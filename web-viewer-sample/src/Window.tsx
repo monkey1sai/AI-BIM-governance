@@ -17,6 +17,18 @@ import USDAsset from "./USDAsset";
 import USDStage from "./USDStage";
 import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
+import ArtifactPanel from "./components/ArtifactPanel";
+import EventLogPanel from "./components/EventLogPanel";
+import IssuePanel from "./components/IssuePanel";
+import PresencePanel from "./components/PresencePanel";
+import ReviewLauncher from "./components/ReviewLauncher";
+import { BimControlClient } from "./clients/bimControlClient";
+import { CoordinatorClient } from "./clients/coordinatorClient";
+import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
+import { buildHighlightPrimsRequest, severityToColor } from "./clients/streamMessages";
+import { reviewEnv } from "./config/env";
+import type { ReviewArtifact } from "./types/artifacts";
+import type { ReviewIssue } from "./types/issues";
 
 
 interface USDPrimType {
@@ -39,6 +51,11 @@ export interface AppProps {
 interface AppState {
     usdAssets: USDAssetType[];
     selectedUSDAsset: USDAssetType | null;
+    reviewSessionId: string | null;
+    reviewStatus: string;
+    reviewArtifacts: ReviewArtifact[];
+    reviewIssues: ReviewIssue[];
+    reviewEvents: string[];
     usdPrims: USDPrimType[];
     selectedUSDPrims: Set<USDPrimType>;
     isKitReady: boolean;
@@ -72,6 +89,9 @@ function getPayloadString(payload: Record<string, unknown>, key: string): string
 export default class App extends React.Component<AppProps, AppState> {
     
     private usdStageRef = React.createRef<USDStage>();
+    private coordinatorClient = new CoordinatorClient(reviewEnv.coordinatorApiBase);
+    private bimControlClient = new BimControlClient(reviewEnv.bimControlApiBase);
+    private reviewSocket: ReviewSocketClient | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -80,6 +100,11 @@ export default class App extends React.Component<AppProps, AppState> {
         this.state = {
             usdAssets: [],
             selectedUSDAsset: null,
+            reviewSessionId: null,
+            reviewStatus: "Review bootstrap pending",
+            reviewArtifacts: [],
+            reviewIssues: [],
+            reviewEvents: [],
             usdPrims: [],
             selectedUSDPrims: new Set<USDPrimType>(),
             isKitReady: false,
@@ -92,6 +117,11 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentDidMount(): void {
         void this._loadUSDAssets();
+        void this._bootstrapReview();
+    }
+
+    componentWillUnmount(): void {
+        this.reviewSocket?.disconnect();
     }
 
     private _getReadyLoadingText(): string {
@@ -123,6 +153,92 @@ export default class App extends React.Component<AppProps, AppState> {
                 isLoading: false,
             });
         }
+    }
+
+    private async _bootstrapReview(): Promise<void> {
+        try {
+            if (!reviewEnv.autoCreateSession) {
+                this.setState({ reviewStatus: "Review auto-create disabled" });
+                await this._loadReviewDataFromBimControl();
+                return;
+            }
+
+            const session = await this.coordinatorClient.createReviewSession({
+                project_id: reviewEnv.defaultProjectId,
+                model_version_id: reviewEnv.defaultModelVersionId,
+                created_by: reviewEnv.defaultUserId,
+            });
+            const [streamConfig, bootstrap] = await Promise.all([
+                this.coordinatorClient.getStreamConfig(session.session_id),
+                this.coordinatorClient.getReviewBootstrap(reviewEnv.defaultModelVersionId),
+            ]);
+
+            const artifacts = streamConfig.artifacts.length > 0 ? streamConfig.artifacts : bootstrap.artifacts;
+            const usdAssets = this._assetsFromReviewArtifacts(artifacts);
+            const selectedUSDAsset = usdAssets.find((asset) => asset.url === streamConfig.model.url) ?? usdAssets[0] ?? this.state.selectedUSDAsset;
+
+            this.reviewSocket = connectReviewSocket(reviewEnv.coordinatorSocketUrl);
+            this.reviewSocket.join(session.session_id, reviewEnv.defaultUserId, reviewEnv.defaultDisplayName);
+
+            this.setState({
+                reviewSessionId: session.session_id,
+                reviewStatus: `Review session active: ${streamConfig.model.status}`,
+                reviewArtifacts: artifacts,
+                reviewIssues: bootstrap.issues,
+                usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
+                selectedUSDAsset,
+                reviewEvents: [...this.state.reviewEvents, "review session created"],
+            }, () => {
+                if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready") {
+                    this._openSelectedAsset();
+                }
+            });
+        }
+        catch (error) {
+            console.warn("Review bootstrap unavailable.", error);
+            this.setState({
+                reviewStatus: "Review coordinator unavailable",
+                reviewEvents: [...this.state.reviewEvents, "review bootstrap failed"],
+            });
+            await this._loadReviewDataFromBimControl();
+        }
+    }
+
+    private async _loadReviewDataFromBimControl(): Promise<void> {
+        try {
+            const [artifacts, issues] = await Promise.all([
+                this.bimControlClient.getArtifacts(reviewEnv.defaultModelVersionId),
+                this.bimControlClient.getReviewIssues(reviewEnv.defaultModelVersionId),
+            ]);
+            const usdAssets = this._assetsFromReviewArtifacts(artifacts);
+            this.setState({
+                reviewArtifacts: artifacts,
+                reviewIssues: issues,
+                usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
+                selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
+                reviewEvents: [...this.state.reviewEvents, "loaded review data from _bim-control"],
+            });
+        }
+        catch (error) {
+            console.warn("Unable to load review data from _bim-control.", error);
+        }
+    }
+
+    private _assetsFromReviewArtifacts(artifacts: ReviewArtifact[]): USDAssetType[] {
+        return artifacts
+            .filter((artifact) => artifact.artifact_type === "usdc" && artifact.status === "ready" && artifact.url)
+            .map((artifact) => ({
+                name: artifact.name || artifact.artifact_id,
+                url: artifact.url as string,
+            }));
+    }
+
+    private _mergeAssets(existing: USDAssetType[], incoming: USDAssetType[]): USDAssetType[] {
+        const byUrl = new Map<string, USDAssetType>();
+        for (const asset of [...incoming, ...existing]) {
+            byUrl.set(asset.url, asset);
+        }
+        return Array.from(byUrl.values());
     }
 
     /**
@@ -315,6 +431,27 @@ export default class App extends React.Component<AppProps, AppState> {
         AppStream.sendMessage(JSON.stringify(reset_message));
     }
 
+    private _onIssueClick(issue: ReviewIssue): void {
+        if (!issue.usd_prim_path) {
+            this.setState({ reviewEvents: [...this.state.reviewEvents, `issue ${issue.issue_id} has no prim path`] });
+            return;
+        }
+
+        const item = {
+            prim_path: issue.usd_prim_path,
+            ifc_guid: issue.ifc_guid,
+            color: severityToColor(issue.severity),
+            label: issue.title,
+            source: issue.source,
+            issue_id: issue.issue_id,
+        };
+        AppStream.sendMessage(JSON.stringify(buildHighlightPrimsRequest([item], true)));
+        if (this.state.reviewSessionId && this.reviewSocket) {
+            this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, issue.issue_id, [item]);
+        }
+        this.setState({ reviewEvents: [...this.state.reviewEvents, `highlight requested: ${issue.issue_id}`] });
+    }
+
     /**
     * @function _onFillUSDPrim
     *
@@ -424,6 +561,11 @@ export default class App extends React.Component<AppProps, AppState> {
             console.log('Kit App communicates progress activity.');
             if (this.state.loadingText !== "Loading Asset...")
                 this.setState( {loadingText: "Loading Asset...", isLoading: true} )
+        }
+
+        else if (event.event_type === "highlightPrimsResult") {
+            const result = getPayloadString(payload, "result") || "unknown";
+            this.setState({ reviewEvents: [...this.state.reviewEvents, `highlight result: ${result}`] });
         }
             
         // Notification from Kit about user changing the selection via the viewport.
@@ -541,6 +683,40 @@ export default class App extends React.Component<AppProps, AppState> {
 
                 {this.state.showUI &&
                 <>
+                    <div
+                        style={{
+                            position: "absolute",
+                            right: sidebarWidth,
+                            top: 0,
+                            width: sidebarWidth,
+                            maxHeight: `calc(100% - ${headerHeight}px)`,
+                            overflow: "auto",
+                            zIndex: 3,
+                            boxShadow: "0 0 8px rgba(0,0,0,0.18)",
+                        }}
+                    >
+                        <ReviewLauncher
+                            width={sidebarWidth}
+                            status={this.state.reviewStatus}
+                        />
+                        <PresencePanel
+                            width={sidebarWidth}
+                            sessionId={this.state.reviewSessionId}
+                        />
+                        <ArtifactPanel
+                            width={sidebarWidth}
+                            artifacts={this.state.reviewArtifacts}
+                        />
+                        <IssuePanel
+                            width={sidebarWidth}
+                            issues={this.state.reviewIssues}
+                            onIssueClick={(issue) => this._onIssueClick(issue)}
+                        />
+                        <EventLogPanel
+                            width={sidebarWidth}
+                            events={this.state.reviewEvents}
+                        />
+                    </div>
                         
                     {/* USD Asset Selector */}
                     <USDAsset

@@ -11,6 +11,8 @@ Thumbs.db
 .codex/
 .vscode/
 .gitnexus/
+.playwright-cli/
+output/playwright/
 
 # ----------------------------
 # Python
@@ -56,6 +58,7 @@ _conversion-service/data/jobs/
 _conversion-service/data/work/
 _conversion-service/data/logs/
 _conversion-service/jobs/
+bim-review-coordinator/data/
 
 # ----------------------------
 # Fake storage generated outputs

@@ -30,3 +30,14 @@ def test_conversion_result_is_stored_and_reloaded(tmp_path: Path):
     assert get_response.status_code == 200
     assert get_response.json()["usdc_url"] == payload["usdc_url"]
     assert get_response.json()["mapping_url"] == payload["mapping_url"]
+
+    artifacts_response = client.get("/api/model-versions/version_demo_001/artifacts")
+    assert artifacts_response.status_code == 200
+    usdc_artifacts = [
+        item
+        for item in artifacts_response.json()["items"]
+        if item["artifact_id"] == "artifact_usdc_demo_001"
+    ]
+    assert usdc_artifacts
+    assert usdc_artifacts[0]["status"] == "ready"
+    assert usdc_artifacts[0]["url"] == payload["usdc_url"]

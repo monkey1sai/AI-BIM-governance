@@ -39,6 +39,10 @@ class StageManager:
             "makePrimsPickableResponse",
             # response to the request to reset camera attributes
             "resetStageResponse",
+            # responses for BIM review issue highlighting requests
+            "highlightPrimsResult",
+            "clearHighlightResult",
+            "focusPrimResult",
         ]
 
         for o in outgoing:
@@ -58,6 +62,12 @@ class StageManager:
             'makePrimsPickable': self._on_make_pickable,
             # request to make primitives pickable
             'resetStage': self._on_reset_camera,
+            # request to highlight BIM issue prims; first implementation uses selection fallback
+            'highlightPrimsRequest': self._on_highlight_prims,
+            # request to clear highlight selection
+            'clearHighlightRequest': self._on_clear_highlight,
+            # request to focus/select one prim
+            'focusPrimRequest': self._on_focus_prim,
         }
 
         ed = get_eventdispatcher()
@@ -263,6 +273,88 @@ class StageManager:
             payload = {"result": "success", "error": ""}
 
         get_eventdispatcher().dispatch_event("makePrimsPickableResponse", payload=payload)
+
+    def _payload_list(self, value):
+        if value is None:
+            return []
+        if isinstance(value, carb.dictionary.Item):
+            value = value.get_dict()
+        if isinstance(value, dict):
+            return list(value.values())
+        return list(value)
+
+    def _payload_dict(self, value):
+        if isinstance(value, carb.dictionary.Item):
+            value = value.get_dict()
+        return value if isinstance(value, dict) else {}
+
+    def _on_highlight_prims(self, event: carb.events.IEvent):
+        """
+        Handler for `highlightPrimsRequest`.
+
+        First MVP uses USD selection as the visual fallback. It still returns
+        explicit missing paths so client/coordinator state remains honest.
+        """
+        stage = omni.usd.get_context().get_stage()
+        if stage is None:
+            payload = {
+                "result": "error",
+                "applied_mode": "selection",
+                "selected_paths": [],
+                "missing_paths": [],
+                "error": "No stage is open.",
+            }
+            get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
+            return
+
+        request_payload = self._payload_dict(event.payload)
+        items = self._payload_list(request_payload.get("items"))
+        selected_paths = []
+        missing_paths = []
+        for raw_item in items:
+            item = self._payload_dict(raw_item)
+            prim_path = item.get("prim_path") or item.get("usd_prim_path")
+            if not prim_path:
+                continue
+            if stage.GetPrimAtPath(prim_path).IsValid():
+                selected_paths.append(prim_path)
+            else:
+                missing_paths.append(prim_path)
+
+        sel = omni.usd.get_context().get_selection()
+        mode = request_payload.get("mode", "replace")
+        if mode == "replace":
+            sel.clear_selected_prim_paths()
+        if selected_paths:
+            self._is_external_update = True
+            sel.set_selected_prim_paths(selected_paths, True)
+
+        payload = {
+            "result": "success",
+            "applied_mode": "selection",
+            "selected_paths": selected_paths,
+            "missing_paths": missing_paths,
+        }
+        get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
+
+    def _on_clear_highlight(self, event: carb.events.IEvent):
+        sel = omni.usd.get_context().get_selection()
+        self._is_external_update = True
+        sel.clear_selected_prim_paths()
+        payload = {"result": "success", "applied_mode": "selection"}
+        get_eventdispatcher().dispatch_event("clearHighlightResult", payload=payload)
+
+    def _on_focus_prim(self, event: carb.events.IEvent):
+        stage = omni.usd.get_context().get_stage()
+        request_payload = self._payload_dict(event.payload)
+        prim_path = request_payload.get("prim_path") or request_payload.get("usd_prim_path")
+        if stage is None or not prim_path or not stage.GetPrimAtPath(prim_path).IsValid():
+            payload = {"result": "error", "prim_path": prim_path, "error": "Prim not found."}
+        else:
+            self._is_external_update = True
+            omni.usd.get_context().get_selection().set_selected_prim_paths([prim_path], True)
+            payload = {"result": "success", "prim_path": prim_path, "applied_mode": "selection"}
+        get_eventdispatcher().dispatch_event("focusPrimResult", payload=payload)
 
     def on_shutdown(self):
         """This is called every time the extension is deactivated. It is used
