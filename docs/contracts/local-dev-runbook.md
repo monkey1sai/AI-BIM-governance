@@ -35,8 +35,10 @@ npm run dev
 
 ```powershell
 cd bim-streaming-server
-.\repo.bat launch -n ezplus.bim_review_stream_streaming.kit -- --no-window
+.\scripts\start-streaming-server.ps1 -UsdPath .\bim-models\許良宇圖書館建築_2026.usd
 ```
+
+The wrapper keeps NvStreamer ETW traces under `bim-streaming-server/logs/nvstreamer/`.
 
 ## 6. Web Viewer
 

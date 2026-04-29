@@ -1,6 +1,8 @@
 param(
     [string] $UsdPath = ".\bim-models\許良宇圖書館建築_2026.usd",
 
+    [string] $TraceRoot = ".\logs\nvstreamer",
+
     [switch] $NoWindow = $true,
 
     [switch] $SkipGpuCheck,
@@ -121,6 +123,9 @@ if ($PreflightOnly) {
 }
 
 $kitPath = $resolvedUsd.Replace("\", "/")
+$resolvedTraceRoot = ConvertTo-AbsolutePath -Path $TraceRoot
+New-Item -ItemType Directory -Force -Path $resolvedTraceRoot | Out-Null
+
 $args = @()
 if ($NoWindow) {
     $args += "--no-window"
@@ -129,7 +134,14 @@ $args += "--/app/auto_load_usd=$kitPath"
 
 Write-Host "[streaming] launcher: $launcher"
 Write-Host "[streaming] USD     : $kitPath"
+Write-Host "[streaming] traces  : $resolvedTraceRoot"
 Write-Host "[streaming] ports   : 49100 / 47998"
 Write-Host "[streaming] starting Kit. Press Ctrl+C to stop."
 
-& $launcher @args
+Push-Location -LiteralPath $resolvedTraceRoot
+try {
+    & $launcher @args
+}
+finally {
+    Pop-Location
+}

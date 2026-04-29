@@ -74,6 +74,7 @@
 - `.claude/`
 - `.playwright-mcp/`
 - `*.etl`
+- `logs/`
 
 ## 快速開始
 
@@ -116,11 +117,25 @@ BUILD (RELEASE) SUCCEEDED (Took XX.XX seconds)
 
 NVIDIA `kit-app-template` 官方流程是先 build，再用 `repo.bat launch` 啟動；若要把參數傳給 Kit executable，放在 `--` 後面。Streaming app 建議用 `--no-window`，避免本機視窗大小與瀏覽器串流互相干擾。
 
+本專案建議使用 wrapper 啟動，會把 NvStreamer 的 Windows ETW trace (`yyyyMMdd-HHmmss-NvStreamer.etl`) 固定寫到 `logs/nvstreamer/`，避免污染 repo 根目錄：
+
+```powershell
+.\scripts\start-streaming-server.ps1 -UsdPath .\bim-models\許良宇圖書館建築_2026.usd
+```
+
+如果根目錄已經有舊的 `*-NvStreamer.etl`，可搬到固定資料夾：
+
+```powershell
+.\scripts\collect-nvstreamer-traces.ps1
+```
+
 官方基準流程：
 
 ```powershell
 .\repo.bat launch -- --no-window
 ```
+
+直接用官方 `repo.bat launch` 時，NvStreamer 會使用目前工作目錄輸出 ETW trace；若工作目錄是 repo root，就會看到 `20260428-112624-NvStreamer.etl` 這類檔案出現在根目錄。
 
 當 launch 選單出現時，選：
 

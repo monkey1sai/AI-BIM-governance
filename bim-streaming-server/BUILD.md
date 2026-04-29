@@ -388,6 +388,18 @@ ezplus.bim_review_stream_streaming.kit
 
 `--portable-root` 的長期建議：把 `*.etl` (NvStreamer trace)、log、user config、cache 都集中到 portable root，避免污染 repo 根目錄。
 
+本 repo 的本地開發建議改用 wrapper：
+
+```powershell
+.\scripts\start-streaming-server.ps1 -UsdPath .\bim-models\許良宇圖書館建築_2026.usd
+```
+
+這個 wrapper 會先建立 `logs/nvstreamer/`，再從該資料夾啟動 Kit build 產物。NvStreamer 仍會產生 `yyyyMMdd-HHmmss-NvStreamer.etl`，但會固定落在 `logs/nvstreamer/`。若根目錄已有舊 trace，可執行：
+
+```powershell
+.\scripts\collect-nvstreamer-traces.ps1
+```
+
 ## 6. 正確關閉 server / client 並釋放資源
 
 Omniverse Kit streaming server 會持有 GPU、D3D12、WebRTC signaling port（通常是 `49100`）與 media port（常見是 `47998`）。關閉時優先走正常 shutdown，避免留下殘留 `kit.exe`、port 被占用、GPU / NVENC resource 未釋放，或下一次 launch 出現 `Failed to start the primary stream server`。

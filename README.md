@@ -99,8 +99,10 @@ npm run dev
 
 ```powershell
 cd bim-streaming-server
-.\repo.bat launch -n ezplus.bim_review_stream_streaming.kit -- --no-window
+.\scripts\start-streaming-server.ps1 -UsdPath .\bim-models\許良宇圖書館建築_2026.usd
 ```
+
+`start-streaming-server.ps1` 會把 NvStreamer 的 `*-NvStreamer.etl` trace 固定寫到 `bim-streaming-server/logs/nvstreamer/`。若直接使用 `repo.bat launch`，NvStreamer 會依目前工作目錄輸出 `.etl`，容易污染 server repo root。
 
 啟動 `web-viewer-sample`：
 

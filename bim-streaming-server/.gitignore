@@ -39,6 +39,7 @@ deps/**/user.toml
 # Streaming EventTrace
 *.etli
 *.etl
+logs/
 
 # Stray dir created when %SystemDrive% env var failed to expand under bash/MSYS
 # (Kit / NvStreamer subprocess wrote to "%SystemDrive%\ProgramData\..." literally
