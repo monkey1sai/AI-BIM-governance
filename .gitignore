@@ -1,0 +1,86 @@
+# ----------------------------
+# General
+# ----------------------------
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+.agents/
+.claude/
+.codex/
+.vscode/
+
+# ----------------------------
+# Python
+# ----------------------------
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+.venv/
+**/venv/
+**/env/
+
+# ----------------------------
+# Node / Web
+# ----------------------------
+**/node_modules/
+**/dist/
+**/build/
+**/.vite/
+**/.nuxt/
+**/.output/
+
+# ----------------------------
+# Omniverse / Kit generated files
+# ----------------------------
+bim-streaming-server/_build/
+bim-streaming-server/_compiler/
+bim-streaming-server/_repo/
+bim-streaming-server/_install/
+bim-streaming-server/_deps/
+bim-streaming-server/_cache/
+bim-streaming-server/extscache/
+bim-streaming-server/cache/
+bim-streaming-server/logs/
+bim-streaming-server/kit/logs/
+
+# ----------------------------
+# Local conversion jobs
+# ----------------------------
+_conversion-service/data/jobs/
+_conversion-service/data/work/
+_conversion-service/data/logs/
+_conversion-service/jobs/
+
+# ----------------------------
+# Fake storage generated outputs
+# Keep fixtures separately if needed.
+# ----------------------------
+_s3_storage/tmp/
+_s3_storage/uploads/
+_s3_storage/generated/
+_s3_storage/static/projects/
+
+# Large BIM artifacts - prefer Git LFS or keep only small fixtures
+*.rvt
+*.dwg
+*.dxf
+*.ifc
+*.ifczip
+*.usd
+*.usda
+*.usdc
+*.usdz
+*.glb
+*.gltf
+
+# Allow explicitly tracked tiny test fixtures if needed
+!_fixtures/**/*.ifc
+!_fixtures/**/*.usd
+!_fixtures/**/*.usda
+!_fixtures/**/*.usdc
+!_fixtures/**/*.json

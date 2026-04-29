@@ -1,0 +1,10 @@
+[
+  {
+    "name": "BIM Conversion Smoke: project_demo_001 / version_demo_001",
+    "url": "http://localhost:8002/static/projects/project_demo_001/versions/version_demo_001/model.usdc"
+  },
+  {
+    "name": "BIM: 許良宇圖書館建築 2026",
+    "url": "C:/Repos/active/iot/AI-BIM-governance/bim-streaming-server/bim-models/許良宇圖書館建築_2026.usdc"
+  }
+]

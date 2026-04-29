@@ -1,0 +1,4 @@
+fastapi==0.111.0
+starlette==0.37.2
+uvicorn==0.45.0
+pytest==8.2.2

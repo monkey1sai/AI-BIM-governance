@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
+
+[package]
+title = "BIM Review Stream Streaming"
+version = "0.1.0"
+description = "Configuration for streaming deployments of BIM Review Stream"
+keywords = ["experience", "app", "dev", "streaming"]
+template_name = "omni.streaming_configuration"
+
+[dependencies]
+"ezplus.bim_review_stream" = {}  # Application kit file
+"omni.kit.livestream.app" = {}  # Livestream extension
+
+[settings.app]
+fastShutdown = true
+name = "BIM Review Stream Streaming"  # Application Display Name
+renderer.resolution.height = 1080
+renderer.resolution.width = 1920
+window.height = 1080
+window.width = 1920
+
+[settings]
+rtx.post.aa.op = 3
+rtx.verifyDriverVersion.enabled = false
+
+[settings.app.extensions]
+registryEnabled = true
+supportedTargets.platform = []  # Skip checking supported platform/config when building
+
+exclude = [
+    "omni.kit.developer.bundle",
+    "omni.kit.widget.cache_indicator",
+]
+
+[settings.app.exts]
+folders.'++' = [  # Search paths for extensions.
+    "${app}/../exts",
+    "${app}/../apps",
+    "${app}/../extscache"
+]
+
+[settings.app.file]
+ignoreUnsavedOnExit = true
+
+[template]
+type = "ApplicationLayerTemplate" # Repo Template Metadata
+
+
+########################################################################################################################
+# BEGIN GENERATED PART (Remove from 'BEGIN' to 'END' to regenerate)
+########################################################################################################################
+
+# Kit SDK Version: 110.1.0+feature.293547.8e364693.gl
+
+# Version lock for all dependencies:
+[settings.app.exts]
+enabled = [
+	"omni.anim.curve.core-1.6.0",
+	"omni.anim.timeline-110.0.0",
+	"omni.graph.action-2.10.2",
+	"omni.graph.action_nodes-2.10.3",
+	"omni.graph.action_nodes_core-2.10.2",
+	"omni.graph.nodes-2.11.1",
+	"omni.graph.nodes_core-2.10.3",
+	"omni.graph.scriptnode-2.10.2",
+	"omni.graph.ui_nodes-2.10.5",
+	"omni.kit.data2ui.core-1.1.4",
+	"omni.kit.data2ui.usd-1.1.4",
+	"omni.kit.livestream.app-10.1.0",
+	"omni.kit.livestream.core-10.0.0",
+	"omni.kit.livestream.messaging-1.2.1",
+	"omni.kit.livestream.webrtc-10.1.2",
+	"omni.kit.sequencer.core-110.0.0",
+	"omni.kit.sequencer.usd-110.0.0",
+	"omni.no_code_ui.bundle-1.1.4",
+	"omni.usd.schema.sequence-3.2.0",
+	"omni.usd_viewer.samples-106.3.3",
+]
+
+########################################################################################################################
+# END GENERATED PART
+########################################################################################################################

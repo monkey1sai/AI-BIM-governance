@@ -1,0 +1,123 @@
+NVIDIA Omniverse 產品特定條款說明（中文摘要）
+
+重要聲明：
+
+- 本文件是中文說明摘要，方便開發與內部閱讀。
+- 它不是法律翻譯，也不取代 NVIDIA 官方授權文件。
+- 若本文件與 NVIDIA 官方最新授權條款有任何差異，應一律以官方最新版本為準。
+
+官方授權與產品條款：
+
+- NVIDIA Software License Agreement
+  https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/
+- Omniverse Product-Specific Terms
+  以上述官方頁面為準
+
+## 適用範圍
+
+本條款適用於 NVIDIA Omniverse 的使用，包括但不限於：
+
+- Enterprise Products
+- Kit SDK 各版本
+- Nucleus Enterprise
+- Omniverse Cloud Containers
+- 公開提供的 Free SDKs
+- OpenUSD Exchange SDK 的公開支援版本
+
+## 關鍵名詞
+
+- `Kit SDK`：
+  NVIDIA 用於開發應用程式、microservices、plugins 的工具組與 extension 集合。
+- `Nucleus`：
+  Omniverse 的資料庫與協作服務。
+- `Omniverse Cloud Containers`：
+  可透過 Omniverse API 存取，並可部署在 Kubernetes 的 Omniverse 軟體容器。
+
+## 授權重點摘要
+
+在符合授權條款、訂單、產品授權參數與費用要求的前提下，NVIDIA 會授予有限、全球、非專屬、不可轉讓、不可再授權（除非條款明示允許）的授權，允許：
+
+- 安裝、使用、重製、建立衍生樣例（Derivative Samples）
+- 在自有或租用基礎設施上，以服務形式提供相容應用中的 Software 與衍生樣例
+- 在相容應用中散布 Software 與衍生樣例
+
+## 限制與注意事項
+
+### 1. Developer Program / NFR / Trial 版本限制
+
+- `NFR` 或 `not for resale` 版本通常僅供內部評估或展示
+- Trial 版本只能在試用期間內使用
+- 經由 NVIDIA Developer Program 取得的 Omniverse 軟體，通常僅供：
+  - 內部評估
+  - 開發
+  - 測試
+- 此類軟體通常不得直接用於 production 使用、散布或正式部署
+
+### 2. 對外提供服務或散布時的額外要求
+
+若你將 Software 或 Derivative Samples：
+
+- 對外提供為服務
+- 或重新散布給第三方
+
+則需要額外遵守：
+
+- 你的應用或服務必須具有「實質額外功能」，不能只是包一層 NVIDIA Software
+- 若發現不合規使用，需通知 NVIDIA
+- Derivative Samples 需包含指定聲明：
+  - `This software contains source code provided by NVIDIA Corporation.`
+- 你與客戶或使用者的條款，至少要與 NVIDIA 原條款同等保護
+- NVIDIA 可要求提供使用報告，以確認費用與授權範圍
+
+### 3. Enterprise Support
+
+- Enterprise Support 只提供給授權客戶本人
+- 不自動延伸到客戶的最終使用者或其他第三方
+
+### 4. 平台限制
+
+部分專有元件只能在 NVIDIA 平台上執行，包括：
+
+- Kit SDK
+- Omniverse Cloud Containers
+
+## 原始碼索取
+
+若某些第三方元件的授權（例如 GPL / LGPL）要求提供可再散布的原始碼，可聯絡：
+
+- `oss-requests@nvidia.com`
+
+根據文件，此提供有效期為 NVIDIA 產品散布日起三年內。
+
+## 資料蒐集
+
+官方條款指出，軟體可能蒐集下列資訊以改善產品：
+
+- 系統配置
+- 作業系統與安裝資訊
+- 功能使用情形
+- 效能與診斷紀錄
+
+官方也指出，在某些情況下，為交付軟體或服務，可能需要姓名、Email、授權資訊等個資。
+
+是否可關閉資料蒐集，會依授權型態而不同：
+
+- 非 Subscription License：可依官方說明選擇 opt-out
+- Subscription License：預設通常不蒐集，必要時可 opt-in
+
+資料主體權利與隱私處理，請以 NVIDIA 官方隱私與授權頁面為準。
+
+## 建議做法
+
+如果這個 repo 或由此產生的應用有以下用途：
+
+- 對外散布
+- 提供 SaaS / streaming service
+- 商業部署
+- 客戶交付
+
+建議務必在法務與授權確認後再進行，並以 NVIDIA 官方最新授權條款為準，不要只依賴本摘要。
+
+版本參考：
+
+- 原始文件標示版本：`January 30, 2025`

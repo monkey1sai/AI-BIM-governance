@@ -1,0 +1,350 @@
+# Kit SDK Tooling Guide
+
+This document provides an overview of the practical aspects of using the tooling provided in the `kit-app-template`. Intended for users with a basic familiarity with command-line operations, this guide offers typical usage patterns and recommendations for effective tool use. For a complete list of options for a given tool, use the help command: `./repo.sh [tool] -h` or `.\repo.bat [tool] -h`.
+
+## Overview of Tools
+
+The `kit-app-template` repository includes several tools designed to streamline the development of applications and extensions within the Omniverse Kit SDK.
+
+### Available Tools
+- `template`
+- `build`
+- `launch`
+- `test`
+- `package`
+
+Each tool plays a specific role in the development workflow:
+
+## Template Tool
+
+**Command:** `./repo.sh template` or `.\repo.bat template`
+
+### Purpose
+The template tool facilitates the initiation of new projects by generating scaffolds for applications or extensions based on predefined templates located in `/templates/templates.toml`.
+
+### Usage
+The template tool has three main commands: `list`, `new`, `replay`, `modify`.
+
+#### `list`
+Lists available templates without initiating the configuration wizard.
+
+**Linux:**
+```bash
+./repo.sh template list
+```
+**Windows:**
+```powershell
+.\repo.bat template list
+```
+
+#### `new`
+Creates new applications or extensions from templates with interactive prompts guiding you through various configuration choices.
+
+**Linux:**
+```bash
+./repo.sh template new
+```
+**Windows:**
+```powershell
+.\repo.bat template new
+```
+
+#### `replay`
+In cases where automation is required for CI pipelines or other scripted workflows, it is possible to record and replay the `template new` configuration.
+
+To achieve this first run template new with the `--generate-playback` flag:
+
+**Linux:**
+```bash
+./repo.sh template new --generate-playback {playback_file_name}.toml
+```
+
+**Windows:**
+```powershell
+.\repo.bat template new --generate-playback {playback_file_name}.toml
+```
+
+After the configuration has been generated, the configuration can be replayed using the `replay` command:
+
+**Linux:**
+```bash
+./repo.sh template replay {playback_file_name}.toml
+```
+
+**Windows:**
+```powershell
+.\repo.bat template replay {playback_file_name}.toml
+```
+
+#### `modify`
+The `modify` command lets you add one or more Application Template Layers (for example, streaming support) to an existing application that was not originally configured with them.
+
+**Linux:**
+```bash
+./repo.sh template modify
+```
+**Windows:**
+```powershell
+.\repo.bat template modify
+```
+
+When prompted, select the Application `.kit` file you want to update.
+
+Next, select (using Space) the Template Layer(s) to add. Enter to confirm.
+
+After the operation completes, rebuild (`./repo.sh build` or `.\repo.bat build`) the project to pull in the new extensions.
+
+### What `template new` Modifies
+
+When creating applications, the template tool automatically updates build configuration files:
+
+1. **`premake5.lua`** - Adds `define_app("appname.kit")` so the build system discovers your application
+2. **`repo.toml`** - Adds the app path to `repo_precache_exts.apps` so dependent extensions are pre-cached at build time
+3. **`source/rendered_template_metadata.json`** - Records which templates were rendered (enables `template modify` and `template list`)
+4. **Setup extension** (some templates) - Creates an extension in `source/extensions/` for application-specific initialization
+
+**Extensions** are automatically discovered by the Kit build system based on directory structure, so no build file modifications are needed.
+
+### Creating Applications Without Templates
+
+If you create a `.kit` file manually (without using `repo template new`), you must update the build files yourself:
+
+1. **Add to `premake5.lua`:**
+   ```lua
+   define_app("my_company.my_app.kit")
+   ```
+
+2. **Add to `repo.toml`:**
+   ```toml
+   [repo_precache_exts]
+   apps = ["${root}/source/apps/my_company.my_app.kit"]
+   ```
+
+   If apps already exist, append to the existing list.
+
+> **Note:** Manually created applications won't be tracked in `rendered_template_metadata.json`, so `template modify` cannot add layers to them.
+
+## Build Tool
+
+**Command:** `./repo.sh build` or `.\repo.bat build`
+
+### Purpose
+The build tool compiles all necessary files in your project, ensuring they are ready for execution, testing, or packaging. It includes all resources located in the `source/` directory.
+
+### Usage
+Run the build command before testing or packaging your application to ensure all components are up to date:
+
+**Linux:**
+```bash
+./repo.sh build
+```
+**Windows:**
+```powershell
+.\repo.bat build
+```
+
+Other common build options:
+- **`-c` or `--clean`:** Cleans the build directory before building.
+- **`x` or `--rebuild`:** Rebuilds the project from scratch.
+
+## Launch Tool
+
+**Command:** `./repo.sh launch` or `.\repo.bat launch`
+
+### Purpose
+The launch tool is used to start your application after it has been successfully built, allowing you to test it live.
+
+### Usage
+Select and run a built .kit file from the `source/apps` directory:
+
+**Linux:**
+```bash
+./repo.sh launch
+```
+**Windows:**
+```powershell
+.\repo.bat launch
+```
+
+Additional launch options:
+- **`-d` or `--dev-bundle`:** By default, the templates in the Kit App Template repository include `omni.kit.developer.bundle` in their `.kit` file definitions. If you want to exclude it from your application definition, you can still enable it at launch by using the `-d` or `--dev-bundle` flags. This approach prevents the developer bundle extensions from being packaged and sent to customers, while allowing you to use them during development.
+
+- **`-p` or `--package`:** Launches a packaged application from a specified path.
+
+    **Linux:**
+    ```bash
+    ./repo.sh launch -p </path/to/package.zip>
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat launch -p <C:\path\to\package.zip>
+    ```
+
+- **`--container`:** Launches a containerized application (Linux only).
+
+    **Linux:**
+    ```bash
+    ./repo.sh launch --container
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat launch --container
+    ```
+
+- **Passing args to launched Kit executable:**
+You can pass through arguments to your targeted Kit executable by appending `--` to your launch command. Any flags added after `--` will be passed through to Kit directly. The following examples will pass the `--clear-cache` flag to Kit.
+
+    **Linux:**
+    ```bash
+    ./repo.sh launch -- --clear-cache
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat launch -- --clear-cache
+    ```
+
+:warning: **Important Notes When Launching Applications:**
+- **Launching an application with path specific arguments:** When launching application with path specific args (for example `--/app/auto_load_usd` using the USD Viewer Template), the path provided should either be absolute (full path from root) or if the asset is within an extension use a tokenized path (e.g. `./repo.sh launch -- --/app/auto_load_usd='${omni.usd_viewer.samples}/samples_data/stage01.usd'` )
+
+- **Launching directly from an uncompressed package:** The `launch` utility is accessible from the project repository and can be used to launch packages from the project repository.  **However**, if launching an application from within a uncompressed packaged the `launch` utility is not available and any arguments passed should be passed to the `.bat` or `.sh` script directly (e.g. `my.app.kit.sh --/app/auto_load_usd=path/to/asset.usd`).
+
+## Test Tool
+
+**Command:** `./repo.sh test` or `.\repo.bat test`
+
+### Purpose
+The test tooling facilitates the execution of automated tests on your applications and extensions to help ensure their functionality and stability.  Applications configurations (`.kit` files) are tested to ensure they can startup and shutdown without issue.  However, the tests written within the extensions will dictate a majority of application functionality testing.  Extension templates provided by the Kit App Template repository include sample tests which can be expanded upon to increase test coverage as needed.
+
+### Usage
+Always run a build before testing:
+
+**Linux:**
+```bash
+./repo.sh test
+```
+**Windows:**
+```powershell
+.\repo.bat test
+```
+
+## Package Tool
+
+**Command:** `./repo.sh package` or `.\repo.bat package`
+
+### Purpose
+This tool prepares your application for distribution or deployment by packaging it into a distributable format.
+
+### Usage
+Always run a build before packaging to ensure the application is up-to-date:
+
+**Linux:**
+```bash
+./repo.sh package
+```
+**Windows:**
+```powershell
+.\repo.bat package
+```
+
+
+Additional launch options:
+- **`-n` or `--name`:** Specifies the package (or container image) name.
+
+    **Linux:**
+    ```bash
+    ./repo.sh package -n <package_name>
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat package -n <package_name>
+    ```
+
+- **`--thin`:** Creates a thin package that includes only custom extensions and configurations for required registry extensions.
+
+    **Linux:**
+    ```bash
+    ./repo.sh package --thin
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat package --thin
+    ```
+:warning: **Important Note for Packaging:** Because the packaging operation will package everything within the `source/` directory the package version will need to be set independently of a given `kit` file.  **The version is set within the `tools/VERSION.md` file.**
+
+## Containerization Tool
+
+**Command:** `./repo.sh package_container` or `.\repo.bat package_container`
+
+### Purpose
+The containerization tool provided by `repo_kit_tools` supports containerization of applications. This is especially useful for deploying headless services and streaming applications in a containerized environment.
+
+### How It Works
+
+The tool performs these steps:
+1. **Creates a fat package** - Stages all dependencies into a temp directory
+2. **Trims unused extensions** - Removes disabled extensions to minimize image size
+3. **Splits into Docker layers** - Base layer (kit kernel + extscache) and app layer for faster rebuilds
+4. **Builds the container** - Uses a configurable base image (default: `nvcr.io/nvidia/omniverse/ov-base-ubuntu-22`)
+
+The container entrypoint supports runtime configuration via environment variables (`NVDA_KIT_ARGS`, `NVDA_KIT_NUCLEUS`).
+
+### Usage
+Always run a build before packaging to ensure the application is up-to-date:
+
+- **`package_container`:** Packages the application as a container image (Linux only). When using the `package_container`, the user will be asked to select a `.kit` file to use within the entry point script for the container.  This can also be specified without user interaction by passing it appropriate `.kit` file name via the `--app ${path_to_kit_file}` flag.
+
+    **Linux:**
+    ```bash
+    ./repo.sh package_container
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat package_container
+    ```
+
+Additional command options:
+- **`--app`:** Specify the Kit app to containerize. One of defined in the config.
+
+    **Linux:**
+    ```bash
+    ./repo.sh package_container --app ${path_to_kit_file}
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat package_container --app ${path_to_kit_file}
+    ```
+
+    - **`--image-tag`:** Optional image tag override to use for docker image. If includes ':', it will be used as is, e.g.: name:tag.
+
+    **Linux:**
+    ```bash
+    ./repo.sh package_container --image-tag [container_image_name:container_image_tag]
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat package_container --image-tag [container_image_name:container_image_tag]
+    ```
+
+- **`-p` or `--from-package`:** Use package from 'kit-app-template/_build/packages/kit-app-template*.${config}.*' instead of a root folder.
+
+    **Linux:**
+    ```bash
+    ./repo.sh package_container -p
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat package_container -p
+    ```
+- **`-g` or `--generate`:** Generate default container template files into the destination folder. Passed argument is the destination folder.
+
+    **Linux:**
+    ```bash
+    ./repo.sh package_container -g
+    ```
+    **Windows:**
+    ```powershell
+    .\repo.bat package_container -g
+    ```
+
+## Additional Resources
+- [Kit SDK Companion Tutorial](https://docs.omniverse.nvidia.com/kit/docs/kit-app-template/latest/docs/intro.html)

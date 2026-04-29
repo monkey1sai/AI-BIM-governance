@@ -1,0 +1,9 @@
+[templates."core_templates"]
+class = "LocalTemplateCollection"
+name = "Core Templates"
+url = "file://${root}/templates/core_templates.toml"
+
+[templates."sample_templates"]
+class = "LocalTemplateCollection"
+name = "Sample Templates"
+url = "file://${root}/templates/sample_templates.toml"

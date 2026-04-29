@@ -1,0 +1,91 @@
+﻿# All folders starting with _ are local.
+_*/
+
+# Compiled python files.
+*.py[cod]
+*.pyc
+__pycache__/
+
+# Visual Studio files.
+/.vs
+**/.vscode/ipch
+
+# macOS files.
+.DS_Store
+
+# Generated license file.
+PACKAGE-DEPS.yaml
+
+# packman .user config
+*.packman.xml.user
+
+# kit user config
+deps/**/user.toml
+
+# vscode settings are copied and filled in from 'settings.json.template'
+.vscode/settings.json
+
+# PyCharm files.
+/.idea/
+
+# Linux in docker build $HOME dirs
+/.nvidia-omniverse
+/.local
+/.cache
+
+# Omniverse EULA breadcrumb
+/.omniverse_eula_accepted.txt
+
+# Streaming EventTrace
+*.etli
+*.etl
+
+# Stray dir created when %SystemDrive% env var failed to expand under bash/MSYS
+# (Kit / NvStreamer subprocess wrote to "%SystemDrive%\ProgramData\..." literally
+# while cwd was the repo root). Local artifact only — never enter version control.
+/%SystemDrive%/
+
+# Keep generated template metadata out of version control, but track app/extension sources.
+/source/*
+!/source/apps/
+!/source/apps/**
+!/source/extensions/
+!/source/extensions/**
+/source/**/__pycache__/
+/source/**/__pycache__/**
+/source/**/*.pyc
+/source/rendered_template_metadata.json
+
+.gitnexus
+
+# Local agent / browser automation artifacts
+/.claude/
+/.playwright-mcp/
+/AGENTS.md
+/CLAUDE.md
+/current-stream-*.png
+/stream-validation-*.png
+/docs/gitnexus-agent-guide.md
+/.codex
+/.codex
+
+# BIM Streaming - USD model artifacts (per docs/plan-bim-ifc-usd-streaming-2026-04-27.md)
+/bim-models/*
+!/bim-models/.gitkeep
+!/bim-models/README.md
+*.usd
+*.usda
+*.usdc
+*.usdz
+!/source/apps/**/*.usd
+!/source/apps/**/*.usda
+!/source/apps/**/*.usdc
+!/source/apps/**/*.usdz
+!/source/extensions/**/*.usd
+!/source/extensions/**/*.usda
+!/source/extensions/**/*.usdc
+!/source/extensions/**/*.usdz
+!/templates/**/*.usd
+!/templates/**/*.usda
+!/templates/**/*.usdc
+!/templates/**/*.usdz

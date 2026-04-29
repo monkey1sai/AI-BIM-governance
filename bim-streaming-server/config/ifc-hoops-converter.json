@@ -1,0 +1,23 @@
+{
+  "accurateSurfaceCurvatures": true,
+  "accurateTessellation": false,
+  "convertCurves": false,
+  "convertMetadata": true,
+  "dedup": true,
+  "filterStyle": 1,
+  "globalXforms": false,
+  "instancingStyle": 2,
+  "materialType": 1,
+  "reportProgress": true,
+  "reportProgressFreq": 4,
+  "tessLOD": 2,
+  "upAxis": 0,
+  "useMaterials": true,
+  "useNormals": true,
+  "instancing": true,
+  "convertHidden": false,
+  "sOptimizeConfig": "",
+  "bOptimize": true,
+  "iUpAxis": 0,
+  "dMetersPerUnit": 0.0
+}

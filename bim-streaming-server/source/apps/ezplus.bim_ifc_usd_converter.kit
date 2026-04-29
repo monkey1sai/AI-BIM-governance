@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
+
+[package]
+title = "BIM IFC to USD Converter"
+version = "0.1.0"
+description = "Headless helper app for IFC to USD conversion through NVIDIA CAD Converter extensions."
+keywords = ["app", "converter", "ifc", "usd"]
+
+[dependencies]
+"omni.kit.telemetry" = {}
+"omni.kit.converter.cad" = { order = 1000 }
+"omni.kit.converter.hoops_core" = {}
+"omni.services.convert.cad" = {}
+
+[settings]
+telemetry.disableInternalSessionCheck = true
+telemetry.enableAnonymousAppName = true
+telemetry.enableAnonymousData = true
+privacy.externalBuild = true
+
+[settings.app]
+fastShutdown = true
+name = "BIM IFC to USD Converter"
+
+[settings.app.environment]
+name = "BIM IFC to USD Converter"
+
+[settings.app.extensions]
+registryEnabled = true
+supportedTargets.platform = []
+supportedTargets.config = []
+
+[settings.app.exts.folders]
+'++' = [
+    "${app}/../exts",
+    "${app}/../extscache/"
+]
+
+
+########################################################################################################################
+# BEGIN GENERATED PART (Remove from 'BEGIN' to 'END' to regenerate)
+########################################################################################################################
+
+# Kit SDK Version: 110.1.0+feature.293547.8e364693.gl
+
+# Version lock for all dependencies:
+[settings.app.exts]
+enabled = [
+	"omni.kit.asset_converter-5.1.2",
+	"omni.kit.converter.cad-209.2.1",
+	"omni.kit.converter.common-510.1.2",
+	"omni.kit.converter.dgn-510.1.2",
+	"omni.kit.converter.dgn_core-512.2.0",
+	"omni.kit.converter.hoops-510.1.0",
+	"omni.kit.converter.hoops_core-511.1.2",
+	"omni.kit.converter.jt-509.0.1",
+	"omni.kit.converter.jt_core-509.0.1",
+	"omni.kit.tool.asset_importer-5.1.4",
+	"omni.scene.optimizer.core-110.1.0",
+	"omni.services.client-0.5.6",
+	"omni.services.convert.asset-510.0.1",
+	"omni.services.convert.cad-508.0.1",
+	"omni.services.core-1.9.3",
+	"omni.services.facilities.base-1.0.5",
+	"omni.services.facilities.monitoring.metrics-0.3.1",
+	"omni.services.facilities.monitoring.progress-0.2.4",
+	"omni.services.pip_archive-0.18.6",
+	"omni.services.transport.client.base-1.2.5",
+	"omni.services.transport.client.http_async-1.4.2",
+	"omni.services.transport.server.base-1.1.2",
+	"omni.services.transport.server.http-1.3.2",
+	"omni.usdex.libs-2.2.2",
+]
+
+########################################################################################################################
+# END GENERATED PART
+########################################################################################################################
