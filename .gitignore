@@ -13,6 +13,7 @@ Thumbs.db
 .gitnexus/
 .playwright-cli/
 output/playwright/
+graphify-out/
 
 # ----------------------------
 # Python

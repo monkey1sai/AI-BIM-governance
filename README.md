@@ -11,6 +11,13 @@ GitNexus 產生的 repo wiki 已放到：
 - HTML viewer: [docs/wiki/gitnexus/index.html](docs/wiki/gitnexus/index.html)
 - Markdown pages: [docs/wiki/gitnexus/](docs/wiki/gitnexus/)
 
+Graphify 產生的跨文件知識圖譜已放到：
+
+- Report: [docs/wiki/graphify/GRAPH_REPORT.md](docs/wiki/graphify/GRAPH_REPORT.md)
+- Interactive graph: [docs/wiki/graphify/graph.html](docs/wiki/graphify/graph.html)
+- Graph JSON: [docs/wiki/graphify/graph.json](docs/wiki/graphify/graph.json)
+- Agent-readable wiki: [docs/wiki/graphify/wiki/index.md](docs/wiki/graphify/wiki/index.md)
+
 原始 GitNexus 輸出仍可由 `.gitnexus/wiki/` 重新產生，但 `.gitnexus/` 是本地索引資料，不納入 git 追蹤。若要更新可閱讀版本，先重新產生 wiki，再同步到 `docs/wiki/gitnexus/`。
 
 ```powershell
@@ -32,7 +39,9 @@ Copy-Item .\.gitnexus\wiki\* .\docs\wiki\gitnexus\ -Recurse -Force
 | `docs/contracts/` | API / event contracts | 記錄 REST、Socket.IO、DataChannel 與 local runbook contract。 |
 | `docs/plans/` | Implementation plans | 保存目前執行計畫與驗收 checklist。 |
 | `docs/git/` | Git migration notes | 保存 nested repo remote 與 backup path 紀錄。 |
+| `docs/graphify-corpus/` | Graphify source corpus | 跨文件知識圖譜的固定輸入集；目前只納入 contracts / plans / git notes。 |
 | `docs/wiki/gitnexus/` | GitNexus generated wiki snapshot | 可閱讀的 repo wiki 快照，供 GitHub / 本機瀏覽。 |
+| `docs/wiki/graphify/` | Graphify knowledge graph snapshot | 補足 GitNexus 不擅長的跨文件關係：service boundaries、API/event flow、conversion → review → streaming 閉環、monorepo context。 |
 | `scripts/` | Root smoke scripts | 跨服務健康檢查與 review session smoke test。 |
 
 ## Source of Truth
@@ -195,6 +204,18 @@ npx gitnexus wiki
 ```powershell
 Copy-Item .\.gitnexus\wiki\* .\docs\wiki\gitnexus\ -Recurse -Force
 ```
+
+## Graphify
+
+Graphify 的輸入 corpus 固定在 `docs/graphify-corpus/`，正式輸出同步到 `docs/wiki/graphify/`。更新時先產生本機暫存輸出，再同步可追蹤副本：
+
+```powershell
+# graphify-out/ 是本機暫存，不納入 git
+# 目前 corpus: docs/contracts, docs/plans, docs/git
+graphify query "What connects conversion output to issue highlight?" --graph docs/wiki/graphify/graph.json
+```
+
+若要重建完整 graph，沿用 `graphify` skill 產生 `graphify-out/GRAPH_REPORT.md`、`graphify-out/graph.json`、`graphify-out/graph.html`、`graphify-out/wiki/`，再同步到 `docs/wiki/graphify/`。
 
 ## Git 注意事項
 
