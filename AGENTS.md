@@ -773,3 +773,30 @@ session 歸 coordinator
 3D runtime 歸 streaming server
 使用者操作歸 web viewer
 ```
+
+## 12. AI Agent Wiki 使用規範
+
+這些文件提供 AI agent 在陌生模組探索時的快速上下文，目的是縮短定位時間，不取代程式碼與 API contract。
+
+Graphify Wiki（跨文件知識圖）
+
+入口：README.md
+用途：快速理解跨 repo 概念關聯、名詞對照、文件連結關係。
+適用時機：需求探索、架構導覽、影響面初步盤點。
+限制：不得作為行為正確性的唯一依據，最終以程式碼與 contracts 為準。
+GitNexus Wiki（程式索引導覽）
+
+入口：index.html
+用途：查找模組入口、符號關聯、可能呼叫路徑。
+適用時機：追 code flow、找實作位置、做改動前風險掃描。
+限制：索引可能落後；執行前需回到實際檔案再次確認。
+Source of Truth 優先順序
+
+程式碼實作
+contracts 文件
+AGENTS 邊界定義
+wiki（Graphify/GitNexus）
+維護規範
+
+若發現 wiki 與實作不一致，先以實作為準，並補更新 wiki。
+重大流程變更（API、事件、資料流）合併前應同步更新對應 wiki 入口頁。
