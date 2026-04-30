@@ -4,6 +4,15 @@ IFC to USDC conversion API and local job manager.
 
 This service owns the conversion API only. It calls the existing Kit headless converter from `../bim-streaming-server/scripts/convert-ifc-to-usdc.ps1`, publishes artifacts into `_s3_storage`, and writes conversion metadata back to `_bim-control`.
 
+## Demo 故事位置
+
+| | |
+|---|---|
+| **步驟** | ② 自動轉換 (Convert) |
+| **Demo URL** | <http://127.0.0.1:8003> |
+| **客戶看到的內容** | 一鍵「開始轉換」按鈕、4 階段進度（讀取 IFC → 解析元件 → 產出 USDC → 建立對照表）、結束顯示 3D 可審查模型與元件對照表的連結 |
+| **設計守則** | [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](../docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md) |
+
 ## Run Order
 
 ```powershell

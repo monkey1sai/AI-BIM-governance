@@ -1,133 +1,123 @@
 # AI-BIM-governance
 
-AI-BIM-governance 是本地 PoC / integration workspace，用來驗證 BIM 模型轉檔、假資料平台、假物件儲存、Omniverse Kit streaming runtime、review coordinator 與 browser web viewer 之間的最小閉環。
+> **BIM 審查雲端 (BIM Review Cloud) — Local Demo Workspace**
+>
+> 本 workspace 是「BIM 模型自動轉換 → 雲端 3D 串流審查 → 多人協作標記 → 紀錄回寫主資料庫」整條閉環的本地 PoC。
+> 所有服務都在你電腦上，用 fake mock 模擬正式產品 (BIM 主平台 / 雲端物件儲存)。
 
-目前 repo 採 single root repo 管理，所有服務都是普通子目錄；不要在子目錄內恢復 nested `.git`。
+---
 
-## 可閱讀 Wiki
+## 給客戶的 5 步驟 Demo 故事 (5-Step Demo Storyboard)
 
-GitNexus 產生的 repo wiki 已放到：
+| 步驟 | 客戶看到 | 對應服務 | URL |
+|---|---|---|---|
+| ① 上傳建模 (Upload) | 原始建模檔已存在雲端倉庫 | `_s3_storage` | <http://127.0.0.1:8002> |
+| ② 自動轉換 (Convert) | 一鍵把建模檔轉成可在瀏覽器即時審查的 3D 模型 | `_conversion-service` | <http://127.0.0.1:8003> |
+| ③ 建立會議 (Meeting) | 一鍵開啟雲端審查會議，取得連線資訊 | `bim-review-coordinator` | <http://127.0.0.1:8004> |
+| ④ 標記問題 (Mark)   | 進入瀏覽器看 3D 模型、點問題即高亮對應元件 | `web-viewer-sample` + `bim-streaming-server` | <http://127.0.0.1:5173> |
+| ⑤ 紀錄回寫 (Record) | 審查標註已寫回主資料庫，留下審查履歷 | `_bim-control` | <http://127.0.0.1:8001> |
 
-- HTML viewer: [docs/wiki/gitnexus/index.html](docs/wiki/gitnexus/index.html)
-- Markdown pages: [docs/wiki/gitnexus/](docs/wiki/gitnexus/)
+> **最快 demo 路徑**：直接打開瀏覽器，依序 `8002 → 8003 → 8004 → 5173 → 8001`。每頁都有頂部的步驟條，可單向流暢走完。
+>
+> **時間緊迫時**：可省略步驟 ⑤，從步驟 ④ 結束。但步驟條保留完整顯示，讓客戶看見全貌。
 
-Graphify 產生的跨文件知識圖譜已放到：
+每個頁面的設計都遵守 [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md)：
+- 業務語言優先 (Business language first)
+- 線性 5 步驟流程條 (Step bar)
+- 狀態號誌化 (●綠就緒 / ●黃進行中 / ●紅未連線)
+- 每個按鈕一句「會發生什麼」(Action caption)
+- 失敗友善：直接告訴你哪個服務沒開、怎麼開
+- 跨服務一致：淺色 + 藍色卡片風格、共用 design tokens
 
-- Report: [docs/wiki/graphify/GRAPH_REPORT.md](docs/wiki/graphify/GRAPH_REPORT.md)
-- Interactive graph: [docs/wiki/graphify/graph.html](docs/wiki/graphify/graph.html)
-- Graph JSON: [docs/wiki/graphify/graph.json](docs/wiki/graphify/graph.json)
-- Agent-readable wiki: [docs/wiki/graphify/wiki/index.md](docs/wiki/graphify/wiki/index.md)
+---
 
-原始 GitNexus 輸出仍可由 `.gitnexus/wiki/` 重新產生，但 `.gitnexus/` 是本地索引資料，不納入 git 追蹤。若要更新可閱讀版本，先重新產生 wiki，再同步到 `docs/wiki/gitnexus/`。
+## Demo 啟動順序 (One-shot Bring-up)
 
-```powershell
-npx gitnexus status
-npx gitnexus wiki
-Copy-Item .\.gitnexus\wiki\* .\docs\wiki\gitnexus\ -Recurse -Force
-```
-
-## 目錄分工
-
-| 目錄 | 角色 | 責任邊界 |
-|---|---|---|
-| `_bim-control/` | Fake BIM Data Authority | 保存 project / model version / artifact / issue / annotation metadata；不保存大型檔案、不渲染 3D、不做 WebRTC。 |
-| `_s3_storage/` | Fake Object Storage | 提供 IFC / USD / USDC / mapping JSON 等檔案本體與 HTTP static URL；不管理 session、不保存業務語意。 |
-| `_conversion-service/` | IFC to USDC Conversion API | 建立 conversion job、呼叫 Kit converter、產出 `model.usdc`、`ifc_index.json`、`usd_index.json`、`element_mapping.json`，並發布到 fake storage / fake BIM API。 |
-| `bim-review-coordinator/` | Session / Collaboration Control Plane | 建立 review session、查詢 BIM metadata、提供 stream config、廣播 presence / selection / annotation / issue focus events；不直接操作 USD stage。 |
-| `bim-streaming-server/` | Omniverse Kit Runtime / WebRTC Streaming Server | 載入 USD / USDC、執行 viewport runtime、WebRTC streaming、DataChannel command，如 `openStageRequest`、`highlightPrimsRequest`。 |
-| `web-viewer-sample/` | Browser Client / WebRTC Viewer | 顯示 streaming 畫面、建立 review session、讀 artifacts/issues、送 DataChannel command、送 collaboration events；不啟動 Kit、不保存資料權威。 |
-| `docs/contracts/` | API / event contracts | 記錄 REST、Socket.IO、DataChannel 與 local runbook contract。 |
-| `docs/plans/` | Implementation plans | 保存目前執行計畫與驗收 checklist。 |
-| `docs/git/` | Git migration notes | 保存 nested repo remote 與 backup path 紀錄。 |
-| `docs/graphify-corpus/` | Graphify source corpus | 跨文件知識圖譜的固定輸入集；目前只納入 contracts / plans / git notes。 |
-| `docs/wiki/gitnexus/` | GitNexus generated wiki snapshot | 可閱讀的 repo wiki 快照，供 GitHub / 本機瀏覽。 |
-| `docs/wiki/graphify/` | Graphify knowledge graph snapshot | 補足 GitNexus 不擅長的跨文件關係：service boundaries、API/event flow、conversion → review → streaming 閉環、monorepo context。 |
-| `scripts/` | Root smoke scripts | 跨服務健康檢查與 review session smoke test。 |
-
-## Source of Truth
-
-| 資料類型 | 權威位置 |
-|---|---|
-| Project / model version metadata | `_bim-control` |
-| Artifact metadata | `_bim-control` |
-| IFC / USD / USDC file body | `_s3_storage` |
-| Conversion job state | `_conversion-service` |
-| Review session state | `bim-review-coordinator` |
-| Collaboration events | `bim-review-coordinator` |
-| USD runtime state | `bim-streaming-server` |
-| Browser UI state | `web-viewer-sample` |
-
-核心原則：
-
-```txt
-資料權威歸資料層
-檔案本體歸 storage
-session 歸 coordinator
-3D runtime 歸 streaming server
-使用者操作歸 web viewer
-```
-
-## 本地啟動
-
-以下命令以 PowerShell 執行。每個服務建議用獨立 terminal，並從 repo root 開始：
+每個服務獨立 terminal，依序啟動：
 
 ```powershell
+# Repo root
 cd C:\Repos\active\iot\AI-BIM-governance
-```
 
-啟動 `_bim-control`：
-
-```powershell
-cd _bim-control
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
-```
-
-啟動 `_s3_storage`：
-
-```powershell
+# 1. 雲端倉庫 (8002)
 cd _s3_storage
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
-```
 
-啟動 `_conversion-service`：
+# 2. 主資料庫 (8001)
+cd _bim-control
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
-```powershell
+# 3. 模型轉換 (8003)
 cd _conversion-service
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8003
-```
 
-啟動 `bim-review-coordinator`：
-
-```powershell
+# 4. 審查協調 (8004)
 cd bim-review-coordinator
-npm install
+npm install   # 第一次需要
 npm run dev
-```
 
-啟動 `bim-streaming-server`：
-
-```powershell
+# 5. Omniverse Kit 串流伺服器 (49100 WebRTC)
 cd bim-streaming-server
 .\scripts\start-streaming-server.ps1 -SkipAutoLoad
-```
 
-MVP demo 建議先不帶 `auto_load_usd`，由 `web-viewer-sample` 透過 `openStageRequest` 明確載入 `_s3_storage` 的 `model.usdc`，避免 Kit 啟動時 auto-load 與 browser DataChannel 請求競速。`start-streaming-server.ps1` 會把 NvStreamer 的 `*-NvStreamer.etl` trace 固定寫到 `bim-streaming-server/logs/nvstreamer/`。若直接使用 `repo.bat launch`，NvStreamer 會依目前工作目錄輸出 `.etl`，容易污染 server repo root。
-
-啟動 `web-viewer-sample`：
-
-```powershell
+# 6. 瀏覽器審查端 (5173)
 cd web-viewer-sample
-npm install
+npm install   # 第一次需要
 npm run dev -- --host 127.0.0.1
 ```
 
-打開 client web view：
+> 為什麼 Kit server 用 `-SkipAutoLoad`：
+> demo 中 USD 模型的載入由 web-viewer-sample 透過 `openStageRequest` 主動觸發，避免 Kit 啟動時 auto-load 與 browser DataChannel 請求競速。`start-streaming-server.ps1` 會把 NvStreamer 的 `*-NvStreamer.etl` trace 固定寫到 `bim-streaming-server/logs/nvstreamer/`。
+
+---
+
+## 服務分工與邊界 (Service Boundaries)
+
+| 目錄 | 角色 | Demo 故事位置 | 責任邊界 |
+|---|---|---|---|
+| `_bim-control/` | 主資料庫 (Fake BIM Data Authority) | 步驟 ⑤ | 保存 project / model version / artifact / issue / annotation metadata；不保存大型檔案、不渲染 3D、不做 WebRTC。 |
+| `_s3_storage/` | 雲端倉庫 (Fake Object Storage) | 步驟 ① | 提供 IFC / USD / USDC / mapping JSON 等檔案本體與 HTTP static URL；不管理 session、不保存業務語意。 |
+| `_conversion-service/` | 模型轉換服務 (Conversion API) | 步驟 ② | 建立 conversion job、呼叫 Kit converter、產出 `model.usdc`、`element_mapping.json`，並發布到 fake storage / fake BIM API。 |
+| `bim-review-coordinator/` | 審查協調 (Session / Collaboration Control Plane) | 步驟 ③ | 建立 review session、查詢 BIM metadata、提供 stream config、廣播 presence / selection / annotation / issue focus；不直接操作 USD stage。 |
+| `bim-streaming-server/` | Omniverse Kit Runtime / WebRTC | 步驟 ④ (背景) | 載入 USD / USDC、執行 viewport runtime、WebRTC streaming、DataChannel command (`openStageRequest`、`highlightPrimsRequest`)；無 UI，存在感由 web-viewer 呈現。 |
+| `web-viewer-sample/` | 瀏覽器審查端 (Browser Client) | 步驟 ④ | 顯示串流畫面、建立或加入 review session、讀 artifacts/issues、送 DataChannel command、送 collaboration events；不啟動 Kit、不保存資料權威。 |
+| `docs/contracts/` | API / event contracts | — | REST、Socket.IO、DataChannel 與 local runbook contract。 |
+| `docs/plans/` | Implementation plans | — | 目前執行計畫與驗收 checklist；**Demo UI 守則** 在 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`。 |
+| `docs/wiki/` | GitNexus / Graphify wiki snapshot | — | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
+| `scripts/` | Root smoke scripts | — | 跨服務健康檢查與 review session smoke test。 |
+
+### Source of Truth
 
 ```txt
-http://127.0.0.1:5173
+資料權威 → _bim-control
+檔案本體 → _s3_storage
+Session  → bim-review-coordinator
+3D runtime → bim-streaming-server
+使用者操作 → web-viewer-sample
 ```
 
-## 常用驗證命令
+---
+
+## Demo UI 設計守則
+
+所有面對 demo 觀眾的 UI（5 個服務頁面）都依循同一份守則：
+
+> [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md)
+
+要點：
+
+1. **客戶看不到的字眼**：`USD / USDC / prim_path / DataChannel / payload / Socket.IO / WebRTC signaling` 等技術名詞只能出現在「展開技術細節」折疊區。
+2. **每頁頂部**固定步驟條，當前頁亮起，其他步驟可點擊跳轉。
+3. **狀態號誌化**：●綠就緒 / ●黃進行中 / ●紅未連線。
+4. **每個按鈕一句「會發生什麼」**：例 `[ 開始轉換 ] ↳ 系統會把建模檔轉成 3D 可審查模型 (約 30~60 秒)`。
+5. **失敗友善**：直接告知哪個服務沒開、可貼的 PowerShell 啟動指令。
+6. **跨服務一致**：5 個 UI 共用一份 design tokens；權威來源在 [`web-viewer-sample/src/styles/demo-theme.css`](web-viewer-sample/src/styles/demo-theme.css)。
+
+任何 UI 改動先讀守則、再動手；違反守則的 PR 應被退回。
+
+---
+
+## 驗證命令 (Validation)
 
 健康檢查：
 
@@ -153,28 +143,19 @@ Conversion smoke：
 .\_conversion-service\scripts\smoke_conversion.ps1 -TimeoutSeconds 1800
 ```
 
-Python tests 需要分服務執行，因為多個 FastAPI service 都使用 `app` package name，從 root 一次收集會互相污染 import cache：
+Python tests（每個 fake service 各自 `app` package name，需分服務跑避免 import cache 互相污染）：
 
 ```powershell
-cd _bim-control
-..\.venv\Scripts\python.exe -m pytest tests
-
-cd ..\_s3_storage
-..\.venv\Scripts\python.exe -m pytest tests
-
-cd ..\_conversion-service
-..\.venv\Scripts\python.exe -m pytest tests
+cd _bim-control          ; ..\.venv\Scripts\python.exe -m pytest tests
+cd ..\_s3_storage        ; ..\.venv\Scripts\python.exe -m pytest tests
+cd ..\_conversion-service; ..\.venv\Scripts\python.exe -m pytest tests
 ```
 
 Node tests / builds：
 
 ```powershell
-cd bim-review-coordinator
-npm test
-npm run build
-
-cd ..\web-viewer-sample
-npm run build
+cd bim-review-coordinator; npm test; npm run build
+cd ..\web-viewer-sample  ; npm run build
 ```
 
 Kit build / test：
@@ -185,49 +166,36 @@ cd bim-streaming-server
 .\repo.bat test
 ```
 
-## GitNexus
+---
 
-檢查 index：
+## AI Agent 輔助 Wiki
+
+GitNexus（程式索引導覽）：
+- HTML viewer: [`docs/wiki/gitnexus/index.html`](docs/wiki/gitnexus/index.html)
+- Markdown pages: [`docs/wiki/gitnexus/`](docs/wiki/gitnexus/)
+
+Graphify（跨文件知識圖）：
+- Report: [`docs/wiki/graphify/GRAPH_REPORT.md`](docs/wiki/graphify/GRAPH_REPORT.md)
+- Interactive graph: [`docs/wiki/graphify/graph.html`](docs/wiki/graphify/graph.html)
+
+> 兩者只是輔助探索；**最終以程式碼與 contracts 文件為準**。
+
+維護命令：
 
 ```powershell
 npx gitnexus status
-```
-
-更新 analysis：
-
-```powershell
 npx gitnexus analyze --skip-agents-md
-```
-
-產生 wiki：
-
-```powershell
 npx gitnexus wiki
-```
-
-同步 wiki 到可追蹤文件資料夾：
-
-```powershell
 Copy-Item .\.gitnexus\wiki\* .\docs\wiki\gitnexus\ -Recurse -Force
 ```
 
-## Graphify
-
-Graphify 的輸入 corpus 固定在 `docs/graphify-corpus/`，正式輸出同步到 `docs/wiki/graphify/`。更新時先產生本機暫存輸出，再同步可追蹤副本：
-
-```powershell
-# graphify-out/ 是本機暫存，不納入 git
-# 目前 corpus: docs/contracts, docs/plans, docs/git
-graphify query "What connects conversion output to issue highlight?" --graph docs/wiki/graphify/graph.json
-```
-
-若要重建完整 graph，沿用 `graphify` skill 產生 `graphify-out/GRAPH_REPORT.md`、`graphify-out/graph.json`、`graphify-out/graph.html`、`graphify-out/wiki/`，再同步到 `docs/wiki/graphify/`。
+---
 
 ## Git 注意事項
 
 - Root repo remote: `https://github.com/monkey1sai/AI-BIM-governance.git`
-- Repo 內應只保留一個 `.git`：`AI-BIM-governance/.git`
-- 不使用 submodule / subtree 管理目前這些服務目錄
+- 整個 workspace 採 single root repo；只保留 `AI-BIM-governance/.git`
+- 不使用 submodule / subtree 管理服務目錄
 - 大型 BIM artifact 預設不進 git：`*.ifc`、`*.usdc`、`*.usd`、`*.rvt`、`*.dwg`
-- 可提交小型 fixture 時，優先放到 `_fixtures/`
-- `node_modules/`、Kit build output、local conversion jobs、`.gitnexus/` 不納入 git
+- 小型 fixture 可放 `_fixtures/`
+- `node_modules/`、Kit build output、local conversion jobs、`.gitnexus/` 皆不納入 git

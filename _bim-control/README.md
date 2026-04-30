@@ -2,6 +2,15 @@
 
 Local fake BIM data authority for conversion result metadata.
 
+## Demo 故事位置
+
+| | |
+|---|---|
+| **步驟** | ⑤ 紀錄回寫 (Record) |
+| **Demo URL** | <http://127.0.0.1:8001> |
+| **客戶看到的內容** | 主資料庫已連線、目前示範專案 / 版本、已登錄成果檔數、最近的審查標註紀錄 |
+| **設計守則** | [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](../docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md) |
+
 ## Run
 
 ```powershell
