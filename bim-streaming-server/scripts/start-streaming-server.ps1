@@ -9,6 +9,11 @@ param(
 
     [switch] $SkipAutoLoad,
 
+    [switch] $ResetUser,
+
+    [ValidateSet("", "error", "warning", "info", "debug", "verbose")]
+    [string] $StreamSdkLogLevel = "",
+
     [switch] $PreflightOnly
 )
 
@@ -142,6 +147,12 @@ $args = @()
 if ($NoWindow) {
     $args += "--no-window"
 }
+if ($ResetUser) {
+    $args += "--reset-user"
+}
+if (-not [string]::IsNullOrWhiteSpace($StreamSdkLogLevel)) {
+    $args += "--/log/channels/omni.kit.livestream.streamsdk=$StreamSdkLogLevel"
+}
 if (-not $SkipAutoLoad) {
     $kitPath = $resolvedUsd.Replace("\", "/")
     $args += "--/app/auto_load_usd=$kitPath"
@@ -156,6 +167,12 @@ else {
 }
 Write-Host "[streaming] traces  : $resolvedTraceRoot"
 Write-Host "[streaming] ports   : 49100 / 47998"
+if ($ResetUser) {
+    Write-Host "[streaming] reset   : user settings will be reset"
+}
+if (-not [string]::IsNullOrWhiteSpace($StreamSdkLogLevel)) {
+    Write-Host "[streaming] logs    : omni.kit.livestream.streamsdk=$StreamSdkLogLevel"
+}
 Write-Host "[streaming] starting Kit. Press Ctrl+C to stop."
 
 Push-Location -LiteralPath $resolvedTraceRoot

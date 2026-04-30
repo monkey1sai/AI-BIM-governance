@@ -1505,6 +1505,8 @@ Expected:
 
 2026-04-30 UI operation order check: before video was ready, a browser smoke clicked openStageRequest, loadingStateQuery, getChildrenRequest, highlightPrimsRequest, focusPrimRequest, clearHighlightRequest, coordinator highlightRequest, and annotationCreate. The page had no `pageerror`, Kit PID `10916` kept responding, coordinator `/health` stayed OK, and `smoke-review-socket.ps1` passed afterward. Current conclusion: premature UI commands can produce non-useful DataChannel outcomes until WebRTC/DataChannel is ready, but this order did not crash `bim-streaming-server` or put `bim-review-coordinator` into an abnormal state.
 
+2026-04-30 reset-user recovery: diagnostic launch with `--reset-user --/log/channels/omni.kit.livestream.streamsdk=info` recovered browser WebRTC. Browser smoke reached `readyState=4`, `videoWidth=1920`, `videoHeight=1080`, `srcObject=true`, and playback advanced. Follow-up DataChannel smoke received `getChildrenResponse`, `highlightPrimsResult`, `focusPrimResult`, and `clearHighlightResult` success. Current likely root cause: stale Kit persistent user settings or stale stream state, not web viewer operation order. `bim-streaming-server\scripts\start-streaming-server.ps1` now exposes `-ResetUser` and `-StreamSdkLogLevel info` to make this recovery path reproducible.
+
 ### 8.4 Regression checks
 
 ```powershell
