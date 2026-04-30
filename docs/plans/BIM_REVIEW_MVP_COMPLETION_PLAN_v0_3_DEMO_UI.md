@@ -1501,6 +1501,10 @@ Expected:
 
 2026-04-30 clean Kit restart baseline: `bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad -SkipGpuCheck` started Kit on TCP `49100`, but browser still did not receive media. Console evidence changed from the earlier timeout to `WebSocket connection to 'ws://127.0.0.1:49100/sign_in?...' failed: WebSocket is closed before the connection is established`, `Sign in request timed out`, `event local candidates: TCP: 0 MDNS: 0 IPV6: 0 IPV4: 0 UNKNOWN: 0`, and `0xC0F22213`. This keeps the root cause in WebRTC sign-in / ICE negotiation, not model loading or user operation.
 
+2026-04-30 restart recheck: old `kit.exe` PID `2540` was stopped and `bim-streaming-server` was restarted as PID `10916`. TCP `49100` and UDP `47998` were listening, but a 65 second browser smoke still showed `readyState=0`, `videoWidth=0`, `videoHeight=0`, and `srcObject=false`. Console showed `sign_in` peer records reaching `connected=true`, then `0xC0F22219` with `event local candidates: TCP: 0 MDNS: 0 IPV6: 0 IPV4: 0 UNKNOWN: 0`. Restart alone did not resolve the WebRTC media timeout.
+
+2026-04-30 UI operation order check: before video was ready, a browser smoke clicked openStageRequest, loadingStateQuery, getChildrenRequest, highlightPrimsRequest, focusPrimRequest, clearHighlightRequest, coordinator highlightRequest, and annotationCreate. The page had no `pageerror`, Kit PID `10916` kept responding, coordinator `/health` stayed OK, and `smoke-review-socket.ps1` passed afterward. Current conclusion: premature UI commands can produce non-useful DataChannel outcomes until WebRTC/DataChannel is ready, but this order did not crash `bim-streaming-server` or put `bim-review-coordinator` into an abnormal state.
+
 ### 8.4 Regression checks
 
 ```powershell
