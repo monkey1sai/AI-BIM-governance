@@ -12,7 +12,7 @@ const socketState = document.getElementById("socketState");
 let socket = null;
 
 function sessionPath(suffix = "") {
-  if (!sessionId.value) throw new Error("session_id is required");
+  if (!sessionId.value) throw new Error("請先建立或輸入 session_id");
   return `/api/review-sessions/${sessionId.value}${suffix}`;
 }
 
@@ -21,7 +21,7 @@ function participantBody() {
 }
 
 async function httpCall(method, path, body) {
-  httpOutput.textContent = `${method} ${path}\nLoading...`;
+  httpOutput.textContent = `${method} ${path}\n載入中...`;
   const init = { method, headers: { Accept: "application/json" } };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
@@ -82,18 +82,18 @@ function getBootstrap() {
 
 function appendSocket(message, payload) {
   const line = `${new Date().toISOString()} ${message} ${payload === undefined ? "" : JSON.stringify(payload)}`;
-  socketOutput.textContent = socketOutput.textContent === "No socket events yet." ? line : `${line}\n${socketOutput.textContent}`;
+  socketOutput.textContent = socketOutput.textContent === "尚未收到 socket 事件。" ? line : `${line}\n${socketOutput.textContent}`;
 }
 
 function connectSocket() {
   if (socket?.connected) return;
   socket = io("/review", { transports: ["websocket", "polling"] });
   socket.on("connect", () => {
-    socketState.textContent = "connected";
+    socketState.textContent = "已連線";
     appendSocket("connect", { id: socket.id });
   });
   socket.on("disconnect", (reason) => {
-    socketState.textContent = "disconnected";
+    socketState.textContent = "未連線";
     appendSocket("disconnect", { reason });
   });
   socket.onAny((event, payload) => appendSocket(event, payload));
@@ -105,7 +105,7 @@ function disconnectSocket() {
 
 function emit(event, payload) {
   if (!socket?.connected) {
-    appendSocket("clientWarning", { error: "Socket is not connected." });
+    appendSocket("clientWarning", { error: "Socket 尚未連線。" });
     return;
   }
   socket.emit(event, payload, (ack) => appendSocket(`${event}:ack`, ack));
@@ -113,7 +113,7 @@ function emit(event, payload) {
 }
 
 function baseSocketPayload() {
-  if (!sessionId.value) throw new Error("session_id is required");
+  if (!sessionId.value) throw new Error("請先建立或輸入 session_id");
   return { session_id: sessionId.value, user_id: userId.value, display_name: displayName.value };
 }
 
@@ -134,7 +134,7 @@ function emitHighlight() {
         prim_path: "/World",
         ifc_guid: "2VJ3sK9L000fake001",
         color: [1, 0, 0, 1],
-        label: "Demo highlight from coordinator dev console",
+        label: "示範：從 coordinator 協作控制台送出的高亮",
         source: "coordinator_dev_console",
         issue_id: "ISSUE-DEMO-001"
       }
@@ -154,7 +154,7 @@ function emitAnnotation() {
   emit("annotationCreate", {
     session_id: sessionId.value || "review_session_demo_001",
     actor_id: userId.value,
-    text: "Demo annotation from coordinator UI",
+    text: "從 coordinator UI 建立的示範標註",
     target: {
       usd_prim_path: "/World",
       ifc_guid: "2VJ3sK9L000fake001"

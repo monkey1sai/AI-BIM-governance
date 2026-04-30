@@ -16,6 +16,7 @@ import carb.tokens
 import omni.kit.app
 from carb.eventdispatcher import get_eventdispatcher, Event
 from omni.kit.test import AsyncTestCase
+from pxr import UsdGeom
 
 
 
@@ -98,6 +99,138 @@ class MessagingTest(AsyncTestCase):
 
         await wait_stage_loading(wait_frames=300)
         self.assertTrue(all(outgoing.values()))
+
+    async def test_highlight_world_falls_back_to_default_prim(self):
+        result, error = await omni.usd.get_context().new_stage_async()
+        self.assertTrue(result, error)
+        stage = omni.usd.get_context().get_stage()
+        model_prim = UsdGeom.Xform.Define(stage, "/model").GetPrim()
+        stage.SetDefaultPrim(model_prim)
+
+        received = {}
+        subscriptions: List[int] = []
+
+        def on_highlight_result(event: Event) -> None:
+            received["payload"] = event.payload
+
+        subscriptions.append(
+            self._ed.observe_event(
+                observer_name="MessagingTest:highlightPrimsResultFallback",
+                event_name="highlightPrimsResult",
+                on_event=on_highlight_result,
+            )
+        )
+        await self._app.next_update_async()
+
+        self._ed.dispatch_event(
+            "highlightPrimsRequest",
+            payload={
+                "request_id": "highlight-world-smoke-001",
+                "mode": "replace",
+                "items": [
+                    {
+                        "prim_path": "/World",
+                        "label": "stage root fallback",
+                    }
+                ],
+            },
+        )
+        await self._app.next_update_async()
+
+        payload = received["payload"]
+        self.assertEqual(payload["request_id"], "highlight-world-smoke-001")
+        self.assertEqual(payload["result"], "success")
+        self.assertEqual(payload["selected_paths"], ["/model"])
+        self.assertEqual(payload["missing_paths"], [])
+        self.assertEqual(
+            payload["fallback_paths"],
+            [
+                {
+                    "requested_path": "/World",
+                    "selected_path": "/model",
+                    "reason": "stage_root_fallback",
+                }
+            ],
+        )
+        self.assertEqual(omni.usd.get_context().get_selection().get_selected_prim_paths(), ["/model"])
+
+    async def test_highlight_reports_missing_and_ignores_malformed_items(self):
+        result, error = await omni.usd.get_context().new_stage_async()
+        self.assertTrue(result, error)
+        stage = omni.usd.get_context().get_stage()
+        UsdGeom.Xform.Define(stage, "/World")
+
+        received = {}
+
+        def on_highlight_result(event: Event) -> None:
+            received["payload"] = event.payload
+
+        subscriptions: List[int] = []
+        subscriptions.append(self._ed.observe_event(
+            observer_name="MessagingTest:highlightPrimsResultMissing",
+            event_name="highlightPrimsResult",
+            on_event=on_highlight_result,
+        ))
+        await self._app.next_update_async()
+
+        self._ed.dispatch_event(
+            "highlightPrimsRequest",
+            payload={
+                "mode": "replace",
+                "items": [
+                    {"usd_prim_path": "/World"},
+                    {"prim_path": "/MissingPrim"},
+                    "malformed",
+                ],
+            },
+        )
+        await self._app.next_update_async()
+
+        payload = received["payload"]
+        self.assertEqual(payload["result"], "success")
+        self.assertEqual(payload["selected_paths"], ["/World"])
+        self.assertEqual(payload["missing_paths"], ["/MissingPrim"])
+
+        self._ed.dispatch_event(
+            "highlightPrimsRequest",
+            payload={
+                "mode": "replace",
+                "items": 1,
+            },
+        )
+        await self._app.next_update_async()
+
+        payload = received["payload"]
+        self.assertEqual(payload["result"], "success")
+        self.assertEqual(payload["selected_paths"], [])
+        self.assertEqual(payload["missing_paths"], [])
+
+    async def test_focus_missing_prim_returns_error(self):
+        result, error = await omni.usd.get_context().new_stage_async()
+        self.assertTrue(result, error)
+        stage = omni.usd.get_context().get_stage()
+        UsdGeom.Xform.Define(stage, "/World")
+
+        received = {}
+
+        def on_focus_result(event: Event) -> None:
+            received["payload"] = event.payload
+
+        subscriptions: List[int] = []
+        subscriptions.append(self._ed.observe_event(
+            observer_name="MessagingTest:focusPrimResultMissing",
+            event_name="focusPrimResult",
+            on_event=on_focus_result,
+        ))
+        await self._app.next_update_async()
+
+        self._ed.dispatch_event("focusPrimRequest", payload={"request_id": "focus-missing-001", "prim_path": "/MissingPrim"})
+        await self._app.next_update_async()
+
+        payload = received["payload"]
+        self.assertEqual(payload["request_id"], "focus-missing-001")
+        self.assertEqual(payload["result"], "error")
+        self.assertEqual(payload["prim_path"], "/MissingPrim")
 
     async def test_stage_management_incoming(self):
         """

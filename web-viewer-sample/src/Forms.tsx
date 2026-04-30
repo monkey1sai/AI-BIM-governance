@@ -106,31 +106,31 @@ export class AppOnlyForm extends Component <AppOnlyProps, AppOnlyState>{
         return (
             
             <div style={formContainerStyle}>
-            <h3>UI Option</h3>
-                <label>This client is part of the <a
+            <h3>UI 顯示模式</h3>
+                <label>這個 client 對應 NVIDIA <a
                     href="https://docs.omniverse.nvidia.com/embedded-web-viewer/latest/index.html" target="_blank"
-                    rel="noopener noreferrer">Embedded Web Viewer Guide</a>.
-                    It provides a user interface and functionality that supports Kit applications created from
-                    the <b>USD Viewer</b> Template in the <a href="https://github.com/NVIDIA-Omniverse/kit-app-template"
-                                              target="_blank" rel="noopener noreferrer">kit-app-template</a>.
+                    rel="noopener noreferrer">Embedded Web Viewer Guide</a>，
+                    並提供可操作 <b>USD Viewer</b> template Kit app 的 UI 與功能；template 來源是
+                    <a href="https://github.com/NVIDIA-Omniverse/kit-app-template"
+                                              target="_blank" rel="noopener noreferrer"> kit-app-template</a>。
                     <br/>
-                    If you are using this client to stream any other application you need to select the 2nd option below in order for the streamed application to become visible.
+                    如果串流的是其他 Kit app，請選第二個選項，避免 viewer UI 擋住串流畫面。
                 </label>
                 <br/>
             <br/>
             <div className="form-check">
                 <input className="form-check-input" type="radio" name="webUiRadio" checked={this.state.useWebUI} id="yes" onChange={() => this._handleOptionChange(true)}/>
                 <label className="form-check-label" htmlFor="radios1">
-                    UI for default streaming <b>USD Viewer</b> app
+                    顯示 <b>USD Viewer</b> 專用 UI 與 BIM review Demo 面板
                 </label>
             </div>
             <div className="form-check">
                 <input className="form-check-input" type="radio" name="webUiRadio" id="no" checked={!this.state.useWebUI} onChange={() => this._handleOptionChange(false)}/>
                 <label className="form-check-label" htmlFor="radios1">
-                    UI for <b>any</b> streaming app
+                    只顯示 <b>任意 Kit app</b> 串流畫面
                 </label>
             </div>
-            <button type="button" className="nvidia-button" onClick={() => this.props.onNext(this.state)} style={nextButtonStyle}>Next</button>
+            <button type="button" className="nvidia-button" onClick={() => this.props.onNext(this.state)} style={nextButtonStyle}>下一步</button>
         </div>
         )
     }
@@ -174,13 +174,13 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
             });
     
             if (!response.ok) {
-                alert(`Error: Received status code ${response.status}`);
+                alert(`錯誤：endpoint 回傳狀態碼 ${response.status}`);
                 return false
             }
         }
         
         catch (error) {
-            alert(`Error: Failed to connect to endpoint \`${endpoint}\``);
+            alert(`錯誤：無法連線到 endpoint \`${endpoint}\``);
             return false
         }
 
@@ -195,7 +195,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
         
         // validate app server URL value is entered
         if (appServer.length === 0) {
-            alert("An App Server must be entered.")
+            alert("請輸入 App Server。")
             return
         }
 
@@ -204,7 +204,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
             new URL(appServer);
         }
         catch (err) {
-            alert(`Invalid App Server URL format`);
+            alert(`App Server URL 格式不正確`);
             return;
         }
         
@@ -213,7 +213,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
         
         let streamServer = (document.getElementById("stream-server") as HTMLInputElement).value;
         if (streamServer.length === 0) {
-            alert("A Stream Server must be entered.")
+            alert("請輸入 Stream Server。")
             return
         }
         
@@ -222,7 +222,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
             new URL(streamServer);
         }
         catch (err) {
-            alert(`Invalid Stream Server URL format`);
+            alert(`Stream Server URL 格式不正確`);
             return;
         }
 
@@ -234,7 +234,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
         // validate that applications exist
         this.setState((prevState) => {
             if (prevState.applications.length === 0) {
-                alert(`No applications were found from App Server \`${appServer}\``)
+                alert(`App Server \`${appServer}\` 沒有回傳可用 application`)
             }
             else {
                 this.props.onNext(appServer, streamServer, prevState.applications)
@@ -255,7 +255,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
         
         return (
             <div style={formContainerStyle}>
-                <h3>Server Information</h3>
+                <h3>Server 連線資訊</h3>
                 <div className="mb-3">
                 <div className="row align-items-center">
 
@@ -265,7 +265,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
                     <label htmlFor="input1" className="col-form-label">App Server</label>
                     </div>
                     <div className="col">
-                        <input type="text" className="form-control" id="app-server" placeholder="Enter App Server" defaultValue={this.state.appServer} style={{outline:"2px solid #76b900"}} />
+                        <input type="text" className="form-control" id="app-server" placeholder="輸入 App Server URL" defaultValue={this.state.appServer} style={{outline:"2px solid #76b900"}} />
                     </div>
                 </div>
 
@@ -274,14 +274,14 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
                     <label htmlFor="input2" className="col-form-label">Stream Server</label>
                     </div>
                     <div className="col">
-                    <input type="text" className="form-control" id="stream-server" placeholder="Enter Stream Server" defaultValue={this.state.streamServer}  style={{outline:"2px solid #76b900"}} />
+                    <input type="text" className="form-control" id="stream-server" placeholder="輸入 Stream Server URL" defaultValue={this.state.streamServer}  style={{outline:"2px solid #76b900"}} />
                     </div>
                 </div>
                 </div>
                 
                 </div>
-                    <button type="button" className="nvidia-button" onClick={() => this._onBack()} style={nextButtonStyle}>Previous</button>
-                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>Next</button>
+                    <button type="button" className="nvidia-button" onClick={() => this._onBack()} style={nextButtonStyle}>上一步</button>
+                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>下一步</button>
                 </div>
         </div>
     )
@@ -312,7 +312,7 @@ export class ApplicationsForm extends Component <ApplicationsProps, Applications
         await this._loadVersions(this.props.appServer, selectedAppId)
         this.setState((prevState) => {
             if (prevState.versions.length === 0) {
-                alert(`No versions were found from Application with id ${selectedAppId}`)
+                alert(`Application id ${selectedAppId} 沒有可用版本`)
                 return
                 
             }
@@ -351,7 +351,7 @@ export class ApplicationsForm extends Component <ApplicationsProps, Applications
     render() {
         return (
             <div style={formContainerStyle}>
-                <h3>Select Application</h3>
+                <h3>選擇 Kit application</h3>
                 <div className="mb-3">
                     <select
                         className="nvidia-dropdown"
@@ -366,8 +366,8 @@ export class ApplicationsForm extends Component <ApplicationsProps, Applications
                         ))}
                         </select>
                 </div>
-                    <button type="button" className="nvidia-button" onClick={() => this.props.onBack()} style={nextButtonStyle}>Previous</button>
-                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>Next</button>
+                    <button type="button" className="nvidia-button" onClick={() => this.props.onBack()} style={nextButtonStyle}>上一步</button>
+                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>下一步</button>
                 </div>
             )
     }
@@ -398,7 +398,7 @@ export class VersionsForm extends Component <VersionsProps, VersionsState> {
 
         this.setState((prevState) => {
             if (prevState.profiles.length === 0) {
-                alert(`No profiles were found for Application version ${selectedVersion}`)
+                alert(`Application version ${selectedVersion} 沒有可用 profile`)
                 return
                 
             }
@@ -433,7 +433,7 @@ export class VersionsForm extends Component <VersionsProps, VersionsState> {
     render() {
         return (
             <div style={formContainerStyle}>
-                <h3>Select Version</h3>
+                <h3>選擇版本</h3>
                 <div className="mb-3">
                     <select
                         className="nvidia-dropdown"
@@ -448,8 +448,8 @@ export class VersionsForm extends Component <VersionsProps, VersionsState> {
                         ))}
                         </select>
                 </div>      
-                    <button type="button" className="nvidia-button" onClick={() => this.props.onBack() } style={nextButtonStyle}>Previous</button>
-                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>Next</button>
+                    <button type="button" className="nvidia-button" onClick={() => this.props.onBack() } style={nextButtonStyle}>上一步</button>
+                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>下一步</button>
                 </div>
       
             )
@@ -489,7 +489,7 @@ export class ProfilesForm extends Component <ProfilesProps, ProfilesState> {
     render() {
         return (
             <div style={formContainerStyle}>
-                <h3>Select Profile</h3>
+                <h3>選擇 profile</h3>
                 <div className="mb-3">
                     <select
                         className="nvidia-dropdown"
@@ -504,8 +504,8 @@ export class ProfilesForm extends Component <ProfilesProps, ProfilesState> {
                         ))}
                         </select>
                 </div>
-                    <button type="button" className="nvidia-button" onClick={() => this.props.onBack()} style={nextButtonStyle}>Previous</button>
-                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>Next</button>
+                    <button type="button" className="nvidia-button" onClick={() => this.props.onBack()} style={nextButtonStyle}>上一步</button>
+                    <button type="button" className="nvidia-button" onClick={() => this._onNext()} style={nextButtonStyle}>下一步</button>
                 </div>
       
             )

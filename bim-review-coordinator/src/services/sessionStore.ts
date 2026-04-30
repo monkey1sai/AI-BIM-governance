@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import type { KitInstance, ReviewParticipant, ReviewSession } from "../types.js";
 import { nowIso } from "../utils/time.js";
 
+const safeSessionIdPattern = /^review_session_[A-Za-z0-9_-]+$/;
+
 export interface CreateSessionInput {
   project_id: string;
   model_version_id: string;
@@ -40,12 +42,14 @@ export class SessionStore {
   }
 
   get(sessionId: string): ReviewSession | null {
+    if (!isSafeSessionId(sessionId)) return null;
     const file = this.filePath(sessionId);
     if (!fs.existsSync(file)) return null;
     return JSON.parse(fs.readFileSync(file, "utf8")) as ReviewSession;
   }
 
   save(session: ReviewSession): void {
+    assertSafeSessionId(session.session_id);
     session.updated_at = nowIso();
     fs.writeFileSync(this.filePath(session.session_id), JSON.stringify(session, null, 2), "utf8");
   }
@@ -74,6 +78,17 @@ export class SessionStore {
   }
 
   private filePath(sessionId: string): string {
+    assertSafeSessionId(sessionId);
     return path.join(this.rootDir, `${sessionId}.json`);
+  }
+}
+
+export function isSafeSessionId(sessionId: string): boolean {
+  return safeSessionIdPattern.test(sessionId);
+}
+
+function assertSafeSessionId(sessionId: string): void {
+  if (!isSafeSessionId(sessionId)) {
+    throw new Error("Invalid review session id.");
   }
 }

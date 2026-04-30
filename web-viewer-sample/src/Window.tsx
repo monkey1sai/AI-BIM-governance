@@ -30,10 +30,11 @@ import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequ
 import { buildDemoHighlightItem, demoIssueId, demoPrimPath } from "./clients/demoDefaults";
 import { reviewEnv } from "./config/env";
 import type { DemoLogEntry } from "./types/demo";
+import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
 import type { ReviewArtifact } from "./types/artifacts";
 import type { ReviewIssue } from "./types/issues";
 import type { ReviewStreamConfig } from "./types/review";
-import type { StreamMessage } from "./types/streamMessages";
+import type { HighlightItem, StreamMessage } from "./types/streamMessages";
 
 
 interface USDPrimType {
@@ -62,6 +63,13 @@ interface AppState {
     reviewIssues: ReviewIssue[];
     reviewEvents: string[];
     latestStreamConfig: ReviewStreamConfig | null;
+    mappingUrl: string | null;
+    mappingStatus: string;
+    mappingSummary: ElementMappingSummary | null;
+    mappingItems: ElementMappingItem[];
+    selectedMappingIndex: number;
+    lastMappingVerification: string | null;
+    mappingVerificationBlockedReason: string | null;
     demoOutgoingMessages: DemoLogEntry[];
     demoIncomingMessages: DemoLogEntry[];
     usdPrims: USDPrimType[];
@@ -71,6 +79,7 @@ interface AppState {
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
+    streamDiagnostic: string | null;
 }
 
 interface AppStreamMessageType {
@@ -94,12 +103,34 @@ function getPayloadString(payload: Record<string, unknown>, key: string): string
     return typeof value === "string" ? value : "";
 }
 
+function getPayloadStringArray(payload: Record<string, unknown>, key: string): string[] {
+    const value = payload[key];
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function getPayloadObjectArray(payload: Record<string, unknown>, key: string): Record<string, unknown>[] {
+    const value = payload[key];
+    return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => isRecord(item)) : [];
+}
+
+function isElementMappingDocument(value: unknown): value is ElementMappingDocument {
+    return isRecord(value) && (Array.isArray(value.items) || isRecord(value.summary));
+}
+
+function makeRequestId(prefix: string): string {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export default class App extends React.Component<AppProps, AppState> {
     
     private usdStageRef = React.createRef<USDStage>();
     private coordinatorClient = new CoordinatorClient(reviewEnv.coordinatorApiBase);
     private bimControlClient = new BimControlClient(reviewEnv.bimControlApiBase);
     private reviewSocket: ReviewSocketClient | null = null;
+    private streamStartTimeoutId: number | null = null;
+    private pendingMappingHighlightRequestId: string | null = null;
+    private pendingMappingFocusRequestId: string | null = null;
+    private pendingMappingPrimPath: string | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -109,11 +140,18 @@ export default class App extends React.Component<AppProps, AppState> {
             usdAssets: [],
             selectedUSDAsset: null,
             reviewSessionId: null,
-            reviewStatus: "Review bootstrap pending",
+            reviewStatus: "Review bootstrap 尚未載入",
             reviewArtifacts: [],
             reviewIssues: [],
             reviewEvents: [],
             latestStreamConfig: null,
+            mappingUrl: null,
+            mappingStatus: "尚未載入 mapping",
+            mappingSummary: null,
+            mappingItems: [],
+            selectedMappingIndex: 0,
+            lastMappingVerification: null,
+            mappingVerificationBlockedReason: null,
             demoOutgoingMessages: [],
             demoIncomingMessages: [],
             usdPrims: [],
@@ -121,17 +159,20 @@ export default class App extends React.Component<AppProps, AppState> {
             isKitReady: false,
             showStream: false,
             showUI: false,
-            loadingText: "Loading asset list...",
+            loadingText: "正在載入成果檔清單...",
+            streamDiagnostic: null,
             isLoading: true
         }
     }
 
     componentDidMount(): void {
+        this._scheduleStreamStartTimeout();
         void this._loadUSDAssets();
         void this._bootstrapReview();
     }
 
     componentWillUnmount(): void {
+        this._clearStreamStartTimeout();
         this.reviewSocket?.disconnect();
     }
 
@@ -158,12 +199,70 @@ export default class App extends React.Component<AppProps, AppState> {
         this._appendDemoOutgoing(message.event_type, message);
     }
 
+    private _scheduleStreamStartTimeout(): void {
+        this._clearStreamStartTimeout();
+        if (StreamConfig.source === "gfn") return;
+        this.streamStartTimeoutId = window.setTimeout(() => {
+            this._handleStreamStartTimeout();
+        }, reviewEnv.streamStartTimeoutMs);
+    }
+
+    private _clearStreamStartTimeout(): void {
+        if (this.streamStartTimeoutId === null) return;
+        window.clearTimeout(this.streamStartTimeoutId);
+        this.streamStartTimeoutId = null;
+    }
+
+    private _getVideoDiagnosticText(): string {
+        const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+        if (!video) {
+            return "remote-video element not found";
+        }
+
+        return [
+            `readyState=${video.readyState}`,
+            `networkState=${video.networkState}`,
+            `paused=${video.paused}`,
+            `currentTime=${video.currentTime.toFixed(2)}`,
+            `videoWidth=${video.videoWidth}`,
+            `videoHeight=${video.videoHeight}`,
+            `srcObject=${video.srcObject ? "true" : "false"}`,
+        ].join(", ");
+    }
+
+    private _hasRemoteVideoFrame(): boolean {
+        const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+        if (!video) return false;
+        return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+    }
+
+    private _handleStreamStartTimeout(): void {
+        this.streamStartTimeoutId = null;
+        if (this._hasRemoteVideoFrame()) return;
+
+        const seconds = Math.round(reviewEnv.streamStartTimeoutMs / 1000);
+        const endpoint = `${this.props.signalingserver || StreamConfig.local.server}:${this.props.signalingport || StreamConfig.local.signalingPort}`;
+        const diagnostic = [
+            `WebRTC 串流未建立（${seconds} 秒內沒有收到影片）。`,
+            `診斷：${this._getVideoDiagnosticText()}`,
+            `端點：${endpoint}`,
+            "請將此視為 demo blocker：Kit signaling 可能已連上，但 browser 尚未取得 media stream。",
+        ].join("\n");
+
+        this.setState((state) => ({
+            loadingText: "WebRTC 串流未建立",
+            streamDiagnostic: diagnostic,
+            isLoading: false,
+            reviewEvents: [...state.reviewEvents, "WebRTC 串流未建立，已顯示診斷資訊"],
+        }));
+    }
+
     private _connectReviewSocket(sessionId: string): void {
         this.reviewSocket?.disconnect();
         this.reviewSocket = connectReviewSocket(reviewEnv.coordinatorSocketUrl, {
-            onStatus: (status) => this._appendReviewEvent(`socket ${status}`),
+            onStatus: (status) => this._appendReviewEvent(`Socket.IO ${status === "connected" ? "已連線" : "已中斷"}`),
             onEvent: (event, payload) => {
-                this._appendReviewEvent(`socket event: ${event}`);
+                this._appendReviewEvent(`收到 Socket.IO 事件：${event}`);
                 this._appendDemoIncoming(`socket:${event}`, payload);
             },
         });
@@ -171,7 +270,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _getReadyLoadingText(): string {
-        return StreamConfig.source === "gfn" ? "Log in to GeForce NOW to view stream" : (StreamConfig.source === "stream" ? "Waiting for stream to initialize":  "Waiting for stream to begin");
+        return StreamConfig.source === "gfn" ? "請先登入 GeForce NOW 才能觀看串流" : (StreamConfig.source === "stream" ? "等待串流初始化":  "等待串流開始");
     }
 
     private async _loadUSDAssets(): Promise<void> {
@@ -182,7 +281,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({
                 usdAssets,
                 selectedUSDAsset,
-                loadingText: selectedUSDAsset ? this._getReadyLoadingText() : "No USD assets available",
+                loadingText: selectedUSDAsset ? this._getReadyLoadingText() : "沒有可用的 USD / USDC 成果檔",
                 isLoading: selectedUSDAsset ? StreamConfig.source === "stream" : false,
             }, () => {
                 if (this.state.isKitReady && this.state.selectedUSDAsset && !this.state.showStream) {
@@ -195,7 +294,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({
                 usdAssets: [],
                 selectedUSDAsset: null,
-                loadingText: "Unable to load asset list",
+                loadingText: "無法載入成果檔清單",
                 isLoading: false,
             });
         }
@@ -204,7 +303,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private async _bootstrapReview(): Promise<void> {
         try {
             if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId) {
-                this.setState({ reviewStatus: "Review auto-create disabled" });
+                this.setState({ reviewStatus: "Review session 自動建立已停用" });
                 await this._loadReviewDataFromBimControl();
                 return;
             }
@@ -227,13 +326,14 @@ export default class App extends React.Component<AppProps, AppState> {
 
             this.setState({
                 reviewSessionId: sessionId,
-                reviewStatus: `Review session active: ${streamConfig.model.status}`,
+                reviewStatus: `Review session 啟用中，模型狀態：${streamConfig.model.status}`,
                 reviewArtifacts: artifacts,
                 reviewIssues: bootstrap.issues,
                 latestStreamConfig: streamConfig,
+                mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset,
-                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId ? "review session loaded" : "review session created"],
+                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId ? "已載入 review session" : "已建立 review session"],
             }, () => {
                 if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready") {
                     this._openSelectedAsset();
@@ -243,8 +343,8 @@ export default class App extends React.Component<AppProps, AppState> {
         catch (error) {
             console.warn("Review bootstrap unavailable.", error);
             this.setState({
-                reviewStatus: "Review coordinator unavailable",
-                reviewEvents: [...this.state.reviewEvents, "review bootstrap failed"],
+                reviewStatus: "Review coordinator 無法連線",
+                reviewEvents: [...this.state.reviewEvents, "review bootstrap 載入失敗"],
             });
             await this._loadReviewDataFromBimControl();
         }
@@ -262,7 +362,8 @@ export default class App extends React.Component<AppProps, AppState> {
                 reviewIssues: issues,
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
-                reviewEvents: [...this.state.reviewEvents, "loaded review data from _bim-control"],
+                mappingUrl: this._resolveMappingUrl(null, artifacts),
+                reviewEvents: [...this.state.reviewEvents, "已從 _bim-control 載入 review 資料"],
             });
         }
         catch (error) {
@@ -287,6 +388,14 @@ export default class App extends React.Component<AppProps, AppState> {
         return Array.from(byUrl.values());
     }
 
+    private _resolveMappingUrl(streamConfig: ReviewStreamConfig | null, artifacts: ReviewArtifact[]): string | null {
+        if (streamConfig?.model.mapping_url) {
+            return streamConfig.model.mapping_url;
+        }
+        const mappedArtifact = artifacts.find((artifact) => artifact.artifact_type === "usdc" && artifact.mapping_url);
+        return mappedArtifact?.mapping_url || null;
+    }
+
     private async _loadReviewBootstrapFromCoordinator(): Promise<void> {
         try {
             const bootstrap = await this.coordinatorClient.getReviewBootstrap(reviewEnv.defaultModelVersionId);
@@ -296,11 +405,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 reviewIssues: bootstrap.issues,
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
+                mappingUrl: this._resolveMappingUrl(this.state.latestStreamConfig, bootstrap.artifacts),
             });
-            this._appendReviewEvent("review-bootstrap loaded");
+            this._appendReviewEvent("review-bootstrap 已載入");
         } catch (error) {
             console.warn("Unable to load review-bootstrap.", error);
-            this._appendReviewEvent("review-bootstrap failed");
+            this._appendReviewEvent("review-bootstrap 載入失敗");
         }
     }
 
@@ -326,6 +436,7 @@ export default class App extends React.Component<AppProps, AppState> {
      * openedStageResult message.
      */
         private _onStreamStarted(): void {
+            this.setState({ streamDiagnostic: null });
             this._pollForKitReady()
         }
 
@@ -372,7 +483,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _onLoggedIn(userId: string): void {
         if (StreamConfig.source === "gfn"){
             console.info(`Logged in to GeForce NOW as ${userId}`)
-            this.setState({ loadingText: "Waiting for stream to begin", isLoading: false})
+            this.setState({ loadingText: "等待串流開始", isLoading: false})
         }
     }
 
@@ -384,11 +495,11 @@ export default class App extends React.Component<AppProps, AppState> {
     private _openSelectedAsset(): void {
         if (!this.state.selectedUSDAsset) {
             console.warn("No USD asset is selected.");
-            this.setState({ loadingText: "No USD assets available", isLoading: false });
+            this.setState({ loadingText: "沒有可用的 USD / USDC 成果檔", isLoading: false });
             return;
         }
 
-        this.setState({ loadingText: "Loading Asset...", showStream: false, isLoading: true })
+        this.setState({ loadingText: "正在載入模型...", showStream: false, isLoading: true })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
         console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
@@ -482,7 +593,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _onIssueClick(issue: ReviewIssue): void {
         if (!issue.usd_prim_path) {
-            this.setState({ reviewEvents: [...this.state.reviewEvents, `issue ${issue.issue_id} has no prim path`] });
+            this.setState({ reviewEvents: [...this.state.reviewEvents, `審查問題 ${issue.issue_id} 沒有 usd_prim_path，未送出 DataChannel`] });
             return;
         }
 
@@ -498,7 +609,130 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this.state.reviewSessionId && this.reviewSocket) {
             this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, issue.issue_id, [item]);
         }
-        this._appendReviewEvent(`highlight requested: ${issue.issue_id}`);
+        this._appendReviewEvent(`已送出高亮請求：${issue.issue_id}`);
+    }
+
+    private async _loadElementMapping(): Promise<void> {
+        const mappingUrl = this.state.mappingUrl || this._resolveMappingUrl(this.state.latestStreamConfig, this.state.reviewArtifacts);
+        if (!mappingUrl) {
+            this.setState({
+                mappingStatus: "沒有 mapping_url，無法載入 element_mapping.json",
+                mappingItems: [],
+                mappingSummary: null,
+                selectedMappingIndex: 0,
+                mappingVerificationBlockedReason: null,
+            });
+            return;
+        }
+
+        this.setState({ mappingStatus: "正在載入 element_mapping.json", mappingUrl });
+        try {
+            const response = await fetch(mappingUrl, { headers: { Accept: "application/json" } });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const payload = await response.json();
+            if (!isElementMappingDocument(payload)) {
+                throw new Error("mapping JSON shape is invalid");
+            }
+            const items = Array.isArray(payload.items) ? payload.items.filter((item) => item.usd_prim_path) : [];
+            const summary = payload.summary || {
+                mapped_count: items.length,
+                unmapped_ifc_count: payload.unmapped_ifc_guids?.length || 0,
+                unmapped_usd_count: payload.unmapped_usd_prims?.length || 0,
+                fake_mapping_count: 0,
+            };
+            const blockedReason = mappingVerificationBlockReason(payload);
+            const mappedCount = summary.mapped_count ?? items.length;
+            const fakeCount = summary.fake_mapping_count ?? 0;
+            const status = blockedReason
+                ? `已載入 mapping，但偵測到 mock/fake 資料；正式驗證已停用`
+                : items.length > 0
+                ? `已載入 ${items.length} 筆可送到 Kit 的 mapping item`
+                : `已載入 mapping，但 mapped_count=${mappedCount}、fake_mapping_count=${fakeCount}，目前沒有可驗證 item`;
+
+            this.setState({
+                mappingUrl,
+                mappingStatus: status,
+                mappingSummary: summary,
+                mappingItems: items,
+                selectedMappingIndex: 0,
+                lastMappingVerification: blockedReason || (items.length > 0 ? null : "mapping items 為空；請先產出真實 ifc_guid -> usd_prim_path 對應"),
+                mappingVerificationBlockedReason: blockedReason,
+            });
+            this._appendReviewEvent(status);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.setState({
+                mappingStatus: `mapping 載入失敗：${message}`,
+                mappingItems: [],
+                mappingSummary: null,
+                selectedMappingIndex: 0,
+                lastMappingVerification: null,
+                mappingVerificationBlockedReason: null,
+            });
+            this._appendReviewEvent(`mapping 載入失敗：${message}`);
+        }
+    }
+
+    private _selectMappingIndex(index: number): void {
+        const safeIndex = Number.isFinite(index) ? Math.max(0, Math.min(index, Math.max(this.state.mappingItems.length - 1, 0))) : 0;
+        this.setState({ selectedMappingIndex: safeIndex });
+    }
+
+    private _getSelectedMappingItem(): ElementMappingItem | null {
+        return this.state.mappingItems[this.state.selectedMappingIndex] || null;
+    }
+
+    private _buildSelectedMappingHighlightItem(): HighlightItem | null {
+        if (this.state.mappingVerificationBlockedReason) {
+            return null;
+        }
+        const mappingItem = this._getSelectedMappingItem();
+        if (!mappingItem?.usd_prim_path) {
+            return null;
+        }
+        const label = mappingItem.name || mappingItem.ifc_class || mappingItem.ifc_guid || mappingItem.usd_prim_path;
+        return {
+            prim_path: mappingItem.usd_prim_path,
+            ifc_guid: mappingItem.ifc_guid,
+            color: [0.1, 0.7, 1, 1],
+            label: `Mapping 驗證：${label}`,
+            source: "element_mapping",
+            issue_id: mappingItem.ifc_guid ? `mapping:${mappingItem.ifc_guid}` : "mapping:selected",
+            mapping_method: mappingItem.mapping_method,
+            mapping_confidence: mappingItem.mapping_confidence,
+        };
+    }
+
+    private _sendSelectedMappingHighlight(): void {
+        const item = this._buildSelectedMappingHighlightItem();
+        if (!item) {
+            const reason = this.state.mappingVerificationBlockedReason || "沒有選取含 usd_prim_path 的 mapping item";
+            this.setState({ lastMappingVerification: reason });
+            this._appendReviewEvent(`mapping 驗證略過：${reason}`);
+            return;
+        }
+        const requestId = makeRequestId("mapping-highlight");
+        this.pendingMappingHighlightRequestId = requestId;
+        this.pendingMappingPrimPath = item.prim_path;
+        this._sendStreamMessage(buildHighlightPrimsRequest([item], true, requestId));
+        this.setState({ lastMappingVerification: `已送出 mapping highlight：${item.ifc_guid || "no-guid"} -> ${item.prim_path} (${requestId})` });
+    }
+
+    private _sendSelectedMappingFocus(): void {
+        const item = this._buildSelectedMappingHighlightItem();
+        if (!item) {
+            const reason = this.state.mappingVerificationBlockedReason || "沒有選取含 usd_prim_path 的 mapping item";
+            this.setState({ lastMappingVerification: reason });
+            this._appendReviewEvent(`mapping 聚焦略過：${reason}`);
+            return;
+        }
+        const requestId = makeRequestId("mapping-focus");
+        this.pendingMappingFocusRequestId = requestId;
+        this.pendingMappingPrimPath = item.prim_path;
+        this._sendStreamMessage(buildFocusPrimRequest(item.prim_path, requestId));
+        this.setState({ lastMappingVerification: `已送出 mapping focus：${item.ifc_guid || "no-guid"} -> ${item.prim_path} (${requestId})` });
     }
 
     private _sendDemoHighlightWorld(): void {
@@ -515,25 +749,25 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _emitDemoCoordinatorHighlight(): void {
         if (!this.state.reviewSessionId || !this.reviewSocket) {
-            this._appendReviewEvent("coordinator highlight skipped: no socket session");
+            this._appendReviewEvent("略過 coordinator highlight：尚未連線 Socket.IO session");
             return;
         }
         this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, demoIssueId, [buildDemoHighlightItem("web_viewer_demo_panel")]);
-        this._appendReviewEvent(`coordinator highlight emitted: ${demoIssueId}`);
+        this._appendReviewEvent(`已廣播 coordinator highlight：${demoIssueId}`);
     }
 
     private _createDemoAnnotation(): void {
         if (!this.state.reviewSessionId || !this.reviewSocket) {
-            this._appendReviewEvent("annotation skipped: no socket session");
+            this._appendReviewEvent("略過標註建立：尚未連線 Socket.IO session");
             return;
         }
-        this.reviewSocket.emitAnnotation(this.state.reviewSessionId, reviewEnv.defaultUserId, "Demo annotation from Web Viewer Demo Panel");
-        this._appendReviewEvent("annotationCreate emitted");
+        this.reviewSocket.emitAnnotation(this.state.reviewSessionId, reviewEnv.defaultUserId, "從 Web Viewer Demo 面板建立的示範標註");
+        this._appendReviewEvent("已送出 annotationCreate");
     }
 
     private _connectDemoSocket(): void {
         if (!this.state.reviewSessionId) {
-            this._appendReviewEvent("socket connect skipped: no review session");
+            this._appendReviewEvent("略過 Socket.IO 連線：尚未建立 review session");
             return;
         }
         this._connectReviewSocket(this.state.reviewSessionId);
@@ -634,7 +868,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (isStageValid && loadingState === "idle")
                 {
                     this._getChildren()
-                    this.setState({ showStream: true, loadingText: "Asset loaded", showUI: true, isLoading: false })
+                    this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false })
                 }
             }
         }
@@ -647,13 +881,58 @@ export default class App extends React.Component<AppProps, AppState> {
         // Loading activity notification.
         else if (event.event_type === "updateProgressActivity") {
             console.log('Kit App communicates progress activity.');
-            if (this.state.loadingText !== "Loading Asset...")
-                this.setState( {loadingText: "Loading Asset...", isLoading: true} )
+            if (this.state.loadingText !== "正在載入模型...")
+                this.setState( {loadingText: "正在載入模型...", isLoading: true} )
         }
 
         else if (event.event_type === "highlightPrimsResult") {
             const result = getPayloadString(payload, "result") || "unknown";
-            this.setState({ reviewEvents: [...this.state.reviewEvents, `highlight result: ${result}`] });
+            const selectedPaths = getPayloadStringArray(payload, "selected_paths");
+            const missingPaths = getPayloadStringArray(payload, "missing_paths");
+            const fallbackPaths = getPayloadObjectArray(payload, "fallback_paths");
+            const requestId = getPayloadString(payload, "request_id");
+            const nextState: Partial<AppState> = {
+                reviewEvents: [...this.state.reviewEvents, `高亮結果：${result}`],
+            };
+
+            if (requestId && requestId === this.pendingMappingHighlightRequestId) {
+                const expectedPath = this.pendingMappingPrimPath;
+                const passed = result === "success"
+                    && !!expectedPath
+                    && selectedPaths.includes(expectedPath)
+                    && missingPaths.length === 0
+                    && fallbackPaths.length === 0;
+                nextState.lastMappingVerification = passed
+                    ? `mapping highlight 通過：selected=${expectedPath}, missing=0, fallback=0`
+                    : `mapping highlight 失敗：result=${result}, expected=${expectedPath || "unknown"}, selected=${selectedPaths.join(",") || "none"}, missing=${missingPaths.length}, fallback=${fallbackPaths.length}`;
+                this.pendingMappingHighlightRequestId = null;
+            }
+
+            this.setState(nextState as Pick<AppState, keyof AppState>);
+        }
+
+        else if (event.event_type === "focusPrimResult") {
+            const result = getPayloadString(payload, "result") || "unknown";
+            const requestId = getPayloadString(payload, "request_id");
+            const nextState: Partial<AppState> = {
+                reviewEvents: [...this.state.reviewEvents, `聚焦結果：${result}`],
+            };
+
+            if (requestId && requestId === this.pendingMappingFocusRequestId) {
+                const expectedPath = this.pendingMappingPrimPath;
+                const focusedPath = getPayloadString(payload, "prim_path");
+                const fallbackPath = getPayloadString(payload, "fallback_path");
+                const passed = result === "success"
+                    && !!expectedPath
+                    && focusedPath === expectedPath
+                    && !fallbackPath;
+                nextState.lastMappingVerification = passed
+                    ? `mapping focus 通過：focused=${focusedPath}, fallback=0`
+                    : `mapping focus 失敗：result=${result}, expected=${expectedPath || "unknown"}, focused=${focusedPath || "none"}, fallback=${fallbackPath || "none"}`;
+                this.pendingMappingFocusRequestId = null;
+            }
+
+            this.setState(nextState as Pick<AppState, keyof AppState>);
         }
             
         // Notification from Kit about user changing the selection via the viewport.
@@ -749,6 +1028,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 {!this.state.showStream && 
                     <div className="loading-indicator-label">
                         {this.state.loadingText}
+                        {this.state.streamDiagnostic &&
+                            <pre className="stream-diagnostic-panel">{this.state.streamDiagnostic}</pre>
+                        }
                         <div className="spinner-border" role="status" style={{ marginTop: 10, visibility: this.state.isLoading? 'visible': 'hidden' }} />
                     </div>
                 }
@@ -793,6 +1075,13 @@ export default class App extends React.Component<AppProps, AppState> {
                             reviewStatus={this.state.reviewStatus}
                             selectedAssetUrl={this.state.selectedUSDAsset?.url || null}
                             streamConfig={this.state.latestStreamConfig}
+                            mappingUrl={this.state.mappingUrl}
+                            mappingStatus={this.state.mappingStatus}
+                            mappingSummary={this.state.mappingSummary}
+                            mappingItems={this.state.mappingItems}
+                            selectedMappingIndex={this.state.selectedMappingIndex}
+                            lastMappingVerification={this.state.lastMappingVerification}
+                            mappingVerificationBlockedReason={this.state.mappingVerificationBlockedReason}
                             outgoingMessages={this.state.demoOutgoingMessages}
                             incomingMessages={this.state.demoIncomingMessages}
                             socketEvents={this.state.reviewEvents}
@@ -807,6 +1096,10 @@ export default class App extends React.Component<AppProps, AppState> {
                             onClearHighlight={() => this._sendDemoClearHighlight()}
                             onEmitCoordinatorHighlight={() => this._emitDemoCoordinatorHighlight()}
                             onCreateAnnotation={() => this._createDemoAnnotation()}
+                            onLoadMapping={() => void this._loadElementMapping()}
+                            onSelectMappingIndex={(index) => this._selectMappingIndex(index)}
+                            onHighlightSelectedMapping={() => this._sendSelectedMappingHighlight()}
+                            onFocusSelectedMapping={() => this._sendSelectedMappingFocus()}
                         />
                     </div>
                 }

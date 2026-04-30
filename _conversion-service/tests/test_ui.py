@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def test_demo_ui_is_served(tmp_path: Path):
     response = client.get("/ui")
 
     assert response.status_code == 200
-    assert "Conversion Service Demo UI" in response.text
+    assert "模型轉換 (Model Conversion)" in response.text
     assert "/api/conversions" in response.text
 
 
@@ -45,3 +46,57 @@ def test_dev_mock_conversion_result_creates_succeeded_job(tmp_path: Path):
     assert body["result"]["mock"] is True
     assert body["result"]["usdc_url"].endswith("/projects/project_demo_001/versions/version_demo_001/model.usdc")
     assert (settings.fake_storage_root / "static" / "projects" / "project_demo_001" / "versions" / "version_demo_001" / "model.usdc").is_file()
+
+    mapping_path = (
+        settings.fake_storage_root
+        / "static"
+        / "projects"
+        / "project_demo_001"
+        / "versions"
+        / "version_demo_001"
+        / "element_mapping.json"
+    )
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+
+    assert mapping["mock"] is True
+    assert mapping["items"][0]["mapping_method"] == "fake_for_smoke_test"
+    assert mapping["items"][0]["mapping_confidence"] == 0.01
+    assert mapping["summary"]["fake_mapping_count"] == 1
+
+
+def test_dev_mock_conversion_result_does_not_overwrite_real_mapping(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    mapping_path = (
+        settings.fake_storage_root
+        / "static"
+        / "projects"
+        / "project_demo_001"
+        / "versions"
+        / "version_demo_001"
+        / "element_mapping.json"
+    )
+    mapping_path.parent.mkdir(parents=True)
+    real_mapping = {
+        "mock": False,
+        "items": [
+            {
+                "ifc_guid": "19nzyxtx5CXwVzdF_4phxj",
+                "ifc_class": "IfcColumn",
+                "revit_element_id": "401627",
+                "usd_prim_path": "/model/IFCCOLUMN/tn__75x120cm401627",
+                "mapping_method": "path_revit_element_id",
+                "mapping_confidence": 0.7,
+            }
+        ],
+        "summary": {"mapped_count": 1, "fake_mapping_count": 0},
+    }
+    mapping_path.write_text(json.dumps(real_mapping, indent=2), encoding="utf-8")
+
+    client = TestClient(create_app(settings=settings, run_background=False))
+
+    response = client.post("/api/dev/mock-conversion-result")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert any("real element_mapping.json already exists" in warning for warning in body["warnings"])
+    assert json.loads(mapping_path.read_text(encoding="utf-8")) == real_mapping

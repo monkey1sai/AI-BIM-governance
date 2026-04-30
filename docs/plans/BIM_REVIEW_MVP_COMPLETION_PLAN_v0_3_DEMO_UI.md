@@ -144,18 +144,18 @@ IFC / USDC artifact
 最小驗收：
 
 ```txt
-[ ] local fake services 全部 /health OK
-[ ] conversion smoke 可成功或可被 skip 且不阻塞 review smoke
-[ ] coordinator 可建立 session
-[ ] coordinator stream-config 回傳 127.0.0.1:49100
-[ ] web-viewer-sample 可 bootstrap review session
-[ ] 若 model.usdc ready，web-viewer-sample 自動或手動送 openStageRequest
-[ ] stage tree 可載入 /World children
-[ ] issue panel 可顯示 ISSUE-DEMO-001
-[ ] 點 issue 會送 highlightPrimsRequest
-[ ] Kit 回 highlightPrimsResult，缺 prim 時不 crash 並列出 missing
-[ ] Socket.IO highlightRequest 可廣播
-[ ] annotation 可保存到 _bim-control
+[x] local fake services 全部 /health OK
+[x] conversion smoke 可成功或可被 skip 且不阻塞 review smoke
+[x] coordinator 可建立 session
+[x] coordinator stream-config 回傳 127.0.0.1:49100
+[x] web-viewer-sample 可 bootstrap review session
+[x] 若 model.usdc ready，web-viewer-sample 自動或手動送 openStageRequest
+[x] stage tree 可載入 /World children
+[x] issue panel 可顯示 ISSUE-DEMO-001
+[x] 點 issue 會送 highlightPrimsRequest
+[x] Kit 回 highlightPrimsResult，缺 prim 時不 crash 並列出 missing
+[x] Socket.IO highlightRequest 可廣播
+[x] annotation 可保存到 _bim-control
 ```
 
 ---
@@ -893,17 +893,17 @@ bim-review-coordinator/src/types.ts
 Implement missing items only:
 
 ```txt
-[ ] Validate request bodies using zod.
-[ ] Session IDs must be safe and unique.
-[ ] Session JSON files must be persisted under data/sessions.
-[ ] Event log JSONL files must be persisted under data/events.
-[ ] stream-config must include artifacts and model status.
-[ ] If _bim-control is unavailable, coordinator returns session + model.status="missing" rather than crashing.
-[ ] Socket joinSession must join room and broadcast presenceUpdated.
-[ ] Socket highlightRequest must log event and broadcast to other clients.
-[ ] Socket selectionUpdate must log event and broadcast to other clients.
-[ ] Socket annotationCreate must write to _bim-control if available; failure returns ack error but does not crash namespace.
-[ ] Add heartbeat event or ignore unknown events safely.
+[x] Validate request bodies using zod.
+[x] Session IDs must be safe and unique.
+[x] Session JSON files must be persisted under data/sessions.
+[x] Event log JSONL files must be persisted under data/events.
+[x] stream-config must include artifacts and model status.
+[x] If _bim-control is unavailable, coordinator returns session + model.status="missing" rather than crashing.
+[x] Socket joinSession must join room and broadcast presenceUpdated.
+[x] Socket highlightRequest must log event and broadcast to other clients.
+[x] Socket selectionUpdate must log event and broadcast to other clients.
+[x] Socket annotationCreate must write to _bim-control if available; failure returns ack error but does not crash namespace.
+[x] Add heartbeat event or ignore unknown events safely.
 ```
 
 ### 3.3 Add Socket.IO smoke test
@@ -1054,13 +1054,13 @@ Do not remove `stream.config.json`; keep it as fallback.
 When user clicks issue:
 
 ```txt
-[ ] If issue.usd_prim_path missing, show event log warning and do not send DataChannel.
-[ ] Build highlightPrimsRequest.
-[ ] Send DataChannel message through AppStream.sendMessage.
-[ ] Send focusPrimRequest after or inside highlight request.
-[ ] Emit Socket.IO highlightRequest.
-[ ] Record event log.
-[ ] Parse highlightPrimsResult whether payload uses result/applied_mode or ok/highlighted shape.
+[x] If issue.usd_prim_path missing, show event log warning and do not send DataChannel.
+[x] Build highlightPrimsRequest.
+[x] Send DataChannel message through AppStream.sendMessage.
+[x] Send focusPrimRequest after or inside highlight request.
+[x] Emit Socket.IO highlightRequest.
+[x] Record event log.
+[x] Parse highlightPrimsResult whether payload uses result/applied_mode or ok/highlighted shape.
 ```
 
 Required DataChannel helper:
@@ -1159,32 +1159,32 @@ Expected current state:
 `highlightPrimsRequest`:
 
 ```txt
-[ ] Accept payload.items.
-[ ] Accept item.prim_path or item.usd_prim_path.
-[ ] Validate stage exists.
-[ ] Validate prim exists.
-[ ] selected_paths contains valid paths.
-[ ] missing_paths contains invalid paths.
-[ ] mode=replace clears old selection.
-[ ] Set selected prim paths only for valid paths.
-[ ] Return highlightPrimsResult.
-[ ] No crash if payload malformed.
+[x] Accept payload.items.
+[x] Accept item.prim_path or item.usd_prim_path.
+[x] Validate stage exists.
+[x] Validate prim exists.
+[x] selected_paths contains valid paths.
+[x] missing_paths contains invalid paths.
+[x] mode=replace clears old selection.
+[x] Set selected prim paths only for valid paths.
+[x] Return highlightPrimsResult.
+[x] No crash if payload malformed.
 ```
 
 `clearHighlightRequest`:
 
 ```txt
-[ ] Clear selection / current highlight state.
-[ ] Return clearHighlightResult.
+[x] Clear selection / current highlight state.
+[x] Return clearHighlightResult.
 ```
 
 `focusPrimRequest`:
 
 ```txt
-[ ] Select prim if exists.
-[ ] Try frame camera if stable API exists.
-[ ] If camera frame API not stable, return success with applied_mode="selection".
-[ ] Return error when prim missing.
+[x] Select prim if exists.
+[x] Try frame camera if stable API exists.
+[x] If camera frame API not stable, return success with applied_mode="selection".
+[x] Return error when prim missing.
 ```
 
 ### 5.3 Optional material highlight
@@ -1484,16 +1484,28 @@ http://127.0.0.1:5173
 Expected:
 
 ```txt
-[ ] Review status visible
-[ ] Artifact panel visible
-[ ] Issue panel visible
-[ ] Presence panel visible
-[ ] Event log visible
+[x] Review status visible
+[x] Artifact panel visible
+[x] Issue panel visible
+[x] Presence panel visible
+[x] Event log visible
 [ ] WebRTC stream visible if Kit is running
-[ ] model opens if USDC ready
-[ ] clicking issue selects / highlights prim
-[ ] event log shows highlightPrimsResult
+[ ] model opens if USDC ready in the browser stream
+[ ] clicking issue selects / highlights prim in the browser stream
+[ ] event log shows highlightPrimsResult from a live browser stream
 ```
+
+2026-04-30 recheck: browser currently stays at `等待串流開始`; `#remote-video.readyState=0`, `videoWidth=0`, `videoHeight=0`, `currentTime=0`, and `srcObject=false`. The browser console reaches `ws://127.0.0.1:49100/sign_in` but later reports `0xC0F22219`. Treat browser WebRTC visibility and DataChannel-in-browser acceptance as open until `readyState=4` and playback advances.
+
+2026-04-30 follow-up: web-viewer-sample now exposes a timeout diagnostic state instead of leaving the user at an indefinite loading label. `?streamTimeoutMs=3000` is available for smoke tests, and `VITE_STREAM_START_TIMEOUT_MS` can set the default. Browser smoke confirmed the UI changes to `WebRTC 串流未建立` and displays video diagnostics when `readyState=0`, `videoWidth=0`, `videoHeight=0`, and `srcObject=false`.
+
+2026-04-30 clean Kit restart baseline: `bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad -SkipGpuCheck` started Kit on TCP `49100`, but browser still did not receive media. Console evidence changed from the earlier timeout to `WebSocket connection to 'ws://127.0.0.1:49100/sign_in?...' failed: WebSocket is closed before the connection is established`, `Sign in request timed out`, `event local candidates: TCP: 0 MDNS: 0 IPV6: 0 IPV4: 0 UNKNOWN: 0`, and `0xC0F22213`. This keeps the root cause in WebRTC sign-in / ICE negotiation, not model loading or user operation.
+
+2026-04-30 restart recheck: old `kit.exe` PID `2540` was stopped and `bim-streaming-server` was restarted as PID `10916`. TCP `49100` and UDP `47998` were listening, but a 65 second browser smoke still showed `readyState=0`, `videoWidth=0`, `videoHeight=0`, and `srcObject=false`. Console showed `sign_in` peer records reaching `connected=true`, then `0xC0F22219` with `event local candidates: TCP: 0 MDNS: 0 IPV6: 0 IPV4: 0 UNKNOWN: 0`. Restart alone did not resolve the WebRTC media timeout.
+
+2026-04-30 UI operation order check: before video was ready, a browser smoke clicked openStageRequest, loadingStateQuery, getChildrenRequest, highlightPrimsRequest, focusPrimRequest, clearHighlightRequest, coordinator highlightRequest, and annotationCreate. The page had no `pageerror`, Kit PID `10916` kept responding, coordinator `/health` stayed OK, and `smoke-review-socket.ps1` passed afterward. Current conclusion: premature UI commands can produce non-useful DataChannel outcomes until WebRTC/DataChannel is ready, but this order did not crash `bim-streaming-server` or put `bim-review-coordinator` into an abnormal state.
+
+2026-04-30 reset-user recovery: diagnostic launch with `--reset-user --/log/channels/omni.kit.livestream.streamsdk=info` recovered browser WebRTC. Browser smoke reached `readyState=4`, `videoWidth=1920`, `videoHeight=1080`, `srcObject=true`, and playback advanced. Follow-up DataChannel smoke received `getChildrenResponse`, `highlightPrimsResult`, `focusPrimResult`, and `clearHighlightResult` success. Current likely root cause: stale Kit persistent user settings or stale stream state, not web viewer operation order. `bim-streaming-server\scripts\start-streaming-server.ps1` now exposes `-ResetUser` and `-StreamSdkLogLevel info` to make this recovery path reproducible.
 
 ### 8.4 Regression checks
 
@@ -1557,50 +1569,50 @@ Codex final answer should report each item as Done / Skipped / Failed with reaso
 
 ```txt
 Docs
-[ ] docs/plans/BIM_REVIEW_MVP_COMPLETION_PLAN_v0_2.md
-[ ] docs/contracts/bim-control-fake-api.md
-[ ] docs/contracts/conversion-api.md
-[ ] docs/contracts/review-session-api.md
-[ ] docs/contracts/coordinator-socket-events.md
-[ ] docs/contracts/streaming-datachannel-events.md
-[ ] docs/contracts/local-dev-runbook.md
-[ ] docs/plans/review-mvp-v0-2-baseline.md
+[x] docs/plans/BIM_REVIEW_MVP_COMPLETION_PLAN_v0_2.md
+[x] docs/contracts/bim-control-fake-api.md
+[x] docs/contracts/conversion-api.md
+[x] docs/contracts/review-session-api.md
+[x] docs/contracts/coordinator-socket-events.md
+[x] docs/contracts/streaming-datachannel-events.md
+[x] docs/contracts/local-dev-runbook.md
+[x] docs/plans/review-mvp-v0-2-baseline.md
 
 Fake services
-[ ] _s3_storage /health and /static validated
-[ ] _bim-control artifacts / issues / annotations validated
-[ ] _conversion-service conversion endpoints validated or documented as optional for review MVP
-[ ] _conversion-server alias handled without duplicate code
+[x] _s3_storage /health and /static validated
+[x] _bim-control artifacts / issues / annotations validated
+[x] _conversion-service conversion endpoints validated or documented as optional for review MVP
+[x] _conversion-server alias handled without duplicate code
 
 Coordinator
-[ ] session API validated
-[ ] stream-config returns local Kit endpoint and model status
-[ ] Socket.IO /review join / presence / highlight / selection / annotation validated
-[ ] npm run build passes
-[ ] npm test passes
+[x] session API validated
+[x] stream-config returns local Kit endpoint and model status
+[x] Socket.IO /review join / presence / highlight / selection / annotation validated
+[x] npm run build passes
+[x] npm test passes
 
 Web viewer
-[ ] review session bootstrap works
-[ ] dynamic artifact list works
-[ ] issue panel works
-[ ] DataChannel highlight request sent
-[ ] Socket highlight request sent
-[ ] npm run build passes
+[x] review session bootstrap works
+[x] dynamic artifact list works
+[x] issue panel works
+[x] DataChannel highlight request sent
+[x] Socket highlight request sent
+[x] npm run build passes
 
 Streaming server
-[ ] existing openStageRequest still works
-[ ] loadingStateQuery still works
-[ ] getChildrenRequest still works
-[ ] selectPrimsRequest still works
-[ ] highlightPrimsRequest works or returns honest error
-[ ] focusPrimRequest works or returns honest error
-[ ] repo.bat build passes
+[x] existing openStageRequest still works
+[x] loadingStateQuery still works
+[x] getChildrenRequest still works
+[x] selectPrimsRequest still works
+[x] highlightPrimsRequest works or returns honest error
+[x] focusPrimRequest works or returns honest error
+[x] repo.bat build passes
 
 Smoke
-[ ] dev-health-check.ps1 passes
-[ ] smoke-review-session.ps1 passes
-[ ] socket smoke passes if implemented
-[ ] browser manual smoke documented
+[x] dev-health-check.ps1 passes
+[x] smoke-review-session.ps1 passes
+[x] socket smoke passes if implemented
+[ ] browser manual smoke proves live WebRTC video
 ```
 
 ---
@@ -1890,14 +1902,14 @@ _bim-control/README.md               # 加 Demo UI 操作說明
 #### `_bim-control` 驗收
 
 ```txt
-[ ] GET http://127.0.0.1:8001/ui 回 HTML
-[ ] UI 可按 health
-[ ] UI 可讀 projects / model version / artifacts
-[ ] UI 可建立 demo issue
-[ ] UI 可讀取 issue list
-[ ] UI 可寫入 conversion result
-[ ] UI 可建立 annotation
-[ ] pytest tests/test_ui.py 通過
+[x] GET http://127.0.0.1:8001/ui 回 HTML
+[x] UI 可按 health
+[x] UI 可讀 projects / model version / artifacts
+[x] UI 可建立 demo issue
+[x] UI 可讀取 issue list
+[x] UI 可寫入 conversion result
+[x] UI 可建立 annotation
+[x] pytest tests/test_ui.py 通過
 ```
 
 ---
@@ -2019,13 +2031,13 @@ POST /api/dev/mock-conversion-result
 #### `_conversion-service` 驗收
 
 ```txt
-[ ] GET http://127.0.0.1:8003/ui 回 HTML
-[ ] UI 可建立 conversion job
-[ ] UI 可查 job status
-[ ] UI 可查 job result
-[ ] conversion failed 時 UI 顯示 error，不白屏
-[ ] 沒有 converter 時可用 dev mock result 繼續 demo
-[ ] pytest tests/test_ui.py 通過
+[x] GET http://127.0.0.1:8003/ui 回 HTML
+[x] UI 可建立 conversion job
+[x] UI 可查 job status
+[x] UI 可查 job result
+[x] conversion failed 時 UI 顯示 error，不白屏
+[x] 沒有 converter 時可用 dev mock result 繼續 demo
+[x] pytest tests/test_ui.py 通過
 ```
 
 ---
@@ -2114,11 +2126,11 @@ UI 功能：
 #### `_s3_storage` 驗收
 
 ```txt
-[ ] GET http://127.0.0.1:8002/ui 回 HTML
-[ ] UI 可按 health
-[ ] UI 可列出 static files
-[ ] UI 可開啟 demo model.usdc URL 或清楚顯示 missing
-[ ] pytest tests/test_ui.py 通過
+[x] GET http://127.0.0.1:8002/ui 回 HTML
+[x] UI 可按 health
+[x] UI 可列出 static files
+[x] UI 可開啟 demo model.usdc URL 或清楚顯示 missing
+[x] pytest tests/test_ui.py 通過
 ```
 
 ---
@@ -2303,20 +2315,20 @@ http://127.0.0.1:5173/?sessionId={session_id}&projectId=project_demo_001&modelVe
 #### F. Coordinator UI 驗收
 
 ```txt
-[ ] GET http://127.0.0.1:8004/ui 回 HTML
-[ ] UI 可按 health
-[ ] UI 可 create session
-[ ] create session 後自動填入 session_id
-[ ] UI 可 get session
-[ ] UI 可 join / leave
-[ ] UI 可 get stream-config
-[ ] UI 可 get / post events
-[ ] UI 可 get review-bootstrap
-[ ] UI 可連 Socket.IO /review
-[ ] UI 可 emit joinSession
-[ ] UI 可 emit highlightRequest
-[ ] 第二個 browser 視窗可收到 broadcast
-[ ] npm test 包含 dev-console route 測試
+[x] GET http://127.0.0.1:8004/ui 回 HTML
+[x] UI 可按 health
+[x] UI 可 create session
+[x] create session 後自動填入 session_id
+[x] UI 可 get session
+[x] UI 可 join / leave
+[x] UI 可 get stream-config
+[x] UI 可 get / post events
+[x] UI 可 get review-bootstrap
+[x] UI 可連 Socket.IO /review
+[x] UI 可 emit joinSession
+[x] UI 可 emit highlightRequest
+[x] 第二個 browser 視窗可收到 broadcast
+[x] npm test 包含 dev-console route 測試
 ```
 
 ---
@@ -2348,7 +2360,11 @@ UI 功能：
 [Button] Send clearHighlightRequest
 [Button] Emit coordinator highlightRequest
 [Button] Create annotation
+[Button] Load element_mapping.json from stream-config.mapping_url
+[Select] Choose real mapping item when mapped_count > 0
+[Button] Send highlightPrimsRequest using selected mapping usd_prim_path
 [Panel] Latest stream-config
+[Panel] Mapping summary / mapping verification result
 [Panel] DataChannel outgoing messages
 [Panel] DataChannel incoming messages
 [Panel] Socket.IO incoming events
@@ -2366,13 +2382,17 @@ UI 功能：
 #### web viewer 驗收
 
 ```txt
-[ ] npm run build 通過
-[ ] Demo panel 可顯示 session id / model status
-[ ] 可手動送 openStageRequest
-[ ] 可手動送 highlightPrimsRequest
-[ ] 可手動送 clearHighlightRequest
-[ ] 可手動 emit coordinator highlightRequest
-[ ] Kit / coordinator 任一方未啟動時，UI 顯示清楚錯誤
+[x] npm run build 通過
+[x] Demo panel 可顯示 session id / model status
+[x] 可手動送 openStageRequest
+[x] 可手動送 highlightPrimsRequest
+[x] 可手動送 clearHighlightRequest
+[x] 可手動 emit coordinator highlightRequest
+[x] Kit / coordinator 任一方未啟動時，UI 顯示清楚錯誤
+[x] WebRTC media stream 未建立時，UI 會顯示 timeout 診斷，不再無限停在等待狀態
+[x] Demo panel 可載入 element_mapping.json，顯示 mapped / fake / unmapped 統計
+[x] 若 mapping items 為空，UI 明確顯示目前沒有可驗證 `ifc_guid -> usd_prim_path`
+[x] 若 mapping items 存在，UI 可用選取 item 的 `usd_prim_path` 送 highlight / focus request
 ```
 
 ---
@@ -2414,10 +2434,10 @@ Codex 需要補的是：
 驗收：
 
 ```txt
-[ ] web-viewer-sample Demo Panel 可送 highlightPrimsRequest
-[ ] Kit 回 highlightPrimsResult
-[ ] 缺 prim 時回 missing_paths，不 crash
-[ ] /World 可被 selection fallback 選取
+[x] web-viewer-sample Demo Panel 可送 highlightPrimsRequest
+[x] Kit 回 highlightPrimsResult
+[x] 缺 prim 時回 missing_paths，不 crash
+[x] /World 可被 selection fallback 選取
 ```
 
 ---
@@ -2481,16 +2501,16 @@ docs(demo): add manual trigger runbook and demo acceptance checklist
 執行順序：
 
 ```txt
-[ ] 1. 先補 _bim-control /ui
-[ ] 2. 補 _s3_storage /ui
-[ ] 3. 補 _conversion-service /ui
-[ ] 4. 補 bim-review-coordinator /ui，且每個 API 都要可觸發
-[ ] 5. 補 coordinator Socket.IO console
-[ ] 6. 補 web-viewer-sample DemoControlPanel
-[ ] 7. 補 demo scripts
-[ ] 8. 補 docs/contracts/local-dev-runbook.md 的 Demo UI 流程
-[ ] 9. 跑 tests / build
-[ ] 10. 手動打開五個 UI 做完整 demo
+[x] 1. 先補 _bim-control /ui
+[x] 2. 補 _s3_storage /ui
+[x] 3. 補 _conversion-service /ui
+[x] 4. 補 bim-review-coordinator /ui，且每個 API 都要可觸發
+[x] 5. 補 coordinator Socket.IO console
+[x] 6. 補 web-viewer-sample DemoControlPanel
+[x] 7. 補 demo scripts
+[x] 8. 補 docs/contracts/local-dev-runbook.md 的 Demo UI 流程
+[x] 9. 跑 tests / build
+[x] 10. 手動打開五個 UI 做完整 demo
 ```
 
 ---
@@ -2544,12 +2564,12 @@ Demo 時照這條路徑操作：
 通過定義：
 
 ```txt
-[ ] 不用 curl 也能完成 demo
-[ ] fake services API 都能被 UI 手動觸發
-[ ] coordinator 每個 HTTP API 都有 UI trigger
-[ ] Socket.IO event 可在 UI 裡手動 emit
-[ ] viewer 能手動送 Kit DataChannel command
-[ ] issue → highlight → annotation 的展示閉環成立
+[x] 不用 curl 也能完成 demo
+[x] fake services API 都能被 UI 手動觸發
+[x] coordinator 每個 HTTP API 都有 UI trigger
+[x] Socket.IO event 可在 UI 裡手動 emit
+[x] viewer 能手動送 Kit DataChannel command
+[x] issue → highlight → annotation 的展示閉環成立
 ```
 
 ---
@@ -2602,3 +2622,153 @@ health check
 ```
 
 只要這條路穩，後面接真正 `bim-control`、正式 object storage、AI 法規 / 碳排服務、GPU pool 都會清楚很多。現在最重要的是：**不要再擴散功能，先把 MVP 閉環打磨到可反覆 demo。**
+
+---
+
+## 13. 2026-04-30 驗收執行紀錄
+
+分支：
+
+```txt
+feat/bim-review-demo-ui-validation
+```
+
+已重啟並驗證的本地服務：
+
+```txt
+_bim-control             http://127.0.0.1:8001
+_s3_storage              http://127.0.0.1:8002
+_conversion-service      http://127.0.0.1:8003
+bim-review-coordinator   http://127.0.0.1:8004
+web-viewer-sample        http://127.0.0.1:5173
+bim-streaming-server     WebRTC signaling 127.0.0.1:49100
+```
+
+瀏覽器 UI 驗收證據：
+
+```txt
+output/playwright/bim-control-ui-actions.png
+output/playwright/storage-ui-actions.png
+output/playwright/conversion-ui-actions.png
+output/playwright/coordinator-ui-actions.png
+output/playwright/coordinator-two-browser-broadcast.png
+output/playwright/web-viewer-final-loop.png
+output/playwright/web-viewer-final-loop-current.png
+```
+
+Web Viewer DataChannel 前次紀錄（需重新驗證）：
+
+> 2026-04-30 user recheck found the browser stuck at `等待串流開始`; therefore these DataChannel results are not accepted as current browser E2E evidence until the video element reaches `readyState=4` and playback advances.
+
+```txt
+openStageRequest      -> openedStageResult success
+loadingStateQuery     -> loadingStateResponse idle
+getChildrenRequest    -> getChildrenResponse
+highlightPrimsRequest -> highlightPrimsResult success
+focusPrimRequest      -> focusPrimResult success
+clearHighlightRequest -> clearHighlightResult success
+```
+
+`/World` fallback 實測結果：
+
+```json
+{
+  "result": "success",
+  "applied_mode": "selection",
+  "selected_paths": ["/model"],
+  "missing_paths": [],
+  "fallback_paths": [
+    {
+      "requested_path": "/World",
+      "selected_path": "/model",
+      "reason": "stage_root_fallback"
+    }
+  ]
+}
+```
+
+多人併發驗收：
+
+```txt
+coordinator UI 開兩個 browser tab，dev_user_001 / dev_user_002 加入同一 session。
+第一個 browser emit highlightRequest，第二個 browser 收到 highlightRequest broadcast。
+presenceUpdated 顯示兩個 participants。
+smoke-review-socket.ps1 覆蓋 join / presence / highlight / selection / annotation / heartbeat。
+```
+
+2026-04-30 WebRTC blocker recheck:
+
+```txt
+URL: http://127.0.0.1:5173
+Kit process: running, TCP 49100 listening
+Coordinator/model state: ready
+Browser text: 等待串流開始
+Video state: readyState=0, videoWidth=0, videoHeight=0, currentTime=0, srcObject=false
+Browser console: signaling reaches ws://127.0.0.1:49100/sign_in, then reports 0xC0F22219 after timeout/retry
+Conclusion: not a user operation error; browser WebRTC negotiation/video attach remains a blocker.
+```
+
+2026-04-30 mapping verification follow-up:
+
+```txt
+web-viewer-sample Demo Panel now includes Mapping 驗證.
+It loads stream-config.model.mapping_url, shows mapped / fake / unmapped counts, and can send highlightPrimsRequest / focusPrimRequest from a selected mapping item.
+Current demo element_mapping.json is honest but empty: mapped_count=0, fake_mapping_count=0, items=[].
+Therefore current UI correctly reports that no real mapping item can be verified yet; /World remains smoke-only, not mapping correctness evidence.
+```
+
+2026-04-30 browser verification after Mapping 驗證 patch:
+
+```txt
+URL: http://127.0.0.1:5173/?projectId=project_demo_001&modelVersionId=version_demo_001&userId=dev_user_001&displayName=Demo%20User
+Video state: readyState=4, videoWidth=1920, videoHeight=1080, srcObject=true, currentTime advanced
+Mapping panel: mapping_url loaded from stream-config.model.mapping_url
+Mapping summary shown: mapped=0, fake=0, unmapped IFC=116934, unmapped USD=10872
+Mapping item controls: disabled because element_mapping.json has items=[]
+DataChannel smoke: highlightPrimsRequest /World -> highlightPrimsResult success, selected=1, missing=0, fallback=1
+Evidence screenshot: output/playwright/web-viewer-mapping-validation-full.png
+Note: output/playwright/ is gitignored local evidence; move screenshots to a tracked docs evidence folder before relying on them in a PR.
+```
+
+2026-04-30 mapping correctness implementation recheck:
+
+```txt
+Conversion smoke:
+.\_conversion-service\scripts\smoke_conversion.ps1 -TimeoutSeconds 1800
+job_id=conv_20260430062843_30ea6655
+mapping summary: mapped=503, fake=0, unmapped IFC=73272, unmapped USD=10369
+first item: IfcColumn revit_element_id=401627 -> /model/tn__22002_/tn__6254577_zDcjk9uvc0/Default/tn__GL_l3/IFCCOLUMN/tn__75x120cm401627_mE4Z6n6CcxzCvgSXhl0php0ujb0hbY1
+method: path_revit_element_id, confidence=0.7
+
+Browser mapping panel:
+URL: http://127.0.0.1:5173/?projectId=project_demo_001&modelVersionId=version_demo_001&userId=dev_user_001&displayName=Demo%20User
+Mapping panel loads stream-config.model.mapping_url and shows mapped=503 / fake=0.
+Selected first mapping item and sent:
+- highlightPrimsRequest with request_id=mapping-highlight-* and real usd_prim_path
+- focusPrimRequest with request_id=mapping-focus-* and same real usd_prim_path
+
+Browser blocker:
+Video state stayed readyState=0, networkState=0, currentTime=0.00, videoWidth=0, videoHeight=0, srcObject=false.
+Console: 0 errors; StreamSDK warning 0xC0F22219.
+No highlightPrimsResult / focusPrimResult returned, so browser mapping correctness is still blocked by WebRTC/media negotiation.
+/World remains smoke-only and is not accepted as mapping correctness evidence.
+
+Evidence screenshot:
+output/playwright/web-viewer-mapping-validation-real-mapping.png
+Note: output/playwright/ is gitignored local evidence; move screenshots to a tracked docs evidence folder before relying on them in a PR.
+```
+
+回歸驗證命令：
+
+```powershell
+.\scripts\demo-health-check.ps1
+.\scripts\dev-health-check.ps1
+.\scripts\smoke-review-session.ps1
+.\scripts\smoke-review-socket.ps1
+cd _bim-control; ..\.venv\Scripts\python.exe -m pytest tests
+cd ..\_s3_storage; ..\.venv\Scripts\python.exe -m pytest tests
+cd ..\_conversion-service; ..\.venv\Scripts\python.exe -m pytest tests
+cd ..\bim-review-coordinator; npm test; npm run build
+cd ..\web-viewer-sample; npm run build
+cd ..\bim-streaming-server; .\repo.bat test; .\repo.bat build
+```

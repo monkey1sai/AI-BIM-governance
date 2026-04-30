@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.settings import Settings
-from app.usd_indexer import run_usd_indexer
+from app.usd_indexer import enrich_usd_index, run_usd_indexer
 
 
 def test_usd_indexer_enables_usd_extensions_and_build_paths(monkeypatch, tmp_path: Path):
@@ -53,3 +53,22 @@ def test_usd_indexer_enables_usd_extensions_and_build_paths(monkeypatch, tmp_pat
 
 def _has_arg_pair(args: list[str], key: str, value: str) -> bool:
     return any(args[index] == key and args[index + 1] == value for index in range(len(args) - 1))
+
+
+def test_enrich_usd_index_reads_ifc_class_and_revit_id_from_path():
+    payload = {
+        "prims": [
+            {
+                "path": "/Root/Geometry/IFCWALL/tn__115cm551956_body",
+                "name": "tn__115cm551956_body",
+                "type": "Mesh",
+                "identifier_candidates": [],
+            }
+        ]
+    }
+
+    enriched = enrich_usd_index(payload)
+
+    prim = enriched["prims"][0]
+    assert prim["ifc_class"] == "IfcWall"
+    assert {"source": "path", "key": "revit_element_id", "value": "551956"} in prim["identifier_candidates"]

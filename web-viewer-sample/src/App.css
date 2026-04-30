@@ -67,6 +67,21 @@ video#remote-video {
     font-weight: bold;
 }
 
+.stream-diagnostic-panel {
+    width: min(760px, calc(100% - 48px));
+    margin: 14px auto 0;
+    padding: 12px;
+    background: #f5f7fa;
+    border: 1px solid #c8d0d8;
+    color: #2f3a45;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.5;
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .nvidia-button {
     font-size: 14px;
     margin-top: 6px; /* Space above the button */

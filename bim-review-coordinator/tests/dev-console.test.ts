@@ -34,7 +34,7 @@ describe("coordinator dev console", () => {
     const consolePage = await request(app.app).get("/dev-console");
 
     expect(ui.status).toBe(200);
-    expect(ui.text).toContain("BIM Review Coordinator Dev Console");
+    expect(ui.text).toContain("審查協調 (Review Coordinator)");
     expect(consolePage.status).toBe(200);
     expect(consolePage.text).toContain("/api/review-sessions");
   });

@@ -97,7 +97,7 @@ export default class USDAsset extends React.Component<USDAssetProps, USDAssetSta
           return (
               <div className="usdAssetContainer" style={{ width: this.props.width }}>
                   <div className="usdAssetHeader">
-                      {'USD Asset'}
+                      {'USD / USDC 成果檔'}
                   </div>
                   <div className="usdAssetSelectorContainer">
                       {this._renderSelector()}

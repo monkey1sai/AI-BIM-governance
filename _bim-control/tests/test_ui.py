@@ -14,7 +14,7 @@ def test_demo_ui_is_served(tmp_path: Path):
     response = client.get("/ui")
 
     assert response.status_code == 200
-    assert "Fake BIM Control Demo UI" in response.text
+    assert "主資料庫 (BIM Data Authority)" in response.text
     assert "/api/model-versions/" in response.text
 
 

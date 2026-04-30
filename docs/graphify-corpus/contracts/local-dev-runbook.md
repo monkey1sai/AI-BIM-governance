@@ -35,10 +35,11 @@ npm run dev
 
 ```powershell
 cd bim-streaming-server
-.\scripts\start-streaming-server.ps1 -UsdPath .\bim-models\許良宇圖書館建築_2026.usd
+.\scripts\start-streaming-server.ps1 -SkipAutoLoad
 ```
 
 The wrapper keeps NvStreamer ETW traces under `bim-streaming-server/logs/nvstreamer/`.
+For the MVP demo, `-SkipAutoLoad` is preferred so the browser client owns the `openStageRequest` timing and avoids `UsdContext busy` during Kit startup.
 
 ## 6. Web Viewer
 
