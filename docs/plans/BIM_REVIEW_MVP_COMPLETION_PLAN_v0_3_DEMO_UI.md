@@ -1497,6 +1497,10 @@ Expected:
 
 2026-04-30 recheck: browser currently stays at `等待串流開始`; `#remote-video.readyState=0`, `videoWidth=0`, `videoHeight=0`, `currentTime=0`, and `srcObject=false`. The browser console reaches `ws://127.0.0.1:49100/sign_in` but later reports `0xC0F22219`. Treat browser WebRTC visibility and DataChannel-in-browser acceptance as open until `readyState=4` and playback advances.
 
+2026-04-30 follow-up: web-viewer-sample now exposes a timeout diagnostic state instead of leaving the user at an indefinite loading label. `?streamTimeoutMs=3000` is available for smoke tests, and `VITE_STREAM_START_TIMEOUT_MS` can set the default. Browser smoke confirmed the UI changes to `WebRTC 串流未建立` and displays video diagnostics when `readyState=0`, `videoWidth=0`, `videoHeight=0`, and `srcObject=false`.
+
+2026-04-30 clean Kit restart baseline: `bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad -SkipGpuCheck` started Kit on TCP `49100`, but browser still did not receive media. Console evidence changed from the earlier timeout to `WebSocket connection to 'ws://127.0.0.1:49100/sign_in?...' failed: WebSocket is closed before the connection is established`, `Sign in request timed out`, `event local candidates: TCP: 0 MDNS: 0 IPV6: 0 IPV4: 0 UNKNOWN: 0`, and `0xC0F22213`. This keeps the root cause in WebRTC sign-in / ICE negotiation, not model loading or user operation.
+
 ### 8.4 Regression checks
 
 ```powershell
@@ -2375,6 +2379,7 @@ UI 功能：
 [x] 可手動送 clearHighlightRequest
 [x] 可手動 emit coordinator highlightRequest
 [x] Kit / coordinator 任一方未啟動時，UI 顯示清楚錯誤
+[x] WebRTC media stream 未建立時，UI 會顯示 timeout 診斷，不再無限停在等待狀態
 ```
 
 ---

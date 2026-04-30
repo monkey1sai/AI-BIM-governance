@@ -71,6 +71,7 @@ interface AppState {
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
+    streamDiagnostic: string | null;
 }
 
 interface AppStreamMessageType {
@@ -100,6 +101,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private coordinatorClient = new CoordinatorClient(reviewEnv.coordinatorApiBase);
     private bimControlClient = new BimControlClient(reviewEnv.bimControlApiBase);
     private reviewSocket: ReviewSocketClient | null = null;
+    private streamStartTimeoutId: number | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -122,16 +124,19 @@ export default class App extends React.Component<AppProps, AppState> {
             showStream: false,
             showUI: false,
             loadingText: "正在載入成果檔清單...",
+            streamDiagnostic: null,
             isLoading: true
         }
     }
 
     componentDidMount(): void {
+        this._scheduleStreamStartTimeout();
         void this._loadUSDAssets();
         void this._bootstrapReview();
     }
 
     componentWillUnmount(): void {
+        this._clearStreamStartTimeout();
         this.reviewSocket?.disconnect();
     }
 
@@ -156,6 +161,64 @@ export default class App extends React.Component<AppProps, AppState> {
     private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): void {
         AppStream.sendMessage(JSON.stringify(message));
         this._appendDemoOutgoing(message.event_type, message);
+    }
+
+    private _scheduleStreamStartTimeout(): void {
+        this._clearStreamStartTimeout();
+        if (StreamConfig.source === "gfn") return;
+        this.streamStartTimeoutId = window.setTimeout(() => {
+            this._handleStreamStartTimeout();
+        }, reviewEnv.streamStartTimeoutMs);
+    }
+
+    private _clearStreamStartTimeout(): void {
+        if (this.streamStartTimeoutId === null) return;
+        window.clearTimeout(this.streamStartTimeoutId);
+        this.streamStartTimeoutId = null;
+    }
+
+    private _getVideoDiagnosticText(): string {
+        const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+        if (!video) {
+            return "remote-video element not found";
+        }
+
+        return [
+            `readyState=${video.readyState}`,
+            `networkState=${video.networkState}`,
+            `paused=${video.paused}`,
+            `currentTime=${video.currentTime.toFixed(2)}`,
+            `videoWidth=${video.videoWidth}`,
+            `videoHeight=${video.videoHeight}`,
+            `srcObject=${video.srcObject ? "true" : "false"}`,
+        ].join(", ");
+    }
+
+    private _hasRemoteVideoFrame(): boolean {
+        const video = document.getElementById("remote-video") as HTMLVideoElement | null;
+        if (!video) return false;
+        return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+    }
+
+    private _handleStreamStartTimeout(): void {
+        this.streamStartTimeoutId = null;
+        if (this._hasRemoteVideoFrame()) return;
+
+        const seconds = Math.round(reviewEnv.streamStartTimeoutMs / 1000);
+        const endpoint = `${this.props.signalingserver || StreamConfig.local.server}:${this.props.signalingport || StreamConfig.local.signalingPort}`;
+        const diagnostic = [
+            `WebRTC 串流未建立（${seconds} 秒內沒有收到影片）。`,
+            `診斷：${this._getVideoDiagnosticText()}`,
+            `端點：${endpoint}`,
+            "請將此視為 demo blocker：Kit signaling 可能已連上，但 browser 尚未取得 media stream。",
+        ].join("\n");
+
+        this.setState((state) => ({
+            loadingText: "WebRTC 串流未建立",
+            streamDiagnostic: diagnostic,
+            isLoading: false,
+            reviewEvents: [...state.reviewEvents, "WebRTC 串流未建立，已顯示診斷資訊"],
+        }));
     }
 
     private _connectReviewSocket(sessionId: string): void {
@@ -326,6 +389,7 @@ export default class App extends React.Component<AppProps, AppState> {
      * openedStageResult message.
      */
         private _onStreamStarted(): void {
+            this.setState({ streamDiagnostic: null });
             this._pollForKitReady()
         }
 
@@ -749,6 +813,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 {!this.state.showStream && 
                     <div className="loading-indicator-label">
                         {this.state.loadingText}
+                        {this.state.streamDiagnostic &&
+                            <pre className="stream-diagnostic-panel">{this.state.streamDiagnostic}</pre>
+                        }
                         <div className="spinner-border" role="status" style={{ marginTop: 10, visibility: this.state.isLoading? 'visible': 'hidden' }} />
                     </div>
                 }
