@@ -10,7 +10,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$viewerDemoUrl = "$ViewerUrl/?projectId=project_demo_001&modelVersionId=version_demo_001&userId=dev_user_001&displayName=Demo%20User"
+$viewerDemoUrl = "$ViewerUrl/?projectId=project_demo_001&modelVersionId=version_demo_001&userId=dev_user_001&displayName=%E7%A4%BA%E7%AF%84%E4%BD%BF%E7%94%A8%E8%80%85"
 
 Start-Process "$BimControlUrl/ui"
 Start-Process "$StorageUrl/ui"

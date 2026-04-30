@@ -5,11 +5,11 @@ def render_ui() -> HTMLResponse:
     return HTMLResponse(
         """
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Conversion Service Demo UI</title>
+  <title>轉檔服務 Demo UI</title>
   <style>
     body { margin: 0; font-family: system-ui, Segoe UI, sans-serif; background: #f6f8fb; color: #1f2933; }
     header { padding: 16px 24px; background: #102a43; color: #fff; }
@@ -26,8 +26,8 @@ def render_ui() -> HTMLResponse:
 </head>
 <body>
   <header>
-    <h1>Conversion Service Demo UI</h1>
-    <p>Manual conversion job trigger, polling, result lookup, and dev-only mock fallback.</p>
+    <h1>轉檔服務 Demo UI</h1>
+    <p>手動建立 IFC/RVT/DWG 轉 USDC job、輪詢狀態、查詢結果，並提供 dev-only mock fallback。</p>
   </header>
   <main>
     <section>
@@ -37,11 +37,11 @@ def render_ui() -> HTMLResponse:
           <input id="jobId" placeholder="conv_..." />
         </div>
         <div>
-          <label for="pollState">polling</label>
-          <input id="pollState" value="stopped" readonly />
+          <label for="pollState">輪詢狀態</label>
+          <input id="pollState" value="已停止" readonly />
         </div>
       </div>
-      <label for="jsonBody">POST /api/conversions body</label>
+      <label for="jsonBody">建立轉檔 job 的 JSON 請求內容 POST /api/conversions</label>
       <textarea id="jsonBody">{
   "project_id": "project_demo_001",
   "model_version_id": "version_demo_001",
@@ -55,30 +55,30 @@ def render_ui() -> HTMLResponse:
   }
 }</textarea>
 
-      <h2>Health</h2>
-      <button onclick="call('GET', '/health')">GET /health</button>
+      <h2>健康檢查</h2>
+      <button onclick="call('GET', '/health')">健康檢查 GET /health</button>
 
-      <h2>Conversion job</h2>
-      <button class="primary" onclick="createJob()">POST /api/conversions</button>
-      <button onclick="getJob()">GET job status</button>
-      <button onclick="getResult()">GET job result</button>
-      <button onclick="startPolling()">Poll every 2s</button>
-      <button onclick="stopPolling()">Stop polling</button>
+      <h2>轉檔 job</h2>
+      <button class="primary" onclick="createJob()">建立轉檔 job POST /api/conversions</button>
+      <button onclick="getJob()">查詢 job 狀態 GET job status</button>
+      <button onclick="getResult()">查詢 job 結果 GET job result</button>
+      <button onclick="startPolling()">每 2 秒自動輪詢</button>
+      <button onclick="stopPolling()">停止輪詢</button>
 
       <h2>Dev fallback</h2>
-      <button onclick="mockConversion()" class="primary">POST /api/dev/mock-conversion-result</button>
+      <button onclick="mockConversion()" class="primary">建立 mock 轉檔結果 POST /api/dev/mock-conversion-result</button>
 
-      <h2>Shortcuts</h2>
-      <button onclick="copyFromResult('usdc_url')">Copy usdc_url</button>
-      <button onclick="copyFromResult('mapping_url')">Copy mapping_url</button>
-      <button onclick="openFromResult('usdc_url')">Open usdc_url</button>
-      <button onclick="openFromResult('mapping_url')">Open mapping_url</button>
-      <a class="button" href="http://127.0.0.1:8001/ui" target="_blank">Open _bim-control UI</a>
-      <a class="button" href="http://127.0.0.1:8004/ui" target="_blank">Open coordinator UI</a>
+      <h2>結果捷徑</h2>
+      <button onclick="copyFromResult('usdc_url')">複製 usdc_url</button>
+      <button onclick="copyFromResult('mapping_url')">複製 mapping_url</button>
+      <button onclick="openFromResult('usdc_url')">開啟 usdc_url</button>
+      <button onclick="openFromResult('mapping_url')">開啟 mapping_url</button>
+      <a class="button" href="http://127.0.0.1:8001/ui" target="_blank">開啟假 BIM 資料平台 UI</a>
+      <a class="button" href="http://127.0.0.1:8004/ui" target="_blank">開啟協作控制台 UI</a>
     </section>
     <section>
-      <h2>Response</h2>
-      <pre id="output">No request yet.</pre>
+      <h2>回應結果</h2>
+      <pre id="output">尚未送出請求。</pre>
     </section>
   </main>
   <script>
@@ -94,7 +94,7 @@ def render_ui() -> HTMLResponse:
     }
 
     async function call(method, path, body) {
-      output.textContent = `${method} ${path}\\nLoading...`;
+      output.textContent = `${method} ${path}\\n載入中...`;
       const init = { method, headers: { Accept: 'application/json' } };
       if (body !== undefined) {
         init.headers['Content-Type'] = 'application/json';
@@ -123,18 +123,18 @@ def render_ui() -> HTMLResponse:
     }
 
     async function getJob() {
-      if (!jobId.value) return alert('job_id is required');
+      if (!jobId.value) return alert('請先輸入或建立 job_id');
       return call('GET', `/api/conversions/${jobId.value}`);
     }
 
     async function getResult() {
-      if (!jobId.value) return alert('job_id is required');
+      if (!jobId.value) return alert('請先輸入或建立 job_id');
       return call('GET', `/api/conversions/${jobId.value}/result`);
     }
 
     function startPolling() {
       stopPolling();
-      pollState.value = 'running';
+      pollState.value = '輪詢中';
       pollTimer = setInterval(async () => {
         const payload = await getJob();
         if (payload && ['succeeded', 'failed'].includes(payload.status)) stopPolling();
@@ -144,7 +144,7 @@ def render_ui() -> HTMLResponse:
     function stopPolling() {
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = null;
-      pollState.value = 'stopped';
+      pollState.value = '已停止';
     }
 
     function valueFromResult(key) {
@@ -153,13 +153,13 @@ def render_ui() -> HTMLResponse:
 
     async function copyFromResult(key) {
       const value = valueFromResult(key);
-      if (!value) return alert(`${key} is not available`);
+      if (!value) return alert(`${key} 目前沒有可用值`);
       await navigator.clipboard.writeText(value);
     }
 
     function openFromResult(key) {
       const value = valueFromResult(key);
-      if (!value) return alert(`${key} is not available`);
+      if (!value) return alert(`${key} 目前沒有可用值`);
       window.open(value, '_blank');
     }
   </script>

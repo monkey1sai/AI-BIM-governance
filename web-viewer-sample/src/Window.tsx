@@ -109,7 +109,7 @@ export default class App extends React.Component<AppProps, AppState> {
             usdAssets: [],
             selectedUSDAsset: null,
             reviewSessionId: null,
-            reviewStatus: "Review bootstrap pending",
+            reviewStatus: "Review bootstrap 尚未載入",
             reviewArtifacts: [],
             reviewIssues: [],
             reviewEvents: [],
@@ -121,7 +121,7 @@ export default class App extends React.Component<AppProps, AppState> {
             isKitReady: false,
             showStream: false,
             showUI: false,
-            loadingText: "Loading asset list...",
+            loadingText: "正在載入成果檔清單...",
             isLoading: true
         }
     }
@@ -161,9 +161,9 @@ export default class App extends React.Component<AppProps, AppState> {
     private _connectReviewSocket(sessionId: string): void {
         this.reviewSocket?.disconnect();
         this.reviewSocket = connectReviewSocket(reviewEnv.coordinatorSocketUrl, {
-            onStatus: (status) => this._appendReviewEvent(`socket ${status}`),
+            onStatus: (status) => this._appendReviewEvent(`Socket.IO ${status === "connected" ? "已連線" : "已中斷"}`),
             onEvent: (event, payload) => {
-                this._appendReviewEvent(`socket event: ${event}`);
+                this._appendReviewEvent(`收到 Socket.IO 事件：${event}`);
                 this._appendDemoIncoming(`socket:${event}`, payload);
             },
         });
@@ -171,7 +171,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _getReadyLoadingText(): string {
-        return StreamConfig.source === "gfn" ? "Log in to GeForce NOW to view stream" : (StreamConfig.source === "stream" ? "Waiting for stream to initialize":  "Waiting for stream to begin");
+        return StreamConfig.source === "gfn" ? "請先登入 GeForce NOW 才能觀看串流" : (StreamConfig.source === "stream" ? "等待串流初始化":  "等待串流開始");
     }
 
     private async _loadUSDAssets(): Promise<void> {
@@ -182,7 +182,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({
                 usdAssets,
                 selectedUSDAsset,
-                loadingText: selectedUSDAsset ? this._getReadyLoadingText() : "No USD assets available",
+                loadingText: selectedUSDAsset ? this._getReadyLoadingText() : "沒有可用的 USD / USDC 成果檔",
                 isLoading: selectedUSDAsset ? StreamConfig.source === "stream" : false,
             }, () => {
                 if (this.state.isKitReady && this.state.selectedUSDAsset && !this.state.showStream) {
@@ -195,7 +195,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({
                 usdAssets: [],
                 selectedUSDAsset: null,
-                loadingText: "Unable to load asset list",
+                loadingText: "無法載入成果檔清單",
                 isLoading: false,
             });
         }
@@ -204,7 +204,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private async _bootstrapReview(): Promise<void> {
         try {
             if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId) {
-                this.setState({ reviewStatus: "Review auto-create disabled" });
+                this.setState({ reviewStatus: "Review session 自動建立已停用" });
                 await this._loadReviewDataFromBimControl();
                 return;
             }
@@ -227,13 +227,13 @@ export default class App extends React.Component<AppProps, AppState> {
 
             this.setState({
                 reviewSessionId: sessionId,
-                reviewStatus: `Review session active: ${streamConfig.model.status}`,
+                reviewStatus: `Review session 啟用中，模型狀態：${streamConfig.model.status}`,
                 reviewArtifacts: artifacts,
                 reviewIssues: bootstrap.issues,
                 latestStreamConfig: streamConfig,
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset,
-                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId ? "review session loaded" : "review session created"],
+                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId ? "已載入 review session" : "已建立 review session"],
             }, () => {
                 if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready") {
                     this._openSelectedAsset();
@@ -243,8 +243,8 @@ export default class App extends React.Component<AppProps, AppState> {
         catch (error) {
             console.warn("Review bootstrap unavailable.", error);
             this.setState({
-                reviewStatus: "Review coordinator unavailable",
-                reviewEvents: [...this.state.reviewEvents, "review bootstrap failed"],
+                reviewStatus: "Review coordinator 無法連線",
+                reviewEvents: [...this.state.reviewEvents, "review bootstrap 載入失敗"],
             });
             await this._loadReviewDataFromBimControl();
         }
@@ -262,7 +262,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 reviewIssues: issues,
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
-                reviewEvents: [...this.state.reviewEvents, "loaded review data from _bim-control"],
+                reviewEvents: [...this.state.reviewEvents, "已從 _bim-control 載入 review 資料"],
             });
         }
         catch (error) {
@@ -297,10 +297,10 @@ export default class App extends React.Component<AppProps, AppState> {
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
             });
-            this._appendReviewEvent("review-bootstrap loaded");
+            this._appendReviewEvent("review-bootstrap 已載入");
         } catch (error) {
             console.warn("Unable to load review-bootstrap.", error);
-            this._appendReviewEvent("review-bootstrap failed");
+            this._appendReviewEvent("review-bootstrap 載入失敗");
         }
     }
 
@@ -372,7 +372,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _onLoggedIn(userId: string): void {
         if (StreamConfig.source === "gfn"){
             console.info(`Logged in to GeForce NOW as ${userId}`)
-            this.setState({ loadingText: "Waiting for stream to begin", isLoading: false})
+            this.setState({ loadingText: "等待串流開始", isLoading: false})
         }
     }
 
@@ -384,11 +384,11 @@ export default class App extends React.Component<AppProps, AppState> {
     private _openSelectedAsset(): void {
         if (!this.state.selectedUSDAsset) {
             console.warn("No USD asset is selected.");
-            this.setState({ loadingText: "No USD assets available", isLoading: false });
+            this.setState({ loadingText: "沒有可用的 USD / USDC 成果檔", isLoading: false });
             return;
         }
 
-        this.setState({ loadingText: "Loading Asset...", showStream: false, isLoading: true })
+        this.setState({ loadingText: "正在載入模型...", showStream: false, isLoading: true })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
         console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
@@ -482,7 +482,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _onIssueClick(issue: ReviewIssue): void {
         if (!issue.usd_prim_path) {
-            this.setState({ reviewEvents: [...this.state.reviewEvents, `issue ${issue.issue_id} has no prim path`] });
+            this.setState({ reviewEvents: [...this.state.reviewEvents, `審查問題 ${issue.issue_id} 沒有 usd_prim_path，未送出 DataChannel`] });
             return;
         }
 
@@ -498,7 +498,7 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this.state.reviewSessionId && this.reviewSocket) {
             this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, issue.issue_id, [item]);
         }
-        this._appendReviewEvent(`highlight requested: ${issue.issue_id}`);
+        this._appendReviewEvent(`已送出高亮請求：${issue.issue_id}`);
     }
 
     private _sendDemoHighlightWorld(): void {
@@ -515,25 +515,25 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private _emitDemoCoordinatorHighlight(): void {
         if (!this.state.reviewSessionId || !this.reviewSocket) {
-            this._appendReviewEvent("coordinator highlight skipped: no socket session");
+            this._appendReviewEvent("略過 coordinator highlight：尚未連線 Socket.IO session");
             return;
         }
         this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, demoIssueId, [buildDemoHighlightItem("web_viewer_demo_panel")]);
-        this._appendReviewEvent(`coordinator highlight emitted: ${demoIssueId}`);
+        this._appendReviewEvent(`已廣播 coordinator highlight：${demoIssueId}`);
     }
 
     private _createDemoAnnotation(): void {
         if (!this.state.reviewSessionId || !this.reviewSocket) {
-            this._appendReviewEvent("annotation skipped: no socket session");
+            this._appendReviewEvent("略過標註建立：尚未連線 Socket.IO session");
             return;
         }
-        this.reviewSocket.emitAnnotation(this.state.reviewSessionId, reviewEnv.defaultUserId, "Demo annotation from Web Viewer Demo Panel");
-        this._appendReviewEvent("annotationCreate emitted");
+        this.reviewSocket.emitAnnotation(this.state.reviewSessionId, reviewEnv.defaultUserId, "從 Web Viewer Demo 面板建立的示範標註");
+        this._appendReviewEvent("已送出 annotationCreate");
     }
 
     private _connectDemoSocket(): void {
         if (!this.state.reviewSessionId) {
-            this._appendReviewEvent("socket connect skipped: no review session");
+            this._appendReviewEvent("略過 Socket.IO 連線：尚未建立 review session");
             return;
         }
         this._connectReviewSocket(this.state.reviewSessionId);
@@ -634,7 +634,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 if (isStageValid && loadingState === "idle")
                 {
                     this._getChildren()
-                    this.setState({ showStream: true, loadingText: "Asset loaded", showUI: true, isLoading: false })
+                    this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false })
                 }
             }
         }
@@ -647,13 +647,13 @@ export default class App extends React.Component<AppProps, AppState> {
         // Loading activity notification.
         else if (event.event_type === "updateProgressActivity") {
             console.log('Kit App communicates progress activity.');
-            if (this.state.loadingText !== "Loading Asset...")
-                this.setState( {loadingText: "Loading Asset...", isLoading: true} )
+            if (this.state.loadingText !== "正在載入模型...")
+                this.setState( {loadingText: "正在載入模型...", isLoading: true} )
         }
 
         else if (event.event_type === "highlightPrimsResult") {
             const result = getPayloadString(payload, "result") || "unknown";
-            this.setState({ reviewEvents: [...this.state.reviewEvents, `highlight result: ${result}`] });
+            this.setState({ reviewEvents: [...this.state.reviewEvents, `高亮結果：${result}`] });
         }
             
         // Notification from Kit about user changing the selection via the viewport.

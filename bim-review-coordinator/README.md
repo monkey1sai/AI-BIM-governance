@@ -8,7 +8,7 @@ Local review-session control plane for the AI-BIM governance workspace.
 - Return the fixed local Kit/WebRTC endpoint for development.
 - Proxy artifact and issue bootstrap data from `_bim-control`.
 - Broadcast review-room events over Socket.IO namespace `/review`.
-- Persist short-lived session events as JSON files.
+- Persist short-lived session events as JSONL files under `data/events`.
 
 ## Run
 

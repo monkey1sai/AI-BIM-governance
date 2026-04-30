@@ -64,54 +64,54 @@ export default function DemoControlPanel({
 }: DemoControlPanelProps) {
     return (
         <div style={{ ...panelStyle, width }}>
-            <div style={{ padding: "10px 12px", fontSize: 16, fontWeight: 700 }}>Demo Controls</div>
+            <div style={{ padding: "10px 12px", fontSize: 16, fontWeight: 700 }}>Demo 操作面板</div>
             <div style={{ padding: 8, fontSize: 12, maxHeight: "calc(100vh - 110px)", overflow: "auto" }}>
                 <div style={{ marginBottom: 8 }}>
-                    <strong>Session</strong>
-                    <div>{sessionId || "none"}</div>
+                    <strong>Review Session</strong>
+                    <div>{sessionId || "尚未建立"}</div>
                     <div>{reviewStatus}</div>
-                    <div>Model: {streamConfig?.model.status || "unknown"}</div>
-                    <div style={{ wordBreak: "break-all" }}>Asset: {selectedAssetUrl || "none"}</div>
+                    <div>模型狀態：{streamConfig?.model.status || "未知"}</div>
+                    <div style={{ wordBreak: "break-all" }}>成果檔 URL：{selectedAssetUrl || "尚未選取"}</div>
                 </div>
 
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onCreateOrLoadSession}>
-                    Create / load review session
+                    建立或載入 review session
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onLoadBootstrap}>
-                    Load review-bootstrap
+                    載入 review-bootstrap
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onConnectSocket}>
-                    Connect / reconnect Socket.IO
+                    連線或重連 Socket.IO
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onOpenStage}>
-                    Send openStageRequest
+                    送出 openStageRequest 開啟模型
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onLoadingState}>
-                    Send loadingStateQuery
+                    送出 loadingStateQuery 查詢載入狀態
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onGetChildren}>
-                    Send getChildrenRequest /World
+                    送出 getChildrenRequest /World 載入 stage tree
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onHighlightWorld}>
-                    Send highlightPrimsRequest /World
+                    送出 highlightPrimsRequest /World 高亮
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onFocusWorld}>
-                    Send focusPrimRequest /World
+                    送出 focusPrimRequest /World 聚焦
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onClearHighlight}>
-                    Send clearHighlightRequest
+                    送出 clearHighlightRequest 清除高亮
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onEmitCoordinatorHighlight}>
-                    Emit coordinator highlightRequest
+                    廣播 coordinator highlightRequest
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onCreateAnnotation}>
-                    Create annotation
+                    建立標註 annotationCreate
                 </button>
 
-                <LogBlock title="Latest stream-config" entries={streamConfig ? [{ at: "", label: "stream-config", payload: streamConfig }] : []} />
-                <LogBlock title="DataChannel outgoing" entries={outgoingMessages} />
-                <LogBlock title="DataChannel incoming" entries={incomingMessages} />
-                <TextLogBlock title="Socket.IO incoming events" items={socketEvents} />
+                <LogBlock title="最新 stream-config" entries={streamConfig ? [{ at: "", label: "stream-config", payload: streamConfig }] : []} />
+                <LogBlock title="DataChannel 送出訊息" entries={outgoingMessages} />
+                <LogBlock title="DataChannel 收到訊息" entries={incomingMessages} />
+                <TextLogBlock title="Socket.IO 收到事件" items={socketEvents} />
             </div>
         </div>
     );
@@ -123,7 +123,7 @@ function LogBlock({ title, entries }: { title: string; entries: DemoLogEntry[] }
             <strong>{title}</strong>
             <pre style={{ maxHeight: 140, overflow: "auto", background: "#f5f7fa", padding: 6, whiteSpace: "pre-wrap" }}>
                 {entries.length === 0
-                    ? "none"
+                    ? "尚無資料"
                     : entries
                           .slice(0, 5)
                           .map((entry) => `${entry.at ? `${entry.at} ` : ""}${entry.label}\n${JSON.stringify(entry.payload, null, 2)}`)
@@ -138,7 +138,7 @@ function TextLogBlock({ title, items }: { title: string; items: string[] }) {
         <div style={{ marginTop: 10 }}>
             <strong>{title}</strong>
             <pre style={{ maxHeight: 140, overflow: "auto", background: "#f5f7fa", padding: 6, whiteSpace: "pre-wrap" }}>
-                {items.length === 0 ? "none" : items.slice(-10).reverse().join("\n")}
+                {items.length === 0 ? "尚無資料" : items.slice(-10).reverse().join("\n")}
             </pre>
         </div>
     );

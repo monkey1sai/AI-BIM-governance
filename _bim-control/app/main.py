@@ -85,7 +85,7 @@ def _demo_projects() -> list[dict[str, Any]]:
     return [
         {
             "project_id": DEMO_PROJECT_ID,
-            "name": "Demo BIM Review Project",
+            "name": "示範 BIM 審查專案",
             "status": "active",
             "created_at": "2026-04-29T10:00:00+08:00",
         }
@@ -97,7 +97,7 @@ def _demo_model_versions() -> list[dict[str, Any]]:
         {
             "project_id": DEMO_PROJECT_ID,
             "model_version_id": DEMO_MODEL_VERSION_ID,
-            "name": "Demo Model Version 001",
+            "name": "示範模型版本 001",
             "status": "active",
             "created_at": "2026-04-29T10:00:00+08:00",
         }
@@ -113,7 +113,7 @@ def _demo_review_issues() -> list[dict[str, Any]]:
             "source": "mock_compliance",
             "severity": "error",
             "status": "open",
-            "title": "測試：BIM issue highlight",
+            "title": "示範：樓梯寬度不足",
             "description": "用來驗證 issue list 到 DataChannel highlightPrimsRequest 的假資料。",
             "ifc_guid": "2VJ3sK9L000fake001",
             "usd_prim_path": "/World",
@@ -138,7 +138,7 @@ def _build_seed_artifacts() -> list[dict[str, Any]]:
             "project_id": DEMO_PROJECT_ID,
             "model_version_id": DEMO_MODEL_VERSION_ID,
             "artifact_type": "ifc",
-            "name": "Demo BIM Model IFC",
+            "name": "示範 BIM 原始 IFC",
             "url": _static_url(DEMO_PROJECT_ID, DEMO_MODEL_VERSION_ID, "source.ifc"),
             "mapping_url": None,
             "status": source_status,
@@ -149,7 +149,7 @@ def _build_seed_artifacts() -> list[dict[str, Any]]:
             "project_id": DEMO_PROJECT_ID,
             "model_version_id": DEMO_MODEL_VERSION_ID,
             "artifact_type": "usdc",
-            "name": "Demo BIM Model USDC",
+            "name": "示範 BIM 轉檔 USDC",
             "url": _static_url(DEMO_PROJECT_ID, DEMO_MODEL_VERSION_ID, "model.usdc"),
             "mapping_url": _static_url(DEMO_PROJECT_ID, DEMO_MODEL_VERSION_ID, "element_mapping.json"),
             "status": usdc_status,
@@ -337,7 +337,7 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
                 "project_id": project_id,
                 "model_version_id": model_version_id,
                 "artifact_type": "ifc",
-                "name": "Source IFC",
+                "name": "原始 IFC",
                 "url": source_url,
                 "mapping_url": None,
                 "status": "ready",
@@ -356,7 +356,7 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
                 "project_id": project_id,
                 "model_version_id": model_version_id,
                 "artifact_type": "usdc",
-                "name": "Converted USDC",
+                "name": "已轉換 USDC",
                 "url": usdc_url,
                 "mapping_url": result.get("mapping_url"),
                 "status": "ready" if result.get("status") == "succeeded" else str(result.get("status") or "unknown"),

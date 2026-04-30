@@ -35,10 +35,11 @@ npm run dev
 
 ```powershell
 cd bim-streaming-server
-.\scripts\start-streaming-server.ps1 -UsdPath .\bim-models\許良宇圖書館建築_2026.usd
+.\scripts\start-streaming-server.ps1 -SkipAutoLoad
 ```
 
 The wrapper keeps NvStreamer ETW traces under `bim-streaming-server/logs/nvstreamer/`.
+For the MVP demo, `-SkipAutoLoad` is preferred so the browser client owns the `openStageRequest` timing and avoids `UsdContext busy` during Kit startup.
 
 ## 6. Web Viewer
 
@@ -56,14 +57,14 @@ http://127.0.0.1:5173
 
 ## Demo UI Consoles
 
-Each fake API service and the coordinator expose a browser UI for manual demo triggers:
+Each fake API service and the coordinator expose a Traditional Chinese browser UI for manual demo triggers:
 
 ```txt
-http://127.0.0.1:8001/ui  _bim-control metadata, issues, annotations
+http://127.0.0.1:8001/ui  _bim-control metadata / issues / annotations
 http://127.0.0.1:8002/ui  _s3_storage static file browser
 http://127.0.0.1:8003/ui  _conversion-service conversion job console
 http://127.0.0.1:8004/ui  coordinator review session and Socket.IO console
-http://127.0.0.1:5173     web viewer with Demo Controls panel
+http://127.0.0.1:5173     web viewer with Demo 操作面板
 ```
 
 Open all demo consoles:
@@ -93,7 +94,10 @@ _s3_storage UI check files
 ```powershell
 .\scripts\dev-health-check.ps1
 .\scripts\smoke-review-session.ps1
+.\scripts\smoke-review-socket.ps1
 .\_conversion-service\scripts\smoke_conversion.ps1
 ```
 
 `smoke-review-session.ps1` verifies fake storage, fake BIM control, coordinator session creation, stream-config, issue discovery, annotation persistence, and coordinator event logging.
+
+`smoke-review-socket.ps1` opens two Socket.IO clients in the same `/review` room and verifies concurrent `joinSession`, `presenceUpdated`, `highlightRequest`, `selectionUpdate`, `annotationCreate`, and `heartbeat` behavior.

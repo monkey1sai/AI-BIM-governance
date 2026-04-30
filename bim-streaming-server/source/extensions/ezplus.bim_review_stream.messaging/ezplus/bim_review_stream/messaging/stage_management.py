@@ -281,12 +281,38 @@ class StageManager:
             value = value.get_dict()
         if isinstance(value, dict):
             return list(value.values())
-        return list(value)
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return []
 
     def _payload_dict(self, value):
         if isinstance(value, carb.dictionary.Item):
             value = value.get_dict()
         return value if isinstance(value, dict) else {}
+
+    def _resolve_selectable_prim_path(self, stage, prim_path):
+        if stage is None or not prim_path:
+            return None
+
+        prim = stage.GetPrimAtPath(prim_path)
+        if prim and prim.IsValid():
+            return prim_path
+
+        if prim_path != "/World":
+            return None
+
+        default_prim = stage.GetDefaultPrim()
+        if default_prim and default_prim.IsValid():
+            return str(default_prim.GetPath())
+
+        for child in stage.GetPseudoRoot().GetChildren():
+            child_name = child.GetName()
+            if child_name == "Render" or child_name.startswith("OmniverseKit_"):
+                continue
+            if child.IsValid():
+                return str(child.GetPath())
+
+        return None
 
     def _on_highlight_prims(self, event: carb.events.IEvent):
         """
@@ -311,13 +337,22 @@ class StageManager:
         items = self._payload_list(request_payload.get("items"))
         selected_paths = []
         missing_paths = []
+        fallback_paths = []
         for raw_item in items:
             item = self._payload_dict(raw_item)
             prim_path = item.get("prim_path") or item.get("usd_prim_path")
             if not prim_path:
                 continue
-            if stage.GetPrimAtPath(prim_path).IsValid():
-                selected_paths.append(prim_path)
+            selected_path = self._resolve_selectable_prim_path(stage, prim_path)
+            if selected_path:
+                if selected_path not in selected_paths:
+                    selected_paths.append(selected_path)
+                if selected_path != prim_path:
+                    fallback_paths.append({
+                        "requested_path": prim_path,
+                        "selected_path": selected_path,
+                        "reason": "stage_root_fallback",
+                    })
             else:
                 missing_paths.append(prim_path)
 
@@ -334,6 +369,7 @@ class StageManager:
             "applied_mode": "selection",
             "selected_paths": selected_paths,
             "missing_paths": missing_paths,
+            "fallback_paths": fallback_paths,
         }
         get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
 
@@ -348,12 +384,20 @@ class StageManager:
         stage = omni.usd.get_context().get_stage()
         request_payload = self._payload_dict(event.payload)
         prim_path = request_payload.get("prim_path") or request_payload.get("usd_prim_path")
-        if stage is None or not prim_path or not stage.GetPrimAtPath(prim_path).IsValid():
+        selected_path = self._resolve_selectable_prim_path(stage, prim_path)
+        if stage is None or not prim_path or not selected_path:
             payload = {"result": "error", "prim_path": prim_path, "error": "Prim not found."}
         else:
             self._is_external_update = True
-            omni.usd.get_context().get_selection().set_selected_prim_paths([prim_path], True)
-            payload = {"result": "success", "prim_path": prim_path, "applied_mode": "selection"}
+            omni.usd.get_context().get_selection().set_selected_prim_paths([selected_path], True)
+            payload = {
+                "result": "success",
+                "prim_path": selected_path,
+                "requested_prim_path": prim_path,
+                "applied_mode": "selection",
+            }
+            if selected_path != prim_path:
+                payload["fallback_path"] = selected_path
         get_eventdispatcher().dispatch_event("focusPrimResult", payload=payload)
 
     def on_shutdown(self):

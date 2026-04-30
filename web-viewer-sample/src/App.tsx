@@ -75,8 +75,9 @@ interface AppState {
 class App extends Component<{}, AppState>{
     constructor(props: {}) {
         super(props);
+        const initialForm = StreamConfig.source === "local" ? Forms.Stream : Forms.AppOnly;
         this.state = {
-            currentForm: Forms.AppOnly,
+            currentForm: initialForm,
             useWebUI: true,
             streamServer: StreamConfig.stream.streamServer,
             appServer: StreamConfig.stream.appServer,
@@ -105,7 +106,7 @@ class App extends Component<{}, AppState>{
     */
     private _resetState() {
         this.setState({
-            currentForm: Forms.AppOnly,
+            currentForm: StreamConfig.source === "local" ? Forms.Stream : Forms.AppOnly,
             useWebUI: true,
             streamServer: StreamConfig.stream.streamServer,
             appServer: StreamConfig.stream.appServer,
@@ -162,16 +163,16 @@ class App extends Component<{}, AppState>{
    async _startStream(appId: string, version: string, profile: string) {
         this.setState({ currentForm: Forms.IDLE, selectedApplicationProfile: profile})
         console.log(`Creating Session for ${appId} ${version}. Errors are expected as the stream updates.`);
-        this.setState({ connectionText: "Attempting to create streaming session..." })
+        this.setState({ connectionText: "正在建立 streaming session..." })
         const createdStreamResponse = await createStreamingSession(this.state.streamServer, appId, version, profile);
         if (createdStreamResponse.status > 400) {
                 console.log(`Failed to create a new streaming session for ${appId} ${version}. Error code ${createdStreamResponse.status}`);
-                alert(`Failed to create a new streaming session for ${appId} ${version}. Error code ${createdStreamResponse.status}`)
+                alert(`建立 streaming session 失敗：${appId} ${version}，錯誤碼 ${createdStreamResponse.status}`)
                 this._resetState()
                 return;
             }
         
-        this.setState({ sessionId: (createdStreamResponse.data as StreamItem).id, streamStatus: StreamStatus.INITIALIZING, connectionText: "Attempting to load stream..." })
+        this.setState({ sessionId: (createdStreamResponse.data as StreamItem).id, streamStatus: StreamStatus.INITIALIZING, connectionText: "正在載入串流..." })
         if (createdStreamResponse.status === 202) {
             this.pollForSessionReady((createdStreamResponse.data as StreamItem).id);
             return;
@@ -262,7 +263,7 @@ class App extends Component<{}, AppState>{
             {/* Header */}
             <div className="header-bar">
                 <img src={LogoImage} alt="Logo" className="header-logo" />
-                    <span className="header-title">Omniverse Embedded Web Viewer Example</span>
+                    <span className="header-title">BIM Review Omniverse Web Viewer</span>
                 </div>
 
             { /* End Stream button */}
@@ -271,7 +272,7 @@ class App extends Component<{}, AppState>{
                 onClick={() => this._resetStream()}
                 style={{ position: "absolute", right: "15px", top:"8px", width: "250px", visibility: this.state.streamStatus === StreamStatus.INITIALIZING || this.state.streamStatus === StreamStatus.INITIALIZED? "visible": "hidden" }}
                 >
-                End Stream
+                結束串流
                 </button>
             }
             

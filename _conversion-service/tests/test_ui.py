@@ -28,7 +28,7 @@ def test_demo_ui_is_served(tmp_path: Path):
     response = client.get("/ui")
 
     assert response.status_code == 200
-    assert "Conversion Service Demo UI" in response.text
+    assert "轉檔服務 Demo UI" in response.text
     assert "/api/conversions" in response.text
 
 

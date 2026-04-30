@@ -108,10 +108,10 @@ npm run dev
 
 ```powershell
 cd bim-streaming-server
-.\scripts\start-streaming-server.ps1 -UsdPath .\bim-models\許良宇圖書館建築_2026.usd
+.\scripts\start-streaming-server.ps1 -SkipAutoLoad
 ```
 
-`start-streaming-server.ps1` 會把 NvStreamer 的 `*-NvStreamer.etl` trace 固定寫到 `bim-streaming-server/logs/nvstreamer/`。若直接使用 `repo.bat launch`，NvStreamer 會依目前工作目錄輸出 `.etl`，容易污染 server repo root。
+MVP demo 建議先不帶 `auto_load_usd`，由 `web-viewer-sample` 透過 `openStageRequest` 明確載入 `_s3_storage` 的 `model.usdc`，避免 Kit 啟動時 auto-load 與 browser DataChannel 請求競速。`start-streaming-server.ps1` 會把 NvStreamer 的 `*-NvStreamer.etl` trace 固定寫到 `bim-streaming-server/logs/nvstreamer/`。若直接使用 `repo.bat launch`，NvStreamer 會依目前工作目錄輸出 `.etl`，容易污染 server repo root。
 
 啟動 `web-viewer-sample`：
 
@@ -139,6 +139,12 @@ Review session smoke：
 
 ```powershell
 .\scripts\smoke-review-session.ps1
+```
+
+Socket.IO 多人協作 smoke：
+
+```powershell
+.\scripts\smoke-review-socket.ps1
 ```
 
 Conversion smoke：

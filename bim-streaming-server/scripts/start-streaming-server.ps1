@@ -7,6 +7,8 @@ param(
 
     [switch] $SkipGpuCheck,
 
+    [switch] $SkipAutoLoad,
+
     [switch] $PreflightOnly
 )
 
@@ -65,9 +67,12 @@ function ConvertTo-AbsolutePath {
 function Test-PortFree {
     param([Parameter(Mandatory = $true)][int] $Port)
 
-    $matches = @(netstat -ano | Select-String ":$Port")
-    if ($matches.Count -gt 0) {
-        throw "Port $Port is already in use:`n$($matches -join "`n")"
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    if ($listeners.Count -gt 0) {
+        $details = $listeners | ForEach-Object {
+            "TCP $($_.LocalAddress):$($_.LocalPort) LISTENING $($_.OwningProcess)"
+        }
+        throw "Port $Port is already listening:`n$($details -join "`n")"
     }
 }
 
@@ -102,9 +107,12 @@ Run this server from an interactive desktop session where nvidia-smi and D3D12 c
 
 Initialize-WindowsRuntimeEnvironment
 
-$resolvedUsd = ConvertTo-AbsolutePath -Path $UsdPath
-if (-not (Test-Path -LiteralPath $resolvedUsd -PathType Leaf)) {
-    throw "USD file not found: $resolvedUsd"
+$resolvedUsd = $null
+if (-not $SkipAutoLoad) {
+    $resolvedUsd = ConvertTo-AbsolutePath -Path $UsdPath
+    if (-not (Test-Path -LiteralPath $resolvedUsd -PathType Leaf)) {
+        throw "USD file not found: $resolvedUsd"
+    }
 }
 
 $launcher = Join-Path $RepoRoot "_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat"
@@ -117,12 +125,16 @@ Test-PortFree -Port 47998
 Test-GpuReady
 
 if ($PreflightOnly) {
-    Write-Host "[preflight] USD path OK: $resolvedUsd"
+    if ($SkipAutoLoad) {
+        Write-Host "[preflight] auto-load disabled; browser/client must send openStageRequest"
+    }
+    else {
+        Write-Host "[preflight] USD path OK: $resolvedUsd"
+    }
     Write-Host "[preflight] ports OK: 49100 / 47998 are free"
     return
 }
 
-$kitPath = $resolvedUsd.Replace("\", "/")
 $resolvedTraceRoot = ConvertTo-AbsolutePath -Path $TraceRoot
 New-Item -ItemType Directory -Force -Path $resolvedTraceRoot | Out-Null
 
@@ -130,10 +142,18 @@ $args = @()
 if ($NoWindow) {
     $args += "--no-window"
 }
-$args += "--/app/auto_load_usd=$kitPath"
+if (-not $SkipAutoLoad) {
+    $kitPath = $resolvedUsd.Replace("\", "/")
+    $args += "--/app/auto_load_usd=$kitPath"
+}
 
 Write-Host "[streaming] launcher: $launcher"
-Write-Host "[streaming] USD     : $kitPath"
+if ($SkipAutoLoad) {
+    Write-Host "[streaming] USD     : auto-load disabled"
+}
+else {
+    Write-Host "[streaming] USD     : $kitPath"
+}
 Write-Host "[streaming] traces  : $resolvedTraceRoot"
 Write-Host "[streaming] ports   : 49100 / 47998"
 Write-Host "[streaming] starting Kit. Press Ctrl+C to stop."

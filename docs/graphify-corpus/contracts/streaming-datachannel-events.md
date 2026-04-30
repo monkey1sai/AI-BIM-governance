@@ -61,9 +61,30 @@ Response:
     "result": "success",
     "applied_mode": "selection",
     "selected_paths": ["/World"],
-    "missing_paths": []
+    "missing_paths": [],
+    "fallback_paths": []
   }
 }
 ```
 
 The first implementation may use selection as the visual fallback. It must return missing prims instead of crashing.
+If a converted BIM stage uses another root prim such as `/model`, a `/World` request may resolve to the stage default prim and return:
+
+```json
+{
+  "event_type": "highlightPrimsResult",
+  "payload": {
+    "result": "success",
+    "applied_mode": "selection",
+    "selected_paths": ["/model"],
+    "missing_paths": [],
+    "fallback_paths": [
+      {
+        "requested_path": "/World",
+        "selected_path": "/model",
+        "reason": "stage_root_fallback"
+      }
+    ]
+  }
+}
+```
