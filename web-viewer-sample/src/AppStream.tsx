@@ -89,10 +89,12 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                     audioElementId: 'remote-audio',
                     authenticate: true,
                     maxReconnects: 20,
-                    signalingServer: StreamConfig.local.server,
-                    signalingPort: StreamConfig.local.signalingPort,
-                    mediaServer: StreamConfig.local.server,
-                    ...(StreamConfig.local.mediaPort != null && { mediaPort: StreamConfig.local.mediaPort }),
+                    signalingServer: this.props.signalingserver || StreamConfig.local.server,
+                    signalingPort: this.props.signalingport || StreamConfig.local.signalingPort,
+                    mediaServer: this.props.mediaserver || StreamConfig.local.server,
+                    ...((this.props.mediaport || StreamConfig.local.mediaPort) != null && {
+                        mediaPort: this.props.mediaport || StreamConfig.local.mediaPort,
+                    }),
                     nativeTouchEvents: true,
                     // No hardcoded width/height/fps — library defaults (1920x1080/60) match the
                     // server's renderer.resolution in the .kit file. The server's actual encoded

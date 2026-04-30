@@ -22,13 +22,18 @@ import EventLogPanel from "./components/EventLogPanel";
 import IssuePanel from "./components/IssuePanel";
 import PresencePanel from "./components/PresencePanel";
 import ReviewLauncher from "./components/ReviewLauncher";
+import DemoControlPanel from "./components/DemoControlPanel";
 import { BimControlClient } from "./clients/bimControlClient";
 import { CoordinatorClient } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
-import { buildHighlightPrimsRequest, severityToColor } from "./clients/streamMessages";
+import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest, severityToColor } from "./clients/streamMessages";
+import { buildDemoHighlightItem, demoIssueId, demoPrimPath } from "./clients/demoDefaults";
 import { reviewEnv } from "./config/env";
+import type { DemoLogEntry } from "./types/demo";
 import type { ReviewArtifact } from "./types/artifacts";
 import type { ReviewIssue } from "./types/issues";
+import type { ReviewStreamConfig } from "./types/review";
+import type { StreamMessage } from "./types/streamMessages";
 
 
 interface USDPrimType {
@@ -56,6 +61,9 @@ interface AppState {
     reviewArtifacts: ReviewArtifact[];
     reviewIssues: ReviewIssue[];
     reviewEvents: string[];
+    latestStreamConfig: ReviewStreamConfig | null;
+    demoOutgoingMessages: DemoLogEntry[];
+    demoIncomingMessages: DemoLogEntry[];
     usdPrims: USDPrimType[];
     selectedUSDPrims: Set<USDPrimType>;
     isKitReady: boolean;
@@ -105,6 +113,9 @@ export default class App extends React.Component<AppProps, AppState> {
             reviewArtifacts: [],
             reviewIssues: [],
             reviewEvents: [],
+            latestStreamConfig: null,
+            demoOutgoingMessages: [],
+            demoIncomingMessages: [],
             usdPrims: [],
             selectedUSDPrims: new Set<USDPrimType>(),
             isKitReady: false,
@@ -122,6 +133,41 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentWillUnmount(): void {
         this.reviewSocket?.disconnect();
+    }
+
+    private _appendReviewEvent(event: string): void {
+        this.setState((state) => ({
+            reviewEvents: [...state.reviewEvents, event].slice(-80),
+        }));
+    }
+
+    private _appendDemoOutgoing(label: string, payload: unknown): void {
+        this.setState((state) => ({
+            demoOutgoingMessages: [{ at: new Date().toISOString(), label, payload }, ...state.demoOutgoingMessages].slice(0, 20),
+        }));
+    }
+
+    private _appendDemoIncoming(label: string, payload: unknown): void {
+        this.setState((state) => ({
+            demoIncomingMessages: [{ at: new Date().toISOString(), label, payload }, ...state.demoIncomingMessages].slice(0, 20),
+        }));
+    }
+
+    private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): void {
+        AppStream.sendMessage(JSON.stringify(message));
+        this._appendDemoOutgoing(message.event_type, message);
+    }
+
+    private _connectReviewSocket(sessionId: string): void {
+        this.reviewSocket?.disconnect();
+        this.reviewSocket = connectReviewSocket(reviewEnv.coordinatorSocketUrl, {
+            onStatus: (status) => this._appendReviewEvent(`socket ${status}`),
+            onEvent: (event, payload) => {
+                this._appendReviewEvent(`socket event: ${event}`);
+                this._appendDemoIncoming(`socket:${event}`, payload);
+            },
+        });
+        this.reviewSocket.join(sessionId, reviewEnv.defaultUserId, reviewEnv.defaultDisplayName);
     }
 
     private _getReadyLoadingText(): string {
@@ -157,19 +203,19 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _bootstrapReview(): Promise<void> {
         try {
-            if (!reviewEnv.autoCreateSession) {
+            if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId) {
                 this.setState({ reviewStatus: "Review auto-create disabled" });
                 await this._loadReviewDataFromBimControl();
                 return;
             }
 
-            const session = await this.coordinatorClient.createReviewSession({
+            const sessionId = reviewEnv.defaultSessionId || (await this.coordinatorClient.createReviewSession({
                 project_id: reviewEnv.defaultProjectId,
                 model_version_id: reviewEnv.defaultModelVersionId,
                 created_by: reviewEnv.defaultUserId,
-            });
+            })).session_id;
             const [streamConfig, bootstrap] = await Promise.all([
-                this.coordinatorClient.getStreamConfig(session.session_id),
+                this.coordinatorClient.getStreamConfig(sessionId),
                 this.coordinatorClient.getReviewBootstrap(reviewEnv.defaultModelVersionId),
             ]);
 
@@ -177,17 +223,17 @@ export default class App extends React.Component<AppProps, AppState> {
             const usdAssets = this._assetsFromReviewArtifacts(artifacts);
             const selectedUSDAsset = usdAssets.find((asset) => asset.url === streamConfig.model.url) ?? usdAssets[0] ?? this.state.selectedUSDAsset;
 
-            this.reviewSocket = connectReviewSocket(reviewEnv.coordinatorSocketUrl);
-            this.reviewSocket.join(session.session_id, reviewEnv.defaultUserId, reviewEnv.defaultDisplayName);
+            this._connectReviewSocket(sessionId);
 
             this.setState({
-                reviewSessionId: session.session_id,
+                reviewSessionId: sessionId,
                 reviewStatus: `Review session active: ${streamConfig.model.status}`,
                 reviewArtifacts: artifacts,
                 reviewIssues: bootstrap.issues,
+                latestStreamConfig: streamConfig,
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset,
-                reviewEvents: [...this.state.reviewEvents, "review session created"],
+                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId ? "review session loaded" : "review session created"],
             }, () => {
                 if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready") {
                     this._openSelectedAsset();
@@ -241,6 +287,23 @@ export default class App extends React.Component<AppProps, AppState> {
         return Array.from(byUrl.values());
     }
 
+    private async _loadReviewBootstrapFromCoordinator(): Promise<void> {
+        try {
+            const bootstrap = await this.coordinatorClient.getReviewBootstrap(reviewEnv.defaultModelVersionId);
+            const usdAssets = this._assetsFromReviewArtifacts(bootstrap.artifacts);
+            this.setState({
+                reviewArtifacts: bootstrap.artifacts,
+                reviewIssues: bootstrap.issues,
+                usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
+                selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
+            });
+            this._appendReviewEvent("review-bootstrap loaded");
+        } catch (error) {
+            console.warn("Unable to load review-bootstrap.", error);
+            this._appendReviewEvent("review-bootstrap failed");
+        }
+    }
+
     /**
     * @function _queryLoadingState
     *
@@ -249,10 +312,9 @@ export default class App extends React.Component<AppProps, AppState> {
     */
     private _queryLoadingState(): void {
         const message: AppStreamMessageType = {
-            event_type: "loadingStateQuery",
-            payload: {}
+            ...buildLoadingStateQuery()
         };
-        AppStream.sendMessage(JSON.stringify(message));
+        this._sendStreamMessage(message);
     }
 
     /**
@@ -330,13 +392,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
         console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
-        const message: AppStreamMessageType = {
-            event_type: "openStageRequest",
-            payload: {
-                url: this.state.selectedUSDAsset.url
-            }
-        };
-        AppStream.sendMessage(JSON.stringify(message));
+        this._sendStreamMessage(buildOpenStageRequest(this.state.selectedUSDAsset.url));
     }
 
     /**
@@ -360,14 +416,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private _getChildren (usdPrim: USDPrimType | null = null): void {
         // Get geometry prims. If no usdPrim is specified then get children of /World.
         console.log(`Requesting children for path: ${usdPrim ? usdPrim.path : '/World'}.`);
-        const message: AppStreamMessageType = {
-            event_type: "getChildrenRequest",
-            payload: {
-                prim_path   : usdPrim ? usdPrim.path : '/World',
-                filters     : ['USDGeom']
-            }
-        };
-        AppStream.sendMessage(JSON.stringify(message));
+        this._sendStreamMessage(buildGetChildrenRequest(usdPrim ? usdPrim.path : '/World'));
     }
 
     /**
@@ -385,7 +434,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 paths   : paths,
             }
         };
-        AppStream.sendMessage(JSON.stringify(message));
+        this._sendStreamMessage(message);
     }
 
     /**
@@ -422,13 +471,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 paths: []
             }
         };
-        AppStream.sendMessage(JSON.stringify(selection_message));
+        this._sendStreamMessage(selection_message);
 
         const reset_message: AppStreamMessageType = {
             event_type: "resetStage",
             payload: {}
         };
-        AppStream.sendMessage(JSON.stringify(reset_message));
+        this._sendStreamMessage(reset_message);
     }
 
     private _onIssueClick(issue: ReviewIssue): void {
@@ -445,11 +494,49 @@ export default class App extends React.Component<AppProps, AppState> {
             source: issue.source,
             issue_id: issue.issue_id,
         };
-        AppStream.sendMessage(JSON.stringify(buildHighlightPrimsRequest([item], true)));
+        this._sendStreamMessage(buildHighlightPrimsRequest([item], true));
         if (this.state.reviewSessionId && this.reviewSocket) {
             this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, issue.issue_id, [item]);
         }
-        this.setState({ reviewEvents: [...this.state.reviewEvents, `highlight requested: ${issue.issue_id}`] });
+        this._appendReviewEvent(`highlight requested: ${issue.issue_id}`);
+    }
+
+    private _sendDemoHighlightWorld(): void {
+        this._sendStreamMessage(buildHighlightPrimsRequest([buildDemoHighlightItem("web_viewer_demo_panel")], true));
+    }
+
+    private _sendDemoFocusWorld(): void {
+        this._sendStreamMessage(buildFocusPrimRequest(demoPrimPath));
+    }
+
+    private _sendDemoClearHighlight(): void {
+        this._sendStreamMessage(buildClearHighlightRequest());
+    }
+
+    private _emitDemoCoordinatorHighlight(): void {
+        if (!this.state.reviewSessionId || !this.reviewSocket) {
+            this._appendReviewEvent("coordinator highlight skipped: no socket session");
+            return;
+        }
+        this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, demoIssueId, [buildDemoHighlightItem("web_viewer_demo_panel")]);
+        this._appendReviewEvent(`coordinator highlight emitted: ${demoIssueId}`);
+    }
+
+    private _createDemoAnnotation(): void {
+        if (!this.state.reviewSessionId || !this.reviewSocket) {
+            this._appendReviewEvent("annotation skipped: no socket session");
+            return;
+        }
+        this.reviewSocket.emitAnnotation(this.state.reviewSessionId, reviewEnv.defaultUserId, "Demo annotation from Web Viewer Demo Panel");
+        this._appendReviewEvent("annotationCreate emitted");
+    }
+
+    private _connectDemoSocket(): void {
+        if (!this.state.reviewSessionId) {
+            this._appendReviewEvent("socket connect skipped: no review session");
+            return;
+        }
+        this._connectReviewSocket(this.state.reviewSessionId);
     }
 
     /**
@@ -497,6 +584,7 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!event) {
             return;
         }
+        this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
 
         const payload = isRecord(event.payload) ? event.payload : {};
 
@@ -636,6 +724,12 @@ export default class App extends React.Component<AppProps, AppState> {
     render() {
 
         const sidebarWidth = 300;
+        const demoPanelWidth = 360;
+        const showDemoPanel = reviewEnv.showDemoPanel;
+        const demoPanelRight = this.state.showUI ? sidebarWidth : 0;
+        const streamReservedWidth = this.state.showUI
+            ? sidebarWidth + (showDemoPanel ? demoPanelWidth : 0)
+            : (showDemoPanel ? demoPanelWidth : 0);
         return (
             <div
                 style={{
@@ -648,7 +742,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 <div style={{
                             position: 'absolute',
                             height: `calc(100% - ${headerHeight}px)`,
-                            width: `calc(100% - ${sidebarWidth}px)`
+                            width: `calc(100% - ${streamReservedWidth}px)`
                 }}>
                     
                 {/* Loading text indicator */}
@@ -681,12 +775,48 @@ export default class App extends React.Component<AppProps, AppState> {
                     />
                 </div>
 
+                {showDemoPanel &&
+                    <div
+                        style={{
+                            position: "absolute",
+                            right: demoPanelRight,
+                            top: 0,
+                            width: demoPanelWidth,
+                            maxHeight: `calc(100% - ${headerHeight}px)`,
+                            overflow: "auto",
+                            zIndex: 5,
+                        }}
+                    >
+                        <DemoControlPanel
+                            width={demoPanelWidth}
+                            sessionId={this.state.reviewSessionId}
+                            reviewStatus={this.state.reviewStatus}
+                            selectedAssetUrl={this.state.selectedUSDAsset?.url || null}
+                            streamConfig={this.state.latestStreamConfig}
+                            outgoingMessages={this.state.demoOutgoingMessages}
+                            incomingMessages={this.state.demoIncomingMessages}
+                            socketEvents={this.state.reviewEvents}
+                            onCreateOrLoadSession={() => void this._bootstrapReview()}
+                            onLoadBootstrap={() => void this._loadReviewBootstrapFromCoordinator()}
+                            onConnectSocket={() => this._connectDemoSocket()}
+                            onOpenStage={() => this._openSelectedAsset()}
+                            onLoadingState={() => this._queryLoadingState()}
+                            onGetChildren={() => this._getChildren()}
+                            onHighlightWorld={() => this._sendDemoHighlightWorld()}
+                            onFocusWorld={() => this._sendDemoFocusWorld()}
+                            onClearHighlight={() => this._sendDemoClearHighlight()}
+                            onEmitCoordinatorHighlight={() => this._emitDemoCoordinatorHighlight()}
+                            onCreateAnnotation={() => this._createDemoAnnotation()}
+                        />
+                    </div>
+                }
+
                 {this.state.showUI &&
                 <>
                     <div
                         style={{
                             position: "absolute",
-                            right: sidebarWidth,
+                            right: sidebarWidth + (showDemoPanel ? demoPanelWidth : 0),
                             top: 0,
                             width: sidebarWidth,
                             maxHeight: `calc(100% - ${headerHeight}px)`,

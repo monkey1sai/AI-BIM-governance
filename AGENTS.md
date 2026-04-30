@@ -30,7 +30,7 @@ AI-BIM-governance/
 
 ```txt
 AI-BIM-governance/
-├── bim-review-coordinator/      # 控制中心，localhost:8100
+├── bim-review-coordinator/      # 控制中心，localhost:8004
 ├── _conversion-service/         # 轉檔 API，localhost:8003
 ├── bim-streaming-server/        # Kit streaming server，WebRTC 49100
 ├── _bim-control/                # fake artifact / model API，localhost:8001

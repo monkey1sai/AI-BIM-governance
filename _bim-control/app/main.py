@@ -5,6 +5,9 @@ import re
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+
+from .ui import render_ui
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -62,50 +65,62 @@ def _demo_version_dir() -> Path:
 
 def _seed_data(data_root: Path) -> None:
     data_root.mkdir(parents=True, exist_ok=True)
-    _seed_if_missing(
-        data_root / "projects.json",
-        [
-            {
-                "project_id": DEMO_PROJECT_ID,
-                "name": "Demo BIM Review Project",
-                "status": "active",
-                "created_at": "2026-04-29T10:00:00+08:00",
-            }
-        ],
-    )
-    _seed_if_missing(
-        data_root / "model_versions.json",
-        [
-            {
-                "project_id": DEMO_PROJECT_ID,
-                "model_version_id": DEMO_MODEL_VERSION_ID,
-                "name": "Demo Model Version 001",
-                "status": "active",
-                "created_at": "2026-04-29T10:00:00+08:00",
-            }
-        ],
-    )
+    _seed_if_missing(data_root / "projects.json", _demo_projects())
+    _seed_if_missing(data_root / "model_versions.json", _demo_model_versions())
     _seed_if_missing(data_root / "artifacts.json", _build_seed_artifacts())
-    _seed_if_missing(
-        data_root / "review_issues.json",
-        [
-            {
-                "issue_id": "ISSUE-DEMO-001",
-                "project_id": DEMO_PROJECT_ID,
-                "model_version_id": DEMO_MODEL_VERSION_ID,
-                "source": "mock_compliance",
-                "severity": "error",
-                "status": "open",
-                "title": "測試：BIM issue highlight",
-                "description": "用來驗證 issue list 到 DataChannel highlightPrimsRequest 的假資料。",
-                "ifc_guid": "2VJ3sK9L000fake001",
-                "usd_prim_path": "/World",
-                "evidence": {"rule": "smoke_test", "expected_result": "highlight request is emitted"},
-                "created_at": "2026-04-29T10:00:00+08:00",
-            }
-        ],
-    )
+    _seed_if_missing(data_root / "review_issues.json", _demo_review_issues())
     _seed_if_missing(data_root / "annotations.json", [])
+
+
+def _reset_seed_data(data_root: Path) -> None:
+    data_root.mkdir(parents=True, exist_ok=True)
+    _write_list(data_root / "projects.json", _demo_projects())
+    _write_list(data_root / "model_versions.json", _demo_model_versions())
+    _write_list(data_root / "artifacts.json", _build_seed_artifacts())
+    _write_list(data_root / "review_issues.json", _demo_review_issues())
+    _write_list(data_root / "annotations.json", [])
+
+
+def _demo_projects() -> list[dict[str, Any]]:
+    return [
+        {
+            "project_id": DEMO_PROJECT_ID,
+            "name": "Demo BIM Review Project",
+            "status": "active",
+            "created_at": "2026-04-29T10:00:00+08:00",
+        }
+    ]
+
+
+def _demo_model_versions() -> list[dict[str, Any]]:
+    return [
+        {
+            "project_id": DEMO_PROJECT_ID,
+            "model_version_id": DEMO_MODEL_VERSION_ID,
+            "name": "Demo Model Version 001",
+            "status": "active",
+            "created_at": "2026-04-29T10:00:00+08:00",
+        }
+    ]
+
+
+def _demo_review_issues() -> list[dict[str, Any]]:
+    return [
+        {
+            "issue_id": "ISSUE-DEMO-001",
+            "project_id": DEMO_PROJECT_ID,
+            "model_version_id": DEMO_MODEL_VERSION_ID,
+            "source": "mock_compliance",
+            "severity": "error",
+            "status": "open",
+            "title": "測試：BIM issue highlight",
+            "description": "用來驗證 issue list 到 DataChannel highlightPrimsRequest 的假資料。",
+            "ifc_guid": "2VJ3sK9L000fake001",
+            "usd_prim_path": "/World",
+            "evidence": {"rule": "smoke_test", "expected_result": "highlight request is emitted"},
+            "created_at": "2026-04-29T10:00:00+08:00",
+        }
+    ]
 
 
 def _seed_if_missing(path: Path, items: list[dict[str, Any]]) -> None:
@@ -167,6 +182,20 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             "status": "ok",
             "service": "_bim-control",
             "data_root": str(resolved_data_root),
+        }
+
+    @app.get("/ui", response_class=HTMLResponse)
+    def ui():
+        return render_ui()
+
+    @app.post("/api/dev/reset-seed")
+    def reset_seed():
+        _reset_seed_data(resolved_data_root)
+        return {
+            "status": "ok",
+            "message": "Demo seed data reset.",
+            "project_id": DEMO_PROJECT_ID,
+            "model_version_id": DEMO_MODEL_VERSION_ID,
         }
 
     @app.get("/api/projects")

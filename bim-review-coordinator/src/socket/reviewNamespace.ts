@@ -48,6 +48,10 @@ export function registerReviewNamespace(
       ack?.({ ok: true });
     });
 
+    socket.on("heartbeat", (payload: SessionPayload, ack?: (response: unknown) => void) => {
+      ack?.({ ok: true, received_at: new Date().toISOString(), session_id: payload.session_id });
+    });
+
     socket.on("annotationCreate", async (payload: SessionPayload, ack?: (response: unknown) => void) => {
       try {
         const sessionId = payload.session_id;

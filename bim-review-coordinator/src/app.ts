@@ -1,4 +1,7 @@
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
 import { Server } from "socket.io";
@@ -56,6 +59,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json({ limit: "1mb" }));
+  mountDevConsole(app);
 
   app.get("/health", (_request, response) => {
     response.json({
@@ -176,6 +180,23 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   registerReviewNamespace(io, store, eventLog, bimControlClient);
 
   return { app, server, io, config, store, eventLog };
+}
+
+function mountDevConsole(app: express.Express): void {
+  const publicDir = resolvePublicDir();
+  app.use("/dev-console-assets", express.static(publicDir));
+  app.get(["/ui", "/dev-console"], (_request, response) => {
+    response.sendFile(path.join(publicDir, "dev-console.html"));
+  });
+}
+
+function resolvePublicDir(): string {
+  const fromCwd = path.resolve(process.cwd(), "src", "public");
+  if (fs.existsSync(path.join(fromCwd, "dev-console.html"))) {
+    return fromCwd;
+  }
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.join(moduleDir, "public");
 }
 
 async function safeArtifacts(client: BimControlClient, modelVersionId: string): Promise<Artifact[]> {

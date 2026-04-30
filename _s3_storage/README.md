@@ -14,6 +14,16 @@ Files are served from:
 _s3_storage/static
 ```
 
+## Demo UI
+
+```txt
+GET /ui
+GET /api/dev/files
+GET /api/dev/demo-files
+```
+
+`GET /ui` opens a browser file browser for demo artifacts. `GET /api/dev/files` returns static file metadata without reading file bodies.
+
 The conversion smoke fixture is expected at:
 
 ```txt

@@ -44,3 +44,13 @@ Socket.IO namespace:
 ```txt
 /review
 ```
+
+## Dev Console
+
+```txt
+GET /ui
+GET /dev-console
+GET /dev-console-assets/dev-console.js
+```
+
+The dev console can manually trigger every coordinator HTTP API listed above and can connect to Socket.IO namespace `/review` to emit `joinSession`, `leaveSession`, `highlightRequest`, `selectionUpdate`, `annotationCreate`, and `heartbeat`.

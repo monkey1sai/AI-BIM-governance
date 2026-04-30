@@ -26,7 +26,7 @@ The five core repositories/folders are:
 
 ```
 AI-BIM-governance/
-├── bim-review-coordinator/      # Control center, localhost:8100
+├── bim-review-coordinator/      # Control center, localhost:8004
 ├── _conversion-service/         # Conversion API, localhost:8003
 ├── bim-streaming-server/        # Kit streaming server, WebRTC 49100
 ├── _bim-control/                # Fake artifact/model API, localhost:8001

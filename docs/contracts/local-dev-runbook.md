@@ -54,6 +54,40 @@ Open:
 http://127.0.0.1:5173
 ```
 
+## Demo UI Consoles
+
+Each fake API service and the coordinator expose a browser UI for manual demo triggers:
+
+```txt
+http://127.0.0.1:8001/ui  _bim-control metadata, issues, annotations
+http://127.0.0.1:8002/ui  _s3_storage static file browser
+http://127.0.0.1:8003/ui  _conversion-service conversion job console
+http://127.0.0.1:8004/ui  coordinator review session and Socket.IO console
+http://127.0.0.1:5173     web viewer with Demo Controls panel
+```
+
+Open all demo consoles:
+
+```powershell
+.\scripts\open-demo-consoles.ps1
+```
+
+Check health and UI endpoints:
+
+```powershell
+.\scripts\demo-health-check.ps1
+```
+
+The manual demo path is:
+
+```txt
+_s3_storage UI check files
+→ _bim-control UI reset seed / confirm issue
+→ _conversion-service UI create job or dev mock result
+→ coordinator UI create session / get stream-config / connect Socket.IO
+→ web viewer Demo Controls send openStageRequest / highlightPrimsRequest / annotationCreate
+```
+
 ## Smoke Checks
 
 ```powershell

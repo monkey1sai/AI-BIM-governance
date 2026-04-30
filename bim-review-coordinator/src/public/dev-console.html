@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BIM Review Coordinator Dev Console</title>
+  <style>
+    body { margin: 0; font-family: system-ui, Segoe UI, sans-serif; background: #f6f8fb; color: #1f2933; }
+    header { padding: 16px 24px; background: #102a43; color: #fff; }
+    main { display: grid; grid-template-columns: minmax(420px, 560px) 1fr; gap: 16px; padding: 16px; }
+    section { background: #fff; border: 1px solid #d9e2ec; border-radius: 8px; padding: 14px; }
+    label { display: block; margin: 10px 0 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; color: #52606d; }
+    input, textarea { width: 100%; box-sizing: border-box; border: 1px solid #bcccdc; border-radius: 6px; padding: 8px; font: inherit; }
+    textarea { min-height: 130px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+    button, a.button { display: inline-flex; align-items: center; margin: 6px 6px 0 0; padding: 8px 10px; border: 1px solid #9fb3c8; border-radius: 6px; background: #fff; color: #102a43; cursor: pointer; text-decoration: none; font: inherit; }
+    button.primary { background: #0f609b; color: #fff; border-color: #0f609b; }
+    pre { min-height: 250px; margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .status { display: inline-flex; min-width: 92px; padding: 4px 8px; border-radius: 999px; background: #f0f4f8; color: #334e68; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BIM Review Coordinator Dev Console</h1>
+    <p>Manual triggers for review session HTTP APIs and Socket.IO /review events.</p>
+  </header>
+  <main>
+    <section>
+      <div class="grid">
+        <div>
+          <label for="projectId">project_id</label>
+          <input id="projectId" value="project_demo_001" />
+        </div>
+        <div>
+          <label for="modelVersionId">model_version_id</label>
+          <input id="modelVersionId" value="version_demo_001" />
+        </div>
+      </div>
+      <div class="grid">
+        <div>
+          <label for="sessionId">session_id</label>
+          <input id="sessionId" placeholder="created session id" />
+        </div>
+        <div>
+          <label for="userId">user_id</label>
+          <input id="userId" value="dev_user_001" />
+        </div>
+      </div>
+      <div class="grid">
+        <div>
+          <label for="displayName">display_name</label>
+          <input id="displayName" value="Demo User" />
+        </div>
+        <div>
+          <label for="mode">mode</label>
+          <input id="mode" value="single_kit_shared_state" />
+        </div>
+      </div>
+
+      <label for="eventBody">event body</label>
+      <textarea id="eventBody">{
+  "event_type": "manualDemoEvent",
+  "actor_id": "dev_user_001",
+  "payload": {
+    "message": "Triggered from coordinator dev console"
+  }
+}</textarea>
+
+      <h2>HTTP APIs</h2>
+      <button onclick="httpCall('GET', '/health')">GET /health</button>
+      <button class="primary" onclick="createSession()">POST /api/review-sessions</button>
+      <button onclick="getSession()">GET session</button>
+      <button onclick="joinSessionHttp()">POST join</button>
+      <button onclick="leaveSessionHttp()">POST leave</button>
+      <button onclick="getStreamConfig()">GET stream-config</button>
+      <button onclick="getEvents()">GET events</button>
+      <button onclick="postEvent()">POST events</button>
+      <button onclick="getBootstrap()">GET review-bootstrap</button>
+
+      <h2>Socket.IO /review</h2>
+      <div>State: <span id="socketState" class="status">disconnected</span></div>
+      <button class="primary" onclick="connectSocket()">Connect Socket.IO /review</button>
+      <button onclick="disconnectSocket()">Disconnect</button>
+      <button onclick="emitJoin()">joinSession</button>
+      <button onclick="emitLeave()">leaveSession</button>
+      <button onclick="emitHighlight()">highlightRequest</button>
+      <button onclick="emitSelection()">selectionUpdate</button>
+      <button onclick="emitAnnotation()">annotationCreate</button>
+      <button onclick="emitHeartbeat()">heartbeat</button>
+
+      <h2>Shortcuts</h2>
+      <a class="button" href="http://127.0.0.1:8001/ui" target="_blank">Open _bim-control UI</a>
+      <a class="button" href="http://127.0.0.1:8002/ui" target="_blank">Open _s3_storage UI</a>
+      <a class="button" href="http://127.0.0.1:8003/ui" target="_blank">Open conversion UI</a>
+      <a class="button" href="http://127.0.0.1:5173" target="_blank">Open web viewer</a>
+      <button onclick="openViewerWithSession()">Open viewer with current session</button>
+    </section>
+    <section>
+      <h2>HTTP Response</h2>
+      <pre id="httpOutput">No request yet.</pre>
+      <h2>Incoming Socket Events</h2>
+      <pre id="socketOutput">No socket events yet.</pre>
+    </section>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/dev-console-assets/dev-console.js"></script>
+</body>
+</html>

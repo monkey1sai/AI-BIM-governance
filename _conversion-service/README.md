@@ -35,9 +35,11 @@ cd C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server
 
 ```txt
 GET  /health
+GET  /ui
 POST /api/conversions
 GET  /api/conversions/{job_id}
 GET  /api/conversions/{job_id}/result
+POST /api/dev/mock-conversion-result
 ```
 
 Example request:
@@ -91,3 +93,9 @@ By default `allow_fake_mapping=false`. Unmatched IFC GUIDs and USD prims are rep
 - `CONVERTER_PROCESS_FAILED`: inspect `_conversion-service/data/logs/{job_id}.log`; often means `bim-streaming-server` was not built or HOOPS converter extensions are missing.
 - `USD_INDEXER_FAILED`: inspect the same log; often means Kit is missing or `model.usdc` could not be opened.
 - `_bim-control` update warnings do not fail the conversion job after files are published.
+
+## Demo UI
+
+`GET /ui` serves a browser console for creating conversion jobs, polling status, reading results, and opening published URLs.
+
+`POST /api/dev/mock-conversion-result` is a dev-only fallback. It creates a succeeded job with `"mock": true` and writes placeholder outputs only when the target files do not already exist. It does not run the real converter and must not be treated as a production conversion result.
