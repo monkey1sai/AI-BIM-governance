@@ -1,5 +1,6 @@
 import type React from "react";
 import type { DemoLogEntry } from "../types/demo";
+import type { ElementMappingItem, ElementMappingSummary } from "../types/mapping";
 import type { ReviewStreamConfig } from "../types/review";
 
 interface DemoControlPanelProps {
@@ -8,6 +9,13 @@ interface DemoControlPanelProps {
     reviewStatus: string;
     selectedAssetUrl: string | null;
     streamConfig: ReviewStreamConfig | null;
+    mappingUrl: string | null;
+    mappingStatus: string;
+    mappingSummary: ElementMappingSummary | null;
+    mappingItems: ElementMappingItem[];
+    selectedMappingIndex: number;
+    lastMappingVerification: string | null;
+    mappingVerificationBlockedReason: string | null;
     outgoingMessages: DemoLogEntry[];
     incomingMessages: DemoLogEntry[];
     socketEvents: string[];
@@ -22,6 +30,10 @@ interface DemoControlPanelProps {
     onClearHighlight: () => void;
     onEmitCoordinatorHighlight: () => void;
     onCreateAnnotation: () => void;
+    onLoadMapping: () => void;
+    onSelectMappingIndex: (index: number) => void;
+    onHighlightSelectedMapping: () => void;
+    onFocusSelectedMapping: () => void;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -47,6 +59,13 @@ export default function DemoControlPanel({
     reviewStatus,
     selectedAssetUrl,
     streamConfig,
+    mappingUrl,
+    mappingStatus,
+    mappingSummary,
+    mappingItems,
+    selectedMappingIndex,
+    lastMappingVerification,
+    mappingVerificationBlockedReason,
     outgoingMessages,
     incomingMessages,
     socketEvents,
@@ -61,7 +80,13 @@ export default function DemoControlPanel({
     onClearHighlight,
     onEmitCoordinatorHighlight,
     onCreateAnnotation,
+    onLoadMapping,
+    onSelectMappingIndex,
+    onHighlightSelectedMapping,
+    onFocusSelectedMapping,
 }: DemoControlPanelProps) {
+    const selectedMapping = mappingItems[selectedMappingIndex] || null;
+    const disableMappingVerification = !selectedMapping || !!mappingVerificationBlockedReason;
     return (
         <div style={{ ...panelStyle, width }}>
             <div style={{ padding: "10px 12px", fontSize: 16, fontWeight: 700 }}>Demo 操作面板</div>
@@ -93,10 +118,10 @@ export default function DemoControlPanel({
                     送出 getChildrenRequest /World 載入 stage tree
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onHighlightWorld}>
-                    送出 highlightPrimsRequest /World 高亮
+                    送出 highlightPrimsRequest /World smoke-only 高亮
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onFocusWorld}>
-                    送出 focusPrimRequest /World 聚焦
+                    送出 focusPrimRequest /World smoke-only 聚焦
                 </button>
                 <button type="button" className="nvidia-button" style={buttonStyle} onClick={onClearHighlight}>
                     送出 clearHighlightRequest 清除高亮
@@ -108,6 +133,50 @@ export default function DemoControlPanel({
                     建立標註 annotationCreate
                 </button>
 
+                <div style={{ marginTop: 10, padding: 8, border: "1px solid #d8d8d8", background: "#fafafa" }}>
+                    <strong>Mapping 驗證</strong>
+                    <div style={{ marginTop: 4, wordBreak: "break-all" }}>mapping_url：{mappingUrl || "尚未取得"}</div>
+                    <div>狀態：{mappingStatus}</div>
+                    {mappingSummary && (
+                        <div style={{ marginTop: 4 }}>
+                            mapped={mappingSummary.mapped_count ?? 0} / fake={mappingSummary.fake_mapping_count ?? 0} / unmapped IFC={mappingSummary.unmapped_ifc_count ?? 0} / unmapped USD={mappingSummary.unmapped_usd_count ?? 0}
+                        </div>
+                    )}
+                    {mappingVerificationBlockedReason && (
+                        <div style={{ marginTop: 4, padding: 6, border: "1px solid #c77700", background: "#fff7e6", color: "#6b4200" }}>
+                            {mappingVerificationBlockedReason}
+                        </div>
+                    )}
+                    <button type="button" className="nvidia-button" style={{ ...buttonStyle, marginTop: 6 }} onClick={onLoadMapping} disabled={!mappingUrl}>
+                        載入 element_mapping.json
+                    </button>
+                    <select
+                        value={selectedMappingIndex}
+                        onChange={(event) => onSelectMappingIndex(Number(event.target.value))}
+                        disabled={mappingItems.length === 0}
+                        style={{ width: "100%", marginBottom: 6, padding: 4 }}
+                    >
+                        {mappingItems.length === 0 && <option value={0}>沒有可驗證 mapping item</option>}
+                        {mappingItems.map((item, index) => (
+                            <option key={`${item.ifc_guid || "no-guid"}-${item.usd_prim_path || "no-path"}-${index}`} value={index}>
+                                {mappingOptionLabel(item, index)}
+                            </option>
+                        ))}
+                    </select>
+                    {selectedMapping && (
+                        <pre style={{ maxHeight: 120, overflow: "auto", background: "#eef3f8", padding: 6, whiteSpace: "pre-wrap" }}>
+                            {JSON.stringify(selectedMapping, null, 2)}
+                        </pre>
+                    )}
+                    <button type="button" className="nvidia-button" style={buttonStyle} onClick={onHighlightSelectedMapping} disabled={disableMappingVerification}>
+                        用選取 mapping 送 highlightPrimsRequest
+                    </button>
+                    <button type="button" className="nvidia-button" style={buttonStyle} onClick={onFocusSelectedMapping} disabled={disableMappingVerification}>
+                        用選取 mapping 送 focusPrimRequest
+                    </button>
+                    <div style={{ marginTop: 4 }}>驗證結果：{lastMappingVerification || "尚未執行"}</div>
+                </div>
+
                 <LogBlock title="最新 stream-config" entries={streamConfig ? [{ at: "", label: "stream-config", payload: streamConfig }] : []} />
                 <LogBlock title="DataChannel 送出訊息" entries={outgoingMessages} />
                 <LogBlock title="DataChannel 收到訊息" entries={incomingMessages} />
@@ -115,6 +184,14 @@ export default function DemoControlPanel({
             </div>
         </div>
     );
+}
+
+function mappingOptionLabel(item: ElementMappingItem, index: number): string {
+    const guid = item.ifc_guid || "no-guid";
+    const path = item.usd_prim_path || "no-prim-path";
+    const method = item.mapping_method || "unknown";
+    const confidence = typeof item.mapping_confidence === "number" ? item.mapping_confidence.toFixed(2) : "n/a";
+    return `${index + 1}. ${guid} -> ${path} (${method}, ${confidence})`;
 }
 
 function LogBlock({ title, entries }: { title: string; entries: DemoLogEntry[] }) {

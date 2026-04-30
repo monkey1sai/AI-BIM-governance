@@ -321,6 +321,8 @@ class StageManager:
         First MVP uses USD selection as the visual fallback. It still returns
         explicit missing paths so client/coordinator state remains honest.
         """
+        request_payload = self._payload_dict(event.payload)
+        request_id = request_payload.get("request_id")
         stage = omni.usd.get_context().get_stage()
         if stage is None:
             payload = {
@@ -328,12 +330,14 @@ class StageManager:
                 "applied_mode": "selection",
                 "selected_paths": [],
                 "missing_paths": [],
+                "fallback_paths": [],
                 "error": "No stage is open.",
             }
+            if request_id:
+                payload["request_id"] = request_id
             get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
             return
 
-        request_payload = self._payload_dict(event.payload)
         items = self._payload_list(request_payload.get("items"))
         selected_paths = []
         missing_paths = []
@@ -371,6 +375,8 @@ class StageManager:
             "missing_paths": missing_paths,
             "fallback_paths": fallback_paths,
         }
+        if request_id:
+            payload["request_id"] = request_id
         get_eventdispatcher().dispatch_event("highlightPrimsResult", payload=payload)
 
     def _on_clear_highlight(self, event: carb.events.IEvent):
@@ -383,6 +389,7 @@ class StageManager:
     def _on_focus_prim(self, event: carb.events.IEvent):
         stage = omni.usd.get_context().get_stage()
         request_payload = self._payload_dict(event.payload)
+        request_id = request_payload.get("request_id")
         prim_path = request_payload.get("prim_path") or request_payload.get("usd_prim_path")
         selected_path = self._resolve_selectable_prim_path(stage, prim_path)
         if stage is None or not prim_path or not selected_path:
@@ -398,6 +405,8 @@ class StageManager:
             }
             if selected_path != prim_path:
                 payload["fallback_path"] = selected_path
+        if request_id:
+            payload["request_id"] = request_id
         get_eventdispatcher().dispatch_event("focusPrimResult", payload=payload)
 
     def on_shutdown(self):

@@ -65,11 +65,7 @@ export function registerReviewNamespace(
         }
         const sessionId = sessionCheck.sessionId;
         const saved = await bimControlClient.createAnnotation(sessionId, payload);
-        const broadcastResult = broadcastSessionEvent(socket, store, eventLog, "annotationCreated", { ...payload, saved });
-        if (!broadcastResult.ok) {
-          ack?.(broadcastResult);
-          return;
-        }
+        recordAndBroadcast(socket, eventLog, sessionId, "annotationCreated", { ...payload, saved });
         ack?.({ ok: true, saved });
       } catch (error) {
         ack?.({ ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -104,10 +100,19 @@ function broadcastSessionEvent(
 ): AckResponse {
   const sessionCheck = validateExistingSession(store, payload);
   if (!sessionCheck.ok) return sessionCheck;
-  const sessionId = sessionCheck.sessionId;
+  recordAndBroadcast(socket, eventLog, sessionCheck.sessionId, type, payload);
+  return { ok: true };
+}
+
+function recordAndBroadcast(
+  socket: Socket,
+  eventLog: EventLog,
+  sessionId: string,
+  type: string,
+  payload: SessionPayload,
+): void {
   eventLog.append(sessionId, type, payload);
   socket.to(sessionId).emit(type, payload);
-  return { ok: true };
 }
 
 function validateExistingSession(

@@ -5,6 +5,7 @@ import request from "supertest";
 import { io as createSocketClient, type Socket as SocketClient } from "socket.io-client";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { EventLog } from "../src/services/eventLog.js";
 
 let active: CoordinatorApp | null = null;
 let activeRoot: string | null = null;
@@ -199,5 +200,44 @@ describe("bim-review-coordinator", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.detail).toBe("Invalid review session id.");
+  });
+
+  it("skips malformed lines in the event log instead of throwing", async () => {
+    const eventsDir = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-eventlog-"));
+    const log = new EventLog(eventsDir);
+    const sessionId = "review_session_eventlog_skip";
+    log.append(sessionId, "highlightRequest", { issue_id: "ISSUE-DEMO-001" });
+    fs.appendFileSync(path.join(eventsDir, `${sessionId}.jsonl`), "{not valid json\n", "utf8");
+    log.append(sessionId, "selectionUpdate", { user_id: "dev_user_001" });
+
+    const items = log.list(sessionId);
+    expect(items.map((item) => item.type)).toEqual(["highlightRequest", "selectionUpdate"]);
+  });
+
+  it("migrates legacy json event logs into jsonl on first append", async () => {
+    const eventsDir = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-eventlog-"));
+    const sessionId = "review_session_eventlog_migrate";
+    const legacyFile = path.join(eventsDir, `${sessionId}.json`);
+    const jsonlFile = path.join(eventsDir, `${sessionId}.jsonl`);
+
+    const legacyEvent = {
+      event_id: "legacy_001",
+      session_id: sessionId,
+      type: "legacyHighlight",
+      payload: { source: "legacy_seed" },
+      created_at: "2026-04-29T10:00:00.000Z",
+    };
+    fs.writeFileSync(legacyFile, JSON.stringify({ items: [legacyEvent] }, null, 2), "utf8");
+
+    const log = new EventLog(eventsDir);
+    expect(log.list(sessionId).map((item) => item.event_id)).toEqual(["legacy_001"]);
+    expect(fs.existsSync(jsonlFile)).toBe(false);
+
+    log.append(sessionId, "highlightRequest", { issue_id: "ISSUE-DEMO-002" });
+
+    expect(fs.existsSync(jsonlFile)).toBe(true);
+    const merged = log.list(sessionId);
+    expect(merged.map((item) => item.event_id)).toContain("legacy_001");
+    expect(merged.some((item) => item.type === "highlightRequest")).toBe(true);
   });
 });

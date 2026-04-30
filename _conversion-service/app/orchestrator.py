@@ -11,7 +11,7 @@ from .job_store import JobStore
 from .mapping_builder import build_element_mapping
 from .publisher import publish_outputs
 from .settings import Settings
-from .usd_indexer import USDIndexerError, run_usd_indexer
+from .usd_indexer import USDIndexerError, enrich_usd_index, run_usd_indexer
 
 
 def run_conversion_job(job_id: str, settings: Settings) -> None:
@@ -58,7 +58,8 @@ def run_conversion_job(job_id: str, settings: Settings) -> None:
         current_stage = "indexing_usd"
         store.update_job(job_id, status="running", stage=current_stage)
         run_usd_indexer(settings=settings, usd_path=usdc_path, output_path=usd_index_path, log_path=log_path)
-        usd_index = json.loads(usd_index_path.read_text(encoding="utf-8"))
+        usd_index = enrich_usd_index(json.loads(usd_index_path.read_text(encoding="utf-8")))
+        _write_json(usd_index_path, usd_index)
 
         current_stage = "building_mapping"
         store.update_job(job_id, status="running", stage=current_stage)

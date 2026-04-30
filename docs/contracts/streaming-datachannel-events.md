@@ -36,6 +36,7 @@ Request:
 {
   "event_type": "highlightPrimsRequest",
   "payload": {
+    "request_id": "mapping-highlight-001",
     "mode": "replace",
     "items": [
       {
@@ -59,6 +60,7 @@ Response:
   "event_type": "highlightPrimsResult",
   "payload": {
     "result": "success",
+    "request_id": "mapping-highlight-001",
     "applied_mode": "selection",
     "selected_paths": ["/World"],
     "missing_paths": [],
@@ -68,6 +70,12 @@ Response:
 ```
 
 The first implementation may use selection as the visual fallback. It must return missing prims instead of crashing.
+
+Stage-root fallback rules:
+
+- Fallback is triggered only when the requested `prim_path` equals `/World`. Any other unresolved path (for example `/World/Floor1/Wall_1`) is returned as-is in `missing_paths`, never silently rewritten to a different prim.
+- When `/World` is missing, Kit resolves to the stage `defaultPrim` (or the first non-Render, non-`OmniverseKit_*` child of the pseudo-root) and reports the substitution under `fallback_paths`.
+
 If a converted BIM stage uses another root prim such as `/model`, a `/World` request may resolve to the stage default prim and return:
 
 ```json
@@ -75,6 +83,7 @@ If a converted BIM stage uses another root prim such as `/model`, a `/World` req
   "event_type": "highlightPrimsResult",
   "payload": {
     "result": "success",
+    "request_id": "mapping-highlight-001",
     "applied_mode": "selection",
     "selected_paths": ["/model"],
     "missing_paths": [],
@@ -89,6 +98,37 @@ If a converted BIM stage uses another root prim such as `/model`, a `/World` req
 }
 ```
 
+## Focus Prim
+
+Request:
+
+```json
+{
+  "event_type": "focusPrimRequest",
+  "payload": {
+    "request_id": "mapping-focus-001",
+    "prim_path": "/World/IFCWALL/tn__115cm551956_body"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "event_type": "focusPrimResult",
+  "payload": {
+    "result": "success",
+    "request_id": "mapping-focus-001",
+    "prim_path": "/World/IFCWALL/tn__115cm551956_body",
+    "requested_prim_path": "/World/IFCWALL/tn__115cm551956_body",
+    "applied_mode": "selection"
+  }
+}
+```
+
+`request_id` is optional, but when present Kit must echo it in `highlightPrimsResult` / `focusPrimResult`.
+
 ## Web Viewer Demo Panel
 
 `web-viewer-sample` exposes a local demo panel when `VITE_SHOW_DEMO_PANEL=true` (default for this MVP). The panel can manually send:
@@ -97,8 +137,8 @@ If a converted BIM stage uses another root prim such as `/model`, a `/World` req
 openStageRequest
 loadingStateQuery
 getChildrenRequest /World
-highlightPrimsRequest /World
-focusPrimRequest /World
+highlightPrimsRequest /World (smoke-only; not mapping correctness)
+focusPrimRequest /World (smoke-only; not mapping correctness)
 clearHighlightRequest
 ```
 
@@ -108,6 +148,7 @@ Demo `highlightPrimsRequest` payload:
 {
   "event_type": "highlightPrimsRequest",
   "payload": {
+    "request_id": "world-smoke-001",
     "mode": "replace",
     "items": [
       {
@@ -124,4 +165,4 @@ Demo `highlightPrimsRequest` payload:
 }
 ```
 
-Demo panel incoming/outgoing logs are UI diagnostics only. Persistent review data still belongs to `_bim-control`, while collaboration broadcast belongs to `bim-review-coordinator`.
+Demo panel incoming/outgoing logs are UI diagnostics only. `/World` fallback proves only that the stream/DataChannel path is alive; it is not evidence that `element_mapping.json` is correct. Mapping correctness requires a real `element_mapping.json.items[*].usd_prim_path` response with `missing_paths=[]` and `fallback_paths=[]`. Persistent review data still belongs to `_bim-control`, while collaboration broadcast belongs to `bim-review-coordinator`.

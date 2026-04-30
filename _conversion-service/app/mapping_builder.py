@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from .ifc_class_canonicalizer import canonical_ifc_class_key
+
 
 def build_element_mapping(
     ifc_index: dict[str, Any],
@@ -30,22 +32,28 @@ def build_element_mapping(
                 used_usd_paths.add(prim_path)
                 break
 
-    revit_to_ifc = {
-        str(item.get("revit_element_id")): item
-        for item in ifc_elements
-        if item.get("ifc_guid") not in used_ifc_guids and item.get("revit_element_id")
-    }
+    revit_to_ifc = _unique_ifc_revit_ids(ifc_elements, used_ifc_guids)
     for prim in usd_prims:
         prim_path = prim.get("path")
         if not prim_path or prim_path in used_usd_paths:
             continue
-        for candidate in _revit_candidates(prim):
+        for candidate in _metadata_revit_candidates(prim):
             if candidate in revit_to_ifc:
                 ifc_item = revit_to_ifc[candidate]
                 items.append(_mapping_item(ifc_item, prim, "metadata_revit_element_id", 0.85))
                 used_ifc_guids.add(ifc_item["ifc_guid"])
                 used_usd_paths.add(prim_path)
                 break
+
+    ifc_path_keys = _unique_ifc_class_revit_keys(ifc_elements, used_ifc_guids)
+    usd_path_keys = _unique_usd_path_revit_keys(usd_prims, used_usd_paths)
+    for key, ifc_item in ifc_path_keys.items():
+        prim = usd_path_keys.get(key)
+        if not prim:
+            continue
+        items.append(_mapping_item(ifc_item, prim, "path_revit_element_id", 0.70))
+        used_ifc_guids.add(ifc_item["ifc_guid"])
+        used_usd_paths.add(prim["path"])
 
     name_class_pairs = _unique_ifc_name_class_pairs(ifc_elements, used_ifc_guids)
     usd_name_pairs = _unique_usd_name_class_pairs(usd_prims, used_usd_paths)
@@ -106,16 +114,70 @@ def _guid_candidates(prim: dict[str, Any]) -> list[str]:
     return [str(value) for value in prim.get("guid_candidates") or [] if value]
 
 
-def _revit_candidates(prim: dict[str, Any]) -> list[str]:
+def _metadata_revit_candidates(prim: dict[str, Any]) -> list[str]:
     values = []
     for key in ("revit_element_id", "revitElementId", "externalId"):
         value = prim.get(key)
         if value:
             values.append(str(value))
     for entry in prim.get("identifier_candidates") or []:
+        if entry.get("source") == "path":
+            continue
         if entry.get("key") in {"revitElementId", "externalId", "revit_element_id"} and entry.get("value"):
             values.append(str(entry["value"]))
     return values
+
+
+def _path_revit_key_candidates(prim: dict[str, Any]) -> list[tuple[str, str]]:
+    ifc_class = _class_key(prim.get("ifc_class"))
+    if not ifc_class:
+        return []
+
+    values: list[str] = []
+    for entry in prim.get("identifier_candidates") or []:
+        if entry.get("source") != "path":
+            continue
+        if entry.get("key") == "revit_element_id" and entry.get("value"):
+            values.append(str(entry["value"]))
+    return [(ifc_class, value) for value in _unique(values)]
+
+
+def _unique_ifc_revit_ids(items: list[dict[str, Any]], used_guids: set[str]) -> dict[str, dict[str, Any]]:
+    counts: dict[str, int] = {}
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if item.get("ifc_guid") in used_guids or not item.get("revit_element_id"):
+            continue
+        key = str(item["revit_element_id"])
+        counts[key] = counts.get(key, 0) + 1
+        by_key[key] = item
+    return {key: by_key[key] for key, count in counts.items() if count == 1}
+
+
+def _unique_ifc_class_revit_keys(items: list[dict[str, Any]], used_guids: set[str]) -> dict[tuple[str, str], dict[str, Any]]:
+    counts: dict[tuple[str, str], int] = {}
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in items:
+        if item.get("ifc_guid") in used_guids:
+            continue
+        key = (_class_key(item.get("ifc_class")), str(item.get("revit_element_id") or "").strip())
+        if not all(key):
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        by_key[key] = item
+    return {key: by_key[key] for key, count in counts.items() if count == 1}
+
+
+def _unique_usd_path_revit_keys(prims: list[dict[str, Any]], used_paths: set[str]) -> dict[tuple[str, str], dict[str, Any]]:
+    counts: dict[tuple[str, str], int] = {}
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for prim in prims:
+        if prim.get("path") in used_paths:
+            continue
+        for key in set(_path_revit_key_candidates(prim)):
+            counts[key] = counts.get(key, 0) + 1
+            by_key[key] = prim
+    return {key: by_key[key] for key, count in counts.items() if count == 1}
 
 
 def _unique_ifc_name_class_pairs(items: list[dict[str, Any]], used_guids: set[str]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -124,7 +186,7 @@ def _unique_ifc_name_class_pairs(items: list[dict[str, Any]], used_guids: set[st
     for item in items:
         if item.get("ifc_guid") in used_guids:
             continue
-        key = (_norm(item.get("name")), _norm(item.get("ifc_class")))
+        key = (_norm(item.get("name")), _class_key(item.get("ifc_class")))
         if not all(key):
             continue
         counts[key] = counts.get(key, 0) + 1
@@ -142,7 +204,7 @@ def _unique_usd_name_class_pairs(prims: list[dict[str, Any]], used_paths: set[st
         classes = [prim.get("ifc_class"), prim.get("type")]
         for name in names:
             for class_name in classes:
-                key = (_norm(name), _norm(class_name))
+                key = (_norm(name), _class_key(class_name))
                 if not all(key):
                     continue
                 counts[key] = counts.get(key, 0) + 1
@@ -158,6 +220,21 @@ def _last_path_token(path: str | None) -> str | None:
 
 def _norm(value: object) -> str:
     return str(value or "").strip().lower()
+
+
+def _class_key(value: object) -> str:
+    return canonical_ifc_class_key(value)
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _derive_usdc_artifact_id(source_artifact_id: str) -> str:

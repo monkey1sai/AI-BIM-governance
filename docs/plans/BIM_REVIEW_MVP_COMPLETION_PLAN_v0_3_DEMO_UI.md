@@ -2360,7 +2360,11 @@ UI 功能：
 [Button] Send clearHighlightRequest
 [Button] Emit coordinator highlightRequest
 [Button] Create annotation
+[Button] Load element_mapping.json from stream-config.mapping_url
+[Select] Choose real mapping item when mapped_count > 0
+[Button] Send highlightPrimsRequest using selected mapping usd_prim_path
 [Panel] Latest stream-config
+[Panel] Mapping summary / mapping verification result
 [Panel] DataChannel outgoing messages
 [Panel] DataChannel incoming messages
 [Panel] Socket.IO incoming events
@@ -2386,6 +2390,9 @@ UI 功能：
 [x] 可手動 emit coordinator highlightRequest
 [x] Kit / coordinator 任一方未啟動時，UI 顯示清楚錯誤
 [x] WebRTC media stream 未建立時，UI 會顯示 timeout 診斷，不再無限停在等待狀態
+[x] Demo panel 可載入 element_mapping.json，顯示 mapped / fake / unmapped 統計
+[x] 若 mapping items 為空，UI 明確顯示目前沒有可驗證 `ifc_guid -> usd_prim_path`
+[x] 若 mapping items 存在，UI 可用選取 item 的 `usd_prim_path` 送 highlight / focus request
 ```
 
 ---
@@ -2699,6 +2706,56 @@ Browser text: 等待串流開始
 Video state: readyState=0, videoWidth=0, videoHeight=0, currentTime=0, srcObject=false
 Browser console: signaling reaches ws://127.0.0.1:49100/sign_in, then reports 0xC0F22219 after timeout/retry
 Conclusion: not a user operation error; browser WebRTC negotiation/video attach remains a blocker.
+```
+
+2026-04-30 mapping verification follow-up:
+
+```txt
+web-viewer-sample Demo Panel now includes Mapping 驗證.
+It loads stream-config.model.mapping_url, shows mapped / fake / unmapped counts, and can send highlightPrimsRequest / focusPrimRequest from a selected mapping item.
+Current demo element_mapping.json is honest but empty: mapped_count=0, fake_mapping_count=0, items=[].
+Therefore current UI correctly reports that no real mapping item can be verified yet; /World remains smoke-only, not mapping correctness evidence.
+```
+
+2026-04-30 browser verification after Mapping 驗證 patch:
+
+```txt
+URL: http://127.0.0.1:5173/?projectId=project_demo_001&modelVersionId=version_demo_001&userId=dev_user_001&displayName=Demo%20User
+Video state: readyState=4, videoWidth=1920, videoHeight=1080, srcObject=true, currentTime advanced
+Mapping panel: mapping_url loaded from stream-config.model.mapping_url
+Mapping summary shown: mapped=0, fake=0, unmapped IFC=116934, unmapped USD=10872
+Mapping item controls: disabled because element_mapping.json has items=[]
+DataChannel smoke: highlightPrimsRequest /World -> highlightPrimsResult success, selected=1, missing=0, fallback=1
+Evidence screenshot: output/playwright/web-viewer-mapping-validation-full.png
+Note: output/playwright/ is gitignored local evidence; move screenshots to a tracked docs evidence folder before relying on them in a PR.
+```
+
+2026-04-30 mapping correctness implementation recheck:
+
+```txt
+Conversion smoke:
+.\_conversion-service\scripts\smoke_conversion.ps1 -TimeoutSeconds 1800
+job_id=conv_20260430062843_30ea6655
+mapping summary: mapped=503, fake=0, unmapped IFC=73272, unmapped USD=10369
+first item: IfcColumn revit_element_id=401627 -> /model/tn__22002_/tn__6254577_zDcjk9uvc0/Default/tn__GL_l3/IFCCOLUMN/tn__75x120cm401627_mE4Z6n6CcxzCvgSXhl0php0ujb0hbY1
+method: path_revit_element_id, confidence=0.7
+
+Browser mapping panel:
+URL: http://127.0.0.1:5173/?projectId=project_demo_001&modelVersionId=version_demo_001&userId=dev_user_001&displayName=Demo%20User
+Mapping panel loads stream-config.model.mapping_url and shows mapped=503 / fake=0.
+Selected first mapping item and sent:
+- highlightPrimsRequest with request_id=mapping-highlight-* and real usd_prim_path
+- focusPrimRequest with request_id=mapping-focus-* and same real usd_prim_path
+
+Browser blocker:
+Video state stayed readyState=0, networkState=0, currentTime=0.00, videoWidth=0, videoHeight=0, srcObject=false.
+Console: 0 errors; StreamSDK warning 0xC0F22219.
+No highlightPrimsResult / focusPrimResult returned, so browser mapping correctness is still blocked by WebRTC/media negotiation.
+/World remains smoke-only and is not accepted as mapping correctness evidence.
+
+Evidence screenshot:
+output/playwright/web-viewer-mapping-validation-real-mapping.png
+Note: output/playwright/ is gitignored local evidence; move screenshots to a tracked docs evidence folder before relying on them in a PR.
 ```
 
 回歸驗證命令：

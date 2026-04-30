@@ -40,6 +40,13 @@ cd bim-streaming-server
 
 The wrapper keeps NvStreamer ETW traces under `bim-streaming-server/logs/nvstreamer/`.
 For the MVP demo, `-SkipAutoLoad` is preferred so the browser client owns the `openStageRequest` timing and avoids `UsdContext busy` during Kit startup.
+If the browser reaches signaling but the video stays at `readyState=0`, use the demo recovery wrapper from the workspace root:
+
+```powershell
+.\scripts\start-demo-streaming-server.ps1 -SkipGpuCheck
+```
+
+This starts Kit with `-SkipAutoLoad -ResetUser -StreamSdkLogLevel info`, which clears stale Kit user state and enables StreamSDK diagnostics.
 
 ## 6. Web Viewer
 
@@ -87,7 +94,11 @@ _s3_storage UI check files
 → _conversion-service UI create job or dev mock result
 → coordinator UI create session / get stream-config / connect Socket.IO
 → web viewer Demo Controls send openStageRequest / highlightPrimsRequest / annotationCreate
+→ web viewer Mapping 驗證 load element_mapping.json / select mapping item / send highlightPrimsRequest
 ```
+
+The Mapping 驗證 panel is intentionally honest: if `element_mapping.json` has `items=[]`, it reports that there is no verifiable `ifc_guid -> usd_prim_path` item instead of treating `/World` fallback as a real mapping validation.
+If the mapping document is marked `mock=true`, `allow_fake_mapping=true`, has `summary.fake_mapping_count > 0`, or contains `mapping_method="fake_for_smoke_test"`, the panel disables formal mapping verification actions and treats the file as smoke-only.
 
 ## Smoke Checks
 

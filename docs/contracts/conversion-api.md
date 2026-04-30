@@ -49,4 +49,31 @@ usd_index.json
 element_mapping.json
 ```
 
+`usd_index.json.prims[*]` may include conversion-service enrichment when the Kit inspector did not provide semantic metadata:
+
+```json
+{
+  "path": "/model/.../IFCWALL/tn__115cm551956_...",
+  "ifc_class": "IfcWall",
+  "identifier_candidates": [
+    { "source": "path", "key": "revit_element_id", "value": "551956" }
+  ]
+}
+```
+
+`element_mapping.json.items[*].mapping_method` values are conservative. `path_revit_element_id` is valid only when `(ifc_class, revit_element_id)` is unique in both IFC and USD indexes:
+
+```json
+{
+  "ifc_guid": "19nzyxtx5CXwVzdF_4phxj",
+  "ifc_class": "IfcColumn",
+  "revit_element_id": "401627",
+  "usd_prim_path": "/model/.../IFCCOLUMN/tn__75x120cm401627_...",
+  "mapping_method": "path_revit_element_id",
+  "mapping_confidence": 0.7
+}
+```
+
+Fake mappings must use `mapping_method="fake_for_smoke_test"`, low confidence, and must not be accepted as mapping correctness evidence.
+
 The conversion service posts the result to `_bim-control` so the coordinator and web viewer can discover the ready USDC artifact.

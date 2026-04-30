@@ -72,6 +72,8 @@ Expected result:
 job status = succeeded
 result.usdc_url is not empty
 result.mapping_url is not empty
+mapping mapped_count > 0
+mapping fake_mapping_count = 0
 _bim-control returns the same usdc_url
 ```
 
@@ -82,11 +84,12 @@ _bim-control returns the same usdc_url
 ```txt
 metadata_guid             confidence 0.95
 metadata_revit_element_id confidence 0.85
+path_revit_element_id     confidence 0.70
 unique_name_class_match   confidence 0.50
 no_match                  confidence 0.00
 ```
 
-By default `allow_fake_mapping=false`. Unmatched IFC GUIDs and USD prims are reported in `unmapped_ifc_guids` and `unmapped_usd_prims`. Fake mapping is only available for smoke testing with `-AllowFakeMapping`.
+`path_revit_element_id` is a conservative Path+Tag match: the IFC `Tag`/Revit element id and USD path-derived element id must share the same IFC class and be unique on both sides. By default `allow_fake_mapping=false`; `smoke_conversion.ps1` fails if `mapped_count=0` or `fake_mapping_count>0`. Unmatched IFC GUIDs and USD prims are reported in `unmapped_ifc_guids` and `unmapped_usd_prims`. Fake mapping is only available for smoke-only flow testing with `-AllowFakeMapping`.
 
 ## Failure Notes
 
@@ -98,4 +101,4 @@ By default `allow_fake_mapping=false`. Unmatched IFC GUIDs and USD prims are rep
 
 `GET /ui` serves a browser console for creating conversion jobs, polling status, reading results, and opening published URLs.
 
-`POST /api/dev/mock-conversion-result` is a dev-only fallback. It creates a succeeded job with `"mock": true` and writes placeholder outputs only when the target files do not already exist. It does not run the real converter and must not be treated as a production conversion result.
+`POST /api/dev/mock-conversion-result` is a dev-only fallback. It creates a succeeded job with `"mock": true`; its `element_mapping.json` is explicitly marked `mock=true`, `mapping_method="fake_for_smoke_test"`, and `mapping_confidence=0.01`. It does not run the real converter and must not be treated as a production conversion result or mapping correctness evidence. If a non-mock `element_mapping.json` already exists for the same project/version, the mock endpoint leaves it unchanged and returns a warning.

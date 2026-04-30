@@ -13,6 +13,34 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Get-JsonNumber {
+    param(
+        [object] $Object,
+        [string] $PropertyName
+    )
+
+    if ($null -eq $Object) {
+        return 0
+    }
+    $property = $Object.PSObject.Properties[$PropertyName]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return 0
+    }
+    return [int] $property.Value
+}
+
+function Assert-PropertyPresent {
+    param(
+        [object] $Object,
+        [string] $PropertyName
+    )
+
+    $property = $Object.PSObject.Properties[$PropertyName]
+    if ($null -eq $property -or $null -eq $property.Value -or [string]::IsNullOrWhiteSpace([string] $property.Value)) {
+        throw "Mapping item is missing required property '$PropertyName'"
+    }
+}
+
 $sourceUrl = "$StorageUrl/projects/$ProjectId/versions/$ModelVersionId/source.ifc"
 $requestBody = @{
     project_id = $ProjectId
@@ -65,10 +93,43 @@ foreach ($url in @($result.usdc_url, $result.ifc_index_url, $result.usd_index_ur
 }
 
 $mapping = Invoke-RestMethod -Method Get -Uri $result.mapping_url
-Write-Host "[smoke] mapping mapped_count = $($mapping.summary.mapped_count)"
-Write-Host "[smoke] mapping unmapped_ifc_count = $($mapping.summary.unmapped_ifc_count)"
-Write-Host "[smoke] mapping unmapped_usd_count = $($mapping.summary.unmapped_usd_count)"
-Write-Host "[smoke] mapping fake_mapping_count = $($mapping.summary.fake_mapping_count)"
+$mappedCount = Get-JsonNumber -Object $mapping.summary -PropertyName "mapped_count"
+$unmappedIfcCount = Get-JsonNumber -Object $mapping.summary -PropertyName "unmapped_ifc_count"
+$unmappedUsdCount = Get-JsonNumber -Object $mapping.summary -PropertyName "unmapped_usd_count"
+$fakeMappingCount = Get-JsonNumber -Object $mapping.summary -PropertyName "fake_mapping_count"
+Write-Host "[smoke] mapping mapped_count = $mappedCount"
+Write-Host "[smoke] mapping unmapped_ifc_count = $unmappedIfcCount"
+Write-Host "[smoke] mapping unmapped_usd_count = $unmappedUsdCount"
+Write-Host "[smoke] mapping fake_mapping_count = $fakeMappingCount"
+
+if (-not $AllowFakeMapping) {
+    if ($mappedCount -le 0) {
+        throw "Mapping correctness failed: mapped_count must be > 0 when allow_fake_mapping=false."
+    }
+    if ($fakeMappingCount -ne 0) {
+        throw "Mapping correctness failed: fake_mapping_count must be 0 when allow_fake_mapping=false."
+    }
+
+    $items = @($mapping.items)
+    if ($items.Count -le 0) {
+        throw "Mapping correctness failed: element_mapping.json items[] is empty."
+    }
+    foreach ($item in $items) {
+        Assert-PropertyPresent -Object $item -PropertyName "ifc_guid"
+        Assert-PropertyPresent -Object $item -PropertyName "ifc_class"
+        Assert-PropertyPresent -Object $item -PropertyName "revit_element_id"
+        Assert-PropertyPresent -Object $item -PropertyName "usd_prim_path"
+        Assert-PropertyPresent -Object $item -PropertyName "mapping_method"
+        Assert-PropertyPresent -Object $item -PropertyName "mapping_confidence"
+        if ($item.mapping_method -eq "fake_for_smoke_test") {
+            throw "Mapping correctness failed: fake_for_smoke_test item is not allowed when allow_fake_mapping=false."
+        }
+    }
+    Write-Host "[smoke] mapping correctness passed: real mapped items found, no fake mappings accepted"
+}
+else {
+    Write-Host "[smoke] -AllowFakeMapping was set; fake mappings are accepted for smoke-only flow checks"
+}
 
 $stored = Invoke-RestMethod -Method Get -Uri "$BimControlUrl/api/model-versions/$ModelVersionId/conversion-result"
 if ($stored.usdc_url -ne $result.usdc_url) {

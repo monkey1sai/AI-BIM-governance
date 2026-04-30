@@ -125,6 +125,7 @@ class MessagingTest(AsyncTestCase):
         self._ed.dispatch_event(
             "highlightPrimsRequest",
             payload={
+                "request_id": "highlight-world-smoke-001",
                 "mode": "replace",
                 "items": [
                     {
@@ -137,6 +138,7 @@ class MessagingTest(AsyncTestCase):
         await self._app.next_update_async()
 
         payload = received["payload"]
+        self.assertEqual(payload["request_id"], "highlight-world-smoke-001")
         self.assertEqual(payload["result"], "success")
         self.assertEqual(payload["selected_paths"], ["/model"])
         self.assertEqual(payload["missing_paths"], [])
@@ -222,10 +224,11 @@ class MessagingTest(AsyncTestCase):
         ))
         await self._app.next_update_async()
 
-        self._ed.dispatch_event("focusPrimRequest", payload={"prim_path": "/MissingPrim"})
+        self._ed.dispatch_event("focusPrimRequest", payload={"request_id": "focus-missing-001", "prim_path": "/MissingPrim"})
         await self._app.next_update_async()
 
         payload = received["payload"]
+        self.assertEqual(payload["request_id"], "focus-missing-001")
         self.assertEqual(payload["result"], "error")
         self.assertEqual(payload["prim_path"], "/MissingPrim")
 
