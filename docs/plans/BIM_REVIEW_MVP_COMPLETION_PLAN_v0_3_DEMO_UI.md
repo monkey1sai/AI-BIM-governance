@@ -1489,11 +1489,13 @@ Expected:
 [x] Issue panel visible
 [x] Presence panel visible
 [x] Event log visible
-[x] WebRTC stream visible if Kit is running
-[x] model opens if USDC ready
-[x] clicking issue selects / highlights prim
-[x] event log shows highlightPrimsResult
+[ ] WebRTC stream visible if Kit is running
+[ ] model opens if USDC ready in the browser stream
+[ ] clicking issue selects / highlights prim in the browser stream
+[ ] event log shows highlightPrimsResult from a live browser stream
 ```
+
+2026-04-30 recheck: browser currently stays at `等待串流開始`; `#remote-video.readyState=0`, `videoWidth=0`, `videoHeight=0`, `currentTime=0`, and `srcObject=false`. The browser console reaches `ws://127.0.0.1:49100/sign_in` but later reports `0xC0F22219`. Treat browser WebRTC visibility and DataChannel-in-browser acceptance as open until `readyState=4` and playback advances.
 
 ### 8.4 Regression checks
 
@@ -1600,7 +1602,7 @@ Smoke
 [x] dev-health-check.ps1 passes
 [x] smoke-review-session.ps1 passes
 [x] socket smoke passes if implemented
-[x] browser manual smoke documented
+[ ] browser manual smoke proves live WebRTC video
 ```
 
 ---
@@ -2636,7 +2638,9 @@ output/playwright/web-viewer-final-loop.png
 output/playwright/web-viewer-final-loop-current.png
 ```
 
-Web Viewer DataChannel 實測結果：
+Web Viewer DataChannel 前次紀錄（需重新驗證）：
+
+> 2026-04-30 user recheck found the browser stuck at `等待串流開始`; therefore these DataChannel results are not accepted as current browser E2E evidence until the video element reaches `readyState=4` and playback advances.
 
 ```txt
 openStageRequest      -> openedStageResult success
@@ -2672,6 +2676,18 @@ coordinator UI 開兩個 browser tab，dev_user_001 / dev_user_002 加入同一 
 第一個 browser emit highlightRequest，第二個 browser 收到 highlightRequest broadcast。
 presenceUpdated 顯示兩個 participants。
 smoke-review-socket.ps1 覆蓋 join / presence / highlight / selection / annotation / heartbeat。
+```
+
+2026-04-30 WebRTC blocker recheck:
+
+```txt
+URL: http://127.0.0.1:5173
+Kit process: running, TCP 49100 listening
+Coordinator/model state: ready
+Browser text: 等待串流開始
+Video state: readyState=0, videoWidth=0, videoHeight=0, currentTime=0, srcObject=false
+Browser console: signaling reaches ws://127.0.0.1:49100/sign_in, then reports 0xC0F22219 after timeout/retry
+Conclusion: not a user operation error; browser WebRTC negotiation/video attach remains a blocker.
 ```
 
 回歸驗證命令：
