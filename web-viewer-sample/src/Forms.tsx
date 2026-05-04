@@ -12,6 +12,7 @@
 
 import { Component } from 'react';
 import { getApplications, getApplicationVersions, getApplicationVersionProfiles } from './Endpoints';
+import ArchitectureOverview from './components/ArchitectureOverview';
 
 const nextButtonStyle = {
     width: '200px',
@@ -100,38 +101,43 @@ export class AppOnlyForm extends Component <AppOnlyProps, AppOnlyState>{
     
     private _handleOptionChange(value: boolean): void {
         this.setState({ useWebUI: value } );
-    };
+    }
 
     render () {
         return (
             
             <div style={formContainerStyle}>
-            <h3>UI Option</h3>
-                <label>This client is part of the <a
-                    href="https://docs.omniverse.nvidia.com/embedded-web-viewer/latest/index.html" target="_blank"
-                    rel="noopener noreferrer">Embedded Web Viewer Guide</a>.
-                    It provides a user interface and functionality that supports Kit applications created from
-                    the <b>USD Viewer</b> Template in the <a href="https://github.com/NVIDIA-Omniverse/kit-app-template"
-                                              target="_blank" rel="noopener noreferrer">kit-app-template</a>.
-                    <br/>
-                    If you are using this client to stream any other application you need to select the 2nd option below in order for the streamed application to become visible.
-                </label>
-                <br/>
-            <br/>
-            <div className="form-check">
-                <input className="form-check-input" type="radio" name="webUiRadio" checked={this.state.useWebUI} id="yes" onChange={() => this._handleOptionChange(true)}/>
-                <label className="form-check-label" htmlFor="radios1">
-                    UI for default streaming <b>USD Viewer</b> app
-                </label>
+                <div className="landing-layout">
+                    <div className="landing-option-card">
+                        <h3>UI Option</h3>
+                        <label>This client is part of the <a
+                            href="https://docs.omniverse.nvidia.com/embedded-web-viewer/latest/index.html" target="_blank"
+                            rel="noopener noreferrer">Embedded Web Viewer Guide</a>.
+                            It provides a user interface and functionality that supports Kit applications created from
+                            the <b> USD Viewer</b> Template in the <a href="https://github.com/NVIDIA-Omniverse/kit-app-template"
+                                                    target="_blank" rel="noopener noreferrer">kit-app-template</a>.
+                            <br/>
+                            If you are using this client to stream any other application you need to select the 2nd option below in order for the streamed application to become visible.
+                        </label>
+                        <br/>
+                        <br/>
+                        <div className="form-check">
+                            <input className="form-check-input" type="radio" name="webUiRadio" checked={this.state.useWebUI} id="yes" onChange={() => this._handleOptionChange(true)}/>
+                            <label className="form-check-label" htmlFor="yes">
+                                UI for default streaming <b>USD Viewer</b> app
+                            </label>
+                        </div>
+                        <div className="form-check">
+                            <input className="form-check-input" type="radio" name="webUiRadio" id="no" checked={!this.state.useWebUI} onChange={() => this._handleOptionChange(false)}/>
+                            <label className="form-check-label" htmlFor="no">
+                                UI for <b>any</b> streaming app
+                            </label>
+                        </div>
+                        <button type="button" className="nvidia-button" onClick={() => this.props.onNext(this.state)} style={nextButtonStyle}>Next</button>
+                    </div>
+                    <ArchitectureOverview />
+                </div>
             </div>
-            <div className="form-check">
-                <input className="form-check-input" type="radio" name="webUiRadio" id="no" checked={!this.state.useWebUI} onChange={() => this._handleOptionChange(false)}/>
-                <label className="form-check-label" htmlFor="radios1">
-                    UI for <b>any</b> streaming app
-                </label>
-            </div>
-            <button type="button" className="nvidia-button" onClick={() => this.props.onNext(this.state)} style={nextButtonStyle}>Next</button>
-        </div>
         )
     }
 }

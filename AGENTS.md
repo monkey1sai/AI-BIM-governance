@@ -800,3 +800,43 @@ wiki（Graphify/GitNexus）
 
 若發現 wiki 與實作不一致，先以實作為準，並補更新 wiki。
 重大流程變更（API、事件、資料流）合併前應同步更新對應 wiki 入口頁。
+
+## Cursor Cloud specific instructions
+
+### 環境概要
+
+- Node.js 18 透過 nvm 管理；啟動 Node 服務前須先 source nvm：`export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh"`
+- Python 3.12 已系統安裝；FastAPI/uvicorn 等 Python 依賴安裝在全域 site-packages（非 venv）
+- `bim-streaming-server` 需要 NVIDIA GPU + Kit SDK，Cloud VM 無法運行，可跳過
+
+### 啟動服務（5 個可運行的服務）
+
+每個服務需獨立 terminal / tmux session，README.md 已有完整 PowerShell 版命令，以下是 Linux 等效：
+
+| 服務 | 工作目錄 | 啟動命令 | Port |
+|---|---|---|---|
+| `_bim-control` | `_bim-control/` | `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8001` | 8001 |
+| `_s3_storage` | `_s3_storage/` | `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8002` | 8002 |
+| `_conversion-service` | `_conversion-service/` | `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8003` | 8003 |
+| `bim-review-coordinator` | `bim-review-coordinator/` | `npm run dev` | 8004 |
+| `web-viewer-sample` | `web-viewer-sample/` | `npm run dev -- --host 0.0.0.0` | 5173 |
+
+### 測試
+
+- Python tests **必須在各自服務目錄下執行**（因為三個 FastAPI 服務都用 `app` package name，從 root 跑會互相污染 import cache）：
+  - `cd _bim-control && python3 -m pytest tests`
+  - `cd _s3_storage && python3 -m pytest tests`
+  - `cd _conversion-service && python3 -m pytest tests`
+- Node tests：`cd bim-review-coordinator && npm test`
+- Build：`cd bim-review-coordinator && npm run build` / `cd web-viewer-sample && npm run build`
+- Lint（`web-viewer-sample`）：`npm run lint` — 目前有 30 個 pre-existing eslint errors，這是已知狀態
+
+### .env 設定
+
+- 從 `.env.example` 複製：root `.env`、`bim-review-coordinator/.env`、`_conversion-service/.env`
+- 預設值即為本地開發正確值，通常不需修改
+
+### 注意事項
+
+- `web-viewer-sample` 完整功能需要 `bim-streaming-server`（WebRTC 串流），Cloud VM 無 GPU 無法運行。但 UI 仍可正常載入，REST API 與 coordinator 互動正常
+- Health check endpoints：各服務皆有 `/health`
