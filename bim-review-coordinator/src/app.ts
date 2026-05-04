@@ -212,6 +212,27 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     }
   });
 
+  app.post("/api/dev/conversions", async (request, response) => {
+    await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions", request.body);
+  });
+
+  app.post("/api/dev/conversions/mock", async (request, response) => {
+    await proxyConversionService(response, config.conversionApiBase, "POST", "/api/dev/mock-conversion-result", request.body);
+  });
+
+  app.get("/api/dev/conversions/:jobId/result", async (request, response) => {
+    await proxyConversionService(
+      response,
+      config.conversionApiBase,
+      "GET",
+      `/api/conversions/${encodeURIComponent(request.params.jobId)}/result`,
+    );
+  });
+
+  app.get("/api/dev/conversions/:jobId", async (request, response) => {
+    await proxyConversionService(response, config.conversionApiBase, "GET", `/api/conversions/${encodeURIComponent(request.params.jobId)}`);
+  });
+
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof z.ZodError) {
       response.status(400).json({ detail: error.flatten() });
@@ -256,6 +277,41 @@ async function safeIssues(client: BimControlClient, modelVersionId: string) {
   } catch {
     return [];
   }
+}
+
+async function proxyConversionService(
+  response: express.Response,
+  conversionApiBase: string,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<void> {
+  try {
+    const upstreamUrl = new URL(path, ensureTrailingSlash(conversionApiBase)).toString();
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const init: RequestInit = {
+      method,
+      headers,
+    };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    const upstream = await fetch(upstreamUrl, init);
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") || "application/json; charset=utf-8";
+    response.status(upstream.status).type(contentType).send(text || "{}");
+  } catch (error) {
+    response.status(502).json({
+      detail: "Conversion service unavailable.",
+      upstream: conversionApiBase,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
 }
 
 function chooseReadyUsdc(artifacts: Artifact[]): Artifact | undefined {
