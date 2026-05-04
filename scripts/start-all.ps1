@@ -39,7 +39,7 @@ function Test-AlreadyRunning {
     }
 }
 
-function Start-Service {
+function Start-LocalService {
     param(
         [string] $Name,
         [string] $WorkingDirectory,
@@ -84,7 +84,9 @@ function Wait-Health {
                 Write-Host "[ok   ] $Name ($Url)" -ForegroundColor Green
                 return $true
             }
-        } catch {}
+        } catch {
+            # 健康檢查失敗或服務尚未就緒，繼續等待。
+        }
         Start-Sleep -Milliseconds 500
     }
     Write-Host "[warn ] $Name 在 ${TimeoutSeconds}s 內未通過健康檢查 ($Url)" -ForegroundColor Yellow
@@ -93,26 +95,26 @@ function Wait-Health {
 
 # === 啟動 6 個服務 ===
 
-Start-Service `
+Start-LocalService `
     -Name "_s3_storage" `
     -WorkingDirectory (Join-Path $RepoRoot "_s3_storage") `
     -FilePath $Python `
     -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8002")
 
-Start-Service `
+Start-LocalService `
     -Name "_bim-control" `
     -WorkingDirectory (Join-Path $RepoRoot "_bim-control") `
     -FilePath $Python `
     -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001")
 
-Start-Service `
+Start-LocalService `
     -Name "_conversion-service" `
     -WorkingDirectory (Join-Path $RepoRoot "_conversion-service") `
     -FilePath $Python `
     -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8003")
 
 if (-not $SkipCoordinator) {
-    Start-Service `
+    Start-LocalService `
         -Name "bim-review-coordinator" `
         -WorkingDirectory (Join-Path $RepoRoot "bim-review-coordinator") `
         -FilePath "npm.cmd" `
@@ -120,7 +122,7 @@ if (-not $SkipCoordinator) {
 }
 
 if (-not $SkipStreaming) {
-    Start-Service `
+    Start-LocalService `
         -Name "bim-streaming-server" `
         -WorkingDirectory (Join-Path $RepoRoot "bim-streaming-server") `
         -FilePath "powershell.exe" `
@@ -133,7 +135,7 @@ if (-not $SkipStreaming) {
 }
 
 if (-not $SkipViewer) {
-    Start-Service `
+    Start-LocalService `
         -Name "web-viewer-sample" `
         -WorkingDirectory (Join-Path $RepoRoot "web-viewer-sample") `
         -FilePath "npm.cmd" `

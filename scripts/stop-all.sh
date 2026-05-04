@@ -30,8 +30,10 @@ fi
 
 color_cyan="\033[36m"
 color_green="\033[32m"
+color_yellow="\033[33m"
 color_dim="\033[2m"
 color_reset="\033[0m"
+expected_ports=(8001 8002 8003 8004 5173 49100 47998)
 
 for f in "${pidfiles[@]}"; do
   name="$(basename "$f" .pid)"
@@ -78,4 +80,26 @@ for f in "${pidfiles[@]}"; do
 done
 
 echo ""
-echo -e "${color_green}[done ]${color_reset} 全部服務已停止"
+sleep 1
+still_up=()
+for port in "${expected_ports[@]}"; do
+  if command -v ss >/dev/null 2>&1; then
+    if ss -H -ltn "sport = :$port" 2>/dev/null | grep -q .; then
+      still_up+=("$port")
+    fi
+  elif command -v lsof >/dev/null 2>&1; then
+    if lsof -iTCP:"$port" -sTCP:LISTEN -Pn >/dev/null 2>&1; then
+      still_up+=("$port")
+    fi
+  elif command -v netstat >/dev/null 2>&1; then
+    if netstat -an 2>/dev/null | grep -E "[.:]$port[[:space:]].*LISTEN" >/dev/null; then
+      still_up+=("$port")
+    fi
+  fi
+done
+
+if (( ${#still_up[@]} > 0 )); then
+  echo -e "${color_yellow}[warn ]${color_reset} 以下 port 仍在 listen：${still_up[*]}"
+else
+  echo -e "${color_green}[done ]${color_reset} 全部服務已停止"
+fi
