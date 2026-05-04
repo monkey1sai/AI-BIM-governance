@@ -101,7 +101,7 @@ export class AppOnlyForm extends Component <AppOnlyProps, AppOnlyState>{
     
     private _handleOptionChange(value: boolean): void {
         this.setState({ useWebUI: value } );
-    };
+    }
 
     render () {
         return (
