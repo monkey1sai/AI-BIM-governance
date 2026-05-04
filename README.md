@@ -33,6 +33,37 @@
 
 ## Demo 啟動順序 (One-shot Bring-up)
 
+### 一鍵啟動 / 關閉 (Recommended)
+
+**Windows (PowerShell):**
+
+```powershell
+# Repo root
+cd C:\Repos\active\iot\AI-BIM-governance
+
+# 一次啟動 6 個服務（背景執行；log 寫到 scripts\.run\<svc>.log）
+.\scripts\start-all.ps1
+
+# 一次關閉所有服務（tree-kill 連子行程一起清掉）
+.\scripts\stop-all.ps1
+```
+
+選用旗標：`-SkipStreaming`（跳過 Kit GPU runtime）/ `-SkipViewer` / `-SkipCoordinator` / `-Visible`（顯示 console 視窗）。
+
+**Linux / macOS (Bash):**
+
+```bash
+cd /path/to/AI-BIM-governance
+./scripts/start-all.sh         # 啟動 5 個服務 (Kit GPU 不在 Linux 啟動)
+./scripts/stop-all.sh          # SIGTERM (5s 寬限) → SIGKILL 整個 process group
+```
+
+選用旗標：`--skip-viewer` / `--skip-coordinator` / `--health-timeout 30`。
+
+> 啟動腳本會做健康檢查（POST /health），用 `●綠` / `●黃` / `●紅` 即時回報；log 與 PID 寫到 `scripts/.run/`（已加入 `.gitignore`）。
+
+### 手動啟動 (debug 用)
+
 每個服務獨立 terminal，依序啟動：
 
 ```powershell
