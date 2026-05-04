@@ -9,41 +9,143 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RunDir = Join-Path $PSScriptRoot ".run"
-if (-not (Test-Path $RunDir)) {
-    Write-Host "[stop ] 沒有 scripts/.run/ 目錄，視為未啟動" -ForegroundColor DarkGray
-    return
-}
 
-$pidFiles = Get-ChildItem -Path $RunDir -Filter "*.pid" -ErrorAction SilentlyContinue
-if (-not $pidFiles -or $pidFiles.Count -eq 0) {
-    Write-Host "[stop ] 找不到任何 PID 檔，視為未啟動" -ForegroundColor DarkGray
-    return
-}
+$ExpectedServices = @(
+    @{ Name = "_s3_storage"; Ports = @(8002) },
+    @{ Name = "_bim-control"; Ports = @(8001) },
+    @{ Name = "_conversion-service"; Ports = @(8003) },
+    @{ Name = "bim-review-coordinator"; Ports = @(8004) },
+    @{ Name = "web-viewer-sample"; Ports = @(5173) },
+    @{ Name = "bim-streaming-server"; Ports = @(49100, 47998) }
+)
 
-foreach ($f in $pidFiles) {
-    $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
-    $procId = Get-Content $f.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $procId) {
-        Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
-        continue
+$ExpectedPorts = $ExpectedServices | ForEach-Object { $_.Ports } | ForEach-Object { $_ }
+$StoppedPids = @{}
+
+function Get-ServiceNameByPort {
+    param([int] $Port)
+
+    foreach ($svc in $ExpectedServices) {
+        if ($svc.Ports -contains $Port) {
+            return $svc.Name
+        }
     }
+    return "unknown"
+}
+
+function Get-ProcessInfo {
+    param([int] $ProcId)
+
+    Get-CimInstance Win32_Process -Filter "ProcessId = $ProcId" -ErrorAction SilentlyContinue
+}
+
+function Test-IsWorkspaceProcess {
+    param($ProcessInfo)
+
+    if (-not $ProcessInfo) { return $false }
+
+    $needle = $RepoRoot.ToLowerInvariant()
+    $commandLine = ""
+    $executablePath = ""
+    if ($ProcessInfo.CommandLine) { $commandLine = $ProcessInfo.CommandLine.ToLowerInvariant() }
+    if ($ProcessInfo.ExecutablePath) { $executablePath = $ProcessInfo.ExecutablePath.ToLowerInvariant() }
+
+    return ($commandLine.Contains($needle) -or $executablePath.Contains($needle))
+}
+
+function Stop-ProcessTree {
+    param(
+        [string] $Name,
+        [int] $ProcId,
+        [string] $Source
+    )
+
+    if ($StoppedPids.ContainsKey($ProcId)) { return }
 
     try {
-        $proc = Get-Process -Id $procId -ErrorAction Stop
-        Write-Host "[stop ] $name (PID=$procId) ..." -ForegroundColor Cyan
-        # tree-kill：連同子行程 (Kit / Node / Python child) 一起終結
-        & taskkill.exe /F /T /PID $procId 2>&1 | Out-Null
+        $null = Get-Process -Id $ProcId -ErrorAction Stop
+        Write-Host "[stop ] $Name (PID=$ProcId, source=$Source) ..." -ForegroundColor Cyan
+        & taskkill.exe /F /T /PID $ProcId 2>&1 | Out-Null
+        $StoppedPids[$ProcId] = $true
     } catch {
-        Write-Host "[skip ] $name (PID=$procId) 已不存在" -ForegroundColor DarkGray
+        Write-Host "[skip ] $Name (PID=$ProcId) 已不存在" -ForegroundColor DarkGray
+        $StoppedPids[$ProcId] = $true
+    }
+}
+
+if (-not (Test-Path $RunDir)) {
+    Write-Host "[stop ] 沒有 scripts/.run/ 目錄，改用 port/process fallback 檢查" -ForegroundColor DarkGray
+} else {
+    $pidFiles = Get-ChildItem -Path $RunDir -Filter "*.pid" -ErrorAction SilentlyContinue
+
+    if (-not $pidFiles -or $pidFiles.Count -eq 0) {
+        Write-Host "[stop ] 找不到任何 PID 檔，改用 port/process fallback 檢查" -ForegroundColor DarkGray
     }
 
-    Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
-    if (-not $KeepLogs) {
-        Remove-Item (Join-Path $RunDir "$name.log") -Force -ErrorAction SilentlyContinue
-        Remove-Item (Join-Path $RunDir "$name.log.err") -Force -ErrorAction SilentlyContinue
+    foreach ($f in $pidFiles) {
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+        $procIdText = Get-Content $f.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $procIdText) {
+            Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
+            continue
+        }
+
+        $procId = 0
+        if ([int]::TryParse($procIdText, [ref] $procId)) {
+            Stop-ProcessTree -Name $name -ProcId $procId -Source "pid-file"
+        } else {
+            Write-Host "[skip ] $name PID 檔內容不是數字：$procIdText" -ForegroundColor Yellow
+        }
+
+        Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
+        if (-not $KeepLogs) {
+            Remove-Item (Join-Path $RunDir "$name.log") -Force -ErrorAction SilentlyContinue
+            Remove-Item (Join-Path $RunDir "$name.log.err") -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+$listening = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+    Where-Object { $ExpectedPorts -contains $_.LocalPort }
+
+foreach ($conn in $listening) {
+    $procId = [int] $conn.OwningProcess
+    if ($procId -le 0 -or $StoppedPids.ContainsKey($procId)) { continue }
+
+    $processInfo = Get-ProcessInfo -ProcId $procId
+    $name = Get-ServiceNameByPort -Port ([int] $conn.LocalPort)
+
+    if (Test-IsWorkspaceProcess -ProcessInfo $processInfo) {
+        Stop-ProcessTree -Name $name -ProcId $procId -Source "port:$($conn.LocalPort)"
+        if ((Test-Path $RunDir) -and -not $KeepLogs) {
+            Remove-Item (Join-Path $RunDir "$name.log") -Force -ErrorAction SilentlyContinue
+            Remove-Item (Join-Path $RunDir "$name.log.err") -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-Host "[skip ] port $($conn.LocalPort) PID=$procId 不屬於此 workspace，未停止" -ForegroundColor Yellow
+    }
+}
+
+Start-Sleep -Milliseconds 500
+$remaining = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+    Where-Object { $ExpectedPorts -contains $_.LocalPort }
+
+$workspaceRemaining = @()
+foreach ($conn in $remaining) {
+    $processInfo = Get-ProcessInfo -ProcId ([int] $conn.OwningProcess)
+    if (Test-IsWorkspaceProcess -ProcessInfo $processInfo) {
+        $workspaceRemaining += $conn
     }
 }
 
 Write-Host ""
-Write-Host "[done ] 全部服務已停止" -ForegroundColor Green
+if ($workspaceRemaining.Count -gt 0) {
+    Write-Host "[warn ] 部分 workspace 服務仍在 listen：" -ForegroundColor Yellow
+    foreach ($conn in $workspaceRemaining) {
+        Write-Host "       port $($conn.LocalPort), PID=$($conn.OwningProcess)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[done ] 全部服務已停止" -ForegroundColor Green
+}
