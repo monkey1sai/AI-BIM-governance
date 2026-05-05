@@ -1,0 +1,37 @@
+# GitNexus ignored outputs for local analysis stability
+# Generated logs / browser profiles / profiler artifacts
+/_bim-control/.pytest_cache/
+/_bim-control/.gitnexus/
+**/.pytest_cache/
+**/.gitnexus/
+**/node_modules/
+**/dist/
+**/build/
+**/coverage/
+**/._*
+**/._*/*
+/**/_testoutput/
+/**/chrome-profile*/
+/**/chrome-profile-*/
+**/GrShaderCache/
+**/Code Cache/
+**/Cache/
+**/Default/
+**/.cache/
+**/.venv/
+**/.pytest_cache/
+**/__pycache__/
+**/docs/wiki/gitnexus/
+**/*.etl
+**/*.pma
+**/*.tflite
+**/*.model
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.log
+**/*.zip
+**/*.tar
+**/*.7z
+**/*.gz
+README.md

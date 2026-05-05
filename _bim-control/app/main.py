@@ -184,6 +184,7 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             "data_root": str(resolved_data_root),
         }
 
+    @app.get("/", response_class=HTMLResponse)
     @app.get("/ui", response_class=HTMLResponse)
     def ui():
         return render_ui()

@@ -455,6 +455,9 @@ def render_ui() -> HTMLResponse:
     const jsonBody = document.getElementById('jsonBody');
     const connStatus = document.getElementById('connStatus');
     const failureBox = document.getElementById('failure');
+    const params = new URLSearchParams(window.location.search);
+    const requestedSessionId = params.get('sessionId') || params.get('review_session_id');
+    if (requestedSessionId) sessionId.value = requestedSessionId;
 
     function readBody() { return JSON.parse(jsonBody.value); }
 

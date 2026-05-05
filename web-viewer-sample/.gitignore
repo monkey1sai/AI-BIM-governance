@@ -30,7 +30,6 @@ yalc.lock
 
 # Local agent artifacts
 /.claude/
-/AGENTS.md
 /CLAUDE.md
 
 # Stray dir created when %SystemDrive% env var failed to expand under bash/MSYS
