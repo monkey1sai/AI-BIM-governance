@@ -82,6 +82,185 @@ video#remote-video {
     word-break: break-word;
 }
 
+.landing-layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 420px) minmax(520px, 1fr);
+    gap: 24px;
+    align-items: start;
+    padding: 24px;
+    min-height: calc(100vh - 60px);
+    background:
+        radial-gradient(circle at top right, rgba(118, 185, 0, 0.16), transparent 32%),
+        linear-gradient(135deg, #f7f9fb 0%, #ffffff 54%, #eef3f7 100%);
+    box-sizing: border-box;
+}
+
+.landing-option-card {
+    padding: 22px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #dde4ea;
+    border-radius: 16px;
+    box-shadow: 0 14px 34px rgba(25, 38, 52, 0.12);
+}
+
+.architecture-overview {
+    color: #1f2933;
+}
+
+.architecture-copy {
+    max-width: 900px;
+    margin-bottom: 18px;
+}
+
+.architecture-eyebrow {
+    margin: 0 0 4px;
+    color: #5f8f00;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.architecture-copy h2 {
+    margin: 0 0 8px;
+    font-size: 32px;
+    font-weight: 800;
+}
+
+.architecture-copy p:last-child {
+    margin: 0;
+    color: #53606c;
+}
+
+.architecture-map {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(170px, 1fr));
+    gap: 14px;
+}
+
+.architecture-node {
+    min-height: 178px;
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(31, 41, 51, 0.12);
+    background: #ffffff;
+    box-shadow: 0 10px 24px rgba(25, 38, 52, 0.08);
+    position: relative;
+    overflow: hidden;
+}
+
+.architecture-node::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 5px;
+    background: var(--node-color, #76b900);
+}
+
+.architecture-node--authority {
+    --node-color: #2563eb;
+}
+
+.architecture-node--storage {
+    --node-color: #7c3aed;
+}
+
+.architecture-node--control {
+    --node-color: #76b900;
+}
+
+.architecture-node--runtime {
+    --node-color: #f97316;
+}
+
+.architecture-node--client {
+    --node-color: #0891b2;
+}
+
+.architecture-node--worker {
+    --node-color: #64748b;
+}
+
+.architecture-node__title {
+    margin-top: 4px;
+    font-size: 16px;
+    font-weight: 800;
+}
+
+.architecture-node__role {
+    min-height: 38px;
+    margin-top: 4px;
+    color: #53606c;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.architecture-node ul,
+.architecture-flow-card ul,
+.architecture-flow-card ol {
+    margin: 10px 0 0;
+    padding-left: 18px;
+}
+
+.architecture-node li,
+.architecture-flow-card li {
+    margin-bottom: 5px;
+    color: #4b5563;
+    font-size: 12px;
+}
+
+.architecture-flow-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+    gap: 14px;
+    margin-top: 14px;
+}
+
+.architecture-flow-card {
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid #dbe4ec;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 10px 24px rgba(25, 38, 52, 0.06);
+}
+
+.architecture-flow-card--rules {
+    background: #111827;
+    border-color: #111827;
+}
+
+.architecture-flow-card h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 800;
+}
+
+.architecture-flow-card--rules h3,
+.architecture-flow-card--rules li {
+    color: #ffffff;
+}
+
+@media (max-width: 1100px) {
+    .landing-layout,
+    .architecture-flow-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .architecture-map {
+        grid-template-columns: repeat(2, minmax(170px, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .landing-layout {
+        padding: 14px;
+    }
+
+    .architecture-map {
+        grid-template-columns: 1fr;
+    }
+}
+
 .nvidia-button {
     font-size: 14px;
     margin-top: 6px; /* Space above the button */

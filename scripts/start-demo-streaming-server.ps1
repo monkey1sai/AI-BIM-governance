@@ -9,17 +9,17 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $StreamingRoot = Join-Path $RepoRoot "bim-streaming-server"
 
-$args = @("-SkipAutoLoad", "-ResetUser", "-StreamSdkLogLevel", "info")
+$kitArgs = @("-SkipAutoLoad", "-ResetUser", "-StreamSdkLogLevel", "info")
 if ($SkipGpuCheck) {
-    $args += "-SkipGpuCheck"
+    $kitArgs += "-SkipGpuCheck"
 }
 
 Write-Host "[demo-streaming] starting Kit with reset-user recovery settings"
-Write-Host "[demo-streaming] command: bim-streaming-server\scripts\start-streaming-server.ps1 $($args -join ' ')"
+Write-Host "[demo-streaming] command: bim-streaming-server\scripts\start-streaming-server.ps1 $($kitArgs -join ' ')"
 
 Push-Location -LiteralPath $StreamingRoot
 try {
-    & ".\scripts\start-streaming-server.ps1" @args
+    & ".\scripts\start-streaming-server.ps1" @kitArgs
 }
 finally {
     Pop-Location

@@ -131,6 +131,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
+    private pendingIssueHighlightRequestId: string | null = null;
+    private pendingIssueHighlightIssueId: string | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -597,6 +599,10 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
+        const requestId = makeRequestId('issue-highlight');
+        this.pendingIssueHighlightRequestId = requestId;
+        this.pendingIssueHighlightIssueId = issue.issue_id;
+
         const item = {
             prim_path: issue.usd_prim_path,
             ifc_guid: issue.ifc_guid,
@@ -605,7 +611,7 @@ export default class App extends React.Component<AppProps, AppState> {
             source: issue.source,
             issue_id: issue.issue_id,
         };
-        this._sendStreamMessage(buildHighlightPrimsRequest([item], true));
+        this._sendStreamMessage(buildHighlightPrimsRequest([item], true, requestId));
         if (this.state.reviewSessionId && this.reviewSocket) {
             this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, issue.issue_id, [item]);
         }
@@ -635,7 +641,9 @@ export default class App extends React.Component<AppProps, AppState> {
             if (!isElementMappingDocument(payload)) {
                 throw new Error("mapping JSON shape is invalid");
             }
-            const items = Array.isArray(payload.items) ? payload.items.filter((item) => item.usd_prim_path) : [];
+            const items = Array.isArray(payload.items)
+                ? payload.items.filter((item): item is Record<string, unknown> => isRecord(item) && Boolean(item['usd_prim_path']))
+                : [];
             const summary = payload.summary || {
                 mapped_count: items.length,
                 unmapped_ifc_count: payload.unmapped_ifc_guids?.length || 0,
@@ -906,6 +914,21 @@ export default class App extends React.Component<AppProps, AppState> {
                     ? `mapping highlight 通過：selected=${expectedPath}, missing=0, fallback=0`
                     : `mapping highlight 失敗：result=${result}, expected=${expectedPath || "unknown"}, selected=${selectedPaths.join(",") || "none"}, missing=${missingPaths.length}, fallback=${fallbackPaths.length}`;
                 this.pendingMappingHighlightRequestId = null;
+            } else if (requestId && requestId === this.pendingIssueHighlightRequestId) {
+                const issueId = this.pendingIssueHighlightIssueId;
+                const hasFallback = fallbackPaths.length > 0;
+                const hasMissing = missingPaths.length > 0;
+                let issueStatus: string;
+                if (result === "success" && !hasMissing && !hasFallback) {
+                    issueStatus = `審查問題 ${issueId} 高亮成功`;
+                } else if (hasFallback) {
+                    issueStatus = `審查問題 ${issueId} 高亮 fallback（prim 找不到，退到 stage root）`;
+                } else {
+                    issueStatus = `審查問題 ${issueId} 高亮失敗：result=${result}, missing=${missingPaths.length}`;
+                }
+                nextState.reviewEvents = [...(nextState.reviewEvents ?? this.state.reviewEvents), issueStatus];
+                this.pendingIssueHighlightRequestId = null;
+                this.pendingIssueHighlightIssueId = null;
             }
 
             this.setState(nextState as Pick<AppState, keyof AppState>);

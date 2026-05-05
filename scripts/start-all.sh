@@ -77,7 +77,7 @@ start_service() {
 
   echo -e "${color_cyan}[start]${color_reset} $name ..."
   # setsid 啟一個新的 process group，stop 時 kill -PG 可一次帶走子行程
-  ( cd "$workdir" && setsid bash -c "$cmd" ) >"$logfile" 2>&1 &
+  ( cd "$workdir" && exec setsid bash -c "$cmd" ) >"$logfile" 2>&1 &
   local pid=$!
   echo "$pid" > "$pidfile"
   echo -e "       ${color_dim}PID=$pid  log=$logfile${color_reset}"
@@ -107,15 +107,15 @@ wait_health() {
 
 start_service "_s3_storage" \
   "$REPO_ROOT/_s3_storage" \
-  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload"
+  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8002"
 
 start_service "_bim-control" \
   "$REPO_ROOT/_bim-control" \
-  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload"
+  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8001"
 
 start_service "_conversion-service" \
   "$REPO_ROOT/_conversion-service" \
-  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8003 --reload"
+  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8003"
 
 if [[ $SKIP_COORDINATOR -eq 0 ]]; then
   start_service "bim-review-coordinator" \

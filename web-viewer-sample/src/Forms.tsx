@@ -12,6 +12,7 @@
 
 import { Component } from 'react';
 import { getApplications, getApplicationVersions, getApplicationVersionProfiles } from './Endpoints';
+import ArchitectureOverview from './components/ArchitectureOverview';
 
 const nextButtonStyle = {
     width: '200px',
@@ -100,38 +101,43 @@ export class AppOnlyForm extends Component <AppOnlyProps, AppOnlyState>{
     
     private _handleOptionChange(value: boolean): void {
         this.setState({ useWebUI: value } );
-    };
+    }
 
     render () {
         return (
             
             <div style={formContainerStyle}>
-            <h3>UI 顯示模式</h3>
-                <label>這個 client 對應 NVIDIA <a
-                    href="https://docs.omniverse.nvidia.com/embedded-web-viewer/latest/index.html" target="_blank"
-                    rel="noopener noreferrer">Embedded Web Viewer Guide</a>，
-                    並提供可操作 <b>USD Viewer</b> template Kit app 的 UI 與功能；template 來源是
-                    <a href="https://github.com/NVIDIA-Omniverse/kit-app-template"
-                                              target="_blank" rel="noopener noreferrer"> kit-app-template</a>。
-                    <br/>
-                    如果串流的是其他 Kit app，請選第二個選項，避免 viewer UI 擋住串流畫面。
-                </label>
-                <br/>
-            <br/>
-            <div className="form-check">
-                <input className="form-check-input" type="radio" name="webUiRadio" checked={this.state.useWebUI} id="yes" onChange={() => this._handleOptionChange(true)}/>
-                <label className="form-check-label" htmlFor="radios1">
-                    顯示 <b>USD Viewer</b> 專用 UI 與 BIM review Demo 面板
-                </label>
+                <div className="landing-layout">
+                    <div className="landing-option-card">
+                        <h3>UI 顯示模式</h3>
+                        <label>這個 client 對應 NVIDIA <a
+                            href="https://docs.omniverse.nvidia.com/embedded-web-viewer/latest/index.html" target="_blank"
+                            rel="noopener noreferrer">Embedded Web Viewer Guide</a>，
+                            並提供可操作 <b>USD Viewer</b> template Kit app 的 UI 與功能；template 來源是
+                            <a href="https://github.com/NVIDIA-Omniverse/kit-app-template"
+                                                    target="_blank" rel="noopener noreferrer">kit-app-template</a>。
+                            <br/>
+                            如果串流的是其他 Kit app，請選第二個選項，避免 viewer UI 擋住串流畫面。
+                        </label>
+                        <br/>
+                        <br/>
+                        <div className="form-check">
+                            <input className="form-check-input" type="radio" name="webUiRadio" checked={this.state.useWebUI} id="yes" onChange={() => this._handleOptionChange(true)}/>
+                            <label className="form-check-label" htmlFor="yes">
+                                顯示 <b>USD Viewer</b> 專用 UI 與 BIM review Demo 面板
+                            </label>
+                        </div>
+                        <div className="form-check">
+                            <input className="form-check-input" type="radio" name="webUiRadio" id="no" checked={!this.state.useWebUI} onChange={() => this._handleOptionChange(false)}/>
+                            <label className="form-check-label" htmlFor="no">
+                                只顯示 <b>任意 Kit app</b> 串流畫面
+                            </label>
+                        </div>
+                        <button type="button" className="nvidia-button" onClick={() => this.props.onNext(this.state)} style={nextButtonStyle}>下一步</button>
+                    </div>
+                    <ArchitectureOverview />
+                </div>
             </div>
-            <div className="form-check">
-                <input className="form-check-input" type="radio" name="webUiRadio" id="no" checked={!this.state.useWebUI} onChange={() => this._handleOptionChange(false)}/>
-                <label className="form-check-label" htmlFor="radios1">
-                    只顯示 <b>任意 Kit app</b> 串流畫面
-                </label>
-            </div>
-            <button type="button" className="nvidia-button" onClick={() => this.props.onNext(this.state)} style={nextButtonStyle}>下一步</button>
-        </div>
         )
     }
 }
