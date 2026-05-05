@@ -1,6 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import type { BimControlClient } from "../services/bimControlClient.js";
 import type { EventLog } from "../services/eventLog.js";
+import { isSafeSessionId } from "../services/sessionStore.js";
 import type { SessionStore } from "../services/sessionStore.js";
 
 interface SessionPayload {
@@ -9,6 +10,10 @@ interface SessionPayload {
   display_name?: string;
   [key: string]: unknown;
 }
+
+type AckResponse =
+  | { ok: true; [key: string]: unknown }
+  | { ok: false; error: string };
 
 export function registerReviewNamespace(
   io: Server,
@@ -20,17 +25,18 @@ export function registerReviewNamespace(
 
   namespace.on("connection", (socket) => {
     socket.on("joinSession", (payload: SessionPayload, ack?: (response: unknown) => void) => {
-      const sessionId = payload.session_id;
-      const userId = payload.user_id || socket.id;
-      if (!sessionId) {
-        ack?.({ ok: false, error: "Missing session_id" });
+      const sessionCheck = validateExistingSession(store, payload);
+      if (!sessionCheck.ok) {
+        ack?.(sessionCheck);
         return;
       }
-      socket.join(sessionId);
+      const sessionId = sessionCheck.sessionId;
+      const userId = payload.user_id || socket.id;
       const session = store.join(sessionId, {
         user_id: userId,
         display_name: payload.display_name,
       });
+      socket.join(sessionId);
       namespace.to(sessionId).emit("presenceUpdated", {
         session_id: sessionId,
         participants: session?.participants || [],
@@ -39,13 +45,11 @@ export function registerReviewNamespace(
     });
 
     socket.on("highlightRequest", (payload: SessionPayload, ack?: (response: unknown) => void) => {
-      broadcastSessionEvent(socket, eventLog, "highlightRequest", payload);
-      ack?.({ ok: true });
+      ack?.(broadcastSessionEvent(socket, store, eventLog, "highlightRequest", payload));
     });
 
     socket.on("selectionUpdate", (payload: SessionPayload, ack?: (response: unknown) => void) => {
-      broadcastSessionEvent(socket, eventLog, "selectionUpdate", payload);
-      ack?.({ ok: true });
+      ack?.(broadcastSessionEvent(socket, store, eventLog, "selectionUpdate", payload));
     });
 
     socket.on("heartbeat", (payload: SessionPayload, ack?: (response: unknown) => void) => {
@@ -54,10 +58,14 @@ export function registerReviewNamespace(
 
     socket.on("annotationCreate", async (payload: SessionPayload, ack?: (response: unknown) => void) => {
       try {
-        const sessionId = payload.session_id;
-        if (!sessionId) throw new Error("Missing session_id");
+        const sessionCheck = validateExistingSession(store, payload);
+        if (!sessionCheck.ok) {
+          ack?.(sessionCheck);
+          return;
+        }
+        const sessionId = sessionCheck.sessionId;
         const saved = await bimControlClient.createAnnotation(sessionId, payload);
-        broadcastSessionEvent(socket, eventLog, "annotationCreated", { ...payload, saved });
+        recordAndBroadcast(socket, eventLog, sessionId, "annotationCreated", { ...payload, saved });
         ack?.({ ok: true, saved });
       } catch (error) {
         ack?.({ ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -65,12 +73,13 @@ export function registerReviewNamespace(
     });
 
     socket.on("leaveSession", (payload: SessionPayload, ack?: (response: unknown) => void) => {
-      const sessionId = payload.session_id;
-      const userId = payload.user_id || socket.id;
-      if (!sessionId) {
-        ack?.({ ok: false, error: "Missing session_id" });
+      const sessionCheck = validateExistingSession(store, payload);
+      if (!sessionCheck.ok) {
+        ack?.(sessionCheck);
         return;
       }
+      const sessionId = sessionCheck.sessionId;
+      const userId = payload.user_id || socket.id;
       socket.leave(sessionId);
       const session = store.leave(sessionId, userId);
       namespace.to(sessionId).emit("presenceUpdated", {
@@ -84,12 +93,41 @@ export function registerReviewNamespace(
 
 function broadcastSessionEvent(
   socket: Socket,
+  store: SessionStore,
   eventLog: EventLog,
   type: string,
   payload: SessionPayload,
+): AckResponse {
+  const sessionCheck = validateExistingSession(store, payload);
+  if (!sessionCheck.ok) return sessionCheck;
+  recordAndBroadcast(socket, eventLog, sessionCheck.sessionId, type, payload);
+  return { ok: true };
+}
+
+function recordAndBroadcast(
+  socket: Socket,
+  eventLog: EventLog,
+  sessionId: string,
+  type: string,
+  payload: SessionPayload,
 ): void {
-  const sessionId = payload.session_id;
-  if (!sessionId) return;
   eventLog.append(sessionId, type, payload);
   socket.to(sessionId).emit(type, payload);
+}
+
+function validateExistingSession(
+  store: SessionStore,
+  payload: SessionPayload,
+): { ok: true; sessionId: string } | { ok: false; error: string } {
+  const sessionId = payload.session_id;
+  if (!sessionId) {
+    return { ok: false, error: "Missing session_id" };
+  }
+  if (!isSafeSessionId(sessionId)) {
+    return { ok: false, error: "Invalid review session id." };
+  }
+  if (!store.get(sessionId)) {
+    return { ok: false, error: "Review session not found." };
+  }
+  return { ok: true, sessionId };
 }

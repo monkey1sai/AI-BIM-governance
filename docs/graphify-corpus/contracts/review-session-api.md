@@ -71,3 +71,23 @@ The coordinator allocates the fixed local Kit endpoint:
 ```
 
 If no ready USDC artifact exists, `model.status` is `missing` and `url` is `null`.
+
+## Session Events
+
+`POST /api/review-sessions/{session_id}/events` requires a JSON body with a non-empty `type` string. Additional event fields are preserved.
+
+```json
+{
+  "type": "highlightRequest",
+  "issue_id": "ISSUE-DEMO-001"
+}
+```
+
+Event reads and writes require an existing review session. Unknown safe-looking session ids return HTTP 404 instead of creating standalone event logs.
+
+## Persistence Notes
+
+Session ids must match `review_session_[A-Za-z0-9_-]+`; unsafe ids return HTTP 400 before any filesystem path is resolved.
+
+Session state is stored under `bim-review-coordinator/data/sessions/{session_id}.json`.
+Session events are appended under `bim-review-coordinator/data/events/{session_id}.jsonl` so concurrent review-room events are append-only and auditable.

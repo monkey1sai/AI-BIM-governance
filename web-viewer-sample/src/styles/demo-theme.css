@@ -1,0 +1,368 @@
+/* ============================================================
+ * BIM Review Demo Theme — Source of Truth
+ * 守則：docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md
+ *
+ * 此檔為跨服務 design tokens 的權威來源。
+ * fake servers (_bim-control / _s3_storage / _conversion-service)
+ * 與 bim-review-coordinator 的 demo console 須以 inline <style>
+ * 複製本檔的 :root 變數區塊，不得擅自分歧。
+ * ============================================================ */
+
+:root {
+  /* Color — light theme with blue accents */
+  --demo-bg: #f4f7fb;
+  --demo-bg-elevated: #ffffff;
+  --demo-bg-card: #eaf2fb;        /* 藍色卡片底 */
+  --demo-bg-card-strong: #dbe9f7;
+  --demo-border: #c9d6e6;
+  --demo-border-strong: #9fb3c8;
+  --demo-text-primary: #102a43;
+  --demo-text-secondary: #486581;
+  --demo-text-muted: #829ab1;
+  --demo-brand: #1d6fb8;
+  --demo-brand-soft: #d6e8fa;
+  --demo-brand-hover: #1357a3;
+
+  /* Status traffic-light */
+  --demo-status-ok: #2ea44f;
+  --demo-status-ok-soft: #dcffe4;
+  --demo-status-warn: #b08800;
+  --demo-status-warn-soft: #fff4cc;
+  --demo-status-bad: #d73a49;
+  --demo-status-bad-soft: #ffe1e3;
+  --demo-status-idle: #829ab1;
+  --demo-status-idle-soft: #e4ebf3;
+
+  /* Typography */
+  --demo-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                    "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --demo-font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+  --demo-fs-xs: 12px;
+  --demo-fs-sm: 13px;
+  --demo-fs-md: 14px;
+  --demo-fs-lg: 16px;
+  --demo-fs-xl: 20px;
+  --demo-fs-2xl: 28px;
+
+  /* Geometry */
+  --demo-radius: 8px;
+  --demo-radius-lg: 12px;
+  --demo-gap: 16px;
+  --demo-gap-lg: 24px;
+  --demo-shadow: 0 1px 2px rgba(16, 42, 67, 0.08);
+  --demo-shadow-lg: 0 6px 18px rgba(16, 42, 67, 0.12);
+}
+
+/* ---- Base ---- */
+
+.demo-root {
+  background: var(--demo-bg);
+  color: var(--demo-text-primary);
+  font-family: var(--demo-font-sans);
+  font-size: var(--demo-fs-md);
+  line-height: 1.55;
+  min-height: 100vh;
+}
+
+.demo-root *,
+.demo-root *::before,
+.demo-root *::after {
+  box-sizing: border-box;
+}
+
+/* ---- Header ---- */
+
+.demo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  background: var(--demo-bg-elevated);
+  border-bottom: 1px solid var(--demo-border);
+}
+
+.demo-header__brand {
+  font-size: var(--demo-fs-lg);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.demo-header__step-label {
+  font-size: var(--demo-fs-sm);
+  color: var(--demo-text-secondary);
+}
+
+/* ---- Step Bar ---- */
+
+.demo-stepbar {
+  display: flex;
+  gap: 0;
+  padding: 12px 24px;
+  background: var(--demo-bg-elevated);
+  border-bottom: 1px solid var(--demo-border);
+  overflow-x: auto;
+}
+
+.demo-stepbar__item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--demo-radius);
+  color: var(--demo-text-muted);
+  text-decoration: none;
+  font-size: var(--demo-fs-sm);
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.demo-stepbar__item:hover {
+  background: var(--demo-brand-soft);
+  color: var(--demo-text-secondary);
+}
+
+.demo-stepbar__item--active {
+  background: var(--demo-brand-soft);
+  color: var(--demo-text-primary);
+  font-weight: 600;
+}
+
+.demo-stepbar__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--demo-bg-card);
+  border: 1px solid var(--demo-border);
+  font-size: var(--demo-fs-xs);
+}
+
+.demo-stepbar__item--active .demo-stepbar__num {
+  background: var(--demo-brand);
+  border-color: var(--demo-brand);
+  color: #fff;
+}
+
+.demo-stepbar__sep {
+  color: var(--demo-text-muted);
+  align-self: center;
+  padding: 0 4px;
+}
+
+/* ---- Main / Cards ---- */
+
+.demo-main {
+  padding: var(--demo-gap-lg);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.demo-card {
+  background: var(--demo-bg-card);
+  border: 1px solid var(--demo-border);
+  border-radius: var(--demo-radius-lg);
+  padding: var(--demo-gap-lg);
+  margin-bottom: var(--demo-gap);
+  box-shadow: var(--demo-shadow);
+}
+
+.demo-card__title {
+  font-size: var(--demo-fs-xl);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.demo-card__subtitle {
+  font-size: var(--demo-fs-sm);
+  color: var(--demo-text-secondary);
+  margin: 0 0 var(--demo-gap);
+}
+
+/* ---- Status Light ---- */
+
+.demo-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: var(--demo-fs-sm);
+  font-weight: 500;
+}
+
+.demo-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.demo-status--ok    { color: var(--demo-status-ok);   background: var(--demo-status-ok-soft); }
+.demo-status--warn  { color: var(--demo-status-warn); background: var(--demo-status-warn-soft); }
+.demo-status--bad   { color: var(--demo-status-bad);  background: var(--demo-status-bad-soft); }
+.demo-status--idle  { color: var(--demo-status-idle); background: var(--demo-status-idle-soft); }
+
+/* ---- Buttons ---- */
+
+.demo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: var(--demo-brand);
+  color: #fff;
+  border: 1px solid var(--demo-brand);
+  border-radius: var(--demo-radius);
+  font-family: inherit;
+  font-size: var(--demo-fs-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease;
+}
+
+.demo-btn:hover { background: var(--demo-brand-hover); }
+.demo-btn:active { transform: translateY(1px); }
+.demo-btn:disabled {
+  background: var(--demo-bg-elevated);
+  border-color: var(--demo-border);
+  color: var(--demo-text-muted);
+  cursor: not-allowed;
+}
+
+.demo-btn--secondary {
+  background: transparent;
+  color: var(--demo-text-primary);
+  border-color: var(--demo-border-strong);
+}
+
+.demo-btn--secondary:hover {
+  background: var(--demo-bg-elevated);
+}
+
+.demo-btn-caption {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--demo-fs-sm);
+  color: var(--demo-text-secondary);
+}
+
+.demo-btn-caption::before { content: "↳ "; color: var(--demo-text-muted); }
+
+/* ---- Details ---- */
+
+.demo-details {
+  margin-top: var(--demo-gap-lg);
+  padding: 12px 16px;
+  background: var(--demo-bg-elevated);
+  border: 1px solid var(--demo-border);
+  border-radius: var(--demo-radius);
+}
+
+.demo-details > summary {
+  cursor: pointer;
+  font-size: var(--demo-fs-sm);
+  color: var(--demo-text-secondary);
+  list-style: none;
+  user-select: none;
+}
+
+.demo-details > summary::before { content: "▸ "; }
+.demo-details[open] > summary::before { content: "▾ "; }
+
+.demo-details pre {
+  margin: 12px 0 0;
+  padding: 12px;
+  background: #0e1116;
+  color: #d6e2f0;
+  border-radius: var(--demo-radius);
+  font-family: var(--demo-font-mono);
+  font-size: var(--demo-fs-xs);
+  overflow-x: auto;
+}
+
+/* ---- Footer / Nav ---- */
+
+.demo-footer-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--demo-gap-lg);
+  padding: 16px 24px;
+  background: var(--demo-bg-elevated);
+  border-top: 1px solid var(--demo-border);
+  font-size: var(--demo-fs-sm);
+  color: var(--demo-text-secondary);
+}
+
+.demo-footer-nav__next a {
+  color: var(--demo-brand);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.demo-footer-nav__next a:hover { color: var(--demo-brand-hover); }
+
+/* ---- Failure Panel ---- */
+
+.demo-failure {
+  border-left: 3px solid var(--demo-status-bad);
+  background: var(--demo-status-bad-soft);
+  padding: 12px 16px;
+  border-radius: var(--demo-radius);
+  margin: var(--demo-gap) 0;
+}
+
+.demo-failure__title {
+  font-weight: 600;
+  color: var(--demo-status-bad);
+  margin-bottom: 4px;
+}
+
+.demo-failure__hint {
+  color: var(--demo-text-secondary);
+  font-size: var(--demo-fs-sm);
+  font-family: var(--demo-font-mono);
+}
+
+/* ---- Tree (file/folder) ---- */
+
+.demo-tree {
+  font-family: var(--demo-font-mono);
+  font-size: var(--demo-fs-sm);
+  color: var(--demo-text-secondary);
+  line-height: 1.7;
+}
+
+.demo-tree__file { color: var(--demo-text-primary); }
+
+/* ---- Progress ---- */
+
+.demo-progress {
+  width: 100%;
+  height: 8px;
+  background: var(--demo-bg-elevated);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.demo-progress__bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--demo-brand), var(--demo-brand-hover));
+  transition: width 0.3s ease;
+}
+
+.demo-progress-stage {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: var(--demo-fs-sm);
+  color: var(--demo-text-secondary);
+}
+
+.demo-progress-stage__item--done   { color: var(--demo-status-ok); }
+.demo-progress-stage__item--active { color: var(--demo-brand); font-weight: 600; }
+.demo-progress-stage__item--idle   { color: var(--demo-text-muted); }

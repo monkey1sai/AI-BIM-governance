@@ -1,108 +1,980 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BIM Review Coordinator Dev Console</title>
+  <title>審查協調 (Review Coordinator) — 步驟③</title>
+  <!-- 設計守則: docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md -->
+  <!-- 跨服務 design tokens 權威來源: web-viewer-sample/src/styles/demo-theme.css -->
   <style>
-    body { margin: 0; font-family: system-ui, Segoe UI, sans-serif; background: #f6f8fb; color: #1f2933; }
-    header { padding: 16px 24px; background: #102a43; color: #fff; }
-    main { display: grid; grid-template-columns: minmax(420px, 560px) 1fr; gap: 16px; padding: 16px; }
-    section { background: #fff; border: 1px solid #d9e2ec; border-radius: 8px; padding: 14px; }
-    label { display: block; margin: 10px 0 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; color: #52606d; }
-    input, textarea { width: 100%; box-sizing: border-box; border: 1px solid #bcccdc; border-radius: 6px; padding: 8px; font: inherit; }
-    textarea { min-height: 130px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
-    button, a.button { display: inline-flex; align-items: center; margin: 6px 6px 0 0; padding: 8px 10px; border: 1px solid #9fb3c8; border-radius: 6px; background: #fff; color: #102a43; cursor: pointer; text-decoration: none; font: inherit; }
-    button.primary { background: #0f609b; color: #fff; border-color: #0f609b; }
-    pre { min-height: 250px; margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .status { display: inline-flex; min-width: 92px; padding: 4px 8px; border-radius: 999px; background: #f0f4f8; color: #334e68; }
+    :root {
+      --demo-bg: #f4f7fb;
+      --demo-bg-elevated: #ffffff;
+      --demo-bg-card: #eaf2fb;
+      --demo-bg-card-strong: #dbe9f7;
+      --demo-border: #c9d6e6;
+      --demo-border-strong: #9fb3c8;
+      --demo-text-primary: #102a43;
+      --demo-text-secondary: #486581;
+      --demo-text-muted: #829ab1;
+      --demo-brand: #1d6fb8;
+      --demo-brand-soft: #d6e8fa;
+      --demo-brand-hover: #1357a3;
+      --demo-status-ok: #2ea44f;
+      --demo-status-ok-soft: #dcffe4;
+      --demo-status-warn: #b08800;
+      --demo-status-warn-soft: #fff4cc;
+      --demo-status-bad: #d73a49;
+      --demo-status-bad-soft: #ffe1e3;
+      --demo-status-idle: #829ab1;
+      --demo-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      --demo-font-mono: "JetBrains Mono", Consolas, "Courier New", monospace;
+      --demo-radius: 8px;
+      --demo-radius-lg: 12px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { background: var(--demo-bg); color: var(--demo-text-primary); font-family: var(--demo-font-sans); font-size: 14px; line-height: 1.55; }
+
+    .demo-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; background: var(--demo-bg-elevated); border-bottom: 1px solid var(--demo-border); }
+    .demo-header__brand { font-size: 16px; font-weight: 600; }
+    .demo-header__step-label { font-size: 13px; color: var(--demo-text-secondary); }
+
+    .demo-stepbar { display: flex; gap: 4px; padding: 12px 24px; background: var(--demo-bg-elevated); border-bottom: 1px solid var(--demo-border); overflow-x: auto; }
+    .demo-stepbar__item { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--demo-radius); color: var(--demo-text-muted); text-decoration: none; font-size: 13px; white-space: nowrap; }
+    .demo-stepbar__item:hover { background: var(--demo-brand-soft); color: var(--demo-text-secondary); }
+    .demo-stepbar__item--active { background: var(--demo-brand-soft); color: var(--demo-text-primary); font-weight: 600; }
+    .demo-stepbar__num { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--demo-bg-card); border: 1px solid var(--demo-border); font-size: 12px; }
+    .demo-stepbar__item--active .demo-stepbar__num { background: var(--demo-brand); border-color: var(--demo-brand); color: #fff; }
+
+    .demo-main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    .demo-card { background: var(--demo-bg-card); border: 1px solid var(--demo-border); border-radius: var(--demo-radius-lg); padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(16,42,67,0.08); }
+    .demo-card__title { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+    .demo-card__subtitle { font-size: 13px; color: var(--demo-text-secondary); margin: 0 0 16px; }
+
+    .demo-status { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 500; }
+    .demo-status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .demo-status--ok   { color: var(--demo-status-ok);   background: var(--demo-status-ok-soft); }
+    .demo-status--warn { color: var(--demo-status-warn); background: var(--demo-status-warn-soft); }
+    .demo-status--bad  { color: var(--demo-status-bad);  background: var(--demo-status-bad-soft); }
+    .demo-status--idle { color: var(--demo-status-idle); }
+
+    .demo-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .demo-summary-item { padding: 16px; background: var(--demo-bg-elevated); border: 1px solid var(--demo-border); border-radius: var(--demo-radius); }
+    .demo-summary-item__label { font-size: 12px; color: var(--demo-text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+    .demo-summary-item__value { margin-top: 6px; font-size: 18px; font-weight: 600; word-break: break-all; }
+    .demo-summary-item__hint { margin-top: 4px; font-size: 12px; color: var(--demo-text-muted); }
+
+    .demo-flow-note { margin: 12px 0 0; padding: 10px 12px; border-left: 3px solid var(--demo-status-warn); background: var(--demo-status-warn-soft); border-radius: var(--demo-radius); color: var(--demo-text-secondary); font-size: 13px; }
+    .demo-file-pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px; background: var(--demo-bg-elevated); border: 1px dashed var(--demo-border-strong); border-radius: var(--demo-radius); }
+    .demo-file-pick__name { font-weight: 600; word-break: break-all; }
+    .demo-file-pick__meta { margin-top: 4px; color: var(--demo-text-muted); font-size: 12px; }
+    .demo-progress { width: 100%; height: 10px; background: var(--demo-bg-elevated); border: 1px solid var(--demo-border); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+    .demo-progress__bar { height: 100%; background: linear-gradient(90deg, var(--demo-brand), var(--demo-brand-hover)); transition: width 0.25s ease; width: 0; }
+    .demo-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 16px; font-size: 13px; }
+    .demo-stage { padding: 12px; background: var(--demo-bg-elevated); border: 1px solid var(--demo-border); border-radius: var(--demo-radius); color: var(--demo-text-muted); }
+    .demo-stage__num { font-size: 11px; color: var(--demo-text-muted); }
+    .demo-stage__name { font-weight: 600; margin-top: 4px; color: var(--demo-text-primary); }
+    .demo-stage--done { border-color: var(--demo-status-ok); background: var(--demo-status-ok-soft); color: var(--demo-status-ok); }
+    .demo-stage--done .demo-stage__name { color: var(--demo-status-ok); }
+    .demo-stage--active { border-color: var(--demo-brand); background: var(--demo-brand-soft); color: var(--demo-brand); }
+    .demo-stage--active .demo-stage__name { color: var(--demo-brand); }
+    .demo-result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+    .demo-result-item { padding: 12px 14px; background: var(--demo-bg-elevated); border: 1px solid var(--demo-border); border-radius: var(--demo-radius); }
+    .demo-result-item__label { font-size: 12px; text-transform: uppercase; color: var(--demo-text-secondary); letter-spacing: 0.06em; }
+    .demo-result-item__value { margin-top: 6px; word-break: break-all; }
+    .demo-result-item__value a { color: var(--demo-brand); text-decoration: none; }
+    .demo-result-item__value a:hover { text-decoration: underline; }
+
+    .demo-btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; background: var(--demo-brand); color: #fff; border: 1px solid var(--demo-brand); border-radius: var(--demo-radius); font: inherit; font-weight: 500; cursor: pointer; }
+    .demo-btn:hover { background: var(--demo-brand-hover); }
+    .demo-btn:disabled { background: var(--demo-bg-elevated); border-color: var(--demo-border); color: var(--demo-text-muted); cursor: not-allowed; }
+    .demo-btn--secondary { background: transparent; color: var(--demo-text-primary); border-color: var(--demo-border-strong); }
+    .demo-btn--secondary:hover { background: var(--demo-bg-elevated); }
+    .demo-btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .demo-btn-caption { display: block; margin-top: 6px; font-size: 13px; color: var(--demo-text-secondary); }
+    .demo-btn-caption::before { content: "↳ "; color: var(--demo-text-muted); }
+
+    .demo-event-feed { background: var(--demo-bg-elevated); border: 1px solid var(--demo-border); border-radius: var(--demo-radius); padding: 12px 16px; max-height: 320px; overflow-y: auto; }
+    .demo-event-feed__row { display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--demo-border); font-size: 13px; }
+    .demo-event-feed__row:last-child { border-bottom: 0; }
+    .demo-event-feed__time { color: var(--demo-text-muted); font-family: var(--demo-font-mono); font-size: 12px; min-width: 80px; }
+    .demo-event-feed__label { color: var(--demo-text-primary); }
+    .demo-event-feed__meta { color: var(--demo-text-muted); margin-left: auto; font-size: 12px; }
+
+    .demo-details { margin-top: 24px; padding: 12px 16px; background: var(--demo-bg-elevated); border: 1px solid var(--demo-border); border-radius: var(--demo-radius); }
+    .demo-details > summary { cursor: pointer; font-size: 13px; color: var(--demo-text-secondary); list-style: none; user-select: none; }
+    .demo-details > summary::before { content: "▸ "; }
+    .demo-details[open] > summary::before { content: "▾ "; }
+    .demo-details__body { margin-top: 16px; }
+    .demo-details__body label { display: block; margin: 10px 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--demo-text-secondary); }
+    .demo-details__body input,
+    .demo-details__body textarea { width: 100%; background: var(--demo-bg); color: var(--demo-text-primary); border: 1px solid var(--demo-border); border-radius: var(--demo-radius); padding: 8px; font: inherit; }
+    .demo-details__body textarea { min-height: 130px; font-family: var(--demo-font-mono); font-size: 12px; }
+    .demo-details__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .demo-details h3 { margin: 16px 0 8px; font-size: 13px; color: var(--demo-text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+    .demo-details button { display: inline-flex; margin: 4px 4px 0 0; padding: 6px 10px; background: var(--demo-bg); color: var(--demo-text-primary); border: 1px solid var(--demo-border-strong); border-radius: var(--demo-radius); font: inherit; font-size: 12px; cursor: pointer; }
+    .demo-details button:hover { background: var(--demo-brand-soft); }
+    .demo-details pre { margin: 12px 0 0; padding: 12px; background: #0e1116; color: #d6e2f0; border-radius: var(--demo-radius); font-family: var(--demo-font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; }
+    .demo-lab { display: grid; gap: 14px; }
+    .demo-lab__intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr); gap: 12px; align-items: stretch; }
+    .demo-lab__panel { padding: 14px; border: 1px solid var(--demo-border); border-radius: var(--demo-radius); background: var(--demo-bg-card); }
+    .demo-lab__title { margin: 0 0 6px; font-size: 16px; font-weight: 700; color: var(--demo-text-primary); }
+    .demo-lab__text { margin: 0; color: var(--demo-text-secondary); font-size: 13px; }
+    .demo-lab__outcome { padding: 14px; border-radius: var(--demo-radius); border: 1px solid var(--demo-border); background: var(--demo-bg-elevated); }
+    .demo-lab__outcome-title { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 6px; }
+    .demo-lab__outcome-title::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+    .demo-lab__outcome[data-kind="ok"] { color: var(--demo-status-ok); background: var(--demo-status-ok-soft); border-color: rgba(46,164,79,0.35); }
+    .demo-lab__outcome[data-kind="warn"] { color: var(--demo-status-warn); background: var(--demo-status-warn-soft); border-color: rgba(176,136,0,0.35); }
+    .demo-lab__outcome[data-kind="bad"] { color: var(--demo-status-bad); background: var(--demo-status-bad-soft); border-color: rgba(215,58,73,0.35); }
+    .demo-lab__outcome[data-kind="idle"] { color: var(--demo-text-secondary); background: var(--demo-bg-elevated); }
+    .demo-lab__outcome-detail { color: var(--demo-text-secondary); font-size: 13px; }
+    .demo-lab-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+    .demo-lab-card { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--demo-border); border-radius: var(--demo-radius); background: var(--demo-bg-elevated); min-height: 100%; }
+    .demo-lab-card__top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+    .demo-lab-card__step { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--demo-brand); color: #fff; font-weight: 700; font-size: 12px; flex: 0 0 auto; }
+    .demo-lab-card__title { margin: 0; font-weight: 700; color: var(--demo-text-primary); }
+    .demo-lab-card__route { margin: 2px 0 0; color: var(--demo-text-secondary); font-size: 12px; }
+    .demo-lab-card__copy { margin: 0; color: var(--demo-text-secondary); font-size: 13px; }
+    .demo-lab-card__effect { padding: 10px 12px; border-left: 3px solid var(--demo-brand); background: var(--demo-brand-soft); border-radius: var(--demo-radius); color: var(--demo-text-secondary); font-size: 12px; }
+    .demo-lab-card__gap { padding: 10px 12px; border-left: 3px solid var(--demo-status-warn); background: var(--demo-status-warn-soft); border-radius: var(--demo-radius); color: var(--demo-text-secondary); font-size: 12px; }
+    .demo-lab-card button { justify-content: center; width: 100%; margin: 0; padding: 9px 10px; }
+    .demo-lab-flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 4px; }
+    .demo-lab-flow__item { padding: 10px; border: 1px solid var(--demo-border); border-radius: var(--demo-radius); background: var(--demo-bg-card); font-size: 12px; color: var(--demo-text-secondary); }
+    .demo-lab-flow__item strong { display: block; margin-bottom: 4px; color: var(--demo-text-primary); }
+    .demo-raw-panel { margin-top: 4px; padding: 12px 14px; border: 1px solid var(--demo-border); border-radius: var(--demo-radius); background: var(--demo-bg); }
+    .demo-raw-panel > summary { cursor: pointer; color: var(--demo-text-secondary); font-size: 13px; font-weight: 600; }
+    .demo-raw-panel__hint { margin: 8px 0 12px; color: var(--demo-text-secondary); font-size: 12px; }
+
+    .demo-failure { border-left: 3px solid var(--demo-status-bad); background: var(--demo-status-bad-soft); padding: 12px 16px; border-radius: var(--demo-radius); margin: 16px 0; display: none; }
+    .demo-failure.is-visible { display: block; }
+    .demo-failure__title { font-weight: 600; color: var(--demo-status-bad); margin-bottom: 4px; }
+    .demo-failure__hint { color: var(--demo-text-secondary); font-size: 13px; font-family: var(--demo-font-mono); }
+
+    .demo-footer-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 24px; padding: 16px 24px; background: var(--demo-bg-elevated); border-top: 1px solid var(--demo-border); font-size: 13px; color: var(--demo-text-secondary); }
+    .demo-footer-nav a { color: var(--demo-brand); text-decoration: none; font-weight: 500; }
+    .demo-footer-nav a:hover { color: var(--demo-brand-hover); }
   </style>
 </head>
 <body>
-  <header>
-    <h1>BIM Review Coordinator Dev Console</h1>
-    <p>Manual triggers for review session HTTP APIs and Socket.IO /review events.</p>
+  <header class="demo-header">
+    <div class="demo-header__brand">BIM 審查雲端 Demo｜審查協調 (Review Coordinator)</div>
+    <div class="demo-header__step-label">步驟 ③ / 5</div>
   </header>
-  <main>
-    <section>
-      <div class="grid">
-        <div>
-          <label for="projectId">project_id</label>
-          <input id="projectId" value="project_demo_001" />
-        </div>
-        <div>
-          <label for="modelVersionId">model_version_id</label>
-          <input id="modelVersionId" value="version_demo_001" />
-        </div>
-      </div>
-      <div class="grid">
-        <div>
-          <label for="sessionId">session_id</label>
-          <input id="sessionId" placeholder="created session id" />
-        </div>
-        <div>
-          <label for="userId">user_id</label>
-          <input id="userId" value="dev_user_001" />
-        </div>
-      </div>
-      <div class="grid">
-        <div>
-          <label for="displayName">display_name</label>
-          <input id="displayName" value="Demo User" />
-        </div>
-        <div>
-          <label for="mode">mode</label>
-          <input id="mode" value="single_kit_shared_state" />
-        </div>
+
+  <nav class="demo-stepbar" aria-label="Demo 流程">
+    <a class="demo-stepbar__item" href="#uploadDemoCard" onclick="openUploadPicker(event)"><span class="demo-stepbar__num">①</span>上傳建模 (Upload)</a>
+    <a class="demo-stepbar__item" href="#conversionDemoCard" onclick="startCoordinatorConversion(event, true)"><span class="demo-stepbar__num">②</span>自動轉換 (Convert)</a>
+    <a class="demo-stepbar__item demo-stepbar__item--active" href="#" aria-current="step"><span class="demo-stepbar__num">③</span>建立會議 (Meeting)</a>
+    <a class="demo-stepbar__item" href="http://127.0.0.1:5173"><span class="demo-stepbar__num">④</span>標記問題 (Mark)</a>
+    <a class="demo-stepbar__item" href="http://127.0.0.1:8001"><span class="demo-stepbar__num">⑤</span>紀錄回寫 (Record)</a>
+  </nav>
+
+  <main class="demo-main">
+    <section class="demo-card">
+      <h1 class="demo-card__title">審查協調服務 <span id="connStatus" class="demo-status demo-status--idle">檢查中</span></h1>
+      <p class="demo-card__subtitle">
+        這個服務負責「開啟一場雲端審查會議」。它會去主資料庫拿到專案模型，
+        準備好雲端視訊連線資訊，然後等審查人員從瀏覽器加入。
+        多人同時在線時，這裡也負責把每個人的操作 (例如點選某個元件) 即時同步給其他人。
+      </p>
+
+      <div id="failure" class="demo-failure">
+        <div class="demo-failure__title">審查協調服務未連線 (Coordinator offline)</div>
+        <div class="demo-failure__hint">請在另一個終端機執行：cd bim-review-coordinator &amp;&amp; npm run dev</div>
       </div>
 
-      <label for="eventBody">event body</label>
-      <textarea id="eventBody">{
+      <button id="createBtn" class="demo-btn" type="button" onclick="startDemoSession()">
+        建立示範審查會議
+        <span class="demo-btn-caption">系統會準備一場新的雲端審查會議，並回傳給瀏覽器需要的連線資訊</span>
+      </button>
+
+      <div class="demo-btn-row">
+        <button class="demo-btn demo-btn--secondary" type="button" onclick="openViewerWithSession()">
+          用本場會議開啟瀏覽器審查端
+        </button>
+        <button class="demo-btn demo-btn--secondary" type="button" onclick="refreshStatus()">
+          重新整理狀態
+        </button>
+      </div>
+    </section>
+
+    <section id="uploadDemoCard" class="demo-card">
+      <h2 class="demo-card__title" style="font-size:16px;">① 上傳建模 <span id="uploadStatus" class="demo-status demo-status--idle">待選擇檔案</span></h2>
+      <p class="demo-card__subtitle">
+        這裡讓 demo 操作者直接選擇 IFC / RVT / DWG 檔，並把「來源模型已準備」這件事顯示在流程中。
+        目前 `_s3_storage` 尚未提供瀏覽器 multipart upload API，所以這一步先保留為本頁檔案選擇與 demo source URL 綁定。
+      </p>
+      <input id="sourceFileInput" type="file" accept=".ifc,.rvt,.dwg,.usd,.usdc,.ifczip" hidden />
+      <div class="demo-file-pick">
+        <div>
+          <div id="selectedFileName" class="demo-file-pick__name">尚未選擇檔案</div>
+          <div id="selectedFileMeta" class="demo-file-pick__meta">點擊上方 ① 或右側按鈕即可開啟檔案選擇器</div>
+        </div>
+        <button class="demo-btn demo-btn--secondary" type="button" onclick="openUploadPicker(event)">選擇建模檔</button>
+      </div>
+      <div class="demo-flow-note">
+        未完成標示：目前尚未真正把檔案 byte 寫入 `_s3_storage`；轉檔流程會使用 demo storage 的 `source.ifc` URL。
+      </div>
+    </section>
+
+    <section id="conversionDemoCard" class="demo-card">
+      <h2 class="demo-card__title" style="font-size:16px;">② 自動轉換 <span id="conversionStatus" class="demo-status demo-status--idle">尚未開始</span></h2>
+      <p class="demo-card__subtitle">
+        這個區塊會透過 coordinator 代理呼叫 `_conversion-service`，讓 demo 操作者在同一頁看到 job id、進度、目前階段與產物 URL。
+        點擊上方 ② 會跑快速 mock 轉換，完整顯示資料流；下方也可手動建立真實轉檔 job。
+      </p>
+      <div class="demo-btn-row">
+        <button id="mockConversionBtn" class="demo-btn" type="button" onclick="startCoordinatorConversion(event, true)">快速展示轉檔流程</button>
+        <button id="realConversionBtn" class="demo-btn demo-btn--secondary" type="button" onclick="startCoordinatorConversion(event, false)">建立真實轉檔工作</button>
+      </div>
+      <div class="demo-progress"><div id="conversionProgressBar" class="demo-progress__bar"></div></div>
+      <div class="demo-stages">
+        <div id="conversionStage-1" class="demo-stage">
+          <div class="demo-stage__num">階段 1</div>
+          <div class="demo-stage__name">讀取 IFC 來源檔</div>
+        </div>
+        <div id="conversionStage-2" class="demo-stage">
+          <div class="demo-stage__num">階段 2</div>
+          <div class="demo-stage__name">解析 BIM 元件</div>
+        </div>
+        <div id="conversionStage-3" class="demo-stage">
+          <div class="demo-stage__num">階段 3</div>
+          <div class="demo-stage__name">產出 USDC 模型</div>
+        </div>
+        <div id="conversionStage-4" class="demo-stage">
+          <div class="demo-stage__num">階段 4</div>
+          <div class="demo-stage__name">建立 mapping 並回寫</div>
+        </div>
+      </div>
+      <div class="demo-summary-grid" style="margin-top:16px;">
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">conversion job</div>
+          <div id="conversionJobLabel" class="demo-summary-item__value">—</div>
+          <div id="conversionJobHint" class="demo-summary-item__hint">等待建立 job</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">目前階段</div>
+          <div id="conversionStageLabel" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">queued / running / succeeded / failed</div>
+        </div>
+      </div>
+      <div id="conversionResultGrid" class="demo-result-grid" style="display:none;">
+        <div class="demo-result-item">
+          <div class="demo-result-item__label">USDC URL</div>
+          <div id="conversionUsdcLink" class="demo-result-item__value">—</div>
+        </div>
+        <div class="demo-result-item">
+          <div class="demo-result-item__label">element_mapping.json</div>
+          <div id="conversionMappingLink" class="demo-result-item__value">—</div>
+        </div>
+      </div>
+      <div class="demo-flow-note">
+        未完成標示：快速展示使用 `_conversion-service` 的 dev mock endpoint，不代表真實 IFC 轉換品質；真實轉檔仍需要本機 Kit converter 可用。
+      </div>
+    </section>
+
+    <section class="demo-card">
+      <h2 class="demo-card__title" style="font-size:16px;">本場會議資訊 (Current meeting)</h2>
+      <div class="demo-summary-grid">
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">會議識別碼</div>
+          <div id="sessSidLabel" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">在 demo 中可直接複製到瀏覽器網址列</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">可審查模型狀態</div>
+          <div id="sessModelLabel" class="demo-summary-item__value">—</div>
+          <div id="sessModelHint" class="demo-summary-item__hint">—</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">雲端視訊連線</div>
+          <div id="sessWebrtcLabel" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">瀏覽器會用這個位置接收 3D 即時畫面</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">即時連線狀態</div>
+          <div id="socketStateLabel" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">用來同步多人審查的操作事件</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="demo-card">
+      <h2 class="demo-card__title" style="font-size:16px;">即時審查事件 (Live review events)</h2>
+      <p class="demo-card__subtitle">會議成員的操作 (加入、標示問題、寫標註) 會即時出現在這裡。</p>
+      <div id="eventFeed" class="demo-event-feed">尚未連線到審查會議。</div>
+    </section>
+
+    <details class="demo-details">
+      <summary>展開互動實驗室與技術細節 (Interaction lab + technical details)</summary>
+      <div class="demo-details__body">
+        <div class="demo-lab">
+          <div class="demo-lab__intro">
+            <div class="demo-lab__panel">
+              <h2 class="demo-lab__title">互動效果實驗室</h2>
+              <p class="demo-lab__text">
+                這裡把底層 API / Socket 指令包成可理解的操作。按下每個動作後，請觀察上方「本場會議資訊」與「即時審查事件」：
+                你會看到是哪個 repo 接手、資料往哪裡流，以及目前哪些能力只是 demo mock。
+              </p>
+            </div>
+            <div id="guidedOutcome" class="demo-lab__outcome" data-kind="idle">
+              <div class="demo-lab__outcome-title">尚未執行互動動作</div>
+              <div class="demo-lab__outcome-detail">先按下任一場景按鈕，這裡會顯示預期效果與實際回饋。</div>
+            </div>
+          </div>
+
+          <div class="demo-lab-grid">
+            <article class="demo-lab-card">
+              <div class="demo-lab-card__top">
+                <div>
+                  <span class="demo-lab-card__step">③</span>
+                  <h3 class="demo-lab-card__title">建立會議</h3>
+                  <div class="demo-lab-card__route">web-viewer-sample → bim-review-coordinator</div>
+                </div>
+                <span class="demo-status demo-status--ok">可操作</span>
+              </div>
+              <p class="demo-lab-card__copy">建立 review session，coordinator 會回傳 session id、模型狀態與 stream config。</p>
+              <div class="demo-lab-card__effect">觀察效果：上方會議卡片更新，event feed 會出現加入與 presence 事件。</div>
+              <button type="button" onclick="guidedCreateSession()">建立並同步會議</button>
+            </article>
+
+            <article class="demo-lab-card">
+              <div class="demo-lab-card__top">
+                <div>
+                  <span class="demo-lab-card__step">WS</span>
+                  <h3 class="demo-lab-card__title">加入即時頻道</h3>
+                  <div class="demo-lab-card__route">Browser ↔ coordinator / Socket.IO</div>
+                </div>
+                <span class="demo-status demo-status--ok">可操作</span>
+              </div>
+              <p class="demo-lab-card__copy">模擬另一個審查人員進入同場會議，讓多人協作狀態變得可見。</p>
+              <div class="demo-lab-card__effect">觀察效果：即時連線狀態變成已連線，event feed 出現 joinSession / presence。</div>
+              <button type="button" onclick="guidedJoinChannel()">連線並加入會議</button>
+            </article>
+
+            <article class="demo-lab-card">
+              <div class="demo-lab-card__top">
+                <div>
+                  <span class="demo-lab-card__step">④</span>
+                  <h3 class="demo-lab-card__title">標示問題位置</h3>
+                  <div class="demo-lab-card__route">coordinator → viewer → streaming server</div>
+                </div>
+                <span class="demo-status demo-status--warn">需 viewer 開啟</span>
+              </div>
+              <p class="demo-lab-card__copy">送出 highlightRequest，示範審查人員點到問題元件後，如何同步到瀏覽器審查端。</p>
+              <div class="demo-lab-card__effect">觀察效果：event feed 出現「送出問題高亮」；5173 viewer 會收到 Socket.IO 事件並可再送 DataChannel 高亮。</div>
+              <button type="button" onclick="guidedHighlightIssue()">同步問題高亮</button>
+            </article>
+
+            <article class="demo-lab-card">
+              <div class="demo-lab-card__top">
+                <div>
+                  <span class="demo-lab-card__step">⑤</span>
+                  <h3 class="demo-lab-card__title">建立審查標註</h3>
+                  <div class="demo-lab-card__route">coordinator → _bim-control</div>
+                </div>
+                <span class="demo-status demo-status--ok">可操作</span>
+              </div>
+              <p class="demo-lab-card__copy">把審查意見變成 annotation event，示範哪些資料會被視為 review metadata。</p>
+              <div class="demo-lab-card__effect">觀察效果：event feed 出現「建立審查標註」與 ack；之後可到 _bim-control 看回寫資料。</div>
+              <button type="button" onclick="guidedAnnotation()">建立示範標註</button>
+            </article>
+
+            <article class="demo-lab-card">
+              <div class="demo-lab-card__top">
+                <div>
+                  <span class="demo-lab-card__step">②</span>
+                  <h3 class="demo-lab-card__title">轉檔資料流</h3>
+                  <div class="demo-lab-card__route">coordinator → _conversion-service → _s3_storage</div>
+                </div>
+                <span class="demo-status demo-status--warn">部分未完成</span>
+              </div>
+              <p class="demo-lab-card__copy">展示 IFC 來源檔如何產生 USDC 與 element_mapping.json，並讓產物 URL 回到 session。</p>
+              <div class="demo-lab-card__gap">未完成標示：瀏覽器直接寫入 `_s3_storage` 的 file-byte API 尚未接入；目前以 demo storage source URL 與 mock conversion 呈現。</div>
+              <button type="button" onclick="guidedConversion()">展示轉檔流程</button>
+            </article>
+          </div>
+
+          <div class="demo-lab-flow">
+            <div class="demo-lab-flow__item"><strong>Session</strong>bim-review-coordinator 負責建立會議與同步狀態。</div>
+            <div class="demo-lab-flow__item"><strong>Metadata</strong>_bim-control 保存 project / model / issue / annotation 關係。</div>
+            <div class="demo-lab-flow__item"><strong>Storage</strong>_s3_storage 保存 IFC / USDC / mapping 檔案本體。</div>
+            <div class="demo-lab-flow__item"><strong>Runtime</strong>bim-streaming-server 處理 WebRTC 畫面與 DataChannel 3D 操作。</div>
+          </div>
+
+          <details class="demo-raw-panel">
+            <summary>工程參數與 Raw API / Socket controls</summary>
+            <p class="demo-raw-panel__hint">這一區保留給開發者查 API payload、session id、Socket.IO event 與原始回應；一般 demo 操作可優先使用上方互動卡片。</p>
+        <div class="demo-details__grid">
+          <div>
+            <label for="projectId">project_id</label>
+            <input id="projectId" value="project_demo_001" />
+          </div>
+          <div>
+            <label for="modelVersionId">model_version_id</label>
+            <input id="modelVersionId" value="version_demo_001" />
+          </div>
+        </div>
+        <div class="demo-details__grid">
+          <div>
+            <label for="sessionId">session_id</label>
+            <input id="sessionId" placeholder="建立 session 後自動填入" />
+          </div>
+          <div>
+            <label for="userId">user_id</label>
+            <input id="userId" value="dev_user_001" />
+          </div>
+        </div>
+        <div class="demo-details__grid">
+          <div>
+            <label for="displayName">display_name</label>
+            <input id="displayName" value="示範使用者" />
+          </div>
+          <div>
+            <label for="mode">mode</label>
+            <input id="mode" value="single_kit_shared_state" />
+          </div>
+        </div>
+
+        <label for="eventBody">Event body (JSON)</label>
+        <textarea id="eventBody">{
   "event_type": "manualDemoEvent",
   "actor_id": "dev_user_001",
   "payload": {
-    "message": "Triggered from coordinator dev console"
+    "message": "從 coordinator demo console 手動觸發"
   }
 }</textarea>
 
-      <h2>HTTP APIs</h2>
-      <button onclick="httpCall('GET', '/health')">GET /health</button>
-      <button class="primary" onclick="createSession()">POST /api/review-sessions</button>
-      <button onclick="getSession()">GET session</button>
-      <button onclick="joinSessionHttp()">POST join</button>
-      <button onclick="leaveSessionHttp()">POST leave</button>
-      <button onclick="getStreamConfig()">GET stream-config</button>
-      <button onclick="getEvents()">GET events</button>
-      <button onclick="postEvent()">POST events</button>
-      <button onclick="getBootstrap()">GET review-bootstrap</button>
+        <h3>HTTP API</h3>
+        <button onclick="httpCall('GET', '/health')">GET /health</button>
+        <button onclick="createSession()">POST /api/review-sessions</button>
+        <button onclick="getSession()">GET session</button>
+        <button onclick="joinSessionHttp()">POST join</button>
+        <button onclick="leaveSessionHttp()">POST leave</button>
+        <button onclick="getStreamConfig()">GET stream-config</button>
+        <button onclick="getEvents()">GET events</button>
+        <button onclick="postEvent()">POST events</button>
+        <button onclick="getBootstrap()">GET review-bootstrap</button>
+        <button onclick="createConversionProxy(false)">POST dev conversion proxy</button>
+        <button onclick="createConversionProxy(true)">POST dev mock conversion proxy</button>
 
-      <h2>Socket.IO /review</h2>
-      <div>State: <span id="socketState" class="status">disconnected</span></div>
-      <button class="primary" onclick="connectSocket()">Connect Socket.IO /review</button>
-      <button onclick="disconnectSocket()">Disconnect</button>
-      <button onclick="emitJoin()">joinSession</button>
-      <button onclick="emitLeave()">leaveSession</button>
-      <button onclick="emitHighlight()">highlightRequest</button>
-      <button onclick="emitSelection()">selectionUpdate</button>
-      <button onclick="emitAnnotation()">annotationCreate</button>
-      <button onclick="emitHeartbeat()">heartbeat</button>
+        <h3>Socket.IO /review</h3>
+        <div>連線狀態：<span id="socketState" class="demo-status demo-status--idle">未連線</span></div>
+        <button onclick="connectSocket()">connect</button>
+        <button onclick="disconnectSocket()">disconnect</button>
+        <button onclick="emitJoin()">joinSession</button>
+        <button onclick="emitLeave()">leaveSession</button>
+        <button onclick="emitHighlight()">highlightRequest</button>
+        <button onclick="emitSelection()">selectionUpdate</button>
+        <button onclick="emitAnnotation()">annotationCreate</button>
+        <button onclick="emitHeartbeat()">heartbeat</button>
 
-      <h2>Shortcuts</h2>
-      <a class="button" href="http://127.0.0.1:8001/ui" target="_blank">Open _bim-control UI</a>
-      <a class="button" href="http://127.0.0.1:8002/ui" target="_blank">Open _s3_storage UI</a>
-      <a class="button" href="http://127.0.0.1:8003/ui" target="_blank">Open conversion UI</a>
-      <a class="button" href="http://127.0.0.1:5173" target="_blank">Open web viewer</a>
-      <button onclick="openViewerWithSession()">Open viewer with current session</button>
-    </section>
-    <section>
-      <h2>HTTP Response</h2>
-      <pre id="httpOutput">No request yet.</pre>
-      <h2>Incoming Socket Events</h2>
-      <pre id="socketOutput">No socket events yet.</pre>
-    </section>
+        <h3>Raw HTTP response</h3>
+        <pre id="httpOutput">尚未送出請求。</pre>
+        <h3>Socket events</h3>
+        <pre id="socketOutput">尚未收到 socket 事件。</pre>
+          </details>
+        </div>
+      </div>
+    </details>
   </main>
+
+  <footer class="demo-footer-nav">
+    <span>你現在在這裡：步驟 ③ 建立會議</span>
+    <span>下一步：<a href="#" id="footerOpenViewer">前往瀏覽器審查端 (步驟 ④)</a></span>
+  </footer>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="/dev-console-assets/dev-console.js"></script>
+  <script>
+    // ----- 業務 demo wrapper：複用 dev-console.js 提供的函式 -----
+    const connStatus  = document.getElementById('connStatus');
+    const failureBox  = document.getElementById('failure');
+    const createBtn   = document.getElementById('createBtn');
+    const sessSid     = document.getElementById('sessSidLabel');
+    const sessModel   = document.getElementById('sessModelLabel');
+    const sessModelHint = document.getElementById('sessModelHint');
+    const sessWebrtc  = document.getElementById('sessWebrtcLabel');
+    const socketStateLabel = document.getElementById('socketStateLabel');
+    const eventFeed   = document.getElementById('eventFeed');
+    const sourceFileInput = document.getElementById('sourceFileInput');
+    const selectedFileName = document.getElementById('selectedFileName');
+    const selectedFileMeta = document.getElementById('selectedFileMeta');
+    const uploadStatus = document.getElementById('uploadStatus');
+    const conversionStatus = document.getElementById('conversionStatus');
+    const conversionProgressBar = document.getElementById('conversionProgressBar');
+    const conversionJobLabel = document.getElementById('conversionJobLabel');
+    const conversionJobHint = document.getElementById('conversionJobHint');
+    const conversionStageLabel = document.getElementById('conversionStageLabel');
+    const conversionResultGrid = document.getElementById('conversionResultGrid');
+    const mockConversionBtn = document.getElementById('mockConversionBtn');
+    const realConversionBtn = document.getElementById('realConversionBtn');
+    const guidedOutcome = document.getElementById('guidedOutcome');
+    let conversionPollTimer = null;
+
+    function setServiceStatus(kind, label) {
+      connStatus.className = `demo-status demo-status--${kind}`;
+      connStatus.textContent = label;
+      failureBox.classList.toggle('is-visible', kind === 'bad');
+    }
+
+    sourceFileInput.addEventListener('change', () => {
+      const file = sourceFileInput.files && sourceFileInput.files[0];
+      if (!file) return;
+      uploadStatus.className = 'demo-status demo-status--ok';
+      uploadStatus.textContent = '已選擇檔案';
+      selectedFileName.textContent = file.name;
+      selectedFileMeta.textContent = `${formatSize(file.size)} · ${file.type || 'unknown type'} · 尚未上傳到 _s3_storage`;
+      appendDemoFeed('已選擇來源建模檔', { file_name: file.name, size_bytes: file.size });
+    });
+
+    function openUploadPicker(event) {
+      if (event) event.preventDefault();
+      document.getElementById('uploadDemoCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      sourceFileInput.click();
+    }
+
+    function buildConversionRequest() {
+      const sourceFile = sourceFileInput.files && sourceFileInput.files[0];
+      return {
+        project_id: projectId.value,
+        model_version_id: modelVersionId.value,
+        source_artifact_id: 'artifact_ifc_demo_001',
+        source_url: `http://127.0.0.1:8002/static/projects/${projectId.value}/versions/${modelVersionId.value}/source.ifc`,
+        target_format: 'usdc',
+        options: {
+          force: true,
+          generate_mapping: true,
+          allow_fake_mapping: false,
+          demo_selected_file_name: sourceFile ? sourceFile.name : undefined,
+        }
+      };
+    }
+
+    async function startCoordinatorConversion(event, mock = true) {
+      if (event) event.preventDefault();
+      document.getElementById('conversionDemoCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      stopConversionPolling();
+      setConversionButtons(false);
+      conversionResultGrid.style.display = 'none';
+      setConversionStatus('warn', mock ? '快速展示中…' : '建立轉檔工作中…');
+      setConversionStage(1, 0);
+      setConversionProgress(10);
+      conversionJobLabel.textContent = '—';
+      conversionJobHint.textContent = mock ? '使用 dev mock endpoint 展示完整資料流' : '呼叫真實 conversion job endpoint';
+
+      try {
+        const payload = await createConversionProxy(mock);
+        if (!payload?.job_id) {
+          if (mock && payload?.http_status === 404) {
+            const fallbackPayload = buildBrowserOnlyMockConversion();
+            conversionJobLabel.textContent = fallbackPayload.job_id;
+            conversionJobHint.textContent = '目前 running coordinator 尚未載入 dev proxy；先顯示 browser-only demo feedback，重啟 coordinator 後會呼叫 8003。';
+            await animateMockConversion(fallbackPayload);
+            showConversionResult(fallbackPayload);
+            setConversionButtons(true);
+            return;
+          }
+          setConversionStatus('bad', '建立失敗');
+          conversionJobHint.textContent = payload?.detail || 'conversion service 沒有回傳 job_id';
+          setConversionButtons(true);
+          return;
+        }
+
+        conversionJobLabel.textContent = payload.job_id;
+        conversionJobHint.textContent = payload.mock ? 'dev mock conversion；不代表真實轉檔品質' : '等待 conversion worker 更新狀態';
+
+        if (mock || payload.status === 'succeeded') {
+          await animateMockConversion(payload);
+          showConversionResult(payload);
+          setConversionButtons(true);
+          return;
+        }
+
+        startConversionPolling(payload.job_id);
+      } finally {
+        if (mock) setConversionButtons(true);
+      }
+    }
+
+    async function createConversionProxy(mock = false) {
+      return coordinatorConversionCall('POST', mock ? '/api/dev/conversions/mock' : '/api/dev/conversions', buildConversionRequest());
+    }
+
+    async function coordinatorConversionCall(method, path, body) {
+      httpOutput.textContent = `${method} ${path}\n載入中…`;
+      const init = { method, headers: { Accept: 'application/json' } };
+      if (body !== undefined) {
+        init.headers['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(body);
+      }
+      try {
+        const response = await fetch(path, init);
+        const text = await response.text();
+        let payload = text;
+        try { payload = JSON.parse(text); } catch {}
+        httpOutput.textContent = `${response.status} ${response.statusText}\n${typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)}`;
+        if (typeof payload === 'string') return { detail: payload, http_status: response.status };
+        if (payload && typeof payload === 'object') {
+          payload.http_status = response.status;
+          return payload;
+        }
+        return { detail: String(payload), http_status: response.status };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        httpOutput.textContent = message;
+        return { detail: message };
+      }
+    }
+
+    function buildBrowserOnlyMockConversion() {
+      const body = buildConversionRequest();
+      const urlBase = `http://127.0.0.1:8002/static/projects/${body.project_id}/versions/${body.model_version_id}`;
+      return {
+        job_id: `browser_only_${Date.now()}`,
+        status: 'succeeded',
+        mock: true,
+        result: {
+          mock: true,
+          source_url: body.source_url,
+          usdc_url: `${urlBase}/model.usdc`,
+          mapping_url: `${urlBase}/element_mapping.json`,
+        },
+        warnings: ['browser-only demo feedback; coordinator dev proxy route is not active in the currently running server.'],
+      };
+    }
+
+    async function animateMockConversion(payload) {
+      const stages = [
+        ['warn', '讀取來源 IFC…', 1, 0, 25],
+        ['warn', '解析 BIM 元件…', 2, 1, 50],
+        ['warn', '產出 USDC 模型…', 3, 2, 75],
+        ['warn', '建立 mapping 並回寫…', 4, 3, 92],
+      ];
+      for (const [kind, label, active, done, progress] of stages) {
+        setConversionStatus(kind, label);
+        setConversionStage(active, done);
+        setConversionProgress(progress);
+        await delay(260);
+      }
+      setConversionStatus(payload.status === 'failed' ? 'bad' : 'ok', payload.status === 'failed' ? '轉換失敗' : '已完成');
+      setConversionStage(0, payload.status === 'failed' ? 3 : 4);
+      setConversionProgress(payload.status === 'failed' ? 92 : 100);
+    }
+
+    function startConversionPolling(jobId) {
+      stopConversionPolling();
+      let tick = 0;
+      conversionPollTimer = setInterval(async () => {
+        tick += 1;
+        const payload = await coordinatorConversionCall('GET', `/api/dev/conversions/${encodeURIComponent(jobId)}`);
+        if (payload.http_status && payload.http_status >= 400) {
+          stopConversionPolling();
+          setConversionButtons(true);
+          setConversionStatus('bad', '查詢轉檔狀態失敗');
+          conversionJobHint.textContent = payload.detail || `conversion status API returned ${payload.http_status}`;
+          return;
+        }
+        updateConversionProgressFromJob(payload, tick);
+        if (payload.status === 'succeeded') {
+          stopConversionPolling();
+          setConversionButtons(true);
+          showConversionResult(payload);
+        }
+        if (payload.status === 'failed') {
+          stopConversionPolling();
+          setConversionButtons(true);
+        }
+      }, 2000);
+    }
+
+    function updateConversionProgressFromJob(payload, tick) {
+      const status = payload?.status || 'unknown';
+      const stage = payload?.stage || status;
+      conversionStageLabel.textContent = stage;
+      if (status === 'queued') {
+        setConversionStatus('warn', '排隊中…');
+        setConversionStage(1, 0);
+        setConversionProgress(15);
+      } else if (status === 'running') {
+        const stageIndex = stageToIndex(stage, tick);
+        setConversionStatus('warn', `轉換中：${stage}`);
+        setConversionStage(stageIndex, Math.max(stageIndex - 1, 0));
+        setConversionProgress(Math.min(90, 20 + stageIndex * 16 + tick * 2));
+      } else if (status === 'succeeded') {
+        setConversionStatus('ok', '已完成');
+        setConversionStage(0, 4);
+        setConversionProgress(100);
+      } else if (status === 'failed') {
+        setConversionStatus('bad', '轉換失敗');
+        setConversionProgress(92);
+        conversionJobHint.textContent = payload?.error?.message || '請展開 raw response 查看錯誤';
+      } else {
+        setConversionStatus('warn', `等待狀態：${status}`);
+      }
+    }
+
+    function showConversionResult(payload) {
+      const result = payload.result || payload;
+      const usdc = result.usdc_url || '';
+      const mapping = result.mapping_url || '';
+      document.getElementById('conversionUsdcLink').innerHTML = usdc
+        ? `<a href="${escapeAttr(usdc)}" target="_blank" rel="noopener">${escapeHtml(usdc)}</a>` : '—';
+      document.getElementById('conversionMappingLink').innerHTML = mapping
+        ? `<a href="${escapeAttr(mapping)}" target="_blank" rel="noopener">${escapeHtml(mapping)}</a>` : '—';
+      conversionResultGrid.style.display = 'grid';
+      appendDemoFeed('轉檔結果已回寫', { job_id: payload.job_id, usdc_url: usdc, mapping_url: mapping });
+      refreshSessionCard();
+    }
+
+    function setConversionStatus(kind, label) {
+      conversionStatus.className = `demo-status demo-status--${kind}`;
+      conversionStatus.textContent = label;
+      conversionStageLabel.textContent = label;
+    }
+
+    function setConversionProgress(percent) {
+      conversionProgressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+    }
+
+    function setConversionStage(activeIndex, doneThrough) {
+      for (let i = 1; i <= 4; i++) {
+        const el = document.getElementById(`conversionStage-${i}`);
+        el.classList.remove('demo-stage--active', 'demo-stage--done');
+        if (i <= doneThrough) el.classList.add('demo-stage--done');
+        else if (i === activeIndex) el.classList.add('demo-stage--active');
+      }
+    }
+
+    function setConversionButtons(enabled) {
+      mockConversionBtn.disabled = !enabled;
+      realConversionBtn.disabled = !enabled;
+    }
+
+    function stopConversionPolling() {
+      if (conversionPollTimer) clearInterval(conversionPollTimer);
+      conversionPollTimer = null;
+    }
+
+    function stageToIndex(stage, tick) {
+      const mapping = {
+        queued: 1,
+        downloading_source: 1,
+        indexing_ifc: 2,
+        converting_ifc_to_usdc: 3,
+        indexing_usd: 3,
+        building_mapping: 4,
+        publishing_outputs: 4,
+        updating_bim_control: 4,
+      };
+      return mapping[stage] || Math.min(4, 1 + Math.floor(tick / 3));
+    }
+
+    function setGuidedOutcome(kind, title, detail) {
+      guidedOutcome.dataset.kind = kind;
+      guidedOutcome.innerHTML = `<div class="demo-lab__outcome-title">${escapeHtml(title)}</div>`
+        + `<div class="demo-lab__outcome-detail">${escapeHtml(detail)}</div>`;
+    }
+
+    async function ensureGuidedSession() {
+      if (!sessionId.value) await startDemoSession();
+      if (!sessionId.value) throw new Error('尚未取得 session id，請先確認 coordinator 是否已啟動。');
+    }
+
+    async function ensureGuidedSocket() {
+      await ensureGuidedSession();
+      if (!socket?.connected) connectSocket();
+      for (let attempt = 0; attempt < 10 && !socket?.connected; attempt += 1) {
+        await delay(200);
+      }
+      if (!socket?.connected) throw new Error('Socket.IO 尚未連線，請確認 coordinator /review namespace 是否可用。');
+    }
+
+    async function guidedCreateSession() {
+      setGuidedOutcome('warn', '正在建立審查會議', 'coordinator 會建立 session，並整理 model metadata / stream config 給瀏覽器。');
+      try {
+        await startDemoSession();
+        setGuidedOutcome(
+          sessionId.value ? 'ok' : 'warn',
+          sessionId.value ? '會議已建立' : '尚未取得 session id',
+          sessionId.value
+            ? `session=${sessionId.value}；上方會議資訊與即時事件已更新。`
+            : '請查看 Raw HTTP response，確認 coordinator 是否回傳錯誤。'
+        );
+      } catch (error) {
+        setGuidedOutcome('bad', '建立會議失敗', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    async function guidedJoinChannel() {
+      setGuidedOutcome('warn', '正在加入即時頻道', '這會開啟 Socket.IO /review，讓 presence 與多人協作事件出現在 event feed。');
+      try {
+        await ensureGuidedSocket();
+        emitJoin();
+        setGuidedOutcome('ok', '即時頻道已送出加入事件', '觀察「即時連線狀態」與 Live review events；其他 viewer 也會收到 presence 更新。');
+      } catch (error) {
+        setGuidedOutcome('bad', '加入即時頻道失敗', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    async function guidedHighlightIssue() {
+      setGuidedOutcome('warn', '正在同步問題高亮', 'coordinator 會廣播 highlightRequest；viewer 可把事件轉成 DataChannel 3D 高亮。');
+      try {
+        await ensureGuidedSocket();
+        emitHighlight();
+        appendDemoFeed('送出問題高亮', { actor_id: userId.value, target: '/World', issue_id: 'ISSUE-DEMO-001' });
+        setGuidedOutcome('ok', '問題高亮事件已送出', '請觀察 Live review events；若 5173 viewer 已開啟，也會在 Socket.IO events 看見 highlightRequest。');
+      } catch (error) {
+        setGuidedOutcome('bad', '問題高亮失敗', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    async function guidedAnnotation() {
+      setGuidedOutcome('warn', '正在建立審查標註', 'annotation 會經 coordinator 進入 fake review metadata 流程，作為 Step ⑤ 回寫示範。');
+      try {
+        await ensureGuidedSocket();
+        emitAnnotation();
+        appendDemoFeed('建立審查標註', { actor_id: userId.value, target: '/World' });
+        setGuidedOutcome('ok', '標註事件已送出', 'event feed 會顯示 annotationCreate；若後端 ack 成功，代表 fake metadata 回寫流程可用。');
+      } catch (error) {
+        setGuidedOutcome('bad', '建立標註失敗', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    async function guidedConversion() {
+      setGuidedOutcome('warn', '正在展示轉檔資料流', '會用 dev mock conversion 顯示 IFC → USDC + mapping 的階段與產物 URL。');
+      try {
+        await startCoordinatorConversion(null, true);
+        setGuidedOutcome('ok', '轉檔展示已完成', '請觀察 Step ② 卡片的進度、job id、USDC URL 與 mapping URL；未完成的 storage upload 已明確標示。');
+      } catch (error) {
+        setGuidedOutcome('bad', '轉檔展示失敗', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    async function refreshStatus() {
+      setServiceStatus('warn', '查詢中…');
+      try {
+        const r = await fetch('/health');
+        if (!r.ok) throw new Error('health not ok');
+        setServiceStatus('ok', '已就緒');
+      } catch {
+        setServiceStatus('bad', '未連線');
+      }
+      if (sessionId.value) await refreshSessionCard();
+    }
+
+    async function refreshSessionCard() {
+      try {
+        const sc = await (await fetch(`/api/review-sessions/${sessionId.value}/stream-config`)).json();
+        sessSid.textContent = sc.session_id ?? sessionId.value;
+        const ready = sc?.model?.status === 'ready';
+        sessModel.textContent = ready ? '已就緒' : '尚未就緒';
+        sessModel.style.color = ready ? 'var(--demo-status-ok)' : 'var(--demo-status-warn)';
+        sessModelHint.textContent = sc?.model?.url ?? '可審查模型尚未產出，請先完成步驟 ②';
+        sessWebrtc.textContent = `${sc?.webrtc?.signalingServer ?? '—'}:${sc?.webrtc?.signalingPort ?? '—'}`;
+      } catch {
+        sessSid.textContent = '—';
+        sessModel.textContent = '—';
+        sessWebrtc.textContent = '—';
+      }
+    }
+
+    async function startDemoSession() {
+      createBtn.disabled = true;
+      try {
+        await createSession();
+        await refreshSessionCard();
+        if (!socket?.connected) connectSocket();
+        setTimeout(emitJoin, 600);
+      } finally {
+        createBtn.disabled = false;
+      }
+    }
+
+    // 將 dev-console.js 內 appendSocket() 的訊息也渲染到 demo feed
+    const _origAppendSocket = window.appendSocket;
+    function appendDemoFeed(message, payload) {
+      const t = new Date();
+      const time = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+      const friendly = friendlyEvent(message, payload);
+      const meta = friendlyMeta(payload);
+      if (eventFeed.textContent.startsWith('尚未連線')) eventFeed.innerHTML = '';
+      const row = document.createElement('div');
+      row.className = 'demo-event-feed__row';
+      row.innerHTML = `<span class="demo-event-feed__time">${time}</span>`
+                    + `<span class="demo-event-feed__label">${escapeHtml(friendly)}</span>`
+                    + `<span class="demo-event-feed__meta">${escapeHtml(meta)}</span>`;
+      eventFeed.prepend(row);
+    }
+
+    window.appendSocket = function(message, payload) {
+      if (typeof _origAppendSocket === 'function') _origAppendSocket(message, payload);
+      appendDemoFeed(message, payload);
+    };
+
+    function friendlyEvent(msg) {
+      const m = String(msg);
+      if (m === 'connect') return '已連上即時頻道';
+      if (m === 'disconnect') return '即時頻道中斷';
+      if (m.startsWith('joinSession')) return '使用者加入審查會議';
+      if (m.startsWith('leaveSession')) return '使用者離開審查會議';
+      if (m.startsWith('highlightRequest')) return '送出問題高亮';
+      if (m.startsWith('selectionUpdate')) return '同步元件選取';
+      if (m.startsWith('annotationCreate')) return '建立審查標註';
+      if (m.startsWith('annotationCreated')) return '標註已寫入主資料庫';
+      if (m.startsWith('presenceUpdated')) return '與會者列表更新';
+      if (m.startsWith('heartbeat')) return '心跳';
+      if (m === 'clientWarning') return '前端提示';
+      if (m === 'serverWarning') return '伺服器提示';
+      return m;
+    }
+
+    function friendlyMeta(payload) {
+      try {
+        if (!payload) return '';
+        if (payload.user_id) return `by ${payload.user_id}`;
+        if (payload.actor_id) return `by ${payload.actor_id}`;
+        if (payload.id) return payload.id;
+        return '';
+      } catch { return ''; }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function escapeAttr(s) {
+      if (/^\s*(javascript|data|vbscript):/i.test(s)) return '#';
+      return escapeHtml(s);
+    }
+
+    // mirror socket connection to summary card label
+    const socketStateEl = document.getElementById('socketState');
+    new MutationObserver(() => {
+      const text = socketStateEl.textContent;
+      socketStateLabel.textContent = text;
+      socketStateLabel.style.color = text === '已連線' ? 'var(--demo-status-ok)' : 'var(--demo-status-warn)';
+    }).observe(socketStateEl, { childList: true, characterData: true, subtree: true });
+
+    document.getElementById('footerOpenViewer').addEventListener('click', (e) => {
+      e.preventDefault();
+      if (sessionId.value) openViewerWithSession();
+      else window.open('http://127.0.0.1:5173', '_blank');
+    });
+
+    refreshStatus();
+    setInterval(refreshStatus, 8000);
+  </script>
 </body>
 </html>

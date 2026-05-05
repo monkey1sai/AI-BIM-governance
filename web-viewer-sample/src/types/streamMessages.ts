@@ -5,6 +5,8 @@ export interface HighlightItem {
     label?: string;
     source?: string;
     issue_id?: string;
+    mapping_method?: string | null;
+    mapping_confidence?: number | null;
 }
 
 export interface StreamMessage {

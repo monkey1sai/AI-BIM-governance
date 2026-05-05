@@ -14,6 +14,7 @@ leaveSession
 highlightRequest
 selectionUpdate
 annotationCreate
+heartbeat
 ```
 
 `joinSession` payload:
@@ -61,3 +62,25 @@ annotationCreated
 ```
 
 Events are broadcast to the same `session_id` room except the sender where appropriate.
+
+`highlightRequest`, `selectionUpdate`, and `annotationCreated` are room scoped: a second browser client joined to the same `session_id` receives the broadcast while other sessions do not. `annotationCreate` returns an ack error if `_bim-control` cannot save the annotation, but the namespace stays alive.
+
+## Ack And Session Validation
+
+All session-scoped client events validate `session_id` before mutating presence, appending the event log, broadcasting to a room, or calling `_bim-control`.
+
+Successful ack:
+
+```json
+{ "ok": true }
+```
+
+Validation failures:
+
+```json
+{ "ok": false, "error": "Missing session_id" }
+{ "ok": false, "error": "Invalid review session id." }
+{ "ok": false, "error": "Review session not found." }
+```
+
+`joinSession`, `leaveSession`, `highlightRequest`, `selectionUpdate`, and `annotationCreate` must not join a Socket.IO room, write event log entries, or persist annotations when the session does not exist.

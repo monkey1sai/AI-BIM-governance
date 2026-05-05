@@ -24,10 +24,11 @@ export function buildGetChildrenRequest(primPath = "/World"): StreamMessage {
     };
 }
 
-export function buildHighlightPrimsRequest(items: HighlightItem[], focusFirst = true): StreamMessage {
+export function buildHighlightPrimsRequest(items: HighlightItem[], focusFirst = true, requestId?: string): StreamMessage {
     return {
         event_type: "highlightPrimsRequest",
         payload: {
+            ...(requestId ? { request_id: requestId } : {}),
             mode: "replace",
             items,
             focus_first: focusFirst,
@@ -35,10 +36,11 @@ export function buildHighlightPrimsRequest(items: HighlightItem[], focusFirst = 
     };
 }
 
-export function buildFocusPrimRequest(primPath = "/World"): StreamMessage {
+export function buildFocusPrimRequest(primPath = "/World", requestId?: string): StreamMessage {
     return {
         event_type: "focusPrimRequest",
         payload: {
+            ...(requestId ? { request_id: requestId } : {}),
             prim_path: primPath,
         },
     };

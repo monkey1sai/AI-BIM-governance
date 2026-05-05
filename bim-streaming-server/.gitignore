@@ -62,7 +62,6 @@ logs/
 # Local agent / browser automation artifacts
 /.claude/
 /.playwright-mcp/
-/AGENTS.md
 /CLAUDE.md
 /current-stream-*.png
 /stream-validation-*.png

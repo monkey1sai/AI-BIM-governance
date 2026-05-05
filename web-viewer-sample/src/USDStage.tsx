@@ -126,8 +126,8 @@ export default class USDStage extends React.Component<USDStageProps, { expandedI
         return (
             <div className="usdStageContainer" style={{ width: this.props.width }}>
                 <div className="usdStageHeader">
-                    {'USD Stage'}
-                    <button className="nvidia-button" onClick={this._onReset}>Reset</button>
+                    {'USD Stage 樹狀結構'}
+                    <button className="nvidia-button" onClick={this._onReset}>重設</button>
                 </div>
                 <ul className="list-container">
                     {this._renderList(this.props.usdPrims)}

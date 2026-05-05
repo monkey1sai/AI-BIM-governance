@@ -11,6 +11,27 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Test-HttpResource {
+    param(
+        [string] $Name,
+        [string] $Uri
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Uri)) {
+        throw "Missing $Name URL"
+    }
+
+    try {
+        $response = Invoke-WebRequest -Method Head -Uri $Uri -TimeoutSec 5 -UseBasicParsing
+    } catch {
+        $response = Invoke-WebRequest -Method Get -Uri $Uri -TimeoutSec 5 -UseBasicParsing
+    }
+
+    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+        throw "$Name returned HTTP $($response.StatusCode): $Uri"
+    }
+}
+
 Invoke-RestMethod "$BimControlUrl/health" | Out-Null
 Invoke-RestMethod "$StorageUrl/health" | Out-Null
 Invoke-RestMethod "$CoordinatorUrl/health" | Out-Null
@@ -43,6 +64,11 @@ if (-not $config.webrtc.signalingPort) {
 if ($config.webrtc.signalingPort -ne 49100) {
     throw "Expected signalingPort 49100, got $($config.webrtc.signalingPort)"
 }
+if ($config.model.status -ne "ready") {
+    throw "Expected ready review model, got $($config.model.status)"
+}
+Test-HttpResource -Name "model.url" -Uri $config.model.url
+Test-HttpResource -Name "model.mapping_url" -Uri $config.model.mapping_url
 if ($null -eq $artifacts.items) {
     throw "Missing artifacts.items"
 }

@@ -1240,6 +1240,42 @@ docs/contracts/conversion-api.md     # 若 root docs 存在
 - git status 於本輪驗收 commit 後確認乾淨；`AGENTS.md` 已恢復 root 版，不保留簡化版。
 ```
 
+2026-04-30 mapping correctness 補強驗收：
+
+```txt
+- _conversion-service mapping 產生改成保守 Path+Tag mapping：
+  - regex IFC indexer 只接受 22 字元 IFC GlobalId。
+  - STEP product Tag 從 args[7] 抽出數字 Revit element id。
+  - usd_index.json 會補 `ifc_class` 與 `identifier_candidates[{source:"path", key:"revit_element_id"}]`。
+  - 只有 `(ifc_class, revit_element_id)` 在 IFC 與 USD 兩邊都唯一時，才產生 `mapping_method=path_revit_element_id`，confidence=0.70。
+- .\_conversion-service\scripts\smoke_conversion.ps1 -TimeoutSeconds 1800
+  - job_id = conv_20260430062843_30ea6655
+  - status = succeeded, stage = done
+  - model.usdc / ifc_index.json / usd_index.json / element_mapping.json 均可 HTTP HEAD 取得
+  - mapping mapped_count = 503
+  - mapping unmapped_ifc_count = 73272
+  - mapping unmapped_usd_count = 10369
+  - mapping fake_mapping_count = 0
+  - smoke script 已改為 correctness gate：allow_fake_mapping=false 時 mapped_count 必須 > 0 且 fake_mapping_count 必須 = 0。
+- 第一筆真實 mapping item：
+  - ifc_guid = 19nzyxtx5CXwVzdF_4phxj
+  - ifc_class = IfcColumn
+  - revit_element_id = 401627
+  - usd_prim_path = /model/tn__22002_/tn__6254577_zDcjk9uvc0/Default/tn__GL_l3/IFCCOLUMN/tn__75x120cm401627_mE4Z6n6CcxzCvgSXhl0php0ujb0hbY1
+  - mapping_method = path_revit_element_id
+  - mapping_confidence = 0.7
+- _bim-control conversion result 的 mapping_url 指向：
+  http://localhost:8002/static/projects/project_demo_001/versions/version_demo_001/element_mapping.json
+- Browser E2E recheck：
+  - web viewer 可載入 stream-config.model.mapping_url。
+  - Mapping panel 顯示 mapped=503 / fake=0。
+  - 選第一筆 mapping item 後，UI 送出帶 request_id 的 highlightPrimsRequest / focusPrimRequest，payload 使用真實 usd_prim_path，不使用 /World。
+  - 目前 browser 仍卡在 WebRTC media blocker：readyState=0, srcObject=false，console 0 errors、StreamSDK warning 0xC0F22219。
+  - 因沒有收到 highlightPrimsResult / focusPrimResult，本輪 browser correctness result 尚未通過；不得把送出 request 或 /World fallback 算成 mapping correctness pass。
+  - 截圖證據：output/playwright/web-viewer-mapping-validation-real-mapping.png
+  - 注意：output/playwright/ 是 gitignored local evidence；若 PR 需要截圖證據，需移到 tracked docs evidence folder。
+```
+
 ---
 
 ## 20. 重要原則

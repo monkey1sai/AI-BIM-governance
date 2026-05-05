@@ -11,7 +11,7 @@ import { loadConfig } from "./config.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
 import { allocateLocalKitInstance } from "./services/kitPool.js";
-import { SessionStore } from "./services/sessionStore.js";
+import { isSafeSessionId, SessionStore } from "./services/sessionStore.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
 import type { Artifact, StreamConfigResponse } from "./types.js";
 
@@ -33,6 +33,12 @@ const participantSchema = z.object({
   user_id: z.string().min(1),
   display_name: z.string().optional(),
 });
+
+const appendEventSchema = z
+  .object({
+    type: z.string().min(1),
+  })
+  .passthrough();
 
 export interface CoordinatorApp {
   app: express.Express;
@@ -94,6 +100,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   });
 
   app.get("/api/review-sessions/:sessionId", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
     const session = store.get(request.params.sessionId);
     if (!session) {
       response.status(404).json({ detail: "Review session not found." });
@@ -104,6 +114,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   app.post("/api/review-sessions/:sessionId/join", (request, response, next) => {
     try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
       const input = participantSchema.parse(request.body);
       const session = store.join(request.params.sessionId, input);
       if (!session) {
@@ -118,6 +132,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   app.post("/api/review-sessions/:sessionId/leave", (request, response, next) => {
     try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
       const input = participantSchema.parse(request.body);
       const session = store.leave(request.params.sessionId, input.user_id);
       if (!session) {
@@ -132,6 +150,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   app.get("/api/review-sessions/:sessionId/stream-config", async (request, response, next) => {
     try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
       const session = store.get(request.params.sessionId);
       if (!session) {
         response.status(404).json({ detail: "Review session not found." });
@@ -145,12 +167,33 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   });
 
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    if (!store.get(request.params.sessionId)) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
     response.json({ items: eventLog.list(request.params.sessionId) });
   });
 
-  app.post("/api/review-sessions/:sessionId/events", (request, response) => {
-    const event = eventLog.append(request.params.sessionId, String(request.body?.type || "custom"), request.body);
-    response.json(event);
+  app.post("/api/review-sessions/:sessionId/events", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      if (!store.get(request.params.sessionId)) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      const input = appendEventSchema.parse(request.body);
+      const event = eventLog.append(request.params.sessionId, input.type, input);
+      response.json(event);
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get("/api/model-versions/:modelVersionId/review-bootstrap", async (request, response, next) => {
@@ -167,6 +210,27 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     } catch (error) {
       next(error);
     }
+  });
+
+  app.post("/api/dev/conversions", async (request, response) => {
+    await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions", request.body);
+  });
+
+  app.post("/api/dev/conversions/mock", async (request, response) => {
+    await proxyConversionService(response, config.conversionApiBase, "POST", "/api/dev/mock-conversion-result", request.body);
+  });
+
+  app.get("/api/dev/conversions/:jobId/result", async (request, response) => {
+    await proxyConversionService(
+      response,
+      config.conversionApiBase,
+      "GET",
+      `/api/conversions/${encodeURIComponent(request.params.jobId)}/result`,
+    );
+  });
+
+  app.get("/api/dev/conversions/:jobId", async (request, response) => {
+    await proxyConversionService(response, config.conversionApiBase, "GET", `/api/conversions/${encodeURIComponent(request.params.jobId)}`);
   });
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
@@ -213,6 +277,41 @@ async function safeIssues(client: BimControlClient, modelVersionId: string) {
   } catch {
     return [];
   }
+}
+
+async function proxyConversionService(
+  response: express.Response,
+  conversionApiBase: string,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<void> {
+  try {
+    const upstreamUrl = new URL(path, ensureTrailingSlash(conversionApiBase)).toString();
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const init: RequestInit = {
+      method,
+      headers,
+    };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    const upstream = await fetch(upstreamUrl, init);
+    const text = await upstream.text();
+    const contentType = upstream.headers.get("content-type") || "application/json; charset=utf-8";
+    response.status(upstream.status).type(contentType).send(text || "{}");
+  } catch (error) {
+    response.status(502).json({
+      detail: "Conversion service unavailable.",
+      upstream: conversionApiBase,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function ensureTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value : `${value}/`;
 }
 
 function chooseReadyUsdc(artifacts: Artifact[]): Artifact | undefined {

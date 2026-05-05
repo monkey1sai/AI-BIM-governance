@@ -19,6 +19,46 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RunDir = Join-Path $PSScriptRoot ".run"
 if (-not (Test-Path $RunDir)) { New-Item -ItemType Directory -Path $RunDir -Force | Out-Null }
 
+function Initialize-WindowsRuntimeEnvironment {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $parts = $identity.Split("\", 2)
+    if ($parts.Count -eq 2) {
+        if ([string]::IsNullOrWhiteSpace($env:USERDOMAIN)) {
+            $env:USERDOMAIN = $parts[0]
+        }
+        if ([string]::IsNullOrWhiteSpace($env:USERNAME)) {
+            $env:USERNAME = $parts[1]
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        $env:APPDATA = Join-Path $env:USERPROFILE "AppData\Roaming"
+    }
+    if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $env:LOCALAPPDATA = Join-Path $env:USERPROFILE "AppData\Local"
+    }
+    if ([string]::IsNullOrWhiteSpace($env:ProgramData)) {
+        $env:ProgramData = "C:\ProgramData"
+    }
+    if ([string]::IsNullOrWhiteSpace($env:ALLUSERSPROFILE)) {
+        $env:ALLUSERSPROFILE = "C:\ProgramData"
+    }
+    if ([string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        $env:SystemRoot = "C:\WINDOWS"
+    }
+    if ([string]::IsNullOrWhiteSpace($env:windir)) {
+        $env:windir = $env:SystemRoot
+    }
+    if ([string]::IsNullOrWhiteSpace($env:ComSpec)) {
+        $env:ComSpec = Join-Path $env:SystemRoot "system32\cmd.exe"
+    }
+    if ([string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) {
+        $env:COMPUTERNAME = $env:USERDOMAIN
+    }
+}
+
+Initialize-WindowsRuntimeEnvironment
+
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) { $Python = "python" }
 

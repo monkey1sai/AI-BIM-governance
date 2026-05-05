@@ -6,6 +6,13 @@ Base URL:
 http://127.0.0.1:8003
 ```
 
+Naming compatibility:
+
+```txt
+_conversion-server is treated as an alias name for _conversion-service.
+Do not duplicate service code; point CONVERSION_API_BASE or local runbooks at the single _conversion-service instance.
+```
+
 ## Endpoints
 
 ```http

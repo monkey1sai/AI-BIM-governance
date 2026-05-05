@@ -9,7 +9,7 @@ export function buildDemoHighlightItem(source: string): HighlightItem {
         prim_path: demoPrimPath,
         ifc_guid: demoIfcGuid,
         color: [1, 0, 0, 1],
-        label: "Demo highlight from Web Viewer Demo Panel",
+        label: "示範：從 Web Viewer Demo 面板送出的高亮",
         source,
         issue_id: demoIssueId,
     };

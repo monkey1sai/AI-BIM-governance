@@ -3,8 +3,12 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .ifc_class_canonicalizer import canonical_ifc_class
+
 
 ENTITY_RE = re.compile(r"^\s*#(?P<id>\d+)\s*=\s*(?P<class>IFC[A-Z0-9_]+)\s*\((?P<args>.*)\)\s*;?\s*$", re.I | re.S)
+IFC_GLOBAL_ID_RE = re.compile(r"^[0-9A-Za-z_$]{22}$")
+TAG_ARG_INDEX = 7
 
 
 def build_ifc_index(
@@ -56,15 +60,15 @@ def _build_with_ifcopenshell(
     elements = []
     for entity in model.by_type("IfcRoot"):
         guid = getattr(entity, "GlobalId", None)
-        if not guid:
+        if not _is_ifc_global_id(str(guid) if guid else None):
             continue
         elements.append(
             {
                 "ifc_entity_id": f"#{entity.id()}",
                 "ifc_guid": str(guid),
-                "ifc_class": str(entity.is_a()),
+                "ifc_class": canonical_ifc_class(entity.is_a()),
                 "name": _none_if_empty(getattr(entity, "Name", None)),
-                "revit_element_id": _none_if_empty(getattr(entity, "Tag", None)),
+                "revit_element_id": _numeric_or_none(getattr(entity, "Tag", None)),
             }
         )
     index["elements"] = elements
@@ -86,15 +90,16 @@ def _build_with_regex(
             continue
         args = _split_step_args(match.group("args"))
         guid = _unquote_step_string(args[0]) if args else None
-        if not guid:
+        if not _is_ifc_global_id(guid):
             continue
+        ifc_class = canonical_ifc_class(match.group("class"))
         elements.append(
             {
                 "ifc_entity_id": f"#{match.group('id')}",
                 "ifc_guid": guid,
-                "ifc_class": _normalize_ifc_class(match.group("class")),
+                "ifc_class": ifc_class,
                 "name": _unquote_step_string(args[2]) if len(args) > 2 else None,
-                "revit_element_id": _unquote_step_string(args[4]) if len(args) > 4 else None,
+                "revit_element_id": _extract_revit_element_id(args),
                 "raw_line": _compact_record(record),
             }
         )
@@ -158,11 +163,18 @@ def _unquote_step_string(value: str | None) -> str | None:
     return None
 
 
-def _normalize_ifc_class(value: str) -> str:
-    value = value.upper()
-    if not value.startswith("IFC"):
-        return value
-    return "Ifc" + value[3:].title().replace("_", "")
+def _is_ifc_global_id(value: str | None) -> bool:
+    return bool(value and IFC_GLOBAL_ID_RE.fullmatch(value))
+
+
+def _extract_revit_element_id(args: list[str]) -> str | None:
+    if len(args) <= TAG_ARG_INDEX:
+        return None
+    tag = _unquote_step_string(args[TAG_ARG_INDEX])
+    if not tag:
+        return None
+    tag = tag.strip()
+    return tag if re.fullmatch(r"\d+", tag) else None
 
 
 def _none_if_empty(value: object) -> str | None:
@@ -170,6 +182,11 @@ def _none_if_empty(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _numeric_or_none(value: object) -> str | None:
+    text = _none_if_empty(value)
+    return text if text and re.fullmatch(r"\d+", text) else None
 
 
 def _compact_record(value: str) -> str:
