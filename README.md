@@ -114,7 +114,7 @@ npm run dev -- --host 127.0.0.1
 | `web-viewer-sample/` | 瀏覽器審查端 (Browser Client) | 步驟 ④ | 顯示串流畫面、建立或加入 review session、讀 artifacts/issues、送 DataChannel command、送 collaboration events；不啟動 Kit、不保存資料權威。 |
 | `docs/contracts/` | API / event contracts | — | REST、Socket.IO、DataChannel 與 local runbook contract。 |
 | `docs/plans/` | Implementation plans | — | 目前執行計畫與驗收 checklist；**Demo UI 守則** 在 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`。 |
-| `docs/wiki/` | GitNexus / Graphify wiki snapshot | — | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
+| `docs/wiki/` | Graphify wiki snapshot | — | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
 | `scripts/` | Root smoke scripts | — | 跨服務健康檢查與 review session smoke test。 |
 
 ### Source of Truth
@@ -201,24 +201,12 @@ cd bim-streaming-server
 
 ## AI Agent 輔助 Wiki
 
-GitNexus（程式索引導覽）：
-- HTML viewer: [`docs/wiki/gitnexus/index.html`](docs/wiki/gitnexus/index.html)
-- Markdown pages: [`docs/wiki/gitnexus/`](docs/wiki/gitnexus/)
-
 Graphify（跨文件知識圖）：
 - Report: [`docs/wiki/graphify/GRAPH_REPORT.md`](docs/wiki/graphify/GRAPH_REPORT.md)
 - Interactive graph: [`docs/wiki/graphify/graph.html`](docs/wiki/graphify/graph.html)
 
-> 兩者只是輔助探索；**最終以程式碼與 contracts 文件為準**。
+> 它只是輔助探索；**最終以程式碼與 contracts 文件為準**。
 
-維護命令：
-
-```powershell
-npx gitnexus status
-npx gitnexus analyze --skip-agents-md
-npx gitnexus wiki
-Copy-Item .\.gitnexus\wiki\* .\docs\wiki\gitnexus\ -Recurse -Force
-```
 
 ---
 

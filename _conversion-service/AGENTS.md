@@ -34,7 +34,7 @@
 
 - 先讀 `README.md`、`app/`、`tests/`、`data/` fixture 與相關 contract。
 - 若 job schema、status enum、mapping format、storage URL 規則變更，必須同步檢查 `_bim-control`、`_s3_storage`、`bim-review-coordinator` 與 `docs/contracts/`。
-- Docs-only 改動不需要 GitNexus symbol impact；source symbol 改動才需要依根目錄 GitNexus 規則做 impact analysis。
+- Source 改動需檢查相關 API、fixture 與測試影響；docs-only 改動只需確認文件語意。
 
 ## Verify
 

@@ -34,7 +34,7 @@
 
 - 先讀 `README.md`、`app/`、`tests/` 與 static file fixture。
 - 若 upload/download path、URL format、storage key 規則變更，必須同步檢查 `_bim-control`、`_conversion-service` 與 `bim-streaming-server` 的依賴。
-- Docs-only 改動不需要 GitNexus symbol impact；source symbol 改動才需要依根目錄 GitNexus 規則做 impact analysis。
+- Source 改動需檢查相關 API、fixture 與測試影響；docs-only 改動只需確認文件語意。
 
 ## Verify
 

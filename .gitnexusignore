@@ -1,5 +1,4 @@
 # GitNexus ignored outputs for local analysis stability
-# Generated logs / browser profiles / profiler artifacts
 /_bim-control/.pytest_cache/
 /_bim-control/.gitnexus/
 **/.pytest_cache/
@@ -34,4 +33,3 @@
 **/*.tar
 **/*.7z
 **/*.gz
-README.md

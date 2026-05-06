@@ -26,7 +26,6 @@ yalc.lock
 *.njsproj
 *.sln
 *.sw?
-.gitnexus
 
 # Local agent artifacts
 /.claude/

@@ -1,4 +1,4 @@
-﻿# All folders starting with _ are local.
+# All folders starting with _ are local.
 _*/
 
 # Compiled python files.
@@ -57,7 +57,6 @@ logs/
 /source/**/*.pyc
 /source/rendered_template_metadata.json
 
-.gitnexus
 
 # Local agent / browser automation artifacts
 /.claude/
@@ -65,7 +64,6 @@ logs/
 /CLAUDE.md
 /current-stream-*.png
 /stream-validation-*.png
-/docs/gitnexus-agent-guide.md
 /.codex
 /.codex
 

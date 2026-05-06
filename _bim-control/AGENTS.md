@@ -33,7 +33,7 @@
 
 - 先讀 `README.md`、`app/`、`tests/` 與相關 API fixture。
 - 若 API schema、response shape、fixture 欄位變更，必須同步檢查 `bim-review-coordinator`、`_conversion-service` 與根目錄 `docs/contracts/` 的依賴。
-- Docs-only 改動不需要 GitNexus symbol impact；source symbol 改動才需要依根目錄 GitNexus 規則做 impact analysis。
+- Source 改動需檢查相關 API、fixture 與測試影響；docs-only 改動只需確認文件語意。
 
 ## Verify
 

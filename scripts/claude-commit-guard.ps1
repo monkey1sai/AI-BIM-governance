@@ -20,7 +20,7 @@ if ($payload.tool_input -and $payload.tool_input.command) {
 }
 
 if ($command -match '(^|\s)git(\.exe)?\s+commit(\s|$)') {
-    [Console]::Error.WriteLine("[commit-guard] 提交前確認：(1) 已跑 verify (2) 已檢查 GitNexus detect changes 或等效 diff 範圍 (3) commit message scope 對應改動 repo")
+    [Console]::Error.WriteLine("[commit-guard] 提交前確認：(1) 已跑 verify (2) 已檢查 diff 範圍 (3) commit message scope 對應改動 repo")
 }
 
 exit 0

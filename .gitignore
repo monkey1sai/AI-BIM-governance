@@ -11,6 +11,7 @@ Thumbs.db
 .codex/
 .vscode/
 .gitnexus/
+**/.gitnexus/
 .playwright-cli/
 output/playwright/
 graphify-out/

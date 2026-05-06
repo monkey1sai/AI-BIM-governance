@@ -33,7 +33,7 @@
 
 - 先讀 `README.md`、`src/`、`tests/`、`package.json` 與相關 contract。
 - API 或 Socket.IO event schema 變更必須同步檢查 `web-viewer-sample`、`_bim-control`、`_s3_storage` 與 `docs/contracts/`。
-- Docs-only 改動不需要 GitNexus symbol impact；source symbol 改動才需要依根目錄 GitNexus 規則做 impact analysis。
+- Source 改動需檢查相關 API、event contract 與測試影響；docs-only 改動只需確認文件語意。
 
 ## Verify
 

@@ -1,6 +1,6 @@
 # Graphify Cross-Document Knowledge Graph
 
-This folder is the tracked Graphify snapshot for cross-document architecture knowledge that GitNexus does not infer from code alone.
+This folder is the tracked Graphify snapshot for cross-document architecture knowledge.
 
 ## Inputs
 
@@ -16,7 +16,7 @@ It currently includes:
 - `docs/plans/`
 - `docs/git/`
 
-Generated GitNexus wiki files are intentionally excluded from the corpus to avoid circular analysis.
+Generated code-index wiki files are intentionally excluded from the corpus to avoid circular analysis.
 
 ## Outputs
 

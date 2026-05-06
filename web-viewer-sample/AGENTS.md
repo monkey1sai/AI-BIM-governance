@@ -35,8 +35,8 @@
 
 - 先讀 `README.md`、`src/`、`package.json` 與相關 docs。
 - UI/client 改動與 server protocol / deployment 改動分開處理。
-- Source symbol 改動必須依根目錄 GitNexus 規則先做 impact analysis；HIGH / CRITICAL impact 先停下回報。
-- Docs-only 改動不需要 GitNexus symbol impact，除非文件改變 public API、protocol 或 operational runbook 行為。
+- Source 改動需檢查相關 public API、protocol、UI flow 與測試影響。
+- Docs-only 改動只需確認文件語意，除非文件改變 public API、protocol 或 operational runbook 行為。
 
 ## Verify
 
@@ -64,5 +64,5 @@ scripts\verify-all.ps1 -TsOnly
 
 - 變更維持 browser client 邊界，沒有把 UI 變成 metadata authority、storage、conversion worker 或 Kit runtime。
 - 相關 build、lint 或 smoke check 通過，或清楚說明未跑原因。
-- Source symbol 改動完成後檢查 GitNexus detect changes 或等效 diff 範圍。
+- Source 改動完成後檢查等效 diff 範圍。
 - 最終回覆列出 changed files、validation、known risks。

@@ -1726,7 +1726,7 @@ Manual：
 
 ### 6.1 修改前檢查
 
-如果 repo 有 GitNexus / AGENTS 規範，先做 impact analysis 或至少記錄 target files。
+如果 repo 有 AGENTS 規範，先檢查相關影響或至少記錄 target files。
 
 ### 6.2 新增 OverlayManager
 

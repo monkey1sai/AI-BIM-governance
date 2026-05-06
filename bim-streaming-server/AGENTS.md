@@ -34,8 +34,8 @@
 ## Before Editing
 
 - 先讀 `README.md`、`BUILD.md`、`source/`、`scripts/`、`config/` 與相關 docs。
-- Source symbol 改動必須依根目錄 GitNexus 規則先做 impact analysis；HIGH / CRITICAL impact 先停下回報。
-- Docs-only 改動不需要 GitNexus symbol impact，除非文件改變 build、deployment、public API 或 operational runbook 行為。
+- Source 改動需檢查相關 build、deployment、public API、DataChannel contract 與測試影響。
+- Docs-only 改動只需確認文件語意，除非文件改變 build、deployment、public API 或 operational runbook 行為。
 - 不要刪除 `_build/`、`logs/`、`bim-models/` 等本地產物，除非使用者明確要求。
 
 ## Verify
@@ -63,5 +63,5 @@ scripts\verify-all.ps1 -StreamingOnly
 
 - 變更維持 Kit runtime / streaming server 邊界。
 - 相關 smoke、build 或 test 通過，或清楚說明未跑原因。
-- Source symbol 改動完成後檢查 GitNexus detect changes 或等效 diff 範圍。
+- Source 改動完成後檢查等效 diff 範圍。
 - 最終回覆列出 changed files、validation、known risks。
