@@ -164,6 +164,23 @@ describe("allocateKitInstanceBindings", () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  it("returns empty array when dedicated_instance exceeds capacity_slots", () => {
+    const artifactBindings = [
+      makeArtifactBinding({ artifact_id: "artifact_usdc_a", binding_id: "binding_1" }),
+      makeArtifactBinding({ artifact_id: "artifact_usdc_b", binding_id: "binding_2" }),
+    ];
+
+    const bindings = allocateKitInstanceBindings(
+      defaultConfig,
+      artifactBindings,
+      "dedicated_instance",
+      "tenant_001",
+      { capacity_slots: 1 },
+    );
+
+    expect(bindings).toHaveLength(0);
+  });
+
   it("returns empty array when capacity_slots is 0", () => {
     const bindings = allocateKitInstanceBindings(
       defaultConfig,

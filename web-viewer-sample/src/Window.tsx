@@ -24,7 +24,7 @@ import PresencePanel from "./components/PresencePanel";
 import ReviewLauncher from "./components/ReviewLauncher";
 import DemoControlPanel from "./components/DemoControlPanel";
 import { BimControlClient } from "./clients/bimControlClient";
-import { CoordinatorClient } from "./clients/coordinatorClient";
+import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
 import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest, severityToColor } from "./clients/streamMessages";
 import { buildDemoHighlightItem, demoIssueId, demoPrimPath } from "./clients/demoDefaults";
@@ -370,18 +370,27 @@ export default class App extends React.Component<AppProps, AppState> {
             const loadedSession: ReviewSession | null = reviewEnv.defaultSessionId
                 ? await this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)
                 : null;
-            const createdSession = !reviewEnv.defaultSessionId && !reviewRequest?.session_id
-                ? await this.coordinatorClient.createReviewSession({
-                    review_request_id: reviewRequest?.review_request_id,
-                    tenant_id: reviewRequest?.tenant_id,
-                    project_id: reviewRequest?.project_id || reviewEnv.defaultProjectId,
-                    model_version_id: reviewRequest?.model_version_id || reviewEnv.defaultModelVersionId,
-                    created_by: reviewEnv.defaultUserId,
-                    routing_policy: (reviewRequest?.startup_policy?.routing_policy as "same_instance" | "dedicated_instance" | "shared_state" | undefined) || "same_instance",
-                    artifact_bindings: reviewRequest?.artifact_bindings || [],
-                    kit_profile: reviewRequest?.kit_profile || {},
-                })
-                : null;
+            let createdSession: ReviewSession | null = null;
+            if (!reviewEnv.defaultSessionId && !reviewRequest?.session_id) {
+                try {
+                    createdSession = await this.coordinatorClient.createReviewSession({
+                        review_request_id: reviewRequest?.review_request_id,
+                        tenant_id: reviewRequest?.tenant_id,
+                        project_id: reviewRequest?.project_id || reviewEnv.defaultProjectId,
+                        model_version_id: reviewRequest?.model_version_id || reviewEnv.defaultModelVersionId,
+                        created_by: reviewEnv.defaultUserId,
+                        routing_policy: (reviewRequest?.startup_policy?.routing_policy as "same_instance" | "dedicated_instance" | "shared_state" | undefined) || "same_instance",
+                        artifact_bindings: reviewRequest?.artifact_bindings || [],
+                        kit_profile: reviewRequest?.kit_profile || {},
+                    });
+                } catch (error) {
+                    if (isQueuedForInstanceError(error)) {
+                        await this._handleQueuedForInstance(reviewRequest, error.response.artifact_bindings);
+                        return;
+                    }
+                    throw error;
+                }
+            }
             const sessionId = loadedSession?.session_id || reviewRequest?.session_id || createdSession?.session_id || "";
             if (!sessionId) {
                 this.setState({
@@ -441,6 +450,35 @@ export default class App extends React.Component<AppProps, AppState> {
             });
             await this._loadReviewDataFromBimControl();
         }
+    }
+
+    private async _handleQueuedForInstance(reviewRequest: ReviewSessionRequest | null, artifactBindings: ArtifactBinding[]): Promise<void> {
+        const queuedBindings = artifactBindings.length > 0 ? artifactBindings : reviewRequest?.artifact_bindings || [];
+        const queuedAssets = this._assetsFromArtifactBindings(queuedBindings);
+        if (reviewRequest) {
+            try {
+                await this.bimControlClient.patchReviewSessionRequest(reviewRequest.review_request_id, {
+                    status: "queued_for_instance",
+                    artifact_bindings: queuedBindings,
+                    lifecycle_event: {
+                        type: "queuedForKitInstance",
+                        reason: "capacity_slots",
+                    },
+                });
+            } catch (error) {
+                console.warn("Unable to patch queued review request.", error);
+            }
+        }
+        this.setState({
+            reviewRequestId: reviewRequest?.review_request_id || null,
+            reviewLifecycleStatus: "queued_for_instance",
+            reviewStatus: lifecycleStatusText("queued_for_instance"),
+            usdAssets: this._mergeAssets(this.state.usdAssets, queuedAssets),
+            selectedUSDAsset: this.state.selectedUSDAsset || queuedAssets[0] || null,
+            loadingText: lifecycleStatusText("queued_for_instance"),
+            isLoading: false,
+            reviewEvents: [...this.state.reviewEvents, "等待 Kit / GPU instance 配額"],
+        });
     }
 
     private async _loadReviewDataFromBimControl(): Promise<void> {

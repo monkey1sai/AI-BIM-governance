@@ -20,14 +20,18 @@ export function allocateKitInstanceBindings(
   tenantId: string,
   kitProfile: Record<string, unknown> = {},
 ): KitInstanceBinding[] {
-  const capacitySlots = Number(kitProfile.capacity_slots ?? 1);
-  if (Number.isFinite(capacitySlots) && capacitySlots <= 0) {
+  const defaultCapacitySlots = routingPolicy === "dedicated_instance" ? Math.max(artifactBindings.length, 1) : 1;
+  const capacitySlots = resolveCapacitySlots(kitProfile.capacity_slots, defaultCapacitySlots);
+  if (capacitySlots <= 0) {
     return [];
   }
 
   const profile = typeof kitProfile.profile === "string" ? kitProfile.profile : "local_fixed";
   const timestamp = nowIso();
   if (routingPolicy === "dedicated_instance") {
+    if (artifactBindings.length > capacitySlots) {
+      return [];
+    }
     return artifactBindings.map((binding, index) =>
       buildBinding(config, {
         kitInstanceId: `kit_local_${String(index + 1).padStart(3, "0")}`,
@@ -62,6 +66,13 @@ export function legacyKitInstanceFromBinding(binding: KitInstanceBinding | undef
     signaling_port: binding.stream_config.signalingPort,
     media_server: binding.stream_config.mediaServer,
   };
+}
+
+function resolveCapacitySlots(value: unknown, fallback: number): number {
+  if (value === undefined || value === null) return fallback;
+  const slots = Number(value);
+  if (!Number.isFinite(slots)) return fallback;
+  return Math.max(0, Math.floor(slots));
 }
 
 export function markKitBindingsDraining(bindings: KitInstanceBinding[]): KitInstanceBinding[] {
