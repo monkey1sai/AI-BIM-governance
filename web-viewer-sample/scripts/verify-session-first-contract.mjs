@@ -56,6 +56,8 @@ for (const token of [
     "failed",
     "_sendStreamMessage",
     "buildOpenStageRequest(this.state.selectedUSDAsset.url, artifactBindings)",
+    "this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)",
+    "const bootstrapModelVersionId = loadedSession?.model_version_id",
 ]) {
     assert.ok(windowSource.includes(token), `Window.tsx is missing ${token}`);
 }
@@ -73,6 +75,11 @@ assert.match(
     windowSource,
     /private _onSelectUSDPrims[\s\S]*?this\._sendStreamMessage\(message\);/,
     "_onSelectUSDPrims must route selection changes through lifecycle-guarded stream sending",
+);
+assert.match(
+    windowSource,
+    /const loadedSession[\s\S]*?this\.coordinatorClient\.getReviewSession\(reviewEnv\.defaultSessionId\)[\s\S]*?const bootstrapModelVersionId = loadedSession\?\.model_version_id[\s\S]*?this\.coordinatorClient\.getReviewBootstrap\(bootstrapModelVersionId\)/,
+    "sessionId bootstrap must resolve model_version_id from the coordinator session before loading review-bootstrap",
 );
 
 const artifactPanelSource = readSource("src/components/ArtifactPanel.tsx");

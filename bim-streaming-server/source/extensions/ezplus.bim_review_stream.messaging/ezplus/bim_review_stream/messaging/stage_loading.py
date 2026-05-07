@@ -215,13 +215,30 @@ class LoadingManager:
             }
 
         selected = normalized[0]
+        skipped = normalized[1:]
+        if skipped:
+            return selected["url"], {
+                "applied_mode": "single_binding_only",
+                "artifact_id": selected.get("artifact_id"),
+                "artifact_group_id": selected.get("artifact_group_id"),
+                "load_order": selected.get("load_order"),
+                "loaded_artifact_ids": [selected.get("artifact_id")],
+                "skipped_artifact_ids": [item.get("artifact_id") for item in skipped],
+                "missing_paths": missing_paths,
+                "fallback_paths": [],
+                "partial_load": True,
+                "warning": "Multiple artifact bindings were provided; only the first loadable binding is opened by this runtime.",
+            }
         return selected["url"], {
             "applied_mode": "artifact_bindings_load_order",
             "artifact_id": selected.get("artifact_id"),
             "artifact_group_id": selected.get("artifact_group_id"),
             "load_order": selected.get("load_order"),
+            "loaded_artifact_ids": [selected.get("artifact_id")],
+            "skipped_artifact_ids": [],
             "missing_paths": missing_paths,
             "fallback_paths": [],
+            "partial_load": False,
         }
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:

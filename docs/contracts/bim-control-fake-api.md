@@ -60,7 +60,7 @@ Artifact `status` is `ready` after conversion posts a succeeded conversion resul
 }
 ```
 
-If the requested artifact group has source, derived USDC, and mapping metadata, status is `created`. Missing derived or mapping metadata sets `status=blocked_conversion` with `blocker=conversion_readiness`.
+If the requested artifact group has source, derived USDC, and mapping metadata, status is `created` and the response includes coordinator-ready `artifact_bindings[]` resolved from the requested artifact group or selected artifacts. Missing derived or mapping metadata sets `status=blocked_conversion` with `blocker=conversion_readiness`.
 
 Coordinator session bindings are patched back:
 
@@ -68,7 +68,7 @@ Coordinator session bindings are patched back:
 {
   "status": "active",
   "session_id": "review_session_xxx",
-  "artifact_bindings": [],
+  "artifact_bindings": [{ "artifact_group_id": "ag_xxx", "artifact_id": "artifact_usdc_xxx", "ready_status": "ready" }],
   "kit_instance_bindings": [],
   "lifecycle_event": { "type": "sessionBound", "session_id": "review_session_xxx" }
 }

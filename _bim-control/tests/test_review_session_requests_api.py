@@ -66,10 +66,50 @@ def test_review_session_request_is_created_for_ready_artifact_group(tmp_path: Pa
     assert body["review_request_id"].startswith("review_request_")
     assert body["status"] == "created"
     assert body["artifact_group_ids"] == ["ag_test_ready"]
+    assert body["artifact_bindings"] == [
+        {
+            "binding_id": "binding_1",
+            "artifact_group_id": "ag_test_ready",
+            "model_version_id": "version_demo_001",
+            "artifact_id": "artifact_usdc_test_001",
+            "artifact_role": "derived",
+            "url": "http://127.0.0.1:8005/objects/model.usdc",
+            "mapping_url": "http://127.0.0.1:8005/objects/element_mapping.json",
+            "load_order": 0,
+            "routing_policy": "same_instance",
+            "ready_status": "ready",
+        }
+    ]
 
     loaded = client.get(f"/api/review-session-requests/{body['review_request_id']}")
     assert loaded.status_code == 200
     assert loaded.json()["model_version_id"] == "version_demo_001"
+    assert loaded.json()["artifact_bindings"][0]["artifact_id"] == "artifact_usdc_test_001"
+
+
+def test_review_session_request_builds_bindings_from_selected_artifacts(tmp_path: Path):
+    client = make_client(tmp_path)
+    client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
+
+    response = client.post(
+        "/api/review-session-requests",
+        json={
+            "requested_by": "dev_user_001",
+            "tenant_id": "tenant_demo_001",
+            "project_id": "project_demo_001",
+            "model_version_id": "version_demo_001",
+            "selected_artifact_ids": ["artifact_usdc_test_001"],
+            "startup_policy": {"routing_policy": "dedicated_instance"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "created"
+    assert body["artifact_bindings"][0]["artifact_id"] == "artifact_usdc_test_001"
+    assert body["artifact_bindings"][0]["artifact_group_id"] == "ag_version_demo_001"
+    assert body["artifact_bindings"][0]["routing_policy"] == "dedicated_instance"
+    assert body["artifact_bindings"][0]["mapping_url"].endswith("element_mapping.json")
 
 
 def test_review_session_request_allows_local_viewer_origin(tmp_path: Path):

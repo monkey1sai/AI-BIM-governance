@@ -33,7 +33,7 @@ import type { DemoLogEntry } from "./types/demo";
 import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
 import type { ReviewIssue } from "./types/issues";
-import type { ReviewLifecycleStatus, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
+import type { ReviewLifecycleStatus, ReviewSession, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
 import type { HighlightItem, StreamMessage } from "./types/streamMessages";
 
 
@@ -367,6 +367,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
             }
 
+            const loadedSession: ReviewSession | null = reviewEnv.defaultSessionId
+                ? await this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)
+                : null;
             const createdSession = !reviewEnv.defaultSessionId && !reviewRequest?.session_id
                 ? await this.coordinatorClient.createReviewSession({
                     review_request_id: reviewRequest?.review_request_id,
@@ -379,7 +382,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     kit_profile: reviewRequest?.kit_profile || {},
                 })
                 : null;
-            const sessionId = reviewEnv.defaultSessionId || reviewRequest?.session_id || createdSession?.session_id || "";
+            const sessionId = loadedSession?.session_id || reviewRequest?.session_id || createdSession?.session_id || "";
             if (!sessionId) {
                 this.setState({
                     reviewLifecycleStatus: reviewRequest?.status || null,
@@ -388,9 +391,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 });
                 return;
             }
+            const bootstrapModelVersionId = loadedSession?.model_version_id
+                || reviewRequest?.model_version_id
+                || createdSession?.model_version_id
+                || reviewEnv.defaultModelVersionId;
             const [streamConfig, bootstrap] = await Promise.all([
                 this.coordinatorClient.getStreamConfig(sessionId),
-                this.coordinatorClient.getReviewBootstrap(reviewRequest?.model_version_id || reviewEnv.defaultModelVersionId),
+                this.coordinatorClient.getReviewBootstrap(bootstrapModelVersionId),
             ]);
 
             const artifacts = streamConfig.artifacts.length > 0 ? streamConfig.artifacts : bootstrap.artifacts;
@@ -410,7 +417,7 @@ export default class App extends React.Component<AppProps, AppState> {
 
             this.setState({
                 reviewSessionId: sessionId,
-                reviewRequestId: reviewRequest?.review_request_id || null,
+                reviewRequestId: reviewRequest?.review_request_id || loadedSession?.review_request_id || null,
                 reviewLifecycleStatus: streamConfig.lifecycle_status,
                 reviewStatus: `${lifecycleStatusText(streamConfig.lifecycle_status)}，模型狀態：${streamConfig.model.status}`,
                 reviewArtifacts: artifacts,

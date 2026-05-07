@@ -298,6 +298,83 @@ def _review_request_status(
     return ("created" if ready and not missing_groups else "blocked_conversion", [group for group in selected_groups if group], missing_groups)
 
 
+def _artifact_role(artifact_type: str) -> str:
+    if artifact_type == "usdc":
+        return "derived"
+    if artifact_type in {"ifc", "rvt", "dwg"}:
+        return "source"
+    if artifact_type == "mapping":
+        return "mapping"
+    return "overlay"
+
+
+def _binding_ready_status(artifact: dict[str, Any]) -> str:
+    if artifact.get("status") != "ready" or not artifact.get("url"):
+        return "missing_model"
+    if artifact.get("artifact_type") == "usdc" and not artifact.get("mapping_url"):
+        return "missing_mapping"
+    return "ready"
+
+
+def _artifact_bindings_for_request(
+    data_root: Path,
+    model_version_id: str,
+    artifact_groups: list[dict[str, Any]],
+    selected_artifact_ids: list[str],
+    routing_policy: str,
+) -> list[dict[str, Any]]:
+    bindings: list[dict[str, Any]] = []
+    for group in artifact_groups:
+        mapping = group.get("mapping") if isinstance(group.get("mapping"), dict) else {}
+        derived = group.get("derived") if isinstance(group.get("derived"), list) else []
+        for item in derived:
+            if not isinstance(item, dict) or not item.get("url"):
+                continue
+            bindings.append(
+                {
+                    "binding_id": f"binding_{len(bindings) + 1}",
+                    "artifact_group_id": group["artifact_group_id"],
+                    "model_version_id": group.get("model_version_id") or model_version_id,
+                    "artifact_id": item.get("artifact_id"),
+                    "artifact_role": item.get("role") or "derived",
+                    "url": item.get("url"),
+                    "mapping_url": item.get("mapping_url") or mapping.get("url"),
+                    "load_order": len(bindings),
+                    "routing_policy": routing_policy,
+                    "ready_status": group.get("ready_status") or "ready",
+                }
+            )
+
+    if bindings or not selected_artifact_ids:
+        return bindings
+
+    artifacts = [
+        artifact
+        for artifact in _read_list(data_root / "artifacts.json")
+        if artifact.get("artifact_id") in selected_artifact_ids
+    ]
+    by_id = {artifact.get("artifact_id"): artifact for artifact in artifacts}
+    for artifact_id in selected_artifact_ids:
+        artifact = by_id.get(artifact_id)
+        if not artifact:
+            continue
+        bindings.append(
+            {
+                "binding_id": f"binding_{len(bindings) + 1}",
+                "artifact_group_id": artifact.get("artifact_group_id") or f"ag_{model_version_id}",
+                "model_version_id": artifact.get("model_version_id") or model_version_id,
+                "artifact_id": artifact["artifact_id"],
+                "artifact_role": _artifact_role(str(artifact.get("artifact_type") or "")),
+                "url": artifact.get("url"),
+                "mapping_url": artifact.get("mapping_url"),
+                "load_order": len(bindings),
+                "routing_policy": routing_policy,
+                "ready_status": _binding_ready_status(artifact),
+            }
+        )
+    return bindings
+
+
 def _append_lifecycle_event(data_root: Path, request_id: str, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     events_path = data_root / "lifecycle_events.json"
     event = {
@@ -447,6 +524,7 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
     @app.post("/api/review-session-requests")
     def create_review_session_request(payload: ReviewSessionRequestInput):
         request_id = _new_review_request_id()
+        safe_model_version_id = _safe_id(payload.model_version_id, "model_version_id")
         for group_id in payload.artifact_group_ids:
             _safe_id(group_id, "artifact_group_id")
         for artifact_id in payload.selected_artifact_ids:
@@ -456,12 +534,24 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             payload.artifact_group_ids,
             payload.selected_artifact_ids,
         )
+        routing_policy = str(payload.startup_policy.get("routing_policy") or "same_instance")
+        artifact_bindings = (
+            _artifact_bindings_for_request(
+                resolved_data_root,
+                safe_model_version_id,
+                ready_groups,
+                payload.selected_artifact_ids,
+                routing_policy,
+            )
+            if status == "created"
+            else []
+        )
         request_record = {
             "review_request_id": request_id,
             "requested_by": payload.requested_by,
             "tenant_id": payload.tenant_id,
             "project_id": payload.project_id,
-            "model_version_id": payload.model_version_id,
+            "model_version_id": safe_model_version_id,
             "artifact_group_ids": payload.artifact_group_ids,
             "selected_artifact_ids": payload.selected_artifact_ids,
             "startup_policy": payload.startup_policy,
@@ -471,7 +561,7 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             "missing_refs": missing_refs,
             "artifact_groups": ready_groups,
             "session_id": None,
-            "artifact_bindings": [],
+            "artifact_bindings": artifact_bindings,
             "kit_instance_bindings": [],
             "created_at": _now(),
             "updated_at": _now(),

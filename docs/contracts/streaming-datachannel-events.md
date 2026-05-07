@@ -42,13 +42,13 @@ Response:
 }
 ```
 
-When `url` is omitted, `bim-streaming-server` may resolve the first loadable item by `artifact_bindings[].load_order` and reports `applied_mode="artifact_bindings_load_order"`. Missing binding URLs are returned in `missing_paths` instead of being treated as loaded evidence.
+When `url` is omitted, `bim-streaming-server` may resolve the first loadable item by `artifact_bindings[].load_order` and reports `applied_mode="artifact_bindings_load_order"` only when one loadable binding is present. If multiple loadable bindings are provided before full multi-layer loading is implemented, the runtime reports `applied_mode="single_binding_only"`, `partial_load=true`, and `skipped_artifact_ids[]` so clients do not mistake a partial load for full multi-artifact evidence. Missing binding URLs are returned in `missing_paths` instead of being treated as loaded evidence.
 
 GPU / Kit manual validation when hardware is available:
 
 1. Start local services with `.\scripts\start-all.ps1`, or start Kit manually with `.\bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad`.
 2. Create worker artifacts and a review session with `.\scripts\smoke-worker-review-request.ps1`, then open `web-viewer-sample` with the returned `review_request_id` or `session_id`.
-3. Confirm the viewer sends `openStageRequest` with `artifact_bindings[]`, Kit returns `openedStageResult.result="success"`, and `applied_mode` is either `single_url` or `artifact_bindings_load_order`.
+3. Confirm the viewer sends `openStageRequest` with `artifact_bindings[]`, Kit returns `openedStageResult.result="success"`, and `applied_mode` is `single_url`, `artifact_bindings_load_order`, or the explicit partial mode `single_binding_only`.
 4. Send `highlightPrimsRequest` against a known mapped `usd_prim_path`; real validation requires `missing_paths=[]` and `fallback_paths=[]`.
 5. Treat `/World` fallback as stream/DataChannel liveness only, not mapping correctness.
 
