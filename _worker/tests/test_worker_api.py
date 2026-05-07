@@ -135,3 +135,236 @@ def test_callback_failure_is_recorded_as_job_warning(tmp_path: Path):
     assert job.status_code == 200
     assert job.json()["status"] == "succeeded"
     assert any("_bim-control callback failed" in warning for warning in job.json()["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Health endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_health_returns_ok_and_service_name(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "_worker"
+    assert "objects_root" in body
+    assert "jobs_dir" in body
+
+
+# ---------------------------------------------------------------------------
+# Artifact group GET endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_get_artifact_group_returns_404_for_unknown_group(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/api/artifact-groups/ag_nonexistent")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_get_artifact_group_returns_400_for_invalid_id(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    # Space (%20 URL-encoded) in artifact_group_id fails safe_id validation → 400
+    response = client.get("/api/artifact-groups/bad%20id")
+
+    assert response.status_code == 400
+
+
+def test_get_artifact_group_returns_group_after_upload(tmp_path: Path):
+    client = make_client(tmp_path)
+    artifact = client.post("/api/artifacts", json=source_payload()).json()
+
+    response = client.get(f"/api/artifact-groups/{artifact['artifact_group_id']}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["artifact_group_id"] == artifact["artifact_group_id"]
+    assert body["status"] == "source_uploaded"
+    assert body["ready_status"] == "missing_derived"
+
+
+# ---------------------------------------------------------------------------
+# Artifact group readiness endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_returns_404_for_unknown_group(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/api/artifact-groups/ag_nonexistent/readiness")
+
+    assert response.status_code == 404
+
+
+def test_readiness_returns_400_for_invalid_group_id(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/api/artifact-groups/bad path here/readiness")
+
+    assert response.status_code == 400
+
+
+def test_readiness_after_upload_shows_missing_derived(tmp_path: Path):
+    client = make_client(tmp_path)
+    artifact = client.post("/api/artifacts", json=source_payload()).json()
+
+    response = client.get(f"/api/artifact-groups/{artifact['artifact_group_id']}/readiness")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready_status"] == "missing_derived"
+    assert body["has_source"] is True
+    assert body["has_derived"] is False
+    assert body["has_mapping"] is False
+
+
+def test_readiness_after_conversion_shows_all_ready(tmp_path: Path):
+    client = make_client(tmp_path)
+    artifact = client.post("/api/artifacts", json=source_payload()).json()
+    client.post(
+        "/api/conversions",
+        json={"source_artifact_id": artifact["source_artifact_id"], "generate_mapping": True},
+    )
+
+    response = client.get(f"/api/artifact-groups/{artifact['artifact_group_id']}/readiness")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ready_status"] == "ready"
+    assert body["has_source"] is True
+    assert body["has_derived"] is True
+    assert body["has_mapping"] is True
+
+
+# ---------------------------------------------------------------------------
+# Conversion endpoint error cases
+# ---------------------------------------------------------------------------
+
+
+def test_conversion_returns_404_for_unknown_source_artifact(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.post(
+        "/api/conversions",
+        json={"source_artifact_id": "artifact_src_nonexistent"},
+    )
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_get_conversion_returns_404_for_unknown_job(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/api/conversions/conv_20240101120000_unknown12")
+
+    assert response.status_code == 404
+
+
+def test_get_conversion_result_returns_not_ready_for_queued_job(tmp_path: Path):
+    client = make_client(tmp_path, run_background=False)
+    artifact = client.post("/api/artifacts", json=source_payload()).json()
+    created = client.post(
+        "/api/conversions",
+        json={"source_artifact_id": artifact["source_artifact_id"]},
+    ).json()
+
+    result = client.get(f"/api/conversions/{created['conversion_job_id']}/result")
+
+    assert result.status_code == 200
+    assert result.json()["ready"] is False
+    assert result.json()["status"] == "queued"
+
+
+def test_conversion_without_mapping_omits_mapping_url(tmp_path: Path):
+    client = make_client(tmp_path)
+    artifact = client.post("/api/artifacts", json=source_payload()).json()
+
+    created = client.post(
+        "/api/conversions",
+        json={"source_artifact_id": artifact["source_artifact_id"], "generate_mapping": False},
+    ).json()
+
+    result = client.get(f"/api/conversions/{created['conversion_job_id']}/result")
+
+    assert result.status_code == 200
+    assert result.json()["mapping_url"] is None
+    readiness = client.get(f"/api/artifact-groups/{artifact['artifact_group_id']}/readiness")
+    assert readiness.json()["has_mapping"] is False
+
+
+# ---------------------------------------------------------------------------
+# Object serve endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_object_serve_returns_404_for_missing_file(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/objects/tenants/nonexistent/file.ifc")
+
+    assert response.status_code == 404
+
+
+def test_object_serve_blocks_path_traversal(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/objects/../../../etc/passwd")
+
+    assert response.status_code in (400, 404)
+
+
+def test_artifact_upload_with_source_url_reference(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.post(
+        "/api/artifacts",
+        json={
+            **source_payload(),
+            "content_base64": None,
+            "source_url": "http://upstream/model.ifc",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metadata"]["lineage"]["source_url"] == "http://upstream/model.ifc"
+
+
+def test_artifact_upload_with_rvt_format(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.post(
+        "/api/artifacts",
+        json=source_payload(source_format="rvt", filename="building.rvt"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["metadata"]["source_format"] == "rvt"
+
+
+def test_artifact_upload_rejects_no_source(tmp_path: Path):
+    client = make_client(tmp_path)
+    payload = source_payload()
+    payload.pop("content_base64")
+
+    response = client.post("/api/artifacts", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_localhost_cors_origin_is_accepted(tmp_path: Path):
+    client = make_client(tmp_path)
+
+    response = client.get("/health", headers={"Origin": "http://localhost:5173"})
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
