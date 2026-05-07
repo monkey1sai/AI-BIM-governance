@@ -97,6 +97,105 @@ describe("bim-review-coordinator", () => {
     expect(config.status).toBe(200);
     expect(config.body.webrtc.signalingPort).toBe(49100);
     expect(config.body.model.status).toBe("missing");
+    expect(config.body.lifecycle_status).toBe("active");
+    expect(Array.isArray(config.body.artifact_bindings)).toBe(true);
+    expect(Array.isArray(config.body.kit_instance_bindings)).toBe(true);
+  });
+
+  it("stores provided artifact and Kit bindings on session creation", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        review_request_id: "review_request_test_001",
+        tenant_id: "tenant_demo_001",
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        routing_policy: "same_instance",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_test_ready",
+            artifact_id: "artifact_usdc_test_001",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/model.usdc",
+            mapping_url: "http://127.0.0.1:8005/objects/element_mapping.json",
+            load_order: 0,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    expect(created.body.review_request_id).toBe("review_request_test_001");
+    expect(created.body.artifact_bindings).toHaveLength(1);
+    expect(created.body.kit_instance_bindings).toHaveLength(1);
+    expect(created.body.kit_instance_bindings[0].assigned_artifact_ids).toEqual(["artifact_usdc_test_001"]);
+
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.model.url).toBe("http://127.0.0.1:8005/objects/model.usdc");
+    expect(config.body.artifact_bindings[0].mapping_url).toContain("element_mapping.json");
+  });
+
+  it("allocates dedicated Kit instance bindings per artifact", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        routing_policy: "dedicated_instance",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_a",
+            artifact_id: "artifact_usdc_a",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/a.usdc",
+            load_order: 0,
+            ready_status: "ready",
+          },
+          {
+            artifact_group_id: "ag_b",
+            artifact_id: "artifact_usdc_b",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/b.usdc",
+            load_order: 1,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    expect(created.body.kit_instance_bindings).toHaveLength(2);
+    expect(created.body.kit_instance_bindings[0].assigned_artifact_ids).toEqual(["artifact_usdc_a"]);
+    expect(created.body.kit_instance_bindings[1].assigned_artifact_ids).toEqual(["artifact_usdc_b"]);
+  });
+
+  it("reports queued_for_instance when Kit capacity is unavailable", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        kit_profile: { capacity_slots: 0 },
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_test_ready",
+            artifact_id: "artifact_usdc_test_001",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/model.usdc",
+            load_order: 0,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(409);
+    expect(created.body.status).toBe("queued_for_instance");
   });
 
   it("joins participants and appends events", async () => {
@@ -125,6 +224,34 @@ describe("bim-review-coordinator", () => {
     const events = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
     expect(events.status).toBe(200);
     expect(events.body.items.some((item: { type: string }) => item.type === "highlightRequest")).toBe(true);
+  });
+
+  it("closes sessions separately from Kit release and blocks new mutating events", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/close`)
+      .send({ final_events: [{ type: "annotationSnapshot", count: 1 }] });
+
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    expect(closed.body.kit_instance_bindings.every((binding: { status: string }) => binding.status === "released")).toBe(true);
+
+    const event = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/events`)
+      .send({ type: "highlightRequest", issue_id: "ISSUE-DEMO-001" });
+    expect(event.status).toBe(409);
+
+    const events = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
+    expect(events.body.items.map((item: { type: string }) => item.type)).toContain("sessionClosed");
+    expect(events.body.items.map((item: { type: string }) => item.type)).toContain("kitInstancesReleased");
   });
 
   it("rejects HTTP events for missing sessions or malformed bodies", async () => {
@@ -193,6 +320,26 @@ describe("bim-review-coordinator", () => {
     expect(response).toEqual({ ok: false, error: "Review session not found." });
   });
 
+  it("rejects socket joins for closed sessions", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+    await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
+    const client = await connectReviewSocket(await listen(app));
+
+    const response = await emitWithAck<{ ok: boolean; error?: string }>(client, "joinSession", {
+      session_id: created.body.session_id,
+      user_id: "dev_user_001",
+    });
+
+    expect(response).toEqual({ ok: false, error: "Review session is not active." });
+  });
+
   it("rejects unsafe session ids before touching the filesystem", async () => {
     const app = makeApp();
 
@@ -239,5 +386,297 @@ describe("bim-review-coordinator", () => {
     const merged = log.list(sessionId);
     expect(merged.map((item) => item.event_id)).toContain("legacy_001");
     expect(merged.some((item) => item.type === "highlightRequest")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // isSessionMutable edge cases
+  // ---------------------------------------------------------------------------
+
+  it("rejects join via HTTP on a closed session with 409", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+    await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
+
+    const joined = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/join`)
+      .send({ user_id: "late_user", display_name: "Late User" });
+
+    expect(joined.status).toBe(409);
+    expect(joined.body.detail).toBe("Review session is not active.");
+  });
+
+  it("close is idempotent for already-closed sessions", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+    await request(app.app).post(`/api/review-sessions/${created.body.session_id}/close`).send({});
+
+    const secondClose = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/close`)
+      .send({});
+
+    expect(secondClose.status).toBe(200);
+    expect(secondClose.body.status).toBe("closed");
+  });
+
+  it("logs sessionCreated event with review_request_id when provided", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        review_request_id: "review_request_events_test",
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+
+    expect(created.status).toBe(200);
+    const events = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
+    expect(events.status).toBe(200);
+    const createdEvent = events.body.items.find((item: { type: string }) => item.type === "sessionCreated");
+    expect(createdEvent).toBeDefined();
+    expect(createdEvent.payload?.review_request_id).toBe("review_request_events_test");
+  });
+
+  it("logs sessionActive event when kit instance bindings are allocated", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_test_active",
+            artifact_id: "artifact_usdc_test_001",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/model.usdc",
+            load_order: 0,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    expect(created.body.status).toBe("active");
+    const events = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
+    const types = events.body.items.map((item: { type: string }) => item.type);
+    expect(types).toContain("sessionActive");
+  });
+
+  it("does not log sessionActive event when no kit bindings are allocated", async () => {
+    // kit_profile with capacity_slots 0 → no bindings → 409 before session creation
+    // Instead test with auto_allocate_kit false, which skips the 409 check
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        options: { auto_allocate_kit: false },
+        kit_profile: { capacity_slots: 0 },
+      });
+
+    // When capacity is 0 and auto_allocate_kit is false, session is created with "created" status
+    expect(created.status).toBe(200);
+    expect(created.body.status).toBe("created");
+    const events = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
+    const types = events.body.items.map((item: { type: string }) => item.type);
+    expect(types).not.toContain("sessionActive");
+  });
+
+  // ---------------------------------------------------------------------------
+  // kitPool: allocateKitInstanceBindings, markKitBindingsDraining, releaseKitBindings
+  // ---------------------------------------------------------------------------
+
+  it("allocates shared Kit instance with custom profile from kit_profile", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        kit_profile: { profile: "gpu_large" },
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_profile_test",
+            artifact_id: "artifact_usdc_profile_test",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/model.usdc",
+            load_order: 0,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    expect(created.body.kit_instance_bindings).toHaveLength(1);
+    expect(created.body.kit_instance_bindings[0].gpu_profile.profile).toBe("gpu_large");
+  });
+
+  it("released bindings stay released when markKitBindingsDraining is called after close", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_drain_test",
+            artifact_id: "artifact_usdc_drain_test",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/model.usdc",
+            load_order: 0,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/close`)
+      .send({});
+
+    // All bindings must be released after close
+    expect(closed.body.kit_instance_bindings.every((b: { status: string }) => b.status === "released")).toBe(true);
+    // released_at must be set
+    expect(closed.body.kit_instance_bindings.every((b: { released_at: string | null }) => b.released_at !== null)).toBe(true);
+  });
+
+  it("close stores final_events in the event log", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+
+    const finalEvent = { type: "annotationFinal", count: 3 };
+    await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/close`)
+      .send({ final_events: [finalEvent] });
+
+    const events = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
+    expect(events.body.items.some((item: { type: string }) => item.type === "finalReviewEvent")).toBe(true);
+    expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosing")).toBe(true);
+    expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosed")).toBe(true);
+    expect(events.body.items.some((item: { type: string }) => item.type === "kitInstancesReleased")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // sessionStore: isSessionMutable + session status transitions
+  // ---------------------------------------------------------------------------
+
+  it("session created without kit bindings has status created not active", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        options: { auto_allocate_kit: false },
+        kit_profile: { capacity_slots: 0 },
+      });
+
+    expect(created.status).toBe(200);
+    expect(created.body.status).toBe("created");
+    expect(created.body.kit_instance_bindings).toHaveLength(0);
+  });
+
+  it("stream config returns artifact bindings and kit instance bindings from session", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        routing_policy: "same_instance",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_stream_test",
+            artifact_id: "artifact_usdc_stream",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/stream.usdc",
+            mapping_url: "http://127.0.0.1:8005/objects/element_mapping.json",
+            load_order: 0,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.lifecycle_status).toBe("active");
+    expect(config.body.model.url).toBe("http://127.0.0.1:8005/objects/stream.usdc");
+    expect(config.body.model.mapping_url).toContain("element_mapping.json");
+    expect(config.body.kit_instance_bindings).toHaveLength(1);
+  });
+
+  it("get session returns 400 for invalid session id", async () => {
+    const app = makeApp();
+
+    const response = await request(app.app).get("/api/review-sessions/invalid-session-format");
+
+    expect(response.status).toBe(400);
+    expect(response.body.detail).toBe("Invalid review session id.");
+  });
+
+  it("get session returns 404 for missing session", async () => {
+    const app = makeApp();
+
+    const response = await request(app.app).get("/api/review-sessions/review_session_missing");
+
+    expect(response.status).toBe(404);
+    expect(response.body.detail).toBe("Review session not found.");
+  });
+
+  it("stream config returns 404 for missing session", async () => {
+    const app = makeApp();
+
+    const response = await request(app.app).get("/api/review-sessions/review_session_missing/stream-config");
+
+    expect(response.status).toBe(404);
+  });
+
+  it("close returns 400 for invalid session id format", async () => {
+    const app = makeApp();
+
+    const response = await request(app.app)
+      .post("/api/review-sessions/bad-format/close")
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.detail).toBe("Invalid review session id.");
+  });
+
+  it("close returns 404 for unknown session id", async () => {
+    const app = makeApp();
+
+    const response = await request(app.app)
+      .post("/api/review-sessions/review_session_unknownclose/close")
+      .send({});
+
+    expect(response.status).toBe(404);
+    expect(response.body.detail).toBe("Review session not found.");
   });
 });
