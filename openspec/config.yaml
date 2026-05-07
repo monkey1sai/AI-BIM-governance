@@ -1,0 +1,44 @@
+schema: spec-driven
+
+context: |
+  Project: AI-BIM-governance workspace.
+  Primary agent behavior baseline: AGENTS.md / Codex workflow.
+  Claude must treat CLAUDE.md as a mirror entrypoint to the same repo rules, not as a separate development process.
+
+  Core repo boundaries:
+  - _bim-control owns fake BIM metadata and review data authority.
+  - _s3_storage owns fake object/file storage.
+  - bim-review-coordinator owns review session and collaboration control plane.
+  - bim-streaming-server owns Omniverse Kit runtime, USD scene runtime, WebRTC, and DataChannel commands.
+  - web-viewer-sample owns browser UI and user interaction.
+
+  Working rules:
+  - Use Traditional Chinese by default; keep code, APIs, logs, and errors in their original language.
+  - Inspect relevant files before editing.
+  - Keep diffs minimal, reversible, and scoped to the responsible repo/folder.
+  - Do not modify secrets, credentials, private keys, or real .env values.
+  - Do not add production dependencies without explaining why.
+  - For code symbols, run GitNexus impact analysis before editing and report HIGH/CRITICAL risk before proceeding.
+  - Preserve the minimum review loop across _bim-control, _s3_storage, bim-review-coordinator, bim-streaming-server, and web-viewer-sample.
+  - OpenSpec artifacts guide planning and execution; they do not override AGENTS.md or CLAUDE.md.
+
+rules:
+  proposal:
+    - State which repo/folder owns the change.
+    - Describe how the change preserves the workspace boundary rules.
+    - Include non-goals when a change might be confused with another repo's responsibility.
+    - Call out API, data structure, event, storage, session, or runtime boundary changes explicitly.
+  design:
+    - Explain data flow and control flow across repos when more than one repo is touched.
+    - Identify source-of-truth ownership for every persistent data type.
+    - Keep runtime state, metadata, file storage, and browser UI responsibilities separate.
+    - Note validation strategy and known environment limits such as GPU/Kit requirements.
+  tasks:
+    - Break implementation tasks by repo/folder ownership.
+    - Include the smallest useful validation for each affected service.
+    - Keep Python tests in their service directory to avoid app package import cache pollution.
+    - Include documentation updates when APIs, events, data flow, or repo boundaries change.
+  specs:
+    - Describe externally observable behavior and acceptance criteria.
+    - Avoid encoding agent-specific implementation details as product requirements.
+    - Preserve English API paths and protocol field names when they are part of the contract.
