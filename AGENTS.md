@@ -839,9 +839,9 @@ wiki（Graphify）
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-BIM-governance** (3249 symbols, 5842 relationships, 161 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-BIM-governance**. Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> If any GitNexus tool warns the index is stale, run `gitnexus analyze --embeddings --skills` in terminal first. After a commit that only needs local index refresh, prefer `gitnexus analyze --embeddings --skills --skip-agents-md` to avoid rewriting this tracked section.
 
 ## Always Do
 
@@ -869,33 +869,9 @@ This project is indexed by GitNexus as **AI-BIM-governance** (3249 symbols, 5842
 
 ## CLI
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-| Work in the App area (113 symbols) | `.claude/skills/generated/app/SKILL.md` |
-| Work in the {{python_module_path}} area (66 symbols) | `.claude/skills/generated/python-module-path/SKILL.md` |
-| Work in the Clients area (62 symbols) | `.claude/skills/generated/clients/SKILL.md` |
-| Work in the Tests area (54 symbols) | `.claude/skills/generated/tests/SKILL.md` |
-| Work in the Repoman area (37 symbols) | `.claude/skills/generated/repoman/SKILL.md` |
-| Work in the Services area (31 symbols) | `.claude/skills/generated/services/SKILL.md` |
-| Work in the Public area (20 symbols) | `.claude/skills/generated/public/SKILL.md` |
-| Work in the Components area (17 symbols) | `.claude/skills/generated/components/SKILL.md` |
-| Work in the Messaging area (15 symbols) | `.claude/skills/generated/messaging/SKILL.md` |
-| Work in the Cluster_1 area (12 symbols) | `.claude/skills/generated/cluster-1/SKILL.md` |
-| Work in the Cluster_24 area (9 symbols) | `.claude/skills/generated/cluster-24/SKILL.md` |
-| Work in the Bootstrap area (9 symbols) | `.claude/skills/generated/bootstrap/SKILL.md` |
-| Work in the Scripts area (9 symbols) | `.claude/skills/generated/scripts/SKILL.md` |
-| Work in the Cluster_0 area (8 symbols) | `.claude/skills/generated/cluster-0/SKILL.md` |
-| Work in the Cluster_2 area (7 symbols) | `.claude/skills/generated/cluster-2/SKILL.md` |
-| Work in the Packman area (7 symbols) | `.claude/skills/generated/packman/SKILL.md` |
-| Work in the Types area (6 symbols) | `.claude/skills/generated/types/SKILL.md` |
-| Work in the Cluster_25 area (6 symbols) | `.claude/skills/generated/cluster-25/SKILL.md` |
-| Work in the Cluster_29 area (5 symbols) | `.claude/skills/generated/cluster-29/SKILL.md` |
-| Work in the Socket area (4 symbols) | `.claude/skills/generated/socket/SKILL.md` |
+- `gitnexus status` checks whether the local index matches `HEAD`.
+- `gitnexus analyze --embeddings --skills` rebuilds the graph, embeddings, and local generated skills.
+- `gitnexus analyze --embeddings --skills --skip-agents-md` refreshes the local index without changing tracked AGENTS / CLAUDE sections.
+- Generated skill files under `.claude/skills/` are local analysis artifacts and must stay ignored.
 
 <!-- gitnexus:end -->
