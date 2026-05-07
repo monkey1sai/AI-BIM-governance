@@ -173,6 +173,41 @@ describe("bim-review-coordinator", () => {
     expect(created.body.kit_instance_bindings[1].assigned_artifact_ids).toEqual(["artifact_usdc_b"]);
   });
 
+  it("reports queued_for_instance when dedicated Kit routing exceeds capacity", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        routing_policy: "dedicated_instance",
+        kit_profile: { capacity_slots: 1 },
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_a",
+            artifact_id: "artifact_usdc_a",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/a.usdc",
+            load_order: 0,
+            ready_status: "ready",
+          },
+          {
+            artifact_group_id: "ag_b",
+            artifact_id: "artifact_usdc_b",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:8005/objects/b.usdc",
+            load_order: 1,
+            ready_status: "ready",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(409);
+    expect(created.body.status).toBe("queued_for_instance");
+    expect(created.body.artifact_bindings).toHaveLength(2);
+  });
+
   it("reports queued_for_instance when Kit capacity is unavailable", async () => {
     const app = makeApp();
     const created = await request(app.app)
