@@ -1,5 +1,6 @@
 import type { ReviewArtifact } from "../types/artifacts";
 import type { ReviewIssue } from "../types/issues";
+import type { ReviewSessionRequest } from "../types/review";
 
 function readItems<T>(payload: unknown, alternateKey?: string): T[] {
     if (Array.isArray(payload)) return payload as T[];
@@ -26,11 +27,26 @@ export class BimControlClient {
         return readItems<ReviewIssue>(response);
     }
 
-    private async request(path: string): Promise<unknown> {
-        const response = await this.fetchImpl(`${this.baseUrl}${path}`, { headers: { Accept: "application/json" } });
+    async getReviewSessionRequest(reviewRequestId: string): Promise<ReviewSessionRequest> {
+        return this.request<ReviewSessionRequest>(`/api/review-session-requests/${reviewRequestId}`);
+    }
+
+    async patchReviewSessionRequest(reviewRequestId: string, payload: Record<string, unknown>): Promise<ReviewSessionRequest> {
+        return this.request<ReviewSessionRequest>(`/api/review-session-requests/${reviewRequestId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+    }
+
+    private async request<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+        const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+            headers: { Accept: "application/json", ...(init?.headers || {}) },
+            ...init,
+        });
         if (!response.ok) {
             throw new Error(`_bim-control request failed: ${response.status} ${path}`);
         }
-        return response.json();
+        return response.json() as Promise<T>;
     }
 }

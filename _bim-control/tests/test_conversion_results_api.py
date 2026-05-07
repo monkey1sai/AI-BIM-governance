@@ -8,15 +8,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.main import create_app
 
 
-def test_conversion_result_is_stored_and_reloaded(tmp_path: Path):
-    client = TestClient(create_app(data_root=tmp_path / "data"))
+def test_conversion_result_is_stored_and_reloaded(case_dir: Path):
+    client = TestClient(create_app(data_root=case_dir / "data"))
     payload = {
         "job_id": "conv_test_001",
         "status": "succeeded",
         "project_id": "project_demo_001",
         "model_version_id": "version_demo_001",
-        "usdc_url": "http://localhost:8002/static/projects/project_demo_001/versions/version_demo_001/model.usdc",
-        "mapping_url": "http://localhost:8002/static/projects/project_demo_001/versions/version_demo_001/element_mapping.json",
+        "usdc_url": "http://localhost:8005/objects/projects/project_demo_001/versions/version_demo_001/model.usdc",
+        "mapping_url": "http://localhost:8005/objects/projects/project_demo_001/versions/version_demo_001/element_mapping.json",
     }
 
     post_response = client.post("/api/model-versions/version_demo_001/conversion-result", json=payload)

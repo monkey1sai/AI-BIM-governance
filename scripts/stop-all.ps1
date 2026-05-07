@@ -3,7 +3,7 @@ param(
     [switch] $KeepLogs   # 保留 .run/<svc>.log
 )
 
-# 一鍵關閉 6 個服務（與 start-all.ps1 對應）。
+# 一鍵關閉 worker-only demo services（與 start-all.ps1 對應）。
 # 對每個 PID 做 tree-kill：taskkill /F /T，連子行程 (例如 Kit) 一起終結。
 
 Set-StrictMode -Version Latest
@@ -13,9 +13,8 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RunDir = Join-Path $PSScriptRoot ".run"
 
 $ExpectedServices = @(
-    @{ Name = "_s3_storage"; Ports = @(8002) },
     @{ Name = "_bim-control"; Ports = @(8001) },
-    @{ Name = "_conversion-service"; Ports = @(8003) },
+    @{ Name = "_worker"; Ports = @(8005) },
     @{ Name = "bim-review-coordinator"; Ports = @(8004) },
     @{ Name = "web-viewer-sample"; Ports = @(5173) },
     @{ Name = "bim-streaming-server"; Ports = @(49100, 47998) }
@@ -86,6 +85,16 @@ if (-not (Test-Path $RunDir)) {
 
     foreach ($f in $pidFiles) {
         $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+        $isExpected = $ExpectedServices | Where-Object { $_.Name -eq $name } | Select-Object -First 1
+        if (-not $isExpected) {
+            Write-Host "[skip ] $name 不屬於 current worker-only demo services，移除 stale PID file" -ForegroundColor DarkGray
+            Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
+            if (-not $KeepLogs) {
+                Remove-Item (Join-Path $RunDir "$name.log") -Force -ErrorAction SilentlyContinue
+                Remove-Item (Join-Path $RunDir "$name.log.err") -Force -ErrorAction SilentlyContinue
+            }
+            continue
+        }
         $procIdText = Get-Content $f.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $procIdText) {
             Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue

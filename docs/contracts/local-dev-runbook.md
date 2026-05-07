@@ -2,28 +2,29 @@
 
 Run commands from `C:\Repos\active\iot\AI-BIM-governance`.
 
-## 1. Fake Storage
+The current local demo path uses `_worker` as the only file and conversion
+boundary. Ports `8002` and `8003` are retired from the current runtime path.
 
-```powershell
-cd _s3_storage
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload
-```
-
-## 2. Fake BIM Control
+## 1. Fake BIM Control
 
 ```powershell
 cd _bim-control
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-## 3. Conversion Service
+## 2. Worker Facade
 
 ```powershell
-cd _conversion-service
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8003 --reload
+cd _worker
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8005 --reload
 ```
 
-## 4. Review Coordinator
+Place demo IFC files under the workspace `storage/` folder. `_worker` defaults
+`WORKER_DEV_STORAGE_ROOT` to `../storage` from the `_worker` service directory,
+lists available `.ifc` files in the demo UI, and triggers conversion jobs for
+the selected file.
+
+## 3. Review Coordinator
 
 ```powershell
 cd bim-review-coordinator
@@ -31,7 +32,7 @@ npm install
 npm run dev
 ```
 
-## 5. Streaming Server
+## 4. Streaming Server
 
 ```powershell
 cd bim-streaming-server
@@ -39,16 +40,16 @@ cd bim-streaming-server
 ```
 
 The wrapper keeps NvStreamer ETW traces under `bim-streaming-server/logs/nvstreamer/`.
-For the MVP demo, `-SkipAutoLoad` is preferred so the browser client owns the `openStageRequest` timing and avoids `UsdContext busy` during Kit startup.
-If the browser reaches signaling but the video stays at `readyState=0`, use the demo recovery wrapper from the workspace root:
+For the MVP demo, `-SkipAutoLoad` is preferred so the browser client owns the
+`openStageRequest` timing and avoids `UsdContext busy` during Kit startup.
+
+If the browser reaches signaling but the video stays at `readyState=0`, use:
 
 ```powershell
 .\scripts\start-demo-streaming-server.ps1 -SkipGpuCheck
 ```
 
-This starts Kit with `-SkipAutoLoad -ResetUser -StreamSdkLogLevel info`, which clears stale Kit user state and enables StreamSDK diagnostics.
-
-## 6. Web Viewer
+## 5. Web Viewer
 
 ```powershell
 cd web-viewer-sample
@@ -64,14 +65,11 @@ http://127.0.0.1:5173
 
 ## Demo UI Consoles
 
-Each fake API service and the coordinator expose a Traditional Chinese browser UI for manual demo triggers:
-
 ```txt
-http://127.0.0.1:8001/ui  _bim-control metadata / issues / annotations
-http://127.0.0.1:8002/ui  _s3_storage static file browser
-http://127.0.0.1:8003/ui  _conversion-service conversion job console
+http://127.0.0.1:8005     _worker IFC source selection + conversion
 http://127.0.0.1:8004/ui  coordinator review session and Socket.IO console
 http://127.0.0.1:5173     web viewer with Demo 操作面板
+http://127.0.0.1:8001/ui  _bim-control metadata / issues / annotations
 ```
 
 Open all demo consoles:
@@ -86,29 +84,39 @@ Check health and UI endpoints:
 .\scripts\demo-health-check.ps1
 ```
 
-The manual demo path is:
+## Manual Demo Path
 
 ```txt
-_s3_storage UI check files
-→ _bim-control UI reset seed / confirm issue
-→ _conversion-service UI create job or dev mock result
-→ coordinator UI create session / get stream-config / connect Socket.IO
-→ web viewer Demo Controls send openStageRequest / highlightPrimsRequest / annotationCreate
-→ web viewer Mapping 驗證 load element_mapping.json / select mapping item / send highlightPrimsRequest
+_worker UI lists .\storage\*.ifc
+→ selected IFC triggers a worker conversion job
+→ _worker produces USDC + mapping URLs and publishes metadata to _bim-control
+→ _bim-control creates a review-session request with artifact bindings
+→ coordinator creates a session from artifact bindings / Kit profile
+→ web viewer opens with review_request_id or session_id and then connects WebRTC
+→ streaming runtime loads every ready artifact binding by load_order
 ```
 
-The Mapping 驗證 panel is intentionally honest: if `element_mapping.json` has `items=[]`, it reports that there is no verifiable `ifc_guid -> usd_prim_path` item instead of treating `/World` fallback as a real mapping validation.
-If the mapping document is marked `mock=true`, `allow_fake_mapping=true`, has `summary.fake_mapping_count > 0`, or contains `mapping_method="fake_for_smoke_test"`, the panel disables formal mapping verification actions and treats the file as smoke-only.
+The Mapping 驗證 panel is intentionally honest: if `element_mapping.json` has
+`items=[]`, it reports that there is no verifiable `ifc_guid -> usd_prim_path`
+item instead of treating `/World` fallback as a real mapping validation.
 
 ## Smoke Checks
 
 ```powershell
 .\scripts\dev-health-check.ps1
+.\scripts\smoke-worker-review-request.ps1
 .\scripts\smoke-review-session.ps1
 .\scripts\smoke-review-socket.ps1
-.\_conversion-service\scripts\smoke_conversion.ps1
+.\bim-streaming-server\scripts\tests\test-stage-loading-contract.ps1
 ```
 
-`smoke-review-session.ps1` verifies fake storage, fake BIM control, coordinator session creation, stream-config, issue discovery, annotation persistence, and coordinator event logging.
+`smoke-worker-review-request.ps1` verifies the API-only flow:
+`_worker -> _bim-control -> bim-review-coordinator`. It does not require Kit,
+GPU, browser automation, or WebRTC.
 
-`smoke-review-socket.ps1` opens two Socket.IO clients in the same `/review` room and verifies concurrent `joinSession`, `presenceUpdated`, `highlightRequest`, `selectionUpdate`, `annotationCreate`, and `heartbeat` behavior.
+`bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1` is a
+non-GPU DataChannel contract smoke for the multi-artifact load-order payload.
+
+`smoke-review-session.ps1` verifies worker object URLs, fake BIM control,
+coordinator session creation, stream-config, issue discovery, annotation
+persistence, and coordinator event logging.

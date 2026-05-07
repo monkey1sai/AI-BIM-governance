@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.main import create_app
 
 
-def make_client(tmp_path: Path) -> TestClient:
-    return TestClient(create_app(data_root=tmp_path / "data"))
+def make_client(case_dir: Path) -> TestClient:
+    return TestClient(create_app(data_root=case_dir / "data"))
 
 
 def ready_conversion_result() -> dict:
@@ -29,8 +29,8 @@ def ready_conversion_result() -> dict:
     }
 
 
-def test_conversion_result_updates_artifact_group_metadata(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_conversion_result_updates_artifact_group_metadata(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
 
@@ -44,8 +44,8 @@ def test_conversion_result_updates_artifact_group_metadata(tmp_path: Path):
     assert body["mapping"]["ready"] is True
 
 
-def test_review_session_request_is_created_for_ready_artifact_group(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_is_created_for_ready_artifact_group(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
 
     response = client.post(
@@ -66,14 +66,18 @@ def test_review_session_request_is_created_for_ready_artifact_group(tmp_path: Pa
     assert body["review_request_id"].startswith("review_request_")
     assert body["status"] == "created"
     assert body["artifact_group_ids"] == ["ag_test_ready"]
+    assert body["artifact_bindings"][0]["artifact_group_id"] == "ag_test_ready"
+    assert body["artifact_bindings"][0]["url"] == "http://127.0.0.1:8005/objects/model.usdc"
+    assert body["artifact_bindings"][0]["mapping_url"] == "http://127.0.0.1:8005/objects/element_mapping.json"
 
     loaded = client.get(f"/api/review-session-requests/{body['review_request_id']}")
     assert loaded.status_code == 200
     assert loaded.json()["model_version_id"] == "version_demo_001"
+    assert loaded.json()["artifact_bindings"] == body["artifact_bindings"]
 
 
-def test_review_session_request_allows_local_viewer_origin(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_allows_local_viewer_origin(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
     created = client.post(
         "/api/review-session-requests",
@@ -93,8 +97,8 @@ def test_review_session_request_allows_local_viewer_origin(tmp_path: Path):
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
 
 
-def test_review_session_request_rejects_missing_model_version_id(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_rejects_missing_model_version_id(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.post(
         "/api/review-session-requests",
@@ -107,8 +111,8 @@ def test_review_session_request_rejects_missing_model_version_id(tmp_path: Path)
     assert response.status_code == 422
 
 
-def test_review_session_request_blocks_missing_artifact_group(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_blocks_missing_artifact_group(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.post(
         "/api/review-session-requests",
@@ -126,8 +130,8 @@ def test_review_session_request_blocks_missing_artifact_group(tmp_path: Path):
     assert body["missing_refs"] == ["ag_missing"]
 
 
-def test_review_session_request_patch_saves_session_binding_and_lifecycle_event(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_patch_saves_session_binding_and_lifecycle_event(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
     created = client.post(
         "/api/review-session-requests",
@@ -163,8 +167,8 @@ def test_review_session_request_patch_saves_session_binding_and_lifecycle_event(
 # ---------------------------------------------------------------------------
 
 
-def test_list_model_version_artifact_groups_returns_seed_group(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_list_model_version_artifact_groups_returns_seed_group(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.get("/api/model-versions/version_demo_001/artifact-groups")
 
@@ -176,8 +180,8 @@ def test_list_model_version_artifact_groups_returns_seed_group(tmp_path: Path):
     assert len(body["items"]) >= 1
 
 
-def test_list_model_version_artifact_groups_returns_empty_for_unknown_version(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_list_model_version_artifact_groups_returns_empty_for_unknown_version(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.get("/api/model-versions/version_unknown_999/artifact-groups")
 
@@ -185,8 +189,8 @@ def test_list_model_version_artifact_groups_returns_empty_for_unknown_version(tm
     assert response.json()["items"] == []
 
 
-def test_upsert_artifact_group_creates_and_can_be_retrieved(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_upsert_artifact_group_creates_and_can_be_retrieved(case_dir: Path):
+    client = make_client(case_dir)
 
     payload = {
         "artifact_group_id": "ag_upsert_001",
@@ -210,8 +214,8 @@ def test_upsert_artifact_group_creates_and_can_be_retrieved(tmp_path: Path):
     assert retrieved.json()["artifact_group_id"] == "ag_upsert_001"
 
 
-def test_upsert_artifact_group_updates_existing_group(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_upsert_artifact_group_updates_existing_group(case_dir: Path):
+    client = make_client(case_dir)
     base_payload = {
         "artifact_group_id": "ag_update_001",
         "tenant_id": "tenant_demo_001",
@@ -230,8 +234,8 @@ def test_upsert_artifact_group_updates_existing_group(tmp_path: Path):
     assert retrieved.json()["ready_status"] == "ready"
 
 
-def test_get_artifact_group_returns_404_for_unknown(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_get_artifact_group_returns_404_for_unknown(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.get("/api/artifact-groups/ag_nonexistent_999")
 
@@ -239,8 +243,8 @@ def test_get_artifact_group_returns_404_for_unknown(tmp_path: Path):
     assert "not found" in response.json()["detail"].lower()
 
 
-def test_conversion_result_without_mapping_url_sets_blocked_ready_status(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_conversion_result_without_mapping_url_sets_blocked_ready_status(case_dir: Path):
+    client = make_client(case_dir)
 
     result_no_mapping = {
         **ready_conversion_result(),
@@ -260,8 +264,8 @@ def test_conversion_result_without_mapping_url_sets_blocked_ready_status(tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_review_session_request_get_returns_404_for_unknown(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_get_returns_404_for_unknown(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.get("/api/review-session-requests/review_request_999999999")
 
@@ -269,8 +273,8 @@ def test_review_session_request_get_returns_404_for_unknown(tmp_path: Path):
     assert "not found" in response.json()["detail"].lower()
 
 
-def test_review_session_request_patch_returns_404_for_unknown(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_patch_returns_404_for_unknown(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.patch(
         "/api/review-session-requests/review_request_999999999",
@@ -280,8 +284,8 @@ def test_review_session_request_patch_returns_404_for_unknown(tmp_path: Path):
     assert response.status_code == 404
 
 
-def test_review_session_request_patch_rejects_invalid_status(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_patch_rejects_invalid_status(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
     created = client.post(
         "/api/review-session-requests",
@@ -300,9 +304,9 @@ def test_review_session_request_patch_rejects_invalid_status(tmp_path: Path):
     assert response.status_code == 400
 
 
-def test_review_session_request_with_selected_artifact_ids_only(tmp_path: Path):
+def test_review_session_request_with_selected_artifact_ids_only(case_dir: Path):
     """selected_artifact_ids path: uses ready artifact from seed data."""
-    client = make_client(tmp_path)
+    client = make_client(case_dir)
 
     response = client.post(
         "/api/review-session-requests",
@@ -321,8 +325,8 @@ def test_review_session_request_with_selected_artifact_ids_only(tmp_path: Path):
     assert "status" in body
 
 
-def test_lifecycle_events_endpoint_returns_empty_list_for_unknown_request(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_lifecycle_events_endpoint_returns_empty_list_for_unknown_request(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.get("/api/review-session-requests/review_request_unknown/lifecycle-events")
 
@@ -330,8 +334,8 @@ def test_lifecycle_events_endpoint_returns_empty_list_for_unknown_request(tmp_pa
     assert response.json()["items"] == []
 
 
-def test_review_session_request_patch_without_lifecycle_event_does_not_add_event(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_patch_without_lifecycle_event_does_not_add_event(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
     created = client.post(
         "/api/review-session-requests",
@@ -353,9 +357,9 @@ def test_review_session_request_patch_without_lifecycle_event_does_not_add_event
     assert types == ["reviewRequestCreated"]
 
 
-def test_review_session_request_patch_full_close_lifecycle(tmp_path: Path):
+def test_review_session_request_patch_full_close_lifecycle(case_dir: Path):
     """Walk through the full status machine: created → active → closing → closed."""
-    client = make_client(tmp_path)
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
     created = client.post(
         "/api/review-session-requests",
@@ -374,8 +378,8 @@ def test_review_session_request_patch_full_close_lifecycle(tmp_path: Path):
     assert final["status"] == "closed"
 
 
-def test_review_session_request_blocker_is_none_when_ready(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_blocker_is_none_when_ready(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
 
     response = client.post(

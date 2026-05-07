@@ -81,6 +81,7 @@ Validation failures:
 { "ok": false, "error": "Missing session_id" }
 { "ok": false, "error": "Invalid review session id." }
 { "ok": false, "error": "Review session not found." }
+{ "ok": false, "error": "Review session is not active." }
 ```
 
-`joinSession`, `leaveSession`, `highlightRequest`, `selectionUpdate`, and `annotationCreate` must not join a Socket.IO room, write event log entries, or persist annotations when the session does not exist.
+`joinSession`, `leaveSession`, `highlightRequest`, `selectionUpdate`, and `annotationCreate` must not join a Socket.IO room, write event log entries, or persist annotations when the session does not exist or is `closing`, `closed`, or `failed`.

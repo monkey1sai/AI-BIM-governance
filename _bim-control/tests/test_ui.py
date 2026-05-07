@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.main import create_app
 
 
-def test_demo_ui_is_served(tmp_path: Path):
-    client = TestClient(create_app(data_root=tmp_path / "data"))
+def test_demo_ui_is_served(case_dir: Path):
+    client = TestClient(create_app(data_root=case_dir / "data"))
 
     response = client.get("/ui")
 
@@ -18,8 +18,8 @@ def test_demo_ui_is_served(tmp_path: Path):
     assert "/api/model-versions/" in response.text
 
 
-def test_dev_reset_seed_restores_demo_issue(tmp_path: Path):
-    client = TestClient(create_app(data_root=tmp_path / "data"))
+def test_dev_reset_seed_restores_demo_issue(case_dir: Path):
+    client = TestClient(create_app(data_root=case_dir / "data"))
 
     created = client.post(
         "/api/model-versions/version_demo_001/review-issues",

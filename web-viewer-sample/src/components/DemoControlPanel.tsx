@@ -78,8 +78,8 @@ interface InteractionLabCard {
 }
 
 const stepDefs: { num: string; name: string; href: string; active?: boolean }[] = [
-    { num: "①", name: "上傳建模 (Upload)",  href: "http://127.0.0.1:8002" },
-    { num: "②", name: "自動轉換 (Convert)", href: "http://127.0.0.1:8003" },
+    { num: "①", name: "上傳建模 (Upload)",  href: "http://127.0.0.1:8005" },
+    { num: "②", name: "自動轉換 (Convert)", href: "http://127.0.0.1:8005" },
     { num: "③", name: "建立會議 (Meeting)", href: "http://127.0.0.1:8004" },
     { num: "④", name: "標記問題 (Mark)",    href: "#",                     active: true },
     { num: "⑤", name: "紀錄回寫 (Record)",  href: "http://127.0.0.1:8001" },
@@ -237,7 +237,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
     const hasStreamCommand = outgoingMessages.length > 0;
     const hasCoordinatorEvidence = !!sessionId || socketEvents.some((event) => /Socket\.IO|session|review-bootstrap|會議/i.test(event));
     const hasMetadataEvidence = !!streamConfig || !!mappingUrl || socketEvents.some((event) => /_bim-control|review 資料|metadata/i.test(event));
-    const hasStorageEvidence = !!selectedAssetUrl || !!mappingUrl;
+    const hasWorkerObjectEvidence = !!selectedAssetUrl || !!mappingUrl;
     const repoGuideCards: RepoGuideCard[] = [
         {
             num: "①",
@@ -271,24 +271,23 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         },
         {
             num: "④",
-            repo: "_s3_storage",
-            role: "Fake Object Storage / file bodies",
-            protocol: "Storage URL",
-            status: hasStorageEvidence ? "已取得檔案 URL" : "等待 artifact URL",
-            statusKind: hasStorageEvidence ? "ok" : "idle",
+            repo: "_worker",
+            role: "File + Conversion Boundary / worker object URLs",
+            protocol: "Worker object URL",
+            status: hasWorkerObjectEvidence ? "已取得檔案 URL" : "等待 artifact URL",
+            statusKind: hasWorkerObjectEvidence ? "ok" : "idle",
             evidence: selectedAssetUrl || mappingUrl || "USDC / mapping URL 尚未出現在本場 demo。",
-            owns: "IFC/RVT/DWG 原始檔、USDC、element_mapping.json、附件檔案本體",
+            owns: "IFC source intake、USDC、element_mapping.json、conversion lineage",
         },
         {
             num: "⑤",
-            repo: "_conversion-service",
-            role: "Conversion Worker API / IFC to USDC + mapping",
-            protocol: "REST conversion job",
-            status: "未接入目前 viewer 操作",
-            statusKind: "warn",
-            evidence: "本面板會標示轉檔路徑，但目前不會從 browser 直接建立 conversion job。",
-            owns: "讀 IFC、產 USDC、產 mapping、更新 artifact status",
-            gap: "待補：由 coordinator 或專用工作流觸發轉檔 job，並把 job status 回到 demo timeline。",
+            repo: "_worker conversion",
+            role: "Selected-source conversion job",
+            protocol: "REST worker job",
+            status: hasWorkerObjectEvidence ? "已完成前置轉檔" : "請先到 8005",
+            statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
+            evidence: hasWorkerObjectEvidence ? "本場 session 已拿到 worker-hosted model/mapping URL。" : "步驟 ①/② 已移到 Worker UI。",
+            owns: "讀取 dev IFC、產 USDC、產 mapping、回寫 _bim-control metadata",
         },
         {
             num: "⑥",
@@ -325,10 +324,10 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "3",
             title: "確認檔案與 mapping URL",
-            route: "_bim-control -> _s3_storage",
-            protocol: "Storage",
-            status: hasStorageEvidence ? "URL 已顯示" : "等待 artifact",
-            statusKind: hasStorageEvidence ? "ok" : "idle",
+            route: "_bim-control -> _worker objects",
+            protocol: "Worker object URL",
+            status: hasWorkerObjectEvidence ? "URL 已顯示" : "等待 artifact",
+            statusKind: hasWorkerObjectEvidence ? "ok" : "idle",
             actionLabel: "載入 mapping",
             action: onLoadMapping,
             disabled: !mappingUrl,
@@ -347,7 +346,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "5",
             title: "載入 USDC 到 Omniverse stream",
-            route: "web-viewer-sample -> bim-streaming-server -> _s3_storage",
+            route: "web-viewer-sample -> bim-streaming-server -> _worker objects",
             protocol: "DataChannel",
             status: hasStreamCommand ? "已送出指令" : "可操作",
             statusKind: hasStreamResponse ? "ok" : hasStreamCommand ? "warn" : selectedAssetUrl ? "idle" : "bad",
@@ -379,12 +378,14 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "8",
             title: "從 demo 介面觸發 IFC -> USDC 轉檔",
-            route: "coordinator -> _conversion-service -> _s3_storage / _bim-control",
-            protocol: "REST conversion",
-            status: "未完成",
-            statusKind: "warn",
-            disabled: true,
-            gap: "目前轉檔 API 不是由此 viewer 面板直接觸發；demo 仍顯示此缺口，避免觀眾以為流程已全自動閉環。",
+            route: "_worker -> _bim-control -> coordinator",
+            protocol: "REST worker job",
+            status: hasWorkerObjectEvidence ? "已完成" : "請先到 8005",
+            statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
+            disabled: false,
+            actionLabel: "開啟 Worker UI",
+            action: () => window.open("http://127.0.0.1:8005", "_blank", "noopener,noreferrer"),
+            gap: hasWorkerObjectEvidence ? undefined : "請先在 Worker UI 選擇 storage/ 內 IFC 並完成轉換。",
         },
     ];
     const latestOutgoingLabel = outgoingMessages[0]?.label || "尚未送出 DataChannel command";
@@ -394,7 +395,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "REST",
             title: "載入審查資料包",
-            route: "viewer -> coordinator -> _bim-control / _s3_storage",
+            route: "viewer -> coordinator -> _bim-control / _worker",
             status: streamConfig ? "已取得" : "可操作",
             statusKind: streamConfig ? "ok" : sessionId ? "warn" : "idle",
             description: "取得 session、model artifact、issue、mapping URL，讓畫面知道要載入哪個模型與問題資料。",
@@ -407,7 +408,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "RTC",
             title: "載入 3D 串流模型",
-            route: "viewer -> bim-streaming-server -> _s3_storage",
+            route: "viewer -> bim-streaming-server -> _worker objects",
             status: hasStreamCommand ? "已送出指令" : "等待操作",
             statusKind: hasStreamResponse ? "ok" : hasStreamCommand ? "warn" : selectedAssetUrl ? "idle" : "bad",
             description: "把 USDC URL 透過 DataChannel 交給 Kit runtime，左側畫面會從等待狀態進入載入流程。",
@@ -467,14 +468,14 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "GAP",
             title: "轉檔與 storage 寫入缺口",
-            route: "viewer -> coordinator -> _conversion-service -> _s3_storage",
-            status: "未由 viewer 直連",
-            statusKind: "warn",
-            description: "目前 viewer 顯示轉檔結果與 mapping，但不直接執行上傳 byte 或 conversion job。",
-            effect: "觀察效果：請回到 8004 Step ② 使用轉檔展示；此 viewer 只消費已產出的 USDC / mapping。",
-            actionLabel: "回到轉檔展示",
-            action: () => window.open("http://127.0.0.1:8004#conversionDemoCard", "_blank", "noopener,noreferrer"),
-            gap: "待補：正式流程應由 coordinator 導向 `_conversion-service`，再由 `_conversion-service` 寫入 `_s3_storage` 並更新 `_bim-control` artifact metadata。",
+            route: "viewer -> _worker UI",
+            status: hasWorkerObjectEvidence ? "前置已完成" : "需先轉檔",
+            statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
+            description: "viewer 只消費已完成的 worker object URL；IFC 選檔與 conversion job 由 Worker UI 負責。",
+            effect: "觀察效果：完成 worker 轉檔後，review session 的 artifact_bindings 會帶入 model/mapping URL。",
+            actionLabel: "開啟 Worker UI",
+            action: () => window.open("http://127.0.0.1:8005", "_blank", "noopener,noreferrer"),
+            gap: hasWorkerObjectEvidence ? undefined : "請先完成步驟 ①/②。",
         },
     ];
 
@@ -602,7 +603,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
                         <span style={protocolPillStyle}>可操作 + 未完成</span>
                     </div>
                     <div style={{ fontSize: 12, color: "var(--demo-text-secondary)", marginBottom: 10 }}>
-                        依照流程按下按鈕，就能把 REST、Storage URL、Socket.IO、WebRTC / DataChannel 的資料流串起來；未接入的轉檔步驟也保留在流程中。
+                        依照流程按下按鈕，就能把 REST、Worker object URL、Socket.IO、WebRTC / DataChannel 的資料流串起來。
                     </div>
                     {demoFlowSteps.map((step, index) => (
                         <DemoFlowStepView key={step.num} step={step} showConnector={index < demoFlowSteps.length - 1} />

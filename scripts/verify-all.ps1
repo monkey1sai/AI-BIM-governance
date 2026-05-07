@@ -6,11 +6,11 @@ param(
     [switch] $ContinueOnError
 )
 
-# 跨 repo verify 入口。對五大 repo 依序跑 verify：
-#   _bim-control / _s3_storage / _conversion-service  → python -m pytest tests -q
+# 跨 repo verify 入口。對 current demo repos 依序跑 verify：
+#   _bim-control / _worker                           → python -m pytest tests -q
 #   bim-review-coordinator                            → npm run verify
 #   web-viewer-sample                                 → npm run verify
-#   bim-streaming-server                              → scripts/tests/test-convert-ifc-to-usdc.ps1
+#   bim-streaming-server                              → scripts/tests/test-stage-loading-contract.ps1
 #
 # 任一失敗即中斷（除非指定 -ContinueOnError）。
 
@@ -36,7 +36,7 @@ $Targets = @()
 $StreamingTarget = @{
     Name = "bim-streaming-server"
     Cmd = $PowerShell
-    Args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\tests\test-convert-ifc-to-usdc.ps1")
+    Args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts\tests\test-stage-loading-contract.ps1")
     Cwd = "bim-streaming-server"
 }
 if ($StreamingOnly) {
@@ -44,9 +44,8 @@ if ($StreamingOnly) {
 }
 else {
     if (-not $TsOnly) {
-        $Targets += @{ Name = "_bim-control";        Cmd = $Python; Args = @("-m", "pytest", "tests", "-q"); Cwd = "_bim-control" }
-        $Targets += @{ Name = "_s3_storage";         Cmd = $Python; Args = @("-m", "pytest", "tests", "-q"); Cwd = "_s3_storage" }
-        $Targets += @{ Name = "_conversion-service"; Cmd = $Python; Args = @("-m", "pytest", "tests", "-q"); Cwd = "_conversion-service" }
+        $Targets += @{ Name = "_bim-control"; Cmd = $Python; Args = @("-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"); Cwd = "_bim-control" }
+        $Targets += @{ Name = "_worker";      Cmd = $Python; Args = @("-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"); Cwd = "_worker" }
     }
     if (-not $PyOnly) {
         $Targets += @{ Name = "bim-review-coordinator"; Cmd = "npm"; Args = @("run", "verify"); Cwd = "bim-review-coordinator" }

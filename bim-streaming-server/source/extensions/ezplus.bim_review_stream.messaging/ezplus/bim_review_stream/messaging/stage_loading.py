@@ -79,6 +79,7 @@ class LoadingManager:
         # -- state variables
         # URL of stage load request. Can be used in messaging with client.
         self._requested_stage_url: str = ""
+        self._requested_stage_context: dict = {}
         self._stage_is_opening: bool = False
 
         # URL of loaded stage. Should not be used in messaging with client
@@ -96,6 +97,7 @@ class LoadingManager:
         # -- register outgoing events/messages
         outgoing = [
             "openedStageResult",  # notify when USD Stage has loaded.
+            "loadArtifactGroupResult",  # artifact binding load-order acknowledgement.
             "updateProgressAmount",  # Status bar event denoting progress
             "updateProgressActivity",  # Status bar event denoting activity
             "loadingStateResponse",  # Response to loadingStateQuery
@@ -111,6 +113,7 @@ class LoadingManager:
         # -- register incoming events/messages
         incoming = {
             'openStageRequest': self._on_open_stage,  # request to open a stage
+            'loadArtifactGroupRequest': self._on_load_artifact_group,
             # internal event to capture progress status
             "omni.kit.window.status_bar@progress": self._on_progress,
             # internal event to capture progress activity
@@ -156,6 +159,169 @@ class LoadingManager:
             )
         )
 
+    def _payload_dict(self, value):
+        if isinstance(value, carb.dictionary.Item):
+            value = value.get_dict()
+        return value if isinstance(value, dict) else {}
+
+    def _payload_list(self, value):
+        if value is None:
+            return []
+        if isinstance(value, carb.dictionary.Item):
+            value = value.get_dict()
+        if isinstance(value, dict):
+            return list(value.values())
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return []
+
+    def _public_stage_context(self, context):
+        return {
+            key: value
+            for key, value in context.items()
+            if key not in {"secondary_bindings"}
+        }
+
+    def _process_stage_url(self, url):
+        # Using a single leading `.` to signify that the path is relative to the ${app} token's parent directory
+        # Because we've moved the samples out of the app directory, we need to check for that here
+        # in the samples extension directory.
+        # If that doesn't exist (using older version of the extension), we fall back to old behavior.
+        if url.startswith(("./", ".\\")):
+            if url.startswith(("./samples", ".\\samples")):
+                sample_url = carb.tokens.acquire_tokens_interface().resolve(
+                    "${omni.usd_viewer.samples}/" + url[1:].replace("samples", "samples_data")
+                )
+                if os.path.exists(sample_url):
+                    return sample_url
+            return carb.tokens.acquire_tokens_interface().resolve(
+                "${app}/.." + url[1:]
+            )
+        return carb.tokens.acquire_tokens_interface().resolve(url)
+
+    def _resolve_stage_request(self, payload):
+        request = self._payload_dict(payload)
+        if request.get("url"):
+            return request["url"], {
+                "applied_mode": "single_url",
+                "missing_paths": [],
+                "fallback_paths": [],
+            }
+
+        bindings = self._payload_list(
+            request.get("artifact_bindings")
+            or request.get("artifacts")
+            or request.get("load_order")
+        )
+        normalized = []
+        missing_paths = []
+        for index, raw_binding in enumerate(bindings):
+            binding = self._payload_dict(raw_binding)
+            url = binding.get("url") or binding.get("usdc_url")
+            artifact_id = binding.get("artifact_id") or binding.get("artifact_group_id") or f"binding_{index}"
+            if not url:
+                missing_paths.append(str(artifact_id))
+                continue
+            normalized.append({
+                "url": url,
+                "artifact_id": artifact_id,
+                "artifact_group_id": binding.get("artifact_group_id"),
+                "load_order": int(binding.get("load_order") or index),
+            })
+
+        normalized.sort(key=lambda item: item["load_order"])
+        if not normalized:
+            return "", {
+                "applied_mode": "artifact_bindings",
+                "missing_paths": missing_paths,
+                "fallback_paths": [],
+                "error": "No loadable artifact binding URL was provided.",
+            }
+
+        primary = normalized[0]
+        applied_mode = "artifact_bindings_single"
+        if len(normalized) > 1:
+            applied_mode = "artifact_bindings_multi_layer_payload"
+        primary_binding = {
+            **primary,
+            "composition_strategy": "primary_stage",
+        }
+        return primary["url"], {
+            "applied_mode": applied_mode,
+            "artifact_id": primary.get("artifact_id"),
+            "artifact_group_id": primary.get("artifact_group_id"),
+            "load_order": primary.get("load_order"),
+            "primary_binding": primary_binding,
+            "loaded_bindings": [primary_binding],
+            "failed_bindings": [],
+            "secondary_bindings": normalized[1:],
+            "partial_load": False,
+            "missing_paths": missing_paths,
+            "fallback_paths": [],
+        }
+
+    def _compose_secondary_artifact_bindings(self, stage) -> None:
+        secondary_bindings = self._requested_stage_context.get("secondary_bindings") or []
+        if not stage or not secondary_bindings:
+            return
+
+        session_layer = stage.GetSessionLayer()
+        loaded_bindings = list(self._requested_stage_context.get("loaded_bindings") or [])
+        failed_bindings = []
+
+        for binding in secondary_bindings:
+            requested_url = binding.get("url")
+            if not requested_url:
+                failed_bindings.append({
+                    **binding,
+                    "composition_strategy": "session_sublayer",
+                    "error": "Missing secondary binding URL.",
+                })
+                continue
+
+            try:
+                resolved_url = self._process_stage_url(requested_url)
+                layer = Sdf.Layer.FindOrOpen(resolved_url)
+                if layer is None:
+                    raise RuntimeError("Unable to open secondary layer.")
+                if layer.identifier not in session_layer.subLayerPaths:
+                    session_layer.subLayerPaths.append(layer.identifier)
+                loaded_bindings.append({
+                    **binding,
+                    "composition_strategy": "session_sublayer",
+                })
+                carb.log_info(
+                    f"LoadingManager: composed secondary artifact binding "
+                    f"{binding.get('artifact_id')} as session sublayer"
+                )
+            except Exception as exc:
+                failed_bindings.append({
+                    **binding,
+                    "composition_strategy": "session_sublayer",
+                    "error": str(exc),
+                })
+                carb.log_warn(
+                    f"LoadingManager: failed to compose secondary artifact binding "
+                    f"{binding.get('artifact_id')}: {exc}"
+                )
+
+        self._requested_stage_context["loaded_bindings"] = loaded_bindings
+        self._requested_stage_context["failed_bindings"] = failed_bindings
+        self._requested_stage_context["partial_load"] = bool(failed_bindings)
+
+    def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
+        url, context = self._resolve_stage_request(event.payload)
+        payload = {
+            "result": "accepted" if url else "error",
+            "url": url,
+            **self._public_stage_context(context),
+        }
+        get_eventdispatcher().dispatch_event("loadArtifactGroupResult", payload=payload)
+        if url:
+            request = self._payload_dict(event.payload)
+            request["url"] = url
+            self._on_open_stage(type("Event", (), {"payload": request})())
+
     def _on_load_state_query(self, event: carb.events.IEvent) -> None:
         payload = {"loading_state": "idle", "url": self._opened_stage_url}
         if self._stage_is_opening:
@@ -174,35 +340,27 @@ class LoadingManager:
         loaded, and an error on any failure.
         """
 
-        if "url" not in event.payload:
+        requested_url, stage_context = self._resolve_stage_request(event.payload)
+        if not requested_url:
             carb.log_error(
-                f"Unexpected message payload: missing \"url\" key. Payload: '{event.payload}'")
+                f"Unexpected message payload: missing loadable \"url\" key. Payload: '{event.payload}'")
+            payload = {
+                "url": "",
+                "result": "error",
+                "error": stage_context.get("error", "Missing url."),
+                **self._public_stage_context(stage_context),
+            }
+            get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
             return
 
-        self._requested_stage_url = event.payload["url"]
+        self._requested_stage_url = requested_url
+        self._requested_stage_context = stage_context
         carb.log_info(
             f"Received message to load '{self._requested_stage_url}'"
         )
 
-        def process_url(url):
-            # Using a single leading `.` to signify that the path is relative to the ${app} token's parent directory
-            # Because we've moved the samples out of the app directory, we need to check for that here
-            # in the samples extension directory.
-            # If that doesn't exist (using older version of the extension), we fall back to old behavior.
-            if url.startswith(("./", ".\\")):
-                if url.startswith(("./samples", ".\\samples")):
-                    sample_url = carb.tokens.acquire_tokens_interface().resolve(
-                        "${omni.usd_viewer.samples}/" + url[1:].replace("samples", "samples_data")
-                    )
-                    if os.path.exists(sample_url):
-                        return sample_url
-                return carb.tokens.acquire_tokens_interface().resolve(
-                    "${app}/.." + url[1:]
-                )
-            return carb.tokens.acquire_tokens_interface().resolve(url)
-
         # Check to see if we've already loaded the current stage.
-        url = process_url(self._requested_stage_url)
+        url = self._process_stage_url(self._requested_stage_url)
 
         stage = omni.usd.get_context().get_stage()
         current_stage = stage.GetRootLayer().identifier if stage else ''
@@ -210,7 +368,12 @@ class LoadingManager:
         # If we are, we don't need to reload the file, instead we'll just send the success message.
         if omni.client.utils.equal_urls(url, current_stage):
             carb.log_info(f'Client requested to open a stage that is already open: {url}')
-            payload = {"url": self._requested_stage_url, "result": "success", "error": ''}
+            payload = {
+                "url": self._requested_stage_url,
+                "result": "success",
+                "error": '',
+                **self._public_stage_context(self._requested_stage_context),
+            }
             get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
             self._reset_state()
             return
@@ -227,10 +390,17 @@ class LoadingManager:
             if result is not True:
                 # Send message to client that loading failed.
                 carb.log_warn(f'The file that the client requested failed to load: {url} (error: {error})')
-                payload = {"url": url, "result": "error", "error": error}
+                payload = {
+                    "url": url,
+                    "result": "error",
+                    "error": error,
+                    **self._public_stage_context(self._requested_stage_context),
+                }
                 get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
                 self._reset_state()
                 return
+
+            self._compose_secondary_artifact_bindings(usd_context.get_stage())
 
         asyncio.ensure_future(open_stage())
 
@@ -306,7 +476,12 @@ class LoadingManager:
         carb.log_info(
             f'Sending message to client that stage has loaded: {url}'
         )
-        payload = {"url": url, "result": "success", "error": ''}
+        payload = {
+            "url": url,
+            "result": "success",
+            "error": '',
+            **self._public_stage_context(self._requested_stage_context),
+        }
         get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
 
         # reset
@@ -353,6 +528,7 @@ class LoadingManager:
         """
         stage = omni.usd.get_context().get_stage()
         self._requested_stage_url = ""
+        self._requested_stage_context = {}
         self._opened_stage_url = stage.GetRootLayer().identifier if stage else ""
         self._stage_has_opened = False
         self._streaming_manager_is_busy = False

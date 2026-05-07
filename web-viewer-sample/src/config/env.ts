@@ -17,6 +17,7 @@ export const reviewEnv = {
     bimControlApiBase: import.meta.env.VITE_BIM_CONTROL_API_BASE || "http://127.0.0.1:8001",
     defaultProjectId: queryParam("projectId") || import.meta.env.VITE_DEFAULT_PROJECT_ID || "project_demo_001",
     defaultModelVersionId: queryParam("modelVersionId") || import.meta.env.VITE_DEFAULT_MODEL_VERSION_ID || "version_demo_001",
+    defaultReviewRequestId: queryParam("reviewRequestId") || queryParam("review_request_id") || import.meta.env.VITE_DEFAULT_REVIEW_REQUEST_ID || "",
     defaultSessionId: queryParam("sessionId") || import.meta.env.VITE_DEFAULT_SESSION_ID || "",
     defaultUserId: queryParam("userId") || import.meta.env.VITE_DEFAULT_USER_ID || "dev_user_001",
     defaultDisplayName: queryParam("displayName") || import.meta.env.VITE_DEFAULT_DISPLAY_NAME || "示範使用者",

@@ -26,7 +26,7 @@
 
 ## Required Boundaries
 
-- metadata / file URL 查詢一律透過 `bim-review-coordinator`，不直連 `_bim-control` 或 `_s3_storage`。
+- metadata / file URL 查詢一律透過 `bim-review-coordinator`，不直連 `_bim-control` 或 `_worker`。
 - 與 streaming server 的互動限定於 WebRTC video 與 DataChannel JSON command。
 - UI cache 只能作為顯示用途；source of truth 仍在 `_bim-control` 或 coordinator。
 - DataChannel schema 或 session API 變更必須同步檢查 `bim-streaming-server`、`bim-review-coordinator` 與 `docs/contracts/`。

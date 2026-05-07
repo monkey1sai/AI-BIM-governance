@@ -24,15 +24,15 @@
 
 ## Required Boundaries
 
-- 大型檔案本體一律屬於 `_s3_storage`，本 repo 只保存 URL、storage key、format、version 關聯。
-- 轉檔完成/失敗狀態可由 `_conversion-service` 透過 API 回寫，但 `_conversion-service` 不可直接改本 repo 的資料檔。
+- 大型檔案本體一律屬於 `_worker`，本 repo 只保存 URL、storage key、format、version 關聯。
+- 轉檔完成/失敗狀態可由 `_worker` 透過 API 回寫，但 `_worker` 不可直接改本 repo 的資料檔。
 - UI 或 viewer 不應直連本服務；正式操作路徑應由 `bim-review-coordinator` 對外協調。
 - 不得引入 Omniverse / `pxr` / `omni.*` dependency。
 
 ## Before Editing
 
 - 先讀 `README.md`、`app/`、`tests/` 與相關 API fixture。
-- 若 API schema、response shape、fixture 欄位變更，必須同步檢查 `bim-review-coordinator`、`_conversion-service` 與根目錄 `docs/contracts/` 的依賴。
+- 若 API schema、response shape、fixture 欄位變更，必須同步檢查 `bim-review-coordinator`、`_worker` 與根目錄 `docs/contracts/` 的依賴。
 - Source 改動需檢查相關 API、fixture 與測試影響；docs-only 改動只需確認文件語意。
 
 ## Verify

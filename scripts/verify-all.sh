@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 跨 repo verify 入口（POSIX 版）。對五大 repo 依序跑 verify。
+# 跨 repo verify 入口（POSIX 版）。對 current demo repos 依序跑 verify。
 # 任一失敗即中斷（除非指定 --continue-on-error）。
 
 set -u
@@ -54,18 +54,17 @@ if [ "$STREAMING_ONLY" -eq 1 ]; then
         echo "PowerShell 7 (pwsh) not found; cannot run bim-streaming-server checks." >&2
         exit 2
     fi
-    TARGETS+=("bim-streaming-server|$PS_Q -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-convert-ifc-to-usdc.ps1")
+    TARGETS+=("bim-streaming-server|$PS_Q -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-stage-loading-contract.ps1")
 elif [ "$TS_ONLY" -eq 0 ]; then
-    TARGETS+=("_bim-control|$PYTHON -m pytest tests -q")
-    TARGETS+=("_s3_storage|$PYTHON -m pytest tests -q")
-    TARGETS+=("_conversion-service|$PYTHON -m pytest tests -q")
+    TARGETS+=("_bim-control|$PYTHON -m pytest tests -q -p no:cacheprovider")
+    TARGETS+=("_worker|$PYTHON -m pytest tests -q -p no:cacheprovider")
 fi
 if [ "$STREAMING_ONLY" -eq 0 ] && [ "$PY_ONLY" -eq 0 ]; then
     TARGETS+=("bim-review-coordinator|$NPM_VERIFY")
     TARGETS+=("web-viewer-sample|$NPM_VERIFY")
 fi
 if [ "$STREAMING_ONLY" -eq 0 ] && [ "$TS_ONLY" -eq 0 ] && [ "$PY_ONLY" -eq 0 ] && [ -n "$PS" ]; then
-    TARGETS+=("bim-streaming-server|$PS_Q -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-convert-ifc-to-usdc.ps1")
+    TARGETS+=("bim-streaming-server|$PS_Q -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-stage-loading-contract.ps1")
 fi
 
 PASSED=()
