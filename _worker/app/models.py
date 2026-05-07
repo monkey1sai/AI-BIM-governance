@@ -35,3 +35,15 @@ class ConversionRequest(BaseModel):
     target_format: Literal["usdc"] = "usdc"
     generate_mapping: bool = True
     options: ConversionOptions = Field(default_factory=ConversionOptions)
+
+
+class DevIfcSourceConversionRequest(BaseModel):
+    tenant_id: str = Field(default="tenant_demo_001", min_length=1)
+    project_id: str = Field(default="project_demo_001", min_length=1)
+    model_version_id: str = Field(default="version_demo_001", min_length=1)
+    source_system: str = Field(default="dev_storage", min_length=1)
+    uploaded_by: str = Field(default="dev_user_001", min_length=1)
+    artifact_group_id: str | None = None
+    target_format: Literal["usdc"] = "usdc"
+    generate_mapping: bool = True
+    options: ConversionOptions = Field(default_factory=ConversionOptions)

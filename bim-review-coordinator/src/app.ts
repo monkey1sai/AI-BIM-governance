@@ -403,7 +403,7 @@ async function proxyConversionService(
     response.status(upstream.status).type(contentType).send(text || "{}");
   } catch (error) {
     response.status(502).json({
-      detail: "Conversion service unavailable.",
+      detail: "Worker API unavailable.",
       upstream: conversionApiBase,
       error: error instanceof Error ? error.message : String(error),
     });

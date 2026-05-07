@@ -33,7 +33,7 @@ color_green="\033[32m"
 color_yellow="\033[33m"
 color_dim="\033[2m"
 color_reset="\033[0m"
-expected_ports=(8001 8002 8003 8004 5173 49100 47998)
+expected_ports=(8001 8004 8005 5173 49100 47998)
 
 for f in "${pidfiles[@]}"; do
   name="$(basename "$f" .pid)"

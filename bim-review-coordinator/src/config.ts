@@ -39,7 +39,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     host: process.env.HOST || "127.0.0.1",
     port: numberFromEnv("PORT", 8004),
     bimControlApiBase: process.env.BIM_CONTROL_API_BASE || "http://127.0.0.1:8001",
-    conversionApiBase: process.env.CONVERSION_API_BASE || "http://127.0.0.1:8003",
+    conversionApiBase: process.env.WORKER_API_BASE || process.env.CONVERSION_API_BASE || "http://127.0.0.1:8005",
     kitStreamServer: process.env.KIT_STREAM_SERVER || "127.0.0.1",
     kitSignalingPort: numberFromEnv("KIT_SIGNALING_PORT", 49100),
     kitMediaServer: process.env.KIT_MEDIA_SERVER || "127.0.0.1",

@@ -14,6 +14,7 @@
 - source / derived / index / mapping file body 的 worker-facing object layout
 - conversion job lifecycle 與 conversion lineage
 - conversion result metadata callback payload
+- dev `storage/` IFC source listing and selected-source conversion trigger
 
 ## Does Not Own
 
@@ -25,7 +26,7 @@
 ## Required Boundaries
 
 - `_worker` 只回報 artifact metadata、URL、mapping URL、lineage；不成為 `_bim-control` 的 BIM metadata authority。
-- 初期可包裝 `_s3_storage` / `_conversion-service` 能力，但外部新流程應依賴 `_worker` contract。
+- 目前 runtime 由 `_worker` 直接承接檔案與轉檔邊界；不要重新依賴 8002 / 8003 legacy services。
 - 不得管理 user auth、GPU capacity、Kit instance lifecycle 或多人協作事件。
 
 ## Before Editing

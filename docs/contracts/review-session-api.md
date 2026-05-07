@@ -80,11 +80,26 @@ The coordinator allocates the fixed local Kit endpoint:
   "model": {
     "status": "ready",
     "artifact_id": "artifact_usdc_demo_001",
-    "url": "http://127.0.0.1:8002/static/projects/project_demo_001/versions/version_demo_001/model.usdc",
-    "mapping_url": "http://127.0.0.1:8002/static/projects/project_demo_001/versions/version_demo_001/element_mapping.json"
+    "url": "http://127.0.0.1:8005/objects/tenants/tenant_demo_001/projects/project_demo_001/versions/version_demo_001/artifact-groups/ag_xxx/derived/conv_xxx/usdc/model.usdc",
+    "mapping_url": "http://127.0.0.1:8005/objects/tenants/tenant_demo_001/projects/project_demo_001/versions/version_demo_001/artifact-groups/ag_xxx/derived/conv_xxx/usdc/element_mapping.json"
   },
-  "artifacts": [],
-  "artifact_bindings": [],
+  "artifacts": [
+    {
+      "artifact_id": "artifact_usdc_demo_001",
+      "status": "ready",
+      "url": "http://127.0.0.1:8005/objects/tenants/.../model.usdc"
+    }
+  ],
+  "artifact_bindings": [
+    {
+      "artifact_group_id": "ag_xxx",
+      "artifact_id": "artifact_usdc_demo_001",
+      "url": "http://127.0.0.1:8005/objects/tenants/.../model.usdc",
+      "mapping_url": "http://127.0.0.1:8005/objects/tenants/.../element_mapping.json",
+      "load_order": 0,
+      "ready_status": "ready"
+    }
+  ],
   "kit_instance_bindings": []
 }
 ```

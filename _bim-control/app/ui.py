@@ -315,10 +315,10 @@ def render_ui() -> HTMLResponse:
   </header>
 
   <nav class="demo-stepbar" aria-label="Demo 流程">
-    <a class="demo-stepbar__item" href="http://127.0.0.1:8002" title="雲端倉庫">
+    <a class="demo-stepbar__item" href="http://127.0.0.1:8005" title="Worker 上傳建模與自動轉換">
       <span class="demo-stepbar__num">①</span>上傳建模 (Upload)
     </a>
-    <a class="demo-stepbar__item" href="http://127.0.0.1:8003" title="轉檔服務">
+    <a class="demo-stepbar__item" href="http://127.0.0.1:8005" title="Worker 上傳建模與自動轉換">
       <span class="demo-stepbar__num">②</span>自動轉換 (Convert)
     </a>
     <a class="demo-stepbar__item" href="http://127.0.0.1:8004" title="審查協調">
@@ -467,9 +467,9 @@ def render_ui() -> HTMLResponse:
         status: 'succeeded',
         project_id: projectId.value,
         model_version_id: modelVersionId.value,
-        source_url: `http://127.0.0.1:8002/static/projects/${projectId.value}/versions/${modelVersionId.value}/source.ifc`,
-        usdc_url: `http://127.0.0.1:8002/static/projects/${projectId.value}/versions/${modelVersionId.value}/model.usdc`,
-        mapping_url: `http://127.0.0.1:8002/static/projects/${projectId.value}/versions/${modelVersionId.value}/element_mapping.json`
+        source_url: `http://127.0.0.1:8005/objects/demo/${projectId.value}/${modelVersionId.value}/source.ifc`,
+        usdc_url: `http://127.0.0.1:8005/objects/demo/${projectId.value}/${modelVersionId.value}/model.usdc`,
+        mapping_url: `http://127.0.0.1:8005/objects/demo/${projectId.value}/${modelVersionId.value}/element_mapping.json`
       };
     }
 

@@ -16,6 +16,10 @@ Thumbs.db
 output/playwright/
 graphify-out/
 scripts/.run/
+pytest-bim-worker-tmp/
+pytest-python-manual/
+pytest-manual-check/
+pytest-bim-control-*.tmp/
 
 # ----------------------------
 # Python
@@ -63,6 +67,7 @@ _conversion-service/data/logs/
 _conversion-service/jobs/
 _worker/data/
 _worker/pytest-cache-files-*/
+_bim-control/pytest-cache-files-*/
 bim-review-coordinator/data/
 
 # ----------------------------

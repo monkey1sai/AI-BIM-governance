@@ -26,7 +26,7 @@
 
 ## Required Boundaries
 
-- 載入 USD / USDC 應透過 `_s3_storage` 或 coordinator 提供的 URL / file path，不把大型檔案納入 source。
+- 載入 USD / USDC 應透過 `_worker` object URL、coordinator artifact binding，或本機測試 file path，不把大型檔案納入 source。
 - runtime state 只代表目前 stream session；若要成為正式審查資料，必須回寫 `_bim-control` 或透過 `bim-review-coordinator`。
 - DataChannel payload schema 變更必須同步檢查 `web-viewer-sample` 與 `docs/contracts/streaming-datachannel.md`。
 - 不得管理 user auth、project metadata、review session lifecycle、annotation persistence。
@@ -43,7 +43,7 @@
 低成本 smoke：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-convert-ifc-to-usdc.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-stage-loading-contract.ps1
 ```
 
 完整 Kit 驗證依變更範圍選擇：

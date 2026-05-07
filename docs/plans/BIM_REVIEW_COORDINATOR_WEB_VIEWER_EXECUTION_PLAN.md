@@ -1,5 +1,7 @@
 # BIM Review Coordinator + Web Viewer 基礎功能與資料流實作計畫 v0.1
 
+> Historical note: this plan predates the worker-only runtime. Mentions of `_s3_storage`, `_conversion-service`, `_conversion-server`, ports `8002` / `8003`, or `/static/projects/...` are archival context only. Current behavior is governed by `AGENTS.md`, `README.md`, and `docs/contracts/worker-api.md`.
+
 > 給 Codex 直接執行用。
 > Workspace 預設：`AI-BIM-governance`。
 > 主要目標：完成 `bim-review-coordinator`、`web-viewer-sample`、`bim-streaming-server` 之間的 BIM Review 基礎資料流，並用 `_bim-control`、`_s3_storage`、`_conversion-service` / `_conversion-server` 等暫時 FastAPI 服務模擬正式 DB / S3 / 外部系統。

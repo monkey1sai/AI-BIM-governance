@@ -7,10 +7,10 @@ const architectureNodes = [
         tone: "authority",
     },
     {
-        id: "storage",
-        title: "_s3_storage",
-        role: "Fake Object Storage",
-        details: ["IFC / RVT / DWG files", "USD / USDC artifacts", "mapping / report files"],
+        id: "worker",
+        title: "_worker",
+        role: "File + Conversion Boundary",
+        details: ["dev IFC source selection", "USDC artifacts", "mapping / lineage files"],
         tone: "storage",
     },
     {
@@ -34,28 +34,20 @@ const architectureNodes = [
         details: ["review UI", "WebRTC viewer", "issue / prim interactions"],
         tone: "client",
     },
-    {
-        id: "conversion",
-        title: "_conversion-service",
-        role: "Optional Conversion Worker",
-        details: ["create conversion jobs", "read original IFC", "write USDC + mapping"],
-        tone: "worker",
-    },
 ];
 
 const architectureFlows = [
     "web-viewer-sample → bim-review-coordinator: create / join review session",
     "bim-review-coordinator → _bim-control: query model, artifact, issue metadata",
-    "_bim-control → _s3_storage: resolve file URL / storage key",
+    "_worker → _bim-control: publish artifact metadata and readiness",
     "web-viewer-sample ↔ bim-streaming-server: WebRTC video + DataChannel JSON",
-    "bim-streaming-server → _s3_storage: load USD / USDC bytes",
+    "bim-streaming-server → _worker: load USD / USDC bytes",
     "web-viewer-sample ↔ bim-review-coordinator: Socket.IO presence / collaboration",
-    "bim-review-coordinator → _conversion-service: optional conversion job orchestration",
 ];
 
 const boundaryRules = [
     "資料權威歸 _bim-control",
-    "檔案本體歸 _s3_storage",
+    "檔案與轉檔邊界歸 _worker",
     "session / collaboration 歸 coordinator",
     "3D runtime 歸 streaming server",
     "使用者操作歸 web viewer",
@@ -68,7 +60,7 @@ export default function ArchitectureOverview() {
                 <p className="architecture-eyebrow">AI-BIM Governance Workspace</p>
                 <h2 id="architecture-overview-title">Project Architecture UI</h2>
                 <p>
-                    五個核心 repo 加上一個可選轉檔服務，依資料權威、檔案儲存、session 控制、3D runtime 與瀏覽器操作分工。
+                    五個核心 repo / folder 依資料權威、檔案轉檔、session 控制、3D runtime 與瀏覽器操作分工。
                 </p>
             </div>
 

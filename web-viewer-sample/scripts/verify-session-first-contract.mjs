@@ -25,9 +25,9 @@ function loadStreamMessageModule() {
 
 const { buildOpenStageRequest } = loadStreamMessageModule();
 
-const legacyRequest = buildOpenStageRequest("http://127.0.0.1:8002/static/model.usdc");
+const legacyRequest = buildOpenStageRequest("http://127.0.0.1:8005/objects/model.usdc");
 assert.equal(legacyRequest.event_type, "openStageRequest");
-assert.equal(legacyRequest.payload.url, "http://127.0.0.1:8002/static/model.usdc");
+assert.equal(legacyRequest.payload.url, "http://127.0.0.1:8005/objects/model.usdc");
 assert.equal(Object.hasOwn(legacyRequest.payload, "artifact_bindings"), false);
 
 const binding = {

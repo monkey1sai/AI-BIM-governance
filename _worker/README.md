@@ -1,8 +1,7 @@
 # _worker
 
-Local worker facade for source artifact intake, conversion jobs, versioned object layout, and conversion lineage.
-
-The first implementation is intentionally an adapter facade: it keeps `_s3_storage` and `_conversion-service` compatibility paths alive while exposing the new worker-facing API contract on port `8005`.
+Local worker facade for dev IFC source selection, source artifact intake,
+conversion jobs, versioned object layout, object URLs, and conversion lineage.
 
 ## Run
 
@@ -15,6 +14,8 @@ cd C:\Repos\active\iot\AI-BIM-governance\_worker
 
 ```http
 GET  /health
+GET  /api/dev/ifc-sources
+POST /api/dev/ifc-sources/{source_id}/conversions
 POST /api/artifacts
 GET  /api/artifact-groups/{artifact_group_id}
 GET  /api/artifact-groups/{artifact_group_id}/readiness
@@ -23,6 +24,10 @@ GET  /api/conversions/{conversion_job_id}
 GET  /api/conversions/{conversion_job_id}/result
 GET  /objects/{path}
 ```
+
+`GET /api/dev/ifc-sources` lists regular `.ifc` files under `WORKER_DEV_STORAGE_ROOT` (default: repo `storage/`) without exposing absolute paths.
+
+`POST /api/dev/ifc-sources/{source_id}/conversions` reads the selected IFC, creates a source artifact, starts a conversion job, and returns source/job/readiness identifiers for the demo UI.
 
 `POST /api/artifacts` accepts either `content_base64`, `content_text`, `source_url`, or `signed_upload_url` plus lineage fields. File bytes are stored under `data/objects/tenants/...`.
 

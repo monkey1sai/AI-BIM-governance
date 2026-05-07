@@ -14,6 +14,7 @@
 - **BREAKING** 移除 `_s3_storage` 作為獨立可啟動服務；新 demo 不再依賴 port `8002` 或 `/static/projects/...` URLs。
 - **BREAKING** 移除 `_conversion-service` 與 `_conversion-server` 作為獨立可啟動服務；新 demo 不再依賴 port `8003` 或 legacy conversion console。
 - 更新 root scripts、health checks、smoke tests 與 docs，讓 one-shot bring-up 只啟動 `_bim-control`、`_worker`、`bim-review-coordinator`、可選的 `bim-streaming-server`、以及 `web-viewer-sample`。
+- 更新 `bim-streaming-server` stage loading：當 review session 帶入多個 ready artifact bindings 時，streaming runtime 需依 `load_order` 真正把多個 worker-hosted USDC/USD 以 sublayer 或 payload 方式組入目前 stage，而不是只載入第一個 binding。
 - 非目標：不導入真實 S3、真實雲端 upload、正式檔案選取權限、真實 BIM platform 權限模型、真實 GPU autoscaling，也不讓 `_bim-control` 或 web viewer 讀取 local filesystem。
 
 ## Capabilities
@@ -23,6 +24,7 @@
 - `worker-dev-ifc-source-selection`: `_worker` 在 local demo mode 下列出 fake storage folder 的 `*.ifc`，讓 worker demo UI 選取 IFC 並建立 source artifact / conversion job。
 - `worker-demo-upload-convert-ui`: `_worker` 提供面向 demo 觀眾的步驟 ①/② UI，呈現 IFC 選取、上傳建模、轉換 job、artifact readiness 與下一步入口。
 - `legacy-storage-conversion-retirement`: workspace 移除 `_s3_storage`、`_conversion-service`、`_conversion-server` 的主要 demo dependency，並把文件、scripts、tests、stepbar 與 contract 改到 worker-only path。
+- `streaming-multi-layer-payload-loading`: `bim-streaming-server` 在 `same_instance` multi-artifact review session 中依 binding load order 載入 primary stage，並把其餘 model bindings composition 到同一 runtime stage。
 
 ### Modified Capabilities
 
@@ -34,7 +36,7 @@
 - `_bim-control`: demo stepbar / UI 文案改為導向 `_worker`；不得掃描 `.\storage`、讀取 IFC bytes 或直接觸發 conversion；仍只保存 project/model/artifact/review metadata。
 - `web-viewer-sample`: demo control panel、architecture overview、stepbar links 與 service copy 改為 worker-only artifact path；不再引用 `_s3_storage` 或 `_conversion-service` 作為主要服務。
 - `bim-review-coordinator`: 移除或更新 `_s3_storage` / `_conversion-service` assumptions，artifact URL 與 mapping URL 以 `_worker` object URLs 為準；session lifecycle contract 不改變。
-- `bim-streaming-server`: runtime 行為不改；只需確認 stage loading 仍可從 `_worker` object URLs 取得 USDC / mapping。
+- `bim-streaming-server`: stage loading 行為會擴充；單一 URL 路徑保持相容，多 artifact binding 路徑需回報實際載入的 primary / layer / payload / failed binding 結果。
 - `scripts/`: `start-all.*`、`stop-all.*`、health checks、verify scripts、smoke scripts 移除 8002/8003 dependency，新增或更新 worker demo flow validation。
 - `docs/`: 更新 AGENTS.md、CLAUDE.md、README.md、contracts、demo UI guidelines references 與 legacy conversion/storage docs；舊文件可搬到 archive 或標為 historical，不再當作 current runbook。
 - Filesystem: 新增明確的 dev-only source folder setting，例如 `WORKER_DEV_STORAGE_ROOT`，預設可指向 repo root 的 `storage/` 或 `_worker/storage/`；必須限制 path traversal，只列出該 root 之內的 `.ifc` 檔。

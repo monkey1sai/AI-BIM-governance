@@ -6,12 +6,14 @@ Base URL:
 http://127.0.0.1:8005
 ```
 
-`_worker` is the external file + conversion boundary for new flows. During this rollout it is a facade over local object layout and compatibility behavior; `_s3_storage` and `_conversion-service` remain runnable compatibility paths for the existing demo.
+`_worker` is the external file + conversion boundary for local review flows. It owns source file bytes, derived objects, conversion jobs, artifact group readiness, and the demo UI for steps ①/②.
 
 ## Endpoints
 
 ```http
 GET  /health
+GET  /api/dev/ifc-sources
+POST /api/dev/ifc-sources/{source_id}/conversions
 POST /api/artifacts
 GET  /api/artifact-groups/{artifact_group_id}
 GET  /api/artifact-groups/{artifact_group_id}/readiness
@@ -19,6 +21,81 @@ POST /api/conversions
 GET  /api/conversions/{conversion_job_id}
 GET  /api/conversions/{conversion_job_id}/result
 GET  /objects/{object_path}
+```
+
+## Dev IFC Source Selection
+
+The worker demo UI reads `.ifc` files from `WORKER_DEV_STORAGE_ROOT`.
+By default this resolves to `../storage` from the `_worker` service directory,
+which is the workspace `storage/` folder.
+
+`GET /health` includes a source-root status:
+
+```json
+{
+  "ok": true,
+  "service": "_worker",
+  "dev_ifc_source_root": {
+    "exists": true,
+    "readable": true,
+    "item_count": 2
+  }
+}
+```
+
+`GET /api/dev/ifc-sources` returns deterministic, path-safe source choices:
+
+```json
+{
+  "root": {
+    "exists": true,
+    "readable": true,
+    "item_count": 2
+  },
+  "items": [
+    {
+      "source_id": "ifcsrc_...",
+      "filename": "sample.ifc",
+      "relative_path": "samples/sample.ifc",
+      "size_bytes": 12345,
+      "modified_at": "2026-05-07T09:00:00Z"
+    }
+  ]
+}
+```
+
+The response never exposes absolute filesystem paths. The scanner lists regular
+`.ifc` files only, ignores symlinks, and rejects stale or out-of-root source ids.
+
+`POST /api/dev/ifc-sources/{source_id}/conversions` creates a source artifact
+from the selected file and starts a conversion job:
+
+```json
+{
+  "tenant_id": "tenant_demo_001",
+  "project_id": "project_demo_001",
+  "model_version_id": "version_demo_001",
+  "source_system": "dev_storage",
+  "uploaded_by": "dev_user_001",
+  "target_format": "usdc",
+  "generate_mapping": true,
+  "options": {
+    "auto_complete": true
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "source_artifact_id": "artifact_src_xxx",
+  "artifact_group_id": "ag_xxx",
+  "conversion_job_id": "conv_20260507000000_xxxxxxxx",
+  "status": "queued",
+  "result_url": "http://127.0.0.1:8005/api/conversions/conv_.../result",
+  "readiness_url": "http://127.0.0.1:8005/api/artifact-groups/ag_xxx/readiness"
+}
 ```
 
 ## Source Artifact Intake
@@ -115,4 +192,4 @@ tenants/{tenant_id}/projects/{project_id}/versions/{model_version_id}/artifact-g
 
 - `_worker` owns file bytes, worker object layout, conversion jobs, and conversion lineage.
 - `_worker` reports conversion metadata to `_bim-control`; it does not own project, model version, issue, annotation, or review intent authority.
-- `_conversion-service` remains a compatibility API on port `8003`; new callers should prefer `_worker` on port `8005`.
+- Current callers use `_worker` on port `8005`; ports `8002` and `8003` are not part of the current runtime path.

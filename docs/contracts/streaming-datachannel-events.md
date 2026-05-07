@@ -32,23 +32,58 @@ Response:
 {
   "event_type": "openedStageResult",
   "payload": {
-    "url": "http://127.0.0.1:8002/static/projects/project_demo_001/versions/version_demo_001/model.usdc",
+    "url": "http://127.0.0.1:8005/objects/tenants/.../model.usdc",
     "result": "success",
     "error": "",
-    "applied_mode": "single_url",
+    "applied_mode": "artifact_bindings_multi_layer_payload",
+    "primary_binding": {
+      "artifact_id": "artifact_usdc_xxx",
+      "load_order": 0,
+      "url": "http://127.0.0.1:8005/objects/tenants/.../model.usdc"
+    },
+    "loaded_bindings": [
+      {
+        "artifact_id": "artifact_usdc_xxx",
+        "load_order": 0,
+        "composition_strategy": "primary_stage"
+      },
+      {
+        "artifact_id": "artifact_overlay_xxx",
+        "load_order": 10,
+        "composition_strategy": "session_sublayer"
+      }
+    ],
+    "failed_bindings": [],
+    "partial_load": false,
     "missing_paths": [],
     "fallback_paths": []
   }
 }
 ```
 
-When `url` is omitted, `bim-streaming-server` may resolve the first loadable item by `artifact_bindings[].load_order` and reports `applied_mode="artifact_bindings_load_order"`. Missing binding URLs are returned in `missing_paths` instead of being treated as loaded evidence.
+When `url` is provided, Kit loads that URL directly and reports
+`applied_mode="single_url"` for backward compatibility. When `url` is omitted,
+`bim-streaming-server` sorts `artifact_bindings[]` by `load_order`, opens the
+first ready binding as the primary stage, and composes every additional ready
+binding into the session layer as a sublayer/payload-style layer.
+
+`applied_mode` values:
+
+```txt
+single_url
+artifact_bindings_single
+artifact_bindings_multi_layer_payload
+```
+
+Missing binding URLs are returned in `missing_paths`. Secondary binding load
+failures are returned in `failed_bindings` and set `partial_load=true`; they do
+not falsely report the whole multi-artifact session as fully loaded.
 
 GPU / Kit manual validation when hardware is available:
 
 1. Start local services with `.\scripts\start-all.ps1`, or start Kit manually with `.\bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad`.
 2. Create worker artifacts and a review session with `.\scripts\smoke-worker-review-request.ps1`, then open `web-viewer-sample` with the returned `review_request_id` or `session_id`.
-3. Confirm the viewer sends `openStageRequest` with `artifact_bindings[]`, Kit returns `openedStageResult.result="success"`, and `applied_mode` is either `single_url` or `artifact_bindings_load_order`.
+3. Confirm the viewer sends `openStageRequest` with `artifact_bindings[]`, Kit returns `openedStageResult.result="success"`, and `applied_mode` is `single_url`, `artifact_bindings_single`, or `artifact_bindings_multi_layer_payload`.
 4. Send `highlightPrimsRequest` against a known mapped `usd_prim_path`; real validation requires `missing_paths=[]` and `fallback_paths=[]`.
 5. Treat `/World` fallback as stream/DataChannel liveness only, not mapping correctness.
 

@@ -202,8 +202,8 @@
     <section id="uploadDemoCard" class="demo-card">
       <h2 class="demo-card__title" style="font-size:16px;">① 上傳建模 <span id="uploadStatus" class="demo-status demo-status--idle">待選擇檔案</span></h2>
       <p class="demo-card__subtitle">
-        這裡讓 demo 操作者直接選擇 IFC / RVT / DWG 檔，並把「來源模型已準備」這件事顯示在流程中。
-        目前 `_s3_storage` 尚未提供瀏覽器 multipart upload API，所以這一步先保留為本頁檔案選擇與 demo source URL 綁定。
+        這裡保留 coordinator 視角的步驟導覽；實際 IFC source 選擇與 artifact intake 由 `_worker` 的 8005 UI 負責。
+        請先在 worker UI 選擇 repo root `storage/` 內的 `.ifc` 並完成轉換，再回到這裡建立審查會議。
       </p>
       <input id="sourceFileInput" type="file" accept=".ifc,.rvt,.dwg,.usd,.usdc,.ifczip" hidden />
       <div class="demo-file-pick">
@@ -214,15 +214,15 @@
         <button class="demo-btn demo-btn--secondary" type="button" onclick="openUploadPicker(event)">選擇建模檔</button>
       </div>
       <div class="demo-flow-note">
-        未完成標示：目前尚未真正把檔案 byte 寫入 `_s3_storage`；轉檔流程會使用 demo storage 的 `source.ifc` URL。
+        操作提示：步驟 ①/② 已移到 `_worker`，本頁只協調步驟 ③ 之後的 review session。
       </div>
     </section>
 
     <section id="conversionDemoCard" class="demo-card">
       <h2 class="demo-card__title" style="font-size:16px;">② 自動轉換 <span id="conversionStatus" class="demo-status demo-status--idle">尚未開始</span></h2>
       <p class="demo-card__subtitle">
-        這個區塊會透過 coordinator 代理呼叫 `_conversion-service`，讓 demo 操作者在同一頁看到 job id、進度、目前階段與產物 URL。
-        點擊上方 ② 會跑快速 mock 轉換，完整顯示資料流；下方也可手動建立真實轉檔 job。
+        這個區塊保留工程代理按鈕，但目前主要 demo path 由 `_worker` 直接建立 conversion job 並把結果回寫 `_bim-control`。
+        一般 demo 請使用 <a href="http://127.0.0.1:8005" target="_blank" rel="noopener">Worker UI</a>。
       </p>
       <div class="demo-btn-row">
         <button id="mockConversionBtn" class="demo-btn" type="button" onclick="startCoordinatorConversion(event, true)">快速展示轉檔流程</button>
@@ -270,7 +270,7 @@
         </div>
       </div>
       <div class="demo-flow-note">
-        未完成標示：快速展示使用 `_conversion-service` 的 dev mock endpoint，不代表真實 IFC 轉換品質；真實轉檔仍需要本機 Kit converter 可用。
+        提示：worker 會產生 worker-hosted object URL；coordinator 只消費 ready artifact binding，不保存檔案本體。
       </div>
     </section>
 
@@ -386,12 +386,12 @@
                 <div>
                   <span class="demo-lab-card__step">②</span>
                   <h3 class="demo-lab-card__title">轉檔資料流</h3>
-                  <div class="demo-lab-card__route">coordinator → _conversion-service → _s3_storage</div>
+                  <div class="demo-lab-card__route">_worker → _bim-control → coordinator</div>
                 </div>
                 <span class="demo-status demo-status--warn">部分未完成</span>
               </div>
               <p class="demo-lab-card__copy">展示 IFC 來源檔如何產生 USDC 與 element_mapping.json，並讓產物 URL 回到 session。</p>
-              <div class="demo-lab-card__gap">未完成標示：瀏覽器直接寫入 `_s3_storage` 的 file-byte API 尚未接入；目前以 demo storage source URL 與 mock conversion 呈現。</div>
+              <div class="demo-lab-card__gap">步驟 ①/② 請在 8005 Worker UI 執行；這裡只展示 session 端如何消費 ready artifact binding。</div>
               <button type="button" onclick="guidedConversion()">展示轉檔流程</button>
             </article>
           </div>
@@ -399,7 +399,7 @@
           <div class="demo-lab-flow">
             <div class="demo-lab-flow__item"><strong>Session</strong>bim-review-coordinator 負責建立會議與同步狀態。</div>
             <div class="demo-lab-flow__item"><strong>Metadata</strong>_bim-control 保存 project / model / issue / annotation 關係。</div>
-            <div class="demo-lab-flow__item"><strong>Storage</strong>_s3_storage 保存 IFC / USDC / mapping 檔案本體。</div>
+            <div class="demo-lab-flow__item"><strong>Worker objects</strong>_worker 保存 IFC / USDC / mapping 檔案本體。</div>
             <div class="demo-lab-flow__item"><strong>Runtime</strong>bim-streaming-server 處理 WebRTC 畫面與 DataChannel 3D 操作。</div>
           </div>
 
@@ -525,7 +525,7 @@
       uploadStatus.className = 'demo-status demo-status--ok';
       uploadStatus.textContent = '已選擇檔案';
       selectedFileName.textContent = file.name;
-      selectedFileMeta.textContent = `${formatSize(file.size)} · ${file.type || 'unknown type'} · 尚未上傳到 _s3_storage`;
+      selectedFileMeta.textContent = `${formatSize(file.size)} · ${file.type || 'unknown type'} · 請改由 8005 Worker UI 選擇 storage/ 內 IFC`;
       appendDemoFeed('已選擇來源建模檔', { file_name: file.name, size_bytes: file.size });
     });
 
@@ -541,7 +541,7 @@
         project_id: projectId.value,
         model_version_id: modelVersionId.value,
         source_artifact_id: 'artifact_ifc_demo_001',
-        source_url: `http://127.0.0.1:8002/static/projects/${projectId.value}/versions/${modelVersionId.value}/source.ifc`,
+        source_url: `http://127.0.0.1:8005/objects/demo/${projectId.value}/${modelVersionId.value}/source.ifc`,
         target_format: 'usdc',
         options: {
           force: true,
@@ -570,7 +570,7 @@
           if (mock && payload?.http_status === 404) {
             const fallbackPayload = buildBrowserOnlyMockConversion();
             conversionJobLabel.textContent = fallbackPayload.job_id;
-            conversionJobHint.textContent = '目前 running coordinator 尚未載入 dev proxy；先顯示 browser-only demo feedback，重啟 coordinator 後會呼叫 8003。';
+            conversionJobHint.textContent = '目前 running coordinator 尚未載入 dev proxy；先顯示 browser-only demo feedback，重啟 coordinator 後會呼叫 8005。';
             await animateMockConversion(fallbackPayload);
             showConversionResult(fallbackPayload);
             setConversionButtons(true);
@@ -630,7 +630,7 @@
 
     function buildBrowserOnlyMockConversion() {
       const body = buildConversionRequest();
-      const urlBase = `http://127.0.0.1:8002/static/projects/${body.project_id}/versions/${body.model_version_id}`;
+      const urlBase = `http://127.0.0.1:8005/objects/demo/${body.project_id}/${body.model_version_id}`;
       return {
         job_id: `browser_only_${Date.now()}`,
         status: 'succeeded',

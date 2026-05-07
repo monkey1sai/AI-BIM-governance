@@ -96,12 +96,9 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _static_url(project_id: str, model_version_id: str, name: str) -> str:
-    return f"http://127.0.0.1:8002/static/projects/{project_id}/versions/{model_version_id}/{name}"
-
-
-def _demo_version_dir() -> Path:
-    return WORKSPACE_ROOT / "_s3_storage" / "static" / "projects" / DEMO_PROJECT_ID / "versions" / DEMO_MODEL_VERSION_ID
+def _worker_object_url(*parts: str) -> str:
+    path = "/".join(part.strip("/") for part in parts if part)
+    return f"http://127.0.0.1:8005/objects/{path}"
 
 
 def _seed_data(data_root: Path) -> None:
@@ -176,9 +173,6 @@ def _seed_if_missing(path: Path, items: list[dict[str, Any]]) -> None:
 
 
 def _build_seed_artifacts() -> list[dict[str, Any]]:
-    version_dir = _demo_version_dir()
-    source_status = "ready" if (version_dir / "source.ifc").is_file() else "missing"
-    usdc_status = "ready" if (version_dir / "model.usdc").is_file() else "missing"
     return [
         {
             "artifact_id": DEMO_SOURCE_ARTIFACT_ID,
@@ -186,9 +180,9 @@ def _build_seed_artifacts() -> list[dict[str, Any]]:
             "model_version_id": DEMO_MODEL_VERSION_ID,
             "artifact_type": "ifc",
             "name": "示範 BIM 原始 IFC",
-            "url": _static_url(DEMO_PROJECT_ID, DEMO_MODEL_VERSION_ID, "source.ifc"),
+            "url": None,
             "mapping_url": None,
-            "status": source_status,
+            "status": "missing",
             "updated_at": _now(),
         },
         {
@@ -197,9 +191,9 @@ def _build_seed_artifacts() -> list[dict[str, Any]]:
             "model_version_id": DEMO_MODEL_VERSION_ID,
             "artifact_type": "usdc",
             "name": "示範 BIM 轉檔 USDC",
-            "url": _static_url(DEMO_PROJECT_ID, DEMO_MODEL_VERSION_ID, "model.usdc"),
-            "mapping_url": _static_url(DEMO_PROJECT_ID, DEMO_MODEL_VERSION_ID, "element_mapping.json"),
-            "status": usdc_status,
+            "url": None,
+            "mapping_url": None,
+            "status": "missing",
             "updated_at": _now(),
         },
     ]
@@ -296,6 +290,61 @@ def _review_request_status(
     missing_groups = [group_id for group_id, group in zip(artifact_group_ids, selected_groups) if group is None]
     ready = bool(selected_groups) and all(_artifact_group_ready(group) for group in selected_groups)
     return ("created" if ready and not missing_groups else "blocked_conversion", [group for group in selected_groups if group], missing_groups)
+
+
+def _artifact_bindings_from_groups(groups: list[dict[str, Any]], routing_policy: str = "same_instance") -> list[dict[str, Any]]:
+    bindings: list[dict[str, Any]] = []
+    for group in groups:
+        derived_items = group.get("derived") if isinstance(group.get("derived"), list) else []
+        mapping = group.get("mapping") if isinstance(group.get("mapping"), dict) else {}
+        for item in derived_items:
+            if not isinstance(item, dict) or not item.get("url"):
+                continue
+            role = str(item.get("role") or "derived")
+            bindings.append(
+                {
+                    "binding_id": f"binding_{len(bindings) + 1}",
+                    "artifact_group_id": group.get("artifact_group_id"),
+                    "model_version_id": group.get("model_version_id"),
+                    "artifact_id": item.get("artifact_id"),
+                    "artifact_role": role,
+                    "url": item.get("url"),
+                    "mapping_url": mapping.get("url") if mapping else item.get("mapping_url"),
+                    "load_order": int(item.get("load_order") or len(bindings)),
+                    "routing_policy": routing_policy,
+                    "ready_status": group.get("ready_status") or "ready",
+                }
+            )
+    bindings.sort(key=lambda item: item["load_order"])
+    return bindings
+
+
+def _artifact_bindings_from_selected_artifacts(
+    artifacts: list[dict[str, Any]],
+    selected_artifact_ids: list[str],
+    model_version_id: str,
+    routing_policy: str = "same_instance",
+) -> list[dict[str, Any]]:
+    selected = [
+        artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id") in selected_artifact_ids and artifact.get("status") == "ready" and artifact.get("url")
+    ]
+    return [
+        {
+            "binding_id": f"binding_{index + 1}",
+            "artifact_group_id": artifact.get("artifact_group_id") or f"ag_{model_version_id}",
+            "model_version_id": artifact.get("model_version_id") or model_version_id,
+            "artifact_id": artifact.get("artifact_id"),
+            "artifact_role": "derived" if artifact.get("artifact_type") == "usdc" else str(artifact.get("artifact_type") or "source"),
+            "url": artifact.get("url"),
+            "mapping_url": artifact.get("mapping_url"),
+            "load_order": index,
+            "routing_policy": routing_policy,
+            "ready_status": "ready",
+        }
+        for index, artifact in enumerate(selected)
+    ]
 
 
 def _append_lifecycle_event(data_root: Path, request_id: str, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -456,6 +505,18 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             payload.artifact_group_ids,
             payload.selected_artifact_ids,
         )
+        routing_policy = str(payload.startup_policy.get("routing_policy") or "same_instance")
+        artifacts = _read_list(resolved_data_root / "artifacts.json")
+        artifact_bindings = (
+            _artifact_bindings_from_groups(ready_groups, routing_policy)
+            if payload.artifact_group_ids
+            else _artifact_bindings_from_selected_artifacts(
+                artifacts,
+                payload.selected_artifact_ids,
+                payload.model_version_id,
+                routing_policy,
+            )
+        )
         request_record = {
             "review_request_id": request_id,
             "requested_by": payload.requested_by,
@@ -471,7 +532,7 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             "missing_refs": missing_refs,
             "artifact_groups": ready_groups,
             "session_id": None,
-            "artifact_bindings": [],
+            "artifact_bindings": artifact_bindings if status == "created" else [],
             "kit_instance_bindings": [],
             "created_at": _now(),
             "updated_at": _now(),

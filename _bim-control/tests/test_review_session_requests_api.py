@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.main import create_app
 
 
-def make_client(tmp_path: Path) -> TestClient:
-    return TestClient(create_app(data_root=tmp_path / "data"))
+def make_client(case_dir: Path) -> TestClient:
+    return TestClient(create_app(data_root=case_dir / "data"))
 
 
 def ready_conversion_result() -> dict:
@@ -29,8 +29,8 @@ def ready_conversion_result() -> dict:
     }
 
 
-def test_conversion_result_updates_artifact_group_metadata(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_conversion_result_updates_artifact_group_metadata(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
 
@@ -44,8 +44,8 @@ def test_conversion_result_updates_artifact_group_metadata(tmp_path: Path):
     assert body["mapping"]["ready"] is True
 
 
-def test_review_session_request_is_created_for_ready_artifact_group(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_is_created_for_ready_artifact_group(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
 
     response = client.post(
@@ -66,14 +66,18 @@ def test_review_session_request_is_created_for_ready_artifact_group(tmp_path: Pa
     assert body["review_request_id"].startswith("review_request_")
     assert body["status"] == "created"
     assert body["artifact_group_ids"] == ["ag_test_ready"]
+    assert body["artifact_bindings"][0]["artifact_group_id"] == "ag_test_ready"
+    assert body["artifact_bindings"][0]["url"] == "http://127.0.0.1:8005/objects/model.usdc"
+    assert body["artifact_bindings"][0]["mapping_url"] == "http://127.0.0.1:8005/objects/element_mapping.json"
 
     loaded = client.get(f"/api/review-session-requests/{body['review_request_id']}")
     assert loaded.status_code == 200
     assert loaded.json()["model_version_id"] == "version_demo_001"
+    assert loaded.json()["artifact_bindings"] == body["artifact_bindings"]
 
 
-def test_review_session_request_allows_local_viewer_origin(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_allows_local_viewer_origin(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
     created = client.post(
         "/api/review-session-requests",
@@ -93,8 +97,8 @@ def test_review_session_request_allows_local_viewer_origin(tmp_path: Path):
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
 
 
-def test_review_session_request_rejects_missing_model_version_id(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_rejects_missing_model_version_id(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.post(
         "/api/review-session-requests",
@@ -107,8 +111,8 @@ def test_review_session_request_rejects_missing_model_version_id(tmp_path: Path)
     assert response.status_code == 422
 
 
-def test_review_session_request_blocks_missing_artifact_group(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_blocks_missing_artifact_group(case_dir: Path):
+    client = make_client(case_dir)
 
     response = client.post(
         "/api/review-session-requests",
@@ -126,8 +130,8 @@ def test_review_session_request_blocks_missing_artifact_group(tmp_path: Path):
     assert body["missing_refs"] == ["ag_missing"]
 
 
-def test_review_session_request_patch_saves_session_binding_and_lifecycle_event(tmp_path: Path):
-    client = make_client(tmp_path)
+def test_review_session_request_patch_saves_session_binding_and_lifecycle_event(case_dir: Path):
+    client = make_client(case_dir)
     client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
     created = client.post(
         "/api/review-session-requests",

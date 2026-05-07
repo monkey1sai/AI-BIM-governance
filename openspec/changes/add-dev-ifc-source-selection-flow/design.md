@@ -19,7 +19,7 @@
 - 不實作真實 cloud object storage、browser direct upload、正式檔案權限、SSO、tenant isolation 或 GPU autoscaling。
 - 不讓 `_bim-control` 掃描 filesystem、讀 IFC bytes 或執行 conversion。
 - 不讓 `_worker` 成為 review metadata authority、session control plane、WebRTC viewer 或 Omniverse runtime。
-- 不重寫 streaming DataChannel 行為；只確保它取得的 file URLs 改由 `_worker` 提供。
+- 不重寫 WebRTC negotiation、selection/highlight/focus command semantics、或 GPU instance lifecycle；本 change 只擴充 stage loading，讓 multi-artifact bindings 能在同一 runtime stage 中被實際 composition。
 
 ## Decisions
 
@@ -76,6 +76,15 @@ Removal is safe only after all current runtime references move to `_worker`:
 - USD runtime state and WebRTC stream: `bim-streaming-server`.
 - Browser interaction state: `web-viewer-sample`.
 
+### 6. Streaming runtime composes all ready model bindings
+
+當 review session 的 `artifact_bindings` 帶入多個 ready model URLs，`bim-streaming-server` 不再只挑第一筆。它先依 `load_order` 開啟第一個 loadable binding 作為 primary stage，接著把其餘 loadable model bindings composition 到目前 stage：
+
+- 優先以 session layer sublayer composition 載入 secondary USD/USDC，避免改寫來源檔案。
+- 若 sublayer 無法載入，回報 failed binding；不把失敗項目偽裝成成功。
+- 保留 top-level `url` 的單檔相容路徑，避免破壞既有 viewer / smoke scripts。
+- `openedStageResult` 回傳 `primary_binding`、`loaded_bindings`、`failed_bindings`、`partial_load` 與 `applied_mode`，讓 viewer 與測試能分辨「真的多載入」與「只載入 primary」。
+
 ## Risks / Trade-offs
 
 - [Risk] Removing `_s3_storage` / `_conversion-service` breaks scripts or demos that still reference `8002` / `8003`. → Mitigation: migrate references first, run `rg` for legacy names/ports, update smoke tests, then delete folders.
@@ -83,12 +92,14 @@ Removal is safe only after all current runtime references move to `_worker`:
 - [Risk] Worker UI could be mistaken for the review viewer. → Mitigation: scope it to steps ①/② and link forward to coordinator/viewer for steps ③/④/⑤.
 - [Risk] Conversion completion remains asynchronous and demo timing can vary. → Mitigation: UI and smoke scripts poll `GET /api/conversions/{conversion_job_id}` and `GET /api/conversions/{conversion_job_id}/result` until terminal status or timeout.
 - [Risk] Kit/WebRTC validation is still hardware-dependent. → Mitigation: API-only validation must pass without Kit; streaming validation remains a documented manual check when GPU/Kit is available.
+- [Risk] USD composition 對任意來源 USDC 的 defaultPrim / layer metadata 可能不一致。→ Mitigation: primary stage 一定先開啟；secondary binding 載入失敗時回報 `failed_bindings` 與 `partial_load=true`，不阻斷 primary review session。
 
 ## Migration Plan
 
 1. Add `_worker` dev source setting, list API, selected-source conversion API, tests, and UI.
 2. Update `_bim-control` stepbar and any hard-coded step ①/② URLs to point to `_worker`.
 3. Update `web-viewer-sample`, coordinator configs/tests, streaming defaults, root scripts, smoke scripts, and current docs to use worker object URLs only.
+3a. Extend streaming stage loading to compose all model artifact bindings by `load_order` and update DataChannel contract validation.
 4. Run worker, bim-control, coordinator, viewer, and smoke validations without `_s3_storage` / `_conversion-service`.
 5. Delete `_s3_storage/`, `_conversion-service/`, and `_conversion-server/` only after validation and reference checks pass.
 6. Run OpenSpec validation and GitNexus detect changes before commit.
@@ -97,5 +108,5 @@ Rollback is repo-level: restore the deleted legacy folders and previous script/d
 
 ## Open Questions
 
-- 是否要提交一個 tiny demo IFC 到 `storage/`，或只建立空資料夾與 README，讓使用者自行放檔案？
+- 已決定：只提交 `storage/README.md` 與 placeholder，不提交 tiny demo IFC；demo 操作者自行把 `.ifc` 放到 repo root `storage/`。
 - Historical docs 中提到 `_s3_storage` / `_conversion-service` 的舊計畫文件要整批移到 archive，還是只加上「historical」標記？
