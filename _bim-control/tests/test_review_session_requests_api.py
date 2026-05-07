@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -74,6 +75,30 @@ def test_review_session_request_is_created_for_ready_artifact_group(case_dir: Pa
     assert loaded.status_code == 200
     assert loaded.json()["model_version_id"] == "version_demo_001"
     assert loaded.json()["artifact_bindings"] == body["artifact_bindings"]
+
+
+def test_review_session_request_ids_include_random_suffix_and_are_unique(case_dir: Path):
+    client = make_client(case_dir)
+    client.post("/api/model-versions/version_demo_001/conversion-result", json=ready_conversion_result())
+
+    ids = []
+    for _ in range(5):
+        response = client.post(
+            "/api/review-session-requests",
+            json={
+                "requested_by": "dev_user_001",
+                "tenant_id": "tenant_demo_001",
+                "project_id": "project_demo_001",
+                "model_version_id": "version_demo_001",
+                "artifact_group_ids": ["ag_test_ready"],
+            },
+        )
+        assert response.status_code == 200
+        ids.append(response.json()["review_request_id"])
+
+    assert len(set(ids)) == len(ids)
+    for request_id in ids:
+        assert re.fullmatch(r"review_request_\d+_[0-9a-f]{8}", request_id)
 
 
 def test_review_session_request_allows_local_viewer_origin(case_dir: Path):

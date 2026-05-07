@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import re
 from typing import Any
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -252,7 +253,8 @@ def _items_response(items: list[dict[str, Any]], **extra: Any) -> dict[str, Any]
 
 
 def _new_review_request_id() -> str:
-    return f"review_request_{int(datetime.now(UTC).timestamp() * 1000)}"
+    timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
+    return f"review_request_{timestamp_ms}_{uuid4().hex[:8]}"
 
 
 def _find_by_id(items: list[dict[str, Any]], key: str, value: str) -> dict[str, Any] | None:
