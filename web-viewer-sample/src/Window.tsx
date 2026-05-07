@@ -231,7 +231,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._appendReviewEvent(`略過 ${message.event_type}：session lifecycle=${lifecycle}`);
             return;
         }
-        this._sendStreamMessage(message);
+        AppStream.sendMessage(JSON.stringify(message));
         this._appendDemoOutgoing(message.event_type, message);
     }
 
@@ -665,7 +665,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 paths: paths
             }
         };
-        AppStream.sendMessage(JSON.stringify(message));
+        this._sendStreamMessage(message);
 
         selectedUsdPrims.forEach(usdPrim => {this._onFillUSDPrim(usdPrim)});
     }
