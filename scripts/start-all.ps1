@@ -7,7 +7,7 @@ param(
     [int] $HealthTimeoutSeconds = 30
 )
 
-# 一鍵啟動 6 個服務。PID 寫到 scripts/.run/<svc>.pid，stdout/stderr 寫到 scripts/.run/<svc>.log。
+# 一鍵啟動 7 個服務。PID 寫到 scripts/.run/<svc>.pid，stdout/stderr 寫到 scripts/.run/<svc>.log。
 # 對應的關閉指令：scripts/stop-all.ps1
 # 設計原則：直接 Start-Process 真正的執行檔，避免 cmd /c 包 wrapper 導致 PID 鏈斷裂。
 # Uvicorn 不開 --reload，因為 --reload 會 fork 額外子行程，使 stop 時清理變複雜。
@@ -133,7 +133,7 @@ function Wait-Health {
     return $false
 }
 
-# === 啟動 6 個服務 ===
+# === 啟動 7 個服務 ===
 
 Start-LocalService `
     -Name "_s3_storage" `
@@ -152,6 +152,12 @@ Start-LocalService `
     -WorkingDirectory (Join-Path $RepoRoot "_conversion-service") `
     -FilePath $Python `
     -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8003")
+
+Start-LocalService `
+    -Name "_worker" `
+    -WorkingDirectory (Join-Path $RepoRoot "_worker") `
+    -FilePath $Python `
+    -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8005")
 
 if (-not $SkipCoordinator) {
     Start-LocalService `
@@ -187,6 +193,7 @@ Write-Host "=== Health probe ===" -ForegroundColor Cyan
 Wait-Health -Name "_s3_storage           (步驟 ①)" -Url "http://127.0.0.1:8002/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 Wait-Health -Name "_bim-control          (步驟 ⑤)" -Url "http://127.0.0.1:8001/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 Wait-Health -Name "_conversion-service   (步驟 ②)" -Url "http://127.0.0.1:8003/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
+Wait-Health -Name "_worker               (檔案+轉檔 facade)" -Url "http://127.0.0.1:8005/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 if (-not $SkipCoordinator) {
     Wait-Health -Name "bim-review-coordinator(步驟 ③)" -Url "http://127.0.0.1:8004/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 }
@@ -204,6 +211,7 @@ Write-Host "② 模型轉換       http://127.0.0.1:8003"
 Write-Host "③ 審查協調       http://127.0.0.1:8004/ui"
 Write-Host "④ 瀏覽器審查端   http://127.0.0.1:5173"
 Write-Host "⑤ 主資料庫       http://127.0.0.1:8001"
+Write-Host "Worker facade   http://127.0.0.1:8005"
 Write-Host ""
 Write-Host "停止所有服務：scripts\stop-all.ps1" -ForegroundColor DarkGray
 Write-Host "查看 log：     Get-Content scripts\.run\<service>.log -Wait" -ForegroundColor DarkGray

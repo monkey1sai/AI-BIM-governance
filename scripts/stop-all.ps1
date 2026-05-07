@@ -3,7 +3,7 @@ param(
     [switch] $KeepLogs   # 保留 .run/<svc>.log
 )
 
-# 一鍵關閉 6 個服務（與 start-all.ps1 對應）。
+# 一鍵關閉 7 個服務（與 start-all.ps1 對應）。
 # 對每個 PID 做 tree-kill：taskkill /F /T，連子行程 (例如 Kit) 一起終結。
 
 Set-StrictMode -Version Latest
@@ -16,6 +16,7 @@ $ExpectedServices = @(
     @{ Name = "_s3_storage"; Ports = @(8002) },
     @{ Name = "_bim-control"; Ports = @(8001) },
     @{ Name = "_conversion-service"; Ports = @(8003) },
+    @{ Name = "_worker"; Ports = @(8005) },
     @{ Name = "bim-review-coordinator"; Ports = @(8004) },
     @{ Name = "web-viewer-sample"; Ports = @(5173) },
     @{ Name = "bim-streaming-server"; Ports = @(49100, 47998) }

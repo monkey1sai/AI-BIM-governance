@@ -16,14 +16,28 @@ cd _bim-control
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-## 3. Conversion Service
+## 3. Conversion Service Compatibility Path
 
 ```powershell
 cd _conversion-service
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8003 --reload
 ```
 
-## 4. Review Coordinator
+This service remains available for the older demo conversion console. The new
+file + conversion boundary is `_worker`.
+
+## 4. Worker Facade
+
+```powershell
+cd _worker
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8005 --reload
+```
+
+`_worker` accepts source IFC/RVT/DWG bytes or upload references, creates
+conversion jobs, writes a versioned object layout, and publishes conversion
+metadata to `_bim-control`.
+
+## 5. Review Coordinator
 
 ```powershell
 cd bim-review-coordinator
@@ -31,7 +45,7 @@ npm install
 npm run dev
 ```
 
-## 5. Streaming Server
+## 6. Streaming Server
 
 ```powershell
 cd bim-streaming-server
@@ -48,7 +62,7 @@ If the browser reaches signaling but the video stays at `readyState=0`, use the 
 
 This starts Kit with `-SkipAutoLoad -ResetUser -StreamSdkLogLevel info`, which clears stale Kit user state and enables StreamSDK diagnostics.
 
-## 6. Web Viewer
+## 7. Web Viewer
 
 ```powershell
 cd web-viewer-sample
@@ -70,6 +84,7 @@ Each fake API service and the coordinator expose a Traditional Chinese browser U
 http://127.0.0.1:8001/ui  _bim-control metadata / issues / annotations
 http://127.0.0.1:8002/ui  _s3_storage static file browser
 http://127.0.0.1:8003/ui  _conversion-service conversion job console
+http://127.0.0.1:8005     _worker artifact + conversion API
 http://127.0.0.1:8004/ui  coordinator review session and Socket.IO console
 http://127.0.0.1:5173     web viewer with Demo 操作面板
 ```
@@ -89,6 +104,16 @@ Check health and UI endpoints:
 The manual demo path is:
 
 ```txt
+_worker POST /api/artifacts creates a source artifact group
+→ _worker POST /api/conversions produces USDC + mapping URLs
+→ _bim-control stores artifact group metadata and review session request
+→ coordinator creates a session from artifact bindings / Kit profile
+→ web viewer opens with review_request_id or session_id and then connects WebRTC
+```
+
+The legacy console path remains useful for demo debugging:
+
+```txt
 _s3_storage UI check files
 → _bim-control UI reset seed / confirm issue
 → _conversion-service UI create job or dev mock result
@@ -104,10 +129,19 @@ If the mapping document is marked `mock=true`, `allow_fake_mapping=true`, has `s
 
 ```powershell
 .\scripts\dev-health-check.ps1
+.\scripts\smoke-worker-review-request.ps1
 .\scripts\smoke-review-session.ps1
 .\scripts\smoke-review-socket.ps1
 .\_conversion-service\scripts\smoke_conversion.ps1
+.\bim-streaming-server\scripts\tests\test-stage-loading-contract.ps1
 ```
+
+`smoke-worker-review-request.ps1` verifies the API-only flow:
+`_worker -> _bim-control -> bim-review-coordinator`. It does not require Kit,
+GPU, browser automation, or WebRTC.
+
+`bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1` is a
+non-GPU DataChannel contract smoke for the multi-artifact load-order payload.
 
 `smoke-review-session.ps1` verifies fake storage, fake BIM control, coordinator session creation, stream-config, issue discovery, annotation persistence, and coordinator event logging.
 

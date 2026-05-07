@@ -2,7 +2,7 @@
 
 ## 0. 文件目的
 
-本文件定義 `AI-BIM-governance/` workspace 內 **五大核心 repo / folder** 的責任邊界、互動方式與資料流動方式。
+本文件定義 `AI-BIM-governance/` workspace 內 **核心 repo / folder** 的責任邊界、互動方式與資料流動方式。
 
 ## 0.1 Claude / Codex 行為對齊
 
@@ -29,14 +29,15 @@ installed skills / Graphify wiki / generated skills
 ### 工作方式
 
 - 預設使用繁體中文回覆；code、API、log、錯誤訊息保留原語言。
-- 編輯前先讀相關檔案與既有模式；不確定 repo 邊界時先回到 `AGENTS.md` 的五大 repo 分工。
+- 編輯前先讀相關檔案與既有模式；不確定 repo 邊界時先回到 `AGENTS.md` 的核心 repo 分工。
 - 非平凡變更先列出假設、成功標準、最小改動面，再做最小、可回復 diff。
 - 不修改 secrets、credentials、private keys、`.env` 實際值或大型模型檔案。
 - 不新增 production dependency，除非先說明原因、影響與替代方案。
-- 不跨 repo 混用責任：資料權威歸 `_bim-control`，檔案本體歸 `_s3_storage`，session 歸 `bim-review-coordinator`，3D runtime 歸 `bim-streaming-server`，使用者操作歸 `web-viewer-sample`。
+- 不跨 repo 混用責任：資料權威歸 `_bim-control`，檔案/轉檔外部邊界歸 `_worker`，舊版 static mirror 歸 `_s3_storage`，session 歸 `bim-review-coordinator`，3D runtime 歸 `bim-streaming-server`，使用者操作歸 `web-viewer-sample`。
 - 修改 function、class、method 前，先依 GitNexus 規範做 impact analysis；若風險為 HIGH 或 CRITICAL，先回報再繼續。
 - OpenSpec 的 `explore` / `propose` 階段只產生需求、設計、spec、task，不直接實作產品程式碼。
 - OpenSpec 的 `apply` 階段必須依 task 分批實作，每批都要回到 repo 邊界與最小驗證。
+- OpenSpec change 不得直接在 `main` 上開發；`/openspec new <change-id>` 前先切到 `codex/openspec/<change-id>`，實作走 PR、GitHub Actions、merge，merge 後才 sync/archive specs。
 - 本機 `.codex/skills` 只作為 workflow helpers；使用 skill 時不得覆蓋 `AGENTS.md` 的 repo 邊界或 source-of-truth 規則。
 - 不新增獨立 `karpathy-guidelines` skill；目前已安裝的 `using-agent-skills`、`incremental-implementation`、`code-simplification`、`code-review-and-quality` 已承接假設揭露、簡潔、範圍紀律與驗證流程。
 
@@ -60,11 +61,13 @@ affected unit tests
 integration / E2E only when needed
 ```
 
-Python tests 必須在各自服務目錄執行，避免三個 FastAPI 服務共用 `app` package name 時污染 import cache。Node build/test 也必須在對應 repo 目錄執行。
+Python tests 必須在各自服務目錄執行，避免多個 FastAPI 服務共用 `app` package name 時污染 import cache。Node build/test 也必須在對應 repo 目錄執行。
 
 ### Git 與本機 agent 產物
 
 - commit message 使用 Conventional Commits，摘要使用繁體中文且可搜尋、可回溯。
+- OpenSpec 對應 branch 命名為 `codex/openspec/<change-id>`；不得把 OpenSpec apply 的實作留在 `main` 未隔離開發。
+- PR 是 OpenSpec 實作的審查與討論入口；GitHub Actions 是自動驗證入口；merge 後才 archive OpenSpec change。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 目前是本機 agent/tooling 產物，預設維持 ignored。
 - 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus 產生的 skill 檔，除非使用者明確要求改變 repo policy。
 
@@ -90,12 +93,13 @@ Python tests 必須在各自服務目錄執行，避免三個 FastAPI 服務共�
 AI-BIM-governance/
 ```
 
-五大核心 repo / folder：
+核心 repo / folder：
 
 ```txt
 AI-BIM-governance/
 ├── bim-review-coordinator/      # 控制中心，localhost:8004
-├── _conversion-service/         # 轉檔 API，localhost:8003
+├── _worker/                     # artifact + conversion facade，localhost:8005
+├── _conversion-service/         # legacy 轉檔 compatibility API，localhost:8003
 ├── bim-streaming-server/        # Kit streaming server，WebRTC 49100
 ├── _bim-control/                # fake artifact / model API，localhost:8001
 ├── _s3_storage/                 # fake storage，localhost:8002
@@ -106,21 +110,21 @@ AI-BIM-governance/
 flowchart TD
   CO[bim-review-coordinator<br/>Control Plane]
 
-  CS[_conversion-service<br/>Conversion Worker API]
+  WK[_worker<br/>Artifact + Conversion Facade]
+  CS[_conversion-service<br/>Legacy Conversion API]
   KIT[bim-streaming-server<br/>Omniverse Kit Runtime]
   BC[_bim-control<br/>Fake BIM Data Authority]
   S3[_s3_storage<br/>Fake Object Storage]
   WV[web-viewer-sample<br/>Browser Client]
 
-  CO -->|REST: create conversion job| CS
+  CO -->|REST: bind review artifacts| WK
   CO -->|REST: query artifact/model data| BC
-  CO -->|REST: query file URLs| S3
   CO -->|start / check / reference process| KIT
   WV -->|REST: create/join session| CO
   WV -->|WebRTC + DataChannel| KIT
-  CS -->|read original IFC| S3
-  CS -->|write USDC + mapping| S3
-  CS -->|update artifact status| BC
+  WK -->|compatibility adapter| CS
+  WK -->|optional legacy object mirror| S3
+  WK -->|publish metadata only| BC
 ```
 
 其中：
@@ -135,14 +139,15 @@ web-viewer-sample/
 
 ```txt
 _bim-control/
+_worker/
 _s3_storage/
 ```
 
-是本地開發用 mock / fake infrastructure，用來模擬正式產品中的 BIM 主平台與物件儲存。
+是本地開發用 worker / mock / fake infrastructure。`_worker` 是新 flow 對外的 artifact + conversion 邊界；`_s3_storage` 與 `_conversion-service` 保留 compatibility path。
 
 ---
 
-## 2. 五大 repo 的定位總覽
+## 2. 核心 repo 的定位總覽
 
 ```mermaid
 flowchart LR
@@ -772,7 +777,7 @@ _mock-auth/
 _mock-sensor-service/
 ```
 
-這些不屬於本文件定義的五大核心 repo。
+這些不屬於本文件定義的核心 repo。`_conversion-service` 已保留在本 workspace 作為 `_worker` 後方的 legacy conversion compatibility path，而不是新的對外檔案/轉檔邊界。
 
 若它們存在，邊界原則如下：
 
@@ -818,8 +823,14 @@ _bim-control 提供 model / issue metadata
 _bim-control
 = 假 BIM 資料權威
 
+_worker
+= 檔案與轉檔 facade
+
 _s3_storage
-= 假檔案與物件儲存
+= 舊版假檔案與物件儲存 / static mirror
+
+_conversion-service
+= 舊版轉檔 compatibility API
 
 bim-review-coordinator
 = Session / collaboration control plane
@@ -835,7 +846,8 @@ web-viewer-sample
 
 ```txt
 資料權威歸資料層
-檔案本體歸 storage
+檔案與轉檔外部邊界歸 worker
+舊版 static mirror 歸 storage
 session 歸 coordinator
 3D runtime 歸 streaming server
 使用者操作歸 web viewer

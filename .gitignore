@@ -61,6 +61,8 @@ _conversion-service/data/jobs/
 _conversion-service/data/work/
 _conversion-service/data/logs/
 _conversion-service/jobs/
+_worker/data/
+_worker/pytest-cache-files-*/
 bim-review-coordinator/data/
 
 # ----------------------------

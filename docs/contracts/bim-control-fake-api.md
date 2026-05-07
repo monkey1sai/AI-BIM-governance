@@ -17,8 +17,15 @@ GET  /api/projects/{project_id}
 GET  /api/projects/{project_id}/versions
 GET  /api/model-versions/{model_version_id}
 GET  /api/model-versions/{model_version_id}/artifacts
+GET  /api/model-versions/{model_version_id}/artifact-groups
+POST /api/artifact-groups
+GET  /api/artifact-groups/{artifact_group_id}
 POST /api/model-versions/{model_version_id}/conversion-result
 GET  /api/model-versions/{model_version_id}/conversion-result
+POST /api/review-session-requests
+GET  /api/review-session-requests/{review_request_id}
+PATCH /api/review-session-requests/{review_request_id}
+GET  /api/review-session-requests/{review_request_id}/lifecycle-events
 GET  /api/model-versions/{model_version_id}/review-issues
 POST /api/model-versions/{model_version_id}/review-issues
 GET  /api/review-sessions/{session_id}/annotations
@@ -36,3 +43,33 @@ ISSUE-DEMO-001
 ```
 
 Artifact `status` is `ready` after conversion posts a succeeded conversion result, otherwise it may be `missing`.
+
+## Review Session Request
+
+`POST /api/review-session-requests` stores review intent before a coordinator session exists:
+
+```json
+{
+  "requested_by": "dev_user_001",
+  "tenant_id": "tenant_demo_001",
+  "project_id": "project_demo_001",
+  "model_version_id": "version_demo_001",
+  "artifact_group_ids": ["ag_xxx"],
+  "startup_policy": { "routing_policy": "same_instance" },
+  "kit_profile": { "provider": "local_fixed" }
+}
+```
+
+If the requested artifact group has source, derived USDC, and mapping metadata, status is `created`. Missing derived or mapping metadata sets `status=blocked_conversion` with `blocker=conversion_readiness`.
+
+Coordinator session bindings are patched back:
+
+```json
+{
+  "status": "active",
+  "session_id": "review_session_xxx",
+  "artifact_bindings": [],
+  "kit_instance_bindings": [],
+  "lifecycle_event": { "type": "sessionBound", "session_id": "review_session_xxx" }
+}
+```

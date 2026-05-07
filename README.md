@@ -11,13 +11,13 @@
 
 | 步驟 | 客戶看到 | 對應服務 | URL |
 |---|---|---|---|
-| ① 上傳建模 (Upload) | 原始建模檔已存在雲端倉庫 | `_s3_storage` | <http://127.0.0.1:8002> |
-| ② 自動轉換 (Convert) | 一鍵把建模檔轉成可在瀏覽器即時審查的 3D 模型 | `_conversion-service` | <http://127.0.0.1:8003> |
+| ① 上傳建模 (Upload) | 原始建模檔交給 worker facade，產生版本化 artifact group | `_worker` | <http://127.0.0.1:8005> |
+| ② 自動轉換 (Convert) | 一鍵把建模檔轉成可在瀏覽器即時審查的 3D 模型 | `_worker` (`_conversion-service` compatibility) | <http://127.0.0.1:8005> |
 | ③ 建立會議 (Meeting) | 一鍵開啟雲端審查會議，取得連線資訊 | `bim-review-coordinator` | <http://127.0.0.1:8004> |
 | ④ 標記問題 (Mark)   | 進入瀏覽器看 3D 模型、點問題即高亮對應元件 | `web-viewer-sample` + `bim-streaming-server` | <http://127.0.0.1:5173> |
 | ⑤ 紀錄回寫 (Record) | 審查標註已寫回主資料庫，留下審查履歷 | `_bim-control` | <http://127.0.0.1:8001> |
 
-> **最快 demo 路徑**：直接打開瀏覽器，依序 `8002 → 8003 → 8004 → 5173 → 8001`。每頁都有頂部的步驟條，可單向流暢走完。
+> **最快 demo 路徑**：直接打開瀏覽器，依序 `8005 → 8004 → 5173 → 8001`；需要舊版 storage / conversion console 時再打開 `8002 → 8003`。
 >
 > **時間緊迫時**：可省略步驟 ⑤，從步驟 ④ 結束。但步驟條保留完整顯示，讓客戶看見全貌。
 
@@ -41,7 +41,7 @@
 # Repo root
 cd C:\Repos\active\iot\AI-BIM-governance
 
-# 一次啟動 6 個服務（背景執行；log 寫到 scripts\.run\<svc>.log）
+# 一次啟動 7 個服務（背景執行；log 寫到 scripts\.run\<svc>.log）
 .\scripts\start-all.ps1
 
 # 一次關閉所有服務（tree-kill 連子行程一起清掉）
@@ -78,20 +78,24 @@ cd _s3_storage
 cd _bim-control
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
-# 3. 模型轉換 (8003)
+# 3. 模型轉換 compatibility path (8003)
 cd _conversion-service
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8003
 
-# 4. 審查協調 (8004)
+# 4. Worker facade：檔案上傳 + 轉檔 job + artifact group (8005)
+cd _worker
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8005
+
+# 5. 審查協調 (8004)
 cd bim-review-coordinator
 npm install   # 第一次需要
 npm run dev
 
-# 5. Omniverse Kit 串流伺服器 (49100 WebRTC)
+# 6. Omniverse Kit 串流伺服器 (49100 WebRTC)
 cd bim-streaming-server
 .\scripts\start-streaming-server.ps1 -SkipAutoLoad
 
-# 6. 瀏覽器審查端 (5173)
+# 7. 瀏覽器審查端 (5173)
 cd web-viewer-sample
 npm install   # 第一次需要
 npm run dev -- --host 127.0.0.1
@@ -107,8 +111,9 @@ npm run dev -- --host 127.0.0.1
 | 目錄 | 角色 | Demo 故事位置 | 責任邊界 |
 |---|---|---|---|
 | `_bim-control/` | 主資料庫 (Fake BIM Data Authority) | 步驟 ⑤ | 保存 project / model version / artifact / issue / annotation metadata；不保存大型檔案、不渲染 3D、不做 WebRTC。 |
-| `_s3_storage/` | 雲端倉庫 (Fake Object Storage) | 步驟 ① | 提供 IFC / USD / USDC / mapping JSON 等檔案本體與 HTTP static URL；不管理 session、不保存業務語意。 |
-| `_conversion-service/` | 模型轉換服務 (Conversion API) | 步驟 ② | 建立 conversion job、呼叫 Kit converter、產出 `model.usdc`、`element_mapping.json`，並發布到 fake storage / fake BIM API。 |
+| `_worker/` | Worker facade (Artifact + Conversion Boundary) | 步驟 ①② | 接收 IFC/RVT/DWG 或 signed upload reference、保存版本化 object layout、建立 conversion job、產出 artifact group / lineage，並只把 metadata 發布到 `_bim-control`。 |
+| `_s3_storage/` | 雲端倉庫 compatibility path (Fake Object Storage) | 舊版步驟 ① | 提供既有 IFC / USD / USDC / mapping JSON static URL；新 flow 由 `_worker` 對外承接檔案與轉檔邊界。 |
+| `_conversion-service/` | 模型轉換 compatibility path (Conversion API) | 舊版步驟 ② | 保留既有 demo conversion endpoint；新 flow 透過 `_worker` 暴露外部 conversion contract。 |
 | `bim-review-coordinator/` | 審查協調 (Session / Collaboration Control Plane) | 步驟 ③ | 建立 review session、查詢 BIM metadata、提供 stream config、廣播 presence / selection / annotation / issue focus；不直接操作 USD stage。 |
 | `bim-streaming-server/` | Omniverse Kit Runtime / WebRTC | 步驟 ④ (背景) | 載入 USD / USDC、執行 viewport runtime、WebRTC streaming、DataChannel command (`openStageRequest`、`highlightPrimsRequest`)；無 UI，存在感由 web-viewer 呈現。 |
 | `web-viewer-sample/` | 瀏覽器審查端 (Browser Client) | 步驟 ④ | 顯示串流畫面、建立或加入 review session、讀 artifacts/issues、送 DataChannel command、送 collaboration events；不啟動 Kit、不保存資料權威。 |
@@ -121,7 +126,8 @@ npm run dev -- --host 127.0.0.1
 
 ```txt
 資料權威 → _bim-control
-檔案本體 → _s3_storage
+檔案/轉檔外部邊界 → _worker
+舊版 static object compatibility → _s3_storage
 Session  → bim-review-coordinator
 3D runtime → bim-streaming-server
 使用者操作 → web-viewer-sample
@@ -162,6 +168,12 @@ Review session smoke：
 .\scripts\smoke-review-session.ps1
 ```
 
+Worker review request smoke（不需要 Kit GPU）：
+
+```powershell
+.\scripts\smoke-worker-review-request.ps1
+```
+
 Socket.IO 多人協作 smoke：
 
 ```powershell
@@ -178,6 +190,7 @@ Python tests（每個 fake service 各自 `app` package name，需分服務跑�
 
 ```powershell
 cd _bim-control          ; ..\.venv\Scripts\python.exe -m pytest tests
+cd ..\_worker            ; ..\.venv\Scripts\python.exe -m pytest tests
 cd ..\_s3_storage        ; ..\.venv\Scripts\python.exe -m pytest tests
 cd ..\_conversion-service; ..\.venv\Scripts\python.exe -m pytest tests
 ```
@@ -186,13 +199,14 @@ Node tests / builds：
 
 ```powershell
 cd bim-review-coordinator; npm test; npm run build
-cd ..\web-viewer-sample  ; npm run build
+cd ..\web-viewer-sample  ; npm run test:session-first; npm run build
 ```
 
-Kit build / test：
+Kit build / test / contract smoke：
 
 ```powershell
 cd bim-streaming-server
+.\scripts\tests\test-stage-loading-contract.ps1
 .\repo.bat build
 .\repo.bat test
 ```
@@ -218,3 +232,19 @@ Graphify（跨文件知識圖）：
 - 大型 BIM artifact 預設不進 git：`*.ifc`、`*.usdc`、`*.usd`、`*.rvt`、`*.dwg`
 - 小型 fixture 可放 `_fixtures/`
 - `node_modules/`、Kit build output、local conversion jobs、`.gitnexus/` 皆不納入 git
+
+### OpenSpec GitHub workflow
+
+```txt
+OpenSpec = 需求 / 規格 / 驗收條件
+Git Branch = 實作隔離
+Pull Request = 審查與討論
+GitHub Actions = 自動驗證
+Merge = 正式接受變更
+Archive = 把變更規格併入正式規格
+```
+
+- 每個 `/openspec new <change-id>` 先從最新 `main` 建立 `codex/openspec/<change-id>` branch。
+- `/openspec apply <change-id>` 的實作、測試、文件與 task 勾選都留在該 branch。
+- 開 PR 後由 review 討論與 GitHub Actions 驗證決定是否 merge。
+- merge 後才執行 OpenSpec sync/archive，將 delta specs 併入正式 `openspec/specs/`。

@@ -1,9 +1,13 @@
+import type { ArtifactBinding } from "../types/artifacts";
 import type { HighlightItem, StreamMessage } from "../types/streamMessages";
 
-export function buildOpenStageRequest(url: string): StreamMessage {
+export function buildOpenStageRequest(url: string, artifactBindings: ArtifactBinding[] = []): StreamMessage {
     return {
         event_type: "openStageRequest",
-        payload: { url },
+        payload: {
+            url,
+            ...(artifactBindings.length > 0 ? { artifact_bindings: artifactBindings } : {}),
+        },
     };
 }
 

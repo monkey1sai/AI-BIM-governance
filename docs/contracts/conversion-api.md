@@ -6,6 +6,14 @@ Base URL:
 http://127.0.0.1:8003
 ```
 
+Compatibility status:
+
+```txt
+_worker (http://127.0.0.1:8005) is the new external file + conversion boundary.
+_conversion-service remains a compatibility path for the existing demo and real Kit converter runner.
+New review-session request flows should depend on docs/contracts/worker-api.md.
+```
+
 Naming compatibility:
 
 ```txt
