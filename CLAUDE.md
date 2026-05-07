@@ -797,3 +797,67 @@ wiki（Graphify）
 
 若發現 wiki 與實作不一致，先以實作為準，並補更新 wiki。
 重大流程變更（API、事件、資料流）合併前應同步更新對應 wiki 入口頁。
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **AI-BIM-governance** (3249 symbols, 5842 relationships, 161 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/AI-BIM-governance/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/AI-BIM-governance/clusters` | All functional areas |
+| `gitnexus://repo/AI-BIM-governance/processes` | All execution flows |
+| `gitnexus://repo/AI-BIM-governance/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+| Work in the App area (113 symbols) | `.claude/skills/generated/app/SKILL.md` |
+| Work in the {{python_module_path}} area (66 symbols) | `.claude/skills/generated/python-module-path/SKILL.md` |
+| Work in the Clients area (62 symbols) | `.claude/skills/generated/clients/SKILL.md` |
+| Work in the Tests area (54 symbols) | `.claude/skills/generated/tests/SKILL.md` |
+| Work in the Repoman area (37 symbols) | `.claude/skills/generated/repoman/SKILL.md` |
+| Work in the Services area (31 symbols) | `.claude/skills/generated/services/SKILL.md` |
+| Work in the Public area (20 symbols) | `.claude/skills/generated/public/SKILL.md` |
+| Work in the Components area (17 symbols) | `.claude/skills/generated/components/SKILL.md` |
+| Work in the Messaging area (15 symbols) | `.claude/skills/generated/messaging/SKILL.md` |
+| Work in the Cluster_1 area (12 symbols) | `.claude/skills/generated/cluster-1/SKILL.md` |
+| Work in the Cluster_24 area (9 symbols) | `.claude/skills/generated/cluster-24/SKILL.md` |
+| Work in the Bootstrap area (9 symbols) | `.claude/skills/generated/bootstrap/SKILL.md` |
+| Work in the Scripts area (9 symbols) | `.claude/skills/generated/scripts/SKILL.md` |
+| Work in the Cluster_0 area (8 symbols) | `.claude/skills/generated/cluster-0/SKILL.md` |
+| Work in the Cluster_2 area (7 symbols) | `.claude/skills/generated/cluster-2/SKILL.md` |
+| Work in the Packman area (7 symbols) | `.claude/skills/generated/packman/SKILL.md` |
+| Work in the Types area (6 symbols) | `.claude/skills/generated/types/SKILL.md` |
+| Work in the Cluster_25 area (6 symbols) | `.claude/skills/generated/cluster-25/SKILL.md` |
+| Work in the Cluster_29 area (5 symbols) | `.claude/skills/generated/cluster-29/SKILL.md` |
+| Work in the Socket area (4 symbols) | `.claude/skills/generated/socket/SKILL.md` |
+
+<!-- gitnexus:end -->
