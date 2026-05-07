@@ -21,6 +21,8 @@ context: |
   - For code symbols, run GitNexus impact analysis before editing and report HIGH/CRITICAL risk before proceeding.
   - Preserve the minimum review loop across _bim-control, _s3_storage, bim-review-coordinator, bim-streaming-server, and web-viewer-sample.
   - OpenSpec artifacts guide planning and execution; they do not override AGENTS.md or CLAUDE.md.
+  - Installed agent skills are workflow helpers only; they do not define product requirements and do not override repo boundary rules.
+  - Do not encode local skill installation, generated skills, or agent-tooling state as product requirements.
 
 rules:
   proposal:
@@ -35,10 +37,12 @@ rules:
     - Note validation strategy and known environment limits such as GPU/Kit requirements.
   tasks:
     - Break implementation tasks by repo/folder ownership.
+    - Keep each task scoped to one owner whenever possible: metadata, storage, session, runtime, or browser UI.
     - Include the smallest useful validation for each affected service.
     - Keep Python tests in their service directory to avoid app package import cache pollution.
     - Include documentation updates when APIs, events, data flow, or repo boundaries change.
   specs:
     - Describe externally observable behavior and acceptance criteria.
     - Avoid encoding agent-specific implementation details as product requirements.
+    - Do not treat installed skills, Graphify wiki, or GitNexus generated skills as product source of truth.
     - Preserve English API paths and protocol field names when they are part of the contract.

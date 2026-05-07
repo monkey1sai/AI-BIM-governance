@@ -6,12 +6,12 @@
 
 ## 0.1 Claude / Codex 行為對齊
 
-本 repo 以 `AGENTS.md` 與 Codex 工作規範作為 agent 行為基準。Claude 在本 repo 內開發、規劃、review 或使用 OpenSpec 時，必須遵守以下對齊規則：
+本 repo 以 `AGENTS.md` 作為 agent 行為與 repo 邊界的 source of truth。Claude 在本 repo 內開發、規劃、review 或使用 OpenSpec 時，必須把本文件視為鏡像入口，而不是另一套獨立流程。
 
 ```txt
-Codex / AGENTS.md = 行為基準與 repo 邊界 source of truth
-CLAUDE.md         = Claude 讀取同一套規範的鏡像入口
-openspec/         = 只記錄可審查的需求、設計、任務與規格，不取代 repo 邊界
+AGENTS.md = 行為基準與 repo 邊界 source of truth
+CLAUDE.md = Claude 讀取同一套規範的鏡像入口
+openspec/ = 只記錄可審查的需求、設計、任務與規格，不取代 repo 邊界
 ```
 
 ### 優先順序
@@ -21,22 +21,24 @@ openspec/         = 只記錄可審查的需求、設計、任務與規格，不
 AGENTS.md / repo-local boundary rules
 CLAUDE.md
 OpenSpec artifacts
-Graphify / wiki / generated skills
+installed skills / Graphify wiki / generated skills
 ```
 
-若 `CLAUDE.md`、`.claude/` command、OpenSpec artifact 與 `AGENTS.md` 發生衝突，Claude 必須先採用 `AGENTS.md` 的規則，並在需要修改文件時明確指出差異。
+若 `CLAUDE.md`、`.claude/` command、OpenSpec artifact、Graphify wiki 或 generated skills 與 `AGENTS.md` 發生衝突，Claude 必須先採用 `AGENTS.md` 的規則，並在需要修改文件或實作時明確指出差異。
 
 ### 工作方式
 
 - 預設使用繁體中文回覆；code、API、log、錯誤訊息保留原語言。
-- 編輯前先讀相關檔案與既有模式；不確定 repo 邊界時先回到本文件的五大 repo 分工。
-- 非平凡變更先給短計畫，再做最小、可回復 diff。
+- 編輯前先讀相關檔案與既有模式；不確定 repo 邊界時先回到 `AGENTS.md` 的五大 repo 分工。
+- 非平凡變更先列出假設、成功標準、最小改動面，再做最小、可回復 diff。
 - 不修改 secrets、credentials、private keys、`.env` 實際值或大型模型檔案。
 - 不新增 production dependency，除非先說明原因、影響與替代方案。
 - 不跨 repo 混用責任：資料權威歸 `_bim-control`，檔案本體歸 `_s3_storage`，session 歸 `bim-review-coordinator`，3D runtime 歸 `bim-streaming-server`，使用者操作歸 `web-viewer-sample`。
 - 修改 function、class、method 前，先依 GitNexus 規範做 impact analysis；若風險為 HIGH 或 CRITICAL，先回報再繼續。
 - OpenSpec 的 `explore` / `propose` 階段只產生需求、設計、spec、task，不直接實作產品程式碼。
 - OpenSpec 的 `apply` 階段必須依 task 分批實作，每批都要回到 repo 邊界與最小驗證。
+- 本機 `.codex/skills` 只作為 workflow helpers；使用 skill 時不得覆蓋 `AGENTS.md` 的 repo 邊界或 source-of-truth 規則。
+- 不新增獨立 `karpathy-guidelines` skill；目前已安裝的 `using-agent-skills`、`incremental-implementation`、`code-simplification`、`code-review-and-quality` 已承接假設揭露、簡潔、範圍紀律與驗證流程。
 
 ### 驗證與完成標準
 
@@ -64,9 +66,9 @@ Python tests 必須在各自服務目錄執行，避免三個 FastAPI 服務共�
 
 - commit message 使用 Conventional Commits，摘要使用繁體中文且可搜尋、可回溯。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 目前是本機 agent/tooling 產物，預設維持 ignored。
-- 不提交 `.claude/skills/generated/` 或 GitNexus 產生的 skill 檔，除非使用者明確要求改變 repo policy。
+- 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus 產生的 skill 檔，除非使用者明確要求改變 repo policy。
 
-本文件只描述：
+除 `0.1 Claude / Codex 行為對齊` 外，本文件描述：
 
 ```txt
 1. repo 邊界

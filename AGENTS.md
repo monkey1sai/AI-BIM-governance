@@ -4,7 +4,7 @@
 
 本文件定義 `AI-BIM-governance/` workspace 內 **五大核心 repo / folder** 的責任邊界、互動方式與資料流動方式。
 
-本文件只描述：
+除 `0.1 Agent 工作方式與 Skill 使用規範` 外，本文件描述：
 
 ```txt
 1. repo 邊界
@@ -15,6 +15,53 @@
 ```
 
 本文件不描述每個 repo 未來要新增哪些功能，也不作為功能開發清單。
+
+---
+
+## 0.1 Agent 工作方式與 Skill 使用規範
+
+本 repo 以 `AGENTS.md` 作為 agent 行為與 repo 邊界的 source of truth。`CLAUDE.md`、OpenSpec、Graphify wiki、GitNexus generated skills、以及本機安裝的 `.codex/skills` 都只能輔助理解與執行，不得覆蓋本文件的 repo 邊界。
+
+### 優先順序
+
+```txt
+使用者最新明確指令
+AGENTS.md / repo-local boundary rules
+CLAUDE.md
+OpenSpec artifacts
+installed skills / Graphify wiki / generated skills
+```
+
+若上述來源衝突，先採用 `AGENTS.md` 的 repo 邊界與 source-of-truth 規則，並在需要修改文件或實作時明確指出差異。
+
+### Karpathy-style 工作守則
+
+- 非平凡任務先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先釐清再實作。
+- 優先採用能解決當前問題的最簡單方案；不要新增未要求的抽象、設定層、擴充點或 production dependency。
+- 只修改與任務直接相關的檔案與程式碼；不要順手重構、格式化、刪除註解或清理不理解的既有內容。
+- 每個實作切片都要能被驗證；完成時回報改動檔案、驗證指令、未跑測試原因與已知風險。
+
+### Skill routing
+
+本 repo 已安裝 `.codex/skills` 作為本機 workflow helpers。使用 skill 時只把它們當作工作流程，不把 skill 內容視為高於本文件的需求來源。
+
+| 情境 | 優先使用 |
+|---|---|
+| 需求模糊或需要收斂想法 | `idea-refine` / `spec-driven-development` |
+| 需要拆任務或排實作順序 | `planning-and-task-breakdown` |
+| 多 repo、API、資料流或邊界風險 | 本文件 repo 邊界 / `api-and-interface-design` |
+| 實作跨多檔案變更 | `incremental-implementation` |
+| 行為變更、bugfix、邏輯修改 | `test-driven-development` |
+| UI 或 browser client 變更 | `frontend-ui-engineering` / `browser-testing-with-devtools` |
+| 框架、SDK、OpenAI、Kit、USD 等官方 API 決策 | `source-driven-development` |
+| code review、merge 前檢查 | `code-review-and-quality` / GitNexus impact + detect changes |
+| 文件、架構決策、流程紀錄 | `documentation-and-adrs` / OpenSpec |
+
+### OpenSpec 與本機 agent 產物
+
+- OpenSpec 只記錄可審查的需求、設計、spec、tasks；不取代 repo 邊界，也不管理本機 skill 安裝。
+- `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 目前是本機 agent/tooling 產物，預設維持 ignored。
+- 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus generated skill 檔，除非使用者明確要求改變 repo policy。
 
 ---
 
