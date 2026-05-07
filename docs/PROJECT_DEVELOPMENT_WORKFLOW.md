@@ -1,7 +1,7 @@
 # AI-BIM-governance 專案開發流程設計
 
 > **基於架構圖分析與當前進度整理**
-> 
+>
 > 本文件提供從 PoC 到 SaaS 的完整開發流程規劃，涵蓋六大開發階段、技術棧選型、資料流設計與測試策略。
 
 ---
@@ -61,15 +61,19 @@ graph TB
     KIT -->|load USD/USDC| S3
 ```
 
+
+
 ### 當前 Demo 5 步驟流程
 
-| 步驟 | 功能 | 服務 | URL |
-|---|---|---|---|
-| ① 上傳建模 | 原始建模檔存在雲端 | `_s3_storage` | http://127.0.0.1:8002 |
-| ② 自動轉換 | IFC → USD/USDC 轉換 | `_conversion-service` | http://127.0.0.1:8003 |
-| ③ 建立會議 | 開啟審查 session | `bim-review-coordinator` | http://127.0.0.1:8004 |
-| ④ 標記問題 | 3D 瀏覽與標記 | `web-viewer-sample` + Kit | http://127.0.0.1:5173 |
-| ⑤ 紀錄回寫 | 審查紀錄保存 | `_bim-control` | http://127.0.0.1:8001 |
+
+| 步驟     | 功能                | 服務                        | URL                                            |
+| ------ | ----------------- | ------------------------- | ---------------------------------------------- |
+| ① 上傳建模 | 原始建模檔存在雲端         | `_s3_storage`             | [http://127.0.0.1:8002](http://127.0.0.1:8002) |
+| ② 自動轉換 | IFC → USD/USDC 轉換 | `_conversion-service`     | [http://127.0.0.1:8003](http://127.0.0.1:8003) |
+| ③ 建立會議 | 開啟審查 session      | `bim-review-coordinator`  | [http://127.0.0.1:8004](http://127.0.0.1:8004) |
+| ④ 標記問題 | 3D 瀏覽與標記          | `web-viewer-sample` + Kit | [http://127.0.0.1:5173](http://127.0.0.1:5173) |
+| ⑤ 紀錄回寫 | 審查紀錄保存            | `_bim-control`            | [http://127.0.0.1:8001](http://127.0.0.1:8001) |
+
 
 ---
 
@@ -133,15 +137,17 @@ gantt
     Demo 5-step Flow     :active, 2026-04-25, 5d
 ```
 
+
+
 **交付物 Checklist**：
 
-- [x] 5 個服務皆可啟動且健康檢查通過
-- [x] `start-all.ps1` / `start-all.sh` 一鍵啟動腳本
-- [x] 每個服務的 `/health` endpoint
-- [ ] 完整 5 步驟 UI 符合 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`
-- [ ] `smoke-review-session.ps1` 測試通過
-- [ ] `smoke-review-socket.ps1` 多人協作測試通過
-- [ ] 至少 1 個完整 IFC → USDC → 瀏覽器審查 demo 流程
+- 5 個服務皆可啟動且健康檢查通過
+- `start-all.ps1` / `start-all.sh` 一鍵啟動腳本
+- 每個服務的 `/health` endpoint
+- 完整 5 步驟 UI 符合 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`
+- `smoke-review-session.ps1` 測試通過
+- `smoke-review-socket.ps1` 多人協作測試通過
+- 至少 1 個完整 IFC → USDC → 瀏覽器審查 demo 流程
 
 **驗收標準**：
 
@@ -196,36 +202,35 @@ flowchart TB
     style D fill:#9C27B0
 ```
 
+
+
 **重點任務**：
 
 1. **Conversion Quality Gate**
-   - IFC 讀取完整性檢查（ifcopenshell validation）
-   - USD 轉換後 prim tree 完整性驗證
-   - Element mapping coverage 計算（需 ≥ 95%）
-
+  - IFC 讀取完整性檢查（ifcopenshell validation）
+  - USD 轉換後 prim tree 完整性驗證
+  - Element mapping coverage 計算（需 ≥ 95%）
 2. **Missing Elements Report**
-   - 列出 IFC GUID 有但 USD prim path 缺失的元件
-   - 分類失敗原因（geometry error / unsupported type / converter bug）
-   - 報告格式：JSON + HTML
-
+  - 列出 IFC GUID 有但 USD prim path 缺失的元件
+  - 分類失敗原因（geometry error / unsupported type / converter bug）
+  - 報告格式：JSON + HTML
 3. **Starter Pack**
-   - 提供 3~5 個測試用 IFC 檔案（不同複雜度）
-   - 預先產出對應的 USD / mapping / review issue
-   - Fake BIM API 預載這些 projects
-
+  - 提供 3~5 個測試用 IFC 檔案（不同複雜度）
+  - 預先產出對應的 USD / mapping / review issue
+  - Fake BIM API 預載這些 projects
 4. **Smoke Test 擴充**
-   - 新增 conversion quality gate 測試
-   - 新增 mapping coverage 測試
-   - CI/CD GitHub Actions workflow
+  - 新增 conversion quality gate 測試
+  - 新增 mapping coverage 測試
+  - CI/CD GitHub Actions workflow
 
 **交付物 Checklist**：
 
-- [ ] `_conversion-service/scripts/quality_gate_check.py` 實作
-- [ ] `_conversion-service/app/reports/missing_elements.py` 實作
-- [ ] `_fixtures/starter-pack/` 目錄建立，包含 3 個 IFC + USD
-- [ ] `_bim-control/app/data/seed_starter_projects.py` 預載腳本
-- [ ] `.github/workflows/quality-gate.yml` CI workflow
-- [ ] `docs/plans/PHASE1_QUALITY_GATE_SPEC.md` 規格文件
+- `_conversion-service/scripts/quality_gate_check.py` 實作
+- `_conversion-service/app/reports/missing_elements.py` 實作
+- `_fixtures/starter-pack/` 目錄建立，包含 3 個 IFC + USD
+- `_bim-control/app/data/seed_starter_projects.py` 預載腳本
+- `.github/workflows/quality-gate.yml` CI workflow
+- `docs/plans/PHASE1_QUALITY_GATE_SPEC.md` 規格文件
 
 **驗收標準**：
 
@@ -266,35 +271,34 @@ sequenceDiagram
     Client->>Client: show friendly error UI
 ```
 
+
+
 **重點任務**：
 
 1. **Sentry Integration**
-   - 所有服務（Python / Node / Kit）整合 Sentry SDK
-   - 定義 error context tags（service、session_id、user_id、artifact_id）
-   - 設定 sample rate 與 alert rules
-
+  - 所有服務（Python / Node / Kit）整合 Sentry SDK
+  - 定義 error context tags（service、session_id、user_id、artifact_id）
+  - 設定 sample rate 與 alert rules
 2. **Callback / Notification Service**
-   - 設計 webhook callback contract
-   - coordinator 訂閱 conversion job status、Kit server status
-   - WebSocket 推送即時狀態給 client
-
+  - 設計 webhook callback contract
+  - coordinator 訂閱 conversion job status、Kit server status
+  - WebSocket 推送即時狀態給 client
 3. **WebRTC 容錯機制**
-   - 檢測 "FrameGrabFailed" 等常見錯誤
-   - 自動 retry + exponential backoff
-   - 降級方案：static viewport snapshot
-
+  - 檢測 "FrameGrabFailed" 等常見錯誤
+  - 自動 retry + exponential backoff
+  - 降級方案：static viewport snapshot
 4. **Kit Stability Monitoring**
-   - 收集 NvStreamer ETL logs
-   - GPU memory / viewport render time metrics
-   - 自動重啟邏輯（crash 超過 3 次則標記 unhealthy）
+  - 收集 NvStreamer ETL logs
+  - GPU memory / viewport render time metrics
+  - 自動重啟邏輯（crash 超過 3 次則標記 unhealthy）
 
 **交付物 Checklist**：
 
-- [ ] `SENTRY_DSN` 環境變數配置（所有服務）
-- [ ] `bim-review-coordinator/src/services/NotificationService.ts` 實作
-- [ ] `docs/contracts/callback-webhook-api.md` 規格
-- [ ] `bim-streaming-server/scripts/monitor_kit_health.ps1` 監控腳本
-- [ ] `docs/plans/PHASE2_ERROR_HANDLING_STRATEGY.md`
+- `SENTRY_DSN` 環境變數配置（所有服務）
+- `bim-review-coordinator/src/services/NotificationService.ts` 實作
+- `docs/contracts/callback-webhook-api.md` 規格
+- `bim-streaming-server/scripts/monitor_kit_health.ps1` 監控腳本
+- `docs/plans/PHASE2_ERROR_HANDLING_STRATEGY.md`
 
 **驗收標準**：
 
@@ -343,41 +347,39 @@ flowchart LR
     style K fill:#FF9800
 ```
 
+
+
 **重點任務**：
 
 1. **SSO Integration**
-   - 支援 SAML 2.0 / OIDC
-   - 整合 Auth0 / Keycloak / Azure AD
-   - Session 管理（Redis）
-
+  - 支援 SAML 2.0 / OIDC
+  - 整合 Auth0 / Keycloak / Azure AD
+  - Session 管理（Redis）
 2. **JWT 與 API Key 認證**
-   - coordinator 成為 API gateway
-   - 所有 REST / Socket.IO / DataChannel 需驗證 token
-   - Refresh token 機制
-
+  - coordinator 成為 API gateway
+  - 所有 REST / Socket.IO / DataChannel 需驗證 token
+  - Refresh token 機制
 3. **RBAC 權限系統**
-   - 角色定義：Admin / Project Manager / Reviewer / Viewer
-   - 權限矩陣：project / model version / issue / annotation
-   - coordinator 實作 permission middleware
-
+  - 角色定義：Admin / Project Manager / Reviewer / Viewer
+  - 權限矩陣：project / model version / issue / annotation
+  - coordinator 實作 permission middleware
 4. **Billing 與 Usage Tracking**
-   - 計量單位：GPU hours / storage GB / API calls
-   - 整合 Stripe / 內部 billing service
-   - Usage dashboard
-
+  - 計量單位：GPU hours / storage GB / API calls
+  - 整合 Stripe / 內部 billing service
+  - Usage dashboard
 5. **Audit Log**
-   - 記錄所有 CRUD 操作（who / when / what / where）
-   - PostgreSQL 保存 audit events
-   - 法規遵循（GDPR / SOC 2）
+  - 記錄所有 CRUD 操作（who / when / what / where）
+  - PostgreSQL 保存 audit events
+  - 法規遵循（GDPR / SOC 2）
 
 **交付物 Checklist**：
 
-- [ ] `bim-review-coordinator/src/middleware/authMiddleware.ts`
-- [ ] `bim-review-coordinator/src/middleware/rbacMiddleware.ts`
-- [ ] `docs/contracts/auth-api.md` SSO / JWT 規格
-- [ ] `docs/contracts/rbac-permission-matrix.md` 權限矩陣
-- [ ] `_bim-control/app/services/audit_log_service.py`
-- [ ] PostgreSQL schema migration：`audit_events` table
+- `bim-review-coordinator/src/middleware/authMiddleware.ts`
+- `bim-review-coordinator/src/middleware/rbacMiddleware.ts`
+- `docs/contracts/auth-api.md` SSO / JWT 規格
+- `docs/contracts/rbac-permission-matrix.md` 權限矩陣
+- `_bim-control/app/services/audit_log_service.py`
+- PostgreSQL schema migration：`audit_events` table
 
 **驗收標準**：
 
@@ -429,46 +431,47 @@ flowchart TB
     style D fill:#3F51B5
 ```
 
+
+
 **重點任務**：
 
 1. **BIM Platform API 整合**
-   - 識別真實 BIM platform 的 API endpoints
-   - 實作 adapter pattern：`coordinator` 透過 adapter 呼叫真實 API
-   - 保留 fake service 作為 local dev fallback
-
+  - 識別真實 BIM platform 的 API endpoints
+  - 實作 adapter pattern：`coordinator` 透過 adapter 呼叫真實 API
+  - 保留 fake service 作為 local dev fallback
 2. **S3 / MinIO 整合**
-   - 將 `_s3_storage` 的 HTTP static server 切換為真實 object storage
-   - 支援 pre-signed URL upload / download
-   - CDN 整合（CloudFront / Cloudflare）
-
+  - 將 `_s3_storage` 的 HTTP static server 切換為真實 object storage
+  - 支援 pre-signed URL upload / download
+  - CDN 整合（CloudFront / Cloudflare）
 3. **GPU Scheduler 整合**
-   - Kit server 不再手動啟動，改由 K8s Job / Pod 管理
-   - coordinator 透過 K8s API 建立 Kit pod
-   - GPU resource quotas 與 auto-scaling
-
+  - Kit server 不再手動啟動，改由 K8s Job / Pod 管理
+  - coordinator 透過 K8s API 建立 Kit pod
+  - GPU resource quotas 與 auto-scaling
 4. **Conversion Pipeline 雲端化**
-   - `_conversion-service` 改為 async worker（Celery / Redis / RabbitMQ）
-   - 支援 horizontal scaling（多個 worker instances）
-   - 進度追蹤與 callback
+  - `_conversion-service` 改為 async worker（Celery / Redis / RabbitMQ）
+  - 支援 horizontal scaling（多個 worker instances）
+  - 進度追蹤與 callback
 
 **技術選型**：
 
-| 元件 | 選項 A | 選項 B | 推薦 |
-|---|---|---|---|
-| Object Storage | AWS S3 | MinIO self-hosted | 取決於 SaaS 或 On-Premise |
-| GPU Scheduler | K8s + NVIDIA GPU Operator | NVIDIA GPU Cloud | K8s（靈活性）|
-| Message Queue | Redis | RabbitMQ / Kafka | Redis（簡單）|
-| Async Worker | Celery | Bull (Node) | Celery（Python conversion service）|
-| Auth Provider | Auth0 | Keycloak self-hosted | Auth0（SaaS 快速）|
+
+| 元件             | 選項 A                      | 選項 B                 | 推薦                                |
+| -------------- | ------------------------- | -------------------- | --------------------------------- |
+| Object Storage | AWS S3                    | MinIO self-hosted    | 取決於 SaaS 或 On-Premise             |
+| GPU Scheduler  | K8s + NVIDIA GPU Operator | NVIDIA GPU Cloud     | K8s（靈活性）                          |
+| Message Queue  | Redis                     | RabbitMQ / Kafka     | Redis（簡單）                         |
+| Async Worker   | Celery                    | Bull (Node)          | Celery（Python conversion service） |
+| Auth Provider  | Auth0                     | Keycloak self-hosted | Auth0（SaaS 快速）                    |
+
 
 **交付物 Checklist**：
 
-- [ ] `bim-review-coordinator/src/adapters/BimPlatformAdapter.ts` 介面定義
-- [ ] `bim-review-coordinator/src/adapters/RealBimPlatformAdapter.ts` 真實實作
-- [ ] `_conversion-service/app/workers/celery_worker.py` Celery worker
-- [ ] `bim-review-coordinator/src/services/GpuSchedulerService.ts` K8s client
-- [ ] `docs/deployment/K8S_GPU_DEPLOYMENT.md` K8s 部署文件
-- [ ] `docs/contracts/real-bim-platform-api-mapping.md` API 對照表
+- `bim-review-coordinator/src/adapters/BimPlatformAdapter.ts` 介面定義
+- `bim-review-coordinator/src/adapters/RealBimPlatformAdapter.ts` 真實實作
+- `_conversion-service/app/workers/celery_worker.py` Celery worker
+- `bim-review-coordinator/src/services/GpuSchedulerService.ts` K8s client
+- `docs/deployment/K8S_GPU_DEPLOYMENT.md` K8s 部署文件
+- `docs/contracts/real-bim-platform-api-mapping.md` API 對照表
 
 **驗收標準**：
 
@@ -520,40 +523,38 @@ flowchart LR
     style J fill:#2196F3
 ```
 
+
+
 **重點任務**：
 
 1. **RTX Real-time Ray Tracing**
-   - 啟用 RTX renderer（目前可能用 raster）
-   - 調整 samples per pixel、max bounces
-   - 平衡畫質與幀率（目標 30 FPS）
-
+  - 啟用 RTX renderer（目前可能用 raster）
+  - 調整 samples per pixel、max bounces
+  - 平衡畫質與幀率（目標 30 FPS）
 2. **Highlight / Overlay 視覺品質**
-   - 改善 `highlightPrimsRequest` 的視覺效果
-   - 支援半透明 overlay、邊緣高亮、閃爍動畫
-   - Annotation 3D marker（球形 / 箭頭 / 文字）
-
+  - 改善 `highlightPrimsRequest` 的視覺效果
+  - 支援半透明 overlay、邊緣高亮、閃爍動畫
+  - Annotation 3D marker（球形 / 箭頭 / 文字）
 3. **Multi-viewport Support**
-   - 同一 Kit instance 支援多個 camera view
-   - DataChannel 指令：`setCameraView { name: "top" | "front" | "perspective" }`
-   - Web viewer 可切換視角
-
+  - 同一 Kit instance 支援多個 camera view
+  - DataChannel 指令：`setCameraView { name: "top" | "front" | "perspective" }`
+  - Web viewer 可切換視角
 4. **MDL 材質與照明**
-   - 支援自訂 MDL 材質
-   - HDRI 環境照明
-   - 光源編輯（directional / point / area light）
-
+  - 支援自訂 MDL 材質
+  - HDRI 環境照明
+  - 光源編輯（directional / point / area light）
 5. **PhysX Integration**
-   - 碰撞檢測（clash detection）
-   - 重力模擬（optional，for 構件掉落檢測）
-   - 結果輸出為 issue list
+  - 碰撞檢測（clash detection）
+  - 重力模擬（optional，for 構件掉落檢測）
+  - 結果輸出為 issue list
 
 **交付物 Checklist**：
 
-- [ ] `bim-streaming-server/source/extensions/ezplus.bim_review_stream.rtx/` RTX 設定
-- [ ] `bim-streaming-server/source/extensions/ezplus.bim_review_stream.highlight/` 視覺效果強化
-- [ ] `docs/contracts/datachannel-camera-view-api.md` Multi-viewport 規格
-- [ ] `docs/plans/PHASE5_RTX_OPTIMIZATION.md` RTX 調優文件
-- [ ] `bim-streaming-server/scripts/benchmark_rendering.ps1` 效能測試
+- `bim-streaming-server/source/extensions/ezplus.bim_review_stream.rtx/` RTX 設定
+- `bim-streaming-server/source/extensions/ezplus.bim_review_stream.highlight/` 視覺效果強化
+- `docs/contracts/datachannel-camera-view-api.md` Multi-viewport 規格
+- `docs/plans/PHASE5_RTX_OPTIMIZATION.md` RTX 調優文件
+- `bim-streaming-server/scripts/benchmark_rendering.ps1` 效能測試
 
 **驗收標準**：
 
@@ -617,51 +618,48 @@ flowchart TB
     style O fill:#FF9800
 ```
 
+
+
 **重點任務**：
 
 1. **Containerization**
-   - 每個服務建立 Dockerfile（multi-stage build）
-   - Docker Compose for local dev
-   - 優化 image size（Alpine / distroless）
-
+  - 每個服務建立 Dockerfile（multi-stage build）
+  - Docker Compose for local dev
+  - 優化 image size（Alpine / distroless）
 2. **K8s 部署**
-   - Helm charts for all services
-   - ConfigMap / Secret 管理
-   - Horizontal Pod Autoscaler（HPA）
-   - GPU node pool for Kit server
-
+  - Helm charts for all services
+  - ConfigMap / Secret 管理
+  - Horizontal Pod Autoscaler（HPA）
+  - GPU node pool for Kit server
 3. **CI/CD Pipeline**
-   - GitHub Actions workflows（test / build / deploy）
-   - Staging → Production promotion
-   - Blue-green deployment 或 Canary release
-
+  - GitHub Actions workflows（test / build / deploy）
+  - Staging → Production promotion
+  - Blue-green deployment 或 Canary release
 4. **Observability**
-   - Metrics: Prometheus + Grafana
-   - Logs: Loki / ELK
-   - Tracing: Jaeger / Tempo
-   - Uptime monitoring: Pingdom / UptimeRobot
-
+  - Metrics: Prometheus + Grafana
+  - Logs: Loki / ELK
+  - Tracing: Jaeger / Tempo
+  - Uptime monitoring: Pingdom / UptimeRobot
 5. **災難復原與備份**
-   - PostgreSQL 定期備份（AWS RDS automated backup）
-   - S3 versioning 與 lifecycle policy
-   - Multi-region replication（optional）
-
+  - PostgreSQL 定期備份（AWS RDS automated backup）
+  - S3 versioning 與 lifecycle policy
+  - Multi-region replication（optional）
 6. **SLO / SLA 定義**
-   - Uptime SLA: 99.5%（允許 monthly downtime < 3.6 hours）
-   - API response time: p95 < 500ms
-   - Streaming latency: p95 < 100ms
-   - Conversion job: 95% 完成於 60 秒內
+  - Uptime SLA: 99.5%（允許 monthly downtime < 3.6 hours）
+  - API response time: p95 < 500ms
+  - Streaming latency: p95 < 100ms
+  - Conversion job: 95% 完成於 60 秒內
 
 **交付物 Checklist**：
 
-- [ ] `Dockerfile` for all 5 services
-- [ ] `docker-compose.yml` for local multi-service dev
-- [ ] `k8s/` Helm charts
-- [ ] `.github/workflows/ci-cd.yml` GitHub Actions
-- [ ] `k8s/monitoring/` Prometheus / Grafana configs
-- [ ] `docs/deployment/PRODUCTION_DEPLOYMENT.md` 部署手冊
-- [ ] `docs/operations/RUNBOOK.md` 維運手冊
-- [ ] `docs/sla/SLO_SLA_DEFINITIONS.md`
+- `Dockerfile` for all 5 services
+- `docker-compose.yml` for local multi-service dev
+- `k8s/` Helm charts
+- `.github/workflows/ci-cd.yml` GitHub Actions
+- `k8s/monitoring/` Prometheus / Grafana configs
+- `docs/deployment/PRODUCTION_DEPLOYMENT.md` 部署手冊
+- `docs/operations/RUNBOOK.md` 維運手冊
+- `docs/sla/SLO_SLA_DEFINITIONS.md`
 
 **驗收標準**：
 
@@ -712,7 +710,10 @@ flowchart LR
     style KIT fill:#FCE4EC
 ```
 
+
+
 **特點**：
+
 - 單機運行，fake services
 - 無認證授權
 - 無 load balancing
@@ -815,7 +816,10 @@ flowchart TB
     style GRAF fill:#FFF9C4
 ```
 
+
+
 **特點**：
+
 - Multi-region / multi-AZ deployment
 - Horizontal scaling（coordinator / worker / Kit）
 - Managed services（RDS / ElastiCache / S3）
@@ -850,6 +854,8 @@ sequenceDiagram
     KIT-->>WV: openedStageResult
 ```
 
+
+
 ### 核心資料流：Conversion Job
 
 ```mermaid
@@ -883,6 +889,8 @@ sequenceDiagram
     CO->>WV: WebSocket notify: conversion done
 ```
 
+
+
 ### 核心資料流：Review Collaboration
 
 ```mermaid
@@ -915,6 +923,8 @@ sequenceDiagram
     WV2->>WV2: Display annotation marker
 ```
 
+
+
 ---
 
 ## 測試與品質保證策略
@@ -942,6 +952,8 @@ graph TB
     style F fill:#9C27B0
 ```
 
+
+
 ### 單元測試 (Unit Tests)
 
 **目標覆蓋率**：≥ 80%
@@ -952,7 +964,6 @@ graph TB
   - `_bim-control/tests/` (pytest)
   - `_s3_storage/tests/` (pytest)
   - `_conversion-service/tests/` (pytest)
-
 - Node services:
   - `bim-review-coordinator/tests/` (Jest / Mocha)
   - `web-viewer-sample/tests/` (Vitest)
@@ -999,16 +1010,15 @@ npm run test:integration
 **測試情境**：
 
 1. **5-step demo flow**：
-   - 打開 step 1 (8002) → 確認 IFC 檔案列表
-   - 打開 step 2 (8003) → 建立 conversion job → 等待完成
-   - 打開 step 3 (8004) → 建立 review session
-   - 打開 step 4 (5173) → WebRTC 連線 → 選取 prim → 高亮顯示
-   - 打開 step 5 (8001) → 確認 annotation 已保存
-
+  - 打開 step 1 (8002) → 確認 IFC 檔案列表
+  - 打開 step 2 (8003) → 建立 conversion job → 等待完成
+  - 打開 step 3 (8004) → 建立 review session
+  - 打開 step 4 (5173) → WebRTC 連線 → 選取 prim → 高亮顯示
+  - 打開 step 5 (8001) → 確認 annotation 已保存
 2. **Multi-user collaboration**：
-   - 兩個 browser session 加入同一 review session
-   - User A 點選 prim → User B 看到選取事件
-   - User B 新增 annotation → User A 看到 marker
+  - 兩個 browser session 加入同一 review session
+  - User A 點選 prim → User B 看到選取事件
+  - User B 新增 annotation → User A 看到 marker
 
 **執行方式**：
 
@@ -1043,15 +1053,14 @@ npm run test:e2e
 **測試情境**：
 
 1. **API 負載測試**：
-   - 100 concurrent users
-   - 每秒 500 requests
-   - 持續 5 分鐘
-   - 目標：p95 < 500ms, error rate < 1%
-
+  - 100 concurrent users
+  - 每秒 500 requests
+  - 持續 5 分鐘
+  - 目標：p95 < 500ms, error rate < 1%
 2. **WebRTC streaming 負載測試**：
-   - 50 concurrent streaming sessions
-   - 每個 session 持續 10 分鐘
-   - 目標：p95 latency < 100ms, FPS ≥ 25
+  - 50 concurrent streaming sessions
+  - 每個 session 持續 10 分鐘
+  - 目標：p95 latency < 100ms, FPS ≥ 25
 
 **執行方式**：
 
@@ -1066,12 +1075,12 @@ k6 run scripts/load-test-streaming.js --vus 50 --duration 10m
 
 **CI/CD 流程中強制檢查**：
 
-- [ ] 所有 unit tests 通過
-- [ ] Code coverage ≥ 80%
-- [ ] Lint 檢查通過（ESLint / Pylint）
-- [ ] Security scan 通過（Snyk / Trivy）
-- [ ] Conversion quality gate：mapping coverage ≥ 95%
-- [ ] Smoke tests 通過
+- 所有 unit tests 通過
+- Code coverage ≥ 80%
+- Lint 檢查通過（ESLint / Pylint）
+- Security scan 通過（Snyk / Trivy）
+- Conversion quality gate：mapping coverage ≥ 95%
+- Smoke tests 通過
 
 **不通過則 PR 不可 merge**。
 
@@ -1208,25 +1217,27 @@ gitgraph
     merge develop tag: "v0.2.0"
 ```
 
+
+
 **分支規則**：
 
 - `main`：production-ready code
 - `develop`：integration branch
-- `feature/*`：新功能開發
-- `fix/*`：bug 修復
+- `feature/`*：新功能開發
+- `fix/`*：bug 修復
 - `hotfix/*`：緊急修復（直接從 main 切出）
 
 ---
 
 ### PR Review Checklist
 
-- [ ] 符合 coding style（ESLint / Pylint / Prettier）
-- [ ] 有單元測試且覆蓋率 ≥ 80%
-- [ ] 有整合測試（如涉及跨服務互動）
-- [ ] 更新相關文件（README / API contract / wiki）
-- [ ] 通過 CI/CD pipeline（所有 quality gate）
-- [ ] 至少 1 人 approve（core team member）
-- [ ] 若涉及 UI 變更，需符合 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`
+- 符合 coding style（ESLint / Pylint / Prettier）
+- 有單元測試且覆蓋率 ≥ 80%
+- 有整合測試（如涉及跨服務互動）
+- 更新相關文件（README / API contract / wiki）
+- 通過 CI/CD pipeline（所有 quality gate）
+- 至少 1 人 approve（core team member）
+- 若涉及 UI 變更，需符合 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`
 
 ---
 
@@ -1234,14 +1245,16 @@ gitgraph
 
 **必須同步更新的文件**：
 
-| 變更類型 | 需更新文件 |
-|---|---|
-| 新增 API endpoint | `docs/contracts/<service>-api.md` |
-| 修改 Socket.IO event | `docs/contracts/coordinator-socket-events.md` |
-| 修改 DataChannel command | `docs/contracts/datachannel-api.md` |
-| 新增環境變數 | `.env.example`、`docs/contracts/local-dev-runbook.md` |
-| 重大架構變更 | `AGENTS.md`、`README.md` |
-| 新增 smoke test | `README.md` "驗證命令" 章節 |
+
+| 變更類型                   | 需更新文件                                                |
+| ---------------------- | ---------------------------------------------------- |
+| 新增 API endpoint        | `docs/contracts/<service>-api.md`                    |
+| 修改 Socket.IO event     | `docs/contracts/coordinator-socket-events.md`        |
+| 修改 DataChannel command | `docs/contracts/datachannel-api.md`                  |
+| 新增環境變數                 | `.env.example`、`docs/contracts/local-dev-runbook.md` |
+| 重大架構變更                 | `AGENTS.md`、`README.md`                              |
+| 新增 smoke test          | `README.md` "驗證命令" 章節                                |
+
 
 ---
 
