@@ -6,16 +6,21 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+.agent/
 .agents/
 .claude/
 .codex/
+.cursor/
 .vscode/
+.windsurf/
 .gitnexus/
 **/.gitnexus/
 .playwright-cli/
 output/playwright/
 graphify-out/
 scripts/.run/
+.github/prompts/
+.github/skills/
 
 # ----------------------------
 # Python

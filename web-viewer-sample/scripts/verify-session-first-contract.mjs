@@ -59,6 +59,21 @@ for (const token of [
 ]) {
     assert.ok(windowSource.includes(token), `Window.tsx is missing ${token}`);
 }
+assert.match(
+    windowSource,
+    /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(JSON\.stringify\(message\)\);[\s\S]*?this\._appendDemoOutgoing/,
+    "_sendStreamMessage must send through AppStream and log outgoing messages",
+);
+assert.doesNotMatch(
+    windowSource,
+    /private _sendStreamMessage[\s\S]*?this\._sendStreamMessage\(message\);[\s\S]*?this\._appendDemoOutgoing/,
+    "_sendStreamMessage must not recursively call itself",
+);
+assert.match(
+    windowSource,
+    /private _onSelectUSDPrims[\s\S]*?this\._sendStreamMessage\(message\);/,
+    "_onSelectUSDPrims must route selection changes through lifecycle-guarded stream sending",
+);
 
 const artifactPanelSource = readSource("src/components/ArtifactPanel.tsx");
 for (const token of ["artifactBindings", "ready_status", "mapping_url", "load_order"]) {
