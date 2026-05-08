@@ -165,3 +165,133 @@ participants=[]
 - `session_id: review_session_6721d4c09e6d`（已 `closed`）
 - 所有臨時 PowerShell 探測腳本（`scripts/_tmp_*.ps1`）已刪除。
 - 為環境準備建立的 `.venv` 與 `node_modules` 屬 gitignored，未提交。
+
+---
+
+## 6. OpenSpec Follow-up Evidence - `complete-spec-runtime-verification`
+
+執行時間：2026-05-08
+
+本節補記 `openspec/changes/complete-spec-runtime-verification/` apply 階段的 runtime evidence。原本第 5 節保留 03:57 那次 E2E 的歷史結果；本節是後續補驗與 blocker 分層，不把硬體 / fixture 條件混成單一 pass/fail。
+
+### 6.1 Baseline / machine constraints
+
+| 項目 | 結果 |
+| --- | --- |
+| `_bim-control` health | `http://127.0.0.1:8001/health` 回 `status=ok` |
+| `_worker` health | 原先 8005 未開；apply 階段暫時啟動 `_worker`，`/health` 回 `status=ok` |
+| `bim-review-coordinator` health | `http://127.0.0.1:8004/health` 回 `status=ok`，`kit_signaling_port=49100` |
+| `web-viewer-sample` | `http://127.0.0.1:5173` 回 HTTP 200 |
+| Kit signaling port | `127.0.0.1:49100` TCP reachable |
+| Kit stream port | `127.0.0.1:47998` TCP not reachable during this apply |
+| GPU probe | `nvidia-smi`: `NVIDIA GeForce RTX 4060 Ti`, driver `580.97`, total memory `8188 MiB` |
+| WMI GPU probe | `Get-CimInstance Win32_VideoController` was access-denied in this sandbox |
+| worktree `storage/` | only `README.md` |
+| user main checkout `storage/` | `C:\Repos\active\iot\AI-BIM-governance\storage` contains 13 IFC files |
+| selected repo-local IFC fixture | `許良宇圖書館建築_2026.ifc`, `89394282` bytes, contains `IFCPROJECT` |
+
+### 6.2 Non-GPU stage-loading contract
+
+Command:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\bim-streaming-server\scripts\tests\test-stage-loading-contract.ps1
+```
+
+Result:
+
+```txt
+[verify] stage loading DataChannel contract passed
+```
+
+Status: **passed at `contract` tier**.
+
+Scope: this validates `stage_loading.py` contains the expected DataChannel contract tokens and load-order / sublayer behavior checks. It does **not** prove GPU viewport render or real USD geometry loading.
+
+### 6.3 Single Kit GPU render
+
+Status: **blocked / not passed**.
+
+Evidence gathered:
+
+- Valid repo-local IFC fixture exists in the user main checkout storage: `許良宇圖書館建築_2026.ifc`, `89394282` bytes.
+- `_worker` can list that storage root when started with `WORKER_DEV_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage`.
+- `_worker` large-fixture facade conversion succeeded, but current `complete_conversion_job()` writes a placeholder `model.usdc` (`# worker adapter USDC placeholder`) rather than a renderable converted model.
+- Kit signaling `49100` was reachable, but stream port `47998` was not reachable during this apply.
+- No browser viewport screenshot or non-zero video frame evidence was captured for a renderable geometry USD / USDC.
+
+Conclusion: the repo-local IFC fixture prerequisite is satisfied, but the runtime still lacks a renderable USD / USDC artifact produced from that fixture. A future pass needs either a real IFC->USD/USDC conversion path or a known renderable USD / USDC fixture before claiming single Kit GPU viewport render.
+
+### 6.4 Dedicated multi-Kit routing
+
+Status: **blocked / not passed**.
+
+Evidence gathered:
+
+- Root `scripts/start-all.ps1` coordinates normal multi-service startup and delegates single streaming startup to `bim-streaming-server/scripts/start-streaming-server.ps1`.
+- No root `scripts/` orchestration entrypoint currently launches two or more Kit instances with distinct signaling ports.
+- Existing coordinator tests cover `dedicated_instance` allocation semantics, but this remains control-plane evidence only.
+
+Conclusion: `dedicated_instance` runtime streaming is not verified on this machine yet. The next runnable step is a root `scripts/` orchestration entrypoint that can launch / check multiple Kit instances with distinct signaling ports, then run two browsers against distinct `kit_instance_bindings[]`.
+
+### 6.5 Large IFC worker/readiness stress
+
+Status: **passed at `_worker` facade/readiness tier; not a real converter or viewport render pass**.
+
+Selected fixture:
+
+```txt
+source_id: 208b4ebf111c1a6e28dd971867fed5ac
+filename: 許良宇圖書館建築_2026.ifc
+size_bytes: 89394282
+```
+
+Result:
+
+```txt
+conversion_job_id: conv_20260508045208_51f18a51
+artifact_group_id: ag_4e3b78ffcbaf
+job_status: succeeded
+result_status: succeeded
+readiness_status: ready
+readiness_ready_status: ready
+elapsed_ms: 1181
+worker_working_set_before: 49090560
+worker_working_set_after: 51568640
+usdc_url: http://127.0.0.1:8005/objects/tenants/tenant_runtime_verify/projects/project_runtime_verify/versions/version_runtime_verify_001/artifact-groups/ag_4e3b78ffcbaf/derived/conv_20260508045208_51f18a51/usdc/model.usdc
+mapping_url: http://127.0.0.1:8005/objects/tenants/tenant_runtime_verify/projects/project_runtime_verify/versions/version_runtime_verify_001/artifact-groups/ag_4e3b78ffcbaf/derived/conv_20260508045208_51f18a51/usdc/element_mapping.json
+```
+
+Conclusion: `_worker` can ingest the 89 MB repo-local IFC through the dev source flow and move the artifact group to `ready`. This is useful readiness evidence, but it does not measure real IFC geometry conversion cost because the current worker facade emits placeholder derived files.
+
+### 6.6 Socket.IO bounded ramp / 90% stress
+
+Prerequisite smoke:
+
+```txt
+[socket-smoke] passed session=review_session_e569f6ec955d
+```
+
+Bounded ramp:
+
+| Clients | Result | Session | Broadcasts seen | Elapsed |
+| --- | --- | --- | --- | --- |
+| 10 | passed | `review_session_e9651b8e458e` | 9 | 62 ms |
+| 25 | passed | `review_session_a1715ab615de` | 24 | 125 ms |
+| 50 | passed | `review_session_9cb34f41b86f` | 49 | 249 ms |
+| 75 | passed | `review_session_636072ea2bc4` | 74 | 352 ms |
+| 100 | passed | `review_session_79a48756bf44` | 99 | 518 ms |
+
+Formal target used for this apply:
+
+```txt
+bounded max stable clients: 100
+90% target: 90
+stress session: review_session_f4e936dc529c
+stress result: passed
+stress elapsed_ms: 432
+broadcasts_seen: 89
+coordinator health after run: status=ok
+```
+
+Conclusion: Socket.IO collaboration passed a bounded 90-client stress run on this machine. This is not an absolute maximum-capacity proof because the ramp stopped at 100 stable clients; it is sufficient evidence for the current 90% target defined by this bounded apply pass.
