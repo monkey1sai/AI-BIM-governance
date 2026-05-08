@@ -664,7 +664,7 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
                 "project_id": project_id,
                 "model_version_id": model_version_id,
                 "artifact_type": "ifc",
-                "name": "原始 IFC",
+                "name": str(result.get("original_filename") or "原始 IFC"),
                 "url": source_url,
                 "mapping_url": None,
                 "status": "ready",

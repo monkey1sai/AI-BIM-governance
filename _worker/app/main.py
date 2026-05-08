@@ -147,6 +147,7 @@ def create_app(settings: Settings | None = None, run_background: bool = True) ->
             "conversion_job_id": job["conversion_job_id"],
             "job_id": job["job_id"],
             "status": job["status"],
+            "original_filename": source_artifact["original_filename"],
             "conversion_url": f"/api/conversions/{job['conversion_job_id']}",
             "result_url": f"/api/conversions/{job['conversion_job_id']}/result",
             "readiness_url": f"/api/artifact-groups/{source_artifact['artifact_group_id']}/readiness",
