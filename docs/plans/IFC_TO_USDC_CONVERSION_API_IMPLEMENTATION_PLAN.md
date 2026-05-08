@@ -1,5 +1,7 @@
 # IFC → USDC Conversion API 實作計畫 v0.1
 
+> Historical note: this plan predates the worker-only runtime. Mentions of `_s3_storage`, `_conversion-service`, `_conversion-server`, ports `8002` / `8003`, or `/static/projects/...` are archival context only. Current behavior is governed by `AGENTS.md`, `README.md`, and `docs/contracts/worker-api.md`.
+
 > 給 Codex 執行用。
 > 目標：在 `AI-BIM-governance` workspace 內，把 IFC → USDC 轉換流程包成可呼叫的 API，並在同一個 conversion job 中產生最小可用的 `element_mapping.json`。
 > 本文件只規劃轉檔 API 與 mapping 的第一階段落地，不處理完整法規、碳排、HVAC、多人協作、正式雲端部署。

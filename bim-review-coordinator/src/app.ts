@@ -10,18 +10,46 @@ import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
-import { allocateLocalKitInstance } from "./services/kitPool.js";
-import { isSafeSessionId, SessionStore } from "./services/sessionStore.js";
+import {
+  allocateKitInstanceBindings,
+  allocateLocalKitInstance,
+  legacyKitInstanceFromBinding,
+  markKitBindingsDraining,
+  releaseKitBindings,
+} from "./services/kitPool.js";
+import { isSafeSessionId, isSessionMutable, SessionStore } from "./services/sessionStore.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
-import type { Artifact, StreamConfigResponse } from "./types.js";
+import type { Artifact, ArtifactBinding, ReviewSession, RoutingPolicy, StreamConfigResponse } from "./types.js";
 
 const createSessionSchema = z.object({
+  review_request_id: z.string().min(1).optional(),
+  tenant_id: z.string().min(1).default("tenant_demo_001"),
   project_id: z.string().min(1),
   model_version_id: z.string().min(1),
   source_artifact_id: z.string().min(1).optional(),
   usdc_artifact_id: z.string().min(1).optional(),
   created_by: z.string().min(1).default("dev_user_001"),
   mode: z.string().min(1).default("single_kit_shared_state"),
+  routing_policy: z.enum(["same_instance", "dedicated_instance", "shared_state"]).default("same_instance"),
+  artifact_bindings: z
+    .array(
+      z
+        .object({
+          binding_id: z.string().optional(),
+          artifact_group_id: z.string().min(1),
+          model_version_id: z.string().min(1).optional(),
+          artifact_id: z.string().min(1),
+          artifact_role: z.enum(["source", "derived", "overlay", "mapping"]).default("derived"),
+          url: z.string().nullable().optional(),
+          mapping_url: z.string().nullable().optional(),
+          load_order: z.number().int().nonnegative().default(0),
+          routing_policy: z.enum(["same_instance", "dedicated_instance", "shared_state"]).optional(),
+          ready_status: z.enum(["ready", "missing_model", "missing_mapping", "blocked_conversion"]).default("ready"),
+        })
+        .passthrough(),
+    )
+    .default([]),
+  kit_profile: z.record(z.unknown()).default({}),
   options: z
     .object({
       auto_allocate_kit: z.boolean().optional(),
@@ -80,19 +108,45 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       const input = createSessionSchema.parse(request.body);
       const artifacts = await safeArtifacts(bimControlClient, input.model_version_id);
       const readyUsdc = chooseReadyUsdc(artifacts);
+      const artifactBindings = buildArtifactBindings(input.model_version_id, artifacts, input.artifact_bindings, input.routing_policy);
+      const kitInstanceBindings = allocateKitInstanceBindings(
+        config,
+        artifactBindings,
+        input.routing_policy,
+        input.tenant_id,
+        input.kit_profile,
+      );
+      if (input.options?.auto_allocate_kit !== false && kitInstanceBindings.length === 0) {
+        response.status(409).json({
+          detail: "No Kit capacity available.",
+          status: "queued_for_instance",
+          artifact_bindings: artifactBindings,
+        });
+        return;
+      }
       const session = store.create({
+        review_request_id: input.review_request_id,
+        tenant_id: input.tenant_id,
         project_id: input.project_id,
         model_version_id: input.model_version_id,
         source_artifact_id: input.source_artifact_id,
         usdc_artifact_id: input.usdc_artifact_id || readyUsdc?.artifact_id,
         created_by: input.created_by,
         mode: input.mode,
-        kit_instance: allocateLocalKitInstance(config),
+        kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
+        artifact_bindings: artifactBindings,
+        kit_instance_bindings: kitInstanceBindings,
       });
       eventLog.append(session.session_id, "sessionCreated", {
         project_id: session.project_id,
         model_version_id: session.model_version_id,
+        review_request_id: session.review_request_id,
       });
+      if (session.status === "active") {
+        eventLog.append(session.session_id, "sessionActive", {
+          kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
+        });
+      }
       response.json(session);
     } catch (error) {
       next(error);
@@ -119,6 +173,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         return;
       }
       const input = participantSchema.parse(request.body);
+      const current = store.get(request.params.sessionId);
+      if (current && !isSessionMutable(current)) {
+        response.status(409).json({ detail: "Review session is not active." });
+        return;
+      }
       const session = store.join(request.params.sessionId, input);
       if (!session) {
         response.status(404).json({ detail: "Review session not found." });
@@ -160,7 +219,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         return;
       }
       const artifacts = await safeArtifacts(bimControlClient, session.model_version_id);
-      response.json(buildStreamConfig(session.session_id, artifacts, config));
+      response.json(buildStreamConfig(session, artifacts, config));
     } catch (error) {
       next(error);
     }
@@ -184,8 +243,13 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         response.status(400).json({ detail: "Invalid review session id." });
         return;
       }
-      if (!store.get(request.params.sessionId)) {
+      const session = store.get(request.params.sessionId);
+      if (!session) {
         response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      if (!isSessionMutable(session)) {
+        response.status(409).json({ detail: "Review session is not active." });
         return;
       }
       const input = appendEventSchema.parse(request.body);
@@ -194,6 +258,42 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     } catch (error) {
       next(error);
     }
+  });
+
+  app.post("/api/review-sessions/:sessionId/close", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    if (session.status === "closed") {
+      response.json(session);
+      return;
+    }
+
+    const finalEvents = Array.isArray(request.body?.final_events) ? request.body.final_events : [];
+    const closing = store.update(session.session_id, {
+      status: "closing",
+      kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
+    });
+    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length });
+    for (const event of finalEvents) {
+      eventLog.append(session.session_id, "finalReviewEvent", event);
+    }
+    const closed = store.update(session.session_id, {
+      status: "closed",
+      participants: [],
+      kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
+    });
+    eventLog.append(session.session_id, "sessionClosed", {});
+    eventLog.append(session.session_id, "kitInstancesReleased", {
+      kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
+    });
+    response.json(closed);
   });
 
   app.get("/api/model-versions/:modelVersionId/review-bootstrap", async (request, response, next) => {
@@ -303,7 +403,7 @@ async function proxyConversionService(
     response.status(upstream.status).type(contentType).send(text || "{}");
   } catch (error) {
     response.status(502).json({
-      detail: "Conversion service unavailable.",
+      detail: "Worker API unavailable.",
       upstream: conversionApiBase,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -318,22 +418,75 @@ function chooseReadyUsdc(artifacts: Artifact[]): Artifact | undefined {
   return artifacts.find((artifact) => artifact.artifact_type === "usdc" && artifact.status === "ready" && artifact.url);
 }
 
-function buildStreamConfig(sessionId: string, artifacts: Artifact[], config: CoordinatorConfig): StreamConfigResponse {
+function buildArtifactBindings(
+  modelVersionId: string,
+  artifacts: Artifact[],
+  inputBindings: Array<z.infer<typeof createSessionSchema>["artifact_bindings"][number]>,
+  routingPolicy: RoutingPolicy,
+): ArtifactBinding[] {
+  if (inputBindings.length > 0) {
+    return inputBindings
+      .slice()
+      .sort((left, right) => left.load_order - right.load_order)
+      .map((binding, index) => ({
+        binding_id: binding.binding_id || `binding_${index + 1}`,
+        artifact_group_id: binding.artifact_group_id,
+        model_version_id: binding.model_version_id || modelVersionId,
+        artifact_id: binding.artifact_id,
+        artifact_role: binding.artifact_role,
+        url: binding.url || null,
+        mapping_url: binding.mapping_url || null,
+        load_order: binding.load_order,
+        routing_policy: binding.routing_policy || routingPolicy,
+        ready_status: binding.ready_status,
+      }));
+  }
+
+  return artifacts
+    .filter((artifact) => artifact.status === "ready" && artifact.url)
+    .map((artifact, index) => ({
+      binding_id: `binding_${index + 1}`,
+      artifact_group_id: `ag_${modelVersionId}`,
+      model_version_id: modelVersionId,
+      artifact_id: artifact.artifact_id,
+      artifact_role: artifact.artifact_type === "usdc" ? "derived" : "source",
+      url: artifact.url || null,
+      mapping_url: artifact.mapping_url || null,
+      load_order: index,
+      routing_policy: routingPolicy,
+      ready_status: artifact.artifact_type === "usdc" && !artifact.mapping_url ? "missing_mapping" : "ready",
+    }));
+}
+
+function chooseReadyBinding(bindings: ArtifactBinding[]): ArtifactBinding | undefined {
+  return bindings.find((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && binding.url);
+}
+
+function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config: CoordinatorConfig): StreamConfigResponse {
+  const artifactBindings =
+    session.artifact_bindings.length > 0
+      ? session.artifact_bindings
+      : buildArtifactBindings(session.model_version_id, artifacts, [], "same_instance");
+  const readyBinding = chooseReadyBinding(artifactBindings);
   const readyUsdc = chooseReadyUsdc(artifacts);
+  const primaryKitBinding = session.kit_instance_bindings[0];
   return {
-    session_id: sessionId,
+    session_id: session.session_id,
+    lifecycle_status: session.status,
     source: "local_fixed",
     webrtc: {
-      signalingServer: config.kitStreamServer,
-      signalingPort: config.kitSignalingPort,
-      mediaServer: config.kitMediaServer,
+      signalingServer: primaryKitBinding?.stream_config.signalingServer || config.kitStreamServer,
+      signalingPort: primaryKitBinding?.stream_config.signalingPort || config.kitSignalingPort,
+      mediaServer: primaryKitBinding?.stream_config.mediaServer || config.kitMediaServer,
     },
     model: {
-      status: readyUsdc ? "ready" : "missing",
-      artifact_id: readyUsdc?.artifact_id || null,
-      url: readyUsdc?.url || null,
-      mapping_url: readyUsdc?.mapping_url || null,
+      status: readyBinding || readyUsdc ? "ready" : "missing",
+      artifact_id: readyBinding?.artifact_id || readyUsdc?.artifact_id || null,
+      url: readyBinding?.url || readyUsdc?.url || null,
+      mapping_url: readyBinding?.mapping_url || readyUsdc?.mapping_url || null,
     },
     artifacts,
+    artifact_bindings: artifactBindings,
+    kit_instance_bindings: session.kit_instance_bindings,
   };
 }

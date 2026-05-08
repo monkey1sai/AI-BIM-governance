@@ -2,9 +2,9 @@
 
 ## 0. 文件目的
 
-本文件定義 `AI-BIM-governance/` workspace 內 **五大核心 repo / folder** 的責任邊界、互動方式與資料流動方式。
+本文件定義 `AI-BIM-governance/` workspace 內 **核心 repo / folder** 的責任邊界、互動方式與資料流動方式。
 
-本文件只描述：
+除 `0.1 Agent 工作方式與 Skill 使用規範` 外，本文件描述：
 
 ```txt
 1. repo 邊界
@@ -18,6 +18,72 @@
 
 ---
 
+## 0.1 Agent 工作方式與 Skill 使用規範
+
+本 repo 以 `AGENTS.md` 作為 agent 行為與 repo 邊界的 source of truth。`CLAUDE.md`、OpenSpec、Graphify wiki、GitNexus generated skills、以及本機安裝的 `.codex/skills` 都只能輔助理解與執行，不得覆蓋本文件的 repo 邊界。
+
+### 優先順序
+
+```txt
+使用者最新明確指令
+AGENTS.md / repo-local boundary rules
+CLAUDE.md
+OpenSpec artifacts
+installed skills / Graphify wiki / generated skills
+```
+
+若上述來源衝突，先採用 `AGENTS.md` 的 repo 邊界與 source-of-truth 規則，並在需要修改文件或實作時明確指出差異。
+
+### Karpathy-style 工作守則
+
+- 非平凡任務先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先釐清再實作。
+- 優先採用能解決當前問題的最簡單方案；不要新增未要求的抽象、設定層、擴充點或 production dependency。
+- 只修改與任務直接相關的檔案與程式碼；不要順手重構、格式化、刪除註解或清理不理解的既有內容。
+- 每個實作切片都要能被驗證；完成時回報改動檔案、驗證指令、未跑測試原因與已知風險。
+
+### Skill routing
+
+本 repo 已安裝 `.codex/skills` 作為本機 workflow helpers。使用 skill 時只把它們當作工作流程，不把 skill 內容視為高於本文件的需求來源。
+
+| 情境 | 優先使用 |
+|---|---|
+| 需求模糊或需要收斂想法 | `idea-refine` / `spec-driven-development` |
+| 需要拆任務或排實作順序 | `planning-and-task-breakdown` |
+| 多 repo、API、資料流或邊界風險 | 本文件 repo 邊界 / `api-and-interface-design` |
+| 實作跨多檔案變更 | `incremental-implementation` |
+| 行為變更、bugfix、邏輯修改 | `test-driven-development` |
+| UI 或 browser client 變更 | `frontend-ui-engineering` / `browser-testing-with-devtools` |
+| 框架、SDK、OpenAI、Kit、USD 等官方 API 決策 | `source-driven-development` |
+| code review、merge 前檢查 | `code-review-and-quality` / GitNexus impact + detect changes |
+| 文件、架構決策、流程紀錄 | `documentation-and-adrs` / OpenSpec |
+
+### OpenSpec 與本機 agent 產物
+
+- OpenSpec 只記錄可審查的需求、設計、spec、tasks；不取代 repo 邊界，也不管理本機 skill 安裝。
+- `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 目前是本機 agent/tooling 產物，預設維持 ignored。
+- 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus generated skill 檔，除非使用者明確要求改變 repo policy。
+
+### OpenSpec + GitHub workflow
+
+OpenSpec change 與實作必須遵守 GitHub PR workflow，不得直接在 `main` 分支上開發。
+
+```txt
+OpenSpec = 需求 / 規格 / 驗收條件
+Git Branch = 實作隔離
+Pull Request = 審查與討論
+GitHub Actions = 自動驗證
+Merge = 正式接受變更
+Archive = 把變更規格併入正式規格
+```
+
+- 執行 `/openspec new <change-id>` 前，先從最新 `main` 建立並切換到 `codex/openspec/<change-id>`。
+- `/openspec apply <change-id>` 的程式碼、測試、文件與 OpenSpec task 更新都必須留在該 branch。
+- 開 PR 前要跑最小驗證並回報結果；PR 由 GitHub Actions 做自動驗證與審查討論。
+- change 實作被正式接受並 merge 後，才執行 OpenSpec sync/archive，把 delta specs 併入 `openspec/specs/`。
+- 若發現已在 `main` 產生未提交變更，先切到對應 `codex/openspec/<change-id>` branch，再繼續工作或整理 PR。
+
+---
+
 ## 1. Workspace 範圍
 
 主要開發資料夾：
@@ -26,35 +92,31 @@
 AI-BIM-governance/
 ```
 
-五大核心 repo / folder：
+核心 repo / folder：
 
 ```txt
 AI-BIM-governance/
 ├── bim-review-coordinator/      # 控制中心，localhost:8004
-├── _conversion-service/         # 轉檔 API，localhost:8003
+├── _worker/                     # artifact + conversion facade，localhost:8005
 ├── bim-streaming-server/        # Kit streaming server，WebRTC 49100
 ├── _bim-control/                # fake artifact / model API，localhost:8001
-├── _s3_storage/                 # fake storage，localhost:8002
-└── web-viewer-sample/           # browser client，localhost:5173```
+└── web-viewer-sample/           # browser client，localhost:5173
+```
 
 flowchart TD
   CO[bim-review-coordinator<br/>Control Plane]
 
-  CS[_conversion-service<br/>Conversion Worker API]
+  WK[_worker<br/>Artifact + Conversion Facade]
   KIT[bim-streaming-server<br/>Omniverse Kit Runtime]
   BC[_bim-control<br/>Fake BIM Data Authority]
-  S3[_s3_storage<br/>Fake Object Storage]
   WV[web-viewer-sample<br/>Browser Client]
 
-  CO -->|REST: create conversion job| CS
+  CO -->|REST: bind review artifacts| WK
   CO -->|REST: query artifact/model data| BC
-  CO -->|REST: query file URLs| S3
   CO -->|start / check / reference process| KIT
   WV -->|REST: create/join session| CO
   WV -->|WebRTC + DataChannel| KIT
-  CS -->|read original IFC| S3
-  CS -->|write USDC + mapping| S3
-  CS -->|update artifact status| BC
+  WK -->|publish metadata only| BC
 
 其中：
 
@@ -68,28 +130,29 @@ web-viewer-sample/
 
 ```txt
 _bim-control/
-_s3_storage/
+_worker/
 ```
 
-是本地開發用 mock / fake infrastructure，用來模擬正式產品中的 BIM 主平台與物件儲存。
+是本地開發用 worker / mock / fake infrastructure。`_worker` 是目前 flow 對外的 artifact + conversion 邊界。
 
 ---
 
-## 2. 五大 repo 的定位總覽
+## 2. 核心 repo 的定位總覽
 
 ```mermaid
 flowchart LR
     BC["_bim-control\nFake BIM Data Authority"]
-    S3["_s3_storage\nFake Object Storage"]
+    WK["_worker\nArtifact + Conversion Facade"]
     CO["bim-review-coordinator\nSession / Control Plane"]
     KIT["bim-streaming-server\nOmniverse Kit Runtime"]
     WV["web-viewer-sample\nBrowser Client"]
 
     WV -->|REST: create / join session| CO
     CO -->|REST: project / version / issue metadata| BC
-    BC -->|file url / artifact url| S3
+    CO -->|REST: review artifact binding| WK
+    WK -->|metadata only| BC
     WV -->|WebRTC video + DataChannel JSON| KIT
-    KIT -->|load USD / USDC by URL| S3
+    KIT -->|load USD / USDC by URL| WK
     WV -->|Socket.IO / WebSocket state events| CO
     CO -->|optional collaboration state| KIT
     WV -->|annotation / issue interaction| CO
@@ -100,7 +163,7 @@ flowchart LR
 
 ```txt
 _bim-control            = 假資料權威
-_s3_storage            = 假檔案倉庫
+_worker                = 檔案與轉檔 facade
 bim-review-coordinator = Session / 協作控制中心
 bim-streaming-server   = Omniverse GPU / USD / WebRTC Runtime
 web-viewer-sample      = Browser 操作端與串流觀看端
@@ -166,51 +229,76 @@ usd_prim_path
 
 ---
 
-## 3.2 `_s3_storage/`
+## 3.2 Retired Legacy Storage / Conversion Services
 
 ### 角色
 
 ```txt
-Fake Object Storage / Local File Storage
+Historical local compatibility services
 ```
 
 ### 邊界
 
-`_s3_storage` 只代表本地開發中的假物件儲存服務。
+`_s3_storage`、`_conversion-service`、`_conversion-server` 不屬於目前 demo runtime 的核心服務，也不應作為新的 startup、health check、smoke test 或 review-session dependency。
 
-它負責保存與提供：
+目前 flow 的檔案、object URL、轉檔 job、artifact group readiness 都由 `_worker` 對外承接。歷史文件若仍提到舊服務，只能作為 archive context，不能覆蓋本文件的 current boundary。
+
+舊服務不得：
 
 ```txt
-- IFC / RVT / DWG 原始檔
-- USD / USDC 衍生檔
-- element_mapping.json
-- fake review result JSON
-- fake report / snapshot / attachment files
+- 被重新加入 current core service list
+- 重新佔用 8002 / 8003 作為 demo 必要服務
+- 取代 _worker 成為檔案與轉檔邊界
+- 取代 _bim-control 成為資料權威
+```
+
+### 資料邊界
+
+`_worker` 保存檔案本體與轉檔輸出，`_bim-control` 保存「這個檔案屬於哪個 project / model version / artifact」的 metadata。兩者不可混淆。
+
+---
+
+## 3.3 `_worker/`
+
+### 角色
+
+```txt
+Artifact + Conversion Worker Facade
+```
+
+### 邊界
+
+`_worker` 是新 review session request lifecycle 對外的檔案與轉檔邊界。
+
+它負責：
+
+```txt
+- 接收 IFC / RVT / DWG bytes 或 signed upload reference
+- 建立 versioned object layout
+- 建立與查詢 conversion job
+- 產出 USDC / index JSON / element_mapping.json / metadata.json
+- 建立 artifact group 與 conversion lineage
+- 將 artifact metadata / conversion result metadata 發布到 _bim-control
 ```
 
 它不負責：
 
 ```txt
-- 專案邏輯
-- 使用者權限
-- session 管理
-- annotation 業務語意
-- Omniverse rendering
+- project / issue / annotation 的資料權威
+- review session lifecycle 的總控
+- Omniverse viewport rendering
 - WebRTC streaming
-- 法規 / 碳排 / AI 判斷
+- 使用者登入與權限
+- 取代 web-viewer-sample 成為 UI
 ```
 
 ### 資料邊界
 
-`_s3_storage` 保存的是「檔案本體」。
-
-`_bim-control` 保存的是「這個檔案屬於哪個 project / model version / artifact」。
-
-兩者不可混淆。
+`_worker` 可保存檔案本體與轉檔輸出，但只把 metadata、artifact group、lineage、readiness 發布到 `_bim-control`。`_bim-control` 仍然是審查資料與 artifact metadata 的 fake authority。
 
 ---
 
-## 3.3 `bim-review-coordinator/`
+## 3.4 `bim-review-coordinator/`
 
 ### 角色
 
@@ -268,7 +356,7 @@ large binary file bytes
 
 ---
 
-## 3.4 `bim-streaming-server/`
+## 3.5 `bim-streaming-server/`
 
 ### 角色
 
@@ -320,7 +408,7 @@ Omniverse Kit Runtime / GPU Streaming Server
 
 ---
 
-## 3.5 `web-viewer-sample/`
+## 3.6 `web-viewer-sample/`
 
 ### 角色
 
@@ -376,7 +464,7 @@ leave session
 3D runtime 操作 → bim-streaming-server
 session / collaboration → bim-review-coordinator
 metadata / review data → _bim-control
-file access → _s3_storage
+file / conversion access → _worker
 ```
 
 ---
@@ -388,9 +476,9 @@ file access → _s3_storage
 | Project metadata | `_bim-control` | 假專案資料 |
 | Model version metadata | `_bim-control` | 假模型版本資料 |
 | Artifact metadata | `_bim-control` | 描述檔案格式、URL、版本關係 |
-| IFC / RVT / DWG file | `_s3_storage` | 原始模型檔案本體 |
-| USD / USDC file | `_s3_storage` | Omniverse runtime 載入的衍生檔 |
-| element_mapping.json | `_s3_storage` + `_bim-control` | 檔案在 storage，關聯 metadata 在 `_bim-control` |
+| IFC / RVT / DWG file | `_worker` | 原始模型檔案本體 |
+| USD / USDC file | `_worker` | Omniverse runtime 載入的衍生檔 |
+| element_mapping.json | `_worker` + `_bim-control` | 檔案在 worker object layout，關聯 metadata 在 `_bim-control` |
 | Review issue metadata | `_bim-control` | 假審查問題與定位資料 |
 | Annotation metadata | `_bim-control` | 假標註與審查紀錄 |
 | Review session state | `bim-review-coordinator` | 當前 session 狀態 |
@@ -409,12 +497,12 @@ sequenceDiagram
     participant WV as web-viewer-sample
     participant CO as bim-review-coordinator
     participant BC as _bim-control
-    participant S3 as _s3_storage
+    participant WK as _worker
 
     WV->>CO: Request review session / model version
     CO->>BC: Query project / model version / artifact metadata
-    BC->>S3: Resolve file URL or storage key
-    S3-->>BC: Return file URL
+    CO->>WK: Bind artifact group / readiness if needed
+    WK-->>CO: Return artifact URLs + lineage
     BC-->>CO: Return artifact metadata + URL
     CO-->>WV: Return session info + artifact URL
 ```
@@ -425,7 +513,7 @@ sequenceDiagram
 web-viewer-sample 不直接決定模型資料權威。
 bim-review-coordinator 負責協調查詢。
 _bim-control 決定哪個 artifact 屬於哪個 model version。
-_s3_storage 只提供檔案 URL。
+_worker 是新 flow 的檔案與轉檔邊界。
 ```
 
 ---
@@ -436,13 +524,13 @@ _s3_storage 只提供檔案 URL。
 sequenceDiagram
     participant WV as web-viewer-sample
     participant KIT as bim-streaming-server
-    participant S3 as _s3_storage
+    participant WK as _worker
 
     WV->>KIT: WebRTC connect
     KIT-->>WV: Rendered viewport stream
-    WV->>KIT: DataChannel openStageRequest { usd_url }
-    KIT->>S3: Load USD / USDC by URL
-    S3-->>KIT: Return file bytes
+    WV->>KIT: DataChannel openStageRequest { artifact_bindings }
+    KIT->>WK: Load USD / USDC by URL
+    WK-->>KIT: Return file bytes
     KIT-->>WV: DataChannel openedStageResult
 ```
 
@@ -450,7 +538,7 @@ sequenceDiagram
 
 ```txt
 WebRTC video stream 只存在於 web-viewer-sample 與 bim-streaming-server 之間。
-USD / USDC 檔案本體由 _s3_storage 提供。
+USD / USDC 檔案本體由 _worker 提供。
 bim-streaming-server 只載入與渲染，不成為檔案權威。
 ```
 
@@ -540,7 +628,8 @@ bim-review-coordinator 負責把 session 與 review metadata 串起來。
 |---|---|---|---|
 | REST | `web-viewer-sample` | `bim-review-coordinator` | 建立 session、查詢 session、取得 stream config |
 | REST | `bim-review-coordinator` | `_bim-control` | 查詢 project / version / artifact / issue / annotation metadata |
-| REST / Static file | `_bim-control` 或 `bim-streaming-server` | `_s3_storage` | 取得檔案 URL 或下載檔案 |
+| REST | `web-viewer-sample` / `bim-review-coordinator` | `_worker` | 建立 source artifact、conversion job、查詢 artifact group readiness |
+| REST / Static file | `_bim-control` 或 `bim-streaming-server` | `_worker` | 取得 current flow object URL |
 | WebRTC video | `bim-streaming-server` | `web-viewer-sample` | 串流 Omniverse viewport 畫面 |
 | WebRTC DataChannel JSON | `web-viewer-sample` | `bim-streaming-server` | open stage、selection、highlight、scene query |
 | WebSocket / Socket.IO | `web-viewer-sample` | `bim-review-coordinator` | presence、selection、annotation、issue focus 等多人事件 |
@@ -559,7 +648,7 @@ IFC / RVT / DWG = 原始模型資料
 其檔案本體屬於：
 
 ```txt
-_s3_storage
+_worker
 ```
 
 其版本與專案關聯屬於：
@@ -579,7 +668,7 @@ USD / USDC = rendering / streaming artifact
 其檔案本體屬於：
 
 ```txt
-_s3_storage
+_worker
 ```
 
 其 runtime 操作屬於：
@@ -599,7 +688,7 @@ IFC GUID ↔ USD Prim Path
 這是 BIM 語意資料與 Omniverse 視覺化資料之間的橋。
 
 ```txt
-mapping file body      → _s3_storage
+mapping file body      → _worker
 mapping metadata       → _bim-control
 mapping runtime usage  → web-viewer-sample / bim-streaming-server
 ```
@@ -658,7 +747,7 @@ web-viewer-sample
 - 不作為 annotation / issue 長期資料庫
 - 不作為多人協作事件中心
 - 不取代 _bim-control
-- 不取代 _s3_storage
+- 不取代 _worker
 ```
 
 ## 8.3 `bim-review-coordinator` 不應做的事
@@ -682,14 +771,15 @@ web-viewer-sample
 - 不保存大型 binary file body
 ```
 
-## 8.5 `_s3_storage` 不應做的事
+## 8.5 `_worker` 不應做的事
 
 ```txt
-- 不保存 project business logic
-- 不管理 session
-- 不管理 annotation 語意
-- 不執行 3D runtime 操作
-- 不廣播多人事件
+- 不保存 project / issue / annotation 的資料權威
+- 不管理 review session lifecycle
+- 不分配 GPU 或管理 Kit runtime
+- 不直接操作 USD stage
+- 不作為多人協作事件中心
+- 不取代 web-viewer-sample 成為 UI
 ```
 
 ---
@@ -699,13 +789,12 @@ web-viewer-sample
 `AI-BIM-governance/` 之後可以存在其他 mock folders，例如：
 
 ```txt
-_conversion-service/
 _ai-rule-carbon-service/
 _mock-auth/
 _mock-sensor-service/
 ```
 
-這些不屬於本文件定義的五大核心 repo。
+這些不屬於本文件定義的核心 repo。若歷史計畫文件提到 `_s3_storage`、`_conversion-service` 或 `_conversion-server`，那些引用只代表舊設計背景；目前 runtime 不啟動、不檢查、也不依賴這些服務。
 
 若它們存在，邊界原則如下：
 
@@ -725,7 +814,7 @@ _mock-sensor-service/
 
 ```txt
 _bim-control 提供 model / issue metadata
-→ _s3_storage 提供 USD / USDC 檔案 URL
+→ _worker 提供 artifact group / USD / USDC / mapping URL
 → bim-review-coordinator 建立 review session
 → web-viewer-sample 取得 session / stream config
 → web-viewer-sample 連到 bim-streaming-server
@@ -751,8 +840,8 @@ _bim-control 提供 model / issue metadata
 _bim-control
 = 假 BIM 資料權威
 
-_s3_storage
-= 假檔案與物件儲存
+_worker
+= 檔案與轉檔 facade
 
 bim-review-coordinator
 = Session / collaboration control plane
@@ -768,7 +857,7 @@ web-viewer-sample
 
 ```txt
 資料權威歸資料層
-檔案本體歸 storage
+檔案與轉檔外部邊界歸 worker
 session 歸 coordinator
 3D runtime 歸 streaming server
 使用者操作歸 web viewer
@@ -804,34 +893,72 @@ wiki（Graphify）
 - Python 3.12 已系統安裝；FastAPI/uvicorn 等 Python 依賴安裝在全域 site-packages（非 venv）
 - `bim-streaming-server` 需要 NVIDIA GPU + Kit SDK，Cloud VM 無法運行，可跳過
 
-### 啟動服務（5 個可運行的服務）
+### 啟動服務（4 個可運行的服務，Kit 需 GPU 可另行啟動）
 
 每個服務需獨立 terminal / tmux session，README.md 已有完整 PowerShell 版命令，以下是 Linux 等效：
 
 | 服務 | 工作目錄 | 啟動命令 | Port |
 |---|---|---|---|
 | `_bim-control` | `_bim-control/` | `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8001` | 8001 |
-| `_s3_storage` | `_s3_storage/` | `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8002` | 8002 |
-| `_conversion-service` | `_conversion-service/` | `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8003` | 8003 |
+| `_worker` | `_worker/` | `python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8005` | 8005 |
 | `bim-review-coordinator` | `bim-review-coordinator/` | `npm run dev` | 8004 |
 | `web-viewer-sample` | `web-viewer-sample/` | `npm run dev -- --host 0.0.0.0` | 5173 |
 
 ### 測試
 
-- Python tests **必須在各自服務目錄下執行**（因為三個 FastAPI 服務都用 `app` package name，從 root 跑會互相污染 import cache）：
+- Python tests **必須在各自服務目錄下執行**（因為多個 FastAPI 服務都用 `app` package name，從 root 跑會互相污染 import cache）：
   - `cd _bim-control && python3 -m pytest tests`
-  - `cd _s3_storage && python3 -m pytest tests`
-  - `cd _conversion-service && python3 -m pytest tests`
+  - `cd _worker && python3 -m pytest tests`
 - Node tests：`cd bim-review-coordinator && npm test`
 - Build：`cd bim-review-coordinator && npm run build` / `cd web-viewer-sample && npm run build`
 - Lint（`web-viewer-sample`）：`npm run lint` — 目前有 30 個 pre-existing eslint errors，這是已知狀態
 
 ### .env 設定
 
-- 從 `.env.example` 複製：root `.env`、`bim-review-coordinator/.env`、`_conversion-service/.env`
+- 從 `.env.example` 複製：root `.env`、`bim-review-coordinator/.env`
 - 預設值即為本地開發正確值，通常不需修改
 
 ### 注意事項
 
 - `web-viewer-sample` 完整功能需要 `bim-streaming-server`（WebRTC 串流），Cloud VM 無 GPU 無法運行。但 UI 仍可正常載入，REST API 與 coordinator 互動正常
 - Health check endpoints：各服務皆有 `/health`
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **AI-BIM-governance**. Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `gitnexus analyze --embeddings --skills` in terminal first. After a commit that only needs local index refresh, prefer `gitnexus analyze --embeddings --skills --skip-agents-md` to avoid rewriting this tracked section.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/AI-BIM-governance/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/AI-BIM-governance/clusters` | All functional areas |
+| `gitnexus://repo/AI-BIM-governance/processes` | All execution flows |
+| `gitnexus://repo/AI-BIM-governance/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+- `gitnexus status` checks whether the local index matches `HEAD`.
+- `gitnexus analyze --embeddings --skills` rebuilds the graph, embeddings, and local generated skills.
+- `gitnexus analyze --embeddings --skills --skip-agents-md` refreshes the local index without changing tracked AGENTS / CLAUDE sections.
+- Generated skill files under `.claude/skills/` are local analysis artifacts and must stay ignored.
+
+<!-- gitnexus:end -->

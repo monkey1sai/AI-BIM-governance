@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.main import create_app
 
 
-def test_seeded_project_artifacts_and_issues_are_queryable(tmp_path: Path):
-    client = TestClient(create_app(data_root=tmp_path / "data"))
+def test_seeded_project_artifacts_and_issues_are_queryable(case_dir: Path):
+    client = TestClient(create_app(data_root=case_dir / "data"))
 
     projects = client.get("/api/projects")
     assert projects.status_code == 200
@@ -29,8 +29,8 @@ def test_seeded_project_artifacts_and_issues_are_queryable(tmp_path: Path):
     assert issues.json()["items"][0]["issue_id"] == "ISSUE-DEMO-001"
 
 
-def test_annotation_can_be_saved_and_read_back(tmp_path: Path):
-    client = TestClient(create_app(data_root=tmp_path / "data"))
+def test_annotation_can_be_saved_and_read_back(case_dir: Path):
+    client = TestClient(create_app(data_root=case_dir / "data"))
     payload = {
         "annotation_id": "ann_test_001",
         "project_id": "project_demo_001",

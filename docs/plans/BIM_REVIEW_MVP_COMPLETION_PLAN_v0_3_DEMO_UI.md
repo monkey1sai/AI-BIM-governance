@@ -1,5 +1,7 @@
 # AI-BIM-governance：BIM Review MVP 完整續作執行計畫 v0.3 - Demo UI Manual Trigger 補充版
 
+> Historical note: this plan predates the worker-only runtime. Mentions of `_s3_storage`, `_conversion-service`, `_conversion-server`, ports `8002` / `8003`, or `/static/projects/...` are archival context only. Current behavior is governed by `AGENTS.md`, `README.md`, and `docs/contracts/worker-api.md`.
+
 > 給 Codex/Claude 直接執行用。
 > 基準 repo：`https://github.com/monkey1sai/AI-BIM-governance.git`，以 `main` 最新進度為準。
 > 本文件是 **從目前 repo 已完成內容往下補齊** 的 execution plan，不是從零重建。

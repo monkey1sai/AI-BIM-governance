@@ -37,14 +37,9 @@ Start-LocalProcess `
     -Command "`"$Python`" -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload"
 
 Start-LocalProcess `
-    -Name "_s3_storage" `
-    -WorkingDirectory (Join-Path $RepoRoot "_s3_storage") `
-    -Command "`"$Python`" -m uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload"
-
-Start-LocalProcess `
-    -Name "_conversion-service" `
-    -WorkingDirectory (Join-Path $RepoRoot "_conversion-service") `
-    -Command "`"$Python`" -m uvicorn app.main:app --host 127.0.0.1 --port 8003 --reload"
+    -Name "_worker" `
+    -WorkingDirectory (Join-Path $RepoRoot "_worker") `
+    -Command "`"$Python`" -m uvicorn app.main:app --host 127.0.0.1 --port 8005 --reload"
 
 if (-not $SkipCoordinator) {
     Start-LocalProcess `
@@ -60,5 +55,5 @@ if (-not $SkipViewer) {
         -Command "npm.cmd run dev -- --host 127.0.0.1"
 }
 
-Write-Host "[start] fake services, coordinator, and viewer start commands submitted"
+Write-Host "[start] worker-only demo services, coordinator, and viewer start commands submitted"
 Write-Host "[start] start bim-streaming-server separately when Kit runtime is needed"

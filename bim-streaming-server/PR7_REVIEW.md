@@ -1,5 +1,8 @@
 # Code Review: PR #7 — Add project architecture overview UI
 
+> Historical review note: references to `_conversion-service` reflect the old
+> PR #7 context and are not current runtime instructions.
+
 **Branch:** `cursor/fix/date---feature/fix/issue/project-architecture-ui-651d`
 **Status:** Draft · 4 commits · 7 files · +390 / −26
 **Repo:** `monkey1sai/AI-BIM-governance`

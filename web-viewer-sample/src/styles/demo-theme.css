@@ -3,7 +3,7 @@
  * 守則：docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md
  *
  * 此檔為跨服務 design tokens 的權威來源。
- * fake servers (_bim-control / _s3_storage / _conversion-service)
+ * fake servers (_bim-control / _worker / bim-review-coordinator)
  * 與 bim-review-coordinator 的 demo console 須以 inline <style>
  * 複製本檔的 :root 變數區塊，不得擅自分歧。
  * ============================================================ */

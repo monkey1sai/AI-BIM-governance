@@ -19,7 +19,7 @@ Fake BIM Data Authority — 假 BIM 主平台 metadata 層，提供 project / mo
 
 - ❌ 引入 Omniverse / `pxr` / `omni.*` 套件。
 - ❌ 處理 WebRTC / DataChannel / GPU runtime。
-- ❌ 保存大型 binary（IFC / RVT / USD bytes）— 檔案本體屬於 `_s3_storage`。
+- ❌ 保存大型 binary（IFC / RVT / USD bytes）— 檔案本體屬於 `_worker`。
 - ❌ 主動推播多人協作事件（presence / selection / annotation broadcast）— 那是 `bim-review-coordinator` 的責任。
 - ❌ 讀寫其他 repo 的 source 路徑。
 
@@ -38,6 +38,6 @@ python -m pytest tests -q
 | project / version / artifact metadata | **owner** |
 | issue / annotation metadata | **owner** |
 | element_mapping metadata（不含檔案 body） | **owner** |
-| IFC / USD 檔案 body | 不擁有，由 `_s3_storage` 提供 URL |
+| IFC / USD 檔案 body | 不擁有，由 `_worker` 提供 URL |
 | 3D runtime state | 不擁有，由 `bim-streaming-server` 處理 |
 | session / collaboration state | 不擁有，由 `bim-review-coordinator` 處理 |

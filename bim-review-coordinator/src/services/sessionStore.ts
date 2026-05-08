@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { KitInstance, ReviewParticipant, ReviewSession } from "../types.js";
+import type { ArtifactBinding, KitInstance, KitInstanceBinding, ReviewParticipant, ReviewSession, SessionStatus } from "../types.js";
 import { nowIso } from "../utils/time.js";
 
 const safeSessionIdPattern = /^review_session_[A-Za-z0-9_-]+$/;
 
 export interface CreateSessionInput {
+  review_request_id?: string;
+  tenant_id?: string;
   project_id: string;
   model_version_id: string;
   source_artifact_id?: string;
@@ -14,6 +16,8 @@ export interface CreateSessionInput {
   created_by: string;
   mode?: string;
   kit_instance: KitInstance;
+  artifact_bindings?: ArtifactBinding[];
+  kit_instance_bindings?: KitInstanceBinding[];
 }
 
 export class SessionStore {
@@ -23,18 +27,23 @@ export class SessionStore {
 
   create(input: CreateSessionInput): ReviewSession {
     const timestamp = nowIso();
+    const kitInstanceBindings = input.kit_instance_bindings || [];
     const session: ReviewSession = {
       session_id: `review_session_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+      review_request_id: input.review_request_id,
+      tenant_id: input.tenant_id || "tenant_demo_001",
       project_id: input.project_id,
       model_version_id: input.model_version_id,
       source_artifact_id: input.source_artifact_id,
       usdc_artifact_id: input.usdc_artifact_id,
-      status: "active",
+      status: kitInstanceBindings.length > 0 ? "active" : "created",
       mode: input.mode || "single_kit_shared_state",
       created_by: input.created_by,
       created_at: timestamp,
       updated_at: timestamp,
       kit_instance: input.kit_instance,
+      artifact_bindings: input.artifact_bindings || [],
+      kit_instance_bindings: kitInstanceBindings,
       participants: [],
     };
     this.save(session);
@@ -77,6 +86,18 @@ export class SessionStore {
     return session;
   }
 
+  update(sessionId: string, update: Partial<ReviewSession>): ReviewSession | null {
+    const session = this.get(sessionId);
+    if (!session) return null;
+    const next = { ...session, ...update };
+    this.save(next);
+    return next;
+  }
+
+  setStatus(sessionId: string, status: SessionStatus): ReviewSession | null {
+    return this.update(sessionId, { status });
+  }
+
   private filePath(sessionId: string): string {
     assertSafeSessionId(sessionId);
     return path.join(this.rootDir, `${sessionId}.json`);
@@ -85,6 +106,10 @@ export class SessionStore {
 
 export function isSafeSessionId(sessionId: string): boolean {
   return safeSessionIdPattern.test(sessionId);
+}
+
+export function isSessionMutable(session: ReviewSession): boolean {
+  return session.status === "created" || session.status === "active";
 }
 
 function assertSafeSessionId(sessionId: string): void {

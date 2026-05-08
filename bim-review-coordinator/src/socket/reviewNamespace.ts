@@ -1,7 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import type { BimControlClient } from "../services/bimControlClient.js";
 import type { EventLog } from "../services/eventLog.js";
-import { isSafeSessionId } from "../services/sessionStore.js";
+import { isSafeSessionId, isSessionMutable } from "../services/sessionStore.js";
 import type { SessionStore } from "../services/sessionStore.js";
 
 interface SessionPayload {
@@ -126,8 +126,12 @@ function validateExistingSession(
   if (!isSafeSessionId(sessionId)) {
     return { ok: false, error: "Invalid review session id." };
   }
-  if (!store.get(sessionId)) {
+  const session = store.get(sessionId);
+  if (!session) {
     return { ok: false, error: "Review session not found." };
+  }
+  if (!isSessionMutable(session)) {
+    return { ok: false, error: "Review session is not active." };
   }
   return { ok: true, sessionId };
 }

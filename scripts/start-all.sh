@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一鍵啟動 5 個服務 (Linux/macOS)。
+# 一鍵啟動 worker-only demo services (Linux/macOS)。
 # 注意：bim-streaming-server (Omniverse Kit GPU runtime) 主要在 Windows 開發，
 # 本 script 不啟動它；若需要請另行 ./repo.sh launch。
 # 對應的關閉指令：scripts/stop-all.sh
@@ -103,19 +103,15 @@ wait_health() {
   done
 }
 
-# === 啟動 5 個服務 ===
-
-start_service "_s3_storage" \
-  "$REPO_ROOT/_s3_storage" \
-  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8002"
+# === 啟動 worker-only demo services ===
 
 start_service "_bim-control" \
   "$REPO_ROOT/_bim-control" \
   "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8001"
 
-start_service "_conversion-service" \
-  "$REPO_ROOT/_conversion-service" \
-  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8003"
+start_service "_worker" \
+  "$REPO_ROOT/_worker" \
+  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8005"
 
 if [[ $SKIP_COORDINATOR -eq 0 ]]; then
   start_service "bim-review-coordinator" \
@@ -131,9 +127,8 @@ fi
 
 echo ""
 echo -e "${color_cyan}=== Health probe ===${color_reset}"
-wait_health "_s3_storage           (步驟 ①)" "http://127.0.0.1:8002/health" "$HEALTH_TIMEOUT" || true
 wait_health "_bim-control          (步驟 ⑤)" "http://127.0.0.1:8001/health" "$HEALTH_TIMEOUT" || true
-wait_health "_conversion-service   (步驟 ②)" "http://127.0.0.1:8003/health" "$HEALTH_TIMEOUT" || true
+wait_health "_worker               (步驟 ①/②)" "http://127.0.0.1:8005/health" "$HEALTH_TIMEOUT" || true
 if [[ $SKIP_COORDINATOR -eq 0 ]]; then
   wait_health "bim-review-coordinator(步驟 ③)" "http://127.0.0.1:8004/health" "$HEALTH_TIMEOUT" || true
 fi
@@ -143,8 +138,7 @@ fi
 
 echo ""
 echo -e "${color_cyan}=== Demo URLs ===${color_reset}"
-echo "① 雲端倉庫       http://127.0.0.1:8002"
-echo "② 模型轉換       http://127.0.0.1:8003"
+echo "①/② Worker 上傳建模與自動轉換 http://127.0.0.1:8005"
 echo "③ 審查協調       http://127.0.0.1:8004/ui"
 echo "④ 瀏覽器審查端   http://127.0.0.1:5173"
 echo "⑤ 主資料庫       http://127.0.0.1:8001"

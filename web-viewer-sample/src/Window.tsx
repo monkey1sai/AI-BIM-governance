@@ -24,16 +24,16 @@ import PresencePanel from "./components/PresencePanel";
 import ReviewLauncher from "./components/ReviewLauncher";
 import DemoControlPanel from "./components/DemoControlPanel";
 import { BimControlClient } from "./clients/bimControlClient";
-import { CoordinatorClient } from "./clients/coordinatorClient";
+import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
 import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest, severityToColor } from "./clients/streamMessages";
 import { buildDemoHighlightItem, demoIssueId, demoPrimPath } from "./clients/demoDefaults";
 import { reviewEnv } from "./config/env";
 import type { DemoLogEntry } from "./types/demo";
 import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
-import type { ReviewArtifact } from "./types/artifacts";
+import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
 import type { ReviewIssue } from "./types/issues";
-import type { ReviewStreamConfig } from "./types/review";
+import type { ReviewLifecycleStatus, ReviewSession, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
 import type { HighlightItem, StreamMessage } from "./types/streamMessages";
 
 
@@ -58,6 +58,8 @@ interface AppState {
     usdAssets: USDAssetType[];
     selectedUSDAsset: USDAssetType | null;
     reviewSessionId: string | null;
+    reviewRequestId: string | null;
+    reviewLifecycleStatus: ReviewLifecycleStatus | null;
     reviewStatus: string;
     reviewArtifacts: ReviewArtifact[];
     reviewIssues: ReviewIssue[];
@@ -121,6 +123,21 @@ function makeRequestId(prefix: string): string {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function isBlockedLifecycle(status: ReviewLifecycleStatus | null): boolean {
+    return status === "blocked_conversion" || status === "queued_for_instance" || status === "closing" || status === "closed" || status === "failed";
+}
+
+function lifecycleStatusText(status: ReviewLifecycleStatus | null): string {
+    if (status === "blocked_conversion") return "成果檔仍在轉換或 mapping 尚未就緒";
+    if (status === "queued_for_instance") return "等待 Kit / GPU instance 配額";
+    if (status === "created") return "審查請求已建立，等待 session 綁定";
+    if (status === "active") return "Review session 啟用中";
+    if (status === "closing") return "Review session 關閉中";
+    if (status === "closed") return "Review session 已關閉";
+    if (status === "failed") return "Review session 建立失敗";
+    return "Review bootstrap 尚未載入";
+}
+
 export default class App extends React.Component<AppProps, AppState> {
     
     private usdStageRef = React.createRef<USDStage>();
@@ -142,6 +159,8 @@ export default class App extends React.Component<AppProps, AppState> {
             usdAssets: [],
             selectedUSDAsset: null,
             reviewSessionId: null,
+            reviewRequestId: null,
+            reviewLifecycleStatus: null,
             reviewStatus: "Review bootstrap 尚未載入",
             reviewArtifacts: [],
             reviewIssues: [],
@@ -197,6 +216,21 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): void {
+        const mutatingEvents = new Set([
+            "openStageRequest",
+            "loadArtifactGroupRequest",
+            "highlightPrimsRequest",
+            "focusPrimRequest",
+            "clearHighlightRequest",
+            "selectPrimsRequest",
+            "makePrimsPickable",
+            "resetStage",
+        ]);
+        if (mutatingEvents.has(message.event_type) && isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
+            const lifecycle = this.state.reviewLifecycleStatus || "unknown";
+            this._appendReviewEvent(`略過 ${message.event_type}：session lifecycle=${lifecycle}`);
+            return;
+        }
         AppStream.sendMessage(JSON.stringify(message));
         this._appendDemoOutgoing(message.event_type, message);
     }
@@ -260,6 +294,10 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _connectReviewSocket(sessionId: string): void {
+        if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
+            this._appendReviewEvent(`略過 Socket.IO join：session lifecycle=${this.state.reviewLifecycleStatus}`);
+            return;
+        }
         this.reviewSocket?.disconnect();
         this.reviewSocket = connectReviewSocket(reviewEnv.coordinatorSocketUrl, {
             onStatus: (status) => this._appendReviewEvent(`Socket.IO ${status === "connected" ? "已連線" : "已中斷"}`),
@@ -304,40 +342,102 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _bootstrapReview(): Promise<void> {
         try {
-            if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId) {
+            if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId && !reviewEnv.defaultReviewRequestId) {
                 this.setState({ reviewStatus: "Review session 自動建立已停用" });
                 await this._loadReviewDataFromBimControl();
                 return;
             }
 
-            const sessionId = reviewEnv.defaultSessionId || (await this.coordinatorClient.createReviewSession({
-                project_id: reviewEnv.defaultProjectId,
-                model_version_id: reviewEnv.defaultModelVersionId,
-                created_by: reviewEnv.defaultUserId,
-            })).session_id;
+            let reviewRequest: ReviewSessionRequest | null = null;
+            if (reviewEnv.defaultReviewRequestId) {
+                reviewRequest = await this.bimControlClient.getReviewSessionRequest(reviewEnv.defaultReviewRequestId);
+                const requestAssets = this._assetsFromArtifactBindings(reviewRequest.artifact_bindings || []);
+                if (isBlockedLifecycle(reviewRequest.status) && !reviewRequest.session_id) {
+                    this.setState({
+                        reviewRequestId: reviewRequest.review_request_id,
+                        reviewLifecycleStatus: reviewRequest.status,
+                        reviewStatus: lifecycleStatusText(reviewRequest.status),
+                        usdAssets: this._mergeAssets(this.state.usdAssets, requestAssets),
+                        selectedUSDAsset: this.state.selectedUSDAsset || requestAssets[0] || null,
+                        loadingText: lifecycleStatusText(reviewRequest.status),
+                        isLoading: false,
+                        reviewEvents: [...this.state.reviewEvents, `已載入 review request：${reviewRequest.status}`],
+                    });
+                    return;
+                }
+            }
+
+            const loadedSession: ReviewSession | null = reviewEnv.defaultSessionId
+                ? await this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)
+                : null;
+            let createdSession: ReviewSession | null = null;
+            if (!reviewEnv.defaultSessionId && !reviewRequest?.session_id) {
+                try {
+                    createdSession = await this.coordinatorClient.createReviewSession({
+                        review_request_id: reviewRequest?.review_request_id,
+                        tenant_id: reviewRequest?.tenant_id,
+                        project_id: reviewRequest?.project_id || reviewEnv.defaultProjectId,
+                        model_version_id: reviewRequest?.model_version_id || reviewEnv.defaultModelVersionId,
+                        created_by: reviewEnv.defaultUserId,
+                        routing_policy: (reviewRequest?.startup_policy?.routing_policy as "same_instance" | "dedicated_instance" | "shared_state" | undefined) || "same_instance",
+                        artifact_bindings: reviewRequest?.artifact_bindings || [],
+                        kit_profile: reviewRequest?.kit_profile || {},
+                    });
+                } catch (error) {
+                    if (isQueuedForInstanceError(error)) {
+                        await this._handleQueuedForInstance(reviewRequest, error.response.artifact_bindings);
+                        return;
+                    }
+                    throw error;
+                }
+            }
+            const sessionId = loadedSession?.session_id || reviewRequest?.session_id || createdSession?.session_id || "";
+            if (!sessionId) {
+                this.setState({
+                    reviewLifecycleStatus: reviewRequest?.status || null,
+                    reviewStatus: lifecycleStatusText(reviewRequest?.status || null),
+                    isLoading: false,
+                });
+                return;
+            }
+            const bootstrapModelVersionId = loadedSession?.model_version_id
+                || reviewRequest?.model_version_id
+                || createdSession?.model_version_id
+                || reviewEnv.defaultModelVersionId;
             const [streamConfig, bootstrap] = await Promise.all([
                 this.coordinatorClient.getStreamConfig(sessionId),
-                this.coordinatorClient.getReviewBootstrap(reviewEnv.defaultModelVersionId),
+                this.coordinatorClient.getReviewBootstrap(bootstrapModelVersionId),
             ]);
 
             const artifacts = streamConfig.artifacts.length > 0 ? streamConfig.artifacts : bootstrap.artifacts;
-            const usdAssets = this._assetsFromReviewArtifacts(artifacts);
+            const usdAssets = this._mergeAssets(this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []), this._assetsFromReviewArtifacts(artifacts));
             const selectedUSDAsset = usdAssets.find((asset) => asset.url === streamConfig.model.url) ?? usdAssets[0] ?? this.state.selectedUSDAsset;
 
             this._connectReviewSocket(sessionId);
+            if (reviewRequest && createdSession) {
+                void this.bimControlClient.patchReviewSessionRequest(reviewRequest.review_request_id, {
+                    status: streamConfig.lifecycle_status,
+                    session_id: sessionId,
+                    artifact_bindings: streamConfig.artifact_bindings,
+                    kit_instance_bindings: streamConfig.kit_instance_bindings,
+                    lifecycle_event: { type: "sessionBound", session_id: sessionId },
+                }).catch((error) => console.warn("Unable to patch review request binding.", error));
+            }
 
             this.setState({
                 reviewSessionId: sessionId,
-                reviewStatus: `Review session 啟用中，模型狀態：${streamConfig.model.status}`,
+                reviewRequestId: reviewRequest?.review_request_id || loadedSession?.review_request_id || null,
+                reviewLifecycleStatus: streamConfig.lifecycle_status,
+                reviewStatus: `${lifecycleStatusText(streamConfig.lifecycle_status)}，模型狀態：${streamConfig.model.status}`,
                 reviewArtifacts: artifacts,
                 reviewIssues: bootstrap.issues,
                 latestStreamConfig: streamConfig,
                 mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset,
-                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId ? "已載入 review session" : "已建立 review session"],
+                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId || reviewRequest?.session_id ? "已載入 review session" : "已建立 review session"],
             }, () => {
-                if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready") {
+                if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
                 }
             });
@@ -350,6 +450,35 @@ export default class App extends React.Component<AppProps, AppState> {
             });
             await this._loadReviewDataFromBimControl();
         }
+    }
+
+    private async _handleQueuedForInstance(reviewRequest: ReviewSessionRequest | null, artifactBindings: ArtifactBinding[]): Promise<void> {
+        const queuedBindings = artifactBindings.length > 0 ? artifactBindings : reviewRequest?.artifact_bindings || [];
+        const queuedAssets = this._assetsFromArtifactBindings(queuedBindings);
+        if (reviewRequest) {
+            try {
+                await this.bimControlClient.patchReviewSessionRequest(reviewRequest.review_request_id, {
+                    status: "queued_for_instance",
+                    artifact_bindings: queuedBindings,
+                    lifecycle_event: {
+                        type: "queuedForKitInstance",
+                        reason: "capacity_slots",
+                    },
+                });
+            } catch (error) {
+                console.warn("Unable to patch queued review request.", error);
+            }
+        }
+        this.setState({
+            reviewRequestId: reviewRequest?.review_request_id || null,
+            reviewLifecycleStatus: "queued_for_instance",
+            reviewStatus: lifecycleStatusText("queued_for_instance"),
+            usdAssets: this._mergeAssets(this.state.usdAssets, queuedAssets),
+            selectedUSDAsset: this.state.selectedUSDAsset || queuedAssets[0] || null,
+            loadingText: lifecycleStatusText("queued_for_instance"),
+            isLoading: false,
+            reviewEvents: [...this.state.reviewEvents, "等待 Kit / GPU instance 配額"],
+        });
     }
 
     private async _loadReviewDataFromBimControl(): Promise<void> {
@@ -382,6 +511,16 @@ export default class App extends React.Component<AppProps, AppState> {
             }));
     }
 
+    private _assetsFromArtifactBindings(bindings: ArtifactBinding[]): USDAssetType[] {
+        return bindings
+            .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && binding.url)
+            .sort((left, right) => left.load_order - right.load_order)
+            .map((binding) => ({
+                name: binding.artifact_id || binding.artifact_group_id,
+                url: binding.url as string,
+            }));
+    }
+
     private _mergeAssets(existing: USDAssetType[], incoming: USDAssetType[]): USDAssetType[] {
         const byUrl = new Map<string, USDAssetType>();
         for (const asset of [...incoming, ...existing]) {
@@ -393,6 +532,10 @@ export default class App extends React.Component<AppProps, AppState> {
     private _resolveMappingUrl(streamConfig: ReviewStreamConfig | null, artifacts: ReviewArtifact[]): string | null {
         if (streamConfig?.model.mapping_url) {
             return streamConfig.model.mapping_url;
+        }
+        const mappedBinding = streamConfig?.artifact_bindings?.find((binding) => binding.mapping_url);
+        if (mappedBinding?.mapping_url) {
+            return mappedBinding.mapping_url;
         }
         const mappedArtifact = artifacts.find((artifact) => artifact.artifact_type === "usdc" && artifact.mapping_url);
         return mappedArtifact?.mapping_url || null;
@@ -505,7 +648,8 @@ export default class App extends React.Component<AppProps, AppState> {
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
         console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
-        this._sendStreamMessage(buildOpenStageRequest(this.state.selectedUSDAsset.url));
+        const artifactBindings = this.state.latestStreamConfig?.artifact_bindings?.filter((binding) => binding.url === this.state.selectedUSDAsset?.url) || [];
+        this._sendStreamMessage(buildOpenStageRequest(this.state.selectedUSDAsset.url, artifactBindings));
     }
 
     /**
@@ -566,7 +710,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 paths: paths
             }
         };
-        AppStream.sendMessage(JSON.stringify(message));
+        this._sendStreamMessage(message);
 
         selectedUsdPrims.forEach(usdPrim => {this._onFillUSDPrim(usdPrim)});
     }
@@ -1152,6 +1296,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         <ArtifactPanel
                             width={sidebarWidth}
                             artifacts={this.state.reviewArtifacts}
+                            artifactBindings={this.state.latestStreamConfig?.artifact_bindings || []}
                         />
                         <IssuePanel
                             width={sidebarWidth}

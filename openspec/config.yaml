@@ -1,0 +1,50 @@
+schema: spec-driven
+
+context: |
+  Project: AI-BIM-governance workspace.
+  Primary agent behavior baseline: AGENTS.md / Codex workflow.
+  Claude must treat CLAUDE.md as a mirror entrypoint to the same repo rules, not as a separate development process.
+
+  Core repo boundaries:
+  - _bim-control owns fake BIM metadata and review data authority.
+  - _worker owns local file bytes, object URLs, conversion jobs, and artifact readiness.
+  - bim-review-coordinator owns review session and collaboration control plane.
+  - bim-streaming-server owns Omniverse Kit runtime, USD scene runtime, WebRTC, and DataChannel commands.
+  - web-viewer-sample owns browser UI and user interaction.
+
+  Working rules:
+  - Use Traditional Chinese by default; keep code, APIs, logs, and errors in their original language.
+  - Inspect relevant files before editing.
+  - Keep diffs minimal, reversible, and scoped to the responsible repo/folder.
+  - Do not modify secrets, credentials, private keys, or real .env values.
+  - Do not add production dependencies without explaining why.
+  - For code symbols, run GitNexus impact analysis before editing and report HIGH/CRITICAL risk before proceeding.
+  - Preserve the minimum review loop across _bim-control, _worker, bim-review-coordinator, bim-streaming-server, and web-viewer-sample.
+  - OpenSpec artifacts guide planning and execution; they do not override AGENTS.md or CLAUDE.md.
+  - OpenSpec changes must be isolated on `codex/openspec/<change-id>` branches before `/openspec new` or `/openspec apply`; do not develop OpenSpec changes directly on `main`.
+  - Pull Requests are the review/discussion boundary, GitHub Actions are the automated validation boundary, merge is formal acceptance, and OpenSpec sync/archive happens only after merge.
+  - Installed agent skills are workflow helpers only; they do not define product requirements and do not override repo boundary rules.
+  - Do not encode local skill installation, generated skills, or agent-tooling state as product requirements.
+
+rules:
+  proposal:
+    - State which repo/folder owns the change.
+    - Describe how the change preserves the workspace boundary rules.
+    - Include non-goals when a change might be confused with another repo's responsibility.
+    - Call out API, data structure, event, storage, session, or runtime boundary changes explicitly.
+  design:
+    - Explain data flow and control flow across repos when more than one repo is touched.
+    - Identify source-of-truth ownership for every persistent data type.
+    - Keep runtime state, metadata, file storage, and browser UI responsibilities separate.
+    - Note validation strategy and known environment limits such as GPU/Kit requirements.
+  tasks:
+    - Break implementation tasks by repo/folder ownership.
+    - Keep each task scoped to one owner whenever possible: metadata, storage, session, runtime, or browser UI.
+    - Include the smallest useful validation for each affected service.
+    - Keep Python tests in their service directory to avoid app package import cache pollution.
+    - Include documentation updates when APIs, events, data flow, or repo boundaries change.
+  specs:
+    - Describe externally observable behavior and acceptance criteria.
+    - Avoid encoding agent-specific implementation details as product requirements.
+    - Do not treat installed skills, Graphify wiki, or GitNexus generated skills as product source of truth.
+    - Preserve English API paths and protocol field names when they are part of the contract.

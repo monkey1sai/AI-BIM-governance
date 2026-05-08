@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string] $BimControlUrl = "http://127.0.0.1:8001",
-    [string] $StorageUrl = "http://127.0.0.1:8002",
+    [string] $WorkerUrl = "http://127.0.0.1:8005",
     [string] $CoordinatorUrl = "http://127.0.0.1:8004",
     [string] $ProjectId = "project_demo_001",
     [string] $ModelVersionId = "version_demo_001",
@@ -33,16 +33,71 @@ function Test-HttpResource {
 }
 
 Invoke-RestMethod "$BimControlUrl/health" | Out-Null
-Invoke-RestMethod "$StorageUrl/health" | Out-Null
+Invoke-RestMethod "$WorkerUrl/health" | Out-Null
 Invoke-RestMethod "$CoordinatorUrl/health" | Out-Null
+
+$ifcText = "ISO-10303-21;`nEND-ISO-10303-21;`n"
+$artifactBody = @{
+    tenant_id = "tenant_demo_001"
+    project_id = $ProjectId
+    model_version_id = $ModelVersionId
+    source_system = "smoke"
+    uploaded_by = $UserId
+    filename = "source.ifc"
+    source_format = "ifc"
+    content_base64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($ifcText))
+} | ConvertTo-Json -Depth 10
+
+$artifact = Invoke-RestMethod `
+    -Method Post `
+    -Uri "$WorkerUrl/api/artifacts" `
+    -ContentType "application/json" `
+    -Body $artifactBody
+
+$conversionBody = @{
+    source_artifact_id = $artifact.source_artifact_id
+    target_format = "usdc"
+    generate_mapping = $true
+    options = @{ auto_complete = $true }
+} | ConvertTo-Json -Depth 10
+
+$conversion = Invoke-RestMethod `
+    -Method Post `
+    -Uri "$WorkerUrl/api/conversions" `
+    -ContentType "application/json" `
+    -Body $conversionBody
+
+$deadline = (Get-Date).AddSeconds(30)
+$result = $null
+do {
+    $result = Invoke-RestMethod "$WorkerUrl/api/conversions/$($conversion.conversion_job_id)/result"
+    if ($result.status -eq "succeeded") {
+        break
+    }
+    Start-Sleep -Milliseconds 500
+} while ((Get-Date) -lt $deadline)
+
+if ($result.status -ne "succeeded") {
+    throw "Expected worker conversion result succeeded, got $($result.status)"
+}
 
 $body = @{
     project_id = $ProjectId
     model_version_id = $ModelVersionId
     created_by = $UserId
     mode = "single_kit_shared_state"
+    artifact_bindings = @(@{
+        artifact_group_id = $artifact.artifact_group_id
+        model_version_id = $ModelVersionId
+        artifact_id = $result.usdc_artifact_id
+        artifact_role = "derived"
+        url = $result.usdc_url
+        mapping_url = $result.mapping_url
+        load_order = 0
+        ready_status = "ready"
+    })
     options = @{ auto_allocate_kit = $true }
-} | ConvertTo-Json -Depth 10
+} | ConvertTo-Json -Depth 20
 
 $session = Invoke-RestMethod `
     -Method Post `
