@@ -21,7 +21,7 @@ interface AppStreamProps {
     signalingserver: string
     signalingport: number
     mediaserver: string
-    mediaport: number
+    mediaport: number | null
     accessToken: string
     style?: React.CSSProperties;
     onStarted: () => void;
@@ -157,6 +157,11 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 console.error(error);
             }
         }
+    }
+
+    componentWillUnmount() {
+        AppStreamer.stop();
+        (AppStreamer as any)._stream = null; // Accessing a private member
     }
 
     componentDidUpdate(_prevProps: AppStreamProps, prevState: AppStreamState, _snapshot: any) {

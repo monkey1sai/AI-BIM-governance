@@ -14,7 +14,7 @@ Local review-session control plane for the AI-BIM governance workspace.
 ## Responsibilities
 
 - Create and persist local review sessions.
-- Return the fixed local Kit/WebRTC endpoint for development.
+- Return the configured local Kit/WebRTC endpoint pool for development.
 - Proxy artifact and issue bootstrap data from `_bim-control`.
 - Broadcast review-room events over Socket.IO namespace `/review`.
 - Persist short-lived session events as JSONL files under `data/events`.
@@ -33,6 +33,28 @@ Default service URL:
 ```txt
 http://127.0.0.1:8004
 ```
+
+## Local Kit Endpoint Pool
+
+By default the coordinator exposes one local Kit endpoint:
+
+```txt
+KIT_STREAM_SERVER=127.0.0.1
+KIT_SIGNALING_PORT=49100
+KIT_MEDIA_SERVER=127.0.0.1
+KIT_MEDIA_PORT=47998
+```
+
+For `routing_policy=dedicated_instance`, configure a real endpoint pool so each
+Kit binding has distinct WebRTC ports:
+
+```powershell
+$env:KIT_INSTANCE_ENDPOINTS='[{"id":"kit_local_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998},{"id":"kit_local_002","signalingServer":"127.0.0.1","signalingPort":49110,"mediaServer":"127.0.0.1","mediaPort":48008}]'
+```
+
+If the requested dedicated bindings exceed the configured endpoint count, the
+session request stays `queued_for_instance` instead of reusing the same stream
+endpoint.
 
 ## Key Endpoints
 

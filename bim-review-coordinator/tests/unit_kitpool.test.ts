@@ -31,10 +31,40 @@ const defaultConfig: CoordinatorConfig = {
   kitStreamServer: "kit-server.local",
   kitSignalingPort: 49100,
   kitMediaServer: "kit-media.local",
+  kitMediaPort: 47998,
+  kitInstanceEndpoints: [
+    {
+      id: "kit_local_001",
+      signalingServer: "kit-server.local",
+      signalingPort: 49100,
+      mediaServer: "kit-media.local",
+      mediaPort: 47998,
+    },
+  ],
   devAuthToken: "dev-token",
   sessionStoreDir: "/tmp/sessions",
   eventLogDir: "/tmp/events",
   corsOrigins: ["http://127.0.0.1:5173"],
+};
+
+const multiEndpointConfig: CoordinatorConfig = {
+  ...defaultConfig,
+  kitInstanceEndpoints: [
+    {
+      id: "kit_local_001",
+      signalingServer: "kit-server.local",
+      signalingPort: 49100,
+      mediaServer: "kit-media.local",
+      mediaPort: 47998,
+    },
+    {
+      id: "kit_local_002",
+      signalingServer: "kit-server.local",
+      signalingPort: 49110,
+      mediaServer: "kit-media.local",
+      mediaPort: 48008,
+    },
+  ],
 };
 
 function makeArtifactBinding(overrides: Partial<ArtifactBinding> = {}): ArtifactBinding {
@@ -64,6 +94,7 @@ function makeKitInstanceBinding(overrides: Partial<KitInstanceBinding> = {}): Ki
       signalingServer: "kit-server.local",
       signalingPort: 49100,
       mediaServer: "kit-media.local",
+      mediaPort: 47998,
     },
     started_at: "2026-01-01T00:00:00.000Z",
     last_heartbeat_at: "2026-01-01T00:00:00.000Z",
@@ -90,6 +121,7 @@ describe("allocateLocalKitInstance", () => {
     expect(instance.signaling_port).toBe(49100);
     expect(instance.stream_server).toBe("kit-server.local");
     expect(instance.media_server).toBe("kit-media.local");
+    expect(instance.media_port).toBe(47998);
   });
 });
 
@@ -136,7 +168,7 @@ describe("allocateKitInstanceBindings", () => {
     ];
 
     const bindings = allocateKitInstanceBindings(
-      defaultConfig,
+      multiEndpointConfig,
       artifactBindings,
       "dedicated_instance",
       "tenant_001",
@@ -154,7 +186,7 @@ describe("allocateKitInstanceBindings", () => {
     ];
 
     const bindings = allocateKitInstanceBindings(
-      defaultConfig,
+      multiEndpointConfig,
       artifactBindings,
       "dedicated_instance",
       "tenant_001",
@@ -162,6 +194,24 @@ describe("allocateKitInstanceBindings", () => {
 
     const ids = bindings.map((b) => b.kit_instance_id);
     expect(new Set(ids).size).toBe(2);
+    const ports = bindings.map((b) => b.stream_config.signalingPort);
+    expect(new Set(ports).size).toBe(2);
+  });
+
+  it("returns empty array when dedicated_instance needs more endpoints than configured", () => {
+    const artifactBindings = [
+      makeArtifactBinding({ artifact_id: "artifact_usdc_a", binding_id: "binding_1" }),
+      makeArtifactBinding({ artifact_id: "artifact_usdc_b", binding_id: "binding_2" }),
+    ];
+
+    const bindings = allocateKitInstanceBindings(
+      defaultConfig,
+      artifactBindings,
+      "dedicated_instance",
+      "tenant_001",
+    );
+
+    expect(bindings).toHaveLength(0);
   });
 
   it("returns empty array when dedicated_instance exceeds capacity_slots", () => {
@@ -171,7 +221,7 @@ describe("allocateKitInstanceBindings", () => {
     ];
 
     const bindings = allocateKitInstanceBindings(
-      defaultConfig,
+      multiEndpointConfig,
       artifactBindings,
       "dedicated_instance",
       "tenant_001",
@@ -252,6 +302,7 @@ describe("allocateKitInstanceBindings", () => {
     expect(bindings[0].stream_config.signalingServer).toBe("kit-server.local");
     expect(bindings[0].stream_config.signalingPort).toBe(49100);
     expect(bindings[0].stream_config.mediaServer).toBe("kit-media.local");
+    expect(bindings[0].stream_config.mediaPort).toBe(47998);
   });
 
   it("stores tenant_id on the binding", () => {
@@ -298,6 +349,7 @@ describe("legacyKitInstanceFromBinding", () => {
         signalingServer: "cloud-server.example.com",
         signalingPort: 12345,
         mediaServer: "media.example.com",
+        mediaPort: 23456,
       },
     });
 
@@ -307,6 +359,7 @@ describe("legacyKitInstanceFromBinding", () => {
     expect(instance.stream_server).toBe("cloud-server.example.com");
     expect(instance.signaling_port).toBe(12345);
     expect(instance.media_server).toBe("media.example.com");
+    expect(instance.media_port).toBe(23456);
     expect(instance.status).toBe("ready");
   });
 

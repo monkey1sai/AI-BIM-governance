@@ -174,6 +174,8 @@ participants=[]
 
 本節補記 `openspec/changes/complete-spec-runtime-verification/` apply 階段的 runtime evidence。原本第 5 節保留 03:57 那次 E2E 的歷史結果；本節是後續補驗與 blocker 分層，不把硬體 / fixture 條件混成單一 pass/fail。
 
+Current update: 17:37 Asia/Taipei re-verification supersedes the earlier hardware-blocked status for the renderable-fixture runtime tier. Single Kit GPU render and same-Kit primary / spectator concurrent streaming are now passed with archived screenshots. `_worker` real IFC→USDC conversion is still not claimed as passed because the current conversion adapter remains a placeholder.
+
 ### 6.1 Baseline / machine constraints
 
 | 項目 | 結果 |
@@ -208,9 +210,9 @@ Status: **passed at `contract` tier**.
 
 Scope: this validates `stage_loading.py` contains the expected DataChannel contract tokens and load-order / sublayer behavior checks. It does **not** prove GPU viewport render or real USD geometry loading.
 
-### 6.3 Single Kit GPU render
+### 6.3 Historical single Kit GPU render blocker probe
 
-Status: **blocked / not passed**.
+Status: **historical blocked / not passed probe only**. This pre-pass result is superseded for the renderable worker-hosted USDC runtime tier by the passed same-Kit evidence in section 6.8.
 
 Evidence gathered:
 
@@ -220,21 +222,46 @@ Evidence gathered:
 - Kit signaling `49100` was reachable, but stream port `47998` was not reachable during this apply.
 - No browser viewport screenshot or non-zero video frame evidence was captured for a renderable geometry USD / USDC.
 
-Conclusion: the repo-local IFC fixture prerequisite is satisfied, but the runtime still lacks a renderable USD / USDC artifact produced from that fixture. A future pass needs either a real IFC->USD/USDC conversion path or a known renderable USD / USDC fixture before claiming single Kit GPU viewport render.
+Conclusion for this historical probe: the repo-local IFC fixture prerequisite was satisfied, but `_worker` still lacked a renderable USD / USDC artifact produced from that fixture. This remains true for real IFC->USDC conversion. The current runtime pass is limited to the worker-hosted renderable USDC fixture documented in section 6.8.
 
-### 6.4 Dedicated multi-Kit routing
+### 6.4 Historical dedicated multi-Kit routing blocker probe
 
-Status: **blocked / not passed**.
+Status: **historical blocked / not passed probe only; dedicated multi-Kit process routing is deferred**. This is not the concurrent runtime pass criterion for the current change.
 
 Evidence gathered:
 
 - Root `scripts/start-all.ps1` coordinates normal multi-service startup and delegates single streaming startup to `bim-streaming-server/scripts/start-streaming-server.ps1`.
-- No root `scripts/` orchestration entrypoint currently launches two or more Kit instances with distinct signaling ports.
+- The original implementation had no root `scripts/` orchestration entrypoint that launched two or more Kit instances with distinct signaling ports.
 - Existing coordinator tests cover `dedicated_instance` allocation semantics, but this remains control-plane evidence only.
 
-Conclusion: `dedicated_instance` runtime streaming is not verified on this machine yet. The next runnable step is a root `scripts/` orchestration entrypoint that can launch / check multiple Kit instances with distinct signaling ports, then run two browsers against distinct `kit_instance_bindings[]`.
+Conclusion for this historical probe: `dedicated_instance` runtime streaming is deferred as a capacity / isolation tier. The current concurrent runtime pass uses the same-Kit primary / spectator stream topology documented in section 6.8; a future dedicated multi-Kit pass still requires two live GPU-backed Kit endpoints and two browser pages with screenshot evidence.
 
-### 6.5 Large IFC worker/readiness stress
+### 6.5 Historical blocked probes before same-Kit pass
+
+Date: 2026-05-08.
+
+Status: **historical blocked / not passed probes only**. These runs were collected before the same-Kit primary / spectator implementation and are superseded by the passed runtime evidence in section 6.8.
+
+Historical evidence gathered:
+
+- GPU probe succeeded: `NVIDIA GeForce RTX 4060 Ti`, driver `580.97`, total memory `8188 MiB`.
+- `_worker` was started for this recheck with `WORKER_DEV_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage`; `/health` reported the dev IFC source root exists, is readable, and contains `13` IFC items.
+- The user's main checkout contains renderable fixture candidates under `C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\bim-models`: `許良宇圖書館建築_2026.usd` (`27525126` bytes) and `許良宇圖書館建築_2026.usdc` (`28458306` bytes).
+- The current worktree `bim-streaming-server\bim-models` contains only `.gitkeep` and `README.md`; the renderable USD / USDC fixture is not a tracked worktree artifact.
+- Current `_worker.complete_conversion_job()` still writes placeholder `model.usdc` content (`# worker adapter USDC placeholder`) rather than a renderable IFC-derived model.
+- A Kit process exists on this machine at `C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_build\windows-x86_64\release\kit\kit.exe` and listens on `49100`.
+- The service chain was executed with a worker-hosted copy of the known renderable `許良宇圖書館建築_2026.usdc` fixture. The first run used the original percent-encoded filename URL and produced `review_request_id=review_request_1778222190248`, `session_id=review_session_27369e16679e`, artifact URL `http://127.0.0.1:8005/objects/%E8%A8%B1%E8%89%AF%E5%AE%87%E5%9C%96%E6%9B%B8%E9%A4%A8%E5%BB%BA%E7%AF%89_2026.usdc`, and screenshot `docs/verification/evidence/2026-05-08-runtime-e2e/single-kit-review_session_27369e16679e.png`.
+- The second run copied the same USDC fixture to an ASCII worker object name and produced `review_request_id=review_request_1778222264807`, `session_id=review_session_580f5948804e`, artifact URL `http://127.0.0.1:8005/objects/library_2026.usdc`, and screenshot `docs/verification/evidence/2026-05-08-runtime-e2e/single-kit-ascii-review_session_580f5948804e.png`.
+- Browser/WebRTC evidence for the ASCII run: `browser_url=http://127.0.0.1:5173/?sessionId=review_session_580f5948804e&streamTimeoutMs=30000`, capture time `2026-05-08T06:38:46.828Z`, Kit endpoint `127.0.0.1:49100`, `readyState=4`, `networkState=2`, `paused=false`, `currentTime=59.1656`, `videoWidth=1920`, `videoHeight=1080`, `srcObject=true`, and no WebRTC diagnostic banner.
+- DataChannel evidence for the ASCII run: `openStageRequest` was sent for `http://127.0.0.1:8005/objects/library_2026.usdc` and `openedStageResult` appeared in the viewer evidence panel, but the browser console also recorded `Kit App communicates there was an error loading: http://127.0.0.1:8005/objects/library_2026.usdc`; the viewer never reached `模型已載入`.
+- Because `openedStageResult` was an error path rather than a stage-load success, the archived screenshots from these early runs are retained as blocker evidence only and are not used as pass evidence.
+- A `routing_policy=dedicated_instance` coordinator probe produced `session_id=review_session_6f8dcf2800bb`, `kit_instance_ids=kit_local_001,kit_local_002`, but both bindings used `127.0.0.1:49100` and `distinct_stream_config_count=1`; this was the false multi-Kit binding defect.
+- The follow-up implementation adds coordinator `KIT_INSTANCE_ENDPOINTS`, optional `mediaPort` in stream configs, `bim-streaming-server/scripts/start-streaming-server.ps1 -SignalPort/-StreamPort`, root `scripts/start-all.ps1 -KitSignalPorts/-KitStreamPorts`, and browser page endpoint targeting via `kitInstanceId` or explicit WebRTC ports.
+- Verification completed for the implementation layer: `bim-review-coordinator` build and Vitest passed, `web-viewer-sample` build passed, PowerShell parser checks passed for root start/stop scripts, and `start-streaming-server.ps1 -PreflightOnly` accepted distinct test ports.
+
+Conclusion for these historical probes: they identified the placeholder IFC conversion boundary, the old stage-load failure, and the false multi-Kit binding defect. They do not represent the final runtime status for this change; the current pass/fail result is recorded in section 6.8, where the worker-hosted renderable USDC reached live GPU browser readiness and same-Kit primary / spectator screenshot evidence.
+
+### 6.6 Large IFC worker/readiness stress
 
 Status: **passed at `_worker` facade/readiness tier; not a real converter or viewport render pass**.
 
@@ -264,7 +291,7 @@ mapping_url: http://127.0.0.1:8005/objects/tenants/tenant_runtime_verify/project
 
 Conclusion: `_worker` can ingest the 89 MB repo-local IFC through the dev source flow and move the artifact group to `ready`. This is useful readiness evidence, but it does not measure real IFC geometry conversion cost because the current worker facade emits placeholder derived files.
 
-### 6.6 Socket.IO bounded ramp / 90% stress
+### 6.7 Socket.IO bounded ramp / 90% stress
 
 Prerequisite smoke:
 
@@ -295,3 +322,81 @@ coordinator health after run: status=ok
 ```
 
 Conclusion: Socket.IO collaboration passed a bounded 90-client stress run on this machine. This is not an absolute maximum-capacity proof because the ramp stopped at 100 stable clients; it is sufficient evidence for the current 90% target defined by this bounded apply pass.
+
+### 6.8 Same-Kit primary / spectator GPU runtime E2E
+
+Status: **passed at renderable worker-hosted USDC runtime tier**.
+
+Scope clarification:
+
+- This pass validates a real GPU-backed Kit runtime loading and rendering a worker-hosted renderable `.usdc`.
+- This pass validates concurrent viewing through one Kit process using primary + spectator WebRTC streams.
+- This pass does **not** validate real IFC geometry conversion, because `_worker` still emits placeholder `model.usdc` for its conversion adapter.
+- Dedicated multi-Kit process routing is deferred as a separate capacity / isolation tier.
+
+Official / MCP basis:
+
+- NVIDIA `omni.kit.livestream.app` documents primary streams and indexed `spectatorStream[]` entries. Runtime CLI settings can set `spectatorStream/0/streamType`, `spectatorStream/0/signalPort`, and `spectatorStream/0/streamPort`: https://docs.omniverse.nvidia.com/kit/docs/omni.kit.livestream.app/latest/Overview.html
+- NVIDIA `omni.services.livestream.webrtc` discovers primary app streams, spectator app streams, and AOV streams: https://docs.omniverse.nvidia.com/kit/docs/omni.services.livestream.webrtc/latest/Overview.html
+- Kit MCP setting search found the local primary stream settings under `/exts/omni.kit.livestream.app/primaryStream`, with default `signalPort=49100`, `streamPort=47998`, `streamType=webrtc`.
+
+Runtime setup:
+
+```txt
+GPU: NVIDIA GeForce RTX 4060 Ti
+Driver: 580.97
+Memory: 8188 MiB
+Kit process: one GPU-backed bim-streaming-server Kit process
+Primary stream: 127.0.0.1:49100 / 47998
+Spectator stream: 127.0.0.1:49110 / 48008
+Worker object URL: http://127.0.0.1:8005/objects/runtime-e2e/2026-05-08/library_2026.usdc
+USDC SHA256: 60DA4E7BB458A053E3642389420903C8D8715E87957D1C018C7FB4B36A60F4A9
+review_request_id: review_request_samekit_20260508_173656
+session_id: review_session_b2d84c44ae31
+```
+
+Command:
+
+```powershell
+$env:RUNTIME_E2E_SAME_KIT_ONLY='1'
+$env:RUNTIME_E2E_SAME_KIT_SESSION='review_session_b2d84c44ae31'
+$env:RUNTIME_E2E_SEPARATE_BROWSERS='1'
+$env:RUNTIME_E2E_STREAM_TIMEOUT_MS='180000'
+$env:RUNTIME_E2E_PRIMARY_SIGNALING_PORT='49100'
+$env:RUNTIME_E2E_PRIMARY_MEDIA_PORT='0'
+$env:RUNTIME_E2E_SPECTATOR_SIGNALING_PORT='49110'
+$env:RUNTIME_E2E_SPECTATOR_MEDIA_PORT='0'
+node .\scripts\verify-runtime-e2e-cdp.mjs
+```
+
+Evidence summary:
+
+| Stream role | Browser URL target | Video readiness | Stage / control evidence | Screenshot |
+| --- | --- | --- | --- | --- |
+| Primary | `signalingPort=49100`, `streamRole=primary` | `readyState=4`, `videoWidth=1920`, `videoHeight=1080`, `srcObject=true`, `bodyHasWaitingText=false` | `bodyHasDataChannelReply=true`, `bodyHasMakePickableResponse=true`, console stage prims evidence | `docs/verification/evidence/2026-05-08-runtime-e2e/same-kit-review_session_b2d84c44ae31-kit_local_001-primary.png` |
+| Spectator | `signalingPort=49110`, `streamRole=spectator` | `readyState=4`, `videoWidth=1920`, `videoHeight=1080`, `srcObject=true`, `bodyHasWaitingText=false` | view-only spectator stream on same `session_id`; no app DataChannel required | `docs/verification/evidence/2026-05-08-runtime-e2e/same-kit-review_session_b2d84c44ae31-kit_local_001_spectator_0-spectator.png` |
+
+Viewport crops:
+
+```txt
+docs/verification/evidence/2026-05-08-runtime-e2e/same-kit-review_session_b2d84c44ae31-kit_local_001-primary-viewport.png
+docs/verification/evidence/2026-05-08-runtime-e2e/same-kit-review_session_b2d84c44ae31-kit_local_001_spectator_0-spectator-viewport.png
+```
+
+Coordinator continuity:
+
+```txt
+participants:
+- runtime_samekit_primary (Runtime Primary)
+- runtime_samekit_spectator (Runtime Spectator)
+session status: active
+mode: single_kit_shared_state
+```
+
+Archived machine-readable evidence:
+
+```txt
+docs/verification/evidence/2026-05-08-runtime-e2e/runtime-e2e-browser-summary.json
+```
+
+Conclusion: the two remaining live GPU evidence items are now passed for this stage: single Kit GPU render with a renderable worker-hosted USDC, and concurrent same-Kit primary / spectator browser E2E with screenshot evidence.

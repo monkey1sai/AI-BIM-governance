@@ -4,6 +4,11 @@ param(
     [switch] $SkipViewer,
     [switch] $SkipCoordinator,
     [switch] $Visible,           # 顯示 console 視窗 (預設背景隱藏)
+    [string] $KitHost = "127.0.0.1",
+    [string[]] $KitSignalPorts = @("49100"),
+    [string[]] $KitStreamPorts = @("47998"),
+    [string[]] $KitSpectatorSignalPorts = @(),
+    [string[]] $KitSpectatorStreamPorts = @(),
     [int] $HealthTimeoutSeconds = 30
 )
 
@@ -63,6 +68,92 @@ $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) { $Python = "python" }
 
 $WindowStyle = if ($Visible) { "Normal" } else { "Hidden" }
+
+function Get-KitEndpointSpecs {
+    $signalPorts = @(ConvertTo-PortList -Values $KitSignalPorts -Name "KitSignalPorts")
+    $streamPorts = @(ConvertTo-PortList -Values $KitStreamPorts -Name "KitStreamPorts")
+    if ($signalPorts.Count -eq 0) {
+        throw "KitSignalPorts must contain at least one port."
+    }
+    if ($signalPorts.Count -ne $streamPorts.Count) {
+        throw "KitSignalPorts and KitStreamPorts must have the same number of entries."
+    }
+
+    $endpoints = @()
+    for ($i = 0; $i -lt $signalPorts.Count; $i++) {
+        $endpoints += [pscustomobject]@{
+            Id = "kit_local_{0:D3}" -f ($i + 1)
+            SignalingServer = $KitHost
+            SignalingPort = [int]$signalPorts[$i]
+            MediaServer = $KitHost
+            MediaPort = [int]$streamPorts[$i]
+        }
+    }
+    return $endpoints
+}
+
+function ConvertTo-PortList {
+    param(
+        [string[]] $Values,
+        [string] $Name
+    )
+
+    $ports = @()
+    foreach ($value in $Values) {
+        foreach ($part in ($value -split ",")) {
+            $trimmed = $part.Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+            $port = 0
+            if (-not [int]::TryParse($trimmed, [ref] $port)) {
+                throw "$Name contains a non-integer port: $trimmed"
+            }
+            $ports += $port
+        }
+    }
+    return $ports
+}
+
+function Get-KitSpectatorEndpointSpecs {
+    $signalPorts = @(ConvertTo-PortList -Values $KitSpectatorSignalPorts -Name "KitSpectatorSignalPorts")
+    $streamPorts = @(ConvertTo-PortList -Values $KitSpectatorStreamPorts -Name "KitSpectatorStreamPorts")
+    if ($signalPorts.Count -ne $streamPorts.Count) {
+        throw "KitSpectatorSignalPorts and KitSpectatorStreamPorts must have the same number of entries."
+    }
+
+    $endpoints = @()
+    for ($i = 0; $i -lt $signalPorts.Count; $i++) {
+        $endpoints += [pscustomobject]@{
+            Index = $i
+            SignalingPort = [int]$signalPorts[$i]
+            MediaPort = [int]$streamPorts[$i]
+        }
+    }
+    return $endpoints
+}
+
+$KitEndpointSpecs = @(Get-KitEndpointSpecs)
+$KitSpectatorEndpointSpecs = @(Get-KitSpectatorEndpointSpecs)
+if ($KitEndpointSpecs.Count -gt 1 -and $KitSpectatorEndpointSpecs.Count -gt 0) {
+    throw "Kit spectator streams are configured for a single Kit process. Use one KitSignalPort when KitSpectatorSignalPorts is set."
+}
+$KitEndpointObjects = @(
+    $KitEndpointSpecs | ForEach-Object {
+        [ordered]@{
+            id = $_.Id
+            signalingServer = $_.SignalingServer
+            signalingPort = $_.SignalingPort
+            mediaServer = $_.MediaServer
+            mediaPort = $_.MediaPort
+        }
+    }
+)
+$KitEndpointJson = ConvertTo-Json -InputObject $KitEndpointObjects -Compress
+
+$env:KIT_STREAM_SERVER = $KitEndpointSpecs[0].SignalingServer
+$env:KIT_SIGNALING_PORT = [string]$KitEndpointSpecs[0].SignalingPort
+$env:KIT_MEDIA_SERVER = $KitEndpointSpecs[0].MediaServer
+$env:KIT_MEDIA_PORT = [string]$KitEndpointSpecs[0].MediaPort
+$env:KIT_INSTANCE_ENDPOINTS = $KitEndpointJson
 
 function Test-AlreadyRunning {
     param([string] $Name)
@@ -156,16 +247,32 @@ if (-not $SkipCoordinator) {
 }
 
 if (-not $SkipStreaming) {
-    Start-LocalService `
-        -Name "bim-streaming-server" `
-        -WorkingDirectory (Join-Path $RepoRoot "bim-streaming-server") `
-        -FilePath "powershell.exe" `
-        -Arguments @(
+    foreach ($endpoint in $KitEndpointSpecs) {
+        $serviceName = if ($KitEndpointSpecs.Count -eq 1) { "bim-streaming-server" } else { "bim-streaming-server-$($endpoint.Id)" }
+        $streamingArguments = @(
             "-ExecutionPolicy", "Bypass",
             "-NoProfile",
             "-File", "$RepoRoot\bim-streaming-server\scripts\start-streaming-server.ps1",
+            "-InstanceId", $endpoint.Id,
+            "-SignalPort", [string]$endpoint.SignalingPort,
+            "-StreamPort", [string]$endpoint.MediaPort,
+            "-TraceRoot", ".\logs\nvstreamer\$($endpoint.Id)",
+            "-PortableRoot", ".\logs\nvstreamer\$($endpoint.Id)\portable",
+            "-ResetUser",
             "-SkipAutoLoad"
         )
+        if ($KitSpectatorEndpointSpecs.Count -gt 0) {
+            $streamingArguments += "-SpectatorSignalPorts"
+            $streamingArguments += (($KitSpectatorEndpointSpecs | ForEach-Object { [string]$_.SignalingPort }) -join ",")
+            $streamingArguments += "-SpectatorStreamPorts"
+            $streamingArguments += (($KitSpectatorEndpointSpecs | ForEach-Object { [string]$_.MediaPort }) -join ",")
+        }
+        Start-LocalService `
+            -Name $serviceName `
+            -WorkingDirectory (Join-Path $RepoRoot "bim-streaming-server") `
+            -FilePath "powershell.exe" `
+            -Arguments $streamingArguments
+    }
 }
 
 if (-not $SkipViewer) {
@@ -187,7 +294,13 @@ if (-not $SkipViewer) {
     Wait-Health -Name "web-viewer-sample     (步驟 ④)" -Url "http://127.0.0.1:5173" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 }
 if (-not $SkipStreaming) {
-    Write-Host "[note ] bim-streaming-server (Kit) 沒有 HTTP /health；請看 scripts/.run/bim-streaming-server.log 確認啟動進度" -ForegroundColor DarkGray
+    $kitSummary = ($KitEndpointSpecs | ForEach-Object { "$($_.Id)=$($_.SignalingServer):$($_.SignalingPort)/$($_.MediaPort)" }) -join ", "
+    Write-Host "[note ] bim-streaming-server (Kit) 沒有 HTTP /health；請看 scripts/.run/bim-streaming-server*.log 確認啟動進度" -ForegroundColor DarkGray
+    Write-Host "[note ] KIT_INSTANCE_ENDPOINTS: $kitSummary" -ForegroundColor DarkGray
+    if ($KitSpectatorEndpointSpecs.Count -gt 0) {
+        $spectatorSummary = ($KitSpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=${KitHost}:$($_.SignalingPort)/$($_.MediaPort)" }) -join ", "
+        Write-Host "[note ] Kit spectator streams: $spectatorSummary" -ForegroundColor DarkGray
+    }
 }
 
 Write-Host ""

@@ -150,6 +150,15 @@ This section describes the required settings in the [stream.config.json](stream.
 
 Local streaming is used when connecting directly to a running Kit app. To use this option, set the source field to `"local"` in the [stream.config.json](stream.config.json#L3). You can also modify the [server](stream.config.json#L18), [signalingPort](stream.config.json#L19) and [mediaPort](stream.config.json#L20) values, but default values are already provided.
 
+For AI-BIM same-Kit concurrent runtime verification, open one browser page for the primary stream and one isolated browser page for a spectator stream. The primary page provides DataChannel stage-load evidence; the spectator page is view-only and connects with `streamRole=spectator`:
+
+```txt
+http://127.0.0.1:5173/?sessionId={session_id}&kitInstanceId=kit_local_001&streamRole=primary&signalingPort=49100&mediaPort=0
+http://127.0.0.1:5173/?sessionId={session_id}&kitInstanceId=kit_local_001_spectator_0&streamRole=spectator&signalingPort=49110&mediaPort=0
+```
+
+Each page still owns a single `AppStreamer` connection; concurrent evidence should use two browser pages or isolated browser contexts and capture one screenshot per stream role. Dedicated multi-Kit process routing remains a separate capacity-tier validation.
+
 #### Omniverse Kit App Streaming
 
 Omniverse Kit Application Streaming (OKAS) is an API that provides Kit app streaming on demand. Set the `source` field to `"stream"` in the [stream.config.json](stream.config.json#L3). You can also provide a default [app server](stream.config.json#L7) and [stream server](stream.config.json#L8), but these values aren't required as you can set them in the `Server Information` form when you run this sample.

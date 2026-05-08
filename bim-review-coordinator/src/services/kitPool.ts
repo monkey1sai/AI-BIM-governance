@@ -1,15 +1,17 @@
-import type { CoordinatorConfig } from "../config.js";
+import type { CoordinatorConfig, KitInstanceEndpointConfig } from "../config.js";
 import type { ArtifactBinding, KitInstance, KitInstanceBinding, RoutingPolicy } from "../types.js";
 import { nowIso } from "../utils/time.js";
 
 export function allocateLocalKitInstance(config: CoordinatorConfig): KitInstance {
+  const endpoint = firstKitEndpoint(config);
   return {
-    instance_id: "kit_local_001",
+    instance_id: endpoint.id,
     provider: "local_fixed",
     status: "ready",
-    stream_server: config.kitStreamServer,
-    signaling_port: config.kitSignalingPort,
-    media_server: config.kitMediaServer,
+    stream_server: endpoint.signalingServer,
+    signaling_port: endpoint.signalingPort,
+    media_server: endpoint.mediaServer,
+    media_port: endpoint.mediaPort,
   };
 }
 
@@ -20,21 +22,23 @@ export function allocateKitInstanceBindings(
   tenantId: string,
   kitProfile: Record<string, unknown> = {},
 ): KitInstanceBinding[] {
-  const defaultCapacitySlots = routingPolicy === "dedicated_instance" ? Math.max(artifactBindings.length, 1) : 1;
+  const endpoints = kitEndpointPool(config);
+  const defaultCapacitySlots = routingPolicy === "dedicated_instance" ? endpoints.length : 1;
   const capacitySlots = resolveCapacitySlots(kitProfile.capacity_slots, defaultCapacitySlots);
-  if (capacitySlots <= 0) {
+  const effectiveCapacitySlots = Math.min(capacitySlots, endpoints.length);
+  if (effectiveCapacitySlots <= 0) {
     return [];
   }
 
   const profile = typeof kitProfile.profile === "string" ? kitProfile.profile : "local_fixed";
   const timestamp = nowIso();
   if (routingPolicy === "dedicated_instance") {
-    if (artifactBindings.length > capacitySlots) {
+    if (artifactBindings.length > effectiveCapacitySlots) {
       return [];
     }
     return artifactBindings.map((binding, index) =>
       buildBinding(config, {
-        kitInstanceId: `kit_local_${String(index + 1).padStart(3, "0")}`,
+        endpoint: endpoints[index],
         tenantId,
         assignedArtifactIds: [binding.artifact_id],
         profile,
@@ -46,7 +50,7 @@ export function allocateKitInstanceBindings(
 
   return [
     buildBinding(config, {
-      kitInstanceId: "kit_local_001",
+      endpoint: endpoints[0],
       tenantId,
       assignedArtifactIds: artifactBindings.map((binding) => binding.artifact_id),
       profile,
@@ -65,7 +69,26 @@ export function legacyKitInstanceFromBinding(binding: KitInstanceBinding | undef
     stream_server: binding.stream_config.signalingServer,
     signaling_port: binding.stream_config.signalingPort,
     media_server: binding.stream_config.mediaServer,
+    media_port: binding.stream_config.mediaPort,
   };
+}
+
+function defaultKitEndpoint(config: CoordinatorConfig): KitInstanceEndpointConfig {
+  return {
+    id: "kit_local_001",
+    signalingServer: config.kitStreamServer,
+    signalingPort: config.kitSignalingPort,
+    mediaServer: config.kitMediaServer,
+    mediaPort: config.kitMediaPort,
+  };
+}
+
+function kitEndpointPool(config: CoordinatorConfig): KitInstanceEndpointConfig[] {
+  return config.kitInstanceEndpoints.length > 0 ? config.kitInstanceEndpoints : [defaultKitEndpoint(config)];
+}
+
+function firstKitEndpoint(config: CoordinatorConfig): KitInstanceEndpointConfig {
+  return kitEndpointPool(config)[0];
 }
 
 function resolveCapacitySlots(value: unknown, fallback: number): number {
@@ -94,7 +117,7 @@ export function releaseKitBindings(bindings: KitInstanceBinding[]): KitInstanceB
 }
 
 interface BuildBindingInput {
-  kitInstanceId: string;
+  endpoint: KitInstanceEndpointConfig;
   tenantId: string;
   assignedArtifactIds: string[];
   profile: string;
@@ -103,16 +126,18 @@ interface BuildBindingInput {
 }
 
 function buildBinding(config: CoordinatorConfig, input: BuildBindingInput): KitInstanceBinding {
+  const endpoint = input.endpoint || firstKitEndpoint(config);
   return {
-    kit_instance_id: input.kitInstanceId,
+    kit_instance_id: endpoint.id,
     provider: "local_fixed",
     tenant_id: input.tenantId,
     assigned_artifact_ids: input.assignedArtifactIds,
     status: "ready",
     stream_config: {
-      signalingServer: config.kitStreamServer,
-      signalingPort: config.kitSignalingPort,
-      mediaServer: config.kitMediaServer,
+      signalingServer: endpoint.signalingServer,
+      signalingPort: endpoint.signalingPort,
+      mediaServer: endpoint.mediaServer,
+      mediaPort: endpoint.mediaPort,
     },
     started_at: input.timestamp,
     last_heartbeat_at: input.timestamp,
