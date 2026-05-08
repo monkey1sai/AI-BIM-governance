@@ -3,6 +3,7 @@ import base64
 import json
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -297,6 +298,19 @@ def test_store_create_source_artifact_stores_sha256_in_metadata(tmp_path: Path):
     import hashlib
     expected = hashlib.sha256(content.encode("utf-8")).hexdigest()
     assert result["sha256"] == expected
+
+
+def test_store_create_source_artifact_preserves_original_filename_in_metadata():
+    store_root = Path(__file__).resolve().parents[1] / "pytest-cache-files-store" / uuid4().hex
+    store_root.mkdir(parents=True, exist_ok=False)
+    store = make_store(store_root)
+    original_filename = "許良宇圖書館建築_2026.ifc"
+    req = make_intake_request(filename=original_filename)
+
+    result = store.create_source_artifact(req)
+
+    assert result["original_filename"] == original_filename
+    assert result["metadata"]["original_filename"] == original_filename
 
 
 def test_store_create_source_artifact_content_base64_decodes_correctly(tmp_path: Path):
