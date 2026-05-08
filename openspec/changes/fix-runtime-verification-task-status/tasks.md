@@ -13,7 +13,7 @@
 - [ ] 2.3 Update the task status notes to explicitly say which tasks are complete only as blocker classification and which runtime tiers remain not passed.
 - [ ] 2.4 If the verification report lacks the re-verification evidence from task group 1, update the report with the exact blocker facts without claiming runtime success.
 
-## 3. Validate And Review
+## 3. Validation And Review
 
 - [ ] 3.1 Run `openspec validate fix-runtime-verification-task-status`.
 - [ ] 3.2 Run `openspec validate complete-spec-runtime-verification`.
