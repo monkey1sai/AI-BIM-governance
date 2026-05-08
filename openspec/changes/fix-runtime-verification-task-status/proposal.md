@@ -4,7 +4,7 @@
 
 ## What Changes
 
-- 定義 runtime verification tasks 的 checklist 語意：`[x]` 只能代表該任務描述本身已完成，不能暗示 blocked runtime tier 已 successful validated。
+- 定義 runtime verification tasks 的 checklist 語意：`[x]` 只能代表該任務描述本身已完成，不能暗示 blocked runtime tier 已 successfully validated。
 - 將需要 GPU render 或 multi-Kit topology 的 tasks 改寫成 attempt / classify / record blocker 形式，或在缺少前置條件時保持未完成。
 - 要求 verification report 與 tasks 對 blocked/not passed 的描述一致，特別是 viewport screenshot、non-zero video frame、distinct Kit endpoints、concurrent browser readiness。
 - 不新增 production runtime 功能，不啟動 retired services，不修改 REST API、Socket.IO event、WebRTC / DataChannel payload 或 storage schema。
