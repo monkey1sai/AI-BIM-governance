@@ -31,4 +31,8 @@ GET  /objects/{path}
 
 `POST /api/artifacts` accepts either `content_base64`, `content_text`, `source_url`, or `signed_upload_url` plus lineage fields. File bytes are stored under `data/objects/tenants/...`.
 
+Source artifact responses, source metadata, source index entries, and completed conversion results include `original_filename`, preserving the raw uploaded or selected IFC filename while keeping the on-disk object name sanitized for path safety.
+
 `POST /api/conversions` creates a queued job. With the default `run_background=true`, FastAPI schedules an inline local adapter conversion that writes deterministic demo `model.usdc`, index JSON, mapping JSON, and `metadata.json`, then posts metadata to `_bim-control`.
+
+The default worker adapter output is not a Kit-ready geometry conversion. Real IFC -> USDC validation uses the Kit/HOOPS converter in `bim-streaming-server/scripts/convert-ifc-to-usdc.ps1` and the stage inspection helper in `bim-streaming-server/scripts/inspect-usd-stage-and-quit.py`. The opt-in pytest smoke `test_real_ifc_files_convert_to_kit_openable_usdc_when_enabled` runs only when `WORKER_RUN_REAL_USDC_SMOKE=1` is set.

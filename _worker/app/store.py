@@ -56,6 +56,7 @@ class WorkerStore:
         source_system = safe_id(request.source_system, "source_system")
         artifact_group_id = safe_id(request.artifact_group_id or f"ag_{uuid4().hex[:12]}", "artifact_group_id")
         source_artifact_id = f"artifact_src_{uuid4().hex[:12]}"
+        original_filename = request.filename
         filename = safe_filename(request.filename)
         content = self._content_bytes(request)
         sha256 = hashlib.sha256(content).hexdigest()
@@ -88,6 +89,7 @@ class WorkerStore:
             "model_version_id": model_version_id,
             "source_system": source_system,
             "source_format": request.source_format,
+            "original_filename": original_filename,
             "sha256": sha256,
             "version_no": 1,
             "uploaded_by": request.uploaded_by,
@@ -109,6 +111,7 @@ class WorkerStore:
             "project_id": project_id,
             "model_version_id": model_version_id,
             "sha256": sha256,
+            "original_filename": original_filename,
             "object_key": object_key.as_posix(),
             "object_url": self.object_url(object_key.as_posix()),
             "status": "uploaded",
@@ -248,6 +251,7 @@ class WorkerStore:
             "model_version_id": job["model_version_id"],
             "source_artifact_id": job["source_artifact_id"],
             "usdc_artifact_id": usdc_artifact_id,
+            "original_filename": source["metadata"].get("original_filename"),
             "derived_artifact_ids": {
                 "model_usdc": usdc_artifact_id,
                 "ifc_index": f"artifact_ifc_index_{conversion_job_id.removeprefix('conv_')}",
@@ -362,6 +366,7 @@ class WorkerStore:
             {
                 "source_artifact_id": source_artifact_id,
                 "artifact_group_id": metadata["artifact_group_id"],
+                "original_filename": metadata.get("original_filename"),
                 "object_key": object_key.as_posix(),
                 "object_url": self.object_url(object_key.as_posix()),
                 "metadata": metadata,
