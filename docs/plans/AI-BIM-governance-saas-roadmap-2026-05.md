@@ -2,9 +2,13 @@
 
 > **文件性質**：roadmap / planning artifact（不是 OpenSpec change，不修改產品程式碼）
 > **依據輸入**：使用者於 2026-05-08 提供的兩張架構圖（v1 路線圖 + v2 目標架構）
-> **基準**：`main` HEAD `cf669a1`（2026-05-08 archive `runtime-verification-evidence`）
+> **基準**：撰寫時 `main` HEAD `5a01487`（與 `origin/main` 同步）；OpenSpec 規格權威見 `openspec/specs/`，已歸檔提案見 `openspec/changes/archive/`（§1.4）。
 > **撰寫技能組合**：`openspec-explore` → `planner` → `incremental-implementation` → `spec-driven-development`
 > **回覆語言**：繁體中文
+>
+> **2026-05-08 follow-up 更新（OpenSpec 溯源 + §9 NVIDIA 語意定稿）**：
+> 1. **§1.4**：整理 `openspec/changes/archive/*` 已歸檔 change 與現行 **`openspec/specs/`**（9 個 capability）對照，避免 roadmap 與 spec 目錄漂移。
+> 2. **§9**：延續 MCP／OVAS／extension 官方文件交叉驗證結果，明確 **`kit.exe` = OS process**、**Multi‑Kit = 多進程／多容器**、**primary／spectator／AOV = 同一進程內可多 signaling endpoint**（與 §11.4 Multi‑Kit 定義互相引用）。
 >
 > **2026-05-08 15:00 更新（MCP 補強）**：透過本機 docker container 上的 NVIDIA NeMo Agent Toolkit MCP server（`kit-mcp:9902`、`usd-code-mcp:9903`，皆 healthy）與 NVIDIA 官方文件（`docs.omniverse.nvidia.com`）交叉驗證，校正 Phase 4 / Phase 5 的「實際可用 NVIDIA 真實能力」。詳見 §11；§2 / §3 / §9 / §6 對應段落已標 ⓜ 表示由 MCP 補正。
 >
@@ -52,7 +56,9 @@
 | `bim-streaming-server/` | 49100 | Omniverse Kit runtime + WebRTC + DataChannel | 部分（GPU/47998 在不同 apply 中時通時不通） |
 | `web-viewer-sample/` | 5173 | Browser client + Demo Control Panel | OK |
 
-### 1.2 已歸檔的 9 個 OpenSpec specs
+### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
+
+下列 **9** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。
 
 | Spec | 對應 v1 Phase | 對應 v2 Layer | 狀態 |
 |---|---|---|---|
@@ -83,6 +89,23 @@ multi-artifact-kit-routing dedicated_instance runtime  : 另一分支驗證中�
 ```
 
 > **註（2026-05-08 16:05）**：使用者另開一條分支驗證 `multi-artifact-kit-routing` 的 dedicated_instance runtime；本 roadmap 不重述該分支具體進度，待對應 PR merge 進 `main` 並更新 `runtime-verification-evidence` 之後再回填本表。
+
+### 1.4 OpenSpec 已歸檔 change → 現行 `openspec/specs/` 溯源
+
+> **用途**： roadmap 只摘要狀態；**需求句式與 Requirement 編號以各 spec 為準**。下列為 `openspec/changes/archive/` 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-08 盤點）。
+
+| 已歸檔 change（`openspec/changes/archive/`） | 影響的現行 spec（`openspec/specs/`） | 摘要 |
+|---|---|---|
+| `2026-05-07-add-dev-ifc-source-selection-flow` | `worker-dev-ifc-source-selection`、`worker-demo-upload-convert-ui`、`legacy-storage-conversion-retirement`、`streaming-multi-layer-payload-loading` | `_worker` 為 demo ①② 唯一入口；退役 `_s3_storage`／`_conversion-service` 主路徑；多 binding stage load |
+| `2026-05-07-introduce-worker-review-session-lifecycle` | `worker-artifact-pipeline`、`review-session-request-lifecycle`、`multi-artifact-kit-routing`、`session-first-review-viewer` | review intent → session lifecycle；`artifact_bindings`／`kit_instance_bindings`；session-first viewer |
+| `2026-05-08-add-worker-original-filename-tracking` | `worker-artifact-pipeline`、`worker-dev-ifc-source-selection`（MODIFY） | `original_filename` traceability（metadata／callback／UI contract） |
+| `2026-05-08-complete-spec-runtime-verification` | `runtime-verification-evidence`（新增） | contract／single‑Kit／multi‑Kit／stress 驗證分層與證據格式 |
+
+```txt
+規格目錄約定：
+  openspec/specs/<capability-id>/spec.md   ← 現行權威
+  openspec/changes/archive/<date>-<slug>/   ← 已合併 PR 的提案／設計／tasks／當時 spec 快照
+```
 
 ---
 
@@ -551,13 +574,71 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 > **輸入來源**：使用者於 2026-05-08 14:50 追加要求；以 `bim-streaming-server/SYSTEM_DESIGN.md` 與 `docs/verification/2026-05-08-spec-end-to-end-verification.md` 已量測值為基礎，不外推未驗證的規格。
 >
 > **適用範圍**：本節只規劃 Phase 4（高併發平台化）與 Phase 5（Omniverse 平台能力最大化）兩階段的硬體；Phase 6（K8s / Backup / SLA）的硬體配置會在 `production-deployment-baseline` spec 階段才細化。
+>
+> **2026-05-08 更新**：交叉驗證並改寫整個 §9；新增 §9.0 釐清 NVIDIA 語意（`kit.exe` = OS process；Multi-Kit = 多進程／多容器；primary／spectator／AOV = 同一進程內可多 signaling endpoint）。依據 [OVAS Overview](https://docs.omniverse.nvidia.com/ovas/latest/index.html)、[`omni.services.livestream.webrtc` 文件](https://docs.omniverse.nvidia.com/extensions/latest/ext_livestream/webrtc.html)、本機 `kit-mcp`／`usd-code-mcp`、`bim-streaming-server/SYSTEM_DESIGN.md`。
+
+### 9.0 NVIDIA／Omniverse 對齊：`kit.exe`、Kit instance、WebRTC endpoint、GPU（2026-05-08 交叉驗證）
+
+> **為何需要本節**：舊稿將「1 GPU 可跑多少 Kit」講得過簡，容易被誤讀成「**一個** `kit.exe` **進程**底下還能掛多台 **獨立** Omniverse streaming app／每台各有獨立 framebuffer」，因而與 NVIDIA 官方模型不符。以下將語意收斂到 **OVAS + Kit livestream extension 官方文件 + 本 repo `SYSTEM_DESIGN.md`**，並以本機 **`kit-mcp:9902`**、`usd-code-mcp:9903` 做輔助查證。
+
+#### 驗證來源（工具與文件）
+
+```txt
+- NVIDIA Kit App Streaming (OVAS) Overview：
+  https://docs.omniverse.nvidia.com/ovas/latest/index.html
+  （Kubernetes 上對 containerized Kit apps 做 registration / configuration / lifecycle management，
+   「dynamically instantiated as streams」）
+
+- NVIDIA Extension：`omni.services.livestream.webrtc` Overview（primary / spectator / AOV 多 stream、對應多組 signalPort 範例）
+  https://docs.omniverse.nvidia.com/extensions/latest/ext_livestream/webrtc.html
+
+- 本機 kit-mcp（NeMo Agent Toolkit MCP @ :9902）示例：`search_kit_extensions("livestream session webrtc multiple clients")`
+  → top hits 包含 omni.kit.livestream.app（application framebuffer）、omni.services.livestream.session（session control endpoints）、
+    omni.kit.livestream.webrtc；呼應「單一 Kit app / session」語意，而非 Kit base 內建 multi-container scheduler。
+
+- 本機 usd-code-mcp（:9903）：例如 `list_usd_modules` 可用於 USD／prim／mapping schema 設計；
+  WebRTC／Kit process topology 非 USD API 的權威範圍。
+
+- 本 repo：`bim-streaming-server/SYSTEM_DESIGN.md` 假設 6「One Kit process = one stage = one user session」
+```
+
+#### A. 名詞對照表（本 roadmap 建議用法）
+
+| 名詞 | 建議語意（務必區分） | 常見誤解 |
+|---|---|---|
+| **`kit.exe`／Kit OS process** | **一個作業系統行程**，載入一份 `.kit` manifest + 啟用的 extensions | 說成「GPU 裡的一個抽象 streaming worker」而忽略 **process／container 邊界** |
+| **Kit Application Instance（OVAS／§11.4）** | **一個** Kit **行程／容器**，對應 **一個 application framebuffer**（見 `omni.kit.livestream.app` 描述） | 把「primary + spectator + AOV」**同一進程內**的多條串流 **誤計成**「多台 Kit instance」 |
+| **Multi-Kit instance 並行（Phase 4.4）** | **多台**互相獨立的 Kit **進程**（通常 **一台進程一組 signaling／streaming 設定**，Tier A PoC 用遞增埠區隔） | 以為可在 **單一** `kit.exe` 內無限複製「獨立 Omniverse App Instance」而不增加 VRAM／encoder 成本 |
+| **WebRTC／signalPort（例：primary stream）** | **某一條** Kit stream endpoint 的 **信令埠**（例：49100）；媒體另有 stream port 設定（對照 §2 Phase 4.10、`omni.kit.livestream.webrtc`） | 「多個瀏覽器／tab **一定**要連不同埠」——實務上 **多個 PeerConnection 可對同一 signaling endpoint**；只有在你切到 **spectator／AOV** 或 **另一個 Kit 進程** 時才會出現 **第二個以上的 signalPort** |
+
+#### B. 官方架構結論（回答「一個 GPU 怎麼管多台 Kit？」）
+
+```txt
+1) 橫向擴展（真・多台 Kit／多個獨立 framebuffer／多個獨立 stage 負載）
+   = 多個 Kit Application Instance = 多個 OS process／containers。
+   OVAS 負責這些 container 的 lifecycle（對齊 Overview 原文）。
+
+2) 單一 Kit 進程內的可選「多條串流」
+   = primary framebuffer stream +（可選）spectator streams +（可選）AOV streams；
+   NVIDIA 官方文件示例會為 spectator 配置另一個 signalPort（例：49200）。
+   這仍是「同一個 Kit framebuffer／同一個 runtime」，不是 Phase 4.4 的「Multi-Kit instance」。
+
+3) web-viewer-sample（或 NVIDIA `omni.services.livestream.webrtc` 內建網頁）
+   - 連到「同一 Kit instance、同一 primary stream」：通常 **多個瀏覽器／多分頁 = 多個 WebRTC PeerConnection**，不一定要換 signalPort。
+   - 連到「同一 Kit instance、不同 spectator／AOV」：會看到 **多組 stream 設定／埠位**（REST `/api/stream-config`／下拉選單）。
+   - 連到「不同 Kit instance（不同 routing slot）」：Tier A 需要 **不同 signaling port pair**（或由 OVAS／LB 做路由）；這才是 dedicated_instance／GPU pool 意義上的 scale-out。
+```
+
+#### C. 與下文容量表的銜接
+
+後文若未另加注，**「並發 Kit instance／並發 review streaming slot」**預設指 **「獨立 Kit Application Instance（獨立 `kit.exe`／container）× 單一載入場景」**，對齊 `SYSTEM_DESIGN.md` 與 **§11.4**（NVIDIA Multi‑Kit／OVAS 語意）。**Spectator／AOV**應視為 **同一進程內附加 encoder／頻寬／VRAM 成本**，不得直接當成「又多一台 Kit」來套 `(VRAM ÷ 3 GB)` 公式。
 
 ### 9.1 規格依據（來自 SYSTEM_DESIGN.md §3 / §9）
 
 ```txt
 - Per-session VRAM 硬上限   : 3 GB（Kit + Hydra + RTX + 平均 USD 500 MB）
 - Per-session VRAM 峰值     : 5 GB（USD 峰值 2 GB 時）
-- 1 GPU 可跑 Kit instance   : VRAM // 3 GB（保留 1-2 GB 給 driver / NVENC / overhead）
+- 1 GPU 可同時跑的獨立 Kit 進程（Kit Application Instance）粗算上界 : VRAM // 3 GB（保留 1-2 GB 給 driver / NVENC / overhead）
 - Cold start                : 2-5s spawn + Kit init
 - Warm pool 建議            : 2-3 idle worker / host
 - DataChannel RTT p95       : < 100 ms
@@ -587,7 +668,7 @@ Driver   : 580.97
 | 元件 | 最低（現況可動） | 推薦（解 Phase 4 紅星 + #2） | 極限（Phase 5 全功能 dev） |
 |---|---|---|---|
 | **GPU** | RTX 4060 Ti 8 GB | **RTX 4090 / 5090 24-32 GB** | RTX 6000 Ada 48 GB / RTX Pro 6000 96 GB |
-| **同時 Kit instance** | 1（撞牆） | **6-9 個**（24 GB ÷ 3 GB） | 14-30 個（48-96 GB） |
+| **同時獨立 Kit 進程（≈ Kit Application Instance）** | 1（撞牆） | **6-9 個**（24 GB ÷ 3 GB） | 14-30 個（48-96 GB） |
 | **CPU** | 8 核 | **16 核**（5950X / 13900K / Ryzen 9） | 24 核+（Threadripper / W7-3455） |
 | **RAM** | 32 GB | **64 GB**（IFC parsing peak） | 128 GB |
 | **NVMe SSD** | 1 TB | **2 TB Gen4**（USD cache + 10 個 conversion job 並行） | 4 TB Gen4/Gen5 |
@@ -605,7 +686,7 @@ Driver   : 580.97
 #### Phase 4「最大化」單機可達上限（24 GB GPU）
 
 ```txt
-Kit Streaming Server  : 6-9 instance（per-session 3 GB cap）
+Kit Streaming（GPU） : 6-9 個獨立 Kit 進程／容器（各 ≈ 1 × Kit Application Instance；假設每進程 1 × stage、per-slot 3 GB VRAM cap）
 Conversion Worker     : 4 個 IFC→USDC parallel job（CPU only，不吃 VRAM）
 Coordinator           : 1 個 Node 進程
 _bim-control          : 1 個 FastAPI 進程
@@ -614,7 +695,9 @@ Redis                 : 1 個（cache + queue）
 Postgres              : 1 個（替換 JSON file store；可用 docker）
 Web Viewer dev server : 1 個
 
-→ 可容納並發 6-9 個 review session、24+ 個 collaboration viewer
+→ 「6-9」指的是 **6-9 條可並行的獨立 GPU streaming capacity（每台 Kit 進程一條）**；
+   collaboration viewer 數可以 **大於** Kit 進程數（多人連 **同一** Kit／同一 primary stream 時，WebRTC 為 **多 PeerConnection → 同一 signaling endpoint**，見 §9.0-B）。
+→ 若 routing policy 要求 **每個 session 一台獨立 Kit**，則「並發 review session」上限才會逼近 Kit 進程數。
 → 適合 1-3 名開發者本機壓測 P1/P2 候選 spec
 ```
 
@@ -663,7 +746,7 @@ Web Viewer dev server : 1 個
 # "omni.kit.livestream.aov" = { version = "9.0.0" }
 ```
 
-→ 結論：**24 GB 級開發機可承擔 Phase 4 的 6-9 並發 + Phase 5 多數能力的 dev 驗證**。同時跑重 Phase 5 + Phase 4 並發時需限制 Kit instance 在 3-4 個以內。**IAQ/HVAC/Sensor/IFC 必須在 §11 框架下自建，不能假設 Kit base 已內建**。
+→ 結論：**24 GB 級開發機**可承擔 Phase 4 約 **6-9 個獨立 Kit 進程**並發（外加 spectator／AOV 會吃掉額外 encoder／頻寬／VRAM），並支援 Phase 5 多數能力的 dev 驗證。同時跑重 Phase 5 + Phase 4 並發時需限制 **獨立 Kit 進程數**在 3-4 個以內。**IAQ/HVAC/Sensor/IFC 必須在 §11 框架下自建，不能假設 Kit base 已內建**。
 
 ### 9.3 SaaS 等級（中小型工作室）：cluster 配置
 
@@ -687,7 +770,7 @@ AI 規則 / 碳排檢查 : 每 review session 1-3 次
 
 | Layer | 主機 | 規格 | 數量 | 備註 |
 |---|---|---|---|---|
-| **L4 Omniverse Runtime（GPU）** | GPU host | RTX A5000 24 GB / L4 24 GB / RTX 4090 24 GB；32 核 CPU；128 GB RAM；2 TB NVMe | **2** | 6-8 Kit / host × 2 = 12-16 並發 session 上限 |
+| **L4 Omniverse Runtime（GPU）** | GPU host | RTX A5000 24 GB / L4 24 GB / RTX 4090 24 GB；32 核 CPU；128 GB RAM；2 TB NVMe | **2** | 每機 **6-8 個獨立 Kit 進程** × 2 = 12-16 streaming capacity（若以「每台機固定並發 session」估算上限） |
 | **L3 核心業務服務** | App host | 16 核 CPU；64 GB RAM；1 TB NVMe；無 GPU | **1** | 跑 `_bim-control` / coordinator / `_worker` / `notification` / `ai-rule-carbon`（mock） |
 | **L5 Conversion Worker** | CPU host | 32 核 CPU；128 GB RAM；4 TB NVMe（IFC parse + USD output） | **1** | 4-8 並行 conversion job |
 | **L5 平台能力** | Data host | 8 核 CPU；32 GB RAM；2 TB NVMe RAID1（Postgres + Redis） | **1** | Postgres 主節點 + Redis；本 tier 不做 read replica |
@@ -1031,7 +1114,7 @@ _worker conversion 架構:
 
 ### 11.4 NVIDIA 對「Multi-Kit Instance 並行」的官方定義（2026-05-08 17:00）
 
-> 回答使用者問題（2）：**NVIDIA 如何定義「Multi-Kit instance 並行」？**
+> **與 §9 的關係**：§9.0–§9.2 把 **`kit.exe`／進程／signalPort／spectator／AOV** 與「Multi‑Kit instance」的硬體容量語意對齊；本節保留 **OVAS／Kit App Instance／業務層 vs runtime 層** 的完整論述。
 >
 > 來源：MCP `kit-mcp` `search_kit_extensions` 結果 + NVIDIA OVAS 官方文件 Overview / Get Started 頁。
 
