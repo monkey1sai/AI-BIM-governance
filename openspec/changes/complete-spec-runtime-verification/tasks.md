@@ -17,20 +17,20 @@ Result: `[verify] stage loading DataChannel contract passed`; no failure asserti
 ## 3. Single Kit GPU Render Evidence
 
 - [x] 3.1 Select a valid geometry fixture from repo-local `storage/` (`C:\Repos\active\iot\AI-BIM-governance\storage` on the user's main Windows checkout); do not use the header-only `storage/sample.ifc` smoke fixture as render evidence.
-- [x] 3.2 Run the `_worker -> _bim-control -> bim-review-coordinator -> web-viewer-sample -> bim-streaming-server` flow with the valid fixture.
-- [x] 3.3 Capture `review_request_id`, `session_id`, artifact URLs, video readiness, non-zero video dimensions, `openedStageResult`, and viewport screenshot evidence.
+- [x] 3.2 Attempt the `_worker -> _bim-control -> bim-review-coordinator -> web-viewer-sample -> bim-streaming-server` flow with the valid fixture and record the exact pass / blocked boundary.
+- [x] 3.3 Attempt to capture `review_request_id`, `session_id`, artifact URLs, video readiness, non-zero video dimensions, `openedStageResult`, and viewport screenshot evidence; if render prerequisites are unavailable, record the blocked evidence-gathering point instead of claiming GPU render success.
 - [x] 3.4 Update the verification report with `passed`, `blocked`, or `failed` for single Kit GPU render, including exact prerequisites when blocked.
 
-Status recorded as blocked: a valid IFC fixture exists, but current `_worker` emits placeholder `model.usdc`, stream port `47998` was not reachable, and no renderable viewport screenshot evidence was captured.
+Status recorded as blocked after re-verification: a valid IFC fixture exists, but current `_worker` emits placeholder `model.usdc`, no Kit stream listener was present on `49100` / `47998` during review recheck, stream port `47998` was not reachable during apply, and no renderable viewport screenshot evidence was captured. Tasks 3.2 / 3.3 are complete only as blocked-evidence capture, not as successful GPU render validation.
 
 ## 4. Dedicated Multi-Kit Routing Evidence
 
 - [x] 4.1 Plan or inspect a root `scripts/` orchestration entrypoint for launching or checking two or more Kit instances with distinct signaling ports.
 - [x] 4.2 If multi Kit topology is unavailable, record `blocked` with the missing topology requirement and do not treat `0xC0F22219` on a single `local_fixed` instance as a routing failure.
-- [x] 4.3 If multi Kit topology is available, create a `dedicated_instance` review session and confirm distinct `kit_instance_bindings[]` and stream configs.
-- [x] 4.4 Validate concurrent browser readiness and Socket.IO collaboration continuity across the shared `session_id`.
+- [x] 4.3 Verify whether multi Kit topology is available for a `dedicated_instance` review session; if unavailable, record the topology blocker instead of claiming distinct `kit_instance_bindings[]` runtime confirmation.
+- [x] 4.4 Validate concurrent browser readiness and Socket.IO collaboration continuity across the shared `session_id` only when multiple Kit endpoints exist; otherwise record that runtime validation remains blocked.
 
-Status recorded as blocked: no root `scripts/` entrypoint currently launches two or more Kit instances with distinct signaling ports; existing dedicated-instance coverage is control-plane only.
+Status recorded as blocked after re-verification: root `scripts/start-all.ps1` launches only one streaming server process, `bim-streaming-server/scripts/start-streaming-server.ps1` uses fixed `49100` / `47998` ports, and no root `scripts/` entrypoint currently launches two or more Kit instances with distinct signaling ports. Tasks 4.3 / 4.4 are complete only as topology-blocker classification, not as successful multi-Kit runtime validation.
 
 ## 5. Stress Evidence
 
