@@ -1,62 +1,205 @@
-# AI-BIM-governance 專案開發流程
+# AI-BIM-governance 專案開發流程 v3
 
-> **依新版架構圖（v2）規劃，對齊 `AGENTS.md` 邊界、`openspec/specs/` 規格、`docs/contracts/` API、實際 commit 進度。**
+> **依新版架構圖 v1（PoC → SaaS 路線圖）+ v2（SaaS 級目標架構與落地順序）重寫。**
 >
-> 本次調整重點：把 `_s3_storage` 與 `_conversion-service` 合併為 `_worker`，補強 review session request、session lifecycle、多 artifact / 多 instance 的控制面。
+> 本次調整核心：**把 Omniverse 能力發揮到最大**（擬真建築、真實物理、環境感測、模擬驅動 AI 分析），並把 `_worker` 收檔案與轉檔流程、review session request、session lifecycle、多 artifact / 多 instance 收進正式控制面。
 >
-> 本文件不取代 `AGENTS.md`（repo 邊界 source of truth），不取代 `openspec/specs/`（capability requirement source of truth），也不取代 `docs/contracts/`（API source of truth）。本文件只是把它們組合成一條可執行的開發路線。
+> **本文件不取代 source of truth**：
+> - Repo 邊界 → [`AGENTS.md`](../AGENTS.md)
+> - Capability requirements → [`openspec/specs/`](../openspec/specs/) 9 份 spec
+> - API 規格 → [`docs/contracts/`](contracts/) 7 份合約
+> - 驗證證據 → [`docs/verification/`](verification/)
+>
+> 本文件是把它們組合成可執行的開發路線。
 
 ---
 
 ## 目錄
 
-1. [專案目標與核心邊界](#1-專案目標與核心邊界)
-2. [架構演進總覽](#2-架構演進總覽)
-3. [當前進度檢視](#3-當前進度檢視)
-4. [主要風險 / 缺口](#4-主要風險--缺口)
-5. [六大階段執行路線圖](#5-六大階段執行路線圖)
-6. [每階段驗收 KPI](#6-每階段驗收-kpi)
-7. [核心資料流（最新）](#7-核心資料流最新)
-8. [Source of Truth 與文件對應表](#8-source-of-truth-與文件對應表)
-9. [開發協作流程](#9-開發協作流程)
+1. [專案目標與架構視野](#1-專案目標與架構視野)
+2. [7 層目標架構（v2 圖）](#2-7-層目標架構v2-圖)
+3. [當前 Runtime 架構（worker-only）](#3-當前-runtime-架構worker-only)
+4. [當前進度檢視 + 驗證證據分層](#4-當前進度檢視--驗證證據分層)
+5. [主要風險 / 缺口](#5-主要風險--缺口)
+6. [IFC → USD 品質保證管線](#6-ifc--usd-品質保證管線)
+7. [六大階段執行路線圖](#7-六大階段執行路線圖)
+8. [每階段驗收 KPI](#8-每階段驗收-kpi)
+9. [核心資料流](#9-核心資料流)
+10. [Source of Truth 與文件對應表](#10-source-of-truth-與文件對應表)
+11. [開發協作流程](#11-開發協作流程)
+12. [下一步行動建議](#12-下一步行動建議)
 
 ---
 
-## 1. 專案目標與核心邊界
+## 1. 專案目標與架構視野
 
-### 核心目標
+### 1.1 終極目標
 
-把目前本地 PoC（IFC → USDC → 串流審查 → 多人協作 → 紀錄回寫）升級為**多租戶、高吞吐、可商轉的 BIM Streaming + AI Review Platform**。
+把目前本地 PoC（IFC → USDC → 串流審查 → 多人協作 → 紀錄回寫）升級為**多租戶、高吞吐、可商轉、可審核、可灰度上線的 BIM Streaming + AI Review SaaS Platform**。
 
-### 核心服務（current runtime）
+### 1.2 為什麼是 Omniverse + AI Review
 
-> 完整定義以 [`AGENTS.md` §1–§3](../AGENTS.md) 為準。
+1. **Omniverse 提供 RTX、PhysX、MDL、Sensor simulation** → 可同時做擬真建築、真實物理、環境感測、能耗模擬
+2. **DataChannel + WebRTC** → 瀏覽器原生即時 3D 串流，無需 Plugin
+3. **USD 是 Pixar 開源、業界標準** → 可與 Revit / IFC / DWG / 各家 BIM 工具互通
+4. **能在 USD 層做語意化 highlight / overlay / clash result** → AI 規則檢核 / 法規 / 碳排可在同一視覺平面呈現
+
+### 1.3 目前架構哲學（不可動搖的邊界）
+
+> 完整定義以 [`AGENTS.md`](../AGENTS.md) 為準。
+
+```txt
+資料權威            → _bim-control（metadata-only）
+檔案 + 轉檔邊界     → _worker（artifact + conversion facade）
+Session / 協作      → bim-review-coordinator
+3D runtime          → bim-streaming-server（Kit + WebRTC + USD stage）
+使用者操作          → web-viewer-sample（browser）
+```
+
+---
+
+## 2. 7 層目標架構（v2 圖）
+
+> 對應架構圖 v2 的層次劃分。從上到下：使用者 → Portal → 業務服務 → Omniverse runtime → 平台能力 → DevOps。
+
+### 2.1 七層概覽
+
+```mermaid
+flowchart TB
+    subgraph L1["① 使用者與權限層"]
+        U1[管理員] & U2[建築師] & U3[審查員] & U4[住戶] & U5[維護人員]
+        T[公司 → 租戶 → 區 → 棟 → 戶 → 號]
+        AUTH[SSO / JWT / RBAC / API Key]
+    end
+    subgraph L2["② Client / Portal 層"]
+        RP[Revit Plugin<br/>IFC Upload]
+        WV[Web Viewer App<br/>web-viewer-sample 演進]
+        AC[Admin Console<br/>Demo UI]
+        EX[External API /<br/>Webhook Consumer]
+    end
+    subgraph L3["③ 核心業務服務層"]
+        A[A. bim-control<br/>metadata authority]
+        B[B. _worker<br/>artifact + conversion facade]
+        C[C. bim-review-coordinator<br/>session / collaboration]
+        D[D. ai-rule-carbon-service<br/>規則 / IDS / 碳排 / IAQ]
+        E[E. notification / webhook<br/>callback / 事件通知]
+    end
+    subgraph L4["④ Omniverse Runtime / Simulation 層"]
+        S1[bim-streaming-server cluster<br/>水平擴展]
+        S2[USD Stage Manager<br/>artifact loading]
+        S3[WebRTC + DataChannel command]
+        S4[Highlight / Overlay /<br/>Clash result overlay]
+        S5[RTX Renderer / PhysX /<br/>MDL / Sensor simulation]
+    end
+    subgraph L5["⑤ 平台能力層"]
+        P1[API Gateway]
+        P2[Queue / Event Bus]
+        P3[Redis Cache]
+        P4[Postgres]
+        P5[Object Storage<br/>S3 / MinIO]
+        P6[Vector / Search]
+        P7[Billing / Usage Metering]
+        P8[Audit Log /<br/>Observability / Trace]
+        P9[Scheduler /<br/>GPU Pool / Autoscaling]
+    end
+    subgraph L6["⑥ DevOps / 營運治理層"]
+        D1[GitHub Actions CI/CD]
+        D2[Test Matrix /<br/>Smoke / Contract / E2E]
+        D3[Container / K8s /<br/>NVIDIA GPU deployment]
+        D4[Backup / DR /<br/>Security / Compliance]
+        D5[SLA / SLO /<br/>Incident Response]
+    end
+
+    L1 --> L2 --> L3 --> L4 --> L5
+    L6 -.支撐.-> L5
+    L6 -.支撐.-> L4
+    L6 -.支撐.-> L3
+```
+
+### 2.2 各層責任邊界
+
+#### ① 使用者與權限層
+
+| 元素 | 內容 | 規劃 phase |
+|---|---|---|
+| 角色 | 管理員 / 建築師 / 審查員 / 住戶 / 維護人員 | Phase 6 |
+| 權限階層（由高到低） | 公司 → 租戶 → 區 → 棟 → 戶 → 號 | Phase 6 |
+| 認證方式 | SSO（SAML / OIDC）、JWT、RBAC、API Key | Phase 6 |
+
+> **目前 PoC 階段沒有任何認證**；所有 service 直接 `127.0.0.1` 開放。Phase 6 才會加入。
+
+#### ② Client / Portal 層
+
+| Portal | 角色 | 對應現有實作 | 規劃 phase |
+|---|---|---|---|
+| **Revit Plugin** | 在 Revit 內直接上傳 IFC/RVT/DWG | 尚無 | Phase 5（規格）/ Phase 6（落地） |
+| **Web Viewer App** | 瀏覽器審查端，從 PoC `web-viewer-sample` 演進 | `web-viewer-sample/` ✅ | 持續演進 |
+| **Admin Console / Demo UI** | 管理員後台、demo UI（demo flow 步驟條） | `_worker/` `_bim-control/` `bim-review-coordinator/` UI ✅ | Phase 6（升級為 Admin Console） |
+| **External API / Webhook Consumer** | 第三方系統訂閱 review event / 對接 workflow | 尚無 | Phase 4（基礎）/ Phase 6（正式 API） |
+
+#### ③ 核心業務服務層（5 個）
+
+| 服務 | 角色 | 現有狀態 | 主要 capability spec |
+|---|---|---|---|
+| **A. `_bim-control/`** | metadata 權威、project/version/artifact group/issue/annotation/review request 認證 | ✅ runtime（:8001） | `review-session-request-lifecycle` |
+| **B. `_worker/`** | upload API + artifact registry + versioned storage facade + conversion job + USD/USDC + mapping + callback workflow + source/version/lineage 模型 | ✅ runtime（:8005） | `worker-artifact-pipeline`, `worker-dev-ifc-source-selection`, `worker-demo-upload-convert-ui` |
+| **C. `bim-review-coordinator/`** | review session / session lifecycle、KitInstancePool、presence / selection / annotation、issue focus、multi-artifact / multi-instance binding | ✅ runtime（:8004） | `multi-artifact-kit-routing`, `session-first-review-viewer` |
+| **D. `ai-rule-carbon-service/`** | IDS / code check、carbon / IAQ / HVAC、compliance、prediction、report API | 📅 尚無 | 待規劃（Phase 5） |
+| **E. `notification / webhook service/`** | callback、事件通知、外部系統整合 | 📅 尚無（callback 邏輯目前散在 `_worker` 與 coordinator） | 待規劃（Phase 4） |
+
+#### ④ Omniverse Runtime / Simulation 層
+
+| 元素 | 內容 | 對應 capability |
+|---|---|---|
+| `bim-streaming-server cluster` | Kit runtime 高可用 / 水平擴展 | `multi-artifact-kit-routing` |
+| USD Stage Manager | artifact loading / stage 管理 / 版本控制 | `streaming-multi-layer-payload-loading` |
+| WebRTC + DataChannel command | 即時指令 / 低延運 | `streaming-multi-layer-payload-loading` |
+| Highlight / Overlay / Clash result overlay | 多層結果即時疊加 | （待 Phase 5 spec） |
+| **RTX Renderer / PhysX / MDL / Sensor simulation** | 高層真品質 / 物理 / 材質 / 環境感測模擬 ⭐ Omniverse 能力最大化 | （待 Phase 5 spec） |
+
+#### ⑤ 平台能力層（所有服務依賴）
+
+| 元素 | 用途 | 規劃 phase |
+|---|---|---|
+| API Gateway | 統一入口、rate limit、auth header、CORS | Phase 4–6 |
+| Queue / Event Bus | 非同步 conversion / AI / notification | Phase 4 |
+| Redis Cache | session presence、artifact metadata、readiness | Phase 4 |
+| Postgres | 取代 `_bim-control` 的 file-based store | Phase 4 |
+| **Object Storage（不再混淆 `_s3_storage` 邊界）** | `_worker` 物件本體存放（local: filesystem，prod: S3 / MinIO） | Phase 4（抽象層） |
+| Vector / Search（可選） | 大型 model 跨 project search、語意搜尋 | Phase 5 |
+| Billing / Usage Metering | GPU hours / storage GB / API calls / conversion jobs | Phase 6 |
+| Audit Log / Observability / Trace | Prometheus / Grafana / Loki / Jaeger / Sentry | Phase 6 |
+| Scheduler / GPU Pool / Autoscaling | Kit instance 動態分配、K8s + NVIDIA GPU Operator | Phase 4–6 |
+
+#### ⑥ DevOps / 營運治理層
+
+| 元素 | 用途 | 現況 |
+|---|---|---|
+| GitHub Actions CI/CD | lint → test → build → deploy | 📅 `.github/workflows/` 目前是空的，需建 |
+| Test Matrix / Smoke / Contract / E2E | 多層次測試矩陣 | ✅ 已有 smoke + contract 部分；E2E 部分驗證 |
+| Container / K8s / NVIDIA GPU deployment | 容器化、GPU node pool | 📅 待 Phase 6 |
+| Backup / DR / Security / Compliance | 資料備份、災難復原、安全合規 | 📅 待 Phase 6 |
+| SLA / SLO / Incident Response | 服務水準、事件應對 | 📅 待 Phase 6 |
+
+---
+
+## 3. 當前 Runtime 架構（worker-only）
+
+> 所有 commit 已 merge 進 `main`。完整邊界以 [`AGENTS.md`](../AGENTS.md) 為準。
+
+### 3.1 服務清單
 
 | 服務 | 角色 | Port | Demo 步驟 |
 |---|---|---|---|
 | `_bim-control/` | Fake BIM Data Authority（metadata-only） | 8001 | ⑤ 紀錄回寫 |
 | `_worker/` | Artifact + Conversion Facade（檔案與轉檔邊界） | 8005 | ① 上傳建模 + ② 自動轉換 |
 | `bim-review-coordinator/` | Session / Collaboration Control Plane | 8004 | ③ 建立會議 |
-| `bim-streaming-server/` | Omniverse Kit Runtime / WebRTC | 49100 (WebRTC) | ④ 標記問題（背景） |
+| `bim-streaming-server/` | Omniverse Kit Runtime / WebRTC | 49100 (signaling) / 47998 (stream) | ④ 標記問題（背景） |
 | `web-viewer-sample/` | Browser Client / WebRTC Viewer | 5173 | ④ 標記問題（前景） |
 
-> **退役服務**：`_s3_storage`（8002）、`_conversion-service`（8003）、`_conversion-server` 已從 current runtime 移除，僅保留 historical reference。詳見 [`openspec/specs/legacy-storage-conversion-retirement/spec.md`](../openspec/specs/legacy-storage-conversion-retirement/spec.md)。
+> **退役服務**：`_s3_storage`（8002）、`_conversion-service`（8003）、`_conversion-server`。詳見 [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md)。
 
-### Source of Truth（不可越界）
-
-```txt
-資料權威               → _bim-control
-檔案 + 轉檔外部邊界   → _worker
-Session / Collaboration → bim-review-coordinator
-3D runtime             → bim-streaming-server
-使用者操作             → web-viewer-sample
-```
-
----
-
-## 2. 架構演進總覽
-
-### 2.1 Current Runtime（worker-only）
+### 3.2 Current Runtime Flow
 
 ```mermaid
 flowchart LR
@@ -67,16 +210,16 @@ flowchart LR
         CO[bim-review-coordinator<br/>:8004]
     end
     subgraph "Worker / Data"
-        WK[_worker<br/>artifact + conversion facade<br/>:8005]
+        WK[_worker<br/>artifact + conversion<br/>:8005]
         BC[_bim-control<br/>metadata authority<br/>:8001]
     end
     subgraph "Runtime"
-        KIT[bim-streaming-server<br/>Omniverse Kit Runtime<br/>WebRTC :49100]
+        KIT[bim-streaming-server<br/>signaling :49100<br/>stream :47998]
     end
 
     WV -->|REST: review-bootstrap / session| CO
     WV -->|WebRTC video + DataChannel JSON| KIT
-    WV -->|Socket.IO collaboration events| CO
+    WV -->|Socket.IO collaboration| CO
 
     CO -->|REST: project / model / artifact / issue| BC
     CO -->|REST: artifact group readiness| WK
@@ -86,110 +229,123 @@ flowchart LR
     KIT -->|HTTP GET worker object URL| WK
 ```
 
-### 2.2 目標 SaaS 架構（Phase 4–6 後）
-
-```mermaid
-flowchart TB
-    subgraph "Edge / CDN"
-        CDN[CDN]
-        AG[API Gateway / SSO + JWT + RBAC]
-    end
-    subgraph "Control Plane (HA)"
-        COp[coordinator pool]
-        BCp[bim-control + Postgres]
-    end
-    subgraph "Worker Pool"
-        WK1[worker / async queue]
-        WK2[worker / async queue]
-        S3[(Object Storage<br/>S3 / MinIO)]
-        RD[(Redis cache)]
-    end
-    subgraph "GPU Pool"
-        KS[Kit Scheduler / Pool]
-        KIT1[Kit instance #1]
-        KIT2[Kit instance #2]
-        KITN[Kit instance N]
-    end
-    subgraph "Observability"
-        PROM[Prometheus]
-        GRAF[Grafana]
-        LOKI[Loki]
-        SEN[Sentry]
-    end
-
-    CDN --> AG
-    AG --> COp
-    COp --> BCp
-    COp --> WK1
-    COp --> WK2
-    COp --> KS
-    WK1 --> S3
-    WK2 --> S3
-    WK1 --> RD
-    KS --> KIT1
-    KS --> KIT2
-    KS --> KITN
-    KIT1 --> S3
-    COp -.metrics.-> PROM
-    KS -.metrics.-> PROM
-    PROM --> GRAF
-    COp -.logs.-> LOKI
-    COp -.errors.-> SEN
-```
-
 ---
 
-## 3. 當前進度檢視
+## 4. 當前進度檢視 + 驗證證據分層
 
-> 進度依據：`git log` 已 merge 進 `main` 的 PR、`openspec/specs/` 已 archive 的 capability、`openspec/changes/archive/` 的 tasks `[x]` 標記。
+> 進度依據：`git log` 已 merge 的 PR、`openspec/specs/` 9 份 capability spec、`docs/verification/2026-05-08-spec-end-to-end-verification.md`。
+
+### 4.1 Phase 完成度
 
 | Phase | 狀態 | 對應 OpenSpec capability | 對應 PR / commit |
 |---|---|---|---|
 | **Phase 0** 基線穩定化 | ✅ 完成 | （demo UI guidelines + smoke tests） | `2de28c9` Demo UI validation, `0496869` smoke runbook |
-| **Phase 1** `_worker` 收攏 | ✅ 完成 | `worker-artifact-pipeline`, `worker-dev-ifc-source-selection`, `worker-demo-upload-convert-ui`, `legacy-storage-conversion-retirement` | PR #11, PR #14（`e95922f` 統一步驟 ①/② 至 `_worker`、`b50a8a7` legacy 退役） |
-| **Phase 2** 檢討閉環（review request） | ✅ 完成 | `review-session-request-lifecycle`, `session-first-review-viewer` | PR #13（`ddac3c2` session lifecycle 修正、`4f103d0` viewer lifecycle guard） |
-| **Phase 3** Session lifecycle + 多 instance | 🔄 進行中 | `multi-artifact-kit-routing`, `streaming-multi-layer-payload-loading` | `8ee577d` kitPool / sessionStore unit tests（部分） |
-| **Phase 4** 高併發平台化 | 📅 待規劃 | （尚未提案） | — |
-| **Phase 5** Omniverse 平台能力最大化 | 📅 待規劃 | （尚未提案） | — |
-| **Phase 6** Production & SaaS 營運 | 📅 待規劃 | （尚未提案） | — |
+| **Phase 1** `_worker` 收攏 + lineage | ✅ 完成 | `worker-artifact-pipeline`、`worker-dev-ifc-source-selection`、`worker-demo-upload-convert-ui`、`legacy-storage-conversion-retirement` | PR #11、PR #14（`e95922f`、`b50a8a7`）、PR #17（`3d58075` `original_filename` 追蹤）、PR #18 |
+| **Phase 2** review-session-request 閉環 | ✅ 完成 | `review-session-request-lifecycle`、`session-first-review-viewer` | PR #13（`ddac3c2`、`4f103d0`）、PR #16（端到端驗證 `595ae5a`） |
+| **Phase 3** Session lifecycle + 多 artifact / 多 instance | 🔄 進行中（control-plane 完成、runtime 部分 blocked） | `multi-artifact-kit-routing`、`streaming-multi-layer-payload-loading`、`runtime-verification-evidence` | PR #19（`runtime-verification-evidence` 新增）、PR #21（`8d805f4` 封存） |
+| **Phase 4** 高併發平台化 | 📅 待規劃（尚未提案） | — | — |
+| **Phase 5** Omniverse 平台能力最大化 + AI Service | 📅 待規劃（尚未提案） | — | — |
+| **Phase 6** Production & SaaS 營運 | 📅 待規劃（尚未提案） | — | — |
 
-### 3.1 已完成的最小閉環（已疏通驗證）
+### 4.2 驗證證據分層（依 `runtime-verification-evidence` capability）
+
+> 不再用單一 pass/fail，改為 4 層分級：non-GPU contract → single Kit GPU → dedicated multi-Kit → stress。
+
+| 證據層級 | 範圍 | 2026-05-08 結果 | 證據位置 |
+|---|---|---|---|
+| **Non-GPU Contract** | DataChannel stage-loading shape、API smoke | ✅ 通過 | `bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1`、`scripts/smoke-worker-review-request.ps1` |
+| **Control Plane API** | `_bim-control` pytest 21/21、coordinator vitest 102/102、viewer session-first contract | ✅ 通過 | `docs/verification/2026-05-08-spec-end-to-end-verification.md` §2 |
+| **Browser + Socket.IO 2-user** | 兩 Chrome tab 真實協作（Alpha + Bravo）、annotation 跨 tab 廣播 | ✅ 通過 | 同上 §4 |
+| **Single Kit GPU Render** | 真實 IFC → renderable USD viewport screenshot | 🚫 blocked | 缺：renderable USDC（目前 worker 寫 placeholder）；§6.3 |
+| **Dedicated Multi-Kit Routing** | ≥2 Kit instances、不同 signaling port、並行 stream | 🚫 blocked | 缺：root scripts 啟動多 Kit；§6.4 |
+| **Large IFC Worker Readiness** | 89 MB IFC 進 `_worker` → ready 狀態 | ✅ 通過（facade tier） | §6.5 |
+| **Socket.IO Bounded Stress** | 90 client（最大 100 sustainable 的 90%） | ✅ 通過 | §6.6 |
+
+### 4.3 已驗證的最小閉環
 
 ```txt
 .\storage\*.ifc
 → _worker dev IFC source list（GET /api/dev/ifc-sources）
-→ _worker conversion job（POST /api/dev/ifc-sources/{id}/conversions）
-→ _worker derived USDC + element_mapping.json + metadata.json
+→ _worker conversion job（POST /api/dev/ifc-sources/{id}/conversions，含 original_filename）
+→ _worker derived USDC + element_mapping.json + metadata.json + lineage
 → _worker callback POST /api/model-versions/{id}/conversion-result → _bim-control
 → _bim-control POST /api/review-session-requests
 → artifact group readiness check
 → coordinator POST /api/review-sessions（artifact_bindings + kit_instance_bindings）
 → web-viewer-sample bootstrap（review_request_id / session_id）
 → WebRTC + DataChannel openStageRequest（artifact_bindings_multi_layer_payload）
-→ stage runtime + selection + highlight + collaboration events
+→ Socket.IO 多人協作（presence / selection / annotation 廣播）
 → _bim-control 保存 annotation / lifecycle event
+→ POST /api/review-sessions/{id}/close → instance released
 ```
-
-> 驗證腳本：`scripts/smoke-worker-review-request.ps1`（API-only，無需 GPU）。
 
 ---
 
-## 4. 主要風險 / 缺口
+## 5. 主要風險 / 缺口
 
-> 對應架構圖 ② 區塊。每個風險都已對應到既有 spec 或本文件後續 phase。
+> 對應 v1 圖 ② 區塊。每個風險都對應到既有 spec 或後續 phase。
 
 | # | 風險 / 缺口 | 收斂機制 | 狀態 |
 |---|---|---|---|
 | 1 | `_worker` 合併後需重新確認 source of truth 與責任邊界 | `AGENTS.md §3.3 / §7 / §8`、`worker-artifact-pipeline` spec | ✅ 已收斂 |
-| 2 | artifact version / source / lineage 若未建模，後續追溯困難 | `_worker` versioned object layout、`metadata.json` lineage 欄位、`_bim-control` `artifact_groups` | ✅ 已收斂 |
+| 2 | artifact version / source / lineage 若未建模，後續追溯困難 | versioned object layout、`metadata.json` lineage、`original_filename` 追蹤 | ✅ 已收斂（含 2026-05-08 PR #17 補強） |
 | 3 | review-session-request 尚未成正式 intent 流程 | `review-session-request-lifecycle` spec、`POST /api/review-session-requests` | ✅ 已收斂 |
-| 4 | session lifecycle 目前過於簡化，未釐清 `created → active → closing → closed → instance released` | `multi-artifact-kit-routing` spec、coordinator `kit_instance_bindings[]` | 🔄 進行中（Phase 3） |
-| 5 | 多 artifact / 多 instance 調度仍未完整推導 | `multi-artifact-kit-routing` + `streaming-multi-layer-payload-loading` specs、KitInstancePool routing policy | 🔄 進行中（Phase 3） |
-| 6 | 觀測、稽核、CI/CD、SLA 尚未產品化 | Phase 6（K8s、Prometheus、Grafana、Sentry、SLA/SLO） | 📅 待規劃 |
+| 4 | session lifecycle 目前過於簡化，未釐清 `created → active → closing → closed → instance released` | `multi-artifact-kit-routing` spec、coordinator `kit_instance_bindings[]`、close/release 分離已驗證 | ✅ control-plane 已收斂 |
+| 5 | 多 artifact / 多 instance 調度仍未完整推導 | `multi-artifact-kit-routing` + `streaming-multi-layer-payload-loading` spec、`runtime-verification-evidence` 標記 dedicated routing 為 blocked | 🔄 control-plane 完成、runtime blocked |
+| 6 | 觀測、稽核、CI/CD、SLA 尚未產品化 | Phase 6 規劃 | 📅 待規劃 |
+| 7 *new* | **Single Kit GPU render 仍是 placeholder USDC**（worker facade tier 不等於真實渲染） | Phase 5 須補真實 IFC → renderable USDC converter | 🚫 blocked |
+| 8 *new* | **AI / 規則 / 碳排 service 邊界未建模** | Phase 5 啟動 `ai-rule-carbon-service` capability proposal | 📅 待規劃 |
 
 ---
 
-## 5. 六大階段執行路線圖
+## 6. IFC → USD 品質保證管線
+
+> 對應 v2 圖右側「IFC → USD 品質保證管線」區塊，標記為 ⭐ **目前最重要的技術風險控制點** ⭐。
+
+### 6.1 七步管線
+
+```mermaid
+flowchart TB
+    S1["① 上傳 IFC / RVT / DWG<br/>Revit Plugin / Web Viewer / API"]
+    S2["② 建立 conversion job<br/>POST /api/conversions"]
+    S3["③ _worker / headless conversion<br/>Kit converter / 批次處理"]
+    S4["④ 生成 USD / USDC + element_mapping<br/>+ metadata.json lineage"]
+    S5["⑤ ⭐ 幾何 / 材質 / 物件 / GUID 對應驗證 ⭐<br/>quality gate / coverage check"]
+    S6["⑥ 建立 review-session-request<br/>→ 分配 review session / kit instance"]
+    S7["⑦ 發布到 streaming 與 AI review"]
+
+    S1 --> S2 --> S3 --> S4 --> S5
+    S5 -->|pass| S6 --> S7
+    S5 -->|fail / partial| FAIL["回報 missing / fallback / coverage 不足<br/>不假裝 mapping 已驗證"]
+
+    style S5 fill:#ffeb3b,stroke:#f57f17,stroke-width:4px
+    style FAIL fill:#ffcdd2
+```
+
+### 6.2 各步驟現況與 Quality Gate
+
+| 步驟 | 現況 | Quality Gate（目標） | 對應 spec / 文件 |
+|---|---|---|---|
+| ① 上傳 | `_worker POST /api/artifacts` ✅，`original_filename` 已保留 | 大檔 chunk upload、checksum 驗證、duplicate detect | `worker-artifact-pipeline` |
+| ② 建立 conversion job | `_worker POST /api/conversions` ✅ | job idempotency、retry policy、timeout 標準化 | 同上 |
+| ③ headless conversion | 🚫 **目前是 placeholder**（worker facade emit `# worker adapter USDC placeholder`） | 真實 IFC → USDC converter（Kit headless 或 ifcopenshell + USD SDK） | Phase 5 啟動 |
+| ④ 生成 USDC + mapping | ✅ artifact group + lineage 完整；mapping 是 placeholder | mapping items 數量 ≥ IFC entity 數量 × 0.95 | `worker-artifact-pipeline` |
+| ⑤ ⭐ **品質驗證** ⭐ | 🚫 **尚無自動驗證** | geometry coverage ≥ 95%、material coverage ≥ 90%、IFC GUID ↔ USD prim path coverage ≥ 95% | **Phase 5 必加 capability**：`ifc-usd-quality-gate` |
+| ⑥ review-session-request | ✅ 已實作 | session 啟動 < 5 秒（artifact ready 狀態下） | `review-session-request-lifecycle` |
+| ⑦ 發布到 streaming | ✅ DataChannel `applied_mode` honest 回報；🚫 真實 viewport render blocked | 真實 GPU viewport screenshot 為 evidence | `streaming-multi-layer-payload-loading` + `runtime-verification-evidence` |
+
+### 6.3 為什麼步驟 ⑤ 是最重要的技術風險控制點
+
+1. **語意斷裂**：IFC GUID ↔ USD prim path 對應若有缺，下游 highlight / clash / annotation 全部會失準
+2. **誠實性原則**：DataChannel `missing_paths` / `fallback_paths` 機制只能在 runtime 報告，不能修補 conversion 階段的對應錯誤
+3. **可審查性**：審查紀錄回寫到 `_bim-control` 時，必須能反查到「這個 issue 對應哪個 IFC 元件、是否在 USD 中存在」
+4. **法規 / 碳排 AI 分析依賴**：D 服務（ai-rule-carbon-service）若拿到對應錯亂的 mapping，產出的 IDS / 碳排計算全部是假數據
+
+> Phase 5 啟動 OpenSpec change `ifc-usd-quality-gate`，要求 conversion 完成後自動跑 coverage check，並把結果寫進 `_bim-control` `artifact_groups.quality_report`。
+
+---
+
+## 7. 六大階段執行路線圖
 
 ### Phase 0：基線穩定化 ✅
 
@@ -198,47 +354,39 @@ flowchart TB
 **已交付**：
 
 - [x] `AGENTS.md` 收斂 repo 邊界與資料權威
-- [x] `docs/contracts/` 7 份 API 合約（worker、bim-control、coordinator、socket events、datachannel events、review session、local-dev runbook）
+- [x] `docs/contracts/` 7 份 API 合約
 - [x] `docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md` UI 設計守則
-- [x] 一鍵啟動腳本（`scripts/start-all.{sh,ps1}`）+ 健康檢查（`scripts/dev-health-check.ps1`、`scripts/demo-health-check.ps1`）
-- [x] Smoke tests：`smoke-review-session.ps1`、`smoke-review-socket.ps1`、`smoke-worker-review-request.ps1`
+- [x] 一鍵啟動腳本 + 健康檢查
+- [x] 4 個 smoke tests
 - [x] 各服務 `/health` endpoint
-- [x] OpenSpec + GitHub PR workflow（`AGENTS.md §0.1`）
+- [x] OpenSpec + GitHub PR workflow
 
 **驗收命令**：
 
 ```bash
 ./scripts/start-all.sh
 ./scripts/verify-all.sh
-./scripts/smoke-worker-review-request.ps1   # Windows
+./scripts/smoke-worker-review-request.ps1
 ```
 
 ---
 
-### Phase 1：`_worker` 收攏（最優先）✅
+### Phase 1：`_worker` 收攏 + Artifact Lineage ✅
 
-> **目標**：把 `_s3_storage` 與 `_conversion-service` 合併為 `_worker`，建立可追蹤的 artifact version / source / lineage 模型。
+> **目標**：把 `_s3_storage` + `_conversion-service` 合併為 `_worker`，建立可追蹤的 artifact version / source / lineage 模型。
 >
-> 對應 OpenSpec capabilities：
-> - [`worker-artifact-pipeline`](../openspec/specs/worker-artifact-pipeline/spec.md)
-> - [`worker-dev-ifc-source-selection`](../openspec/specs/worker-dev-ifc-source-selection/spec.md)
-> - [`worker-demo-upload-convert-ui`](../openspec/specs/worker-demo-upload-convert-ui/spec.md)
-> - [`legacy-storage-conversion-retirement`](../openspec/specs/legacy-storage-conversion-retirement/spec.md)
+> 對應 OpenSpec capabilities：[`worker-artifact-pipeline`](../openspec/specs/worker-artifact-pipeline/spec.md)、[`worker-dev-ifc-source-selection`](../openspec/specs/worker-dev-ifc-source-selection/spec.md)、[`worker-demo-upload-convert-ui`](../openspec/specs/worker-demo-upload-convert-ui/spec.md)、[`legacy-storage-conversion-retirement`](../openspec/specs/legacy-storage-conversion-retirement/spec.md)
 
 **已交付**：
 
-- [x] `_worker` 服務（FastAPI on `:8005`）
-  - `POST /api/artifacts`：source IFC/RVT/DWG intake + lineage（`tenant_id` / `project_id` / `model_version_id` / `source_system` / `uploaded_by`）
-  - `POST /api/conversions` + `GET /api/conversions/{id}` + `GET /api/conversions/{id}/result`
-  - `GET /api/dev/ifc-sources` + `POST /api/dev/ifc-sources/{source_id}/conversions`（dev demo flow）
-  - `GET /api/artifact-groups/{id}/readiness`
-  - `GET /objects/{path}`（versioned object URL serving）
-- [x] Versioned object layout：`tenants/{t}/projects/{p}/versions/{v}/artifact-groups/{g}/source/{ss}/{sa}/original/{sha8}_{filename}`，derived 在 `derived/{conversion_job_id}/usdc/`
-- [x] `metadata.json` 內含完整 lineage：`artifact_id`、`parent_artifact_id`、`artifact_group_id`、`source_system`、`source_format`、`sha256`、`version_no`、`uploaded_by`、`conversion_job_id`、`created_at`
-- [x] `_worker` callback `_bim-control` 只發 metadata，不寫檔案 bytes
-- [x] `_worker` demo UI（步驟 ①/②）取代 `_s3_storage` / `_conversion-service` UI
-- [x] 移除 `_s3_storage/`、`_conversion-service/`、`_conversion-server/` folder（commit `b50a8a7`）
-- [x] `scripts/start-all.{sh,ps1}` 不再啟動 8002 / 8003
+- [x] `_worker` 服務（FastAPI on `:8005`）：8 個 endpoints
+- [x] Versioned object layout：`tenants/{t}/projects/{p}/versions/{v}/artifact-groups/{g}/...`
+- [x] `metadata.json` 完整 lineage（`artifact_id` / `parent_artifact_id` / `sha256` / `version_no` / `uploaded_by` / `conversion_job_id` / `created_at`）
+- [x] `_worker` callback `_bim-control` 只發 metadata
+- [x] `_worker` demo UI 取代 `_s3_storage` / `_conversion-service` UI
+- [x] 移除 `_s3_storage/`、`_conversion-service/`、`_conversion-server/` folder
+- [x] **`original_filename` 保留**（PR #17，commit `3d58075`）：disk 檔名仍 sanitize，metadata 層保留原檔名
+- [x] dev IFC source selection（從 `storage/` 掃描）
 
 **驗收命令**：
 
@@ -251,36 +399,31 @@ curl http://127.0.0.1:8005/api/dev/ifc-sources
 
 ---
 
-### Phase 2：檢討閉環（Review Request → Session）✅
+### Phase 2：Review Request → Session 閉環 ✅
 
 > **目標**：讓「我要開審查 session」成為可保存、可查詢、可回寫的 intent；coordinator 從單純建 session 升級為承接 request → 分配 Kit → 回寫 binding 的完整協調器。
 >
-> 對應 OpenSpec capabilities：
-> - [`review-session-request-lifecycle`](../openspec/specs/review-session-request-lifecycle/spec.md)
-> - [`session-first-review-viewer`](../openspec/specs/session-first-review-viewer/spec.md)
+> 對應 OpenSpec capabilities：[`review-session-request-lifecycle`](../openspec/specs/review-session-request-lifecycle/spec.md)、[`session-first-review-viewer`](../openspec/specs/session-first-review-viewer/spec.md)
 
 **已交付**：
 
-- [x] `_bim-control` 新增 `ReviewSessionRequest` model 與 endpoints：
-  - `POST /api/review-session-requests`（status=`created`）
-  - `GET /api/review-session-requests/{id}`
-  - `PATCH /api/review-session-requests/{id}`（status / bindings 回寫）
-  - `GET /api/review-session-requests/{id}/lifecycle-events`
+- [x] `_bim-control` `ReviewSessionRequest` model + 4 endpoints（POST / GET / PATCH / lifecycle-events）
 - [x] artifact group readiness check：缺 derived/mapping → `status=blocked_conversion`
-- [x] coordinator `POST /api/review-sessions` 接受 `review_request_id` + `artifact_bindings[]` + `kit_profile`
-- [x] coordinator `GET /api/review-sessions/{id}/stream-config` 回傳 `lifecycle_status` + `artifact_bindings[]` + `kit_instance_bindings[]`
-- [x] `web-viewer-sample` session-first bootstrap：以 `review_request_id` 或 `session_id` 啟動，不再硬編 model URL
-- [x] viewer lifecycle 狀態渲染：`blocked_conversion` / `queued_for_instance` / `created` / `active` / `closing` / `closed` / `failed`
-- [x] viewer lifecycle guard（commit `4f103d0`）：`closing` / `closed` 期間不送 mutating runtime command
+- [x] coordinator `POST /api/review-sessions` 接 `review_request_id` + `artifact_bindings[]` + `kit_profile`
+- [x] coordinator `GET /api/review-sessions/{id}/stream-config` 回 lifecycle + bindings
+- [x] viewer session-first bootstrap（`review_request_id` / `session_id`）
+- [x] viewer lifecycle 狀態渲染（7 種狀態）
+- [x] viewer lifecycle guard：`closing` / `closed` 期間不送 mutating runtime command
 - [x] `_sendStreamMessage` 無限遞迴修正
+- [x] **2026-05-08 兩 Chrome tab 真實協作驗證**（Alpha + Bravo，annotation 跨 tab 廣播 + `_bim-control` 持久化）
 
 **驗收命令**：
 
 ```bash
-cd _bim-control && python3 -m pytest tests
-cd bim-review-coordinator && npm test
+cd _bim-control && python3 -m pytest tests/test_review_session_requests_api.py -v   # 21/21
+cd bim-review-coordinator && npm test                                                # 102/102
 cd web-viewer-sample && npm run test:session-first
-./scripts/smoke-worker-review-request.ps1   # 端到端 API 驗證
+./scripts/smoke-worker-review-request.ps1                                            # 端到端 API
 ```
 
 ---
@@ -289,186 +432,231 @@ cd web-viewer-sample && npm run test:session-first
 
 > **目標**：完整實作 `created → active → closing → closed → instance released` lifecycle，以及 `same_instance` / `dedicated_instance` / `shared_state` routing policy 下的多 artifact / 多 Kit instance 調度。
 >
-> 對應 OpenSpec capabilities：
-> - [`multi-artifact-kit-routing`](../openspec/specs/multi-artifact-kit-routing/spec.md)
-> - [`streaming-multi-layer-payload-loading`](../openspec/specs/streaming-multi-layer-payload-loading/spec.md)
+> 對應 OpenSpec capabilities：[`multi-artifact-kit-routing`](../openspec/specs/multi-artifact-kit-routing/spec.md)、[`streaming-multi-layer-payload-loading`](../openspec/specs/streaming-multi-layer-payload-loading/spec.md)、[`runtime-verification-evidence`](../openspec/specs/runtime-verification-evidence/spec.md)
 
-**已交付**（部分）：
+**已交付**（control-plane）：
 
-- [x] coordinator `artifact_bindings[]` 結構（artifact_role / load_order / routing_policy / ready_status）
-- [x] coordinator `kit_instance_bindings[]` 結構（kit_instance_id / provider / status / stream_config / heartbeat）
-- [x] `same_instance` routing policy + `dedicated_instance` 容量檢查
-- [x] `kit_profile.capacity_slots=0` → `queued_for_instance`（commit `ddac3c2`）
-- [x] `request_id` 唯一性保證（commit `ddac3c2`）
-- [x] `bim-streaming-server` `openStageRequest` 支援 `artifact_bindings[]` + `applied_mode` 回報（`single_url` / `artifact_bindings_single` / `artifact_bindings_multi_layer_payload`）
-- [x] DataChannel contract smoke：`bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1`
-- [x] coordinator session/kitPool unit tests（commit `8ee577d`）
+- [x] coordinator `artifact_bindings[]` 結構
+- [x] coordinator `kit_instance_bindings[]` 結構
+- [x] `same_instance` + `dedicated_instance` routing policy
+- [x] `kit_profile.capacity_slots=0` → `queued_for_instance`
+- [x] `request_id` 唯一性
+- [x] DataChannel `openStageRequest` 支援 `artifact_bindings[]` + `applied_mode` 誠實回報（3 種 mode）
+- [x] DataChannel contract smoke ✅
+- [x] coordinator session/kitPool unit tests
+- [x] close → release 分離驗證（兩 tab 真實 close）
+- [x] **驗證證據分層 spec**（`runtime-verification-evidence`，PR #19/#21）
+- [x] **Socket.IO 90-client bounded stress 通過**（2026-05-08）
 
-**待補**：
+**待補（runtime evidence + control-plane）**：
 
-- [ ] **`closing` state 完整實作**：累積最終 annotation / snapshot 後再 `closed`
-- [ ] **Kit instance release flow**：`allocated → starting → ready → draining → released` 各階段事件回寫
-- [ ] **`shared_state` routing policy**：跨 instance selection / issue focus / annotation 同步（Socket.IO event broadcast）
-- [ ] **Routing policy decision engine**：依 artifact 大小 / GPU profile / tenant isolation 自動決定 policy
-- [ ] **Multi-instance stream config shape**：每個 binding 對應的 stream endpoint 結構正規化
-- [ ] **GPU 環境多 artifact 真機驗證**（須 NVIDIA GPU + Kit SDK）
-- [ ] **artifact group / model_version / startup policy 整合 UI**：viewer 上可選擇 routing policy
+- [ ] **真實 IFC → renderable USDC converter**（目前是 placeholder，Single Kit GPU render blocked 的根因）
+- [ ] **Root `scripts/` 啟動多 Kit instance**（不同 signaling port），讓 `dedicated_instance` 能在實機驗證
+- [ ] `closing` state 完整實作（累積最終 annotation / snapshot 後再 `closed`）
+- [ ] Kit instance release flow 各階段事件回寫（`allocated → starting → ready → draining → released`）
+- [ ] `shared_state` routing policy 跨 instance Socket.IO event 同步
+- [ ] Routing policy decision engine（依 artifact 大小 / GPU profile 自動決定）
+- [ ] Multi-instance stream config shape 正規化
+- [ ] Viewer 上選擇 routing policy 的 UI
 
 **規劃驗收命令**：
 
 ```bash
-# Lifecycle 狀態機測試
 cd bim-review-coordinator && npm test -- lifecycle
-# 多 artifact 載入 contract smoke
 ./bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1
-# Multi-instance routing smoke（待補）
-./scripts/smoke-multi-instance-routing.ps1   # TODO
+./scripts/smoke-multi-instance-routing.ps1   # TODO（須先補 root multi-Kit launcher）
 ```
 
 ---
 
 ### Phase 4：高併發平台化 📅
 
-> **目標**：把目前 in-memory / file-based 的 worker、session store 升級為 async / queue / multi-worker，加入 GPU pool / scheduler / Redis cache，使 conversion worker、AI worker、streaming runtime 可水平擴展。
+> **目標**：把目前 in-memory / file-based 的 worker、session store 升級為 async / queue / multi-worker；加入 GPU pool / scheduler / Redis cache；E. notification / webhook service 抽出成獨立服務；conversion / AI worker / streaming runtime 可水平擴展。
 >
-> **尚未提案** OpenSpec change，建議 Phase 3 完成後啟動。
+> **尚未提案** OpenSpec change，建議 Phase 3 收尾後啟動。
 
 **規劃任務**：
 
 1. **Conversion worker 非同步化**
-   - `_worker` `POST /api/conversions` 改寫為 enqueue（Redis Stream / RQ / Celery）
+   - `_worker POST /api/conversions` 改為 enqueue（Redis Stream / RQ / Celery）
    - 多個 worker process 共享 queue
    - Job 進度透過 callback / polling 回報
 2. **GPU Pool / Kit Scheduler**
    - 把 coordinator 內 hardcode `local_fixed` Kit endpoint 換成 KitPool client
-   - 支援 K8s GPU node pool（NVIDIA Operator）或自行管理 GPU host group
+   - 支援 K8s GPU node pool（NVIDIA Operator）或自管 GPU host group
    - Pool 回報可用 capacity slots，coordinator allocate / release
 3. **Redis cache**
    - artifact metadata / readiness 結果快取
    - session presence / selection 即時狀態
-4. **Object Storage 抽象層**
-   - `_worker` 把本地 `data/objects/` 升級為 S3-compatible（MinIO local、S3 production）
+4. **Object Storage 抽象層（不再混淆 `_s3_storage` 邊界）**
+   - `_worker` 把本地 `data/objects/` 升級為 S3-compatible（local: MinIO；prod: S3）
    - 衍生檔可用 pre-signed URL 對外
-5. **API Gateway**
-   - 在 coordinator 前面加一層 gateway（Kong / Traefik / 自行實作）
+5. **E. Notification / Webhook Service 抽出**
+   - 建立獨立 service：`_notification-service/`
+   - 訂閱 conversion job 完成、session lifecycle 變更、annotation 新增等事件
+   - 推送到外部系統（Slack / Email / 外部 workflow）
+   - Webhook delivery retry 與 dead-letter queue
+6. **API Gateway**
+   - 在 coordinator + `_worker` + `_bim-control` 前面加 gateway
    - 統一處理 rate limit、CORS、auth header
 
 **規劃 OpenSpec change（建議命名）**：
 
 ```txt
-openspec new async-worker-pool-and-redis
-openspec new gpu-kit-pool-scheduler
-openspec new object-storage-abstraction
+/openspec new async-worker-pool-and-redis
+/openspec new gpu-kit-pool-scheduler
+/openspec new object-storage-abstraction
+/openspec new notification-webhook-service
+/openspec new api-gateway-and-rate-limiting
 ```
 
 ---
 
-### Phase 5：Omniverse 平台能力最大化 📅
+### Phase 5：Omniverse 平台能力最大化 + AI Service 📅
 
-> **目標**：把 Omniverse 在 BIM review 之外的能力打開：物理模擬（Physics / RTX）、材質（MDL）、感測模擬（IAQ / HVAC / 環境感測 / 能耗模擬）、AI 分析。
+> **目標**：把 Omniverse 能力發揮到最大 — 擬真建築、真實物理、環境感測、模擬驅動 AI 分析。同時建立 D. AI Rule Carbon Service。
+>
+> **這是 v2 架構圖中明確標記「把 Omniverse 能力發揮到最大」的核心 phase**。
 
 **規劃任務**：
 
-1. **RTX 視覺品質**
-   - 開啟 RTX renderer，調整 SPP / max bounces
-   - HDRI 環境照明與 MDL 自訂材質
-2. **PhysX 整合**
+1. **真實 IFC → USDC Converter ⭐ 最高優先**（解決 Phase 3 blocked）
+   - 評估 NVIDIA Omniverse IFC Importer / 自建 ifcopenshell + USD SDK pipeline
+   - 目標 quality gate：geometry coverage ≥ 95%、IFC GUID ↔ USD prim path coverage ≥ 95%
+   - 對應品質保證管線步驟 ⑤
+2. **`ifc-usd-quality-gate` capability**（新 spec）
+   - conversion 完成後自動跑 coverage check
+   - 結果寫入 `_bim-control` `artifact_groups.quality_report`
+   - viewer 顯示 mapping coverage badge
+3. **RTX 視覺品質**
+   - 啟用 RTX renderer，調整 SPP / max bounces
+   - HDRI 環境照明 + MDL 自訂材質
+4. **PhysX 整合**
    - 碰撞檢測（clash detection）→ 自動產生 review issue
    - 構件穩定性 / 重力模擬
-3. **環境感測模擬**
+5. **環境感測 / 能耗模擬**
    - IAQ（室內空氣品質）/ HVAC 模擬
-   - 能耗模擬（透過 Omniverse Connect 與其他工具整合）
-4. **AI Worker pipeline**
-   - 法規檢核 worker（讀 USD + element_mapping → 規則引擎 → 產生 issue）
-   - 碳排估算 worker
-   - 結果都透過 `_bim-control` `POST /api/model-versions/{id}/review-issues` 回寫
-5. **Multi-viewport / Camera presets**
-   - DataChannel 新增 `setCameraView` command（top / front / perspective）
-   - viewer 切換視角
+   - 能耗模擬（透過 Omniverse Connect）
+   - 結果以 Highlight / Overlay layer 疊在 USD 上
+6. **D. AI Rule Carbon Service**（新建獨立服務）
+   - IDS（Information Delivery Specification）/ code check
+   - Carbon footprint 估算
+   - IAQ / HVAC compliance
+   - 結果都透過 `_bim-control POST /api/model-versions/{id}/review-issues` 回寫
+   - **嚴守邊界**：D 不取代 `_bim-control` 成為資料權威；只提供分析結果並由 `_bim-control` 持久化
+7. **Multi-viewport / Camera presets**
+   - DataChannel 新增 `setCameraView` command
+   - viewer 切換視角（top / front / perspective）
 
-**邊界守則**：所有新 worker / AI service 都須遵守 `AGENTS.md §9` Optional Mock Services 規範，不得越過 `_bim-control` / `_worker` / coordinator 的權威。
+**規劃 OpenSpec change（建議命名）**：
+
+```txt
+/openspec new ifc-to-usdc-real-converter
+/openspec new ifc-usd-quality-gate
+/openspec new rtx-physx-mdl-rendering
+/openspec new sensor-simulation-overlay
+/openspec new ai-rule-carbon-service-foundation
+```
+
+> **邊界守則**：所有新 worker / AI service 都須遵守 [`AGENTS.md §9` Optional Mock Services 規範](../AGENTS.md)，不得越過 `_bim-control` / `_worker` / coordinator 的權威。
 
 ---
 
 ### Phase 6：Production & SaaS 營運 📅
 
-> **目標**：CI/CD、container deployment、observability、tracing、backup / DR、billing / usage metering、SLA / SLO。
+> **目標**：CI/CD、container deployment、observability、tracing、backup / DR、billing / usage metering、SLA / SLO、SSO + RBAC + 多租戶、Revit Plugin、Admin Console、External API。
 
 **規劃任務**：
 
 1. **Container & K8s**
    - 每個服務 Dockerfile（multi-stage build）
-   - Helm chart per service（coordinator / worker / bim-control / kit）
+   - Helm chart per service
    - GPU node pool + 一般 node pool 分離
+   - 對應 v2 架構圖 ⑥ DevOps 層
 2. **CI/CD**
    - GitHub Actions：lint → unit test → integration test → build image → push registry → deploy staging → smoke test → promote production
-   - `.github/workflows/`（目前是空的，需要建立）
-3. **Auth & Multi-tenant**
-   - SSO（SAML / OIDC，整合 Auth0 / Keycloak）
+   - `.github/workflows/`（目前是空的，需建立）
+3. **使用者與權限層（v2 架構圖 ①）**
+   - SSO（SAML / OIDC，Auth0 / Keycloak）
    - JWT + refresh token
-   - RBAC（Admin / Project Manager / Reviewer / Viewer）
-   - tenant isolation：所有 worker object key、coordinator session、bim-control resource 加 `tenant_id` enforcement
-4. **Observability**
+   - RBAC：管理員 / 建築師 / 審查員 / 住戶 / 維護人員
+   - API Key（給 External API consumer）
+   - 租戶階層：公司 → 租戶 → 區 → 棟 → 戶 → 號
+   - tenant isolation 全面 enforce（worker object key、coordinator session、bim-control resource）
+4. **Client / Portal 層（v2 架構圖 ②）**
+   - **Revit Plugin**：在 Revit 內直接觸發 IFC export + 上傳 `_worker`
+   - **Admin Console**：取代 demo UI，包含 tenant management、project / version 管理、conversion job 監控、session 管理
+   - **External API / Webhook Consumer**：對外公開 stable API，含 OpenAPI spec
+5. **Observability（v2 架構圖 ⑤ Audit Log / Observability / Trace）**
    - Metrics：Prometheus + Grafana（API latency p50/p95/p99、conversion success rate、Kit GPU utilization、WebRTC FPS / packet loss）
    - Logs：Loki / ELK + correlation ID
    - Tracing：Jaeger / Tempo（跨 worker → bim-control → coordinator 完整 trace）
    - Errors：Sentry（所有 service 整合 SDK）
-5. **Billing & Usage Metering**
+   - Audit Log：所有 CRUD 操作，符合 GDPR / SOC 2
+6. **Billing & Usage Metering（v2 架構圖 ⑤）**
    - 計量單位：GPU hours、storage GB、API calls、conversion jobs
    - 整合 Stripe 或內部 billing
-6. **Backup / DR**
+7. **Backup / DR / Security / Compliance**
    - PostgreSQL 自動備份（多 region）
    - Object storage versioning + lifecycle policy
-7. **SLA / SLO**
+   - SOC 2 / ISO 27001 準備
+8. **SLA / SLO / Incident Response**
    - Uptime SLA 99.5%
    - API p95 < 500ms
    - WebRTC streaming latency p95 < 100ms
    - Conversion job 95% < 60 秒
+   - PagerDuty 整合
+9. **Vector / Search（v2 架構圖 ⑤，optional）**
+   - 跨 project 模型搜尋
+   - 語意搜尋（建築物件描述、issue 全文檢索）
 
 ---
 
-## 6. 每階段驗收 KPI
+## 8. 每階段驗收 KPI
 
-> 對應架構圖 ④ 區塊。
+> 對應 v1 架構圖 ④ 區塊。
 
-| # | KPI | 量測方式 | 目標 | 對應 Phase |
-|---|---|---|---|---|
-| 1 | **轉檔成功率** | `_worker` conversion job `succeeded` / `(succeeded+failed)` | ≥ 95% | Phase 1 ✅ |
-| 2 | **Artifact 版本 / 來源可追溯** | `metadata.json` 含完整 lineage、`_bim-control` artifact group 可查到 source artifact 與 conversion job | 100% lineage 完整 | Phase 1 ✅ |
-| 3 | **Review Session 啟動時間** | 從 `POST /api/review-session-requests` 到 viewer 看到 `lifecycle_status=active` 的 wall-clock 時間 | < 5 秒（artifact ready 狀態下） | Phase 2 ✅ / Phase 3 持續優化 |
-| 4 | **Session Lifecycle 狀態正確** | smoke test 涵蓋 `created → active → closing → closed → released` 完整轉移；`closed` 後 Kit binding 都 `released` | smoke 通過率 100% | Phase 3 🔄 |
-| 5 | **多 artifact / 多 instance 可運作** | `same_instance` 多 artifact 載入回 `applied_mode=artifact_bindings_multi_layer_payload`；`dedicated_instance` 多 binding 各自獨立 | 通過 multi-binding contract smoke + GPU 真機驗證 | Phase 3 🔄 |
-| 6 | **全鏈路可觀測 / 可稽核 / 可回放** | Prometheus metrics 涵蓋 5 個服務、Grafana dashboard 上線、Jaeger trace 可串 worker→bim-control→coordinator、Sentry 收到所有 service error | dashboard / trace / sentry 三項上線 | Phase 6 📅 |
+| # | KPI | 量測方式 | 目標 | 對應 Phase | 現況 |
+|---|---|---|---|---|---|
+| 1 | **轉檔成功率** | `_worker` conversion job `succeeded` / `(succeeded+failed)` | ≥ 95% | Phase 1 ✅ / Phase 5（真實轉檔後重評） | facade tier 100%；真實 converter 待 Phase 5 |
+| 2 | **Artifact 版本 / 來源可追溯** | `metadata.json` 含完整 lineage、`original_filename`、`_bim-control` artifact group 可查到 source artifact 與 conversion job | 100% lineage 完整 | Phase 1 ✅ | 已驗證（含 PR #17 中文檔名追蹤） |
+| 3 | **Review Session 啟動時間** | 從 `POST /api/review-session-requests` 到 viewer 看到 `lifecycle_status=active` 的 wall-clock 時間 | < 5 秒（artifact ready 狀態下） | Phase 2 ✅ | smoke 通過、實機 < 1 秒（control-plane）；真實 GPU streaming 視 GPU 暖機而定 |
+| 4 | **Session Lifecycle 狀態正確** | smoke 涵蓋 `created → active → closing → closed → released`；`closed` 後 Kit binding 都 `released` | smoke 通過率 100% | Phase 3 🔄 | close/release 分離已驗證；`closing` 完整實作待補 |
+| 5 | **多 artifact / 多 instance 可運作** | `same_instance` 多 artifact → `applied_mode=artifact_bindings_multi_layer_payload`；`dedicated_instance` 多 binding 各自獨立 stream | non-GPU contract 通過 + GPU 真機驗證 | Phase 3 🔄 | non-GPU contract ✅；GPU 真機 blocked（需多 Kit instance + renderable USDC） |
+| 6 | **全鏈路可觀測 / 可稽核 / 可回放** | Prometheus metrics 涵蓋 5 個服務 + Grafana dashboard + Jaeger trace 可串完整 flow + Sentry 收所有 error + Audit Log 持久化 | 5 項全上線 | Phase 6 📅 | 待規劃 |
+| 7 *new* | **IFC → USD 品質 Gate** | geometry coverage ≥ 95% + IFC GUID ↔ USD prim path coverage ≥ 95% | 自動跑 quality gate 並寫入 `artifact_groups.quality_report` | Phase 5 📅 | 待提案 capability `ifc-usd-quality-gate` |
+| 8 *new* | **多租戶 + RBAC** | 同 tenant 內可看到自己資料、跨 tenant 完全隔離；5 個角色權限矩陣正確 | 滲透測試通過 + RBAC unit tests 100% | Phase 6 📅 | 待規劃 |
 
 ---
 
-## 7. 核心資料流（最新）
+## 9. 核心資料流
 
 > 完整定義以 [`AGENTS.md §5`](../AGENTS.md) 與 [`docs/contracts/`](contracts/) 為準。
 
-### 7.1 Artifact Pipeline（Phase 1）
+### 9.1 Artifact Pipeline（Phase 1，含 `original_filename`）
 
 ```mermaid
 sequenceDiagram
-    participant UI as Worker Demo UI
+    participant UI as Worker Demo UI / Revit Plugin
     participant WK as _worker (:8005)
     participant BC as _bim-control (:8001)
 
     UI->>WK: GET /api/dev/ifc-sources
     WK-->>UI: items[] (source_id, filename, ...)
     UI->>WK: POST /api/dev/ifc-sources/{id}/conversions
-    WK->>WK: persist source IFC under versioned object layout
+    WK->>WK: persist source IFC (sanitized disk name)<br/>+ metadata.json {original_filename}
     WK->>WK: create source_artifact + conversion_job (queued)
-    WK-->>UI: {source_artifact_id, conversion_job_id, ...}
+    WK-->>UI: {source_artifact_id, conversion_job_id, original_filename, ...}
     Note over WK: background: convert IFC → USDC + indexes + mapping
-    WK->>WK: write derived files + metadata.json
-    WK->>BC: POST /api/model-versions/{id}/conversion-result (metadata only)
+    WK->>WK: write derived files + metadata.json + lineage
+    WK->>BC: POST /api/model-versions/{id}/conversion-result<br/>{original_filename, usdc_url, mapping_url, lineage}
+    BC->>BC: artifact.name = original_filename
     BC-->>WK: 200 OK
     UI->>WK: GET /api/conversions/{id}/result (poll)
-    WK-->>UI: {status: succeeded, usdc_url, mapping_url, lineage}
+    WK-->>UI: {status: succeeded, usdc_url, mapping_url, original_filename, lineage}
 ```
 
-### 7.2 Review Session Request（Phase 2）
+### 9.2 Review Session Request（Phase 2）
 
 ```mermaid
 sequenceDiagram
@@ -496,7 +684,7 @@ sequenceDiagram
     end
 ```
 
-### 7.3 Streaming + Session Lifecycle（Phase 2/3）
+### 9.3 Streaming + Session Lifecycle Close/Release（Phase 2/3）
 
 ```mermaid
 sequenceDiagram
@@ -504,32 +692,54 @@ sequenceDiagram
     participant CO as bim-review-coordinator
     participant KIT as bim-streaming-server
     participant WK as _worker
+    participant BC as _bim-control
 
     WV->>CO: GET /api/review-sessions/{id}/stream-config
     CO-->>WV: {lifecycle_status: active, webrtc, artifact_bindings[]}
     WV->>KIT: WebRTC connect (signaling :49100)
-    KIT-->>WV: video stream
+    KIT-->>WV: video stream (:47998)
     WV->>KIT: DataChannel openStageRequest<br/>{artifact_bindings[]}
     KIT->>WK: HTTP GET worker object URL (model.usdc)
     WK-->>KIT: file bytes
     KIT->>KIT: open primary stage + compose secondary as sublayer/payload
-    KIT-->>WV: openedStageResult<br/>{applied_mode: artifact_bindings_multi_layer_payload,<br/>loaded_bindings, failed_bindings, missing_paths}
+    KIT-->>WV: openedStageResult<br/>{applied_mode, loaded_bindings, missing_paths, fallback_paths}
 
-    Note over WV,CO: 後續：DataChannel highlightPrimsRequest / focusPrimRequest
-    Note over WV,CO: 協作事件走 Socket.IO（presence / selection / annotation）
+    Note over WV,CO: DataChannel: highlightPrimsRequest / focusPrimRequest
+    Note over WV,CO: Socket.IO: presence / selection / annotation broadcast
 
     WV->>CO: POST /api/review-sessions/{id}/close
     CO->>CO: lifecycle: active → closing
-    CO->>CO: persist final events
+    CO->>BC: persist final annotation / snapshot events
     CO->>CO: lifecycle: closing → closed
     CO->>KIT: release Kit instance binding
     KIT-->>CO: released
-    CO->>BC: PATCH (lifecycle_event: instanceReleased)
+    CO->>BC: PATCH (lifecycle_event: instanceReleased, released_at)
+```
+
+### 9.4 Phase 5 規劃：AI Rule / Carbon Service Flow
+
+```mermaid
+sequenceDiagram
+    participant WK as _worker
+    participant BC as _bim-control
+    participant AI as D. ai-rule-carbon-service
+    participant N as E. notification service
+    participant WV as web-viewer-sample
+
+    WK->>BC: conversion-result (artifact ready)
+    BC->>N: event: artifact.ready
+    N->>AI: webhook: 觸發 IDS / 碳排 / IAQ 分析
+    AI->>WK: GET /objects/.../element_mapping.json
+    AI->>AI: 規則檢核 / IDS / 碳排計算
+    AI->>BC: POST /api/model-versions/{id}/review-issues<br/>(issue list with usd_prim_path)
+    BC->>N: event: issues.created
+    N->>WV: WebSocket / push: new issues
+    WV->>WV: highlight 對應 prim path
 ```
 
 ---
 
-## 8. Source of Truth 與文件對應表
+## 10. Source of Truth 與文件對應表
 
 | 你想知道 | 看哪個檔 |
 |---|---|
@@ -539,21 +749,36 @@ sequenceDiagram
 | Coordinator REST API | [`docs/contracts/review-session-api.md`](contracts/review-session-api.md) |
 | Coordinator Socket.IO 事件 | [`docs/contracts/coordinator-socket-events.md`](contracts/coordinator-socket-events.md) |
 | Streaming DataChannel 事件 | [`docs/contracts/streaming-datachannel-events.md`](contracts/streaming-datachannel-events.md) |
-| 退役服務說明 | [`docs/contracts/conversion-api.md`](contracts/conversion-api.md), [`openspec/specs/legacy-storage-conversion-retirement/spec.md`](../openspec/specs/legacy-storage-conversion-retirement/spec.md) |
+| 退役服務 | [`docs/contracts/conversion-api.md`](contracts/conversion-api.md), [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md) |
 | 本地開發步驟 | [`docs/contracts/local-dev-runbook.md`](contracts/local-dev-runbook.md), [`README.md`](../README.md) |
 | Demo UI 設計守則 | [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md) |
-| Capability 規格（current behavior 須符合） | [`openspec/specs/`](../openspec/specs/) 7 份 spec |
-| 已完成的 OpenSpec change（含 proposal/design/tasks） | [`openspec/changes/archive/`](../openspec/changes/archive/) |
+| 9 份 Capability spec | [`openspec/specs/`](../openspec/specs/) |
+| 已 archive 的 OpenSpec change | [`openspec/changes/archive/`](../openspec/changes/archive/) |
+| **2026-05-08 端到端驗證證據** | [`docs/verification/2026-05-08-spec-end-to-end-verification.md`](verification/2026-05-08-spec-end-to-end-verification.md) |
 
-> **衝突解決順序**（同 `AGENTS.md §0.1`）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。
+### 10.1 9 份 Capability Spec 對應 Phase
+
+| Capability | Phase | 狀態 |
+|---|---|---|
+| `worker-artifact-pipeline` | 1 | ✅ |
+| `worker-dev-ifc-source-selection` | 1 | ✅ |
+| `worker-demo-upload-convert-ui` | 1 | ✅ |
+| `legacy-storage-conversion-retirement` | 1 | ✅ |
+| `review-session-request-lifecycle` | 2 | ✅ |
+| `session-first-review-viewer` | 2 | ✅ |
+| `multi-artifact-kit-routing` | 3 | 🔄 |
+| `streaming-multi-layer-payload-loading` | 3 | 🔄 |
+| `runtime-verification-evidence` | 3 | ✅（spec 完成、blocked 條件已記錄） |
+
+> **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。
 
 ---
 
-## 9. 開發協作流程
+## 11. 開發協作流程
 
-### 9.1 OpenSpec + GitHub PR Workflow
+### 11.1 OpenSpec + GitHub PR Workflow
 
-> 完整定義以 [`AGENTS.md §0.1` "OpenSpec + GitHub workflow"](../AGENTS.md) 為準。
+> 完整定義以 [`AGENTS.md §0.1`](../AGENTS.md) 為準。
 
 ```txt
 OpenSpec       = 需求 / 規格 / 驗收條件
@@ -567,13 +792,13 @@ Archive        = 把 delta specs 併入 openspec/specs/
 **標準流程**：
 
 1. 從最新 `main` 建立 `codex/openspec/<change-id>` branch
-2. `/openspec new <change-id>` 在該 branch 上建立 proposal / design / tasks / delta specs
+2. `/openspec new <change-id>` 在該 branch 建 proposal / design / tasks / delta specs
 3. `/openspec apply <change-id>` 實作並更新 task `[ ] → [x]`
-4. 開 PR，跑最小驗證並回報結果
+4. 開 PR 跑最小驗證並回報結果
 5. PR review + GitHub Actions 自動驗證
 6. Merge 後執行 OpenSpec sync/archive
 
-### 9.2 PR Checklist
+### 11.2 PR Checklist
 
 - [ ] 對應的 OpenSpec change 存在（或本 PR 為純 docs/refactor 不需要）
 - [ ] 修改不違反 `AGENTS.md` repo 邊界
@@ -581,9 +806,10 @@ Archive        = 把 delta specs 併入 openspec/specs/
 - [ ] Node tests / build 從各服務目錄執行：`cd <svc> && npm test && npm run build`
 - [ ] 涉及 API 變更時，同步更新 `docs/contracts/`
 - [ ] 涉及 UI 變更時，符合 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`
-- [ ] 使用 GitNexus 工具：`gitnexus_impact` 評估影響、`gitnexus_detect_changes` 確認 scope
+- [ ] 涉及驗證時，依 `runtime-verification-evidence` 分層記錄（不混用單一 pass/fail）
+- [ ] 使用 GitNexus：`gitnexus_impact` 評估影響、`gitnexus_detect_changes` 確認 scope
 
-### 9.3 服務測試命令速查
+### 11.3 服務測試命令速查
 
 ```bash
 # Python services（必須在各自服務目錄下）
@@ -594,43 +820,65 @@ cd _worker      && python3 -m pytest tests
 cd bim-review-coordinator && npm test && npm run build
 cd web-viewer-sample      && npm run test:session-first && npm run build
 
-# Smoke tests（root）
-./scripts/dev-health-check.ps1                # 健康檢查
-./scripts/smoke-worker-review-request.ps1     # API-only 端到端
-./scripts/smoke-review-session.ps1            # session 完整流程
-./scripts/smoke-review-socket.ps1             # 多人協作
+# Smoke tests（root，PowerShell on Windows）
+./scripts/dev-health-check.ps1
+./scripts/smoke-worker-review-request.ps1     # API-only 端到端（推薦每次 PR 前跑）
+./scripts/smoke-review-session.ps1
+./scripts/smoke-review-socket.ps1
 
 # Streaming（須 GPU + Kit）
-./bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1
+./bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1   # non-GPU contract
+./scripts/start-all.ps1                                                # 啟動所有服務（含 streaming）
+
+# OpenSpec 驗證
+openspec validate <change-id>
 ```
 
 ---
 
-## 10. 下一步行動建議
+## 12. 下一步行動建議
 
-依當前進度（Phase 0/1/2 ✅ 完成、Phase 3 🔄 進行中），建議優先順序：
+依當前進度（Phase 0/1/2 ✅、Phase 3 🔄 control-plane 完成 / runtime blocked），建議優先順序：
 
-1. **Phase 3 收尾**（最高優先）：
-   - 完成 `closing` state 與 Kit instance release flow
-   - 實作 `shared_state` routing policy 的跨 instance Socket.IO event 同步
-   - 補 `scripts/smoke-multi-instance-routing.ps1`
-   - GPU 環境下做多 artifact 真機驗證
+### 12.1 第一優先：解開 Phase 3 runtime blocker
 
-2. **Phase 4 啟動準備**：
-   - 開 OpenSpec change：`async-worker-pool-and-redis`、`gpu-kit-pool-scheduler`
-   - 評估 Object Storage 抽象層（MinIO local + S3 production）
-   - 在 `_worker` 引入 background queue（Redis Stream / RQ）
+> 解開這個 blocker 才能讓 IFC → USD 品質保證管線（v2 圖右側 ⭐）真正跑起來。
 
-3. **DevOps 基礎**（與 Phase 4 並行）：
-   - 建立 `.github/workflows/`（目前是空的）：lint + unit test + build per service
-   - 為每個服務建立 Dockerfile（multi-stage build）
-   - 建立 root `docker-compose.yml`（local multi-service dev）
+1. **真實 IFC → USDC converter**（取代 placeholder）
+   - 開 OpenSpec change：`/openspec new ifc-to-usdc-real-converter`
+   - 評估方案：NVIDIA Omniverse IFC Importer / ifcopenshell + USD SDK / Kit headless converter
+2. **`ifc-usd-quality-gate` capability**
+   - 開 OpenSpec change：`/openspec new ifc-usd-quality-gate`
+   - 寫入 `artifact_groups.quality_report`，viewer 顯示 coverage badge
+3. **Root multi-Kit launcher**
+   - `scripts/start-multi-kit.{ps1,sh}`：啟動 ≥ 2 Kit instance（不同 signaling port）
+   - 驗證 `dedicated_instance` routing 在實機並行 stream
 
-> 任何新 phase 啟動前，先以 `/openspec new <change-id>` 建立可審查的 proposal，並由人類 reviewer 確認再實作。
+### 12.2 第二優先：Phase 3 收尾
+
+1. `closing` state 完整實作（累積最終 annotation / snapshot 後再 `closed`）
+2. Kit instance release flow 各階段事件回寫
+3. `shared_state` routing policy 跨 instance Socket.IO 同步
+4. Routing policy decision engine
+
+### 12.3 第三優先：Phase 4 平台化基礎啟動
+
+1. 開 OpenSpec change：`async-worker-pool-and-redis`
+2. 開 OpenSpec change：`object-storage-abstraction`（不再混淆 `_s3_storage` 邊界）
+3. 抽出 `_notification-service/`：`/openspec new notification-webhook-service`
+
+### 12.4 並行進行：DevOps 基礎
+
+1. 建立 `.github/workflows/`（目前是空的）：lint + unit test + build per service
+2. 為每個服務建立 Dockerfile（multi-stage build）
+3. 建立 root `docker-compose.yml`
 
 ---
 
-**文件版本**：v2.0
-**最後更新**：2026-05-08（依新版架構圖 v2 重寫）
-**對應架構圖**：`AI-BIM-governance：從目前 PoC 到 SaaS 級平台的執行路線圖`
+**文件版本**：v3.0
+**最後更新**：2026-05-08（依 v1+v2 雙圖重寫，補入 7 層架構、IFC→USD 品質保證管線、AI/Notification service、Portal 層、租戶權限層、驗證證據分層）
+**對應架構圖**：
+- v1：`AI-BIM-governance：從目前 PoC 到 SaaS 級平台的執行路線圖`
+- v2：`AI-BIM-governance：SaaS 級目標架構與落地順序`
+
 **審查週期**：每個 phase 結束 + 重大架構變更時更新
