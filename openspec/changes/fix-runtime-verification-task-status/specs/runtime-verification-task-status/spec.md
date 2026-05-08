@@ -17,7 +17,7 @@ OpenSpec runtime verification tasks SHALL distinguish successful runtime validat
 #### Scenario: OpenSpec reports all tasks done
 
 - **WHEN** `openspec instructions apply` reports `state=all_done`
-- **THEN** readers MUST still be able to determine from tasks and verification report whether each runtime tier is `passed`, `blocked`, `failed`, or `not passed`
+- **THEN** readers MUST still be able to determine from tasks and verification report whether each runtime tier is `passed`, `blocked`, or `failed`
 
 ### Requirement: Review finding resolution uses live re-verification
 
