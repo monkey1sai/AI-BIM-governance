@@ -1,7 +1,12 @@
 # legacy-storage-conversion-retirement Specification
 
 ## Purpose
-TBD - created by archiving change add-dev-ifc-source-selection-flow. Update Purpose after archive.
+Define the worker-only retirement boundary for legacy local storage and
+conversion services after `_worker` became the current artifact + conversion
+facade. This spec keeps `_s3_storage`, `_conversion-service`, and
+`_conversion-server` out of current startup, health check, smoke test, and
+review-session dependencies while preserving clearly marked historical
+references as archive context.
 ## Requirements
 ### Requirement: Worker-Only Demo Service Set
 
