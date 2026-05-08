@@ -18,6 +18,11 @@ The workspace SHALL record runtime verification evidence by tier instead of usin
 
 The workspace SHALL only treat Kit viewport render as verified when the loaded model contains valid renderable geometry and browser evidence proves video readiness.
 
+#### Scenario: Repo-local storage fixture is selected
+
+- **WHEN** single Kit render evidence is prepared
+- **THEN** the fixture MUST come from repo-local `storage/` unless the verification report explicitly records an approved exception and reason
+
 #### Scenario: Header-only IFC fixture is rejected for render evidence
 
 - **WHEN** a smoke fixture only contains IFC header / footer text and no renderable building geometry
@@ -31,6 +36,11 @@ The workspace SHALL only treat Kit viewport render as verified when the loaded m
 ### Requirement: Dedicated Kit routing evidence requires multiple Kit instances
 
 The workspace SHALL only classify `dedicated_instance` routing as runtime-verified when the environment provides two or more distinct Kit instance endpoints.
+
+#### Scenario: Root scripts coordinate multi Kit startup
+
+- **WHEN** multi Kit runtime verification needs to launch or check more than one service
+- **THEN** the orchestration entrypoint MUST live under root `scripts/` while `bim-streaming-server/scripts/` may remain the low-level single-instance launcher
 
 #### Scenario: Single local_fixed instance cannot verify dedicated routing
 
@@ -55,3 +65,8 @@ The workspace SHALL define thresholds before claiming large IFC or Socket.IO con
 
 - **WHEN** Socket.IO collaboration stress is run with more than two clients
 - **THEN** evidence records client count, event types, broadcast success criteria, observed failures, and coordinator health after the run
+
+#### Scenario: Socket.IO target load uses local sustainable capacity
+
+- **WHEN** Socket.IO stress is prepared on the user's workstation
+- **THEN** the verification MUST first determine the machine's maximum sustainable client count and use 90% of that count as the formal stress target

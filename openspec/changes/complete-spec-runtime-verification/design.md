@@ -45,6 +45,8 @@ Runtime evidence 分成四層：
 
 Kit viewport render evidence MUST NOT 使用只有 `ISO-10303-21` header 的 minimal smoke IFC。有效 evidence 需要至少有可渲染幾何的 IFC 或現成 USD / USDC，並記錄該 fixture 的來源、大小、artifact URL 與 session id。
 
+有效幾何 fixture 來源決議為 repo-local sample：優先從 repo root 的 `storage/` 選取。使用者本機主要 checkout 的目標路徑是 `C:\Repos\active\iot\AI-BIM-governance\storage`；在 Codex worktree 或 CI 中則以該 checkout 的 repo-local `storage/` 對應路徑為準。
+
 替代方案是沿用 existing smoke fixture，但它只能證明 API chain，不足以證明 viewport render。
 
 ### Decision 3: Keep `local_fixed` single-instance behavior honest
@@ -57,12 +59,25 @@ Kit viewport render evidence MUST NOT 使用只有 `ISO-10303-21` header 的 min
 
 每個硬體或負載相依項目都要記錄 `status=blocked`、缺少的前置條件與下一步，而不是留下模糊的「未驗證」。這讓 PR reviewer 可判斷目前 change 是否可接受，並避免下次重跑已知不可能通過的步驟。
 
+### Decision 5: Coordinate multi Kit startup from root scripts
+
+多 Kit instance 啟動與驗證 orchestration 由 root `scripts/` 協調，因為它跨越 `_worker`、`_bim-control`、`bim-review-coordinator`、`bim-streaming-server` 與 `web-viewer-sample`。`bim-streaming-server/scripts/` 可以保留單一 Kit instance 的低階啟動能力，但多服務、多 port、多 session 的驗證入口應放在 root `scripts/`。
+
+替代方案是把多 Kit launcher 放在 `bim-streaming-server/scripts/`，但那會讓 streaming repo 承擔跨服務 orchestration，容易越過 AGENTS 定義的 workspace 邊界。
+
+### Decision 6: Define Socket.IO stress at 90% of this machine's sustainable capacity
+
+Socket.IO stress 不固定寫死 10 / 25 / 50 clients。驗證流程先在本機做 ramp test 找出最大穩定 client count，再以該容量的 90% 作為正式 stress evidence 的目標負載。最大穩定容量的判定必須記錄硬體/程序狀態、失敗條件與採樣時間，避免把瞬間可連線數誤當成可持續負載。
+
+替代方案是固定 10 / 25 / 50 clients，但不同本機資源與已啟動服務差異太大，固定數字可能過低而沒有壓力意義，或過高而只測到本機資源極限。
+
 ## Risks / Trade-offs
 
 - [Risk] 驗證文件變成流程文件而不是可執行測試 → Mitigation: 每個 requirement 都要求明確命令、前置條件、成功標準與 evidence location。
 - [Risk] GPU / Kit 驗證在不同 Windows machine 上結果不穩 → Mitigation: 記錄 Kit profile、signaling port、fixture、session id、video readiness 與 screenshot，不只記錄「看起來成功」。
 - [Risk] 多 Kit routing 被誤認為已由 unit tests 完整覆蓋 → Mitigation: unit tests 只算 control-plane evidence；實機並行 stream 需要 `multi_kit_routing` evidence tier。
 - [Risk] 大型 IFC 壓力測試拖慢一般 PR → Mitigation: stress tier 不納入最小 PR gate，除非該 PR 修改 conversion、readiness 或 Socket.IO fanout 行為。
+- [Risk] 90% stress target 隨機器狀態浮動 → Mitigation: 每次 stress evidence 都記錄當次 machine baseline、最大穩定 client count、90% 計算值與失敗門檻。
 
 ## Migration Plan
 
@@ -72,8 +87,8 @@ Kit viewport render evidence MUST NOT 使用只有 `ISO-10303-21` header 的 min
 
 Rollback 方式：撤回此 OpenSpec change 的新增 artifacts，不影響 production runtime。
 
-## Open Questions
+## Resolved Questions
 
-- 有效幾何 IFC fixture 要使用 repo-local sample、外部客戶樣本，或由 Kit/USD toolchain 產生 synthetic sample？
-- 多 Kit instance 啟動腳本要放在 `bim-streaming-server/scripts/`，還是由 root `scripts/` 協調多服務啟動？
-- Socket.IO stress 的最低門檻要訂為 10、25 還是 50 clients？
+- 有效幾何 IFC fixture 使用 repo-local `storage/` sample；使用者本機主要 checkout 路徑為 `C:\Repos\active\iot\AI-BIM-governance\storage`。
+- 多 Kit instance 啟動與驗證由 root `scripts/` 協調多服務。
+- Socket.IO stress 門檻以本電腦最大穩定負荷的 90% 為正式驗收負載。
