@@ -41,3 +41,47 @@ def test_conversion_result_is_stored_and_reloaded(case_dir: Path):
     assert usdc_artifacts
     assert usdc_artifacts[0]["status"] == "ready"
     assert usdc_artifacts[0]["url"] == payload["usdc_url"]
+
+
+def test_conversion_result_uses_original_filename_for_source_artifact_name(case_dir: Path):
+    client = TestClient(create_app(data_root=case_dir / "data"))
+    original_filename = "許良宇圖書館建築_2026.ifc"
+    payload = {
+        "job_id": "conv_test_001",
+        "status": "succeeded",
+        "project_id": "project_demo_001",
+        "model_version_id": "version_demo_001",
+        "source_artifact_id": "artifact_src_test_001",
+        "source_url": "http://localhost:8005/objects/source.ifc",
+        "usdc_url": "http://localhost:8005/objects/model.usdc",
+        "mapping_url": "http://localhost:8005/objects/element_mapping.json",
+        "original_filename": original_filename,
+    }
+
+    response = client.post("/api/model-versions/version_demo_001/conversion-result", json=payload)
+
+    assert response.status_code == 200
+    artifacts = client.get("/api/model-versions/version_demo_001/artifacts").json()["items"]
+    source = next(item for item in artifacts if item["artifact_id"] == "artifact_src_test_001")
+    assert source["name"] == original_filename
+
+
+def test_conversion_result_source_artifact_name_falls_back_without_original_filename(case_dir: Path):
+    client = TestClient(create_app(data_root=case_dir / "data"))
+    payload = {
+        "job_id": "conv_test_001",
+        "status": "succeeded",
+        "project_id": "project_demo_001",
+        "model_version_id": "version_demo_001",
+        "source_artifact_id": "artifact_src_test_001",
+        "source_url": "http://localhost:8005/objects/source.ifc",
+        "usdc_url": "http://localhost:8005/objects/model.usdc",
+        "mapping_url": "http://localhost:8005/objects/element_mapping.json",
+    }
+
+    response = client.post("/api/model-versions/version_demo_001/conversion-result", json=payload)
+
+    assert response.status_code == 200
+    artifacts = client.get("/api/model-versions/version_demo_001/artifacts").json()["items"]
+    source = next(item for item in artifacts if item["artifact_id"] == "artifact_src_test_001")
+    assert source["name"] == "原始 IFC"

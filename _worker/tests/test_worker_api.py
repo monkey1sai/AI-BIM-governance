@@ -1,4 +1,8 @@
 import base64
+import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -32,6 +36,16 @@ def make_client(case_dir: Path, run_background: bool = True) -> TestClient:
     return TestClient(create_app(settings=settings, run_background=run_background))
 
 
+def real_ifc_storage_root() -> Path:
+    return Path(os.getenv("WORKER_REAL_IFC_STORAGE_ROOT", r"C:\Repos\active\iot\AI-BIM-governance\storage"))
+
+
+def real_streaming_root() -> Path:
+    return Path(
+        os.getenv("WORKER_REAL_STREAMING_ROOT", r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server")
+    )
+
+
 def source_payload(**overrides):
     payload = {
         "tenant_id": "tenant_demo_001",
@@ -62,6 +76,28 @@ def test_source_artifact_upload_writes_versioned_object_layout(case_dir: Path):
     object_response = client.get(body["object_url"].removeprefix("http://testserver"))
     assert object_response.status_code == 200
     assert b"ISO-10303-21" in object_response.content
+
+
+def test_source_artifact_upload_preserves_original_filename_metadata_index_and_response(case_dir: Path):
+    client = make_client(case_dir)
+    original_filename = "許良宇圖書館建築_2026 - 複製 (1).ifc"
+
+    response = client.post("/api/artifacts", json=source_payload(filename=original_filename))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["original_filename"] == original_filename
+    assert body["metadata"]["original_filename"] == original_filename
+    assert original_filename not in body["object_key"]
+
+    object_path = case_dir / "objects" / Path(*body["object_key"].split("/"))
+    metadata = json.loads((object_path.parents[1] / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["original_filename"] == original_filename
+
+    index = json.loads((case_dir / "objects" / "_index" / "source_artifacts.json").read_text(encoding="utf-8"))
+    entry = next(item for item in index["items"] if item["source_artifact_id"] == body["source_artifact_id"])
+    assert entry["original_filename"] == original_filename
+    assert entry["metadata"]["original_filename"] == original_filename
 
 
 def test_object_download_allows_local_viewer_origin(case_dir: Path):
@@ -146,6 +182,171 @@ def test_selected_dev_ifc_source_creates_artifact_and_conversion_job(case_dir: P
     result = client.get(body["result_url"])
     assert result.status_code == 200
     assert result.json()["status"] == "succeeded"
+
+
+def test_selected_dev_ifc_source_conversion_preserves_original_filename(case_dir: Path):
+    storage = case_dir / "storage"
+    storage.mkdir()
+    original_filename = "許良宇圖書館建築_2026 - 複製 (2).ifc"
+    (storage / original_filename).write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+    client = make_client(case_dir)
+    source = client.get("/api/dev/ifc-sources").json()["items"][0]
+
+    response = client.post(
+        f"/api/dev/ifc-sources/{source['source_id']}/conversions",
+        json={
+            "tenant_id": "tenant_demo_001",
+            "project_id": "project_demo_001",
+            "model_version_id": "version_demo_001",
+            "source_system": "dev_storage",
+            "uploaded_by": "dev_user_001",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"]["filename"] == original_filename
+    assert body["original_filename"] == original_filename
+
+    result = client.get(body["result_url"])
+    assert result.status_code == 200
+    assert result.json()["original_filename"] == original_filename
+
+
+def test_real_ifc_inputs_preserve_filename_through_worker_adapter_conversions(case_dir: Path):
+    """Uses real IFC bytes with the current worker adapter, not a Kit-ready USDC converter."""
+    real_storage = real_ifc_storage_root()
+    real_ifc_files = sorted(real_storage.glob("*.ifc"), key=lambda path: path.name.casefold())
+    if len(real_ifc_files) < 2:
+        pytest.skip(f"Need at least two real IFC files under {real_storage}.")
+
+    storage = case_dir / "storage"
+    storage.mkdir()
+    selected_files = real_ifc_files[:2]
+    for source_file in selected_files:
+        shutil.copy2(source_file, storage / source_file.name)
+
+    client = make_client(case_dir)
+    sources = client.get("/api/dev/ifc-sources").json()["items"]
+    assert [source["filename"] for source in sources] == [source_file.name for source_file in selected_files]
+
+    conversions = []
+    for index, source in enumerate(sources):
+        response = client.post(
+            f"/api/dev/ifc-sources/{source['source_id']}/conversions",
+            json={
+                "tenant_id": "tenant_demo_001",
+                "project_id": "project_demo_001",
+                "model_version_id": "version_demo_001",
+                "source_system": "dev_storage",
+                "uploaded_by": "dev_user_001",
+                "artifact_group_id": f"ag_real_ifc_{index}",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        result = client.get(body["result_url"])
+        assert result.status_code == 200
+        conversions.append((source, body, result.json()))
+
+    assert len({body["source_artifact_id"] for _, body, _ in conversions}) == len(selected_files)
+    assert len({body["conversion_job_id"] for _, body, _ in conversions}) == len(selected_files)
+    assert len({result["source_url"] for _, _, result in conversions}) == len(selected_files)
+
+    index = json.loads((case_dir / "objects" / "_index" / "source_artifacts.json").read_text(encoding="utf-8"))
+    index_by_artifact = {item["source_artifact_id"]: item for item in index["items"]}
+    for source, body, result in conversions:
+        assert body["original_filename"] == source["filename"]
+        assert result["status"] == "succeeded"
+        assert result["original_filename"] == source["filename"]
+        assert result["usdc_url"].endswith("/model.usdc")
+        assert index_by_artifact[body["source_artifact_id"]]["original_filename"] == source["filename"]
+        assert source["filename"] not in result["lineage"]["source_object_key"]
+
+
+def test_real_ifc_files_convert_to_kit_openable_usdc_when_enabled(case_dir: Path):
+    if os.getenv("WORKER_RUN_REAL_USDC_SMOKE") != "1":
+        pytest.skip("Set WORKER_RUN_REAL_USDC_SMOKE=1 to run the Kit/HOOPS IFC-to-USDC smoke test.")
+
+    storage_root = real_ifc_storage_root()
+    streaming_root = real_streaming_root()
+    build_root = streaming_root / "_build" / "windows-x86_64" / "release"
+    converter_script = streaming_root / "scripts" / "convert-ifc-to-usdc.ps1"
+    inspect_script = streaming_root / "scripts" / "inspect-usd-stage-and-quit.py"
+    kit_exe = build_root / "kit" / "kit.exe"
+
+    for required_path in (storage_root, converter_script, inspect_script, kit_exe):
+        assert required_path.exists(), f"Required real converter path is missing: {required_path}"
+
+    real_ifc_files = sorted(storage_root.glob("*.ifc"), key=lambda path: path.name.casefold())
+    assert len(real_ifc_files) >= 2, f"Need at least two real IFC files under {storage_root}."
+
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    assert powershell, "PowerShell is required to run convert-ifc-to-usdc.ps1."
+
+    output_dir = case_dir / "real-usdc"
+    output_dir.mkdir()
+    for source_file in real_ifc_files[:2]:
+        conversion = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(converter_script),
+                "-IfcPath",
+                str(source_file),
+                "-OutputDir",
+                str(output_dir),
+                "-KitExePath",
+                str(kit_exe),
+                "-TimeoutSeconds",
+                "900",
+                "-Force",
+            ],
+            cwd=streaming_root,
+            capture_output=True,
+            text=True,
+            timeout=960,
+            check=False,
+        )
+        assert conversion.returncode == 0, conversion.stdout + conversion.stderr
+
+        output_path = output_dir / f"{source_file.stem}.usdc"
+        assert output_path.is_file()
+        assert output_path.stat().st_size > 1024 * 1024
+
+        inspect_output = output_dir / f"{source_file.stem}.stage.json"
+        stage_check = subprocess.run(
+            [
+                str(kit_exe),
+                "--ext-folder",
+                str(build_root / "exts"),
+                "--ext-folder",
+                str(build_root / "extscache"),
+                "--ext-folder",
+                str(build_root / "apps"),
+                "--no-window",
+                "--enable",
+                "omni.usd",
+                "--exec",
+                f'"{inspect_script}" --usd-path "{output_path}" --output-path "{inspect_output}"',
+                "--/app/fastShutdown=1",
+                "--info",
+            ],
+            cwd=streaming_root,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        assert stage_check.returncode == 0, stage_check.stdout + stage_check.stderr
+
+        stage = json.loads(inspect_output.read_text(encoding="utf-8"))
+        assert stage["prim_count"] > 0
+        assert stage["root_layer"].replace("\\", "/").endswith(f"{source_file.stem}.usdc")
 
 
 def test_selected_dev_ifc_source_rejects_stale_source_id(case_dir: Path):

@@ -93,6 +93,7 @@ Response:
   "artifact_group_id": "ag_xxx",
   "conversion_job_id": "conv_20260507000000_xxxxxxxx",
   "status": "queued",
+  "original_filename": "sample.ifc",
   "result_url": "http://127.0.0.1:8005/api/conversions/conv_.../result",
   "readiness_url": "http://127.0.0.1:8005/api/artifact-groups/ag_xxx/readiness"
 }
@@ -120,6 +121,7 @@ Response:
   "source_artifact_id": "artifact_src_xxx",
   "artifact_group_id": "ag_xxx",
   "sha256": "...",
+  "original_filename": "source.ifc",
   "object_key": "tenants/tenant_demo_001/projects/project_demo_001/versions/version_demo_001/artifact-groups/ag_xxx/source/revit/artifact_src_xxx/original/abcd1234_source.ifc",
   "object_url": "http://127.0.0.1:8005/objects/tenants/tenant_demo_001/...",
   "status": "uploaded"
@@ -127,6 +129,11 @@ Response:
 ```
 
 The request must include `tenant_id`, `project_id`, `model_version_id`, `source_system`, uploader identity, filename, and either `content_base64`, `content_text`, `source_url`, or `signed_upload_url`. Missing lineage is rejected so orphan artifacts are not created.
+
+The worker preserves the raw client-provided `filename` as `original_filename`
+in source artifact metadata, the source artifact index, source artifact
+responses, conversion results, and the `_bim-control` conversion-result callback.
+The on-disk object name still uses a sanitized filename for path safety.
 
 ## Conversion Job
 
@@ -163,6 +170,7 @@ Succeeded result:
   "artifact_group_id": "ag_xxx",
   "source_artifact_id": "artifact_src_xxx",
   "usdc_artifact_id": "artifact_usdc_20260507000000_xxxxxxxx",
+  "original_filename": "source.ifc",
   "usdc_url": "http://127.0.0.1:8005/objects/tenants/.../derived/conv_.../usdc/model.usdc",
   "ifc_index_url": "http://127.0.0.1:8005/objects/tenants/.../ifc_index.json",
   "usd_index_url": "http://127.0.0.1:8005/objects/tenants/.../usd_index.json",
