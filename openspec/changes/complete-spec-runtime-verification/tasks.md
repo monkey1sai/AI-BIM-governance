@@ -16,9 +16,9 @@ Result: `[verify] stage loading DataChannel contract passed`; no failure asserti
 
 ## 3. Single Kit GPU Render Evidence
 
-- [x] 3.1 Select a valid geometry fixture from repo-local `storage/` (`C:\Repos\active\iot\AI-BIM-governance\storage` on the user's main Windows checkout); do not use the header-only `storage/sample.ifc` smoke fixture as render evidence.
-- [x] 3.2 Attempt the `_worker -> _bim-control -> bim-review-coordinator -> web-viewer-sample -> bim-streaming-server` flow with the valid fixture and record the exact pass / blocked boundary.
-- [x] 3.3 Record blocked evidence when render prerequisites are unavailable, including fixture identity, worker artifact type, Kit listener state, and missing browser visual proof.
+- [x] 3.1 Select a renderable worker-hosted USDC fixture for the GPU runtime pass and explicitly exclude the current `_worker` placeholder IFC conversion output from pass evidence.
+- [x] 3.2 Attempt the `_worker -> _bim-control -> bim-review-coordinator -> web-viewer-sample -> bim-streaming-server` flow with the renderable fixture and record the exact pass / blocked boundary.
+- [x] 3.3 Record historical blocked evidence when render prerequisites are unavailable, including fixture identity, worker artifact type, Kit listener state, and missing browser visual proof.
 - [x] 3.4 Capture successful single Kit GPU evidence: `review_request_id`, `session_id`, artifact URLs, video readiness, non-zero video dimensions, `openedStageResult` or equivalent stage success, and archived viewport screenshot for a renderable USD / USDC loaded through the current service chain.
 - [x] 3.5 Update the verification report with `passed`, `blocked`, or `failed` for single Kit GPU render, including exact prerequisites when blocked.
 

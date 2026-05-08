@@ -212,6 +212,13 @@ npm run dev
 
 Primary browser 負責 DataChannel stage-load；spectator browser 以 explicit ports 連到 `49110`，作為同一 Kit stage 的 view-only stream 證據。若後續要驗證獨立 GPU runtime capacity，才需要啟動多個 Kit processes 並同步註冊到 `bim-review-coordinator` 的 `KIT_INSTANCE_ENDPOINTS`。
 
+當 browser 以 `openStageRequest` 指向 `_worker` hosted HTTP / HTTPS stage URL 時，streaming server 預設只允許 `127.0.0.1:8005` 與 `localhost:8005`，並限制單一 stage 下載大小為 `512 MiB`。可用以下環境變數調整：
+
+```powershell
+$env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS='127.0.0.1:8005,localhost:8005'
+$env:BIM_REVIEW_STREAM_MAX_HTTP_STAGE_BYTES='536870912'
+```
+
 詳細排查脈絡與實測量測值見 [docs/issue-webrtc-framegrabfailed-resolution-mismatch-2026-04-27.md](./docs/issue-webrtc-framegrabfailed-resolution-mismatch-2026-04-27.md)。
 
 更多 build / launch / source 產生步驟請見：

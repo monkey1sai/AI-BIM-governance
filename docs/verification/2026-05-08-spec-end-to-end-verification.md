@@ -236,13 +236,13 @@ Evidence gathered:
 
 Conclusion: `dedicated_instance` runtime streaming is not verified on this machine yet. The follow-up `fix-runtime-verification-task-status` implementation adds endpoint-pool configuration and multi-port launch support, but a pass still requires two live GPU-backed Kit endpoints and two browser pages with screenshot evidence.
 
-### 6.5 `fix-runtime-verification-task-status` recheck
+### 6.5 Historical blocked probes before same-Kit pass
 
 Date: 2026-05-08.
 
-Status: **blocked / not passed** for hardware-dependent GPU render and dedicated multi-Kit runtime.
+Status: **historical blocked / not passed probes only**. These runs were collected before the same-Kit primary / spectator implementation and are superseded by the passed evidence in section 6.7.
 
-Evidence gathered:
+Historical evidence gathered:
 
 - GPU probe succeeded: `NVIDIA GeForce RTX 4060 Ti`, driver `580.97`, total memory `8188 MiB`.
 - `_worker` was started for this recheck with `WORKER_DEV_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage`; `/health` reported the dev IFC source root exists, is readable, and contains `13` IFC items.
@@ -254,12 +254,12 @@ Evidence gathered:
 - The second run copied the same USDC fixture to an ASCII worker object name and produced `review_request_id=review_request_1778222264807`, `session_id=review_session_580f5948804e`, artifact URL `http://127.0.0.1:8005/objects/library_2026.usdc`, and screenshot `docs/verification/evidence/2026-05-08-runtime-e2e/single-kit-ascii-review_session_580f5948804e.png`.
 - Browser/WebRTC evidence for the ASCII run: `browser_url=http://127.0.0.1:5173/?sessionId=review_session_580f5948804e&streamTimeoutMs=30000`, capture time `2026-05-08T06:38:46.828Z`, Kit endpoint `127.0.0.1:49100`, `readyState=4`, `networkState=2`, `paused=false`, `currentTime=59.1656`, `videoWidth=1920`, `videoHeight=1080`, `srcObject=true`, and no WebRTC diagnostic banner.
 - DataChannel evidence for the ASCII run: `openStageRequest` was sent for `http://127.0.0.1:8005/objects/library_2026.usdc` and `openedStageResult` appeared in the viewer evidence panel, but the browser console also recorded `Kit App communicates there was an error loading: http://127.0.0.1:8005/objects/library_2026.usdc`; the viewer never reached `模型已載入`.
-- Because `openedStageResult` was an error path rather than a stage-load success, the archived screenshots are blocker evidence, not pass evidence. Single Kit GPU render remains `blocked / not passed`.
+- Because `openedStageResult` was an error path rather than a stage-load success, the archived screenshots from these early runs are retained as blocker evidence only and are not used as pass evidence.
 - A `routing_policy=dedicated_instance` coordinator probe produced `session_id=review_session_6f8dcf2800bb`, `kit_instance_ids=kit_local_001,kit_local_002`, but both bindings used `127.0.0.1:49100` and `distinct_stream_config_count=1`; this was the false multi-Kit binding defect.
 - The follow-up implementation adds coordinator `KIT_INSTANCE_ENDPOINTS`, optional `mediaPort` in stream configs, `bim-streaming-server/scripts/start-streaming-server.ps1 -SignalPort/-StreamPort`, root `scripts/start-all.ps1 -KitSignalPorts/-KitStreamPorts`, and browser page endpoint targeting via `kitInstanceId` or explicit WebRTC ports.
 - Verification completed for the implementation layer: `bim-review-coordinator` build and Vitest passed, `web-viewer-sample` build passed, PowerShell parser checks passed for root start/stop scripts, and `start-streaming-server.ps1 -PreflightOnly` accepted distinct test ports.
 
-Conclusion: the storage IFC source prerequisite, GPU presence, browser WebRTC readiness, non-zero video dimensions, screenshot archival, and multi-Kit endpoint-pool implementation are now evidenced. The runtime still does not pass because Kit returned `error loading` for the worker-hosted renderable fixture, so no successful `openedStageResult` / loaded-stage proof exists. Dedicated multi-Kit success additionally requires two live Kit endpoints, concurrent browser readiness, DataChannel success, Socket.IO continuity, and one archived screenshot per endpoint.
+Conclusion for these historical probes: they identified the placeholder IFC conversion boundary, the old stage-load failure, and the false multi-Kit binding defect. They do not represent the final runtime status for this change; the current pass/fail result is recorded in section 6.7, where the worker-hosted renderable USDC reached live GPU browser readiness and same-Kit primary / spectator screenshot evidence.
 
 ### 6.6 Large IFC worker/readiness stress
 

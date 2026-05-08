@@ -30,6 +30,8 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
 _HTTP_STAGE_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
+_DEFAULT_HTTP_STAGE_ALLOWED_HOSTS = ("127.0.0.1:8005", "localhost:8005")
+_DEFAULT_MAX_HTTP_STAGE_BYTES = 512 * 1024 * 1024
 
 
 def _stage_has_lights(stage) -> bool:
@@ -79,6 +81,48 @@ def _ensure_default_lighting(stage) -> None:
 
 def _is_http_stage_url(url: str) -> bool:
     return urlparse(url).scheme.lower() in {"http", "https"}
+
+
+def _http_stage_allowed_hosts() -> set[str]:
+    raw = os.environ.get("BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS", "")
+    values = raw.split(",") if raw else _DEFAULT_HTTP_STAGE_ALLOWED_HOSTS
+    return {value.strip().lower() for value in values if value.strip()}
+
+
+def _http_stage_max_bytes() -> int:
+    raw = os.environ.get("BIM_REVIEW_STREAM_MAX_HTTP_STAGE_BYTES", "")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            carb.log_warn(
+                f"Invalid BIM_REVIEW_STREAM_MAX_HTTP_STAGE_BYTES='{raw}', "
+                f"using default {_DEFAULT_MAX_HTTP_STAGE_BYTES}."
+            )
+    return _DEFAULT_MAX_HTTP_STAGE_BYTES
+
+
+def _http_stage_host_key(parsed) -> str:
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return ""
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80
+    return f"{host}:{port}"
+
+
+def _ensure_allowed_http_stage_url(parsed, url: str) -> None:
+    host_key = _http_stage_host_key(parsed)
+    if host_key not in _http_stage_allowed_hosts():
+        raise RuntimeError(
+            f"HTTP stage URL host is not allowed: '{host_key}' for '{url}'."
+        )
 
 
 class LoadingManager:
@@ -215,6 +259,7 @@ class LoadingManager:
 
     def _download_http_stage(self, url: str) -> str:
         parsed = urlparse(url)
+        _ensure_allowed_http_stage_url(parsed, url)
         source_path = Path(unquote(parsed.path))
         suffix = source_path.suffix.lower()
         if suffix not in _HTTP_STAGE_EXTENSIONS:
@@ -222,6 +267,7 @@ class LoadingManager:
                 f"Unsupported HTTP stage file extension for '{url}'."
             )
 
+        max_bytes = _http_stage_max_bytes()
         cache_root = Path(
             os.environ.get(
                 "BIM_REVIEW_STREAM_STAGE_CACHE",
@@ -232,6 +278,11 @@ class LoadingManager:
         cache_key = hashlib.sha256(url.encode("utf-8")).hexdigest()
         cache_path = cache_root / f"{cache_key}{suffix}"
         if cache_path.exists() and cache_path.stat().st_size > 0:
+            cached_size = cache_path.stat().st_size
+            if cached_size > max_bytes:
+                raise RuntimeError(
+                    f"Cached HTTP stage exceeds max size: {cached_size} > {max_bytes}."
+                )
             carb.log_info(
                 f"LoadingManager: using cached HTTP stage for '{url}': {cache_path}"
             )
@@ -244,11 +295,29 @@ class LoadingManager:
                 status = getattr(response, "status", 200)
                 if status >= 400:
                     raise RuntimeError(f"HTTP {status}")
+                content_length = response.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        expected_size = int(content_length)
+                        if expected_size > max_bytes:
+                            raise RuntimeError(
+                                f"HTTP stage exceeds max size: {expected_size} > {max_bytes}."
+                            )
+                    except ValueError:
+                        carb.log_warn(
+                            f"Invalid HTTP stage Content-Length '{content_length}' for '{url}'."
+                        )
+                bytes_written = 0
                 with open(temp_path, "wb") as output:
                     while True:
                         chunk = response.read(1024 * 1024)
                         if not chunk:
                             break
+                        bytes_written += len(chunk)
+                        if bytes_written > max_bytes:
+                            raise RuntimeError(
+                                f"HTTP stage exceeds max size: {bytes_written} > {max_bytes}."
+                            )
                         output.write(chunk)
             os.replace(temp_path, cache_path)
         except Exception:
