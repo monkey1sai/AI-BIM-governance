@@ -18,19 +18,20 @@ Result: `[verify] stage loading DataChannel contract passed`; no failure asserti
 
 - [x] 3.1 Select a valid geometry fixture from repo-local `storage/` (`C:\Repos\active\iot\AI-BIM-governance\storage` on the user's main Windows checkout); do not use the header-only `storage/sample.ifc` smoke fixture as render evidence.
 - [x] 3.2 Attempt the `_worker -> _bim-control -> bim-review-coordinator -> web-viewer-sample -> bim-streaming-server` flow with the valid fixture and record the exact pass / blocked boundary.
-- [x] 3.3 Attempt to capture `review_request_id`, `session_id`, artifact URLs, video readiness, non-zero video dimensions, `openedStageResult`, and viewport screenshot evidence; if render prerequisites are unavailable, record the blocked evidence-gathering point instead of claiming GPU render success.
-- [x] 3.4 Update the verification report with `passed`, `blocked`, or `failed` for single Kit GPU render, including exact prerequisites when blocked.
+- [x] 3.3 Record blocked evidence when render prerequisites are unavailable, including fixture identity, worker artifact type, Kit listener state, and missing browser visual proof.
+- [x] 3.4 Capture successful single Kit GPU evidence: `review_request_id`, `session_id`, artifact URLs, video readiness, non-zero video dimensions, `openedStageResult` or equivalent stage success, and archived viewport screenshot for a renderable USD / USDC loaded through the current service chain.
+- [x] 3.5 Update the verification report with `passed`, `blocked`, or `failed` for single Kit GPU render, including exact prerequisites when blocked.
 
-Status recorded as blocked after re-verification: a valid IFC fixture exists, but current `_worker` emits placeholder `model.usdc`, no Kit stream listener was present on `49100` / `47998` during review recheck, stream port `47998` was not reachable during apply, and no renderable viewport screenshot evidence was captured. Tasks 3.2 / 3.3 are complete only as blocked-evidence capture, not as successful GPU render validation.
+Status updated after same-Kit runtime re-verification: current `_worker` IFC conversion still emits placeholder `model.usdc`, so this is not claimed as real IFC geometry conversion. The runtime pass uses a worker-hosted known renderable USDC fixture at `http://127.0.0.1:8005/objects/runtime-e2e/2026-05-08/library_2026.usdc` (SHA256 `60DA4E7BB458A053E3642389420903C8D8715E87957D1C018C7FB4B36A60F4A9`). For `review_session_b2d84c44ae31`, primary browser evidence reached `readyState=4`, `videoWidth=1920`, `videoHeight=1080`, `srcObject=true`, `bodyHasDataChannelReply=true`, `bodyHasMakePickableResponse=true`, and `bodyHasWaitingText=false`; screenshot evidence is archived under `docs/verification/evidence/2026-05-08-runtime-e2e/`.
 
-## 4. Dedicated Multi-Kit Routing Evidence
+## 4. Same-Kit Concurrent Stream Evidence
 
-- [x] 4.1 Plan or inspect a root `scripts/` orchestration entrypoint for launching or checking two or more Kit instances with distinct signaling ports.
-- [x] 4.2 If multi Kit topology is unavailable, record `blocked` with the missing topology requirement and do not treat `0xC0F22219` on a single `local_fixed` instance as a routing failure.
-- [x] 4.3 Verify whether multi Kit topology is available for a `dedicated_instance` review session; if unavailable, record the topology blocker instead of claiming distinct `kit_instance_bindings[]` runtime confirmation.
-- [x] 4.4 Validate concurrent browser readiness and Socket.IO collaboration continuity across the shared `session_id` only when multiple Kit endpoints exist; otherwise record that runtime validation remains blocked.
+- [x] 4.1 Confirm the correct Kit concurrency model for this stage: one Kit process exposing `primaryStream` plus indexed `spectatorStream[]`, rather than two logical bindings pointed at the same primary stream.
+- [x] 4.2 Record dedicated multi-Kit process routing as deferred capacity-tier work and do not treat `0xC0F22219` on a single primary stream as a same-Kit spectator failure.
+- [x] 4.3 Update startup / browser verification helpers so one Kit process can expose distinct primary and spectator WebRTC ports.
+- [x] 4.4 Validate successful same-Kit concurrent runtime with primary and spectator stream configs, two concurrent browser pages, primary DataChannel stage-load success, spectator video readiness, one archived screenshot per stream role, and Socket.IO collaboration continuity across the shared `session_id`.
 
-Status recorded as blocked after re-verification: root `scripts/start-all.ps1` launches only one streaming server process, `bim-streaming-server/scripts/start-streaming-server.ps1` uses fixed `49100` / `47998` ports, and no root `scripts/` entrypoint currently launches two or more Kit instances with distinct signaling ports. Tasks 4.3 / 4.4 are complete only as topology-blocker classification, not as successful multi-Kit runtime validation.
+Status passed after re-scoping and live E2E: the original probe found a false multi-Kit binding (`kit_local_001` / `kit_local_002` both on `127.0.0.1:49100`). NVIDIA's current Kit stream model supports same-process primary and spectator streams, so this stage validates one GPU-backed Kit process with primary `49100` / `47998` and spectator `49110` / `48008`. The run for `review_session_b2d84c44ae31` opened two browser contexts on the same session, recorded both participants through coordinator, captured primary DataChannel / stage evidence, captured spectator video readiness, and archived screenshots for both stream roles.
 
 ## 5. Stress Evidence
 

@@ -49,9 +49,17 @@ export interface AppProps {
     signalingserver: string
     signalingport: number
     mediaserver: string
-    mediaport: number
+    mediaport: number | null
     accessToken: string
     onStreamFailed: () => void;
+}
+
+interface StreamEndpoint {
+    kitInstanceId: string | null;
+    signalingserver: string;
+    signalingport: number;
+    mediaserver: string;
+    mediaport: number | null;
 }
 
 interface AppState {
@@ -82,6 +90,8 @@ interface AppState {
     isLoading: boolean;
     loadingText: string; 
     streamDiagnostic: string | null;
+    activeStreamEndpoint: StreamEndpoint;
+    streamMountKey: number;
 }
 
 interface AppStreamMessageType {
@@ -119,6 +129,56 @@ function isElementMappingDocument(value: unknown): value is ElementMappingDocume
     return isRecord(value) && (Array.isArray(value.items) || isRecord(value.summary));
 }
 
+function getQueryParam(...names: string[]): string | null {
+    const params = new URLSearchParams(window.location.search);
+    for (const name of names) {
+        const value = params.get(name);
+        if (value && value.trim().length > 0) return value.trim();
+    }
+    return null;
+}
+
+function getQueryPort(...names: string[]): number | null {
+    const value = getQueryParam(...names);
+    if (!value) return null;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isSpectatorStreamMode(): boolean {
+    const mode = getQueryParam("streamRole", "stream_role", "viewerMode", "viewer_mode");
+    return mode?.toLowerCase() === "spectator" || mode?.toLowerCase() === "view_only";
+}
+
+function hasDirectStreamEndpointOverride(): boolean {
+    const params = new URLSearchParams(window.location.search);
+    return params.has("signalingPort") || params.has("signalingport") || params.has("mediaPort") || params.has("mediaport");
+}
+
+function resolveInitialStreamEndpoint(props: AppProps): StreamEndpoint {
+    return {
+        kitInstanceId: getQueryParam("kitInstanceId", "kit_instance_id"),
+        signalingserver: getQueryParam("signalingServer", "signalingserver") || props.signalingserver || StreamConfig.local.server,
+        signalingport: getQueryPort("signalingPort", "signalingport") || props.signalingport || StreamConfig.local.signalingPort,
+        mediaserver: getQueryParam("mediaServer", "mediaserver") || props.mediaserver || StreamConfig.local.server,
+        mediaport: getQueryPort("mediaPort", "mediaport") ?? props.mediaport ?? StreamConfig.local.mediaPort ?? null,
+    };
+}
+
+function streamEndpointLabel(endpoint: StreamEndpoint): string {
+    const kit = endpoint.kitInstanceId ? `${endpoint.kitInstanceId} ` : "";
+    const media = endpoint.mediaport !== null ? `/${endpoint.mediaport}` : "";
+    return `${kit}${endpoint.signalingserver}:${endpoint.signalingport}${media}`;
+}
+
+function sameStreamEndpoint(a: StreamEndpoint, b: StreamEndpoint): boolean {
+    return a.kitInstanceId === b.kitInstanceId
+        && a.signalingserver === b.signalingserver
+        && a.signalingport === b.signalingport
+        && a.mediaserver === b.mediaserver
+        && a.mediaport === b.mediaport;
+}
+
 function makeRequestId(prefix: string): string {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -154,6 +214,7 @@ export default class App extends React.Component<AppProps, AppState> {
     
     constructor(props: AppProps) {
         super(props);
+        const activeStreamEndpoint = resolveInitialStreamEndpoint(props);
 
         this.state = {
             usdAssets: [],
@@ -182,7 +243,9 @@ export default class App extends React.Component<AppProps, AppState> {
             showUI: false,
             loadingText: "正在載入成果檔清單...",
             streamDiagnostic: null,
-            isLoading: true
+            isLoading: true,
+            activeStreamEndpoint,
+            streamMountKey: 0,
         }
     }
 
@@ -277,7 +340,7 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this._hasRemoteVideoFrame()) return;
 
         const seconds = Math.round(reviewEnv.streamStartTimeoutMs / 1000);
-        const endpoint = `${this.props.signalingserver || StreamConfig.local.server}:${this.props.signalingport || StreamConfig.local.signalingPort}`;
+        const endpoint = streamEndpointLabel(this.state.activeStreamEndpoint);
         const diagnostic = [
             `WebRTC 串流未建立（${seconds} 秒內沒有收到影片）。`,
             `診斷：${this._getVideoDiagnosticText()}`,
@@ -291,6 +354,27 @@ export default class App extends React.Component<AppProps, AppState> {
             isLoading: false,
             reviewEvents: [...state.reviewEvents, "WebRTC 串流未建立，已顯示診斷資訊"],
         }));
+    }
+
+    private _resolveStreamEndpoint(streamConfig: ReviewStreamConfig): StreamEndpoint {
+        if (hasDirectStreamEndpointOverride()) {
+            return this.state.activeStreamEndpoint;
+        }
+
+        const requestedKitInstanceId = this.state.activeStreamEndpoint.kitInstanceId;
+        const requestedBinding = requestedKitInstanceId
+            ? streamConfig.kit_instance_bindings.find((binding) => binding.kit_instance_id === requestedKitInstanceId)
+            : null;
+        const selectedBinding = requestedBinding || streamConfig.kit_instance_bindings[0] || null;
+        const selectedConfig = selectedBinding?.stream_config || streamConfig.webrtc;
+
+        return {
+            kitInstanceId: selectedBinding?.kit_instance_id || requestedKitInstanceId,
+            signalingserver: selectedConfig.signalingServer,
+            signalingport: selectedConfig.signalingPort,
+            mediaserver: selectedConfig.mediaServer,
+            mediaport: selectedConfig.mediaPort ?? null,
+        };
     }
 
     private _connectReviewSocket(sessionId: string): void {
@@ -424,6 +508,10 @@ export default class App extends React.Component<AppProps, AppState> {
                 }).catch((error) => console.warn("Unable to patch review request binding.", error));
             }
 
+            const activeStreamEndpoint = this._resolveStreamEndpoint(streamConfig);
+            const streamEndpointChanged = !sameStreamEndpoint(this.state.activeStreamEndpoint, activeStreamEndpoint);
+            const endpointEvent = `Kit endpoint：${streamEndpointLabel(activeStreamEndpoint)}`;
+
             this.setState({
                 reviewSessionId: sessionId,
                 reviewRequestId: reviewRequest?.review_request_id || loadedSession?.review_request_id || null,
@@ -435,7 +523,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset,
-                reviewEvents: [...this.state.reviewEvents, reviewEnv.defaultSessionId || reviewRequest?.session_id ? "已載入 review session" : "已建立 review session"],
+                activeStreamEndpoint,
+                streamMountKey: streamEndpointChanged ? this.state.streamMountKey + 1 : this.state.streamMountKey,
+                reviewEvents: [
+                    ...this.state.reviewEvents,
+                    reviewEnv.defaultSessionId || reviewRequest?.session_id ? "已載入 review session" : "已建立 review session",
+                    endpointEvent,
+                ],
             }, () => {
                 if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
@@ -582,6 +676,17 @@ export default class App extends React.Component<AppProps, AppState> {
      */
         private _onStreamStarted(): void {
             this.setState({ streamDiagnostic: null });
+            if (isSpectatorStreamMode()) {
+                this._clearStreamStartTimeout();
+                this.setState((state) => ({
+                    showStream: true,
+                    showUI: true,
+                    isLoading: false,
+                    loadingText: "旁觀串流已連線",
+                    reviewEvents: [...state.reviewEvents, "Spectator stream 已連線，沿用目前 Kit stage"],
+                }));
+                return;
+            }
             this._pollForKitReady()
         }
 
@@ -1204,12 +1309,13 @@ export default class App extends React.Component<AppProps, AppState> {
 
                 {/* Streamed app */}
                 <AppStream
+                    key={this.state.streamMountKey}
                     sessionId={this.props.sessionId}
                     backendUrl={this.props.backendUrl}
-                    signalingserver={this.props.signalingserver}
-                    signalingport={this.props.signalingport}
-                    mediaserver={this.props.mediaserver}
-                    mediaport={this.props.mediaport}
+                    signalingserver={this.state.activeStreamEndpoint.signalingserver}
+                    signalingport={this.state.activeStreamEndpoint.signalingport}
+                    mediaserver={this.state.activeStreamEndpoint.mediaserver}
+                    mediaport={this.state.activeStreamEndpoint.mediaport}
                     accessToken={this.props.accessToken}
                     onStarted={() => this._onStreamStarted()}
                     onFocus={() => this._handleAppStreamFocus()}

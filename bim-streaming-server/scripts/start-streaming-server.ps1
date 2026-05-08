@@ -3,6 +3,18 @@ param(
 
     [string] $TraceRoot = ".\logs\nvstreamer",
 
+    [string] $InstanceId = "kit_local_001",
+
+    [int] $SignalPort = 49100,
+
+    [int] $StreamPort = 47998,
+
+    [string[]] $SpectatorSignalPorts = @(),
+
+    [string[]] $SpectatorStreamPorts = @(),
+
+    [string] $PortableRoot = "",
+
     [switch] $NoWindow = $true,
 
     [switch] $SkipGpuCheck,
@@ -81,6 +93,45 @@ function Test-PortFree {
     }
 }
 
+function ConvertTo-PortList {
+    param(
+        [string[]] $Values,
+        [string] $Name
+    )
+
+    $ports = @()
+    foreach ($value in $Values) {
+        foreach ($part in ($value -split ",")) {
+            $trimmed = $part.Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+            $port = 0
+            if (-not [int]::TryParse($trimmed, [ref] $port)) {
+                throw "$Name contains a non-integer port: $trimmed"
+            }
+            $ports += $port
+        }
+    }
+    return $ports
+}
+
+function Get-SpectatorEndpointSpecs {
+    $signalPorts = @(ConvertTo-PortList -Values $SpectatorSignalPorts -Name "SpectatorSignalPorts")
+    $streamPorts = @(ConvertTo-PortList -Values $SpectatorStreamPorts -Name "SpectatorStreamPorts")
+    if ($signalPorts.Count -ne $streamPorts.Count) {
+        throw "SpectatorSignalPorts and SpectatorStreamPorts must have the same number of entries."
+    }
+
+    $endpoints = @()
+    for ($i = 0; $i -lt $signalPorts.Count; $i++) {
+        $endpoints += [pscustomobject]@{
+            Index = $i
+            SignalingPort = [int]$signalPorts[$i]
+            StreamPort = [int]$streamPorts[$i]
+        }
+    }
+    return $endpoints
+}
+
 function Test-GpuReady {
     if ($SkipGpuCheck) {
         Write-Warning "Skipping GPU preflight check."
@@ -111,6 +162,7 @@ Run this server from an interactive desktop session where nvidia-smi and D3D12 c
 }
 
 Initialize-WindowsRuntimeEnvironment
+$SpectatorEndpointSpecs = @(Get-SpectatorEndpointSpecs)
 
 $resolvedUsd = $null
 if (-not $SkipAutoLoad) {
@@ -125,8 +177,12 @@ if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
     throw "Streaming launcher not found: $launcher. Run .\repo.bat build first."
 }
 
-Test-PortFree -Port 49100
-Test-PortFree -Port 47998
+Test-PortFree -Port $SignalPort
+Test-PortFree -Port $StreamPort
+foreach ($endpoint in $SpectatorEndpointSpecs) {
+    Test-PortFree -Port $endpoint.SignalingPort
+    Test-PortFree -Port $endpoint.StreamPort
+}
 Test-GpuReady
 
 if ($PreflightOnly) {
@@ -136,22 +192,47 @@ if ($PreflightOnly) {
     else {
         Write-Host "[preflight] USD path OK: $resolvedUsd"
     }
-    Write-Host "[preflight] ports OK: 49100 / 47998 are free"
+    Write-Host "[preflight] ports OK: $SignalPort / $StreamPort are free"
+    if ($SpectatorEndpointSpecs.Count -gt 0) {
+        $spectatorSummary = ($SpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=$($_.SignalingPort)/$($_.StreamPort)" }) -join ", "
+        Write-Host "[preflight] spectator ports OK: $spectatorSummary"
+    }
     return
 }
 
 $resolvedTraceRoot = ConvertTo-AbsolutePath -Path $TraceRoot
 New-Item -ItemType Directory -Force -Path $resolvedTraceRoot | Out-Null
+$resolvedPortableRoot = $null
+if (-not [string]::IsNullOrWhiteSpace($PortableRoot)) {
+    $resolvedPortableRoot = ConvertTo-AbsolutePath -Path $PortableRoot
+    New-Item -ItemType Directory -Force -Path $resolvedPortableRoot | Out-Null
+}
 
 $args = @()
 if ($NoWindow) {
     $args += "--no-window"
 }
+if ($resolvedPortableRoot) {
+    $args += "--portable-root"
+    $args += $resolvedPortableRoot
+}
 if ($ResetUser) {
     $args += "--reset-user"
 }
+$sourceExtensions = Join-Path $RepoRoot "source\extensions"
+if (Test-Path -LiteralPath $sourceExtensions -PathType Container) {
+    $args += "--ext-folder"
+    $args += $sourceExtensions
+}
 if (-not [string]::IsNullOrWhiteSpace($StreamSdkLogLevel)) {
     $args += "--/log/channels/omni.kit.livestream.streamsdk=$StreamSdkLogLevel"
+}
+$args += "--/exts/omni.kit.livestream.app/primaryStream/signalPort=$SignalPort"
+$args += "--/exts/omni.kit.livestream.app/primaryStream/streamPort=$StreamPort"
+foreach ($endpoint in $SpectatorEndpointSpecs) {
+    $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/streamType=webrtc"
+    $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/signalPort=$($endpoint.SignalingPort)"
+    $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/streamPort=$($endpoint.StreamPort)"
 }
 if (-not $SkipAutoLoad) {
     $kitPath = $resolvedUsd.Replace("\", "/")
@@ -159,6 +240,7 @@ if (-not $SkipAutoLoad) {
 }
 
 Write-Host "[streaming] launcher: $launcher"
+Write-Host "[streaming] instance: $InstanceId"
 if ($SkipAutoLoad) {
     Write-Host "[streaming] USD     : auto-load disabled"
 }
@@ -166,7 +248,14 @@ else {
     Write-Host "[streaming] USD     : $kitPath"
 }
 Write-Host "[streaming] traces  : $resolvedTraceRoot"
-Write-Host "[streaming] ports   : 49100 / 47998"
+if ($resolvedPortableRoot) {
+    Write-Host "[streaming] portable: $resolvedPortableRoot"
+}
+Write-Host "[streaming] ports   : $SignalPort / $StreamPort"
+if ($SpectatorEndpointSpecs.Count -gt 0) {
+    $spectatorSummary = ($SpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=$($_.SignalingPort)/$($_.StreamPort)" }) -join ", "
+    Write-Host "[streaming] spect.  : $spectatorSummary"
+}
 if ($ResetUser) {
     Write-Host "[streaming] reset   : user settings will be reset"
 }

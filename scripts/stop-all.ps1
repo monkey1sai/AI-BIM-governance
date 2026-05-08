@@ -1,6 +1,10 @@
 [CmdletBinding()]
 param(
-    [switch] $KeepLogs   # 保留 .run/<svc>.log
+    [switch] $KeepLogs,   # 保留 .run/<svc>.log
+    [string[]] $KitSignalPorts = @("49100"),
+    [string[]] $KitStreamPorts = @("47998"),
+    [string[]] $KitSpectatorSignalPorts = @(),
+    [string[]] $KitSpectatorStreamPorts = @()
 )
 
 # 一鍵關閉 worker-only demo services（與 start-all.ps1 對應）。
@@ -12,12 +16,39 @@ $ErrorActionPreference = "Continue"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RunDir = Join-Path $PSScriptRoot ".run"
 
+function ConvertTo-PortList {
+    param(
+        [string[]] $Values,
+        [string] $Name
+    )
+
+    $ports = @()
+    foreach ($value in $Values) {
+        foreach ($part in ($value -split ",")) {
+            $trimmed = $part.Trim()
+            if ([string]::IsNullOrWhiteSpace($trimmed)) { continue }
+            $port = 0
+            if (-not [int]::TryParse($trimmed, [ref] $port)) {
+                throw "$Name contains a non-integer port: $trimmed"
+            }
+            $ports += $port
+        }
+    }
+    return $ports
+}
+
+$ResolvedKitSignalPorts = @(ConvertTo-PortList -Values $KitSignalPorts -Name "KitSignalPorts")
+$ResolvedKitStreamPorts = @(ConvertTo-PortList -Values $KitStreamPorts -Name "KitStreamPorts")
+$ResolvedKitSpectatorSignalPorts = @(ConvertTo-PortList -Values $KitSpectatorSignalPorts -Name "KitSpectatorSignalPorts")
+$ResolvedKitSpectatorStreamPorts = @(ConvertTo-PortList -Values $KitSpectatorStreamPorts -Name "KitSpectatorStreamPorts")
+$ResolvedStreamingPorts = @($ResolvedKitSignalPorts + $ResolvedKitStreamPorts + $ResolvedKitSpectatorSignalPorts + $ResolvedKitSpectatorStreamPorts)
+
 $ExpectedServices = @(
     @{ Name = "_bim-control"; Ports = @(8001) },
     @{ Name = "_worker"; Ports = @(8005) },
     @{ Name = "bim-review-coordinator"; Ports = @(8004) },
     @{ Name = "web-viewer-sample"; Ports = @(5173) },
-    @{ Name = "bim-streaming-server"; Ports = @(49100, 47998) }
+    @{ Name = "bim-streaming-server"; Ports = $ResolvedStreamingPorts }
 )
 
 $ExpectedPorts = $ExpectedServices | ForEach-Object { $_.Ports } | ForEach-Object { $_ }
@@ -32,6 +63,15 @@ function Get-ServiceNameByPort {
         }
     }
     return "unknown"
+}
+
+function Test-IsExpectedServiceName {
+    param([string] $Name)
+
+    if ($ExpectedServices | Where-Object { $_.Name -eq $Name } | Select-Object -First 1) {
+        return $true
+    }
+    return $Name.StartsWith("bim-streaming-server-kit_local_")
 }
 
 function Get-ProcessInfo {
@@ -85,8 +125,7 @@ if (-not (Test-Path $RunDir)) {
 
     foreach ($f in $pidFiles) {
         $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
-        $isExpected = $ExpectedServices | Where-Object { $_.Name -eq $name } | Select-Object -First 1
-        if (-not $isExpected) {
+        if (-not (Test-IsExpectedServiceName -Name $name)) {
             Write-Host "[skip ] $name 不屬於 current worker-only demo services，移除 stale PID file" -ForegroundColor DarkGray
             Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
             if (-not $KeepLogs) {

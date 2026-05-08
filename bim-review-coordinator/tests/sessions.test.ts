@@ -5,6 +5,7 @@ import request from "supertest";
 import { io as createSocketClient, type Socket as SocketClient } from "socket.io-client";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import type { CoordinatorConfig } from "../src/config.js";
 import { EventLog } from "../src/services/eventLog.js";
 
 let active: CoordinatorApp | null = null;
@@ -22,7 +23,7 @@ afterEach(async () => {
   }
 });
 
-function makeApp(): CoordinatorApp {
+function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-test-"));
   activeRoot = root;
   active = createCoordinatorApp({
@@ -30,8 +31,31 @@ function makeApp(): CoordinatorApp {
     eventLogDir: path.join(root, "events"),
     bimControlApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
+    ...overrides,
   });
   return active;
+}
+
+function multiEndpointOverrides(): Partial<CoordinatorConfig> {
+  return {
+    kitMediaPort: 47998,
+    kitInstanceEndpoints: [
+      {
+        id: "kit_local_001",
+        signalingServer: "127.0.0.1",
+        signalingPort: 49100,
+        mediaServer: "127.0.0.1",
+        mediaPort: 47998,
+      },
+      {
+        id: "kit_local_002",
+        signalingServer: "127.0.0.1",
+        signalingPort: 49110,
+        mediaServer: "127.0.0.1",
+        mediaPort: 48008,
+      },
+    ],
+  };
 }
 
 async function listen(app: CoordinatorApp): Promise<string> {
@@ -139,7 +163,7 @@ describe("bim-review-coordinator", () => {
   });
 
   it("allocates dedicated Kit instance bindings per artifact", async () => {
-    const app = makeApp();
+    const app = makeApp(multiEndpointOverrides());
     const created = await request(app.app)
       .post("/api/review-sessions")
       .send({
@@ -171,6 +195,15 @@ describe("bim-review-coordinator", () => {
     expect(created.body.kit_instance_bindings).toHaveLength(2);
     expect(created.body.kit_instance_bindings[0].assigned_artifact_ids).toEqual(["artifact_usdc_a"]);
     expect(created.body.kit_instance_bindings[1].assigned_artifact_ids).toEqual(["artifact_usdc_b"]);
+    expect(created.body.kit_instance_bindings[0].stream_config.signalingPort).toBe(49100);
+    expect(created.body.kit_instance_bindings[1].stream_config.signalingPort).toBe(49110);
+    expect(created.body.kit_instance_bindings[0].stream_config.mediaPort).toBe(47998);
+    expect(created.body.kit_instance_bindings[1].stream_config.mediaPort).toBe(48008);
+
+    const streamConfig = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(streamConfig.status).toBe(200);
+    expect(streamConfig.body.webrtc.signalingPort).toBe(49100);
+    expect(streamConfig.body.webrtc.mediaPort).toBe(47998);
   });
 
   it("reports queued_for_instance when dedicated Kit routing exceeds capacity", async () => {

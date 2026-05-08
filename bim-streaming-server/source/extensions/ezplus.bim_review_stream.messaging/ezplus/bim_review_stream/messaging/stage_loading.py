@@ -9,7 +9,12 @@
 # its affiliates is strictly prohibited.
 
 import asyncio
+import hashlib
 import os
+import tempfile
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+from urllib.request import urlopen
 
 import carb
 import carb.events
@@ -24,6 +29,7 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 
 
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
+_HTTP_STAGE_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
 
 
 def _stage_has_lights(stage) -> bool:
@@ -71,6 +77,10 @@ def _ensure_default_lighting(stage) -> None:
     )
 
 
+def _is_http_stage_url(url: str) -> bool:
+    return urlparse(url).scheme.lower() in {"http", "https"}
+
+
 class LoadingManager:
     """Manages the loading of USD stages and sends messages to the client"""
     def __init__(self):
@@ -86,6 +96,7 @@ class LoadingManager:
         # because it may reveal directory paths in environment where
         # application runs.
         self._opened_stage_url: str = ""
+        self._public_opened_stage_url: str = ""
         self._stage_has_opened = False
         self._streaming_manager_is_busy: bool = False
 
@@ -183,6 +194,9 @@ class LoadingManager:
         }
 
     def _process_stage_url(self, url):
+        if _is_http_stage_url(url):
+            return self._download_http_stage(url)
+
         # Using a single leading `.` to signify that the path is relative to the ${app} token's parent directory
         # Because we've moved the samples out of the app directory, we need to check for that here
         # in the samples extension directory.
@@ -198,6 +212,54 @@ class LoadingManager:
                 "${app}/.." + url[1:]
             )
         return carb.tokens.acquire_tokens_interface().resolve(url)
+
+    def _download_http_stage(self, url: str) -> str:
+        parsed = urlparse(url)
+        source_path = Path(unquote(parsed.path))
+        suffix = source_path.suffix.lower()
+        if suffix not in _HTTP_STAGE_EXTENSIONS:
+            raise RuntimeError(
+                f"Unsupported HTTP stage file extension for '{url}'."
+            )
+
+        cache_root = Path(
+            os.environ.get(
+                "BIM_REVIEW_STREAM_STAGE_CACHE",
+                Path(tempfile.gettempdir()) / "bim-review-stream" / "stage-cache",
+            )
+        )
+        cache_root.mkdir(parents=True, exist_ok=True)
+        cache_key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+        cache_path = cache_root / f"{cache_key}{suffix}"
+        if cache_path.exists() and cache_path.stat().st_size > 0:
+            carb.log_info(
+                f"LoadingManager: using cached HTTP stage for '{url}': {cache_path}"
+            )
+            return cache_path.as_posix()
+
+        temp_path = cache_path.with_suffix(f"{suffix}.tmp")
+        carb.log_info(f"LoadingManager: downloading HTTP stage '{url}' to '{cache_path}'")
+        try:
+            with urlopen(url, timeout=30) as response:
+                status = getattr(response, "status", 200)
+                if status >= 400:
+                    raise RuntimeError(f"HTTP {status}")
+                with open(temp_path, "wb") as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+            os.replace(temp_path, cache_path)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+        carb.log_info(
+            f"LoadingManager: cached HTTP stage '{url}' as '{cache_path}'"
+        )
+        return cache_path.as_posix()
 
     def _resolve_stage_request(self, payload):
         request = self._payload_dict(payload)
@@ -323,7 +385,8 @@ class LoadingManager:
             self._on_open_stage(type("Event", (), {"payload": request})())
 
     def _on_load_state_query(self, event: carb.events.IEvent) -> None:
-        payload = {"loading_state": "idle", "url": self._opened_stage_url}
+        public_url = self._public_opened_stage_url or self._opened_stage_url
+        payload = {"loading_state": "idle", "url": public_url}
         if self._stage_is_opening:
             payload = { "loading_state": "busy", "url": self._requested_stage_url }
         elif self._stage_has_opened:
@@ -368,6 +431,7 @@ class LoadingManager:
         # If we are, we don't need to reload the file, instead we'll just send the success message.
         if omni.client.utils.equal_urls(url, current_stage):
             carb.log_info(f'Client requested to open a stage that is already open: {url}')
+            self._public_opened_stage_url = self._requested_stage_url
             payload = {
                 "url": self._requested_stage_url,
                 "result": "success",
@@ -473,6 +537,7 @@ class LoadingManager:
 
         # Stage has loaded with all dependencies. Send message to client.
         url = self._requested_stage_url if self._requested_stage_url  else '[obfuscated]'
+        self._public_opened_stage_url = url
         carb.log_info(
             f'Sending message to client that stage has loaded: {url}'
         )

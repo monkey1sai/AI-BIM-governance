@@ -8,6 +8,7 @@ export interface KitInstance {
   stream_server: string;
   signaling_port: number;
   media_server: string;
+  media_port?: number | null;
 }
 
 export interface ArtifactBinding {
@@ -33,6 +34,7 @@ export interface KitInstanceBinding {
     signalingServer: string;
     signalingPort: number;
     mediaServer: string;
+    mediaPort?: number | null;
   };
   started_at: string;
   last_heartbeat_at: string;
@@ -94,6 +96,7 @@ export interface StreamConfigResponse {
     signalingServer: string;
     signalingPort: number;
     mediaServer: string;
+    mediaPort?: number | null;
   };
   model: {
     status: "ready" | "missing";

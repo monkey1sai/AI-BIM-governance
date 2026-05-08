@@ -198,6 +198,20 @@ npm run dev
 
 > client 端**不要**寫死 `width` / `height`；`omni.kit.livestream.webrtc` 會透過 `streamInfo` 自動完成解析度協商。
 
+若要在同一台 Windows workstation 驗證本階段的 concurrent viewing，使用同一個 Kit process 的 primary + spectator streams：
+
+```powershell
+.\scripts\start-streaming-server.ps1 `
+  -InstanceId kit_local_001 `
+  -SignalPort 49100 `
+  -StreamPort 47998 `
+  -SpectatorSignalPorts 49110 `
+  -SpectatorStreamPorts 48008 `
+  -SkipAutoLoad
+```
+
+Primary browser 負責 DataChannel stage-load；spectator browser 以 explicit ports 連到 `49110`，作為同一 Kit stage 的 view-only stream 證據。若後續要驗證獨立 GPU runtime capacity，才需要啟動多個 Kit processes 並同步註冊到 `bim-review-coordinator` 的 `KIT_INSTANCE_ENDPOINTS`。
+
 詳細排查脈絡與實測量測值見 [docs/issue-webrtc-framegrabfailed-resolution-mismatch-2026-04-27.md](./docs/issue-webrtc-framegrabfailed-resolution-mismatch-2026-04-27.md)。
 
 更多 build / launch / source 產生步驟請見：

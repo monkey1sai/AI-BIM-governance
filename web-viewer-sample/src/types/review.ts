@@ -13,6 +13,7 @@ export interface KitInstanceBinding {
         signalingServer: string;
         signalingPort: number;
         mediaServer: string;
+        mediaPort?: number | null;
     };
     released_at: string | null;
 }
@@ -41,6 +42,7 @@ export interface ReviewStreamConfig {
         signalingServer: string;
         signalingPort: number;
         mediaServer: string;
+        mediaPort?: number | null;
     };
     model: {
         status: "ready" | "missing";

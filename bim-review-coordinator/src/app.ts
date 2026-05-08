@@ -478,6 +478,7 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
       signalingServer: primaryKitBinding?.stream_config.signalingServer || config.kitStreamServer,
       signalingPort: primaryKitBinding?.stream_config.signalingPort || config.kitSignalingPort,
       mediaServer: primaryKitBinding?.stream_config.mediaServer || config.kitMediaServer,
+      mediaPort: primaryKitBinding?.stream_config.mediaPort ?? config.kitMediaPort,
     },
     model: {
       status: readyBinding || readyUsdc ? "ready" : "missing",
