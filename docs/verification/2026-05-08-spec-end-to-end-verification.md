@@ -210,9 +210,9 @@ Status: **passed at `contract` tier**.
 
 Scope: this validates `stage_loading.py` contains the expected DataChannel contract tokens and load-order / sublayer behavior checks. It does **not** prove GPU viewport render or real USD geometry loading.
 
-### 6.3 Single Kit GPU render
+### 6.3 Historical single Kit GPU render blocker probe
 
-Status: **blocked / not passed**.
+Status: **historical blocked / not passed probe only**. This pre-pass result is superseded for the renderable worker-hosted USDC runtime tier by the passed same-Kit evidence in section 6.8.
 
 Evidence gathered:
 
@@ -222,11 +222,11 @@ Evidence gathered:
 - Kit signaling `49100` was reachable, but stream port `47998` was not reachable during this apply.
 - No browser viewport screenshot or non-zero video frame evidence was captured for a renderable geometry USD / USDC.
 
-Conclusion: the repo-local IFC fixture prerequisite is satisfied, but the runtime still lacks a renderable USD / USDC artifact produced from that fixture. A future pass needs either a real IFC->USD/USDC conversion path or a known renderable USD / USDC fixture before claiming single Kit GPU viewport render.
+Conclusion for this historical probe: the repo-local IFC fixture prerequisite was satisfied, but `_worker` still lacked a renderable USD / USDC artifact produced from that fixture. This remains true for real IFC->USDC conversion. The current runtime pass is limited to the worker-hosted renderable USDC fixture documented in section 6.8.
 
-### 6.4 Dedicated multi-Kit routing
+### 6.4 Historical dedicated multi-Kit routing blocker probe
 
-Status: **blocked / not passed**.
+Status: **historical blocked / not passed probe only; dedicated multi-Kit process routing is deferred**. This is not the concurrent runtime pass criterion for the current change.
 
 Evidence gathered:
 
@@ -234,13 +234,13 @@ Evidence gathered:
 - The original implementation had no root `scripts/` orchestration entrypoint that launched two or more Kit instances with distinct signaling ports.
 - Existing coordinator tests cover `dedicated_instance` allocation semantics, but this remains control-plane evidence only.
 
-Conclusion: `dedicated_instance` runtime streaming is not verified on this machine yet. The follow-up `fix-runtime-verification-task-status` implementation adds endpoint-pool configuration and multi-port launch support, but a pass still requires two live GPU-backed Kit endpoints and two browser pages with screenshot evidence.
+Conclusion for this historical probe: `dedicated_instance` runtime streaming is deferred as a capacity / isolation tier. The current concurrent runtime pass uses the same-Kit primary / spectator stream topology documented in section 6.8; a future dedicated multi-Kit pass still requires two live GPU-backed Kit endpoints and two browser pages with screenshot evidence.
 
 ### 6.5 Historical blocked probes before same-Kit pass
 
 Date: 2026-05-08.
 
-Status: **historical blocked / not passed probes only**. These runs were collected before the same-Kit primary / spectator implementation and are superseded by the passed evidence in section 6.7.
+Status: **historical blocked / not passed probes only**. These runs were collected before the same-Kit primary / spectator implementation and are superseded by the passed runtime evidence in section 6.8.
 
 Historical evidence gathered:
 
@@ -259,7 +259,7 @@ Historical evidence gathered:
 - The follow-up implementation adds coordinator `KIT_INSTANCE_ENDPOINTS`, optional `mediaPort` in stream configs, `bim-streaming-server/scripts/start-streaming-server.ps1 -SignalPort/-StreamPort`, root `scripts/start-all.ps1 -KitSignalPorts/-KitStreamPorts`, and browser page endpoint targeting via `kitInstanceId` or explicit WebRTC ports.
 - Verification completed for the implementation layer: `bim-review-coordinator` build and Vitest passed, `web-viewer-sample` build passed, PowerShell parser checks passed for root start/stop scripts, and `start-streaming-server.ps1 -PreflightOnly` accepted distinct test ports.
 
-Conclusion for these historical probes: they identified the placeholder IFC conversion boundary, the old stage-load failure, and the false multi-Kit binding defect. They do not represent the final runtime status for this change; the current pass/fail result is recorded in section 6.7, where the worker-hosted renderable USDC reached live GPU browser readiness and same-Kit primary / spectator screenshot evidence.
+Conclusion for these historical probes: they identified the placeholder IFC conversion boundary, the old stage-load failure, and the false multi-Kit binding defect. They do not represent the final runtime status for this change; the current pass/fail result is recorded in section 6.8, where the worker-hosted renderable USDC reached live GPU browser readiness and same-Kit primary / spectator screenshot evidence.
 
 ### 6.6 Large IFC worker/readiness stress
 

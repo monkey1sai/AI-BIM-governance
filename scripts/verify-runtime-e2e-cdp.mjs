@@ -287,12 +287,19 @@ function isReady(state, consoleEvents, options = {}) {
   const requireDataChannel = options.requireDataChannel !== false;
   const requireStageSuccess = options.requireStageSuccess !== false;
   const log = consoleText(consoleEvents);
+  const hasOpenedStageSuccess =
+    state.bodyHasModelLoaded
+    || (
+      state.bodyHasOpenedStageResult
+      && !log.includes("Kit App communicates there was an error loading")
+    )
+    || (log.includes("openedStageResult") && log.includes('"result":"success"'));
+  const hasStageQuerySuccess =
+    log.includes("Kit App sent stage prims")
+    || log.includes("getChildrenResponse");
   const hasStageSuccess =
-    state.bodyHasReviewModelReady
-    || state.bodyHasModelLoaded
-    || state.bodyHasOpenedStageResult
-    || log.includes("openedStageResult")
-    || log.includes("Kit App sent stage prims");
+    hasOpenedStageSuccess
+    || hasStageQuerySuccess;
   const hasDataChannelEvidence =
     state.bodyHasDataChannelReply
     || state.bodyHasMakePickableResponse
