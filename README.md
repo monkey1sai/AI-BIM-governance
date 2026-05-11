@@ -159,7 +159,7 @@ Review session smoke：
 .\scripts\smoke-review-session.ps1
 ```
 
-Worker review request smoke（不需要 Kit GPU）：
+Worker review request smoke（不需要 Kit GPU，但需要 `storage/` 內有真實 IFC，且 `_worker` real converter prerequisites 可用）：
 
 ```powershell
 .\scripts\smoke-worker-review-request.ps1

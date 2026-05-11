@@ -7,6 +7,7 @@ import re
 from typing import Any, Mapping
 from uuid import uuid4
 
+from .converters import ConversionAdapter, ConversionAdapterError, IfcOpenShellUsdConverter
 from .models import ArtifactIntakeRequest
 from .settings import Settings
 
@@ -44,8 +45,9 @@ def read_json(path: Path, default: Any) -> Any:
 
 
 class WorkerStore:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, converter: ConversionAdapter | None = None):
         self.settings = settings
+        self.converter = converter or IfcOpenShellUsdConverter()
         Path(self.settings.objects_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.jobs_dir).mkdir(parents=True, exist_ok=True)
 
@@ -155,10 +157,17 @@ class WorkerStore:
         job = self.get_conversion_job(conversion_job_id)
         if job is None:
             raise KeyError(conversion_job_id)
-        self._update_job(conversion_job_id, status="running", stage="writing_derived_outputs")
+        self._update_job(conversion_job_id, status="running", stage="running_converter")
         source = self.get_source_artifact(job["source_artifact_id"])
         if source is None:
             raise KeyError(job["source_artifact_id"])
+        if job.get("target_format") != "usdc" or source["metadata"].get("source_format") != "ifc":
+            return self._fail_conversion_job(
+                job,
+                code="unsupported_conversion",
+                message="Only IFC source artifacts can be converted to USDC by the current worker adapter.",
+                stage="unsupported_conversion",
+            )
 
         group_id = job["artifact_group_id"]
         derived_root = (
@@ -176,46 +185,29 @@ class WorkerStore:
         )
         root_path = Path(self.settings.objects_root) / derived_root
         root_path.mkdir(parents=True, exist_ok=True)
-        files = {
-            "model.usdc": "# worker adapter USDC placeholder\n",
-            "ifc_index.json": json.dumps(
-                {
-                    "source_artifact_id": job["source_artifact_id"],
-                    "summary": {"element_count": 1, "guid_count": 1},
-                    "elements": [{"ifc_guid": "0BTBFw6f90Nfh9rP1dlXr7", "ifc_class": "IfcWall"}],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            "usd_index.json": json.dumps(
-                {
-                    "prim_count": 1,
-                    "prims": [{"path": "/World", "type": "Xform", "ifc_class": "IfcWall"}],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            "element_mapping.json": json.dumps(
-                {
-                    "mock": True,
-                    "mapping_method": "worker_adapter_smoke",
-                    "items": [
-                        {
-                            "ifc_guid": "0BTBFw6f90Nfh9rP1dlXr7",
-                            "ifc_class": "IfcWall",
-                            "usd_prim_path": "/World",
-                            "mapping_method": "worker_adapter_smoke",
-                            "mapping_confidence": 0.1,
-                        }
-                    ],
-                    "summary": {"mapped_count": 1, "unmapped_ifc_count": 0, "unmapped_usd_count": 0, "fake_mapping_count": 1},
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-        }
-        for name, content in files.items():
-            (root_path / name).write_text(content, encoding="utf-8")
+
+        try:
+            adapter_result = self.converter.convert(
+                source_path=Path(self.settings.objects_root) / source["object_key"],
+                output_dir=root_path,
+                job=job,
+                generate_mapping=job["generate_mapping"],
+            )
+            self._assert_adapter_result(adapter_result, root_path, job["generate_mapping"])
+        except ConversionAdapterError as exc:
+            return self._fail_conversion_job(
+                job,
+                code=exc.__class__.__name__,
+                message=str(exc),
+                stage="conversion_failed",
+            )
+        except Exception as exc:
+            return self._fail_conversion_job(
+                job,
+                code=exc.__class__.__name__,
+                message=str(exc),
+                stage="conversion_failed",
+            )
 
         now = utc_now()
         usdc_artifact_id = f"artifact_usdc_{conversion_job_id.removeprefix('conv_')}"
@@ -241,10 +233,12 @@ class WorkerStore:
         }
         write_json(root_path / "metadata.json", metadata)
 
+        mapping_url = self.object_url((derived_root / "element_mapping.json").as_posix()) if job["generate_mapping"] else None
         result = {
             "conversion_job_id": conversion_job_id,
             "job_id": conversion_job_id,
             "status": "succeeded",
+            "ready": True,
             "artifact_group_id": group_id,
             "tenant_id": job["tenant_id"],
             "project_id": job["project_id"],
@@ -262,8 +256,11 @@ class WorkerStore:
             "usdc_url": self.object_url((derived_root / "model.usdc").as_posix()),
             "ifc_index_url": self.object_url((derived_root / "ifc_index.json").as_posix()),
             "usd_index_url": self.object_url((derived_root / "usd_index.json").as_posix()),
-            "mapping_url": self.object_url((derived_root / "element_mapping.json").as_posix()) if job["generate_mapping"] else None,
+            "mapping_url": mapping_url,
             "metadata_url": self.object_url((derived_root / "metadata.json").as_posix()),
+            "converter": adapter_result.converter,
+            "quality_metrics": adapter_result.quality_metrics,
+            "warnings": adapter_result.warnings,
             "lineage": metadata["lineage"],
         }
         self._upsert_group(group_id, self._derived_group_payload(source, result, metadata, derived_root))
@@ -353,6 +350,8 @@ class WorkerStore:
                 "ifc_index_url": result["ifc_index_url"],
                 "usd_index_url": result["usd_index_url"],
             },
+            "quality_metrics": result.get("quality_metrics"),
+            "converter": result.get("converter"),
             "metadata": metadata,
             "lineage": result["lineage"],
             "updated_at": utc_now(),
@@ -393,3 +392,67 @@ class WorkerStore:
         job["updated_at"] = utc_now()
         write_json(self._job_path(conversion_job_id), job)
         return job
+
+    def _assert_adapter_result(self, adapter_result: Any, root_path: Path, generate_mapping: bool) -> None:
+        required_paths = [
+            adapter_result.model_path,
+            adapter_result.ifc_index_path,
+            adapter_result.usd_index_path,
+        ]
+        if generate_mapping:
+            required_paths.append(adapter_result.mapping_path)
+        for path in required_paths:
+            if path is None or not Path(path).is_file():
+                raise ConversionAdapterError(f"Converter did not create required output: {path}")
+            if root_path.resolve() != Path(path).resolve() and root_path.resolve() not in Path(path).resolve().parents:
+                raise ConversionAdapterError(f"Converter output escaped the derived object layout: {path}")
+
+        gates = (adapter_result.quality_metrics or {}).get("hard_quality_gates", {})
+        if not gates.get("usdc_openable"):
+            raise ConversionAdapterError("Generated model.usdc did not pass USD stage openability gate.")
+        if not gates.get("has_renderable_prims"):
+            raise ConversionAdapterError("Generated model.usdc did not contain renderable prims.")
+        if self._looks_like_placeholder(adapter_result.model_path):
+            raise ConversionAdapterError("Generated model.usdc looks like a placeholder output.")
+
+        if generate_mapping and adapter_result.mapping_path is not None:
+            mapping = read_json(adapter_result.mapping_path, {})
+            if mapping.get("mock") is True:
+                raise ConversionAdapterError("Generated element_mapping.json is marked as mock output.")
+            summary = mapping.get("summary") or {}
+            if int(summary.get("fake_mapping_count") or 0) > 0:
+                raise ConversionAdapterError("Generated element_mapping.json contains fake mapping entries.")
+
+    def _looks_like_placeholder(self, path: Path) -> bool:
+        content = path.read_bytes()[:4096].lower()
+        markers = (b"worker adapter usdc placeholder", b"placeholder", b"worker_adapter_smoke")
+        return any(marker in content for marker in markers)
+
+    def _fail_conversion_job(
+        self,
+        job: Mapping[str, Any],
+        *,
+        code: str,
+        message: str,
+        stage: str,
+    ) -> dict[str, Any]:
+        result = {
+            "conversion_job_id": job["conversion_job_id"],
+            "job_id": job["job_id"],
+            "status": "failed",
+            "ready": False,
+            "artifact_group_id": job["artifact_group_id"],
+            "tenant_id": job["tenant_id"],
+            "project_id": job["project_id"],
+            "model_version_id": job["model_version_id"],
+            "source_artifact_id": job["source_artifact_id"],
+            "usdc_url": None,
+            "ifc_index_url": None,
+            "usd_index_url": None,
+            "mapping_url": None,
+            "metadata_url": None,
+            "error": {"code": code, "message": message},
+        }
+        warnings = list(job.get("warnings") or [])
+        warnings.append(f"{code}: {message}")
+        return self._update_job(job["conversion_job_id"], status="failed", stage=stage, result=result, warnings=warnings)

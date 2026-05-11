@@ -82,7 +82,7 @@ not falsely report the whole multi-artifact session as fully loaded.
 GPU / Kit manual validation when hardware is available:
 
 1. Start local services with `.\scripts\start-all.ps1`, or start Kit manually with `.\bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad`.
-2. Create worker artifacts and a review session with `.\scripts\smoke-worker-review-request.ps1`, then open `web-viewer-sample` with the returned `review_request_id` or `session_id`.
+2. Create real-converted worker artifacts and a review session with `.\scripts\smoke-worker-review-request.ps1`, then open `web-viewer-sample` with the returned `review_request_id` or `session_id`.
 3. Confirm the viewer sends `openStageRequest` with `artifact_bindings[]`, Kit returns `openedStageResult.result="success"`, and `applied_mode` is `single_url`, `artifact_bindings_single`, or `artifact_bindings_multi_layer_payload`.
 4. Send `highlightPrimsRequest` against a known mapped `usd_prim_path`; real validation requires `missing_paths=[]` and `fallback_paths=[]`.
 5. Treat `/World` fallback as stream/DataChannel liveness only, not mapping correctness.

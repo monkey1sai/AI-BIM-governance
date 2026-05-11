@@ -4,6 +4,10 @@
 
 Runtime verification evidence SHALL distinguish `_worker` API flow success from real IFC geometry conversion success. Evidence MUST NOT claim single Kit render readiness when the source artifact was converted by a placeholder path.
 
+Current accepted real conversion evidence uses the worker adapter backed by
+external `ifcopenshell` and `usd-core`; API-only success without those hard
+quality gates is contract evidence only.
+
 #### Scenario: API-only conversion smoke passes
 
 - **WHEN** `_worker` accepts an IFC, creates a conversion job, and returns conversion result metadata
@@ -17,6 +21,10 @@ Runtime verification evidence SHALL distinguish `_worker` API flow success from 
 ### Requirement: Real conversion evidence records quality metrics
 
 The workspace SHALL record real conversion quality metrics before treating a conversion as accepted evidence. Metrics MUST include fixture identity, fixture size, converter identity, duration, USDC openability, source IFC element count, USD prim count, mapped count, unmapped count, coverage ratio, and whether a minimum coverage baseline is locked. P0 evidence MUST use a measure-first policy: coverage report is required, but low coverage alone MUST NOT fail CI until a later baseline threshold is established.
+
+P0 evidence records coverage as observed data. It MUST NOT claim a minimum
+issue-to-real-prim baseline is locked until a later change adds the threshold as
+a hard gate.
 
 #### Scenario: Large IFC fixture is converted
 

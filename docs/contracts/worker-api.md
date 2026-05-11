@@ -161,12 +161,19 @@ Response:
 
 `GET /api/conversions/{id}` tracks `queued`, `running`, `succeeded`, and `failed`. `GET /api/conversions/{id}/result` returns `ready=false` while the job is not complete.
 
+For IFC `target_format=usdc`, `_worker` uses an internal converter adapter. The
+current production adapter expects external `ifcopenshell` and `usd-core`
+Python packages. Missing prerequisites, converter errors, placeholder output,
+non-openable USDC, or missing required index/mapping files produce a failed job
+and do not mark the artifact group ready.
+
 Succeeded result:
 
 ```json
 {
   "conversion_job_id": "conv_20260507000000_xxxxxxxx",
   "status": "succeeded",
+  "ready": true,
   "artifact_group_id": "ag_xxx",
   "source_artifact_id": "artifact_src_xxx",
   "usdc_artifact_id": "artifact_usdc_20260507000000_xxxxxxxx",
@@ -176,11 +183,69 @@ Succeeded result:
   "usd_index_url": "http://127.0.0.1:8005/objects/tenants/.../usd_index.json",
   "mapping_url": "http://127.0.0.1:8005/objects/tenants/.../element_mapping.json",
   "metadata_url": "http://127.0.0.1:8005/objects/tenants/.../metadata.json",
+  "converter": {
+    "name": "ifcopenshell-openusd",
+    "ifcopenshell_version": "0.8.5",
+    "usd_core_version": "26.5",
+    "external_prerequisite": true
+  },
+  "quality_metrics": {
+    "duration_seconds": 189.15,
+    "source_ifc_element_count": 7362,
+    "usd_prim_count": 6949,
+    "mapped_count": 6998,
+    "unmapped_count": 364,
+    "coverage_ratio": 0.950557,
+    "threshold_status": "measure_only",
+    "minimum_coverage_baseline_locked": false,
+    "hard_quality_gates": {
+      "usdc_openable": true,
+      "has_renderable_prims": true,
+      "placeholder_output": false
+    }
+  },
   "lineage": {
     "source_artifact_id": "artifact_src_xxx",
     "source_object_key": "tenants/...",
     "derived_object_prefix": "tenants/.../derived/conv_.../usdc"
   }
+}
+```
+
+Failed result:
+
+```json
+{
+  "conversion_job_id": "conv_20260507000000_xxxxxxxx",
+  "status": "failed",
+  "ready": false,
+  "artifact_group_id": "ag_xxx",
+  "source_artifact_id": "artifact_src_xxx",
+  "usdc_url": null,
+  "ifc_index_url": null,
+  "usd_index_url": null,
+  "mapping_url": null,
+  "metadata_url": null,
+  "error": {
+    "code": "ConversionAdapterUnavailable",
+    "message": "IfcOpenShell is unavailable. Install ifcopenshell to run real IFC conversion."
+  }
+}
+```
+
+Mapping entries support one IFC GUID to many USD prim paths:
+
+```json
+{
+  "ifc_guid": "1eWqc$0zjELO5mD9AONs0i",
+  "ifc_class": "IfcSite",
+  "primary_usd_prim_path": "/World/IfcSite_1eWqc_0zjELO5mD9AONs0i",
+  "usd_prim_paths": [
+    "/World/IfcSite_1eWqc_0zjELO5mD9AONs0i",
+    "/World/IfcSite_1eWqc_0zjELO5mD9AONs0i_2"
+  ],
+  "mapping_method": "ifcopenshell_geometry_guid_to_usd_mesh",
+  "mapping_confidence": 0.95
 }
 ```
 

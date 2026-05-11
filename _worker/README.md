@@ -33,6 +33,21 @@ GET  /objects/{path}
 
 Source artifact responses, source metadata, source index entries, and completed conversion results include `original_filename`, preserving the raw uploaded or selected IFC filename while keeping the on-disk object name sanitized for path safety.
 
-`POST /api/conversions` creates a queued job. With the default `run_background=true`, FastAPI schedules an inline local adapter conversion that writes deterministic demo `model.usdc`, index JSON, mapping JSON, and `metadata.json`, then posts metadata to `_bim-control`.
+`POST /api/conversions` creates a queued job. With the default `run_background=true`, FastAPI schedules an inline local adapter conversion that writes `model.usdc`, index JSON, mapping JSON, quality metrics, and `metadata.json`, then posts successful metadata to `_bim-control`.
 
-The default worker adapter output is not a Kit-ready geometry conversion. Real IFC -> USDC validation uses the Kit/HOOPS converter in `bim-streaming-server/scripts/convert-ifc-to-usdc.ps1` and the stage inspection helper in `bim-streaming-server/scripts/inspect-usd-stage-and-quit.py`. The opt-in pytest smoke `test_real_ifc_files_convert_to_kit_openable_usdc_when_enabled` runs only when `WORKER_RUN_REAL_USDC_SMOKE=1` is set.
+The production worker adapter uses optional external Python prerequisites:
+`ifcopenshell` for IFC geometry extraction and `usd-core` for writing and
+reopening OpenUSD stages. These are treated as external prerequisites, not
+repo-local installs. If either prerequisite is unavailable, or if the generated
+`model.usdc` cannot be reopened with a USD stage reader, the job is marked
+`failed` and the artifact group remains non-ready.
+
+`element_mapping.json` is generated from real IFC GUIDs and USD prim paths. Each
+entry includes `primary_usd_prim_path` for the current UI focus path and
+`usd_prim_paths` for the full one-to-many mapping. P0 coverage is
+measure-first: coverage metrics are emitted, but low coverage alone is not a CI
+failure until a later baseline is locked.
+
+The opt-in pytest smoke `test_real_ifc_files_convert_to_kit_openable_usdc_when_enabled`
+runs only when `WORKER_RUN_REAL_USDC_SMOKE=1` is set and uses repo-local IFC
+fixtures from `WORKER_REAL_IFC_STORAGE_ROOT`.

@@ -7,6 +7,7 @@ param(
     [string] $ProjectId = "project_demo_001",
     [string] $ModelVersionId = "version_demo_001",
     [string] $UserId = "dev_user_001",
+    [string] $DevSourceId = "",
     [int] $TimeoutSeconds = 30
 )
 
@@ -17,26 +18,28 @@ Invoke-RestMethod "$WorkerUrl/health" | Out-Null
 Invoke-RestMethod "$BimControlUrl/health" | Out-Null
 Invoke-RestMethod "$CoordinatorUrl/health" | Out-Null
 
-$ifcText = "ISO-10303-21;`nEND-ISO-10303-21;`n"
-$artifactBody = @{
+$sources = Invoke-RestMethod "$WorkerUrl/api/dev/ifc-sources"
+if (-not $sources.items -or $sources.items.Count -eq 0) {
+    throw "No dev IFC source is available. Put a real .ifc file under the worker dev storage root before running this smoke."
+}
+
+$source = $null
+if (-not [string]::IsNullOrWhiteSpace($DevSourceId)) {
+    $source = @($sources.items | Where-Object { $_.source_id -eq $DevSourceId } | Select-Object -First 1)[0]
+    if (-not $source) {
+        throw "Dev source id was not found: $DevSourceId"
+    }
+}
+else {
+    $source = @($sources.items | Sort-Object filename | Select-Object -First 1)[0]
+}
+
+$conversionBody = @{
     tenant_id = $TenantId
     project_id = $ProjectId
     model_version_id = $ModelVersionId
-    source_system = "smoke"
+    source_system = "dev_storage"
     uploaded_by = $UserId
-    filename = "source.ifc"
-    source_format = "ifc"
-    content_base64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($ifcText))
-} | ConvertTo-Json -Depth 10
-
-$artifact = Invoke-RestMethod `
-    -Method Post `
-    -Uri "$WorkerUrl/api/artifacts" `
-    -ContentType "application/json" `
-    -Body $artifactBody
-
-$conversionBody = @{
-    source_artifact_id = $artifact.source_artifact_id
     target_format = "usdc"
     generate_mapping = $true
     options = @{ auto_complete = $true }
@@ -44,7 +47,7 @@ $conversionBody = @{
 
 $conversion = Invoke-RestMethod `
     -Method Post `
-    -Uri "$WorkerUrl/api/conversions" `
+    -Uri "$WorkerUrl/api/dev/ifc-sources/$($source.source_id)/conversions" `
     -ContentType "application/json" `
     -Body $conversionBody
 
@@ -61,13 +64,16 @@ do {
 if ($result.status -ne "succeeded") {
     throw "Expected worker conversion result succeeded, got $($result.status)"
 }
+if (-not $result.quality_metrics.hard_quality_gates.usdc_openable) {
+    throw "Expected generated USDC to pass the openability quality gate."
+}
 
 $requestBody = @{
     requested_by = $UserId
     tenant_id = $TenantId
     project_id = $ProjectId
     model_version_id = $ModelVersionId
-    artifact_group_ids = @($artifact.artifact_group_id)
+    artifact_group_ids = @($conversion.artifact_group_id)
     startup_policy = @{ routing_policy = "same_instance" }
     kit_profile = @{ provider = "local_fixed" }
 } | ConvertTo-Json -Depth 10
@@ -90,7 +96,7 @@ $sessionBody = @{
     created_by = $UserId
     routing_policy = "same_instance"
     artifact_bindings = @(@{
-        artifact_group_id = $artifact.artifact_group_id
+        artifact_group_id = $conversion.artifact_group_id
         model_version_id = $ModelVersionId
         artifact_id = $result.usdc_artifact_id
         artifact_role = "derived"
@@ -132,7 +138,9 @@ if ($patched.status -ne "active") {
 }
 
 Write-Host "[smoke] worker review request passed"
-Write-Host "[smoke] source_artifact_id: $($artifact.source_artifact_id)"
+Write-Host "[smoke] dev_source: $($source.filename) ($($source.size_bytes) bytes)"
+Write-Host "[smoke] source_artifact_id: $($conversion.source_artifact_id)"
 Write-Host "[smoke] conversion_job_id: $($conversion.conversion_job_id)"
+Write-Host "[smoke] coverage_ratio: $($result.quality_metrics.coverage_ratio)"
 Write-Host "[smoke] review_request_id: $($reviewRequest.review_request_id)"
 Write-Host "[smoke] session_id: $($session.session_id)"

@@ -9,9 +9,99 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.converters import ConversionAdapterResult, ConversionAdapterUnavailable
 from app.models import ArtifactIntakeRequest, ConversionOptions, ConversionRequest
 from app.settings import Settings
 from app.store import WorkerStore, safe_filename, safe_id, write_json, read_json
+
+
+class FakeSuccessfulConverter:
+    def __init__(self, *, model_content: bytes = b"PXR-USDC-fake-openable\n", quality_overrides: dict | None = None):
+        self.model_content = model_content
+        self.quality_overrides = quality_overrides or {}
+
+    def convert(self, *, source_path: Path, output_dir: Path, job: dict, generate_mapping: bool) -> ConversionAdapterResult:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        model_path = output_dir / "model.usdc"
+        ifc_index_path = output_dir / "ifc_index.json"
+        usd_index_path = output_dir / "usd_index.json"
+        mapping_path = output_dir / "element_mapping.json" if generate_mapping else None
+        model_path.write_bytes(self.model_content)
+        write_json(
+            ifc_index_path,
+            {
+                "summary": {"element_count": 2, "guid_count": 2},
+                "elements": [
+                    {"ifc_guid": "guid-1", "ifc_class": "IfcWall"},
+                    {"ifc_guid": "guid-2", "ifc_class": "IfcDoor"},
+                ],
+            },
+        )
+        write_json(
+            usd_index_path,
+            {
+                "summary": {"prim_count": 3, "mesh_prim_count": 2},
+                "prims": [
+                    {"path": "/World/IfcWall_guid_1", "type": "Mesh", "ifc_guid": "guid-1"},
+                    {"path": "/World/IfcWall_guid_1_2", "type": "Mesh", "ifc_guid": "guid-1"},
+                ],
+            },
+        )
+        if mapping_path is not None:
+            write_json(
+                mapping_path,
+                {
+                    "mock": False,
+                    "items": [
+                        {
+                            "ifc_guid": "guid-1",
+                            "ifc_class": "IfcWall",
+                            "primary_usd_prim_path": "/World/IfcWall_guid_1",
+                            "usd_prim_paths": ["/World/IfcWall_guid_1", "/World/IfcWall_guid_1_2"],
+                            "mapping_method": "test_fake_converter",
+                            "mapping_confidence": 0.95,
+                        }
+                    ],
+                    "summary": {
+                        "mapped_count": 1,
+                        "unmapped_ifc_count": 1,
+                        "unmapped_usd_count": 0,
+                        "coverage_ratio": 0.5,
+                        "fake_mapping_count": 0,
+                    },
+                },
+            )
+        quality_metrics = {
+            "converter_identity": {"name": "test-fake-converter", "mock": True},
+            "duration_seconds": 0.01,
+            "source_ifc_element_count": 2,
+            "usd_prim_count": 3,
+            "mapped_count": 1,
+            "unmapped_count": 1,
+            "coverage_ratio": 0.5,
+            "threshold_status": "measure_only",
+            "minimum_coverage_baseline_locked": False,
+            "hard_quality_gates": {
+                "usdc_openable": True,
+                "has_renderable_prims": True,
+                "placeholder_output": False,
+            },
+        }
+        quality_metrics.update(self.quality_overrides)
+        return ConversionAdapterResult(
+            model_path=model_path,
+            ifc_index_path=ifc_index_path,
+            usd_index_path=usd_index_path,
+            mapping_path=mapping_path,
+            converter={"name": "test-fake-converter", "mock": True},
+            quality_metrics=quality_metrics,
+            warnings=[],
+        )
+
+
+class FakeUnavailableConverter:
+    def convert(self, *, source_path: Path, output_dir: Path, job: dict, generate_mapping: bool) -> ConversionAdapterResult:
+        raise ConversionAdapterUnavailable("test converter is unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +341,7 @@ def test_settings_from_env_reads_environment_variables(monkeypatch, tmp_path: Pa
 # ---------------------------------------------------------------------------
 
 
-def make_store(tmp_path: Path) -> WorkerStore:
+def make_store(tmp_path: Path, converter=None) -> WorkerStore:
     settings = Settings(
         service_root=tmp_path,
         objects_root=tmp_path / "objects",
@@ -259,7 +349,7 @@ def make_store(tmp_path: Path) -> WorkerStore:
         fake_bim_control_url="http://127.0.0.1:1",
         public_objects_url="http://testserver/objects",
     )
-    return WorkerStore(settings)
+    return WorkerStore(settings, converter=converter or FakeSuccessfulConverter())
 
 
 def make_intake_request(**overrides) -> ArtifactIntakeRequest:
@@ -407,6 +497,24 @@ def test_store_complete_conversion_sets_group_to_ready(tmp_path: Path):
     assert group["mapping"]["ready"] is True
 
 
+def test_store_complete_conversion_reports_quality_metrics_and_one_to_many_mapping(tmp_path: Path):
+    store = make_store(tmp_path)
+    req = make_intake_request(artifact_group_id="ag_quality_test")
+    upload = store.create_source_artifact(req)
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    result = completed["result"]
+    assert result["quality_metrics"]["converter_identity"]["name"] == "test-fake-converter"
+    assert result["quality_metrics"]["coverage_ratio"] == 0.5
+    mapping_path = Path(store.settings.objects_root) / result["lineage"]["derived_object_prefix"] / "element_mapping.json"
+    mapping = read_json(mapping_path, {})
+    assert mapping["mock"] is False
+    assert mapping["items"][0]["primary_usd_prim_path"] == "/World/IfcWall_guid_1"
+    assert mapping["items"][0]["usd_prim_paths"] == ["/World/IfcWall_guid_1", "/World/IfcWall_guid_1_2"]
+
+
 def test_store_conversion_without_mapping_sets_missing_mapping_status(tmp_path: Path):
     store = make_store(tmp_path)
     req = make_intake_request(artifact_group_id="ag_nomapping")
@@ -416,6 +524,59 @@ def test_store_conversion_without_mapping_sets_missing_mapping_status(tmp_path: 
     group = store.get_artifact_group("ag_nomapping")
     assert group["ready_status"] == "missing_mapping"
     assert group["mapping"]["ready"] is False
+
+
+def test_store_converter_unavailable_fails_without_ready_artifact_group(tmp_path: Path):
+    store = make_store(tmp_path, converter=FakeUnavailableConverter())
+    req = make_intake_request(artifact_group_id="ag_converter_missing")
+    upload = store.create_source_artifact(req)
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    assert completed["status"] == "failed"
+    assert completed["result"]["ready"] is False
+    assert "unavailable" in completed["result"]["error"]["message"]
+    group = store.get_artifact_group("ag_converter_missing")
+    assert group["status"] == "source_uploaded"
+    assert group["ready_status"] == "missing_derived"
+
+
+def test_store_rejects_placeholder_output_as_ready_evidence(tmp_path: Path):
+    store = make_store(tmp_path, converter=FakeSuccessfulConverter(model_content=b"# worker adapter USDC placeholder\n"))
+    req = make_intake_request(artifact_group_id="ag_placeholder")
+    upload = store.create_source_artifact(req)
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    assert completed["status"] == "failed"
+    assert completed["result"]["ready"] is False
+    assert "placeholder" in completed["result"]["error"]["message"].lower()
+    group = store.get_artifact_group("ag_placeholder")
+    assert group["ready_status"] == "missing_derived"
+
+
+def test_store_rejects_non_openable_converter_output(tmp_path: Path):
+    quality = {
+        "hard_quality_gates": {
+            "usdc_openable": False,
+            "has_renderable_prims": True,
+            "placeholder_output": False,
+        }
+    }
+    store = make_store(tmp_path, converter=FakeSuccessfulConverter(quality_overrides=quality))
+    req = make_intake_request(artifact_group_id="ag_non_openable")
+    upload = store.create_source_artifact(req)
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    assert completed["status"] == "failed"
+    assert completed["result"]["ready"] is False
+    assert "openability" in completed["result"]["error"]["message"].lower()
+    group = store.get_artifact_group("ag_non_openable")
+    assert group["ready_status"] == "missing_derived"
 
 
 def test_store_object_url_constructs_from_public_base(tmp_path: Path):

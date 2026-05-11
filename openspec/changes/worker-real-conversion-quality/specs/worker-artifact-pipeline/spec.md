@@ -4,6 +4,11 @@
 
 `_worker` SHALL produce real derived artifacts for IFC `target_format=usdc` conversion jobs. A succeeded conversion MUST write a `model.usdc` that can be opened by a USD stage reader and MUST NOT use placeholder text, empty files, or fake geometry as the ready artifact.
 
+The first implementation uses an internal adapter boundary backed by external
+`ifcopenshell` geometry extraction and `usd-core` stage writing. These packages
+remain external prerequisites; missing packages or incompatible local runtime
+state MUST fail the job instead of falling back to placeholder output.
+
 #### Scenario: IFC conversion writes an openable USDC
 
 - **WHEN** a conversion job for an IFC source artifact succeeds with `target_format=usdc`
@@ -22,6 +27,10 @@
 ### Requirement: Worker derives indices and mapping from real conversion output
 
 `_worker` SHALL produce `ifc_index.json`, `usd_index.json`, and `element_mapping.json` from the source IFC content and the converted USD / USDC stage. Mapping output MUST identify whether each entry is derived from a reliable IFC GUID / USD prim relationship and MUST NOT label fabricated mapping entries as real coverage. `element_mapping.json` MUST support one IFC GUID mapped to multiple USD prim paths by providing `primary_usd_prim_path` for UI / highlight / focus and `usd_prim_paths` for the complete mapping.
+
+The current mapping method is `ifcopenshell_geometry_guid_to_usd_mesh`: one IFC
+GUID may produce multiple mesh prims when the geometry iterator emits multiple
+shapes for the same product.
 
 #### Scenario: Real indices are written
 
