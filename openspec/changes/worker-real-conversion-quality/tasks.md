@@ -61,3 +61,8 @@ repo-local ignored 89 MB IFC source. The PR body prepared for this branch calls
 out IfcOpenShell / usd-core prerequisites and license observations, the
 measure-first coverage policy, root smoke evidence, and single Kit/browser
 screenshot evidence. No GPU/Kit evidence remains blocked for this change.
+
+## 8. PR Review Follow-Up
+
+- [x] 8.1 Prevent converter fallback / synthetic shape ids from being counted as real IFC GUID mapping coverage.
+- [x] 8.2 Add regression coverage for converter-emitted shapes with missing or unknown source IFC `GlobalId`.

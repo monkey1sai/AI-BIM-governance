@@ -121,6 +121,7 @@ class IfcOpenShellUsdConverter:
 
         prim_rows: list[dict[str, Any]] = []
         mapping_by_guid: dict[str, dict[str, Any]] = {}
+        unmapped_usd_prims: list[dict[str, Any]] = []
         used_paths: set[str] = set()
         converted_shapes = 0
         skipped_shapes = 0
@@ -133,7 +134,9 @@ class IfcOpenShellUsdConverter:
             geometry = shape.geometry
             vertices = list(geometry.verts)
             faces = list(geometry.faces)
-            guid = str(getattr(shape, "guid", "") or f"shape_{converted_shapes}")
+            raw_guid = str(getattr(shape, "guid", "") or "").strip()
+            diagnostic_id = raw_guid or f"shape_{converted_shapes}"
+            mapping_guid = raw_guid if raw_guid in source_by_guid else None
             ifc_class = str(getattr(shape, "type", "") or "IfcProduct")
 
             if len(vertices) < 3 or len(faces) < 3:
@@ -141,35 +144,55 @@ class IfcOpenShellUsdConverter:
                 keep_going = iterator.next()
                 continue
 
-            prim_path = self._unique_prim_path(ifc_class, guid, used_paths)
+            prim_path = self._unique_prim_path(ifc_class, diagnostic_id, used_paths)
             mesh = UsdGeom.Mesh.Define(stage, prim_path)
             points = [(vertices[i], vertices[i + 1], vertices[i + 2]) for i in range(0, len(vertices), 3)]
             triangle_count = len(faces) // 3
             mesh.CreatePointsAttr(points)
             mesh.CreateFaceVertexCountsAttr([3] * triangle_count)
             mesh.CreateFaceVertexIndicesAttr(faces[: triangle_count * 3])
-            mesh.GetPrim().CreateAttribute("ifc:guid", Sdf.ValueTypeNames.String).Set(guid)
+            if raw_guid:
+                mesh.GetPrim().CreateAttribute("ifc:guid", Sdf.ValueTypeNames.String).Set(raw_guid)
+            else:
+                mesh.GetPrim().CreateAttribute("worker:diagnostic_id", Sdf.ValueTypeNames.String).Set(diagnostic_id)
             mesh.GetPrim().CreateAttribute("ifc:type", Sdf.ValueTypeNames.String).Set(ifc_class)
 
             converted_shapes += 1
             vertex_count += len(points)
             face_count += triangle_count
-            prim_rows.append(
-                {
-                    "path": prim_path,
-                    "type": "Mesh",
-                    "ifc_guid": guid,
-                    "ifc_class": ifc_class,
-                    "vertex_count": len(points),
-                    "face_count": triangle_count,
-                }
-            )
+            prim_row = {
+                "path": prim_path,
+                "type": "Mesh",
+                "ifc_guid": raw_guid or None,
+                "diagnostic_id": diagnostic_id,
+                "ifc_class": ifc_class,
+                "vertex_count": len(points),
+                "face_count": triangle_count,
+            }
 
+            if mapping_guid is None:
+                reason = "unknown_source_guid" if raw_guid else "missing_source_guid"
+                prim_row["mapping_status"] = "unmapped"
+                prim_row["unmapped_reason"] = reason
+                unmapped_usd_prims.append(
+                    {
+                        "path": prim_path,
+                        "ifc_guid": raw_guid or None,
+                        "diagnostic_id": diagnostic_id,
+                        "reason": reason,
+                    }
+                )
+                prim_rows.append(prim_row)
+                keep_going = iterator.next()
+                continue
+
+            prim_row["mapping_status"] = "mapped"
+            prim_rows.append(prim_row)
             mapping = mapping_by_guid.setdefault(
-                guid,
+                mapping_guid,
                 {
-                    "ifc_guid": guid,
-                    "ifc_class": source_by_guid.get(guid, {}).get("ifc_class", ifc_class),
+                    "ifc_guid": mapping_guid,
+                    "ifc_class": source_by_guid.get(mapping_guid, {}).get("ifc_class", ifc_class),
                     "usd_prim_path": prim_path,
                     "primary_usd_prim_path": prim_path,
                     "usd_prim_paths": [],
@@ -191,6 +214,8 @@ class IfcOpenShellUsdConverter:
         source_count = len(source_elements)
         mapped_count = len(mapping_by_guid)
         unmapped_count = max(source_count - mapped_count, 0)
+        unmapped_ifc_guids = [guid for guid in source_by_guid if guid not in mapping_by_guid]
+        unmapped_usd_count = len(unmapped_usd_prims)
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
         duration_seconds = perf_counter() - started
 
@@ -209,6 +234,7 @@ class IfcOpenShellUsdConverter:
                 "mesh_prim_count": len(prim_rows),
                 "vertex_count": vertex_count,
                 "face_count": face_count,
+                "unmapped_usd_count": unmapped_usd_count,
             },
             "prims": prim_rows,
         }
@@ -217,7 +243,7 @@ class IfcOpenShellUsdConverter:
             "usd_prim_count": usd_prim_count,
             "mapped_count": mapped_count,
             "unmapped_ifc_count": unmapped_count,
-            "unmapped_usd_count": 0,
+            "unmapped_usd_count": unmapped_usd_count,
             "coverage_ratio": coverage_ratio,
             "fake_mapping_count": 0,
             "minimum_coverage_baseline_locked": False,
@@ -238,6 +264,8 @@ class IfcOpenShellUsdConverter:
                         "minimum_coverage_ratio": None,
                     },
                     "items": list(mapping_by_guid.values()),
+                    "unmapped_ifc_guids": unmapped_ifc_guids,
+                    "unmapped_usd_prims": unmapped_usd_prims,
                     "summary": mapping_summary,
                 },
             )
@@ -260,6 +288,7 @@ class IfcOpenShellUsdConverter:
             "mesh_prim_count": len(prim_rows),
             "mapped_count": mapped_count,
             "unmapped_count": unmapped_count,
+            "unmapped_usd_count": unmapped_usd_count,
             "coverage_ratio": coverage_ratio,
             "threshold_status": "measure_only",
             "minimum_coverage_baseline_locked": False,

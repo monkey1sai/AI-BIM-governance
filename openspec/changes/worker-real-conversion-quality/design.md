@@ -48,6 +48,12 @@ roadmap 將此列為 `worker-real-conversion-quality` P0 候選：優先解除 I
 
 `element_mapping.json` 第一版即支援 one IFC GUID 對多個 USD prim path。每筆 mapping 應提供 `ifc_guid`、`usd_prim_path`、`primary_usd_prim_path`、`usd_prim_paths`、`mapping_method`、`mapping_confidence` 與可選 diagnostics。`primary_usd_prim_path` 是 canonical UI / highlight / focus 主路徑；`usd_prim_path` 是目前 viewer-compatible alias，避免在不改 `web-viewer-sample` UI contract 的情況下破壞現有 DataChannel command；`usd_prim_paths` 保留完整映射，供後續 multi-part highlight、debug 與 coverage 分析使用。
 
+PR review follow-up: mapping coverage must count only prims that can be traced
+back to a real source IFC `GlobalId` present in the source index. Converter-side
+fallback ids such as `shape_123` may be used for USD prim path uniqueness or
+diagnostics, but they are not reliable IFC GUIDs and must not increment
+`mapped_count`, `coverage_ratio`, or real mapping readiness.
+
 替代方案：第一版只輸出單一 `usd_prim_path`。這會讓牆、樓板、族群或被 converter 拆分的 IFC 元件遺失完整映射，後續再補會破壞 schema 相容性，因此不採用。
 
 ### 5. Evidence 不跨越 repo 邊界
@@ -59,7 +65,7 @@ roadmap 將此列為 `worker-real-conversion-quality` P0 候選：優先解除 I
 - [Converter dependency risk] 新增 IfcOpenShell / USD / Kit converter 可能帶來安裝、license、Windows 路徑與版本風險。緩解：先做 adapter spike，記錄 license 與 external prerequisite；Omniverse / HOOPS / CAD Converter 不納入 repo-local install。
 - [Performance risk] 89 MB 到 500 MB IFC 可能造成高 RAM / disk 峰值。緩解：quality evidence 必須記錄 duration、fixture size、process / memory observation when available。
 - [Coverage drift risk] P0 不用 coverage fail CI 可能讓低 coverage 暫時通過。緩解：每次 smoke 必須輸出 coverage report，baseline 穩定後再鎖最低門檻。
-- [Mapping correctness risk] IFC GUID 可能在轉檔後遺失或被拆成多個 prim。緩解：mapping schema 第一版即支援 `usd_prim_path` alias、`primary_usd_prim_path` + `usd_prim_paths`，並保留 confidence、unmapped reason 與 diagnostics。
+- [Mapping correctness risk] IFC GUID 可能在轉檔後遺失、被拆成多個 prim、或 converter shape 缺少可回溯的 source `GlobalId`。緩解：mapping schema 第一版即支援 `usd_prim_path` alias、`primary_usd_prim_path` + `usd_prim_paths`，並保留 confidence、unmapped reason 與 diagnostics；fallback / synthetic ids 不得計入 real mapping coverage。
 - [Environment risk] Kit/GPU 不一定在所有環境可用。緩解：unit/API tests 不依賴 GPU；real converter smoke 與 browser viewport evidence 可用 opt-in 或 blocked 記錄。
 
 ## Migration Plan
@@ -76,3 +82,4 @@ roadmap 將此列為 `worker-real-conversion-quality` P0 候選：優先解除 I
 - baseline 穩定後再鎖最低 coverage 門檻，並把門檻提升成正式 quality gate。
 - `element_mapping.json` 第一版即支援 one IFC GUID → many USD prim paths。
 - `primary_usd_prim_path` 作為 canonical UI / highlight / focus 主路徑，`usd_prim_path` 保留為 current viewer-compatible alias，`usd_prim_paths` 保留完整映射。
+- fallback / synthetic shape id 不得當成 source IFC `GlobalId`，也不得計入 real mapping coverage。
