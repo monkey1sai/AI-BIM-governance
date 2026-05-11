@@ -135,7 +135,7 @@ Session  → bim-review-coordinator
 | [`AGENTS.md`](AGENTS.md) | **Repo 邊界與資料權威**（最高優先） | 不確定哪個服務該做什麼、資料權威歸誰 |
 | [`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`](docs/PROJECT_DEVELOPMENT_WORKFLOW.md) | **開發流程入口**（7 層架構、Phase 完成度、驗證證據 4 層分級、IFC→USD 品質管線 7 步、OpenSpec + PR Checklist、服務測試命令、核心資料流 sequence diagram） | 新進工程師 onboarding、PR review、demo 簡報 |
 | [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md) | **SaaS 路線圖**（OpenSpec 候選 #1-#9 + #1A / #2A 精確 spec id 與 KPI、NVIDIA Reference 採用決策矩陣 §13、§11.4 Multi-Kit Instance 並行官方定義、硬體配置 §9.0-§9.8、MCP 查詢結果 §11） | 架構師決策、OpenSpec change owner、技術 review |
-| [`openspec/specs/`](openspec/specs/) | **9 份 capability spec**（現行規格權威） | 修改任何服務前先讀對應 capability 的 spec 與 archived change |
+| [`openspec/specs/`](openspec/specs/) | **11 份 capability spec**（現行規格權威） | 修改任何服務前先讀對應 capability 的 spec 與 archived change |
 
 > **workflow v3 與 SaaS 路線圖互補不替代**：workflow v3 是「怎麼做」的流程入口；路線圖是「做什麼 / 為什麼 / 怎麼決策」的技術權威。兩份文件交叉引用，避免分歧。
 

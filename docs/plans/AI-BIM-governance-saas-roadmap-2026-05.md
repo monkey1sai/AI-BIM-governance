@@ -7,7 +7,7 @@
 > **回覆語言**：繁體中文
 >
 > **2026-05-08 follow-up 更新（OpenSpec 溯源 + §9 NVIDIA 語意定稿）**：
-> 1. **§1.4**：整理 `openspec/changes/archive/*` 已歸檔 change 與現行 **`openspec/specs/`**（9 個 capability）對照，避免 roadmap 與 spec 目錄漂移。
+> 1. **§1.4**：整理 `openspec/changes/archive/*` 已歸檔 change 與現行 **`openspec/specs/`**（11 個 capability）對照，避免 roadmap 與 spec 目錄漂移。
 > 2. **§9**：延續 MCP／OVAS／extension 官方文件交叉驗證結果，明確 **`kit.exe` = OS process**、**Multi‑Kit = 多進程／多容器**、**primary／spectator／AOV = 同一進程內可多 signaling endpoint**（與 §11.4 Multi‑Kit 定義互相引用）。
 >
 > **2026-05-08 15:00 更新（MCP 補強）**：透過本機 docker container 上的 NVIDIA NeMo Agent Toolkit MCP server（`kit-mcp:9902`、`usd-code-mcp:9903`，皆 healthy）與 NVIDIA 官方文件（`docs.omniverse.nvidia.com`）交叉驗證，校正 Phase 4 / Phase 5 的「實際可用 NVIDIA 真實能力」。詳見 §11；§2 / §3 / §9 / §6 對應段落已標 ⓜ 表示由 MCP 補正。
@@ -62,7 +62,7 @@
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
 
-下列 **10** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。
+下列 **11** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。
 
 | Spec | 對應 v1 Phase | 對應 v2 Layer | 狀態 |
 |---|---|---|---|
@@ -76,6 +76,7 @@
 | `session-first-review-viewer` | 2/3 | 2 | ✓ Viewer 從 review_request_id / session_id bootstrap |
 | `runtime-verification-evidence` | 0 | 6 | ✓ 證據分層（contract / single-Kit / multi-Kit / stress） |
 | `runtime-verification-task-status` | 3 | 6 | ✓ checklist 語意：GPU / concurrent runtime items 不得因 blocker classification 被視為完成 |
+| `documentation-source-of-truth` | cross-cutting | repo governance | ✓ workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威 |
 
 ### 1.3 已驗證的閉環（`docs/verification/2026-05-08-spec-end-to-end-verification.md`）
 
@@ -106,6 +107,7 @@ multi-artifact-kit-routing dedicated_instance runtime  : 另一分支驗證中�
 | `2026-05-08-add-worker-original-filename-tracking` | `worker-artifact-pipeline`、`worker-dev-ifc-source-selection`（MODIFY） | `original_filename` traceability（metadata／callback／UI contract） |
 | `2026-05-08-complete-spec-runtime-verification` | `runtime-verification-evidence`（新增） | contract／single‑Kit／multi‑Kit／stress 驗證分層與證據格式 |
 | `2026-05-08-fix-runtime-verification-task-status` | `runtime-verification-task-status`（新增） | OpenSpec runtime verification checklist 語意；GPU / concurrent runtime items 不得因 blocker classification 被視為完成；同步 PR #20 same-Kit primary／spectator stream evidence |
+| `2026-05-11-align-workflow-v3-with-saas-roadmap` | `documentation-source-of-truth`（新增） | workflow v3 與 SaaS 路線圖互補不替代；文件分工調整必須走 OpenSpec change；雙向 cross-reference 必須持續成立 |
 
 ```txt
 規格目錄約定：

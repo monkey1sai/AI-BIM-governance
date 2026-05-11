@@ -806,12 +806,12 @@ sequenceDiagram
 | 退役服務 | [`docs/contracts/conversion-api.md`](contracts/conversion-api.md), [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md) |
 | 本地開發步驟 | [`docs/contracts/local-dev-runbook.md`](contracts/local-dev-runbook.md), [`README.md`](../README.md) |
 | Demo UI 設計守則 | [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md) |
-| 9 份 Capability spec | [`openspec/specs/`](../openspec/specs/) |
+| 11 份 Capability spec | [`openspec/specs/`](../openspec/specs/) |
 | 已 archive 的 OpenSpec change | [`openspec/changes/archive/`](../openspec/changes/archive/) |
 | **2026-05-08 端到端驗證證據** | [`docs/verification/2026-05-08-spec-end-to-end-verification.md`](verification/2026-05-08-spec-end-to-end-verification.md) |
 | **SaaS 路線圖**（OpenSpec 候選 #1-#9 + #1A/#2A 編號、NVIDIA Reference 採用決策矩陣 §13、§11.4 Multi-Kit Instance 並行官方定義、硬體 §9.0-§9.8、MCP 查詢結果 §11） | [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](plans/AI-BIM-governance-saas-roadmap-2026-05.md) |
 
-### 10.1 10 份 Capability Spec 對應 Phase
+### 10.1 11 份 Capability Spec 對應 Phase
 
 > 對應 SaaS 路線圖 §1.4 OpenSpec 已歸檔 change → 現行 spec 溯源表。
 
@@ -827,6 +827,7 @@ sequenceDiagram
 | `streaming-multi-layer-payload-loading` | 3 | 🔄 |
 | `runtime-verification-evidence` | 3 | ✅（spec 完成、blocked 條件已記錄） |
 | `runtime-verification-task-status` | 3 | ✅（checklist 語意：GPU / concurrent runtime 不得因 blocker 視為完成；PR #20 same-Kit primary／spectator evidence 已 land） |
+| `documentation-source-of-truth` | cross-cutting | ✅（workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威） |
 
 > **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。本文件與 [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md) 屬 **OpenSpec 補充 planning artifact**（分工見頂部 metadata），不在上述優先順序內覆蓋 `openspec/specs/` 權威。
 
