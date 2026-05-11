@@ -2,7 +2,7 @@
 
 ### Requirement: Worker produces real IFC conversion artifacts
 
-`_worker` SHALL produce real derived artifacts for IFC `target_format=usdc` conversion jobs. A succeeded conversion MUST write a `model.usdc` that can be opened by a USD stage reader and MUST NOT use placeholder text, empty files, or fake geometry as the ready artifact.
+`_worker` SHALL produce real derived artifacts for IFC `target_format=usdc` conversion jobs. A successful conversion job MUST write a `model.usdc` that can be opened by a USD stage reader and MUST NOT use placeholder text, empty files, or fake geometry as the ready artifact.
 
 The first implementation uses an internal adapter boundary backed by external
 `ifcopenshell` geometry extraction and `usd-core` stage writing. These packages
@@ -74,5 +74,5 @@ shapes for the same product.
 
 #### Scenario: Quality metrics are exposed
 
-- **WHEN** `GET /api/conversions/{conversion_job_id}/result` returns a succeeded real conversion result
+- **WHEN** `GET /api/conversions/{conversion_job_id}/result` returns a conversion result with status `succeeded`
 - **THEN** the payload includes converter identity, conversion duration, source IFC element count, USD prim count, mapped count, unmapped count, coverage ratio, threshold status, and validation warnings when present
