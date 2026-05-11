@@ -1,0 +1,63 @@
+## ADDED Requirements
+
+### Requirement: Worker produces real IFC conversion artifacts
+
+`_worker` SHALL produce real derived artifacts for IFC `target_format=usdc` conversion jobs. A succeeded conversion MUST write a `model.usdc` that can be opened by a USD stage reader and MUST NOT use placeholder text, empty files, or fake geometry as the ready artifact.
+
+#### Scenario: IFC conversion writes an openable USDC
+
+- **WHEN** a conversion job for an IFC source artifact succeeds with `target_format=usdc`
+- **THEN** `_worker` writes `model.usdc` under the derived object layout and records evidence that the file can be opened by a USD stage reader with at least one renderable prim
+
+#### Scenario: Converter is unavailable
+
+- **WHEN** `_worker` cannot run the configured real IFC converter
+- **THEN** the conversion job is marked `failed`, the artifact group is not marked ready, and the result reports the missing converter prerequisite without creating a ready placeholder USDC
+
+#### Scenario: Converter output is not openable
+
+- **WHEN** the converter returns a file that cannot be opened by a USD stage reader
+- **THEN** `_worker` marks the conversion job `failed` or non-ready and records validation diagnostics instead of publishing the file as `model.usdc`
+
+### Requirement: Worker derives indices and mapping from real conversion output
+
+`_worker` SHALL produce `ifc_index.json`, `usd_index.json`, and `element_mapping.json` from the source IFC content and the converted USD / USDC stage. Mapping output MUST identify whether each entry is derived from a reliable IFC GUID / USD prim relationship and MUST NOT label fabricated mapping entries as real coverage. `element_mapping.json` MUST support one IFC GUID mapped to multiple USD prim paths by providing `primary_usd_prim_path` for UI / highlight / focus and `usd_prim_paths` for the complete mapping.
+
+#### Scenario: Real indices are written
+
+- **WHEN** an IFC conversion job succeeds with `generate_mapping=true`
+- **THEN** `_worker` writes `ifc_index.json` with source IFC element counts, `usd_index.json` with USD prim counts, and `element_mapping.json` with mappings derived from the conversion output
+
+#### Scenario: Mapping is incomplete
+
+- **WHEN** some IFC elements cannot be matched to USD prim paths
+- **THEN** `element_mapping.json` records mapped and unmapped counts, coverage ratio, and unmapped reasons when available
+
+#### Scenario: IFC element maps to multiple USD prims
+
+- **WHEN** a converted IFC element is represented by more than one USD prim
+- **THEN** `element_mapping.json` records one `primary_usd_prim_path` for UI focus and all related paths in `usd_prim_paths`
+
+#### Scenario: Mapping generation is disabled
+
+- **WHEN** an IFC conversion job succeeds with `generate_mapping=false`
+- **THEN** `_worker` MAY omit `element_mapping.json`, but the conversion result MUST clearly report `mapping_url=null` and MUST NOT claim issue-to-prim highlight readiness
+
+### Requirement: Worker reports conversion quality before enforcing coverage gates
+
+`_worker` SHALL only mark an artifact group ready for review when the real conversion output passes hard quality gates. P0 hard gates MUST include USDC openability. Mapping coverage MUST be measured and reported when `generate_mapping=true`, but P0 CI and artifact readiness MUST NOT fail only because coverage is below an unstabilized baseline. After baseline stabilization, the minimum mapping coverage threshold MAY become a hard gate through a later spec update.
+
+#### Scenario: Hard quality gate passes
+
+- **WHEN** a conversion job produces an openable USDC and writes the required coverage report
+- **THEN** `_worker` marks the conversion job `succeeded`, returns derived artifact URLs, and includes coverage metrics in the result payload
+
+#### Scenario: Mapping coverage is measured below target during P0
+
+- **WHEN** a P0 conversion job produces an openable USDC but observed mapping coverage is low
+- **THEN** `_worker` still returns the coverage report, does not fail CI only for low coverage, and does not claim that a minimum coverage baseline has been locked
+
+#### Scenario: Quality metrics are exposed
+
+- **WHEN** `GET /api/conversions/{conversion_job_id}/result` returns a succeeded real conversion result
+- **THEN** the payload includes converter identity, conversion duration, source IFC element count, USD prim count, mapped count, unmapped count, coverage ratio, threshold status, and validation warnings when present
