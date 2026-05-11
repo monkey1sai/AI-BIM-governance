@@ -4,14 +4,14 @@
 >
 > 本次調整核心：**把 Omniverse 能力發揮到最大**（擬真建築、真實物理、環境感測、模擬驅動 AI 分析），並把 `_worker` 收檔案與轉檔流程、review session request、session lifecycle、多 artifact / 多 instance 收進正式控制面。
 >
-> **本文件 = 開發流程入口**；OpenSpec 候選編號（#1-#9 / #1A / #2A）、NVIDIA Reference 採用決策矩陣、MCP 查詢結果、§11.4 Multi-Kit Instance 並行的官方定義、硬體配置（§9.0-§9.8）以 [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](plans/AI-BIM-governance-saas-roadmap-2026-05.md) 為準，本文件不重述。
+> **本文件 = 開發流程入口**；OpenSpec 候選編號（#1-#9 / #1A / #2A）、NVIDIA Reference 採用決策矩陣、MCP 查詢結果、§11.4 Multi-Kit Instance 並行的官方定義、硬體配置（§9.0-§9.8）以 [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md) 為準，本文件不重述。
 >
 > **本文件不取代 source of truth**：
 > - Repo 邊界 → [`AGENTS.md`](../AGENTS.md)
-> - Capability requirements → [`openspec/specs/`](../openspec/specs/) 9 份 spec
+> - Capability requirements → [`openspec/specs/`](../openspec/specs/) 10 份 spec
 > - API 規格 → [`docs/contracts/`](contracts/) 7 份合約
 > - 驗證證據 → [`docs/verification/`](verification/)
-> - **SaaS 路線圖（OpenSpec 候選 / NVIDIA 採用決策 / 硬體配置）** → [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](plans/AI-BIM-governance-saas-roadmap-2026-05.md)
+> - **SaaS 路線圖（OpenSpec 候選 / NVIDIA 採用決策 / 硬體配置）** → [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md)
 >
 > 本文件是把它們組合成可執行的開發路線。
 
@@ -259,8 +259,10 @@ flowchart LR
 | **Non-GPU Contract** | DataChannel stage-loading shape、API smoke | ✅ 通過 | `bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1`、`scripts/smoke-worker-review-request.ps1` |
 | **Control Plane API** | `_bim-control` pytest 21/21、coordinator vitest 102/102、viewer session-first contract | ✅ 通過 | `docs/verification/2026-05-08-spec-end-to-end-verification.md` §2 |
 | **Browser + Socket.IO 2-user** | 兩 Chrome tab 真實協作（Alpha + Bravo）、annotation 跨 tab 廣播 | ✅ 通過 | 同上 §4 |
-| **Single Kit GPU Render** | 真實 IFC → renderable USD viewport screenshot | 🚫 blocked（real IFC→USDC）；same-Kit Socket.IO 並行 stream 已驗證（PR #20 commit `0e94a5b`） | 缺：renderable USDC（目前 worker 寫 placeholder）；§6.3 |
-| **Dedicated Multi-Kit Routing** | ≥2 Kit instances、不同 signaling port、並行 stream | 🟡 在另一分支驗證中（owner 自管，非 environment-blocked）；待對應 PR merge 進 main 並更新 `runtime-verification-evidence` §6.4 | 缺：root scripts 啟動多 Kit；對應 SaaS 路線圖 P0 候選 #2 `streaming-multi-instance-orchestration` |
+| **Single Kit GPU Render (real IFC→USDC)** | 真實 IFC → renderable USD viewport screenshot（worker 自動轉檔結果） | 🚫 blocked | 缺：renderable USDC（worker 目前寫 `# worker adapter USDC placeholder`）；對應 SaaS 路線圖 P0 候選 #1 `worker-real-conversion-quality`；§6.3 |
+| **Single Kit GPU Render (worker-hosted renderable fixture)** | 已存在的 renderable `.usdc` fixture 經 worker 路徑載入 Kit viewport | ✅ 通過（PR #20 commit `0e94a5b`） | `docs/verification/evidence/2026-05-08-runtime-e2e/same-kit-review_session_b2d84c44ae31-kit_local_001-primary.png` |
+| **Same-Kit Concurrent Stream (primary + spectator)** | 單一 Kit process 內 primary + spectator WebRTC ports（49100/47998 + 49110/48008）並行 stream，兩個 Chrome contexts 同一 `session_id` | ✅ 通過（PR #20 commit `0e94a5b`） | `same-kit-*-primary.png` / `same-kit-*_spectator_0-spectator.png` |
+| **Dedicated Multi-Kit Routing (≥2 Kit processes)** | ≥2 獨立 Kit processes、不同 signaling port pair、並行 stream | 🟡 在另一分支驗證中（owner 自管，非 environment-blocked）；待對應 PR merge 進 main 並更新 `runtime-verification-evidence` §6.4 | 缺：root scripts 啟動多 Kit；對應 SaaS 路線圖 P0 候選 #2 `streaming-multi-instance-orchestration` |
 | **Large IFC Worker Readiness** | 89 MB IFC 進 `_worker` → ready 狀態 | ✅ 通過（facade tier） | §6.5 |
 | **Socket.IO Bounded Stress** | 90 client（最大 100 sustainable 的 90%） | ✅ 通過 | §6.6 |
 
@@ -809,7 +811,9 @@ sequenceDiagram
 | **2026-05-08 端到端驗證證據** | [`docs/verification/2026-05-08-spec-end-to-end-verification.md`](verification/2026-05-08-spec-end-to-end-verification.md) |
 | **SaaS 路線圖**（OpenSpec 候選 #1-#9 + #1A/#2A 編號、NVIDIA Reference 採用決策矩陣 §13、§11.4 Multi-Kit Instance 並行官方定義、硬體 §9.0-§9.8、MCP 查詢結果 §11） | [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](plans/AI-BIM-governance-saas-roadmap-2026-05.md) |
 
-### 10.1 9 份 Capability Spec 對應 Phase
+### 10.1 10 份 Capability Spec 對應 Phase
+
+> 對應 SaaS 路線圖 §1.4 OpenSpec 已歸檔 change → 現行 spec 溯源表。
 
 | Capability | Phase | 狀態 |
 |---|---|---|
@@ -822,8 +826,9 @@ sequenceDiagram
 | `multi-artifact-kit-routing` | 3 | 🔄 |
 | `streaming-multi-layer-payload-loading` | 3 | 🔄 |
 | `runtime-verification-evidence` | 3 | ✅（spec 完成、blocked 條件已記錄） |
+| `runtime-verification-task-status` | 3 | ✅（checklist 語意：GPU / concurrent runtime 不得因 blocker 視為完成；PR #20 same-Kit primary／spectator evidence 已 land） |
 
-> **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。
+> **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。本文件與 [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md) 屬 **OpenSpec 補充 planning artifact**（分工見頂部 metadata），不在上述優先順序內覆蓋 `openspec/specs/` 權威。
 
 ---
 
