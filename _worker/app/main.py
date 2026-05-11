@@ -10,15 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .dev_sources import list_dev_ifc_sources, resolve_dev_ifc_source
+from .converters import ConversionAdapter
 from .models import ArtifactIntakeRequest, ConversionRequest, DevIfcSourceConversionRequest
 from .settings import Settings
 from .store import WorkerStore, safe_id
 from .ui import render_worker_ui
 
 
-def create_app(settings: Settings | None = None, run_background: bool = True) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    run_background: bool = True,
+    converter: ConversionAdapter | None = None,
+) -> FastAPI:
     resolved_settings = settings or Settings.from_env()
-    store = WorkerStore(resolved_settings)
+    store = WorkerStore(resolved_settings, converter=converter)
     app = FastAPI(title="AI BIM Worker Facade", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -195,6 +200,8 @@ def create_app(settings: Settings | None = None, run_background: bool = True) ->
 
 def _run_conversion_and_callback(store: WorkerStore, settings: Settings, conversion_job_id: str) -> None:
     job = store.complete_conversion_job(conversion_job_id)
+    if job.get("status") != "succeeded" or not job.get("result"):
+        return
     result = dict(job["result"])
     warning = _post_bim_control_result(settings, result)
     if warning:

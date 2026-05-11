@@ -1,0 +1,39 @@
+{
+  "captured_at": "2026-05-11T04:00:29.995Z",
+  "session_id": "review_session_001a59d345ce",
+  "browser_url": "http://127.0.0.1:5173/?sessionId=review_session_001a59d345ce&streamTimeoutMs=180000&kitInstanceId=local-kit&streamRole=primary&signalingServer=127.0.0.1&mediaServer=127.0.0.1&signalingPort=49100&mediaPort=0&userId=runtime_single_user&displayName=Runtime+Single",
+  "screenshot": "docs/verification/evidence/2026-05-11-worker-real-conversion-quality/single-kit-review_session_001a59d345ce-real-conversion.png",
+  "viewport_screenshot": "docs/verification/evidence/2026-05-11-worker-real-conversion-quality/single-kit-review_session_001a59d345ce-real-conversion-viewport.png",
+  "acceptance": {
+    "real_usdc_openability_gate_was_precondition": true,
+    "single_kit_browser_stream_ready": true,
+    "non_black_stream_pixels": true,
+    "worker_usdc_url_visible": true,
+    "data_channel_reply_visible": true
+  },
+  "state": {
+    "href": "http://127.0.0.1:5173/?sessionId=review_session_001a59d345ce&streamTimeoutMs=180000&kitInstanceId=local-kit&streamRole=primary&signalingServer=127.0.0.1&mediaServer=127.0.0.1&signalingPort=49100&mediaPort=0&userId=runtime_single_user&displayName=Runtime+Single",
+    "readyState": 4,
+    "networkState": 2,
+    "paused": false,
+    "currentTime": 3.83,
+    "videoWidth": 1920,
+    "videoHeight": 1080,
+    "srcObject": true,
+    "bodyHasReviewModelReady": true,
+    "bodyHasDataChannelReply": true,
+    "bodyHasUsdcPanel": true,
+    "bodyHasArtifactUrl": true,
+    "bodyHasWaitingText": false,
+    "pixelStats": {
+      "canvasWidth": 320,
+      "canvasHeight": 180,
+      "samples": 14400,
+      "nonZero": 14396,
+      "nonBlack": 14385,
+      "avgRgb": 221.2
+    },
+    "bodyPreview": "BIM Review Omniverse Web Viewer\n瀏覽器審查端 (Web Viewer)\n步驟 ④ / 5\n①\n上傳建模 (Upload)\n②\n自動轉換 (Convert)\n③\n建立會議 (Meeting)\n④\n標記問題 (Mark)\n⑤\n紀錄回寫 (Record)\n本場審查會議\n進行中\n會議識別碼 (Session id)：review_session_001a59d345ce\n可審查模型：已就緒\nhttp://127.0.0.1:8005/objects/tenants/tenant_demo_001/projects/project_demo_001/versions/version_demo_001/artifact-groups/ag_f18adbf3511c/derived/conv_20260511034506_f88ee0fd/usdc/model.usdc\n架構導覽 (Repo map)\n圖片 ①-⑥\n這裡把示意圖中的六個節點轉成可追蹤狀態，讓 demo 操作時能看見誰負責資料、誰負責檔案、誰負責 stream。\n①\nweb-viewer-sample\nBrowser Client / 使用者操作入口\n目前正在操作\nREST / WebSocket / DataChannel\nUI state、操作意圖、顯示用 cache\n右側面板負責把使用者操作轉成 session、metadata、stream command 與 annotation event。\n②\nbim-review-coordinator\nSession / Collaboration Control Plane\n已接入 demo 流程\nREST + Socket.IO\nreview session、presence、collaboration event、stream con"
+  },
+  "console_evidence": []
+}

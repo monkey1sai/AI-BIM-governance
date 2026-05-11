@@ -112,7 +112,10 @@ item instead of treating `/World` fallback as a real mapping validation.
 
 `smoke-worker-review-request.ps1` verifies the API-only flow:
 `_worker -> _bim-control -> bim-review-coordinator`. It does not require Kit,
-GPU, browser automation, or WebRTC.
+GPU, browser automation, or WebRTC, but it now requires a real `.ifc` under the
+worker dev storage root and the worker's real conversion prerequisites
+(`ifcopenshell` + `usd-core`). Header-only IFC smoke data is not accepted as
+ready conversion evidence.
 
 `bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1` is a
 non-GPU DataChannel contract smoke for the multi-artifact load-order payload.

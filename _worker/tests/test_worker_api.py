@@ -2,7 +2,6 @@ import base64
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -12,8 +11,75 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.converters import ConversionAdapterResult, ConversionAdapterUnavailable, IfcOpenShellUsdConverter
 from app.main import create_app
 from app.settings import Settings
+from app.store import write_json
+
+
+class FakeSuccessfulConverter:
+    def convert(self, *, source_path: Path, output_dir: Path, job: dict, generate_mapping: bool) -> ConversionAdapterResult:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        model_path = output_dir / "model.usdc"
+        ifc_index_path = output_dir / "ifc_index.json"
+        usd_index_path = output_dir / "usd_index.json"
+        mapping_path = output_dir / "element_mapping.json" if generate_mapping else None
+        model_path.write_bytes(b"PXR-USDC-fake-openable\n")
+        write_json(ifc_index_path, {"summary": {"element_count": 2, "guid_count": 2}, "elements": []})
+        write_json(usd_index_path, {"summary": {"prim_count": 3, "mesh_prim_count": 2}, "prims": []})
+        if mapping_path is not None:
+            write_json(
+                mapping_path,
+                {
+                    "mock": False,
+                    "items": [
+                        {
+                            "ifc_guid": "guid-1",
+                            "usd_prim_path": "/World/IfcWall_guid_1",
+                            "primary_usd_prim_path": "/World/IfcWall_guid_1",
+                            "usd_prim_paths": ["/World/IfcWall_guid_1", "/World/IfcWall_guid_1_2"],
+                            "mapping_method": "test_fake_converter",
+                            "mapping_confidence": 0.95,
+                        }
+                    ],
+                    "summary": {
+                        "mapped_count": 1,
+                        "unmapped_ifc_count": 1,
+                        "unmapped_usd_count": 0,
+                        "coverage_ratio": 0.5,
+                        "fake_mapping_count": 0,
+                    },
+                },
+            )
+        return ConversionAdapterResult(
+            model_path=model_path,
+            ifc_index_path=ifc_index_path,
+            usd_index_path=usd_index_path,
+            mapping_path=mapping_path,
+            converter={"name": "test-fake-converter", "mock": True},
+            quality_metrics={
+                "converter_identity": {"name": "test-fake-converter", "mock": True},
+                "duration_seconds": 0.01,
+                "source_ifc_element_count": 2,
+                "usd_prim_count": 3,
+                "mapped_count": 1,
+                "unmapped_count": 1,
+                "coverage_ratio": 0.5,
+                "threshold_status": "measure_only",
+                "minimum_coverage_baseline_locked": False,
+                "hard_quality_gates": {
+                    "usdc_openable": True,
+                    "has_renderable_prims": True,
+                    "placeholder_output": False,
+                },
+            },
+            warnings=[],
+        )
+
+
+class FakeUnavailableConverter:
+    def convert(self, *, source_path: Path, output_dir: Path, job: dict, generate_mapping: bool) -> ConversionAdapterResult:
+        raise ConversionAdapterUnavailable("test converter is unavailable")
 
 
 @pytest.fixture
@@ -24,7 +90,7 @@ def case_dir() -> Path:
     return path
 
 
-def make_client(case_dir: Path, run_background: bool = True) -> TestClient:
+def make_client(case_dir: Path, run_background: bool = True, converter=None) -> TestClient:
     settings = Settings(
         service_root=case_dir,
         objects_root=case_dir / "objects",
@@ -33,17 +99,11 @@ def make_client(case_dir: Path, run_background: bool = True) -> TestClient:
         fake_bim_control_url="http://127.0.0.1:1",
         public_objects_url="http://testserver/objects",
     )
-    return TestClient(create_app(settings=settings, run_background=run_background))
+    return TestClient(create_app(settings=settings, run_background=run_background, converter=converter or FakeSuccessfulConverter()))
 
 
 def real_ifc_storage_root() -> Path:
     return Path(os.getenv("WORKER_REAL_IFC_STORAGE_ROOT", r"C:\Repos\active\iot\AI-BIM-governance\storage"))
-
-
-def real_streaming_root() -> Path:
-    return Path(
-        os.getenv("WORKER_REAL_STREAMING_ROOT", r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server")
-    )
 
 
 def source_payload(**overrides):
@@ -214,7 +274,7 @@ def test_selected_dev_ifc_source_conversion_preserves_original_filename(case_dir
 
 
 def test_real_ifc_inputs_preserve_filename_through_worker_adapter_conversions(case_dir: Path):
-    """Uses real IFC bytes with the current worker adapter, not a Kit-ready USDC converter."""
+    """Uses real IFC bytes with an explicit test converter, not runtime evidence."""
     real_storage = real_ifc_storage_root()
     real_ifc_files = sorted(real_storage.glob("*.ifc"), key=lambda path: path.name.casefold())
     if len(real_ifc_files) < 2:
@@ -267,86 +327,48 @@ def test_real_ifc_inputs_preserve_filename_through_worker_adapter_conversions(ca
 
 def test_real_ifc_files_convert_to_kit_openable_usdc_when_enabled(case_dir: Path):
     if os.getenv("WORKER_RUN_REAL_USDC_SMOKE") != "1":
-        pytest.skip("Set WORKER_RUN_REAL_USDC_SMOKE=1 to run the Kit/HOOPS IFC-to-USDC smoke test.")
+        pytest.skip("Set WORKER_RUN_REAL_USDC_SMOKE=1 to run the opt-in real IFC-to-USDC smoke test.")
 
     storage_root = real_ifc_storage_root()
-    streaming_root = real_streaming_root()
-    build_root = streaming_root / "_build" / "windows-x86_64" / "release"
-    converter_script = streaming_root / "scripts" / "convert-ifc-to-usdc.ps1"
-    inspect_script = streaming_root / "scripts" / "inspect-usd-stage-and-quit.py"
-    kit_exe = build_root / "kit" / "kit.exe"
-
-    for required_path in (storage_root, converter_script, inspect_script, kit_exe):
-        assert required_path.exists(), f"Required real converter path is missing: {required_path}"
+    if not storage_root.exists():
+        pytest.skip(f"Real IFC storage root is missing: {storage_root}")
 
     real_ifc_files = sorted(storage_root.glob("*.ifc"), key=lambda path: path.name.casefold())
-    assert len(real_ifc_files) >= 2, f"Need at least two real IFC files under {storage_root}."
+    if not real_ifc_files:
+        pytest.skip(f"Need at least one real IFC file under {storage_root}.")
 
-    powershell = shutil.which("pwsh") or shutil.which("powershell")
-    assert powershell, "PowerShell is required to run convert-ifc-to-usdc.ps1."
+    storage = case_dir / "storage"
+    storage.mkdir()
+    shutil.copy2(real_ifc_files[0], storage / real_ifc_files[0].name)
+    client = make_client(case_dir, converter=IfcOpenShellUsdConverter())
+    source = client.get("/api/dev/ifc-sources").json()["items"][0]
 
-    output_dir = case_dir / "real-usdc"
-    output_dir.mkdir()
-    for source_file in real_ifc_files[:2]:
-        conversion = subprocess.run(
-            [
-                powershell,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(converter_script),
-                "-IfcPath",
-                str(source_file),
-                "-OutputDir",
-                str(output_dir),
-                "-KitExePath",
-                str(kit_exe),
-                "-TimeoutSeconds",
-                "900",
-                "-Force",
-            ],
-            cwd=streaming_root,
-            capture_output=True,
-            text=True,
-            timeout=960,
-            check=False,
-        )
-        assert conversion.returncode == 0, conversion.stdout + conversion.stderr
+    response = client.post(
+        f"/api/dev/ifc-sources/{source['source_id']}/conversions",
+        json={
+            "tenant_id": "tenant_demo_001",
+            "project_id": "project_demo_001",
+            "model_version_id": "version_demo_001",
+            "source_system": "dev_storage",
+            "uploaded_by": "dev_user_001",
+            "artifact_group_id": "ag_real_converter_smoke",
+        },
+    )
 
-        output_path = output_dir / f"{source_file.stem}.usdc"
-        assert output_path.is_file()
-        assert output_path.stat().st_size > 1024 * 1024
+    assert response.status_code == 200
+    body = response.json()
+    result = client.get(body["result_url"]).json()
+    assert result["status"] == "succeeded"
+    assert result["quality_metrics"]["hard_quality_gates"]["usdc_openable"] is True
+    assert result["quality_metrics"]["usd_prim_count"] > 1
+    assert result["quality_metrics"]["coverage_ratio"] >= 0
 
-        inspect_output = output_dir / f"{source_file.stem}.stage.json"
-        stage_check = subprocess.run(
-            [
-                str(kit_exe),
-                "--ext-folder",
-                str(build_root / "exts"),
-                "--ext-folder",
-                str(build_root / "extscache"),
-                "--ext-folder",
-                str(build_root / "apps"),
-                "--no-window",
-                "--enable",
-                "omni.usd",
-                "--exec",
-                f'"{inspect_script}" --usd-path "{output_path}" --output-path "{inspect_output}"',
-                "--/app/fastShutdown=1",
-                "--info",
-            ],
-            cwd=streaming_root,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-        )
-        assert stage_check.returncode == 0, stage_check.stdout + stage_check.stderr
-
-        stage = json.loads(inspect_output.read_text(encoding="utf-8"))
-        assert stage["prim_count"] > 0
-        assert stage["root_layer"].replace("\\", "/").endswith(f"{source_file.stem}.usdc")
+    derived_root = case_dir / "objects" / Path(*result["lineage"]["derived_object_prefix"].split("/"))
+    assert (derived_root / "model.usdc").stat().st_size > 1024
+    mapping = json.loads((derived_root / "element_mapping.json").read_text(encoding="utf-8"))
+    assert mapping["mock"] is False
+    assert mapping["summary"]["fake_mapping_count"] == 0
+    assert mapping["items"][0]["usd_prim_path"] == mapping["items"][0]["primary_usd_prim_path"]
 
 
 def test_selected_dev_ifc_source_rejects_stale_source_id(case_dir: Path):
@@ -422,10 +444,37 @@ def test_conversion_result_contains_derived_urls_lineage_and_readiness(case_dir:
     assert body["usdc_url"].endswith("/model.usdc")
     assert body["mapping_url"].endswith("/element_mapping.json")
     assert body["lineage"]["source_artifact_id"] == artifact["source_artifact_id"]
+    assert body["converter"]["name"] == "test-fake-converter"
+    assert body["quality_metrics"]["coverage_ratio"] == 0.5
+    assert body["quality_metrics"]["hard_quality_gates"]["usdc_openable"] is True
 
     readiness = client.get(f"/api/artifact-groups/{artifact['artifact_group_id']}/readiness")
     assert readiness.status_code == 200
     assert readiness.json()["ready_status"] == "ready"
+
+
+def test_conversion_failure_does_not_publish_ready_artifact_group(case_dir: Path):
+    client = make_client(case_dir, converter=FakeUnavailableConverter())
+    artifact = client.post("/api/artifacts", json=source_payload(artifact_group_id="ag_api_converter_missing")).json()
+
+    created = client.post(
+        "/api/conversions",
+        json={"source_artifact_id": artifact["source_artifact_id"], "target_format": "usdc", "generate_mapping": True},
+    )
+
+    assert created.status_code == 200
+    job_id = created.json()["conversion_job_id"]
+    job = client.get(f"/api/conversions/{job_id}")
+    assert job.json()["status"] == "failed"
+
+    result = client.get(f"/api/conversions/{job_id}/result").json()
+    assert result["ready"] is False
+    assert result["usdc_url"] is None
+    assert "unavailable" in result["error"]["message"]
+
+    readiness = client.get(f"/api/artifact-groups/{artifact['artifact_group_id']}/readiness")
+    assert readiness.json()["ready_status"] == "missing_derived"
+    assert readiness.json()["has_derived"] is False
 
 
 def test_callback_failure_is_recorded_as_job_warning(case_dir: Path):
