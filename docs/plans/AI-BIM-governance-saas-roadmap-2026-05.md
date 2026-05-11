@@ -46,6 +46,10 @@
 
 ## 1. 現況基線（2026-05-08）
 
+> **與 workflow v3 的分工**：本文件是 **OpenSpec 候選（#1-#9 + #1A / #2A）、NVIDIA Reference 採用決策矩陣（§13）、§11.4 Multi-Kit Instance 並行官方定義、硬體配置（§9.0-§9.8）、MCP 查詢結果（§11）** 的權威。
+> **開發流程入口**（七層架構、Phase 完成度、驗證證據 4 層分級、品質管線 7 步、開發協作流程、PR Checklist、服務測試命令、核心資料流 sequence diagram）見 [`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`](../PROJECT_DEVELOPMENT_WORKFLOW.md)。
+> 兩份文件**互補不替代**：workflow v3 不重述本文件的決策矩陣與 spec id；本文件不重述 workflow v3 的 sequence diagram 與 PR checklist。任何後續分工調整應走 OpenSpec change，不直接在 main 上覆蓋。
+
 ### 1.1 已存在的核心服務
 
 | 服務 | Port | 角色 | 健檢狀態 |
