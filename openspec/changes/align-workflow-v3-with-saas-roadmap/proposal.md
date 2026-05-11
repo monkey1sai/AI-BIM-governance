@@ -25,6 +25,7 @@
 
 - 純 documentation / planning artifact 變動；不影響任何服務 runtime、API、storage、Socket.IO event。
 - 不修改任何現有 `openspec/specs/<capability>/spec.md`；本 change 新增的 `documentation-source-of-truth` capability 只定義文件治理規則，不影響任何程式行為。
+- 本 PR 順便修正 main `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` §1.2 / §1.4 既有的 staleness：補上 `runtime-verification-task-status` capability row（PR #20 之後 main 上實際有 10 個 capability 但 §1.2 仍說 9 個）以及 `2026-05-08-fix-runtime-verification-task-status` archived change row（§1.4 只列 4 個但 main archived 實際 5 個）。
 - 不新增 dependency、不影響 GitNexus 圖譜中的程式碼節點。
-- 與 PR #8 在 `cursor/fix/date---feature/fix/issue/project-development-workflow-877a` 分支上的 workflow v3 對齊 commit `3e2eedc` 配對成立：兩個 PR merge 後即雙向 cross-reference 完整成立。**兩個 PR 無強依賴**，可並行 review；建議先讓本 PR 上線，因為改動最小、CI 風險最低。
+- **Merge order 為強依賴**：本 PR 引用 `docs/PROJECT_DEVELOPMENT_WORKFLOW.md`，但該檔案目前只在 PR #8（`cursor/fix/date---feature/fix/issue/project-development-workflow-877a` 分支，head `3e2eedc`）上。**PR #8 必須先 merge 進 main，本 PR 才能 merge**；否則 main 上會立刻產生 dead link，並違反本 PR 自身新增的 `documentation-source-of-truth` capability「Requirement: workflow v3 與 roadmap 互相 cross-reference 持續成立」+「Scenario: cross-reference 被誤刪」。
 - archive 後本 change 將進入 `openspec/changes/archive/<YYYY-MM-DD>-align-workflow-v3-with-saas-roadmap/`，未來 roadmap / workflow v3 任何分工調整都應以對應新 OpenSpec change 處理，不直接在 main 上覆蓋。
