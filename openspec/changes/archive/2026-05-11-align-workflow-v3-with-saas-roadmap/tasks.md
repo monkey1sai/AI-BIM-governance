@@ -20,16 +20,16 @@
 
 - [x] 4.1 Run `openspec validate align-workflow-v3-with-saas-roadmap`. ✓ valid（initial spec only）；本 commit 加 staleness fix 後重跑。
 - [x] 4.2 確認 PR #8 對應 commit `3e2eedc`（workflow v3 對齊）已 push 到 `cursor/fix/date---feature/fix/issue/project-development-workflow-877a` 分支。
-- [ ] 4.3 Run `git diff --check`（在 commit 前執行）.
+- [x] 4.3 Run `git diff --check`（在 commit 前執行）.
 - [x] 4.4 本 change 為 docs only，無需 GitNexus 重新 detect changes（GitNexus hook 提示為知識圖過期，與本 change 無關）。
 
 ## 5. Merge Order Coordination
 
-- [ ] 5.1 確認 PR #8（workflow v3 對齊，commit `3e2eedc`）**已 merge 進 main**；本 PR 引用 `docs/PROJECT_DEVELOPMENT_WORKFLOW.md` 必須在 main 存在後才能 merge，否則會立刻違反本 PR 自身新增的 `documentation-source-of-truth` capability。
-- [ ] 5.2 PR #8 merge 後 rebase 本 branch 至最新 main（或重跑 CI），確認 `../PROJECT_DEVELOPMENT_WORKFLOW.md` 相對連結在 main 上成立。
-- [ ] 5.3 本 PR 與 PR #8 在兩端 PR description 都標註 merge order「PR #8 → PR #23」。
+- [x] 5.1 確認 PR #8（workflow v3 對齊，commit `3e2eedc`）**已 merge 進 main**；本 PR 引用 `docs/PROJECT_DEVELOPMENT_WORKFLOW.md` 必須在 main 存在後才能 merge，否則會立刻違反本 PR 自身新增的 `documentation-source-of-truth` capability。
+- [x] 5.2 PR #8 merge 後 rebase 本 branch 至最新 main（或重跑 CI），確認 `../PROJECT_DEVELOPMENT_WORKFLOW.md` 相對連結在 main 上成立。
+- [x] 5.3 本 PR 與 PR #8 在兩端 PR description 都標註 merge order「PR #8 → PR #23」。
 
 ## 6. Archive
 
-- [ ] 6.1 PR merge 進 `main` 後執行 `openspec archive align-workflow-v3-with-saas-roadmap`，把 change folder 移至 `openspec/changes/archive/<YYYY-MM-DD>-align-workflow-v3-with-saas-roadmap/`。
-- [ ] 6.2 Archive 後不再對 `main` 上的 roadmap §1 / README.md 文件分工說明直接 commit；任何後續分工調整都應以對應新 OpenSpec change 處理。
+- [x] 6.1 PR merge 進 `main` 後執行 `openspec archive align-workflow-v3-with-saas-roadmap`，把 change folder 移至 `openspec/changes/archive/<YYYY-MM-DD>-align-workflow-v3-with-saas-roadmap/`。
+- [x] 6.2 Archive 後不再對 `main` 上的 roadmap §1 / README.md 文件分工說明直接 commit；任何後續分工調整都應以對應新 OpenSpec change 處理。
