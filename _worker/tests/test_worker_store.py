@@ -56,6 +56,7 @@ class FakeSuccessfulConverter:
                         {
                             "ifc_guid": "guid-1",
                             "ifc_class": "IfcWall",
+                            "usd_prim_path": "/World/IfcWall_guid_1",
                             "primary_usd_prim_path": "/World/IfcWall_guid_1",
                             "usd_prim_paths": ["/World/IfcWall_guid_1", "/World/IfcWall_guid_1_2"],
                             "mapping_method": "test_fake_converter",
@@ -511,7 +512,9 @@ def test_store_complete_conversion_reports_quality_metrics_and_one_to_many_mappi
     mapping_path = Path(store.settings.objects_root) / result["lineage"]["derived_object_prefix"] / "element_mapping.json"
     mapping = read_json(mapping_path, {})
     assert mapping["mock"] is False
+    assert mapping["items"][0]["usd_prim_path"] == "/World/IfcWall_guid_1"
     assert mapping["items"][0]["primary_usd_prim_path"] == "/World/IfcWall_guid_1"
+    assert mapping["items"][0]["usd_prim_path"] == mapping["items"][0]["primary_usd_prim_path"]
     assert mapping["items"][0]["usd_prim_paths"] == ["/World/IfcWall_guid_1", "/World/IfcWall_guid_1_2"]
 
 

@@ -43,10 +43,11 @@ repo-local installs. If either prerequisite is unavailable, or if the generated
 `failed` and the artifact group remains non-ready.
 
 `element_mapping.json` is generated from real IFC GUIDs and USD prim paths. Each
-entry includes `primary_usd_prim_path` for the current UI focus path and
-`usd_prim_paths` for the full one-to-many mapping. P0 coverage is
-measure-first: coverage metrics are emitted, but low coverage alone is not a CI
-failure until a later baseline is locked.
+entry includes `usd_prim_path` as the current viewer-compatible focus alias,
+`primary_usd_prim_path` for the canonical focus path, and `usd_prim_paths` for
+the full one-to-many mapping. P0 coverage is measure-first: coverage metrics are
+emitted, but low coverage alone is not a CI failure until a later baseline is
+locked.
 
 The opt-in pytest smoke `test_real_ifc_files_convert_to_kit_openable_usdc_when_enabled`
 runs only when `WORKER_RUN_REAL_USDC_SMOKE=1` is set and uses repo-local IFC

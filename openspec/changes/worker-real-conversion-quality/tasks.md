@@ -54,6 +54,7 @@ USDC passed the openability gate. Screenshot evidence is under
 - [x] 7.2 Run the affected root smoke script for worker review-session flow.
 - [x] 7.3 Run GitNexus detect changes before commit and confirm affected scope stays within `_worker` and verification docs unless explicitly expanded.
 - [x] 7.4 PR description must call out external prerequisites, license status, measure-first coverage policy, validation evidence, and any blocked GPU/Kit evidence.
+- [x] 7.5 Address PR review finding by preserving `usd_prim_path` as a viewer-compatible alias for `primary_usd_prim_path` in real mapping output.
 
 Final pass: root smoke passed with real worker converter prerequisites and a
 repo-local ignored 89 MB IFC source. The PR body prepared for this branch calls

@@ -26,7 +26,7 @@ state MUST fail the job instead of falling back to placeholder output.
 
 ### Requirement: Worker derives indices and mapping from real conversion output
 
-`_worker` SHALL produce `ifc_index.json`, `usd_index.json`, and `element_mapping.json` from the source IFC content and the converted USD / USDC stage. Mapping output MUST identify whether each entry is derived from a reliable IFC GUID / USD prim relationship and MUST NOT label fabricated mapping entries as real coverage. `element_mapping.json` MUST support one IFC GUID mapped to multiple USD prim paths by providing `primary_usd_prim_path` for UI / highlight / focus and `usd_prim_paths` for the complete mapping.
+`_worker` SHALL produce `ifc_index.json`, `usd_index.json`, and `element_mapping.json` from the source IFC content and the converted USD / USDC stage. Mapping output MUST identify whether each entry is derived from a reliable IFC GUID / USD prim relationship and MUST NOT label fabricated mapping entries as real coverage. `element_mapping.json` MUST support one IFC GUID mapped to multiple USD prim paths by providing `primary_usd_prim_path` for UI / highlight / focus and `usd_prim_paths` for the complete mapping. It MUST also provide `usd_prim_path` as a backward-compatible alias for `primary_usd_prim_path` while existing viewer consumers require that scalar field.
 
 The current mapping method is `ifcopenshell_geometry_guid_to_usd_mesh`: one IFC
 GUID may produce multiple mesh prims when the geometry iterator emits multiple
@@ -45,7 +45,7 @@ shapes for the same product.
 #### Scenario: IFC element maps to multiple USD prims
 
 - **WHEN** a converted IFC element is represented by more than one USD prim
-- **THEN** `element_mapping.json` records one `primary_usd_prim_path` for UI focus and all related paths in `usd_prim_paths`
+- **THEN** `element_mapping.json` records one `primary_usd_prim_path` for UI focus, a matching `usd_prim_path` alias for current viewer compatibility, and all related paths in `usd_prim_paths`
 
 #### Scenario: Mapping generation is disabled
 

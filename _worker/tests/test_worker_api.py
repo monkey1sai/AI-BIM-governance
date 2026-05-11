@@ -35,6 +35,7 @@ class FakeSuccessfulConverter:
                     "items": [
                         {
                             "ifc_guid": "guid-1",
+                            "usd_prim_path": "/World/IfcWall_guid_1",
                             "primary_usd_prim_path": "/World/IfcWall_guid_1",
                             "usd_prim_paths": ["/World/IfcWall_guid_1", "/World/IfcWall_guid_1_2"],
                             "mapping_method": "test_fake_converter",
@@ -367,6 +368,7 @@ def test_real_ifc_files_convert_to_kit_openable_usdc_when_enabled(case_dir: Path
     mapping = json.loads((derived_root / "element_mapping.json").read_text(encoding="utf-8"))
     assert mapping["mock"] is False
     assert mapping["summary"]["fake_mapping_count"] == 0
+    assert mapping["items"][0]["usd_prim_path"] == mapping["items"][0]["primary_usd_prim_path"]
 
 
 def test_selected_dev_ifc_source_rejects_stale_source_id(case_dir: Path):

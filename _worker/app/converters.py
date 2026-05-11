@@ -170,6 +170,7 @@ class IfcOpenShellUsdConverter:
                 {
                     "ifc_guid": guid,
                     "ifc_class": source_by_guid.get(guid, {}).get("ifc_class", ifc_class),
+                    "usd_prim_path": prim_path,
                     "primary_usd_prim_path": prim_path,
                     "usd_prim_paths": [],
                     "mapping_method": "ifcopenshell_geometry_guid_to_usd_mesh",

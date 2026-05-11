@@ -84,7 +84,7 @@ GPU / Kit manual validation when hardware is available:
 1. Start local services with `.\scripts\start-all.ps1`, or start Kit manually with `.\bim-streaming-server\scripts\start-streaming-server.ps1 -SkipAutoLoad`.
 2. Create real-converted worker artifacts and a review session with `.\scripts\smoke-worker-review-request.ps1`, then open `web-viewer-sample` with the returned `review_request_id` or `session_id`.
 3. Confirm the viewer sends `openStageRequest` with `artifact_bindings[]`, Kit returns `openedStageResult.result="success"`, and `applied_mode` is `single_url`, `artifact_bindings_single`, or `artifact_bindings_multi_layer_payload`.
-4. Send `highlightPrimsRequest` against a known mapped `usd_prim_path`; real validation requires `missing_paths=[]` and `fallback_paths=[]`.
+4. Send `highlightPrimsRequest` against a known mapped `usd_prim_path`; worker real conversion mappings also expose `primary_usd_prim_path` and `usd_prim_paths`, with `usd_prim_path` kept as the current viewer-compatible focus alias. Real validation requires `missing_paths=[]` and `fallback_paths=[]`.
 5. Treat `/World` fallback as stream/DataChannel liveness only, not mapping correctness.
 
 ## Highlight Prims
@@ -224,4 +224,4 @@ Demo `highlightPrimsRequest` payload:
 }
 ```
 
-Demo panel incoming/outgoing logs are UI diagnostics only. `/World` fallback proves only that the stream/DataChannel path is alive; it is not evidence that `element_mapping.json` is correct. Mapping correctness requires a real `element_mapping.json.items[*].usd_prim_path` response with `missing_paths=[]` and `fallback_paths=[]`. Persistent review data still belongs to `_bim-control`, while collaboration broadcast belongs to `bim-review-coordinator`.
+Demo panel incoming/outgoing logs are UI diagnostics only. `/World` fallback proves only that the stream/DataChannel path is alive; it is not evidence that `element_mapping.json` is correct. Mapping correctness requires a real `element_mapping.json.items[*].usd_prim_path` response with `missing_paths=[]` and `fallback_paths=[]`; `usd_prim_path` is the current viewer-compatible alias for `primary_usd_prim_path` when worker real conversion emits one-to-many mapping data. Persistent review data still belongs to `_bim-control`, while collaboration broadcast belongs to `bim-review-coordinator`.

@@ -7,7 +7,7 @@
 - 將 `_worker` 的 IFC→USDC conversion 從 placeholder output 升級為可驗證的真實 conversion pipeline。
 - 要求 conversion result 的 `model.usdc` 必須可被 USD/Kit stage 開啟，不能只是文字 placeholder 或空檔。
 - 要求 `ifc_index.json`、`usd_index.json`、`element_mapping.json` 由真實 source IFC 與轉檔後 USD stage 推導，並帶 mapping coverage report / quality metrics。
-- `element_mapping.json` 第一版即支援 one IFC GUID 對多個 USD prim path；`primary_usd_prim_path` 作為 UI / highlight / focus 主路徑，`usd_prim_paths` 保留完整映射。
+- `element_mapping.json` 第一版即支援 one IFC GUID 對多個 USD prim path；`primary_usd_prim_path` 作為 canonical UI / highlight / focus 主路徑，`usd_prim_path` 保留為 current viewer-compatible alias，`usd_prim_paths` 保留完整映射。
 - P0 採 measure-first policy：mapping coverage 必須輸出 report，但不因 coverage 未達門檻而 fail CI；baseline 穩定後再鎖最低門檻。
 - 要求 conversion job 在 converter 不可用、conversion 失敗、或 USDC 無法開啟時誠實標為 `failed` 或非 ready，不得發布 ready placeholder artifact group。
 - 建立 large IFC / mapping coverage report / single Kit render evidence 的驗證紀錄，讓 runtime evidence 能區分「API flow 成功」與「真實幾何可渲染」。
