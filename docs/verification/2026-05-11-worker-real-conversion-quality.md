@@ -5,7 +5,8 @@
 OpenSpec change: `worker-real-conversion-quality`
 
 本紀錄只驗證 `_worker` 的 IFC -> USDC conversion quality 邊界，不宣稱
-`bim-streaming-server` / browser viewport 已完成 single Kit render evidence。
+`_worker` 會取代 `bim-streaming-server` 的 runtime 責任；single Kit/browser
+evidence 只驗證 worker 產出的 USDC 可被目前 demo runtime 載入並串流顯示。
 
 ## Fixture Inventory
 
@@ -145,13 +146,92 @@ Result:
 The skipped test is the opt-in real converter smoke gated by
 `WORKER_RUN_REAL_USDC_SMOKE=1`.
 
-## Blocked / Not Claimed
+## Root Smoke Evidence
 
-- Single Kit/browser render evidence was not run in this worktree because
-  `bim-streaming-server\_build\windows-x86_64\release\kit\kit.exe` was absent.
-- Root smoke `scripts/smoke-worker-review-request.ps1` now requires a real dev
-  IFC source and real converter prerequisites; it was not run here because the
-  four local services were not started in this verification pass.
+Runtime services:
+
+- `_bim-control`: current worktree, `python -m uvicorn app.main:app --host 127.0.0.1 --port 8001`
+- `_worker`: current worktree, `python -m uvicorn app.main:app --host 127.0.0.1 --port 8005`
+- `bim-review-coordinator`: user main checkout with existing `node_modules`, `npm run dev`
+- `web-viewer-sample`: user main checkout with existing `node_modules`, `npm run dev -- --host 127.0.0.1`
+- `bim-streaming-server`: user main checkout Kit build via `scripts/start-streaming-server.ps1 -ResetUser -SkipAutoLoad`
+
+Executed:
+
+```txt
+.\scripts\smoke-worker-review-request.ps1 -TimeoutSeconds 900
+```
+
+Result:
+
+```txt
+[smoke] worker review request passed
+[smoke] dev_source: 許良宇圖書館建築_2026 - 複製 (10).ifc (89394282 bytes)
+[smoke] source_artifact_id: artifact_src_85116710da4c
+[smoke] conversion_job_id: conv_20260511034506_f88ee0fd
+[smoke] coverage_ratio: 0.950556913882097
+[smoke] review_request_id: review_request_1778471326587_1d43c03c
+[smoke] session_id: review_session_001a59d345ce
+```
+
+This proves the full REST contract flow:
+
+```txt
+_worker dev IFC source
+-> real IFC to USDC conversion
+-> hard USDC openability gate
+-> _bim-control review-session-request
+-> bim-review-coordinator review session
+-> stream-config with ready worker-produced USDC binding
+-> _bim-control request patched active
+```
+
+## Single Kit / Browser Evidence
+
+Executed after the root smoke produced `review_session_001a59d345ce` and after
+the worker result passed `quality_metrics.hard_quality_gates.usdc_openable`.
+
+Command summary:
+
+```txt
+cd scripts\.run-runtime
+node .\capture-single-runtime.mjs
+```
+
+Result:
+
+```txt
+summaryPath: docs/verification/evidence/2026-05-11-worker-real-conversion-quality/single-kit-runtime-summary.json
+screenshot: docs/verification/evidence/2026-05-11-worker-real-conversion-quality/single-kit-review_session_001a59d345ce-real-conversion.png
+viewport: docs/verification/evidence/2026-05-11-worker-real-conversion-quality/single-kit-review_session_001a59d345ce-real-conversion-viewport.png
+readyState: 4
+videoWidth: 1920
+videoHeight: 1080
+srcObject: true
+bodyHasReviewModelReady: true
+bodyHasDataChannelReply: true
+bodyHasUsdcPanel: true
+bodyHasArtifactUrl: true
+bodyHasWaitingText: false
+pixelStats.nonBlack: 14385
+pixelStats.avgRgb: 221.2
+```
+
+The screenshot shows the worker-produced
+`artifact_usdc_20260511034506_f88ee0fd` URL loaded into the viewer and a
+non-black Omniverse stream frame for the generated model.
+
+## Known Scope / Prerequisites
+
 - The current worktree does not contain the ignored 89 MB IFC fixture; the
   spike used the user's main checkout fixture path as the repo-local ignored
   fixture source.
+- Node service and Kit/browser runtime verification reused the user's main
+  checkout dependencies/build artifacts because this Codex worktree does not
+  carry `node_modules` or the generated Kit build output.
+- Runtime evidence depends on local NVIDIA GPU / Kit build availability.
+- Converter execution depends on Python packages `ifcopenshell` and `usd-core`;
+  missing packages fail the worker conversion job instead of publishing a ready
+  artifact group.
+- Coverage remains measure-first for P0: this change records coverage metrics
+  but does not fail CI on a minimum coverage ratio yet.

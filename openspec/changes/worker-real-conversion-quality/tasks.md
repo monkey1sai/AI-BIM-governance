@@ -41,16 +41,22 @@
 
 - [x] 6.1 Update or create verification evidence that records real conversion metrics and coverage report for the selected fixture.
 - [x] 6.2 Run API-only smoke first and record that it proves contract flow only.
-- [ ] 6.3 Run single Kit/browser verification only after real USDC openability passes.
+- [x] 6.3 Run single Kit/browser verification only after real USDC openability passes.
 - [x] 6.4 If Kit/GPU/browser verification cannot run, record it as blocked with the missing prerequisite instead of marking the real conversion work failed.
 
-Blocked this pass: `bim-streaming-server\_build\windows-x86_64\release\kit\kit.exe` was absent in this worktree, so single Kit/browser verification was not runnable here.
+Final pass: single Kit/browser verification ran after the real worker-produced
+USDC passed the openability gate. Screenshot evidence is under
+`docs/verification/evidence/2026-05-11-worker-real-conversion-quality/`.
 
 ## 7. Validation And Review
 
 - [x] 7.1 Run `_worker` focused tests from the `_worker/` directory.
-- [ ] 7.2 Run the affected root smoke script for worker review-session flow.
+- [x] 7.2 Run the affected root smoke script for worker review-session flow.
 - [x] 7.3 Run GitNexus detect changes before commit and confirm affected scope stays within `_worker` and verification docs unless explicitly expanded.
-- [ ] 7.4 PR description must call out external prerequisites, license status, measure-first coverage policy, validation evidence, and any blocked GPU/Kit evidence.
+- [x] 7.4 PR description must call out external prerequisites, license status, measure-first coverage policy, validation evidence, and any blocked GPU/Kit evidence.
 
-Pending this pass: root smoke requires the local services to be started with real worker converter prerequisites and a dev IFC source; PR description is pending until PR creation.
+Final pass: root smoke passed with real worker converter prerequisites and a
+repo-local ignored 89 MB IFC source. The PR body prepared for this branch calls
+out IfcOpenShell / usd-core prerequisites and license observations, the
+measure-first coverage policy, root smoke evidence, and single Kit/browser
+screenshot evidence. No GPU/Kit evidence remains blocked for this change.
