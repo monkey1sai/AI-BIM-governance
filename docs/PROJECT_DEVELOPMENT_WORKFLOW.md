@@ -856,10 +856,23 @@ Archive        = 把 delta specs 併入 openspec/specs/
 4. 開 PR 跑最小驗證並回報結果
 5. PR review + GitHub Actions 自動驗證
 6. Merge 後執行 OpenSpec sync/archive
+7. 依 SaaS roadmap `§1.6` 同步更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`
+   - 更新 `§1.2` specs 清單
+   - 更新 `§1.4` archive 溯源
+   - 更新 `§2` Phase 狀態
+   - 更新 `§5` 候選清單
+   - 更新 `§7` 風險
+   - 更新 `§10` 下一步
+   - 若沒有新的 runtime evidence，不更新 `§1.3` passed 狀態
+8. 使用文件/規劃相關 skill 產生或更新同名 HTML 檢視版 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`
+   - HTML 內容必須源自同名 Markdown
+   - HTML 只作為人類檢視用衍生檔，Markdown 仍是 source of truth
 
 ### 11.2 PR Checklist
 
 - [ ] 對應的 OpenSpec change 存在（或本 PR 為純 docs/refactor 不需要）
+- [ ] 若本 PR 完成 OpenSpec sync/archive，已同步更新 SaaS roadmap `§1.6` 要求的章節，或明確標註不適用原因
+- [ ] 若本 PR 更新 SaaS roadmap，已同步產生/更新同名 HTML 檢視版，或明確標註不適用原因
 - [ ] 修改不違反 `AGENTS.md` repo 邊界
 - [ ] Python tests 從各服務目錄下執行：`cd <svc> && python3 -m pytest tests`
 - [ ] Node tests / build 從各服務目錄執行：`cd <svc> && npm test && npm run build`
