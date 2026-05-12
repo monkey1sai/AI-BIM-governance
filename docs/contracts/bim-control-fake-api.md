@@ -73,3 +73,27 @@ Coordinator session bindings are patched back:
   "lifecycle_event": { "type": "sessionBound", "session_id": "review_session_xxx" }
 }
 ```
+
+`GET /api/review-session-requests/{review_request_id}/lifecycle-events` returns request-side lifecycle events owned by `_bim-control`. These events correlate review intent with the coordinator session audit trail, but they do not replace coordinator session lifecycle events.
+
+```json
+{
+  "review_request_id": "review_request_xxx",
+  "items": [
+    {
+      "event_id": "lifecycle_1700000000000",
+      "review_request_id": "review_request_xxx",
+      "session_id": "review_session_xxx",
+      "correlation_id": "review_request_xxx",
+      "type": "sessionBound",
+      "payload": {
+        "type": "sessionBound",
+        "session_id": "review_session_xxx"
+      },
+      "created_at": "2026-05-12T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+`reviewRequestCreated` events have `session_id=null` until a coordinator session is bound.

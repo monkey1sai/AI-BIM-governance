@@ -237,6 +237,18 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     response.json({ items: eventLog.list(request.params.sessionId) });
   });
 
+  app.get("/api/review-sessions/:sessionId/lifecycle-events", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    if (!store.get(request.params.sessionId)) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    response.json({ items: eventLog.listLifecycle(request.params.sessionId) });
+  });
+
   app.post("/api/review-sessions/:sessionId/events", (request, response, next) => {
     try {
       if (!isSafeSessionId(request.params.sessionId)) {
@@ -290,7 +302,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
     });
     eventLog.append(session.session_id, "sessionClosed", {});
-    eventLog.append(session.session_id, "kitInstancesReleased", {
+    eventLog.append(session.session_id, "kitInstanceReleased", {
       kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
     });
     response.json(closed);

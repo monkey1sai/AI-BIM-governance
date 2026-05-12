@@ -38,6 +38,8 @@
 >
 > **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；執行順序明確改為「單檔 real conversion 先跑通 → 用既有 web viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果 → 再跑 full 13-file batch」。`coordinator-session-lifecycle-events-audit` 仍保留為下一個新功能候選。
 
+> **2026-05-12 更新（並行啟動 #4 lifecycle audit）**：新增 active change **`coordinator-session-lifecycle-events-audit`**，在不干擾 `_worker` canonical batch risk burn-down 的前提下，先把 `bim-review-coordinator` 既有 session events 收斂成 append-only lifecycle audit endpoint 與固定 schema；`_bim-control` 僅補 review request correlation 欄位。此 change 不解凍 Phase 6 audit persistence / observability / webhook production delivery。
+
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
 ---
@@ -568,10 +570,11 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1`，通過後用該 artifact group 經 review viewer / Kit 載入 `model.usdc`，再跑 full batch |
 | **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` storage batch verification；MODIFY `runtime-verification-evidence` canonical batch acceptance / single Kit real worker artifact evidence；MODIFY `worker-demo-upload-convert-ui` preview handoff |
 
-#### 候選 #4：`coordinator-session-lifecycle-events-audit`
+#### Active #4：`coordinator-session-lifecycle-events-audit`
 
 | 項目 | 內容 |
 |---|---|
+| **狀態** | Active OpenSpec change：`openspec/changes/coordinator-session-lifecycle-events-audit/` |
 | **目標** | 把現有 `lifecycle-events` (reviewRequestCreated / sessionBound) 整理成 append-only audit log，定義固定 event schema 讓 webhook / observability spec 能訂閱 |
 | **解決的 v1 phase / v2 layer** | Phase 3 / Layer 5 / Layer 6 |
 | **repo 邊界** | `bim-review-coordinator/`（主）+ `_bim-control/` 補相對應 audit 寫入欄位 |
@@ -667,7 +670,8 @@ P1 (這月):
   worker-canonical-storage-batch-baseline     ★★★ Active risk burn-down
                                                先修 canonical --limit 1 timeout，再補 13-file real batch evidence
                                                full pass 前 production mapping baseline 不得 locked
-  #4  coordinator-session-lifecycle-events-audit  事件 schema 收斂（為 #6 webhook 鋪路；audit log 持久化屬 Phase 6 凍結）
+  #4  coordinator-session-lifecycle-events-audit  ★★ Active parallel change
+                                               事件 schema 收斂（為 #6 webhook 鋪路；audit log 持久化屬 Phase 6 凍結）
 
 P2 (下月):
   #5  ai-rule-carbon-result-contract           v2 Layer 3-D contract + mock
@@ -1151,9 +1155,9 @@ B → C 觸發：
    - 重啟驗證通過後，才更新 §1.3 / §2 Phase 3 / §9.2 與 `runtime-verification-evidence` §6.4 evidence。
    - **MCP 補強**：驗證前用 `kit-mcp` `get_kit_extension_details("omni.kit.livestream.webrtc")` 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。
 
-5. **下一個 P1 OpenSpec 候選以 `#4 coordinator-session-lifecycle-events-audit` 為主**：
+5. **並行執行 P1 OpenSpec change `#4 coordinator-session-lifecycle-events-audit`**：
    - #3 / #3A 已完成並歸檔，不再列為候選池。
-   - 若要支撐後續 webhook / observability，選 `#4`：把 lifecycle events 收斂成 append-only event schema。
+   - `#4` 已成為 active OpenSpec change：把 lifecycle events 收斂成 append-only event schema，支撐後續 webhook / observability。
    - 若要先補 worker evidence，優先完成 active change `worker-canonical-storage-batch-baseline`，不要跳過這個 readiness gate。
 
 6. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
