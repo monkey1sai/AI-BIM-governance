@@ -19,8 +19,32 @@ class _FakeProduct:
         return self._ifc_class
 
 
+class _FakeEntity:
+    def __init__(self, ifc_class: str, name: str = "", entity_id: int = 0):
+        self.Name = name
+        self._ifc_class = ifc_class
+        self._id = entity_id
+
+    def is_a(self) -> str:
+        return self._ifc_class
+
+
 class _FakeModel:
     schema = "IFC4"
+
+    def __iter__(self):
+        return iter(
+            [
+                _FakeProduct("guid-project", "IfcProject", "Demo project"),
+                _FakeProduct("guid-site", "IfcSite", "Demo site"),
+                _FakeProduct("guid-building", "IfcBuilding", "Demo building"),
+                _FakeProduct("guid-1", "IfcWall", "Mapped wall"),
+                _FakeProduct("guid-2", "IfcDoor", "Metadata door"),
+                _FakeProduct("guid-pset", "IfcPropertySet", "Wall Pset"),
+                _FakeProduct("guid-type", "IfcWallType", "Wall type"),
+                _FakeEntity("IfcRelDefinesByProperties", "Wall properties", 42),
+            ]
+        )
 
     def by_type(self, name: str):
         if name != "IfcProduct":
@@ -172,19 +196,37 @@ def test_ifcopenshell_converter_does_not_count_missing_or_unknown_guids_as_mappi
     mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
     usd_index = json.loads(result.usd_index_path.read_text(encoding="utf-8"))
 
-    assert [item["ifc_guid"] for item in mapping["items"]] == ["guid-1"]
-    assert mapping["unmapped_ifc_guids"] == ["guid-2"]
-    assert mapping["summary"]["mapped_count"] == 1
-    assert mapping["summary"]["unmapped_ifc_count"] == 1
+    mapped_guids = [item.get("ifc_guid") for item in mapping["items"] if item.get("ifc_guid")]
+    assert "guid-1" in mapped_guids
+    assert "guid-2" in mapped_guids
+    assert "guid-project" in mapped_guids
+    assert "unknown-guid" not in mapped_guids
+    assert mapping["unmapped_ifc_guids"] == []
+    assert mapping["summary"]["source_ifc_entity_count"] == 8
+    assert mapping["summary"]["mapped_count"] == 8
+    assert mapping["summary"]["unmapped_ifc_count"] == 0
     assert mapping["summary"]["unmapped_usd_count"] == 2
-    assert mapping["summary"]["coverage_ratio"] == 0.5
+    assert mapping["summary"]["coverage_ratio"] == 1.0
+    assert mapping["summary"]["minimum_coverage_ratio"] == 1.0
+    assert mapping["summary"]["coverage_denominator"] == "source_ifc_entity_count"
     assert {item["reason"] for item in mapping["unmapped_usd_prims"]} == {
         "missing_source_guid",
         "unknown_source_guid",
     }
-    assert all(not item["ifc_guid"].startswith("shape_") for item in mapping["items"])
+    assert all(not str(item.get("ifc_guid") or "").startswith("shape_") for item in mapping["items"])
+    non_renderable = [item for item in usd_index["prims"] if item.get("renderable") is False]
+    assert {item["ifc_class"] for item in non_renderable} == {
+        "IfcProject",
+        "IfcSite",
+        "IfcBuilding",
+        "IfcDoor",
+        "IfcPropertySet",
+        "IfcWallType",
+        "IfcRelDefinesByProperties",
+    }
     assert usd_index["summary"]["unmapped_usd_count"] == 2
-    assert result.quality_metrics["mapped_count"] == 1
-    assert result.quality_metrics["unmapped_count"] == 1
+    assert result.quality_metrics["source_ifc_entity_count"] == 8
+    assert result.quality_metrics["mapped_count"] == 8
+    assert result.quality_metrics["unmapped_count"] == 0
     assert result.quality_metrics["unmapped_usd_count"] == 2
-    assert result.quality_metrics["coverage_ratio"] == 0.5
+    assert result.quality_metrics["coverage_ratio"] == 1.0

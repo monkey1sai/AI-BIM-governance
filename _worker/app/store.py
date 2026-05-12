@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
+from dataclasses import replace
 from pathlib import Path
 import base64
 import hashlib
 import json
 import re
+import shutil
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -185,16 +187,25 @@ class WorkerStore:
         )
         root_path = Path(self.settings.objects_root) / derived_root
         root_path.mkdir(parents=True, exist_ok=True)
+        converter_output_dir = self._converter_output_dir(root_path, conversion_job_id)
+        converter_output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             adapter_result = self.converter.convert(
                 source_path=Path(self.settings.objects_root) / source["object_key"],
-                output_dir=root_path,
+                output_dir=converter_output_dir,
                 job=job,
                 generate_mapping=job["generate_mapping"],
             )
-            self._assert_adapter_result(adapter_result, root_path, job["generate_mapping"])
+            self._assert_adapter_result(adapter_result, converter_output_dir, job["generate_mapping"])
+            if converter_output_dir != root_path:
+                adapter_result = self._publish_staged_adapter_outputs(
+                    adapter_result,
+                    root_path,
+                    job["generate_mapping"],
+                )
         except ConversionAdapterError as exc:
+            self._cleanup_staging_dir(converter_output_dir, root_path)
             return self._fail_conversion_job(
                 job,
                 code=exc.__class__.__name__,
@@ -202,6 +213,7 @@ class WorkerStore:
                 stage="conversion_failed",
             )
         except Exception as exc:
+            self._cleanup_staging_dir(converter_output_dir, root_path)
             return self._fail_conversion_job(
                 job,
                 code=exc.__class__.__name__,
@@ -211,6 +223,7 @@ class WorkerStore:
 
         now = utc_now()
         usdc_artifact_id = f"artifact_usdc_{conversion_job_id.removeprefix('conv_')}"
+        quality_metrics = self._normalize_quality_metrics(adapter_result.quality_metrics)
         metadata = {
             "artifact_id": usdc_artifact_id,
             "parent_artifact_id": job["source_artifact_id"],
@@ -259,7 +272,7 @@ class WorkerStore:
             "mapping_url": mapping_url,
             "metadata_url": self.object_url((derived_root / "metadata.json").as_posix()),
             "converter": adapter_result.converter,
-            "quality_metrics": adapter_result.quality_metrics,
+            "quality_metrics": quality_metrics,
             "warnings": adapter_result.warnings,
             "lineage": metadata["lineage"],
         }
@@ -278,8 +291,434 @@ class WorkerStore:
         safe_id(artifact_group_id, "artifact_group_id")
         return read_json(self._group_path(artifact_group_id), None)
 
+    def get_artifact_lineage(self, artifact_id: str) -> dict[str, Any] | None:
+        safe_artifact_id = safe_id(artifact_id, "artifact_id")
+        source = self.get_source_artifact(safe_artifact_id)
+        jobs = self._conversion_jobs()
+        matched_job: dict[str, Any] | None = None
+        matched_kind: str | None = None
+
+        for job in reversed(jobs):
+            result = job.get("result") or {}
+            if result.get("status") != "succeeded":
+                continue
+            candidates = self._lineage_artifact_candidates(result)
+            if safe_artifact_id in candidates:
+                matched_job = job
+                matched_kind = candidates[safe_artifact_id]
+                break
+
+        if matched_job is not None:
+            return self._lineage_from_conversion_job(matched_job, safe_artifact_id, matched_kind or "unknown")
+
+        if source is not None:
+            return self._source_only_lineage(source, safe_artifact_id, jobs)
+
+        return None
+
     def object_url(self, object_key: str) -> str:
         return f"{self.settings.public_objects_url}/{object_key.strip('/')}"
+
+    def _conversion_jobs(self) -> list[dict[str, Any]]:
+        jobs: list[dict[str, Any]] = []
+        for path in sorted(Path(self.settings.jobs_dir).glob("*.json")):
+            payload = read_json(path, None)
+            if isinstance(payload, dict):
+                jobs.append(payload)
+        return jobs
+
+    def _lineage_artifact_candidates(self, result: Mapping[str, Any]) -> dict[str, str]:
+        candidates: dict[str, str] = {}
+        source_artifact_id = result.get("source_artifact_id")
+        usdc_artifact_id = result.get("usdc_artifact_id")
+        if source_artifact_id:
+            candidates[str(source_artifact_id)] = "source"
+        if usdc_artifact_id:
+            candidates[str(usdc_artifact_id)] = "derived_model"
+        derived_ids = result.get("derived_artifact_ids") or {}
+        for key, kind in (
+            ("model_usdc", "derived_model"),
+            ("ifc_index", "ifc_index"),
+            ("usd_index", "usd_index"),
+            ("element_mapping", "element_mapping"),
+        ):
+            artifact_id = derived_ids.get(key)
+            if artifact_id:
+                candidates[str(artifact_id)] = kind
+        metadata_id = self._metadata_artifact_id(result)
+        if metadata_id:
+            candidates[metadata_id] = "metadata"
+        return candidates
+
+    def _source_only_lineage(
+        self,
+        source: dict[str, Any],
+        requested_artifact_id: str,
+        jobs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        related_jobs = [
+            job["conversion_job_id"]
+            for job in jobs
+            if job.get("source_artifact_id") == source["source_artifact_id"]
+        ]
+        diagnostics = [
+            {
+                "code": "derived_artifacts_not_ready",
+                "severity": "info",
+                "message": "Source artifact has no succeeded conversion lineage yet.",
+            }
+        ]
+        return {
+            "artifact_id": requested_artifact_id,
+            "current_artifact_id": requested_artifact_id,
+            "current_node_id": requested_artifact_id,
+            "current_artifact_kind": "source",
+            "artifact_group_id": source["artifact_group_id"],
+            "tenant_id": source["metadata"]["tenant_id"],
+            "project_id": source["metadata"]["project_id"],
+            "model_version_id": source["metadata"]["model_version_id"],
+            "root_source_artifact_id": source["source_artifact_id"],
+            "conversion_job_ids": related_jobs,
+            "nodes": [self._source_lineage_node(source)],
+            "edges": [],
+            "quality_metrics_summary": None,
+            "diagnostics": diagnostics,
+        }
+
+    def _lineage_from_conversion_job(
+        self,
+        job: Mapping[str, Any],
+        requested_artifact_id: str,
+        requested_kind: str,
+    ) -> dict[str, Any] | None:
+        result = job.get("result") or {}
+        source_artifact_id = result.get("source_artifact_id")
+        if not source_artifact_id:
+            return None
+        source = self.get_source_artifact(str(source_artifact_id))
+        if source is None:
+            return None
+
+        diagnostics: list[dict[str, Any]] = []
+        derived_ids = self._normalized_derived_artifact_ids(result, diagnostics)
+        derived_root = Path(str((result.get("lineage") or {}).get("derived_object_prefix") or ""))
+        metadata = self._read_derived_metadata(derived_root, diagnostics)
+        lineage = metadata.get("lineage") if isinstance(metadata, dict) else None
+        if not isinstance(lineage, dict):
+            diagnostics.append(
+                {
+                    "code": "missing_metadata_lineage",
+                    "severity": "warn",
+                    "message": "metadata.json is missing a lineage object.",
+                }
+            )
+        else:
+            for field in ("source_artifact_id", "source_object_key", "derived_object_prefix"):
+                if field not in lineage:
+                    diagnostics.append(
+                        {
+                            "code": f"missing_metadata_lineage_{field}",
+                            "severity": "warn",
+                            "message": f"metadata.json lineage is missing {field}.",
+                        }
+                    )
+
+        conversion_node_id = str(result["conversion_job_id"])
+        nodes = [
+            self._source_lineage_node(source),
+            {
+                "node_id": conversion_node_id,
+                "artifact_id": conversion_node_id,
+                "kind": "conversion_job",
+                "role": "conversion",
+                "status": result.get("status"),
+                "conversion_job_id": conversion_node_id,
+            },
+            {
+                "node_id": derived_ids["model_usdc"],
+                "artifact_id": derived_ids["model_usdc"],
+                "kind": "derived_model",
+                "role": "model_usdc",
+                "format": "usdc",
+                "object_key": (derived_root / "model.usdc").as_posix(),
+                "url": result.get("usdc_url"),
+                "conversion_job_id": conversion_node_id,
+                "exists": self._object_exists(derived_root / "model.usdc"),
+            },
+        ]
+
+        sidecar_specs = [
+            ("ifc_index", "ifc_index", "ifc_index.json", result.get("ifc_index_url")),
+            ("usd_index", "usd_index", "usd_index.json", result.get("usd_index_url")),
+            ("element_mapping", "element_mapping", "element_mapping.json", result.get("mapping_url")),
+        ]
+        for key, kind, filename, url in sidecar_specs:
+            if not url:
+                diagnostics.append(
+                    {
+                        "code": f"missing_{key}_url",
+                        "severity": "warn",
+                        "message": f"Conversion result does not expose {filename}.",
+                    }
+                )
+                continue
+            object_key = (derived_root / filename).as_posix()
+            nodes.append(
+                {
+                    "node_id": derived_ids[key],
+                    "artifact_id": derived_ids[key],
+                    "kind": kind,
+                    "role": key,
+                    "format": "json",
+                    "object_key": object_key,
+                    "url": url,
+                    "conversion_job_id": conversion_node_id,
+                    "exists": self._object_exists(derived_root / filename),
+                }
+            )
+
+        metadata_id = self._metadata_artifact_id(result)
+        if result.get("metadata_url"):
+            nodes.append(
+                {
+                    "node_id": metadata_id,
+                    "artifact_id": metadata_id,
+                    "kind": "metadata",
+                    "role": "metadata",
+                    "format": "json",
+                    "object_key": (derived_root / "metadata.json").as_posix(),
+                    "url": result.get("metadata_url"),
+                    "conversion_job_id": conversion_node_id,
+                    "exists": self._object_exists(derived_root / "metadata.json"),
+                }
+            )
+        else:
+            diagnostics.append(
+                {
+                    "code": "missing_metadata_url",
+                    "severity": "warn",
+                    "message": "Conversion result does not expose metadata.json.",
+                }
+            )
+
+        edges = [
+            {
+                "from": source["source_artifact_id"],
+                "to": conversion_node_id,
+                "relationship": "converted_by",
+            },
+            {
+                "from": conversion_node_id,
+                "to": derived_ids["model_usdc"],
+                "relationship": "produced",
+            },
+        ]
+        for node in nodes:
+            if node["kind"] in {"ifc_index", "usd_index", "element_mapping", "metadata"}:
+                edges.append(
+                    {
+                        "from": derived_ids["model_usdc"],
+                        "to": node["node_id"],
+                        "relationship": "has_sidecar",
+                    }
+                )
+
+        return {
+            "artifact_id": requested_artifact_id,
+            "current_artifact_id": requested_artifact_id,
+            "current_node_id": requested_artifact_id,
+            "current_artifact_kind": requested_kind,
+            "artifact_group_id": result["artifact_group_id"],
+            "tenant_id": result["tenant_id"],
+            "project_id": result["project_id"],
+            "model_version_id": result["model_version_id"],
+            "root_source_artifact_id": result["source_artifact_id"],
+            "conversion_job_ids": [conversion_node_id],
+            "nodes": nodes,
+            "edges": edges,
+            "quality_metrics_summary": self._quality_metrics_summary(result.get("quality_metrics") or {}),
+            "diagnostics": diagnostics,
+        }
+
+    def _source_lineage_node(self, source: Mapping[str, Any]) -> dict[str, Any]:
+        metadata = source["metadata"]
+        return {
+            "node_id": source["source_artifact_id"],
+            "artifact_id": source["source_artifact_id"],
+            "kind": "source",
+            "role": "source_ifc",
+            "format": metadata.get("source_format"),
+            "object_key": source.get("object_key"),
+            "url": source.get("object_url"),
+            "sha256": metadata.get("sha256"),
+            "original_filename": metadata.get("original_filename"),
+        }
+
+    def _normalized_derived_artifact_ids(
+        self,
+        result: Mapping[str, Any],
+        diagnostics: list[dict[str, Any]],
+    ) -> dict[str, str]:
+        suffix = str(result["conversion_job_id"]).removeprefix("conv_")
+        defaults = {
+            "model_usdc": str(result.get("usdc_artifact_id") or f"artifact_usdc_{suffix}"),
+            "ifc_index": f"artifact_ifc_index_{suffix}",
+            "usd_index": f"artifact_usd_index_{suffix}",
+            "element_mapping": f"artifact_mapping_{suffix}",
+        }
+        raw_ids = result.get("derived_artifact_ids")
+        if not isinstance(raw_ids, dict):
+            diagnostics.append(
+                {
+                    "code": "missing_derived_artifact_ids",
+                    "severity": "warn",
+                    "message": "Conversion result is missing derived_artifact_ids; stable fallback IDs were reconstructed.",
+                }
+            )
+            return defaults
+        ids = dict(defaults)
+        for key in defaults:
+            if raw_ids.get(key):
+                ids[key] = str(raw_ids[key])
+            else:
+                diagnostics.append(
+                    {
+                        "code": f"missing_derived_artifact_id_{key}",
+                        "severity": "warn",
+                        "message": f"Conversion result is missing derived_artifact_ids.{key}; fallback ID was reconstructed.",
+                    }
+                )
+        return ids
+
+    def _metadata_artifact_id(self, result: Mapping[str, Any]) -> str:
+        suffix = str(result.get("conversion_job_id") or "unknown").removeprefix("conv_")
+        return f"artifact_metadata_{suffix}"
+
+    def _read_derived_metadata(self, derived_root: Path, diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
+        if not derived_root.as_posix():
+            diagnostics.append(
+                {
+                    "code": "missing_derived_object_prefix",
+                    "severity": "warn",
+                    "message": "Conversion result lineage is missing derived_object_prefix.",
+                }
+            )
+            return {}
+        metadata_path = Path(self.settings.objects_root) / derived_root / "metadata.json"
+        metadata = read_json(metadata_path, {})
+        if not metadata:
+            diagnostics.append(
+                {
+                    "code": "missing_metadata_json",
+                    "severity": "warn",
+                    "message": "Derived metadata.json is missing or unreadable.",
+                }
+            )
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _object_exists(self, object_key: Path) -> bool:
+        return (Path(self.settings.objects_root) / object_key).is_file()
+
+    def _quality_metrics_summary(self, quality_metrics: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = self._normalize_quality_metrics(quality_metrics)
+        keys = (
+            "source_ifc_entity_count",
+            "source_ifc_element_count",
+            "usd_prim_count",
+            "mapped_entity_count",
+            "unmapped_entity_count",
+            "mapped_count",
+            "unmapped_count",
+            "coverage_ratio",
+            "minimum_coverage_ratio",
+            "coverage_denominator",
+            "minimum_coverage_baseline_locked",
+            "coverage_status",
+            "issue_to_real_prim_readiness",
+            "threshold_status",
+            "coverage_policy_diagnostics",
+        )
+        return {key: normalized.get(key) for key in keys if key in normalized}
+
+    def _normalize_quality_metrics(self, quality_metrics: Mapping[str, Any] | None) -> dict[str, Any]:
+        metrics = dict(quality_metrics or {})
+        source_count = self._int_metric(
+            metrics.get("source_ifc_entity_count"),
+            metrics.get("source_ifc_element_count"),
+            metrics.get("source_count"),
+            default=0,
+        )
+        mapped_count = self._int_metric(metrics.get("mapped_entity_count"), metrics.get("mapped_count"), default=0)
+        if "unmapped_entity_count" in metrics:
+            unmapped_count = self._int_metric(metrics.get("unmapped_entity_count"), default=0)
+        elif "unmapped_count" in metrics:
+            unmapped_count = self._int_metric(metrics.get("unmapped_count"), default=0)
+        elif "unmapped_ifc_count" in metrics:
+            unmapped_count = self._int_metric(metrics.get("unmapped_ifc_count"), default=0)
+        else:
+            unmapped_count = max(source_count - mapped_count, 0)
+
+        if metrics.get("coverage_ratio") is None:
+            coverage_ratio = (mapped_count / source_count) if source_count else 0.0
+        else:
+            coverage_ratio = float(metrics.get("coverage_ratio") or 0.0)
+
+        locked = bool(metrics.get("minimum_coverage_baseline_locked", False))
+        minimum_ratio = float(metrics.get("minimum_coverage_ratio") if metrics.get("minimum_coverage_ratio") is not None else 1.0)
+        coverage_status = str(metrics.get("coverage_status") or "").strip().lower()
+        if not coverage_status:
+            if locked:
+                coverage_status = "pass" if coverage_ratio >= minimum_ratio and unmapped_count == 0 else "fail"
+            else:
+                coverage_status = "unlocked"
+
+        diagnostics = list(metrics.get("coverage_policy_diagnostics") or metrics.get("policy_diagnostics") or [])
+        if locked and coverage_status == "fail" and not diagnostics:
+            diagnostics.append(
+                {
+                    "code": "coverage_below_minimum",
+                    "severity": "error",
+                    "message": "At least one source IFC entity lacks a USD prim mapping under the locked 1.0 coverage policy.",
+                }
+            )
+        if coverage_status == "warn" and not diagnostics:
+            diagnostics.append(
+                {
+                    "code": "coverage_warning",
+                    "severity": "warn",
+                    "message": "Coverage is degraded but allowed for review-session creation.",
+                }
+            )
+
+        metrics["source_ifc_entity_count"] = source_count
+        metrics.setdefault("source_ifc_element_count", source_count)
+        metrics["mapped_entity_count"] = mapped_count
+        metrics["unmapped_entity_count"] = unmapped_count
+        metrics["mapped_count"] = mapped_count
+        metrics["unmapped_count"] = unmapped_count
+        metrics["coverage_ratio"] = coverage_ratio
+        metrics["minimum_coverage_ratio"] = minimum_ratio
+        metrics["coverage_denominator"] = metrics.get("coverage_denominator") or "source_ifc_entity_count"
+        metrics["minimum_coverage_baseline_locked"] = locked
+        metrics["coverage_status"] = coverage_status
+        metrics["threshold_status"] = metrics.get("threshold_status") or ("locked" if locked else "measure_only")
+        metrics["coverage_policy_diagnostics"] = diagnostics
+        metrics["issue_to_real_prim_readiness"] = bool(
+            metrics.get("issue_to_real_prim_readiness", locked and coverage_status == "pass")
+        )
+        if not locked or coverage_status != "pass":
+            metrics["issue_to_real_prim_readiness"] = False
+        return metrics
+
+    def _int_metric(self, *values: Any, default: int = 0) -> int:
+        for value in values:
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return default
 
     def _content_bytes(self, request: ArtifactIntakeRequest) -> bytes:
         if request.content_base64:
@@ -288,6 +727,49 @@ class WorkerStore:
             return request.content_text.encode("utf-8")
         reference = request.source_url or request.signed_upload_url or ""
         return json.dumps({"upload_reference": reference}, ensure_ascii=False).encode("utf-8")
+
+    def _converter_output_dir(self, root_path: Path, conversion_job_id: str) -> Path:
+        model_path = root_path / "model.usdc"
+        if len(str(model_path)) < 240:
+            return root_path
+        return Path(self.settings.service_root) / "data" / "conversion-staging" / conversion_job_id
+
+    def _publish_staged_adapter_outputs(
+        self,
+        adapter_result: Any,
+        root_path: Path,
+        generate_mapping: bool,
+    ) -> Any:
+        model_path = root_path / "model.usdc"
+        ifc_index_path = root_path / "ifc_index.json"
+        usd_index_path = root_path / "usd_index.json"
+        mapping_path = root_path / "element_mapping.json" if generate_mapping else None
+        shutil.copy2(adapter_result.model_path, model_path)
+        shutil.copy2(adapter_result.ifc_index_path, ifc_index_path)
+        shutil.copy2(adapter_result.usd_index_path, usd_index_path)
+        if generate_mapping and adapter_result.mapping_path is not None and mapping_path is not None:
+            shutil.copy2(adapter_result.mapping_path, mapping_path)
+
+        staging_dir = Path(adapter_result.model_path).parent.resolve()
+        staging_root = (Path(self.settings.service_root) / "data" / "conversion-staging").resolve()
+        if staging_dir == staging_root or staging_root in staging_dir.parents:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+        return replace(
+            adapter_result,
+            model_path=model_path,
+            ifc_index_path=ifc_index_path,
+            usd_index_path=usd_index_path,
+            mapping_path=mapping_path,
+        )
+
+    def _cleanup_staging_dir(self, converter_output_dir: Path, root_path: Path) -> None:
+        if converter_output_dir == root_path:
+            return
+        staging_root = (Path(self.settings.service_root) / "data" / "conversion-staging").resolve()
+        candidate = converter_output_dir.resolve()
+        if candidate == staging_root or staging_root in candidate.parents:
+            shutil.rmtree(candidate, ignore_errors=True)
 
     def _source_group_payload(self, metadata: dict[str, Any], object_key: Path) -> dict[str, Any]:
         return {
@@ -317,13 +799,26 @@ class WorkerStore:
         metadata: dict[str, Any],
         derived_root: Path,
     ) -> dict[str, Any]:
+        quality_metrics = self._normalize_quality_metrics(result.get("quality_metrics"))
+        coverage_status = quality_metrics.get("coverage_status")
+        mapping_url = result.get("mapping_url")
+        mapping_ready = bool(mapping_url) and coverage_status != "fail"
+        if not mapping_url:
+            ready_status = "missing_mapping"
+            group_status = "ready"
+        elif coverage_status == "fail":
+            ready_status = "mapping_quality_failed"
+            group_status = "quality_failed"
+        else:
+            ready_status = "ready"
+            group_status = "ready"
         return {
             "artifact_group_id": result["artifact_group_id"],
             "tenant_id": result["tenant_id"],
             "project_id": result["project_id"],
             "model_version_id": result["model_version_id"],
-            "status": "ready",
-            "ready_status": "ready" if result.get("mapping_url") else "missing_mapping",
+            "status": group_status,
+            "ready_status": ready_status,
             "source": {
                 "artifact_id": source["source_artifact_id"],
                 "format": source["metadata"]["source_format"],
@@ -342,15 +837,21 @@ class WorkerStore:
                 }
             ],
             "mapping": {
+                "artifact_id": (result.get("derived_artifact_ids") or {}).get("element_mapping"),
                 "object_key": (derived_root / "element_mapping.json").as_posix(),
-                "url": result.get("mapping_url"),
-                "ready": bool(result.get("mapping_url")),
+                "url": mapping_url,
+                "ready": mapping_ready,
+                "coverage_status": coverage_status,
+                "quality_ready": mapping_ready,
+                "issue_to_real_prim_readiness": quality_metrics.get("issue_to_real_prim_readiness"),
             },
             "indexes": {
+                "ifc_index_artifact_id": (result.get("derived_artifact_ids") or {}).get("ifc_index"),
                 "ifc_index_url": result["ifc_index_url"],
+                "usd_index_artifact_id": (result.get("derived_artifact_ids") or {}).get("usd_index"),
                 "usd_index_url": result["usd_index_url"],
             },
-            "quality_metrics": result.get("quality_metrics"),
+            "quality_metrics": quality_metrics,
             "converter": result.get("converter"),
             "metadata": metadata,
             "lineage": result["lineage"],

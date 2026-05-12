@@ -48,6 +48,40 @@ def _safe_prim_name(value: str) -> str:
     return cleaned or "IfcProduct"
 
 
+def _entity_id(entity: Any, fallback: int) -> str:
+    raw_id = None
+    entity_id = getattr(entity, "id", None)
+    if callable(entity_id):
+        try:
+            raw_id = entity_id()
+        except Exception:
+            raw_id = None
+    if raw_id is None:
+        raw_id = getattr(entity, "_id", None)
+    return str(raw_id if raw_id is not None else fallback)
+
+
+def _entity_class(entity: Any) -> str:
+    is_a = getattr(entity, "is_a", None)
+    if callable(is_a):
+        try:
+            return str(is_a())
+        except Exception:
+            return "IfcEntity"
+    return str(getattr(entity, "_ifc_class", None) or entity.__class__.__name__ or "IfcEntity")
+
+
+def _entity_global_id(entity: Any) -> str | None:
+    guid = getattr(entity, "GlobalId", None)
+    if not guid:
+        return None
+    return str(guid)
+
+
+def _entity_name(entity: Any) -> str:
+    return str(getattr(entity, "Name", "") or "")
+
+
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
@@ -101,8 +135,9 @@ class IfcOpenShellUsdConverter:
         except Exception as exc:
             raise ConversionAdapterError(f"IfcOpenShell could not open source IFC: {exc}") from exc
 
-        source_elements = self._source_elements(model)
-        source_by_guid = {item["ifc_guid"]: item for item in source_elements}
+        source_entities = self._source_entities(model)
+        source_by_key = {item["ifc_entity_key"]: item for item in source_entities}
+        source_by_guid = {item["ifc_guid"]: item for item in source_entities if item.get("ifc_guid")}
 
         settings = ifcopenshell.geom.settings()
         settings.set(settings.USE_WORLD_COORDS, True)
@@ -120,7 +155,7 @@ class IfcOpenShellUsdConverter:
         stage.SetDefaultPrim(root.GetPrim())
 
         prim_rows: list[dict[str, Any]] = []
-        mapping_by_guid: dict[str, dict[str, Any]] = {}
+        mapping_by_entity: dict[str, dict[str, Any]] = {}
         unmapped_usd_prims: list[dict[str, Any]] = []
         used_paths: set[str] = set()
         converted_shapes = 0
@@ -136,7 +171,8 @@ class IfcOpenShellUsdConverter:
             faces = list(geometry.faces)
             raw_guid = str(getattr(shape, "guid", "") or "").strip()
             diagnostic_id = raw_guid or f"shape_{converted_shapes}"
-            mapping_guid = raw_guid if raw_guid in source_by_guid else None
+            source_entity = source_by_guid.get(raw_guid)
+            mapping_entity_key = source_entity["ifc_entity_key"] if source_entity else None
             ifc_class = str(getattr(shape, "type", "") or "IfcProduct")
 
             if len(vertices) < 3 or len(faces) < 3:
@@ -170,7 +206,7 @@ class IfcOpenShellUsdConverter:
                 "face_count": triangle_count,
             }
 
-            if mapping_guid is None:
+            if mapping_entity_key is None:
                 reason = "unknown_source_guid" if raw_guid else "missing_source_guid"
                 prim_row["mapping_status"] = "unmapped"
                 prim_row["unmapped_reason"] = reason
@@ -188,11 +224,14 @@ class IfcOpenShellUsdConverter:
 
             prim_row["mapping_status"] = "mapped"
             prim_rows.append(prim_row)
-            mapping = mapping_by_guid.setdefault(
-                mapping_guid,
+            mapping = mapping_by_entity.setdefault(
+                mapping_entity_key,
                 {
-                    "ifc_guid": mapping_guid,
-                    "ifc_class": source_by_guid.get(mapping_guid, {}).get("ifc_class", ifc_class),
+                    "ifc_entity_key": mapping_entity_key,
+                    "ifc_entity_id": source_entity.get("ifc_entity_id"),
+                    "ifc_guid": source_entity.get("ifc_guid"),
+                    "ifc_class": source_entity.get("ifc_class", ifc_class),
+                    "name": source_entity.get("name", ""),
                     "usd_prim_path": prim_path,
                     "primary_usd_prim_path": prim_path,
                     "usd_prim_paths": [],
@@ -203,6 +242,15 @@ class IfcOpenShellUsdConverter:
             mapping["usd_prim_paths"].append(prim_path)
             keep_going = iterator.next()
 
+        self._materialize_unmapped_entities(
+            UsdGeom=UsdGeom,
+            Sdf=Sdf,
+            stage=stage,
+            source_entities=source_entities,
+            mapping_by_entity=mapping_by_entity,
+            prim_rows=prim_rows,
+            used_paths=used_paths,
+        )
         stage.GetRootLayer().Save()
         opened_stage = Usd.Stage.Open(str(model_path))
         if opened_stage is None:
@@ -211,10 +259,21 @@ class IfcOpenShellUsdConverter:
         if usd_prim_count <= 1:
             raise ConversionAdapterError("Generated model.usdc has no renderable mesh prims.")
 
-        source_count = len(source_elements)
-        mapped_count = len(mapping_by_guid)
+        source_count = len(source_entities)
+        mapped_count = len(mapping_by_entity)
         unmapped_count = max(source_count - mapped_count, 0)
-        unmapped_ifc_guids = [guid for guid in source_by_guid if guid not in mapping_by_guid]
+        unmapped_ifc_entities = [
+            {
+                "ifc_entity_key": entity["ifc_entity_key"],
+                "ifc_entity_id": entity.get("ifc_entity_id"),
+                "ifc_guid": entity.get("ifc_guid"),
+                "ifc_class": entity.get("ifc_class"),
+                "name": entity.get("name", ""),
+            }
+            for entity in source_entities
+            if entity["ifc_entity_key"] not in mapping_by_entity
+        ]
+        unmapped_ifc_guids = [item["ifc_guid"] for item in unmapped_ifc_entities if item.get("ifc_guid")]
         unmapped_usd_count = len(unmapped_usd_prims)
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
         duration_seconds = perf_counter() - started
@@ -223,15 +282,17 @@ class IfcOpenShellUsdConverter:
             "source_artifact_id": job["source_artifact_id"],
             "schema": model.schema,
             "summary": {
+                "entity_count": source_count,
                 "element_count": source_count,
                 "guid_count": len(source_by_guid),
             },
-            "elements": source_elements,
+            "entities": source_entities,
+            "elements": source_entities,
         }
         usd_index = {
             "summary": {
                 "prim_count": usd_prim_count,
-                "mesh_prim_count": len(prim_rows),
+                "mesh_prim_count": converted_shapes,
                 "vertex_count": vertex_count,
                 "face_count": face_count,
                 "unmapped_usd_count": unmapped_usd_count,
@@ -239,14 +300,20 @@ class IfcOpenShellUsdConverter:
             "prims": prim_rows,
         }
         mapping_summary = {
+            "source_ifc_entity_count": source_count,
             "source_ifc_element_count": source_count,
             "usd_prim_count": usd_prim_count,
+            "mapped_entity_count": mapped_count,
+            "unmapped_entity_count": unmapped_count,
             "mapped_count": mapped_count,
             "unmapped_ifc_count": unmapped_count,
             "unmapped_usd_count": unmapped_usd_count,
             "coverage_ratio": coverage_ratio,
             "fake_mapping_count": 0,
             "minimum_coverage_baseline_locked": False,
+            "minimum_coverage_ratio": 1.0,
+            "coverage_denominator": "source_ifc_entity_count",
+            "coverage_status": "unlocked",
             "threshold_status": "measure_only",
         }
 
@@ -261,9 +328,11 @@ class IfcOpenShellUsdConverter:
                     "coverage_policy": {
                         "mode": "measure_first",
                         "minimum_coverage_baseline_locked": False,
-                        "minimum_coverage_ratio": None,
+                        "minimum_coverage_ratio": 1.0,
+                        "coverage_denominator": "source_ifc_entity_count",
                     },
-                    "items": list(mapping_by_guid.values()),
+                    "items": list(mapping_by_entity.values()),
+                    "unmapped_ifc_entities": unmapped_ifc_entities,
                     "unmapped_ifc_guids": unmapped_ifc_guids,
                     "unmapped_usd_prims": unmapped_usd_prims,
                     "summary": mapping_summary,
@@ -283,15 +352,22 @@ class IfcOpenShellUsdConverter:
         quality_metrics = {
             "converter_identity": converter,
             "duration_seconds": duration_seconds,
+            "source_ifc_entity_count": source_count,
             "source_ifc_element_count": source_count,
             "usd_prim_count": usd_prim_count,
-            "mesh_prim_count": len(prim_rows),
+            "mesh_prim_count": converted_shapes,
+            "mapped_entity_count": mapped_count,
+            "unmapped_entity_count": unmapped_count,
             "mapped_count": mapped_count,
             "unmapped_count": unmapped_count,
             "unmapped_usd_count": unmapped_usd_count,
             "coverage_ratio": coverage_ratio,
             "threshold_status": "measure_only",
             "minimum_coverage_baseline_locked": False,
+            "minimum_coverage_ratio": 1.0,
+            "coverage_denominator": "source_ifc_entity_count",
+            "coverage_status": "unlocked",
+            "issue_to_real_prim_readiness": False,
             "hard_quality_gates": {
                 "usdc_openable": True,
                 "has_renderable_prims": usd_prim_count > 1,
@@ -314,23 +390,95 @@ class IfcOpenShellUsdConverter:
             warnings=[],
         )
 
-    def _source_elements(self, model: Any) -> list[dict[str, Any]]:
-        elements: list[dict[str, Any]] = []
-        for entity in model.by_type("IfcProduct"):
-            guid = getattr(entity, "GlobalId", None)
-            if not guid:
-                continue
-            elements.append(
+    def _source_entities(self, model: Any) -> list[dict[str, Any]]:
+        entities = self._iter_model_entities(model)
+        rows: list[dict[str, Any]] = []
+        for index, entity in enumerate(entities, start=1):
+            entity_id = _entity_id(entity, index)
+            ifc_class = _entity_class(entity)
+            guid = _entity_global_id(entity)
+            entity_key = guid or f"{ifc_class}:{entity_id}"
+            rows.append(
                 {
-                    "ifc_guid": str(guid),
-                    "ifc_class": entity.is_a(),
-                    "name": str(getattr(entity, "Name", "") or ""),
+                    "ifc_entity_key": entity_key,
+                    "ifc_entity_id": entity_id,
+                    "ifc_guid": guid,
+                    "ifc_class": ifc_class,
+                    "name": _entity_name(entity),
                 }
             )
-        return elements
+        return rows
 
-    def _unique_prim_path(self, ifc_class: str, guid: str, used_paths: set[str]) -> str:
-        base = f"/World/{_safe_prim_name(ifc_class)}_{_safe_prim_name(guid)}"
+    def _iter_model_entities(self, model: Any) -> list[Any]:
+        try:
+            entities = list(model)
+        except TypeError:
+            entities = []
+        if entities:
+            return entities
+        try:
+            return list(model.by_type("IfcProduct"))
+        except Exception:
+            return []
+
+    def _materialize_unmapped_entities(
+        self,
+        *,
+        UsdGeom: Any,
+        Sdf: Any,
+        stage: Any,
+        source_entities: list[dict[str, Any]],
+        mapping_by_entity: dict[str, dict[str, Any]],
+        prim_rows: list[dict[str, Any]],
+        used_paths: set[str],
+    ) -> None:
+        for entity in source_entities:
+            entity_key = entity["ifc_entity_key"]
+            if entity_key in mapping_by_entity:
+                continue
+            prim_path = self._unique_prim_path(
+                entity.get("ifc_class", "IfcEntity"),
+                entity_key,
+                used_paths,
+                prefix="/World/IfcEntity",
+            )
+            xform = UsdGeom.Xform.Define(stage, prim_path)
+            prim = xform.GetPrim()
+            prim.CreateAttribute("ifc:entityKey", Sdf.ValueTypeNames.String).Set(entity_key)
+            prim.CreateAttribute("ifc:entityId", Sdf.ValueTypeNames.String).Set(str(entity.get("ifc_entity_id") or ""))
+            if entity.get("ifc_guid"):
+                prim.CreateAttribute("ifc:guid", Sdf.ValueTypeNames.String).Set(entity["ifc_guid"])
+            prim.CreateAttribute("ifc:type", Sdf.ValueTypeNames.String).Set(entity.get("ifc_class", "IfcEntity"))
+            prim.CreateAttribute("ifc:name", Sdf.ValueTypeNames.String).Set(entity.get("name", ""))
+            prim.CreateAttribute("worker:nonRenderableIfcEntity", Sdf.ValueTypeNames.String).Set("true")
+            prim_rows.append(
+                {
+                    "path": prim_path,
+                    "type": "Xform",
+                    "ifc_entity_key": entity_key,
+                    "ifc_entity_id": entity.get("ifc_entity_id"),
+                    "ifc_guid": entity.get("ifc_guid"),
+                    "ifc_class": entity.get("ifc_class"),
+                    "mapping_status": "mapped",
+                    "renderable": False,
+                }
+            )
+            mapping_by_entity[entity_key] = {
+                "ifc_entity_key": entity_key,
+                "ifc_entity_id": entity.get("ifc_entity_id"),
+                "ifc_guid": entity.get("ifc_guid"),
+                "ifc_class": entity.get("ifc_class"),
+                "name": entity.get("name", ""),
+                "usd_prim_path": prim_path,
+                "primary_usd_prim_path": prim_path,
+                "usd_prim_paths": [prim_path],
+                "mapping_method": "ifc_entity_to_non_renderable_usd_prim",
+                "mapping_confidence": 1.0,
+                "renderable": False,
+            }
+
+    def _unique_prim_path(self, ifc_class: str, guid: str, used_paths: set[str], prefix: str = "/World") -> str:
+        base = f"{prefix}/{_safe_prim_name(ifc_class)}_{_safe_prim_name(guid)}"
         candidate = base
         index = 2
         while candidate in used_paths:
