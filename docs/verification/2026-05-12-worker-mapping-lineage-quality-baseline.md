@@ -43,10 +43,11 @@ python -m pytest --basetemp .\pytest-tmp-worker tests/test_worker_store.py tests
 Result:
 
 - `56 passed`
-- Follow-up clean venv full suite: `93 passed, 1 skipped`
+- Follow-up clean venv full suite: `94 passed, 1 skipped`
 - Clean venv package baseline: `fastapi==0.111.0`, `starlette==0.37.2`, `uvicorn==0.45.0`
 - Store tests cover source-only lineage, succeeded derived lineage, stable mapping/index IDs, legacy diagnostics, unlocked coverage, locked pass, warn reviewability, fail blocking, and duplicate fixture identity.
 - Converter tests cover all-entity denominator materialization for `IfcProject`, `IfcSite`, `IfcBuilding`, `IfcPropertySet`, `IfcWallType`, `IfcRelDefinesByProperties`, and product geometry.
+- Converter tests also cover metadata-only USD rejection so non-renderable IFC entity prims cannot satisfy the renderable mesh hard gate.
 - Batch helper tests cover missing fixture root and duplicate IFC bytes with independent source artifact IDs, conversion job IDs, original filenames, and lineage.
 
 Historical local global-env blocker:

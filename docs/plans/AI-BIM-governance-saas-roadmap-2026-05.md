@@ -110,7 +110,7 @@ single Kit/browser real worker USDC: passed (review_session_001a59d345ce; 1920×
 # 2026-05-12 worker-mapping-lineage-quality-baseline（branch evidence，尚未 archive）
 openspec validate --strict:          passed
 _worker store/converter/batch tests: 56 passed
-_worker clean venv full tests:       93 passed, 1 skipped
+_worker clean venv full tests:       94 passed, 1 skipped
 lineage API / UI / quality policy:   implemented in change branch
 _worker dependency baseline:         requirements pin fastapi/starlette/uvicorn to repo baseline
 canonical storage dry-run:           13 IFC fixtures found; not converted; minimum_coverage_locked=false

@@ -4,9 +4,11 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.converters import IfcOpenShellUsdConverter
+from app.converters import ConversionAdapterError, IfcOpenShellUsdConverter
 
 
 class _FakeProduct:
@@ -60,17 +62,22 @@ class _FakeGeometry:
     faces = [0, 1, 2]
 
 
+class _FakeDegenerateGeometry:
+    verts = [0.0, 0.0, 0.0]
+    faces = [0]
+
+
 class _FakeShape:
-    def __init__(self, guid: str, ifc_class: str = "IfcWall"):
+    def __init__(self, guid: str, ifc_class: str = "IfcWall", geometry=None):
         self.guid = guid
         self.type = ifc_class
-        self.geometry = _FakeGeometry()
+        self.geometry = geometry or _FakeGeometry()
 
 
 class _FakeIterator:
-    def __init__(self):
+    def __init__(self, shapes=None):
         self._index = 0
-        self._shapes = [
+        self._shapes = shapes or [
             _FakeShape("guid-1"),
             _FakeShape(""),
             _FakeShape("unknown-guid"),
@@ -147,11 +154,11 @@ class _FakeMesh:
         return _FakePrim()
 
 
-def _install_fake_converter_modules(monkeypatch) -> None:
+def _install_fake_converter_modules(monkeypatch, *, shapes=None) -> None:
     fake_ifcopenshell = types.ModuleType("ifcopenshell")
     fake_geom = types.ModuleType("ifcopenshell.geom")
     fake_geom.settings = _FakeSettings
-    fake_geom.iterator = lambda _settings, _model, _workers: _FakeIterator()
+    fake_geom.iterator = lambda _settings, _model, _workers: _FakeIterator(shapes)
     fake_ifcopenshell.geom = fake_geom
     fake_ifcopenshell.open = lambda _path: _FakeModel()
 
@@ -230,3 +237,17 @@ def test_ifcopenshell_converter_does_not_count_missing_or_unknown_guids_as_mappi
     assert result.quality_metrics["unmapped_count"] == 0
     assert result.quality_metrics["unmapped_usd_count"] == 2
     assert result.quality_metrics["coverage_ratio"] == 1.0
+
+
+def test_ifcopenshell_converter_rejects_metadata_only_usd(monkeypatch, tmp_path: Path):
+    _install_fake_converter_modules(monkeypatch, shapes=[_FakeShape("guid-1", geometry=_FakeDegenerateGeometry())])
+    source_path = tmp_path / "source.ifc"
+    source_path.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+
+    with pytest.raises(ConversionAdapterError, match="no renderable mesh prims"):
+        IfcOpenShellUsdConverter().convert(
+            source_path=source_path,
+            output_dir=tmp_path / "derived",
+            job={"source_artifact_id": "source_test"},
+            generate_mapping=True,
+        )

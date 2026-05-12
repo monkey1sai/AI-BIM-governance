@@ -256,7 +256,7 @@ class IfcOpenShellUsdConverter:
         if opened_stage is None:
             raise ConversionAdapterError("OpenUSD could not reopen generated model.usdc.")
         usd_prim_count = sum(1 for _ in opened_stage.Traverse())
-        if usd_prim_count <= 1:
+        if converted_shapes <= 0:
             raise ConversionAdapterError("Generated model.usdc has no renderable mesh prims.")
 
         source_count = len(source_entities)
@@ -370,7 +370,7 @@ class IfcOpenShellUsdConverter:
             "issue_to_real_prim_readiness": False,
             "hard_quality_gates": {
                 "usdc_openable": True,
-                "has_renderable_prims": usd_prim_count > 1,
+                "has_renderable_prims": converted_shapes > 0,
                 "placeholder_output": False,
             },
             "source_file_size_bytes": source_path.stat().st_size,

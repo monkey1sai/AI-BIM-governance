@@ -47,7 +47,8 @@
 - [x] 7.1 Run `openspec validate worker-mapping-lineage-quality-baseline --strict`.
 - [x] 7.2 Run `_worker` focused tests from `_worker/` with `python -m pytest tests`.
   - Initial global Python run was blocked before API test execution by dependency drift: `fastapi 0.111.0` + `starlette 1.0.0`.
-  - Follow-up clean venv using `_worker/requirements.txt` passed: `93 passed, 1 skipped`.
+  - Follow-up clean venv using `_worker/requirements.txt` passed: `94 passed, 1 skipped`.
+  - GitNexus PR review follow-up added metadata-only USD rejection coverage so non-renderable IFC entity prims cannot satisfy the renderable mesh hard gate.
 - [x] 7.3 Run the batch fixture helper against `storage/*.ifc` or record the exact blocker.
 - [x] 7.4 Run single Kit/browser issue highlight smoke only when GPU/Kit prerequisites are available, otherwise record blocked evidence.
 - [x] 7.5 Run `gitnexus_detect_changes()` before commit and confirm affected scope stays within `_worker`, OpenSpec artifacts, and verification docs unless explicitly expanded.
