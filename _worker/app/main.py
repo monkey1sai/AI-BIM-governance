@@ -78,14 +78,30 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if group is None:
             raise HTTPException(status_code=404, detail="Artifact group not found.")
+        mapping = group.get("mapping") or {}
+        quality_metrics = group.get("quality_metrics") or {}
         return {
             "artifact_group_id": artifact_group_id,
             "status": group.get("status"),
             "ready_status": group.get("ready_status"),
             "has_source": bool(group.get("source")),
             "has_derived": bool(group.get("derived")),
-            "has_mapping": bool((group.get("mapping") or {}).get("ready")),
+            "has_mapping": bool(mapping.get("ready")),
+            "coverage_status": mapping.get("coverage_status") or quality_metrics.get("coverage_status"),
+            "mapping_quality_ready": bool(mapping.get("quality_ready")),
+            "issue_to_real_prim_readiness": bool(mapping.get("issue_to_real_prim_readiness")),
+            "quality_warnings": quality_metrics.get("coverage_policy_diagnostics") or [],
         }
+
+    @app.get("/api/artifacts/{artifact_id}/lineage")
+    def get_artifact_lineage(artifact_id: str):
+        try:
+            lineage = store.get_artifact_lineage(artifact_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if lineage is None:
+            raise HTTPException(status_code=404, detail="Artifact lineage not found.")
+        return lineage
 
     @app.post("/api/conversions")
     def create_conversion(request: ConversionRequest, background_tasks: BackgroundTasks):

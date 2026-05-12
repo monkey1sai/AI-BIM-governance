@@ -453,6 +453,83 @@ def test_conversion_result_contains_derived_urls_lineage_and_readiness(case_dir:
     assert readiness.json()["ready_status"] == "ready"
 
 
+def test_artifact_lineage_api_returns_source_only_graph_before_conversion(case_dir: Path):
+    client = make_client(case_dir)
+    artifact = client.post("/api/artifacts", json=source_payload(artifact_group_id="ag_api_source_lineage")).json()
+
+    response = client.get(f"/api/artifacts/{artifact['source_artifact_id']}/lineage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["current_artifact_kind"] == "source"
+    assert body["root_source_artifact_id"] == artifact["source_artifact_id"]
+    assert body["nodes"][0]["artifact_id"] == artifact["source_artifact_id"]
+    assert body["diagnostics"][0]["code"] == "derived_artifacts_not_ready"
+
+
+def test_artifact_lineage_api_returns_stable_derived_nodes(case_dir: Path):
+    client = make_client(case_dir)
+    artifact = client.post("/api/artifacts", json=source_payload(artifact_group_id="ag_api_lineage")).json()
+    created = client.post(
+        "/api/conversions",
+        json={"source_artifact_id": artifact["source_artifact_id"], "target_format": "usdc", "generate_mapping": True},
+    )
+    result = client.get(f"/api/conversions/{created.json()['conversion_job_id']}/result").json()
+    derived_ids = result["derived_artifact_ids"]
+
+    response = client.get(f"/api/artifacts/{result['usdc_artifact_id']}/lineage")
+
+    assert response.status_code == 200
+    body = response.json()
+    node_ids = {node["artifact_id"] for node in body["nodes"]}
+    assert derived_ids["model_usdc"] in node_ids
+    assert derived_ids["ifc_index"] in node_ids
+    assert derived_ids["usd_index"] in node_ids
+    assert derived_ids["element_mapping"] in node_ids
+    assert body["quality_metrics_summary"]["minimum_coverage_ratio"] == 1.0
+
+
+def test_artifact_lineage_api_accepts_mapping_and_index_artifact_ids(case_dir: Path):
+    client = make_client(case_dir)
+    artifact = client.post("/api/artifacts", json=source_payload(artifact_group_id="ag_api_lineage_sidecars")).json()
+    created = client.post(
+        "/api/conversions",
+        json={"source_artifact_id": artifact["source_artifact_id"], "target_format": "usdc", "generate_mapping": True},
+    )
+    result = client.get(f"/api/conversions/{created.json()['conversion_job_id']}/result").json()
+
+    for key in ("ifc_index", "usd_index", "element_mapping"):
+        artifact_id = result["derived_artifact_ids"][key]
+        response = client.get(f"/api/artifacts/{artifact_id}/lineage")
+        assert response.status_code == 200
+        assert response.json()["current_artifact_kind"] == key
+
+
+def test_artifact_lineage_api_returns_404_for_unknown_artifact(case_dir: Path):
+    client = make_client(case_dir)
+
+    response = client.get("/api/artifacts/artifact_unknown/lineage")
+
+    assert response.status_code == 404
+
+
+def test_artifact_group_readiness_exposes_mapping_quality_fields(case_dir: Path):
+    client = make_client(case_dir)
+    artifact = client.post("/api/artifacts", json=source_payload(artifact_group_id="ag_api_quality")).json()
+    client.post(
+        "/api/conversions",
+        json={"source_artifact_id": artifact["source_artifact_id"], "target_format": "usdc", "generate_mapping": True},
+    )
+
+    readiness = client.get(f"/api/artifact-groups/{artifact['artifact_group_id']}/readiness")
+
+    assert readiness.status_code == 200
+    body = readiness.json()
+    assert body["coverage_status"] == "unlocked"
+    assert body["mapping_quality_ready"] is True
+    assert body["issue_to_real_prim_readiness"] is False
+
+
 def test_conversion_failure_does_not_publish_ready_artifact_group(case_dir: Path):
     client = make_client(case_dir, converter=FakeUnavailableConverter())
     artifact = client.post("/api/artifacts", json=source_payload(artifact_group_id="ag_api_converter_missing")).json()

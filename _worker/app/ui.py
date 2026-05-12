@@ -207,6 +207,23 @@ def render_worker_ui() -> HTMLResponse:
     }
     .demo-failure { display: none; background: var(--demo-status-bad-soft); border-color: #f3a5ad; }
     .demo-failure.is-visible { display: block; }
+    .lineage-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .lineage-row {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 6px 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--demo-border);
+      border-radius: var(--demo-radius);
+      background: var(--demo-bg-elevated);
+      font-size: 12px;
+    }
+    .lineage-row strong { color: var(--demo-text-primary); }
+    .lineage-row span { color: var(--demo-text-secondary); overflow-wrap: anywhere; font-family: var(--demo-font-mono); }
     pre {
       margin: 12px 0 0;
       padding: 12px;
@@ -283,12 +300,21 @@ def render_worker_ui() -> HTMLResponse:
           <dt>job</dt><dd id="jobId">—</dd>
           <dt>artifact group</dt><dd id="artifactGroupId">—</dd>
           <dt>readiness</dt><dd id="readiness">—</dd>
+          <dt>coverage</dt><dd id="coverageRatio">—</dd>
+          <dt>lineage</dt><dd id="lineageSummary">—</dd>
         </dl>
         <div class="demo-actions">
           <a id="nextStep" class="demo-btn" href="http://127.0.0.1:8004" aria-disabled="true">前往建立會議</a>
         </div>
       </aside>
     </div>
+
+    <section class="demo-card">
+      <h2>Lineage / Quality <span id="lineageStatus" class="demo-status demo-status--idle">尚未查詢</span></h2>
+      <p class="demo-subtitle">只顯示 worker API 回傳的 artifact lineage 與 coverage 狀態。</p>
+      <div id="lineageNodes" class="demo-empty">尚未有完成的 conversion。</div>
+      <div id="lineageDiagnostics" class="lineage-list"></div>
+    </section>
 
     <section class="demo-card">
       <h2>技術回應</h2>
@@ -313,6 +339,11 @@ def render_worker_ui() -> HTMLResponse:
     const jobIdEl = document.getElementById("jobId");
     const artifactGroupEl = document.getElementById("artifactGroupId");
     const readinessEl = document.getElementById("readiness");
+    const coverageRatioEl = document.getElementById("coverageRatio");
+    const lineageSummaryEl = document.getElementById("lineageSummary");
+    const lineageStatus = document.getElementById("lineageStatus");
+    const lineageNodes = document.getElementById("lineageNodes");
+    const lineageDiagnostics = document.getElementById("lineageDiagnostics");
     const nextStep = document.getElementById("nextStep");
     let sources = [];
     let selected = null;
@@ -427,6 +458,7 @@ def render_worker_ui() -> HTMLResponse:
         log(result);
         setStatus(jobStatus, result.status === "succeeded" ? "ok" : "warn", result.status || "running");
         if (result.status === "succeeded") {
+          await loadLineage(result.usdc_artifact_id || result.source_artifact_id);
           await pollReadiness(artifactGroupId);
           return;
         }
@@ -444,9 +476,43 @@ def render_worker_ui() -> HTMLResponse:
     async function pollReadiness(artifactGroupId) {
       const readiness = await fetchJson(`/api/artifact-groups/${encodeURIComponent(artifactGroupId)}/readiness`);
       readinessEl.textContent = readiness.ready_status || readiness.status || "—";
+      coverageRatioEl.textContent = readiness.coverage_status || "—";
       if (readiness.ready_status === "ready") {
         nextStep.href = `http://127.0.0.1:8004?artifact_group_id=${encodeURIComponent(artifactGroupId)}&model_version_id=version_demo_001`;
         nextStep.setAttribute("aria-disabled", "false");
+      }
+    }
+
+    async function loadLineage(artifactId) {
+      if (!artifactId) return;
+      try {
+        const lineage = await fetchJson(`/api/artifacts/${encodeURIComponent(artifactId)}/lineage`);
+        const quality = lineage.quality_metrics_summary || {};
+        const coverageStatus = quality.coverage_status || "unknown";
+        const statusKind = coverageStatus === "fail" ? "bad" : coverageStatus === "warn" ? "warn" : "ok";
+        setStatus(lineageStatus, statusKind, coverageStatus);
+        coverageRatioEl.textContent = Number.isFinite(quality.coverage_ratio) ? quality.coverage_ratio.toFixed(4) : "—";
+        lineageSummaryEl.textContent = `${lineage.nodes?.length || 0} nodes / ${lineage.edges?.length || 0} edges`;
+        lineageNodes.className = "lineage-list";
+        lineageNodes.innerHTML = (lineage.nodes || []).map((node) => `
+          <div class="lineage-row">
+            <strong>${escapeHtml(node.kind || node.role || "node")}</strong>
+            <span>${escapeHtml(node.artifact_id || node.node_id || "—")}</span>
+            <strong>url</strong>
+            <span>${escapeHtml(node.url || "—")}</span>
+          </div>
+        `).join("") || '<div class="demo-empty">沒有 lineage nodes。</div>';
+        lineageDiagnostics.innerHTML = (lineage.diagnostics || []).map((item) => `
+          <div class="lineage-row">
+            <strong>${escapeHtml(item.severity || "info")}</strong>
+            <span>${escapeHtml(item.code || "diagnostic")}: ${escapeHtml(item.message || "")}</span>
+          </div>
+        `).join("");
+      } catch (error) {
+        setStatus(lineageStatus, "bad", "查詢失敗");
+        lineageNodes.className = "demo-empty";
+        lineageNodes.textContent = String(error);
+        lineageDiagnostics.innerHTML = "";
       }
     }
 

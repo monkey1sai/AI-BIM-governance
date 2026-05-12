@@ -518,6 +518,191 @@ def test_store_complete_conversion_reports_quality_metrics_and_one_to_many_mappi
     assert mapping["items"][0]["usd_prim_paths"] == ["/World/IfcWall_guid_1", "/World/IfcWall_guid_1_2"]
 
 
+def test_store_normalizes_unlocked_coverage_policy(tmp_path: Path):
+    store = make_store(tmp_path)
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_unlocked_quality"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    quality = completed["result"]["quality_metrics"]
+    assert quality["minimum_coverage_baseline_locked"] is False
+    assert quality["minimum_coverage_ratio"] == 1.0
+    assert quality["coverage_denominator"] == "source_ifc_entity_count"
+    assert quality["coverage_status"] == "unlocked"
+    assert quality["issue_to_real_prim_readiness"] is False
+    group = store.get_artifact_group("ag_unlocked_quality")
+    assert group["ready_status"] == "ready"
+    assert group["mapping"]["ready"] is True
+
+
+def test_store_locked_coverage_pass_verifies_issue_to_real_prim_readiness(tmp_path: Path):
+    store = make_store(
+        tmp_path,
+        converter=FakeSuccessfulConverter(
+            quality_overrides={
+                "source_ifc_entity_count": 2,
+                "mapped_entity_count": 2,
+                "unmapped_entity_count": 0,
+                "mapped_count": 2,
+                "unmapped_count": 0,
+                "coverage_ratio": 1.0,
+                "minimum_coverage_baseline_locked": True,
+            }
+        ),
+    )
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_locked_pass"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    quality = completed["result"]["quality_metrics"]
+    assert quality["coverage_status"] == "pass"
+    assert quality["issue_to_real_prim_readiness"] is True
+    group = store.get_artifact_group("ag_locked_pass")
+    assert group["ready_status"] == "ready"
+    assert group["mapping"]["ready"] is True
+
+
+def test_store_coverage_warning_keeps_reviewable_but_not_verified(tmp_path: Path):
+    store = make_store(
+        tmp_path,
+        converter=FakeSuccessfulConverter(
+            quality_overrides={
+                "minimum_coverage_baseline_locked": True,
+                "coverage_status": "warn",
+                "coverage_policy_diagnostics": [
+                    {"code": "allowed_metadata_degradation", "severity": "warn", "message": "test warning"}
+                ],
+            }
+        ),
+    )
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_quality_warn"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    quality = completed["result"]["quality_metrics"]
+    assert quality["coverage_status"] == "warn"
+    assert quality["issue_to_real_prim_readiness"] is False
+    group = store.get_artifact_group("ag_quality_warn")
+    assert group["ready_status"] == "ready"
+    assert group["mapping"]["ready"] is True
+    assert group["mapping"]["issue_to_real_prim_readiness"] is False
+
+
+def test_store_coverage_fail_blocks_mapping_readiness(tmp_path: Path):
+    store = make_store(
+        tmp_path,
+        converter=FakeSuccessfulConverter(
+            quality_overrides={
+                "minimum_coverage_baseline_locked": True,
+                "coverage_status": "fail",
+                "coverage_policy_diagnostics": [
+                    {"code": "missing_ifc_entity_mapping", "severity": "error", "message": "test failure"}
+                ],
+            }
+        ),
+    )
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_quality_fail"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+
+    assert completed["result"]["quality_metrics"]["coverage_status"] == "fail"
+    group = store.get_artifact_group("ag_quality_fail")
+    assert group["status"] == "quality_failed"
+    assert group["ready_status"] == "mapping_quality_failed"
+    assert group["mapping"]["ready"] is False
+
+
+def test_store_source_only_lineage_reports_missing_derived_artifacts(tmp_path: Path):
+    store = make_store(tmp_path)
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_source_lineage"))
+
+    lineage = store.get_artifact_lineage(upload["source_artifact_id"])
+
+    assert lineage["artifact_id"] == upload["source_artifact_id"]
+    assert lineage["current_artifact_kind"] == "source"
+    assert lineage["root_source_artifact_id"] == upload["source_artifact_id"]
+    assert lineage["nodes"] == [
+        {
+            "node_id": upload["source_artifact_id"],
+            "artifact_id": upload["source_artifact_id"],
+            "kind": "source",
+            "role": "source_ifc",
+            "format": "ifc",
+            "object_key": upload["object_key"],
+            "url": upload["object_url"],
+            "sha256": upload["sha256"],
+            "original_filename": "model.ifc",
+        }
+    ]
+    assert lineage["diagnostics"][0]["code"] == "derived_artifacts_not_ready"
+
+
+def test_store_lineage_uses_stable_derived_artifact_ids(tmp_path: Path):
+    store = make_store(tmp_path)
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_lineage"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+    result = completed["result"]
+    derived_ids = result["derived_artifact_ids"]
+
+    lineage = store.get_artifact_lineage(result["usdc_artifact_id"])
+
+    node_ids = {node["artifact_id"] for node in lineage["nodes"]}
+    assert derived_ids["model_usdc"] in node_ids
+    assert derived_ids["ifc_index"] in node_ids
+    assert derived_ids["usd_index"] in node_ids
+    assert derived_ids["element_mapping"] in node_ids
+    assert lineage["quality_metrics_summary"]["minimum_coverage_ratio"] == 1.0
+    assert {
+        (edge["from"], edge["to"], edge["relationship"])
+        for edge in lineage["edges"]
+    } >= {
+        (upload["source_artifact_id"], result["conversion_job_id"], "converted_by"),
+        (result["conversion_job_id"], derived_ids["model_usdc"], "produced"),
+    }
+
+
+def test_store_lineage_can_be_queried_by_mapping_and_index_artifact_ids(tmp_path: Path):
+    store = make_store(tmp_path)
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_lineage_sidecars"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+    result = store.complete_conversion_job(job["conversion_job_id"])["result"]
+
+    for key in ("ifc_index", "usd_index", "element_mapping"):
+        artifact_id = result["derived_artifact_ids"][key]
+        lineage = store.get_artifact_lineage(artifact_id)
+        assert lineage["artifact_id"] == artifact_id
+        assert lineage["current_artifact_kind"] == key
+        assert lineage["root_source_artifact_id"] == upload["source_artifact_id"]
+
+
+def test_store_lineage_returns_legacy_diagnostics_instead_of_failing(tmp_path: Path):
+    store = make_store(tmp_path)
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_legacy_lineage"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+    result = store.complete_conversion_job(job["conversion_job_id"])["result"]
+    job_path = Path(store.settings.jobs_dir) / f"{job['conversion_job_id']}.json"
+    legacy_job = read_json(job_path, {})
+    legacy_job["result"].pop("derived_artifact_ids")
+    metadata_path = Path(store.settings.objects_root) / result["lineage"]["derived_object_prefix"] / "metadata.json"
+    metadata = read_json(metadata_path, {})
+    metadata.pop("lineage")
+    write_json(metadata_path, metadata)
+    write_json(job_path, legacy_job)
+
+    lineage = store.get_artifact_lineage(result["usdc_artifact_id"])
+
+    assert lineage["artifact_id"] == result["usdc_artifact_id"]
+    assert {item["code"] for item in lineage["diagnostics"]} >= {
+        "missing_derived_artifact_ids",
+        "missing_metadata_lineage",
+    }
+
+
 def test_store_conversion_without_mapping_sets_missing_mapping_status(tmp_path: Path):
     store = make_store(tmp_path)
     req = make_intake_request(artifact_group_id="ag_nomapping")
