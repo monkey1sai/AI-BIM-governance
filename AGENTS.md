@@ -60,6 +60,7 @@ installed skills / Graphify wiki / generated skills
 ### OpenSpec 與本機 agent 產物
 
 - OpenSpec 只記錄可審查的需求、設計、spec、tasks；不取代 repo 邊界，也不管理本機 skill 安裝。
+- 本 repo 的 OpenSpec artifacts 預設必須使用繁體中文；API 路徑、schema 欄位、CLI flags、status enum、log/error、外部產品名稱與 OpenSpec parser 必要標頭（例如 `## MODIFIED Requirements`、`### Requirement:`、`#### Scenario:`）保留原文。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 目前是本機 agent/tooling 產物，預設維持 ignored。
 - 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus generated skill 檔，除非使用者明確要求改變 repo policy。
 

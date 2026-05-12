@@ -36,7 +36,7 @@
 >
 > **2026-05-12 更新（`worker-mapping-lineage-quality-baseline` archive 對齊）**：依 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10**。原候選 #3 lineage API 與 #3A mapping quality baseline 已合併為同一 change 並歸檔：`_worker` 已具備 lineage query API、worker UI lineage / quality view、all-IFC-entity coverage 語意、`minimum_coverage_ratio=1.0` policy 與 storage batch verification helper；canonical 13-file real batch 仍未完成，因此 production baseline 尚未鎖定。
 >
-> **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；`coordinator-session-lifecycle-events-audit` 仍保留為下一個新功能候選。
+> **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；執行順序明確改為「單檔 real conversion 先跑通 → 用既有 web viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果 → 再跑 full 13-file batch」。`coordinator-session-lifecycle-events-audit` 仍保留為下一個新功能候選。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -560,13 +560,13 @@ A：可以，但**不是把 #2 spec 換掉**：
 | 項目 | 內容 |
 |---|---|
 | **狀態** | Active OpenSpec follow-up：`openspec/changes/worker-canonical-storage-batch-baseline/` |
-| **目標** | 補齊 canonical `storage/*.ifc` 13-file real batch evidence；先找出並修掉 `--limit 1` 600s timeout，再擴到全批次 |
+| **目標** | 補齊 canonical `storage/*.ifc` 13-file real batch evidence；先找出並修掉 `--limit 1` 600s timeout，單檔成功後用既有 review viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果，再擴到全批次 |
 | **解決的 gap** | `worker-mapping-lineage-quality-baseline` 已歸檔，但 production mapping baseline 仍未鎖定 |
-| **repo 邊界** | `_worker/` + verification docs + roadmap；不新增 coordinator / viewer / Kit runtime ownership |
+| **repo 邊界** | `_worker/` + worker UI handoff + verification docs + roadmap；visual preview 使用既有 coordinator / viewer / Kit flow 取 evidence，但不新增 coordinator / viewer / Kit runtime ownership |
 | **風險** | HIGH（89MB canonical fixture 單檔 real conversion 曾 timeout；all-IFC-entity materialization 可能放大 output size / stage save 成本） |
-| **KPI** | 1) canonical `--limit 1` 完成並有 phase timing；2) full 13-file batch 完成；3) 每 fixture lineage API / USDC openability / coverage status 有 evidence；4) 只有 full pass 才允許 `minimum_coverage_locked=true` |
-| **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1`，通過後再跑 full batch |
-| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` storage batch verification；MODIFY `runtime-verification-evidence` canonical batch acceptance |
+| **KPI** | 1) canonical `--limit 1` 完成並有 phase timing；2) 單檔 `model.usdc` 透過既有 web viewer / Kit visual preview passed，或留下明確 blocked prerequisite；3) full 13-file batch 完成；4) 每 fixture lineage API / USDC openability / coverage status 有 evidence；5) 只有 full pass 才允許 `minimum_coverage_locked=true` |
+| **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1`，通過後用該 artifact group 經 review viewer / Kit 載入 `model.usdc`，再跑 full batch |
+| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` storage batch verification；MODIFY `runtime-verification-evidence` canonical batch acceptance / single Kit real worker artifact evidence；MODIFY `worker-demo-upload-convert-ui` preview handoff |
 
 #### 候選 #4：`coordinator-session-lifecycle-events-audit`
 
@@ -1142,6 +1142,7 @@ B → C 觸發：
    - 使用 `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 作為正式本機 fixture root。
    - 此 work 已落成 active OpenSpec change：`openspec/changes/worker-canonical-storage-batch-baseline/`。
    - 先解決 89MB fixture `--limit 1` 超過 600s timeout 的 runtime / performance 問題，再擴到 13-file batch。
+   - 單檔 real conversion 通過後，先用既有 `web-viewer-sample` / `bim-review-coordinator` / `bim-streaming-server` flow 載入該 worker-hosted `model.usdc`，留下 screenshot 或等效 visual proof；若 Kit/GPU/browser 不可用，記錄 blocked，不宣稱 web UI 已檢視成果。
    - 只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 `minimum_coverage_locked=true` production baseline 寫入 evidence。
 
 4. **暫停 `#2 streaming-multi-instance-orchestration`，等待 GPU 購買與部署後再執行**：

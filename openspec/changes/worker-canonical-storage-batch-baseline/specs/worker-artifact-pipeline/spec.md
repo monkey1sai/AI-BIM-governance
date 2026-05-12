@@ -2,13 +2,15 @@
 
 ### Requirement: Worker supports storage IFC batch quality verification
 
-`_worker` SHALL provide an implementation path for batch quality verification over repo-local `storage/*.ifc` fixtures. The Windows local fixture glob `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` and the worktree-local `_worker` dev source root `../storage` SHALL be treated as the same fixture source class for local validation.
+`_worker` SHALL provide an implementation path for batch quality verification over repo-local `storage/*.ifc` fixtures. Windows canonical fixture glob `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 與 worktree-local `_worker` dev source root `../storage` SHALL be treated as the same fixture source class for local validation。
 
-The batch verification path MUST use existing worker artifact intake and selected-source conversion contracts unless a later production batch-job spec is opened. Each fixture result MUST record filename, relative path, size, source artifact ID, artifact group ID, conversion job ID, USDC openability, mapped count, unmapped count, coverage ratio, coverage status, lineage API status, duration when available, and failure or warning details.
+Batch verification path MUST use existing worker artifact intake and selected-source conversion contracts unless a later production batch-job spec is opened。每個 fixture result MUST record filename、relative path、size、source artifact ID、artifact group ID、conversion job ID、USDC openability、mapped count、unmapped count、coverage ratio、coverage status、lineage API status、duration when available，以及 failure / warning details。
 
-For canonical baseline runs, `_worker` MUST also record per-fixture phase timings and timeout diagnostics. Phase timings MUST identify the observable conversion phases needed to diagnose slow or stuck runs, including source read or artifact intake, conversion total duration, IFC open, source entity enumeration, geometry iteration, mesh authoring, non-renderable entity materialization, stage save, stage reopen, artifact publish, and lineage lookup when those phases are available. A timeout or failure before a phase starts MUST be reported as a diagnostic rather than omitted silently.
+Canonical baseline runs MUST also record per-fixture phase timings and timeout diagnostics。Phase timings MUST identify observable conversion phases needed to diagnose slow or stuck runs，包含 source read 或 artifact intake、conversion total duration、IFC open、source entity enumeration、geometry iteration、mesh authoring、non-renderable entity materialization、stage save、stage reopen、artifact publish 與 lineage lookup when available。若 timeout 或 failure 發生在 phase start 前，MUST report that phase as not reached or unavailable diagnostic，而不得靜默省略。
 
-Batch summary status MUST distinguish `blocked`, `partial`, `timed_out`, `failed`, and `passed`. `_worker` MUST NOT set `minimum_coverage_locked=true` unless the full required canonical fixture set completes real conversion and every fixture passes USDC openability, truthful mapping, lineage API lookup, and locked all-IFC-entity coverage criteria.
+Batch summary status MUST distinguish `blocked`、`partial`、`timed_out`、`failed`、`passed`。`_worker` MUST NOT set `minimum_coverage_locked=true` unless the full required canonical fixture set completes real conversion and every fixture passes USDC openability、truthful mapping、lineage API lookup 與 locked all-IFC-entity coverage criteria。
+
+Canonical batch implementation MUST run the canonical `--limit 1` single fixture first。Only after that single-fixture run either passes with complete conversion evidence or records a deterministic blocker may the helper attempt the full 13-file batch。When the single-fixture run passes，the result MUST expose stable artifact IDs and object URLs needed by the existing review viewer flow to load the produced `model.usdc`。
 
 #### Scenario: Storage IFC fixtures are converted in batch
 
@@ -35,6 +37,16 @@ Batch summary status MUST distinguish `blocked`, `partial`, `timed_out`, `failed
 
 - **WHEN** any canonical storage fixture exceeds the configured per-fixture timeout before producing a completed conversion result
 - **THEN** `_worker` records `status=timed_out`, includes the timeout duration and last known phase diagnostics, and MUST NOT mark the batch status as `passed`
+
+#### Scenario: Canonical single fixture gates full batch
+
+- **WHEN** canonical batch verification is requested for the full fixture set before the canonical `--limit 1` run has produced either a passing result or deterministic blocker evidence
+- **THEN** `_worker` MUST keep the batch evidence non-passed and require the single-fixture evidence first
+
+#### Scenario: Canonical single fixture exposes preview handoff data
+
+- **WHEN** the canonical `--limit 1` fixture completes real conversion with openable USDC and lineage
+- **THEN** `_worker` exposes the `conversion_job_id`, `artifact_group_id`, source artifact ID, derived `model.usdc` artifact ID or URL, mapping artifact ID or URL, and readiness state needed by the existing review viewer flow
 
 #### Scenario: Full canonical batch locks coverage
 

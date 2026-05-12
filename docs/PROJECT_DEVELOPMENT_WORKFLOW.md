@@ -852,6 +852,7 @@ Archive        = 把 delta specs 併入 openspec/specs/
 
 1. 從最新 `main` 建立 `codex/openspec/<change-id>` branch
 2. `/openspec new <change-id>` 在該 branch 建 proposal / design / tasks / delta specs
+   - OpenSpec artifacts 預設使用繁體中文；API、schema、CLI、status enum、log/error 與 OpenSpec parser 必要標頭保留原文
 3. `/openspec apply <change-id>` 實作並更新 task `[ ] → [x]`
 4. 開 PR 跑最小驗證並回報結果
 5. PR review + GitHub Actions 自動驗證

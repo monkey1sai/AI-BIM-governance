@@ -1,14 +1,40 @@
 ## MODIFIED Requirements
 
+### Requirement: Single Kit render evidence uses real worker artifacts
+
+Single Kit render evidence SHALL use `_worker` real conversion artifacts when validating the review-session path from IFC source to browser viewport. Evidence MUST include the conversion job ID and artifact group ID so the rendered stage can be traced back to the source IFC。
+
+Canonical storage batch burn-down MUST include a single-file visual preview step after canonical `--limit 1` real conversion succeeds and before claiming that users can inspect the converted result in the web UI。This visual preview MUST use the existing `web-viewer-sample` + `bim-review-coordinator` + `bim-streaming-server` path to load the worker-hosted `model.usdc`; it MUST NOT require `_worker` to parse or render USD/USDC locally。
+
+#### Scenario: Real worker artifact renders in browser
+
+- **WHEN** a valid IFC is converted through `_worker`, routed through `bim-review-coordinator`, loaded by `bim-streaming-server`, and displayed in `web-viewer-sample`
+- **THEN** the evidence records the source IFC identity, `conversion_job_id`, `artifact_group_id`, `model.usdc` URL, mapping URL, `openedStageResult`, non-zero video dimensions, and a viewport screenshot or equivalent visual proof
+
+#### Scenario: Canonical single fixture preview renders in browser
+
+- **WHEN** the canonical `--limit 1` storage fixture completes real conversion and its worker-produced `model.usdc` is loaded through the existing review viewer flow
+- **THEN** the evidence records the canonical fixture path, `conversion_job_id`, `artifact_group_id`, derived USDC artifact ID or URL, `openedStageResult`, non-zero viewport/video dimensions, and screenshot or equivalent visual proof
+
+#### Scenario: Kit or GPU prerequisite is unavailable
+
+- **WHEN** real conversion succeeds but Kit/GPU/browser verification cannot run in the current environment
+- **THEN** the evidence records conversion success and marks single Kit render evidence as `blocked` with the missing runtime prerequisite
+
+#### Scenario: Worker conversion passes but visual preview is blocked
+
+- **WHEN** canonical `--limit 1` conversion succeeds but `web-viewer-sample`, coordinator, Kit runtime, WebRTC, GPU, or browser automation is unavailable
+- **THEN** the evidence keeps conversion result separate from visual preview, marks visual preview as `blocked`, and MUST NOT claim the converted USDC was visually inspected in the web UI
+
 ### Requirement: Batch storage IFC evidence calibrates mapping baseline
 
-Runtime verification evidence SHALL include a batch conversion evidence tier for repo-local `storage/*.ifc` fixtures before declaring the mapping coverage baseline locked. The evidence MUST identify the fixture glob, resolved root, fixture count, per-fixture conversion job IDs, per-fixture artifact group IDs, USDC openability, source IFC entity count, mapped/unmapped entity counts, coverage ratio, `minimum_coverage_ratio=1.0`, coverage status, lineage API status, and whether all required fixtures passed.
+Runtime verification evidence SHALL include a batch conversion evidence tier for repo-local `storage/*.ifc` fixtures before declaring the mapping coverage baseline locked. The evidence MUST identify the fixture glob, resolved root, fixture count, per-fixture conversion job IDs, per-fixture artifact group IDs, USDC openability, source IFC entity count, mapped/unmapped entity counts, coverage ratio, `minimum_coverage_ratio=1.0`, coverage status, lineage API status, and whether all required fixtures passed。
 
-The standard local Windows fixture glob is `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc`. In worktrees and CI-like local runs, the same requirement MAY resolve through `_worker` `dev_storage_root` as repo-local `storage/*.ifc`, but the evidence MUST record the resolved path or approved exception.
+The standard local Windows fixture glob is `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc`。In worktrees and CI-like local runs, the same requirement MAY resolve through `_worker` `dev_storage_root` as repo-local `storage/*.ifc`, but the evidence MUST record the resolved path or approved exception。
 
-Canonical baseline evidence MUST include per-fixture duration, phase timings when available, converter identity, output file size, warnings, and failure diagnostics. The evidence MUST classify the overall batch as `blocked`, `partial`, `timed_out`, `failed`, or `passed`. Dry-runs, subset runs, timeout runs, and any run with failed fixture-level quality checks MUST NOT mark `minimum_coverage_locked=true`.
+Canonical baseline evidence MUST include per-fixture duration、phase timings when available、converter identity、output file size、warnings 與 failure diagnostics。The evidence MUST classify the overall batch as `blocked`, `partial`, `timed_out`, `failed`, or `passed`。Dry-runs、subset runs、timeout runs 與 any run with failed fixture-level quality checks MUST NOT mark `minimum_coverage_locked=true`。
 
-Before running the full 13-file canonical batch, evidence MUST first include a completed real `--limit 1` run against the canonical fixture root. If that single-fixture run times out or fails, the evidence MUST record the bottleneck diagnostics and keep the production mapping baseline unlocked.
+Before running the full 13-file canonical batch, evidence MUST first include a completed real `--limit 1` run against the canonical fixture root。If that single-fixture run times out or fails, the evidence MUST record bottleneck diagnostics and keep the production mapping baseline unlocked。If that single-fixture run succeeds, evidence MUST next include either a passed visual preview through the existing review viewer flow or a clearly classified visual-preview blocker before the full batch evidence is treated as human-inspected。
 
 #### Scenario: Full storage fixture batch passes
 
@@ -34,3 +60,8 @@ Before running the full 13-file canonical batch, evidence MUST first include a c
 
 - **WHEN** canonical storage batch evidence is produced for a real conversion run
 - **THEN** the evidence records per-fixture phase timings for the available conversion phases and identifies any missing phase timing as unavailable or not reached
+
+#### Scenario: Canonical full batch waits for single-file gate
+
+- **WHEN** full 13-file batch evidence is attempted before the canonical single-fixture conversion gate has either passed or produced a deterministic blocker
+- **THEN** the evidence records the full batch as not ready and keeps `minimum_coverage_locked=false`
