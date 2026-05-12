@@ -82,6 +82,7 @@ Archive = 把變更規格併入正式規格
 - change 實作被正式接受並 merge 後，才執行 OpenSpec sync/archive，把 delta specs 併入 `openspec/specs/`。
 - 每次執行 OpenSpec sync/archive 後，必須同步更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`，保持 `openspec/specs/`、`openspec/changes/archive/`、Phase 狀態、OpenSpec 候選、風險與下一步規劃一致。
 - Roadmap 同步以 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md §1.6` 為準；若沒有新的 runtime / smoke / test evidence，不得因 archive 完成就把 roadmap 的驗證狀態標成 passed。
+- Roadmap 對齊完成後，必須主動使用文件/規劃相關 skill 產生或更新同名 HTML 檢視版 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`；HTML 只作為方便人類閱讀的衍生檢視，內容必須源自同名 Markdown，source of truth 仍是 `.md`。
 - 若 roadmap 未同步，OpenSpec archive 只能視為規格檔案已搬移，不能視為專案執行規劃已收斂。
 - 若發現已在 `main` 產生未提交變更，先切到對應 `codex/openspec/<change-id>` branch，再繼續工作或整理 PR。
 

@@ -29,6 +29,8 @@
 > **2026-05-12 更新（本機環境一致性納入執行基線）**：新增 **§1.5** 作為 demo runtime 的環境一致性基線，並在 **§7 R10** / **§10** 補上 drift 風險與啟動前檢查。OpenSpec 已驗證通過代表當時 spec / tests / smoke evidence 成立；重新啟動 demo 前仍必須確認 repo-local Python / Node dependencies 沒有漂移。
 >
 > **2026-05-12 更新（OpenSpec archive 後 roadmap 對齊規範）**：新增 **§1.6**，明定每次 OpenSpec sync / archive 後，必須同步更新本 roadmap 的 spec 清單、歸檔 change 溯源、Phase 狀態、候選優先級與驗證證據引用，避免 `openspec/specs/` 與本文件漂移。
+>
+> **2026-05-12 更新（`worker-real-conversion-quality` archive 對齊）**：依 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §4 / §5 / §6 / §7 / §9.8 / §10**。P0 #1 已 land 並歸檔：`_worker` 已具備真實 IFC→USDC adapter、USDC openability hard gate、real mapping quality metrics 與 single Kit/browser 截圖證據；mapping coverage 仍採 measure-first，尚未鎖 production baseline 門檻。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -72,7 +74,7 @@
 
 | Spec | 對應 v1 Phase | 對應 v2 Layer | 狀態 |
 |---|---|---|---|
-| `worker-artifact-pipeline` | 1 | 3-B | ✓ 涵蓋 source intake / conversion job / versioned object layout / metadata callback / `original_filename` |
+| `worker-artifact-pipeline` | 1 | 3-B | ✓ 涵蓋 source intake / conversion job / versioned object layout / metadata callback / `original_filename` / real IFC→USDC conversion quality |
 | `worker-dev-ifc-source-selection` | 0/1 | 3-B | ✓ dev IFC source root + selected-source flow |
 | `worker-demo-upload-convert-ui` | 0/1 | 2 | ✓ Worker demo UI on 8005 |
 | `legacy-storage-conversion-retirement` | 1 | 3 | ✓ `_s3_storage` / `_conversion-service` 退役完成 |
@@ -80,13 +82,14 @@
 | `multi-artifact-kit-routing` | 3 | 3-C / 4 | ✓ artifact_bindings + kit_instance_bindings + same/dedicated/shared 三種 routing |
 | `streaming-multi-layer-payload-loading` | 1/2 | 4 | ✓ multi-binding load + applied_mode 誠實回傳 |
 | `session-first-review-viewer` | 2/3 | 2 | ✓ Viewer 從 review_request_id / session_id bootstrap |
-| `runtime-verification-evidence` | 0 | 6 | ✓ 證據分層（contract / single-Kit / multi-Kit / stress） |
+| `runtime-verification-evidence` | 0 | 6 | ✓ 證據分層（contract / real conversion / single-Kit / multi-Kit / stress） |
 | `runtime-verification-task-status` | 3 | 6 | ✓ checklist 語意：GPU / concurrent runtime items 不得因 blocker classification 被視為完成 |
 | `documentation-source-of-truth` | cross-cutting | repo governance | ✓ workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威 |
 
-### 1.3 已驗證的閉環（`docs/verification/2026-05-08-spec-end-to-end-verification.md`）
+### 1.3 已驗證的閉環與 runtime evidence
 
 ```txt
+# 2026-05-08 spec / review-session baseline
 _bim-control pytest:                 21 / 21 passed
 bim-review-coordinator vitest:       102 / 102 passed
 web-viewer-sample contract test:     passed
@@ -96,15 +99,28 @@ multi-user Socket.IO collaboration:  2 tabs ✓
 session close → kit release 分離:     ✓
 Socket.IO 90 client bounded stress:  passed (review_session_f4e936dc529c)
 
+# 2026-05-11 worker-real-conversion-quality
+_worker store focused tests:         45 passed
+_worker API tests:                   32 passed, 1 skipped
+real IFC→USDC root smoke:            passed (89,394,282 bytes fixture; coverage_ratio=0.950556913882097)
+single Kit/browser real worker USDC: passed (review_session_001a59d345ce; 1920×1080; non-black stream frame)
+
 # 進行中（不在 main，另一分支驗證）
 multi-artifact-kit-routing dedicated_instance runtime  : 另一分支驗證中（owner 自管進度）
 ```
+
+> **證據文件**：
+> - 2026-05-08 baseline：`docs/verification/2026-05-08-spec-end-to-end-verification.md`
+> - 2026-05-11 real conversion：`docs/verification/2026-05-11-worker-real-conversion-quality.md`
+> - Single Kit/browser 截圖與 summary：`docs/verification/evidence/2026-05-11-worker-real-conversion-quality/`
+>
+> **限制**：`worker-real-conversion-quality` 已解除 placeholder converter blocker，但本次 evidence 仍採 measure-first；目前記錄 coverage metrics，不代表已鎖定 production 最低 mapping coverage 門檻。
 
 > **註（2026-05-08 16:05）**：使用者另開一條分支驗證 `multi-artifact-kit-routing` 的 dedicated_instance runtime；本 roadmap 不重述該分支具體進度，待對應 PR merge 進 `main` 並更新 `runtime-verification-evidence` 之後再回填本表。
 
 ### 1.4 OpenSpec 已歸檔 change → 現行 `openspec/specs/` 溯源
 
-> **用途**： roadmap 只摘要狀態；**需求句式與 Requirement 編號以各 spec 為準**。下列為 `openspec/changes/archive/` 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-08 盤點）。
+> **用途**： roadmap 只摘要狀態；**需求句式與 Requirement 編號以各 spec 為準**。下列為 `openspec/changes/archive/` 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-12 盤點）。
 
 | 已歸檔 change（`openspec/changes/archive/`） | 影響的現行 spec（`openspec/specs/`） | 摘要 |
 |---|---|---|
@@ -114,6 +130,7 @@ multi-artifact-kit-routing dedicated_instance runtime  : 另一分支驗證中�
 | `2026-05-08-complete-spec-runtime-verification` | `runtime-verification-evidence`（新增） | contract／single‑Kit／multi‑Kit／stress 驗證分層與證據格式 |
 | `2026-05-08-fix-runtime-verification-task-status` | `runtime-verification-task-status`（新增） | OpenSpec runtime verification checklist 語意；GPU / concurrent runtime items 不得因 blocker classification 被視為完成；同步 PR #20 same-Kit primary／spectator stream evidence |
 | `2026-05-11-align-workflow-v3-with-saas-roadmap` | `documentation-source-of-truth`（新增） | workflow v3 與 SaaS 路線圖互補不替代；文件分工調整必須走 OpenSpec change；雙向 cross-reference 必須持續成立 |
+| `2026-05-11-worker-real-conversion-quality` | `worker-artifact-pipeline`、`runtime-verification-evidence`（MODIFY） | `_worker` real IFC→USDC adapter、openable `model.usdc` hard gate、real `ifc_index` / `usd_index` / `element_mapping`、one-to-many mapping schema、quality metrics、measure-first coverage report、single Kit/browser real worker artifact evidence |
 
 ```txt
 規格目錄約定：
@@ -194,6 +211,7 @@ cd ..
 | `§5 OpenSpec change 候選清單` | 若候選已 land / archive，改成已完成或從候選池移除；若產生新 gap，新增候選並標優先級 | 不得保留已完成候選作為 P0 待辦 |
 | `§7 風險與緩解` | 若 archive 解除了風險或引入新風險，更新對應 R 編號與緩解策略 | 不得刪除仍未被證據解除的風險 |
 | `§10 建議的下一步` | 把下一個實際 P0 / P1 工作重排，並引用最新 spec / archive 狀態 | 不得讓下一步指向已完成或已凍結的工作 |
+| 同名 HTML 檢視版 | 使用文件/規劃相關 skill 產生或更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`，內容源自本 Markdown | 不得讓 HTML 成為 source of truth；不得只改 HTML 而不更新 Markdown |
 
 #### 對齊檢查
 
@@ -204,6 +222,7 @@ OpenSpec archive 後，至少檢查：
 3. 已完成 change 是否仍被 §5 / §10 當成候選或下一步。
 4. 若 archive 只改 spec 而未重跑 runtime，不更新 §1.3 passed evidence。
 5. 若 runtime evidence 有更新，附上測試指令、日期、環境基線與證據文件路徑。
+6. 重新產生同名 HTML 檢視版，確認它引用的來源檔與更新時間反映本 Markdown。
 ```
 
 #### 完成定義
@@ -213,7 +232,9 @@ OpenSpec archive 後，至少檢查：
 - openspec/specs/ 代表最新規格權威。
 - openspec/changes/archive/ 保留已接受 change 的歷史 delta。
 - docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md 已同步反映 spec 現況、Phase 狀態、候選池、風險與下一步。
+- docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html 已由同名 Markdown 重新產生，供人類快速檢視。
 - 若 roadmap 未更新，archive 只能視為規格檔案已搬移，不能視為專案執行規劃已收斂。
+- 若 HTML 未同步，archive closeout 仍不完整；但衍生檢視不得覆蓋 Markdown 的 source-of-truth 地位。
 ```
 
 ---
@@ -228,19 +249,19 @@ OpenSpec archive 後，至少檢查：
 | fake APIs 補齊 demo UI / 人工可觸發 review flow | `worker-demo-upload-convert-ui` | ✓ |
 | health check / smoke test / 測試資料穩定化 | `runtime-verification-evidence` + `scripts/start-all`、`smoke-*.ps1` | ✓ |
 
-### Phase 1：`_worker` 收攏（最優先）— **狀態：⚠ 80% 完成，存在紅星風險**
+### Phase 1：`_worker` 收攏（最優先）— **狀態：✓ 主要紅星已解除；lineage / coverage baseline 待後續收斂**
 
 | v1 路線圖項目 | 對應 spec | 狀態 |
 |---|---|---|
 | `_s3_storage` + `_conversion-service` → `_worker` | `legacy-storage-conversion-retirement` | ✓ |
 | `_bim-control` 上傳 IFC 至 `_worker` | `worker-artifact-pipeline` Req1 | ✓ |
-| `_worker` 啟動 conversion job、產出 USDC + mapping | `worker-artifact-pipeline` Req2/3 | ⚠ **placeholder converter** |
+| `_worker` 啟動 conversion job、產出 USDC + mapping | `worker-artifact-pipeline` Req2/3 + real conversion requirements | ✓ real IFC→USDC adapter；USDC openability hard gate；one-to-many mapping；quality metrics |
 | 建立 artifact source / version / lineage 模型 | `worker-artifact-pipeline` Req4 | ✓ metadata 結構完成；lineage **graph API 未做** |
 
 **Gap**：
 
-1. `_worker` `complete_conversion_job()` 寫的是 `# worker adapter USDC placeholder`，**不是真實 IFC→USDC 轉換**。Runtime verification 證據第 6.3 / 6.5 節已記錄這個 blocker。
-2. mapping 對映率在 89 MB demo IFC 下只有 503 / 73272 IFC 元件 ≈ **0.7%**，無法支撐 issue → real prim highlight 的端對端示範。
+1. `worker-real-conversion-quality` 已於 `2026-05-11` archive：`_worker` 不再以 placeholder `model.usdc` 作為 ready conversion evidence；89 MB ignored repo-local IFC fixture 的 real conversion smoke 與 single Kit/browser evidence 已記錄於 `docs/verification/2026-05-11-worker-real-conversion-quality.md`。
+2. Mapping coverage 目前是 measure-first：本次 evidence 量到 `coverage_ratio=0.950556913882097`，但尚未把 production 最低 coverage 門檻寫成 hard gate；issue → real prim highlight 的最低可接受 coverage 仍需後續 spec 鎖定。
 3. lineage 已寫進 `metadata.json`，但**沒有 lineage 查詢 API**（GET `/api/artifacts/{id}/lineage`），UI 無法視覺化 source → derived → mapping 三層關係。
 
 ### Phase 2：檢討閉環 — **狀態：✓ 已完成並驗證**
@@ -375,7 +396,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 | # | 細項 | v2 Layer | NVIDIA Reference（優先） | 自主開發 fallback | 採用順序 | 對應候選 / 狀態 |
 |---|---|---|---|---|---|---|
-| **5.12** | IFC / Revit 原生轉檔 | 3-B | **無**（Kit converter 只支援 CAD：HOOPS / DGN / JT，**沒有 IFC**） | IfcOpenShell + NVIDIA Connect for Revit + Speckle（必須自建） | ❌ **必須自建** | P0/P1 候選 **#1**（已在 P0–P1 範圍）|
+| **5.12** | IFC / Revit 原生轉檔 | 3-B | **無**（Kit converter 只支援 CAD：HOOPS / DGN / JT，**沒有 IFC**） | IfcOpenShell + NVIDIA Connect for Revit + Speckle（必須自建） | ❌ **必須自建** | **#1 已 archive**（IfcOpenShell + `usd-core` adapter 已 land；coverage baseline 後續另開 spec）|
 | **5.13** | CFD / IAQ / HVAC / 環境模擬 | 3-D | **無**（Kit base 沒有；NVIDIA Modulus 是獨立 SDK，PINN 路線，需大量訓練資料）| OpenFOAM + OpenStudio + 結果以 USD attribute 寫回 stage | ❌ **必須自建 / 第三方**（Modulus 為長期選項）| P2 候選 **#5** contract / mock |
 | **5.14** | 碳排計算 | 3-D | **無**（NVIDIA 不提供業務邏輯） | 自建規則引擎 + 可選 AI inference（H100 host） | ❌ **必須自建** | P2 候選 **#5** |
 | **5.15** | IFC 規則檢查 / IDS / 法規 code check | 3-D | **無**（NVIDIA 不提供業務邏輯） | 自建規則引擎 + IDS 解析 + 可選 AI 提示 | ❌ **必須自建** | P2 候選 **#5** |
@@ -401,7 +422,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 > **Gap**：
 > 1. Phase 5 多數細項只需要 app `.kit` 加 dependency，但目前 `bim-streaming-server` 啟動 app 沒有載入 `omni.physx.bundle` / `omni.hydra.rtx` / `omni.mdl*` / `omni.kit.collaboration.*`，要先做一次「啟動 app extension list 對齊」spike（屬 §9.2 / §9.3 部署作業，不是新 spec）。
 > 2. **#1A**（presence layer）需要先有 USD live layer transport（5.11）才能用；Tier A 自建 transport 風險高 → 先以 Socket.IO 維持 collaboration，等 Tier B+ 配 Nucleus 再切。
-> 3. **#1**（IFC pipeline）與 **#5**（ai-rule contract）已在 P0–P1 / P2 候選清單內，本次拆分不改其優先級。
+> 3. **#1**（IFC pipeline）已於 2026-05-11 archive；**#5**（ai-rule contract）仍在 P2 候選清單內，本次拆分不改其優先級。
 
 ### Phase 6：Production & SaaS 營運 — **狀態：⏸ 等待公司的業務系統接入；目前不規劃 OpenSpec spec**
 
@@ -426,7 +447,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **多 region / 跨地理 TURN 部署** | Layer 6 | 海外使用者 RTT 投訴 | ⏸ 等待業務接入 |
 | **GitHub Actions / auto PR / test matrix 擴大** | Layer 6 | 開發團隊規模 ≥ 4 人 | ⏸ 等待業務接入 |
 
-> **與其他 Phase 的關係**：候選 #1 / #2 / #3 / #4（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
+> **與其他 Phase 的關係**：已歸檔 #1、候選 #2 / #3 / #4（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
 
 ---
 
@@ -451,13 +472,13 @@ A：可以，但**不是把 #2 spec 換掉**：
 |---|---|---|---|
 | 1 | 上傳 IFC / RVT / DWG | ✓ `POST /api/artifacts` + `POST /api/dev/ifc-sources/{id}/conversions` | LOW |
 | 2 | 建立 conversion job | ✓ `POST /api/conversions` 含 lineage 與 `original_filename` | LOW |
-| 3 | `_worker` headless conversion | ⚠ **placeholder：寫 `# worker adapter USDC placeholder`** | **HIGH** |
-| 4 | 生成 USD / USDC + element_mapping | ⚠ placeholder USDC；mapping 對映率 0.7% | **HIGH** |
-| 5 | 幾何 / 材料 / 物件 / GUID 對映檢查 | ❌ 無自動化品質閾值告警 | **HIGH** |
+| 3 | `_worker` headless conversion | ✓ real IFC→USDC adapter（IfcOpenShell + `usd-core` external prerequisites） | MEDIUM（dependency / local runtime drift） |
+| 4 | 生成 USD / USDC + element_mapping | ✓ openable worker-produced `model.usdc`；one-to-many mapping；coverage report `0.950556913882097` | MEDIUM（coverage baseline 尚未鎖門檻） |
+| 5 | 幾何 / 材料 / 物件 / GUID 對映檢查 | ⚠ USDC openability hard gate + quality metrics 已有；production 最低 coverage / material fidelity 門檻未鎖 | MEDIUM |
 | 6 | 建立 review-session-request → 分發 review session / kit instance | ✓ E2E 已驗證 | LOW |
 | 7 | 發布到 streaming + AI review | ⚠ streaming 通；AI review 未實作 | MEDIUM |
 
-**結論**：v1 路線圖「Phase 1 _worker 收攏（最優先）」雖然 spec 帳面 ✓，但**步驟 3-5 是真正的紅星 blocker**。任何往 Phase 4-6 推進的努力，都應在這個 blocker 解除後才有意義（否則 Kit GPU render 永遠是 placeholder evidence）。
+**結論（2026-05-12 對齊）**：v1 路線圖「Phase 1 _worker 收攏」的最大紅星 blocker（placeholder IFC→USDC）已由 `worker-real-conversion-quality` 解除。後續 Phase 4-6 可把 real worker-produced USDC 作為前提，但仍不得把 mapping coverage 視為 production baseline，直到另一次 spec 將最低門檻與 failure policy 鎖定。
 
 ---
 
@@ -471,20 +492,24 @@ A：可以，但**不是把 #2 spec 換掉**：
 - 候選不重疊；若新候選含已歸檔 spec 範圍，會用 ADD/MODIFY/REMOVE 注記。
 ```
 
-### 5.1 P0（馬上）
+### 5.0 已完成 / Archived
 
-#### 候選 #1：`worker-real-conversion-quality`
+#### 已歸檔 #1：`worker-real-conversion-quality`
 
 | 項目 | 內容 |
 |---|---|
+| **狀態** | ✓ 已 archive：`openspec/changes/archive/2026-05-11-worker-real-conversion-quality/` |
 | **目標** | 把 `_worker` `complete_conversion_job()` 從 placeholder 換成真實 IFC→USDC + mapping 產出，並建立 mapping coverage 品質基線 |
 | **解決的 v1 phase / v2 layer** | Phase 1 紅星 / Layer 3-B / IFC→USD 管線 step 3-5 |
-| **repo 邊界** | 只動 `_worker/`；不改 `_bim-control` / `coordinator` / `streaming` / `viewer` |
-| **風險** | HIGH（沒解決就無法驗 single Kit GPU render；可能引入大型 dependency 例如 IFCConvert / pxr USD） |
-| **KPI** | 1) 至少 1 個 repo-local IFC fixture 轉出可在 Kit viewport 渲染的 USDC（取代 placeholder）；2) mapping coverage ≥ 50% on 89 MB demo IFC（具體門檻在 explore 階段定）；3) 90 MB IFC conversion ≤ 預設門檻（在 explore 階段量測） |
-| **驗證指令** | `cd _worker && python -m pytest tests` + `scripts/smoke-worker-review-request.ps1` + browser viewport screenshot |
+| **repo 邊界** | 主要動 `_worker/` 與 verification docs；`bim-streaming-server` / viewer 僅作 runtime evidence，不接管 conversion ownership |
+| **結果** | `_worker` 已產生 real openable `model.usdc`、`ifc_index.json`、`usd_index.json`、one-to-many `element_mapping.json`、converter metadata 與 quality metrics；converter fallback / synthetic ids 不計入 real IFC GUID coverage |
+| **KPI / evidence** | 89 MB ignored repo-local IFC fixture smoke passed；`coverage_ratio=0.950556913882097`；`conversion_job_id=conv_20260511034506_f88ee0fd`；`review_session_001a59d345ce` single Kit/browser screenshot evidence passed |
+| **驗證紀錄** | `docs/verification/2026-05-11-worker-real-conversion-quality.md` + `docs/verification/evidence/2026-05-11-worker-real-conversion-quality/` |
 | **建議 spec id** | `worker-real-conversion-quality` |
-| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` Req3「derived artifact result」；MODIFY `runtime-verification-evidence` 6.3 / 6.5 的「single Kit GPU render」blocked 條件 |
+| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline`：real conversion / mapping / quality gates；MODIFY `runtime-verification-evidence`：real conversion metrics + single Kit real worker artifact evidence |
+| **剩餘限制** | Coverage 仍是 measure-first；尚未鎖 production 最低 mapping coverage hard gate |
+
+### 5.1 P0（馬上）
 
 #### 候選 #2：`streaming-multi-instance-orchestration`
 
@@ -598,11 +623,12 @@ A：可以，但**不是把 #2 spec 換掉**：
 ## 6. 優先順序總結
 
 ```txt
-P0 (馬上 / 紅星 blocker):
-  #1  worker-real-conversion-quality           ★★★ 解除 IFC→USDC placeholder blocker
-                                               硬體：開發者本機（CPU + 64 GB RAM 為主，見 §9.2）
-                                               NVIDIA: Kit base 無 IFC converter（MCP 已驗，見 §11）
-                                                       → 必須走 IfcOpenShell / Connect for Revit 自建
+Archived / 已完成:
+  #1  worker-real-conversion-quality           ✓ 已於 2026-05-11 archive
+                                               解除 IFC→USDC placeholder blocker；real worker-produced USDC 已有 single Kit/browser evidence
+                                               剩餘：coverage baseline 門檻仍是 measure-first，待後續 spec 鎖定
+
+P0 (馬上):
   #2  streaming-multi-instance-orchestration   ★★  🟡 驗證在另一分支進行中（owner 自管；non-blocked）
                                                硬體：**24 GB VRAM 為硬門檻**（RTX 4090 / L4 起跳，見 §9.2）
                                                NVIDIA: signalPort=49100 / streamPort=47999 與 omni.kit.livestream.webrtc 9.0.2 對齊
@@ -620,7 +646,7 @@ P2.5 (新增 ⓜ，由 §11 MCP 補正衍生；採用 reference impl，見 §13)
   #1A streaming-collaboration-presence-layer-upgrade   用 omni.kit.collaboration.presence_layer 取代 Socket.IO 自建協作
                                                         依賴：Tier A 起 + Nucleus 或自建 USD live transport
   #2A streaming-ovas-helm-baseline                     遷移到 NVIDIA OVAS Helm chart（K8s reference impl）
-                                                        前置條件：#1 / #2 在 main 上 land；K8s 環境（kind / 雲）
+                                                        前置條件：#1 已 land；#2 在 main 上 land；K8s 環境（kind / 雲）
 
 P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
   #7  tenant-rbac-foundation                   ⏸ 等待 SSO / IdP 接入時點（Phase 6 / Layer 1）
@@ -632,8 +658,8 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 依賴圖（粗線是強依賴；⏸ 表示等業務接入才解凍）：
 
 ```txt
-#1 ─┬─→ Kit GPU render 證據解鎖
-    └─→ Phase 5 真正可以開始（沒有真實 USDC 就沒有 Physics / MDL）
+#1 (✓ archived) ─┬─→ Kit GPU render 證據已解鎖
+                 └─→ Phase 5 可用 real worker-produced USDC 作前提；coverage baseline 仍待後續 spec 鎖門檻
 
 #2 (🟡 另一分支驗證中)
    ─→ main 上 multi-instance routing 證據解鎖
@@ -643,7 +669,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 #4 ─→ #6 mock webhook (P2 可探索)
    ─→ ⏸ #8 audit (Phase 6 凍結)
 
-#1A ─→ Phase 5 多人協作真實化（#1 / #2 land 後啟動）
+#1A ─→ Phase 5 多人協作真實化（#1 已 archive；#2 land 後啟動）
 #2A ─→ ⏸ #9 (Phase 6 凍結；待業務接入後與 OVAS 融合)
 
 ⏸ #7 tenant-rbac ─→ ⏸ #5 / #6 / #8 (tenant 隔離是後續所有服務的權限根；同凍結)
@@ -655,7 +681,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 
 | # | 風險 | 緩解 |
 |---|---|---|
-| R1 | 候選 #1 引入 IFCConvert / pxr USD 大型 dependency 風險 | 在 explore 階段先評估 3 個候選 converter（IfcOpenShell / NVIDIA Connect for IFC / Speckle），定 KPI 再選擇。MCP 已驗 Kit base 確認**沒有** IFC converter（§11） |
+| R1 | #1 已選 IfcOpenShell + `usd-core` 作為 real IFC→USDC adapter external prerequisites，後續仍有 dependency / license / Windows runtime drift 風險 | 保持 adapter boundary，不讓 `_worker` contract 綁死單一本機腳本路徑；缺 converter 或 USDC 不可開啟時必須 fail job，不得 fallback ready placeholder。Coverage baseline 仍採 measure-first，待後續 spec 鎖最低門檻 |
 | R2 | 候選 #2 在 8 GB VRAM 下可能無法並行 2 個 Kit；驗證在另一分支進行中 | 不再以 `main` 環境作為 blocker 依據；驗證 owner 自管分支進度。本 roadmap 的 KPI 寫成「對應 PR merge 進 `main` 並更新 `runtime-verification-evidence` §6.4」；硬體門檻 24 GB VRAM 在 §9.2 |
 | R3 | 規劃過早跳到 Phase 5/6，本機 demo 變不穩 | P0 / P1 全部 land 之前不啟動 #5 / #6 之後的候選；Phase 6 候選 #7 / #8 / #9 連同細項一律凍結至業務系統接入 |
 | R4 | OpenSpec 在 main 上累積太多 untracked 變更 | 每個候選都走 `codex/openspec/<change-id>` branch + PR；本文件不算 OpenSpec change，是 plan |
@@ -674,7 +700,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 ```txt
 - 本文件不直接創建 OpenSpec change folder；那是 explore / propose 的工作。
 - 本文件不修改既有 spec；任何 MODIFY 都應在對應 OpenSpec change 內執行。
-- 本文件不啟動實作；候選 #1 ~ #9 都應走 codex/openspec/<change-id> branch。
+- 本文件不啟動實作；尚未歸檔的候選應走 codex/openspec/<change-id> branch。
 - 本文件不更新 AGENTS.md / CLAUDE.md；除非候選 land 後改變 repo 邊界（例如 #5 / #6 加新 mock service）。
 ```
 
@@ -825,7 +851,7 @@ Web Viewer dev server : 1 個
 | WebRTC 串流升級（per-AOV） | ✓ 可 | 從現用 framebuffer 串流升級到 RGB / depth / segmentation 分流 | `omni.kit.livestream.webrtc` v9.0.2 / `omni.kit.livestream.app` v9.0.0 / `omni.kit.livestream.aov` v9.0.0 / `omni.services.livestream.webrtc` v9.0.0 |
 | IAQ / HVAC / CFD 模擬 | ⚠ 受限（CPU 主導） | **需自建**：寫 Kit extension 將 OpenFOAM / OpenStudio 結果以 USD attribute 寫回 stage；不要與重 Kit 並跑 | **無 NVIDIA Kit base 對應**；可參考 NVIDIA Modulus（PINN/CFD AI）但屬獨立 SDK |
 | Sensor Simulation（lidar / radar） | ⚠ 受限 | **需自建或引入 Isaac Sim**；Kit base 只有 `omni.kit.property.camera` / `omni.kit.manipulator.camera` 等基礎 camera | **無 Kit base sensor extension**（搜 lidar/radar 命中度低）；Isaac Sim 的 `omni.isaac.sensor` 才有，需獨立部署 |
-| IFC / Revit 原生轉檔 | ⚠ 部分 | **需自建**：候選 #1 走 IfcOpenShell；Revit 走 NVIDIA Connect for Revit | Kit 只覆蓋 `omni.kit.converter.cad` v207.0.7（HOOPS/DGN/JT 等）+ `omni.services.convert.cad` v507.1.5（batch service），**沒有 IFC** |
+| IFC / Revit 原生轉檔 | ⚠ 部分 | **需自建**：#1 已以 IfcOpenShell + `usd-core` adapter land；Revit 走 NVIDIA Connect for Revit | Kit 只覆蓋 `omni.kit.converter.cad` v207.0.7（HOOPS/DGN/JT 等）+ `omni.services.convert.cad` v507.1.5（batch service），**沒有 IFC** |
 | 大型場景 (≥ 2 GB USD) | ⚠ 受限 | per-session 撐到 5 GB；24 GB 只能跑 4-5 個 instance；建議用 USD payload + purpose 做 LOD | `omni.kit.usd.layers` + USD `payload` / `purpose` API |
 | 場景多 sublayer 即時同步（live） | ✓ 可 | App 啟用 LiveSyncing 與 Nucleus（或自建 USD live transport） | `omni.kit.usd.layers.LiveSyncing` / `omni.kit.usd.layers.LiveSession` |
 
@@ -934,7 +960,7 @@ AI 規則 / 碳排檢查 : 每 review session 1-3 次
 | Per-AOV 多通道串流 | ⚠ 不啟用 | ⚠ 評估 | 進階：審查時要同時看 RGB + depth + segmentation overlay 才有意義 |
 | IAQ / HVAC 模擬 | ⚠ 透過 `_ai-rule-carbon-service` mock | ⚠ 透過 `_ai-rule-carbon-service` 真實計算 + USD writeback | 候選 #5 `ai-rule-carbon-result-contract` 先做 contract，AI 推論本身不在 Kit Streaming GPU 上跑（建議分到 1 台 H100/L40S 共用 inference host） |
 | Sensor Simulation（lidar / radar） | ❌ 不部署 | ⚠ 評估獨立 Isaac Sim cluster | 與 Kit Streaming 不同部署單元；Tier C 才考慮 |
-| IFC / Revit 轉檔 | ✓（候選 #1：IfcOpenShell on Conversion CPU host） | ✓ + Revit 自動化 hook | Conversion CPU host（不吃 GPU），符合 §9.3 表中已列的 conversion worker 主機 |
+| IFC / Revit 轉檔 | ✓（#1 已 land：IfcOpenShell + `usd-core` on Conversion CPU host） | ✓ + Revit 自動化 hook | Conversion CPU host（不吃 GPU），符合 §9.3 表中已列的 conversion worker 主機 |
 | OVAS K8s 部署 | ❌ 仍走自建 docker-compose | ✓ 推薦遷移到 OVAS Helm chart | NGC `kit-appstreaming-collection`；K8s + API gateway + LB；對應候選 #2 升級到 #9 |
 
 ##### 中小型工作室部署藍圖（Tier B + Phase 5 對應）
@@ -1050,7 +1076,7 @@ B → C 觸發：
 
 | 候選 | 涉及 Tier 元件 | 在哪一階段被驗證 |
 |---|---|---|
-| #1 worker-real-conversion-quality | Conversion worker（CPU + 64 GB RAM） | 開發階段單機即可 |
+| #1 worker-real-conversion-quality | Conversion worker（CPU + 64 GB RAM） | ✓ 已於 2026-05-11 archive；開發階段單機已驗 real IFC→USDC + single Kit/browser evidence |
 | #2 streaming-multi-instance-orchestration | GPU host（**24 GB 為必要門檻**） | 開發階段升級 → 驗 dedicated_instance routing |
 | #4 coordinator-session-lifecycle-events-audit | App host + Postgres | 開發階段單機 |
 | #5 ai-rule-carbon-result-contract | App host（Phase 5 mock）；正式 AI inference 需 H100 級 GPU | 開發階段 mock；Tier C 正式 |
@@ -1072,19 +1098,24 @@ B → C 觸發：
    - 對 `bim-review-coordinator` 與 `web-viewer-sample` 重跑 `npm ci`，確認 `tsx.cmd` / `vite.cmd` 存在。
    - 以 `.\scripts\start-all.ps1 -SkipStreaming` 驗 8001 / 8005 / 8004 / 5173；這一步通過後，才把後續 OpenSpec / runtime evidence 的失敗視為功能或 spec 問題。
 
-2. **挑一個 P0 候選啟動 OpenSpec explore**：
-   - 推薦先做 `#1 worker-real-conversion-quality`，因為 v2 圖紅星指向這裡。
-   - 啟動指令：先建 branch `codex/openspec/worker-real-conversion-quality`，再呼叫 `/openspec new worker-real-conversion-quality`，進 explore 階段釐清 converter 選型 + KPI。
-   - **MCP 補強建議**：在 explore 階段呼叫 `kit-mcp` `search_kit_extensions("ifc opc revit")` 確認 NVIDIA 是否新增 IFC converter（目前未發現）；同時用 `usd-code-mcp` `get_usd_class_detail("UsdGeomMesh")` / `get_usd_method_detail("CreateAttribute", "Prim")` 驗證 mapping schema 設計符合 USD 官方 API。
+2. **確認 #1 archive 對齊已完成，後續不再重開 `worker-real-conversion-quality`**：
+   - `#1 worker-real-conversion-quality` 已歸檔到 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/`。
+   - 現行 specs 已同步到 `worker-artifact-pipeline` 與 `runtime-verification-evidence`。
+   - 下一步若要提升品質，不是重開 #1，而是另開「mapping coverage baseline / material fidelity / lineage API」等更小 spec。
 
-3. **追蹤 `#2 streaming-multi-instance-orchestration` 在另一分支的驗證進度**：
+3. **追蹤 `#2 streaming-multi-instance-orchestration` 在另一分支的驗證進度（目前 P0）**：
    - **不再從 0 啟動**；驗證已在使用者另一分支進行中（owner 自管），本 roadmap 端的責任是：
      - 待對應 PR merge 進 `main` 後，更新 §1.3 / §2 Phase 3 / §9.2 把「🟡 進行中」→「✓ passed」
      - 同步更新 `runtime-verification-evidence` §6.4 evidence
    - 若該分支需要硬體升級（24 GB VRAM）才能完成驗證，參考 §9.2 推薦配置；本機 8 GB 是下限不是阻礙。
    - **MCP 補強**：在分支 review 時，用 `kit-mcp` `get_kit_extension_details("omni.kit.livestream.webrtc")` 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。
 
-4. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
+4. **挑一個 P1 候選啟動 OpenSpec explore**：
+   - 推薦在 `#3 worker-artifact-lineage-api` 與 `#4 coordinator-session-lifecycle-events-audit` 二選一。
+   - 若要延續 #1 的 worker 成果，優先 `#3`：把 source → derived → mapping lineage 從 metadata 變成可查詢 API / worker UI。
+   - 若要支撐後續 webhook / observability，優先 `#4`：把 lifecycle events 收斂成 append-only event schema。
+
+5. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
    - 在啟動前，先依 §13 的決策框架評估「**自建 vs 採用 NVIDIA**」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。
    - 若決定啟動 #1A：用 `kit-mcp` `get_kit_extension_details("omni.kit.collaboration.presence_layer")` 查 PresenceLayerAPI 22 個方法（`broadcast_local_bound_camera` / `enter_follow_mode` / `get_selections`）。
    - 若決定啟動 #2A（OVAS spike，2026-05-08 17:00 補）：
@@ -1094,16 +1125,16 @@ B → C 觸發：
      4. **不變的部分**：`web-viewer-sample` UI、`_bim-control` / `_worker` data plane、Socket.IO collaboration 全部保留；OVAS 只取代「Kit container 啟動 / 調度」（§2 4.4 / 4.5 / 4.11）。
      5. **避免的事**：不要把 OVAS image build 流程混進 `bim-streaming-server` 的單機 dev workflow；把 OVAS 部署放 `deploy/ovas/` 獨立目錄，Tier A 仍可走 `scripts/start-multi-kit.ps1` 自寫 KitInstancePool 路徑。
 
-5. **Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動**：
+6. **Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動**：
    - 依使用者 2026-05-08 16:05 指示，這些細項目前 ⏸ 凍結，**等待公司業務系統接入**（SSO / IT 維運 / SLA / billing / 合約等）。
    - 任何想解凍的提案，需在 PR description 引用該決策段落（本文件 §2 Phase 6 表 + §6 P3-frozen），並附上業務系統接入確認文件。
 
-6. **延後啟動 `#5` / `#6`**：
+7. **延後啟動 `#5` / `#6`**：
    - `#5 ai-rule-carbon-result-contract` 與 `#6 notification-webhook-service` 是 P2 的入口 contract（mock 階段），但若 P0 / P1 還沒 land 就開，會是**範圍擴散風險**。
    - production-grade 的 audit log persistence 與 webhook delivery 屬 Phase 6 凍結範圍（§2 Phase 6 表）。
 
-7. **保留本文件作為下一輪 roadmap 對照基準**：
-    - 任何新 spec land 後（例如 `#1` archive 完成），更新對照表「Phase 1 紅星 ✓ 解除」並重新評估 P1 / P2 的優先級。
+8. **保留本文件作為下一輪 roadmap 對照基準**：
+    - 任何新 spec land 後，更新對照表、候選池與優先級，避免已完成工作仍留在 P0/P1。
     - 每次 OpenSpec sync / archive 後，依 §1.6 同步更新 `§1.2` / `§1.4` / `§2` / `§5` / `§7` / `§10`，保持 `openspec/specs/` 與 roadmap 對齊。
     - 持續用 `kit-mcp` / `usd-code-mcp` 對 NVIDIA 真實 extension 版本做 quarterly drift check（NVIDIA 經常隨 Kit major 版本更新 extension 介面；本文件記錄為 109.x 系列）。
     - 公司業務系統接入確認後，逐項解凍 §2 Phase 6 細項並補對應 OpenSpec change。
@@ -1224,7 +1255,7 @@ _worker conversion 架構:
 
 | 缺口 | 建議來源 |
 |---|---|
-| IFC native converter | **IfcOpenShell**（開源、Python binding；候選 #1 主推） / NVIDIA Connect for Revit（Revit→USD）/ Speckle（多格式 stream）|
+| IFC native converter | **IfcOpenShell + `usd-core`**（#1 已採用的 `_worker` adapter external prerequisites） / NVIDIA Connect for Revit（Revit→USD）/ Speckle（多格式 stream）|
 | Sensor simulation（lidar / radar / 真實相機） | **NVIDIA Isaac Sim**（含 `omni.isaac.sensor`）；獨立部署單元，不混在 BIM streaming server |
 | IAQ / HVAC / 全屋 CFD | **OpenFOAM / OpenStudio / Modulus**；在 conversion / inference host 跑，結果以 USD attribute 寫回 stage |
 | Multi-Kit instance lifecycle / pool / scheduling | **OVAS Helm chart**（NGC `kit-appstreaming-collection`）— 詳見 §11.4 |
@@ -1359,7 +1390,7 @@ flowchart TB
 | **建議 spec id** | `streaming-ovas-helm-baseline` |
 | **與既有 spec 關係** | 與 #2 互補（先在單機/雙機做 #2，再升級到 OVAS） |
 | **與 #9 的關係** | **不等 #9 解凍即可探索**。#9 production-deployment-baseline 屬 Phase 6 凍結（等業務接入），但 #2A 只是「把 streaming runtime 換成官方 reference」，不涉及 SLA / billing / multi-tenant 等 Phase 6 範圍 |
-| **建議啟動時機** | **P0 候選 #1 / #2 land 之後**；不要在 IFC→USDC placeholder 與 multi-Kit 都還沒驗證前提早跳到 K8s。先在開發機 kind / minikube 驗證再評估雲端 |
+| **建議啟動時機** | **#1 已 land，待 #2 在 main 上 land 後**；不要在 dedicated multi-Kit 還沒驗證前提早跳到 K8s。先在開發機 kind / minikube 驗證再評估雲端 |
 
 #### #2A 對 spec `multi-artifact-kit-routing` 的具體影響（2026-05-08 17:00）
 
@@ -1405,8 +1436,8 @@ flowchart TB
 ##### #1A / #2A 與既有 P0 / P1 的依賴
 
 ```txt
-#1 worker-real-conversion-quality
-   └─→ 解開 IFC→USDC 紅星
+#1 worker-real-conversion-quality (✓ archived)
+   └─→ 已解開 IFC→USDC placeholder 紅星；coverage baseline 門檻仍待後續 spec
 
 #2 streaming-multi-instance-orchestration  (🟡 另一分支驗證中)
    └─→ 雙 Kit 在單機可動 → 為 #2A 的 OVAS Helm 升級鋪路
@@ -1443,8 +1474,8 @@ flowchart TB
 | **PhysX 5 物理（rigid body / 結構）** | `omni.physx` v109.0.7（742 methods） | 不可能（PhysX 是 NVIDIA 專屬實作） | ✅ **採用** — App `.kit` 加 `omni.physx.bundle`，per Kit +500 MB-1 GB VRAM | （現用 app 啟動加 dependency；不需新 spec） |
 | **RTX Realtime / Path Tracing** | `omni.hydra.rtx` v1.0.2 + `omni.kit.viewport.rtx` v107.0.0 | 不可能（RTX 是 NVIDIA hardware + driver） | ✅ **採用** — 我們已預設用 RTX | （現用） |
 | **MDL 高精度材質** | `omni.mdl` v56.0.3 + `omni.mdl.usd_converter` v1.0.36 | 不可能（MDL 是 NVIDIA 標準） | ✅ **採用** — App 加 `omni.kit.material.library` | （現用 app 啟動加 dependency） |
-| **Batch CAD→USD（DGN/JT/HOOPS）** | `omni.services.convert.cad` v507.1.5（FastAPI-style） | 中（自寫但會吃官方 SDK license） | ⚠ **採用（業務有 DGN/JT/HOOPS 時）** — 非必要；候選 #1 主軸是 IFC | （#1 為主） |
-| **IFC native 轉檔** | **無** | 必須自建（IfcOpenShell / Connect for Revit / Speckle） | ❌ **自建** — 候選 #1 紅星，IfcOpenShell 為主 | #1 |
+| **Batch CAD→USD（DGN/JT/HOOPS）** | `omni.services.convert.cad` v507.1.5（FastAPI-style） | 中（自寫但會吃官方 SDK license） | ⚠ **採用（業務有 DGN/JT/HOOPS 時）** — 非必要；IFC 主軸已由 #1 自建 adapter 處理 | （#1 已處理 IFC 主軸） |
+| **IFC native 轉檔** | **無** | 必須自建（IfcOpenShell / Connect for Revit / Speckle） | ❌ **自建** — #1 已以 IfcOpenShell + `usd-core` adapter 解除 placeholder blocker | #1（已 archive） |
 | **Sensor simulation（lidar / radar）** | NVIDIA Isaac Sim（獨立部署） | 低（從 0 寫感測器模擬不切實際） | ⚠ **獨立部署** — 不混進 BIM streaming server，Phase 5 後期才考慮 | （無對應候選；待業務需求） |
 | **CFD / IAQ / HVAC** | **無 Kit base 對應**（Modulus 是獨立 SDK） | 中（OpenFOAM + 結果寫回 USD） | ❌ **自建 / 第三方** — 計算放 inference host，結果以 USD attribute 寫回 stage | #5（mock 階段先做 contract） |
 | **Live session / Nucleus 同步** | `omni.kit.usd.layers.LiveSyncing` + Nucleus | 高（自建 USD live transport server，但需 Pixar USD 深度知識） | ⚠ **依規模決定** — Tier A 自建簡易 transport；Tier B 起接 Nucleus | （與 #1A 配合） |
@@ -1492,7 +1523,7 @@ flowchart TB
 | **R8.7** | GPU 鎖定（強依賴 NVIDIA RTX / driver / CUDA） | LOW | 業界 BIM streaming 預設是 NVIDIA；不是合理可變動軸 |
 | **R8.8** | 版本破壞性升級（Kit 109 → 110 API 可能變） | MEDIUM | 釘住 minor 版本；季度做 `kit-mcp` drift check（已列入 §7 R5） |
 | **R8.9** | 不解業務邏輯（NVIDIA 不管你的 review session lifecycle / RBAC） | LOW（已知） | OVAS 只取代基礎建設；業務邏輯仍留在 `_bim-control` / `coordinator` 邊界 |
-| **R8.10** | 不解 IFC（NVIDIA Kit base 沒有 IFC converter） | HIGH（已知） | 候選 #1 自建 IFC converter；NVIDIA reference 不解這個 |
+| **R8.10** | 不解 IFC（NVIDIA Kit base 沒有 IFC converter） | HIGH（已知） | #1 已自建 IFC converter adapter；NVIDIA reference 仍不解這個，後續只追 coverage baseline / Revit 自動化 |
 | **R8.11** | 部分 extension API 變動快（如 `omni.kit.livestream.webrtc` 9.0.x → 9.1.x 介面） | MEDIUM | 透過清晰邊界 + 版本鎖；不要在多處硬編碼 API |
 | **R8.12** | Reference impl 不一定符合公司資安政策（如 NGC image 來自外部 registry） | MEDIUM | 評估階段允許從 NGC pull；商業階段 mirror 到內部 registry + 安全掃描 |
 
