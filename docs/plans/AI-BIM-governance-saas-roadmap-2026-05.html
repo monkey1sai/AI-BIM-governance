@@ -127,6 +127,7 @@
 <p><strong>2026-05-12 更新（<code>worker-mapping-lineage-quality-baseline</code> archive 對齊）</strong>：依 <code>openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/</code> 與現行 <code>openspec/specs/</code> 更新 <strong>§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10</strong>。原候選 #3 lineage API 與 #3A mapping quality baseline 已合併為同一 change 並歸檔：<code>_worker</code> 已具備 lineage query API、worker UI lineage / quality view、all-IFC-entity coverage 語意、<code>minimum_coverage_ratio=1.0</code> policy 與 storage batch verification helper；canonical 13-file real batch 仍未完成，因此 production baseline 尚未鎖定。</p>
 <p><strong>2026-05-12 更新（canonical storage batch follow-up）</strong>：新增 active change <strong><code>worker-canonical-storage-batch-baseline</code></strong>，專門處理已歸檔 #3/#3A 留下的 readiness gap：<code>C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc</code> 13-file real batch 尚未 passed，且 <code>--limit 1</code> 曾 600s timeout。此 change 是下一個 worker risk burn-down；執行順序明確改為「單檔 real conversion 先跑通 → 用既有 web viewer / Kit 載入 worker-hosted <code>model.usdc</code> 看轉檔成果 → 再跑 full 13-file batch」。<code>coordinator-session-lifecycle-events-audit</code> 仍保留為下一個新功能候選。</p>
 <p><strong>2026-05-12 更新（canonical batch apply evidence）</strong>：<code>worker-canonical-storage-batch-baseline</code> 已補上 batch timeout/status semantics、converter phase progress、worker UI review viewer handoff 與 verification report。Canonical <code>--limit 1 --timeout-seconds 600</code> 仍在第一個 89MB fixture timeout，並記錄 <code>source_artifact_id=artifact_src_00de4766405d</code>、<code>artifact_group_id=ag_61cd043fd19c</code>、<code>conversion_job_id=conv_20260512095847_74be0bc7</code>。短 timeout smoke 顯示已完成 <code>ifc_open</code>，目前卡在 <code>source_entity_enumeration</code>；因此 visual preview / full 13-file batch 仍 blocked，<code>minimum_coverage_locked=false</code> 維持不變。</p>
+<p><strong>2026-05-12 更新（canonical batch archive + enumeration optimization next）</strong>：依使用者明確指示，<code>worker-canonical-storage-batch-baseline</code> 已先 archive 至 <code>openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/</code>，並把其 batch/status/phase timing/preview handoff requirements 併入現行 specs；archive 時仍有 10 個 implementation tasks 未完成，因此 roadmap 不把它視為 runtime passed。新的 active change <strong><code>optimize-worker-source-entity-enumeration</code></strong> 專門 burn down <code>source_entity_enumeration</code> timeout blocker，先完成 89MB canonical fixture 的 enumeration profiling / optimization，再回到 single-fixture conversion、visual preview 與 full 13-file batch gate。</p>
 </blockquote>
 <p>本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出<strong>下一階段最小、可驗證、不擴散範圍</strong>的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。</p>
 <hr />
@@ -299,6 +300,17 @@ real batch --limit 1:                timed out after 600s; first fixture job con
 short timeout phase smoke:           ifc_open completed; source_entity_enumeration still running at timeout
 worker UI handoff data:              implemented, but canonical visual preview blocked until model.usdc exists
 
+# 2026-05-12 worker-canonical-storage-batch-baseline（archived blocked evidence）
+openspec archive:                    completed by explicit user instruction; 30/40 tasks complete
+spec sync:                           worker-artifact-pipeline / runtime-verification-evidence / worker-demo-upload-convert-ui updated
+runtime status:                      still blocked at source_entity_enumeration; visual preview / full batch not passed
+baseline lock:                       minimum_coverage_locked=false
+
+# 2026-05-12 optimize-worker-source-entity-enumeration（active change）
+openspec validate --strict:          passed for proposal/design/specs/tasks
+scope:                               _worker source entity enumeration profiling + optimization
+next runtime gate:                   rerun canonical --limit 1 --timeout-seconds 600 after optimization
+
 # 延後（等待 GPU 購買與部署）
 multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部署後執行
 </code></pre>
@@ -366,6 +378,11 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 <td><code>2026-05-12-worker-mapping-lineage-quality-baseline</code></td>
 <td><code>worker-artifact-pipeline</code>、<code>runtime-verification-evidence</code>、<code>worker-demo-upload-convert-ui</code>（MODIFY）</td>
 <td>lineage graph API、stable derived/index/mapping artifact IDs、all-IFC-entity coverage denominator、<code>minimum_coverage_ratio=1.0</code> policy、warn reviewable / fail blocking readiness、storage batch evidence tier、worker UI lineage / quality view</td>
+</tr>
+<tr>
+<td><code>2026-05-12-worker-canonical-storage-batch-baseline</code></td>
+<td><code>worker-artifact-pipeline</code>、<code>runtime-verification-evidence</code>、<code>worker-demo-upload-convert-ui</code>（MODIFY）</td>
+<td>canonical storage batch status/timeout semantics、per-fixture phase timings、single-fixture gate、review viewer handoff contract；archive 時 runtime evidence 仍 blocked at <code>source_entity_enumeration</code>，baseline 未鎖定</td>
 </tr>
 </tbody>
 </table>
@@ -1489,7 +1506,42 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4>Active risk burn-down：<code>worker-canonical-storage-batch-baseline</code></h4>
+<h4>已歸檔但 runtime blocked：<code>worker-canonical-storage-batch-baseline</code></h4>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Archive</strong></td>
+<td><code>openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/</code></td>
+</tr>
+<tr>
+<td><strong>目前執行結果（2026-05-12）</strong></td>
+<td>Batch helper / CLI / worker UI handoff 已更新；canonical dry-run 找到 13 個 fixture；canonical <code>--limit 1 --timeout-seconds 600</code> 第一個 fixture 仍 timed out，短 timeout smoke 顯示 last-known phase 為 <code>source_entity_enumeration</code>；visual preview 與 full batch 仍 blocked</td>
+</tr>
+<tr>
+<td><strong>已併入 specs</strong></td>
+<td>canonical storage batch status semantics、phase timings、timeout diagnostics、single-fixture gate、review viewer handoff</td>
+</tr>
+<tr>
+<td><strong>解決的 gap</strong></td>
+<td><code>worker-mapping-lineage-quality-baseline</code> 已歸檔，但 production mapping baseline 仍未鎖定</td>
+</tr>
+<tr>
+<td><strong>仍未宣稱完成</strong></td>
+<td><code>source_entity_enumeration</code> bottleneck 未解；<code>model.usdc</code> 未產出；visual preview / full 13-file batch 未 passed；<code>minimum_coverage_locked=true</code> 不成立</td>
+</tr>
+<tr>
+<td><strong>後續切片</strong></td>
+<td><code>optimize-worker-source-entity-enumeration</code> 先處理 89MB canonical fixture 的 enumeration timeout</td>
+</tr>
+</tbody>
+</table>
+<h4>Active risk burn-down：<code>optimize-worker-source-entity-enumeration</code></h4>
 <table>
 <thead>
 <tr>
@@ -1500,19 +1552,15 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tbody>
 <tr>
 <td><strong>狀態</strong></td>
-<td>Active OpenSpec follow-up：<code>openspec/changes/worker-canonical-storage-batch-baseline/</code></td>
-</tr>
-<tr>
-<td><strong>目前執行結果（2026-05-12）</strong></td>
-<td>Batch helper / CLI / worker UI handoff 已更新；canonical dry-run 找到 13 個 fixture；canonical <code>--limit 1 --timeout-seconds 600</code> 第一個 fixture 仍 timed out，短 timeout smoke 顯示 last-known phase 為 <code>source_entity_enumeration</code>；visual preview 與 full batch 仍 blocked</td>
+<td>Active OpenSpec change：<code>openspec/changes/optimize-worker-source-entity-enumeration/</code></td>
 </tr>
 <tr>
 <td><strong>目標</strong></td>
-<td>補齊 canonical <code>storage/*.ifc</code> 13-file real batch evidence；先找出並修掉 <code>--limit 1</code> timeout，單檔成功後用既有 review viewer / Kit 載入 worker-hosted <code>model.usdc</code> 看轉檔成果，再擴到全批次</td>
+<td>profile 並 optimize <code>_worker</code> <code>source_entity_enumeration</code>，讓 canonical 89MB fixture 在 configured timeout 內通過 enumeration 或留下 deterministic external blocker</td>
 </tr>
 <tr>
 <td><strong>解決的 gap</strong></td>
-<td><code>worker-mapping-lineage-quality-baseline</code> 已歸檔，但 production mapping baseline 仍未鎖定</td>
+<td><code>worker-canonical-storage-batch-baseline</code> archive 後留下的第一個 runtime blocker：<code>ifc_open</code> 已完成，但 <code>_source_entities(model)</code> / all-entity enumeration 無法於 timeout 內完成</td>
 </tr>
 <tr>
 <td><strong>repo 邊界</strong></td>
@@ -1520,19 +1568,19 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><strong>風險</strong></td>
-<td>HIGH（89MB canonical fixture 單檔 real conversion 曾 timeout；all-IFC-entity materialization 可能放大 output size / stage save 成本）</td>
+<td>HIGH（若瓶頸來自 IfcOpenShell / IFC parser 內部，<code>_worker</code> 只能產生 deterministic blocker；若優化誤改 denominator，會破壞 all-IFC-entity coverage 語意）</td>
 </tr>
 <tr>
 <td><strong>KPI</strong></td>
-<td>1) canonical <code>--limit 1</code> 完成並有 phase timing，或以 deterministic timeout blocker 指向具體 converter phase；2) 單檔 <code>model.usdc</code> 透過既有 web viewer / Kit visual preview passed，或留下明確 blocked prerequisite；3) full 13-file batch 完成；4) 每 fixture lineage API / USDC openability / coverage status 有 evidence；5) 只有 full pass 才允許 <code>minimum_coverage_locked=true</code></td>
+<td>1) source entity enumeration before/after timing 可重現；2) canonical <code>--limit 1 --timeout-seconds 600</code> 能越過 <code>source_entity_enumeration</code>，或 blocker 明確歸因；3) all-IFC-entity denominator 不降級；4) conversion result / quality / lineage / handoff payload backward-compatible；5) baseline 未 full pass 前維持 <code>minimum_coverage_locked=false</code></td>
 </tr>
 <tr>
 <td><strong>驗證指令</strong></td>
-<td><code>cd _worker &amp;&amp; $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1</code>，通過後用該 artifact group 經 review viewer / Kit 載入 <code>model.usdc</code>，再跑 full batch</td>
+<td><code>cd _worker &amp;&amp; $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600</code></td>
 </tr>
 <tr>
 <td><strong>與既有 spec 關係</strong></td>
-<td>MODIFY <code>worker-artifact-pipeline</code> storage batch verification；MODIFY <code>runtime-verification-evidence</code> canonical batch acceptance / single Kit real worker artifact evidence；MODIFY <code>worker-demo-upload-convert-ui</code> preview handoff</td>
+<td>ADD delta requirements to <code>worker-artifact-pipeline</code> source enumeration optimization；ADD delta requirements to <code>runtime-verification-evidence</code> before/after enumeration evidence</td>
 </tr>
 </tbody>
 </table>
@@ -1781,6 +1829,9 @@ A：可以，但**不是把 #2 spec 換掉**：
   #3/#3A worker-mapping-lineage-quality-baseline ✓ 已於 2026-05-12 archive
                                                lineage API / worker UI / all-IFC-entity coverage policy 已併入 specs
                                                剩餘：canonical 13-file real batch 未完成，production coverage baseline 未鎖定
+  worker-canonical-storage-batch-baseline       ✓ 已於 2026-05-12 archive（blocked evidence）
+                                               batch semantics / phase timings / handoff contract 已併入 specs
+                                               剩餘：source_entity_enumeration timeout；visual preview / full batch 未通過
 
 P0-hold (等待 GPU 購買與部署):
   #2  streaming-multi-instance-orchestration   ★★  ⏸ 等待 GPU 購買與部署後執行
@@ -1789,8 +1840,8 @@ P0-hold (等待 GPU 購買與部署):
                                                roadmap 端：GPU capacity 到位後才重啟驗證並同步 §1.3 / §2 / §9.2
 
 P1 (這月):
-  worker-canonical-storage-batch-baseline     ★★★ Active risk burn-down
-                                               先修 canonical --limit 1 timeout，再補 13-file real batch evidence
+  optimize-worker-source-entity-enumeration   ★★★ Active risk burn-down
+                                               先修 canonical 89MB fixture 的 source_entity_enumeration timeout
                                                full pass 前 production mapping baseline 不得 locked
   #4  coordinator-session-lifecycle-events-audit  事件 schema 收斂（為 #6 webhook 鋪路；audit log 持久化屬 Phase 6 凍結）
 
@@ -1819,7 +1870,8 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
    ─→ GPU-backed multi-instance routing 證據解鎖
    ─→ #2A (OVAS Helm 升級需要先在已部署 GPU capacity 上跑通多 Kit)
 
-#3/#3A (✓ archived) ─→ worker-canonical-storage-batch-baseline (active risk burn-down)
+#3/#3A (✓ archived) ─→ worker-canonical-storage-batch-baseline (✓ archived, blocked evidence)
+                    ─→ optimize-worker-source-entity-enumeration (active risk burn-down)
                     ─→ issue highlight evidence（需 locked real mapping 後才可宣稱）
                     ─→ ⏸ #8 audit (Phase 6 凍結；待業務接入)
 #4 ─→ #6 mock webhook (P2 可探索)
@@ -2662,21 +2714,22 @@ B → C 觸發：
 </ul>
 </li>
 <li>
-<p><strong>確認 #1 與 #3/#3A archive 對齊已完成，後續不再重開已完成 change</strong>：</p>
+<p><strong>確認 #1、#3/#3A 與 canonical batch archive 對齊已完成，後續不再重開已完成 change</strong>：</p>
 <ul>
 <li><code>#1 worker-real-conversion-quality</code> 已歸檔到 <code>openspec/changes/archive/2026-05-11-worker-real-conversion-quality/</code>。</li>
 <li>現行 specs 已同步到 <code>worker-artifact-pipeline</code> 與 <code>runtime-verification-evidence</code>。</li>
 <li><code>#3/#3A worker-mapping-lineage-quality-baseline</code> 已歸檔到 <code>openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/</code>，並同步到 <code>worker-artifact-pipeline</code>、<code>runtime-verification-evidence</code>、<code>worker-demo-upload-convert-ui</code>。</li>
-<li>後續若要提升品質，不重開 #1 / #3 / #3A；改以 canonical storage batch completion 或 issue highlight evidence 作為下一個更小切片。</li>
+<li><code>worker-canonical-storage-batch-baseline</code> 已依使用者明確指示歸檔到 <code>openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/</code>，但 runtime evidence 仍 blocked at <code>source_entity_enumeration</code>，baseline 未鎖定。</li>
+<li>後續若要提升品質，不重開 #1 / #3 / #3A / canonical batch archive；改以 source entity enumeration optimization、canonical storage batch completion 或 issue highlight evidence 作為更小切片。</li>
 </ul>
 </li>
 <li>
-<p><strong>下一個 worker 品質工作：執行 <code>worker-canonical-storage-batch-baseline</code></strong>：</p>
+<p><strong>下一個 worker 品質工作：執行 <code>optimize-worker-source-entity-enumeration</code></strong>：</p>
 <ul>
 <li>使用 <code>C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc</code> 作為正式本機 fixture root。</li>
-<li>此 work 已落成 active OpenSpec change：<code>openspec/changes/worker-canonical-storage-batch-baseline/</code>。</li>
+<li>此 work 已落成 active OpenSpec change：<code>openspec/changes/optimize-worker-source-entity-enumeration/</code>。</li>
 <li>目前 helper 已能回報 <code>timed_out</code>、source artifact / artifact group / conversion job IDs 與 last-known converter phase；最新 evidence 指向 <code>source_entity_enumeration</code> 在 canonical 89MB fixture 上仍無法於 timeout 內完成。</li>
-<li>下一步先解決或分段量測 89MB fixture <code>_source_entities(model)</code> / all-entity enumeration 的 runtime / performance 問題，再重跑 <code>--limit 1 --timeout-seconds 600</code>。</li>
+<li>下一步先 profile 並 optimize 89MB fixture <code>_source_entities(model)</code> / all-entity enumeration 的 runtime / performance 問題，再重跑 <code>--limit 1 --timeout-seconds 600</code>。</li>
 <li>單檔 real conversion 通過後，先用既有 <code>web-viewer-sample</code> / <code>bim-review-coordinator</code> / <code>bim-streaming-server</code> flow 載入該 worker-hosted <code>model.usdc</code>，留下 screenshot 或等效 visual proof；若 Kit/GPU/browser 不可用，記錄 blocked，不宣稱 web UI 已檢視成果。</li>
 <li>只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 <code>minimum_coverage_locked=true</code> production baseline 寫入 evidence。</li>
 </ul>
@@ -2695,7 +2748,7 @@ B → C 觸發：
 <ul>
 <li>#3 / #3A 已完成並歸檔，不再列為候選池。</li>
 <li>若要支撐後續 webhook / observability，選 <code>#4</code>：把 lifecycle events 收斂成 append-only event schema。</li>
-<li>若要先補 worker evidence，優先完成 active change <code>worker-canonical-storage-batch-baseline</code>，不要跳過這個 readiness gate。</li>
+<li>若要先補 worker evidence，優先完成 active change <code>optimize-worker-source-entity-enumeration</code>，不要跳過 canonical batch readiness gate。</li>
 </ul>
 </li>
 <li>
