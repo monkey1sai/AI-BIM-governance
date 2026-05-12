@@ -84,4 +84,4 @@ Same-Kit concurrent browser runtime validation SHALL use one GPU-backed Kit proc
 #### Scenario: Dedicated multi-Kit process routing is out of scope for this pass
 
 - **WHEN** the product requires isolated GPU runtimes or multiple Kit processes
-- **THEN** that validation MUST be tracked as a separate dedicated capacity tier with its own endpoint pool and E2E evidence
+- **THEN** that validation MUST remain deferred until GPU purchase and deployment provide a dedicated capacity tier with its own endpoint pool and E2E evidence

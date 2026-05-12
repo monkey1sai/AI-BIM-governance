@@ -245,7 +245,7 @@ flowchart LR
 | **Phase 0** 基線穩定化 | ✅ 完成 | （demo UI guidelines + smoke tests） | `2de28c9` Demo UI validation, `0496869` smoke runbook |
 | **Phase 1** `_worker` 收攏 + lineage | ✅ 完成 | `worker-artifact-pipeline`、`worker-dev-ifc-source-selection`、`worker-demo-upload-convert-ui`、`legacy-storage-conversion-retirement` | PR #11、PR #14（`e95922f`、`b50a8a7`）、PR #17（`3d58075` `original_filename` 追蹤）、PR #18 |
 | **Phase 2** review-session-request 閉環 | ✅ 完成 | `review-session-request-lifecycle`、`session-first-review-viewer` | PR #13（`ddac3c2`、`4f103d0`）、PR #16（端到端驗證 `595ae5a`） |
-| **Phase 3** Session lifecycle + 多 artifact / 多 instance | 🔄 進行中（control-plane 完成；runtime `dedicated_instance` 驗證在另一分支進行中，owner 自管，**非 environment-blocked**） | `multi-artifact-kit-routing`、`streaming-multi-layer-payload-loading`、`runtime-verification-evidence` | PR #19（`runtime-verification-evidence` 新增）、PR #20（`0e94a5b` same-Kit 並行驗證）、PR #21（`8d805f4` 封存） |
+| **Phase 3** Session lifecycle + 多 artifact / 多 instance | 🔄 進行中（control-plane 完成；runtime `dedicated_instance` 等待 GPU 購買與部署後執行） | `multi-artifact-kit-routing`、`streaming-multi-layer-payload-loading`、`runtime-verification-evidence` | PR #19（`runtime-verification-evidence` 新增）、PR #20（`0e94a5b` same-Kit 並行驗證）、PR #21（`8d805f4` 封存） |
 | **Phase 4** 高併發平台化 | 📅 待規劃（尚未提案） | — | — |
 | **Phase 5** Omniverse 平台能力最大化 + AI Service | 📅 待規劃（尚未提案） | — | — |
 | **Phase 6** Production & SaaS 營運 | 📅 待規劃（尚未提案） | — | — |
@@ -262,7 +262,7 @@ flowchart LR
 | **Single Kit GPU Render (real IFC→USDC)** | 真實 IFC → renderable USD viewport screenshot（worker 自動轉檔結果） | 🚫 blocked | 缺：renderable USDC（worker 目前寫 `# worker adapter USDC placeholder`）；對應 SaaS 路線圖 P0 候選 #1 `worker-real-conversion-quality`；§6.3 |
 | **Single Kit GPU Render (worker-hosted renderable fixture)** | 已存在的 renderable `.usdc` fixture 經 worker 路徑載入 Kit viewport | ✅ 通過（PR #20 commit `0e94a5b`） | `docs/verification/evidence/2026-05-08-runtime-e2e/same-kit-review_session_b2d84c44ae31-kit_local_001-primary.png` |
 | **Same-Kit Concurrent Stream (primary + spectator)** | 單一 Kit process 內 primary + spectator WebRTC ports（49100/47998 + 49110/48008）並行 stream，兩個 Chrome contexts 同一 `session_id` | ✅ 通過（PR #20 commit `0e94a5b`） | `same-kit-*-primary.png` / `same-kit-*_spectator_0-spectator.png` |
-| **Dedicated Multi-Kit Routing (≥2 Kit processes)** | ≥2 獨立 Kit processes、不同 signaling port pair、並行 stream | 🟡 在另一分支驗證中（owner 自管，非 environment-blocked）；待對應 PR merge 進 main 並更新 `runtime-verification-evidence` §6.4 | 缺：root scripts 啟動多 Kit；對應 SaaS 路線圖 P0 候選 #2 `streaming-multi-instance-orchestration` |
+| **Dedicated Multi-Kit Routing (≥2 Kit processes)** | ≥2 獨立 Kit processes、不同 signaling port pair、並行 stream | ⏸ 等待 GPU 購買與部署後執行；GPU capacity 到位前不得標為 in-progress / passed / failed | 缺：GPU-backed 多 Kit endpoints；對應 SaaS 路線圖 P0-hold 候選 #2 `streaming-multi-instance-orchestration` |
 | **Large IFC Worker Readiness** | 89 MB IFC 進 `_worker` → ready 狀態 | ✅ 通過（facade tier） | §6.5 |
 | **Socket.IO Bounded Stress** | 90 client（最大 100 sustainable 的 90%） | ✅ 通過 | §6.6 |
 
@@ -296,7 +296,7 @@ flowchart LR
 | 2 | artifact version / source / lineage 若未建模，後續追溯困難 | versioned object layout、`metadata.json` lineage、`original_filename` 追蹤 | ✅ 已收斂（含 2026-05-08 PR #17 補強） |
 | 3 | review-session-request 尚未成正式 intent 流程 | `review-session-request-lifecycle` spec、`POST /api/review-session-requests` | ✅ 已收斂 |
 | 4 | session lifecycle 目前過於簡化，未釐清 `created → active → closing → closed → instance released` | `multi-artifact-kit-routing` spec、coordinator `kit_instance_bindings[]`、close/release 分離已驗證 | ✅ control-plane 已收斂 |
-| 5 | 多 artifact / 多 instance 調度仍未完整推導 | `multi-artifact-kit-routing` + `streaming-multi-layer-payload-loading` spec；`runtime-verification-evidence` `dedicated_instance` evidence 在另一分支進行中（對應 SaaS 路線圖 P0 候選 #2 `streaming-multi-instance-orchestration`） | 🟡 control-plane 完成；runtime 在另一分支驗證中 |
+| 5 | 多 artifact / 多 instance 調度仍未完整推導 | `multi-artifact-kit-routing` + `streaming-multi-layer-payload-loading` spec；`runtime-verification-evidence` `dedicated_instance` evidence 等待 GPU 購買與部署後執行（對應 SaaS 路線圖 P0-hold 候選 #2 `streaming-multi-instance-orchestration`） | ⏸ control-plane 完成；runtime 等待 GPU capacity |
 | 6 | 觀測、稽核、CI/CD、SLA 尚未產品化 | Phase 6 規劃；對應 SaaS 路線圖 P3-frozen 候選 #8 `observability-audit-baseline` | ⏸ 等公司業務系統接入 |
 | 7 *new* | **Single Kit GPU render 仍是 placeholder USDC**（worker facade tier 不等於真實渲染） | 對應 SaaS 路線圖 P0 候選 #1 `worker-real-conversion-quality`（解開 IFC→USDC placeholder blocker） | 🚫 blocked |
 | 8 *new* | **AI / 規則 / 碳排 service 邊界未建模** | 對應 SaaS 路線圖 P2 候選 #5 `ai-rule-carbon-result-contract`（contract + mock，不做真實 AI） | 📅 待規劃 |
@@ -457,7 +457,7 @@ cd web-viewer-sample && npm run test:session-first
 **待補（runtime evidence + control-plane）**：
 
 - [ ] **真實 IFC → renderable USDC converter**（目前是 placeholder，Single Kit GPU render blocked 的根因）→ 對應 SaaS 路線圖 P0 候選 #1 `worker-real-conversion-quality`
-- [ ] **Root `scripts/` 啟動多 Kit instance**（不同 signaling port），讓 `dedicated_instance` 能在實機驗證 → 對應 SaaS 路線圖 P0 候選 #2 `streaming-multi-instance-orchestration`，**驗證在另一分支進行中（owner 自管，非 environment-blocked）**；待對應 PR merge 進 `main` 後同步更新 `runtime-verification-evidence` §6.4
+- [ ] **Root `scripts/` 啟動多 Kit instance**（不同 signaling port），讓 `dedicated_instance` 能在實機驗證 → 對應 SaaS 路線圖 P0-hold 候選 #2 `streaming-multi-instance-orchestration`，**等待 GPU 購買與部署後執行**；GPU-backed endpoints 到位前維持 deferred pending capacity
 - [ ] `closing` state 完整實作（累積最終 annotation / snapshot 後再 `closed`）
 - [ ] Kit instance release flow 各階段事件回寫（`allocated → starting → ready → draining → released`）→ 對應 SaaS 路線圖 P1 候選 #4 `coordinator-session-lifecycle-events-audit`
 - [ ] `shared_state` routing policy 跨 instance Socket.IO event 同步
@@ -494,7 +494,7 @@ cd bim-review-coordinator && npm test -- lifecycle
    - 對應 SaaS 路線圖 §2 Phase 4.7 / 4.8（NVIDIA `omni.services.convert.cad` 是 CAD-only，IFC 仍需自建）
 2. **GPU Pool / Kit Scheduler** ⚠ 混合
    - 把 coordinator 內 hardcode `local_fixed` Kit endpoint 換成 KitPool client
-   - 對應 SaaS 路線圖 P0 候選 #2 `streaming-multi-instance-orchestration`（業務語意層；驗證在另一分支進行中）
+   - 對應 SaaS 路線圖 P0-hold 候選 #2 `streaming-multi-instance-orchestration`（業務語意層；等待 GPU 購買與部署後執行）
    - Tier A：自寫 `KitInstancePool` + `start-multi-kit.ps1` PoC；Tier B+：採用 NVIDIA OVAS Helm chart 接管 4.4 / 4.5 / 4.11 → 對應 P2.5 候選 #2A `streaming-ovas-helm-baseline`
 3. **Redis cache** ❌ 必須自建
    - artifact metadata / readiness 結果快取
@@ -516,16 +516,16 @@ cd bim-review-coordinator && npm test -- lifecycle
 **規劃 OpenSpec change（建議命名）**：
 
 ```txt
-# P0 候選（業務語意層）— 驗證在另一分支進行中
+# P0-hold 候選（業務語意層）— 等待 GPU 購買與部署後執行
 /openspec new streaming-multi-instance-orchestration
 
 # P2 候選（mock 階段）
 /openspec new notification-webhook-service
 
-# P2.5 候選（採用 NVIDIA reference impl；前置條件 #1 / #2 land）
+# P2.5 候選（採用 NVIDIA reference impl；前置條件 #1 land + GPU capacity 到位 + #2 runtime evidence land）
 /openspec new streaming-ovas-helm-baseline
 
-# Phase 4 細項（待 #1 / #2 land 後逐項評估，目前不開新 spec）
+# Phase 4 細項（待 #1 land 與 GPU capacity 到位後逐項評估，目前不開新 spec）
 # - async worker pool / Redis cache：Phase 4.7 / 4.8 / 4.9
 # - object storage abstraction：Phase 4 細項
 
@@ -616,7 +616,7 @@ cd bim-review-coordinator && npm test -- lifecycle
 >
 > **依使用者 2026-05-08 決策，本 phase 所有細項一律暫不啟動 OpenSpec change**，等公司業務系統（CRM / SSO / billing / IT 維運 SLA）接入時程後才會逐項解凍。對應 SaaS 路線圖 §6 P3-frozen 候選 #7 / #8 / #9 + §2 Phase 6 表的「⏸ 等待業務接入」標記。
 >
-> **凍結例外**：P2.5 候選 #2A `streaming-ovas-helm-baseline` **不等 #9 解凍即可探索**（只解 streaming runtime，不涉及 SLA / billing / multi-tenant 等 Phase 6 範圍）；P0 / P1 / P2 / P2.5 候選與 §12.6 DevOps 基礎也不受此凍結影響。
+> **凍結例外**：P2.5 候選 #2A `streaming-ovas-helm-baseline` **不等 #9 解凍即可探索**（只解 streaming runtime，不涉及 SLA / billing / multi-tenant 等 Phase 6 範圍）；P0-hold / P1 / P2 / P2.5 候選與 §12.6 DevOps 基礎也不受此凍結影響。
 >
 > **解凍程序**：任何想啟動下列項目的提案，需在 PR description 引用 SaaS 路線圖 §6 P3-frozen 段落與 §2 Phase 6 表，並附上業務系統接入確認文件。
 
@@ -676,7 +676,7 @@ cd bim-review-coordinator && npm test -- lifecycle
 | 2 | **Artifact 版本 / 來源可追溯** | `metadata.json` 含完整 lineage、`original_filename`、`_bim-control` artifact group 可查到 source artifact 與 conversion job | 100% lineage 完整 | Phase 1 ✅ | 已驗證（含 PR #17 中文檔名追蹤） |
 | 3 | **Review Session 啟動時間** | 從 `POST /api/review-session-requests` 到 viewer 看到 `lifecycle_status=active` 的 wall-clock 時間 | < 5 秒（artifact ready 狀態下） | Phase 2 ✅ | smoke 通過、實機 < 1 秒（control-plane）；真實 GPU streaming 視 GPU 暖機而定 |
 | 4 | **Session Lifecycle 狀態正確** | smoke 涵蓋 `created → active → closing → closed → released`；`closed` 後 Kit binding 都 `released` | smoke 通過率 100% | Phase 3 🔄 | close/release 分離已驗證；`closing` 完整實作待補 |
-| 5 | **多 artifact / 多 instance 可運作** | `same_instance` 多 artifact → `applied_mode=artifact_bindings_multi_layer_payload`；`dedicated_instance` 多 binding 各自獨立 stream | non-GPU contract 通過 + GPU 真機驗證 | Phase 3 🔄 | non-GPU contract ✅；GPU 真機 blocked（需多 Kit instance + renderable USDC） |
+| 5 | **多 artifact / 多 instance 可運作** | `same_instance` 多 artifact → `applied_mode=artifact_bindings_multi_layer_payload`；`dedicated_instance` 多 binding 各自獨立 stream | non-GPU contract 通過 + GPU 真機驗證 | Phase 3 🔄 | non-GPU contract ✅；dedicated multi-Kit GPU 真機驗證 ⏸ 等待 GPU 購買與部署 |
 | 6 | **全鏈路可觀測 / 可稽核 / 可回放** | Prometheus metrics 涵蓋 5 個服務 + Grafana dashboard + Jaeger trace 可串完整 flow + Sentry 收所有 error + Audit Log 持久化 | 5 項全上線 | Phase 6 📅 | 待規劃 |
 | 7 *new* | **IFC → USD 品質 Gate** | geometry coverage ≥ 95% + IFC GUID ↔ USD prim path coverage ≥ 95% | 自動跑 quality gate 並寫入 `artifact_groups.quality_report` | Phase 5 📅 | 整合進 **P0 候選 #1 `worker-real-conversion-quality`** KPI |
 | 8 *new* | **多租戶 + RBAC** | 同 tenant 內可看到自己資料、跨 tenant 完全隔離；5 個角色權限矩陣正確 | 滲透測試通過 + RBAC unit tests 100% | Phase 6 ⏸ | ⏸ 等公司業務系統接入；對應 P3-frozen 候選 #7 `tenant-rbac-foundation` |
@@ -929,9 +929,9 @@ openspec validate <change-id>
 
 ## 12. 下一步行動建議
 
-依當前進度（Phase 0/1/2 ✅、Phase 3 🔄 control-plane 完成 / runtime blocked），建議優先順序：
+依當前進度（Phase 0/1/2 ✅、Phase 3 🔄 control-plane 完成 / dedicated multi-Kit runtime 等待 GPU capacity），建議優先順序：
 
-### 12.1 第一優先：解開 Phase 3 runtime blocker（對應 SaaS 路線圖 P0 候選 #1 / #2）
+### 12.1 第一優先：解開 Phase 3 runtime blocker（對應 SaaS 路線圖 #1 / #2）
 
 > 解開這個 blocker 才能讓 IFC → USD 品質保證管線（v2 圖右側 ⭐）真正跑起來。
 
@@ -940,10 +940,10 @@ openspec validate <change-id>
    - 評估方案：IfcOpenShell / NVIDIA Connect for Revit / Speckle（NVIDIA Kit base **沒有** IFC converter，MCP 已驗）
    - KPI：mapping coverage ≥ 50% on 89 MB demo IFC（具體門檻在 explore 階段定）；90 MB IFC conversion ≤ 預設門檻
    - **`ifc-usd-quality-gate` 的 coverage check（geometry / material / IFC GUID ↔ USD prim path）已整合進 #1 KPI**；是否拆分獨立 spec 在 #1 land 後再評估
-2. **Root multi-Kit launcher** — P0 候選 #2
-   - 開 OpenSpec change：`/openspec new streaming-multi-instance-orchestration`（業務語意層；驗證在另一分支進行中）
+2. **Root multi-Kit launcher** — P0-hold 候選 #2
+   - 開 OpenSpec change：`/openspec new streaming-multi-instance-orchestration`（業務語意層；等待 GPU 購買與部署後執行）
    - `scripts/start-multi-kit.{ps1,sh}`：啟動 ≥ 2 Kit instance（不同 signaling port pair）
-   - 驗證 `dedicated_instance` routing 在實機並行 stream；待對應 PR merge 進 main 並更新 `runtime-verification-evidence` §6.4
+   - GPU-backed endpoints 到位後，驗證 `dedicated_instance` routing 在實機並行 stream，並更新 `runtime-verification-evidence` §6.4
    - **層級邊界**：#2 是「業務語意層」spec（routing policy + `kit_instance_bindings[]` 紀錄）；Kit container 真實啟停 / pool / scheduling 屬 runtime infrastructure 層（Phase 4.4 / 4.5 / 4.11），Tier A 自寫 `KitInstancePool`，Tier B+ 換 OVAS（→ P2.5 候選 #2A）。詳見 SaaS 路線圖 §11.4 Multi-Kit Instance 並行的官方定義
 
 ### 12.2 第二優先：Phase 3 收尾 + P1 候選（對應 SaaS 路線圖 P1）
@@ -973,11 +973,11 @@ openspec validate <change-id>
    - 訂閱 P1 候選 #4 的 lifecycle events
    - **production-grade webhook delivery（重試 / dead-letter / 簽章驗證）屬 Phase 6 凍結**
 
-> Phase 4 細項（`async-worker-pool-and-redis` / `object-storage-abstraction` 等）目前**不開新 spec**；待 #1 / #2 land 後逐項評估。詳見 §7 Phase 4 規劃 OpenSpec change 段落。
+> Phase 4 細項（`async-worker-pool-and-redis` / `object-storage-abstraction` 等）目前**不開新 spec**；待 #1 land 與 GPU capacity 到位後逐項評估。詳見 §7 Phase 4 規劃 OpenSpec change 段落。
 
 ### 12.4 P2.5：採用 NVIDIA reference implementation
 
-> 對應 SaaS 路線圖 §12（由 MCP 結果新增）+ §13 採用決策框架。**前置條件**：#1 / #2 在 main 上 land。
+> 對應 SaaS 路線圖 §12（由 MCP 結果新增）+ §13 採用決策框架。**前置條件**：#1 已 land、GPU capacity 到位、#2 runtime evidence land。
 
 1. **P2.5 候選 #1A `streaming-collaboration-presence-layer-upgrade`**
    - 用 `omni.kit.collaboration.presence_layer` v1.2.1（22 APIs：`broadcast_local_bound_camera` / `enter_follow_mode` / `get_selections`）取代 / 補足 Socket.IO 自建協作（presence / camera follow / selection outline）
@@ -988,7 +988,7 @@ openspec validate <change-id>
    - 把 `bim-streaming-server` 從自建 docker-compose 啟動，遷移到 NVIDIA Omniverse Kit App Streaming (OVAS) Helm chart 部署
    - **接管 SaaS 路線圖 §2 Phase 4.4 / 4.5 / 4.11**：Multi-Kit instance 並行 + GPU pool / Kit scheduling + Streaming session lifecycle 整合 OVAS API
    - **不取代 #2 spec**：OVAS 在 runtime infrastructure 層接管 Kit container lifecycle；#2 spec 仍在業務語意層紀錄 routing decision；對 spec `multi-artifact-kit-routing` 唯一 MODIFY 是 Req2 的 `provider` enum 多 `"ovas"` 值（其他 4 個 Req 不變）
-   - **建議啟動時機**：P0 候選 #1 / #2 land 之後；先在開發機 kind / minikube 驗證再評估雲端
+   - **建議啟動時機**：#1 已 land、GPU 購買部署完成且 #2 runtime evidence land 之後；先在開發機 kind / minikube 驗證再評估雲端
    - **不等 #9 解凍即可探索**（只解 streaming runtime，不涉及 SLA / billing / multi-tenant 等 Phase 6 範圍）
 
 ### 12.5 P3-frozen：⏸ 等公司業務系統接入

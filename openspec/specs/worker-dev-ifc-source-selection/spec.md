@@ -1,7 +1,11 @@
 # worker-dev-ifc-source-selection Specification
 
 ## Purpose
-TBD - created by archiving change add-dev-ifc-source-selection-flow. Update Purpose after archive.
+Define the dev-only local IFC source selection flow for `_worker`. This spec
+keeps demo file discovery bounded by `WORKER_DEV_STORAGE_ROOT`, starts selected
+source conversions through the normal worker artifact pipeline, preserves the
+original filename for traceability, and publishes only metadata/readiness back
+to `_bim-control`.
 ## Requirements
 ### Requirement: Dev IFC Source Root
 

@@ -1,7 +1,17 @@
 # multi-artifact-kit-routing Specification
 
 ## Purpose
-TBD - created by archiving change introduce-worker-review-session-lifecycle. Update Purpose after archive.
+Define how review sessions bind multiple artifacts to one or more Kit runtime
+instances. The coordinator records artifact bindings, Kit instance bindings,
+routing policy, stream configuration, capacity identity, and same/dedicated/
+shared topology decisions while keeping collaboration session identity separate
+from Kit runtime capacity.
+
+Dedicated multi-Kit runtime execution is deferred until GPU purchase and
+deployment provide at least two GPU-backed Kit endpoints. Before that capacity
+exists, this specification remains the control-plane contract and routing
+target, not proof that dedicated runtime evidence has passed.
+
 ## Requirements
 ### Requirement: Sessions contain artifact bindings
 
@@ -33,7 +43,7 @@ TBD - created by archiving change introduce-worker-review-session-lifecycle. Upd
 
 ### Requirement: Routing policy determines Kit topology
 
-The coordinator SHALL decide Kit topology from routing policy and artifact characteristics. `same_instance` MUST allow multiple compatible USDC artifacts to load as layers or payloads in one Kit instance. `dedicated_instance` MUST allocate separate Kit instances for large models, tenant isolation, or GPU-heavy artifact groups. `shared_state` MUST synchronize selection and issue focus through coordinator events rather than video synchronization.
+The coordinator SHALL decide Kit topology from routing policy and artifact characteristics. `same_instance` MUST allow multiple compatible USDC artifacts to load as layers or payloads in one Kit instance. `dedicated_instance` MUST record separate Kit instance allocation intent for large models, tenant isolation, or GPU-heavy artifact groups and MUST allocate separate Kit instances when GPU capacity is available. `shared_state` MUST synchronize selection and issue focus through coordinator events rather than video synchronization.
 
 #### Scenario: Compatible artifacts share an instance
 
@@ -42,8 +52,14 @@ The coordinator SHALL decide Kit topology from routing policy and artifact chara
 
 #### Scenario: Large model gets a dedicated instance
 
-- **WHEN** a session requests a large or isolated artifact group with `routing_policy=dedicated_instance`
+- **WHEN** a session requests a large or isolated artifact group with `routing_policy=dedicated_instance` and deployed GPU capacity is available
 - **THEN** coordinator assigns that artifact group to its own Kit instance binding
+
+#### Scenario: Dedicated runtime capacity is not deployed yet
+
+- **WHEN** a session requests `routing_policy=dedicated_instance` before purchased and deployed GPU capacity exposes two or more Kit endpoints
+- **THEN** the coordinator records the requested dedicated topology and leaves runtime allocation evidence pending
+- **AND** the workspace does not classify dedicated_instance runtime evidence as passed or failed
 
 #### Scenario: Shared state spans instances
 
