@@ -1,7 +1,11 @@
 # runtime-verification-evidence Specification
 
 ## Purpose
-TBD - created by archiving change complete-spec-runtime-verification. Update Purpose after archive.
+Define the evidence tiers and acceptance rules for runtime verification. This
+spec separates contract checks, single-Kit render evidence, dedicated multi-Kit
+routing evidence, stress evidence, and real IFC conversion quality metrics so
+the roadmap can distinguish API success, geometry/render success, blocked
+hardware prerequisites, and deferred capacity tiers.
 ## Requirements
 ### Requirement: Runtime verification evidence is tiered
 
@@ -38,11 +42,17 @@ The workspace SHALL only treat Kit viewport render as verified when the loaded m
 
 ### Requirement: Dedicated Kit routing evidence requires multiple Kit instances
 
-The workspace SHALL only classify `dedicated_instance` routing as runtime-verified when the environment provides two or more distinct Kit instance endpoints.
+The workspace SHALL only classify `dedicated_instance` routing as runtime-verified when the purchased and deployed GPU environment provides two or more distinct Kit instance endpoints. Dedicated multi-Kit runtime verification SHALL remain deferred until GPU purchase and deployment provide that capacity.
+
+#### Scenario: GPU capacity purchase and deployment is pending
+
+- **WHEN** no purchased and deployed GPU capacity tier provides at least two Kit endpoints
+- **THEN** dedicated_instance runtime verification is recorded as deferred pending capacity
+- **AND** the evidence MUST NOT classify the dedicated runtime tier as in-progress, passed, or failed
 
 #### Scenario: Root scripts coordinate multi Kit startup
 
-- **WHEN** multi Kit runtime verification needs to launch or check more than one service
+- **WHEN** GPU capacity has been purchased and deployed and multi Kit runtime verification needs to launch or check more than one service
 - **THEN** the orchestration entrypoint MUST live under root `scripts/` while `bim-streaming-server/scripts/` may remain the low-level single-instance launcher
 
 #### Scenario: Single local_fixed instance cannot verify dedicated routing

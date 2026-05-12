@@ -1,7 +1,11 @@
 # streaming-multi-layer-payload-loading Specification
 
 ## Purpose
-TBD - created by archiving change add-dev-ifc-source-selection-flow. Update Purpose after archive.
+Define how `bim-streaming-server` loads multiple ready artifact bindings into a
+single Kit runtime stage for `same_instance` review sessions. Runtime responses
+must honestly report the applied loading mode, loaded bindings, missing paths,
+and partial failures while preserving the existing single-URL stage loading
+path.
 ## Requirements
 ### Requirement: Load Multiple Artifact Bindings Into One Runtime Stage
 

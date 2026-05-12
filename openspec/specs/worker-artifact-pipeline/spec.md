@@ -1,7 +1,11 @@
 # worker-artifact-pipeline Specification
 
 ## Purpose
-TBD - created by archiving change introduce-worker-review-session-lifecycle. Update Purpose after archive.
+Define `_worker` as the artifact and conversion facade for source model files,
+derived USDC artifacts, indices, mapping files, versioned object layout,
+conversion lineage, original filename traceability, real IFC conversion output,
+and conversion quality reporting. `_worker` owns file bytes and derived
+artifact bodies while publishing metadata only to `_bim-control`.
 ## Requirements
 ### Requirement: Worker accepts source artifacts
 

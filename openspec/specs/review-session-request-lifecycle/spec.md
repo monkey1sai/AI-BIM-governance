@@ -1,7 +1,11 @@
 # review-session-request-lifecycle Specification
 
 ## Purpose
-TBD - created by archiving change introduce-worker-review-session-lifecycle. Update Purpose after archive.
+Define the review intent and session lifecycle contract across `_bim-control`
+and `bim-review-coordinator`. `_bim-control` records review session requests and
+artifact readiness, the coordinator creates and manages explicit session states,
+and close/release semantics remain auditable without making either service a
+file store or Kit renderer.
 ## Requirements
 ### Requirement: BIM control stores review session requests
 

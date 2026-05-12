@@ -1,7 +1,10 @@
 # worker-demo-upload-convert-ui Specification
 
 ## Purpose
-TBD - created by archiving change add-dev-ifc-source-selection-flow. Update Purpose after archive.
+Define the `_worker` demo UI boundary for local artifact intake and conversion
+steps. The UI supports IFC source selection, conversion job progress, artifact
+group readiness, and handoff toward review session creation without replacing
+the browser review viewer, session control plane, or review metadata editor.
 ## Requirements
 ### Requirement: Worker Demo UI Entry
 

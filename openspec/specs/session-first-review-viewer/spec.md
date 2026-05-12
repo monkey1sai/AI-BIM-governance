@@ -1,7 +1,11 @@
 # session-first-review-viewer Specification
 
 ## Purpose
-TBD - created by archiving change introduce-worker-review-session-lifecycle. Update Purpose after archive.
+Define the session-first browser review experience for `web-viewer-sample`.
+The viewer bootstraps from review request/session state, respects lifecycle
+transitions, sends USD runtime commands through the Kit DataChannel, sends
+collaboration events through coordinator contracts, and exposes multi-artifact
+review controls without becoming a data authority or GPU runtime manager.
 ## Requirements
 ### Requirement: Viewer bootstraps from review request or session
 
