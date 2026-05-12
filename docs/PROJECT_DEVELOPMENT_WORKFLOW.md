@@ -867,12 +867,19 @@ Archive        = 把 delta specs 併入 openspec/specs/
 8. 使用文件/規劃相關 skill 產生或更新同名 HTML 檢視版 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`
    - HTML 內容必須源自同名 Markdown
    - HTML 只作為人類檢視用衍生檔，Markdown 仍是 source of truth
+9. PR merge 後收斂本地工作樹
+   - 執行 `git fetch origin --prune`
+   - 切回 `main` 並確認工作區乾淨
+   - 本地 `main` 必須指向 `origin/main`
+   - 若因 PR squash/merge commit 出現 `main...origin/main` ahead/behind，先確認 ahead 內容已被遠端 merge commit 吸收，再對齊 `origin/main`
+   - 不用 merge/pull 方式手動解同內容衝突；功能開發與文件變更都應留在 feature / `codex/openspec/<change-id>` branch
 
 ### 11.2 PR Checklist
 
 - [ ] 對應的 OpenSpec change 存在（或本 PR 為純 docs/refactor 不需要）
 - [ ] 若本 PR 完成 OpenSpec sync/archive，已同步更新 SaaS roadmap `§1.6` 要求的章節，或明確標註不適用原因
 - [ ] 若本 PR 更新 SaaS roadmap，已同步產生/更新同名 HTML 檢視版，或明確標註不適用原因
+- [ ] PR merge 後已 fetch/prune，且本地 `main` 乾淨對齊 `origin/main`，沒有殘留本地-only commit
 - [ ] 修改不違反 `AGENTS.md` repo 邊界
 - [ ] Python tests 從各服務目錄下執行：`cd <svc> && python3 -m pytest tests`
 - [ ] Node tests / build 從各服務目錄執行：`cd <svc> && npm test && npm run build`
@@ -881,7 +888,19 @@ Archive        = 把 delta specs 併入 openspec/specs/
 - [ ] 涉及驗證時，依 `runtime-verification-evidence` 分層記錄（不混用單一 pass/fail）
 - [ ] 使用 GitNexus：`gitnexus_impact` 評估影響、`gitnexus_detect_changes` 確認 scope
 
-### 11.3 服務測試命令速查
+### 11.3 Post-merge 本地 `main` 對齊
+
+當 PR 已 merge 且 GitHub 上 `origin/main` 是正式主線時，本地開發目錄的 `main` 必須回到 tracking branch 狀態：
+
+```powershell
+git fetch origin --prune
+git switch main
+git status --short --branch
+```
+
+若 `main...origin/main` 顯示 ahead/behind，且已確認 ahead commit 內容已被 PR merge/squash commit 吸收，收斂目標是讓本地 `main` 指向 `origin/main`。不要再把 `origin/main` merge 進本地 `main` 來解同內容衝突。
+
+### 11.4 服務測試命令速查
 
 ```bash
 # Python services（必須在各自服務目錄下）

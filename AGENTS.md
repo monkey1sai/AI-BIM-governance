@@ -85,6 +85,8 @@ Archive = 把變更規格併入正式規格
 - Roadmap 對齊完成後，必須主動使用文件/規劃相關 skill 產生或更新同名 HTML 檢視版 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`；HTML 只作為方便人類閱讀的衍生檢視，內容必須源自同名 Markdown，source of truth 仍是 `.md`。
 - 若 roadmap 未同步，OpenSpec archive 只能視為規格檔案已搬移，不能視為專案執行規劃已收斂。
 - 若發現已在 `main` 產生未提交變更，先切到對應 `codex/openspec/<change-id>` branch，再繼續工作或整理 PR。
+- 本地 `main` 只作為 `origin/main` 的乾淨追蹤分支；不得在 `main` 保留本地-only commit、累積功能開發、或用 merge/pull 解 PR squash/merge 後的 ahead/behind 分岔。
+- PR merge 後的本地收斂必須先 `git fetch origin --prune`，確認工作區乾淨後讓本地 `main` 指向 `origin/main`；若 `main...origin/main` 顯示 ahead/behind，先確認 ahead 內容已被 PR merge commit 吸收，再對齊 `origin/main`，不要手動解同內容衝突。
 
 ### Archive 後的 agent closeout event flow
 
