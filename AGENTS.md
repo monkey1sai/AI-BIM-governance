@@ -82,6 +82,44 @@ Archive = 把變更規格併入正式規格
 - change 實作被正式接受並 merge 後，才執行 OpenSpec sync/archive，把 delta specs 併入 `openspec/specs/`。
 - 若發現已在 `main` 產生未提交變更，先切到對應 `codex/openspec/<change-id>` branch，再繼續工作或整理 PR。
 
+### Archive 後的 agent closeout event flow
+
+OpenSpec archive 只代表規格已併入正式 specs，不代表 Git branch 已自動收斂。當 agent 完成或協助完成 archive change id、PR merge、或使用者詢問「分支是否收斂」時，必須把 branch closeout 視為同一個事件流程的收尾，不應要求使用者靠記憶手動執行。
+
+Closeout 必須先做只讀盤點：
+
+```powershell
+git switch main
+git fetch origin --prune
+git status --short --branch
+git branch -vv --no-abbrev
+git branch --no-merged origin/main
+git branch -r --no-merged origin/main
+```
+
+判斷規則：
+
+- 對於 PR 已 `MERGED`、upstream 已 `gone`、或已被後續 PR / archive 明確 superseded 的 local branch，agent 可以在回報理由後清理 local branch。
+- 對於遠端 branch，必須先用 `gh pr list --state all` 或等價方式確認 PR 狀態與 head ref；只有已 merge 或已明確 superseded 的 branch 才可建議刪除。
+- `revert-*`、release、hotfix、或語意上代表回滾決策的 branch 不得自動刪除；必須先向使用者說明保留/刪除影響並取得明確同意。
+- 若 `git branch --no-merged origin/main` 因 squash merge 或 replacement PR 仍列出舊 branch，不能只用 ancestry 判斷；必須交叉比對 PR 狀態、`mergedAt`、`closedAt`、branch diff 與 OpenSpec archive 內容。
+
+清理指令範本：
+
+```powershell
+git branch -D <local-branch>
+git push origin --delete <remote-branch>
+git fetch origin --prune
+```
+
+完成後必須回報：
+
+- 刪除哪些 local branch。
+- 刪除哪些 remote branch。
+- 哪些 branch 刻意保留，以及保留原因。
+- `main` 是否已對齊 `origin/main`。
+- `git branch --no-merged origin/main` 與 `git branch -r --no-merged origin/main` 的剩餘結果。
+
 ---
 
 ## 1. Workspace 範圍
