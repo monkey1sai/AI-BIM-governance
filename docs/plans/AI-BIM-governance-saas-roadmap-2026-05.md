@@ -33,6 +33,8 @@
 > **2026-05-12 更新（`worker-real-conversion-quality` archive 對齊）**：依 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §4 / §5 / §6 / §7 / §9.8 / §10**。P0 #1 已 land 並歸檔：`_worker` 已具備真實 IFC→USDC adapter、USDC openability hard gate、real mapping quality metrics 與 single Kit/browser 截圖證據；mapping coverage 仍採 measure-first，尚未鎖 production baseline 門檻。
 >
 > **2026-05-12 更新（#2 GPU 容量等待）**：依使用者指示，`multi-artifact-kit-routing` / `streaming-multi-instance-orchestration` 的 `dedicated_instance` runtime 驗證改為 **等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，roadmap 與 OpenSpec 只保留 control-plane contract / routing target，不把 dedicated multi-Kit runtime 視為進行中、passed 或 failed。
+>
+> **2026-05-12 更新（`worker-mapping-lineage-quality-baseline` archive 對齊）**：依 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10**。原候選 #3 lineage API 與 #3A mapping quality baseline 已合併為同一 change 並歸檔：`_worker` 已具備 lineage query API、worker UI lineage / quality view、all-IFC-entity coverage 語意、`minimum_coverage_ratio=1.0` policy 與 storage batch verification helper；canonical 13-file real batch 仍未完成，因此 production baseline 尚未鎖定。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -76,15 +78,15 @@
 
 | Spec | 對應 v1 Phase | 對應 v2 Layer | 狀態 |
 |---|---|---|---|
-| `worker-artifact-pipeline` | 1 | 3-B | ✓ 涵蓋 source intake / conversion job / versioned object layout / metadata callback / `original_filename` / real IFC→USDC conversion quality |
+| `worker-artifact-pipeline` | 1 | 3-B | ✓ 涵蓋 source intake / conversion job / versioned object layout / metadata callback / `original_filename` / real IFC→USDC conversion quality / lineage graph API / all-IFC-entity coverage policy |
 | `worker-dev-ifc-source-selection` | 0/1 | 3-B | ✓ dev IFC source root + selected-source flow |
-| `worker-demo-upload-convert-ui` | 0/1 | 2 | ✓ Worker demo UI on 8005 |
+| `worker-demo-upload-convert-ui` | 0/1 | 2 | ✓ Worker demo UI on 8005；含 lineage / conversion quality view |
 | `legacy-storage-conversion-retirement` | 1 | 3 | ✓ `_s3_storage` / `_conversion-service` 退役完成 |
 | `review-session-request-lifecycle` | 2/3 | 3-A/C | ✓ created/active/closing/closed/failed + queued_for_instance + close vs release 分離 |
 | `multi-artifact-kit-routing` | 3 | 3-C / 4 | ✓ artifact_bindings + kit_instance_bindings + same/dedicated/shared 三種 routing |
 | `streaming-multi-layer-payload-loading` | 1/2 | 4 | ✓ multi-binding load + applied_mode 誠實回傳 |
 | `session-first-review-viewer` | 2/3 | 2 | ✓ Viewer 從 review_request_id / session_id bootstrap |
-| `runtime-verification-evidence` | 0 | 6 | ✓ 證據分層（contract / real conversion / single-Kit / multi-Kit / stress） |
+| `runtime-verification-evidence` | 0 | 6 | ✓ 證據分層（contract / real conversion / storage batch baseline / single-Kit / multi-Kit / stress） |
 | `runtime-verification-task-status` | 3 | 6 | ✓ checklist 語意：GPU / concurrent runtime items 不得因 blocker classification 被視為完成 |
 | `documentation-source-of-truth` | cross-cutting | repo governance | ✓ workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威 |
 
@@ -107,11 +109,11 @@ _worker API tests:                   32 passed, 1 skipped
 real IFC→USDC root smoke:            passed (89,394,282 bytes fixture; coverage_ratio=0.950556913882097)
 single Kit/browser real worker USDC: passed (review_session_001a59d345ce; 1920×1080; non-black stream frame)
 
-# 2026-05-12 worker-mapping-lineage-quality-baseline（branch evidence，尚未 archive）
+# 2026-05-12 worker-mapping-lineage-quality-baseline（archived spec + validation evidence）
 openspec validate --strict:          passed
 _worker store/converter/batch tests: 56 passed
 _worker clean venv full tests:       94 passed, 1 skipped
-lineage API / UI / quality policy:   implemented in change branch
+lineage API / UI / quality policy:   archived into current specs
 _worker dependency baseline:         requirements pin fastapi/starlette/uvicorn to repo baseline
 canonical storage dry-run:           13 IFC fixtures found; not converted; minimum_coverage_locked=false
 real batch --limit 1:                timed out after 600s; full baseline not locked
@@ -125,7 +127,7 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 > - 2026-05-11 real conversion：`docs/verification/2026-05-11-worker-real-conversion-quality.md`
 > - Single Kit/browser 截圖與 summary：`docs/verification/evidence/2026-05-11-worker-real-conversion-quality/`
 >
-> **限制**：`worker-real-conversion-quality` 已解除 placeholder converter blocker，但該 evidence 仍採 measure-first；`worker-mapping-lineage-quality-baseline` 分支已加入 `minimum_coverage_ratio=1.0` / all-IFC-entity semantics 與 lineage API，但 canonical 13-file real batch 尚未完成，因此不得宣稱 full production coverage baseline 已鎖定。
+> **限制**：`worker-real-conversion-quality` 已解除 placeholder converter blocker；`worker-mapping-lineage-quality-baseline` 已將 `minimum_coverage_ratio=1.0` / all-IFC-entity semantics 與 lineage API 併入現行 specs，但 canonical 13-file real batch 尚未完成，因此不得宣稱 full production coverage baseline 已鎖定。
 
 > **註（2026-05-12）**：`multi-artifact-kit-routing` 的 dedicated_instance runtime 不再列為既有分支驗證狀態；後續必須等 GPU 購買與部署完成、可提供至少兩個 GPU-backed Kit endpoints 後，才重新啟動驗證並更新 `runtime-verification-evidence`。
 
@@ -142,6 +144,7 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 | `2026-05-08-fix-runtime-verification-task-status` | `runtime-verification-task-status`（新增） | OpenSpec runtime verification checklist 語意；GPU / concurrent runtime items 不得因 blocker classification 被視為完成；同步 PR #20 same-Kit primary／spectator stream evidence |
 | `2026-05-11-align-workflow-v3-with-saas-roadmap` | `documentation-source-of-truth`（新增） | workflow v3 與 SaaS 路線圖互補不替代；文件分工調整必須走 OpenSpec change；雙向 cross-reference 必須持續成立 |
 | `2026-05-11-worker-real-conversion-quality` | `worker-artifact-pipeline`、`runtime-verification-evidence`（MODIFY） | `_worker` real IFC→USDC adapter、openable `model.usdc` hard gate、real `ifc_index` / `usd_index` / `element_mapping`、one-to-many mapping schema、quality metrics、measure-first coverage report、single Kit/browser real worker artifact evidence |
+| `2026-05-12-worker-mapping-lineage-quality-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | lineage graph API、stable derived/index/mapping artifact IDs、all-IFC-entity coverage denominator、`minimum_coverage_ratio=1.0` policy、warn reviewable / fail blocking readiness、storage batch evidence tier、worker UI lineage / quality view |
 
 ```txt
 規格目錄約定：
@@ -260,20 +263,20 @@ OpenSpec archive 後，至少檢查：
 | fake APIs 補齊 demo UI / 人工可觸發 review flow | `worker-demo-upload-convert-ui` | ✓ |
 | health check / smoke test / 測試資料穩定化 | `runtime-verification-evidence` + `scripts/start-all`、`smoke-*.ps1` | ✓ |
 
-### Phase 1：`_worker` 收攏（最優先）— **狀態：✓ 主要紅星已解除；lineage / coverage baseline 分支實作中，real batch 未鎖定**
+### Phase 1：`_worker` 收攏（最優先）— **狀態：✓ 主要紅星已解除；lineage / coverage baseline 已歸檔，real batch 未鎖定**
 
 | v1 路線圖項目 | 對應 spec | 狀態 |
 |---|---|---|
 | `_s3_storage` + `_conversion-service` → `_worker` | `legacy-storage-conversion-retirement` | ✓ |
 | `_bim-control` 上傳 IFC 至 `_worker` | `worker-artifact-pipeline` Req1 | ✓ |
 | `_worker` 啟動 conversion job、產出 USDC + mapping | `worker-artifact-pipeline` Req2/3 + real conversion requirements | ✓ real IFC→USDC adapter；USDC openability hard gate；one-to-many mapping；quality metrics |
-| 建立 artifact source / version / lineage 模型 | `worker-artifact-pipeline` Req4 + `worker-mapping-lineage-quality-baseline` | ✓ metadata 結構完成；branch 已實作 lineage graph API / worker UI；clean venv `_worker` full tests passed |
+| 建立 artifact source / version / lineage 模型 | `worker-artifact-pipeline` Req4 + `2026-05-12-worker-mapping-lineage-quality-baseline` | ✓ metadata 結構完成；lineage graph API / worker UI 已歸檔；clean venv `_worker` full tests passed |
 
 **Gap**：
 
 1. `worker-real-conversion-quality` 已於 `2026-05-11` archive：`_worker` 不再以 placeholder `model.usdc` 作為 ready conversion evidence；89 MB ignored repo-local IFC fixture 的 real conversion smoke 與 single Kit/browser evidence 已記錄於 `docs/verification/2026-05-11-worker-real-conversion-quality.md`。
-2. Mapping coverage 已由 `worker-mapping-lineage-quality-baseline` 分支改成 `minimum_coverage_ratio=1.0`、`coverage_denominator=source_ifc_entity_count`、所有 IFC entity 必須 materialize 為 USD prim 的語意；`warn` 可進 review、`fail` 阻擋 mapping readiness。尚未完成 canonical 13-file real batch，因此 production baseline **未鎖定**，issue → real prim baseline 也不得宣稱 passed。
-3. lineage 查詢 API 已由 `worker-mapping-lineage-quality-baseline` 分支實作 `GET /api/artifacts/{id}/lineage`，並優先沿用 `derived_artifact_ids` 作為 mapping/index stable IDs；clean venv 使用 `_worker/requirements.txt` 後 `_worker` full tests passed，global Python 的 `starlette 1.0.0` drift 仍視為本機環境問題。
+2. Mapping coverage 已由 `2026-05-12-worker-mapping-lineage-quality-baseline` archive 改成 `minimum_coverage_ratio=1.0`、`coverage_denominator=source_ifc_entity_count`、所有 IFC entity 必須 materialize 為 USD prim 的語意；`warn` 可進 review、`fail` 阻擋 mapping readiness。尚未完成 canonical 13-file real batch，因此 production baseline **未鎖定**，issue → real prim baseline 也不得宣稱 passed。
+3. lineage 查詢 API 已由 `2026-05-12-worker-mapping-lineage-quality-baseline` archive 納入 `GET /api/artifacts/{id}/lineage`，並優先沿用 `derived_artifact_ids` 作為 mapping/index stable IDs；clean venv 使用 `_worker/requirements.txt` 後 `_worker` full tests passed，global Python 的 `starlette 1.0.0` drift 仍視為本機環境問題。
 
 ### Phase 2：檢討閉環 — **狀態：✓ 已完成並驗證**
 
@@ -458,7 +461,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **多 region / 跨地理 TURN 部署** | Layer 6 | 海外使用者 RTT 投訴 | ⏸ 等待業務接入 |
 | **GitHub Actions / auto PR / test matrix 擴大** | Layer 6 | 開發團隊規模 ≥ 4 人 | ⏸ 等待業務接入 |
 
-> **與其他 Phase 的關係**：已歸檔 #1、候選 #2 / #3 / #4（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
+> **與其他 Phase 的關係**：已歸檔 #1 / #3 / #3A、候選 #2 / #4（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
 
 ---
 
@@ -489,7 +492,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | 6 | 建立 review-session-request → 分發 review session / kit instance | ✓ E2E 已驗證 | LOW |
 | 7 | 發布到 streaming + AI review | ⚠ streaming 通；AI review 未實作 | MEDIUM |
 
-**結論（2026-05-12 對齊）**：v1 路線圖「Phase 1 _worker 收攏」的最大紅星 blocker（placeholder IFC→USDC）已由 `worker-real-conversion-quality` 解除。後續 Phase 4-6 可把 real worker-produced USDC 作為前提，但仍不得把 mapping coverage 視為 production baseline；該門檻與 failure policy 改由候選 **#3A `worker-mapping-quality-baseline`** 鎖定。
+**結論（2026-05-12 對齊）**：v1 路線圖「Phase 1 _worker 收攏」的最大紅星 blocker（placeholder IFC→USDC）已由 `worker-real-conversion-quality` 解除；lineage API 與 all-IFC-entity mapping quality policy 已由 `worker-mapping-lineage-quality-baseline` 歸檔。後續 Phase 4-6 可把 real worker-produced USDC 作為前提，但仍不得把 mapping coverage 視為 production baseline，直到 canonical storage real batch 通過並鎖定 evidence。
 
 ---
 
@@ -518,7 +521,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **驗證紀錄** | `docs/verification/2026-05-11-worker-real-conversion-quality.md` + `docs/verification/evidence/2026-05-11-worker-real-conversion-quality/` |
 | **建議 spec id** | `worker-real-conversion-quality` |
 | **與既有 spec 關係** | MODIFY `worker-artifact-pipeline`：real conversion / mapping / quality gates；MODIFY `runtime-verification-evidence`：real conversion metrics + single Kit real worker artifact evidence |
-| **剩餘限制** | Coverage 仍是 measure-first；尚未鎖 production 最低 mapping coverage hard gate。此限制改由候選 **#3A `worker-mapping-quality-baseline`** 承接，不重開 #1 |
+| **剩餘限制** | Coverage policy 已定義為 all-IFC-entity + `minimum_coverage_ratio=1.0`，但 canonical 13-file real batch 未完成；尚未鎖 production 最低 mapping coverage hard gate。不重開 #1 / #3 / #3A，後續補 evidence 即可 |
 
 ### 5.1 P0-hold（等待 GPU 購買部署）
 
@@ -540,31 +543,15 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 ### 5.2 P1（這月）
 
-#### 候選 #3：`worker-artifact-lineage-api`
+#### 已完成：候選 #3 / #3A 合併為 `worker-mapping-lineage-quality-baseline`
 
 | 項目 | 內容 |
 |---|---|
-| **目標** | 把現有 `metadata.json` 中 `parent_artifact_id` / `conversion_job_id` 整理成可查詢的 lineage graph API；worker UI 視覺化三層關係 |
-| **解決的 v1 phase / v2 layer** | Phase 1 / Layer 3-B |
-| **repo 邊界** | 只動 `_worker/`；UI 改動限於 `_worker/app/static/` |
-| **風險** | MEDIUM（API shape 設計影響後續 Layer 5 audit log） |
-| **KPI** | 1) `GET /api/artifacts/{id}/lineage` 回完整祖系 + 子代鏈；2) worker UI 顯示 source → derived → mapping 三層樹；3) 既有 worker pytest 全綠 |
-| **驗證指令** | `cd _worker && python -m pytest tests` + browser open `/ui/lineage` |
-| **建議 spec id** | `worker-artifact-lineage-api` |
-| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` Req4 versioned object layout（補 lineage query semantics） |
-
-#### 候選 #3A：`worker-mapping-quality-baseline`
-
-| 項目 | 內容 |
-|---|---|
-| **目標** | 將 #1 archive 後保留的 measure-first mapping coverage 轉成可審查 baseline：定義最低 coverage threshold、material / prim fidelity smoke criteria、低 coverage 的 failure / warn policy，以及 issue → real prim highlight 可接受門檻 |
-| **解決的 v1 phase / v2 layer** | Phase 1 quality gate / Layer 3-B |
-| **repo 邊界** | 主要動 `_worker/` 與 verification docs；若需要 viewer smoke，只作 evidence consumer，不讓 viewer 接管 mapping ownership |
-| **風險** | MEDIUM（過早鎖門檻可能讓不同 IFC 類型誤 fail；需先用至少 2-3 個 fixture 校準） |
-| **KPI** | 1) `runtime-verification-evidence` 明確記錄 `minimum_coverage_locked=true` 的條件；2) `_worker` conversion quality report 區分 pass / warn / fail；3) issue highlight smoke 使用 real IFC GUID → USD prim path；4) baseline fixture evidence 不低於門檻 |
-| **驗證指令** | `cd _worker && python -m pytest tests` + real conversion smoke + single Kit/browser issue highlight smoke（有 GPU 時） |
-| **建議 spec id** | `worker-mapping-quality-baseline` |
-| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` real mapping quality gate；MODIFY `runtime-verification-evidence` real conversion quality metrics |
+| **Archive** | `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/` |
+| **涵蓋原候選** | #3 `worker-artifact-lineage-api` + #3A `worker-mapping-quality-baseline` |
+| **已併入 specs** | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui` |
+| **已完成** | lineage graph API、stable mapping/index derived artifact IDs、worker UI lineage / quality view、all-IFC-entity coverage denominator、`minimum_coverage_ratio=1.0` policy、warn reviewable / fail blocking readiness、storage batch helper |
+| **仍未宣稱完成** | canonical 13-file real batch 未完成；`minimum_coverage_locked=true` production baseline 與 issue → real prim verified evidence 尚未成立 |
 
 #### 候選 #4：`coordinator-session-lifecycle-events-audit`
 
@@ -650,7 +637,10 @@ A：可以，但**不是把 #2 spec 換掉**：
 Archived / 已完成:
   #1  worker-real-conversion-quality           ✓ 已於 2026-05-11 archive
                                                解除 IFC→USDC placeholder blocker；real worker-produced USDC 已有 single Kit/browser evidence
-                                               剩餘：coverage baseline 門檻仍是 measure-first，待後續 spec 鎖定
+                                               剩餘：canonical storage real batch 未完成，production coverage baseline 未鎖定
+  #3/#3A worker-mapping-lineage-quality-baseline ✓ 已於 2026-05-12 archive
+                                               lineage API / worker UI / all-IFC-entity coverage policy 已併入 specs
+                                               剩餘：canonical 13-file real batch 未完成，production coverage baseline 未鎖定
 
 P0-hold (等待 GPU 購買與部署):
   #2  streaming-multi-instance-orchestration   ★★  ⏸ 等待 GPU 購買與部署後執行
@@ -659,8 +649,6 @@ P0-hold (等待 GPU 購買與部署):
                                                roadmap 端：GPU capacity 到位後才重啟驗證並同步 §1.3 / §2 / §9.2
 
 P1 (這月):
-  #3  worker-artifact-lineage-api              收斂 lineage 為 query API
-  #3A worker-mapping-quality-baseline          鎖定 #1 archive 後仍 measure-first 的 mapping coverage / issue highlight 門檻
   #4  coordinator-session-lifecycle-events-audit  事件 schema 收斂（為 #6 webhook 鋪路；audit log 持久化屬 Phase 6 凍結）
 
 P2 (下月):
@@ -685,14 +673,14 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 ```txt
 #1 (✓ archived) ─┬─→ Kit GPU render 證據已解鎖
                  ├─→ Phase 5 可用 real worker-produced USDC 作前提
-                 ├─→ #3A mapping coverage / issue highlight baseline 鎖門檻
-                 └─→ #3 lineage API 將 metadata lineage 變成可查詢圖
+                 └─→ #3/#3A (✓ archived) lineage API + all-IFC-entity coverage policy
 
 #2 (⏸ 等待 GPU 購買與部署)
    ─→ GPU-backed multi-instance routing 證據解鎖
    ─→ #2A (OVAS Helm 升級需要先在已部署 GPU capacity 上跑通多 Kit)
 
-#3 ─→ ⏸ #8 audit (Phase 6 凍結；待業務接入)
+#3/#3A (✓ archived) ─→ 後續只剩 canonical storage real batch 與 issue highlight evidence
+                    ─→ ⏸ #8 audit (Phase 6 凍結；待業務接入)
 #4 ─→ #6 mock webhook (P2 可探索)
    ─→ ⏸ #8 audit (Phase 6 凍結)
 
@@ -708,7 +696,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 
 | # | 風險 | 緩解 |
 |---|---|---|
-| R1 | #1 已選 IfcOpenShell + `usd-core` 作為 real IFC→USDC adapter external prerequisites，後續仍有 dependency / license / Windows runtime drift 風險 | 保持 adapter boundary，不讓 `_worker` contract 綁死單一本機腳本路徑；缺 converter 或 USDC 不可開啟時必須 fail job，不得 fallback ready placeholder。Coverage baseline 仍採 measure-first，待後續 spec 鎖最低門檻 |
+| R1 | #1 已選 IfcOpenShell + `usd-core` 作為 real IFC→USDC adapter external prerequisites，後續仍有 dependency / license / Windows runtime drift 風險 | 保持 adapter boundary，不讓 `_worker` contract 綁死單一本機腳本路徑；缺 converter 或 USDC 不可開啟時必須 fail job，不得 fallback ready placeholder。#3/#3A 已定義 all-IFC-entity coverage policy，但 canonical storage real batch 未完成前不得把 production baseline 標成 locked |
 | R2 | 候選 #2 在 8 GB VRAM 下可能無法並行 2 個 Kit；最新狀態為等待 GPU 購買與部署後執行 | GPU 未購買部署前不執行 dedicated multi-Kit runtime 驗證，也不標 passed / failed / in-progress；重新啟動前需具備至少兩個 GPU-backed Kit endpoints，硬體門檻 24 GB VRAM 見 §9.2 |
 | R3 | 規劃過早跳到 Phase 5/6，本機 demo 變不穩 | P0 / P1 全部 land 之前不啟動 #5 / #6 之後的候選；Phase 6 候選 #7 / #8 / #9 連同細項一律凍結至業務系統接入 |
 | R4 | OpenSpec 在 main 上累積太多 untracked 變更 | 每個候選都走 `codex/openspec/<change-id>` branch + PR；本文件不算 OpenSpec change，是 plan |
@@ -1125,24 +1113,29 @@ B → C 觸發：
    - 對 `bim-review-coordinator` 與 `web-viewer-sample` 重跑 `npm ci`，確認 `tsx.cmd` / `vite.cmd` 存在。
    - 以 `.\scripts\start-all.ps1 -SkipStreaming` 驗 8001 / 8005 / 8004 / 5173；這一步通過後，才把後續 OpenSpec / runtime evidence 的失敗視為功能或 spec 問題。
 
-2. **確認 #1 archive 對齊已完成，後續不再重開 `worker-real-conversion-quality`**：
+2. **確認 #1 與 #3/#3A archive 對齊已完成，後續不再重開已完成 change**：
    - `#1 worker-real-conversion-quality` 已歸檔到 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/`。
    - 現行 specs 已同步到 `worker-artifact-pipeline` 與 `runtime-verification-evidence`。
-   - 下一步若要提升品質，不是重開 #1，而是另開 **#3A `worker-mapping-quality-baseline`**（mapping coverage / material fidelity / issue highlight 門檻）或 **#3 `worker-artifact-lineage-api`**（lineage API / UI）等更小 spec。
+   - `#3/#3A worker-mapping-lineage-quality-baseline` 已歸檔到 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/`，並同步到 `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`。
+   - 後續若要提升品質，不重開 #1 / #3 / #3A；改以 canonical storage batch completion 或 issue highlight evidence 作為下一個更小切片。
 
-3. **暫停 `#2 streaming-multi-instance-orchestration`，等待 GPU 購買與部署後再執行**：
+3. **下一個 worker 品質工作：補 canonical storage 13-file real batch evidence**：
+   - 使用 `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 作為正式本機 fixture root。
+   - 先解決 89MB fixture `--limit 1` 超過 600s timeout 的 runtime / performance 問題，再擴到 13-file batch。
+   - 只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 `minimum_coverage_locked=true` production baseline 寫入 evidence。
+
+4. **暫停 `#2 streaming-multi-instance-orchestration`，等待 GPU 購買與部署後再執行**：
    - 在至少兩個 GPU-backed Kit endpoints 可用前，不啟動 dedicated multi-Kit runtime 驗證，也不把它標為進行中、passed 或 failed。
    - GPU 購買與部署完成後，先依 §9.2 確認 24 GB VRAM 級 GPU capacity、distinct signaling / media port pair、Kit stream listener 與 browser evidence 儲存位置，再重新啟動驗證。
    - 重啟驗證通過後，才更新 §1.3 / §2 Phase 3 / §9.2 與 `runtime-verification-evidence` §6.4 evidence。
    - **MCP 補強**：驗證前用 `kit-mcp` `get_kit_extension_details("omni.kit.livestream.webrtc")` 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。
 
-4. **挑一個 P1 候選啟動 OpenSpec explore**：
-   - 推薦在 `#3 worker-artifact-lineage-api`、`#3A worker-mapping-quality-baseline` 與 `#4 coordinator-session-lifecycle-events-audit` 三選一。
-   - 若要延續 #1 的 worker 成果並處理 archive 後的品質 gap，優先 `#3A`：把 mapping coverage / material fidelity / issue highlight 門檻從 measure-first 變成 baseline。
-   - 若要強化 artifact traceability，選 `#3`：把 source → derived → mapping lineage 從 metadata 變成可查詢 API / worker UI。
+5. **下一個 P1 OpenSpec 候選以 `#4 coordinator-session-lifecycle-events-audit` 為主**：
+   - #3 / #3A 已完成並歸檔，不再列為候選池。
    - 若要支撐後續 webhook / observability，選 `#4`：把 lifecycle events 收斂成 append-only event schema。
+   - 若要先補 worker evidence，不開新 spec，優先延續現行 `runtime-verification-evidence` 的 canonical storage batch evidence。
 
-5. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
+6. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
    - 在啟動前，先依 §13 的決策框架評估「**自建 vs 採用 NVIDIA**」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。
    - 若決定啟動 #1A：用 `kit-mcp` `get_kit_extension_details("omni.kit.collaboration.presence_layer")` 查 PresenceLayerAPI 22 個方法（`broadcast_local_bound_camera` / `enter_follow_mode` / `get_selections`）。
    - 若決定啟動 #2A（OVAS spike，2026-05-08 17:00 補）：
@@ -1152,11 +1145,11 @@ B → C 觸發：
      4. **不變的部分**：`web-viewer-sample` UI、`_bim-control` / `_worker` data plane、Socket.IO collaboration 全部保留；OVAS 只取代「Kit container 啟動 / 調度」（§2 4.4 / 4.5 / 4.11）。
      5. **避免的事**：不要把 OVAS image build 流程混進 `bim-streaming-server` 的單機 dev workflow；把 OVAS 部署放 `deploy/ovas/` 獨立目錄，Tier A 仍可走 `scripts/start-multi-kit.ps1` 自寫 KitInstancePool 路徑。
 
-6. **Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動**：
+7. **Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動**：
    - 依使用者 2026-05-08 16:05 指示，這些細項目前 ⏸ 凍結，**等待公司業務系統接入**（SSO / IT 維運 / SLA / billing / 合約等）。
    - 任何想解凍的提案，需在 PR description 引用該決策段落（本文件 §2 Phase 6 表 + §6 P3-frozen），並附上業務系統接入確認文件。
 
-7. **延後啟動 `#5` / `#6`**：
+8. **延後啟動 `#5` / `#6`**：
    - `#5 ai-rule-carbon-result-contract` 與 `#6 notification-webhook-service` 是 P2 的入口 contract（mock 階段），但若 P0 / P1 還沒 land 就開，會是**範圍擴散風險**。
    - production-grade 的 audit log persistence 與 webhook delivery 屬 Phase 6 凍結範圍（§2 Phase 6 表）。
 
