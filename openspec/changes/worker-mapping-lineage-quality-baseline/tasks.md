@@ -45,8 +45,9 @@
 ## 7. Validation And Review
 
 - [x] 7.1 Run `openspec validate worker-mapping-lineage-quality-baseline --strict`.
-- [ ] 7.2 Run `_worker` focused tests from `_worker/` with `python -m pytest tests`.
-  - Blocked locally before API test execution by global dependency drift: `fastapi 0.111.0` + `starlette 1.0.0`; this change pins `_worker/requirements.txt` back to the repo baseline and records the blocker in evidence.
+- [x] 7.2 Run `_worker` focused tests from `_worker/` with `python -m pytest tests`.
+  - Initial global Python run was blocked before API test execution by dependency drift: `fastapi 0.111.0` + `starlette 1.0.0`.
+  - Follow-up clean venv using `_worker/requirements.txt` passed: `93 passed, 1 skipped`.
 - [x] 7.3 Run the batch fixture helper against `storage/*.ifc` or record the exact blocker.
 - [x] 7.4 Run single Kit/browser issue highlight smoke only when GPU/Kit prerequisites are available, otherwise record blocked evidence.
 - [x] 7.5 Run `gitnexus_detect_changes()` before commit and confirm affected scope stays within `_worker`, OpenSpec artifacts, and verification docs unless explicitly expanded.

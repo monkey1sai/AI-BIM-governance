@@ -37,16 +37,19 @@ Passed:
 cd _worker
 python -m py_compile app\store.py app\converters.py app\batch_verification.py app\main.py app\ui.py
 python -m pytest --basetemp .\pytest-tmp-worker tests/test_worker_store.py tests/test_worker_converters.py tests/test_worker_batch_verification.py
+..\_worker\.venv-pr29\Scripts\python.exe -m pytest --basetemp .\pytest-tmp-pr29 tests
 ```
 
 Result:
 
 - `56 passed`
+- Follow-up clean venv full suite: `93 passed, 1 skipped`
+- Clean venv package baseline: `fastapi==0.111.0`, `starlette==0.37.2`, `uvicorn==0.45.0`
 - Store tests cover source-only lineage, succeeded derived lineage, stable mapping/index IDs, legacy diagnostics, unlocked coverage, locked pass, warn reviewability, fail blocking, and duplicate fixture identity.
 - Converter tests cover all-entity denominator materialization for `IfcProject`, `IfcSite`, `IfcBuilding`, `IfcPropertySet`, `IfcWallType`, `IfcRelDefinesByProperties`, and product geometry.
 - Batch helper tests cover missing fixture root and duplicate IFC bytes with independent source artifact IDs, conversion job IDs, original filenames, and lineage.
 
-Blocked:
+Historical local global-env blocker:
 
 ```powershell
 cd _worker
@@ -55,14 +58,15 @@ python -m pytest tests
 
 Result:
 
-- Collection failed before reaching worker API tests.
+- Collection failed before reaching worker API tests when using the machine global Python environment.
 - Local global dependency state:
   - `fastapi 0.111.0`
   - `starlette 1.0.0`
   - installed FastAPI requirement reports `starlette<0.38.0,>=0.37.2`
 - Error: `TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'`
-- Interpretation: local Python environment has an incompatible Starlette version for the installed FastAPI version. API route tests were added but could not run in this environment until dependencies are resolved.
-- Mitigation in this change: `_worker/requirements.txt` now pins `fastapi==0.111.0`, `starlette==0.37.2`, and `uvicorn[standard]==0.45.0` to match `_bim-control`. The current global Python environment was not mutated during this run.
+- Interpretation: local global Python environment has an incompatible Starlette version for the installed FastAPI version.
+- Mitigation in this change: `_worker/requirements.txt` now pins `fastapi==0.111.0`, `starlette==0.37.2`, and `uvicorn[standard]==0.45.0` to match `_bim-control`.
+- Follow-up result: after installing requirements into a clean `_worker/.venv-pr29`, the full `_worker` test suite passed.
 
 ## Batch Fixture Verification
 

@@ -110,6 +110,7 @@ single Kit/browser real worker USDC: passed (review_session_001a59d345ce; 1920×
 # 2026-05-12 worker-mapping-lineage-quality-baseline（branch evidence，尚未 archive）
 openspec validate --strict:          passed
 _worker store/converter/batch tests: 56 passed
+_worker clean venv full tests:       93 passed, 1 skipped
 lineage API / UI / quality policy:   implemented in change branch
 _worker dependency baseline:         requirements pin fastapi/starlette/uvicorn to repo baseline
 canonical storage dry-run:           13 IFC fixtures found; not converted; minimum_coverage_locked=false
@@ -266,13 +267,13 @@ OpenSpec archive 後，至少檢查：
 | `_s3_storage` + `_conversion-service` → `_worker` | `legacy-storage-conversion-retirement` | ✓ |
 | `_bim-control` 上傳 IFC 至 `_worker` | `worker-artifact-pipeline` Req1 | ✓ |
 | `_worker` 啟動 conversion job、產出 USDC + mapping | `worker-artifact-pipeline` Req2/3 + real conversion requirements | ✓ real IFC→USDC adapter；USDC openability hard gate；one-to-many mapping；quality metrics |
-| 建立 artifact source / version / lineage 模型 | `worker-artifact-pipeline` Req4 + `worker-mapping-lineage-quality-baseline` | ✓ metadata 結構完成；branch 已實作 lineage graph API / worker UI；待 PR / API env 驗證收斂 |
+| 建立 artifact source / version / lineage 模型 | `worker-artifact-pipeline` Req4 + `worker-mapping-lineage-quality-baseline` | ✓ metadata 結構完成；branch 已實作 lineage graph API / worker UI；clean venv `_worker` full tests passed |
 
 **Gap**：
 
 1. `worker-real-conversion-quality` 已於 `2026-05-11` archive：`_worker` 不再以 placeholder `model.usdc` 作為 ready conversion evidence；89 MB ignored repo-local IFC fixture 的 real conversion smoke 與 single Kit/browser evidence 已記錄於 `docs/verification/2026-05-11-worker-real-conversion-quality.md`。
 2. Mapping coverage 已由 `worker-mapping-lineage-quality-baseline` 分支改成 `minimum_coverage_ratio=1.0`、`coverage_denominator=source_ifc_entity_count`、所有 IFC entity 必須 materialize 為 USD prim 的語意；`warn` 可進 review、`fail` 阻擋 mapping readiness。尚未完成 canonical 13-file real batch，因此 production baseline **未鎖定**，issue → real prim baseline 也不得宣稱 passed。
-3. lineage 查詢 API 已由 `worker-mapping-lineage-quality-baseline` 分支實作 `GET /api/artifacts/{id}/lineage`，並優先沿用 `derived_artifact_ids` 作為 mapping/index stable IDs；目前 API tests 因本機 `fastapi 0.111.0` 搭到 incompatible `starlette 1.0.0` 於 collection 階段阻擋，需在 PR/CI 或修復本機 dependency 後收斂。
+3. lineage 查詢 API 已由 `worker-mapping-lineage-quality-baseline` 分支實作 `GET /api/artifacts/{id}/lineage`，並優先沿用 `derived_artifact_ids` 作為 mapping/index stable IDs；clean venv 使用 `_worker/requirements.txt` 後 `_worker` full tests passed，global Python 的 `starlette 1.0.0` drift 仍視為本機環境問題。
 
 ### Phase 2：檢討閉環 — **狀態：✓ 已完成並驗證**
 
