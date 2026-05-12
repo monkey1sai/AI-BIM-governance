@@ -6,7 +6,7 @@
 - [ ] 1.4 確認 canonical fixture root `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc`、fixture count、filenames、sizes，以及 worktree-local `storage/` 是不存在或刻意不用。
 - [ ] 1.5 確認本 change 的 OpenSpec artifacts 使用繁體中文；API paths、schema fields、CLI flags、status enum、logs 與 OpenSpec parser 必要標頭保留原文。
 
-## 2. Batch Timing 與 Status Semantics
+## 2. 批次 Timing 與 Status Semantics
 
 - [ ] 2.1 為 batch verification 加入 per-fixture phase timing support，不新增 production dependencies。
 - [ ] 2.2 為 converter phase timing hooks 或 result fields 補上 IFC open、source entity enumeration、geometry iteration、mesh authoring、non-renderable entity materialization、stage save、stage reopen 等可觀察 phase。
@@ -30,7 +30,7 @@
 - [ ] 4.4 若 Kit、GPU、WebRTC、browser automation、coordinator 或 viewer prerequisite 不可用，將 visual preview 記為 `blocked`，列出缺少 prerequisite，且不得宣稱 web UI 已看過轉檔成果。
 - [ ] 4.5 更新 worker UI handoff，讓 lineage / quality view 可提供「用既有 review viewer 開啟 USDC」的 action 或等效 handoff data；UI 不讀 local files，不解析 USD/USDC。
 
-## 5. Canonical 13-File Batch Evidence
+## 5. Canonical 13 檔批次 Evidence
 
 - [ ] 5.1 只有在 `--limit 1` 成功或已有清楚 documented blocker 後，才執行 full canonical 13-file real batch。
 - [ ] 5.2 記錄每個 fixture 的 source artifact ID、artifact group ID、conversion job ID、original filename、size、duration、phase timings、output size、converter identity、USDC openability、lineage API status、source IFC entity count、mapped/unmapped entity counts、coverage ratio、coverage status、warnings 與 failures。
@@ -46,7 +46,7 @@
 - [ ] 6.4 若 bottleneck fix 影響 all-entity materialization、stage writing、artifact publishing 或 lineage lookup behavior，補上 converter/store tests。
 - [ ] 6.5 加入 worker UI tests，覆蓋 lineage / quality view 的 USDC preview handoff，以及 `_worker` UI 不直接 render USD/USDC 或管理 review session。
 
-## 7. Evidence 與 Roadmap
+## 7. Evidence 與 Roadmap 對齊
 
 - [ ] 7.1 更新或建立 `docs/verification/2026-05-12-worker-canonical-storage-batch-baseline.md`，記錄 canonical root、fixture matrix、commands、environment、result status、phase timing summary、single-file visual preview evidence 或 blocked reason。
 - [ ] 7.2 更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`，讓 worker canonical batch risk burn-down 持續排在 unrelated new feature candidates 前，並明確列出單檔先行、USDC viewer preview、再 full batch 的順序。

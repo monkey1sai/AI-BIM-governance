@@ -22,8 +22,8 @@
 
 ### 修改能力
 
-- `worker-artifact-pipeline`：收緊 storage batch verification 行為，讓 timeout diagnostics、phase timing、單檔先行與 full real-batch success 成為 worker batch verification contract 的一部分。
-- `runtime-verification-evidence`：收緊 canonical storage batch evidence acceptance，避免 dry-run、partial、timed-out、subset evidence 被誤用來 lock production mapping baseline，並要求單檔成功後有 web viewer / Kit visual preview evidence 或明確 blocked 記錄。
+- `worker-artifact-pipeline`：收緊 storage batch verification 行為，讓 timeout diagnostics、phase timing、單檔先行與 full real-batch success 成為 worker batch verification contract 的必要內容。
+- `runtime-verification-evidence`：收緊 canonical storage batch evidence acceptance，避免 dry-run、partial、timed-out、subset evidence 被誤用來 lock production mapping baseline，並要求單檔成功後留下 web viewer / Kit visual preview evidence 或明確 blocked 記錄。
 - `worker-demo-upload-convert-ui`：worker demo UI 必須提供 lineage / quality view 中的 USDC preview handoff，將使用者導向既有 review viewer flow；它不得直接解析或渲染 USD/USDC，也不得管理 review session lifecycle。
 
 ## 影響範圍

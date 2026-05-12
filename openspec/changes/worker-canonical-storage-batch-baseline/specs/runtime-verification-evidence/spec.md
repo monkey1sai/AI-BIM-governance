@@ -2,66 +2,66 @@
 
 ### Requirement: Single Kit render evidence uses real worker artifacts
 
-Single Kit render evidence SHALL use `_worker` real conversion artifacts when validating the review-session path from IFC source to browser viewport. Evidence MUST include the conversion job ID and artifact group ID so the rendered stage can be traced back to the source IFC。
+Single Kit render evidence MUST 使用 `_worker` real conversion artifacts 來驗證從 IFC source 到 browser viewport 的 review-session path。Evidence 必須包含 conversion job ID 與 artifact group ID，讓 rendered stage 可追溯回 source IFC。
 
-Canonical storage batch burn-down MUST include a single-file visual preview step after canonical `--limit 1` real conversion succeeds and before claiming that users can inspect the converted result in the web UI。This visual preview MUST use the existing `web-viewer-sample` + `bim-review-coordinator` + `bim-streaming-server` path to load the worker-hosted `model.usdc`; it MUST NOT require `_worker` to parse or render USD/USDC locally。
+Canonical storage batch burn-down 必須在 canonical `--limit 1` real conversion 成功後，加入 single-file visual preview step，才可宣稱使用者能在 web UI 檢視轉檔成果。此 visual preview 必須使用既有 `web-viewer-sample` + `bim-review-coordinator` + `bim-streaming-server` path 載入 worker-hosted `model.usdc`；不得要求 `_worker` 在本地 parse 或 render USD/USDC。
 
-#### Scenario: Real worker artifact renders in browser
+#### Scenario: Real worker artifact 在 browser render
 
-- **WHEN** a valid IFC is converted through `_worker`, routed through `bim-review-coordinator`, loaded by `bim-streaming-server`, and displayed in `web-viewer-sample`
-- **THEN** the evidence records the source IFC identity, `conversion_job_id`, `artifact_group_id`, `model.usdc` URL, mapping URL, `openedStageResult`, non-zero video dimensions, and a viewport screenshot or equivalent visual proof
+- **WHEN** valid IFC 經 `_worker` 轉檔、經 `bim-review-coordinator` routing、由 `bim-streaming-server` 載入，並顯示在 `web-viewer-sample`
+- **THEN** evidence 記錄 source IFC identity、`conversion_job_id`、`artifact_group_id`、`model.usdc` URL、mapping URL、`openedStageResult`、非零 video dimensions，以及 viewport screenshot 或等效 visual proof
 
-#### Scenario: Canonical single fixture preview renders in browser
+#### Scenario: Canonical single fixture preview 在 browser render
 
-- **WHEN** the canonical `--limit 1` storage fixture completes real conversion and its worker-produced `model.usdc` is loaded through the existing review viewer flow
-- **THEN** the evidence records the canonical fixture path, `conversion_job_id`, `artifact_group_id`, derived USDC artifact ID or URL, `openedStageResult`, non-zero viewport/video dimensions, and screenshot or equivalent visual proof
+- **WHEN** canonical `--limit 1` storage fixture 完成 real conversion，且其 worker-produced `model.usdc` 透過既有 review viewer flow 載入
+- **THEN** evidence 記錄 canonical fixture path、`conversion_job_id`、`artifact_group_id`、derived USDC artifact ID 或 URL、`openedStageResult`、非零 viewport/video dimensions，以及 screenshot 或等效 visual proof
 
-#### Scenario: Kit or GPU prerequisite is unavailable
+#### Scenario: Kit 或 GPU prerequisite 不可用
 
-- **WHEN** real conversion succeeds but Kit/GPU/browser verification cannot run in the current environment
-- **THEN** the evidence records conversion success and marks single Kit render evidence as `blocked` with the missing runtime prerequisite
+- **WHEN** real conversion 成功，但目前環境無法執行 Kit/GPU/browser verification
+- **THEN** evidence 分別記錄 conversion success，並將 single Kit render evidence 標為 `blocked`，同時列出 missing runtime prerequisite
 
-#### Scenario: Worker conversion passes but visual preview is blocked
+#### Scenario: Worker conversion passed 但 visual preview blocked
 
-- **WHEN** canonical `--limit 1` conversion succeeds but `web-viewer-sample`, coordinator, Kit runtime, WebRTC, GPU, or browser automation is unavailable
-- **THEN** the evidence keeps conversion result separate from visual preview, marks visual preview as `blocked`, and MUST NOT claim the converted USDC was visually inspected in the web UI
+- **WHEN** canonical `--limit 1` conversion 成功，但 `web-viewer-sample`、coordinator、Kit runtime、WebRTC、GPU 或 browser automation 不可用
+- **THEN** evidence 將 conversion result 與 visual preview 分層記錄，將 visual preview 標為 `blocked`，且不得宣稱 converted USDC 已在 web UI 被 visually inspected
 
 ### Requirement: Batch storage IFC evidence calibrates mapping baseline
 
-Runtime verification evidence SHALL include a batch conversion evidence tier for repo-local `storage/*.ifc` fixtures before declaring the mapping coverage baseline locked. The evidence MUST identify the fixture glob, resolved root, fixture count, per-fixture conversion job IDs, per-fixture artifact group IDs, USDC openability, source IFC entity count, mapped/unmapped entity counts, coverage ratio, `minimum_coverage_ratio=1.0`, coverage status, lineage API status, and whether all required fixtures passed。
+Runtime verification evidence MUST 在宣稱 mapping coverage baseline locked 前，包含 repo-local `storage/*.ifc` fixtures 的 batch conversion evidence tier。Evidence 必須識別 fixture glob、resolved root、fixture count、per-fixture conversion job IDs、per-fixture artifact group IDs、USDC openability、source IFC entity count、mapped/unmapped entity counts、coverage ratio、`minimum_coverage_ratio=1.0`、coverage status、lineage API status，以及所有 required fixtures 是否 passed。
 
-The standard local Windows fixture glob is `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc`。In worktrees and CI-like local runs, the same requirement MAY resolve through `_worker` `dev_storage_root` as repo-local `storage/*.ifc`, but the evidence MUST record the resolved path or approved exception。
+標準 local Windows fixture glob 是 `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc`。在 worktrees 與 CI-like local runs 中，此 requirement 可以透過 `_worker` `dev_storage_root` resolution 指向 repo-local `storage/*.ifc`，但 evidence 必須記錄 resolved path 或 approved exception。
 
-Canonical baseline evidence MUST include per-fixture duration、phase timings when available、converter identity、output file size、warnings 與 failure diagnostics。The evidence MUST classify the overall batch as `blocked`, `partial`, `timed_out`, `failed`, or `passed`。Dry-runs、subset runs、timeout runs 與 any run with failed fixture-level quality checks MUST NOT mark `minimum_coverage_locked=true`。
+Canonical baseline evidence 必須包含 per-fixture duration、可取得時的 phase timings、converter identity、output file size、warnings 與 failure diagnostics。Evidence 必須將 overall batch 分類為 `blocked`、`partial`、`timed_out`、`failed` 或 `passed`。Dry-runs、subset runs、timeout runs，以及任何有 failed fixture-level quality checks 的 run，都不得標示 `minimum_coverage_locked=true`。
 
-Before running the full 13-file canonical batch, evidence MUST first include a completed real `--limit 1` run against the canonical fixture root。If that single-fixture run times out or fails, the evidence MUST record bottleneck diagnostics and keep the production mapping baseline unlocked。If that single-fixture run succeeds, evidence MUST next include either a passed visual preview through the existing review viewer flow or a clearly classified visual-preview blocker before the full batch evidence is treated as human-inspected。
+在執行 full 13-file canonical batch 前，evidence 必須先包含針對 canonical fixture root 的 completed real `--limit 1` run。若該 single-fixture run timeout 或 failed，evidence 必須記錄 bottleneck diagnostics 並維持 production mapping baseline unlocked。若該 single-fixture run succeeded，evidence 接著必須包含透過既有 review viewer flow 的 passed visual preview，或清楚分類的 visual-preview blocker，full batch evidence 才能被視為已具備人工檢視前置結果。
 
 #### Scenario: Full storage fixture batch passes
 
-- **WHEN** all required `storage/*.ifc` fixtures complete real IFC->USDC conversion with openable USDC, truthful mapping output, lineage API success, and every source IFC entity mapped to at least one real USD prim path
-- **THEN** the evidence records `minimum_coverage_locked=true`, `minimum_coverage_ratio=1.0`, `coverage_denominator=source_ifc_entity_count`, per-fixture metrics, and the batch status as `passed`
+- **WHEN** 所有 required `storage/*.ifc` fixtures 都完成 real IFC->USDC conversion，且具備 openable USDC、truthful mapping output、lineage API success，並且每個 source IFC entity 都 mapping 到至少一個 real USD prim path
+- **THEN** evidence 記錄 `minimum_coverage_locked=true`、`minimum_coverage_ratio=1.0`、`coverage_denominator=source_ifc_entity_count`、per-fixture metrics，並將 batch status 設為 `passed`
 
-#### Scenario: Storage fixture batch is incomplete
+#### Scenario: Storage fixture batch incomplete
 
-- **WHEN** the fixture root is unavailable, contains no IFC files, or only a subset was intentionally run
-- **THEN** the evidence records `blocked` or `partial` with the missing prerequisite or subset reason and MUST NOT mark the production mapping baseline as locked
+- **WHEN** fixture root unavailable、不含 IFC files，或刻意只跑 subset
+- **THEN** evidence 以 `blocked` 或 `partial` 記錄 missing prerequisite 或 subset reason，且不得把 production mapping baseline 標為 locked
 
 #### Scenario: One fixture fails baseline
 
-- **WHEN** any required fixture fails conversion, USDC openability, truthful mapping checks, lineage API lookup, or locked coverage threshold
-- **THEN** the batch evidence records the failed fixture and reason, and the overall batch status is not `passed`
+- **WHEN** 任一 required fixture 在 conversion、USDC openability、truthful mapping checks、lineage API lookup 或 locked coverage threshold 中失敗
+- **THEN** batch evidence 記錄 failed fixture 與 reason，overall batch status 不得是 `passed`
 
-#### Scenario: Canonical single-fixture run times out
+#### Scenario: Canonical single-fixture run timeout
 
-- **WHEN** the required `--limit 1` canonical storage run exceeds its configured timeout before completion
-- **THEN** the evidence records `timed_out`, the configured timeout, elapsed duration, last known phase diagnostics, and MUST NOT classify the canonical batch baseline as passed or locked
+- **WHEN** required `--limit 1` canonical storage run 在完成前超過 configured timeout
+- **THEN** evidence 記錄 `timed_out`、configured timeout、elapsed duration、last known phase diagnostics，且不得將 canonical batch baseline 分類為 passed 或 locked
 
 #### Scenario: Canonical batch evidence records phase timings
 
-- **WHEN** canonical storage batch evidence is produced for a real conversion run
-- **THEN** the evidence records per-fixture phase timings for the available conversion phases and identifies any missing phase timing as unavailable or not reached
+- **WHEN** canonical storage batch evidence 由 real conversion run 產出
+- **THEN** evidence 記錄 available conversion phases 的 per-fixture phase timings，並把 missing phase timing 標示為 unavailable 或 not reached
 
 #### Scenario: Canonical full batch waits for single-file gate
 
-- **WHEN** full 13-file batch evidence is attempted before the canonical single-fixture conversion gate has either passed or produced a deterministic blocker
-- **THEN** the evidence records the full batch as not ready and keeps `minimum_coverage_locked=false`
+- **WHEN** full 13-file batch evidence 在 canonical single-fixture conversion gate 尚未 passed 或產生 deterministic blocker 前被嘗試
+- **THEN** evidence 記錄 full batch not ready，並維持 `minimum_coverage_locked=false`

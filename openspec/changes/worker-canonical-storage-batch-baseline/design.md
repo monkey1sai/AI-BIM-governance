@@ -72,7 +72,7 @@ canonical `--limit 1` 完成後，evidence 必須使用該 worker-produced artif
 
 若 Kit、GPU、browser automation 或 streaming prerequisite 在當前環境不可用，evidence 必須標示 single-file visual preview 為 `blocked`，並列出缺少的 prerequisite；不得把 conversion success 說成 visual preview passed。
 
-### 4. Batch status 必須比 helper availability 更嚴格
+### 4. 批次 status 必須比 helper availability 更嚴格
 
 Helper 存在、dry-run 可找到 13 fixtures，仍不等於 evidence passed。Summary status 必須是：
 
@@ -118,4 +118,4 @@ Rollback 很直接：revert implementation PR。既有 archived specs 與過去 
 - 第一輪 controlled run 的 per-fixture timeout 應採 600s、1200s，或經人工批准後更長？
 - Full 13-file batch 應先 serial run 取得 deterministic evidence，還是在單檔穩定後允許 later parallel mode？
 - 若某些 canonical fixtures 因 unsupported IFC content 持續失敗，應 curate fixture set，還是擴充 `coverage_status=warn` policy 加入明確允許的 degradation reasons？
-- Single-file visual preview 的最小 evidence 應固定為 screenshot + `openedStageResult` + non-zero video dimensions，還是允許 headless browser artifact inspection 作為替代？
+- 單檔 visual preview 的最小 evidence 應固定為 screenshot + `openedStageResult` + non-zero video dimensions，還是允許 headless browser artifact inspection 作為替代？
