@@ -25,6 +25,10 @@
 > 3. **§12.2 #2A 補充**：OVAS 接管 4.4 / 4.5 / 4.11 runtime 後，對 spec `multi-artifact-kit-routing` 的影響（`provider="ovas"`、Req2 不變、KitInstancePool 變薄）。
 > 4. **§7 新增 R9**：OVAS multi-Kit lifecycle 黑盒化的觀察成本風險。
 > 5. **§10 補 OVAS spike 路徑**：kind / minikube 單節點驗 chart 起跳，避免直接挑戰雲端 K8s。
+>
+> **2026-05-12 更新（本機環境一致性納入執行基線）**：新增 **§1.5** 作為 demo runtime 的環境一致性基線，並在 **§7 R10** / **§10** 補上 drift 風險與啟動前檢查。OpenSpec 已驗證通過代表當時 spec / tests / smoke evidence 成立；重新啟動 demo 前仍必須確認 repo-local Python / Node dependencies 沒有漂移。
+>
+> **2026-05-12 更新（OpenSpec archive 後 roadmap 對齊規範）**：新增 **§1.6**，明定每次 OpenSpec sync / archive 後，必須同步更新本 roadmap 的 spec 清單、歸檔 change 溯源、Phase 狀態、候選優先級與驗證證據引用，避免 `openspec/specs/` 與本文件漂移。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -38,7 +42,9 @@
   bim-streaming-server 是 Kit runtime，web-viewer-sample 是 browser client。
 - 先收斂、再擴散：不在沒有 KPI 的情況下開新 spec。
 - OpenSpec change 不直接在 main 開發；每個 change 走 codex/openspec/<change-id> branch + PR。
+- 每次 OpenSpec sync / archive 後，都必須更新本 roadmap，讓 `openspec/specs/`、`openspec/changes/archive/` 與本文件的候選、Phase 狀態、風險、KPI 保持一致。
 - 「最小可驗證閉環」優先於「漂亮架構」；任何候選都必須能在本機 demo 路徑下被驗證。
+- Runtime 驗證證據必須綁定可重建的本機環境；不得把全域 Python / 殘缺 `node_modules` 的偶然狀態視為 roadmap health。
 - 跨 5 個 repo 邊界的整合 spec，先拆成單 repo 邊界內的子 change，避免 high-risk impact analysis。
 ```
 
@@ -113,6 +119,101 @@ multi-artifact-kit-routing dedicated_instance runtime  : 另一分支驗證中�
 規格目錄約定：
   openspec/specs/<capability-id>/spec.md   ← 現行權威
   openspec/changes/archive/<date>-<slug>/   ← 已合併 PR 的提案／設計／tasks／當時 spec 快照
+```
+
+### 1.5 本機環境一致性基線（2026-05-12）
+
+> **目的**：避免「OpenSpec / smoke evidence 曾通過」與「今天本機 demo 可重新啟動」被混為一談。OpenSpec 驗證是當時 commit + 當時環境的證據；每次重新執行 demo 前，仍需確認本機 runtime dependencies 沒有 drift。
+
+#### 啟動前必要條件
+
+| 範圍 | 必要條件 | 判斷方式 |
+|---|---|---|
+| Python services | repo root 必須有 `.venv\Scripts\python.exe`，`scripts/start-all.ps1` 應使用此 venv，不依賴全域 Python | `Test-Path .\.venv\Scripts\python.exe` |
+| `_bim-control` | `fastapi==0.111.0`、`starlette==0.37.2`、`uvicorn==0.45.0` 必須同時成立 | `.\.venv\Scripts\python.exe -c "import fastapi, starlette, uvicorn; print(fastapi.__version__, starlette.__version__, uvicorn.__version__)"` |
+| `_worker` | 使用同一個 repo-local venv；不得因 `_worker/requirements.txt` 未 pin 版本而升級到與 `_bim-control` 不相容的 Starlette | 先安裝 `_bim-control/requirements.txt`，再安裝 `_worker/requirements.txt`，最後重跑版本檢查 |
+| `bim-review-coordinator` | `node_modules\.bin\tsx.cmd` 必須存在 | `Test-Path .\bim-review-coordinator\node_modules\.bin\tsx.cmd` |
+| `web-viewer-sample` | `node_modules\.bin\vite.cmd` 必須存在 | `Test-Path .\web-viewer-sample\node_modules\.bin\vite.cmd` |
+| Skip Kit demo | `.\scripts\start-all.ps1 -SkipStreaming` 應至少讓 8001 / 8005 / 8004 / 5173 通過 health / page probe | `Invoke-WebRequest http://127.0.0.1:8001/health` 等四個 endpoint |
+
+#### 已知 drift 症狀
+
+```txt
+_bim-control / _worker:
+  TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'
+  → 通常代表 FastAPI 0.111.0 搭到 Starlette 1.x；應回到 starlette==0.37.2。
+
+bim-review-coordinator:
+  'tsx' is not recognized as an internal or external command
+  → `node_modules` 存在但 devDependency binary 缺失；重跑 npm ci。
+
+web-viewer-sample:
+  'vite' is not recognized as an internal or external command
+  → `node_modules` 存在但 Vite binary 缺失；重跑 npm ci。
+```
+
+#### 恢復基線命令
+
+```powershell
+.\scripts\stop-all.ps1
+
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r .\_bim-control\requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r .\_worker\requirements.txt
+
+cd .\bim-review-coordinator
+npm ci
+cd ..\web-viewer-sample
+npm ci
+cd ..
+
+.\scripts\start-all.ps1 -SkipStreaming
+```
+
+#### Roadmap 判讀規則
+
+```txt
+- §1.3 的「已驗證閉環」代表 2026-05-08 的功能證據，不代表任何日期的本機環境都可直接啟動。
+- 若 health probe 失敗，先看 scripts/.run/*.log.err 與本節 drift 症狀；不要先把問題歸因為 OpenSpec 規格退化。
+- Runtime evidence 更新前，PR / branch 驗證紀錄必須附上 Python package 版本、Node binary presence、start-all health result。
+- 若只跑 `-SkipStreaming`，Kit / GPU / WebRTC 未啟動是預期；但 `_bim-control`、`_worker`、coordinator、viewer 四個非 Kit 服務仍必須健康。
+```
+
+### 1.6 OpenSpec sync / archive 後 roadmap 對齊規範（2026-05-12）
+
+> **觸發時機**：任何 OpenSpec change 被正式接受、執行 sync / archive、或 `openspec/specs/` 內容因 archive 產生新增 / 修改 / 移除時，都必須在同一輪文件更新中檢查本節清單。
+
+#### 必更新章節
+
+| 章節 | 必要動作 | 不可做的事 |
+|---|---|---|
+| `§1.2 已歸檔的 OpenSpec specs` | 若 capability 新增、合併、移除或狀態改變，更新 spec 清單與狀態摘要 | 不得只更新 OpenSpec 目錄而讓 roadmap 繼續顯示舊 capability 數量 |
+| `§1.3 已驗證的閉環` | 只有在有新的 runtime / smoke / test evidence 時才更新通過狀態與數字 | 不得因 archive 完成就把尚未重跑的 runtime 項目標成 passed |
+| `§1.4 OpenSpec 已歸檔 change → 現行 specs 溯源` | 加入新的 `openspec/changes/archive/<date>-<slug>/`，列出影響的現行 spec 與摘要 | 不得省略 archive folder 名稱，避免未來無法追溯 delta 來源 |
+| `§2 v1 路線圖 vs 既有 specs 對照` | 對應 Phase 的完成度、Gap、風險與「進行中 / 已完成 / 凍結」狀態同步調整 | 不得讓 Phase 狀態與現行 spec 互相矛盾 |
+| `§5 OpenSpec change 候選清單` | 若候選已 land / archive，改成已完成或從候選池移除；若產生新 gap，新增候選並標優先級 | 不得保留已完成候選作為 P0 待辦 |
+| `§7 風險與緩解` | 若 archive 解除了風險或引入新風險，更新對應 R 編號與緩解策略 | 不得刪除仍未被證據解除的風險 |
+| `§10 建議的下一步` | 把下一個實際 P0 / P1 工作重排，並引用最新 spec / archive 狀態 | 不得讓下一步指向已完成或已凍結的工作 |
+
+#### 對齊檢查
+
+```txt
+OpenSpec archive 後，至少檢查：
+1. openspec/specs/<capability-id>/spec.md 是否與 §1.2 的 capability 數量與名稱一致。
+2. openspec/changes/archive/<date>-<slug>/ 是否已加入 §1.4 溯源表。
+3. 已完成 change 是否仍被 §5 / §10 當成候選或下一步。
+4. 若 archive 只改 spec 而未重跑 runtime，不更新 §1.3 passed evidence。
+5. 若 runtime evidence 有更新，附上測試指令、日期、環境基線與證據文件路徑。
+```
+
+#### 完成定義
+
+```txt
+一次 OpenSpec sync / archive 完成，必須同時滿足：
+- openspec/specs/ 代表最新規格權威。
+- openspec/changes/archive/ 保留已接受 change 的歷史 delta。
+- docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md 已同步反映 spec 現況、Phase 狀態、候選池、風險與下一步。
+- 若 roadmap 未更新，archive 只能視為規格檔案已搬移，不能視為專案執行規劃已收斂。
 ```
 
 ---
@@ -563,6 +664,8 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 | R7 | Phase 6 細項在使用者明確凍結期間若被誤啟動，會把 roadmap 範圍擴散到尚無業務輸入的領域 | 候選 #7 / #8 / #9 與 §2 Phase 6 表中的所有細項標 ⏸；任何打算解凍的提案需在 PR description 引用「使用者業務系統接入確認」段落 |
 | R8 | 採用 NVIDIA reference implementation 帶來的依賴鎖定 / license 限制 / Nucleus 部署門檻 | 採用框架見 §13；**先在開發機驗證單一 extension 啟用**，再決定是否升 OVAS / Nucleus；不在沒有商業 license 的情況下重新散布 NVIDIA image |
 | R9 ⓜ | 採用 OVAS 後 multi-Kit lifecycle 黑盒化（autoscaling / live migration / pod restart 由 OVAS 內部決定） | spec `multi-artifact-kit-routing` 仍紀錄 `kit_instance_bindings[]`（Req2），透過 OVAS app instance API 取狀態；故障時先看 K8s pod log + OVAS 微服務 log，不要嘗試 reverse-engineer NVIDIA 內部行為。Tier A 先用自寫 KitInstancePool 累積觀察 / 故障經驗，Tier B+ 才換 OVAS（給維運時間吸收新故障模式） |
+| R10 | 本機環境漂移讓「曾通過的 OpenSpec / smoke evidence」無法重啟 demo（例如 Starlette 升到 1.x、`tsx.cmd` / `vite.cmd` 缺失） | 啟動 demo 前先跑 §1.5 環境一致性檢查；缺 venv 或 Node binary 時先恢復依賴，不把 health probe failed 直接視為 spec regression。PR 驗證紀錄要附 package 版本與 `start-all -SkipStreaming` 結果 |
+| R11 | OpenSpec sync / archive 後沒有同步更新 roadmap，導致 `openspec/specs/`、archive 溯源、Phase 狀態與下一步規劃漂移 | 每次 archive 後依 §1.6 檢查並更新本文件；若沒有新的 runtime evidence，不得把 §1.3 標成 passed；若候選已 archive，必須更新 §5 / §10，避免已完成工作仍留在 P0/P1 |
 
 ---
 
@@ -964,19 +1067,24 @@ B → C 觸發：
 
 ## 10. 建議的下一步（給 monkey1sai）
 
-1. **挑一個 P0 候選啟動 OpenSpec explore**：
+1. **先恢復並鎖定本機環境一致性（新增，2026-05-12）**：
+   - 先依 §1.5 建立 repo-local `.venv`，確認 `fastapi 0.111.0 / starlette 0.37.2 / uvicorn 0.45.0`。
+   - 對 `bim-review-coordinator` 與 `web-viewer-sample` 重跑 `npm ci`，確認 `tsx.cmd` / `vite.cmd` 存在。
+   - 以 `.\scripts\start-all.ps1 -SkipStreaming` 驗 8001 / 8005 / 8004 / 5173；這一步通過後，才把後續 OpenSpec / runtime evidence 的失敗視為功能或 spec 問題。
+
+2. **挑一個 P0 候選啟動 OpenSpec explore**：
    - 推薦先做 `#1 worker-real-conversion-quality`，因為 v2 圖紅星指向這裡。
    - 啟動指令：先建 branch `codex/openspec/worker-real-conversion-quality`，再呼叫 `/openspec new worker-real-conversion-quality`，進 explore 階段釐清 converter 選型 + KPI。
    - **MCP 補強建議**：在 explore 階段呼叫 `kit-mcp` `search_kit_extensions("ifc opc revit")` 確認 NVIDIA 是否新增 IFC converter（目前未發現）；同時用 `usd-code-mcp` `get_usd_class_detail("UsdGeomMesh")` / `get_usd_method_detail("CreateAttribute", "Prim")` 驗證 mapping schema 設計符合 USD 官方 API。
 
-2. **追蹤 `#2 streaming-multi-instance-orchestration` 在另一分支的驗證進度**：
+3. **追蹤 `#2 streaming-multi-instance-orchestration` 在另一分支的驗證進度**：
    - **不再從 0 啟動**；驗證已在使用者另一分支進行中（owner 自管），本 roadmap 端的責任是：
      - 待對應 PR merge 進 `main` 後，更新 §1.3 / §2 Phase 3 / §9.2 把「🟡 進行中」→「✓ passed」
      - 同步更新 `runtime-verification-evidence` §6.4 evidence
    - 若該分支需要硬體升級（24 GB VRAM）才能完成驗證，參考 §9.2 推薦配置；本機 8 GB 是下限不是阻礙。
    - **MCP 補強**：在分支 review 時，用 `kit-mcp` `get_kit_extension_details("omni.kit.livestream.webrtc")` 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。
 
-3. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
+4. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
    - 在啟動前，先依 §13 的決策框架評估「**自建 vs 採用 NVIDIA**」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。
    - 若決定啟動 #1A：用 `kit-mcp` `get_kit_extension_details("omni.kit.collaboration.presence_layer")` 查 PresenceLayerAPI 22 個方法（`broadcast_local_bound_camera` / `enter_follow_mode` / `get_selections`）。
    - 若決定啟動 #2A（OVAS spike，2026-05-08 17:00 補）：
@@ -986,18 +1094,19 @@ B → C 觸發：
      4. **不變的部分**：`web-viewer-sample` UI、`_bim-control` / `_worker` data plane、Socket.IO collaboration 全部保留；OVAS 只取代「Kit container 啟動 / 調度」（§2 4.4 / 4.5 / 4.11）。
      5. **避免的事**：不要把 OVAS image build 流程混進 `bim-streaming-server` 的單機 dev workflow；把 OVAS 部署放 `deploy/ovas/` 獨立目錄，Tier A 仍可走 `scripts/start-multi-kit.ps1` 自寫 KitInstancePool 路徑。
 
-4. **Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動**：
+5. **Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動**：
    - 依使用者 2026-05-08 16:05 指示，這些細項目前 ⏸ 凍結，**等待公司業務系統接入**（SSO / IT 維運 / SLA / billing / 合約等）。
    - 任何想解凍的提案，需在 PR description 引用該決策段落（本文件 §2 Phase 6 表 + §6 P3-frozen），並附上業務系統接入確認文件。
 
-5. **延後啟動 `#5` / `#6`**：
+6. **延後啟動 `#5` / `#6`**：
    - `#5 ai-rule-carbon-result-contract` 與 `#6 notification-webhook-service` 是 P2 的入口 contract（mock 階段），但若 P0 / P1 還沒 land 就開，會是**範圍擴散風險**。
    - production-grade 的 audit log persistence 與 webhook delivery 屬 Phase 6 凍結範圍（§2 Phase 6 表）。
 
-6. **保留本文件作為下一輪 roadmap 對照基準**：
-   - 任何新 spec land 後（例如 `#1` archive 完成），更新對照表「Phase 1 紅星 ✓ 解除」並重新評估 P1 / P2 的優先級。
-   - 持續用 `kit-mcp` / `usd-code-mcp` 對 NVIDIA 真實 extension 版本做 quarterly drift check（NVIDIA 經常隨 Kit major 版本更新 extension 介面；本文件記錄為 109.x 系列）。
-   - 公司業務系統接入確認後，逐項解凍 §2 Phase 6 細項並補對應 OpenSpec change。
+7. **保留本文件作為下一輪 roadmap 對照基準**：
+    - 任何新 spec land 後（例如 `#1` archive 完成），更新對照表「Phase 1 紅星 ✓ 解除」並重新評估 P1 / P2 的優先級。
+    - 每次 OpenSpec sync / archive 後，依 §1.6 同步更新 `§1.2` / `§1.4` / `§2` / `§5` / `§7` / `§10`，保持 `openspec/specs/` 與 roadmap 對齊。
+    - 持續用 `kit-mcp` / `usd-code-mcp` 對 NVIDIA 真實 extension 版本做 quarterly drift check（NVIDIA 經常隨 Kit major 版本更新 extension 介面；本文件記錄為 109.x 系列）。
+    - 公司業務系統接入確認後，逐項解凍 §2 Phase 6 細項並補對應 OpenSpec change。
 
 ---
 
