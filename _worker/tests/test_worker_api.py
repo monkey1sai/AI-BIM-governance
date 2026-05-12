@@ -197,6 +197,19 @@ def test_worker_demo_ui_loads_without_legacy_services(case_dir: Path):
     assert "8003" not in response.text
 
 
+def test_worker_demo_ui_exposes_review_viewer_handoff_without_rendering_usdc(case_dir: Path):
+    client = make_client(case_dir)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "reviewPreview" in response.text
+    assert "configureReviewHandoff" in response.text
+    assert "bim-review-coordinator" in response.text
+    assert "Usd.Stage.Open" not in response.text
+    assert "WebRTC" not in response.text
+
+
 def test_dev_ifc_sources_lists_recursive_ifc_only_without_absolute_paths(case_dir: Path):
     storage = case_dir / "storage"
     nested = storage / "nested"

@@ -509,6 +509,7 @@ def test_store_complete_conversion_reports_quality_metrics_and_one_to_many_mappi
     result = completed["result"]
     assert result["quality_metrics"]["converter_identity"]["name"] == "test-fake-converter"
     assert result["quality_metrics"]["coverage_ratio"] == 0.5
+    assert result["quality_metrics"]["phase_timings"]["artifact_publish"]["status"] == "completed"
     mapping_path = Path(store.settings.objects_root) / result["lineage"]["derived_object_prefix"] / "element_mapping.json"
     mapping = read_json(mapping_path, {})
     assert mapping["mock"] is False
