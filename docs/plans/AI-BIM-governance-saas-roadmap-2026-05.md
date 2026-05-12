@@ -35,6 +35,8 @@
 > **2026-05-12 更新（#2 GPU 容量等待）**：依使用者指示，`multi-artifact-kit-routing` / `streaming-multi-instance-orchestration` 的 `dedicated_instance` runtime 驗證改為 **等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，roadmap 與 OpenSpec 只保留 control-plane contract / routing target，不把 dedicated multi-Kit runtime 視為進行中、passed 或 failed。
 >
 > **2026-05-12 更新（`worker-mapping-lineage-quality-baseline` archive 對齊）**：依 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10**。原候選 #3 lineage API 與 #3A mapping quality baseline 已合併為同一 change 並歸檔：`_worker` 已具備 lineage query API、worker UI lineage / quality view、all-IFC-entity coverage 語意、`minimum_coverage_ratio=1.0` policy 與 storage batch verification helper；canonical 13-file real batch 仍未完成，因此 production baseline 尚未鎖定。
+>
+> **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；`coordinator-session-lifecycle-events-audit` 仍保留為下一個新功能候選。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -553,6 +555,19 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **已完成** | lineage graph API、stable mapping/index derived artifact IDs、worker UI lineage / quality view、all-IFC-entity coverage denominator、`minimum_coverage_ratio=1.0` policy、warn reviewable / fail blocking readiness、storage batch helper |
 | **仍未宣稱完成** | canonical 13-file real batch 未完成；`minimum_coverage_locked=true` production baseline 與 issue → real prim verified evidence 尚未成立 |
 
+#### Active risk burn-down：`worker-canonical-storage-batch-baseline`
+
+| 項目 | 內容 |
+|---|---|
+| **狀態** | Active OpenSpec follow-up：`openspec/changes/worker-canonical-storage-batch-baseline/` |
+| **目標** | 補齊 canonical `storage/*.ifc` 13-file real batch evidence；先找出並修掉 `--limit 1` 600s timeout，再擴到全批次 |
+| **解決的 gap** | `worker-mapping-lineage-quality-baseline` 已歸檔，但 production mapping baseline 仍未鎖定 |
+| **repo 邊界** | `_worker/` + verification docs + roadmap；不新增 coordinator / viewer / Kit runtime ownership |
+| **風險** | HIGH（89MB canonical fixture 單檔 real conversion 曾 timeout；all-IFC-entity materialization 可能放大 output size / stage save 成本） |
+| **KPI** | 1) canonical `--limit 1` 完成並有 phase timing；2) full 13-file batch 完成；3) 每 fixture lineage API / USDC openability / coverage status 有 evidence；4) 只有 full pass 才允許 `minimum_coverage_locked=true` |
+| **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1`，通過後再跑 full batch |
+| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` storage batch verification；MODIFY `runtime-verification-evidence` canonical batch acceptance |
+
 #### 候選 #4：`coordinator-session-lifecycle-events-audit`
 
 | 項目 | 內容 |
@@ -649,6 +664,9 @@ P0-hold (等待 GPU 購買與部署):
                                                roadmap 端：GPU capacity 到位後才重啟驗證並同步 §1.3 / §2 / §9.2
 
 P1 (這月):
+  worker-canonical-storage-batch-baseline     ★★★ Active risk burn-down
+                                               先修 canonical --limit 1 timeout，再補 13-file real batch evidence
+                                               full pass 前 production mapping baseline 不得 locked
   #4  coordinator-session-lifecycle-events-audit  事件 schema 收斂（為 #6 webhook 鋪路；audit log 持久化屬 Phase 6 凍結）
 
 P2 (下月):
@@ -679,7 +697,8 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
    ─→ GPU-backed multi-instance routing 證據解鎖
    ─→ #2A (OVAS Helm 升級需要先在已部署 GPU capacity 上跑通多 Kit)
 
-#3/#3A (✓ archived) ─→ 後續只剩 canonical storage real batch 與 issue highlight evidence
+#3/#3A (✓ archived) ─→ worker-canonical-storage-batch-baseline (active risk burn-down)
+                    ─→ issue highlight evidence（需 locked real mapping 後才可宣稱）
                     ─→ ⏸ #8 audit (Phase 6 凍結；待業務接入)
 #4 ─→ #6 mock webhook (P2 可探索)
    ─→ ⏸ #8 audit (Phase 6 凍結)
@@ -1119,8 +1138,9 @@ B → C 觸發：
    - `#3/#3A worker-mapping-lineage-quality-baseline` 已歸檔到 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/`，並同步到 `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`。
    - 後續若要提升品質，不重開 #1 / #3 / #3A；改以 canonical storage batch completion 或 issue highlight evidence 作為下一個更小切片。
 
-3. **下一個 worker 品質工作：補 canonical storage 13-file real batch evidence**：
+3. **下一個 worker 品質工作：執行 `worker-canonical-storage-batch-baseline`**：
    - 使用 `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 作為正式本機 fixture root。
+   - 此 work 已落成 active OpenSpec change：`openspec/changes/worker-canonical-storage-batch-baseline/`。
    - 先解決 89MB fixture `--limit 1` 超過 600s timeout 的 runtime / performance 問題，再擴到 13-file batch。
    - 只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 `minimum_coverage_locked=true` production baseline 寫入 evidence。
 
@@ -1133,7 +1153,7 @@ B → C 觸發：
 5. **下一個 P1 OpenSpec 候選以 `#4 coordinator-session-lifecycle-events-audit` 為主**：
    - #3 / #3A 已完成並歸檔，不再列為候選池。
    - 若要支撐後續 webhook / observability，選 `#4`：把 lifecycle events 收斂成 append-only event schema。
-   - 若要先補 worker evidence，不開新 spec，優先延續現行 `runtime-verification-evidence` 的 canonical storage batch evidence。
+   - 若要先補 worker evidence，優先完成 active change `worker-canonical-storage-batch-baseline`，不要跳過這個 readiness gate。
 
 6. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
    - 在啟動前，先依 §13 的決策框架評估「**自建 vs 採用 NVIDIA**」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。
@@ -1153,7 +1173,7 @@ B → C 觸發：
    - `#5 ai-rule-carbon-result-contract` 與 `#6 notification-webhook-service` 是 P2 的入口 contract（mock 階段），但若 P0 / P1 還沒 land 就開，會是**範圍擴散風險**。
    - production-grade 的 audit log persistence 與 webhook delivery 屬 Phase 6 凍結範圍（§2 Phase 6 表）。
 
-8. **保留本文件作為下一輪 roadmap 對照基準**：
+9. **保留本文件作為下一輪 roadmap 對照基準**：
     - 任何新 spec land 後，更新對照表、候選池與優先級，避免已完成工作仍留在 P0/P1。
     - 每次 OpenSpec sync / archive 後，依 §1.6 同步更新 `§1.2` / `§1.4` / `§2` / `§5` / `§7` / `§10`，保持 `openspec/specs/` 與 roadmap 對齊。
     - 持續用 `kit-mcp` / `usd-code-mcp` 對 NVIDIA 真實 extension 版本做 quarterly drift check（NVIDIA 經常隨 Kit major 版本更新 extension 介面；本文件記錄為 109.x 系列）。
