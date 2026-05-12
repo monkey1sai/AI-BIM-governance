@@ -319,7 +319,7 @@ describe("bim-review-coordinator", () => {
 
     const events = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
     expect(events.body.items.map((item: { type: string }) => item.type)).toContain("sessionClosed");
-    expect(events.body.items.map((item: { type: string }) => item.type)).toContain("kitInstancesReleased");
+    expect(events.body.items.map((item: { type: string }) => item.type)).toContain("kitInstanceReleased");
   });
 
   it("rejects HTTP events for missing sessions or malformed bodies", async () => {
@@ -645,7 +645,60 @@ describe("bim-review-coordinator", () => {
     expect(events.body.items.some((item: { type: string }) => item.type === "finalReviewEvent")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosing")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosed")).toBe(true);
-    expect(events.body.items.some((item: { type: string }) => item.type === "kitInstancesReleased")).toBe(true);
+    expect(events.body.items.some((item: { type: string }) => item.type === "kitInstanceReleased")).toBe(true);
+  });
+
+  it("returns lifecycle audit events with stable sequence and excludes generic events", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        review_request_id: "review_request_lifecycle_audit",
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+
+    await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/events`)
+      .send({ type: "highlightRequest", issue_id: "ISSUE-DEMO-001" });
+    await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/close`)
+      .send({ final_events: [{ type: "annotationSnapshot", count: 1 }] });
+
+    const lifecycle = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/lifecycle-events`);
+    expect(lifecycle.status).toBe(200);
+    const items = lifecycle.body.items as Array<{
+      event_id: string;
+      session_id: string;
+      type: string;
+      sequence: number;
+      created_at: string;
+      payload: Record<string, unknown>;
+    }>;
+    const types = items.map((item) => item.type);
+    expect(types).toEqual(["sessionCreated", "sessionActive", "sessionClosing", "sessionClosed", "kitInstanceReleased"]);
+    expect(types).not.toContain("highlightRequest");
+    expect(types).not.toContain("finalReviewEvent");
+    expect(items.map((item) => item.sequence)).toEqual([1, 2, 4, 6, 7]);
+    expect(items.every((item) => item.event_id && item.session_id === created.body.session_id && item.created_at)).toBe(true);
+    expect(items[0].payload.review_request_id).toBe("review_request_lifecycle_audit");
+    expect(items.at(-1)?.payload.kit_instance_bindings).toEqual(["kit_local_001"]);
+
+    const generic = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/events`);
+    const genericTypes = generic.body.items.map((item: { type: string }) => item.type);
+    expect(genericTypes).toContain("highlightRequest");
+    expect(genericTypes).toContain("finalReviewEvent");
+  });
+
+  it("uses existing validation behavior for lifecycle event endpoint", async () => {
+    const app = makeApp();
+
+    const invalid = await request(app.app).get("/api/review-sessions/..%2Fsecrets/lifecycle-events");
+    expect(invalid.status).toBe(400);
+
+    const missing = await request(app.app).get("/api/review-sessions/review_session_missing/lifecycle-events");
+    expect(missing.status).toBe(404);
   });
 
   // ---------------------------------------------------------------------------

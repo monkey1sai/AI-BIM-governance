@@ -354,6 +354,8 @@ def _append_lifecycle_event(data_root: Path, request_id: str, event_type: str, p
     event = {
         "event_id": f"lifecycle_{int(datetime.now(UTC).timestamp() * 1000)}",
         "review_request_id": request_id,
+        "session_id": payload.get("session_id"),
+        "correlation_id": payload.get("correlation_id") or request_id,
         "type": event_type,
         "payload": payload,
         "created_at": _now(),

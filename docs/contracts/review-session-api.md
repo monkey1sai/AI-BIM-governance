@@ -18,6 +18,7 @@ POST /api/review-sessions/{session_id}/close
 GET  /api/review-sessions/{session_id}/stream-config
 GET  /api/review-sessions/{session_id}/events
 POST /api/review-sessions/{session_id}/events
+GET  /api/review-sessions/{session_id}/lifecycle-events
 GET  /api/model-versions/{model_version_id}/review-bootstrap
 ```
 
@@ -119,6 +120,39 @@ failed
 ```
 
 `POST /api/review-sessions/{session_id}/close` moves a session through `closing` to `closed`, appends final events, and then marks every `kit_instance_bindings[]` item as `released`. `closed` means collaboration is closed; Kit release completion is tracked separately in binding status.
+
+`GET /api/review-sessions/{session_id}/lifecycle-events` returns only lifecycle audit events, sorted by append order and `sequence`:
+
+```json
+{
+  "items": [
+    {
+      "event_id": "1700000000000_abcd",
+      "session_id": "review_session_xxx",
+      "type": "sessionCreated",
+      "sequence": 1,
+      "created_at": "2026-05-12T10:00:00.000Z",
+      "payload": {
+        "project_id": "project_demo_001",
+        "model_version_id": "version_demo_001",
+        "review_request_id": "review_request_xxx"
+      }
+    }
+  ]
+}
+```
+
+Lifecycle audit event types include:
+
+```txt
+sessionCreated
+sessionActive
+sessionClosing
+sessionClosed
+kitInstanceReleased
+```
+
+The lifecycle endpoint excludes generic collaboration events such as `highlightRequest`, `selectionUpdate`, `annotationCreated`, and `finalReviewEvent`. Use `GET /api/review-sessions/{session_id}/events` for the full generic session event feed.
 
 If `kit_profile.capacity_slots=0`, `POST /api/review-sessions` returns:
 
