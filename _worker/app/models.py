@@ -34,6 +34,7 @@ class ConversionRequest(BaseModel):
     source_artifact_id: str = Field(min_length=1)
     target_format: Literal["usdc"] = "usdc"
     generate_mapping: bool = True
+    materialization_strategy: Literal["sidecar", "usd_prim"] = "sidecar"
     options: ConversionOptions = Field(default_factory=ConversionOptions)
 
 
@@ -46,4 +47,5 @@ class DevIfcSourceConversionRequest(BaseModel):
     artifact_group_id: str | None = None
     target_format: Literal["usdc"] = "usdc"
     generate_mapping: bool = True
+    materialization_strategy: Literal["sidecar", "usd_prim"] = "sidecar"
     options: ConversionOptions = Field(default_factory=ConversionOptions)
