@@ -114,22 +114,27 @@ Result: **passed**（首次有 canonical `model.usdc` 完成輸出 + lineage 完
 - `minimum_coverage_locked=false`
 - `lineage_api_status=ok`
 - `output_file_size_bytes=9844612`（~9.4 MB；baseline 從未產生完成 USDC）
-- `duration_seconds=267.72`（從 timeout > 600s 到完成 267.7s）
+- `duration_seconds=267.72`（fixture 端到端 wall-clock，包含 `source_read` / `artifact_intake` / `conversion_total` / `lineage_lookup`，即 verification harness 計時範圍）
+- `conversion_total=232.42s`（converter 內部 phases 加總，含 `ifc_open` → `stage_reopen` 與 `artifact_publish`，不含 batch harness 端的 `source_read` / `artifact_intake` / `lineage_lookup`）
 
 ### Phase timing summary
 
-| Phase | Baseline | Post-change | Δ |
-|---|---|---|---|
-| `ifc_open` | 4.23s | 4.28s | flat |
-| `source_entity_enumeration` | 33.19s | 27.26s | -5.93s |
-| `geometry_iteration` | 198.08s | 187.47s | -10.61s |
-| `mesh_authoring` | 8.51s | 7.23s | -1.28s |
-| `non_renderable_entity_materialization` | timed_out > 375s | **5.05s** | **-370s+，~74× faster** |
-| `stage_save` | not_reached | 0.24s | unblocked |
-| `stage_reopen` | not_reached | 0.02s | unblocked |
-| `artifact_publish` | not_reached | 0.001s | unblocked |
-| `conversion_total` | not_reached | 232.42s | unblocked |
-| `lineage_lookup` | not_run | 0.13s | unblocked |
+> 兩種總和的差異：`duration_seconds=267.72` 為 fixture 端到端 wall-clock（涵蓋下表所有列）；`conversion_total=232.42s` 為 converter 內部範圍（`ifc_open` + `source_entity_enumeration` + `geometry_iteration` + `mesh_authoring` + `non_renderable_entity_materialization` + `stage_save` + `stage_reopen` + `artifact_publish`），不含 batch harness 端的 `source_read` / `artifact_intake` / `lineage_lookup`。差值 `~35s` 對應 source_read + artifact_intake + lineage_lookup 的開銷。
+
+| Phase | Baseline | Post-change | Δ | 計入哪個 total |
+|---|---|---|---|---|
+| `source_read` | n/a | <0.1s | - | duration_seconds |
+| `artifact_intake` | n/a | <1s | - | duration_seconds |
+| `ifc_open` | 4.23s | 4.28s | flat | conversion_total + duration_seconds |
+| `source_entity_enumeration` | 33.19s | 27.26s | -5.93s | conversion_total + duration_seconds |
+| `geometry_iteration` | 198.08s | 187.47s | -10.61s | conversion_total + duration_seconds |
+| `mesh_authoring` | 8.51s | 7.23s | -1.28s | conversion_total + duration_seconds |
+| `non_renderable_entity_materialization` | timed_out > 375s | **5.05s** | **-370s+，~74× faster** | conversion_total + duration_seconds |
+| `stage_save` | not_reached | 0.24s | unblocked | conversion_total + duration_seconds |
+| `stage_reopen` | not_reached | 0.02s | unblocked | conversion_total + duration_seconds |
+| `artifact_publish` | not_reached | 0.001s | unblocked | conversion_total + duration_seconds |
+| `conversion_total` | not_reached | 232.42s | unblocked | （converter 內部 phases 的 sum） |
+| `lineage_lookup` | not_run | 0.13s | unblocked | duration_seconds |
 
 ### Materialization diagnostics (post-change)
 
@@ -152,6 +157,8 @@ Result: **passed**（首次有 canonical `model.usdc` 完成輸出 + lineage 完
   }
 }
 ```
+
+> 注意：此 JSON 為 2026-05-13 canonical run 的原始輸出快照。在 PR review 後，profile 欄位 `sidecar_io_seconds` 被改名為 `sidecar_append_seconds`（用來精確表達它計時的是 in-memory list/dict append cost，而非實際 file I/O）；同時新增 `quality_metrics.sidecar_write_seconds` 計時實際的 `entity_index.json` JSON dump。未來 canonical run 將使用新欄位名稱。1.39s 對應的是當時 1,597,773 entries 的 list append + mapping dict insert 累積耗時。
 
 USD-side metrics:
 

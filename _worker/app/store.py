@@ -134,6 +134,12 @@ class WorkerStore:
         source = self.get_source_artifact(source_artifact_id)
         if source is None:
             raise KeyError(source_artifact_id)
+        materialization_strategy = str(request.get("materialization_strategy") or "sidecar").lower()
+        if materialization_strategy not in {"sidecar", "usd_prim"}:
+            raise ValueError(
+                f"Unsupported materialization_strategy={materialization_strategy!r}; "
+                "expected 'sidecar' or 'usd_prim'."
+            )
         now = utc_now()
         conversion_job_id = f"conv_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
         job = {
@@ -144,6 +150,7 @@ class WorkerStore:
             "target_format": request.get("target_format", "usdc"),
             "generate_mapping": bool(request.get("generate_mapping", True)),
             "profile_source_entity_enumeration": bool(request.get("profile_source_entity_enumeration", False)),
+            "materialization_strategy": materialization_strategy,
             "created_at": now,
             "updated_at": now,
             "source_artifact_id": source_artifact_id,

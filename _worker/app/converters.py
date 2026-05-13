@@ -216,7 +216,10 @@ class IfcOpenShellUsdConverter:
         mapping_path = output_dir / "element_mapping.json" if generate_mapping else None
         materialization_strategy = str(job.get("materialization_strategy") or "sidecar").lower()
         if materialization_strategy not in {"sidecar", "usd_prim"}:
-            materialization_strategy = "sidecar"
+            raise ConversionAdapterError(
+                f"Unsupported materialization_strategy={materialization_strategy!r}; "
+                "expected 'sidecar' or 'usd_prim'."
+            )
         use_sidecar = materialization_strategy == "sidecar"
         entity_index_path: Path | None = output_dir / "entity_index.json" if use_sidecar else None
 
@@ -411,7 +414,9 @@ class IfcOpenShellUsdConverter:
         unmapped_usd_count = len(unmapped_usd_prims)
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
         sidecar_carrier_count = len(sidecar_entries)
+        sidecar_write_seconds: float | None = None
         if entity_index_path is not None:
+            sidecar_write_started = perf_counter()
             _write_json(
                 entity_index_path,
                 {
@@ -425,6 +430,7 @@ class IfcOpenShellUsdConverter:
                     "entities": sidecar_entries,
                 },
             )
+            sidecar_write_seconds = perf_counter() - sidecar_write_started
         duration_seconds = perf_counter() - conversion_started
         _mark_phase_completed(phase_timings, "conversion_total", duration_seconds)
         _record_phase_progress(job, "conversion_total", phase_timings, status="completed")
@@ -468,6 +474,7 @@ class IfcOpenShellUsdConverter:
             "threshold_status": "measure_only",
             "materialization_strategy": materialization_strategy,
             "sidecar_carrier_count": sidecar_carrier_count,
+            "sidecar_write_seconds": sidecar_write_seconds,
         }
 
         _write_json(ifc_index_path, ifc_index)
@@ -535,6 +542,7 @@ class IfcOpenShellUsdConverter:
             "phase_timings": phase_timings,
             "materialization_strategy": materialization_strategy,
             "sidecar_carrier_count": sidecar_carrier_count,
+            "sidecar_write_seconds": sidecar_write_seconds,
         }
         return ConversionAdapterResult(
             model_path=model_path,
@@ -698,7 +706,10 @@ class IfcOpenShellUsdConverter:
             "row_append_seconds": 0.0,
             "mapping_append_seconds": 0.0,
             "progress_write_seconds": 0.0,
-            "sidecar_io_seconds": 0.0,
+            # Time spent appending sidecar entries to in-memory list + mapping dict
+            # (the actual entity_index.json write happens later in convert() and is
+            # tracked separately by quality_metrics.sidecar_write_seconds).
+            "sidecar_append_seconds": 0.0,
         }
         details: dict[str, Any] = {
             "materialized_entity_count": 0,
@@ -766,7 +777,7 @@ class IfcOpenShellUsdConverter:
                     "carrier": "sidecar",
                 }
                 if profile_enabled:
-                    profile["sidecar_io_seconds"] += perf_counter() - op_started
+                    profile["sidecar_append_seconds"] += perf_counter() - op_started
             else:
                 details["last_operation"] = "unique_prim_path"
                 if profile_enabled:
@@ -840,7 +851,7 @@ class IfcOpenShellUsdConverter:
                 materialized % MATERIALIZATION_PROGRESS_INTERVAL == 0
                 or now - last_progress_at >= MATERIALIZATION_PROGRESS_SECONDS
             ):
-                publish_progress("append_row")
+                publish_progress("sidecar_append" if use_sidecar else "append_row")
 
         details["materialized_entity_count"] = materialized
         details["elapsed_seconds"] = perf_counter() - started
