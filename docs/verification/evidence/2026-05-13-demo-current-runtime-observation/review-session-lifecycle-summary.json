@@ -1,0 +1,343 @@
+{
+  "captured_at": "2026-05-13T10:06:17.1811480Z",
+  "review_request": {
+    "review_request_id": "review_request_1778666777077_1d692eed",
+    "requested_by": "dev_user_001",
+    "tenant_id": "tenant_demo_001",
+    "project_id": "project_demo_001",
+    "model_version_id": "version_demo_001",
+    "artifact_group_ids": [
+      "ag_593876ab7233"
+    ],
+    "selected_artifact_ids": [],
+    "startup_policy": {
+      "routing_policy": "same_instance"
+    },
+    "kit_profile": {
+      "provider": "local_fixed"
+    },
+    "status": "blocked_conversion",
+    "blocker": "conversion_readiness",
+    "missing_refs": [
+      "ag_593876ab7233"
+    ],
+    "artifact_groups": [],
+    "session_id": null,
+    "artifact_bindings": [],
+    "kit_instance_bindings": [],
+    "created_at": "2026-05-13T18:06:17.083044+08:00",
+    "updated_at": "2026-05-13T18:06:17.083044+08:00"
+  },
+  "session": {
+    "session_id": "review_session_87404055d4fd",
+    "review_request_id": "review_request_1778666777077_1d692eed",
+    "tenant_id": "tenant_demo_001",
+    "project_id": "project_demo_001",
+    "model_version_id": "version_demo_001",
+    "status": "active",
+    "mode": "single_kit_shared_state",
+    "created_by": "dev_user_001",
+    "created_at": "2026-05-13T10:06:17.129Z",
+    "updated_at": "2026-05-13T10:06:17.129Z",
+    "kit_instance": {
+      "instance_id": "kit_local_001",
+      "provider": "local_fixed",
+      "status": "ready",
+      "stream_server": "127.0.0.1",
+      "signaling_port": 49100,
+      "media_server": "127.0.0.1",
+      "media_port": 47998
+    },
+    "artifact_bindings": [],
+    "kit_instance_bindings": [
+      {
+        "kit_instance_id": "kit_local_001",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49100,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 47998
+        },
+        "started_at": "2026-05-13T10:06:17.129Z",
+        "last_heartbeat_at": "2026-05-13T10:06:17.129Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "local-slot-1"
+        }
+      }
+    ],
+    "participants": []
+  },
+  "stream_config": {
+    "session_id": "review_session_87404055d4fd",
+    "lifecycle_status": "active",
+    "source": "local_fixed",
+    "webrtc": {
+      "signalingServer": "127.0.0.1",
+      "signalingPort": 49100,
+      "mediaServer": "127.0.0.1",
+      "mediaPort": 47998
+    },
+    "model": {
+      "status": "missing",
+      "artifact_id": null,
+      "url": null,
+      "mapping_url": null
+    },
+    "artifacts": [
+      {
+        "artifact_id": "artifact_ifc_demo_001",
+        "project_id": "project_demo_001",
+        "model_version_id": "version_demo_001",
+        "artifact_type": "ifc",
+        "name": "示範 BIM 原始 IFC",
+        "url": null,
+        "mapping_url": null,
+        "status": "missing",
+        "updated_at": "2026-05-13T17:49:13.745977+08:00"
+      },
+      {
+        "artifact_id": "artifact_usdc_demo_001",
+        "project_id": "project_demo_001",
+        "model_version_id": "version_demo_001",
+        "artifact_type": "usdc",
+        "name": "示範 BIM 轉檔 USDC",
+        "url": null,
+        "mapping_url": null,
+        "status": "missing",
+        "updated_at": "2026-05-13T17:49:13.745977+08:00"
+      }
+    ],
+    "artifact_bindings": [],
+    "kit_instance_bindings": [
+      {
+        "kit_instance_id": "kit_local_001",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49100,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 47998
+        },
+        "started_at": "2026-05-13T10:06:17.129Z",
+        "last_heartbeat_at": "2026-05-13T10:06:17.129Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "local-slot-1"
+        }
+      }
+    ]
+  },
+  "event": {
+    "event_id": "1778666777142_406053904dbd",
+    "session_id": "review_session_87404055d4fd",
+    "type": "highlightRequest",
+    "sequence": 3,
+    "payload": {
+      "type": "highlightRequest",
+      "items": [
+        {
+          "color": [
+            1,
+            0,
+            0,
+            1
+          ],
+          "label": "Runtime observation",
+          "usd_prim_path": "/World"
+        }
+      ],
+      "issue_id": "ISSUE-DEMO-001"
+    },
+    "created_at": "2026-05-13T10:06:17.142Z"
+  },
+  "closed": {
+    "session_id": "review_session_87404055d4fd",
+    "review_request_id": "review_request_1778666777077_1d692eed",
+    "tenant_id": "tenant_demo_001",
+    "project_id": "project_demo_001",
+    "model_version_id": "version_demo_001",
+    "status": "closed",
+    "mode": "single_kit_shared_state",
+    "created_by": "dev_user_001",
+    "created_at": "2026-05-13T10:06:17.129Z",
+    "updated_at": "2026-05-13T10:06:17.146Z",
+    "kit_instance": {
+      "instance_id": "kit_local_001",
+      "provider": "local_fixed",
+      "status": "ready",
+      "stream_server": "127.0.0.1",
+      "signaling_port": 49100,
+      "media_server": "127.0.0.1",
+      "media_port": 47998
+    },
+    "artifact_bindings": [],
+    "kit_instance_bindings": [
+      {
+        "kit_instance_id": "kit_local_001",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [],
+        "status": "released",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49100,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 47998
+        },
+        "started_at": "2026-05-13T10:06:17.129Z",
+        "last_heartbeat_at": "2026-05-13T10:06:17.146Z",
+        "released_at": "2026-05-13T10:06:17.146Z",
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "local-slot-1"
+        }
+      }
+    ],
+    "participants": []
+  },
+  "lifecycle": {
+    "items": [
+      {
+        "event_id": "1778666777129_d20cc332631f6",
+        "session_id": "review_session_87404055d4fd",
+        "type": "sessionCreated",
+        "sequence": 1,
+        "payload": {
+          "project_id": "project_demo_001",
+          "model_version_id": "version_demo_001",
+          "review_request_id": "review_request_1778666777077_1d692eed"
+        },
+        "created_at": "2026-05-13T10:06:17.13Z"
+      },
+      {
+        "event_id": "1778666777130_5a4a0a1647a81",
+        "session_id": "review_session_87404055d4fd",
+        "type": "sessionActive",
+        "sequence": 2,
+        "payload": {
+          "kit_instance_bindings": [
+            "kit_local_001"
+          ]
+        },
+        "created_at": "2026-05-13T10:06:17.131Z"
+      },
+      {
+        "event_id": "1778666777146_420a34b040c06",
+        "session_id": "review_session_87404055d4fd",
+        "type": "sessionClosing",
+        "sequence": 4,
+        "payload": {
+          "final_events": 1
+        },
+        "created_at": "2026-05-13T10:06:17.146Z"
+      },
+      {
+        "event_id": "1778666777147_13ba0fe9f9af3",
+        "session_id": "review_session_87404055d4fd",
+        "type": "sessionClosed",
+        "sequence": 6,
+        "payload": {},
+        "created_at": "2026-05-13T10:06:17.147Z"
+      },
+      {
+        "event_id": "1778666777147_c88dd2fcf6324",
+        "session_id": "review_session_87404055d4fd",
+        "type": "kitInstanceReleased",
+        "sequence": 7,
+        "payload": {
+          "kit_instance_bindings": [
+            "kit_local_001"
+          ]
+        },
+        "created_at": "2026-05-13T10:06:17.147Z"
+      }
+    ]
+  },
+  "patched_review_request": {
+    "review_request_id": "review_request_1778666777077_1d692eed",
+    "requested_by": "dev_user_001",
+    "tenant_id": "tenant_demo_001",
+    "project_id": "project_demo_001",
+    "model_version_id": "version_demo_001",
+    "artifact_group_ids": [
+      "ag_593876ab7233"
+    ],
+    "selected_artifact_ids": [],
+    "startup_policy": {
+      "routing_policy": "same_instance"
+    },
+    "kit_profile": {
+      "provider": "local_fixed"
+    },
+    "status": "closed",
+    "blocker": "conversion_readiness",
+    "missing_refs": [
+      "ag_593876ab7233"
+    ],
+    "artifact_groups": [],
+    "session_id": "review_session_87404055d4fd",
+    "artifact_bindings": [],
+    "kit_instance_bindings": [
+      {
+        "kit_instance_id": "kit_local_001",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [],
+        "status": "released",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49100,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 47998
+        },
+        "started_at": "2026-05-13T10:06:17.129Z",
+        "last_heartbeat_at": "2026-05-13T10:06:17.146Z",
+        "released_at": "2026-05-13T10:06:17.146Z",
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "local-slot-1"
+        }
+      }
+    ],
+    "created_at": "2026-05-13T18:06:17.083044+08:00",
+    "updated_at": "2026-05-13T18:06:17.161572+08:00"
+  },
+  "request_lifecycle": {
+    "review_request_id": "review_request_1778666777077_1d692eed",
+    "items": [
+      {
+        "event_id": "lifecycle_1778666777085",
+        "review_request_id": "review_request_1778666777077_1d692eed",
+        "session_id": null,
+        "correlation_id": "review_request_1778666777077_1d692eed",
+        "type": "reviewRequestCreated",
+        "payload": {
+          "status": "blocked_conversion"
+        },
+        "created_at": "2026-05-13T18:06:17.085042+08:00"
+      },
+      {
+        "event_id": "lifecycle_1778666777162",
+        "review_request_id": "review_request_1778666777077_1d692eed",
+        "session_id": "review_session_87404055d4fd",
+        "correlation_id": "review_request_1778666777077_1d692eed",
+        "type": "sessionClosed",
+        "payload": {
+          "session_id": "review_session_87404055d4fd",
+          "type": "sessionClosed"
+        },
+        "created_at": "2026-05-13T18:06:17.1626+08:00"
+      }
+    ]
+  }
+}

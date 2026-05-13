@@ -46,6 +46,8 @@
 
 > **2026-05-13 更新（source enumeration blocker burn-down）**：`optimize-worker-source-entity-enumeration` 已讓 canonical first fixture 越過 `source_entity_enumeration`：`--limit 1 --timeout-seconds 600 --profile-source-entities` 記錄 `1,604,773` source IFC entities、enumeration 約 `33.19s`、`fallback_used=false`。該 run 仍在 `non_renderable_entity_materialization` timeout，未產出 completed `model.usdc`，因此 visual preview / full 13-file batch 仍 blocked，`minimum_coverage_locked=false` 維持不變。Closeout 時修正本機 Python user-site dependency drift（`starlette 1.0.0` → `_worker/requirements.txt` baseline `starlette==0.37.2`）後，`_worker` API regression `38 passed, 1 skipped`，converter/batch/store focused tests `67 passed`，strict OpenSpec validation 與 `git diff --check` 通過。新的後續風險切片應聚焦 large IFC all-entity non-renderable materialization。
 
+> **2026-05-13 更新（`demo-current-runtime-observation` live pass）**：本次 current observation 產出 `docs/verification/2026-05-13-demo-current-runtime-observation.md`。非 Kit 服務 health 目前可啟動並通過：8001 / 8005 / 8004 health OK、5173 HTTP 200；focused checks 為 `_bim-control` `23 passed`、`_worker` `105 passed, 1 skipped`、coordinator `105 passed`、viewer build / session-first contract passed，viewer lint 仍是既有 `29 errors, 1 warning`。Socket.IO collaboration passed，coordinator close / release lifecycle passed（`review_session_87404055d4fd`）。但 current worktree `storage/` 沒有 IFC fixture，worker dev-source smoke blocked；`smoke-review-session.ps1` 的極簡 IFC payload 無法被 IfcOpenShell parse，因此 conversion readiness failed；Kit/WebRTC blocked by missing streaming launcher，Browser automation blocked by in-app browser policy，dedicated multi-Kit runtime 仍 deferred。此 live pass 不把 historical single-Kit/browser evidence 重新標成 current passed。
+
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
 ---
@@ -143,6 +145,21 @@ _worker converter/batch/store tests:  67 passed
 source enumeration runtime:          1,604,773 entities in ~33.19s; fallback_used=false
 current runtime blocker:             non_renderable_entity_materialization timeout; model.usdc not produced
 baseline lock:                       minimum_coverage_locked=false
+
+# 2026-05-13 demo-current-runtime-observation（current live observation）
+non-Kit service health:              passed (8001 / 8005 / 8004 health OK; 5173 HTTP 200)
+_bim-control focused tests:          23 passed
+_worker focused tests:               105 passed, 1 skipped
+bim-review-coordinator tests:        105 passed
+web-viewer build / contract:         build passed; session-first contract passed
+web-viewer lint:                     failed with existing 29 errors, 1 warning
+Socket.IO collaboration smoke:       passed (review_session_8b7cf9515752)
+review lifecycle close/release:      passed (review_session_87404055d4fd; kitInstanceReleased)
+worker dev-source readiness:         blocked; current worktree storage has 0 IFC fixtures
+worker minimal conversion smoke:     failed; inline IFC payload cannot be parsed by IfcOpenShell
+Kit/WebRTC runtime:                  blocked; streaming launcher missing and 49100 not listening
+browser visual automation:           blocked by in-app Browser policy; no screenshot
+dedicated multi-Kit runtime:         deferred until two live GPU-backed Kit endpoints exist
 
 # 2026-05-12 coordinator-session-lifecycle-events-audit（archived spec + validation evidence）
 openspec validate --strict:          passed
@@ -624,6 +641,17 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **目標** | 優化或分段 `_worker` all-IFC-entity non-renderable USD materialization，讓 89MB canonical fixture 能在 configured timeout 內進到 `stage_save` / `stage_reopen`，或留下更精確 materialization blocker |
 | **不可做** | 不得把 denominator 改成 geometry-only、`IfcProduct`-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 `_worker` ownership |
 | **KPI** | 1) materialization before/after timing 可重現；2) materialized entity count / USD prim count 可稽核；3) completed `model.usdc` 或 deterministic blocker；4) baseline 未 full pass 前維持 `minimum_coverage_locked=false` |
+
+#### Active observation：`demo-current-runtime-observation`
+
+| 項目 | 內容 |
+|---|---|
+| **狀態** | Active OpenSpec observation change；本次 current pass 已產出 verification report |
+| **報告** | `docs/verification/2026-05-13-demo-current-runtime-observation.md` |
+| **目前 live pass** | 非 Kit service health、focused tests/builds、Socket.IO collaboration、coordinator lifecycle close/release、non-GPU DataChannel contract |
+| **目前 failed / blocked** | worker dev-source root 無 IFC fixture；`smoke-review-session.ps1` inline IFC 無法 parse；Kit streaming launcher missing；Browser automation policy block；single Kit/WebRTC 沒有 live evidence |
+| **不得宣稱** | 不得把 API-only pass 當成 worker real conversion pass；不得把 historical browser screenshot 當成本次 current pass；不得把 dedicated multi-Kit runtime 標 passed |
+| **下一步** | 補 current worktree IFC fixture 或明確設定 `WORKER_DEV_STORAGE_ROOT`，修正 smoke IFC payload，build `bim-streaming-server`，再重跑 browser/Kit evidence |
 
 #### Completed #4：`coordinator-session-lifecycle-events-audit`
 

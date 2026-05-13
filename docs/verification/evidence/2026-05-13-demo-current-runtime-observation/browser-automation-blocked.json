@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-05-13T10:06:00Z",
+  "target_url": "http://127.0.0.1:5173",
+  "status": "blocked",
+  "owner": "web-viewer-sample",
+  "reason": "The in-app Browser security policy rejected navigation to the local target.",
+  "fallback_used": false,
+  "http_route_status": "passed via Invoke-WebRequest HTTP 200",
+  "screenshot": null,
+  "next_runnable_step": "Open http://127.0.0.1:5173 manually or rerun browser observation from an allowed local browser surface after policy permits it."
+}
