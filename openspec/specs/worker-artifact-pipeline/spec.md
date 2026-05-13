@@ -300,3 +300,41 @@ Canonical batch implementation 必須先執行 canonical `--limit 1` single fixt
 
 - **WHEN** 13 個 canonical storage fixtures 全部完成 real conversion，且具備 openable USDC、truthful mapping output、successful lineage lookup，並在 locked all-IFC-entity denominator 下取得 `coverage_status=pass`
 - **THEN** `_worker` 回傳 batch `status=passed`，並可設定 `minimum_coverage_locked=true`
+
+### Requirement: Worker optimizes source entity enumeration for canonical IFC fixtures
+
+`_worker` MUST 在轉換 canonical IFC fixtures 時，把 `source_entity_enumeration` 視為自己擁有、可量測的 conversion subphase。Converter MUST 保留 all-IFC-entity 的 coverage denominator，同時避免不必要的重複 full-model traversal、過早的 deep relationship expansion，或對於建立穩定 source entity identity 並非必要的昂貴 metadata extraction。
+
+優化後的 enumeration path MUST 為每個 source IFC entity 保留穩定識別欄位：`ifc_entity_key`、可取得時的 `ifc_entity_id`、`ifc_class`、存在時的 `ifc_guid`，以及可取得時的 `name`，且不得犧牲 bounded execution。It MUST NOT 將 all-entity coverage 退化為僅幾何、僅 `IfcProduct`、僅 GUID 或僅 renderable 的 coverage。
+
+Real/canonical converter path MUST NOT 以 `model.by_type("IfcProduct")` 作為 all-entity 的 fallback。若無法進行 all-entity iteration，`_worker` MUST 以 deterministic diagnostics 讓 conversion 失敗或 block，而不是輸出僅 product-only 的 coverage evidence。
+
+在長時間的 canonical conversions 中，`_worker` MUST 揭露 additive source enumeration diagnostics，例如 elapsed seconds、enumerated entity count、目前 phase 狀態、`fallback_used`、最後已知 operation，以及可取得時的 blocker 細節。這些 diagnostics MUST 與既有 conversion result 與 quality metrics payloads 保持向後相容。Fine-grained profiling diagnostics MAY 於 verification evidence 中啟用，且 MUST 為可選。
+
+#### Scenario: Canonical source enumeration advances past timeout bottleneck
+
+- **WHEN** 以設定的 per-fixture timeout 對第一個 89MB fixture 執行 canonical `--limit 1` storage verification
+- **THEN** `_worker` 在 timeout 前完成 `source_entity_enumeration` 並進入下一個 conversion phase，或記錄 deterministic blocker diagnostics 指認非 `_worker` 端的限制
+- **AND** 若 conversion 仍未完成，batch 結果維持 non-passed
+
+#### Scenario: Enumeration preserves all-entity denominator
+
+- **WHEN** `_worker` 優化 source entity enumeration
+- **THEN** `source_ifc_entity_count`、`coverage_denominator=source_ifc_entity_count`、mapping 輸出與 non-renderable entity materialization 仍涵蓋所有 source IFC entity，而不僅是 renderable geometry entity
+
+#### Scenario: Enumeration diagnostics are additive
+
+- **WHEN** source entity enumeration 發出 progress 或 completion diagnostics
+- **THEN** 既有 conversion result fields 仍然可用
+- **AND** 新增的 diagnostics 為可選的 nested fields，consumer 可忽略而不影響 lineage、readiness 或 review viewer handoff
+
+#### Scenario: Product-only fallback is rejected for canonical evidence
+
+- **WHEN** real converter 無法 iterate 所有 IFC source entity
+- **THEN** `_worker` 記錄 conversion blocker，而非退化為 `IfcProduct`-only enumeration
+- **AND** 結果 MUST NOT 以 product-only 的子集宣稱 all-entity coverage evidence
+
+#### Scenario: Optimization does not lock baseline prematurely
+
+- **WHEN** source entity enumeration 已改善，但整個 canonical batch 尚未通過所有 archived baseline gates
+- **THEN** `_worker` 維持 `minimum_coverage_locked=false`，並記錄剩餘的 blocker 或下一個 gate
