@@ -7,7 +7,17 @@ Thumbs.db
 *.tmp
 *.bak
 .agents/
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+# Tracked closed-loop automation skills (2026-05-13)
+!.claude/skills/closed-loop-orchestrator/
+!.claude/skills/change-id-resolve/
+!.claude/skills/openspec-explore-twice/
+!.claude/skills/gitnexus-blast-radius/
+!.claude/skills/apply-and-verify/
+!.claude/skills/pr-review-gate/
+!.claude/skills/archive-and-closeout/
 .codex/
 .vscode/
 .gitnexus/
