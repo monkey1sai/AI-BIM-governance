@@ -374,6 +374,29 @@ class IfcOpenShellUsdConverter:
             phase_started=phase_started,
             strategy=materialization_strategy,
         )
+        # Sidecar carrier write is part of materialization: the carrier file persists
+        # the non-renderable IFC entity identity. Keep the JSON dump inside this phase
+        # so phase timing reflects the real materialization cost, including the
+        # cost of producing entity_index.json. (Otherwise a slow JSON write would
+        # falsely appear as time spent near stage_reopen.)
+        sidecar_carrier_count = len(sidecar_entries)
+        sidecar_write_seconds: float | None = None
+        if entity_index_path is not None:
+            sidecar_write_started = perf_counter()
+            _write_json(
+                entity_index_path,
+                {
+                    "source_artifact_id": job["source_artifact_id"],
+                    "mapping_method": "ifc_entity_to_sidecar_index",
+                    "materialization_strategy": materialization_strategy,
+                    "summary": {
+                        "sidecar_entity_count": sidecar_carrier_count,
+                        "renderable_only": False,
+                    },
+                    "entities": sidecar_entries,
+                },
+            )
+            sidecar_write_seconds = perf_counter() - sidecar_write_started
         _mark_phase_completed(
             phase_timings,
             "non_renderable_entity_materialization",
@@ -413,24 +436,6 @@ class IfcOpenShellUsdConverter:
         unmapped_ifc_guids = [item["ifc_guid"] for item in unmapped_ifc_entities if item.get("ifc_guid")]
         unmapped_usd_count = len(unmapped_usd_prims)
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
-        sidecar_carrier_count = len(sidecar_entries)
-        sidecar_write_seconds: float | None = None
-        if entity_index_path is not None:
-            sidecar_write_started = perf_counter()
-            _write_json(
-                entity_index_path,
-                {
-                    "source_artifact_id": job["source_artifact_id"],
-                    "mapping_method": "ifc_entity_to_sidecar_index",
-                    "materialization_strategy": materialization_strategy,
-                    "summary": {
-                        "sidecar_entity_count": sidecar_carrier_count,
-                        "renderable_only": False,
-                    },
-                    "entities": sidecar_entries,
-                },
-            )
-            sidecar_write_seconds = perf_counter() - sidecar_write_started
         duration_seconds = perf_counter() - conversion_started
         _mark_phase_completed(phase_timings, "conversion_total", duration_seconds)
         _record_phase_progress(job, "conversion_total", phase_timings, status="completed")
