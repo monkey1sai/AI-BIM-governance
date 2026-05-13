@@ -248,6 +248,69 @@ def test_ifcopenshell_converter_does_not_count_missing_or_unknown_guids_as_mappi
     assert phase_timings["conversion_total"]["duration_seconds"] >= 0
 
 
+def test_ifcopenshell_converter_records_source_enumeration_diagnostics(monkeypatch, tmp_path: Path):
+    _install_fake_converter_modules(monkeypatch)
+    source_path = tmp_path / "source.ifc"
+    source_path.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+    progress_path = tmp_path / "phase.json"
+
+    result = IfcOpenShellUsdConverter().convert(
+        source_path=source_path,
+        output_dir=tmp_path / "derived",
+        job={"source_artifact_id": "source_test", "phase_progress_path": str(progress_path)},
+        generate_mapping=True,
+    )
+
+    source_timing = result.quality_metrics["phase_timings"]["source_entity_enumeration"]
+    assert source_timing["status"] == "completed"
+    assert source_timing["details"]["enumerated_entity_count"] == 8
+    assert source_timing["details"]["fallback_used"] is False
+    assert source_timing["details"]["last_operation"] == "append_row"
+    assert source_timing["details"]["last_ifc_class"] == "IfcRelDefinesByProperties"
+    assert source_timing["details"]["elapsed_seconds"] >= 0
+
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert progress["phase_timings"]["source_entity_enumeration"]["details"]["enumerated_entity_count"] == 8
+
+
+def test_ifcopenshell_converter_records_fine_grained_source_profile_when_enabled(monkeypatch, tmp_path: Path):
+    _install_fake_converter_modules(monkeypatch)
+    source_path = tmp_path / "source.ifc"
+    source_path.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+
+    result = IfcOpenShellUsdConverter().convert(
+        source_path=source_path,
+        output_dir=tmp_path / "derived",
+        job={"source_artifact_id": "source_test", "profile_source_entity_enumeration": True},
+        generate_mapping=True,
+    )
+
+    details = result.quality_metrics["phase_timings"]["source_entity_enumeration"]["details"]
+    profile = details["profile"]
+    assert profile["iteration_seconds"] >= 0
+    assert profile["id_extraction_seconds"] >= 0
+    assert profile["class_extraction_seconds"] >= 0
+    assert profile["guid_extraction_seconds"] >= 0
+    assert profile["name_extraction_seconds"] >= 0
+    assert profile["row_append_seconds"] >= 0
+
+
+def test_ifcopenshell_converter_rejects_product_only_source_entity_fallback():
+    class ProductOnlyFallbackModel:
+        schema = "IFC4"
+
+        def __iter__(self):
+            raise TypeError("all-entity iteration unavailable")
+
+        def by_type(self, name: str):
+            if name == "IfcProduct":
+                return [_FakeProduct("guid-1", "IfcWall", "Product-only wall")]
+            return []
+
+    with pytest.raises(ConversionAdapterError, match="all-entity iteration"):
+        IfcOpenShellUsdConverter()._source_entities(ProductOnlyFallbackModel())
+
+
 def test_ifcopenshell_converter_rejects_metadata_only_usd(monkeypatch, tmp_path: Path):
     _install_fake_converter_modules(monkeypatch, shapes=[_FakeShape("guid-1", geometry=_FakeDegenerateGeometry())])
     source_path = tmp_path / "source.ifc"

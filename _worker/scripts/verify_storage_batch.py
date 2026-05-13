@@ -23,6 +23,11 @@ def main() -> int:
         default=600.0,
         help="Per-fixture timeout for real conversion runs.",
     )
+    parser.add_argument(
+        "--profile-source-entities",
+        action="store_true",
+        help="Collect fine-grained source entity enumeration timings for verification evidence.",
+    )
     args = parser.parse_args()
 
     payload = run_storage_batch_verification(
@@ -30,6 +35,7 @@ def main() -> int:
         limit=args.limit,
         dry_run=args.dry_run,
         timeout_seconds=None if args.dry_run else args.timeout_seconds,
+        profile_source_entities=args.profile_source_entities,
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     if payload["status"] in {"failed", "timed_out"}:

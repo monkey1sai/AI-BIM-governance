@@ -143,6 +143,7 @@ class WorkerStore:
             "stage": "queued",
             "target_format": request.get("target_format", "usdc"),
             "generate_mapping": bool(request.get("generate_mapping", True)),
+            "profile_source_entity_enumeration": bool(request.get("profile_source_entity_enumeration", False)),
             "created_at": now,
             "updated_at": now,
             "source_artifact_id": source_artifact_id,

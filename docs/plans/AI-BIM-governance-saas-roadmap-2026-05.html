@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="source" content="AI-BIM-governance-saas-roadmap-2026-05.md" />
   <title>AI-BIM-governance SaaS Roadmap 2026-05</title>
-  <style>
+<style>
     :root {
       --page: #f7f8fb;
       --paper: #ffffff;
@@ -86,13 +86,66 @@
     <aside>
       <p class="toc-title">目錄</p>
       <nav>
-        <a class="toc-l1" href="#AI-BIM-governanceSaaS-路線圖規劃2026-05">AI-BIM-governance：SaaS 路線圖規劃（2026-05）</a><a class="toc-l2" href="#0-規劃原則Karpathy--AGENTSmd--既有路線圖一致">0. 規劃原則（Karpathy / AGENTS.md / 既有路線圖一致）</a><a class="toc-l2" href="#1-現況基線2026-05-08">1. 現況基線（2026-05-08）</a><a class="toc-l3" href="#11-已存在的核心服務">1.1 已存在的核心服務</a><a class="toc-l3" href="#12-已歸檔的-OpenSpec-specs權威openspecspecs">1.2 已歸檔的 OpenSpec specs（權威：openspec/specs/）</a><a class="toc-l3" href="#13-已驗證的閉環與-runtime-evidence">1.3 已驗證的閉環與 runtime evidence</a><a class="toc-l3" href="#14-OpenSpec-已歸檔-change-→-現行-openspecspecs-溯源">1.4 OpenSpec 已歸檔 change → 現行 openspec/specs/ 溯源</a><a class="toc-l3" href="#15-本機環境一致性基線2026-05-12">1.5 本機環境一致性基線（2026-05-12）</a><a class="toc-l3" href="#啟動前必要條件">啟動前必要條件</a><a class="toc-l3" href="#已知-drift-症狀">已知 drift 症狀</a><a class="toc-l3" href="#恢復基線命令">恢復基線命令</a><a class="toc-l3" href="#Roadmap-判讀規則">Roadmap 判讀規則</a><a class="toc-l3" href="#16-OpenSpec-sync--archive-後-roadmap-對齊規範2026-05-12">1.6 OpenSpec sync / archive 後 roadmap 對齊規範（2026-05-12）</a><a class="toc-l3" href="#必更新章節">必更新章節</a><a class="toc-l3" href="#對齊檢查">對齊檢查</a><a class="toc-l3" href="#完成定義">完成定義</a><a class="toc-l2" href="#2-v1-路線圖-vs-既有-specs-對照">2. v1 路線圖 vs 既有 specs 對照</a><a class="toc-l3" href="#Phase-0基線穩定化-—-狀態✓-已完成">Phase 0：基線穩定化 — 狀態：✓ 已完成</a><a class="toc-l3" href="#Phase-1_worker-收攏最優先—-狀態✓-主要紅星已解除lineage--coverage-baseline-已歸檔real-batch-未鎖定">Phase 1：_worker 收攏（最優先）— 狀態：✓ 主要紅星已解除；lineage / coverage baseline 已歸檔，real batch 未鎖定</a><a class="toc-l3" href="#Phase-2檢討閉環-—-狀態✓-已完成並驗證">Phase 2：檢討閉環 — 狀態：✓ 已完成並驗證</a><a class="toc-l3" href="#Phase-3Session-lifecycle-核心-—-狀態⚠-Spec-完整dedicated-multi-Kit-runtime-等待-GPU-購買部署">Phase 3：Session lifecycle 核心 — 狀態：⚠ Spec 完整，dedicated multi-Kit runtime 等待 GPU 購買部署</a><a class="toc-l3" href="#Phase-3-↔-Phase-44--45--411-層級對照2026-05-08-1700-釐清-ⓜ">Phase 3 ↔ Phase 4.4 / 4.5 / 4.11 層級對照（2026-05-08 17:00 釐清 ⓜ）</a><a class="toc-l3" href="#Phase-4高併發平台化-—-狀態❌-我方無-spec-ⓜNVIDIA-官方有-reference-implementation">Phase 4：高併發平台化 — 狀態：❌ 我方無 spec ⓜ；NVIDIA 官方有 reference implementation</a><a class="toc-l3" href="#Phase-4-細項清單11-項">Phase 4 細項清單（11 項）</a><a class="toc-l3" href="#Phase-5Omniverse-平台能力最大化-—-狀態❌-我方無-spec-ⓜKit-base-多數能力已內建只缺-IFC--sensor--環境模擬">Phase 5：Omniverse 平台能力最大化 — 狀態：❌ 我方無 spec ⓜ；Kit base 多數能力已內建，只缺 IFC / sensor / 環境模擬</a><a class="toc-l3" href="#Phase-5-細項清單18-項">Phase 5 細項清單（18 項）</a><a class="toc-l3" href="#A-物理與模擬PhysX-系列不可能自製">A. 物理與模擬（PhysX 系列；不可能自製）</a><a class="toc-l3" href="#B-渲染與材質RTX--MDL不可能自製">B. 渲染與材質（RTX / MDL；不可能自製）</a><a class="toc-l3" href="#C-多人協作USD-live-layerNVIDIA-已有--與我們-SocketIO-重疊">C. 多人協作（USD live layer；NVIDIA 已有 + 與我們 Socket.IO 重疊）</a><a class="toc-l3" href="#D-領域邏輯NVIDIA-沒有覆蓋必須自建">D. 領域邏輯（NVIDIA 沒有覆蓋；必須自建）</a><a class="toc-l3" href="#E-Sensor--Synthetic-DataNVIDIA-有但需獨立部署">E. Sensor / Synthetic Data（NVIDIA 有，但需獨立部署）</a><a class="toc-l3" href="#F-大型場景USD-標準已有-spec">F. 大型場景（USD 標準；已有 spec）</a><a class="toc-l3" href="#Phase-6Production--SaaS-營運-—-狀態⏸-等待公司的業務系統接入目前不規劃-OpenSpec-spec">Phase 6：Production &amp; SaaS 營運 — 狀態：⏸ 等待公司的業務系統接入；目前不規劃 OpenSpec spec</a><a class="toc-l2" href="#3-v2-6-層架構-vs-現況對照">3. v2 6 層架構 vs 現況對照</a><a class="toc-l2" href="#4-IFC-→-USD-品質保護管線v2-紅星風險點">4. IFC → USD 品質保護管線（v2 紅星風險點）</a><a class="toc-l2" href="#5-下一階段-OpenSpec-change-候選清單">5. 下一階段 OpenSpec change 候選清單</a><a class="toc-l3" href="#50-已完成--Archived">5.0 已完成 / Archived</a><a class="toc-l3" href="#已歸檔-1worker-real-conversion-quality">已歸檔 #1：worker-real-conversion-quality</a><a class="toc-l3" href="#51-P0-hold等待-GPU-購買部署">5.1 P0-hold（等待 GPU 購買部署）</a><a class="toc-l3" href="#候選-2streaming-multi-instance-orchestration">候選 #2：streaming-multi-instance-orchestration</a><a class="toc-l3" href="#52-P1這月">5.2 P1（這月）</a><a class="toc-l3" href="#已完成候選-3--3A-合併為-worker-mapping-lineage-quality-baseline">已完成：候選 #3 / #3A 合併為 worker-mapping-lineage-quality-baseline</a><a class="toc-l3" href="#已歸檔但-runtime-blockedworker-canonical-storage-batch-baseline">已歸檔但 runtime blocked：worker-canonical-storage-batch-baseline</a><a class="toc-l3" href="#Active-risk-burn-downoptimize-worker-source-entity-enumeration">Active risk burn-down：optimize-worker-source-entity-enumeration</a><a class="toc-l3" href="#Completed-4coordinator-session-lifecycle-events-audit">Completed #4：coordinator-session-lifecycle-events-audit</a><a class="toc-l3" href="#53-P2下月">5.3 P2（下月）</a><a class="toc-l3" href="#候選-5ai-rule-carbon-result-contract">候選 #5：ai-rule-carbon-result-contract</a><a class="toc-l3" href="#候選-6notification-webhook-service">候選 #6：notification-webhook-service</a><a class="toc-l3" href="#候選-7tenant-rbac-foundation">候選 #7：tenant-rbac-foundation</a><a class="toc-l3" href="#54-P3季度">5.4 P3（季度）</a><a class="toc-l3" href="#候選-8observability-audit-baseline">候選 #8：observability-audit-baseline</a><a class="toc-l3" href="#候選-9production-deployment-baseline">候選 #9：production-deployment-baseline</a><a class="toc-l2" href="#6-優先順序總結">6. 優先順序總結</a><a class="toc-l2" href="#7-風險與-trade-off">7. 風險與 trade-off</a><a class="toc-l2" href="#8-不在這次規劃範圍">8. 不在這次規劃範圍</a><a class="toc-l2" href="#9-Phase-4--Phase-5-硬體配置補充">9. Phase 4 / Phase 5 硬體配置補充</a><a class="toc-l3" href="#90-NVIDIA／Omniverse-對齊kitexeKit-instanceWebRTC-endpointGPU2026-05-08-交叉驗證">9.0 NVIDIA／Omniverse 對齊：kit.exe、Kit instance、WebRTC endpoint、GPU（2026-05-08 交叉驗證）</a><a class="toc-l3" href="#驗證來源工具與文件">驗證來源（工具與文件）</a><a class="toc-l3" href="#A-名詞對照表本-roadmap-建議用法">A. 名詞對照表（本 roadmap 建議用法）</a><a class="toc-l3" href="#B-官方架構結論回答一個-GPU-怎麼管多台-Kit？">B. 官方架構結論（回答「一個 GPU 怎麼管多台 Kit？」）</a><a class="toc-l3" href="#C-與下文容量表的銜接">C. 與下文容量表的銜接</a><a class="toc-l3" href="#91-規格依據來自-SYSTEM_DESIGNmd-§3--§9">9.1 規格依據（來自 SYSTEM_DESIGN.md §3 / §9）</a><a class="toc-l3" href="#92-開發階段單機極限配置">9.2 開發階段（單機）：極限配置</a><a class="toc-l3" href="#現況基線已量測">現況基線（已量測）</a><a class="toc-l3" href="#開發階段最大限度單機配置建議">開發階段「最大限度」單機配置（建議）</a><a class="toc-l3" href="#Phase-4最大化單機可達上限24-GB-GPU">Phase 4「最大化」單機可達上限（24 GB GPU）</a><a class="toc-l3" href="#Phase-5最大化單機可達上限含-NVIDIA-真實-extension-對應-ⓜ">Phase 5「最大化」單機可達上限（含 NVIDIA 真實 extension 對應 ⓜ）</a><a class="toc-l3" href="#本機開發版Phase-5-啟用清單建議-bim-streaming-server-加進-kit-檔">本機開發版「Phase 5 啟用清單」（建議 bim-streaming-server 加進 .kit 檔）</a><a class="toc-l3" href="#93-SaaS-等級中小型工作室cluster-配置">9.3 SaaS 等級（中小型工作室）：cluster 配置</a><a class="toc-l3" href="#規模假設依-SYSTEM_DESIGN-§3--中小型工作室常見比例">規模假設（依 SYSTEM_DESIGN §3 + 中小型工作室常見比例）</a><a class="toc-l3" href="#Tier-A最小可行5-10-並發-session10-20-人工作室">Tier A：最小可行（5-10 並發 session，10-20 人工作室）</a><a class="toc-l3" href="#Tier-B推薦平衡10-15-並發-session20-50-人工作室">Tier B：推薦平衡（10-15 並發 session，20-50 人工作室）</a><a class="toc-l3" href="#Tier-C成長型多區域準備擴-Phase-6">Tier C：成長型（多區域，準備擴 Phase 6）</a><a class="toc-l3" href="#中小型工作室Phase-5-啟用清單依-NVIDIA-OVAS-reference-impl-ⓜ">中小型工作室「Phase 5 啟用清單」（依 NVIDIA OVAS reference impl ⓜ）</a><a class="toc-l3" href="#中小型工作室部署藍圖Tier-B--Phase-5-對應">中小型工作室部署藍圖（Tier B + Phase 5 對應）</a><a class="toc-l3" href="#94-GPU-Pool-容量計算公式">9.4 GPU Pool 容量計算公式</a><a class="toc-l3" href="#95-網路--儲存--備援邊界">9.5 網路 / 儲存 / 備援邊界</a><a class="toc-l3" href="#96-升級觸發條件什麼時候從-Tier-A-→-B-→-C">9.6 升級觸發條件（什麼時候從 Tier A → B → C）</a><a class="toc-l3" href="#97-預算粗估僅供決策參考硬體價格波動大">9.7 預算粗估（僅供決策參考，硬體價格波動大）</a><a class="toc-l3" href="#98-與-OpenSpec-候選的對應">9.8 與 OpenSpec 候選的對應</a><a class="toc-l2" href="#10-建議的下一步給-monkey1sai">10. 建議的下一步（給 monkey1sai）</a><a class="toc-l2" href="#11-Phase-4--Phase-5-NVIDIA-真實能力對應2026-05-08-MCP--官方文件查詢">11. Phase 4 / Phase 5 NVIDIA 真實能力對應（2026-05-08 MCP + 官方文件查詢）</a><a class="toc-l3" href="#111-MCP-server-載入步驟給後續-session-沿用">11.1 MCP server 載入步驟（給後續 session 沿用）</a><a class="toc-l3" href="#Streamable-HTTP-MCP-直接呼叫範例不靠-Cursor-MCP-catalog">Streamable HTTP MCP 直接呼叫範例（不靠 Cursor MCP catalog）</a><a class="toc-l3" href="#若要把它們加進-Cursor-設定推薦做法">若要把它們加進 Cursor 設定（推薦做法）</a><a class="toc-l3" href="#112-兩個-MCP-server-的工具能力總覽">11.2 兩個 MCP server 的工具能力總覽</a><a class="toc-l3" href="#kit-mcpport-9902—-Kit-開發--extension-知識庫">kit-mcp（port 9902）— Kit 開發 / extension 知識庫</a><a class="toc-l3" href="#usd-code-mcpport-9903—-USD-code--文件知識庫">usd-code-mcp（port 9903）— USD code / 文件知識庫</a><a class="toc-l3" href="#113-MCP-查詢結果摘要驅動-§2--§3--§9-校正的依據">11.3 MCP 查詢結果摘要（驅動 §2 / §3 / §9 校正的依據）</a><a class="toc-l3" href="#A-Phase-4-—-平台化NVIDIA-真實-reference-impl">A. Phase 4 — 平台化（NVIDIA 真實 reference impl）</a><a class="toc-l3" href="#B-Phase-5-—-Omniverse-平台能力最大化NVIDIA-真實-extension">B. Phase 5 — Omniverse 平台能力最大化（NVIDIA 真實 extension）</a><a class="toc-l3" href="#C-關鍵缺口Kit-base-沒有必須自建或第三方">C. 關鍵缺口（Kit base 沒有，必須自建或第三方）</a><a class="toc-l3" href="#114-NVIDIA-對Multi-Kit-Instance-並行的官方定義2026-05-08-1700">11.4 NVIDIA 對「Multi-Kit Instance 並行」的官方定義（2026-05-08 17:00）</a><a class="toc-l3" href="#A-名詞定義NVIDIA-官方語意">A. 名詞定義（NVIDIA 官方語意）</a><a class="toc-l3" href="#B-NVIDIA-對Multi-Kit-instance-並行的定義">B. NVIDIA 對「Multi-Kit instance 並行」的定義</a><a class="toc-l3" href="#C-對應到我們現況的層級">C. 對應到我們現況的層級</a><a class="toc-l3" href="#D-關鍵結論對使用者問題的直接回答">D. 關鍵結論（對使用者問題的直接回答）</a><a class="toc-l3" href="#E-MCP-與官方文件的交叉驗證">E. MCP 與官方文件的交叉驗證</a><a class="toc-l2" href="#12-由-MCP-結果新增的候選">12. 由 MCP 結果新增的候選</a><a class="toc-l3" href="#121-候選-1Astreaming-collaboration-presence-layer-upgrade">12.1 候選 #1A：streaming-collaboration-presence-layer-upgrade</a><a class="toc-l3" href="#122-候選-2Astreaming-ovas-helm-baseline">12.2 候選 #2A：streaming-ovas-helm-baseline</a><a class="toc-l3" href="#2A-對-spec-multi-artifact-kit-routing-的具體影響2026-05-08-1700">#2A 對 spec multi-artifact-kit-routing 的具體影響（2026-05-08 17:00）</a><a class="toc-l3" href="#採用-OVAS-之後-KitInstancePool-的角色變化">採用 OVAS 之後 KitInstancePool 的角色變化</a><a class="toc-l3" href="#1A--2A-與既有-P0--P1-的依賴">#1A / #2A 與既有 P0 / P1 的依賴</a><a class="toc-l2" href="#13-採用-NVIDIA-Reference-Implementation-的決策框架">13. 採用 NVIDIA Reference Implementation 的決策框架</a><a class="toc-l3" href="#131-決策矩陣每個能力獨立判斷">13.1 決策矩陣（每個能力獨立判斷）</a><a class="toc-l3" href="#132-採用-reference-implementation-的優點">13.2 採用 reference implementation 的「優點」</a><a class="toc-l3" href="#133-採用-reference-implementation-的缺點與風險">13.3 採用 reference implementation 的「缺點」與風險</a><a class="toc-l3" href="#134-採用建議依各-Phase-對應">13.4 採用建議（依各 Phase 對應）</a><a class="toc-l3" href="#Phase-4高併發平台化">Phase 4（高併發平台化）</a><a class="toc-l3" href="#Phase-5Omniverse-平台能力最大化">Phase 5（Omniverse 平台能力最大化）</a><a class="toc-l3" href="#Phase-6Production--SaaS-營運">Phase 6（Production &amp; SaaS 營運）</a><a class="toc-l3" href="#135-何時不要採用-reference-implementation">13.5 何時「不要」採用 reference implementation</a><a class="toc-l3" href="#136-決策流程給每個-Phase-4--5-子能力">13.6 決策流程（給每個 Phase 4 / 5 子能力）</a>
+        <a class="toc-l1" href="#ai-bim-governancesaas-2026-05">AI-BIM-governance：SaaS 路線圖規劃（2026-05）</a>
+        <a class="toc-l2" href="#karpathy-agents.md">0. 規劃原則（Karpathy / AGENTS.md / 既有路線圖一致）</a>
+        <a class="toc-l2" href="#section">1. 現況基線（2026-05-08）</a>
+        <a class="toc-l3" href="#section-1">1.1 已存在的核心服務</a>
+        <a class="toc-l3" href="#openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：openspec/specs/）</a>
+        <a class="toc-l3" href="#runtime-evidence">1.3 已驗證的閉環與 runtime evidence</a>
+        <a class="toc-l3" href="#openspec-change-openspecspecs">1.4 OpenSpec 已歸檔 change → 現行 openspec/specs/ 溯源</a>
+        <a class="toc-l3" href="#section-2">1.5 本機環境一致性基線（2026-05-12）</a>
+        <a class="toc-l3" href="#openspec-sync-archive-roadmap-2026-05-12">1.6 OpenSpec sync / archive 後 roadmap 對齊規範（2026-05-12）</a>
+        <a class="toc-l2" href="#v1-vs-specs">2. v1 路線圖 vs 既有 specs 對照</a>
+        <a class="toc-l3" href="#phase-0">Phase 0：基線穩定化 — 狀態：✓ 已完成</a>
+        <a class="toc-l3" href="#phase-1_worker-lineage-coverage-baseline-real-batch">Phase 1：_worker 收攏（最優先）— 狀態：✓ 主要紅星已解除；lineage / coverage baseline 已歸檔，real batch 未鎖定</a>
+        <a class="toc-l3" href="#phase-2">Phase 2：檢討閉環 — 狀態：✓ 已完成並驗證</a>
+        <a class="toc-l3" href="#phase-3session-lifecycle-spec-dedicated-multi-kit-runtime-gpu">Phase 3：Session lifecycle 核心 — 狀態：⚠ Spec 完整，dedicated multi-Kit runtime 等待 GPU 購買部署</a>
+        <a class="toc-l3" href="#phase-4-spec-mnvidia-reference-implementation">Phase 4：高併發平台化 — 狀態：❌ 我方無 spec ⓜ；NVIDIA 官方有 reference implementation</a>
+        <a class="toc-l3" href="#phase-5omniverse-spec-mkit-base-ifc-sensor">Phase 5：Omniverse 平台能力最大化 — 狀態：❌ 我方無 spec ⓜ；Kit base 多數能力已內建，只缺 IFC / sensor / 環境模擬</a>
+        <a class="toc-l3" href="#phase-6production-saas-openspec-spec">Phase 6：Production &amp; SaaS 營運 — 狀態：⏸ 等待公司的業務系統接入；目前不規劃 OpenSpec spec</a>
+        <a class="toc-l2" href="#v2-6-vs">3. v2 6 層架構 vs 現況對照</a>
+        <a class="toc-l2" href="#ifc-usd-v2">4. IFC → USD 品質保護管線（v2 紅星風險點）</a>
+        <a class="toc-l2" href="#openspec-change">5. 下一階段 OpenSpec change 候選清單</a>
+        <a class="toc-l3" href="#archived">5.0 已完成 / Archived</a>
+        <a class="toc-l3" href="#p0-hold-gpu">5.1 P0-hold（等待 GPU 購買部署）</a>
+        <a class="toc-l3" href="#p1">5.2 P1（這月）</a>
+        <a class="toc-l3" href="#p2">5.3 P2（下月）</a>
+        <a class="toc-l3" href="#p3">5.4 P3（季度）</a>
+        <a class="toc-l2" href="#section-8">6. 優先順序總結</a>
+        <a class="toc-l2" href="#trade-off">7. 風險與 trade-off</a>
+        <a class="toc-l2" href="#section-9">8. 不在這次規劃範圍</a>
+        <a class="toc-l2" href="#phase-4-phase-5">9. Phase 4 / Phase 5 硬體配置補充</a>
+        <a class="toc-l3" href="#nvidiaomniverse-kit.exekit-instancewebrtc-endpointgpu2026-05-08">9.0 NVIDIA／Omniverse 對齊：kit.exe、Kit instance、WebRTC endpoint、GPU（2026-05-08 交叉驗證）</a>
+        <a class="toc-l3" href="#system_design.md-3-9">9.1 規格依據（來自 SYSTEM_DESIGN.md &#167;3 / &#167;9）</a>
+        <a class="toc-l3" href="#section-11">9.2 開發階段（單機）：極限配置</a>
+        <a class="toc-l3" href="#saas-cluster">9.3 SaaS 等級（中小型工作室）：cluster 配置</a>
+        <a class="toc-l3" href="#gpu-pool">9.4 GPU Pool 容量計算公式</a>
+        <a class="toc-l3" href="#section-14">9.5 網路 / 儲存 / 備援邊界</a>
+        <a class="toc-l3" href="#tier-a-b-c">9.6 升級觸發條件（什麼時候從 Tier A → B → C）</a>
+        <a class="toc-l3" href="#section-15">9.7 預算粗估（僅供決策參考，硬體價格波動大）</a>
+        <a class="toc-l3" href="#openspec">9.8 與 OpenSpec 候選的對應</a>
+        <a class="toc-l2" href="#monkey1sai">10. 建議的下一步（給 monkey1sai）</a>
+        <a class="toc-l2" href="#phase-4-phase-5-nvidia-2026-05-08-mcp">11. Phase 4 / Phase 5 NVIDIA 真實能力對應（2026-05-08 MCP + 官方文件查詢）</a>
+        <a class="toc-l3" href="#mcp-server-session">11.1 MCP server 載入步驟（給後續 session 沿用）</a>
+        <a class="toc-l3" href="#mcp-server">11.2 兩個 MCP server 的工具能力總覽</a>
+        <a class="toc-l3" href="#mcp-2-3-9">11.3 MCP 查詢結果摘要（驅動 &#167;2 / &#167;3 / &#167;9 校正的依據）</a>
+        <a class="toc-l3" href="#nvidia-multi-kit-instance-2026-05-08-1700">11.4 NVIDIA 對「Multi-Kit Instance 並行」的官方定義（2026-05-08 17:00）</a>
+        <a class="toc-l2" href="#mcp">12. 由 MCP 結果新增的候選</a>
+        <a class="toc-l3" href="#astreaming-collaboration-presence-layer-upgrade">12.1 候選 #1A：streaming-collaboration-presence-layer-upgrade</a>
+        <a class="toc-l3" href="#astreaming-ovas-helm-baseline">12.2 候選 #2A：streaming-ovas-helm-baseline</a>
+        <a class="toc-l2" href="#nvidia-reference-implementation">13. 採用 NVIDIA Reference Implementation 的決策框架</a>
+        <a class="toc-l3" href="#section-16">13.1 決策矩陣（每個能力獨立判斷）</a>
+        <a class="toc-l3" href="#reference-implementation">13.2 採用 reference implementation 的「優點」</a>
+        <a class="toc-l3" href="#reference-implementation-1">13.3 採用 reference implementation 的「缺點」與風險</a>
+        <a class="toc-l3" href="#phase">13.4 採用建議（依各 Phase 對應）</a>
+        <a class="toc-l3" href="#reference-implementation-2">13.5 何時「不要」採用 reference implementation</a>
+        <a class="toc-l3" href="#phase-4-5">13.6 決策流程（給每個 Phase 4 / 5 子能力）</a>
       </nav>
     </aside>
     <main>
-      <p class="eyebrow">Roadmap / Planning Artifact</p>
-      <p class="meta">Source: docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md</p>
-<h1 id="AI-BIM-governanceSaaS-路線圖規劃2026-05">AI-BIM-governance：SaaS 路線圖規劃（2026-05）</h1>
+      <p class="eyebrow">Markdown view</p>
+      <p class="meta">Source of truth: docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md</p>
+<h1 id="ai-bim-governancesaas-2026-05">AI-BIM-governance：SaaS 路線圖規劃（2026-05）</h1>
 <blockquote>
 <p><strong>文件性質</strong>：roadmap / planning artifact（不是 OpenSpec change，不修改產品程式碼）
 <strong>依據輸入</strong>：使用者於 2026-05-08 提供的兩張架構圖（v1 路線圖 + v2 目標架構）
@@ -132,9 +185,12 @@
 <p><strong>2026-05-12 更新（canonical batch apply evidence）</strong>：<code>worker-canonical-storage-batch-baseline</code> 已補上 batch timeout/status semantics、converter phase progress、worker UI review viewer handoff 與 verification report。Canonical <code>--limit 1 --timeout-seconds 600</code> 仍在第一個 89MB fixture timeout，並記錄 <code>source_artifact_id=artifact_src_00de4766405d</code>、<code>artifact_group_id=ag_61cd043fd19c</code>、<code>conversion_job_id=conv_20260512095847_74be0bc7</code>。短 timeout smoke 顯示已完成 <code>ifc_open</code>，目前卡在 <code>source_entity_enumeration</code>；因此 visual preview / full 13-file batch 仍 blocked，<code>minimum_coverage_locked=false</code> 維持不變。</p>
 <p><strong>2026-05-12 更新（canonical batch archive + enumeration optimization next）</strong>：依使用者明確指示，<code>worker-canonical-storage-batch-baseline</code> 已先 archive 至 <code>openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/</code>，並把其 batch/status/phase timing/preview handoff requirements 併入現行 specs；archive 時仍有 10 個 implementation tasks 未完成，因此 roadmap 不把它視為 runtime passed。新的 active change <strong><code>optimize-worker-source-entity-enumeration</code></strong> 專門 burn down <code>source_entity_enumeration</code> timeout blocker，先完成 89MB canonical fixture 的 enumeration profiling / optimization，再回到 single-fixture conversion、visual preview 與 full 13-file batch gate。</p>
 </blockquote>
+<blockquote>
+<p><strong>2026-05-13 更新（source enumeration blocker burn-down）</strong>：<code>optimize-worker-source-entity-enumeration</code> 已讓 canonical first fixture 越過 <code>source_entity_enumeration</code>：<code>--limit 1 --timeout-seconds 600 --profile-source-entities</code> 記錄 <code>1,604,773</code> source IFC entities、enumeration 約 <code>33.19s</code>、<code>fallback_used=false</code>。該 run 仍在 <code>non_renderable_entity_materialization</code> timeout，未產出 completed <code>model.usdc</code>，因此 visual preview / full 13-file batch 仍 blocked，<code>minimum_coverage_locked=false</code> 維持不變。Closeout 時修正本機 Python user-site dependency drift（<code>starlette 1.0.0</code> → <code>_worker/requirements.txt</code> baseline <code>starlette==0.37.2</code>）後，<code>_worker</code> API regression <code>38 passed, 1 skipped</code>，converter/batch/store focused tests <code>67 passed</code>，strict OpenSpec validation 與 <code>git diff --check</code> 通過。新的後續風險切片應聚焦 large IFC all-entity non-renderable materialization。</p>
+</blockquote>
 <p>本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出<strong>下一階段最小、可驗證、不擴散範圍</strong>的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。</p>
 <hr />
-<h2 id="0-規劃原則Karpathy--AGENTSmd--既有路線圖一致">0. 規劃原則（Karpathy / AGENTS.md / 既有路線圖一致）</h2>
+<h2 id="karpathy-agents.md">0. 規劃原則（Karpathy / AGENTS.md / 既有路線圖一致）</h2>
 <pre><code class="language-txt">- 依 AGENTS.md 的 repo 邊界與 source-of-truth 順序執行：
   bim-control 是資料權威，_worker 是檔案/轉檔 facade，coordinator 是 session control plane，
   bim-streaming-server 是 Kit runtime，web-viewer-sample 是 browser client。
@@ -146,13 +202,13 @@
 - 跨 5 個 repo 邊界的整合 spec，先拆成單 repo 邊界內的子 change，避免 high-risk impact analysis。
 </code></pre>
 <hr />
-<h2 id="1-現況基線2026-05-08">1. 現況基線（2026-05-08）</h2>
+<h2 id="section">1. 現況基線（2026-05-08）</h2>
 <blockquote>
 <p><strong>與 workflow v3 的分工</strong>：本文件是 <strong>OpenSpec 候選（#1-#9 + #1A / #2A）、NVIDIA Reference 採用決策矩陣（§13）、§11.4 Multi-Kit Instance 並行官方定義、硬體配置（§9.0-§9.8）、MCP 查詢結果（§11）</strong> 的權威。
 <strong>開發流程入口</strong>（七層架構、Phase 完成度、驗證證據 4 層分級、品質管線 7 步、開發協作流程、PR Checklist、服務測試命令、核心資料流 sequence diagram）見 <a href="../PROJECT_DEVELOPMENT_WORKFLOW.md"><code>docs/PROJECT_DEVELOPMENT_WORKFLOW.md</code></a>。
 兩份文件<strong>互補不替代</strong>：workflow v3 不重述本文件的決策矩陣與 spec id；本文件不重述 workflow v3 的 sequence diagram 與 PR checklist。任何後續分工調整應走 OpenSpec change，不直接在 main 上覆蓋。</p>
 </blockquote>
-<h3 id="11-已存在的核心服務">1.1 已存在的核心服務</h3>
+<h3 id="section-1">1.1 已存在的核心服務</h3>
 <table>
 <thead>
 <tr>
@@ -195,7 +251,7 @@
 </tr>
 </tbody>
 </table>
-<h3 id="12-已歸檔的-OpenSpec-specs權威openspecspecs">1.2 已歸檔的 OpenSpec specs（權威：<code>openspec/specs/</code>）</h3>
+<h3 id="openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：<code>openspec/specs/</code>）</h3>
 <p>下列 <strong>11</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。</p>
 <table>
 <thead>
@@ -275,7 +331,7 @@
 </tr>
 </tbody>
 </table>
-<h3 id="13-已驗證的閉環與-runtime-evidence">1.3 已驗證的閉環與 runtime evidence</h3>
+<h3 id="runtime-evidence">1.3 已驗證的閉環與 runtime evidence</h3>
 <pre><code class="language-txt"># 2026-05-08 spec / review-session baseline
 _bim-control pytest:                 21 / 21 passed
 bim-review-coordinator vitest:       102 / 102 passed
@@ -310,9 +366,12 @@ runtime status:                      still blocked at source_entity_enumeration;
 baseline lock:                       minimum_coverage_locked=false
 
 # 2026-05-12 optimize-worker-source-entity-enumeration（active change）
-openspec validate --strict:          passed for proposal/design/specs/tasks
-scope:                               _worker source entity enumeration profiling + optimization
-next runtime gate:                   rerun canonical --limit 1 --timeout-seconds 600 after optimization
+openspec validate --strict:          passed
+_worker API regression:              38 passed, 1 skipped after starlette==0.37.2 baseline restored
+_worker converter/batch/store tests:  67 passed
+source enumeration runtime:          1,604,773 entities in ~33.19s; fallback_used=false
+current runtime blocker:             non_renderable_entity_materialization timeout; model.usdc not produced
+baseline lock:                       minimum_coverage_locked=false
 
 # 2026-05-12 coordinator-session-lifecycle-events-audit（archived spec + validation evidence）
 openspec validate --strict:          passed
@@ -335,7 +394,7 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 <blockquote>
 <p><strong>註（2026-05-12）</strong>：<code>multi-artifact-kit-routing</code> 的 dedicated_instance runtime 不再列為既有分支驗證狀態；後續必須等 GPU 購買與部署完成、可提供至少兩個 GPU-backed Kit endpoints 後，才重新啟動驗證並更新 <code>runtime-verification-evidence</code>。</p>
 </blockquote>
-<h3 id="14-OpenSpec-已歸檔-change-→-現行-openspecspecs-溯源">1.4 OpenSpec 已歸檔 change → 現行 <code>openspec/specs/</code> 溯源</h3>
+<h3 id="openspec-change-openspecspecs">1.4 OpenSpec 已歸檔 change → 現行 <code>openspec/specs/</code> 溯源</h3>
 <blockquote>
 <p><strong>用途</strong>： roadmap 只摘要狀態；<strong>需求句式與 Requirement 編號以各 spec 為準</strong>。下列為 <code>openspec/changes/archive/</code> 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-12 盤點）。</p>
 </blockquote>
@@ -404,11 +463,11 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
   openspec/specs/&lt;capability-id&gt;/spec.md   ← 現行權威
   openspec/changes/archive/&lt;date&gt;-&lt;slug&gt;/   ← 已合併 PR 的提案／設計／tasks／當時 spec 快照
 </code></pre>
-<h3 id="15-本機環境一致性基線2026-05-12">1.5 本機環境一致性基線（2026-05-12）</h3>
+<h3 id="section-2">1.5 本機環境一致性基線（2026-05-12）</h3>
 <blockquote>
 <p><strong>目的</strong>：避免「OpenSpec / smoke evidence 曾通過」與「今天本機 demo 可重新啟動」被混為一談。OpenSpec 驗證是當時 commit + 當時環境的證據；每次重新執行 demo 前，仍需確認本機 runtime dependencies 沒有 drift。</p>
 </blockquote>
-<h4 id="啟動前必要條件">啟動前必要條件</h4>
+<h4 id="section-3">啟動前必要條件</h4>
 <table>
 <thead>
 <tr>
@@ -450,7 +509,7 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 </tr>
 </tbody>
 </table>
-<h4 id="已知-drift-症狀">已知 drift 症狀</h4>
+<h4 id="drift">已知 drift 症狀</h4>
 <pre><code class="language-txt">_bim-control / _worker:
   TypeError: Router.__init__() got an unexpected keyword argument 'on_startup'
   → 通常代表 FastAPI 0.111.0 搭到 Starlette 1.x；應回到 starlette==0.37.2。
@@ -463,7 +522,7 @@ web-viewer-sample:
   'vite' is not recognized as an internal or external command
   → `node_modules` 存在但 Vite binary 缺失；重跑 npm ci。
 </code></pre>
-<h4 id="恢復基線命令">恢復基線命令</h4>
+<h4 id="section-4">恢復基線命令</h4>
 <pre><code class="language-powershell">.\scripts\stop-all.ps1
 
 py -3.12 -m venv .venv
@@ -478,17 +537,17 @@ cd ..
 
 .\scripts\start-all.ps1 -SkipStreaming
 </code></pre>
-<h4 id="Roadmap-判讀規則">Roadmap 判讀規則</h4>
+<h4 id="roadmap">Roadmap 判讀規則</h4>
 <pre><code class="language-txt">- §1.3 的「已驗證閉環」代表 2026-05-08 的功能證據，不代表任何日期的本機環境都可直接啟動。
 - 若 health probe 失敗，先看 scripts/.run/*.log.err 與本節 drift 症狀；不要先把問題歸因為 OpenSpec 規格退化。
 - Runtime evidence 更新前，PR / branch 驗證紀錄必須附上 Python package 版本、Node binary presence、start-all health result。
 - 若只跑 `-SkipStreaming`，Kit / GPU / WebRTC 未啟動是預期；但 `_bim-control`、`_worker`、coordinator、viewer 四個非 Kit 服務仍必須健康。
 </code></pre>
-<h3 id="16-OpenSpec-sync--archive-後-roadmap-對齊規範2026-05-12">1.6 OpenSpec sync / archive 後 roadmap 對齊規範（2026-05-12）</h3>
+<h3 id="openspec-sync-archive-roadmap-2026-05-12">1.6 OpenSpec sync / archive 後 roadmap 對齊規範（2026-05-12）</h3>
 <blockquote>
 <p><strong>觸發時機</strong>：任何 OpenSpec change 被正式接受、執行 sync / archive、或 <code>openspec/specs/</code> 內容因 archive 產生新增 / 修改 / 移除時，都必須在同一輪文件更新中檢查本節清單。</p>
 </blockquote>
-<h4 id="必更新章節">必更新章節</h4>
+<h4 id="section-5">必更新章節</h4>
 <table>
 <thead>
 <tr>
@@ -540,7 +599,7 @@ cd ..
 </tr>
 </tbody>
 </table>
-<h4 id="對齊檢查">對齊檢查</h4>
+<h4 id="section-6">對齊檢查</h4>
 <pre><code class="language-txt">OpenSpec archive 後，至少檢查：
 1. openspec/specs/&lt;capability-id&gt;/spec.md 是否與 §1.2 的 capability 數量與名稱一致。
 2. openspec/changes/archive/&lt;date&gt;-&lt;slug&gt;/ 是否已加入 §1.4 溯源表。
@@ -549,7 +608,7 @@ cd ..
 5. 若 runtime evidence 有更新，附上測試指令、日期、環境基線與證據文件路徑。
 6. 重新產生同名 HTML 檢視版，確認它引用的來源檔與更新時間反映本 Markdown。
 </code></pre>
-<h4 id="完成定義">完成定義</h4>
+<h4 id="section-7">完成定義</h4>
 <pre><code class="language-txt">一次 OpenSpec sync / archive 完成，必須同時滿足：
 - openspec/specs/ 代表最新規格權威。
 - openspec/changes/archive/ 保留已接受 change 的歷史 delta。
@@ -559,8 +618,8 @@ cd ..
 - 若 HTML 未同步，archive closeout 仍不完整；但衍生檢視不得覆蓋 Markdown 的 source-of-truth 地位。
 </code></pre>
 <hr />
-<h2 id="2-v1-路線圖-vs-既有-specs-對照">2. v1 路線圖 vs 既有 specs 對照</h2>
-<h3 id="Phase-0基線穩定化-—-狀態✓-已完成">Phase 0：基線穩定化 — <strong>狀態：✓ 已完成</strong></h3>
+<h2 id="v1-vs-specs">2. v1 路線圖 vs 既有 specs 對照</h2>
+<h3 id="phase-0">Phase 0：基線穩定化 — <strong>狀態：✓ 已完成</strong></h3>
 <table>
 <thead>
 <tr>
@@ -587,7 +646,7 @@ cd ..
 </tr>
 </tbody>
 </table>
-<h3 id="Phase-1_worker-收攏最優先—-狀態✓-主要紅星已解除lineage--coverage-baseline-已歸檔real-batch-未鎖定">Phase 1：<code>_worker</code> 收攏（最優先）— <strong>狀態：✓ 主要紅星已解除；lineage / coverage baseline 已歸檔，real batch 未鎖定</strong></h3>
+<h3 id="phase-1_worker-lineage-coverage-baseline-real-batch">Phase 1：<code>_worker</code> 收攏（最優先）— <strong>狀態：✓ 主要紅星已解除；lineage / coverage baseline 已歸檔，real batch 未鎖定</strong></h3>
 <table>
 <thead>
 <tr>
@@ -625,7 +684,7 @@ cd ..
 <li>Mapping coverage 已由 <code>2026-05-12-worker-mapping-lineage-quality-baseline</code> archive 改成 <code>minimum_coverage_ratio=1.0</code>、<code>coverage_denominator=source_ifc_entity_count</code>、所有 IFC entity 必須 materialize 為 USD prim 的語意；<code>warn</code> 可進 review、<code>fail</code> 阻擋 mapping readiness。尚未完成 canonical 13-file real batch，因此 production baseline <strong>未鎖定</strong>，issue → real prim baseline 也不得宣稱 passed。</li>
 <li>lineage 查詢 API 已由 <code>2026-05-12-worker-mapping-lineage-quality-baseline</code> archive 納入 <code>GET /api/artifacts/{id}/lineage</code>，並優先沿用 <code>derived_artifact_ids</code> 作為 mapping/index stable IDs；clean venv 使用 <code>_worker/requirements.txt</code> 後 <code>_worker</code> full tests passed，global Python 的 <code>starlette 1.0.0</code> drift 仍視為本機環境問題。</li>
 </ol>
-<h3 id="Phase-2檢討閉環-—-狀態✓-已完成並驗證">Phase 2：檢討閉環 — <strong>狀態：✓ 已完成並驗證</strong></h3>
+<h3 id="phase-2">Phase 2：檢討閉環 — <strong>狀態：✓ 已完成並驗證</strong></h3>
 <table>
 <thead>
 <tr>
@@ -652,7 +711,7 @@ cd ..
 </tr>
 </tbody>
 </table>
-<h3 id="Phase-3Session-lifecycle-核心-—-狀態⚠-Spec-完整dedicated-multi-Kit-runtime-等待-GPU-購買部署">Phase 3：Session lifecycle 核心 — <strong>狀態：⚠ Spec 完整，dedicated multi-Kit runtime 等待 GPU 購買部署</strong></h3>
+<h3 id="phase-3session-lifecycle-spec-dedicated-multi-kit-runtime-gpu">Phase 3：Session lifecycle 核心 — <strong>狀態：⚠ Spec 完整，dedicated multi-Kit runtime 等待 GPU 購買部署</strong></h3>
 <table>
 <thead>
 <tr>
@@ -685,7 +744,7 @@ cd ..
 <li><code>failed</code> 狀態下的 retry / rerun spec 還沒定義。</li>
 <li>tenant 隔離的 GPU profile / quota 還沒進入 spec。</li>
 </ol>
-<h4 id="Phase-3-↔-Phase-44--45--411-層級對照2026-05-08-1700-釐清-ⓜ">Phase 3 ↔ Phase 4.4 / 4.5 / 4.11 層級對照（2026-05-08 17:00 釐清 ⓜ）</h4>
+<h4 id="phase-3-phase-4.4-4.5-4.11-2026-05-08-1700-m">Phase 3 ↔ Phase 4.4 / 4.5 / 4.11 層級對照（2026-05-08 17:00 釐清 ⓜ）</h4>
 <blockquote>
 <p>「Phase 3 多 artifact / 多 instance 調度」與 「Phase 4.4 Multi-Kit instance 並行」<strong>不是同一件事</strong>，是同一條鏈的上下兩層；本次澄清依 MCP 對 NVIDIA Kit base extension 與 OVAS 文件的交叉驗證（詳見 §11.4）。</p>
 </blockquote>
@@ -733,7 +792,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 - 4.4 不是 #2 的子集；4.4 是 #2 的「工人」，#2 是 4.4 的「指揮」
 - 兩者解耦的好處：spec 不被 OVAS 鎖死；單機 docker-compose 與 K8s OVAS 走同一個 spec
 </code></pre>
-<h3 id="Phase-4高併發平台化-—-狀態❌-我方無-spec-ⓜNVIDIA-官方有-reference-implementation">Phase 4：高併發平台化 — <strong>狀態：❌ 我方無 spec ⓜ；NVIDIA 官方有 reference implementation</strong></h3>
+<h3 id="phase-4-spec-mnvidia-reference-implementation">Phase 4：高併發平台化 — <strong>狀態：❌ 我方無 spec ⓜ；NVIDIA 官方有 reference implementation</strong></h3>
 <blockquote>
 <p><strong>2026-05-08 16:30 拆分原則</strong>（依 §13 決策框架）：</p>
 <ul>
@@ -744,7 +803,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 <li>每個細項都對應 §13.1 決策矩陣中的一列；如果未來解凍 spec，依細項粒度開 OpenSpec change，不一次大寫一個 <code>phase-4-platformization</code> 大型 spec。</li>
 </ul>
 </blockquote>
-<h4 id="Phase-4-細項清單11-項">Phase 4 細項清單（11 項）</h4>
+<h4 id="phase-4-11">Phase 4 細項清單（11 項）</h4>
 <table>
 <thead>
 <tr>
@@ -869,7 +928,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </ul>
 <p><strong>Gap</strong>：候選 #2 的 dedicated_instance routing 必須等 GPU 購買與部署完成、可提供至少兩個 GPU-backed Kit endpoints 後再執行；完成前 #2A（OVAS）維持「探索性 spike，不開新 spec」，不得把 dedicated multi-Kit runtime 視為已在驗證中。</p>
 </blockquote>
-<h3 id="Phase-5Omniverse-平台能力最大化-—-狀態❌-我方無-spec-ⓜKit-base-多數能力已內建只缺-IFC--sensor--環境模擬">Phase 5：Omniverse 平台能力最大化 — <strong>狀態：❌ 我方無 spec ⓜ；Kit base 多數能力已內建，只缺 IFC / sensor / 環境模擬</strong></h3>
+<h3 id="phase-5omniverse-spec-mkit-base-ifc-sensor">Phase 5：Omniverse 平台能力最大化 — <strong>狀態：❌ 我方無 spec ⓜ；Kit base 多數能力已內建，只缺 IFC / sensor / 環境模擬</strong></h3>
 <blockquote>
 <p><strong>2026-05-08 16:30 拆分原則</strong>（依 §13 決策框架）：</p>
 <ul>
@@ -879,11 +938,11 @@ A：可以，但**不是把 #2 spec 換掉**：
 <li>大型場景 / multi-layer payload 我們已經有 spec（<code>streaming-multi-layer-payload-loading</code>），與 USD 標準 + NVIDIA <code>omni.kit.usd.layers</code> 相容，視為 ✓ 已採用。</li>
 </ul>
 </blockquote>
-<h4 id="Phase-5-細項清單18-項">Phase 5 細項清單（18 項）</h4>
+<h4 id="phase-5-18">Phase 5 細項清單（18 項）</h4>
 <blockquote>
 <p><strong>欄位語意</strong>：「採用順序」✅ 全採用 NVIDIA / ⚠ NVIDIA 為主 + 自主 fallback 或漸進採用 / ❌ NVIDIA 無對應，必須自建。</p>
 </blockquote>
-<h5 id="A-物理與模擬PhysX-系列不可能自製">A. 物理與模擬（PhysX 系列；不可能自製）</h5>
+<h5 id="a.physx">A. 物理與模擬（PhysX 系列；不可能自製）</h5>
 <table>
 <thead>
 <tr>
@@ -926,7 +985,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h5 id="B-渲染與材質RTX--MDL不可能自製">B. 渲染與材質（RTX / MDL；不可能自製）</h5>
+<h5 id="b.rtx-mdl">B. 渲染與材質（RTX / MDL；不可能自製）</h5>
 <table>
 <thead>
 <tr>
@@ -978,7 +1037,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h5 id="C-多人協作USD-live-layerNVIDIA-已有--與我們-SocketIO-重疊">C. 多人協作（USD live layer；NVIDIA 已有 + 與我們 Socket.IO 重疊）</h5>
+<h5 id="c.usd-live-layernvidia-socket.io">C. 多人協作（USD live layer；NVIDIA 已有 + 與我們 Socket.IO 重疊）</h5>
 <table>
 <thead>
 <tr>
@@ -1030,7 +1089,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h5 id="D-領域邏輯NVIDIA-沒有覆蓋必須自建">D. 領域邏輯（NVIDIA 沒有覆蓋；必須自建）</h5>
+<h5 id="d.nvidia">D. 領域邏輯（NVIDIA 沒有覆蓋；必須自建）</h5>
 <table>
 <thead>
 <tr>
@@ -1082,7 +1141,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h5 id="E-Sensor--Synthetic-DataNVIDIA-有但需獨立部署">E. Sensor / Synthetic Data（NVIDIA 有，但需獨立部署）</h5>
+<h5 id="e.sensor-synthetic-datanvidia">E. Sensor / Synthetic Data（NVIDIA 有，但需獨立部署）</h5>
 <table>
 <thead>
 <tr>
@@ -1116,7 +1175,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h5 id="F-大型場景USD-標準已有-spec">F. 大型場景（USD 標準；已有 spec）</h5>
+<h5 id="f.usd-spec">F. 大型場景（USD 標準；已有 spec）</h5>
 <table>
 <thead>
 <tr>
@@ -1155,7 +1214,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 <li><strong>#1</strong>（IFC pipeline）已於 2026-05-11 archive；<strong>#5</strong>（ai-rule contract）仍在 P2 候選清單內，本次拆分不改其優先級。</li>
 </ol>
 </blockquote>
-<h3 id="Phase-6Production--SaaS-營運-—-狀態⏸-等待公司的業務系統接入目前不規劃-OpenSpec-spec">Phase 6：Production &amp; SaaS 營運 — <strong>狀態：⏸ 等待公司的業務系統接入；目前不規劃 OpenSpec spec</strong></h3>
+<h3 id="phase-6production-saas-openspec-spec">Phase 6：Production &amp; SaaS 營運 — <strong>狀態：⏸ 等待公司的業務系統接入；目前不規劃 OpenSpec spec</strong></h3>
 <blockquote>
 <p><strong>2026-05-08 16:05 決策</strong>：依使用者明確指示，Phase 6 所有細部項目即使技術成熟，也<strong>暫不啟動 OpenSpec change</strong>；等到公司端確認業務系統（CRM / SSO / billing / IT 維運 SLA）接入時程後，才會逐項開 explore。本表只列「分類」與「對應業務系統觸發點」。</p>
 </blockquote>
@@ -1271,7 +1330,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 <p><strong>與其他 Phase 的關係</strong>：已歸檔 #1 / #3 / #3A / #4、候選 #2（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，<strong>不受此凍結影響</strong>。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。</p>
 </blockquote>
 <hr />
-<h2 id="3-v2-6-層架構-vs-現況對照">3. v2 6 層架構 vs 現況對照</h2>
+<h2 id="v2-6-vs">3. v2 6 層架構 vs 現況對照</h2>
 <table>
 <thead>
 <tr>
@@ -1314,7 +1373,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tbody>
 </table>
 <hr />
-<h2 id="4-IFC-→-USD-品質保護管線v2-紅星風險點">4. IFC → USD 品質保護管線（v2 紅星風險點）</h2>
+<h2 id="ifc-usd-v2">4. IFC → USD 品質保護管線（v2 紅星風險點）</h2>
 <blockquote>
 <p>v2 圖右側標：「★ 這是目前最重要的技術風險控制點 ★」</p>
 </blockquote>
@@ -1374,14 +1433,14 @@ A：可以，但**不是把 #2 spec 換掉**：
 </table>
 <p><strong>結論（2026-05-12 對齊）</strong>：v1 路線圖「Phase 1 _worker 收攏」的最大紅星 blocker（placeholder IFC→USDC）已由 <code>worker-real-conversion-quality</code> 解除；lineage API 與 all-IFC-entity mapping quality policy 已由 <code>worker-mapping-lineage-quality-baseline</code> 歸檔。後續 Phase 4-6 可把 real worker-produced USDC 作為前提，但仍不得把 mapping coverage 視為 production baseline，直到 canonical storage real batch 通過並鎖定 evidence。</p>
 <hr />
-<h2 id="5-下一階段-OpenSpec-change-候選清單">5. 下一階段 OpenSpec change 候選清單</h2>
+<h2 id="openspec-change">5. 下一階段 OpenSpec change 候選清單</h2>
 <p>每一個候選都遵守：</p>
 <pre><code class="language-txt">- 單一 repo 邊界內優先；跨 repo 候選會明確標註並建議拆 sub-changes。
 - 每個候選都列 KPI、風險等級、衝擊面、最小驗證指令。
 - 候選不重疊；若新候選含已歸檔 spec 範圍，會用 ADD/MODIFY/REMOVE 注記。
 </code></pre>
-<h3 id="50-已完成--Archived">5.0 已完成 / Archived</h3>
-<h4 id="已歸檔-1worker-real-conversion-quality">已歸檔 #1：<code>worker-real-conversion-quality</code></h4>
+<h3 id="archived">5.0 已完成 / Archived</h3>
+<h4 id="worker-real-conversion-quality">已歸檔 #1：<code>worker-real-conversion-quality</code></h4>
 <table>
 <thead>
 <tr>
@@ -1432,8 +1491,8 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h3 id="51-P0-hold等待-GPU-購買部署">5.1 P0-hold（等待 GPU 購買部署）</h3>
-<h4 id="候選-2streaming-multi-instance-orchestration">候選 #2：<code>streaming-multi-instance-orchestration</code></h4>
+<h3 id="p0-hold-gpu">5.1 P0-hold（等待 GPU 購買部署）</h3>
+<h4 id="streaming-multi-instance-orchestration">候選 #2：<code>streaming-multi-instance-orchestration</code></h4>
 <table>
 <thead>
 <tr>
@@ -1488,8 +1547,8 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h3 id="52-P1這月">5.2 P1（這月）</h3>
-<h4 id="已完成候選-3--3A-合併為-worker-mapping-lineage-quality-baseline">已完成：候選 #3 / #3A 合併為 <code>worker-mapping-lineage-quality-baseline</code></h4>
+<h3 id="p1">5.2 P1（這月）</h3>
+<h4 id="a-worker-mapping-lineage-quality-baseline">已完成：候選 #3 / #3A 合併為 <code>worker-mapping-lineage-quality-baseline</code></h4>
 <table>
 <thead>
 <tr>
@@ -1520,7 +1579,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="已歸檔但-runtime-blockedworker-canonical-storage-batch-baseline">已歸檔但 runtime blocked：<code>worker-canonical-storage-batch-baseline</code></h4>
+<h4 id="runtime-blockedworker-canonical-storage-batch-baseline">已歸檔但 runtime blocked：<code>worker-canonical-storage-batch-baseline</code></h4>
 <table>
 <thead>
 <tr>
@@ -1559,7 +1618,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="Active-risk-burn-downoptimize-worker-source-entity-enumeration">Active risk burn-down：<code>optimize-worker-source-entity-enumeration</code></h4>
+<h4 id="active-risk-burn-downoptimize-worker-source-entity-enumeration">Active risk burn-down：<code>optimize-worker-source-entity-enumeration</code></h4>
 <table>
 <thead>
 <tr>
@@ -1577,8 +1636,16 @@ A：可以，但**不是把 #2 spec 換掉**：
 <td>profile 並 optimize <code>_worker</code> <code>source_entity_enumeration</code>，讓 canonical 89MB fixture 在 configured timeout 內通過 enumeration 或留下 deterministic external blocker</td>
 </tr>
 <tr>
+<td><strong>目前執行結果（2026-05-13）</strong></td>
+<td>Canonical <code>--limit 1 --timeout-seconds 600 --profile-source-entities</code> 已通過 <code>source_entity_enumeration</code>；<code>1,604,773</code> entities 約 <code>33.19s</code> 完成，<code>fallback_used=false</code>。Run 仍在 <code>non_renderable_entity_materialization</code> timeout，未產出 completed <code>model.usdc</code></td>
+</tr>
+<tr>
+<td><strong>closeout 驗證（2026-05-13）</strong></td>
+<td><code>py_compile</code> passed；API regression <code>38 passed, 1 skipped</code>；converter/batch/store focused tests <code>67 passed</code>；<code>openspec validate --strict</code> passed；<code>git diff --check</code> passed with CRLF warnings only</td>
+</tr>
+<tr>
 <td><strong>解決的 gap</strong></td>
-<td><code>worker-canonical-storage-batch-baseline</code> archive 後留下的第一個 runtime blocker：<code>ifc_open</code> 已完成，但 <code>_source_entities(model)</code> / all-entity enumeration 無法於 timeout 內完成</td>
+<td><code>worker-canonical-storage-batch-baseline</code> archive 後留下的第一個 runtime blocker：<code>ifc_open</code> 已完成，但 <code>_source_entities(model)</code> / all-entity enumeration 無法於 timeout 內完成。此 blocker 已 burn down；下一個 blocker 是 large IFC non-renderable entity materialization</td>
 </tr>
 <tr>
 <td><strong>repo 邊界</strong></td>
@@ -1586,15 +1653,19 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><strong>風險</strong></td>
-<td>HIGH（若瓶頸來自 IfcOpenShell / IFC parser 內部，<code>_worker</code> 只能產生 deterministic blocker；若優化誤改 denominator，會破壞 all-IFC-entity coverage 語意）</td>
+<td>HIGH（source enumeration 已解除；新的 timeout phase 是 <code>_worker</code> all-entity non-renderable USD materialization，若直接降級 denominator 會破壞 coverage 語意）</td>
 </tr>
 <tr>
 <td><strong>KPI</strong></td>
-<td>1) source entity enumeration before/after timing 可重現；2) canonical <code>--limit 1 --timeout-seconds 600</code> 能越過 <code>source_entity_enumeration</code>，或 blocker 明確歸因；3) all-IFC-entity denominator 不降級；4) conversion result / quality / lineage / handoff payload backward-compatible；5) baseline 未 full pass 前維持 <code>minimum_coverage_locked=false</code></td>
+<td>✓ 1) source entity enumeration before/after timing 可重現；✓ 2) canonical <code>--limit 1 --timeout-seconds 600</code> 已越過 <code>source_entity_enumeration</code>；✓ 3) all-IFC-entity denominator 不降級且 <code>fallback_used=false</code>；✓ 4) conversion result / quality / lineage / handoff payload backward-compatible；✓ 5) baseline 未 full pass 前維持 <code>minimum_coverage_locked=false</code></td>
+</tr>
+<tr>
+<td><strong>驗證紀錄</strong></td>
+<td><code>docs/verification/2026-05-13-worker-source-entity-enumeration-optimization.md</code></td>
 </tr>
 <tr>
 <td><strong>驗證指令</strong></td>
-<td><code>cd _worker &amp;&amp; $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600</code></td>
+<td><code>cd _worker &amp;&amp; $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600 --profile-source-entities</code></td>
 </tr>
 <tr>
 <td><strong>與既有 spec 關係</strong></td>
@@ -1602,7 +1673,38 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="Completed-4coordinator-session-lifecycle-events-audit">Completed #4：<code>coordinator-session-lifecycle-events-audit</code></h4>
+<h4 id="next-worker-risk-burn-downlarge-ifc-non-renderable-materialization">Next worker risk burn-down：large IFC non-renderable materialization</h4>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>狀態</strong></td>
+<td>待開 OpenSpec change</td>
+</tr>
+<tr>
+<td><strong>來源 evidence</strong></td>
+<td><code>optimize-worker-source-entity-enumeration</code> 的 2026-05-13 canonical run</td>
+</tr>
+<tr>
+<td><strong>目標</strong></td>
+<td>優化或分段 <code>_worker</code> all-IFC-entity non-renderable USD materialization，讓 89MB canonical fixture 能在 configured timeout 內進到 <code>stage_save</code> / <code>stage_reopen</code>，或留下更精確 materialization blocker</td>
+</tr>
+<tr>
+<td><strong>不可做</strong></td>
+<td>不得把 denominator 改成 geometry-only、<code>IfcProduct</code>-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 <code>_worker</code> ownership</td>
+</tr>
+<tr>
+<td><strong>KPI</strong></td>
+<td>1) materialization before/after timing 可重現；2) materialized entity count / USD prim count 可稽核；3) completed <code>model.usdc</code> 或 deterministic blocker；4) baseline 未 full pass 前維持 <code>minimum_coverage_locked=false</code></td>
+</tr>
+</tbody>
+</table>
+<h4 id="completed-4coordinator-session-lifecycle-events-audit">Completed #4：<code>coordinator-session-lifecycle-events-audit</code></h4>
 <table>
 <thead>
 <tr>
@@ -1649,8 +1751,8 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h3 id="53-P2下月">5.3 P2（下月）</h3>
-<h4 id="候選-5ai-rule-carbon-result-contract">候選 #5：<code>ai-rule-carbon-result-contract</code></h4>
+<h3 id="p2">5.3 P2（下月）</h3>
+<h4 id="ai-rule-carbon-result-contract">候選 #5：<code>ai-rule-carbon-result-contract</code></h4>
 <table>
 <thead>
 <tr>
@@ -1693,7 +1795,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="候選-6notification-webhook-service">候選 #6：<code>notification-webhook-service</code></h4>
+<h4 id="notification-webhook-service">候選 #6：<code>notification-webhook-service</code></h4>
 <table>
 <thead>
 <tr>
@@ -1736,7 +1838,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="候選-7tenant-rbac-foundation">候選 #7：<code>tenant-rbac-foundation</code></h4>
+<h4 id="tenant-rbac-foundation">候選 #7：<code>tenant-rbac-foundation</code></h4>
 <table>
 <thead>
 <tr>
@@ -1779,8 +1881,8 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h3 id="54-P3季度">5.4 P3（季度）</h3>
-<h4 id="候選-8observability-audit-baseline">候選 #8：<code>observability-audit-baseline</code></h4>
+<h3 id="p3">5.4 P3（季度）</h3>
+<h4 id="observability-audit-baseline">候選 #8：<code>observability-audit-baseline</code></h4>
 <table>
 <thead>
 <tr>
@@ -1815,7 +1917,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="候選-9production-deployment-baseline">候選 #9：<code>production-deployment-baseline</code></h4>
+<h4 id="production-deployment-baseline">候選 #9：<code>production-deployment-baseline</code></h4>
 <table>
 <thead>
 <tr>
@@ -1843,7 +1945,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tbody>
 </table>
 <hr />
-<h2 id="6-優先順序總結">6. 優先順序總結</h2>
+<h2 id="section-8">6. 優先順序總結</h2>
 <pre><code class="language-txt">Archived / 已完成:
   #1  worker-real-conversion-quality           ✓ 已於 2026-05-11 archive
                                                解除 IFC→USDC placeholder blocker；real worker-produced USDC 已有 single Kit/browser evidence
@@ -1907,7 +2009,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 ⏸ #7 tenant-rbac ─→ ⏸ #5 / #6 / #8 (tenant 隔離是後續所有服務的權限根；同凍結)
 </code></pre>
 <hr />
-<h2 id="7-風險與-trade-off">7. 風險與 trade-off</h2>
+<h2 id="trade-off">7. 風險與 trade-off</h2>
 <table>
 <thead>
 <tr>
@@ -1975,24 +2077,24 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 </tbody>
 </table>
 <hr />
-<h2 id="8-不在這次規劃範圍">8. 不在這次規劃範圍</h2>
+<h2 id="section-9">8. 不在這次規劃範圍</h2>
 <pre><code class="language-txt">- 本文件不直接創建 OpenSpec change folder；那是 explore / propose 的工作。
 - 本文件不修改既有 spec；任何 MODIFY 都應在對應 OpenSpec change 內執行。
 - 本文件不啟動實作；尚未歸檔的候選應走 codex/openspec/&lt;change-id&gt; branch。
 - 本文件不更新 AGENTS.md / CLAUDE.md；除非候選 land 後改變 repo 邊界（例如 #5 / #6 加新 mock service）。
 </code></pre>
 <hr />
-<h2 id="9-Phase-4--Phase-5-硬體配置補充">9. Phase 4 / Phase 5 硬體配置補充</h2>
+<h2 id="phase-4-phase-5">9. Phase 4 / Phase 5 硬體配置補充</h2>
 <blockquote>
 <p><strong>輸入來源</strong>：使用者於 2026-05-08 14:50 追加要求；以 <code>bim-streaming-server/SYSTEM_DESIGN.md</code> 與 <code>docs/verification/2026-05-08-spec-end-to-end-verification.md</code> 已量測值為基礎，不外推未驗證的規格。</p>
 <p><strong>適用範圍</strong>：本節只規劃 Phase 4（高併發平台化）與 Phase 5（Omniverse 平台能力最大化）兩階段的硬體；Phase 6（K8s / Backup / SLA）的硬體配置會在 <code>production-deployment-baseline</code> spec 階段才細化。</p>
 <p><strong>2026-05-08 更新</strong>：交叉驗證並改寫整個 §9；新增 §9.0 釐清 NVIDIA 語意（<code>kit.exe</code> = OS process；Multi-Kit = 多進程／多容器；primary／spectator／AOV = 同一進程內可多 signaling endpoint）。依據 <a href="https://docs.omniverse.nvidia.com/ovas/latest/index.html">OVAS Overview</a>、<a href="https://docs.omniverse.nvidia.com/extensions/latest/ext_livestream/webrtc.html"><code>omni.services.livestream.webrtc</code> 文件</a>、本機 <code>kit-mcp</code>／<code>usd-code-mcp</code>、<code>bim-streaming-server/SYSTEM_DESIGN.md</code>。</p>
 </blockquote>
-<h3 id="90-NVIDIA／Omniverse-對齊kitexeKit-instanceWebRTC-endpointGPU2026-05-08-交叉驗證">9.0 NVIDIA／Omniverse 對齊：<code>kit.exe</code>、Kit instance、WebRTC endpoint、GPU（2026-05-08 交叉驗證）</h3>
+<h3 id="nvidiaomniverse-kit.exekit-instancewebrtc-endpointgpu2026-05-08">9.0 NVIDIA／Omniverse 對齊：<code>kit.exe</code>、Kit instance、WebRTC endpoint、GPU（2026-05-08 交叉驗證）</h3>
 <blockquote>
 <p><strong>為何需要本節</strong>：舊稿將「1 GPU 可跑多少 Kit」講得過簡，容易被誤讀成「<strong>一個</strong> <code>kit.exe</code> <strong>進程</strong>底下還能掛多台 <strong>獨立</strong> Omniverse streaming app／每台各有獨立 framebuffer」，因而與 NVIDIA 官方模型不符。以下將語意收斂到 <strong>OVAS + Kit livestream extension 官方文件 + 本 repo <code>SYSTEM_DESIGN.md</code></strong>，並以本機 <strong><code>kit-mcp:9902</code></strong>、<code>usd-code-mcp:9903</code> 做輔助查證。</p>
 </blockquote>
-<h4 id="驗證來源工具與文件">驗證來源（工具與文件）</h4>
+<h4 id="section-10">驗證來源（工具與文件）</h4>
 <pre><code class="language-txt">- NVIDIA Kit App Streaming (OVAS) Overview：
   https://docs.omniverse.nvidia.com/ovas/latest/index.html
   （Kubernetes 上對 containerized Kit apps 做 registration / configuration / lifecycle management，
@@ -2010,7 +2112,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 
 - 本 repo：`bim-streaming-server/SYSTEM_DESIGN.md` 假設 6「One Kit process = one stage = one user session」
 </code></pre>
-<h4 id="A-名詞對照表本-roadmap-建議用法">A. 名詞對照表（本 roadmap 建議用法）</h4>
+<h4 id="a.roadmap">A. 名詞對照表（本 roadmap 建議用法）</h4>
 <table>
 <thead>
 <tr>
@@ -2042,7 +2144,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 </tr>
 </tbody>
 </table>
-<h4 id="B-官方架構結論回答一個-GPU-怎麼管多台-Kit？">B. 官方架構結論（回答「一個 GPU 怎麼管多台 Kit？」）</h4>
+<h4 id="b.gpu-kit">B. 官方架構結論（回答「一個 GPU 怎麼管多台 Kit？」）</h4>
 <pre><code class="language-txt">1) 橫向擴展（真・多台 Kit／多個獨立 framebuffer／多個獨立 stage 負載）
    = 多個 Kit Application Instance = 多個 OS process／containers。
    OVAS 負責這些 container 的 lifecycle（對齊 Overview 原文）。
@@ -2057,9 +2159,9 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
    - 連到「同一 Kit instance、不同 spectator／AOV」：會看到 **多組 stream 設定／埠位**（REST `/api/stream-config`／下拉選單）。
    - 連到「不同 Kit instance（不同 routing slot）」：Tier A 需要 **不同 signaling port pair**（或由 OVAS／LB 做路由）；這才是 dedicated_instance／GPU pool 意義上的 scale-out。
 </code></pre>
-<h4 id="C-與下文容量表的銜接">C. 與下文容量表的銜接</h4>
+<h4 id="c">C. 與下文容量表的銜接</h4>
 <p>後文若未另加注，**「並發 Kit instance／並發 review streaming slot」**預設指 <strong>「獨立 Kit Application Instance（獨立 <code>kit.exe</code>／container）× 單一載入場景」</strong>，對齊 <code>SYSTEM_DESIGN.md</code> 與 <strong>§11.4</strong>（NVIDIA Multi‑Kit／OVAS 語意）。<strong>Spectator／AOV</strong>應視為 <strong>同一進程內附加 encoder／頻寬／VRAM 成本</strong>，不得直接當成「又多一台 Kit」來套 <code>(VRAM ÷ 3 GB)</code> 公式。</p>
-<h3 id="91-規格依據來自-SYSTEM_DESIGNmd-§3--§9">9.1 規格依據（來自 SYSTEM_DESIGN.md §3 / §9）</h3>
+<h3 id="system_design.md-3-9">9.1 規格依據（來自 SYSTEM_DESIGN.md §3 / §9）</h3>
 <pre><code class="language-txt">- Per-session VRAM 硬上限   : 3 GB（Kit + Hydra + RTX + 平均 USD 500 MB）
 - Per-session VRAM 峰值     : 5 GB（USD 峰值 2 GB 時）
 - 1 GPU 可同時跑的獨立 Kit 進程（Kit Application Instance）粗算上界 : VRAM // 3 GB（保留 1-2 GB 給 driver / NVENC / overhead）
@@ -2071,8 +2173,8 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 - WebRTC 預設頻寬           : 5 Mbps / session（720p/1080p simulcast）
 - TURN relay 比例           : 20-30%（企業內網需要 TURN cluster）
 </code></pre>
-<h3 id="92-開發階段單機極限配置">9.2 開發階段（單機）：極限配置</h3>
-<h4 id="現況基線已量測">現況基線（已量測）</h4>
+<h3 id="section-11">9.2 開發階段（單機）：極限配置</h3>
+<h4 id="section-12">現況基線（已量測）</h4>
 <pre><code class="language-txt">GPU      : NVIDIA GeForce RTX 4060 Ti
 VRAM     : 8188 MiB（≈ 8 GB）
 Driver   : 580.97
@@ -2081,7 +2183,7 @@ Driver   : 580.97
 dedicated_instance 驗證（2026-05-12）: 等待 GPU 購買與部署後執行
 </code></pre>
 <p>→ 在 <code>main</code> 上現況<strong>只驗到 <code>same_instance</code> routing</strong>；<code>dedicated_instance</code> 證據必須等 GPU 購買與部署完成、具備至少兩個 GPU-backed Kit endpoints 後才重啟驗證。完成前 <code>runtime-verification-evidence</code> §6.4 應維持 deferred pending capacity，不得標為 passed / failed / in-progress。</p>
-<h4 id="開發階段最大限度單機配置建議">開發階段「最大限度」單機配置（建議）</h4>
+<h4 id="section-13">開發階段「最大限度」單機配置（建議）</h4>
 <table>
 <thead>
 <tr>
@@ -2149,7 +2251,7 @@ dedicated_instance 驗證（2026-05-12）: 等待 GPU 購買與部署後執行
 <li><strong>2 TB Gen4 SSD</strong> 是因為 USD local cache（<code>SYSTEM_DESIGN §11</code>）+ 10 個並行 conversion job 的中間檔，1 TB 在 demo 用沒問題、但跑 <code>worker-real-conversion-quality</code> benchmark 會打爆。</li>
 <li><strong>WSL2</strong> 是讓 Linux Kit instance 與 Windows Kit instance 能在同一台機器並存，方便驗證跨平台 routing。</li>
 </ul>
-<h4 id="Phase-4最大化單機可達上限24-GB-GPU">Phase 4「最大化」單機可達上限（24 GB GPU）</h4>
+<h4 id="phase-424-gb-gpu">Phase 4「最大化」單機可達上限（24 GB GPU）</h4>
 <pre><code class="language-txt">Kit Streaming（GPU） : 6-9 個獨立 Kit 進程／容器（各 ≈ 1 × Kit Application Instance；假設每進程 1 × stage、per-slot 3 GB VRAM cap）
 Conversion Worker     : 4 個 IFC→USDC parallel job（CPU only，不吃 VRAM）
 Coordinator           : 1 個 Node 進程
@@ -2164,7 +2266,7 @@ Web Viewer dev server : 1 個
 → 若 routing policy 要求 **每個 session 一台獨立 Kit**，則「並發 review session」上限才會逼近 Kit 進程數。
 → 適合 1-3 名開發者本機壓測 P1/P2 候選 spec
 </code></pre>
-<h4 id="Phase-5最大化單機可達上限含-NVIDIA-真實-extension-對應-ⓜ">Phase 5「最大化」單機可達上限（含 NVIDIA 真實 extension 對應 ⓜ）</h4>
+<h4 id="phase-5-nvidia-extension-m">Phase 5「最大化」單機可達上限（含 NVIDIA 真實 extension 對應 ⓜ）</h4>
 <blockquote>
 <p>本表已對照 <code>kit-mcp:9902</code> 查得的 Kit base extension 真實版本（2026-05-08 查詢）。<strong>「需自建」表示 Kit base 沒有對應 extension，必須在 <code>bim-streaming-server</code> 自寫 Kit extension 或引入第三方</strong>。</p>
 </blockquote>
@@ -2240,7 +2342,7 @@ Web Viewer dev server : 1 個
 </tr>
 </tbody>
 </table>
-<h5 id="本機開發版Phase-5-啟用清單建議-bim-streaming-server-加進-kit-檔">本機開發版「Phase 5 啟用清單」（建議 <code>bim-streaming-server</code> 加進 <code>.kit</code> 檔）</h5>
+<h5 id="phase-5-bim-streaming-server.kit">本機開發版「Phase 5 啟用清單」（建議 <code>bim-streaming-server</code> 加進 <code>.kit</code> 檔）</h5>
 <pre><code class="language-toml">[dependencies]
 # 基線（已存在）
 &quot;omni.kit.livestream.webrtc&quot; = { version = &quot;9.0.2&quot; }
@@ -2266,8 +2368,8 @@ Web Viewer dev server : 1 個
 # &quot;omni.kit.livestream.aov&quot; = { version = &quot;9.0.0&quot; }
 </code></pre>
 <p>→ 結論：<strong>24 GB 級開發機</strong>可承擔 Phase 4 約 <strong>6-9 個獨立 Kit 進程</strong>並發（外加 spectator／AOV 會吃掉額外 encoder／頻寬／VRAM），並支援 Phase 5 多數能力的 dev 驗證。同時跑重 Phase 5 + Phase 4 並發時需限制 <strong>獨立 Kit 進程數</strong>在 3-4 個以內。<strong>IAQ/HVAC/Sensor/IFC 必須在 §11 框架下自建，不能假設 Kit base 已內建</strong>。</p>
-<h3 id="93-SaaS-等級中小型工作室cluster-配置">9.3 SaaS 等級（中小型工作室）：cluster 配置</h3>
-<h4 id="規模假設依-SYSTEM_DESIGN-§3--中小型工作室常見比例">規模假設（依 SYSTEM_DESIGN §3 + 中小型工作室常見比例）</h4>
+<h3 id="saas-cluster">9.3 SaaS 等級（中小型工作室）：cluster 配置</h3>
+<h4 id="system_design-3">規模假設（依 SYSTEM_DESIGN §3 + 中小型工作室常見比例）</h4>
 <pre><code class="language-txt">工作室人數         : 10-50 名建築師 / BIM 工程師 / 審查員
 日活躍使用者 DAU   : 8-30 名
 並發審查 session    : 5-15 個（高峰期）
@@ -2279,7 +2381,7 @@ Web Viewer dev server : 1 個
 AI 規則 / 碳排檢查 : 每 review session 1-3 次
 </code></pre>
 <p>依 <code>SYSTEM_DESIGN §3</code> 「500 peak concurrent sessions ÷ 6 per GPU ≈ 85 GPU instances」反推：<strong>15 並發 session ÷ 6 per GPU ≈ 2.5 GPU host</strong>。</p>
-<h4 id="Tier-A最小可行5-10-並發-session10-20-人工作室">Tier A：最小可行（5-10 並發 session，10-20 人工作室）</h4>
+<h4 id="tier-a5-10-session10-20">Tier A：最小可行（5-10 並發 session，10-20 人工作室）</h4>
 <table>
 <thead>
 <tr>
@@ -2350,7 +2452,7 @@ AI 規則 / 碳排檢查 : 每 review session 1-3 次
 </tbody>
 </table>
 <p>→ Tier A 容量：<strong>12-16 並發 session、40-60 並發 viewer、日 100 conversion</strong>；高峰時無冗餘。</p>
-<h4 id="Tier-B推薦平衡10-15-並發-session20-50-人工作室">Tier B：推薦平衡（10-15 並發 session，20-50 人工作室）</h4>
+<h4 id="tier-b10-15-session20-50">Tier B：推薦平衡（10-15 並發 session，20-50 人工作室）</h4>
 <table>
 <thead>
 <tr>
@@ -2424,7 +2526,7 @@ AI 規則 / 碳排檢查 : 每 review session 1-3 次
 </tbody>
 </table>
 <p>→ Tier B 容量：<strong>18-24 並發 session、80-120 viewer、日 500 conversion</strong>；單台失效不停服。</p>
-<h4 id="Tier-C成長型多區域準備擴-Phase-6">Tier C：成長型（多區域，準備擴 Phase 6）</h4>
+<h4 id="tier-c-phase-6">Tier C：成長型（多區域，準備擴 Phase 6）</h4>
 <pre><code class="language-txt">- GPU host: 5+ 台（含 1 台 H100/H200 80 GB 跑 Phase 5 重模擬 / AI inference）
 - 加 K8s control plane（3 master + 5 worker）
 - 加多 region TURN（國內 + 海外）
@@ -2432,7 +2534,7 @@ AI 規則 / 碳排檢查 : 每 review session 1-3 次
 - 物件儲存改 distributed MinIO 或外接 AWS S3
 </code></pre>
 <p>→ 進到 Tier C 就應啟動候選 #9 <code>production-deployment-baseline</code>，本節不展開。</p>
-<h4 id="中小型工作室Phase-5-啟用清單依-NVIDIA-OVAS-reference-impl-ⓜ">中小型工作室「Phase 5 啟用清單」（依 NVIDIA OVAS reference impl ⓜ）</h4>
+<h4 id="phase-5-nvidia-ovas-reference-impl-m">中小型工作室「Phase 5 啟用清單」（依 NVIDIA OVAS reference impl ⓜ）</h4>
 <blockquote>
 <p><strong>基準</strong>：Kit 5 streaming server 應該以 NVIDIA Omniverse Kit App Streaming (OVAS) 作為 reference implementation；OVAS 在 NGC Collection（<code>nvidia/omniverse/kit-appstreaming-collection</code>）已提供 Helm chart、container images、API gateway 設定。我們的 <code>bim-streaming-server</code> 是 OVAS 的「自建單節點精簡版」，Tier B/C 直接走 OVAS K8s 模式可大幅縮短 Phase 4 平台化的工程時間。</p>
 </blockquote>
@@ -2502,7 +2604,7 @@ AI 規則 / 碳排檢查 : 每 review session 1-3 次
 </tr>
 </tbody>
 </table>
-<h5 id="中小型工作室部署藍圖Tier-B--Phase-5-對應">中小型工作室部署藍圖（Tier B + Phase 5 對應）</h5>
+<h5 id="tier-b-phase-5">中小型工作室部署藍圖（Tier B + Phase 5 對應）</h5>
 <pre><code class="language-txt">[ Browser users ]
         │
         ▼
@@ -2539,7 +2641,7 @@ AI 規則 / 碳排檢查 : 每 review session 1-3 次
 - Conversion 走 IFC 自建（IfcOpenShell）+ Kit 官方 omni.services.convert.cad（DGN/JT/HOOPS）
 - Per-AOV streaming 是進階選項，不影響基礎審查流程
 </code></pre>
-<h3 id="94-GPU-Pool-容量計算公式">9.4 GPU Pool 容量計算公式</h3>
+<h3 id="gpu-pool">9.4 GPU Pool 容量計算公式</h3>
 <pre><code class="language-txt">slots_per_host = floor( (VRAM_GB - reserve_GB) / per_session_VRAM_GB )
 
 reserve_GB:
@@ -2561,7 +2663,7 @@ L4 24 GB Linux 典型               : (24-1.5)/3 = 7 → 推薦 6
 L40S 48 GB Linux 含 PhysX         : (48-1.5)/4 = 11
 H100 80 GB Linux 含 PhysX + MDL  : (80-2)/4.5 = 17
 </code></pre>
-<h3 id="95-網路--儲存--備援邊界">9.5 網路 / 儲存 / 備援邊界</h3>
+<h3 id="section-14">9.5 網路 / 儲存 / 備援邊界</h3>
 <table>
 <thead>
 <tr>
@@ -2616,7 +2718,7 @@ H100 80 GB Linux 含 PhysX + MDL  : (80-2)/4.5 = 17
 </tr>
 </tbody>
 </table>
-<h3 id="96-升級觸發條件什麼時候從-Tier-A-→-B-→-C">9.6 升級觸發條件（什麼時候從 Tier A → B → C）</h3>
+<h3 id="tier-a-b-c">9.6 升級觸發條件（什麼時候從 Tier A → B → C）</h3>
 <pre><code class="language-txt">A → B 觸發：
   - 並發 session 高峰連續 2 週 &gt; 8（80% 容量）
   - GPU 容量不足拒絕的 review session &gt; 2 件 / 週
@@ -2628,7 +2730,7 @@ B → C 觸發：
   - 出現需要 H100 級 GPU 的 Phase 5 工作負載（如全屋 CFD）
   - SLA 承諾上修到 99.9%
 </code></pre>
-<h3 id="97-預算粗估僅供決策參考硬體價格波動大">9.7 預算粗估（僅供決策參考，硬體價格波動大）</h3>
+<h3 id="section-15">9.7 預算粗估（僅供決策參考，硬體價格波動大）</h3>
 <table>
 <thead>
 <tr>
@@ -2661,7 +2763,7 @@ B → C 觸發：
 </tbody>
 </table>
 <p>→ <strong>中小型工作室建議</strong>：先<strong>雲端 Tier A</strong>（縮短 time-to-value），驗證 12 並發 session 穩定後再評估自建 Tier B。</p>
-<h3 id="98-與-OpenSpec-候選的對應">9.8 與 OpenSpec 候選的對應</h3>
+<h3 id="openspec">9.8 與 OpenSpec 候選的對應</h3>
 <table>
 <thead>
 <tr>
@@ -2727,18 +2829,16 @@ B → C 觸發：
 <p><strong>#2 ↔ #2A 的層級關係（2026-05-08 17:00）</strong>：#2 解 §2 Phase 3 業務語意層（routing decision + kit_instance_bindings 紀錄）；#2A 解 §2 Phase 4.4 / 4.5 / 4.11 runtime infrastructure 層（OVAS 接管 Kit container lifecycle）。採用 OVAS 後 <code>bim-review-coordinator/src/services/kitPool.ts</code> 變 thin client（call OVAS REST app instance API），spec 只需 1 個 MODIFY（Req2 provider enum 擴 <code>&quot;ovas&quot;</code>），其他 4 個 Req 不變。完整影響表見 §12.2、官方定義見 §11.4。</p>
 </blockquote>
 <hr />
-<h2 id="10-建議的下一步給-monkey1sai">10. 建議的下一步（給 monkey1sai）</h2>
+<h2 id="monkey1sai">10. 建議的下一步（給 monkey1sai）</h2>
 <ol>
-<li>
-<p><strong>先恢復並鎖定本機環境一致性（新增，2026-05-12）</strong>：</p>
+<li><p><strong>先恢復並鎖定本機環境一致性（新增，2026-05-12）</strong>：</p>
 <ul>
 <li>先依 §1.5 建立 repo-local <code>.venv</code>，確認 <code>fastapi 0.111.0 / starlette 0.37.2 / uvicorn 0.45.0</code>。</li>
 <li>對 <code>bim-review-coordinator</code> 與 <code>web-viewer-sample</code> 重跑 <code>npm ci</code>，確認 <code>tsx.cmd</code> / <code>vite.cmd</code> 存在。</li>
 <li>以 <code>.\scripts\start-all.ps1 -SkipStreaming</code> 驗 8001 / 8005 / 8004 / 5173；這一步通過後，才把後續 OpenSpec / runtime evidence 的失敗視為功能或 spec 問題。</li>
 </ul>
 </li>
-<li>
-<p><strong>確認 #1、#3/#3A 與 canonical batch archive 對齊已完成，後續不再重開已完成 change</strong>：</p>
+<li><p><strong>確認 #1、#3/#3A 與 canonical batch archive 對齊已完成，後續不再重開已完成 change</strong>：</p>
 <ul>
 <li><code>#1 worker-real-conversion-quality</code> 已歸檔到 <code>openspec/changes/archive/2026-05-11-worker-real-conversion-quality/</code>。</li>
 <li>現行 specs 已同步到 <code>worker-artifact-pipeline</code> 與 <code>runtime-verification-evidence</code>。</li>
@@ -2747,8 +2847,7 @@ B → C 觸發：
 <li>後續若要提升品質，不重開 #1 / #3 / #3A / canonical batch archive；改以 source entity enumeration optimization、canonical storage batch completion 或 issue highlight evidence 作為更小切片。</li>
 </ul>
 </li>
-<li>
-<p><strong>下一個 worker 品質工作：執行 <code>optimize-worker-source-entity-enumeration</code></strong>：</p>
+<li><p><strong>下一個 worker 品質工作：執行 <code>optimize-worker-source-entity-enumeration</code></strong>：</p>
 <ul>
 <li>使用 <code>C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc</code> 作為正式本機 fixture root。</li>
 <li>此 work 已落成 active OpenSpec change：<code>openspec/changes/optimize-worker-source-entity-enumeration/</code>。</li>
@@ -2758,8 +2857,7 @@ B → C 觸發：
 <li>只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 <code>minimum_coverage_locked=true</code> production baseline 寫入 evidence。</li>
 </ul>
 </li>
-<li>
-<p><strong>暫停 <code>#2 streaming-multi-instance-orchestration</code>，等待 GPU 購買與部署後再執行</strong>：</p>
+<li><p><strong>暫停 <code>#2 streaming-multi-instance-orchestration</code>，等待 GPU 購買與部署後再執行</strong>：</p>
 <ul>
 <li>在至少兩個 GPU-backed Kit endpoints 可用前，不啟動 dedicated multi-Kit runtime 驗證，也不把它標為進行中、passed 或 failed。</li>
 <li>GPU 購買與部署完成後，先依 §9.2 確認 24 GB VRAM 級 GPU capacity、distinct signaling / media port pair、Kit stream listener 與 browser evidence 儲存位置，再重新啟動驗證。</li>
@@ -2767,8 +2865,7 @@ B → C 觸發：
 <li><strong>MCP 補強</strong>：驗證前用 <code>kit-mcp</code> <code>get_kit_extension_details(&quot;omni.kit.livestream.webrtc&quot;)</code> 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。</li>
 </ul>
 </li>
-<li>
-<p><strong>完成並歸檔 P1 OpenSpec change <code>#4 coordinator-session-lifecycle-events-audit</code></strong>：</p>
+<li><p><strong>完成並歸檔 P1 OpenSpec change <code>#4 coordinator-session-lifecycle-events-audit</code></strong>：</p>
 <ul>
 <li>#3 / #3A 已完成並歸檔，不再列為候選池。</li>
 <li><code>#4</code> 已歸檔到 <code>openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/</code>，並同步到 <code>review-session-request-lifecycle</code>。</li>
@@ -2776,8 +2873,7 @@ B → C 觸發：
 <li>若要先補 worker evidence，優先完成 active change <code>optimize-worker-source-entity-enumeration</code>，不要跳過 canonical batch readiness gate。</li>
 </ul>
 </li>
-<li>
-<p><strong>評估是否啟動 <code>#1A</code> / <code>#2A</code>（採用 NVIDIA reference impl，見 §12 / §13）</strong>：</p>
+<li><p><strong>評估是否啟動 <code>#1A</code> / <code>#2A</code>（採用 NVIDIA reference impl，見 §12 / §13）</strong>：</p>
 <ul>
 <li>在啟動前，先依 §13 的決策框架評估「<strong>自建 vs 採用 NVIDIA</strong>」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。</li>
 <li>若決定啟動 #1A：用 <code>kit-mcp</code> <code>get_kit_extension_details(&quot;omni.kit.collaboration.presence_layer&quot;)</code> 查 PresenceLayerAPI 22 個方法（<code>broadcast_local_bound_camera</code> / <code>enter_follow_mode</code> / <code>get_selections</code>）。</li>
@@ -2792,22 +2888,19 @@ B → C 觸發：
 </li>
 </ul>
 </li>
-<li>
-<p><strong>Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動</strong>：</p>
+<li><p><strong>Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動</strong>：</p>
 <ul>
 <li>依使用者 2026-05-08 16:05 指示，這些細項目前 ⏸ 凍結，<strong>等待公司業務系統接入</strong>（SSO / IT 維運 / SLA / billing / 合約等）。</li>
 <li>任何想解凍的提案，需在 PR description 引用該決策段落（本文件 §2 Phase 6 表 + §6 P3-frozen），並附上業務系統接入確認文件。</li>
 </ul>
 </li>
-<li>
-<p><strong>延後啟動 <code>#5</code> / <code>#6</code></strong>：</p>
+<li><p><strong>延後啟動 <code>#5</code> / <code>#6</code></strong>：</p>
 <ul>
 <li><code>#5 ai-rule-carbon-result-contract</code> 與 <code>#6 notification-webhook-service</code> 是 P2 的入口 contract（mock 階段），但若 P0 / P1 還沒 land 就開，會是<strong>範圍擴散風險</strong>。</li>
 <li>production-grade 的 audit log persistence 與 webhook delivery 屬 Phase 6 凍結範圍（§2 Phase 6 表）。</li>
 </ul>
 </li>
-<li>
-<p><strong>保留本文件作為下一輪 roadmap 對照基準</strong>：</p>
+<li><p><strong>保留本文件作為下一輪 roadmap 對照基準</strong>：</p>
 <ul>
 <li>任何新 spec land 後，更新對照表、候選池與優先級，避免已完成工作仍留在 P0/P1。</li>
 <li>每次 OpenSpec sync / archive 後，依 §1.6 同步更新 <code>§1.2</code> / <code>§1.4</code> / <code>§2</code> / <code>§5</code> / <code>§7</code> / <code>§10</code>，保持 <code>openspec/specs/</code> 與 roadmap 對齊。</li>
@@ -2817,7 +2910,7 @@ B → C 觸發：
 </li>
 </ol>
 <hr />
-<h2 id="11-Phase-4--Phase-5-NVIDIA-真實能力對應2026-05-08-MCP--官方文件查詢">11. Phase 4 / Phase 5 NVIDIA 真實能力對應（2026-05-08 MCP + 官方文件查詢）</h2>
+<h2 id="phase-4-phase-5-nvidia-2026-05-08-mcp">11. Phase 4 / Phase 5 NVIDIA 真實能力對應（2026-05-08 MCP + 官方文件查詢）</h2>
 <blockquote>
 <p><strong>查詢來源</strong>：</p>
 <ol>
@@ -2827,7 +2920,7 @@ B → C 觸發：
 <li>Kit extension cache 版本：109.x 系列</li>
 </ol>
 </blockquote>
-<h3 id="111-MCP-server-載入步驟給後續-session-沿用">11.1 MCP server 載入步驟（給後續 session 沿用）</h3>
+<h3 id="mcp-server-session">11.1 MCP server 載入步驟（給後續 session 沿用）</h3>
 <pre><code class="language-powershell"># 1. 確認 container 已在跑
 docker ps --filter &quot;name=kit-mcp&quot; --filter &quot;name=usd-code-mcp&quot;
 
@@ -2839,7 +2932,7 @@ docker ps --filter &quot;name=kit-mcp&quot; --filter &quot;name=usd-code-mcp&quo
 Invoke-WebRequest http://127.0.0.1:9902/health    # {&quot;status&quot;:&quot;healthy&quot;,...}
 Invoke-WebRequest http://127.0.0.1:9903/health
 </code></pre>
-<h5 id="Streamable-HTTP-MCP-直接呼叫範例不靠-Cursor-MCP-catalog">Streamable HTTP MCP 直接呼叫範例（不靠 Cursor MCP catalog）</h5>
+<h5 id="streamable-http-mcp-cursor-mcp-catalog">Streamable HTTP MCP 直接呼叫範例（不靠 Cursor MCP catalog）</h5>
 <pre><code class="language-powershell"># 三步握手 (initialize → notifications/initialized → tools/call)，必帶 Accept: application/json, text/event-stream
 $h = @{ &quot;Accept&quot; = &quot;application/json, text/event-stream&quot;; &quot;Content-Type&quot; = &quot;application/json&quot; }
 $init = '{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;initialize&quot;,&quot;params&quot;:{&quot;protocolVersion&quot;:&quot;2025-03-26&quot;,&quot;capabilities&quot;:{},&quot;clientInfo&quot;:{&quot;name&quot;:&quot;x&quot;,&quot;version&quot;:&quot;1&quot;}}}'
@@ -2851,7 +2944,7 @@ Invoke-WebRequest -Uri http://127.0.0.1:9902/mcp -Method POST -Headers $h2 `
 Invoke-WebRequest -Uri http://127.0.0.1:9902/mcp -Method POST -Headers $h2 `
   -Body '{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:2,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;name&quot;:&quot;search_kit_extensions&quot;,&quot;arguments&quot;:{&quot;query&quot;:&quot;physx&quot;,&quot;top_k&quot;:5}}}' -UseBasicParsing
 </code></pre>
-<h5 id="若要把它們加進-Cursor-設定推薦做法">若要把它們加進 Cursor 設定（推薦做法）</h5>
+<h5 id="cursor">若要把它們加進 Cursor 設定（推薦做法）</h5>
 <blockquote>
 <p>Cursor MCP catalog 不含這兩個 server（<code>mcp-find</code> 結果為空）。直接用 streamable HTTP URL 加進 user / project mcp.json：</p>
 </blockquote>
@@ -2862,8 +2955,8 @@ Invoke-WebRequest -Uri http://127.0.0.1:9902/mcp -Method POST -Headers $h2 `
   }
 }
 </code></pre>
-<h3 id="112-兩個-MCP-server-的工具能力總覽">11.2 兩個 MCP server 的工具能力總覽</h3>
-<h4 id="kit-mcpport-9902—-Kit-開發--extension-知識庫">kit-mcp（port 9902）— Kit 開發 / extension 知識庫</h4>
+<h3 id="mcp-server">11.2 兩個 MCP server 的工具能力總覽</h3>
+<h4 id="kit-mcpport-9902-kit-extension">kit-mcp（port 9902）— Kit 開發 / extension 知識庫</h4>
 <table>
 <thead>
 <tr>
@@ -2894,7 +2987,7 @@ Invoke-WebRequest -Uri http://127.0.0.1:9902/mcp -Method POST -Headers $h2 `
 </tr>
 </tbody>
 </table>
-<h4 id="usd-code-mcpport-9903—-USD-code--文件知識庫">usd-code-mcp（port 9903）— USD code / 文件知識庫</h4>
+<h4 id="usd-code-mcpport-9903-usd-code">usd-code-mcp（port 9903）— USD code / 文件知識庫</h4>
 <table>
 <thead>
 <tr>
@@ -2931,8 +3024,8 @@ Invoke-WebRequest -Uri http://127.0.0.1:9902/mcp -Method POST -Headers $h2 `
 </tr>
 </tbody>
 </table>
-<h3 id="113-MCP-查詢結果摘要驅動-§2--§3--§9-校正的依據">11.3 MCP 查詢結果摘要（驅動 §2 / §3 / §9 校正的依據）</h3>
-<h4 id="A-Phase-4-—-平台化NVIDIA-真實-reference-impl">A. Phase 4 — 平台化（NVIDIA 真實 reference impl）</h4>
+<h3 id="mcp-2-3-9">11.3 MCP 查詢結果摘要（驅動 §2 / §3 / §9 校正的依據）</h3>
+<h4 id="a.phase-4-nvidia-reference-impl">A. Phase 4 — 平台化（NVIDIA 真實 reference impl）</h4>
 <table>
 <thead>
 <tr>
@@ -2978,7 +3071,7 @@ _worker conversion 架構:
    暗示我們的 _worker 可以演進成「Kit service extension + FastAPI 包裝」混合，
    而非純 Python FastAPI app。但**只支援 DGN/JT/HOOPS**，IFC 仍需自建。
 </code></pre>
-<h4 id="B-Phase-5-—-Omniverse-平台能力最大化NVIDIA-真實-extension">B. Phase 5 — Omniverse 平台能力最大化（NVIDIA 真實 extension）</h4>
+<h4 id="b.phase-5-omniverse-nvidia-extension">B. Phase 5 — Omniverse 平台能力最大化（NVIDIA 真實 extension）</h4>
 <table>
 <thead>
 <tr>
@@ -3009,7 +3102,7 @@ _worker conversion 架構:
 </tr>
 </tbody>
 </table>
-<h4 id="C-關鍵缺口Kit-base-沒有必須自建或第三方">C. 關鍵缺口（Kit base 沒有，必須自建或第三方）</h4>
+<h4 id="c.kit-base">C. 關鍵缺口（Kit base 沒有，必須自建或第三方）</h4>
 <table>
 <thead>
 <tr>
@@ -3036,12 +3129,12 @@ _worker conversion 架構:
 </tr>
 </tbody>
 </table>
-<h3 id="114-NVIDIA-對Multi-Kit-Instance-並行的官方定義2026-05-08-1700">11.4 NVIDIA 對「Multi-Kit Instance 並行」的官方定義（2026-05-08 17:00）</h3>
+<h3 id="nvidia-multi-kit-instance-2026-05-08-1700">11.4 NVIDIA 對「Multi-Kit Instance 並行」的官方定義（2026-05-08 17:00）</h3>
 <blockquote>
 <p><strong>與 §9 的關係</strong>：§9.0–§9.2 把 <strong><code>kit.exe</code>／進程／signalPort／spectator／AOV</strong> 與「Multi‑Kit instance」的硬體容量語意對齊；本節保留 <strong>OVAS／Kit App Instance／業務層 vs runtime 層</strong> 的完整論述。</p>
 <p>來源：MCP <code>kit-mcp</code> <code>search_kit_extensions</code> 結果 + NVIDIA OVAS 官方文件 Overview / Get Started 頁。</p>
 </blockquote>
-<h4 id="A-名詞定義NVIDIA-官方語意">A. 名詞定義（NVIDIA 官方語意）</h4>
+<h4 id="a.nvidia">A. 名詞定義（NVIDIA 官方語意）</h4>
 <table>
 <thead>
 <tr>
@@ -3073,7 +3166,7 @@ _worker conversion 架構:
 </tr>
 </tbody>
 </table>
-<h4 id="B-NVIDIA-對Multi-Kit-instance-並行的定義">B. NVIDIA 對「Multi-Kit instance 並行」的定義</h4>
+<h4 id="b.nvidia-multi-kit-instance">B. NVIDIA 對「Multi-Kit instance 並行」的定義</h4>
 <pre><code class="language-txt">官方語意：
   「同時運行多個 Kit Application Instance container，
    每個 instance 是一個獨立的 application framebuffer，
@@ -3094,28 +3187,28 @@ OVAS Overview 原文：
   4. Kit base extension 只提供「單 instance 內」的 livestream session control（omni.services.livestream.session）；
      **沒有任何 Kit base extension 跨 instance 做 lifecycle / pool / scheduling**（MCP 已驗證）。
 </code></pre>
-<h4 id="C-對應到我們現況的層級">C. 對應到我們現況的層級</h4>
-<pre><code class="language-mermaid">flowchart TB
-    subgraph BIZ[&quot;業務語意層（自家 spec；NVIDIA 不管）&quot;]
-        S1[&quot;multi-artifact-kit-routing&lt;br/&gt;Req3: routing_policy&lt;br/&gt;same/dedicated/shared_state&quot;]
-        S2[&quot;multi-artifact-kit-routing&lt;br/&gt;Req2: kit_instance_bindings[]&lt;br/&gt;provider / status / stream_config&quot;]
-        S3[&quot;multi-artifact-kit-routing&lt;br/&gt;Req5: session_id ≠ kit_instance_id&quot;]
+<h4 id="c-1">C. 對應到我們現況的層級</h4>
+<pre class="mermaid">flowchart TB
+    subgraph BIZ["業務語意層（自家 spec；NVIDIA 不管）"]
+        S1["multi-artifact-kit-routing&lt;br/>Req3: routing_policy&lt;br/>same/dedicated/shared_state"]
+        S2["multi-artifact-kit-routing&lt;br/>Req2: kit_instance_bindings[]&lt;br/>provider / status / stream_config"]
+        S3["multi-artifact-kit-routing&lt;br/>Req5: session_id ≠ kit_instance_id"]
     end
 
-    subgraph RUNTIME[&quot;Runtime infrastructure 層（NVIDIA OVAS reference impl 可接管）&quot;]
-        K1[&quot;Kit instance #1&lt;br/&gt;1 container, 1 framebuffer&lt;br/&gt;omni.kit.livestream.webrtc&quot;]
-        K2[&quot;Kit instance #2&lt;br/&gt;1 container, 1 framebuffer&lt;br/&gt;omni.kit.livestream.webrtc&quot;]
-        OVAS[&quot;OVAS app instance lifecycle&lt;br/&gt;K8s + Helm&lt;br/&gt;register / config / start / stop / scale&quot;]
+    subgraph RUNTIME["Runtime infrastructure 層（NVIDIA OVAS reference impl 可接管）"]
+        K1["Kit instance #1&lt;br/>1 container, 1 framebuffer&lt;br/>omni.kit.livestream.webrtc"]
+        K2["Kit instance #2&lt;br/>1 container, 1 framebuffer&lt;br/>omni.kit.livestream.webrtc"]
+        OVAS["OVAS app instance lifecycle&lt;br/>K8s + Helm&lt;br/>register / config / start / stop / scale"]
     end
 
-    S1 --&gt; S2
-    S2 --&gt;|provider=local-script Tier A&lt;br/&gt;provider=ovas Tier B+| K1
-    S2 --&gt;|...| K2
-    OVAS -.-&gt;|管 K1/K2 lifecycle&lt;br/&gt;取代自寫 KitInstancePool| K1
-    OVAS -.-&gt; K2
-    S3 -.-&gt;|多 Kit 服務同一 session&lt;br/&gt;collaboration 由 coordinator 廣播| OVAS
-</code></pre>
-<h4 id="D-關鍵結論對使用者問題的直接回答">D. 關鍵結論（對使用者問題的直接回答）</h4>
+    S1 --> S2
+    S2 -->|provider=local-script Tier A&lt;br/>provider=ovas Tier B+| K1
+    S2 -->|...| K2
+    OVAS -.->|管 K1/K2 lifecycle&lt;br/>取代自寫 KitInstancePool| K1
+    OVAS -.-> K2
+    S3 -.->|多 Kit 服務同一 session&lt;br/>collaboration 由 coordinator 廣播| OVAS
+</pre>
+<h4 id="d">D. 關鍵結論（對使用者問題的直接回答）</h4>
 <pre><code class="language-txt">結論 1：可以用 OVAS app instance lifecycle 達到「Multi-Kit instance 並行」
         - OVAS 是 NVIDIA 官方對該需求的 reference implementation
         - 接管自寫 KitInstancePool / start-multi-kit.ps1 / docker-compose 多 GPU 啟動
@@ -3134,7 +3227,7 @@ OVAS Overview 原文：
         - kit_instance_bindings.provider 由 &quot;local-script&quot; 多一個值 &quot;ovas&quot;
         - 其他 Req（routing policy / lifecycle / draining / shared_state）完全不變
 </code></pre>
-<h4 id="E-MCP-與官方文件的交叉驗證">E. MCP 與官方文件的交叉驗證</h4>
+<h4 id="e.mcp">E. MCP 與官方文件的交叉驗證</h4>
 <table>
 <thead>
 <tr>
@@ -3162,11 +3255,11 @@ OVAS Overview 原文：
 </tbody>
 </table>
 <hr />
-<h2 id="12-由-MCP-結果新增的候選">12. 由 MCP 結果新增的候選</h2>
+<h2 id="mcp">12. 由 MCP 結果新增的候選</h2>
 <blockquote>
 <p>這兩個候選都不取代 §5 既有 P0 / P1，而是<strong>讓 P0 候選在實作時直接對齊 NVIDIA 真實做法，避免「自建版」與「NVIDIA 版」雙軌成本</strong>。</p>
 </blockquote>
-<h3 id="121-候選-1Astreaming-collaboration-presence-layer-upgrade">12.1 候選 #1A：<code>streaming-collaboration-presence-layer-upgrade</code></h3>
+<h3 id="astreaming-collaboration-presence-layer-upgrade">12.1 候選 #1A：<code>streaming-collaboration-presence-layer-upgrade</code></h3>
 <table>
 <thead>
 <tr>
@@ -3217,7 +3310,7 @@ OVAS Overview 原文：
 </tr>
 </tbody>
 </table>
-<h3 id="122-候選-2Astreaming-ovas-helm-baseline">12.2 候選 #2A：<code>streaming-ovas-helm-baseline</code></h3>
+<h3 id="astreaming-ovas-helm-baseline">12.2 候選 #2A：<code>streaming-ovas-helm-baseline</code></h3>
 <table>
 <thead>
 <tr>
@@ -3276,7 +3369,7 @@ OVAS Overview 原文：
 </tr>
 </tbody>
 </table>
-<h4 id="2A-對-spec-multi-artifact-kit-routing-的具體影響2026-05-08-1700">#2A 對 spec <code>multi-artifact-kit-routing</code> 的具體影響（2026-05-08 17:00）</h4>
+<h4 id="a-spec-multi-artifact-kit-routing-2026-05-08-1700">#2A 對 spec <code>multi-artifact-kit-routing</code> 的具體影響（2026-05-08 17:00）</h4>
 <blockquote>
 <p>回應使用者問題「Phase 3 #2 與 4.4 的關係 + 是否可用 OVAS app instance lifecycle 達到 multi-Kit instance 並行」。</p>
 </blockquote>
@@ -3323,7 +3416,7 @@ OVAS Overview 原文：
 </tbody>
 </table>
 <p><strong>關鍵：OVAS 接管後，<code>multi-artifact-kit-routing</code> spec 只需要 1 個 MODIFY</strong>（Req2 provider enum 擴值），其他 4 個 Requirement 完全不變。這證實 §2 Phase 3 ↔ §2 Phase 4.4 的「業務語意層 vs runtime infrastructure 層」解耦設計是正確的。</p>
-<h4 id="採用-OVAS-之後-KitInstancePool-的角色變化">採用 OVAS 之後 KitInstancePool 的角色變化</h4>
+<h4 id="ovas-kitinstancepool">採用 OVAS 之後 KitInstancePool 的角色變化</h4>
 <pre><code class="language-txt">採用前（Tier A，目前 main 自寫）：
   bim-review-coordinator/src/services/kitPool.ts
     - 直接 spawn / kill Kit process
@@ -3347,7 +3440,7 @@ OVAS Overview 原文：
   - web-viewer-sample（仍是我們自己的 review UI；只是 WebRTC 對端 URL 換成 OVAS 提供）
   - _bim-control / _worker / Socket.IO collaboration 全部不變
 </code></pre>
-<h5 id="1A--2A-與既有-P0--P1-的依賴">#1A / #2A 與既有 P0 / P1 的依賴</h5>
+<h5 id="a-2a-p0-p1">#1A / #2A 與既有 P0 / P1 的依賴</h5>
 <pre><code class="language-txt">#1 worker-real-conversion-quality (✓ archived)
    └─→ 已解開 IFC→USDC placeholder 紅星；coverage baseline 門檻仍待後續 spec
 
@@ -3365,12 +3458,12 @@ OVAS Overview 原文：
 ⏸ #9 production-deployment-baseline   ── 凍結中（等業務系統接入）
 </code></pre>
 <hr />
-<h2 id="13-採用-NVIDIA-Reference-Implementation-的決策框架">13. 採用 NVIDIA Reference Implementation 的決策框架</h2>
+<h2 id="nvidia-reference-implementation">13. 採用 NVIDIA Reference Implementation 的決策框架</h2>
 <blockquote>
 <p><strong>2026-05-08 16:05 新增</strong>：回應使用者問題「Phase 4 / Phase 5 NVIDIA 已提供功能是否可直接採用？優缺點與風險？」。</p>
 <p>本節<strong>不是</strong>「全部採用」或「全部不採用」的二分決策，而是給每個能力一個獨立的決策矩陣，避免 reference impl 把整個 stack 鎖死。</p>
 </blockquote>
-<h3 id="131-決策矩陣每個能力獨立判斷">13.1 決策矩陣（每個能力獨立判斷）</h3>
+<h3 id="section-16">13.1 決策矩陣（每個能力獨立判斷）</h3>
 <blockquote>
 <p>圖例：✅ = 推薦採用 NVIDIA reference；⚠ = 部分採用 / 條件採用；❌ = 不採用（自建或第三方）</p>
 </blockquote>
@@ -3478,7 +3571,7 @@ OVAS Overview 原文：
 </tr>
 </tbody>
 </table>
-<h3 id="132-採用-reference-implementation-的優點">13.2 採用 reference implementation 的「優點」</h3>
+<h3 id="reference-implementation">13.2 採用 reference implementation 的「優點」</h3>
 <pre><code class="language-txt">時間成本：
   - OVAS Helm 從 0 到 K8s deploy，內部估計 1-2 週
   - 自寫 KitInstancePool + scheduler + autoscaling 從 0 到 production-ready，估計 ≥ 6 週
@@ -3504,7 +3597,7 @@ OVAS Overview 原文：
   - Kit 109.x 升 110.x 時自動繼承新功能
   - 不需要為 driver / CUDA 升級 patch 自家程式碼
 </code></pre>
-<h3 id="133-採用-reference-implementation-的缺點與風險">13.3 採用 reference implementation 的「缺點」與風險</h3>
+<h3 id="reference-implementation-1">13.3 採用 reference implementation 的「缺點」與風險</h3>
 <table>
 <thead>
 <tr>
@@ -3589,8 +3682,8 @@ OVAS Overview 原文：
 </tr>
 </tbody>
 </table>
-<h3 id="134-採用建議依各-Phase-對應">13.4 採用建議（依各 Phase 對應）</h3>
-<h4 id="Phase-4高併發平台化">Phase 4（高併發平台化）</h4>
+<h3 id="phase">13.4 採用建議（依各 Phase 對應）</h3>
+<h4 id="phase-4">Phase 4（高併發平台化）</h4>
 <table>
 <thead>
 <tr>
@@ -3622,7 +3715,7 @@ OVAS Overview 原文：
 </tr>
 </tbody>
 </table>
-<h4 id="Phase-5Omniverse-平台能力最大化">Phase 5（Omniverse 平台能力最大化）</h4>
+<h4 id="phase-5omniverse">Phase 5（Omniverse 平台能力最大化）</h4>
 <table>
 <thead>
 <tr>
@@ -3659,7 +3752,7 @@ OVAS Overview 原文：
 </tr>
 </tbody>
 </table>
-<h4 id="Phase-6Production--SaaS-營運">Phase 6（Production &amp; SaaS 營運）</h4>
+<h4 id="phase-6production-saas">Phase 6（Production &amp; SaaS 營運）</h4>
 <pre><code class="language-txt">全部 ⏸ 凍結，等公司業務系統接入。
 
 當解凍時：
@@ -3668,7 +3761,7 @@ OVAS Overview 原文：
   - Observability / SLA / SLO          → 對應 #8（凍結中）
   - 完整 production deployment          → 對應 #9（凍結中）
 </code></pre>
-<h3 id="135-何時不要採用-reference-implementation">13.5 何時「不要」採用 reference implementation</h3>
+<h3 id="reference-implementation-2">13.5 何時「不要」採用 reference implementation</h3>
 <pre><code class="language-txt">1. 開發階段 PoC 為了快速驗證單一假設
    例：候選 #2 在單機驗 multi-Kit
    理由：OVAS K8s 對 PoC 過重；先用 docker-compose 驗，再升
@@ -3688,23 +3781,23 @@ OVAS Overview 原文：
 5. 業務邏輯 / RBAC / multi-tenant
    永遠不採用 NVIDIA reference — 那是我們自己的領域
 </code></pre>
-<h3 id="136-決策流程給每個-Phase-4--5-子能力">13.6 決策流程（給每個 Phase 4 / 5 子能力）</h3>
-<pre><code class="language-mermaid">flowchart TD
-  A[新功能需求] --&gt; B{NVIDIA Kit base 有 extension?}
-  B -- &quot;✓ 有&quot; --&gt; C{基礎設施門檻可接受?&lt;br/&gt;K8s/Nucleus/license}
-  B -- &quot;✗ 沒有&quot; --&gt; D{第三方 / 開源有解?}
+<h3 id="phase-4-5">13.6 決策流程（給每個 Phase 4 / 5 子能力）</h3>
+<pre class="mermaid">flowchart TD
+  A[新功能需求] --> B{NVIDIA Kit base 有 extension?}
+  B -- "✓ 有" --> C{基礎設施門檻可接受?&lt;br/>K8s/Nucleus/license}
+  B -- "✗ 沒有" --> D{第三方 / 開源有解?}
 
-  C -- &quot;✓ 是&quot; --&gt; E[✅ 採用 NVIDIA reference]
-  C -- &quot;✗ 否（Tier A 沒 K8s 人力）&quot; --&gt; F[⚠ 部分採用 / Tier 升級時再用]
+  C -- "✓ 是" --> E[✅ 採用 NVIDIA reference]
+  C -- "✗ 否（Tier A 沒 K8s 人力）" --> F[⚠ 部分採用 / Tier 升級時再用]
 
-  D -- &quot;✓ 有（如 IfcOpenShell）&quot; --&gt; G[❌ 自建 + 第三方]
-  D -- &quot;✗ 都沒有&quot; --&gt; H[從 0 自建 / 等業務接入再評估]
+  D -- "✓ 有（如 IfcOpenShell）" --> G[❌ 自建 + 第三方]
+  D -- "✗ 都沒有" --> H[從 0 自建 / 等業務接入再評估]
 
-  E --&gt; I[在 OpenSpec change 內列&lt;br/&gt;NVIDIA extension 版本 + license 條款]
-  F --&gt; I
-  G --&gt; I
-  H --&gt; I
-</code></pre>
+  E --> I[在 OpenSpec change 內列&lt;br/>NVIDIA extension 版本 + license 條款]
+  F --> I
+  G --> I
+  H --> I
+</pre>
 <p>→ 每次新增候選時，<strong>先依 §13.6 流程跑一遍</strong>，再決定 spec 內容。</p>
 
     </main>
