@@ -1,7 +1,7 @@
 ---
 name: apply-and-verify
 description: OpenSpec change 的 apply 階段：實作程式碼、同步 artifacts、跑四層驗證、commit、push、開 implementation PR。當 explore 已完成、要開始實作、要進入 verify-and-commit 階段時使用。
-allowed-tools: Bash(git*) Bash(gh pr create*) Bash(openspec*) Bash(pytest*) Bash(npm*) Bash(gitnexus detect-changes*) Read Edit Write Grep Glob
+allowed-tools: Bash(git add*) Bash(git commit*) Bash(git push*) Bash(git diff*) Bash(git status*) Bash(git log*) Bash(gh pr create*) Bash(openspec*) Bash(pytest*) Bash(npm*) Bash(gitnexus detect-changes*) Read Edit Write Grep Glob
 ---
 
 # Apply and Verify

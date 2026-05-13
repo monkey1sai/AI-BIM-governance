@@ -87,7 +87,7 @@ recommendations:
 2. 或補 OpenSpec task 涵蓋實際改動
 3. 不能直接放行進 commit
 
-### Step 3：Fallback 機制
+### Step 3：Fallback 機制（含停損條件）
 
 若 `gitnexus detect-changes` 失敗（resolver 對 worktree index 沒及時刷新）：
 
@@ -103,6 +103,16 @@ recommendations:
 ```
 
 在 PR body 明確標註「GitNexus detect-changes failed, using git diff as fallback」，**不能**把 fallback 當永久替代（這是 PR #35 曾真實出現的風險，要明文揭露）。
+
+**停損條件（強制）**：
+
+| 失敗次數 | 動作 |
+|---|---|
+| 第 1 次失敗 | 跑 `gitnexus analyze --embeddings --skills --skip-agents-md` 後重試 |
+| 第 2 次失敗 | 改用 `git diff --name-only --cached` 作 fallback，但在 PR body 標記 ⚠️ |
+| **第 3 次失敗（同一 session）** | **停止**：升為 issue（`gh issue create`），標題格式 `gitnexus: detect-changes repeatedly failing on <branch>`，body 附最近 3 次失敗指令與 stderr，並暫停該 change 的 commit / merge 流程，等修復或 reviewer 明確 sign-off「accept git-diff-only fallback for this PR」後再繼續 |
+
+停損的理由：fallback 連續失敗代表 GitNexus index 或 resolver 已有更深層問題，繼續用 fallback 等於放棄改後 scope 驗證；提前升 issue 比累積 technical debt 安全。
 
 ### Step 4：輸出 post-change report
 

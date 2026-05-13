@@ -2,7 +2,7 @@
 name: archive-and-closeout
 description: implementation PR merge 後執行 archive 與 closeout：建 archive branch、跑 openspec archive、同步 specs 與 roadmap markdown/HTML、開 archive PR、等使用者同意後 merge、最後做 branch cleanup。所有 merge 動作絕不自動執行。
 disable-model-invocation: true
-allowed-tools: Bash(git*) Bash(gh pr*) Bash(openspec archive*) Read Edit Write Grep
+allowed-tools: Bash(git switch*) Bash(git pull*) Bash(git status*) Bash(git fetch*) Bash(git branch*) Bash(git add*) Bash(git commit*) Bash(git push*) Bash(git diff*) Bash(gh pr*) Bash(openspec archive*) Bash(openspec validate*) Bash(gitnexus detect-changes*) Read Edit Write Grep
 ---
 
 # Archive and Closeout

@@ -2,7 +2,7 @@
 name: pr-review-gate
 description: implementation PR 開出後的 review gate；等待 CI checks、列出 reviewer comments、若有 blocking risk 自動觸發 GitNexus debug loop、全綠後等使用者明確同意才 merge。Merge 動作絕不自動執行，必須使用者人工同意。
 disable-model-invocation: true
-allowed-tools: Bash(gh pr*) Bash(git*) Skill Read Grep
+allowed-tools: Bash(gh pr*) Bash(gh api*) Bash(git push*) Bash(git status*) Bash(git log*) Skill Read Grep
 ---
 
 # PR Review Gate
