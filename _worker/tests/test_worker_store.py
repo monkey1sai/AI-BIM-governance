@@ -704,6 +704,101 @@ def test_store_lineage_returns_legacy_diagnostics_instead_of_failing(tmp_path: P
     }
 
 
+def test_store_surfaces_entity_index_sidecar_in_lineage_when_emitted(tmp_path: Path):
+    """§5.5: lineage API must list the sidecar artifact when the converter emits entity_index.json."""
+
+    class _SidecarConverter(FakeSuccessfulConverter):
+        def convert(self, *, source_path: Path, output_dir: Path, job: dict, generate_mapping: bool) -> ConversionAdapterResult:
+            base = super().convert(
+                source_path=source_path,
+                output_dir=output_dir,
+                job=job,
+                generate_mapping=generate_mapping,
+            )
+            entity_index_path = output_dir / "entity_index.json"
+            write_json(
+                entity_index_path,
+                {
+                    "source_artifact_id": job["source_artifact_id"],
+                    "mapping_method": "ifc_entity_to_sidecar_index",
+                    "materialization_strategy": "sidecar",
+                    "summary": {"sidecar_entity_count": 2},
+                    "entities": [
+                        {
+                            "ifc_entity_key": "IfcPropertySet:42",
+                            "ifc_entity_id": "42",
+                            "ifc_guid": None,
+                            "ifc_class": "IfcPropertySet",
+                            "name": "Wall Pset",
+                            "renderable": False,
+                        },
+                        {
+                            "ifc_entity_key": "guid-project",
+                            "ifc_entity_id": "1",
+                            "ifc_guid": "guid-project",
+                            "ifc_class": "IfcProject",
+                            "name": "Demo project",
+                            "renderable": False,
+                        },
+                    ],
+                },
+            )
+            quality = dict(base.quality_metrics)
+            quality["materialization_strategy"] = "sidecar"
+            quality["sidecar_carrier_count"] = 2
+            return ConversionAdapterResult(
+                model_path=base.model_path,
+                ifc_index_path=base.ifc_index_path,
+                usd_index_path=base.usd_index_path,
+                mapping_path=base.mapping_path,
+                converter=base.converter,
+                quality_metrics=quality,
+                warnings=list(base.warnings),
+                entity_index_path=entity_index_path,
+            )
+
+    store = make_store(tmp_path, converter=_SidecarConverter())
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_sidecar_lineage"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+    completed = store.complete_conversion_job(job["conversion_job_id"])
+    result = completed["result"]
+
+    # Result surfaces entity_index_url + derived_artifact_ids.entity_index.
+    assert result["entity_index_url"] is not None
+    assert result["entity_index_url"].endswith("entity_index.json")
+    assert "entity_index" in result["derived_artifact_ids"]
+    entity_index_artifact_id = result["derived_artifact_ids"]["entity_index"]
+    assert entity_index_artifact_id.startswith("artifact_entity_index_")
+
+    # Lineage resolves the sidecar artifact and includes a has_sidecar edge.
+    lineage = store.get_artifact_lineage(entity_index_artifact_id)
+    assert lineage is not None
+    assert lineage["current_artifact_kind"] == "entity_index"
+    kinds = {node["kind"] for node in lineage["nodes"]}
+    assert "entity_index" in kinds
+    has_sidecar_edges = [edge for edge in lineage["edges"] if edge["relationship"] == "has_sidecar"]
+    sidecar_targets = {edge["to"] for edge in has_sidecar_edges}
+    assert entity_index_artifact_id in sidecar_targets
+
+    # Artifact group "indexes" block also exposes the sidecar artifact and URL.
+    group = store.get_artifact_group("ag_sidecar_lineage")
+    assert group["indexes"]["entity_index_artifact_id"] == entity_index_artifact_id
+    assert group["indexes"]["entity_index_url"] == result["entity_index_url"]
+
+
+def test_store_omits_entity_index_lineage_when_carrier_is_usd_prim(tmp_path: Path):
+    """When the converter does not emit a sidecar, the lineage MUST NOT fabricate one."""
+    store = make_store(tmp_path)  # FakeSuccessfulConverter does not produce entity_index
+    upload = store.create_source_artifact(make_intake_request(artifact_group_id="ag_no_sidecar"))
+    job = store.create_conversion_job(upload["source_artifact_id"], {"target_format": "usdc", "generate_mapping": True})
+    result = store.complete_conversion_job(job["conversion_job_id"])["result"]
+    assert "entity_index" not in result["derived_artifact_ids"]
+    assert result["entity_index_url"] is None
+    lineage = store.get_artifact_lineage(result["usdc_artifact_id"])
+    kinds = {node["kind"] for node in lineage["nodes"]}
+    assert "entity_index" not in kinds
+
+
 def test_store_conversion_without_mapping_sets_missing_mapping_status(tmp_path: Path):
     store = make_store(tmp_path)
     req = make_intake_request(artifact_group_id="ag_nomapping")

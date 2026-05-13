@@ -26,6 +26,7 @@ class ConversionAdapterResult:
     converter: dict[str, Any]
     quality_metrics: dict[str, Any]
     warnings: list[str]
+    entity_index_path: Path | None = None
 
 
 class ConversionAdapter(Protocol):
@@ -43,6 +44,8 @@ class ConversionAdapter(Protocol):
 PRIM_NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
 SOURCE_ENUMERATION_PROGRESS_INTERVAL = 5000
 SOURCE_ENUMERATION_PROGRESS_SECONDS = 2.0
+MATERIALIZATION_PROGRESS_INTERVAL = 5000
+MATERIALIZATION_PROGRESS_SECONDS = 2.0
 CONVERSION_PHASES = (
     "conversion_total",
     "ifc_open",
@@ -211,6 +214,11 @@ class IfcOpenShellUsdConverter:
         ifc_index_path = output_dir / "ifc_index.json"
         usd_index_path = output_dir / "usd_index.json"
         mapping_path = output_dir / "element_mapping.json" if generate_mapping else None
+        materialization_strategy = str(job.get("materialization_strategy") or "sidecar").lower()
+        if materialization_strategy not in {"sidecar", "usd_prim"}:
+            materialization_strategy = "sidecar"
+        use_sidecar = materialization_strategy == "sidecar"
+        entity_index_path: Path | None = output_dir / "entity_index.json" if use_sidecar else None
 
         phase_started = perf_counter()
         _record_phase_progress(job, "ifc_open", phase_timings)
@@ -350,7 +358,7 @@ class IfcOpenShellUsdConverter:
 
         phase_started = perf_counter()
         _record_phase_progress(job, "non_renderable_entity_materialization", phase_timings)
-        self._materialize_unmapped_entities(
+        sidecar_entries = self._materialize_unmapped_entities(
             UsdGeom=UsdGeom,
             Sdf=Sdf,
             stage=stage,
@@ -358,6 +366,10 @@ class IfcOpenShellUsdConverter:
             mapping_by_entity=mapping_by_entity,
             prim_rows=prim_rows,
             used_paths=used_paths,
+            job=job,
+            phase_timings=phase_timings,
+            phase_started=phase_started,
+            strategy=materialization_strategy,
         )
         _mark_phase_completed(
             phase_timings,
@@ -398,6 +410,21 @@ class IfcOpenShellUsdConverter:
         unmapped_ifc_guids = [item["ifc_guid"] for item in unmapped_ifc_entities if item.get("ifc_guid")]
         unmapped_usd_count = len(unmapped_usd_prims)
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
+        sidecar_carrier_count = len(sidecar_entries)
+        if entity_index_path is not None:
+            _write_json(
+                entity_index_path,
+                {
+                    "source_artifact_id": job["source_artifact_id"],
+                    "mapping_method": "ifc_entity_to_sidecar_index",
+                    "materialization_strategy": materialization_strategy,
+                    "summary": {
+                        "sidecar_entity_count": sidecar_carrier_count,
+                        "renderable_only": False,
+                    },
+                    "entities": sidecar_entries,
+                },
+            )
         duration_seconds = perf_counter() - conversion_started
         _mark_phase_completed(phase_timings, "conversion_total", duration_seconds)
         _record_phase_progress(job, "conversion_total", phase_timings, status="completed")
@@ -439,6 +466,8 @@ class IfcOpenShellUsdConverter:
             "coverage_denominator": "source_ifc_entity_count",
             "coverage_status": "unlocked",
             "threshold_status": "measure_only",
+            "materialization_strategy": materialization_strategy,
+            "sidecar_carrier_count": sidecar_carrier_count,
         }
 
         _write_json(ifc_index_path, ifc_index)
@@ -504,12 +533,15 @@ class IfcOpenShellUsdConverter:
             "vertex_count": vertex_count,
             "face_count": face_count,
             "phase_timings": phase_timings,
+            "materialization_strategy": materialization_strategy,
+            "sidecar_carrier_count": sidecar_carrier_count,
         }
         return ConversionAdapterResult(
             model_path=model_path,
             ifc_index_path=ifc_index_path,
             usd_index_path=usd_index_path,
             mapping_path=mapping_path,
+            entity_index_path=entity_index_path,
             converter=converter,
             quality_metrics=quality_metrics,
             warnings=[],
@@ -647,51 +679,183 @@ class IfcOpenShellUsdConverter:
         mapping_by_entity: dict[str, dict[str, Any]],
         prim_rows: list[dict[str, Any]],
         used_paths: set[str],
-    ) -> None:
+        job: Mapping[str, Any] | None = None,
+        phase_timings: dict[str, dict[str, Any]] | None = None,
+        phase_started: float | None = None,
+        strategy: str = "sidecar",
+    ) -> list[dict[str, Any]]:
+        started = phase_started if phase_started is not None else perf_counter()
+        last_progress_at = started
+        progress_write_count = 0
+        materialized = 0
+        sidecar_entries: list[dict[str, Any]] = []
+        use_sidecar = strategy == "sidecar"
+        profile_enabled = bool((job or {}).get("profile_source_entity_enumeration"))
+        profile: dict[str, float] = {
+            "unique_prim_path_seconds": 0.0,
+            "xform_define_seconds": 0.0,
+            "attribute_write_seconds": 0.0,
+            "row_append_seconds": 0.0,
+            "mapping_append_seconds": 0.0,
+            "progress_write_seconds": 0.0,
+            "sidecar_io_seconds": 0.0,
+        }
+        details: dict[str, Any] = {
+            "materialized_entity_count": 0,
+            "materialization_strategy": strategy,
+            "elapsed_seconds": 0.0,
+            "last_operation": "start_materialization",
+            "progress_write_count": 0,
+            "fallback_used": False,
+        }
+
+        def publish_progress(operation: str) -> None:
+            nonlocal last_progress_at, progress_write_count
+            if phase_timings is None or job is None:
+                return
+            now = perf_counter()
+            details["materialized_entity_count"] = materialized
+            details["elapsed_seconds"] = now - started
+            details["last_operation"] = operation
+            progress_write_count += 1
+            details["progress_write_count"] = progress_write_count
+            if profile_enabled:
+                details["profile"] = dict(profile)
+            progress_started = perf_counter() if profile_enabled else 0.0
+            _mark_phase_running(
+                phase_timings,
+                "non_renderable_entity_materialization",
+                diagnostic="materializing_non_renderable_ifc_entities",
+                details=details,
+            )
+            _record_phase_progress(job, "non_renderable_entity_materialization", phase_timings)
+            if profile_enabled:
+                profile["progress_write_seconds"] += perf_counter() - progress_started
+            last_progress_at = now
+
         for entity in source_entities:
             entity_key = entity["ifc_entity_key"]
             if entity_key in mapping_by_entity:
                 continue
-            prim_path = self._unique_prim_path(
-                entity.get("ifc_class", "IfcEntity"),
-                entity_key,
-                used_paths,
-                prefix="/World/IfcEntity",
-            )
-            xform = UsdGeom.Xform.Define(stage, prim_path)
-            prim = xform.GetPrim()
-            prim.CreateAttribute("ifc:entityKey", Sdf.ValueTypeNames.String).Set(entity_key)
-            prim.CreateAttribute("ifc:entityId", Sdf.ValueTypeNames.String).Set(str(entity.get("ifc_entity_id") or ""))
-            if entity.get("ifc_guid"):
-                prim.CreateAttribute("ifc:guid", Sdf.ValueTypeNames.String).Set(entity["ifc_guid"])
-            prim.CreateAttribute("ifc:type", Sdf.ValueTypeNames.String).Set(entity.get("ifc_class", "IfcEntity"))
-            prim.CreateAttribute("ifc:name", Sdf.ValueTypeNames.String).Set(entity.get("name", ""))
-            prim.CreateAttribute("worker:nonRenderableIfcEntity", Sdf.ValueTypeNames.String).Set("true")
-            prim_rows.append(
-                {
-                    "path": prim_path,
-                    "type": "Xform",
+            op_started = 0.0
+            if use_sidecar:
+                details["last_operation"] = "sidecar_append"
+                if profile_enabled:
+                    op_started = perf_counter()
+                sidecar_entry = {
                     "ifc_entity_key": entity_key,
                     "ifc_entity_id": entity.get("ifc_entity_id"),
                     "ifc_guid": entity.get("ifc_guid"),
                     "ifc_class": entity.get("ifc_class"),
-                    "mapping_status": "mapped",
+                    "name": entity.get("name", ""),
                     "renderable": False,
                 }
+                sidecar_entries.append(sidecar_entry)
+                mapping_by_entity[entity_key] = {
+                    "ifc_entity_key": entity_key,
+                    "ifc_entity_id": entity.get("ifc_entity_id"),
+                    "ifc_guid": entity.get("ifc_guid"),
+                    "ifc_class": entity.get("ifc_class"),
+                    "name": entity.get("name", ""),
+                    "usd_prim_path": None,
+                    "primary_usd_prim_path": None,
+                    "usd_prim_paths": [],
+                    "mapping_method": "ifc_entity_to_sidecar_index",
+                    "mapping_confidence": 1.0,
+                    "renderable": False,
+                    "carrier": "sidecar",
+                }
+                if profile_enabled:
+                    profile["sidecar_io_seconds"] += perf_counter() - op_started
+            else:
+                details["last_operation"] = "unique_prim_path"
+                if profile_enabled:
+                    op_started = perf_counter()
+                prim_path = self._unique_prim_path(
+                    entity.get("ifc_class", "IfcEntity"),
+                    entity_key,
+                    used_paths,
+                    prefix="/World/IfcEntity",
+                )
+                if profile_enabled:
+                    profile["unique_prim_path_seconds"] += perf_counter() - op_started
+                details["last_operation"] = "xform_define"
+                if profile_enabled:
+                    op_started = perf_counter()
+                xform = UsdGeom.Xform.Define(stage, prim_path)
+                prim = xform.GetPrim()
+                if profile_enabled:
+                    profile["xform_define_seconds"] += perf_counter() - op_started
+                details["last_operation"] = "attribute_write"
+                if profile_enabled:
+                    op_started = perf_counter()
+                prim.CreateAttribute("ifc:entityKey", Sdf.ValueTypeNames.String).Set(entity_key)
+                prim.CreateAttribute("ifc:entityId", Sdf.ValueTypeNames.String).Set(str(entity.get("ifc_entity_id") or ""))
+                if entity.get("ifc_guid"):
+                    prim.CreateAttribute("ifc:guid", Sdf.ValueTypeNames.String).Set(entity["ifc_guid"])
+                prim.CreateAttribute("ifc:type", Sdf.ValueTypeNames.String).Set(entity.get("ifc_class", "IfcEntity"))
+                prim.CreateAttribute("ifc:name", Sdf.ValueTypeNames.String).Set(entity.get("name", ""))
+                prim.CreateAttribute("worker:nonRenderableIfcEntity", Sdf.ValueTypeNames.String).Set("true")
+                if profile_enabled:
+                    profile["attribute_write_seconds"] += perf_counter() - op_started
+                details["last_operation"] = "row_append"
+                if profile_enabled:
+                    op_started = perf_counter()
+                prim_rows.append(
+                    {
+                        "path": prim_path,
+                        "type": "Xform",
+                        "ifc_entity_key": entity_key,
+                        "ifc_entity_id": entity.get("ifc_entity_id"),
+                        "ifc_guid": entity.get("ifc_guid"),
+                        "ifc_class": entity.get("ifc_class"),
+                        "mapping_status": "mapped",
+                        "renderable": False,
+                    }
+                )
+                if profile_enabled:
+                    profile["row_append_seconds"] += perf_counter() - op_started
+                details["last_operation"] = "mapping_append"
+                if profile_enabled:
+                    op_started = perf_counter()
+                mapping_by_entity[entity_key] = {
+                    "ifc_entity_key": entity_key,
+                    "ifc_entity_id": entity.get("ifc_entity_id"),
+                    "ifc_guid": entity.get("ifc_guid"),
+                    "ifc_class": entity.get("ifc_class"),
+                    "name": entity.get("name", ""),
+                    "usd_prim_path": prim_path,
+                    "primary_usd_prim_path": prim_path,
+                    "usd_prim_paths": [prim_path],
+                    "mapping_method": "ifc_entity_to_non_renderable_usd_prim",
+                    "mapping_confidence": 1.0,
+                    "renderable": False,
+                    "carrier": "usd_prim",
+                }
+                if profile_enabled:
+                    profile["mapping_append_seconds"] += perf_counter() - op_started
+            materialized += 1
+            now = perf_counter()
+            if (
+                materialized % MATERIALIZATION_PROGRESS_INTERVAL == 0
+                or now - last_progress_at >= MATERIALIZATION_PROGRESS_SECONDS
+            ):
+                publish_progress("append_row")
+
+        details["materialized_entity_count"] = materialized
+        details["elapsed_seconds"] = perf_counter() - started
+        details["last_operation"] = "completed"
+        details["progress_write_count"] = progress_write_count
+        if profile_enabled:
+            details["profile"] = dict(profile)
+        if phase_timings is not None:
+            _mark_phase_running(
+                phase_timings,
+                "non_renderable_entity_materialization",
+                diagnostic="materializing_non_renderable_ifc_entities",
+                details=details,
             )
-            mapping_by_entity[entity_key] = {
-                "ifc_entity_key": entity_key,
-                "ifc_entity_id": entity.get("ifc_entity_id"),
-                "ifc_guid": entity.get("ifc_guid"),
-                "ifc_class": entity.get("ifc_class"),
-                "name": entity.get("name", ""),
-                "usd_prim_path": prim_path,
-                "primary_usd_prim_path": prim_path,
-                "usd_prim_paths": [prim_path],
-                "mapping_method": "ifc_entity_to_non_renderable_usd_prim",
-                "mapping_confidence": 1.0,
-                "renderable": False,
-            }
+        return sidecar_entries
 
     def _unique_prim_path(self, ifc_class: str, guid: str, used_paths: set[str], prefix: str = "/World") -> str:
         base = f"{prefix}/{_safe_prim_name(ifc_class)}_{_safe_prim_name(guid)}"

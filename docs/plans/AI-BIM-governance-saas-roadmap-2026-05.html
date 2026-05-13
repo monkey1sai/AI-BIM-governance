@@ -212,6 +212,9 @@
 <blockquote>
 <p><strong>2026-05-13 更新（<code>demo-current-runtime-observation</code> live pass）</strong>：本次 current observation 產出 <code>docs/verification/2026-05-13-demo-current-runtime-observation.md</code>。非 Kit 服務 health 目前可啟動並通過：8001 / 8005 / 8004 health OK、5173 HTTP 200；focused checks 為 <code>_bim-control</code> <code>23 passed</code>、<code>_worker</code> <code>105 passed, 1 skipped</code>、coordinator <code>105 passed</code>、viewer build / session-first contract passed，viewer lint 仍是既有 <code>29 errors, 1 warning</code>。Socket.IO collaboration passed，coordinator close / release lifecycle passed（<code>review_session_87404055d4fd</code>）。但 current worktree <code>storage/</code> 沒有 IFC fixture，worker dev-source smoke blocked；<code>smoke-review-session.ps1</code> 的極簡 IFC payload 無法被 IfcOpenShell parse，因此 conversion readiness failed；Kit/WebRTC blocked by missing streaming launcher，Browser automation blocked by in-app browser policy，dedicated multi-Kit runtime 仍 deferred。此 live pass 不把 historical single-Kit/browser evidence 重新標成 current passed。</p>
 </blockquote>
+<blockquote>
+<p><strong>2026-05-13 更新（non-renderable materialization sidecar carrier 完成 canonical single-fixture conversion）</strong>：<code>optimize-worker-non-renderable-materialization</code> 已 land sidecar carrier 路徑（Option 4 + Option 3）。<code>non_renderable_entity_materialization</code> 從 baseline <code>375.1s+ timeout</code> 收斂至 <code>5.05s</code>（≈74× faster），同 fixture canonical run 在 <code>267.7s</code> 完成、產出第一個 canonical <code>model.usdc</code>（<code>output_file_size_bytes=9,844,612</code>），<code>coverage_ratio=0.9999987537178155</code>（<code>mapped_count=1,604,771</code> / <code>source_ifc_entity_count=1,604,773</code>，2 個未對映的 shape 為 geometry side 缺 GUID，可由 secondary scope follow-up 收斂）。<code>bim-review-coordinator</code> / <code>web-viewer-sample</code> / <code>bim-streaming-server</code> 三邊在 source 中對 sidecar carrier 無需 schema change，handoff framework 已記錄於 design.md。Full 13-file batch 與 visual preview 仍 not_run，<code>minimum_coverage_locked=false</code> 維持不變。下一個切片：full 13-file batch with sidecar carrier，以及把 secondary <code>guid_extraction</code> / <code>name_extraction</code> 優化（baseline ~10s）獨立 follow-up。</p>
+</blockquote>
 <p>本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出<strong>下一階段最小、可驗證、不擴散範圍</strong>的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。</p>
 <hr />
 <h2 id="0-規劃原則-karpathy-agents-md-既有路線圖一致">0. 規劃原則（Karpathy / AGENTS.md / 既有路線圖一致）</h2>
@@ -389,13 +392,26 @@ spec sync:                           worker-artifact-pipeline / runtime-verifica
 runtime status:                      still blocked at source_entity_enumeration; visual preview / full batch not passed
 baseline lock:                       minimum_coverage_locked=false
 
-# 2026-05-12 optimize-worker-source-entity-enumeration（active change）
-openspec validate --strict:          passed
+# 2026-05-13 optimize-worker-source-entity-enumeration（archived; gap closed by next change）
+openspec validate --strict:          passed (pre-archive)
 _worker API regression:              38 passed, 1 skipped after starlette==0.37.2 baseline restored
-_worker converter/batch/store tests:  67 passed
+_worker converter/batch/store tests:  67 passed (pre-archive)
 source enumeration runtime:          1,604,773 entities in ~33.19s; fallback_used=false
-current runtime blocker:             non_renderable_entity_materialization timeout; model.usdc not produced
-baseline lock:                       minimum_coverage_locked=false
+status:                              archived under openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/
+
+# 2026-05-13 optimize-worker-non-renderable-materialization（active change → sidecar carrier landed）
+openspec validate --strict:          passed
+_worker focused tests (full suite):  112 passed, 1 skipped (5 new sidecar converter tests + 2 new lineage tests)
+canonical --limit 1 (post-change):    passed; first canonical model.usdc produced for 89MB fixture
+non_renderable materialization time:  5.05s (baseline 375.1s+ timeout); 74× faster
+materialization_strategy:            sidecar; sidecar_carrier_count=1,597,773
+coverage_ratio:                      0.9999987537178155 (mapped_count=1,604,771 of 1,604,773)
+output_file_size_bytes (model.usdc): 9,844,612 (~9.4 MB)
+conversion_total:                    267.72s (well under 600s budget)
+canonical IDs:                        conversion_job_id=conv_20260513105315_57b2c0fa; artifact_group_id=ag_bc5f30cda296; source_artifact_id=artifact_src_e63ba1705fe1; usdc_artifact_id=artifact_usdc_20260513105315_57b2c0fa; mapping_artifact_id=artifact_mapping_20260513105315_57b2c0fa
+entity_index sidecar:                 lineage emits derived_artifact_ids.entity_index + has_sidecar edge
+full 13-file batch status:           still not_run; minimum_coverage_locked=false maintained
+visual preview status:               still blocked downstream of _worker (not in this change scope)
 
 # 2026-05-13 demo-current-runtime-observation（current live observation）
 non-Kit service health:              passed (8001 / 8005 / 8004 health OK; 5173 HTTP 200)
@@ -1657,7 +1673,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="active-risk-burn-down-optimize-worker-source-entity-enumeration">Active risk burn-down：<code>optimize-worker-source-entity-enumeration</code></h4>
+<h4 id="archived-optimize-worker-source-entity-enumeration">已完成：<code>optimize-worker-source-entity-enumeration</code>（archived）</h4>
 <table>
 <thead>
 <tr>
@@ -1668,39 +1684,74 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tbody>
 <tr>
 <td><strong>狀態</strong></td>
-<td>Active OpenSpec change：<code>openspec/changes/optimize-worker-source-entity-enumeration/</code></td>
-</tr>
-<tr>
-<td><strong>目標</strong></td>
-<td>profile 並 optimize <code>_worker</code> <code>source_entity_enumeration</code>，讓 canonical 89MB fixture 在 configured timeout 內通過 enumeration 或留下 deterministic external blocker</td>
-</tr>
-<tr>
-<td><strong>目前執行結果（2026-05-13）</strong></td>
-<td>Canonical <code>--limit 1 --timeout-seconds 600 --profile-source-entities</code> 已通過 <code>source_entity_enumeration</code>；<code>1,604,773</code> entities 約 <code>33.19s</code> 完成，<code>fallback_used=false</code>。Run 仍在 <code>non_renderable_entity_materialization</code> timeout，未產出 completed <code>model.usdc</code></td>
-</tr>
-<tr>
-<td><strong>closeout 驗證（2026-05-13）</strong></td>
-<td><code>py_compile</code> passed；API regression <code>38 passed, 1 skipped</code>；converter/batch/store focused tests <code>67 passed</code>；<code>openspec validate --strict</code> passed；<code>git diff --check</code> passed with CRLF warnings only</td>
+<td>Archived（pre-archive validation passed）。OpenSpec sync 後將進入 <code>openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/</code>。</td>
 </tr>
 <tr>
 <td><strong>解決的 gap</strong></td>
-<td><code>worker-canonical-storage-batch-baseline</code> archive 後留下的第一個 runtime blocker：<code>ifc_open</code> 已完成，但 <code>_source_entities(model)</code> / all-entity enumeration 無法於 timeout 內完成。此 blocker 已 burn down；下一個 blocker 是 large IFC non-renderable entity materialization</td>
-</tr>
-<tr>
-<td><strong>repo 邊界</strong></td>
-<td><code>_worker/</code> + worker UI handoff + verification docs + roadmap；visual preview 使用既有 coordinator / viewer / Kit flow 取 evidence，但不新增 coordinator / viewer / Kit runtime ownership</td>
-</tr>
-<tr>
-<td><strong>風險</strong></td>
-<td>HIGH（source enumeration 已解除；新的 timeout phase 是 <code>_worker</code> all-entity non-renderable USD materialization，若直接降級 denominator 會破壞 coverage 語意）</td>
-</tr>
-<tr>
-<td><strong>KPI</strong></td>
-<td>✓ 1) source entity enumeration before/after timing 可重現；✓ 2) canonical <code>--limit 1 --timeout-seconds 600</code> 已越過 <code>source_entity_enumeration</code>；✓ 3) all-IFC-entity denominator 不降級且 <code>fallback_used=false</code>；✓ 4) conversion result / quality / lineage / handoff payload backward-compatible；✓ 5) baseline 未 full pass 前維持 <code>minimum_coverage_locked=false</code></td>
+<td>canonical 89MB fixture 的 <code>source_entity_enumeration</code> 從 timeout 收斂至 ~33.2s（<code>1,604,773</code> entities，<code>fallback_used=false</code>）</td>
 </tr>
 <tr>
 <td><strong>驗證紀錄</strong></td>
 <td><code>docs/verification/2026-05-13-worker-source-entity-enumeration-optimization.md</code></td>
+</tr>
+<tr>
+<td><strong>新的下游 blocker</strong></td>
+<td><code>non_renderable_entity_materialization</code> timeout（已由下方 <code>optimize-worker-non-renderable-materialization</code> change 解決）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="active-risk-burn-downoptimize-worker-non-renderable-materialization">Active risk burn-down：<code>optimize-worker-non-renderable-materialization</code></h4>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>狀態</strong></td>
+<td>Active OpenSpec change：<code>openspec/changes/optimize-worker-non-renderable-materialization/</code>；sidecar carrier 已 land 並通過 canonical single-fixture verification</td>
+</tr>
+<tr>
+<td><strong>目標</strong></td>
+<td>解除 <code>_worker</code> non-renderable IFC entity materialization 的 timeout blocker，讓 89MB canonical fixture 在 600s budget 內完成 <code>model.usdc</code> 而不犧牲 all-IFC-entity coverage 語意</td>
+</tr>
+<tr>
+<td><strong>選定路徑</strong></td>
+<td>Option 4 (sidecar carrier) + Option 3 (chunked progress writes)；Carrier-shift Handoff Framework 已對 coordinator / viewer / streaming 三邊填寫完成</td>
+</tr>
+<tr>
+<td><strong>目前執行結果（2026-05-13）</strong></td>
+<td>Canonical <code>--limit 1 --timeout-seconds 600 --profile-source-entities</code> first-fixture <strong>passed</strong>；<code>non_renderable_entity_materialization</code> 從 <code>&gt;375s timeout</code> 收斂至 <strong>5.05s</strong>（~74×）；<code>conversion_total=267.72s</code>；第一份 canonical <code>model.usdc=9.84 MB</code>；<code>coverage_ratio=0.99999875</code></td>
+</tr>
+<tr>
+<td><strong>closeout 驗證（2026-05-13）</strong></td>
+<td><code>openspec validate --strict</code> passed；<code>_worker</code> full tests <code>112 passed, 1 skipped</code>；canonical single-fixture run passed，IDs 已記錄</td>
+</tr>
+<tr>
+<td><strong>canonical IDs</strong></td>
+<td><code>conversion_job_id=conv_20260513105315_57b2c0fa</code>、<code>artifact_group_id=ag_bc5f30cda296</code>、<code>source_artifact_id=artifact_src_e63ba1705fe1</code>、<code>usdc_artifact_id=artifact_usdc_20260513105315_57b2c0fa</code>、<code>mapping_artifact_id=artifact_mapping_20260513105315_57b2c0fa</code>、<code>entity_index</code> artifact <code>artifact_entity_index_20260513105315_57b2c0fa</code></td>
+</tr>
+<tr>
+<td><strong>解決的 gap</strong></td>
+<td><code>optimize-worker-source-entity-enumeration</code> archive 後的下一個 runtime blocker：<code>UsdGeom.Xform.Define</code> per-entity 成本（baseline 365.5s / 97.4% of materialization 375s）；此 blocker 已 burn down</td>
+</tr>
+<tr>
+<td><strong>repo 邊界</strong></td>
+<td><code>_worker/</code> 內部（converter / store / lineage）+ verification docs + roadmap；downstream coordinator/viewer/streaming 因 sidecar <code>usd_prim_path=null</code> natural filter 無需 schema change</td>
+</tr>
+<tr>
+<td><strong>風險</strong></td>
+<td>MEDIUM（sidecar carrier 改變了 non-renderable IFC entity 的 carrier，但 downstream 在 source 中 zero hard-coded reliance；coverage 語意保持）</td>
+</tr>
+<tr>
+<td><strong>KPI</strong></td>
+<td>✓ 1) materialization before/after timing 可重現（375s+ → 5.05s）；✓ 2) materialized entity count 可稽核（1,597,773）；✓ 3) completed <code>model.usdc</code> 已產出；✓ 4) <code>minimum_coverage_locked=false</code> 維持；✓ 5) conversion result / quality / lineage / handoff payload backward-compatible（additive optional 欄位）</td>
+</tr>
+<tr>
+<td><strong>驗證紀錄</strong></td>
+<td><code>docs/verification/2026-05-13-worker-non-renderable-materialization-optimization.md</code></td>
 </tr>
 <tr>
 <td><strong>驗證指令</strong></td>
@@ -1708,11 +1759,11 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><strong>與既有 spec 關係</strong></td>
-<td>ADD delta requirements to <code>worker-artifact-pipeline</code> source enumeration optimization；ADD delta requirements to <code>runtime-verification-evidence</code> before/after enumeration evidence</td>
+<td>MODIFIED <code>worker-artifact-pipeline</code>（允許 sidecar carrier）；ADDED <code>worker-artifact-pipeline</code> 非渲染 materialization 優化要求；ADDED <code>runtime-verification-evidence</code> materialization before/after timing 要求</td>
 </tr>
 </tbody>
 </table>
-<h4 id="next-worker-risk-burn-down-large-ifc-non-renderable-materialization">Next worker risk burn-down：large IFC non-renderable materialization</h4>
+<h4 id="next-worker-risk-burn-downfull-13-batch-secondary-scope">Next worker risk burn-down：full 13-file canonical batch + secondary enumeration scope</h4>
 <table>
 <thead>
 <tr>
@@ -1727,11 +1778,11 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><strong>來源 evidence</strong></td>
-<td><code>optimize-worker-source-entity-enumeration</code> 的 2026-05-13 canonical run</td>
+<td><code>optimize-worker-non-renderable-materialization</code> 的 2026-05-13 canonical single-fixture passed run</td>
 </tr>
 <tr>
 <td><strong>目標</strong></td>
-<td>優化或分段 <code>_worker</code> all-IFC-entity non-renderable USD materialization，讓 89MB canonical fixture 能在 configured timeout 內進到 <code>stage_save</code> / <code>stage_reopen</code>，或留下更精確 materialization blocker</td>
+<td>1) 在 sidecar carrier 條件下跑 full 13-file canonical batch，量化 stage_reopen / mapping_quality_failed 機率；2) 把 secondary <code>guid_extraction</code> (~10.6s) / <code>name_extraction</code> (~10.0s) 優化獨立 follow-up；3) 解決 <code>unmapped_count=2</code>（geometry shape 缺 GUID）case</td>
 </tr>
 <tr>
 <td><strong>不可做</strong></td>
@@ -1739,7 +1790,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><strong>KPI</strong></td>
-<td>1) materialization before/after timing 可重現；2) materialized entity count / USD prim count 可稽核；3) completed <code>model.usdc</code> 或 deterministic blocker；4) baseline 未 full pass 前維持 <code>minimum_coverage_locked=false</code></td>
+<td>1) 13-file batch 通過 / 不通過比例可重現；2) 若 pass 即可考慮 <code>minimum_coverage_locked=true</code> 候選</td>
 </tr>
 </tbody>
 </table>

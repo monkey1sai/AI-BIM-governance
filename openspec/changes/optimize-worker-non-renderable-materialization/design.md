@@ -30,15 +30,113 @@ The affected ownership boundary remains `_worker`: file bytes, object URLs, conv
 
 `_materialize_unmapped_entities` currently runs an O(N) Python loop with per-entity USD-level calls. The options below were surfaced in `/opsx:explore` as **pre-measurement hypotheses**. None of them is selected and none of the columns below carries a measured effort estimate; the table exists only to seed the baseline profile (§2) and the Option Selection Gate (§2.5 in `tasks.md`). Final selection MUST cite numbers from the baseline profile, MUST be recorded in this `design.md` under a new "Selected Option(s)" subsection at apply time, and MUST NOT bypass the gate task.
 
-| # | Approach (hypothesis) | Coverage impact | Streaming impact | Notes |
-|---|----------------------|----------------|------------------|-------|
-| 1 | `Sdf.ChangeBlock` + direct `Sdf.PrimSpec` / `Sdf.AttributeSpec` instead of `UsdGeom.Xform.Define` + `CreateAttribute` | None | None | USD-internal optimization. Keeps stage shape. |
-| 2 | Flat container under a single `Scope` prim with deterministic prim names; collapse `_unique_prim_path` set-membership cost | None on coverage; prim path strings change | Path string changes for non-renderable prims (irrelevant to viewer if those prims were not highlighted) | Mid-risk to consumers that walk the USD stage tree assuming the current prefix. |
-| 3 | Chunked authoring with progress writes (e.g. flush per N entities), allowing resumable / diagnosable progress | None | None | Diagnoseability win; may not be a throughput win on its own. |
-| 4 | Sidecar carrier: non-renderable IFC entity identity is written to `element_mapping.json` (or a new `entity_index.json` artifact) and is not authored into the USD stage; USD stage only contains renderable + mapped prims | None on denominator, but mapping artifact takes the carrier role | Streaming server no longer sees non-renderable prims (they were never rendered anyway); coordinator/viewer still get full coverage data via mapping artifact | Highest throughput hypothesis; requires Carrier-shift Handoff Framework answers before any code lands. |
-| 5 | Secondary: reduce `guid_extraction` / `name_extraction` cost in source enumeration by reusing IfcOpenShell attribute access patterns or caching schema lookups | None, must keep ifc_guid / name fidelity | None | Lives under secondary scope §4; never blocks primary burn-down. |
+| # | Approach (hypothesis) | Coverage impact | Streaming impact | Baseline-annotated effect | Notes |
+|---|----------------------|----------------|------------------|---------------------------|-------|
+| 1 | `Sdf.ChangeBlock` + direct `Sdf.PrimSpec` / `Sdf.AttributeSpec` instead of `UsdGeom.Xform.Define` + `CreateAttribute` | None | None | **HIGH win, primary target.** Baseline measured `xform_define_seconds=365.5s` (97.4% of 375s materialization for 69,189 entities); `attribute_write_seconds=8.2s` (2.2%). The bottleneck is the schema-level `Xform.Define` + `CreateAttribute` notification cost, exactly the pattern `Sdf.ChangeBlock` + `Sdf.PrimSpec` is designed to bypass. Even a conservative 5× throughput improvement projects ~1,690s for all 1.5M; combined with option 3 chunking and the existing geometry / enumeration time (~225s) the remaining 600s budget is still tight, but this is the only USD-prim-internal path that targets the measured bottleneck. | USD-internal optimization. Keeps stage shape and downstream contracts. Lowest blast radius. |
+| 2 | Flat container under a single `Scope` prim with deterministic prim names; collapse `_unique_prim_path` set-membership cost | None on coverage; prim path strings change | Path string changes for non-renderable prims (irrelevant to viewer if those prims were not highlighted) | **LOW win.** Baseline `unique_prim_path_seconds=0.5s` (0.13% of materialization). Set membership is not the bottleneck. | Mid-risk to consumers that walk the USD stage tree assuming the current prefix. Not worth the prim-path churn on its own. |
+| 3 | Chunked authoring with progress writes (e.g. flush per N entities), allowing resumable / diagnosable progress | None | None | **Already partially in place.** Progress writes cost `0.28s` across 192 publishes. Combined with option 1 it preserves diagnoseability and is a natural fit because `Sdf.ChangeBlock` flushes notifications on exit; chunked blocks give incremental progress reporting. Alone it does not raise throughput. | Diagnoseability + bounded `ChangeBlock` size. |
+| 4 | Sidecar carrier: non-renderable IFC entity identity is written to `element_mapping.json` (or a new `entity_index.json` artifact) and is not authored into the USD stage; USD stage only contains renderable + mapped prims | None on denominator, but mapping artifact takes the carrier role | Streaming server no longer sees non-renderable prims (they were never rendered anyway); coordinator/viewer still get full coverage data via mapping artifact | **HIGHEST win in pure throughput** — eliminates all 1.5M `UsdGeom.Xform.Define` calls. Sub-second JSON dump replaces the 365s+ USD authoring loop. | Requires Carrier-shift Handoff Framework answers across coordinator/viewer/streaming before code can land. Higher coordination cost than option 1. Deferred to a follow-up change unless option 1 (+3) cannot fit the canonical 600s budget. |
+| 5 | Secondary: reduce `guid_extraction` / `name_extraction` cost in source enumeration by reusing IfcOpenShell attribute access patterns or caching schema lookups | None, must keep ifc_guid / name fidelity | None | **Marginal.** Baseline `guid_extraction=10.6s + name_extraction=10.0s ≈ 20.6s` of 27.4s enumeration. Even halving that saves ~10s — small next to the 365s primary bottleneck. | Lives under secondary scope §4; never blocks primary burn-down. Deferred unless option 1 succeeds with headroom remaining. |
 
-Option (4) is the most promising hypothesis in throughput, but it is also the only one that crosses the artifact-carrier line. Selection MUST be conditional on completing the Carrier-shift Handoff Framework below.
+Option (4) is the most promising hypothesis in pure throughput, but it is also the only one that crosses the artifact-carrier line. Selection MUST be conditional on completing the Carrier-shift Handoff Framework below.
+
+## Selected Option(s)
+
+**Selected: Option 4 (sidecar carrier) + Option 3 (chunked progress writes).**
+
+### Baseline profile citations
+
+From canonical `--limit 1 --timeout-seconds 600 --profile-source-entities` run on `許良宇圖書館建築_2026 - 複製 (10).ifc` (89,394,282 bytes, `conversion_job_id=conv_20260513102219_4c543c8f`, `artifact_group_id=ag_ec7eda49abf7`, `source_artifact_id=artifact_src_17f2e857a8ff`):
+
+- `non_renderable_entity_materialization` timed out at `375.09s`, having materialized `69,189` of `1,604,773` entities. Projected wall time for full set at this rate: **~8,160s (13.6× over the 600s budget)**.
+- Per-operation breakdown within materialization:
+  - `xform_define_seconds = 365.48s` — **97.4% of the phase**. This is `UsdGeom.Xform.Define` schema-level notification + `Tf` notice round-trip cost per prim.
+  - `attribute_write_seconds = 8.19s` — 2.2%.
+  - `unique_prim_path_seconds = 0.51s` — 0.13%.
+  - `row_append_seconds = 0.14s`, `mapping_append_seconds = 0.17s`, `progress_write_seconds = 0.28s` — negligible.
+  - `sidecar_io_seconds = 0.0s` — baseline did not exercise sidecar path.
+- Source enumeration ran in `27.38s` with `guid_extraction = 10.61s`, `name_extraction = 10.05s`, `iteration = 2.25s` (total 1,604,773 entities). Halving `guid_extraction + name_extraction` would save ~10s — small next to the 365s primary bottleneck.
+
+### Expected win (sidecar path)
+
+Sidecar carrier writes 1.5M entity entries to a JSON artifact (`entity_index.json`) in a single bulk write. Estimated wall time: **< 5s** (JSON encode of ~1.5M small records is bound by I/O, not by per-record overhead). This eliminates the 365s `Xform.Define` loop entirely and reduces the materialization phase to roughly the time spent walking `source_entities` + writing one JSON file (target: < 10s combined). Projected full-fixture conversion: `ifc_open (4.3s) + source_entity_enumeration (27.4s) + geometry_iteration (190.9s) + mesh_authoring (8.1s) + non_renderable_entity_materialization (<10s) + stage_save + stage_reopen ≈ 240–260s`, well inside the 600s budget.
+
+### Rejected options
+
+- **Option 1 (`Sdf.ChangeBlock` + `Sdf.PrimSpec`)** — even at an optimistic 10× speedup on `xform_define_seconds`, the projected materialization time is ~37s for 69k entities, scaling to ~860s for 1.5M, still over the 600s budget. The win is real but not deterministically sufficient.
+- **Option 2 (flat `Scope` prim path collapse)** — measured cost being optimized is `unique_prim_path_seconds = 0.51s` (0.13%). Negligible win; pure prim-path churn for no measurable gain.
+- **Option 5 (secondary `guid_extraction` / `name_extraction` reduction)** — measured potential saving ~10s, deferred to §4 follow-up after the primary burn-down lands; will not be exercised in this change unless headroom remains after canonical rerun.
+
+### Combination notes
+
+- **Option 3 (chunked progress writes)** is retained because the per-entity diagnostics path (`materialized_entity_count`, `last_operation`, `elapsed_seconds`, `progress_write_count`) added in §2.1 already exists and is reused for the sidecar path. Sidecar carrier still walks `source_entities` and reports progress; the per-batch write is a single JSON dump at the end.
+- This change does **NOT** enable Option 1 in code. If future evidence shows the sidecar path is insufficient (e.g. JSON encode > 30s for larger fixtures), `Sdf.ChangeBlock` remains a reusable hypothesis recorded in this table.
+
+## Carrier-shift Handoff Framework — Answers for this change
+
+The selected path is **Option 4 (sidecar carrier)**. Concrete answers below were verified against current source on 2026-05-13.
+
+### Coordinator side (`bim-review-coordinator`)
+
+- **Does the coordinator consume `usd_prim_count` or assume non-renderable USD prim presence?**
+  - **No.** `bim-review-coordinator/src/types.ts:87` declares `usd_prim_path?: string | null` on `DemoMappingItem` (optional). No `usd_prim_count` is consumed in `src/`. Coordinator does not iterate the USD stage and does not enumerate non-renderable entities server-side.
+  - **New field needed?** No. `materialization_strategy` in `quality_metrics` is sufficient; coordinator passes `quality_metrics` through without semantic transformation.
+- **Does the coordinator broadcast/persist any IFC-entity-keyed event whose payload assumes a USD prim path?**
+  - **No.** `dev-console.js:159` uses a constant `"/World"` placeholder for `usd_prim_path` in test scaffolding only. Real review events flow through `socket.io` carrying `ifc_guid` / `usd_prim_path` from upstream payloads; if `usd_prim_path` is null, downstream consumers fall back to `ifc_guid` keying.
+- **Does the artifact group readiness API need a new flag for carrier choice?**
+  - **No.** Existing readiness checks for `model_usdc`, `ifc_index`, `usd_index`, `element_mapping` are unchanged. `entity_index` is added as an additional derived artifact in the lineage graph and readiness check. `materialization_strategy=sidecar` in `quality_metrics` is sufficient signal.
+
+### Viewer side (`web-viewer-sample`)
+
+- **Where does the viewer surface non-renderable IFC entities today?**
+  - **It does not surface them as a separate list.** `web-viewer-sample/src/Window.tsx:894` reads `element_mapping.json` and explicitly filters: `payload.items.filter((item) => Boolean(item['usd_prim_path']))`. Items without `usd_prim_path` are dropped from the selectable highlight list. Today's non-renderable USD prims (which DO carry `usd_prim_path` under the existing implementation) pass this filter but are not surfaced in a non-renderable-specific UI.
+- **If the viewer iterates USD stage to enumerate non-renderable entities, what is the replacement path?**
+  - **N/A.** Viewer does not iterate USD stage for enumeration today. The DataChannel `getChildrenRequest` flow walks the USD stage only for user-initiated tree expansion; non-renderable prims that disappear from the stage simply do not appear in tree expansion, which matches the current viewer behavior (non-renderable items in the tree have no highlight target anyway).
+- **Does any DataChannel command currently assume non-renderable prims exist?**
+  - **No.** `Window.tsx:846-947` shows the highlight flow guards on `usd_prim_path` truthiness before sending `highlightPrimsRequest`. Issues and mapping items without `usd_prim_path` are handled with "no DataChannel sent" branches today.
+- **Net viewer impact for sidecar path:** the viewer's existing filter handles missing `usd_prim_path` correctly. No viewer code change is required for sidecar to ship. The new `entity_index.json` artifact is fetchable via lineage if a future viewer feature wants to surface non-renderable entries in a tree view, but that is out of scope for this change.
+
+### Streaming side (`bim-streaming-server`)
+
+- **Does Kit runtime rely on non-renderable prims for traversal, selection routing, or metadata lookup?**
+  - **No.** `grep -ri "non_renderable\|element_mapping\|usd_prim_path"` in `bim-streaming-server/source` returns zero matches. Kit loads the USD stage as authored by `_worker` and renders renderable prims; non-renderable prims that today exist in the stage are inert at the rendering level.
+- **Does USDC stage open time improve materially without non-renderable prims?**
+  - **Plausible yes, but not measured here.** Removing ~1.5M `Xform` prims from `model.usdc` will reduce file size and stage-open prim count. Measurable in `stage_reopen` timing post-change.
+- **Does `highlightPrimsRequest` need a fallback for entities with no prim?**
+  - **No new fallback needed.** The viewer already does not send `highlightPrimsRequest` for entities without `usd_prim_path` (see Window.tsx guard above).
+- **Net streaming impact for sidecar path:** no change required. Stage shrinks; `getChildrenRequest` returns fewer non-renderable nodes (matching the new authoritative truth).
+
+### Sidecar artifact contract for this change
+
+- **Filename / object key:** `entity_index.json`, written next to `model.usdc`, `ifc_index.json`, `usd_index.json`, `element_mapping.json` under the derived object prefix.
+- **Artifact id:** `artifact_entity_index_<job-suffix>` (matches existing naming pattern).
+- **Lineage:** added as a `kind=entity_index` node with `has_sidecar` edge from `model_usdc`, surfaced in `derived_artifact_ids.entity_index` and `entity_index_url` in conversion result.
+- **Schema (sidecar entries):**
+  ```json
+  {
+    "mapping_method": "ifc_entity_to_sidecar_index",
+    "materialization_strategy": "sidecar",
+    "source_artifact_id": "<source artifact id>",
+    "entities": [
+      {
+        "ifc_entity_key": "...",
+        "ifc_entity_id": "...",
+        "ifc_guid": "..." | null,
+        "ifc_class": "...",
+        "name": "...",
+        "renderable": false
+      }
+    ],
+    "summary": {
+      "sidecar_entity_count": N
+    }
+  }
+  ```
+- **Coverage accounting:**
+  - `mapped_count = mapped_renderable_count + sidecar_carrier_count`
+  - `usd_prim_count` counts only USD stage prims (renderable + structural roots like `/World`), excluding sidecar-only entities.
+  - `coverage_denominator = source_ifc_entity_count`, unchanged.
+  - `coverage_ratio = mapped_count / source_ifc_entity_count`.
 
 ## Decisions
 

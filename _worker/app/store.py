@@ -259,9 +259,24 @@ class WorkerStore:
         write_json(root_path / "metadata.json", metadata)
 
         mapping_url = self.object_url((derived_root / "element_mapping.json").as_posix()) if job["generate_mapping"] else None
+        entity_index_url = (
+            self.object_url((derived_root / "entity_index.json").as_posix())
+            if adapter_result.entity_index_path is not None
+            else None
+        )
         phase_timings = dict(quality_metrics.get("phase_timings") or {})
         phase_timings["artifact_publish"] = completed_phase_timing(perf_counter() - publish_started)
         quality_metrics["phase_timings"] = phase_timings
+        derived_artifact_ids: dict[str, str] = {
+            "model_usdc": usdc_artifact_id,
+            "ifc_index": f"artifact_ifc_index_{conversion_job_id.removeprefix('conv_')}",
+            "usd_index": f"artifact_usd_index_{conversion_job_id.removeprefix('conv_')}",
+            "element_mapping": f"artifact_mapping_{conversion_job_id.removeprefix('conv_')}",
+        }
+        if entity_index_url is not None:
+            derived_artifact_ids["entity_index"] = (
+                f"artifact_entity_index_{conversion_job_id.removeprefix('conv_')}"
+            )
         result = {
             "conversion_job_id": conversion_job_id,
             "job_id": conversion_job_id,
@@ -274,17 +289,13 @@ class WorkerStore:
             "source_artifact_id": job["source_artifact_id"],
             "usdc_artifact_id": usdc_artifact_id,
             "original_filename": source["metadata"].get("original_filename"),
-            "derived_artifact_ids": {
-                "model_usdc": usdc_artifact_id,
-                "ifc_index": f"artifact_ifc_index_{conversion_job_id.removeprefix('conv_')}",
-                "usd_index": f"artifact_usd_index_{conversion_job_id.removeprefix('conv_')}",
-                "element_mapping": f"artifact_mapping_{conversion_job_id.removeprefix('conv_')}",
-            },
+            "derived_artifact_ids": derived_artifact_ids,
             "source_url": source["object_url"],
             "usdc_url": self.object_url((derived_root / "model.usdc").as_posix()),
             "ifc_index_url": self.object_url((derived_root / "ifc_index.json").as_posix()),
             "usd_index_url": self.object_url((derived_root / "usd_index.json").as_posix()),
             "mapping_url": mapping_url,
+            "entity_index_url": entity_index_url,
             "metadata_url": self.object_url((derived_root / "metadata.json").as_posix()),
             "converter": adapter_result.converter,
             "quality_metrics": quality_metrics,
@@ -356,6 +367,7 @@ class WorkerStore:
             ("ifc_index", "ifc_index"),
             ("usd_index", "usd_index"),
             ("element_mapping", "element_mapping"),
+            ("entity_index", "entity_index"),
         ):
             artifact_id = derived_ids.get(key)
             if artifact_id:
@@ -462,11 +474,15 @@ class WorkerStore:
             },
         ]
 
-        sidecar_specs = [
+        sidecar_specs: list[tuple[str, str, str, Any]] = [
             ("ifc_index", "ifc_index", "ifc_index.json", result.get("ifc_index_url")),
             ("usd_index", "usd_index", "usd_index.json", result.get("usd_index_url")),
             ("element_mapping", "element_mapping", "element_mapping.json", result.get("mapping_url")),
         ]
+        if "entity_index" in derived_ids:
+            sidecar_specs.append(
+                ("entity_index", "entity_index", "entity_index.json", result.get("entity_index_url"))
+            )
         for key, kind, filename, url in sidecar_specs:
             if not url:
                 diagnostics.append(
@@ -529,7 +545,7 @@ class WorkerStore:
             },
         ]
         for node in nodes:
-            if node["kind"] in {"ifc_index", "usd_index", "element_mapping", "metadata"}:
+            if node["kind"] in {"ifc_index", "usd_index", "element_mapping", "entity_index", "metadata"}:
                 edges.append(
                     {
                         "from": derived_ids["model_usdc"],
@@ -590,6 +606,8 @@ class WorkerStore:
                     "message": "Conversion result is missing derived_artifact_ids; stable fallback IDs were reconstructed.",
                 }
             )
+            if result.get("entity_index_url"):
+                defaults["entity_index"] = f"artifact_entity_index_{suffix}"
             return defaults
         ids = dict(defaults)
         for key in defaults:
@@ -603,6 +621,10 @@ class WorkerStore:
                         "message": f"Conversion result is missing derived_artifact_ids.{key}; fallback ID was reconstructed.",
                     }
                 )
+        if raw_ids.get("entity_index"):
+            ids["entity_index"] = str(raw_ids["entity_index"])
+        elif result.get("entity_index_url"):
+            ids["entity_index"] = f"artifact_entity_index_{suffix}"
         return ids
 
     def _metadata_artifact_id(self, result: Mapping[str, Any]) -> str:
@@ -759,11 +781,16 @@ class WorkerStore:
         ifc_index_path = root_path / "ifc_index.json"
         usd_index_path = root_path / "usd_index.json"
         mapping_path = root_path / "element_mapping.json" if generate_mapping else None
+        entity_index_path: Path | None = (
+            root_path / "entity_index.json" if adapter_result.entity_index_path is not None else None
+        )
         shutil.copy2(adapter_result.model_path, model_path)
         shutil.copy2(adapter_result.ifc_index_path, ifc_index_path)
         shutil.copy2(adapter_result.usd_index_path, usd_index_path)
         if generate_mapping and adapter_result.mapping_path is not None and mapping_path is not None:
             shutil.copy2(adapter_result.mapping_path, mapping_path)
+        if adapter_result.entity_index_path is not None and entity_index_path is not None:
+            shutil.copy2(adapter_result.entity_index_path, entity_index_path)
 
         staging_dir = Path(adapter_result.model_path).parent.resolve()
         staging_root = (Path(self.settings.service_root) / "data" / "conversion-staging").resolve()
@@ -776,6 +803,7 @@ class WorkerStore:
             ifc_index_path=ifc_index_path,
             usd_index_path=usd_index_path,
             mapping_path=mapping_path,
+            entity_index_path=entity_index_path,
         )
 
     def _cleanup_staging_dir(self, converter_output_dir: Path, root_path: Path) -> None:
@@ -865,6 +893,8 @@ class WorkerStore:
                 "ifc_index_url": result["ifc_index_url"],
                 "usd_index_artifact_id": (result.get("derived_artifact_ids") or {}).get("usd_index"),
                 "usd_index_url": result["usd_index_url"],
+                "entity_index_artifact_id": (result.get("derived_artifact_ids") or {}).get("entity_index"),
+                "entity_index_url": result.get("entity_index_url"),
             },
             "quality_metrics": quality_metrics,
             "converter": result.get("converter"),
@@ -917,6 +947,8 @@ class WorkerStore:
         ]
         if generate_mapping:
             required_paths.append(adapter_result.mapping_path)
+        if adapter_result.entity_index_path is not None:
+            required_paths.append(adapter_result.entity_index_path)
         for path in required_paths:
             if path is None or not Path(path).is_file():
                 raise ConversionAdapterError(f"Converter did not create required output: {path}")
