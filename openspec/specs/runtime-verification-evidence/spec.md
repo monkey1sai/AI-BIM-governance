@@ -220,26 +220,26 @@ Runtime verification evidence SHALL only classify issue-to-real-prim highlight b
 
 ### Requirement: Source entity enumeration optimization evidence
 
-Runtime verification evidence MUST record the source entity enumeration burn-down before the canonical batch baseline can advance. Evidence MUST include the canonical fixture identity, command, timeout setting, baseline timing or timeout result, implemented optimization summary, post-change `source_entity_enumeration` timing, source IFC entity count, whether conversion advanced past enumeration, fallback usage, and the next gating phase or blocker.
+Runtime verification evidence MUST 在 canonical batch baseline 推進前記錄 source entity enumeration burn-down。Evidence MUST 包含 canonical fixture 識別、command、timeout 設定、baseline 計時或 timeout 結果、實作的優化摘要、優化後的 `source_entity_enumeration` 計時、source IFC entity 數量、conversion 是否越過 enumeration 階段、fallback 使用情形，以及下一個 gating phase 或 blocker。
 
-If source entity enumeration remains unable to complete within the configured timeout, evidence MUST classify the result as `timed_out` or `blocked`, preserve `minimum_coverage_locked=false`, and identify whether the unresolved limitation appears to be `_worker`-owned or external to the worker converter logic.
+若 source entity enumeration 在設定的 timeout 內仍無法完成，evidence MUST 將結果歸類為 `timed_out` 或 `blocked`，保留 `minimum_coverage_locked=false`，並指出尚未解除的限制屬於 `_worker` 內部，或是 worker converter 邏輯之外的外部因素。
 
-Fine-grained source enumeration profiling evidence MAY be recorded for canonical burn-down runs. When enabled, it SHOULD distinguish model iteration, entity id extraction, IFC class extraction, GlobalId extraction, Name extraction, row append, and progress write counts so the evidence can separate IfcOpenShell/runtime costs from `_worker` identity-scan costs.
+Fine-grained source enumeration profiling evidence MAY 於 canonical burn-down runs 中紀錄。啟用時，SHOULD 區分 model iteration、entity id extraction、IFC class extraction、GlobalId extraction、Name extraction、row append 與 progress write 計數，使 evidence 能將 IfcOpenShell/runtime 成本與 `_worker` identity-scan 成本分離。
 
 #### Scenario: Before and after timing recorded
 
-- **WHEN** `_worker` changes source entity enumeration behavior for canonical fixtures
-- **THEN** verification evidence records the pre-change timeout or baseline timing and the post-change timing for `source_entity_enumeration`
-- **AND** the evidence references the exact canonical fixture path or source identity used
+- **WHEN** `_worker` 對 canonical fixtures 變更 source entity enumeration 行為
+- **THEN** verification evidence 同時記錄改動前的 timeout 或 baseline 計時、以及改動後的 `source_entity_enumeration` 計時
+- **AND** evidence 引用所使用的 canonical fixture 實際路徑或 source identity
 
 #### Scenario: Canonical single fixture advances past enumeration
 
-- **WHEN** canonical `--limit 1 --timeout-seconds 600` is rerun after the optimization
-- **THEN** evidence records whether conversion progressed beyond `source_entity_enumeration`
-- **AND** if conversion succeeds, evidence records the resulting `conversion_job_id`, `artifact_group_id`, derived USDC artifact ID or URL, mapping artifact ID or URL, and readiness state
+- **WHEN** 優化後重跑 canonical `--limit 1 --timeout-seconds 600`
+- **THEN** evidence 記錄 conversion 是否越過 `source_entity_enumeration`
+- **AND** 若 conversion 成功，evidence 記錄產出的 `conversion_job_id`、`artifact_group_id`、衍生 USDC artifact ID 或 URL、mapping artifact ID 或 URL，以及 readiness 狀態
 
 #### Scenario: Optimization evidence keeps baseline unlocked when incomplete
 
-- **WHEN** the optimized run still times out, fails, or only produces partial evidence
-- **THEN** runtime verification evidence records the exact phase and failure reason
-- **AND** the canonical batch baseline remains unlocked with `minimum_coverage_locked=false`
+- **WHEN** 優化後的執行仍 timeout、失敗或僅產出部分 evidence
+- **THEN** runtime verification evidence 記錄確切的 phase 與失敗原因
+- **AND** canonical batch baseline 維持 `minimum_coverage_locked=false`
