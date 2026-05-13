@@ -36,7 +36,9 @@
 >
 > **2026-05-12 更新（`worker-mapping-lineage-quality-baseline` archive 對齊）**：依 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10**。原候選 #3 lineage API 與 #3A mapping quality baseline 已合併為同一 change 並歸檔：`_worker` 已具備 lineage query API、worker UI lineage / quality view、all-IFC-entity coverage 語意、`minimum_coverage_ratio=1.0` policy 與 storage batch verification helper；canonical 13-file real batch 仍未完成，因此 production baseline 尚未鎖定。
 >
-> **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；執行順序明確改為「單檔 real conversion 先跑通 → 用既有 web viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果 → 再跑 full 13-file batch」。`coordinator-session-lifecycle-events-audit` 仍保留為下一個新功能候選。
+> **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；執行順序明確改為「單檔 real conversion 先跑通 → 用既有 web viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果 → 再跑 full 13-file batch」。
+
+> **2026-05-12 更新（#4 lifecycle audit archive 對齊）**：依 `openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/` 與現行 `openspec/specs/review-session-request-lifecycle/spec.md` 更新 **§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10**。#4 已完成並歸檔：`bim-review-coordinator` 已具備 append-only lifecycle audit endpoint 與 `sequence` event schema；`_bim-control` review request lifecycle events 已補 `session_id` / `correlation_id`。此 archive 不解凍 Phase 6 audit persistence / observability / webhook production delivery。
 >
 > **2026-05-12 更新（canonical batch apply evidence）**：`worker-canonical-storage-batch-baseline` 已補上 batch timeout/status semantics、converter phase progress、worker UI review viewer handoff 與 verification report。Canonical `--limit 1 --timeout-seconds 600` 仍在第一個 89MB fixture timeout，並記錄 `source_artifact_id=artifact_src_00de4766405d`、`artifact_group_id=ag_61cd043fd19c`、`conversion_job_id=conv_20260512095847_74be0bc7`。短 timeout smoke 顯示已完成 `ifc_open`，目前卡在 `source_entity_enumeration`；因此 visual preview / full 13-file batch 仍 blocked，`minimum_coverage_locked=false` 維持不變。
 >
@@ -88,7 +90,7 @@
 | `worker-dev-ifc-source-selection` | 0/1 | 3-B | ✓ dev IFC source root + selected-source flow |
 | `worker-demo-upload-convert-ui` | 0/1 | 2 | ✓ Worker demo UI on 8005；含 lineage / conversion quality view |
 | `legacy-storage-conversion-retirement` | 1 | 3 | ✓ `_s3_storage` / `_conversion-service` 退役完成 |
-| `review-session-request-lifecycle` | 2/3 | 3-A/C | ✓ created/active/closing/closed/failed + queued_for_instance + close vs release 分離 |
+| `review-session-request-lifecycle` | 2/3 | 3-A/C | ✓ created/active/closing/closed/failed + queued_for_instance + close vs release 分離 + lifecycle audit endpoint / `sequence` event schema |
 | `multi-artifact-kit-routing` | 3 | 3-C / 4 | ✓ artifact_bindings + kit_instance_bindings + same/dedicated/shared 三種 routing |
 | `streaming-multi-layer-payload-loading` | 1/2 | 4 | ✓ multi-binding load + applied_mode 誠實回傳 |
 | `session-first-review-viewer` | 2/3 | 2 | ✓ Viewer 從 review_request_id / session_id bootstrap |
@@ -137,6 +139,12 @@ openspec validate --strict:          passed for proposal/design/specs/tasks
 scope:                               _worker source entity enumeration profiling + optimization
 next runtime gate:                   rerun canonical --limit 1 --timeout-seconds 600 after optimization
 
+# 2026-05-12 coordinator-session-lifecycle-events-audit（archived spec + validation evidence）
+openspec validate --strict:          passed
+bim-review-coordinator build/test:   npm run build passed; npm test 105 passed
+_bim-control focused tests:          21 passed, 1 warning
+lifecycle audit endpoint:            contract + unit tests passed; no browser/runtime smoke added
+
 # 延後（等待 GPU 購買與部署）
 multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部署後執行
 ```
@@ -165,6 +173,7 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 | `2026-05-11-worker-real-conversion-quality` | `worker-artifact-pipeline`、`runtime-verification-evidence`（MODIFY） | `_worker` real IFC→USDC adapter、openable `model.usdc` hard gate、real `ifc_index` / `usd_index` / `element_mapping`、one-to-many mapping schema、quality metrics、measure-first coverage report、single Kit/browser real worker artifact evidence |
 | `2026-05-12-worker-mapping-lineage-quality-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | lineage graph API、stable derived/index/mapping artifact IDs、all-IFC-entity coverage denominator、`minimum_coverage_ratio=1.0` policy、warn reviewable / fail blocking readiness、storage batch evidence tier、worker UI lineage / quality view |
 | `2026-05-12-worker-canonical-storage-batch-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | canonical storage batch status/timeout semantics、per-fixture phase timings、single-fixture gate、review viewer handoff contract；archive 時 runtime evidence 仍 blocked at `source_entity_enumeration`，baseline 未鎖定 |
+| `2026-05-12-coordinator-session-lifecycle-events-audit` | `review-session-request-lifecycle`（MODIFY） | coordinator append-only lifecycle audit endpoint、stable `sequence` event schema、lifecycle-only filter、close/release audit events、`_bim-control` review request correlation fields |
 
 ```txt
 規格目錄約定：
@@ -473,7 +482,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **多租戶資料隔離（schema-per-tenant / RLS）** | Layer 1 | 第二個外部租戶簽約 | ⏸ 等待業務接入；候選 #7 暫凍結 |
 | **RBAC 真實 role 模型（取代 dev_user_001）** | Layer 1 | 公司 IAM 政策確認 | ⏸ 等待業務接入 |
 | **Billing / usage metering（GPU 時數、conversion 數）** | Layer 5 | 計費模式定案 | ⏸ 等待業務接入 |
-| **Audit log persistence + 法遵保存** | Layer 5 | 公司資安 / 法遵需求出現 | ⏸ 等待業務接入；候選 #4 lifecycle event 不在此凍結（仍是 P1）|
+| **Audit log persistence + 法遵保存** | Layer 5 | 公司資安 / 法遵需求出現 | ⏸ 等待業務接入；已歸檔 #4 lifecycle event schema 不在此凍結，但 durable audit persistence 仍凍結 |
 | **Backup / DR / 異地備援** | Layer 6 | RPO / RTO 需求定案 | ⏸ 等待業務接入 |
 | **SLA / SLO 定義 + 對外承諾** | Layer 6 | 第一份正式商業合約 | ⏸ 等待業務接入 |
 | **資料生命週期（保存期限、歸檔、刪除）** | Layer 5 | 法規要求或客戶合約條款 | ⏸ 等待業務接入 |
@@ -481,7 +490,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **多 region / 跨地理 TURN 部署** | Layer 6 | 海外使用者 RTT 投訴 | ⏸ 等待業務接入 |
 | **GitHub Actions / auto PR / test matrix 擴大** | Layer 6 | 開發團隊規模 ≥ 4 人 | ⏸ 等待業務接入 |
 
-> **與其他 Phase 的關係**：已歸檔 #1 / #3 / #3A、候選 #2 / #4（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
+> **與其他 Phase 的關係**：已歸檔 #1 / #3 / #3A / #4、候選 #2（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
 
 ---
 
@@ -597,18 +606,19 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600` |
 | **與既有 spec 關係** | ADD delta requirements to `worker-artifact-pipeline` source enumeration optimization；ADD delta requirements to `runtime-verification-evidence` before/after enumeration evidence |
 
-#### 候選 #4：`coordinator-session-lifecycle-events-audit`
+#### Completed #4：`coordinator-session-lifecycle-events-audit`
 
 | 項目 | 內容 |
 |---|---|
+| **狀態** | ✓ Archived：`openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/` |
 | **目標** | 把現有 `lifecycle-events` (reviewRequestCreated / sessionBound) 整理成 append-only audit log，定義固定 event schema 讓 webhook / observability spec 能訂閱 |
 | **解決的 v1 phase / v2 layer** | Phase 3 / Layer 5 / Layer 6 |
 | **repo 邊界** | `bim-review-coordinator/`（主）+ `_bim-control/` 補相對應 audit 寫入欄位 |
-| **風險** | MEDIUM（schema 是後續 webhook / billing / audit 的依賴根） |
-| **KPI** | 1) `GET /api/review-sessions/{id}/lifecycle-events` 回 append-only 序列；2) 至少含 `reviewRequestCreated` / `sessionCreated` / `sessionActive` / `sessionClosing` / `sessionClosed` / `kitInstanceReleased` 6 種事件；3) 對應 vitest 覆蓋 |
-| **驗證指令** | `cd bim-review-coordinator && npm test` + E2E API |
+| **風險** | 已收斂為後續依賴 schema；production-grade audit persistence / observability 仍屬 Phase 6 凍結 |
+| **KPI** | ✓ 1) `GET /api/review-sessions/{id}/lifecycle-events` 回 append-only 序列；✓ 2) 含 `sessionCreated` / `sessionActive` / `sessionClosing` / `sessionClosed` / `kitInstanceReleased` 並保留 `_bim-control` `reviewRequestCreated` / `sessionBound` correlation；✓ 3) coordinator vitest 與 `_bim-control` focused tests 覆蓋 |
+| **驗證指令** | `openspec validate coordinator-session-lifecycle-events-audit --strict`、`cd bim-review-coordinator && npm run build && npm test`、`cd _bim-control && ..\.venv\Scripts\python.exe -m pytest tests\test_review_session_requests_api.py` |
 | **建議 spec id** | `coordinator-session-lifecycle-events-audit` |
-| **與既有 spec 關係** | MODIFY `review-session-request-lifecycle` Req4「lifecycle 顯式」+ ADD audit event schema |
+| **與既有 spec 關係** | 已同步到 `review-session-request-lifecycle` Req4「lifecycle 顯式」+ 新增 coordinator lifecycle audit log requirement |
 
 ### 5.3 P2（下月）
 
@@ -629,7 +639,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 | 項目 | 內容 |
 |---|---|
-| **目標** | 為 v2 圖 Layer 3-E 的 notification / webhook service 定義 subscription / delivery / retry / dead-letter 行為；訂閱候選 #4 的 lifecycle events |
+| **目標** | 為 v2 圖 Layer 3-E 的 notification / webhook service 定義 subscription / delivery / retry / dead-letter 行為；訂閱已歸檔 #4 的 lifecycle events |
 | **解決的 v1 phase / v2 layer** | Phase 6 入口 / Layer 3-E |
 | **repo 邊界** | 新增 `_notification-service/` mock folder |
 | **風險** | LOW（mock） |
@@ -657,7 +667,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 | 項目 | 內容 |
 |---|---|
-| **目標** | 把候選 #4 的 lifecycle events 與 `_worker` conversion jobs、Socket.IO broadcasts 整合進 `/metrics` + structured log；review session 完整 trace 可重建 |
+| **目標** | 把已歸檔 #4 的 lifecycle events 與 `_worker` conversion jobs、Socket.IO broadcasts 整合進 `/metrics` + structured log；review session 完整 trace 可重建 |
 | **解決的 v1 phase / v2 layer** | Phase 6 / Layer 5-Audit / Layer 6-Test Matrix |
 | **repo 邊界** | 跨 3 個 repo（_bim-control / _worker / coordinator） |
 | **風險** | MEDIUM |
@@ -699,7 +709,9 @@ P1 (這月):
   optimize-worker-source-entity-enumeration   ★★★ Active risk burn-down
                                                先修 canonical 89MB fixture 的 source_entity_enumeration timeout
                                                full pass 前 production mapping baseline 不得 locked
-  #4  coordinator-session-lifecycle-events-audit  事件 schema 收斂（為 #6 webhook 鋪路；audit log 持久化屬 Phase 6 凍結）
+  #4  coordinator-session-lifecycle-events-audit  ✓ Archived
+                                               lifecycle event schema 已收斂；#6 webhook 可依此 schema 探索
+                                               durable audit persistence 仍屬 Phase 6 凍結
 
 P2 (下月):
   #5  ai-rule-carbon-result-contract           v2 Layer 3-D contract + mock
@@ -733,7 +745,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
                     ─→ optimize-worker-source-entity-enumeration (active risk burn-down)
                     ─→ issue highlight evidence（需 locked real mapping 後才可宣稱）
                     ─→ ⏸ #8 audit (Phase 6 凍結；待業務接入)
-#4 ─→ #6 mock webhook (P2 可探索)
+#4 (✓ archived) ─→ #6 mock webhook (P2 可探索)
    ─→ ⏸ #8 audit (Phase 6 凍結)
 
 #1A ─→ Phase 5 多人協作真實化（#1 已 archive；不依賴 #2A，可在 Tier A 起探索）
@@ -1186,9 +1198,10 @@ B → C 觸發：
    - 重啟驗證通過後，才更新 §1.3 / §2 Phase 3 / §9.2 與 `runtime-verification-evidence` §6.4 evidence。
    - **MCP 補強**：驗證前用 `kit-mcp` `get_kit_extension_details("omni.kit.livestream.webrtc")` 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。
 
-5. **下一個 P1 OpenSpec 候選以 `#4 coordinator-session-lifecycle-events-audit` 為主**：
+5. **完成並歸檔 P1 OpenSpec change `#4 coordinator-session-lifecycle-events-audit`**：
    - #3 / #3A 已完成並歸檔，不再列為候選池。
-   - 若要支撐後續 webhook / observability，選 `#4`：把 lifecycle events 收斂成 append-only event schema。
+   - `#4` 已歸檔到 `openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/`，並同步到 `review-session-request-lifecycle`。
+   - lifecycle events 已收斂成 append-only event schema，支撐後續 #6 mock webhook / observability 探索。
    - 若要先補 worker evidence，優先完成 active change `optimize-worker-source-entity-enumeration`，不要跳過 canonical batch readiness gate。
 
 6. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
