@@ -13,8 +13,10 @@ from app.store import write_json
 class FakeBatchConverter:
     def __init__(self, *, locked: bool = False):
         self.locked = locked
+        self.profile_flags: list[bool] = []
 
     def convert(self, *, source_path: Path, output_dir: Path, job: dict, generate_mapping: bool) -> ConversionAdapterResult:
+        self.profile_flags.append(bool(job.get("profile_source_entity_enumeration")))
         output_dir.mkdir(parents=True, exist_ok=True)
         model_path = output_dir / "model.usdc"
         ifc_index_path = output_dir / "ifc_index.json"
@@ -94,6 +96,38 @@ class FakeProgressThenSlowBatchConverter:
         raise AssertionError("timeout test should terminate the process before this converter returns")
 
 
+class FakeSourceEnumerationProgressThenSlowBatchConverter:
+    def convert(self, *, source_path: Path, output_dir: Path, job: dict, generate_mapping: bool) -> ConversionAdapterResult:
+        progress_path = job.get("phase_progress_path")
+        if progress_path:
+            write_json(
+                Path(progress_path),
+                {
+                    "conversion_job_id": job.get("conversion_job_id"),
+                    "source_artifact_id": job.get("source_artifact_id"),
+                    "current_phase": "source_entity_enumeration",
+                    "status": "running",
+                    "phase_timings": {
+                        "ifc_open": {"status": "completed", "duration_seconds": 0.01},
+                        "source_entity_enumeration": {
+                            "status": "running",
+                            "duration_seconds": None,
+                            "diagnostic": "enumerating_ifc_source_entities",
+                            "details": {
+                                "enumerated_entity_count": 42000,
+                                "last_ifc_class": "IfcRelDefinesByProperties",
+                                "last_operation": "extract_name",
+                                "elapsed_seconds": 37.4,
+                                "fallback_used": False,
+                            },
+                        },
+                    },
+                },
+            )
+        time.sleep(10)
+        raise AssertionError("timeout test should terminate the process before this converter returns")
+
+
 def make_settings(tmp_path: Path) -> Settings:
     return Settings(
         service_root=tmp_path,
@@ -163,6 +197,27 @@ def test_batch_verification_timeout_is_classified_and_unlocked(tmp_path: Path):
     assert payload["results"][0]["phase_timings"]["geometry_iteration"]["status"] == "timed_out"
 
 
+def test_batch_verification_timeout_preserves_source_enumeration_progress_details(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+
+    payload = run_storage_batch_verification(
+        make_settings(tmp_path),
+        converter=FakeSourceEnumerationProgressThenSlowBatchConverter(),
+        timeout_seconds=2.0,
+    )
+
+    result = payload["results"][0]
+    source_timing = result["phase_timings"]["source_entity_enumeration"]
+    assert result["status"] == "timed_out"
+    assert result["last_known_phase_diagnostics"]["phase"] == "source_entity_enumeration"
+    assert result["last_known_phase_diagnostics"]["details"]["enumerated_entity_count"] == 42000
+    assert source_timing["status"] == "timed_out"
+    assert source_timing["details"]["enumerated_entity_count"] == 42000
+    assert source_timing["details"]["last_operation"] == "extract_name"
+
+
 def test_batch_verification_failed_fixture_is_failed_and_unlocked(tmp_path: Path):
     storage = tmp_path / "storage"
     storage.mkdir()
@@ -207,3 +262,18 @@ def test_batch_verification_preserves_duplicate_fixture_identity(tmp_path: Path)
     assert all(item["phase_timings"]["source_read"]["status"] == "completed" for item in payload["results"])
     assert all(item["phase_timings"]["artifact_publish"]["status"] == "completed" for item in payload["results"])
     assert all(item["review_viewer_handoff"]["params"]["usdc_url"] for item in payload["results"])
+
+
+def test_batch_verification_can_enable_source_entity_profiling_flag(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    converter = FakeBatchConverter()
+
+    run_storage_batch_verification(
+        make_settings(tmp_path),
+        converter=converter,
+        profile_source_entities=True,
+    )
+
+    assert converter.profile_flags == [True]

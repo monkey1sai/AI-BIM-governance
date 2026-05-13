@@ -41,6 +41,8 @@ class ConversionAdapter(Protocol):
 
 
 PRIM_NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
+SOURCE_ENUMERATION_PROGRESS_INTERVAL = 5000
+SOURCE_ENUMERATION_PROGRESS_SECONDS = 2.0
 CONVERSION_PHASES = (
     "conversion_total",
     "ifc_open",
@@ -118,10 +120,14 @@ def _new_phase_timings() -> dict[str, dict[str, Any]]:
 
 
 def _mark_phase_completed(phase_timings: dict[str, dict[str, Any]], phase: str, duration_seconds: float) -> None:
-    phase_timings[phase] = {
+    existing = phase_timings.get(phase) or {}
+    timing = {
         "status": "completed",
         "duration_seconds": duration_seconds,
     }
+    if "details" in existing:
+        timing["details"] = existing["details"]
+    phase_timings[phase] = timing
 
 
 def _mark_phase_unavailable(phase_timings: dict[str, dict[str, Any]], phase: str, diagnostic: str) -> None:
@@ -130,6 +136,23 @@ def _mark_phase_unavailable(phase_timings: dict[str, dict[str, Any]], phase: str
         "duration_seconds": None,
         "diagnostic": diagnostic,
     }
+
+
+def _mark_phase_running(
+    phase_timings: dict[str, dict[str, Any]],
+    phase: str,
+    *,
+    diagnostic: str,
+    details: Mapping[str, Any] | None = None,
+) -> None:
+    timing: dict[str, Any] = {
+        "status": "running",
+        "duration_seconds": None,
+        "diagnostic": diagnostic,
+    }
+    if details is not None:
+        timing["details"] = dict(details)
+    phase_timings[phase] = timing
 
 
 def _record_phase_progress(
@@ -200,7 +223,12 @@ class IfcOpenShellUsdConverter:
 
         phase_started = perf_counter()
         _record_phase_progress(job, "source_entity_enumeration", phase_timings)
-        source_entities = self._source_entities(model)
+        source_entities = self._source_entities(
+            model,
+            job=job,
+            phase_timings=phase_timings,
+            phase_started=phase_started,
+        )
         _mark_phase_completed(phase_timings, "source_entity_enumeration", perf_counter() - phase_started)
         _record_phase_progress(job, "source_entity_enumeration", phase_timings, status="completed")
         source_by_key = {item["ifc_entity_key"]: item for item in source_entities}
@@ -487,36 +515,127 @@ class IfcOpenShellUsdConverter:
             warnings=[],
         )
 
-    def _source_entities(self, model: Any) -> list[dict[str, Any]]:
+    def _source_entities(
+        self,
+        model: Any,
+        *,
+        job: Mapping[str, Any] | None = None,
+        phase_timings: dict[str, dict[str, Any]] | None = None,
+        phase_started: float | None = None,
+    ) -> list[dict[str, Any]]:
         entities = self._iter_model_entities(model)
         rows: list[dict[str, Any]] = []
-        for index, entity in enumerate(entities, start=1):
+        started = phase_started if phase_started is not None else perf_counter()
+        last_progress_at = started
+        progress_write_count = 0
+        profile_enabled = bool((job or {}).get("profile_source_entity_enumeration"))
+        profile: dict[str, float] = {
+            "iteration_seconds": 0.0,
+            "id_extraction_seconds": 0.0,
+            "class_extraction_seconds": 0.0,
+            "guid_extraction_seconds": 0.0,
+            "name_extraction_seconds": 0.0,
+            "row_append_seconds": 0.0,
+        }
+        details: dict[str, Any] = {
+            "enumerated_entity_count": 0,
+            "last_ifc_class": None,
+            "last_operation": "start_iteration",
+            "elapsed_seconds": 0.0,
+            "fallback_used": False,
+        }
+        index = 0
+        while True:
+            if profile_enabled:
+                operation_started = perf_counter()
+            try:
+                entity = next(entities)
+            except StopIteration:
+                break
+            if profile_enabled:
+                profile["iteration_seconds"] += perf_counter() - operation_started
+            index += 1
+            details["last_operation"] = "extract_entity_id"
+            if profile_enabled:
+                operation_started = perf_counter()
             entity_id = _entity_id(entity, index)
+            if profile_enabled:
+                profile["id_extraction_seconds"] += perf_counter() - operation_started
+            details["last_operation"] = "extract_class"
+            if profile_enabled:
+                operation_started = perf_counter()
             ifc_class = _entity_class(entity)
+            if profile_enabled:
+                profile["class_extraction_seconds"] += perf_counter() - operation_started
+            details["last_ifc_class"] = ifc_class
+            details["last_operation"] = "extract_global_id"
+            if profile_enabled:
+                operation_started = perf_counter()
             guid = _entity_global_id(entity)
+            if profile_enabled:
+                profile["guid_extraction_seconds"] += perf_counter() - operation_started
+            details["last_operation"] = "extract_name"
+            if profile_enabled:
+                operation_started = perf_counter()
+            name = _entity_name(entity)
+            if profile_enabled:
+                profile["name_extraction_seconds"] += perf_counter() - operation_started
             entity_key = guid or f"{ifc_class}:{entity_id}"
+            if profile_enabled:
+                operation_started = perf_counter()
             rows.append(
                 {
                     "ifc_entity_key": entity_key,
                     "ifc_entity_id": entity_id,
                     "ifc_guid": guid,
                     "ifc_class": ifc_class,
-                    "name": _entity_name(entity),
+                    "name": name,
                 }
+            )
+            if profile_enabled:
+                profile["row_append_seconds"] += perf_counter() - operation_started
+            details["enumerated_entity_count"] = index
+            details["last_operation"] = "append_row"
+            details["elapsed_seconds"] = perf_counter() - started
+            if profile_enabled:
+                details["profile"] = dict(profile)
+            now = perf_counter()
+            should_publish = (
+                index % SOURCE_ENUMERATION_PROGRESS_INTERVAL == 0
+                or now - last_progress_at >= SOURCE_ENUMERATION_PROGRESS_SECONDS
+            )
+            if should_publish and phase_timings is not None and job is not None:
+                progress_write_count += 1
+                details["progress_write_count"] = progress_write_count
+                _mark_phase_running(
+                    phase_timings,
+                    "source_entity_enumeration",
+                    diagnostic="enumerating_ifc_source_entities",
+                    details=details,
+                )
+                _record_phase_progress(job, "source_entity_enumeration", phase_timings)
+                last_progress_at = now
+        details["elapsed_seconds"] = perf_counter() - started
+        if profile_enabled:
+            details["profile"] = dict(profile)
+        if phase_timings is not None:
+            details["progress_write_count"] = progress_write_count
+            _mark_phase_running(
+                phase_timings,
+                "source_entity_enumeration",
+                diagnostic="enumerating_ifc_source_entities",
+                details=details,
             )
         return rows
 
-    def _iter_model_entities(self, model: Any) -> list[Any]:
+    def _iter_model_entities(self, model: Any) -> Any:
         try:
-            entities = list(model)
-        except TypeError:
-            entities = []
-        if entities:
-            return entities
-        try:
-            return list(model.by_type("IfcProduct"))
-        except Exception:
-            return []
+            return iter(model)
+        except TypeError as exc:
+            raise ConversionAdapterError(
+                "IfcOpenShell model does not support all-entity iteration; "
+                "IfcProduct-only fallback is not valid for all-entity coverage."
+            ) from exc
 
     def _materialize_unmapped_entities(
         self,

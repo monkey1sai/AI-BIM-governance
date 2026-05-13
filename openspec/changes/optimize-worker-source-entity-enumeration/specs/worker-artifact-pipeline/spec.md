@@ -6,7 +6,9 @@
 
 The optimized enumeration path MUST keep stable identity fields for each source IFC entity: `ifc_entity_key`, `ifc_entity_id` when available, `ifc_class`, `ifc_guid` when present, and `name` when available without compromising bounded execution. It MUST NOT replace all-entity coverage with geometry-only, `IfcProduct`-only, GUID-only, or renderable-only coverage.
 
-During long-running canonical conversions, `_worker` MUST expose additive source enumeration diagnostics such as elapsed seconds, enumerated entity count, current phase status, and blocker details when available. These diagnostics MUST remain backward-compatible with existing conversion result and quality metrics payloads.
+The real/canonical converter path MUST NOT use `model.by_type("IfcProduct")` as an all-entity fallback. If all-entity iteration is unavailable, `_worker` MUST fail or block the conversion with deterministic diagnostics rather than producing product-only coverage evidence.
+
+During long-running canonical conversions, `_worker` MUST expose additive source enumeration diagnostics such as elapsed seconds, enumerated entity count, current phase status, `fallback_used`, last known operation, and blocker details when available. These diagnostics MUST remain backward-compatible with existing conversion result and quality metrics payloads. Fine-grained profiling diagnostics MAY be enabled for verification evidence and MUST be optional.
 
 #### Scenario: Canonical source enumeration advances past timeout bottleneck
 
@@ -24,6 +26,12 @@ During long-running canonical conversions, `_worker` MUST expose additive source
 - **WHEN** source entity enumeration emits progress or completion diagnostics
 - **THEN** existing conversion result fields remain available
 - **AND** new diagnostics are optional nested fields that consumers can ignore without breaking lineage, readiness, or review viewer handoff
+
+#### Scenario: Product-only fallback is rejected for canonical evidence
+
+- **WHEN** the real converter cannot iterate all IFC source entities
+- **THEN** `_worker` records a conversion blocker instead of falling back to `IfcProduct`-only enumeration
+- **AND** the result MUST NOT claim all-entity coverage evidence from the product-only subset
 
 #### Scenario: Optimization does not lock baseline prematurely
 

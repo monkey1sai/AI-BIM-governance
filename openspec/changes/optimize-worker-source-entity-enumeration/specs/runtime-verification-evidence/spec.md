@@ -2,9 +2,11 @@
 
 ### Requirement: Source entity enumeration optimization evidence
 
-Runtime verification evidence MUST record the source entity enumeration burn-down before the canonical batch baseline can advance. Evidence MUST include the canonical fixture identity, command, timeout setting, baseline timing or timeout result, implemented optimization summary, post-change `source_entity_enumeration` timing, source IFC entity count, whether conversion advanced past enumeration, and the next gating phase or blocker.
+Runtime verification evidence MUST record the source entity enumeration burn-down before the canonical batch baseline can advance. Evidence MUST include the canonical fixture identity, command, timeout setting, baseline timing or timeout result, implemented optimization summary, post-change `source_entity_enumeration` timing, source IFC entity count, whether conversion advanced past enumeration, fallback usage, and the next gating phase or blocker.
 
 If source entity enumeration remains unable to complete within the configured timeout, evidence MUST classify the result as `timed_out` or `blocked`, preserve `minimum_coverage_locked=false`, and identify whether the unresolved limitation appears to be `_worker`-owned or external to the worker converter logic.
+
+Fine-grained source enumeration profiling evidence MAY be recorded for canonical burn-down runs. When enabled, it SHOULD distinguish model iteration, entity id extraction, IFC class extraction, GlobalId extraction, Name extraction, row append, and progress write counts so the evidence can separate IfcOpenShell/runtime costs from `_worker` identity-scan costs.
 
 #### Scenario: Before and after timing recorded
 

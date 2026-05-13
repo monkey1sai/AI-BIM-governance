@@ -27,6 +27,7 @@ def run_storage_batch_verification(
     limit: int | None = None,
     dry_run: bool = False,
     timeout_seconds: float | None = None,
+    profile_source_entities: bool = False,
 ) -> dict[str, Any]:
     sources_payload = list_dev_ifc_sources(settings.dev_storage_root)
     root = sources_payload["root"]
@@ -81,9 +82,15 @@ def run_storage_batch_verification(
                 source_item,
                 converter=converter,
                 timeout_seconds=timeout_seconds,
+                profile_source_entities=profile_source_entities,
             )
         else:
-            record = _run_single_fixture(settings, source_item["source_id"], converter=converter)
+            record = _run_single_fixture(
+                settings,
+                source_item["source_id"],
+                converter=converter,
+                profile_source_entities=profile_source_entities,
+            )
 
         if record.get("status") == "timed_out":
             timed_out += 1
@@ -126,12 +133,13 @@ def _run_single_fixture_with_timeout(
     *,
     converter: Any | None,
     timeout_seconds: float,
+    profile_source_entities: bool,
 ) -> dict[str, Any]:
     ctx = mp.get_context("spawn")
     queue = ctx.Queue()
     process = ctx.Process(
         target=_run_single_fixture_process,
-        args=(settings, source_id, converter, queue),
+        args=(settings, source_id, converter, profile_source_entities, queue),
     )
     started = perf_counter()
     process.start()
@@ -181,6 +189,7 @@ def _run_single_fixture_process(
     settings: Settings,
     source_id: str,
     converter: Any | None,
+    profile_source_entities: bool,
     queue: Any,
 ) -> None:
     try:
@@ -188,6 +197,7 @@ def _run_single_fixture_process(
             settings,
             source_id,
             converter=converter,
+            profile_source_entities=profile_source_entities,
             progress=lambda payload: queue.put({"event": "progress", "payload": payload}),
         )
         queue.put({"event": "result", "payload": record})
@@ -206,6 +216,7 @@ def _run_single_fixture(
     source_id: str,
     *,
     converter: Any | None,
+    profile_source_entities: bool = False,
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     started = perf_counter()
@@ -246,7 +257,11 @@ def _run_single_fixture(
 
         job = store.create_conversion_job(
             source_artifact["source_artifact_id"],
-            {"target_format": "usdc", "generate_mapping": True},
+            {
+                "target_format": "usdc",
+                "generate_mapping": True,
+                "profile_source_entity_enumeration": profile_source_entities,
+            },
         )
         _publish_progress(
             progress,
@@ -370,6 +385,15 @@ def _timeout_record(
     partial = partial or {}
     phase_progress = phase_progress or {}
     last_phase = phase_progress.get("current_phase") or partial.get("phase") or "fixture_process"
+    last_phase_timing = (phase_progress.get("phase_timings") or {}).get(last_phase) or {}
+    last_phase_details = last_phase_timing.get("details") if isinstance(last_phase_timing, dict) else None
+    diagnostics = {
+        "phase": last_phase,
+        "converter_phase_status": phase_progress.get("status"),
+        "message": "Fixture exceeded configured per-fixture timeout before completion.",
+    }
+    if isinstance(last_phase_details, dict):
+        diagnostics["details"] = last_phase_details
     return {
         "filename": source_item["filename"],
         "relative_path": source_item["relative_path"],
@@ -386,11 +410,7 @@ def _timeout_record(
             phase_progress.get("phase_timings"),
             intake_completed=bool(partial.get("source_artifact_id")),
         ),
-        "last_known_phase_diagnostics": {
-            "phase": last_phase,
-            "converter_phase_status": phase_progress.get("status"),
-            "message": "Fixture exceeded configured per-fixture timeout before completion.",
-        },
+        "last_known_phase_diagnostics": diagnostics,
         "failure": {
             "code": "FixtureTimedOut",
             "message": f"Fixture exceeded configured timeout of {timeout_seconds} seconds.",
@@ -471,10 +491,16 @@ def _timeout_phase_timings(
         timings["source_read"] = _completed_unmeasured_timing("completed_before_timeout")
         timings["artifact_intake"] = _completed_unmeasured_timing("completed_before_timeout")
     if last_phase in timings:
-        timings[last_phase] = {
+        existing = timings.get(last_phase) or {}
+        timing = {
             "status": "timed_out",
             "duration_seconds": None,
             "diagnostic": "fixture_timed_out_during_phase",
+        }
+        if isinstance(existing, dict) and isinstance(existing.get("details"), dict):
+            timing["details"] = existing["details"]
+        timings[last_phase] = {
+            **timing,
         }
     else:
         timings["conversion_total"] = {
