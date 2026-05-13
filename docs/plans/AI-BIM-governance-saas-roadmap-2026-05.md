@@ -635,7 +635,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 | 項目 | 內容 |
 |---|---|
-| **狀態** | Archived（pre-archive validation passed）。OpenSpec sync 後將進入 `openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/`。 |
+| **狀態** | Archived（pre-archive validation passed）。已同步至 `openspec/changes/archive/2026-05-13-optimize-worker-source-entity-enumeration/`。 |
 | **解決的 gap** | canonical 89MB fixture 的 `source_entity_enumeration` 從 timeout 收斂至 ~33.2s（`1,604,773` entities，`fallback_used=false`） |
 | **驗證紀錄** | `docs/verification/2026-05-13-worker-source-entity-enumeration-optimization.md` |
 | **新的下游 blocker** | `non_renderable_entity_materialization` timeout（已由下方 `optimize-worker-non-renderable-materialization` change 解決） |

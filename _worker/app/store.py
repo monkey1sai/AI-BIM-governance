@@ -955,6 +955,11 @@ class WorkerStore:
         if generate_mapping:
             required_paths.append(adapter_result.mapping_path)
         if adapter_result.entity_index_path is not None:
+            if Path(adapter_result.entity_index_path).name != "entity_index.json":
+                raise ConversionAdapterError(
+                    f"Converter output entity_index_path must be named 'entity_index.json', "
+                    f"got: {Path(adapter_result.entity_index_path).name!r}"
+                )
             required_paths.append(adapter_result.entity_index_path)
         for path in required_paths:
             if path is None or not Path(path).is_file():
