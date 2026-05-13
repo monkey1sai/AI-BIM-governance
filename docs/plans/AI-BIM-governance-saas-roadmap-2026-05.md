@@ -589,6 +589,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **Archive** | `openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/` |
 | **目前執行結果（2026-05-12）** | Batch helper / CLI / worker UI handoff 已更新；canonical dry-run 找到 13 個 fixture；canonical `--limit 1 --timeout-seconds 600` 第一個 fixture 仍 timed out，短 timeout smoke 顯示 last-known phase 為 `source_entity_enumeration`；visual preview 與 full batch 仍 blocked |
 | **已併入 specs** | canonical storage batch status semantics、phase timings、timeout diagnostics、single-fixture gate、review viewer handoff |
+| **驗證紀錄** | `docs/verification/2026-05-12-worker-canonical-storage-batch-baseline.md` |
 | **解決的 gap** | `worker-mapping-lineage-quality-baseline` 已歸檔，但 production mapping baseline 仍未鎖定 |
 | **仍未宣稱完成** | `source_entity_enumeration` bottleneck 未解；`model.usdc` 未產出；visual preview / full 13-file batch 未 passed；`minimum_coverage_locked=true` 不成立 |
 | **後續切片** | `optimize-worker-source-entity-enumeration` 先處理 89MB canonical fixture 的 enumeration timeout |
