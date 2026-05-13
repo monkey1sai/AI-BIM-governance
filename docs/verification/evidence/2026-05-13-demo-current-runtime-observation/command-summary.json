@@ -1,0 +1,65 @@
+{
+  "captured_at": "2026-05-13T10:06:17Z",
+  "change": "demo-current-runtime-observation",
+  "branch": "codex/openspec/demo-current-runtime-observation",
+  "head": "93df32d",
+  "head_vs_origin_main": "0 0",
+  "service_health": {
+    "_bim_control": {
+      "status": "passed",
+      "port": 8001,
+      "pid": 27140
+    },
+    "_worker": {
+      "status": "passed",
+      "port": 8005,
+      "pid": 39164,
+      "dev_ifc_source_items": 0
+    },
+    "bim_review_coordinator": {
+      "status": "passed",
+      "port": 8004,
+      "pid": 28612,
+      "kit_signaling_port": 49100
+    },
+    "web_viewer_sample": {
+      "status": "passed",
+      "port": 5173,
+      "pid": 42344,
+      "http_status": 200
+    },
+    "bim_streaming_server": {
+      "status": "blocked",
+      "reason": "streaming launcher missing; port 49100 not listening"
+    }
+  },
+  "checks": {
+    "_bim_control_pytest": "23 passed",
+    "_worker_pytest": "105 passed, 1 skipped",
+    "coordinator_npm_test": "105 passed",
+    "viewer_build": "passed with Vite chunk-size warning",
+    "viewer_session_first_contract": "passed",
+    "viewer_lint": "failed: 29 errors, 1 warning",
+    "dev_health_check": "passed",
+    "smoke_worker_review_request": "blocked: no dev IFC source",
+    "smoke_review_session": "failed: invalid minimal IFC payload could not be parsed",
+    "smoke_review_socket": "passed: review_session_8b7cf9515752",
+    "stage_loading_contract": "passed",
+    "kit_preflight": "blocked: ezplus.bim_review_stream_streaming.kit.bat missing",
+    "browser_automation": "blocked by in-app Browser policy for http://127.0.0.1:5173"
+  },
+  "closeout": {
+    "openspec_validate_strict": "passed",
+    "git_diff_check": "passed with CRLF conversion warnings only",
+    "gitnexus_analyze": "indexed current worktree: 4030 nodes, 8435 edges, 172 clusters, 252 flows",
+    "gitnexus_detect_changes": "MCP detect_changes on 01e1 worktree: changed_count=2, changed_files=3, affected_count=0, risk_level=low"
+  },
+  "ids": {
+    "source_artifact_id": "artifact_src_3c138a21f9d1",
+    "artifact_group_id": "ag_593876ab7233",
+    "conversion_job_id": "conv_20260513100246_c395e1ca",
+    "review_request_id": "review_request_1778666777077_1d692eed",
+    "session_id": "review_session_87404055d4fd",
+    "socket_smoke_session_id": "review_session_8b7cf9515752"
+  }
+}
