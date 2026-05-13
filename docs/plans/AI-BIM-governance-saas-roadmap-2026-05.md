@@ -36,9 +36,13 @@
 >
 > **2026-05-12 更新（`worker-mapping-lineage-quality-baseline` archive 對齊）**：依 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10**。原候選 #3 lineage API 與 #3A mapping quality baseline 已合併為同一 change 並歸檔：`_worker` 已具備 lineage query API、worker UI lineage / quality view、all-IFC-entity coverage 語意、`minimum_coverage_ratio=1.0` policy 與 storage batch verification helper；canonical 13-file real batch 仍未完成，因此 production baseline 尚未鎖定。
 >
-> **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；執行順序明確改為「單檔 real conversion 先跑通 → 用既有 web viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果 → 再跑 full 13-file batch」。`coordinator-session-lifecycle-events-audit` 仍保留為下一個新功能候選。
+> **2026-05-12 更新（canonical storage batch follow-up）**：新增 active change **`worker-canonical-storage-batch-baseline`**，專門處理已歸檔 #3/#3A 留下的 readiness gap：`C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 13-file real batch 尚未 passed，且 `--limit 1` 曾 600s timeout。此 change 是下一個 worker risk burn-down；執行順序明確改為「單檔 real conversion 先跑通 → 用既有 web viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果 → 再跑 full 13-file batch」。
+
+> **2026-05-12 更新（#4 lifecycle audit archive 對齊）**：依 `openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/` 與現行 `openspec/specs/review-session-request-lifecycle/spec.md` 更新 **§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10**。#4 已完成並歸檔：`bim-review-coordinator` 已具備 append-only lifecycle audit endpoint 與 `sequence` event schema；`_bim-control` review request lifecycle events 已補 `session_id` / `correlation_id`。此 archive 不解凍 Phase 6 audit persistence / observability / webhook production delivery。
 >
 > **2026-05-12 更新（canonical batch apply evidence）**：`worker-canonical-storage-batch-baseline` 已補上 batch timeout/status semantics、converter phase progress、worker UI review viewer handoff 與 verification report。Canonical `--limit 1 --timeout-seconds 600` 仍在第一個 89MB fixture timeout，並記錄 `source_artifact_id=artifact_src_00de4766405d`、`artifact_group_id=ag_61cd043fd19c`、`conversion_job_id=conv_20260512095847_74be0bc7`。短 timeout smoke 顯示已完成 `ifc_open`，目前卡在 `source_entity_enumeration`；因此 visual preview / full 13-file batch 仍 blocked，`minimum_coverage_locked=false` 維持不變。
+>
+> **2026-05-12 更新（canonical batch archive + enumeration optimization next）**：依使用者明確指示，`worker-canonical-storage-batch-baseline` 已先 archive 至 `openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/`，並把其 batch/status/phase timing/preview handoff requirements 併入現行 specs；archive 時仍有 10 個 implementation tasks 未完成，因此 roadmap 不把它視為 runtime passed。新的 active change **`optimize-worker-source-entity-enumeration`** 專門 burn down `source_entity_enumeration` timeout blocker，先完成 89MB canonical fixture 的 enumeration profiling / optimization，再回到 single-fixture conversion、visual preview 與 full 13-file batch gate。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -86,7 +90,7 @@
 | `worker-dev-ifc-source-selection` | 0/1 | 3-B | ✓ dev IFC source root + selected-source flow |
 | `worker-demo-upload-convert-ui` | 0/1 | 2 | ✓ Worker demo UI on 8005；含 lineage / conversion quality view |
 | `legacy-storage-conversion-retirement` | 1 | 3 | ✓ `_s3_storage` / `_conversion-service` 退役完成 |
-| `review-session-request-lifecycle` | 2/3 | 3-A/C | ✓ created/active/closing/closed/failed + queued_for_instance + close vs release 分離 |
+| `review-session-request-lifecycle` | 2/3 | 3-A/C | ✓ created/active/closing/closed/failed + queued_for_instance + close vs release 分離 + lifecycle audit endpoint / `sequence` event schema |
 | `multi-artifact-kit-routing` | 3 | 3-C / 4 | ✓ artifact_bindings + kit_instance_bindings + same/dedicated/shared 三種 routing |
 | `streaming-multi-layer-payload-loading` | 1/2 | 4 | ✓ multi-binding load + applied_mode 誠實回傳 |
 | `session-first-review-viewer` | 2/3 | 2 | ✓ Viewer 從 review_request_id / session_id bootstrap |
@@ -124,6 +128,23 @@ real batch --limit 1:                timed out after 600s; first fixture job con
 short timeout phase smoke:           ifc_open completed; source_entity_enumeration still running at timeout
 worker UI handoff data:              implemented, but canonical visual preview blocked until model.usdc exists
 
+# 2026-05-12 worker-canonical-storage-batch-baseline（archived blocked evidence）
+openspec archive:                    completed by explicit user instruction; 30/40 tasks complete
+spec sync:                           worker-artifact-pipeline / runtime-verification-evidence / worker-demo-upload-convert-ui updated
+runtime status:                      still blocked at source_entity_enumeration; visual preview / full batch not passed
+baseline lock:                       minimum_coverage_locked=false
+
+# 2026-05-12 optimize-worker-source-entity-enumeration（active change）
+openspec validate --strict:          passed for proposal/design/specs/tasks
+scope:                               _worker source entity enumeration profiling + optimization
+next runtime gate:                   rerun canonical --limit 1 --timeout-seconds 600 after optimization
+
+# 2026-05-12 coordinator-session-lifecycle-events-audit（archived spec + validation evidence）
+openspec validate --strict:          passed
+bim-review-coordinator build/test:   npm run build passed; npm test 105 passed
+_bim-control focused tests:          21 passed, 1 warning
+lifecycle audit endpoint:            contract + unit tests passed; no browser/runtime smoke added
+
 # 延後（等待 GPU 購買與部署）
 multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部署後執行
 ```
@@ -151,6 +172,8 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 | `2026-05-11-align-workflow-v3-with-saas-roadmap` | `documentation-source-of-truth`（新增） | workflow v3 與 SaaS 路線圖互補不替代；文件分工調整必須走 OpenSpec change；雙向 cross-reference 必須持續成立 |
 | `2026-05-11-worker-real-conversion-quality` | `worker-artifact-pipeline`、`runtime-verification-evidence`（MODIFY） | `_worker` real IFC→USDC adapter、openable `model.usdc` hard gate、real `ifc_index` / `usd_index` / `element_mapping`、one-to-many mapping schema、quality metrics、measure-first coverage report、single Kit/browser real worker artifact evidence |
 | `2026-05-12-worker-mapping-lineage-quality-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | lineage graph API、stable derived/index/mapping artifact IDs、all-IFC-entity coverage denominator、`minimum_coverage_ratio=1.0` policy、warn reviewable / fail blocking readiness、storage batch evidence tier、worker UI lineage / quality view |
+| `2026-05-12-worker-canonical-storage-batch-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | canonical storage batch status/timeout semantics、per-fixture phase timings、single-fixture gate、review viewer handoff contract；archive 時 runtime evidence 仍 blocked at `source_entity_enumeration`，baseline 未鎖定 |
+| `2026-05-12-coordinator-session-lifecycle-events-audit` | `review-session-request-lifecycle`（MODIFY） | coordinator append-only lifecycle audit endpoint、stable `sequence` event schema、lifecycle-only filter、close/release audit events、`_bim-control` review request correlation fields |
 
 ```txt
 規格目錄約定：
@@ -459,7 +482,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **多租戶資料隔離（schema-per-tenant / RLS）** | Layer 1 | 第二個外部租戶簽約 | ⏸ 等待業務接入；候選 #7 暫凍結 |
 | **RBAC 真實 role 模型（取代 dev_user_001）** | Layer 1 | 公司 IAM 政策確認 | ⏸ 等待業務接入 |
 | **Billing / usage metering（GPU 時數、conversion 數）** | Layer 5 | 計費模式定案 | ⏸ 等待業務接入 |
-| **Audit log persistence + 法遵保存** | Layer 5 | 公司資安 / 法遵需求出現 | ⏸ 等待業務接入；候選 #4 lifecycle event 不在此凍結（仍是 P1）|
+| **Audit log persistence + 法遵保存** | Layer 5 | 公司資安 / 法遵需求出現 | ⏸ 等待業務接入；已歸檔 #4 lifecycle event schema 不在此凍結，但 durable audit persistence 仍凍結 |
 | **Backup / DR / 異地備援** | Layer 6 | RPO / RTO 需求定案 | ⏸ 等待業務接入 |
 | **SLA / SLO 定義 + 對外承諾** | Layer 6 | 第一份正式商業合約 | ⏸ 等待業務接入 |
 | **資料生命週期（保存期限、歸檔、刪除）** | Layer 5 | 法規要求或客戶合約條款 | ⏸ 等待業務接入 |
@@ -467,7 +490,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **多 region / 跨地理 TURN 部署** | Layer 6 | 海外使用者 RTT 投訴 | ⏸ 等待業務接入 |
 | **GitHub Actions / auto PR / test matrix 擴大** | Layer 6 | 開發團隊規模 ≥ 4 人 | ⏸ 等待業務接入 |
 
-> **與其他 Phase 的關係**：已歸檔 #1 / #3 / #3A、候選 #2 / #4（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
+> **與其他 Phase 的關係**：已歸檔 #1 / #3 / #3A / #4、候選 #2（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，**不受此凍結影響**。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。
 
 ---
 
@@ -559,32 +582,44 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **已完成** | lineage graph API、stable mapping/index derived artifact IDs、worker UI lineage / quality view、all-IFC-entity coverage denominator、`minimum_coverage_ratio=1.0` policy、warn reviewable / fail blocking readiness、storage batch helper |
 | **仍未宣稱完成** | canonical 13-file real batch 未完成；`minimum_coverage_locked=true` production baseline 與 issue → real prim verified evidence 尚未成立 |
 
-#### Active risk burn-down：`worker-canonical-storage-batch-baseline`
+#### 已歸檔但 runtime blocked：`worker-canonical-storage-batch-baseline`
 
 | 項目 | 內容 |
 |---|---|
-| **狀態** | Active OpenSpec follow-up：`openspec/changes/worker-canonical-storage-batch-baseline/` |
+| **Archive** | `openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/` |
 | **目前執行結果（2026-05-12）** | Batch helper / CLI / worker UI handoff 已更新；canonical dry-run 找到 13 個 fixture；canonical `--limit 1 --timeout-seconds 600` 第一個 fixture 仍 timed out，短 timeout smoke 顯示 last-known phase 為 `source_entity_enumeration`；visual preview 與 full batch 仍 blocked |
-| **目標** | 補齊 canonical `storage/*.ifc` 13-file real batch evidence；先找出並修掉 `--limit 1` timeout，單檔成功後用既有 review viewer / Kit 載入 worker-hosted `model.usdc` 看轉檔成果，再擴到全批次 |
+| **已併入 specs** | canonical storage batch status semantics、phase timings、timeout diagnostics、single-fixture gate、review viewer handoff |
+| **驗證紀錄** | `docs/verification/2026-05-12-worker-canonical-storage-batch-baseline.md` |
 | **解決的 gap** | `worker-mapping-lineage-quality-baseline` 已歸檔，但 production mapping baseline 仍未鎖定 |
-| **repo 邊界** | `_worker/` + worker UI handoff + verification docs + roadmap；visual preview 使用既有 coordinator / viewer / Kit flow 取 evidence，但不新增 coordinator / viewer / Kit runtime ownership |
-| **風險** | HIGH（89MB canonical fixture 單檔 real conversion 曾 timeout；all-IFC-entity materialization 可能放大 output size / stage save 成本） |
-| **KPI** | 1) canonical `--limit 1` 完成並有 phase timing，或以 deterministic timeout blocker 指向具體 converter phase；2) 單檔 `model.usdc` 透過既有 web viewer / Kit visual preview passed，或留下明確 blocked prerequisite；3) full 13-file batch 完成；4) 每 fixture lineage API / USDC openability / coverage status 有 evidence；5) 只有 full pass 才允許 `minimum_coverage_locked=true` |
-| **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1`，通過後用該 artifact group 經 review viewer / Kit 載入 `model.usdc`，再跑 full batch |
-| **與既有 spec 關係** | MODIFY `worker-artifact-pipeline` storage batch verification；MODIFY `runtime-verification-evidence` canonical batch acceptance / single Kit real worker artifact evidence；MODIFY `worker-demo-upload-convert-ui` preview handoff |
+| **仍未宣稱完成** | `source_entity_enumeration` bottleneck 未解；`model.usdc` 未產出；visual preview / full 13-file batch 未 passed；`minimum_coverage_locked=true` 不成立 |
+| **後續切片** | `optimize-worker-source-entity-enumeration` 先處理 89MB canonical fixture 的 enumeration timeout |
 
-#### 候選 #4：`coordinator-session-lifecycle-events-audit`
+#### Active risk burn-down：`optimize-worker-source-entity-enumeration`
 
 | 項目 | 內容 |
 |---|---|
+| **狀態** | Active OpenSpec change：`openspec/changes/optimize-worker-source-entity-enumeration/` |
+| **目標** | profile 並 optimize `_worker` `source_entity_enumeration`，讓 canonical 89MB fixture 在 configured timeout 內通過 enumeration 或留下 deterministic external blocker |
+| **解決的 gap** | `worker-canonical-storage-batch-baseline` archive 後留下的第一個 runtime blocker：`ifc_open` 已完成，但 `_source_entities(model)` / all-entity enumeration 無法於 timeout 內完成 |
+| **repo 邊界** | `_worker/` + worker UI handoff + verification docs + roadmap；visual preview 使用既有 coordinator / viewer / Kit flow 取 evidence，但不新增 coordinator / viewer / Kit runtime ownership |
+| **風險** | HIGH（若瓶頸來自 IfcOpenShell / IFC parser 內部，`_worker` 只能產生 deterministic blocker；若優化誤改 denominator，會破壞 all-IFC-entity coverage 語意） |
+| **KPI** | 1) source entity enumeration before/after timing 可重現；2) canonical `--limit 1 --timeout-seconds 600` 能越過 `source_entity_enumeration`，或 blocker 明確歸因；3) all-IFC-entity denominator 不降級；4) conversion result / quality / lineage / handoff payload backward-compatible；5) baseline 未 full pass 前維持 `minimum_coverage_locked=false` |
+| **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600` |
+| **與既有 spec 關係** | ADD delta requirements to `worker-artifact-pipeline` source enumeration optimization；ADD delta requirements to `runtime-verification-evidence` before/after enumeration evidence |
+
+#### Completed #4：`coordinator-session-lifecycle-events-audit`
+
+| 項目 | 內容 |
+|---|---|
+| **狀態** | ✓ Archived：`openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/` |
 | **目標** | 把現有 `lifecycle-events` (reviewRequestCreated / sessionBound) 整理成 append-only audit log，定義固定 event schema 讓 webhook / observability spec 能訂閱 |
 | **解決的 v1 phase / v2 layer** | Phase 3 / Layer 5 / Layer 6 |
 | **repo 邊界** | `bim-review-coordinator/`（主）+ `_bim-control/` 補相對應 audit 寫入欄位 |
-| **風險** | MEDIUM（schema 是後續 webhook / billing / audit 的依賴根） |
-| **KPI** | 1) `GET /api/review-sessions/{id}/lifecycle-events` 回 append-only 序列；2) 至少含 `reviewRequestCreated` / `sessionCreated` / `sessionActive` / `sessionClosing` / `sessionClosed` / `kitInstanceReleased` 6 種事件；3) 對應 vitest 覆蓋 |
-| **驗證指令** | `cd bim-review-coordinator && npm test` + E2E API |
+| **風險** | 已收斂為後續依賴 schema；production-grade audit persistence / observability 仍屬 Phase 6 凍結 |
+| **KPI** | ✓ 1) `GET /api/review-sessions/{id}/lifecycle-events` 回 append-only 序列；✓ 2) 含 `sessionCreated` / `sessionActive` / `sessionClosing` / `sessionClosed` / `kitInstanceReleased` 並保留 `_bim-control` `reviewRequestCreated` / `sessionBound` correlation；✓ 3) coordinator vitest 與 `_bim-control` focused tests 覆蓋 |
+| **驗證指令** | `openspec validate coordinator-session-lifecycle-events-audit --strict`、`cd bim-review-coordinator && npm run build && npm test`、`cd _bim-control && ..\.venv\Scripts\python.exe -m pytest tests\test_review_session_requests_api.py` |
 | **建議 spec id** | `coordinator-session-lifecycle-events-audit` |
-| **與既有 spec 關係** | MODIFY `review-session-request-lifecycle` Req4「lifecycle 顯式」+ ADD audit event schema |
+| **與既有 spec 關係** | 已同步到 `review-session-request-lifecycle` Req4「lifecycle 顯式」+ 新增 coordinator lifecycle audit log requirement |
 
 ### 5.3 P2（下月）
 
@@ -605,7 +640,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 | 項目 | 內容 |
 |---|---|
-| **目標** | 為 v2 圖 Layer 3-E 的 notification / webhook service 定義 subscription / delivery / retry / dead-letter 行為；訂閱候選 #4 的 lifecycle events |
+| **目標** | 為 v2 圖 Layer 3-E 的 notification / webhook service 定義 subscription / delivery / retry / dead-letter 行為；訂閱已歸檔 #4 的 lifecycle events |
 | **解決的 v1 phase / v2 layer** | Phase 6 入口 / Layer 3-E |
 | **repo 邊界** | 新增 `_notification-service/` mock folder |
 | **風險** | LOW（mock） |
@@ -633,7 +668,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 | 項目 | 內容 |
 |---|---|
-| **目標** | 把候選 #4 的 lifecycle events 與 `_worker` conversion jobs、Socket.IO broadcasts 整合進 `/metrics` + structured log；review session 完整 trace 可重建 |
+| **目標** | 把已歸檔 #4 的 lifecycle events 與 `_worker` conversion jobs、Socket.IO broadcasts 整合進 `/metrics` + structured log；review session 完整 trace 可重建 |
 | **解決的 v1 phase / v2 layer** | Phase 6 / Layer 5-Audit / Layer 6-Test Matrix |
 | **repo 邊界** | 跨 3 個 repo（_bim-control / _worker / coordinator） |
 | **風險** | MEDIUM |
@@ -661,6 +696,9 @@ Archived / 已完成:
   #3/#3A worker-mapping-lineage-quality-baseline ✓ 已於 2026-05-12 archive
                                                lineage API / worker UI / all-IFC-entity coverage policy 已併入 specs
                                                剩餘：canonical 13-file real batch 未完成，production coverage baseline 未鎖定
+  worker-canonical-storage-batch-baseline       ✓ 已於 2026-05-12 archive（blocked evidence）
+                                               batch semantics / phase timings / handoff contract 已併入 specs
+                                               剩餘：source_entity_enumeration timeout；visual preview / full batch 未通過
 
 P0-hold (等待 GPU 購買與部署):
   #2  streaming-multi-instance-orchestration   ★★  ⏸ 等待 GPU 購買與部署後執行
@@ -669,10 +707,12 @@ P0-hold (等待 GPU 購買與部署):
                                                roadmap 端：GPU capacity 到位後才重啟驗證並同步 §1.3 / §2 / §9.2
 
 P1 (這月):
-  worker-canonical-storage-batch-baseline     ★★★ Active risk burn-down
-                                               先修 canonical --limit 1 timeout，再補 13-file real batch evidence
+  optimize-worker-source-entity-enumeration   ★★★ Active risk burn-down
+                                               先修 canonical 89MB fixture 的 source_entity_enumeration timeout
                                                full pass 前 production mapping baseline 不得 locked
-  #4  coordinator-session-lifecycle-events-audit  事件 schema 收斂（為 #6 webhook 鋪路；audit log 持久化屬 Phase 6 凍結）
+  #4  coordinator-session-lifecycle-events-audit  ✓ Archived
+                                               lifecycle event schema 已收斂；#6 webhook 可依此 schema 探索
+                                               durable audit persistence 仍屬 Phase 6 凍結
 
 P2 (下月):
   #5  ai-rule-carbon-result-contract           v2 Layer 3-D contract + mock
@@ -702,10 +742,11 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
    ─→ GPU-backed multi-instance routing 證據解鎖
    ─→ #2A (OVAS Helm 升級需要先在已部署 GPU capacity 上跑通多 Kit)
 
-#3/#3A (✓ archived) ─→ worker-canonical-storage-batch-baseline (active risk burn-down)
+#3/#3A (✓ archived) ─→ worker-canonical-storage-batch-baseline (✓ archived, blocked evidence)
+                    ─→ optimize-worker-source-entity-enumeration (active risk burn-down)
                     ─→ issue highlight evidence（需 locked real mapping 後才可宣稱）
                     ─→ ⏸ #8 audit (Phase 6 凍結；待業務接入)
-#4 ─→ #6 mock webhook (P2 可探索)
+#4 (✓ archived) ─→ #6 mock webhook (P2 可探索)
    ─→ ⏸ #8 audit (Phase 6 凍結)
 
 #1A ─→ Phase 5 多人協作真實化（#1 已 archive；不依賴 #2A，可在 Tier A 起探索）
@@ -1137,17 +1178,18 @@ B → C 觸發：
    - 對 `bim-review-coordinator` 與 `web-viewer-sample` 重跑 `npm ci`，確認 `tsx.cmd` / `vite.cmd` 存在。
    - 以 `.\scripts\start-all.ps1 -SkipStreaming` 驗 8001 / 8005 / 8004 / 5173；這一步通過後，才把後續 OpenSpec / runtime evidence 的失敗視為功能或 spec 問題。
 
-2. **確認 #1 與 #3/#3A archive 對齊已完成，後續不再重開已完成 change**：
+2. **確認 #1、#3/#3A 與 canonical batch archive 對齊已完成，後續不再重開已完成 change**：
    - `#1 worker-real-conversion-quality` 已歸檔到 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/`。
    - 現行 specs 已同步到 `worker-artifact-pipeline` 與 `runtime-verification-evidence`。
    - `#3/#3A worker-mapping-lineage-quality-baseline` 已歸檔到 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/`，並同步到 `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`。
-   - 後續若要提升品質，不重開 #1 / #3 / #3A；改以 canonical storage batch completion 或 issue highlight evidence 作為下一個更小切片。
+   - `worker-canonical-storage-batch-baseline` 已依使用者明確指示歸檔到 `openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/`，但 runtime evidence 仍 blocked at `source_entity_enumeration`，baseline 未鎖定。
+   - 後續若要提升品質，不重開 #1 / #3 / #3A / canonical batch archive；改以 source entity enumeration optimization、canonical storage batch completion 或 issue highlight evidence 作為更小切片。
 
-3. **下一個 worker 品質工作：執行 `worker-canonical-storage-batch-baseline`**：
+3. **下一個 worker 品質工作：執行 `optimize-worker-source-entity-enumeration`**：
    - 使用 `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 作為正式本機 fixture root。
-   - 此 work 已落成 active OpenSpec change：`openspec/changes/worker-canonical-storage-batch-baseline/`。
+   - 此 work 已落成 active OpenSpec change：`openspec/changes/optimize-worker-source-entity-enumeration/`。
    - 目前 helper 已能回報 `timed_out`、source artifact / artifact group / conversion job IDs 與 last-known converter phase；最新 evidence 指向 `source_entity_enumeration` 在 canonical 89MB fixture 上仍無法於 timeout 內完成。
-   - 下一步先解決或分段量測 89MB fixture `_source_entities(model)` / all-entity enumeration 的 runtime / performance 問題，再重跑 `--limit 1 --timeout-seconds 600`。
+   - 下一步先 profile 並 optimize 89MB fixture `_source_entities(model)` / all-entity enumeration 的 runtime / performance 問題，再重跑 `--limit 1 --timeout-seconds 600`。
    - 單檔 real conversion 通過後，先用既有 `web-viewer-sample` / `bim-review-coordinator` / `bim-streaming-server` flow 載入該 worker-hosted `model.usdc`，留下 screenshot 或等效 visual proof；若 Kit/GPU/browser 不可用，記錄 blocked，不宣稱 web UI 已檢視成果。
    - 只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 `minimum_coverage_locked=true` production baseline 寫入 evidence。
 
@@ -1157,10 +1199,11 @@ B → C 觸發：
    - 重啟驗證通過後，才更新 §1.3 / §2 Phase 3 / §9.2 與 `runtime-verification-evidence` §6.4 evidence。
    - **MCP 補強**：驗證前用 `kit-mcp` `get_kit_extension_details("omni.kit.livestream.webrtc")` 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。
 
-5. **下一個 P1 OpenSpec 候選以 `#4 coordinator-session-lifecycle-events-audit` 為主**：
+5. **完成並歸檔 P1 OpenSpec change `#4 coordinator-session-lifecycle-events-audit`**：
    - #3 / #3A 已完成並歸檔，不再列為候選池。
-   - 若要支撐後續 webhook / observability，選 `#4`：把 lifecycle events 收斂成 append-only event schema。
-   - 若要先補 worker evidence，優先完成 active change `worker-canonical-storage-batch-baseline`，不要跳過這個 readiness gate。
+   - `#4` 已歸檔到 `openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/`，並同步到 `review-session-request-lifecycle`。
+   - lifecycle events 已收斂成 append-only event schema，支撐後續 #6 mock webhook / observability 探索。
+   - 若要先補 worker evidence，優先完成 active change `optimize-worker-source-entity-enumeration`，不要跳過 canonical batch readiness gate。
 
 6. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
    - 在啟動前，先依 §13 的決策框架評估「**自建 vs 採用 NVIDIA**」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。

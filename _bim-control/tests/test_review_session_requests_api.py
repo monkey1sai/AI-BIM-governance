@@ -184,7 +184,12 @@ def test_review_session_request_patch_saves_session_binding_and_lifecycle_event(
 
     events = client.get(f"/api/review-session-requests/{created['review_request_id']}/lifecycle-events")
     assert events.status_code == 200
-    assert [item["type"] for item in events.json()["items"]] == ["reviewRequestCreated", "sessionBound"]
+    items = events.json()["items"]
+    assert [item["type"] for item in items] == ["reviewRequestCreated", "sessionBound"]
+    assert [item["review_request_id"] for item in items] == [created["review_request_id"], created["review_request_id"]]
+    assert items[0]["session_id"] is None
+    assert items[1]["session_id"] == "review_session_test_001"
+    assert items[1]["correlation_id"] == created["review_request_id"]
 
 
 # ---------------------------------------------------------------------------
