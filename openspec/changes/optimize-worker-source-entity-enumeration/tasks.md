@@ -32,7 +32,7 @@
 - [x] 5.1 執行 focused `_worker` tests：converter、batch verification、store quality metrics 與 API/UI regression。（2026-05-13：修正本機 user-site Starlette drift 後，API regression `38 passed, 1 skipped`；converter/batch/store `67 passed`。）
 - [x] 5.2 執行 `openspec validate optimize-worker-source-entity-enumeration --strict`。
 - [x] 5.3 使用 `WORKER_DEV_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage` 重跑 canonical `python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600`。
-- [ ] 5.4 若 single-fixture conversion succeeds，記錄 `conversion_job_id`、`artifact_group_id`、derived USDC artifact ID/URL、mapping artifact ID/URL、readiness state 與 `source_entity_enumeration` timing。
+- [x] 5.4 若 single-fixture conversion succeeds，記錄 `conversion_job_id`、`artifact_group_id`、derived USDC artifact ID/URL、mapping artifact ID/URL、readiness state 與 `source_entity_enumeration` timing。**N/A**：2026-05-13 canonical run 已進入 `non_renderable_entity_materialization` 並 timeout（見 5.5），single-fixture USDC 未產出，無 success IDs 可填；後續由 new change `optimize-worker-non-renderable-materialization` 接續。
 - [x] 5.5 若 single-fixture conversion 仍 timeout / failed，記錄 exact phase、diagnostics、elapsed duration、owned/external blocker 判定，並維持 `minimum_coverage_locked=false`。
 
 ## 6. Evidence 與 Roadmap 對齊
