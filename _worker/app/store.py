@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+from time import perf_counter
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -44,6 +45,13 @@ def read_json(path: Path, default: Any) -> Any:
     if not path.is_file():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def completed_phase_timing(duration_seconds: float) -> dict[str, Any]:
+    return {
+        "status": "completed",
+        "duration_seconds": duration_seconds,
+    }
 
 
 class WorkerStore:
@@ -191,10 +199,12 @@ class WorkerStore:
         converter_output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
+            converter_job = dict(job)
+            converter_job["phase_progress_path"] = str(Path(self.settings.jobs_dir) / f"{conversion_job_id}.phase.json")
             adapter_result = self.converter.convert(
                 source_path=Path(self.settings.objects_root) / source["object_key"],
                 output_dir=converter_output_dir,
-                job=job,
+                job=converter_job,
                 generate_mapping=job["generate_mapping"],
             )
             self._assert_adapter_result(adapter_result, converter_output_dir, job["generate_mapping"])
@@ -221,6 +231,7 @@ class WorkerStore:
                 stage="conversion_failed",
             )
 
+        publish_started = perf_counter()
         now = utc_now()
         usdc_artifact_id = f"artifact_usdc_{conversion_job_id.removeprefix('conv_')}"
         quality_metrics = self._normalize_quality_metrics(adapter_result.quality_metrics)
@@ -247,6 +258,9 @@ class WorkerStore:
         write_json(root_path / "metadata.json", metadata)
 
         mapping_url = self.object_url((derived_root / "element_mapping.json").as_posix()) if job["generate_mapping"] else None
+        phase_timings = dict(quality_metrics.get("phase_timings") or {})
+        phase_timings["artifact_publish"] = completed_phase_timing(perf_counter() - publish_started)
+        quality_metrics["phase_timings"] = phase_timings
         result = {
             "conversion_job_id": conversion_job_id,
             "job_id": conversion_job_id,

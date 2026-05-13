@@ -41,6 +41,16 @@ class ConversionAdapter(Protocol):
 
 
 PRIM_NAME_RE = re.compile(r"[^A-Za-z0-9_]+")
+CONVERSION_PHASES = (
+    "conversion_total",
+    "ifc_open",
+    "source_entity_enumeration",
+    "geometry_iteration",
+    "mesh_authoring",
+    "non_renderable_entity_materialization",
+    "stage_save",
+    "stage_reopen",
+)
 
 
 def _safe_prim_name(value: str) -> str:
@@ -96,6 +106,54 @@ def _package_version(name: str) -> str | None:
         return None
 
 
+def _new_phase_timings() -> dict[str, dict[str, Any]]:
+    return {
+        phase: {
+            "status": "not_reached",
+            "duration_seconds": None,
+            "diagnostic": "phase_not_reached",
+        }
+        for phase in CONVERSION_PHASES
+    }
+
+
+def _mark_phase_completed(phase_timings: dict[str, dict[str, Any]], phase: str, duration_seconds: float) -> None:
+    phase_timings[phase] = {
+        "status": "completed",
+        "duration_seconds": duration_seconds,
+    }
+
+
+def _mark_phase_unavailable(phase_timings: dict[str, dict[str, Any]], phase: str, diagnostic: str) -> None:
+    phase_timings[phase] = {
+        "status": "unavailable",
+        "duration_seconds": None,
+        "diagnostic": diagnostic,
+    }
+
+
+def _record_phase_progress(
+    job: Mapping[str, Any],
+    phase: str,
+    phase_timings: dict[str, dict[str, Any]],
+    *,
+    status: str = "running",
+) -> None:
+    progress_path = job.get("phase_progress_path")
+    if not progress_path:
+        return
+    _write_json(
+        Path(str(progress_path)),
+        {
+            "conversion_job_id": job.get("conversion_job_id"),
+            "source_artifact_id": job.get("source_artifact_id"),
+            "current_phase": phase,
+            "status": status,
+            "phase_timings": phase_timings,
+        },
+    )
+
+
 class IfcOpenShellUsdConverter:
     name = "ifcopenshell-openusd"
 
@@ -123,19 +181,28 @@ class IfcOpenShellUsdConverter:
         if not source_path.is_file():
             raise ConversionAdapterError(f"Source IFC object is missing: {source_path}")
 
+        conversion_started = perf_counter()
+        phase_timings = _new_phase_timings()
         output_dir.mkdir(parents=True, exist_ok=True)
         model_path = output_dir / "model.usdc"
         ifc_index_path = output_dir / "ifc_index.json"
         usd_index_path = output_dir / "usd_index.json"
         mapping_path = output_dir / "element_mapping.json" if generate_mapping else None
 
-        started = perf_counter()
+        phase_started = perf_counter()
+        _record_phase_progress(job, "ifc_open", phase_timings)
         try:
             model = ifcopenshell.open(str(source_path))
         except Exception as exc:
             raise ConversionAdapterError(f"IfcOpenShell could not open source IFC: {exc}") from exc
+        _mark_phase_completed(phase_timings, "ifc_open", perf_counter() - phase_started)
+        _record_phase_progress(job, "ifc_open", phase_timings, status="completed")
 
+        phase_started = perf_counter()
+        _record_phase_progress(job, "source_entity_enumeration", phase_timings)
         source_entities = self._source_entities(model)
+        _mark_phase_completed(phase_timings, "source_entity_enumeration", perf_counter() - phase_started)
+        _record_phase_progress(job, "source_entity_enumeration", phase_timings, status="completed")
         source_by_key = {item["ifc_entity_key"]: item for item in source_entities}
         source_by_guid = {item["ifc_guid"]: item for item in source_entities if item.get("ifc_guid")}
 
@@ -163,7 +230,10 @@ class IfcOpenShellUsdConverter:
         vertex_count = 0
         face_count = 0
         keep_going = True
+        mesh_authoring_seconds = 0.0
 
+        phase_started = perf_counter()
+        _record_phase_progress(job, "geometry_iteration", phase_timings)
         while keep_going:
             shape = iterator.get()
             geometry = shape.geometry
@@ -181,6 +251,7 @@ class IfcOpenShellUsdConverter:
                 continue
 
             prim_path = self._unique_prim_path(ifc_class, diagnostic_id, used_paths)
+            mesh_started = perf_counter()
             mesh = UsdGeom.Mesh.Define(stage, prim_path)
             points = [(vertices[i], vertices[i + 1], vertices[i + 2]) for i in range(0, len(vertices), 3)]
             triangle_count = len(faces) // 3
@@ -192,6 +263,7 @@ class IfcOpenShellUsdConverter:
             else:
                 mesh.GetPrim().CreateAttribute("worker:diagnostic_id", Sdf.ValueTypeNames.String).Set(diagnostic_id)
             mesh.GetPrim().CreateAttribute("ifc:type", Sdf.ValueTypeNames.String).Set(ifc_class)
+            mesh_authoring_seconds += perf_counter() - mesh_started
 
             converted_shapes += 1
             vertex_count += len(points)
@@ -241,7 +313,15 @@ class IfcOpenShellUsdConverter:
             )
             mapping["usd_prim_paths"].append(prim_path)
             keep_going = iterator.next()
+        _mark_phase_completed(phase_timings, "geometry_iteration", perf_counter() - phase_started)
+        if mesh_authoring_seconds > 0:
+            _mark_phase_completed(phase_timings, "mesh_authoring", mesh_authoring_seconds)
+        else:
+            _mark_phase_unavailable(phase_timings, "mesh_authoring", "no_renderable_mesh_authored")
+        _record_phase_progress(job, "geometry_iteration", phase_timings, status="completed")
 
+        phase_started = perf_counter()
+        _record_phase_progress(job, "non_renderable_entity_materialization", phase_timings)
         self._materialize_unmapped_entities(
             UsdGeom=UsdGeom,
             Sdf=Sdf,
@@ -251,11 +331,25 @@ class IfcOpenShellUsdConverter:
             prim_rows=prim_rows,
             used_paths=used_paths,
         )
+        _mark_phase_completed(
+            phase_timings,
+            "non_renderable_entity_materialization",
+            perf_counter() - phase_started,
+        )
+        _record_phase_progress(job, "non_renderable_entity_materialization", phase_timings, status="completed")
+        phase_started = perf_counter()
+        _record_phase_progress(job, "stage_save", phase_timings)
         stage.GetRootLayer().Save()
+        _mark_phase_completed(phase_timings, "stage_save", perf_counter() - phase_started)
+        _record_phase_progress(job, "stage_save", phase_timings, status="completed")
+        phase_started = perf_counter()
+        _record_phase_progress(job, "stage_reopen", phase_timings)
         opened_stage = Usd.Stage.Open(str(model_path))
         if opened_stage is None:
             raise ConversionAdapterError("OpenUSD could not reopen generated model.usdc.")
         usd_prim_count = sum(1 for _ in opened_stage.Traverse())
+        _mark_phase_completed(phase_timings, "stage_reopen", perf_counter() - phase_started)
+        _record_phase_progress(job, "stage_reopen", phase_timings, status="completed")
         if converted_shapes <= 0:
             raise ConversionAdapterError("Generated model.usdc has no renderable mesh prims.")
 
@@ -276,7 +370,9 @@ class IfcOpenShellUsdConverter:
         unmapped_ifc_guids = [item["ifc_guid"] for item in unmapped_ifc_entities if item.get("ifc_guid")]
         unmapped_usd_count = len(unmapped_usd_prims)
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
-        duration_seconds = perf_counter() - started
+        duration_seconds = perf_counter() - conversion_started
+        _mark_phase_completed(phase_timings, "conversion_total", duration_seconds)
+        _record_phase_progress(job, "conversion_total", phase_timings, status="completed")
 
         ifc_index = {
             "source_artifact_id": job["source_artifact_id"],
@@ -379,6 +475,7 @@ class IfcOpenShellUsdConverter:
             "skipped_shape_count": skipped_shapes,
             "vertex_count": vertex_count,
             "face_count": face_count,
+            "phase_timings": phase_timings,
         }
         return ConversionAdapterResult(
             model_path=model_path,

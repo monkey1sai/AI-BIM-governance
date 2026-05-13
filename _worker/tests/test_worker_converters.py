@@ -237,6 +237,15 @@ def test_ifcopenshell_converter_does_not_count_missing_or_unknown_guids_as_mappi
     assert result.quality_metrics["unmapped_count"] == 0
     assert result.quality_metrics["unmapped_usd_count"] == 2
     assert result.quality_metrics["coverage_ratio"] == 1.0
+    phase_timings = result.quality_metrics["phase_timings"]
+    assert phase_timings["ifc_open"]["status"] == "completed"
+    assert phase_timings["source_entity_enumeration"]["status"] == "completed"
+    assert phase_timings["geometry_iteration"]["status"] == "completed"
+    assert phase_timings["mesh_authoring"]["status"] == "completed"
+    assert phase_timings["non_renderable_entity_materialization"]["status"] == "completed"
+    assert phase_timings["stage_save"]["status"] == "completed"
+    assert phase_timings["stage_reopen"]["status"] == "completed"
+    assert phase_timings["conversion_total"]["duration_seconds"] >= 0
 
 
 def test_ifcopenshell_converter_rejects_metadata_only_usd(monkeypatch, tmp_path: Path):

@@ -302,9 +302,12 @@ def render_worker_ui() -> HTMLResponse:
           <dt>readiness</dt><dd id="readiness">—</dd>
           <dt>coverage</dt><dd id="coverageRatio">—</dd>
           <dt>lineage</dt><dd id="lineageSummary">—</dd>
+          <dt>USDC</dt><dd id="usdcUrl">—</dd>
+          <dt>handoff</dt><dd id="reviewHandoff">—</dd>
         </dl>
         <div class="demo-actions">
           <a id="nextStep" class="demo-btn" href="http://127.0.0.1:8004" aria-disabled="true">前往建立會議</a>
+          <a id="reviewPreview" class="demo-btn demo-btn--secondary" href="http://127.0.0.1:8004" aria-disabled="true">開啟 USDC Review</a>
         </div>
       </aside>
     </div>
@@ -341,10 +344,13 @@ def render_worker_ui() -> HTMLResponse:
     const readinessEl = document.getElementById("readiness");
     const coverageRatioEl = document.getElementById("coverageRatio");
     const lineageSummaryEl = document.getElementById("lineageSummary");
+    const usdcUrlEl = document.getElementById("usdcUrl");
+    const reviewHandoffEl = document.getElementById("reviewHandoff");
     const lineageStatus = document.getElementById("lineageStatus");
     const lineageNodes = document.getElementById("lineageNodes");
     const lineageDiagnostics = document.getElementById("lineageDiagnostics");
     const nextStep = document.getElementById("nextStep");
+    const reviewPreview = document.getElementById("reviewPreview");
     let sources = [];
     let selected = null;
     let pollTimer = null;
@@ -458,6 +464,7 @@ def render_worker_ui() -> HTMLResponse:
         log(result);
         setStatus(jobStatus, result.status === "succeeded" ? "ok" : "warn", result.status || "running");
         if (result.status === "succeeded") {
+          configureReviewHandoff(result, artifactGroupId);
           await loadLineage(result.usdc_artifact_id || result.source_artifact_id);
           await pollReadiness(artifactGroupId);
           return;
@@ -480,6 +487,28 @@ def render_worker_ui() -> HTMLResponse:
       if (readiness.ready_status === "ready") {
         nextStep.href = `http://127.0.0.1:8004?artifact_group_id=${encodeURIComponent(artifactGroupId)}&model_version_id=version_demo_001`;
         nextStep.setAttribute("aria-disabled", "false");
+      }
+    }
+
+    function configureReviewHandoff(result, artifactGroupId) {
+      const params = new URLSearchParams();
+      params.set("artifact_group_id", artifactGroupId || result.artifact_group_id || "");
+      params.set("model_version_id", result.model_version_id || "version_demo_001");
+      params.set("conversion_job_id", result.conversion_job_id || "");
+      params.set("source_artifact_id", result.source_artifact_id || "");
+      params.set("usdc_artifact_id", result.usdc_artifact_id || "");
+      params.set("usdc_url", result.usdc_url || "");
+      params.set("mapping_url", result.mapping_url || "");
+      const derived = result.derived_artifact_ids || {};
+      if (derived.element_mapping) params.set("mapping_artifact_id", derived.element_mapping);
+      const target = `http://127.0.0.1:8004?${params.toString()}`;
+      usdcUrlEl.textContent = result.usdc_url || "—";
+      reviewHandoffEl.textContent = result.usdc_url ? "bim-review-coordinator" : "—";
+      if (result.usdc_url) {
+        nextStep.href = target;
+        nextStep.setAttribute("aria-disabled", "false");
+        reviewPreview.href = target;
+        reviewPreview.setAttribute("aria-disabled", "false");
       }
     }
 
