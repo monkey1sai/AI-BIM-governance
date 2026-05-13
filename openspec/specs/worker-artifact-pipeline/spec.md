@@ -258,6 +258,8 @@ Canonical baseline runs 也必須記錄 per-fixture phase timings 與 timeout di
 
 Batch summary status 必須區分 `blocked`、`partial`、`timed_out`、`failed`、`passed`。除非完整 required canonical fixture set 都完成 real conversion，且每個 fixture 都通過 USDC openability、truthful mapping、lineage API lookup 與 locked all-IFC-entity coverage criteria，`_worker` 不得設定 `minimum_coverage_locked=true`。
 
+`minimum_coverage_locked` 是 batch summary 頂層 aggregate flag，與每個 fixture `quality_metrics` 內的 `minimum_coverage_baseline_locked` 為兩個不同層級的 key：per-fixture `minimum_coverage_baseline_locked` 由 converter 設定並隨 conversion result 回傳；batch 層 `minimum_coverage_locked` 必須由 `_worker` 在所有 selected fixture 皆 `minimum_coverage_baseline_locked=true` 且 `coverage_status=pass` 時才匯總為 `true`。兩者不得互換使用，亦不得視為同一欄位的別名。
+
 Canonical batch implementation 必須先執行 canonical `--limit 1` single fixture。只有該 single-fixture run 產生完整 passing conversion evidence，或產生 deterministic blocker 記錄後，helper 才能嘗試 full 13-file batch。當 single-fixture run passed 時，result 必須提供 stable artifact IDs 與 object URLs，讓既有 review viewer flow 可載入產出的 `model.usdc`。
 
 #### Scenario: Storage IFC fixtures 批次轉檔

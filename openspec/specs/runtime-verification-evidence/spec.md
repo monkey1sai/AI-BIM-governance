@@ -172,6 +172,8 @@ Runtime verification evidence MUST 在宣稱 mapping coverage baseline locked �
 
 Canonical baseline evidence 必須包含 per-fixture duration、可取得時的 phase timings、converter identity、output file size、warnings 與 failure diagnostics。Evidence 必須將 overall batch 分類為 `blocked`、`partial`、`timed_out`、`failed` 或 `passed`。Dry-runs、subset runs、timeout runs，以及任何有 failed fixture-level quality checks 的 run，都不得標示 `minimum_coverage_locked=true`。
 
+`minimum_coverage_locked` 為 batch summary 頂層 aggregate flag，與 per-fixture `quality_metrics.minimum_coverage_baseline_locked`（見 `Real conversion evidence records quality metrics`）為兩個不同層級的 key，分別由 batch summary 與每個 conversion result 攜帶。Evidence MUST 各自記錄兩者，且不得以其中之一覆寫或替代另一者。
+
 在執行 full 13-file canonical batch 前，evidence 必須先包含針對 canonical fixture root 的 completed real `--limit 1` run。若該 single-fixture run timeout 或 failed，evidence 必須記錄 bottleneck diagnostics 並維持 production mapping baseline unlocked。若該 single-fixture run succeeded，evidence 接著必須包含透過既有 review viewer flow 的 passed visual preview，或清楚分類的 visual-preview blocker，full batch evidence 才能被視為已具備人工檢視前置結果。
 
 #### Scenario: Full storage fixture batch passes
