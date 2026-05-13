@@ -872,9 +872,9 @@ wiki（Graphify）
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-BIM-governance**. Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-BIM-governance** (4178 symbols, 8563 relationships, 252 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `gitnexus analyze --embeddings --skills` in terminal first. After a commit that only needs local index refresh, prefer `gitnexus analyze --embeddings --skills --skip-agents-md` to avoid rewriting this tracked section.
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
 ## Always Do
 
@@ -902,9 +902,13 @@ This project is indexed by GitNexus as **AI-BIM-governance**. Use the GitNexus M
 
 ## CLI
 
-- `gitnexus status` checks whether the local index matches `HEAD`.
-- `gitnexus analyze --embeddings --skills` rebuilds the graph, embeddings, and local generated skills.
-- `gitnexus analyze --embeddings --skills --skip-agents-md` refreshes the local index without changing tracked AGENTS / CLAUDE sections.
-- Generated skill files under `.claude/skills/` are local analysis artifacts and must stay ignored.
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
