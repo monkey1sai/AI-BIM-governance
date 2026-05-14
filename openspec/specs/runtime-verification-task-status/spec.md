@@ -119,4 +119,3 @@ Demo observation checklist SHALL 區分 evidence gathering 與 implementation fi
 
 - **WHEN** 所有 in-scope demo tiers 都已通過，或已具備明確 blocker/deferred classifications
 - **THEN** observation change 可以只用 documentation 與 evidence updates 完成
-

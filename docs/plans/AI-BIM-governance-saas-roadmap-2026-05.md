@@ -1257,11 +1257,10 @@ B → C 觸發：
    - `worker-canonical-storage-batch-baseline` 已依使用者明確指示歸檔到 `openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/`，但 runtime evidence 仍 blocked at `source_entity_enumeration`，baseline 未鎖定。
    - 後續若要提升品質，不重開 #1 / #3 / #3A / canonical batch archive；改以 source entity enumeration optimization、canonical storage batch completion 或 issue highlight evidence 作為更小切片。
 
-3. **下一個 worker 品質工作：執行 `optimize-worker-source-entity-enumeration`**：
+3. **下一個 worker 品質工作：full 13-file canonical batch + secondary enumeration burn-down**：
    - 使用 `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 作為正式本機 fixture root。
-   - 此 work 已落成 active OpenSpec change：`openspec/changes/optimize-worker-source-entity-enumeration/`。
-   - 目前 helper 已能回報 `timed_out`、source artifact / artifact group / conversion job IDs 與 last-known converter phase；最新 evidence 指向 `source_entity_enumeration` 在 canonical 89MB fixture 上仍無法於 timeout 內完成。
-   - 下一步先 profile 並 optimize 89MB fixture `_source_entities(model)` / all-entity enumeration 的 runtime / performance 問題，再重跑 `--limit 1 --timeout-seconds 600`。
+   - 前一個 burn-down `optimize-worker-source-entity-enumeration` 已歸檔（enumeration ~33s 收斂），其下游 blocker `non_renderable_entity_materialization` 也已由 `optimize-worker-non-renderable-materialization`（sidecar carrier，74× faster）完成 canonical single-fixture 級驗證，但尚未 archive。
+   - 下一個 OpenSpec change 候選為「在 sidecar carrier 條件下跑 full 13-file canonical batch」，量化 stage_reopen / mapping_quality_failed 機率、解 `unmapped_count=2`（geometry shape 缺 GUID）case，並把 secondary `guid_extraction` (~10.6s) / `name_extraction` (~10.0s) 優化獨立為 follow-up；見 §5.2 「Next worker risk burn-down」。
    - 單檔 real conversion 通過後，先用既有 `web-viewer-sample` / `bim-review-coordinator` / `bim-streaming-server` flow 載入該 worker-hosted `model.usdc`，留下 screenshot 或等效 visual proof；若 Kit/GPU/browser 不可用，記錄 blocked，不宣稱 web UI 已檢視成果。
    - 只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 `minimum_coverage_locked=true` production baseline 寫入 evidence。
 
@@ -1275,7 +1274,7 @@ B → C 觸發：
    - #3 / #3A 已完成並歸檔，不再列為候選池。
    - `#4` 已歸檔到 `openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/`，並同步到 `review-session-request-lifecycle`。
    - lifecycle events 已收斂成 append-only event schema，支撐後續 #6 mock webhook / observability 探索。
-   - 若要先補 worker evidence，優先完成 active change `optimize-worker-source-entity-enumeration`，不要跳過 canonical batch readiness gate。
+   - 若要先補 worker evidence，優先完成上方第 3 點的 full 13-file canonical batch + secondary enumeration burn-down，不要跳過 canonical batch readiness gate；demo runtime readiness 改由 active change `stabilize-demo-runtime-readiness` 接手。
 
 6. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
    - 在啟動前，先依 §13 的決策框架評估「**自建 vs 採用 NVIDIA**」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。
