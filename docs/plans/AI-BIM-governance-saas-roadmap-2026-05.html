@@ -1794,7 +1794,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="active-observation-demo-current-runtime-observation">Active observation：<code>demo-current-runtime-observation</code></h4>
+<h4 id="completed-observation-demo-current-runtime-observation">Completed observation：<code>demo-current-runtime-observation</code></h4>
 <table>
 <thead>
 <tr>
@@ -1805,18 +1805,18 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tbody>
 <tr>
 <td><strong>狀態</strong></td>
-<td>Active OpenSpec observation change；本次 current pass 已產出 verification report</td>
+<td>✓ Archived：<code>openspec/changes/archive/2026-05-14-demo-current-runtime-observation/</code>；current pass evidence 已歸檔，主 specs 已同步</td>
 </tr>
 <tr>
 <td><strong>報告</strong></td>
 <td><code>docs/verification/2026-05-13-demo-current-runtime-observation.md</code></td>
 </tr>
 <tr>
-<td><strong>目前 live pass</strong></td>
+<td><strong>本輪 live pass</strong></td>
 <td>非 Kit service health、focused tests/builds、Socket.IO collaboration、coordinator lifecycle close/release、non-GPU DataChannel contract</td>
 </tr>
 <tr>
-<td><strong>目前 failed / blocked</strong></td>
+<td><strong>本輪 failed / blocked</strong></td>
 <td>worker dev-source root 無 IFC fixture；<code>smoke-review-session.ps1</code> inline IFC 無法 parse；Kit streaming launcher missing；Browser automation policy block；single Kit/WebRTC 沒有 live evidence</td>
 </tr>
 <tr>
@@ -1824,8 +1824,8 @@ A：可以，但**不是把 #2 spec 換掉**：
 <td>不得把 API-only pass 當成 worker real conversion pass；不得把 historical browser screenshot 當成本次 current pass；不得把 dedicated multi-Kit runtime 標 passed</td>
 </tr>
 <tr>
-<td><strong>下一步</strong></td>
-<td>補 current worktree IFC fixture 或明確設定 <code>WORKER_DEV_STORAGE_ROOT</code>，修正 smoke IFC payload，build <code>bim-streaming-server</code>，再重跑 browser/Kit evidence</td>
+<td><strong>承接 change</strong></td>
+<td><code>stabilize-demo-runtime-readiness</code>（解 worker fixture root / smoke inline IFC / Kit launcher / browser policy / single-Kit live evidence 等 blocker）</td>
 </tr>
 </tbody>
 </table>

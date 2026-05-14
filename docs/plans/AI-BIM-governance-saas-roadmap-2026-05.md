@@ -668,16 +668,16 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **不可做** | 不得把 denominator 改成 geometry-only、`IfcProduct`-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 `_worker` ownership |
 | **KPI** | 1) 13-file batch 通過 / 不通過比例可重現；2) 若 pass 即可考慮 `minimum_coverage_locked=true` 候選 |
 
-#### Active observation：`demo-current-runtime-observation`
+#### Completed observation：`demo-current-runtime-observation`
 
 | 項目 | 內容 |
 |---|---|
-| **狀態** | Active OpenSpec observation change；本次 current pass 已產出 verification report |
+| **狀態** | ✓ Archived：`openspec/changes/archive/2026-05-14-demo-current-runtime-observation/`；current pass evidence 已歸檔，主 specs 已同步 |
 | **報告** | `docs/verification/2026-05-13-demo-current-runtime-observation.md` |
-| **目前 live pass** | 非 Kit service health、focused tests/builds、Socket.IO collaboration、coordinator lifecycle close/release、non-GPU DataChannel contract |
-| **目前 failed / blocked** | worker dev-source root 無 IFC fixture；`smoke-review-session.ps1` inline IFC 無法 parse；Kit streaming launcher missing；Browser automation policy block；single Kit/WebRTC 沒有 live evidence |
+| **本輪 live pass** | 非 Kit service health、focused tests/builds、Socket.IO collaboration、coordinator lifecycle close/release、non-GPU DataChannel contract |
+| **本輪 failed / blocked** | worker dev-source root 無 IFC fixture；`smoke-review-session.ps1` inline IFC 無法 parse；Kit streaming launcher missing；Browser automation policy block；single Kit/WebRTC 沒有 live evidence |
 | **不得宣稱** | 不得把 API-only pass 當成 worker real conversion pass；不得把 historical browser screenshot 當成本次 current pass；不得把 dedicated multi-Kit runtime 標 passed |
-| **下一步** | 補 current worktree IFC fixture 或明確設定 `WORKER_DEV_STORAGE_ROOT`，修正 smoke IFC payload，build `bim-streaming-server`，再重跑 browser/Kit evidence |
+| **承接 change** | `stabilize-demo-runtime-readiness`（解 worker fixture root / smoke inline IFC / Kit launcher / browser policy / single-Kit live evidence 等 blocker） |
 
 #### Completed #4：`coordinator-session-lifecycle-events-audit`
 
