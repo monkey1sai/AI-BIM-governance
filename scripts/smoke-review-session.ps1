@@ -162,9 +162,18 @@ if ($fixtureSummary.fixture_count -gt 0) {
 $session = $null
 $streamConfig = $null
 try {
-    $artifactBindings = @()
+    $sessionPayload = @{
+        project_id       = $ProjectId
+        model_version_id = $ModelVersionId
+        created_by       = $UserId
+        mode             = 'single_kit_shared_state'
+        options          = @{ auto_allocate_kit = $true }
+    }
     if ($workerArtifactId -and $artifactGroupId -and $workerUsdcUrl) {
-        $artifactBindings = @(@{
+        # Coordinator's zod schema accepts `.default([])` when the key is absent; supplying an
+        # empty array can serialise to `null` on PowerShell 5.1, which fails validation. So only
+        # set the key when we actually have a derived binding to forward.
+        $sessionPayload.artifact_bindings = @(@{
             artifact_group_id  = $artifactGroupId
             model_version_id   = $ModelVersionId
             artifact_id        = $workerArtifactId
@@ -175,14 +184,7 @@ try {
             ready_status       = 'ready'
         })
     }
-    $sessionBody = @{
-        project_id         = $ProjectId
-        model_version_id   = $ModelVersionId
-        created_by         = $UserId
-        mode               = 'single_kit_shared_state'
-        artifact_bindings  = $artifactBindings
-        options            = @{ auto_allocate_kit = $true }
-    } | ConvertTo-Json -Depth 20
+    $sessionBody = $sessionPayload | ConvertTo-Json -Depth 20
 
     $session = Invoke-RestMethod `
         -Method Post `
