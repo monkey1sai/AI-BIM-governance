@@ -332,7 +332,8 @@ class LoadingManager:
 
     def _resolve_stage_request(self, payload):
         request = self._payload_dict(payload)
-        if request.get("url"):
+        stage_composition = self._payload_dict(request.get("stage_composition"))
+        if request.get("url") and not stage_composition:
             return request["url"], {
                 "applied_mode": "legacy_single_url",
                 "applied_primary": {
@@ -345,7 +346,6 @@ class LoadingManager:
                 "fallback_paths": [],
             }
 
-        stage_composition = self._payload_dict(request.get("stage_composition"))
         if stage_composition:
             raw_primary = stage_composition.get("primary")
             if isinstance(raw_primary, (list, tuple)):

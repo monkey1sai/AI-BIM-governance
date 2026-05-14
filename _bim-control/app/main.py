@@ -333,6 +333,44 @@ def _rvt_event_response(
     }
 
 
+def _nested_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_conversion_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    result = _nested_dict(payload.get("result"))
+    if payload.get("event_type") != "streaming_conversion_result" or not result:
+        return dict(payload)
+
+    artifacts = _nested_dict(result.get("artifacts"))
+    model_artifact = _nested_dict(artifacts.get("model_usdc"))
+    mapping_artifact = _nested_dict(artifacts.get("element_mapping"))
+    model = _nested_dict(result.get("model"))
+    lineage = _nested_dict(result.get("lineage"))
+    conversion_job_id = str(result.get("conversion_job_id") or payload.get("conversion_job_id") or "")
+    normalized = {
+        **payload,
+        "status": result.get("status") or payload.get("status"),
+        "conversion_status": result.get("status") or payload.get("status"),
+        "conversion_authority": result.get("authority") or payload.get("authority"),
+        "conversion_job_id": conversion_job_id or payload.get("conversion_job_id"),
+        "job_id": conversion_job_id or payload.get("job_id"),
+        "tenant_id": result.get("tenant_id") or payload.get("tenant_id"),
+        "project_id": result.get("project_id") or payload.get("project_id"),
+        "model_version_id": result.get("model_version_id") or payload.get("model_version_id"),
+        "artifact_group_id": payload.get("artifact_group_id") or (f"ag_{conversion_job_id}" if conversion_job_id else None),
+        "source_artifact_id": result.get("ifc_artifact_id") or lineage.get("ifc_artifact_id"),
+        "usdc_artifact_id": model_artifact.get("artifact_id") or lineage.get("usdc_artifact_id"),
+        "mapping_artifact_id": mapping_artifact.get("artifact_id") or lineage.get("mapping_artifact_id"),
+        "usdc_url": model_artifact.get("url") or model.get("url") or payload.get("usdc_url"),
+        "mapping_url": mapping_artifact.get("url") or payload.get("mapping_url"),
+        "lineage": lineage,
+        "quality_metrics": result.get("quality_metrics"),
+        "streaming_conversion_result": result,
+    }
+    return {key: value for key, value in normalized.items() if value is not None}
+
+
 def _artifact_group_ready(group: dict[str, Any] | None) -> bool:
     if not group:
         return False
@@ -653,17 +691,28 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Artifact group not found.")
         return group
 
-    @app.post("/api/model-versions/{model_version_id}/conversion-result")
-    def store_conversion_result(model_version_id: str, payload: dict[str, Any]):
+    def _store_conversion_result_for_model(model_version_id: str, payload: dict[str, Any]):
         safe_model_version_id = _safe_id(model_version_id, "model_version_id")
-        stored = dict(payload)
+        stored = _normalize_conversion_result_payload(payload)
         stored["model_version_id"] = safe_model_version_id
-        stored["conversion_status"] = str(payload.get("status") or payload.get("conversion_status") or "unknown")
+        stored["conversion_status"] = str(stored.get("status") or stored.get("conversion_status") or "unknown")
         stored["updated_at"] = _now()
 
         _write_json(results_root / f"{safe_model_version_id}.json", stored)
         _update_artifacts_from_conversion(resolved_data_root, safe_model_version_id, stored)
         return stored
+
+    @app.post("/api/model-versions/{model_version_id}/conversion-result")
+    def store_conversion_result(model_version_id: str, payload: dict[str, Any]):
+        return _store_conversion_result_for_model(model_version_id, payload)
+
+    @app.post("/api/streaming-conversion-results")
+    def store_streaming_conversion_result(payload: dict[str, Any]):
+        result = _nested_dict(payload.get("result"))
+        model_version_id = str(payload.get("model_version_id") or result.get("model_version_id") or "")
+        if not model_version_id:
+            raise HTTPException(status_code=400, detail="Streaming conversion result is missing model_version_id.")
+        return _store_conversion_result_for_model(model_version_id, payload)
 
     @app.get("/api/model-versions/{model_version_id}/conversion-result")
     def get_conversion_result(model_version_id: str):
@@ -865,6 +914,12 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
                 "url": usdc_url,
                 "mapping_url": result.get("mapping_url"),
                 "status": "ready" if result.get("status") == "succeeded" else str(result.get("status") or "unknown"),
+                "conversion_authority": result.get("conversion_authority"),
+                "conversion_job_id": result.get("conversion_job_id") or result.get("job_id"),
+                "conversion_status": result.get("conversion_status") or result.get("status"),
+                "failure_code": result.get("failure_code"),
+                "diagnostic": result.get("diagnostic"),
+                "quality_metrics_summary": result.get("quality_metrics"),
                 "updated_at": updated_at,
             },
         )
@@ -877,6 +932,10 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
         "model_version_id": model_version_id,
         "status": "ready" if result.get("status") == "succeeded" else str(result.get("status") or "unknown"),
         "ready_status": "ready" if usdc_url and result.get("mapping_url") else "blocked_conversion",
+        "conversion_authority": result.get("conversion_authority"),
+        "conversion_job_id": result.get("conversion_job_id") or result.get("job_id"),
+        "conversion_status": result.get("conversion_status") or result.get("status"),
+        "quality_metrics_summary": result.get("quality_metrics"),
         "source": {
             "artifact_id": source_artifact_id,
             "format": "ifc",
@@ -890,6 +949,8 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
                 "format": "usdc",
                 "url": usdc_url,
                 "conversion_job_id": result.get("conversion_job_id") or result.get("job_id"),
+                "conversion_authority": result.get("conversion_authority"),
+                "conversion_status": result.get("conversion_status") or result.get("status"),
             }
         ]
         if usdc_url
