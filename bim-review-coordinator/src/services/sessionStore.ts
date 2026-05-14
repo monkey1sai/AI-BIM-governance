@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ArtifactBinding, KitInstance, KitInstanceBinding, ReviewParticipant, ReviewSession, SessionStatus } from "../types.js";
+import type {
+  ArtifactBinding,
+  ConversionQualityMetricsSummary,
+  KitInstance,
+  KitInstanceBinding,
+  ReviewParticipant,
+  ReviewSession,
+  SessionStatus,
+} from "../types.js";
 import { nowIso } from "../utils/time.js";
 
 const safeSessionIdPattern = /^review_session_[A-Za-z0-9_-]+$/;
@@ -18,6 +26,7 @@ export interface CreateSessionInput {
   kit_instance: KitInstance;
   artifact_bindings?: ArtifactBinding[];
   kit_instance_bindings?: KitInstanceBinding[];
+  quality_metrics_summary?: ConversionQualityMetricsSummary | null;
 }
 
 export class SessionStore {
@@ -45,6 +54,7 @@ export class SessionStore {
       artifact_bindings: input.artifact_bindings || [],
       kit_instance_bindings: kitInstanceBindings,
       participants: [],
+      quality_metrics_summary: input.quality_metrics_summary ?? null,
     };
     this.save(session);
     return session;

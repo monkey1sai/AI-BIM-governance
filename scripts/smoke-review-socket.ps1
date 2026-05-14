@@ -1,16 +1,37 @@
 [CmdletBinding()]
 param(
     [string] $CoordinatorUrl = "http://127.0.0.1:8004",
-    [int] $TimeoutSeconds = 15
+    [int] $TimeoutSeconds = 15,
+    [string] $EvidencePath = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot 'lib\smoke-evidence.ps1')
+
+$RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $SocketClientModule = Join-Path $RepoRoot "web-viewer-sample\node_modules\socket.io-client\build\cjs\index.js"
+if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
+    $EvidencePath = Join-Path $RepoRoot 'docs\verification\2026-05-14-stabilize-demo-runtime-readiness\smoke-review-socket-evidence.json'
+}
+
+$Record = New-SmokeEvidenceRecord -Command $MyInvocation.MyCommand.Path -Cwd (Get-Location).Path -Context @{
+    coordinator_url    = $CoordinatorUrl
+    socket_client_path = $SocketClientModule
+}
+
+function Save-Evidence {
+    Save-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
+    Write-SmokeTierSummary -Record $Record
+    Write-Host "[smoke] evidence: $EvidencePath"
+}
 
 if (-not (Test-Path -LiteralPath $SocketClientModule)) {
+    Add-SmokeTier -Record $Record -Tier 'socket_io_collaboration' -Status 'blocked' -Owner 'bim-review-coordinator' `
+        -Blocker "socket.io-client not found at $SocketClientModule" `
+        -NextCommand "Run 'npm install' in web-viewer-sample, then rerun this script"
+    Save-Evidence
     throw "socket.io-client not found at $SocketClientModule. Run npm install in web-viewer-sample first."
 }
 
@@ -169,4 +190,44 @@ function waitFor(socket, event, predicate = () => true) {
 });
 '@
 
-$script | node
+$nodeProcess = $null
+$nodeOutput = $null
+try {
+    $nodeOutput = $script | & node 2>&1
+    $exitCode = $LASTEXITCODE
+    $output = ($nodeOutput | Out-String).Trim()
+    if ($exitCode -eq 0) {
+        $sessionMatch = [regex]::Match($output, 'session=([A-Za-z0-9_]+)')
+        $sessionId = if ($sessionMatch.Success) { $sessionMatch.Groups[1].Value } else { $null }
+        Add-SmokeTier -Record $Record -Tier 'socket_io_collaboration' -Status 'passed' -Owner 'bim-review-coordinator' `
+            -Ids @{ session_id = $sessionId } `
+            -Detail @{
+                events_verified = @('joinSession', 'presenceUpdated', 'highlightRequest', 'selectionUpdate', 'annotationCreate', 'heartbeat')
+                note            = 'Socket.IO success MUST NOT be treated as WebRTC video, DataChannel stage load, or browser visual success.'
+            }
+    } else {
+        Add-SmokeTier -Record $Record -Tier 'socket_io_collaboration' -Status 'failed' -Owner 'bim-review-coordinator' `
+            -Blocker $output `
+            -NextCommand 'Inspect bim-review-coordinator Socket.IO handlers and rerun'
+        Save-Evidence
+        throw "Socket.IO smoke failed: $output"
+    }
+} catch {
+    if (-not ($Record.tiers | Where-Object { $_.tier -eq 'socket_io_collaboration' })) {
+        Add-SmokeTier -Record $Record -Tier 'socket_io_collaboration' -Status 'failed' -Owner 'bim-review-coordinator' `
+            -Blocker $_.Exception.Message
+    }
+    Save-Evidence
+    throw
+}
+
+# Explicit reminder tiers — Socket.IO success does NOT imply WebRTC or browser
+Add-SmokeTier -Record $Record -Tier 'kit_webrtc_readiness' -Status 'not_observed' -Owner 'bim-streaming-server' `
+    -Blocker 'This socket smoke does not probe WebRTC video, DataChannel stage load, or Kit signaling' `
+    -NextCommand 'Run scripts/smoke-review-session.ps1 or scripts/run-single-kit-demo.ps1 for Kit readiness evidence'
+
+Add-SmokeTier -Record $Record -Tier 'browser_visual_evidence' -Status 'not_observed' -Owner 'web-viewer-sample' `
+    -Blocker 'This socket smoke does not open the viewer or capture screenshots' `
+    -NextCommand 'Manually open http://127.0.0.1:5173 and capture viewport evidence for the relevant session'
+
+Save-Evidence

@@ -124,6 +124,40 @@ describe("bim-review-coordinator", () => {
     expect(config.body.lifecycle_status).toBe("active");
     expect(Array.isArray(config.body.artifact_bindings)).toBe(true);
     expect(Array.isArray(config.body.kit_instance_bindings)).toBe(true);
+    // Additive pass-through: when not provided, stream_config still exposes the field as null.
+    expect(config.body.quality_metrics_summary).toBeNull();
+  });
+
+  it("forwards additive quality_metrics_summary from session creation through stream-config", async () => {
+    const app = makeApp();
+    const summary = {
+      fixture_name: "fixture_demo.ifc",
+      conversion_job_id: "conv_test_summary_001",
+      artifact_group_id: "ag_test_summary",
+      source_ifc_entity_count: 1234,
+      sidecar_carrier_count: 7,
+      materialization_strategy: "sidecar",
+      coverage_ratio: 1.0,
+      coverage_status: "pass",
+      conversion_duration_seconds: 87.5,
+    };
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        quality_metrics_summary: summary,
+      });
+    expect(created.status).toBe(200);
+    expect(created.body.quality_metrics_summary).toEqual(summary);
+
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.quality_metrics_summary).toEqual(summary);
+    // Coordinator MUST NOT compute or rewrite values.
+    expect(config.body.quality_metrics_summary.coverage_ratio).toBe(1.0);
+    expect(config.body.quality_metrics_summary.materialization_strategy).toBe("sidecar");
   });
 
   it("stores provided artifact and Kit bindings on session creation", async () => {
