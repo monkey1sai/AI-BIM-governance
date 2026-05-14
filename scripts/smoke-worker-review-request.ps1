@@ -34,7 +34,7 @@ $Record = New-SmokeEvidenceRecord -Command $MyInvocation.MyCommand.Path -Cwd (Ge
 }
 
 function Save-Evidence {
-    Write-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
+    Save-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
     Write-SmokeTierSummary -Record $Record
     Write-Host "[smoke] evidence: $EvidencePath"
 }

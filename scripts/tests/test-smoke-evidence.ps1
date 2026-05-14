@@ -21,7 +21,8 @@ function Assert-True {
 
 function Get-TierByName {
     param($Tiers, [string] $Name)
-    return @($Tiers | Where-Object { $_.tier -eq $Name })[0]
+    # Avoid `@(...)[0]` — in strict mode + PowerShell 7 indexing an empty result throws.
+    return $Tiers | Where-Object { $_.tier -eq $Name } | Select-Object -First 1
 }
 
 # --- Test 1: Fixture-missing blocked classification, with separate tier emission ---
@@ -70,7 +71,7 @@ Add-SmokeTier -Record $record -Tier 'dedicated_multi_kit_routing' -Status 'defer
     -Detail @{ invariant = 'stream_config.kit_instance_bindings.length <= 1'; invariant_holds = $true } | Out-Null
 
 $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) "smoke-evidence-test-$([Guid]::NewGuid()).json"
-Write-SmokeEvidence -Record $record -Path $tempPath | Out-Null
+Save-SmokeEvidence -Record $record -Path $tempPath | Out-Null
 $loaded = Get-Content -LiteralPath $tempPath -Raw | ConvertFrom-Json
 Remove-Item -LiteralPath $tempPath -Force
 

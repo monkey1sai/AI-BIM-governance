@@ -34,7 +34,7 @@
 
 ## 變更摘要
 
-1. 新增 `scripts/lib/smoke-evidence.ps1` — 共用 PowerShell helper，提供 `New-SmokeEvidenceRecord`、`Add-SmokeTier`、`Write-SmokeEvidence`、`Resolve-WorkerDevStorageRoot`、`Get-WorkerDevFixtureSummary`、`Get-KitLauncherPreflight`、`Test-KitSignalingPortListening`，並把 `WORKER_DEV_STORAGE_ROOT` 預設值固定到 `C:\Repos\active\iot\AI-BIM-governance\storage`。
+1. 新增 `scripts/lib/smoke-evidence.ps1` — 共用 PowerShell helper，提供 `New-SmokeEvidenceRecord`、`Add-SmokeTier`、`Save-SmokeEvidence`、`Resolve-WorkerDevStorageRoot`、`Get-WorkerDevFixtureSummary`、`Get-KitLauncherPreflight`、`Test-KitSignalingPortListening`，並把 `WORKER_DEV_STORAGE_ROOT` 預設值固定到 `C:\Repos\active\iot\AI-BIM-governance\storage`。
 2. 重寫 `scripts/smoke-review-session.ps1`：移除 invalid inline IFC（曾觸發 IfcOpenShell parse failure），改用 dev IFC source / 或在 fixture 缺失時直接 `blocked`，並在 coordinator lifecycle 仍可獨立通過時保留 worker conversion / Kit / browser tier 為非 passed。
 3. 重寫 `scripts/smoke-worker-review-request.ps1`：保留原本的 dev source / conversion / review-request / coordinator session lifecycle / sessionBound 流程，但每段都產生獨立的 `worker_conversion`、`bim_control_review_request`、`coordinator_session_lifecycle`、`bim_control_review_request_active` 等 tier，並補上 Kit / browser / `single_kit_render` / `dedicated_multi_kit_routing` 的 explicit 分類。
 4. 重寫 `scripts/smoke-review-socket.ps1`：保留現有 Socket.IO 驗證腳本，但明確標記 `kit_webrtc_readiness=not_observed`、`browser_visual_evidence=not_observed`，避免 Socket.IO 通過被誤判為 WebRTC / 瀏覽器視覺成功。

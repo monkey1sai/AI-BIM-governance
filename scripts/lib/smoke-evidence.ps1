@@ -12,7 +12,7 @@
 #                 -Blocker 'no dev IFC fixture under WORKER_DEV_STORAGE_ROOT' `
 #                 -NextCommand 'Copy a real .ifc under storage/ then rerun' `
 #                 -Ids @{ dev_storage_root = $root }
-#   Write-SmokeEvidence -Record $record -Path $EvidencePath
+#   Save-SmokeEvidence -Record $record -Path $EvidencePath
 
 Set-StrictMode -Version Latest
 
@@ -146,7 +146,9 @@ function New-SmokeEvidenceRecord {
         context        = $contextOrdered
         tiers          = New-Object System.Collections.Generic.List[object]
     }
-    return $record
+    # Wrap in single-element array to prevent PowerShell from enumerating the OrderedDictionary
+    # (returning it bare unrolls to DictionaryEntry items in the caller's scope).
+    return ,$record
 }
 
 function Add-SmokeTier {
@@ -187,17 +189,23 @@ function Add-SmokeTier {
         detail         = $detailOrdered
     }
     [void]$Record.tiers.Add($entry)
-    return $entry
+    # Prevent OrderedDictionary enumeration on return.
+    return ,$entry
 }
 
-function Write-SmokeEvidence {
-    [CmdletBinding()]
+function Save-SmokeEvidence {
+    # NOTE: skip [Parameter(Mandatory)] here and use explicit null checks.
+    # Also avoid `Split-Path -LiteralPath -Parent` for the directory — under PowerShell 7's
+    # advanced binding it can raise "Parameter set cannot be resolved" when invoked inside
+    # a function with mixed-type params. .NET Path.GetDirectoryName is unambiguous.
     param(
-        [Parameter(Mandatory = $true)] $Record,
-        [Parameter(Mandatory = $true)][string] $Path
+        $Record,
+        [string] $Path
     )
+    if ($null -eq $Record) { throw 'Save-SmokeEvidence: -Record is required.' }
+    if ([string]::IsNullOrWhiteSpace($Path)) { throw 'Save-SmokeEvidence: -Path is required.' }
 
-    $directory = Split-Path -LiteralPath $Path -Parent
+    $directory = [System.IO.Path]::GetDirectoryName($Path)
     if ($directory -and -not (Test-Path -LiteralPath $directory)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }

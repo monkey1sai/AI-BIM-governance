@@ -54,7 +54,7 @@ function Test-Health {
             Write-Host "[health] $Name SKIPPED/UNAVAILABLE ($Url): $($_.Exception.Message)"
             return
         }
-        Write-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
+        Save-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
         Write-SmokeTierSummary -Record $Record
         throw
     }
@@ -118,7 +118,7 @@ if ($signalProbe.listening) {
         -Ids @{ signaling_endpoint = "$($signalProbe.host):$($signalProbe.port)" }
 }
 
-Write-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
+Save-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
 Write-SmokeTierSummary -Record $Record
 Write-Host "[health] evidence: $EvidencePath"
 Write-Host "[health] local development health check completed"
