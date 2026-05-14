@@ -20,9 +20,25 @@ failures.
   WebRTC readiness, and browser visual evidence.
 - Require Kit and browser blockers to be captured as evidence artifacts without
   claiming WebRTC, screenshot, or render success.
+- Drive a single-Kit happy-path that renders the optimized `model.usdc`
+  produced by the completed `optimize-worker-non-renderable-materialization`
+  change in `web-viewer-sample`, with Kit launched in skip-auto-load mode and
+  the viewer issuing `openStageRequest` via DataChannel.
+- Provide an orchestration helper that bootstraps worker preflight, resolves
+  `WORKER_DEV_STORAGE_ROOT` (defaulting to
+  `C:\Repos\active\iot\AI-BIM-governance\storage`), triggers the canonical
+  fixture conversion when its `model.usdc` is not already available, builds a
+  review session, and prints the viewer URL plus a Kit preflight summary;
+  final Kit launch and visual confirmation remain manual.
+- Surface a conversion summary card in `web-viewer-sample` that displays
+  fixture identity, source IFC entity count, sidecar carrier count,
+  `materialization_strategy`, coverage ratio, and conversion duration, sourced
+  only from existing coordinator/worker endpoints without becoming a new
+  authority. Any fallback path to `_worker` is dev-only and unreachable in
+  production builds.
 - No breaking API change is intended. This change may add script output fields,
-  evidence JSON fields, or diagnostics, but it must preserve existing service
-  API contracts.
+  evidence JSON fields, viewer UI elements, or additive diagnostics, but it
+  must preserve existing service API contracts.
 
 ## Capabilities
 
@@ -55,5 +71,7 @@ failures.
   storage layout, event schema, or runtime contract changes. Any added fields
   must be additive diagnostics for scripts or evidence artifacts.
 - Non-goals: optimizing large IFC conversion performance, unlocking
-  `minimum_coverage_locked`, implementing OVAS/multi-GPU orchestration, fixing
-  existing viewer lint debt, or replacing Browser plugin policy.
+  `minimum_coverage_locked`, implementing OVAS/multi-GPU orchestration,
+  fixing existing `web-viewer-sample` lint debt unrelated to the additive
+  summary card, replacing the Browser plugin policy, or making dedicated
+  multi-Kit runtime pass before a second GPU-backed Kit endpoint exists.

@@ -102,3 +102,66 @@ historical context.
 
 - **WHEN** a verification report or roadmap update summarizes demo runtime readiness
 - **THEN** it references the current evidence artifact paths and preserves the tier statuses without merging them into one ambiguous end-to-end status
+
+### Requirement: Single-Kit demo runtime renders the optimized USDC and captures viewport proof
+
+The demo runtime smoke SHALL drive a single-Kit happy-path that renders the
+`model.usdc` produced by the completed
+`optimize-worker-non-renderable-materialization` change in
+`web-viewer-sample`. Kit MUST be launched with `-SkipAutoLoad`; the viewer
+MUST issue `openStageRequest` via DataChannel using
+`stream_config.model.url`. When the happy-path succeeds, a
+`single_kit_render` evidence tier MUST be classified as `passed` with
+viewport proof. Multi-Kit dedicated routing remains out of scope and MUST
+NOT be claimed as `passed` by this tier.
+
+#### Scenario: Kit launches in skip-auto-load and viewer drives stage load
+
+- **WHEN** the single-Kit demo runtime starts and the viewer joins the review session
+- **THEN** Kit is launched with `-SkipAutoLoad` and the viewer issues `openStageRequest` carrying `stream_config.model.url`
+- **AND** Kit MUST NOT receive worker `model.usdc` URLs through `-UsdPath` or any other launch argument
+
+#### Scenario: Single-Kit viewport proof is captured
+
+- **WHEN** `single_kit_render` is classified as `passed`
+- **THEN** evidence records the viewer URL, `session_id` or `review_request_id`, Kit endpoint, video width and height as non-zero values, DataChannel stage-load result, and a screenshot path (manual or automated)
+- **AND** the screenshot MUST correspond to the canonical optimized `model.usdc` from the active worker conversion job
+
+#### Scenario: Missing prerequisites keep single-Kit render blocked
+
+- **WHEN** the Kit launcher is missing, the signaling port is not listening, GPU preflight fails, or the worker has no successful `model.usdc` available for the canonical fixture
+- **THEN** `single_kit_render` is classified as `blocked` with the missing prerequisite, the resolved next command, and (when applicable) the missing artifact identity
+- **AND** the tier MUST NOT be classified as `passed`
+
+#### Scenario: Multi-Kit dedicated routing stays deferred
+
+- **WHEN** only one GPU-backed Kit endpoint exists in the workspace
+- **THEN** dedicated multi-Kit routing remains classified as `deferred`
+- **AND** `stream_config.kit_instance_bindings` contains at most one binding, and a `single_kit_render=passed` evidence record MUST NOT be promoted to dedicated multi-Kit success
+
+### Requirement: Web viewer surfaces a conversion summary card sourced from existing endpoints
+
+The `web-viewer-sample` SHALL display a conversion summary card whenever
+`stream_config.model.status == "ready"` and a successful conversion result
+is available. The card MUST source data from existing coordinator or worker
+endpoints only and MUST NOT cache, recompute, or persist quality metrics in
+the viewer.
+
+#### Scenario: Card renders when stream_config carries a ready model
+
+- **WHEN** `stream_config.model.status == "ready"` and the coordinator forwards `quality_metrics_summary`
+- **THEN** the viewer card displays fixture identity, `source_ifc_entity_count`, `sidecar_carrier_count`, `materialization_strategy`, `coverage_ratio`, `coverage_status`, and `conversion_duration_seconds`
+- **AND** the displayed values match the corresponding fields in `GET /api/conversions/{conversion_job_id}/result`
+
+#### Scenario: Card shows degraded state when conversion is not ready
+
+- **WHEN** `stream_config.model.status` is not `"ready"`, or no successful conversion result exists for the active session
+- **THEN** the viewer card displays a degraded state with the current `model.status`, the blocker classification surfaced from smoke evidence (when available), and the next rerunnable command or prerequisite
+- **AND** the card MUST NOT display stale or fabricated quality values
+
+#### Scenario: Card uses dev-only fallback fetch when coordinator did not forward summary
+
+- **WHEN** the coordinator did not forward `quality_metrics_summary` and the viewer is running in dev mode (for example `import.meta.env.DEV` is true)
+- **THEN** the viewer MAY fetch `GET /api/conversions/{conversion_job_id}/result` from `_worker` for read-only display
+- **AND** in production builds, the fallback MUST be unreachable and the card MUST render the degraded state from the previous scenario
+- **AND** the viewer MUST NOT write back, transform, or rebroadcast the fetched values
