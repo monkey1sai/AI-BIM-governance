@@ -18,6 +18,7 @@ Thumbs.db
 !.claude/skills/apply-and-verify/
 !.claude/skills/pr-review-gate/
 !.claude/skills/archive-and-closeout/
+!.claude/skills/opsx-worktree-provision/
 .codex/
 .vscode/
 .gitnexus/
@@ -108,3 +109,8 @@ _s3_storage/static/projects/
 !_fixtures/**/*.usda
 !_fixtures/**/*.usdc
 !_fixtures/**/*.json
+
+# ----------------------------
+# OpenSpec apply worktrees (opsx-worktree-provision)
+# ----------------------------
+.worktrees/
