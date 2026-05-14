@@ -150,6 +150,7 @@ def create_app(
                 source_artifact_id=source_artifact["source_artifact_id"],
                 target_format=request.target_format,
                 generate_mapping=request.generate_mapping,
+                materialization_strategy=request.materialization_strategy,
                 options=request.options,
             )
             job = store.create_conversion_job(
