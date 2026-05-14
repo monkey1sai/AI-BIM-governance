@@ -5,6 +5,11 @@ export interface ReviewArtifact {
     url?: string | null;
     mapping_url?: string | null;
     status: string;
+    conversion_authority?: string | null;
+    conversion_job_id?: string | null;
+    conversion_status?: string | null;
+    failure_code?: string | null;
+    diagnostic?: string | null;
 }
 
 export interface ArtifactBinding {
@@ -17,5 +22,10 @@ export interface ArtifactBinding {
     mapping_url: string | null;
     load_order: number;
     routing_policy: "same_instance" | "dedicated_instance" | "shared_state";
-    ready_status: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion";
+    ready_status: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion" | "converting" | "failed";
+    conversion_authority?: string | null;
+    conversion_job_id?: string | null;
+    conversion_status?: string | null;
+    failure_code?: string | null;
+    diagnostic?: string | null;
 }

@@ -121,6 +121,7 @@ async function defaultFetchFallback(
 
 function pickConversionJobId(streamConfig: ReviewStreamConfig | null): string | null {
     if (!streamConfig) return null;
+    if (streamConfig.model.conversion_job_id) return streamConfig.model.conversion_job_id;
     const summary = streamConfig.quality_metrics_summary;
     if (summary?.conversion_job_id) return summary.conversion_job_id;
     return null;
@@ -145,6 +146,8 @@ export default function ConversionSummaryCard(props: ConversionSummaryCardProps)
     const { streamConfig, smokeBlockerHint, fetchFallback, workerBaseUrl } = props;
     const modelStatus = streamConfig?.model.status ?? null;
     const isReady = modelStatus === "ready";
+    const conversionAuthority = streamConfig?.model.conversion_authority ?? null;
+    const stageComposition = streamConfig?.stage_composition ?? null;
     const summaryFromConfig = streamConfig?.quality_metrics_summary ?? null;
     const conversionJobId = pickConversionJobId(streamConfig);
     const dev = isDevEnvironment();
@@ -218,12 +221,22 @@ export default function ConversionSummaryCard(props: ConversionSummaryCardProps)
                     {summary.conversion_job_id && (
                         <Field label="Conversion job id" value={formatString(summary.conversion_job_id)} />
                     )}
+                    <Field label="Conversion authority" value={formatString(conversionAuthority)} />
+                    <Field label="Primary artifact" value={formatString(stageComposition?.primary_artifact_id)} />
+                    <Field
+                        label="Secondary layers"
+                        value={formatNumber(stageComposition?.secondary_artifact_ids?.length ?? null)}
+                    />
                 </div>
             ) : (
                 <div style={degradedStyle} data-testid="conversion-summary-card-degraded">
                     <div style={{ fontWeight: 600, marginBottom: 4 }}>
                         Model status：<span style={{ fontFamily: "var(--demo-font-mono)" }}>{modelStatus ?? "unknown"}</span>
                     </div>
+                    <Field label="Conversion authority" value={formatString(conversionAuthority)} />
+                    <Field label="Conversion job id" value={formatString(conversionJobId)} />
+                    <Field label="Failure code" value={formatString(streamConfig?.model.failure_code)} />
+                    <Field label="Diagnostic" value={formatString(streamConfig?.model.diagnostic)} />
                     {smokeBlockerHint?.blocker && (
                         <div style={{ marginBottom: 4 }}>
                             <span style={labelStyle}>Smoke blocker</span>

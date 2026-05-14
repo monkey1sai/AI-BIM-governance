@@ -1,11 +1,30 @@
 import type { ArtifactBinding } from "../types/artifacts";
 import type { HighlightItem, StreamMessage } from "../types/streamMessages";
 
-export function buildOpenStageRequest(url: string, artifactBindings: ArtifactBinding[] = []): StreamMessage {
+interface StageCompositionRequest {
+    primary: ArtifactBinding | null;
+    secondary_layers: ArtifactBinding[];
+}
+
+export function buildOpenStageRequest(
+    url: string,
+    artifactBindings: ArtifactBinding[] = [],
+    stageComposition?: StageCompositionRequest | null,
+): StreamMessage {
+    const primary = stageComposition?.primary?.url ? stageComposition.primary : null;
+    const secondaryLayers = stageComposition?.secondary_layers?.filter((binding) => binding.url) || [];
     return {
         event_type: "openStageRequest",
         payload: {
             url,
+            ...(primary
+                ? {
+                      stage_composition: {
+                          primary,
+                          secondary_layers: secondaryLayers,
+                      },
+                  }
+                : {}),
             ...(artifactBindings.length > 0 ? { artifact_bindings: artifactBindings } : {}),
         },
     };

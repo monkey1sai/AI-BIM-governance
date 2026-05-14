@@ -64,15 +64,33 @@ export interface ReviewStreamConfig {
         mediaPort?: number | null;
     };
     model: {
-        status: "ready" | "missing";
+        status: "ready" | "missing" | "converting" | "failed" | "blocked";
         artifact_id: string | null;
         url: string | null;
         mapping_url: string | null;
+        conversion_authority?: string | null;
+        conversion_job_id?: string | null;
+        conversion_status?: string | null;
+        failure_code?: string | null;
+        diagnostic?: string | null;
     };
     artifacts: ReviewArtifact[];
     artifact_bindings: ArtifactBinding[];
     kit_instance_bindings: KitInstanceBinding[];
     quality_metrics_summary?: ConversionQualityMetricsSummary | null;
+    stage_composition?: {
+        applied_policy: "coordinator_load_order";
+        primary_artifact_id: string | null;
+        secondary_artifact_ids: string[];
+        primary: ArtifactBinding | null;
+        secondary_layers: ArtifactBinding[];
+    };
+    viewport_sharing?: {
+        mode: string;
+        primary_kit_instance_id: string | null;
+        shared_state: boolean;
+        spectator_ready: boolean;
+    };
 }
 
 export interface ReviewBootstrap {

@@ -47,6 +47,8 @@ for (const required of [
     "coverage_ratio",
     "coverage_status",
     "conversion_duration_seconds",
+    "conversion_authority",
+    "stage_composition",
 ]) {
     assert.match(cardSource, new RegExp(required), `card must reference field ${required}`);
 }

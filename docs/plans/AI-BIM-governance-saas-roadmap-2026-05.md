@@ -49,6 +49,8 @@
 > **2026-05-13 更新（`demo-current-runtime-observation` live pass）**：本次 current observation 產出 `docs/verification/2026-05-13-demo-current-runtime-observation.md`。非 Kit 服務 health 目前可啟動並通過：8001 / 8005 / 8004 health OK、5173 HTTP 200；focused checks 為 `_bim-control` `23 passed`、`_worker` `105 passed, 1 skipped`、coordinator `105 passed`、viewer build / session-first contract passed，viewer lint 仍是既有 `29 errors, 1 warning`。Socket.IO collaboration passed，coordinator close / release lifecycle passed（`review_session_87404055d4fd`）。但 current worktree `storage/` 沒有 IFC fixture，worker dev-source smoke blocked；`smoke-review-session.ps1` 的極簡 IFC payload 無法被 IfcOpenShell parse，因此 conversion readiness failed；Kit/WebRTC blocked by missing streaming launcher，Browser automation blocked by in-app browser policy，dedicated multi-Kit runtime 仍 deferred。此 live pass 不把 historical single-Kit/browser evidence 重新標成 current passed。
 
 > **2026-05-13 更新（non-renderable materialization sidecar carrier 完成 canonical single-fixture conversion）**：`optimize-worker-non-renderable-materialization` 已 land sidecar carrier 路徑（Option 4 + Option 3）。`non_renderable_entity_materialization` 從 baseline `375.1s+ timeout` 收斂至 `5.05s`（≈74× faster），同 fixture canonical run 在 `267.7s` 完成、產出第一個 canonical `model.usdc`（`output_file_size_bytes=9,844,612`），`coverage_ratio=0.9999987537178155`（`mapped_count=1,604,771` / `source_ifc_entity_count=1,604,773`，2 個未對映的 shape 為 geometry side 缺 GUID，可由 secondary scope follow-up 收斂）。`bim-review-coordinator` / `web-viewer-sample` / `bim-streaming-server` 三邊在 source 中對 sidecar carrier 無需 schema change，handoff framework 已記錄於 design.md。Full 13-file batch 與 visual preview 仍 not_run，`minimum_coverage_locked=false` 維持不變。下一個切片：full 13-file batch with sidecar carrier，以及把 secondary `guid_extraction` / `name_extraction` 優化（baseline ~10s）獨立 follow-up。
+>
+> **2026-05-14 更新（architecture-rework B 方案 apply）**：active change `architecture-rework-2026-05-14` 將 conversion authority 重新分配為 B 方案：`_worker` 收斂為 RVT→IFC bridge，`bim-streaming-server` 成為 IFC→USDC conversion job authority，`bim-review-platform` 只代表 coordinator + streaming-server + viewer 的 deployment boundary，不建立 nested repo。既有 `_worker` real IFC→USDC evidence 只能作為 migration source；在 streaming-server-owned conversion job / result / quality evidence 出現前，roadmap 不把 `streaming_conversion_job` 或 `mapping_quality` 標成 passed。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -58,8 +60,9 @@
 
 ```txt
 - 依 AGENTS.md 的 repo 邊界與 source-of-truth 順序執行：
-  bim-control 是資料權威，_worker 是檔案/轉檔 facade，coordinator 是 session control plane，
-  bim-streaming-server 是 Kit runtime，web-viewer-sample 是 browser client。
+  bim-control 是資料權威與 fake RVT intake facade，_worker 是 RVT→IFC bridge，
+  bim-streaming-server 是 IFC→USDC conversion authority + Kit runtime，
+  coordinator 是 session control plane，web-viewer-sample 是 browser client。
 - 先收斂、再擴散：不在沒有 KPI 的情況下開新 spec。
 - OpenSpec change 不直接在 main 開發；每個 change 走 codex/openspec/<change-id> branch + PR。
 - 每次 OpenSpec sync / archive 後，都必須更新本 roadmap，讓 `openspec/specs/`、`openspec/changes/archive/` 與本文件的候選、Phase 狀態、風險、KPI 保持一致。
@@ -80,10 +83,10 @@
 
 | 服務 | Port | 角色 | 健檢狀態 |
 |---|---|---|---|
-| `_bim-control/` | 8001 | Fake BIM data authority + review-session-requests | OK |
-| `_worker/` | 8005 | Artifact + conversion facade（已合併 `_s3_storage` + `_conversion-service`） | OK |
+| `_bim-control/` | 8001 | Fake BIM data authority + fake RVT intake facade + review-session-requests | OK |
+| `_worker/` | 8005 | RVT→IFC bridge / worker handoff（B 方案下不擁有 IFC→USDC conversion job） | OK（B 方案 bridge evidence 需補） |
 | `bim-review-coordinator/` | 8004 | Session control plane + Socket.IO collaboration | OK |
-| `bim-streaming-server/` | 49100 | Omniverse Kit runtime + WebRTC + DataChannel | 部分（GPU/47998 在不同 apply 中時通時不通） |
+| `bim-streaming-server/` | 49100 | IFC→USDC conversion authority + Omniverse Kit runtime + WebRTC + DataChannel | 部分（conversion API / GPU / 47998 需分層驗證） |
 | `web-viewer-sample/` | 5173 | Browser client + Demo Control Panel | OK |
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
@@ -103,6 +106,20 @@
 | `runtime-verification-evidence` | 0 | 6 | ✓ 證據分層（contract / real conversion / storage batch baseline / single-Kit / multi-Kit / stress） |
 | `runtime-verification-task-status` | 3 | 6 | ✓ checklist 語意：GPU / concurrent runtime items 不得因 blocker classification 被視為完成 |
 | `documentation-source-of-truth` | cross-cutting | repo governance | ✓ workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威 |
+
+### 1.2A Active architecture rework specs（pending archive）
+
+`architecture-rework-2026-05-14` 是目前正在套用的 B 方案 change。這些 delta specs 在 archive 前先作為 active change 驗收來源；archive 後必須依 §1.6 同步併入 `openspec/specs/`、§1.2、§1.4、Phase 狀態與 HTML 檢視版。
+
+| Active spec delta | Roadmap effect |
+|---|---|
+| `bim-control-revit-intake-facade` | `_bim-control` 增加 fake RVT intake facade；不執行 Revit |
+| `worker-rvt-ifc-bridge` | `_worker` 改為 RVT→IFC bridge；不宣告 `model.usdc` ready |
+| `streaming-ifc-usdc-conversion-authority` | `bim-streaming-server` 成為 IFC→USDC conversion job / status / result authority |
+| `conversion-webhook-lifecycle` | `rvt_uploaded`、`ifc_ready`、`conversion_result_ready` / `conversion_failed` 必須保留 correlation / idempotency |
+| `bim-review-platform-boundary` | `bim-review-platform` 是 deployment boundary，不是 nested repo / submodule |
+| `streaming-usd-stage-composition` | primary root model + session layer + ordered secondary subLayers 成為正式 stage composition 語意 |
+| `demo-runtime-readiness-smoke` | 新增 `rvt_intake`、`rvt_to_ifc_bridge`、`streaming_conversion_job`、`mapping_quality`、`single_kit_multi_viewer`、`usd_stage_composition` 分層 |
 
 ### 1.3 已驗證的閉環與 runtime evidence
 
@@ -184,6 +201,13 @@ lifecycle audit endpoint:            contract + unit tests passed; no browser/ru
 
 # 延後（等待 GPU 購買與部署）
 multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部署後執行
+
+# B 方案 active change（2026-05-14）
+rvt_intake tier:                    pending implementation / evidence
+rvt_to_ifc_bridge tier:             pending implementation / evidence
+streaming_conversion_job tier:      not_observed until bim-streaming-server owns job evidence
+mapping_quality tier:               not_observed until streaming-owned result carries metrics
+historical worker conversion:       migration source only; cannot mark B-scheme tiers passed
 ```
 
 > **證據文件**：
@@ -844,6 +868,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 | R9 ⓜ | 採用 OVAS 後 multi-Kit lifecycle 黑盒化（autoscaling / live migration / pod restart 由 OVAS 內部決定） | spec `multi-artifact-kit-routing` 仍紀錄 `kit_instance_bindings[]`（Req2），透過 OVAS app instance API 取狀態；故障時先看 K8s pod log + OVAS 微服務 log，不要嘗試 reverse-engineer NVIDIA 內部行為。Tier A 先用自寫 KitInstancePool 累積觀察 / 故障經驗，Tier B+ 才換 OVAS（給維運時間吸收新故障模式） |
 | R10 | 本機環境漂移讓「曾通過的 OpenSpec / smoke evidence」無法重啟 demo（例如 Starlette 升到 1.x、`tsx.cmd` / `vite.cmd` 缺失） | 啟動 demo 前先跑 §1.5 環境一致性檢查；缺 venv 或 Node binary 時先恢復依賴，不把 health probe failed 直接視為 spec regression。PR 驗證紀錄要附 package 版本與 `start-all -SkipStreaming` 結果 |
 | R11 | OpenSpec sync / archive 後沒有同步更新 roadmap，導致 `openspec/specs/`、archive 溯源、Phase 狀態與下一步規劃漂移 | 每次 archive 後依 §1.6 檢查並更新本文件；若沒有新的 runtime evidence，不得把 §1.3 標成 passed；若候選已 archive，必須更新 §5 / §10，避免已完成工作仍留在 P0/P1 |
+| R12 | B 方案 migration 期間把 historical `_worker` real IFC→USDC evidence 誤標成 streaming-server-owned conversion pass | Demo smoke 必須分 tier 回報 `conversion_authority`；`streaming_conversion_job` / `mapping_quality` 只有在 `bim-streaming-server` job/result/quality evidence 出現後才可 passed |
 
 ---
 

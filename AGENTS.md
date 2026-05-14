@@ -142,18 +142,18 @@ AI-BIM-governance/
 ```txt
 AI-BIM-governance/
 ├── bim-review-coordinator/      # 控制中心，localhost:8004
-├── _worker/                     # artifact + conversion facade，localhost:8005
-├── bim-streaming-server/        # Kit streaming server，WebRTC 49100
-├── _bim-control/                # fake artifact / model API，localhost:8001
+├── _worker/                     # RVT→IFC bridge / worker facade，localhost:8005
+├── bim-streaming-server/        # Kit streaming + IFC→USDC authority，WebRTC 49100
+├── _bim-control/                # fake metadata + RVT intake API，localhost:8001
 └── web-viewer-sample/           # browser client，localhost:5173
 ```
 
 flowchart TD
   CO[bim-review-coordinator<br/>Control Plane]
 
-  WK[_worker<br/>Artifact + Conversion Facade]
-  KIT[bim-streaming-server<br/>Omniverse Kit Runtime]
-  BC[_bim-control<br/>Fake BIM Data Authority]
+  WK[_worker<br/>RVT→IFC Bridge]
+  KIT[bim-streaming-server<br/>IFC→USDC Authority + Kit Runtime]
+  BC[_bim-control<br/>Fake BIM Data + RVT Intake]
   WV[web-viewer-sample<br/>Browser Client]
 
   CO -->|REST: bind review artifacts| WK
@@ -161,7 +161,9 @@ flowchart TD
   CO -->|start / check / reference process| KIT
   WV -->|REST: create/join session| CO
   WV -->|WebRTC + DataChannel| KIT
-  WK -->|publish metadata only| BC
+  BC -->|webhook: rvt_uploaded| WK
+  WK -->|webhook: ifc_ready| KIT
+  KIT -->|conversion result metadata| BC
 
 其中：
 
@@ -178,7 +180,7 @@ _bim-control/
 _worker/
 ```
 
-是本地開發用 worker / mock / fake infrastructure。`_worker` 是目前 flow 對外的 artifact + conversion 邊界。
+是本地開發用 worker / mock / fake infrastructure。B 方案套用後，`_worker` 的轉檔責任收斂為 RVT→IFC bridge；IFC→USDC conversion job authority 改由 `bim-streaming-server` 承接。
 
 ---
 
@@ -186,18 +188,19 @@ _worker/
 
 ```mermaid
 flowchart LR
-    BC["_bim-control\nFake BIM Data Authority"]
-    WK["_worker\nArtifact + Conversion Facade"]
+    BC["_bim-control\nFake BIM Data Authority\n+ RVT Intake"]
+    WK["_worker\nRVT→IFC Bridge"]
     CO["bim-review-coordinator\nSession / Control Plane"]
-    KIT["bim-streaming-server\nOmniverse Kit Runtime"]
+    KIT["bim-streaming-server\nIFC→USDC Authority\n+ Omniverse Kit Runtime"]
     WV["web-viewer-sample\nBrowser Client"]
 
     WV -->|REST: create / join session| CO
     CO -->|REST: project / version / issue metadata| BC
-    CO -->|REST: review artifact binding| WK
-    WK -->|metadata only| BC
+    CO -->|REST: review artifact binding / readiness| BC
+    BC -->|webhook: rvt_uploaded| WK
+    WK -->|webhook: ifc_ready| KIT
+    KIT -->|callback: conversion_result_ready / failed| BC
     WV -->|WebRTC video + DataChannel JSON| KIT
-    KIT -->|load USD / USDC by URL| WK
     WV -->|Socket.IO / WebSocket state events| CO
     CO -->|optional collaboration state| KIT
     WV -->|annotation / issue interaction| CO
@@ -208,9 +211,9 @@ flowchart LR
 
 ```txt
 _bim-control            = 假資料權威
-_worker                = 檔案與轉檔 facade
+_worker                = RVT→IFC bridge / worker handoff
 bim-review-coordinator = Session / 協作控制中心
-bim-streaming-server   = Omniverse GPU / USD / WebRTC Runtime
+bim-streaming-server   = IFC→USDC conversion authority + Omniverse GPU / USD / WebRTC Runtime
 web-viewer-sample      = Browser 操作端與串流觀看端
 ```
 
@@ -286,20 +289,20 @@ Historical local compatibility services
 
 `_s3_storage`、`_conversion-service`、`_conversion-server` 不屬於目前 demo runtime 的核心服務，也不應作為新的 startup、health check、smoke test 或 review-session dependency。
 
-目前 flow 的檔案、object URL、轉檔 job、artifact group readiness 都由 `_worker` 對外承接。歷史文件若仍提到舊服務，只能作為 archive context，不能覆蓋本文件的 current boundary。
+目前 B 方案 flow 的 RVT→IFC handoff 由 `_worker` 對外承接；IFC→USDC conversion job 與 derived artifact readiness 由 `bim-streaming-server` 承接。歷史文件若仍提到舊服務，只能作為 archive context，不能覆蓋本文件的 current boundary。
 
 舊服務不得：
 
 ```txt
 - 被重新加入 current core service list
 - 重新佔用 8002 / 8003 作為 demo 必要服務
-- 取代 _worker 成為檔案與轉檔邊界
+- 取代 _worker 成為 RVT→IFC handoff 邊界
 - 取代 _bim-control 成為資料權威
 ```
 
 ### 資料邊界
 
-`_worker` 保存檔案本體與轉檔輸出，`_bim-control` 保存「這個檔案屬於哪個 project / model version / artifact」的 metadata。兩者不可混淆。
+B 方案下，`_worker` 保存 RVT source / IFC handoff 相關檔案與 metadata，`bim-streaming-server` 擁有 IFC→USDC conversion job 與 derived USDC / mapping / entity index 輸出，`_bim-control` 保存「這個檔案屬於哪個 project / model version / artifact」的 metadata。三者不可混淆。
 
 ---
 
@@ -308,22 +311,24 @@ Historical local compatibility services
 ### 角色
 
 ```txt
-Artifact + Conversion Worker Facade
+RVT→IFC Worker Bridge
 ```
 
 ### 邊界
 
-`_worker` 是新 review session request lifecycle 對外的檔案與轉檔邊界。
+`_worker` 是 B 方案中 RVT→IFC export bridge 與 worker artifact handoff 邊界。
 
 它負責：
 
 ```txt
-- 接收 IFC / RVT / DWG bytes 或 signed upload reference
-- 建立 versioned object layout
-- 建立與查詢 conversion job
-- 產出 USDC / index JSON / element_mapping.json / metadata.json
-- 建立 artifact group 與 conversion lineage
-- 將 artifact metadata / conversion result metadata 發布到 _bim-control
+- 接收 _bim-control 的 rvt_uploaded event
+- 建立與查詢 RVT→IFC export job
+- 建立 versioned object layout for source RVT 與 derived IFC
+- 在 real Revit/export prerequisites 缺失時回報 blocked，或明確使用 fake fixture mode
+- 產出 IFC artifact 或 blocked/failed result
+- 以 ifc_ready webhook 將 IFC artifact handoff 給 bim-streaming-server
+- 保留 RVT source → IFC artifact lineage
+- 將 RVT / IFC handoff metadata 發布到 _bim-control
 ```
 
 它不負責：
@@ -331,6 +336,9 @@ Artifact + Conversion Worker Facade
 ```txt
 - project / issue / annotation 的資料權威
 - review session lifecycle 的總控
+- IFC→USDC conversion job authority
+- model.usdc / element_mapping.json / entity_index.json readiness authority
+- mapping quality metrics 的最終 conversion result authority
 - Omniverse viewport rendering
 - WebRTC streaming
 - 使用者登入與權限
@@ -339,7 +347,7 @@ Artifact + Conversion Worker Facade
 
 ### 資料邊界
 
-`_worker` 可保存檔案本體與轉檔輸出，但只把 metadata、artifact group、lineage、readiness 發布到 `_bim-control`。`_bim-control` 仍然是審查資料與 artifact metadata 的 fake authority。
+`_worker` 可保存 RVT source、IFC handoff artifact 與 RVT→IFC export lineage，但不得在 B 方案中宣告 `model.usdc` ready。IFC→USDC 的 job state、derived USDC、mapping、entity index、quality metrics result 由 `bim-streaming-server` 承接；`_bim-control` 仍然是審查資料與 artifact metadata 的 fake authority。
 
 ---
 
@@ -406,16 +414,23 @@ large binary file bytes
 ### 角色
 
 ```txt
-Omniverse Kit Runtime / GPU Streaming Server
+IFC→USDC Conversion Authority / Omniverse Kit Runtime / GPU Streaming Server
 ```
 
 ### 邊界
 
-`bim-streaming-server` 是 Omniverse Kit runtime。
+`bim-streaming-server` 是 B 方案的 IFC→USDC conversion job authority，同時仍是 Omniverse Kit runtime。
 
 它負責處理：
 
 ```txt
+- 接收 _worker 的 ifc_ready handoff
+- 建立 conversion_job_id 並管理 queued / running / succeeded / failed / cancelled 狀態
+- 對外提供 IFC→USDC conversion status / result API
+- 透過 headless converter app / subprocess / worker lane 執行 heavy conversion
+- 產出 model.usdc、element_mapping.json、entity_index.json、metadata.json 或等價 result payload
+- 保留 mapping quality metrics、sidecar carrier 與 no-placeholder-ready 語意
+- callback _bim-control conversion_result_ready / conversion_failed
 - USD / USDC stage runtime
 - Omniverse Kit viewport
 - GPU rendering
@@ -434,6 +449,7 @@ Omniverse Kit Runtime / GPU Streaming Server
 - 長期 annotation / issue 儲存
 - 假 S3 檔案倉庫
 - 假 BIM API
+- 阻塞 live WebRTC viewport thread 執行大型 IFC→USDC conversion
 ```
 
 ### Runtime 邊界
@@ -521,9 +537,10 @@ file / conversion access → _worker
 | Project metadata | `_bim-control` | 假專案資料 |
 | Model version metadata | `_bim-control` | 假模型版本資料 |
 | Artifact metadata | `_bim-control` | 描述檔案格式、URL、版本關係 |
-| IFC / RVT / DWG file | `_worker` | 原始模型檔案本體 |
-| USD / USDC file | `_worker` | Omniverse runtime 載入的衍生檔 |
-| element_mapping.json | `_worker` + `_bim-control` | 檔案在 worker object layout，關聯 metadata 在 `_bim-control` |
+| RVT source file / signed reference | `_worker` + `_bim-control` | 檔案或 reference 由 worker handoff 保存，版本與專案 metadata 在 `_bim-control` |
+| IFC handoff artifact | `_worker` | RVT→IFC bridge 的輸出 |
+| USD / USDC file | `bim-streaming-server` | B 方案 IFC→USDC conversion authority 產出的衍生檔 |
+| element_mapping.json / entity_index.json | `bim-streaming-server` + `_bim-control` | 檔案由 streaming conversion result 產出，關聯 metadata 在 `_bim-control` |
 | Review issue metadata | `_bim-control` | 假審查問題與定位資料 |
 | Annotation metadata | `_bim-control` | 假標註與審查紀錄 |
 | Review session state | `bim-review-coordinator` | 當前 session 狀態 |
@@ -543,13 +560,13 @@ sequenceDiagram
     participant CO as bim-review-coordinator
     participant BC as _bim-control
     participant WK as _worker
+    participant KIT as bim-streaming-server
 
     WV->>CO: Request review session / model version
     CO->>BC: Query project / model version / artifact metadata
-    CO->>WK: Bind artifact group / readiness if needed
-    WK-->>CO: Return artifact URLs + lineage
-    BC-->>CO: Return artifact metadata + URL
-    CO-->>WV: Return session info + artifact URL
+    CO->>BC: Query conversion authority / readiness metadata
+    BC-->>CO: Return artifact metadata + streaming-owned conversion status
+    CO-->>WV: Return session info + stream config + artifact bindings
 ```
 
 ### 邊界說明
@@ -558,7 +575,8 @@ sequenceDiagram
 web-viewer-sample 不直接決定模型資料權威。
 bim-review-coordinator 負責協調查詢。
 _bim-control 決定哪個 artifact 屬於哪個 model version。
-_worker 是新 flow 的檔案與轉檔邊界。
+_worker 是 RVT→IFC handoff 邊界。
+bim-streaming-server 是 IFC→USDC conversion job 與 derived artifact readiness 邊界。
 ```
 
 ---
@@ -569,13 +587,11 @@ _worker 是新 flow 的檔案與轉檔邊界。
 sequenceDiagram
     participant WV as web-viewer-sample
     participant KIT as bim-streaming-server
-    participant WK as _worker
 
     WV->>KIT: WebRTC connect
     KIT-->>WV: Rendered viewport stream
-    WV->>KIT: DataChannel openStageRequest { artifact_bindings }
-    KIT->>WK: Load USD / USDC by URL
-    WK-->>KIT: Return file bytes
+    WV->>KIT: DataChannel openStageRequest { stage_composition }
+    KIT->>KIT: Open primary USDC + apply secondary subLayers
     KIT-->>WV: DataChannel openedStageResult
 ```
 
@@ -583,8 +599,8 @@ sequenceDiagram
 
 ```txt
 WebRTC video stream 只存在於 web-viewer-sample 與 bim-streaming-server 之間。
-USD / USDC 檔案本體由 _worker 提供。
-bim-streaming-server 只載入與渲染，不成為檔案權威。
+USD / USDC conversion result 由 bim-streaming-server 在 B 方案下提供。
+bim-streaming-server 載入、渲染，且是 IFC→USDC conversion job authority；它仍不成為 project / issue / annotation 的資料權威。
 ```
 
 ---
@@ -690,16 +706,16 @@ bim-review-coordinator 負責把 session 與 review metadata 串起來。
 IFC / RVT / DWG = 原始模型資料
 ```
 
-其檔案本體屬於：
-
-```txt
-_worker
-```
-
-其版本與專案關聯屬於：
+RVT source / signed reference 的版本與專案關聯屬於：
 
 ```txt
 _bim-control
+```
+
+RVT→IFC bridge 的檔案與 handoff lineage 屬於：
+
+```txt
+_worker
 ```
 
 ---
@@ -710,10 +726,10 @@ _bim-control
 USD / USDC = rendering / streaming artifact
 ```
 
-其檔案本體屬於：
+其 conversion job、檔案本體與 result payload 屬於：
 
 ```txt
-_worker
+bim-streaming-server
 ```
 
 其 runtime 操作屬於：
@@ -733,7 +749,7 @@ IFC GUID ↔ USD Prim Path
 這是 BIM 語意資料與 Omniverse 視覺化資料之間的橋。
 
 ```txt
-mapping file body      → _worker
+mapping file body      → bim-streaming-server
 mapping metadata       → _bim-control
 mapping runtime usage  → web-viewer-sample / bim-streaming-server
 ```
@@ -858,8 +874,10 @@ _mock-sensor-service/
 整個 workspace 要保護的最小閉環是：
 
 ```txt
-_bim-control 提供 model / issue metadata
-→ _worker 提供 artifact group / USD / USDC / mapping URL
+_bim-control 接收 fake RVT intake 並提供 model / issue metadata
+→ _worker 執行 RVT→IFC bridge，送出 ifc_ready
+→ bim-streaming-server 擁有 IFC→USDC conversion job 並產出 USDC / mapping / entity_index
+→ _bim-control 保存 conversion result metadata
 → bim-review-coordinator 建立 review session
 → web-viewer-sample 取得 session / stream config
 → web-viewer-sample 連到 bim-streaming-server
@@ -886,13 +904,13 @@ _bim-control
 = 假 BIM 資料權威
 
 _worker
-= 檔案與轉檔 facade
+= RVT→IFC bridge / worker handoff
 
 bim-review-coordinator
 = Session / collaboration control plane
 
 bim-streaming-server
-= Omniverse Kit runtime / WebRTC streaming / USD scene runtime
+= IFC→USDC conversion authority + Omniverse Kit runtime / WebRTC streaming / USD scene runtime
 
 web-viewer-sample
 = Browser client / user interaction layer
@@ -902,7 +920,8 @@ web-viewer-sample
 
 ```txt
 資料權威歸資料層
-檔案與轉檔外部邊界歸 worker
+RVT→IFC bridge 歸 worker
+IFC→USDC conversion authority 歸 streaming server
 session 歸 coordinator
 3D runtime 歸 streaming server
 使用者操作歸 web viewer

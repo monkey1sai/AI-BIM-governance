@@ -15,6 +15,18 @@ _worker              = RVT→IFC export bridge only
 
 ## 與現行 repo source-of-truth 的主要差異
 
+### 0. 套用前 source-of-truth baseline（2026-05-14）
+
+本 baseline 記錄套用 `architecture-rework-2026-05-14` 前，repo 主要 source-of-truth 文件仍採用的舊邊界，避免後續文件對齊時把「已驗證的現況」與「B 方案目標狀態」混在一起。
+
+| 文件 | 套用前 baseline |
+|---|---|
+| `AGENTS.md` | `_worker` 是 artifact + conversion facade，負責接收 IFC/RVT/DWG 或 signed upload reference、建立 conversion job、產出 USDC / index / mapping / metadata；`bim-streaming-server` 是 Omniverse Kit runtime / WebRTC / USD scene runtime，載入並渲染 `_worker` 提供的 USD / USDC。 |
+| `README.md` | demo 步驟 ① 上傳建模與 ② 自動轉換都指向 `_worker`；服務邊界表把 `_worker` 描述為 Artifact + Conversion Boundary，把 `bim-streaming-server` 描述為載入 USD / USDC、WebRTC streaming 與 DataChannel runtime。 |
+| `docs/PROJECT_DEVELOPMENT_WORKFLOW.md` | workflow v3 把「檔案 + 轉檔邊界」歸給 `_worker`，並在 Phase 1 / IFC→USD 品質管線中描述 `_worker` conversion job、USDC、mapping、lineage 與 callback workflow；`bim-streaming-server` 仍是 Kit + WebRTC + USD stage runtime。 |
+| `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` | roadmap baseline 以 `_worker` 作為 artifact + conversion facade，並記錄 `worker-real-conversion-quality` 已把 real IFC→USDC adapter、USDC openability hard gate、mapping quality metrics 與 single Kit/browser evidence 歸入現行 specs；本次 B 方案會改變這個 conversion authority 敘述。 |
+| `openspec/specs/` | 現行 specs 包含 `worker-artifact-pipeline`、`worker-dev-ifc-source-selection`、`worker-demo-upload-convert-ui`、`legacy-storage-conversion-retirement`、`review-session-request-lifecycle`、`multi-artifact-kit-routing`、`streaming-multi-layer-payload-loading`、`session-first-review-viewer`、`runtime-verification-evidence`、`runtime-verification-task-status`、`documentation-source-of-truth`；其中 `worker-artifact-pipeline` 仍是 worker-owned IFC→USDC conversion / mapping / quality / lineage 的正式規格來源。 |
+
 ### 1. `_bim-control` 擴成 fake Revit intake facade
 
 現行：fake BIM metadata authority。

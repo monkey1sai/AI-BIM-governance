@@ -748,13 +748,27 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({ loadingText: "沒有可用的 USD / USDC 成果檔", isLoading: false });
             return;
         }
+        if (this.state.latestStreamConfig && this.state.latestStreamConfig.model.status !== "ready") {
+            const status = this.state.latestStreamConfig.model.status;
+            console.warn(`Model is not ready for openStageRequest: ${status}.`);
+            this.setState({ loadingText: `模型尚未就緒：${status}`, showStream: false, isLoading: false });
+            return;
+        }
 
         this.setState({ loadingText: "正在載入模型...", showStream: false, isLoading: true })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
         console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
         const artifactBindings = this.state.latestStreamConfig?.artifact_bindings?.filter((binding) => binding.url === this.state.selectedUSDAsset?.url) || [];
-        this._sendStreamMessage(buildOpenStageRequest(this.state.selectedUSDAsset.url, artifactBindings));
+        const composition = this.state.latestStreamConfig?.stage_composition;
+        const selectedIsPrimary = composition?.primary?.url === this.state.selectedUSDAsset.url;
+        this._sendStreamMessage(
+            buildOpenStageRequest(
+                this.state.selectedUSDAsset.url,
+                artifactBindings,
+                selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
+            ),
+        );
     }
 
     /**

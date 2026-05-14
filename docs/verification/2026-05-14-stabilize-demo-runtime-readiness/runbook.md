@@ -6,6 +6,40 @@
 
 這份 runbook 補足 `scripts/run-single-kit-demo.ps1` 無法自動化的步驟。Kit GPU runtime 需要 interactive desktop session，且 workspace 的 in-app 瀏覽器自動化政策仍然受限，所以最終的 viewport 觀察 + screenshot capture 必須由人類執行。
 
+## B 方案補充：RVT intake → IFC bridge → streaming conversion
+
+`architecture-rework-2026-05-14` 之後，這份 runbook 的人工驗證要把舊的 `_worker` IFC→USDC evidence 與新的 B 方案 readiness 分開看：
+
+```txt
+_bim-control RVT intake
+→ _worker RVT→IFC bridge
+→ bim-streaming-server IFC→USDC conversion authority
+→ bim-review-coordinator session / artifact binding
+→ web-viewer-sample openStageRequest(stage_composition)
+→ bim-streaming-server Kit stage load / WebRTC render
+```
+
+B 方案的通過條件：
+
+- `_bim-control` 只保存 RVT source artifact metadata 與 `rvt_uploaded` event；如果沒有 RVT bytes 或 signed reference，必須回報 `blocked`，不可偽造上傳成功。
+- `_worker` 只負責 RVT→IFC bridge 與 `ifc_ready` handoff；它不能在新 flow 中宣告 `model.usdc` ready。
+- `bim-streaming-server` 才是 IFC→USDC conversion authority；只有它的 conversion result 可以把 `model.usdc`、`element_mapping.json`、`entity_index.json`、`metadata.json` 宣告為 ready。
+- `bim-review-coordinator` 只保存 conversion metadata、primary/secondary ordering、viewport sharing state；它不執行轉檔。
+- `web-viewer-sample` 只能在 `stream_config.model.status == "ready"` 時送出 `openStageRequest`，且要帶 `stage_composition` 給 Kit runtime。
+
+`scripts/smoke-review-session.ps1` 目前仍可用來記錄歷史 `_worker` conversion evidence，但它會另外輸出 B 方案 tiers：
+
+| Tier | 預期判讀 |
+|---|---|
+| `rvt_intake` | 沒有送 RVT intake 時是 `not_observed`，不是 passed |
+| `rvt_to_ifc_bridge` | 沒有跑 RVT→IFC bridge 時是 `not_observed`，不是 passed |
+| `streaming_conversion_job` | 只有 `conversion_authority="bim-streaming-server"` 時才可 passed |
+| `mapping_quality` | 必須來自 streaming-owned conversion result |
+| `usd_stage_composition` | 必須有 primary artifact；secondary layer 失敗不可掩蓋 primary 結果 |
+| `single_kit_multi_viewer` | 需要 primary + spectator browser evidence，沒有 evidence 時維持 deferred / not_observed |
+
+如果只有 `worker_conversion=passed`，那代表舊的 worker conversion fixture 可用；它不能被提升成 B 方案 `streaming_conversion_job=passed`。
+
 ## Prerequisites
 
 1. Workspace 已 `git checkout` 到 `codex/openspec/stabilize-demo-runtime-readiness-impl`（或之後的 implementation branch）。
@@ -33,7 +67,12 @@ scripts\run-single-kit-demo.ps1
 
 預期輸出（重點）：
 
-- `worker_conversion=passed`，含 `conversion_job_id` 與 `usdc_url`
+- `worker_conversion=passed`，含 `conversion_job_id` 與 `usdc_url`；這是歷史 compatibility evidence，不是 B 方案 streaming conversion pass
+- `rvt_intake=not_observed`，除非本次手動送過 `_bim-control` RVT intake
+- `rvt_to_ifc_bridge=not_observed`，除非本次手動跑過 `_worker` RVT→IFC bridge
+- `streaming_conversion_job=not_observed` 或 `blocked`，除非本次 stream config 真的帶有 `conversion_authority="bim-streaming-server"`
+- `mapping_quality=not_observed` 或 `blocked`，除非 mapping evidence 來自 streaming-owned conversion result
+- `usd_stage_composition=passed` 只有在 `stream_config.stage_composition.primary_artifact_id` 存在時成立
 - `coordinator_session_lifecycle=passed`，且 `stream_config.model.url` 等於 `worker_conversion` 的 `usdc_url`
 - `kit_launcher_preflight=passed`
 - `kit_webrtc_readiness=blocked`（因為 Kit 尚未啟動）

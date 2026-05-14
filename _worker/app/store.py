@@ -11,7 +11,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from .converters import ConversionAdapter, ConversionAdapterError, IfcOpenShellUsdConverter
-from .models import ArtifactIntakeRequest
+from .models import ArtifactIntakeRequest, RvtExportRequest
 from .settings import Settings
 
 
@@ -60,6 +60,7 @@ class WorkerStore:
         self.converter = converter or IfcOpenShellUsdConverter()
         Path(self.settings.objects_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.jobs_dir).mkdir(parents=True, exist_ok=True)
+        self._rvt_exports_dir().mkdir(parents=True, exist_ok=True)
 
     def create_source_artifact(self, request: ArtifactIntakeRequest) -> dict[str, Any]:
         tenant_id = safe_id(request.tenant_id, "tenant_id")
@@ -166,6 +167,95 @@ class WorkerStore:
         }
         write_json(self._job_path(conversion_job_id), job)
         return job
+
+    def create_rvt_export_job(self, request: RvtExportRequest) -> dict[str, Any]:
+        source = request.source_artifact
+        existing = self._find_rvt_export_job(request.event_id)
+        if existing is not None:
+            replay = dict(existing)
+            replay["idempotent_replay"] = True
+            return replay
+
+        tenant_id = safe_id(request.tenant_id, "tenant_id")
+        project_id = safe_id(request.project_id, "project_id")
+        model_version_id = safe_id(request.model_version_id, "model_version_id")
+        event_id = safe_id(request.event_id, "event_id")
+        correlation_id = safe_id(request.correlation_id, "correlation_id")
+        source_rvt_artifact_id = safe_id(source.artifact_id, "source_rvt_artifact_id")
+        now = utc_now()
+        export_job_id = f"rvt_export_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid4().hex[:8]}"
+        export_mode = request.options.export_mode
+        job = {
+            "export_job_id": export_job_id,
+            "job_id": export_job_id,
+            "event_type": request.event_type,
+            "event_id": event_id,
+            "correlation_id": correlation_id,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "model_version_id": model_version_id,
+            "source_rvt_artifact_id": source_rvt_artifact_id,
+            "target_format": "ifc",
+            "requested_outputs": list(request.requested_outputs or ["ifc"]),
+            "status": "queued",
+            "queue_state": "queued",
+            "stage": "queued",
+            "export_mode": export_mode,
+            "runtime_boundary": {
+                "owner": "_worker",
+                "role": "dockerized_rvt_to_ifc_bridge",
+                "real_revit_export": "external_prerequisite",
+                "ifc_to_usdc_authority": "bim-streaming-server",
+            },
+            "source_artifact": {
+                "artifact_id": source_rvt_artifact_id,
+                "format": "rvt",
+                "filename": source.filename,
+                "url": source.url,
+                "file_url": source.file_url,
+                "signed_upload_reference": source.signed_upload_reference,
+                "checksum_sha256": source.checksum_sha256,
+            },
+            "callback_url": request.callback_url,
+            "handoff_target_url": request.handoff_target_url
+            or "http://127.0.0.1:49100/api/conversions/ifc-to-usdc",
+            "options": request.options.model_dump(),
+            "ifc_artifact": None,
+            "ifc_ready_event": None,
+            "handoff_delivery": None,
+            "blocked_reason": None,
+            "created_at": now,
+            "updated_at": now,
+            "lineage": {
+                "source_rvt_artifact_id": source_rvt_artifact_id,
+                "ifc_artifact_id": None,
+                "export_mode": export_mode,
+                "real_revit_export": False,
+            },
+        }
+        write_json(self._rvt_export_job_path(export_job_id), job)
+        return job
+
+    def get_rvt_export_job(self, export_job_id: str) -> dict[str, Any] | None:
+        safe_id(export_job_id, "export_job_id")
+        return read_json(self._rvt_export_job_path(export_job_id), None)
+
+    def complete_rvt_export_job(self, export_job_id: str) -> dict[str, Any]:
+        job = self.get_rvt_export_job(export_job_id)
+        if job is None:
+            raise KeyError(export_job_id)
+        if job.get("status") not in {"queued", "exporting_rvt_to_ifc"}:
+            return job
+
+        job = self._update_rvt_export_job(
+            export_job_id,
+            status="exporting_rvt_to_ifc",
+            queue_state="exporting_rvt_to_ifc",
+            stage="exporting_rvt_to_ifc",
+        )
+        if job.get("export_mode") == "fake_fixture":
+            return self._complete_fake_fixture_rvt_export(job)
+        return self._block_rvt_export_without_revit_runtime(job)
 
     def get_conversion_job(self, conversion_job_id: str) -> dict[str, Any] | None:
         safe_id(conversion_job_id, "conversion_job_id")
@@ -352,6 +442,96 @@ class WorkerStore:
     def object_url(self, object_key: str) -> str:
         return f"{self.settings.public_objects_url}/{object_key.strip('/')}"
 
+    def _complete_fake_fixture_rvt_export(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        options = job.get("options") or {}
+        fixture_url = str(options.get("fixture_ifc_url") or "")
+        if not fixture_url:
+            return self._block_rvt_export_without_revit_runtime(job)
+
+        suffix = str(job["export_job_id"]).removeprefix("rvt_export_")
+        source = job.get("source_artifact") or {}
+        source_filename = str(source.get("filename") or "model.rvt")
+        ifc_artifact_id = safe_id(
+            str(options.get("fixture_ifc_artifact_id") or f"artifact_ifc_fixture_{suffix}"),
+            "ifc_artifact_id",
+        )
+        ifc_filename = f"{Path(source_filename).stem or 'model'}.ifc"
+        ifc_artifact = {
+            "artifact_id": ifc_artifact_id,
+            "format": "ifc",
+            "filename": ifc_filename,
+            "url": fixture_url,
+            "source_rvt_artifact_id": job["source_rvt_artifact_id"],
+            "export_mode": "fake_fixture",
+            "real_revit_export": False,
+        }
+        ifc_ready_event = {
+            "event_type": "ifc_ready",
+            "event_id": f"evt_ifc_{uuid4().hex[:12]}",
+            "correlation_id": job["correlation_id"],
+            "tenant_id": job["tenant_id"],
+            "project_id": job["project_id"],
+            "model_version_id": job["model_version_id"],
+            "export_job_id": job["export_job_id"],
+            "source_rvt_artifact_id": job["source_rvt_artifact_id"],
+            "ifc_artifact": ifc_artifact,
+            "conversion_authority": "bim-streaming-server",
+            "requested_outputs": ["usdc", "element_mapping", "entity_index", "metadata"],
+            "handoff_target_url": job["handoff_target_url"],
+            "created_at": utc_now(),
+        }
+        lineage = dict(job.get("lineage") or {})
+        lineage.update(
+            {
+                "source_rvt_artifact_id": job["source_rvt_artifact_id"],
+                "ifc_artifact_id": ifc_artifact_id,
+                "export_mode": "fake_fixture",
+                "real_revit_export": False,
+                "fixture_ifc_url": fixture_url,
+            }
+        )
+        return self._update_rvt_export_job(
+            job["export_job_id"],
+            status="ifc_ready",
+            queue_state="ifc_ready",
+            stage="ifc_ready_pending_delivery",
+            ifc_artifact=ifc_artifact,
+            ifc_ready_event=ifc_ready_event,
+            handoff_delivery={
+                "status": "pending",
+                "target_url": job["handoff_target_url"],
+                "reason": "delivery is owned by the streaming-server handoff loop",
+            },
+            blocked_reason=None,
+            lineage=lineage,
+        )
+
+    def _block_rvt_export_without_revit_runtime(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        lineage = dict(job.get("lineage") or {})
+        lineage.update(
+            {
+                "source_rvt_artifact_id": job["source_rvt_artifact_id"],
+                "ifc_artifact_id": None,
+                "real_revit_export": False,
+                "blocked_reason": "revit_runtime_unavailable",
+            }
+        )
+        return self._update_rvt_export_job(
+            job["export_job_id"],
+            status="blocked",
+            queue_state="failed",
+            stage="blocked_missing_revit_runtime",
+            blocked_reason="revit_runtime_unavailable",
+            ifc_artifact=None,
+            ifc_ready_event=None,
+            handoff_delivery=None,
+            lineage=lineage,
+            evidence={
+                "missing_prerequisite": "external Revit runtime or export lane is not available to _worker",
+                "fake_fixture_mode_enabled": False,
+            },
+        )
+
     def _conversion_jobs(self) -> list[dict[str, Any]]:
         jobs: list[dict[str, Any]] = []
         for path in sorted(Path(self.settings.jobs_dir).glob("*.json")):
@@ -359,6 +539,21 @@ class WorkerStore:
             if isinstance(payload, dict):
                 jobs.append(payload)
         return jobs
+
+    def _rvt_export_jobs(self) -> list[dict[str, Any]]:
+        jobs: list[dict[str, Any]] = []
+        for path in sorted(self._rvt_exports_dir().glob("*.json")):
+            payload = read_json(path, None)
+            if isinstance(payload, dict):
+                jobs.append(payload)
+        return jobs
+
+    def _find_rvt_export_job(self, event_id: str) -> dict[str, Any] | None:
+        safe_event_id = safe_id(event_id, "event_id")
+        for job in reversed(self._rvt_export_jobs()):
+            if job.get("event_id") == safe_event_id:
+                return job
+        return None
 
     def _lineage_artifact_candidates(self, result: Mapping[str, Any]) -> dict[str, str]:
         candidates: dict[str, str] = {}
@@ -937,6 +1132,13 @@ class WorkerStore:
         safe_id(conversion_job_id, "conversion_job_id")
         return Path(self.settings.jobs_dir) / f"{conversion_job_id}.json"
 
+    def _rvt_exports_dir(self) -> Path:
+        return Path(self.settings.jobs_dir) / "rvt-exports"
+
+    def _rvt_export_job_path(self, export_job_id: str) -> Path:
+        safe_id(export_job_id, "export_job_id")
+        return self._rvt_exports_dir() / f"{export_job_id}.json"
+
     def _update_job(self, conversion_job_id: str, **updates: Any) -> dict[str, Any]:
         job = self.get_conversion_job(conversion_job_id)
         if job is None:
@@ -944,6 +1146,15 @@ class WorkerStore:
         job.update(updates)
         job["updated_at"] = utc_now()
         write_json(self._job_path(conversion_job_id), job)
+        return job
+
+    def _update_rvt_export_job(self, export_job_id: str, **updates: Any) -> dict[str, Any]:
+        job = self.get_rvt_export_job(export_job_id)
+        if job is None:
+            raise KeyError(export_job_id)
+        job.update(updates)
+        job["updated_at"] = utc_now()
+        write_json(self._rvt_export_job_path(export_job_id), job)
         return job
 
     def _assert_adapter_result(self, adapter_result: Any, root_path: Path, generate_mapping: bool) -> None:
