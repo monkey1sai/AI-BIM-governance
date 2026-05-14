@@ -1,0 +1,140 @@
+{
+  "change_id": "architecture-rework-2026-05-14",
+  "package_type": "OpenSpec proposal/design/tasks/spec-delta draft",
+  "created_for": "AI-BIM-governance",
+  "created_date": "2026-05-14",
+  "language": "Traditional Chinese with OpenSpec headings",
+  "decisions": {
+    "bim_review_platform": "deployment boundary inside the single root repo; not a nested Git repo",
+    "bim_control_revit_plugin": "fake / PoC intake API; not real Revit runtime",
+    "ifc_to_usdc_authority": "B scheme: bim-streaming-server owns conversion job lifecycle and derived USDC/mapping/quality authority"
+  },
+  "touches_runtime_code": false,
+  "files": [
+    {
+      "path": "APPLY_INSTRUCTIONS.md",
+      "bytes": 1352,
+      "sha256": "aec6023c1015ebf66ee5d7628834ae0bb5ae099dc17adf4c34df142e1a6ca5a7"
+    },
+    {
+      "path": "DECISION_ALIGNMENT.md",
+      "bytes": 256,
+      "sha256": "9562c61ce68757260eb827149c2f677b5f92b738c68158e522b6327a93706fd7"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2397,
+      "sha256": "2a6376fa290803b950645ce6e8b70b0a471dbda4265707b8425bbbf48b17ff02"
+    },
+    {
+      "path": "docs/architecture/ARCHITECTURE_ALIGNMENT_NOTES.md",
+      "bytes": 3958,
+      "sha256": "7ab491020269150f4a927ae0b8cf7902ca9616c8615e1a0054a911ca469d6717"
+    },
+    {
+      "path": "docs/contracts/drafts/bim-review-platform-boundary-contract.md",
+      "bytes": 1132,
+      "sha256": "62e67673c8b3addcabc44978f4c22d17115109757772f0c5e3015f5eb785bde9"
+    },
+    {
+      "path": "docs/contracts/drafts/demo-readiness-evidence-v2.md",
+      "bytes": 1489,
+      "sha256": "7b09900a471947453f52e89c15a310b98d8b239bc5c0f69895ce8ea8e6611881"
+    },
+    {
+      "path": "docs/contracts/drafts/revit-intake-rvt-ifc-bridge-contract.md",
+      "bytes": 1849,
+      "sha256": "28ef696fe09c0575636d870777a03226e0cdb78e47bb25fbab267f4d06268ac3"
+    },
+    {
+      "path": "docs/contracts/drafts/streaming-conversion-authority-contract.md",
+      "bytes": 2536,
+      "sha256": "cfc9639755e65d53162714fe7b0d3d368a460471d1452fa1e685aca5ee41fac3"
+    },
+    {
+      "path": "docs/contracts/drafts/usd-stage-composition-contract.md",
+      "bytes": 1424,
+      "sha256": "4e31140bfed5a1e3a462d50a1bb3bef14a598f636a83a56685ee8bb4b8d8a335"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/design.md",
+      "bytes": 10841,
+      "sha256": "ba247c84869269b275f5cad7060db4c950e97d42fb78eacc7c542cb7e3262a88"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/proposal.md",
+      "bytes": 3962,
+      "sha256": "7938f87444e8ed8f9d400a46f06529a9e1a197868d3a3b42a118b7c2d2f0fb26"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/bim-control-revit-intake-facade/spec.md",
+      "bytes": 2396,
+      "sha256": "a36287e36e8b61cece317f8581076f20986ca3bc5ba21bb49682a6aab7485151"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/bim-review-platform-boundary/spec.md",
+      "bytes": 1682,
+      "sha256": "e5a722d6316813a839df2c1e81ea5ab7ccd652bbcb45014895a6f843b6c63be6"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/conversion-webhook-lifecycle/spec.md",
+      "bytes": 2345,
+      "sha256": "48b46fd08a67d6d28b2d3574b532263ed9b6e0ba67d34232370b8bfd18a2fbb3"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/demo-runtime-readiness-smoke/spec.md",
+      "bytes": 2068,
+      "sha256": "dc6a039b6c7d7faece37fac92dfc0c0f63d1c2ecf0fa94f243988a4125175a50"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/documentation-source-of-truth/spec.md",
+      "bytes": 1312,
+      "sha256": "9a729f8134fb3c664da9c3328854408df9ad91516b8bebcfdad3576469a67f40"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/multi-artifact-kit-routing/spec.md",
+      "bytes": 1491,
+      "sha256": "fe9ba2e07f8591a670f03d180052138024fef09be62a6167937b866238fd9757"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/review-session-request-lifecycle/spec.md",
+      "bytes": 1397,
+      "sha256": "080780bfe00c7cf828014254411bcf4d80ea92dff5f04ef2250501b04b729441"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/session-first-review-viewer/spec.md",
+      "bytes": 1296,
+      "sha256": "861245aa19f8b9d5c11ca4d0a0ca4fb19b894845a1870f9075c635a198f6847b"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/streaming-ifc-usdc-conversion-authority/spec.md",
+      "bytes": 3459,
+      "sha256": "b5bbc5dae3bcb3284f401763bf565d946971956f5e93762440ddea4cc98564de"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/streaming-multi-layer-payload-loading/spec.md",
+      "bytes": 1300,
+      "sha256": "2ebdde30439226fbdcf7e1d8680dac1d038ca3a2d1803b0010b23a2258b584cc"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/streaming-usd-stage-composition/spec.md",
+      "bytes": 2065,
+      "sha256": "bc9ac6942fb720820ee5ac9bf4aa1ca03d46454aabd0a8a7bdc7c47e96876182"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/worker-artifact-pipeline/spec.md",
+      "bytes": 1415,
+      "sha256": "4224132a408da8e4a9f52072d94fd2d367e9d41ab727d6f67b33a4321f745513"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/specs/worker-rvt-ifc-bridge/spec.md",
+      "bytes": 2170,
+      "sha256": "7c5c0128fb54d12190d0763205458ab8207fbb9f26949785bb49d5e210f4482d"
+    },
+    {
+      "path": "openspec/changes/architecture-rework-2026-05-14/tasks.md",
+      "bytes": 5402,
+      "sha256": "72eb7756b3bfb93a027fbba542948ea1db64eba0929bf5b98957924efb9db9f9"
+    }
+  ]
+}
