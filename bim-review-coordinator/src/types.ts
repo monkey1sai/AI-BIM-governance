@@ -52,6 +52,25 @@ export interface ReviewParticipant {
   last_seen_at: string;
 }
 
+/**
+ * Additive, opt-in pass-through of conversion quality metrics surfaced by `_worker`.
+ *
+ * The coordinator does NOT compute, cache, or modify these values; it only forwards what the
+ * orchestrator/caller provides at session creation time. The viewer card consumes this read-only.
+ * Keep this strictly additive — never make it required, and never let it gate session creation.
+ */
+export interface ConversionQualityMetricsSummary {
+  fixture_name?: string | null;
+  conversion_job_id?: string | null;
+  artifact_group_id?: string | null;
+  source_ifc_entity_count?: number | null;
+  sidecar_carrier_count?: number | null;
+  materialization_strategy?: string | null;
+  coverage_ratio?: number | null;
+  coverage_status?: string | null;
+  conversion_duration_seconds?: number | null;
+}
+
 export interface ReviewSession {
   session_id: string;
   review_request_id?: string;
@@ -69,6 +88,7 @@ export interface ReviewSession {
   artifact_bindings: ArtifactBinding[];
   kit_instance_bindings: KitInstanceBinding[];
   participants: ReviewParticipant[];
+  quality_metrics_summary?: ConversionQualityMetricsSummary | null;
 }
 
 export interface Artifact {
@@ -107,4 +127,5 @@ export interface StreamConfigResponse {
   artifacts: Artifact[];
   artifact_bindings: ArtifactBinding[];
   kit_instance_bindings: KitInstanceBinding[];
+  quality_metrics_summary?: ConversionQualityMetricsSummary | null;
 }

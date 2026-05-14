@@ -1,6 +1,25 @@
 import type { ArtifactBinding, ReviewArtifact } from "./artifacts";
 import type { ReviewIssue } from "./issues";
 
+/**
+ * Additive, read-only pass-through of `_worker` conversion quality metrics.
+ *
+ * The viewer MUST NOT compute, cache, or rebroadcast these values. When the coordinator forwards
+ * them, the viewer renders them as-is in the conversion summary card. When omitted, the viewer
+ * MAY (in dev builds only) fall back to `GET /api/conversions/{job}/result` against `_worker`.
+ */
+export interface ConversionQualityMetricsSummary {
+    fixture_name?: string | null;
+    conversion_job_id?: string | null;
+    artifact_group_id?: string | null;
+    source_ifc_entity_count?: number | null;
+    sidecar_carrier_count?: number | null;
+    materialization_strategy?: string | null;
+    coverage_ratio?: number | null;
+    coverage_status?: string | null;
+    conversion_duration_seconds?: number | null;
+}
+
 export type ReviewLifecycleStatus = "created" | "active" | "closing" | "closed" | "failed" | "blocked_conversion" | "queued_for_instance";
 
 export interface KitInstanceBinding {
@@ -53,6 +72,7 @@ export interface ReviewStreamConfig {
     artifacts: ReviewArtifact[];
     artifact_bindings: ArtifactBinding[];
     kit_instance_bindings: KitInstanceBinding[];
+    quality_metrics_summary?: ConversionQualityMetricsSummary | null;
 }
 
 export interface ReviewBootstrap {

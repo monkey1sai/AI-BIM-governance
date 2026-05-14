@@ -5,170 +5,345 @@ param(
     [string] $CoordinatorUrl = "http://127.0.0.1:8004",
     [string] $ProjectId = "project_demo_001",
     [string] $ModelVersionId = "version_demo_001",
-    [string] $UserId = "dev_user_001"
+    [string] $UserId = "dev_user_001",
+    [string] $TenantId = "tenant_demo_001",
+    [string] $DevStorageRoot = "",
+    [int] $ConversionTimeoutSeconds = 120,
+    [string] $EvidencePath = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Test-HttpResource {
-    param(
-        [string] $Name,
-        [string] $Uri
-    )
+. (Join-Path $PSScriptRoot 'lib\smoke-evidence.ps1')
 
-    if ([string]::IsNullOrWhiteSpace($Uri)) {
-        throw "Missing $Name URL"
-    }
+$RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
+    $EvidencePath = Join-Path $RepoRoot 'docs\verification\2026-05-14-stabilize-demo-runtime-readiness\smoke-review-session-evidence.json'
+}
 
+$Record = New-SmokeEvidenceRecord -Command $MyInvocation.MyCommand.Path -Cwd (Get-Location).Path -Context @{
+    bim_control_url   = $BimControlUrl
+    worker_url        = $WorkerUrl
+    coordinator_url   = $CoordinatorUrl
+    project_id        = $ProjectId
+    model_version_id  = $ModelVersionId
+    user_id           = $UserId
+    tenant_id         = $TenantId
+}
+
+function Save-Evidence {
+    Write-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
+    Write-SmokeTierSummary -Record $Record
+    Write-Host "[smoke] evidence: $EvidencePath"
+}
+
+# ---------- Service health preflight ----------
+$serviceErrors = @{}
+foreach ($svc in @(
+    @{ name = '_bim-control'; url = $BimControlUrl },
+    @{ name = '_worker'; url = $WorkerUrl },
+    @{ name = 'bim-review-coordinator'; url = $CoordinatorUrl }
+)) {
     try {
-        $response = Invoke-WebRequest -Method Head -Uri $Uri -TimeoutSec 5 -UseBasicParsing
+        Invoke-RestMethod "$($svc.url)/health" -TimeoutSec 5 | Out-Null
     } catch {
-        $response = Invoke-WebRequest -Method Get -Uri $Uri -TimeoutSec 5 -UseBasicParsing
+        $serviceErrors[$svc.name] = $_.Exception.Message
     }
+}
+if ($serviceErrors.Count -gt 0) {
+    foreach ($name in $serviceErrors.Keys) {
+        Add-SmokeTier -Record $Record -Tier 'service_health' -Status 'blocked' -Owner $name `
+            -Blocker "health probe failed: $($serviceErrors[$name])" `
+            -NextCommand 'Start the service via scripts/start-all.ps1 -SkipStreaming and rerun'
+    }
+    Save-Evidence
+    throw "Service health preflight failed: $($serviceErrors.Keys -join ', ')"
+}
 
-    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
-        throw "$Name returned HTTP $($response.StatusCode): $Uri"
+# ---------- Worker dev fixture preflight ----------
+$resolvedRoot = Resolve-WorkerDevStorageRoot -Override $DevStorageRoot
+$fixtureSummary = Get-WorkerDevFixtureSummary -Root $resolvedRoot
+
+if ($fixtureSummary.fixture_count -le 0) {
+    Add-SmokeTier -Record $Record -Tier 'worker_conversion' -Status 'blocked' -Owner '_worker' `
+        -Blocker 'no parseable .ifc fixture under WORKER_DEV_STORAGE_ROOT' `
+        -NextCommand "Copy a real .ifc into '$resolvedRoot' or set WORKER_DEV_STORAGE_ROOT to a folder that contains one, then rerun this script" `
+        -Ids @{ worker_dev_storage_root = $resolvedRoot; fixture_count = 0 } `
+        -Detail @{ root = $fixtureSummary.root; exists = $fixtureSummary.exists; is_directory = $fixtureSummary.is_directory }
+} else {
+    Add-SmokeTier -Record $Record -Tier 'fixture_preflight' -Status 'passed' -Owner 'scripts' `
+        -Ids @{ worker_dev_storage_root = $resolvedRoot; fixture_count = $fixtureSummary.fixture_count } `
+        -Detail @{ fixtures = $fixtureSummary.fixtures }
+}
+
+# ---------- Worker conversion tier ----------
+$source = $null
+$conversion = $null
+$conversionResult = $null
+$workerArtifactId = $null
+$workerMappingUrl = $null
+$workerUsdcUrl = $null
+$artifactGroupId = $null
+
+if ($fixtureSummary.fixture_count -gt 0) {
+    try {
+        $sources = Invoke-RestMethod "$WorkerUrl/api/dev/ifc-sources"
+        if (-not $sources.items -or $sources.items.Count -eq 0) {
+            throw "Worker dev source listing is empty even though the storage root has $($fixtureSummary.fixture_count) .ifc files. Check worker's WORKER_DEV_STORAGE_ROOT."
+        }
+        $source = @($sources.items | Sort-Object filename | Select-Object -First 1)[0]
+
+        $conversionBody = @{
+            tenant_id          = $TenantId
+            project_id         = $ProjectId
+            model_version_id   = $ModelVersionId
+            source_system      = 'dev_storage'
+            uploaded_by        = $UserId
+            target_format      = 'usdc'
+            generate_mapping   = $true
+            options            = @{ auto_complete = $true }
+        } | ConvertTo-Json -Depth 10
+
+        $conversion = Invoke-RestMethod `
+            -Method Post `
+            -Uri "$WorkerUrl/api/dev/ifc-sources/$($source.source_id)/conversions" `
+            -ContentType 'application/json' `
+            -Body $conversionBody
+
+        $deadline = (Get-Date).AddSeconds($ConversionTimeoutSeconds)
+        do {
+            $conversionResult = Invoke-RestMethod "$WorkerUrl/api/conversions/$($conversion.conversion_job_id)/result"
+            if ($conversionResult.status -eq 'succeeded' -or $conversionResult.status -eq 'failed') { break }
+            Start-Sleep -Milliseconds 500
+        } while ((Get-Date) -lt $deadline)
+
+        if ($conversionResult.status -eq 'succeeded') {
+            $workerArtifactId = $conversionResult.usdc_artifact_id
+            $workerMappingUrl = $conversionResult.mapping_url
+            $workerUsdcUrl    = $conversionResult.usdc_url
+            $artifactGroupId  = $conversion.artifact_group_id
+            $tierIds = @{
+                source_artifact_id  = $conversion.source_artifact_id
+                artifact_group_id   = $conversion.artifact_group_id
+                conversion_job_id   = $conversion.conversion_job_id
+                usdc_artifact_id    = $workerArtifactId
+                usdc_url            = $workerUsdcUrl
+                mapping_url         = $workerMappingUrl
+                dev_source_filename = $source.filename
+            }
+            Add-SmokeTier -Record $Record -Tier 'worker_conversion' -Status 'passed' -Owner '_worker' `
+                -Ids $tierIds `
+                -Detail @{
+                    source_size_bytes        = $source.size_bytes
+                    coverage_ratio           = $conversionResult.quality_metrics.coverage_ratio
+                    coverage_status          = $conversionResult.quality_metrics.coverage_status
+                    sidecar_carrier_count    = $conversionResult.quality_metrics.sidecar_carrier_count
+                    materialization_strategy = $conversionResult.quality_metrics.materialization_strategy
+                }
+        } else {
+            $diag = ''
+            try { $diag = ($conversionResult | ConvertTo-Json -Compress -Depth 5) } catch {}
+            Add-SmokeTier -Record $Record -Tier 'worker_conversion' -Status 'failed' -Owner '_worker' `
+                -Blocker "conversion job did not succeed within $ConversionTimeoutSeconds s (status=$($conversionResult.status))" `
+                -NextCommand "Inspect worker logs and rerun scripts/smoke-review-session.ps1 once the converter is healthy" `
+                -Ids @{ conversion_job_id = $conversion.conversion_job_id; dev_source_filename = $source.filename } `
+                -Detail @{ result = $conversionResult }
+        }
+    } catch {
+        Add-SmokeTier -Record $Record -Tier 'worker_conversion' -Status 'failed' -Owner '_worker' `
+            -Blocker $_.Exception.Message `
+            -NextCommand 'Inspect worker logs and rerun once the converter is healthy' `
+            -Ids @{ dev_source_filename = if ($source) { $source.filename } else { '' } }
     }
 }
 
-Invoke-RestMethod "$BimControlUrl/health" | Out-Null
-Invoke-RestMethod "$WorkerUrl/health" | Out-Null
-Invoke-RestMethod "$CoordinatorUrl/health" | Out-Null
-
-$ifcText = "ISO-10303-21;`nEND-ISO-10303-21;`n"
-$artifactBody = @{
-    tenant_id = "tenant_demo_001"
-    project_id = $ProjectId
-    model_version_id = $ModelVersionId
-    source_system = "smoke"
-    uploaded_by = $UserId
-    filename = "source.ifc"
-    source_format = "ifc"
-    content_base64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($ifcText))
-} | ConvertTo-Json -Depth 10
-
-$artifact = Invoke-RestMethod `
-    -Method Post `
-    -Uri "$WorkerUrl/api/artifacts" `
-    -ContentType "application/json" `
-    -Body $artifactBody
-
-$conversionBody = @{
-    source_artifact_id = $artifact.source_artifact_id
-    target_format = "usdc"
-    generate_mapping = $true
-    options = @{ auto_complete = $true }
-} | ConvertTo-Json -Depth 10
-
-$conversion = Invoke-RestMethod `
-    -Method Post `
-    -Uri "$WorkerUrl/api/conversions" `
-    -ContentType "application/json" `
-    -Body $conversionBody
-
-$deadline = (Get-Date).AddSeconds(30)
-$result = $null
-do {
-    $result = Invoke-RestMethod "$WorkerUrl/api/conversions/$($conversion.conversion_job_id)/result"
-    if ($result.status -eq "succeeded") {
-        break
+# ---------- Coordinator session lifecycle (independent of model readiness) ----------
+$session = $null
+$streamConfig = $null
+try {
+    $artifactBindings = @()
+    if ($workerArtifactId -and $artifactGroupId -and $workerUsdcUrl) {
+        $artifactBindings = @(@{
+            artifact_group_id  = $artifactGroupId
+            model_version_id   = $ModelVersionId
+            artifact_id        = $workerArtifactId
+            artifact_role      = 'derived'
+            url                = $workerUsdcUrl
+            mapping_url        = $workerMappingUrl
+            load_order         = 0
+            ready_status       = 'ready'
+        })
     }
-    Start-Sleep -Milliseconds 500
-} while ((Get-Date) -lt $deadline)
+    $sessionBody = @{
+        project_id         = $ProjectId
+        model_version_id   = $ModelVersionId
+        created_by         = $UserId
+        mode               = 'single_kit_shared_state'
+        artifact_bindings  = $artifactBindings
+        options            = @{ auto_allocate_kit = $true }
+    } | ConvertTo-Json -Depth 20
 
-if ($result.status -ne "succeeded") {
-    throw "Expected worker conversion result succeeded, got $($result.status)"
+    $session = Invoke-RestMethod `
+        -Method Post `
+        -Uri "$CoordinatorUrl/api/review-sessions" `
+        -ContentType 'application/json' `
+        -Body $sessionBody
+
+    $streamConfig = Invoke-RestMethod "$CoordinatorUrl/api/review-sessions/$($session.session_id)/stream-config"
+
+    Add-SmokeTier -Record $Record -Tier 'coordinator_session_lifecycle' -Status 'passed' -Owner 'bim-review-coordinator' `
+        -Ids @{
+            session_id          = $session.session_id
+            review_request_id   = $session.review_request_id
+            lifecycle_status    = $streamConfig.lifecycle_status
+            model_status        = $streamConfig.model.status
+        } `
+        -Detail @{
+            kit_instance_bindings_count = @($streamConfig.kit_instance_bindings).Count
+            artifact_bindings_count     = @($streamConfig.artifact_bindings).Count
+        }
+} catch {
+    Add-SmokeTier -Record $Record -Tier 'coordinator_session_lifecycle' -Status 'failed' -Owner 'bim-review-coordinator' `
+        -Blocker $_.Exception.Message `
+        -NextCommand 'Check bim-review-coordinator logs and rerun once /api/review-sessions responds 2xx'
+    Save-Evidence
+    throw
 }
 
-$body = @{
-    project_id = $ProjectId
-    model_version_id = $ModelVersionId
-    created_by = $UserId
-    mode = "single_kit_shared_state"
-    artifact_bindings = @(@{
-        artifact_group_id = $artifact.artifact_group_id
+# ---------- _bim-control review request artifact discovery (independent tier) ----------
+try {
+    $artifacts = Invoke-RestMethod "$BimControlUrl/api/model-versions/$ModelVersionId/artifacts"
+    $issues    = Invoke-RestMethod "$BimControlUrl/api/model-versions/$ModelVersionId/review-issues"
+    $artifactCount = if ($artifacts.items) { @($artifacts.items).Count } else { 0 }
+    $issueCount    = if ($issues.items)    { @($issues.items).Count }    else { 0 }
+    Add-SmokeTier -Record $Record -Tier 'bim_control_review_request' -Status 'passed' -Owner '_bim-control' `
+        -Ids @{ model_version_id = $ModelVersionId } `
+        -Detail @{ artifact_count = $artifactCount; issue_count = $issueCount }
+} catch {
+    Add-SmokeTier -Record $Record -Tier 'bim_control_review_request' -Status 'failed' -Owner '_bim-control' `
+        -Blocker $_.Exception.Message `
+        -NextCommand 'Confirm _bim-control fake metadata is seeded for the model version'
+}
+
+# ---------- annotation + collaboration event flow ----------
+try {
+    $annotationBody = @{
+        annotation_id    = "ann_smoke_$($session.session_id)"
+        project_id       = $ProjectId
         model_version_id = $ModelVersionId
-        artifact_id = $result.usdc_artifact_id
-        artifact_role = "derived"
-        url = $result.usdc_url
-        mapping_url = $result.mapping_url
-        load_order = 0
-        ready_status = "ready"
-    })
-    options = @{ auto_allocate_kit = $true }
-} | ConvertTo-Json -Depth 20
+        author_id        = $UserId
+        title            = 'Smoke annotation'
+        body             = 'Created by smoke-review-session.ps1'
+        usd_prim_path    = '/World'
+    } | ConvertTo-Json -Depth 10
+    $annotation = Invoke-RestMethod `
+        -Method Post `
+        -Uri "$BimControlUrl/api/review-sessions/$($session.session_id)/annotations" `
+        -ContentType 'application/json' `
+        -Body $annotationBody
 
-$session = Invoke-RestMethod `
-    -Method Post `
-    -Uri "$CoordinatorUrl/api/review-sessions" `
-    -ContentType "application/json" `
-    -Body $body
+    $eventBody = @{
+        type     = 'highlightRequest'
+        issue_id = 'ISSUE-DEMO-001'
+        items    = @(@{ usd_prim_path = '/World'; color = @(1, 0, 0, 1); label = 'Smoke' })
+    } | ConvertTo-Json -Depth 10
+    $event = Invoke-RestMethod `
+        -Method Post `
+        -Uri "$CoordinatorUrl/api/review-sessions/$($session.session_id)/events" `
+        -ContentType 'application/json' `
+        -Body $eventBody
 
-if ([string]::IsNullOrWhiteSpace($session.session_id)) {
-    throw "Missing session_id"
+    Add-SmokeTier -Record $Record -Tier 'rest_collaboration_event' -Status 'passed' -Owner 'bim-review-coordinator' `
+        -Ids @{ session_id = $session.session_id; annotation_id = $annotation.annotation_id; event_id = $event.event_id }
+} catch {
+    Add-SmokeTier -Record $Record -Tier 'rest_collaboration_event' -Status 'failed' -Owner 'bim-review-coordinator' `
+        -Blocker $_.Exception.Message `
+        -NextCommand 'Rerun once the coordinator and _bim-control accept annotation/event posts'
 }
 
-$config = Invoke-RestMethod "$CoordinatorUrl/api/review-sessions/$($session.session_id)/stream-config"
-$artifacts = Invoke-RestMethod "$BimControlUrl/api/model-versions/$ModelVersionId/artifacts"
-$issues = Invoke-RestMethod "$BimControlUrl/api/model-versions/$ModelVersionId/review-issues"
-
-if (-not $config.webrtc.signalingPort) {
-    throw "Missing signalingPort"
-}
-if ($config.webrtc.signalingPort -ne 49100) {
-    throw "Expected signalingPort 49100, got $($config.webrtc.signalingPort)"
-}
-if ($config.model.status -ne "ready") {
-    throw "Expected ready review model, got $($config.model.status)"
-}
-Test-HttpResource -Name "model.url" -Uri $config.model.url
-Test-HttpResource -Name "model.mapping_url" -Uri $config.model.mapping_url
-if ($null -eq $artifacts.items) {
-    throw "Missing artifacts.items"
-}
-if ($null -eq $issues.items) {
-    throw "Missing issues.items"
+# ---------- Kit launcher preflight (does not run Kit) ----------
+$kitPreflight = Get-KitLauncherPreflight -RepoRoot $RepoRoot
+if ($kitPreflight.launcher_present) {
+    Add-SmokeTier -Record $Record -Tier 'kit_launcher_preflight' -Status 'passed' -Owner 'bim-streaming-server' `
+        -Ids @{ launcher_path = $kitPreflight.launcher_path } `
+        -Detail @{ next_command = $kitPreflight.next_command }
+} else {
+    Add-SmokeTier -Record $Record -Tier 'kit_launcher_preflight' -Status 'blocked' -Owner 'bim-streaming-server' `
+        -Blocker "Streaming launcher not found at $($kitPreflight.launcher_path)" `
+        -NextCommand $kitPreflight.next_command `
+        -Ids @{ launcher_path = $kitPreflight.launcher_path }
 }
 
-$annotationBody = @{
-    annotation_id = "ann_smoke_$($session.session_id)"
-    project_id = $ProjectId
-    model_version_id = $ModelVersionId
-    author_id = $UserId
-    title = "Smoke annotation"
-    body = "Created by smoke-review-session.ps1"
-    usd_prim_path = "/World"
-} | ConvertTo-Json -Depth 10
-
-$annotation = Invoke-RestMethod `
-    -Method Post `
-    -Uri "$BimControlUrl/api/review-sessions/$($session.session_id)/annotations" `
-    -ContentType "application/json" `
-    -Body $annotationBody
-
-if ([string]::IsNullOrWhiteSpace($annotation.annotation_id)) {
-    throw "Missing annotation_id"
+# ---------- WebRTC signaling readiness (no live Kit means blocked) ----------
+$signalProbe = Test-KitSignalingPortListening -Port 49100
+if ($signalProbe.listening) {
+    Add-SmokeTier -Record $Record -Tier 'kit_webrtc_readiness' -Status 'passed' -Owner 'bim-streaming-server' `
+        -Ids @{ signaling_endpoint = "$($signalProbe.host):$($signalProbe.port)" }
+} else {
+    Add-SmokeTier -Record $Record -Tier 'kit_webrtc_readiness' -Status 'blocked' -Owner 'bim-streaming-server' `
+        -Blocker "$($signalProbe.host):$($signalProbe.port) is not listening" `
+        -NextCommand "Launch Kit with bim-streaming-server/scripts/start-streaming-server.ps1 -SkipAutoLoad and rerun" `
+        -Ids @{ signaling_endpoint = "$($signalProbe.host):$($signalProbe.port)" }
 }
 
-$eventBody = @{
-    type = "highlightRequest"
-    issue_id = "ISSUE-DEMO-001"
-    items = @(@{ usd_prim_path = "/World"; color = @(1, 0, 0, 1); label = "Smoke" })
-} | ConvertTo-Json -Depth 10
+# ---------- Browser visual evidence (not driven by this script) ----------
+Add-SmokeTier -Record $Record -Tier 'browser_visual_evidence' -Status 'not_observed' -Owner 'web-viewer-sample' `
+    -Blocker 'browser automation is out of scope for this smoke script (policy-restricted in workspace)' `
+    -NextCommand "Open http://127.0.0.1:5173/?sessionId=$($session.session_id) manually and capture viewport screenshot under docs/verification/2026-05-14-stabilize-demo-runtime-readiness/" `
+    -Ids @{
+        viewer_url = "http://127.0.0.1:5173/?sessionId=$($session.session_id)"
+        session_id = $session.session_id
+    }
 
-$event = Invoke-RestMethod `
-    -Method Post `
-    -Uri "$CoordinatorUrl/api/review-sessions/$($session.session_id)/events" `
-    -ContentType "application/json" `
-    -Body $eventBody
+# ---------- single_kit_render (capability-defined tier) ----------
+$singleKitBlocker = @()
+if (-not $kitPreflight.launcher_present) { $singleKitBlocker += 'Kit launcher missing' }
+if (-not $signalProbe.listening)         { $singleKitBlocker += 'signaling port 49100 closed' }
+if (-not $workerUsdcUrl)                 { $singleKitBlocker += 'no successful worker model.usdc for the canonical fixture' }
+$kitBindingsLength = @($streamConfig.kit_instance_bindings).Count
 
-if ([string]::IsNullOrWhiteSpace($event.event_id)) {
-    throw "Missing event_id"
+if ($singleKitBlocker.Count -eq 0) {
+    Add-SmokeTier -Record $Record -Tier 'single_kit_render' -Status 'not_observed' -Owner 'web-viewer-sample' `
+        -Blocker 'screenshot + video dimensions must be captured manually before this tier is passed' `
+        -NextCommand "Open http://127.0.0.1:5173/?sessionId=$($session.session_id) once Kit is running and save a screenshot" `
+        -Ids @{
+            viewer_url        = "http://127.0.0.1:5173/?sessionId=$($session.session_id)"
+            session_id        = $session.session_id
+            kit_endpoint      = "$($signalProbe.host):$($signalProbe.port)"
+            stage_load_result = $null
+        } `
+        -Detail @{ manual_or_automated = 'manual'; screenshot_path = $null; video = @{ width = 0; height = 0 } }
+} else {
+    Add-SmokeTier -Record $Record -Tier 'single_kit_render' -Status 'blocked' -Owner 'web-viewer-sample' `
+        -Blocker ($singleKitBlocker -join '; ') `
+        -NextCommand $kitPreflight.next_command `
+        -Ids @{
+            viewer_url   = "http://127.0.0.1:5173/?sessionId=$($session.session_id)"
+            session_id   = $session.session_id
+            kit_endpoint = "$($signalProbe.host):$($signalProbe.port)"
+        } `
+        -Detail @{
+            manual_or_automated = 'manual'
+            screenshot_path     = $null
+            video               = @{ width = 0; height = 0 }
+            stage_load_result   = $null
+            missing_prereqs     = $singleKitBlocker
+        }
 }
 
-Write-Host "[smoke] review session passed: $($session.session_id)"
-Write-Host "[smoke] model status: $($config.model.status)"
-Write-Host "[smoke] artifacts: $($artifacts.items.Count)"
-Write-Host "[smoke] issues: $($issues.items.Count)"
-Write-Host "[smoke] annotation: $($annotation.annotation_id)"
+# Multi-Kit invariant (always recorded so single_kit_render cannot leak into dedicated routing)
+Add-SmokeTier -Record $Record -Tier 'dedicated_multi_kit_routing' -Status 'deferred' -Owner 'bim-streaming-server' `
+    -Blocker 'fewer than two GPU-backed Kit endpoints exist in workspace' `
+    -NextCommand 'When two Kit endpoints exist, design dedicated multi-Kit routing as its own change' `
+    -Ids @{ kit_instance_bindings_length = $kitBindingsLength } `
+    -Detail @{ invariant = 'stream_config.kit_instance_bindings.length <= 1'; invariant_holds = ($kitBindingsLength -le 1) }
+
+Save-Evidence
+
+# Backward-compatible final summary line for legacy consumers.
+Write-Host "[smoke] review session lifecycle: $($session.session_id)"
+Write-Host "[smoke] coordinator model.status: $($streamConfig.model.status)"
+if ($workerUsdcUrl) {
+    Write-Host "[smoke] worker model.usdc URL: $workerUsdcUrl"
+}

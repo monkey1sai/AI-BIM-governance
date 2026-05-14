@@ -1,7 +1,8 @@
 import type React from "react";
 import type { DemoLogEntry } from "../types/demo";
 import type { ElementMappingItem, ElementMappingSummary } from "../types/mapping";
-import type { ReviewStreamConfig } from "../types/review";
+import type { ConversionQualityMetricsSummary, ReviewStreamConfig } from "../types/review";
+import ConversionSummaryCard, { type SmokeBlockerHint } from "./ConversionSummaryCard";
 
 interface DemoControlPanelProps {
     width: number;
@@ -19,6 +20,12 @@ interface DemoControlPanelProps {
     outgoingMessages: DemoLogEntry[];
     incomingMessages: DemoLogEntry[];
     socketEvents: string[];
+    smokeBlockerHint?: SmokeBlockerHint | null;
+    /**
+     * Optional override for the conversion summary card dev-only fallback fetcher. Production
+     * builds MUST NOT pass this. Tests inject it to verify dev-only behavior deterministically.
+     */
+    conversionSummaryFetchFallback?: (conversionJobId: string) => Promise<ConversionQualityMetricsSummary | null>;
     onCreateOrLoadSession: () => void;
     onLoadBootstrap: () => void;
     onConnectSocket: () => void;
@@ -209,6 +216,8 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         outgoingMessages,
         incomingMessages,
         socketEvents,
+        smokeBlockerHint,
+        conversionSummaryFetchFallback,
         onCreateOrLoadSession,
         onLoadBootstrap,
         onConnectSocket,
@@ -581,6 +590,13 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
                         {selectedAssetUrl || reviewStatus}
                     </div>
                 </div>
+
+                {/* Conversion summary card (additive read-only pass-through) */}
+                <ConversionSummaryCard
+                    streamConfig={streamConfig}
+                    smokeBlockerHint={smokeBlockerHint ?? null}
+                    fetchFallback={conversionSummaryFetchFallback}
+                />
 
                 {/* Architecture and repo ownership guide */}
                 <div style={sectionStyle}>

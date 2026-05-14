@@ -19,7 +19,14 @@ import {
 } from "./services/kitPool.js";
 import { isSafeSessionId, isSessionMutable, SessionStore } from "./services/sessionStore.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
-import type { Artifact, ArtifactBinding, ReviewSession, RoutingPolicy, StreamConfigResponse } from "./types.js";
+import type {
+  Artifact,
+  ArtifactBinding,
+  ConversionQualityMetricsSummary,
+  ReviewSession,
+  RoutingPolicy,
+  StreamConfigResponse,
+} from "./types.js";
 
 const createSessionSchema = z.object({
   review_request_id: z.string().min(1).optional(),
@@ -55,6 +62,22 @@ const createSessionSchema = z.object({
       auto_allocate_kit: z.boolean().optional(),
     })
     .optional(),
+  // Additive pass-through; coordinator does not compute, cache, or modify these values.
+  // Strictly optional — viewer falls back to dev-only worker fetch when omitted.
+  quality_metrics_summary: z
+    .object({
+      fixture_name: z.string().nullish(),
+      conversion_job_id: z.string().nullish(),
+      artifact_group_id: z.string().nullish(),
+      source_ifc_entity_count: z.number().nullish(),
+      sidecar_carrier_count: z.number().nullish(),
+      materialization_strategy: z.string().nullish(),
+      coverage_ratio: z.number().nullish(),
+      coverage_status: z.string().nullish(),
+      conversion_duration_seconds: z.number().nullish(),
+    })
+    .passthrough()
+    .nullish(),
 });
 
 const participantSchema = z.object({
@@ -136,6 +159,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
         artifact_bindings: artifactBindings,
         kit_instance_bindings: kitInstanceBindings,
+        quality_metrics_summary: (input.quality_metrics_summary ?? null) as ConversionQualityMetricsSummary | null,
       });
       eventLog.append(session.session_id, "sessionCreated", {
         project_id: session.project_id,
@@ -501,5 +525,6 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
     artifacts,
     artifact_bindings: artifactBindings,
     kit_instance_bindings: session.kit_instance_bindings,
+    quality_metrics_summary: session.quality_metrics_summary ?? null,
   };
 }
