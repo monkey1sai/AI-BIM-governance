@@ -1,6 +1,6 @@
 # streaming-multi-layer-payload-loading Specification Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: openStageRequest supports explicit stage composition payload
 

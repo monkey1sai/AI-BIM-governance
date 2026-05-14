@@ -1,6 +1,6 @@
 # review-session-request-lifecycle Specification Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Review sessions reference streaming-owned conversion readiness
 

@@ -109,4 +109,4 @@
 - [x] PR summary states no nested git repo was created.
 - [x] PR summary lists all source-of-truth files updated.
 - [x] PR summary lists unimplemented runtime items as blocked/deferred, not passed.
-- [ ] After merge, archive change and sync roadmap + HTML view.
+- [x] After merge, archive change and sync roadmap + HTML view.

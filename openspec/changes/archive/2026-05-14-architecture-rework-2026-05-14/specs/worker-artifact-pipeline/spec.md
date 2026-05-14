@@ -1,6 +1,6 @@
 # worker-artifact-pipeline Specification Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Worker artifact pipeline separates RVT→IFC bridge from streaming-owned IFC→USDC conversion
 

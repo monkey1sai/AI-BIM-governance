@@ -1,6 +1,6 @@
 # multi-artifact-kit-routing Specification Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Multi-artifact routing includes primary/secondary composition policy
 
