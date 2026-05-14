@@ -1,6 +1,6 @@
 # documentation-source-of-truth Specification Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Source-of-truth documents reflect B-scheme architecture rework
 

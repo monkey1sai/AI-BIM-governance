@@ -1,6 +1,6 @@
 # session-first-review-viewer Specification Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Viewer displays streaming-owned conversion and composition status
 

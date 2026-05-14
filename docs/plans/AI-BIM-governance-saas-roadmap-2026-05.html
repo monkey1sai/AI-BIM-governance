@@ -93,7 +93,7 @@
 <li><a href="#1-2026-05-08">1. 現況基線（2026-05-08）</a><ul>
 <li><a href="#11">1.1 已存在的核心服務</a></li>
 <li><a href="#12-openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：openspec/specs/）</a></li>
-<li><a href="#12a-active-architecture-rework-specspending-archive">1.2A Active architecture rework specs（pending archive）</a></li>
+<li><a href="#12a-architecture-rework-archive-2026-05-14">1.2A Architecture rework archive 對齊（2026-05-14）</a></li>
 <li><a href="#13-runtime-evidence">1.3 已驗證的閉環與 runtime evidence</a></li>
 <li><a href="#14-openspec-change-openspecspecs">1.4 OpenSpec 已歸檔 change → 現行 openspec/specs/ 溯源</a></li>
 <li><a href="#15-2026-05-12">1.5 本機環境一致性基線（2026-05-12）</a><ul>
@@ -274,8 +274,6 @@
       </nav>
     </aside>
     <main>
-      <p class="eyebrow">Derived view</p>
-      <p class="meta">Source of truth: AI-BIM-governance-saas-roadmap-2026-05.md</p>
 <h1 id="ai-bim-governancesaas-2026-05">AI-BIM-governance：SaaS 路線圖規劃（2026-05）</h1>
 <blockquote>
 <p><strong>文件性質</strong>：roadmap / planning artifact（不是 OpenSpec change，不修改產品程式碼）
@@ -284,7 +282,7 @@
 <strong>撰寫技能組合</strong>：<code>openspec-explore</code> → <code>planner</code> → <code>incremental-implementation</code> → <code>spec-driven-development</code>
 <strong>回覆語言</strong>：繁體中文</p>
 <p><strong>2026-05-08 follow-up 更新（OpenSpec 溯源 + §9 NVIDIA 語意定稿）</strong>：
-1. <strong>§1.4</strong>：整理 <code>openspec/changes/archive/*</code> 已歸檔 change 與現行 <strong><code>openspec/specs/</code></strong>（11 個 capability）對照，避免 roadmap 與 spec 目錄漂移。
+1. <strong>§1.4</strong>：整理 <code>openspec/changes/archive/*</code> 已歸檔 change 與現行 <strong><code>openspec/specs/</code></strong> capability 對照，避免 roadmap 與 spec 目錄漂移。
 2. <strong>§9</strong>：延續 MCP／OVAS／extension 官方文件交叉驗證結果，明確 <strong><code>kit.exe</code> = OS process</strong>、<strong>Multi‑Kit = 多進程／多容器</strong>、<strong>primary／spectator／AOV = 同一進程內可多 signaling endpoint</strong>（與 §11.4 Multi‑Kit 定義互相引用）。</p>
 <p><strong>2026-05-08 15:00 更新（MCP 補強）</strong>：透過本機 docker container 上的 NVIDIA NeMo Agent Toolkit MCP server（<code>kit-mcp:9902</code>、<code>usd-code-mcp:9903</code>，皆 healthy）與 NVIDIA 官方文件（<code>docs.omniverse.nvidia.com</code>）交叉驗證，校正 Phase 4 / Phase 5 的「實際可用 NVIDIA 真實能力」。詳見 §11；§2 / §3 / §9 / §6 對應段落已標 ⓜ 表示由 MCP 補正。</p>
 <p><strong>2026-05-08 16:05 更新（依使用者 review 修訂）</strong>：
@@ -310,10 +308,10 @@
 <p><strong>2026-05-13 更新（source enumeration blocker burn-down）</strong>：<code>optimize-worker-source-entity-enumeration</code> 已讓 canonical first fixture 越過 <code>source_entity_enumeration</code>：<code>--limit 1 --timeout-seconds 600 --profile-source-entities</code> 記錄 <code>1,604,773</code> source IFC entities、enumeration 約 <code>33.19s</code>、<code>fallback_used=false</code>。該 run 仍在 <code>non_renderable_entity_materialization</code> timeout，未產出 completed <code>model.usdc</code>，因此 visual preview / full 13-file batch 仍 blocked，<code>minimum_coverage_locked=false</code> 維持不變。Closeout 時修正本機 Python user-site dependency drift（<code>starlette 1.0.0</code> → <code>_worker/requirements.txt</code> baseline <code>starlette==0.37.2</code>）後，<code>_worker</code> API regression <code>38 passed, 1 skipped</code>，converter/batch/store focused tests <code>67 passed</code>，strict OpenSpec validation 與 <code>git diff --check</code> 通過。新的後續風險切片應聚焦 large IFC all-entity non-renderable materialization。</p>
 <p><strong>2026-05-13 更新（<code>demo-current-runtime-observation</code> live pass）</strong>：本次 current observation 產出 <code>docs/verification/2026-05-13-demo-current-runtime-observation.md</code>。非 Kit 服務 health 目前可啟動並通過：8001 / 8005 / 8004 health OK、5173 HTTP 200；focused checks 為 <code>_bim-control</code> <code>23 passed</code>、<code>_worker</code> <code>105 passed, 1 skipped</code>、coordinator <code>105 passed</code>、viewer build / session-first contract passed，viewer lint 仍是既有 <code>29 errors, 1 warning</code>。Socket.IO collaboration passed，coordinator close / release lifecycle passed（<code>review_session_87404055d4fd</code>）。但 current worktree <code>storage/</code> 沒有 IFC fixture，worker dev-source smoke blocked；<code>smoke-review-session.ps1</code> 的極簡 IFC payload 無法被 IfcOpenShell parse，因此 conversion readiness failed；Kit/WebRTC blocked by missing streaming launcher，Browser automation blocked by in-app browser policy，dedicated multi-Kit runtime 仍 deferred。此 live pass 不把 historical single-Kit/browser evidence 重新標成 current passed。</p>
 <p><strong>2026-05-13 更新（non-renderable materialization sidecar carrier 完成 canonical single-fixture conversion）</strong>：<code>optimize-worker-non-renderable-materialization</code> 已 land sidecar carrier 路徑（Option 4 + Option 3）。<code>non_renderable_entity_materialization</code> 從 baseline <code>375.1s+ timeout</code> 收斂至 <code>5.05s</code>（≈74× faster），同 fixture canonical run 在 <code>267.7s</code> 完成、產出第一個 canonical <code>model.usdc</code>（<code>output_file_size_bytes=9,844,612</code>），<code>coverage_ratio=0.9999987537178155</code>（<code>mapped_count=1,604,771</code> / <code>source_ifc_entity_count=1,604,773</code>，2 個未對映的 shape 為 geometry side 缺 GUID，可由 secondary scope follow-up 收斂）。<code>bim-review-coordinator</code> / <code>web-viewer-sample</code> / <code>bim-streaming-server</code> 三邊在 source 中對 sidecar carrier 無需 schema change，handoff framework 已記錄於 design.md。Full 13-file batch 與 visual preview 仍 not_run，<code>minimum_coverage_locked=false</code> 維持不變。下一個切片：full 13-file batch with sidecar carrier，以及把 secondary <code>guid_extraction</code> / <code>name_extraction</code> 優化（baseline ~10s）獨立 follow-up。</p>
-<p><strong>2026-05-14 更新（architecture-rework B 方案 apply）</strong>：active change <code>architecture-rework-2026-05-14</code> 將 conversion authority 重新分配為 B 方案：<code>_worker</code> 收斂為 RVT→IFC bridge，<code>bim-streaming-server</code> 成為 IFC→USDC conversion job authority，<code>bim-review-platform</code> 只代表 coordinator + streaming-server + viewer 的 deployment boundary，不建立 nested repo。既有 <code>_worker</code> real IFC→USDC evidence 只能作為 migration source；在 streaming-server-owned conversion job / result / quality evidence 出現前，roadmap 不把 <code>streaming_conversion_job</code> 或 <code>mapping_quality</code> 標成 passed。</p>
+<p><strong>2026-05-14 更新（architecture-rework B 方案 archive 對齊）</strong>：<code>architecture-rework-2026-05-14</code> 已由 PR #54 merge 後 archive 至 <code>openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/</code>，現行 <code>openspec/specs/</code> 共 18 個 capability。B 方案正式把 conversion authority 重新分配為：<code>_bim-control</code> = fake RVT intake facade、<code>_worker</code> = RVT→IFC bridge、<code>bim-streaming-server</code> = IFC→USDC conversion job authority + USD stage composition、<code>bim-review-platform</code> = coordinator + streaming-server + viewer deployment boundary（不是 nested repo）。本次 archive 只代表規格併入，不代表已新增 runtime smoke；在 streaming-server-owned conversion job / result / quality evidence 出現前，roadmap 仍不把 <code>streaming_conversion_job</code> 或 <code>mapping_quality</code> 標成 passed。</p>
 </blockquote>
 <p>本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出<strong>下一階段最小、可驗證、不擴散範圍</strong>的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。</p>
-<hr />
+<hr>
 <h2 id="0-karpathy-agentsmd">0. 規劃原則（Karpathy / AGENTS.md / 既有路線圖一致）</h2>
 <pre><code class="language-txt">- 依 AGENTS.md 的 repo 邊界與 source-of-truth 順序執行：
   bim-control 是資料權威與 fake RVT intake facade，_worker 是 RVT→IFC bridge，
@@ -326,7 +324,7 @@
 - Runtime 驗證證據必須綁定可重建的本機環境；不得把全域 Python / 殘缺 `node_modules` 的偶然狀態視為 roadmap health。
 - 跨 5 個 repo 邊界的整合 spec，先拆成單 repo 邊界內的子 change，避免 high-risk impact analysis。
 </code></pre>
-<hr />
+<hr>
 <h2 id="1-2026-05-08">1. 現況基線（2026-05-08）</h2>
 <blockquote>
 <p><strong>與 workflow v3 的分工</strong>：本文件是 <strong>OpenSpec 候選（#1-#9 + #1A / #2A）、NVIDIA Reference 採用決策矩陣（§13）、§11.4 Multi-Kit Instance 並行官方定義、硬體配置（§9.0-§9.8）、MCP 查詢結果（§11）</strong> 的權威。
@@ -377,7 +375,7 @@
 </tbody>
 </table>
 <h3 id="12-openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：<code>openspec/specs/</code>）</h3>
-<p>下列 <strong>11</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。</p>
+<p>下列 <strong>18</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。</p>
 <table>
 <thead>
 <tr>
@@ -437,6 +435,12 @@
 <td>✓ Viewer 從 review_request_id / session_id bootstrap</td>
 </tr>
 <tr>
+<td><code>demo-runtime-readiness-smoke</code></td>
+<td>0/1/2/3</td>
+<td>6</td>
+<td>✓ Demo readiness 分層 smoke contract；B 方案新增 <code>rvt_intake</code>、<code>rvt_to_ifc_bridge</code>、<code>streaming_conversion_job</code>、<code>mapping_quality</code>、<code>single_kit_multi_viewer</code>、<code>usd_stage_composition</code> tiers</td>
+</tr>
+<tr>
 <td><code>runtime-verification-evidence</code></td>
 <td>0</td>
 <td>6</td>
@@ -454,14 +458,50 @@
 <td>repo governance</td>
 <td>✓ workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威</td>
 </tr>
+<tr>
+<td><code>bim-control-revit-intake-facade</code></td>
+<td>1/2</td>
+<td>3-A</td>
+<td>✓ <code>_bim-control</code> 提供 fake RVT intake facade；只保存 request / artifact metadata，不執行 Revit</td>
+</tr>
+<tr>
+<td><code>worker-rvt-ifc-bridge</code></td>
+<td>1</td>
+<td>3-B</td>
+<td>✓ <code>_worker</code> 收斂為 RVT→IFC bridge；輸出 <code>ifc_ready</code> handoff，不宣告 <code>model.usdc</code> ready</td>
+</tr>
+<tr>
+<td><code>streaming-ifc-usdc-conversion-authority</code></td>
+<td>1/4</td>
+<td>4</td>
+<td>✓ <code>bim-streaming-server</code> 成為 IFC→USDC conversion job / status / result authority</td>
+</tr>
+<tr>
+<td><code>conversion-webhook-lifecycle</code></td>
+<td>1/2/4</td>
+<td>3-A/B/C</td>
+<td>✓ <code>rvt_uploaded</code>、<code>ifc_ready</code>、<code>conversion_result_ready</code> / <code>conversion_failed</code> lifecycle 保留 correlation / idempotency</td>
+</tr>
+<tr>
+<td><code>bim-review-platform-boundary</code></td>
+<td>cross-cutting</td>
+<td>deployment</td>
+<td>✓ <code>bim-review-platform</code> 僅代表 deployment boundary，不是 nested repo / submodule</td>
+</tr>
+<tr>
+<td><code>streaming-usd-stage-composition</code></td>
+<td>4/5</td>
+<td>4</td>
+<td>✓ primary root model + session layer + ordered secondary subLayers 的 stage composition 語意</td>
+</tr>
 </tbody>
 </table>
-<h3 id="12a-active-architecture-rework-specspending-archive">1.2A Active architecture rework specs（pending archive）</h3>
-<p><code>architecture-rework-2026-05-14</code> 是目前正在套用的 B 方案 change。這些 delta specs 在 archive 前先作為 active change 驗收來源；archive 後必須依 §1.6 同步併入 <code>openspec/specs/</code>、§1.2、§1.4、Phase 狀態與 HTML 檢視版。</p>
+<h3 id="12a-architecture-rework-archive-2026-05-14">1.2A Architecture rework archive 對齊（2026-05-14）</h3>
+<p><code>architecture-rework-2026-05-14</code> 已完成 archive，delta specs 已併入 <code>openspec/specs/</code>，歷史快照保留在 <code>openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/</code>。本節只保留 archive 對齊摘要；需求細節以 §1.2 的現行 specs 為準。</p>
 <table>
 <thead>
 <tr>
-<th>Active spec delta</th>
+<th>Archived spec delta</th>
 <th>Roadmap effect</th>
 </tr>
 </thead>
@@ -575,11 +615,13 @@ lifecycle audit endpoint:            contract + unit tests passed; no browser/ru
 # 延後（等待 GPU 購買與部署）
 multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部署後執行
 
-# B 方案 active change（2026-05-14）
-rvt_intake tier:                    pending implementation / evidence
-rvt_to_ifc_bridge tier:             pending implementation / evidence
-streaming_conversion_job tier:      not_observed until bim-streaming-server owns job evidence
-mapping_quality tier:               not_observed until streaming-owned result carries metrics
+# B 方案 archive 對齊（2026-05-14；PR #54 merged，OpenSpec archived）
+openspec archive:                   completed; specs synced under openspec/specs/
+rvt_intake tier:                    contract archived; runtime smoke not rerun in archive branch
+rvt_to_ifc_bridge tier:             contract archived; runtime smoke not rerun in archive branch
+streaming_conversion_job tier:      contract archived; not_observed until bim-streaming-server owns live job evidence
+mapping_quality tier:               contract archived; not_observed until streaming-owned result carries metrics
+usd_stage_composition tier:          contract archived; live Kit/GPU composition smoke not rerun
 historical worker conversion:       migration source only; cannot mark B-scheme tiers passed
 </code></pre>
 <blockquote>
@@ -592,7 +634,7 @@ historical worker conversion:       migration source only; cannot mark B-scheme 
 </blockquote>
 <h3 id="14-openspec-change-openspecspecs">1.4 OpenSpec 已歸檔 change → 現行 <code>openspec/specs/</code> 溯源</h3>
 <blockquote>
-<p><strong>用途</strong>： roadmap 只摘要狀態；<strong>需求句式與 Requirement 編號以各 spec 為準</strong>。下列為 <code>openspec/changes/archive/</code> 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-12 盤點）。</p>
+<p><strong>用途</strong>： roadmap 只摘要狀態；<strong>需求句式與 Requirement 編號以各 spec 為準</strong>。下列為 <code>openspec/changes/archive/</code> 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-14 盤點）。</p>
 </blockquote>
 <table>
 <thead>
@@ -652,6 +694,11 @@ historical worker conversion:       migration source only; cannot mark B-scheme 
 <td><code>2026-05-12-coordinator-session-lifecycle-events-audit</code></td>
 <td><code>review-session-request-lifecycle</code>（MODIFY）</td>
 <td>coordinator append-only lifecycle audit endpoint、stable <code>sequence</code> event schema、lifecycle-only filter、close/release audit events、<code>_bim-control</code> review request correlation fields</td>
+</tr>
+<tr>
+<td><code>2026-05-14-architecture-rework-2026-05-14</code></td>
+<td><code>bim-control-revit-intake-facade</code>、<code>worker-rvt-ifc-bridge</code>、<code>streaming-ifc-usdc-conversion-authority</code>、<code>conversion-webhook-lifecycle</code>、<code>bim-review-platform-boundary</code>、<code>streaming-usd-stage-composition</code>（ADD）；<code>demo-runtime-readiness-smoke</code>、<code>documentation-source-of-truth</code>、<code>multi-artifact-kit-routing</code>、<code>review-session-request-lifecycle</code>、<code>session-first-review-viewer</code>、<code>streaming-multi-layer-payload-loading</code>、<code>worker-artifact-pipeline</code>（MODIFY）</td>
+<td>B 方案 conversion authority rework：<code>_bim-control</code> RVT intake、<code>_worker</code> RVT→IFC bridge、<code>bim-streaming-server</code> IFC→USDC authority + stage composition、platform boundary clarification、demo readiness tiers；archive 不代表 runtime smoke passed</td>
 </tr>
 </tbody>
 </table>
@@ -813,7 +860,7 @@ cd ..
 - 若 roadmap 未更新，archive 只能視為規格檔案已搬移，不能視為專案執行規劃已收斂。
 - 若 HTML 未同步，archive closeout 仍不完整；但衍生檢視不得覆蓋 Markdown 的 source-of-truth 地位。
 </code></pre>
-<hr />
+<hr>
 <h2 id="2-v1-vs-specs">2. v1 路線圖 vs 既有 specs 對照</h2>
 <h3 id="phase-0">Phase 0：基線穩定化 — <strong>狀態：✓ 已完成</strong></h3>
 <table>
@@ -1515,7 +1562,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 <blockquote>
 <p><strong>與其他 Phase 的關係</strong>：已歸檔 #1 / #3 / #3A / #4、候選 #2（P0–P1）與候選 #1A / #2A 是 Phase 4–5 範圍，<strong>不受此凍結影響</strong>。Phase 6 凍結僅作用於候選 #7 / #8 / #9 與上表細項。</p>
 </blockquote>
-<hr />
+<hr>
 <h2 id="3-v2-6-vs">3. v2 6 層架構 vs 現況對照</h2>
 <table>
 <thead>
@@ -1558,7 +1605,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<hr />
+<hr>
 <h2 id="4-ifc-usd-v2">4. IFC → USD 品質保護管線（v2 紅星風險點）</h2>
 <blockquote>
 <p>v2 圖右側標：「★ 這是目前最重要的技術風險控制點 ★」</p>
@@ -1576,26 +1623,26 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tr>
 <td>1</td>
 <td>上傳 IFC / RVT / DWG</td>
-<td>✓ <code>POST /api/artifacts</code> + <code>POST /api/dev/ifc-sources/{id}/conversions</code></td>
+<td>✓ historical IFC upload；B 方案下 RVT intake facade 已 archive 到 <code>_bim-control</code> spec，live smoke 需補</td>
 <td>LOW</td>
 </tr>
 <tr>
 <td>2</td>
 <td>建立 conversion job</td>
-<td>✓ <code>POST /api/conversions</code> 含 lineage 與 <code>original_filename</code></td>
-<td>LOW</td>
+<td>✓ historical <code>_worker</code> job contract；B 方案下 IFC→USDC job authority 已移到 <code>bim-streaming-server</code> spec，live job evidence 需補</td>
+<td>MEDIUM</td>
 </tr>
 <tr>
 <td>3</td>
 <td><code>_worker</code> headless conversion</td>
-<td>✓ real IFC→USDC adapter（IfcOpenShell + <code>usd-core</code> external prerequisites）</td>
-<td>MEDIUM（dependency / local runtime drift）</td>
+<td>✓ historical real IFC→USDC adapter evidence；B 方案下改作 migration source，不再代表 target authority</td>
+<td>MEDIUM（dependency / local runtime drift；authority migration risk）</td>
 </tr>
 <tr>
 <td>4</td>
 <td>生成 USD / USDC + element_mapping</td>
-<td>✓ openable worker-produced <code>model.usdc</code>；one-to-many mapping；coverage report <code>0.950556913882097</code></td>
-<td>MEDIUM（coverage baseline 尚未鎖門檻）</td>
+<td>✓ historical openable worker-produced <code>model.usdc</code>；B 方案需補 streaming-owned conversion result / quality metrics</td>
+<td>MEDIUM（coverage baseline 尚未鎖門檻；streaming-owned evidence 未補）</td>
 </tr>
 <tr>
 <td>5</td>
@@ -1617,8 +1664,8 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<p><strong>結論（2026-05-12 對齊）</strong>：v1 路線圖「Phase 1 _worker 收攏」的最大紅星 blocker（placeholder IFC→USDC）已由 <code>worker-real-conversion-quality</code> 解除；lineage API 與 all-IFC-entity mapping quality policy 已由 <code>worker-mapping-lineage-quality-baseline</code> 歸檔。後續 Phase 4-6 可把 real worker-produced USDC 作為前提，但仍不得把 mapping coverage 視為 production baseline，直到 canonical storage real batch 通過並鎖定 evidence。</p>
-<hr />
+<p><strong>結論（2026-05-14 對齊）</strong>：v1 路線圖「Phase 1 _worker 收攏」的 historical placeholder IFC→USDC blocker 已由 <code>worker-real-conversion-quality</code> 解除；lineage API 與 all-IFC-entity mapping quality policy 已由 <code>worker-mapping-lineage-quality-baseline</code> 歸檔。<code>architecture-rework-2026-05-14</code> archive 後，這些 <code>_worker</code> real conversion evidence 只能作為 migration source；target runtime authority 是 <code>bim-streaming-server</code>。後續不得把 mapping coverage 視為 production baseline，也不得把 streaming conversion / mapping quality 標成 passed，直到 canonical storage real batch 與 streaming-owned job/result/quality evidence 都通過並鎖定。</p>
+<hr>
 <h2 id="5-openspec-change">5. 下一階段 OpenSpec change 候選清單</h2>
 <p>每一個候選都遵守：</p>
 <pre><code class="language-txt">- 單一 repo 邊界內優先；跨 repo 候選會明確標註並建議拆 sub-changes。
@@ -2200,7 +2247,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<hr />
+<hr>
 <h2 id="6">6. 優先順序總結</h2>
 <pre><code class="language-txt">Archived / 已完成:
   #1  worker-real-conversion-quality           ✓ 已於 2026-05-11 archive
@@ -2264,7 +2311,7 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 
 ⏸ #7 tenant-rbac ─→ ⏸ #5 / #6 / #8 (tenant 隔離是後續所有服務的權限根；同凍結)
 </code></pre>
-<hr />
+<hr>
 <h2 id="7-trade-off">7. 風險與 trade-off</h2>
 <table>
 <thead>
@@ -2332,19 +2379,19 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 </tr>
 <tr>
 <td>R12</td>
-<td>B 方案 migration 期間把 historical <code>_worker</code> real IFC→USDC evidence 誤標成 streaming-server-owned conversion pass</td>
-<td>Demo smoke 必須分 tier 回報 <code>conversion_authority</code>；<code>streaming_conversion_job</code> / <code>mapping_quality</code> 只有在 <code>bim-streaming-server</code> job/result/quality evidence 出現後才可 passed</td>
+<td>B 方案已 archive，但仍可能把 historical <code>_worker</code> real IFC→USDC evidence 誤標成 streaming-server-owned conversion pass</td>
+<td>Demo smoke 必須分 tier 回報 <code>conversion_authority</code>；<code>streaming_conversion_job</code> / <code>mapping_quality</code> 只有在 <code>bim-streaming-server</code> job/result/quality evidence 出現後才可 passed；archive branch 未重跑 live Kit/GPU smoke</td>
 </tr>
 </tbody>
 </table>
-<hr />
+<hr>
 <h2 id="8">8. 不在這次規劃範圍</h2>
 <pre><code class="language-txt">- 本文件不直接創建 OpenSpec change folder；那是 explore / propose 的工作。
 - 本文件不修改既有 spec；任何 MODIFY 都應在對應 OpenSpec change 內執行。
 - 本文件不啟動實作；尚未歸檔的候選應走 codex/openspec/&lt;change-id&gt; branch。
 - 本文件不更新 AGENTS.md / CLAUDE.md；除非候選 land 後改變 repo 邊界（例如 #5 / #6 加新 mock service）。
 </code></pre>
-<hr />
+<hr>
 <h2 id="9-phase-4-phase-5">9. Phase 4 / Phase 5 硬體配置補充</h2>
 <blockquote>
 <p><strong>輸入來源</strong>：使用者於 2026-05-08 14:50 追加要求；以 <code>bim-streaming-server/SYSTEM_DESIGN.md</code> 與 <code>docs/verification/2026-05-08-spec-end-to-end-verification.md</code> 已量測值為基礎，不外推未驗證的規格。</p>
@@ -3089,7 +3136,7 @@ B → C 觸發：
 <blockquote>
 <p><strong>#2 ↔ #2A 的層級關係（2026-05-08 17:00）</strong>：#2 解 §2 Phase 3 業務語意層（routing decision + kit_instance_bindings 紀錄）；#2A 解 §2 Phase 4.4 / 4.5 / 4.11 runtime infrastructure 層（OVAS 接管 Kit container lifecycle）。採用 OVAS 後 <code>bim-review-coordinator/src/services/kitPool.ts</code> 變 thin client（call OVAS REST app instance API），spec 只需 1 個 MODIFY（Req2 provider enum 擴 <code>"ovas"</code>），其他 4 個 Req 不變。完整影響表見 §12.2、官方定義見 §11.4。</p>
 </blockquote>
-<hr />
+<hr>
 <h2 id="10-monkey1sai">10. 建議的下一步（給 monkey1sai）</h2>
 <ol>
 <li>
@@ -3097,6 +3144,13 @@ B → C 觸發：
    - 先依 §1.5 建立 repo-local <code>.venv</code>，確認 <code>fastapi 0.111.0 / starlette 0.37.2 / uvicorn 0.45.0</code>。
    - 對 <code>bim-review-coordinator</code> 與 <code>web-viewer-sample</code> 重跑 <code>npm ci</code>，確認 <code>tsx.cmd</code> / <code>vite.cmd</code> 存在。
    - 以 <code>.\scripts\start-all.ps1 -SkipStreaming</code> 驗 8001 / 8005 / 8004 / 5173；這一步通過後，才把後續 OpenSpec / runtime evidence 的失敗視為功能或 spec 問題。</p>
+</li>
+<li>
+<p><strong>B 方案 archive 後，先補最小整合驗證，不把 archive 當 runtime pass</strong>：
+   - <code>architecture-rework-2026-05-14</code> 已歸檔到 <code>openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/</code>，現行 specs 已更新為 18 個 capability。
+   - 下一個最小 smoke 應從 <code>_bim-control</code> fake RVT intake → <code>_worker</code> RVT→IFC bridge / <code>ifc_ready</code> → <code>bim-streaming-server</code> streaming-owned IFC→USDC conversion job/result → coordinator session bootstrap → viewer stage composition 分層驗。
+   - 若本機沒有 GPU / Kit listener，先跑 API-only contract smoke，並把 <code>streaming_conversion_job</code>、<code>mapping_quality</code>、<code>usd_stage_composition</code> 明確標成 blocked / not_observed；不得沿用 historical <code>_worker</code> conversion evidence 當 target authority pass。
+   - 實際 live Kit/GPU smoke 通過後，才更新 §1.3、<code>demo-runtime-readiness-smoke</code> evidence 與 HTML 檢視版。</p>
 </li>
 <li>
 <p><strong>確認 #1、#3/#3A 與 canonical batch archive 對齊已完成，後續不再重開已完成 change</strong>：
@@ -3126,7 +3180,7 @@ B → C 觸發：
    - #3 / #3A 已完成並歸檔，不再列為候選池。
    - <code>#4</code> 已歸檔到 <code>openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/</code>，並同步到 <code>review-session-request-lifecycle</code>。
    - lifecycle events 已收斂成 append-only event schema，支撐後續 #6 mock webhook / observability 探索。
-   - 若要先補 worker evidence，優先完成上方第 3 點的 full 13-file canonical batch + secondary enumeration burn-down，不要跳過 canonical batch readiness gate；demo runtime readiness 改由 active change <code>stabilize-demo-runtime-readiness</code> 接手。</p>
+   - 若要先補 worker evidence，優先完成上方第 4 點的 full 13-file canonical batch + secondary enumeration burn-down，不要跳過 canonical batch readiness gate；demo runtime readiness 改由 active change <code>stabilize-demo-runtime-readiness</code> 接手。</p>
 </li>
 <li>
 <p><strong>評估是否啟動 <code>#1A</code> / <code>#2A</code>（採用 NVIDIA reference impl，見 §12 / §13）</strong>：
@@ -3161,7 +3215,7 @@ B → C 觸發：
 </ul>
 </li>
 </ol>
-<hr />
+<hr>
 <h2 id="11-phase-4-phase-5-nvidia-2026-05-08-mcp">11. Phase 4 / Phase 5 NVIDIA 真實能力對應（2026-05-08 MCP + 官方文件查詢）</h2>
 <blockquote>
 <p><strong>查詢來源</strong>：
@@ -3504,7 +3558,7 @@ OVAS Overview 原文：
 </tr>
 </tbody>
 </table>
-<hr />
+<hr>
 <h2 id="12-mcp">12. 由 MCP 結果新增的候選</h2>
 <blockquote>
 <p>這兩個候選都不取代 §5 既有 P0 / P1，而是<strong>讓 P0 候選在實作時直接對齊 NVIDIA 真實做法，避免「自建版」與「NVIDIA 版」雙軌成本</strong>。</p>
@@ -3707,7 +3761,7 @@ OVAS Overview 原文：
 
 ⏸ #9 production-deployment-baseline   ── 凍結中（等業務系統接入）
 </code></pre>
-<hr />
+<hr>
 <h2 id="13-nvidia-reference-implementation">13. 採用 NVIDIA Reference Implementation 的決策框架</h2>
 <blockquote>
 <p><strong>2026-05-08 16:05 新增</strong>：回應使用者問題「Phase 4 / Phase 5 NVIDIA 已提供功能是否可直接採用？優缺點與風險？」。</p>

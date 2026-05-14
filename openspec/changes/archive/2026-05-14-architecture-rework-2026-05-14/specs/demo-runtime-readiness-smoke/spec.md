@@ -1,6 +1,6 @@
 # demo-runtime-readiness-smoke Specification Delta
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Demo runtime smoke includes B-scheme conversion tiers
 
