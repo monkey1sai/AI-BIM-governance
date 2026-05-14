@@ -21,7 +21,12 @@ export interface ArtifactBinding {
   mapping_url: string | null;
   load_order: number;
   routing_policy: RoutingPolicy;
-  ready_status: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion";
+  ready_status: "ready" | "missing_model" | "missing_mapping" | "blocked_conversion" | "converting" | "failed";
+  conversion_authority?: "bim-streaming-server" | string | null;
+  conversion_job_id?: string | null;
+  conversion_status?: string | null;
+  failure_code?: string | null;
+  diagnostic?: string | null;
 }
 
 export interface KitInstanceBinding {
@@ -98,6 +103,12 @@ export interface Artifact {
   url?: string | null;
   mapping_url?: string | null;
   status: string;
+  conversion_authority?: "bim-streaming-server" | string | null;
+  conversion_job_id?: string | null;
+  conversion_status?: string | null;
+  failure_code?: string | null;
+  diagnostic?: string | null;
+  quality_metrics_summary?: ConversionQualityMetricsSummary | null;
 }
 
 export interface ReviewIssue {
@@ -119,13 +130,31 @@ export interface StreamConfigResponse {
     mediaPort?: number | null;
   };
   model: {
-    status: "ready" | "missing";
+    status: "ready" | "missing" | "converting" | "failed" | "blocked";
     artifact_id: string | null;
     url: string | null;
     mapping_url: string | null;
+    conversion_authority?: "bim-streaming-server" | string | null;
+    conversion_job_id?: string | null;
+    conversion_status?: string | null;
+    failure_code?: string | null;
+    diagnostic?: string | null;
   };
   artifacts: Artifact[];
   artifact_bindings: ArtifactBinding[];
   kit_instance_bindings: KitInstanceBinding[];
   quality_metrics_summary?: ConversionQualityMetricsSummary | null;
+  stage_composition: {
+    applied_policy: "coordinator_load_order";
+    primary_artifact_id: string | null;
+    secondary_artifact_ids: string[];
+    primary: ArtifactBinding | null;
+    secondary_layers: ArtifactBinding[];
+  };
+  viewport_sharing: {
+    mode: string;
+    primary_kit_instance_id: string | null;
+    shared_state: boolean;
+    spectator_ready: boolean;
+  };
 }

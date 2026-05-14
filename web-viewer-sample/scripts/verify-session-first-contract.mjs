@@ -42,9 +42,11 @@ const binding = {
     routing_policy: "same_instance",
     ready_status: "ready",
 };
-const routedRequest = buildOpenStageRequest(binding.url, [binding]);
+const routedRequest = buildOpenStageRequest(binding.url, [binding], { primary: binding, secondary_layers: [] });
 assert.equal(routedRequest.payload.url, binding.url);
 assert.deepEqual(routedRequest.payload.artifact_bindings, [binding]);
+assert.equal(routedRequest.payload.stage_composition.primary.artifact_id, binding.artifact_id);
+assert.deepEqual(routedRequest.payload.stage_composition.secondary_layers, []);
 
 const windowSource = readSource("src/Window.tsx");
 for (const token of [
@@ -59,11 +61,18 @@ for (const token of [
     "isQueuedForInstanceError",
     "queuedForKitInstance",
     "patchReviewSessionRequest(reviewRequest.review_request_id",
-    "buildOpenStageRequest(this.state.selectedUSDAsset.url, artifactBindings)",
+    "buildOpenStageRequest(",
+    "this.state.latestStreamConfig.model.status !== \"ready\"",
+    "stage_composition",
     "this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)",
     "const bootstrapModelVersionId = loadedSession?.model_version_id",
 ]) {
     assert.ok(windowSource.includes(token), `Window.tsx is missing ${token}`);
+}
+
+const reviewTypesSource = readSource("src/types/review.ts");
+for (const token of ["converting", "conversion_authority", "conversion_job_id", "stage_composition"]) {
+    assert.ok(reviewTypesSource.includes(token), `review.ts is missing ${token}`);
 }
 assert.match(
     windowSource,

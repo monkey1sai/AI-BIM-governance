@@ -38,6 +38,17 @@ function Save-Evidence {
     Write-Host "[smoke] evidence: $EvidencePath"
 }
 
+function Get-OptionalValue {
+    param(
+        $Object,
+        [Parameter(Mandatory = $true)][string] $Name
+    )
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
 # ---------- Service health preflight ----------
 $serviceErrors = @{}
 foreach ($svc in @(
@@ -205,6 +216,79 @@ try {
             kit_instance_bindings_count = @($streamConfig.kit_instance_bindings).Count
             artifact_bindings_count     = @($streamConfig.artifact_bindings).Count
         }
+
+    # B-scheme conversion tiers. Legacy `_worker` conversion evidence above is historical
+    # context only and must not promote streaming-owned conversion readiness.
+    Add-SmokeTier -Record $Record -Tier 'rvt_intake' -Status 'not_observed' -Owner '_bim-control' `
+        -Blocker 'smoke-review-session.ps1 does not submit fake RVT intake; it starts from dev IFC fixtures' `
+        -NextCommand 'Use _bim-control POST /api/model-versions/{model_version_id}/rvt-intake for RVT intake evidence' `
+        -Ids @{ model_version_id = $ModelVersionId }
+
+    Add-SmokeTier -Record $Record -Tier 'rvt_to_ifc_bridge' -Status 'not_observed' -Owner '_worker' `
+        -Blocker 'no rvt_uploaded -> ifc_ready handoff was executed in this smoke pass' `
+        -NextCommand 'POST the rvt_uploaded event to _worker /api/rvt-exports, then rerun streaming conversion smoke' `
+        -Ids @{ model_version_id = $ModelVersionId }
+
+    $model = $streamConfig.model
+    $conversionAuthority = Get-OptionalValue -Object $model -Name 'conversion_authority'
+    $streamingConversionJobId = Get-OptionalValue -Object $model -Name 'conversion_job_id'
+    $failureCode = Get-OptionalValue -Object $model -Name 'failure_code'
+    $diagnostic = Get-OptionalValue -Object $model -Name 'diagnostic'
+    $stageComposition = Get-OptionalValue -Object $streamConfig -Name 'stage_composition'
+
+    if ($conversionAuthority -eq 'bim-streaming-server') {
+        $streamingStatus = 'blocked'
+        if ($model.status -eq 'ready') { $streamingStatus = 'passed' }
+        elseif ($model.status -eq 'failed') { $streamingStatus = 'failed' }
+        elseif ($model.status -eq 'converting') { $streamingStatus = 'blocked' }
+
+        Add-SmokeTier -Record $Record -Tier 'streaming_conversion_job' -Status $streamingStatus -Owner 'bim-streaming-server' `
+            -Blocker $(if ($streamingStatus -eq 'passed') { '' } else { "model.status=$($model.status)" }) `
+            -Ids @{
+                conversion_authority = $conversionAuthority
+                conversion_job_id    = $streamingConversionJobId
+                model_status         = $model.status
+                artifact_id          = $model.artifact_id
+            } `
+            -Detail @{
+                failure_code = $failureCode
+                diagnostic   = $diagnostic
+                model_url    = $model.url
+                mapping_url  = $model.mapping_url
+            }
+
+        $mappingStatus = if ($model.status -eq 'ready' -and $model.mapping_url) { 'passed' } elseif ($model.status -eq 'failed') { 'failed' } else { 'blocked' }
+        Add-SmokeTier -Record $Record -Tier 'mapping_quality' -Status $mappingStatus -Owner 'bim-streaming-server' `
+            -Blocker $(if ($mappingStatus -eq 'passed') { '' } else { 'streaming-owned mapping quality evidence is not ready' }) `
+            -Ids @{
+                conversion_authority = $conversionAuthority
+                conversion_job_id    = $streamingConversionJobId
+                mapping_url          = $model.mapping_url
+            } `
+            -Detail @{ quality_metrics_summary = Get-OptionalValue -Object $streamConfig -Name 'quality_metrics_summary' }
+    } else {
+        Add-SmokeTier -Record $Record -Tier 'streaming_conversion_job' -Status 'not_observed' -Owner 'bim-streaming-server' `
+            -Blocker 'no streaming-owned conversion evidence in stream-config; legacy _worker conversion is not promoted' `
+            -NextCommand 'Run the B-scheme ifc_ready -> bim-streaming-server conversion API path' `
+            -Ids @{ conversion_authority = $conversionAuthority; historical_worker_conversion_job_id = if ($conversion) { $conversion.conversion_job_id } else { $null } }
+
+        Add-SmokeTier -Record $Record -Tier 'mapping_quality' -Status 'not_observed' -Owner 'bim-streaming-server' `
+            -Blocker 'mapping quality is not streaming-owned in this smoke pass' `
+            -NextCommand 'Run a streaming-owned conversion job and verify its mapping result payload'
+    }
+
+    if ($null -ne $stageComposition -and (Get-OptionalValue -Object $stageComposition -Name 'primary_artifact_id')) {
+        Add-SmokeTier -Record $Record -Tier 'usd_stage_composition' -Status 'passed' -Owner 'bim-streaming-server' `
+            -Ids @{
+                primary_artifact_id    = $stageComposition.primary_artifact_id
+                secondary_artifact_ids = $stageComposition.secondary_artifact_ids
+            } `
+            -Detail @{ policy = $stageComposition.applied_policy }
+    } else {
+        Add-SmokeTier -Record $Record -Tier 'usd_stage_composition' -Status 'not_observed' -Owner 'bim-streaming-server' `
+            -Blocker 'stream-config did not include a loadable stage_composition primary artifact' `
+            -NextCommand 'Create a session with streaming-owned ready artifacts and rerun'
+    }
 } catch {
     Add-SmokeTier -Record $Record -Tier 'coordinator_session_lifecycle' -Status 'failed' -Owner 'bim-review-coordinator' `
         -Blocker $_.Exception.Message `
@@ -340,6 +424,12 @@ Add-SmokeTier -Record $Record -Tier 'dedicated_multi_kit_routing' -Status 'defer
     -NextCommand 'When two Kit endpoints exist, design dedicated multi-Kit routing as its own change' `
     -Ids @{ kit_instance_bindings_length = $kitBindingsLength } `
     -Detail @{ invariant = 'stream_config.kit_instance_bindings.length <= 1'; invariant_holds = ($kitBindingsLength -le 1) }
+
+Add-SmokeTier -Record $Record -Tier 'single_kit_multi_viewer' -Status 'deferred' -Owner 'bim-streaming-server' `
+    -Blocker 'same-Kit primary/spectator viewport sharing requires browser evidence and a spectator port' `
+    -NextCommand 'Run browser E2E with primary and spectator viewers against one Kit instance' `
+    -Ids @{ kit_instance_bindings_length = $kitBindingsLength } `
+    -Detail @{ invariant = 'single Kit, multiple viewers'; evidence_required = @('primary screenshot', 'spectator screenshot', 'shared kit_instance_id') }
 
 Save-Evidence
 

@@ -332,10 +332,97 @@ class LoadingManager:
 
     def _resolve_stage_request(self, payload):
         request = self._payload_dict(payload)
-        if request.get("url"):
+        stage_composition = self._payload_dict(request.get("stage_composition"))
+        if request.get("url") and not stage_composition:
             return request["url"], {
-                "applied_mode": "single_url",
+                "applied_mode": "legacy_single_url",
+                "applied_primary": {
+                    "url": request["url"],
+                    "composition_strategy": "primary_stage",
+                },
+                "applied_secondary_layers": [],
+                "skipped_secondary_layers": [],
                 "missing_paths": [],
+                "fallback_paths": [],
+            }
+
+        if stage_composition:
+            raw_primary = stage_composition.get("primary")
+            if isinstance(raw_primary, (list, tuple)):
+                primary_candidates = [self._payload_dict(item) for item in raw_primary]
+            elif raw_primary:
+                primary_candidates = [self._payload_dict(raw_primary)]
+            else:
+                primary_candidates = []
+
+            if len(primary_candidates) != 1:
+                return "", {
+                    "applied_mode": "stage_composition",
+                    "applied_primary": None,
+                    "applied_secondary_layers": [],
+                    "skipped_secondary_layers": [],
+                    "missing_paths": [],
+                    "fallback_paths": [],
+                    "error": "Expected exactly one stage_composition.primary.",
+                }
+
+            primary = primary_candidates[0]
+            primary_url = primary.get("url") or primary.get("usdc_url")
+            primary_artifact_id = primary.get("artifact_id") or stage_composition.get("primary_artifact_id")
+            if not primary_url:
+                return "", {
+                    "applied_mode": "stage_composition",
+                    "applied_primary": None,
+                    "applied_secondary_layers": [],
+                    "skipped_secondary_layers": [],
+                    "missing_paths": [str(primary_artifact_id or "primary")],
+                    "fallback_paths": [],
+                    "error": "No primary stage_composition.primary URL was provided.",
+                }
+
+            secondary_layers = self._payload_list(stage_composition.get("secondary_layers"))
+            normalized_secondary = []
+            skipped_secondary = []
+            for index, raw_layer in enumerate(secondary_layers):
+                layer = self._payload_dict(raw_layer)
+                layer_url = layer.get("url") or layer.get("usdc_url")
+                artifact_id = layer.get("artifact_id") or f"secondary_{index}"
+                if not layer_url:
+                    skipped_secondary.append({
+                        **layer,
+                        "artifact_id": artifact_id,
+                        "composition_strategy": "session_sublayer",
+                        "error": "Missing secondary layer URL.",
+                    })
+                    continue
+                normalized_secondary.append({
+                    **layer,
+                    "url": layer_url,
+                    "artifact_id": artifact_id,
+                    "load_order": int(layer.get("load_order") or index),
+                })
+
+            normalized_secondary.sort(key=lambda item: item["load_order"])
+            primary_binding = {
+                **primary,
+                "url": primary_url,
+                "artifact_id": primary_artifact_id,
+                "composition_strategy": "primary_stage",
+            }
+            return primary_url, {
+                "applied_mode": "stage_composition",
+                "artifact_id": primary_artifact_id,
+                "artifact_group_id": primary.get("artifact_group_id"),
+                "load_order": primary.get("load_order", 0),
+                "primary_binding": primary_binding,
+                "applied_primary": primary_binding,
+                "loaded_bindings": [primary_binding],
+                "failed_bindings": [],
+                "secondary_bindings": normalized_secondary,
+                "applied_secondary_layers": [],
+                "skipped_secondary_layers": skipped_secondary,
+                "partial_load": bool(skipped_secondary),
+                "missing_paths": [item["artifact_id"] for item in skipped_secondary],
                 "fallback_paths": [],
             }
 
@@ -383,9 +470,12 @@ class LoadingManager:
             "artifact_group_id": primary.get("artifact_group_id"),
             "load_order": primary.get("load_order"),
             "primary_binding": primary_binding,
+            "applied_primary": primary_binding,
             "loaded_bindings": [primary_binding],
             "failed_bindings": [],
             "secondary_bindings": normalized[1:],
+            "applied_secondary_layers": [],
+            "skipped_secondary_layers": [],
             "partial_load": False,
             "missing_paths": missing_paths,
             "fallback_paths": [],
@@ -398,16 +488,20 @@ class LoadingManager:
 
         session_layer = stage.GetSessionLayer()
         loaded_bindings = list(self._requested_stage_context.get("loaded_bindings") or [])
+        applied_secondary_layers = list(self._requested_stage_context.get("applied_secondary_layers") or [])
+        skipped_secondary_layers = list(self._requested_stage_context.get("skipped_secondary_layers") or [])
         failed_bindings = []
 
         for binding in secondary_bindings:
             requested_url = binding.get("url")
             if not requested_url:
-                failed_bindings.append({
+                skipped = {
                     **binding,
                     "composition_strategy": "session_sublayer",
                     "error": "Missing secondary binding URL.",
-                })
+                }
+                failed_bindings.append(skipped)
+                skipped_secondary_layers.append(skipped)
                 continue
 
             try:
@@ -421,16 +515,22 @@ class LoadingManager:
                     **binding,
                     "composition_strategy": "session_sublayer",
                 })
+                applied_secondary_layers.append({
+                    **binding,
+                    "composition_strategy": "session_sublayer",
+                })
                 carb.log_info(
                     f"LoadingManager: composed secondary artifact binding "
                     f"{binding.get('artifact_id')} as session sublayer"
                 )
             except Exception as exc:
-                failed_bindings.append({
+                skipped = {
                     **binding,
                     "composition_strategy": "session_sublayer",
                     "error": str(exc),
-                })
+                }
+                failed_bindings.append(skipped)
+                skipped_secondary_layers.append(skipped)
                 carb.log_warn(
                     f"LoadingManager: failed to compose secondary artifact binding "
                     f"{binding.get('artifact_id')}: {exc}"
@@ -438,7 +538,9 @@ class LoadingManager:
 
         self._requested_stage_context["loaded_bindings"] = loaded_bindings
         self._requested_stage_context["failed_bindings"] = failed_bindings
-        self._requested_stage_context["partial_load"] = bool(failed_bindings)
+        self._requested_stage_context["applied_secondary_layers"] = applied_secondary_layers
+        self._requested_stage_context["skipped_secondary_layers"] = skipped_secondary_layers
+        self._requested_stage_context["partial_load"] = bool(failed_bindings or skipped_secondary_layers)
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
         url, context = self._resolve_stage_request(event.payload)

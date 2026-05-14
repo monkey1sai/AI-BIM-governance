@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from .dev_sources import list_dev_ifc_sources, resolve_dev_ifc_source
 from .converters import ConversionAdapter
-from .models import ArtifactIntakeRequest, ConversionRequest, DevIfcSourceConversionRequest
+from .models import ArtifactIntakeRequest, ConversionRequest, DevIfcSourceConversionRequest, RvtExportRequest
 from .settings import Settings
 from .store import WorkerStore, safe_id
 from .ui import render_worker_ui
@@ -59,6 +59,27 @@ def create_app(
             return store.create_source_artifact(request)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/rvt-exports", status_code=202)
+    def create_rvt_export(request: RvtExportRequest, background_tasks: BackgroundTasks):
+        try:
+            job = store.create_rvt_export_job(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if run_background and request.options.auto_process and not job.get("idempotent_replay"):
+            background_tasks.add_task(_run_rvt_export_bridge, store, job["export_job_id"])
+        return job
+
+    @app.get("/api/rvt-exports/{export_job_id}")
+    def get_rvt_export(export_job_id: str):
+        try:
+            job = store.get_rvt_export_job(export_job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if job is None:
+            raise HTTPException(status_code=404, detail="RVT export job not found.")
+        return job
 
     @app.get("/api/artifact-groups/{artifact_group_id}")
     def get_artifact_group(artifact_group_id: str):
@@ -228,6 +249,10 @@ def _run_conversion_and_callback(store: WorkerStore, settings: Settings, convers
         from .store import write_json
 
         write_json(Path(settings.jobs_dir) / f"{conversion_job_id}.json", job)
+
+
+def _run_rvt_export_bridge(store: WorkerStore, export_job_id: str) -> None:
+    store.complete_rvt_export_job(export_job_id)
 
 
 def _post_bim_control_result(settings: Settings, result: dict[str, Any]) -> str | None:

@@ -11,13 +11,13 @@
 
 | 步驟 | 客戶看到 | 對應服務 | URL |
 |---|---|---|---|
-| ① 上傳建模 (Upload) | 原始建模檔交給 worker facade，產生版本化 artifact group | `_worker` | <http://127.0.0.1:8005> |
-| ② 自動轉換 (Convert) | 一鍵把建模檔轉成可在瀏覽器即時審查的 3D 模型 | `_worker` | <http://127.0.0.1:8005> |
+| ① 上傳建模 (Upload) | 原始 RVT/模型檔建立 source artifact metadata，觸發 worker handoff | `_bim-control` + `_worker` | <http://127.0.0.1:8001> / <http://127.0.0.1:8005> |
+| ② 自動轉換 (Convert) | `_worker` 產生 IFC handoff，`bim-streaming-server` 擁有 IFC→USDC conversion job | `_worker` + `bim-streaming-server` | <http://127.0.0.1:8005> / <http://127.0.0.1:49100> |
 | ③ 建立會議 (Meeting) | 一鍵開啟雲端審查會議，取得連線資訊 | `bim-review-coordinator` | <http://127.0.0.1:8004> |
 | ④ 標記問題 (Mark)   | 進入瀏覽器看 3D 模型、點問題即高亮對應元件 | `web-viewer-sample` + `bim-streaming-server` | <http://127.0.0.1:5173> |
 | ⑤ 紀錄回寫 (Record) | 審查標註已寫回主資料庫，留下審查履歷 | `_bim-control` | <http://127.0.0.1:8001> |
 
-> **最快 demo 路徑**：直接打開瀏覽器，依序 `8005 → 8004 → 5173 → 8001`。
+> **最快 demo 路徑**：直接打開瀏覽器，依序 `8001 → 8005 → 8004 → 5173`。若 Kit / GPU 尚未啟動，streaming 與 IFC→USDC conversion authority 相關項目要標成 blocked / not observed，不要標成 passed。
 >
 > **時間緊迫時**：可省略步驟 ⑤，從步驟 ④ 結束。但步驟條保留完整顯示，讓客戶看見全貌。
 
@@ -74,7 +74,7 @@ cd C:\Repos\active\iot\AI-BIM-governance
 cd _bim-control
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 
-# 2. Worker facade：選取 .\storage 的 IFC + 轉檔 job + artifact group (8005)
+# 2. Worker bridge：RVT→IFC handoff / fixture mode / artifact lineage (8005)
 cd _worker
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8005
 
@@ -83,7 +83,7 @@ cd bim-review-coordinator
 npm install   # 第一次需要
 npm run dev
 
-# 4. Omniverse Kit 串流伺服器 (49100 WebRTC)
+# 4. Omniverse Kit 串流 + IFC→USDC authority (49100 WebRTC)
 cd bim-streaming-server
 .\scripts\start-streaming-server.ps1 -SkipAutoLoad
 
@@ -104,10 +104,10 @@ Worker 預設會從 repo root 的 `storage/` 掃描 `.ifc` 檔案；也可用 `_
 
 | 目錄 | 角色 | Demo 故事位置 | 責任邊界 |
 |---|---|---|---|
-| `_bim-control/` | 主資料庫 (Fake BIM Data Authority) | 步驟 ⑤ | 保存 project / model version / artifact / issue / annotation metadata；不保存大型檔案、不渲染 3D、不做 WebRTC。 |
-| `_worker/` | Worker facade (Artifact + Conversion Boundary) | 步驟 ①② | 從 `storage/` 選取 IFC、接收 IFC/RVT/DWG 或 signed upload reference、保存版本化 object layout、建立 conversion job、產出 artifact group / lineage，並只把 metadata 發布到 `_bim-control`。 |
+| `_bim-control/` | 主資料庫 (Fake BIM Data Authority + RVT Intake Facade) | 步驟 ①⑤ | 保存 project / model version / artifact / issue / annotation metadata；接受 fake RVT upload / signed reference metadata；不保存大型檔案、不執行 Revit、不做 WebRTC。 |
+| `_worker/` | Worker bridge (RVT→IFC Handoff Boundary) | 步驟 ①② | 接收 `rvt_uploaded` event、管理 RVT→IFC export job、產出 IFC handoff 或 blocked/failed result、保留 RVT→IFC lineage；B 方案下不宣告 `model.usdc` ready、不擁有 IFC→USDC conversion job。 |
 | `bim-review-coordinator/` | 審查協調 (Session / Collaboration Control Plane) | 步驟 ③ | 建立 review session、查詢 BIM metadata、提供 stream config、廣播 presence / selection / annotation / issue focus；不直接操作 USD stage。 |
-| `bim-streaming-server/` | Omniverse Kit Runtime / WebRTC | 步驟 ④ (背景) | 載入 USD / USDC、執行 viewport runtime、WebRTC streaming、DataChannel command (`openStageRequest`、`highlightPrimsRequest`)；無 UI，存在感由 web-viewer 呈現。 |
+| `bim-streaming-server/` | IFC→USDC Conversion Authority + Omniverse Kit Runtime / WebRTC | 步驟 ②④ (背景) | 接收 `_worker` 的 `ifc_ready` handoff、建立 IFC→USDC conversion job、產出 USDC / mapping / entity index / quality metrics、callback `_bim-control`；同時執行 viewport runtime、WebRTC streaming、DataChannel command。 |
 | `web-viewer-sample/` | 瀏覽器審查端 (Browser Client) | 步驟 ④ | 顯示串流畫面、建立或加入 review session、讀 artifacts/issues、送 DataChannel command、送 collaboration events；不啟動 Kit、不保存資料權威。 |
 | `docs/contracts/` | API / event contracts | — | REST、Socket.IO、DataChannel 與 local runbook contract。 |
 | `docs/plans/` | Implementation plans | — | 目前執行計畫與驗收 checklist；**Demo UI 守則** 在 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`。 |
@@ -118,7 +118,8 @@ Worker 預設會從 repo root 的 `storage/` 掃描 `.ifc` 檔案；也可用 `_
 
 ```txt
 資料權威 → _bim-control
-檔案/轉檔外部邊界 → _worker
+RVT→IFC handoff → _worker
+IFC→USDC conversion authority → bim-streaming-server
 Session  → bim-review-coordinator
 3D runtime → bim-streaming-server
 使用者操作 → web-viewer-sample

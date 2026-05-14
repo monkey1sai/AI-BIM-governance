@@ -4,13 +4,16 @@
 
 ## Role
 
-`bim-streaming-server` 是 Omniverse Kit Runtime / GPU Streaming Server。它負責 USD / USDC stage runtime、viewport rendering、WebRTC video stream、DataChannel JSON command、selection / camera / overlay runtime 操作。
+`bim-streaming-server` 是 Omniverse Kit Runtime / GPU Streaming Server，也是 B 方案中的 IFC→USDC conversion authority。它負責 IFC→USDC job authority、USD / USDC stage runtime、viewport rendering、WebRTC video stream、DataChannel JSON command、selection / camera / overlay runtime 操作。
 
 主要 runtime 埠口：WebRTC `127.0.0.1:49100`
 
 ## Owns
 
 - USD / USDC stage runtime state
+- IFC→USDC conversion job status / result authority under B 方案
+- streaming-owned `model.usdc` / `element_mapping.json` / `entity_index.json` / `metadata.json` result payloads
+- mapping quality metrics and no-placeholder-ready enforcement for streaming-owned conversion results
 - Kit viewport、camera、visual overlay、selection runtime behavior
 - WebRTC video streaming server behavior
 - DataChannel scene command handling
@@ -21,12 +24,13 @@
 - project / model version / artifact metadata authority
 - issue / annotation 長期保存
 - review session lifecycle 與多人 collaboration hub
-- file body storage
+- source RVT / IFC file body storage
 - browser UI
 
 ## Required Boundaries
 
-- 載入 USD / USDC 應透過 `_worker` object URL、coordinator artifact binding，或本機測試 file path，不把大型檔案納入 source。
+- 載入 USD / USDC 應透過 streaming-owned conversion result、`_worker` IFC handoff URL、coordinator artifact binding，或本機測試 file path，不把大型檔案納入 source。
+- heavy IFC→USDC conversion 必須走 headless converter app、subprocess 或 worker lane，不得阻塞 live WebRTC viewport runtime。
 - runtime state 只代表目前 stream session；若要成為正式審查資料，必須回寫 `_bim-control` 或透過 `bim-review-coordinator`。
 - DataChannel payload schema 變更必須同步檢查 `web-viewer-sample` 與 `docs/contracts/streaming-datachannel.md`。
 - 不得管理 user auth、project metadata、review session lifecycle、annotation persistence。

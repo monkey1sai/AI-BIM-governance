@@ -5,7 +5,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -62,6 +62,21 @@ class ArtifactGroupInput(BaseModel):
     conversion_lineage: dict[str, Any] = Field(default_factory=dict)
 
 
+class RvtIntakeInput(BaseModel):
+    tenant_id: str = Field(default="tenant_demo_001", min_length=1)
+    project_id: str = Field(default=DEMO_PROJECT_ID, min_length=1)
+    filename: str = Field(min_length=1)
+    url: str | None = None
+    file_url: str | None = None
+    signed_upload_reference: str | None = None
+    content_base64: str | None = None
+    checksum_sha256: str | None = None
+    idempotency_key: str | None = None
+    correlation_id: str | None = None
+    requested_outputs: list[str] = Field(default_factory=lambda: ["ifc"])
+    callback_url: str = "http://127.0.0.1:8001/api/rvt-export-results"
+
+
 def _safe_id(value: str, label: str) -> str:
     if not SAFE_ID_RE.fullmatch(value):
         raise HTTPException(status_code=400, detail=f"Invalid {label}.")
@@ -112,6 +127,7 @@ def _seed_data(data_root: Path) -> None:
     _seed_if_missing(data_root / "annotations.json", [])
     _seed_if_missing(data_root / "review_session_requests.json", [])
     _seed_if_missing(data_root / "lifecycle_events.json", [])
+    _seed_if_missing(data_root / "rvt_uploaded_events.json", [])
 
 
 def _reset_seed_data(data_root: Path) -> None:
@@ -124,6 +140,7 @@ def _reset_seed_data(data_root: Path) -> None:
     _write_list(data_root / "annotations.json", [])
     _write_list(data_root / "review_session_requests.json", [])
     _write_list(data_root / "lifecycle_events.json", [])
+    _write_list(data_root / "rvt_uploaded_events.json", [])
 
 
 def _demo_projects() -> list[dict[str, Any]]:
@@ -257,8 +274,101 @@ def _new_review_request_id() -> str:
     return f"review_request_{timestamp_ms}_{uuid4().hex[:8]}"
 
 
+def _new_rvt_artifact_id() -> str:
+    return f"artifact_rvt_{uuid4().hex[:12]}"
+
+
+def _new_rvt_event_id() -> str:
+    timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
+    return f"evt_rvt_{timestamp_ms}_{uuid4().hex[:8]}"
+
+
 def _find_by_id(items: list[dict[str, Any]], key: str, value: str) -> dict[str, Any] | None:
     return next((item for item in items if item.get(key) == value), None)
+
+
+def _rvt_source_reference(payload: RvtIntakeInput) -> tuple[str | None, str | None]:
+    if payload.url:
+        return ("url", payload.url)
+    if payload.file_url:
+        return ("file_url", payload.file_url)
+    if payload.signed_upload_reference:
+        return ("signed_upload_reference", payload.signed_upload_reference)
+    if payload.content_base64:
+        return ("inline_bytes", "inline://rvt-upload")
+    return (None, None)
+
+
+def _rvt_intake_signature(
+    *,
+    project_id: str,
+    model_version_id: str,
+    payload: RvtIntakeInput,
+    source_kind: str,
+    source_reference: str,
+) -> dict[str, Any]:
+    return {
+        "project_id": project_id,
+        "model_version_id": model_version_id,
+        "filename": payload.filename,
+        "source_kind": source_kind,
+        "source_reference": source_reference,
+        "checksum_sha256": payload.checksum_sha256,
+        "requested_outputs": payload.requested_outputs or ["ifc"],
+    }
+
+
+def _rvt_event_response(
+    artifact: dict[str, Any],
+    event: dict[str, Any] | None,
+    *,
+    idempotent_replay: bool,
+) -> dict[str, Any]:
+    return {
+        "intake_status": artifact.get("intake_status") or artifact.get("status"),
+        "correlation_id": artifact.get("correlation_id"),
+        "source_artifact": artifact,
+        "rvt_uploaded_event": event,
+        "idempotent_replay": idempotent_replay,
+    }
+
+
+def _nested_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_conversion_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    result = _nested_dict(payload.get("result"))
+    if payload.get("event_type") != "streaming_conversion_result" or not result:
+        return dict(payload)
+
+    artifacts = _nested_dict(result.get("artifacts"))
+    model_artifact = _nested_dict(artifacts.get("model_usdc"))
+    mapping_artifact = _nested_dict(artifacts.get("element_mapping"))
+    model = _nested_dict(result.get("model"))
+    lineage = _nested_dict(result.get("lineage"))
+    conversion_job_id = str(result.get("conversion_job_id") or payload.get("conversion_job_id") or "")
+    normalized = {
+        **payload,
+        "status": result.get("status") or payload.get("status"),
+        "conversion_status": result.get("status") or payload.get("status"),
+        "conversion_authority": result.get("authority") or payload.get("authority"),
+        "conversion_job_id": conversion_job_id or payload.get("conversion_job_id"),
+        "job_id": conversion_job_id or payload.get("job_id"),
+        "tenant_id": result.get("tenant_id") or payload.get("tenant_id"),
+        "project_id": result.get("project_id") or payload.get("project_id"),
+        "model_version_id": result.get("model_version_id") or payload.get("model_version_id"),
+        "artifact_group_id": payload.get("artifact_group_id") or (f"ag_{conversion_job_id}" if conversion_job_id else None),
+        "source_artifact_id": result.get("ifc_artifact_id") or lineage.get("ifc_artifact_id"),
+        "usdc_artifact_id": model_artifact.get("artifact_id") or lineage.get("usdc_artifact_id"),
+        "mapping_artifact_id": mapping_artifact.get("artifact_id") or lineage.get("mapping_artifact_id"),
+        "usdc_url": model_artifact.get("url") or model.get("url") or payload.get("usdc_url"),
+        "mapping_url": mapping_artifact.get("url") or payload.get("mapping_url"),
+        "lineage": lineage,
+        "quality_metrics": result.get("quality_metrics"),
+        "streaming_conversion_result": result,
+    }
+    return {key: value for key, value in normalized.items() if value is not None}
 
 
 def _artifact_group_ready(group: dict[str, Any] | None) -> bool:
@@ -445,6 +555,110 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             "artifacts": artifacts,
         }
 
+    @app.post("/api/model-versions/{model_version_id}/rvt-intake", status_code=201)
+    def create_rvt_intake(model_version_id: str, payload: RvtIntakeInput, response: Response):
+        safe_model_version_id = _safe_id(model_version_id, "model_version_id")
+        safe_project_id = _safe_id(payload.project_id, "project_id")
+        safe_tenant_id = _safe_id(payload.tenant_id, "tenant_id")
+        idempotency_key = _safe_id(payload.idempotency_key, "idempotency_key") if payload.idempotency_key else None
+        correlation_id = (
+            _safe_id(payload.correlation_id, "correlation_id")
+            if payload.correlation_id
+            else f"corr_{uuid4().hex[:12]}"
+        )
+        if not _find_by_id(_read_list(resolved_data_root / "model_versions.json"), "model_version_id", safe_model_version_id):
+            raise HTTPException(status_code=404, detail="Model version not found.")
+
+        source_kind, source_reference = _rvt_source_reference(payload)
+        if not source_kind or not source_reference:
+            response.status_code = 200
+            return {
+                "intake_status": "blocked",
+                "blocker": "missing_rvt_source",
+                "correlation_id": correlation_id,
+                "model_version_id": safe_model_version_id,
+                "source_artifact": None,
+                "rvt_uploaded_event": None,
+            }
+
+        signature = _rvt_intake_signature(
+            project_id=safe_project_id,
+            model_version_id=safe_model_version_id,
+            payload=payload,
+            source_kind=source_kind,
+            source_reference=source_reference,
+        )
+        artifacts_path = resolved_data_root / "artifacts.json"
+        events_path = resolved_data_root / "rvt_uploaded_events.json"
+        artifacts = _read_list(artifacts_path)
+        events = _read_list(events_path)
+
+        if idempotency_key:
+            existing = next(
+                (
+                    artifact
+                    for artifact in artifacts
+                    if artifact.get("artifact_type") == "rvt"
+                    and artifact.get("idempotency_key") == idempotency_key
+                    and artifact.get("model_version_id") == safe_model_version_id
+                ),
+                None,
+            )
+            if existing:
+                if existing.get("intake_signature") != signature:
+                    raise HTTPException(status_code=409, detail="Conflicting RVT intake idempotency key.")
+                response.status_code = 200
+                event = next((item for item in events if item.get("source_artifact_id") == existing.get("artifact_id")), None)
+                return _rvt_event_response(existing, event, idempotent_replay=True)
+
+        now = _now()
+        artifact_id = _new_rvt_artifact_id()
+        requested_outputs = payload.requested_outputs or ["ifc"]
+        artifact = {
+            "artifact_id": artifact_id,
+            "tenant_id": safe_tenant_id,
+            "project_id": safe_project_id,
+            "model_version_id": safe_model_version_id,
+            "artifact_type": "rvt",
+            "format": "rvt",
+            "name": payload.filename,
+            "filename": payload.filename,
+            "url": source_reference,
+            "source_kind": source_kind,
+            "checksum_sha256": payload.checksum_sha256,
+            "status": "rvt_uploaded",
+            "intake_status": "accepted",
+            "idempotency_key": idempotency_key,
+            "correlation_id": correlation_id,
+            "requested_outputs": requested_outputs,
+            "intake_signature": signature,
+            "created_at": now,
+            "updated_at": now,
+        }
+        event = {
+            "event_type": "rvt_uploaded",
+            "event_id": _new_rvt_event_id(),
+            "source_artifact_id": artifact_id,
+            "tenant_id": safe_tenant_id,
+            "project_id": safe_project_id,
+            "model_version_id": safe_model_version_id,
+            "correlation_id": correlation_id,
+            "idempotency_key": idempotency_key,
+            "source_artifact": {
+                "artifact_id": artifact_id,
+                "format": "rvt",
+                "filename": payload.filename,
+                "url": source_reference,
+                "checksum_sha256": payload.checksum_sha256,
+            },
+            "requested_outputs": requested_outputs,
+            "callback_url": payload.callback_url,
+            "created_at": now,
+        }
+        _write_list(artifacts_path, [*artifacts, artifact])
+        _write_list(events_path, [*events, event])
+        return _rvt_event_response(artifact, event, idempotent_replay=False)
+
     @app.get("/api/model-versions/{model_version_id}/artifact-groups")
     def list_model_version_artifact_groups(model_version_id: str):
         safe_model_version_id = _safe_id(model_version_id, "model_version_id")
@@ -477,17 +691,28 @@ def create_app(data_root: Path | str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Artifact group not found.")
         return group
 
-    @app.post("/api/model-versions/{model_version_id}/conversion-result")
-    def store_conversion_result(model_version_id: str, payload: dict[str, Any]):
+    def _store_conversion_result_for_model(model_version_id: str, payload: dict[str, Any]):
         safe_model_version_id = _safe_id(model_version_id, "model_version_id")
-        stored = dict(payload)
+        stored = _normalize_conversion_result_payload(payload)
         stored["model_version_id"] = safe_model_version_id
-        stored["conversion_status"] = str(payload.get("status") or payload.get("conversion_status") or "unknown")
+        stored["conversion_status"] = str(stored.get("status") or stored.get("conversion_status") or "unknown")
         stored["updated_at"] = _now()
 
         _write_json(results_root / f"{safe_model_version_id}.json", stored)
         _update_artifacts_from_conversion(resolved_data_root, safe_model_version_id, stored)
         return stored
+
+    @app.post("/api/model-versions/{model_version_id}/conversion-result")
+    def store_conversion_result(model_version_id: str, payload: dict[str, Any]):
+        return _store_conversion_result_for_model(model_version_id, payload)
+
+    @app.post("/api/streaming-conversion-results")
+    def store_streaming_conversion_result(payload: dict[str, Any]):
+        result = _nested_dict(payload.get("result"))
+        model_version_id = str(payload.get("model_version_id") or result.get("model_version_id") or "")
+        if not model_version_id:
+            raise HTTPException(status_code=400, detail="Streaming conversion result is missing model_version_id.")
+        return _store_conversion_result_for_model(model_version_id, payload)
 
     @app.get("/api/model-versions/{model_version_id}/conversion-result")
     def get_conversion_result(model_version_id: str):
@@ -689,6 +914,12 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
                 "url": usdc_url,
                 "mapping_url": result.get("mapping_url"),
                 "status": "ready" if result.get("status") == "succeeded" else str(result.get("status") or "unknown"),
+                "conversion_authority": result.get("conversion_authority"),
+                "conversion_job_id": result.get("conversion_job_id") or result.get("job_id"),
+                "conversion_status": result.get("conversion_status") or result.get("status"),
+                "failure_code": result.get("failure_code"),
+                "diagnostic": result.get("diagnostic"),
+                "quality_metrics_summary": result.get("quality_metrics"),
                 "updated_at": updated_at,
             },
         )
@@ -701,6 +932,10 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
         "model_version_id": model_version_id,
         "status": "ready" if result.get("status") == "succeeded" else str(result.get("status") or "unknown"),
         "ready_status": "ready" if usdc_url and result.get("mapping_url") else "blocked_conversion",
+        "conversion_authority": result.get("conversion_authority"),
+        "conversion_job_id": result.get("conversion_job_id") or result.get("job_id"),
+        "conversion_status": result.get("conversion_status") or result.get("status"),
+        "quality_metrics_summary": result.get("quality_metrics"),
         "source": {
             "artifact_id": source_artifact_id,
             "format": "ifc",
@@ -714,6 +949,8 @@ def _update_artifacts_from_conversion(data_root: Path, model_version_id: str, re
                 "format": "usdc",
                 "url": usdc_url,
                 "conversion_job_id": result.get("conversion_job_id") or result.get("job_id"),
+                "conversion_authority": result.get("conversion_authority"),
+                "conversion_status": result.get("conversion_status") or result.get("status"),
             }
         ]
         if usdc_url

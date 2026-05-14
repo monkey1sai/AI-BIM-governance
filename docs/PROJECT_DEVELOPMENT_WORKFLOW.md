@@ -2,7 +2,7 @@
 
 > **依新版架構圖 v1（PoC → SaaS 路線圖）+ v2（SaaS 級目標架構與落地順序）重寫。**
 >
-> 本次調整核心：**把 Omniverse 能力發揮到最大**（擬真建築、真實物理、環境感測、模擬驅動 AI 分析），並把 `_worker` 收檔案與轉檔流程、review session request、session lifecycle、多 artifact / 多 instance 收進正式控制面。
+> 本次調整核心：**把 Omniverse 能力發揮到最大**（擬真建築、真實物理、環境感測、模擬驅動 AI 分析），並在 B 方案下把 `_worker` 收斂為 RVT→IFC bridge、把 `bim-streaming-server` 定義為 IFC→USDC conversion authority，同時讓 review session request、session lifecycle、多 artifact / 多 instance 收進正式控制面。
 >
 > **本文件 = 開發流程入口**；OpenSpec 候選編號（#1-#9 / #1A / #2A）、NVIDIA Reference 採用決策矩陣、MCP 查詢結果、§11.4 Multi-Kit Instance 並行的官方定義、硬體配置（§9.0-§9.8）以 [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md) 為準，本文件不重述。
 >
@@ -53,7 +53,9 @@
 
 ```txt
 資料權威            → _bim-control（metadata-only）
-檔案 + 轉檔邊界     → _worker（artifact + conversion facade）
+RVT intake metadata   → _bim-control（fake Revit / RVT intake facade）
+RVT→IFC handoff       → _worker（bridge / fixture mode / lineage）
+IFC→USDC conversion  → bim-streaming-server（B 方案 conversion authority）
 Session / 協作      → bim-review-coordinator
 3D runtime          → bim-streaming-server（Kit + WebRTC + USD stage）
 使用者操作          → web-viewer-sample（browser）
@@ -75,20 +77,20 @@ flowchart TB
         AUTH[SSO / JWT / RBAC / API Key]
     end
     subgraph L2["② Client / Portal 層"]
-        RP[Revit Plugin<br/>IFC Upload]
+        RP[Revit Plugin<br/>RVT Upload]
         WV[Web Viewer App<br/>web-viewer-sample 演進]
         AC[Admin Console<br/>Demo UI]
         EX[External API /<br/>Webhook Consumer]
     end
     subgraph L3["③ 核心業務服務層"]
         A[A. bim-control<br/>metadata authority]
-        B[B. _worker<br/>artifact + conversion facade]
+        B[B. _worker<br/>RVT→IFC bridge]
         C[C. bim-review-coordinator<br/>session / collaboration]
         D[D. ai-rule-carbon-service<br/>規則 / IDS / 碳排 / IAQ]
         E[E. notification / webhook<br/>callback / 事件通知]
     end
     subgraph L4["④ Omniverse Runtime / Simulation 層"]
-        S1[bim-streaming-server cluster<br/>水平擴展]
+        S1[bim-streaming-server cluster<br/>IFC→USDC authority + 水平擴展]
         S2[USD Stage Manager<br/>artifact loading]
         S3[WebRTC + DataChannel command]
         S4[Highlight / Overlay /<br/>Clash result overlay]
@@ -145,7 +147,7 @@ flowchart TB
 | 服務 | 角色 | 現有狀態 | 主要 capability spec |
 |---|---|---|---|
 | **A. `_bim-control/`** | metadata 權威、project/version/artifact group/issue/annotation/review request 認證 | ✅ runtime（:8001） | `review-session-request-lifecycle` |
-| **B. `_worker/`** | upload API + artifact registry + versioned storage facade + conversion job + USD/USDC + mapping + callback workflow + source/version/lineage 模型 | ✅ runtime（:8005） | `worker-artifact-pipeline`, `worker-dev-ifc-source-selection`, `worker-demo-upload-convert-ui` |
+| **B. `_worker/`** | RVT→IFC export bridge、fixture mode、worker object layout、source RVT → derived IFC lineage；B 方案下不擁有 IFC→USDC conversion job | ✅ runtime（:8005；B 方案 runtime evidence 仍需補） | `worker-rvt-ifc-bridge`, `worker-artifact-pipeline` |
 | **C. `bim-review-coordinator/`** | review session / session lifecycle、KitInstancePool、presence / selection / annotation、issue focus、multi-artifact / multi-instance binding | ✅ runtime（:8004） | `multi-artifact-kit-routing`, `session-first-review-viewer` |
 | **D. `ai-rule-carbon-service/`** | IDS / code check、carbon / IAQ / HVAC、compliance、prediction、report API | 📅 尚無 | 待規劃（Phase 5） |
 | **E. `notification / webhook service/`** | callback、事件通知、外部系統整合 | 📅 尚無（callback 邏輯目前散在 `_worker` 與 coordinator） | 待規劃（Phase 4） |
@@ -154,8 +156,8 @@ flowchart TB
 
 | 元素 | 內容 | 對應 capability |
 |---|---|---|
-| `bim-streaming-server cluster` | Kit runtime 高可用 / 水平擴展 | `multi-artifact-kit-routing` |
-| USD Stage Manager | artifact loading / stage 管理 / 版本控制 | `streaming-multi-layer-payload-loading` |
+| `bim-streaming-server cluster` | IFC→USDC conversion authority + Kit runtime 高可用 / 水平擴展 | `streaming-ifc-usdc-conversion-authority`, `multi-artifact-kit-routing` |
+| USD Stage Manager | primary / secondary stage composition、artifact loading / stage 管理 / 版本控制 | `streaming-usd-stage-composition`, `streaming-multi-layer-payload-loading` |
 | WebRTC + DataChannel command | 即時指令 / 低延運 | `streaming-multi-layer-payload-loading` |
 | Highlight / Overlay / Clash result overlay | 多層結果即時疊加 | （待 Phase 5 spec） |
 | **RTX Renderer / PhysX / MDL / Sensor simulation** | 高層真品質 / 物理 / 材質 / 環境感測模擬 ⭐ Omniverse 能力最大化 | （待 Phase 5 spec） |
@@ -194,10 +196,10 @@ flowchart TB
 
 | 服務 | 角色 | Port | Demo 步驟 |
 |---|---|---|---|
-| `_bim-control/` | Fake BIM Data Authority（metadata-only） | 8001 | ⑤ 紀錄回寫 |
-| `_worker/` | Artifact + Conversion Facade（檔案與轉檔邊界） | 8005 | ① 上傳建模 + ② 自動轉換 |
+| `_bim-control/` | Fake BIM Data Authority + fake RVT intake facade | 8001 | ① 上傳建模 + ⑤ 紀錄回寫 |
+| `_worker/` | RVT→IFC Bridge（worker handoff 邊界） | 8005 | ② RVT→IFC handoff |
 | `bim-review-coordinator/` | Session / Collaboration Control Plane | 8004 | ③ 建立會議 |
-| `bim-streaming-server/` | Omniverse Kit Runtime / WebRTC | 49100 (signaling) / 47998 (stream) | ④ 標記問題（背景） |
+| `bim-streaming-server/` | IFC→USDC Conversion Authority + Omniverse Kit Runtime / WebRTC | 49100 (signaling) / 47998 (stream) | ② 自動轉換 + ④ 標記問題（背景） |
 | `web-viewer-sample/` | Browser Client / WebRTC Viewer | 5173 | ④ 標記問題（前景） |
 
 > **退役服務**：`_s3_storage`（8002）、`_conversion-service`（8003）、`_conversion-server`。詳見 [`legacy-storage-conversion-retirement` spec](../openspec/specs/legacy-storage-conversion-retirement/spec.md)。
@@ -213,11 +215,11 @@ flowchart LR
         CO[bim-review-coordinator<br/>:8004]
     end
     subgraph "Worker / Data"
-        WK[_worker<br/>artifact + conversion<br/>:8005]
+        WK[_worker<br/>RVT→IFC bridge<br/>:8005]
         BC[_bim-control<br/>metadata authority<br/>:8001]
     end
     subgraph "Runtime"
-        KIT[bim-streaming-server<br/>signaling :49100<br/>stream :47998]
+        KIT[bim-streaming-server<br/>IFC→USDC + signaling :49100<br/>stream :47998]
     end
 
     WV -->|REST: review-bootstrap / session| CO
@@ -225,18 +227,19 @@ flowchart LR
     WV -->|Socket.IO collaboration| CO
 
     CO -->|REST: project / model / artifact / issue| BC
-    CO -->|REST: artifact group readiness| WK
+    CO -->|REST: streaming-owned readiness metadata| BC
     CO -->|REST: review-session-request patch| BC
 
-    WK -->|metadata-only callback| BC
-    KIT -->|HTTP GET worker object URL| WK
+    BC -->|webhook: rvt_uploaded| WK
+    WK -->|webhook: ifc_ready| KIT
+    KIT -->|callback: conversion_result_ready / failed| BC
 ```
 
 ---
 
 ## 4. 當前進度檢視 + 驗證證據分層
 
-> 進度依據：`git log` 已 merge 的 PR、`openspec/specs/` 9 份 capability spec、`docs/verification/2026-05-08-spec-end-to-end-verification.md`。
+> 進度依據：`git log` 已 merge 的 PR、現行 `openspec/specs/` capability specs、active OpenSpec change `architecture-rework-2026-05-14`、`docs/verification/` runtime evidence。
 
 ### 4.1 Phase 完成度
 
@@ -259,14 +262,15 @@ flowchart LR
 | **Non-GPU Contract** | DataChannel stage-loading shape、API smoke | ✅ 通過 | `bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1`、`scripts/smoke-worker-review-request.ps1` |
 | **Control Plane API** | `_bim-control` pytest 21/21、coordinator vitest 102/102、viewer session-first contract | ✅ 通過 | `docs/verification/2026-05-08-spec-end-to-end-verification.md` §2 |
 | **Browser + Socket.IO 2-user** | 兩 Chrome tab 真實協作（Alpha + Bravo）、annotation 跨 tab 廣播 | ✅ 通過 | 同上 §4 |
-| **Single Kit GPU Render (real IFC→USDC)** | 真實 IFC → renderable USD viewport screenshot（worker 自動轉檔結果） | 🚫 blocked | 缺：renderable USDC（worker 目前寫 `# worker adapter USDC placeholder`）；對應 SaaS 路線圖 P0 候選 #1 `worker-real-conversion-quality`；§6.3 |
+| **Historical worker-owned real IFC→USDC** | 真實 IFC → renderable USD viewport screenshot（worker 自動轉檔結果） | ✅ historical passed；不可升格成 B 方案 streaming-owned pass | `worker-real-conversion-quality` evidence；B 方案需重跑 streaming-owned conversion evidence |
+| **B-scheme streaming conversion job** | `_worker ifc_ready` → `bim-streaming-server` conversion job → USDC / mapping / entity_index result | ⏳ not_observed / pending implementation | `architecture-rework-2026-05-14` |
 | **Single Kit GPU Render (worker-hosted renderable fixture)** | 已存在的 renderable `.usdc` fixture 經 worker 路徑載入 Kit viewport | ✅ 通過（PR #20 commit `0e94a5b`） | `docs/verification/evidence/2026-05-08-runtime-e2e/same-kit-review_session_b2d84c44ae31-kit_local_001-primary.png` |
 | **Same-Kit Concurrent Stream (primary + spectator)** | 單一 Kit process 內 primary + spectator WebRTC ports（49100/47998 + 49110/48008）並行 stream，兩個 Chrome contexts 同一 `session_id` | ✅ 通過（PR #20 commit `0e94a5b`） | `same-kit-*-primary.png` / `same-kit-*_spectator_0-spectator.png` |
 | **Dedicated Multi-Kit Routing (≥2 Kit processes)** | ≥2 獨立 Kit processes、不同 signaling port pair、並行 stream | ⏸ 等待 GPU 購買與部署後執行；GPU capacity 到位前不得標為 in-progress / passed / failed | 缺：GPU-backed 多 Kit endpoints；對應 SaaS 路線圖 P0-hold 候選 #2 `streaming-multi-instance-orchestration` |
-| **Large IFC Worker Readiness** | 89 MB IFC 進 `_worker` → ready 狀態 | ✅ 通過（facade tier） | §6.5 |
+| **Large IFC Worker Readiness** | 89 MB IFC 進 `_worker` → ready 狀態 | ✅ historical worker facade tier；B 方案只可作 migration source | §6.5 |
 | **Socket.IO Bounded Stress** | 90 client（最大 100 sustainable 的 90%） | ✅ 通過 | §6.6 |
 
-### 4.3 已驗證的最小閉環
+### 4.3 已驗證的歷史最小閉環（B 方案前）
 
 ```txt
 .\storage\*.ifc
@@ -284,6 +288,19 @@ flowchart LR
 → POST /api/review-sessions/{id}/close → instance released
 ```
 
+B 方案目標閉環改為：
+
+```txt
+fake RVT intake metadata
+→ _bim-control emits rvt_uploaded
+→ _worker RVT→IFC bridge emits ifc_ready
+→ bim-streaming-server owns IFC→USDC conversion job
+→ bim-streaming-server produces model.usdc + element_mapping.json + entity_index.json + quality metrics
+→ bim-streaming-server callback _bim-control conversion result
+→ coordinator creates review session with conversion_authority="bim-streaming-server"
+→ web-viewer-sample opens primary / secondary stage composition through DataChannel
+```
+
 ---
 
 ## 5. 主要風險 / 缺口
@@ -292,13 +309,13 @@ flowchart LR
 
 | # | 風險 / 缺口 | 收斂機制 | 狀態 |
 |---|---|---|---|
-| 1 | `_worker` 合併後需重新確認 source of truth 與責任邊界 | `AGENTS.md §3.3 / §7 / §8`、`worker-artifact-pipeline` spec | ✅ 已收斂 |
+| 1 | B 方案後 `_worker` / `bim-streaming-server` conversion authority 需重新對齊 source of truth | `AGENTS.md §3.3 / §3.5 / §7 / §8`、`worker-rvt-ifc-bridge`、`streaming-ifc-usdc-conversion-authority` | 🔄 active change 對齊中 |
 | 2 | artifact version / source / lineage 若未建模，後續追溯困難 | versioned object layout、`metadata.json` lineage、`original_filename` 追蹤 | ✅ 已收斂（含 2026-05-08 PR #17 補強） |
 | 3 | review-session-request 尚未成正式 intent 流程 | `review-session-request-lifecycle` spec、`POST /api/review-session-requests` | ✅ 已收斂 |
 | 4 | session lifecycle 目前過於簡化，未釐清 `created → active → closing → closed → instance released` | `multi-artifact-kit-routing` spec、coordinator `kit_instance_bindings[]`、close/release 分離已驗證 | ✅ control-plane 已收斂 |
 | 5 | 多 artifact / 多 instance 調度仍未完整推導 | `multi-artifact-kit-routing` + `streaming-multi-layer-payload-loading` spec；`runtime-verification-evidence` `dedicated_instance` evidence 等待 GPU 購買與部署後執行（對應 SaaS 路線圖 P0-hold 候選 #2 `streaming-multi-instance-orchestration`） | ⏸ control-plane 完成；runtime 等待 GPU capacity |
 | 6 | 觀測、稽核、CI/CD、SLA 尚未產品化 | Phase 6 規劃；對應 SaaS 路線圖 P3-frozen 候選 #8 `observability-audit-baseline` | ⏸ 等公司業務系統接入 |
-| 7 *new* | **Single Kit GPU render 仍是 placeholder USDC**（worker facade tier 不等於真實渲染） | 對應 SaaS 路線圖 P0 候選 #1 `worker-real-conversion-quality`（解開 IFC→USDC placeholder blocker） | 🚫 blocked |
+| 7 *new* | **B 方案 streaming-owned conversion evidence 尚未建立**（historical `_worker` real conversion evidence 不等於 streaming conversion pass） | `streaming-ifc-usdc-conversion-authority` + `demo-runtime-readiness-smoke` 新 tier | 🔄 active change 對齊中 |
 | 8 *new* | **AI / 規則 / 碳排 service 邊界未建模** | 對應 SaaS 路線圖 P2 候選 #5 `ai-rule-carbon-result-contract`（contract + mock，不做真實 AI） | 📅 待規劃 |
 | 9 *new* | **Artifact lineage graph query API 尚未實作**（`metadata.json` 已含 lineage，但缺 `GET /api/artifacts/{id}/lineage` endpoint 與 worker UI 樹狀視圖） | 對應 SaaS 路線圖 P1 候選 #3 `worker-artifact-lineage-api` | 📅 待規劃 |
 
@@ -312,11 +329,11 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    S1["① 上傳 IFC / RVT / DWG<br/>Revit Plugin / Web Viewer / API"]
-    S2["② 建立 conversion job<br/>POST /api/conversions"]
-    S3["③ _worker / headless conversion<br/>Kit converter / 批次處理"]
-    S4["④ 生成 USD / USDC + element_mapping<br/>+ metadata.json lineage"]
-    S5["⑤ ⭐ 幾何 / 材質 / 物件 / GUID 對應驗證 ⭐<br/>quality gate / coverage check"]
+    S1["① fake RVT intake<br/>_bim-control"]
+    S2["② RVT→IFC export bridge<br/>_worker"]
+    S3["③ ifc_ready handoff<br/>_worker → bim-streaming-server"]
+    S4["④ IFC→USDC conversion job<br/>bim-streaming-server"]
+    S5["⑤ ⭐ mapping / lineage / quality gate ⭐<br/>streaming-owned result"]
     S6["⑥ 建立 review-session-request<br/>→ 分配 review session / kit instance"]
     S7["⑦ 發布到 streaming 與 AI review"]
 
@@ -332,11 +349,11 @@ flowchart TB
 
 | 步驟 | 現況 | Quality Gate（目標） | 對應 spec / 文件 |
 |---|---|---|---|
-| ① 上傳 | `_worker POST /api/artifacts` ✅，`original_filename` 已保留 | 大檔 chunk upload、checksum 驗證、duplicate detect | `worker-artifact-pipeline` |
-| ② 建立 conversion job | `_worker POST /api/conversions` ✅ | job idempotency、retry policy、timeout 標準化 | 同上 |
-| ③ headless conversion | 🚫 **目前是 placeholder**（worker facade emit `# worker adapter USDC placeholder`） | 真實 IFC → USDC converter（IfcOpenShell + USD SDK 為主，NVIDIA Kit base 無 IFC converter） | **P0 候選 #1 `worker-real-conversion-quality`**（SaaS 路線圖 §5.1） |
-| ④ 生成 USDC + mapping | ✅ artifact group + lineage 完整；mapping 是 placeholder | mapping items 數量 ≥ IFC entity 數量 × 0.95 | `worker-artifact-pipeline` |
-| ⑤ ⭐ **品質驗證** ⭐ | 🚫 **尚無自動驗證** | geometry coverage ≥ 95%、material coverage ≥ 90%、IFC GUID ↔ USD prim path coverage ≥ 95% | **整合進 P0 候選 #1 `worker-real-conversion-quality` KPI**；是否拆分獨立 spec 在 #1 land 後再評估 |
+| ① fake RVT intake | `_bim-control` 需接受 fake RVT upload / signed reference metadata | idempotency key、correlation_id、source artifact metadata 完整 | `bim-control-revit-intake-facade` |
+| ② RVT→IFC bridge | `_worker` 需接收 `rvt_uploaded` 並產出 IFC handoff 或 blocked/failed result | 不假裝 Revit export；fixture mode 必須明確標示 | `worker-rvt-ifc-bridge` |
+| ③ ifc_ready handoff | `_worker` 成功時送 `ifc_ready` 給 `bim-streaming-server` | event_id / correlation_id / idempotency / retry observable | `conversion-webhook-lifecycle` |
+| ④ IFC→USDC conversion job | B 方案由 `bim-streaming-server` 建立 `conversion_job_id` 與 status/result API | no-placeholder-ready、output openability、headless converter 不阻塞 live WebRTC | `streaming-ifc-usdc-conversion-authority` |
+| ⑤ ⭐ **品質驗證** ⭐ | mapping / quality metrics 需隨 streaming-owned result 保留；historical worker evidence 不可升格成 B 方案 passed | geometry / mapping coverage、sidecar carrier、entity_index、no fake GUID | `streaming-ifc-usdc-conversion-authority`, `demo-runtime-readiness-smoke` |
 | ⑥ review-session-request | ✅ 已實作 | session 啟動 < 5 秒（artifact ready 狀態下） | `review-session-request-lifecycle` |
 | ⑦ 發布到 streaming | ✅ DataChannel `applied_mode` honest 回報；🚫 真實 viewport render blocked | 真實 GPU viewport screenshot 為 evidence | `streaming-multi-layer-payload-loading` + `runtime-verification-evidence` |
 
@@ -347,7 +364,7 @@ flowchart TB
 3. **可審查性**：審查紀錄回寫到 `_bim-control` 時，必須能反查到「這個 issue 對應哪個 IFC 元件、是否在 USD 中存在」
 4. **法規 / 碳排 AI 分析依賴**：D 服務（ai-rule-carbon-service）若拿到對應錯亂的 mapping，產出的 IDS / 碳排計算全部是假數據
 
-> P0 候選 #1 `worker-real-conversion-quality` 承接 coverage check（KPI 含 mapping coverage、IFC GUID ↔ USD prim path 對應率），結果寫進 `_bim-control` `artifact_groups.quality_report`；是否拆分獨立 spec 在 #1 land 後再評估。
+> B 方案下，historical `_worker` real conversion evidence 只能作為 migration source；新的 streaming-owned IFC→USDC evidence 出現前，不得把 `streaming_conversion_job` 或 `mapping_quality` 標成 passed。
 
 ---
 

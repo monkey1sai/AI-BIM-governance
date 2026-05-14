@@ -196,6 +196,102 @@ describe("bim-review-coordinator", () => {
     expect(config.body.artifact_bindings[0].mapping_url).toContain("element_mapping.json");
   });
 
+  it("reports streaming-owned conversion as converting in stream config", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_streaming_conversion",
+            artifact_id: "artifact_ifc_demo_001",
+            artifact_role: "derived",
+            load_order: 0,
+            ready_status: "converting",
+            conversion_authority: "bim-streaming-server",
+            conversion_job_id: "stream_conv_demo_001",
+            conversion_status: "running",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.model.status).toBe("converting");
+    expect(config.body.model.conversion_authority).toBe("bim-streaming-server");
+    expect(config.body.model.conversion_job_id).toBe("stream_conv_demo_001");
+    expect(config.body.model.url).toBeNull();
+  });
+
+  it("passes streaming-owned ready conversion metadata through stream config", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_streaming_ready",
+            artifact_id: "artifact_stream_usdc_001",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:49100/artifacts/stream_conv_001/model.usdc",
+            mapping_url: "http://127.0.0.1:49100/artifacts/stream_conv_001/element_mapping.json",
+            load_order: 0,
+            ready_status: "ready",
+            conversion_authority: "bim-streaming-server",
+            conversion_job_id: "stream_conv_001",
+            conversion_status: "succeeded",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.model.status).toBe("ready");
+    expect(config.body.model.conversion_authority).toBe("bim-streaming-server");
+    expect(config.body.model.conversion_job_id).toBe("stream_conv_001");
+    expect(config.body.model.mapping_url).toContain("element_mapping.json");
+  });
+
+  it("surfaces streaming-owned conversion failure without hiding it", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_streaming_failed",
+            artifact_id: "artifact_ifc_demo_001",
+            artifact_role: "derived",
+            load_order: 0,
+            ready_status: "failed",
+            conversion_authority: "bim-streaming-server",
+            conversion_job_id: "stream_conv_failed_001",
+            conversion_status: "failed",
+            failure_code: "placeholder_usdc",
+            diagnostic: "Generated model.usdc looks like a placeholder output.",
+          },
+        ],
+      });
+
+    expect(created.status).toBe(200);
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+    expect(config.status).toBe(200);
+    expect(config.body.model.status).toBe("failed");
+    expect(config.body.model.failure_code).toBe("placeholder_usdc");
+    expect(config.body.model.diagnostic).toContain("placeholder");
+  });
+
   it("allocates dedicated Kit instance bindings per artifact", async () => {
     const app = makeApp(multiEndpointOverrides());
     const created = await request(app.app)
@@ -238,6 +334,8 @@ describe("bim-review-coordinator", () => {
     expect(streamConfig.status).toBe(200);
     expect(streamConfig.body.webrtc.signalingPort).toBe(49100);
     expect(streamConfig.body.webrtc.mediaPort).toBe(47998);
+    expect(streamConfig.body.stage_composition.primary_artifact_id).toBe("artifact_usdc_a");
+    expect(streamConfig.body.stage_composition.secondary_artifact_ids).toEqual(["artifact_usdc_b"]);
   });
 
   it("reports queued_for_instance when dedicated Kit routing exceeds capacity", async () => {
