@@ -161,7 +161,7 @@ entity_index sidecar:                 lineage emits derived_artifact_ids.entity_
 full 13-file batch status:           still not_run; minimum_coverage_locked=false maintained
 visual preview status:               still blocked downstream of _worker (not in this change scope)
 
-# 2026-05-13 demo-current-runtime-observation（archived 2026-05-14；evidence snapshot only）
+# 2026-05-13 demo-current-runtime-observation（current live observation）
 non-Kit service health:              passed (8001 / 8005 / 8004 health OK; 5173 HTTP 200)
 _bim-control focused tests:          23 passed
 _worker focused tests:               105 passed, 1 skipped
@@ -211,7 +211,6 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 | `2026-05-12-worker-mapping-lineage-quality-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | lineage graph API、stable derived/index/mapping artifact IDs、all-IFC-entity coverage denominator、`minimum_coverage_ratio=1.0` policy、warn reviewable / fail blocking readiness、storage batch evidence tier、worker UI lineage / quality view |
 | `2026-05-12-worker-canonical-storage-batch-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | canonical storage batch status/timeout semantics、per-fixture phase timings、single-fixture gate、review viewer handoff contract；archive 時 runtime evidence 仍 blocked at `source_entity_enumeration`，baseline 未鎖定 |
 | `2026-05-12-coordinator-session-lifecycle-events-audit` | `review-session-request-lifecycle`（MODIFY） | coordinator append-only lifecycle audit endpoint、stable `sequence` event schema、lifecycle-only filter、close/release audit events、`_bim-control` review request correlation fields |
-| `2026-05-14-demo-current-runtime-observation` | `runtime-verification-evidence`、`runtime-verification-task-status`（ADD） | demo observation 證據必須按 `passed` / `failed` / `blocked` / `deferred` / `not_observed` 分層；service ownership 邊界分開記錄；replayable artifacts 必須歸檔；demo observation tasks 完成需 current evidence；observation 工作必須與 fixes 分離 |
 
 ```txt
 規格目錄約定：
@@ -669,16 +668,16 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **不可做** | 不得把 denominator 改成 geometry-only、`IfcProduct`-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 `_worker` ownership |
 | **KPI** | 1) 13-file batch 通過 / 不通過比例可重現；2) 若 pass 即可考慮 `minimum_coverage_locked=true` 候選 |
 
-#### Archived observation：`demo-current-runtime-observation`
+#### Completed observation：`demo-current-runtime-observation`
 
 | 項目 | 內容 |
 |---|---|
-| **狀態** | ✓ Archived 2026-05-14：`openspec/changes/archive/2026-05-14-demo-current-runtime-observation/`；demo observation 證據規則已併入 `runtime-verification-evidence` / `runtime-verification-task-status` |
+| **狀態** | ✓ Archived：`openspec/changes/archive/2026-05-14-demo-current-runtime-observation/`；current pass evidence 已歸檔，主 specs 已同步 |
 | **報告** | `docs/verification/2026-05-13-demo-current-runtime-observation.md` |
-| **本次 live pass** | 非 Kit service health、focused tests/builds、Socket.IO collaboration、coordinator lifecycle close/release、non-GPU DataChannel contract |
-| **本次 failed / blocked** | worker dev-source root 無 IFC fixture；`smoke-review-session.ps1` inline IFC 無法 parse；Kit streaming launcher missing；Browser automation policy block；single Kit/WebRTC 沒有 live evidence |
-| **後續工作位置** | 補 IFC fixture / streaming launcher / browser policy 等 runtime blocker 已由 `stabilize-demo-runtime-readiness`（active）接手；本 observation 不再追蹤 next steps |
+| **本輪 live pass** | 非 Kit service health、focused tests/builds、Socket.IO collaboration、coordinator lifecycle close/release、non-GPU DataChannel contract |
+| **本輪 failed / blocked** | worker dev-source root 無 IFC fixture；`smoke-review-session.ps1` inline IFC 無法 parse；Kit streaming launcher missing；Browser automation policy block；single Kit/WebRTC 沒有 live evidence |
 | **不得宣稱** | 不得把 API-only pass 當成 worker real conversion pass；不得把 historical browser screenshot 當成本次 current pass；不得把 dedicated multi-Kit runtime 標 passed |
+| **承接 change** | `stabilize-demo-runtime-readiness`（解 worker fixture root / smoke inline IFC / Kit launcher / browser policy / single-Kit live evidence 等 blocker） |
 
 #### Completed #4：`coordinator-session-lifecycle-events-audit`
 

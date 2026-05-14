@@ -88,7 +88,7 @@ Same-Kit concurrent browser runtime validation SHALL use one GPU-backed Kit proc
 
 ### Requirement: Demo observation tasks require current evidence
 
-Demo observation tasks SHALL 只有在 claimed status 具備 current evidence 時才能標記完成。Historical evidence MAY 作為 context 引用，但 task completion MUST 識別 current run 是 `passed`、`failed`、`blocked`、`deferred`，或 `not_observed`。
+Demo observation tasks SHALL 只有在 claimed status 具備 current evidence 時才能標記完成。Historical evidence MAY 作為 context 引用，但 task completion MUST 識別 current run 是 `passed`、`failed`、`blocked`、`deferred` 或 `not_observed`。
 
 #### Scenario: Task is marked complete after live observation
 

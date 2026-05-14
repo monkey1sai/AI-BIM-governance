@@ -97,7 +97,7 @@
 <a href="#2026-05-12-worker-mapping-lineage-quality-baseline-archived-spec-validation-evidence" style="padding-left: 8px">2026-05-12 worker-mapping-lineage-quality-baseline（archived spec + validation evidence）</a>
 <a href="#2026-05-12-worker-canonical-storage-batch-baseline-archived-blocked-evidence" style="padding-left: 8px">2026-05-12 worker-canonical-storage-batch-baseline（archived blocked evidence）</a>
 <a href="#2026-05-12-optimize-worker-source-entity-enumeration-active-change" style="padding-left: 8px">2026-05-12 optimize-worker-source-entity-enumeration（active change）</a>
-<a href="#2026-05-13-demo-current-runtime-observation-archived-2026-05-14-evidence-snapshot-only" style="padding-left: 8px">2026-05-13 demo-current-runtime-observation（archived 2026-05-14；evidence snapshot only）</a>
+<a href="#2026-05-13-demo-current-runtime-observation-current-live-observation" style="padding-left: 8px">2026-05-13 demo-current-runtime-observation（current live observation）</a>
 <a href="#2026-05-12-coordinator-session-lifecycle-events-audit-archived-spec-validation-evidence" style="padding-left: 8px">2026-05-12 coordinator-session-lifecycle-events-audit（archived spec + validation evidence）</a>
 <a href="#延後-等待-gpu-購買與部署" style="padding-left: 8px">延後（等待 GPU 購買與部署）</a>
 <a href="#1-4-openspec-已歸檔-change-現行-openspec-specs-溯源" style="padding-left: 32px">1.4 OpenSpec 已歸檔 change → 現行 `openspec/specs/` 溯源</a>
@@ -413,7 +413,7 @@ entity_index sidecar:                 lineage emits derived_artifact_ids.entity_
 full 13-file batch status:           still not_run; minimum_coverage_locked=false maintained
 visual preview status:               still blocked downstream of _worker (not in this change scope)
 
-# 2026-05-13 demo-current-runtime-observation（archived 2026-05-14；evidence snapshot only）
+# 2026-05-13 demo-current-runtime-observation（current live observation）
 non-Kit service health:              passed (8001 / 8005 / 8004 health OK; 5173 HTTP 200)
 _bim-control focused tests:          23 passed
 _worker focused tests:               105 passed, 1 skipped
@@ -511,11 +511,6 @@ multi-artifact-kit-routing dedicated_instance runtime  : 等待 GPU 購買與部
 <td><code>2026-05-12-coordinator-session-lifecycle-events-audit</code></td>
 <td><code>review-session-request-lifecycle</code>（MODIFY）</td>
 <td>coordinator append-only lifecycle audit endpoint、stable <code>sequence</code> event schema、lifecycle-only filter、close/release audit events、<code>_bim-control</code> review request correlation fields</td>
-</tr>
-<tr>
-<td><code>2026-05-14-demo-current-runtime-observation</code></td>
-<td><code>runtime-verification-evidence</code>、<code>runtime-verification-task-status</code>（ADD）</td>
-<td>demo observation 證據必須按 <code>passed</code> / <code>failed</code> / <code>blocked</code> / <code>deferred</code> / <code>not_observed</code> 分層；service ownership 邊界分開記錄；replayable artifacts 必須歸檔；demo observation tasks 完成需 current evidence；observation 工作必須與 fixes 分離</td>
 </tr>
 </tbody>
 </table>
@@ -1799,7 +1794,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="archived-observation-demo-current-runtime-observation">Archived observation：<code>demo-current-runtime-observation</code></h4>
+<h4 id="completed-observation-demo-current-runtime-observation">Completed observation：<code>demo-current-runtime-observation</code></h4>
 <table>
 <thead>
 <tr>
@@ -1810,27 +1805,27 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tbody>
 <tr>
 <td><strong>狀態</strong></td>
-<td>✓ Archived 2026-05-14：<code>openspec/changes/archive/2026-05-14-demo-current-runtime-observation/</code>；demo observation 證據規則已併入 <code>runtime-verification-evidence</code> / <code>runtime-verification-task-status</code></td>
+<td>✓ Archived：<code>openspec/changes/archive/2026-05-14-demo-current-runtime-observation/</code>；current pass evidence 已歸檔，主 specs 已同步</td>
 </tr>
 <tr>
 <td><strong>報告</strong></td>
 <td><code>docs/verification/2026-05-13-demo-current-runtime-observation.md</code></td>
 </tr>
 <tr>
-<td><strong>本次 live pass</strong></td>
+<td><strong>本輪 live pass</strong></td>
 <td>非 Kit service health、focused tests/builds、Socket.IO collaboration、coordinator lifecycle close/release、non-GPU DataChannel contract</td>
 </tr>
 <tr>
-<td><strong>本次 failed / blocked</strong></td>
+<td><strong>本輪 failed / blocked</strong></td>
 <td>worker dev-source root 無 IFC fixture；<code>smoke-review-session.ps1</code> inline IFC 無法 parse；Kit streaming launcher missing；Browser automation policy block；single Kit/WebRTC 沒有 live evidence</td>
-</tr>
-<tr>
-<td><strong>後續工作位置</strong></td>
-<td>補 IFC fixture / streaming launcher / browser policy 等 runtime blocker 已由 <code>stabilize-demo-runtime-readiness</code>（active）接手；本 observation 不再追蹤 next steps</td>
 </tr>
 <tr>
 <td><strong>不得宣稱</strong></td>
 <td>不得把 API-only pass 當成 worker real conversion pass；不得把 historical browser screenshot 當成本次 current pass；不得把 dedicated multi-Kit runtime 標 passed</td>
+</tr>
+<tr>
+<td><strong>承接 change</strong></td>
+<td><code>stabilize-demo-runtime-readiness</code>（解 worker fixture root / smoke inline IFC / Kit launcher / browser policy / single-Kit live evidence 等 blocker）</td>
 </tr>
 </tbody>
 </table>
