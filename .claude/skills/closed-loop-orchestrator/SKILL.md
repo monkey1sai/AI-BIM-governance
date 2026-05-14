@@ -2,7 +2,7 @@
 name: closed-loop-orchestrator
 description: 串接 AI-BIM-governance / OpenSpec / GitNexus 三技能完整 14-step 閉環。當使用者要「開始新 change」、「跑完整閉環」、「自動化 OpenSpec 流程」時使用。本技能不會自動執行 merge / archive，所有不可逆 phase 都會停下來等使用者確認。
 disable-model-invocation: true
-allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git switch*) Bash(git rev-parse*) Bash(gh pr list*) Bash(gh pr view*) Read Grep Glob Skill
+allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git rev-parse*) Bash(git worktree*) Bash(gh pr list*) Bash(gh pr view*) Read Grep Glob Skill
 ---
 
 # Closed-Loop Orchestrator
@@ -20,7 +20,9 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git switch*) Bash(git rev
 
 ### Phase A：起點判定（Step 1–3）
 
-呼叫 `change-id-resolve` skill：
+依 [docs/agent-tooling/opsx-worktree-provision.md](docs/agent-tooling/opsx-worktree-provision.md) 規範，Phase A 改採 git worktree 隔離 — main worktree 保持唯讀。
+
+#### A.1：呼叫 `change-id-resolve`
 
 ```
 /change-id-resolve
@@ -30,8 +32,29 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git switch*) Bash(git rev
 
 **Gate**：
 - `blockers` 非空 → STOP 並回報
-- 若 `branch_plan == "new"` → `git switch -c codex/openspec/<change-id>`
-- 若 `branch_plan == "continue-existing"` → `git switch <branch>` 並 pull rebase
+
+#### A.2：呼叫 `opsx-worktree-provision`
+
+```
+/opsx-worktree-provision <change-id> --branch-plan <new|continue-existing>
+```
+
+取得 manifest：
+
+```yaml
+worktree_path: <abs>
+branch: codex/openspec/<id>
+created_new: <bool>
+cwd_hint: <abs>
+env_copied: {...}
+warnings: [...]
+```
+
+**Gate**：
+- skill 回報任一 `cwd-not-main` / `main-dirty` / `branch-bound-elsewhere` / `worktree-dirty` → STOP
+- 後續所有 Phase 必須用 `manifest.cwd_hint` 作為 `git -C` / `cd` 目標
+- **不**在 main worktree (`<repo_root>`) 內做任何 edit / commit
+- continue-existing 不自動 `pull --rebase`，由使用者明確介入
 
 ### Phase B：規格收斂（Step 4）
 
@@ -110,6 +133,7 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git switch*) Bash(git rev
 
 | 條款 | 規則 |
 |---|---|
+| Worktree isolation | Phase A 起改採 `opsx-worktree-provision`，main worktree 唯讀；所有後續操作走 `manifest.cwd_hint` |
 | Branch isolation | 永遠不在 `main` 直接 commit |
 | NoSuccessorWhilePredecessorOpen | predecessor 未完整 closeout 前，不開 successor 的 active change |
 | Two-PR policy | implementation PR 與 archive PR 必須分開，archive 不得搭便車 |
