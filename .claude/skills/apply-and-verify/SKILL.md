@@ -13,7 +13,10 @@ allowed-tools: Bash(git add*) Bash(git commit*) Bash(git push*) Bash(git diff*) 
 - `openspec/changes/<change-id>/` 已有完整 proposal/design/tasks/spec-delta
 - `openspec validate <change-id> --strict` 已綠燈
 - 已跑過 `gitnexus-blast-radius pre-change`，risk_level 非 CRITICAL
-- 已在 `codex/openspec/<change-id>` branch
+- 已執行 `opsx-worktree-provision`，取得 manifest，`cwd_hint = <repo>/.worktrees/<change-id>/`，HEAD = `codex/openspec/<change-id>`
+- main worktree (`<repo_root>`) 保持唯讀，所有 git/edit/test 動作走 `git -C "<cwd_hint>"` 或 `cd "<cwd_hint>/<service>"`
+
+詳細規範見 [docs/agent-tooling/opsx-worktree-provision.md](../../../docs/agent-tooling/opsx-worktree-provision.md)。
 
 ## 執行步驟
 
@@ -58,28 +61,31 @@ docs/verification/<date>-<change-id>.md     # verification evidence
 
 #### Layer 2：focused tests
 
-依 bounded service 跑：
+依 bounded service 跑（`<cwd_hint>` 來自 `opsx-worktree-provision` manifest，例：`<repo>/.worktrees/<change-id>`）：
 
 ```
 # _worker
-!`cd _worker && python -m pytest tests/ -x`
+!`cd "<cwd_hint>/_worker" && python -m pytest tests/ -x`
 
 # _bim-control
-!`cd _bim-control && python -m pytest tests/ -x`
+!`cd "<cwd_hint>/_bim-control" && python -m pytest tests/ -x`
 
 # bim-review-coordinator
-!`cd bim-review-coordinator && python -m pytest tests/ -x`
+!`cd "<cwd_hint>/bim-review-coordinator" && python -m pytest tests/ -x`
 
 # web-viewer-sample
-!`cd web-viewer-sample && npm test`
+!`cd "<cwd_hint>/web-viewer-sample" && npm test`
 ```
 
-**重要**：必須在各自服務目錄執行（[CLAUDE.md](CLAUDE.md) 規範：避免多個 FastAPI 服務共用 `app` package name 時污染 import cache）。
+**重要**：
+- 必須在各自服務目錄執行（[CLAUDE.md](CLAUDE.md) 規範：避免多個 FastAPI 服務共用 `app` package name 時污染 import cache）
+- 必須走 `<cwd_hint>`（worktree 路徑），不在 main worktree 跑測試
+- 首次 apply 時各服務 `.venv` 需在 worktree 內自建（`venv_strategy: per-service-self-bootstrap`）
 
 #### Layer 3：diff 衛生檢查
 
 ```
-!`git diff --check`
+!`git -C "<cwd_hint>" diff --check`
 ```
 
 阻擋 whitespace / formatting 問題。
@@ -87,7 +93,7 @@ docs/verification/<date>-<change-id>.md     # verification evidence
 #### Layer 4：GitNexus scope drift 驗證
 
 ```
-!`gitnexus detect-changes --scope staged`
+!`gitnexus detect-changes --scope staged --cwd "<cwd_hint>"`
 ```
 
 呼叫 `gitnexus-blast-radius post-change` skill，比對 `affected_symbols` 是否 ⊆ tasks.md 預期 scope。
@@ -114,7 +120,7 @@ Commit message 用 Conventional Commits（PR #31/#33/#35 已成熟格式）：
 ### Step 5：Push 與開 PR
 
 ```
-!`git push -u origin codex/openspec/<change-id>`
+!`git -C "<cwd_hint>" push -u origin codex/openspec/<change-id>`
 ```
 
 ```
@@ -124,6 +130,8 @@ Commit message 用 Conventional Commits（PR #31/#33/#35 已成熟格式）：
   --title "<type>(<bounded-service>): <change-id> - <摘要>" \
   --body-file <generated PR body>`
 ```
+
+> `gh pr create` 認 branch 不認 cwd，可從 main worktree 或 `<cwd_hint>` 任一處呼叫。
 
 PR body 固定使用：
 
@@ -163,6 +171,7 @@ PR body 固定使用：
 change_id: <id>
 implementation_pr: <pr-number>
 branch: codex/openspec/<change-id>
+worktree_path: <cwd_hint>
 validation:
   openspec_strict: passed
   focused_tests:
@@ -173,14 +182,19 @@ validation:
     affected_scope: [<list>]
     drift: []
 commit_sha: <sha>
+cleanup_hint:
+  - "git worktree remove \"<cwd_hint>\""
+  - "git branch -d codex/openspec/<change-id>"
 ```
 
 ## 安全條款
 
 - 四層驗證任一失敗 → 不 commit，回到對應 Step
-- 不跑 `git add -A`，逐 file 確認
+- 所有 git/edit/test 動作走 `<cwd_hint>`，**不在 main worktree** 內改檔或 commit
+- 不跑 `git -C "<cwd_hint>" add -A`，逐 file 確認
 - 不在 commit message 寫「fix everything」這種模糊摘要
 - 不在 implementation PR 內偷塞 archive 動作
+- apply 結束**不自動清** worktree；印 `cleanup_hint`，由使用者人工執行
 
 ## 參考
 
