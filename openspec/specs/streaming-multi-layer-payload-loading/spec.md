@@ -11,6 +11,8 @@ path.
 
 `bim-streaming-server` SHALL load every loadable model artifact binding in a `same_instance` review session into the active USD runtime stage, ordered by `artifact_bindings[].load_order`.
 
+Technical note: this requirement describes USD runtime composition, not a merged USDC artifact. The first loadable binding is the primary/root model for the Kit runtime stage; secondary bindings are composed through the stage session layer, typically by appending their resolved layer identifiers to `stage.GetSessionLayer().subLayerPaths`. The source IFC files and derived USD/USDC artifacts remain independently traceable through `_worker` lineage, mapping metadata, and object URLs.
+
 #### Scenario: Multi-binding session composes all loadable artifacts
 
 - **WHEN** an `openStageRequest` or `loadArtifactGroupRequest` contains two or more ready `artifact_bindings` with model URLs

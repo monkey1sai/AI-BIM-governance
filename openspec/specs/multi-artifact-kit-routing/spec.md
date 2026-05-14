@@ -45,6 +45,8 @@ target, not proof that dedicated runtime evidence has passed.
 
 The coordinator SHALL decide Kit topology from routing policy and artifact characteristics. `same_instance` MUST allow multiple compatible USDC artifacts to load as layers or payloads in one Kit instance. `dedicated_instance` MUST record separate Kit instance allocation intent for large models, tenant isolation, or GPU-heavy artifact groups and MUST allocate separate Kit instances when GPU capacity is available. `shared_state` MUST synchronize selection and issue focus through coordinator events rather than video synchronization.
 
+Technical note: for `same_instance`, the coordinator only assigns compatible artifacts to one Kit instance; the actual multi-model viewport is produced by `bim-streaming-server` USD runtime composition. The first ready artifact binding is opened as the primary/root stage, and secondary USD/USDC artifacts are composed through the USD session layer. This preserves independent `_worker` artifact lineage and avoids generating a new merged USDC file.
+
 #### Scenario: Compatible artifacts share an instance
 
 - **WHEN** a session requests small compatible artifacts with `routing_policy=same_instance`

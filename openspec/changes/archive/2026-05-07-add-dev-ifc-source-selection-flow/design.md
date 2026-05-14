@@ -85,6 +85,37 @@ Removal is safe only after all current runtime references move to `_worker`:
 - 保留 top-level `url` 的單檔相容路徑，避免破壞既有 viewer / smoke scripts。
 - `openedStageResult` 回傳 `primary_binding`、`loaded_bindings`、`failed_bindings`、`partial_load` 與 `applied_mode`，讓 viewer 與測試能分辨「真的多載入」與「只載入 primary」。
 
+### 6.1 Special technical note: USD runtime composition, not merged USDC
+
+This design is a USD stage load / composition strategy, not a USDC file-format merge strategy. Each IFC remains an independent source artifact and is converted into its own USD/USDC artifact group. At review time, the first loadable binding becomes the Kit runtime stage's primary/root model, and every additional ready binding is composed into that active stage through the USD session layer.
+
+```txt
+Multiple IFC files
+→ each IFC converts to its own USD/USDC artifact
+→ coordinator sends artifact_bindings[] with load_order
+→ same_instance routes those bindings to one Kit instance
+→ Kit opens the first binding as the primary stage
+→ Kit appends secondary bindings to stage.GetSessionLayer().subLayerPaths
+→ WebRTC streams one composed viewport
+```
+
+Conceptual runtime layer shape:
+
+```txt
+UsdStage
+├─ Session Layer
+│  ├─ subLayer: secondary_model_B.usdc
+│  ├─ subLayer: secondary_model_C.usdc
+│  └─ runtime-only opinions / overrides
+│
+└─ Root Layer
+   └─ primary_model_A.usdc
+```
+
+Important memory hook: do not think of this as `IFC A + IFC B + IFC C -> merged.usdc`. Think of it as `IFC A -> primary_model_A.usdc`, plus `IFC B/C -> secondary USD layers` temporarily composed by the running Kit session. The primary USDC is not rewritten, no new merged artifact is produced, and every source/derived artifact keeps its own lineage, mapping metadata, and object URL.
+
+This keeps review startup cheap and traceable, but it also means future work must validate namespace, root prim, transform, unit, and `element_mapping.json` behavior across multiple composed models. A composed viewport can be visually correct while issue highlight or prim-path mapping is still ambiguous if two source models produce conflicting paths or incompatible stage metadata.
+
 ## Risks / Trade-offs
 
 - [Risk] Removing `_s3_storage` / `_conversion-service` breaks scripts or demos that still reference `8002` / `8003`. → Mitigation: migrate references first, run `rg` for legacy names/ports, update smoke tests, then delete folders.
