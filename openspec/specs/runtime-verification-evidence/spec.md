@@ -299,4 +299,3 @@ Runtime verification evidence SHALL 將 current demo observation results 存入 
 
 - **WHEN** 某個 tier 因 prerequisite 缺失而無法產生 screenshot 或 machine-readable summary
 - **THEN** report 明確記錄 blocker 與 missing artifact，而不是讓 evidence path 保持空白或語意不清
-

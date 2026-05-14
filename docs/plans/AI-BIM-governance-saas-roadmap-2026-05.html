@@ -2975,12 +2975,11 @@ B → C 觸發：
 </ul>
 </li>
 <li>
-<p><strong>下一個 worker 品質工作：執行 <code>optimize-worker-source-entity-enumeration</code></strong>：</p>
+<p><strong>下一個 worker 品質工作：full 13-file canonical batch + secondary enumeration burn-down</strong>：</p>
 <ul>
 <li>使用 <code>C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc</code> 作為正式本機 fixture root。</li>
-<li>此 work 已落成 active OpenSpec change：<code>openspec/changes/optimize-worker-source-entity-enumeration/</code>。</li>
-<li>目前 helper 已能回報 <code>timed_out</code>、source artifact / artifact group / conversion job IDs 與 last-known converter phase；最新 evidence 指向 <code>source_entity_enumeration</code> 在 canonical 89MB fixture 上仍無法於 timeout 內完成。</li>
-<li>下一步先 profile 並 optimize 89MB fixture <code>_source_entities(model)</code> / all-entity enumeration 的 runtime / performance 問題，再重跑 <code>--limit 1 --timeout-seconds 600</code>。</li>
+<li>前一個 burn-down <code>optimize-worker-source-entity-enumeration</code> 已歸檔（enumeration ~33s 收斂），其下游 blocker <code>non_renderable_entity_materialization</code> 也已由 <code>optimize-worker-non-renderable-materialization</code>（sidecar carrier，74× faster）完成 canonical single-fixture 級驗證，但尚未 archive。</li>
+<li>下一個 OpenSpec change 候選為「在 sidecar carrier 條件下跑 full 13-file canonical batch」，量化 stage_reopen / mapping_quality_failed 機率、解 <code>unmapped_count=2</code>（geometry shape 缺 GUID）case，並把 secondary <code>guid_extraction</code> (~10.6s) / <code>name_extraction</code> (~10.0s) 優化獨立為 follow-up；見 §5.2 「Next worker risk burn-down」。</li>
 <li>單檔 real conversion 通過後，先用既有 <code>web-viewer-sample</code> / <code>bim-review-coordinator</code> / <code>bim-streaming-server</code> flow 載入該 worker-hosted <code>model.usdc</code>，留下 screenshot 或等效 visual proof；若 Kit/GPU/browser 不可用，記錄 blocked，不宣稱 web UI 已檢視成果。</li>
 <li>只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 <code>minimum_coverage_locked=true</code> production baseline 寫入 evidence。</li>
 </ul>
@@ -3000,7 +2999,7 @@ B → C 觸發：
 <li>#3 / #3A 已完成並歸檔，不再列為候選池。</li>
 <li><code>#4</code> 已歸檔到 <code>openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/</code>，並同步到 <code>review-session-request-lifecycle</code>。</li>
 <li>lifecycle events 已收斂成 append-only event schema，支撐後續 #6 mock webhook / observability 探索。</li>
-<li>若要先補 worker evidence，優先完成 active change <code>optimize-worker-source-entity-enumeration</code>，不要跳過 canonical batch readiness gate。</li>
+<li>若要先補 worker evidence，優先完成上方第 3 點的 full 13-file canonical batch + secondary enumeration burn-down，不要跳過 canonical batch readiness gate；demo runtime readiness 改由 active change <code>stabilize-demo-runtime-readiness</code> 接手。</li>
 </ul>
 </li>
 <li>
