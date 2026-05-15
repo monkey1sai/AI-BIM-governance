@@ -328,6 +328,37 @@ def test_ifcopenshell_converter_rejects_product_only_source_entity_fallback():
         IfcOpenShellUsdConverter()._source_entities(ProductOnlyFallbackModel())
 
 
+def test_source_entities_keep_no_guid_keys_unique_under_id_collision():
+    """Regression for canonical unmapped_count=2: IfcOpenShell returns id()==0 for many
+    inline/derived instances. No-GUID entities sharing class + id MUST still get distinct
+    ifc_entity_key so the per-key dedup in mapping_by_entity does not silently drop them.
+    Real ifc_entity_id is preserved (no synthetic GUID).
+    """
+
+    class IdCollisionModel:
+        schema = "IFC4"
+
+        def __iter__(self):
+            # Three no-GUID entities, all class IfcArbitraryClosedProfileDef, all id()==0.
+            return iter(
+                [
+                    _FakeEntity("IfcArbitraryClosedProfileDef", "p1", 0),
+                    _FakeEntity("IfcArbitraryClosedProfileDef", "p2", 0),
+                    _FakeEntity("IfcArbitraryClosedProfileDef", "p3", 0),
+                ]
+            )
+
+    rows = IfcOpenShellUsdConverter()._source_entities(IdCollisionModel())
+    keys = [r["ifc_entity_key"] for r in rows]
+    assert len(rows) == 3
+    assert len(set(keys)) == 3, f"ifc_entity_key collided: {keys}"
+    # ifc_guid stays None (no fabrication); real id preserved as "0".
+    assert all(r["ifc_guid"] is None for r in rows)
+    assert all(r["ifc_entity_id"] == "0" for r in rows)
+    # The per-key dedup that produced unmapped_count=2 now keeps every entity.
+    assert len({r["ifc_entity_key"]: r for r in rows}) == 3
+
+
 def test_ifcopenshell_converter_rejects_metadata_only_usd(monkeypatch, tmp_path: Path):
     _install_fake_converter_modules(monkeypatch, shapes=[_FakeShape("guid-1", geometry=_FakeDegenerateGeometry())])
     source_path = tmp_path / "source.ifc"

@@ -644,7 +644,15 @@ class IfcOpenShellUsdConverter:
             name = _entity_name(entity)
             if profile_enabled:
                 profile["name_extraction_seconds"] += perf_counter() - operation_started
-            entity_key = guid or f"{ifc_class}:{entity_id}"
+            # No-GUID entities are keyed by class + IfcOpenShell id + the stable enumeration
+            # index. IfcOpenShell returns id()==0 for many inline/derived instances, so
+            # f"{ifc_class}:{entity_id}" collides across them and the per-key dedup in
+            # mapping_by_entity silently drops the colliding entities (observed as the
+            # canonical unmapped_count=2 residue). The 1-based `index` is unique per entity
+            # and deterministic for a given file, so it makes ifc_entity_key collision-free
+            # without synthesizing a GUID or weakening the all-entity denominator. Entities
+            # WITH a real GlobalId keep guid as the key (renderable geometry maps via guid).
+            entity_key = guid or f"{ifc_class}:{entity_id}:{index}"
             if profile_enabled:
                 operation_started = perf_counter()
             rows.append(
