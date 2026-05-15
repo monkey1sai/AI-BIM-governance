@@ -42,18 +42,18 @@
 
 ## 7. Canonical Verification
 
-- [ ] 7.1 `_worker/` focused tests 全綠（在 `_worker/` 目錄執行）。
-- [ ] 7.2 `openspec validate queue-batch-dispatch-and-post-usdc-artifact-retention --strict`。
-- [ ] 7.3 dry-run：`--enqueue` + `--status` 於 tmp fixture set，確認 manifest 形狀與 idempotency。
-- [ ] 7.4 real evidence：對 13 檔 canonical 反覆 `--run-next` 跑完（短命行程逐筆），`--summary` 取得 `outcome_distribution`/`minimum_coverage_locked`；斷言與 predecessor v3 一致（passed=13、locked=true）。
-- [ ] 7.5 量測 retention 後 footprint（目標 ≈130 MB-class）與 v3 ≈58 GB 對比，記入 verification doc。
-- [ ] 7.6 visual preview 沿用 predecessor 範疇（`not_observed` 除非 Kit/GPU/browser 可用），不在本 change 宣稱通過。
+- [x] 7.1 `_worker/` focused tests 全綠（在 `_worker/` 目錄執行）。
+- [x] 7.2 `openspec validate queue-batch-dispatch-and-post-usdc-artifact-retention --strict`。
+- [x] 7.3 dry-run：`--enqueue` + `--status` 於 tmp fixture set，確認 manifest 形狀與 idempotency。
+- [ ] 7.4 real evidence：對 13 檔 canonical 反覆 `--run-next` 跑完（短命行程逐筆），`--summary` 取得 `outcome_distribution`/`minimum_coverage_locked`；斷言與 predecessor v3 一致（passed=13、locked=true）。 — **blocked**: 真實 13 檔 .ifc 為 gitignored 大檔不在 worktree（見 verification doc）
+- [ ] 7.5 量測 retention 後 footprint（目標 ≈130 MB-class）與 v3 ≈58 GB 對比，記入 verification doc。 — **blocked/recorded_only**: 依賴 7.4（見 verification doc）
+- [x] 7.6 visual preview 沿用 predecessor 範疇（`not_observed` 除非 Kit/GPU/browser 可用），不在本 change 宣稱通過。
 
 ## 8. Evidence 與 Roadmap 對齊
 
-- [ ] 8.1 建立 `docs/verification/2026-05-1X-queue-batch-and-artifact-retention.md`：manifest schema、resume 行為、retention footprint 前後、parity 結果、scratch cleanup。
-- [ ] 8.2 更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` §5.2：predecessor 標 archived、本 change 接為 active risk burn-down。
-- [ ] 8.3 同名 `.html` surgical sync。
+- [x] 8.1 建立 `docs/verification/2026-05-1X-queue-batch-and-artifact-retention.md`：manifest schema、resume 行為、retention footprint 前後、parity 結果、scratch cleanup。
+- [x] 8.2 更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` §5.2：predecessor 標 archived、本 change 接為 active risk burn-down。
+- [x] 8.3 同名 `.html` surgical sync。
 - [ ] 8.4 `git diff --check` + GitNexus `detect_changes`，scope 維持在 `_worker` + OpenSpec artifacts + docs。
 
 ## 最小可逆驗證（smallest reversible diff that proves it works）

@@ -154,7 +154,8 @@
 <li><a href="#runtime-blockedworker-canonical-storage-batch-baseline">已歸檔但 runtime blocked：worker-canonical-storage-batch-baseline</a></li>
 <li><a href="#optimize-worker-source-entity-enumerationarchived">已完成：optimize-worker-source-entity-enumeration（archived）</a></li>
 <li><a href="#active-risk-burn-downoptimize-worker-non-renderable-materialization">Active risk burn-down：optimize-worker-non-renderable-materialization</a></li>
-<li><a href="#active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：optimize-worker-canonical-batch-and-secondary-enumeration（v3 GOAL ACHIEVED，待 merge/archive）</a></li>
+<li><a href="#active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Archived：optimize-worker-canonical-batch-and-secondary-enumeration（v3 GOAL ACHIEVED，已 archive 2026-05-15）</a></li>
+<li><a href="#active-risk-burn-downqueue-batch-dispatch-and-post-usdc-artifact-retention">Active risk burn-down：queue-batch-dispatch-and-post-usdc-artifact-retention（apply 進行中）</a></li>
 <li><a href="#completed-observationdemo-current-runtime-observation">Completed observation：demo-current-runtime-observation</a></li>
 <li><a href="#completed-4coordinator-session-lifecycle-events-audit">Completed #4：coordinator-session-lifecycle-events-audit</a></li>
 </ul>
@@ -1941,7 +1942,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：<code>optimize-worker-canonical-batch-and-secondary-enumeration</code>（v3 GOAL ACHIEVED，待 merge/archive）</h4>
+<h4 id="active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Archived：<code>optimize-worker-canonical-batch-and-secondary-enumeration</code>（v3 GOAL ACHIEVED，已 archive 2026-05-15）</h4>
 <table>
 <thead>
 <tr>
@@ -1952,7 +1953,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tbody>
 <tr>
 <td><strong>狀態</strong></td>
-<td>implementation 完成且 canonical v3 全綠：13/13 <code>coverage_status=pass</code>、<code>unmapped_count=0</code>、<code>minimum_coverage_locked=true</code>。PR #56 mergeable，待 Phase E merge + Phase F archive</td>
+<td>✓ Archived：<code>openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/</code>。implementation 完成且 canonical v3 全綠：13/13 <code>coverage_status=pass</code>、<code>unmapped_count=0</code>、<code>minimum_coverage_locked=true</code></td>
 </tr>
 <tr>
 <td><strong>來源 evidence</strong></td>
@@ -1980,7 +1981,46 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><strong>後繼</strong></td>
-<td>queue 單筆批次 orchestration + 轉檔後檔案結構/retention（58GB scratch 問題）切為後繼 change <code>queue-batch-dispatch-and-post-usdc-artifact-retention</code>（route α；settled decisions 記於本 change design「Successor handoff」；NoSuccessorWhilePredecessorOpen — 本 change archive 後才開）</td>
+<td>queue 單筆批次 orchestration + 轉檔後檔案結構/retention（58GB scratch 問題）已切為後繼 change <code>queue-batch-dispatch-and-post-usdc-artifact-retention</code>（route α；predecessor 已 archive，後繼已開為下方 active risk burn-down）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="active-risk-burn-downqueue-batch-dispatch-and-post-usdc-artifact-retention">Active risk burn-down：<code>queue-batch-dispatch-and-post-usdc-artifact-retention</code>（apply 進行中）</h4>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>狀態</strong></td>
+<td>apply 分批落地：M.1 + Section 2–5 完成並驗證（branch <code>codex/openspec/queue-batch-dispatch-and-post-usdc-artifact-retention</code>，commits <code>e20b433</code>/<code>6d24c7a</code>/<code>1c48a2e</code>）。7.4 真實 13 檔 canonical 跑批 = blocked（真實 <code>.ifc</code> 為 gitignored 大檔、不在 worktree）</td>
+</tr>
+<tr>
+<td><strong>來源 evidence</strong></td>
+<td><code>docs/verification/2026-05-15-queue-batch-and-artifact-retention.md</code></td>
+</tr>
+<tr>
+<td><strong>目標</strong></td>
+<td>1) 單筆短命 <code>--run-next</code> 取代 ~65min monolithic 全有全無；2) manifest-as-index resumable、recorded outcome 不自動重跑；3) retention strategy A 把 scratch ≈58GB→≈130MB-class；4) <code>outcome_distribution</code>/<code>minimum_coverage_locked</code> 語意凍結自 predecessor（parity test pin 相等）</td>
+</tr>
+<tr>
+<td><strong>不可做</strong></td>
+<td>不改 <code>_compute_outcome_distribution</code>/lock gate 邏輯；不碰 converter（Q6 out of scope）；不對非 <code>tenant_batch_verification</code> 路徑做 retention；不自動 retry recorded failure；不把 blocked 宣稱 passed</td>
+</tr>
+<tr>
+<td><strong>KPI 達成</strong></td>
+<td>✓ parity test：queue 跑完 == monolithic（同 input）；✓ retention 僅作用 scratch tenant（test 把關）；✓ <code>_worker</code> 138 passed/1 skipped；✓ <code>openspec --strict</code> 綠；⏸ 真實 13 檔 footprint 量測 = blocked</td>
+</tr>
+<tr>
+<td><strong>報告</strong></td>
+<td><code>docs/verification/2026-05-15-queue-batch-and-artifact-retention.md</code></td>
+</tr>
+<tr>
+<td><strong>後續</strong></td>
+<td>真實 canonical evidence（7.4/7.5）待 IFC fixture 可用環境補跑；converter 端 stream-compute coverage（proposal Q6）為潛在 follow-up</td>
 </tr>
 </tbody>
 </table>
