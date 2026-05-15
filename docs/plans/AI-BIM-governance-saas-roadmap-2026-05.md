@@ -158,6 +158,8 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
    與 AGENTS.md / CLAUDE.md，把過渡語意收斂為正式邊界。
 ```
 
+> **Phase B 草稿（gate-pending）**：完整草稿見 [`docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`](phase-b-external-platform-webhook-intake-DRAFT-2026-05.md)。該檔為 planning DRAFT（非 OpenSpec change，不在 `openspec/changes/`），因 `NoSuccessorWhilePredecessorOpen` gate（PR #59 未 merge）暫不升格；gate 清除後依草稿 §9 checklist 一鍵 `openspec-propose` 升格為 change-id `external-platform-webhook-intake-boundary`。
+
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
 
 下列 **18** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。
