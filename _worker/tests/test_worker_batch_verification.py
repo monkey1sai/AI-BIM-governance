@@ -4,6 +4,17 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.batch_queue import (
+    apply_post_coverage_retention,
+    batch_queue_status,
+    cleanup_batch_scratch,
+    enqueue_batch_queue,
+    read_batch_queue,
+    retry_batch_queue,
+    run_next_batch_queue,
+    summarize_batch_queue,
+    write_batch_queue,
+)
 from app.batch_verification import run_storage_batch_verification
 from app.converters import ConversionAdapterResult, ConversionAdapterUnavailable
 from app.settings import Settings
@@ -372,3 +383,400 @@ def test_batch_verification_timed_out_fixture_buckets_into_timed_out(tmp_path: P
     assert distribution["timed_out"]["count"] == 1
     assert distribution["passed"]["count"] == 0
     assert payload["minimum_coverage_locked"] is False
+
+
+# --- M.1: --enqueue / --status minimal reversible slice -----------------------
+
+
+def make_queue_settings(tmp_path: Path) -> Settings:
+    """Settings whose batch_queue_path is pinned under tmp (never the real home)."""
+    return Settings(
+        service_root=tmp_path,
+        objects_root=tmp_path / "objects",
+        jobs_dir=tmp_path / "jobs",
+        dev_storage_root=tmp_path / "storage",
+        batch_queue_path=tmp_path / "queue" / "batch_queue.json",
+        fake_bim_control_url="http://127.0.0.1:1",
+        public_objects_url="http://testserver/objects",
+    )
+
+
+def test_batch_queue_enqueue_builds_manifest(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+
+    manifest = enqueue_batch_queue(settings)
+
+    assert manifest["manifest_version"] == 1
+    assert Path(settings.batch_queue_path).is_file()
+    assert read_batch_queue(settings.batch_queue_path) == manifest
+    fixtures = manifest["fixtures"]
+    assert [row["filename"] for row in fixtures] == ["A.ifc", "B.ifc"]
+    assert all(row["status"] == "pending" for row in fixtures)
+    assert all(row["history"] == [] for row in fixtures)
+    assert len({row["source_id"] for row in fixtures}) == 2
+
+
+def test_batch_queue_enqueue_is_idempotent_and_preserves_recorded_outcome(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+
+    first = enqueue_batch_queue(settings)
+    created_at = first["created_at"]
+    # Simulate a later recorded terminal outcome on the existing row.
+    recorded = read_batch_queue(settings.batch_queue_path)
+    recorded["fixtures"][0]["status"] = "passed"
+    recorded["fixtures"][0]["history"] = [{"event": "passed"}]
+    write_batch_queue(settings.batch_queue_path, recorded)
+
+    # A new fixture appears; re-enqueue must NOT reset the recorded row.
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    second = enqueue_batch_queue(settings)
+
+    by_name = {row["filename"]: row for row in second["fixtures"]}
+    assert by_name["A.ifc"]["status"] == "passed"
+    assert by_name["A.ifc"]["history"] == [{"event": "passed"}]
+    assert by_name["B.ifc"]["status"] == "pending"
+    assert second["created_at"] == created_at  # created_at is preserved
+
+
+def test_batch_queue_status_reflects_pending(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+
+    before = batch_queue_status(settings)
+    assert before["exists"] is False
+
+    enqueue_batch_queue(settings)
+    after = batch_queue_status(settings)
+
+    assert after["exists"] is True
+    assert after["total"] == 2
+    assert after["counts"]["pending"] == 2
+    assert after["pending_remaining"] == 2
+    assert after["all_dispatched"] is False
+
+
+# --- Section 3/4: dispatch / resume / retry / summary parity ------------------
+
+
+def test_batch_queue_run_next_advances_one_fixture_at_a_time(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    first = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert first["dispatched"] is True
+    assert first["outcome"] == "passed"
+    mid = batch_queue_status(settings)
+    assert mid["counts"]["passed"] == 1
+    assert mid["pending_remaining"] == 1
+
+    second = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert second["dispatched"] is True
+    assert second["source_id"] != first["source_id"]
+
+    drained = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert drained["dispatched"] is False
+    assert drained["all_dispatched"] is True
+
+
+def test_batch_queue_resume_reclaims_running_but_not_terminal(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    manifest = read_batch_queue(settings.batch_queue_path)
+    # row 0 already terminal (must NOT be re-dispatched); row 1 crashed mid-flight
+    # (status "running" with no recorded outcome — must be reclaimed).
+    manifest["fixtures"][0]["status"] = "passed"
+    manifest["fixtures"][0]["coverage_summary"] = {
+        "status": "passed",
+        "coverage_status": "pass",
+        "quality_metrics": {"minimum_coverage_baseline_locked": True, "coverage_status": "pass"},
+    }
+    manifest["fixtures"][1]["status"] = "running"
+    write_batch_queue(settings.batch_queue_path, manifest)
+    terminal_sid = manifest["fixtures"][0]["source_id"]
+    running_sid = manifest["fixtures"][1]["source_id"]
+
+    result = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert result["source_id"] == running_sid  # reclaimed the crashed row
+
+    after = read_batch_queue(settings.batch_queue_path)
+    by_id = {r["source_id"]: r for r in after["fixtures"]}
+    assert by_id[terminal_sid]["status"] == "passed"  # terminal row untouched
+    assert by_id[terminal_sid]["coverage_summary"]["coverage_status"] == "pass"
+    assert by_id[running_sid]["status"] == "passed"  # reclaimed row got an outcome
+
+
+def test_batch_queue_retry_only_resets_recorded_failures(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+    manifest = read_batch_queue(settings.batch_queue_path)
+    sid = manifest["fixtures"][0]["source_id"]
+
+    manifest["fixtures"][0]["status"] = "failed"
+    write_batch_queue(settings.batch_queue_path, manifest)
+    ok = retry_batch_queue(settings, sid)
+    assert ok["retried"] is True
+    assert ok["prev_outcome"] == "failed"
+    reread = read_batch_queue(settings.batch_queue_path)
+    assert reread["fixtures"][0]["status"] == "pending"
+    assert reread["fixtures"][0]["history"][-1]["event"] == "retry"
+    assert reread["fixtures"][0]["history"][-1]["prev_outcome"] == "failed"
+
+    # A passing fixture must never be re-runnable via --retry.
+    reread["fixtures"][0]["status"] = "passed"
+    write_batch_queue(settings.batch_queue_path, reread)
+    rejected = retry_batch_queue(settings, sid)
+    assert rejected["retried"] is False
+    assert rejected["reason"] == "not_a_recorded_failure"
+
+    unknown = retry_batch_queue(settings, "deadbeef")
+    assert unknown["retried"] is False
+    assert unknown["reason"] == "unknown_source_id"
+
+
+def test_batch_queue_summary_is_bit_identical_to_monolithic(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    (storage / "C.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nC\n")
+
+    # Monolithic path on the same fixtures (isolated object/jobs roots).
+    mono_settings = Settings(
+        service_root=tmp_path,
+        objects_root=tmp_path / "mono_objects",
+        jobs_dir=tmp_path / "mono_jobs",
+        dev_storage_root=storage,
+        fake_bim_control_url="http://127.0.0.1:1",
+        public_objects_url="http://testserver/objects",
+    )
+    monolithic = run_storage_batch_verification(
+        mono_settings, converter=FakeBatchConverter(locked=True)
+    )
+
+    queue_settings = Settings(
+        service_root=tmp_path,
+        objects_root=tmp_path / "q_objects",
+        jobs_dir=tmp_path / "q_jobs",
+        dev_storage_root=storage,
+        batch_queue_path=tmp_path / "queue" / "batch_queue.json",
+        fake_bim_control_url="http://127.0.0.1:1",
+        public_objects_url="http://testserver/objects",
+    )
+    enqueue_batch_queue(queue_settings)
+    for _ in range(3):
+        run_next_batch_queue(
+            queue_settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+        )
+    summary = summarize_batch_queue(queue_settings)
+
+    assert summary["pending_remaining"] == 0
+    assert summary["outcome_distribution"] == monolithic["outcome_distribution"]
+    assert summary["minimum_coverage_locked"] == monolithic["minimum_coverage_locked"]
+    assert summary["minimum_coverage_locked"] is True
+
+
+# --- Section 5: retention strategy A + location ------------------------------
+
+
+def test_batch_queue_retention_prunes_scratch_arrays_keeps_runtime(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    result = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    retention = result["retention"]
+    assert retention["applied"] is True
+    assert "ifc_index.json" in retention["dropped"]
+    assert "element_mapping.json" in retention["dropped"]
+
+    derived = Path(retention["derived_dir"])
+    assert not (derived / "ifc_index.json").exists()
+    assert not (derived / "element_mapping.json").exists()
+    assert (derived / "model.usdc").is_file()
+    assert (derived / "usd_index.json").is_file()
+    assert (derived / "metadata.json").is_file()
+
+    row = read_batch_queue(settings.batch_queue_path)["fixtures"][0]
+    assert row["retention_class"] == "post_coverage_strategy_a"
+    assert set(row["retained_paths"]) == {"model.usdc", "usd_index.json", "metadata.json"}
+    # --status / --summary surface no drift while retained files exist.
+    assert batch_queue_status(settings)["retained_paths_drift"] == []
+    assert summarize_batch_queue(settings)["retained_paths_drift"] == []
+
+
+def test_batch_queue_retention_never_touches_non_scratch_tenant(tmp_path: Path):
+    settings = make_queue_settings(tmp_path)
+    # A derived dir under a NON-scratch tenant, with the giant arrays present.
+    rel = Path("tenants") / "tenant_real_review" / "derived" / "conv_x" / "usdc"
+    derived = Path(settings.objects_root) / rel
+    derived.mkdir(parents=True, exist_ok=True)
+    for name in ("ifc_index.json", "element_mapping.json", "entity_index.json", "model.usdc"):
+        (derived / name).write_text("{}", encoding="utf-8")
+    write_json(
+        Path(settings.jobs_dir) / "conv_x.json",
+        {"result": {"lineage": {"derived_object_prefix": rel.as_posix()}}},
+    )
+
+    outcome = apply_post_coverage_retention(settings, {"conversion_job_id": "conv_x"})
+
+    assert outcome["applied"] is False
+    assert outcome["reason"] == "not_scratch_tenant"
+    # Nothing under the non-scratch tenant was deleted.
+    for name in ("ifc_index.json", "element_mapping.json", "entity_index.json", "model.usdc"):
+        assert (derived / name).is_file()
+
+
+def test_batch_queue_cleanup_scratch_is_idempotent(tmp_path: Path):
+    settings = make_queue_settings(tmp_path)
+    scratch = Path(settings.objects_root) / "tenants" / "tenant_batch_verification"
+
+    empty = cleanup_batch_scratch(settings)
+    assert empty["removed"] is False
+    assert empty["exists_after"] is False
+
+    (scratch / "derived").mkdir(parents=True, exist_ok=True)
+    (scratch / "derived" / "junk.json").write_text("{}", encoding="utf-8")
+    removed = cleanup_batch_scratch(settings)
+    assert removed["removed"] is True
+    assert removed["exists_after"] is False
+
+    again = cleanup_batch_scratch(settings)  # idempotent
+    assert again["removed"] is False
+
+
+def test_batch_queue_default_manifest_path_is_outside_worktree(tmp_path: Path):
+    from app.settings import DEFAULT_BATCH_QUEUE_PATH
+
+    default_settings = Settings(service_root=tmp_path)
+    resolved = Path(default_settings.batch_queue_path)
+    assert resolved.is_absolute()
+    assert resolved == DEFAULT_BATCH_QUEUE_PATH.resolve()
+    # The unset default never lands inside the service/worktree tree.
+    assert tmp_path.resolve() not in resolved.parents
+
+    override = Settings(service_root=tmp_path, batch_queue_path=tmp_path / "q.json")
+    assert Path(override.batch_queue_path) == (tmp_path / "q.json").resolve()
+
+
+def test_batch_queue_status_reports_retained_path_drift(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+    manifest = read_batch_queue(settings.batch_queue_path)
+    manifest["fixtures"][0]["status"] = "passed"
+    manifest["fixtures"][0]["retained_paths"] = {
+        "model.usdc": str(tmp_path / "gone" / "model.usdc")
+    }
+    write_batch_queue(settings.batch_queue_path, manifest)
+
+    drift = batch_queue_status(settings)["retained_paths_drift"]
+    assert len(drift) == 1
+    assert drift[0]["missing"] == ["model.usdc"]
+
+
+# --- PR #60 review fixes: summary parity hole + retention prune-lock resilience
+
+
+def test_batch_queue_summary_counts_source_unavailable_failure(tmp_path: Path):
+    """A terminal failure with no conversion record (source vanished after
+    enqueue) must still appear in --summary's outcome_distribution; it must not
+    silently drop out and under-report failures."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    fixture = storage / "A.ifc"
+    fixture.write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    fixture.unlink()  # source disappears between enqueue and dispatch
+    result = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert result["outcome"] == "failed"
+
+    row = read_batch_queue(settings.batch_queue_path)["fixtures"][0]
+    assert row["status"] == "failed"
+    assert row["coverage_summary"] == {}  # no conversion record was produced
+
+    summary = summarize_batch_queue(settings)
+    assert summary["outcome_distribution"]["total"] == 1
+    assert summary["outcome_distribution"]["failed"]["count"] == 1
+    assert summary["minimum_coverage_locked"] is False
+
+
+def test_apply_post_coverage_retention_survives_locked_drop_file(tmp_path, monkeypatch):
+    """A Windows-style file lock during prune (the predecessor failure class)
+    must not crash the dispatch — it degrades to a diagnostic."""
+    import pathlib
+
+    settings = make_queue_settings(tmp_path)
+    rel = Path("tenants") / "tenant_batch_verification" / "derived" / "conv_lock" / "usdc"
+    derived = Path(settings.objects_root) / rel
+    derived.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "ifc_index.json",
+        "element_mapping.json",
+        "model.usdc",
+        "usd_index.json",
+        "metadata.json",
+    ):
+        (derived / name).write_text("{}", encoding="utf-8")
+    write_json(
+        Path(settings.jobs_dir) / "conv_lock.json",
+        {"result": {"lineage": {"derived_object_prefix": rel.as_posix()}}},
+    )
+
+    real_unlink = pathlib.Path.unlink
+
+    def boom(self, *args, **kwargs):
+        if self.name == "ifc_index.json":
+            raise PermissionError("simulated WinError 5 lock")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", boom)
+
+    out = apply_post_coverage_retention(settings, {"conversion_job_id": "conv_lock"})
+
+    assert out["applied"] is True  # did not raise
+    assert "element_mapping.json" in out["dropped"]  # unlocked one still pruned
+    assert "ifc_index.json" not in out["dropped"]
+    assert out["prune_errors"] == [
+        {"file": "ifc_index.json", "error": "PermissionError"}
+    ]
+    assert (derived / "ifc_index.json").is_file()  # locked file survived intact

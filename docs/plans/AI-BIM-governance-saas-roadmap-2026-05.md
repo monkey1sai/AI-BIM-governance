@@ -692,18 +692,31 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600 --profile-source-entities` |
 | **與既有 spec 關係** | MODIFIED `worker-artifact-pipeline`（允許 sidecar carrier）；ADDED `worker-artifact-pipeline` 非渲染 materialization 優化要求；ADDED `runtime-verification-evidence` materialization before/after timing 要求 |
 
-#### Active risk burn-down：`optimize-worker-canonical-batch-and-secondary-enumeration`（v3 GOAL ACHIEVED，待 merge/archive）
+#### Archived：`optimize-worker-canonical-batch-and-secondary-enumeration`（v3 GOAL ACHIEVED，已 archive 2026-05-15）
 
 | 項目 | 內容 |
 |---|---|
-| **狀態** | implementation 完成且 canonical v3 全綠：13/13 `coverage_status=pass`、`unmapped_count=0`、`minimum_coverage_locked=true`。PR #56 mergeable，待 Phase E merge + Phase F archive |
+| **狀態** | ✓ Archived：`openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/`。implementation 完成且 canonical v3 全綠：13/13 `coverage_status=pass`、`unmapped_count=0`、`minimum_coverage_locked=true` |
 | **來源 evidence** | `docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md`（v3 完整證據；v1/v2 診斷出真因 = 模型本身 2 個重複 GlobalId，非 no-GUID） |
 | **目標達成** | 1) 13-file canonical batch `outcome_distribution.passed=13`、其餘 bucket 0；2) `unmapped_count` 由 2→0（`ifc_entity_key` 無條件唯一，`ifc_guid` 保留真值不合成）；3) secondary `guid_extraction≈10–17s`/`name_extraction≈10–16s` 量測完成並依 Decision 9 書面 deferral（follow-up `optimize-worker-secondary-enumeration`） |
 | **不可做** | 不得把 denominator 改成 geometry-only、`IfcProduct`-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 `_worker` ownership；不得在 partial subset run 上 lock baseline |
 | **KPI 達成** | ✓ 13-file outcome distribution 可重現；✓ 三項解鎖條件全成立 `minimum_coverage_locked=true`；✓ secondary 書面 deferral |
 | **驗證指令** | `openspec validate optimize-worker-canonical-batch-and-secondary-enumeration --strict`（綠）、`cd _worker && python -m pytest tests/`（126 passed/1 skipped）、`python scripts/verify_storage_batch.py --limit 13 --timeout-seconds 600 --profile-source-entities`（v3 status=passed locked=True） |
 | **報告** | `docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md`（v3 證據完整） |
-| **後繼** | queue 單筆批次 orchestration + 轉檔後檔案結構/retention（58GB scratch 問題）切為後繼 change `queue-batch-dispatch-and-post-usdc-artifact-retention`（route α；settled decisions 記於本 change design「Successor handoff」；NoSuccessorWhilePredecessorOpen — 本 change archive 後才開） |
+| **後繼** | queue 單筆批次 orchestration + 轉檔後檔案結構/retention（58GB scratch 問題）已切為後繼 change `queue-batch-dispatch-and-post-usdc-artifact-retention`（route α；predecessor 已 archive，後繼已開為下方 active risk burn-down） |
+
+#### Active risk burn-down：`queue-batch-dispatch-and-post-usdc-artifact-retention`（apply 進行中）
+
+| 項目 | 內容 |
+|---|---|
+| **狀態** | apply 分批落地：M.1 + Section 2–5 完成並驗證（branch `codex/openspec/queue-batch-dispatch-and-post-usdc-artifact-retention`，commits `e20b433`/`6d24c7a`/`1c48a2e`）。7.4 真實 13 檔 canonical 跑批 = blocked（真實 `.ifc` 為 gitignored 大檔、不在 worktree） |
+| **來源 evidence** | `docs/verification/2026-05-15-queue-batch-and-artifact-retention.md` |
+| **目標** | 1) 單筆短命 `--run-next` 取代 ~65min monolithic 全有全無；2) manifest-as-index resumable、recorded outcome 不自動重跑；3) retention strategy A 把 scratch ≈58GB→≈130MB-class；4) `outcome_distribution`/`minimum_coverage_locked` 語意凍結自 predecessor（parity test pin 相等） |
+| **不可做** | 不改 `_compute_outcome_distribution`/lock gate 邏輯；不碰 converter（Q6 out of scope）；不對非 `tenant_batch_verification` 路徑做 retention；不自動 retry recorded failure；不把 blocked 宣稱 passed |
+| **KPI 達成** | ✓ parity test：queue 跑完 == monolithic（同 input）；✓ retention 僅作用 scratch tenant（test 把關）；✓ `_worker` 138 passed/1 skipped；✓ `openspec --strict` 綠；⏸ 真實 13 檔 footprint 量測 = blocked |
+| **驗證指令** | `openspec validate queue-batch-dispatch-and-post-usdc-artifact-retention --strict`、`cd _worker && python -m pytest tests/`（138 passed/1 skipped）、`python scripts/verify_storage_batch.py --enqueue/--status/--run-next/--summary`（dry-run tmp fixture）；真實 13 檔 `--run-next` 逐筆 = blocked |
+| **報告** | `docs/verification/2026-05-15-queue-batch-and-artifact-retention.md` |
+| **後續** | 真實 canonical evidence（7.4/7.5）待 IFC fixture 可用環境補跑；converter 端 stream-compute coverage（proposal Q6）為潛在 follow-up |
 
 #### Completed observation：`demo-current-runtime-observation`
 
