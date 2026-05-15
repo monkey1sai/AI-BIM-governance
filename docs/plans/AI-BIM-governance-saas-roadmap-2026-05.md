@@ -53,6 +53,8 @@
 > **2026-05-14 更新（architecture-rework B 方案 archive 對齊）**：`architecture-rework-2026-05-14` 已由 PR #54 merge 後 archive 至 `openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/`，現行 `openspec/specs/` 共 18 個 capability。B 方案正式把 conversion authority 重新分配為：`_bim-control` = fake RVT intake facade、`_worker` = RVT→IFC bridge、`bim-streaming-server` = IFC→USDC conversion job authority + USD stage composition、`bim-review-platform` = coordinator + streaming-server + viewer deployment boundary（不是 nested repo）。本次 archive 只代表規格併入，不代表已新增 runtime smoke；在 streaming-server-owned conversion job / result / quality evidence 出現前，roadmap 仍不把 `streaming_conversion_job` 或 `mapping_quality` 標成 passed。
 >
 > **2026-05-15 更新（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離定位）**：依使用者提供的 `BIM模型管理平台 系統架構_260514.pdf`（2026-05-14，雲地分離架構）新增 **§1.1A**，明確 AI-BIM-governance 在該平台中的角色 = **客戶落地端**接在 PDF「IFC Worker（IFC 4 匯出）」之後的延伸（IFC→USDC + 後續 BIM 治理 + Kit streaming runtime，GPU 由客戶自購自擴）；**公司雲端只負責服務授權（公司層級 License）與客戶資訊紀錄（版本／權限／metadata），不存客戶模型原始檔、不跑 GPU runtime**。此更新只對齊部署與商業邊界語意，不改 §1.2 現行 specs、不改 §6 OpenSpec 候選優先級。
+>
+> **2026-05-15 更新（架構決策：外部既有平台邊界 + webhook intake；權威見 AGENTS.md §1.A）**：依使用者明確指令，`_bim-control` / `_worker` 自核心開發 repo **降級為「外部既有平台（PDF 公司雲端 + 客戶落地端 IFC Worker，已部署於公司測試機/正式機）的本地整合 fake」**，本 repo 不再為其新增產品功能；本 repo 對外入口改為 **可被外部測試機呼叫的 webhook intake → 觸發既有已實作的 IFC→USDC（`bim-streaming-server`）**。新增 **§1.1B** 記錄決策與衝突管理排序。程式碼層退役屬產品實作，依 AGENTS.md §0.1 走獨立 OpenSpec change + branch + PR，且**排在在途 worktree 分支 `introduce-ai-bim-runtime-manager-docker-kit-mvp` merge 之後**才從乾淨 main 開分支實作；落地前只改治理/規劃文件，本地 demo 閉環照常可跑。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -119,6 +121,41 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 - IFC→USDC、Kit streaming、GPU 硬體一律在客戶落地端，硬體由客戶自購自擴。
 - 本定位僅作為部署與商業邊界的對齊錨點，
   不新增 spec、不改 §1.2 現行 specs 與 §6 候選優先級。
+```
+
+### 1.1B 架構決策：外部既有平台邊界 + webhook intake（權威：AGENTS.md §1.A）
+
+> **權威**：邊界決策以 `AGENTS.md §1.A` 為準；本節為 roadmap 對應紀錄與**衝突管理排序**。本節不新增 spec、不改 §1.2 現行 specs 與 §6 候選優先級；程式碼層落地走獨立 OpenSpec change。
+
+**決策摘要（接續 §1.1A）**
+
+```txt
+- PDF 平台（公司雲端 Web門戶/MySQL/SSO + 客戶落地端 IFC Worker+Revit）
+  = 外部既有系統，已部署於公司測試機/正式機，非本 repo 功能開發範圍。
+- _bim-control / _worker 降級為「外部既有平台的本地整合 fake」，
+  本 repo 不再為其新增產品功能。
+- 本 repo 對外入口 = 可被外部測試機呼叫的 webhook intake API；
+  收到外部 IFC Worker 的 .ifc-ready 通知 → 觸發既有已實作的
+  IFC→USDC（bim-streaming-server / spec streaming-ifc-usdc-conversion-authority
+  + conversion-webhook-lifecycle）→ Kit streaming → BIM 治理。
+```
+
+**分階段落地與衝突管理（使用者指定重點）**
+
+| 階段 | 內容 | 衝突風險 | 狀態 |
+|---|---|---|---|
+| Phase A | 治理/規劃文件對齊（AGENTS.md §1.A、CLAUDE.md §1.A、本節）；不動程式碼、不刪 mock、不重寫既有 specs | 近乎零（worktree 不碰 AGENTS/CLAUDE；本節 additive 且遠離 §5.0 熱區） | ✓ 本次完成 |
+| Phase B | 程式碼層：退役/收斂 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本、webhook 來源改外部測試機、調整相關 specs | 高（與 worktree 的 `_worker/` 與 `worker-artifact-pipeline` spec 熱區重疊） | ⏸ 待排程 |
+
+**Phase B 排序（避免大量 merge 衝突）**
+
+```txt
+1. 在途 worktree 分支 codex/openspec/introduce-ai-bim-runtime-manager-docker-kit-mvp
+   先完成並 merge 進 main（目前僅領先 main 1 commit + 未提交工作）。
+2. Phase B 從 merge 後的乾淨 main 開 codex/openspec/<id> 分支實作，
+   rebase-on-clean-main，避免與 worktree 的 _worker/ 熱區對撞。
+3. Phase B 落地、PR merge、archive 後，依 §1.6 回頭同步本 roadmap
+   與 AGENTS.md / CLAUDE.md，把過渡語意收斂為正式邊界。
 ```
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）

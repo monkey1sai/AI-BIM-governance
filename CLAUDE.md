@@ -140,6 +140,27 @@ _worker/
 
 ---
 
+## 1.A 架構決策（2026-05-15）：外部既有平台邊界與 webhook intake
+
+> 本節為 AGENTS.md `## 1.A` 的鏡像入口；**內容權威以 `AGENTS.md §1.A` 為準**。
+
+依使用者明確指令與 `BIM模型管理平台 系統架構_260514.pdf`（雲地分離），決策摘要：
+
+```txt
+1. PDF 平台 = 外部既有系統，已部署於公司測試機/正式機
+   （192.168.20.238 / 192.168.20.237），非本 repo 功能開發範圍。
+2. _bim-control / _worker 降級為「外部既有平台的本地整合 fake」，
+   本 repo 不再為它們新增產品功能。
+3. 本 repo 對外入口 = 可被外部測試機呼叫的 webhook intake API，
+   收到外部 IFC Worker 的 .ifc-ready 通知後，觸發既有已實作的
+   IFC→USDC（bim-streaming-server）。
+4. 本 repo 範圍收斂為 webhook intake → IFC→USDC → Kit streaming → BIM 治理。
+```
+
+落地與衝突管理：程式碼層退役 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本，屬產品實作，依 §0.1 走獨立 OpenSpec change + branch + PR；排序為「在途 worktree 分支 `introduce-ai-bim-runtime-manager-docker-kit-mvp` 先 merge → 再從乾淨 main 開分支實作」。落地前只改治理/規劃文件，本地 demo 閉環照常可跑。
+
+---
+
 ## 2. 核心 repo 的定位總覽
 
 ```mermaid

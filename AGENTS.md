@@ -184,6 +184,48 @@ _worker/
 
 ---
 
+## 1.A 架構決策（2026-05-15）：外部既有平台邊界與 webhook intake
+
+> 依使用者明確指令與 `BIM模型管理平台 系統架構_260514.pdf`（雲地分離）。本節為**邊界決策（forward decision）**，優先序高於下方 §2–§11 既有描述。但在「程式碼層 change」落地前，§2–§11 的 `_bim-control` / `_worker` 仍是**本地 demo 過渡可運行依賴**，不得逕自刪除或停用。
+
+### 決策
+
+```txt
+1. PDF 平台（公司雲端 Web門戶/MySQL/SSO + 客戶落地端 IFC Worker+Revit）
+   = 外部既有系統，已部署於公司測試機/正式機
+   （ppms 192.168.20.238 / normal 192.168.20.237），
+   不屬於 AI-BIM-governance 的功能開發範圍。
+2. `_bim-control` / `_worker` 自「核心開發 repo」降級為
+   「外部既有平台的本地整合 fake / stub」；本 repo 不再為它們新增產品功能。
+3. 本 repo 對外入口改為：一個可被外部測試機呼叫的 webhook intake API，
+   於外部 IFC Worker 轉出 .ifc 後接收通知，觸發既有已實作的 IFC→USDC
+   （bim-streaming-server / spec `streaming-ifc-usdc-conversion-authority`
+    + `conversion-webhook-lifecycle`）。
+4. 本 repo 開發範圍收斂為：
+   webhook intake → IFC→USDC → Kit streaming → BIM 治理
+   （bim-streaming-server / bim-review-coordinator / web-viewer-sample）。
+```
+
+### 落地方式與衝突管理（重點）
+
+```txt
+- 程式碼層（退役/收斂 _worker、_bim-control；改寫 §10 閉環；
+  收斂啟動腳本；把 webhook 來源由內部 _worker 改為外部測試機；
+  調整相關 specs）屬產品實作，依 §0.1 必須走獨立 OpenSpec change
+  + codex/openspec/<id> branch + PR，不得直接在 main 開發。
+- 在途 worktree 分支 codex/openspec/introduce-ai-bim-runtime-manager-docker-kit-mvp
+  仍會修改 _worker/ 與 worker-artifact-pipeline spec
+  （領先 main 1 commit + 未提交工作）= 衝突熱區。
+  為避免大量 merge 衝突的排序：
+  (1) 該 worktree 分支先 merge 進 main；
+  (2) 本決策的程式碼層 change 再從 merge 後的乾淨 main 開分支實作。
+- 程式碼層 change 落地前，本決策只更新治理/規劃文件
+  （AGENTS.md / CLAUDE.md / roadmap）；不動程式碼、不刪 _worker/_bim-control、
+  不重寫既有 specs；本地 demo 閉環照常可跑、可 git revert。
+```
+
+---
+
 ## 2. 核心 repo 的定位總覽
 
 ```mermaid
