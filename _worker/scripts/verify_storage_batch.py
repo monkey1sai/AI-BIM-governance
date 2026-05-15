@@ -9,7 +9,13 @@ import sys
 WORKER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKER_ROOT))
 
-from app.batch_queue import batch_queue_status, enqueue_batch_queue
+from app.batch_queue import (
+    batch_queue_status,
+    enqueue_batch_queue,
+    retry_batch_queue,
+    run_next_batch_queue,
+    summarize_batch_queue,
+)
 from app.batch_verification import run_storage_batch_verification
 from app.settings import Settings
 
@@ -39,6 +45,22 @@ def main() -> int:
         action="store_true",
         help="Print read-only batch queue progress from the persisted manifest.",
     )
+    parser.add_argument(
+        "--run-next",
+        action="store_true",
+        help="Dispatch exactly one pending fixture via the persisted queue (short-lived, no drain).",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Compute outcome_distribution + minimum_coverage_locked from the persisted manifest.",
+    )
+    parser.add_argument(
+        "--retry",
+        metavar="SOURCE_ID",
+        default=None,
+        help="Explicitly reset one recorded-failure (failed/timed_out) row back to pending.",
+    )
     args = parser.parse_args()
 
     # Queue subcommands are additive and short-circuit before the existing
@@ -56,6 +78,22 @@ def main() -> int:
         status_payload = batch_queue_status(Settings.from_env())
         print(json.dumps(status_payload, ensure_ascii=False, indent=2))
         return 0
+    if args.run_next:
+        outcome = run_next_batch_queue(
+            Settings.from_env(),
+            timeout_seconds=args.timeout_seconds,
+            profile_source_entities=args.profile_source_entities,
+        )
+        print(json.dumps(outcome, ensure_ascii=False, indent=2))
+        return 0 if outcome.get("dispatched") or outcome.get("all_dispatched") else 1
+    if args.summary:
+        summary = summarize_batch_queue(Settings.from_env())
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+    if args.retry:
+        result = retry_batch_queue(Settings.from_env(), args.retry)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("retried") else 1
 
     payload = run_storage_batch_verification(
         Settings.from_env(),

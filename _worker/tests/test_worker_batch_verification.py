@@ -8,6 +8,10 @@ from app.batch_queue import (
     batch_queue_status,
     enqueue_batch_queue,
     read_batch_queue,
+    retry_batch_queue,
+    run_next_batch_queue,
+    summarize_batch_queue,
+    write_batch_queue,
 )
 from app.batch_verification import run_storage_batch_verification
 from app.converters import ConversionAdapterResult, ConversionAdapterUnavailable
@@ -426,8 +430,6 @@ def test_batch_queue_enqueue_is_idempotent_and_preserves_recorded_outcome(tmp_pa
     recorded = read_batch_queue(settings.batch_queue_path)
     recorded["fixtures"][0]["status"] = "passed"
     recorded["fixtures"][0]["history"] = [{"event": "passed"}]
-    from app.batch_queue import write_batch_queue
-
     write_batch_queue(settings.batch_queue_path, recorded)
 
     # A new fixture appears; re-enqueue must NOT reset the recorded row.
@@ -459,3 +461,143 @@ def test_batch_queue_status_reflects_pending(tmp_path: Path):
     assert after["counts"]["pending"] == 2
     assert after["pending_remaining"] == 2
     assert after["all_dispatched"] is False
+
+
+# --- Section 3/4: dispatch / resume / retry / summary parity ------------------
+
+
+def test_batch_queue_run_next_advances_one_fixture_at_a_time(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    first = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert first["dispatched"] is True
+    assert first["outcome"] == "passed"
+    mid = batch_queue_status(settings)
+    assert mid["counts"]["passed"] == 1
+    assert mid["pending_remaining"] == 1
+
+    second = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert second["dispatched"] is True
+    assert second["source_id"] != first["source_id"]
+
+    drained = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert drained["dispatched"] is False
+    assert drained["all_dispatched"] is True
+
+
+def test_batch_queue_resume_reclaims_running_but_not_terminal(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    manifest = read_batch_queue(settings.batch_queue_path)
+    # row 0 already terminal (must NOT be re-dispatched); row 1 crashed mid-flight
+    # (status "running" with no recorded outcome — must be reclaimed).
+    manifest["fixtures"][0]["status"] = "passed"
+    manifest["fixtures"][0]["coverage_summary"] = {
+        "status": "passed",
+        "coverage_status": "pass",
+        "quality_metrics": {"minimum_coverage_baseline_locked": True, "coverage_status": "pass"},
+    }
+    manifest["fixtures"][1]["status"] = "running"
+    write_batch_queue(settings.batch_queue_path, manifest)
+    terminal_sid = manifest["fixtures"][0]["source_id"]
+    running_sid = manifest["fixtures"][1]["source_id"]
+
+    result = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert result["source_id"] == running_sid  # reclaimed the crashed row
+
+    after = read_batch_queue(settings.batch_queue_path)
+    by_id = {r["source_id"]: r for r in after["fixtures"]}
+    assert by_id[terminal_sid]["status"] == "passed"  # terminal row untouched
+    assert by_id[terminal_sid]["coverage_summary"]["coverage_status"] == "pass"
+    assert by_id[running_sid]["status"] == "passed"  # reclaimed row got an outcome
+
+
+def test_batch_queue_retry_only_resets_recorded_failures(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+    manifest = read_batch_queue(settings.batch_queue_path)
+    sid = manifest["fixtures"][0]["source_id"]
+
+    manifest["fixtures"][0]["status"] = "failed"
+    write_batch_queue(settings.batch_queue_path, manifest)
+    ok = retry_batch_queue(settings, sid)
+    assert ok["retried"] is True
+    assert ok["prev_outcome"] == "failed"
+    reread = read_batch_queue(settings.batch_queue_path)
+    assert reread["fixtures"][0]["status"] == "pending"
+    assert reread["fixtures"][0]["history"][-1]["event"] == "retry"
+    assert reread["fixtures"][0]["history"][-1]["prev_outcome"] == "failed"
+
+    # A passing fixture must never be re-runnable via --retry.
+    reread["fixtures"][0]["status"] = "passed"
+    write_batch_queue(settings.batch_queue_path, reread)
+    rejected = retry_batch_queue(settings, sid)
+    assert rejected["retried"] is False
+    assert rejected["reason"] == "not_a_recorded_failure"
+
+    unknown = retry_batch_queue(settings, "deadbeef")
+    assert unknown["retried"] is False
+    assert unknown["reason"] == "unknown_source_id"
+
+
+def test_batch_queue_summary_is_bit_identical_to_monolithic(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    (storage / "C.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nC\n")
+
+    # Monolithic path on the same fixtures (isolated object/jobs roots).
+    mono_settings = Settings(
+        service_root=tmp_path,
+        objects_root=tmp_path / "mono_objects",
+        jobs_dir=tmp_path / "mono_jobs",
+        dev_storage_root=storage,
+        fake_bim_control_url="http://127.0.0.1:1",
+        public_objects_url="http://testserver/objects",
+    )
+    monolithic = run_storage_batch_verification(
+        mono_settings, converter=FakeBatchConverter(locked=True)
+    )
+
+    queue_settings = Settings(
+        service_root=tmp_path,
+        objects_root=tmp_path / "q_objects",
+        jobs_dir=tmp_path / "q_jobs",
+        dev_storage_root=storage,
+        batch_queue_path=tmp_path / "queue" / "batch_queue.json",
+        fake_bim_control_url="http://127.0.0.1:1",
+        public_objects_url="http://testserver/objects",
+    )
+    enqueue_batch_queue(queue_settings)
+    for _ in range(3):
+        run_next_batch_queue(
+            queue_settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+        )
+    summary = summarize_batch_queue(queue_settings)
+
+    assert summary["pending_remaining"] == 0
+    assert summary["outcome_distribution"] == monolithic["outcome_distribution"]
+    assert summary["minimum_coverage_locked"] == monolithic["minimum_coverage_locked"]
+    assert summary["minimum_coverage_locked"] is True

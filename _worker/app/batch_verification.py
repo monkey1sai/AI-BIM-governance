@@ -63,6 +63,36 @@ def _compute_outcome_distribution(records: list[dict[str, Any]]) -> dict[str, An
     return distribution
 
 
+def _count_locked_passes(records: list[dict[str, Any]]) -> int:
+    locked = 0
+    for record in records:
+        quality = record.get("quality_metrics") or {}
+        if quality.get("minimum_coverage_baseline_locked") and quality.get("coverage_status") == "pass":
+            locked += 1
+    return locked
+
+
+def _compute_minimum_coverage_locked(
+    records: list[dict[str, Any]],
+    *,
+    partial: bool,
+    selected_count: int,
+    outcome_distribution: dict[str, Any] | None = None,
+) -> bool:
+    # Per worker-artifact-pipeline spec / design Decision 5 (inherited verbatim from the
+    # predecessor): lock the coverage baseline only when the full canonical batch (no
+    # --limit subset) lands every fixture in the `passed` bucket AND every per-fixture
+    # quality_metrics.minimum_coverage_baseline_locked is true. Subset runs and warning
+    # fixtures keep the gate closed so partial evidence never claims production readiness.
+    distribution = outcome_distribution or _compute_outcome_distribution(records)
+    full_pass = (
+        not partial
+        and selected_count > 0
+        and distribution["passed"]["count"] == selected_count
+    )
+    return bool(full_pass and _count_locked_passes(records) == selected_count)
+
+
 def run_storage_batch_verification(
     settings: Settings,
     *,
@@ -116,7 +146,6 @@ def run_storage_batch_verification(
     results: list[dict[str, Any]] = []
     failures = 0
     timed_out = 0
-    locked_passes = 0
     for source_item in selected_sources:
         if timeout_seconds is not None and timeout_seconds > 0:
             record = _run_single_fixture_with_timeout(
@@ -140,9 +169,6 @@ def run_storage_batch_verification(
         elif record.get("status") != "passed":
             failures += 1
 
-        quality = record.get("quality_metrics") or {}
-        if quality.get("minimum_coverage_baseline_locked") and quality.get("coverage_status") == "pass":
-            locked_passes += 1
         results.append(record)
 
     if timed_out:
@@ -155,18 +181,11 @@ def run_storage_batch_verification(
         status = "passed"
 
     outcome_distribution = _compute_outcome_distribution(results)
-    # Per worker-artifact-pipeline spec: lock the coverage baseline only when the full canonical
-    # batch (no --limit subset) lands every fixture in the `passed` bucket AND every per-fixture
-    # quality_metrics.minimum_coverage_baseline_locked is true. Subset runs and warning fixtures
-    # keep the gate closed so partial evidence never claims production readiness.
-    full_pass = (
-        not partial
-        and bool(selected_sources)
-        and outcome_distribution["passed"]["count"] == len(selected_sources)
-    )
-    minimum_coverage_locked = bool(
-        full_pass
-        and locked_passes == len(selected_sources)
+    minimum_coverage_locked = _compute_minimum_coverage_locked(
+        results,
+        partial=partial,
+        selected_count=len(selected_sources),
+        outcome_distribution=outcome_distribution,
     )
 
     return {

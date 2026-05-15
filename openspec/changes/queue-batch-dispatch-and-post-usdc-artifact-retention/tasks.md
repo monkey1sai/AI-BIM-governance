@@ -7,22 +7,22 @@
 
 ## 2. Queue manifest 模型（manifest-as-index）
 
-- [ ] 2.1 定義 `batch_queue.json` schema：`{manifest_version, root, created_at, fixtures: [{source_id, filename, relative_path, size_bytes, sha256?, status, conversion_job_id?, artifact_group_id?, retained_paths{}, retention_class, coverage_summary{}, history[]}]}`。status ∈ `pending|running|passed|passed_with_quality_warning|failed|timed_out`。
-- [ ] 2.2 `--enqueue`：由 `list_dev_ifc_sources` 建/刷新 manifest；既有已 outcome 的 row 不被覆寫（idempotent），新 fixture 補成 `pending`。
-- [ ] 2.3 manifest 讀寫採原子寫（temp + replace），路徑預設在 worktree 外（見 §5）。
+- [x] 2.1 定義 `batch_queue.json` schema：`{manifest_version, root, created_at, fixtures: [{source_id, filename, relative_path, size_bytes, sha256?, status, conversion_job_id?, artifact_group_id?, retained_paths{}, retention_class, coverage_summary{}, history[]}]}`。status ∈ `pending|running|passed|passed_with_quality_warning|failed|timed_out`。
+- [x] 2.2 `--enqueue`：由 `list_dev_ifc_sources` 建/刷新 manifest；既有已 outcome 的 row 不被覆寫（idempotent），新 fixture 補成 `pending`。
+- [x] 2.3 manifest 讀寫採原子寫（temp + replace），路徑預設在 worktree 外（見 §5）。
 
 ## 3. 單筆 dispatch（沿用既有機制）
 
-- [ ] 3.1 `--run-next`：挑第一個 `pending`（或 `running` 視為 crash 殘留可重領）→ 標 `running` → 呼叫既有 `_run_single_fixture_with_timeout` → 寫回單一 terminal outcome + `conversion_job_id` + coverage summary 欄位到該 row。
-- [ ] 3.2 一個 `--run-next` 只處理一筆、為短命行程；不得在單行程內 loop 跑完整個 queue（no `--drain`）。
-- [ ] 3.3 `--retry <source_id>`：僅當該 row 為 `failed`/`timed_out` 時，明確將其 reset 回 `pending` 並在 `history[]` 記一筆 retry（who/when/prev_outcome）。其他 status 不允許 retry。
-- [ ] 3.4 resume 正確性：crash 後重跑 `--run-next` 只重領沒有 terminal outcome 的 row；已 `passed`/`failed`/`timed_out` 的 row 不自動重跑（守 predecessor Decision 7）。
+- [x] 3.1 `--run-next`：挑第一個 `pending`（或 `running` 視為 crash 殘留可重領）→ 標 `running` → 呼叫既有 `_run_single_fixture_with_timeout` → 寫回單一 terminal outcome + `conversion_job_id` + coverage summary 欄位到該 row。
+- [x] 3.2 一個 `--run-next` 只處理一筆、為短命行程；不得在單行程內 loop 跑完整個 queue（no `--drain`）。
+- [x] 3.3 `--retry <source_id>`：僅當該 row 為 `failed`/`timed_out` 時，明確將其 reset 回 `pending` 並在 `history[]` 記一筆 retry（who/when/prev_outcome）。其他 status 不允許 retry。
+- [x] 3.4 resume 正確性：crash 後重跑 `--run-next` 只重領沒有 terminal outcome 的 row；已 `passed`/`failed`/`timed_out` 的 row 不自動重跑（守 predecessor Decision 7）。
 
 ## 4. Summary / status（語意凍結自 predecessor）
 
-- [ ] 4.1 `--summary`：以 manifest rows 為輸入，呼叫**既有未改的** `_compute_outcome_distribution` 與 lock gate 函式算 `outcome_distribution` + `minimum_coverage_locked`；bucket 定義與 gate 與 predecessor 完全一致。
-- [ ] 4.2 `--status`：human-readable 進度（total / 各 bucket count / 還剩幾個 pending / 是否可 lock）；不影響 JSON。
-- [ ] 4.3 parity test：同一組 fixture，queue 跑完的 `outcome_distribution` + `minimum_coverage_locked` == 既有 monolithic 路徑結果（pin 相等）。
+- [x] 4.1 `--summary`：以 manifest rows 為輸入，呼叫**既有未改的** `_compute_outcome_distribution` 與 lock gate 函式算 `outcome_distribution` + `minimum_coverage_locked`；bucket 定義與 gate 與 predecessor 完全一致。
+- [x] 4.2 `--status`：human-readable 進度（total / 各 bucket count / 還剩幾個 pending / 是否可 lock）；不影響 JSON。
+- [x] 4.3 parity test：同一組 fixture，queue 跑完的 `outcome_distribution` + `minimum_coverage_locked` == 既有 monolithic 路徑結果（pin 相等）。
 
 ## 5. Retention strategy A + 位置
 
@@ -33,10 +33,10 @@
 
 ## 6. Tests
 
-- [ ] 6.1 `test_worker_batch_verification.py`：`--enqueue` 建 manifest、idempotent 不覆寫已 outcome row。
-- [ ] 6.2 `--run-next` 單筆推進 + crash（`running` 殘留）後 resume 只重領該筆；`passed`/`failed` 不自動重跑。
-- [ ] 6.3 `--retry` 僅對 recorded failure 生效並記 history；對 `passed` 拒絕。
-- [ ] 6.4 parity：queue 跑完 == monolithic `outcome_distribution`/`minimum_coverage_locked`（同 input）。
+- [x] 6.1 `test_worker_batch_verification.py`：`--enqueue` 建 manifest、idempotent 不覆寫已 outcome row。
+- [x] 6.2 `--run-next` 單筆推進 + crash（`running` 殘留）後 resume 只重領該筆；`passed`/`failed` 不自動重跑。
+- [x] 6.3 `--retry` 僅對 recorded failure 生效並記 history；對 `passed` 拒絕。
+- [x] 6.4 parity：queue 跑完 == monolithic `outcome_distribution`/`minimum_coverage_locked`（同 input）。
 - [ ] 6.5 retention：scratch tenant 巨型 array 被刪、必留檔保留、retained_paths 正確；非 scratch tenant 不受影響。
 - [ ] 6.6 location：manifest/scratch root 可由 settings/env 指到 worktree 外；預設不落在 git worktree。
 
