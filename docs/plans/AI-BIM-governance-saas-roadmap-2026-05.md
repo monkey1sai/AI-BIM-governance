@@ -51,6 +51,8 @@
 > **2026-05-13 更新（non-renderable materialization sidecar carrier 完成 canonical single-fixture conversion）**：`optimize-worker-non-renderable-materialization` 已 land sidecar carrier 路徑（Option 4 + Option 3）。`non_renderable_entity_materialization` 從 baseline `375.1s+ timeout` 收斂至 `5.05s`（≈74× faster），同 fixture canonical run 在 `267.7s` 完成、產出第一個 canonical `model.usdc`（`output_file_size_bytes=9,844,612`），`coverage_ratio=0.9999987537178155`（`mapped_count=1,604,771` / `source_ifc_entity_count=1,604,773`，2 個未對映的 shape 為 geometry side 缺 GUID，可由 secondary scope follow-up 收斂）。`bim-review-coordinator` / `web-viewer-sample` / `bim-streaming-server` 三邊在 source 中對 sidecar carrier 無需 schema change，handoff framework 已記錄於 design.md。Full 13-file batch 與 visual preview 仍 not_run，`minimum_coverage_locked=false` 維持不變。下一個切片：full 13-file batch with sidecar carrier，以及把 secondary `guid_extraction` / `name_extraction` 優化（baseline ~10s）獨立 follow-up。
 >
 > **2026-05-14 更新（architecture-rework B 方案 archive 對齊）**：`architecture-rework-2026-05-14` 已由 PR #54 merge 後 archive 至 `openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/`，現行 `openspec/specs/` 共 18 個 capability。B 方案正式把 conversion authority 重新分配為：`_bim-control` = fake RVT intake facade、`_worker` = RVT→IFC bridge、`bim-streaming-server` = IFC→USDC conversion job authority + USD stage composition、`bim-review-platform` = coordinator + streaming-server + viewer deployment boundary（不是 nested repo）。本次 archive 只代表規格併入，不代表已新增 runtime smoke；在 streaming-server-owned conversion job / result / quality evidence 出現前，roadmap 仍不把 `streaming_conversion_job` 或 `mapping_quality` 標成 passed。
+>
+> **2026-05-15 更新（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離定位）**：依使用者提供的 `BIM模型管理平台 系統架構_260514.pdf`（2026-05-14，雲地分離架構）新增 **§1.1A**，明確 AI-BIM-governance 在該平台中的角色 = **客戶落地端**接在 PDF「IFC Worker（IFC 4 匯出）」之後的延伸（IFC→USDC + 後續 BIM 治理 + Kit streaming runtime，GPU 由客戶自購自擴）；**公司雲端只負責服務授權（公司層級 License）與客戶資訊紀錄（版本／權限／metadata），不存客戶模型原始檔、不跑 GPU runtime**。此更新只對齊部署與商業邊界語意，不改 §1.2 現行 specs、不改 §6 OpenSpec 候選優先級。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -88,6 +90,36 @@
 | `bim-review-coordinator/` | 8004 | Session control plane + Socket.IO collaboration | OK |
 | `bim-streaming-server/` | 49100 | IFC→USDC conversion authority + Omniverse Kit runtime + WebRTC + DataChannel | 部分（conversion API / GPU / 47998 需分層驗證） |
 | `web-viewer-sample/` | 5173 | Browser client + Demo Control Panel | OK |
+
+### 1.1A 部署與商業邊界（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離）
+
+> **來源**：使用者提供的 `BIM模型管理平台 系統架構_260514.pdf`（2026-05-14，雲地分離架構）。本節只對齊 AI-BIM-governance 在該平台中的**部署位置與商業邊界**；需求細節仍以 §1.2 現行 specs 與 AGENTS.md repo 邊界為準，本節不新增 spec、不改候選優先級。
+
+PDF 平台 pipeline 終點是「IFC Worker → IFC 4 匯出」，**不含 USDC / Omniverse**。AI-BIM-governance = **接在該 IFC 之後、仍在客戶落地端**的後續 BIM 治理與 3D streaming 延伸：
+
+```txt
+PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc        ← 客戶落地端
+            └─ AI-BIM-governance 在此接手，仍在客戶落地端 ─┐
+.ifc → IFC→USDC 轉檔 → Omniverse Kit streaming → BIM 治理(review/annotation/issue) → 結果 metadata
+                                                                              ↓
+公司雲端：只收 metadata + 管服務授權 + 客戶資訊紀錄（不碰大檔 / 不跑 GPU）
+```
+
+| PDF 分區 | 職責（PDF 標示） | AI-BIM-governance 對應 |
+|---|---|---|
+| ☁ 公司雲端（輕量平台服務） | Web 門戶 / 版本記錄·權限 / SSO / **公司層級 License 授權管理**；僅存版本索引，**不存客戶模型原始檔** | 只接收 review / conversion **metadata** 與服務授權；對應 `_bim-control` 的 fake data authority（metadata-only）語意，不把大檔 / GPU runtime 拉回公司側 |
+| 🏢 客戶落地端（重量資料服務） | 模型檔案儲存 + IFC 轉檔；客戶自購硬體、按需擴充、資料隔離不出內網 | **本 repo 全部 runtime 都在這裡**：`_worker` RVT→IFC bridge、`bim-streaming-server` IFC→USDC + Kit + WebRTC、`bim-review-coordinator` session、`web-viewer-sample` client；**GPU 由客戶自購自擴**（呼應 §9 硬體配置） |
+| IFC Worker 終點（.ifc 匯出） | PDF 平台 pipeline 終點 | AI-BIM-governance 的**起點**：以 IFC 為輸入接續 IFC→USDC 與後續治理 |
+
+**邊界含義（與 §8 禁止跨界、AGENTS.md 一致）**：
+
+```txt
+- 公司雲端側永遠只持有 metadata + 服務授權 + 客戶資訊紀錄；
+  不得把 USDC / 3D 大檔 / GPU runtime / Kit instance 生命週期拉回公司雲端。
+- IFC→USDC、Kit streaming、GPU 硬體一律在客戶落地端，硬體由客戶自購自擴。
+- 本定位僅作為部署與商業邊界的對齊錨點，
+  不新增 spec、不改 §1.2 現行 specs 與 §6 候選優先級。
+```
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
 
