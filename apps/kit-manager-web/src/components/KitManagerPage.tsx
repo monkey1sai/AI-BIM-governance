@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { KitManagerClient } from "../api/KitManagerClient";
-import { KitInstanceState, UsdcArtifact } from "../models";
+import { HealthResponse, KitInstanceState, UsdcArtifact } from "../models";
 import { StatusPanel } from "./StatusPanel";
 import { UsdcChecklist } from "./UsdcChecklist";
 
@@ -10,6 +10,7 @@ export function KitManagerPage() {
   const client = useMemo(() => new KitManagerClient(apiBase), [apiBase]);
   const [artifacts, setArtifacts] = useState<UsdcArtifact[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [health, setHealth] = useState<HealthResponse>();
   const [state, setState] = useState<KitInstanceState>();
   const [message, setMessage] = useState("尚未連線。");
 
@@ -19,7 +20,12 @@ export function KitManagerPage() {
 
   async function refresh() {
     try {
-      const [items, current] = await Promise.all([client.listUsdc(), client.getCurrentInstance()]);
+      const [runtimeHealth, items, current] = await Promise.all([
+        client.getHealth(),
+        client.listUsdc(),
+        client.getCurrentInstance(),
+      ]);
+      setHealth(runtimeHealth);
       setArtifacts(items);
       setState(current);
       setMessage("Kit Manager API 已連線。");
@@ -71,7 +77,7 @@ export function KitManagerPage() {
           <h2>USDC 檔案</h2>
           <UsdcChecklist artifacts={artifacts} selected={selected} onToggle={toggle} />
         </section>
-        <StatusPanel state={state} message={message} />
+        <StatusPanel health={health} state={state} message={message} />
       </section>
     </main>
   );
