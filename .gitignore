@@ -115,3 +115,10 @@ _s3_storage/static/projects/
 # OpenSpec apply worktrees (opsx-worktree-provision)
 # ----------------------------
 .worktrees/
+
+# Ignore storage files by default
+storage/*
+
+# But allow root-level IFC test files
+!storage/
+!storage/*.ifc

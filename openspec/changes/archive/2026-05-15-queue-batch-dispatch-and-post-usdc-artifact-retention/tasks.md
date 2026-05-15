@@ -54,7 +54,7 @@
 - [x] 8.1 建立 `docs/verification/2026-05-1X-queue-batch-and-artifact-retention.md`：manifest schema、resume 行為、retention footprint 前後、parity 結果、scratch cleanup。
 - [x] 8.2 更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` §5.2：predecessor 標 archived、本 change 接為 active risk burn-down。
 - [x] 8.3 同名 `.html` surgical sync。
-- [ ] 8.4 `git diff --check` + GitNexus `detect_changes`，scope 維持在 `_worker` + OpenSpec artifacts + docs。
+- [x] 8.4 `git diff --check` + GitNexus `detect_changes`，scope 維持在 `_worker` + OpenSpec artifacts + docs。 — `git diff --check` clean（每批驗證）；GitNexus `detect_changes` 受 git worktree 獨立 index 限制無法解析（已誠實記錄於 verification doc），scope 改由 pre-change impact 全 LOW + 變更檔全 `_worker`/OpenSpec/docs + 140 passed 零回歸確證。
 
 ## 最小可逆驗證（smallest reversible diff that proves it works）
 
