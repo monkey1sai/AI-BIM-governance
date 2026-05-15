@@ -43,18 +43,16 @@
 
 ## 7. Canonical Verification
 
-- [ ] 7.1 在 `_worker/` 目錄執行 focused tests：converter、batch verification、store quality metrics 與 API/UI regression。Python tests 必須在 `_worker/` 各自目錄執行，避免 FastAPI `app` package import cache 污染。
-- [ ] 7.2 執行 `openspec validate optimize-worker-canonical-batch-and-secondary-enumeration --strict`。
-- [ ] 7.3 使用 `WORKER_DEV_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage` 執行 canonical full 13-file batch：`python scripts\verify_storage_batch.py --limit 13 --timeout-seconds 600 --profile-source-entities`。
-- [ ] 7.4 記錄每個 fixture 的 `conversion_job_id`、`artifact_group_id`、source artifact ID、`status`、`coverage_status`、`coverage_ratio`、phase timings、`unmapped_count`，以及 batch 層 `outcome_distribution`。
-- [ ] 7.5 若 `outcome_distribution.passed.count == 13` AND 所有 fixture `coverage_status=pass` AND `minimum_coverage_baseline_locked=true` → 確認 batch summary `minimum_coverage_locked=true`；否則確認兩 key 為 `false` 並記錄阻塞原因。
-- [ ] 7.6 對通過的 fixture 子集（建議第一個 89MB fixture）執行 single-file visual preview：透過既有 `web-viewer-sample` + `bim-review-coordinator` + `bim-streaming-server` flow 載入 `model.usdc`；若 Kit / GPU / browser 不可用 → 記錄 blocked，不宣稱 visual preview 通過。
+- [x] 7.1 在 `_worker/` 目錄執行 focused tests：126 passed / 1 skipped（含 2 條 key-uniqueness regression）。
+- [x] 7.2 執行 `openspec validate optimize-worker-canonical-batch-and-secondary-enumeration --strict`：綠。
+- [x] 7.3 canonical full 13-file batch 跑三次（v1/v2 診斷真因，v3 全綠）；v3 jobs/objects 移出 worktree 避 Windows 檔案鎖。
+- [x] 7.4 v3 每 fixture 的 `conversion_job_id`/`artifact_group_id`/source/usdc/mapping artifact ID、`status`/`coverage_status`/`coverage_ratio`/phase timings/`unmapped_count`/`no_guid_entity_count`/`mapped_renderable_count` 與 batch `outcome_distribution` 全數記入 verification doc，raw JSON 保留於 `_worker/data/verification/2026-05-14-canonical-batch-v3.json`。
+- [x] 7.5 v3：`outcome_distribution.passed.count == 13` AND 全 fixture `coverage_status=pass` AND `minimum_coverage_baseline_locked=true` → batch `minimum_coverage_locked=true` 確認。
+- [x] 7.6 visual preview：本 session 未啟動 Kit/GPU/browser，依 spec 記為 `not_observed` 並列 missing prerequisite，不宣稱通過（demo-runtime readiness 範疇）。
 
 ## 8. Evidence 與 Roadmap 對齊
 
-- [ ] 8.1 建立 `docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md`，記錄：batch input identity（13 fixtures）、canonical command、per-fixture outcome、`outcome_distribution`、`minimum_coverage_locked` 狀態、secondary enumeration 量測或 deferral、visual preview 嘗試結果。
-- [ ] 8.2 更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`：
-  - §5.2「Next worker risk burn-down」狀態從「待開 OpenSpec change」改為 active / archived，引用本 change 與 verification doc。
-  - §10 #4 反映 batch 結果；若 `minimum_coverage_locked=true` 達成 → 同步 §1.3 production baseline 紀錄；否則記下個 gate。
-- [ ] 8.3 由同名 Markdown 重新產生 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`（採 surgical edit，避免破壞 1500+ 行 layout 的 anchor 與 TOC）。
-- [ ] 8.4 執行 `git diff --check` 與 GitNexus `detect_changes`，確認 affected scope 維持在 `_worker`、OpenSpec artifacts、verification/roadmap docs。
+- [x] 8.1 `docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md`：input identity（13 byte-identical 副本 + SHA-256）、canonical command、per-fixture outcome、`outcome_distribution`、`minimum_coverage_locked=true`、secondary deferral（Decision 9）、visual preview `not_observed`、root cause discovery、58GB scratch cleanup 全數記錄。
+- [x] 8.2 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` §5.2 更新為 v3 GOAL ACHIEVED、引用 change 與 verification doc；§10 #4 反映 `minimum_coverage_locked=true`。
+- [x] 8.3 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html` 同名 surgical sync（含 TOC）。
+- [ ] 8.4 執行 `git diff --check` 與 GitNexus `detect_changes`（commit 前四層驗證執行）。

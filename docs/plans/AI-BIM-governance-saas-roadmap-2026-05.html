@@ -154,7 +154,7 @@
 <li><a href="#runtime-blockedworker-canonical-storage-batch-baseline">已歸檔但 runtime blocked：worker-canonical-storage-batch-baseline</a></li>
 <li><a href="#optimize-worker-source-entity-enumerationarchived">已完成：optimize-worker-source-entity-enumeration（archived）</a></li>
 <li><a href="#active-risk-burn-downoptimize-worker-non-renderable-materialization">Active risk burn-down：optimize-worker-non-renderable-materialization</a></li>
-<li><a href="#active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：optimize-worker-canonical-batch-and-secondary-enumeration</a></li>
+<li><a href="#active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：optimize-worker-canonical-batch-and-secondary-enumeration（v3 GOAL ACHIEVED，待 merge/archive）</a></li>
 <li><a href="#completed-observationdemo-current-runtime-observation">Completed observation：demo-current-runtime-observation</a></li>
 <li><a href="#completed-4coordinator-session-lifecycle-events-audit">Completed #4：coordinator-session-lifecycle-events-audit</a></li>
 </ul>
@@ -1941,7 +1941,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：<code>optimize-worker-canonical-batch-and-secondary-enumeration</code></h4>
+<h4 id="active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：<code>optimize-worker-canonical-batch-and-secondary-enumeration</code>（v3 GOAL ACHIEVED，待 merge/archive）</h4>
 <table>
 <thead>
 <tr>
@@ -1952,31 +1952,35 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tbody>
 <tr>
 <td><strong>狀態</strong></td>
-<td>Active OpenSpec change：<code>openspec/changes/optimize-worker-canonical-batch-and-secondary-enumeration/</code>；implementation 已 land，canonical full-batch evidence pending</td>
+<td>implementation 完成且 canonical v3 全綠：13/13 <code>coverage_status=pass</code>、<code>unmapped_count=0</code>、<code>minimum_coverage_locked=true</code>。PR #56 mergeable，待 Phase E merge + Phase F archive</td>
 </tr>
 <tr>
 <td><strong>來源 evidence</strong></td>
-<td><code>optimize-worker-non-renderable-materialization</code> 的 2026-05-13 canonical single-fixture passed run；本 change implementation PR 已加入 <code>outcome_distribution</code>、<code>no_guid_entity_count</code>、<code>mapped_renderable_count</code> 與 per-fixture lock gate</td>
+<td><code>docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md</code>（v3 完整證據；v1/v2 診斷出真因 = 模型本身 2 個重複 GlobalId，非 no-GUID）</td>
 </tr>
 <tr>
-<td><strong>目標</strong></td>
-<td>1) 在 sidecar carrier 條件下跑 full 13-file canonical batch，量化 5-bucket outcome 分佈；2) 解決 <code>unmapped_count=2</code>（geometry shape 缺 GUID）case；3) 量測 secondary <code>guid_extraction</code> / <code>name_extraction</code>（gated on ≥5s measured win，否則 deferral）</td>
+<td><strong>目標達成</strong></td>
+<td>1) 13-file canonical batch <code>outcome_distribution.passed=13</code>、其餘 bucket 0；2) <code>unmapped_count</code> 由 2→0（<code>ifc_entity_key</code> 無條件唯一，<code>ifc_guid</code> 保留真值不合成）；3) secondary <code>guid_extraction≈10–17s</code>/<code>name_extraction≈10–16s</code> 量測完成並依 Decision 9 書面 deferral（follow-up <code>optimize-worker-secondary-enumeration</code>）</td>
 </tr>
 <tr>
 <td><strong>不可做</strong></td>
 <td>不得把 denominator 改成 geometry-only、<code>IfcProduct</code>-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 <code>_worker</code> ownership；不得在 partial subset run 上 lock baseline</td>
 </tr>
 <tr>
-<td><strong>KPI</strong></td>
-<td>1) 13-file batch outcome distribution 可重現；2) <code>outcome_distribution.passed.count == 13</code> 且所有 fixture <code>quality_metrics.minimum_coverage_baseline_locked=true</code> 才能 <code>minimum_coverage_locked=true</code>；3) secondary 優化 land 或書面 deferral</td>
+<td><strong>KPI 達成</strong></td>
+<td>✓ 13-file outcome distribution 可重現；✓ 三項解鎖條件全成立 <code>minimum_coverage_locked=true</code>；✓ secondary 書面 deferral</td>
 </tr>
 <tr>
 <td><strong>驗證指令</strong></td>
-<td><code>openspec validate optimize-worker-canonical-batch-and-secondary-enumeration --strict</code>、<code>cd _worker &amp;&amp; python -m pytest tests/</code>、<code>python scripts/verify_storage_batch.py --limit 13 --timeout-seconds 600 --profile-source-entities</code>（後者待跑）</td>
+<td><code>openspec validate optimize-worker-canonical-batch-and-secondary-enumeration --strict</code>（綠）、<code>cd _worker &amp;&amp; python -m pytest tests/</code>（126 passed/1 skipped）、<code>python scripts/verify_storage_batch.py --limit 13 --timeout-seconds 600 --profile-source-entities</code>（v3 status=passed locked=True）</td>
 </tr>
 <tr>
 <td><strong>報告</strong></td>
-<td><code>docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md</code>（canonical run evidence 尚待補充）</td>
+<td><code>docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md</code>（v3 證據完整）</td>
+</tr>
+<tr>
+<td><strong>後繼</strong></td>
+<td>queue 單筆批次 orchestration + 轉檔後檔案結構/retention（58GB scratch 問題）切為後繼 change <code>queue-batch-dispatch-and-post-usdc-artifact-retention</code>（route α；settled decisions 記於本 change design「Successor handoff」；NoSuccessorWhilePredecessorOpen — 本 change archive 後才開）</td>
 </tr>
 </tbody>
 </table>
