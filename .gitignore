@@ -19,6 +19,7 @@ Thumbs.db
 !.claude/skills/pr-review-gate/
 !.claude/skills/archive-and-closeout/
 !.claude/skills/opsx-worktree-provision/
+!.claude/skills/opsx-worktree-guard/
 .codex/
 .vscode/
 .gitnexus/

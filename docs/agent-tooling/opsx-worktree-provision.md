@@ -180,6 +180,7 @@ flowchart LR
 - `change-id-resolve` 不變。
 - `closed-loop-orchestrator` Phase A 在 `change-id-resolve` 後**插入** `opsx-worktree-provision`，取代原本的 `git switch -c`。
 - `apply-and-verify` 觸發前提改為「已位於 manifest.cwd_hint worktree」。
+- `opsx-worktree-guard` 是 explore / apply 進入點前面的**薄守門層**：偵測「該不該隔離 / 是否已隔離」，未隔離時**委派**本文件規範的 `opsx-worktree-provision`（不重寫 provisioning 規則、不複製額外資料）。純思考 explore（無 change-id、不寫 artifact）放行不隔離；由 `closed-loop-orchestrator` 驅動時，Phase A 已 provision，guard 偵測到已隔離即放行，不重複 provision。本文件仍是 worktree 行為的 source of truth。
 
 ## 9. 風險與緩解
 
