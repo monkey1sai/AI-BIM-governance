@@ -329,10 +329,10 @@ def test_ifcopenshell_converter_rejects_product_only_source_entity_fallback():
 
 
 def test_source_entities_keep_no_guid_keys_unique_under_id_collision():
-    """Regression for canonical unmapped_count=2: IfcOpenShell returns id()==0 for many
-    inline/derived instances. No-GUID entities sharing class + id MUST still get distinct
-    ifc_entity_key so the per-key dedup in mapping_by_entity does not silently drop them.
-    Real ifc_entity_id is preserved (no synthetic GUID).
+    """Regression for canonical unmapped_count=2 (no-GUID arm): IfcOpenShell returns
+    id()==0 for many inline/derived instances. No-GUID entities sharing class + id MUST
+    still get distinct ifc_entity_key so the per-key dedup in mapping_by_entity does not
+    silently drop them. Real ifc_entity_id is preserved (no synthetic GUID).
     """
 
     class IdCollisionModel:
@@ -356,6 +356,39 @@ def test_source_entities_keep_no_guid_keys_unique_under_id_collision():
     assert all(r["ifc_guid"] is None for r in rows)
     assert all(r["ifc_entity_id"] == "0" for r in rows)
     # The per-key dedup that produced unmapped_count=2 now keeps every entity.
+    assert len({r["ifc_entity_key"]: r for r in rows}) == 3
+
+
+def test_source_entities_keep_keys_unique_under_duplicate_global_id():
+    """Regression for the ACTUAL canonical unmapped_count=2 root cause: the source IFC
+    contains DUPLICATE GlobalId values (guid_count=73,743 vs 73,745 entities with a
+    GlobalId in the 許良宇圖書館建築 fixtures). Keying by raw GlobalId collides and the
+    per-key dedup in mapping_by_entity silently drops the duplicate. ifc_entity_key MUST
+    stay unique while ifc_guid keeps the real (duplicate) GlobalId — no synthetic ID.
+    """
+
+    class DuplicateGuidModel:
+        schema = "IFC4X3"
+
+        def __iter__(self):
+            # Two distinct entities (different STEP ids) sharing GlobalId "DUP-GUID",
+            # plus one unique-GUID entity.
+            return iter(
+                [
+                    _FakeProduct("DUP-GUID", "IfcWall", "wall A"),
+                    _FakeProduct("DUP-GUID", "IfcWall", "wall B"),
+                    _FakeProduct("UNIQUE-GUID", "IfcSlab", "slab"),
+                ]
+            )
+
+    rows = IfcOpenShellUsdConverter()._source_entities(DuplicateGuidModel())
+    keys = [r["ifc_entity_key"] for r in rows]
+    assert len(rows) == 3
+    assert len(set(keys)) == 3, f"ifc_entity_key collided on duplicate GlobalId: {keys}"
+    # ifc_guid keeps the REAL (duplicate) GlobalId — no synthetic substitution.
+    guids = sorted(r["ifc_guid"] for r in rows)
+    assert guids == ["DUP-GUID", "DUP-GUID", "UNIQUE-GUID"]
+    # Every entity survives the per-key dedup → coverage denominator stays all-entity.
     assert len({r["ifc_entity_key"]: r for r in rows}) == 3
 
 

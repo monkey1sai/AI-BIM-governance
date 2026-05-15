@@ -644,15 +644,20 @@ class IfcOpenShellUsdConverter:
             name = _entity_name(entity)
             if profile_enabled:
                 profile["name_extraction_seconds"] += perf_counter() - operation_started
-            # No-GUID entities are keyed by class + IfcOpenShell id + the stable enumeration
-            # index. IfcOpenShell returns id()==0 for many inline/derived instances, so
-            # f"{ifc_class}:{entity_id}" collides across them and the per-key dedup in
-            # mapping_by_entity silently drops the colliding entities (observed as the
-            # canonical unmapped_count=2 residue). The 1-based `index` is unique per entity
-            # and deterministic for a given file, so it makes ifc_entity_key collision-free
-            # without synthesizing a GUID or weakening the all-entity denominator. Entities
-            # WITH a real GlobalId keep guid as the key (renderable geometry maps via guid).
-            entity_key = guid or f"{ifc_class}:{entity_id}:{index}"
+            # ifc_entity_key MUST be a globally-unique per-entity join key. The canonical
+            # 13-file batch proved the residue was NOT no-GUID entities but DUPLICATE
+            # GlobalId values in the source IFC (guid_count=73,743 vs 73,745 entities with
+            # a GlobalId → exactly 2 duplicate-GUID instances). When two entities share a
+            # GlobalId, keying by `guid` collides and the per-key dedup in
+            # mapping_by_entity silently drops the second one (the stable unmapped_count=2).
+            # The 1-based enumeration `index` is unique per entity and deterministic for a
+            # given file, so appending it makes the join key collision-free for BOTH the
+            # duplicate-GUID case and the IfcOpenShell id()==0 no-GUID case. ifc_guid keeps
+            # the real (possibly duplicate) GlobalId — no synthetic identifier is fabricated
+            # and the all-entity coverage denominator is unchanged. Renderable geometry
+            # still maps via the raw GlobalId (source_by_guid is keyed by ifc_guid, not by
+            # ifc_entity_key), so the USD prim ifc:guid attribute is unaffected.
+            entity_key = f"{guid}:{index}" if guid else f"{ifc_class}:{entity_id}:{index}"
             if profile_enabled:
                 operation_started = perf_counter()
             rows.append(
