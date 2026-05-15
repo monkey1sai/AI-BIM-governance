@@ -19,6 +19,49 @@ BATCH_PHASES = (
     "lineage_lookup",
 )
 
+# Per worker-artifact-pipeline spec: the 5-bucket outcome distribution recorded on batch summaries.
+# Keep order stable so consumers can iterate deterministically.
+OUTCOME_BUCKETS = (
+    "passed",
+    "passed_with_quality_warning",
+    "timed_out",
+    "failed",
+    "blocked",
+)
+
+
+def _fixture_outcome_bucket(record: dict[str, Any]) -> str:
+    status = record.get("status")
+    coverage_status = (record.get("coverage_status") or "").strip().lower()
+    if status == "passed":
+        if coverage_status == "pass":
+            return "passed"
+        if coverage_status == "warn":
+            return "passed_with_quality_warning"
+        if coverage_status == "fail":
+            return "failed"
+        # "unlocked" or absent — coverage was not proven clean; treat as quality warning so the
+        # canonical lock gate does not silently pass through unmeasured fixtures.
+        return "passed_with_quality_warning"
+    if status == "timed_out":
+        return "timed_out"
+    if status == "blocked":
+        return "blocked"
+    return "failed"
+
+
+def _compute_outcome_distribution(records: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(records)
+    counts = {bucket: 0 for bucket in OUTCOME_BUCKETS}
+    for record in records:
+        counts[_fixture_outcome_bucket(record)] += 1
+    distribution: dict[str, Any] = {"total": total}
+    for bucket in OUTCOME_BUCKETS:
+        count = counts[bucket]
+        rate = (count / total) if total else 0.0
+        distribution[bucket] = {"count": count, "rate": rate}
+    return distribution
+
 
 def run_storage_batch_verification(
     settings: Settings,
@@ -111,15 +154,29 @@ def run_storage_batch_verification(
     else:
         status = "passed"
 
+    outcome_distribution = _compute_outcome_distribution(results)
+    # Per worker-artifact-pipeline spec: lock the coverage baseline only when the full canonical
+    # batch (no --limit subset) lands every fixture in the `passed` bucket AND every per-fixture
+    # quality_metrics.minimum_coverage_baseline_locked is true. Subset runs and warning fixtures
+    # keep the gate closed so partial evidence never claims production readiness.
+    full_pass = (
+        not partial
+        and bool(selected_sources)
+        and outcome_distribution["passed"]["count"] == len(selected_sources)
+    )
+    minimum_coverage_locked = bool(
+        full_pass
+        and locked_passes == len(selected_sources)
+    )
+
     return {
         "status": status,
         "root": root,
         "fixture_count": len(sources),
         "selected_count": len(selected_sources),
         "timeout_seconds": timeout_seconds,
-        "minimum_coverage_locked": bool(
-            status == "passed" and selected_sources and locked_passes == len(selected_sources)
-        ),
+        "minimum_coverage_locked": minimum_coverage_locked,
+        "outcome_distribution": outcome_distribution,
         "failure_count": failures,
         "timed_out_count": timed_out,
         "results": results,

@@ -361,6 +361,10 @@ class IfcOpenShellUsdConverter:
 
         phase_started = perf_counter()
         _record_phase_progress(job, "non_renderable_entity_materialization", phase_timings)
+        # Snapshot how many source IFC entities resolved to a renderable USD prim before sidecar
+        # materialization runs; the difference between this and post-materialization mapped_count
+        # is exactly the sidecar/non-renderable carrier count (no double counting by construction).
+        mapped_renderable_count = len(mapping_by_entity)
         sidecar_entries = self._materialize_unmapped_entities(
             UsdGeom=UsdGeom,
             Sdf=Sdf,
@@ -422,6 +426,9 @@ class IfcOpenShellUsdConverter:
         source_count = len(source_entities)
         mapped_count = len(mapping_by_entity)
         unmapped_count = max(source_count - mapped_count, 0)
+        # Additive diagnostic: how many source IFC entities lack ifc_guid (geometry-shape entries
+        # without GlobalId are still uniquely keyed by ifc_entity_key / ifc_entity_id).
+        no_guid_entity_count = sum(1 for entity in source_entities if not entity.get("ifc_guid"))
         unmapped_ifc_entities = [
             {
                 "ifc_entity_key": entity["ifc_entity_key"],
@@ -436,6 +443,14 @@ class IfcOpenShellUsdConverter:
         unmapped_ifc_guids = [item["ifc_guid"] for item in unmapped_ifc_entities if item.get("ifc_guid")]
         unmapped_usd_count = len(unmapped_usd_prims)
         coverage_ratio = (mapped_count / source_count) if source_count else 0.0
+        # Once every source IFC entity resolves to at least one carrier (renderable USD prim or
+        # sidecar entry), this fixture's coverage baseline can lock — spec scenario "Mapping
+        # coverage passes locked threshold". A clean per-fixture lock is a precondition for the
+        # batch-level minimum_coverage_locked gate (computed in batch_verification).
+        quality_clean = source_count > 0 and unmapped_count == 0
+        baseline_locked = quality_clean
+        coverage_status_value = "pass" if quality_clean else "unlocked"
+        threshold_status_value = "locked" if quality_clean else "measure_only"
         duration_seconds = perf_counter() - conversion_started
         _mark_phase_completed(phase_timings, "conversion_total", duration_seconds)
         _record_phase_progress(job, "conversion_total", phase_timings, status="completed")
@@ -468,18 +483,20 @@ class IfcOpenShellUsdConverter:
             "mapped_entity_count": mapped_count,
             "unmapped_entity_count": unmapped_count,
             "mapped_count": mapped_count,
+            "mapped_renderable_count": mapped_renderable_count,
             "unmapped_ifc_count": unmapped_count,
             "unmapped_usd_count": unmapped_usd_count,
             "coverage_ratio": coverage_ratio,
             "fake_mapping_count": 0,
-            "minimum_coverage_baseline_locked": False,
+            "minimum_coverage_baseline_locked": baseline_locked,
             "minimum_coverage_ratio": 1.0,
             "coverage_denominator": "source_ifc_entity_count",
-            "coverage_status": "unlocked",
-            "threshold_status": "measure_only",
+            "coverage_status": coverage_status_value,
+            "threshold_status": threshold_status_value,
             "materialization_strategy": materialization_strategy,
             "sidecar_carrier_count": sidecar_carrier_count,
             "sidecar_write_seconds": sidecar_write_seconds,
+            "no_guid_entity_count": no_guid_entity_count,
         }
 
         _write_json(ifc_index_path, ifc_index)
@@ -492,7 +509,7 @@ class IfcOpenShellUsdConverter:
                     "mapping_method": "ifcopenshell_geometry_guid_to_usd_mesh",
                     "coverage_policy": {
                         "mode": "measure_first",
-                        "minimum_coverage_baseline_locked": False,
+                        "minimum_coverage_baseline_locked": baseline_locked,
                         "minimum_coverage_ratio": 1.0,
                         "coverage_denominator": "source_ifc_entity_count",
                     },
@@ -524,15 +541,16 @@ class IfcOpenShellUsdConverter:
             "mapped_entity_count": mapped_count,
             "unmapped_entity_count": unmapped_count,
             "mapped_count": mapped_count,
+            "mapped_renderable_count": mapped_renderable_count,
             "unmapped_count": unmapped_count,
             "unmapped_usd_count": unmapped_usd_count,
             "coverage_ratio": coverage_ratio,
-            "threshold_status": "measure_only",
-            "minimum_coverage_baseline_locked": False,
+            "threshold_status": threshold_status_value,
+            "minimum_coverage_baseline_locked": baseline_locked,
             "minimum_coverage_ratio": 1.0,
             "coverage_denominator": "source_ifc_entity_count",
-            "coverage_status": "unlocked",
-            "issue_to_real_prim_readiness": False,
+            "coverage_status": coverage_status_value,
+            "issue_to_real_prim_readiness": baseline_locked,
             "hard_quality_gates": {
                 "usdc_openable": True,
                 "has_renderable_prims": converted_shapes > 0,
@@ -548,6 +566,7 @@ class IfcOpenShellUsdConverter:
             "materialization_strategy": materialization_strategy,
             "sidecar_carrier_count": sidecar_carrier_count,
             "sidecar_write_seconds": sidecar_write_seconds,
+            "no_guid_entity_count": no_guid_entity_count,
         }
         return ConversionAdapterResult(
             model_path=model_path,
@@ -625,7 +644,20 @@ class IfcOpenShellUsdConverter:
             name = _entity_name(entity)
             if profile_enabled:
                 profile["name_extraction_seconds"] += perf_counter() - operation_started
-            entity_key = guid or f"{ifc_class}:{entity_id}"
+            # ifc_entity_key MUST be a globally-unique per-entity join key. The canonical
+            # 13-file batch proved the residue was NOT no-GUID entities but DUPLICATE
+            # GlobalId values in the source IFC (guid_count=73,743 vs 73,745 entities with
+            # a GlobalId → exactly 2 duplicate-GUID instances). When two entities share a
+            # GlobalId, keying by `guid` collides and the per-key dedup in
+            # mapping_by_entity silently drops the second one (the stable unmapped_count=2).
+            # The 1-based enumeration `index` is unique per entity and deterministic for a
+            # given file, so appending it makes the join key collision-free for BOTH the
+            # duplicate-GUID case and the IfcOpenShell id()==0 no-GUID case. ifc_guid keeps
+            # the real (possibly duplicate) GlobalId — no synthetic identifier is fabricated
+            # and the all-entity coverage denominator is unchanged. Renderable geometry
+            # still maps via the raw GlobalId (source_by_guid is keyed by ifc_guid, not by
+            # ifc_entity_key), so the USD prim ifc:guid attribute is unaffected.
+            entity_key = f"{guid}:{index}" if guid else f"{ifc_class}:{entity_id}:{index}"
             if profile_enabled:
                 operation_started = perf_counter()
             rows.append(

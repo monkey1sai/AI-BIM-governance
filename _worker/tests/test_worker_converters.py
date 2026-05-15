@@ -328,6 +328,70 @@ def test_ifcopenshell_converter_rejects_product_only_source_entity_fallback():
         IfcOpenShellUsdConverter()._source_entities(ProductOnlyFallbackModel())
 
 
+def test_source_entities_keep_no_guid_keys_unique_under_id_collision():
+    """Regression for canonical unmapped_count=2 (no-GUID arm): IfcOpenShell returns
+    id()==0 for many inline/derived instances. No-GUID entities sharing class + id MUST
+    still get distinct ifc_entity_key so the per-key dedup in mapping_by_entity does not
+    silently drop them. Real ifc_entity_id is preserved (no synthetic GUID).
+    """
+
+    class IdCollisionModel:
+        schema = "IFC4"
+
+        def __iter__(self):
+            # Three no-GUID entities, all class IfcArbitraryClosedProfileDef, all id()==0.
+            return iter(
+                [
+                    _FakeEntity("IfcArbitraryClosedProfileDef", "p1", 0),
+                    _FakeEntity("IfcArbitraryClosedProfileDef", "p2", 0),
+                    _FakeEntity("IfcArbitraryClosedProfileDef", "p3", 0),
+                ]
+            )
+
+    rows = IfcOpenShellUsdConverter()._source_entities(IdCollisionModel())
+    keys = [r["ifc_entity_key"] for r in rows]
+    assert len(rows) == 3
+    assert len(set(keys)) == 3, f"ifc_entity_key collided: {keys}"
+    # ifc_guid stays None (no fabrication); real id preserved as "0".
+    assert all(r["ifc_guid"] is None for r in rows)
+    assert all(r["ifc_entity_id"] == "0" for r in rows)
+    # The per-key dedup that produced unmapped_count=2 now keeps every entity.
+    assert len({r["ifc_entity_key"]: r for r in rows}) == 3
+
+
+def test_source_entities_keep_keys_unique_under_duplicate_global_id():
+    """Regression for the ACTUAL canonical unmapped_count=2 root cause: the source IFC
+    contains DUPLICATE GlobalId values (guid_count=73,743 vs 73,745 entities with a
+    GlobalId in the 許良宇圖書館建築 fixtures). Keying by raw GlobalId collides and the
+    per-key dedup in mapping_by_entity silently drops the duplicate. ifc_entity_key MUST
+    stay unique while ifc_guid keeps the real (duplicate) GlobalId — no synthetic ID.
+    """
+
+    class DuplicateGuidModel:
+        schema = "IFC4X3"
+
+        def __iter__(self):
+            # Two distinct entities (different STEP ids) sharing GlobalId "DUP-GUID",
+            # plus one unique-GUID entity.
+            return iter(
+                [
+                    _FakeProduct("DUP-GUID", "IfcWall", "wall A"),
+                    _FakeProduct("DUP-GUID", "IfcWall", "wall B"),
+                    _FakeProduct("UNIQUE-GUID", "IfcSlab", "slab"),
+                ]
+            )
+
+    rows = IfcOpenShellUsdConverter()._source_entities(DuplicateGuidModel())
+    keys = [r["ifc_entity_key"] for r in rows]
+    assert len(rows) == 3
+    assert len(set(keys)) == 3, f"ifc_entity_key collided on duplicate GlobalId: {keys}"
+    # ifc_guid keeps the REAL (duplicate) GlobalId — no synthetic substitution.
+    guids = sorted(r["ifc_guid"] for r in rows)
+    assert guids == ["DUP-GUID", "DUP-GUID", "UNIQUE-GUID"]
+    # Every entity survives the per-key dedup → coverage denominator stays all-entity.
+    assert len({r["ifc_entity_key"]: r for r in rows}) == 3
+
+
 def test_ifcopenshell_converter_rejects_metadata_only_usd(monkeypatch, tmp_path: Path):
     _install_fake_converter_modules(monkeypatch, shapes=[_FakeShape("guid-1", geometry=_FakeDegenerateGeometry())])
     source_path = tmp_path / "source.ifc"
@@ -521,3 +585,101 @@ def test_usd_prim_strategy_preserves_legacy_xform_authoring(monkeypatch, tmp_pat
         if item.get("renderable") is False
     }
     assert "IfcProject" in non_renderable_classes
+
+
+def test_sidecar_carrier_picks_up_no_guid_geometry_shape_entities(monkeypatch, tmp_path: Path):
+    """Carrier rule MUST cover source IFC entities lacking ifc_guid (geometry-shape entries
+    without GlobalId). They land in entity_index.json with ifc_guid=None and still count
+    toward mapped_count under the all-entity coverage denominator.
+    """
+    _install_fake_converter_modules(monkeypatch)
+    source_path = tmp_path / "source.ifc"
+    source_path.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+
+    result = IfcOpenShellUsdConverter().convert(
+        source_path=source_path,
+        output_dir=tmp_path / "derived",
+        job={"source_artifact_id": "source_test"},
+        generate_mapping=True,
+    )
+
+    entity_index = json.loads(result.entity_index_path.read_text(encoding="utf-8"))
+    no_guid_entries = [entry for entry in entity_index["entities"] if entry.get("ifc_guid") in (None, "")]
+    assert no_guid_entries, "expected at least one no-GUID source entity in the sidecar carrier"
+    for entry in no_guid_entries:
+        assert entry["ifc_entity_key"]
+        assert entry["ifc_entity_id"] is not None
+        assert entry["ifc_class"]
+        assert entry["renderable"] is False
+
+
+def test_quality_metrics_record_no_guid_entity_count(monkeypatch, tmp_path: Path):
+    """quality_metrics MUST expose the additive no_guid_entity_count diagnostic that counts
+    every source IFC entity lacking ifc_guid (independent of which carrier picked it up).
+    """
+    _install_fake_converter_modules(monkeypatch)
+    source_path = tmp_path / "source.ifc"
+    source_path.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+
+    result = IfcOpenShellUsdConverter().convert(
+        source_path=source_path,
+        output_dir=tmp_path / "derived",
+        job={"source_artifact_id": "source_test"},
+        generate_mapping=True,
+    )
+
+    quality = result.quality_metrics
+    # _FakeModel emits exactly one entity without GlobalId (IfcRelDefinesByProperties via _FakeEntity).
+    assert quality["no_guid_entity_count"] == 1
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+    assert mapping["summary"]["no_guid_entity_count"] == 1
+
+
+def test_clean_fixture_locks_baseline_and_reports_coverage_pass(monkeypatch, tmp_path: Path):
+    """When every source IFC entity resolves to at least one carrier, the per-fixture
+    coverage baseline MUST lock with coverage_status=pass — the precondition for the
+    batch-level minimum_coverage_locked gate.
+    """
+    _install_fake_converter_modules(monkeypatch)
+    source_path = tmp_path / "source.ifc"
+    source_path.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+
+    result = IfcOpenShellUsdConverter().convert(
+        source_path=source_path,
+        output_dir=tmp_path / "derived",
+        job={"source_artifact_id": "source_test"},
+        generate_mapping=True,
+    )
+
+    quality = result.quality_metrics
+    assert quality["unmapped_count"] == 0
+    assert quality["minimum_coverage_baseline_locked"] is True
+    assert quality["coverage_status"] == "pass"
+    assert quality["threshold_status"] == "locked"
+    assert quality["issue_to_real_prim_readiness"] is True
+    mapping = json.loads(result.mapping_path.read_text(encoding="utf-8"))
+    assert mapping["summary"]["minimum_coverage_baseline_locked"] is True
+    assert mapping["summary"]["coverage_status"] == "pass"
+    assert mapping["coverage_policy"]["minimum_coverage_baseline_locked"] is True
+
+
+def test_mapped_renderable_and_sidecar_counts_do_not_overlap(monkeypatch, tmp_path: Path):
+    """The renderable USD prim carrier and the sidecar carrier partition mapped_count
+    without overlap: mapped_renderable_count + sidecar_carrier_count = mapped_count.
+    """
+    _install_fake_converter_modules(monkeypatch)
+    source_path = tmp_path / "source.ifc"
+    source_path.write_text("ISO-10303-21;\nEND-ISO-10303-21;\n", encoding="utf-8")
+
+    result = IfcOpenShellUsdConverter().convert(
+        source_path=source_path,
+        output_dir=tmp_path / "derived",
+        job={"source_artifact_id": "source_test"},
+        generate_mapping=True,
+    )
+
+    quality = result.quality_metrics
+    assert quality["mapped_renderable_count"] == 1  # only guid-1 in the _FakeModel produces a mesh
+    assert quality["sidecar_carrier_count"] == 7
+    assert quality["mapped_count"] == quality["mapped_renderable_count"] + quality["sidecar_carrier_count"]
+    assert quality["mapped_count"] + quality["unmapped_count"] == quality["source_ifc_entity_count"]

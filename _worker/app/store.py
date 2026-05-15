@@ -867,6 +867,7 @@ class WorkerStore:
             "mapped_entity_count",
             "unmapped_entity_count",
             "mapped_count",
+            "mapped_renderable_count",
             "unmapped_count",
             "coverage_ratio",
             "minimum_coverage_ratio",
@@ -876,6 +877,9 @@ class WorkerStore:
             "issue_to_real_prim_readiness",
             "threshold_status",
             "coverage_policy_diagnostics",
+            "no_guid_entity_count",
+            "sidecar_carrier_count",
+            "materialization_strategy",
         )
         return {key: normalized.get(key) for key in keys if key in normalized}
 
