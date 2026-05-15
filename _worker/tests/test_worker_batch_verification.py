@@ -277,3 +277,98 @@ def test_batch_verification_can_enable_source_entity_profiling_flag(tmp_path: Pa
     )
 
     assert converter.profile_flags == [True]
+
+
+def test_batch_verification_outcome_distribution_is_derivable_from_records(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "C.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+
+    payload = run_storage_batch_verification(make_settings(tmp_path), converter=FakeBatchConverter(locked=True))
+
+    distribution = payload["outcome_distribution"]
+    assert distribution["total"] == 3
+    expected_buckets = {"passed", "passed_with_quality_warning", "timed_out", "failed", "blocked"}
+    assert expected_buckets.issubset(distribution.keys())
+    # All 3 records should land in the `passed` bucket — locked=True FakeBatchConverter emits
+    # coverage_status=pass and fixture_status returns "passed".
+    assert distribution["passed"]["count"] == 3
+    assert distribution["passed"]["rate"] == 1.0
+    for bucket in ("passed_with_quality_warning", "timed_out", "failed", "blocked"):
+        assert distribution[bucket]["count"] == 0
+        assert distribution[bucket]["rate"] == 0.0
+    # Distribution is fully derivable from per-fixture records; recomputing matches.
+    from app.batch_verification import _compute_outcome_distribution
+
+    assert _compute_outcome_distribution(payload["results"]) == distribution
+
+
+def test_batch_verification_outcome_distribution_mixes_quality_warning_and_failure(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+
+    payload = run_storage_batch_verification(make_settings(tmp_path), converter=FakeBatchConverter())
+
+    # FakeBatchConverter() (locked=False) emits coverage_status="unlocked"; fixture_status stays
+    # "passed" but the unlocked state must NOT bucket as "passed" — it becomes a quality warning.
+    distribution = payload["outcome_distribution"]
+    assert distribution["passed"]["count"] == 0
+    assert distribution["passed_with_quality_warning"]["count"] == 1
+    assert payload["minimum_coverage_locked"] is False
+
+
+def test_batch_verification_subset_run_cannot_lock_baseline_even_when_all_pass(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+
+    # Even though FakeBatchConverter(locked=True) would mark the run as passed, processing only
+    # a subset of the fixture root MUST NOT lock the coverage baseline. The canonical lock gate
+    # requires the full batch (no --limit subset).
+    payload = run_storage_batch_verification(
+        make_settings(tmp_path),
+        converter=FakeBatchConverter(locked=True),
+        limit=1,
+    )
+
+    assert payload["status"] == "partial"
+    assert payload["minimum_coverage_locked"] is False
+    assert payload["outcome_distribution"]["total"] == 1
+    assert payload["outcome_distribution"]["passed"]["count"] == 1
+
+
+def test_batch_verification_failed_fixture_buckets_into_failed(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+
+    payload = run_storage_batch_verification(make_settings(tmp_path), converter=FakeFailingBatchConverter())
+
+    distribution = payload["outcome_distribution"]
+    assert distribution["total"] == 2
+    assert distribution["failed"]["count"] == 2
+    assert distribution["passed"]["count"] == 0
+    assert payload["minimum_coverage_locked"] is False
+
+
+def test_batch_verification_timed_out_fixture_buckets_into_timed_out(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+
+    payload = run_storage_batch_verification(
+        make_settings(tmp_path),
+        converter=FakeProgressThenSlowBatchConverter(),
+        timeout_seconds=2.0,
+    )
+
+    distribution = payload["outcome_distribution"]
+    assert distribution["total"] == 1
+    assert distribution["timed_out"]["count"] == 1
+    assert distribution["passed"]["count"] == 0
+    assert payload["minimum_coverage_locked"] is False

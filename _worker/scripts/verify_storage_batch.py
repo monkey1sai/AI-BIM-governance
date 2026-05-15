@@ -38,6 +38,25 @@ def main() -> int:
         profile_source_entities=args.profile_source_entities,
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
+    distribution = payload.get("outcome_distribution")
+    if isinstance(distribution, dict):
+        total = distribution.get("total")
+        parts = [f"total={total}"]
+        for bucket in (
+            "passed",
+            "passed_with_quality_warning",
+            "timed_out",
+            "failed",
+            "blocked",
+        ):
+            entry = distribution.get(bucket)
+            if isinstance(entry, dict):
+                parts.append(f"{bucket}={entry.get('count')}")
+        print(
+            "outcome_distribution: "
+            + " ".join(parts)
+            + f" minimum_coverage_locked={payload.get('minimum_coverage_locked')}"
+        )
     if payload["status"] in {"failed", "timed_out"}:
         return 1
     return 0

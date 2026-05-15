@@ -154,7 +154,7 @@
 <li><a href="#runtime-blockedworker-canonical-storage-batch-baseline">已歸檔但 runtime blocked：worker-canonical-storage-batch-baseline</a></li>
 <li><a href="#optimize-worker-source-entity-enumerationarchived">已完成：optimize-worker-source-entity-enumeration（archived）</a></li>
 <li><a href="#active-risk-burn-downoptimize-worker-non-renderable-materialization">Active risk burn-down：optimize-worker-non-renderable-materialization</a></li>
-<li><a href="#next-worker-risk-burn-downfull-13-file-canonical-batch-secondary-enumeration-scope">Next worker risk burn-down：full 13-file canonical batch + secondary enumeration scope</a></li>
+<li><a href="#active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：optimize-worker-canonical-batch-and-secondary-enumeration</a></li>
 <li><a href="#completed-observationdemo-current-runtime-observation">Completed observation：demo-current-runtime-observation</a></li>
 <li><a href="#completed-4coordinator-session-lifecycle-events-audit">Completed #4：coordinator-session-lifecycle-events-audit</a></li>
 </ul>
@@ -1941,7 +1941,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="next-worker-risk-burn-downfull-13-file-canonical-batch-secondary-enumeration-scope">Next worker risk burn-down：full 13-file canonical batch + secondary enumeration scope</h4>
+<h4 id="active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Active risk burn-down：<code>optimize-worker-canonical-batch-and-secondary-enumeration</code></h4>
 <table>
 <thead>
 <tr>
@@ -1952,23 +1952,31 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tbody>
 <tr>
 <td><strong>狀態</strong></td>
-<td>待開 OpenSpec change</td>
+<td>Active OpenSpec change：<code>openspec/changes/optimize-worker-canonical-batch-and-secondary-enumeration/</code>；implementation 已 land，canonical full-batch evidence pending</td>
 </tr>
 <tr>
 <td><strong>來源 evidence</strong></td>
-<td><code>optimize-worker-non-renderable-materialization</code> 的 2026-05-13 canonical single-fixture passed run</td>
+<td><code>optimize-worker-non-renderable-materialization</code> 的 2026-05-13 canonical single-fixture passed run；本 change implementation PR 已加入 <code>outcome_distribution</code>、<code>no_guid_entity_count</code>、<code>mapped_renderable_count</code> 與 per-fixture lock gate</td>
 </tr>
 <tr>
 <td><strong>目標</strong></td>
-<td>1) 在 sidecar carrier 條件下跑 full 13-file canonical batch，量化 stage_reopen / mapping_quality_failed 機率；2) 把 secondary <code>guid_extraction</code> (~10.6s) / <code>name_extraction</code> (~10.0s) 優化獨立 follow-up；3) 解決 <code>unmapped_count=2</code>（geometry shape 缺 GUID）case</td>
+<td>1) 在 sidecar carrier 條件下跑 full 13-file canonical batch，量化 5-bucket outcome 分佈；2) 解決 <code>unmapped_count=2</code>（geometry shape 缺 GUID）case；3) 量測 secondary <code>guid_extraction</code> / <code>name_extraction</code>（gated on ≥5s measured win，否則 deferral）</td>
 </tr>
 <tr>
 <td><strong>不可做</strong></td>
-<td>不得把 denominator 改成 geometry-only、<code>IfcProduct</code>-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 <code>_worker</code> ownership</td>
+<td>不得把 denominator 改成 geometry-only、<code>IfcProduct</code>-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 <code>_worker</code> ownership；不得在 partial subset run 上 lock baseline</td>
 </tr>
 <tr>
 <td><strong>KPI</strong></td>
-<td>1) 13-file batch 通過 / 不通過比例可重現；2) 若 pass 即可考慮 <code>minimum_coverage_locked=true</code> 候選</td>
+<td>1) 13-file batch outcome distribution 可重現；2) <code>outcome_distribution.passed.count == 13</code> 且所有 fixture <code>quality_metrics.minimum_coverage_baseline_locked=true</code> 才能 <code>minimum_coverage_locked=true</code>；3) secondary 優化 land 或書面 deferral</td>
+</tr>
+<tr>
+<td><strong>驗證指令</strong></td>
+<td><code>openspec validate optimize-worker-canonical-batch-and-secondary-enumeration --strict</code>、<code>cd _worker &amp;&amp; python -m pytest tests/</code>、<code>python scripts/verify_storage_batch.py --limit 13 --timeout-seconds 600 --profile-source-entities</code>（後者待跑）</td>
+</tr>
+<tr>
+<td><strong>報告</strong></td>
+<td><code>docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md</code>（canonical run evidence 尚待補充）</td>
 </tr>
 </tbody>
 </table>

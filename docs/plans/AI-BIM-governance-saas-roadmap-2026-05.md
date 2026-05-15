@@ -692,15 +692,17 @@ A：可以，但**不是把 #2 spec 換掉**：
 | **驗證指令** | `cd _worker && $env:WORKER_DEV_STORAGE_ROOT='C:\Repos\active\iot\AI-BIM-governance\storage'; python scripts\verify_storage_batch.py --limit 1 --timeout-seconds 600 --profile-source-entities` |
 | **與既有 spec 關係** | MODIFIED `worker-artifact-pipeline`（允許 sidecar carrier）；ADDED `worker-artifact-pipeline` 非渲染 materialization 優化要求；ADDED `runtime-verification-evidence` materialization before/after timing 要求 |
 
-#### Next worker risk burn-down：full 13-file canonical batch + secondary enumeration scope
+#### Active risk burn-down：`optimize-worker-canonical-batch-and-secondary-enumeration`
 
 | 項目 | 內容 |
 |---|---|
-| **狀態** | 待開 OpenSpec change |
-| **來源 evidence** | `optimize-worker-non-renderable-materialization` 的 2026-05-13 canonical single-fixture passed run |
-| **目標** | 1) 在 sidecar carrier 條件下跑 full 13-file canonical batch，量化 stage_reopen / mapping_quality_failed 機率；2) 把 secondary `guid_extraction` (~10.6s) / `name_extraction` (~10.0s) 優化獨立 follow-up；3) 解決 `unmapped_count=2`（geometry shape 缺 GUID）case |
-| **不可做** | 不得把 denominator 改成 geometry-only、`IfcProduct`-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 `_worker` ownership |
-| **KPI** | 1) 13-file batch 通過 / 不通過比例可重現；2) 若 pass 即可考慮 `minimum_coverage_locked=true` 候選 |
+| **狀態** | Active OpenSpec change：`openspec/changes/optimize-worker-canonical-batch-and-secondary-enumeration/`；implementation 已 land，canonical full-batch evidence pending |
+| **來源 evidence** | `optimize-worker-non-renderable-materialization` 的 2026-05-13 canonical single-fixture passed run；本 change implementation PR 已加入 `outcome_distribution`、`no_guid_entity_count`、`mapped_renderable_count` 與 per-fixture lock gate |
+| **目標** | 1) 在 sidecar carrier 條件下跑 full 13-file canonical batch，量化 5-bucket outcome 分佈；2) 解決 `unmapped_count=2`（geometry shape 缺 GUID）case；3) 量測 secondary `guid_extraction` / `name_extraction`（gated on ≥5s measured win，否則 deferral） |
+| **不可做** | 不得把 denominator 改成 geometry-only、`IfcProduct`-only、GUID-only 或 renderable-only；不得把 viewer/coordinator/Kit 拉進 `_worker` ownership；不得在 partial subset run 上 lock baseline |
+| **KPI** | 1) 13-file batch outcome distribution 可重現；2) `outcome_distribution.passed.count == 13` 且所有 fixture `quality_metrics.minimum_coverage_baseline_locked=true` 才能 `minimum_coverage_locked=true`；3) secondary 優化 land 或書面 deferral |
+| **驗證指令** | `openspec validate optimize-worker-canonical-batch-and-secondary-enumeration --strict`、`cd _worker && python -m pytest tests/`、`python scripts/verify_storage_batch.py --limit 13 --timeout-seconds 600 --profile-source-entities`（後者待跑） |
+| **報告** | `docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md`（canonical run evidence 尚待補充） |
 
 #### Completed observation：`demo-current-runtime-observation`
 
