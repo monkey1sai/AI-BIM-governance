@@ -54,6 +54,8 @@ services:
         SERVICE_DIR: bim-review-coordinator
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     environment:
+      HOST: 0.0.0.0
+      PORT: 8004
       BIM_CONTROL_API_BASE: ${BIM_CONTROL_URL:-http://bim-control:8001}
       WORKER_API_BASE: ${WORKER_URL:-http://worker:8005}
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
@@ -66,9 +68,7 @@ services:
   viewer:
     build:
       context: .
-      dockerfile: infra/docker/node-dev.Dockerfile
-      args:
-        SERVICE_DIR: web-viewer-sample
+      dockerfile: infra/docker/web-viewer-sample.Dockerfile
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
     environment:
       VITE_COORDINATOR_API_BASE: http://127.0.0.1:8004

@@ -31,9 +31,40 @@
 
 ---
 
-## Demo 啟動順序 (One-shot Bring-up)
+## Docker-first Runtime Manager MVP
 
-### 一鍵啟動 / 關閉 (Recommended)
+`CODE_GOAL_DOCKER_KIT_MVP.md` 的 MVP 驗收路徑只接受 Docker Compose。Host-local `uvicorn` / `npm run dev` / host Kit launcher 只保留作為 legacy/debug，不作為 MVP pass evidence。
+
+主要入口：
+
+```powershell
+cd C:\Repos\active\iot\AI-BIM-governance
+Copy-Item .env.runtime-manager.docker.example .env.runtime-manager.docker
+docker compose -f compose.runtime-manager.yml --env-file .env.runtime-manager.docker config
+.\scripts\start-runtime-manager-docker.ps1 -Build
+.\scripts\check-runtime-manager-docker.ps1
+```
+
+Kit 管理前端：
+
+```txt
+http://127.0.0.1:5174
+```
+
+GPU Kit profile 只有在本機 Docker Desktop、NVIDIA Container Toolkit、以及 container 內 Linux Kit launcher 都可用時才可宣告 pass：
+
+```powershell
+.\scripts\start-runtime-manager-docker.ps1 -Build -WithGpu
+.\scripts\check-runtime-manager-docker.ps1 -WithGpu
+```
+
+若 GPU container 或 Linux Kit launcher 尚未具備，驗證結果必須記錄為 `blocked` 或 `recorded_only`；不得用 host-local Kit 取代 GPU container pass。
+
+---
+
+## Demo 啟動順序 (Legacy / Debug Bring-up)
+
+### 一鍵啟動 / 關閉 (Legacy / Debug)
 
 **Windows (PowerShell):**
 
@@ -41,7 +72,7 @@
 # Repo root
 cd C:\Repos\active\iot\AI-BIM-governance
 
-# 一次啟動 worker-only demo services（背景執行；log 寫到 scripts\.run\<svc>.log）
+# Legacy/debug：一次啟動 worker-only demo services（背景執行；log 寫到 scripts\.run\<svc>.log）
 .\scripts\start-all.ps1
 
 # 一次關閉所有服務（tree-kill 連子行程一起清掉）

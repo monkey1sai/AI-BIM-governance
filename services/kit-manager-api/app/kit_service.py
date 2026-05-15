@@ -19,7 +19,7 @@ class KitInstanceService:
         control_status = self.gateway.open_stage(payload)
         self.state = KitInstanceState(
             instance_id=self.instance_id,
-            status="open",
+            status=self._runtime_status("open", control_status),
             selected_artifact_ids=artifact_ids,
             opened_runtime_uris=[artifact.runtime_uri for artifact in artifacts],
             last_command="open",
@@ -35,7 +35,7 @@ class KitInstanceService:
         control_status = self.gateway.close_stage(payload)
         self.state = KitInstanceState(
             instance_id=self.instance_id,
-            status="closed",
+            status=self._runtime_status("closed", control_status),
             selected_artifact_ids=[],
             opened_runtime_uris=[],
             last_command="close",
@@ -61,3 +61,10 @@ class KitInstanceService:
                 "load_order": runtime_uris,
             },
         }
+
+    def _runtime_status(self, successful_status: str, control_status: str) -> str:
+        if control_status == "sent":
+            return successful_status
+        if control_status.startswith("blocked"):
+            return "blocked"
+        return "recorded_only"

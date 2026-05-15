@@ -40,5 +40,11 @@ and sends open / close commands to one Kit instance.
 
 ### Requirement: New source files SHALL remain small and separated
 
-Each new or modified source file SHOULD stay under 500 lines and SHOULD keep a
+Each new or modified source file SHALL stay under 500 lines and SHALL keep a
 single clear responsibility.
+
+#### Scenario: Source files stay within the MVP size limit
+
+- **WHEN** the MVP source files are reviewed before PR
+- **THEN** each new or modified source file is under 500 lines
+- **AND** API service, repository, gateway, session state, and UI components remain separated by responsibility
