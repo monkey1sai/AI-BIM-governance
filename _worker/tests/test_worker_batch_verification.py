@@ -5,7 +5,9 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.batch_queue import (
+    apply_post_coverage_retention,
     batch_queue_status,
+    cleanup_batch_scratch,
     enqueue_batch_queue,
     read_batch_queue,
     retry_batch_queue,
@@ -601,3 +603,108 @@ def test_batch_queue_summary_is_bit_identical_to_monolithic(tmp_path: Path):
     assert summary["outcome_distribution"] == monolithic["outcome_distribution"]
     assert summary["minimum_coverage_locked"] == monolithic["minimum_coverage_locked"]
     assert summary["minimum_coverage_locked"] is True
+
+
+# --- Section 5: retention strategy A + location ------------------------------
+
+
+def test_batch_queue_retention_prunes_scratch_arrays_keeps_runtime(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    result = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    retention = result["retention"]
+    assert retention["applied"] is True
+    assert "ifc_index.json" in retention["dropped"]
+    assert "element_mapping.json" in retention["dropped"]
+
+    derived = Path(retention["derived_dir"])
+    assert not (derived / "ifc_index.json").exists()
+    assert not (derived / "element_mapping.json").exists()
+    assert (derived / "model.usdc").is_file()
+    assert (derived / "usd_index.json").is_file()
+    assert (derived / "metadata.json").is_file()
+
+    row = read_batch_queue(settings.batch_queue_path)["fixtures"][0]
+    assert row["retention_class"] == "post_coverage_strategy_a"
+    assert set(row["retained_paths"]) == {"model.usdc", "usd_index.json", "metadata.json"}
+    # --status / --summary surface no drift while retained files exist.
+    assert batch_queue_status(settings)["retained_paths_drift"] == []
+    assert summarize_batch_queue(settings)["retained_paths_drift"] == []
+
+
+def test_batch_queue_retention_never_touches_non_scratch_tenant(tmp_path: Path):
+    settings = make_queue_settings(tmp_path)
+    # A derived dir under a NON-scratch tenant, with the giant arrays present.
+    rel = Path("tenants") / "tenant_real_review" / "derived" / "conv_x" / "usdc"
+    derived = Path(settings.objects_root) / rel
+    derived.mkdir(parents=True, exist_ok=True)
+    for name in ("ifc_index.json", "element_mapping.json", "entity_index.json", "model.usdc"):
+        (derived / name).write_text("{}", encoding="utf-8")
+    write_json(
+        Path(settings.jobs_dir) / "conv_x.json",
+        {"result": {"lineage": {"derived_object_prefix": rel.as_posix()}}},
+    )
+
+    outcome = apply_post_coverage_retention(settings, {"conversion_job_id": "conv_x"})
+
+    assert outcome["applied"] is False
+    assert outcome["reason"] == "not_scratch_tenant"
+    # Nothing under the non-scratch tenant was deleted.
+    for name in ("ifc_index.json", "element_mapping.json", "entity_index.json", "model.usdc"):
+        assert (derived / name).is_file()
+
+
+def test_batch_queue_cleanup_scratch_is_idempotent(tmp_path: Path):
+    settings = make_queue_settings(tmp_path)
+    scratch = Path(settings.objects_root) / "tenants" / "tenant_batch_verification"
+
+    empty = cleanup_batch_scratch(settings)
+    assert empty["removed"] is False
+    assert empty["exists_after"] is False
+
+    (scratch / "derived").mkdir(parents=True, exist_ok=True)
+    (scratch / "derived" / "junk.json").write_text("{}", encoding="utf-8")
+    removed = cleanup_batch_scratch(settings)
+    assert removed["removed"] is True
+    assert removed["exists_after"] is False
+
+    again = cleanup_batch_scratch(settings)  # idempotent
+    assert again["removed"] is False
+
+
+def test_batch_queue_default_manifest_path_is_outside_worktree(tmp_path: Path):
+    from app.settings import DEFAULT_BATCH_QUEUE_PATH
+
+    default_settings = Settings(service_root=tmp_path)
+    resolved = Path(default_settings.batch_queue_path)
+    assert resolved.is_absolute()
+    assert resolved == DEFAULT_BATCH_QUEUE_PATH.resolve()
+    # The unset default never lands inside the service/worktree tree.
+    assert tmp_path.resolve() not in resolved.parents
+
+    override = Settings(service_root=tmp_path, batch_queue_path=tmp_path / "q.json")
+    assert Path(override.batch_queue_path) == (tmp_path / "q.json").resolve()
+
+
+def test_batch_queue_status_reports_retained_path_drift(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+    manifest = read_batch_queue(settings.batch_queue_path)
+    manifest["fixtures"][0]["status"] = "passed"
+    manifest["fixtures"][0]["retained_paths"] = {
+        "model.usdc": str(tmp_path / "gone" / "model.usdc")
+    }
+    write_batch_queue(settings.batch_queue_path, manifest)
+
+    drift = batch_queue_status(settings)["retained_paths_drift"]
+    assert len(drift) == 1
+    assert drift[0]["missing"] == ["model.usdc"]

@@ -26,10 +26,10 @@
 
 ## 5. Retention strategy A + 位置
 
-- [ ] 5.1 coverage 算完並寫入 manifest row 後，對 **`tenant_batch_verification` scratch tenant** 刪除該 fixture 的 `ifc_index.json`/`element_mapping.json`/`entity_index.json`；保留 `model.usdc`/`usd_index.json`/`metadata.json` + coverage summary + `unmapped_*` 小清單；retained 路徑寫入 row。
-- [ ] 5.2 retention 僅作用於 scratch tenant；非 `tenant_batch_verification` 路徑一律不動（測試斷言）。
-- [ ] 5.3 manifest 路徑 + canonical scratch root 預設在 git worktree 外，經 settings/env 可設定；提供 idempotent scratch cleanup 指令/路徑。
-- [ ] 5.4 drift 偵測：`--status`/`--summary` 驗證 row.retained_paths 實際存在，缺檔以 diagnostic 揭露，不靜默 pass。
+- [x] 5.1 coverage 算完並寫入 manifest row 後，對 **`tenant_batch_verification` scratch tenant** 刪除該 fixture 的 `ifc_index.json`/`element_mapping.json`/`entity_index.json`；保留 `model.usdc`/`usd_index.json`/`metadata.json` + coverage summary + `unmapped_*` 小清單；retained 路徑寫入 row。
+- [x] 5.2 retention 僅作用於 scratch tenant；非 `tenant_batch_verification` 路徑一律不動（測試斷言）。
+- [x] 5.3 manifest 路徑 + canonical scratch root 預設在 git worktree 外，經 settings/env 可設定；提供 idempotent scratch cleanup 指令/路徑。
+- [x] 5.4 drift 偵測：`--status`/`--summary` 驗證 row.retained_paths 實際存在，缺檔以 diagnostic 揭露，不靜默 pass。
 
 ## 6. Tests
 
@@ -37,8 +37,8 @@
 - [x] 6.2 `--run-next` 單筆推進 + crash（`running` 殘留）後 resume 只重領該筆；`passed`/`failed` 不自動重跑。
 - [x] 6.3 `--retry` 僅對 recorded failure 生效並記 history；對 `passed` 拒絕。
 - [x] 6.4 parity：queue 跑完 == monolithic `outcome_distribution`/`minimum_coverage_locked`（同 input）。
-- [ ] 6.5 retention：scratch tenant 巨型 array 被刪、必留檔保留、retained_paths 正確；非 scratch tenant 不受影響。
-- [ ] 6.6 location：manifest/scratch root 可由 settings/env 指到 worktree 外；預設不落在 git worktree。
+- [x] 6.5 retention：scratch tenant 巨型 array 被刪、必留檔保留、retained_paths 正確；非 scratch tenant 不受影響。
+- [x] 6.6 location：manifest/scratch root 可由 settings/env 指到 worktree 外；預設不落在 git worktree。
 
 ## 7. Canonical Verification
 
