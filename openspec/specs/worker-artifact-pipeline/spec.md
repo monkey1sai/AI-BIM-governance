@@ -177,9 +177,11 @@ Mapping coverage MUST be measured and reported when `generate_mapping=true`. Bef
 
 Coverage calculation MUST include every source IFC entity in the denominator. `_worker` MUST carry every IFC entity in the artifact group with stable traceability back to the source IFC entity. Each source IFC entity's carrier MUST be one of: (a) a renderable or highlightable USD prim authored into `model.usdc` when geometry exists, (b) a non-renderable USD prim authored into `model.usdc`, or (c) a sidecar mapping artifact entry (`element_mapping.json` or a dedicated `entity_index.json`) that records the same stable IFC traceability fields. The chosen carrier MUST preserve IFC class, entity identifier, GlobalId when present, Name when present, and relationship metadata when available. No IFC entity class may be excluded from coverage solely because it is not renderable, regardless of which carrier is used.
 
-Every source IFC entity MUST resolve to at least one carrier — a USD prim path or a sidecar mapping entry — for `coverage_status=pass`. When coverage status is `warn`, `_worker` MAY keep the artifact group eligible for review-session creation as degraded quality, but MUST NOT classify issue-to-real-prim readiness as verified. When coverage status is `fail`, `_worker` MUST NOT claim mapping readiness or issue-to-real-prim highlight readiness.
+Every source IFC entity MUST resolve to at least one carrier — a USD prim path or a sidecar mapping entry — for `coverage_status=pass`, **including geometry-shape source IFC entities that lack `ifc_guid` and were not authored as a renderable USD prim**. Such entries MUST land in the sidecar mapping artifact with `ifc_guid=null` while still recording `ifc_entity_key`, `ifc_entity_id`, and `ifc_class`. When coverage status is `warn`, `_worker` MAY keep the artifact group eligible for review-session creation as degraded quality, but MUST NOT classify issue-to-real-prim readiness as verified. When coverage status is `fail`, `_worker` MUST NOT claim mapping readiness or issue-to-real-prim highlight readiness.
 
 When a sidecar carrier is used for non-renderable IFC entities, the conversion result and lineage MUST surface the sidecar artifact alongside `model.usdc`, `ifc_index.json`, `usd_index.json`, and `element_mapping.json`, so that `bim-review-coordinator`, `web-viewer-sample`, and `bim-streaming-server` can continue to obtain complete coverage data without requiring those entities to be present as USD prims. Renderable mapped entries MUST keep existing `primary_usd_prim_path` / `usd_prim_path` / `usd_prim_paths` semantics.
+
+Quality metrics MUST additionally expose an additive `no_guid_entity_count` diagnostic counting source IFC entities that lack `ifc_guid` and therefore rely on `ifc_entity_key` / `ifc_entity_id` for identity. The diagnostic MUST be backward-compatible (consumers that ignore it MUST NOT break).
 
 #### Scenario: Hard quality gate passes
 
@@ -209,7 +211,7 @@ When a sidecar carrier is used for non-renderable IFC entities, the conversion r
 #### Scenario: Quality metrics are exposed
 
 - **WHEN** `GET /api/conversions/{conversion_job_id}/result` returns a conversion result with status `succeeded`
-- **THEN** the payload includes converter identity, conversion duration, source IFC entity count, USD prim count, sidecar carrier count when present, mapped count, unmapped count, coverage ratio, `minimum_coverage_ratio`, denominator policy, baseline lock status, coverage status, and validation warnings when present
+- **THEN** the payload includes converter identity, conversion duration, source IFC entity count, USD prim count, sidecar carrier count when present, mapped count, unmapped count, coverage ratio, `minimum_coverage_ratio`, denominator policy, baseline lock status, coverage status, validation warnings when present, and `no_guid_entity_count`
 
 #### Scenario: Non-geometric IFC entity is carried with stable traceability
 
@@ -222,6 +224,13 @@ When a sidecar carrier is used for non-renderable IFC entities, the conversion r
 - **WHEN** `_worker` uses a sidecar mapping artifact to carry non-renderable IFC entity identity
 - **THEN** the conversion result, `derived_artifact_ids`, and the lineage graph response identify the sidecar artifact alongside `model.usdc`, `ifc_index.json`, `usd_index.json`, and `element_mapping.json`
 - **AND** downstream consumers can obtain complete coverage data without requiring non-renderable entities to be present as USD prims
+
+#### Scenario: No-GUID geometry-shape entities are carried via sidecar
+
+- **WHEN** the source IFC contains geometry-shape entities (for example construction geometry, mesh shape representations, or auxiliary geometry items) that lack `ifc_guid` and are not authored as renderable USD prims
+- **THEN** `_worker` records each such entity in the sidecar mapping artifact with `ifc_guid=null` and preserved `ifc_entity_key`, `ifc_entity_id`, and `ifc_class`
+- **AND** these entries count toward `mapped_count` and the `coverage_denominator=source_ifc_entity_count` calculation
+- **AND** `coverage_status=pass` is reachable when no other carrier gaps remain
 
 ### Requirement: Worker optimizes non-renderable entity materialization for canonical IFC fixtures
 
@@ -358,6 +367,8 @@ Real/canonical converter path MUST NOT 以 `model.by_type("IfcProduct")` 作為 
 
 在長時間的 canonical conversions 中，`_worker` MUST 揭露 additive source enumeration diagnostics，例如 elapsed seconds、enumerated entity count、目前 phase 狀態、`fallback_used`、最後已知 operation，以及可取得時的 blocker 細節。這些 diagnostics MUST 與既有 conversion result 與 quality metrics payloads 保持向後相容。Fine-grained profiling diagnostics MAY 於 verification evidence 中啟用，且 MUST 為可選。
 
+Secondary `guid_extraction` 與 `name_extraction` 子階段成本 MUST 在每次 canonical burn-down run 透過既有 `--profile-source-entities` 路徑量測並記錄。`_worker` MAY 在後續變更中優化此二子階段成本，但 MUST 保留 `ifc_guid` 與 `name` 對所有 source IFC entity 的真實值，不得以 synthetic ID 取代 real GUID，亦不得用 default name 取代 source-declared name。當 canonical run 未啟用任何 secondary 優化時，`_worker` 仍 MUST 在 evidence 中記錄當次量測值與「沒有變更」的事實，使 follow-up change 有 baseline 可比。
+
 #### Scenario: Canonical source enumeration advances past timeout bottleneck
 
 - **WHEN** 以設定的 per-fixture timeout 對第一個 89MB fixture 執行 canonical `--limit 1` storage verification
@@ -386,6 +397,13 @@ Real/canonical converter path MUST NOT 以 `model.by_type("IfcProduct")` 作為 
 - **WHEN** source entity enumeration 已改善，但整個 canonical batch 尚未通過所有 archived baseline gates
 - **THEN** `_worker` 維持 `minimum_coverage_locked=false`，並記錄剩餘的 blocker 或下一個 gate
 
+#### Scenario: Secondary GUID and name extraction cost is measured
+
+- **WHEN** canonical burn-down run 以 `--profile-source-entities` 對 first 89MB fixture（或任一 canonical fixture）執行
+- **THEN** evidence 記錄 `guid_extraction` 與 `name_extraction` 的 elapsed seconds、所佔 `source_entity_enumeration` 比例，以及該次 run 是否啟用 secondary 優化
+- **AND** 若該 run 啟用 secondary 優化，evidence 記錄 before/after timing 與 `ifc_guid` / `name` fidelity 對所有 source IFC entity 一致的證明
+- **AND** 若該 run 未啟用 secondary 優化，evidence 記錄量測值與「deferred」的事實，並指出 follow-up change 候選名稱
+
 ### Requirement: Worker artifact pipeline separates RVT→IFC bridge from streaming-owned IFC→USDC conversion
 
 `_worker` SHALL remain responsible for source intake metadata and RVT→IFC bridge artifacts, but under B 方案 it SHALL NOT be the authority for IFC→USDC conversion jobs. Derived USDC artifacts, conversion job status, and mapping quality results SHALL be owned by `bim-streaming-server` after the architecture rework.
@@ -407,3 +425,44 @@ Real/canonical converter path MUST NOT 以 `model.by_type("IfcProduct")` 作為 
 - **WHEN** reports mention prior `_worker` real IFC→USDC evidence
 - **THEN** they MAY cite it as migration source or historical evidence
 - **AND** they MUST NOT classify the new B-scheme streaming conversion authority as passed until new streaming-server-owned evidence exists
+
+### Requirement: Worker quantifies full canonical batch outcome distribution under sidecar carrier
+
+`_worker` MUST 在執行 full canonical 13-file `storage/*.ifc` batch verification 時，於 batch summary 中產出 additive `outcome_distribution`，依以下分桶記錄各 fixture 的結果計數與比例：`passed`（status=passed AND coverage_status=pass）、`passed_with_quality_warning`（status=passed AND coverage_status=warn）、`timed_out`、`failed`（含 status=failed 或 status=passed AND coverage_status=fail），以及 `blocked`（fixture 未進入轉檔，例如缺 prerequisites）。
+
+`outcome_distribution` MUST 為 additive optional field；既有 `status`、`fixtures`、`minimum_coverage_locked` 等 batch summary key 必須保持不變且向後相容。分桶結果 MUST 完全由 per-fixture row 派生，不得引入新的權威來源；測試 MUST 證明從 per-fixture rows 重新計算所得的 distribution 與記錄的 distribution 完全一致。
+
+`_worker` MUST 僅在 `outcome_distribution.passed.count == 13` AND 所有 fixture `quality_metrics.minimum_coverage_baseline_locked=true` AND `coverage_status=pass` 同時成立時，才設定 batch summary `minimum_coverage_locked=true`。任一條件不滿足 → `minimum_coverage_locked=false`，且 batch summary MUST 記錄阻塞的 fixture 與原因（per-fixture row 已記錄足夠時不另增 row）。
+
+`_worker` MUST NOT 在 full batch verification 中對單一 fixture 自動 retry。一個 fixture 在一次 batch run 內只記錄一次 outcome；使用者若要重跑單一 fixture，應另外執行 `--limit 1` 對該檔案，並產生獨立的 evidence。
+
+#### Scenario: Full canonical batch records outcome distribution
+
+- **WHEN** `_worker` 對 `WORKER_DEV_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage` 執行 `verify_storage_batch.py --limit 13 --timeout-seconds 600 --profile-source-entities`
+- **THEN** batch summary 中包含 `outcome_distribution` 物件，欄位含 `total`（=13）、`passed`、`passed_with_quality_warning`、`timed_out`、`failed`、`blocked` 各自的 `count` 與 `rate`
+- **AND** distribution 計數加總 = `total` = `outcome_distribution.total`
+- **AND** 既有 batch summary key（`status`、`fixtures`、`minimum_coverage_locked` 等）維持原樣
+
+#### Scenario: Distribution is derived from per-fixture rows
+
+- **WHEN** consumer 從 batch summary 重新計算 `outcome_distribution`（用 per-fixture row 的 `status` 與 `coverage_status`）
+- **THEN** 重算結果與 batch summary 內記錄的 `outcome_distribution` 完全一致
+
+#### Scenario: Coverage lock requires clean full batch
+
+- **WHEN** `outcome_distribution.passed.count == 13` AND 所有 fixture `quality_metrics.minimum_coverage_baseline_locked=true` AND `coverage_status=pass`
+- **THEN** batch summary `minimum_coverage_locked=true`
+- **AND** batch summary `status=passed`
+
+#### Scenario: Partial batch does not lock coverage
+
+- **WHEN** 13 個 fixture 中有任一個 fixture status ≠ `passed` 或 coverage_status ≠ `pass`
+- **THEN** batch summary `minimum_coverage_locked=false`
+- **AND** batch summary 記錄阻塞的 fixture 與分類（`timed_out` / `failed` / `passed_with_quality_warning` / `blocked`）
+
+#### Scenario: No automatic retry within a batch run
+
+- **WHEN** 某個 fixture 在 batch run 中發生 timeout 或 failure
+- **THEN** `_worker` 將該 fixture 的 outcome 記為單次結果（不重試），並繼續處理下一個 fixture
+- **AND** batch summary 不得標示曾被自動 retry 過的 fixture 為 `passed`
+
