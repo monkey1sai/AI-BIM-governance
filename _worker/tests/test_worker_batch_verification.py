@@ -4,6 +4,11 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.batch_queue import (
+    batch_queue_status,
+    enqueue_batch_queue,
+    read_batch_queue,
+)
 from app.batch_verification import run_storage_batch_verification
 from app.converters import ConversionAdapterResult, ConversionAdapterUnavailable
 from app.settings import Settings
@@ -372,3 +377,85 @@ def test_batch_verification_timed_out_fixture_buckets_into_timed_out(tmp_path: P
     assert distribution["timed_out"]["count"] == 1
     assert distribution["passed"]["count"] == 0
     assert payload["minimum_coverage_locked"] is False
+
+
+# --- M.1: --enqueue / --status minimal reversible slice -----------------------
+
+
+def make_queue_settings(tmp_path: Path) -> Settings:
+    """Settings whose batch_queue_path is pinned under tmp (never the real home)."""
+    return Settings(
+        service_root=tmp_path,
+        objects_root=tmp_path / "objects",
+        jobs_dir=tmp_path / "jobs",
+        dev_storage_root=tmp_path / "storage",
+        batch_queue_path=tmp_path / "queue" / "batch_queue.json",
+        fake_bim_control_url="http://127.0.0.1:1",
+        public_objects_url="http://testserver/objects",
+    )
+
+
+def test_batch_queue_enqueue_builds_manifest(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+
+    manifest = enqueue_batch_queue(settings)
+
+    assert manifest["manifest_version"] == 1
+    assert Path(settings.batch_queue_path).is_file()
+    assert read_batch_queue(settings.batch_queue_path) == manifest
+    fixtures = manifest["fixtures"]
+    assert [row["filename"] for row in fixtures] == ["A.ifc", "B.ifc"]
+    assert all(row["status"] == "pending" for row in fixtures)
+    assert all(row["history"] == [] for row in fixtures)
+    assert len({row["source_id"] for row in fixtures}) == 2
+
+
+def test_batch_queue_enqueue_is_idempotent_and_preserves_recorded_outcome(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+
+    first = enqueue_batch_queue(settings)
+    created_at = first["created_at"]
+    # Simulate a later recorded terminal outcome on the existing row.
+    recorded = read_batch_queue(settings.batch_queue_path)
+    recorded["fixtures"][0]["status"] = "passed"
+    recorded["fixtures"][0]["history"] = [{"event": "passed"}]
+    from app.batch_queue import write_batch_queue
+
+    write_batch_queue(settings.batch_queue_path, recorded)
+
+    # A new fixture appears; re-enqueue must NOT reset the recorded row.
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    second = enqueue_batch_queue(settings)
+
+    by_name = {row["filename"]: row for row in second["fixtures"]}
+    assert by_name["A.ifc"]["status"] == "passed"
+    assert by_name["A.ifc"]["history"] == [{"event": "passed"}]
+    assert by_name["B.ifc"]["status"] == "pending"
+    assert second["created_at"] == created_at  # created_at is preserved
+
+
+def test_batch_queue_status_reflects_pending(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    (storage / "A.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    (storage / "B.ifc").write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\nB\n")
+    settings = make_queue_settings(tmp_path)
+
+    before = batch_queue_status(settings)
+    assert before["exists"] is False
+
+    enqueue_batch_queue(settings)
+    after = batch_queue_status(settings)
+
+    assert after["exists"] is True
+    assert after["total"] == 2
+    assert after["counts"]["pending"] == 2
+    assert after["pending_remaining"] == 2
+    assert after["all_dispatched"] is False

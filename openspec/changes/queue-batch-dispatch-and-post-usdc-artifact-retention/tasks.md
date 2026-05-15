@@ -1,9 +1,9 @@
 ## 1. 準備與影響檢查
 
-- [ ] 1.1 重新閱讀 archived predecessor `openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/`（特別是 design「Successor handoff」）、`docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md`、`openspec/specs/worker-artifact-pipeline/spec.md`、`openspec/specs/runtime-verification-evidence/spec.md`。
-- [ ] 1.2 重新閱讀 `_worker/app/batch_verification.py`（`run_storage_batch_verification`、`_run_single_fixture_with_timeout`、`_compute_outcome_distribution`、lock gate）、`_worker/app/dev_sources.py`（`_source_id`）、`_worker/app/settings.py`、`_worker/app/store.py`（derived artifact layout / `tenant_batch_verification`）、`_worker/scripts/verify_storage_batch.py`、既有 `_worker/tests/test_worker_batch_verification.py`。
-- [ ] 1.3 對準備修改的 symbols 跑 GitNexus impact（至少 `run_storage_batch_verification`、`_compute_outcome_distribution`、`verify_storage_batch.main`、retention helper 落點）。HIGH/CRITICAL 先回報。
-- [ ] 1.4 確認 canonical fixture root 仍為 13 檔；記錄 `source_id` / SHA-256 作為 manifest key 對照。
+- [x] 1.1 重新閱讀 archived predecessor `openspec/changes/archive/2026-05-15-optimize-worker-canonical-batch-and-secondary-enumeration/`（特別是 design「Successor handoff」）、`docs/verification/2026-05-14-worker-canonical-batch-and-secondary-enumeration.md`、`openspec/specs/worker-artifact-pipeline/spec.md`、`openspec/specs/runtime-verification-evidence/spec.md`。
+- [x] 1.2 重新閱讀 `_worker/app/batch_verification.py`（`run_storage_batch_verification`、`_run_single_fixture_with_timeout`、`_compute_outcome_distribution`、lock gate）、`_worker/app/dev_sources.py`（`_source_id`）、`_worker/app/settings.py`、`_worker/app/store.py`（derived artifact layout / `tenant_batch_verification`）、`_worker/scripts/verify_storage_batch.py`、既有 `_worker/tests/test_worker_batch_verification.py`。
+- [x] 1.3 對準備修改的 symbols 跑 GitNexus impact（至少 `run_storage_batch_verification`、`_compute_outcome_distribution`、`verify_storage_batch.main`、retention helper 落點）。HIGH/CRITICAL 先回報。
+- [x] 1.4 確認 canonical fixture root 仍為 13 檔；記錄 `source_id` / SHA-256 作為 manifest key 對照。
 
 ## 2. Queue manifest 模型（manifest-as-index）
 
@@ -58,4 +58,4 @@
 
 ## 最小可逆驗證（smallest reversible diff that proves it works）
 
-- [ ] M.1 只加 `--enqueue` + `--status`（純讀 + 建一個 standalone `batch_queue.json`，不刪任何 artifact、不改既有 CLI、不改 `outcome_distribution` 程式），對 tmp fixture set 證明：manifest 建得出、idempotent、`--status` 正確反映 pending。此步不碰 retention、不碰既有 monolithic 路徑，完全可逆（刪 manifest 檔即還原）。
+- [x] M.1 只加 `--enqueue` + `--status`（純讀 + 建一個 standalone `batch_queue.json`，不刪任何 artifact、不改既有 CLI、不改 `outcome_distribution` 程式），對 tmp fixture set 證明：manifest 建得出、idempotent、`--status` 正確反映 pending。此步不碰 retention、不碰既有 monolithic 路徑，完全可逆（刪 manifest 檔即還原）。

@@ -9,6 +9,7 @@ import sys
 WORKER_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKER_ROOT))
 
+from app.batch_queue import batch_queue_status, enqueue_batch_queue
 from app.batch_verification import run_storage_batch_verification
 from app.settings import Settings
 
@@ -28,7 +29,33 @@ def main() -> int:
         action="store_true",
         help="Collect fine-grained source entity enumeration timings for verification evidence.",
     )
+    parser.add_argument(
+        "--enqueue",
+        action="store_true",
+        help="Build/refresh the persisted batch_queue.json manifest from the IFC source listing (idempotent).",
+    )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Print read-only batch queue progress from the persisted manifest.",
+    )
     args = parser.parse_args()
+
+    # Queue subcommands are additive and short-circuit before the existing
+    # monolithic path; the one-shot CLI (--limit / --timeout-seconds /
+    # --profile-source-entities) keeps working unchanged (design Decision 6).
+    if args.enqueue:
+        manifest = enqueue_batch_queue(Settings.from_env())
+        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+        print(
+            f"enqueued: manifest_version={manifest['manifest_version']} "
+            f"fixtures={len(manifest['fixtures'])}"
+        )
+        return 0
+    if args.status:
+        status_payload = batch_queue_status(Settings.from_env())
+        print(json.dumps(status_payload, ensure_ascii=False, indent=2))
+        return 0
 
     payload = run_storage_batch_verification(
         Settings.from_env(),
