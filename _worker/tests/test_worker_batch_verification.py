@@ -708,3 +708,75 @@ def test_batch_queue_status_reports_retained_path_drift(tmp_path: Path):
     drift = batch_queue_status(settings)["retained_paths_drift"]
     assert len(drift) == 1
     assert drift[0]["missing"] == ["model.usdc"]
+
+
+# --- PR #60 review fixes: summary parity hole + retention prune-lock resilience
+
+
+def test_batch_queue_summary_counts_source_unavailable_failure(tmp_path: Path):
+    """A terminal failure with no conversion record (source vanished after
+    enqueue) must still appear in --summary's outcome_distribution; it must not
+    silently drop out and under-report failures."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    fixture = storage / "A.ifc"
+    fixture.write_bytes(b"ISO-10303-21;\nEND-ISO-10303-21;\n")
+    settings = make_queue_settings(tmp_path)
+    enqueue_batch_queue(settings)
+
+    fixture.unlink()  # source disappears between enqueue and dispatch
+    result = run_next_batch_queue(
+        settings, converter=FakeBatchConverter(locked=True), timeout_seconds=60.0
+    )
+    assert result["outcome"] == "failed"
+
+    row = read_batch_queue(settings.batch_queue_path)["fixtures"][0]
+    assert row["status"] == "failed"
+    assert row["coverage_summary"] == {}  # no conversion record was produced
+
+    summary = summarize_batch_queue(settings)
+    assert summary["outcome_distribution"]["total"] == 1
+    assert summary["outcome_distribution"]["failed"]["count"] == 1
+    assert summary["minimum_coverage_locked"] is False
+
+
+def test_apply_post_coverage_retention_survives_locked_drop_file(tmp_path, monkeypatch):
+    """A Windows-style file lock during prune (the predecessor failure class)
+    must not crash the dispatch — it degrades to a diagnostic."""
+    import pathlib
+
+    settings = make_queue_settings(tmp_path)
+    rel = Path("tenants") / "tenant_batch_verification" / "derived" / "conv_lock" / "usdc"
+    derived = Path(settings.objects_root) / rel
+    derived.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "ifc_index.json",
+        "element_mapping.json",
+        "model.usdc",
+        "usd_index.json",
+        "metadata.json",
+    ):
+        (derived / name).write_text("{}", encoding="utf-8")
+    write_json(
+        Path(settings.jobs_dir) / "conv_lock.json",
+        {"result": {"lineage": {"derived_object_prefix": rel.as_posix()}}},
+    )
+
+    real_unlink = pathlib.Path.unlink
+
+    def boom(self, *args, **kwargs):
+        if self.name == "ifc_index.json":
+            raise PermissionError("simulated WinError 5 lock")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", boom)
+
+    out = apply_post_coverage_retention(settings, {"conversion_job_id": "conv_lock"})
+
+    assert out["applied"] is True  # did not raise
+    assert "element_mapping.json" in out["dropped"]  # unlocked one still pruned
+    assert "ifc_index.json" not in out["dropped"]
+    assert out["prune_errors"] == [
+        {"file": "ifc_index.json", "error": "PermissionError"}
+    ]
+    assert (derived / "ifc_index.json").is_file()  # locked file survived intact

@@ -80,6 +80,15 @@ evidence：`docs/verification/2026-05-14-worker-canonical-batch-and-secondary-en
 
 owner=`_worker`。改動侷限 `_worker/app/{settings,batch_verification,batch_queue}.py`、`_worker/scripts/verify_storage_batch.py`、`_worker/tests/test_worker_batch_verification.py` + OpenSpec artifacts + 本 doc/roadmap。未觸 `_bim-control` / `bim-review-coordinator` / `bim-streaming-server` / `web-viewer-sample`；GitNexus pre-change impact（`run_storage_batch_verification`、`_compute_outcome_distribution`、`verify_storage_batch.main`、`Settings`）全 LOW。
 
+## PR #60 Review Fixes（gitnexus-pr-review，同分支處理）
+
+| # | 嚴重度 | 發現 | 修正 |
+|---|---|---|---|
+| F1 | MEDIUM 正確性 | `summarize_batch_queue` 僅納入有非空 `coverage_summary` 的 terminal row → 經 source-unavailable 路徑（`record={}`）產生的 `failed` row 被排除，`outcome_distribution` 少算失敗、破壞 parity 保證 | 新增 `_summary_record`：缺 coverage_summary 時依 row terminal status 合成最小 record，使 `_compute_outcome_distribution`（仍未改）正確計入所有 terminal row。新增測試 `test_batch_queue_summary_counts_source_unavailable_failure` |
+| F2 | MEDIUM 健壯性 | `apply_post_coverage_retention` 的 `target.unlink()` 無 try/except → Windows 檔案鎖（正是本 change 要對付的 predecessor 失敗類別）會 crash dispatch | best-effort unlink + `prune_errors` diagnostic，鎖檔不再 crash、其餘照刪。新增測試 `test_apply_post_coverage_retention_survives_locked_drop_file` |
+
+修正後：`_worker` 全套件 **140 passed, 1 skipped**（+2 回歸測試，零回歸，parity test 仍綠）。修正侷限 `_worker/app/batch_queue.py` + tests，無跨界、未改 `_compute_outcome_distribution`/lock gate。
+
 ## Known Risks
 
 - 真實 footprint / canonical pass 仍 blocked（見上）；merge 前 reviewer 應知此為 recorded_only，不可當 real-run pass。

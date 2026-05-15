@@ -244,23 +244,34 @@ def apply_post_coverage_retention(
     if not _is_scratch_tenant_path(derived, settings.objects_root):
         return {"applied": False, "reason": "not_scratch_tenant", "path": str(derived)}
     dropped: list[str] = []
+    prune_errors: list[dict[str, str]] = []
     for name in RETENTION_DROP:
         target = derived / name
         if target.is_file():
-            target.unlink()
-            dropped.append(name)
+            try:
+                target.unlink()
+                dropped.append(name)
+            except OSError as exc:
+                # Best-effort: a Windows file lock under git/AV watch is the
+                # exact predecessor failure class this change exists to defeat —
+                # a prune lock must NOT crash the dispatch. Surface it as a
+                # diagnostic; the row still records a terminal outcome.
+                prune_errors.append({"file": name, "error": exc.__class__.__name__})
     retained: dict[str, str] = {}
     for name in RETENTION_KEEP:
         target = derived / name
         if target.is_file():
             retained[name] = str(target)
-    return {
+    result = {
         "applied": True,
         "derived_dir": str(derived),
         "dropped": dropped,
         "retained_paths": retained,
         "retention_class": RETENTION_CLASS,
     }
+    if prune_errors:
+        result["prune_errors"] = prune_errors
+    return result
 
 
 def cleanup_batch_scratch(settings: Settings) -> dict[str, Any]:
@@ -438,6 +449,30 @@ def retry_batch_queue(
     return {"retried": True, "source_id": source_id, "prev_outcome": prev}
 
 
+def _summary_record(row: dict[str, Any]) -> dict[str, Any]:
+    """Record consumed by `_compute_outcome_distribution` for one terminal row.
+
+    Uses the stored coverage_summary when present; otherwise synthesizes the
+    minimal shape so `_fixture_outcome_bucket` re-derives the SAME bucket as the
+    row's recorded terminal status — even when no conversion record was produced
+    (e.g. a source-unavailable failure). Without this, such rows would silently
+    drop out of the distribution and under-report failures (parity hole).
+    """
+    cov = row.get("coverage_summary")
+    if isinstance(cov, dict) and cov:
+        return cov
+    status = row.get("status")
+    if status == "timed_out":
+        return {"status": "timed_out"}
+    if status == "blocked":
+        return {"status": "blocked"}
+    if status == "passed_with_quality_warning":
+        return {"status": "passed", "coverage_status": "warn"}
+    if status == "passed":
+        return {"status": "passed", "coverage_status": "pass"}
+    return {"status": "failed"}
+
+
 def summarize_batch_queue(settings: Settings) -> dict[str, Any]:
     """Compute `outcome_distribution` + `minimum_coverage_locked` from the
     manifest, reusing the predecessor's functions unchanged (task 4.1). A queue
@@ -457,11 +492,9 @@ def summarize_batch_queue(settings: Settings) -> dict[str, Any]:
         1 for r in fixtures if r.get("status") in {"pending", "running"}
     )
     records = [
-        r["coverage_summary"]
+        _summary_record(r)
         for r in fixtures
         if r.get("status") not in {"pending", "running"}
-        and isinstance(r.get("coverage_summary"), dict)
-        and r.get("coverage_summary")
     ]
     distribution = _compute_outcome_distribution(records)
     partial = pending_remaining > 0
