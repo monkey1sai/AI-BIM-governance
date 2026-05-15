@@ -91,10 +91,11 @@ The decision lattice is narrow because the predecessor already chose the carrier
 
 ## Decisions
 
-1. **Sidecar covers no-GUID geometry-shape entities.**
+1. **`unmapped_count=2` resolved by globally-unique `ifc_entity_key` (real root cause: duplicate GlobalId).**
    - Rationale: it's the only chosen `unmapped_count=2` resolution that keeps real-GUID fidelity and reaches `coverage_status=pass` without weakening the denominator.
-   - Approach: `_materialize_unmapped_entities` continues to write to the sidecar; the inclusion predicate is broadened from "non-renderable AND has identity" to "any source IFC entity not authored as a renderable USD prim, regardless of whether `ifc_guid` is present". Entries without `ifc_guid` keep `ifc_guid=null` in the sidecar — they are still uniquely keyed by `ifc_entity_key` / `ifc_entity_id`.
+   - Approach: `_materialize_unmapped_entities` continues to write to the sidecar; the inclusion predicate already covers "any source IFC entity not authored as a renderable USD prim, regardless of whether `ifc_guid` is present". Entries without `ifc_guid` keep `ifc_guid=null` in the sidecar. The actual residue fix is in `_source_entities`: `ifc_entity_key` is made globally unique per entity by appending the 1-based enumeration index.
    - Alternative rejected: see Option A2 / A3 above.
+   - **Empirical correction (2026-05-14 canonical evidence):** the pre-change hypothesis was that the 2 residue entities were *geometry-shape entries lacking `ifc_guid`*. The full 13-file canonical batch disproved this. Every completed fixture showed `unmapped_count=2` with an **empty** `unmapped_ifc_entities` list — i.e. the gap is a list-vs-dict cardinality artifact, not a real missing carrier. `ifc_index.json` summary showed `guid_count=73,743` against `73,745` entities carrying a GlobalId → exactly **2 duplicate-GlobalId instances** in the source model (`許良宇圖書館建築_2026`, IFC4X3). Two distinct entities sharing one GlobalId collide when keyed by `guid`, and the per-key dedup in `mapping_by_entity` silently drops the second. The chosen fix (Option A1 family) still holds: `ifc_guid` keeps the real, possibly-duplicate GlobalId (no synthetic identifier — A3 still rejected), the all-entity denominator is unchanged, and renderable geometry still maps via the raw GlobalId because `source_by_guid` is keyed by `ifc_guid`, not by `ifc_entity_key`. A no-GUID arm of the same uniqueness fix also covers the IfcOpenShell `id()==0` inline-instance case.
 
 2. **Coverage denominator stays at all-entity.**
    - Rationale: load-bearing invariant inherited from the predecessor changes.
