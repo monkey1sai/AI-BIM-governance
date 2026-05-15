@@ -1,0 +1,148 @@
+name: ${COMPOSE_PROJECT_NAME:-ai-bim-runtime-manager}
+
+services:
+  bim-control:
+    build:
+      context: .
+      dockerfile: infra/docker/python-fastapi.Dockerfile
+      args:
+        SERVICE_DIR: _bim-control
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    volumes:
+      - runtime-bim-control-data:/workspace/_bim-control/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/python-fastapi.Dockerfile
+      args:
+        SERVICE_DIR: _worker
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]
+    environment:
+      WORKER_BIM_CONTROL_URL: ${BIM_CONTROL_URL:-http://bim-control:8001}
+      WORKER_PUBLIC_OBJECTS_URL: http://127.0.0.1:8005/objects
+      WORKER_DEV_STORAGE_ROOT: /workspace/storage
+      WORKER_OBJECTS_ROOT: /workspace/.runtime/objects
+      WORKER_JOBS_DIR: /workspace/.runtime/jobs
+    ports:
+      - "8005:8005"
+    volumes:
+      - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
+      - ${RUNTIME_OBJECTS_ROOT:-./.runtime/objects}:/workspace/.runtime/objects
+      - ${RUNTIME_JOBS_ROOT:-./.runtime/jobs}:/workspace/.runtime/jobs
+    depends_on:
+      bim-control:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  coordinator:
+    build:
+      context: .
+      dockerfile: infra/docker/node-dev.Dockerfile
+      args:
+        SERVICE_DIR: bim-review-coordinator
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    environment:
+      BIM_CONTROL_API_BASE: ${BIM_CONTROL_URL:-http://bim-control:8001}
+      WORKER_API_BASE: ${WORKER_URL:-http://worker:8005}
+      KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
+    ports:
+      - "8004:8004"
+    depends_on:
+      worker:
+        condition: service_healthy
+
+  viewer:
+    build:
+      context: .
+      dockerfile: infra/docker/node-dev.Dockerfile
+      args:
+        SERVICE_DIR: web-viewer-sample
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    environment:
+      VITE_COORDINATOR_API_BASE: http://127.0.0.1:8004
+      VITE_KIT_STREAM_SERVER: 127.0.0.1
+      VITE_KIT_SIGNALING_PORT: ${KIT_SIGNALING_PORT:-49100}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - coordinator
+
+  kit-manager-api:
+    build:
+      context: .
+      dockerfile: infra/docker/kit-manager-api.Dockerfile
+    environment:
+      RUNTIME_MODE: ${RUNTIME_MODE:-docker-container}
+      HOST_LOCAL_RUNTIME_ALLOWED: ${HOST_LOCAL_RUNTIME_ALLOWED:-false}
+      STORAGE_ROOT: /workspace/storage
+      KIT_INSTANCE_ID: ${KIT_INSTANCE_ID:-kit_local_gpu_001}
+      KIT_CONTROL_URL: ${KIT_CONTROL_URL:-http://streaming-server:49101}
+      KIT_SIGNALING_HOST: 127.0.0.1
+      KIT_SIGNALING_PORT: ${KIT_SIGNALING_PORT:-49100}
+      KIT_MEDIA_PORT: ${KIT_MEDIA_PORT:-47998}
+    ports:
+      - "8010:8010"
+    volumes:
+      - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  kit-manager-web:
+    build:
+      context: .
+      dockerfile: infra/docker/kit-manager-web.Dockerfile
+    environment:
+      VITE_KIT_MANAGER_API_BASE: ${VITE_KIT_MANAGER_API_BASE:-http://127.0.0.1:8010}
+      VITE_VIEWER_URL: ${VITE_VIEWER_URL:-http://127.0.0.1:5173}
+    ports:
+      - "5174:80"
+    depends_on:
+      kit-manager-api:
+        condition: service_healthy
+
+  streaming-server:
+    profiles: ["gpu"]
+    build:
+      context: .
+      dockerfile: infra/docker/bim-streaming-server-gpu.Dockerfile
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-graphics,utility,compute,video}
+      KIT_INSTANCE_ID: ${KIT_INSTANCE_ID:-kit_local_gpu_001}
+      KIT_SIGNALING_PORT: ${KIT_SIGNALING_PORT:-49100}
+      KIT_MEDIA_PORT: ${KIT_MEDIA_PORT:-47998}
+      KIT_CONTROL_PORT: ${KIT_CONTROL_PORT:-49101}
+      STORAGE_ROOT: /workspace/storage
+    ports:
+      - "${KIT_SIGNALING_PORT:-49100}:${KIT_SIGNALING_PORT:-49100}/tcp"
+      - "${KIT_SIGNALING_PORT:-49100}:${KIT_SIGNALING_PORT:-49100}/udp"
+      - "${KIT_MEDIA_PORT:-47998}:${KIT_MEDIA_PORT:-47998}/tcp"
+      - "${KIT_MEDIA_PORT:-47998}:${KIT_MEDIA_PORT:-47998}/udp"
+      - "${KIT_CONTROL_PORT:-49101}:${KIT_CONTROL_PORT:-49101}/tcp"
+    volumes:
+      - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  runtime-bim-control-data:
