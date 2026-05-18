@@ -51,9 +51,11 @@
 
 ## 5. T4 Streaming internal conversion API
 
-- [ ] 5.1 `bim-streaming-server` 收斂為 internal-only：接受 coordinator internal conversion request，移除對外 ifc-ready 入口
-- [ ] 5.2 保留 IFC→USDC / element_mapping / manifest 既有轉檔核心（不重寫）
-- [ ] 5.3 契約測試：coordinator→streaming internal request → conversion_job_id/status/result
+- [x] 5.1 `bim-streaming-server` 收斂為 internal-only：接受 coordinator internal conversion request，移除對外 ifc-ready 入口
+- [x] 5.2 保留 IFC→USDC / element_mapping / manifest 既有轉檔核心（不重寫）
+- [x] 5.3 契約測試：coordinator→streaming internal request → conversion_job_id/status/result
+
+> **T4 done（2026-05-18）** — 見 `apply-notes.md` §T4。`POST /api/conversions/ifc-to-usdc` 即唯一內部端點（coordinator→streaming），無另一對外 ifc-ready 入口；加 internal-only docstring（caller=coordinator，非外部 IFC Worker、非 `_worker`）。`ConversionAuthoritySettings.bim_control_callback_url` 改 `str | None = None`（不再寫死已刪 `_bim-control:8001`）；轉檔完成無 callback_url → `callback_delivery.status="skipped"`（coordinator 輪詢 /result，cloud callback outbox 屬 T5）。轉檔核心（converter / `_build_success_result` / `_assert_publishable_outputs`）**未重寫**。測試移除 :8001/:8005 寫死、加 2 契約測試（reject non-ifc_ready、coordinator→streaming→job/status/result+skipped callback）；`pytest test_conversion_authority_api.py` **5 pass**（既有 3 無 regression）。GitNexus `ConversionAuthoritySettings` impact LOW、`detect_changes` risk low。
 
 ## 6. T5 Callback to company cloud
 

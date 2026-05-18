@@ -67,3 +67,12 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 - **GitNexus**：`createCoordinatorApp`/`loadConfig` upstream impact = LOW；`detect_changes` risk low / 0 affected processes。
 - **驗證**：`npm run verify`（tsc build + vitest）綠，**115 tests pass**（新 6 + 既有 109 無 regression）；worktree 首次需 `npm ci`（opsx self-bootstrap，已執行）。
 - **邊界註記**：`bim-review-coordinator/CLAUDE.md` 仍寫舊邊界（查詢 `_bim-control`/`_worker`）；B-scheme 下 coordinator 新增「唯一對外 IFC-ready intake」職責，治理文件層對齊收斂於 **T9**（與 spec `documentation-source-of-truth` 一致）。
+
+## T4 — Streaming internal conversion API 收斂（done，2026-05-18）
+
+- `conversion_authority.py`：`POST /api/conversions/ifc-to-usdc` 即唯一內部端點（coordinator→streaming），**無另一對外 ifc-ready 入口**；加 internal-only docstring（caller=coordinator；非外部 IFC Worker、非 `_worker`）。
+- `ConversionAuthoritySettings.bim_control_callback_url` → `str | None = None`（移除對已刪 `_bim-control:8001` 的寫死）。轉檔完成：有 callback_url → `callback_delivery.status="pending"`（投遞 deferred 給 coordinator/T5 outbox）；無 → `status="skipped"`（coordinator 輪詢 /result）。**不打已刪服務**。
+- 轉檔核心（外部注入 `converter.convert`、`_build_success_result`、`_assert_publishable_outputs`、idempotency/job store）**未重寫**（§5.2）。
+- 測試：`make_client` 與 `ifc_ready_payload` 移除 :8001/:8005 寫死（改 `edge-local://`、無 callback_url）；新增 2 契約測試（reject non-ifc_ready→400；coordinator internal request→job/status/result + callback skipped）。`pytest test_conversion_authority_api.py` **5 pass**（既有 3 無 regression，轉檔核心不變）。
+- GitNexus：`ConversionAuthoritySettings` upstream LOW、`create_conversion_job` 僅同檔 route 呼叫（`_worker` 版已刪）、`detect_changes` risk low。
+- 過渡：轉檔結果回拋公司雲端（metadata-only callback outbox / retry / dead-letter）屬 **T5**，由 coordinator 驅動。

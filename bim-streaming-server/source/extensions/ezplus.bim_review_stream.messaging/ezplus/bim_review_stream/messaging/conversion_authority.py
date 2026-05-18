@@ -30,7 +30,12 @@ class ConversionAuthoritySettings:
     artifacts_root: Path
     jobs_dir: Path
     public_artifacts_url: str
-    bim_control_callback_url: str
+    # B-scheme（local-coordinator-ifc-ready-intake-boundary T4）：
+    # `_bim-control`(:8001) 已自 repo 刪除。streaming 為 internal-only 轉檔引擎，
+    # 不再寫死 callback 到已刪服務；轉檔結果回拋公司雲端（metadata-only outbox）
+    # 屬 T5 並由 coordinator 驅動。預設 None＝不主動 callback（coordinator 輪詢
+    # /result 或由 T5 outbox 投遞）。
+    bim_control_callback_url: str | None = None
 
 
 class HeadlessConverterNotConfigured:
@@ -54,6 +59,15 @@ def create_conversion_api_app(
 
     @app.post("/api/conversions/ifc-to-usdc", status_code=202)
     def create_conversion(background_tasks: BackgroundTasks, ifc_ready_event: dict[str, Any] = Body(...)):
+        """Internal conversion request (B-scheme: local-coordinator-ifc-ready-intake-boundary T4).
+
+        `bim-streaming-server` is an internal-only conversion engine. The supported
+        caller is `bim-review-coordinator` (the single external IFC-ready intake);
+        this is NOT an external IFC Worker entry point and NOT `_worker`. The
+        request body keeps the `event_type="ifc_ready"` shape that the coordinator's
+        StreamingConversionClient produces; the external IFC-ready contract lives at
+        `bim-review-coordinator` `POST /api/external/ifc-ready`.
+        """
         try:
             job = store.create_conversion_job(ifc_ready_event)
         except ValueError as exc:
@@ -173,17 +187,30 @@ class StreamingConversionStore:
             return self._fail_job(job, code=exc.__class__.__name__, message=str(exc), stage="conversion_failed")
 
         callback_payload = self._callback_payload(job, result)
+        callback_url = job.get("callback_url")
+        if callback_url:
+            callback_delivery = {
+                "status": "pending",
+                "target_url": callback_url,
+                "reason": "network delivery deferred to coordinator / T5 cloud callback outbox",
+            }
+        else:
+            # B-scheme T4: `_bim-control` removed; with no callback target the
+            # streaming server does NOT post anywhere. The coordinator owns the
+            # external contract — it polls /result and (T5) drives the
+            # metadata-only cloud callback outbox.
+            callback_delivery = {
+                "status": "skipped",
+                "target_url": None,
+                "reason": "no callback_url; coordinator polls /result, cloud callback is T5 outbox",
+            }
         return self._update_job(
             conversion_job_id,
             status="succeeded",
             stage="done",
             result=result,
             callback_payload=callback_payload,
-            callback_delivery={
-                "status": "pending",
-                "target_url": job["callback_url"],
-                "reason": "network delivery is performed by the service runtime loop",
-            },
+            callback_delivery=callback_delivery,
         )
 
     def _build_success_result(self, job: Mapping[str, Any], converter_result: Mapping[str, Any]) -> dict[str, Any]:

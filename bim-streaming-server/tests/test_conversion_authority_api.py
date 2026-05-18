@@ -70,7 +70,7 @@ def make_client(tmp_path: Path, converter, run_background: bool = True) -> TestC
         artifacts_root=tmp_path / "artifacts",
         jobs_dir=tmp_path / "jobs",
         public_artifacts_url="http://testserver/artifacts",
-        bim_control_callback_url="http://127.0.0.1:8001/api/streaming-conversion-results",
+        bim_control_callback_url=None,
     )
     app = create_conversion_api_app(settings=settings, converter=converter, run_background=run_background)
     return TestClient(app)
@@ -86,14 +86,16 @@ def ifc_ready_payload(**overrides):
         "model_version_id": "version_demo_001",
         "export_job_id": "rvt_export_demo_001",
         "source_rvt_artifact_id": "artifact_rvt_demo_001",
+        # B-scheme T4: internal request from coordinator. ifc_artifact ref is an
+        # edge-local reference (not the deleted `_worker`:8005); no callback_url
+        # (coordinator polls /result; cloud callback is the T5 outbox).
         "ifc_artifact": {
             "artifact_id": "artifact_ifc_demo_001",
             "format": "ifc",
             "filename": "demo-model.ifc",
-            "url": "http://127.0.0.1:8005/objects/fixtures/demo-model.ifc",
+            "url": "edge-local://fixtures/demo-model.ifc",
         },
         "requested_outputs": ["usdc", "element_mapping", "entity_index", "metadata"],
-        "callback_url": "http://127.0.0.1:8001/api/streaming-conversion-results",
     }
     payload.update(overrides)
     return payload
@@ -156,3 +158,43 @@ def test_placeholder_usdc_fails_without_ready_result(tmp_path: Path):
     assert result["ready"] is False
     assert result["error"]["code"] == "placeholder_usdc"
     assert result["model"]["status"] != "ready"
+
+
+# --- B-scheme（local-coordinator-ifc-ready-intake-boundary T4 §5.3）契約測試 ---
+# bim-streaming-server 為 internal-only 轉檔引擎；唯一支援的 caller 是
+# bim-review-coordinator（內部 conversion request）。非 ifc_ready 形狀拒絕；
+# 無 callback_url 時不打已刪服務（coordinator 輪詢 /result，cloud outbox 屬 T5）。
+
+
+def test_streaming_is_internal_only_rejects_non_ifc_ready(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    response = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json={"event_type": "external_http_probe", "event_id": "evt_bad_001"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_coordinator_internal_request_yields_job_status_result_and_skipped_callback(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    # coordinator → streaming internal conversion request（無 callback_url）
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    assert create.status_code == 202
+    conversion_job_id = create.json()["conversion_job_id"]
+    assert create.json()["status"] == "queued"
+    assert create.json()["authority"] == "bim-streaming-server"
+
+    status = client.get(f"/api/conversions/{conversion_job_id}").json()
+    assert status["conversion_job_id"] == conversion_job_id
+    assert status["status"] == "succeeded"
+    # B-scheme：無 callback_url → 不打已刪 `_bim-control`，標 skipped
+    assert status["callback_delivery"]["status"] == "skipped"
+    assert status["callback_delivery"]["target_url"] is None
+
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["status"] == "succeeded"
+    assert result["authority"] == "bim-streaming-server"
+    assert result["model"]["status"] == "ready"
