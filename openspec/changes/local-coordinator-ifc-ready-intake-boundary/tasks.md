@@ -14,8 +14,10 @@
 
 ## 2. T1 OpenSpec boundary 對齊（治理文件，apply 階段內）
 
-- [ ] 2.1 確認 change-id `local-coordinator-ifc-ready-intake-boundary` 與 spec delta 與本 change 一致
-- [ ] 2.2 在 design/spec 明確：公司雲端=external control-plane、客戶落地端 IFC Worker=external caller、本 repo=local data-plane runtime
+- [x] 2.1 確認 change-id `local-coordinator-ifc-ready-intake-boundary` 與 spec delta 與本 change 一致
+- [x] 2.2 在 design/spec 明確：公司雲端=external control-plane、客戶落地端 IFC Worker=external caller、本 repo=local data-plane runtime
+
+> **T1 done（2026-05-18）** — 確認記錄見 `apply-notes.md` §T1。2.1：change-id 一致、7 spec delta header 與 proposal Capabilities 對應（ADDED 4 / MODIFIED 3，5 大型延 T9）、`validate --strict` valid。2.2：control-plane（公司雲端）/ external caller（落地端 IFC Worker）/ data-plane（本 repo）定位已於 `design.md` Context/D6/D7 與相關 specs 明確承載，apply 不需新增需求；治理文件層（AGENTS/CLAUDE/roadmap）同步收斂於 T9。
 
 ## 3. T2 刪除 `_worker` / `_bim-control`
 
