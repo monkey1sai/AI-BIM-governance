@@ -70,9 +70,11 @@
 
 ## 7. T6 Local artifact shadow metadata
 
-- [ ] 7.1 定義並實作最小 shadow metadata 欄位集（tenant_id/project_id/external_model_version_id/external_conversion_task_id/correlation_id/source_ifc_ref/source_ifc_etag/conversion_job_id/artifact_manifest_ref/callback_url/callback_status/last_callback_attempt_at）
-- [ ] 7.2 artifact_manifest 產出與 `external_model_version_id` binding；不 mirror 公司 MySQL
-- [ ] 7.3 測試：control-plane metadata 不在本地被重新宣告權威；data-plane availability 本地可答
+- [x] 7.1 定義並實作最小 shadow metadata 欄位集（tenant_id/project_id/external_model_version_id/external_conversion_task_id/correlation_id/source_ifc_ref/source_ifc_etag/conversion_job_id/artifact_manifest_ref/callback_url/callback_status/last_callback_attempt_at）
+- [x] 7.2 artifact_manifest 產出與 `external_model_version_id` binding；不 mirror 公司 MySQL
+- [x] 7.3 測試：control-plane metadata 不在本地被重新宣告權威；data-plane availability 本地可答
+
+> **T6 done（2026-05-18）** — 見 `apply-notes.md` §T6。`types.ts` 新增 `ShadowMetadata`（精確 12 欄位）+ `IfcReadyIntakeJob.artifact_manifest_ref`；`externalIfcReadyStore` 加 `toShadowMetadata`（投影最小欄位集，callback_status/last_callback_attempt_at 來自連結 outbox）、`recordConversionOutcome` 接 `artifact_manifest_ref`（external_model_version_id binding 已在既有欄位）；`app.ts` 新增 `GET /api/external/ifc-ready/:jobId/shadow`（回 shadow_metadata + data_plane_availability + control_plane_authority 標註 `owner=company-cloud-bim-control`/`not_mirrored=true`，僅以 external_model_version_id 參照）。測試 `tests/shadow-metadata.test.ts`：shadow 僅 12 欄位且無 control-plane 權威鍵（不 mirror MySQL）、control-plane 不重宣告、data-plane 本地可答、callback 與 conversion 分離、404。`npm run verify` **綠，125 tests pass**（既有 120 無 regression）。GitNexus impact LOW、`detect_changes` risk low。
 
 ## 8. T7 Local web view integration
 

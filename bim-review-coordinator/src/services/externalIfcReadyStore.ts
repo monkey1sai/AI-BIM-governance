@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { ExternalIfcReadyEvent, IfcReadyIntakeJob } from "../types.js";
+import type { ExternalIfcReadyEvent, IfcReadyIntakeJob, ShadowMetadata } from "../types.js";
 
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.3）。
@@ -101,13 +101,42 @@ export class ExternalIfcReadyStore {
     jobId: string,
     conversionStatus: "ready" | "failed",
     callbackOutboxId: string,
+    artifactManifestRef?: string | null,
   ): IfcReadyIntakeJob | undefined {
     const job = this.jobsById.get(jobId);
     if (!job) return undefined;
     job.conversion_status = conversionStatus;
     job.callback_outbox_id = callbackOutboxId;
+    if (artifactManifestRef !== undefined) {
+      job.artifact_manifest_ref = artifactManifestRef;
+    }
     job.updated_at = new Date().toISOString();
     return job;
+  }
+
+  /**
+   * T6 §7.1：投影為最小 shadow metadata 欄位集（**不 mirror 公司 MySQL**）。
+   * callback_status / last_callback_attempt_at 來自連結的 outbox entry（傳入），
+   * control-plane 權威欄位（user/RBAC/license/version 歷史）一律不納入。
+   */
+  toShadowMetadata(
+    job: IfcReadyIntakeJob,
+    callback?: { status: string; lastAttemptAt: string | null },
+  ): ShadowMetadata {
+    return {
+      tenant_id: job.tenant_id,
+      project_id: job.project_id,
+      external_model_version_id: job.external_model_version_id,
+      external_conversion_task_id: job.external_conversion_task_id ?? null,
+      correlation_id: job.correlation_id,
+      source_ifc_ref: job.source_ifc_ref,
+      source_ifc_etag: job.source_ifc_etag,
+      conversion_job_id: job.conversion_job_id,
+      artifact_manifest_ref: job.artifact_manifest_ref ?? null,
+      callback_url: job.callback_url ?? null,
+      callback_status: callback?.status ?? "not_enqueued",
+      last_callback_attempt_at: callback?.lastAttemptAt ?? null,
+    };
   }
 
   get(jobId: string): IfcReadyIntakeJob | undefined {

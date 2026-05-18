@@ -85,3 +85,10 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 - `config`：`cloudCallbackBaseUrl`（default 空＝OQ1 pending、無 real endpoint）、`callbackOutboxMaxAttempts`（default 5）。
 - **6.4 / OQ1**：交付＝OQ1-pending 緩解（凍結契約 + outbox 行為），**非真實公司雲端對接**。target 來源優先 ifc-ready `callback_url`（凍結契約 placeholder），否則 `cloudCallbackBaseUrl`；皆無/不可達 → 保留重試→`dead_letter`，real endpoint 標 pending OQ1。
 - 契約測試 `tests/cloud-callback-outbox.test.ts`（讀 `tests/contracts/conversion_result_callback.json`）：5 cases 全過。`npm run verify` 綠，**120 tests pass**（既有 115 無 regression）。GitNexus impact LOW、`detect_changes` risk low。
+
+## T6 — Local artifact shadow metadata（done，2026-05-18）
+
+- `types.ts`：`ShadowMetadata`（精確 12 欄位＝ tenant/project/external_model_version_id/external_conversion_task_id/correlation_id/source_ifc_ref/source_ifc_etag/conversion_job_id/artifact_manifest_ref/callback_url/callback_status/last_callback_attempt_at）；`IfcReadyIntakeJob` 加 `artifact_manifest_ref`。
+- `externalIfcReadyStore`：`toShadowMetadata(job, callback?)` 投影最小欄位集（callback_status/last_callback_attempt_at 來自連結的 outbox entry，**不納入** user/RBAC/license/version 歷史等 control-plane 權威欄位）；`recordConversionOutcome` 接 `artifact_manifest_ref`（`external_model_version_id` binding 已在 intake 既有欄位）。
+- `app.ts`：`GET /api/external/ifc-ready/:jobId/shadow` → `{ shadow_metadata, data_plane_availability, control_plane_authority }`。data-plane（local conversion status / source_ifc / manifest 可用性）本地可答；control-plane 標 `owner=company-cloud-bim-control`、`not_mirrored=true`、`referenced_by=external_model_version_id`（不重新宣告權威、不 mirror MySQL）。
+- 測試 `tests/shadow-metadata.test.ts`：shadow 鍵集恰為 12（無 control-plane 禁用鍵）、control-plane 不重宣告、data-plane 本地可答、callback 與 conversion 分離、未知 jobId→404。`npm run verify` **綠，125 tests pass**（既有 120 無 regression）。GitNexus impact LOW、`detect_changes` risk low。

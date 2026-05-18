@@ -478,6 +478,42 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     response.json(job);
   });
 
+  // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
+  // 不 mirror 公司 MySQL；control-plane 權威（user/RBAC/license/version 歷史）
+  // 不在此重新宣告，僅以 external_model_version_id 參照公司雲端。
+  app.get("/api/external/ifc-ready/:jobId/shadow", (request, response) => {
+    const job = externalIfcReadyStore.get(request.params.jobId);
+    if (!job) {
+      response.status(404).json({ detail: "IFC-ready job not found." });
+      return;
+    }
+    let callback: { status: string; lastAttemptAt: string | null } | undefined;
+    if (job.callback_outbox_id) {
+      const entry = callbackOutbox.get(job.callback_outbox_id);
+      if (entry) {
+        const lastEvidence = entry.evidence[entry.evidence.length - 1];
+        callback = { status: entry.status, lastAttemptAt: lastEvidence ? lastEvidence.at : null };
+      }
+    }
+    const shadow = externalIfcReadyStore.toShadowMetadata(job, callback);
+    response.json({
+      shadow_metadata: shadow,
+      // 本 repo（data-plane）可在本地回答的可用性，不需公司雲端
+      data_plane_availability: {
+        local_conversion_status: job.conversion_status,
+        conversion_authority: job.conversion_authority,
+        source_ifc_available: Boolean(job.source_ifc_ref),
+        artifact_manifest_available: Boolean(job.artifact_manifest_ref),
+      },
+      // control-plane 權威歸屬說明：本地僅參照，不宣告權威
+      control_plane_authority: {
+        owner: "company-cloud-bim-control",
+        referenced_by: "external_model_version_id",
+        not_mirrored: true,
+      },
+    });
+  });
+
   // B-scheme T5：本地轉檔結果 → 組 metadata-only 雲端 callback 並入 outbox。
   // 內部端點（coordinator 自身輪詢/result loop 餵入）。callback 投遞狀態與
   // conversion 成功分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。
@@ -540,6 +576,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         job.ifc_ready_job_id,
         report.status,
         entry.outbox_id,
+        report.artifacts?.manifest_ref ?? null,
       );
       // conversion 在本地的成功/失敗，與 callback 投遞狀態（outbox）分離回報。
       response.status(202).json({ ifc_ready_job: updatedJob, callback: entry });

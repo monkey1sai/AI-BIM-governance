@@ -176,8 +176,35 @@ export interface IfcReadyIntakeJob {
   // T5：雲端 callback outbox 連結。callback 投遞狀態與 conversion 成功分離，
   // 故為獨立欄位（outbox 各自追蹤 delivered/dead_letter）。
   callback_outbox_id?: string | null;
+  // T6：data-plane shadow——本地 artifact manifest 參照（external_model_version_id
+  // binding 已在上方欄位；不 mirror 公司 MySQL）。
+  artifact_manifest_ref?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * B-scheme（local-coordinator-ifc-ready-intake-boundary T6 §7.1）。
+ *
+ * 客戶落地端最小 shadow metadata 欄位集——僅 idempotency / 轉檔 / web view /
+ * callback retry 所需索引。**不 mirror 公司雲端 MySQL**；control-plane 權威
+ * （tenant/project/user/RBAC/license/model version/版本歷史/高階 artifact
+ * index）仍屬公司雲端 `bim-control`，本地僅以 `external_model_version_id`
+ * 參照、不重新宣告權威。
+ */
+export interface ShadowMetadata {
+  tenant_id: string;
+  project_id: string;
+  external_model_version_id: string;
+  external_conversion_task_id: string | null;
+  correlation_id: string;
+  source_ifc_ref: string;
+  source_ifc_etag: string;
+  conversion_job_id: string | null;
+  artifact_manifest_ref: string | null;
+  callback_url: string | null;
+  callback_status: string;
+  last_callback_attempt_at: string | null;
 }
 
 export interface StreamConfigResponse {
