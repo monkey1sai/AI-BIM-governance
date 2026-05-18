@@ -162,6 +162,8 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 ```
 
 > **Phase B 草稿（2026-05-18：gate 已清除，可升格）**：完整草稿見 [`docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`](phase-b-external-platform-webhook-intake-DRAFT-2026-05.md)。`NoSuccessorWhilePredecessorOpen` gate 已解除（predecessor PR #59 merged + change archived `2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp`）。下一步：依草稿 §9 checklist，從 synced main 重跑 `change-id-resolve`（確認 `blockers=[]`）→ `opsx-worktree-guard`/provision → `openspec-propose` 升格為 change-id `external-platform-webhook-intake-boundary`（explore 階段先收斂草稿 §8 open questions，特別 Q1 caller 身分、Q3 auth）。
+>
+> **2026-05-18 更新（Plan B v2，依 `planB.txt` 修訂）**：Plan B 草稿已整份重寫，取代「降級保留 offline fake」方向：(1) `_worker`/`_bim-control` **自 repo 刪除**（非降級），測試改 `tests/fakes` + contract fixtures；(2) 對外 intake 收斂於 **`bim-review-coordinator`**（`POST /api/external/ifc-ready`），`bim-streaming-server` 僅 internal conversion engine；(3) caller = 客戶落地端 IFC Worker（落地端內網，非公司測試機直連）；(4) 新增**雲端 callback outbox**（metadata-only，禁傳大檔）；(5) Q1–Q6 已收斂；(6) 建議 change-id 改 **`local-coordinator-ifc-ready-intake-boundary`**（舊名 `external-platform-webhook-intake-boundary` 為別名）。完整見同檔草稿。SoT / spec / §10 閉環 rewrite 屬 Phase B 的 T1/T9（OpenSpec change apply 時做，現在不做）。
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
 

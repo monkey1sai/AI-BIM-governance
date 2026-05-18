@@ -1,112 +1,207 @@
-# Phase B 規劃草稿：外部既有平台 webhook intake + 內部 mock 退役
+# Phase B 規劃草稿 v2：客戶落地端 coordinator IFC-ready intake + 雲端 callback + mock 刪除
 
-> **文件性質**：planning / pre-OpenSpec **DRAFT**（不是 OpenSpec change，不在 `openspec/changes/`，不開 worktree/PR，不動產品程式碼）。
-> **存在理由**：`NoSuccessorWhilePredecessorOpen` gate 目前擋住「升格為正式 OpenSpec change」——在途 change `introduce-ai-bim-runtime-manager-docker-kit-mvp`（PR #59）尚未 merge/archive。本草稿先把 Phase B 想清楚、備齊，gate 清掉後可一鍵 `openspec-propose` 升格。
-> **權威來源**：邊界決策以 `AGENTS.md §1.A`（commit `0df76d9`）為準；roadmap 對應 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md §1.1A / §1.1B`；PDF `BIM模型管理平台 系統架構_260514.pdf`（雲地分離）。
+> **文件性質**：planning / pre-OpenSpec **DRAFT**（不是 OpenSpec change，不在 `openspec/changes/`，不開 worktree/PR，不動產品程式碼）。檔名沿用歷史（roadmap §1.1B 連結指向本檔）；內容已依 `C:\Users\IOT\Documents\planB.txt`（2026-05-18 修訂建議）整份重寫，取代 v1「外部 webhook intake + mock 降級保留」的方向。
+> **gate 狀態**：`NoSuccessorWhilePredecessorOpen` **已清除**——predecessor `introduce-ai-bim-runtime-manager-docker-kit-mvp` 之 implementation PR #59（`55a9703`）+ archive PR #61（`5489328`）皆 MERGED；本 Plan B 可升格為正式 OpenSpec change。
+> **建議升格 change-id**：`local-coordinator-ifc-ready-intake-boundary`（歷史別名：`external-platform-webhook-intake-boundary`，仍可沿用但語意較不準）。
+> **建議 proposal title**：`Local Coordinator IFC-ready Intake + Cloud Callback + Mock Retirement`。
+> **權威來源**：邊界決策 SoT = `AGENTS.md §1.A`；roadmap 對應 §1.1A/§1.1B；PDF `BIM模型管理平台 系統架構_260514.pdf`（雲地分離）；本次修訂輸入 = `planB.txt`（Q1–Q6 收斂 + 補充資料）。
 > **回覆語言**：繁體中文；API 路徑 / schema 欄位 / status enum / 外部產品名稱保留原文。
-> **建議升格 change-id**：`external-platform-webhook-intake-boundary`（候選別名：`retire-internal-mocks-external-webhook-intake`）。
 
 ---
 
-## 0. 升格前置（gate 與排序）
+## 0. 升格前置（gate 已清除）
 
 ```txt
-擋路 gate：NoSuccessorWhilePredecessorOpen
-predecessor：introduce-ai-bim-runtime-manager-docker-kit-mvp / PR #59 = OPEN（未 merge）
-解除條件：PR #59 implementation merge + 對應 archive PR merge
-升格步驟（gate 清除後）：
-  1. git fetch origin --prune；確認本地 main == origin/main（吸收 PR #59 merge）
-  2. 重新跑 change-id-resolve（確認 blockers=[]）
-  3. opsx-worktree-guard → opsx-worktree-provision 開 codex/openspec/external-platform-webhook-intake-boundary
-  4. 用本草稿內容跑 openspec-propose（§4/§5/§6 直接對應 proposal/design/tasks/spec delta）
-  5. apply-and-verify 分批落地（§6 任務切片）
+gate：NoSuccessorWhilePredecessorOpen → 已清除
+  predecessor introduce-ai-bim-runtime-manager-docker-kit-mvp
+    implementation PR #59  MERGED (55a9703)
+    archive       PR #61   MERGED (5489328) → openspec/specs/ 已含 runtime-manager-docker-kit-mvp（19 specs）
+升格步驟：
+  1. 從 synced main 重跑 change-id-resolve（確認 blockers=[]）
+  2. opsx-worktree-guard → opsx-worktree-provision 開
+     codex/openspec/local-coordinator-ifc-ready-intake-boundary
+  3. 用本草稿 §4/§5/§6 跑 openspec-propose（先 explore 收斂 §8 剩餘 open questions）
+  4. apply-and-verify 依 T0…T9 分批落地
 ```
 
-**為何現在不直接建**：PR #59 仍會改 `_worker/`、`openspec/specs/worker-artifact-pipeline/spec.md`、`compose.runtime-manager.yml`、scripts。Phase B 重度改同一批檔；平行開 change = 大量 merge 衝突（使用者已指定此為最高關注風險）。必須 rebase-on-clean-main。
+---
+
+## 1. Why / 新主軸（control-plane vs data-plane）
+
+PDF 雲地分離：公司雲端負責 Web 門戶 / MySQL / EZPLUS SSO / 版本與權限（輕量 JSON metadata）；客戶落地端負責 MinIO / IFC Worker + Revit / 模型檔案儲存與 IFC 轉檔（重量資料 `.rvt`/`.ifc`/3D 幾何，流量由客戶端承擔，每家客戶獨立落地主機，公司雲端不存客戶模型原始檔）。
+
+**Plan B v2 主軸（取代 v1 的「mock 降級保留」）**：
+
+```txt
+公司雲端 bim-control
+  = 外部 control-plane（非本 repo）
+  = SSO / RBAC / project / model version / conversion task / callback 接收 API
+
+客戶落地端 IFC Worker + Revit
+  = 外部既有 IFC 產出者（非本 repo）
+  = 產出 .ifc 後呼叫本 repo
+
+本 repo（客戶落地端 data-plane runtime）
+  = coordinator external intake + streaming IFC→USDC + OpenUSD/USDC runtime
+    + local web view + callback outbox
+```
+
+一句話：**本 repo 不再模擬公司雲端、也不再模擬 IFC Worker；只做客戶落地端該做的 OpenUSD / USDC runtime 與可視化服務。** 大模型與 3D 資料本就不該繞回公司雲端，而應在客戶落地端被轉換、快取、streaming、view —— 這正是本 repo 採用 Omniverse / OpenUSD 的核心理由之一。
 
 ---
 
-## 1. Why（背景與動機）
-
-PDF `BIM模型管理平台 系統架構_260514.pdf` 是**雲地分離既有平台**，已部署於公司測試機/正式機（`ppms 192.168.20.238` / `normal 192.168.20.237`），其 pipeline 終點是「客戶落地端 IFC Worker → 產出 .ifc」。
-
-`AGENTS.md §1.A` 決策：
-- PDF 平台（公司雲端 Web門戶/MySQL/SSO + 客戶落地端 IFC Worker+Revit）= **外部既有系統，非本 repo 開發範圍**。
-- `_bim-control` / `_worker` 自核心開發 repo **降級為「外部既有平台的本地整合 fake」**，本 repo 不再為其新增產品功能。
-- 本 repo 對外入口 = **可被外部呼叫的 webhook intake**，收到「.ifc 已就緒」通知後觸發**既有已實作**的 IFC→USDC（`bim-streaming-server`）。
-
-目前程式碼仍是「內部 `_bim-control` → `_worker` → `bim-streaming-server`」三段內部 flow（`AGENTS.md §10` 閉環硬綁這兩個 mock）。Phase B 把入口邊界從「內部 mock 串接」改為「外部既有平台 webhook 驅動」，並把 mock 收斂為**可選 offline 開發用 fake**。
-
----
-
-## 2. Scope（範圍）
+## 2. Scope / Non-goals
 
 ### In scope
 
 ```txt
-- 在 bim-streaming-server 形式化「外部可呼叫的 IFC-ready webhook intake」契約
-  （auth / idempotency / network boundary / payload schema），觸發既有 IFC→USDC。
-- 把 _worker / _bim-control 由「核心必跑服務」改為「可選 offline fake profile」
-  （明確 flag/profile 開關；預設 readiness 路徑不依賴它們）。
-- 改寫 AGENTS.md §2/§3/§4/§5/§10/§11 對 _worker / _bim-control 的核心定位與閉環；
-  同步 CLAUDE.md 鏡像、roadmap（§1.6）。
-- 收斂 ~14 個 .ps1（start-all / stop-all / *health* / smoke-* / verify-all 等）：
-  _worker / _bim-control 啟動移到顯式 -OfflineFake 開關之後，預設不需它們。
-- OpenSpec spec delta（§5）：MODIFIED 既有 + ADDED 一個 external intake 邊界 spec。
+- coordinator 新增對外 POST /api/external/ifc-ready（auth / payload / idempotency /
+  local job state / external_model_version_id binding / 呼叫 streaming internal API /
+  收 conversion result / callback 雲端 / local web view 查詢入口）。
+- streaming-server 收斂為「internal conversion engine」：只收 internal conversion
+  request，輸出 USDC / element_mapping / manifest，不擁有對外契約。
+- 雲端 callback：conversion_result_ready / conversion_failed，只傳輕量 metadata，
+  必備 callback_outbox + retry + dead-letter + evidence log。
+- 兩層 auth：User auth（web view，未來 EZPLUS SSO）、Service auth（IFC Worker→
+  coordinator，machine-to-machine），以可替換 AuthProvider/AuthModule 介面實作。
+- local artifact shadow metadata（最小本地索引，非 mirror 公司 MySQL）。
+- 刪除 _worker / _bim-control（見 §3 Q4），測試改 tests/fakes + contract fixtures。
+- T0：補 archive 遺留缺口 Validate runtime image launches produced Linux Kit launcher。
 ```
 
 ### Out of scope（non-goals）
 
 ```txt
-- 不重寫 / 不重新驗證 bim-streaming-server 既有 IFC→USDC 轉檔邏輯
-  （streaming-ifc-usdc-conversion-authority 已實作，僅換觸發來源）。
-- 不開發 PDF 平台本身（Revit plugin / Nuxt 門戶 / MySQL / EZPLUS SSO 全屬外部）。
-- 不物理刪除 _worker / _bim-control 目錄（Karpathy：先 reclassify + gate，
-  relocate 為可選 follow-up；保留可 git revert）。
-- 不在 Phase B 內處理 GPU 採購 / 多 Kit 並行（既有 P0-hold，分開）。
-- 不碰 collaboration / annotation / review metadata 既有資料權威語意。
+- 不重寫 / 不重新驗證 streaming 既有 IFC→USDC 轉檔核心（沿用，只改觸發來源/邊界）。
+- 不開發 PDF 平台本身（Nuxt 門戶 / MySQL / EZPLUS SSO / Revit plugin 全屬外部）。
+- 不把 .usdc / 3D 大檔 callback 回公司雲端（PDF 鐵律：大檔只在客戶側流動）。
+- 不在本 change 內處理 GPU 採購 / 多 Kit 並行（既有 P0-hold，分開）。
+- 不保留 _worker / _bim-control 為 offline_fake runtime profile（與 v1 不同）。
 ```
 
 ---
 
-## 3. Design（設計）
+## 3. Design（Q1–Q6 收斂結論）
 
-### 3.1 Before / After
+### 3.1 新架構主流程
 
 ```txt
-Before（內部 mock 串接，現況）：
-  _bim-control(:8001 fake) --rvt_uploaded--> _worker(:8005 fake/blocked)
-  _worker --ifc_ready--> bim-streaming-server(:49100) --IFC→USDC--> model.usdc
-  bim-streaming-server --conversion_result_ready--> _bim-control
-
-After（外部既有平台驅動，目標）：
-  [外部] 客戶落地端 IFC Worker（PDF 平台，非本 repo）產出 .ifc
-       │  ifc_ready webhook（intra-LAN，落地端內網）
-       ▼
-  [本 repo] bim-streaming-server webhook intake
-       - 驗證 caller（shared secret / IP allowlist，落地端內網邊界）
-       - idempotency key 去重
-       - payload：{ ifc_url|ifc_ref, model_version_id, correlation_id, ... }
-       │ 觸發既有 conversion authority（程式碼已存在）
-       ▼
-  IFC→USDC → model.usdc + element_mapping → Kit streaming → BIM 治理
-       （coordinator / web-viewer-sample 不變）
-
-  [離線開發] _worker / _bim-control = 可選 offline fake，模擬外部平台；
-       behind `-OfflineFake` / profile flag；不在預設 readiness、不再開發新功能。
+[公司雲端 bim-control]  Nuxt / MySQL / EZPLUS SSO / RBAC / model version / conversion task
+        ▲
+        │ callback: conversion_result_ready / conversion_failed（輕量 metadata only）
+        │
+[客戶落地端 IFC Worker + Revit]  產出 .ifc
+        │  POST /api/external/ifc-ready（machine-to-machine，落地端內網）
+        ▼
+[本 repo: bim-review-coordinator]  ← 客戶落地端 local control-plane / 邊界服務
+   external intake · AuthModule · idempotency · local job state
+   · external_model_version_id binding · callback outbox · local web view session
+        │  internal conversion request
+        ▼
+[本 repo: bim-streaming-server]  internal conversion engine（IFC→USDC / element_mapping / manifest）
+        ▼
+[本 repo: OpenUSD / Omniverse runtime]  Linux Kit launcher · USDC streaming · local web view
+        ▼
+[Browser]  使用者透過公司 SSO / token / local viewer access 開啟模型
 ```
 
-### 3.2 Webhook intake 落點
+### 3.2 Q1（收斂）：webhook caller = 客戶落地端 IFC Worker
 
-- **建議**：放在 `bim-streaming-server`。理由：它已是 `streaming-ifc-usdc-conversion-authority` + `conversion-webhook-lifecycle` 的擁有者，既有 `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/.../conversion_authority.py` 已處理 webhook → IFC→USDC。Phase B 主要是「形式化外部 caller 契約」而非新建轉檔。
-- 替代：`bim-review-coordinator` 放一個 thin intake 再轉呼 streaming（多一跳、多一個失敗點，不建議；列為 §8 open question）。
+```txt
+webhook caller     = 客戶落地端 IFC Worker（與本 repo runtime 同一落地端內網）
+network boundary    = 落地端內網（intra-LAN），非公司測試機直連
+公司測試機 192.168.20.238 / 正式機 192.168.20.237 = 公司雲端側 Docker 主機
+  （Nginx + Nuxt + MySQL），只透過 API 管理任務/版本/權限/接收 callback，
+  不直接扮演 IFC-ready caller
+```
+→ Plan B 移除 v1「公司測試機直接呼叫 webhook」假設。
 
-### 3.3 與既有 spec 的關係
+### 3.3 Q2（收斂）：intake 放 coordinator，不是 streaming-server
 
-`conversion-webhook-lifecycle` 已定義 `rvt_uploaded` / `ifc_ready` / `conversion_result_ready` / `conversion_failed` + correlation / idempotency。Phase B 不重造輪子，只是：
-- **來源**：`ifc_ready` 由「內部 `_worker`」改為「外部既有平台 IFC Worker」。
-- **新增**：external caller 的 auth / network boundary / payload 契約。
-- **readiness**：把 `_worker` / `_bim-control` 從 `demo-runtime-readiness-smoke` 核心 tier 移出，新增 `external_webhook_intake` 與 `offline_fake_mode` tier。
+```txt
+對外契約屬 coordinator；streaming-server 只保留 internal conversion API（非對外）。
+IFC Worker → POST /api/external/ifc-ready → bim-review-coordinator
+  - 驗證 caller / payload / idempotency
+  - 建立 local conversion job、綁定 external_model_version_id
+  - 呼叫 bim-streaming-server internal conversion API
+  - 收 conversion result → callback 公司雲端 → 提供 local web view 查詢入口
+bim-streaming-server
+  - 只負責 IFC → USDC / element_mapping / conversion artifact
+```
+理由：coordinator 要負責產品邊界（外部身份、model version 關聯、web view session、callback/outbox、conversion 狀態機）；streaming-server 不應變成 god service（web view session 歸屬不清、metadata 散落、outbox 塞進轉檔服務、auth/SSO/RBAC 污染轉檔引擎、邊界不乾淨）。技術上可保留 streaming internal endpoint，但**對外契約屬 coordinator**。
+
+### 3.4 Q3（收斂）：兩層 auth + 可替換 AuthProvider
+
+```txt
+A. User auth（browser / local web view）
+   - 未來接 EZPLUS SSO；驗證 access_token / RBAC / project permission
+B. Service auth（IFC Worker → coordinator webhook，machine-to-machine）
+   - 不能只靠使用者 SSO；至少需 service credential
+   - 現階段：intranet-dev provider = IP allowlist + X-Webhook-Secret/HMAC signature
+     + correlation_id + idempotency_key + tenant_id/project_id/external_model_version_id
+   - 未來：sso-token-introspection / machine-token / mTLS provider（介面不重做）
+實作：AuthProvider / AuthModule 介面，先放 intranet-dev provider；不做死 SSO、
+也不只做 IP allowlist。
+```
+
+### 3.5 Q4（收斂）：`_worker` / `_bim-control` 刪除（非降級）
+
+```txt
+從本 repo 刪除；不再作為 runtime profile / readiness tier；
+不再出現在 start-all / health / smoke / compose 的預設或可選服務。
+測試所需的「假外部平台」改為 test fixture / contract test / temp utility：
+  tests/fakes/external_ifc_worker_client
+  tests/fakes/cloud_bim_control_api
+  tests/contracts/ifc_ready_payload.json
+  tests/contracts/conversion_result_callback.json
+  temp/ 手動測試工具（不進正式 runtime）
+```
+→ v1 的 R4「external-stub + offline_fake_mode 雙 tier」改為：**用 external contract test stub 保留驗證能力；不保留 offline_fake runtime profile。**
+
+### 3.6 Q5（收斂）：conversion_result_ready 必須 callback 回公司雲端（metadata-only + outbox）
+
+轉檔完成/失敗後本 repo **必須** callback 公司雲端 bim-control；**只傳輕量 metadata，不傳 `.usdc` 本體**（PDF 鐵律：大檔只在客戶辦公室 ↔ 客戶落地主機之間流動，不經公司伺服器）。
+
+```json
+// conversion_result_ready
+{
+  "event": "conversion_result_ready",
+  "tenant_id": "xxx",
+  "project_id": "xxx",
+  "external_model_version_id": "xxx",
+  "conversion_job_id": "xxx",
+  "correlation_id": "xxx",
+  "status": "ready",
+  "source_ifc": { "ref": "minio://bucket/path/model.ifc", "etag": "..." },
+  "artifacts": {
+    "usdc_ref": "minio://bucket/path/model.usdc",
+    "element_mapping_ref": "minio://bucket/path/element_mapping.json",
+    "manifest_ref": "minio://bucket/path/manifest.json"
+  },
+  "artifact_summary": { "format": "USDC", "converter": "bim-streaming-server", "runtime": "openusd", "created_at": "..." }
+}
+```
+```json
+// conversion_failed
+{ "event": "conversion_failed", "status": "failed", "reason": "...", "retryable": true, "correlation_id": "..." }
+```
+callback **必備**（非 optional）：`callback_outbox` + retry policy + dead-letter state + callback evidence log（客戶落地端可能暫時連不到公司雲端 API，不可「call 一次失敗就算了」）。
+
+### 3.7 Q6（重新定義）：誰是什麼 metadata 的權威
+
+| 權威方 | 擁有的 metadata |
+|---|---|
+| **公司雲端 bim-control（control-plane）** | tenant/customer、project、user、role/permission/RBAC、license、model version/commit record、IFC conversion task request、版本歷史、高階 artifact index、callback 接收狀態 |
+| **本 repo（客戶落地端 data-plane）** | local conversion job state、source IFC local availability、USDC/OpenUSD artifact local availability、element_mapping local availability、artifact manifest、converter version、runtime image digest、Kit launcher validation evidence、local web view session/artifact resolution、callback outbox retry state |
+
+本 repo **不 mirror 公司 MySQL**，只保存讓 local runtime 正常運作的最小 shadow metadata：
+
+```txt
+tenant_id / project_id / external_model_version_id / external_conversion_task_id /
+correlation_id / source_ifc_ref / source_ifc_etag(checksum) / conversion_job_id /
+artifact_manifest_ref / callback_url / callback_status / last_callback_attempt_at
+```
+正式答案：外部平台仍是 model_version 權威；本 repo 不 mirror 完整 metadata；本 repo 保存 local runtime 必需的 artifact shadow metadata；USDC/OpenUSD artifact 的 local availability 與 manifest 由本 repo 負責。
 
 ---
 
@@ -114,141 +209,150 @@ After（外部既有平台驅動，目標）：
 
 ```txt
 ## Why
-依 AGENTS.md §1.A：PDF 平台為外部既有系統；本 repo 入口改為外部 webhook
-intake → 既有 IFC→USDC。內部 _worker / _bim-control 降級為 offline fake。
+依 AGENTS.md §1.A + planB.txt：公司雲端 = 外部 control-plane；客戶落地端
+IFC Worker = 外部 caller；本 repo = 客戶落地端 data-plane runtime。對外 intake
+收斂於 coordinator，轉檔完成 callback 雲端（metadata-only + outbox），
+_worker/_bim-control 自 repo 刪除。
 
 ## What Changes
-- ADDED：external-platform-webhook-intake-boundary（外部 caller 契約 + mock 降級邊界）
-- MODIFIED：conversion-webhook-lifecycle（ifc_ready 來源 = 外部平台 + auth/network）
-- MODIFIED：streaming-ifc-usdc-conversion-authority（觸發來源澄清，邏輯不變）
-- MODIFIED：worker-rvt-ifc-bridge（RVT→IFC 屬外部；內部 _worker = 可選 offline fake）
-- MODIFIED：bim-control-revit-intake-facade（RVT intake/metadata 屬外部平台；_bim-control = 可選 offline fake）
-- MODIFIED：worker-artifact-pipeline（收斂為 offline-fake-only，不在核心 readiness）
-- MODIFIED：demo-runtime-readiness-smoke（新增 external_webhook_intake / offline_fake_mode tier；核心不依賴內部 mock）
-- MODIFIED：runtime-verification-evidence / runtime-verification-task-status（證據語意對齊）
-- MODIFIED：documentation-source-of-truth（AGENTS/CLAUDE/roadmap 分工對齊 §1.A）
+- ADDED：local-coordinator-ifc-ready-intake-boundary、external-cloud-callback-lifecycle、
+  local-artifact-shadow-metadata、runtime-image-linux-kit-launcher-readiness
+- MODIFIED：conversion-webhook-lifecycle、streaming-ifc-usdc-conversion-authority、
+  demo-runtime-readiness-smoke、runtime-verification-evidence、documentation-source-of-truth
+- REMOVED（as product capability / core runtime dependency）：worker-rvt-ifc-bridge、
+  bim-control-revit-intake-facade、worker-artifact-pipeline（僅允許 test fixture 模擬外部 API）
 
 ## Impact
-- Affected specs：見上（1 ADDED + 8 MODIFIED 草案，升格時依實作收斂）
-- Affected code：bim-streaming-server（intake 形式化）、~14 個 scripts、AGENTS.md/CLAUDE.md/roadmap
-- 不改：bim-streaming-server 既有 IFC→USDC 轉檔核心、coordinator / viewer 既有契約
+- code：bim-review-coordinator（external intake + auth + outbox + web view session）、
+  bim-streaming-server（internal conversion API 收斂）、刪 _worker/_bim-control、
+  compose/scripts/health/smoke、tests/fakes + contract fixtures
+- docs/SoT：AGENTS.md §1.A/§2-§11/§10 閉環、CLAUDE.md、roadmap、openspec/specs（T1/T9）
+- 不改：streaming 既有 IFC→USDC 轉檔核心邏輯
 ```
 
 ---
 
-## 5. Spec delta 草稿（升格時放 `openspec/changes/<id>/specs/`）
-
-> 以下為**草案語意**，非最終 OpenSpec 格式；升格時依 OpenSpec parser 標頭（`## ADDED Requirements` / `### Requirement:` / `#### Scenario:`）改寫，並依當時 `openspec/specs/` 現況收斂。
-
-### ADDED — `external-platform-webhook-intake-boundary`
+## 5. Spec delta 草稿（升格時放 `openspec/changes/<id>/specs/`；依 OpenSpec 標頭改寫）
 
 ```txt
-Requirement: 外部既有平台邊界
-  PDF 平台（公司雲端 + 客戶落地端 IFC Worker）為外部既有系統；本 repo 不開發、
-  不啟動、不健康檢查它。_worker / _bim-control 僅為「模擬外部平台」的可選 offline fake。
-  Scenario：預設 readiness 路徑不啟動 _worker / _bim-control 即可成立。
-  Scenario：-OfflineFake profile 下，_worker / _bim-control 才作為外部平台替身啟動。
+ADDED
+- local-coordinator-ifc-ready-intake-boundary
+  外部契約屬 coordinator；caller=客戶落地端 IFC Worker（intra-LAN）；
+  POST /api/external/ifc-ready；Service auth（AuthProvider）；idempotency；
+  local job state；external_model_version_id binding；呼叫 streaming internal API。
+- external-cloud-callback-lifecycle
+  conversion_result_ready / conversion_failed；metadata-only（禁傳大檔）；
+  callback_outbox + retry + dead-letter + evidence log。
+- local-artifact-shadow-metadata
+  最小本地 shadow 欄位集合；非 mirror；idempotency/轉檔/web view/retry 用途。
+- runtime-image-linux-kit-launcher-readiness
+  runtime image 能 launch produced Linux Kit launcher；evidence 規格；
+  GPU/Kit 阻塞 → deferred，不可標 passed。
 
-Requirement: 外部 IFC-ready webhook intake 契約
-  bim-streaming-server 提供可被外部呼叫的 webhook intake，收到 .ifc-ready 通知後
-  觸發既有 IFC→USDC。
-  Scenario：合法 caller（通過 auth + 在 network allowlist）送合法 payload
-    {ifc_url|ifc_ref, model_version_id, correlation_id} → 建立 conversion job。
-  Scenario：未授權 / 不在 allowlist 的 caller → 拒絕，不建立 job。
-  Scenario：相同 idempotency key 重送 → 不重複建立 job（沿用既有 idempotency）。
-  Scenario：payload 缺 ifc 參照 → 明確 4xx，不進轉檔。
+MODIFIED
+- conversion-webhook-lifecycle：ifc_ready 來源=客戶落地端 IFC Worker；
+  入口=coordinator（非 streaming）；新增 Service auth / outbox 語意。
+- streaming-ifc-usdc-conversion-authority：收斂為 internal conversion engine，
+  非對外入口；轉檔核心不變。
+- demo-runtime-readiness-smoke：核心不依賴 _worker/_bim-control；
+  改用 contract stub 呼叫 coordinator intake，驗 conversion+callback outbox+Kit launcher evidence。
+- runtime-verification-evidence：新增 Kit launcher / callback outbox evidence 分層。
+- documentation-source-of-truth：AGENTS/CLAUDE/roadmap 對齊 control-plane/data-plane。
+
+REMOVED（as product capability / core runtime dependency）
+- worker-rvt-ifc-bridge：RVT→IFC 屬外部 IFC Worker，非本 repo 產品能力。
+- bim-control-revit-intake-facade：RVT intake/metadata 屬外部公司雲端，非本 repo。
+- worker-artifact-pipeline：不再是核心 runtime 依賴；僅 test fixture 模擬外部 API。
 ```
+> 注意：active specs 內若仍有 worker / bim-control 能力描述，**不寫「降級」，寫 removed from product runtime，只允許 test fixture 模擬外部 API**。
 
-### MODIFIED 草案重點
+---
+
+## 6. Tasks 草稿（升格時放 tasks.md；分批、守 repo 邊界；順序依 planB §10）
 
 ```txt
-conversion-webhook-lifecycle：
-  - ifc_ready 來源由「內部 _worker」改為「外部既有平台 IFC Worker」。
-  - 新增 external caller 的 auth / network boundary 要求；
-    correlation / idempotency / conversion_result_ready / conversion_failed 語意保留。
+T0  Runtime image closure（P0，補 archive 遺留）
+    Validate runtime image launches produced Linux Kit launcher。
+    驗收：image build 成功；Linux Kit launcher artifact 產生；launcher 於 Linux
+    runtime image 內可執行；啟動後有可檢查 log；能載入 sample USDC 或至少完成
+    Kit runtime smoke；evidence＝image digest/launcher path/startup log/exit code/
+    USDC sample path；GPU/driver/Kit license 阻塞 → 標 deferred，不可標 passed。
+T1  OpenSpec boundary rewrite（change-id=local-coordinator-ifc-ready-intake-boundary）
+    定義 公司雲端=external control-plane、客戶落地端 IFC Worker=external caller、
+    本 repo=local runtime/data-plane。
+T2  Delete _worker / _bim-control
+    刪 runtime 服務；移除 compose/scripts/health/smoke 依賴；改 tests/fakes +
+    contract fixtures；移除 AGENTS/CLAUDE/roadmap 把它們當核心閉環的描述。
+T3  Coordinator external intake
+    POST /api/external/ifc-ready；payload schema；idempotency；AuthModule；
+    local job state；呼叫 streaming internal API。
+T4  Streaming server internal conversion API
+    保留 IFC→USDC conversion authority（internal-only）；輸出 USDC/element_mapping/manifest；
+    不做對外入口。
+T5  Callback to company cloud
+    conversion_result_ready / conversion_failed；callback outbox/retry/dead-letter；
+    只傳 metadata，不傳大檔。
+T6  Local artifact metadata model
+    local shadow metadata；artifact_manifest；external_model_version_id binding；
+    source_ifc_ref / usdc_ref / mapping_ref。
+T7  Local web view integration
+    coordinator 提供 viewer session / artifact resolution；使用者 SSO flow 預留；
+    現階段可替換 auth provider。
+T8  Readiness / smoke / evidence rewrite
+    default smoke 不依賴 _worker/_bim-control；新 smoke 用 contract stub 呼叫
+    coordinator intake；驗 conversion + callback outbox + Kit launcher evidence。
+T9  Documentation cleanup
+    AGENTS.md / CLAUDE.md / roadmap / OpenSpec specs 對齊（含 §10 閉環 rewrite）。
+```
+每批驗證：type check → lint → 該服務目錄 affected unit/contract tests → 必要時 smoke；Python tests 各自服務目錄跑。修改 function/class/method 前依 GitNexus 規範跑 impact analysis；HIGH/CRITICAL 先回報。
 
-streaming-ifc-usdc-conversion-authority：
-  - 觸發來源澄清為「external webhook intake」；轉檔 job/status/result 邏輯不變。
+---
 
-worker-rvt-ifc-bridge / bim-control-revit-intake-facade / worker-artifact-pipeline：
-  - 由核心能力改為「offline fake profile only」；非預設 readiness 依賴；
-    不再為其新增產品功能。
+## 7. 風險與緩解
 
-demo-runtime-readiness-smoke：
-  - 核心 tier 移除對內部 _worker / _bim-control 的硬依賴；
-  - 新增 tier：external_webhook_intake（外部 stub 觸發 → IFC→USDC）、
-    offline_fake_mode（-OfflineFake 下完整閉環仍可跑）。
+```txt
+R1 大改面（刪服務 + coordinator 升格邊界）：依 T0…T9 分批，每批最小驗證，
+   高 impact 先 GitNexus impact analysis。
+R2 §10 閉環現綁 mock：T2/T9 收斂；落地前本地 demo 仍可跑（過渡）。
+R3 callback 對象（公司雲端 bim-control API 契約）未定：屬外部平台團隊；
+   先以 contract fixture 凍結 payload，real endpoint 待外部提供 → §8 open。
+R4（取代 v1）：用 external contract test stub 保留驗證能力；
+   不保留 offline_fake runtime profile。
+R5 callback outbox/Kit launcher 是必要工作：不得當 optional；
+   GPU/Kit 阻塞 evidence 標 deferred，不可謊報 passed。
+R6 Service auth 過早做死：用 AuthProvider 介面，先 intranet-dev provider，
+   未來加 sso/machine-token/mTLS provider 不重做。
+R7 spec REMOVE 面大：升格 explore 時依當時 openspec/specs 現況逐一收斂；
+   高 impact MODIFIED/REMOVED 先 impact analysis。
 ```
 
 ---
 
-## 6. Tasks 草稿（升格時放 `openspec/changes/<id>/tasks.md`；分批、守 repo 邊界）
+## 8. Open questions（升格 explore 時收斂；Q1–Q6 已答）
 
 ```txt
-T1  spec：撰寫 ADDED external-platform-webhook-intake-boundary + 8 個 MODIFIED delta
-    （openspec validate --strict 綠）。純文件。
-T2  bim-streaming-server：形式化 external webhook intake（auth / IP allowlist /
-    idempotency / payload schema），復用既有 conversion_authority；單元/契約測試
-    （含 unauthorized / duplicate / missing-ifc）。最小改動，不改轉檔核心。
-T3  readiness：demo-runtime-readiness-smoke 重分層；核心路徑改用「external 觸發 stub」
-    取代內部 _worker/_bim-control；新增 offline_fake_mode tier。
-T4  scripts：~14 個 .ps1 把 _worker/_bim-control 啟動移到 -OfflineFake 開關後；
-    預設 start-all / health / smoke 不需內部 mock；offline profile 仍可完整跑。
-T5  治理文件：改寫 AGENTS.md §2/§3/§4/§5/§10/§11（閉環去 mock 化）；CLAUDE.md 鏡像；
-    roadmap §1.6 同步（Phase B 狀態、specs 清單、閉環圖）。
-T6  verification report：external 觸發路徑 evidence + offline fake profile evidence；
-    依 runtime-verification-evidence 分層；GPU/Kit 仍 deferred 不謊報 passed。
-T7（可選 follow-up，不阻塞）：物理 relocate _worker/_bim-control → _fakes/，
-    或保留原路徑只加文件標記（design 決定；預設不刪）。
-```
-
-每批驗證順序：type check → lint → 該服務目錄 affected unit/contract tests → 必要時 smoke；
-Python tests 在各自服務目錄跑；不跨服務污染 `app` import cache。
-
----
-
-## 7. 風險與衝突管理（使用者指定重點）
-
-```txt
-R1 與 PR #59 衝突：#59 改 _worker/ + worker-artifact-pipeline spec + scripts + compose。
-   緩解：gate 強制 #59 先 merge+archive；Phase B rebase-on-clean-main 才開分支。
-R2 閉環暫態不一致：AGENTS.md §1.A 已宣告新邊界，但 §10 閉環在 Phase B 落地前仍綁 mock。
-   緩解：§1.A 已標 forward-decision 且優先序最高；T5 收斂；落地前本地 demo 照舊可跑。
-R3 external caller 網路/auth 假設未定：caller 究竟是公司測試機 192.168.20.238 還是
-   客戶落地端 IFC Worker（intra-LAN）？影響 auth 模型。→ §8 open question，design 收斂。
-R4 readiness 退 mock 後可能掩蓋整合破口：用 external-stub + offline_fake_mode 雙 tier
-   並存，保留可重現整合驗證。
-R5 spec delta 面大（1 ADDED + 8 MODIFIED）：升格時依當時 openspec/specs/ 現況逐一收斂，
-   不一次大改；高 impact 的 MODIFIED 先做 impact analysis。
+已收斂：Q1 caller=客戶落地端 IFC Worker；Q2 intake=coordinator；
+        Q3 兩層 auth + AuthProvider；Q4 刪除 mock；Q5 雲端 callback+outbox；
+        Q6 control-plane/data-plane 權威切分 + 最小 shadow metadata。
+仍需外部平台團隊確認（不阻塞升格 propose，阻塞 T5 真實對接）：
+  OQ1 公司雲端 bim-control callback 接收 endpoint URL / auth（machine token? mTLS?）
+  OQ2 source_ifc / usdc artifact 的 ref scheme（minio:// bucket 命名、etag 來源）
+  OQ3 external_model_version_id / external_conversion_task_id 由誰產生、格式
+  OQ4 IFC Worker → coordinator 的 Service auth 憑證由公司平台發放的時程
+  OQ5 local web view 與公司 SSO 的銜接點（token introspection? redirect?）
 ```
 
 ---
 
-## 8. Open questions（升格 explore 時必須收斂）
+## 9. 升格 checklist（gate 已清除，可直接走）
 
 ```txt
-Q1 webhook caller 身分：公司測試機（192.168.20.238）直接呼叫，還是客戶落地端
-   IFC Worker（與本 repo runtime 同落地端內網）呼叫？PDF 顯示重量資料/轉檔都在
-   客戶落地端 → 推測 caller = 落地端 IFC Worker、intra-LAN。需使用者確認。
-Q2 intake 落點：bim-streaming-server（建議）vs coordinator thin intake。
-Q3 auth 模型：shared secret / mTLS / IP allowlist？（落地端內網 → 可能 allowlist 即可）
-Q4 _worker/_bim-control 最終處置：原地 reclassify（建議）vs 移到 _fakes/ vs 之後刪。
-Q5 conversion_result_ready callback 對象：外部平台是否要接回？還是只留本 repo 內部？
-Q6 model_version / artifact metadata：外部平台已是權威，本 repo 是否仍需本地鏡像？
-```
-
----
-
-## 9. 升格 checklist（gate 清除後照這個走）
-
-```txt
-[ ] PR #59 implementation merged
-[ ] PR #59 對應 archive PR merged（introduce-ai-bim-runtime-manager-docker-kit-mvp 已 archive）
+[x] PR #59 implementation merged（55a9703）
+[x] PR #61 archive merged（5489328）→ openspec/specs 19、gate 清除
 [ ] git fetch origin --prune；本地 main == origin/main
 [ ] change-id-resolve 重跑 → blockers=[]
-[ ] opsx-worktree-guard → provision codex/openspec/external-platform-webhook-intake-boundary
-[ ] openspec-propose：用 §4/§5/§6 產 proposal.md / design.md / tasks.md / specs/
-[ ] §8 open questions 在 explore 階段逐一收斂（特別 Q1 caller 身分、Q3 auth）
-[ ] apply-and-verify 依 T1–T6 分批；T7 視情況
-[ ] 完成後 §1.6 同步 roadmap + AGENTS.md/CLAUDE.md，過渡語意收斂為正式邊界
+[ ] opsx-worktree-guard → provision codex/openspec/local-coordinator-ifc-ready-intake-boundary
+[ ] openspec-propose：用 §4/§5/§6 產 proposal/design/tasks/specs（先 explore 收斂 §8 OQ1–OQ5）
+[ ] apply-and-verify 依 T0…T9 分批；T0 先行（runtime image closure）
+[ ] 完成後 §1.6 同步 roadmap + AGENTS/CLAUDE，把過渡語意收斂為正式邊界
 ```

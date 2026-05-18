@@ -157,7 +157,7 @@ _worker/
 4. 本 repo 範圍收斂為 webhook intake → IFC→USDC → Kit streaming → BIM 治理。
 ```
 
-落地與衝突管理：程式碼層退役 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本，屬產品實作，依 §0.1 走獨立 OpenSpec change + branch + PR。**[2026-05-18 更新]** predecessor `introduce-ai-bim-runtime-manager-docker-kit-mvp` 已 merged（PR #59）+ archived（`2026-05-18-…`）；`NoSuccessorWhilePredecessorOpen` gate 已清除，Phase B 可從 synced main 開 `codex/openspec/external-platform-webhook-intake-boundary` 升格實作。Phase B 落地前本地 demo 閉環照常可跑。
+落地與衝突管理：程式碼層退役 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本，屬產品實作，依 §0.1 走獨立 OpenSpec change + branch + PR。**[2026-05-18 更新]** predecessor `introduce-ai-bim-runtime-manager-docker-kit-mvp` 已 merged（PR #59）+ archived（`2026-05-18-…`）；`NoSuccessorWhilePredecessorOpen` gate 已清除，Phase B 可從 synced main 升格實作。Phase B 落地前本地 demo 閉環照常可跑。**[2026-05-18 修訂｜依 `planB.txt`]** Plan B 已細化（內容權威見 `AGENTS.md §1.A` 的 2026-05-18 修訂註記與 `docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`）：`_worker`/`_bim-control` 改為**自 repo 刪除**（非降級）；對外 intake 收斂於 `bim-review-coordinator`、`bim-streaming-server` 僅 internal conversion；新增雲端 callback outbox（metadata-only）；建議 change-id `local-coordinator-ifc-ready-intake-boundary`。SoT/spec/§10 閉環 rewrite 屬 Phase B T1/T9。
 
 ---
 

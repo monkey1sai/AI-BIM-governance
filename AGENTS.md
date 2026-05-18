@@ -226,6 +226,8 @@ _worker/
   不重寫既有 specs；本地 demo 閉環照常可跑、可 git revert。
 ```
 
+> **[2026-05-18 修訂｜依 `planB.txt`]** 本決策已細化（取代上方「降級為 fake / offline profile」字面）：(1) `_worker` / `_bim-control` **自 repo 刪除**（非降級保留），測試改 `tests/fakes` + contract fixtures；(2) 對外 intake 收斂於 **`bim-review-coordinator`**（`POST /api/external/ifc-ready`），`bim-streaming-server` 僅 internal conversion engine；(3) webhook caller = 客戶落地端 IFC Worker（落地端內網，非公司測試機直連）；(4) 新增**雲端 callback outbox**（metadata-only，禁傳 `.usdc` 大檔）；(5) 公司雲端=control-plane / 本 repo=客戶落地端 data-plane 權威切分；(6) 建議 change-id `local-coordinator-ifc-ready-intake-boundary`。完整方案見 `docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`。**上方 §1.A 決策塊與 §2–§11 / §10 閉環 / specs 的 rewrite 屬 Phase B 的 T1/T9，於 OpenSpec change apply 時執行，現在不做。**
+
 ---
 
 ## 2. 核心 repo 的定位總覽
