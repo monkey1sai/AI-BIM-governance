@@ -49,6 +49,8 @@ const defaultConfig: CoordinatorConfig = {
   externalIntakeAuthProvider: "intranet-dev",
   externalIntakeWebhookSecret: "dev-webhook-secret",
   externalIntakeIpAllowlist: ["127.0.0.1", "::1"],
+  cloudCallbackBaseUrl: "",
+  callbackOutboxMaxAttempts: 5,
 };
 
 const multiEndpointConfig: CoordinatorConfig = {

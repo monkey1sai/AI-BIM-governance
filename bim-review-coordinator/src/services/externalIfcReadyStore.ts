@@ -87,6 +87,29 @@ export class ExternalIfcReadyStore {
     return job;
   }
 
+  getByCorrelation(correlationId: string): IfcReadyIntakeJob | undefined {
+    const id = this.correlationIndex.get(correlationId);
+    return id ? this.jobsById.get(id) : undefined;
+  }
+
+  /**
+   * T5：記錄 conversion 結果 + 連結雲端 callback outbox。
+   * callback 投遞狀態與 conversion 成功**分離**——此處只更新 conversion_status
+   * 與 callback 連結；callback 是否 ack 由 outbox 各自追蹤，不回寫否定本地結果。
+   */
+  recordConversionOutcome(
+    jobId: string,
+    conversionStatus: "ready" | "failed",
+    callbackOutboxId: string,
+  ): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.conversion_status = conversionStatus;
+    job.callback_outbox_id = callbackOutboxId;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
   get(jobId: string): IfcReadyIntakeJob | undefined {
     return this.jobsById.get(jobId);
   }

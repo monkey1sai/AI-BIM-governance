@@ -173,6 +173,9 @@ export interface IfcReadyIntakeJob {
   conversion_status: string | null;
   conversion_authority: "bim-streaming-server" | null;
   dispatch_error?: string | null;
+  // T5：雲端 callback outbox 連結。callback 投遞狀態與 conversion 成功分離，
+  // 故為獨立欄位（outbox 各自追蹤 delivered/dead_letter）。
+  callback_outbox_id?: string | null;
   created_at: string;
   updated_at: string;
 }

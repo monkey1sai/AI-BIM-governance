@@ -76,3 +76,12 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 - 測試：`make_client` 與 `ifc_ready_payload` 移除 :8001/:8005 寫死（改 `edge-local://`、無 callback_url）；新增 2 契約測試（reject non-ifc_ready→400；coordinator internal request→job/status/result + callback skipped）。`pytest test_conversion_authority_api.py` **5 pass**（既有 3 無 regression，轉檔核心不變）。
 - GitNexus：`ConversionAuthoritySettings` upstream LOW、`create_conversion_job` 僅同檔 route 呼叫（`_worker` 版已刪）、`detect_changes` risk low。
 - 過渡：轉檔結果回拋公司雲端（metadata-only callback outbox / retry / dead-letter）屬 **T5**，由 coordinator 驅動。
+
+## T5 — Cloud callback outbox（done，2026-05-18；6.4 real endpoint pending OQ1）
+
+- `src/services/callbackOutbox.ts`：`CallbackOutbox`（in-memory）— `enqueue`（入列前 `assertMetadataOnly` 強制禁 `.usdc`/大型本體）、`attemptDelivery`/`deliverPending`（顯式驅動，無計時器）、retry 累加、耗盡→`dead_letter`（不靜默丟棄）、`evidence[]`（at/attempt/outcome/detail）。`assertMetadataOnly` 與 `tests/fakes/cloud_bim_control_api.py` 的 guard 同義（雙語一致）。
+- `app.ts`：`POST /api/internal/conversion-result`（依 `correlation_id` 找 ifc-ready job，組 `conversion_result_ready`/`conversion_failed` metadata-only payload，入 outbox，`recordConversionOutcome`）；`GET /api/internal/callback-outbox/:id`；`POST /api/internal/callback-outbox/deliver`（runtime loop / 測試決定性驅動）；`MetadataOnlyViolation`→422。
+- `externalIfcReadyStore`：`getByCorrelation` + `recordConversionOutcome`（conversion_status 與 callback 連結；**callback 投遞狀態與 conversion 成功分離**——conversion 本地 ready 即可查，不因 callback 未 ack 被否定）。
+- `config`：`cloudCallbackBaseUrl`（default 空＝OQ1 pending、無 real endpoint）、`callbackOutboxMaxAttempts`（default 5）。
+- **6.4 / OQ1**：交付＝OQ1-pending 緩解（凍結契約 + outbox 行為），**非真實公司雲端對接**。target 來源優先 ifc-ready `callback_url`（凍結契約 placeholder），否則 `cloudCallbackBaseUrl`；皆無/不可達 → 保留重試→`dead_letter`，real endpoint 標 pending OQ1。
+- 契約測試 `tests/cloud-callback-outbox.test.ts`（讀 `tests/contracts/conversion_result_callback.json`）：5 cases 全過。`npm run verify` 綠，**120 tests pass**（既有 115 無 regression）。GitNexus impact LOW、`detect_changes` risk low。

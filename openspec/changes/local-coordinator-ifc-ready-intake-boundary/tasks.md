@@ -59,10 +59,14 @@
 
 ## 6. T5 Callback to company cloud
 
-- [ ] 6.1 實作 `conversion_result_ready` / `conversion_failed` callback（metadata-only，禁傳 `.usdc` 本體）
-- [ ] 6.2 實作 `callback_outbox` + retry policy + dead-letter state + callback evidence log
-- [ ] 6.3 契約測試：cloud 不可達→outbox 保留重試、retry 耗盡→dead-letter、callback_status 與 conversion 成功分離
-- [ ] 6.4 **阻塞項**：真實對接公司雲端 endpoint/auth 待 OQ1 確認（未確認前以 `tests/contracts/conversion_result_callback.json` 凍結契約，real endpoint 標 pending）
+- [x] 6.1 實作 `conversion_result_ready` / `conversion_failed` callback（metadata-only，禁傳 `.usdc` 本體）
+- [x] 6.2 實作 `callback_outbox` + retry policy + dead-letter state + callback evidence log
+- [x] 6.3 契約測試：cloud 不可達→outbox 保留重試、retry 耗盡→dead-letter、callback_status 與 conversion 成功分離
+- [x] 6.4 **阻塞項**：真實對接公司雲端 endpoint/auth 待 OQ1 確認（未確認前以 `tests/contracts/conversion_result_callback.json` 凍結契約，real endpoint 標 pending）
+
+> **T5 done（2026-05-18）** — 見 `apply-notes.md` §T5。新增 `src/services/callbackOutbox.ts`（`CallbackOutbox`：enqueue + `deliverPending`/`attemptDelivery` + retry + `dead_letter` + evidence log + `assertMetadataOnly` 強制禁 `.usdc` 本體）；`app.ts` 新增 `POST /api/internal/conversion-result`（組 `conversion_result_ready`/`conversion_failed` metadata-only payload 入 outbox）、`GET /api/internal/callback-outbox/:id`、`POST /api/internal/callback-outbox/deliver`（runtime loop/測試決定性驅動）、`MetadataOnlyViolation`→422；`externalIfcReadyStore` 加 `getByCorrelation`/`recordConversionOutcome`（callback 連結，callback_status 與 conversion 分離）；`config`/`types` 擴充；`unit_kitpool` fixture 補欄位。
+> **6.4 / OQ1**：`cloudCallbackBaseUrl` default 空 = 無 real endpoint；target 由 ifc-ready `callback_url`（凍結契約 placeholder）覆寫；無/不可達 target 一律保留重試→`dead_letter`（不靜默丟棄）。**真實公司雲端 endpoint/auth 仍 pending OQ1**——本任務交付的是 OQ1-pending 緩解（契約凍結 + outbox 行為），非真實對接。
+> 契約測試 `tests/cloud-callback-outbox.test.ts`（讀 `tests/contracts/conversion_result_callback.json`）：ready→metadata-only enqueue + conversion/callback 狀態分離、不可達→retry→`dead_letter`+evidence、conversion_failed、metadata-only→422、unknown correlation→404。`npm run verify` **綠，120 tests pass**（既有 115 無 regression）。GitNexus `createCoordinatorApp`/`loadConfig` LOW、`detect_changes` risk low。
 
 ## 7. T6 Local artifact shadow metadata
 

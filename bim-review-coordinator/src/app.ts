@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
 import { AuthError, createAuthProvider } from "./services/authProvider.js";
+import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
@@ -126,6 +127,28 @@ const ifcReadyPayloadSchema = z
   })
   .passthrough();
 
+// B-scheme T5 §6.1：本地轉檔結果回報（coordinator 輪詢 streaming /result 或
+// 內部 result loop 餵入），coordinator 據此組 metadata-only 雲端 callback 並
+// 入 outbox。callback 投遞狀態與 conversion 成功分離。
+const conversionResultReportSchema = z
+  .object({
+    correlation_id: z.string().min(1),
+    conversion_job_id: z.string().min(1).nullish(),
+    status: z.enum(["ready", "failed"]),
+    artifacts: z
+      .object({
+        usdc_ref: z.string().nullish(),
+        element_mapping_ref: z.string().nullish(),
+        manifest_ref: z.string().nullish(),
+      })
+      .passthrough()
+      .optional(),
+    artifact_summary: z.record(z.unknown()).optional(),
+    reason: z.string().nullish(),
+    retryable: z.boolean().optional(),
+  })
+  .passthrough();
+
 export interface CoordinatorApp {
   app: express.Express;
   server: http.Server;
@@ -152,6 +175,8 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   const authProvider = createAuthProvider(config);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
   const streamingConversionClient = new StreamingConversionClient(config.streamingConversionApiBase);
+  // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
+  const callbackOutbox = new CallbackOutbox(config.callbackOutboxMaxAttempts);
 
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json({ limit: "1mb" }));
@@ -453,6 +478,95 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     response.json(job);
   });
 
+  // B-scheme T5：本地轉檔結果 → 組 metadata-only 雲端 callback 並入 outbox。
+  // 內部端點（coordinator 自身輪詢/result loop 餵入）。callback 投遞狀態與
+  // conversion 成功分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。
+  app.post("/api/internal/conversion-result", (request, response, next) => {
+    try {
+      const report = conversionResultReportSchema.parse(request.body);
+      const job = externalIfcReadyStore.getByCorrelation(report.correlation_id);
+      if (!job) {
+        response.status(404).json({ detail: "No IFC-ready job for correlation_id." });
+        return;
+      }
+      const conversionJobId = report.conversion_job_id || job.conversion_job_id || null;
+      const targetUrl = job.callback_url || config.cloudCallbackBaseUrl || null;
+
+      let payload: Record<string, unknown>;
+      let event: "conversion_result_ready" | "conversion_failed";
+      if (report.status === "ready") {
+        event = "conversion_result_ready";
+        payload = {
+          event,
+          tenant_id: job.tenant_id,
+          project_id: job.project_id,
+          external_model_version_id: job.external_model_version_id,
+          external_conversion_task_id: job.external_conversion_task_id ?? null,
+          conversion_job_id: conversionJobId,
+          correlation_id: job.correlation_id,
+          status: "ready",
+          source_ifc: { ref: job.source_ifc_ref, etag: job.source_ifc_etag },
+          artifacts: {
+            usdc_ref: report.artifacts?.usdc_ref ?? null,
+            element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
+            manifest_ref: report.artifacts?.manifest_ref ?? null,
+          },
+          artifact_summary: report.artifact_summary ?? {},
+        };
+      } else {
+        event = "conversion_failed";
+        payload = {
+          event,
+          tenant_id: job.tenant_id,
+          project_id: job.project_id,
+          external_model_version_id: job.external_model_version_id,
+          conversion_job_id: conversionJobId,
+          correlation_id: job.correlation_id,
+          status: "failed",
+          reason: report.reason || "conversion_failed",
+          retryable: report.retryable ?? false,
+        };
+      }
+
+      const entry = callbackOutbox.enqueue({
+        event,
+        targetUrl,
+        correlationId: job.correlation_id,
+        externalModelVersionId: job.external_model_version_id,
+        conversionJobId,
+        payload,
+      });
+      const updatedJob = externalIfcReadyStore.recordConversionOutcome(
+        job.ifc_ready_job_id,
+        report.status,
+        entry.outbox_id,
+      );
+      // conversion 在本地的成功/失敗，與 callback 投遞狀態（outbox）分離回報。
+      response.status(202).json({ ifc_ready_job: updatedJob, callback: entry });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/internal/callback-outbox/:outboxId", (request, response) => {
+    const entry = callbackOutbox.get(request.params.outboxId);
+    if (!entry) {
+      response.status(404).json({ detail: "Callback outbox entry not found." });
+      return;
+    }
+    response.json(entry);
+  });
+
+  // runtime loop / 測試決定性驅動：對所有 pending entry 各嘗試投遞一次。
+  app.post("/api/internal/callback-outbox/deliver", async (_request, response, next) => {
+    try {
+      const touched = await callbackOutbox.deliverPending();
+      response.json({ delivered_pass: true, entries: touched });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/dev/conversions", async (request, response) => {
     await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions", request.body);
   });
@@ -481,6 +595,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     }
     if (error instanceof AuthError) {
       response.status(error.statusCode).json({ detail: error.message });
+      return;
+    }
+    if (error instanceof MetadataOnlyViolation) {
+      // 雲地分離鐵律：metadata-only callback 不得帶大型模型本體。
+      response.status(422).json({ detail: error.message });
       return;
     }
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });

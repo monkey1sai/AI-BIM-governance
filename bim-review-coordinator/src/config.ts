@@ -32,6 +32,11 @@ export interface CoordinatorConfig {
   externalIntakeAuthProvider: string;
   externalIntakeWebhookSecret: string;
   externalIntakeIpAllowlist: string[];
+  // T5 雲端 callback（metadata-only outbox）。真實公司雲端 endpoint/auth 待
+  // OQ1；未確認前 default 空＝無 real endpoint（outbox 視為不可達，保留重試
+  // 至 dead-letter，不靜默丟棄）。每事件可由 ifc-ready callback_url 覆寫。
+  cloudCallbackBaseUrl: string;
+  callbackOutboxMaxAttempts: number;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -135,6 +140,8 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       "::1",
       "::ffff:127.0.0.1",
     ]),
+    cloudCallbackBaseUrl: process.env.CLOUD_CALLBACK_BASE_URL || "",
+    callbackOutboxMaxAttempts: numberFromEnv("CALLBACK_OUTBOX_MAX_ATTEMPTS", 5),
     ...overrides,
   };
 }
