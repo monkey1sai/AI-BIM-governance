@@ -7,8 +7,8 @@
 //      contract, gates the fallback behind import.meta.env.DEV, and lists every required summary
 //      field (fixture_name, source_ifc_entity_count, sidecar_carrier_count, materialization_strategy,
 //      coverage_ratio, coverage_status, conversion_duration_seconds).
-//   2. The pure data-shaping function `defaultFetchFallback` transforms a worker
-//      `/api/conversions/{job}/result` payload into a ConversionQualityMetricsSummary with the
+//   2. The pure data-shaping function `defaultFetchFallback` transforms a coordinator dev-proxy
+//      `/api/dev/conversions/{job}/result` payload into a ConversionQualityMetricsSummary with the
 //      expected fields, and never mutates or recomputes any value.
 //   3. The dev gate behaves correctly for both DEV=true and DEV=false (the dev gate must be the
 //      single source of truth for fallback reachability).
@@ -56,11 +56,11 @@ for (const required of [
 // The fallback must be guarded by `if (!dev) return` in the useEffect body.
 assert.match(cardSource, /if \(!dev\) return/, "card must short-circuit non-dev builds before any fetch");
 
-// The defaultFetchFallback must read from `/api/conversions/.../result` on the worker URL.
+// The defaultFetchFallback must read from `/api/dev/conversions/.../result` on the coordinator URL.
 assert.match(
     cardSource,
-    /\/api\/conversions\/.+\/result/,
-    "card's dev fallback must target /api/conversions/{job}/result",
+    /\/api\/dev\/conversions\/.+\/result/,
+    "card's dev fallback must target /api/dev/conversions/{job}/result",
 );
 
 // `data-testid` hooks for ready / degraded / dev-fetching states must all exist.
@@ -106,7 +106,7 @@ function loadCard(devOverride) {
 // Re-extract the pure transform from the compiled output. We do this by string-eval'ing only the
 // helper rather than executing React rendering. The transform must remain self-contained.
 const transformBlockMatch = cardSource.match(
-    /async function defaultFetchFallback[\s\S]+?\n}\n/,
+    /async function defaultFetchFallback[\s\S]+?\r?\n}\r?\n/,
 );
 assert.ok(transformBlockMatch, "defaultFetchFallback must be defined in the card source");
 
@@ -118,7 +118,7 @@ const transformModule = { exports: {} };
 new Function("exports", "module", transformCompiled)(transformModule.exports, transformModule);
 const defaultFetchFallback = transformModule.exports;
 
-// Stub fetch with a deterministic worker-shaped response.
+// Stub fetch with a deterministic streaming conversion-shaped response.
 const workerPayload = {
     conversion_job_id: "conv_test_001",
     original_filename: "fixture_demo.ifc",
@@ -137,7 +137,7 @@ const workerPayload = {
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {
-    assert.match(String(url), /\/api\/conversions\/conv_test_001\/result/, "fallback must encode conversion_job_id");
+    assert.match(String(url), /\/api\/dev\/conversions\/conv_test_001\/result/, "fallback must encode conversion_job_id");
     return {
         ok: true,
         json: async () => workerPayload,
@@ -145,7 +145,7 @@ globalThis.fetch = async (url) => {
 };
 
 try {
-    const summary = await defaultFetchFallback("http://127.0.0.1:8005", "conv_test_001");
+    const summary = await defaultFetchFallback("http://127.0.0.1:8004", "conv_test_001");
     assert.ok(summary, "fallback must return a summary object");
     assert.equal(summary.fixture_name, "fixture_demo.ifc");
     assert.equal(summary.conversion_job_id, "conv_test_001");
@@ -163,7 +163,7 @@ try {
 
     // Non-OK responses must produce null (no synthesized values).
     globalThis.fetch = async () => ({ ok: false, json: async () => ({}) });
-    const failure = await defaultFetchFallback("http://127.0.0.1:8005", "conv_test_999");
+    const failure = await defaultFetchFallback("http://127.0.0.1:8004", "conv_test_999");
     assert.equal(failure, null, "fallback must return null when the worker response is not OK");
 } finally {
     globalThis.fetch = originalFetch;

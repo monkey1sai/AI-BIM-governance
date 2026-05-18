@@ -182,7 +182,7 @@ describe("SessionStore", () => {
           model_version_id: "version_001",
           artifact_id: "artifact_usdc_001",
           artifact_role: "derived" as const,
-          url: "http://127.0.0.1:8005/objects/model.usdc",
+          url: "edge-local://artifacts/model.usdc",
           mapping_url: null,
           load_order: 0,
           routing_policy: "same_instance" as const,

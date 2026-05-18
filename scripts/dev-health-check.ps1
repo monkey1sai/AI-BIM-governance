@@ -1,7 +1,5 @@
 [CmdletBinding()]
 param(
-    [string] $BimControlUrl = "http://127.0.0.1:8001",
-    [string] $WorkerUrl = "http://127.0.0.1:8005",
     [string] $CoordinatorUrl = "http://127.0.0.1:8004",
     [string] $ViewerUrl = "http://127.0.0.1:5173",
     [string] $EvidencePath = "",
@@ -19,8 +17,6 @@ if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
 }
 
 $Record = New-SmokeEvidenceRecord -Command $MyInvocation.MyCommand.Path -Cwd (Get-Location).Path -Context @{
-    bim_control_url = $BimControlUrl
-    worker_url      = $WorkerUrl
     coordinator_url = $CoordinatorUrl
     viewer_url      = $ViewerUrl
 }
@@ -60,8 +56,7 @@ function Test-Health {
     }
 }
 
-Test-Health -Name "_bim-control" -Url $BimControlUrl
-Test-Health -Name "_worker" -Url $WorkerUrl
+# B-scheme：外部平台由 tests/fakes 模擬，dev health 只檢查本 repo runtime。
 Test-Health -Name "bim-review-coordinator" -Url $CoordinatorUrl
 
 # Viewer route is a static page; HTTP 200 is allowed evidence but never implies WebRTC.
@@ -89,7 +84,7 @@ if ($fixtureSummary.fixture_count -gt 0) {
     Add-SmokeTier -Record $Record -Tier 'fixture_preflight' -Status 'passed' -Owner 'scripts' `
         -Ids @{ worker_dev_storage_root = $resolvedRoot; fixture_count = $fixtureSummary.fixture_count }
 } else {
-    Add-SmokeTier -Record $Record -Tier 'fixture_preflight' -Status 'blocked' -Owner '_worker' `
+    Add-SmokeTier -Record $Record -Tier 'fixture_preflight' -Status 'blocked' -Owner 'tests/fakes' `
         -Blocker "no .ifc fixture present under '$resolvedRoot'" `
         -NextCommand "Copy a real .ifc into '$resolvedRoot' or set WORKER_DEV_STORAGE_ROOT, then rerun" `
         -Ids @{ worker_dev_storage_root = $resolvedRoot; fixture_count = 0 }

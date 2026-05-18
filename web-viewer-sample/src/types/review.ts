@@ -2,11 +2,11 @@ import type { ArtifactBinding, ReviewArtifact } from "./artifacts";
 import type { ReviewIssue } from "./issues";
 
 /**
- * Additive, read-only pass-through of `_worker` conversion quality metrics.
+ * Additive, read-only pass-through of streaming conversion quality metrics.
  *
  * The viewer MUST NOT compute, cache, or rebroadcast these values. When the coordinator forwards
  * them, the viewer renders them as-is in the conversion summary card. When omitted, the viewer
- * MAY (in dev builds only) fall back to `GET /api/conversions/{job}/result` against `_worker`.
+ * MAY (in dev builds only) fall back to the coordinator dev conversion proxy.
  */
 export interface ConversionQualityMetricsSummary {
     fixture_name?: string | null;

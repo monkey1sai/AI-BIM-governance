@@ -1,0 +1,215 @@
+import fs from "node:fs";
+import crypto from "node:crypto";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import request from "supertest";
+import { afterEach, describe, expect, it } from "vitest";
+import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import type { CoordinatorConfig } from "../src/config.js";
+
+// B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.5）契約測試。
+// 契約權威 = repo-root tests/contracts/ifc_ready_payload.json（凍結契約，
+// 與 OQ pending 緩解一致）。
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const CONTRACT_PATH = path.resolve(TEST_DIR, "..", "..", "tests", "contracts", "ifc_ready_payload.json");
+const CONTRACT = JSON.parse(fs.readFileSync(CONTRACT_PATH, "utf-8")) as {
+  example: Record<string, unknown>;
+};
+
+const WEBHOOK_SECRET = "dev-webhook-secret"; // = config 預設（環境設定，非契約資料）
+
+let active: CoordinatorApp | null = null;
+let activeStreamingServer: http.Server | null = null;
+
+afterEach(async () => {
+  if (activeStreamingServer) {
+    await new Promise<void>((resolve) => activeStreamingServer?.close(() => resolve()));
+    activeStreamingServer = null;
+  }
+  if (active) {
+    active.io.close();
+    await new Promise<void>((resolve) => active?.server.close(() => resolve()));
+    active = null;
+  }
+});
+
+function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-ifcready-test-"));
+  active = createCoordinatorApp({
+    sessionStoreDir: path.join(root, "sessions"),
+    eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    bimControlApiBase: "http://127.0.0.1:1",
+    // streaming 不可達 → 內部派工失敗應 graceful（job dispatch_failed，仍 202）
+    streamingConversionApiBase: "http://127.0.0.1:1",
+    corsOrigins: ["http://127.0.0.1:5173"],
+    ...overrides,
+  });
+  return active;
+}
+
+function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...structuredClone(CONTRACT.example), ...overrides };
+}
+
+function authHeaders(overrides: Record<string, string> = {}): Record<string, string> {
+  return {
+    "X-Webhook-Secret": WEBHOOK_SECRET,
+    "X-Correlation-Id": "corr_test_001",
+    "X-Idempotency-Key": "idem_test_001",
+    ...overrides,
+  };
+}
+
+async function startStreamingConversionStub(): Promise<{ baseUrl: string; bodies: unknown[] }> {
+  const bodies: unknown[] = [];
+  activeStreamingServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString("utf8");
+    });
+    req.on("end", () => {
+      if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+        bodies.push(JSON.parse(body));
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ conversion_job_id: "stream_conv_test_001", status: "queued", authority: "bim-streaming-server" }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ detail: "not found" }));
+    });
+  });
+  await new Promise<void>((resolve) => {
+    activeStreamingServer?.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = activeStreamingServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected streaming conversion stub to listen on a TCP port.");
+  }
+  return { baseUrl: `http://127.0.0.1:${address.port}`, bodies };
+}
+
+describe("POST /api/external/ifc-ready", () => {
+  it("接受 spec-correct ifc-ready，建立本地 job 並綁定 external_model_version_id", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(payload());
+
+    expect(res.status).toBe(202);
+    expect(res.body.ifc_ready_job_id).toMatch(/^ifcready_/);
+    expect(res.body.idempotent_replay).toBe(false);
+    expect(res.body.external_model_version_id).toBe(CONTRACT.example.external_model_version_id);
+    expect(res.body.correlation_id).toBe("corr_test_001");
+    expect(res.body.source_ifc_ref).toBe((CONTRACT.example.source_ifc as { ref: string }).ref);
+    // streaming 不可達 → 接受但派工失敗（intake 本身未被否定）
+    expect(res.body.status).toBe("dispatch_failed");
+    expect(res.body.conversion_authority).toBeNull();
+  });
+
+  it("對相同 X-Idempotency-Key 為 idempotent（回相同 job、replay 標記）", async () => {
+    const app = makeApp();
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(payload());
+    const second = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(payload());
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(200);
+    expect(second.body.idempotent_replay).toBe(true);
+    expect(second.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
+  });
+
+  it("缺少 X-Webhook-Secret → 401，且不建立 job", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({ "X-Correlation-Id": "c1", "X-Idempotency-Key": "i1" })
+      .send(payload());
+    expect(res.status).toBe(401);
+  });
+
+  it("錯誤的 X-Webhook-Secret → 401", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Webhook-Secret": "wrong-secret" }))
+      .send(payload());
+    expect(res.status).toBe(401);
+  });
+
+  it("缺少 X-Correlation-Id → 401", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": WEBHOOK_SECRET, "X-Idempotency-Key": "i1" })
+      .send(payload());
+    expect(res.status).toBe(401);
+  });
+
+  it("缺少 source_ifc → 400（payload 驗證）", async () => {
+    const app = makeApp();
+    const bad = payload();
+    delete (bad as Record<string, unknown>).source_ifc;
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(bad);
+    expect(res.status).toBe(400);
+  });
+
+  it("成功呼叫 streaming internal conversion API 後標記 dispatched", async () => {
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(payload());
+
+    expect(res.status).toBe(202);
+    expect(res.body.status).toBe("dispatched");
+    expect(res.body.conversion_job_id).toBe("stream_conv_test_001");
+    expect(res.body.conversion_authority).toBe("bim-streaming-server");
+    expect(streaming.bodies).toHaveLength(1);
+    expect((streaming.bodies[0] as Record<string, unknown>).event_type).toBe("ifc_ready");
+  });
+
+  it("X-Webhook-Signature 使用原始 body bytes 驗證", async () => {
+    const app = makeApp();
+    const rawBody = JSON.stringify(payload(), null, 2);
+    const signature = crypto.createHmac("sha256", WEBHOOK_SECRET).update(rawBody).digest("hex");
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "Content-Type": "application/json",
+        "X-Webhook-Signature": signature,
+        "X-Correlation-Id": "corr_hmac_001",
+        "X-Idempotency-Key": "idem_hmac_001",
+      })
+      .send(rawBody);
+
+    expect(res.status).toBe(202);
+    expect(res.body.correlation_id).toBe("corr_hmac_001");
+  });
+
+  it("拒絕不在公司雲端同 origin 的 callback_url", async () => {
+    const app = makeApp({
+      cloudCallbackBaseUrl: "https://company-cloud.example/api/bim-control/conversion-callbacks",
+    });
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(payload({ callback_url: "http://169.254.169.254/latest/meta-data" }));
+
+    expect(res.status).toBe(403);
+  });
+});

@@ -25,9 +25,9 @@ function loadStreamMessageModule() {
 
 const { buildOpenStageRequest } = loadStreamMessageModule();
 
-const legacyRequest = buildOpenStageRequest("http://127.0.0.1:8005/objects/model.usdc");
+const legacyRequest = buildOpenStageRequest("edge-local://artifacts/model.usdc");
 assert.equal(legacyRequest.event_type, "openStageRequest");
-assert.equal(legacyRequest.payload.url, "http://127.0.0.1:8005/objects/model.usdc");
+assert.equal(legacyRequest.payload.url, "edge-local://artifacts/model.usdc");
 assert.equal(Object.hasOwn(legacyRequest.payload, "artifact_bindings"), false);
 
 const binding = {
@@ -36,8 +36,8 @@ const binding = {
     model_version_id: "version_demo_001",
     artifact_id: "artifact_usdc_test_001",
     artifact_role: "derived",
-    url: "http://127.0.0.1:8005/objects/model.usdc",
-    mapping_url: "http://127.0.0.1:8005/objects/element_mapping.json",
+    url: "edge-local://artifacts/model.usdc",
+    mapping_url: "edge-local://artifacts/element_mapping.json",
     load_order: 0,
     routing_policy: "same_instance",
     ready_status: "ready",

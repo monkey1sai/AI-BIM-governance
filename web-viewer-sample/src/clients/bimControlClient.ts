@@ -45,7 +45,7 @@ export class BimControlClient {
             ...init,
         });
         if (!response.ok) {
-            throw new Error(`_bim-control request failed: ${response.status} ${path}`);
+            throw new Error(`metadata request failed: ${response.status} ${path}`);
         }
         return response.json() as Promise<T>;
     }

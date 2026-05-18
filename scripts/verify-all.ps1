@@ -44,8 +44,9 @@ if ($StreamingOnly) {
 }
 else {
     if (-not $TsOnly) {
-        $Targets += @{ Name = "_bim-control"; Cmd = $Python; Args = @("-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"); Cwd = "_bim-control" }
-        $Targets += @{ Name = "_worker";      Cmd = $Python; Args = @("-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"); Cwd = "_worker" }
+        # B-scheme T8 §9.1：default verify 不再依賴已刪 _bim-control / _worker；
+        # 改以 repo-root tests/（外部平台 contracts + test-only fakes）作 Python 覆蓋。
+        $Targets += @{ Name = "tests (contracts+fakes)"; Cmd = $Python; Args = @("-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"); Cwd = "." }
     }
     if (-not $PyOnly) {
         $Targets += @{ Name = "bim-review-coordinator"; Cmd = "npm"; Args = @("run", "verify"); Cwd = "bim-review-coordinator" }

@@ -224,19 +224,10 @@ function Wait-Health {
     return $false
 }
 
-# === 啟動 worker-only demo services ===
-
-Start-LocalService `
-    -Name "_bim-control" `
-    -WorkingDirectory (Join-Path $RepoRoot "_bim-control") `
-    -FilePath $Python `
-    -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001")
-
-Start-LocalService `
-    -Name "_worker" `
-    -WorkingDirectory (Join-Path $RepoRoot "_worker") `
-    -FilePath $Python `
-    -Arguments @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8005")
+# === B-scheme（local-coordinator-ifc-ready-intake-boundary T2）===
+# `_worker`(:8005) / `_bim-control`(:8001) 已自 repo 刪除。公司雲端 control-plane
+# 與落地端 IFC Worker 屬外部系統，僅由 tests/fakes 模擬，不在本地啟動。
+# 對外 IFC-ready intake 收斂於 coordinator（T3），streaming 為 internal-only（T4）。
 
 if (-not $SkipCoordinator) {
     Start-LocalService `
@@ -285,8 +276,6 @@ if (-not $SkipViewer) {
 
 Write-Host ""
 Write-Host "=== Health probe ===" -ForegroundColor Cyan
-Wait-Health -Name "_bim-control          (步驟 ⑤)" -Url "http://127.0.0.1:8001/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
-Wait-Health -Name "_worker               (步驟 ①/②)" -Url "http://127.0.0.1:8005/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 if (-not $SkipCoordinator) {
     Wait-Health -Name "bim-review-coordinator(步驟 ③)" -Url "http://127.0.0.1:8004/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 }
@@ -305,10 +294,9 @@ if (-not $SkipStreaming) {
 
 Write-Host ""
 Write-Host "=== Demo URLs ===" -ForegroundColor Cyan
-Write-Host "①/② Worker 上傳建模與自動轉換 http://127.0.0.1:8005"
 Write-Host "③ 審查協調       http://127.0.0.1:8004/ui"
 Write-Host "④ 瀏覽器審查端   http://127.0.0.1:5173"
-Write-Host "⑤ 主資料庫       http://127.0.0.1:8001"
+Write-Host "（①/② Worker、⑤ 主資料庫已移除：外部平台由 tests/fakes 模擬，見 T3/T5）" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "停止所有服務：scripts\stop-all.ps1" -ForegroundColor DarkGray
 Write-Host "查看 log：     Get-Content scripts\.run\<service>.log -Wait" -ForegroundColor DarkGray

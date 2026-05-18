@@ -29,6 +29,7 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
     bimControlApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
     ...overrides,
@@ -176,8 +177,8 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_test_ready",
             artifact_id: "artifact_usdc_test_001",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/model.usdc",
-            mapping_url: "http://127.0.0.1:8005/objects/element_mapping.json",
+            url: "edge-local://artifacts/model.usdc",
+            mapping_url: "edge-local://artifacts/element_mapping.json",
             load_order: 0,
             ready_status: "ready",
           },
@@ -192,7 +193,7 @@ describe("bim-review-coordinator", () => {
 
     const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
     expect(config.status).toBe(200);
-    expect(config.body.model.url).toBe("http://127.0.0.1:8005/objects/model.usdc");
+    expect(config.body.model.url).toBe("edge-local://artifacts/model.usdc");
     expect(config.body.artifact_bindings[0].mapping_url).toContain("element_mapping.json");
   });
 
@@ -306,7 +307,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_a",
             artifact_id: "artifact_usdc_a",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/a.usdc",
+            url: "edge-local://artifacts/a.usdc",
             load_order: 0,
             ready_status: "ready",
           },
@@ -314,7 +315,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_b",
             artifact_id: "artifact_usdc_b",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/b.usdc",
+            url: "edge-local://artifacts/b.usdc",
             load_order: 1,
             ready_status: "ready",
           },
@@ -353,7 +354,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_a",
             artifact_id: "artifact_usdc_a",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/a.usdc",
+            url: "edge-local://artifacts/a.usdc",
             load_order: 0,
             ready_status: "ready",
           },
@@ -361,7 +362,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_b",
             artifact_id: "artifact_usdc_b",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/b.usdc",
+            url: "edge-local://artifacts/b.usdc",
             load_order: 1,
             ready_status: "ready",
           },
@@ -387,7 +388,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_test_ready",
             artifact_id: "artifact_usdc_test_001",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/model.usdc",
+            url: "edge-local://artifacts/model.usdc",
             load_order: 0,
             ready_status: "ready",
           },
@@ -662,7 +663,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_test_active",
             artifact_id: "artifact_usdc_test_001",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/model.usdc",
+            url: "edge-local://artifacts/model.usdc",
             load_order: 0,
             ready_status: "ready",
           },
@@ -716,7 +717,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_profile_test",
             artifact_id: "artifact_usdc_profile_test",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/model.usdc",
+            url: "edge-local://artifacts/model.usdc",
             load_order: 0,
             ready_status: "ready",
           },
@@ -741,7 +742,7 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_drain_test",
             artifact_id: "artifact_usdc_drain_test",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/model.usdc",
+            url: "edge-local://artifacts/model.usdc",
             load_order: 0,
             ready_status: "ready",
           },
@@ -868,8 +869,8 @@ describe("bim-review-coordinator", () => {
             artifact_group_id: "ag_stream_test",
             artifact_id: "artifact_usdc_stream",
             artifact_role: "derived",
-            url: "http://127.0.0.1:8005/objects/stream.usdc",
-            mapping_url: "http://127.0.0.1:8005/objects/element_mapping.json",
+            url: "edge-local://artifacts/stream.usdc",
+            mapping_url: "edge-local://artifacts/element_mapping.json",
             load_order: 0,
             ready_status: "ready",
           },
@@ -880,7 +881,7 @@ describe("bim-review-coordinator", () => {
     const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
     expect(config.status).toBe(200);
     expect(config.body.lifecycle_status).toBe("active");
-    expect(config.body.model.url).toBe("http://127.0.0.1:8005/objects/stream.usdc");
+    expect(config.body.model.url).toBe("edge-local://artifacts/stream.usdc");
     expect(config.body.model.mapping_url).toContain("element_mapping.json");
     expect(config.body.kit_instance_bindings).toHaveLength(1);
   });

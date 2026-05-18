@@ -1,8 +1,8 @@
-// ConversionSummaryCard — additive, read-only pass-through of `_worker` conversion metrics.
+// ConversionSummaryCard — additive, read-only pass-through of streaming conversion metrics.
 // The viewer MUST NOT compute, cache, or rebroadcast these values; the card only renders what the
 // coordinator forwards inside `stream_config.quality_metrics_summary`, or in dev builds, what the
-// worker `/api/conversions/{job}/result` endpoint returns. Production builds (`import.meta.env.PROD`)
-// MUST NOT reach the dev fallback. See openspec/changes/stabilize-demo-runtime-readiness §8.
+// coordinator dev proxy returns. Production builds (`import.meta.env.PROD`) MUST NOT reach the dev
+// fallback. See openspec/changes/stabilize-demo-runtime-readiness §8.
 
 import { useEffect, useRef, useState } from "react";
 import type React from "react";
@@ -18,15 +18,15 @@ export interface ConversionSummaryCardProps {
     smokeBlockerHint?: SmokeBlockerHint | null;
     /**
      * Optional dev-only fallback fetcher. When omitted, the default fetch path is `fetch` against
-     * the worker URL (only invoked when `import.meta.env.DEV` is true). Injecting allows
+     * the coordinator dev conversion proxy (only invoked when `import.meta.env.DEV` is true). Injecting allows
      * deterministic testing via `verify-conversion-summary-card.mjs`.
      */
     fetchFallback?: (conversionJobId: string) => Promise<ConversionQualityMetricsSummary | null>;
     /**
-     * Override for the worker base URL. Defaults to `http://127.0.0.1:8005`. Production
+     * Override for the coordinator base URL. Defaults to `http://127.0.0.1:8004`. Production
      * builds (`import.meta.env.PROD`) MUST NOT reach the fallback regardless of this value.
      */
-    workerBaseUrl?: string;
+    conversionApiBaseUrl?: string;
 }
 
 const cardStyle: React.CSSProperties = {
@@ -91,10 +91,10 @@ function isDevEnvironment(): boolean {
 }
 
 async function defaultFetchFallback(
-    workerBaseUrl: string,
+    conversionApiBaseUrl: string,
     conversionJobId: string,
 ): Promise<ConversionQualityMetricsSummary | null> {
-    const response = await fetch(`${workerBaseUrl}/api/conversions/${encodeURIComponent(conversionJobId)}/result`);
+    const response = await fetch(`${conversionApiBaseUrl}/api/dev/conversions/${encodeURIComponent(conversionJobId)}/result`);
     if (!response.ok) {
         return null;
     }
@@ -143,7 +143,7 @@ function formatString(value: string | null | undefined): string {
 }
 
 export default function ConversionSummaryCard(props: ConversionSummaryCardProps) {
-    const { streamConfig, smokeBlockerHint, fetchFallback, workerBaseUrl } = props;
+    const { streamConfig, smokeBlockerHint, fetchFallback, conversionApiBaseUrl } = props;
     const modelStatus = streamConfig?.model.status ?? null;
     const isReady = modelStatus === "ready";
     const conversionAuthority = streamConfig?.model.conversion_authority ?? null;
@@ -170,7 +170,7 @@ export default function ConversionSummaryCard(props: ConversionSummaryCardProps)
         if (lastFetchedJobId.current === conversionJobId) return;
 
         let cancelled = false;
-        const runner = fetchFallback ?? ((jobId: string) => defaultFetchFallback(workerBaseUrl ?? "http://127.0.0.1:8005", jobId));
+        const runner = fetchFallback ?? ((jobId: string) => defaultFetchFallback(conversionApiBaseUrl ?? "http://127.0.0.1:8004", jobId));
         setFallbackStatus("loading");
         lastFetchedJobId.current = conversionJobId;
         runner(conversionJobId)
@@ -192,7 +192,7 @@ export default function ConversionSummaryCard(props: ConversionSummaryCardProps)
         return () => {
             cancelled = true;
         };
-    }, [dev, isReady, summaryFromConfig, conversionJobId, fetchFallback, workerBaseUrl]);
+    }, [dev, isReady, summaryFromConfig, conversionJobId, fetchFallback, conversionApiBaseUrl]);
 
     const summary = summaryFromConfig ?? fallbackSummary ?? null;
     const showReady = isReady && summary;
@@ -251,8 +251,7 @@ export default function ConversionSummaryCard(props: ConversionSummaryCardProps)
                     )}
                     {!smokeBlockerHint?.blocker && !smokeBlockerHint?.next_command && (
                         <div>
-                            Worker conversion is not ready yet. Re-run{" "}
-                            <code>scripts/run-single-kit-demo.ps1</code> once the canonical fixture is converted.
+                            Streaming conversion is not ready yet. Re-run coordinator / streaming verification once the canonical fixture is converted.
                         </div>
                     )}
                     {dev && conversionJobId && fallbackStatus === "loading" && (

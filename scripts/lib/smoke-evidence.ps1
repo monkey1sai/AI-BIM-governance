@@ -3,12 +3,12 @@
 # Tier statuses follow the demo-runtime-readiness-smoke capability:
 #   passed | failed | blocked | deferred | not_observed
 #
-# Owners are the responsible repo / folder boundary, matching CLAUDE.md.
+# Owners are the responsible repo / folder boundary, matching AGENTS.md.
 #
 # Usage:
 #   . "$PSScriptRoot/lib/smoke-evidence.ps1"
 #   $record  = New-SmokeEvidenceRecord -Command $MyInvocation.Line -Cwd (Get-Location).Path
-#   Add-SmokeTier -Record $record -Tier 'worker_conversion' -Status 'blocked' -Owner '_worker' `
+#   Add-SmokeTier -Record $record -Tier 'streaming_internal_conversion' -Status 'blocked' -Owner 'bim-streaming-server' `
 #                 -Blocker 'no dev IFC fixture under WORKER_DEV_STORAGE_ROOT' `
 #                 -NextCommand 'Copy a real .ifc under storage/ then rerun' `
 #                 -Ids @{ dev_storage_root = $root }
@@ -18,11 +18,10 @@ Set-StrictMode -Version Latest
 
 $Script:SmokeTierStatuses = @('passed', 'failed', 'blocked', 'deferred', 'not_observed')
 $Script:SmokeKnownOwners = @(
-    '_worker',
-    '_bim-control',
     'bim-review-coordinator',
     'bim-streaming-server',
     'web-viewer-sample',
+    'tests/fakes',
     'scripts'
 )
 

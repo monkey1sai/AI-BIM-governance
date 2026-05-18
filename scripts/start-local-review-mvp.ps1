@@ -31,15 +31,9 @@ function Start-LocalProcess {
         -WindowStyle $windowStyle
 }
 
-Start-LocalProcess `
-    -Name "_bim-control" `
-    -WorkingDirectory (Join-Path $RepoRoot "_bim-control") `
-    -Command "`"$Python`" -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload"
-
-Start-LocalProcess `
-    -Name "_worker" `
-    -WorkingDirectory (Join-Path $RepoRoot "_worker") `
-    -Command "`"$Python`" -m uvicorn app.main:app --host 127.0.0.1 --port 8005 --reload"
+# B-scheme（local-coordinator-ifc-ready-intake-boundary T2）：
+# `_worker` / `_bim-control` 已自 repo 刪除（外部平台由 tests/fakes 模擬）。
+# 此腳本只啟動 coordinator + viewer；對外 intake 收斂於 coordinator（T3）。
 
 if (-not $SkipCoordinator) {
     Start-LocalProcess `
@@ -55,5 +49,5 @@ if (-not $SkipViewer) {
         -Command "npm.cmd run dev -- --host 127.0.0.1"
 }
 
-Write-Host "[start] worker-only demo services, coordinator, and viewer start commands submitted"
+Write-Host "[start] coordinator and viewer start commands submitted"
 Write-Host "[start] start bim-streaming-server separately when Kit runtime is needed"

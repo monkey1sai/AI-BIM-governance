@@ -1,51 +1,10 @@
 name: ${COMPOSE_PROJECT_NAME:-ai-bim-runtime-manager}
 
 services:
-  bim-control:
-    build:
-      context: .
-      dockerfile: infra/docker/python-fastapi.Dockerfile
-      args:
-        SERVICE_DIR: _bim-control
-    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
-    ports:
-      - "8001:8001"
-    volumes:
-      - runtime-bim-control-data:/workspace/_bim-control/data
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-
-  worker:
-    build:
-      context: .
-      dockerfile: infra/docker/python-fastapi.Dockerfile
-      args:
-        SERVICE_DIR: _worker
-    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]
-    environment:
-      WORKER_BIM_CONTROL_URL: ${BIM_CONTROL_URL:-http://bim-control:8001}
-      WORKER_PUBLIC_OBJECTS_URL: http://127.0.0.1:8005/objects
-      WORKER_DEV_STORAGE_ROOT: /workspace/storage
-      WORKER_OBJECTS_ROOT: /workspace/.runtime/objects
-      WORKER_JOBS_DIR: /workspace/.runtime/jobs
-    ports:
-      - "8005:8005"
-    volumes:
-      - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
-      - ${RUNTIME_OBJECTS_ROOT:-./.runtime/objects}:/workspace/.runtime/objects
-      - ${RUNTIME_JOBS_ROOT:-./.runtime/jobs}:/workspace/.runtime/jobs
-    depends_on:
-      bim-control:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-
+  # B-scheme（local-coordinator-ifc-ready-intake-boundary T2）：
+  # `_worker`(:8005) 與 `_bim-control`(:8001) 已自 repo 刪除。外部公司雲端
+  # control-plane 與落地端 IFC Worker 屬外部系統，僅由 tests/fakes 模擬；
+  # 對外 intake 收斂於 coordinator（T3），streaming 為 internal-only（T4）。
   coordinator:
     build:
       context: .
@@ -56,14 +15,19 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8004
-      BIM_CONTROL_API_BASE: ${BIM_CONTROL_URL:-http://bim-control:8001}
-      WORKER_API_BASE: ${WORKER_URL:-http://worker:8005}
+      # B-scheme T2：legacy mock service API bases 已移除（兩 mock 服務刪除）。
+      # 對外 IFC-ready intake / 公司雲端 callback 設定由 T3/T5 引入；coordinator
+      # 不再 depends_on 已刪服務，獨立啟動。
+      BIM_CONTROL_API_BASE: ""
+      STREAMING_CONVERSION_API_BASE: http://streaming-server:49101
+      CONVERSION_API_BASE: http://streaming-server:49101
+      INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
+      CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
     ports:
       - "8004:8004"
-    depends_on:
-      worker:
-        condition: service_healthy
+    volumes:
+      - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
 
   viewer:
     build:
@@ -143,6 +107,3 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
-volumes:
-  runtime-bim-control-data:

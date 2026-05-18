@@ -8,8 +8,12 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
+import { AuthError, createAuthProvider, createUserAuthProvider } from "./services/authProvider.js";
+import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
+import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
+import { StreamingConversionClient } from "./services/streamingConversionClient.js";
 import {
   allocateKitInstanceBindings,
   allocateLocalKitInstance,
@@ -23,6 +27,7 @@ import type {
   Artifact,
   ArtifactBinding,
   ConversionQualityMetricsSummary,
+  IfcReadyIntakeJob,
   ReviewSession,
   RoutingPolicy,
   StreamConfigResponse,
@@ -98,6 +103,65 @@ const appendEventSchema = z
   })
   .passthrough();
 
+// B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.1）。
+// 契約權威：tests/contracts/ifc_ready_payload.json。correlation_id /
+// idempotency_key 的權威來源是 AuthProvider（X-Correlation-Id /
+// X-Idempotency-Key header）；body 內同名欄位僅為可選回顯。
+const ifcReadyPayloadSchema = z
+  .object({
+    event: z.literal("ifc_ready"),
+    event_id: z.string().min(1).optional(),
+    correlation_id: z.string().min(1).optional(),
+    idempotency_key: z.string().min(1).optional(),
+    tenant_id: z.string().min(1),
+    project_id: z.string().min(1),
+    external_model_version_id: z.string().min(1),
+    external_conversion_task_id: z.string().min(1).nullish(),
+    source_ifc: z.object({
+      ref: z.string().min(1),
+      etag: z.string().min(1),
+      filename: z.string().nullish(),
+      format: z.string().nullish(),
+    }),
+    requested_outputs: z.array(z.string()).optional(),
+    callback_url: z.string().url().nullish(),
+  })
+  .passthrough();
+
+// B-scheme T5 §6.1：本地轉檔結果回報（coordinator 輪詢 streaming /result 或
+// 內部 result loop 餵入），coordinator 據此組 metadata-only 雲端 callback 並
+// 入 outbox。callback 投遞狀態與 conversion 成功分離。
+const conversionResultReportSchema = z
+  .object({
+    correlation_id: z.string().min(1),
+    conversion_job_id: z.string().min(1).nullish(),
+    status: z.enum(["ready", "succeeded", "failed"]),
+    artifacts: z
+      .object({
+        usdc_ref: z.string().nullish(),
+        element_mapping_ref: z.string().nullish(),
+        manifest_ref: z.string().nullish(),
+      })
+      .passthrough()
+      .optional(),
+    artifact_summary: z.record(z.unknown()).optional(),
+    reason: z.string().nullish(),
+    retryable: z.boolean().optional(),
+  })
+  .passthrough();
+
+// B-scheme T7 §8.1：local web view session 建立輸入（ifc_ready_job_id 或
+// external_model_version_id 擇一）。使用者 auth 由可替換 provider 處理。
+const localWebViewSessionSchema = z
+  .object({
+    ifc_ready_job_id: z.string().min(1).optional(),
+    external_model_version_id: z.string().min(1).optional(),
+  })
+  .passthrough()
+  .refine((v) => Boolean(v.ifc_ready_job_id || v.external_model_version_id), {
+    message: "ifc_ready_job_id or external_model_version_id is required",
+  });
+
 export interface CoordinatorApp {
   app: express.Express;
   server: http.Server;
@@ -106,6 +170,8 @@ export interface CoordinatorApp {
   store: SessionStore;
   eventLog: EventLog;
 }
+
+type RawBodyRequest = express.Request & { rawBody?: string };
 
 export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   const config = loadConfig(overrides);
@@ -120,9 +186,28 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   const store = new SessionStore(config.sessionStoreDir);
   const eventLog = new EventLog(config.eventLogDir);
   const bimControlClient = new BimControlClient(config.bimControlApiBase);
+  // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
+  const authProvider = createAuthProvider(config);
+  const externalIfcReadyStore = new ExternalIfcReadyStore();
+  const streamingConversionClient = new StreamingConversionClient(config.streamingConversionApiBase);
+  // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
+  const callbackOutbox = new CallbackOutbox(
+    config.callbackOutboxMaxAttempts,
+    undefined,
+    config.callbackOutboxStorePath,
+  );
+  // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
+  const userAuthProvider = createUserAuthProvider(config);
 
   app.use(cors({ origin: config.corsOrigins }));
-  app.use(express.json({ limit: "1mb" }));
+  app.use(
+    express.json({
+      limit: "1mb",
+      verify: (request, _response, buffer) => {
+        (request as RawBodyRequest).rawBody = buffer.toString("utf8");
+      },
+    }),
+  );
   mountDevConsole(app);
 
   app.get("/health", (_request, response) => {
@@ -355,6 +440,251 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     }
   });
 
+  // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：
+  // 唯一對外 IFC-ready intake。caller = 客戶落地端 IFC Worker（落地端內網，
+  // machine-to-machine）。streaming 為 internal-only 轉檔引擎（T4）。
+  app.post("/api/external/ifc-ready", async (request, response, next) => {
+    try {
+      const event = { ...ifcReadyPayloadSchema.parse(request.body) };
+      event.callback_url = resolveAllowedCallbackTarget(event.callback_url ?? null, config);
+      const headerMap = headersToMap(request.headers);
+      const auth = authProvider.authenticate({
+        clientIp: request.ip || request.socket.remoteAddress || "",
+        headers: headerMap,
+        rawBody: (request as RawBodyRequest).rawBody ?? JSON.stringify(request.body ?? {}),
+        payloadIdentity: {
+          tenant_id: event.tenant_id,
+          project_id: event.project_id,
+          external_model_version_id: event.external_model_version_id,
+        },
+      });
+
+      const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
+      if (existing) {
+        response.status(200).json({ ...existing, idempotent_replay: true });
+        return;
+      }
+
+      const job = externalIfcReadyStore.create(event, {
+        correlationId: auth.correlationId,
+        idempotencyKey: auth.idempotencyKey,
+        tenantId: auth.tenantId,
+        projectId: auth.projectId,
+        externalModelVersionId: auth.externalModelVersionId,
+      });
+
+      // ifc-ready 已被接受並落地（local job + external_model_version_id binding）。
+      // 內部轉檔派工失敗為可重試狀態，不否定 intake 本身（重試/補派 + 雲端
+      // callback outbox 屬 T4/T5）。
+      try {
+        const dispatch = await streamingConversionClient.createConversionJob(event, {
+          correlationId: auth.correlationId,
+          externalModelVersionId: auth.externalModelVersionId,
+        });
+        externalIfcReadyStore.markDispatched(job.ifc_ready_job_id, dispatch.conversion_job_id, dispatch.status);
+      } catch (dispatchError) {
+        externalIfcReadyStore.markDispatchFailed(
+          job.ifc_ready_job_id,
+          dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+        );
+      }
+
+      response.status(202).json(externalIfcReadyStore.get(job.ifc_ready_job_id));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/external/ifc-ready/:jobId", (request, response) => {
+    const job = externalIfcReadyStore.get(request.params.jobId);
+    if (!job) {
+      response.status(404).json({ detail: "IFC-ready job not found." });
+      return;
+    }
+    response.json(job);
+  });
+
+  // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
+  // 不 mirror 公司 MySQL；control-plane 權威（user/RBAC/license/version 歷史）
+  // 不在此重新宣告，僅以 external_model_version_id 參照公司雲端。
+  app.get("/api/external/ifc-ready/:jobId/shadow", (request, response) => {
+    const job = externalIfcReadyStore.get(request.params.jobId);
+    if (!job) {
+      response.status(404).json({ detail: "IFC-ready job not found." });
+      return;
+    }
+    let callback: { status: string; lastAttemptAt: string | null } | undefined;
+    if (job.callback_outbox_id) {
+      const entry = callbackOutbox.get(job.callback_outbox_id);
+      if (entry) {
+        const lastEvidence = entry.evidence[entry.evidence.length - 1];
+        callback = { status: entry.status, lastAttemptAt: lastEvidence ? lastEvidence.at : null };
+      }
+    }
+    const shadow = externalIfcReadyStore.toShadowMetadata(job, callback);
+    response.json({
+      shadow_metadata: shadow,
+      // 本 repo（data-plane）可在本地回答的可用性，不需公司雲端
+      data_plane_availability: {
+        local_conversion_status: job.conversion_status,
+        conversion_authority: job.conversion_authority,
+        source_ifc_available: Boolean(job.source_ifc_ref),
+        artifact_manifest_available: Boolean(job.artifact_manifest_ref),
+      },
+      // control-plane 權威歸屬說明：本地僅參照，不宣告權威
+      control_plane_authority: {
+        owner: "company-cloud-bim-control",
+        referenced_by: "external_model_version_id",
+        not_mirrored: true,
+      },
+    });
+  });
+
+  app.use("/api/internal", (request, response, next) => {
+    if (!isInternalRequestAuthorized(headersToMap(request.headers), config.internalApiAuthToken)) {
+      response.status(401).json({ detail: "missing or invalid internal API token" });
+      return;
+    }
+    next();
+  });
+
+  // B-scheme T5：本地轉檔結果 → 組 metadata-only 雲端 callback 並入 outbox。
+  // 內部端點（coordinator 自身輪詢/result loop 餵入）。callback 投遞狀態與
+  // conversion 成功分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。
+  app.post("/api/internal/conversion-result", (request, response, next) => {
+    try {
+      const report = conversionResultReportSchema.parse(request.body);
+      const normalizedStatus = normalizeConversionReportStatus(report.status);
+      const job = externalIfcReadyStore.getByCorrelation(report.correlation_id);
+      if (!job) {
+        response.status(404).json({ detail: "No IFC-ready job for correlation_id." });
+        return;
+      }
+      const conversionJobId = report.conversion_job_id || job.conversion_job_id || null;
+      const targetUrl = job.callback_url || config.cloudCallbackBaseUrl || null;
+
+      let payload: Record<string, unknown>;
+      let event: "conversion_result_ready" | "conversion_failed";
+      if (normalizedStatus === "ready") {
+        event = "conversion_result_ready";
+        payload = {
+          event,
+          tenant_id: job.tenant_id,
+          project_id: job.project_id,
+          external_model_version_id: job.external_model_version_id,
+          external_conversion_task_id: job.external_conversion_task_id ?? null,
+          conversion_job_id: conversionJobId,
+          correlation_id: job.correlation_id,
+          status: "ready",
+          source_ifc: { ref: job.source_ifc_ref, etag: job.source_ifc_etag },
+          artifacts: {
+            usdc_ref: report.artifacts?.usdc_ref ?? null,
+            element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
+            manifest_ref: report.artifacts?.manifest_ref ?? null,
+          },
+          artifact_summary: report.artifact_summary ?? {},
+        };
+      } else {
+        event = "conversion_failed";
+        payload = {
+          event,
+          tenant_id: job.tenant_id,
+          project_id: job.project_id,
+          external_model_version_id: job.external_model_version_id,
+          conversion_job_id: conversionJobId,
+          correlation_id: job.correlation_id,
+          status: "failed",
+          reason: report.reason || "conversion_failed",
+          retryable: report.retryable ?? false,
+        };
+      }
+
+      const entry = callbackOutbox.enqueue({
+        event,
+        targetUrl,
+        correlationId: job.correlation_id,
+        externalModelVersionId: job.external_model_version_id,
+        conversionJobId,
+        payload,
+      });
+      const updatedJob = externalIfcReadyStore.recordConversionOutcome(
+        job.ifc_ready_job_id,
+        normalizedStatus,
+        entry.outbox_id,
+        report.artifacts?.manifest_ref ?? null,
+      );
+      // conversion 在本地的成功/失敗，與 callback 投遞狀態（outbox）分離回報。
+      response.status(202).json({ ifc_ready_job: updatedJob, callback: entry });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/internal/callback-outbox/:outboxId", (request, response) => {
+    const entry = callbackOutbox.get(request.params.outboxId);
+    if (!entry) {
+      response.status(404).json({ detail: "Callback outbox entry not found." });
+      return;
+    }
+    response.json(entry);
+  });
+
+  // runtime loop / 測試決定性驅動：對所有 pending entry 各嘗試投遞一次。
+  app.post("/api/internal/callback-outbox/deliver", async (_request, response, next) => {
+    try {
+      const touched = await callbackOutbox.deliverPending();
+      response.json({ delivered_pass: true, entries: touched });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // B-scheme T7 §8.1-8.3：local web view session / artifact resolution。
+  // 使用者 auth 用可替換 provider（不做死 EZPLUS SSO；sso_binding 在 OQ5
+  // 確認前恆 pending_oq5）。實際 USDC streaming 仍走既有 stream-config 路徑。
+  app.post("/api/local-web-view/sessions", (request, response, next) => {
+    try {
+      const headerMap = headersToMap(request.headers);
+      const user = userAuthProvider.authenticate({ headers: headerMap });
+      const input = localWebViewSessionSchema.parse(request.body);
+
+      let job = input.ifc_ready_job_id
+        ? externalIfcReadyStore.get(input.ifc_ready_job_id)
+        : undefined;
+      if (!job && input.external_model_version_id) {
+        job = latestIfcReadyJobForExternalModelVersion(
+          externalIfcReadyStore.list(),
+          input.external_model_version_id,
+        );
+      }
+      if (!job) {
+        response.status(404).json({ detail: "No IFC-ready job for local web view." });
+        return;
+      }
+
+      const session = {
+        web_view_session_id: `lwv_${Date.now()}_${randomWebViewSuffix()}`,
+        user_id: user.userId,
+        auth_provider: user.provider,
+        sso_binding: user.ssoBinding,
+        external_model_version_id: job.external_model_version_id,
+        ifc_ready_job_id: job.ifc_ready_job_id,
+        artifact_resolution: {
+          source_ifc_ref: job.source_ifc_ref,
+          artifact_manifest_ref: job.artifact_manifest_ref ?? null,
+          conversion_job_id: job.conversion_job_id,
+          conversion_status: job.conversion_status,
+          conversion_authority: job.conversion_authority,
+          viewer_open_ready: job.conversion_status === "ready",
+        },
+        created_at: new Date().toISOString(),
+      };
+      response.status(201).json(session);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/dev/conversions", async (request, response) => {
     await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions", request.body);
   });
@@ -381,12 +711,66 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       response.status(400).json({ detail: error.flatten() });
       return;
     }
+    if (error instanceof AuthError) {
+      response.status(error.statusCode).json({ detail: error.message });
+      return;
+    }
+    if (error instanceof MetadataOnlyViolation) {
+      // 雲地分離鐵律：metadata-only callback 不得帶大型模型本體。
+      response.status(422).json({ detail: error.message });
+      return;
+    }
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });
   });
 
   registerReviewNamespace(io, store, eventLog, bimControlClient);
 
   return { app, server, io, config, store, eventLog };
+}
+
+function headersToMap(headers: express.Request["headers"]): Record<string, string | undefined> {
+  const headerMap: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    headerMap[key.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+  }
+  return headerMap;
+}
+
+function isInternalRequestAuthorized(headers: Record<string, string | undefined>, token: string): boolean {
+  const expected = token.trim();
+  if (!expected) return false;
+  const headerToken = headers["x-internal-token"]?.trim();
+  const authorization = headers.authorization;
+  const bearerToken =
+    typeof authorization === "string" && authorization.toLowerCase().startsWith("bearer ")
+      ? authorization.slice(7).trim()
+      : "";
+  return headerToken === expected || bearerToken === expected;
+}
+
+function resolveAllowedCallbackTarget(candidateUrl: string | null, config: CoordinatorConfig): string | null {
+  const configuredBase = config.cloudCallbackBaseUrl.trim();
+  if (!configuredBase) return null;
+  const base = new URL(configuredBase);
+  if (!candidateUrl) return configuredBase;
+  const candidate = new URL(candidateUrl);
+  if (candidate.origin !== base.origin) {
+    throw new AuthError(403, `callback_url origin not allowed: ${candidate.origin}`);
+  }
+  return candidate.toString();
+}
+
+function normalizeConversionReportStatus(status: "ready" | "succeeded" | "failed"): "ready" | "failed" {
+  return status === "failed" ? "failed" : "ready";
+}
+
+function latestIfcReadyJobForExternalModelVersion(
+  jobs: IfcReadyIntakeJob[],
+  externalModelVersionId: string,
+): IfcReadyIntakeJob | undefined {
+  return jobs
+    .filter((job) => job.external_model_version_id === externalModelVersionId)
+    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))[0];
 }
 
 function mountDevConsole(app: express.Express): void {
@@ -446,7 +830,7 @@ async function proxyConversionService(
     response.status(upstream.status).type(contentType).send(text || "{}");
   } catch (error) {
     response.status(502).json({
-      detail: "Worker API unavailable.",
+      detail: "Conversion API unavailable.",
       upstream: conversionApiBase,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -455,6 +839,10 @@ async function proxyConversionService(
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function randomWebViewSuffix(): string {
+  return Math.random().toString(36).slice(2, 10);
 }
 
 function chooseReadyUsdc(artifacts: Artifact[]): Artifact | undefined {

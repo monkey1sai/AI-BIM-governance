@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string] $BimControlUrl = "http://127.0.0.1:8001",
-    [string] $WorkerUrl = "http://127.0.0.1:8005",
+    [string] $BimControlUrl = "removed-runtime",
+    [string] $WorkerUrl = "removed-runtime",
     [string] $CoordinatorUrl = "http://127.0.0.1:8004",
     [string] $ViewerUrl = "http://127.0.0.1:5173",
     [string] $TenantId = "tenant_demo_001",
@@ -22,6 +22,14 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# === B-scheme（local-coordinator-ifc-ready-intake-boundary T2）SUPERSEDED ===
+# `_worker`(:8005) / `_bim-control`(:8001) 已自 repo 刪除（外部平台改由 tests/fakes 模擬）。
+# 本 demo 以兩 mock 服務 preflight 為前提，已不可運作。B-scheme 改以 coordinator
+# 對外 intake（T3）+ streaming internal conversion（T4）+ tests/fakes 驗證
+# （OpenSpec change local-coordinator-ifc-ready-intake-boundary，T8 smoke rewrite）。
+Write-Host "[demo] SUPERSEDED：_worker/_bim-control 已於 T2 刪除；改由 T3/T4 + T8 contract-stub smoke 取代。未執行。" -ForegroundColor Yellow
+exit 0
 
 . (Join-Path $PSScriptRoot 'lib\smoke-evidence.ps1')
 

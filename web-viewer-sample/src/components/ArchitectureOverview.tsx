@@ -1,30 +1,30 @@
 const architectureNodes = [
     {
-        id: "control",
-        title: "_bim-control",
-        role: "Fake BIM Data Authority",
-        details: ["project / model metadata", "artifact / issue / annotation records", "element mapping metadata"],
+        id: "external-worker",
+        title: "External IFC Worker",
+        role: "Customer-edge IFC producer",
+        details: ["produces IFC", "calls coordinator intake", "external system"],
         tone: "authority",
     },
     {
-        id: "worker",
-        title: "_worker",
-        role: "File + Conversion Boundary",
-        details: ["dev IFC source selection", "USDC artifacts", "mapping / lineage files"],
+        id: "cloud-control",
+        title: "Company cloud bim-control",
+        role: "External control-plane authority",
+        details: ["project / model metadata", "callback receiver", "not a local runtime"],
         tone: "storage",
     },
     {
         id: "coordinator",
         title: "bim-review-coordinator",
-        role: "Session / Collaboration Control Plane",
-        details: ["review session lifecycle", "stream config routing", "presence / collaboration events"],
+        role: "IFC-ready intake + Session Control Plane",
+        details: ["service auth / idempotency", "callback outbox", "stream config routing"],
         tone: "control",
     },
     {
         id: "streaming",
         title: "bim-streaming-server",
-        role: "Omniverse Kit Runtime",
-        details: ["USD stage runtime", "GPU rendering / WebRTC", "DataChannel scene commands"],
+        role: "IFC→USDC Authority + Omniverse Kit Runtime",
+        details: ["internal conversion", "GPU rendering / WebRTC", "DataChannel scene commands"],
         tone: "runtime",
     },
     {
@@ -37,17 +37,17 @@ const architectureNodes = [
 ];
 
 const architectureFlows = [
-    "web-viewer-sample → bim-review-coordinator: create / join review session",
-    "bim-review-coordinator → _bim-control: query model, artifact, issue metadata",
-    "_worker → _bim-control: publish artifact metadata and readiness",
+    "External IFC Worker → bim-review-coordinator: POST /api/external/ifc-ready",
+    "bim-review-coordinator → bim-streaming-server: internal conversion request",
+    "bim-review-coordinator → company cloud: metadata-only callback outbox",
     "web-viewer-sample ↔ bim-streaming-server: WebRTC video + DataChannel JSON",
-    "bim-streaming-server → _worker: load USD / USDC bytes",
     "web-viewer-sample ↔ bim-review-coordinator: Socket.IO presence / collaboration",
 ];
 
 const boundaryRules = [
-    "資料權威歸 _bim-control",
-    "檔案與轉檔邊界歸 _worker",
+    "對外 IFC-ready intake 歸 coordinator",
+    "IFC→USDC conversion 歸 streaming server",
+    "雲端 callback 歸 coordinator outbox",
     "session / collaboration 歸 coordinator",
     "3D runtime 歸 streaming server",
     "使用者操作歸 web viewer",
@@ -60,7 +60,7 @@ export default function ArchitectureOverview() {
                 <p className="architecture-eyebrow">AI-BIM Governance Workspace</p>
                 <h2 id="architecture-overview-title">Project Architecture UI</h2>
                 <p>
-                    五個核心 repo / folder 依資料權威、檔案轉檔、session 控制、3D runtime 與瀏覽器操作分工。
+                    B 方案以 coordinator 作唯一外部 intake，streaming server 擁有 IFC→USDC 與 3D runtime，外部平台只由 tests/fakes 模擬。
                 </p>
             </div>
 

@@ -122,8 +122,7 @@ function Test-GpuImageAndRuntime {
 }
 
 $coreOk = $true
-$coreOk = (Test-Http "bim-control" "http://127.0.0.1:8001/health") -and $coreOk
-$coreOk = (Test-Http "worker" "http://127.0.0.1:8005/health") -and $coreOk
+# B-scheme T2：bim-control(:8001) / worker(:8005) 已自 repo 刪除（外部平台由 tests/fakes 模擬）
 $coreOk = (Test-Http "coordinator" "http://127.0.0.1:8004/health") -and $coreOk
 $coreOk = (Test-Http "viewer" "http://127.0.0.1:5173") -and $coreOk
 $coreOk = (Test-Http "kit-manager-api" "http://127.0.0.1:8010/health") -and $coreOk

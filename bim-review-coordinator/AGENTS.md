@@ -4,7 +4,7 @@
 
 ## Role
 
-`bim-review-coordinator` 是 Session / Collaboration Control Plane。它負責建立 review session、協調 viewer 與 streaming server 的連線資訊、廣播多人協作事件，並對外代理 BIM metadata / worker object URL 查詢。
+`bim-review-coordinator` 是外部 IFC-ready intake、metadata-only callback outbox 與 Session / Collaboration Control Plane。它負責建立 review session、協調 viewer 與 streaming server 的連線資訊、廣播多人協作事件，並保存最小 local shadow metadata。
 
 服務埠口：`127.0.0.1:8004`
 
@@ -13,7 +13,8 @@
 - review session state
 - stream config 對 viewer 的發放
 - user presence / selection / issue focus / annotation event broadcast
-- viewer 對 `_bim-control` 與 `_worker` artifact binding / object URL 的查詢路由
+- 外部 IFC-ready service auth / idempotency / local conversion job binding
+- streaming conversion result → metadata-only callback outbox
 
 ## Does Not Own
 
@@ -24,15 +25,15 @@
 
 ## Required Boundaries
 
-- `web-viewer-sample` 的 metadata / file URL 查詢應走本服務，不直連 `_bim-control` 或 `_worker`。
-- 本服務只協調 session 與 collaboration，不取代 `_bim-control` 成為長期 review metadata authority。
+- `web-viewer-sample` 的 session / metadata / stream config 查詢應走本服務，不直連已刪 runtime。
+- 本服務只協調 session、collaboration、intake 與 callback outbox，不取代外部公司雲端 control-plane 成為長期 metadata authority。
 - 不得引入 Omniverse / `pxr` / `omni.*` dependency。
 - 不得直接控制 Kit viewport、camera、material；runtime operation 屬於 `bim-streaming-server`。
 
 ## Before Editing
 
 - 先讀 `README.md`、`src/`、`tests/`、`package.json` 與相關 contract。
-- API 或 Socket.IO event schema 變更必須同步檢查 `web-viewer-sample`、`_bim-control`、`_worker` 與 `docs/contracts/`。
+- API 或 Socket.IO event schema 變更必須同步檢查 `web-viewer-sample`、`bim-streaming-server`、`tests/contracts/` 與 `docs/contracts/`。
 - Source 改動需檢查相關 API、event contract 與測試影響；docs-only 改動只需確認文件語意。
 
 ## Verify

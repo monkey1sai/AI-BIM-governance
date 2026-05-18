@@ -1,0 +1,90 @@
+{
+  "contract": "conversion_result_callback",
+  "contract_version": "1.0.0",
+  "direction": "bim-review-coordinator -> company cloud bim-control (callback receipt)",
+  "hard_rule": "METADATA-ONLY. MUST NOT carry raw .usdc body/binary or any large model/3D bytes; metadata references such as usdc_ref are allowed; large artifacts stay on the customer edge (PDF cloud-edge separation).",
+  "source_of_truth": [
+    "openspec/changes/local-coordinator-ifc-ready-intake-boundary/specs/external-cloud-callback-lifecycle/spec.md"
+  ],
+  "open_question_status": {
+    "OQ1": "company cloud callback endpoint URL + auth (machine token? mTLS?) TBD by external platform team",
+    "OQ2": "source/usdc artifact ref scheme (minio:// naming, etag source) TBD",
+    "mitigation": "this frozen contract is the T5.4 stand-in; real endpoint stays 'pending' until OQ1 is confirmed; outbox/retry/dead-letter is verified against this fixture, not a live cloud"
+  },
+  "events": {
+    "conversion_result_ready": {
+      "when": "local conversion job succeeded",
+      "required_fields": [
+        "event",
+        "tenant_id",
+        "project_id",
+        "external_model_version_id",
+        "conversion_job_id",
+        "correlation_id",
+        "status",
+        "source_ifc",
+        "artifacts",
+        "artifact_summary"
+      ],
+      "example": {
+        "event": "conversion_result_ready",
+        "tenant_id": "tenant_demo_001",
+        "project_id": "project_demo_001",
+        "external_model_version_id": "ext_mv_demo_001",
+        "external_conversion_task_id": "ext_task_demo_001",
+        "conversion_job_id": "cj_demo_001",
+        "correlation_id": "corr_rvt_demo_001",
+        "status": "ready",
+        "source_ifc": {
+          "ref": "minio://edge-bucket/tenant_demo_001/project_demo_001/ext_mv_demo_001/demo-model.ifc",
+          "etag": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "artifacts": {
+          "usdc_ref": "edge-local://tenant_demo_001/ext_mv_demo_001/cj_demo_001/model.usdc",
+          "element_mapping_ref": "edge-local://tenant_demo_001/ext_mv_demo_001/cj_demo_001/element_mapping.json",
+          "manifest_ref": "edge-local://tenant_demo_001/ext_mv_demo_001/cj_demo_001/artifact_manifest.json"
+        },
+        "artifact_summary": {
+          "usdc_openable": true,
+          "has_renderable_prims": true,
+          "placeholder_output": false,
+          "mapped_count": 2,
+          "unmapped_count": 0,
+          "coverage_ratio": 1.0,
+          "coverage_status": "pass"
+        }
+      }
+    },
+    "conversion_failed": {
+      "when": "local conversion job failed",
+      "required_fields": [
+        "event",
+        "tenant_id",
+        "project_id",
+        "external_model_version_id",
+        "conversion_job_id",
+        "correlation_id",
+        "status",
+        "reason",
+        "retryable"
+      ],
+      "example": {
+        "event": "conversion_failed",
+        "tenant_id": "tenant_demo_001",
+        "project_id": "project_demo_001",
+        "external_model_version_id": "ext_mv_demo_001",
+        "conversion_job_id": "cj_demo_001",
+        "correlation_id": "corr_rvt_demo_001",
+        "status": "failed",
+        "reason": "converter_failed: USDC could not be opened",
+        "retryable": false
+      }
+    }
+  },
+  "delivery_semantics": {
+    "callback_status_field": "callback delivery state is reported separately from conversion success; conversion_job stays 'ready' locally even if callback not yet acked",
+    "outbox": "callback retained in callback_outbox and retried per policy when cloud unreachable (network/5xx/timeout)",
+    "dead_letter": "after retries exhausted -> dead_letter state with evidence (target URL, attempts, last error, correlation_id); never silently dropped",
+    "forbidden": "no raw .usdc body/binary / no large bytes in payload (metadata refs such as usdc_ref are allowed)"
+  }
+}

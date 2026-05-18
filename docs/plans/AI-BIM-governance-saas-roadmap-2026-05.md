@@ -30,6 +30,8 @@
 >
 > **2026-05-12 更新（OpenSpec archive 後 roadmap 對齊規範）**：新增 **§1.6**，明定每次 OpenSpec sync / archive 後，必須同步更新本 roadmap 的 spec 清單、歸檔 change 溯源、Phase 狀態、候選優先級與驗證證據引用，避免 `openspec/specs/` 與本文件漂移。
 >
+> **2026-05-18 更新（Phase B apply 進度｜`local-coordinator-ifc-ready-intake-boundary`）**：B 方案 apply（T0–T9）已於 rolling PR #63 完成實作並各批最小驗證；**`_worker` / `_bim-control` 已自 repo 刪除**（removed from product runtime，非降級），對外入口收斂於 `bim-review-coordinator` `POST /api/external/ifc-ready`、`bim-streaming-server` 為 internal-only、轉檔結果走 metadata-only callback outbox、本地僅最小 shadow metadata。**驗證狀態（誠實，未標 passed）**：coordinator `npm run verify` 與 repo-root / streaming pytest 綠；**runtime image Linux Kit launcher = `deferred`**（GPU/Kit graphics-vulkan 阻塞，非 passed，不用 host-local Kit 充當）；OQ1（雲端 callback endpoint）/ OQ5（SSO）真實對接仍 pending，以凍結契約緩解。本節核心 repo 清單、§2/§5/§7/§10、Phase 狀態等的**正式收斂屬 merge 後 §1.6 sync/archive（T9.5）**，此處先記進度、不據此把驗證狀態標為 passed。
+>
 > **2026-05-12 更新（`worker-real-conversion-quality` archive 對齊）**：依 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §4 / §5 / §6 / §7 / §9.8 / §10**。P0 #1 已 land 並歸檔：`_worker` 已具備真實 IFC→USDC adapter、USDC openability hard gate、real mapping quality metrics 與 single Kit/browser 截圖證據；mapping coverage 仍採 measure-first，尚未鎖 production baseline 門檻。
 >
 > **2026-05-12 更新（#2 GPU 容量等待）**：依使用者指示，`multi-artifact-kit-routing` / `streaming-multi-instance-orchestration` 的 `dedicated_instance` runtime 驗證改為 **等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，roadmap 與 OpenSpec 只保留 control-plane contract / routing target，不把 dedicated multi-Kit runtime 視為進行中、passed 或 failed。

@@ -25,6 +25,24 @@ export interface CoordinatorConfig {
   sessionStoreDir: string;
   eventLogDir: string;
   corsOrigins: string[];
+  internalApiAuthToken: string;
+  // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
+  // 公司雲端 control-plane / 落地端 IFC Worker 為外部系統；以下為落地端內網
+  // machine-to-machine 設定（可替換 AuthProvider）。
+  streamingConversionApiBase: string;
+  externalIntakeAuthProvider: string;
+  externalIntakeWebhookSecret: string;
+  externalIntakeIpAllowlist: string[];
+  // T5 雲端 callback（metadata-only outbox）。真實公司雲端 endpoint/auth 待
+  // OQ1；未確認前 default 空＝無 real endpoint（outbox 視為不可達，保留重試
+  // 至 dead-letter，不靜默丟棄）。每事件的 callback_url 只允許落在
+  // cloudCallbackBaseUrl 同 origin；未設定時不得由外部 payload 任意指定。
+  cloudCallbackBaseUrl: string;
+  callbackOutboxMaxAttempts: number;
+  callbackOutboxStorePath: string;
+  // T7：使用者（local web view）auth provider，可替換；不做死 EZPLUS SSO，
+  // local web view ↔ 公司 SSO 真實銜接待 OQ5。
+  userAuthProvider: string;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -108,8 +126,11 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   return {
     host: process.env.HOST || "127.0.0.1",
     port: numberFromEnv("PORT", 8004),
-    bimControlApiBase: process.env.BIM_CONTROL_API_BASE || "http://127.0.0.1:8001",
-    conversionApiBase: process.env.WORKER_API_BASE || process.env.CONVERSION_API_BASE || "http://127.0.0.1:8005",
+    bimControlApiBase: process.env.BIM_CONTROL_API_BASE || "",
+    conversionApiBase:
+      process.env.CONVERSION_API_BASE ||
+      process.env.STREAMING_CONVERSION_API_BASE ||
+      "http://127.0.0.1:49101",
     kitStreamServer,
     kitSignalingPort,
     kitMediaServer,
@@ -119,6 +140,22 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     sessionStoreDir: process.env.SESSION_STORE_DIR || path.join(cwd, "data", "sessions"),
     eventLogDir: process.env.EVENT_LOG_DIR || path.join(cwd, "data", "events"),
     corsOrigins: csvFromEnv("CORS_ORIGINS", ["http://127.0.0.1:5173", "http://localhost:5173"]),
+    internalApiAuthToken: process.env.INTERNAL_API_AUTH_TOKEN || "dev-internal-token",
+    streamingConversionApiBase:
+      process.env.STREAMING_CONVERSION_API_BASE || "http://127.0.0.1:49101",
+    externalIntakeAuthProvider: process.env.EXTERNAL_INTAKE_AUTH_PROVIDER || "intranet-dev",
+    externalIntakeWebhookSecret: process.env.EXTERNAL_INTAKE_WEBHOOK_SECRET || "dev-webhook-secret",
+    externalIntakeIpAllowlist: csvFromEnv("EXTERNAL_INTAKE_IP_ALLOWLIST", [
+      "127.0.0.1",
+      "::1",
+      "172.16.0.0/12",
+    ]),
+    cloudCallbackBaseUrl: process.env.CLOUD_CALLBACK_BASE_URL || "",
+    callbackOutboxMaxAttempts: numberFromEnv("CALLBACK_OUTBOX_MAX_ATTEMPTS", 5),
+    callbackOutboxStorePath:
+      process.env.CALLBACK_OUTBOX_STORE_PATH ||
+      path.join(cwd, "data", "callback-outbox.json"),
+    userAuthProvider: process.env.USER_AUTH_PROVIDER || "local-dev",
     ...overrides,
   };
 }
