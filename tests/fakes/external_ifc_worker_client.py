@@ -15,6 +15,7 @@ import copy
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ def build_ifc_ready_payload(**overrides: Any) -> dict[str, Any]:
 def auth_headers(**overrides: Any) -> dict[str, str]:
     """intranet-dev AuthProvider headers from the frozen contract."""
     headers = dict(load_contract()["transport"]["auth"]["headers"])
+    headers["X-Webhook-Secret"] = "dev-webhook-secret"
     headers.update(overrides)
     return headers
 
@@ -56,6 +58,9 @@ def post_ifc_ready(
         payload = build_ifc_ready_payload()
     if headers is None:
         headers = auth_headers()
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"Unsupported coordinator base_url scheme: {parsed.scheme or '<missing>'}")
     url = base_url.rstrip("/") + load_contract()["transport"]["path"]
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")

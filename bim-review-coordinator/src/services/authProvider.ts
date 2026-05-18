@@ -16,7 +16,7 @@ import type { CoordinatorConfig } from "../config.js";
 export interface AuthRequest {
   clientIp: string;
   headers: Record<string, string | undefined>;
-  /** 原始 request body（用於 HMAC 簽章驗證），已序列化字串 */
+  /** 原始 request body（用於 HMAC 簽章驗證），不可由 parsed JSON 重組 */
   rawBody: string;
   payloadIdentity: {
     tenant_id?: unknown;
@@ -76,6 +76,37 @@ function normalizeIp(ip: string): string {
   return ip.replace(/^::ffff:/, "");
 }
 
+function ipv4ToInt(ip: string): number | null {
+  const parts = normalizeIp(ip).split(".");
+  if (parts.length !== 4) return null;
+  const bytes = parts.map((part) => Number.parseInt(part, 10));
+  if (bytes.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return null;
+  }
+  return (((bytes[0] * 2 ** 24) + (bytes[1] * 2 ** 16) + (bytes[2] * 2 ** 8) + bytes[3]) >>> 0);
+}
+
+function cidrContains(cidr: string, ip: string): boolean {
+  const [base, prefixText] = cidr.split("/");
+  const prefix = Number.parseInt(prefixText || "", 10);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const baseInt = ipv4ToInt(base);
+  const ipInt = ipv4ToInt(ip);
+  if (baseInt === null || ipInt === null) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (baseInt & mask) === (ipInt & mask);
+}
+
+function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
+  const normalized = normalizeIp(clientIp || "");
+  return allowlist.some((entry) => {
+    const rule = entry.trim();
+    if (rule.length === 0) return false;
+    if (rule.includes("/")) return cidrContains(rule, normalized);
+    return normalizeIp(rule) === normalized;
+  });
+}
+
 /**
  * intranet-dev：IP allowlist + `X-Webhook-Secret`（共享密鑰）或
  * `X-Webhook-Signature`（HMAC-SHA256(rawBody, secret)）二擇一。
@@ -90,8 +121,7 @@ export class IntranetDevAuthProvider implements AuthProvider {
 
   authenticate(request: AuthRequest): AuthContext {
     const clientIp = normalizeIp(request.clientIp || "");
-    const allowed = this.ipAllowlist.map(normalizeIp);
-    if (allowed.length > 0 && !allowed.includes(clientIp)) {
+    if (this.ipAllowlist.length > 0 && !isIpAllowed(clientIp, this.ipAllowlist)) {
       throw new AuthError(403, `caller ip not in allowlist: ${clientIp || "unknown"}`);
     }
 
@@ -136,11 +166,12 @@ export class IntranetDevAuthProvider implements AuthProvider {
 export function createAuthProvider(config: CoordinatorConfig): AuthProvider {
   switch (config.externalIntakeAuthProvider) {
     case "intranet-dev":
-    default:
       return new IntranetDevAuthProvider(
         config.externalIntakeWebhookSecret,
         config.externalIntakeIpAllowlist,
       );
+    default:
+      throw new Error(`Unsupported EXTERNAL_INTAKE_AUTH_PROVIDER: ${config.externalIntakeAuthProvider}`);
   }
 }
 
@@ -189,7 +220,8 @@ export class LocalDevUserAuthProvider implements UserAuthProvider {
 export function createUserAuthProvider(config: CoordinatorConfig): UserAuthProvider {
   switch (config.userAuthProvider) {
     case "local-dev":
-    default:
       return new LocalDevUserAuthProvider();
+    default:
+      throw new Error(`Unsupported USER_AUTH_PROVIDER: ${config.userAuthProvider}`);
   }
 }

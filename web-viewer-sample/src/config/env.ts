@@ -14,7 +14,7 @@ function positiveNumberConfig(queryName: string, envName: string, fallback: numb
 export const reviewEnv = {
     coordinatorApiBase: import.meta.env.VITE_COORDINATOR_API_BASE || "http://127.0.0.1:8004",
     coordinatorSocketUrl: import.meta.env.VITE_COORDINATOR_SOCKET_URL || "http://127.0.0.1:8004",
-    bimControlApiBase: import.meta.env.VITE_BIM_CONTROL_API_BASE || "http://127.0.0.1:8001",
+    bimControlApiBase: import.meta.env.VITE_BIM_CONTROL_API_BASE || import.meta.env.VITE_COORDINATOR_API_BASE || "http://127.0.0.1:8004",
     defaultProjectId: queryParam("projectId") || import.meta.env.VITE_DEFAULT_PROJECT_ID || "project_demo_001",
     defaultModelVersionId: queryParam("modelVersionId") || import.meta.env.VITE_DEFAULT_MODEL_VERSION_ID || "version_demo_001",
     defaultReviewRequestId: queryParam("reviewRequestId") || queryParam("review_request_id") || import.meta.env.VITE_DEFAULT_REVIEW_REQUEST_ID || "",

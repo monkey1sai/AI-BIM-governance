@@ -2,37 +2,28 @@
   "schema_version": "demo-runtime-readiness-smoke/v1",
   "capability": "demo-runtime-readiness-smoke",
   "emitted_at": "2026-05-18T09:48:53.000Z",
-  "command": "scripts/smoke-bscheme-intake.ps1 (this run executed via equivalent node/python checks: PowerShell execution is denied by the sandbox policy; the committed .ps1 is the reproducible tool for PowerShell/CI environments)",
+  "command": "scripts/smoke-bscheme-intake.ps1 (captured with equivalent node/python checks; do not treat as live Kit/WebRTC pass)",
   "cwd": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\local-coordinator-ifc-ready-intake-boundary",
   "context": {
     "change_id": "local-coordinator-ifc-ready-intake-boundary",
     "task": "T8 readiness/smoke/evidence rewrite (§9.1-9.3)",
-    "note": "default smoke 不依賴 _worker/_bim-control（已自 repo 刪除）；改以 contract stub（tests/contracts + tests/fakes）→ coordinator 對外 intake，驗 conversion + callback outbox + Kit launcher evidence。GPU/Kit 阻塞誠實 deferred，不謊報 passed。"
+    "note": "default smoke 不依賴已刪 runtime；以 contract stub（tests/contracts + tests/fakes）→ coordinator 對外 intake，分層驗證 conversion、callback outbox 與 Kit launcher evidence。GPU/Kit 阻塞誠實 deferred，不謊報 passed。"
   },
   "tiers": [
     {
-      "tier": "external_platform_contracts",
+      "tier": "external_ifc_ready_intake",
       "status": "passed",
       "owner": "scripts",
       "ids": { "suite": "tests/test_contracts_and_fakes.py" },
       "blocker": "",
-      "next_command": "python -m pytest tests -q",
-      "evidence_paths": ["tests/contracts/ifc_ready_payload.json", "tests/contracts/conversion_result_callback.json"],
+      "next_command": "python -m pytest tests -q -p no:cacheprovider",
+      "evidence_paths": [
+        "tests/contracts/ifc_ready_payload.json",
+        "tests/contracts/conversion_result_callback.json"
+      ],
       "detail": {
-        "result": "6 passed",
+        "result": "7 passed",
         "checks": "contracts parse + required fields; external_ifc_worker_client double; cloud_bim_control double; metadata-only guard rejects embedded model body; control-plane read doubles answer locally"
-      }
-    },
-    {
-      "tier": "coordinator_bscheme_intake",
-      "status": "passed",
-      "owner": "bim-review-coordinator",
-      "ids": { "suite": "npm run verify (tsc build + vitest)" },
-      "blocker": "",
-      "next_command": "cd bim-review-coordinator && npm run verify",
-      "detail": {
-        "result": "130 passed (8 test files)",
-        "covers": "external-ifc-ready (auth/idempotency/dispatch), cloud-callback-outbox (retry/dead-letter/metadata-only), shadow-metadata, local-web-view, plus pre-existing sessions/kitpool/sessionstore/dev-console"
       }
     },
     {
@@ -43,12 +34,22 @@
       "blocker": "",
       "next_command": "cd bim-streaming-server && python -m pytest tests/test_conversion_authority_api.py -q",
       "detail": {
-        "result": "5 passed",
-        "covers": "internal-only conversion request; reject non-ifc_ready; coordinator->streaming contract; callback skipped when no callback_url (no hit to deleted _bim-control:8001)"
+        "result": "6 passed",
+        "covers": "internal-only conversion request; reject non-ifc_ready; coordinator->streaming contract; callback skipped when no callback_url"
       }
     },
     {
-      "tier": "callback_outbox",
+      "tier": "mapping_quality",
+      "status": "not_observed",
+      "owner": "bim-streaming-server",
+      "blocker": "no streaming-owned mapping-quality evidence was collected in this API-only pass",
+      "next_command": "Run a real streaming conversion with quality metrics evidence when Kit/converter prerequisites are available",
+      "detail": {
+        "honesty_note": "historical worker mapping evidence is not promoted to B-scheme pass evidence"
+      }
+    },
+    {
+      "tier": "cloud_callback_outbox",
       "status": "passed",
       "owner": "bim-review-coordinator",
       "blocker": "",
@@ -62,6 +63,18 @@
       }
     },
     {
+      "tier": "coordinator_session_lifecycle",
+      "status": "passed",
+      "owner": "bim-review-coordinator",
+      "ids": { "suite": "npm run verify (tsc build + vitest)" },
+      "blocker": "",
+      "next_command": "cd bim-review-coordinator && npm run verify",
+      "detail": {
+        "result": "140 passed (9 test files)",
+        "covers": "external-ifc-ready auth/idempotency/dispatch, internal conversion-result token, callback outbox retry/dead-letter/metadata-only, shadow-metadata, local-web-view, and session lifecycle tests"
+      }
+    },
+    {
       "tier": "runtime_image_kit_launcher",
       "status": "deferred",
       "owner": "bim-streaming-server",
@@ -71,11 +84,34 @@
       },
       "blocker": "blocked_gpu_runtime_unavailable: NVIDIA graphics/Vulkan driver libraries not mounted in container (Missing libGLX_nvidia.so.0); nvidia-smi/CUDA compute IS visible but Kit RTX cannot init. Recorded as deferred, NOT passed; host-local Kit NOT used as substitute.",
       "next_command": "pwsh -File scripts/verify-runtime-kit-launcher.ps1",
-      "evidence_paths": ["docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json"],
+      "evidence_paths": [
+        "docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json"
+      ],
       "detail": {
         "source": "reuses T0 honest finding; GPU/Kit prerequisite unavailable in this environment",
         "honesty_note": "GPU/Kit blocked -> deferred per runtime-image-linux-kit-launcher-readiness spec; the layered readiness explicitly does NOT report Kit as passed"
       }
+    },
+    {
+      "tier": "single_kit_render",
+      "status": "deferred",
+      "owner": "bim-streaming-server",
+      "blocker": "Kit/GPU/WebRTC live render evidence not collected by this API-only pass",
+      "next_command": "pwsh -File scripts/verify-runtime-kit-launcher.ps1, then run browser/Kit render validation"
+    },
+    {
+      "tier": "single_kit_multi_viewer",
+      "status": "not_observed",
+      "owner": "web-viewer-sample",
+      "blocker": "multi-viewer browser evidence not collected by this API-only pass",
+      "next_command": "Run multi-viewer browser validation after single Kit render is available"
+    },
+    {
+      "tier": "usd_stage_composition",
+      "status": "not_observed",
+      "owner": "bim-streaming-server",
+      "blocker": "USD stage composition evidence not collected by this API-only pass",
+      "next_command": "Run stage composition validation with streaming-owned artifacts"
     }
   ]
 }

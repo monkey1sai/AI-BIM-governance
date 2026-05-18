@@ -79,24 +79,24 @@ class CloudBimControlApi:
 
     def get_callbacks(self, event: str | None = None) -> list[dict[str, Any]]:
         if event is None:
-            return list(self._callbacks)
-        return [c for c in self._callbacks if c.get("event") == event]
+            return copy.deepcopy(self._callbacks)
+        return [copy.deepcopy(c) for c in self._callbacks if c.get("event") == event]
 
     def last_callback(self) -> dict[str, Any] | None:
-        return self._callbacks[-1] if self._callbacks else None
+        return copy.deepcopy(self._callbacks[-1]) if self._callbacks else None
 
     # ---- minimal control-plane reads the coordinator depends on ----
     def seed_model_version(self, external_model_version_id: str, *, artifacts=None, issues=None) -> None:
         self._model_versions[external_model_version_id] = {
-            "artifacts": list(artifacts or []),
-            "review_issues": list(issues or []),
+            "artifacts": copy.deepcopy(list(artifacts or [])),
+            "review_issues": copy.deepcopy(list(issues or [])),
         }
 
     def get_model_version_artifacts(self, external_model_version_id: str) -> list[dict[str, Any]]:
-        return list(self._model_versions.get(external_model_version_id, {}).get("artifacts", []))
+        return copy.deepcopy(self._model_versions.get(external_model_version_id, {}).get("artifacts", []))
 
     def get_review_issues(self, external_model_version_id: str) -> list[dict[str, Any]]:
-        return list(self._model_versions.get(external_model_version_id, {}).get("review_issues", []))
+        return copy.deepcopy(self._model_versions.get(external_model_version_id, {}).get("review_issues", []))
 
     def reset(self) -> None:
         self._callbacks.clear()

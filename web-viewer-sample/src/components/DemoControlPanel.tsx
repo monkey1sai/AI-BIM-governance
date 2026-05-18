@@ -85,11 +85,11 @@ interface InteractionLabCard {
 }
 
 const stepDefs: { num: string; name: string; href: string; active?: boolean }[] = [
-    { num: "①", name: "上傳建模 (Upload)",  href: "http://127.0.0.1:8005" },
-    { num: "②", name: "自動轉換 (Convert)", href: "http://127.0.0.1:8005" },
+    { num: "①", name: "上傳建模 (Upload)",  href: "http://127.0.0.1:8004/dev-console" },
+    { num: "②", name: "自動轉換 (Convert)", href: "http://127.0.0.1:8004/dev-console" },
     { num: "③", name: "建立會議 (Meeting)", href: "http://127.0.0.1:8004" },
     { num: "④", name: "標記問題 (Mark)",    href: "#",                     active: true },
-    { num: "⑤", name: "紀錄回寫 (Record)",  href: "http://127.0.0.1:8001" },
+    { num: "⑤", name: "紀錄回寫 (Record)",  href: "http://127.0.0.1:8004/dev-console" },
 ];
 
 const sectionStyle: React.CSSProperties = {
@@ -239,13 +239,13 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
     const disableMappingVerification = !selectedMapping || !!mappingVerificationBlockedReason;
     const modelKind = streamConfig?.model.status === "ready" ? "ok" : streamConfig ? "warn" : "idle";
     const reviewKind = inferKind(reviewStatus);
-    const recordHref = withSessionId("http://127.0.0.1:8001", sessionId);
+    const recordHref = withSessionId("http://127.0.0.1:8004/dev-console", sessionId);
     const hasStreamResponse = incomingMessages.some((entry) =>
         /openedStageResult|loadingStateResponse|getChildrenResponse|highlightPrimsResult|focusPrimResult|stageSelectionChanged/i.test(entry.label)
     );
     const hasStreamCommand = outgoingMessages.length > 0;
     const hasCoordinatorEvidence = !!sessionId || socketEvents.some((event) => /Socket\.IO|session|review-bootstrap|會議/i.test(event));
-    const hasMetadataEvidence = !!streamConfig || !!mappingUrl || socketEvents.some((event) => /_bim-control|review 資料|metadata/i.test(event));
+    const hasMetadataEvidence = !!streamConfig || !!mappingUrl || socketEvents.some((event) => /review 資料|metadata|shadow/i.test(event));
     const hasWorkerObjectEvidence = !!selectedAssetUrl || !!mappingUrl;
     const repoGuideCards: RepoGuideCard[] = [
         {
@@ -270,30 +270,30 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         },
         {
             num: "③",
-            repo: "_bim-control",
-            role: "Fake BIM Data Authority / metadata source of truth",
+            repo: "company-cloud bim-control",
+            role: "External control-plane authority / 本地僅 shadow",
             protocol: "REST metadata",
             status: hasMetadataEvidence ? "metadata 已進入 UI" : "尚未取得 metadata",
             statusKind: hasMetadataEvidence ? "ok" : reviewKind === "bad" ? "bad" : "idle",
             evidence: streamConfig ? `model=${streamConfig.model.status}, artifacts=${streamConfig.artifacts.length}` : "等待 review-bootstrap 或 fallback metadata。",
-            owns: "project、model version、artifact、issue、annotation metadata",
+            owns: "project、model version、artifact、issue、annotation metadata 權威在外部雲端",
         },
         {
             num: "④",
-            repo: "_worker",
-            role: "RVT→IFC Bridge / worker object URLs",
-            protocol: "Worker object URL",
+            repo: "external IFC Worker",
+            role: "Customer-edge IFC producer",
+            protocol: "POST /api/external/ifc-ready",
             status: hasWorkerObjectEvidence ? "已取得檔案 URL" : "等待 artifact URL",
             statusKind: hasWorkerObjectEvidence ? "ok" : "idle",
-            evidence: selectedAssetUrl || mappingUrl || "IFC handoff / streaming result URL 尚未出現在本場 demo。",
-            owns: "RVT source intake、RVT→IFC export、ifc_ready handoff、lineage",
+            evidence: selectedAssetUrl || mappingUrl || "IFC-ready handoff / streaming result URL 尚未出現在本場 demo。",
+            owns: "產出 IFC 並通知 coordinator；不在本 repo runtime 內",
         },
         {
             num: "⑤",
             repo: "bim-streaming-server conversion",
             role: "Streaming-owned IFC→USDC job",
             protocol: "REST conversion authority",
-            status: hasWorkerObjectEvidence ? "已完成前置轉檔" : "請先到 8005",
+            status: hasWorkerObjectEvidence ? "已完成前置轉檔" : "等待 IFC-ready",
             statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
             evidence: hasWorkerObjectEvidence ? "本場 session 已拿到 streaming-owned model/mapping URL。" : "等待 RVT→IFC 或 streaming conversion evidence。",
             owns: "IFC→USDC job、mapping quality、model.usdc readiness、conversion result callback",
@@ -323,7 +323,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "2",
             title: "取得模型、議題與 artifact metadata",
-            route: "coordinator -> _bim-control",
+            route: "coordinator -> company-cloud shadow/outbox",
             protocol: "REST",
             status: hasMetadataEvidence ? "metadata 已取得" : "等待 bootstrap",
             statusKind: hasMetadataEvidence ? "ok" : "idle",
@@ -333,7 +333,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "3",
             title: "確認檔案與 mapping URL",
-            route: "_bim-control -> _worker objects",
+            route: "coordinator -> streaming artifact refs",
             protocol: "Worker object URL",
             status: hasWorkerObjectEvidence ? "URL 已顯示" : "等待 artifact",
             statusKind: hasWorkerObjectEvidence ? "ok" : "idle",
@@ -355,7 +355,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "5",
             title: "載入 USDC 到 Omniverse stream",
-            route: "web-viewer-sample -> bim-streaming-server -> _worker objects",
+            route: "web-viewer-sample -> bim-streaming-server -> edge artifact refs",
             protocol: "DataChannel",
             status: hasStreamCommand ? "已送出指令" : "可操作",
             statusKind: hasStreamResponse ? "ok" : hasStreamCommand ? "warn" : selectedAssetUrl ? "idle" : "bad",
@@ -376,7 +376,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "7",
             title: "建立審查標註並回寫",
-            route: "web-viewer-sample -> coordinator -> _bim-control",
+            route: "web-viewer-sample -> coordinator -> callback outbox",
             protocol: "Socket.IO / REST",
             status: sessionId ? "可操作" : "需先建立 session",
             statusKind: sessionId ? "warn" : "idle",
@@ -387,14 +387,14 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "8",
             title: "從 demo 介面觸發 IFC -> USDC 轉檔",
-            route: "_worker -> _bim-control -> coordinator",
-            protocol: "REST worker job",
-            status: hasWorkerObjectEvidence ? "已完成" : "請先到 8005",
+            route: "external IFC Worker -> coordinator -> streaming",
+            protocol: "REST B-scheme intake",
+            status: hasWorkerObjectEvidence ? "已完成" : "等待 IFC-ready",
             statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
             disabled: false,
-            actionLabel: "開啟 Worker UI",
-            action: () => window.open("http://127.0.0.1:8005", "_blank", "noopener,noreferrer"),
-            gap: hasWorkerObjectEvidence ? undefined : "請先在 Worker UI 選擇 storage/ 內 IFC 並完成轉換。",
+            actionLabel: "開啟 coordinator console",
+            action: () => window.open("http://127.0.0.1:8004/dev-console", "_blank", "noopener,noreferrer"),
+            gap: hasWorkerObjectEvidence ? undefined : "請先讓外部 IFC Worker 送出 ifc-ready，或用 coordinator console 查看 B-scheme intake。",
         },
     ];
     const latestOutgoingLabel = outgoingMessages[0]?.label || "尚未送出 DataChannel command";
@@ -404,7 +404,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "REST",
             title: "載入審查資料包",
-            route: "viewer -> coordinator -> _bim-control / _worker",
+            route: "viewer -> coordinator -> shadow metadata / streaming refs",
             status: streamConfig ? "已取得" : "可操作",
             statusKind: streamConfig ? "ok" : sessionId ? "warn" : "idle",
             description: "取得 session、model artifact、issue、mapping URL，讓畫面知道要載入哪個模型與問題資料。",
@@ -417,7 +417,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "RTC",
             title: "載入 3D 串流模型",
-            route: "viewer -> bim-streaming-server -> _worker objects",
+            route: "viewer -> bim-streaming-server -> edge artifact refs",
             status: hasStreamCommand ? "已送出指令" : "等待操作",
             statusKind: hasStreamResponse ? "ok" : hasStreamCommand ? "warn" : selectedAssetUrl ? "idle" : "bad",
             description: "把 USDC URL 透過 DataChannel 交給 Kit runtime，左側畫面會從等待狀態進入載入流程。",
@@ -465,7 +465,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "REC",
             title: "建立標註並準備回寫",
-            route: "viewer -> coordinator -> _bim-control",
+            route: "viewer -> coordinator -> callback outbox",
             status: sessionId ? "可操作" : "需 session",
             statusKind: sessionId ? "warn" : "idle",
             description: "把審查意見寫成 annotation event，讓 Step ⑤ 可以看到 fake review metadata 回寫。",
@@ -477,13 +477,13 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         {
             num: "GAP",
             title: "轉檔與 storage 寫入缺口",
-            route: "viewer -> _worker UI",
+            route: "viewer -> coordinator console",
             status: hasWorkerObjectEvidence ? "前置已完成" : "需先轉檔",
             statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
-            description: "viewer 只消費已完成的 worker object URL；IFC 選檔與 conversion job 由 Worker UI 負責。",
+            description: "viewer 只消費已完成的 artifact refs；IFC-ready 與 conversion job 由 coordinator/streaming flow 負責。",
             effect: "觀察效果：完成 worker 轉檔後，review session 的 artifact_bindings 會帶入 model/mapping URL。",
-            actionLabel: "開啟 Worker UI",
-            action: () => window.open("http://127.0.0.1:8005", "_blank", "noopener,noreferrer"),
+            actionLabel: "開啟 coordinator console",
+            action: () => window.open("http://127.0.0.1:8004/dev-console", "_blank", "noopener,noreferrer"),
             gap: hasWorkerObjectEvidence ? undefined : "請先完成步驟 ①/②。",
         },
     ];

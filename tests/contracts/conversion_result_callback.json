@@ -2,7 +2,7 @@
   "contract": "conversion_result_callback",
   "contract_version": "1.0.0",
   "direction": "bim-review-coordinator -> company cloud bim-control (callback receipt)",
-  "hard_rule": "METADATA-ONLY. MUST NOT carry .usdc or any large model/3D bytes; large artifacts stay on the customer edge (PDF cloud-edge separation).",
+  "hard_rule": "METADATA-ONLY. MUST NOT carry raw .usdc body/binary or any large model/3D bytes; metadata references such as usdc_ref are allowed; large artifacts stay on the customer edge (PDF cloud-edge separation).",
   "source_of_truth": [
     "openspec/changes/local-coordinator-ifc-ready-intake-boundary/specs/external-cloud-callback-lifecycle/spec.md"
   ],
@@ -85,6 +85,6 @@
     "callback_status_field": "callback delivery state is reported separately from conversion success; conversion_job stays 'ready' locally even if callback not yet acked",
     "outbox": "callback retained in callback_outbox and retried per policy when cloud unreachable (network/5xx/timeout)",
     "dead_letter": "after retries exhausted -> dead_letter state with evidence (target URL, attempts, last error, correlation_id); never silently dropped",
-    "forbidden": "no .usdc / no large bytes in payload (metadata refs only)"
+    "forbidden": "no raw .usdc body/binary / no large bytes in payload (metadata refs such as usdc_ref are allowed)"
   }
 }

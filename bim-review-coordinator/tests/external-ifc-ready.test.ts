@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,8 +22,13 @@ const CONTRACT = JSON.parse(fs.readFileSync(CONTRACT_PATH, "utf-8")) as {
 const WEBHOOK_SECRET = "dev-webhook-secret"; // = config 預設（環境設定，非契約資料）
 
 let active: CoordinatorApp | null = null;
+let activeStreamingServer: http.Server | null = null;
 
 afterEach(async () => {
+  if (activeStreamingServer) {
+    await new Promise<void>((resolve) => activeStreamingServer?.close(() => resolve()));
+    activeStreamingServer = null;
+  }
   if (active) {
     active.io.close();
     await new Promise<void>((resolve) => active?.server.close(() => resolve()));
@@ -34,6 +41,7 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
     bimControlApiBase: "http://127.0.0.1:1",
     // streaming 不可達 → 內部派工失敗應 graceful（job dispatch_failed，仍 202）
     streamingConversionApiBase: "http://127.0.0.1:1",
@@ -54,6 +62,34 @@ function authHeaders(overrides: Record<string, string> = {}): Record<string, str
     "X-Idempotency-Key": "idem_test_001",
     ...overrides,
   };
+}
+
+async function startStreamingConversionStub(): Promise<{ baseUrl: string; bodies: unknown[] }> {
+  const bodies: unknown[] = [];
+  activeStreamingServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString("utf8");
+    });
+    req.on("end", () => {
+      if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+        bodies.push(JSON.parse(body));
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ conversion_job_id: "stream_conv_test_001", status: "queued", authority: "bim-streaming-server" }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ detail: "not found" }));
+    });
+  });
+  await new Promise<void>((resolve) => {
+    activeStreamingServer?.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = activeStreamingServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected streaming conversion stub to listen on a TCP port.");
+  }
+  return { baseUrl: `http://127.0.0.1:${address.port}`, bodies };
 }
 
 describe("POST /api/external/ifc-ready", () => {
@@ -128,5 +164,52 @@ describe("POST /api/external/ifc-ready", () => {
       .set(authHeaders())
       .send(bad);
     expect(res.status).toBe(400);
+  });
+
+  it("成功呼叫 streaming internal conversion API 後標記 dispatched", async () => {
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(payload());
+
+    expect(res.status).toBe(202);
+    expect(res.body.status).toBe("dispatched");
+    expect(res.body.conversion_job_id).toBe("stream_conv_test_001");
+    expect(res.body.conversion_authority).toBe("bim-streaming-server");
+    expect(streaming.bodies).toHaveLength(1);
+    expect((streaming.bodies[0] as Record<string, unknown>).event_type).toBe("ifc_ready");
+  });
+
+  it("X-Webhook-Signature 使用原始 body bytes 驗證", async () => {
+    const app = makeApp();
+    const rawBody = JSON.stringify(payload(), null, 2);
+    const signature = crypto.createHmac("sha256", WEBHOOK_SECRET).update(rawBody).digest("hex");
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "Content-Type": "application/json",
+        "X-Webhook-Signature": signature,
+        "X-Correlation-Id": "corr_hmac_001",
+        "X-Idempotency-Key": "idem_hmac_001",
+      })
+      .send(rawBody);
+
+    expect(res.status).toBe(202);
+    expect(res.body.correlation_id).toBe("corr_hmac_001");
+  });
+
+  it("拒絕不在公司雲端同 origin 的 callback_url", async () => {
+    const app = makeApp({
+      cloudCallbackBaseUrl: "https://company-cloud.example/api/bim-control/conversion-callbacks",
+    });
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(payload({ callback_url: "http://169.254.169.254/latest/meta-data" }));
+
+    expect(res.status).toBe(403);
   });
 });

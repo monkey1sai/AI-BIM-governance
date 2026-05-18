@@ -62,6 +62,7 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
     bimControlApiBase: "http://127.0.0.1:1",
     streamingConversionApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
@@ -78,6 +79,10 @@ function authHeaders(): Record<string, string> {
   };
 }
 
+function internalHeaders(): Record<string, string> {
+  return { "X-Internal-Token": "dev-internal-token" };
+}
+
 async function seedJob(app: CoordinatorApp): Promise<string> {
   const created = await request(app.app)
     .post("/api/external/ifc-ready")
@@ -91,7 +96,7 @@ describe("T6 local artifact shadow metadata", () => {
   it("shadow 僅含最小欄位集（不 mirror 公司 MySQL；無 control-plane 權威欄位）", async () => {
     const app = makeApp();
     const jobId = await seedJob(app);
-    await request(app.app).post("/api/internal/conversion-result").send({
+    await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
       correlation_id: "corr_shadow_001",
       conversion_job_id: "cj_shadow_001",
       status: "ready",
@@ -137,7 +142,7 @@ describe("T6 local artifact shadow metadata", () => {
   it("callback_status / last_callback_attempt_at 來自 outbox，與 conversion 分離", async () => {
     const app = makeApp();
     const jobId = await seedJob(app);
-    await request(app.app).post("/api/internal/conversion-result").send({
+    await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
       correlation_id: "corr_shadow_001",
       status: "ready",
       artifacts: { manifest_ref: "edge-local://m.json" },

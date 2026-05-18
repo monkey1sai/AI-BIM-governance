@@ -1,47 +1,57 @@
 # AI-BIM-governance
 
-> **BIM 審查雲端 (BIM Review Cloud) — Local Demo Workspace**
+> **BIM 審查雲端 (BIM Review Cloud) — Local B-scheme Workspace**
 >
-> 本 workspace 是「BIM 模型自動轉換 → 雲端 3D 串流審查 → 多人協作標記 → 紀錄回寫主資料庫」整條閉環的本地 PoC。
-> 所有服務都在你電腦上，用 fake mock 模擬正式產品 (BIM 主平台 / 雲端物件儲存)。
+> 本 workspace 現行 B 方案的核心閉環是：外部客戶落地端 IFC Worker 通知
+> `bim-review-coordinator`，coordinator 觸發 `bim-streaming-server` 的 IFC→USDC
+> internal conversion，轉檔結果再以 metadata-only callback outbox 回拋外部公司雲端。
+
+`_worker/` 與 `_bim-control/` 已自 repo product runtime 刪除。它們只保留為歷史脈絡或
+`tests/fakes` / `tests/contracts` 的 test-double 對照，不是本地啟動、health check、smoke
+或 review-session 依賴。
 
 ---
 
-## 給客戶的 5 步驟 Demo 故事 (5-Step Demo Storyboard)
+## 給客戶的 5 步驟 Demo 故事
 
-| 步驟 | 客戶看到 | 對應服務 | URL |
+| 步驟 | 客戶看到 | 現行邊界 | URL / 入口 |
 |---|---|---|---|
-| ① 上傳建模 (Upload) | 原始 RVT/模型檔建立 source artifact metadata，觸發 worker handoff | `_bim-control` + `_worker` | <http://127.0.0.1:8001> / <http://127.0.0.1:8005> |
-| ② 自動轉換 (Convert) | `_worker` 產生 IFC handoff，`bim-streaming-server` 擁有 IFC→USDC conversion job | `_worker` + `bim-streaming-server` | <http://127.0.0.1:8005> / <http://127.0.0.1:49100> |
-| ③ 建立會議 (Meeting) | 一鍵開啟雲端審查會議，取得連線資訊 | `bim-review-coordinator` | <http://127.0.0.1:8004> |
-| ④ 標記問題 (Mark)   | 進入瀏覽器看 3D 模型、點問題即高亮對應元件 | `web-viewer-sample` + `bim-streaming-server` | <http://127.0.0.1:5173> |
-| ⑤ 紀錄回寫 (Record) | 審查標註已寫回主資料庫，留下審查履歷 | `_bim-control` | <http://127.0.0.1:8001> |
+| ① IFC 就緒通知 | 客戶落地端已產生 IFC，通知本地審查服務 | 外部 IFC Worker → `bim-review-coordinator` | `POST /api/external/ifc-ready` |
+| ② 自動轉換 | 系統建立 conversion job，產生可串流的 USDC / mapping / manifest | `bim-review-coordinator` → `bim-streaming-server` internal API | `http://127.0.0.1:8004` / internal `49101` |
+| ③ 建立會議 | 一鍵開啟審查會議，取得 stream config | `bim-review-coordinator` | <http://127.0.0.1:8004> |
+| ④ 標記問題 | 瀏覽器觀看 3D 串流，點選問題高亮元件 | `web-viewer-sample` + `bim-streaming-server` | <http://127.0.0.1:5173> / WebRTC `49100` |
+| ⑤ 回拋結果 | 轉檔與審查 metadata 進入 callback outbox，回拋外部公司雲端 | `bim-review-coordinator` callback outbox | metadata-only callback |
 
-> **最快 demo 路徑**：直接打開瀏覽器，依序 `8001 → 8005 → 8004 → 5173`。若 Kit / GPU 尚未啟動，streaming 與 IFC→USDC conversion authority 相關項目要標成 blocked / not observed，不要標成 passed。
->
-> **時間緊迫時**：可省略步驟 ⑤，從步驟 ④ 結束。但步驟條保留完整顯示，讓客戶看見全貌。
+> **最快 demo 路徑**：啟動 coordinator `8004`、streaming server、viewer `5173`。若 Kit / GPU 尚未啟動，streaming、WebRTC 與 GPU 相關項目要標成 blocked / not observed，不要標成 passed。
 
-每個頁面的設計都遵守 [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md)：
-- 業務語言優先 (Business language first)
-- 線性 5 步驟流程條 (Step bar)
-- 狀態號誌化 (●綠就緒 / ●黃進行中 / ●紅未連線)
-- 每個按鈕一句「會發生什麼」(Action caption)
-- 失敗友善：直接告訴你哪個服務沒開、怎麼開
-- 跨服務一致：淺色 + 藍色卡片風格、共用 design tokens
+每個面對 demo 觀眾的 UI 都遵守
+[`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md)：
+
+- 業務語言優先。
+- 線性 5 步驟流程條。
+- 狀態號誌化。
+- 每個按鈕一句「會發生什麼」。
+- 失敗時直接指出哪個服務沒開、怎麼驗證。
 
 ---
 
 ## Docker-first Runtime Manager MVP
 
-`CODE_GOAL_DOCKER_KIT_MVP.md` 的 MVP 驗收路徑只接受 Docker Compose。Host-local `uvicorn` / `npm run dev` / host Kit launcher 只保留作為 legacy/debug，不作為 MVP pass evidence。
+`CODE_GOAL_DOCKER_KIT_MVP.md` 的 MVP 驗收路徑只接受 Docker Compose。Host-local
+`uvicorn` / `npm run dev` / host Kit launcher 只保留作為 legacy/debug，不作為 MVP pass
+evidence。
 
 Docker-first Kit MVP 的硬邊界：
 
-- `streaming-server` GPU image 必須在 Docker build 階段於 Linux container 內執行 `./repo.sh build`，產生 Linux Kit app。
-- 現有 `bim-streaming-server/source/apps` 是 NVIDIA `kit-app-template` `template new` 產物；Docker MVP 不重新互動產生 source，而是在乾淨 Linux builder 內 build 現有 source，再用 `./repo.sh package` 產出 runtime artifact。
+- `streaming-server` GPU image 必須在 Docker build 階段於 Linux container 內執行
+  `./repo.sh build`，產生 Linux Kit app。
+- 現有 `bim-streaming-server/source/apps` 是 NVIDIA `kit-app-template` 產物；Docker MVP
+  不重新互動產生 source，而是在乾淨 Linux builder 內 build 現有 source。
 - 缺少 Linux launcher 不是可接受的前置 blocker；這代表 `failed_linux_kit_build`。
-- Host-local Windows `_build`、`repo.bat`、PowerShell launcher 或 host Kit launcher 不算 MVP pass、GPU runtime pass 或 Kit viewport pass evidence。
-- `web-viewer-sample` container 使用 Node 18 與 npm 10，符合 `web-viewer-sample/package.json` 的 engines contract，並以 `engine-strict` 驗證。
+- Host-local Windows `_build`、`repo.bat`、PowerShell launcher 或 host Kit launcher 不算
+  MVP pass、GPU runtime pass 或 Kit viewport pass evidence。
+- `web-viewer-sample` container 使用 Node 18 與 npm 10，符合 `package.json` engines
+  contract，並以 `engine-strict` 驗證。
 
 主要入口：
 
@@ -59,51 +69,24 @@ Kit 管理前端：
 http://127.0.0.1:5174
 ```
 
-GPU Kit profile 只有在本機 Docker Desktop、NVIDIA Container Toolkit、container 內 Linux Kit build 成功、以及 Docker build 產出的 Linux launcher 可啟動時才可宣告 pass：
+GPU Kit profile 只有在本機 Docker Desktop、NVIDIA Container Toolkit、container 內 Linux Kit
+build 成功、以及 Docker build 產出的 Linux launcher 可啟動時才可宣告 pass：
 
 ```powershell
 .\scripts\start-runtime-manager-docker.ps1 -Build -WithGpu
 .\scripts\check-runtime-manager-docker.ps1 -WithGpu
 ```
 
-若 NVIDIA runtime / GPU / license / auth / NVIDIA package network 這類外部依賴不可用，驗證結果可記錄為 `blocked_external_dependency` 或 `blocked_gpu_runtime_unavailable`。若 Dockerfile 沒執行 Linux build、build pipeline 缺失、或 image 內缺 Linux launcher，必須記錄為 `failed_linux_kit_build`，不得用 host-local Kit 取代 GPU container pass。
+若 NVIDIA runtime / GPU / license / auth / NVIDIA package network 這類外部依賴不可用，
+驗證結果可記錄為 `blocked_external_dependency` 或 `blocked_gpu_runtime_unavailable`。
+若 Dockerfile 沒執行 Linux build、build pipeline 缺失、或 image 內缺 Linux launcher，
+必須記錄為 `failed_linux_kit_build`，不得用 host-local Kit 取代 GPU container pass。
 
 ---
 
-## Demo 啟動順序 (Legacy / Debug Bring-up)
+## 本機 Debug 啟動
 
-### 一鍵啟動 / 關閉 (Legacy / Debug)
-
-本段落只供 legacy/debug 使用，不作 MVP 驗收、不作 GPU runtime pass、不作 Kit viewport pass evidence。Docker-first MVP evidence 以上方 Runtime Manager 流程與 Docker Linux build 結果為準。
-
-**Windows (PowerShell):**
-
-```powershell
-# Repo root
-cd C:\Repos\active\iot\AI-BIM-governance
-
-# Legacy/debug：一次啟動 worker-only demo services（背景執行；log 寫到 scripts\.run\<svc>.log）
-.\scripts\start-all.ps1
-
-# 一次關閉所有服務（tree-kill 連子行程一起清掉）
-.\scripts\stop-all.ps1
-```
-
-選用旗標：`-SkipStreaming`（跳過 Kit GPU runtime）/ `-SkipViewer` / `-SkipCoordinator` / `-Visible`（顯示 console 視窗）。
-
-**Linux / macOS (Bash):**
-
-```bash
-cd /path/to/AI-BIM-governance
-./scripts/start-all.sh         # 啟動 5 個服務 (Kit GPU 不在 Linux 啟動)
-./scripts/stop-all.sh          # SIGTERM (5s 寬限) → SIGKILL 整個 process group
-```
-
-選用旗標：`--skip-viewer` / `--skip-coordinator` / `--health-timeout 30`。
-
-> 啟動腳本會做健康檢查（GET /health），用 `●綠` / `●黃` / `●紅` 即時回報；log 與 PID 寫到 `scripts/.run/`（已加入 `.gitignore`）。
-
-### 手動啟動 (debug 用)
+本段落只供 B 方案 local debug 使用，不作 Docker-first MVP evidence。
 
 每個服務獨立 terminal，依序啟動：
 
@@ -111,144 +94,104 @@ cd /path/to/AI-BIM-governance
 # Repo root
 cd C:\Repos\active\iot\AI-BIM-governance
 
-# 1. 主資料庫 (8001)
-cd _bim-control
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
-
-# 2. Worker bridge：RVT→IFC handoff / fixture mode / artifact lineage (8005)
-cd _worker
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8005
-
-# 3. 審查協調 (8004)
+# 1. 審查協調 / 外部 IFC-ready intake / callback outbox (8004)
 cd bim-review-coordinator
-npm install   # 第一次需要
+npm install
 npm run dev
 
-# 4. Omniverse Kit 串流 + IFC→USDC authority (49100 WebRTC)
-cd bim-streaming-server
+# 2. Omniverse Kit 串流 + IFC→USDC authority
+cd ..\bim-streaming-server
 .\scripts\start-streaming-server.ps1 -SkipAutoLoad
 
-# 5. 瀏覽器審查端 (5173)
-cd web-viewer-sample
-npm install   # 第一次需要
+# 3. 瀏覽器審查端 (5173)
+cd ..\web-viewer-sample
+npm install
 npm run dev -- --host 127.0.0.1
 ```
 
-Worker 預設會從 repo root 的 `storage/` 掃描 `.ifc` 檔案；也可用 `_worker` 的 `WORKER_DEV_STORAGE_ROOT` 覆寫。`storage/` 只提交 README，不提交實際大型模型檔。
-
-> 為什麼 Kit server 用 `-SkipAutoLoad`：
-> demo 中 USD 模型的載入由 web-viewer-sample 透過 `openStageRequest` 主動觸發，避免 Kit 啟動時 auto-load 與 browser DataChannel 請求競速。`start-streaming-server.ps1` 會把 NvStreamer 的 `*-NvStreamer.etl` trace 固定寫到 `bim-streaming-server/logs/nvstreamer/`。
+> 為什麼 Kit server 用 `-SkipAutoLoad`：demo 中 USD / USDC 模型載入由
+> `web-viewer-sample` 透過 DataChannel `openStageRequest` 主動觸發，避免 Kit 啟動時
+> auto-load 與 browser DataChannel 請求競速。
 
 ---
 
-## 服務分工與邊界 (Service Boundaries)
+## 服務分工與邊界
 
 | 目錄 | 角色 | Demo 故事位置 | 責任邊界 |
 |---|---|---|---|
-| `_bim-control/` | 主資料庫 (Fake BIM Data Authority + RVT Intake Facade) | 步驟 ①⑤ | 保存 project / model version / artifact / issue / annotation metadata；接受 fake RVT upload / signed reference metadata；不保存大型檔案、不執行 Revit、不做 WebRTC。 |
-| `_worker/` | Worker bridge (RVT→IFC Handoff Boundary) | 步驟 ①② | 接收 `rvt_uploaded` event、管理 RVT→IFC export job、產出 IFC handoff 或 blocked/failed result、保留 RVT→IFC lineage；B 方案下不宣告 `model.usdc` ready、不擁有 IFC→USDC conversion job。 |
-| `bim-review-coordinator/` | 審查協調 (Session / Collaboration Control Plane) | 步驟 ③ | 建立 review session、查詢 BIM metadata、提供 stream config、廣播 presence / selection / annotation / issue focus；不直接操作 USD stage。 |
-| `bim-streaming-server/` | IFC→USDC Conversion Authority + Omniverse Kit Runtime / WebRTC | 步驟 ②④ (背景) | 接收 `_worker` 的 `ifc_ready` handoff、建立 IFC→USDC conversion job、產出 USDC / mapping / entity index / quality metrics、callback `_bim-control`；同時執行 viewport runtime、WebRTC streaming、DataChannel command。 |
-| `web-viewer-sample/` | 瀏覽器審查端 (Browser Client) | 步驟 ④ | 顯示串流畫面、建立或加入 review session、讀 artifacts/issues、送 DataChannel command、送 collaboration events；不啟動 Kit、不保存資料權威。 |
+| `bim-review-coordinator/` | 外部 IFC-ready intake + Session / Collaboration Control Plane | ①③⑤ | 驗證 service auth、建立 local conversion job、dispatch streaming conversion、維護 callback outbox、建立 review session、廣播 collaboration event；不渲染 3D、不保存大型模型本體。 |
+| `bim-streaming-server/` | IFC→USDC Conversion Authority + Omniverse Kit Runtime / WebRTC | ②④ | Internal-only conversion engine，產生 USDC / mapping / entity index / manifest；負責 Kit viewport、WebRTC、DataChannel command；不管理 project / user / annotation 權威。 |
+| `web-viewer-sample/` | Browser Client / User Interaction Layer | ④ | 顯示串流畫面、建立或加入 review session、送 DataChannel command、送 annotation / collaboration event；不啟動 Kit、不保存資料權威、不直連已刪 runtime。 |
+| `tests/contracts/` | API / event contracts | — | 描述外部 IFC Worker、公司雲端 callback、metadata-only contract。 |
+| `tests/fakes/` | Test-only external platform doubles | — | 模擬外部 IFC Worker 與公司雲端，不是 runtime profile。 |
 | `docs/contracts/` | API / event contracts | — | REST、Socket.IO、DataChannel 與 local runbook contract。 |
-| `docs/plans/` | Implementation plans | — | 目前執行計畫與驗收 checklist；**Demo UI 守則** 在 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`。 |
+| `docs/plans/` | Implementation plans | — | 目前執行計畫與驗收 checklist。 |
 | `docs/wiki/` | Graphify wiki snapshot | — | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
-| `scripts/` | Root smoke scripts | — | 跨服務健康檢查與 review session smoke test。 |
+| `scripts/` | Root verification scripts | — | 跨服務健康檢查與 B 方案驗證入口；不得把已刪 runtime 標成必跑 pass gate。 |
 
 ### Source of Truth
 
 ```txt
-資料權威 → _bim-control
-RVT→IFC handoff → _worker
+對外 IFC-ready intake → bim-review-coordinator
 IFC→USDC conversion authority → bim-streaming-server
-Session  → bim-review-coordinator
+雲端 metadata-only callback outbox → bim-review-coordinator
+外部公司雲端 control-plane → 非本 repo runtime，由 tests/fakes 模擬
+外部客戶落地端 IFC Worker → 非本 repo runtime，由 tests/fakes 模擬
+Session / collaboration → bim-review-coordinator
 3D runtime → bim-streaming-server
 使用者操作 → web-viewer-sample
 ```
 
 ---
 
-## 核心文件入口（Core Documentation Map）
-
-> 本 repo 的 source of truth 分散在 4 份權威文件 + capability specs。讀任何架構決策或行為合約時依下列順序查閱。
+## 核心文件入口
 
 | 文件 | 角色 | 何時看 |
 |---|---|---|
 | [`AGENTS.md`](AGENTS.md) | **Repo 邊界與資料權威**（最高優先） | 不確定哪個服務該做什麼、資料權威歸誰 |
-| [`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`](docs/PROJECT_DEVELOPMENT_WORKFLOW.md) | **開發流程入口**（7 層架構、Phase 完成度、驗證證據 4 層分級、IFC→USD 品質管線 7 步、OpenSpec + PR Checklist、服務測試命令、核心資料流 sequence diagram） | 新進工程師 onboarding、PR review、demo 簡報 |
-| [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md) | **SaaS 路線圖**（OpenSpec 候選 #1-#9 + #1A / #2A 精確 spec id 與 KPI、NVIDIA Reference 採用決策矩陣 §13、§11.4 Multi-Kit Instance 並行官方定義、硬體配置 §9.0-§9.8、MCP 查詢結果 §11） | 架構師決策、OpenSpec change owner、技術 review |
-| [`openspec/specs/`](openspec/specs/) | **11 份 capability spec**（現行規格權威） | 修改任何服務前先讀對應 capability 的 spec 與 archived change |
-
-> **workflow v3 與 SaaS 路線圖互補不替代**：workflow v3 是「怎麼做」的流程入口；路線圖是「做什麼 / 為什麼 / 怎麼決策」的技術權威。兩份文件交叉引用，避免分歧。
+| [`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`](docs/PROJECT_DEVELOPMENT_WORKFLOW.md) | **開發流程入口** | 新進工程師 onboarding、PR review、demo 簡報 |
+| [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md) | **SaaS 路線圖** | 架構決策、OpenSpec owner、技術 review |
+| [`openspec/specs/`](openspec/specs/) | **Capability specs** | 修改任何服務前先讀對應 capability spec 與 archived change |
 
 ---
 
-## Demo UI 設計守則
+## 驗證命令
 
-所有面對 demo 觀眾的 UI（5 個服務頁面）都依循同一份守則：
-
-> [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md)
-
-要點：
-
-1. **客戶看不到的字眼**：`USD / USDC / prim_path / DataChannel / payload / Socket.IO / WebRTC signaling` 等技術名詞只能出現在「展開技術細節」折疊區。
-2. **每頁頂部**固定步驟條，當前頁亮起，其他步驟可點擊跳轉。
-3. **狀態號誌化**：●綠就緒 / ●黃進行中 / ●紅未連線。
-4. **每個按鈕一句「會發生什麼」**：例 `[ 開始轉換 ] ↳ 系統會把建模檔轉成 3D 可審查模型 (約 30~60 秒)`。
-5. **失敗友善**：直接告知哪個服務沒開、可貼的 PowerShell 啟動指令。
-6. **跨服務一致**：5 個 UI 共用一份 design tokens；權威來源在 [`web-viewer-sample/src/styles/demo-theme.css`](web-viewer-sample/src/styles/demo-theme.css)。
-
-任何 UI 改動先讀守則、再動手；違反守則的 PR 應被退回。
-
----
-
-## 驗證命令 (Validation)
-
-健康檢查：
+Root contracts / fakes：
 
 ```powershell
-.\scripts\dev-health-check.ps1
+python -m pytest tests -p no:cacheprovider
 ```
 
-Review session smoke：
+Coordinator：
 
 ```powershell
-.\scripts\smoke-review-session.ps1
+cd bim-review-coordinator
+npm test
+npm run build
+npm run verify
 ```
 
-Worker review request smoke（不需要 Kit GPU，但需要 `storage/` 內有真實 IFC，且 `_worker` real converter prerequisites 可用）：
-
-```powershell
-.\scripts\smoke-worker-review-request.ps1
-```
-
-Socket.IO 多人協作 smoke：
-
-```powershell
-.\scripts\smoke-review-socket.ps1
-```
-
-Python tests（每個 fake service 各自 `app` package name，需分服務跑避免 import cache 互相污染）：
-
-```powershell
-cd _bim-control ; ..\.venv\Scripts\python.exe -m pytest tests -p no:cacheprovider
-cd ..\_worker   ; ..\.venv\Scripts\python.exe -m pytest tests -p no:cacheprovider
-```
-
-Node tests / builds：
-
-```powershell
-cd bim-review-coordinator; npm test; npm run build
-cd ..\web-viewer-sample  ; npm run test:session-first; npm run build
-```
-
-Kit build / test / contract smoke：
+Streaming conversion authority：
 
 ```powershell
 cd bim-streaming-server
-.\scripts\tests\test-stage-loading-contract.ps1
-.\repo.bat build
-.\repo.bat test
+python -m pytest tests/test_conversion_authority_api.py -q
+```
+
+Viewer：
+
+```powershell
+cd web-viewer-sample
+npm run test:session-first
+npm run build
+```
+
+Shell / PowerShell script sanity：
+
+```powershell
+bash -n scripts/verify-all.sh
+powershell -NoProfile -Command "[scriptblock]::Create((Get-Content -Raw scripts/smoke-bscheme-intake.ps1)) | Out-Null"
 ```
 
 ---
@@ -256,11 +199,11 @@ cd bim-streaming-server
 ## AI Agent 輔助 Wiki
 
 Graphify（跨文件知識圖）：
+
 - Report: [`docs/wiki/graphify/GRAPH_REPORT.md`](docs/wiki/graphify/GRAPH_REPORT.md)
 - Interactive graph: [`docs/wiki/graphify/graph.html`](docs/wiki/graphify/graph.html)
 
 > 它只是輔助探索；**最終以程式碼與 contracts 文件為準**。
-
 
 ---
 

@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T5 §6.1-6.3）。
@@ -111,7 +113,10 @@ export class CallbackOutbox {
   constructor(
     private readonly maxAttempts: number = 5,
     private readonly deliverer: CallbackDeliverer = defaultDeliverer,
-  ) {}
+    private readonly persistencePath: string | null = null,
+  ) {
+    this.loadPersistedEntries();
+  }
 
   enqueue(input: {
     event: CallbackEvent;
@@ -143,6 +148,7 @@ export class CallbackOutbox {
       evidence: [],
     };
     this.entries.set(id, entry);
+    this.persist();
     return entry;
   }
 
@@ -165,6 +171,7 @@ export class CallbackOutbox {
         entry.last_error = null;
         entry.updated_at = at;
         entry.evidence.push({ at, attempt: entry.attempts, outcome: "delivered", detail: entry.target_url });
+        this.persist();
         return entry;
       } catch (error) {
         entry.last_error = error instanceof Error ? error.message : String(error);
@@ -181,6 +188,7 @@ export class CallbackOutbox {
       });
     }
     entry.updated_at = at;
+    this.persist();
     return entry;
   }
 
@@ -206,5 +214,39 @@ export class CallbackOutbox {
 
   list(): CallbackOutboxEntry[] {
     return Array.from(this.entries.values());
+  }
+
+  private loadPersistedEntries(): void {
+    if (!this.persistencePath || !fs.existsSync(this.persistencePath)) return;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.persistencePath, "utf-8")) as {
+        entries?: unknown;
+      };
+      if (!Array.isArray(parsed.entries)) return;
+      for (const raw of parsed.entries) {
+        if (!raw || typeof raw !== "object") continue;
+        const entry = raw as CallbackOutboxEntry;
+        if (typeof entry.outbox_id === "string" && entry.outbox_id.length > 0) {
+          this.entries.set(entry.outbox_id, entry);
+        }
+      }
+    } catch {
+      // A corrupt local outbox file should not crash the coordinator at boot;
+      // new entries continue in memory and the bad file is overwritten on next mutation.
+      this.entries.clear();
+    }
+  }
+
+  private persist(): void {
+    if (!this.persistencePath) return;
+    const dir = path.dirname(this.persistencePath);
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${this.persistencePath}.tmp`;
+    const payload = {
+      schema_version: "callback-outbox/v1",
+      entries: Array.from(this.entries.values()),
+    };
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf-8");
+    fs.renameSync(tmp, this.persistencePath);
   }
 }

@@ -15,12 +15,19 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8004
-      # B-scheme T2：BIM_CONTROL_API_BASE / WORKER_API_BASE 已移除（兩 mock 服務刪除）。
+      # B-scheme T2：legacy mock service API bases 已移除（兩 mock 服務刪除）。
       # 對外 IFC-ready intake / 公司雲端 callback 設定由 T3/T5 引入；coordinator
       # 不再 depends_on 已刪服務，獨立啟動。
+      BIM_CONTROL_API_BASE: ""
+      STREAMING_CONVERSION_API_BASE: http://streaming-server:49101
+      CONVERSION_API_BASE: http://streaming-server:49101
+      INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
+      CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
     ports:
       - "8004:8004"
+    volumes:
+      - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
 
   viewer:
     build:

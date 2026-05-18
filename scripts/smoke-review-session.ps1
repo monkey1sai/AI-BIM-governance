@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string] $BimControlUrl = "http://127.0.0.1:8001",
-    [string] $WorkerUrl = "http://127.0.0.1:8005",
+    [string] $BimControlUrl = "removed-runtime",
+    [string] $WorkerUrl = "removed-runtime",
     [string] $CoordinatorUrl = "http://127.0.0.1:8004",
     [string] $ProjectId = "project_demo_001",
     [string] $ModelVersionId = "version_demo_001",

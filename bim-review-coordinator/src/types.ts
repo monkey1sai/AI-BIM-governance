@@ -58,7 +58,8 @@ export interface ReviewParticipant {
 }
 
 /**
- * Additive, opt-in pass-through of conversion quality metrics surfaced by `_worker`.
+ * Additive, opt-in pass-through of conversion quality metrics surfaced by the
+ * streaming conversion authority.
  *
  * The coordinator does NOT compute, cache, or modify these values; it only forwards what the
  * orchestrator/caller provides at session creation time. The viewer card consumes this read-only.

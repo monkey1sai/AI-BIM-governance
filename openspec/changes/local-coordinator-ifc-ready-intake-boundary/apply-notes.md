@@ -116,7 +116,7 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
   - `openspec validate "local-coordinator-ifc-ready-intake-boundary" --strict` valid；`openspec validate --specs --strict` = **19 passed / 0 failed**。
 - **10.2 治理文件**：`AGENTS.md` §10 閉環、§11 總結、§1.A 改寫為 B 方案（external IFC Worker → coordinator `POST /api/external/ifc-ready` → streaming internal → metadata-only callback outbox → viewer；`_worker`/`_bim-control` 明確標 **removed from product runtime，非降級、非 offline fake profile**）；`CLAUDE.md`（根，AGENTS 鏡像）§10 + §1.A 同步。spec `documentation-source-of-truth` 場景（mock removed-not-degraded、AGENTS/README 不矛盾、roadmap HTML 重生）滿足。
 - **10.3 roadmap**：`python scripts/render-roadmap-html.py` 重生 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`（193,918 bytes，源自同名 `.md`，md＝SoT）；md 加 2026-05-18 Phase B apply 進度註記，**依 §1.6 未把驗證狀態標 passed**（Kit launcher deferred、OQ1/OQ5 pending），正式收斂留 10.5 post-merge。
-- **10.4 四層驗證綠**：`git diff --check` 乾淨；coordinator `npm run verify`（tsc + vitest **130 pass**）；repo-root pytest **6 pass**；streaming pytest **5 pass**；`openspec validate --strict`（change valid、specs 19/0）。
+- **10.4 四層驗證綠**：`git diff --check` 乾淨；coordinator `npm run verify`（tsc + vitest **140 pass**）；repo-root pytest **7 pass**；streaming pytest **6 pass**；`openspec validate --strict`（change valid、specs 19/0）。
 - **10.5（post-merge gate，未做）**：依 `AGENTS.md §1.6`，OpenSpec sync/archive 與 roadmap 正式收斂（過渡語意 → 正式邊界）必須在 **rolling PR #63 merge 後** 才執行；不在本 PR。
 
 ---
@@ -135,6 +135,6 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 | T6 最小 local shadow metadata | done | cff64a2 |
 | T7 local web view + 可替換 user auth | done（8.3 OQ5 pending） | 5aa307b |
 | T8 readiness/smoke/evidence rewrite | done | 49c1ec8 |
-| T9 文件/spec cleanup（10.1–10.4） | done（10.5 post-merge） | （本 commit） |
+| T9 文件/spec cleanup（10.1–10.4） | done（10.5 post-merge） | f38f127418ac2bbc7d410fcb547367d5427c70be |
 
 **OQ 阻塞項（不阻塞 apply，阻塞真實外部對接）**：OQ1（雲端 callback endpoint/auth）阻 T5.4 真實對接、OQ5（公司 SSO）阻 T7.3 真實銜接——皆以凍結契約 + pending 標記緩解，待外部平台團隊確認。**runtime image Kit launcher = `deferred`**（GPU/Kit graphics-vulkan 阻塞，誠實未謊報 passed）。**10.5 sync/archive + roadmap 正式收斂屬 PR #63 merge 後**。

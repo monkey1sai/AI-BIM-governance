@@ -49,5 +49,5 @@ if (-not $SkipViewer) {
         -Command "npm.cmd run dev -- --host 127.0.0.1"
 }
 
-Write-Host "[start] worker-only demo services, coordinator, and viewer start commands submitted"
+Write-Host "[start] coordinator and viewer start commands submitted"
 Write-Host "[start] start bim-streaming-server separately when Kit runtime is needed"

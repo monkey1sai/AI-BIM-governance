@@ -30,6 +30,7 @@ export class BimControlClient {
   }
 
   async createAnnotation(sessionId: string, payload: unknown): Promise<unknown> {
+    this.ensureConfigured();
     const response = await this.fetchWithTimeout(
       `${this.baseUrl}/api/review-sessions/${sessionId}/annotations`,
       {
@@ -39,25 +40,32 @@ export class BimControlClient {
       },
     );
     if (!response.ok) {
-      throw new Error(`_bim-control annotation save failed: ${response.status}`);
+      throw new Error(`external control-plane annotation save failed: ${response.status}`);
     }
     return response.json();
   }
 
   private async getJson(path: string): Promise<unknown> {
+    this.ensureConfigured();
     const response = await this.fetchWithTimeout(`${this.baseUrl}${path}`, {
       headers: { Accept: "application/json" },
     });
     if (!response.ok) {
-      throw new Error(`_bim-control returned ${response.status} for ${path}`);
+      throw new Error(`external control-plane returned ${response.status} for ${path}`);
     }
     return response.json();
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
-    // _bim-control is a fake/local data authority. Without an explicit
+    // The external control-plane may be unavailable in local B-scheme runs. Without an explicit
     // timeout, a hung connection (firewalled host, SYN drop, etc.) would
     // tie up an entire request and make tests / live endpoints flaky.
     return fetch(url, { ...init, signal: AbortSignal.timeout(this.requestTimeoutMs) });
+  }
+
+  private ensureConfigured(): void {
+    if (this.baseUrl.trim().length === 0) {
+      throw new Error("BIM_CONTROL_API_BASE is not configured; company cloud control-plane is external in B-scheme.");
+    }
   }
 }

@@ -122,7 +122,10 @@ while ((Get-Date) -lt $deadline) {
     try {
         $tcp = Get-NetTCPConnection -LocalPort $SignalingPort -State Listen -ErrorAction SilentlyContinue
         if ($tcp) { $portListening = $true }
-    } catch {}
+    } catch {
+        $portListening = $false
+        Write-Verbose "Get-NetTCPConnection failed for port ${SignalingPort}: $PSItem"
+    }
 
     $parts = "$state" -split '\|'
     $st = if ($parts.Count -ge 1) { $parts[0] } else { '' }

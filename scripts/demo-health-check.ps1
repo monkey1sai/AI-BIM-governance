@@ -1,7 +1,5 @@
 [CmdletBinding()]
 param(
-    [string] $BimControlUrl = "http://127.0.0.1:8001",
-    [string] $WorkerUrl = "http://127.0.0.1:8005",
     [string] $CoordinatorUrl = "http://127.0.0.1:8004",
     [string] $ViewerUrl = "http://127.0.0.1:5173"
 )
@@ -35,7 +33,7 @@ function Test-HtmlEndpoint {
     Write-Host "[ok] $Name $Uri"
 }
 
-# B-scheme T2：_bim-control(:8001) / _worker(:8005) 已自 repo 刪除（外部平台由 tests/fakes 模擬）
+# B-scheme：外部平台由 tests/fakes 模擬，demo health 只檢查本 repo runtime。
 Test-JsonEndpoint -Name "coordinator health" -Uri "$CoordinatorUrl/health"
 Test-HtmlEndpoint -Name "coordinator UI" -Uri "$CoordinatorUrl/ui"
 Test-HtmlEndpoint -Name "web viewer" -Uri $ViewerUrl

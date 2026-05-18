@@ -21,6 +21,7 @@ from fakes import (  # noqa: E402
     auth_headers,
     build_ifc_ready_payload,
     example_callback,
+    post_ifc_ready,
 )
 
 
@@ -50,6 +51,12 @@ def test_external_ifc_worker_client_double_builds_spec_payload():
     assert payload["tenant_id"] == "t_override"
     headers = auth_headers()
     assert "X-Correlation-Id" in headers and "X-Idempotency-Key" in headers
+    assert headers["X-Webhook-Secret"] == "dev-webhook-secret"
+
+
+def test_external_ifc_worker_client_rejects_unsupported_scheme():
+    with pytest.raises(ValueError, match="Unsupported coordinator base_url scheme"):
+        post_ifc_ready("file:///tmp/coordinator")
 
 
 def test_cloud_bim_control_double_records_callbacks_and_filters():
@@ -59,6 +66,9 @@ def test_cloud_bim_control_double_records_callbacks_and_filters():
     assert len(api.get_callbacks()) == 2
     assert api.last_callback()["event"] == "conversion_failed"
     assert len(api.get_callbacks("conversion_result_ready")) == 1
+    callbacks = api.get_callbacks()
+    callbacks[0]["event"] = "mutated"
+    assert api.get_callbacks()[0]["event"] == "conversion_result_ready"
 
 
 def test_metadata_only_guard_rejects_embedded_model_body():
@@ -72,5 +82,7 @@ def test_metadata_only_guard_rejects_embedded_model_body():
 def test_control_plane_read_doubles_answer_locally():
     api = CloudBimControlApi()
     api.seed_model_version("ext_mv_demo_001", artifacts=[{"artifact_id": "a1"}], issues=[{"issue_id": "i1"}])
+    artifacts = api.get_model_version_artifacts("ext_mv_demo_001")
+    artifacts[0]["artifact_id"] = "mutated"
     assert api.get_model_version_artifacts("ext_mv_demo_001")[0]["artifact_id"] == "a1"
     assert api.get_review_issues("ext_mv_demo_001")[0]["issue_id"] == "i1"

@@ -15,7 +15,9 @@ Local review-session control plane for the AI-BIM governance workspace.
 
 - Create and persist local review sessions.
 - Return the configured local Kit/WebRTC endpoint pool for development.
-- Proxy artifact and issue bootstrap data from `_bim-control`.
+- Accept external IFC-ready intake and dispatch internal streaming conversion.
+- Maintain metadata-only callback outbox for the external company cloud.
+- Return session / stream config data to the viewer.
 - Broadcast review-room events over Socket.IO namespace `/review`.
 - Persist short-lived session events as JSONL files under `data/events`.
 
@@ -68,6 +70,11 @@ GET  /api/review-sessions/{session_id}/stream-config
 GET  /api/review-sessions/{session_id}/events
 POST /api/review-sessions/{session_id}/events
 GET  /api/model-versions/{model_version_id}/review-bootstrap
+POST /api/external/ifc-ready
+GET  /api/external/ifc-ready/{job_id}
+POST /api/internal/conversion-result
+POST /api/internal/callback-outbox/deliver
+POST /api/local-web-view/sessions
 ```
 
 Socket.IO namespace:

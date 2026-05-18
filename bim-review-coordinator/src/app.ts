@@ -27,6 +27,7 @@ import type {
   Artifact,
   ArtifactBinding,
   ConversionQualityMetricsSummary,
+  IfcReadyIntakeJob,
   ReviewSession,
   RoutingPolicy,
   StreamConfigResponse,
@@ -123,7 +124,7 @@ const ifcReadyPayloadSchema = z
       format: z.string().nullish(),
     }),
     requested_outputs: z.array(z.string()).optional(),
-    callback_url: z.string().nullish(),
+    callback_url: z.string().url().nullish(),
   })
   .passthrough();
 
@@ -134,7 +135,7 @@ const conversionResultReportSchema = z
   .object({
     correlation_id: z.string().min(1),
     conversion_job_id: z.string().min(1).nullish(),
-    status: z.enum(["ready", "failed"]),
+    status: z.enum(["ready", "succeeded", "failed"]),
     artifacts: z
       .object({
         usdc_ref: z.string().nullish(),
@@ -170,6 +171,8 @@ export interface CoordinatorApp {
   eventLog: EventLog;
 }
 
+type RawBodyRequest = express.Request & { rawBody?: string };
+
 export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   const config = loadConfig(overrides);
   const app = express();
@@ -188,12 +191,23 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   const externalIfcReadyStore = new ExternalIfcReadyStore();
   const streamingConversionClient = new StreamingConversionClient(config.streamingConversionApiBase);
   // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
-  const callbackOutbox = new CallbackOutbox(config.callbackOutboxMaxAttempts);
+  const callbackOutbox = new CallbackOutbox(
+    config.callbackOutboxMaxAttempts,
+    undefined,
+    config.callbackOutboxStorePath,
+  );
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
   app.use(cors({ origin: config.corsOrigins }));
-  app.use(express.json({ limit: "1mb" }));
+  app.use(
+    express.json({
+      limit: "1mb",
+      verify: (request, _response, buffer) => {
+        (request as RawBodyRequest).rawBody = buffer.toString("utf8");
+      },
+    }),
+  );
   mountDevConsole(app);
 
   app.get("/health", (_request, response) => {
@@ -431,15 +445,13 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   // machine-to-machine）。streaming 為 internal-only 轉檔引擎（T4）。
   app.post("/api/external/ifc-ready", async (request, response, next) => {
     try {
-      const event = ifcReadyPayloadSchema.parse(request.body);
-      const headerMap: Record<string, string | undefined> = {};
-      for (const [key, value] of Object.entries(request.headers)) {
-        headerMap[key.toLowerCase()] = Array.isArray(value) ? value[0] : value;
-      }
+      const event = { ...ifcReadyPayloadSchema.parse(request.body) };
+      event.callback_url = resolveAllowedCallbackTarget(event.callback_url ?? null, config);
+      const headerMap = headersToMap(request.headers);
       const auth = authProvider.authenticate({
         clientIp: request.ip || request.socket.remoteAddress || "",
         headers: headerMap,
-        rawBody: JSON.stringify(request.body ?? {}),
+        rawBody: (request as RawBodyRequest).rawBody ?? JSON.stringify(request.body ?? {}),
         payloadIdentity: {
           tenant_id: event.tenant_id,
           project_id: event.project_id,
@@ -528,12 +540,21 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     });
   });
 
+  app.use("/api/internal", (request, response, next) => {
+    if (!isInternalRequestAuthorized(headersToMap(request.headers), config.internalApiAuthToken)) {
+      response.status(401).json({ detail: "missing or invalid internal API token" });
+      return;
+    }
+    next();
+  });
+
   // B-scheme T5：本地轉檔結果 → 組 metadata-only 雲端 callback 並入 outbox。
   // 內部端點（coordinator 自身輪詢/result loop 餵入）。callback 投遞狀態與
   // conversion 成功分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。
   app.post("/api/internal/conversion-result", (request, response, next) => {
     try {
       const report = conversionResultReportSchema.parse(request.body);
+      const normalizedStatus = normalizeConversionReportStatus(report.status);
       const job = externalIfcReadyStore.getByCorrelation(report.correlation_id);
       if (!job) {
         response.status(404).json({ detail: "No IFC-ready job for correlation_id." });
@@ -544,7 +565,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
       let payload: Record<string, unknown>;
       let event: "conversion_result_ready" | "conversion_failed";
-      if (report.status === "ready") {
+      if (normalizedStatus === "ready") {
         event = "conversion_result_ready";
         payload = {
           event,
@@ -588,7 +609,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       });
       const updatedJob = externalIfcReadyStore.recordConversionOutcome(
         job.ifc_ready_job_id,
-        report.status,
+        normalizedStatus,
         entry.outbox_id,
         report.artifacts?.manifest_ref ?? null,
       );
@@ -623,10 +644,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   // 確認前恆 pending_oq5）。實際 USDC streaming 仍走既有 stream-config 路徑。
   app.post("/api/local-web-view/sessions", (request, response, next) => {
     try {
-      const headerMap: Record<string, string | undefined> = {};
-      for (const [key, value] of Object.entries(request.headers)) {
-        headerMap[key.toLowerCase()] = Array.isArray(value) ? value[0] : value;
-      }
+      const headerMap = headersToMap(request.headers);
       const user = userAuthProvider.authenticate({ headers: headerMap });
       const input = localWebViewSessionSchema.parse(request.body);
 
@@ -634,9 +652,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         ? externalIfcReadyStore.get(input.ifc_ready_job_id)
         : undefined;
       if (!job && input.external_model_version_id) {
-        job = externalIfcReadyStore
-          .list()
-          .find((j) => j.external_model_version_id === input.external_model_version_id);
+        job = latestIfcReadyJobForExternalModelVersion(
+          externalIfcReadyStore.list(),
+          input.external_model_version_id,
+        );
       }
       if (!job) {
         response.status(404).json({ detail: "No IFC-ready job for local web view." });
@@ -709,6 +728,51 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   return { app, server, io, config, store, eventLog };
 }
 
+function headersToMap(headers: express.Request["headers"]): Record<string, string | undefined> {
+  const headerMap: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    headerMap[key.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+  }
+  return headerMap;
+}
+
+function isInternalRequestAuthorized(headers: Record<string, string | undefined>, token: string): boolean {
+  const expected = token.trim();
+  if (!expected) return false;
+  const headerToken = headers["x-internal-token"]?.trim();
+  const authorization = headers.authorization;
+  const bearerToken =
+    typeof authorization === "string" && authorization.toLowerCase().startsWith("bearer ")
+      ? authorization.slice(7).trim()
+      : "";
+  return headerToken === expected || bearerToken === expected;
+}
+
+function resolveAllowedCallbackTarget(candidateUrl: string | null, config: CoordinatorConfig): string | null {
+  const configuredBase = config.cloudCallbackBaseUrl.trim();
+  if (!configuredBase) return null;
+  const base = new URL(configuredBase);
+  if (!candidateUrl) return configuredBase;
+  const candidate = new URL(candidateUrl);
+  if (candidate.origin !== base.origin) {
+    throw new AuthError(403, `callback_url origin not allowed: ${candidate.origin}`);
+  }
+  return candidate.toString();
+}
+
+function normalizeConversionReportStatus(status: "ready" | "succeeded" | "failed"): "ready" | "failed" {
+  return status === "failed" ? "failed" : "ready";
+}
+
+function latestIfcReadyJobForExternalModelVersion(
+  jobs: IfcReadyIntakeJob[],
+  externalModelVersionId: string,
+): IfcReadyIntakeJob | undefined {
+  return jobs
+    .filter((job) => job.external_model_version_id === externalModelVersionId)
+    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))[0];
+}
+
 function mountDevConsole(app: express.Express): void {
   const publicDir = resolvePublicDir();
   app.use("/dev-console-assets", express.static(publicDir));
@@ -766,7 +830,7 @@ async function proxyConversionService(
     response.status(upstream.status).type(contentType).send(text || "{}");
   } catch (error) {
     response.status(502).json({
-      detail: "Worker API unavailable.",
+      detail: "Conversion API unavailable.",
       upstream: conversionApiBase,
       error: error instanceof Error ? error.message : String(error),
     });

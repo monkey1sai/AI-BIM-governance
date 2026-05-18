@@ -6,10 +6,10 @@ context: |
   Claude must treat CLAUDE.md as a mirror entrypoint to the same repo rules, not as a separate development process.
 
   Core repo boundaries:
-  - _bim-control owns fake BIM metadata and review data authority.
-  - _worker owns local file bytes, object URLs, conversion jobs, and artifact readiness.
-  - bim-review-coordinator owns review session and collaboration control plane.
-  - bim-streaming-server owns Omniverse Kit runtime, USD scene runtime, WebRTC, and DataChannel commands.
+  - External company cloud bim-control owns control-plane metadata and callback acknowledgment; it is not a repo runtime.
+  - External customer-edge IFC Worker owns IFC production and calls coordinator IFC-ready intake; it is not a repo runtime.
+  - bim-review-coordinator owns IFC-ready intake, idempotency, minimal shadow metadata, callback outbox, review session, and collaboration control plane.
+  - bim-streaming-server owns IFC→USDC conversion authority, Omniverse Kit runtime, USD scene runtime, WebRTC, and DataChannel commands.
   - web-viewer-sample owns browser UI and user interaction.
 
   Working rules:
@@ -19,7 +19,7 @@ context: |
   - Do not modify secrets, credentials, private keys, or real .env values.
   - Do not add production dependencies without explaining why.
   - For code symbols, run GitNexus impact analysis before editing and report HIGH/CRITICAL risk before proceeding.
-  - Preserve the minimum review loop across _bim-control, _worker, bim-review-coordinator, bim-streaming-server, and web-viewer-sample.
+  - Preserve the minimum B-scheme loop across external IFC Worker, bim-review-coordinator, bim-streaming-server, external company cloud callback, and web-viewer-sample.
   - OpenSpec artifacts guide planning and execution; they do not override AGENTS.md or CLAUDE.md.
   - OpenSpec changes must be isolated on `codex/openspec/<change-id>` branches before `/openspec new` or `/openspec apply`; do not develop OpenSpec changes directly on `main`.
   - Pull Requests are the review/discussion boundary, GitHub Actions are the automated validation boundary, merge is formal acceptance, and OpenSpec sync/archive happens only after merge.

@@ -382,6 +382,7 @@ class StreamingConversionStore:
             },
         }
         callback_payload = self._callback_payload(job, result)
+        callback_url = job.get("callback_url")
         return self._update_job(
             job["conversion_job_id"],
             status="failed",
@@ -389,9 +390,11 @@ class StreamingConversionStore:
             result=result,
             callback_payload=callback_payload,
             callback_delivery={
-                "status": "pending",
-                "target_url": job["callback_url"],
-                "reason": "network delivery is performed by the service runtime loop",
+                "status": "pending" if callback_url else "skipped",
+                "target_url": callback_url,
+                "reason": "network delivery is performed by the service runtime loop"
+                if callback_url
+                else "no callback_url; coordinator polls /result, cloud callback is T5 outbox",
             },
         )
 

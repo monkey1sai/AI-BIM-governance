@@ -16,18 +16,18 @@ does not strand verification capability.
 |---|---|---|
 | `contracts/ifc_ready_payload.json` | external IFC Worker → coordinator request | Frozen `POST /api/external/ifc-ready` payload contract (T3 anchor) |
 | `contracts/conversion_result_callback.json` | coordinator → company cloud callback | Frozen metadata-only callback contract; **T5.4 / OQ1 mitigation** (real endpoint stays `pending`) |
-| `fakes/external_ifc_worker_client.py` | `_worker` flow-driver role | Build / POST a spec-correct ifc-ready request |
-| `fakes/cloud_bim_control_api.py` | `_bim-control` (:8001) | Receive callbacks + **enforce metadata-only**; minimal control-plane reads |
+| `fakes/external_ifc_worker_client.py` | historical worker flow-driver role | Build / POST a spec-correct ifc-ready request |
+| `fakes/cloud_bim_control_api.py` | external company cloud control-plane double | Receive callbacks + **enforce metadata-only**; minimal control-plane reads |
 
 ## Endpoint replacement map (deleted services → fake/contract)
 
-`_worker` (:8005) — IFC source list / conversion create+query / artifact-group
+Historical `_worker` — IFC source list / conversion create+query / artifact-group
 readiness: under B-scheme the external entry becomes the coordinator
 `POST /api/external/ifc-ready` (T3) and `bim-streaming-server` internal
 conversion (T4). `fakes/external_ifc_worker_client` drives the ifc-ready side;
 the conversion engine is exercised via `bim-streaming-server` tests.
 
-`_bim-control` (:8001) — conversion-result callback receiver + control-plane
+Historical `_bim-control` — conversion-result callback receiver + control-plane
 metadata reads: replaced by `fakes/cloud_bim_control_api` (callback receipt with
 the metadata-only guard, plus `get_model_version_artifacts` /
 `get_review_issues` doubles the coordinator uses).
@@ -45,10 +45,10 @@ the metadata-only guard, plus `get_model_version_artifacts` /
 
 - [x] `tests/contracts/` frozen from current spec + existing event shapes
 - [x] `tests/fakes/` contract-anchored doubles created (non-destructive, additive)
-- [ ] (T2) rewire smoke/tests to fakes; remove `_worker`/`_bim-control` from
+- [x] (T2) rewire smoke/tests to fakes; remove `_worker`/`_bim-control` from
       `start-all`/health/compose; delete the two service directories
-- [ ] (T2) GitNexus impact analysis on affected symbols before deletion;
+- [x] (T2) GitNexus impact analysis on affected symbols before deletion;
       HIGH/CRITICAL reported first
 
-> The remaining unchecked items are the **destructive T2 work** and are paused
-> until the user explicitly confirms (per the 2026-05-18 decision).
+> T2 destructive work has completed in PR #63. These fakes remain test-only
+> verification doubles and must not be promoted into runtime services.

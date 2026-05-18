@@ -30,6 +30,7 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
     bimControlApiBase: "http://127.0.0.1:1",
     streamingConversionApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
@@ -38,18 +39,26 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   return active;
 }
 
-function svcAuth(): Record<string, string> {
+function svcAuth(overrides: Record<string, string> = {}): Record<string, string> {
   return {
     "X-Webhook-Secret": "dev-webhook-secret",
     "X-Correlation-Id": "corr_lwv_001",
     "X-Idempotency-Key": "idem_lwv_001",
+    ...overrides,
   };
 }
 
-async function seedJob(app: CoordinatorApp): Promise<{ jobId: string; emv: string }> {
+function internalHeaders(): Record<string, string> {
+  return { "X-Internal-Token": "dev-internal-token" };
+}
+
+async function seedJob(
+  app: CoordinatorApp,
+  headers: Record<string, string> = svcAuth(),
+): Promise<{ jobId: string; emv: string }> {
   const res = await request(app.app)
     .post("/api/external/ifc-ready")
-    .set(svcAuth())
+    .set(headers)
     .send({ ...structuredClone(IFC_CONTRACT.example) });
   expect(res.status).toBe(202);
   return { jobId: res.body.ifc_ready_job_id, emv: res.body.external_model_version_id };
@@ -88,7 +97,7 @@ describe("T7 local web view session / artifact resolution", () => {
   it("以 external_model_version_id 解析；轉檔 ready 後 viewer_open_ready=true", async () => {
     const app = makeApp();
     const { emv } = await seedJob(app);
-    await request(app.app).post("/api/internal/conversion-result").send({
+    await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
       correlation_id: "corr_lwv_001",
       conversion_job_id: "cj_lwv_001",
       status: "ready",
@@ -104,6 +113,28 @@ describe("T7 local web view session / artifact resolution", () => {
     expect(res.body.artifact_resolution.conversion_status).toBe("ready");
     expect(res.body.artifact_resolution.viewer_open_ready).toBe(true);
     expect(res.body.artifact_resolution.artifact_manifest_ref).toBe("edge-local://m.json");
+  });
+
+  it("以 external_model_version_id 解析時選最新 job", async () => {
+    const app = makeApp();
+    const first = await seedJob(app, svcAuth({ "X-Correlation-Id": "corr_lwv_old", "X-Idempotency-Key": "idem_lwv_old" }));
+    const second = await seedJob(app, svcAuth({ "X-Correlation-Id": "corr_lwv_new", "X-Idempotency-Key": "idem_lwv_new" }));
+    expect(first.emv).toBe(second.emv);
+    await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
+      correlation_id: "corr_lwv_new",
+      conversion_job_id: "cj_lwv_new",
+      status: "ready",
+      artifacts: { manifest_ref: "edge-local://new.json" },
+    });
+
+    const res = await request(app.app)
+      .post("/api/local-web-view/sessions")
+      .set({ "X-User-Token": "dev_user_latest" })
+      .send({ external_model_version_id: second.emv });
+
+    expect(res.status).toBe(201);
+    expect(res.body.ifc_ready_job_id).toBe(second.jobId);
+    expect(res.body.artifact_resolution.artifact_manifest_ref).toBe("edge-local://new.json");
   });
 
   it("缺 ifc_ready_job_id 與 external_model_version_id → 400", async () => {

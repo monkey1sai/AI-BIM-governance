@@ -58,7 +58,7 @@ if [ "$STREAMING_ONLY" -eq 1 ]; then
 elif [ "$TS_ONLY" -eq 0 ]; then
     # B-scheme T8 §9.1：default verify 不再依賴已刪 _bim-control / _worker；
     # 改以 repo-root tests/（外部平台 contracts + test-only fakes）作 Python 覆蓋。
-    TARGETS+=("tests (contracts+fakes)|$PYTHON -m pytest tests -q -p no:cacheprovider")
+    TARGETS+=("tests|$PYTHON -m pytest tests -q -p no:cacheprovider")
 fi
 if [ "$STREAMING_ONLY" -eq 0 ] && [ "$PY_ONLY" -eq 0 ]; then
     TARGETS+=("bim-review-coordinator|$NPM_VERIFY")

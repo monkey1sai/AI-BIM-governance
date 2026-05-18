@@ -15,6 +15,7 @@ MODULE_DIR = (
 sys.path.insert(0, str(MODULE_DIR))
 
 from conversion_authority import (  # noqa: E402
+    ConversionAuthorityError,
     ConversionAuthoritySettings,
     create_conversion_api_app,
 )
@@ -62,6 +63,11 @@ class FakePlaceholderConverter(FakeSuccessfulConverter):
         result = super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
         Path(result["model_path"]).write_bytes(b"worker adapter usdc placeholder")
         return result
+
+
+class FakeFailedConverter:
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        raise ConversionAuthorityError("converter_failed", "fixture converter failed")
 
 
 def make_client(tmp_path: Path, converter, run_background: bool = True) -> TestClient:
@@ -198,3 +204,22 @@ def test_coordinator_internal_request_yields_job_status_result_and_skipped_callb
     assert result["status"] == "succeeded"
     assert result["authority"] == "bim-streaming-server"
     assert result["model"]["status"] == "ready"
+
+
+def test_coordinator_internal_request_failed_yields_failed_and_skipped_callback(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeFailedConverter())
+
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload(event_id="evt_ifc_fail_001"))
+    assert create.status_code == 202
+    conversion_job_id = create.json()["conversion_job_id"]
+    assert create.json()["status"] == "queued"
+
+    status = client.get(f"/api/conversions/{conversion_job_id}").json()
+    assert status["conversion_job_id"] == conversion_job_id
+    assert status["status"] == "failed"
+    assert status["callback_delivery"]["status"] == "skipped"
+    assert status["callback_delivery"]["target_url"] is None
+
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["status"] == "failed"
+    assert result["authority"] == "bim-streaming-server"
