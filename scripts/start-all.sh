@@ -103,15 +103,9 @@ wait_health() {
   done
 }
 
-# === 啟動 worker-only demo services ===
-
-start_service "_bim-control" \
-  "$REPO_ROOT/_bim-control" \
-  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8001"
-
-start_service "_worker" \
-  "$REPO_ROOT/_worker" \
-  "exec '$PYTHON' -m uvicorn app.main:app --host 127.0.0.1 --port 8005"
+# === B-scheme（local-coordinator-ifc-ready-intake-boundary T2）===
+# `_worker`(:8005) / `_bim-control`(:8001) 已自 repo 刪除（外部平台由 tests/fakes 模擬）。
+# 對外 IFC-ready intake 收斂於 coordinator（T3），streaming 為 internal-only（T4）。
 
 if [[ $SKIP_COORDINATOR -eq 0 ]]; then
   start_service "bim-review-coordinator" \
@@ -127,8 +121,6 @@ fi
 
 echo ""
 echo -e "${color_cyan}=== Health probe ===${color_reset}"
-wait_health "_bim-control          (步驟 ⑤)" "http://127.0.0.1:8001/health" "$HEALTH_TIMEOUT" || true
-wait_health "_worker               (步驟 ①/②)" "http://127.0.0.1:8005/health" "$HEALTH_TIMEOUT" || true
 if [[ $SKIP_COORDINATOR -eq 0 ]]; then
   wait_health "bim-review-coordinator(步驟 ③)" "http://127.0.0.1:8004/health" "$HEALTH_TIMEOUT" || true
 fi
@@ -138,10 +130,9 @@ fi
 
 echo ""
 echo -e "${color_cyan}=== Demo URLs ===${color_reset}"
-echo "①/② Worker 上傳建模與自動轉換 http://127.0.0.1:8005"
 echo "③ 審查協調       http://127.0.0.1:8004/ui"
 echo "④ 瀏覽器審查端   http://127.0.0.1:5173"
-echo "⑤ 主資料庫       http://127.0.0.1:8001"
+echo "（①/② Worker、⑤ 主資料庫已移除：外部平台由 tests/fakes 模擬，見 T3/T5）"
 echo ""
 echo -e "${color_dim}停止所有服務：scripts/stop-all.sh${color_reset}"
 echo -e "${color_dim}查看 log：     tail -f scripts/.run/<service>.log${color_reset}"

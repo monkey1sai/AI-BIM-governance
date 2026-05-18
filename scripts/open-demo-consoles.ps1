@@ -11,8 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $viewerDemoUrl = "$ViewerUrl/?projectId=project_demo_001&modelVersionId=version_demo_001&userId=dev_user_001&displayName=%E7%A4%BA%E7%AF%84%E4%BD%BF%E7%94%A8%E8%80%85"
 
-Start-Process "$BimControlUrl/ui"
-Start-Process "$WorkerUrl/ui"
+# B-scheme T2：_bim-control(:8001) / _worker(:8005) UI 已自 repo 刪除（外部平台由 tests/fakes 模擬）
 Start-Process "$CoordinatorUrl/ui"
 Start-Process $viewerDemoUrl
 

@@ -21,11 +21,18 @@
 
 ## 3. T2 刪除 `_worker` / `_bim-control`
 
-- [ ] 3.1 刪除 `_worker/`、`_bim-control/` 服務目錄（先建立 T8 的 tests/fakes 確保驗證能力不中斷後再刪）
-- [ ] 3.2 移除 `compose.*` / `scripts/*`（start-all/stop-all/health/smoke）對兩者的預設與可選依賴
-- [ ] 3.3 移除 health / smoke / readiness 對兩者的依賴
-- [ ] 3.4 改用 `tests/fakes/external_ifc_worker_client`、`tests/fakes/cloud_bim_control_api`、`tests/contracts/*.json` 模擬外部 API（非 runtime profile）
-- [ ] 3.5 修改前對受影響 symbol 跑 GitNexus impact analysis；HIGH/CRITICAL 先回報
+- [x] 3.1 刪除 `_worker/`、`_bim-control/` 服務目錄（先建立 T8 的 tests/fakes 確保驗證能力不中斷後再刪）
+- [x] 3.2 移除 `compose.*` / `scripts/*`（start-all/stop-all/health/smoke）對兩者的預設與可選依賴
+- [x] 3.3 移除 health / smoke / readiness 對兩者的依賴
+- [x] 3.4 改用 `tests/fakes/external_ifc_worker_client`、`tests/fakes/cloud_bim_control_api`、`tests/contracts/*.json` 模擬外部 API（非 runtime profile）
+- [x] 3.5 修改前對受影響 symbol 跑 GitNexus impact analysis；HIGH/CRITICAL 先回報
+
+> **T2 done（2026-05-18，BREAKING）** — 確認記錄見 `apply-notes.md` §T2。
+> 刪除：`_worker/`（19 檔）、`_bim-control/`（14 檔）共 33 檔（使用者於 session 手動 `git rm`，因自動安全防護擋下 agent 直接刪除）。
+> de-wire（15 檔修改）：`compose.runtime-manager.yml`（移除 bim-control/worker service + coordinator env/depends_on + volume）；`start-all.ps1`/`.sh`、`start-local-review-mvp.ps1`（移除兩服務啟動+health+URL）；`stop-all.ps1`/`.sh`（移除 8001/8005）；`dev/demo-health-check.ps1`、`check-runtime-manager-docker.ps1`（移除兩服務 probe）；`verify-all.ps1`/`.sh`（移除兩 pytest 目標，新 tests/ 目標延 T8）；`smoke-worker-review-request.ps1`、`smoke-review-session.ps1`、`run-single-kit-demo.ps1`（tombstone 守衛，指向 T8 contract-stub smoke）；`open-demo-consoles.ps1`（移除死 console）。
+> GitNexus（3.5）：產品碼自 index commit `9d7db83` 未變→stale index 對產品 symbol 仍準確；`BimControlClient` upstream impact = **LOW**（0 callers/processes/modules）；`detect_changes` = **risk low / 0 affected processes**。無 HIGH/CRITICAL。
+> 驗證：`openspec validate --strict` valid；`tests/fakes` sanity `T8-PREREQ-SANITY-OK`（刪除未中斷驗證能力）。
+> 已知過渡狀態：coordinator `config.ts`/`app.ts` 與 streaming `conversion_authority.py` 對已刪服務的 callback/metadata 來源 rewire 屬 **T3/T4/T5**（緊接其後）；6 腳本未使用的 `$BimControlUrl/$WorkerUrl` param 預設值為 cosmetic，折入 **T9** 文件清理。
 
 ## 4. T3 Coordinator external intake
 

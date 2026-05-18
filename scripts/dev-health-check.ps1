@@ -60,8 +60,7 @@ function Test-Health {
     }
 }
 
-Test-Health -Name "_bim-control" -Url $BimControlUrl
-Test-Health -Name "_worker" -Url $WorkerUrl
+# B-scheme T2：_bim-control(:8001) / _worker(:8005) 已自 repo 刪除（外部平台由 tests/fakes 模擬）
 Test-Health -Name "bim-review-coordinator" -Url $CoordinatorUrl
 
 # Viewer route is a static page; HTTP 200 is allowed evidence but never implies WebRTC.

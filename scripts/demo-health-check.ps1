@@ -35,10 +35,7 @@ function Test-HtmlEndpoint {
     Write-Host "[ok] $Name $Uri"
 }
 
-Test-JsonEndpoint -Name "_bim-control health" -Uri "$BimControlUrl/health"
-Test-HtmlEndpoint -Name "_bim-control UI" -Uri "$BimControlUrl/ui"
-Test-JsonEndpoint -Name "_worker health" -Uri "$WorkerUrl/health"
-Test-HtmlEndpoint -Name "_worker UI" -Uri "$WorkerUrl/ui"
+# B-scheme T2：_bim-control(:8001) / _worker(:8005) 已自 repo 刪除（外部平台由 tests/fakes 模擬）
 Test-JsonEndpoint -Name "coordinator health" -Uri "$CoordinatorUrl/health"
 Test-HtmlEndpoint -Name "coordinator UI" -Uri "$CoordinatorUrl/ui"
 Test-HtmlEndpoint -Name "web viewer" -Uri $ViewerUrl

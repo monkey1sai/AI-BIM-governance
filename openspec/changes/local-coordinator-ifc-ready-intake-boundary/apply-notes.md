@@ -48,3 +48,11 @@ apply 階段三方定位 source of truth（與 `design.md` Context/D6/D7、相�
 Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required fields 齊、fakes 可 import、callback ready/failed 記錄與過濾正確、**metadata-only guard 正確拒絕內嵌 `usdc_body`（雲地分離鐵律於測試強制）**、control-plane read doubles 正常 → `T8-PREREQ-SANITY-OK`。
 
 > 注意：此批僅為 T2 的**非破壞前置鷹架**；未勾 `tasks.md` §3（T2 刪除）/ §9（T8 rewrite）任何 box——真正的刪除、smoke/test rewire、start-all/health/compose 收斂、GitNexus impact analysis 屬 T2 本體，**待使用者確認後**才執行。
+
+### T2 本體 — done（2026-05-18，BREAKING；使用者於 AskUserQuestion 確認「確認 T2 並續做 T3–T9」）
+
+- **刪除**：`_worker/`（19 檔）+ `_bim-control/`（14 檔）= 33 檔。**注意流程**：agent `git rm` 被 harness 自動安全防護擋下（不視結構化回答為對原始破壞指令的同意）；agent **未繞過**防護，改由使用者於 session 以 `!git rm -r _worker _bim-control` 手動執行（使用者選「你在 session 手動執行刪除」）。
+- **de-wire（15 檔修改）**：見 `tasks.md §3` 註記。compose 移除兩 service + coordinator env/depends_on + volume；startup/stop/health/verify 移除兩服務行；3 支 smoke/demo 改 tombstone 守衛指向 T8；open-demo-consoles 移除死 console。
+- **GitNexus（3.5）**：產品碼自 index `9d7db83` 未變動 → stale index 對產品 symbol 仍準確；`BimControlClient` upstream impact = **LOW**（0 callers/processes/modules，無 incoming edges）；`detect_changes` scope=all = **risk low / 0 affected processes / 0 changed symbols**。**無 HIGH/CRITICAL**。
+- **驗證**：`openspec validate --strict` valid；`tests/fakes` sanity `T8-PREREQ-SANITY-OK`（刪除未中斷驗證能力）；殘留僅 6 腳本未使用 param 預設值（cosmetic → T9）。
+- **過渡狀態（明確）**：coordinator `config.ts`/`app.ts`（`bimControlApiBase`/`conversionApiBase`/`/api/dev/conversions`）與 streaming `conversion_authority.py`（`bim_control_callback_url` 寫死 :8001）對已刪服務的相依，rewire 屬 **T3（intake）/ T4（streaming internal）/ T5（cloud callback outbox）**，緊接其後；rolling PR #63 全部完成且四層驗證綠才 merge（未 merge 不影響 main）。

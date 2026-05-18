@@ -15,6 +15,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# === B-scheme（local-coordinator-ifc-ready-intake-boundary T2）SUPERSEDED ===
+# `_worker`(:8005) / `_bim-control`(:8001) 已自 repo 刪除（外部平台改由 tests/fakes 模擬）。
+# 本 smoke 原以兩 mock 服務為核心，已不可運作。B-scheme 的 default smoke 改以
+# tests/contracts + tests/fakes 對 coordinator 對外 intake / 雲端 callback outbox
+# 驗證（OpenSpec change T8；契約：tests/contracts/*.json）。
+Write-Host "[smoke] SUPERSEDED：_worker/_bim-control 已於 T2 刪除；改由 T8 contract-stub smoke 取代。未執行。" -ForegroundColor Yellow
+exit 0
+
 . (Join-Path $PSScriptRoot 'lib\smoke-evidence.ps1')
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path

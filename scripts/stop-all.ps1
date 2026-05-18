@@ -44,8 +44,7 @@ $ResolvedKitSpectatorStreamPorts = @(ConvertTo-PortList -Values $KitSpectatorStr
 $ResolvedStreamingPorts = @($ResolvedKitSignalPorts + $ResolvedKitStreamPorts + $ResolvedKitSpectatorSignalPorts + $ResolvedKitSpectatorStreamPorts)
 
 $ExpectedServices = @(
-    @{ Name = "_bim-control"; Ports = @(8001) },
-    @{ Name = "_worker"; Ports = @(8005) },
+    # B-scheme T2：_bim-control(:8001) / _worker(:8005) 已自 repo 刪除
     @{ Name = "bim-review-coordinator"; Ports = @(8004) },
     @{ Name = "web-viewer-sample"; Ports = @(5173) },
     @{ Name = "bim-streaming-server"; Ports = $ResolvedStreamingPorts }
