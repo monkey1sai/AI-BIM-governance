@@ -92,3 +92,11 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 - `externalIfcReadyStore`：`toShadowMetadata(job, callback?)` 投影最小欄位集（callback_status/last_callback_attempt_at 來自連結的 outbox entry，**不納入** user/RBAC/license/version 歷史等 control-plane 權威欄位）；`recordConversionOutcome` 接 `artifact_manifest_ref`（`external_model_version_id` binding 已在 intake 既有欄位）。
 - `app.ts`：`GET /api/external/ifc-ready/:jobId/shadow` → `{ shadow_metadata, data_plane_availability, control_plane_authority }`。data-plane（local conversion status / source_ifc / manifest 可用性）本地可答；control-plane 標 `owner=company-cloud-bim-control`、`not_mirrored=true`、`referenced_by=external_model_version_id`（不重新宣告權威、不 mirror MySQL）。
 - 測試 `tests/shadow-metadata.test.ts`：shadow 鍵集恰為 12（無 control-plane 禁用鍵）、control-plane 不重宣告、data-plane 本地可答、callback 與 conversion 分離、未知 jobId→404。`npm run verify` **綠，125 tests pass**（既有 120 無 regression）。GitNexus impact LOW、`detect_changes` risk low。
+
+## T7 — Local web view integration（done，2026-05-18；8.3 real SSO pending OQ5）
+
+- `authProvider.ts`：使用者 auth 與 Service auth 分離。`UserAuthProvider` 介面 + `LocalDevUserAuthProvider`（`Authorization: Bearer <token>` 或 `X-User-Token`；dev token 即 user id；**不做死 EZPLUS SSO**）+ `createUserAuthProvider` 工廠（未來 `sso-token-introspection` 同介面替換，local web view 契約不變）。
+- `app.ts`：`POST /api/local-web-view/sessions` — user-auth → 以 `ifc_ready_job_id` 或 `external_model_version_id` 解析 → `LocalWebViewSession`（`artifact_resolution`：source_ifc_ref/manifest/conversion 狀態/`viewer_open_ready`）。實際 USDC streaming 仍走既有 `stream-config`/bim-streaming-server 路徑（T7 只做 data-plane 解析入口，不重複 streaming）。
+- `types.ts` 加 `LocalWebViewSession`；`config` 加 `userAuthProvider`（default `local-dev`）。
+- **8.3 / OQ5**：`sso_binding` 恆 `pending_oq5`；交付＝可替換 user-auth provider 預留（OQ5-pending 緩解），**非真實公司 SSO 對接**（待 OQ5）。
+- 測試 `tests/local-web-view.test.ts`：缺 token→401、Bearer/X-User-Token→201+pending_oq5、emv 解析 + 轉檔 ready→`viewer_open_ready=true`、缺 id→400、無 job→404。`npm run verify` **綠，130 tests pass**（既有 125 無 regression）。GitNexus impact LOW、`detect_changes` risk low。

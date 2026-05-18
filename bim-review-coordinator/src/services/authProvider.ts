@@ -143,3 +143,53 @@ export function createAuthProvider(config: CoordinatorConfig): AuthProvider {
       );
   }
 }
+
+/**
+ * B-scheme T7 §8.2：**使用者** auth（browser / local web view），與 §T3 的
+ * machine-to-machine Service auth 分開。現階段用可替換 provider，**不做死
+ * EZPLUS SSO**；未來 `sso-token-introspection` 同介面替換，local web view ↔
+ * 公司 SSO 真實銜接待 OQ5（§8.3）。
+ */
+export interface UserAuthContext {
+  provider: string;
+  userId: string;
+  ssoBinding: "pending_oq5" | "bound";
+}
+
+export interface UserAuthProvider {
+  readonly name: string;
+  authenticate(request: { headers: Record<string, string | undefined> }): UserAuthContext;
+}
+
+/**
+ * local-dev：接受 `Authorization: Bearer <token>` 或 `X-User-Token` 任一非空
+ * 作為開發使用者；不驗證真實 SSO（OQ5 待外部平台確認）。介面化讓未來換成
+ * SSO introspection 不需改 local web view 契約。
+ */
+export class LocalDevUserAuthProvider implements UserAuthProvider {
+  readonly name = "local-dev";
+
+  authenticate(request: { headers: Record<string, string | undefined> }): UserAuthContext {
+    const bearer = request.headers["authorization"];
+    const userToken = request.headers["x-user-token"];
+    let token = "";
+    if (typeof bearer === "string" && bearer.toLowerCase().startsWith("bearer ")) {
+      token = bearer.slice(7).trim();
+    } else if (typeof userToken === "string") {
+      token = userToken.trim();
+    }
+    if (token.length === 0) {
+      throw new AuthError(401, "missing user token (Authorization: Bearer / X-User-Token)");
+    }
+    // 開發階段：token 即視為 user id。真實 SSO introspection 為 OQ5。
+    return { provider: this.name, userId: token, ssoBinding: "pending_oq5" };
+  }
+}
+
+export function createUserAuthProvider(config: CoordinatorConfig): UserAuthProvider {
+  switch (config.userAuthProvider) {
+    case "local-dev":
+    default:
+      return new LocalDevUserAuthProvider();
+  }
+}

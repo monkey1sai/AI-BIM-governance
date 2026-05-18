@@ -37,6 +37,9 @@ export interface CoordinatorConfig {
   // 至 dead-letter，不靜默丟棄）。每事件可由 ifc-ready callback_url 覆寫。
   cloudCallbackBaseUrl: string;
   callbackOutboxMaxAttempts: number;
+  // T7：使用者（local web view）auth provider，可替換；不做死 EZPLUS SSO，
+  // local web view ↔ 公司 SSO 真實銜接待 OQ5。
+  userAuthProvider: string;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -142,6 +145,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     ]),
     cloudCallbackBaseUrl: process.env.CLOUD_CALLBACK_BASE_URL || "",
     callbackOutboxMaxAttempts: numberFromEnv("CALLBACK_OUTBOX_MAX_ATTEMPTS", 5),
+    userAuthProvider: process.env.USER_AUTH_PROVIDER || "local-dev",
     ...overrides,
   };
 }

@@ -8,7 +8,7 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
-import { AuthError, createAuthProvider } from "./services/authProvider.js";
+import { AuthError, createAuthProvider, createUserAuthProvider } from "./services/authProvider.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
@@ -149,6 +149,18 @@ const conversionResultReportSchema = z
   })
   .passthrough();
 
+// B-scheme T7 §8.1：local web view session 建立輸入（ifc_ready_job_id 或
+// external_model_version_id 擇一）。使用者 auth 由可替換 provider 處理。
+const localWebViewSessionSchema = z
+  .object({
+    ifc_ready_job_id: z.string().min(1).optional(),
+    external_model_version_id: z.string().min(1).optional(),
+  })
+  .passthrough()
+  .refine((v) => Boolean(v.ifc_ready_job_id || v.external_model_version_id), {
+    message: "ifc_ready_job_id or external_model_version_id is required",
+  });
+
 export interface CoordinatorApp {
   app: express.Express;
   server: http.Server;
@@ -177,6 +189,8 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   const streamingConversionClient = new StreamingConversionClient(config.streamingConversionApiBase);
   // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
   const callbackOutbox = new CallbackOutbox(config.callbackOutboxMaxAttempts);
+  // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
+  const userAuthProvider = createUserAuthProvider(config);
 
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json({ limit: "1mb" }));
@@ -604,6 +618,54 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     }
   });
 
+  // B-scheme T7 §8.1-8.3：local web view session / artifact resolution。
+  // 使用者 auth 用可替換 provider（不做死 EZPLUS SSO；sso_binding 在 OQ5
+  // 確認前恆 pending_oq5）。實際 USDC streaming 仍走既有 stream-config 路徑。
+  app.post("/api/local-web-view/sessions", (request, response, next) => {
+    try {
+      const headerMap: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(request.headers)) {
+        headerMap[key.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+      }
+      const user = userAuthProvider.authenticate({ headers: headerMap });
+      const input = localWebViewSessionSchema.parse(request.body);
+
+      let job = input.ifc_ready_job_id
+        ? externalIfcReadyStore.get(input.ifc_ready_job_id)
+        : undefined;
+      if (!job && input.external_model_version_id) {
+        job = externalIfcReadyStore
+          .list()
+          .find((j) => j.external_model_version_id === input.external_model_version_id);
+      }
+      if (!job) {
+        response.status(404).json({ detail: "No IFC-ready job for local web view." });
+        return;
+      }
+
+      const session = {
+        web_view_session_id: `lwv_${Date.now()}_${randomWebViewSuffix()}`,
+        user_id: user.userId,
+        auth_provider: user.provider,
+        sso_binding: user.ssoBinding,
+        external_model_version_id: job.external_model_version_id,
+        ifc_ready_job_id: job.ifc_ready_job_id,
+        artifact_resolution: {
+          source_ifc_ref: job.source_ifc_ref,
+          artifact_manifest_ref: job.artifact_manifest_ref ?? null,
+          conversion_job_id: job.conversion_job_id,
+          conversion_status: job.conversion_status,
+          conversion_authority: job.conversion_authority,
+          viewer_open_ready: job.conversion_status === "ready",
+        },
+        created_at: new Date().toISOString(),
+      };
+      response.status(201).json(session);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/dev/conversions", async (request, response) => {
     await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions", request.body);
   });
@@ -713,6 +775,10 @@ async function proxyConversionService(
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function randomWebViewSuffix(): string {
+  return Math.random().toString(36).slice(2, 10);
 }
 
 function chooseReadyUsdc(artifacts: Artifact[]): Artifact | undefined {

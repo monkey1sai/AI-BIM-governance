@@ -78,9 +78,11 @@
 
 ## 8. T7 Local web view integration
 
-- [ ] 8.1 `bim-review-coordinator` 提供 local web view session / artifact resolution 入口
-- [ ] 8.2 預留使用者 SSO flow（現階段用可替換 auth provider；不做死 EZPLUS SSO）
-- [ ] 8.3 **阻塞項**：local web view ↔ 公司 SSO 銜接待 OQ5 確認
+- [x] 8.1 `bim-review-coordinator` 提供 local web view session / artifact resolution 入口
+- [x] 8.2 預留使用者 SSO flow（現階段用可替換 auth provider；不做死 EZPLUS SSO）
+- [x] 8.3 **阻塞項**：local web view ↔ 公司 SSO 銜接待 OQ5 確認
+
+> **T7 done（2026-05-18）** — 見 `apply-notes.md` §T7。`authProvider.ts` 新增 **使用者** auth（與 T3 machine-to-machine Service auth 分離）：`UserAuthProvider` 介面 + `LocalDevUserAuthProvider`（`Authorization: Bearer`/`X-User-Token`，dev token 即 user id；**不做死 EZPLUS SSO**）+ `createUserAuthProvider` 工廠。`app.ts` 新增 `POST /api/local-web-view/sessions`（user-auth → 解析 ifc_ready_job_id 或 external_model_version_id → `LocalWebViewSession`，含 data-plane `artifact_resolution` 與 `viewer_open_ready`；實際 USDC streaming 仍走既有 stream-config）。`types.ts` 加 `LocalWebViewSession`；`config` 加 `userAuthProvider`。**8.3 / OQ5**：`sso_binding` 在 OQ5 確認前恆 `pending_oq5`，交付＝可替換 provider 預留（OQ5-pending 緩解），**非真實公司 SSO 對接**。測試 `tests/local-web-view.test.ts`：缺 token→401、Bearer/X-User-Token→201+pending_oq5+artifact_resolution、emv 解析 + 轉檔 ready→viewer_open_ready、缺 id→400、無 job→404。`npm run verify` **綠，130 tests pass**（既有 125 無 regression）。GitNexus impact LOW、`detect_changes` risk low。
 
 ## 9. T8 Readiness / smoke / evidence rewrite
 

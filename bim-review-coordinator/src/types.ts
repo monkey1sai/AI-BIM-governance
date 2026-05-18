@@ -207,6 +207,32 @@ export interface ShadowMetadata {
   last_callback_attempt_at: string | null;
 }
 
+/**
+ * B-scheme（local-coordinator-ifc-ready-intake-boundary T7 §8.1-8.3）。
+ *
+ * 客戶落地端 local web view session：以 data-plane 本地 artifact 解析給
+ * browser viewer（實際 USDC streaming 仍走既有 bim-streaming-server 路徑）。
+ * 使用者 auth 用可替換 provider，`sso_binding` 在 OQ5 確認前恆為 `pending_oq5`
+ * （不做死 EZPLUS SSO）。
+ */
+export interface LocalWebViewSession {
+  web_view_session_id: string;
+  user_id: string;
+  auth_provider: string;
+  sso_binding: "pending_oq5" | "bound";
+  external_model_version_id: string;
+  ifc_ready_job_id: string;
+  artifact_resolution: {
+    source_ifc_ref: string;
+    artifact_manifest_ref: string | null;
+    conversion_job_id: string | null;
+    conversion_status: string | null;
+    conversion_authority: "bim-streaming-server" | null;
+    viewer_open_ready: boolean;
+  };
+  created_at: string;
+}
+
 export interface StreamConfigResponse {
   session_id: string;
   lifecycle_status: SessionStatus;
