@@ -1,0 +1,65 @@
+{
+  "contract": "ifc_ready_payload",
+  "contract_version": "1.0.0",
+  "direction": "customer-edge IFC Worker -> bim-review-coordinator POST /api/external/ifc-ready",
+  "caller": "customer-edge IFC Worker (edge intranet / intra-LAN; NOT the company cloud test/prod hosts)",
+  "source_of_truth": [
+    "openspec/changes/local-coordinator-ifc-ready-intake-boundary/specs/local-coordinator-ifc-ready-intake-boundary/spec.md",
+    "openspec/changes/local-coordinator-ifc-ready-intake-boundary/specs/conversion-webhook-lifecycle/spec.md"
+  ],
+  "open_question_status": {
+    "OQ3": "external_model_version_id / external_conversion_task_id producer + format TBD by external platform team; example values are placeholders",
+    "OQ4": "Service auth credential issuance schedule TBD; auth headers below are the intranet-dev provider shape",
+    "note": "frozen contract; does NOT block apply; blocks T5 real cloud-callback wiring (OQ1) and T7 SSO (OQ5) only"
+  },
+  "transport": {
+    "method": "POST",
+    "path": "/api/external/ifc-ready",
+    "auth": {
+      "provider": "intranet-dev",
+      "headers": {
+        "X-Correlation-Id": "corr_rvt_demo_001",
+        "X-Idempotency-Key": "idem_ifcready_demo_001",
+        "X-Webhook-Secret": "<shared-secret-or-HMAC-signature> (intranet-dev provider; replaceable AuthProvider)"
+      },
+      "ip_allowlist": "edge intranet only"
+    }
+  },
+  "required_fields": [
+    "event",
+    "correlation_id",
+    "idempotency_key",
+    "tenant_id",
+    "project_id",
+    "external_model_version_id",
+    "source_ifc"
+  ],
+  "field_notes": {
+    "event": "constant 'ifc_ready'",
+    "external_model_version_id": "binds the local conversion job for later callback correlation (control-plane authority is the company cloud; this repo only shadows it)",
+    "external_conversion_task_id": "optional; company-cloud-issued task id when present (OQ3)",
+    "source_ifc.ref": "artifact reference scheme TBD (OQ2: minio:// bucket naming / etag source); placeholder URL-style ref accepted in dev",
+    "source_ifc.etag": "checksum of the produced .ifc for idempotency / integrity",
+    "callback_url": "where coordinator should POST conversion_result_ready/conversion_failed to the company cloud (OQ1: real endpoint pending; dev placeholder frozen here)",
+    "requested_outputs": "subset of usdc | element_mapping | entity_index | metadata",
+    "compat_note": "supersedes the legacy streaming ifc_ready event (bim-streaming-server/tests/test_conversion_authority_api.py::ifc_ready_payload); under B-scheme the external entry is the coordinator, and bim-streaming-server receives an internal conversion request derived from this (T4)"
+  },
+  "example": {
+    "event": "ifc_ready",
+    "event_id": "evt_ifc_demo_001",
+    "correlation_id": "corr_rvt_demo_001",
+    "idempotency_key": "idem_ifcready_demo_001",
+    "tenant_id": "tenant_demo_001",
+    "project_id": "project_demo_001",
+    "external_model_version_id": "ext_mv_demo_001",
+    "external_conversion_task_id": "ext_task_demo_001",
+    "source_ifc": {
+      "ref": "minio://edge-bucket/tenant_demo_001/project_demo_001/ext_mv_demo_001/demo-model.ifc",
+      "etag": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "filename": "demo-model.ifc",
+      "format": "ifc"
+    },
+    "requested_outputs": ["usdc", "element_mapping", "entity_index", "metadata"],
+    "callback_url": "https://company-cloud.example/api/bim-control/conversion-callbacks"
+  }
+}

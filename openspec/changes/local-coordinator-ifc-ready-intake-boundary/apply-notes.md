@@ -34,3 +34,17 @@ apply 階段三方定位 source of truth（與 `design.md` Context/D6/D7、相�
 ## T2 — BREAKING gate（pending 使用者確認）
 
 `_worker`/`_bim-control` 自 repo 刪除為不可逆破壞性變更。依使用者定調：先完成非破壞前置（T1 ＋ T8 的 `tests/fakes`＋`tests/contracts` 子集，確保驗證能力不中斷），到「真要刪除」前停下回報、待明確確認後才執行 T2 與後續 T3–T9。
+
+### T2 非破壞前置 — done（2026-05-18，additive only）
+
+已新增（**純新增，未動 `_worker`/`_bim-control`、未改 smoke/start-all、未刪任何東西**）：
+
+- `tests/contracts/ifc_ready_payload.json` — 凍結 coordinator `POST /api/external/ifc-ready` 契約（T3 anchor；OQ3/OQ4 標 placeholder/pending）
+- `tests/contracts/conversion_result_callback.json` — 凍結 metadata-only cloud callback 契約（**T5.4 / OQ1 緩解**：real endpoint 標 pending；含 outbox/retry/dead-letter 語意）
+- `tests/fakes/external_ifc_worker_client.py` — 外部落地端 IFC Worker double（build/POST spec-correct ifc-ready）
+- `tests/fakes/cloud_bim_control_api.py` — 公司雲端 `bim-control` double（收 callback + **強制 metadata-only guard**；最小 control-plane reads）
+- `tests/fakes/__init__.py`、`tests/README.md`（宣告 test-only doubles、非 runtime profile，依 D4；endpoint 取代對照、OQ 狀態、T2 刪除前置清單）
+
+Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required fields 齊、fakes 可 import、callback ready/failed 記錄與過濾正確、**metadata-only guard 正確拒絕內嵌 `usdc_body`（雲地分離鐵律於測試強制）**、control-plane read doubles 正常 → `T8-PREREQ-SANITY-OK`。
+
+> 注意：此批僅為 T2 的**非破壞前置鷹架**；未勾 `tasks.md` §3（T2 刪除）/ §9（T8 rewrite）任何 box——真正的刪除、smoke/test rewire、start-all/health/compose 收斂、GitNexus impact analysis 屬 T2 本體，**待使用者確認後**才執行。
