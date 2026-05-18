@@ -157,7 +157,7 @@ _worker/
 4. 本 repo 範圍收斂為 webhook intake → IFC→USDC → Kit streaming → BIM 治理。
 ```
 
-落地與衝突管理：程式碼層退役 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本，屬產品實作，依 §0.1 走獨立 OpenSpec change + branch + PR；排序為「在途 worktree 分支 `introduce-ai-bim-runtime-manager-docker-kit-mvp` 先 merge → 再從乾淨 main 開分支實作」。落地前只改治理/規劃文件，本地 demo 閉環照常可跑。
+落地與衝突管理：程式碼層退役 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本，屬產品實作，依 §0.1 走獨立 OpenSpec change + branch + PR。**[2026-05-18 更新]** predecessor `introduce-ai-bim-runtime-manager-docker-kit-mvp` 已 merged（PR #59）+ archived（`2026-05-18-…`）；`NoSuccessorWhilePredecessorOpen` gate 已清除，Phase B 可從 synced main 開 `codex/openspec/external-platform-webhook-intake-boundary` 升格實作。Phase B 落地前本地 demo 閉環照常可跑。
 
 ---
 
