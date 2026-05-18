@@ -13,6 +13,15 @@ if ($WithGpu) {
     $ArgsList += @("--profile", "gpu")
 }
 
+if ($WithGpu -and $Build) {
+    $GpuBuildArgs = $ArgsList + @("build", "streaming-server")
+    Write-Host "[runtime] docker $($GpuBuildArgs -join ' ')" -ForegroundColor Cyan
+    docker @GpuBuildArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "failed_linux_kit_build: streaming-server GPU image build failed"
+    }
+}
+
 $ArgsList += "up"
 $ArgsList += "-d"
 

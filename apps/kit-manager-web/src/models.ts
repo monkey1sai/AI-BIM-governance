@@ -15,6 +15,14 @@ export interface KitInstanceState {
   control_status: string;
 }
 
+export interface HealthResponse {
+  status: string;
+  runtime_mode: string;
+  host_local_runtime_allowed: boolean;
+  kit_instance_id: string;
+  kit_control_url: string;
+}
+
 export interface OpenResponse {
   instance: KitInstanceState;
   stage_composition_payload: Record<string, unknown>;

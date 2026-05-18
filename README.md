@@ -31,9 +31,50 @@
 
 ---
 
-## Demo 啟動順序 (One-shot Bring-up)
+## Docker-first Runtime Manager MVP
 
-### 一鍵啟動 / 關閉 (Recommended)
+`CODE_GOAL_DOCKER_KIT_MVP.md` 的 MVP 驗收路徑只接受 Docker Compose。Host-local `uvicorn` / `npm run dev` / host Kit launcher 只保留作為 legacy/debug，不作為 MVP pass evidence。
+
+Docker-first Kit MVP 的硬邊界：
+
+- `streaming-server` GPU image 必須在 Docker build 階段於 Linux container 內執行 `./repo.sh build`，產生 Linux Kit app。
+- 現有 `bim-streaming-server/source/apps` 是 NVIDIA `kit-app-template` `template new` 產物；Docker MVP 不重新互動產生 source，而是在乾淨 Linux builder 內 build 現有 source，再用 `./repo.sh package` 產出 runtime artifact。
+- 缺少 Linux launcher 不是可接受的前置 blocker；這代表 `failed_linux_kit_build`。
+- Host-local Windows `_build`、`repo.bat`、PowerShell launcher 或 host Kit launcher 不算 MVP pass、GPU runtime pass 或 Kit viewport pass evidence。
+- `web-viewer-sample` container 使用 Node 18 與 npm 10，符合 `web-viewer-sample/package.json` 的 engines contract，並以 `engine-strict` 驗證。
+
+主要入口：
+
+```powershell
+cd C:\Repos\active\iot\AI-BIM-governance
+Copy-Item .env.runtime-manager.docker.example .env.runtime-manager.docker
+docker compose -f compose.runtime-manager.yml --env-file .env.runtime-manager.docker config
+.\scripts\start-runtime-manager-docker.ps1 -Build
+.\scripts\check-runtime-manager-docker.ps1
+```
+
+Kit 管理前端：
+
+```txt
+http://127.0.0.1:5174
+```
+
+GPU Kit profile 只有在本機 Docker Desktop、NVIDIA Container Toolkit、container 內 Linux Kit build 成功、以及 Docker build 產出的 Linux launcher 可啟動時才可宣告 pass：
+
+```powershell
+.\scripts\start-runtime-manager-docker.ps1 -Build -WithGpu
+.\scripts\check-runtime-manager-docker.ps1 -WithGpu
+```
+
+若 NVIDIA runtime / GPU / license / auth / NVIDIA package network 這類外部依賴不可用，驗證結果可記錄為 `blocked_external_dependency` 或 `blocked_gpu_runtime_unavailable`。若 Dockerfile 沒執行 Linux build、build pipeline 缺失、或 image 內缺 Linux launcher，必須記錄為 `failed_linux_kit_build`，不得用 host-local Kit 取代 GPU container pass。
+
+---
+
+## Demo 啟動順序 (Legacy / Debug Bring-up)
+
+### 一鍵啟動 / 關閉 (Legacy / Debug)
+
+本段落只供 legacy/debug 使用，不作 MVP 驗收、不作 GPU runtime pass、不作 Kit viewport pass evidence。Docker-first MVP evidence 以上方 Runtime Manager 流程與 Docker Linux build 結果為準。
 
 **Windows (PowerShell):**
 
@@ -41,7 +82,7 @@
 # Repo root
 cd C:\Repos\active\iot\AI-BIM-governance
 
-# 一次啟動 worker-only demo services（背景執行；log 寫到 scripts\.run\<svc>.log）
+# Legacy/debug：一次啟動 worker-only demo services（背景執行；log 寫到 scripts\.run\<svc>.log）
 .\scripts\start-all.ps1
 
 # 一次關閉所有服務（tree-kill 連子行程一起清掉）

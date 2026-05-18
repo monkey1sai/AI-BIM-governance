@@ -1,4 +1,4 @@
-import { CloseResponse, KitInstanceState, OpenResponse, UsdcArtifact } from "../models";
+import { CloseResponse, HealthResponse, KitInstanceState, OpenResponse, UsdcArtifact } from "../models";
 
 export class KitManagerClient {
   private readonly baseUrl: string;
@@ -12,6 +12,12 @@ export class KitManagerClient {
     this.assertOk(response);
     const body = await response.json();
     return body.items ?? [];
+  }
+
+  async getHealth(): Promise<HealthResponse> {
+    const response = await fetch(`${this.baseUrl}/health`);
+    this.assertOk(response);
+    return response.json();
   }
 
   async getCurrentInstance(): Promise<KitInstanceState> {

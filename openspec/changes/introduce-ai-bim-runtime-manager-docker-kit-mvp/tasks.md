@@ -1,15 +1,23 @@
 # Tasks
 
-- [ ] Add Docker Compose runtime file.
-- [ ] Add Dockerfiles for Python, Node, Kit Manager API/Web, and GPU streaming scaffold.
-- [ ] Add Kit Manager API service.
-- [ ] Add Kit Manager Web frontend.
-- [ ] Add scripts for start / stop / health check.
-- [ ] Add Docker-first runbook and architecture docs.
-- [ ] Update README primary path to Docker-first runtime.
-- [ ] Mark host-local runtime as legacy/debug.
-- [ ] Validate OpenSpec: `npx openspec validate introduce-ai-bim-runtime-manager-docker-kit-mvp --strict`.
-- [ ] Validate Compose: `docker compose -f compose.runtime-manager.yml --env-file .env.runtime-manager.docker config`.
-- [ ] Run core profile.
-- [ ] Run GPU profile or record blocked evidence if Linux Kit launcher / GPU runtime is missing.
-- [ ] Confirm all changed files are under 500 lines.
+- [x] Add Docker Compose runtime file.
+- [x] Add Dockerfiles for Python, Node, Kit Manager API/Web, and GPU streaming scaffold.
+- [x] Add Kit Manager API service.
+- [x] Add Kit Manager Web frontend.
+- [x] Add scripts for start / stop / health check.
+- [x] Add Docker-first runbook and architecture docs.
+- [x] Update README primary path to Docker-first runtime.
+- [x] Mark host-local runtime as legacy/debug.
+- [x] Fix web-viewer-sample Docker Node engine mismatch.
+- [x] Validate web-viewer image with Node 18 / npm 10 engine contract.
+- [x] Add Kit Manager API runtime status pytest.
+- [x] Convert streaming-server GPU image to Linux Kit build/package multi-stage build.
+- [x] Validate Linux Kit launcher is produced by Docker build.
+- [ ] Validate runtime image launches produced Linux Kit launcher.
+- [x] Update evidence to distinguish build_failed from runtime_blocked.
+- [x] Validate OpenSpec: `npx openspec validate introduce-ai-bim-runtime-manager-docker-kit-mvp --strict`.
+- [x] Validate Compose: `docker compose -f compose.runtime-manager.yml --env-file .env.runtime-manager.docker config`.
+- [x] Run core profile.
+- [x] Run GPU profile or record `blocked_gpu_runtime_unavailable` only for NVIDIA runtime/GPU failure.
+- [x] Run GitNexus detect-changes after fixes.
+- [x] Confirm all changed files are under 500 lines.
