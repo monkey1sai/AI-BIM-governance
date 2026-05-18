@@ -44,8 +44,9 @@ if ($StreamingOnly) {
 }
 else {
     if (-not $TsOnly) {
-        # B-scheme T2：_bim-control / _worker 已自 repo 刪除（外部平台由 tests/fakes 模擬）。
-        # 新的 repo-root tests/（fakes + contracts）pytest 目標由 T8 readiness/smoke rewrite 加入。
+        # B-scheme T8 §9.1：default verify 不再依賴已刪 _bim-control / _worker；
+        # 改以 repo-root tests/（外部平台 contracts + test-only fakes）作 Python 覆蓋。
+        $Targets += @{ Name = "tests (contracts+fakes)"; Cmd = $Python; Args = @("-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"); Cwd = "." }
     }
     if (-not $PyOnly) {
         $Targets += @{ Name = "bim-review-coordinator"; Cmd = "npm"; Args = @("run", "verify"); Cwd = "bim-review-coordinator" }

@@ -86,9 +86,11 @@
 
 ## 9. T8 Readiness / smoke / evidence rewrite
 
-- [ ] 9.1 default smoke 不依賴 `_worker`/`_bim-control`
-- [ ] 9.2 新 smoke 用 contract stub 呼叫 coordinator intake，驗 conversion + callback outbox + Kit launcher evidence
-- [ ] 9.3 evidence 分層加入 Kit launcher / callback outbox；GPU/Kit 阻塞標 deferred 不謊報
+- [x] 9.1 default smoke 不依賴 `_worker`/`_bim-control`
+- [x] 9.2 新 smoke 用 contract stub 呼叫 coordinator intake，驗 conversion + callback outbox + Kit launcher evidence
+- [x] 9.3 evidence 分層加入 Kit launcher / callback outbox；GPU/Kit 阻塞標 deferred 不謊報
+
+> **T8 done（2026-05-18）** — 見 `apply-notes.md` §T8。`tests/test_contracts_and_fakes.py`（repo-root pytest，**6 pass**）形式化 T2 前置 fakes/contracts 為正式覆蓋；`verify-all.ps1`/`.sh` re-add repo-root `tests/` pytest 目標（§9.1：default verify 改以 contracts+fakes 取代已刪兩服務覆蓋，不再依賴 `_worker`/`_bim-control`）。新增 `scripts/smoke-bscheme-intake.ps1`（§9.2 contract stub → coordinator intake；分層 tiers：external_platform_contracts / coordinator_bscheme_intake / streaming_internal_conversion / callback_outbox / runtime_image_kit_launcher）。Evidence `docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json`（§9.3 分層）：external_platform_contracts=passed(6)、coordinator_bscheme_intake=passed(130)、streaming_internal_conversion=passed(5)、callback_outbox=passed（retry/dead-letter/metadata-only/OQ1-pending）、**runtime_image_kit_launcher=`deferred`（沿用 T0 誠實結論，GPU/Kit graphics-vulkan 阻塞，不謊報 passed、不用 host-local Kit 充當 pass）**。PowerShell 被環境拒，`.ps1` 為 CI/PowerShell 可重複工具，本 session evidence 由等效 node/python 檢查產出。`detect_changes` risk low。
 
 ## 10. T9 Documentation / spec cleanup（對 merge 後現行 specs 撰寫）
 

@@ -100,3 +100,10 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 - `types.ts` 加 `LocalWebViewSession`；`config` 加 `userAuthProvider`（default `local-dev`）。
 - **8.3 / OQ5**：`sso_binding` 恆 `pending_oq5`；交付＝可替換 user-auth provider 預留（OQ5-pending 緩解），**非真實公司 SSO 對接**（待 OQ5）。
 - 測試 `tests/local-web-view.test.ts`：缺 token→401、Bearer/X-User-Token→201+pending_oq5、emv 解析 + 轉檔 ready→`viewer_open_ready=true`、缺 id→400、無 job→404。`npm run verify` **綠，130 tests pass**（既有 125 無 regression）。GitNexus impact LOW、`detect_changes` risk low。
+
+## T8 — Readiness / smoke / evidence rewrite（done，2026-05-18）
+
+- §9.1：`tests/test_contracts_and_fakes.py`（repo-root pytest，**6 pass**）形式化 T2 前置的 contracts/fakes 為正式覆蓋；`verify-all.ps1`/`.sh` re-add repo-root `tests/` pytest 目標——**default verify 不再依賴已刪 `_worker`/`_bim-control`**，改以外部平台 contracts + test-only fakes 提供 Python 覆蓋。
+- §9.2：`scripts/smoke-bscheme-intake.ps1`（專案慣例可重複工具，reuse `smoke-evidence.ps1`）——contract stub（tests/fakes+contracts）→ coordinator intake，分層 tiers：external_platform_contracts / coordinator_bscheme_intake / streaming_internal_conversion / callback_outbox / runtime_image_kit_launcher。
+- §9.3：evidence `docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json` 分層加入 Kit launcher + callback outbox tier。本 session 各 tier（依實際已跑檢查）：external_platform_contracts=passed(6)、coordinator_bscheme_intake=passed(130)、streaming_internal_conversion=passed(5)、callback_outbox=passed、**runtime_image_kit_launcher=`deferred`**（沿用 T0，GPU/Kit graphics-vulkan 阻塞；**誠實 deferred，不謊報 passed、不用 host-local Kit 充當 pass**）。
+- PowerShell 被環境拒：`.ps1` 為 CI/PowerShell 環境可重複工具；本 session evidence 由等效 node/python 檢查產出（與 T0 同模式）。`detect_changes` risk low。

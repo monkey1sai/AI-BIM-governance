@@ -56,9 +56,9 @@ if [ "$STREAMING_ONLY" -eq 1 ]; then
     fi
     TARGETS+=("bim-streaming-server|$PS_Q -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-stage-loading-contract.ps1")
 elif [ "$TS_ONLY" -eq 0 ]; then
-    # B-scheme T2：_bim-control / _worker 已自 repo 刪除（外部平台由 tests/fakes 模擬）。
-    # 新的 repo-root tests/ pytest 目標由 T8 readiness/smoke rewrite 加入。
-    :
+    # B-scheme T8 §9.1：default verify 不再依賴已刪 _bim-control / _worker；
+    # 改以 repo-root tests/（外部平台 contracts + test-only fakes）作 Python 覆蓋。
+    TARGETS+=("tests (contracts+fakes)|$PYTHON -m pytest tests -q -p no:cacheprovider")
 fi
 if [ "$STREAMING_ONLY" -eq 0 ] && [ "$PY_ONLY" -eq 0 ]; then
     TARGETS+=("bim-review-coordinator|$NPM_VERIFY")
