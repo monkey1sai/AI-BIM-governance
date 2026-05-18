@@ -55,6 +55,8 @@
 > **2026-05-15 更新（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離定位）**：依使用者提供的 `BIM模型管理平台 系統架構_260514.pdf`（2026-05-14，雲地分離架構）新增 **§1.1A**，明確 AI-BIM-governance 在該平台中的角色 = **客戶落地端**接在 PDF「IFC Worker（IFC 4 匯出）」之後的延伸（IFC→USDC + 後續 BIM 治理 + Kit streaming runtime，GPU 由客戶自購自擴）；**公司雲端只負責服務授權（公司層級 License）與客戶資訊紀錄（版本／權限／metadata），不存客戶模型原始檔、不跑 GPU runtime**。此更新只對齊部署與商業邊界語意，不改 §1.2 現行 specs、不改 §6 OpenSpec 候選優先級。
 >
 > **2026-05-15 更新（架構決策：外部既有平台邊界 + webhook intake；權威見 AGENTS.md §1.A）**：依使用者明確指令，`_bim-control` / `_worker` 自核心開發 repo **降級為「外部既有平台（PDF 公司雲端 + 客戶落地端 IFC Worker，已部署於公司測試機/正式機）的本地整合 fake」**，本 repo 不再為其新增產品功能；本 repo 對外入口改為 **可被外部測試機呼叫的 webhook intake → 觸發既有已實作的 IFC→USDC（`bim-streaming-server`）**。新增 **§1.1B** 記錄決策與衝突管理排序。程式碼層退役屬產品實作，依 AGENTS.md §0.1 走獨立 OpenSpec change + branch + PR，且**排在在途 worktree 分支 `introduce-ai-bim-runtime-manager-docker-kit-mvp` merge 之後**才從乾淨 main 開分支實作；落地前只改治理/規劃文件，本地 demo 閉環照常可跑。
+>
+> **2026-05-18 更新（`introduce-ai-bim-runtime-manager-docker-kit-mvp` archive 對齊）**：依 `openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.4 / §1.1B**。該 change 之 implementation PR #59 已 merged（mergeCommit `55a9703`），新 capability **`runtime-manager-docker-kit-mvp`** 已 sync 進 `openspec/specs/`（現行 specs 由 18 → **19**）。`openspec validate --specs --strict` = 19 passed / 0 failed。archive 時 tasks 為 **20 done / 1 deferred**（`Validate runtime image launches produced Linux Kit launcher` 屬 GPU/Kit runtime 驗證）；依 AGENTS.md §0.1 line 85，此 archive **不**把該 runtime 項標成 passed。**連帶效果**：predecessor 既已 merged + archived，Phase B（`external-platform-webhook-intake-boundary`）的 `NoSuccessorWhilePredecessorOpen` gate **已清除**，可依 `docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md` §9 升格。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -145,24 +147,25 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 | 階段 | 內容 | 衝突風險 | 狀態 |
 |---|---|---|---|
 | Phase A | 治理/規劃文件對齊（AGENTS.md §1.A、CLAUDE.md §1.A、本節）；不動程式碼、不刪 mock、不重寫既有 specs | 近乎零（worktree 不碰 AGENTS/CLAUDE；本節 additive 且遠離 §5.0 熱區） | ✓ 本次完成 |
-| Phase B | 程式碼層：退役/收斂 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本、webhook 來源改外部測試機、調整相關 specs | 高（與 worktree 的 `_worker/` 與 `worker-artifact-pipeline` spec 熱區重疊） | ⏸ 待排程 |
+| Phase B | 程式碼層：退役/收斂 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本、webhook 來源改外部測試機、調整相關 specs | 中（worktree 已 merge+archived，原 `_worker/` 熱區衝突風險解除；Phase B 從 synced main rebase-on-clean-main） | ✅ gate 已清除（predecessor #59 merged + archived 2026-05-18）；可升格 |
 
 **Phase B 排序（避免大量 merge 衝突）**
 
 ```txt
-1. 在途 worktree 分支 codex/openspec/introduce-ai-bim-runtime-manager-docker-kit-mvp
-   先完成並 merge 進 main（目前僅領先 main 1 commit + 未提交工作）。
-2. Phase B 從 merge 後的乾淨 main 開 codex/openspec/<id> 分支實作，
-   rebase-on-clean-main，避免與 worktree 的 _worker/ 熱區對撞。
+1. ✅ 完成（2026-05-18）：在途 worktree 分支
+   codex/openspec/introduce-ai-bim-runtime-manager-docker-kit-mvp 已 merge 進 main
+   （PR #59 / 55a9703）並 archived；gate 清除。
+2. Phase B 從 synced main 開 codex/openspec/external-platform-webhook-intake-boundary
+   分支實作，rebase-on-clean-main。
 3. Phase B 落地、PR merge、archive 後，依 §1.6 回頭同步本 roadmap
    與 AGENTS.md / CLAUDE.md，把過渡語意收斂為正式邊界。
 ```
 
-> **Phase B 草稿（gate-pending）**：完整草稿見 [`docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`](phase-b-external-platform-webhook-intake-DRAFT-2026-05.md)。該檔為 planning DRAFT（非 OpenSpec change，不在 `openspec/changes/`），因 `NoSuccessorWhilePredecessorOpen` gate（PR #59 未 merge）暫不升格；gate 清除後依草稿 §9 checklist 一鍵 `openspec-propose` 升格為 change-id `external-platform-webhook-intake-boundary`。
+> **Phase B 草稿（2026-05-18：gate 已清除，可升格）**：完整草稿見 [`docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`](phase-b-external-platform-webhook-intake-DRAFT-2026-05.md)。`NoSuccessorWhilePredecessorOpen` gate 已解除（predecessor PR #59 merged + change archived `2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp`）。下一步：依草稿 §9 checklist，從 synced main 重跑 `change-id-resolve`（確認 `blockers=[]`）→ `opsx-worktree-guard`/provision → `openspec-propose` 升格為 change-id `external-platform-webhook-intake-boundary`（explore 階段先收斂草稿 §8 open questions，特別 Q1 caller 身分、Q3 auth）。
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
 
-下列 **18** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。
+下列 **19** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。
 
 | Spec | 對應 v1 Phase | 對應 v2 Layer | 狀態 |
 |---|---|---|---|
@@ -184,6 +187,7 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 | `conversion-webhook-lifecycle` | 1/2/4 | 3-A/B/C | ✓ `rvt_uploaded`、`ifc_ready`、`conversion_result_ready` / `conversion_failed` lifecycle 保留 correlation / idempotency |
 | `bim-review-platform-boundary` | cross-cutting | deployment | ✓ `bim-review-platform` 僅代表 deployment boundary，不是 nested repo / submodule |
 | `streaming-usd-stage-composition` | 4/5 | 4 | ✓ primary root model + session layer + ordered secondary subLayers 的 stage composition 語意 |
+| `runtime-manager-docker-kit-mvp` | 3/4 | 4/6 | ✓ 規格：MVP runtime SHALL be Docker-first、Kit SHALL run in GPU container、GPU image 於 Docker build 內建 Linux Kit launcher；⚠ GPU/Kit runtime 驗證項 deferred（`Validate runtime image launches produced Linux Kit launcher` 未完），依 §0.1 不標 runtime passed |
 
 ### 1.2A Architecture rework archive 對齊（2026-05-14）
 
@@ -316,6 +320,7 @@ historical worker conversion:       migration source only; cannot mark B-scheme 
 | `2026-05-12-worker-canonical-storage-batch-baseline` | `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`（MODIFY） | canonical storage batch status/timeout semantics、per-fixture phase timings、single-fixture gate、review viewer handoff contract；archive 時 runtime evidence 仍 blocked at `source_entity_enumeration`，baseline 未鎖定 |
 | `2026-05-12-coordinator-session-lifecycle-events-audit` | `review-session-request-lifecycle`（MODIFY） | coordinator append-only lifecycle audit endpoint、stable `sequence` event schema、lifecycle-only filter、close/release audit events、`_bim-control` review request correlation fields |
 | `2026-05-14-architecture-rework-2026-05-14` | `bim-control-revit-intake-facade`、`worker-rvt-ifc-bridge`、`streaming-ifc-usdc-conversion-authority`、`conversion-webhook-lifecycle`、`bim-review-platform-boundary`、`streaming-usd-stage-composition`（ADD）；`demo-runtime-readiness-smoke`、`documentation-source-of-truth`、`multi-artifact-kit-routing`、`review-session-request-lifecycle`、`session-first-review-viewer`、`streaming-multi-layer-payload-loading`、`worker-artifact-pipeline`（MODIFY） | B 方案 conversion authority rework：`_bim-control` RVT intake、`_worker` RVT→IFC bridge、`bim-streaming-server` IFC→USDC authority + stage composition、platform boundary clarification、demo readiness tiers；archive 不代表 runtime smoke passed |
+| `2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp` | `runtime-manager-docker-kit-mvp`（ADD，新 capability） | Docker-first runtime MVP：MVP runtime SHALL be Docker-first（host-local 不算 pass）、Kit SHALL run in GPU container、GPU image 於 Docker build 內建並打包 Linux Kit launcher；implementation PR #59 merged；archive 時 1 個 GPU/Kit runtime 驗證 task deferred，依 §0.1 不標 runtime passed |
 
 ```txt
 規格目錄約定：

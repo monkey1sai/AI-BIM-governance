@@ -213,12 +213,14 @@ _worker/
   收斂啟動腳本；把 webhook 來源由內部 _worker 改為外部測試機；
   調整相關 specs）屬產品實作，依 §0.1 必須走獨立 OpenSpec change
   + codex/openspec/<id> branch + PR，不得直接在 main 開發。
-- 在途 worktree 分支 codex/openspec/introduce-ai-bim-runtime-manager-docker-kit-mvp
-  仍會修改 _worker/ 與 worker-artifact-pipeline spec
-  （領先 main 1 commit + 未提交工作）= 衝突熱區。
-  為避免大量 merge 衝突的排序：
-  (1) 該 worktree 分支先 merge 進 main；
-  (2) 本決策的程式碼層 change 再從 merge 後的乾淨 main 開分支實作。
+- [2026-05-18 更新] predecessor change introduce-ai-bim-runtime-manager-docker-kit-mvp
+  已 merged（PR #59 / mergeCommit 55a9703）並 archived
+  （openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/，
+   新 capability runtime-manager-docker-kit-mvp 已 sync 進 openspec/specs/）。
+  NoSuccessorWhilePredecessorOpen gate 已清除：
+  Phase B 程式碼層 change 可從 synced main 開
+  codex/openspec/external-platform-webhook-intake-boundary 升格實作
+  （草稿見 docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md）。
 - 程式碼層 change 落地前，本決策只更新治理/規劃文件
   （AGENTS.md / CLAUDE.md / roadmap）；不動程式碼、不刪 _worker/_bim-control、
   不重寫既有 specs；本地 demo 閉環照常可跑、可 git revert。
