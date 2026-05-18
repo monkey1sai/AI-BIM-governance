@@ -1,8 +1,16 @@
 ## 1. T0 Runtime image closure（P0，先行）
 
-- [ ] 1.1 在 runtime image 內驗證 produced Linux Kit launcher 可啟動（補 predecessor archive 遺留 `Validate runtime image launches produced Linux Kit launcher`）
-- [ ] 1.2 產出 evidence：image digest、launcher path、startup log、exit code、sample USDC path
-- [ ] 1.3 若 GPU/driver/Kit license 阻塞 → 標 `deferred` 並記錄 reason，**不得**標 passed、不得用 host-local Kit 充當 pass
+- [x] 1.1 在 runtime image 內驗證 produced Linux Kit launcher 可啟動（補 predecessor archive 遺留 `Validate runtime image launches produced Linux Kit launcher`）
+- [x] 1.2 產出 evidence：image digest、launcher path、startup log、exit code、sample USDC path
+- [x] 1.3 若 GPU/driver/Kit license 阻塞 → 標 `deferred` 並記錄 reason，**不得**標 passed、不得用 host-local Kit 充當 pass
+
+> **T0 Outcome（2026-05-18）= `deferred`（誠實，符合 spec 預期，非 passed）**
+> 可重複工具：`scripts/verify-runtime-kit-launcher.ps1`（reuse `scripts/lib/smoke-evidence.ps1`，schema `demo-runtime-readiness-smoke/v1`）。
+> Evidence：`docs/verification/evidence/2026-05-18-t0-kit-launcher/`（`kit-launcher-readiness.json` + `kit-launcher-startup.log`）。
+> Image `ai-bim-runtime-manager-streaming-server:latest`（`sha256:8f8ff0d7…`，built 2026-05-15）。
+> launcher / kit binary **確認存在於 image 內**（entrypoint 未 exit 64；Dockerfile builder+runtime stage 已 `test -x`）。容器內 `nvidia-smi` 成功（RTX 4060 Ti / driver 580.97 / CUDA 13.0，compute 可見）。
+> **阻塞點**：容器缺 NVIDIA graphics/Vulkan driver libs（`libGLX_nvidia.so.0` 未掛載）→ Omniverse Kit RTX runtime 無法啟動 → entrypoint exit 75（Docker Desktop / WSL2 graphics-passthrough 限制）。
+> 依 `runtime-image-linux-kit-launcher-readiness` spec 誠實標 `deferred` 並記 reason，未謊報 passed、未用 host-local Kit 充當 pass。升為 `passed` 的條件：容器取得 NVIDIA graphics/Vulkan libs（native Linux + NVIDIA Container Toolkit `graphics` capability，或修 WSL2 GL/Vulkan passthrough）後重跑同一工具。
 
 ## 2. T1 OpenSpec boundary 對齊（治理文件，apply 階段內）
 

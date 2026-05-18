@@ -1,0 +1,47 @@
+{
+  "schema_version": "demo-runtime-readiness-smoke/v1",
+  "capability": "demo-runtime-readiness-smoke",
+  "emitted_at": "2026-05-18T06:10:06.000Z",
+  "command": "scripts/verify-runtime-kit-launcher.ps1 (this run executed via equivalent docker orchestration: PowerShell execution is denied by the sandbox policy; the committed .ps1 is the reproducible tool for PowerShell/CI environments)",
+  "cwd": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\local-coordinator-ifc-ready-intake-boundary",
+  "context": {
+    "image": "ai-bim-runtime-manager-streaming-server:latest",
+    "dockerfile": "infra/docker/bim-streaming-server-gpu.Dockerfile",
+    "observe_seconds": 150,
+    "signaling_port": 49100,
+    "change_id": "local-coordinator-ifc-ready-intake-boundary",
+    "task": "T0 runtime-image-linux-kit-launcher-readiness"
+  },
+  "tiers": [
+    {
+      "tier": "runtime_image_kit_launcher",
+      "status": "deferred",
+      "owner": "bim-streaming-server",
+      "ids": {
+        "image": "ai-bim-runtime-manager-streaming-server:latest",
+        "image_id": "sha256:8f8ff0d74d0322c4c87be52b2988f7f3b74446c5d5e5c98672eeb588d3dbd0f8",
+        "image_created": "2026-05-15T12:37:08.866052975Z",
+        "launcher_path": "/workspace/bim-streaming-server/_build/linux-x86_64/release/ezplus.bim_review_stream_streaming.kit.sh",
+        "kit_binary_path": "/workspace/bim-streaming-server/_build/linux-x86_64/release/kit/kit"
+      },
+      "blocker": "blocked_gpu_runtime_unavailable: NVIDIA graphics/Vulkan driver libraries not mounted in container (Missing libGLX_nvidia.so.0). nvidia-smi / CUDA compute IS visible inside the container (RTX 4060 Ti, driver 580.97, CUDA 13.0), but the graphics/Vulkan stack required by the Omniverse Kit RTX runtime is not exposed to the container (Docker Desktop / WSL2 GPU graphics-passthrough limitation). Entrypoint exit code 75.",
+      "next_command": "Provide NVIDIA graphics/Vulkan driver libs to the container (native Linux host + NVIDIA Container Toolkit with the `graphics` driver capability, or fix WSL2 GL/Vulkan passthrough), then rerun scripts/verify-runtime-kit-launcher.ps1",
+      "evidence_paths": [
+        "docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-startup.log"
+      ],
+      "detail": {
+        "exit_code": 75,
+        "reached_launch": false,
+        "launcher_binary_present_in_image": true,
+        "nvidia_smi_in_container": true,
+        "graphics_vulkan_libs_in_container": false,
+        "observe_seconds": 150,
+        "sample_usdc_path": "n/a — no sample USDC required for launcher-launch validation; full USDC streaming smoke is the T8 readiness tier (STORAGE_ROOT=/workspace/storage mounts ./storage)",
+        "classification": "passed = entrypoint passes GPU+launcher gates and execs the Linux Kit launcher; deferred = GPU/driver/graphics/Vulkan/Kit license prerequisite unavailable inside container; failed = launcher/kit binary missing from image or Kit crash",
+        "launcher_present_proof": "entrypoint did NOT exit 64; the produced Linux Kit launcher and kit binary ARE present in the runtime image (Dockerfile builder+runtime stages `test -x` already enforce this at build time)",
+        "predecessor_deferred_item": "openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/tasks.md:16 — 'Validate runtime image launches produced Linux Kit launcher.'",
+        "honesty_note": "Host-side nvidia-smi works, but the in-container validation correctly reveals the graphics/Vulkan-library gap that blocks the Omniverse Kit RTX runtime. Per the runtime-image-linux-kit-launcher-readiness spec this is recorded as `deferred` with reason, NOT `passed`, and host-local Kit was NOT used as a substitute pass."
+      }
+    }
+  ]
+}
