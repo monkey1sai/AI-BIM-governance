@@ -92,6 +92,8 @@
 <li><a href="#0-karpathy-agentsmd">0. 規劃原則（Karpathy / AGENTS.md / 既有路線圖一致）</a></li>
 <li><a href="#1-2026-05-08">1. 現況基線（2026-05-08）</a><ul>
 <li><a href="#11">1.1 已存在的核心服務</a></li>
+<li><a href="#11a-bim-pdf">1.1A 部署與商業邊界（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離）</a></li>
+<li><a href="#11b-webhook-intakeagentsmd-1a">1.1B 架構決策：外部既有平台邊界 + webhook intake（權威：AGENTS.md §1.A）</a></li>
 <li><a href="#12-openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：openspec/specs/）</a></li>
 <li><a href="#12a-architecture-rework-archive-2026-05-14">1.2A Architecture rework archive 對齊（2026-05-14）</a></li>
 <li><a href="#13-runtime-evidence">1.3 已驗證的閉環與 runtime evidence</a></li>
@@ -154,8 +156,8 @@
 <li><a href="#runtime-blockedworker-canonical-storage-batch-baseline">已歸檔但 runtime blocked：worker-canonical-storage-batch-baseline</a></li>
 <li><a href="#optimize-worker-source-entity-enumerationarchived">已完成：optimize-worker-source-entity-enumeration（archived）</a></li>
 <li><a href="#active-risk-burn-downoptimize-worker-non-renderable-materialization">Active risk burn-down：optimize-worker-non-renderable-materialization</a></li>
-<li><a href="#active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Archived：optimize-worker-canonical-batch-and-secondary-enumeration（v3 GOAL ACHIEVED，已 archive 2026-05-15）</a></li>
-<li><a href="#active-risk-burn-downqueue-batch-dispatch-and-post-usdc-artifact-retention">Active risk burn-down：queue-batch-dispatch-and-post-usdc-artifact-retention（apply 進行中）</a></li>
+<li><a href="#archivedoptimize-worker-canonical-batch-and-secondary-enumerationv3-goal-achieved-archive-2026-05-15">Archived：optimize-worker-canonical-batch-and-secondary-enumeration（v3 GOAL ACHIEVED，已 archive 2026-05-15）</a></li>
+<li><a href="#active-risk-burn-downqueue-batch-dispatch-and-post-usdc-artifact-retentionapply">Active risk burn-down：queue-batch-dispatch-and-post-usdc-artifact-retention（apply 進行中）</a></li>
 <li><a href="#completed-observationdemo-current-runtime-observation">Completed observation：demo-current-runtime-observation</a></li>
 <li><a href="#completed-4coordinator-session-lifecycle-events-audit">Completed #4：coordinator-session-lifecycle-events-audit</a></li>
 </ul>
@@ -271,8 +273,7 @@
 </li>
 </ul>
 </div>
-
-      </nav>
+</nav>
     </aside>
     <main>
 <h1 id="ai-bim-governancesaas-2026-05">AI-BIM-governance：SaaS 路線圖規劃（2026-05）</h1>
@@ -310,6 +311,9 @@
 <p><strong>2026-05-13 更新（<code>demo-current-runtime-observation</code> live pass）</strong>：本次 current observation 產出 <code>docs/verification/2026-05-13-demo-current-runtime-observation.md</code>。非 Kit 服務 health 目前可啟動並通過：8001 / 8005 / 8004 health OK、5173 HTTP 200；focused checks 為 <code>_bim-control</code> <code>23 passed</code>、<code>_worker</code> <code>105 passed, 1 skipped</code>、coordinator <code>105 passed</code>、viewer build / session-first contract passed，viewer lint 仍是既有 <code>29 errors, 1 warning</code>。Socket.IO collaboration passed，coordinator close / release lifecycle passed（<code>review_session_87404055d4fd</code>）。但 current worktree <code>storage/</code> 沒有 IFC fixture，worker dev-source smoke blocked；<code>smoke-review-session.ps1</code> 的極簡 IFC payload 無法被 IfcOpenShell parse，因此 conversion readiness failed；Kit/WebRTC blocked by missing streaming launcher，Browser automation blocked by in-app browser policy，dedicated multi-Kit runtime 仍 deferred。此 live pass 不把 historical single-Kit/browser evidence 重新標成 current passed。</p>
 <p><strong>2026-05-13 更新（non-renderable materialization sidecar carrier 完成 canonical single-fixture conversion）</strong>：<code>optimize-worker-non-renderable-materialization</code> 已 land sidecar carrier 路徑（Option 4 + Option 3）。<code>non_renderable_entity_materialization</code> 從 baseline <code>375.1s+ timeout</code> 收斂至 <code>5.05s</code>（≈74× faster），同 fixture canonical run 在 <code>267.7s</code> 完成、產出第一個 canonical <code>model.usdc</code>（<code>output_file_size_bytes=9,844,612</code>），<code>coverage_ratio=0.9999987537178155</code>（<code>mapped_count=1,604,771</code> / <code>source_ifc_entity_count=1,604,773</code>，2 個未對映的 shape 為 geometry side 缺 GUID，可由 secondary scope follow-up 收斂）。<code>bim-review-coordinator</code> / <code>web-viewer-sample</code> / <code>bim-streaming-server</code> 三邊在 source 中對 sidecar carrier 無需 schema change，handoff framework 已記錄於 design.md。Full 13-file batch 與 visual preview 仍 not_run，<code>minimum_coverage_locked=false</code> 維持不變。下一個切片：full 13-file batch with sidecar carrier，以及把 secondary <code>guid_extraction</code> / <code>name_extraction</code> 優化（baseline ~10s）獨立 follow-up。</p>
 <p><strong>2026-05-14 更新（architecture-rework B 方案 archive 對齊）</strong>：<code>architecture-rework-2026-05-14</code> 已由 PR #54 merge 後 archive 至 <code>openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/</code>，現行 <code>openspec/specs/</code> 共 18 個 capability。B 方案正式把 conversion authority 重新分配為：<code>_bim-control</code> = fake RVT intake facade、<code>_worker</code> = RVT→IFC bridge、<code>bim-streaming-server</code> = IFC→USDC conversion job authority + USD stage composition、<code>bim-review-platform</code> = coordinator + streaming-server + viewer deployment boundary（不是 nested repo）。本次 archive 只代表規格併入，不代表已新增 runtime smoke；在 streaming-server-owned conversion job / result / quality evidence 出現前，roadmap 仍不把 <code>streaming_conversion_job</code> 或 <code>mapping_quality</code> 標成 passed。</p>
+<p><strong>2026-05-15 更新（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離定位）</strong>：依使用者提供的 <code>BIM模型管理平台 系統架構_260514.pdf</code>（2026-05-14，雲地分離架構）新增 <strong>§1.1A</strong>，明確 AI-BIM-governance 在該平台中的角色 = <strong>客戶落地端</strong>接在 PDF「IFC Worker（IFC 4 匯出）」之後的延伸（IFC→USDC + 後續 BIM 治理 + Kit streaming runtime，GPU 由客戶自購自擴）；<strong>公司雲端只負責服務授權（公司層級 License）與客戶資訊紀錄（版本／權限／metadata），不存客戶模型原始檔、不跑 GPU runtime</strong>。此更新只對齊部署與商業邊界語意，不改 §1.2 現行 specs、不改 §6 OpenSpec 候選優先級。</p>
+<p><strong>2026-05-15 更新（架構決策：外部既有平台邊界 + webhook intake；權威見 AGENTS.md §1.A）</strong>：依使用者明確指令，<code>_bim-control</code> / <code>_worker</code> 自核心開發 repo <strong>降級為「外部既有平台（PDF 公司雲端 + 客戶落地端 IFC Worker，已部署於公司測試機/正式機）的本地整合 fake」</strong>，本 repo 不再為其新增產品功能；本 repo 對外入口改為 <strong>可被外部測試機呼叫的 webhook intake → 觸發既有已實作的 IFC→USDC（<code>bim-streaming-server</code>）</strong>。新增 <strong>§1.1B</strong> 記錄決策與衝突管理排序。程式碼層退役屬產品實作，依 AGENTS.md §0.1 走獨立 OpenSpec change + branch + PR，且<strong>排在在途 worktree 分支 <code>introduce-ai-bim-runtime-manager-docker-kit-mvp</code> merge 之後</strong>才從乾淨 main 開分支實作；落地前只改治理/規劃文件，本地 demo 閉環照常可跑。</p>
+<p><strong>2026-05-18 更新（<code>introduce-ai-bim-runtime-manager-docker-kit-mvp</code> archive 對齊）</strong>：依 <code>openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/</code> 與現行 <code>openspec/specs/</code> 更新 <strong>§1.2 / §1.4 / §1.1B</strong>。該 change 之 implementation PR #59 已 merged（mergeCommit <code>55a9703</code>），新 capability <strong><code>runtime-manager-docker-kit-mvp</code></strong> 已 sync 進 <code>openspec/specs/</code>（現行 specs 由 18 → <strong>19</strong>）。<code>openspec validate --specs --strict</code> = 19 passed / 0 failed。archive 時 tasks 為 <strong>20 done / 1 deferred</strong>（<code>Validate runtime image launches produced Linux Kit launcher</code> 屬 GPU/Kit runtime 驗證）；依 AGENTS.md §0.1 line 85，此 archive <strong>不</strong>把該 runtime 項標成 passed。<strong>連帶效果</strong>：predecessor 既已 merged + archived，Phase B（<code>external-platform-webhook-intake-boundary</code>）的 <code>NoSuccessorWhilePredecessorOpen</code> gate <strong>已清除</strong>，可依 <code>docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md</code> §9 升格。</p>
 </blockquote>
 <p>本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出<strong>下一階段最小、可驗證、不擴散範圍</strong>的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。</p>
 <hr>
@@ -375,8 +379,103 @@
 </tr>
 </tbody>
 </table>
+<h3 id="11a-bim-pdf">1.1A 部署與商業邊界（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離）</h3>
+<blockquote>
+<p><strong>來源</strong>：使用者提供的 <code>BIM模型管理平台 系統架構_260514.pdf</code>（2026-05-14，雲地分離架構）。本節只對齊 AI-BIM-governance 在該平台中的<strong>部署位置與商業邊界</strong>；需求細節仍以 §1.2 現行 specs 與 AGENTS.md repo 邊界為準，本節不新增 spec、不改候選優先級。</p>
+</blockquote>
+<p>PDF 平台 pipeline 終點是「IFC Worker → IFC 4 匯出」，<strong>不含 USDC / Omniverse</strong>。AI-BIM-governance = <strong>接在該 IFC 之後、仍在客戶落地端</strong>的後續 BIM 治理與 3D streaming 延伸：</p>
+<pre><code class="language-txt">PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc        ← 客戶落地端
+            └─ AI-BIM-governance 在此接手，仍在客戶落地端 ─┐
+.ifc → IFC→USDC 轉檔 → Omniverse Kit streaming → BIM 治理(review/annotation/issue) → 結果 metadata
+                                                                              ↓
+公司雲端：只收 metadata + 管服務授權 + 客戶資訊紀錄（不碰大檔 / 不跑 GPU）
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>PDF 分區</th>
+<th>職責（PDF 標示）</th>
+<th>AI-BIM-governance 對應</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>☁ 公司雲端（輕量平台服務）</td>
+<td>Web 門戶 / 版本記錄·權限 / SSO / <strong>公司層級 License 授權管理</strong>；僅存版本索引，<strong>不存客戶模型原始檔</strong></td>
+<td>只接收 review / conversion <strong>metadata</strong> 與服務授權；對應 <code>_bim-control</code> 的 fake data authority（metadata-only）語意，不把大檔 / GPU runtime 拉回公司側</td>
+</tr>
+<tr>
+<td>🏢 客戶落地端（重量資料服務）</td>
+<td>模型檔案儲存 + IFC 轉檔；客戶自購硬體、按需擴充、資料隔離不出內網</td>
+<td><strong>本 repo 全部 runtime 都在這裡</strong>：<code>_worker</code> RVT→IFC bridge、<code>bim-streaming-server</code> IFC→USDC + Kit + WebRTC、<code>bim-review-coordinator</code> session、<code>web-viewer-sample</code> client；<strong>GPU 由客戶自購自擴</strong>（呼應 §9 硬體配置）</td>
+</tr>
+<tr>
+<td>IFC Worker 終點（.ifc 匯出）</td>
+<td>PDF 平台 pipeline 終點</td>
+<td>AI-BIM-governance 的<strong>起點</strong>：以 IFC 為輸入接續 IFC→USDC 與後續治理</td>
+</tr>
+</tbody>
+</table>
+<p><strong>邊界含義（與 §8 禁止跨界、AGENTS.md 一致）</strong>：</p>
+<pre><code class="language-txt">- 公司雲端側永遠只持有 metadata + 服務授權 + 客戶資訊紀錄；
+  不得把 USDC / 3D 大檔 / GPU runtime / Kit instance 生命週期拉回公司雲端。
+- IFC→USDC、Kit streaming、GPU 硬體一律在客戶落地端，硬體由客戶自購自擴。
+- 本定位僅作為部署與商業邊界的對齊錨點，
+  不新增 spec、不改 §1.2 現行 specs 與 §6 候選優先級。
+</code></pre>
+<h3 id="11b-webhook-intakeagentsmd-1a">1.1B 架構決策：外部既有平台邊界 + webhook intake（權威：AGENTS.md §1.A）</h3>
+<blockquote>
+<p><strong>權威</strong>：邊界決策以 <code>AGENTS.md §1.A</code> 為準；本節為 roadmap 對應紀錄與<strong>衝突管理排序</strong>。本節不新增 spec、不改 §1.2 現行 specs 與 §6 候選優先級；程式碼層落地走獨立 OpenSpec change。</p>
+</blockquote>
+<p><strong>決策摘要（接續 §1.1A）</strong></p>
+<pre><code class="language-txt">- PDF 平台（公司雲端 Web門戶/MySQL/SSO + 客戶落地端 IFC Worker+Revit）
+  = 外部既有系統，已部署於公司測試機/正式機，非本 repo 功能開發範圍。
+- _bim-control / _worker 降級為「外部既有平台的本地整合 fake」，
+  本 repo 不再為其新增產品功能。
+- 本 repo 對外入口 = 可被外部測試機呼叫的 webhook intake API；
+  收到外部 IFC Worker 的 .ifc-ready 通知 → 觸發既有已實作的
+  IFC→USDC（bim-streaming-server / spec streaming-ifc-usdc-conversion-authority
+  + conversion-webhook-lifecycle）→ Kit streaming → BIM 治理。
+</code></pre>
+<p><strong>分階段落地與衝突管理（使用者指定重點）</strong></p>
+<table>
+<thead>
+<tr>
+<th>階段</th>
+<th>內容</th>
+<th>衝突風險</th>
+<th>狀態</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Phase A</td>
+<td>治理/規劃文件對齊（AGENTS.md §1.A、CLAUDE.md §1.A、本節）；不動程式碼、不刪 mock、不重寫既有 specs</td>
+<td>近乎零（worktree 不碰 AGENTS/CLAUDE；本節 additive 且遠離 §5.0 熱區）</td>
+<td>✓ 本次完成</td>
+</tr>
+<tr>
+<td>Phase B</td>
+<td>程式碼層：退役/收斂 <code>_worker</code>/<code>_bim-control</code>、改寫 §10 閉環、收斂啟動腳本、webhook 來源改外部測試機、調整相關 specs</td>
+<td>中（worktree 已 merge+archived，原 <code>_worker/</code> 熱區衝突風險解除；Phase B 從 synced main rebase-on-clean-main）</td>
+<td>✅ gate 已清除（predecessor #59 merged + archived 2026-05-18）；可升格</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Phase B 排序（避免大量 merge 衝突）</strong></p>
+<pre><code class="language-txt">1. ✅ 完成（2026-05-18）：在途 worktree 分支
+   codex/openspec/introduce-ai-bim-runtime-manager-docker-kit-mvp 已 merge 進 main
+   （PR #59 / 55a9703）並 archived；gate 清除。
+2. Phase B 從 synced main 開 codex/openspec/external-platform-webhook-intake-boundary
+   分支實作，rebase-on-clean-main。
+3. Phase B 落地、PR merge、archive 後，依 §1.6 回頭同步本 roadmap
+   與 AGENTS.md / CLAUDE.md，把過渡語意收斂為正式邊界。
+</code></pre>
+<blockquote>
+<p><strong>Phase B 草稿（2026-05-18：gate 已清除，可升格）</strong>：完整草稿見 <a href="phase-b-external-platform-webhook-intake-DRAFT-2026-05.md"><code>docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md</code></a>。<code>NoSuccessorWhilePredecessorOpen</code> gate 已解除（predecessor PR #59 merged + change archived <code>2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp</code>）。下一步：依草稿 §9 checklist，從 synced main 重跑 <code>change-id-resolve</code>（確認 <code>blockers=[]</code>）→ <code>opsx-worktree-guard</code>/provision → <code>openspec-propose</code> 升格為 change-id <code>external-platform-webhook-intake-boundary</code>（explore 階段先收斂草稿 §8 open questions，特別 Q1 caller 身分、Q3 auth）。</p>
+</blockquote>
 <h3 id="12-openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：<code>openspec/specs/</code>）</h3>
-<p>下列 <strong>18</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。</p>
+<p>下列 <strong>19</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。</p>
 <table>
 <thead>
 <tr>
@@ -494,6 +593,12 @@
 <td>4/5</td>
 <td>4</td>
 <td>✓ primary root model + session layer + ordered secondary subLayers 的 stage composition 語意</td>
+</tr>
+<tr>
+<td><code>runtime-manager-docker-kit-mvp</code></td>
+<td>3/4</td>
+<td>4/6</td>
+<td>✓ 規格：MVP runtime SHALL be Docker-first、Kit SHALL run in GPU container、GPU image 於 Docker build 內建 Linux Kit launcher；⚠ GPU/Kit runtime 驗證項 deferred（<code>Validate runtime image launches produced Linux Kit launcher</code> 未完），依 §0.1 不標 runtime passed</td>
 </tr>
 </tbody>
 </table>
@@ -700,6 +805,11 @@ historical worker conversion:       migration source only; cannot mark B-scheme 
 <td><code>2026-05-14-architecture-rework-2026-05-14</code></td>
 <td><code>bim-control-revit-intake-facade</code>、<code>worker-rvt-ifc-bridge</code>、<code>streaming-ifc-usdc-conversion-authority</code>、<code>conversion-webhook-lifecycle</code>、<code>bim-review-platform-boundary</code>、<code>streaming-usd-stage-composition</code>（ADD）；<code>demo-runtime-readiness-smoke</code>、<code>documentation-source-of-truth</code>、<code>multi-artifact-kit-routing</code>、<code>review-session-request-lifecycle</code>、<code>session-first-review-viewer</code>、<code>streaming-multi-layer-payload-loading</code>、<code>worker-artifact-pipeline</code>（MODIFY）</td>
 <td>B 方案 conversion authority rework：<code>_bim-control</code> RVT intake、<code>_worker</code> RVT→IFC bridge、<code>bim-streaming-server</code> IFC→USDC authority + stage composition、platform boundary clarification、demo readiness tiers；archive 不代表 runtime smoke passed</td>
+</tr>
+<tr>
+<td><code>2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp</code></td>
+<td><code>runtime-manager-docker-kit-mvp</code>（ADD，新 capability）</td>
+<td>Docker-first runtime MVP：MVP runtime SHALL be Docker-first（host-local 不算 pass）、Kit SHALL run in GPU container、GPU image 於 Docker build 內建並打包 Linux Kit launcher；implementation PR #59 merged；archive 時 1 個 GPU/Kit runtime 驗證 task deferred，依 §0.1 不標 runtime passed</td>
 </tr>
 </tbody>
 </table>
@@ -1942,7 +2052,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="active-risk-burn-downoptimize-worker-canonical-batch-and-secondary-enumeration">Archived：<code>optimize-worker-canonical-batch-and-secondary-enumeration</code>（v3 GOAL ACHIEVED，已 archive 2026-05-15）</h4>
+<h4 id="archivedoptimize-worker-canonical-batch-and-secondary-enumerationv3-goal-achieved-archive-2026-05-15">Archived：<code>optimize-worker-canonical-batch-and-secondary-enumeration</code>（v3 GOAL ACHIEVED，已 archive 2026-05-15）</h4>
 <table>
 <thead>
 <tr>
@@ -1985,7 +2095,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 </tbody>
 </table>
-<h4 id="active-risk-burn-downqueue-batch-dispatch-and-post-usdc-artifact-retention">Active risk burn-down：<code>queue-batch-dispatch-and-post-usdc-artifact-retention</code>（apply 進行中）</h4>
+<h4 id="active-risk-burn-downqueue-batch-dispatch-and-post-usdc-artifact-retentionapply">Active risk burn-down：<code>queue-batch-dispatch-and-post-usdc-artifact-retention</code>（apply 進行中）</h4>
 <table>
 <thead>
 <tr>
@@ -2013,6 +2123,10 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tr>
 <td><strong>KPI 達成</strong></td>
 <td>✓ parity test：queue 跑完 == monolithic（同 input）；✓ retention 僅作用 scratch tenant（test 把關）；✓ <code>_worker</code> 138 passed/1 skipped；✓ <code>openspec --strict</code> 綠；⏸ 真實 13 檔 footprint 量測 = blocked</td>
+</tr>
+<tr>
+<td><strong>驗證指令</strong></td>
+<td><code>openspec validate queue-batch-dispatch-and-post-usdc-artifact-retention --strict</code>、<code>cd _worker &amp;&amp; python -m pytest tests/</code>（138 passed/1 skipped）、<code>python scripts/verify_storage_batch.py --enqueue/--status/--run-next/--summary</code>（dry-run tmp fixture）；真實 13 檔 <code>--run-next</code> 逐筆 = blocked</td>
 </tr>
 <tr>
 <td><strong>報告</strong></td>
