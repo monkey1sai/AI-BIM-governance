@@ -36,11 +36,18 @@
 
 ## 4. T3 Coordinator external intake
 
-- [ ] 4.1 `bim-review-coordinator` 新增 `POST /api/external/ifc-ready`（payload schema 對齊 `tests/contracts/ifc_ready_payload.json`）
-- [ ] 4.2 實作 `AuthProvider`/`AuthModule` 介面 + `intranet-dev` provider（IP allowlist + secret/HMAC + correlation_id + idempotency_key + tenant/project/external_model_version_id）
-- [ ] 4.3 idempotency（依 `idempotency_key`/`correlation_id`）+ local conversion job state + `external_model_version_id` binding
-- [ ] 4.4 呼叫 `bim-streaming-server` internal conversion API
-- [ ] 4.5 單元/契約測試：unauthorized / duplicate / missing-ifc / 正常路徑
+- [x] 4.1 `bim-review-coordinator` 新增 `POST /api/external/ifc-ready`（payload schema 對齊 `tests/contracts/ifc_ready_payload.json`）
+- [x] 4.2 實作 `AuthProvider`/`AuthModule` 介面 + `intranet-dev` provider（IP allowlist + secret/HMAC + correlation_id + idempotency_key + tenant/project/external_model_version_id）
+- [x] 4.3 idempotency（依 `idempotency_key`/`correlation_id`）+ local conversion job state + `external_model_version_id` binding
+- [x] 4.4 呼叫 `bim-streaming-server` internal conversion API
+- [x] 4.5 單元/契約測試：unauthorized / duplicate / missing-ifc / 正常路徑
+
+> **T3 done（2026-05-18）** — 確認記錄見 `apply-notes.md` §T3。
+> 新增：`src/services/authProvider.ts`（`AuthProvider` 介面 + `IntranetDevAuthProvider`：IP allowlist + `X-Webhook-Secret`/HMAC `X-Webhook-Signature` + 必要 correlation/idempotency/tenant/project/external_model_version_id；`createAuthProvider` 工廠可替換）、`src/services/externalIfcReadyStore.ts`（idempotency by `idempotency_key`/`correlation_id` + local job state + `external_model_version_id` binding）、`src/services/streamingConversionClient.ts`（external B-scheme → internal `ifc_ready_event` 映射 + 呼叫 `POST /api/conversions/ifc-to-usdc`）、`tests/external-ifc-ready.test.ts`（契約驅動，讀 `tests/contracts/ifc_ready_payload.json`）。
+> 修改：`src/app.ts`（zod `ifcReadyPayloadSchema` + `POST /api/external/ifc-ready` + `GET /api/external/ifc-ready/:jobId` + AuthError→401/403）、`src/config.ts`（+streamingConversionApiBase/authProvider/webhookSecret/ipAllowlist）、`src/types.ts`（+ExternalIfcReadyEvent/IfcReadyIntakeJob）、`tests/unit_kitpool.test.ts`（defaultConfig fixture 補新欄位）。
+> 設計：ifc-ready 已接受並落地（local job + binding）後才派工 streaming；派工失敗為可重試 `dispatch_failed`（不否定 intake，重試/補派 + 雲端 callback outbox 屬 T4/T5）。
+> GitNexus：`createCoordinatorApp`/`loadConfig` upstream impact = **LOW**；`detect_changes` risk low / 0 affected processes。
+> 驗證：`npm run verify`（tsc build + vitest）**綠，115 tests pass**（新 6 + 既有 109 無 regression）。
 
 ## 5. T4 Streaming internal conversion API
 

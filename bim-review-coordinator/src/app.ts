@@ -8,8 +8,11 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
+import { AuthError, createAuthProvider } from "./services/authProvider.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
+import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
+import { StreamingConversionClient } from "./services/streamingConversionClient.js";
 import {
   allocateKitInstanceBindings,
   allocateLocalKitInstance,
@@ -98,6 +101,31 @@ const appendEventSchema = z
   })
   .passthrough();
 
+// B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.1）。
+// 契約權威：tests/contracts/ifc_ready_payload.json。correlation_id /
+// idempotency_key 的權威來源是 AuthProvider（X-Correlation-Id /
+// X-Idempotency-Key header）；body 內同名欄位僅為可選回顯。
+const ifcReadyPayloadSchema = z
+  .object({
+    event: z.literal("ifc_ready"),
+    event_id: z.string().min(1).optional(),
+    correlation_id: z.string().min(1).optional(),
+    idempotency_key: z.string().min(1).optional(),
+    tenant_id: z.string().min(1),
+    project_id: z.string().min(1),
+    external_model_version_id: z.string().min(1),
+    external_conversion_task_id: z.string().min(1).nullish(),
+    source_ifc: z.object({
+      ref: z.string().min(1),
+      etag: z.string().min(1),
+      filename: z.string().nullish(),
+      format: z.string().nullish(),
+    }),
+    requested_outputs: z.array(z.string()).optional(),
+    callback_url: z.string().nullish(),
+  })
+  .passthrough();
+
 export interface CoordinatorApp {
   app: express.Express;
   server: http.Server;
@@ -120,6 +148,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   const store = new SessionStore(config.sessionStoreDir);
   const eventLog = new EventLog(config.eventLogDir);
   const bimControlClient = new BimControlClient(config.bimControlApiBase);
+  // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
+  const authProvider = createAuthProvider(config);
+  const externalIfcReadyStore = new ExternalIfcReadyStore();
+  const streamingConversionClient = new StreamingConversionClient(config.streamingConversionApiBase);
 
   app.use(cors({ origin: config.corsOrigins }));
   app.use(express.json({ limit: "1mb" }));
@@ -355,6 +387,72 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     }
   });
 
+  // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：
+  // 唯一對外 IFC-ready intake。caller = 客戶落地端 IFC Worker（落地端內網，
+  // machine-to-machine）。streaming 為 internal-only 轉檔引擎（T4）。
+  app.post("/api/external/ifc-ready", async (request, response, next) => {
+    try {
+      const event = ifcReadyPayloadSchema.parse(request.body);
+      const headerMap: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(request.headers)) {
+        headerMap[key.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+      }
+      const auth = authProvider.authenticate({
+        clientIp: request.ip || request.socket.remoteAddress || "",
+        headers: headerMap,
+        rawBody: JSON.stringify(request.body ?? {}),
+        payloadIdentity: {
+          tenant_id: event.tenant_id,
+          project_id: event.project_id,
+          external_model_version_id: event.external_model_version_id,
+        },
+      });
+
+      const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
+      if (existing) {
+        response.status(200).json({ ...existing, idempotent_replay: true });
+        return;
+      }
+
+      const job = externalIfcReadyStore.create(event, {
+        correlationId: auth.correlationId,
+        idempotencyKey: auth.idempotencyKey,
+        tenantId: auth.tenantId,
+        projectId: auth.projectId,
+        externalModelVersionId: auth.externalModelVersionId,
+      });
+
+      // ifc-ready 已被接受並落地（local job + external_model_version_id binding）。
+      // 內部轉檔派工失敗為可重試狀態，不否定 intake 本身（重試/補派 + 雲端
+      // callback outbox 屬 T4/T5）。
+      try {
+        const dispatch = await streamingConversionClient.createConversionJob(event, {
+          correlationId: auth.correlationId,
+          externalModelVersionId: auth.externalModelVersionId,
+        });
+        externalIfcReadyStore.markDispatched(job.ifc_ready_job_id, dispatch.conversion_job_id, dispatch.status);
+      } catch (dispatchError) {
+        externalIfcReadyStore.markDispatchFailed(
+          job.ifc_ready_job_id,
+          dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+        );
+      }
+
+      response.status(202).json(externalIfcReadyStore.get(job.ifc_ready_job_id));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/external/ifc-ready/:jobId", (request, response) => {
+    const job = externalIfcReadyStore.get(request.params.jobId);
+    if (!job) {
+      response.status(404).json({ detail: "IFC-ready job not found." });
+      return;
+    }
+    response.json(job);
+  });
+
   app.post("/api/dev/conversions", async (request, response) => {
     await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions", request.body);
   });
@@ -379,6 +477,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof z.ZodError) {
       response.status(400).json({ detail: error.flatten() });
+      return;
+    }
+    if (error instanceof AuthError) {
+      response.status(error.statusCode).json({ detail: error.message });
       return;
     }
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });

@@ -119,6 +119,64 @@ export interface ReviewIssue {
   ifc_guid?: string | null;
 }
 
+/**
+ * B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：外部落地端 IFC
+ * Worker → coordinator `POST /api/external/ifc-ready` 的事件。契約權威：
+ * `tests/contracts/ifc_ready_payload.json` 與 spec
+ * `local-coordinator-ifc-ready-intake-boundary` / `conversion-webhook-lifecycle`。
+ */
+export interface ExternalIfcReadyEvent {
+  event: "ifc_ready";
+  event_id?: string;
+  // correlation_id / idempotency_key 的權威來源是 AuthProvider（X-Correlation-Id /
+  // X-Idempotency-Key header）；body 內同名欄位僅為可選回顯，故型別為 optional。
+  correlation_id?: string;
+  idempotency_key?: string;
+  tenant_id: string;
+  project_id: string;
+  external_model_version_id: string;
+  external_conversion_task_id?: string | null;
+  source_ifc: {
+    ref: string;
+    etag: string;
+    filename?: string | null;
+    format?: string | null;
+  };
+  requested_outputs?: string[];
+  callback_url?: string | null;
+}
+
+export type IfcReadyIntakeStatus =
+  | "accepted"
+  | "dispatched"
+  | "dispatch_failed"
+  | "failed";
+
+/**
+ * 本地 data-plane conversion job 狀態（最小 shadow；非 mirror 公司 MySQL）。
+ * external_model_version_id binding 供後續 cloud callback 關聯（T5）。
+ */
+export interface IfcReadyIntakeJob {
+  ifc_ready_job_id: string;
+  status: IfcReadyIntakeStatus;
+  idempotent_replay: boolean;
+  correlation_id: string;
+  idempotency_key: string;
+  tenant_id: string;
+  project_id: string;
+  external_model_version_id: string;
+  external_conversion_task_id?: string | null;
+  source_ifc_ref: string;
+  source_ifc_etag: string;
+  callback_url?: string | null;
+  conversion_job_id: string | null;
+  conversion_status: string | null;
+  conversion_authority: "bim-streaming-server" | null;
+  dispatch_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface StreamConfigResponse {
   session_id: string;
   lifecycle_status: SessionStatus;

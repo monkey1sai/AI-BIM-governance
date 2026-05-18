@@ -56,3 +56,14 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 - **GitNexus（3.5）**：產品碼自 index `9d7db83` 未變動 → stale index 對產品 symbol 仍準確；`BimControlClient` upstream impact = **LOW**（0 callers/processes/modules，無 incoming edges）；`detect_changes` scope=all = **risk low / 0 affected processes / 0 changed symbols**。**無 HIGH/CRITICAL**。
 - **驗證**：`openspec validate --strict` valid；`tests/fakes` sanity `T8-PREREQ-SANITY-OK`（刪除未中斷驗證能力）；殘留僅 6 腳本未使用 param 預設值（cosmetic → T9）。
 - **過渡狀態（明確）**：coordinator `config.ts`/`app.ts`（`bimControlApiBase`/`conversionApiBase`/`/api/dev/conversions`）與 streaming `conversion_authority.py`（`bim_control_callback_url` 寫死 :8001）對已刪服務的相依，rewire 屬 **T3（intake）/ T4（streaming internal）/ T5（cloud callback outbox）**，緊接其後；rolling PR #63 全部完成且四層驗證綠才 merge（未 merge 不影響 main）。
+
+## T3 — Coordinator external IFC-ready intake（done，2026-05-18）
+
+- **唯一對外 intake**：`bim-review-coordinator` `POST /api/external/ifc-ready`（+ `GET /api/external/ifc-ready/:jobId`）。caller = 客戶落地端 IFC Worker（落地端內網）。
+- **AuthProvider（§4.2）**：`src/services/authProvider.ts` — 介面 + `IntranetDevAuthProvider`（IP allowlist + `X-Webhook-Secret` 共享密鑰或 `X-Webhook-Signature` HMAC-SHA256；要求 `X-Correlation-Id`/`X-Idempotency-Key` + body tenant/project/external_model_version_id）；`createAuthProvider` 工廠，未來 `sso-token-introspection`/`machine-token`/`mTLS` 同介面替換、對外契約不重設計。
+- **Idempotency + job state（§4.3）**：`src/services/externalIfcReadyStore.ts` — 以 `idempotency_key`（次要 `correlation_id`）去重，建立本地 conversion job 並綁定 `external_model_version_id`（最小 shadow，非 mirror 公司 MySQL；長期投遞屬 T5 outbox）。
+- **Dispatch streaming（§4.4）**：`src/services/streamingConversionClient.ts` — external B-scheme 事件映射為 streaming 既有 internal `ifc_ready_event` 形狀並呼叫 `POST /api/conversions/ifc-to-usdc`（不重寫轉檔核心）。設計：intake 先落地（job+binding）再派工；派工失敗 = 可重試 `dispatch_failed`，**不否定 intake**（重試/補派與雲端 callback outbox 屬 T4/T5）。
+- **契約測試（§4.5）**：`tests/external-ifc-ready.test.ts` 讀 `tests/contracts/ifc_ready_payload.json`（單一事實來源）：normal(202)/idempotent replay(200)/missing-secret(401)/wrong-secret(401)/missing-correlation(401)/missing-source_ifc(400)。
+- **GitNexus**：`createCoordinatorApp`/`loadConfig` upstream impact = LOW；`detect_changes` risk low / 0 affected processes。
+- **驗證**：`npm run verify`（tsc build + vitest）綠，**115 tests pass**（新 6 + 既有 109 無 regression）；worktree 首次需 `npm ci`（opsx self-bootstrap，已執行）。
+- **邊界註記**：`bim-review-coordinator/CLAUDE.md` 仍寫舊邊界（查詢 `_bim-control`/`_worker`）；B-scheme 下 coordinator 新增「唯一對外 IFC-ready intake」職責，治理文件層對齊收斂於 **T9**（與 spec `documentation-source-of-truth` 一致）。

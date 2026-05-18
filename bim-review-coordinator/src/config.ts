@@ -25,6 +25,13 @@ export interface CoordinatorConfig {
   sessionStoreDir: string;
   eventLogDir: string;
   corsOrigins: string[];
+  // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
+  // 公司雲端 control-plane / 落地端 IFC Worker 為外部系統；以下為落地端內網
+  // machine-to-machine 設定（可替換 AuthProvider）。
+  streamingConversionApiBase: string;
+  externalIntakeAuthProvider: string;
+  externalIntakeWebhookSecret: string;
+  externalIntakeIpAllowlist: string[];
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -119,6 +126,15 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     sessionStoreDir: process.env.SESSION_STORE_DIR || path.join(cwd, "data", "sessions"),
     eventLogDir: process.env.EVENT_LOG_DIR || path.join(cwd, "data", "events"),
     corsOrigins: csvFromEnv("CORS_ORIGINS", ["http://127.0.0.1:5173", "http://localhost:5173"]),
+    streamingConversionApiBase:
+      process.env.STREAMING_CONVERSION_API_BASE || "http://127.0.0.1:49100",
+    externalIntakeAuthProvider: process.env.EXTERNAL_INTAKE_AUTH_PROVIDER || "intranet-dev",
+    externalIntakeWebhookSecret: process.env.EXTERNAL_INTAKE_WEBHOOK_SECRET || "dev-webhook-secret",
+    externalIntakeIpAllowlist: csvFromEnv("EXTERNAL_INTAKE_IP_ALLOWLIST", [
+      "127.0.0.1",
+      "::1",
+      "::ffff:127.0.0.1",
+    ]),
     ...overrides,
   };
 }

@@ -45,6 +45,10 @@ const defaultConfig: CoordinatorConfig = {
   sessionStoreDir: "/tmp/sessions",
   eventLogDir: "/tmp/events",
   corsOrigins: ["http://127.0.0.1:5173"],
+  streamingConversionApiBase: "http://127.0.0.1:49100",
+  externalIntakeAuthProvider: "intranet-dev",
+  externalIntakeWebhookSecret: "dev-webhook-secret",
+  externalIntakeIpAllowlist: ["127.0.0.1", "::1"],
 };
 
 const multiEndpointConfig: CoordinatorConfig = {
