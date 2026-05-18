@@ -107,3 +107,34 @@ Sanity（`python`，PowerShell 被環境拒）：contracts 可解析且 required
 - §9.2：`scripts/smoke-bscheme-intake.ps1`（專案慣例可重複工具，reuse `smoke-evidence.ps1`）——contract stub（tests/fakes+contracts）→ coordinator intake，分層 tiers：external_platform_contracts / coordinator_bscheme_intake / streaming_internal_conversion / callback_outbox / runtime_image_kit_launcher。
 - §9.3：evidence `docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json` 分層加入 Kit launcher + callback outbox tier。本 session 各 tier（依實際已跑檢查）：external_platform_contracts=passed(6)、coordinator_bscheme_intake=passed(130)、streaming_internal_conversion=passed(5)、callback_outbox=passed、**runtime_image_kit_launcher=`deferred`**（沿用 T0，GPU/Kit graphics-vulkan 阻塞；**誠實 deferred，不謊報 passed、不用 host-local Kit 充當 pass**）。
 - PowerShell 被環境拒：`.ps1` 為 CI/PowerShell 環境可重複工具；本 session evidence 由等效 node/python 檢查產出（與 T0 同模式）。`detect_changes` risk low。
+
+## T9 — Documentation / spec cleanup（done 10.1–10.4，2026-05-18；10.5 post-merge）
+
+- **10.1 spec delta**（對 merge 後現行 `openspec/specs/` 撰寫，寫入 change `specs/`）：
+  - REMOVED：`worker-rvt-ifc-bridge`（2 req）、`bim-control-revit-intake-facade`（2 req）、`worker-artifact-pipeline`（17 req）——理由＝B 方案 `_worker`/`_bim-control` 自 repo 刪除（非降級），相關能力屬外部平台 / 收斂至 coordinator intake + streaming internal + cloud callback；僅 test fixture 模擬。
+  - MODIFIED：`demo-runtime-readiness-smoke`（「Demo runtime smoke includes B-scheme conversion tiers」改寫：default smoke 不依賴兩 mock，contract stub → coordinator intake，新增 cloud_callback_outbox / runtime_image_kit_launcher 分層，Kit 阻塞 deferred 不謊報）、`runtime-verification-evidence`（「Single Kit render evidence」改為 streaming-owned 轉檔產出，不再 `_worker`-hosted；callback 分層）。
+  - `openspec validate "local-coordinator-ifc-ready-intake-boundary" --strict` valid；`openspec validate --specs --strict` = **19 passed / 0 failed**。
+- **10.2 治理文件**：`AGENTS.md` §10 閉環、§11 總結、§1.A 改寫為 B 方案（external IFC Worker → coordinator `POST /api/external/ifc-ready` → streaming internal → metadata-only callback outbox → viewer；`_worker`/`_bim-control` 明確標 **removed from product runtime，非降級、非 offline fake profile**）；`CLAUDE.md`（根，AGENTS 鏡像）§10 + §1.A 同步。spec `documentation-source-of-truth` 場景（mock removed-not-degraded、AGENTS/README 不矛盾、roadmap HTML 重生）滿足。
+- **10.3 roadmap**：`python scripts/render-roadmap-html.py` 重生 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`（193,918 bytes，源自同名 `.md`，md＝SoT）；md 加 2026-05-18 Phase B apply 進度註記，**依 §1.6 未把驗證狀態標 passed**（Kit launcher deferred、OQ1/OQ5 pending），正式收斂留 10.5 post-merge。
+- **10.4 四層驗證綠**：`git diff --check` 乾淨；coordinator `npm run verify`（tsc + vitest **130 pass**）；repo-root pytest **6 pass**；streaming pytest **5 pass**；`openspec validate --strict`（change valid、specs 19/0）。
+- **10.5（post-merge gate，未做）**：依 `AGENTS.md §1.6`，OpenSpec sync/archive 與 roadmap 正式收斂（過渡語意 → 正式邊界）必須在 **rolling PR #63 merge 後** 才執行；不在本 PR。
+
+---
+
+## Apply 總結（T0–T9，rolling PR #63）
+
+| T | 狀態 | commit |
+|---|---|---|
+| T0 runtime image Kit launcher | done（誠實 `deferred`） | 2034489 |
+| T1 OpenSpec boundary 對齊 | done | 01fff13 |
+| T2 前置 fakes/contracts | done | c850c94 |
+| T2 刪 `_worker`/`_bim-control` + de-wire（BREAKING） | done | b34eb2b |
+| T3 coordinator 對外 intake + AuthProvider + idempotency | done | 4f700a2 |
+| T4 streaming internal-only 收斂 | done | de09c8c |
+| T5 雲端 callback metadata-only outbox | done（6.4 OQ1 pending） | cf1cc57 |
+| T6 最小 local shadow metadata | done | cff64a2 |
+| T7 local web view + 可替換 user auth | done（8.3 OQ5 pending） | 5aa307b |
+| T8 readiness/smoke/evidence rewrite | done | 49c1ec8 |
+| T9 文件/spec cleanup（10.1–10.4） | done（10.5 post-merge） | （本 commit） |
+
+**OQ 阻塞項（不阻塞 apply，阻塞真實外部對接）**：OQ1（雲端 callback endpoint/auth）阻 T5.4 真實對接、OQ5（公司 SSO）阻 T7.3 真實銜接——皆以凍結契約 + pending 標記緩解，待外部平台團隊確認。**runtime image Kit launcher = `deferred`**（GPU/Kit graphics-vulkan 阻塞，誠實未謊報 passed）。**10.5 sync/archive + roadmap 正式收斂屬 PR #63 merge 後**。

@@ -195,12 +195,16 @@ _worker/
    = 外部既有系統，已部署於公司測試機/正式機
    （ppms 192.168.20.238 / normal 192.168.20.237），
    不屬於 AI-BIM-governance 的功能開發範圍。
-2. `_bim-control` / `_worker` 自「核心開發 repo」降級為
-   「外部既有平台的本地整合 fake / stub」；本 repo 不再為它們新增產品功能。
-3. 本 repo 對外入口改為：一個可被外部測試機呼叫的 webhook intake API，
-   於外部 IFC Worker 轉出 .ifc 後接收通知，觸發既有已實作的 IFC→USDC
-   （bim-streaming-server / spec `streaming-ifc-usdc-conversion-authority`
-    + `conversion-webhook-lifecycle`）。
+2. `_bim-control` / `_worker` 已**自 repo 刪除**（removed from product runtime，
+   **非降級、非保留為 offline fake runtime profile**）；外部公司雲端 control-plane
+   與客戶落地端 IFC Worker 屬外部既有系統，僅由 `tests/fakes` + `tests/contracts`
+   模擬（design D4：test fixture，非 runtime）。**[2026-05-18 B 方案落地]**
+3. 本 repo 唯一對外入口 = `bim-review-coordinator` `POST /api/external/ifc-ready`
+   （caller = 客戶落地端 IFC Worker，落地端內網，Service auth）；收到後建立
+   local conversion job 並對 `bim-streaming-server` 發 internal conversion
+   request（internal-only：spec `streaming-ifc-usdc-conversion-authority`
+    + `conversion-webhook-lifecycle`）；轉檔結果以 metadata-only callback
+   outbox 回拋公司雲端（spec `external-cloud-callback-lifecycle`）。
 4. 本 repo 開發範圍收斂為：
    webhook intake → IFC→USDC → Kit streaming → BIM 治理
    （bim-streaming-server / bim-review-coordinator / web-viewer-sample）。
@@ -917,60 +921,71 @@ _mock-sensor-service/
 
 ## 10. Workspace 最重要閉環
 
-整個 workspace 要保護的最小閉環是：
+> **B 方案（local-coordinator-ifc-ready-intake-boundary，2026-05-18 落地）**：`_worker` / `_bim-control` 已**自 repo 刪除**（非降級），只由 `tests/fakes` + `tests/contracts` 模擬外部既有平台。對外入口收斂於 `bim-review-coordinator`；`bim-streaming-server` 為 internal-only 轉檔引擎；轉檔結果以 metadata-only callback 回拋公司雲端（outbox）。
+
+整個 workspace 要保護的最小閉環（B 方案）是：
 
 ```txt
-_bim-control 接收 fake RVT intake 並提供 model / issue metadata
-→ _worker 執行 RVT→IFC bridge，送出 ifc_ready
-→ bim-streaming-server 擁有 IFC→USDC conversion job 並產出 USDC / mapping / entity_index
-→ _bim-control 保存 conversion result metadata
-→ bim-review-coordinator 建立 review session
-→ web-viewer-sample 取得 session / stream config
+[外部] 客戶落地端 IFC Worker 產出 .ifc
+→ POST /api/external/ifc-ready 至 bim-review-coordinator（落地端內網，Service auth）
+→ bim-review-coordinator 驗證 / idempotency / 建立 local conversion job
+   並綁定 external_model_version_id
+→ bim-review-coordinator 對 bim-streaming-server 發 internal conversion request
+→ bim-streaming-server（internal-only）執行 IFC→USDC，產出 USDC / element_mapping / manifest
+→ bim-review-coordinator 取得結果，組 metadata-only callback 入 callback_outbox
+   （retry / dead-letter；不傳 .usdc 本體）→ 回拋 [外部] 公司雲端 bim-control
+→ bim-review-coordinator 建立 / 維護 review session 與 local web view session
+→ web-viewer-sample 取得 session / stream config（使用者經可替換 auth provider）
 → web-viewer-sample 連到 bim-streaming-server
 → bim-streaming-server 載入 USD / USDC
 → web-viewer-sample 顯示 stream 畫面
-→ 使用者點選 issue / prim
-→ web-viewer-sample 送 DataChannel command
+→ 使用者點選 issue / prim → web-viewer-sample 送 DataChannel command
 → bim-streaming-server 執行 3D highlight / selection
 → web-viewer-sample 送 annotation / collaboration event
-→ bim-review-coordinator 廣播 / 回寫
-→ _bim-control 保存 fake review metadata
+→ bim-review-coordinator 廣播 / 回寫；最小 shadow metadata 留本地
+   （control-plane 權威屬公司雲端，不 mirror）
 ```
 
-任何修改都不應破壞這條閉環。
+任何修改都不應破壞這條閉環。歷史的 `_bim-control 接收 fake RVT → _worker RVT→IFC → _bim-control 保存 metadata` 閉環已隨兩服務刪除而退役，僅作 archive context，不得作為 startup / health / smoke / review-session 依賴。
 
 ---
 
 ## 11. 總結
 
-本 workspace 的核心分工是：
+本 workspace 的核心分工（B 方案）是：
 
 ```txt
-_bim-control
-= 假 BIM 資料權威
-
-_worker
-= RVT→IFC bridge / worker handoff
-
 bim-review-coordinator
-= Session / collaboration control plane
+= 唯一對外 IFC-ready intake（Service auth / idempotency / external_model_version_id
+  binding）+ Session / collaboration control plane + 雲端 metadata-only callback
+  outbox + local web view session + 最小 shadow metadata（data-plane）
 
 bim-streaming-server
-= IFC→USDC conversion authority + Omniverse Kit runtime / WebRTC streaming / USD scene runtime
+= internal-only IFC→USDC conversion engine（由 coordinator internal request 觸發）
+  + Omniverse Kit runtime / WebRTC streaming / USD scene runtime
 
 web-viewer-sample
 = Browser client / user interaction layer
+
+[外部，非本 repo] 公司雲端 bim-control = control-plane 權威
+[外部，非本 repo] 客戶落地端 IFC Worker = 外部 IFC 產出者
+
+_worker / _bim-control
+= 已自 repo 刪除（removed from product runtime，非降級）；
+  僅 tests/fakes + tests/contracts 模擬，不是 runtime profile
 ```
 
 所有跨 repo 互動都必須遵守：
 
 ```txt
-資料權威歸資料層
-RVT→IFC bridge 歸 worker
-IFC→USDC conversion authority 歸 streaming server
-session 歸 coordinator
+對外 IFC-ready intake 歸 coordinator（唯一外部入口）
+IFC→USDC conversion 歸 streaming server（internal-only）
+雲端 callback（metadata-only / outbox）歸 coordinator
+control-plane 權威歸外部公司雲端（本地僅最小 shadow，不 mirror）
+session / collaboration 歸 coordinator
 3D runtime 歸 streaming server
 使用者操作歸 web viewer
+外部平台模擬只在 tests/，不得進 runtime
 ```
 
 ## 12. AI Agent Wiki 使用規範

@@ -94,8 +94,15 @@
 
 ## 10. T9 Documentation / spec cleanup（對 merge 後現行 specs 撰寫）
 
-- [ ] 10.1 撰寫並套用大型 spec delta：`demo-runtime-readiness-smoke`(MODIFIED)、`runtime-verification-evidence`(MODIFIED)、`worker-rvt-ifc-bridge`/`bim-control-revit-intake-facade`/`worker-artifact-pipeline`(REMOVED as product capability) — 對當時現行 `openspec/specs/` 撰寫，避免 stale/partial delta
-- [ ] 10.2 改寫 `AGENTS.md` §2–§11 / §10 閉環、`CLAUDE.md`、roadmap 對齊 control-plane/data-plane；移除把 `_worker`/`_bim-control` 當核心閉環的描述
-- [ ] 10.3 `scripts/render-roadmap-html.py` 重生 roadmap `.html`
-- [ ] 10.4 四層驗證（type/lint/affected unit/contract、必要時 smoke）綠；`openspec validate --strict` 綠；`git diff --check` 乾淨
-- [ ] 10.5 merge 後依 §1.6 sync/archive 並同步 roadmap，把過渡語意收斂為正式邊界
+- [x] 10.1 撰寫並套用大型 spec delta：`demo-runtime-readiness-smoke`(MODIFIED)、`runtime-verification-evidence`(MODIFIED)、`worker-rvt-ifc-bridge`/`bim-control-revit-intake-facade`/`worker-artifact-pipeline`(REMOVED as product capability) — 對當時現行 `openspec/specs/` 撰寫，避免 stale/partial delta
+- [x] 10.2 改寫 `AGENTS.md` §2–§11 / §10 閉環、`CLAUDE.md`、roadmap 對齊 control-plane/data-plane；移除把 `_worker`/`_bim-control` 當核心閉環的描述
+- [x] 10.3 `scripts/render-roadmap-html.py` 重生 roadmap `.html`
+- [x] 10.4 四層驗證（type/lint/affected unit/contract、必要時 smoke）綠；`openspec validate --strict` 綠；`git diff --check` 乾淨
+- [ ] 10.5 merge 後依 §1.6 sync/archive 並同步 roadmap，把過渡語意收斂為正式邊界 — **post-merge gate（PR #63 merge 後執行，不在本 PR）**
+
+> **T9 done（10.1–10.4，2026-05-18；10.5 為 post-merge gate）** — 見 `apply-notes.md` §T9。
+> 10.1：5 spec delta 寫入 `specs/`：`worker-rvt-ifc-bridge`/`bim-control-revit-intake-facade`/`worker-artifact-pipeline` = REMOVED（product/core capability，理由＝B 方案刪服務、僅 test fixture 模擬）；`demo-runtime-readiness-smoke`/`runtime-verification-evidence` = MODIFIED（核心 tier 去 `_worker`/`_bim-control`、改 contract stub → coordinator intake / streaming internal / callback outbox / Kit launcher deferred 分層）。`openspec validate --strict` change valid、`--specs --strict` **19 passed / 0 failed**。
+> 10.2：`AGENTS.md` §10 閉環 + §11 總結 + §1.A 改寫為 B 方案（external IFC Worker → coordinator intake → streaming internal → metadata-only callback outbox；`_worker`/`_bim-control` 標 **removed from product runtime，非降級**）；`CLAUDE.md` §10 鏡像 + §1.A 同步。
+> 10.3：`python scripts/render-roadmap-html.py` 重生 `.html`（193,918 bytes，源自同名 `.md`，md 為 SoT）；roadmap md 加 2026-05-18 Phase B apply 進度註記，**未把驗證狀態標 passed**（依 §1.6：Kit launcher deferred、OQ1/OQ5 pending）。
+> 10.4：`git diff --check` 乾淨；coordinator `npm run verify` 綠（tsc + vitest **130**）；repo-root pytest **6**；streaming pytest **5**；`openspec validate --strict`（change valid、specs 19/0）。
+> 10.5：依 `AGENTS.md §1.6` 屬 **PR #63 merge 後** 才執行 OpenSpec sync/archive + roadmap 正式收斂（把過渡語意收斂為正式邊界），不在本 rolling PR 範圍。

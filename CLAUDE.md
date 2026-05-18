@@ -149,10 +149,11 @@ _worker/
 ```txt
 1. PDF 平台 = 外部既有系統，已部署於公司測試機/正式機
    （192.168.20.238 / 192.168.20.237），非本 repo 功能開發範圍。
-2. _bim-control / _worker 降級為「外部既有平台的本地整合 fake」，
-   本 repo 不再為它們新增產品功能。
-3. 本 repo 對外入口 = 可被外部測試機呼叫的 webhook intake API，
-   收到外部 IFC Worker 的 .ifc-ready 通知後，觸發既有已實作的
+2. _bim-control / _worker 已**自 repo 刪除**（removed from product runtime，
+   非降級、非保留為 offline fake runtime profile）；僅 tests/fakes +
+   tests/contracts 模擬外部既有平台。**[2026-05-18 B 方案落地]**
+3. 本 repo 唯一對外入口 = bim-review-coordinator POST /api/external/ifc-ready，
+   收到外部客戶落地端 IFC Worker 的 .ifc-ready 通知後，觸發既有已實作的
    IFC→USDC（bim-streaming-server）。
 4. 本 repo 範圍收斂為 webhook intake → IFC→USDC → Kit streaming → BIM 治理。
 ```
@@ -815,25 +816,28 @@ _mock-sensor-service/
 
 ## 10. Workspace 最重要閉環
 
-整個 workspace 要保護的最小閉環是：
+> **B 方案（local-coordinator-ifc-ready-intake-boundary，2026-05-18 落地；內容權威見 `AGENTS.md §10`）**：`_worker` / `_bim-control` 已**自 repo 刪除**（removed from product runtime，非降級），僅 `tests/fakes` + `tests/contracts` 模擬外部既有平台。
+
+整個 workspace 要保護的最小閉環（B 方案）是：
 
 ```txt
-_bim-control 提供 model / issue metadata
-→ _worker 提供 artifact group / USD / USDC / mapping URL
-→ bim-review-coordinator 建立 review session
+[外部] 客戶落地端 IFC Worker 產出 .ifc
+→ POST /api/external/ifc-ready 至 bim-review-coordinator（落地端內網，Service auth）
+→ coordinator 驗證 / idempotency / 建立 local job + external_model_version_id binding
+→ coordinator 對 bim-streaming-server 發 internal conversion request
+→ bim-streaming-server（internal-only）IFC→USDC，產出 USDC / element_mapping / manifest
+→ coordinator 組 metadata-only callback 入 outbox（retry/dead-letter，不傳 .usdc）
+   → 回拋 [外部] 公司雲端 bim-control
+→ coordinator 建立 review session / local web view session
 → web-viewer-sample 取得 session / stream config
-→ web-viewer-sample 連到 bim-streaming-server
-→ bim-streaming-server 載入 USD / USDC
-→ web-viewer-sample 顯示 stream 畫面
-→ 使用者點選 issue / prim
-→ web-viewer-sample 送 DataChannel command
+→ web-viewer-sample 連到 bim-streaming-server → 載入 USD / USDC → 顯示 stream
+→ 使用者點選 issue / prim → web-viewer-sample 送 DataChannel command
 → bim-streaming-server 執行 3D highlight / selection
 → web-viewer-sample 送 annotation / collaboration event
-→ bim-review-coordinator 廣播 / 回寫
-→ _bim-control 保存 fake review metadata
+→ bim-review-coordinator 廣播 / 回寫；最小 shadow metadata 留本地（不 mirror 公司雲端）
 ```
 
-任何修改都不應破壞這條閉環。
+任何修改都不應破壞這條閉環。歷史 `_bim-control → _worker → …` 閉環已隨兩服務刪除退役，僅作 archive context，不得作為 startup / health / smoke / review-session 依賴。
 
 ---
 
