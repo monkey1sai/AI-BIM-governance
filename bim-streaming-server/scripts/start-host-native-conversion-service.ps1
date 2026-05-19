@@ -22,13 +22,27 @@
 [CmdletBinding()]
 param(
     [string] $BindHost = $env:STREAMING_CONVERSION_HOST,
-    [int]    $Port     = $(if ($env:STREAMING_CONVERSION_PORT) { [int]$env:STREAMING_CONVERSION_PORT } else { 49101 }),
+    # Keep as string: eager [int] casting in the default would fail parameter
+    # binding (InvalidArgument) when STREAMING_CONVERSION_PORT is non-numeric,
+    # before the script can apply a safe fallback.
+    [string] $PortRaw  = $env:STREAMING_CONVERSION_PORT,
     [string] $PythonExe = $(if ($env:STREAMING_CONVERSION_PYTHON) { $env:STREAMING_CONVERSION_PYTHON } else { "python" })
 )
 
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($BindHost)) { $BindHost = "127.0.0.1" }
+
+$Port = 49101
+if (-not [string]::IsNullOrWhiteSpace($PortRaw)) {
+    $parsed = 0
+    if ([int]::TryParse($PortRaw, [ref]$parsed) -and $parsed -ge 1 -and $parsed -le 65535) {
+        $Port = $parsed
+    }
+    else {
+        Write-Warning "STREAMING_CONVERSION_PORT='$PortRaw' invalid; using $Port"
+    }
+}
 
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $moduleDir = Join-Path $serverRoot "source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging"

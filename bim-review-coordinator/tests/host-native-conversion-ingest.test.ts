@@ -172,4 +172,27 @@ describe("host-native conversion result ingest (pull)", () => {
 
     expect(res.status).toBe(401);
   });
+
+  it("non-terminal (queued/running) result is not coerced to failed", async () => {
+    const base = await startStreamingStub({
+      conversion_job_id: "stream_conv_test_001",
+      authority: "bim-streaming-server",
+      status: "running",
+      ready: false,
+      correlation_id: CORRELATION,
+      model: { status: "converting", format: "usdc", url: null },
+      artifacts: {},
+    });
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    // must NOT enqueue a premature conversion_failed callback
+    expect(res.status).toBe(409);
+    expect(res.body.conversion_status).toBe("converting");
+  });
 });

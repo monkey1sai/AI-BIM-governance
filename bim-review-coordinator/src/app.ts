@@ -189,7 +189,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
-  const streamingConversionClient = new StreamingConversionClient(config.streamingConversionApiBase);
+  const streamingConversionClient = new StreamingConversionClient(
+    config.streamingConversionApiBase,
+    undefined,
+    config.streamingConversionInternalToken || undefined,
+  );
   // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
   const callbackOutbox = new CallbackOutbox(
     config.callbackOutboxMaxAttempts,
@@ -651,8 +655,26 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         });
         return;
       }
+      // 只有 terminal 結果才入 callback outbox。非終結（queued/running）不得
+      // 被誤判為 failed，否則會提前送 conversion_failed 並持久化失敗結果。
       const failed =
-        result.model_status === "failed" || result.status === "failed" || result.ready !== true;
+        result.model_status === "failed" ||
+        result.status === "failed" ||
+        result.status === "cancelled";
+      const ready =
+        !failed &&
+        (result.ready === true ||
+          result.model_status === "ready" ||
+          result.status === "succeeded" ||
+          result.status === "succeeded_with_warnings");
+      if (!failed && !ready) {
+        response.status(409).json({
+          detail: "conversion result is not terminal yet",
+          conversion_job_id: conversionJobId,
+          conversion_status: result.model_status ?? result.status ?? "unknown",
+        });
+        return;
+      }
       const report = conversionResultReportSchema.parse({
         correlation_id: correlationId,
         conversion_job_id: result.conversion_job_id,

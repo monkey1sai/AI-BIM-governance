@@ -80,7 +80,16 @@ export class StreamingConversionClient {
   constructor(
     private readonly baseUrl: string,
     private readonly requestTimeoutMs: number = 10000,
+    // host-native service 啟用 internal_conversion_token 時，coordinator 必須
+    // 帶 X-Internal-Conversion-Token，否則 dispatch / result 取得會被 401/403。
+    private readonly internalToken?: string,
   ) {}
+
+  private authHeaders(extra: Record<string, string>): Record<string, string> {
+    return this.internalToken
+      ? { ...extra, "X-Internal-Conversion-Token": this.internalToken }
+      : extra;
+  }
 
   async createConversionJob(
     event: ExternalIfcReadyEvent,
@@ -93,7 +102,10 @@ export class StreamingConversionClient {
     const payload = toInternalIfcReadyEvent(event, binding);
     const upstream = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: this.authHeaders({
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      }),
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(this.requestTimeoutMs),
     });
@@ -129,7 +141,7 @@ export class StreamingConversionClient {
     ).toString();
     const upstream = await fetch(url, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: this.authHeaders({ Accept: "application/json" }),
       signal: AbortSignal.timeout(this.requestTimeoutMs),
     });
     const text = await upstream.text();

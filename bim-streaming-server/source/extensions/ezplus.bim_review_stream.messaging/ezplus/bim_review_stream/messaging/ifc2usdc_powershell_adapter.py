@@ -76,23 +76,18 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"PowerShell executable not resolvable: {self.powershell_exe} "
                 "(host-native conversion must launch the .ps1 from PowerShell, not Git Bash)"
             )
-        if self.kit_exe_path is None or not self.kit_exe_path.is_file():
-            missing.append(
-                "Kit executable not configured/found "
-                "(set STREAMING_CONVERSION_KIT_EXE to the kit.exe used by the IFC->USDC converter)"
-            )
-        if self.hoops_main_path is None or not self.hoops_main_path.exists():
-            missing.append(
-                "HOOPS converter entrypoint not configured/found "
-                "(set STREAMING_CONVERSION_HOOPS_MAIN)"
-            )
+        # kit.exe / hoops_main: when NOT explicitly configured, convert-ifc-to-usdc.ps1
+        # resolves its own repo defaults — do not pre-block an otherwise valid
+        # default build. Only fail when an explicitly configured path is missing.
+        if self.kit_exe_path is not None and not self.kit_exe_path.is_file():
+            missing.append(f"configured Kit executable not found: {self.kit_exe_path}")
+        if self.hoops_main_path is not None and not self.hoops_main_path.exists():
+            missing.append(f"configured HOOPS entrypoint not found: {self.hoops_main_path}")
         if self.config_path is not None and not self.config_path.exists():
             missing.append(f"converter config not found: {self.config_path}")
-        if not self._usd_runtime_available():
-            missing.append(
-                "USD runtime (pxr.Usd) not importable; cannot enumerate the produced "
-                "USDC into element_mapping/entity_index/metadata + real quality_metrics"
-            )
+        # USD runtime is only needed on the enumeration fallback (no converter
+        # sidecars). It is checked there, not as a blanket preflight gate, so a
+        # converter that emits its own sidecars is not falsely blocked.
         if missing:
             raise ConversionAuthorityError(
                 "converter_unavailable",
@@ -160,14 +155,6 @@ class Ifc2UsdcPowershellConverterAdapter:
 
         return which(self.powershell_exe) is not None
 
-    def _usd_runtime_available(self) -> bool:
-        try:  # pragma: no cover - depends on Kit/USD runtime presence
-            import importlib.util
-
-            return importlib.util.find_spec("pxr.Usd") is not None
-        except Exception:
-            return False
-
     def _resolve_local_ifc(self, ifc_ready_event: Mapping[str, Any]) -> Path:
         artifact = ifc_ready_event.get("ifc_artifact")
         if not isinstance(artifact, dict):
@@ -206,9 +193,22 @@ class Ifc2UsdcPowershellConverterAdapter:
         return None
 
     def _anchor(self, candidate: Path) -> Path:
-        if candidate.is_absolute():
-            return candidate
-        return (self.work_dir / candidate).resolve()
+        # Constrain resolved IFC paths to work_dir so a crafted artifact URL
+        # (`..`, absolute path) cannot target arbitrary local files.
+        base = self.work_dir.resolve()
+        resolved = (
+            candidate.resolve()
+            if candidate.is_absolute()
+            else (base / candidate).resolve()
+        )
+        try:
+            resolved.relative_to(base)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "invalid_ifc_input",
+                f"IFC path escapes configured work directory: {resolved}",
+            ) from exc
+        return resolved
 
     def _run_powershell_conversion(self, *, ifc_path: Path, output_dir: Path) -> None:
         cmd: list[str] = [

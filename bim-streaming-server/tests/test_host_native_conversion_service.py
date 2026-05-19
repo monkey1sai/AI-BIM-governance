@@ -247,9 +247,9 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
         timeout_seconds=42,
         work_dir=repo_root,
     )
-    # USD runtime is absent in test env; bypass that one preflight gate so we can
-    # assert the PowerShell argv contract (D7) deterministically.
-    monkeypatch.setattr(adapter, "_usd_runtime_available", lambda: True)
+    # The fake subprocess emits converter-owned sidecars, so the adopt path
+    # returns real metrics with no USD runtime needed (pxr is only required on
+    # the enumeration fallback, not in preflight).
 
     captured = {}
 

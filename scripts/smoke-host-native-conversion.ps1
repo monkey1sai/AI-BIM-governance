@@ -20,6 +20,13 @@
 param(
     [string] $BaseUrl = "http://127.0.0.1:49101",
     [string] $EvidencePath = "",
+    # No IFC fixture is checked into the repo; point this at a real local .ifc
+    # (or edge-local ref the host-native work dir can resolve) to get real
+    # conversion evidence instead of an invalid_ifc_input blocker.
+    [string] $IfcUrl = $(if ($env:STREAMING_CONVERSION_SMOKE_IFC_URL) { $env:STREAMING_CONVERSION_SMOKE_IFC_URL } else { "edge-local://fixtures/smoke-model.ifc" }),
+    # Required when the service was started with STREAMING_CONVERSION_INTERNAL_TOKEN.
+    [string] $InternalToken = $env:STREAMING_CONVERSION_INTERNAL_TOKEN,
+    [int]    $TimeoutSeconds = 120,
     [switch] $SkipJob
 )
 
@@ -86,15 +93,20 @@ $payload = @{
     ifc_artifact   = @{
         artifact_id = "artifact_ifc_smoke_001"
         format      = "ifc"
-        filename    = "smoke-model.ifc"
-        url         = "edge-local://fixtures/smoke-model.ifc"
+        filename    = [System.IO.Path]::GetFileName($IfcUrl)
+        url         = $IfcUrl
     }
     requested_outputs = @("usdc", "element_mapping", "entity_index", "metadata")
 } | ConvertTo-Json -Depth 6
 
+$postHeaders = @{ "Content-Type" = "application/json" }
+if (-not [string]::IsNullOrWhiteSpace($InternalToken)) {
+    $postHeaders["X-Internal-Conversion-Token"] = $InternalToken
+}
+
 try {
     $created = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/conversions/ifc-to-usdc" `
-        -ContentType "application/json" -Body $payload -TimeoutSec 15
+        -Headers $postHeaders -Body $payload -TimeoutSec 15
     $tier.conversion_job_id = $created.conversion_job_id
     $tier.correlation_id = $created.correlation_id
 }
@@ -104,10 +116,17 @@ catch {
     return Save-And-Report
 }
 
-Start-Sleep -Seconds 2
+# Poll until terminal: a single early fetch can observe queued/running and
+# (when model is absent) dereferencing $result.model.status would throw.
 try {
-    $result = Invoke-RestMethod -Method Get `
-        -Uri "$BaseUrl/api/conversions/$($tier.conversion_job_id)/result" -TimeoutSec 15
+    $deadline = (Get-Date).ToUniversalTime().AddSeconds($TimeoutSeconds)
+    $result = $null
+    do {
+        $result = Invoke-RestMethod -Method Get `
+            -Uri "$BaseUrl/api/conversions/$($tier.conversion_job_id)/result" -TimeoutSec 15
+        if ($result.status -in @("succeeded", "succeeded_with_warnings", "failed", "cancelled")) { break }
+        Start-Sleep -Seconds 2
+    } while ((Get-Date).ToUniversalTime() -lt $deadline)
 }
 catch {
     $tier.status = "blocked"
@@ -115,8 +134,13 @@ catch {
     return Save-And-Report
 }
 
-$tier.model_status = $result.model.status
-if ($result.status -eq "succeeded" -and $result.model.status -eq "ready") {
+$tier.model_status = if ($result.model) { $result.model.status } else { $null }
+if ($result.status -in @("queued", "running")) {
+    $tier.status = "blocked"
+    $tier.diagnostic = "conversion not terminal within smoke timeout (${TimeoutSeconds}s)"
+    return Save-And-Report
+}
+if ($result.status -eq "succeeded" -and $tier.model_status -eq "ready") {
     $tier.status = "passed"
     $tier.artifact_refs = @{
         model_usdc      = $result.artifacts.model_usdc.url

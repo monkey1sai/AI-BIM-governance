@@ -63,7 +63,9 @@ def load_config(env: Mapping[str, str] | None = None) -> HostNativeServiceConfig
     service_root = (
         Path(src["STREAMING_CONVERSION_SERVICE_ROOT"])
         if src.get("STREAMING_CONVERSION_SERVICE_ROOT")
-        else repo_root / ".host-native-conversion"
+        # default under bim-streaming-server/_cache/ (already git-ignored) so
+        # local runs do not dirty the working tree.
+        else repo_root / "bim-streaming-server" / "_cache" / "host-native-conversion"
     )
     artifacts_root = (
         Path(src["STREAMING_CONVERSION_ARTIFACTS_ROOT"])
@@ -78,9 +80,11 @@ def load_config(env: Mapping[str, str] | None = None) -> HostNativeServiceConfig
     host = src.get("STREAMING_CONVERSION_HOST", DEFAULT_HOST)
     port_raw = src.get("STREAMING_CONVERSION_PORT")
     try:
-        port = int(port_raw) if port_raw else DEFAULT_PORT
+        parsed_port = int(port_raw) if port_raw else DEFAULT_PORT
     except ValueError:
-        port = DEFAULT_PORT
+        parsed_port = DEFAULT_PORT
+    # out-of-range (0, negative, >65535) -> fall back instead of bind failure
+    port = parsed_port if 1 <= parsed_port <= 65535 else DEFAULT_PORT
     public_artifacts_url = src.get(
         "STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL",
         f"http://{host}:{port}/artifacts",
@@ -120,9 +124,24 @@ def build_app(
     )
     if converter is None:
         converter = adapter_from_env(config.repo_root)
-    return create_conversion_api_app(
+    app = create_conversion_api_app(
         settings=settings, converter=converter, run_background=run_background
     )
+    # Serve produced artifacts so the URLs advertised in results
+    # (public_artifacts_url default = this service /artifacts) are reachable
+    # by coordinator/viewer instead of dead links.
+    try:
+        from fastapi.staticfiles import StaticFiles
+
+        Path(config.artifacts_root).mkdir(parents=True, exist_ok=True)
+        app.mount(
+            "/artifacts",
+            StaticFiles(directory=str(config.artifacts_root)),
+            name="artifacts",
+        )
+    except Exception:  # noqa: BLE001 - static mount is best-effort, not core
+        pass
+    return app
 
 
 def main() -> int:
