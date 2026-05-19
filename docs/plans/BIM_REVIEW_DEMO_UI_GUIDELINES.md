@@ -1,7 +1,7 @@
 # BIM Review Demo UI 設計守則 v0.4
 
 > 本文件是後續所有 Demo UI 改動的**唯一風格依循**。任何 UI 修改若違反本守則，視為破壞 demo 一致性。
-> 適用範圍：`_worker` / `_bim-control` / `bim-review-coordinator` / `web-viewer-sample` 四個有 UI 的 current services。`bim-streaming-server` 無 UI，其存在感由 `web-viewer-sample` 的「串流連線狀態卡」呈現。
+> 適用範圍：`bim-review-coordinator` / `web-viewer-sample` 兩個 current demo UI。外部 IFC Worker 與公司雲端 control-plane 只透過 coordinator console、contract fixtures 或 test fakes 呈現；`bim-streaming-server` 無 UI，其存在感由 `web-viewer-sample` 的「串流連線狀態卡」呈現。
 >
 > 本守則**不新增功能**。所有 UI 元素都對應現有 API / 事件。
 
@@ -46,11 +46,11 @@ Upload   →  Convert   →  Meeting  →  Mark    →  Record
 當前頁所對應的步驟亮起；其他步驟為灰色但可點擊（連到對應服務 URL）。
 
 服務對應：
-- 步驟 ① = `_worker` (8005)
-- 步驟 ② = `_worker` (8005)
+- 步驟 ① = 外部 IFC Worker handoff（由 `bim-review-coordinator` console / tests/fakes 呈現）
+- 步驟 ② = `bim-streaming-server` internal conversion（由 `bim-review-coordinator` console 呈現）
 - 步驟 ③ = `bim-review-coordinator` (8004)
 - 步驟 ④ = `web-viewer-sample` (5173) + `bim-streaming-server` (49100)
-- 步驟 ⑤ = `_bim-control` (8001)
+- 步驟 ⑤ = `bim-review-coordinator` metadata-only callback outbox（外部公司雲端 control-plane 不在本 repo 啟動）
 
 ### 2.3 狀態號誌化 Traffic-light status
 
@@ -95,8 +95,8 @@ Upload   →  Convert   →  Meeting  →  Mark    →  Record
 
 current demo UI 共用同一份 design tokens（顏色、字型、步驟條樣式）。實作方式：
 - `web-viewer-sample` 引用 `src/styles/demo-theme.css`
-- `_bim-control` / `_worker` 的 `app/ui.py` 以 inline `<style>` 複製同一份 CSS 變數值（避免跨服務 CORS 載入）
-- `bim-review-coordinator/public/index.html` 直接 inline 同一份變數
+- `bim-review-coordinator/src/public/dev-console.html` 直接 inline 同一份變數
+- 若未來外部平台 test UI 需要同款視覺，先以 test fixture 身分同步 token，不可把它升格成 current runtime service
 
 **Token 來源權威**：`web-viewer-sample/src/styles/demo-theme.css`。其他服務若需新增 token，先改這支再同步。
 
@@ -164,11 +164,11 @@ current demo UI 共用同一份 design tokens（顏色、字型、步驟條樣�
 
 | 步驟 | 客戶看到 | 服務 | URL | 操作 |
 |---|---|---|---|---|
-| ① 選取建模來源 | 從 `storage/` 選擇要審查的 IFC 檔 | `_worker` | http://127.0.0.1:8005 | 選檔 |
-| ② 自動轉成可審查 3D 模型 | 進度條跑完顯示「已產出可審查模型 + 元件對照表」 | `_worker` | http://127.0.0.1:8005 | 點按鈕 |
-| ③ 開啟雲端審查會議 | console「建立會議 → 取得連線資訊」 | `bim-review-coordinator` | http://127.0.0.1:8004 | 點按鈕 |
+| ① 接收建模來源 | 外部 IFC Worker 已通知「模型檔可用」 | `bim-review-coordinator` intake console / tests/fakes | http://127.0.0.1:8004/dev-console | 送出 ifc-ready |
+| ② 自動轉成可審查 3D 模型 | 進度條跑完顯示「已產出可審查模型 + 元件對照表」 | `bim-streaming-server` internal conversion，透過 coordinator console 呈現 | http://127.0.0.1:8004/dev-console | 點按鈕 |
+| ③ 開啟雲端審查會議 | console「建立會議 → 取得連線資訊」 | `bim-review-coordinator` | http://127.0.0.1:8004/dev-console | 點按鈕 |
 | ④ 進入瀏覽器看 3D 模型並點問題 | 串流＋問題清單，點問題 → 模型高亮 | `web-viewer-sample` | http://127.0.0.1:5173 | 點 issue |
-| ⑤ 標記與紀錄回到主資料庫 | 顯示新增的標註紀錄 | `_bim-control` | http://127.0.0.1:8001 | 純展示 |
+| ⑤ 標記與紀錄回到主資料庫 | 顯示 metadata-only callback outbox / shadow metadata 狀態 | `bim-review-coordinator`，外部公司雲端不在本 repo 啟動 | http://127.0.0.1:8004/dev-console | 純展示 |
 
 **Demo 順序保留調整空間**：必要時可省略步驟 ⑤ 以縮短時長，或從步驟 ③ 直接跳步驟 ④。但步驟條必須完整顯示，讓客戶理解全貌。
 

@@ -7,7 +7,7 @@ param(
     [string[]] $KitSpectatorStreamPorts = @()
 )
 
-# 一鍵關閉 worker-only demo services（與 start-all.ps1 對應）。
+# 一鍵關閉 Phase B current demo services（與 start-all.ps1 對應）。
 # 對每個 PID 做 tree-kill：taskkill /F /T，連子行程 (例如 Kit) 一起終結。
 
 Set-StrictMode -Version Latest
@@ -125,7 +125,7 @@ if (-not (Test-Path $RunDir)) {
     foreach ($f in $pidFiles) {
         $name = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
         if (-not (Test-IsExpectedServiceName -Name $name)) {
-            Write-Host "[skip ] $name 不屬於 current worker-only demo services，移除 stale PID file" -ForegroundColor DarkGray
+            Write-Host "[skip ] $name 不屬於 Phase B current demo services，移除 stale PID file" -ForegroundColor DarkGray
             Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
             if (-not $KeepLogs) {
                 Remove-Item (Join-Path $RunDir "$name.log") -Force -ErrorAction SilentlyContinue

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一鍵啟動 worker-only demo services (Linux/macOS)。
+# 一鍵啟動 Phase B current demo services (Linux/macOS)。
 # 注意：bim-streaming-server (Omniverse Kit GPU runtime) 主要在 Windows 開發，
 # 本 script 不啟動它；若需要請另行 ./repo.sh launch。
 # 對應的關閉指令：scripts/stop-all.sh

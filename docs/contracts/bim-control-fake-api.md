@@ -1,12 +1,19 @@
-# Fake BIM Control API
+# Historical Fake BIM Control API
 
-Base URL:
+> Phase B status: `_bim-control` has been removed from product runtime. This
+> contract is retained only as historical/test-double context. Current control
+> plane authority is the external company cloud; this repo keeps only minimal
+> coordinator shadow metadata and metadata-only callback outbox state.
+
+Historical base URL:
 
 ```txt
 http://127.0.0.1:8001
 ```
 
-`_bim-control` is the fake BIM data authority for local development. It stores metadata, not model file bytes.
+Historically, `_bim-control` was the fake BIM data authority for local
+development. In the current Phase B demo, do not start it as a local runtime
+service.
 
 ## Endpoints
 
@@ -74,7 +81,7 @@ Coordinator session bindings are patched back:
 }
 ```
 
-`GET /api/review-session-requests/{review_request_id}/lifecycle-events` returns request-side lifecycle events owned by `_bim-control`. These events correlate review intent with the coordinator session audit trail, but they do not replace coordinator session lifecycle events.
+Historically, `GET /api/review-session-requests/{review_request_id}/lifecycle-events` returned request-side lifecycle events owned by `_bim-control`. These events correlated review intent with the coordinator session audit trail, but they did not replace coordinator session lifecycle events.
 
 ```json
 {

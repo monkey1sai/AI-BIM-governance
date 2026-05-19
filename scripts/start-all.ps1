@@ -12,7 +12,7 @@ param(
     [int] $HealthTimeoutSeconds = 30
 )
 
-# 一鍵啟動 worker-only demo services。PID 寫到 scripts/.run/<svc>.pid，stdout/stderr 寫到 scripts/.run/<svc>.log。
+# 一鍵啟動 Phase B current demo services。PID 寫到 scripts/.run/<svc>.pid，stdout/stderr 寫到 scripts/.run/<svc>.log。
 # 對應的關閉指令：scripts/stop-all.ps1
 # 設計原則：直接 Start-Process 真正的執行檔，避免 cmd /c 包 wrapper 導致 PID 鏈斷裂。
 # Uvicorn 不開 --reload，因為 --reload 會 fork 額外子行程，使 stop 時清理變複雜。

@@ -1,9 +1,9 @@
 {
     "schema_version":  "demo-runtime-readiness-smoke/v1",
     "capability":  "demo-runtime-readiness-smoke",
-    "emitted_at":  "2026-05-19T03:33:06.7203341Z",
-    "command":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance\\scripts\\smoke-bscheme-intake.ps1",
-    "cwd":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance",
+    "emitted_at":  "2026-05-19T03:56:19.5563160Z",
+    "command":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\scripts\\smoke-bscheme-intake.ps1",
+    "cwd":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance",
     "context":  {
                     "task":  "T8 readiness/smoke/evidence rewrite",
                     "note":  "default smoke 不依賴 _worker/_bim-control；contract stub + optional real storage/*.ifc → coordinator intake → streaming conversion",
@@ -21,7 +21,7 @@
                       "next_command":  "python -m pytest tests -q",
                       "evidence_paths":  null,
                       "detail":  {
-                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n.......                                                                  [100%]\n7 passed in 0.02s"
+                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n.......                                                                  [100%]\n7 passed in 0.03s"
                                  }
                   },
                   {
@@ -30,7 +30,7 @@
                       "owner":  "scripts",
                       "ids":  {
                                   "fixture_count":  0,
-                                  "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance\\storage",
+                                  "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
                                   "top_level_ifc_count":  0
                               },
                       "blocker":  "no real IFC fixture found at storage/*.ifc",
@@ -40,7 +40,7 @@
                                      "recursive_fixtures":  [
 
                                                             ],
-                                     "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance\\storage",
+                                     "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
                                      "streaming_base_url":  "http://127.0.0.1:49101",
                                      "selected_fixture":  null,
                                      "coordinator_base_url":  "http://127.0.0.1:8004",
@@ -53,7 +53,7 @@
                       "owner":  "bim-review-coordinator",
                       "ids":  {
                                   "fixture_count":  0,
-                                  "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance\\storage",
+                                  "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
                                   "top_level_ifc_count":  0
                               },
                       "blocker":  "real IFC intake→conversion was not run because storage/*.ifc is empty",
@@ -63,7 +63,7 @@
                                      "recursive_fixtures":  [
 
                                                             ],
-                                     "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance\\storage",
+                                     "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
                                      "streaming_base_url":  "http://127.0.0.1:49101",
                                      "selected_fixture":  null,
                                      "coordinator_base_url":  "http://127.0.0.1:8004",
@@ -81,7 +81,7 @@
                       "next_command":  "cd bim-review-coordinator \u0026\u0026 npm run verify",
                       "evidence_paths":  null,
                       "detail":  {
-                                     "output":  "\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 verify\n\u003e npm run build \u0026\u0026 npm test\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 build\n\u003e tsc -p tsconfig.json\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 test\n\u003e vitest run\n\n\n\u001b[1m\u001b[7m\u001b[36m RUN \u001b[39m\u001b[27m\u001b[22m \u001b[36mv2.1.9 \u001b[39m\u001b[90mC:/Users/IOT/.codex/worktrees/8caa/AI-BIM-governance/bim-review-coordinator\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/unit_kitpool.test.ts \u001b[2m(\u001b[22m\u001b[2m31 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 13\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/auth-provider.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 4\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/unit_sessionstore.test.ts \u001b[2m(\u001b[22m\u001b[2m39 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 90\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/dev-console.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 87\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/shadow-metadata.test.ts \u001b[2m(\u001b[22m\u001b[2m5 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 102\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/local-web-view.test.ts \u001b[2m(\u001b[22m\u001b[2m6 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 116\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/cloud-callback-outbox.test.ts \u001b[2m(\u001b[22m\u001b[2m8 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 133\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/external-ifc-ready.test.ts \u001b[2m(\u001b[22m\u001b[2m9 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 136\u001b[2mms\u001b[22m\u001b[39m\n\u001b[90mstderr\u001b[2m | tests/sessions.test.ts\u001b[2m \u003e \u001b[22m\u001b[2mbim-review-coordinator\u001b[2m \u003e \u001b[22m\u001b[2mskips malformed lines in the event log instead of throwing\n\u001b[22m\u001b[39mEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nSystem.Management.Automation.RemoteException\n \u001b[32m✓\u001b[39m tests/sessions.test.ts \u001b[2m(\u001b[22m\u001b[2m36 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[33m 424\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m9 passed\u001b[39m\u001b[22m\u001b[90m (9)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m140 passed\u001b[39m\u001b[22m\u001b[90m (140)\u001b[39m\n\u001b[2m   Start at \u001b[22m 11:33:10\n\u001b[2m   Duration \u001b[22m 1.30s\u001b[2m (transform 597ms, setup 0ms, collect 3.13s, tests 1.10s, environment 2ms, prepare 1.29s)\u001b[22m\n"
+                                     "output":  "\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 verify\n\u003e npm run build \u0026\u0026 npm test\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 build\n\u003e tsc -p tsconfig.json\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 test\n\u003e vitest run\n\n\n\u001b[1m\u001b[7m\u001b[36m RUN \u001b[39m\u001b[27m\u001b[22m \u001b[36mv2.1.9 \u001b[39m\u001b[90mC:/Users/IOT/.codex/worktrees/c3de/AI-BIM-governance/bim-review-coordinator\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/unit_kitpool.test.ts \u001b[2m(\u001b[22m\u001b[2m31 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 17\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/auth-provider.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 5\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/unit_sessionstore.test.ts \u001b[2m(\u001b[22m\u001b[2m39 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 102\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/dev-console.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 107\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/shadow-metadata.test.ts \u001b[2m(\u001b[22m\u001b[2m5 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 126\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/local-web-view.test.ts \u001b[2m(\u001b[22m\u001b[2m6 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 146\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/external-ifc-ready.test.ts \u001b[2m(\u001b[22m\u001b[2m9 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 159\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/cloud-callback-outbox.test.ts \u001b[2m(\u001b[22m\u001b[2m8 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 160\u001b[2mms\u001b[22m\u001b[39m\n\u001b[90mstderr\u001b[2m | tests/sessions.test.ts\u001b[2m \u003e \u001b[22m\u001b[2mbim-review-coordinator\u001b[2m \u003e \u001b[22m\u001b[2mskips malformed lines in the event log instead of throwing\n\u001b[22m\u001b[39mEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nSystem.Management.Automation.RemoteException\n \u001b[32m✓\u001b[39m tests/sessions.test.ts \u001b[2m(\u001b[22m\u001b[2m36 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[33m 477\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m9 passed\u001b[39m\u001b[22m\u001b[90m (9)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m140 passed\u001b[39m\u001b[22m\u001b[90m (140)\u001b[39m\n\u001b[2m   Start at \u001b[22m 11:56:23\n\u001b[2m   Duration \u001b[22m 1.54s\u001b[2m (transform 656ms, setup 0ms, collect 3.76s, tests 1.30s, environment 2ms, prepare 1.56s)\u001b[22m\n"
                                  }
                   },
                   {
@@ -95,7 +95,7 @@
                       "next_command":  "cd bim-streaming-server \u0026\u0026 python -m pytest tests/test_conversion_authority_api.py -q -p no:cacheprovider",
                       "evidence_paths":  null,
                       "detail":  {
-                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n..........                                                               [100%]\n10 passed in 0.74s"
+                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n..........                                                               [100%]\n10 passed in 0.94s"
                                  }
                   },
                   {
@@ -136,11 +136,9 @@
                       "ids":  {
 
                               },
-                      "blocker":  "Docker engine not available; cannot validate runtime image Kit launcher",
+                      "blocker":  "skipped by -SkipKitLauncher; see T0 evidence",
                       "next_command":  "pwsh -File scripts/verify-runtime-kit-launcher.ps1",
-                      "evidence_paths":  [
-                                             "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance\\docs\\verification\\evidence\\2026-05-18-t0-kit-launcher\\kit-launcher-readiness.json"
-                                         ],
+                      "evidence_paths":  null,
                       "detail":  {
 
                                  }

@@ -15,8 +15,8 @@ param(
     [switch] $ReuseExisting
 )
 
-# Orchestrate the single-Kit demo happy-path: worker/_bim-control/coordinator preflight,
-# canonical fixture conversion, review session creation, and a Kit preflight summary.
+# Historical single-Kit demo orchestrator superseded by Phase B coordinator intake,
+# streaming conversion authority, callback outbox, and Kit preflight summary.
 # The final Kit launch and screenshot capture remain manual. See:
 #   docs/verification/2026-05-14-stabilize-demo-runtime-readiness/runbook.md
 

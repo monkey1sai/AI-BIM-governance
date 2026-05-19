@@ -7,7 +7,7 @@ param(
 )
 
 # 跨 repo verify 入口。對 current demo repos 依序跑 verify：
-#   _bim-control / _worker                           → python -m pytest tests -q
+#   tests/contracts + tests/fakes                    → python -m pytest tests -q
 #   bim-review-coordinator                            → npm run verify
 #   web-viewer-sample                                 → npm run verify
 #   bim-streaming-server                              → scripts/tests/test-stage-loading-contract.ps1

@@ -67,11 +67,13 @@ function Invoke-Tier {
     }
     $previousTemp = $env:TEMP
     $previousTmp = $env:TMP
+    $previousTmpDir = $env:TMPDIR
+    $previousErrorActionPreference = $ErrorActionPreference
     try {
         $env:TEMP = $tempRoot
         $env:TMP = $tempRoot
+        $env:TMPDIR = $tempRoot
         $InvokeArgs = if ($CmdArgs.Length -gt 1) { $CmdArgs[1..($CmdArgs.Length - 1)] } else { @() }
-        $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
             $output = & $CmdArgs[0] @InvokeArgs 2>&1
@@ -86,6 +88,7 @@ function Invoke-Tier {
     } finally {
         $env:TEMP = $previousTemp
         $env:TMP = $previousTmp
+        $env:TMPDIR = $previousTmpDir
         Pop-Location
     }
     $status = if ($ok) { 'passed' } else { 'failed' }

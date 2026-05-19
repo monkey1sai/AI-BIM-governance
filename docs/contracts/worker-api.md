@@ -1,12 +1,22 @@
-# Worker Artifact And Conversion API
+# Historical Worker Artifact And Conversion API
 
-Base URL:
+> Phase B status: `_worker` has been removed from product runtime. This file is
+> historical/test-double context only. Current IFC-ready intake is
+> `bim-review-coordinator` `POST /api/external/ifc-ready`; current IFC→USDC
+> conversion authority is `bim-streaming-server`, called internally by the
+> coordinator. Do not use this file as a startup, smoke-test, or live demo
+> dependency.
+
+Historical base URL:
 
 ```txt
 http://127.0.0.1:8005
 ```
 
-`_worker` is the external file + conversion boundary for local review flows. It owns source file bytes, derived objects, conversion jobs, artifact group readiness, and the demo UI for steps ①/②.
+Historically, `_worker` was the external file + conversion boundary for local
+review flows. In the current Phase B boundary, the external IFC Worker belongs
+outside this repo, the coordinator owns the IFC-ready intake, and streaming owns
+the conversion result.
 
 ## Endpoints
 
@@ -25,7 +35,7 @@ GET  /objects/{object_path}
 
 ## Dev IFC Source Selection
 
-The worker demo UI reads `.ifc` files from `WORKER_DEV_STORAGE_ROOT`.
+The historical worker demo UI read `.ifc` files from `WORKER_DEV_STORAGE_ROOT`.
 By default this resolves to `../storage` from the `_worker` service directory,
 which is the workspace `storage/` folder.
 
@@ -161,8 +171,8 @@ Response:
 
 `GET /api/conversions/{id}` tracks `queued`, `running`, `succeeded`, and `failed`. `GET /api/conversions/{id}/result` returns `ready=false` while the job is not complete.
 
-For IFC `target_format=usdc`, `_worker` uses an internal converter adapter. The
-current production adapter expects external `ifcopenshell` and `usd-core`
+For IFC `target_format=usdc`, historical `_worker` used an internal converter adapter. The
+adapter expected external `ifcopenshell` and `usd-core`
 Python packages. Missing prerequisites, converter errors, placeholder output,
 non-openable USDC, or missing required index/mapping files produce a failed job
 and do not mark the artifact group ready.
@@ -263,6 +273,6 @@ tenants/{tenant_id}/projects/{project_id}/versions/{model_version_id}/artifact-g
 
 ## Boundary Notes
 
-- `_worker` owns file bytes, worker object layout, conversion jobs, and conversion lineage.
-- `_worker` reports conversion metadata to `_bim-control`; it does not own project, model version, issue, annotation, or review intent authority.
-- Current callers use `_worker` on port `8005`; ports `8002` and `8003` are not part of the current runtime path.
+- `_worker` no longer owns current runtime file bytes, object layout, conversion jobs, or conversion lineage.
+- No current caller should depend on `_worker` or `_bim-control` as local runtime services.
+- Current demo callers use coordinator `:8004`, streaming conversion `:49101`, WebRTC `:49100`, and viewer `:5173`.
