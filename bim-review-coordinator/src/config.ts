@@ -30,6 +30,10 @@ export interface CoordinatorConfig {
   // 公司雲端 control-plane / 落地端 IFC Worker 為外部系統；以下為落地端內網
   // machine-to-machine 設定（可替換 AuthProvider）。
   streamingConversionApiBase: string;
+  // host-native conversion service 啟用 internal token 時，coordinator 帶
+  // X-Internal-Conversion-Token；optional（default 空＝streaming 未啟用 token），
+  // 既有手動建構的 config literal 無需一律補欄位。
+  streamingConversionInternalToken?: string;
   externalIntakeAuthProvider: string;
   externalIntakeWebhookSecret: string;
   externalIntakeIpAllowlist: string[];
@@ -143,6 +147,8 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     internalApiAuthToken: process.env.INTERNAL_API_AUTH_TOKEN || "dev-internal-token",
     streamingConversionApiBase:
       process.env.STREAMING_CONVERSION_API_BASE || "http://127.0.0.1:49101",
+    streamingConversionInternalToken:
+      process.env.STREAMING_CONVERSION_INTERNAL_TOKEN || "",
     externalIntakeAuthProvider: process.env.EXTERNAL_INTAKE_AUTH_PROVIDER || "intranet-dev",
     externalIntakeWebhookSecret: process.env.EXTERNAL_INTAKE_WEBHOOK_SECRET || "dev-webhook-secret",
     externalIntakeIpAllowlist: csvFromEnv("EXTERNAL_INTAKE_IP_ALLOWLIST", [

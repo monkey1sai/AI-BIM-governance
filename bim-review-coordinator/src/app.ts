@@ -189,7 +189,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
-  const streamingConversionClient = new StreamingConversionClient(config.streamingConversionApiBase);
+  const streamingConversionClient = new StreamingConversionClient(
+    config.streamingConversionApiBase,
+    undefined,
+    config.streamingConversionInternalToken || undefined,
+  );
   // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
   const callbackOutbox = new CallbackOutbox(
     config.callbackOutboxMaxAttempts,
@@ -549,72 +553,150 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   });
 
   // B-scheme T5：本地轉檔結果 → 組 metadata-only 雲端 callback 並入 outbox。
-  // 內部端點（coordinator 自身輪詢/result loop 餵入）。callback 投遞狀態與
-  // conversion 成功分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。
+  // 行為保持式 helper：`/api/internal/conversion-result`（外部/輪詢餵入）與
+  // `/api/internal/conversions/:id/ingest`（coordinator 主動拉 host-native
+  // `GET /result`）共用同一條 ingestion 路徑，不重複邏輯。
+  type ConversionIngestOutcome =
+    | { ok: true; ifc_ready_job: ReturnType<typeof externalIfcReadyStore.recordConversionOutcome>; callback: ReturnType<typeof callbackOutbox.enqueue> }
+    | { ok: false; status: number; detail: string };
+
+  function ingestConversionReport(
+    report: z.infer<typeof conversionResultReportSchema>,
+  ): ConversionIngestOutcome {
+    const normalizedStatus = normalizeConversionReportStatus(report.status);
+    const job = externalIfcReadyStore.getByCorrelation(report.correlation_id);
+    if (!job) {
+      return { ok: false, status: 404, detail: "No IFC-ready job for correlation_id." };
+    }
+    const conversionJobId = report.conversion_job_id || job.conversion_job_id || null;
+    const targetUrl = job.callback_url || config.cloudCallbackBaseUrl || null;
+
+    let payload: Record<string, unknown>;
+    let event: "conversion_result_ready" | "conversion_failed";
+    if (normalizedStatus === "ready") {
+      event = "conversion_result_ready";
+      payload = {
+        event,
+        tenant_id: job.tenant_id,
+        project_id: job.project_id,
+        external_model_version_id: job.external_model_version_id,
+        external_conversion_task_id: job.external_conversion_task_id ?? null,
+        conversion_job_id: conversionJobId,
+        correlation_id: job.correlation_id,
+        status: "ready",
+        source_ifc: { ref: job.source_ifc_ref, etag: job.source_ifc_etag },
+        artifacts: {
+          usdc_ref: report.artifacts?.usdc_ref ?? null,
+          element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
+          manifest_ref: report.artifacts?.manifest_ref ?? null,
+        },
+        artifact_summary: report.artifact_summary ?? {},
+      };
+    } else {
+      event = "conversion_failed";
+      payload = {
+        event,
+        tenant_id: job.tenant_id,
+        project_id: job.project_id,
+        external_model_version_id: job.external_model_version_id,
+        conversion_job_id: conversionJobId,
+        correlation_id: job.correlation_id,
+        status: "failed",
+        reason: report.reason || "conversion_failed",
+        retryable: report.retryable ?? false,
+      };
+    }
+
+    const entry = callbackOutbox.enqueue({
+      event,
+      targetUrl,
+      correlationId: job.correlation_id,
+      externalModelVersionId: job.external_model_version_id,
+      conversionJobId,
+      payload,
+    });
+    const updatedJob = externalIfcReadyStore.recordConversionOutcome(
+      job.ifc_ready_job_id,
+      normalizedStatus,
+      entry.outbox_id,
+      report.artifacts?.manifest_ref ?? null,
+    );
+    return { ok: true, ifc_ready_job: updatedJob, callback: entry };
+  }
+
+  // 內部端點（外部/輪詢直接餵 report）。callback 投遞狀態與 conversion 成功
+  // 分離；conversion 在本地 ready 即可查，callback 由 outbox 追蹤。
   app.post("/api/internal/conversion-result", (request, response, next) => {
     try {
       const report = conversionResultReportSchema.parse(request.body);
-      const normalizedStatus = normalizeConversionReportStatus(report.status);
-      const job = externalIfcReadyStore.getByCorrelation(report.correlation_id);
-      if (!job) {
-        response.status(404).json({ detail: "No IFC-ready job for correlation_id." });
+      const outcome = ingestConversionReport(report);
+      if (!outcome.ok) {
+        response.status(outcome.status).json({ detail: outcome.detail });
         return;
       }
-      const conversionJobId = report.conversion_job_id || job.conversion_job_id || null;
-      const targetUrl = job.callback_url || config.cloudCallbackBaseUrl || null;
+      response.status(202).json({ ifc_ready_job: outcome.ifc_ready_job, callback: outcome.callback });
+    } catch (error) {
+      next(error);
+    }
+  });
 
-      let payload: Record<string, unknown>;
-      let event: "conversion_result_ready" | "conversion_failed";
-      if (normalizedStatus === "ready") {
-        event = "conversion_result_ready";
-        payload = {
-          event,
-          tenant_id: job.tenant_id,
-          project_id: job.project_id,
-          external_model_version_id: job.external_model_version_id,
-          external_conversion_task_id: job.external_conversion_task_id ?? null,
+  // B-scheme：coordinator 主動向 host-native conversion service 拉
+  // `GET /api/conversions/{id}/result`，把 streaming-owned result 映射成
+  // 既有 report 形狀後走同一條 metadata-only callback outbox 路徑。
+  app.post("/api/internal/conversions/:conversionJobId/ingest", async (request, response, next) => {
+    try {
+      const conversionJobId = request.params.conversionJobId;
+      const result = await streamingConversionClient.fetchConversionResult(conversionJobId);
+      const correlationId = result.correlation_id;
+      if (!correlationId) {
+        response.status(422).json({
+          detail: "streaming conversion result has no correlation_id",
           conversion_job_id: conversionJobId,
-          correlation_id: job.correlation_id,
-          status: "ready",
-          source_ifc: { ref: job.source_ifc_ref, etag: job.source_ifc_etag },
-          artifacts: {
-            usdc_ref: report.artifacts?.usdc_ref ?? null,
-            element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
-            manifest_ref: report.artifacts?.manifest_ref ?? null,
-          },
-          artifact_summary: report.artifact_summary ?? {},
-        };
-      } else {
-        event = "conversion_failed";
-        payload = {
-          event,
-          tenant_id: job.tenant_id,
-          project_id: job.project_id,
-          external_model_version_id: job.external_model_version_id,
-          conversion_job_id: conversionJobId,
-          correlation_id: job.correlation_id,
-          status: "failed",
-          reason: report.reason || "conversion_failed",
-          retryable: report.retryable ?? false,
-        };
+        });
+        return;
       }
-
-      const entry = callbackOutbox.enqueue({
-        event,
-        targetUrl,
-        correlationId: job.correlation_id,
-        externalModelVersionId: job.external_model_version_id,
-        conversionJobId,
-        payload,
+      // 只有 terminal 結果才入 callback outbox。非終結（queued/running）不得
+      // 被誤判為 failed，否則會提前送 conversion_failed 並持久化失敗結果。
+      const failed =
+        result.model_status === "failed" ||
+        result.status === "failed" ||
+        result.status === "cancelled";
+      const ready =
+        !failed &&
+        (result.ready === true ||
+          result.model_status === "ready" ||
+          result.status === "succeeded" ||
+          result.status === "succeeded_with_warnings");
+      if (!failed && !ready) {
+        response.status(409).json({
+          detail: "conversion result is not terminal yet",
+          conversion_job_id: conversionJobId,
+          conversion_status: result.model_status ?? result.status ?? "unknown",
+        });
+        return;
+      }
+      const report = conversionResultReportSchema.parse({
+        correlation_id: correlationId,
+        conversion_job_id: result.conversion_job_id,
+        status: failed ? "failed" : "ready",
+        artifacts: {
+          usdc_ref: result.usdc_ref ?? null,
+          element_mapping_ref: result.element_mapping_ref ?? null,
+          manifest_ref: result.manifest_ref ?? null,
+        },
+        reason: failed ? result.reason || "conversion_failed" : undefined,
+        retryable: false,
       });
-      const updatedJob = externalIfcReadyStore.recordConversionOutcome(
-        job.ifc_ready_job_id,
-        normalizedStatus,
-        entry.outbox_id,
-        report.artifacts?.manifest_ref ?? null,
-      );
-      // conversion 在本地的成功/失敗，與 callback 投遞狀態（outbox）分離回報。
-      response.status(202).json({ ifc_ready_job: updatedJob, callback: entry });
+      const outcome = ingestConversionReport(report);
+      if (!outcome.ok) {
+        response.status(outcome.status).json({ detail: outcome.detail });
+        return;
+      }
+      response.status(202).json({
+        ifc_ready_job: outcome.ifc_ready_job,
+        callback: outcome.callback,
+        conversion_status: failed ? "failed" : "ready",
+      });
     } catch (error) {
       next(error);
     }
