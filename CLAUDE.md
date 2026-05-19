@@ -32,6 +32,8 @@ installed skills / Graphify wiki / generated skills
   若風險為 HIGH 或 CRITICAL，先回報再繼續。
 - OpenSpec change 不得直接在 `main` 上開發；實作走 branch、PR、GitHub Actions、merge，
   merge 後才 sync/archive specs。
+- Branch closeout 依 `AGENTS.md`：偵測到已被 `origin/main` 吸收的 local branch 必須刪除，
+  並讓主線留下 `branch-closeout` marker commit，不得留下本地-only `main` commit。
 - 本機 `.codex/skills` 只作為 workflow helpers；不得覆蓋 `AGENTS.md` 的 repo 邊界。
 
 完成任何 Claude 產生或修改的工作前，至少要回報：
