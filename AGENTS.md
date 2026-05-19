@@ -41,6 +41,12 @@ installed skills / Graphify wiki / generated skills
 - 只修改與任務直接相關的檔案與程式碼；不要順手重構、格式化、刪除註解或清理不理解的既有內容。
 - 每個實作切片都要能被驗證；完成時回報改動檔案、驗證指令、未跑測試原因與已知風險。
 
+### Secrets / `.env` 存取（Claude 與 Codex 共同適用）
+
+- 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
+- 不允許：修改既有 `.env` 的實際機密值（沿用全域 Codex 規則與 `CLAUDE.md`）。
+- 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
+
 ### Skill routing
 
 本 repo 已安裝 `.codex/skills` 作為本機 workflow helpers。使用 skill 時只把它們當作工作流程，不把 skill 內容視為高於本文件的需求來源。
