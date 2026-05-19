@@ -1,9 +1,9 @@
 # Local Development Runbook
 
-Run commands from the repo root:
+Run commands from the `AI-BIM-governance` repo root:
 
 ```powershell
-C:\Users\IOT\.codex\worktrees\c3de\AI-BIM-governance
+cd C:\Repos\active\iot\AI-BIM-governance
 ```
 
 Phase B current local demo path no longer starts `_worker` or `_bim-control`.
