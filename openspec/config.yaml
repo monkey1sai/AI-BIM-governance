@@ -28,22 +28,26 @@ context: |
 
 rules:
   proposal:
+    -Please use Traditional Chinese if possible. 
     - State which repo/folder owns the change.
     - Describe how the change preserves the workspace boundary rules.
     - Include non-goals when a change might be confused with another repo's responsibility.
     - Call out API, data structure, event, storage, session, or runtime boundary changes explicitly.
   design:
+    -Please use Traditional Chinese if possible. 
     - Explain data flow and control flow across repos when more than one repo is touched.
     - Identify source-of-truth ownership for every persistent data type.
     - Keep runtime state, metadata, file storage, and browser UI responsibilities separate.
     - Note validation strategy and known environment limits such as GPU/Kit requirements.
   tasks:
+    -Please use Traditional Chinese if possible. 
     - Break implementation tasks by repo/folder ownership.
     - Keep each task scoped to one owner whenever possible: metadata, storage, session, runtime, or browser UI.
     - Include the smallest useful validation for each affected service.
     - Keep Python tests in their service directory to avoid app package import cache pollution.
     - Include documentation updates when APIs, events, data flow, or repo boundaries change.
   specs:
+    -Please use Traditional Chinese if possible. 
     - Describe externally observable behavior and acceptance criteria.
     - Avoid encoding agent-specific implementation details as product requirements.
     - Do not treat installed skills, Graphify wiki, or GitNexus generated skills as product source of truth.
