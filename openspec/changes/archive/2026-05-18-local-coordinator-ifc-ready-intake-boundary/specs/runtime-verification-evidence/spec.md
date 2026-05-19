@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Single Kit render evidence uses streaming-owned conversion artifacts
+### Requirement: Single Kit render evidence uses real worker artifacts
 
 Single Kit render evidence MUST 使用 `bim-streaming-server` internal-only 轉檔產出的 artifacts 來驗證從 IFC source 到 browser viewport 的 review-session path（B 方案：`_worker` 已自 repo 刪除，對外入口為 `bim-review-coordinator` `POST /api/external/ifc-ready`，轉檔權威為 `bim-streaming-server`）。Evidence 必須包含 `conversion_job_id` 與 `external_model_version_id` binding，讓 rendered stage 可追溯回 source IFC（`source_ifc_ref`/`source_ifc_etag`）。
 

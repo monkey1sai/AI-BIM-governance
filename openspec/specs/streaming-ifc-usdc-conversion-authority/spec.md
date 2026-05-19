@@ -5,11 +5,11 @@ TBD - created by archiving change architecture-rework-2026-05-14. Update Purpose
 ## Requirements
 ### Requirement: `bim-streaming-server` owns IFC→USDC conversion jobs under B 方案
 
-`bim-streaming-server` SHALL be the authority for IFC→USDC conversion jobs. It SHALL accept `ifc_ready` handoff from `_worker`, create `conversion_job_id`, manage conversion state, run or orchestrate headless conversion, produce USDC and mapping artifacts, and expose job status/result endpoints.
+`bim-streaming-server` SHALL be the authority for IFC→USDC conversion jobs as an internal conversion engine. It SHALL accept an internal conversion request from `bim-review-coordinator` (not an external `ifc_ready` handoff and not from `_worker`), create `conversion_job_id`, manage conversion state, run or orchestrate headless conversion, produce USDC and mapping artifacts, and expose internal job status/result endpoints. It SHALL NOT expose an external IFC-ready entry point.
 
-#### Scenario: ifc_ready creates streaming conversion job
+#### Scenario: Internal conversion request creates streaming conversion job
 
-- **WHEN** `_worker` sends a valid `ifc_ready` payload to `bim-streaming-server`
+- **WHEN** `bim-review-coordinator` sends a valid internal conversion request to `bim-streaming-server`
 - **THEN** `bim-streaming-server` creates a conversion job
 - **AND** the response includes `conversion_job_id`, `status="queued"`, `authority="bim-streaming-server"`, and `correlation_id`
 
@@ -17,7 +17,7 @@ TBD - created by archiving change architecture-rework-2026-05-14. Update Purpose
 
 - **WHEN** IFC→USDC conversion succeeds
 - **THEN** `bim-streaming-server` result endpoint returns the derived `model.usdc`, `element_mapping.json`, `entity_index.json`, and quality metrics
-- **AND** `_worker` MUST NOT be required to answer USDC job status for the same conversion
+- **AND** `bim-review-coordinator` consumes the result to drive callback and local web view, while `bim-streaming-server` remains the conversion authority
 
 #### Scenario: Conversion job failure is honest
 

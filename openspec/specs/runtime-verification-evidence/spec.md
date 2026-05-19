@@ -140,29 +140,31 @@ Evidence before threshold lock MUST use a measure-first policy: coverage report 
 
 ### Requirement: Single Kit render evidence uses real worker artifacts
 
-Single Kit render evidence MUST 使用 `_worker` real conversion artifacts 來驗證從 IFC source 到 browser viewport 的 review-session path。Evidence 必須包含 conversion job ID 與 artifact group ID，讓 rendered stage 可追溯回 source IFC。
+Single Kit render evidence MUST 使用 `bim-streaming-server` internal-only 轉檔產出的 artifacts 來驗證從 IFC source 到 browser viewport 的 review-session path（B 方案：`_worker` 已自 repo 刪除，對外入口為 `bim-review-coordinator` `POST /api/external/ifc-ready`，轉檔權威為 `bim-streaming-server`）。Evidence 必須包含 `conversion_job_id` 與 `external_model_version_id` binding，讓 rendered stage 可追溯回 source IFC（`source_ifc_ref`/`source_ifc_etag`）。
 
-Canonical storage batch burn-down 必須在 canonical `--limit 1` real conversion 成功後，加入 single-file visual preview step，才可宣稱使用者能在 web UI 檢視轉檔成果。此 visual preview 必須使用既有 `web-viewer-sample` + `bim-review-coordinator` + `bim-streaming-server` path 載入 worker-hosted `model.usdc`；不得要求 `_worker` 在本地 parse 或 render USD/USDC。
+Visual preview step 必須使用既有 `web-viewer-sample` + `bim-review-coordinator` + `bim-streaming-server` path 載入 streaming-produced `model.usdc`；不得要求任何已刪除的 `_worker`/`_bim-control` 服務，也不得要求 `bim-review-coordinator` 在本地 parse 或 render USD/USDC。重量模型檔只在客戶落地端流動；雲端僅收 metadata-only callback。
 
-#### Scenario: Real worker artifact 在 browser render
+#### Scenario: Streaming-owned artifact 在 browser render
 
-- **WHEN** valid IFC 經 `_worker` 轉檔、經 `bim-review-coordinator` routing、由 `bim-streaming-server` 載入，並顯示在 `web-viewer-sample`
-- **THEN** evidence 記錄 source IFC identity、`conversion_job_id`、`artifact_group_id`、`model.usdc` URL、mapping URL、`openedStageResult`、非零 video dimensions，以及 viewport screenshot 或等效 visual proof
-
-#### Scenario: Canonical single fixture preview 在 browser render
-
-- **WHEN** canonical `--limit 1` storage fixture 完成 real conversion，且其 worker-produced `model.usdc` 透過既有 review viewer flow 載入
-- **THEN** evidence 記錄 canonical fixture path、`conversion_job_id`、`artifact_group_id`、derived USDC artifact ID 或 URL、`openedStageResult`、非零 viewport/video dimensions，以及 screenshot 或等效 visual proof
+- **WHEN** valid IFC 經外部落地端 IFC Worker → `bim-review-coordinator` `POST /api/external/ifc-ready` intake → `bim-streaming-server` internal conversion 產出、經 coordinator routing、由 `bim-streaming-server` 載入，並顯示在 `web-viewer-sample`
+- **THEN** evidence 記錄 source IFC identity（`source_ifc_ref`/`etag`）、`conversion_job_id`、`external_model_version_id`、`model.usdc` 參照、mapping 參照、`openedStageResult`、非零 video dimensions，以及 viewport screenshot 或等效 visual proof
+- **AND** evidence 記錄 `conversion_authority="bim-streaming-server"`，且不得宣稱任何 `_worker`-hosted artifact
 
 #### Scenario: Kit 或 GPU prerequisite 不可用
 
-- **WHEN** real conversion 成功，但目前環境無法執行 Kit/GPU/browser verification
-- **THEN** evidence 分別記錄 conversion success，並將 single Kit render evidence 標為 `blocked`，同時列出 missing runtime prerequisite
+- **WHEN** internal conversion 成功，但目前環境無法執行 Kit/GPU/browser verification（含 runtime image Linux Kit launcher 的 NVIDIA graphics/Vulkan/GPU/Kit license 阻塞）
+- **THEN** evidence 分別記錄 conversion success，並將 single Kit render evidence 標為 `blocked` 或 `deferred`，同時列出 missing runtime prerequisite
+- **AND** `deferred` MUST NOT 被報為 `passed`，且 host-local Kit MUST NOT 充當 substitute pass
 
-#### Scenario: Worker conversion passed 但 visual preview blocked
+#### Scenario: Conversion passed 但 visual preview blocked
 
-- **WHEN** canonical `--limit 1` conversion 成功，但 `web-viewer-sample`、coordinator、Kit runtime、WebRTC、GPU 或 browser automation 不可用
+- **WHEN** internal conversion 成功，但 `web-viewer-sample`、coordinator、Kit runtime、WebRTC、GPU 或 browser automation 不可用
 - **THEN** evidence 將 conversion result 與 visual preview 分層記錄，將 visual preview 標為 `blocked`，且不得宣稱 converted USDC 已在 web UI 被 visually inspected
+
+#### Scenario: Cloud callback delivery is layered separately
+
+- **WHEN** internal conversion 成功並產出 metadata，但公司雲端 callback endpoint 不可達（OQ1 pending）
+- **THEN** evidence 將 `cloud_callback_outbox` 與 conversion / render 分層記錄，記 retry / `dead_letter` 狀態，且 conversion / render evidence 不因 callback 未送達而被否定
 
 ### Requirement: Batch storage IFC evidence calibrates mapping baseline
 
@@ -431,4 +433,3 @@ Evidence MUST report the retention footprint (retained vs pruned per fixture) so
 - **WHEN** at least one fixture row is not a terminal `passed` with its per-fixture baseline locked
 - **THEN** the evidence records `minimum_coverage_locked=false`
 - **AND** the evidence lists the blocking fixtures and their recorded bucket
-

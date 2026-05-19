@@ -300,7 +300,7 @@
 5. <strong>§10 補 OVAS spike 路徑</strong>：kind / minikube 單節點驗 chart 起跳，避免直接挑戰雲端 K8s。</p>
 <p><strong>2026-05-12 更新（本機環境一致性納入執行基線）</strong>：新增 <strong>§1.5</strong> 作為 demo runtime 的環境一致性基線，並在 <strong>§7 R10</strong> / <strong>§10</strong> 補上 drift 風險與啟動前檢查。OpenSpec 已驗證通過代表當時 spec / tests / smoke evidence 成立；重新啟動 demo 前仍必須確認 repo-local Python / Node dependencies 沒有漂移。</p>
 <p><strong>2026-05-12 更新（OpenSpec archive 後 roadmap 對齊規範）</strong>：新增 <strong>§1.6</strong>，明定每次 OpenSpec sync / archive 後，必須同步更新本 roadmap 的 spec 清單、歸檔 change 溯源、Phase 狀態、候選優先級與驗證證據引用，避免 <code>openspec/specs/</code> 與本文件漂移。</p>
-<p><strong>2026-05-18 更新（Phase B apply 進度｜<code>local-coordinator-ifc-ready-intake-boundary</code>）</strong>：B 方案 apply（T0–T9）已於 rolling PR #63 完成實作並各批最小驗證；<strong><code>_worker</code> / <code>_bim-control</code> 已自 repo 刪除</strong>（removed from product runtime，非降級），對外入口收斂於 <code>bim-review-coordinator</code> <code>POST /api/external/ifc-ready</code>、<code>bim-streaming-server</code> 為 internal-only、轉檔結果走 metadata-only callback outbox、本地僅最小 shadow metadata。<strong>驗證狀態（誠實，未標 passed）</strong>：coordinator <code>npm run verify</code> 與 repo-root / streaming pytest 綠；<strong>runtime image Linux Kit launcher = <code>deferred</code></strong>（GPU/Kit graphics-vulkan 阻塞，非 passed，不用 host-local Kit 充當）；OQ1（雲端 callback endpoint）/ OQ5（SSO）真實對接仍 pending，以凍結契約緩解。本節核心 repo 清單、§2/§5/§7/§10、Phase 狀態等的<strong>正式收斂屬 merge 後 §1.6 sync/archive（T9.5）</strong>，此處先記進度、不據此把驗證狀態標為 passed。</p>
+<p><strong>2026-05-18 更新（Phase B apply 已 merged + archived｜<code>local-coordinator-ifc-ready-intake-boundary</code>）</strong>：B 方案 apply（T0–T9）已於 rolling PR #63 <strong>merged</strong>（squash <code>17553a0</code>），並依 <code>AGENTS.md §1.6</code> 完成 <strong>OpenSpec sync/archive</strong>（archive folder <code>openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/</code>；<code>openspec/specs/</code> 19 → <strong>23</strong>：ADD 4＝<code>local-coordinator-ifc-ready-intake-boundary</code>/<code>external-cloud-callback-lifecycle</code>/<code>local-artifact-shadow-metadata</code>/<code>runtime-image-linux-kit-launcher-readiness</code>；MODIFIED 5＝<code>conversion-webhook-lifecycle</code>/<code>streaming-ifc-usdc-conversion-authority</code>/<code>documentation-source-of-truth</code>/<code>demo-runtime-readiness-smoke</code>/<code>runtime-verification-evidence</code>；<code>worker-rvt-ifc-bridge</code>/<code>bim-control-revit-intake-facade</code>/<code>worker-artifact-pipeline</code> 收斂為單一「capability removed from product runtime」requirement）。<code>openspec validate --specs --strict</code> = <strong>23 passed / 0 failed</strong>。<strong>架構正式邊界</strong>：<code>_worker</code> / <code>_bim-control</code> 已自 repo 刪除（removed from product runtime，非降級）；對外入口 = <code>bim-review-coordinator</code> <code>POST /api/external/ifc-ready</code>、<code>bim-streaming-server</code> internal-only、轉檔結果走 metadata-only callback outbox、本地僅最小 shadow metadata（control-plane 權威屬外部公司雲端，不 mirror）。<strong>驗證狀態（誠實，依 §1.6 未標 §1.3 passed）</strong>：coordinator <code>npm run verify</code>（vitest 130）與 repo-root pytest 6 / streaming pytest 5 綠（程式/契約層）；<strong>runtime image Linux Kit launcher = <code>deferred</code></strong>（GPU/Kit graphics-vulkan 阻塞，非 passed，不用 host-local Kit 充當）；OQ1（雲端 callback endpoint/auth）/ OQ5（SSO）真實對接仍 pending（凍結契約緩解）。<strong>Phase B 候選（§5）/ 下一步（§10）狀態</strong>：本 change 已 land＋archived，從候選池移除、不再是 Phase B 待升格項；溯源見 §1.4。</p>
 <p><strong>2026-05-12 更新（<code>worker-real-conversion-quality</code> archive 對齊）</strong>：依 <code>openspec/changes/archive/2026-05-11-worker-real-conversion-quality/</code> 與現行 <code>openspec/specs/</code> 更新 <strong>§1.2 / §1.3 / §1.4 / §2 / §4 / §5 / §6 / §7 / §9.8 / §10</strong>。P0 #1 已 land 並歸檔：<code>_worker</code> 已具備真實 IFC→USDC adapter、USDC openability hard gate、real mapping quality metrics 與 single Kit/browser 截圖證據；mapping coverage 仍採 measure-first，尚未鎖 production baseline 門檻。</p>
 <p><strong>2026-05-12 更新（#2 GPU 容量等待）</strong>：依使用者指示，<code>multi-artifact-kit-routing</code> / <code>streaming-multi-instance-orchestration</code> 的 <code>dedicated_instance</code> runtime 驗證改為 <strong>等待 GPU 購買與部署後執行</strong>。在至少兩個 GPU-backed Kit endpoints 可用前，roadmap 與 OpenSpec 只保留 control-plane contract / routing target，不把 dedicated multi-Kit runtime 視為進行中、passed 或 failed。</p>
 <p><strong>2026-05-12 更新（<code>worker-mapping-lineage-quality-baseline</code> archive 對齊）</strong>：依 <code>openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/</code> 與現行 <code>openspec/specs/</code> 更新 <strong>§1.2 / §1.3 / §1.4 / §2 / §5 / §6 / §10</strong>。原候選 #3 lineage API 與 #3A mapping quality baseline 已合併為同一 change 並歸檔：<code>_worker</code> 已具備 lineage query API、worker UI lineage / quality view、all-IFC-entity coverage 語意、<code>minimum_coverage_ratio=1.0</code> policy 與 storage batch verification helper；canonical 13-file real batch 仍未完成，因此 production baseline 尚未鎖定。</p>
@@ -477,7 +477,7 @@
 <p><strong>2026-05-18 更新（Plan B v2，依 <code>planB.txt</code> 修訂）</strong>：Plan B 草稿已整份重寫，取代「降級保留 offline fake」方向：(1) <code>_worker</code>/<code>_bim-control</code> <strong>自 repo 刪除</strong>（非降級），測試改 <code>tests/fakes</code> + contract fixtures；(2) 對外 intake 收斂於 <strong><code>bim-review-coordinator</code></strong>（<code>POST /api/external/ifc-ready</code>），<code>bim-streaming-server</code> 僅 internal conversion engine；(3) caller = 客戶落地端 IFC Worker（落地端內網，非公司測試機直連）；(4) 新增<strong>雲端 callback outbox</strong>（metadata-only，禁傳大檔）；(5) Q1–Q6 已收斂；(6) 建議 change-id 改 <strong><code>local-coordinator-ifc-ready-intake-boundary</code></strong>（舊名 <code>external-platform-webhook-intake-boundary</code> 為別名）。完整見同檔草稿。SoT / spec / §10 閉環 rewrite 屬 Phase B 的 T1/T9（OpenSpec change apply 時做，現在不做）。</p>
 </blockquote>
 <h3 id="12-openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：<code>openspec/specs/</code>）</h3>
-<p>下列 <strong>19</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。</p>
+<p>下列 <strong>23</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。<strong>[2026-05-18 <code>local-coordinator-ifc-ready-intake-boundary</code> archive]</strong> 新增 4 capability（19 → 23）；<code>worker-artifact-pipeline</code>/<code>bim-control-revit-intake-facade</code>/<code>worker-rvt-ifc-bridge</code> 已收斂為單一「removed from product runtime」requirement（B 方案：<code>_worker</code>/<code>_bim-control</code> 自 repo 刪除，僅 test fixture 模擬，非 runtime）。</p>
 <table>
 <thead>
 <tr>
@@ -492,7 +492,7 @@
 <td><code>worker-artifact-pipeline</code></td>
 <td>1</td>
 <td>3-B</td>
-<td>✓ 涵蓋 source intake / conversion job / versioned object layout / metadata callback / <code>original_filename</code> / real IFC→USDC conversion quality / lineage graph API / all-IFC-entity coverage policy</td>
+<td>✗ <strong>removed from product runtime</strong>（B 方案：<code>_worker</code> 自 repo 刪除，非降級）；轉檔權威 → <code>streaming-ifc-usdc-conversion-authority</code>、對外入口 → <code>local-coordinator-ifc-ready-intake-boundary</code>；僅 test fixture 模擬</td>
 </tr>
 <tr>
 <td><code>worker-dev-ifc-source-selection</code></td>
@@ -564,13 +564,13 @@
 <td><code>bim-control-revit-intake-facade</code></td>
 <td>1/2</td>
 <td>3-A</td>
-<td>✓ <code>_bim-control</code> 提供 fake RVT intake facade；只保存 request / artifact metadata，不執行 Revit</td>
+<td>✗ <strong>removed from product runtime</strong>（B 方案：<code>_bim-control</code> 自 repo 刪除，非降級）；RVT intake/資料權威屬外部公司雲端 control-plane；僅 test fixture 模擬</td>
 </tr>
 <tr>
 <td><code>worker-rvt-ifc-bridge</code></td>
 <td>1</td>
 <td>3-B</td>
-<td>✓ <code>_worker</code> 收斂為 RVT→IFC bridge；輸出 <code>ifc_ready</code> handoff，不宣告 <code>model.usdc</code> ready</td>
+<td>✗ <strong>removed from product runtime</strong>（B 方案：<code>_worker</code> 自 repo 刪除，非降級）；RVT→IFC 屬外部客戶落地端 IFC Worker；僅 test fixture 模擬</td>
 </tr>
 <tr>
 <td><code>streaming-ifc-usdc-conversion-authority</code></td>
@@ -601,6 +601,30 @@
 <td>3/4</td>
 <td>4/6</td>
 <td>✓ 規格：MVP runtime SHALL be Docker-first、Kit SHALL run in GPU container、GPU image 於 Docker build 內建 Linux Kit launcher；⚠ GPU/Kit runtime 驗證項 deferred（<code>Validate runtime image launches produced Linux Kit launcher</code> 未完），依 §0.1 不標 runtime passed</td>
+</tr>
+<tr>
+<td><code>local-coordinator-ifc-ready-intake-boundary</code></td>
+<td>1/2</td>
+<td>3-A</td>
+<td>✓ B 方案：<code>bim-review-coordinator</code> 為唯一對外 IFC-ready intake（<code>POST /api/external/ifc-ready</code>，caller=落地端 IFC Worker）；Service auth（可替換 AuthProvider）/ idempotency / <code>external_model_version_id</code> binding；<code>bim-streaming-server</code> internal-only</td>
+</tr>
+<tr>
+<td><code>external-cloud-callback-lifecycle</code></td>
+<td>1/2</td>
+<td>3-A</td>
+<td>✓ B 方案：轉檔結果以 <strong>metadata-only</strong> callback 回拋公司雲端；<code>callback_outbox</code> + retry + <code>dead_letter</code> + evidence；callback 狀態與 conversion 成功分離；⚠ real 公司雲端 endpoint/auth pending OQ1（凍結契約緩解，未標真實對接 passed）</td>
+</tr>
+<tr>
+<td><code>local-artifact-shadow-metadata</code></td>
+<td>1/2</td>
+<td>3-B</td>
+<td>✓ B 方案：control-plane（外部公司雲端）/ data-plane（本 repo）權威切分；本地僅最小 12 欄位 shadow（不 mirror 公司 MySQL）</td>
+</tr>
+<tr>
+<td><code>runtime-image-linux-kit-launcher-readiness</code></td>
+<td>3/4</td>
+<td>6</td>
+<td>⚠ B 方案：補 predecessor 遺留「Validate runtime image launches produced Linux Kit launcher」；本環境 GPU/Kit graphics-vulkan 阻塞 → <strong>deferred</strong>（誠實，依 §0.1/§1.6 不標 runtime passed、不用 host-local Kit 充當）</td>
 </tr>
 </tbody>
 </table>
@@ -812,6 +836,11 @@ historical worker conversion:       migration source only; cannot mark B-scheme 
 <td><code>2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp</code></td>
 <td><code>runtime-manager-docker-kit-mvp</code>（ADD，新 capability）</td>
 <td>Docker-first runtime MVP：MVP runtime SHALL be Docker-first（host-local 不算 pass）、Kit SHALL run in GPU container、GPU image 於 Docker build 內建並打包 Linux Kit launcher；implementation PR #59 merged；archive 時 1 個 GPU/Kit runtime 驗證 task deferred，依 §0.1 不標 runtime passed</td>
+</tr>
+<tr>
+<td><code>2026-05-18-local-coordinator-ifc-ready-intake-boundary</code></td>
+<td><code>local-coordinator-ifc-ready-intake-boundary</code>、<code>external-cloud-callback-lifecycle</code>、<code>local-artifact-shadow-metadata</code>、<code>runtime-image-linux-kit-launcher-readiness</code>（ADD，4 新 capability）；<code>conversion-webhook-lifecycle</code>、<code>streaming-ifc-usdc-conversion-authority</code>、<code>documentation-source-of-truth</code>、<code>demo-runtime-readiness-smoke</code>、<code>runtime-verification-evidence</code>（MODIFY）；<code>worker-rvt-ifc-bridge</code>、<code>bim-control-revit-intake-facade</code>、<code>worker-artifact-pipeline</code>（收斂為單一「capability removed from product runtime」requirement）</td>
+<td>B 方案落地：<code>_worker</code>/<code>_bim-control</code> 自 repo 刪除（removed from product runtime，非降級）；對外 IFC-ready intake 收斂於 <code>bim-review-coordinator</code>（Service auth/idempotency/external_model_version_id binding）、<code>bim-streaming-server</code> internal-only、轉檔結果 metadata-only callback outbox（retry/dead-letter）、最小 local shadow metadata（control-plane 權威屬外部公司雲端，不 mirror）、local web view + 可替換 user auth。implementation PR #63 merged（squash <code>17553a0</code>）；<code>openspec/specs/</code> 19 → 23、<code>validate --specs --strict</code> 23/0；archive 時 runtime image Linux Kit launcher = <strong>deferred</strong>（GPU/Kit graphics-vulkan 阻塞）、OQ1/OQ5 真實對接 pending，依 §0.1/§1.6 不標 §1.3 runtime passed</td>
 </tr>
 </tbody>
 </table>
