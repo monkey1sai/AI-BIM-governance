@@ -32,6 +32,8 @@
 >
 > **2026-05-18 更新（Phase B apply 已 merged + archived｜`local-coordinator-ifc-ready-intake-boundary`）**：B 方案 apply（T0–T9）已於 rolling PR #63 **merged**（squash `17553a0`），並依 `AGENTS.md §1.6` 完成 **OpenSpec sync/archive**（archive folder `openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/`；`openspec/specs/` 19 → **23**：ADD 4＝`local-coordinator-ifc-ready-intake-boundary`/`external-cloud-callback-lifecycle`/`local-artifact-shadow-metadata`/`runtime-image-linux-kit-launcher-readiness`；MODIFIED 5＝`conversion-webhook-lifecycle`/`streaming-ifc-usdc-conversion-authority`/`documentation-source-of-truth`/`demo-runtime-readiness-smoke`/`runtime-verification-evidence`；`worker-rvt-ifc-bridge`/`bim-control-revit-intake-facade`/`worker-artifact-pipeline` 收斂為單一「capability removed from product runtime」requirement）。`openspec validate --specs --strict` = **23 passed / 0 failed**。**架構正式邊界**：`_worker` / `_bim-control` 已自 repo 刪除（removed from product runtime，非降級）；對外入口 = `bim-review-coordinator` `POST /api/external/ifc-ready`、`bim-streaming-server` internal-only、轉檔結果走 metadata-only callback outbox、本地僅最小 shadow metadata（control-plane 權威屬外部公司雲端，不 mirror）。**驗證狀態（誠實，依 §1.6 未標 §1.3 passed）**：coordinator `npm run verify`（vitest 130）與 repo-root pytest 6 / streaming pytest 5 綠（程式/契約層）；**runtime image Linux Kit launcher = `deferred`**（GPU/Kit graphics-vulkan 阻塞，非 passed，不用 host-local Kit 充當）；OQ1（雲端 callback endpoint/auth）/ OQ5（SSO）真實對接仍 pending（凍結契約緩解）。**Phase B 候選（§5）/ 下一步（§10）狀態**：本 change 已 land＋archived，從候選池移除、不再是 Phase B 待升格項；溯源見 §1.4。
 >
+> **2026-05-19 更新（B 方案 intake smoke 現行證據）**：`scripts/smoke-bscheme-intake.ps1` 已從 contract-stub API-only smoke 擴成「contract checks + optional real `storage/*.ifc` → coordinator intake → streaming conversion polling → coordinator callback outbox」的最小整合驗證入口。本 8caa worktree 的 `storage/*.ifc` 目前為 **0 檔**，因此 `real_ifc_fixture=blocked`、`real_ifc_intake_conversion=blocked`；contract/API 層仍通過（repo-root pytest 7、coordinator verify 140、streaming conversion pytest 6、callback outbox passed）。GPU/Kit 層本次 `runtime_image_kit_launcher=deferred`，實際 blocker 為 **Docker engine not available**；single Kit render 為 `deferred`、multi-viewer 與 USD stage composition 為 `not_observed`。證據：`docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json` 與 `docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json`。
+>
 > **2026-05-12 更新（`worker-real-conversion-quality` archive 對齊）**：依 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §4 / §5 / §6 / §7 / §9.8 / §10**。P0 #1 已 land 並歸檔：`_worker` 已具備真實 IFC→USDC adapter、USDC openability hard gate、real mapping quality metrics 與 single Kit/browser 截圖證據；mapping coverage 仍採 measure-first，尚未鎖 production baseline 門檻。
 >
 > **2026-05-12 更新（#2 GPU 容量等待）**：依使用者指示，`multi-artifact-kit-routing` / `streaming-multi-instance-orchestration` 的 `dedicated_instance` runtime 驗證改為 **等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，roadmap 與 OpenSpec 只保留 control-plane contract / routing target，不把 dedicated multi-Kit runtime 視為進行中、passed 或 failed。
@@ -300,6 +302,18 @@ streaming_conversion_job tier:      contract archived; not_observed until bim-st
 mapping_quality tier:               contract archived; not_observed until streaming-owned result carries metrics
 usd_stage_composition tier:          contract archived; live Kit/GPU composition smoke not rerun
 historical worker conversion:       migration source only; cannot mark B-scheme tiers passed
+
+# 2026-05-19 B-scheme intake smoke（current worktree evidence）
+command:                            powershell -NoProfile -File scripts\smoke-bscheme-intake.ps1
+evidence json:                       docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json
+storage/*.ifc:                       0 files in current 8caa worktree; real_ifc_fixture=blocked
+real IFC intake→conversion:          blocked; not run because current storage/*.ifc is empty
+external contracts/fakes:            passed; repo-root pytest 7 passed
+coordinator lifecycle/outbox:         passed; npm run verify 140 passed
+streaming conversion authority:      passed; pytest 6 passed
+mapping_quality:                     not_observed; no streaming-owned real result in this run
+runtime_image_kit_launcher:          deferred; Docker engine not available
+single Kit/WebRTC render:             deferred/not_observed; 49100 not listening and no browser evidence collected
 ```
 
 > **證據文件**：
