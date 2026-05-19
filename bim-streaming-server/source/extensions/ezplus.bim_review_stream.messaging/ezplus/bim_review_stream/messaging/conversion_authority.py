@@ -24,6 +24,13 @@ class ConversionAuthorityError(RuntimeError):
         self.message = message
 
 
+class ConversionRequestError(ValueError):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
 @dataclass(frozen=True)
 class ConversionAuthoritySettings:
     service_root: Path
@@ -36,6 +43,7 @@ class ConversionAuthoritySettings:
     # 屬 T5 並由 coordinator 驅動。預設 None＝不主動 callback（coordinator 輪詢
     # /result 或由 T5 outbox 投遞）。
     bim_control_callback_url: str | None = None
+    internal_conversion_token: str | None = None
 
 
 class HeadlessConverterNotConfigured:
@@ -52,13 +60,17 @@ def create_conversion_api_app(
     converter: Any | None = None,
     run_background: bool = True,
 ):
-    from fastapi import BackgroundTasks, Body, FastAPI, HTTPException
+    from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Request
 
     store = StreamingConversionStore(settings=settings, converter=converter)
     app = FastAPI(title="BIM Streaming Conversion Authority", version="0.1.0")
 
     @app.post("/api/conversions/ifc-to-usdc", status_code=202)
-    def create_conversion(background_tasks: BackgroundTasks, ifc_ready_event: dict[str, Any] = Body(...)):
+    def create_conversion(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        ifc_ready_event: dict[str, Any] = Body(...),
+    ):
         """Internal conversion request (B-scheme: local-coordinator-ifc-ready-intake-boundary T4).
 
         `bim-streaming-server` is an internal-only conversion engine. The supported
@@ -68,8 +80,17 @@ def create_conversion_api_app(
         StreamingConversionClient produces; the external IFC-ready contract lives at
         `bim-review-coordinator` `POST /api/external/ifc-ready`.
         """
+        expected_token = settings.internal_conversion_token
+        if expected_token:
+            actual_token = request.headers.get("X-Internal-Conversion-Token")
+            if not actual_token:
+                raise HTTPException(status_code=401, detail="Missing internal conversion token.")
+            if actual_token != expected_token:
+                raise HTTPException(status_code=403, detail="Invalid internal conversion token.")
         try:
             job = store.create_conversion_job(ifc_ready_event)
+        except ConversionRequestError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if run_background and not job.get("idempotent_replay"):
@@ -116,8 +137,13 @@ class StreamingConversionStore:
         if event.get("event_type") != "ifc_ready":
             raise ValueError("Expected ifc_ready event.")
         event_id = _safe_id(str(event.get("event_id") or ""), "event_id")
-        existing = self._find_job_by_event_id(event_id)
+        idempotency_key = _safe_id(str(event.get("idempotency_key") or event_id), "idempotency_key")
+        request_fingerprint = _request_fingerprint(event)
+        existing = self._find_job_by_idempotency_key(idempotency_key)
         if existing is not None:
+            existing_fingerprint = existing.get("request_fingerprint")
+            if existing_fingerprint and existing_fingerprint != request_fingerprint:
+                raise ConversionRequestError(409, "Idempotency key already belongs to a different conversion request.")
             replay = dict(existing)
             replay["idempotent_replay"] = True
             return replay
@@ -130,6 +156,8 @@ class StreamingConversionStore:
             "job_id": conversion_job_id,
             "authority": "bim-streaming-server",
             "event_id": event_id,
+            "idempotency_key": idempotency_key,
+            "request_fingerprint": request_fingerprint,
             "event_type": event["event_type"],
             "correlation_id": _safe_id(str(event.get("correlation_id") or ""), "correlation_id"),
             "tenant_id": _safe_id(str(event.get("tenant_id") or "tenant_demo_001"), "tenant_id"),
@@ -398,10 +426,10 @@ class StreamingConversionStore:
             },
         )
 
-    def _find_job_by_event_id(self, event_id: str) -> dict[str, Any] | None:
+    def _find_job_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
         for path in sorted(Path(self.settings.jobs_dir).glob("stream_conv_*.json"), reverse=True):
             job = json.loads(path.read_text(encoding="utf-8"))
-            if job.get("event_id") == event_id:
+            if (job.get("idempotency_key") or job.get("event_id")) == idempotency_key:
                 return job
         return None
 
@@ -447,6 +475,13 @@ def _safe_id(value: str, label: str) -> str:
     if not value or not SAFE_ID_RE.fullmatch(value):
         raise ValueError(f"Invalid {label}: {value}")
     return value
+
+
+def _request_fingerprint(event: Mapping[str, Any]) -> str:
+    stable_event = dict(event)
+    stable_event.pop("event_id", None)
+    stable_event.pop("idempotency_key", None)
+    return json.dumps(stable_event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _int_metric(*values: Any, default: int = 0) -> int:

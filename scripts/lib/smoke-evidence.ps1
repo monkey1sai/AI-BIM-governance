@@ -74,9 +74,17 @@ function Get-DevIfcFixtureSummary {
             Get-ChildItem -LiteralPath $Root -Recurse -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.Extension -ieq '.ifc' } |
                 ForEach-Object {
+                    $separators = [char[]]"\/"
+                    $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd($separators)
+                    $fileFull = [System.IO.Path]::GetFullPath($_.FullName)
+                    if ($fileFull.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $relativePath = $fileFull.Substring($rootFull.Length).TrimStart($separators)
+                    } else {
+                        $relativePath = $_.Name
+                    }
                     [pscustomobject]@{
                         filename      = $_.Name
-                        relative_path = ([System.IO.Path]::GetRelativePath($Root, $_.FullName)).Replace('\', '/')
+                        relative_path = $relativePath.Replace('\', '/')
                         size_bytes    = [int64]$_.Length
                         modified_at   = $_.LastWriteTimeUtc.ToString('o')
                     }

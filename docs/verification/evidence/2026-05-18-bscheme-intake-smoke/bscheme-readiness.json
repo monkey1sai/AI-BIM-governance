@@ -1,12 +1,12 @@
 {
     "schema_version":  "demo-runtime-readiness-smoke/v1",
     "capability":  "demo-runtime-readiness-smoke",
-    "emitted_at":  "2026-05-19T03:02:59.0950615Z",
+    "emitted_at":  "2026-05-19T03:56:19.5563160Z",
     "command":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\scripts\\smoke-bscheme-intake.ps1",
     "cwd":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance",
     "context":  {
                     "task":  "T8 readiness/smoke/evidence rewrite",
-                    "note":  "default smoke 不依賴 _worker/_bim-control；contract stub → coordinator intake",
+                    "note":  "default smoke 不依賴 _worker/_bim-control；contract stub + optional real storage/*.ifc → coordinator intake → streaming conversion",
                     "change_id":  "local-coordinator-ifc-ready-intake-boundary"
                 },
     "tiers":  [
@@ -21,7 +21,53 @@
                       "next_command":  "python -m pytest tests -q",
                       "evidence_paths":  null,
                       "detail":  {
-                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n.......                                                                  [100%]\n7 passed in 0.02s"
+                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n.......                                                                  [100%]\n7 passed in 0.03s"
+                                 }
+                  },
+                  {
+                      "tier":  "real_ifc_fixture",
+                      "status":  "blocked",
+                      "owner":  "scripts",
+                      "ids":  {
+                                  "fixture_count":  0,
+                                  "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
+                                  "top_level_ifc_count":  0
+                              },
+                      "blocker":  "no real IFC fixture found at storage/*.ifc",
+                      "next_command":  "Put a real .ifc directly under storage/ (gitignored), then rerun scripts/smoke-bscheme-intake.ps1",
+                      "evidence_paths":  null,
+                      "detail":  {
+                                     "recursive_fixtures":  [
+
+                                                            ],
+                                     "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
+                                     "streaming_base_url":  "http://127.0.0.1:49101",
+                                     "selected_fixture":  null,
+                                     "coordinator_base_url":  "http://127.0.0.1:8004",
+                                     "top_level_pattern":  "storage/*.ifc"
+                                 }
+                  },
+                  {
+                      "tier":  "real_ifc_intake_conversion",
+                      "status":  "blocked",
+                      "owner":  "bim-review-coordinator",
+                      "ids":  {
+                                  "fixture_count":  0,
+                                  "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
+                                  "top_level_ifc_count":  0
+                              },
+                      "blocker":  "real IFC intake→conversion was not run because storage/*.ifc is empty",
+                      "next_command":  "Start bim-review-coordinator on 8004 and a streaming conversion API on 49101, then rerun scripts/smoke-bscheme-intake.ps1",
+                      "evidence_paths":  null,
+                      "detail":  {
+                                     "recursive_fixtures":  [
+
+                                                            ],
+                                     "storage_root":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\storage",
+                                     "streaming_base_url":  "http://127.0.0.1:49101",
+                                     "selected_fixture":  null,
+                                     "coordinator_base_url":  "http://127.0.0.1:8004",
+                                     "top_level_pattern":  "storage/*.ifc"
                                  }
                   },
                   {
@@ -35,7 +81,7 @@
                       "next_command":  "cd bim-review-coordinator \u0026\u0026 npm run verify",
                       "evidence_paths":  null,
                       "detail":  {
-                                     "output":  "\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 verify\n\u003e npm run build \u0026\u0026 npm test\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 build\n\u003e tsc -p tsconfig.json\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 test\n\u003e vitest run\n\n\n\u001b[1m\u001b[7m\u001b[36m RUN \u001b[39m\u001b[27m\u001b[22m \u001b[36mv2.1.9 \u001b[39m\u001b[90mC:/Users/IOT/.codex/worktrees/c3de/AI-BIM-governance/bim-review-coordinator\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/unit_kitpool.test.ts \u001b[2m(\u001b[22m\u001b[2m31 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 13\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/auth-provider.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 5\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/unit_sessionstore.test.ts \u001b[2m(\u001b[22m\u001b[2m39 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 69\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/dev-console.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 80\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/shadow-metadata.test.ts \u001b[2m(\u001b[22m\u001b[2m5 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 85\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/local-web-view.test.ts \u001b[2m(\u001b[22m\u001b[2m6 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 93\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/cloud-callback-outbox.test.ts \u001b[2m(\u001b[22m\u001b[2m8 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 116\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/external-ifc-ready.test.ts \u001b[2m(\u001b[22m\u001b[2m9 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 118\u001b[2mms\u001b[22m\u001b[39m\n\u001b[90mstderr\u001b[2m | tests/sessions.test.ts\u001b[2m \u003e \u001b[22m\u001b[2mbim-review-coordinator\u001b[2m \u003e \u001b[22m\u001b[2mskips malformed lines in the event log instead of throwing\n\u001b[22m\u001b[39mEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nSystem.Management.Automation.RemoteException\n \u001b[32m✓\u001b[39m tests/sessions.test.ts \u001b[2m(\u001b[22m\u001b[2m36 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[33m 357\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m9 passed\u001b[39m\u001b[22m\u001b[90m (9)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m140 passed\u001b[39m\u001b[22m\u001b[90m (140)\u001b[39m\n\u001b[2m   Start at \u001b[22m 11:03:02\n\u001b[2m   Duration \u001b[22m 1.14s\u001b[2m (transform 696ms, setup 0ms, collect 2.86s, tests 935ms, environment 2ms, prepare 1.18s)\u001b[22m\n"
+                                     "output":  "\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 verify\n\u003e npm run build \u0026\u0026 npm test\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 build\n\u003e tsc -p tsconfig.json\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 test\n\u003e vitest run\n\n\n\u001b[1m\u001b[7m\u001b[36m RUN \u001b[39m\u001b[27m\u001b[22m \u001b[36mv2.1.9 \u001b[39m\u001b[90mC:/Users/IOT/.codex/worktrees/c3de/AI-BIM-governance/bim-review-coordinator\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/unit_kitpool.test.ts \u001b[2m(\u001b[22m\u001b[2m31 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 17\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/auth-provider.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 5\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/unit_sessionstore.test.ts \u001b[2m(\u001b[22m\u001b[2m39 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 102\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/dev-console.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 107\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/shadow-metadata.test.ts \u001b[2m(\u001b[22m\u001b[2m5 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 126\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/local-web-view.test.ts \u001b[2m(\u001b[22m\u001b[2m6 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 146\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/external-ifc-ready.test.ts \u001b[2m(\u001b[22m\u001b[2m9 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 159\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/cloud-callback-outbox.test.ts \u001b[2m(\u001b[22m\u001b[2m8 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 160\u001b[2mms\u001b[22m\u001b[39m\n\u001b[90mstderr\u001b[2m | tests/sessions.test.ts\u001b[2m \u003e \u001b[22m\u001b[2mbim-review-coordinator\u001b[2m \u003e \u001b[22m\u001b[2mskips malformed lines in the event log instead of throwing\n\u001b[22m\u001b[39mEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nSystem.Management.Automation.RemoteException\n \u001b[32m✓\u001b[39m tests/sessions.test.ts \u001b[2m(\u001b[22m\u001b[2m36 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[33m 477\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m9 passed\u001b[39m\u001b[22m\u001b[90m (9)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m140 passed\u001b[39m\u001b[22m\u001b[90m (140)\u001b[39m\n\u001b[2m   Start at \u001b[22m 11:56:23\n\u001b[2m   Duration \u001b[22m 1.54s\u001b[2m (transform 656ms, setup 0ms, collect 3.76s, tests 1.30s, environment 2ms, prepare 1.56s)\u001b[22m\n"
                                  }
                   },
                   {
@@ -49,7 +95,7 @@
                       "next_command":  "cd bim-streaming-server \u0026\u0026 python -m pytest tests/test_conversion_authority_api.py -q -p no:cacheprovider",
                       "evidence_paths":  null,
                       "detail":  {
-                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n......                                                                   [100%]\n6 passed in 0.65s"
+                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n..........                                                               [100%]\n10 passed in 0.94s"
                                  }
                   },
                   {
@@ -59,11 +105,11 @@
                       "ids":  {
 
                               },
-                      "blocker":  "no streaming-owned mapping-quality evidence collected by this API-only pass",
+                      "blocker":  "no streaming-owned mapping-quality evidence collected by this pass",
                       "next_command":  "Run a real streaming conversion with quality metrics evidence when Kit/converter prerequisites are available",
                       "evidence_paths":  null,
                       "detail":  {
-
+                                     "live_real_ifc_intake_conversion":  "blocked"
                                  }
                   },
                   {
@@ -79,6 +125,7 @@
                       "detail":  {
                                      "metadata_only":  "enforced (422)",
                                      "retry":  "pending-\u003eretry",
+                                     "live_real_ifc_callback":  null,
                                      "exhausted":  "dead_letter"
                                  }
                   },
@@ -107,7 +154,11 @@
                       "next_command":  "pwsh -File scripts/verify-runtime-kit-launcher.ps1, then run browser/Kit render validation",
                       "evidence_paths":  null,
                       "detail":  {
-
+                                     "kit_signal":  {
+                                                        "host":  "127.0.0.1",
+                                                        "port":  49100,
+                                                        "listening":  false
+                                                    }
                                  }
                   },
                   {

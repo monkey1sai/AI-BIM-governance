@@ -179,6 +179,18 @@ cd bim-streaming-server
 python -m pytest tests/test_conversion_authority_api.py -q
 ```
 
+B 方案 intake → conversion smoke（會檢查目前 repo 的 `storage/*.ifc`）：
+
+```powershell
+powershell -NoProfile -File scripts\smoke-bscheme-intake.ps1
+```
+
+此 smoke 的 evidence 會寫到
+[`docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json`](docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json)。
+若 `storage/*.ifc` 沒有真實 IFC，`real_ifc_fixture` 與
+`real_ifc_intake_conversion` 必須是 `blocked`，不得用 contract stub 或歷史
+worker evidence 代替 passed。
+
 Viewer：
 
 ```powershell

@@ -32,6 +32,10 @@
 >
 > **2026-05-18 更新（Phase B apply 已 merged + archived｜`local-coordinator-ifc-ready-intake-boundary`）**：B 方案 apply（T0–T9）已於 rolling PR #63 **merged**（squash `17553a0`），並依 `AGENTS.md §1.6` 完成 **OpenSpec sync/archive**（archive folder `openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/`；`openspec/specs/` 19 → **23**：ADD 4＝`local-coordinator-ifc-ready-intake-boundary`/`external-cloud-callback-lifecycle`/`local-artifact-shadow-metadata`/`runtime-image-linux-kit-launcher-readiness`；MODIFIED 5＝`conversion-webhook-lifecycle`/`streaming-ifc-usdc-conversion-authority`/`documentation-source-of-truth`/`demo-runtime-readiness-smoke`/`runtime-verification-evidence`；`worker-rvt-ifc-bridge`/`bim-control-revit-intake-facade`/`worker-artifact-pipeline` 收斂為單一「capability removed from product runtime」requirement）。`openspec validate --specs --strict` = **23 passed / 0 failed**。**架構正式邊界**：`_worker` / `_bim-control` 已自 repo 刪除（removed from product runtime，非降級）；對外入口 = `bim-review-coordinator` `POST /api/external/ifc-ready`、`bim-streaming-server` internal-only、轉檔結果走 metadata-only callback outbox、本地僅最小 shadow metadata（control-plane 權威屬外部公司雲端，不 mirror）。**驗證狀態（誠實，依 §1.6 未標 §1.3 passed）**：coordinator `npm run verify`（vitest 130）與 repo-root pytest 6 / streaming pytest 5 綠（程式/契約層）；**runtime image Linux Kit launcher = `deferred`**（GPU/Kit graphics-vulkan 阻塞，非 passed，不用 host-local Kit 充當）；OQ1（雲端 callback endpoint/auth）/ OQ5（SSO）真實對接仍 pending（凍結契約緩解）。**Phase B 候選（§5）/ 下一步（§10）狀態**：本 change 已 land＋archived，從候選池移除、不再是 Phase B 待升格項；溯源見 §1.4。
 >
+> **2026-05-19 更新（下一輪 burn-down reset｜對齊 Drive 12h Claude Design 2026-05-14/15）**：新增 [`AI-BIM-governance-next-burn-down-2026-05-19.md`](AI-BIM-governance-next-burn-down-2026-05-19.md) 作為 Drive-ready 下一輪 burn-down。結論：5/14/15 工作台的 C1/C2 仍有效但改名並收斂為 B-scheme runtime evidence（`runtime-image-linux-kit-launcher-readiness-pass`、`bscheme-real-streaming-conversion-evidence`、`single-kit-webrtc-visual-evidence`）；C3 `revit-intake-rvt-ifc-bridge-evidence` **已失效**，不得重開 `_bim-control` / `_worker` 產品 runtime。13-file worker batch / `minimum_coverage_locked` 已轉為 archive-only historical evidence，不再是 Phase B 後的下一輪 product runtime 候選。§5 / §6 / §10 已同步加入目前仍有效的候選、deferred / blocked runtime evidence 與建議順序。
+>
+> **2026-05-19 更新（B 方案 intake smoke 現行證據）**：`scripts/smoke-bscheme-intake.ps1` 已從 contract-stub API-only smoke 擴成「contract checks + optional real `storage/*.ifc` → coordinator intake → streaming conversion polling → coordinator callback outbox」的最小整合驗證入口。本 8caa worktree 的 `storage/*.ifc` 目前為 **0 檔**，因此 `real_ifc_fixture=blocked`、`real_ifc_intake_conversion=blocked`；contract/API 層仍通過（repo-root pytest 7、coordinator verify 140、streaming conversion pytest 10、callback outbox passed）。GPU/Kit 層本次 `runtime_image_kit_launcher=deferred`，實際 blocker 為 **Docker engine not available**；single Kit render 為 `deferred`、multi-viewer 與 USD stage composition 為 `not_observed`。證據：`docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json` 與 `docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json`。
+>
 > **2026-05-12 更新（`worker-real-conversion-quality` archive 對齊）**：依 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §4 / §5 / §6 / §7 / §9.8 / §10**。P0 #1 已 land 並歸檔：`_worker` 已具備真實 IFC→USDC adapter、USDC openability hard gate、real mapping quality metrics 與 single Kit/browser 截圖證據；mapping coverage 仍採 measure-first，尚未鎖 production baseline 門檻。
 >
 > **2026-05-12 更新（#2 GPU 容量等待）**：依使用者指示，`multi-artifact-kit-routing` / `streaming-multi-instance-orchestration` 的 `dedicated_instance` runtime 驗證改為 **等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，roadmap 與 OpenSpec 只保留 control-plane contract / routing target，不把 dedicated multi-Kit runtime 視為進行中、passed 或 failed。
@@ -56,9 +60,9 @@
 >
 > **2026-05-15 更新（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離定位）**：依使用者提供的 `BIM模型管理平台 系統架構_260514.pdf`（2026-05-14，雲地分離架構）新增 **§1.1A**，明確 AI-BIM-governance 在該平台中的角色 = **客戶落地端**接在 PDF「IFC Worker（IFC 4 匯出）」之後的延伸（IFC→USDC + 後續 BIM 治理 + Kit streaming runtime，GPU 由客戶自購自擴）；**公司雲端只負責服務授權（公司層級 License）與客戶資訊紀錄（版本／權限／metadata），不存客戶模型原始檔、不跑 GPU runtime**。此更新只對齊部署與商業邊界語意，不改 §1.2 現行 specs、不改 §6 OpenSpec 候選優先級。
 >
-> **2026-05-15 更新（架構決策：外部既有平台邊界 + webhook intake；權威見 AGENTS.md §1.A）**：依使用者明確指令，`_bim-control` / `_worker` 自核心開發 repo **降級為「外部既有平台（PDF 公司雲端 + 客戶落地端 IFC Worker，已部署於公司測試機/正式機）的本地整合 fake」**，本 repo 不再為其新增產品功能；本 repo 對外入口改為 **可被外部測試機呼叫的 webhook intake → 觸發既有已實作的 IFC→USDC（`bim-streaming-server`）**。新增 **§1.1B** 記錄決策與衝突管理排序。程式碼層退役屬產品實作，依 AGENTS.md §0.1 走獨立 OpenSpec change + branch + PR，且**排在在途 worktree 分支 `introduce-ai-bim-runtime-manager-docker-kit-mvp` merge 之後**才從乾淨 main 開分支實作；落地前只改治理/規劃文件，本地 demo 閉環照常可跑。
+> **2026-05-15 更新（歷史決策草稿；已由 2026-05-18/19 Phase B archive supersede）**：當時曾暫時把 `_bim-control` / `_worker` 視為外部既有平台整合 fake，並規劃 webhook intake；此段只保留為決策演進脈絡。現行正式邊界以 2026-05-18/19 archive 與 AGENTS.md §1.A 為準：`_worker` / `_bim-control` 已自 repo 刪除（removed from product runtime，非降級），對外入口為 coordinator `POST /api/external/ifc-ready`。
 >
-> **2026-05-18 更新（`introduce-ai-bim-runtime-manager-docker-kit-mvp` archive 對齊）**：依 `openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.4 / §1.1B**。該 change 之 implementation PR #59 已 merged（mergeCommit `55a9703`），新 capability **`runtime-manager-docker-kit-mvp`** 已 sync 進 `openspec/specs/`（現行 specs 由 18 → **19**）。`openspec validate --specs --strict` = 19 passed / 0 failed。archive 時 tasks 為 **20 done / 1 deferred**（`Validate runtime image launches produced Linux Kit launcher` 屬 GPU/Kit runtime 驗證）；依 AGENTS.md §0.1 line 85，此 archive **不**把該 runtime 項標成 passed。**連帶效果**：predecessor 既已 merged + archived，Phase B（`external-platform-webhook-intake-boundary`）的 `NoSuccessorWhilePredecessorOpen` gate **已清除**，可依 `docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md` §9 升格。
+> **2026-05-18 更新（`introduce-ai-bim-runtime-manager-docker-kit-mvp` archive 對齊）**：依 `openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.4 / §1.1B**。該 change 之 implementation PR #59 已 merged（mergeCommit `55a9703`），新 capability **`runtime-manager-docker-kit-mvp`** 已 sync 進 `openspec/specs/`（現行 specs 由 18 → **19**）。`openspec validate --specs --strict` = 19 passed / 0 failed。archive 時 tasks 為 **20 done / 1 deferred**（`Validate runtime image launches produced Linux Kit launcher` 屬 GPU/Kit runtime 驗證）；依 AGENTS.md §0.1 line 85，此 archive **不**把該 runtime 項標成 passed。**連帶效果（已完成）**：predecessor merge/archive 清掉 Phase B gate；Phase B 後續已由 `local-coordinator-ifc-ready-intake-boundary` PR #63/#64 merged + archived，不再是待升格項。
 
 本文件目的是把使用者提供的兩張架構圖（v1 從 PoC 到 SaaS 的執行路線圖、v2 SaaS 級目標架構與落地順序）對照目前 repo 現況，產出**下一階段最小、可驗證、不擴散範圍**的 OpenSpec change 候選清單，並標出每個候選的優先級、風險、KPI 與 repo 邊界。
 
@@ -91,11 +95,12 @@
 
 | 服務 | Port | 角色 | 健檢狀態 |
 |---|---|---|---|
-| `_bim-control/` | 8001 | Fake BIM data authority + fake RVT intake facade + review-session-requests | OK |
-| `_worker/` | 8005 | RVT→IFC bridge / worker handoff（B 方案下不擁有 IFC→USDC conversion job） | OK（B 方案 bridge evidence 需補） |
-| `bim-review-coordinator/` | 8004 | Session control plane + Socket.IO collaboration | OK |
-| `bim-streaming-server/` | 49100 | IFC→USDC conversion authority + Omniverse Kit runtime + WebRTC + DataChannel | 部分（conversion API / GPU / 47998 需分層驗證） |
+| `bim-review-coordinator/` | 8004 | 唯一對外 IFC-ready intake + session / collaboration control plane + metadata-only callback outbox + local web view | OK（API / contract 層 passed；OQ1/OQ5 真實外部對接 pending） |
+| `bim-streaming-server/` | 49100 | internal-only IFC→USDC conversion authority + Omniverse Kit runtime + WebRTC + DataChannel | 部分（internal conversion API passed；mapping quality / Kit launcher / WebRTC live evidence 仍需分層補） |
 | `web-viewer-sample/` | 5173 | Browser client + Demo Control Panel | OK |
+| `tests/contracts/` + `tests/fakes/` | n/a | 外部公司雲端 bim-control / 客戶落地端 IFC Worker 的 test-only doubles | OK（repo-root pytest passed；非 runtime profile） |
+
+> `_worker/` 與 `_bim-control/` 已依 B 方案自 product runtime 刪除；若歷史段落仍提及，僅作 archive context，不再作為 startup、health、smoke、review-session 或下一輪候選依賴。
 
 ### 1.1A 部署與商業邊界（對齊「BIM 模型管理平台 系統架構」PDF 雲地分離）
 
@@ -113,9 +118,9 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 
 | PDF 分區 | 職責（PDF 標示） | AI-BIM-governance 對應 |
 |---|---|---|
-| ☁ 公司雲端（輕量平台服務） | Web 門戶 / 版本記錄·權限 / SSO / **公司層級 License 授權管理**；僅存版本索引，**不存客戶模型原始檔** | 只接收 review / conversion **metadata** 與服務授權；對應 `_bim-control` 的 fake data authority（metadata-only）語意，不把大檔 / GPU runtime 拉回公司側 |
-| 🏢 客戶落地端（重量資料服務） | 模型檔案儲存 + IFC 轉檔；客戶自購硬體、按需擴充、資料隔離不出內網 | **本 repo 全部 runtime 都在這裡**：`_worker` RVT→IFC bridge、`bim-streaming-server` IFC→USDC + Kit + WebRTC、`bim-review-coordinator` session、`web-viewer-sample` client；**GPU 由客戶自購自擴**（呼應 §9 硬體配置） |
-| IFC Worker 終點（.ifc 匯出） | PDF 平台 pipeline 終點 | AI-BIM-governance 的**起點**：以 IFC 為輸入接續 IFC→USDC 與後續治理 |
+| ☁ 公司雲端（輕量平台服務） | Web 門戶 / 版本記錄·權限 / SSO / **公司層級 License 授權管理**；僅存版本索引，**不存客戶模型原始檔** | 外部 control-plane 權威；只接收 review / conversion **metadata-only callback** 與服務授權，不把大檔 / GPU runtime 拉回公司側 |
+| 🏢 客戶落地端（重量資料服務） | 模型檔案儲存 + IFC 轉檔；客戶自購硬體、按需擴充、資料隔離不出內網 | **本 repo runtime 在這裡**：`bim-review-coordinator` intake/session/callback outbox、`bim-streaming-server` IFC→USDC + Kit + WebRTC、`web-viewer-sample` client；**GPU 由客戶自購自擴**（呼應 §9 硬體配置） |
+| IFC Worker 終點（.ifc 匯出） | PDF 平台 pipeline 終點 | 外部客戶落地端 IFC Worker；AI-BIM-governance 的**起點**是 coordinator `POST /api/external/ifc-ready`，以 IFC reference 觸發 internal conversion |
 
 **邊界含義（與 §8 禁止跨界、AGENTS.md 一致）**：
 
@@ -136,12 +141,12 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 ```txt
 - PDF 平台（公司雲端 Web門戶/MySQL/SSO + 客戶落地端 IFC Worker+Revit）
   = 外部既有系統，已部署於公司測試機/正式機，非本 repo 功能開發範圍。
-- _bim-control / _worker 降級為「外部既有平台的本地整合 fake」，
-  本 repo 不再為其新增產品功能。
-- 本 repo 對外入口 = 可被外部測試機呼叫的 webhook intake API；
-  收到外部 IFC Worker 的 .ifc-ready 通知 → 觸發既有已實作的
-  IFC→USDC（bim-streaming-server / spec streaming-ifc-usdc-conversion-authority
-  + conversion-webhook-lifecycle）→ Kit streaming → BIM 治理。
+- _bim-control / _worker 已自 repo 刪除（removed from product runtime，非降級、
+  非 offline fake runtime profile）；僅 tests/contracts + tests/fakes 模擬外部平台。
+- 本 repo 唯一對外入口 = bim-review-coordinator POST /api/external/ifc-ready；
+  收到外部 IFC Worker 的 .ifc-ready 通知 → 建立 local conversion job /
+  external_model_version_id binding → 呼叫 bim-streaming-server internal conversion API
+  → metadata-only callback outbox 回拋公司雲端 → Kit streaming → BIM 治理。
 ```
 
 **分階段落地與衝突管理（使用者指定重點）**
@@ -149,7 +154,7 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 | 階段 | 內容 | 衝突風險 | 狀態 |
 |---|---|---|---|
 | Phase A | 治理/規劃文件對齊（AGENTS.md §1.A、CLAUDE.md §1.A、本節）；不動程式碼、不刪 mock、不重寫既有 specs | 近乎零（worktree 不碰 AGENTS/CLAUDE；本節 additive 且遠離 §5.0 熱區） | ✓ 本次完成 |
-| Phase B | 程式碼層：退役/收斂 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本、webhook 來源改外部測試機、調整相關 specs | 中（worktree 已 merge+archived，原 `_worker/` 熱區衝突風險解除；Phase B 從 synced main rebase-on-clean-main） | ✅ gate 已清除（predecessor #59 merged + archived 2026-05-18）；可升格 |
+| Phase B | 程式碼層：刪除 `_worker`/`_bim-control`、改寫 §10 閉環、收斂啟動腳本、webhook 來源改外部客戶落地端 IFC Worker、調整 specs | 已收斂 | ✅ 已 merged + archived（PR #64 / main `70a0dd2`）；從候選池移除 |
 
 **Phase B 排序（避免大量 merge 衝突）**
 
@@ -157,15 +162,15 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 1. ✅ 完成（2026-05-18）：在途 worktree 分支
    codex/openspec/introduce-ai-bim-runtime-manager-docker-kit-mvp 已 merge 進 main
    （PR #59 / 55a9703）並 archived；gate 清除。
-2. Phase B 從 synced main 開 codex/openspec/external-platform-webhook-intake-boundary
-   分支實作，rebase-on-clean-main。
-3. Phase B 落地、PR merge、archive 後，依 §1.6 回頭同步本 roadmap
-   與 AGENTS.md / CLAUDE.md，把過渡語意收斂為正式邊界。
+2. ✅ 完成（2026-05-18/19）：Phase B 實作 PR #63 merged，post-merge PR #64
+   sync/archive 到 main 70a0dd2。
+3. 下一輪不再升格 Phase B；只補 B-scheme runtime evidence（Kit launcher、
+   streaming-owned conversion/mapping、single Kit/WebRTC visual proof）。
 ```
 
-> **Phase B 草稿（2026-05-18：gate 已清除，可升格）**：完整草稿見 [`docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`](phase-b-external-platform-webhook-intake-DRAFT-2026-05.md)。`NoSuccessorWhilePredecessorOpen` gate 已解除（predecessor PR #59 merged + change archived `2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp`）。下一步：依草稿 §9 checklist，從 synced main 重跑 `change-id-resolve`（確認 `blockers=[]`）→ `opsx-worktree-guard`/provision → `openspec-propose` 升格為 change-id `external-platform-webhook-intake-boundary`（explore 階段先收斂草稿 §8 open questions，特別 Q1 caller 身分、Q3 auth）。
+> **Phase B 草稿狀態（2026-05-19）**：[`docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`](phase-b-external-platform-webhook-intake-DRAFT-2026-05.md) 已被 `local-coordinator-ifc-ready-intake-boundary` 實作與 archive 吸收。此草稿現在只作 design lineage，不再是待升格候選；下一輪工作見 §5.0A / §6 / §10。
 >
-> **2026-05-18 更新（Plan B v2，依 `planB.txt` 修訂）**：Plan B 草稿已整份重寫，取代「降級保留 offline fake」方向：(1) `_worker`/`_bim-control` **自 repo 刪除**（非降級），測試改 `tests/fakes` + contract fixtures；(2) 對外 intake 收斂於 **`bim-review-coordinator`**（`POST /api/external/ifc-ready`），`bim-streaming-server` 僅 internal conversion engine；(3) caller = 客戶落地端 IFC Worker（落地端內網，非公司測試機直連）；(4) 新增**雲端 callback outbox**（metadata-only，禁傳大檔）；(5) Q1–Q6 已收斂；(6) 建議 change-id 改 **`local-coordinator-ifc-ready-intake-boundary`**（舊名 `external-platform-webhook-intake-boundary` 為別名）。完整見同檔草稿。SoT / spec / §10 閉環 rewrite 屬 Phase B 的 T1/T9（OpenSpec change apply 時做，現在不做）。
+> **2026-05-18/19 archive 結果**：Plan B v2 的 6 點已落地為現行規格：`_worker`/`_bim-control` removed from product runtime、對外 intake 收斂於 coordinator、streaming server internal-only、metadata-only callback outbox、最小 local shadow metadata、OQ1/OQ5 pending。後續只能補 runtime evidence，不再回頭重開已刪服務。
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
 
@@ -300,6 +305,18 @@ streaming_conversion_job tier:      contract archived; not_observed until bim-st
 mapping_quality tier:               contract archived; not_observed until streaming-owned result carries metrics
 usd_stage_composition tier:          contract archived; live Kit/GPU composition smoke not rerun
 historical worker conversion:       migration source only; cannot mark B-scheme tiers passed
+
+# 2026-05-19 B-scheme intake smoke（current worktree evidence）
+command:                            powershell -NoProfile -File scripts\smoke-bscheme-intake.ps1
+evidence json:                       docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json
+storage/*.ifc:                       0 files in current 8caa worktree; real_ifc_fixture=blocked
+real IFC intake→conversion:          blocked; not run because current storage/*.ifc is empty
+external contracts/fakes:            passed; repo-root pytest 7 passed
+coordinator lifecycle/outbox:         passed; npm run verify 140 passed
+streaming conversion authority:      passed; pytest 10 passed
+mapping_quality:                     not_observed; no streaming-owned real result in this run
+runtime_image_kit_launcher:          deferred; Docker engine not available
+single Kit/WebRTC render:             deferred/not_observed; 49100 not listening and no browser evidence collected
 ```
 
 > **證據文件**：
@@ -691,6 +708,32 @@ A：可以，但**不是把 #2 spec 換掉**：
 - 候選不重疊；若新候選含已歸檔 spec 範圍，會用 ADD/MODIFY/REMOVE 注記。
 ```
 
+> **2026-05-19 判讀規則**：§5.0A 是下一輪實際 burn-down 候選清單；§5.0–§5.4 保留較早 OpenSpec/worker-era 候選矩陣與歷史溯源。若舊段落與 §5.0A、§1.2、AGENTS.md §1.A 衝突，以 §5.0A / §1.2 / AGENTS.md 為準。
+
+### 5.0A Current next burn-down（2026-05-19）
+
+| 順序 | 候選 | 狀態 | Owner / 邊界 | 成功標準 | 明確不做 |
+|---|---|---|---|---|---|
+| 1 | `runtime-image-linux-kit-launcher-readiness-pass` | **P0 / deferred blocker** | `bim-streaming-server` + Docker runtime | `scripts/verify-runtime-kit-launcher.ps1` 顯示 runtime image 內 produced Linux Kit launcher 真正啟動；container 不再缺 NVIDIA graphics/Vulkan libs；evidence 從 `deferred` 升為 `passed` | 不用 host-local Kit、不用 `nvidia-smi` compute-only 充當 pass |
+| 2 | `bscheme-real-streaming-conversion-evidence` | **P0 / candidate** | `bim-review-coordinator` + `bim-streaming-server` | contract-correct IFC-ready payload → coordinator intake → streaming internal conversion → streaming-owned `conversion_job_id` / result / mapping quality metrics → metadata-only callback outbox；保留 `external_model_version_id` binding | 不重建 `_worker`；不把 historical worker evidence 升等為 B-scheme pass |
+| 3 | `single-kit-webrtc-visual-evidence` | **P0 / blocked by #1** | `bim-streaming-server` + `web-viewer-sample` | 用 streaming-produced artifact 開 stage，記錄 `openedStageResult`、非零 video dimensions、viewport screenshot 或等效 visual proof | 不把 API-only pass、Socket.IO pass、舊截圖當 current WebRTC pass |
+| 4 | `same-kit-multi-viewer-session-evidence` | **P1 / after #3** | viewer + coordinator + streaming | 同一 Kit endpoint 支援至少兩個 viewer session，session / presence / callback 狀態分層清楚 | 不與 dedicated multi-Kit 混在同一驗證 |
+| 5 | `streaming-multi-instance-orchestration` | **P0-hold** | streaming runtime / coordinator Kit pool | 至少兩個 GPU-backed Kit endpoints + 24GB 級 GPU capacity 到位後，驗 dedicated instance routing | GPU 未到位前不標 in-progress、passed 或 failed |
+| 6 | `company-cloud-callback-auth-binding` | **blocked by OQ1** | coordinator callback outbox + 外部公司雲端 | 外部 endpoint/auth 確認後，將 outbox target/auth 從 placeholder 轉成 real integration evidence | 不假設 endpoint、不傳 `.usdc` 本體、不把 dead-letter 視為 conversion failed |
+| 7 | `local-web-view-sso-binding` | **blocked by OQ5** | coordinator user auth + 外部 SSO | 公司 SSO/token introspection 確認後，替換 local-dev provider 並維持 current local web view contract | 不寫死 EZPLUS SSO、不把 dev token 當正式 pass |
+
+**目前 deferred / blocked / not_observed runtime evidence**
+
+| Evidence tier | 現況 | 下一步 |
+|---|---|---|
+| `runtime_image_kit_launcher` | `deferred`：2026-05-19 smoke 顯示 Docker engine not available，因此尚未驗到 runtime image Kit launcher；先前 container graphics/Vulkan blocker 仍列為 Docker 可用後需再觀察的下一層風險 | 先啟動/修復 Docker engine，重跑 `scripts/verify-runtime-kit-launcher.ps1`；若回到 `libGLX_nvidia.so.0` / graphics-Vulkan failure，再修 NVIDIA Container Toolkit graphics capability 或 WSL2 GL/Vulkan passthrough |
+| `mapping_quality` | `not_observed`：5/18 B-scheme smoke 是 API-only pass，未收 streaming-owned real quality metrics | 跟 #2 一起補，不能沿用 worker-era mapping evidence |
+| `single_kit_render` | `deferred`：Kit/GPU/WebRTC live render 未跑 | #1 passed 後跑 browser / Kit render validation |
+| `single_kit_multi_viewer` | `not_observed`：未收多 viewer browser evidence | #3 passed 後再跑 |
+| `usd_stage_composition` | `not_observed`：未用 streaming-owned artifacts 實際開 stage | #2 + #3 合併驗證 |
+| OQ1 | `pending`：公司雲端 callback endpoint/auth 未確認 | 等外部平台 team 提供 endpoint/auth；保留 contract + outbox |
+| OQ5 | `pending`：公司 SSO / user auth provider 未確認 | 等 SSO 決策；保留可替換 provider |
+
 ### 5.0 已完成 / Archived
 
 #### 已歸檔 #1：`worker-real-conversion-quality`
@@ -896,70 +939,58 @@ A：可以，但**不是把 #2 spec 換掉**：
 ## 6. 優先順序總結
 
 ```txt
-Archived / 已完成:
-  #1  worker-real-conversion-quality           ✓ 已於 2026-05-11 archive
-                                               解除 IFC→USDC placeholder blocker；real worker-produced USDC 已有 single Kit/browser evidence
-                                               剩餘：canonical storage real batch 未完成，production coverage baseline 未鎖定
-  #3/#3A worker-mapping-lineage-quality-baseline ✓ 已於 2026-05-12 archive
-                                               lineage API / worker UI / all-IFC-entity coverage policy 已併入 specs
-                                               剩餘：canonical 13-file real batch 未完成，production coverage baseline 未鎖定
-  worker-canonical-storage-batch-baseline       ✓ 已於 2026-05-12 archive（blocked evidence）
-                                               batch semantics / phase timings / handoff contract 已併入 specs
-                                               剩餘：source_entity_enumeration timeout；visual preview / full batch 未通過
+Current P0 (下一輪先做):
+  runtime-image-linux-kit-launcher-readiness-pass
+    → 先讓 Docker engine 可用並啟動 runtime image；若 graphics/Vulkan blocker 仍出現，再解除 container NVIDIA graphics/Vulkan 問題，讓 produced Linux Kit launcher 在 runtime image 內真的啟動。
 
-P0-hold (等待 GPU 購買與部署):
-  #2  streaming-multi-instance-orchestration   ★★  ⏸ 等待 GPU 購買與部署後執行
-                                               硬體：**24 GB VRAM 為硬門檻**（RTX 4090 / L4 起跳，見 §9.2）
-                                               NVIDIA: signalPort=49100 / streamPort=47999 與 omni.kit.livestream.webrtc 9.0.2 對齊
-                                               roadmap 端：GPU capacity 到位後才重啟驗證並同步 §1.3 / §2 / §9.2
+  bscheme-real-streaming-conversion-evidence
+    → 用 coordinator 外部 intake + streaming internal conversion 補 streaming-owned result / mapping quality / callback outbox evidence。
 
-P1 (這月):
-  optimize-worker-source-entity-enumeration   ★★★ Active risk burn-down
-                                               先修 canonical 89MB fixture 的 source_entity_enumeration timeout
-                                               full pass 前 production mapping baseline 不得 locked
-  #4  coordinator-session-lifecycle-events-audit  ✓ Archived
-                                               lifecycle event schema 已收斂；#6 webhook 可依此 schema 探索
-                                               durable audit persistence 仍屬 Phase 6 凍結
+  single-kit-webrtc-visual-evidence
+    → 用 streaming-produced artifact 開 stage，留下 openedStageResult、video dimensions、screenshot 或等效 visual proof。
 
-P2 (下月):
-  #5  ai-rule-carbon-result-contract           v2 Layer 3-D contract + mock
-  #6  notification-webhook-service             v2 Layer 3-E mock + 訂閱 #4 events（production-grade webhook 屬 Phase 6 凍結）
+P1 (P0 passed 後):
+  same-kit-multi-viewer-session-evidence
+    → 先驗同一 Kit endpoint 多 viewer，再考慮 dedicated multi-Kit。
 
-P2.5 (新增 ⓜ，由 §11 MCP 補正衍生；採用 reference impl，見 §13):
-  #1A streaming-collaboration-presence-layer-upgrade   用 omni.kit.collaboration.presence_layer 取代 Socket.IO 自建協作
-                                                        依賴：Tier A 起 + Nucleus 或自建 USD live transport
-  #2A streaming-ovas-helm-baseline                     遷移到 NVIDIA OVAS Helm chart（K8s reference impl）
-                                                        前置條件：#1 已 land；GPU 購買部署完成且 #2 runtime evidence land；K8s 環境（kind / 雲）
+P0-hold / capacity-gated:
+  streaming-multi-instance-orchestration
+    → 等至少兩個 GPU-backed Kit endpoints + 24GB 級 GPU capacity 到位後才執行；之前不標 in-progress/passed/failed。
 
-P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
-  #7  tenant-rbac-foundation                   ⏸ 等待 SSO / IdP 接入時點（Phase 6 / Layer 1）
-  #8  observability-audit-baseline             ⏸ 等待 SLA / SLO 需求出現（Phase 6 / Layer 5-Audit）
-  #9  production-deployment-baseline           ⏸ 等待規模超過 Tier B 與 IT 維運接入（與 #2A 融合）
-  + 其餘 Phase 6 細項（CI matrix / Backup / DR / Billing / SLA / 多租戶...，見 §2 Phase 6 表）
+Blocked by external OQ:
+  company-cloud-callback-auth-binding
+    → OQ1 pending；等公司雲端 endpoint/auth。
+  local-web-view-sso-binding
+    → OQ5 pending；等公司 SSO / token introspection 決策。
+
+Archive-only / not next product runtime:
+  worker-real-conversion-quality、worker mapping lineage、canonical 13-file batch、queue retention
+    → 已作 worker-era evidence / archive lineage；Phase B 後不再作本 repo product runtime 候選。
+
+P3-frozen:
+  tenant RBAC、observability、production deployment、notification / AI rule-carbon 等 Phase 5/6 擴張項
+    → 等 B-scheme runtime evidence + 外部業務系統接入確認後再討論。
 ```
 
-依賴圖（粗線是強依賴；⏸ 表示等業務接入才解凍）：
+依賴圖（下一輪 burn-down）：
 
 ```txt
-#1 (✓ archived) ─┬─→ Kit GPU render 證據已解鎖
-                 ├─→ Phase 5 可用 real worker-produced USDC 作前提
-                 └─→ #3/#3A (✓ archived) lineage API + all-IFC-entity coverage policy
+runtime-image-linux-kit-launcher-readiness-pass
+  └─→ single-kit-webrtc-visual-evidence
+       └─→ same-kit-multi-viewer-session-evidence
+            └─→ streaming-multi-instance-orchestration（GPU capacity gated）
 
-#2 (⏸ 等待 GPU 購買與部署)
-   ─→ GPU-backed multi-instance routing 證據解鎖
-   ─→ #2A (OVAS Helm 升級需要先在已部署 GPU capacity 上跑通多 Kit)
+bscheme-real-streaming-conversion-evidence
+  ├─→ streaming-owned mapping_quality evidence
+  ├─→ usd_stage_composition evidence
+  └─→ single-kit-webrtc-visual-evidence
 
-#3/#3A (✓ archived) ─→ worker-canonical-storage-batch-baseline (✓ archived, blocked evidence)
-                    ─→ optimize-worker-source-entity-enumeration (active risk burn-down)
-                    ─→ issue highlight evidence（需 locked real mapping 後才可宣稱）
-                    ─→ ⏸ #8 audit (Phase 6 凍結；待業務接入)
-#4 (✓ archived) ─→ #6 mock webhook (P2 可探索)
-   ─→ ⏸ #8 audit (Phase 6 凍結)
+company-cloud-callback-auth-binding（OQ1 pending）
+local-web-view-sso-binding（OQ5 pending）
+  └─→ 等外部平台輸入；不阻塞本地 B-scheme runtime evidence，但不得標 real integration passed
 
-#1A ─→ Phase 5 多人協作真實化（#1 已 archive；不依賴 #2A，可在 Tier A 起探索）
-#2A ─→ ⏸ #9 (Phase 6 凍結；待業務接入後與 OVAS 融合)
-
-⏸ #7 tenant-rbac ─→ ⏸ #5 / #6 / #8 (tenant 隔離是後續所有服務的權限根；同凍結)
+OVAS / Presence / Phase 6
+  └─→ B-scheme runtime evidence 成立且業務接入確認後再探索
 ```
 
 ---
@@ -968,9 +999,9 @@ P3-frozen (⏸ 等待公司業務系統接入；目前不規劃 OpenSpec spec):
 
 | # | 風險 | 緩解 |
 |---|---|---|
-| R1 | #1 已選 IfcOpenShell + `usd-core` 作為 real IFC→USDC adapter external prerequisites，後續仍有 dependency / license / Windows runtime drift 風險 | 保持 adapter boundary，不讓 `_worker` contract 綁死單一本機腳本路徑；缺 converter 或 USDC 不可開啟時必須 fail job，不得 fallback ready placeholder。#3/#3A 已定義 all-IFC-entity coverage policy，但 canonical storage real batch 未完成前不得把 production baseline 標成 locked |
+| R1 | Phase B 後仍可能誤用 worker-era conversion / mapping evidence，讓 B-scheme streaming-owned runtime 被錯誤標 passed | 任何下一輪 evidence 必須走 coordinator intake → streaming internal conversion；historical `_worker` evidence 只能作 archive lineage，不得升等成 current pass。Streaming result 若缺 converter、USDC openability 或 mapping quality metrics，必須分層標 `blocked` / `not_observed` |
 | R2 | 候選 #2 在 8 GB VRAM 下可能無法並行 2 個 Kit；最新狀態為等待 GPU 購買與部署後執行 | GPU 未購買部署前不執行 dedicated multi-Kit runtime 驗證，也不標 passed / failed / in-progress；重新啟動前需具備至少兩個 GPU-backed Kit endpoints，硬體門檻 24 GB VRAM 見 §9.2 |
-| R3 | 規劃過早跳到 Phase 5/6，本機 demo 變不穩 | P0 / P1 全部 land 之前不啟動 #5 / #6 之後的候選；Phase 6 候選 #7 / #8 / #9 連同細項一律凍結至業務系統接入 |
+| R3 | 規劃過早跳到 Phase 5/6，本機 demo 變不穩 | `runtime-image-linux-kit-launcher-readiness-pass`、B-scheme streaming-owned conversion evidence、single Kit/WebRTC visual proof 未成立前，不啟動 OVAS / Presence / notification / RBAC / observability / production deployment |
 | R4 | OpenSpec 在 main 上累積太多 untracked 變更 | 每個候選都走 `codex/openspec/<change-id>` branch + PR；本文件不算 OpenSpec change，是 plan |
 | R5 ⓜ | NVIDIA Kit extension 版本漂移（109.x 系列定期升版，API 可能變） | 每季度用 `kit-mcp` `get_kit_extension_details` 對齊我們 `.kit` 檔依賴版本；Phase 5 啟用清單以「>= 109.0」為下限，不寫死到 minor 版本 |
 | R6 ⓜ | usd-code-mcp `search_usd_knowledge` 目前 401 / 403 Forbidden（缺 NVIDIA API key） | 本機只用 `list_usd_modules` / `get_usd_class_detail` 做 schema 設計輔助；要查設計討論時 fallback 到 `docs.omniverse.nvidia.com/usd/` 直接 fetch |
@@ -1381,66 +1412,45 @@ B → C 觸發：
 
 ## 10. 建議的下一步（給 monkey1sai）
 
-1. **先恢復並鎖定本機環境一致性（新增，2026-05-12）**：
-   - 先依 §1.5 建立 repo-local `.venv`，確認 `fastapi 0.111.0 / starlette 0.37.2 / uvicorn 0.45.0`。
-   - 對 `bim-review-coordinator` 與 `web-viewer-sample` 重跑 `npm ci`，確認 `tsx.cmd` / `vite.cmd` 存在。
-   - 以 `.\scripts\start-all.ps1 -SkipStreaming` 驗 8001 / 8005 / 8004 / 5173；這一步通過後，才把後續 OpenSpec / runtime evidence 的失敗視為功能或 spec 問題。
+1. **先解 `runtime-image-linux-kit-launcher-readiness` 的 deferred blocker**：
+   - 目前 evidence：`docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json`。
+   - 目前阻塞原因（2026-05-19 smoke）：Docker engine not available，因此尚未驗到 runtime image Kit launcher。
+   - 下一層風險：Docker 可用後仍可能回到先前觀察過的 NVIDIA graphics/Vulkan libs 缺失（例如 `libGLX_nvidia.so.0` / entrypoint exit 75）；需在重跑 evidence 時誠實記錄。
+   - 成功標準：`scripts/verify-runtime-kit-launcher.ps1` 在 runtime image 內啟動 produced Linux Kit launcher，並把 tier 從 `deferred` 更新為 `passed`。
+   - 禁止：不得用 host-local Kit、不得用 `nvidia-smi` compute-only 當 pass。
 
-2. **B 方案 archive 後，先補最小整合驗證，不把 archive 當 runtime pass**：
-   - `architecture-rework-2026-05-14` 已歸檔到 `openspec/changes/archive/2026-05-14-architecture-rework-2026-05-14/`，現行 specs 已更新為 18 個 capability。
-   - 下一個最小 smoke 應從 `_bim-control` fake RVT intake → `_worker` RVT→IFC bridge / `ifc_ready` → `bim-streaming-server` streaming-owned IFC→USDC conversion job/result → coordinator session bootstrap → viewer stage composition 分層驗。
-   - 若本機沒有 GPU / Kit listener，先跑 API-only contract smoke，並把 `streaming_conversion_job`、`mapping_quality`、`usd_stage_composition` 明確標成 blocked / not_observed；不得沿用 historical `_worker` conversion evidence 當 target authority pass。
-   - 實際 live Kit/GPU smoke 通過後，才更新 §1.3、`demo-runtime-readiness-smoke` evidence 與 HTML 檢視版。
+2. **補 B-scheme real streaming conversion evidence**：
+   - 正路徑：外部 IFC-ready payload → `bim-review-coordinator` `POST /api/external/ifc-ready` → `bim-streaming-server` internal conversion API → metadata-only callback outbox。
+   - 成功標準：evidence 包含 `external_model_version_id` binding、`conversion_job_id`、streaming-owned mapping quality metrics、artifact manifest ref、callback outbox 狀態。
+   - 誠實分層：callback OQ1 pending 不否定 conversion；mapping quality 若未產生就標 `not_observed` / `blocked`。
+   - 禁止：不得沿用 historical `_worker` mapping / conversion / browser evidence 當 B-scheme pass。
 
-3. **確認 #1、#3/#3A 與 canonical batch archive 對齊已完成，後續不再重開已完成 change**：
-   - `#1 worker-real-conversion-quality` 已歸檔到 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/`。
-   - 現行 specs 已同步到 `worker-artifact-pipeline` 與 `runtime-verification-evidence`。
-   - `#3/#3A worker-mapping-lineage-quality-baseline` 已歸檔到 `openspec/changes/archive/2026-05-12-worker-mapping-lineage-quality-baseline/`，並同步到 `worker-artifact-pipeline`、`runtime-verification-evidence`、`worker-demo-upload-convert-ui`。
-   - `worker-canonical-storage-batch-baseline` 已依使用者明確指示歸檔到 `openspec/changes/archive/2026-05-12-worker-canonical-storage-batch-baseline/`，但 runtime evidence 仍 blocked at `source_entity_enumeration`，baseline 未鎖定。
-   - 後續若要提升品質，不重開 #1 / #3 / #3A / canonical batch archive；改以 source entity enumeration optimization、canonical storage batch completion 或 issue highlight evidence 作為更小切片。
+3. **補 single Kit / WebRTC visual proof**：
+   - 前置：第 1 點 Kit launcher passed，且第 2 點有 streaming-produced artifact。
+   - 成功標準：`openedStageResult`、非零 video dimensions、viewport screenshot 或等效 visual proof。
+   - 若 Kit/GPU/browser 仍不可用，分層記 `blocked` / `deferred` / `not_observed`，不得宣稱 web UI 已檢視成果。
 
-4. **下一個 worker 品質工作：full 13-file canonical batch + secondary enumeration burn-down**：
-   - 使用 `C:\Repos\active\iot\AI-BIM-governance\storage\*.ifc` 作為正式本機 fixture root。
-   - 前一個 burn-down `optimize-worker-source-entity-enumeration` 已歸檔（enumeration ~33s 收斂），其下游 blocker `non_renderable_entity_materialization` 也已由 `optimize-worker-non-renderable-materialization`（sidecar carrier，74× faster）完成 canonical single-fixture 級驗證，但尚未 archive。
-   - 下一個 OpenSpec change 候選為「在 sidecar carrier 條件下跑 full 13-file canonical batch」，量化 stage_reopen / mapping_quality_failed 機率、解 `unmapped_count=2`（geometry shape 缺 GUID）case，並把 secondary `guid_extraction` (~10.6s) / `name_extraction` (~10.0s) 優化獨立為 follow-up；見 §5.2 「Next worker risk burn-down」。
-   - 單檔 real conversion 通過後，先用既有 `web-viewer-sample` / `bim-review-coordinator` / `bim-streaming-server` flow 載入該 worker-hosted `model.usdc`，留下 screenshot 或等效 visual proof；若 Kit/GPU/browser 不可用，記錄 blocked，不宣稱 web UI 已檢視成果。
-   - 只有全批次 real conversion、USDC openability、lineage API、all-IFC-entity coverage 都通過時，才可把 `minimum_coverage_locked=true` production baseline 寫入 evidence。
+4. **先 same-Kit multi-viewer，再 dedicated multi-Kit**：
+   - Same-Kit multi-viewer 可在 single Kit render 成立後驗證。
+   - `streaming-multi-instance-orchestration` 維持 P0-hold：至少兩個 GPU-backed Kit endpoints + 24GB 級 GPU capacity 到位前，不啟動 dedicated instance runtime verification，也不標 in-progress、passed 或 failed。
 
-5. **暫停 `#2 streaming-multi-instance-orchestration`，等待 GPU 購買與部署後再執行**：
-   - 在至少兩個 GPU-backed Kit endpoints 可用前，不啟動 dedicated multi-Kit runtime 驗證，也不把它標為進行中、passed 或 failed。
-   - GPU 購買與部署完成後，先依 §9.2 確認 24 GB VRAM 級 GPU capacity、distinct signaling / media port pair、Kit stream listener 與 browser evidence 儲存位置，再重新啟動驗證。
-   - 重啟驗證通過後，才更新 §1.3 / §2 Phase 3 / §9.2 與 `runtime-verification-evidence` §6.4 evidence。
-   - **MCP 補強**：驗證前用 `kit-mcp` `get_kit_extension_details("omni.kit.livestream.webrtc")` 確認 signalPort 49100 / streamPort 47999 設定與 NVIDIA 預設值一致；多 instance 時兩台需用不同 port pair。
+5. **OQ1 / OQ5 等外部平台輸入，不在本 repo 內猜答案**：
+   - OQ1：公司雲端 callback endpoint/auth；現階段保留 contract + callback outbox retry/dead-letter。
+   - OQ5：公司 SSO / user auth provider；現階段保留可替換 user auth provider。
+   - 等外部平台 team 給定 endpoint/auth/SSO 決策後，再開小 change 做 real integration evidence。
 
-6. **完成並歸檔 P1 OpenSpec change `#4 coordinator-session-lifecycle-events-audit`**：
-   - #3 / #3A 已完成並歸檔，不再列為候選池。
-   - `#4` 已歸檔到 `openspec/changes/archive/2026-05-12-coordinator-session-lifecycle-events-audit/`，並同步到 `review-session-request-lifecycle`。
-   - lifecycle events 已收斂成 append-only event schema，支撐後續 #6 mock webhook / observability 探索。
-   - 若要先補 worker evidence，優先完成上方第 4 點的 full 13-file canonical batch + secondary enumeration burn-down，不要跳過 canonical batch readiness gate；demo runtime readiness 改由 active change `stabilize-demo-runtime-readiness` 接手。
+6. **把 worker-era evidence 保留為 archive lineage，不再當下一輪產品候選**：
+   - `worker-real-conversion-quality`、mapping lineage、canonical batch、queue retention 等已歸檔或只作 historical evidence。
+   - Phase B 後 `_worker` / `_bim-control` 已 removed from product runtime；不得重開 C3 `revit-intake-rvt-ifc-bridge-evidence`。
 
-7. **評估是否啟動 `#1A` / `#2A`（採用 NVIDIA reference impl，見 §12 / §13）**：
-   - 在啟動前，先依 §13 的決策框架評估「**自建 vs 採用 NVIDIA**」對應風險（依賴鎖定 / Nucleus 部署 / license / GPU 鎖定）。
-   - 若決定啟動 #1A：用 `kit-mcp` `get_kit_extension_details("omni.kit.collaboration.presence_layer")` 查 PresenceLayerAPI 22 個方法（`broadcast_local_bound_camera` / `enter_follow_mode` / `get_selections`）。
-   - 若決定啟動 #2A（OVAS spike，2026-05-08 17:00 補）：
-     1. **第一次驗證**：在開發機跑 `kind create cluster` + 從 NGC pull `kit-appstreaming-collection` chart + `helm install`。**單節點驗 chart 能起**，不要先挑戰多節點 / 雲端。
-     2. **第二次驗證**：把我們的 `bim-streaming-server` build 成 NGC-compatible image（內含 .kit + extension list），讓 OVAS 啟動我們的 image，而不是 NVIDIA 預設範例 app。
-     3. **第三次驗證**：`bim-review-coordinator/src/services/kitPool.ts` 改成 thin client（call OVAS REST app instance API）；對 spec `multi-artifact-kit-routing` 唯一 MODIFY 是 Req2 的 `provider` enum 多 `"ovas"` 值（其他 4 個 Req 不變，見 §12.2）。
-     4. **不變的部分**：`web-viewer-sample` UI、`_bim-control` / `_worker` data plane、Socket.IO collaboration 全部保留；OVAS 只取代「Kit container 啟動 / 調度」（§2 4.4 / 4.5 / 4.11）。
-     5. **避免的事**：不要把 OVAS image build 流程混進 `bim-streaming-server` 的單機 dev workflow；把 OVAS 部署放 `deploy/ovas/` 獨立目錄，Tier A 仍可走 `scripts/start-multi-kit.ps1` 自寫 KitInstancePool 路徑。
+7. **Phase 5 / OVAS / Presence / Phase 6 全部後置**：
+   - OVAS、Presence layer、notification、tenant RBAC、observability、production deployment，都等 B-scheme runtime evidence 成立後再評估。
+   - Phase 6 仍等待公司業務系統接入確認；未確認前不規劃 OpenSpec spec。
 
-8. **Phase 6 候選 #7 / #8 / #9 與 §2 Phase 6 細項一律暫不啟動**：
-   - 依使用者 2026-05-08 16:05 指示，這些細項目前 ⏸ 凍結，**等待公司業務系統接入**（SSO / IT 維運 / SLA / billing / 合約等）。
-   - 任何想解凍的提案，需在 PR description 引用該決策段落（本文件 §2 Phase 6 表 + §6 P3-frozen），並附上業務系統接入確認文件。
-
-9. **延後啟動 `#5` / `#6`**：
-   - `#5 ai-rule-carbon-result-contract` 與 `#6 notification-webhook-service` 是 P2 的入口 contract（mock 階段），但若 P0 / P1 還沒 land 就開，會是**範圍擴散風險**。
-   - production-grade 的 audit log persistence 與 webhook delivery 屬 Phase 6 凍結範圍（§2 Phase 6 表）。
-
-10. **保留本文件作為下一輪 roadmap 對照基準**：
-    - 任何新 spec land 後，更新對照表、候選池與優先級，避免已完成工作仍留在 P0/P1。
-    - 每次 OpenSpec sync / archive 後，依 §1.6 同步更新 `§1.2` / `§1.4` / `§2` / `§5` / `§7` / `§10`，保持 `openspec/specs/` 與 roadmap 對齊。
-    - 持續用 `kit-mcp` / `usd-code-mcp` 對 NVIDIA 真實 extension 版本做 quarterly drift check（NVIDIA 經常隨 Kit major 版本更新 extension 介面；本文件記錄為 109.x 系列）。
-    - 公司業務系統接入確認後，逐項解凍 §2 Phase 6 細項並補對應 OpenSpec change。
+8. **保留本文件與 next burn-down 作為下一輪對照基準**：
+   - 下一輪 burn-down source：[`docs/plans/AI-BIM-governance-next-burn-down-2026-05-19.md`](AI-BIM-governance-next-burn-down-2026-05-19.md)。
+   - 每次 OpenSpec sync / archive 後，依 §1.6 同步 `§1.2` / `§1.4` / `§5` / `§6` / `§10` 與同名 HTML。
+   - 持續用 `kit-mcp` / `usd-code-mcp` 做 NVIDIA extension drift check；但不得讓 reference implementation 探索搶在 runtime evidence 前面。
 
 ---
 
