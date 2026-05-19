@@ -270,7 +270,7 @@
         </div>
       </div>
       <div class="demo-flow-note">
-        提示：worker 會產生 worker-hosted object URL；coordinator 只消費 ready artifact binding，不保存檔案本體。
+        提示：streaming 會產生 model / mapping artifact URL；coordinator 只消費 ready artifact binding 與 shadow metadata，不保存檔案本體。
       </div>
     </section>
 
@@ -583,7 +583,7 @@
         }
 
         conversionJobLabel.textContent = payload.job_id;
-        conversionJobHint.textContent = payload.mock ? 'dev mock conversion；不代表真實轉檔品質' : '等待 conversion worker 更新狀態';
+        conversionJobHint.textContent = payload.mock ? 'dev mock conversion；不代表真實轉檔品質' : '等待 streaming conversion authority 更新狀態';
 
         if (mock || payload.status === 'succeeded') {
           await animateMockConversion(payload);
@@ -724,7 +724,7 @@
       document.getElementById('conversionMappingLink').innerHTML = mapping
         ? `<a href="${escapeAttr(mapping)}" target="_blank" rel="noopener">${escapeHtml(mapping)}</a>` : '—';
       conversionResultGrid.style.display = 'grid';
-      appendDemoFeed('轉檔結果已回寫', { job_id: payload.job_id, usdc_url: usdc, mapping_url: mapping });
+      appendDemoFeed('轉檔結果已進入 metadata callback outbox', { job_id: payload.job_id, usdc_url: usdc, mapping_url: mapping });
       refreshSessionCard();
     }
 
@@ -766,7 +766,7 @@
         indexing_usd: 3,
         building_mapping: 4,
         publishing_outputs: 4,
-        updating_bim_control: 4,
+        preparing_cloud_callback: 4,
       };
       return mapping[stage] || Math.min(4, 1 + Math.floor(tick / 3));
     }

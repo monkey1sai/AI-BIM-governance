@@ -46,7 +46,8 @@ heartbeat
 }
 ```
 
-`annotationCreate` also writes through to `_bim-control`:
+`annotationCreate` also appends local coordinator shadow metadata and can be
+forwarded to the external control-plane callback path:
 
 ```http
 POST /api/review-sessions/{session_id}/annotations
@@ -63,11 +64,11 @@ annotationCreated
 
 Events are broadcast to the same `session_id` room except the sender where appropriate.
 
-`highlightRequest`, `selectionUpdate`, and `annotationCreated` are room scoped: a second browser client joined to the same `session_id` receives the broadcast while other sessions do not. `annotationCreate` returns an ack error if `_bim-control` cannot save the annotation, but the namespace stays alive.
+`highlightRequest`, `selectionUpdate`, and `annotationCreated` are room scoped: a second browser client joined to the same `session_id` receives the broadcast while other sessions do not. `annotationCreate` returns an ack error if local shadow persistence or the configured external callback path cannot save the annotation, but the namespace stays alive.
 
 ## Ack And Session Validation
 
-All session-scoped client events validate `session_id` before mutating presence, appending the event log, broadcasting to a room, or calling `_bim-control`.
+All session-scoped client events validate `session_id` before mutating presence, appending the event log, broadcasting to a room, or writing coordinator shadow/callback state.
 
 Successful ack:
 

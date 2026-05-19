@@ -1,117 +1,142 @@
 {
-  "schema_version": "demo-runtime-readiness-smoke/v1",
-  "capability": "demo-runtime-readiness-smoke",
-  "emitted_at": "2026-05-18T09:48:53.000Z",
-  "command": "scripts/smoke-bscheme-intake.ps1 (captured with equivalent node/python checks; do not treat as live Kit/WebRTC pass)",
-  "cwd": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\local-coordinator-ifc-ready-intake-boundary",
-  "context": {
-    "change_id": "local-coordinator-ifc-ready-intake-boundary",
-    "task": "T8 readiness/smoke/evidence rewrite (§9.1-9.3)",
-    "note": "default smoke 不依賴已刪 runtime；以 contract stub（tests/contracts + tests/fakes）→ coordinator 對外 intake，分層驗證 conversion、callback outbox 與 Kit launcher evidence。GPU/Kit 阻塞誠實 deferred，不謊報 passed。"
-  },
-  "tiers": [
-    {
-      "tier": "external_ifc_ready_intake",
-      "status": "passed",
-      "owner": "scripts",
-      "ids": { "suite": "tests/test_contracts_and_fakes.py" },
-      "blocker": "",
-      "next_command": "python -m pytest tests -q -p no:cacheprovider",
-      "evidence_paths": [
-        "tests/contracts/ifc_ready_payload.json",
-        "tests/contracts/conversion_result_callback.json"
-      ],
-      "detail": {
-        "result": "7 passed",
-        "checks": "contracts parse + required fields; external_ifc_worker_client double; cloud_bim_control double; metadata-only guard rejects embedded model body; control-plane read doubles answer locally"
-      }
-    },
-    {
-      "tier": "streaming_internal_conversion",
-      "status": "passed",
-      "owner": "bim-streaming-server",
-      "ids": { "suite": "tests/test_conversion_authority_api.py" },
-      "blocker": "",
-      "next_command": "cd bim-streaming-server && python -m pytest tests/test_conversion_authority_api.py -q",
-      "detail": {
-        "result": "6 passed",
-        "covers": "internal-only conversion request; reject non-ifc_ready; coordinator->streaming contract; callback skipped when no callback_url"
-      }
-    },
-    {
-      "tier": "mapping_quality",
-      "status": "not_observed",
-      "owner": "bim-streaming-server",
-      "blocker": "no streaming-owned mapping-quality evidence was collected in this API-only pass",
-      "next_command": "Run a real streaming conversion with quality metrics evidence when Kit/converter prerequisites are available",
-      "detail": {
-        "honesty_note": "historical worker mapping evidence is not promoted to B-scheme pass evidence"
-      }
-    },
-    {
-      "tier": "cloud_callback_outbox",
-      "status": "passed",
-      "owner": "bim-review-coordinator",
-      "blocker": "",
-      "next_command": "covered by coordinator verify: tests/cloud-callback-outbox.test.ts",
-      "detail": {
-        "metadata_only": "enforced (embedded model body -> 422)",
-        "cloud_unreachable": "retained + retried (pending)",
-        "retries_exhausted": "dead_letter with evidence (not silently dropped)",
-        "callback_status_separate": "conversion stays ready locally independent of callback delivery",
-        "oq1": "real company-cloud endpoint/auth still pending OQ1 (contract frozen; real endpoint pending — this is the OQ1-pending mitigation, not real integration)"
-      }
-    },
-    {
-      "tier": "coordinator_session_lifecycle",
-      "status": "passed",
-      "owner": "bim-review-coordinator",
-      "ids": { "suite": "npm run verify (tsc build + vitest)" },
-      "blocker": "",
-      "next_command": "cd bim-review-coordinator && npm run verify",
-      "detail": {
-        "result": "140 passed (9 test files)",
-        "covers": "external-ifc-ready auth/idempotency/dispatch, internal conversion-result token, callback outbox retry/dead-letter/metadata-only, shadow-metadata, local-web-view, and session lifecycle tests"
-      }
-    },
-    {
-      "tier": "runtime_image_kit_launcher",
-      "status": "deferred",
-      "owner": "bim-streaming-server",
-      "ids": {
-        "image": "ai-bim-runtime-manager-streaming-server:latest",
-        "image_id": "sha256:8f8ff0d74d0322c4c87be52b2988f7f3b74446c5d5e5c98672eeb588d3dbd0f8"
-      },
-      "blocker": "blocked_gpu_runtime_unavailable: NVIDIA graphics/Vulkan driver libraries not mounted in container (Missing libGLX_nvidia.so.0); nvidia-smi/CUDA compute IS visible but Kit RTX cannot init. Recorded as deferred, NOT passed; host-local Kit NOT used as substitute.",
-      "next_command": "pwsh -File scripts/verify-runtime-kit-launcher.ps1",
-      "evidence_paths": [
-        "docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json"
-      ],
-      "detail": {
-        "source": "reuses T0 honest finding; GPU/Kit prerequisite unavailable in this environment",
-        "honesty_note": "GPU/Kit blocked -> deferred per runtime-image-linux-kit-launcher-readiness spec; the layered readiness explicitly does NOT report Kit as passed"
-      }
-    },
-    {
-      "tier": "single_kit_render",
-      "status": "deferred",
-      "owner": "bim-streaming-server",
-      "blocker": "Kit/GPU/WebRTC live render evidence not collected by this API-only pass",
-      "next_command": "pwsh -File scripts/verify-runtime-kit-launcher.ps1, then run browser/Kit render validation"
-    },
-    {
-      "tier": "single_kit_multi_viewer",
-      "status": "not_observed",
-      "owner": "web-viewer-sample",
-      "blocker": "multi-viewer browser evidence not collected by this API-only pass",
-      "next_command": "Run multi-viewer browser validation after single Kit render is available"
-    },
-    {
-      "tier": "usd_stage_composition",
-      "status": "not_observed",
-      "owner": "bim-streaming-server",
-      "blocker": "USD stage composition evidence not collected by this API-only pass",
-      "next_command": "Run stage composition validation with streaming-owned artifacts"
-    }
-  ]
+    "schema_version":  "demo-runtime-readiness-smoke/v1",
+    "capability":  "demo-runtime-readiness-smoke",
+    "emitted_at":  "2026-05-19T03:02:59.0950615Z",
+    "command":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance\\scripts\\smoke-bscheme-intake.ps1",
+    "cwd":  "C:\\Users\\IOT\\.codex\\worktrees\\c3de\\AI-BIM-governance",
+    "context":  {
+                    "task":  "T8 readiness/smoke/evidence rewrite",
+                    "note":  "default smoke 不依賴 _worker/_bim-control；contract stub → coordinator intake",
+                    "change_id":  "local-coordinator-ifc-ready-intake-boundary"
+                },
+    "tiers":  [
+                  {
+                      "tier":  "external_ifc_ready_intake",
+                      "status":  "passed",
+                      "owner":  "scripts",
+                      "ids":  {
+
+                              },
+                      "blocker":  "",
+                      "next_command":  "python -m pytest tests -q",
+                      "evidence_paths":  null,
+                      "detail":  {
+                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n.......                                                                  [100%]\n7 passed in 0.02s"
+                                 }
+                  },
+                  {
+                      "tier":  "coordinator_session_lifecycle",
+                      "status":  "passed",
+                      "owner":  "bim-review-coordinator",
+                      "ids":  {
+
+                              },
+                      "blocker":  "",
+                      "next_command":  "cd bim-review-coordinator \u0026\u0026 npm run verify",
+                      "evidence_paths":  null,
+                      "detail":  {
+                                     "output":  "\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 verify\n\u003e npm run build \u0026\u0026 npm test\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 build\n\u003e tsc -p tsconfig.json\n\n\n\u003e @ai-bim-governance/bim-review-coordinator@0.1.0 test\n\u003e vitest run\n\n\n\u001b[1m\u001b[7m\u001b[36m RUN \u001b[39m\u001b[27m\u001b[22m \u001b[36mv2.1.9 \u001b[39m\u001b[90mC:/Users/IOT/.codex/worktrees/c3de/AI-BIM-governance/bim-review-coordinator\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/unit_kitpool.test.ts \u001b[2m(\u001b[22m\u001b[2m31 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 13\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/auth-provider.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 5\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/unit_sessionstore.test.ts \u001b[2m(\u001b[22m\u001b[2m39 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 69\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/dev-console.test.ts \u001b[2m(\u001b[22m\u001b[2m3 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 80\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/shadow-metadata.test.ts \u001b[2m(\u001b[22m\u001b[2m5 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 85\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/local-web-view.test.ts \u001b[2m(\u001b[22m\u001b[2m6 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 93\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/cloud-callback-outbox.test.ts \u001b[2m(\u001b[22m\u001b[2m8 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 116\u001b[2mms\u001b[22m\u001b[39m\n \u001b[32m✓\u001b[39m tests/external-ifc-ready.test.ts \u001b[2m(\u001b[22m\u001b[2m9 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[90m 118\u001b[2mms\u001b[22m\u001b[39m\n\u001b[90mstderr\u001b[2m | tests/sessions.test.ts\u001b[2m \u003e \u001b[22m\u001b[2mbim-review-coordinator\u001b[2m \u003e \u001b[22m\u001b[2mskips malformed lines in the event log instead of throwing\n\u001b[22m\u001b[39mEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nEventLog: skipping malformed event in review_session_eventlog_skip.jsonl line 2: Expected property name or \u0027}\u0027 in JSON at position 1 (line 1 column 2)\nSystem.Management.Automation.RemoteException\n \u001b[32m✓\u001b[39m tests/sessions.test.ts \u001b[2m(\u001b[22m\u001b[2m36 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[33m 357\u001b[2mms\u001b[22m\u001b[39m\n\n\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m9 passed\u001b[39m\u001b[22m\u001b[90m (9)\u001b[39m\n\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m140 passed\u001b[39m\u001b[22m\u001b[90m (140)\u001b[39m\n\u001b[2m   Start at \u001b[22m 11:03:02\n\u001b[2m   Duration \u001b[22m 1.14s\u001b[2m (transform 696ms, setup 0ms, collect 2.86s, tests 935ms, environment 2ms, prepare 1.18s)\u001b[22m\n"
+                                 }
+                  },
+                  {
+                      "tier":  "streaming_internal_conversion",
+                      "status":  "passed",
+                      "owner":  "bim-streaming-server",
+                      "ids":  {
+
+                              },
+                      "blocker":  "",
+                      "next_command":  "cd bim-streaming-server \u0026\u0026 python -m pytest tests/test_conversion_authority_api.py -q -p no:cacheprovider",
+                      "evidence_paths":  null,
+                      "detail":  {
+                                     "output":  "C:\\Users\\IOT\\AppData\\Roaming\\Python\\Python312\\site-packages\\pytest_asyncio\\plugin.py:247: PytestDeprecationWarning: The configuration option \"asyncio_default_fixture_loop_scope\" is unset.\nThe event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: \"function\", \"class\", \"module\", \"package\", \"session\"\nSystem.Management.Automation.RemoteException\n  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))\n......                                                                   [100%]\n6 passed in 0.65s"
+                                 }
+                  },
+                  {
+                      "tier":  "mapping_quality",
+                      "status":  "not_observed",
+                      "owner":  "bim-streaming-server",
+                      "ids":  {
+
+                              },
+                      "blocker":  "no streaming-owned mapping-quality evidence collected by this API-only pass",
+                      "next_command":  "Run a real streaming conversion with quality metrics evidence when Kit/converter prerequisites are available",
+                      "evidence_paths":  null,
+                      "detail":  {
+
+                                 }
+                  },
+                  {
+                      "tier":  "cloud_callback_outbox",
+                      "status":  "passed",
+                      "owner":  "bim-review-coordinator",
+                      "ids":  {
+
+                              },
+                      "blocker":  "",
+                      "next_command":  "covered by coordinator verify: tests/cloud-callback-outbox.test.ts",
+                      "evidence_paths":  null,
+                      "detail":  {
+                                     "metadata_only":  "enforced (422)",
+                                     "retry":  "pending-\u003eretry",
+                                     "exhausted":  "dead_letter"
+                                 }
+                  },
+                  {
+                      "tier":  "runtime_image_kit_launcher",
+                      "status":  "deferred",
+                      "owner":  "bim-streaming-server",
+                      "ids":  {
+
+                              },
+                      "blocker":  "skipped by -SkipKitLauncher; see T0 evidence",
+                      "next_command":  "pwsh -File scripts/verify-runtime-kit-launcher.ps1",
+                      "evidence_paths":  null,
+                      "detail":  {
+
+                                 }
+                  },
+                  {
+                      "tier":  "single_kit_render",
+                      "status":  "deferred",
+                      "owner":  "bim-streaming-server",
+                      "ids":  {
+
+                              },
+                      "blocker":  "Kit/GPU/WebRTC live render evidence not collected by this API-only pass",
+                      "next_command":  "pwsh -File scripts/verify-runtime-kit-launcher.ps1, then run browser/Kit render validation",
+                      "evidence_paths":  null,
+                      "detail":  {
+
+                                 }
+                  },
+                  {
+                      "tier":  "single_kit_multi_viewer",
+                      "status":  "not_observed",
+                      "owner":  "web-viewer-sample",
+                      "ids":  {
+
+                              },
+                      "blocker":  "multi-viewer browser evidence not collected by this API-only pass",
+                      "next_command":  "Run multi-viewer browser validation after single Kit render is available",
+                      "evidence_paths":  null,
+                      "detail":  {
+
+                                 }
+                  },
+                  {
+                      "tier":  "usd_stage_composition",
+                      "status":  "not_observed",
+                      "owner":  "bim-streaming-server",
+                      "ids":  {
+
+                              },
+                      "blocker":  "USD stage composition evidence not collected by this API-only pass",
+                      "next_command":  "Run stage composition validation with streaming-owned artifacts",
+                      "evidence_paths":  null,
+                      "detail":  {
+
+                                 }
+                  }
+              ]
 }

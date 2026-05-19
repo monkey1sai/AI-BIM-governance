@@ -78,16 +78,16 @@ try {
 }
 
 # Fixture preflight (informational, separate from Kit/WebRTC tiers).
-$resolvedRoot = Resolve-WorkerDevStorageRoot
-$fixtureSummary = Get-WorkerDevFixtureSummary -Root $resolvedRoot
+$resolvedRoot = Resolve-DevIfcFixtureRoot
+$fixtureSummary = Get-DevIfcFixtureSummary -Root $resolvedRoot
 if ($fixtureSummary.fixture_count -gt 0) {
     Add-SmokeTier -Record $Record -Tier 'fixture_preflight' -Status 'passed' -Owner 'scripts' `
-        -Ids @{ worker_dev_storage_root = $resolvedRoot; fixture_count = $fixtureSummary.fixture_count }
+        -Ids @{ dev_ifc_fixture_root = $resolvedRoot; fixture_count = $fixtureSummary.fixture_count }
 } else {
     Add-SmokeTier -Record $Record -Tier 'fixture_preflight' -Status 'blocked' -Owner 'tests/fakes' `
         -Blocker "no .ifc fixture present under '$resolvedRoot'" `
-        -NextCommand "Copy a real .ifc into '$resolvedRoot' or set WORKER_DEV_STORAGE_ROOT, then rerun" `
-        -Ids @{ worker_dev_storage_root = $resolvedRoot; fixture_count = 0 }
+        -NextCommand "Copy a real .ifc into '$resolvedRoot' or set DEV_IFC_FIXTURE_ROOT, then rerun" `
+        -Ids @{ dev_ifc_fixture_root = $resolvedRoot; fixture_count = 0 }
 }
 
 # Kit launcher preflight (Kit health is OUT OF SCOPE for the trivial dev-health-check; only classify).

@@ -9,7 +9,7 @@
 #   . "$PSScriptRoot/lib/smoke-evidence.ps1"
 #   $record  = New-SmokeEvidenceRecord -Command $MyInvocation.Line -Cwd (Get-Location).Path
 #   Add-SmokeTier -Record $record -Tier 'streaming_internal_conversion' -Status 'blocked' -Owner 'bim-streaming-server' `
-#                 -Blocker 'no dev IFC fixture under WORKER_DEV_STORAGE_ROOT' `
+#                 -Blocker 'no dev IFC fixture under DEV_IFC_FIXTURE_ROOT' `
 #                 -NextCommand 'Copy a real .ifc under storage/ then rerun' `
 #                 -Ids @{ dev_storage_root = $root }
 #   Save-SmokeEvidence -Record $record -Path $EvidencePath
@@ -25,7 +25,7 @@ $Script:SmokeKnownOwners = @(
     'scripts'
 )
 
-function Resolve-WorkerDevStorageRoot {
+function Resolve-DevIfcFixtureRoot {
     [CmdletBinding()]
     param(
         [string] $Override
@@ -33,6 +33,10 @@ function Resolve-WorkerDevStorageRoot {
 
     $candidate = $Override
     if ([string]::IsNullOrWhiteSpace($candidate)) {
+        $candidate = $env:DEV_IFC_FIXTURE_ROOT
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        # Legacy fallback for superseded worker smoke scripts.
         $candidate = $env:WORKER_DEV_STORAGE_ROOT
     }
     if ([string]::IsNullOrWhiteSpace($candidate)) {
@@ -46,7 +50,16 @@ function Resolve-WorkerDevStorageRoot {
     return [System.IO.Path]::GetFullPath((Join-Path $base $candidate))
 }
 
-function Get-WorkerDevFixtureSummary {
+function Resolve-WorkerDevStorageRoot {
+    [CmdletBinding()]
+    param(
+        [string] $Override
+    )
+
+    return Resolve-DevIfcFixtureRoot -Override $Override
+}
+
+function Get-DevIfcFixtureSummary {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $Root
@@ -78,6 +91,15 @@ function Get-WorkerDevFixtureSummary {
         fixture_count  = [int]$fixtures.Count
         fixtures       = @($fixtures)
     }
+}
+
+function Get-WorkerDevFixtureSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Root
+    )
+
+    return Get-DevIfcFixtureSummary -Root $Root
 }
 
 function Get-KitLauncherPreflight {

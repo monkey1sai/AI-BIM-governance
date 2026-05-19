@@ -588,11 +588,11 @@ export default class App extends React.Component<AppProps, AppState> {
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
                 mappingUrl: this._resolveMappingUrl(null, artifacts),
-                reviewEvents: [...this.state.reviewEvents, "已從 _bim-control 載入 review 資料"],
+                reviewEvents: [...this.state.reviewEvents, "已從 coordinator / control-plane shadow 載入 review 資料"],
             });
         }
         catch (error) {
-            console.warn("Unable to load review data from _bim-control.", error);
+            console.warn("Unable to load review data from coordinator/control-plane shadow.", error);
         }
     }
 

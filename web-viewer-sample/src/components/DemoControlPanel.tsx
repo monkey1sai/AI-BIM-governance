@@ -246,7 +246,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
     const hasStreamCommand = outgoingMessages.length > 0;
     const hasCoordinatorEvidence = !!sessionId || socketEvents.some((event) => /Socket\.IO|session|review-bootstrap|會議/i.test(event));
     const hasMetadataEvidence = !!streamConfig || !!mappingUrl || socketEvents.some((event) => /review 資料|metadata|shadow/i.test(event));
-    const hasWorkerObjectEvidence = !!selectedAssetUrl || !!mappingUrl;
+    const hasArtifactUrlEvidence = !!selectedAssetUrl || !!mappingUrl;
     const repoGuideCards: RepoGuideCard[] = [
         {
             num: "①",
@@ -283,8 +283,8 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
             repo: "external IFC Worker",
             role: "Customer-edge IFC producer",
             protocol: "POST /api/external/ifc-ready",
-            status: hasWorkerObjectEvidence ? "已取得檔案 URL" : "等待 artifact URL",
-            statusKind: hasWorkerObjectEvidence ? "ok" : "idle",
+            status: hasArtifactUrlEvidence ? "已取得檔案 URL" : "等待 artifact URL",
+            statusKind: hasArtifactUrlEvidence ? "ok" : "idle",
             evidence: selectedAssetUrl || mappingUrl || "IFC-ready handoff / streaming result URL 尚未出現在本場 demo。",
             owns: "產出 IFC 並通知 coordinator；不在本 repo runtime 內",
         },
@@ -293,9 +293,9 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
             repo: "bim-streaming-server conversion",
             role: "Streaming-owned IFC→USDC job",
             protocol: "REST conversion authority",
-            status: hasWorkerObjectEvidence ? "已完成前置轉檔" : "等待 IFC-ready",
-            statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
-            evidence: hasWorkerObjectEvidence ? "本場 session 已拿到 streaming-owned model/mapping URL。" : "等待 RVT→IFC 或 streaming conversion evidence。",
+            status: hasArtifactUrlEvidence ? "已完成前置轉檔" : "等待 IFC-ready",
+            statusKind: hasArtifactUrlEvidence ? "ok" : "warn",
+            evidence: hasArtifactUrlEvidence ? "本場 session 已拿到 streaming-owned model/mapping URL。" : "等待 external IFC-ready 或 streaming conversion evidence。",
             owns: "IFC→USDC job、mapping quality、model.usdc readiness、conversion result callback",
         },
         {
@@ -334,9 +334,9 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
             num: "3",
             title: "確認檔案與 mapping URL",
             route: "coordinator -> streaming artifact refs",
-            protocol: "Worker object URL",
-            status: hasWorkerObjectEvidence ? "URL 已顯示" : "等待 artifact",
-            statusKind: hasWorkerObjectEvidence ? "ok" : "idle",
+            protocol: "Streaming artifact URL",
+            status: hasArtifactUrlEvidence ? "URL 已顯示" : "等待 artifact",
+            statusKind: hasArtifactUrlEvidence ? "ok" : "idle",
             actionLabel: "載入 mapping",
             action: onLoadMapping,
             disabled: !mappingUrl,
@@ -389,12 +389,12 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
             title: "從 demo 介面觸發 IFC -> USDC 轉檔",
             route: "external IFC Worker -> coordinator -> streaming",
             protocol: "REST B-scheme intake",
-            status: hasWorkerObjectEvidence ? "已完成" : "等待 IFC-ready",
-            statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
+            status: hasArtifactUrlEvidence ? "已完成" : "等待 IFC-ready",
+            statusKind: hasArtifactUrlEvidence ? "ok" : "warn",
             disabled: false,
             actionLabel: "開啟 coordinator console",
             action: () => window.open("http://127.0.0.1:8004/dev-console", "_blank", "noopener,noreferrer"),
-            gap: hasWorkerObjectEvidence ? undefined : "請先讓外部 IFC Worker 送出 ifc-ready，或用 coordinator console 查看 B-scheme intake。",
+            gap: hasArtifactUrlEvidence ? undefined : "請先讓外部 IFC Worker 送出 ifc-ready，或用 coordinator console 查看 B-scheme intake。",
         },
     ];
     const latestOutgoingLabel = outgoingMessages[0]?.label || "尚未送出 DataChannel command";
@@ -478,13 +478,13 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
             num: "GAP",
             title: "轉檔與 storage 寫入缺口",
             route: "viewer -> coordinator console",
-            status: hasWorkerObjectEvidence ? "前置已完成" : "需先轉檔",
-            statusKind: hasWorkerObjectEvidence ? "ok" : "warn",
+            status: hasArtifactUrlEvidence ? "前置已完成" : "需先轉檔",
+            statusKind: hasArtifactUrlEvidence ? "ok" : "warn",
             description: "viewer 只消費已完成的 artifact refs；IFC-ready 與 conversion job 由 coordinator/streaming flow 負責。",
-            effect: "觀察效果：完成 worker 轉檔後，review session 的 artifact_bindings 會帶入 model/mapping URL。",
+            effect: "觀察效果：完成 streaming 轉檔後，review session 的 artifact_bindings 會帶入 model/mapping URL。",
             actionLabel: "開啟 coordinator console",
             action: () => window.open("http://127.0.0.1:8004/dev-console", "_blank", "noopener,noreferrer"),
-            gap: hasWorkerObjectEvidence ? undefined : "請先完成步驟 ①/②。",
+            gap: hasArtifactUrlEvidence ? undefined : "請先完成步驟 ①/②。",
         },
     ];
 
@@ -619,7 +619,7 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
                         <span style={protocolPillStyle}>可操作 + 未完成</span>
                     </div>
                     <div style={{ fontSize: 12, color: "var(--demo-text-secondary)", marginBottom: 10 }}>
-                        依照流程按下按鈕，就能把 REST、Worker object URL、Socket.IO、WebRTC / DataChannel 的資料流串起來。
+                        依照流程按下按鈕，就能把 REST、artifact URL、Socket.IO、WebRTC / DataChannel 的資料流串起來。
                     </div>
                     {demoFlowSteps.map((step, index) => (
                         <DemoFlowStepView key={step.num} step={step} showConnector={index < demoFlowSteps.length - 1} />

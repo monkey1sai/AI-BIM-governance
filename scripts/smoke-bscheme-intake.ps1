@@ -36,6 +36,8 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) { $Python = "python" }
+$SmokeTempRoot = Join-Path $RepoRoot '.tmp\smoke'
+New-Item -ItemType Directory -Path $SmokeTempRoot -Force | Out-Null
 $EvidenceDir = Join-Path $RepoRoot 'docs\verification\evidence\2026-05-18-bscheme-intake-smoke'
 if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
     $EvidencePath = Join-Path $EvidenceDir 'bscheme-readiness.json'
@@ -51,14 +53,30 @@ function Invoke-Tier {
     param([string] $Tier, [string] $Owner, [string] $Cwd, [string[]] $CmdArgs, [string] $NextCommand)
     Push-Location (Join-Path $RepoRoot $Cwd)
     $output = @()
+    $previousErrorActionPreference = $ErrorActionPreference
+    $previousTmp = $env:TMP
+    $previousTemp = $env:TEMP
+    $previousTmpDir = $env:TMPDIR
     try {
         $InvokeArgs = if ($CmdArgs.Length -gt 1) { $CmdArgs[1..($CmdArgs.Length - 1)] } else { @() }
+        $ErrorActionPreference = "Continue"
+        $env:TMP = $SmokeTempRoot
+        $env:TEMP = $SmokeTempRoot
+        $env:TMPDIR = $SmokeTempRoot
         $output = & $CmdArgs[0] @InvokeArgs 2>&1
-        $ok = ($LASTEXITCODE -eq 0)
+        $exitCode = $LASTEXITCODE
+        $ErrorActionPreference = $previousErrorActionPreference
+        $ok = ($exitCode -eq 0)
     } catch {
         $ok = $false
         $output = @($_)
     } finally {
+        if ($previousErrorActionPreference) {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        $env:TMP = $previousTmp
+        $env:TEMP = $previousTemp
+        $env:TMPDIR = $previousTmpDir
         Pop-Location
     }
     $status = if ($ok) { 'passed' } else { 'failed' }
@@ -80,8 +98,8 @@ $CoordinatorStatus = Invoke-Tier -Tier 'coordinator_session_lifecycle' -Owner 'b
 
 # streaming internal conversion authority
 $StreamingStatus = Invoke-Tier -Tier 'streaming_internal_conversion' -Owner 'bim-streaming-server' -Cwd 'bim-streaming-server' `
-    -CmdArgs @($Python, '-m', 'pytest', 'tests/test_conversion_authority_api.py', '-q') `
-    -NextCommand 'cd bim-streaming-server && python -m pytest tests/test_conversion_authority_api.py -q'
+    -CmdArgs @($Python, '-m', 'pytest', 'tests/test_conversion_authority_api.py', '-q', '-p', 'no:cacheprovider') `
+    -NextCommand 'cd bim-streaming-server && python -m pytest tests/test_conversion_authority_api.py -q -p no:cacheprovider'
 
 # mapping quality 需要 streaming-owned quality evidence；本 smoke 不用 historical worker evidence 充當。
 Add-SmokeTier -Record $Record -Tier 'mapping_quality' -Status 'not_observed' -Owner 'bim-streaming-server' `
