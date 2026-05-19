@@ -1,3 +1,28 @@
+## ADDED Requirements
+
+### Requirement: Terminal conversion-ready ingestion triggers local review session handoff
+
+When `bim-review-coordinator` conversion ingestion reaches a terminal `ready` state for a correlated IFC-ready job, the coordinator SHALL trigger local review session creation or activation separately from, and in parallel with, the metadata-only callback outbox. Callback outbox delivery state and local session handoff state SHALL remain independently classified: a pending or dead-letter cloud callback MUST NOT block the local session handoff, and a successful local session handoff MUST NOT be reported as cloud callback success. A terminal `failed` conversion MUST NOT create an openable or streamable local review session. Review session creation, binding, idempotency, and lifecycle details are governed by `review-session-request-lifecycle`; this requirement only fixes the seam that terminal `ready` ingestion is what triggers that handoff in the B-scheme runtime.
+
+#### Scenario: Ready ingestion triggers session handoff alongside callback outbox
+
+- **WHEN** coordinator conversion ingestion reaches terminal `ready` for a correlated IFC-ready job
+- **THEN** the coordinator enqueues the metadata-only cloud callback in the outbox
+- **AND** in parallel triggers local review session creation or activation for that correlation
+- **AND** the two outcomes are reported as independently classified states
+
+#### Scenario: Pending cloud callback does not block local session handoff
+
+- **WHEN** the metadata-only cloud callback is `pending` or moved to dead-letter because the company-cloud endpoint is unavailable
+- **THEN** the local review session handoff still proceeds for a terminal `ready` conversion
+- **AND** the local session is not reported as cloud callback success
+
+#### Scenario: Failed conversion creates no local session
+
+- **WHEN** coordinator conversion ingestion reaches terminal `failed`
+- **THEN** the coordinator MUST NOT create an openable or streamable local review session
+- **AND** the callback metadata reports `failed` or an equivalent not-ready state
+
 ## MODIFIED Requirements
 
 ### Requirement: Conversion handoff uses correlation IDs and idempotent events
