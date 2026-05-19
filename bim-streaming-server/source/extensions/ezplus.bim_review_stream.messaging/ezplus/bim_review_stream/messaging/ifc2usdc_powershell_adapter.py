@@ -1,0 +1,437 @@
+"""Host-native IFC->USDC converter adapter (introduce-host-native-conversion-authority-service, D7).
+
+This adapter is the ONLY new conversion execution body added by this change. It is
+dependency-injected into the existing ``create_conversion_api_app(converter=...)`` /
+``StreamingConversionStore(converter=...)``; the store gate logic
+(``_required_output_paths`` / ``_assert_publishable_outputs``) is NOT changed and
+NOT bypassed.
+
+Honesty contract (design.md D7 / OQ2, host-native-conversion-authority-service spec
+"Missing converter is an honest blocker"):
+
+- ``preflight()`` verifies every real converter prerequisite. Anything missing ->
+  ``ConversionAuthorityError("converter_unavailable", <actionable message>)``.
+- ``convert()`` runs ``scripts/convert-ifc-to-usdc.ps1`` (which only emits ``.usdc``)
+  and is then responsible for producing ``element_mapping.json`` /
+  ``entity_index.json`` / ``metadata.json`` + real ``quality_metrics`` from the
+  produced USDC. It never fabricates placeholder USDC or fake mapping; on any
+  missing prerequisite / failure it raises ``ConversionAuthorityError`` so the
+  store fails the job (``model.status="failed"``) instead of publishing a
+  fake-ready result.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Mapping
+from urllib.parse import unquote, urlparse
+import json
+import os
+import subprocess
+
+from conversion_authority import ConversionAuthorityError
+
+
+_PLACEHOLDER_MARKERS = (b"placeholder", b"worker adapter usdc placeholder")
+
+
+class Ifc2UsdcPowershellConverterAdapter:
+    """Run ``scripts/convert-ifc-to-usdc.ps1`` on the host and normalize outputs.
+
+    Produces the four store-required outputs (``model.usdc``,
+    ``element_mapping.json``, ``entity_index.json``, ``metadata.json``) plus
+    ``quality_metrics``. Missing prerequisites raise ``converter_unavailable``;
+    conversion failures raise a specific ``ConversionAuthorityError`` code.
+    """
+
+    def __init__(
+        self,
+        *,
+        repo_root: Path,
+        powershell_exe: str = "powershell.exe",
+        kit_exe_path: Path | None = None,
+        hoops_main_path: Path | None = None,
+        config_path: Path | None = None,
+        timeout_seconds: int = 600,
+        work_dir: Path | None = None,
+    ) -> None:
+        self.repo_root = Path(repo_root)
+        self.powershell_exe = powershell_exe
+        self.kit_exe_path = Path(kit_exe_path) if kit_exe_path else None
+        self.hoops_main_path = Path(hoops_main_path) if hoops_main_path else None
+        self.config_path = Path(config_path) if config_path else None
+        self.timeout_seconds = int(timeout_seconds)
+        self.work_dir = Path(work_dir) if work_dir else self.repo_root
+        self.ps1_path = self.repo_root / "scripts" / "convert-ifc-to-usdc.ps1"
+
+    # -- preflight -----------------------------------------------------------
+
+    def preflight(self) -> None:
+        """Fail fast (and honestly) when any real converter prerequisite is missing."""
+        missing: list[str] = []
+        if not self.ps1_path.is_file():
+            missing.append(f"converter script not found: {self.ps1_path}")
+        if not self._powershell_resolvable():
+            missing.append(
+                f"PowerShell executable not resolvable: {self.powershell_exe} "
+                "(host-native conversion must launch the .ps1 from PowerShell, not Git Bash)"
+            )
+        if self.kit_exe_path is None or not self.kit_exe_path.is_file():
+            missing.append(
+                "Kit executable not configured/found "
+                "(set STREAMING_CONVERSION_KIT_EXE to the kit.exe used by the IFC->USDC converter)"
+            )
+        if self.hoops_main_path is None or not self.hoops_main_path.exists():
+            missing.append(
+                "HOOPS converter entrypoint not configured/found "
+                "(set STREAMING_CONVERSION_HOOPS_MAIN)"
+            )
+        if self.config_path is not None and not self.config_path.exists():
+            missing.append(f"converter config not found: {self.config_path}")
+        if not self._usd_runtime_available():
+            missing.append(
+                "USD runtime (pxr.Usd) not importable; cannot enumerate the produced "
+                "USDC into element_mapping/entity_index/metadata + real quality_metrics"
+            )
+        if missing:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Host-native IFC->USDC converter prerequisites missing: "
+                + "; ".join(missing),
+            )
+
+    # -- convert -------------------------------------------------------------
+
+    def convert(
+        self,
+        *,
+        job: Mapping[str, Any],
+        ifc_ready_event: Mapping[str, Any],
+        output_dir: Path,
+    ) -> Mapping[str, Any]:
+        self.preflight()
+
+        ifc_path = self._resolve_local_ifc(ifc_ready_event)
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        model_path = output_dir / "model.usdc"
+
+        self._run_powershell_conversion(ifc_path=ifc_path, output_dir=output_dir)
+
+        if not model_path.is_file():
+            raise ConversionAuthorityError(
+                "missing_output",
+                f"Converter did not produce model.usdc at {model_path}",
+            )
+        head = model_path.read_bytes()[:4096].lower()
+        if any(marker in head for marker in _PLACEHOLDER_MARKERS):
+            raise ConversionAuthorityError(
+                "placeholder_usdc",
+                "Converter produced a placeholder model.usdc; refusing to publish.",
+            )
+
+        mapping_path = output_dir / "element_mapping.json"
+        entity_index_path = output_dir / "entity_index.json"
+        metadata_path = output_dir / "metadata.json"
+        quality_metrics = self._materialize_sidecars(
+            model_path=model_path,
+            ifc_path=ifc_path,
+            output_dir=output_dir,
+            mapping_path=mapping_path,
+            entity_index_path=entity_index_path,
+            metadata_path=metadata_path,
+        )
+
+        return {
+            "model_path": model_path,
+            "mapping_path": mapping_path,
+            "entity_index_path": entity_index_path,
+            "metadata_path": metadata_path,
+            "quality_metrics": quality_metrics,
+        }
+
+    # -- internals -----------------------------------------------------------
+
+    def _powershell_resolvable(self) -> bool:
+        exe = Path(self.powershell_exe)
+        if exe.is_file():
+            return True
+        from shutil import which
+
+        return which(self.powershell_exe) is not None
+
+    def _usd_runtime_available(self) -> bool:
+        try:  # pragma: no cover - depends on Kit/USD runtime presence
+            import importlib.util
+
+            return importlib.util.find_spec("pxr.Usd") is not None
+        except Exception:
+            return False
+
+    def _resolve_local_ifc(self, ifc_ready_event: Mapping[str, Any]) -> Path:
+        artifact = ifc_ready_event.get("ifc_artifact")
+        if not isinstance(artifact, dict):
+            raise ConversionAuthorityError(
+                "invalid_ifc_input", "ifc_ready event is missing ifc_artifact."
+            )
+        url = artifact.get("url") or artifact.get("file_url") or artifact.get(
+            "signed_upload_reference"
+        )
+        if not url:
+            raise ConversionAuthorityError(
+                "invalid_ifc_input", "ifc_artifact has no resolvable url."
+            )
+        local = self._url_to_local_path(str(url))
+        if local is None or not local.is_file():
+            raise ConversionAuthorityError(
+                "invalid_ifc_input",
+                f"IFC source is not a readable local file: {url}",
+            )
+        return local
+
+    def _url_to_local_path(self, url: str) -> Path | None:
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme in ("", "file"):
+            raw = parsed.path or url
+            if scheme == "":
+                raw = url
+            candidate = Path(unquote(raw))
+            if not candidate.is_absolute() and parsed.netloc:
+                candidate = Path(unquote(parsed.netloc)) / candidate
+            return self._anchor(candidate)
+        if scheme == "edge-local":
+            rel = (parsed.netloc + parsed.path) if parsed.netloc else parsed.path
+            return self._anchor(Path(unquote(rel.lstrip("/"))))
+        return None
+
+    def _anchor(self, candidate: Path) -> Path:
+        if candidate.is_absolute():
+            return candidate
+        return (self.work_dir / candidate).resolve()
+
+    def _run_powershell_conversion(self, *, ifc_path: Path, output_dir: Path) -> None:
+        cmd: list[str] = [
+            self.powershell_exe,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(self.ps1_path.resolve()),
+            "-IfcPath",
+            str(ifc_path.resolve()),
+            "-OutputDir",
+            str(output_dir.resolve()),
+            "-OutputName",
+            "model.usdc",
+            "-TimeoutSeconds",
+            str(self.timeout_seconds),
+            "-Force",
+        ]
+        if self.config_path is not None:
+            cmd += ["-ConfigPath", str(self.config_path.resolve())]
+        if self.kit_exe_path is not None:
+            cmd += ["-KitExePath", str(self.kit_exe_path.resolve())]
+        if self.hoops_main_path is not None:
+            cmd += ["-HoopsMainPath", str(self.hoops_main_path.resolve())]
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=str(self.repo_root),
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                shell=False,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ConversionAuthorityError(
+                "converter_timeout",
+                f"convert-ifc-to-usdc.ps1 exceeded {self.timeout_seconds}s and was killed.",
+            ) from exc
+        except OSError as exc:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                f"Failed to launch PowerShell converter: {exc}",
+            ) from exc
+        if completed.returncode != 0:
+            tail = (completed.stderr or completed.stdout or "").strip()[-800:]
+            raise ConversionAuthorityError(
+                "converter_failed",
+                f"convert-ifc-to-usdc.ps1 exited {completed.returncode}: {tail}",
+            )
+
+    def _materialize_sidecars(
+        self,
+        *,
+        model_path: Path,
+        ifc_path: Path,
+        output_dir: Path,
+        mapping_path: Path,
+        entity_index_path: Path,
+        metadata_path: Path,
+    ) -> Mapping[str, Any]:
+        """Derive the three sidecars + quality_metrics from the real produced USDC.
+
+        The converter (HOOPS/Kit) may already emit sidecars next to the USDC. When
+        present we adopt them; otherwise we enumerate the produced USD stage.
+        We never fabricate fake mapping content (the store would reject it, and
+        D7/OQ2 forbid polluting B-scheme evidence).
+        """
+        adopted = self._adopt_converter_sidecars(
+            output_dir=output_dir,
+            mapping_path=mapping_path,
+            entity_index_path=entity_index_path,
+            metadata_path=metadata_path,
+        )
+        if adopted is not None:
+            return adopted
+        return self._enumerate_usd_stage(
+            model_path=model_path,
+            ifc_path=ifc_path,
+            mapping_path=mapping_path,
+            entity_index_path=entity_index_path,
+            metadata_path=metadata_path,
+        )
+
+    def _adopt_converter_sidecars(
+        self,
+        *,
+        output_dir: Path,
+        mapping_path: Path,
+        entity_index_path: Path,
+        metadata_path: Path,
+    ) -> Mapping[str, Any] | None:
+        emitted_mapping = output_dir / "element_mapping.json"
+        emitted_index = output_dir / "entity_index.json"
+        emitted_metadata = output_dir / "metadata.json"
+        emitted_quality = output_dir / "quality_metrics.json"
+        if not (
+            emitted_mapping.is_file()
+            and emitted_index.is_file()
+            and emitted_metadata.is_file()
+            and emitted_quality.is_file()
+        ):
+            return None
+        # Paths already match the required names; just load the converter-owned
+        # quality metrics (real gates produced by the converter pipeline).
+        try:
+            quality = json.loads(emitted_quality.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ConversionAuthorityError(
+                "invalid_quality_metrics",
+                f"Converter-emitted quality_metrics.json is unreadable: {exc}",
+            ) from exc
+        if mapping_path != emitted_mapping:  # pragma: no cover - names are fixed
+            mapping_path.write_text(
+                emitted_mapping.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        return quality
+
+    def _enumerate_usd_stage(
+        self,
+        *,
+        model_path: Path,
+        ifc_path: Path,
+        mapping_path: Path,
+        entity_index_path: Path,
+        metadata_path: Path,
+    ) -> Mapping[str, Any]:
+        try:  # pragma: no cover - exercised only where Kit/USD runtime exists
+            from pxr import Usd, UsdGeom
+        except Exception as exc:  # noqa: BLE001
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Converter did not emit sidecars and USD runtime (pxr) is "
+                f"unavailable to enumerate {model_path.name}: {exc}",
+            ) from exc
+
+        stage = Usd.Stage.Open(str(model_path))  # pragma: no cover
+        if stage is None:  # pragma: no cover
+            raise ConversionAuthorityError(
+                "usdc_not_openable",
+                f"Produced USDC could not be opened by USD: {model_path}",
+            )
+
+        prims = [p for p in stage.Traverse()]  # pragma: no cover
+        imageable = [  # pragma: no cover
+            p for p in prims if UsdGeom.Imageable(p)
+        ]
+        mapping_items = []  # pragma: no cover
+        for prim in prims:  # pragma: no cover
+            ifc_guid = prim.GetCustomDataByKey("ifc:guid") or prim.GetCustomDataByKey(
+                "ifcGlobalId"
+            )
+            if ifc_guid:
+                mapping_items.append(
+                    {"ifc_guid": str(ifc_guid), "usd_prim_path": str(prim.GetPath())}
+                )
+        source_count = len(mapping_items) or len(prims)  # pragma: no cover
+        mapped_count = len(mapping_items)  # pragma: no cover
+
+        mapping_doc = {  # pragma: no cover
+            "mock": False,
+            "summary": {
+                "mapped_count": mapped_count,
+                "fake_mapping_count": 0,
+            },
+            "items": mapping_items,
+        }
+        index_doc = {  # pragma: no cover
+            "entities": [str(p.GetPath()) for p in prims],
+        }
+        metadata_doc = {  # pragma: no cover
+            "source": "ifc_ready",
+            "source_ifc": ifc_path.name,
+            "usd_root_layer": model_path.name,
+            "prim_count": len(prims),
+            "imageable_prim_count": len(imageable),
+        }
+        mapping_path.write_text(  # pragma: no cover
+            json.dumps(mapping_doc, ensure_ascii=False), encoding="utf-8"
+        )
+        entity_index_path.write_text(  # pragma: no cover
+            json.dumps(index_doc, ensure_ascii=False), encoding="utf-8"
+        )
+        metadata_path.write_text(  # pragma: no cover
+            json.dumps(metadata_doc, ensure_ascii=False), encoding="utf-8"
+        )
+        return {  # pragma: no cover
+            "source_ifc_entity_count": source_count,
+            "mapped_count": mapped_count,
+            "unmapped_count": max(source_count - mapped_count, 0),
+            "coverage_ratio": (mapped_count / source_count) if source_count else 0.0,
+            "coverage_status": "pass" if mapped_count == source_count else "warn",
+            "materialization_strategy": "usd_stage_enumeration",
+            "sidecar_carrier_count": 0,
+            "minimum_coverage_baseline_locked": False,
+            "hard_quality_gates": {
+                "usdc_openable": True,
+                "has_renderable_prims": len(imageable) > 0,
+                "placeholder_output": False,
+            },
+        }
+
+
+def adapter_from_env(repo_root: Path, env: Mapping[str, str] | None = None):
+    """Build an adapter from STREAMING_CONVERSION_* env vars (None values stay None)."""
+    src = dict(os.environ if env is None else env)
+
+    def _path(key: str) -> Path | None:
+        value = src.get(key)
+        return Path(value) if value else None
+
+    timeout_raw = src.get("STREAMING_CONVERSION_TIMEOUT_SECONDS")
+    try:
+        timeout = int(timeout_raw) if timeout_raw else 600
+    except ValueError:
+        timeout = 600
+    return Ifc2UsdcPowershellConverterAdapter(
+        repo_root=Path(repo_root),
+        powershell_exe=src.get("STREAMING_CONVERSION_POWERSHELL_EXE", "powershell.exe"),
+        kit_exe_path=_path("STREAMING_CONVERSION_KIT_EXE"),
+        hoops_main_path=_path("STREAMING_CONVERSION_HOOPS_MAIN"),
+        config_path=_path("STREAMING_CONVERSION_CONFIG_PATH"),
+        timeout_seconds=timeout,
+        work_dir=_path("STREAMING_CONVERSION_WORK_DIR"),
+    )

@@ -17,6 +17,24 @@ export interface StreamingConversionDispatchResult {
   authority?: string;
 }
 
+/**
+ * streaming-owned conversion result（host-native `GET /api/conversions/{id}/result`）。
+ * coordinator 只消費 metadata refs，不取 `.usdc` 本體（雲端 callback 為
+ * metadata-only outbox）。
+ */
+export interface StreamingConversionResult {
+  conversion_job_id: string;
+  status: string;
+  ready: boolean;
+  correlation_id?: string;
+  model_status?: string;
+  usdc_ref?: string | null;
+  element_mapping_ref?: string | null;
+  manifest_ref?: string | null;
+  reason?: string | null;
+  raw: Record<string, unknown>;
+}
+
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
 }
@@ -96,6 +114,54 @@ export class StreamingConversionClient {
       idempotent_replay:
         typeof parsed.idempotent_replay === "boolean" ? parsed.idempotent_replay : undefined,
       authority: typeof parsed.authority === "string" ? parsed.authority : undefined,
+    };
+  }
+
+  /**
+   * 主動向 host-native conversion service 取結果（B-scheme：coordinator 拉
+   * `GET /api/conversions/{id}/result`，再餵進既有 internal ingestion + 雲端
+   * metadata-only callback outbox）。只抽 metadata refs，不取大型檔案本體。
+   */
+  async fetchConversionResult(conversionJobId: string): Promise<StreamingConversionResult> {
+    const url = new URL(
+      `api/conversions/${encodeURIComponent(conversionJobId)}/result`,
+      ensureTrailingSlash(this.baseUrl),
+    ).toString();
+    const upstream = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
+    });
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      throw new Error(
+        `streaming conversion result API ${upstream.status}: ${text.slice(0, 256)}`,
+      );
+    }
+    const parsed = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
+    const model = (parsed.model as Record<string, unknown> | undefined) ?? {};
+    const artifacts = (parsed.artifacts as Record<string, unknown> | undefined) ?? {};
+    const errorInfo = (parsed.error as Record<string, unknown> | undefined) ?? {};
+    const refOf = (key: string): string | null => {
+      const entry = artifacts[key] as Record<string, unknown> | undefined;
+      const value = entry?.url;
+      return typeof value === "string" ? value : null;
+    };
+    return {
+      conversion_job_id:
+        typeof parsed.conversion_job_id === "string"
+          ? parsed.conversion_job_id
+          : conversionJobId,
+      status: typeof parsed.status === "string" ? parsed.status : "unknown",
+      ready: parsed.ready === true || model.status === "ready",
+      correlation_id:
+        typeof parsed.correlation_id === "string" ? parsed.correlation_id : undefined,
+      model_status: typeof model.status === "string" ? model.status : undefined,
+      usdc_ref: refOf("model_usdc"),
+      element_mapping_ref: refOf("element_mapping"),
+      manifest_ref: refOf("metadata"),
+      reason: typeof errorInfo.message === "string" ? errorInfo.message : null,
+      raw: parsed,
     };
   }
 }

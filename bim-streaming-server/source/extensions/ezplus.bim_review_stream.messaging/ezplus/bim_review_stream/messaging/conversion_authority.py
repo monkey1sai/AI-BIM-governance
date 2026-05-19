@@ -122,6 +122,28 @@ def create_conversion_api_app(
             "ready": False,
         }
 
+    @app.get("/health")
+    def health():
+        """Conversion-only identity.
+
+        This host-native service owns IFC->USDC conversion only. It MUST NOT
+        claim WebRTC (`49100`), Kit launcher, or viewport readiness; those are
+        separately health-checked tiers (see demo-runtime-readiness-smoke spec).
+        """
+        return {
+            "status": "ok",
+            "authority": "bim-streaming-server",
+            "service": "host-native-conversion-authority",
+            "role": "conversion-only",
+            "endpoints": CONVERSION_API_ENDPOINTS,
+            "claims": {
+                "ifc_to_usdc_conversion": True,
+                "webrtc_49100": False,
+                "kit_launcher": False,
+                "viewport_render": False,
+            },
+        }
+
     return app
 
 
