@@ -88,7 +88,6 @@ Archive = 把變更規格併入正式規格
 - 若發現已在 `main` 產生未提交變更，先切到對應 `codex/openspec/<change-id>` branch，再繼續工作或整理 PR。
 - 本地 `main` 只作為 `origin/main` 的乾淨追蹤分支；不得在 `main` 保留本地-only commit、累積功能開發、或用 merge/pull 解 PR squash/merge 後的 ahead/behind 分岔。
 - PR merge 後的本地收斂必須先 `git fetch origin --prune`，確認工作區乾淨後讓本地 `main` 指向 `origin/main`；若 `main...origin/main` 顯示 ahead/behind，先確認 ahead 內容已被 PR merge commit 吸收，再對齊 `origin/main`，不要手動解同內容衝突。
-- 任何 branch closeout 若偵測到已 merge / 已被主線吸收的 local branch，必須清理該 local branch，並讓主線留下可追溯的 `branch-closeout` marker commit；marker 不得停留為本地-only `main` commit，必須透過正常 PR/merge 或使用者明確授權的 direct push 進入 `origin/main`。
 
 ### Archive 後的 agent closeout event flow
 
@@ -107,11 +106,10 @@ git branch -r --no-merged origin/main
 
 判斷規則：
 
-- 對於 PR 已 `MERGED`、upstream 已 `gone`、或已被後續 PR / archive 明確 superseded 且內容已被 `origin/main` 吸收的 local branch，agent 必須在回報理由後清理 local branch。
+- 對於 PR 已 `MERGED`、upstream 已 `gone`、或已被後續 PR / archive 明確 superseded 的 local branch，agent 可以在回報理由後清理 local branch。
 - 對於遠端 branch，必須先用 `gh pr list --state all` 或等價方式確認 PR 狀態與 head ref；只有已 merge 或已明確 superseded 的 branch 才可建議刪除。
 - `revert-*`、release、hotfix、或語意上代表回滾決策的 branch 不得自動刪除；必須先向使用者說明保留/刪除影響並取得明確同意。
 - 若 `git branch --no-merged origin/main` 因 squash merge 或 replacement PR 仍列出舊 branch，不能只用 ancestry 判斷；必須交叉比對 PR 狀態、`mergedAt`、`closedAt`、branch diff 與 OpenSpec archive 內容。
-- 若 local branch 只是一般未 merge 工作、實驗分支、或 diff 尚未能證明已被主線吸收，不得用本規則刪除；先回報保留原因。
 
 清理指令範本：
 
@@ -121,25 +119,10 @@ git push origin --delete <remote-branch>
 git fetch origin --prune
 ```
 
-主線 marker commit 規則：
-
-- 只要本輪 closeout 實際刪除至少一個已 merge local branch，就必須留下 marker commit；若沒有刪除任何 local branch，不建立 marker。
-- marker commit message 使用 Conventional Commits，建議：
-
-```txt
-chore(branch-closeout): 記錄 merged local branch 清理
-```
-
-- marker commit body 必須列出：刪除的 local branch、對應 PR / merge commit / squash commit / 原始 SHA（若有）、刻意保留的 branch 與原因、`main` 對齊狀態、以及 `git branch --no-merged origin/main` 的剩餘結果。
-- 若純粹是 branch 清理，沒有文件或程式碼需要改，允許使用 `git commit --allow-empty` 建立 marker commit；該 commit 是 audit trail，不代表功能變更。
-- marker commit 必須進入 `origin/main` 才算完成。預設做法是從最新 `main` 建短分支送 PR；只有使用者明確要求或授權 direct-to-main closeout 時，才可直接在 `main` 建 marker commit 並 push。
-- marker commit 不得用來夾帶 unrelated docs/code 變更；若同時需要文件修正，另開正常 docs commit 或 PR。
-
 完成後必須回報：
 
 - 刪除哪些 local branch。
 - 刪除哪些 remote branch。
-- 建立了哪個 `branch-closeout` marker commit；若沒有建立，說明本輪未刪除 local branch 或尚未取得 push/PR 授權。
 - 哪些 branch 刻意保留，以及保留原因。
 - `main` 是否已對齊 `origin/main`。
 - `git branch --no-merged origin/main` 與 `git branch -r --no-merged origin/main` 的剩餘結果。

@@ -243,4 +243,3 @@ Archive = 把變更規格併入正式規格
 - `/openspec apply <change-id>` 的實作、測試、文件與 task 勾選都留在該 branch。
 - 開 PR 後由 review 討論與 GitHub Actions 驗證決定是否 merge。
 - merge 後才執行 OpenSpec sync/archive，將 delta specs 併入正式 `openspec/specs/`。
-- merge closeout 時，若偵測到已被 `origin/main` 吸收的 local branch，必須刪除該 local branch，並依 `AGENTS.md` 留下 `branch-closeout` marker commit 作為主線 audit trail；不得留下本地-only `main` commit。
