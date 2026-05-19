@@ -70,13 +70,14 @@ class FakeFailedConverter:
         raise ConversionAuthorityError("converter_failed", "fixture converter failed")
 
 
-def make_client(tmp_path: Path, converter, run_background: bool = True) -> TestClient:
+def make_client(tmp_path: Path, converter, run_background: bool = True, internal_conversion_token: str | None = None) -> TestClient:
     settings = ConversionAuthoritySettings(
         service_root=tmp_path,
         artifacts_root=tmp_path / "artifacts",
         jobs_dir=tmp_path / "jobs",
         public_artifacts_url="http://testserver/artifacts",
         bim_control_callback_url=None,
+        internal_conversion_token=internal_conversion_token,
     )
     app = create_conversion_api_app(settings=settings, converter=converter, run_background=run_background)
     return TestClient(app)
@@ -105,6 +106,10 @@ def ifc_ready_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def job_file_count(tmp_path: Path) -> int:
+    return len(list((tmp_path / "jobs").glob("stream_conv_*.json")))
 
 
 def test_ifc_ready_creates_queued_streaming_conversion_job(tmp_path: Path):
@@ -181,6 +186,91 @@ def test_streaming_is_internal_only_rejects_non_ifc_ready(tmp_path: Path):
     )
 
     assert response.status_code == 400
+    assert job_file_count(tmp_path) == 0
+
+
+def test_internal_conversion_requires_configured_token(tmp_path: Path):
+    client = make_client(
+        tmp_path,
+        converter=FakeSuccessfulConverter(),
+        run_background=False,
+        internal_conversion_token="secret-token",
+    )
+
+    missing = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    invalid = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(),
+        headers={"X-Internal-Conversion-Token": "wrong-token"},
+    )
+
+    assert missing.status_code == 401
+    assert invalid.status_code == 403
+    assert job_file_count(tmp_path) == 0
+
+    valid = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(),
+        headers={"X-Internal-Conversion-Token": "secret-token"},
+    )
+    assert valid.status_code == 202
+    assert job_file_count(tmp_path) == 1
+
+
+def test_duplicate_idempotency_key_replays_existing_job(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(event_id="evt_retry_001", idempotency_key="idem_ifc_demo_001"),
+    )
+    second = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(event_id="evt_retry_002", idempotency_key="idem_ifc_demo_001"),
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert second.json()["conversion_job_id"] == first.json()["conversion_job_id"]
+    assert second.json()["idempotent_replay"] is True
+    assert job_file_count(tmp_path) == 1
+
+
+def test_conflicting_idempotency_key_returns_409_without_new_job(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(event_id="evt_conflict_001", idempotency_key="idem_conflict_001"),
+    )
+    conflict = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_conflict_002",
+            idempotency_key="idem_conflict_001",
+            ifc_artifact={
+                "artifact_id": "artifact_ifc_other_001",
+                "format": "ifc",
+                "filename": "other-model.ifc",
+                "url": "edge-local://fixtures/other-model.ifc",
+            },
+        ),
+    )
+
+    assert first.status_code == 202
+    assert conflict.status_code == 409
+    assert job_file_count(tmp_path) == 1
+
+
+def test_missing_ifc_artifact_returns_400_without_new_job(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+    payload = ifc_ready_payload()
+    payload.pop("ifc_artifact")
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=payload)
+
+    assert response.status_code == 400
+    assert job_file_count(tmp_path) == 0
 
 
 def test_coordinator_internal_request_yields_job_status_result_and_skipped_callback(tmp_path: Path):

@@ -1,7 +1,7 @@
 {
     "schema_version":  "demo-runtime-readiness-smoke/v1",
     "capability":  "demo-runtime-readiness-smoke",
-    "emitted_at":  "2026-05-19T02:54:39.4589305Z",
+    "emitted_at":  "2026-05-19T03:33:12.9236889Z",
     "command":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance\\scripts\\verify-runtime-kit-launcher.ps1",
     "cwd":  "C:\\Users\\IOT\\.codex\\worktrees\\8caa\\AI-BIM-governance",
     "context":  {

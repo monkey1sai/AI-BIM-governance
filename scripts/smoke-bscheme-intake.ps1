@@ -58,7 +58,10 @@ function Invoke-Tier {
     param([string] $Tier, [string] $Owner, [string] $Cwd, [string[]] $CmdArgs, [string] $NextCommand)
     Push-Location (Join-Path $RepoRoot $Cwd)
     $output = @()
-    $tempRoot = Join-Path $RepoRoot 'pytest-bim-worker-tmp\bscheme-smoke'
+    $tempBase = Join-Path $RepoRoot 'pytest-bim-worker-tmp\bscheme-smoke'
+    $safeTier = ($Tier -replace '[^A-Za-z0-9_.-]', '_').Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safeTier)) { $safeTier = 'tier' }
+    $tempRoot = Join-Path $tempBase "$safeTier-$PID-$([System.Guid]::NewGuid().ToString('N'))"
     if (-not (Test-Path -LiteralPath $tempRoot)) {
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     }
@@ -529,3 +532,9 @@ Add-SmokeTier -Record $Record -Tier 'usd_stage_composition' -Status 'not_observe
 Save-SmokeEvidence -Record $Record -Path $EvidencePath | Out-Null
 Write-SmokeTierSummary -Record $Record
 Write-Host "[bscheme-smoke] evidence: $EvidencePath"
+
+$FailedTiers = @($Record.tiers | Where-Object { $_.status -eq 'failed' })
+if ($FailedTiers.Count -gt 0) {
+    $failedNames = ($FailedTiers | ForEach-Object { $_.tier }) -join ', '
+    throw "B-scheme smoke failed tiers: $failedNames"
+}

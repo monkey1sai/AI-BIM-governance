@@ -14,7 +14,7 @@ Current 2026-05-19 result in this worktree:
 | `real_ifc_fixture` | `blocked` | current `storage/*.ifc` has 0 IFC files |
 | `real_ifc_intake_conversion` | `blocked` | not run because current `storage/*.ifc` is empty |
 | `coordinator_session_lifecycle` | `passed` | `bim-review-coordinator` build + vitest passed |
-| `streaming_internal_conversion` | `passed` | streaming conversion authority pytest passed |
+| `streaming_internal_conversion` | `passed` | streaming conversion authority pytest 10 passed |
 | `mapping_quality` | `not_observed` | no real streaming-owned conversion result was produced |
 | `cloud_callback_outbox` | `passed` | coordinator callback outbox tests passed |
 | `runtime_image_kit_launcher` | `deferred` | Docker engine not available, so Kit launcher was not validated |
