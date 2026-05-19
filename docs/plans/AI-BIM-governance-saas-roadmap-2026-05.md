@@ -34,6 +34,8 @@
 >
 > **2026-05-19 更新（下一輪 burn-down reset｜對齊 Drive 12h Claude Design 2026-05-14/15）**：新增 [`AI-BIM-governance-next-burn-down-2026-05-19.md`](AI-BIM-governance-next-burn-down-2026-05-19.md) 作為 Drive-ready 下一輪 burn-down。結論：5/14/15 工作台的 C1/C2 仍有效但改名並收斂為 B-scheme runtime evidence（`runtime-image-linux-kit-launcher-readiness-pass`、`bscheme-real-streaming-conversion-evidence`、`single-kit-webrtc-visual-evidence`）；C3 `revit-intake-rvt-ifc-bridge-evidence` **已失效**，不得重開 `_bim-control` / `_worker` 產品 runtime。13-file worker batch / `minimum_coverage_locked` 已轉為 archive-only historical evidence，不再是 Phase B 後的下一輪 product runtime 候選。§5 / §6 / §10 已同步加入目前仍有效的候選、deferred / blocked runtime evidence 與建議順序。
 >
+> **2026-05-19 更新（B 方案 intake smoke 現行證據）**：`scripts/smoke-bscheme-intake.ps1` 已從 contract-stub API-only smoke 擴成「contract checks + optional real `storage/*.ifc` → coordinator intake → streaming conversion polling → coordinator callback outbox」的最小整合驗證入口。本 8caa worktree 的 `storage/*.ifc` 目前為 **0 檔**，因此 `real_ifc_fixture=blocked`、`real_ifc_intake_conversion=blocked`；contract/API 層仍通過（repo-root pytest 7、coordinator verify 140、streaming conversion pytest 10、callback outbox passed）。GPU/Kit 層本次 `runtime_image_kit_launcher=deferred`，實際 blocker 為 **Docker engine not available**；single Kit render 為 `deferred`、multi-viewer 與 USD stage composition 為 `not_observed`。證據：`docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json` 與 `docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json`。
+>
 > **2026-05-12 更新（`worker-real-conversion-quality` archive 對齊）**：依 `openspec/changes/archive/2026-05-11-worker-real-conversion-quality/` 與現行 `openspec/specs/` 更新 **§1.2 / §1.3 / §1.4 / §2 / §4 / §5 / §6 / §7 / §9.8 / §10**。P0 #1 已 land 並歸檔：`_worker` 已具備真實 IFC→USDC adapter、USDC openability hard gate、real mapping quality metrics 與 single Kit/browser 截圖證據；mapping coverage 仍採 measure-first，尚未鎖 production baseline 門檻。
 >
 > **2026-05-12 更新（#2 GPU 容量等待）**：依使用者指示，`multi-artifact-kit-routing` / `streaming-multi-instance-orchestration` 的 `dedicated_instance` runtime 驗證改為 **等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，roadmap 與 OpenSpec 只保留 control-plane contract / routing target，不把 dedicated multi-Kit runtime 視為進行中、passed 或 failed。
@@ -303,6 +305,18 @@ streaming_conversion_job tier:      contract archived; not_observed until bim-st
 mapping_quality tier:               contract archived; not_observed until streaming-owned result carries metrics
 usd_stage_composition tier:          contract archived; live Kit/GPU composition smoke not rerun
 historical worker conversion:       migration source only; cannot mark B-scheme tiers passed
+
+# 2026-05-19 B-scheme intake smoke（current worktree evidence）
+command:                            powershell -NoProfile -File scripts\smoke-bscheme-intake.ps1
+evidence json:                       docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json
+storage/*.ifc:                       0 files in current 8caa worktree; real_ifc_fixture=blocked
+real IFC intake→conversion:          blocked; not run because current storage/*.ifc is empty
+external contracts/fakes:            passed; repo-root pytest 7 passed
+coordinator lifecycle/outbox:         passed; npm run verify 140 passed
+streaming conversion authority:      passed; pytest 10 passed
+mapping_quality:                     not_observed; no streaming-owned real result in this run
+runtime_image_kit_launcher:          deferred; Docker engine not available
+single Kit/WebRTC render:             deferred/not_observed; 49100 not listening and no browser evidence collected
 ```
 
 > **證據文件**：
@@ -712,7 +726,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 
 | Evidence tier | 現況 | 下一步 |
 |---|---|---|
-| `runtime_image_kit_launcher` | `deferred`：container 內缺 NVIDIA graphics/Vulkan libs（`libGLX_nvidia.so.0`），Kit RTX runtime exit 75 | 修 native Linux / NVIDIA Container Toolkit graphics capability 或 WSL2 GL/Vulkan passthrough，重跑 `scripts/verify-runtime-kit-launcher.ps1` |
+| `runtime_image_kit_launcher` | `deferred`：2026-05-19 smoke 顯示 Docker engine not available，因此尚未驗到 runtime image Kit launcher；先前 container graphics/Vulkan blocker 仍列為 Docker 可用後需再觀察的下一層風險 | 先啟動/修復 Docker engine，重跑 `scripts/verify-runtime-kit-launcher.ps1`；若回到 `libGLX_nvidia.so.0` / graphics-Vulkan failure，再修 NVIDIA Container Toolkit graphics capability 或 WSL2 GL/Vulkan passthrough |
 | `mapping_quality` | `not_observed`：5/18 B-scheme smoke 是 API-only pass，未收 streaming-owned real quality metrics | 跟 #2 一起補，不能沿用 worker-era mapping evidence |
 | `single_kit_render` | `deferred`：Kit/GPU/WebRTC live render 未跑 | #1 passed 後跑 browser / Kit render validation |
 | `single_kit_multi_viewer` | `not_observed`：未收多 viewer browser evidence | #3 passed 後再跑 |
@@ -927,7 +941,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 ```txt
 Current P0 (下一輪先做):
   runtime-image-linux-kit-launcher-readiness-pass
-    → 解除 container graphics/Vulkan blocker；讓 produced Linux Kit launcher 在 runtime image 內真的啟動。
+    → 先讓 Docker engine 可用並啟動 runtime image；若 graphics/Vulkan blocker 仍出現，再解除 container NVIDIA graphics/Vulkan 問題，讓 produced Linux Kit launcher 在 runtime image 內真的啟動。
 
   bscheme-real-streaming-conversion-evidence
     → 用 coordinator 外部 intake + streaming internal conversion 補 streaming-owned result / mapping quality / callback outbox evidence。
@@ -1400,7 +1414,8 @@ B → C 觸發：
 
 1. **先解 `runtime-image-linux-kit-launcher-readiness` 的 deferred blocker**：
    - 目前 evidence：`docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json`。
-   - 阻塞原因：container 可見 CUDA compute，但未掛 NVIDIA graphics/Vulkan libs；缺 `libGLX_nvidia.so.0`，entrypoint exit 75。
+   - 目前阻塞原因（2026-05-19 smoke）：Docker engine not available，因此尚未驗到 runtime image Kit launcher。
+   - 下一層風險：Docker 可用後仍可能回到先前觀察過的 NVIDIA graphics/Vulkan libs 缺失（例如 `libGLX_nvidia.so.0` / entrypoint exit 75）；需在重跑 evidence 時誠實記錄。
    - 成功標準：`scripts/verify-runtime-kit-launcher.ps1` 在 runtime image 內啟動 produced Linux Kit launcher，並把 tier 從 `deferred` 更新為 `passed`。
    - 禁止：不得用 host-local Kit、不得用 `nvidia-smi` compute-only 當 pass。
 
