@@ -22,8 +22,8 @@ TBD - created by archiving change introduce-host-native-conversion-authority-ser
 
 #### Scenario: Internal token is enforced when configured
 
-- **WHEN** an internal conversion token is configured for the service
-- **THEN** requests without the expected internal token are rejected with `401` or `403`
+- **WHEN** the service is configured with an internal conversion token and clients are expected to send that configured value in the `X-Internal-Conversion-Token` request header
+- **THEN** requests that omit `X-Internal-Conversion-Token` or provide a value that does not match the configured internal conversion token are rejected with `401` or `403`
 - **AND** no conversion job is created for rejected requests
 
 ### Requirement: Host-native converter adapter publishes only validated artifacts
