@@ -27,6 +27,7 @@ from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
 import json
 import os
+import shutil
 import subprocess
 
 from conversion_authority import ConversionAuthorityError
@@ -413,6 +414,10 @@ class Ifc2UsdcPowershellConverterAdapter:
         }
 
 
+def _default_powershell_exe() -> str:
+    return shutil.which("pwsh") or "powershell.exe"
+
+
 def adapter_from_env(repo_root: Path, env: Mapping[str, str] | None = None):
     """Build an adapter from STREAMING_CONVERSION_* env vars (None values stay None)."""
     src = dict(os.environ if env is None else env)
@@ -428,7 +433,7 @@ def adapter_from_env(repo_root: Path, env: Mapping[str, str] | None = None):
         timeout = 600
     return Ifc2UsdcPowershellConverterAdapter(
         repo_root=Path(repo_root),
-        powershell_exe=src.get("STREAMING_CONVERSION_POWERSHELL_EXE", "powershell.exe"),
+        powershell_exe=src.get("STREAMING_CONVERSION_POWERSHELL_EXE") or _default_powershell_exe(),
         kit_exe_path=_path("STREAMING_CONVERSION_KIT_EXE"),
         hoops_main_path=_path("STREAMING_CONVERSION_HOOPS_MAIN"),
         config_path=_path("STREAMING_CONVERSION_CONFIG_PATH"),

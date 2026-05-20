@@ -87,7 +87,9 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 streamConfig = {
                     videoElementId: 'remote-video',
                     audioElementId: 'remote-audio',
-                    authenticate: true,
+                    server: this.props.signalingserver || StreamConfig.local.server,
+                    authenticate: Boolean(this.props.accessToken),
+                    ...(this.props.accessToken ? { accessToken: this.props.accessToken } : {}),
                     maxReconnects: 20,
                     signalingServer: this.props.signalingserver || StreamConfig.local.server,
                     signalingPort: this.props.signalingport || StreamConfig.local.signalingPort,
