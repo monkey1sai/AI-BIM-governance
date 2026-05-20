@@ -207,6 +207,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private streamStartTimeoutId: number | null = null;
     private loadingStateRetryId: number | null = null;
     private stageLoadTimeoutId: number | null = null;
+    private deferredOpenStageId: number | null = null;
     private loadingStatePollCount = 0;
     private pendingStageUrl: string | null = null;
     private pendingMappingHighlightRequestId: string | null = null;
@@ -263,6 +264,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearStreamStartTimeout();
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
+        this._clearDeferredOpenStage();
         this.reviewSocket?.disconnect();
     }
 
@@ -338,6 +340,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this.stageLoadTimeoutId = window.setTimeout(() => {
             this.stageLoadTimeoutId = null;
             if (!this.pendingStageUrl) return;
+            if (this._completeStageLoadFromVisibleStream()) return;
             this._failStageLoad(
                 "模型載入逾時",
                 [
@@ -355,11 +358,48 @@ export default class App extends React.Component<AppProps, AppState> {
         this.stageLoadTimeoutId = null;
     }
 
+    private _scheduleDeferredOpenStage(delayMs = 3000): void {
+        this._clearDeferredOpenStage();
+        this.deferredOpenStageId = window.setTimeout(() => {
+            this.deferredOpenStageId = null;
+            if (!this.state.showStream && !this._hasRemoteVideoFrame() && !this.state.isKitReady) {
+                this._scheduleDeferredOpenStage(1000);
+                return;
+            }
+            if (this._canOpenSelectedAsset()) {
+                this._openSelectedAsset();
+                return;
+            }
+            this._scheduleLoadingStateQuery(500);
+        }, delayMs);
+    }
+
+    private _clearDeferredOpenStage(): void {
+        if (this.deferredOpenStageId === null) return;
+        window.clearTimeout(this.deferredOpenStageId);
+        this.deferredOpenStageId = null;
+    }
+
     private _finishStageLoad(): void {
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this.pendingStageUrl = null;
         this.loadingStatePollCount = 0;
+    }
+
+    private _completeStageLoad(): void {
+        this._finishStageLoad();
+        this._getChildren();
+        this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false, streamDiagnostic: null });
+    }
+
+    private _completeStageLoadFromVisibleStream(): boolean {
+        if (!this.pendingStageUrl || !this._hasRemoteVideoFrame()) return false;
+        this._completeStageLoad();
+        this.setState((state) => ({
+            reviewEvents: [...state.reviewEvents, "模型已載入（WebRTC 畫面已可見）"],
+        }));
+        return true;
     }
 
     private _failStageLoad(loadingText: string, diagnostic?: string): void {
@@ -394,6 +434,12 @@ export default class App extends React.Component<AppProps, AppState> {
         const video = document.getElementById("remote-video") as HTMLVideoElement | null;
         if (!video) return false;
         return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+    }
+
+    private _canOpenSelectedAsset(): boolean {
+        if (!this.state.selectedUSDAsset) return false;
+        if (this.state.latestStreamConfig && this.state.latestStreamConfig.model.status !== "ready") return false;
+        return !isBlockedLifecycle(this.state.reviewLifecycleStatus);
     }
 
     private _handleStreamStartTimeout(): void {
@@ -767,7 +813,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 isLoading: false,
                 loadingText: "串流已連線，等待 Kit 狀態回應",
                 reviewEvents: [...state.reviewEvents, "WebRTC stream 已連線，正在確認 Kit stage state"],
-            }), () => this._pollForKitReady())
+            }), () => {
+                if (this._canOpenSelectedAsset()) {
+                    this._scheduleDeferredOpenStage();
+                    return;
+                }
+                this._pollForKitReady();
+            })
         }
 
     /**
@@ -879,6 +931,16 @@ export default class App extends React.Component<AppProps, AppState> {
             lastMappingVerification: null,
             mappingVerificationBlockedReason: null,
         }, () => {
+            if (!this._canOpenSelectedAsset()) {
+                this._appendReviewEvent(`已選擇 ${usdAsset.name}，等待 Kit ready 後載入`);
+                this._scheduleLoadingStateQuery(500);
+                return;
+            }
+            if (!this.state.showStream || !this._hasRemoteVideoFrame()) {
+                this._appendReviewEvent(`已選擇 ${usdAsset.name}，等待 WebRTC streamReady 後載入`);
+                this._scheduleDeferredOpenStage();
+                return;
+            }
             this._openSelectedAsset();
         });
     }
@@ -1189,6 +1251,20 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!event) {
             return;
         }
+        if (!event.event_type && event.messageRecipient === "kit" && typeof event.data === "string") {
+            try {
+                const parsed = JSON.parse(event.data);
+                if (isRecord(parsed)) {
+                    event = {
+                        ...event,
+                        ...parsed,
+                        payload: isRecord(parsed.payload) ? parsed.payload : event.payload,
+                    };
+                }
+            } catch {
+                // Keep the original event shape so the fallback logger below can surface it.
+            }
+        }
         this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
 
         const payload = isRecord(event.payload) ? event.payload : {};
@@ -1217,8 +1293,13 @@ export default class App extends React.Component<AppProps, AppState> {
             // is in Kit
             if (this.state.isKitReady === false) {
                 console.info("Kit is ready to load assets")
-                this.setState({ isKitReady: true })
-                this._queryLoadingState()
+                this.setState({ isKitReady: true }, () => {
+                    if (this._canOpenSelectedAsset()) {
+                        this._openSelectedAsset();
+                    } else {
+                        this._queryLoadingState();
+                    }
+                })
             }
             
             else {
@@ -1269,9 +1350,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 // show stream and populate children if the stage is valid and it's done loading
                 if (isStageValid && loadingState === "idle")
                 {
-                    this._finishStageLoad();
-                    this._getChildren()
-                    this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false, streamDiagnostic: null })
+                    this._completeStageLoad()
                 }
             }
         }
@@ -1284,6 +1363,11 @@ export default class App extends React.Component<AppProps, AppState> {
         // Loading activity notification.
         else if (event.event_type === "updateProgressActivity") {
             console.log('Kit App communicates progress activity.');
+            const activityText = getPayloadString(payload, "text");
+            if (this.pendingStageUrl && activityText === "None") {
+                this._completeStageLoad();
+                return;
+            }
             if (this.state.loadingText !== "正在載入模型...")
                 this.setState( {loadingText: "正在載入模型...", isLoading: true} )
         }
@@ -1396,7 +1480,13 @@ export default class App extends React.Component<AppProps, AppState> {
         // other messages from app to kit
         else if (event.messageRecipient === "kit") {
             console.log("onCustomEvent");
-            console.log(JSON.parse(event.data).event_type);
+            if (typeof event.data === "string") {
+                try {
+                    console.log(JSON.parse(event.data).event_type);
+                } catch {
+                    console.log(event.data);
+                }
+            }
         }
     }
 
