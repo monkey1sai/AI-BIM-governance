@@ -12,8 +12,8 @@ driver libraries in Docker container` 的後續證據補充。
 確認 2026-05-15 觀察到的 blocker 不是配置缺漏，而是 WSL2 架構天花板。
 
 `CODE_GOAL_DOCKER_KIT_MVP.md`「Kit 以 GPU container 運行；不能用 host Kit 假裝
-通過」的驗收規矩在此機物理上不可達（仍須走 host-native Kit，與
-`memory/kit-gpu-render-needs-windows-native` 一致）。
+通過」的驗收規矩在此機物理上不可達；依本次 2026-05-20 驗證結論，仍須走
+host-native Kit。
 
 ## Environment Diff vs. 2026-05-15
 
