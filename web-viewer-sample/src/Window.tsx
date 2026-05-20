@@ -556,7 +556,9 @@ export default class App extends React.Component<AppProps, AppState> {
 
             const artifacts = streamConfig.artifacts.length > 0 ? streamConfig.artifacts : bootstrap.artifacts;
             const usdAssets = this._mergeAssets(this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []), this._assetsFromReviewArtifacts(artifacts));
+            const mergedUSDAssets = this._mergeAssets(this.state.usdAssets, usdAssets);
             const selectedUSDAsset = usdAssets.find((asset) => asset.url === streamConfig.model.url) ?? usdAssets[0] ?? this.state.selectedUSDAsset;
+            const shouldShowReviewUI = mergedUSDAssets.length > 0 || artifacts.length > 0 || streamConfig.artifact_bindings.length > 0;
 
             this._connectReviewSocket(sessionId);
             if (reviewRequest && createdSession) {
@@ -582,8 +584,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 reviewIssues: bootstrap.issues,
                 latestStreamConfig: streamConfig,
                 mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
-                usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
+                usdAssets: mergedUSDAssets,
                 selectedUSDAsset,
+                showUI: this.state.showUI || shouldShowReviewUI,
                 activeStreamEndpoint,
                 streamMountKey: streamEndpointChanged ? this.state.streamMountKey + 1 : this.state.streamMountKey,
                 reviewEvents: [
