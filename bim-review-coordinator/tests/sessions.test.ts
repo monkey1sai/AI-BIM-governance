@@ -129,6 +129,41 @@ describe("bim-review-coordinator", () => {
     expect(config.body.quality_metrics_summary).toBeNull();
   });
 
+  it("overrides stale loopback Kit endpoints in stream config when runtime host changes", async () => {
+    const app = makeApp({
+      kitMediaPort: 47998,
+      kitInstanceEndpoints: [
+        {
+          id: "kit_local_001",
+          signalingServer: "127.0.0.1",
+          signalingPort: 49100,
+          mediaServer: "127.0.0.1",
+          mediaPort: null,
+        },
+      ],
+    });
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+
+    expect(created.status).toBe(200);
+    app.config.kitStreamServer = "192.0.2.10";
+    app.config.kitMediaServer = "192.0.2.10";
+    app.config.kitMediaPort = 47998;
+
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+
+    expect(config.status).toBe(200);
+    expect(config.body.webrtc.signalingServer).toBe("192.0.2.10");
+    expect(config.body.webrtc.mediaServer).toBe("192.0.2.10");
+    expect(config.body.webrtc.mediaPort).toBe(47998);
+    expect(config.body.kit_instance_bindings[0].stream_config.signalingServer).toBe("192.0.2.10");
+  });
+
   it("forwards additive quality_metrics_summary from session creation through stream-config", async () => {
     const app = makeApp();
     const summary = {

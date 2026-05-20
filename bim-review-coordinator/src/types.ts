@@ -16,6 +16,8 @@ export interface ArtifactBinding {
   artifact_group_id: string;
   model_version_id: string;
   artifact_id: string;
+  display_name?: string | null;
+  source_ifc_filename?: string | null;
   artifact_role: "source" | "derived" | "overlay" | "mapping";
   url: string | null;
   mapping_url: string | null;

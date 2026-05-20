@@ -44,6 +44,8 @@ describe("coordinator dev console", () => {
     expect(ui.text).toContain("審查協調 (Review Coordinator)");
     expect(ui.text).toContain("sourceFileInput");
     expect(ui.text).toContain("/api/dev/conversions/mock");
+    expect(ui.text).toContain("/api/external/ifc-ready");
+    expect(ui.text).toContain("getLatestConversionReviewPayload");
     expect(ui.text).toContain("互動效果實驗室");
     expect(ui.text).toContain("guidedHighlightIssue");
     expect(ui.text).toContain("工程參數與 Raw API / Socket controls");
@@ -58,6 +60,7 @@ describe("coordinator dev console", () => {
 
     expect(response.status).toBe(200);
     expect(response.text).toContain("joinSession");
+    expect(response.text).toContain("bim_review_primary_viewer");
   });
 
   it("proxies dev mock conversion requests to the conversion service", async () => {
@@ -94,5 +97,63 @@ describe("coordinator dev console", () => {
     expect(receivedMethod).toBe("POST");
     expect(receivedUrl).toBe("/api/dev/mock-conversion-result");
     expect(JSON.parse(receivedBody).project_id).toBe("project_demo_001");
+  });
+
+  it("proxies dev real conversion requests to the host-native conversion endpoint", async () => {
+    let receivedUrl = "";
+    activeConversionServer = http.createServer((req, res) => {
+      receivedUrl = req.url || "";
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ conversion_job_id: "stream_conv_dev_001", status: "queued" }));
+    });
+    await new Promise<void>((resolve) => {
+      activeConversionServer?.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = activeConversionServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected conversion test server to listen on a TCP port.");
+    }
+    const app = makeApp();
+    app.config.conversionApiBase = `http://127.0.0.1:${address.port}`;
+
+    const response = await request(app.app)
+      .post("/api/dev/conversions")
+      .send({ event_type: "ifc_ready", ifc_artifact: { artifact_id: "ifc_1", format: "ifc", url: "edge-local://storage/model.ifc" } });
+
+    expect(response.status).toBe(202);
+    expect(response.body.conversion_job_id).toBe("stream_conv_dev_001");
+    expect(receivedUrl).toBe("/api/conversions/ifc-to-usdc");
+  });
+
+  it("proxies dev conversion list queries to the host-native conversion endpoint", async () => {
+    let receivedUrl = "";
+    activeConversionServer = http.createServer((req, res) => {
+      receivedUrl = req.url || "";
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          count: 2,
+          items: [
+            { conversion_job_id: "stream_conv_dev_002", model_version_id: "version_demo_001", ready: true },
+            { conversion_job_id: "stream_conv_dev_001", model_version_id: "version_demo_001", ready: true },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => {
+      activeConversionServer?.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = activeConversionServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected conversion test server to listen on a TCP port.");
+    }
+    const app = makeApp();
+    app.config.conversionApiBase = `http://127.0.0.1:${address.port}`;
+
+    const response = await request(app.app).get("/api/dev/conversions?model_version_id=version_demo_001&status=succeeded&ready=true");
+
+    expect(response.status).toBe(200);
+    expect(response.body.count).toBe(2);
+    expect(receivedUrl).toBe("/api/conversions?model_version_id=version_demo_001&status=succeeded&ready=true");
   });
 });

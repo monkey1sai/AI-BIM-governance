@@ -42,14 +42,24 @@ async function httpCall(method, path, body) {
   }
 }
 
-function createSession() {
-  return httpCall("POST", "/api/review-sessions", {
+async function createSession() {
+  const conversionReviewPayload =
+    typeof window.prepareConversionReviewPayload === "function"
+      ? await window.prepareConversionReviewPayload()
+      : typeof window.getLatestConversionReviewPayload === "function"
+      ? window.getLatestConversionReviewPayload()
+      : null;
+  const body = {
     project_id: projectId.value,
     model_version_id: modelVersionId.value,
     created_by: userId.value,
     mode: mode.value,
     options: { auto_allocate_kit: true }
-  });
+  };
+  if (conversionReviewPayload && Array.isArray(conversionReviewPayload.artifact_bindings)) {
+    Object.assign(body, conversionReviewPayload);
+  }
+  return httpCall("POST", "/api/review-sessions", body);
 }
 
 function getSession() {
@@ -166,7 +176,33 @@ function emitHeartbeat() {
   emit("heartbeat", { session_id: sessionId.value || "review_session_demo_001", actor_id: userId.value });
 }
 
-function openViewerWithSession() {
+function applyStreamEndpointParams(params, streamConfig) {
+  const binding = Array.isArray(streamConfig?.kit_instance_bindings)
+    ? streamConfig.kit_instance_bindings[0]
+    : null;
+  const endpoint = binding?.stream_config || streamConfig?.webrtc || {};
+  if (binding?.kit_instance_id) params.set("kitInstanceId", binding.kit_instance_id);
+  if (endpoint.signalingServer) params.set("signalingServer", endpoint.signalingServer);
+  if (endpoint.signalingPort) params.set("signalingPort", String(endpoint.signalingPort));
+  if (endpoint.mediaServer) params.set("mediaServer", endpoint.mediaServer);
+  if (endpoint.mediaPort !== undefined && endpoint.mediaPort !== null) {
+    params.set("mediaPort", String(endpoint.mediaPort));
+  }
+  params.set("streamTimeoutMs", "90000");
+}
+
+async function openViewerWithSession() {
+  if (!sessionId.value) {
+    if (typeof window.startDemoSession === "function") {
+      await window.startDemoSession();
+    } else {
+      await createSession();
+    }
+  }
+  if (!sessionId.value) {
+    httpOutput.textContent = "開啟瀏覽器審查端失敗：尚未取得 session_id。請先完成轉檔並建立本場審查會議。";
+    return;
+  }
   const params = new URLSearchParams({
     sessionId: sessionId.value,
     projectId: projectId.value,
@@ -174,5 +210,16 @@ function openViewerWithSession() {
     userId: userId.value,
     displayName: displayName.value
   });
-  window.open(`http://127.0.0.1:5173/?${params.toString()}`, "_blank");
+  if (sessionId.value) {
+    try {
+      const response = await fetch(sessionPath("/stream-config"), { headers: { Accept: "application/json" } });
+      if (response.ok) {
+        applyStreamEndpointParams(params, await response.json());
+      }
+    } catch (error) {
+      console.warn("Unable to attach stream endpoint params to viewer URL", error);
+    }
+  }
+  const viewer = window.open(`http://127.0.0.1:5173/?${params.toString()}`, "bim_review_primary_viewer");
+  viewer?.focus?.();
 }

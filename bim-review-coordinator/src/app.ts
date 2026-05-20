@@ -28,6 +28,7 @@ import type {
   ArtifactBinding,
   ConversionQualityMetricsSummary,
   IfcReadyIntakeJob,
+  KitInstanceBinding,
   ReviewSession,
   RoutingPolicy,
   StreamConfigResponse,
@@ -51,6 +52,8 @@ const createSessionSchema = z.object({
           artifact_group_id: z.string().min(1),
           model_version_id: z.string().min(1).optional(),
           artifact_id: z.string().min(1),
+          display_name: z.string().nullable().optional(),
+          source_ifc_filename: z.string().nullable().optional(),
           artifact_role: z.enum(["source", "derived", "overlay", "mapping"]).default("derived"),
           url: z.string().nullable().optional(),
           mapping_url: z.string().nullable().optional(),
@@ -768,7 +771,12 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   });
 
   app.post("/api/dev/conversions", async (request, response) => {
-    await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions", request.body);
+    await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions/ifc-to-usdc", request.body);
+  });
+
+  app.get("/api/dev/conversions", async (request, response) => {
+    const upstreamPath = request.originalUrl.replace(/^\/api\/dev\/conversions/, "/api/conversions");
+    await proxyConversionService(response, config.conversionApiBase, "GET", upstreamPath);
   });
 
   app.post("/api/dev/conversions/mock", async (request, response) => {
@@ -957,6 +965,8 @@ function buildArtifactBindings(
         artifact_group_id: binding.artifact_group_id,
         model_version_id: binding.model_version_id || modelVersionId,
         artifact_id: binding.artifact_id,
+        display_name: binding.display_name || null,
+        source_ifc_filename: binding.source_ifc_filename || null,
         artifact_role: binding.artifact_role,
         url: binding.url || null,
         mapping_url: binding.mapping_url || null,
@@ -1021,6 +1031,32 @@ function modelStatusFromBinding(binding: ArtifactBinding | undefined, readyUsdc:
   return readyUsdc ? "ready" : "missing";
 }
 
+function isLoopbackHost(host: string | null | undefined): boolean {
+  const normalized = (host || "").trim().toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+function streamConfigWithRuntimeOverride(
+  stored: KitInstanceBinding["stream_config"] | undefined,
+  config: CoordinatorConfig,
+): KitInstanceBinding["stream_config"] {
+  const signalingServer =
+    stored?.signalingServer && !(isLoopbackHost(stored.signalingServer) && !isLoopbackHost(config.kitStreamServer))
+      ? stored.signalingServer
+      : config.kitStreamServer;
+  const mediaServer =
+    stored?.mediaServer && !(isLoopbackHost(stored.mediaServer) && !isLoopbackHost(config.kitMediaServer))
+      ? stored.mediaServer
+      : config.kitMediaServer;
+
+  return {
+    signalingServer,
+    signalingPort: stored?.signalingPort || config.kitSignalingPort,
+    mediaServer,
+    mediaPort: stored?.mediaPort ?? config.kitMediaPort,
+  };
+}
+
 function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config: CoordinatorConfig): StreamConfigResponse {
   const artifactBindings =
     session.artifact_bindings.length > 0
@@ -1029,7 +1065,11 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
   const readyBinding = chooseReadyBinding(artifactBindings);
   const statusBinding = readyBinding ?? chooseStreamingStatusBinding(artifactBindings);
   const readyUsdc = chooseReadyUsdc(artifacts);
-  const primaryKitBinding = session.kit_instance_bindings[0];
+  const kitInstanceBindings = session.kit_instance_bindings.map((binding) => ({
+    ...binding,
+    stream_config: streamConfigWithRuntimeOverride(binding.stream_config, config),
+  }));
+  const primaryKitBinding = kitInstanceBindings[0];
   const modelBinding = statusBinding;
   const loadableDerivedBindings = orderedLoadableDerivedBindings(artifactBindings);
   const primaryStageBinding = loadableDerivedBindings[0] ?? readyBinding ?? null;
@@ -1057,7 +1097,7 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
     },
     artifacts,
     artifact_bindings: artifactBindings,
-    kit_instance_bindings: session.kit_instance_bindings,
+    kit_instance_bindings: kitInstanceBindings,
     quality_metrics_summary: session.quality_metrics_summary ?? null,
     stage_composition: {
       applied_policy: "coordinator_load_order",
@@ -1069,8 +1109,8 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
     viewport_sharing: {
       mode: session.mode,
       primary_kit_instance_id: primaryKitBinding?.kit_instance_id || null,
-      shared_state: session.mode === "single_kit_shared_state" || session.kit_instance_bindings.length <= 1,
-      spectator_ready: session.kit_instance_bindings.some((binding) => binding.stream_config.signalingPort !== primaryKitBinding?.stream_config.signalingPort),
+      shared_state: session.mode === "single_kit_shared_state" || kitInstanceBindings.length <= 1,
+      spectator_ready: kitInstanceBindings.some((binding) => binding.stream_config.signalingPort !== primaryKitBinding?.stream_config.signalingPort),
     },
   };
 }

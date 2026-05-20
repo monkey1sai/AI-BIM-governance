@@ -278,6 +278,9 @@ if ($resolvedPortableRoot) {
 if ($ResetUser) {
     $args += "--reset-user"
 }
+if ([string]::IsNullOrWhiteSpace($env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS)) {
+    $env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS = "127.0.0.1:8005,localhost:8005,127.0.0.1:49101,localhost:49101"
+}
 $sourceExtensions = Join-Path $RepoRoot "source\extensions"
 if (Test-Path -LiteralPath $sourceExtensions -PathType Container) {
     $args += "--ext-folder"

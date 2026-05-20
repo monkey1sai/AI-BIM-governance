@@ -205,6 +205,11 @@ export default class App extends React.Component<AppProps, AppState> {
     private bimControlClient = new BimControlClient(reviewEnv.bimControlApiBase);
     private reviewSocket: ReviewSocketClient | null = null;
     private streamStartTimeoutId: number | null = null;
+    private loadingStateRetryId: number | null = null;
+    private stageLoadTimeoutId: number | null = null;
+    private deferredOpenStageId: number | null = null;
+    private loadingStatePollCount = 0;
+    private pendingStageUrl: string | null = null;
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
@@ -250,6 +255,11 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentDidMount(): void {
+        if (reviewEnv.hasExplicitEmptySessionId) {
+            void this._bootstrapReview();
+            return;
+        }
+
         this._scheduleStreamStartTimeout();
         void this._loadUSDAssets();
         void this._bootstrapReview();
@@ -257,6 +267,9 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentWillUnmount(): void {
         this._clearStreamStartTimeout();
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this._clearDeferredOpenStage();
         this.reviewSocket?.disconnect();
     }
 
@@ -312,6 +325,99 @@ export default class App extends React.Component<AppProps, AppState> {
         this.streamStartTimeoutId = null;
     }
 
+    private _scheduleLoadingStateQuery(delayMs = 1000): void {
+        this._clearLoadingStateRetry();
+        this.loadingStateRetryId = window.setTimeout(() => {
+            this.loadingStateRetryId = null;
+            this._queryLoadingState();
+        }, delayMs);
+    }
+
+    private _clearLoadingStateRetry(): void {
+        if (this.loadingStateRetryId === null) return;
+        window.clearTimeout(this.loadingStateRetryId);
+        this.loadingStateRetryId = null;
+    }
+
+    private _scheduleStageLoadTimeout(): void {
+        this._clearStageLoadTimeout();
+        const timeoutMs = Math.max(reviewEnv.streamStartTimeoutMs, 45000);
+        this.stageLoadTimeoutId = window.setTimeout(() => {
+            this.stageLoadTimeoutId = null;
+            if (!this.pendingStageUrl) return;
+            if (this._completeStageLoadFromVisibleStream()) return;
+            this._failStageLoad(
+                "模型載入逾時",
+                [
+                    `目標：${this.pendingStageUrl}`,
+                    `診斷：${this._getVideoDiagnosticText()}`,
+                    "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+                ].join("\n"),
+            );
+        }, timeoutMs);
+    }
+
+    private _clearStageLoadTimeout(): void {
+        if (this.stageLoadTimeoutId === null) return;
+        window.clearTimeout(this.stageLoadTimeoutId);
+        this.stageLoadTimeoutId = null;
+    }
+
+    private _scheduleDeferredOpenStage(delayMs = 3000): void {
+        this._clearDeferredOpenStage();
+        this.deferredOpenStageId = window.setTimeout(() => {
+            this.deferredOpenStageId = null;
+            if (!this.state.showStream && !this._hasRemoteVideoFrame() && !this.state.isKitReady) {
+                this._scheduleDeferredOpenStage(1000);
+                return;
+            }
+            if (this._canOpenSelectedAsset()) {
+                this._openSelectedAsset();
+                return;
+            }
+            this._scheduleLoadingStateQuery(500);
+        }, delayMs);
+    }
+
+    private _clearDeferredOpenStage(): void {
+        if (this.deferredOpenStageId === null) return;
+        window.clearTimeout(this.deferredOpenStageId);
+        this.deferredOpenStageId = null;
+    }
+
+    private _finishStageLoad(): void {
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this.pendingStageUrl = null;
+        this.loadingStatePollCount = 0;
+    }
+
+    private _completeStageLoad(): void {
+        this._finishStageLoad();
+        this._getChildren();
+        this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false, streamDiagnostic: null });
+    }
+
+    private _completeStageLoadFromVisibleStream(): boolean {
+        if (!this.pendingStageUrl || !this._hasRemoteVideoFrame()) return false;
+        this._completeStageLoad();
+        this.setState((state) => ({
+            reviewEvents: [...state.reviewEvents, "模型已載入（WebRTC 畫面已可見）"],
+        }));
+        return true;
+    }
+
+    private _failStageLoad(loadingText: string, diagnostic?: string): void {
+        this._finishStageLoad();
+        this.setState((state) => ({
+            loadingText,
+            streamDiagnostic: diagnostic || null,
+            showStream: this._hasRemoteVideoFrame(),
+            isLoading: false,
+            reviewEvents: [...state.reviewEvents, loadingText],
+        }));
+    }
+
     private _getVideoDiagnosticText(): string {
         const video = document.getElementById("remote-video") as HTMLVideoElement | null;
         if (!video) {
@@ -333,6 +439,12 @@ export default class App extends React.Component<AppProps, AppState> {
         const video = document.getElementById("remote-video") as HTMLVideoElement | null;
         if (!video) return false;
         return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+    }
+
+    private _canOpenSelectedAsset(): boolean {
+        if (!this.state.selectedUSDAsset) return false;
+        if (this.state.latestStreamConfig && this.state.latestStreamConfig.model.status !== "ready") return false;
+        return !isBlockedLifecycle(this.state.reviewLifecycleStatus);
     }
 
     private _handleStreamStartTimeout(): void {
@@ -426,6 +538,29 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _bootstrapReview(): Promise<void> {
         try {
+            if (reviewEnv.hasExplicitEmptySessionId) {
+                this.setState((state) => ({
+                    reviewLifecycleStatus: null,
+                    reviewStatus: "Review session URL 缺少 sessionId",
+                    reviewArtifacts: [],
+                    reviewIssues: [],
+                    latestStreamConfig: null,
+                    mappingUrl: null,
+                    usdAssets: [],
+                    selectedUSDAsset: null,
+                    showStream: false,
+                    showUI: false,
+                    loadingText: "請從本場會議開啟瀏覽器審查端",
+                    streamDiagnostic: [
+                        "目前 URL 帶有空的 sessionId=，viewer 已停止自動建立新 session。",
+                        "請回到 http://127.0.0.1:8004/ui，完成轉檔與建立會議後按「用本場會議開啟瀏覽器審查端」。",
+                    ].join("\n"),
+                    isLoading: false,
+                    reviewEvents: [...state.reviewEvents, "空 sessionId 已阻止自動建立 review session"],
+                }));
+                return;
+            }
+
             if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId && !reviewEnv.defaultReviewRequestId) {
                 this.setState({ reviewStatus: "Review session 自動建立已停用" });
                 await this._loadReviewDataFromBimControl();
@@ -495,7 +630,9 @@ export default class App extends React.Component<AppProps, AppState> {
 
             const artifacts = streamConfig.artifacts.length > 0 ? streamConfig.artifacts : bootstrap.artifacts;
             const usdAssets = this._mergeAssets(this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []), this._assetsFromReviewArtifacts(artifacts));
+            const mergedUSDAssets = this._mergeAssets(this.state.usdAssets, usdAssets);
             const selectedUSDAsset = usdAssets.find((asset) => asset.url === streamConfig.model.url) ?? usdAssets[0] ?? this.state.selectedUSDAsset;
+            const shouldShowReviewUI = mergedUSDAssets.length > 0 || artifacts.length > 0 || streamConfig.artifact_bindings.length > 0;
 
             this._connectReviewSocket(sessionId);
             if (reviewRequest && createdSession) {
@@ -521,8 +658,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 reviewIssues: bootstrap.issues,
                 latestStreamConfig: streamConfig,
                 mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
-                usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
+                usdAssets: mergedUSDAssets,
                 selectedUSDAsset,
+                showUI: this.state.showUI || shouldShowReviewUI,
                 activeStreamEndpoint,
                 streamMountKey: streamEndpointChanged ? this.state.streamMountKey + 1 : this.state.streamMountKey,
                 reviewEvents: [
@@ -610,17 +748,27 @@ export default class App extends React.Component<AppProps, AppState> {
             .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && binding.url)
             .sort((left, right) => left.load_order - right.load_order)
             .map((binding) => ({
-                name: binding.artifact_id || binding.artifact_group_id,
+                name: binding.display_name || binding.source_ifc_filename || binding.artifact_id || binding.artifact_group_id,
                 url: binding.url as string,
             }));
     }
 
     private _mergeAssets(existing: USDAssetType[], incoming: USDAssetType[]): USDAssetType[] {
         const byUrl = new Map<string, USDAssetType>();
-        for (const asset of [...incoming, ...existing]) {
+        for (const asset of existing) {
+            if (!byUrl.has(asset.url)) byUrl.set(asset.url, asset);
+        }
+        for (const asset of incoming) {
             byUrl.set(asset.url, asset);
         }
         return Array.from(byUrl.values());
+    }
+
+    private _resolveMappingUrlForAsset(asset: USDAssetType): string | null {
+        const binding = this.state.latestStreamConfig?.artifact_bindings?.find((item) => item.url === asset.url && item.mapping_url);
+        if (binding?.mapping_url) return binding.mapping_url;
+        const artifact = this.state.reviewArtifacts.find((item) => item.url === asset.url && item.mapping_url);
+        return artifact?.mapping_url || null;
     }
 
     private _resolveMappingUrl(streamConfig: ReviewStreamConfig | null, artifacts: ReviewArtifact[]): string | null {
@@ -693,7 +841,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 isLoading: false,
                 loadingText: "串流已連線，等待 Kit 狀態回應",
                 reviewEvents: [...state.reviewEvents, "WebRTC stream 已連線，正在確認 Kit stage state"],
-            }), () => this._pollForKitReady())
+            }), () => {
+                if (this._canOpenSelectedAsset()) {
+                    this._scheduleDeferredOpenStage();
+                    return;
+                }
+                this._pollForKitReady();
+            })
         }
 
     /**
@@ -761,7 +915,16 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
-        this.setState({ loadingText: "正在載入模型...", showStream: false, isLoading: true })
+        this.pendingStageUrl = this.state.selectedUSDAsset.url;
+        this.loadingStatePollCount = 0;
+        this._clearLoadingStateRetry();
+        this._scheduleStageLoadTimeout();
+        this.setState({
+            loadingText: "正在載入模型...",
+            showStream: this._hasRemoteVideoFrame(),
+            streamDiagnostic: null,
+            isLoading: true
+        })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
         console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
@@ -775,6 +938,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
             ),
         );
+        this._scheduleLoadingStateQuery(1500);
     }
 
     /**
@@ -784,7 +948,27 @@ export default class App extends React.Component<AppProps, AppState> {
     */
     private _onSelectUSDAsset (usdAsset: USDAssetType): void {
         console.log(`Asset selected: ${usdAsset.name}.`);
-        this.setState({ selectedUSDAsset: usdAsset }, () => {
+        const mappingUrl = this._resolveMappingUrlForAsset(usdAsset);
+        this.setState({
+            selectedUSDAsset: usdAsset,
+            mappingUrl,
+            mappingStatus: mappingUrl ? "尚未載入 mapping" : "此成果檔沒有 mapping URL",
+            mappingSummary: null,
+            mappingItems: [],
+            selectedMappingIndex: 0,
+            lastMappingVerification: null,
+            mappingVerificationBlockedReason: null,
+        }, () => {
+            if (!this._canOpenSelectedAsset()) {
+                this._appendReviewEvent(`已選擇 ${usdAsset.name}，等待 Kit ready 後載入`);
+                this._scheduleLoadingStateQuery(500);
+                return;
+            }
+            if (!this.state.showStream || !this._hasRemoteVideoFrame()) {
+                this._appendReviewEvent(`已選擇 ${usdAsset.name}，等待 WebRTC streamReady 後載入`);
+                this._scheduleDeferredOpenStage();
+                return;
+            }
             this._openSelectedAsset();
         });
     }
@@ -1095,6 +1279,20 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!event) {
             return;
         }
+        if (!event.event_type && event.messageRecipient === "kit" && typeof event.data === "string") {
+            try {
+                const parsed = JSON.parse(event.data);
+                if (isRecord(parsed)) {
+                    event = {
+                        ...event,
+                        ...parsed,
+                        payload: isRecord(parsed.payload) ? parsed.payload : event.payload,
+                    };
+                }
+            } catch {
+                // Keep the original event shape so the fallback logger below can surface it.
+            }
+        }
         this._appendDemoIncoming(event.event_type || event.messageRecipient || "streamEvent", event);
 
         const payload = isRecord(event.payload) ? event.payload : {};
@@ -1102,10 +1300,16 @@ export default class App extends React.Component<AppProps, AppState> {
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
             if (payload.result === "success") {
-                this._queryLoadingState() 
+                this._scheduleLoadingStateQuery(250)
             }
             else {
-                console.error('Kit App communicates there was an error loading: ' + getPayloadString(payload, "url"));
+                const url = getPayloadString(payload, "url");
+                const error = getPayloadString(payload, "error") || "unknown error";
+                console.error(`Kit App communicates there was an error loading: ${url} (${error})`);
+                this._failStageLoad(
+                    "模型載入失敗",
+                    [`目標：${url || this.pendingStageUrl || "unknown"}`, `錯誤：${error}`].join("\n"),
+                );
             }
         }
         
@@ -1117,35 +1321,64 @@ export default class App extends React.Component<AppProps, AppState> {
             // is in Kit
             if (this.state.isKitReady === false) {
                 console.info("Kit is ready to load assets")
-                this.setState({ isKitReady: true })
-                this._queryLoadingState()
+                this.setState({ isKitReady: true }, () => {
+                    if (this._canOpenSelectedAsset()) {
+                        this._openSelectedAsset();
+                    } else {
+                        this._queryLoadingState();
+                    }
+                })
             }
             
             else {
+                this._clearLoadingStateRetry();
+                this.loadingStatePollCount += 1;
                 const payloadUrl = getPayloadString(payload, "url");
                 const loadingState = getPayloadString(payload, "loading_state");
                 const usdAsset: USDAssetType = this._getAsset(payloadUrl)
                 const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
+
+                if (loadingState === "busy") {
+                    if (this.loadingStatePollCount <= 90) {
+                        this.setState({ loadingText: "正在載入模型...", isLoading: true });
+                        this._scheduleLoadingStateQuery(1000);
+                    } else {
+                        this._failStageLoad(
+                            "模型載入逾時",
+                            [`目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`, `最後狀態：${payloadUrl || "empty"} busy`].join("\n"),
+                        );
+                    }
+                    return;
+                }
                 
                 // set the USD Asset dropdown to the currently opened stage if it doesn't match
                 if (isStageValid && usdAsset !== undefined && this.state.selectedUSDAsset !== usdAsset)
                     this.setState({ selectedUSDAsset: usdAsset })
 
                 // if the stage is empty, force-load the selected usd asset; the loading state is irrelevant
-                if (!payloadUrl)
-                    this._openSelectedAsset()
+                if (!payloadUrl) {
+                    if (this.pendingStageUrl && this.loadingStatePollCount <= 3) {
+                        this._scheduleLoadingStateQuery(1000);
+                    } else {
+                        this._failStageLoad("模型載入狀態未回傳 URL", `目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`);
+                    }
+                    return;
+                }
                 
                 // if a stage has been fully loaded and isn't a part of this application, force-load the selected stage
                 else if (!isStageValid && loadingState === "idle"){
                     console.log(`The loaded asset ${payloadUrl} is invalid.`)
-                    this._openSelectedAsset()
+                    this._failStageLoad(
+                        "模型載入狀態不符合目前清單",
+                        [`Kit 回報：${payloadUrl}`, `目前選擇：${this.state.selectedUSDAsset?.url || "none"}`].join("\n"),
+                    )
+                    return;
                 }
                 
                 // show stream and populate children if the stage is valid and it's done loading
                 if (isStageValid && loadingState === "idle")
                 {
-                    this._getChildren()
-                    this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false })
+                    this._completeStageLoad()
                 }
             }
         }
@@ -1158,6 +1391,11 @@ export default class App extends React.Component<AppProps, AppState> {
         // Loading activity notification.
         else if (event.event_type === "updateProgressActivity") {
             console.log('Kit App communicates progress activity.');
+            const activityText = getPayloadString(payload, "text");
+            if (this.pendingStageUrl && activityText === "None") {
+                this._completeStageLoad();
+                return;
+            }
             if (this.state.loadingText !== "正在載入模型...")
                 this.setState( {loadingText: "正在載入模型...", isLoading: true} )
         }
@@ -1270,7 +1508,13 @@ export default class App extends React.Component<AppProps, AppState> {
         // other messages from app to kit
         else if (event.messageRecipient === "kit") {
             console.log("onCustomEvent");
-            console.log(JSON.parse(event.data).event_type);
+            if (typeof event.data === "string") {
+                try {
+                    console.log(JSON.parse(event.data).event_type);
+                } catch {
+                    console.log(event.data);
+                }
+            }
         }
     }
 
@@ -1296,11 +1540,12 @@ export default class App extends React.Component<AppProps, AppState> {
 
         const sidebarWidth = 300;
         const demoPanelWidth = 360;
-        const showDemoPanel = reviewEnv.showDemoPanel;
+        const showDemoPanel = reviewEnv.showDemoPanel && !reviewEnv.hasExplicitEmptySessionId;
         const demoPanelRight = this.state.showUI ? sidebarWidth : 0;
         const streamReservedWidth = this.state.showUI
             ? sidebarWidth + (showDemoPanel ? demoPanelWidth : 0)
             : (showDemoPanel ? demoPanelWidth : 0);
+        const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId;
         return (
             <div
                 style={{
@@ -1328,6 +1573,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
 
                 {/* Streamed app */}
+                {shouldRenderAppStream &&
                 <AppStream
                     key={this.state.streamMountKey}
                     sessionId={this.props.sessionId}
@@ -1347,7 +1593,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     onLoggedIn={(userId) => this._onLoggedIn(userId)}
                     handleCustomEvent={(event) => this._handleCustomEvent(event)}
                     onStreamFailed={this.props.onStreamFailed}
-                    />
+                    />}
                 </div>
 
                 {showDemoPanel &&

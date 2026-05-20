@@ -30,7 +30,12 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
 _HTTP_STAGE_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
-_DEFAULT_HTTP_STAGE_ALLOWED_HOSTS = ("127.0.0.1:8005", "localhost:8005")
+_DEFAULT_HTTP_STAGE_ALLOWED_HOSTS = (
+    "127.0.0.1:8005",
+    "localhost:8005",
+    "127.0.0.1:49101",
+    "localhost:49101",
+)
 _DEFAULT_MAX_HTTP_STAGE_BYTES = 512 * 1024 * 1024
 
 
@@ -636,6 +641,27 @@ class LoadingManager:
                 return
 
             self._compose_secondary_artifact_bindings(usd_context.get_stage())
+            self._stage_is_opening = False
+            self._stage_has_opened = True
+            self._streaming_manager_is_busy = False
+
+            for _ in range(2):
+                await omni.kit.app.get_app().next_update_async()
+
+            _ensure_default_lighting(usd_context.get_stage())
+
+            public_url = self._requested_stage_url if self._requested_stage_url else "[obfuscated]"
+            self._public_opened_stage_url = public_url
+            carb.log_info(
+                f"Sending message to client that stage has loaded: {public_url}"
+            )
+            payload = {
+                "url": public_url,
+                "result": "success",
+                "error": "",
+                **self._public_stage_context(self._requested_stage_context),
+            }
+            get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
 
         asyncio.ensure_future(open_stage())
 

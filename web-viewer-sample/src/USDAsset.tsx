@@ -42,6 +42,7 @@ export default class USDAsset extends React.Component<USDAssetProps, USDAssetSta
     */
     _handleSelectChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
         const selectedIndex = parseInt(event.target.value, 10);
+        if (!Number.isFinite(selectedIndex) || !this.props.usdAssets[selectedIndex]) return;
         this.setState({ selectedUSDAssetIndex: selectedIndex });
         if (this.props.onSelectUSDAsset) {
             this.props.onSelectUSDAsset(this.props.usdAssets[selectedIndex]);
@@ -67,8 +68,9 @@ export default class USDAsset extends React.Component<USDAssetProps, USDAssetSta
     *
     * Find index of asset by url.
     */
-    private _findAssetIndexByUrl (url?: string): number {
-        return this.props.usdAssets.findIndex(asset => asset.url === url);
+    private _findAssetIndexByUrl (url?: string): number | null {
+        const index = this.props.usdAssets.findIndex(asset => asset.url === url);
+        return index >= 0 ? index : null;
     }
     
     /**
@@ -87,7 +89,7 @@ export default class USDAsset extends React.Component<USDAssetProps, USDAssetSta
               <select
                   className="nvidia-dropdown"
                   onChange={this._handleSelectChange}
-                  value={this.state.selectedUSDAssetIndex || ''}>
+                  value={this.state.selectedUSDAssetIndex ?? ''}>
                   {options}
               </select>
           );
