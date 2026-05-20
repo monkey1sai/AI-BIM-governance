@@ -33,7 +33,7 @@ The host-native conversion authority service SHALL run conversion through a conv
 #### Scenario: Successful conversion returns ready artifacts
 
 - **WHEN** the converter adapter completes an IFC to USDC conversion with all required outputs
-- **THEN** `GET /api/conversions/{conversion_job_id}/result` returns `status="succeeded"` and `model.status="ready"`
+- **THEN** `GET /api/conversions/{conversion_job_id}/result` returns `status="succeeded"` or `status="succeeded_with_warnings"` and `model.status="ready"`
 - **AND** the result includes USDC, element mapping, entity index, metadata refs, quality metrics, and lineage
 
 #### Scenario: Placeholder output is rejected
