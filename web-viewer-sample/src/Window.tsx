@@ -671,17 +671,27 @@ export default class App extends React.Component<AppProps, AppState> {
             .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && binding.url)
             .sort((left, right) => left.load_order - right.load_order)
             .map((binding) => ({
-                name: binding.artifact_id || binding.artifact_group_id,
+                name: binding.display_name || binding.source_ifc_filename || binding.artifact_id || binding.artifact_group_id,
                 url: binding.url as string,
             }));
     }
 
     private _mergeAssets(existing: USDAssetType[], incoming: USDAssetType[]): USDAssetType[] {
         const byUrl = new Map<string, USDAssetType>();
-        for (const asset of [...incoming, ...existing]) {
+        for (const asset of existing) {
+            if (!byUrl.has(asset.url)) byUrl.set(asset.url, asset);
+        }
+        for (const asset of incoming) {
             byUrl.set(asset.url, asset);
         }
         return Array.from(byUrl.values());
+    }
+
+    private _resolveMappingUrlForAsset(asset: USDAssetType): string | null {
+        const binding = this.state.latestStreamConfig?.artifact_bindings?.find((item) => item.url === asset.url && item.mapping_url);
+        if (binding?.mapping_url) return binding.mapping_url;
+        const artifact = this.state.reviewArtifacts.find((item) => item.url === asset.url && item.mapping_url);
+        return artifact?.mapping_url || null;
     }
 
     private _resolveMappingUrl(streamConfig: ReviewStreamConfig | null, artifacts: ReviewArtifact[]): string | null {
@@ -855,7 +865,17 @@ export default class App extends React.Component<AppProps, AppState> {
     */
     private _onSelectUSDAsset (usdAsset: USDAssetType): void {
         console.log(`Asset selected: ${usdAsset.name}.`);
-        this.setState({ selectedUSDAsset: usdAsset }, () => {
+        const mappingUrl = this._resolveMappingUrlForAsset(usdAsset);
+        this.setState({
+            selectedUSDAsset: usdAsset,
+            mappingUrl,
+            mappingStatus: mappingUrl ? "尚未載入 mapping" : "此成果檔沒有 mapping URL",
+            mappingSummary: null,
+            mappingItems: [],
+            selectedMappingIndex: 0,
+            lastMappingVerification: null,
+            mappingVerificationBlockedReason: null,
+        }, () => {
             this._openSelectedAsset();
         });
     }

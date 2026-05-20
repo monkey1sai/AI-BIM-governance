@@ -10,6 +10,7 @@ from uuid import uuid4
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 CONVERSION_API_ENDPOINTS = {
     "create": "POST /api/conversions/ifc-to-usdc",
+    "list": "GET /api/conversions",
     "status": "GET /api/conversions/{conversion_job_id}",
     "result": "GET /api/conversions/{conversion_job_id}/result",
 }
@@ -96,6 +97,24 @@ def create_conversion_api_app(
         if run_background and not job.get("idempotent_replay"):
             background_tasks.add_task(store.complete_conversion_job, job["conversion_job_id"])
         return job
+
+    @app.get("/api/conversions")
+    def list_conversions(
+        model_version_id: str | None = None,
+        status: str | None = None,
+        ready: bool | None = None,
+        limit: int = 50,
+    ):
+        try:
+            items = store.list_conversion_results(
+                model_version_id=model_version_id,
+                status=status,
+                ready=ready,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"items": items, "count": len(items)}
 
     @app.get("/api/conversions/{conversion_job_id}")
     def get_conversion(conversion_job_id: str):
@@ -217,6 +236,38 @@ class StreamingConversionStore:
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def list_conversion_results(
+        self,
+        *,
+        model_version_id: str | None = None,
+        status: str | None = None,
+        ready: bool | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if model_version_id:
+            _safe_id(model_version_id, "model_version_id")
+        if status and status not in CONVERSION_STATUSES:
+            raise ValueError(f"Invalid conversion status: {status}")
+        if limit < 1:
+            raise ValueError("limit must be greater than zero.")
+        max_limit = min(limit, 200)
+        jobs = []
+        for path in Path(self.settings.jobs_dir).glob("stream_conv_*.json"):
+            job = json.loads(path.read_text(encoding="utf-8"))
+            if model_version_id and job.get("model_version_id") != model_version_id:
+                continue
+            result = job.get("result") or {}
+            result_status = result.get("status") or job.get("status")
+            if status and result_status != status:
+                continue
+            result_ready = bool(result.get("ready", False))
+            if ready is not None and result_ready is not ready:
+                continue
+            jobs.append(job)
+
+        jobs.sort(key=lambda job: (str(job.get("created_at") or ""), str(job.get("conversion_job_id") or "")), reverse=True)
+        return [self._conversion_result_list_item(job) for job in jobs[:max_limit]]
+
     def complete_conversion_job(self, conversion_job_id: str) -> dict[str, Any]:
         job = self.get_conversion_job(conversion_job_id)
         if job is None:
@@ -324,6 +375,10 @@ class StreamingConversionStore:
                 "format": "usdc",
                 "url": artifacts["model_usdc"]["url"],
             },
+            "source_ifc_filename": job["ifc_artifact"].get("filename"),
+            "usdc_url": artifacts["model_usdc"]["url"],
+            "mapping_url": artifacts["element_mapping"]["url"],
+            "manifest_url": artifacts["metadata"]["url"],
             "artifacts": artifacts,
             "quality_metrics": quality_metrics,
             "lineage": lineage,
@@ -474,6 +529,32 @@ class StreamingConversionStore:
         job["updated_at"] = _utc_now()
         self._write_job(job)
         return job
+
+    def _conversion_result_list_item(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(job.get("result") or {})
+        if not result:
+            result = {
+                "conversion_job_id": job.get("conversion_job_id"),
+                "authority": job.get("authority", "bim-streaming-server"),
+                "status": job.get("status", "unknown"),
+                "ready": False,
+                "tenant_id": job.get("tenant_id"),
+                "project_id": job.get("project_id"),
+                "model_version_id": job.get("model_version_id"),
+                "correlation_id": job.get("correlation_id"),
+            }
+        ifc_artifact = job.get("ifc_artifact") if isinstance(job.get("ifc_artifact"), dict) else {}
+        artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+        model_artifact = artifacts.get("model_usdc") if isinstance(artifacts.get("model_usdc"), dict) else {}
+        mapping_artifact = artifacts.get("element_mapping") if isinstance(artifacts.get("element_mapping"), dict) else {}
+        metadata_artifact = artifacts.get("metadata") if isinstance(artifacts.get("metadata"), dict) else {}
+        result.setdefault("source_ifc_filename", ifc_artifact.get("filename"))
+        result.setdefault("usdc_url", result.get("model", {}).get("url") if isinstance(result.get("model"), dict) else None)
+        result.setdefault("mapping_url", mapping_artifact.get("url"))
+        result.setdefault("manifest_url", metadata_artifact.get("url"))
+        result.setdefault("artifact_id", model_artifact.get("artifact_id"))
+        result.setdefault("artifact_group_id", f"ag_{job.get('model_version_id')}_{job.get('conversion_job_id')}")
+        return result
 
 
 def _ifc_artifact(event: Mapping[str, Any]) -> dict[str, Any]:

@@ -42,9 +42,11 @@ async function httpCall(method, path, body) {
   }
 }
 
-function createSession() {
+async function createSession() {
   const conversionReviewPayload =
-    typeof window.getLatestConversionReviewPayload === "function"
+    typeof window.prepareConversionReviewPayload === "function"
+      ? await window.prepareConversionReviewPayload()
+      : typeof window.getLatestConversionReviewPayload === "function"
       ? window.getLatestConversionReviewPayload()
       : null;
   const body = {
@@ -190,6 +192,17 @@ function applyStreamEndpointParams(params, streamConfig) {
 }
 
 async function openViewerWithSession() {
+  if (!sessionId.value) {
+    if (typeof window.startDemoSession === "function") {
+      await window.startDemoSession();
+    } else {
+      await createSession();
+    }
+  }
+  if (!sessionId.value) {
+    httpOutput.textContent = "開啟瀏覽器審查端失敗：尚未取得 session_id。請先完成轉檔並建立本場審查會議。";
+    return;
+  }
   const params = new URLSearchParams({
     sessionId: sessionId.value,
     projectId: projectId.value,

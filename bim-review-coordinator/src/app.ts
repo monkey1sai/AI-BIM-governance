@@ -52,6 +52,8 @@ const createSessionSchema = z.object({
           artifact_group_id: z.string().min(1),
           model_version_id: z.string().min(1).optional(),
           artifact_id: z.string().min(1),
+          display_name: z.string().nullable().optional(),
+          source_ifc_filename: z.string().nullable().optional(),
           artifact_role: z.enum(["source", "derived", "overlay", "mapping"]).default("derived"),
           url: z.string().nullable().optional(),
           mapping_url: z.string().nullable().optional(),
@@ -772,6 +774,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     await proxyConversionService(response, config.conversionApiBase, "POST", "/api/conversions/ifc-to-usdc", request.body);
   });
 
+  app.get("/api/dev/conversions", async (request, response) => {
+    const upstreamPath = request.originalUrl.replace(/^\/api\/dev\/conversions/, "/api/conversions");
+    await proxyConversionService(response, config.conversionApiBase, "GET", upstreamPath);
+  });
+
   app.post("/api/dev/conversions/mock", async (request, response) => {
     await proxyConversionService(response, config.conversionApiBase, "POST", "/api/dev/mock-conversion-result", request.body);
   });
@@ -958,6 +965,8 @@ function buildArtifactBindings(
         artifact_group_id: binding.artifact_group_id,
         model_version_id: binding.model_version_id || modelVersionId,
         artifact_id: binding.artifact_id,
+        display_name: binding.display_name || null,
+        source_ifc_filename: binding.source_ifc_filename || null,
         artifact_role: binding.artifact_role,
         url: binding.url || null,
         mapping_url: binding.mapping_url || null,

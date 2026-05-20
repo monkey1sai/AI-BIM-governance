@@ -297,11 +297,14 @@ if (-not $SkipCoordinator) {
 }
 
 if (-not $SkipConversionService) {
+    $env:STREAMING_CONVERSION_HOST = "127.0.0.1"
+    $env:STREAMING_CONVERSION_PORT = "49101"
     Start-LocalService `
         -Name "bim-streaming-conversion-service" `
         -WorkingDirectory (Join-Path $RepoRoot "bim-streaming-server") `
         -FilePath "powershell.exe" `
         -Arguments @(
+            "-NoExit",
             "-ExecutionPolicy", "Bypass",
             "-NoProfile",
             "-File", "$RepoRoot\bim-streaming-server\scripts\start-host-native-conversion-service.ps1"

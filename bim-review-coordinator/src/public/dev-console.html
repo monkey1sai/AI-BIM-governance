@@ -512,6 +512,7 @@
     const realConversionBtn = document.getElementById('realConversionBtn');
     const guidedOutcome = document.getElementById('guidedOutcome');
     let conversionPollTimer = null;
+    let conversionReviewResults = [];
     let latestConversionReviewPayload = null;
     let latestIfcReadyJob = null;
 
@@ -595,7 +596,6 @@
       stopConversionPolling();
       setConversionButtons(false);
       conversionResultGrid.style.display = 'none';
-      latestConversionReviewPayload = null;
       setConversionStatus('warn', mock ? '快速展示中…' : '建立轉檔工作中…');
       setConversionStage(1, 0);
       setConversionProgress(10);
@@ -797,11 +797,15 @@
       const metadataArtifact = artifacts.metadata || {};
       const jobId = result.conversion_job_id || payload?.conversion_job_id || payload?.job_id || conversionJobLabel.textContent;
       const suffix = String(jobId || 'latest').replace(/^stream_conv_/, '');
+      const sourceIfcFilename = result.source_ifc_filename || payload?.source_ifc_filename || selectedIfcFileName();
       return {
         conversion_job_id: jobId || null,
         authority: result.authority || payload?.authority || 'bim-streaming-server',
         status: result.status || payload?.status || 'succeeded',
         ready: result.ready !== false,
+        model_version_id: result.model_version_id || payload?.model_version_id || modelVersionId.value,
+        source_ifc_filename: sourceIfcFilename,
+        display_name: sourceIfcFilename ? sourceIfcFilename.replace(/\.ifc$/i, '') : `USDC ${suffix}`,
         usdc_url: result.usdc_url || result.usdc_ref || result.model?.url || modelArtifact.url || '',
         mapping_url: result.mapping_url || result.element_mapping_ref || mappingArtifact.url || '',
         manifest_url: result.manifest_ref || metadataArtifact.url || '',
@@ -814,41 +818,84 @@
 
     function rememberLatestConversionReviewPayload(result) {
       if (!result.usdc_url) return;
-      latestConversionReviewPayload = {
+      const normalized = {
+        ...result,
+        model_version_id: result.model_version_id || modelVersionId.value,
+        source_ifc_filename: result.source_ifc_filename || selectedIfcFileName(),
+      };
+      normalized.display_name = normalized.display_name || normalized.source_ifc_filename?.replace(/\.ifc$/i, '') || normalized.artifact_id;
+      const key = normalized.conversion_job_id || normalized.usdc_url || normalized.artifact_id;
+      const existingIndex = conversionReviewResults.findIndex((item) => (
+        (key && (item.conversion_job_id === key || item.usdc_url === key || item.artifact_id === key))
+        || item.usdc_url === normalized.usdc_url
+      ));
+      if (existingIndex >= 0) conversionReviewResults[existingIndex] = normalized;
+      else conversionReviewResults.push(normalized);
+      latestConversionReviewPayload = buildConversionReviewPayload();
+    }
+
+    function buildConversionReviewPayload() {
+      const currentResults = conversionReviewResults
+        .filter((result) => result.usdc_url && (result.model_version_id || modelVersionId.value) === modelVersionId.value)
+        .slice();
+      if (currentResults.length === 0) return null;
+      const bindings = currentResults.map((result, index) => ({
+        artifact_group_id: result.artifact_group_id,
+        model_version_id: result.model_version_id || modelVersionId.value,
+        artifact_id: result.artifact_id,
+        display_name: result.display_name || result.source_ifc_filename || result.artifact_id,
+        source_ifc_filename: result.source_ifc_filename || null,
+        artifact_role: 'derived',
+        url: result.usdc_url,
+        mapping_url: result.mapping_url || null,
+        load_order: index,
+        routing_policy: 'same_instance',
+        ready_status: result.ready ? 'ready' : 'failed',
+        conversion_authority: result.authority,
+        conversion_job_id: result.conversion_job_id,
+        conversion_status: result.status,
+        diagnostic: result.diagnostic,
+      }));
+      const primaryResult = currentResults[0];
+      return {
         source_artifact_id: `ifc_${modelVersionId.value}`,
-        usdc_artifact_id: result.artifact_id,
-        artifact_bindings: [
-          {
-            artifact_group_id: result.artifact_group_id,
-            model_version_id: modelVersionId.value,
-            artifact_id: result.artifact_id,
-            artifact_role: 'derived',
-            url: result.usdc_url,
-            mapping_url: result.mapping_url || null,
-            load_order: 0,
-            routing_policy: 'same_instance',
-            ready_status: result.ready ? 'ready' : 'failed',
-            conversion_authority: result.authority,
-            conversion_job_id: result.conversion_job_id,
-            conversion_status: result.status,
-            diagnostic: result.diagnostic,
-          },
-        ],
-        quality_metrics_summary: result.quality_metrics ? {
-          conversion_job_id: result.conversion_job_id,
-          artifact_group_id: result.artifact_group_id,
-          source_ifc_entity_count: result.quality_metrics.source_ifc_entity_count ?? null,
-          sidecar_carrier_count: result.quality_metrics.sidecar_carrier_count ?? null,
-          materialization_strategy: result.quality_metrics.materialization_strategy ?? null,
-          coverage_ratio: result.quality_metrics.coverage_ratio ?? null,
-          coverage_status: result.quality_metrics.coverage_status ?? null,
-          conversion_duration_seconds: result.quality_metrics.conversion_duration_seconds ?? null,
+        usdc_artifact_id: primaryResult.artifact_id,
+        artifact_bindings: bindings,
+        quality_metrics_summary: primaryResult.quality_metrics ? {
+          conversion_job_id: primaryResult.conversion_job_id,
+          artifact_group_id: primaryResult.artifact_group_id,
+          source_ifc_entity_count: primaryResult.quality_metrics.source_ifc_entity_count ?? null,
+          sidecar_carrier_count: primaryResult.quality_metrics.sidecar_carrier_count ?? null,
+          materialization_strategy: primaryResult.quality_metrics.materialization_strategy ?? null,
+          coverage_ratio: primaryResult.quality_metrics.coverage_ratio ?? null,
+          coverage_status: primaryResult.quality_metrics.coverage_status ?? null,
+          conversion_duration_seconds: primaryResult.quality_metrics.conversion_duration_seconds ?? null,
         } : null,
       };
     }
 
     window.getLatestConversionReviewPayload = function() {
+      latestConversionReviewPayload = buildConversionReviewPayload();
       return latestConversionReviewPayload ? JSON.parse(JSON.stringify(latestConversionReviewPayload)) : null;
+    };
+
+    async function refreshReadyConversionReviewPayloads() {
+      const query = new URLSearchParams({
+        model_version_id: modelVersionId.value,
+        status: 'succeeded',
+        ready: 'true',
+      });
+      const payload = await coordinatorConversionCall('GET', `/api/dev/conversions?${query.toString()}`);
+      if (payload?.http_status && payload.http_status >= 400) return window.getLatestConversionReviewPayload();
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      for (const item of items) {
+        rememberLatestConversionReviewPayload(normalizeConversionResult(item));
+      }
+      return window.getLatestConversionReviewPayload();
+    }
+
+    window.prepareConversionReviewPayload = async function() {
+      return refreshReadyConversionReviewPayloads();
     };
 
     function setConversionStatus(kind, label) {

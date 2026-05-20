@@ -173,6 +173,57 @@ def test_conversion_success_result_owns_usdc_mapping_entity_index_and_callback_p
     assert job["callback_payload"]["result"]["model"]["status"] == "ready"
 
 
+def test_lists_ready_conversion_results_for_model_version(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_ifc_list_001",
+            idempotency_key="idem_ifc_list_001",
+            ifc_artifact={
+                "artifact_id": "artifact_ifc_list_001",
+                "format": "ifc",
+                "filename": "first-model.ifc",
+                "url": "edge-local://fixtures/first-model.ifc",
+            },
+        ),
+    ).json()
+    second = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_ifc_list_002",
+            idempotency_key="idem_ifc_list_002",
+            ifc_artifact={
+                "artifact_id": "artifact_ifc_list_002",
+                "format": "ifc",
+                "filename": "second-model.ifc",
+                "url": "edge-local://fixtures/second-model.ifc",
+            },
+        ),
+    ).json()
+    client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_ifc_list_other_001",
+            idempotency_key="idem_ifc_list_other_001",
+            model_version_id="version_other_001",
+        ),
+    )
+
+    response = client.get("/api/conversions?model_version_id=version_demo_001&status=succeeded&ready=true")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 2
+    assert [item["conversion_job_id"] for item in body["items"]] == [
+        second["conversion_job_id"],
+        first["conversion_job_id"],
+    ]
+    assert body["items"][0]["source_ifc_filename"] == "second-model.ifc"
+    assert body["items"][1]["source_ifc_filename"] == "first-model.ifc"
+
+
 def test_placeholder_usdc_fails_without_ready_result(tmp_path: Path):
     client = make_client(tmp_path, converter=FakePlaceholderConverter())
 
