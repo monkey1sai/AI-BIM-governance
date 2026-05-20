@@ -149,6 +149,6 @@ Graphics capability 容器輸出（blocked / 一致）：
 ## Notes
 
 - 此 follow-up 為 docs-only，不修改 spec、不修改 runtime code、不改 Dockerfile / compose。
-- `kali-linux` distro 已 `wsl --unregister`，整 distro tarball 留底於 `D:\backup\kali-2026-05-20\kali-linux.tar`（重要 dotfiles / SSH key / hermes-agent untracked conversation log 已備份於 `D:\backup\kali-2026-05-20\dotfiles\` 與 `D:\backup\kali-2026-05-20\hermes-agent\`）。
+- `kali-linux` distro 已 `wsl --unregister`；解除註冊前已完成必要備份與留存。
 - 後續若要把此機定位為「CUDA compute container」用途，建議另開 OpenSpec change
   正式記錄 host environment 與 supported workload 範圍（不在此 follow-up 範圍內）。
