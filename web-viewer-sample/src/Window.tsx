@@ -255,6 +255,11 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentDidMount(): void {
+        if (reviewEnv.hasExplicitEmptySessionId) {
+            void this._bootstrapReview();
+            return;
+        }
+
         this._scheduleStreamStartTimeout();
         void this._loadUSDAssets();
         void this._bootstrapReview();
@@ -533,6 +538,29 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _bootstrapReview(): Promise<void> {
         try {
+            if (reviewEnv.hasExplicitEmptySessionId) {
+                this.setState((state) => ({
+                    reviewLifecycleStatus: null,
+                    reviewStatus: "Review session URL 缺少 sessionId",
+                    reviewArtifacts: [],
+                    reviewIssues: [],
+                    latestStreamConfig: null,
+                    mappingUrl: null,
+                    usdAssets: [],
+                    selectedUSDAsset: null,
+                    showStream: false,
+                    showUI: false,
+                    loadingText: "請從本場會議開啟瀏覽器審查端",
+                    streamDiagnostic: [
+                        "目前 URL 帶有空的 sessionId=，viewer 已停止自動建立新 session。",
+                        "請回到 http://127.0.0.1:8004/ui，完成轉檔與建立會議後按「用本場會議開啟瀏覽器審查端」。",
+                    ].join("\n"),
+                    isLoading: false,
+                    reviewEvents: [...state.reviewEvents, "空 sessionId 已阻止自動建立 review session"],
+                }));
+                return;
+            }
+
             if (!reviewEnv.autoCreateSession && !reviewEnv.defaultSessionId && !reviewEnv.defaultReviewRequestId) {
                 this.setState({ reviewStatus: "Review session 自動建立已停用" });
                 await this._loadReviewDataFromBimControl();
@@ -1512,11 +1540,12 @@ export default class App extends React.Component<AppProps, AppState> {
 
         const sidebarWidth = 300;
         const demoPanelWidth = 360;
-        const showDemoPanel = reviewEnv.showDemoPanel;
+        const showDemoPanel = reviewEnv.showDemoPanel && !reviewEnv.hasExplicitEmptySessionId;
         const demoPanelRight = this.state.showUI ? sidebarWidth : 0;
         const streamReservedWidth = this.state.showUI
             ? sidebarWidth + (showDemoPanel ? demoPanelWidth : 0)
             : (showDemoPanel ? demoPanelWidth : 0);
+        const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId;
         return (
             <div
                 style={{
@@ -1544,6 +1573,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
 
                 {/* Streamed app */}
+                {shouldRenderAppStream &&
                 <AppStream
                     key={this.state.streamMountKey}
                     sessionId={this.props.sessionId}
@@ -1563,7 +1593,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     onLoggedIn={(userId) => this._onLoggedIn(userId)}
                     handleCustomEvent={(event) => this._handleCustomEvent(event)}
                     onStreamFailed={this.props.onStreamFailed}
-                    />
+                    />}
                 </div>
 
                 {showDemoPanel &&
