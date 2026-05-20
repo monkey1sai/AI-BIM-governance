@@ -9,6 +9,8 @@ param(
 
     [int] $StreamPort = 47998,
 
+    [string] $PublicIp = "auto",
+
     [string[]] $SpectatorSignalPorts = @(),
 
     [string[]] $SpectatorStreamPorts = @(),
@@ -114,6 +116,59 @@ function ConvertTo-PortList {
     return $ports
 }
 
+function Resolve-PublicIp {
+    param([string] $Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return ""
+    }
+
+    $trimmed = $Value.Trim()
+    if ($trimmed -ne "auto") {
+        return $trimmed
+    }
+
+    $candidates = @()
+    $interfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
+    foreach ($interface in $interfaces) {
+        if ($interface.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) {
+            continue
+        }
+        if ($interface.NetworkInterfaceType -eq [System.Net.NetworkInformation.NetworkInterfaceType]::Loopback) {
+            continue
+        }
+
+        $properties = $interface.GetIPProperties()
+        $hasGateway = @(($properties.GatewayAddresses | Where-Object {
+            $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+            $_.Address.ToString() -ne "0.0.0.0"
+        })).Count -gt 0
+
+        foreach ($address in $properties.UnicastAddresses) {
+            $ip = $address.Address
+            if ($ip.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+                continue
+            }
+            $ipString = $ip.ToString()
+            if ($ipString -eq "0.0.0.0" -or $ipString.StartsWith("127.") -or $ipString.StartsWith("169.254.")) {
+                continue
+            }
+            $candidates += [pscustomobject]@{
+                Address = $ipString
+                HasGateway = $hasGateway
+                InterfaceName = $interface.Name
+            }
+        }
+    }
+
+    $selected = $candidates | Sort-Object -Property @{ Expression = "HasGateway"; Descending = $true }, InterfaceName | Select-Object -First 1
+    if ($selected) {
+        return $selected.Address
+    }
+
+    return ""
+}
+
 function Get-SpectatorEndpointSpecs {
     $signalPorts = @(ConvertTo-PortList -Values $SpectatorSignalPorts -Name "SpectatorSignalPorts")
     $streamPorts = @(ConvertTo-PortList -Values $SpectatorStreamPorts -Name "SpectatorStreamPorts")
@@ -184,6 +239,7 @@ foreach ($endpoint in $SpectatorEndpointSpecs) {
     Test-PortFree -Port $endpoint.StreamPort
 }
 Test-GpuReady
+$resolvedPublicIp = Resolve-PublicIp -Value $PublicIp
 
 if ($PreflightOnly) {
     if ($SkipAutoLoad) {
@@ -193,6 +249,9 @@ if ($PreflightOnly) {
         Write-Host "[preflight] USD path OK: $resolvedUsd"
     }
     Write-Host "[preflight] ports OK: $SignalPort / $StreamPort are free"
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPublicIp)) {
+        Write-Host "[preflight] publicIp: $resolvedPublicIp"
+    }
     if ($SpectatorEndpointSpecs.Count -gt 0) {
         $spectatorSummary = ($SpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=$($_.SignalingPort)/$($_.StreamPort)" }) -join ", "
         Write-Host "[preflight] spectator ports OK: $spectatorSummary"
@@ -227,8 +286,12 @@ if (Test-Path -LiteralPath $sourceExtensions -PathType Container) {
 if (-not [string]::IsNullOrWhiteSpace($StreamSdkLogLevel)) {
     $args += "--/log/channels/omni.kit.livestream.streamsdk=$StreamSdkLogLevel"
 }
+$args += "--/exts/omni.kit.livestream.app/primaryStream/streamType=webrtc"
 $args += "--/exts/omni.kit.livestream.app/primaryStream/signalPort=$SignalPort"
 $args += "--/exts/omni.kit.livestream.app/primaryStream/streamPort=$StreamPort"
+if (-not [string]::IsNullOrWhiteSpace($resolvedPublicIp)) {
+    $args += "--/exts/omni.kit.livestream.app/primaryStream/publicIp=$resolvedPublicIp"
+}
 foreach ($endpoint in $SpectatorEndpointSpecs) {
     $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/streamType=webrtc"
     $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/signalPort=$($endpoint.SignalingPort)"
@@ -252,6 +315,9 @@ if ($resolvedPortableRoot) {
     Write-Host "[streaming] portable: $resolvedPortableRoot"
 }
 Write-Host "[streaming] ports   : $SignalPort / $StreamPort"
+if (-not [string]::IsNullOrWhiteSpace($resolvedPublicIp)) {
+    Write-Host "[streaming] publicIp: $resolvedPublicIp"
+}
 if ($SpectatorEndpointSpecs.Count -gt 0) {
     $spectatorSummary = ($SpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=$($_.SignalingPort)/$($_.StreamPort)" }) -join ", "
     Write-Host "[streaming] spect.  : $spectatorSummary"

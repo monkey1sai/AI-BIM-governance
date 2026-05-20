@@ -294,7 +294,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._appendReviewEvent(`略過 ${message.event_type}：session lifecycle=${lifecycle}`);
             return;
         }
-        AppStream.sendMessage(JSON.stringify(message));
+        AppStream.sendMessage(message);
         this._appendDemoOutgoing(message.event_type, message);
     }
 
@@ -676,8 +676,8 @@ export default class App extends React.Component<AppProps, AppState> {
      */
         private _onStreamStarted(): void {
             this.setState({ streamDiagnostic: null });
+            this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
-                this._clearStreamStartTimeout();
                 this.setState((state) => ({
                     showStream: true,
                     showUI: true,
@@ -687,7 +687,13 @@ export default class App extends React.Component<AppProps, AppState> {
                 }));
                 return;
             }
-            this._pollForKitReady()
+            this.setState((state) => ({
+                showStream: true,
+                showUI: true,
+                isLoading: false,
+                loadingText: "串流已連線，等待 Kit 狀態回應",
+                reviewEvents: [...state.reviewEvents, "WebRTC stream 已連線，正在確認 Kit stage state"],
+            }), () => this._pollForKitReady())
         }
 
     /**

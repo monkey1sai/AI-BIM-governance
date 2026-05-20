@@ -185,8 +185,10 @@ class StreamingConversionStore:
             "tenant_id": _safe_id(str(event.get("tenant_id") or "tenant_demo_001"), "tenant_id"),
             "project_id": _safe_id(str(event.get("project_id") or "project_demo_001"), "project_id"),
             "model_version_id": _safe_id(str(event.get("model_version_id") or ""), "model_version_id"),
-            "export_job_id": _safe_id(str(event.get("export_job_id") or ""), "export_job_id"),
-            "source_rvt_artifact_id": _safe_id(str(event.get("source_rvt_artifact_id") or ""), "source_rvt_artifact_id"),
+            "export_job_id": _safe_optional_id(event.get("export_job_id"), "export_job_id"),
+            "source_rvt_artifact_id": _safe_optional_id(
+                event.get("source_rvt_artifact_id"), "source_rvt_artifact_id"
+            ),
             "ifc_artifact": ifc_artifact,
             "status": "queued",
             "stage": "queued",
@@ -497,6 +499,12 @@ def _safe_id(value: str, label: str) -> str:
     if not value or not SAFE_ID_RE.fullmatch(value):
         raise ValueError(f"Invalid {label}: {value}")
     return value
+
+
+def _safe_optional_id(value: Any, label: str) -> str | None:
+    if value is None or str(value) == "":
+        return None
+    return _safe_id(str(value), label)
 
 
 def _request_fingerprint(event: Mapping[str, Any]) -> str:

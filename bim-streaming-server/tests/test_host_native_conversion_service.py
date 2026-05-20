@@ -118,6 +118,7 @@ def test_load_config_defaults_to_local_conversion_port():
     assert config.host == DEFAULT_HOST == "127.0.0.1"
     assert config.port == DEFAULT_PORT == 49101
     assert config.base_url == "http://127.0.0.1:49101"
+    assert config.service_root == config.repo_root / "_cache" / "host-native-conversion"
     assert config.internal_conversion_token is None
 
 
@@ -242,6 +243,7 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
 
     adapter = Ifc2UsdcPowershellConverterAdapter(
         repo_root=repo_root,
+        powershell_exe="powershell.exe",
         kit_exe_path=kit_exe,
         hoops_main_path=hoops_main,
         timeout_seconds=42,
@@ -306,3 +308,28 @@ def test_adapter_from_env_keeps_unset_paths_none(tmp_path: Path):
     assert adapter.kit_exe_path is None
     assert adapter.hoops_main_path is None
     assert adapter.timeout_seconds == 600
+
+
+def test_adapter_from_env_prefers_pwsh_when_available(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "C:/Program Files/PowerShell/7/pwsh.exe" if name == "pwsh" else None,
+    )
+
+    adapter = adapter_from_env(tmp_path, env={})
+
+    assert adapter.powershell_exe == "C:/Program Files/PowerShell/7/pwsh.exe"
+
+
+def test_adapter_from_env_explicit_powershell_wins(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "C:/Program Files/PowerShell/7/pwsh.exe" if name == "pwsh" else None,
+    )
+
+    adapter = adapter_from_env(
+        tmp_path,
+        env={"STREAMING_CONVERSION_POWERSHELL_EXE": "powershell.exe"},
+    )
+
+    assert adapter.powershell_exe == "powershell.exe"

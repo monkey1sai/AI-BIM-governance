@@ -125,6 +125,21 @@ def test_ifc_ready_creates_queued_streaming_conversion_job(tmp_path: Path):
     assert body["correlation_id"] == "corr_rvt_demo_001"
 
 
+def test_b_scheme_request_does_not_require_retired_worker_ids(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+    payload = ifc_ready_payload()
+    payload.pop("export_job_id")
+    payload.pop("source_rvt_artifact_id")
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=payload)
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["export_job_id"] is None
+    assert body["source_rvt_artifact_id"] is None
+    assert body["conversion_job_id"].startswith("stream_conv_")
+
+
 def test_conversion_success_result_owns_usdc_mapping_entity_index_and_callback_payload(tmp_path: Path):
     client = make_client(tmp_path, converter=FakeSuccessfulConverter())
 

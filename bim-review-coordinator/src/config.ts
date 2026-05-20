@@ -3,6 +3,12 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const DEFAULT_STREAMING_CONVERSION_API_BASE = "http://127.0.0.1:49101";
+const RETIRED_LEGACY_CONVERSION_API_BASES = new Set([
+  "http://127.0.0.1:8003",
+  "http://localhost:8003",
+]);
+
 export interface KitInstanceEndpointConfig {
   id: string;
   signalingServer: string;
@@ -114,6 +120,17 @@ function kitInstanceEndpointsFromEnv(name: string, fallback: KitInstanceEndpoint
   }
 }
 
+function conversionApiBaseFromEnv(): string {
+  const streamingBase = process.env.STREAMING_CONVERSION_API_BASE;
+  if (streamingBase) return streamingBase;
+
+  const legacyBase = process.env.CONVERSION_API_BASE;
+  if (!legacyBase) return DEFAULT_STREAMING_CONVERSION_API_BASE;
+  return RETIRED_LEGACY_CONVERSION_API_BASES.has(legacyBase)
+    ? DEFAULT_STREAMING_CONVERSION_API_BASE
+    : legacyBase;
+}
+
 export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): CoordinatorConfig {
   const cwd = process.cwd();
   const kitStreamServer = process.env.KIT_STREAM_SERVER || "127.0.0.1";
@@ -131,10 +148,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     host: process.env.HOST || "127.0.0.1",
     port: numberFromEnv("PORT", 8004),
     bimControlApiBase: process.env.BIM_CONTROL_API_BASE || "",
-    conversionApiBase:
-      process.env.CONVERSION_API_BASE ||
-      process.env.STREAMING_CONVERSION_API_BASE ||
-      "http://127.0.0.1:49101",
+    conversionApiBase: conversionApiBaseFromEnv(),
     kitStreamServer,
     kitSignalingPort,
     kitMediaServer,
@@ -146,7 +160,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     corsOrigins: csvFromEnv("CORS_ORIGINS", ["http://127.0.0.1:5173", "http://localhost:5173"]),
     internalApiAuthToken: process.env.INTERNAL_API_AUTH_TOKEN || "dev-internal-token",
     streamingConversionApiBase:
-      process.env.STREAMING_CONVERSION_API_BASE || "http://127.0.0.1:49101",
+      process.env.STREAMING_CONVERSION_API_BASE || DEFAULT_STREAMING_CONVERSION_API_BASE,
     streamingConversionInternalToken:
       process.env.STREAMING_CONVERSION_INTERNAL_TOKEN || "",
     externalIntakeAuthProvider: process.env.EXTERNAL_INTAKE_AUTH_PROVIDER || "intranet-dev",

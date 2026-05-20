@@ -65,7 +65,7 @@ def load_config(env: Mapping[str, str] | None = None) -> HostNativeServiceConfig
         if src.get("STREAMING_CONVERSION_SERVICE_ROOT")
         # default under bim-streaming-server/_cache/ (already git-ignored) so
         # local runs do not dirty the working tree.
-        else repo_root / "bim-streaming-server" / "_cache" / "host-native-conversion"
+        else repo_root / "_cache" / "host-native-conversion"
     )
     artifacts_root = (
         Path(src["STREAMING_CONVERSION_ARTIFACTS_ROOT"])
