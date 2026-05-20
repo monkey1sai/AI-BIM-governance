@@ -60,7 +60,7 @@ driver libraries in Docker container` 的後續證據補充。
 ## Validation Commands
 
 ```bash
-# In Ubuntu-24.04 WSL distro, user ssss (member of docker group)
+# In Ubuntu-24.04 WSL distro, current user (member of docker group)
 docker --version
 docker compose version
 nvidia-ctk --version
