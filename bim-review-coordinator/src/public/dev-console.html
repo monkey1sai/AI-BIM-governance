@@ -512,6 +512,8 @@
     const realConversionBtn = document.getElementById('realConversionBtn');
     const guidedOutcome = document.getElementById('guidedOutcome');
     let conversionPollTimer = null;
+    let latestConversionReviewPayload = null;
+    let latestIfcReadyJob = null;
 
     function setServiceStatus(kind, label) {
       connStatus.className = `demo-status demo-status--${kind}`;
@@ -552,17 +554,53 @@
       };
     }
 
+    function makeSafeDevId(prefix) {
+      const random = Math.random().toString(36).slice(2, 10);
+      return `${prefix}_${Date.now()}_${random}`.replace(/[^A-Za-z0-9_.:-]/g, '_');
+    }
+
+    function selectedIfcFileName() {
+      const sourceFile = sourceFileInput.files && sourceFileInput.files[0];
+      return sourceFile ? sourceFile.name : '許良宇圖書館建築_2026.ifc';
+    }
+
+    function selectedIfcRef() {
+      return `edge-local://storage/${encodeURIComponent(selectedIfcFileName())}`;
+    }
+
+    function buildIfcReadyEvent(correlationId, idempotencyKey) {
+      const sourceFile = sourceFileInput.files && sourceFileInput.files[0];
+      return {
+        event: 'ifc_ready',
+        event_id: makeSafeDevId('evt_dev_ifc_ready'),
+        correlation_id: correlationId,
+        idempotency_key: idempotencyKey,
+        tenant_id: 'tenant_demo_001',
+        project_id: projectId.value,
+        external_model_version_id: modelVersionId.value,
+        external_conversion_task_id: makeSafeDevId('ext_task_dev'),
+        source_ifc: {
+          ref: selectedIfcRef(),
+          etag: sourceFile ? `dev-etag-${sourceFile.size}-${sourceFile.lastModified}` : 'dev-etag-canonical-fixture',
+          filename: selectedIfcFileName(),
+          format: 'ifc',
+        },
+        requested_outputs: ['usdc', 'element_mapping', 'entity_index', 'metadata'],
+      };
+    }
+
     async function startCoordinatorConversion(event, mock = true) {
       if (event) event.preventDefault();
       document.getElementById('conversionDemoCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
       stopConversionPolling();
       setConversionButtons(false);
       conversionResultGrid.style.display = 'none';
+      latestConversionReviewPayload = null;
       setConversionStatus('warn', mock ? '快速展示中…' : '建立轉檔工作中…');
       setConversionStage(1, 0);
       setConversionProgress(10);
       conversionJobLabel.textContent = '—';
-      conversionJobHint.textContent = mock ? '使用 dev mock endpoint 展示完整資料流' : '呼叫真實 conversion job endpoint';
+      conversionJobHint.textContent = mock ? '使用 dev mock endpoint 展示完整資料流' : '模擬外部 IFC Worker 呼叫 coordinator ifc-ready intake';
 
       try {
         const payload = await createConversionProxy(mock);
@@ -577,7 +615,7 @@
             return;
           }
           setConversionStatus('bad', '建立失敗');
-          conversionJobHint.textContent = payload?.detail || 'conversion service 沒有回傳 job_id';
+          conversionJobHint.textContent = payload?.dispatch_error || payload?.detail || 'conversion service 沒有回傳 job_id';
           setConversionButtons(true);
           return;
         }
@@ -599,12 +637,35 @@
     }
 
     async function createConversionProxy(mock = false) {
-      return coordinatorConversionCall('POST', mock ? '/api/dev/conversions/mock' : '/api/dev/conversions', buildConversionRequest());
+      if (mock) {
+        return coordinatorConversionCall('POST', '/api/dev/conversions/mock', buildConversionRequest());
+      }
+      const correlationId = makeSafeDevId('corr_dev_ifc');
+      const idempotencyKey = makeSafeDevId('idem_dev_ifc');
+      const payload = buildIfcReadyEvent(correlationId, idempotencyKey);
+      const response = await coordinatorConversionCall('POST', '/api/external/ifc-ready', payload, {
+        'X-Webhook-Secret': 'dev-webhook-secret',
+        'X-Correlation-Id': correlationId,
+        'X-Idempotency-Key': idempotencyKey,
+      });
+      latestIfcReadyJob = response?.ifc_ready_job_id ? response : null;
+      if (!response?.conversion_job_id) {
+        return {
+          ...response,
+          job_id: null,
+          detail: response?.dispatch_error || response?.detail || 'coordinator accepted ifc-ready but did not dispatch a conversion job',
+        };
+      }
+      return {
+        ...response,
+        job_id: response.conversion_job_id,
+        status: response.conversion_status || response.status || 'queued',
+      };
     }
 
-    async function coordinatorConversionCall(method, path, body) {
+    async function coordinatorConversionCall(method, path, body, extraHeaders = {}) {
       httpOutput.textContent = `${method} ${path}\n載入中…`;
-      const init = { method, headers: { Accept: 'application/json' } };
+      const init = { method, headers: { Accept: 'application/json', ...extraHeaders } };
       if (body !== undefined) {
         init.headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);
@@ -680,7 +741,8 @@
         if (payload.status === 'succeeded') {
           stopConversionPolling();
           setConversionButtons(true);
-          showConversionResult(payload);
+          const resultPayload = await coordinatorConversionCall('GET', `/api/dev/conversions/${encodeURIComponent(jobId)}/result`);
+          showConversionResult(resultPayload?.http_status && resultPayload.http_status >= 400 ? payload : resultPayload);
         }
         if (payload.status === 'failed') {
           stopConversionPolling();
@@ -716,17 +778,78 @@
     }
 
     function showConversionResult(payload) {
-      const result = payload.result || payload;
-      const usdc = result.usdc_url || '';
-      const mapping = result.mapping_url || '';
-      document.getElementById('conversionUsdcLink').innerHTML = usdc
-        ? `<a href="${escapeAttr(usdc)}" target="_blank" rel="noopener">${escapeHtml(usdc)}</a>` : '—';
-      document.getElementById('conversionMappingLink').innerHTML = mapping
-        ? `<a href="${escapeAttr(mapping)}" target="_blank" rel="noopener">${escapeHtml(mapping)}</a>` : '—';
+      const normalized = normalizeConversionResult(payload);
+      rememberLatestConversionReviewPayload(normalized);
+      document.getElementById('conversionUsdcLink').innerHTML = normalized.usdc_url
+        ? `<a href="${escapeAttr(normalized.usdc_url)}" target="_blank" rel="noopener">${escapeHtml(normalized.usdc_url)}</a>` : '—';
+      document.getElementById('conversionMappingLink').innerHTML = normalized.mapping_url
+        ? `<a href="${escapeAttr(normalized.mapping_url)}" target="_blank" rel="noopener">${escapeHtml(normalized.mapping_url)}</a>` : '—';
       conversionResultGrid.style.display = 'grid';
-      appendDemoFeed('轉檔結果已進入 metadata callback outbox', { job_id: payload.job_id, usdc_url: usdc, mapping_url: mapping });
+      appendDemoFeed('轉檔結果已可建立審查會議', { job_id: normalized.conversion_job_id, usdc_url: normalized.usdc_url, mapping_url: normalized.mapping_url });
       refreshSessionCard();
     }
+
+    function normalizeConversionResult(payload) {
+      const result = payload?.result || payload || {};
+      const artifacts = result.artifacts || payload?.artifacts || {};
+      const modelArtifact = artifacts.model_usdc || {};
+      const mappingArtifact = artifacts.element_mapping || {};
+      const metadataArtifact = artifacts.metadata || {};
+      const jobId = result.conversion_job_id || payload?.conversion_job_id || payload?.job_id || conversionJobLabel.textContent;
+      const suffix = String(jobId || 'latest').replace(/^stream_conv_/, '');
+      return {
+        conversion_job_id: jobId || null,
+        authority: result.authority || payload?.authority || 'bim-streaming-server',
+        status: result.status || payload?.status || 'succeeded',
+        ready: result.ready !== false,
+        usdc_url: result.usdc_url || result.usdc_ref || result.model?.url || modelArtifact.url || '',
+        mapping_url: result.mapping_url || result.element_mapping_ref || mappingArtifact.url || '',
+        manifest_url: result.manifest_ref || metadataArtifact.url || '',
+        artifact_id: modelArtifact.artifact_id || result.usdc_artifact_id || `artifact_stream_usdc_${suffix}`,
+        artifact_group_id: result.artifact_group_id || `ag_${modelVersionId.value}_${suffix}`,
+        diagnostic: result.error?.message || payload?.error?.message || null,
+        quality_metrics: result.quality_metrics || payload?.quality_metrics || null,
+      };
+    }
+
+    function rememberLatestConversionReviewPayload(result) {
+      if (!result.usdc_url) return;
+      latestConversionReviewPayload = {
+        source_artifact_id: `ifc_${modelVersionId.value}`,
+        usdc_artifact_id: result.artifact_id,
+        artifact_bindings: [
+          {
+            artifact_group_id: result.artifact_group_id,
+            model_version_id: modelVersionId.value,
+            artifact_id: result.artifact_id,
+            artifact_role: 'derived',
+            url: result.usdc_url,
+            mapping_url: result.mapping_url || null,
+            load_order: 0,
+            routing_policy: 'same_instance',
+            ready_status: result.ready ? 'ready' : 'failed',
+            conversion_authority: result.authority,
+            conversion_job_id: result.conversion_job_id,
+            conversion_status: result.status,
+            diagnostic: result.diagnostic,
+          },
+        ],
+        quality_metrics_summary: result.quality_metrics ? {
+          conversion_job_id: result.conversion_job_id,
+          artifact_group_id: result.artifact_group_id,
+          source_ifc_entity_count: result.quality_metrics.source_ifc_entity_count ?? null,
+          sidecar_carrier_count: result.quality_metrics.sidecar_carrier_count ?? null,
+          materialization_strategy: result.quality_metrics.materialization_strategy ?? null,
+          coverage_ratio: result.quality_metrics.coverage_ratio ?? null,
+          coverage_status: result.quality_metrics.coverage_status ?? null,
+          conversion_duration_seconds: result.quality_metrics.conversion_duration_seconds ?? null,
+        } : null,
+      };
+    }
+
+    window.getLatestConversionReviewPayload = function() {
+      return latestConversionReviewPayload ? JSON.parse(JSON.stringify(latestConversionReviewPayload)) : null;
+    };
 
     function setConversionStatus(kind, label) {
       conversionStatus.className = `demo-status demo-status--${kind}`;

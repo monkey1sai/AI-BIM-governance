@@ -2,9 +2,10 @@
 param(
     [switch] $SkipStreaming,    # 跳過 bim-streaming-server (Kit GPU runtime)
     [switch] $SkipViewer,
+    [switch] $SkipConversionService,
     [switch] $SkipCoordinator,
     [switch] $Visible,           # 顯示 console 視窗 (預設背景隱藏)
-    [string] $KitHost = "127.0.0.1",
+    [string] $KitHost = "auto",
     [string[]] $KitSignalPorts = @("49100"),
     [string[]] $KitStreamPorts = @("47998"),
     [string[]] $KitSpectatorSignalPorts = @(),
@@ -69,6 +70,64 @@ if (-not (Test-Path $Python)) { $Python = "python" }
 
 $WindowStyle = if ($Visible) { "Normal" } else { "Hidden" }
 
+function Resolve-KitHost {
+    param([string] $Value)
+
+    if (-not [string]::IsNullOrWhiteSpace($Value) -and $Value.Trim().ToLowerInvariant() -ne "auto") {
+        return $Value
+    }
+
+    $candidates = @()
+    foreach ($nic in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        if ($nic.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) { continue }
+        $props = $nic.GetIPProperties()
+        foreach ($address in $props.UnicastAddresses) {
+            if ($address.Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { continue }
+            if ([System.Net.IPAddress]::IsLoopback($address.Address)) { continue }
+            $candidates += [pscustomobject]@{
+                Address = $address.Address.ToString()
+                HasGateway = @($props.GatewayAddresses | Where-Object { $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork }).Count -gt 0
+            }
+        }
+    }
+
+    $preferred = $candidates | Sort-Object -Property @{ Expression = "HasGateway"; Descending = $true }, Address | Select-Object -First 1
+    if ($preferred) { return $preferred.Address }
+    return "127.0.0.1"
+}
+
+$ResolvedKitHost = Resolve-KitHost -Value $KitHost
+
+function Resolve-ConversionWorkDir {
+    param([string] $Root)
+
+    $rootStorage = Join-Path $Root "storage"
+    if (
+        (Test-Path -LiteralPath $rootStorage -PathType Container) -and
+        @(Get-ChildItem -LiteralPath $rootStorage -Filter "*.ifc" -File -ErrorAction SilentlyContinue).Count -gt 0
+    ) {
+        return $Root
+    }
+
+    $parent = Split-Path -Parent $Root
+    if ((Split-Path -Leaf $parent) -eq ".worktrees") {
+        $hostRoot = Split-Path -Parent $parent
+        $hostStorage = Join-Path $hostRoot "storage"
+        if (
+            (Test-Path -LiteralPath $hostStorage -PathType Container) -and
+            @(Get-ChildItem -LiteralPath $hostStorage -Filter "*.ifc" -File -ErrorAction SilentlyContinue).Count -gt 0
+        ) {
+            return $hostRoot
+        }
+    }
+
+    return $Root
+}
+
+if ([string]::IsNullOrWhiteSpace($env:STREAMING_CONVERSION_WORK_DIR)) {
+    $env:STREAMING_CONVERSION_WORK_DIR = Resolve-ConversionWorkDir -Root $RepoRoot
+}
+
 function Get-KitEndpointSpecs {
     $signalPorts = @(ConvertTo-PortList -Values $KitSignalPorts -Name "KitSignalPorts")
     $streamPorts = @(ConvertTo-PortList -Values $KitStreamPorts -Name "KitStreamPorts")
@@ -83,9 +142,9 @@ function Get-KitEndpointSpecs {
     for ($i = 0; $i -lt $signalPorts.Count; $i++) {
         $endpoints += [pscustomobject]@{
             Id = "kit_local_{0:D3}" -f ($i + 1)
-            SignalingServer = $KitHost
+            SignalingServer = $ResolvedKitHost
             SignalingPort = [int]$signalPorts[$i]
-            MediaServer = $KitHost
+            MediaServer = $ResolvedKitHost
             MediaPort = [int]$streamPorts[$i]
         }
     }
@@ -237,6 +296,18 @@ if (-not $SkipCoordinator) {
         -Arguments @("run", "dev")
 }
 
+if (-not $SkipConversionService) {
+    Start-LocalService `
+        -Name "bim-streaming-conversion-service" `
+        -WorkingDirectory (Join-Path $RepoRoot "bim-streaming-server") `
+        -FilePath "powershell.exe" `
+        -Arguments @(
+            "-ExecutionPolicy", "Bypass",
+            "-NoProfile",
+            "-File", "$RepoRoot\bim-streaming-server\scripts\start-host-native-conversion-service.ps1"
+        )
+}
+
 if (-not $SkipStreaming) {
     foreach ($endpoint in $KitEndpointSpecs) {
         $serviceName = if ($KitEndpointSpecs.Count -eq 1) { "bim-streaming-server" } else { "bim-streaming-server-$($endpoint.Id)" }
@@ -249,6 +320,7 @@ if (-not $SkipStreaming) {
             "-StreamPort", [string]$endpoint.MediaPort,
             "-TraceRoot", ".\logs\nvstreamer\$($endpoint.Id)",
             "-PortableRoot", ".\logs\nvstreamer\$($endpoint.Id)\portable",
+            "-PublicIp", $ResolvedKitHost,
             "-ResetUser",
             "-SkipAutoLoad"
         )
@@ -282,12 +354,15 @@ if (-not $SkipCoordinator) {
 if (-not $SkipViewer) {
     Wait-Health -Name "web-viewer-sample     (步驟 ④)" -Url "http://127.0.0.1:5173" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
 }
+if (-not $SkipConversionService) {
+    Wait-Health -Name "bim-streaming-conversion-service (:49101)" -Url "http://127.0.0.1:49101/health" -TimeoutSeconds $HealthTimeoutSeconds | Out-Null
+}
 if (-not $SkipStreaming) {
     $kitSummary = ($KitEndpointSpecs | ForEach-Object { "$($_.Id)=$($_.SignalingServer):$($_.SignalingPort)/$($_.MediaPort)" }) -join ", "
     Write-Host "[note ] bim-streaming-server (Kit) 沒有 HTTP /health；請看 scripts/.run/bim-streaming-server*.log 確認啟動進度" -ForegroundColor DarkGray
     Write-Host "[note ] KIT_INSTANCE_ENDPOINTS: $kitSummary" -ForegroundColor DarkGray
     if ($KitSpectatorEndpointSpecs.Count -gt 0) {
-        $spectatorSummary = ($KitSpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=${KitHost}:$($_.SignalingPort)/$($_.MediaPort)" }) -join ", "
+        $spectatorSummary = ($KitSpectatorEndpointSpecs | ForEach-Object { "spectator[$($_.Index)]=${ResolvedKitHost}:$($_.SignalingPort)/$($_.MediaPort)" }) -join ", "
         Write-Host "[note ] Kit spectator streams: $spectatorSummary" -ForegroundColor DarkGray
     }
 }

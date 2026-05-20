@@ -205,6 +205,10 @@ export default class App extends React.Component<AppProps, AppState> {
     private bimControlClient = new BimControlClient(reviewEnv.bimControlApiBase);
     private reviewSocket: ReviewSocketClient | null = null;
     private streamStartTimeoutId: number | null = null;
+    private loadingStateRetryId: number | null = null;
+    private stageLoadTimeoutId: number | null = null;
+    private loadingStatePollCount = 0;
+    private pendingStageUrl: string | null = null;
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
@@ -257,6 +261,8 @@ export default class App extends React.Component<AppProps, AppState> {
 
     componentWillUnmount(): void {
         this._clearStreamStartTimeout();
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
         this.reviewSocket?.disconnect();
     }
 
@@ -310,6 +316,61 @@ export default class App extends React.Component<AppProps, AppState> {
         if (this.streamStartTimeoutId === null) return;
         window.clearTimeout(this.streamStartTimeoutId);
         this.streamStartTimeoutId = null;
+    }
+
+    private _scheduleLoadingStateQuery(delayMs = 1000): void {
+        this._clearLoadingStateRetry();
+        this.loadingStateRetryId = window.setTimeout(() => {
+            this.loadingStateRetryId = null;
+            this._queryLoadingState();
+        }, delayMs);
+    }
+
+    private _clearLoadingStateRetry(): void {
+        if (this.loadingStateRetryId === null) return;
+        window.clearTimeout(this.loadingStateRetryId);
+        this.loadingStateRetryId = null;
+    }
+
+    private _scheduleStageLoadTimeout(): void {
+        this._clearStageLoadTimeout();
+        const timeoutMs = Math.max(reviewEnv.streamStartTimeoutMs, 45000);
+        this.stageLoadTimeoutId = window.setTimeout(() => {
+            this.stageLoadTimeoutId = null;
+            if (!this.pendingStageUrl) return;
+            this._failStageLoad(
+                "模型載入逾時",
+                [
+                    `目標：${this.pendingStageUrl}`,
+                    `診斷：${this._getVideoDiagnosticText()}`,
+                    "Kit 已連線但沒有回報模型載入完成，請檢查該 USDC 是否可由 Kit 開啟。",
+                ].join("\n"),
+            );
+        }, timeoutMs);
+    }
+
+    private _clearStageLoadTimeout(): void {
+        if (this.stageLoadTimeoutId === null) return;
+        window.clearTimeout(this.stageLoadTimeoutId);
+        this.stageLoadTimeoutId = null;
+    }
+
+    private _finishStageLoad(): void {
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this.pendingStageUrl = null;
+        this.loadingStatePollCount = 0;
+    }
+
+    private _failStageLoad(loadingText: string, diagnostic?: string): void {
+        this._finishStageLoad();
+        this.setState((state) => ({
+            loadingText,
+            streamDiagnostic: diagnostic || null,
+            showStream: this._hasRemoteVideoFrame(),
+            isLoading: false,
+            reviewEvents: [...state.reviewEvents, loadingText],
+        }));
     }
 
     private _getVideoDiagnosticText(): string {
@@ -761,7 +822,16 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
-        this.setState({ loadingText: "正在載入模型...", showStream: false, isLoading: true })
+        this.pendingStageUrl = this.state.selectedUSDAsset.url;
+        this.loadingStatePollCount = 0;
+        this._clearLoadingStateRetry();
+        this._scheduleStageLoadTimeout();
+        this.setState({
+            loadingText: "正在載入模型...",
+            showStream: this._hasRemoteVideoFrame(),
+            streamDiagnostic: null,
+            isLoading: true
+        })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
         console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
@@ -775,6 +845,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
             ),
         );
+        this._scheduleLoadingStateQuery(1500);
     }
 
     /**
@@ -1102,10 +1173,16 @@ export default class App extends React.Component<AppProps, AppState> {
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
             if (payload.result === "success") {
-                this._queryLoadingState() 
+                this._scheduleLoadingStateQuery(250)
             }
             else {
-                console.error('Kit App communicates there was an error loading: ' + getPayloadString(payload, "url"));
+                const url = getPayloadString(payload, "url");
+                const error = getPayloadString(payload, "error") || "unknown error";
+                console.error(`Kit App communicates there was an error loading: ${url} (${error})`);
+                this._failStageLoad(
+                    "模型載入失敗",
+                    [`目標：${url || this.pendingStageUrl || "unknown"}`, `錯誤：${error}`].join("\n"),
+                );
             }
         }
         
@@ -1122,30 +1199,56 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             
             else {
+                this._clearLoadingStateRetry();
+                this.loadingStatePollCount += 1;
                 const payloadUrl = getPayloadString(payload, "url");
                 const loadingState = getPayloadString(payload, "loading_state");
                 const usdAsset: USDAssetType = this._getAsset(payloadUrl)
                 const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
+
+                if (loadingState === "busy") {
+                    if (this.loadingStatePollCount <= 90) {
+                        this.setState({ loadingText: "正在載入模型...", isLoading: true });
+                        this._scheduleLoadingStateQuery(1000);
+                    } else {
+                        this._failStageLoad(
+                            "模型載入逾時",
+                            [`目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`, `最後狀態：${payloadUrl || "empty"} busy`].join("\n"),
+                        );
+                    }
+                    return;
+                }
                 
                 // set the USD Asset dropdown to the currently opened stage if it doesn't match
                 if (isStageValid && usdAsset !== undefined && this.state.selectedUSDAsset !== usdAsset)
                     this.setState({ selectedUSDAsset: usdAsset })
 
                 // if the stage is empty, force-load the selected usd asset; the loading state is irrelevant
-                if (!payloadUrl)
-                    this._openSelectedAsset()
+                if (!payloadUrl) {
+                    if (this.pendingStageUrl && this.loadingStatePollCount <= 3) {
+                        this._scheduleLoadingStateQuery(1000);
+                    } else {
+                        this._failStageLoad("模型載入狀態未回傳 URL", `目標：${this.pendingStageUrl || this.state.selectedUSDAsset?.url || "unknown"}`);
+                    }
+                    return;
+                }
                 
                 // if a stage has been fully loaded and isn't a part of this application, force-load the selected stage
                 else if (!isStageValid && loadingState === "idle"){
                     console.log(`The loaded asset ${payloadUrl} is invalid.`)
-                    this._openSelectedAsset()
+                    this._failStageLoad(
+                        "模型載入狀態不符合目前清單",
+                        [`Kit 回報：${payloadUrl}`, `目前選擇：${this.state.selectedUSDAsset?.url || "none"}`].join("\n"),
+                    )
+                    return;
                 }
                 
                 // show stream and populate children if the stage is valid and it's done loading
                 if (isStageValid && loadingState === "idle")
                 {
+                    this._finishStageLoad();
                     this._getChildren()
-                    this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false })
+                    this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false, streamDiagnostic: null })
                 }
             }
         }

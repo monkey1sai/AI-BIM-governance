@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -91,6 +92,25 @@ function readNumber(value: unknown): number | null {
   return null;
 }
 
+function localIpv4ForStreaming(): string | null {
+  const interfaces = os.networkInterfaces();
+  for (const addresses of Object.values(interfaces)) {
+    for (const address of addresses || []) {
+      if (address.family === "IPv4" && !address.internal && address.address) {
+        return address.address;
+      }
+    }
+  }
+  return null;
+}
+
+function kitHostFromEnv(name: string, fallback: string): string {
+  const value = process.env[name];
+  if (!value) return fallback;
+  if (value.trim().toLowerCase() !== "auto") return value;
+  return localIpv4ForStreaming() || fallback;
+}
+
 function endpointFromUnknown(value: unknown, index: number, fallback: KitInstanceEndpointConfig): KitInstanceEndpointConfig | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -133,9 +153,9 @@ function conversionApiBaseFromEnv(): string {
 
 export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): CoordinatorConfig {
   const cwd = process.cwd();
-  const kitStreamServer = process.env.KIT_STREAM_SERVER || "127.0.0.1";
+  const kitStreamServer = kitHostFromEnv("KIT_STREAM_SERVER", "127.0.0.1");
   const kitSignalingPort = numberFromEnv("KIT_SIGNALING_PORT", 49100);
-  const kitMediaServer = process.env.KIT_MEDIA_SERVER || "127.0.0.1";
+  const kitMediaServer = kitHostFromEnv("KIT_MEDIA_SERVER", kitStreamServer);
   const kitMediaPort = nullableNumberFromEnv("KIT_MEDIA_PORT");
   const defaultKitEndpoint: KitInstanceEndpointConfig = {
     id: "kit_local_001",
