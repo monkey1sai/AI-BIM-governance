@@ -1,3 +1,7 @@
+# Tasks
+
+> **Retro-audited 2026-05-21**：依 CLAUDE.md §2 newer-wins，`_worker` 已從 product runtime 刪除。worker UI（`http://127.0.0.1:8005/`）不再是 demo 路徑，現行 demo 由 recap `demo-fast-mvp-orchestration` 接手。GitNexus detect-changes 在 worktree 有 quoting bug（memory `opsx-skill-placeholder-bug` / `opsx-worktree-closeout-gotchas`），newer change baseline 可以 `git diff --stat` 替代。
+
 ## 1. Preparation And Impact Review
 
 - [x] 1.1 Inspect current `_worker`, `_bim-control`, `web-viewer-sample`, `bim-review-coordinator`, `bim-streaming-server`, root scripts, and current docs before editing.
@@ -60,9 +64,9 @@
 - [x] 7.3 Run `bim-review-coordinator` tests/build from `bim-review-coordinator/`.
 - [x] 7.4 Run `web-viewer-sample` relevant tests/build from `web-viewer-sample/`, accounting for known pre-existing lint errors if lint is run.
 - [x] 7.5 Run root health/smoke validation with `_s3_storage` and `_conversion-service` absent.
-- [ ] 7.6 Browser-validate worker UI on `http://127.0.0.1:8005/` for IFC listing, selected conversion trigger, polling, and readiness handoff.
-- [ ] 7.7 If GPU/Kit is available, validate the review viewer still opens a worker-hosted USDC URL; otherwise record Kit/WebRTC as hardware-dependent.
+- [ ] 7.6 Browser-validate worker UI on `http://127.0.0.1:8005/` for IFC listing, selected conversion trigger, polling, and readiness handoff. — **superseded** (Retro-audited 2026-05-21): worker UI 退役；現行 demo intake 改走 `bim-review-coordinator` `POST /api/external/ifc-ready` + smoke script，UI listing/selection 由 viewer 取代。
+- [ ] 7.7 If GPU/Kit is available, validate the review viewer still opens a worker-hosted USDC URL; otherwise record Kit/WebRTC as hardware-dependent. — **superseded** (Retro-audited 2026-05-21): worker-hosted USDC URL 退役；現行 USDC 由 streaming-server 權威。Kit/WebRTC hardware-dependent 結論在 recap runbook §6 與 memory `kit-gpu-render-needs-windows-native` / `WSL-ubuntu-24-04-container-toolkit-setup` 已凍結。
 - [x] 7.8 Run `bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1` and syntax validation for `stage_loading.py`.
 - [x] 7.9 Run `openspec validate add-dev-ifc-source-selection-flow`.
 - [x] 7.10 Run `git diff --check`.
-- [ ] 7.11 Run GitNexus detect changes before commit or final handoff and confirm the affected scope matches this OpenSpec change.
+- [ ] 7.11 Run GitNexus detect changes before commit or final handoff and confirm the affected scope matches this OpenSpec change. — **superseded** (Retro-audited 2026-05-21): archive 已落地；GitNexus CLI 在 worktree 有已知 quoting bug，後續所有 commit-time 驗證由 successor change 接續執行，本 task 不需回填 evidence。

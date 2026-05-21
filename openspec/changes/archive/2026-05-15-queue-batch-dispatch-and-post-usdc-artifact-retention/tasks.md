@@ -45,8 +45,8 @@
 - [x] 7.1 `_worker/` focused tests 全綠（在 `_worker/` 目錄執行）。
 - [x] 7.2 `openspec validate queue-batch-dispatch-and-post-usdc-artifact-retention --strict`。
 - [x] 7.3 dry-run：`--enqueue` + `--status` 於 tmp fixture set，確認 manifest 形狀與 idempotency。
-- [ ] 7.4 real evidence：對 13 檔 canonical 反覆 `--run-next` 跑完（短命行程逐筆），`--summary` 取得 `outcome_distribution`/`minimum_coverage_locked`；斷言與 predecessor v3 一致（passed=13、locked=true）。 — **blocked**: 真實 13 檔 .ifc 為 gitignored 大檔不在 worktree（見 verification doc）
-- [ ] 7.5 量測 retention 後 footprint（目標 ≈130 MB-class）與 v3 ≈58 GB 對比，記入 verification doc。 — **blocked/recorded_only**: 依賴 7.4（見 verification doc）
+- [ ] 7.4 real evidence：對 13 檔 canonical 反覆 `--run-next` 跑完（短命行程逐筆），`--summary` 取得 `outcome_distribution`/`minimum_coverage_locked`；斷言與 predecessor v3 一致（passed=13、locked=true）。 — **superseded** (Retro-audited 2026-05-21): `_worker` 已從 product runtime 刪除（CLAUDE.md §2、`local-coordinator-ifc-ready-intake-boundary` archive、`introduce-host-native-conversion-authority-service` archive）；canonical batch v3 evidence 不再是現行 demo gating。原 **blocked**（gitignored fixture）為次要原因。
+- [ ] 7.5 量測 retention 後 footprint（目標 ≈130 MB-class）與 v3 ≈58 GB 對比，記入 verification doc。 — **superseded** (Retro-audited 2026-05-21): 依賴 7.4 之 `_worker` 路徑；B 方案 host-native conversion authority 已取代，retention footprint 規則待新 capability 重新定義。原 **blocked/recorded_only** 為次要原因。
 - [x] 7.6 visual preview 沿用 predecessor 範疇（`not_observed` 除非 Kit/GPU/browser 可用），不在本 change 宣稱通過。
 
 ## 8. Evidence 與 Roadmap 對齊
