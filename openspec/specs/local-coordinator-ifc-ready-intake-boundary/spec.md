@@ -2,6 +2,8 @@
 
 ## Purpose
 TBD - created by archiving change local-coordinator-ifc-ready-intake-boundary. Update Purpose after archive.
+
+> **Implementation status (2026-05-21 fast-mvp loop)**: change `fast-ifc-link-demo-loop` ADD 3 個 requirements:`Coordinator synchronously downloads IFC to shared volume before responding`、`Coordinator GET job endpoint exposes download and viewer state`、`Coordinator provides /ui/open redirect for viewer entry`,以及 MODIFIED 2 個既有 requirements(`Coordinator owns the external IFC-ready intake contract` + `External intake is idempotent and binds external model version` 加 implementation status note 反映同步下載階段 + idempotent replay 不重下載)。完整 ADD requirement body 與 scenario 見 `openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/specs/local-coordinator-ifc-ready-intake-boundary/spec.md`。實作:`bim-review-coordinator/src/services/ifcDownloader.ts`、`POST /api/external/ifc-ready` handler、`GET /api/external/ifc-ready/:jobId`(加 download_status / viewer_url / web_view_session_id)、`GET /ui/open?session=`(302 redirect)。
 ## Requirements
 ### Requirement: Coordinator owns the external IFC-ready intake contract
 
