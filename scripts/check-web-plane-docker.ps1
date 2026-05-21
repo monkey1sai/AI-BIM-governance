@@ -23,6 +23,24 @@ function Resolve-HybridEnvFile {
     return ".env.web-plane.host-kit.example"
 }
 
+function Normalize-EnvValue {
+    param([string] $Raw)
+    $value = $Raw.Trim()
+    if ($value.Length -eq 0) { return "" }
+    $first = $value.Substring(0, 1)
+    if ($first -eq '"' -or $first -eq "'") {
+        if ($value.Length -ge 2 -and $value.EndsWith($first)) {
+            return $value.Substring(1, $value.Length - 2)
+        }
+        return $value.Trim($first)
+    }
+    $comment = [regex]::Match($value, "\s+#")
+    if ($comment.Success) {
+        $value = $value.Substring(0, $comment.Index).TrimEnd()
+    }
+    return $value
+}
+
 function Read-EnvFile {
     param([string] $Path)
     $values = @{}
@@ -35,7 +53,7 @@ function Read-EnvFile {
         $idx = $trimmed.IndexOf("=")
         if ($idx -le 0) { continue }
         $name = $trimmed.Substring(0, $idx).Trim()
-        $value = $trimmed.Substring($idx + 1).Trim().Trim('"').Trim("'")
+        $value = Normalize-EnvValue -Raw $trimmed.Substring($idx + 1)
         $values[$name] = $value
     }
     return $values
@@ -111,8 +129,22 @@ function Classify-BridgeFailure {
     return "unknown"
 }
 
+function Get-OptionalPropertyValue {
+    param([object] $InputObject, [string] $Name)
+    if ($null -eq $InputObject) { return $null }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
+function Get-ArtifactUrl {
+    param([object] $Artifacts, [string] $Role)
+    $artifact = Get-OptionalPropertyValue -InputObject $Artifacts -Name $Role
+    return Get-OptionalPropertyValue -InputObject $artifact -Name "url"
+}
+
 function Test-ContainerToHostConversion {
-    param([string[]] $ComposeArgs, [string] $Profile)
+    param([string[]] $ComposeArgs, [string] $HostBridgeProfile)
     $probeJs = @'
 const base = (process.env.STREAMING_CONVERSION_API_BASE || process.env.CONVERSION_API_BASE || "").replace(/\/+$/, "");
 if (!base) {
@@ -143,11 +175,11 @@ fetch(base + "/health", { signal: AbortSignal.timeout(5000) })
     $execArgs = $ComposeArgs + @("exec", "-T", "coordinator", "node", "-e", $probeJs)
     $output = docker @execArgs 2>&1
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "[ok] container_to_host_conversion profile=$Profile $($output | Select-Object -First 1)" -ForegroundColor Green
+        Write-Host "[ok] container_to_host_conversion profile=$HostBridgeProfile $($output | Select-Object -First 1)" -ForegroundColor Green
         return $true
     }
     $kind = Classify-BridgeFailure -Output ($output -join "`n")
-    Write-Host "[blocked] container_to_host_conversion profile=$Profile blocker=$kind" -ForegroundColor Yellow
+    Write-Host "[blocked] container_to_host_conversion profile=$HostBridgeProfile blocker=$kind" -ForegroundColor Yellow
     Write-Host "        next: start host conversion service or adjust HOST_CONVERSION_API_BASE / bind host / firewall" -ForegroundColor Yellow
     return $false
 }
@@ -169,11 +201,12 @@ function Test-RuntimeVisibleArtifactRefs {
         Write-Host "[blocked] runtime_visible_artifact_refs conversion_status=$($result.status)" -ForegroundColor Yellow
         return
     }
+    $artifacts = Get-OptionalPropertyValue -InputObject $result -Name "artifacts"
     $refs = @(
-        @{ name = "model.usdc"; value = $result.artifacts.model_usdc.url },
-        @{ name = "element_mapping.json"; value = $result.artifacts.element_mapping.url },
-        @{ name = "entity_index.json"; value = $result.artifacts.entity_index.url },
-        @{ name = "metadata.json"; value = $result.artifacts.metadata.url }
+        @{ name = "model.usdc"; value = Get-ArtifactUrl -Artifacts $artifacts -Role "model_usdc" },
+        @{ name = "element_mapping.json"; value = Get-ArtifactUrl -Artifacts $artifacts -Role "element_mapping" },
+        @{ name = "entity_index.json"; value = Get-ArtifactUrl -Artifacts $artifacts -Role "entity_index" },
+        @{ name = "metadata.json"; value = Get-ArtifactUrl -Artifacts $artifacts -Role "metadata" }
     )
     foreach ($ref in $refs) {
         if ([string]::IsNullOrWhiteSpace([string]$ref.value)) {
@@ -186,13 +219,16 @@ function Test-RuntimeVisibleArtifactRefs {
 
 $resolvedEnvFile = Resolve-HybridEnvFile -Requested $EnvFile
 $envValues = Read-EnvFile -Path $resolvedEnvFile
-$profile = Value-OrDefault -Values $envValues -Name "HOST_BRIDGE_PROFILE" -Default "windows-docker-desktop"
+$hostBridgeProfile = Value-OrDefault -Values $envValues -Name "HOST_BRIDGE_PROFILE" -Default "windows-docker-desktop"
 $coordinatorPort = Value-OrDefault -Values $envValues -Name "COORDINATOR_PORT" -Default "8004"
 $viewerPort = Value-OrDefault -Values $envValues -Name "VIEWER_PORT" -Default "5173"
 $kitHost = Value-OrDefault -Values $envValues -Name "KIT_SIGNALING_HOST" -Default "127.0.0.1"
 $kitPortRaw = Value-OrDefault -Values $envValues -Name "KIT_SIGNALING_PORT" -Default "49100"
 $kitPort = 49100
-[void][int]::TryParse($kitPortRaw, [ref]$kitPort)
+$parsedKitPort = 0
+if ([int]::TryParse($kitPortRaw, [ref]$parsedKitPort)) {
+    $kitPort = $parsedKitPort
+}
 
 if ([string]::IsNullOrWhiteSpace($ConversionApiBase)) {
     $ConversionApiBase = Value-OrDefault -Values $envValues -Name "STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL" -Default "http://127.0.0.1:49101/artifacts"
@@ -201,12 +237,12 @@ if ([string]::IsNullOrWhiteSpace($ConversionApiBase)) {
 
 Write-Host "[info] hybrid_mode=web-plane-docker-host-native-kit" -ForegroundColor Cyan
 Write-Host "[info] env_file=$resolvedEnvFile" -ForegroundColor Cyan
-Write-Host "[info] host_bridge_profile=$profile" -ForegroundColor Cyan
+Write-Host "[info] host_bridge_profile=$hostBridgeProfile" -ForegroundColor Cyan
 
 $composeArgs = Get-ComposeArgs -ResolvedEnvFile $resolvedEnvFile
 [void](Test-Http -Tier "docker_web_plane_health:coordinator" -Url "http://127.0.0.1:$coordinatorPort/health")
 [void](Test-Http -Tier "docker_web_plane_health:viewer" -Url "http://127.0.0.1:$viewerPort")
-[void](Test-ContainerToHostConversion -ComposeArgs $composeArgs -Profile $profile)
+[void](Test-ContainerToHostConversion -ComposeArgs $composeArgs -HostBridgeProfile $hostBridgeProfile)
 [void](Test-TcpPort -Tier "host_native_kit_probe" -HostName $kitHost -Port $kitPort)
 Test-RuntimeVisibleArtifactRefs -BaseUrl $ConversionApiBase -JobId $ConversionJobId
 

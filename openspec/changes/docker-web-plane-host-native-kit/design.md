@@ -42,13 +42,14 @@
 
 ### Decision 1: 新增 compose override，而不是重寫 base compose
 
-選擇：保留 `compose.runtime-manager.yml` 的 Docker GPU profile，新增 hybrid override（例如 `compose.host-kit.yml`）只覆蓋 coordinator/viewer 在 host-native Kit 模式下需要的 environment 與 host bridge。
+選擇：保留 `compose.runtime-manager.yml` 的 Docker GPU profile，新增 hybrid override（例如 `compose.host-kit.yml`）只覆蓋 coordinator/viewer 在 host-native Kit 模式下需要的 environment、ports 與 host bridge。
 
 理由：
 
 - base compose 仍服務 `runtime-manager-docker-kit-mvp` 的 Docker-first GPU goal。
 - hybrid path 是另一條部署模式，不能破壞 GPU profile 的 evidence rule。
 - override diff 較小，可逆，operator 可明確看出自己跑的是哪條模式。
+- `ports` 必須明確 override base mappings，避免 `COORDINATOR_PORT` / `VIEWER_PORT` 被設定後仍同時發布預設 `8004` / `5173`。
 
 替代方案：直接改 base compose 讓 coordinator 永遠指向 `host.docker.internal:49101`。拒絕，因為會破壞 GPU container profile 下的 `streaming-server:49101` 網路語意。
 
@@ -62,29 +63,29 @@
 - `streaming-server:49101` 只存在 Docker GPU profile，不適用於本 change。
 - `host.docker.internal` 是 operator 最容易理解的 container-to-host bridge；Linux 可用 compose `extra_hosts: host.docker.internal:host-gateway` 補齊。
 
-替代方案：把 conversion authority 包成 container，再 volume mount Windows launcher。拒絕，因為 PowerShell/.bat/Kit launcher semantics 與 Windows GPU graphics path 不是可攜 container contract。
+替代方案：把 conversion authority 包成 container，再 volume mount Windows launcher。拒絕，因為 PowerShell `.ps1`、`.bat`、Kit launcher semantics 與 Windows GPU graphics path 不是可攜 container contract。
 
 ### Decision 2A: host bridge profile matrix
 
-選擇：hybrid mode SHALL document and validate OS-specific host bridge profiles instead of treating `host.docker.internal` as universally reliable.
+選擇：hybrid mode SHALL 文件化並驗證 OS-specific host bridge profiles，而不是把 `host.docker.internal` 當成所有 Docker engine 都可靠的固定規則。
 
 | Profile | Intended host | Container-to-host conversion URL | Host-native conversion bind expectation |
 |---|---|---|---|
-| `windows-docker-desktop` | Windows + Docker Desktop | `http://host.docker.internal:49101` | Default may remain loopback-first if health check proves reachable; otherwise operator explicitly sets a reachable bind host |
-| `linux-host-gateway` | Linux Docker Engine | `http://host.docker.internal:49101` with compose `extra_hosts: host.docker.internal:host-gateway` | Service SHALL listen on a host interface reachable from Docker bridge when loopback-only cannot be reached |
-| `explicit-host-address` | LAN / deployment-specific | `http://<configured-host>:49101` | Operator owns firewall, route, and bind host configuration |
+| `windows-docker-desktop` | Windows + Docker Desktop | `http://host.docker.internal:49101` | 若 health check 證明可達，default 可維持 loopback-first；否則 operator 明確設定可達 bind host |
+| `linux-host-gateway` | Linux Docker Engine | `http://host.docker.internal:49101` with compose `extra_hosts: host.docker.internal:host-gateway` | loopback-only 不可達時，service SHALL listen on Docker bridge 可達的 host interface |
+| `explicit-host-address` | LAN / deployment-specific | `http://<configured-host>:49101` | route、firewall、bind host configuration 由 operator 負責 |
 
 理由：
 
-- Windows Docker Desktop and Linux Docker Engine do not expose host loopback in the same way.
-- A single hard-coded rule would either be too permissive for Windows local demo or too fragile for Linux deployment.
-- Check scripts can turn this from guesswork into a concrete pass/blocked diagnosis.
+- Windows Docker Desktop 與 Linux Docker Engine 對 host loopback 的暴露方式不同。
+- 單一 hard-coded rule 不是對 Windows local demo 太寬鬆，就是對 Linux deployment 太脆弱。
+- Check scripts 可以把猜測轉成具體 pass / blocked diagnosis。
 
 安全邊界：
 
-- `0.0.0.0:8004` in Docker/hybrid mode is a LAN/single-machine exposure mechanism, not a production Internet contract.
-- Public or cross-company exposure requires a separate edge design: reverse proxy, TLS/mTLS or equivalent service auth, firewall allowlist, and operational logging.
-- Fast MVP docs SHALL NOT instruct operators to expose unauthenticated coordinator endpoints to the Internet.
+- Docker/hybrid mode 的 `0.0.0.0:8004` 只是 LAN/single-machine exposure mechanism，不是 production Internet contract。
+- Public 或 cross-company exposure 需要另一個 edge design：reverse proxy、TLS/mTLS 或等價 service auth、firewall allowlist、operational logging。
+- Fast MVP docs SHALL NOT 指示 operator 把未認證 coordinator endpoint 直接暴露到 Internet。
 
 ### Decision 3: stream config 使用 browser-visible endpoint
 
@@ -95,6 +96,7 @@
 - WebRTC 是 browser 連 Kit，不是 container 連 Kit。
 - `host.docker.internal` 對 browser 未必可解析，也不是跨平台部署者應暴露的 public endpoint。
 - 這個分界是避免「container 裡能 ping，browser 不能連」的主要設計點。
+- `web-viewer-sample` 由 coordinator/session config 取得 stream endpoint；hybrid compose 不應保留未被 viewer 讀取的 `VITE_KIT_*` env，以免 operator 誤以為它們會影響 viewer。
 
 ### Decision 4: validation 分成四個 tier
 
@@ -110,8 +112,9 @@
 
 - `8004/5173 OK` 不代表 conversion bridge OK。
 - `49100 listening` 不代表 WebRTC media/datachannel fully passed，但它是 hybrid deployment readiness 的 minimum host-native runtime probe。
-- `conversion succeeded` 不代表 `model.usdc` / mapping / manifest refs are reachable from the runtime that will load them.
+- `conversion succeeded` 不代表 `model.usdc` / mapping / manifest refs are reachable from the runtime that will load them。
 - runtime evidence tier 必須保留「不等於 Docker GPU Kit pass」的文字。
+- 若 conversion result payload 缺少 artifact member，check script 應輸出 `blocked` / `missing=<ref>`，不得因 `Set-StrictMode -Version Latest` 的 missing property dereference 直接中止。
 
 ### Decision 5: 轉檔輸出由 streaming host-native authority 管理，coordinator 只保存 refs
 
@@ -144,27 +147,27 @@ authority 對外回傳 metadata refs / URLs，例如：
 
 ## Risks / Trade-offs
 
-- **Risk: `host.docker.internal` 在不同 Docker engine 行為不同。** Mitigation: runbook SHALL document Windows Docker Desktop default path and Linux `host-gateway` override; check script SHALL fail with an explicit container-to-host diagnostic.
-- **Risk: Linux container cannot reach a host service bound only to loopback.** Mitigation: Linux profile SHALL include `host-gateway` or explicit host address guidance and require check output to say whether `STREAMING_CONVERSION_HOST` must be widened for the target machine.
-- **Risk: operator 誤把 hybrid pass 當成 Docker GPU Kit pass。** Mitigation: spec/runbook/check output SHALL label this as `hybrid_web_plane_host_native_runtime` and SHALL NOT update `runtime_image_kit_launcher` to passed.
-- **Risk: browser-facing endpoint 與 container-facing endpoint 被混用。** Mitigation: compose env names and docs SHALL separate `HOST_CONVERSION_API_BASE` from `KIT_SIGNALING_HOST` / browser stream config.
-- **Risk: artifact refs are generated with a localhost base that only one process can resolve.** Mitigation: runbook SHALL explain `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` as a runtime-visible URL and check script SHALL test at least `model.usdc`, mapping, and manifest refs when a conversion result exists.
-- **Risk: host-native services are not running when Docker web plane starts.** Mitigation: start script MAY allow web plane to start, but check script SHALL report `container_to_host_conversion=blocked` or `host_native_kit_probe=blocked` with next command.
-- **Risk: local `.env` secrets leak into docs/logs.** Mitigation: templates SHALL use `.env.*.example`; scripts SHALL print variable names/status only, not secret values.
-- **Risk: artifacts accumulate and fill disk during repeated demo conversion.** Mitigation: runbook/check output SHALL identify `STREAMING_CONVERSION_ARTIFACTS_ROOT` and document manual cleanup / retention expectations; automated deletion is out of scope unless it can prove no active session/outbox reference remains.
-- **Risk: `0.0.0.0:8004` is mistaken for production public exposure.** Mitigation: docs SHALL label it LAN/single-machine exposure only and defer Internet/cross-company exposure to a separate edge-security design.
+- **Risk: `host.docker.internal` 在不同 Docker engine 行為不同。** Mitigation：runbook SHALL document Windows Docker Desktop default path and Linux `host-gateway` override；check script SHALL fail with an explicit container-to-host diagnostic。
+- **Risk: Linux container 無法連到只 bind loopback 的 host service。** Mitigation：Linux profile SHALL include `host-gateway` or explicit host address guidance，且 check output 必須說明目標機器是否需要 widen `STREAMING_CONVERSION_HOST`。
+- **Risk: operator 誤把 hybrid pass 當成 Docker GPU Kit pass。** Mitigation：spec/runbook/check output SHALL label this as `hybrid_web_plane_host_native_runtime`，且 SHALL NOT update `runtime_image_kit_launcher` to passed。
+- **Risk: browser-facing endpoint 與 container-facing endpoint 被混用。** Mitigation：compose env names and docs SHALL separate `HOST_CONVERSION_API_BASE` from `KIT_SIGNALING_HOST` / browser stream config。
+- **Risk: artifact refs 使用只有單一 process 可解析的 localhost base。** Mitigation：runbook SHALL explain `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` as a runtime-visible URL，且 check script SHALL test at least `model.usdc`、mapping、manifest refs when a conversion result exists。
+- **Risk: Docker web plane 啟動時 host-native services 尚未啟動。** Mitigation：start script MAY allow web plane to start，但 check script SHALL report `container_to_host_conversion=blocked` or `host_native_kit_probe=blocked` with next command。
+- **Risk: local `.env` secrets leak into docs/logs。** Mitigation：templates SHALL use `.env.*.example`；scripts SHALL print variable names/status only，不印 secret values。
+- **Risk: 重複 demo conversion 讓 artifacts 累積並填滿磁碟。** Mitigation：runbook/check output SHALL identify `STREAMING_CONVERSION_ARTIFACTS_ROOT` and document manual cleanup / retention expectations；自動刪除不在本 change 範圍，除非能證明沒有 active session/outbox reference。
+- **Risk: `0.0.0.0:8004` 被誤認為 production public exposure。** Mitigation：docs SHALL label it LAN/single-machine exposure only，public/cross-company exposure defer 到 separate edge-security design。
 
 ## Migration Plan
 
-1. Add hybrid compose override and `.env` example with non-secret defaults.
-2. Add start/check helper scripts for Docker web plane hybrid mode.
-3. Update fast MVP runbook to include this path as post-fast-MVP deployable single-machine standard flow.
-4. Validate compose config and health checks locally.
-5. Keep existing host-only `scripts/start-all.ps1` and Docker GPU profile intact.
+1. Add hybrid compose override and `.env` example with non-secret defaults。
+2. Add start/check helper scripts for Docker web plane hybrid mode。
+3. Update fast MVP runbook to include this path as post-fast-MVP deployable single-machine standard flow。
+4. Validate compose config and health checks locally。
+5. Keep existing host-only `scripts/start-all.ps1` and Docker GPU profile intact。
 
-Rollback: stop the hybrid compose stack and remove the override/scripts/docs introduced by this change. Since no data schema or public API changes are introduced, rollback is file-level only.
+Rollback：停止 hybrid compose stack，移除本 change 新增的 override/scripts/docs。因為沒有 data schema 或 public API 變更，rollback 只需要 file-level revert。
 
 ## Open Questions
 
-- None for the current hybrid single-machine scope. The Linux host bridge question is resolved as a profile matrix: use `host-gateway` or an explicit host address, then let the check script report whether loopback-only binding is sufficient on that machine or whether `STREAMING_CONVERSION_HOST` must be widened.
-- Public Internet / cross-company exposure remains intentionally out of scope for this change and should become a separate edge-security OpenSpec change if needed.
+- Current hybrid single-machine scope 沒有未決問題。Linux host bridge 已收斂為 profile matrix：使用 `host-gateway` 或 explicit host address，再由 check script 回報 loopback-only binding 在該機器是否足夠，或是否需要 widen `STREAMING_CONVERSION_HOST`。
+- Public Internet / cross-company exposure 刻意不納入本 change；若需要，應另開 edge-security OpenSpec change。

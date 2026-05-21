@@ -34,6 +34,7 @@ repo 已具備 long-roadmap Phase 0 / 1 / 3 / 4 等同的 MVP 能力（`bim-revi
 | Service | Port | 部署方式（demo 路徑） | 為什麼 |
 |---|---|---|---|
 | `bim-streaming-server` Kit / WebRTC signaling | **49100** | **Windows host-native（強制）** | WSL2 + NVIDIA Container Toolkit 對 Kit graphics-vulkan 仍卡天花板；capability `runtime-image-linux-kit-launcher-readiness` 維持 deferred；[`docs/runbooks/FAST_MVP_DOCKER_KIT_MANAGER.md`](../runbooks/FAST_MVP_DOCKER_KIT_MANAGER.md) 已凍結 evidence rule |
+| `bim-streaming-server` WebRTC media | **47998** | **Windows host-native（強制）** | 與 49100 同屬 Kit/WebRTC host-native runtime；只做瀏覽器可見 media path，不代表 Docker GPU Kit pass |
 | `bim-streaming-server` internal conversion authority API | **49101** | **Windows host-native** | 與 49100 同住一個進程；internal-only，不對外網開放 |
 | `bim-review-coordinator` | **8004** | Windows host（`scripts/start-all.ps1`）或 Docker 或 `cd bim-review-coordinator && npm run start` | 不吃 GPU，但 demo 短路徑用 host 最省事 |
 | `web-viewer-sample` | **5173** | Windows host（`scripts/start-all.ps1`）或 `cd web-viewer-sample && npm run dev` | 純 browser client |

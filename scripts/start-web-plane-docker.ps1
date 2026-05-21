@@ -21,6 +21,24 @@ function Resolve-HybridEnvFile {
     return ".env.web-plane.host-kit.example"
 }
 
+function Normalize-EnvValue {
+    param([string] $Raw)
+    $value = $Raw.Trim()
+    if ($value.Length -eq 0) { return "" }
+    $first = $value.Substring(0, 1)
+    if ($first -eq '"' -or $first -eq "'") {
+        if ($value.Length -ge 2 -and $value.EndsWith($first)) {
+            return $value.Substring(1, $value.Length - 2)
+        }
+        return $value.Trim($first)
+    }
+    $comment = [regex]::Match($value, "\s+#")
+    if ($comment.Success) {
+        $value = $value.Substring(0, $comment.Index).TrimEnd()
+    }
+    return $value
+}
+
 function Read-EnvFile {
     param([string] $Path)
     $values = @{}
@@ -33,7 +51,7 @@ function Read-EnvFile {
         $idx = $trimmed.IndexOf("=")
         if ($idx -le 0) { continue }
         $name = $trimmed.Substring(0, $idx).Trim()
-        $value = $trimmed.Substring($idx + 1).Trim().Trim('"').Trim("'")
+        $value = Normalize-EnvValue -Raw $trimmed.Substring($idx + 1)
         $values[$name] = $value
     }
     return $values
