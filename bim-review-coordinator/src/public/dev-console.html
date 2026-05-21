@@ -169,6 +169,78 @@
   </nav>
 
   <main class="demo-main">
+    <!-- fast-ifc-link-demo-loop §5:3 卡單欄垂直 fast MVP happy path。 -->
+    <section class="demo-card" id="fastIfcReadyCard">
+      <h2 class="demo-card__title" style="font-size:18px;">① 提交 IFC source(模擬外部 ifc-ready)</h2>
+      <p class="demo-card__subtitle">填入 worker compat payload,點「送出 ifc-ready」後 coordinator 同步下載 IFC 至 shared volume 並 dispatch streaming-server。</p>
+      <div class="demo-details__grid">
+        <div>
+          <label for="fastIfcPath">ifc_path</label>
+          <input id="fastIfcPath" value="edge-local://storage/demo-fixture.ifc" />
+        </div>
+        <div>
+          <label for="fastProjectId">project_id</label>
+          <input id="fastProjectId" value="project_demo_001" />
+        </div>
+      </div>
+      <div class="demo-details__grid">
+        <div>
+          <label for="fastVersion">version</label>
+          <input id="fastVersion" value="version_demo_001" />
+        </div>
+        <div>
+          <label for="fastTaskId">task_id</label>
+          <input id="fastTaskId" value="task_demo_001" />
+        </div>
+      </div>
+      <div class="demo-btn-row">
+        <button class="demo-btn" type="button" onclick="submitFastIfcReady()">送出 ifc-ready</button>
+      </div>
+      <div id="fastIfcReadyResult" class="demo-card__subtitle" style="margin-top:12px;">尚未送出。</div>
+    </section>
+
+    <section class="demo-card" id="fastJobProgressCard">
+      <h2 class="demo-card__title" style="font-size:18px;">② 下載 + 轉檔進度</h2>
+      <p class="demo-card__subtitle">每 5 秒自動 polling <code>GET /api/external/ifc-ready/{jobId}</code>。download → conversion → viewer ready 三段狀態。</p>
+      <div class="demo-summary-grid">
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">job id</div>
+          <div id="fastJobIdLabel" class="demo-summary-item__value">—</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">download_status</div>
+          <div id="fastDownloadStatus" class="demo-summary-item__value">—</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">conversion_status</div>
+          <div id="fastConversionStatus" class="demo-summary-item__value">—</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">viewer_open_ready</div>
+          <div id="fastViewerReady" class="demo-summary-item__value">false</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="demo-card" id="fastViewerLinkCard">
+      <h2 class="demo-card__title" style="font-size:18px;">③ 開啟 viewer</h2>
+      <p class="demo-card__subtitle">轉檔 ready 時自動填入 viewer_url。點「開啟 viewer」會走 coordinator <code>/ui/open?session=</code> 302 → host loopback <code>127.0.0.1:5173/?session=</code>。</p>
+      <div class="demo-result-grid">
+        <div class="demo-result-item">
+          <div class="demo-result-item__label">viewer_url</div>
+          <div id="fastViewerUrl" class="demo-result-item__value">—</div>
+        </div>
+      </div>
+      <div class="demo-btn-row">
+        <button class="demo-btn demo-btn--secondary" type="button" onclick="copyFastViewerUrl()" disabled id="fastCopyBtn">複製</button>
+        <button class="demo-btn" type="button" onclick="openFastViewer()" disabled id="fastOpenBtn">開啟 viewer</button>
+      </div>
+    </section>
+
+    <details class="demo-details" style="margin-top:24px;">
+      <summary>展開 dev console / 工程測試控制台(舊版 demo 控制 + 互動實驗室,fast MVP 流程不需要)</summary>
+      <div class="demo-details__body">
+
     <section class="demo-card">
       <h1 class="demo-card__title">審查協調服務 <span id="connStatus" class="demo-status demo-status--idle">檢查中</span></h1>
       <p class="demo-card__subtitle">
@@ -430,6 +502,8 @@
         <pre id="socketOutput">尚未收到 socket 事件。</pre>
           </details>
         </div>
+      </div>
+    </details>
       </div>
     </details>
   </main>
@@ -990,6 +1064,119 @@
       } finally {
         createBtn.disabled = false;
       }
+    }
+
+    // ============================================================
+    // fast-ifc-link-demo-loop §5:3 卡單欄 fast MVP happy path helpers
+    // ============================================================
+    let fastJobPollTimer = null;
+    const fastIfcReadyResultEl = document.getElementById('fastIfcReadyResult');
+    const fastJobIdLabel = document.getElementById('fastJobIdLabel');
+    const fastDownloadStatus = document.getElementById('fastDownloadStatus');
+    const fastConversionStatus = document.getElementById('fastConversionStatus');
+    const fastViewerReady = document.getElementById('fastViewerReady');
+    const fastViewerUrlEl = document.getElementById('fastViewerUrl');
+    const fastCopyBtn = document.getElementById('fastCopyBtn');
+    const fastOpenBtn = document.getElementById('fastOpenBtn');
+
+    async function submitFastIfcReady() {
+      stopFastJobPolling();
+      const ifcPath = document.getElementById('fastIfcPath').value.trim();
+      const projectId = document.getElementById('fastProjectId').value.trim();
+      const version = document.getElementById('fastVersion').value.trim();
+      const taskId = document.getElementById('fastTaskId').value.trim();
+      if (!ifcPath || !projectId || !version || !taskId) {
+        fastIfcReadyResultEl.textContent = 'ifc_path / project_id / version / task_id 都必填';
+        return;
+      }
+      fastIfcReadyResultEl.textContent = '送出中…';
+      fastJobIdLabel.textContent = '—';
+      fastDownloadStatus.textContent = '—';
+      fastConversionStatus.textContent = '—';
+      fastViewerReady.textContent = 'false';
+      fastViewerUrlEl.textContent = '—';
+      fastCopyBtn.disabled = true;
+      fastOpenBtn.disabled = true;
+      try {
+        const response = await fetch('/api/external/ifc-ready', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Secret': 'dev-webhook-secret',
+            'X-Correlation-Id': makeFastId('corr_ui'),
+            'X-Idempotency-Key': makeFastId('idem_ui'),
+          },
+          body: JSON.stringify({
+            status: 'ifc_ready',
+            ifc_path: ifcPath,
+            project_id: projectId,
+            version,
+            task_id: taskId,
+          }),
+        });
+        const text = await response.text();
+        let payload = text;
+        try { payload = JSON.parse(text); } catch {}
+        fastIfcReadyResultEl.textContent = `${response.status} ${response.statusText}`;
+        if (payload && typeof payload === 'object' && payload.ifc_ready_job_id) {
+          fastJobIdLabel.textContent = payload.ifc_ready_job_id;
+          fastDownloadStatus.textContent = payload.download_status || '—';
+          startFastJobPolling(payload.ifc_ready_job_id);
+        }
+      } catch (error) {
+        fastIfcReadyResultEl.textContent = `送出失敗:${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
+    function startFastJobPolling(jobId) {
+      stopFastJobPolling();
+      fastJobPollTimer = setInterval(() => pollFastJob(jobId), 5000);
+      pollFastJob(jobId);
+    }
+
+    function stopFastJobPolling() {
+      if (fastJobPollTimer) clearInterval(fastJobPollTimer);
+      fastJobPollTimer = null;
+    }
+
+    async function pollFastJob(jobId) {
+      try {
+        const response = await fetch(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`);
+        if (!response.ok) {
+          fastConversionStatus.textContent = `query ${response.status}`;
+          return;
+        }
+        const payload = await response.json();
+        fastDownloadStatus.textContent = payload.download_status || '—';
+        fastConversionStatus.textContent = payload.conversion_status || '—';
+        const ready = Boolean(payload.viewer_url);
+        fastViewerReady.textContent = ready ? 'true' : 'false';
+        if (ready) {
+          fastViewerUrlEl.innerHTML = `<a href="${escapeAttr(payload.viewer_url)}" target="_blank" rel="noopener">${escapeHtml(payload.viewer_url)}</a>`;
+          fastCopyBtn.disabled = false;
+          fastOpenBtn.disabled = false;
+          stopFastJobPolling();
+        }
+      } catch (error) {
+        fastConversionStatus.textContent = `poll error:${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
+    function copyFastViewerUrl() {
+      const link = fastViewerUrlEl.querySelector('a');
+      if (!link) return;
+      navigator.clipboard?.writeText(link.href).catch(() => undefined);
+    }
+
+    function openFastViewer() {
+      const link = fastViewerUrlEl.querySelector('a');
+      if (!link) return;
+      window.open(link.href, '_blank');
+    }
+
+    function makeFastId(prefix) {
+      const random = Math.random().toString(36).slice(2, 10);
+      return `${prefix}_${Date.now()}_${random}`;
     }
 
     // 將 dev-console.js 內 appendSocket() 的訊息也渲染到 demo feed

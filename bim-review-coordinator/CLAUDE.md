@@ -28,6 +28,7 @@ IFC-ready Intake / Callback Outbox / Session Control Plane — 唯一外部 IFC-
 
 - ❌ 渲染 3D / 開啟 USD stage / 處理 GPU。
 - ❌ 直接保存大型模型檔案 byte（屬於 streaming/data-plane artifact storage）。
+  > **例外 carve-out(2026-05-21,change `fast-ifc-link-demo-loop`)**:`POST /api/external/ifc-ready` 同步階段允許 coordinator 把外部 IFC 下載到本地 shared volume(`storage/ifc-cache/<ifc_ready_job_id>/source.ifc`)作 dispatch 前臨時通道。coordinator 不視為該 IFC bytes 資料權威;`bim-streaming-server` 為 conversion authority,外部公司雲端為 control-plane 權威。實作:`src/services/ifcDownloader.ts` + `POST /api/external/ifc-ready` 內同步呼叫。production 應設 `IFC_DOWNLOAD_STRICT=true`/`fallbackOnFetchError=false` 強制真實下載。
 - ❌ 取代外部公司雲端 control-plane 成為 metadata 權威（本服務只保存最小 shadow metadata）。
 - ❌ 取代 `web-viewer-sample` 成為 UI（本服務不渲染畫面、不送 view-layer 樣式）。
 - ❌ 引入 Omniverse / `pxr` / `omni.*` 套件。

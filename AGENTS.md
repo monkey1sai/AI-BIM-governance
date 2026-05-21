@@ -430,6 +430,17 @@ Session Control Plane / Collaboration Coordinator
 - 取代 web-viewer-sample 成為 UI
 ```
 
+> **例外 carve-out(2026-05-21,change `fast-ifc-link-demo-loop`)**:
+> 允許 coordinator 在 `POST /api/external/ifc-ready` 的同步階段,將外部 IFC 下載
+> 至本地 shared volume 路徑 `storage/ifc-cache/<ifc_ready_job_id>/source.ifc`,
+> 作為 dispatch streaming-server 前的**臨時通道快取**(非資料權威)。coordinator
+> 不視為該 IFC bytes 的資料權威:權威仍屬外部公司雲端 control-plane
+> (`external_model_version_id` 參照),streaming-server 為 conversion authority。
+> 規範細節見 spec `local-coordinator-ifc-ready-intake-boundary` 內
+> `Coordinator synchronously downloads IFC to shared volume before responding`
+> requirement。Transition 過後若另有設計(streaming-server 直接從 MinIO pull、
+> 或 sidecar service 處理下載),carve-out 可由新 OpenSpec change 收斂回原邊界。
+
 ### 控制邊界
 
 `bim-review-coordinator` 可以知道：
