@@ -11,7 +11,13 @@ Fast MVP demo 已確認 `bim-review-coordinator` (`8004`) 與 `web-viewer-sample
   - Windows host-native 啟動 `bim-streaming-server` Kit/WebRTC (`49100` / `47998`)
   - Windows host-native 啟動 conversion authority API (`49101`)
   - coordinator container 透過 `host.docker.internal:49101` 呼叫 host-native conversion API
+  - coordinator container 在 Docker/hybrid mode 明確 bind `0.0.0.0:8004` 並 publish host port `8004`，host-local `npm run dev` 預設仍維持 loopback-only
   - browser-facing stream config 仍回傳 `127.0.0.1:49100` / `127.0.0.1:47998` 或部署者指定的 host address，因為 viewer 是使用者瀏覽器在 host/network 端連 Kit
+  - host-native conversion authority 以 per-job artifact directory 管理轉檔輸出，coordinator 只保存 metadata refs / URL，不複製或回拋大型 `.usdc` 本體
+- 定義 OS-specific host bridge profiles：
+  - Windows Docker Desktop profile：優先使用 `host.docker.internal:49101`，以 check script 驗證是否能到 host-native conversion authority。
+  - Linux Docker Engine profile：compose SHALL provide `extra_hosts: host.docker.internal:host-gateway` or an explicit host address；host-native conversion authority SHALL listen on a host interface reachable from Docker bridge when loopback-only is insufficient。
+- 增加 artifact ref reachability validation，確認 `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` 產生的 `model.usdc` / mapping / manifest refs 可被實際 consumer 解析。
 - 新增/調整 Docker Compose override 與啟動檢查腳本，讓 operator 可只啟 containerized `8004` / `5173`，不啟 Docker GPU profile。
 - 更新 fast MVP / runbook 文件，將此 hybrid path 寫成 fast MVP 後的單機標準流程。
 - 明確保留 `runtime-manager-docker-kit-mvp` 的 evidence rule：host-native Kit 不得被拿來宣稱 Docker GPU Kit pass；此 change 的 pass target 是 hybrid single-machine deployment readiness，不是 Linux Kit GPU container readiness。
@@ -23,6 +29,7 @@ Non-goals:
 - 不接真實外部公司雲端 `_bim-control` 或真實外部 IFC Worker；B 方案仍由 coordinator intake、tests/fakes 與 callback outbox 表達。
 - 不新增 production dependency。
 - 不升格 roadmap/runtime evidence 中的 `runtime_image_kit_launcher`、`single_kit_render` 或 Docker GPU profile 狀態。
+- 不把 `0.0.0.0:8004` 當成 public Internet exposure；跨公司網路或 Internet exposure 需要另行規格化 reverse proxy、TLS/mTLS、防火牆與正式 allowlist。
 
 ## Capabilities
 
@@ -50,11 +57,15 @@ Non-goals:
   - Existing `STREAMING_CONVERSION_API_BASE` remains the coordinator-to-conversion bridge.
   - Existing review session stream config remains the browser-to-Kit bridge.
 - Data / storage:
-  - No new durable data model.
-  - Existing mounted `storage/` remains the local artifact/IFC fixture boundary.
+  - No new durable database model.
+  - `storage/` remains the local source IFC / smoke fixture boundary.
+  - Derived conversion outputs remain owned by `bim-streaming-server` host-native conversion authority under a configured artifacts root, defaulting to its git-ignored `_cache/host-native-conversion/artifacts/<conversion_job_id>/` layout.
+  - Coordinator and cloud callback outbox store only metadata refs (`usdc_ref`, `element_mapping_ref`, `manifest_ref`) and MUST NOT copy or callback large `.usdc` bytes.
 - Validation:
   - Compose config/build for `coordinator` + `viewer`.
   - `GET http://127.0.0.1:8004/health` returns ok.
   - `GET http://127.0.0.1:5173` returns 2xx.
   - From the coordinator container, `GET http://host.docker.internal:49101/health` reaches host-native conversion authority.
   - From host/browser perspective, `127.0.0.1:49100` is reachable when Kit is running.
+  - Conversion result refs resolve to runtime-visible artifact URLs for `model.usdc`, `element_mapping.json`, and `metadata.json`.
+  - Check output labels the active host bridge profile (`windows-docker-desktop`, `linux-host-gateway`, or explicit host address) and reports actionable blockers when the profile cannot reach `49101`.
