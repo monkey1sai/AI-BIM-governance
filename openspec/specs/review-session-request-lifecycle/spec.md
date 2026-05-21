@@ -120,6 +120,8 @@ The coordinator SHALL expose `GET /api/review-sessions/{session_id}/lifecycle-ev
 
 The lifecycle event audit log MUST include at least these lifecycle event types when the corresponding transition occurs: `sessionCreated`, `sessionActive`, `sessionClosing`, `sessionClosed`, and `kitInstanceReleased`.
 
+> **Implementation status (2026-05-21 fast-mvp loop)**: change `remove-conflict-review-from-fast-mvp` removed the coordinator `highlightRequest` / `selectionUpdate` / `annotationCreate` Socket.IO event handlers (in `bim-review-coordinator/src/socket/reviewNamespace.ts`) and the viewer `IssuePanel` / `EventLogPanel` / `bimControlClient.getReviewIssues` / `coordinatorClient.getReviewBootstrap` paths. New generic collaboration events of those types are no longer produced. The exclusion wording covering `highlightRequest`, `selectionUpdate`, `annotationCreated`, and `finalReviewEvent` from lifecycle audit is preserved for archive / historical compatibility — existing event logs may still contain those event types from earlier runs, and the lifecycle endpoint MUST still exclude them. The companion `compose.host-kit.yml` change pinned `viewer.ports` to `127.0.0.1:5173:5173` so the viewer is no longer addressable from LAN, aligning with the Kit-1:1 boundary that excludes broadcast collaboration. If conflict review is re-introduced under a future OpenSpec change, that change SHALL add back the corresponding collaboration ADD requirements and viewer slots.
+
 #### Scenario: Lifecycle audit events are returned in append order
 
 - **WHEN** a client requests `GET /api/review-sessions/{session_id}/lifecycle-events` for an existing review session
