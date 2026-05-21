@@ -514,46 +514,27 @@ describe("bim-review-coordinator", () => {
     expect(malformed.status).toBe(400);
   });
 
-  it("rejects socket session operations when the session id is missing, invalid, or unknown", async () => {
+  it("rejects socket joinSession when the session id is missing, invalid, or unknown", async () => {
     const app = makeApp();
     const client = await connectReviewSocket(await listen(app));
 
-    const missingHighlight = await emitWithAck<{ ok: boolean; error?: string }>(client, "highlightRequest", {
+    const missingJoin = await emitWithAck<{ ok: boolean; error?: string }>(client, "joinSession", {
       user_id: "dev_user_001",
     });
-    expect(missingHighlight).toEqual({ ok: false, error: "Missing session_id" });
+    expect(missingJoin).toEqual({ ok: false, error: "Missing session_id" });
 
-    const invalidSelection = await emitWithAck<{ ok: boolean; error?: string }>(client, "selectionUpdate", {
+    const invalidJoin = await emitWithAck<{ ok: boolean; error?: string }>(client, "joinSession", {
       session_id: "..\\secrets",
       user_id: "dev_user_001",
     });
-    expect(invalidSelection).toEqual({ ok: false, error: "Invalid review session id." });
+    expect(invalidJoin).toEqual({ ok: false, error: "Invalid review session id." });
 
-    const missingJoin = await emitWithAck<{ ok: boolean; error?: string }>(client, "joinSession", {
+    const unknownJoin = await emitWithAck<{ ok: boolean; error?: string }>(client, "joinSession", {
       session_id: "review_session_missing",
       user_id: "dev_user_001",
     });
-    expect(missingJoin).toEqual({ ok: false, error: "Review session not found." });
-
-    const missingHighlightSession = await emitWithAck<{ ok: boolean; error?: string }>(client, "highlightRequest", {
-      session_id: "review_session_missing",
-      user_id: "dev_user_001",
-    });
-    expect(missingHighlightSession).toEqual({ ok: false, error: "Review session not found." });
+    expect(unknownJoin).toEqual({ ok: false, error: "Review session not found." });
     expect(fs.existsSync(path.join(activeRoot as string, "events", "review_session_missing.jsonl"))).toBe(false);
-  });
-
-  it("rejects socket annotation persistence for unknown sessions before calling downstream APIs", async () => {
-    const app = makeApp();
-    const client = await connectReviewSocket(await listen(app));
-
-    const response = await emitWithAck<{ ok: boolean; error?: string }>(client, "annotationCreate", {
-      session_id: "review_session_missing",
-      user_id: "dev_user_001",
-      text: "檢查消防區劃",
-    });
-
-    expect(response).toEqual({ ok: false, error: "Review session not found." });
   });
 
   it("rejects socket joins for closed sessions", async () => {

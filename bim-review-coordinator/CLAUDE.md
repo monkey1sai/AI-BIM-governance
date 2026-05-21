@@ -5,7 +5,15 @@
 
 ## Role
 
-IFC-ready Intake / Callback Outbox / Session Control Plane — 唯一外部 IFC-ready intake；協調 browser client 與 Kit streaming server 的連線資訊；廣播 presence / selection / annotation 等多人事件；將 streaming conversion 結果放入 metadata-only callback outbox。
+IFC-ready Intake / Callback Outbox / Session Control Plane — 唯一外部 IFC-ready intake；協調 browser client 與 Kit streaming server 的連線資訊；廣播 presence(`joinSession` / `leaveSession` / `presenceUpdated`)等基本 session 事件；將 streaming conversion 結果放入 metadata-only callback outbox。
+
+> **退役狀態(2026-05-21,change `remove-conflict-review-from-fast-mvp`)**:
+> `highlightRequest` / `selectionUpdate` / `annotationCreate` 等 collaboration
+> Socket.IO event handlers 已從本 service 移除(`src/socket/reviewNamespace.ts`);
+> `getReviewIssues` / `createAnnotation` / `/api/model-versions/:id/review-bootstrap`
+> 也已刪。`/api/review-sessions/:id/events` 與 `/lifecycle-events` 仍保留;
+> lifecycle endpoint 排除 collaboration event 的語意 wording 保留作 archive
+> compatibility(舊 event log 仍可能含這些 type)。
 
 埠口：`localhost:8004`（含 Socket.IO）
 

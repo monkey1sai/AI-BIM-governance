@@ -1,4 +1,4 @@
-import type { ReviewBootstrap, ReviewSession, ReviewStreamConfig } from "../types/review";
+import type { ReviewSession, ReviewStreamConfig } from "../types/review";
 import type { ArtifactBinding } from "../types/artifacts";
 
 export interface CreateReviewSessionInput {
@@ -67,10 +67,6 @@ export class CoordinatorClient {
 
     async getStreamConfig(sessionId: string): Promise<ReviewStreamConfig> {
         return this.request<ReviewStreamConfig>(`/api/review-sessions/${sessionId}/stream-config`);
-    }
-
-    async getReviewBootstrap(modelVersionId: string): Promise<ReviewBootstrap> {
-        return this.request<ReviewBootstrap>(`/api/model-versions/${modelVersionId}/review-bootstrap`);
     }
 
     private async request<T>(path: string, init?: RequestInit): Promise<T> {

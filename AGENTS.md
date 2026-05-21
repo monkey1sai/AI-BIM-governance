@@ -677,6 +677,15 @@ Scene interaction 是 browser client 與 Kit runtime 之間的 DataChannel JSON 
 
 ## 5.4 Collaboration Flow
 
+> **退役狀態(2026-05-21,change `remove-conflict-review-from-fast-mvp`)**:本節
+> collaboration broadcast(highlight / selection / annotation)在 coordinator 與
+> viewer 兩端的 implementation 已從 fast MVP product runtime 移除(`reviewNamespace.ts`
+> 內的 `highlightRequest` / `selectionUpdate` / `annotationCreate` Socket.IO event
+> handlers、viewer `IssuePanel` / `EventLogPanel` 已刪)。本 sequence 保留作為
+> archive context;viewer Change 2 (`fast-ifc-link-demo-loop`) 將 viewer 主畫面
+> 收斂為「全螢幕 stream + 邊框 HUD」,不含多人協作 UI。若未來重新引入,以新
+> OpenSpec change form ADD requirement 與 viewer slot。
+
 ```mermaid
 sequenceDiagram
     participant WV1 as web-viewer-sample User A
@@ -702,6 +711,13 @@ bim-streaming-server 不作為多人協作事件中心。
 ---
 
 ## 5.5 Review Result Visualization Flow
+
+> **退役狀態(2026-05-21,change `remove-conflict-review-from-fast-mvp`)**:本節
+> review issue → DataChannel `highlightPrimsRequest` 的「issue 流」入口
+> (viewer `IssuePanel` + coordinator `getReviewIssues` / `review-bootstrap`
+> endpoint)已從 fast MVP product runtime 移除。DataChannel `highlightPrimsRequest`
+> 本身保留作 mapping highlight 工具(Window.tsx `_onMappingItemClick`),Change 2
+> 重做 viewer 時再評估。若 issue 流要重新引入,以新 OpenSpec change form ADD。
 
 ```mermaid
 sequenceDiagram
@@ -802,6 +818,13 @@ mapping runtime usage  → web-viewer-sample / bim-streaming-server
 ---
 
 ## 7.4 Review 資料
+
+> **退役狀態(2026-05-21,change `remove-conflict-review-from-fast-mvp`)**:issue
+> / annotation / review result 的 fast MVP product runtime 已移除(`ReviewIssue`
+> interface、`getReviewIssues` / `createAnnotation` / `getReviewBootstrap` /
+> `IssuePanel` / `EventLogPanel` 已刪)。本表保留作 archive context,記錄歷史權威
+> 劃分。若 review 流要重新引入,以新 OpenSpec change form ADD requirement 與
+> coordinator / viewer 端配套。
 
 ```txt
 issue / annotation / review result

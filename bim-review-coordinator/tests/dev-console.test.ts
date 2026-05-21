@@ -47,7 +47,11 @@ describe("coordinator dev console", () => {
     expect(ui.text).toContain("/api/external/ifc-ready");
     expect(ui.text).toContain("getLatestConversionReviewPayload");
     expect(ui.text).toContain("互動效果實驗室");
-    expect(ui.text).toContain("guidedHighlightIssue");
+    // remove-conflict-review-from-fast-mvp:衝突檢討(guidedHighlightIssue / guidedAnnotation / guidedConversion)已自 fast MVP 移除
+    expect(ui.text).not.toContain("guidedHighlightIssue");
+    expect(ui.text).not.toContain("guidedAnnotation");
+    expect(ui.text).not.toContain("emitHighlight()");
+    expect(ui.text).toContain("步驟 ③ / 3");
     expect(ui.text).toContain("工程參數與 Raw API / Socket controls");
     expect(consolePage.status).toBe(200);
     expect(consolePage.text).toContain("/api/review-sessions");

@@ -114,14 +114,6 @@ export interface Artifact {
   quality_metrics_summary?: ConversionQualityMetricsSummary | null;
 }
 
-export interface ReviewIssue {
-  issue_id: string;
-  severity: string;
-  title: string;
-  usd_prim_path?: string | null;
-  ifc_guid?: string | null;
-}
-
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：外部落地端 IFC
  * Worker → coordinator `POST /api/external/ifc-ready` 的事件。契約權威：

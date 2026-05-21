@@ -135,43 +135,6 @@ function emitLeave() {
   emit("leaveSession", baseSocketPayload());
 }
 
-function emitHighlight() {
-  emit("highlightRequest", {
-    session_id: sessionId.value || "review_session_demo_001",
-    actor_id: userId.value,
-    items: [
-      {
-        prim_path: "/World",
-        ifc_guid: "2VJ3sK9L000fake001",
-        color: [1, 0, 0, 1],
-        label: "示範：從 coordinator 協作控制台送出的高亮",
-        source: "coordinator_dev_console",
-        issue_id: "ISSUE-DEMO-001"
-      }
-    ]
-  });
-}
-
-function emitSelection() {
-  emit("selectionUpdate", {
-    session_id: sessionId.value || "review_session_demo_001",
-    actor_id: userId.value,
-    selected_paths: ["/World"]
-  });
-}
-
-function emitAnnotation() {
-  emit("annotationCreate", {
-    session_id: sessionId.value || "review_session_demo_001",
-    actor_id: userId.value,
-    text: "從 coordinator UI 建立的示範標註",
-    target: {
-      usd_prim_path: "/World",
-      ifc_guid: "2VJ3sK9L000fake001"
-    }
-  });
-}
-
 function emitHeartbeat() {
   emit("heartbeat", { session_id: sessionId.value || "review_session_demo_001", actor_id: userId.value });
 }

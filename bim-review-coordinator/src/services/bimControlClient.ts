@@ -1,4 +1,4 @@
-import type { Artifact, ReviewIssue } from "../types.js";
+import type { Artifact } from "../types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3000;
 
@@ -24,27 +24,6 @@ export class BimControlClient {
     return asItems<Artifact>(payload, "artifacts");
   }
 
-  async getReviewIssues(modelVersionId: string): Promise<ReviewIssue[]> {
-    const payload = await this.getJson(`/api/model-versions/${modelVersionId}/review-issues`);
-    return asItems<ReviewIssue>(payload);
-  }
-
-  async createAnnotation(sessionId: string, payload: unknown): Promise<unknown> {
-    this.ensureConfigured();
-    const response = await this.fetchWithTimeout(
-      `${this.baseUrl}/api/review-sessions/${sessionId}/annotations`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`external control-plane annotation save failed: ${response.status}`);
-    }
-    return response.json();
-  }
-
   private async getJson(path: string): Promise<unknown> {
     this.ensureConfigured();
     const response = await this.fetchWithTimeout(`${this.baseUrl}${path}`, {
@@ -57,9 +36,6 @@ export class BimControlClient {
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
-    // The external control-plane may be unavailable in local B-scheme runs. Without an explicit
-    // timeout, a hung connection (firewalled host, SYN drop, etc.) would
-    // tie up an entire request and make tests / live endpoints flaky.
     return fetch(url, { ...init, signal: AbortSignal.timeout(this.requestTimeoutMs) });
   }
 

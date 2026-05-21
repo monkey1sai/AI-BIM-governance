@@ -18,8 +18,6 @@ import USDStage from "./USDStage";
 import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import ArtifactPanel from "./components/ArtifactPanel";
-import EventLogPanel from "./components/EventLogPanel";
-import IssuePanel from "./components/IssuePanel";
 import PresencePanel from "./components/PresencePanel";
 import ReviewLauncher from "./components/ReviewLauncher";
 import DemoControlPanel from "./components/DemoControlPanel";
@@ -27,12 +25,11 @@ import { BimControlClient } from "./clients/bimControlClient";
 import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
 import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest, severityToColor } from "./clients/streamMessages";
-import { buildDemoHighlightItem, demoIssueId, demoPrimPath } from "./clients/demoDefaults";
+import { demoPrimPath } from "./clients/demoDefaults";
 import { reviewEnv } from "./config/env";
 import type { DemoLogEntry } from "./types/demo";
 import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
-import type { ReviewIssue } from "./types/issues";
 import type { ReviewLifecycleStatus, ReviewSession, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
 import type { HighlightItem, StreamMessage } from "./types/streamMessages";
 
@@ -70,7 +67,6 @@ interface AppState {
     reviewLifecycleStatus: ReviewLifecycleStatus | null;
     reviewStatus: string;
     reviewArtifacts: ReviewArtifact[];
-    reviewIssues: ReviewIssue[];
     reviewEvents: string[];
     latestStreamConfig: ReviewStreamConfig | null;
     mappingUrl: string | null;
@@ -214,7 +210,6 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
     private pendingIssueHighlightRequestId: string | null = null;
-    private pendingIssueHighlightIssueId: string | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -229,7 +224,6 @@ export default class App extends React.Component<AppProps, AppState> {
             reviewLifecycleStatus: null,
             reviewStatus: "Review bootstrap 尚未載入",
             reviewArtifacts: [],
-            reviewIssues: [],
             reviewEvents: [],
             latestStreamConfig: null,
             mappingUrl: null,
@@ -543,7 +537,6 @@ export default class App extends React.Component<AppProps, AppState> {
                     reviewLifecycleStatus: null,
                     reviewStatus: "Review session URL 缺少 sessionId",
                     reviewArtifacts: [],
-                    reviewIssues: [],
                     latestStreamConfig: null,
                     mappingUrl: null,
                     usdAssets: [],
@@ -623,12 +616,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 || reviewRequest?.model_version_id
                 || createdSession?.model_version_id
                 || reviewEnv.defaultModelVersionId;
-            const [streamConfig, bootstrap] = await Promise.all([
-                this.coordinatorClient.getStreamConfig(sessionId),
-                this.coordinatorClient.getReviewBootstrap(bootstrapModelVersionId),
-            ]);
+            const streamConfig = await this.coordinatorClient.getStreamConfig(sessionId);
 
-            const artifacts = streamConfig.artifacts.length > 0 ? streamConfig.artifacts : bootstrap.artifacts;
+            const artifacts = streamConfig.artifacts;
             const usdAssets = this._mergeAssets(this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []), this._assetsFromReviewArtifacts(artifacts));
             const mergedUSDAssets = this._mergeAssets(this.state.usdAssets, usdAssets);
             const selectedUSDAsset = usdAssets.find((asset) => asset.url === streamConfig.model.url) ?? usdAssets[0] ?? this.state.selectedUSDAsset;
@@ -655,7 +645,6 @@ export default class App extends React.Component<AppProps, AppState> {
                 reviewLifecycleStatus: streamConfig.lifecycle_status,
                 reviewStatus: `${lifecycleStatusText(streamConfig.lifecycle_status)}，模型狀態：${streamConfig.model.status}`,
                 reviewArtifacts: artifacts,
-                reviewIssues: bootstrap.issues,
                 latestStreamConfig: streamConfig,
                 mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
                 usdAssets: mergedUSDAssets,
@@ -715,14 +704,10 @@ export default class App extends React.Component<AppProps, AppState> {
 
     private async _loadReviewDataFromBimControl(): Promise<void> {
         try {
-            const [artifacts, issues] = await Promise.all([
-                this.bimControlClient.getArtifacts(reviewEnv.defaultModelVersionId),
-                this.bimControlClient.getReviewIssues(reviewEnv.defaultModelVersionId),
-            ]);
+            const artifacts = await this.bimControlClient.getArtifacts(reviewEnv.defaultModelVersionId);
             const usdAssets = this._assetsFromReviewArtifacts(artifacts);
             this.setState({
                 reviewArtifacts: artifacts,
-                reviewIssues: issues,
                 usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
                 selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
                 mappingUrl: this._resolveMappingUrl(null, artifacts),
@@ -781,24 +766,6 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         const mappedArtifact = artifacts.find((artifact) => artifact.artifact_type === "usdc" && artifact.mapping_url);
         return mappedArtifact?.mapping_url || null;
-    }
-
-    private async _loadReviewBootstrapFromCoordinator(): Promise<void> {
-        try {
-            const bootstrap = await this.coordinatorClient.getReviewBootstrap(reviewEnv.defaultModelVersionId);
-            const usdAssets = this._assetsFromReviewArtifacts(bootstrap.artifacts);
-            this.setState({
-                reviewArtifacts: bootstrap.artifacts,
-                reviewIssues: bootstrap.issues,
-                usdAssets: this._mergeAssets(this.state.usdAssets, usdAssets),
-                selectedUSDAsset: this.state.selectedUSDAsset || usdAssets[0] || null,
-                mappingUrl: this._resolveMappingUrl(this.state.latestStreamConfig, bootstrap.artifacts),
-            });
-            this._appendReviewEvent("review-bootstrap 已載入");
-        } catch (error) {
-            console.warn("Unable to load review-bootstrap.", error);
-            this._appendReviewEvent("review-bootstrap 載入失敗");
-        }
     }
 
     /**
@@ -1046,31 +1013,6 @@ export default class App extends React.Component<AppProps, AppState> {
         this._sendStreamMessage(reset_message);
     }
 
-    private _onIssueClick(issue: ReviewIssue): void {
-        if (!issue.usd_prim_path) {
-            this.setState({ reviewEvents: [...this.state.reviewEvents, `審查問題 ${issue.issue_id} 沒有 usd_prim_path，未送出 DataChannel`] });
-            return;
-        }
-
-        const requestId = makeRequestId('issue-highlight');
-        this.pendingIssueHighlightRequestId = requestId;
-        this.pendingIssueHighlightIssueId = issue.issue_id;
-
-        const item = {
-            prim_path: issue.usd_prim_path,
-            ifc_guid: issue.ifc_guid,
-            color: severityToColor(issue.severity),
-            label: issue.title,
-            source: issue.source,
-            issue_id: issue.issue_id,
-        };
-        this._sendStreamMessage(buildHighlightPrimsRequest([item], true, requestId));
-        if (this.state.reviewSessionId && this.reviewSocket) {
-            this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, issue.issue_id, [item]);
-        }
-        this._appendReviewEvent(`已送出高亮請求：${issue.issue_id}`);
-    }
-
     private async _loadElementMapping(): Promise<void> {
         const mappingUrl = this.state.mappingUrl || this._resolveMappingUrl(this.state.latestStreamConfig, this.state.reviewArtifacts);
         if (!mappingUrl) {
@@ -1196,34 +1138,12 @@ export default class App extends React.Component<AppProps, AppState> {
         this.setState({ lastMappingVerification: `已送出 mapping focus：${item.ifc_guid || "no-guid"} -> ${item.prim_path} (${requestId})` });
     }
 
-    private _sendDemoHighlightWorld(): void {
-        this._sendStreamMessage(buildHighlightPrimsRequest([buildDemoHighlightItem("web_viewer_demo_panel")], true));
-    }
-
     private _sendDemoFocusWorld(): void {
         this._sendStreamMessage(buildFocusPrimRequest(demoPrimPath));
     }
 
     private _sendDemoClearHighlight(): void {
         this._sendStreamMessage(buildClearHighlightRequest());
-    }
-
-    private _emitDemoCoordinatorHighlight(): void {
-        if (!this.state.reviewSessionId || !this.reviewSocket) {
-            this._appendReviewEvent("略過 coordinator highlight：尚未連線 Socket.IO session");
-            return;
-        }
-        this.reviewSocket.emitHighlight(this.state.reviewSessionId, reviewEnv.defaultUserId, demoIssueId, [buildDemoHighlightItem("web_viewer_demo_panel")]);
-        this._appendReviewEvent(`已廣播 coordinator highlight：${demoIssueId}`);
-    }
-
-    private _createDemoAnnotation(): void {
-        if (!this.state.reviewSessionId || !this.reviewSocket) {
-            this._appendReviewEvent("略過標註建立：尚未連線 Socket.IO session");
-            return;
-        }
-        this.reviewSocket.emitAnnotation(this.state.reviewSessionId, reviewEnv.defaultUserId, "從 Web Viewer Demo 面板建立的示範標註");
-        this._appendReviewEvent("已送出 annotationCreate");
     }
 
     private _connectDemoSocket(): void {
@@ -1421,21 +1341,6 @@ export default class App extends React.Component<AppProps, AppState> {
                     ? `mapping highlight 通過：selected=${expectedPath}, missing=0, fallback=0`
                     : `mapping highlight 失敗：result=${result}, expected=${expectedPath || "unknown"}, selected=${selectedPaths.join(",") || "none"}, missing=${missingPaths.length}, fallback=${fallbackPaths.length}`;
                 this.pendingMappingHighlightRequestId = null;
-            } else if (requestId && requestId === this.pendingIssueHighlightRequestId) {
-                const issueId = this.pendingIssueHighlightIssueId;
-                const hasFallback = fallbackPaths.length > 0;
-                const hasMissing = missingPaths.length > 0;
-                let issueStatus: string;
-                if (result === "success" && !hasMissing && !hasFallback) {
-                    issueStatus = `審查問題 ${issueId} 高亮成功`;
-                } else if (hasFallback) {
-                    issueStatus = `審查問題 ${issueId} 高亮 fallback（prim 找不到，退到 stage root）`;
-                } else {
-                    issueStatus = `審查問題 ${issueId} 高亮失敗：result=${result}, missing=${missingPaths.length}`;
-                }
-                nextState.reviewEvents = [...(nextState.reviewEvents ?? this.state.reviewEvents), issueStatus];
-                this.pendingIssueHighlightRequestId = null;
-                this.pendingIssueHighlightIssueId = null;
             }
 
             this.setState(nextState as Pick<AppState, keyof AppState>);
@@ -1625,16 +1530,12 @@ export default class App extends React.Component<AppProps, AppState> {
                             incomingMessages={this.state.demoIncomingMessages}
                             socketEvents={this.state.reviewEvents}
                             onCreateOrLoadSession={() => void this._bootstrapReview()}
-                            onLoadBootstrap={() => void this._loadReviewBootstrapFromCoordinator()}
                             onConnectSocket={() => this._connectDemoSocket()}
                             onOpenStage={() => this._openSelectedAsset()}
                             onLoadingState={() => this._queryLoadingState()}
                             onGetChildren={() => this._getChildren()}
-                            onHighlightWorld={() => this._sendDemoHighlightWorld()}
                             onFocusWorld={() => this._sendDemoFocusWorld()}
                             onClearHighlight={() => this._sendDemoClearHighlight()}
-                            onEmitCoordinatorHighlight={() => this._emitDemoCoordinatorHighlight()}
-                            onCreateAnnotation={() => this._createDemoAnnotation()}
                             onLoadMapping={() => void this._loadElementMapping()}
                             onSelectMappingIndex={(index) => this._selectMappingIndex(index)}
                             onHighlightSelectedMapping={() => this._sendSelectedMappingHighlight()}
@@ -1669,15 +1570,6 @@ export default class App extends React.Component<AppProps, AppState> {
                             width={sidebarWidth}
                             artifacts={this.state.reviewArtifacts}
                             artifactBindings={this.state.latestStreamConfig?.artifact_bindings || []}
-                        />
-                        <IssuePanel
-                            width={sidebarWidth}
-                            issues={this.state.reviewIssues}
-                            onIssueClick={(issue) => this._onIssueClick(issue)}
-                        />
-                        <EventLogPanel
-                            width={sidebarWidth}
-                            events={this.state.reviewEvents}
                         />
                     </div>
                         
