@@ -1,47 +1,37 @@
 # review-session-request-lifecycle — Spec Delta (remove-conflict-review-from-fast-mvp)
 
 > Delta against `openspec/specs/review-session-request-lifecycle/spec.md`(本檔僅含本 change 的差異)。
-> Implementation 階段於 §7.1 task 跑 grep 命中既有 requirement / scenario 名稱後,**用實際名稱替換**下列 `<placeholder>`,然後 `npx openspec validate ... --strict` 綠燈即可。
-> 設計階段不憑空猜 requirement 名稱;parser-friendly header(`## REMOVED Requirements` / `### Requirement: ...` / `#### Scenario: ...`)與條目結構先寫好。
-
-## REMOVED Requirements
-
-### Requirement: <REPLACE-WITH-issue-highlight-handoff-requirement-name>
-
-**Reason:** fast MVP demo 不展示衝突檢討 / issue highlight 功能;viewer 重做為「全螢幕 stream + auto-attach」後無 IssuePanel 插槽承接 issue 焦點;coordinator `/ui` 收斂為 3 卡單欄垂直流程,亦不含步驟 ④「標記問題」。本 requirement 隨 conflict review 功能整體退役。
-
-**Migration:** 無外部 production consumer 依賴本 requirement 的 Socket.IO event / viewer UI 表現;如未來重新引入,以新 OpenSpec change form ADD requirement,並對應重新建立 viewer slot 與 coordinator event handler。
-
-### Requirement: <REPLACE-WITH-annotation-create-update-delete-requirement-name>
-
-**Reason:** annotation create / update / delete 流程屬衝突檢討協作的一部分,fast MVP 不展示;`/ui` 步驟 ⑤「紀錄回寫」與互動實驗室「建立審查標註」guided card 一併移除。
-
-**Migration:** 無;若未來重新引入,以新 change ADD。
-
-### Requirement: <REPLACE-WITH-selection-update-or-issue-focus-broadcast-requirement-name>
-
-**Reason:** selection broadcast / issue focus 廣播由 coordinator Socket.IO 廣播給多人 viewer,但 fast MVP 是 Kit 1:1,只一個 viewer 連線,broadcast 無意義;且 viewer 主畫面改全螢幕 stream 無選取面板。本 requirement 隨 conflict review 功能整體退役。
-
-**Migration:** 無;若未來支援多人協作再以新 change ADD。
+> 既有 spec 內**沒有專屬於 conflict review / issue handoff 的 requirement**;`highlightRequest` / `selectionUpdate` / `annotationCreated` / `finalReviewEvent` 等 collaboration event 名詞只出現在 lifecycle audit endpoint 的「排除清單」中。因此本 change 採 MODIFIED 方式,在「Coordinator exposes lifecycle event audit log」requirement 內加入 implementation status note,記錄 collaboration events 已不再由 coordinator 產生;排除清單文字保留,以維持 archive / historical compatibility(舊 event log 可能仍含這些 type)。
 
 ## MODIFIED Requirements
 
-### Requirement: <REPLACE-WITH-review-session-event-stream-requirement-name>
+### Requirement: Coordinator exposes lifecycle event audit log
 
-**Note:** 本 requirement 既有 scenario 列出「append-only lifecycle audit endpoint」可能涵蓋 issue / annotation 事件分類。implementation 階段確認 scenario 內若有 issue / annotation 字眼,改寫為「lifecycle audit endpoint 接受任意 event_type;fast MVP 範圍內不再產生 highlight / annotation event,但 schema 仍開放未來重新引入」。
+The coordinator SHALL expose `GET /api/review-sessions/{session_id}/lifecycle-events` for review session lifecycle audit events. The response MUST contain an `items` array sorted by append order and `sequence`. This endpoint MUST return lifecycle audit events only and MUST NOT include generic collaboration events such as `highlightRequest`, `selectionUpdate`, `annotationCreated`, or `finalReviewEvent`.
 
-**Reason:** event log endpoint 本身保留(`POST /api/review-sessions/:sessionId/events`、`GET .../events`、`GET .../lifecycle-events`),不影響 successor `fast-ifc-link-demo-loop` 觀察 session lifecycle 的能力。
+The lifecycle event audit log MUST include at least these lifecycle event types when the corresponding transition occurs: `sessionCreated`, `sessionActive`, `sessionClosing`, `sessionClosed`, and `kitInstanceReleased`.
 
-(實際 scenario 文字 implementation 階段定稿)
+> **Implementation status (2026-05-21 fast-mvp loop)**: change `remove-conflict-review-from-fast-mvp` removed the coordinator `highlightRequest` / `selectionUpdate` / `annotationCreate` Socket.IO event handlers (in `bim-review-coordinator/src/socket/reviewNamespace.ts`) and the viewer `IssuePanel` / `EventLogPanel` / `bimControlClient.getReviewIssues` / `coordinatorClient.getReviewBootstrap` paths. New generic collaboration events of those types are no longer produced. The exclusion wording covering `highlightRequest`, `selectionUpdate`, `annotationCreated`, and `finalReviewEvent` from lifecycle audit is preserved for archive / historical compatibility — existing event logs may still contain those event types from earlier runs, and the lifecycle endpoint MUST still exclude them. The companion `compose.host-kit.yml` change pinned `viewer.ports` to `127.0.0.1:5173:5173` so the viewer is no longer addressable from LAN, aligning with the Kit-1:1 boundary that excludes broadcast collaboration. If conflict review is re-introduced under a future OpenSpec change, that change SHALL add back the corresponding collaboration ADD requirements and viewer slots.
 
-#### Scenario: <既有 scenario 名稱 — 保留>
+#### Scenario: Lifecycle audit events are returned in append order
 
-(若 scenario 內無 issue / annotation 字眼則整段保留,不寫進本 change)
+- **WHEN** a client requests `GET /api/review-sessions/{session_id}/lifecycle-events` for an existing review session
+- **THEN** the coordinator returns lifecycle audit events sorted by increasing `sequence`
+- **AND** every item includes `event_id`, `session_id`, `type`, `sequence`, `created_at`, and `payload`
 
----
+#### Scenario: Closing a session records lifecycle events
 
-## 校驗檢核(implementation 階段執行 §7 後)
+- **WHEN** a close request is accepted for an active review session
+- **THEN** the coordinator appends `sessionClosing`, `sessionClosed`, and `kitInstanceReleased` lifecycle audit events
+- **AND** the `kitInstanceReleased` payload identifies released `kit_instance_bindings`
 
-1. `npx openspec validate remove-conflict-review-from-fast-mvp --strict` 綠燈
-2. `npx openspec validate --specs --strict` 整體仍綠燈
-3. `git diff openspec/specs/review-session-request-lifecycle/spec.md`(merge + sync 後)清楚顯示 ## REMOVED 段已 archive 進 spec 本體
+#### Scenario: Collaboration events are excluded from lifecycle audit
+
+- **WHEN** a session record still contains historical generic events such as highlight, selection, annotation, or final review events (from earlier runs before this change, or from re-introduction under a future ADD)
+- **THEN** `GET /api/review-sessions/{session_id}/events` MAY continue to return those generic events
+- **AND** `GET /api/review-sessions/{session_id}/lifecycle-events` excludes those generic events
+
+#### Scenario: Unknown session lifecycle events are not returned
+
+- **WHEN** a client requests lifecycle events for an unknown or invalid review session id
+- **THEN** the coordinator returns the same not-found or validation behavior used by the review session event APIs

@@ -27,16 +27,17 @@ interface DemoControlPanelProps {
      */
     conversionSummaryFetchFallback?: (conversionJobId: string) => Promise<ConversionQualityMetricsSummary | null>;
     onCreateOrLoadSession: () => void;
-    onLoadBootstrap: () => void;
+    // fast-mvp loop: optional, no-op default; 對應 button 等 Change 2 viewer 重做時整段刪
+    onLoadBootstrap?: () => void;
     onConnectSocket: () => void;
     onOpenStage: () => void;
     onLoadingState: () => void;
     onGetChildren: () => void;
-    onHighlightWorld: () => void;
+    onHighlightWorld?: () => void;
     onFocusWorld: () => void;
     onClearHighlight: () => void;
-    onEmitCoordinatorHighlight: () => void;
-    onCreateAnnotation: () => void;
+    onEmitCoordinatorHighlight?: () => void;
+    onCreateAnnotation?: () => void;
     onLoadMapping: () => void;
     onSelectMappingIndex: (index: number) => void;
     onHighlightSelectedMapping: () => void;
@@ -219,16 +220,16 @@ export default function DemoControlPanel(props: DemoControlPanelProps) {
         smokeBlockerHint,
         conversionSummaryFetchFallback,
         onCreateOrLoadSession,
-        onLoadBootstrap,
+        onLoadBootstrap = () => undefined,
         onConnectSocket,
         onOpenStage,
         onLoadingState,
         onGetChildren,
-        onHighlightWorld,
+        onHighlightWorld = () => undefined,
         onFocusWorld,
         onClearHighlight,
-        onEmitCoordinatorHighlight,
-        onCreateAnnotation,
+        onEmitCoordinatorHighlight = () => undefined,
+        onCreateAnnotation = () => undefined,
         onLoadMapping,
         onSelectMappingIndex,
         onHighlightSelectedMapping,

@@ -1,5 +1,4 @@
 import type { ArtifactBinding, ReviewArtifact } from "./artifacts";
-import type { ReviewIssue } from "./issues";
 
 /**
  * Additive, read-only pass-through of streaming conversion quality metrics.
@@ -91,12 +90,6 @@ export interface ReviewStreamConfig {
         shared_state: boolean;
         spectator_ready: boolean;
     };
-}
-
-export interface ReviewBootstrap {
-    model_version_id: string;
-    artifacts: ReviewArtifact[];
-    issues: ReviewIssue[];
 }
 
 export interface ReviewSessionRequest {

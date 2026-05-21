@@ -1,5 +1,4 @@
 import type { ReviewArtifact } from "../types/artifacts";
-import type { ReviewIssue } from "../types/issues";
 import type { ReviewSessionRequest } from "../types/review";
 
 function readItems<T>(payload: unknown, alternateKey?: string): T[] {
@@ -20,11 +19,6 @@ export class BimControlClient {
     async getArtifacts(modelVersionId: string): Promise<ReviewArtifact[]> {
         const response = await this.request(`/api/model-versions/${modelVersionId}/artifacts`);
         return readItems<ReviewArtifact>(response, "artifacts");
-    }
-
-    async getReviewIssues(modelVersionId: string): Promise<ReviewIssue[]> {
-        const response = await this.request(`/api/model-versions/${modelVersionId}/review-issues`);
-        return readItems<ReviewIssue>(response);
     }
 
     async getReviewSessionRequest(reviewRequestId: string): Promise<ReviewSessionRequest> {

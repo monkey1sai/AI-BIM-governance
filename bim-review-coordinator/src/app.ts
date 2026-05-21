@@ -494,22 +494,6 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     response.json(closed);
   });
 
-  app.get("/api/model-versions/:modelVersionId/review-bootstrap", async (request, response, next) => {
-    try {
-      const [artifacts, issues] = await Promise.all([
-        safeArtifacts(bimControlClient, request.params.modelVersionId),
-        safeIssues(bimControlClient, request.params.modelVersionId),
-      ]);
-      response.json({
-        model_version_id: request.params.modelVersionId,
-        artifacts,
-        issues,
-      });
-    } catch (error) {
-      next(error);
-    }
-  });
-
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：
   // 唯一對外 IFC-ready intake。caller = 客戶落地端 IFC Worker（落地端內網，
   // machine-to-machine）。streaming 為 internal-only 轉檔引擎（T4）。
@@ -1030,7 +1014,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });
   });
 
-  registerReviewNamespace(io, store, eventLog, bimControlClient);
+  registerReviewNamespace(io, store, eventLog);
 
   return { app, server, io, config, store, eventLog };
 }
@@ -1100,14 +1084,6 @@ function resolvePublicDir(): string {
 async function safeArtifacts(client: BimControlClient, modelVersionId: string): Promise<Artifact[]> {
   try {
     return await client.getArtifacts(modelVersionId);
-  } catch {
-    return [];
-  }
-}
-
-async function safeIssues(client: BimControlClient, modelVersionId: string) {
-  try {
-    return await client.getReviewIssues(modelVersionId);
   } catch {
     return [];
   }

@@ -65,10 +65,15 @@ for (const token of [
     "this.state.latestStreamConfig.model.status !== \"ready\"",
     "stage_composition",
     "this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)",
-    "const bootstrapModelVersionId = loadedSession?.model_version_id",
+    // remove-conflict-review-from-fast-mvp:review-bootstrap endpoint 與 getReviewBootstrap 已退役;
+    // session-first 仍保留(先 GET session → 拿 model_version_id),但 bootstrap 取代為 stream-config 內 artifacts。
 ]) {
     assert.ok(windowSource.includes(token), `Window.tsx is missing ${token}`);
 }
+// 額外確認 review-bootstrap path 已從 Window.tsx 移除
+assert.ok(!windowSource.includes("getReviewBootstrap"), "Window.tsx must NOT call getReviewBootstrap after remove-conflict-review-from-fast-mvp");
+assert.ok(!windowSource.includes("_loadReviewBootstrapFromCoordinator"), "Window.tsx must NOT define _loadReviewBootstrapFromCoordinator after remove-conflict-review-from-fast-mvp");
+assert.ok(!windowSource.includes("ReviewIssue"), "Window.tsx must NOT import ReviewIssue after remove-conflict-review-from-fast-mvp");
 
 const reviewTypesSource = readSource("src/types/review.ts");
 for (const token of ["converting", "conversion_authority", "conversion_job_id", "stage_composition"]) {
@@ -89,10 +94,11 @@ assert.match(
     /private _onSelectUSDPrims[\s\S]*?this\._sendStreamMessage\(message\);/,
     "_onSelectUSDPrims must route selection changes through lifecycle-guarded stream sending",
 );
+// remove-conflict-review-from-fast-mvp:review-bootstrap 已退役,改驗 session-first 順序到 stream-config 的鏈
 assert.match(
     windowSource,
-    /const loadedSession[\s\S]*?this\.coordinatorClient\.getReviewSession\(reviewEnv\.defaultSessionId\)[\s\S]*?const bootstrapModelVersionId = loadedSession\?\.model_version_id[\s\S]*?this\.coordinatorClient\.getReviewBootstrap\(bootstrapModelVersionId\)/,
-    "sessionId bootstrap must resolve model_version_id from the coordinator session before loading review-bootstrap",
+    /this\.coordinatorClient\.getReviewSession\(reviewEnv\.defaultSessionId\)[\s\S]*?this\.coordinatorClient\.getStreamConfig\(sessionId\)/,
+    "sessionId bootstrap must call getReviewSession before getStreamConfig (session-first contract; review-bootstrap retired)",
 );
 
 const coordinatorClientSource = readSource("src/clients/coordinatorClient.ts");

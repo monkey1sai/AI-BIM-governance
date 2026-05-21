@@ -159,15 +159,13 @@
 <body>
   <header class="demo-header">
     <div class="demo-header__brand">BIM 審查雲端 Demo｜審查協調 (Review Coordinator)</div>
-    <div class="demo-header__step-label">步驟 ③ / 5</div>
+    <div class="demo-header__step-label">步驟 ③ / 3</div>
   </header>
 
   <nav class="demo-stepbar" aria-label="Demo 流程">
     <a class="demo-stepbar__item" href="#uploadDemoCard" onclick="openUploadPicker(event)"><span class="demo-stepbar__num">①</span>上傳建模 (Upload)</a>
     <a class="demo-stepbar__item" href="#conversionDemoCard" onclick="startCoordinatorConversion(event, true)"><span class="demo-stepbar__num">②</span>自動轉換 (Convert)</a>
     <a class="demo-stepbar__item demo-stepbar__item--active" href="#" aria-current="step"><span class="demo-stepbar__num">③</span>建立會議 (Meeting)</a>
-    <a class="demo-stepbar__item" href="http://127.0.0.1:5173"><span class="demo-stepbar__num">④</span>標記問題 (Mark)</a>
-    <a class="demo-stepbar__item" href="/dev-console"><span class="demo-stepbar__num">⑤</span>紀錄回寫 (Record)</a>
   </nav>
 
   <main class="demo-main">
@@ -353,47 +351,6 @@
               <button type="button" onclick="guidedJoinChannel()">連線並加入會議</button>
             </article>
 
-            <article class="demo-lab-card">
-              <div class="demo-lab-card__top">
-                <div>
-                  <span class="demo-lab-card__step">④</span>
-                  <h3 class="demo-lab-card__title">標示問題位置</h3>
-                  <div class="demo-lab-card__route">coordinator → viewer → streaming server</div>
-                </div>
-                <span class="demo-status demo-status--warn">需 viewer 開啟</span>
-              </div>
-              <p class="demo-lab-card__copy">送出 highlightRequest，示範審查人員點到問題元件後，如何同步到瀏覽器審查端。</p>
-              <div class="demo-lab-card__effect">觀察效果：event feed 出現「送出問題高亮」；5173 viewer 會收到 Socket.IO 事件並可再送 DataChannel 高亮。</div>
-              <button type="button" onclick="guidedHighlightIssue()">同步問題高亮</button>
-            </article>
-
-            <article class="demo-lab-card">
-              <div class="demo-lab-card__top">
-                <div>
-                  <span class="demo-lab-card__step">⑤</span>
-                  <h3 class="demo-lab-card__title">建立審查標註</h3>
-              <div class="demo-lab-card__route">coordinator → company-cloud callback outbox</div>
-                </div>
-                <span class="demo-status demo-status--ok">可操作</span>
-              </div>
-              <p class="demo-lab-card__copy">把審查意見變成 annotation event，示範哪些資料會被視為 review metadata。</p>
-              <div class="demo-lab-card__effect">觀察效果：event feed 出現「建立審查標註」與 ack；後續由 outbox 追蹤雲端回寫狀態。</div>
-              <button type="button" onclick="guidedAnnotation()">建立示範標註</button>
-            </article>
-
-            <article class="demo-lab-card">
-              <div class="demo-lab-card__top">
-                <div>
-                  <span class="demo-lab-card__step">②</span>
-                  <h3 class="demo-lab-card__title">轉檔資料流</h3>
-                  <div class="demo-lab-card__route">external IFC Worker → coordinator → streaming</div>
-                </div>
-                <span class="demo-status demo-status--warn">部分未完成</span>
-              </div>
-              <p class="demo-lab-card__copy">展示 IFC 來源檔如何產生 USDC 與 element_mapping.json，並讓產物 URL 回到 session。</p>
-              <div class="demo-lab-card__gap">步驟 ①/② 由外部 IFC Worker 送出 ifc-ready；這裡只展示 session 端如何消費 ready artifact binding。</div>
-              <button type="button" onclick="guidedConversion()">展示轉檔流程</button>
-            </article>
           </div>
 
           <div class="demo-lab-flow">
@@ -465,9 +422,6 @@
         <button onclick="disconnectSocket()">disconnect</button>
         <button onclick="emitJoin()">joinSession</button>
         <button onclick="emitLeave()">leaveSession</button>
-        <button onclick="emitHighlight()">highlightRequest</button>
-        <button onclick="emitSelection()">selectionUpdate</button>
-        <button onclick="emitAnnotation()">annotationCreate</button>
         <button onclick="emitHeartbeat()">heartbeat</button>
 
         <h3>Raw HTTP response</h3>
@@ -988,40 +942,6 @@
       }
     }
 
-    async function guidedHighlightIssue() {
-      setGuidedOutcome('warn', '正在同步問題高亮', 'coordinator 會廣播 highlightRequest；viewer 可把事件轉成 DataChannel 3D 高亮。');
-      try {
-        await ensureGuidedSocket();
-        emitHighlight();
-        appendDemoFeed('送出問題高亮', { actor_id: userId.value, target: '/World', issue_id: 'ISSUE-DEMO-001' });
-        setGuidedOutcome('ok', '問題高亮事件已送出', '請觀察 Live review events；若 5173 viewer 已開啟，也會在 Socket.IO events 看見 highlightRequest。');
-      } catch (error) {
-        setGuidedOutcome('bad', '問題高亮失敗', error instanceof Error ? error.message : String(error));
-      }
-    }
-
-    async function guidedAnnotation() {
-      setGuidedOutcome('warn', '正在建立審查標註', 'annotation 會經 coordinator 進入 fake review metadata 流程，作為 Step ⑤ 回寫示範。');
-      try {
-        await ensureGuidedSocket();
-        emitAnnotation();
-        appendDemoFeed('建立審查標註', { actor_id: userId.value, target: '/World' });
-        setGuidedOutcome('ok', '標註事件已送出', 'event feed 會顯示 annotationCreate；若後端 ack 成功，代表 fake metadata 回寫流程可用。');
-      } catch (error) {
-        setGuidedOutcome('bad', '建立標註失敗', error instanceof Error ? error.message : String(error));
-      }
-    }
-
-    async function guidedConversion() {
-      setGuidedOutcome('warn', '正在展示轉檔資料流', '會用 dev mock conversion 顯示 IFC → USDC + mapping 的階段與產物 URL。');
-      try {
-        await startCoordinatorConversion(null, true);
-        setGuidedOutcome('ok', '轉檔展示已完成', '請觀察 Step ② 卡片的進度、job id、USDC URL 與 mapping URL；未完成的 storage upload 已明確標示。');
-      } catch (error) {
-        setGuidedOutcome('bad', '轉檔展示失敗', error instanceof Error ? error.message : String(error));
-      }
-    }
-
     function delay(ms) {
       return new Promise(resolve => setTimeout(resolve, ms));
     }
@@ -1099,10 +1019,6 @@
       if (m === 'disconnect') return '即時頻道中斷';
       if (m.startsWith('joinSession')) return '使用者加入審查會議';
       if (m.startsWith('leaveSession')) return '使用者離開審查會議';
-      if (m.startsWith('highlightRequest')) return '送出問題高亮';
-      if (m.startsWith('selectionUpdate')) return '同步元件選取';
-      if (m.startsWith('annotationCreate')) return '建立審查標註';
-      if (m.startsWith('annotationCreated')) return '標註已寫入主資料庫';
       if (m.startsWith('presenceUpdated')) return '與會者列表更新';
       if (m.startsWith('heartbeat')) return '心跳';
       if (m === 'clientWarning') return '前端提示';

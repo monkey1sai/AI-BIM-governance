@@ -1,5 +1,4 @@
-import type { Server, Socket } from "socket.io";
-import type { BimControlClient } from "../services/bimControlClient.js";
+import type { Server } from "socket.io";
 import type { EventLog } from "../services/eventLog.js";
 import { isSafeSessionId, isSessionMutable } from "../services/sessionStore.js";
 import type { SessionStore } from "../services/sessionStore.js";
@@ -11,16 +10,14 @@ interface SessionPayload {
   [key: string]: unknown;
 }
 
-type AckResponse =
-  | { ok: true; [key: string]: unknown }
-  | { ok: false; error: string };
-
 export function registerReviewNamespace(
   io: Server,
   store: SessionStore,
   eventLog: EventLog,
-  bimControlClient: BimControlClient,
 ): void {
+  // eventLog 保留為 future lifecycle audit 拓展,join/leave/heartbeat 路徑暫未直接寫入。
+  void eventLog;
+
   const namespace = io.of("/review");
 
   namespace.on("connection", (socket) => {
@@ -44,32 +41,8 @@ export function registerReviewNamespace(
       ack?.({ ok: true, session });
     });
 
-    socket.on("highlightRequest", (payload: SessionPayload, ack?: (response: unknown) => void) => {
-      ack?.(broadcastSessionEvent(socket, store, eventLog, "highlightRequest", payload));
-    });
-
-    socket.on("selectionUpdate", (payload: SessionPayload, ack?: (response: unknown) => void) => {
-      ack?.(broadcastSessionEvent(socket, store, eventLog, "selectionUpdate", payload));
-    });
-
     socket.on("heartbeat", (payload: SessionPayload, ack?: (response: unknown) => void) => {
       ack?.({ ok: true, received_at: new Date().toISOString(), session_id: payload.session_id });
-    });
-
-    socket.on("annotationCreate", async (payload: SessionPayload, ack?: (response: unknown) => void) => {
-      try {
-        const sessionCheck = validateExistingSession(store, payload);
-        if (!sessionCheck.ok) {
-          ack?.(sessionCheck);
-          return;
-        }
-        const sessionId = sessionCheck.sessionId;
-        const saved = await bimControlClient.createAnnotation(sessionId, payload);
-        recordAndBroadcast(socket, eventLog, sessionId, "annotationCreated", { ...payload, saved });
-        ack?.({ ok: true, saved });
-      } catch (error) {
-        ack?.({ ok: false, error: error instanceof Error ? error.message : String(error) });
-      }
     });
 
     socket.on("leaveSession", (payload: SessionPayload, ack?: (response: unknown) => void) => {
@@ -89,30 +62,6 @@ export function registerReviewNamespace(
       ack?.({ ok: true });
     });
   });
-}
-
-function broadcastSessionEvent(
-  socket: Socket,
-  store: SessionStore,
-  eventLog: EventLog,
-  type: string,
-  payload: SessionPayload,
-): AckResponse {
-  const sessionCheck = validateExistingSession(store, payload);
-  if (!sessionCheck.ok) return sessionCheck;
-  recordAndBroadcast(socket, eventLog, sessionCheck.sessionId, type, payload);
-  return { ok: true };
-}
-
-function recordAndBroadcast(
-  socket: Socket,
-  eventLog: EventLog,
-  sessionId: string,
-  type: string,
-  payload: SessionPayload,
-): void {
-  eventLog.append(sessionId, type, payload);
-  socket.to(sessionId).emit(type, payload);
 }
 
 function validateExistingSession(
