@@ -2,6 +2,8 @@
 
 ## Purpose
 TBD - created by archiving change architecture-rework-2026-05-14. Update Purpose after archive.
+
+> **Implementation status (2026-05-21 fast-mvp loop)**: change `fast-ifc-link-demo-loop` ADD 1 個 requirement `Coordinator dispatch payload carries local path references`(coordinator → streaming-server dispatch 加 `local_path` / `host_local_path`,streaming-server 優先用 host path 讀 shared volume,fallback 到 `source_ifc_ref` URL),並對既有 `Conversion result callback carries ready artifact references back to coordinator` requirement 加 implementation status note(ready 分支已擴充為 `setViewerLink`)。完整 ADD scenario 見 `openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/specs/conversion-webhook-lifecycle/spec.md`。實作:`bim-review-coordinator/src/services/streamingConversionClient.ts` `toInternalIfcReadyEvent` payload + `ingestConversionReport` ready 分支 `setViewerLink`。
 ## Requirements
 ### Requirement: Conversion handoff uses correlation IDs and idempotent events
 

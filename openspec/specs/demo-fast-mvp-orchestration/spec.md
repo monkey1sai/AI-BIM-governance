@@ -2,6 +2,8 @@
 
 ## Purpose
 TBD - created by archiving change recap. Update Purpose after archive.
+
+> **Implementation status (2026-05-21 fast-mvp loop)**: change `fast-ifc-link-demo-loop` ADD 2 個 requirements:`Coordinator /ui provides 3-card single-column fast-mvp happy path`(`fastIfcReadyCard` + `fastJobProgressCard` + `fastViewerLinkCard` 在 `dev-console.html` main 開頭)、`Postman collection mirrors external caller flow`(`docs/postman/fast-ifc-link-demo.postman_collection.json` + README 3 個 requests),並對既有 `Fast MVP demo runbook lives in repo and is grep-verifiable` requirement 加 implementation status note(coordinator `/ui` 3 卡 + Postman 作為主路徑,既有 PowerShell scripts 仍保留)。完整 ADD scenarios 見 `openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/specs/demo-fast-mvp-orchestration/spec.md`。實作:`bim-review-coordinator/src/public/dev-console.html` + `docs/postman/`。
 ## Requirements
 ### Requirement: Repository SHALL provide a single fast MVP demo runbook
 

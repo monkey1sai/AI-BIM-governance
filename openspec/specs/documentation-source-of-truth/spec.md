@@ -2,6 +2,8 @@
 
 ## Purpose
 Defines the repository source-of-truth relationship between workflow v3, the SaaS roadmap, README entry points, and OpenSpec capability specs.
+
+> **Implementation status (2026-05-21 fast-mvp loop)**: change `fast-ifc-link-demo-loop` MODIFIED `AGENTS.md is the source-of-truth for repo boundary` requirement,加 implementation status note 對應 `AGENTS.md §3.4` + `bim-review-coordinator/CLAUDE.md` MUST NOT 段內的 carve-out(允許 coordinator 在 `POST /api/external/ifc-ready` 同步階段下載 IFC 至 `storage/ifc-cache/<ifc_ready_job_id>/source.ifc` 作臨時通道,非資料權威)。完整 wording 見 `openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/specs/documentation-source-of-truth/spec.md`。
 ## Requirements
 ### Requirement: Workflow v3 and SaaS roadmap have distinct, non-overlapping authority
 
