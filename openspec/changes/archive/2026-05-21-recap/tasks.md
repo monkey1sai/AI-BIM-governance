@@ -13,7 +13,7 @@
       - `scripts/demo-health-check.ps1`（coordinator + viewer health）
       - `scripts/smoke-bscheme-intake.ps1`（spec-correct ifc-ready 觸發 + 等 conversion + publish callback + evidence）
       - `CLAUDE.md` §5 既有 verification 入口作為基準驗證
-      — runbook §5
+      - runbook §5
 - [x] 1.6 加入「現場操作三步劇本」（按 `start-all.ps1` → `demo-health-check.ps1` → `smoke-bscheme-intake.ps1` 或手動 viewer 操作）— runbook §5
 - [x] 1.7 加入 storage/ 樣本選擇條件（`storage/*.ifc` 必須是 top-level，符合 `smoke-bscheme-intake.ps1` 的 `Get-TopLevelIfcFixtures` 規則），並提示「現場不要抽不認識的檔」原則 — runbook §4 step 4 / §5 step 2
 - [x] 1.8 加入驗收長相區塊（成功 / 失敗 / 灰色情境 — 對齊 `smoke-bscheme-intake.ps1` 的 tier 狀態語意：`passed` / `failed` / `blocked` / `deferred` / `not_observed`）— runbook §6

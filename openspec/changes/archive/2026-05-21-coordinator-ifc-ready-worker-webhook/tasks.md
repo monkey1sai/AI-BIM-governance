@@ -39,10 +39,10 @@
 
 ## 5. Verification And Evidence
 
-- [ ] 5.1 實作前針對會修改的 symbols 跑 GitNexus impact analysis（含 `ingestConversionReport`、`SessionStore.create`、`allocateKitInstanceBindings`、`/api/internal/conversion-result`、`/api/internal/conversions/:id/ingest`、`/api/review-sessions`），若出現 HIGH/CRITICAL 先回報再改。 — **deferred**: 依賴 1.x-4.x；GitNexus CLI 在 worktree 有 quoting bug（memory `opsx-skill-placeholder-bug`、`opsx-worktree-closeout-gotchas`）
+- [ ] 5.1 實作前針對會修改的 symbols 跑 GitNexus impact analysis（含 `ingestConversionReport`、`SessionStore.create`、`allocateKitInstanceBindings`、`/api/internal/conversion-result`、`/api/internal/conversions/:id/ingest`、`/api/review-sessions`），若出現 HIGH/CRITICAL 先回報再改。 — **deferred**: 依賴 1.x-4.x；GitNexus CLI 在 worktree 路徑下可能出現 quoting 問題，必要時改在 repo root 執行或以明確加引號的絕對路徑重跑 `npx gitnexus detect-changes --scope all --repo "<repo-absolute-path>"`
 - [ ] 5.2 執行 `cd bim-review-coordinator && npm test -- external-ifc-ready.test.ts auth-provider.test.ts` 或等價最小測試。 — **deferred**: 依賴 2.x
 - [ ] 5.3 執行 `cd bim-review-coordinator && npm run build`。 — **deferred**: 依賴 1.x-3.x
 - [ ] 5.4 執行 `npx gitnexus detect-changes --scope all --repo <current-worktree>`，確認 affected symbols/flows 符合預期。 — **deferred**: 依賴 1.x-3.x；GitNexus CLI quoting bug
 - [ ] 5.5 視需要更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` 與同名 HTML；若此 change 僅 proposal 尚未 apply，記錄為未執行而非 passed。 — **deferred**: archive PR #80 已在 roadmap line 41 / html line 308 標註 documentation lag
 - [ ] 5.6 跑 conversion-ready → 自動 session 的最小 coordinator 測試集（auto-create / idempotent / non-ready / control-plane-only / outbox-session 狀態分離），記錄為 passed 的條件為真實測試綠燈。 — **deferred**: 依賴 4.x
-- [ ] 5.7 在 verification evidence 明確分層：control-plane 自動接線 tier 與 `single_kit_render` / WebRTC `49100` / browser visual tier 獨立判定、不升等；後者若無 Kit build/GPU 證據標 `not_observed`，不標 passed。 — **deferred**: 依賴 4.x；Kit/WebRTC tier 受 memory `kit-gpu-render-needs-windows-native` + `WSL-ubuntu-24-04-container-toolkit-setup` 阻擋
+- [ ] 5.7 在 verification evidence 明確分層：control-plane 自動接線 tier 與 `single_kit_render` / WebRTC `49100` / browser visual tier 獨立判定、不升等；後者若無 Kit build/GPU/實機視覺驗證證據標 `not_observed`，不標 passed。 — **deferred**: 依賴 4.x；Kit/WebRTC tier 需要獨立的原生 Kit/GPU 執行證據，缺少該證據時不可用 control-plane 測試結果替代
