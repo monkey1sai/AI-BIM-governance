@@ -134,7 +134,7 @@ verdict: <pass|drift|critical>
 
 當 PR reviewer 提出風險評論：
 
-1. 把 comment 文字摘要成 `debug_target`（例如：「timeout cleanup 殘餘 process」→ `_worker/app/batch_verification.py` 的 cleanup function）
+1. 把 comment 文字摘要成 `debug_target`（例如：「callback retry 靜默丟棄」→ `bim-review-coordinator/src/services/callbackOutbox.ts` 的 `deliverPending`）
 2. 對該 symbol 跑 `gitnexus impact --target <symbol>` 找實際 blast radius
 3. 補 focused tests，再回 Phase D 重跑 verify
 

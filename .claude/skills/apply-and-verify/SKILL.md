@@ -25,11 +25,15 @@ allowed-tools: Bash(git add*) Bash(git commit*) Bash(git push*) Bash(git diff*) 
 讀 `openspec/changes/<change-id>/tasks.md`，逐個 task 實作。
 
 **強制邊界**：依 [AGENTS.md](AGENTS.md) §3 repo 邊界，每個 task 只能在事先宣告的 bounded service 內：
-- `_bim-control` = metadata authority
-- `_worker` = artifact + conversion facade
-- `bim-review-coordinator` = session / collaboration control plane
-- `bim-streaming-server` = Kit runtime
+- `bim-review-coordinator` = 對外 IFC-ready intake、service auth/idempotency、metadata-only callback outbox、session / collaboration control plane
+- `bim-streaming-server` = internal-only IFC→USDC conversion authority、Kit/WebRTC/USD runtime
 - `web-viewer-sample` = browser client
+- `tests/contracts` = 外部 IFC-ready 與 cloud callback contract
+- `tests/fakes` = 外部公司雲端與客戶落地端 IFC Worker 的 test-only doubles
+
+退役邊界：`_bim-control` / `_worker` / `_conversion-service` / `_s3_storage`
+只可作為 historical / archive context，不得作為現行 runtime、startup、health
+check、smoke test、review-session dependency 或 bounded service。
 
 跨邊界改動 → 停止，回 Phase B（OpenSpec explore）重新切 scope。
 
@@ -64,17 +68,17 @@ docs/verification/<date>-<change-id>.md     # verification evidence
 依 bounded service 跑（`<cwd_hint>` 來自 `opsx-worktree-provision` manifest，例：`<repo>/.worktrees/<change-id>`）：
 
 ```
-# _worker
-!`cd "<cwd_hint>/_worker" && python -m pytest tests/ -x`
-
-# _bim-control
-!`cd "<cwd_hint>/_bim-control" && python -m pytest tests/ -x`
+# external platform contracts + test-only fakes
+!`cd "<cwd_hint>" && python -m pytest tests -x`
 
 # bim-review-coordinator
-!`cd "<cwd_hint>/bim-review-coordinator" && python -m pytest tests/ -x`
+!`cd "<cwd_hint>/bim-review-coordinator" && npm test`
+
+# bim-streaming-server conversion authority API（Kit/GPU runtime 可依環境跳過）
+!`cd "<cwd_hint>/bim-streaming-server" && python -m pytest tests/test_conversion_authority_api.py -x`
 
 # web-viewer-sample
-!`cd "<cwd_hint>/web-viewer-sample" && npm test`
+!`cd "<cwd_hint>/web-viewer-sample" && npm run build`
 ```
 
 **重要**：
@@ -131,7 +135,7 @@ Commit message 用 Conventional Commits（PR #31/#33/#35 已成熟格式）：
   --body-file <generated PR body>`
 ```
 
-> `gh pr create` 認 branch 不認 cwd，可從 main worktree 或 `<cwd_hint>` 任一處呼叫。
+> `gh pr create` 認 branch 不認 cwd，可從 main worktree 或 `<cwd_hint>` 任一處呠叫。
 
 PR body 固定使用：
 

@@ -95,12 +95,14 @@ case (target_path 存在?, branch 本地?, branch origin?):
 ```txt
 scan_targets:
   - .env
-  - _bim-control/.env
-  - _worker/.env
   - bim-review-coordinator/.env
   - bim-streaming-server/.env
   - web-viewer-sample/.env
 ```
+
+B 方案下，`_bim-control` / `_worker` / `_conversion-service` / `_s3_storage`
+已自 product runtime 退役；worktree provisioning 不複製這些 retired service 的
+`.env`，避免 historical/test-double context 被誤用為現行 runtime。
 
 規則：
 
@@ -120,8 +122,8 @@ created_new: true | false
 cwd_hint: <abs>           # 後續所有 git -C / cd 都用這個
 env_copied:
   copied:
-    - _worker/.env
-    - _bim-control/.env
+    - .env
+    - bim-review-coordinator/.env
   skipped: []
 venv_strategy: per-service-self-bootstrap
 warnings:
