@@ -6,6 +6,9 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+
+# Local runtime-manager env (real values; .env.runtime-manager.docker.example stays tracked)
+.env.runtime-manager.docker
 .agents/
 .claude/*
 !.claude/skills/
@@ -118,7 +121,3 @@ _s3_storage/static/projects/
 
 # Ignore storage files by default
 storage/*
-
-# But allow root-level IFC test files
-!storage/
-!storage/*.ifc
