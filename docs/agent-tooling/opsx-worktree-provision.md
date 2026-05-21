@@ -124,6 +124,8 @@ env_copied:
   copied:
     - .env
     - bim-review-coordinator/.env
+    - bim-streaming-server/.env
+    - web-viewer-sample/.env
   skipped: []
 venv_strategy: per-service-self-bootstrap
 warnings:

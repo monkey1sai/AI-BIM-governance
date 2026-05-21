@@ -135,7 +135,7 @@ Commit message 用 Conventional Commits（PR #31/#33/#35 已成熟格式）：
   --body-file <generated PR body>`
 ```
 
-> `gh pr create` 認 branch 不認 cwd，可從 main worktree 或 `<cwd_hint>` 任一處呠叫。
+> `gh pr create` 認 branch 不認 cwd，可從 main worktree 或 `<cwd_hint>` 任一處呼叫。
 
 PR body 固定使用：
 
