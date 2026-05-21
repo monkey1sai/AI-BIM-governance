@@ -16,13 +16,13 @@ Fast MVP demo 已確認 `bim-review-coordinator` (`8004`) 與 `web-viewer-sample
   - host-native conversion authority 以 per-job artifact directory 管理轉檔輸出，coordinator 只保存 metadata refs / URL，不複製或回拋大型 `.usdc` 本體
 - 定義 OS-specific host bridge profiles：
   - Windows Docker Desktop profile：優先使用 `host.docker.internal:49101`，以 check script 驗證是否能到 host-native conversion authority。
-  - Linux Docker Engine profile：compose SHALL provide `extra_hosts: host.docker.internal:host-gateway` or an explicit host address；host-native conversion authority SHALL listen on a host interface reachable from Docker bridge when loopback-only is insufficient。
+  - Linux Docker Engine profile：compose 必須提供 `extra_hosts: host.docker.internal:host-gateway` 或 explicit host address；當 loopback-only 不足以被 Docker bridge 連到時，host-native conversion authority 必須 listen on Docker bridge 可到達的 host interface。
 - 增加 artifact ref reachability validation，確認 `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` 產生的 `model.usdc` / mapping / manifest refs 可被實際 consumer 解析。
 - 新增/調整 Docker Compose override 與啟動檢查腳本，讓 operator 可只啟 containerized `8004` / `5173`，不啟 Docker GPU profile。
 - 更新 fast MVP / runbook 文件，將此 hybrid path 寫成 fast MVP 後的單機標準流程。
 - 明確保留 `runtime-manager-docker-kit-mvp` 的 evidence rule：host-native Kit 不得被拿來宣稱 Docker GPU Kit pass；此 change 的 pass target 是 hybrid single-machine deployment readiness，不是 Linux Kit GPU container readiness。
 
-Non-goals:
+非目標：
 
 - 不把 NVIDIA Kit/WebRTC 或 IFC→USDC PowerShell converter 放進 Docker。
 - 不修改 `runtime-manager-docker-kit-mvp` 中「Kit SHALL run in a GPU container」的 MVP pass contract。
@@ -44,28 +44,28 @@ Non-goals:
 ## Impact
 
 - Owner repo/folder:
-  - `compose.runtime-manager.yml` / new compose override: Docker web plane deployment wiring
-  - `scripts/`: hybrid start/check helper scripts
-  - `docs/runbooks/` or `docs/demo/`: operator-facing runbook
-  - `openspec/changes/docker-web-plane-host-native-kit/`: proposal/design/tasks/spec delta
+  - `compose.runtime-manager.yml` / new compose override：Docker web plane deployment wiring。
+  - `scripts/`：hybrid start/check helper scripts。
+  - `docs/runbooks/` 或 `docs/demo/`：operator-facing runbook。
+  - `openspec/changes/docker-web-plane-host-native-kit/`：proposal/design/tasks/spec delta。
 - Affected services:
-  - `bim-review-coordinator`: container environment must point conversion API to host-native `49101` and return browser-visible Kit endpoint values.
-  - `web-viewer-sample`: container/dev environment must call browser-visible coordinator URL and keep Kit signaling host browser-visible.
-  - `bim-streaming-server`: host-native runtime remains out of Docker and is validated through existing `49100` / `47998` / `49101` probes.
+  - `bim-review-coordinator`：container environment 必須把 conversion API 指向 host-native `49101`，並回傳 browser-visible Kit endpoint values。
+  - `web-viewer-sample`：container/dev environment 必須呼叫 browser-visible coordinator URL，並保持 Kit signaling host 對 browser 可見。
+  - `bim-streaming-server`：host-native runtime 維持在 Docker 外，透過既有 `49100` / `47998` / `49101` probes 驗證。
 - API / event contracts:
-  - No new public API paths.
-  - Existing `STREAMING_CONVERSION_API_BASE` remains the coordinator-to-conversion bridge.
-  - Existing review session stream config remains the browser-to-Kit bridge.
+  - 不新增 public API paths。
+  - 既有 `STREAMING_CONVERSION_API_BASE` 維持 coordinator-to-conversion bridge。
+  - 既有 review session stream config 維持 browser-to-Kit bridge。
 - Data / storage:
-  - No new durable database model.
-  - `storage/` remains the local source IFC / smoke fixture boundary.
-  - Derived conversion outputs remain owned by `bim-streaming-server` host-native conversion authority under a configured artifacts root, defaulting to its git-ignored `_cache/host-native-conversion/artifacts/<conversion_job_id>/` layout.
-  - Coordinator and cloud callback outbox store only metadata refs (`usdc_ref`, `element_mapping_ref`, `manifest_ref`) and MUST NOT copy or callback large `.usdc` bytes.
-- Validation:
-  - Compose config/build for `coordinator` + `viewer`.
-  - `GET http://127.0.0.1:8004/health` returns ok.
-  - `GET http://127.0.0.1:5173` returns 2xx.
-  - From the coordinator container, `GET http://host.docker.internal:49101/health` reaches host-native conversion authority.
-  - From host/browser perspective, `127.0.0.1:49100` is reachable when Kit is running.
-  - Conversion result refs resolve to runtime-visible artifact URLs for `model.usdc`, `element_mapping.json`, and `metadata.json`.
-  - Check output labels the active host bridge profile (`windows-docker-desktop`, `linux-host-gateway`, or explicit host address) and reports actionable blockers when the profile cannot reach `49101`.
+  - 不新增 durable database model。
+  - `storage/` 維持 local source IFC / smoke fixture boundary。
+  - Derived conversion outputs 仍由 `bim-streaming-server` host-native conversion authority 擁有，放在 configured artifacts root；預設是 git-ignored `_cache/host-native-conversion/artifacts/<conversion_job_id>/` layout。
+  - Coordinator 與 cloud callback outbox 只保存 metadata refs（`usdc_ref`、`element_mapping_ref`、`manifest_ref`），不得複製或 callback 大型 `.usdc` bytes。
+- 驗證：
+  - Compose config/build for `coordinator` + `viewer`。
+  - `GET http://127.0.0.1:8004/health` returns ok。
+  - `GET http://127.0.0.1:5173` returns 2xx。
+  - 從 coordinator container 呼叫 `GET http://host.docker.internal:49101/health` 可到達 host-native conversion authority。
+  - 從 host/browser perspective，在 Kit running 時 `127.0.0.1:49100` 可連。
+  - Conversion result refs 必須解析到 `model.usdc`、`element_mapping.json`、`metadata.json` 的 runtime-visible artifact URLs。
+  - Check output 標示 active host bridge profile（`windows-docker-desktop`、`linux-host-gateway` 或 explicit host address），並在 profile 無法連到 `49101` 時回報可執行 blocker。

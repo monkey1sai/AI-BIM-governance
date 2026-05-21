@@ -2,41 +2,41 @@
 
 ### Requirement: Fast MVP runbook SHALL include hybrid Docker web-plane path
 
-The fast MVP documentation SHALL describe a post-fast-MVP hybrid path where Docker runs only the coordinator/viewer web plane and host-native NVIDIA runtime remains outside Docker.
+Fast MVP 文件 SHALL 描述 fast MVP 後的 hybrid path：Docker 只負責 coordinator/viewer web plane，host-native NVIDIA runtime 維持在 Docker 外。
 
-#### Scenario: Operator can choose hybrid web-plane mode
+#### Scenario: Operator 可以選擇 hybrid web-plane mode
 
-- **WHEN** an operator reads the fast MVP or deployment runbook
-- **THEN** the runbook SHALL list hybrid Docker web-plane mode as a supported single-machine path for `bim-review-coordinator` and `web-viewer-sample`
-- **AND** it SHALL state that this mode starts containerized `8004` and `5173`
-- **AND** it SHALL state that `49100` / `47998` / `49101` remain host-native
+- **WHEN** operator 閱讀 fast MVP 或 deployment runbook
+- **THEN** runbook 必須把 hybrid Docker web-plane mode 列為 `bim-review-coordinator` 與 `web-viewer-sample` 的 supported single-machine path
+- **AND** runbook 必須說明這個模式會啟動 containerized `8004` 與 `5173`
+- **AND** runbook 必須說明 `49100` / `47998` / `49101` 維持 host-native
 
-#### Scenario: Runbook separates hybrid readiness from Docker GPU Kit readiness
+#### Scenario: Runbook 區分 hybrid readiness 與 Docker GPU Kit readiness
 
-- **WHEN** the runbook describes validation for hybrid Docker web-plane mode
-- **THEN** it SHALL explicitly state that successful `8004` / `5173` container health and host-native bridge checks do not satisfy `runtime-manager-docker-kit-mvp` GPU-container pass criteria
-- **AND** it SHALL state that host-native Kit evidence MUST NOT be used to mark Docker GPU Kit readiness as passed
+- **WHEN** runbook 描述 hybrid Docker web-plane mode 的驗證方式
+- **THEN** runbook 必須明確說明 `8004` / `5173` container health 與 host-native bridge checks 成功，不等於滿足 `runtime-manager-docker-kit-mvp` GPU-container pass criteria
+- **AND** runbook 必須說明 host-native Kit evidence 不得用來把 Docker GPU Kit readiness 標成 passed
 
-#### Scenario: Runbook documents localhost semantics
+#### Scenario: Runbook 文件化 localhost semantics
 
-- **WHEN** the runbook describes environment variables or compose overrides for hybrid Docker web-plane mode
-- **THEN** it SHALL distinguish container-to-host URLs such as `host.docker.internal:49101` from browser-visible Kit endpoints such as `127.0.0.1:49100`
-- **AND** it SHALL warn that container-local `127.0.0.1` and browser/host `127.0.0.1` are not the same network endpoint
+- **WHEN** runbook 描述 hybrid Docker web-plane mode 的 environment variables 或 compose overrides
+- **THEN** runbook 必須區分 container-to-host URLs，例如 `host.docker.internal:49101`，以及 browser-visible Kit endpoints，例如 `127.0.0.1:49100`
+- **AND** runbook 必須提醒 container-local `127.0.0.1` 與 browser/host `127.0.0.1` 不是同一個 network endpoint
 
-#### Scenario: Runbook documents OS-specific host bridge profiles
+#### Scenario: Runbook 文件化 OS-specific host bridge profiles
 
-- **WHEN** the runbook describes hybrid Docker web-plane mode
-- **THEN** it SHALL include a Windows Docker Desktop profile using `host.docker.internal`
-- **AND** it SHALL include a Linux Docker Engine profile using `host-gateway` or an explicit host address
-- **AND** it SHALL state that conversion service bind host, firewall, and route must be validated by the check helper instead of assumed
-- **AND** it SHALL label `0.0.0.0:8004` as LAN/single-machine exposure, not public Internet exposure
+- **WHEN** runbook 描述 hybrid Docker web-plane mode
+- **THEN** runbook 必須包含使用 `host.docker.internal` 的 Windows Docker Desktop profile
+- **AND** runbook 必須包含使用 `host-gateway` 或 explicit host address 的 Linux Docker Engine profile
+- **AND** runbook 必須說明 conversion service bind host、firewall 與 route 必須由 check helper 驗證，不能靠假設
+- **AND** runbook 必須將 `0.0.0.0:8004` 標示為 LAN/single-machine exposure，而不是 public Internet exposure
 
-#### Scenario: Runbook documents conversion artifact output management
+#### Scenario: Runbook 文件化 conversion artifact output management
 
-- **WHEN** the runbook describes a completed IFC→USDC conversion
-- **THEN** it SHALL state that `storage/` is for source IFC fixtures, not the default derived output store
-- **AND** it SHALL identify the host-native conversion artifacts root and per-job output layout
-- **AND** it SHALL list the expected publishable files: `model.usdc`, `element_mapping.json`, `entity_index.json`, and `metadata.json`
-- **AND** it SHALL explain that coordinator and cloud callback outbox carry metadata refs only
-- **AND** it SHALL explain how to choose `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` so artifact refs are visible to the runtime that consumes them
-- **AND** it SHALL include an operator cleanup note for demo artifacts and job state
+- **WHEN** runbook 描述已完成的 IFC→USDC conversion
+- **THEN** runbook 必須說明 `storage/` 用於 source IFC fixtures，不是 default derived output store
+- **AND** runbook 必須指出 host-native conversion artifacts root 與 per-job output layout
+- **AND** runbook 必須列出 expected publishable files：`model.usdc`、`element_mapping.json`、`entity_index.json`、`metadata.json`
+- **AND** runbook 必須說明 coordinator 與 cloud callback outbox 只攜帶 metadata refs
+- **AND** runbook 必須說明如何選擇 `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL`，使 artifact refs 對 consuming runtime 可見
+- **AND** runbook 必須包含 demo artifacts 與 job state 的 operator cleanup note
