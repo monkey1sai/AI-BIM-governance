@@ -307,7 +307,7 @@ export default class App extends React.Component<AppProps, AppState> {
             this._appendReviewEvent(`略過 ${message.event_type}：session lifecycle=${lifecycle}`);
             return;
         }
-        AppStream.sendMessage(message);
+        AppStream.sendMessage(JSON.stringify(message));
         this._appendDemoOutgoing(message.event_type, message);
     }
 

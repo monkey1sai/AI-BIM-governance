@@ -1,0 +1,27 @@
+name: ${COMPOSE_PROJECT_NAME:-ai-bim-runtime-manager}
+
+services:
+  coordinator:
+    environment:
+      # Hybrid mode: web plane runs in Docker, NVIDIA Kit/conversion remain on host.
+      HOST: 0.0.0.0
+      PORT: 8004
+      STREAMING_CONVERSION_API_BASE: ${HOST_CONVERSION_API_BASE:-http://host.docker.internal:49101}
+      CONVERSION_API_BASE: ${HOST_CONVERSION_API_BASE:-http://host.docker.internal:49101}
+      KIT_STREAM_SERVER: ${KIT_SIGNALING_HOST:-127.0.0.1}
+      KIT_SIGNALING_PORT: ${KIT_SIGNALING_PORT:-49100}
+      KIT_MEDIA_SERVER: ${KIT_MEDIA_HOST:-127.0.0.1}
+      KIT_MEDIA_PORT: ${KIT_MEDIA_PORT:-47998}
+      KIT_INSTANCE_ENDPOINTS: >-
+        [{"id":"kit_host_native_001","signalingServer":"${KIT_SIGNALING_HOST:-127.0.0.1}","signalingPort":${KIT_SIGNALING_PORT:-49100},"mediaServer":"${KIT_MEDIA_HOST:-127.0.0.1}","mediaPort":${KIT_MEDIA_PORT:-47998}}]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: !override
+      - "${COORDINATOR_PORT:-8004}:8004"
+
+  viewer:
+    environment: !override
+      VITE_COORDINATOR_API_BASE: "${WEB_VIEWER_COORDINATOR_API_BASE:-http://127.0.0.1:${COORDINATOR_PORT:-8004}}"
+      VITE_COORDINATOR_SOCKET_URL: "${WEB_VIEWER_COORDINATOR_SOCKET_URL:-http://127.0.0.1:${COORDINATOR_PORT:-8004}}"
+    ports: !override
+      - "${VIEWER_PORT:-5173}:5173"

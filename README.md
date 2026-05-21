@@ -50,7 +50,7 @@ Docker-first Kit MVP 的硬邊界：
 - 缺少 Linux launcher 不是可接受的前置 blocker；這代表 `failed_linux_kit_build`。
 - Host-local Windows `_build`、`repo.bat`、PowerShell launcher 或 host Kit launcher 不算
   MVP pass、GPU runtime pass 或 Kit viewport pass evidence。
-- `web-viewer-sample` container 使用 Node 18 與 npm 10，符合 `package.json` engines
+- `web-viewer-sample` container 使用 Node 20 與 npm 10，符合 `package.json` engines
   contract，並以 `engine-strict` 驗證。
 
 主要入口：
