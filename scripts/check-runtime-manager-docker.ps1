@@ -52,7 +52,7 @@ function Test-WebViewerEngineContract {
     $npmVersion = (docker run --rm --entrypoint npm $image -v 2>&1 | Select-Object -First 1).Trim()
     $engineStrict = (docker run --rm --entrypoint npm $image config get engine-strict 2>&1 | Select-Object -First 1).Trim()
 
-    if ($nodeVersion -match "^v18\." -and $npmVersion -match "^10\." -and $engineStrict -eq "true") {
+    if ($nodeVersion -match "^v20\." -and $npmVersion -match "^10\." -and $engineStrict -eq "true") {
         Write-Host "[ok] web_viewer_engine_contract_passed node=$nodeVersion npm=$npmVersion engine-strict=$engineStrict" -ForegroundColor Green
         return
     }

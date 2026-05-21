@@ -67,7 +67,7 @@ export function StatusPanel({health, state, message}: Props) {
         </dl>
       )}
       <ul className="status-notes">
-        <li><code>web_viewer_engine_contract_ok</code> 由 Docker image 的 Node 18 / npm 10 / engine-strict 驗證。</li>
+        <li><code>web_viewer_engine_contract_ok</code> 由 Docker image 的 Node 20 / npm 10 / engine-strict 驗證。</li>
         <li><code>kit_build_failed</code> 代表 Docker build 沒有產生 Linux launcher。</li>
         <li><code>gpu_runtime_blocked</code> 只限 GPU / NVIDIA runtime 等外部環境缺失。</li>
       </ul>

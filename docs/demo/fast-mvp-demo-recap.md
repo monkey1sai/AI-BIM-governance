@@ -40,6 +40,21 @@ repo 已具備 long-roadmap Phase 0 / 1 / 3 / 4 等同的 MVP 能力（`bim-revi
 
 > **唯一硬限制**：Kit graphics 必須 host-native。其餘三服務的部署方式可依現場環境調整，但 runbook 預設全部 host-native，因為這是 demo 最少踩雷的組合。
 
+### Fast MVP 後的 hybrid Docker web-plane path
+
+Fast MVP 跑通後，可改用 [`docs/runbooks/DOCKER_WEB_PLANE_HOST_NATIVE_KIT.md`](../runbooks/DOCKER_WEB_PLANE_HOST_NATIVE_KIT.md) 作為單機可部署標準流程：Docker 只啟 `bim-review-coordinator` (`8004`) 與 `web-viewer-sample` (`5173`)，NVIDIA Kit/WebRTC (`49100` / `47998`) 與 host-native conversion authority (`49101`) 仍留在當下 OS。
+
+啟動入口：
+
+```powershell
+pwsh -File bim-streaming-server/scripts/start-host-native-conversion-service.ps1
+pwsh -File scripts/run-single-kit-demo.ps1
+pwsh -File scripts/start-web-plane-docker.ps1 -Build
+pwsh -File scripts/check-web-plane-docker.ps1
+```
+
+此 hybrid path 的綠燈只代表 `docker_web_plane_health`、`container_to_host_conversion`、`host_native_kit_probe` 等 tier；不得拿來把 `runtime-manager-docker-kit-mvp` 的 GPU-container pass、`runtime_image_kit_launcher`、browser visual render 升等為 passed。
+
 ## 4. Pre-flight 清單（demo 前 10 分鐘做完）
 
 1. **硬體**：Windows 11、RTX Ada / Blackwell GPU、`nvidia-smi` 看得到驅動。沒 GPU 等於沒戲。
