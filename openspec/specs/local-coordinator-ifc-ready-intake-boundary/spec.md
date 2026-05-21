@@ -76,6 +76,8 @@ The external intake SHALL be idempotent on explicit `idempotency_key` / `correla
 
 `bim-review-coordinator` SHALL accept a worker compatibility body on `POST /api/external/ifc-ready` with `status="ifc_ready"`, `ifc_path`, `project_id`, `version`, and `task_id`. The coordinator SHALL normalize this body at the intake boundary into the canonical local IFC-ready event before creating a local conversion job or dispatching an internal request to `bim-streaming-server`.
 
+> **Implementation status (2026-05-21)**: this requirement was ratified by archive `2026-05-21-coordinator-ifc-ready-worker-webhook` but its code path was never implemented (retro-audit commit `a32fcd6`). Change `backfill-coordinator-webhook-and-auto-session` backfills the implementation in `bim-review-coordinator/src/app.ts` (`normalizeIntakePayload` helper plus the `/api/external/ifc-ready` route handler wiring). See its `tasks.md` for the scenario-to-test mapping.
+
 #### Scenario: Worker payload is accepted and normalized
 
 - **WHEN** the customer-edge IFC Worker posts `status="ifc_ready"`, `ifc_path`, `project_id`, `version`, and `task_id` to `POST /api/external/ifc-ready`
