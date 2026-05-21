@@ -36,6 +36,19 @@ def build_ifc_ready_payload(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
+def build_worker_compatibility_payload(**overrides: Any) -> dict[str, Any]:
+    """Return a worker-compatibility ifc-ready payload (簡化形狀).
+
+    backfill-coordinator-webhook-and-auto-session §1：模擬客戶落地端 IFC
+    Worker 送的較簡化 payload（status / ifc_path / project_id / version /
+    task_id）。coordinator 在 intake boundary 會正規化為 canonical
+    ExternalIfcReadyEvent，dispatch 給 streaming 仍走 internal contract。
+    """
+    payload = copy.deepcopy(load_contract()["worker_compatibility_example"]["payload"])
+    payload.update(overrides)
+    return payload
+
+
 def auth_headers(**overrides: Any) -> dict[str, str]:
     """intranet-dev AuthProvider headers from the frozen contract."""
     headers = dict(load_contract()["transport"]["auth"]["headers"])

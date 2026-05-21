@@ -213,3 +213,140 @@ describe("POST /api/external/ifc-ready", () => {
     expect(res.status).toBe(403);
   });
 });
+
+// backfill-coordinator-webhook-and-auto-session §1：worker compatibility payload
+// 規格權威：openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md
+// §"Coordinator accepts worker ifc-ready compatibility payload"
+describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
+  function workerPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      status: "ifc_ready",
+      ifc_path: "http://edge-internal.example/storage/demo-model.ifc",
+      project_id: "project_worker_001",
+      version: "ver_worker_001",
+      task_id: "task_worker_001",
+      ...overrides,
+    };
+  }
+
+  function workerAuthHeaders(overrides: Record<string, string> = {}): Record<string, string> {
+    // worker payload 預設不帶 X-Correlation-Id / X-Idempotency-Key；由 task_id 派生。
+    return {
+      "X-Webhook-Secret": WEBHOOK_SECRET,
+      ...overrides,
+    };
+  }
+
+  it("worker payload is accepted and normalized → 202 with canonical fields", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload());
+
+    expect(res.status).toBe(202);
+    expect(res.body.ifc_ready_job_id).toMatch(/^ifcready_/);
+    // version → external_model_version_id
+    expect(res.body.external_model_version_id).toBe("ver_worker_001");
+    // task_id → external_conversion_task_id
+    expect(res.body.external_conversion_task_id).toBe("task_worker_001");
+    // ifc_path → source_ifc.ref
+    expect(res.body.source_ifc_ref).toBe("http://edge-internal.example/storage/demo-model.ifc");
+    // 派生 correlation_id 從 project_id+version+task_id
+    expect(res.body.correlation_id).toMatch(/^worker:project_worker_001::ver_worker_001::task_worker_001$/);
+  });
+
+  it("non-ready worker status → 4xx，不建 local job 也不 dispatch", async () => {
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload({ status: "ifc_pending" }));
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+    // dispatch 不可被觸發
+    expect(streaming.bodies).toHaveLength(0);
+  });
+
+  it("worker payload 缺 ifc_path → 4xx，無 partial shadow metadata", async () => {
+    const app = makeApp();
+    const bad = workerPayload();
+    delete (bad as Record<string, unknown>).ifc_path;
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(bad);
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+  });
+
+  it("worker payload 缺 task_id → 4xx", async () => {
+    const app = makeApp();
+    const bad = workerPayload();
+    delete (bad as Record<string, unknown>).task_id;
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(bad);
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+  });
+
+  it("worker 缺 X-Correlation-Id / X-Idempotency-Key 時從 project_id+version+task_id 派生穩定 idempotency", async () => {
+    const app = makeApp();
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload());
+    const second = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload());
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(200);
+    expect(second.body.idempotent_replay).toBe(true);
+    expect(second.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
+  });
+
+  it("explicit X-Correlation-Id 優先於 task_id 派生", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders({
+        "X-Correlation-Id": "explicit_corr_999",
+        "X-Idempotency-Key": "explicit_idem_999",
+      }))
+      .send(workerPayload());
+
+    expect(res.status).toBe(202);
+    expect(res.body.correlation_id).toBe("explicit_corr_999");
+    expect(res.body.idempotency_key).toBe("explicit_idem_999");
+  });
+
+  it("worker payload 經 normalize 後 dispatch 給 streaming 仍走 canonical shape，不洩漏 worker 形狀", async () => {
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload());
+
+    expect(res.status).toBe(202);
+    expect(streaming.bodies).toHaveLength(1);
+    const dispatched = streaming.bodies[0] as Record<string, unknown>;
+    // canonical streaming internal contract
+    expect(dispatched.event_type).toBe("ifc_ready");
+    expect(dispatched.external_model_version_id).toBe("ver_worker_001");
+    expect(dispatched.external_conversion_task_id).toBe("task_worker_001");
+    // 不洩漏 worker 形狀
+    expect(dispatched.status).toBeUndefined();
+    expect(dispatched.ifc_path).toBeUndefined();
+    expect(dispatched.version).toBeUndefined();
+    expect(dispatched.task_id).toBeUndefined();
+  });
+});

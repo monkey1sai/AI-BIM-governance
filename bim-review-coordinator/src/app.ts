@@ -27,6 +27,7 @@ import type {
   Artifact,
   ArtifactBinding,
   ConversionQualityMetricsSummary,
+  ExternalIfcReadyEvent,
   IfcReadyIntakeJob,
   KitInstanceBinding,
   ReviewSession,
@@ -130,6 +131,68 @@ const ifcReadyPayloadSchema = z
     callback_url: z.string().url().nullish(),
   })
   .passthrough();
+
+// backfill-coordinator-webhook-and-auto-session §1：worker compatibility payload。
+// 規格權威：openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md
+// §"Coordinator accepts worker ifc-ready compatibility payload"。
+// 落地端 IFC Worker 送的較簡化形狀；coordinator 在 intake boundary 正規化為
+// canonical ExternalIfcReadyEvent，不洩漏進 streaming internal contract。
+const workerCompatPayloadSchema = z
+  .object({
+    status: z.literal("ifc_ready"),
+    ifc_path: z.string().min(1),
+    project_id: z.string().min(1),
+    version: z.string().min(1),
+    task_id: z.string().min(1),
+  })
+  .passthrough();
+
+interface NormalizeResult {
+  event: ExternalIfcReadyEvent;
+  isWorkerCompat: boolean;
+  // worker compat 缺 explicit X-Correlation-Id / X-Idempotency-Key 時的派生值
+  // （`worker:project_id::version::task_id`）；explicit headers 仍優先（D11）。
+  derivedCorrelationId?: string;
+  derivedIdempotencyKey?: string;
+}
+
+function normalizeIntakePayload(rawBody: unknown): NormalizeResult {
+  const body = rawBody && typeof rawBody === "object" ? (rawBody as Record<string, unknown>) : {};
+  // D9：以 `event` 欄位作為 canonical 判別；worker compat 用 `status`。
+  if ("event" in body) {
+    const event = ifcReadyPayloadSchema.parse(body) as ExternalIfcReadyEvent;
+    return { event, isWorkerCompat: false };
+  }
+  const worker = workerCompatPayloadSchema.parse(body);
+  const derivedKey = `worker:${worker.project_id}::${worker.version}::${worker.task_id}`;
+  const tenantId = typeof body.tenant_id === "string" && body.tenant_id.trim().length > 0
+    ? body.tenant_id.trim()
+    : "tenant_demo_001";
+  const event: ExternalIfcReadyEvent = {
+    event: "ifc_ready",
+    correlation_id: derivedKey,
+    idempotency_key: derivedKey,
+    tenant_id: tenantId,
+    project_id: worker.project_id,
+    external_model_version_id: worker.version,
+    external_conversion_task_id: worker.task_id,
+    source_ifc: {
+      ref: worker.ifc_path,
+      // worker 未提供 checksum；以 fallback marker 替代，**不**宣告為真實 etag。
+      etag: `worker:unknown:${worker.task_id}`,
+      filename: null,
+      format: "ifc",
+    },
+    requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
+    callback_url: typeof body.callback_url === "string" ? body.callback_url : null,
+  };
+  return {
+    event,
+    isWorkerCompat: true,
+    derivedCorrelationId: derivedKey,
+    derivedIdempotencyKey: derivedKey,
+  };
+}
 
 // B-scheme T5 §6.1：本地轉檔結果回報（coordinator 輪詢 streaming /result 或
 // 內部 result loop 餵入），coordinator 據此組 metadata-only 雲端 callback 並
@@ -452,9 +515,23 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   // machine-to-machine）。streaming 為 internal-only 轉檔引擎（T4）。
   app.post("/api/external/ifc-ready", async (request, response, next) => {
     try {
-      const event = { ...ifcReadyPayloadSchema.parse(request.body) };
+      // backfill-coordinator-webhook-and-auto-session §1：normalize canonical
+      // 與 worker compatibility payload 為同一 ExternalIfcReadyEvent，再走既有
+      // auth / store / dispatch 路徑。worker compat 缺 X-Correlation-Id /
+      // X-Idempotency-Key 時，從 project_id+version+task_id 派生作為 fallback
+      // 注入 header map；explicit headers 仍優先（D11）。
+      const normalized = normalizeIntakePayload(request.body);
+      const event = { ...normalized.event };
       event.callback_url = resolveAllowedCallbackTarget(event.callback_url ?? null, config);
       const headerMap = headersToMap(request.headers);
+      if (normalized.isWorkerCompat) {
+        if (!headerMap["x-correlation-id"] && normalized.derivedCorrelationId) {
+          headerMap["x-correlation-id"] = normalized.derivedCorrelationId;
+        }
+        if (!headerMap["x-idempotency-key"] && normalized.derivedIdempotencyKey) {
+          headerMap["x-idempotency-key"] = normalized.derivedIdempotencyKey;
+        }
+      }
       const auth = authProvider.authenticate({
         clientIp: request.ip || request.socket.remoteAddress || "",
         headers: headerMap,
@@ -559,9 +636,112 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   // 行為保持式 helper：`/api/internal/conversion-result`（外部/輪詢餵入）與
   // `/api/internal/conversions/:id/ingest`（coordinator 主動拉 host-native
   // `GET /result`）共用同一條 ingestion 路徑，不重複邏輯。
+  //
+  // backfill-coordinator-webhook-and-auto-session §2 (D10/D11)：terminal `ready`
+  // 分支於 callback outbox enqueue 之後並行呼叫 autoCreateOrActivateSession，
+  // 把退役 `_bim-control` 孤立的 session 觸發責任 re-home 進本路徑；outbox 與
+  // session 狀態獨立分類（pending callback 不阻塞 session handoff，反之亦然）。
   type ConversionIngestOutcome =
-    | { ok: true; ifc_ready_job: ReturnType<typeof externalIfcReadyStore.recordConversionOutcome>; callback: ReturnType<typeof callbackOutbox.enqueue> }
+    | {
+        ok: true;
+        ifc_ready_job: ReturnType<typeof externalIfcReadyStore.recordConversionOutcome>;
+        callback: ReturnType<typeof callbackOutbox.enqueue>;
+        session: ReviewSession | null;
+        session_replay: boolean;
+        session_reason?: string;
+      }
     | { ok: false; status: number; detail: string };
+
+  // backfill-coordinator-webhook-and-auto-session §2 (D10)：抽出共用 helper，
+  // 與既有 `POST /api/review-sessions` route handler 走同一份 SessionStore /
+  // kitPool / eventLog 權威；不複製 binding 規則。傳入 conversion-ready 的
+  // streaming-owned artifact refs，構建最小 ArtifactBinding 後重用既有 Kit
+  // binding 分配。
+  function autoCreateOrActivateSession(
+    job: IfcReadyIntakeJob,
+    artifacts: { usdc_ref?: string | null; element_mapping_ref?: string | null; manifest_ref?: string | null },
+    conversionJobId: string | null,
+  ): { session: ReviewSession; replay: boolean } | { session: null; reason: string } {
+    // D11：以 job.review_session_id 為 idempotency 主索引（job 已被 correlation_id /
+    // external_model_version_id 唯一索引）。重入回既有 session。
+    if (job.review_session_id) {
+      const existing = store.get(job.review_session_id);
+      if (existing) {
+        return { session: existing, replay: true };
+      }
+      // 既有 session 檔被外部移除 → 視為無 session，重建（不丟 review intent）。
+    }
+
+    const modelVersionId = job.external_model_version_id;
+    const usdcUrl = artifacts.usdc_ref ?? null;
+    if (!usdcUrl) {
+      // 沒有 usdc_ref 不建可串流 session（sustained `Non-ready conversion does
+      // not create a streamable session` semantics 即使 status=ready 但無 artifact）。
+      return { session: null, reason: "no_usdc_ref" };
+    }
+
+    const autoArtifactId = `auto_usdc_${conversionJobId ?? job.correlation_id}`;
+    const artifactBindings: ArtifactBinding[] = [
+      {
+        binding_id: "binding_auto_usdc",
+        artifact_group_id: `ag_${modelVersionId}`,
+        model_version_id: modelVersionId,
+        artifact_id: autoArtifactId,
+        artifact_role: "derived",
+        url: usdcUrl,
+        mapping_url: artifacts.element_mapping_ref ?? null,
+        load_order: 0,
+        routing_policy: "same_instance",
+        ready_status: "ready",
+        conversion_authority: "bim-streaming-server",
+        conversion_job_id: conversionJobId,
+        conversion_status: "ready",
+      },
+    ];
+
+    const kitInstanceBindings = allocateKitInstanceBindings(
+      config,
+      artifactBindings,
+      "same_instance",
+      job.tenant_id,
+      {},
+    );
+    if (kitInstanceBindings.length === 0) {
+      // GPU/Kit 無容量 → 不建 active session、不丟 review intent；spec
+      // 「GPU capacity is unavailable」由顯式 caller 處理，自動接線僅記原因
+      // 待後續輪詢/重入時再分配。
+      return { session: null, reason: "queued_for_instance" };
+    }
+
+    const session = store.create({
+      review_request_id: undefined,
+      tenant_id: job.tenant_id,
+      project_id: job.project_id,
+      model_version_id: modelVersionId,
+      source_artifact_id: undefined,
+      usdc_artifact_id: autoArtifactId,
+      created_by: "coordinator-auto-conversion-ready",
+      mode: "single_kit_shared_state",
+      kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
+      artifact_bindings: artifactBindings,
+      kit_instance_bindings: kitInstanceBindings,
+      quality_metrics_summary: null,
+    });
+    // lifecycle audit event parity（與 explicit /api/review-sessions caller
+    // 路徑等價；Risk mitigation）。
+    eventLog.append(session.session_id, "sessionCreated", {
+      project_id: session.project_id,
+      model_version_id: session.model_version_id,
+      review_request_id: session.review_request_id,
+    });
+    if (session.status === "active") {
+      eventLog.append(session.session_id, "sessionActive", {
+        kit_instance_bindings: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
+      });
+    }
+    externalIfcReadyStore.recordReviewSession(job.ifc_ready_job_id, session.session_id);
+    return { session, replay: false };
+  }
 
   function ingestConversionReport(
     report: z.infer<typeof conversionResultReportSchema>,
@@ -624,7 +804,35 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       entry.outbox_id,
       report.artifacts?.manifest_ref ?? null,
     );
-    return { ok: true, ifc_ready_job: updatedJob, callback: entry };
+
+    // backfill §2：terminal `ready` 才觸發本地 session handoff；`failed` 不建
+    // 可串流 session。auto-session 與 callback outbox **狀態獨立**——任一狀態
+    // 不阻塞他者，pending / dead-letter callback 不影響 session handoff，反之
+    // 亦然。
+    let session: ReviewSession | null = null;
+    let session_replay = false;
+    let session_reason: string | undefined;
+    if (normalizedStatus === "ready") {
+      // 使用 updatedJob 取得包含 review_session_id 的最新 job 狀態。
+      const sessionJob = updatedJob ?? job;
+      const result = autoCreateOrActivateSession(
+        sessionJob,
+        {
+          usdc_ref: report.artifacts?.usdc_ref ?? null,
+          element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
+          manifest_ref: report.artifacts?.manifest_ref ?? null,
+        },
+        conversionJobId,
+      );
+      if (result.session) {
+        session = result.session;
+        session_replay = result.replay;
+      } else {
+        session_reason = result.reason;
+      }
+    }
+
+    return { ok: true, ifc_ready_job: updatedJob, callback: entry, session, session_replay, session_reason };
   }
 
   // 內部端點（外部/輪詢直接餵 report）。callback 投遞狀態與 conversion 成功
@@ -637,7 +845,13 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         response.status(outcome.status).json({ detail: outcome.detail });
         return;
       }
-      response.status(202).json({ ifc_ready_job: outcome.ifc_ready_job, callback: outcome.callback });
+      response.status(202).json({
+        ifc_ready_job: outcome.ifc_ready_job,
+        callback: outcome.callback,
+        session: outcome.session,
+        session_replay: outcome.session_replay,
+        session_reason: outcome.session_reason ?? null,
+      });
     } catch (error) {
       next(error);
     }
@@ -699,6 +913,9 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         ifc_ready_job: outcome.ifc_ready_job,
         callback: outcome.callback,
         conversion_status: failed ? "failed" : "ready",
+        session: outcome.session,
+        session_replay: outcome.session_replay,
+        session_reason: outcome.session_reason ?? null,
       });
     } catch (error) {
       next(error);

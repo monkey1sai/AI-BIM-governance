@@ -182,6 +182,11 @@ export interface IfcReadyIntakeJob {
   // T6：data-plane shadow——本地 artifact manifest 參照（external_model_version_id
   // binding 已在上方欄位；不 mirror 公司 MySQL）。
   artifact_manifest_ref?: string | null;
+  // backfill-coordinator-webhook-and-auto-session §2：conversion-ready ingestion
+  // 自動建立的 review_session 反向參照，供 idempotent re-entry 對應到既有 session
+  // （correlation_id / external_model_version_id 已是 job 主索引，此處只記
+  // 反向 session_id，不改 SessionStore schema）。
+  review_session_id?: string | null;
   created_at: string;
   updated_at: string;
 }
