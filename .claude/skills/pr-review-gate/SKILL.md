@@ -120,13 +120,14 @@ next_action: |
 
 ## Debug Loop 範例
 
-reviewer 留言：「`_worker/app/batch_verification.py` cleanup function 可能留下殘餘 process」
+reviewer 留言：「`bim-review-coordinator/src/services/callbackOutbox.ts`
+的 callback retry path 可能靜默丟棄 cloud callback」
 
 轉成 debug target：
-1. symbol: `cleanup_batch` (in `_worker/app/batch_verification.py`)
-2. 跑 `gitnexus impact --target cleanup_batch --direction upstream`
+1. symbol: `deliverPending` (in `bim-review-coordinator/src/services/callbackOutbox.ts`)
+2. 跑 `gitnexus impact --target deliverPending --direction upstream`
 3. 確認 affected processes 與 reviewer 的擔心是否吻合
-4. 若是 → 補 focused test（測 timeout cleanup path）
+4. 若是 → 補 focused test（測 retry / dead_letter / metadata-only callback path）
 5. 重 push commit，回到 Step 2
 
 ## 參考

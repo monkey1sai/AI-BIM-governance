@@ -76,12 +76,14 @@ branch: codex/openspec/<change_id>
 
 ```
 .env
-_bim-control/.env
-_worker/.env
 bim-review-coordinator/.env
 bim-streaming-server/.env
 web-viewer-sample/.env
 ```
+
+B 方案下，`_bim-control` / `_worker` / `_conversion-service` / `_s3_storage`
+已自 product runtime 退役；worktree provisioning 不複製這些 retired service 的
+`.env`，避免把 historical/test-double context 誤當現行 runtime。
 
 對每個來源（main worktree）：
 
