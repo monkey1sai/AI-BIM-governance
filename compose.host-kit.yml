@@ -20,9 +20,7 @@ services:
       - "${COORDINATOR_PORT:-8004}:8004"
 
   viewer:
-    environment:
+    environment: !override
       VITE_COORDINATOR_API_BASE: ${WEB_VIEWER_COORDINATOR_API_BASE:-http://127.0.0.1:8004}
-      VITE_KIT_STREAM_SERVER: ${KIT_SIGNALING_HOST:-127.0.0.1}
-      VITE_KIT_SIGNALING_PORT: ${KIT_SIGNALING_PORT:-49100}
     ports: !override
       - "${VIEWER_PORT:-5173}:5173"
