@@ -16,6 +16,23 @@ import App from "./App.tsx";
 import "./index.css";
 import "./styles/demo-theme.css";
 
+// fast-ifc-link-demo-loop §6.1:解析 ?session=lwv_xxx | review_session_xxx,
+// 寫進 window.__INITIAL_SESSION_FROM_QUERY__ 供 App / Window bootstrap 階段接手,
+// 跳過 NVIDIA Forms onboarding,直接走 stream-config attach 路徑。
+declare global {
+    interface Window {
+        __INITIAL_SESSION_FROM_QUERY__?: string | null;
+    }
+}
+const initialQueryParams = new URLSearchParams(window.location.search);
+const initialSession = initialQueryParams.get("session");
+if (initialSession && /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(initialSession)) {
+    window.__INITIAL_SESSION_FROM_QUERY__ = initialSession;
+    console.info(`[fast-mvp] auto-attach session from query string:${initialSession}`);
+} else {
+    window.__INITIAL_SESSION_FROM_QUERY__ = null;
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
 );

@@ -13,6 +13,7 @@ import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
+import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { StreamingConversionClient } from "./services/streamingConversionClient.js";
 import {
   allocateKitInstanceBindings,
@@ -529,6 +530,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
       const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
       if (existing) {
+        // fast-ifc-link-demo-loop §2.6:idempotent replay 直接 200 reuse,不重下載也不重派工
         response.status(200).json({ ...existing, idempotent_replay: true });
         return;
       }
@@ -541,13 +543,35 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         externalModelVersionId: auth.externalModelVersionId,
       });
 
-      // ifc-ready 已被接受並落地（local job + external_model_version_id binding）。
-      // 內部轉檔派工失敗為可重試狀態，不否定 intake 本身（重試/補派 + 雲端
-      // callback outbox 屬 T4/T5）。
+      // fast-ifc-link-demo-loop §2.3:同步下載 IFC → shared volume,完成才 dispatch + 200。
+      // 失敗 → 502,job 標 download_status:"failed",**不** dispatch streaming-server。
+      externalIfcReadyStore.markDownloading(job.ifc_ready_job_id);
+      const downloadResult = await downloadIfcToSharedVolume(event.source_ifc.ref, job.ifc_ready_job_id, {
+        storageRoot: config.storageRoot,
+        storageHostRoot: config.storageHostRoot,
+        timeoutMs: config.ifcDownloadTimeoutSeconds * 1000,
+      });
+      if (!downloadResult.ok) {
+        externalIfcReadyStore.markDownloadFailed(job.ifc_ready_job_id, `${downloadResult.reason}: ${downloadResult.message}`);
+        response.status(502).json({
+          detail: "IFC download failed",
+          ifc_ready_job_id: job.ifc_ready_job_id,
+          error: downloadResult.message,
+          reason: downloadResult.reason,
+          download_status: "failed",
+        });
+        return;
+      }
+      externalIfcReadyStore.markDownloaded(job.ifc_ready_job_id, downloadResult.local_path, downloadResult.host_local_path);
+
+      // ifc-ready 已接受 + IFC bytes 已落地 shared volume。dispatch streaming-server
+      // 帶 local_path / host_local_path;dispatch 失敗不否定 intake 本身(可重試)。
       try {
         const dispatch = await streamingConversionClient.createConversionJob(event, {
           correlationId: auth.correlationId,
           externalModelVersionId: auth.externalModelVersionId,
+          localPath: downloadResult.local_path,
+          hostLocalPath: downloadResult.host_local_path,
         });
         externalIfcReadyStore.markDispatched(job.ifc_ready_job_id, dispatch.conversion_job_id, dispatch.status);
       } catch (dispatchError) {
@@ -557,7 +581,14 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         );
       }
 
-      response.status(202).json(externalIfcReadyStore.get(job.ifc_ready_job_id));
+      // fast-ifc-link-demo-loop §2.3:同步下載完成 → 202 Accepted(下載完 + dispatch 完,
+      // conversion 仍 queued/running 屬於 server-side 後續處理,語意上保留 202)。
+      // download_status / message 由 job state + body 傳達。
+      const finalJob = externalIfcReadyStore.get(job.ifc_ready_job_id);
+      response.status(202).json({
+        ...finalJob,
+        message: "IFC 已下載至本地共享卷,轉檔已派工",
+      });
     } catch (error) {
       next(error);
     }
@@ -811,12 +842,18 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       if (result.session) {
         session = result.session;
         session_replay = result.replay;
+        // fast-ifc-link-demo-loop §3.2:轉檔 ready + session 建好,組 viewer_url
+        // 並寫進 ifc_ready job state。viewer_url 走 coordinator `/ui/open?session=`
+        // redirect,client 端 browser 收到後改連 host loopback `127.0.0.1:5173/?session=`。
+        // 用 review session_id 當 web_view_session_id(fast MVP 簡化:不再分兩種 session)。
+        const viewerUrl = `http://${config.publicHost}:${config.port}/ui/open?session=${encodeURIComponent(session.session_id)}`;
+        externalIfcReadyStore.setViewerLink(job.ifc_ready_job_id, session.session_id, viewerUrl);
       } else {
         session_reason = result.reason;
       }
     }
 
-    return { ok: true, ifc_ready_job: updatedJob, callback: entry, session, session_replay, session_reason };
+    return { ok: true, ifc_ready_job: externalIfcReadyStore.get(job.ifc_ready_job_id) ?? updatedJob, callback: entry, session, session_replay, session_reason };
   }
 
   // 內部端點（外部/輪詢直接餵 report）。callback 投遞狀態與 conversion 成功
@@ -1069,6 +1106,21 @@ function mountDevConsole(app: express.Express): void {
   app.use("/dev-console-assets", express.static(publicDir));
   app.get(["/ui", "/dev-console"], (_request, response) => {
     response.sendFile(path.join(publicDir, "dev-console.html"));
+  });
+
+  // fast-ifc-link-demo-loop §3.4:server-side redirect to host loopback viewer。
+  // viewer 已綁 127.0.0.1:5173,LAN 連不到;LAN client 拿 `/ui/open?session=` URL
+  // 後 browser 收到 302 → 改連自己機器 loopback 開 viewer。session id 驗證
+  // `^(lwv_|review_session_)[A-Za-z0-9_]+$`(支援 lwv_ + review_session_ 兩種 prefix
+  // 因為 fast MVP 簡化用 review session id 當 viewer attach key)。
+  app.get("/ui/open", (request, response) => {
+    const sessionRaw = request.query.session;
+    const session = typeof sessionRaw === "string" ? sessionRaw : "";
+    if (!/^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(session)) {
+      response.status(400).json({ detail: "invalid session id" });
+      return;
+    }
+    response.redirect(302, `http://127.0.0.1:5173/?session=${encodeURIComponent(session)}`);
   });
 }
 

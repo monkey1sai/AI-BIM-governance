@@ -54,6 +54,11 @@ const defaultConfig: CoordinatorConfig = {
   callbackOutboxMaxAttempts: 5,
   callbackOutboxStorePath: "/tmp/callback-outbox.json",
   userAuthProvider: "local-dev",
+  // fast-ifc-link-demo-loop §2.5
+  ifcDownloadTimeoutSeconds: 600,
+  storageRoot: "/tmp/storage",
+  storageHostRoot: "/tmp/storage",
+  publicHost: "127.0.0.1",
 };
 
 const multiEndpointConfig: CoordinatorConfig = {

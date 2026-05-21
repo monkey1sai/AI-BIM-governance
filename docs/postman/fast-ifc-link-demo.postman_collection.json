@@ -1,0 +1,126 @@
+{
+  "info": {
+    "name": "fast-ifc-link-demo",
+    "_postman_id": "f1e2d3c4-b5a6-4978-8b89-a1b2c3d4e5f6",
+    "description": "fast-ifc-link-demo-loop change:模擬外部客戶落地端 IFC Worker 對 coordinator `POST /api/external/ifc-ready` 的呼叫,然後輪詢 GET 直到 viewer_url 出現。設計見 docs/superpowers/specs/2026-05-21-fast-mvp-loop-overall-design.md §4。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "coordinator_base_url", "value": "http://127.0.0.1:8004", "type": "string" },
+    { "key": "webhook_secret", "value": "dev-webhook-secret", "type": "string" },
+    { "key": "ifc_path", "value": "http://192.168.20.234:9000/bim-control/899/xxx/model.ifc", "type": "string" },
+    { "key": "project_id", "value": "899", "type": "string" },
+    { "key": "version", "value": "xxx", "type": "string" },
+    { "key": "task_id", "value": "task_img_001", "type": "string" },
+    { "key": "ifc_ready_job_id", "value": "", "type": "string" },
+    { "key": "viewer_url", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Submit ifc-ready",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Webhook-Secret", "value": "{{webhook_secret}}" },
+          { "key": "X-Correlation-Id", "value": "{{$randomUUID}}" },
+          { "key": "X-Idempotency-Key", "value": "{{$randomUUID}}" }
+        ],
+        "url": {
+          "raw": "{{coordinator_base_url}}/api/external/ifc-ready",
+          "host": ["{{coordinator_base_url}}"],
+          "path": ["api", "external", "ifc-ready"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status\": \"ifc_ready\",\n  \"ifc_path\": \"{{ifc_path}}\",\n  \"project_id\": \"{{project_id}}\",\n  \"version\": \"{{version}}\",\n  \"task_id\": \"{{task_id}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('intake accepted (202 or 200)', function () {",
+              "    pm.expect([200, 202]).to.include(pm.response.code);",
+              "});",
+              "const body = pm.response.json();",
+              "if (body && body.ifc_ready_job_id) {",
+              "    pm.collectionVariables.set('ifc_ready_job_id', body.ifc_ready_job_id);",
+              "    console.log('captured ifc_ready_job_id =', body.ifc_ready_job_id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "protocolProfileBehavior": {
+        "followRedirects": false
+      }
+    },
+    {
+      "name": "Poll ifc-ready job",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{coordinator_base_url}}/api/external/ifc-ready/{{ifc_ready_job_id}}",
+          "host": ["{{coordinator_base_url}}"],
+          "path": ["api", "external", "ifc-ready", "{{ifc_ready_job_id}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('GET job ok', function () { pm.response.to.have.status(200); });",
+              "const body = pm.response.json();",
+              "console.log('download_status=', body.download_status, ' conversion_status=', body.conversion_status, ' viewer_url=', body.viewer_url);",
+              "if (body && body.viewer_url) {",
+              "    pm.collectionVariables.set('viewer_url', body.viewer_url);",
+              "    console.log('captured viewer_url =', body.viewer_url);",
+              "    // 終止 polling 迴圈",
+              "    pm.execution.setNextRequest(null);",
+              "} else {",
+              "    // 5 秒後再 poll 自己;Postman Runner 必須勾 Delay = 5000",
+              "    pm.execution.setNextRequest('Poll ifc-ready job');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Open viewer (info only)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{viewer_url}}",
+          "host": ["{{viewer_url}}"]
+        },
+        "description": "本 request 僅作 viewer_url 文件參考;Postman 不能驅動瀏覽器,請在同台 host 的 browser 打開 viewer_url。"
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const url = pm.collectionVariables.get('viewer_url');",
+              "if (!url) {",
+              "    console.warn('viewer_url 尚未捕獲,先跑 Poll 直到 viewer ready。');",
+              "} else {",
+              "    console.log('viewer_url ready,請在同台 host 的瀏覽器打開:', url);",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
