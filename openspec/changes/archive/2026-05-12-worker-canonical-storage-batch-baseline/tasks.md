@@ -1,3 +1,7 @@
+# Tasks
+
+> **Retro-audited 2026-05-21**：依 CLAUDE.md §2 newer-wins，`_worker` 已從 product runtime 刪除（B 方案）。下列 `[ ]` 任務全屬 `_worker` canonical batch 範圍，標 **superseded** 不再 retro-tick；現行 conversion authority 路徑由 `introduce-host-native-conversion-authority-service` 與 `local-coordinator-ifc-ready-intake-boundary` 接續，不需回填 `_worker` evidence。Visual preview / Kit / WebRTC evidence 在 newer specs 中分層為 `deferred` / `not_observed`，本 archive 不再 gating。
+
 ## 1. 準備與影響檢查
 
 - [x] 1.1 重新閱讀 `openspec/specs/worker-artifact-pipeline/spec.md`、`openspec/specs/runtime-verification-evidence/spec.md`、`openspec/specs/worker-demo-upload-convert-ui/spec.md`、本 change 的 proposal/design/spec deltas，以及 `docs/verification/2026-05-12-worker-mapping-lineage-quality-baseline.md`。
@@ -18,25 +22,25 @@
 
 - [x] 3.1 使用 `WORKER_DEV_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage` 重現 canonical `--limit 1` real conversion timeout。
 - [x] 3.2 記錄第一個 89MB fixture 的 phase timing evidence，定位 bottleneck phase。
-- [ ] 3.3 若 bottleneck 來自 `_worker` conversion staging、all-entity enumeration/materialization、mapping generation、artifact publish 或 lineage lookup，則在 `_worker` 邊界內修正。
-- [ ] 3.4 若 bottleneck 是 external converter limitation，記錄 deterministic blocker diagnostics，並維持 baseline unlocked，不宣稱 pass。
+- [ ] 3.3 若 bottleneck 來自 `_worker` conversion staging、all-entity enumeration/materialization、mapping generation、artifact publish 或 lineage lookup，則在 `_worker` 邊界內修正。 — **superseded**（_worker 退役）
+- [ ] 3.4 若 bottleneck 是 external converter limitation，記錄 deterministic blocker diagnostics，並維持 baseline unlocked，不宣稱 pass。 — **superseded**（_worker 退役；blocker 診斷由 host-native conversion authority 接續）
 - [x] 3.5 重跑 `--limit 1`，直到它完成完整 evidence，或留下 deterministic unresolved blocker。
 
 ## 4. 單檔 USDC Web Viewer Visual Preview
 
-- [ ] 4.1 在 canonical `--limit 1` real conversion 成功後，收集 `conversion_job_id`、`artifact_group_id`、source artifact ID、derived `model.usdc` artifact ID/URL、mapping artifact ID/URL 與 readiness state。
-- [ ] 4.2 使用既有 `bim-review-coordinator` / `web-viewer-sample` / `bim-streaming-server` flow 載入該 worker-hosted `model.usdc`，不得讓 `_worker` 直接 render 或管理 review session。
-- [ ] 4.3 記錄 visual preview evidence：canonical fixture path、artifact IDs、`openedStageResult`、非零 viewport/video dimensions、screenshot 或等效 visual proof。
-- [ ] 4.4 若 Kit、GPU、WebRTC、browser automation、coordinator 或 viewer prerequisite 不可用，將 visual preview 記為 `blocked`，列出缺少 prerequisite，且不得宣稱 web UI 已看過轉檔成果。
+- [ ] 4.1 在 canonical `--limit 1` real conversion 成功後，收集 `conversion_job_id`、`artifact_group_id`、source artifact ID、derived `model.usdc` artifact ID/URL、mapping artifact ID/URL 與 readiness state。 — **superseded**（_worker 退役；artifact ID 流由 host-native conversion authority + coordinator outbox 取代）
+- [ ] 4.2 使用既有 `bim-review-coordinator` / `web-viewer-sample` / `bim-streaming-server` flow 載入該 worker-hosted `model.usdc`，不得讓 `_worker` 直接 render 或管理 review session。 — **superseded**（worker-hosted USDC 路徑廢除；現行 USDC 由 streaming-server 權威）
+- [ ] 4.3 記錄 visual preview evidence：canonical fixture path、artifact IDs、`openedStageResult`、非零 viewport/video dimensions、screenshot 或等效 visual proof。 — **superseded**（依賴 _worker artifact ID；newer specs 把 visual preview tier 分到 `runtime-image-linux-kit-launcher-readiness` deferred / `not_observed`）
+- [ ] 4.4 若 Kit、GPU、WebRTC、browser automation、coordinator 或 viewer prerequisite 不可用，將 visual preview 記為 `blocked`，列出缺少 prerequisite，且不得宣稱 web UI 已看過轉檔成果。 — **superseded**（newer specs 已分層；blocked 邏輯由 recap `demo-fast-mvp-orchestration` runbook §6 接續）
 - [x] 4.5 更新 worker UI handoff，讓 lineage / quality view 可提供「用既有 review viewer 開啟 USDC」的 action 或等效 handoff data；UI 不讀 local files，不解析 USD/USDC。
 
 ## 5. Canonical 13 檔批次 Evidence
 
 - [x] 5.1 只有在 `--limit 1` 成功或已有清楚 documented blocker 後，才執行 full canonical 13-file real batch。
-- [ ] 5.2 記錄每個 fixture 的 source artifact ID、artifact group ID、conversion job ID、original filename、size、duration、phase timings、output size、converter identity、USDC openability、lineage API status、source IFC entity count、mapped/unmapped entity counts、coverage ratio、coverage status、warnings 與 failures。
-- [ ] 5.3 僅當 13 個 required fixtures 全部完成 real conversion 並通過所有 required quality checks 時，設定 batch `status=passed`。
-- [ ] 5.4 僅當 full canonical batch status 為 `passed` 時，才設定或宣稱 `minimum_coverage_locked=true`。
-- [ ] 5.5 若任一 fixture blocked、timed out、partial 或 failed，記錄 exact fixture 與 reason，並維持 production mapping baseline unlocked。
+- [ ] 5.2 記錄每個 fixture 的 source artifact ID、artifact group ID、conversion job ID、original filename、size、duration、phase timings、output size、converter identity、USDC openability、lineage API status、source IFC entity count、mapped/unmapped entity counts、coverage ratio、coverage status、warnings 與 failures。 — **superseded**（_worker fixture metric schema 不再為 product schema）
+- [ ] 5.3 僅當 13 個 required fixtures 全部完成 real conversion 並通過所有 required quality checks 時，設定 batch `status=passed`。 — **superseded**（_worker batch 規則不再 gating）
+- [ ] 5.4 僅當 full canonical batch status 為 `passed` 時，才設定或宣稱 `minimum_coverage_locked=true`。 — **superseded**（同 5.3）
+- [ ] 5.5 若任一 fixture blocked、timed out、partial 或 failed，記錄 exact fixture 與 reason，並維持 production mapping baseline unlocked。 — **superseded**（_worker production mapping baseline 範疇已退役）
 
 ## 6. Tests 與 Regression Coverage
 
