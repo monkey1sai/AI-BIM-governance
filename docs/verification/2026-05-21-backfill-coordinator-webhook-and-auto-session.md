@@ -5,6 +5,8 @@
 **Predecessor archive**: `2026-05-21-coordinator-ifc-ready-worker-webhook` (documentation lag)
 **Retro-audit anchor**: commit `a32fcd6`
 
+> **2026-05-21 re-apply supplement**：目前 `main` 已包含 PR #85 / PR #86 的 implementation + archive；本輪補上圖片中實際外部 IFC Worker payload 的 contract/test guard：`ifc_path="http://192.168.20.234:9000/bim-control/899/xxx/model.ifc"`、`project_id="899"`、`version="xxx"`、`task_id="task_img_001"`。Production coordinator 程式碼未新增變更；本輪變更集中在 contract / test fixture / verification evidence。
+
 ## 1. 範圍
 
 補 archive 的 spec drift：把已 ratified 但 code 從未實作的 11 個 spec scenarios（intake 4 + auto-session 4 + webhook seam 3）一次性落地。
@@ -21,6 +23,8 @@
 | A4 | Worker payload does not leak into streaming contract | →「worker payload 經 normalize 後 dispatch 給 streaming 仍走 canonical shape，不洩漏 worker 形狀」 |
 
 額外覆蓋（D11 idempotency / explicit header priority）：
+- 「contract captures the image-derived absolute IFC URL worker payload」
+- 「accepts image-derived IFCWorker payload with absolute S3 URL shape」
 - 「worker 缺 X-Correlation-Id / X-Idempotency-Key 時從 project_id+version+task_id 派生穩定 idempotency」
 - 「explicit X-Correlation-Id 優先於 task_id 派生」
 
@@ -48,12 +52,12 @@
 
 | 層 | 命令 | 結果 |
 |---|---|---|
-| Coordinator focused | `cd bim-review-coordinator && npm test -- --run external-ifc-ready host-native-conversion-ingest` | **16 + 10 = 26 passed** |
-| Coordinator full | `cd bim-review-coordinator && npm run verify` (= `tsc + vitest`) | **11 files / 165 tests passed**；tsc clean |
-| Root contracts baseline | `python -m pytest tests -p no:cacheprovider` | **7 passed** |
-| Whitespace | `git diff --check` | clean |
-| OpenSpec strict | `npx openspec validate backfill-coordinator-webhook-and-auto-session --strict` | `Change ... is valid` |
-| Affected scope | `git diff --stat` | 7 files / +551 / -4：`app.ts`（intake + auto-session）、`externalIfcReadyStore.ts`、`types.ts`、`external-ifc-ready.test.ts`、`host-native-conversion-ingest.test.ts`、`tests/contracts/ifc_ready_payload.json`、`tests/fakes/external_ifc_worker_client.py` — 符合 §0.2 預期，無範圍擴張 |
+| Coordinator focused | `cd bim-review-coordinator && npm test -- external-ifc-ready.test.ts auth-provider.test.ts host-native-conversion-ingest.test.ts` | **18 + 3 + 10 = 31 passed** |
+| Coordinator full | `cd bim-review-coordinator && npm run verify` (= `tsc + vitest`) | **11 files / 167 tests passed**；tsc clean |
+| Root contracts baseline | `python -m pytest tests -p no:cacheprovider` | **9 passed** |
+| Whitespace | `git -c safe.directory=C:/Repos/active/iot/AI-BIM-governance/.worktrees/backfill-coordinator-webhook-and-auto-session diff --check` | clean |
+| OpenSpec strict | `npx openspec validate --specs --strict` | **25 passed / 0 failed**（active duplicate change 已移除；正式權威為 archived specs） |
+| Affected scope | `npx gitnexus detect-changes --repo AI-BIM-governance` + `git diff --stat` | GitNexus：`No changes detected`（本輪無 production symbol 變更）；diff 僅 contract/test/evidence/roadmap 補強，無範圍擴張 |
 
 ## 4. Tier 分層 — Render tier `not_observed`
 
@@ -65,7 +69,9 @@
 
 ## 5. GitNexus 對齊
 
-`detect_changes` CLI 在 worktree 有 quoting bug（memory `opsx-skill-placeholder-bug` / `opsx-worktree-closeout-gotchas`），fallback 用 `git diff --stat`：
+PR #85 apply 時的 production affected symbols如下；本輪 re-apply supplement 已跑 `npx gitnexus detect-changes --repo AI-BIM-governance`，結果為 `No changes detected`，符合「只補 contract/test/evidence，未改 production symbols」。
+
+PR #85 原始 affected scope：
 
 ```
 bim-review-coordinator/src/app.ts                            +225 / -4

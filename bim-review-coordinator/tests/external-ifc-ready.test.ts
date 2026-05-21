@@ -17,6 +17,7 @@ const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CONTRACT_PATH = path.resolve(TEST_DIR, "..", "..", "tests", "contracts", "ifc_ready_payload.json");
 const CONTRACT = JSON.parse(fs.readFileSync(CONTRACT_PATH, "utf-8")) as {
   example: Record<string, unknown>;
+  worker_compatibility_example: { payload: Record<string, unknown> };
 };
 
 const WEBHOOK_SECRET = "dev-webhook-secret"; // = config 預設（環境設定，非契約資料）
@@ -236,6 +237,30 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
       ...overrides,
     };
   }
+
+  it("contract captures the image-derived absolute IFC URL worker payload", () => {
+    expect(CONTRACT.worker_compatibility_example.payload).toEqual({
+      status: "ifc_ready",
+      ifc_path: "http://192.168.20.234:9000/bim-control/899/xxx/model.ifc",
+      project_id: "899",
+      version: "xxx",
+      task_id: "task_img_001",
+    });
+  });
+
+  it("accepts image-derived IFCWorker payload with absolute S3 URL shape", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(CONTRACT.worker_compatibility_example.payload);
+
+    expect(res.status).toBe(202);
+    expect(res.body.external_model_version_id).toBe("xxx");
+    expect(res.body.external_conversion_task_id).toBe("task_img_001");
+    expect(res.body.source_ifc_ref).toBe("http://192.168.20.234:9000/bim-control/899/xxx/model.ifc");
+    expect(res.body.correlation_id).toBe("worker:899::xxx::task_img_001");
+  });
 
   it("worker payload is accepted and normalized → 202 with canonical fields", async () => {
     const app = makeApp();

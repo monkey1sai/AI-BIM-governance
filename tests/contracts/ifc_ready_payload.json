@@ -66,10 +66,10 @@
     "_comment": "backfill-coordinator-webhook-and-auto-session §1：客戶落地端 IFC Worker 送的簡化形狀。coordinator 在 intake boundary 正規化為 canonical example（上方），不洩漏進 streaming internal contract。",
     "payload": {
       "status": "ifc_ready",
-      "ifc_path": "http://edge-internal.example/storage/tenant_demo_001/project_demo_001/ver_worker_001/demo-model.ifc",
-      "project_id": "project_demo_001",
-      "version": "ver_worker_001",
-      "task_id": "task_worker_001"
+      "ifc_path": "http://192.168.20.234:9000/bim-control/899/xxx/model.ifc",
+      "project_id": "899",
+      "version": "xxx",
+      "task_id": "task_img_001"
     },
     "field_mapping": {
       "status": "→ event (literal 'ifc_ready')",
