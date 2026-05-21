@@ -179,6 +179,13 @@ export interface IfcReadyIntakeJob {
   // （correlation_id / external_model_version_id 已是 job 主索引，此處只記
   // 反向 session_id，不改 SessionStore schema）。
   review_session_id?: string | null;
+  // fast-ifc-link-demo-loop §2.2 / §3.1:同步下載階段 + viewer_url 出現條件
+  download_status?: "pending" | "downloading" | "downloaded" | "failed" | null;
+  download_failure?: string | null;
+  local_path?: string | null;
+  host_local_path?: string | null;
+  web_view_session_id?: string | null;
+  viewer_url?: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -46,7 +46,14 @@ function ensureTrailingSlash(value: string): string {
  */
 export function toInternalIfcReadyEvent(
   event: ExternalIfcReadyEvent,
-  binding: { correlationId: string; externalModelVersionId: string },
+  binding: {
+    correlationId: string;
+    externalModelVersionId: string;
+    /** fast-ifc-link-demo-loop §4.1:coordinator container view path,優先使用。 */
+    localPath?: string;
+    /** fast-ifc-link-demo-loop §4.1:host view path,streaming-server host-native 用。 */
+    hostLocalPath?: string;
+  },
 ): Record<string, unknown> {
   return {
     event_type: "ifc_ready",
@@ -65,6 +72,10 @@ export function toInternalIfcReadyEvent(
       filename: event.source_ifc.filename || null,
       url: event.source_ifc.ref,
       etag: event.source_ifc.etag,
+      // fast-ifc-link-demo-loop §4.1:shared volume 兩種 view path。streaming-server
+      // 優先用 local_path / host_local_path,fallback 到 url(HTTP GET)。
+      local_path: binding.localPath ?? null,
+      host_local_path: binding.hostLocalPath ?? null,
     },
     requested_outputs:
       event.requested_outputs && event.requested_outputs.length > 0
@@ -93,7 +104,14 @@ export class StreamingConversionClient {
 
   async createConversionJob(
     event: ExternalIfcReadyEvent,
-    binding: { correlationId: string; externalModelVersionId: string },
+    binding: {
+      correlationId: string;
+      externalModelVersionId: string;
+      /** fast-ifc-link-demo-loop §4.1:coordinator container view path,寫進 payload。 */
+      localPath?: string;
+      /** fast-ifc-link-demo-loop §4.1:host view path,streaming-server host-native 用。 */
+      hostLocalPath?: string;
+    },
   ): Promise<StreamingConversionDispatchResult> {
     const url = new URL(
       "api/conversions/ifc-to-usdc",

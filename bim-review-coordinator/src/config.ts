@@ -54,6 +54,11 @@ export interface CoordinatorConfig {
   // T7：使用者（local web view）auth provider，可替換；不做死 EZPLUS SSO，
   // local web view ↔ 公司 SSO 真實銜接待 OQ5。
   userAuthProvider: string;
+  // fast-ifc-link-demo-loop §2.5:同步下載 IFC + viewer_url 組合 + shared volume 路徑
+  ifcDownloadTimeoutSeconds: number;     // POST /api/external/ifc-ready 同步下載 timeout
+  storageRoot: string;                    // container view storage root,寫入用
+  storageHostRoot: string;                // host view storage root,寫進 dispatch payload host_local_path
+  publicHost: string;                     // viewer_url 用的對外 host(coordinator 對 LAN IP);default 127.0.0.1
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -196,6 +201,12 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
       process.env.CALLBACK_OUTBOX_STORE_PATH ||
       path.join(cwd, "data", "callback-outbox.json"),
     userAuthProvider: process.env.USER_AUTH_PROVIDER || "local-dev",
+    // fast-ifc-link-demo-loop §2.5:
+    ifcDownloadTimeoutSeconds: numberFromEnv("IFC_DOWNLOAD_TIMEOUT_SECONDS", 600),
+    storageRoot: process.env.STORAGE_ROOT || "/workspace/storage",
+    storageHostRoot:
+      process.env.STORAGE_HOST_ROOT || process.env.RUNTIME_STORAGE_ROOT || path.join(cwd, "storage"),
+    publicHost: process.env.PUBLIC_HOST || "127.0.0.1",
     ...overrides,
   };
 }

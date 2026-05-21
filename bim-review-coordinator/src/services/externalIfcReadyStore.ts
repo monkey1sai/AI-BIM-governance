@@ -54,6 +54,14 @@ export class ExternalIfcReadyStore {
       conversion_status: null,
       conversion_authority: null,
       dispatch_error: null,
+      // fast-ifc-link-demo-loop §2:新 job 預設 download_status="pending",
+      // app handler 進入同步下載後改為 downloading / downloaded / failed。
+      download_status: "pending",
+      download_failure: null,
+      local_path: null,
+      host_local_path: null,
+      web_view_session_id: null,
+      viewer_url: null,
       created_at: now,
       updated_at: now,
     };
@@ -71,6 +79,48 @@ export class ExternalIfcReadyStore {
     job.conversion_status = conversionStatus;
     job.conversion_authority = "bim-streaming-server";
     job.dispatch_error = null;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
+  /** fast-ifc-link-demo-loop §2.2:進入同步下載階段。 */
+  markDownloading(jobId: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.download_status = "downloading";
+    job.download_failure = null;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
+  /** fast-ifc-link-demo-loop §2.2:同步下載完成,寫入 local_path / host_local_path。 */
+  markDownloaded(jobId: string, localPath: string, hostLocalPath: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.download_status = "downloaded";
+    job.download_failure = null;
+    job.local_path = localPath;
+    job.host_local_path = hostLocalPath;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
+  /** fast-ifc-link-demo-loop §2.2:同步下載失敗(timeout / network / write)。不 dispatch。 */
+  markDownloadFailed(jobId: string, failure: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.download_status = "failed";
+    job.download_failure = failure;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
+  /** fast-ifc-link-demo-loop §3.2:轉檔 ready 時,coordinator 自動 spawn local web view session 並寫 viewer_url。 */
+  setViewerLink(jobId: string, webViewSessionId: string, viewerUrl: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.web_view_session_id = webViewSessionId;
+    job.viewer_url = viewerUrl;
     job.updated_at = new Date().toISOString();
     return job;
   }
