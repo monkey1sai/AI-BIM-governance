@@ -13,7 +13,7 @@
 - [x] Add Kit Manager API runtime status pytest.
 - [x] Convert streaming-server GPU image to Linux Kit build/package multi-stage build.
 - [x] Validate Linux Kit launcher is produced by Docker build.
-- [ ] Validate runtime image launches produced Linux Kit launcher. — **blocked**: WSL2 + NVIDIA Container Toolkit 對 Kit graphics-vulkan 仍卡天花板（memory `WSL-ubuntu-24-04-container-toolkit-setup`、`kit-gpu-render-needs-windows-native`）；capability `runtime-image-linux-kit-launcher-readiness` 維持 deferred。**Retro-audited 2026-05-21**：依 CLAUDE.md §2 newer-wins，現行 demo path 為 Windows host-native（recap runbook §3）；Linux Kit launcher runtime 驗證不再是 demo gating，僅作為未來 Linux runtime 解鎖時的 follow-up evidence。
+- [ ] Validate runtime image launches produced Linux Kit launcher. — **blocked**: 在 WSL2 Ubuntu 24.04 + NVIDIA Container Toolkit 環境中，runtime image 啟動 Linux Kit launcher 時會卡在 Kit `graphics-vulkan` 初始化，無法完成可互動啟動；此阻擋以最小重現條件記錄於此，capability `runtime-image-linux-kit-launcher-readiness` 維持 deferred。**Retro-audited 2026-05-21**：依 CLAUDE.md §2 newer-wins，現行 demo path 為 Windows host-native（recap runbook §3）；Linux Kit launcher runtime 驗證不再是 demo gating，僅作為未來 Linux runtime 解鎖時的 follow-up evidence。
 - [x] Update evidence to distinguish build_failed from runtime_blocked.
 - [x] Validate OpenSpec: `npx openspec validate introduce-ai-bim-runtime-manager-docker-kit-mvp --strict`.
 - [x] Validate Compose: `docker compose -f compose.runtime-manager.yml --env-file .env.runtime-manager.docker config`.

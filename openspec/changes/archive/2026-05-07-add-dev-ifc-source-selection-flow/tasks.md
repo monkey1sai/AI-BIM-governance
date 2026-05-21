@@ -1,6 +1,6 @@
 # Tasks
 
-> **Retro-audited 2026-05-21**：依 CLAUDE.md §2 newer-wins，`_worker` 已從 product runtime 刪除。worker UI（`http://127.0.0.1:8005/`）不再是 demo 路徑，現行 demo 由 recap `demo-fast-mvp-orchestration` 接手。GitNexus detect-changes 在 worktree 有 quoting bug（memory `opsx-skill-placeholder-bug` / `opsx-worktree-closeout-gotchas`），newer change baseline 可以 `git diff --stat` 替代。
+> **Retro-audited 2026-05-21**：依 `CLAUDE.md` §2 newer-wins，`_worker` 已從 product runtime 刪除。worker UI（`http://127.0.0.1:8005/`）不再是 demo 路徑，現行 demo 由 recap `demo-fast-mvp-orchestration` 接手。若 GitNexus detect-changes 在 worktree 狀態下輸出不穩定，請改用可重現的 baseline 驗證：`git diff --stat HEAD -- . ':(exclude).git'`，必要時再搭配 `git status --short` 確認變更集合。
 
 ## 1. Preparation And Impact Review
 
