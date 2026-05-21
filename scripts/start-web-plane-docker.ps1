@@ -27,8 +27,9 @@ function Normalize-EnvValue {
     if ($value.Length -eq 0) { return "" }
     $first = $value.Substring(0, 1)
     if ($first -eq '"' -or $first -eq "'") {
-        if ($value.Length -ge 2 -and $value.EndsWith($first)) {
-            return $value.Substring(1, $value.Length - 2)
+        $closing = $value.IndexOf($first, 1)
+        if ($closing -ge 1) {
+            return $value.Substring(1, $closing - 1)
         }
         return $value.Trim($first)
     }
@@ -37,6 +38,15 @@ function Normalize-EnvValue {
         $value = $value.Substring(0, $comment.Index).TrimEnd()
     }
     return $value
+}
+
+function Get-EnvDelimiterIndex {
+    param([string] $Line)
+    $eq = $Line.IndexOf("=")
+    $colon = $Line.IndexOf(":")
+    $candidates = @(@($eq, $colon) | Where-Object { $_ -gt 0 } | Sort-Object)
+    if ($candidates.Count -eq 0) { return -1 }
+    return [int]$candidates[0]
 }
 
 function Read-EnvFile {
@@ -48,7 +58,7 @@ function Read-EnvFile {
     foreach ($line in Get-Content -LiteralPath $Path) {
         $trimmed = $line.Trim()
         if ($trimmed.Length -eq 0 -or $trimmed.StartsWith("#")) { continue }
-        $idx = $trimmed.IndexOf("=")
+        $idx = Get-EnvDelimiterIndex -Line $trimmed
         if ($idx -le 0) { continue }
         $name = $trimmed.Substring(0, $idx).Trim()
         $value = Normalize-EnvValue -Raw $trimmed.Substring($idx + 1)

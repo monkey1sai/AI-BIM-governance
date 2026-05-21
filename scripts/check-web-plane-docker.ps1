@@ -29,8 +29,9 @@ function Normalize-EnvValue {
     if ($value.Length -eq 0) { return "" }
     $first = $value.Substring(0, 1)
     if ($first -eq '"' -or $first -eq "'") {
-        if ($value.Length -ge 2 -and $value.EndsWith($first)) {
-            return $value.Substring(1, $value.Length - 2)
+        $closing = $value.IndexOf($first, 1)
+        if ($closing -ge 1) {
+            return $value.Substring(1, $closing - 1)
         }
         return $value.Trim($first)
     }
@@ -39,6 +40,15 @@ function Normalize-EnvValue {
         $value = $value.Substring(0, $comment.Index).TrimEnd()
     }
     return $value
+}
+
+function Get-EnvDelimiterIndex {
+    param([string] $Line)
+    $eq = $Line.IndexOf("=")
+    $colon = $Line.IndexOf(":")
+    $candidates = @(@($eq, $colon) | Where-Object { $_ -gt 0 } | Sort-Object)
+    if ($candidates.Count -eq 0) { return -1 }
+    return [int]$candidates[0]
 }
 
 function Read-EnvFile {
@@ -50,7 +60,7 @@ function Read-EnvFile {
     foreach ($line in Get-Content -LiteralPath $Path) {
         $trimmed = $line.Trim()
         if ($trimmed.Length -eq 0 -or $trimmed.StartsWith("#")) { continue }
-        $idx = $trimmed.IndexOf("=")
+        $idx = Get-EnvDelimiterIndex -Line $trimmed
         if ($idx -le 0) { continue }
         $name = $trimmed.Substring(0, $idx).Trim()
         $value = Normalize-EnvValue -Raw $trimmed.Substring($idx + 1)
@@ -168,7 +178,19 @@ fetch(base + "/health", { signal: AbortSignal.timeout(5000) })
     }));
   })
   .catch((err) => {
-    console.error(JSON.stringify({ ok: false, base, error: err && err.message ? err.message : String(err) }));
+    const cause = err && err.cause ? err.cause : null;
+    console.error(JSON.stringify({
+      ok: false,
+      base,
+      error: err && err.message ? err.message : String(err),
+      code: err && err.code ? err.code : null,
+      cause_code: cause && cause.code ? cause.code : null,
+      cause: cause && cause.message ? cause.message : null,
+      syscall: cause && cause.syscall ? cause.syscall : null,
+      hostname: cause && cause.hostname ? cause.hostname : null,
+      address: cause && cause.address ? cause.address : null,
+      port: cause && cause.port ? cause.port : null
+    }));
     process.exit(4);
   });
 '@

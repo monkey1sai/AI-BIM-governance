@@ -22,5 +22,6 @@ services:
   viewer:
     environment: !override
       VITE_COORDINATOR_API_BASE: "${WEB_VIEWER_COORDINATOR_API_BASE:-http://127.0.0.1:${COORDINATOR_PORT:-8004}}"
+      VITE_COORDINATOR_SOCKET_URL: "${WEB_VIEWER_COORDINATOR_SOCKET_URL:-http://127.0.0.1:${COORDINATOR_PORT:-8004}}"
     ports: !override
       - "${VIEWER_PORT:-5173}:5173"
