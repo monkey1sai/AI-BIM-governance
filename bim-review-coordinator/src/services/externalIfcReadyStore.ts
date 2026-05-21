@@ -93,6 +93,21 @@ export class ExternalIfcReadyStore {
   }
 
   /**
+   * backfill-coordinator-webhook-and-auto-session §2 (D10/D11)：
+   * 寫入 conversion-ready ingestion 自動建立的 review_session_id 反向參照，
+   * 供 idempotent re-entry（同 correlation_id / external_model_version_id 重入）
+   * 直接定位既有 session，不重複建立 active session。
+   * 與 callback outbox 狀態獨立分類。
+   */
+  recordReviewSession(jobId: string, reviewSessionId: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.review_session_id = reviewSessionId;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
+  /**
    * T5：記錄 conversion 結果 + 連結雲端 callback outbox。
    * callback 投遞狀態與 conversion 成功**分離**——此處只更新 conversion_status
    * 與 callback 連結；callback 是否 ack 由 outbox 各自追蹤，不回寫否定本地結果。

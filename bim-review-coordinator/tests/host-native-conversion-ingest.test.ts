@@ -196,3 +196,144 @@ describe("host-native conversion result ingest (pull)", () => {
     expect(res.body.conversion_status).toBe("converting");
   });
 });
+
+// backfill-coordinator-webhook-and-auto-session §2-§3：conversion-ready 自動建
+// review session（B 方案 re-home：_bim-control runtime 退役後的 session 觸發
+// 責任接 coordinator 自身的 conversion-ready ingestion）。
+// 規格權威：openspec/specs/review-session-request-lifecycle/spec.md
+// §"Coordinator session is bound back to the request"（含 4 scenarios）+
+// openspec/specs/conversion-webhook-lifecycle/spec.md
+// §"Terminal conversion-ready ingestion triggers local review session handoff"
+// （含 3 scenarios）。
+describe("conversion-ready auto-session handoff", () => {
+  it("ready ingestion 自動建立綁 USDC + Kit binding 的 session（spec: auto-creates a review session under retired _bim-control）", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    // session 物件附在 ingest response（與 callback outbox 並行、狀態獨立）
+    expect(res.body.session).toBeTruthy();
+    expect(res.body.session.session_id).toMatch(/^review_session_/);
+    expect(res.body.session.status).toBe("active");
+    expect(res.body.session.usdc_artifact_id).toContain("auto_usdc_");
+    expect(res.body.session.model_version_id).toBe("ext_mv_demo_001");
+    // Kit binding 已被分配（control-plane 接線）
+    expect(res.body.session.kit_instance_bindings).toHaveLength(1);
+    expect(res.body.session.kit_instance_bindings[0].assigned_artifact_ids).toContain(res.body.session.usdc_artifact_id);
+    // session 可被 viewer 透過 GET /api/review-sessions/{id} 查到
+    const getRes = await request(app.app).get(`/api/review-sessions/${res.body.session.session_id}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.session_id).toBe(res.body.session.session_id);
+  });
+
+  it("duplicate ready ingestion 不建重複 active session（spec: Duplicate conversion-ready does not create duplicate sessions）", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const first = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    const second = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(second.body.session.session_id).toBe(first.body.session.session_id);
+    // session_replay 標記為 true（idempotent re-entry）
+    expect(second.body.session_replay).toBe(true);
+  });
+
+  it("failed ingestion 不建可串流 session（spec: Non-ready conversion does not create a streamable session + Failed conversion creates no local session）", async () => {
+    const base = await startStreamingStub(FAILED_RESULT);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body.conversion_status).toBe("failed");
+    // 不得建可串流 session
+    expect(res.body.session).toBeNull();
+    // callback outbox 仍記 failed（兩者狀態獨立分類）
+    expect(res.body.callback.event).toBe("conversion_failed");
+  });
+
+  it("pending cloud callback 不阻塞 local session handoff（spec: Pending cloud callback does not block local session handoff）", async () => {
+    // 不設 cloudCallbackBaseUrl → callback 仍入 outbox（默認 pending；本測試
+    // 不啟動 delivery loop，故 outbox status 一直 pending）；本 assert 關注的是
+    // session handoff 與 callback enqueue 狀態獨立分類，session 不被 callback
+    // 狀態阻塞、且 session_id 不會被混入 callback payload。
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    // session handoff 成功（不被 outbox 狀態阻塞）
+    expect(res.body.session).toBeTruthy();
+    expect(res.body.session.status).toBe("active");
+    // callback 仍入 outbox（狀態獨立分類；status 為 pending 直至 delivery loop 跑）
+    expect(res.body.callback.event).toBe("conversion_result_ready");
+    expect(res.body.callback.status).toBe("pending");
+    // session_id 不被誤標進 callback 為「雲端 callback 成功」
+    expect(res.body.callback.payload.session_id).toBeUndefined();
+  });
+
+  it("auto-creation 不啟動 Kit 進程、不開 USD stage、不渲染（spec: Coordinator-triggered creation stays control-plane only）", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    // session 寫了 metadata；但只是 metadata（不發 Kit 進程 spawn / USD open
+    // / render 指令）。斷言方式：session.kit_instance / kit_instance_bindings
+    // 是 metadata schema，而非「executed」狀態；不存在 process_id / render
+    // _started_at 之類的 runtime 欄位。
+    expect(res.body.session.kit_instance).toBeTruthy();
+    expect(res.body.session.kit_instance).not.toHaveProperty("process_id");
+    expect(res.body.session.kit_instance).not.toHaveProperty("render_started_at");
+    expect(res.body.session.kit_instance_bindings[0]).not.toHaveProperty("process_id");
+    expect(res.body.session.kit_instance_bindings[0]).not.toHaveProperty("usd_stage_opened_at");
+  });
+
+  it("lifecycle audit event 仍與 explicit /api/review-sessions caller 路徑等價（Risk mitigation）", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    const sessionId = res.body.session.session_id;
+    const lifecycleRes = await request(app.app).get(`/api/review-sessions/${sessionId}/lifecycle-events`);
+    expect(lifecycleRes.status).toBe(200);
+    const types = (lifecycleRes.body.items as Array<{ type: string }>).map((it) => it.type);
+    expect(types).toContain("sessionCreated");
+    expect(types).toContain("sessionActive");
+  });
+});
