@@ -48,7 +48,7 @@
 
 - [x] 5.1 新增 `docs/verification/2026-05-21-backfill-coordinator-webhook-and-auto-session.md`，記錄 §4 evidence + 11 spec scenarios 對應 test 編號 + render tier `not_observed` rationale。
 - [x] 5.2 在 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` 加一段 2026-05-21 更新：archive `2026-05-21-coordinator-ifc-ready-worker-webhook` documentation lag 已透過本 change 補齊，spec drift 收斂；HTML 鏡像同步更新（`scripts/render-roadmap-html.py` 重生 207,470 bytes）。
-- [ ] 5.3 編輯 archive `2026-05-21-coordinator-ifc-ready-worker-webhook/tasks.md`，把 26 個 `[ ] — deferred` 升級為 `[x] — implemented by backfill-coordinator-webhook-and-auto-session (PR #NN)`；不刪 retro-audited annotation。 — **post-merge gate**：依賴 retro-audit PR #83 先 merge（deferred 註記源自 PR #83 commit `a32fcd6`，不在本 PR base）。PR #83 merge 後在本 branch 補一個 doc-only 收尾 commit。
+- [x] 5.3 編輯 archive `2026-05-21-coordinator-ifc-ready-worker-webhook/tasks.md`，把 26 個 `[ ] — deferred` 升級為 `[x] — implemented by backfill-coordinator-webhook-and-auto-session (PR #85)`；不刪 retro-audited annotation — PR #83 merge 後（commit `e8e576d` 已在 main），本 branch rebase onto main 後一次性升級全部 26 個 deferred 標記為 `[x] — implemented by PR #85 (was: deferred: ...)`，原 retro-audit annotation 完整保留。
 
 ## 6. Commit & PR
 
