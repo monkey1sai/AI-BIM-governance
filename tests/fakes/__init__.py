@@ -14,6 +14,7 @@ from .cloud_bim_control_api import (
 from .external_ifc_worker_client import (
     auth_headers,
     build_ifc_ready_payload,
+    build_worker_compatibility_payload,
     post_ifc_ready,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "example_callback",
     "auth_headers",
     "build_ifc_ready_payload",
+    "build_worker_compatibility_payload",
     "post_ifc_ready",
 ]

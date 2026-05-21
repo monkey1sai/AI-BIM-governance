@@ -61,5 +61,24 @@
     },
     "requested_outputs": ["usdc", "element_mapping", "entity_index", "metadata"],
     "callback_url": "https://company-cloud.example/api/bim-control/conversion-callbacks"
+  },
+  "worker_compatibility_example": {
+    "_comment": "backfill-coordinator-webhook-and-auto-session §1：客戶落地端 IFC Worker 送的簡化形狀。coordinator 在 intake boundary 正規化為 canonical example（上方），不洩漏進 streaming internal contract。",
+    "payload": {
+      "status": "ifc_ready",
+      "ifc_path": "http://192.168.20.234:9000/bim-control/899/xxx/model.ifc",
+      "project_id": "899",
+      "version": "xxx",
+      "task_id": "task_img_001"
+    },
+    "field_mapping": {
+      "status": "→ event (literal 'ifc_ready')",
+      "ifc_path": "→ source_ifc.ref",
+      "project_id": "→ project_id",
+      "version": "→ external_model_version_id",
+      "task_id": "→ external_conversion_task_id; 也派生 correlation_id / idempotency_key fallback 為 'worker:<project_id>::<version>::<task_id>'（explicit X-Correlation-Id / X-Idempotency-Key headers 仍優先）",
+      "tenant_id (absent)": "→ tenant_demo_001 development fallback；production AuthProvider 必須要求真實 machine identity / tenant mapping",
+      "source_ifc.etag (absent)": "→ 'worker:unknown:<task_id>' fallback marker；不宣告為真實 checksum，未來 worker 補 checksum 後升級契約"
+    }
   }
 }

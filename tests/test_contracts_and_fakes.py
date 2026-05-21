@@ -20,6 +20,7 @@ from fakes import (  # noqa: E402
     MetadataOnlyViolation,
     auth_headers,
     build_ifc_ready_payload,
+    build_worker_compatibility_payload,
     example_callback,
     post_ifc_ready,
 )
@@ -52,6 +53,27 @@ def test_external_ifc_worker_client_double_builds_spec_payload():
     headers = auth_headers()
     assert "X-Correlation-Id" in headers and "X-Idempotency-Key" in headers
     assert headers["X-Webhook-Secret"] == "dev-webhook-secret"
+
+
+def test_ifc_ready_contract_includes_image_derived_worker_compatibility_payload():
+    ifc = _contract("ifc_ready_payload.json")
+    worker = ifc["worker_compatibility_example"]["payload"]
+    assert worker == {
+        "status": "ifc_ready",
+        "ifc_path": "http://192.168.20.234:9000/bim-control/899/xxx/model.ifc",
+        "project_id": "899",
+        "version": "xxx",
+        "task_id": "task_img_001",
+    }
+
+
+def test_external_ifc_worker_client_double_builds_worker_compatibility_payload():
+    payload = build_worker_compatibility_payload(task_id="task_override")
+    assert payload["status"] == "ifc_ready"
+    assert payload["ifc_path"] == "http://192.168.20.234:9000/bim-control/899/xxx/model.ifc"
+    assert payload["project_id"] == "899"
+    assert payload["version"] == "xxx"
+    assert payload["task_id"] == "task_override"
 
 
 def test_external_ifc_worker_client_rejects_unsupported_scheme():
