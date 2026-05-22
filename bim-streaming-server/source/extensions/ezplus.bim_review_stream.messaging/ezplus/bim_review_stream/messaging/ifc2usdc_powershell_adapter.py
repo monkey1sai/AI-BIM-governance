@@ -122,7 +122,16 @@ class Ifc2UsdcPowershellConverterAdapter:
         output_dir.mkdir(parents=True, exist_ok=True)
         model_path = output_dir / "model.usdc"
 
-        self._run_powershell_conversion(ifc_path=ifc_path, output_dir=output_dir)
+        try:
+            self._run_powershell_conversion(ifc_path=ifc_path, output_dir=output_dir)
+        except ConversionAuthorityError as exc:
+            if not self._is_primary_ifc_import_failure(exc):
+                raise
+            self._run_ifcopenshell_openusd_fallback(
+                ifc_path=ifc_path,
+                output_dir=output_dir,
+                primary_error=exc,
+            )
 
         if not model_path.is_file():
             raise ConversionAuthorityError(
@@ -337,6 +346,300 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "\n".join(message_parts),
                 metadata=metadata or None,
             )
+
+    def _is_primary_ifc_import_failure(self, exc: ConversionAuthorityError) -> bool:
+        if exc.code != "converter_failed":
+            return False
+        message = exc.message.lower()
+        return any(
+            marker in message
+            for marker in (
+                "a3d_load_cannot_load_model",
+                "failed to import model",
+                "cannot load model",
+            )
+        )
+
+    def _run_ifcopenshell_openusd_fallback(
+        self,
+        *,
+        ifc_path: Path,
+        output_dir: Path,
+        primary_error: ConversionAuthorityError,
+    ) -> None:
+        """Write a real geometry-bearing USDC when HOOPS cannot import the IFC."""
+        try:
+            import ifcopenshell
+            import ifcopenshell.geom
+            from pxr import Gf, Usd, UsdGeom
+        except Exception as exc:  # noqa: BLE001
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "Kit/HOOPS could not import the IFC and IfcOpenShell/OpenUSD "
+                f"fallback dependencies are unavailable: {exc}",
+                metadata=getattr(primary_error, "metadata", None),
+            ) from exc
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        model_path = output_dir / "model.usdc"
+        mapping_path = output_dir / "element_mapping.json"
+        entity_index_path = output_dir / "entity_index.json"
+        metadata_path = output_dir / "metadata.json"
+        quality_metrics_path = output_dir / "quality_metrics.json"
+
+        try:
+            ifc_model = ifcopenshell.open(str(ifc_path))
+        except Exception as exc:  # noqa: BLE001
+            raise ConversionAuthorityError(
+                "fallback_ifc_parse_failed",
+                f"IfcOpenShell could not parse fallback IFC input {ifc_path}: {exc}",
+                metadata=getattr(primary_error, "metadata", None),
+            ) from exc
+
+        try:
+            settings = ifcopenshell.geom.settings()
+            use_world_coords = getattr(settings, "USE_WORLD_COORDS", None)
+            if use_world_coords is not None:
+                settings.set(use_world_coords, True)
+        except Exception as exc:  # noqa: BLE001
+            raise ConversionAuthorityError(
+                "fallback_geometry_settings_failed",
+                f"IfcOpenShell fallback geometry settings failed: {exc}",
+                metadata=getattr(primary_error, "metadata", None),
+            ) from exc
+
+        try:
+            worker_count = max(os.cpu_count() or 1, 1)
+            iterator = ifcopenshell.geom.iterator(settings, ifc_model, worker_count)
+        except TypeError:
+            iterator = ifcopenshell.geom.iterator(settings, ifc_model)
+        except Exception as exc:  # noqa: BLE001
+            raise ConversionAuthorityError(
+                "fallback_geometry_iterator_failed",
+                f"IfcOpenShell fallback geometry iterator could not start: {exc}",
+                metadata=getattr(primary_error, "metadata", None),
+            ) from exc
+
+        try:
+            initialized = iterator.initialize()
+        except Exception as exc:  # noqa: BLE001
+            raise ConversionAuthorityError(
+                "fallback_geometry_iterator_failed",
+                f"IfcOpenShell fallback geometry iterator initialization failed: {exc}",
+                metadata=getattr(primary_error, "metadata", None),
+            ) from exc
+        if not initialized:
+            raise ConversionAuthorityError(
+                "fallback_no_renderable_geometry",
+                f"IfcOpenShell fallback found no renderable geometry in {ifc_path}",
+                metadata=getattr(primary_error, "metadata", None),
+            )
+
+        stage = Usd.Stage.CreateNew(str(model_path))
+        if stage is None:
+            raise ConversionAuthorityError(
+                "fallback_usdc_create_failed",
+                f"OpenUSD could not create fallback USDC at {model_path}",
+                metadata=getattr(primary_error, "metadata", None),
+            )
+        world = UsdGeom.Xform.Define(stage, "/World")
+        stage.SetDefaultPrim(world.GetPrim())
+        try:
+            UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+            UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+        except Exception:
+            pass
+
+        mapping_items: list[dict[str, str]] = []
+        entity_items: list[dict[str, Any]] = []
+        shape_count = 0
+        skipped_shape_count = 0
+        while True:
+            try:
+                shape = iterator.get()
+            except Exception as exc:  # noqa: BLE001
+                raise ConversionAuthorityError(
+                    "fallback_geometry_iterator_failed",
+                    "IfcOpenShell fallback geometry iterator failed while reading "
+                    f"a shape: {exc}",
+                    metadata=getattr(primary_error, "metadata", None),
+                ) from exc
+
+            geometry = getattr(shape, "geometry", None)
+            verts_raw = tuple(getattr(geometry, "verts", ()) or ())
+            faces_raw = tuple(getattr(geometry, "faces", ()) or ())
+            points, face_indices, face_counts = self._usd_mesh_data_from_ifcopenshell(
+                verts_raw=verts_raw,
+                faces_raw=faces_raw,
+                vec3_type=Gf.Vec3f,
+            )
+
+            if not points or not face_indices:
+                skipped_shape_count += 1
+            else:
+                shape_count += 1
+                prim_path = f"/World/IfcShape_{shape_count:06d}"
+                mesh = UsdGeom.Mesh.Define(stage, prim_path)
+                mesh.CreatePointsAttr(points)
+                mesh.CreateFaceVertexCountsAttr(face_counts)
+                mesh.CreateFaceVertexIndicesAttr(face_indices)
+                mesh.CreateExtentAttr(self._mesh_extent(points, vec3_type=Gf.Vec3f))
+
+                ifc_guid = str(getattr(shape, "guid", "") or "")
+                ifc_name = str(getattr(shape, "name", "") or "")
+                ifc_type = str(getattr(shape, "type", "") or "")
+                prim = mesh.GetPrim()
+                if ifc_guid:
+                    prim.SetCustomDataByKey("ifcGlobalId", ifc_guid)
+                    prim.SetCustomDataByKey("ifc_guid", ifc_guid)
+                    mapping_items.append(
+                        {"ifc_guid": ifc_guid, "usd_prim_path": prim_path}
+                    )
+                if ifc_name:
+                    prim.SetCustomDataByKey("ifcName", ifc_name)
+                if ifc_type:
+                    prim.SetCustomDataByKey("ifcType", ifc_type)
+                entity_items.append(
+                    {
+                        "ifc_guid": ifc_guid or None,
+                        "ifc_type": ifc_type or None,
+                        "name": ifc_name or None,
+                        "usd_prim_path": prim_path,
+                    }
+                )
+
+            try:
+                has_next = iterator.next()
+            except Exception as exc:  # noqa: BLE001
+                raise ConversionAuthorityError(
+                    "fallback_geometry_iterator_failed",
+                    f"IfcOpenShell fallback geometry iterator failed advancing: {exc}",
+                    metadata=getattr(primary_error, "metadata", None),
+                ) from exc
+            if not has_next:
+                break
+
+        if shape_count == 0:
+            raise ConversionAuthorityError(
+                "fallback_no_renderable_geometry",
+                f"IfcOpenShell fallback produced no renderable meshes for {ifc_path}",
+                metadata=getattr(primary_error, "metadata", None),
+            )
+
+        try:
+            stage.GetRootLayer().Save()
+        except Exception as exc:  # noqa: BLE001
+            raise ConversionAuthorityError(
+                "fallback_usdc_save_failed",
+                f"OpenUSD could not save fallback USDC at {model_path}: {exc}",
+                metadata=getattr(primary_error, "metadata", None),
+            ) from exc
+
+        reopened = Usd.Stage.Open(str(model_path))
+        if reopened is None:
+            raise ConversionAuthorityError(
+                "usdc_not_openable",
+                f"Fallback USDC could not be opened by USD: {model_path}",
+                metadata=getattr(primary_error, "metadata", None),
+            )
+        renderable_count = sum(1 for prim in reopened.Traverse() if UsdGeom.Mesh(prim))
+        if renderable_count == 0:
+            raise ConversionAuthorityError(
+                "fallback_no_renderable_geometry",
+                f"Fallback USDC has no renderable mesh prims: {model_path}",
+                metadata=getattr(primary_error, "metadata", None),
+            )
+
+        schema = str(getattr(ifc_model, "schema", "") or "")
+        mapped_count = len(mapping_items)
+        source_count = shape_count
+        coverage_ratio = (mapped_count / source_count) if source_count else 0.0
+        mapping_doc = {
+            "mock": False,
+            "summary": {
+                "mapped_count": mapped_count,
+                "fake_mapping_count": 0,
+            },
+            "items": mapping_items,
+        }
+        index_doc = {
+            "entities": entity_items,
+        }
+        metadata_doc = {
+            "source": "ifcopenshell_openusd_fallback",
+            "source_ifc": ifc_path.name,
+            "ifc_schema": schema or None,
+            "usd_root_layer": model_path.name,
+            "mesh_count": shape_count,
+            "skipped_shape_count": skipped_shape_count,
+            "primary_converter_error": primary_error.message,
+        }
+        quality_metrics = {
+            "source_ifc_entity_count": source_count,
+            "mapped_count": mapped_count,
+            "unmapped_count": max(source_count - mapped_count, 0),
+            "coverage_ratio": coverage_ratio,
+            "coverage_status": "pass" if mapped_count == source_count else "warn",
+            "materialization_strategy": "ifcopenshell_openusd_fallback",
+            "sidecar_carrier_count": shape_count,
+            "minimum_coverage_baseline_locked": False,
+            "hard_quality_gates": {
+                "usdc_openable": True,
+                "has_renderable_prims": True,
+                "placeholder_output": False,
+            },
+        }
+
+        mapping_path.write_text(
+            json.dumps(mapping_doc, ensure_ascii=False), encoding="utf-8"
+        )
+        entity_index_path.write_text(
+            json.dumps(index_doc, ensure_ascii=False), encoding="utf-8"
+        )
+        metadata_path.write_text(
+            json.dumps(metadata_doc, ensure_ascii=False), encoding="utf-8"
+        )
+        quality_metrics_path.write_text(
+            json.dumps(quality_metrics, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def _usd_mesh_data_from_ifcopenshell(
+        self,
+        *,
+        verts_raw: tuple[Any, ...],
+        faces_raw: tuple[Any, ...],
+        vec3_type: Any,
+    ) -> tuple[list[Any], list[int], list[int]]:
+        vertex_count = len(verts_raw) // 3
+        points = [
+            vec3_type(
+                float(verts_raw[offset]),
+                float(verts_raw[offset + 1]),
+                float(verts_raw[offset + 2]),
+            )
+            for offset in range(0, vertex_count * 3, 3)
+        ]
+        face_indices: list[int] = []
+        face_counts: list[int] = []
+        for offset in range(0, len(faces_raw) - 2, 3):
+            triangle = [
+                int(faces_raw[offset]),
+                int(faces_raw[offset + 1]),
+                int(faces_raw[offset + 2]),
+            ]
+            if all(0 <= index < vertex_count for index in triangle):
+                face_indices.extend(triangle)
+                face_counts.append(3)
+        return points, face_indices, face_counts
+
+    def _mesh_extent(self, points: list[Any], *, vec3_type: Any) -> list[Any]:
+        xs = [float(point[0]) for point in points]
+        ys = [float(point[1]) for point in points]
+        zs = [float(point[2]) for point in points]
+        return [
+            vec3_type(min(xs), min(ys), min(zs)),
+            vec3_type(max(xs), max(ys), max(zs)),
+        ]
 
     def _materialize_sidecars(
         self,

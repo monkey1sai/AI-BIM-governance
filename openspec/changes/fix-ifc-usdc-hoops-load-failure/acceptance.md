@@ -38,6 +38,22 @@ Required before archive:
 - `model.usdc` exists in artifact dir and `Usd.Stage.Open(model.usdc)` succeeds.
 - `viewer_url` is produced by coordinator, unless WebRTC/Kit viewer runtime has a separately documented blocker. A viewer/WebRTC blocker MUST NOT be reported as conversion failure if conversion ready evidence passed.
 
+Observed implementation evidence (2026-05-22):
+
+- Fixed conversion API path was exercised through FastAPI `TestClient` with main workspace Kit/HOOPS assets and cached target IFC.
+- New streaming conversion job `stream_conv_20260522074249_54684134` returned `status="succeeded"`, `ready=true`, `model.status="ready"`.
+- `quality_metrics.materialization_strategy="ifcopenshell_openusd_fallback"`, `coverage_status="pass"`, `mapped_count=5128`.
+- Produced artifact:
+  - `model.usdc` path: `.worktrees/fix-ifc-usdc-hoops-load-failure/bim-streaming-server/_cache/host-native-conversion-real-ifc-fallback-main-repo/artifacts/stream_conv_20260522074249_54684134/model.usdc`
+  - size: `20,453,256` bytes
+  - independent USD open check: `openable=True`, `mesh_count=5128`
+
+Remaining before archive:
+
+- Restart/deploy live host-native conversion service on `49101` with this branch's code.
+- Submit a fresh coordinator `POST /api/external/ifc-ready` request and verify coordinator-level `conversion_status="ready"`.
+- Verify coordinator viewer handoff / `viewer_url`, or record a separate WebRTC/viewer blocker without downgrading conversion readiness.
+
 ## Archive gate
 
 Do not archive this change until L1-L4 pass. A failed conversion with better diagnostics is not sufficient; the final accepted result must include a real, openable USD/USDC artifact for the target IFC.

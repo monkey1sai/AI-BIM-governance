@@ -5,7 +5,7 @@
 - [x] 0.1 Clean unrelated GitNexus statistic diffs from main.
 - [x] 0.2 Create isolated worktree/branch `codex/openspec/fix-ifc-usdc-hoops-load-failure`.
 - [x] 0.3 Create OpenSpec scaffold and artifacts.
-- [ ] 0.4 Commit OpenSpec scaffold before implementation.
+- [x] 0.4 Commit OpenSpec scaffold before implementation.
 
 ## 1. Root-cause evidence
 
@@ -16,48 +16,48 @@
 
 ## 2. GitNexus pre-impact
 
-- [ ] 2.1 Run impact analysis for `Ifc2UsdcPowershellConverterAdapter.convert`.
-- [ ] 2.2 Run impact analysis for `_run_powershell_conversion`.
-- [ ] 2.3 Run impact analysis for any new fallback helper before editing.
-- [ ] 2.4 If any impact is HIGH/CRITICAL, stop and report before editing.
+- [x] 2.1 Run impact analysis for `Ifc2UsdcPowershellConverterAdapter.convert`.
+- [x] 2.2 Run impact analysis for `_run_powershell_conversion`.
+- [x] 2.3 Run impact analysis for fallback scope / adapter class.
+- [x] 2.4 Impact remained LOW; no HIGH/CRITICAL stop condition.
 
 ## 3. Failing tests first
 
-- [ ] 3.1 Add unit test where primary converter failure containing `A3D_LOAD_CANNOT_LOAD_MODEL` triggers fallback.
-- [ ] 3.2 Add unit test where fallback writes `model.usdc`, `element_mapping.json`, `entity_index.json`, `metadata.json`, and real quality metrics.
-- [ ] 3.3 Add unit test where missing IfcOpenShell or OpenUSD fallback prerequisite remains non-ready and does not publish ready.
-- [ ] 3.4 Add test guard that fallback output with no renderable mesh or placeholder marker is rejected.
+- [x] 3.1 Add unit test where primary converter failure containing `A3D_LOAD_CANNOT_LOAD_MODEL` triggers fallback.
+- [x] 3.2 Add unit test where fallback writes `model.usdc`, `element_mapping.json`, `entity_index.json`, `metadata.json`, and real quality metrics.
+- [x] 3.3 Add unit test where missing IfcOpenShell or OpenUSD fallback prerequisite remains non-ready and does not publish ready.
+- [x] 3.4 Add test guard that fallback output with no renderable mesh or placeholder marker is rejected.
 
 ## 4. Implement fallback converter
 
-- [ ] 4.1 Add scoped fallback helper in `bim-streaming-server` messaging converter area.
-- [ ] 4.2 Lazy import `ifcopenshell`, `ifcopenshell.geom`, and `pxr` only inside fallback path.
-- [ ] 4.3 Convert IfcOpenShell geometry shapes into USD mesh prims under a stable root prim.
-- [ ] 4.4 Preserve IFC GUID/name/class where available in mapping and metadata.
-- [ ] 4.5 Write required sidecars and quality metrics.
-- [ ] 4.6 Validate generated `model.usdc` with USD stage openability and mesh count.
-- [ ] 4.7 Wire fallback into `Ifc2UsdcPowershellConverterAdapter.convert` only for primary import failure.
+- [x] 4.1 Add scoped fallback helper in `bim-streaming-server` messaging converter area.
+- [x] 4.2 Lazy import `ifcopenshell`, `ifcopenshell.geom`, and `pxr` only inside fallback path.
+- [x] 4.3 Convert IfcOpenShell geometry shapes into USD mesh prims under a stable root prim.
+- [x] 4.4 Preserve IFC GUID/name/class where available in mapping and metadata.
+- [x] 4.5 Write required sidecars and quality metrics.
+- [x] 4.6 Validate generated `model.usdc` with USD stage openability and mesh count.
+- [x] 4.7 Wire fallback into `Ifc2UsdcPowershellConverterAdapter.convert` only for primary import failure.
 
 ## 5. Local verification
 
-- [ ] 5.1 `cd bim-streaming-server && python -m pytest tests -q`
-- [ ] 5.2 `openspec validate fix-ifc-usdc-hoops-load-failure --strict`
-- [ ] 5.3 `openspec validate --specs --strict`
-- [ ] 5.4 `gitnexus detect-changes` or MCP equivalent for changed scope.
+- [x] 5.1 `cd bim-streaming-server && python -m pytest tests -q`
+- [x] 5.2 `openspec validate fix-ifc-usdc-hoops-load-failure --strict`
+- [x] 5.3 `openspec validate --specs --strict`
+- [x] 5.4 GitNexus impact remained LOW; MCP detect-changes cannot see this `.worktrees/` checkout, so `git diff --stat` was used for changed-scope confirmation before commit.
 
 ## 6. Real runtime verification
 
-- [ ] 6.1 Restart host-native conversion service so it reads new code.
-- [ ] 6.2 Submit a new B-scheme IFC-ready request with fresh correlation/idempotency.
-- [ ] 6.3 Poll coordinator until terminal state.
-- [ ] 6.4 Verify `conversion_status="ready"` for the new `ifc_ready_job_id`.
-- [ ] 6.5 Verify streaming result has ready `model_usdc` artifact and fallback quality metrics.
-- [ ] 6.6 Verify produced `model.usdc` opens with USD runtime.
+- [x] 6.1 Run the fixed conversion API path via FastAPI `TestClient` using main Kit/HOOPS assets and cached target IFC.
+- [x] 6.2 Verify API result `stream_conv_20260522074249_54684134` has `ready=true`, `model.status="ready"`, and fallback quality metrics.
+- [x] 6.3 Verify produced `model.usdc` opens with USD runtime and contains 5128 mesh prims.
+- [ ] 6.4 Restart live host-native conversion service on `49101` after this branch is merged/deployed.
+- [ ] 6.5 Submit a new coordinator `POST /api/external/ifc-ready` request with fresh correlation/idempotency.
+- [ ] 6.6 Poll coordinator until terminal state and verify `conversion_status="ready"` for the new `ifc_ready_job_id`.
 - [ ] 6.7 Verify coordinator produces `viewer_url`, or document a separate WebRTC/viewer blocker without treating conversion as failed.
 
 ## 7. Commit / PR / archive
 
-- [ ] 7.1 Commit implementation and OpenSpec artifacts.
+- [x] 7.1 Commit implementation and OpenSpec artifacts.
 - [ ] 7.2 Push branch and open PR with Traditional Chinese title/body.
 - [ ] 7.3 Wait for CI/review and merge.
 - [ ] 7.4 Archive only after real runtime conversion success evidence exists.
