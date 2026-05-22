@@ -462,3 +462,111 @@ def test_adapter_resolve_existing_edge_local_url_still_works(tmp_path: Path):
     resolved = adapter._resolve_local_ifc(event)
 
     assert resolved == ifc.resolve()
+
+
+# --- streaming-server-capture-kit-conversion-logs:ConversionAuthorityError.metadata
+#     propagates through _fail_job into result.error so callers can read Kit
+#     subprocess stdout/stderr log paths without re-running the conversion.
+
+
+class FakeConverterWithLogPaths:
+    """Fixture converter that raises with kit_stdout_log / kit_stderr_log metadata."""
+
+    def __init__(self, stdout_log: str, stderr_log: str):
+        self._stdout_log = stdout_log
+        self._stderr_log = stderr_log
+
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        raise ConversionAuthorityError(
+            "converter_failed",
+            "convert-ifc-to-usdc.ps1 exited 1: ...stderr tail...",
+            metadata={
+                "kit_stdout_log": self._stdout_log,
+                "kit_stderr_log": self._stderr_log,
+            },
+        )
+
+
+def test_failed_conversion_surfaces_kit_log_paths_in_result_error(tmp_path: Path):
+    stdout_log = str(tmp_path / "artifacts" / "demo" / "kit-stdout.log")
+    stderr_log = str(tmp_path / "artifacts" / "demo" / "kit-stderr.log")
+    client = _client(
+        tmp_path,
+        converter=FakeConverterWithLogPaths(stdout_log=stdout_log, stderr_log=stderr_log),
+    )
+
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = create.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    assert result["status"] == "failed"
+    assert result["ready"] is False
+    error = result["error"]
+    assert error["code"] == "converter_failed"
+    assert error["kit_stdout_log"] == stdout_log
+    assert error["kit_stderr_log"] == stderr_log
+
+
+def test_failed_conversion_without_metadata_still_works(tmp_path: Path):
+    """Regression guard:既有 ConversionAuthorityError 不帶 metadata 不應破。"""
+    client = _client(tmp_path, converter=FakeFailedConverter())
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = create.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    assert result["status"] == "failed"
+    error = result["error"]
+    assert error["code"] == "converter_failed"
+    # 沒 metadata 時不該硬加 keys
+    assert "kit_stdout_log" not in error
+    assert "kit_stderr_log" not in error
+
+
+def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_path: Path, monkeypatch):
+    """Review Important #2:lock in ps1 throw shape ↔ Python regex 契約。
+    monkeypatch subprocess.run 返回 ps1 真實 throw heredoc 形狀,assert
+    `_run_powershell_conversion` 拋出 ConversionAuthorityError 且 metadata 含兩個 path。
+    包含 Windows path 內的冒號(`C:\\...`)與空格,測 regex 不會被 drive-letter colon 截斷。
+    """
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root)
+
+    # 真實 ps1 throw shape(對齊 convert-ifc-to-usdc.ps1::Invoke-KitConversion line ~360 throw heredoc)
+    stdout_log_path = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\host-native-conversion\artifacts\stream_conv_demo\kit-stdout.log"
+    stderr_log_path = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\host-native-conversion\artifacts\stream_conv_demo\kit-stderr.log"
+    ps1_throw = (
+        "Kit CAD conversion completed but output was not created: C:\\foo\\model.usdc\n"
+        f"  kit_stdout_log: {stdout_log_path}\n"
+        f"  kit_stderr_log: {stderr_log_path}\n"
+        "  ---- stderr tail (last 100 lines) ----\n"
+        "<fake stderr lines>\n"
+        "  ---- stdout tail (last 50 lines) ----\n"
+        "<fake stdout lines>\n"
+    )
+
+    class _FakeCompleted:
+        returncode = 1
+        stderr = ps1_throw
+        stdout = ""
+
+    def _fake_run(*args, **kwargs):
+        return _FakeCompleted()
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_failed"
+    assert raised.metadata.get("kit_stdout_log") == stdout_log_path
+    assert raised.metadata.get("kit_stderr_log") == stderr_log_path
+    # spec scenario 1:message MUST contain the tail header substring + log paths
+    assert "kit_stdout_log:" in raised.message
+    assert "kit_stderr_log:" in raised.message
+    assert "---- stderr tail (last 100 lines) ----" in raised.message

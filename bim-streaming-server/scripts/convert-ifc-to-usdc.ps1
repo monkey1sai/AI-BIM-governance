@@ -285,9 +285,23 @@ function Invoke-KitConversion {
     Write-Host "[ifc-convert] $($Item.IfcPath)"
     Write-Host "[ifc-convert] -> $($Item.OutputPath)"
 
+    # streaming-server-capture-kit-conversion-logs §2:Kit subprocess stdout/stderr
+    # 用 async redirect 寫到 artifact dir 內 file,失敗 throw 時把 tail 帶進 message
+    # 並 surface log file path,讓 operator 不需重跑就能 debug Kit silent failure。
+    $artifactDir = Split-Path -Parent $Item.OutputPath
+    if (-not (Test-Path -LiteralPath $artifactDir)) {
+        New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+    }
+    $stdoutLog = Join-Path $artifactDir "kit-stdout.log"
+    $stderrLog = Join-Path $artifactDir "kit-stderr.log"
+    Write-Host "[ifc-convert] kit_stdout_log: $stdoutLog"
+    Write-Host "[ifc-convert] kit_stderr_log: $stderrLog"
+
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new($kitExe)
     $startInfo.UseShellExecute = $false
     $startInfo.WorkingDirectory = $RepoRoot
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     foreach ($arg in $kitArgs) {
         $startInfo.ArgumentList.Add($arg) | Out-Null
     }
@@ -297,23 +311,70 @@ function Invoke-KitConversion {
         throw "Kit CAD conversion process did not start for $($Item.IfcPath)"
     }
 
+    # AutoFlush 確保 timeout / crash 時 partial log 仍落地。
+    $stdoutWriter = [System.IO.StreamWriter]::new($stdoutLog, $false, [System.Text.Encoding]::UTF8)
+    $stderrWriter = [System.IO.StreamWriter]::new($stderrLog, $false, [System.Text.Encoding]::UTF8)
+    $stdoutWriter.AutoFlush = $true
+    $stderrWriter.AutoFlush = $true
+
+    # async file redirect — avoids classic sync ReadToEnd + WaitForExit deadlock
+    # when Kit subprocess output volume fills the OS pipe buffer (large IFC 可達 MB).
+    $stdoutEvent = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived `
+        -MessageData $stdoutWriter -Action {
+            if ($EventArgs.Data) { $Event.MessageData.WriteLine($EventArgs.Data) }
+        }
+    $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived `
+        -MessageData $stderrWriter -Action {
+            if ($EventArgs.Data) { $Event.MessageData.WriteLine($EventArgs.Data) }
+        }
+    $process.BeginOutputReadLine()
+    $process.BeginErrorReadLine()
+
     try {
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            throw "Kit CAD conversion timed out after $TimeoutSeconds seconds for $($Item.IfcPath)"
+            # fall through 到 finally drain 後,再 throw timeout
+            $timedOut = $true
+        } else {
+            $timedOut = $false
         }
-
-        $exitCode = $process.ExitCode
+        $exitCode = if ($timedOut) { -1 } else { $process.ExitCode }
     }
     finally {
+        # 二次 WaitForExit 確保所有 async events drain(per MS .NET docs)
+        try { $process.WaitForExit() } catch { }
+        Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
+        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
+        $stdoutWriter.Close()
+        $stderrWriter.Close()
         $process.Dispose()
     }
 
-    if ($exitCode -ne 0) {
-        throw "Kit CAD conversion failed with exit code $exitCode for $($Item.IfcPath)"
-    }
-    if (-not (Test-Path -LiteralPath $Item.OutputPath -PathType Leaf)) {
-        throw "Kit CAD conversion completed but output was not created: $($Item.OutputPath)"
+    $outputCreated = Test-Path -LiteralPath $Item.OutputPath -PathType Leaf
+
+    if ($timedOut -or $exitCode -ne 0 -or -not $outputCreated) {
+        $stderrTail = if (Test-Path -LiteralPath $stderrLog) {
+            (Get-Content -LiteralPath $stderrLog -Tail 100 -ErrorAction SilentlyContinue) -join "`n"
+        } else { "(no stderr log)" }
+        $stdoutTail = if (Test-Path -LiteralPath $stdoutLog) {
+            (Get-Content -LiteralPath $stdoutLog -Tail 50 -ErrorAction SilentlyContinue) -join "`n"
+        } else { "(no stdout log)" }
+        $reason = if ($timedOut) {
+            "Kit CAD conversion timed out after $TimeoutSeconds seconds for $($Item.IfcPath)"
+        } elseif ($exitCode -ne 0) {
+            "Kit CAD conversion failed with exit code $exitCode for $($Item.IfcPath)"
+        } else {
+            "Kit CAD conversion completed but output was not created: $($Item.OutputPath)"
+        }
+        throw @"
+$reason
+  kit_stdout_log: $stdoutLog
+  kit_stderr_log: $stderrLog
+  ---- stderr tail (last 100 lines) ----
+$stderrTail
+  ---- stdout tail (last 50 lines) ----
+$stdoutTail
+"@
     }
 }
 

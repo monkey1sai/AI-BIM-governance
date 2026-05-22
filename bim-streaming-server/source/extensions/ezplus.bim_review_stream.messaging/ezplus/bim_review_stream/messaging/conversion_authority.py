@@ -19,10 +19,14 @@ CONVERSION_STAGES = ("queued", "running_headless_converter", "done", "conversion
 
 
 class ConversionAuthorityError(RuntimeError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, metadata: dict | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        # streaming-server-capture-kit-conversion-logs:optional diagnostic context
+        # (e.g. kit_stdout_log / kit_stderr_log file paths from PowerShell wrapper),
+        # surfaced through host_native_conversion_service into result.error dict.
+        self.metadata: dict = metadata or {}
 
 
 class ConversionRequestError(ValueError):
@@ -285,7 +289,13 @@ class StreamingConversionStore:
             )
             result = self._build_success_result(job, converter_result)
         except ConversionAuthorityError as exc:
-            return self._fail_job(job, code=exc.code, message=exc.message, stage="conversion_failed")
+            return self._fail_job(
+                job,
+                code=exc.code,
+                message=exc.message,
+                stage="conversion_failed",
+                metadata=exc.metadata,
+            )
         except Exception as exc:
             return self._fail_job(job, code=exc.__class__.__name__, message=str(exc), stage="conversion_failed")
 
@@ -462,7 +472,28 @@ class StreamingConversionStore:
             "result": result,
         }
 
-    def _fail_job(self, job: Mapping[str, Any], *, code: str, message: str, stage: str) -> dict[str, Any]:
+    def _fail_job(
+        self,
+        job: Mapping[str, Any],
+        *,
+        code: str,
+        message: str,
+        stage: str,
+        metadata: dict | None = None,
+    ) -> dict[str, Any]:
+        # streaming-server-capture-kit-conversion-logs §3:把
+        # ConversionAuthorityError.metadata 的 diagnostic keys(kit_stdout_log /
+        # kit_stderr_log 等)merge 進 error dict,讓 GET /result caller 直接拿到
+        # host fs log file path 去 tail。callback outbox 仍 metadata-only,log
+        # 本身不會被 forward(per conversion-webhook-lifecycle).
+        error_dict: dict[str, Any] = {
+            "code": code,
+            "message": message,
+        }
+        if metadata:
+            for key, value in metadata.items():
+                if key not in error_dict:
+                    error_dict[key] = value
         result = {
             "conversion_job_id": job["conversion_job_id"],
             "authority": "bim-streaming-server",
@@ -483,10 +514,7 @@ class StreamingConversionStore:
                 "source_rvt_artifact_id": job["source_rvt_artifact_id"],
                 "ifc_artifact_id": job["ifc_artifact"]["artifact_id"],
             },
-            "error": {
-                "code": code,
-                "message": message,
-            },
+            "error": error_dict,
         }
         callback_payload = self._callback_payload(job, result)
         callback_url = job.get("callback_url")
