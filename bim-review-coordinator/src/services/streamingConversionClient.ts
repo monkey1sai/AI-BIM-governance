@@ -40,6 +40,44 @@ function ensureTrailingSlash(value: string): string {
 }
 
 /**
+ * coordinator-auto-poll-streaming-conversion §4:terminal detection 抽 module-level
+ * helper,讓 dispatch 端 auto poller 與 internal ingest endpoint 共用同一條判定,
+ * 避免雙處硬編字串走偏。
+ */
+export function isTerminalConversionResult(result: StreamingConversionResult): {
+  terminal: boolean;
+  failed: boolean;
+  ready: boolean;
+} {
+  const failed =
+    result.model_status === "failed" ||
+    result.status === "failed" ||
+    result.status === "cancelled";
+  const ready =
+    !failed &&
+    (result.ready === true ||
+      result.model_status === "ready" ||
+      result.status === "succeeded" ||
+      result.status === "succeeded_with_warnings");
+  return { terminal: failed || ready, failed, ready };
+}
+
+export interface PollerHandle {
+  cancel: () => void;
+}
+
+export interface PollConversionResultOptions {
+  intervalMs: number;
+  maxAttempts: number;
+  /** test 注入;預設用 client.fetchConversionResult。 */
+  fetchImpl?: (conversionJobId: string) => Promise<StreamingConversionResult>;
+  /** terminal 時(含 poll_timeout)呼叫。實作端應在此 chain 既有 ingest helper。 */
+  onTerminal: (result: StreamingConversionResult) => void | Promise<void>;
+  /** fetch 失敗時觀察(預設 swallow,下次再試);不影響 schedule 繼續。 */
+  onError?: (error: unknown, attempt: number) => void;
+}
+
+/**
  * external（B-scheme）→ internal streaming `ifc_ready_event`。
  * streaming 的 conversion_authority 仍以 `model_version_id` / `ifc_artifact`
  * 為輸入；coordinator 在邊界做轉換，外部契約維持 B-scheme。
@@ -152,6 +190,76 @@ export class StreamingConversionClient {
    * `GET /api/conversions/{id}/result`，再餵進既有 internal ingestion + 雲端
    * metadata-only callback outbox）。只抽 metadata refs，不取大型檔案本體。
    */
+  /**
+   * coordinator-auto-poll-streaming-conversion §3:dispatch 成功後自動啟動的
+   * in-process polling chain。setTimeout 序列(非 setInterval,避免 overlap)。
+   * 終態時 caller 透過 `onTerminal` 接手既有 ingest 路徑;達 maxAttempts 仍 non-terminal
+   * 視為 `poll_timeout` failed-equivalent(轉成 fake failed result 餵 onTerminal,
+   * 讓 ingest helper 走 failed callback 路徑,維持單一 ingest contract)。
+   * 回傳 `cancel()` 清 pending timer(已 in-flight 的 fetch 不取消,自然 settle)。
+   */
+  pollConversionResult(
+    conversionJobId: string,
+    options: PollConversionResultOptions,
+  ): PollerHandle {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    const fetchOne =
+      options.fetchImpl ?? ((id: string) => this.fetchConversionResult(id));
+
+    const tick = async (): Promise<void> => {
+      if (cancelled) return;
+      attempts += 1;
+      let result: StreamingConversionResult | null = null;
+      try {
+        result = await fetchOne(conversionJobId);
+      } catch (err) {
+        options.onError?.(err, attempts);
+      }
+      if (cancelled) return;
+      if (result) {
+        const { terminal } = isTerminalConversionResult(result);
+        if (terminal) {
+          await options.onTerminal(result);
+          return;
+        }
+      }
+      if (attempts >= options.maxAttempts) {
+        const fakeTimeoutResult: StreamingConversionResult = {
+          conversion_job_id: conversionJobId,
+          status: "failed",
+          ready: false,
+          model_status: "failed",
+          usdc_ref: null,
+          element_mapping_ref: null,
+          manifest_ref: null,
+          reason: "poll_timeout",
+          raw: { reason: "poll_timeout", attempts },
+        };
+        await options.onTerminal(fakeTimeoutResult);
+        return;
+      }
+      timer = setTimeout(() => {
+        void tick();
+      }, options.intervalMs);
+    };
+
+    timer = setTimeout(() => {
+      void tick();
+    }, options.intervalMs);
+
+    return {
+      cancel: () => {
+        cancelled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      },
+    };
+  }
+
   async fetchConversionResult(conversionJobId: string): Promise<StreamingConversionResult> {
     const url = new URL(
       `api/conversions/${encodeURIComponent(conversionJobId)}/result`,

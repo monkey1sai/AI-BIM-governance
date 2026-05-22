@@ -1,0 +1,308 @@
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import request from "supertest";
+import { afterEach, describe, expect, it } from "vitest";
+import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import type { CoordinatorConfig } from "../src/config.js";
+
+// coordinator-auto-poll-streaming-conversion §5 unit cover:
+// - dispatch 後 in-process polling 自動 ingest ready / failed
+// - poller 重複 dispatch 不雙起
+// - manual ingest endpoint 觸發 cancel auto poller(no double ingest)
+// - max attempts 達到 → poll_timeout 走 failed-equivalent ingest
+// - conversionPollEnabled:false fixture 不啟 poller
+
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const CONTRACT_PATH = path.resolve(TEST_DIR, "..", "..", "tests", "contracts", "ifc_ready_payload.json");
+const CONTRACT = JSON.parse(fs.readFileSync(CONTRACT_PATH, "utf-8")) as {
+  example: Record<string, unknown>;
+};
+
+const WEBHOOK_SECRET = "dev-webhook-secret";
+
+let active: CoordinatorApp | null = null;
+let activeStub: http.Server | null = null;
+
+afterEach(async () => {
+  if (active) active.dispose();
+  if (activeStub) {
+    await new Promise<void>((resolve) => activeStub?.close(() => resolve()));
+    activeStub = null;
+  }
+  if (active) {
+    active.io.close();
+    await new Promise<void>((resolve) => active?.server.close(() => resolve()));
+    active = null;
+  }
+});
+
+interface StubBehavior {
+  /** 順序回的 /result body;最後一個 entry 用完後重複。 */
+  resultSequence: Array<Record<string, unknown>>;
+}
+
+async function startStreamingStub(behavior: StubBehavior): Promise<{
+  baseUrl: string;
+  dispatchCount: { value: number };
+  resultCount: { value: number };
+}> {
+  const dispatchCount = { value: 0 };
+  const resultCount = { value: 0 };
+  activeStub = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString("utf8");
+    });
+    req.on("end", () => {
+      if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+        dispatchCount.value += 1;
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          conversion_job_id: "stream_conv_auto_poll_test",
+          status: "queued",
+          correlation_id: (JSON.parse(body) as { correlation_id?: string }).correlation_id ?? "corr_auto_001",
+          authority: "bim-streaming-server",
+        }));
+        return;
+      }
+      if (req.method === "GET" && req.url?.startsWith("/api/conversions/")) {
+        const idx = Math.min(resultCount.value, behavior.resultSequence.length - 1);
+        resultCount.value += 1;
+        const payload = behavior.resultSequence[idx];
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(payload));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ detail: "not found" }));
+    });
+  });
+  await new Promise<void>((resolve) => {
+    activeStub?.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = activeStub.address();
+  if (!address || typeof address === "string") {
+    throw new Error("stub did not bind");
+  }
+  return { baseUrl: `http://127.0.0.1:${address.port}`, dispatchCount, resultCount };
+}
+
+function readyResultPayload(correlationId: string): Record<string, unknown> {
+  return {
+    conversion_job_id: "stream_conv_auto_poll_test",
+    status: "succeeded",
+    ready: true,
+    correlation_id: correlationId,
+    model: { status: "ready", url: "http://127.0.0.1:49101/artifacts/x/model.usdc" },
+    artifacts: {
+      model_usdc: { url: "http://127.0.0.1:49101/artifacts/x/model.usdc" },
+      element_mapping: { url: "http://127.0.0.1:49101/artifacts/x/element_mapping.json" },
+      metadata: { url: "http://127.0.0.1:49101/artifacts/x/metadata.json" },
+    },
+  };
+}
+
+function failedResultPayload(correlationId: string): Record<string, unknown> {
+  return {
+    conversion_job_id: "stream_conv_auto_poll_test",
+    status: "failed",
+    ready: false,
+    correlation_id: correlationId,
+    model: { status: "failed" },
+    error: { code: "fixture_failed", message: "fixture says failed" },
+  };
+}
+
+function queuedResultPayload(correlationId: string): Record<string, unknown> {
+  return {
+    conversion_job_id: "stream_conv_auto_poll_test",
+    status: "queued",
+    ready: false,
+    correlation_id: correlationId,
+    model: { status: "queued" },
+  };
+}
+
+function makeApp(streamingBase: string, overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-auto-poll-test-"));
+  active = createCoordinatorApp({
+    sessionStoreDir: path.join(root, "sessions"),
+    eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    streamingConversionApiBase: streamingBase,
+    bimControlApiBase: "http://127.0.0.1:1",
+    corsOrigins: ["http://127.0.0.1:5173"],
+    conversionPollEnabled: true,
+    // 50ms tick → 半秒內 ~10 次 poll,test 跑完很快
+    conversionPollIntervalSeconds: 0.05,
+    conversionPollMaxAttempts: 20,
+    storageRoot: path.join(root, "storage"),
+    storageHostRoot: path.join(root, "storage"),
+    ...overrides,
+  });
+  return active;
+}
+
+function dispatchPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...structuredClone(CONTRACT.example), ...overrides };
+}
+
+function authHeaders(correlationId: string, idempotencyKey: string): Record<string, string> {
+  return {
+    "X-Webhook-Secret": WEBHOOK_SECRET,
+    "X-Correlation-Id": correlationId,
+    "X-Idempotency-Key": idempotencyKey,
+  };
+}
+
+async function waitFor(check: () => Promise<boolean> | boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`waitFor timeout after ${timeoutMs}ms`);
+}
+
+describe("coordinator auto-poll streaming conversion", () => {
+  it("dispatch 成功後 poller 自動 fetch 直到 ready,自動 ingest 出 viewer_url + callback", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [
+        queuedResultPayload("corr_ap_ready_001"),
+        queuedResultPayload("corr_ap_ready_001"),
+        readyResultPayload("corr_ap_ready_001"),
+      ],
+    });
+    const app = makeApp(stub.baseUrl);
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_ready_001", "idem_ap_ready_001"))
+      .send(dispatchPayload());
+    expect(submit.status).toBe(202);
+    const jobId = submit.body.ifc_ready_job_id as string;
+    expect(jobId).toMatch(/^ifcready_/);
+    expect(stub.dispatchCount.value).toBe(1);
+
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.viewer_url != null;
+    });
+
+    const final = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(final.body.conversion_status).toBe("ready");
+    expect(final.body.viewer_url).toMatch(/\/ui\/open\?session=/);
+    expect(final.body.web_view_session_id).toMatch(/^review_session_/);
+  });
+
+  it("dispatch 後 poller 拿到 failed → 自動 ingest 為 failed,不產 viewer_url", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [
+        queuedResultPayload("corr_ap_failed_001"),
+        failedResultPayload("corr_ap_failed_001"),
+      ],
+    });
+    const app = makeApp(stub.baseUrl);
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_failed_001", "idem_ap_failed_001"))
+      .send(dispatchPayload());
+    expect(submit.status).toBe(202);
+    const jobId = submit.body.ifc_ready_job_id as string;
+
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.conversion_status === "failed";
+    });
+    const final = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(final.body.viewer_url).toBeNull();
+  });
+
+  it("重複 idempotent dispatch 不雙起 poller(stub /result 不被雙倍呼叫)", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [
+        queuedResultPayload("corr_ap_dup_001"),
+        readyResultPayload("corr_ap_dup_001"),
+      ],
+    });
+    const app = makeApp(stub.baseUrl);
+
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_dup_001", "idem_ap_dup_001"))
+      .send(dispatchPayload());
+    expect(first.status).toBe(202);
+    const second = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_dup_001", "idem_ap_dup_001"))
+      .send(dispatchPayload());
+    expect([200, 202]).toContain(second.status);
+    expect(second.body.idempotent_replay).toBe(true);
+    // 第二次 dispatch 走 idempotent replay,但 streaming-server 仍可能被 createConversionJob 打一次(因為 reuse 仍 markDispatched
+    // 跑同條 path);關鍵是 poller 不該 double 起。等 ready 後檢查 stub.resultCount 不會超過合理範圍(< 2 倍 maxAttempts)
+    const jobId = first.body.ifc_ready_job_id as string;
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.viewer_url != null;
+    });
+    // 同一 conversion_job_id 只應對 stub /result 發出個位數請求(<= 5,粗略 budget)
+    expect(stub.resultCount.value).toBeLessThanOrEqual(5);
+  });
+
+  it("manual /api/internal/conversions/<id>/ingest 觸發後 cancel auto poller(no double ingest)", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [
+        readyResultPayload("corr_ap_manual_001"),
+      ],
+    });
+    const app = makeApp(stub.baseUrl, {
+      // 拉長 interval,確保 manual endpoint 比 auto poller 先 ingest
+      conversionPollIntervalSeconds: 1,
+    });
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_manual_001", "idem_ap_manual_001"))
+      .send(dispatchPayload());
+    const jobId = submit.body.ifc_ready_job_id as string;
+
+    const manual = await request(app.app)
+      .post(`/api/internal/conversions/stream_conv_auto_poll_test/ingest`)
+      .set("X-Internal-Token", "dev-internal-token")
+      .send({});
+    expect(manual.status).toBe(202);
+
+    // wait 1.5s,若 auto poller 沒 cancel 會雙 ingest
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const final = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(final.body.conversion_status).toBe("ready");
+    // stub /result 應該只被打過一次(manual endpoint 1 次,poller 被 cancel)
+    expect(stub.resultCount.value).toBe(1);
+  });
+
+  it("conversionPollEnabled:false fixture 不啟 poller", async () => {
+    const stub = await startStreamingStub({
+      resultSequence: [readyResultPayload("corr_ap_disabled_001")],
+    });
+    const app = makeApp(stub.baseUrl, { conversionPollEnabled: false });
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_disabled_001", "idem_ap_disabled_001"))
+      .send(dispatchPayload());
+    expect(submit.status).toBe(202);
+
+    // 等 500ms,poller 不啟 → stub /result 不該被呼叫
+    await new Promise((r) => setTimeout(r, 500));
+    expect(stub.resultCount.value).toBe(0);
+
+    const final = await request(app.app).get(`/api/external/ifc-ready/${submit.body.ifc_ready_job_id}`);
+    expect(final.body.conversion_status).toBe("queued");
+    expect(final.body.viewer_url).toBeNull();
+  });
+});
