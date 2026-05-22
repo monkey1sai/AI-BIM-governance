@@ -9,17 +9,20 @@ review controls without becoming a data authority or GPU runtime manager.
 ## Requirements
 ### Requirement: Viewer bootstraps from review request or session
 
-`web-viewer-sample` SHALL bootstrap the review page from a review request or review session identifier. It MUST query `_bim-control` or coordinator for session state and stream config instead of hard-coding BIM model paths or local static URLs.
+`web-viewer-sample` SHALL bootstrap from the coordinator review session and SHALL treat `stream_config.stage_composition.primary.url` (or `stream_config.model.url` when no primary composition exists) as the expected stage URL for the session. The viewer MUST accept the coordinator handoff query key `session` and legacy `sessionId`, and MUST NOT create a new default session when a valid `session` query value is present.
 
-#### Scenario: Viewer opens an active session
+#### Scenario: Coordinator handoff uses session query key
 
-- **WHEN** a user opens a review page with an active `session_id`
-- **THEN** the viewer retrieves session state, stream config, artifact bindings, and collaboration endpoint details
+- **WHEN** a browser opens `http://127.0.0.1:5173/?session=<review_session_id>`
+- **THEN** the viewer loads that coordinator session
+- **AND** it MUST NOT ignore the query key and auto-create an unrelated session
 
-#### Scenario: Viewer opens a review request
+#### Scenario: Expected stage URL is derived from stream config
 
-- **WHEN** a user opens a review page with a `review_request_id`
-- **THEN** the viewer resolves the bound session or shows the request lifecycle state
+- **WHEN** stream config returns a ready model and stage composition primary binding
+- **THEN** the viewer records the expected stage URL from the primary binding
+- **AND** `openStageRequest` targets that URL
+- **AND** the viewer displays the expected conversion job and model URL for operator inspection
 
 ### Requirement: Viewer displays artifact and lifecycle state
 
@@ -70,36 +73,39 @@ The review page SHALL support selecting or inspecting artifact groups bound to t
 
 ### Requirement: Viewer handles lifecycle transitions safely
 
-`web-viewer-sample` MUST respond to `created`, `active`, `closing`, `closed`, and `failed` lifecycle states without fabricating a ready stream. During `closing` or `closed`, it MUST stop new runtime commands that mutate the session.
+`web-viewer-sample` SHALL handle WebRTC stream lifecycle transitions explicitly. AppStreamer `onStop`, `onTerminate`, and stream failure callbacks MUST update visible state and provide a controlled reconnect or remount path instead of only logging to the console.
 
-#### Scenario: Session is closing
+#### Scenario: WebRTC stream disconnects
 
-- **WHEN** the session lifecycle changes to `closing`
-- **THEN** the viewer stops new join or mutating runtime actions and allows final state to be shown
+- **WHEN** AppStreamer stops or terminates after a stream was visible
+- **THEN** the viewer displays `webrtc_disconnected` with the last known video diagnostics and Kit endpoint
+- **AND** it offers a reconnect/remount action or records that a Kit runtime restart is required
 
-#### Scenario: Session has failed
+#### Scenario: Reload does not require killing Chrome
 
-- **WHEN** the session lifecycle changes to `failed`
-- **THEN** the viewer shows the error reference and does not retry destructive session creation automatically
+- **WHEN** the user reloads the viewer after a disconnect
+- **THEN** the viewer attempts to create a clean WebRTC client lifecycle for the same session
+- **AND** if reconnect cannot succeed because Kit remains busy or disconnected, the viewer shows a deterministic blocker instead of silently hanging
 
 ### Requirement: Viewer displays streaming-owned conversion and composition status
 
-`web-viewer-sample` SHALL consume session-first stream config that may include `conversion_authority="bim-streaming-server"`, `conversion_job_id`, model readiness, quality summary, and stage composition summary. The viewer SHALL display this data read-only and SHALL NOT recompute or persist conversion metrics.
+`web-viewer-sample` SHALL display streaming-owned conversion and composition status, and SHALL classify the viewer as ready only when Kit stage-load evidence matches the current session's expected stage URL. Metadata display alone is not sufficient.
 
-#### Scenario: Ready model with streaming conversion authority
+#### Scenario: Kit loaded URL matches expected conversion artifact
 
-- **WHEN** stream config reports `model.status="ready"` and `conversion_authority="bim-streaming-server"`
-- **THEN** viewer displays the conversion authority, job id, quality summary if present, and primary/secondary layer summary
+- **WHEN** the viewer receives `openedStageResult` or `loadingStateResponse` from Kit after sending `openStageRequest`
+- **THEN** it compares the Kit-reported URL with the expected stage URL
+- **AND** it marks the viewer stage as ready only when the URL matches or when Kit echoes an accepted cached-path representation tied to the same requested URL
 
-#### Scenario: Model still converting
+#### Scenario: Kit reports stale demo stage
 
-- **WHEN** stream config reports `model.status="converting"`
-- **THEN** viewer displays a degraded/pending state
-- **AND** it MUST NOT send `openStageRequest` as if the model were ready unless user explicitly uses a debug/manual override
+- **WHEN** Kit reports a loaded stage URL such as `bim-models/許良宇圖書館建築_2026.usdc` while the expected stage URL is the current conversion job artifact
+- **THEN** the viewer displays a `stale_stage_or_mismatch` blocker
+- **AND** it MUST NOT claim that the current IFC-ready job has been visually loaded
 
-#### Scenario: Viewer does not own conversion
+#### Scenario: Stage load is not proven
 
-- **WHEN** viewer fetches conversion result in dev mode for display
-- **THEN** the fetch is read-only
-- **AND** production build MUST NOT rely on viewer-side fallback to establish conversion readiness
+- **WHEN** the viewer displays a ready conversion URL but no matching DataChannel or loading-state evidence has been observed
+- **THEN** it displays a pending or unproven stage-load state
+- **AND** Chrome E2E evidence MUST classify single-Kit render as non-passed
 

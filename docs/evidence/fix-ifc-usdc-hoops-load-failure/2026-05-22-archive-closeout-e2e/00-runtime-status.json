@@ -1,0 +1,131 @@
+{
+  "service": {
+    "status": "ok",
+    "name": "bim-review-coordinator",
+    "uptime_seconds": 4665,
+    "generated_at": "2026-05-22T12:41:54.628Z"
+  },
+  "configured_endpoints": {
+    "coordinator": {
+      "host": "0.0.0.0",
+      "port": 8004,
+      "public_host": "127.0.0.1"
+    },
+    "viewer": {
+      "browser_url_base": "http://127.0.0.1:5173",
+      "handoff_path": "/ui/open?session=<review_session_id>"
+    },
+    "conversion_authority": {
+      "base_url": "http://host.docker.internal:49101",
+      "authority": "bim-streaming-server"
+    },
+    "kit": [
+      {
+        "id": "kit_host_native_001",
+        "signalingServer": "127.0.0.1",
+        "signalingPort": 49100,
+        "mediaServer": "127.0.0.1",
+        "mediaPort": 47998
+      }
+    ]
+  },
+  "sessions": {
+    "count": 1,
+    "active_count": 1,
+    "participant_count": 1,
+    "items": [
+      {
+        "session_id": "review_session_5f549af0631b",
+        "status": "active",
+        "project_id": "270",
+        "model_version_id": "test001",
+        "participant_count": 1,
+        "participants": [
+          {
+            "user_id": "dev_user_001",
+            "display_name": "示範使用者",
+            "last_seen_at": "2026-05-22T12:37:57.340Z"
+          }
+        ],
+        "expected_stage_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc",
+        "expected_mapping_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json",
+        "conversion_job_id": "stream_conv_20260522112506_2b79ba1d",
+        "conversion_status": "ready",
+        "kit_instance_ids": [
+          "kit_host_native_001"
+        ],
+        "created_at": "2026-05-22T11:29:09.906Z",
+        "updated_at": "2026-05-22T12:37:57.340Z"
+      }
+    ]
+  },
+  "kit_instance_bindings": [
+    {
+      "session_id": "review_session_5f549af0631b",
+      "kit_instance_id": "kit_host_native_001",
+      "status": "ready",
+      "assigned_artifact_ids": [
+        "auto_usdc_stream_conv_20260522112506_2b79ba1d"
+      ],
+      "stream_config": {
+        "signalingServer": "127.0.0.1",
+        "signalingPort": 49100,
+        "mediaServer": "127.0.0.1",
+        "mediaPort": 47998
+      },
+      "started_at": "2026-05-22T11:29:09.906Z",
+      "last_heartbeat_at": "2026-05-22T11:29:09.906Z",
+      "released_at": null
+    }
+  ],
+  "ifc_ready_jobs": {
+    "count": 1,
+    "recent": [
+      {
+        "ifc_ready_job_id": "ifcready_1779449084006_3a0fd2cb",
+        "status": "dispatched",
+        "tenant_id": "tenant_demo_001",
+        "project_id": "270",
+        "external_model_version_id": "test001",
+        "external_conversion_task_id": "270_test001_1779449083755",
+        "correlation_id": "corr_ui_e2e_1779449083751",
+        "source_ifc_ref": "http://host.docker.internal:9010/ifcready_1779436887005_44f9b405/source.ifc",
+        "source_ifc_etag": "worker:unknown:270_test001_1779449083755",
+        "download_status": "downloaded",
+        "download_failure": null,
+        "local_path": "/workspace/storage/ifc-cache/ifcready_1779449084006_3a0fd2cb/source.ifc",
+        "host_local_path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\ifc-cache\\ifcready_1779449084006_3a0fd2cb\\source.ifc",
+        "conversion_job_id": "stream_conv_20260522112506_2b79ba1d",
+        "conversion_status": "ready",
+        "conversion_authority": "bim-streaming-server",
+        "dispatch_error": null,
+        "callback_outbox_id": "cbk_1779449349898_e7d54d13",
+        "artifact_manifest_ref": "http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/metadata.json",
+        "review_session_id": "review_session_5f549af0631b",
+        "web_view_session_id": "review_session_5f549af0631b",
+        "viewer_url": "http://127.0.0.1:8004/ui/open?session=review_session_5f549af0631b",
+        "expected_stage_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc",
+        "expected_mapping_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json",
+        "created_at": "2026-05-22T11:24:44.006Z",
+        "updated_at": "2026-05-22T11:29:09.907Z"
+      }
+    ]
+  },
+  "observations": {
+    "classification": "coordinator_visible_runtime_summary",
+    "note": "read-only coordinator observations; Kit internal stage state still requires DataChannel or Kit log evidence.",
+    "web_plane": {
+      "coordinator_port": 8004,
+      "viewer_port": 5173
+    },
+    "host_native_plane": {
+      "conversion_api_base": "http://host.docker.internal:49101",
+      "kit_signal_ports": [
+        49100
+      ],
+      "kit_media_ports": [
+        47998
+      ]
+    }
+  }
+}

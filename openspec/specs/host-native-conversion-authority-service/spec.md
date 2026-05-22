@@ -28,25 +28,29 @@ TBD - created by archiving change introduce-host-native-conversion-authority-ser
 
 ### Requirement: Host-native converter adapter publishes only validated artifacts
 
-The host-native conversion authority service SHALL run conversion through a converter adapter and SHALL publish a ready result only when validated outputs are present. Required outputs are `model.usdc`, `element_mapping.json`, `entity_index.json`, and `metadata.json` or equivalent artifact refs. The result SHALL include quality metrics and lineage that can be traced back to the source IFC reference.
+The host-native conversion authority service SHALL publish a ready result only when validated artifacts are present. If the primary PowerShell/Kit/HOOPS converter fails to import a locally readable IFC, the adapter MAY use an IfcOpenShell + OpenUSD fallback converter, but only when the fallback produces a real `model.usdc`, `element_mapping.json`, `entity_index.json`, `metadata.json`, and quality metrics derived from the source IFC. The fallback output MUST pass the same no-placeholder and openability gates as primary converter output.
 
-#### Scenario: Successful conversion returns ready artifacts
+#### Scenario: fallback converter produces publishable artifacts
 
-- **WHEN** the converter adapter completes an IFC to USDC conversion with all required outputs
-- **THEN** `GET /api/conversions/{conversion_job_id}/result` returns `status="succeeded"` or `status="succeeded_with_warnings"` and `model.status="ready"`
-- **AND** the result includes USDC, element mapping, entity index, metadata refs, quality metrics, and lineage
+- **WHEN** the primary converter fails with a source IFC import error
+- **AND** the fallback converter successfully tessellates source IFC geometry and writes `model.usdc`
+- **THEN** `GET /api/conversions/{conversion_job_id}/result` returns `status="succeeded"` or an explicitly allowed warning status
+- **AND** `model.status="ready"`
+- **AND** `artifacts.model_usdc.url`, `artifacts.element_mapping.url`, `artifacts.entity_index.url`, and metadata refs are present
+- **AND** `quality_metrics.materialization_strategy="ifcopenshell_openusd_fallback"`
 
-#### Scenario: Placeholder output is rejected
+#### Scenario: fallback converter does not fabricate mappings
 
-- **WHEN** the converter adapter produces a placeholder, missing, or unopenable `model.usdc`
-- **THEN** the conversion job is marked `failed` or another non-ready terminal status
-- **AND** the result MUST NOT publish `model.status="ready"`
+- **WHEN** a source IFC entity cannot be represented as a renderable USD prim by the fallback converter
+- **THEN** the entity is reported as unmapped, sidecar-only, or omitted according to documented fallback policy
+- **AND** the converter MUST NOT create fake GUID-to-prim mappings to inflate coverage
+- **AND** `element_mapping.json` MUST identify `mock=false`
 
-#### Scenario: Missing converter is an honest blocker
+#### Scenario: final archive evidence requires real fallback success
 
-- **WHEN** the host does not have the configured converter executable, script, or Kit app prerequisite
-- **THEN** health or job evidence reports a `blocked` or `converter_unavailable` diagnostic
-- **AND** downstream coordinator/viewer readiness MUST remain non-passed
+- **WHEN** this OpenSpec change is considered for archive
+- **THEN** the archived evidence MUST include a real runtime conversion of the user-provided or equivalent 341MB IFC that reaches ready conversion state
+- **AND** unit-only or fake converter tests MUST NOT be sufficient archive evidence
 
 ### Requirement: Host-native conversion job state is durable enough for local evidence
 
