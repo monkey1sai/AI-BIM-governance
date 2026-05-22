@@ -12,7 +12,7 @@ import path from "node:path";
  */
 
 export interface IfcDownloadOptions {
-  /** Container view storage root,coordinator 寫入用(預設 `/workspace/storage`)。 */
+  /** Storage root,coordinator 寫入用。docker compose:`/workspace/storage`(env 顯式設);host-native:預設 `<cwd>/storage`。 */
   storageRoot: string;
   /**
    * Host view storage root,寫進回傳 host_local_path 供 streaming-server 讀取。

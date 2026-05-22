@@ -1,3 +1,4 @@
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
@@ -5,6 +6,7 @@ const originalConversionApiBase = process.env.CONVERSION_API_BASE;
 const originalStreamingConversionApiBase = process.env.STREAMING_CONVERSION_API_BASE;
 const originalKitStreamServer = process.env.KIT_STREAM_SERVER;
 const originalKitMediaServer = process.env.KIT_MEDIA_SERVER;
+const originalStorageRoot = process.env.STORAGE_ROOT;
 
 afterEach(() => {
   if (originalConversionApiBase === undefined) {
@@ -29,6 +31,12 @@ afterEach(() => {
     delete process.env.KIT_MEDIA_SERVER;
   } else {
     process.env.KIT_MEDIA_SERVER = originalKitMediaServer;
+  }
+
+  if (originalStorageRoot === undefined) {
+    delete process.env.STORAGE_ROOT;
+  } else {
+    process.env.STORAGE_ROOT = originalStorageRoot;
   }
 });
 
@@ -76,5 +84,19 @@ describe("loadConfig Kit endpoint", () => {
     expect(config.kitMediaServer).not.toBe("auto");
     expect(config.kitStreamServer.length).toBeGreaterThan(0);
     expect(config.kitMediaServer.length).toBeGreaterThan(0);
+  });
+});
+
+describe("loadConfig storageRoot fallback", () => {
+  it("falls back to <cwd>/storage when STORAGE_ROOT is not set (host-native default)", () => {
+    delete process.env.STORAGE_ROOT;
+
+    expect(loadConfig().storageRoot).toBe(path.join(process.cwd(), "storage"));
+  });
+
+  it("respects explicit STORAGE_ROOT env (docker compose still sets /workspace/storage)", () => {
+    process.env.STORAGE_ROOT = "/workspace/storage";
+
+    expect(loadConfig().storageRoot).toBe("/workspace/storage");
   });
 });
