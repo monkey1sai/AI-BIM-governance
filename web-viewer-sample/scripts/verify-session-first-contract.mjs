@@ -28,6 +28,7 @@ const { buildOpenStageRequest } = loadStreamMessageModule();
 const legacyRequest = buildOpenStageRequest("edge-local://artifacts/model.usdc");
 assert.equal(legacyRequest.event_type, "openStageRequest");
 assert.equal(legacyRequest.payload.url, "edge-local://artifacts/model.usdc");
+assert.equal(legacyRequest.payload.requested_stage_url, "edge-local://artifacts/model.usdc");
 assert.equal(Object.hasOwn(legacyRequest.payload, "artifact_bindings"), false);
 
 const binding = {
@@ -44,6 +45,7 @@ const binding = {
 };
 const routedRequest = buildOpenStageRequest(binding.url, [binding], { primary: binding, secondary_layers: [] });
 assert.equal(routedRequest.payload.url, binding.url);
+assert.equal(routedRequest.payload.requested_stage_url, binding.url);
 assert.deepEqual(routedRequest.payload.artifact_bindings, [binding]);
 assert.equal(routedRequest.payload.stage_composition.primary.artifact_id, binding.artifact_id);
 assert.deepEqual(routedRequest.payload.stage_composition.secondary_layers, []);
@@ -64,6 +66,13 @@ for (const token of [
     "buildOpenStageRequest(",
     "this.state.latestStreamConfig.model.status !== \"ready\"",
     "stage_composition",
+    "expectedStageUrlFromStreamConfig",
+    "_recordLoadedStageEvidence",
+    "stale_stage_or_mismatch",
+    "webrtc_disconnected",
+    "_reconnectStream",
+    "stage-truth-panel",
+    "Boolean(this.state.reviewSessionId)",
     "this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)",
     // remove-conflict-review-from-fast-mvp:review-bootstrap endpoint 與 getReviewBootstrap 已退役;
     // session-first 仍保留(先 GET session → 拿 model_version_id),但 bootstrap 取代為 stream-config 內 artifacts。
@@ -89,8 +98,18 @@ assert.match(
 
 assert.match(
     windowSource,
-    /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(JSON\.stringify\(message\)\);[\s\S]*?this\._appendDemoOutgoing/,
-    "_sendStreamMessage must send through AppStream and log outgoing messages",
+    /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(message\)[\s\S]*?appStreamResultToAppEvent\(message\.event_type, result\)[\s\S]*?this\._handleCustomEvent\(responseEvent\)[\s\S]*?this\._appendDemoOutgoing/,
+    "_sendStreamMessage must send object payloads through AppStream, handle built-in Promise replies, and log outgoing messages",
+);
+assert.doesNotMatch(
+    windowSource,
+    /AppStream\.sendMessage\(JSON\.stringify\(message\)\);/,
+    "_sendStreamMessage must not stringify DataChannel messages; Kit livestream messaging expects an event object",
+);
+assert.match(
+    windowSource,
+    /function appStreamResultToAppEvent[\s\S]*?requestEventType === "openStageRequest"[\s\S]*?event_type: "openedStageResult"[\s\S]*?requestEventType === "loadingStateQuery"[\s\S]*?event_type: "loadingStateResponse"[\s\S]*?requestEventType === "getChildrenRequest"[\s\S]*?event_type: "getChildrenResponse"/,
+    "viewer must map AppStreamer built-in Promise replies back into existing DataChannel handlers",
 );
 assert.doesNotMatch(
     windowSource,
@@ -101,6 +120,51 @@ assert.match(
     windowSource,
     /private _onSelectUSDPrims[\s\S]*?this\._sendStreamMessage\(message\);/,
     "_onSelectUSDPrims must route selection changes through lifecycle-guarded stream sending",
+);
+assert.match(
+    windowSource,
+    /const expectedStageUrl = expectedStageUrlFromStreamConfig\(streamConfig\)[\s\S]*?const selectedUSDAsset = expectedStageAsset/,
+    "session-first viewer must prefer stream_config stage_composition primary URL over stale /api/assets entries",
+);
+assert.doesNotMatch(
+    windowSource,
+    /componentDidMount\(\): void \{[\s\S]*?this\._scheduleStreamStartTimeout\(\);[\s\S]*?void this\._bootstrapReview\(\);/,
+    "viewer must not start the WebRTC timeout before session stream-config is resolved",
+);
+assert.match(
+    windowSource,
+    /const shouldRenderAppStream = !reviewEnv\.hasExplicitEmptySessionId && Boolean\(this\.state\.reviewSessionId\);/,
+    "viewer must not mount AppStream before a coordinator review session is bound",
+);
+assert.match(
+    windowSource,
+    /this\.setState\(\{[\s\S]*?reviewSessionId: sessionId,[\s\S]*?\}, \(\) => \{\s*this\._scheduleStreamStartTimeout\(\);/,
+    "viewer must start the WebRTC timeout only after session stream-config has bound AppStream inputs",
+);
+assert.match(
+    windowSource,
+    /event\.event_type === "openedStageResult"[\s\S]*?_recordLoadedStageEvidence\(loadedUrl, "openedStageResult"/,
+    "openedStageResult must record loaded stage URL evidence",
+);
+assert.match(
+    windowSource,
+    /event\.event_type == "loadingStateResponse"[\s\S]*?_recordLoadedStageEvidence\(payloadUrl, "loadingStateResponse"/,
+    "loadingStateResponse must record and compare loaded stage URL evidence",
+);
+assert.match(
+    windowSource,
+    /activityText === "None"[\s\S]*?const loadedUrl = this\.pendingStageUrl;[\s\S]*?_recordLoadedStageEvidence\(loadedUrl, "updateProgressActivity", activityText\)[\s\S]*?_completeStageLoad\(loadedUrl\)/,
+    "updateProgressActivity=None must prove the pending stage URL when Kit omits openedStageResult",
+);
+assert.match(
+    windowSource,
+    /onStopped=\{\(message\) => this\._handleStreamStopped\("stopped", message\)\}/,
+    "AppStream onStop must surface visible WebRTC disconnect state",
+);
+assert.match(
+    windowSource,
+    /onTerminated=\{\(message\) => this\._handleStreamStopped\("terminated", message\)\}/,
+    "AppStream onTerminate must surface visible WebRTC disconnect state",
 );
 // remove-conflict-review-from-fast-mvp:review-bootstrap 已退役,改驗 session-first 順序到 stream-config 的鏈
 assert.match(

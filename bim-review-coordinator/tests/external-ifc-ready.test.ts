@@ -112,6 +112,39 @@ describe("POST /api/external/ifc-ready", () => {
     expect(res.body.conversion_authority).toBeNull();
   });
 
+  it("lists recent IFC-ready jobs with dashboard-safe progress fields", async () => {
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_list_001", "X-Idempotency-Key": "idem_list_001" }))
+      .send(payload());
+    const second = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_list_002", "X-Idempotency-Key": "idem_list_002" }))
+      .send(payload({ external_model_version_id: "ext_mv_demo_002" }));
+
+    const listed = await request(app.app).get("/api/external/ifc-ready?limit=1");
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(listed.status).toBe(200);
+    expect(listed.body.count).toBe(2);
+    expect(listed.body.items).toHaveLength(1);
+    expect(listed.body.items[0]).toMatchObject({
+      ifc_ready_job_id: second.body.ifc_ready_job_id,
+      download_status: "downloaded",
+      conversion_job_id: "stream_conv_test_001",
+      conversion_status: "queued",
+      conversion_authority: "bim-streaming-server",
+      web_view_session_id: null,
+      viewer_url: null,
+    });
+    expect(listed.body.items[0]).not.toHaveProperty("idempotency_key");
+    expect(listed.body.items[0]).not.toHaveProperty("callback_url");
+  });
+
   it("對相同 X-Idempotency-Key 為 idempotent（回相同 job、replay 標記）", async () => {
     const app = makeApp();
     const first = await request(app.app)

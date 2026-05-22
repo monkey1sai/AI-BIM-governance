@@ -104,6 +104,63 @@ describe("bim-review-coordinator", () => {
     expect(response.body.kit_signaling_port).toBe(49100);
   });
 
+  it("returns dashboard runtime status with session, participant, Kit, and IFC-ready summaries", async () => {
+    const app = makeApp(multiEndpointOverrides());
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_version_demo_001",
+            artifact_id: "auto_usdc_stream_conv_status_001",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:49101/artifacts/stream_conv_status_001/model.usdc",
+            mapping_url: "http://127.0.0.1:49101/artifacts/stream_conv_status_001/element_mapping.json",
+            load_order: 0,
+            ready_status: "ready",
+            conversion_authority: "bim-streaming-server",
+            conversion_job_id: "stream_conv_status_001",
+            conversion_status: "ready",
+          },
+        ],
+      });
+    await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/join`)
+      .send({ user_id: "viewer_001", display_name: "Viewer One" });
+
+    const status = await request(app.app).get("/api/runtime/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body.service.status).toBe("ok");
+    expect(status.body.configured_endpoints.kit).toHaveLength(2);
+    expect(status.body.configured_endpoints.kit[0]).toMatchObject({
+      id: "kit_local_001",
+      signalingServer: "127.0.0.1",
+      signalingPort: 49100,
+      mediaPort: 47998,
+    });
+    expect(status.body.sessions).toMatchObject({
+      count: 1,
+      active_count: 1,
+      participant_count: 1,
+    });
+    expect(status.body.sessions.items[0]).toMatchObject({
+      session_id: created.body.session_id,
+      expected_stage_url: "http://127.0.0.1:49101/artifacts/stream_conv_status_001/model.usdc",
+      participant_count: 1,
+    });
+    expect(status.body.kit_instance_bindings[0]).toMatchObject({
+      kit_instance_id: "kit_local_001",
+      session_id: created.body.session_id,
+      assigned_artifact_ids: ["auto_usdc_stream_conv_status_001"],
+    });
+    expect(status.body.ifc_ready_jobs).toMatchObject({ count: 0, recent: [] });
+    expect(status.body.observations.note).toContain("read-only");
+  });
+
   it("creates a review session and stream config", async () => {
     const app = makeApp();
     const created = await request(app.app)

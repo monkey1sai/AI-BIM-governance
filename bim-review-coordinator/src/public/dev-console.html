@@ -64,6 +64,25 @@
     .demo-summary-item__label { font-size: 12px; color: var(--demo-text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
     .demo-summary-item__value { margin-top: 6px; font-size: 18px; font-weight: 600; word-break: break-all; }
     .demo-summary-item__hint { margin-top: 4px; font-size: 12px; color: var(--demo-text-muted); }
+    .runtime-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+    .runtime-toolbar__copy { min-width: min(100%, 540px); }
+    .runtime-pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .runtime-pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--demo-border); border-radius: var(--demo-radius); background: var(--demo-bg-elevated); color: var(--demo-text-secondary); font-size: 12px; }
+    .runtime-board { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(320px, 1.05fr); gap: 16px; align-items: start; }
+    .runtime-panel { padding: 14px; background: var(--demo-bg-elevated); border: 1px solid var(--demo-border); border-radius: var(--demo-radius); min-width: 0; }
+    .runtime-panel__title { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: var(--demo-text-primary); }
+    .runtime-kv { display: grid; grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr); gap: 8px 12px; font-size: 13px; }
+    .runtime-kv dt { color: var(--demo-text-secondary); }
+    .runtime-kv dd { margin: 0; font-family: var(--demo-font-mono); font-size: 12px; word-break: break-all; color: var(--demo-text-primary); }
+    .runtime-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .runtime-table th, .runtime-table td { padding: 8px; border-bottom: 1px solid var(--demo-border); text-align: left; vertical-align: top; word-break: break-word; }
+    .runtime-table th { color: var(--demo-text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .runtime-table td code { font-family: var(--demo-font-mono); font-size: 11px; }
+    .runtime-warning { margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--demo-status-warn); border-radius: var(--demo-radius); background: var(--demo-status-warn-soft); color: var(--demo-text-secondary); font-size: 13px; }
+    @media (max-width: 860px) {
+      .runtime-board { grid-template-columns: 1fr; }
+      .runtime-kv { grid-template-columns: 1fr; }
+    }
 
     .demo-flow-note { margin: 12px 0 0; padding: 10px 12px; border-left: 3px solid var(--demo-status-warn); background: var(--demo-status-warn-soft); border-radius: var(--demo-radius); color: var(--demo-text-secondary); font-size: 13px; }
     .demo-file-pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px; background: var(--demo-bg-elevated); border: 1px dashed var(--demo-border-strong); border-radius: var(--demo-radius); }
@@ -169,6 +188,79 @@
   </nav>
 
   <main class="demo-main">
+    <section class="demo-card" id="runtimeDashboardCard">
+      <div class="runtime-toolbar">
+        <div class="runtime-toolbar__copy">
+          <h1 class="demo-card__title">閉環 Runtime Dashboard <span id="runtimeRefreshStatus" class="demo-status demo-status--idle">尚未更新</span></h1>
+          <p class="demo-card__subtitle">
+            從 <code>POST /api/external/ifc-ready</code> 到 download、conversion、review session、Kit / WebRTC、viewer handoff 分層觀察。
+            conversion ready 不等於 Kit 已載入；必須看到 expected stage URL 與 viewer stage-load evidence 對齊。
+          </p>
+        </div>
+        <div class="demo-btn-row" style="margin-top:0;">
+          <button class="demo-btn demo-btn--secondary" type="button" onclick="refreshRuntimeDashboard()">刷新 runtime</button>
+          <button class="demo-btn" type="button" onclick="openLatestRuntimeViewer()" disabled id="runtimeOpenViewerBtn">開啟最新 viewer</button>
+        </div>
+      </div>
+
+      <div class="demo-summary-grid">
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">IFC-ready jobs</div>
+          <div id="runtimeJobCount" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">read-only list: <code>GET /api/external/ifc-ready</code></div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">Active sessions</div>
+          <div id="runtimeActiveSessions" class="demo-summary-item__value">—</div>
+          <div id="runtimeParticipantHint" class="demo-summary-item__hint">participants: —</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">Kit / WebRTC</div>
+          <div id="runtimeKitEndpoint" class="demo-summary-item__value">—</div>
+          <div id="runtimeWebrtcStatus" class="demo-summary-item__hint">WebRTC evidence: not observed</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">Latest conversion</div>
+          <div id="runtimeConversionStatus" class="demo-summary-item__value">—</div>
+          <div id="runtimeLatestJob" class="demo-summary-item__hint">job: —</div>
+        </div>
+      </div>
+
+      <div class="runtime-board" style="margin-top:16px;">
+        <div class="runtime-panel">
+          <h2 class="runtime-panel__title">最新 ifc-ready / conversion</h2>
+          <dl class="runtime-kv">
+            <dt>download_status</dt><dd id="runtimeDownloadStatus">—</dd>
+            <dt>conversion_job_id</dt><dd id="runtimeConversionJobId">—</dd>
+            <dt>artifact_manifest_ref</dt><dd id="runtimeManifestRef">—</dd>
+            <dt>review_session_id</dt><dd id="runtimeReviewSessionId">—</dd>
+            <dt>viewer_url</dt><dd id="runtimeViewerUrl">—</dd>
+            <dt>expected stage URL</dt><dd id="runtimeExpectedStageUrl">—</dd>
+          </dl>
+          <div class="runtime-warning">
+            這裡只證明 coordinator 看到的狀態。Kit 是否真的載入 expected stage，仍要由 viewer DataChannel / Kit log / Chrome E2E 證明。
+          </div>
+        </div>
+
+        <div class="runtime-panel">
+          <h2 class="runtime-panel__title">Recent jobs</h2>
+          <table class="runtime-table">
+            <thead>
+              <tr>
+                <th>job</th>
+                <th>download</th>
+                <th>conversion</th>
+                <th>viewer</th>
+              </tr>
+            </thead>
+            <tbody id="runtimeJobsBody">
+              <tr><td colspan="4">尚未載入。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- fast-ifc-link-demo-loop §5:3 卡單欄垂直 fast MVP happy path。 -->
     <section class="demo-card" id="fastIfcReadyCard">
       <h2 class="demo-card__title" style="font-size:18px;">① 提交 IFC source(模擬外部 ifc-ready)</h2>
@@ -543,11 +635,96 @@
     let conversionReviewResults = [];
     let latestConversionReviewPayload = null;
     let latestIfcReadyJob = null;
+    let latestRuntimeViewerUrl = null;
+
+    const runtimeRefreshStatus = document.getElementById('runtimeRefreshStatus');
+    const runtimeOpenViewerBtn = document.getElementById('runtimeOpenViewerBtn');
+    const runtimeJobCount = document.getElementById('runtimeJobCount');
+    const runtimeActiveSessions = document.getElementById('runtimeActiveSessions');
+    const runtimeParticipantHint = document.getElementById('runtimeParticipantHint');
+    const runtimeKitEndpoint = document.getElementById('runtimeKitEndpoint');
+    const runtimeWebrtcStatus = document.getElementById('runtimeWebrtcStatus');
+    const runtimeConversionStatus = document.getElementById('runtimeConversionStatus');
+    const runtimeLatestJob = document.getElementById('runtimeLatestJob');
+    const runtimeDownloadStatus = document.getElementById('runtimeDownloadStatus');
+    const runtimeConversionJobId = document.getElementById('runtimeConversionJobId');
+    const runtimeManifestRef = document.getElementById('runtimeManifestRef');
+    const runtimeReviewSessionId = document.getElementById('runtimeReviewSessionId');
+    const runtimeViewerUrl = document.getElementById('runtimeViewerUrl');
+    const runtimeExpectedStageUrl = document.getElementById('runtimeExpectedStageUrl');
+    const runtimeJobsBody = document.getElementById('runtimeJobsBody');
 
     function setServiceStatus(kind, label) {
       connStatus.className = `demo-status demo-status--${kind}`;
       connStatus.textContent = label;
       failureBox.classList.toggle('is-visible', kind === 'bad');
+    }
+
+    function setRuntimeStatus(kind, label) {
+      runtimeRefreshStatus.className = `demo-status demo-status--${kind}`;
+      runtimeRefreshStatus.textContent = label;
+    }
+
+    async function refreshRuntimeDashboard() {
+      setRuntimeStatus('warn', '更新中');
+      try {
+        const [runtimeResponse, jobsResponse] = await Promise.all([
+          fetch('/api/runtime/status'),
+          fetch('/api/external/ifc-ready?limit=8'),
+        ]);
+        if (!runtimeResponse.ok) throw new Error(`runtime ${runtimeResponse.status}`);
+        if (!jobsResponse.ok) throw new Error(`jobs ${jobsResponse.status}`);
+        const runtime = await runtimeResponse.json();
+        const jobs = await jobsResponse.json();
+        renderRuntimeDashboard(runtime, jobs);
+        setRuntimeStatus('ok', '已更新');
+      } catch (error) {
+        setRuntimeStatus('bad', '更新失敗');
+        runtimeWebrtcStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
+    }
+
+    function renderRuntimeDashboard(runtime, jobs) {
+      const recentJobs = Array.isArray(jobs?.items) ? jobs.items : [];
+      const latest = recentJobs[0] || (Array.isArray(runtime?.ifc_ready_jobs?.recent) ? runtime.ifc_ready_jobs.recent[0] : null);
+      const kit = Array.isArray(runtime?.configured_endpoints?.kit) ? runtime.configured_endpoints.kit[0] : null;
+      runtimeJobCount.textContent = String(jobs?.count ?? runtime?.ifc_ready_jobs?.count ?? 0);
+      runtimeActiveSessions.textContent = String(runtime?.sessions?.active_count ?? 0);
+      runtimeParticipantHint.textContent = `participants: ${runtime?.sessions?.participant_count ?? 0}`;
+      runtimeKitEndpoint.textContent = kit ? `${kit.signalingServer}:${kit.signalingPort}` : '—';
+      runtimeWebrtcStatus.textContent = runtime?.observations?.note || 'WebRTC evidence: not observed';
+      latestRuntimeViewerUrl = latest?.viewer_url || null;
+      runtimeOpenViewerBtn.disabled = !latestRuntimeViewerUrl;
+
+      runtimeLatestJob.textContent = `job: ${latest?.ifc_ready_job_id || '—'}`;
+      runtimeDownloadStatus.textContent = latest?.download_status || '—';
+      runtimeConversionStatus.textContent = latest?.conversion_status || latest?.status || '—';
+      runtimeConversionJobId.textContent = latest?.conversion_job_id || '—';
+      runtimeManifestRef.textContent = latest?.artifact_manifest_ref || '—';
+      runtimeReviewSessionId.textContent = latest?.review_session_id || latest?.web_view_session_id || '—';
+      runtimeViewerUrl.innerHTML = latest?.viewer_url
+        ? `<a href="${escapeAttr(latest.viewer_url)}" target="_blank" rel="noopener">${escapeHtml(latest.viewer_url)}</a>`
+        : '—';
+      runtimeExpectedStageUrl.textContent = latest?.expected_stage_url || '尚未由 session 綁定證明';
+
+      runtimeJobsBody.innerHTML = recentJobs.length
+        ? recentJobs.map((job) => {
+            const viewer = job.viewer_url
+              ? `<a href="${escapeAttr(job.viewer_url)}" target="_blank" rel="noopener">open</a>`
+              : '—';
+            return `<tr>`
+              + `<td><code>${escapeHtml(job.ifc_ready_job_id || '—')}</code><br>${escapeHtml(job.external_model_version_id || '')}</td>`
+              + `<td>${escapeHtml(job.download_status || '—')}</td>`
+              + `<td>${escapeHtml(job.conversion_status || '—')}<br><code>${escapeHtml(job.conversion_job_id || '')}</code></td>`
+              + `<td>${viewer}<br><code>${escapeHtml(job.expected_stage_url || 'stage unproven')}</code></td>`
+              + `</tr>`;
+          }).join('')
+        : '<tr><td colspan="4">尚無 ifc-ready job。</td></tr>';
+    }
+
+    function openLatestRuntimeViewer() {
+      if (!latestRuntimeViewerUrl) return;
+      window.open(latestRuntimeViewerUrl, '_blank');
     }
 
     sourceFileInput.addEventListener('change', () => {
@@ -1121,6 +1298,7 @@
         if (payload && typeof payload === 'object' && payload.ifc_ready_job_id) {
           fastJobIdLabel.textContent = payload.ifc_ready_job_id;
           fastDownloadStatus.textContent = payload.download_status || '—';
+          refreshRuntimeDashboard();
           startFastJobPolling(payload.ifc_ready_job_id);
         }
       } catch (error) {
@@ -1155,6 +1333,7 @@
           fastViewerUrlEl.innerHTML = `<a href="${escapeAttr(payload.viewer_url)}" target="_blank" rel="noopener">${escapeHtml(payload.viewer_url)}</a>`;
           fastCopyBtn.disabled = false;
           fastOpenBtn.disabled = false;
+          refreshRuntimeDashboard();
           stopFastJobPolling();
         }
       } catch (error) {
@@ -1247,7 +1426,9 @@
     });
 
     refreshStatus();
+    refreshRuntimeDashboard();
     setInterval(refreshStatus, 8000);
+    setInterval(refreshRuntimeDashboard, 5000);
   </script>
 </body>
 </html>

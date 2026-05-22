@@ -86,6 +86,10 @@ interface AppState {
     isLoading: boolean;
     loadingText: string; 
     streamDiagnostic: string | null;
+    expectedStageUrl: string | null;
+    loadedStageUrl: string | null;
+    stageLoadStatus: "unproven" | "pending" | "matched" | "mismatch" | "disconnected";
+    webrtcLifecycleStatus: "initializing" | "started" | "stopped" | "terminated" | "failed";
     activeStreamEndpoint: StreamEndpoint;
     streamMountKey: number;
 }
@@ -119,6 +123,46 @@ function getPayloadStringArray(payload: Record<string, unknown>, key: string): s
 function getPayloadObjectArray(payload: Record<string, unknown>, key: string): Record<string, unknown>[] {
     const value = payload[key];
     return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => isRecord(item)) : [];
+}
+
+function appStreamResultToAppEvent(requestEventType: string, result: unknown): AppStreamEventType | null {
+    if (!isRecord(result)) return null;
+    const status = getPayloadString(result, "status");
+    const info = getPayloadString(result, "info");
+    const responseResult = status === "error" ? "error" : "success";
+
+    if (requestEventType === "openStageRequest") {
+        return {
+            event_type: "openedStageResult",
+            payload: {
+                result: responseResult,
+                url: getPayloadString(result, "url"),
+                error: responseResult === "error" ? info || "openStageRequest failed" : "",
+            },
+        };
+    }
+
+    if (requestEventType === "loadingStateQuery") {
+        return {
+            event_type: "loadingStateResponse",
+            payload: {
+                loading_state: getPayloadString(result, "loadingState"),
+                url: getPayloadString(result, "url"),
+            },
+        };
+    }
+
+    if (requestEventType === "getChildrenRequest") {
+        return {
+            event_type: "getChildrenResponse",
+            payload: {
+                prim_path: getPayloadString(result, "primPath"),
+                children: Array.isArray(result.children) ? result.children : [],
+            },
+        };
+    }
+
+    return null;
 }
 
 function isElementMappingDocument(value: unknown): value is ElementMappingDocument {
@@ -177,6 +221,15 @@ function sameStreamEndpoint(a: StreamEndpoint, b: StreamEndpoint): boolean {
 
 function makeRequestId(prefix: string): string {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function expectedStageUrlFromStreamConfig(streamConfig: ReviewStreamConfig | null): string | null {
+    return streamConfig?.stage_composition?.primary?.url || streamConfig?.model?.url || null;
+}
+
+function displayNameFromStageUrl(url: string): string {
+    const tail = url.split(/[\\/]/).pop() || "model.usdc";
+    return tail.includes("?") ? tail.split("?")[0] : tail;
 }
 
 function isBlockedLifecycle(status: ReviewLifecycleStatus | null): boolean {
@@ -242,6 +295,10 @@ export default class App extends React.Component<AppProps, AppState> {
             showUI: false,
             loadingText: "正在載入成果檔清單...",
             streamDiagnostic: null,
+            expectedStageUrl: null,
+            loadedStageUrl: null,
+            stageLoadStatus: "unproven",
+            webrtcLifecycleStatus: "initializing",
             isLoading: true,
             activeStreamEndpoint,
             streamMountKey: 0,
@@ -254,7 +311,6 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
-        this._scheduleStreamStartTimeout();
         void this._loadUSDAssets();
         void this._bootstrapReview();
     }
@@ -301,7 +357,20 @@ export default class App extends React.Component<AppProps, AppState> {
             this._appendReviewEvent(`略過 ${message.event_type}：session lifecycle=${lifecycle}`);
             return;
         }
-        AppStream.sendMessage(JSON.stringify(message));
+        void AppStream.sendMessage(message)
+            .then((result) => {
+                const responseEvent = appStreamResultToAppEvent(message.event_type, result);
+                if (responseEvent) {
+                    this._handleCustomEvent(responseEvent);
+                }
+            })
+            .catch((error: unknown) => {
+                const diagnostic = error instanceof Error ? error.message : String(error);
+                this._appendReviewEvent(`${message.event_type} failed: ${diagnostic}`);
+                if (message.event_type === "openStageRequest") {
+                    this._failStageLoad("模型載入失敗", [`目標：${this.pendingStageUrl || "unknown"}`, `錯誤：${diagnostic}`].join("\n"));
+                }
+            });
         this._appendDemoOutgoing(message.event_type, message);
     }
 
@@ -386,10 +455,62 @@ export default class App extends React.Component<AppProps, AppState> {
         this.loadingStatePollCount = 0;
     }
 
-    private _completeStageLoad(): void {
+    private _expectedStageAsset(): USDAssetType | null {
+        const expectedStageUrl = this.state.expectedStageUrl;
+        if (!expectedStageUrl) return null;
+        return this.state.usdAssets.find((asset) => asset.url === expectedStageUrl)
+            || { name: displayNameFromStageUrl(expectedStageUrl), url: expectedStageUrl };
+    }
+
+    private _isLoadedStageExpected(loadedUrl: string): boolean {
+        const expectedStageUrl = this.state.expectedStageUrl || this.pendingStageUrl;
+        if (!expectedStageUrl || !loadedUrl) return false;
+        if (loadedUrl === expectedStageUrl) return true;
+        const conversionJobId = this.state.latestStreamConfig?.model.conversion_job_id;
+        return Boolean(conversionJobId && expectedStageUrl.includes(conversionJobId) && loadedUrl.includes(conversionJobId));
+    }
+
+    private _recordLoadedStageEvidence(loadedUrl: string, source: string, loadingState?: string): boolean {
+        if (!loadedUrl) return false;
+        const matched = this._isLoadedStageExpected(loadedUrl);
+        this.setState((state) => ({
+            loadedStageUrl: loadedUrl,
+            stageLoadStatus: matched ? "matched" : "mismatch",
+            reviewEvents: [
+                ...state.reviewEvents,
+                matched
+                    ? `Kit stage-load matched expected URL (${source})`
+                    : `stale_stage_or_mismatch (${source})`,
+            ].slice(-80),
+        }));
+        if (!matched) {
+            this._failStageLoad(
+                "stale_stage_or_mismatch",
+                [
+                    `expected：${this.state.expectedStageUrl || this.pendingStageUrl || "unknown"}`,
+                    `loaded：${loadedUrl}`,
+                    `state：${loadingState || "unknown"}`,
+                ].join("\n"),
+            );
+        }
+        return matched;
+    }
+
+    private _completeStageLoad(loadedUrl?: string): void {
+        const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl;
+        const hasExpectedStage = Boolean(this.state.expectedStageUrl);
+        const matched = finalLoadedUrl ? this._isLoadedStageExpected(finalLoadedUrl) : !hasExpectedStage;
         this._finishStageLoad();
         this._getChildren();
-        this.setState({ showStream: true, loadingText: "模型已載入", showUI: true, isLoading: false, streamDiagnostic: null });
+        this.setState({
+            showStream: true,
+            loadingText: matched ? "模型已載入" : "模型畫面可見，stage URL 尚未證明",
+            showUI: true,
+            isLoading: false,
+            streamDiagnostic: matched ? null : `expected：${this.state.expectedStageUrl || "unknown"}\nloaded：${finalLoadedUrl || "not_observed"}`,
+            loadedStageUrl: finalLoadedUrl || null,
+            stageLoadStatus: matched ? "matched" : "unproven",
+        });
     }
 
     private _completeStageLoadFromVisibleStream(): boolean {
@@ -408,6 +529,7 @@ export default class App extends React.Component<AppProps, AppState> {
             streamDiagnostic: diagnostic || null,
             showStream: this._hasRemoteVideoFrame(),
             isLoading: false,
+            stageLoadStatus: loadingText === "stale_stage_or_mismatch" ? "mismatch" : state.stageLoadStatus,
             reviewEvents: [...state.reviewEvents, loadingText],
         }));
     }
@@ -458,6 +580,7 @@ export default class App extends React.Component<AppProps, AppState> {
             loadingText: "WebRTC 串流未建立",
             streamDiagnostic: diagnostic,
             isLoading: false,
+            webrtcLifecycleStatus: "failed",
             reviewEvents: [...state.reviewEvents, "WebRTC 串流未建立，已顯示診斷資訊"],
         }));
     }
@@ -620,8 +743,15 @@ export default class App extends React.Component<AppProps, AppState> {
 
             const artifacts = streamConfig.artifacts;
             const usdAssets = this._mergeAssets(this._assetsFromArtifactBindings(streamConfig.artifact_bindings || []), this._assetsFromReviewArtifacts(artifacts));
-            const mergedUSDAssets = this._mergeAssets(this.state.usdAssets, usdAssets);
-            const selectedUSDAsset = usdAssets.find((asset) => asset.url === streamConfig.model.url) ?? usdAssets[0] ?? this.state.selectedUSDAsset;
+            const expectedStageUrl = expectedStageUrlFromStreamConfig(streamConfig);
+            const expectedStageAsset = expectedStageUrl
+                ? (usdAssets.find((asset) => asset.url === expectedStageUrl) || { name: displayNameFromStageUrl(expectedStageUrl), url: expectedStageUrl })
+                : null;
+            const mergedUSDAssets = this._mergeAssets(this.state.usdAssets, expectedStageAsset ? [expectedStageAsset, ...usdAssets] : usdAssets);
+            const selectedUSDAsset = expectedStageAsset
+                ?? usdAssets.find((asset) => asset.url === streamConfig.model.url)
+                ?? usdAssets[0]
+                ?? this.state.selectedUSDAsset;
             const shouldShowReviewUI = mergedUSDAssets.length > 0 || artifacts.length > 0 || streamConfig.artifact_bindings.length > 0;
 
             this._connectReviewSocket(sessionId);
@@ -649,6 +779,9 @@ export default class App extends React.Component<AppProps, AppState> {
                 mappingUrl: this._resolveMappingUrl(streamConfig, artifacts),
                 usdAssets: mergedUSDAssets,
                 selectedUSDAsset,
+                expectedStageUrl,
+                loadedStageUrl: null,
+                stageLoadStatus: expectedStageUrl ? "pending" : "unproven",
                 showUI: this.state.showUI || shouldShowReviewUI,
                 activeStreamEndpoint,
                 streamMountKey: streamEndpointChanged ? this.state.streamMountKey + 1 : this.state.streamMountKey,
@@ -658,6 +791,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     endpointEvent,
                 ],
             }, () => {
+                this._scheduleStreamStartTimeout();
                 if (this.state.isKitReady && this.state.selectedUSDAsset && streamConfig.model.status === "ready" && !isBlockedLifecycle(streamConfig.lifecycle_status)) {
                     this._openSelectedAsset();
                 }
@@ -790,7 +924,7 @@ export default class App extends React.Component<AppProps, AppState> {
      * openedStageResult message.
      */
         private _onStreamStarted(): void {
-            this.setState({ streamDiagnostic: null });
+            this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
             this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
                 this.setState((state) => ({
@@ -869,12 +1003,58 @@ export default class App extends React.Component<AppProps, AppState> {
     *
     * Send a request to load an asset based on the currently selected asset
     */
+    private _handleStreamStopped(kind: "stopped" | "terminated", message: unknown): void {
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this._clearDeferredOpenStage();
+        const endpoint = streamEndpointLabel(this.state.activeStreamEndpoint);
+        const diagnostic = [
+            `webrtc_disconnected=${kind}`,
+            `端點：${endpoint}`,
+            `診斷：${this._getVideoDiagnosticText()}`,
+            `event：${JSON.stringify(message)}`,
+            "請按「重新連線」重建 viewer 端 AppStreamer；若仍停在 busy/disconnected，需重啟 Kit/WebRTC runtime。",
+        ].join("\n");
+        this.setState((state) => ({
+            loadingText: "webrtc_disconnected",
+            streamDiagnostic: diagnostic,
+            showStream: this._hasRemoteVideoFrame(),
+            isLoading: false,
+            stageLoadStatus: "disconnected",
+            webrtcLifecycleStatus: kind,
+            reviewEvents: [...state.reviewEvents, `WebRTC ${kind}`].slice(-80),
+        }));
+    }
+
+    private _reconnectStream(): void {
+        AppStream.stop();
+        this.pendingStageUrl = null;
+        this.loadingStatePollCount = 0;
+        this._clearLoadingStateRetry();
+        this._clearStageLoadTimeout();
+        this._clearDeferredOpenStage();
+        this.setState((state) => ({
+            isKitReady: false,
+            showStream: false,
+            isLoading: true,
+            loadingText: "正在重新連線 WebRTC...",
+            streamDiagnostic: null,
+            loadedStageUrl: null,
+            stageLoadStatus: state.expectedStageUrl ? "pending" : "unproven",
+            webrtcLifecycleStatus: "initializing",
+            streamMountKey: state.streamMountKey + 1,
+            reviewEvents: [...state.reviewEvents, "重新建立 AppStreamer lifecycle"].slice(-80),
+        }), () => this._scheduleStreamStartTimeout());
+    }
+
     private _openSelectedAsset(): void {
-        if (!this.state.selectedUSDAsset) {
+        const targetAsset = this._expectedStageAsset() || this.state.selectedUSDAsset;
+        if (!targetAsset) {
             console.warn("No USD asset is selected.");
             this.setState({ loadingText: "沒有可用的 USD / USDC 成果檔", isLoading: false });
             return;
         }
+
         if (this.state.latestStreamConfig && this.state.latestStreamConfig.model.status !== "ready") {
             const status = this.state.latestStreamConfig.model.status;
             console.warn(`Model is not ready for openStageRequest: ${status}.`);
@@ -882,7 +1062,7 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
-        this.pendingStageUrl = this.state.selectedUSDAsset.url;
+        this.pendingStageUrl = targetAsset.url;
         this.loadingStatePollCount = 0;
         this._clearLoadingStateRetry();
         this._scheduleStageLoadTimeout();
@@ -890,17 +1070,21 @@ export default class App extends React.Component<AppProps, AppState> {
             loadingText: "正在載入模型...",
             showStream: this._hasRemoteVideoFrame(),
             streamDiagnostic: null,
+            selectedUSDAsset: targetAsset,
+            expectedStageUrl: this.state.expectedStageUrl || targetAsset.url,
+            loadedStageUrl: null,
+            stageLoadStatus: "pending",
             isLoading: true
         })
         this.setState({ usdPrims: [], selectedUSDPrims: new Set<USDPrimType>() });
         this.usdStageRef.current?.resetExpandedIds();
-        console.log(`Sending request to open asset: ${this.state.selectedUSDAsset.url}.`);
-        const artifactBindings = this.state.latestStreamConfig?.artifact_bindings?.filter((binding) => binding.url === this.state.selectedUSDAsset?.url) || [];
+        console.log(`Sending request to open asset: ${targetAsset.url}.`);
+        const artifactBindings = this.state.latestStreamConfig?.artifact_bindings?.filter((binding) => binding.url === targetAsset.url) || [];
         const composition = this.state.latestStreamConfig?.stage_composition;
-        const selectedIsPrimary = composition?.primary?.url === this.state.selectedUSDAsset.url;
+        const selectedIsPrimary = composition?.primary?.url === targetAsset.url;
         this._sendStreamMessage(
             buildOpenStageRequest(
-                this.state.selectedUSDAsset.url,
+                targetAsset.url,
                 artifactBindings,
                 selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
             ),
@@ -1220,6 +1404,10 @@ export default class App extends React.Component<AppProps, AppState> {
         // response received once a USD asset is fully loaded
         if (event.event_type === "openedStageResult") {
             if (payload.result === "success") {
+                const loadedUrl = getPayloadString(payload, "url");
+                if (loadedUrl && !this._recordLoadedStageEvidence(loadedUrl, "openedStageResult")) {
+                    return;
+                }
                 this._scheduleLoadingStateQuery(250)
             }
             else {
@@ -1257,6 +1445,10 @@ export default class App extends React.Component<AppProps, AppState> {
                 const loadingState = getPayloadString(payload, "loading_state");
                 const usdAsset: USDAssetType = this._getAsset(payloadUrl)
                 const isStageValid: boolean = !!(usdAsset.name && usdAsset.url)
+
+                if (payloadUrl && loadingState === "idle" && !this._recordLoadedStageEvidence(payloadUrl, "loadingStateResponse", loadingState)) {
+                    return;
+                }
 
                 if (loadingState === "busy") {
                     if (this.loadingStatePollCount <= 90) {
@@ -1298,7 +1490,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 // show stream and populate children if the stage is valid and it's done loading
                 if (isStageValid && loadingState === "idle")
                 {
-                    this._completeStageLoad()
+                    this._completeStageLoad(payloadUrl)
                 }
             }
         }
@@ -1313,7 +1505,11 @@ export default class App extends React.Component<AppProps, AppState> {
             console.log('Kit App communicates progress activity.');
             const activityText = getPayloadString(payload, "text");
             if (this.pendingStageUrl && activityText === "None") {
-                this._completeStageLoad();
+                const loadedUrl = this.pendingStageUrl;
+                if (!this._recordLoadedStageEvidence(loadedUrl, "updateProgressActivity", activityText)) {
+                    return;
+                }
+                this._completeStageLoad(loadedUrl);
                 return;
             }
             if (this.state.loadingText !== "正在載入模型...")
@@ -1450,7 +1646,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const streamReservedWidth = this.state.showUI
             ? sidebarWidth + (showDemoPanel ? demoPanelWidth : 0)
             : (showDemoPanel ? demoPanelWidth : 0);
-        const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId;
+        const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
         return (
             <div
                 style={{
@@ -1477,6 +1673,19 @@ export default class App extends React.Component<AppProps, AppState> {
                     </div>
                 }
 
+                <div className={`stage-truth-panel stage-truth-panel--${this.state.stageLoadStatus}`}>
+                    <div className="stage-truth-panel__row">
+                        <strong>Stage truth</strong>
+                        <span>{this.state.stageLoadStatus}</span>
+                    </div>
+                    <div className="stage-truth-panel__line">expected: {this.state.expectedStageUrl || "not_set"}</div>
+                    <div className="stage-truth-panel__line">loaded: {this.state.loadedStageUrl || "not_observed"}</div>
+                    <div className="stage-truth-panel__line">WebRTC: {this.state.webrtcLifecycleStatus} · {streamEndpointLabel(this.state.activeStreamEndpoint)}</div>
+                    {this.state.stageLoadStatus === "disconnected" &&
+                        <button type="button" className="stage-truth-panel__button" onClick={() => this._reconnectStream()}>重新連線</button>
+                    }
+                </div>
+
                 {/* Streamed app */}
                 {shouldRenderAppStream &&
                 <AppStream
@@ -1498,6 +1707,8 @@ export default class App extends React.Component<AppProps, AppState> {
                     onLoggedIn={(userId) => this._onLoggedIn(userId)}
                     handleCustomEvent={(event) => this._handleCustomEvent(event)}
                     onStreamFailed={this.props.onStreamFailed}
+                    onStopped={(message) => this._handleStreamStopped("stopped", message)}
+                    onTerminated={(message) => this._handleStreamStopped("terminated", message)}
                     />}
                 </div>
 

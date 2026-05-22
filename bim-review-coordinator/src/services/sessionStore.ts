@@ -67,6 +67,18 @@ export class SessionStore {
     return JSON.parse(fs.readFileSync(file, "utf8")) as ReviewSession;
   }
 
+  list(): ReviewSession[] {
+    if (!fs.existsSync(this.rootDir)) return [];
+    return fs
+      .readdirSync(this.rootDir)
+      .filter((entry) => entry.endsWith(".json"))
+      .map((entry) => entry.slice(0, -".json".length))
+      .filter(isSafeSessionId)
+      .map((sessionId) => this.get(sessionId))
+      .filter((session): session is ReviewSession => session !== null)
+      .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+  }
+
   save(session: ReviewSession): void {
     assertSafeSessionId(session.session_id);
     session.updated_at = nowIso();

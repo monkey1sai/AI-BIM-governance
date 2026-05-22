@@ -114,6 +114,27 @@ Required additional evidence before archive:
 - E2E screenshot/HAR/console/log evidence proves the viewport is not the stale `許良宇圖書館建築_2026.usdc` stage.
 - Reload/reconnect either succeeds without killing all Chrome processes or records a deterministic blocker with Kit/WebRTC evidence and next action.
 
+Resolved dashboard + viewer evidence (2026-05-22):
+
+- Evidence directory:
+  - `docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-e2e-final-stage-truth-matched/`
+- Runtime snapshots:
+  - `00-runtime-status.json`: coordinator reports `ifcready_1779449084006_3a0fd2cb`, `conversion_job_id="stream_conv_20260522112506_2b79ba1d"`, `conversion_status="ready"`, `review_session_id="review_session_5f549af0631b"`, `expected_stage_url="http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc"`.
+  - `00-ifc-ready-list.json`: read-only job list exposes `download_status="downloaded"`, `conversion_status="ready"`, `viewer_url`, expected stage/mapping URLs, and omits secret/idempotency fields from the dashboard list.
+- `/ui` dashboard evidence:
+  - `01-runtime-dashboard.png`
+  - `01-runtime-dashboard.json`: Chrome opened `http://192.168.10.105:8004/ui` and observed `downloaded`, `ready`, `Kit / WebRTC`, active session/participant count, `stream_conv_20260522112506_2b79ba1d`, `review_session_5f549af0631b`, and the expected `model.usdc` URL.
+- Viewer stage-load evidence:
+  - `02-session-viewer-matched.png`
+  - `02-session-viewer-matched.json`: Chrome opened `http://127.0.0.1:5173/?session=review_session_5f549af0631b&streamTimeoutMs=180000`; viewer showed `Stage truth matched`, `loaded` equals the expected `model.usdc`, WebRTC `started`, video `1920x1080`, and no `mismatch` / `disconnected` text.
+  - `chrome-events.json`: browser console includes DataChannel evidence (`openedStageResult` / `loadingStateResponse`) routed through the viewer's AppStreamer Promise handling.
+- Reload/reconnect evidence:
+  - `03-session-viewer-reloaded.png`
+  - `03-session-viewer-reloaded.json`: same Chrome tab reloaded the session and returned to `Stage truth matched` with the same loaded URL and non-zero video dimensions. This proves the current failure mode no longer requires killing all Chrome processes for a normal reload recovery.
+- Root-cause correction:
+  - The earlier viewer dropped built-in AppStreamer replies because `AppStreamer.sendMessage(...)` returns a Promise for `openedStageResult`, `loadingStateResponse`, and `getChildrenResponse`; those responses do not arrive via `onCustomEvent`.
+  - The fix returns that Promise from `AppStream.sendMessage(...)` and maps the built-in Promise result back into existing viewer handlers, so the UI now records the actual loaded stage URL instead of relying on metadata or a visible video frame alone.
+
 Remaining before archive:
 
 - Implementation PR #101 must be merged into `main`.

@@ -1,0 +1,35 @@
+{
+  "snapshot": {
+    "href": "http://192.168.10.105:8004/ui",
+    "title": "審查協調 (Review Coordinator) — 步驟③",
+    "readyState": "complete",
+    "bodyText": "BIM 審查雲端 Demo｜審查協調 (Review Coordinator)\n步驟 ③ / 3\n①\n上傳建模 (Upload)\n②\n自動轉換 (Convert)\n③\n建立會議 (Meeting)\n閉環 Runtime Dashboard 已更新\n\n從 POST /api/external/ifc-ready 到 download、conversion、review session、Kit / WebRTC、viewer handoff 分層觀察。 conversion ready 不等於 Kit 已載入；必須看到 expected stage URL 與 viewer stage-load evidence 對齊。\n\n刷新 runtime\n開啟最新 viewer\nIFC-READY JOBS\n1\nread-only list: GET /api/external/ifc-ready\nACTIVE SESSIONS\n1\nparticipants: 1\nKIT / WEBRTC\n127.0.0.1:49100\nread-only coordinator observations; Kit internal stage state still requires DataChannel or Kit log evidence.\nLATEST CONVERSION\nready\njob: ifcready_1779449084006_3a0fd2cb\n最新 ifc-ready / conversion\ndownload_status\ndownloaded\nconversion_job_id\nstream_conv_20260522112506_2b79ba1d\nartifact_manifest_ref\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/metadata.json\nreview_session_id\nreview_session_5f549af0631b\nviewer_url\nhttp://127.0.0.1:8004/ui/open?session=review_session_5f549af0631b\nexpected stage URL\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n這裡只證明 coordinator 看到的狀態。Kit 是否真的載入 expected stage，仍要由 viewer DataChannel / Kit log / Chrome E2E 證明。\nRecent jobs\nJOB\tDOWNLOAD\tCONVERSION\tVIEWER\nifcready_1779449084006_3a0fd2cb\ntest001\tdownloaded\tready\nstream_conv_20260522112506_2b79ba1d\topen\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n① 提交 IFC source(模擬外部 ifc-ready)\n\n填入 worker compat payload,點「送出 ifc-ready」後 coordinator 同步下載 IFC 至 shared volume 並 dispatch streaming-server。\n\nifc_path \nproject_id \nversion \ntask_id \n送出 ifc-ready\n尚未送出。\n② 下載 + 轉檔進度\n\n每 5 秒自動 polling GET /api/external/ifc-ready/{jobId}。download → conversion → viewer ready 三段狀態。\n\nJOB ID\n—\nDOWNLOAD_STATUS\n—\nCONVERSION_STATUS\n—\nVIEWER_OPEN_READY\nfalse\n③ 開啟 viewer\n\n轉檔 ready 時自動填入 viewer_url。點「開啟 viewer」會走 coordinator /ui/open?session= 302 → host loopback 127.0.0.1:5173/?session=。\n\nVIEWER_URL\n—\n複製\n開啟 viewer\n展開 dev console / 工程測試控制台(舊版 demo 控制 + 互動實驗室,fast MVP 流程不需要)\n你現在在這裡：步驟 ③ 建立會議\n下一步：前往瀏覽器審查端 (步驟 ④)",
+    "containsDashboard": true,
+    "containsIfcReady": true,
+    "containsDownloaded": true,
+    "containsReady": true,
+    "containsConversionJob": true,
+    "containsKitWebRTC": true,
+    "containsExpectedStage": true,
+    "bodyLength": 2020
+  },
+  "snapshots": [
+    {
+      "at": "2026-05-22T12:16:29.932Z",
+      "snapshot": {
+        "href": "http://192.168.10.105:8004/ui",
+        "title": "審查協調 (Review Coordinator) — 步驟③",
+        "readyState": "complete",
+        "bodyText": "BIM 審查雲端 Demo｜審查協調 (Review Coordinator)\n步驟 ③ / 3\n①\n上傳建模 (Upload)\n②\n自動轉換 (Convert)\n③\n建立會議 (Meeting)\n閉環 Runtime Dashboard 已更新\n\n從 POST /api/external/ifc-ready 到 download、conversion、review session、Kit / WebRTC、viewer handoff 分層觀察。 conversion ready 不等於 Kit 已載入；必須看到 expected stage URL 與 viewer stage-load evidence 對齊。\n\n刷新 runtime\n開啟最新 viewer\nIFC-READY JOBS\n1\nread-only list: GET /api/external/ifc-ready\nACTIVE SESSIONS\n1\nparticipants: 1\nKIT / WEBRTC\n127.0.0.1:49100\nread-only coordinator observations; Kit internal stage state still requires DataChannel or Kit log evidence.\nLATEST CONVERSION\nready\njob: ifcready_1779449084006_3a0fd2cb\n最新 ifc-ready / conversion\ndownload_status\ndownloaded\nconversion_job_id\nstream_conv_20260522112506_2b79ba1d\nartifact_manifest_ref\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/metadata.json\nreview_session_id\nreview_session_5f549af0631b\nviewer_url\nhttp://127.0.0.1:8004/ui/open?session=review_session_5f549af0631b\nexpected stage URL\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n這裡只證明 coordinator 看到的狀態。Kit 是否真的載入 expected stage，仍要由 viewer DataChannel / Kit log / Chrome E2E 證明。\nRecent jobs\nJOB\tDOWNLOAD\tCONVERSION\tVIEWER\nifcready_1779449084006_3a0fd2cb\ntest001\tdownloaded\tready\nstream_conv_20260522112506_2b79ba1d\topen\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n① 提交 IFC source(模擬外部 ifc-ready)\n\n填入 worker compat payload,點「送出 ifc-ready」後 coordinator 同步下載 IFC 至 shared volume 並 dispatch streaming-server。\n\nifc_path \nproject_id \nversion \ntask_id \n送出 ifc-ready\n尚未送出。\n② 下載 + 轉檔進度\n\n每 5 秒自動 polling GET /api/external/ifc-ready/{jobId}。download → conversion → viewer ready 三段狀態。\n\nJOB ID\n—\nDOWNLOAD_STATUS\n—\nCONVERSION_STATUS\n—\nVIEWER_OPEN_READY\nfalse\n③ 開啟 viewer\n\n轉檔 ready 時自動填入 viewer_url。點「開啟 viewer」會走 coordinator /ui/open?session= 302 → host loopback 127.0.0.1:5173/?session=。\n\nVIEWER_URL\n—\n複製\n開啟 viewer\n展開 dev console / 工程測試控制台(舊版 demo 控制 + 互動實驗室,fast MVP 流程不需要)\n你現在在這裡：步驟 ③ 建立會議\n下一步：前往瀏覽器審查端 (步驟 ④)",
+        "containsDashboard": true,
+        "containsIfcReady": true,
+        "containsDownloaded": true,
+        "containsReady": true,
+        "containsConversionJob": true,
+        "containsKitWebRTC": true,
+        "containsExpectedStage": true,
+        "bodyLength": 2020
+      }
+    }
+  ]
+}
