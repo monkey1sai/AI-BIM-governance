@@ -333,3 +333,132 @@ def test_adapter_from_env_explicit_powershell_wins(tmp_path: Path, monkeypatch):
     )
 
     assert adapter.powershell_exe == "powershell.exe"
+
+
+# --- streaming-server-prefer-local-ifc-path:dispatch payload local path resolution -----
+
+
+def _adapter_with_storage(tmp_path: Path, *, storage_root: Path | None = None) -> Ifc2UsdcPowershellConverterAdapter:
+    return Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        storage_root=storage_root,
+    )
+
+
+def test_adapter_resolve_prefers_host_local_path_inside_storage_root(tmp_path: Path):
+    storage = tmp_path / "storage"
+    ifc = storage / "ifc-cache" / "job_a" / "source.ifc"
+    ifc.parent.mkdir(parents=True)
+    ifc.write_bytes(b"IFC")
+    adapter = _adapter_with_storage(tmp_path, storage_root=storage)
+    event = ifc_ready_payload(
+        ifc_artifact={
+            "artifact_id": "artifact_local_001",
+            "format": "ifc",
+            "filename": "source.ifc",
+            "url": "http://127.0.0.1:9000/should-not-be-fetched.ifc",
+            "host_local_path": str(ifc),
+        }
+    )
+
+    resolved = adapter._resolve_local_ifc(event)
+
+    assert resolved == ifc.resolve()
+
+
+def test_adapter_resolve_falls_back_to_local_path_when_host_local_path_missing(tmp_path: Path):
+    storage = tmp_path / "storage"
+    ifc = storage / "ifc-cache" / "job_b" / "source.ifc"
+    ifc.parent.mkdir(parents=True)
+    ifc.write_bytes(b"IFC")
+    adapter = _adapter_with_storage(tmp_path, storage_root=storage)
+    event = ifc_ready_payload(
+        ifc_artifact={
+            "artifact_id": "artifact_local_002",
+            "format": "ifc",
+            "filename": "source.ifc",
+            "url": "http://127.0.0.1:9000/should-not-be-fetched.ifc",
+            "local_path": str(ifc),
+        }
+    )
+
+    resolved = adapter._resolve_local_ifc(event)
+
+    assert resolved == ifc.resolve()
+
+
+def test_adapter_resolve_falls_back_to_url_when_local_paths_unreadable(tmp_path: Path):
+    """host_local_path/local_path 在 storage_root 內但檔案還沒寫好 → soft fallback url。"""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    # url 走 edge-local:// 解析(既有 _url_to_local_path 路徑)
+    fixture_root = tmp_path / "fixtures"
+    fixture_root.mkdir()
+    ifc = fixture_root / "fallback.ifc"
+    ifc.write_bytes(b"IFC")
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        storage_root=storage,
+        work_dir=tmp_path,
+    )
+    missing_local = storage / "ifc-cache" / "job_c" / "source.ifc"  # 不存在
+    event = ifc_ready_payload(
+        ifc_artifact={
+            "artifact_id": "artifact_local_003",
+            "format": "ifc",
+            "filename": "fallback.ifc",
+            "url": "edge-local://fixtures/fallback.ifc",
+            "host_local_path": str(missing_local),
+        }
+    )
+
+    resolved = adapter._resolve_local_ifc(event)
+
+    assert resolved == ifc.resolve()
+
+
+def test_adapter_resolve_rejects_local_path_outside_storage_root(tmp_path: Path):
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    outside = tmp_path / "outside" / "secret.ifc"
+    outside.parent.mkdir()
+    outside.write_bytes(b"OUT")
+    adapter = _adapter_with_storage(tmp_path, storage_root=storage)
+    event = ifc_ready_payload(
+        ifc_artifact={
+            "artifact_id": "artifact_local_004",
+            "format": "ifc",
+            "filename": "secret.ifc",
+            "url": "edge-local://fixtures/demo-model.ifc",
+            "host_local_path": str(outside),
+        }
+    )
+
+    try:
+        adapter._resolve_local_ifc(event)
+        raised = None
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "invalid_ifc_input"
+    assert "outside storage_root" in raised.message
+
+
+def test_adapter_resolve_existing_edge_local_url_still_works(tmp_path: Path):
+    """Regression guard:legacy edge-local:// url-only payload(無 local_path/host_local_path)仍能解析。"""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    ifc = tmp_path / "fixtures" / "demo-model.ifc"
+    ifc.parent.mkdir()
+    ifc.write_bytes(b"IFC")
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=tmp_path,
+        storage_root=storage,
+        work_dir=tmp_path,
+    )
+    event = ifc_ready_payload()  # url=edge-local://fixtures/demo-model.ifc,無 local paths
+
+    resolved = adapter._resolve_local_ifc(event)
+
+    assert resolved == ifc.resolve()

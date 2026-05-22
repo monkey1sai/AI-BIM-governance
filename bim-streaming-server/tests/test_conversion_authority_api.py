@@ -17,6 +17,7 @@ sys.path.insert(0, str(MODULE_DIR))
 from conversion_authority import (  # noqa: E402
     ConversionAuthorityError,
     ConversionAuthoritySettings,
+    _ifc_artifact,
     create_conversion_api_app,
 )
 
@@ -379,3 +380,40 @@ def test_coordinator_internal_request_failed_yields_failed_and_skipped_callback(
     result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
     assert result["status"] == "failed"
     assert result["authority"] == "bim-streaming-server"
+
+
+# --- streaming-server-prefer-local-ifc-path:_ifc_artifact propagate local paths ----
+
+
+def test_ifc_artifact_propagates_local_paths_when_present():
+    event = {
+        "ifc_artifact": {
+            "artifact_id": "artifact_local_propagate_001",
+            "format": "ifc",
+            "filename": "source.ifc",
+            "url": "edge-local://fixtures/source.ifc",
+            "local_path": "/workspace/storage/ifc-cache/job_x/source.ifc",
+            "host_local_path": "C:/host/storage/ifc-cache/job_x/source.ifc",
+        }
+    }
+
+    artifact = _ifc_artifact(event)
+
+    assert artifact["local_path"] == "/workspace/storage/ifc-cache/job_x/source.ifc"
+    assert artifact["host_local_path"] == "C:/host/storage/ifc-cache/job_x/source.ifc"
+
+
+def test_ifc_artifact_local_paths_default_to_none_when_absent():
+    event = {
+        "ifc_artifact": {
+            "artifact_id": "artifact_local_propagate_002",
+            "format": "ifc",
+            "filename": "source.ifc",
+            "url": "edge-local://fixtures/source.ifc",
+        }
+    }
+
+    artifact = _ifc_artifact(event)
+
+    assert artifact["local_path"] is None
+    assert artifact["host_local_path"] is None
