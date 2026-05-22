@@ -97,7 +97,7 @@
 
 - [x] 12.1 Commit implementation and OpenSpec artifacts.
 - [x] 12.2 Push branch and open PR with Traditional Chinese title/body: PR #101.
-- [ ] 12.3 Commit and push the approved runtime dashboard / viewer E2E additions.
+- [x] 12.3 Commit and push the approved runtime dashboard / viewer E2E additions.
 - [ ] 12.4 Wait for CI/review and merge.
 - [ ] 12.5 Archive only after PR #101 is merged and real runtime conversion + viewer evidence remains valid on synced `main`.
 - [ ] 12.6 Sync roadmap Markdown and HTML if archive is performed.
