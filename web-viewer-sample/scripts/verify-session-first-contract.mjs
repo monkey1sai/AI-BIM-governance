@@ -79,6 +79,14 @@ const reviewTypesSource = readSource("src/types/review.ts");
 for (const token of ["converting", "conversion_authority", "conversion_job_id", "stage_composition"]) {
     assert.ok(reviewTypesSource.includes(token), `review.ts is missing ${token}`);
 }
+
+const envSource = readSource("src/config/env.ts");
+assert.match(
+    envSource,
+    /queryParam\("session"\)\s*\|\|\s*queryParam\("sessionId"\)/,
+    "viewer must accept coordinator /ui/open handoff query key `session` before falling back to legacy `sessionId`",
+);
+
 assert.match(
     windowSource,
     /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(JSON\.stringify\(message\)\);[\s\S]*?this\._appendDemoOutgoing/,

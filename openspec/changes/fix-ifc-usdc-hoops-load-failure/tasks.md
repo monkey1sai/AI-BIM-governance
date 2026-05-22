@@ -54,11 +54,12 @@
 - [x] 6.5 Submit a new coordinator `POST /api/external/ifc-ready` request with fresh correlation/idempotency.
 - [x] 6.6 Poll coordinator until terminal state and verify `conversion_status="ready"` for `ifcready_1779436887005_44f9b405`.
 - [x] 6.7 Verify coordinator produces `viewer_url` and viewer handoff URL returns HTTP 200.
+- [x] 6.8 Verify the live Docker viewer on `127.0.0.1:5173` consumes `?session=review_session_761f0c316079` and displays the converted artifact URL for `stream_conv_20260522080140_dfa11d33`, not the default demo asset.
 
 ## 7. Commit / PR / archive
 
 - [x] 7.1 Commit implementation and OpenSpec artifacts.
 - [x] 7.2 Push branch and open PR with Traditional Chinese title/body: PR #101.
 - [ ] 7.3 Wait for CI/review and merge.
-- [x] 7.4 Archive only after real runtime conversion success evidence exists.
+- [ ] 7.4 Archive only after PR #101 is merged and real runtime conversion + viewer evidence remains valid on synced `main`.
 - [ ] 7.5 Sync roadmap Markdown and HTML if archive is performed.

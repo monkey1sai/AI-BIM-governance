@@ -36,7 +36,9 @@ Required before archive:
   - `artifacts.model_usdc.url` present
   - `quality_metrics.materialization_strategy="ifcopenshell_openusd_fallback"` when fallback was used
 - `model.usdc` exists in artifact dir and `Usd.Stage.Open(model.usdc)` succeeds.
-- `viewer_url` is produced by coordinator, unless WebRTC/Kit viewer runtime has a separately documented blocker. A viewer/WebRTC blocker MUST NOT be reported as conversion failure if conversion ready evidence passed.
+- `viewer_url` is produced by coordinator.
+- The live web viewer must consume the coordinator session handoff and display the converted artifact for that session. A plain HTTP `200` is not enough if the viewer falls back to `/api/assets` and shows the default demo model.
+- A viewer/WebRTC blocker MUST NOT be reported as conversion failure if conversion ready evidence passed, but the change still cannot be archived until the viewer handoff gap is documented or fixed.
 
 Observed implementation evidence (2026-05-22):
 
@@ -74,6 +76,18 @@ Observed live coordinator evidence after replacing `49101` service (2026-05-22):
   - artifact URL download returned the same byte count
 - Viewer handoff check:
   - `GET /ui/open?session=review_session_761f0c316079` returned HTTP `200`.
+- Viewer session-binding correction after browser evidence showed the default demo asset:
+  - Rebuilt Docker viewer container `ai-bim-web-plane-host-kit-viewer-1` from this PR worktree.
+  - Playwright opened `http://127.0.0.1:5173/?session=review_session_761f0c316079` at viewport `1280x720`.
+  - Screenshot evidence `tmp/viewer-session-761f0c316079.png` showed:
+    - `Review session` id `review_session_761f0c316079`
+    - review/model status `ready`
+    - converted model URL `http://127.0.0.1:49101/artifacts/stream_conv_20260522080140_dfa11d33/model.usdc`
+    - conversion summary `materialization_strategy=ifcopenshell_openusd_fallback`, `source_ifc_entity_count=5128`, `coverage_status=pass`
+  - HAR evidence showed coordinator session calls:
+    - `GET /api/review-sessions/review_session_761f0c316079`
+    - `GET /api/review-sessions/review_session_761f0c316079/stream-config`
+  - `/api/assets` may still be requested to populate the right-side dropdown, but it no longer controls the primary session/model binding for this URL.
 
 Remaining before archive:
 
