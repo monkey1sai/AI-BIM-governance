@@ -567,12 +567,16 @@ def _ifc_artifact(event: Mapping[str, Any]) -> dict[str, Any]:
     url = raw.get("url") or raw.get("file_url") or raw.get("signed_upload_reference")
     if not url:
         raise ValueError("ifc_artifact must include url, file_url, or signed_upload_reference.")
+    local_path = raw.get("local_path")
+    host_local_path = raw.get("host_local_path")
     return {
         "artifact_id": artifact_id,
         "format": "ifc",
         "filename": str(raw.get("filename") or "model.ifc"),
         "url": url,
         "checksum_sha256": raw.get("checksum_sha256"),
+        "local_path": str(local_path) if local_path else None,
+        "host_local_path": str(host_local_path) if host_local_path else None,
     }
 
 

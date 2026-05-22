@@ -55,6 +55,7 @@ class Ifc2UsdcPowershellConverterAdapter:
         config_path: Path | None = None,
         timeout_seconds: int = 600,
         work_dir: Path | None = None,
+        storage_root: Path | None = None,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.powershell_exe = powershell_exe
@@ -64,6 +65,14 @@ class Ifc2UsdcPowershellConverterAdapter:
         self.timeout_seconds = int(timeout_seconds)
         self.work_dir = Path(work_dir) if work_dir else self.repo_root
         self.ps1_path = self.repo_root / "scripts" / "convert-ifc-to-usdc.ps1"
+        # streaming-server-prefer-local-ifc-path: shared volume sandbox base for
+        # dispatch payload host_local_path / local_path. Defaults to env STORAGE_ROOT
+        # (compose 對齊),or cwd 作為 host-native fallback。
+        if storage_root is not None:
+            self.storage_root = Path(storage_root).resolve()
+        else:
+            env_root = os.environ.get("STORAGE_ROOT")
+            self.storage_root = (Path(env_root) if env_root else Path.cwd()).resolve()
 
     # -- preflight -----------------------------------------------------------
 
@@ -162,6 +171,15 @@ class Ifc2UsdcPowershellConverterAdapter:
             raise ConversionAuthorityError(
                 "invalid_ifc_input", "ifc_ready event is missing ifc_artifact."
             )
+        # streaming-server-prefer-local-ifc-path: 優先用 coordinator 寫到 shared volume
+        # 的 IFC,避免重複 HTTP fetch。host_local_path 是 host-native streaming-server
+        # 直接讀的 host fs path;local_path 在共享 fs 場景下與其同值,作為 fallback。
+        # 兩者都必須落在 storage_root 之內(防 path traversal)。
+        local = self._try_local_path(artifact.get("host_local_path"))
+        if local is None:
+            local = self._try_local_path(artifact.get("local_path"))
+        if local is not None:
+            return local
         url = artifact.get("url") or artifact.get("file_url") or artifact.get(
             "signed_upload_reference"
         )
@@ -176,6 +194,38 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"IFC source is not a readable local file: {url}",
             )
         return local
+
+    def _try_local_path(self, candidate: Any) -> Path | None:
+        """Resolve a dispatch-payload local path inside storage_root sandbox.
+
+        Returns the resolved Path if the file exists and lies inside
+        ``self.storage_root``; returns None when the candidate is missing or
+        the file does not yet exist (soft fallback). Raises
+        ``ConversionAuthorityError("invalid_ifc_input")`` when the resolved
+        path escapes ``storage_root`` (security hard-fail).
+        """
+        if not candidate:
+            return None
+        raw = str(candidate).strip()
+        if not raw:
+            return None
+        path = Path(raw)
+        base = self.storage_root
+        resolved = (
+            path.resolve()
+            if path.is_absolute()
+            else (base / path).resolve()
+        )
+        try:
+            resolved.relative_to(base)
+        except ValueError as exc:
+            raise ConversionAuthorityError(
+                "invalid_ifc_input",
+                f"local IFC path is outside storage_root: {raw}",
+            ) from exc
+        if not resolved.is_file():
+            return None
+        return resolved
 
     def _url_to_local_path(self, url: str) -> Path | None:
         parsed = urlparse(url)
