@@ -56,7 +56,7 @@ export interface CoordinatorConfig {
   userAuthProvider: string;
   // fast-ifc-link-demo-loop §2.5:同步下載 IFC + viewer_url 組合 + shared volume 路徑
   ifcDownloadTimeoutSeconds: number;     // POST /api/external/ifc-ready 同步下載 timeout
-  storageRoot: string;                    // container view storage root,寫入用
+  storageRoot: string;                    // coordinator 寫入路徑;docker compose 顯式設 /workspace/storage,host-native 預設 <cwd>/storage
   storageHostRoot: string;                // host view storage root,寫進 dispatch payload host_local_path
   publicHost: string;                     // viewer_url 用的對外 host(coordinator 對 LAN IP);default 127.0.0.1
 }
@@ -203,7 +203,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     userAuthProvider: process.env.USER_AUTH_PROVIDER || "local-dev",
     // fast-ifc-link-demo-loop §2.5:
     ifcDownloadTimeoutSeconds: numberFromEnv("IFC_DOWNLOAD_TIMEOUT_SECONDS", 600),
-    storageRoot: process.env.STORAGE_ROOT || "/workspace/storage",
+    storageRoot: process.env.STORAGE_ROOT || path.join(cwd, "storage"),
     storageHostRoot:
       process.env.STORAGE_HOST_ROOT || process.env.RUNTIME_STORAGE_ROOT || path.join(cwd, "storage"),
     publicHost: process.env.PUBLIC_HOST || "127.0.0.1",
