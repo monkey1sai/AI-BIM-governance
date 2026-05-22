@@ -4,6 +4,8 @@
 TBD - created by archiving change architecture-rework-2026-05-14. Update Purpose after archive.
 
 > **Implementation status (2026-05-21 fast-mvp loop)**: change `fast-ifc-link-demo-loop` ADD 1 個 requirement `Coordinator dispatch payload carries local path references`(coordinator → streaming-server dispatch 加 `local_path` / `host_local_path`,streaming-server 優先用 host path 讀 shared volume,fallback 到 `source_ifc_ref` URL),並對既有 `Conversion result callback carries ready artifact references back to coordinator` requirement 加 implementation status note(ready 分支已擴充為 `setViewerLink`)。完整 ADD scenario 見 `openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/specs/conversion-webhook-lifecycle/spec.md`。實作:`bim-review-coordinator/src/services/streamingConversionClient.ts` `toInternalIfcReadyEvent` payload + `ingestConversionReport` ready 分支 `setViewerLink`。
+>
+> **Implementation status (2026-05-22 fast-mvp loop, hotfix bundle)**: PR #94 / #95 補 coordinator host-native `storageRoot` default fallback 與 `compose.runtime-manager.yml` coordinator service `STORAGE_ROOT` / `STORAGE_HOST_ROOT` env(IFC bytes 真實落到 shared volume mount destination)。change `streaming-server-prefer-local-ifc-path` 補實 fast-ifc-link-demo-loop 已宣告但 streaming-server 端未實作的 consumer 行為:ADD 1 個 requirement `Streaming-server consumes shared-volume local IFC path before url fetch`,streaming-server `_resolve_local_ifc` 新解析順序 `host_local_path` → `local_path` → 既有 url fallback,並加 `STORAGE_ROOT` sandboxing 防 path traversal。實作:`bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py` `_ifc_artifact` propagate + `ifc2usdc_powershell_adapter.py` `Ifc2UsdcPowershellConverterAdapter._resolve_local_ifc` / `_try_local_path`。
 ## Requirements
 ### Requirement: Conversion handoff uses correlation IDs and idempotent events
 
@@ -130,4 +132,64 @@ When `bim-review-coordinator` conversion ingestion reaches a terminal `ready` st
 - **WHEN** coordinator conversion ingestion reaches terminal `failed`
 - **THEN** the coordinator MUST NOT create an openable or streamable local review session
 - **AND** the callback metadata reports `failed` or an equivalent not-ready state
+
+### Requirement: Coordinator dispatch payload carries local path references
+
+`bim-review-coordinator` SHALL, when dispatching a conversion request to `bim-streaming-server` after a synchronous IFC download(see `local-coordinator-ifc-ready-intake-boundary` change `fast-ifc-link-demo-loop`),include both:
+
+- `local_path`: container-view absolute path of the downloaded IFC inside coordinator's mounted shared volume(e.g. `/workspace/storage/ifc-cache/<ifc_ready_job_id>/source.ifc`)
+- `host_local_path`: host-view absolute path of the same file(e.g. `C:\Repos\active\iot\AI-BIM-governance\storage\ifc-cache\<ifc_ready_job_id>\source.ifc`)
+
+`bim-streaming-server` SHALL prefer `host_local_path` when present, fall back to translating `local_path` through `STORAGE_HOST_ROOT` env, and use the existing `source_ifc_ref`(URL form)only as a last-resort fallback. The legacy URL-only fallback MUST remain functional so that callers without the shared volume(test fakes, non-Docker setups)still work.
+
+> **Implementation status (2026-05-21)**:dispatch payload schema added by archive `2026-05-21-fast-ifc-link-demo-loop`。streaming-server consumer 行為由 archive `2026-05-22-streaming-server-prefer-local-ifc-path` 補實(see also `Streaming-server consumes shared-volume local IFC path before url fetch` requirement)。
+
+#### Scenario: Streaming-server reads from shared volume via host_local_path
+
+- **WHEN** coordinator dispatches `POST /api/conversions` with `{ ifc_ready_job_id, local_path:"/workspace/storage/ifc-cache/<jobId>/source.ifc", host_local_path:"C:\\...\\storage\\ifc-cache\\<jobId>\\source.ifc", source_ifc_ref }`
+- **THEN** `bim-streaming-server` opens the host-local file directly without performing an HTTP GET on `source_ifc_ref`
+
+#### Scenario: Streaming-server falls back to URL when local paths unavailable
+
+- **WHEN** coordinator dispatches a conversion without `local_path` / `host_local_path`(test fake, legacy caller)
+- **THEN** `bim-streaming-server` falls back to fetching `source_ifc_ref` over HTTP as before
+- **AND** no breaking change is exposed to legacy callers
+
+#### Scenario: Streaming-server validates host path is inside STORAGE_HOST_ROOT
+
+- **WHEN** coordinator dispatches a conversion whose `host_local_path` is outside the configured `STORAGE_HOST_ROOT`
+- **THEN** `bim-streaming-server` rejects the request as `403 forbidden_path` and the conversion job is NOT started
+- **AND** this protects against path traversal from a misconfigured coordinator
+
+### Requirement: Streaming-server consumes shared-volume local IFC path before url fetch
+
+`bim-streaming-server` SHALL, when receiving a conversion dispatch whose `ifc_artifact` carries `host_local_path` or `local_path`, resolve the IFC source from that local path before falling back to url-based resolution. The resolution order MUST be:
+
+1. `host_local_path`(streaming-server 為 host-native runtime,直接讀 host fs)
+2. `local_path`(coordinator 與 streaming-server 共享 fs 時生效,fast MVP host-native streaming-server 場景通常與 `host_local_path` 同值)
+3. existing `url` / `file_url` / `signed_upload_reference` parsing(`file://` / `edge-local://` 既有 scheme 不變)
+
+Resolved paths MUST be constrained inside `STORAGE_ROOT`(env,default streaming-server cwd);path 解析後 escape `STORAGE_ROOT` 範圍 MUST raise `invalid_ifc_input` 而不靜默 fallback。Path 在 `STORAGE_ROOT` 之內但檔案不存在 MUST soft fallback 至下一順位來源(不 raise),允許 race condition 期間用 url 重試。Legacy url-only 來源(無 `local_path` / `host_local_path`)MUST 保持 backward compatible。
+
+> **Implementation status (2026-05-22)**:由 archive `2026-05-22-streaming-server-prefer-local-ifc-path` 實作。`bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py` `Ifc2UsdcPowershellConverterAdapter._resolve_local_ifc` 新解析順序 + `_try_local_path` storage_root sandbox helper;`conversion_authority.py` `_ifc_artifact` propagate `local_path` / `host_local_path` 進 job dict 給 lineage / debug 用。
+
+#### Scenario: Streaming-server prefers host_local_path inside storage_root
+
+- **WHEN** coordinator dispatches `POST /api/conversions` with `ifc_artifact.host_local_path` 指向 `${STORAGE_ROOT}/ifc-cache/<jobId>/source.ifc` 且檔案存在可讀
+- **THEN** `bim-streaming-server` opens the host-local file directly
+- **AND** does NOT attempt to fetch `ifc_artifact.url`
+- **AND** the resolved path passes a `relative_to(STORAGE_ROOT)` security check
+
+#### Scenario: Streaming-server falls back to url when local paths missing or unreadable
+
+- **WHEN** dispatch carries `ifc_artifact` without `host_local_path` / `local_path`, or both point to files inside `STORAGE_ROOT` that do not yet exist
+- **THEN** `bim-streaming-server` falls back to existing url parsing(`file://` / `edge-local://`)
+- **AND** existing fixtures and test doubles that only supply `url` continue to work without behaviour change
+
+#### Scenario: Streaming-server rejects local path outside storage_root
+
+- **WHEN** dispatch carries `ifc_artifact.host_local_path = "/etc/passwd"`(or any resolved path outside `STORAGE_ROOT`)
+- **THEN** `bim-streaming-server` raises `invalid_ifc_input` with diagnostic "local IFC path is outside storage_root"
+- **AND** the conversion job is NOT started
+- **AND** the failure is observable in the conversion result for retry / debug
 
