@@ -307,9 +307,24 @@ class Ifc2UsdcPowershellConverterAdapter:
             ) from exc
         if completed.returncode != 0:
             tail = (completed.stderr or completed.stdout or "").strip()[-800:]
+            # streaming-server-capture-kit-conversion-logs §3:ps1 wrapper 在 throw
+            # message 內附 `kit_stdout_log: <path>` / `kit_stderr_log: <path>` 兩行
+            # (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。regex 抓 absolute
+            # path,放進 ConversionAuthorityError.metadata,讓 host_native_conversion_service
+            # 寫進 result.error 內,operator 可直接 tail 完整 Kit subprocess log。
+            metadata: dict = {}
+            combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
+            import re as _re
+            stdout_match = _re.search(r"kit_stdout_log:\s*(.+?)(?:\s*$|\r?\n)", combined, _re.MULTILINE)
+            stderr_match = _re.search(r"kit_stderr_log:\s*(.+?)(?:\s*$|\r?\n)", combined, _re.MULTILINE)
+            if stdout_match:
+                metadata["kit_stdout_log"] = stdout_match.group(1).strip()
+            if stderr_match:
+                metadata["kit_stderr_log"] = stderr_match.group(1).strip()
             raise ConversionAuthorityError(
                 "converter_failed",
                 f"convert-ifc-to-usdc.ps1 exited {completed.returncode}: {tail}",
+                metadata=metadata or None,
             )
 
     def _materialize_sidecars(
