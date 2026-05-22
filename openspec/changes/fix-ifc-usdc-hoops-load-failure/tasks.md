@@ -55,11 +55,49 @@
 - [x] 6.6 Poll coordinator until terminal state and verify `conversion_status="ready"` for `ifcready_1779436887005_44f9b405`.
 - [x] 6.7 Verify coordinator produces `viewer_url` and viewer handoff URL returns HTTP 200.
 - [x] 6.8 Verify the live Docker viewer on `127.0.0.1:5173` consumes `?session=review_session_761f0c316079` and displays the converted artifact URL for `stream_conv_20260522080140_dfa11d33`, not the default demo asset.
+- [ ] 6.9 Verify Kit log or DataChannel evidence shows `openStageRequest` / `openedStageResult` for `stream_conv_20260522080140_dfa11d33/model.usdc`.
+- [ ] 6.10 Verify the rendered Chrome viewport is not the stale `許良宇圖書館建築_2026.usdc` stage.
+- [ ] 6.11 Verify reload/reconnect behavior after WebRTC disconnect without requiring all Chrome processes to be killed, or record a deterministic runtime blocker.
 
-## 7. Commit / PR / archive
+## 8. Brainstorming/OpenSpec redesign scope
 
-- [x] 7.1 Commit implementation and OpenSpec artifacts.
-- [x] 7.2 Push branch and open PR with Traditional Chinese title/body: PR #101.
-- [ ] 7.3 Wait for CI/review and merge.
-- [ ] 7.4 Archive only after PR #101 is merged and real runtime conversion + viewer evidence remains valid on synced `main`.
-- [ ] 7.5 Sync roadmap Markdown and HTML if archive is performed.
+- [x] 8.1 Capture corrected root-cause understanding: conversion ready is not proof of Kit loaded stage.
+- [x] 8.2 Capture WebRTC disconnect evidence from Kit log (`NVST_R_BUSY`, `Client disconnected from WebRTC server`).
+- [x] 8.3 Extend proposal/design with `/ui` runtime dashboard and Chrome E2E archive gate.
+- [ ] 8.4 User approves the design scope before implementation.
+
+## 9. Coordinator `/ui` runtime dashboard
+
+- [ ] 9.1 Add tests for read-only IFC-ready job listing endpoint.
+- [ ] 9.2 Implement `GET /api/external/ifc-ready` to list recent jobs with download/conversion/viewer fields.
+- [ ] 9.3 Add tests for runtime status endpoint that summarizes sessions, participants, Kit bindings, and configured endpoints.
+- [ ] 9.4 Implement `GET /api/runtime/status` without adding coordinator USD render/parse responsibility.
+- [ ] 9.5 Redesign `/ui` first viewport as an operational dashboard showing IFC-ready, download, conversion, artifact, session, Kit/WebRTC, and viewer counts.
+- [ ] 9.6 Preserve existing dev-console controls under an explicit debug/details section.
+
+## 10. Viewer stage-load and disconnect evidence
+
+- [ ] 10.1 Add viewer contract test requiring `?session=` handoff to select `stream_config.stage_composition.primary.url`.
+- [ ] 10.2 Add viewer contract test for stale/mismatched `loadingStateResponse.url`.
+- [ ] 10.3 Show expected stage URL, loaded stage URL, conversion job, and mismatch blocker in viewer UI.
+- [ ] 10.4 Handle AppStreamer `onStop` / `onTerminate` by surfacing `webrtc_disconnected` and allowing remount/reconnect.
+- [ ] 10.5 Ensure stale `/api/assets` demo entries cannot override the session primary artifact.
+
+## 11. Chrome human-like E2E
+
+- [ ] 11.1 Write Playwright/Chrome E2E that opens `http://192.168.10.105:8004/ui`.
+- [ ] 11.2 Drive or select an IFC-ready job and observe download/conversion state through the dashboard.
+- [ ] 11.3 Open the viewer from `/ui` and wait for WebRTC/DataChannel evidence.
+- [ ] 11.4 Assert loaded stage URL equals the current conversion `model.usdc` URL.
+- [ ] 11.5 Assert video dimensions are non-zero and screenshot does not show the stale demo stage.
+- [ ] 11.6 Reload/reconnect and assert recovery or deterministic blocker.
+- [ ] 11.7 Save HAR/screenshot/console/runtime snapshots as evidence referenced by `acceptance.md`.
+
+## 12. Commit / PR / archive
+
+- [x] 12.1 Commit implementation and OpenSpec artifacts.
+- [x] 12.2 Push branch and open PR with Traditional Chinese title/body: PR #101.
+- [ ] 12.3 Commit and push the approved runtime dashboard / viewer E2E additions.
+- [ ] 12.4 Wait for CI/review and merge.
+- [ ] 12.5 Archive only after PR #101 is merged and real runtime conversion + viewer evidence remains valid on synced `main`.
+- [ ] 12.6 Sync roadmap Markdown and HTML if archive is performed.

@@ -85,6 +85,106 @@ fallback 完成後必須重新打開產出的 `model.usdc`，確認：
 - `GET /api/conversions/<conversion_job_id>/result` 顯示 `status="succeeded"` 或 allowed warning status、`ready=true`、`model.status="ready"`。
 - `artifacts.model_usdc.url` 存在，且 artifact dir 內 `model.usdc` 可由 USD runtime 開啟。
 - coordinator 建立 local web view session 或產生 `viewer_url`；若 WebRTC/Kit viewer runtime 另有 blocker，必須分層記錄，不能否定 conversion ready。
+- Chrome E2E 必須證明 viewer 透過 DataChannel 讓 Kit 載入本次 conversion artifact。只有 `viewer_url` HTTP 200、React 畫面顯示 model URL、或 coordinator stream-config 指到 artifact 都不再足夠。
+
+### D8. 新證據修正：conversion ready 不是 viewer success
+
+使用者後續人工驗證指出畫面仍看到 `許良宇圖書館建築_2026.usdc`，並且 viewer 看數秒後會斷線。重新盤點後，現況分層如下：
+
+```txt
+IFC download                    pass
+conversion artifact ready        pass
+coordinator session binding      pass
+viewer metadata display          partial
+DataChannel openStage to target  not proven
+Kit loaded target stage          not proven
+WebRTC session stability         failing / unstable
+```
+
+Kit log 中沒有找到 `stream_conv_20260522080140_dfa11d33` 的 stage-load 證據；反而存在舊 demo path `bim-models/許良宇圖書館建築_2026.usdc` 的 opened successfully 訊息。Kit log 也反覆出現：
+
+```txt
+NVST_R_BUSY, dropping frame
+Client disconnected from WebRTC server
+```
+
+這代表本 change 的剩餘閉環目標不是再修 conversion fallback，而是補足 runtime observability 與 stage-load truth gate。
+
+### D9. `/ui` runtime dashboard
+
+`bim-review-coordinator` `/ui` 應從「三張 demo 卡 + dev console」收斂成 operator 可讀的 closed-loop dashboard。頁面首屏必須直接顯示：
+
+```txt
+POST ifc-ready job
+  -> download_status / local_path / host_local_path
+  -> conversion_job_id / conversion_status
+  -> artifact_manifest_ref / model_usdc / mapping_url
+  -> review_session_id / viewer_url
+  -> Kit endpoint / WebRTC connection evidence / viewer count
+```
+
+UI 不應把舊 `/api/assets` demo picker 狀態當成本次 session 的主模型。任何舊 demo asset 只可出現在 debug 區或 dropdown，不可被 dashboard 判為 current model。
+
+### D10. Read-only runtime status API
+
+為了讓 `/ui` 不再靠人工拼 log，可新增 additive read-only endpoints：
+
+- `GET /api/external/ifc-ready`：列出最近 IFC-ready jobs，含 download/conversion/viewer 欄位。
+- `GET /api/runtime/status`：回傳 coordinator 可觀測的 runtime summary：
+  - coordinator uptime / service status
+  - configured Kit endpoints
+  - review sessions / participants count
+  - known `kit_instance_bindings`
+  - optional host observations（ports/listeners/log tail）若可安全取得
+- `GET /api/runtime/kit-log-tail` 或等價整合欄位：只回傳最近 runtime evidence 摘要，不回傳模型 bytes 或 secrets。
+
+這些 API 只做觀測，不新增 coordinator 對 USD/USDC 的 render 或 parse 責任。
+
+### D11. Viewer stage-load truth gate
+
+`web-viewer-sample` 對 session-first viewer 必須建立以下 invariant：
+
+```txt
+expectedStageUrl = stream_config.stage_composition.primary.url
+```
+
+當 viewer 開啟 session 時：
+
+1. 顯示 expected stage URL、conversion job、session id。
+2. WebRTC started 後送 `openStageRequest(expectedStageUrl)`。
+3. 收到 `openedStageResult` 或 `loadingStateResponse` 後，檢查 Kit 回報 URL 是否等於 expected stage URL（允許 Kit 端 HTTP cache 轉為本機 cache path 時仍保留 requested URL echo）。
+4. 若 Kit 回報舊 demo path、空 URL、或未知 URL，畫面標示 `stale_stage_or_mismatch`，不得宣稱 viewer ready。
+5. 若 WebRTC `onStop` / `onTerminate` 觸發，畫面標示 `webrtc_disconnected`，並提供重新連線/重建 stream component 的路徑；不得只 `console.log`。
+
+### D12. WebRTC disconnect diagnosis
+
+斷線不應只顯示「看不到畫面」。dashboard 和 viewer 必須分層顯示：
+
+- browser video readiness：`readyState`、`videoWidth`、`videoHeight`、`srcObject`
+- AppStreamer lifecycle：started / stopped / terminated / failed
+- Kit log evidence：最近 `Client connected`、`Client disconnected`、`NVST_R_BUSY`
+- active connection summary：49100/47998/5173/8004/49101 listener 與連線數（若由本機 API 或 smoke script 提供）
+
+當連線數殘留或 Kit 長時間運行導致狀態混濁時，dashboard 應明確建議 operator 重啟 Kit/WebRTC runtime，而不是要求關掉所有 Chrome 才恢復。
+
+### D13. Chrome human-like E2E
+
+archive 前 E2E 必須使用 Chrome/Chromium browser automation 模擬人類路徑：
+
+```txt
+1. 打開 http://192.168.10.105:8004/ui
+2. 在 /ui 送出或選取 ifc-ready job
+3. 觀察 download_status 從 pending/downloading 到 downloaded
+4. 觀察 conversion_job_id 建立並到 ready/succeeded
+5. 點開 viewer
+6. 等待 WebRTC started
+7. 等待 DataChannel stage-load result
+8. 驗證 loaded stage URL == current conversion model.usdc URL
+9. 驗證 video 有非零 dimensions 且截圖不是舊圖書館 stage
+10. 觸發 reload/reconnect，驗證不需要關閉整個 Chrome 才能恢復，或將 blocker 精確顯示為 WebRTC/Kit runtime limitation
+```
+
+每次 E2E 必須保存 artifact：HAR / screenshot / console log summary / coordinator runtime snapshot / Kit log line references。若任一環節失敗，OpenSpec task 不可勾選 archive gate。
 
 ## Risks
 

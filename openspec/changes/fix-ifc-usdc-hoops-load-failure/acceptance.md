@@ -39,6 +39,8 @@ Required before archive:
 - `viewer_url` is produced by coordinator.
 - The live web viewer must consume the coordinator session handoff and display the converted artifact for that session. A plain HTTP `200` is not enough if the viewer falls back to `/api/assets` and shows the default demo model.
 - A viewer/WebRTC blocker MUST NOT be reported as conversion failure if conversion ready evidence passed, but the change still cannot be archived until the viewer handoff gap is documented or fixed.
+- Chrome E2E must prove the Kit-loaded stage URL, not only React metadata. The accepted proof must include a DataChannel `openStageRequest` / `openedStageResult` or `loadingStateResponse` trace whose URL equals the current conversion `model.usdc` URL.
+- WebRTC disconnect evidence must be classified separately. If Kit logs contain `NVST_R_BUSY` followed by `Client disconnected from WebRTC server`, the run may keep conversion as `passed`, but viewer/render remains non-passed until reconnect or a deterministic blocker is documented.
 
 Observed implementation evidence (2026-05-22):
 
@@ -88,6 +90,29 @@ Observed live coordinator evidence after replacing `49101` service (2026-05-22):
     - `GET /api/review-sessions/review_session_761f0c316079`
     - `GET /api/review-sessions/review_session_761f0c316079/stream-config`
   - `/api/assets` may still be requested to populate the right-side dropdown, but it no longer controls the primary session/model binding for this URL.
+
+Corrected runtime evidence from user observation and log inspection (2026-05-22):
+
+- User observed `http://127.0.0.1:5173/?session=review_session_761f0c316079` still rendering the stale `許良宇圖書館建築_2026.usdc` scene and disconnecting after a few seconds.
+- Kit process `PID 32216` had been running since `2026-05-21T10:17:23+08:00`, so the WebRTC/Kit runtime was long-lived rather than a fresh per-job instance.
+- Kit log search found no `stream_conv_20260522080140_dfa11d33` stage-load line, so the previous viewer screenshot proved metadata display but did not prove Kit opened the converted stage.
+- Kit log contained repeated disconnect evidence:
+  - `NVST_R_BUSY, dropping frame`
+  - `Client disconnected from WebRTC server`
+- Kit log contained stale demo stage evidence for `C:/Repos/active/iot/AI-BIM-governance/bim-streaming-server/bim-models/許良宇圖書館建築_2026.usdc`.
+- Therefore the following tiers remain incomplete:
+  - `DataChannel openStageRequest target artifact`
+  - `Kit loaded target stage`
+  - `single_kit_render`
+  - `reload/reconnect stability`
+  - `/ui runtime dashboard observability`
+
+Required additional evidence before archive:
+
+- `/ui` dashboard shows the same current `ifc_ready_job_id`, `conversion_job_id`, `review_session_id`, expected `model.usdc` URL, Kit endpoint, viewer count, and latest WebRTC evidence.
+- Chrome E2E starts from `http://192.168.10.105:8004/ui`, opens the viewer, and captures proof that Kit loaded `stream_conv_20260522080140_dfa11d33/model.usdc` or a newer equivalent job's `model.usdc`.
+- E2E screenshot/HAR/console/log evidence proves the viewport is not the stale `許良宇圖書館建築_2026.usdc` stage.
+- Reload/reconnect either succeeds without killing all Chrome processes or records a deterministic blocker with Kit/WebRTC evidence and next action.
 
 Remaining before archive:
 
