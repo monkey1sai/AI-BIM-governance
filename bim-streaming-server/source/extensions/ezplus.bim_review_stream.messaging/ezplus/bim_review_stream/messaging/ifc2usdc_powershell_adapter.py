@@ -27,6 +27,7 @@ from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -306,7 +307,6 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"Failed to launch PowerShell converter: {exc}",
             ) from exc
         if completed.returncode != 0:
-            tail = (completed.stderr or completed.stdout or "").strip()[-800:]
             # streaming-server-capture-kit-conversion-logs §3:ps1 wrapper 在 throw
             # message 內附 `kit_stdout_log: <path>` / `kit_stderr_log: <path>` 兩行
             # (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。regex 抓 absolute
@@ -314,16 +314,27 @@ class Ifc2UsdcPowershellConverterAdapter:
             # 寫進 result.error 內,operator 可直接 tail 完整 Kit subprocess log。
             metadata: dict = {}
             combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
-            import re as _re
-            stdout_match = _re.search(r"kit_stdout_log:\s*(.+?)(?:\s*$|\r?\n)", combined, _re.MULTILINE)
-            stderr_match = _re.search(r"kit_stderr_log:\s*(.+?)(?:\s*$|\r?\n)", combined, _re.MULTILINE)
+            stdout_match = re.search(r"kit_stdout_log:\s*(.+?)(?:\s*$|\r?\n)", combined, re.MULTILINE)
+            stderr_match = re.search(r"kit_stderr_log:\s*(.+?)(?:\s*$|\r?\n)", combined, re.MULTILINE)
             if stdout_match:
                 metadata["kit_stdout_log"] = stdout_match.group(1).strip()
             if stderr_match:
                 metadata["kit_stderr_log"] = stderr_match.group(1).strip()
+            # streaming-server-capture-kit-conversion-logs review fix(2026-05-22):
+            # 把 log path 與 spec-required "---- stderr tail (last 100 lines) ----"
+            # 標頭顯式 prepend 到 message 開頭,再放 tail,避免 truncation 把 spec
+            # 要求的 substring 從 message 後段砍掉(spec scenario 1)。tail 額度
+            # 提升到 3000 chars 以涵蓋 header + 大部分 tail 內容。
+            tail = (completed.stderr or completed.stdout or "").strip()[-3000:]
+            message_parts = [f"convert-ifc-to-usdc.ps1 exited {completed.returncode}"]
+            if "kit_stdout_log" in metadata:
+                message_parts.append(f"kit_stdout_log: {metadata['kit_stdout_log']}")
+            if "kit_stderr_log" in metadata:
+                message_parts.append(f"kit_stderr_log: {metadata['kit_stderr_log']}")
+            message_parts.append(tail)
             raise ConversionAuthorityError(
                 "converter_failed",
-                f"convert-ifc-to-usdc.ps1 exited {completed.returncode}: {tail}",
+                "\n".join(message_parts),
                 metadata=metadata or None,
             )
 
