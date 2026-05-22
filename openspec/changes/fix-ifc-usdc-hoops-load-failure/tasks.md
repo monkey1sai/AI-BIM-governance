@@ -58,7 +58,7 @@
 ## 7. Commit / PR / archive
 
 - [x] 7.1 Commit implementation and OpenSpec artifacts.
-- [ ] 7.2 Push branch and open PR with Traditional Chinese title/body.
+- [x] 7.2 Push branch and open PR with Traditional Chinese title/body: PR #101.
 - [ ] 7.3 Wait for CI/review and merge.
 - [ ] 7.4 Archive only after real runtime conversion success evidence exists.
 - [ ] 7.5 Sync roadmap Markdown and HTML if archive is performed.
