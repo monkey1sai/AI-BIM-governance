@@ -87,7 +87,9 @@ After `bim-review-coordinator` accepts a valid external IFC-ready request, it SH
 
 ### Requirement: Coordinator ingests host-native conversion result into callback outbox
 
-Coordinator SHALL ingest the host-native conversion result through polling, an internal result loop, or an equivalent internal callback. A ready conversion result SHALL be transformed into the existing metadata-only `conversion_result_ready` callback outbox entry; a failed result SHALL become `conversion_failed`. Callback delivery state SHALL remain separate from conversion success.
+Coordinator SHALL ingest the host-native conversion result through polling, an internal result loop, or an equivalent internal callback. **A successful dispatch to `bim-streaming-server` SHALL automatically schedule an in-process polling task that periodically fetches `GET /api/conversions/<conversion_job_id>/result` until the result reaches a terminal state(`status` ∈ {`succeeded`, `succeeded_with_warnings`, `failed`, `cancelled`} or `model_status` ∈ {`ready`, `failed`}),then runs the same ingestion path as the manual `POST /api/internal/conversions/<id>/ingest` endpoint(callback outbox enqueue + local review session handoff per existing requirements).** Polling cadence and max attempts SHALL be configurable via env(`CONVERSION_POLL_INTERVAL_SECONDS` default `5`,`CONVERSION_POLL_MAX_ATTEMPTS` default `60`= 5 分鐘 ceiling);env `CONVERSION_POLL_ENABLED=false` MAY disable auto-poll for test fixtures while keeping the manual endpoint functional. A ready conversion result SHALL be transformed into the existing metadata-only `conversion_result_ready` callback outbox entry; a failed result SHALL become `conversion_failed`. Callback delivery state SHALL remain separate from conversion success. The same conversion_job_id MUST NOT spawn duplicate concurrent pollers; the manual ingest endpoint MUST cancel any active poller for that conversion_job_id before running ingestion to prevent double-delivery.
+
+> **Implementation status (2026-05-22)**:auto-poll 由 archive `2026-05-22-coordinator-auto-poll-streaming-conversion` 實作。`bim-review-coordinator/src/services/streamingConversionClient.ts` 加 `pollConversionResult` + `isTerminalConversionResult` helper;`bim-review-coordinator/src/app.ts` 加 `pollerRegistry` + `schedulePollerForConversion` + refactor `ingestStreamingConversionResult` 共用 manual / auto-poll 兩條 path;`CoordinatorApp.dispose()` 清空所有 poller。L4 真實 runtime 驗證(2026-05-22):dispatch → 40 秒內 viewer_url 自動出現,無需 manual POST ingest。
 
 #### Scenario: Ready result creates metadata-only callback
 
@@ -107,6 +109,27 @@ Coordinator SHALL ingest the host-native conversion result through polling, an i
 - **WHEN** conversion succeeds but the company-cloud callback target is unavailable or OQ1 remains pending
 - **THEN** conversion success remains queryable locally
 - **AND** callback outbox records pending, retry, or dead-letter delivery state separately
+
+#### Scenario: Dispatch auto-schedules a poller that drives ingestion to terminal
+
+- **WHEN** coordinator returns 202 from `POST /api/external/ifc-ready` with a dispatched `conversion_job_id` and `CONVERSION_POLL_ENABLED` is unset or `true`
+- **THEN** coordinator schedules an in-process polling task keyed by that `conversion_job_id`
+- **AND** the polling task fetches `GET /api/conversions/<id>/result` every `CONVERSION_POLL_INTERVAL_SECONDS`
+- **AND** when the result reaches a terminal state the polling task triggers the same ingestion path as the manual endpoint(callback outbox + local session handoff per existing requirements)
+- **AND** the polling task de-registers itself after terminal ingestion or after `CONVERSION_POLL_MAX_ATTEMPTS` poll-timeout
+
+#### Scenario: Auto-poll de-duplicates with manual ingest endpoint
+
+- **WHEN** a poller is active for `conversion_job_id` and the operator(or other internal caller)POSTs `/api/internal/conversions/<conversion_job_id>/ingest` with a valid internal token
+- **THEN** coordinator cancels and de-registers the auto-poller for that `conversion_job_id`
+- **AND** the manual ingest path runs exactly once
+- **AND** no duplicate `conversion_result_ready` / `conversion_failed` callback is enqueued for the same `conversion_job_id`
+
+#### Scenario: Poll timeout yields a failed-equivalent terminal state
+
+- **WHEN** the auto-poller reaches `CONVERSION_POLL_MAX_ATTEMPTS` without observing a terminal result from `bim-streaming-server`
+- **THEN** coordinator treats the local conversion job as terminally failed with reason `poll_timeout`
+- **AND** the manual ingest endpoint MAY still be invoked later to re-ingest if the streaming-server eventually reaches terminal
 
 ### Requirement: Terminal conversion-ready ingestion triggers local review session handoff
 
