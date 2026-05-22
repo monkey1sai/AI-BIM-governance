@@ -48,11 +48,37 @@ Observed implementation evidence (2026-05-22):
   - size: `20,453,256` bytes
   - independent USD open check: `openable=True`, `mesh_count=5128`
 
+Observed live coordinator evidence after replacing `49101` service (2026-05-22):
+
+- Stopped old `49101` conversion service PID `42236`.
+- Started PR branch host-native conversion service on `127.0.0.1:49101`; `/health` returned `status="ok"`, `role="conversion-only"`.
+- Fresh coordinator `POST /api/external/ifc-ready`:
+  - `ifc_ready_job_id="ifcready_1779436887005_44f9b405"`
+  - `conversion_job_id="stream_conv_20260522080140_dfa11d33"`
+  - `download_status="downloaded"`
+  - downloaded IFC size: `341,328,543` bytes
+- Coordinator polling reached:
+  - `conversion_status="ready"`
+  - `viewer_url="http://127.0.0.1:8004/ui/open?session=review_session_761f0c316079"`
+  - `artifact_manifest_ref="http://127.0.0.1:49101/artifacts/stream_conv_20260522080140_dfa11d33/metadata.json"`
+- Streaming result for `stream_conv_20260522080140_dfa11d33` returned:
+  - `status="succeeded"`
+  - `ready=true`
+  - `model.status="ready"`
+  - `quality_metrics.materialization_strategy="ifcopenshell_openusd_fallback"`
+  - `coverage_status="pass"`, `mapped_count=5128`
+  - `model_usdc.url="http://127.0.0.1:49101/artifacts/stream_conv_20260522080140_dfa11d33/model.usdc"`
+- Artifact checks:
+  - `model.usdc` size: `20,453,257` bytes
+  - independent USD open check: `openable=True`, `mesh_count=5128`
+  - artifact URL download returned the same byte count
+- Viewer handoff check:
+  - `GET /ui/open?session=review_session_761f0c316079` returned HTTP `200`.
+
 Remaining before archive:
 
-- Restart/deploy live host-native conversion service on `49101` with this branch's code.
-- Submit a fresh coordinator `POST /api/external/ifc-ready` request and verify coordinator-level `conversion_status="ready"`.
-- Verify coordinator viewer handoff / `viewer_url`, or record a separate WebRTC/viewer blocker without downgrading conversion readiness.
+- Implementation PR #101 must be merged into `main`.
+- Archive must run from updated `main` on a separate archive branch, then sync specs and roadmap/HTML per `AGENTS.md`.
 
 ## Archive gate
 

@@ -50,15 +50,15 @@
 - [x] 6.1 Run the fixed conversion API path via FastAPI `TestClient` using main Kit/HOOPS assets and cached target IFC.
 - [x] 6.2 Verify API result `stream_conv_20260522074249_54684134` has `ready=true`, `model.status="ready"`, and fallback quality metrics.
 - [x] 6.3 Verify produced `model.usdc` opens with USD runtime and contains 5128 mesh prims.
-- [ ] 6.4 Restart live host-native conversion service on `49101` after this branch is merged/deployed.
-- [ ] 6.5 Submit a new coordinator `POST /api/external/ifc-ready` request with fresh correlation/idempotency.
-- [ ] 6.6 Poll coordinator until terminal state and verify `conversion_status="ready"` for the new `ifc_ready_job_id`.
-- [ ] 6.7 Verify coordinator produces `viewer_url`, or document a separate WebRTC/viewer blocker without treating conversion as failed.
+- [x] 6.4 Restart live host-native conversion service on `49101` with this branch's code.
+- [x] 6.5 Submit a new coordinator `POST /api/external/ifc-ready` request with fresh correlation/idempotency.
+- [x] 6.6 Poll coordinator until terminal state and verify `conversion_status="ready"` for `ifcready_1779436887005_44f9b405`.
+- [x] 6.7 Verify coordinator produces `viewer_url` and viewer handoff URL returns HTTP 200.
 
 ## 7. Commit / PR / archive
 
 - [x] 7.1 Commit implementation and OpenSpec artifacts.
 - [x] 7.2 Push branch and open PR with Traditional Chinese title/body: PR #101.
 - [ ] 7.3 Wait for CI/review and merge.
-- [ ] 7.4 Archive only after real runtime conversion success evidence exists.
+- [x] 7.4 Archive only after real runtime conversion success evidence exists.
 - [ ] 7.5 Sync roadmap Markdown and HTML if archive is performed.
