@@ -1,4 +1,6 @@
+import json
 import sys
+import types
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -570,3 +572,370 @@ def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_p
     assert "kit_stdout_log:" in raised.message
     assert "kit_stderr_log:" in raised.message
     assert "---- stderr tail (last 100 lines) ----" in raised.message
+
+
+# --- fix-ifc-usdc-hoops-load-failure:HOOPS import failure uses real fallback ----
+
+
+def _write_minimal_converter_sidecars(output_dir: Path) -> None:
+    (output_dir / "model.usdc").write_bytes(b"PXR-USDC-real-fallback\n")
+    (output_dir / "element_mapping.json").write_text(
+        json.dumps(
+            {
+                "mock": False,
+                "summary": {"mapped_count": 1, "fake_mapping_count": 0},
+                "items": [{"ifc_guid": "2abc", "usd_prim_path": "/World/IfcShape_000001"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "entity_index.json").write_text(
+        json.dumps({"entities": [{"usd_prim_path": "/World/IfcShape_000001"}]}),
+        encoding="utf-8",
+    )
+    (output_dir / "metadata.json").write_text(
+        json.dumps({"source": "ifcopenshell_openusd_fallback"}),
+        encoding="utf-8",
+    )
+    (output_dir / "quality_metrics.json").write_text(
+        json.dumps(
+            {
+                "source_ifc_entity_count": 1,
+                "mapped_count": 1,
+                "unmapped_count": 0,
+                "coverage_ratio": 1.0,
+                "coverage_status": "pass",
+                "materialization_strategy": "ifcopenshell_openusd_fallback",
+                "sidecar_carrier_count": 1,
+                "minimum_coverage_baseline_locked": False,
+                "hard_quality_gates": {
+                    "usdc_openable": True,
+                    "has_renderable_prims": True,
+                    "placeholder_output": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _clear_pxr_test_stubs(monkeypatch) -> None:
+    for name in ("pxr", "pxr.Gf", "pxr.Sdf", "pxr.Usd", "pxr.UsdGeom", "pxr.UsdLux"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+
+def test_adapter_falls_back_when_hoops_cannot_load_parseable_ifc(tmp_path: Path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=repo_root,
+        powershell_exe="powershell.exe",
+        work_dir=repo_root,
+    )
+
+    def fake_primary_failure(*, ifc_path: Path, output_dir: Path) -> None:
+        raise ConversionAuthorityError(
+            "converter_failed",
+            "Failed to import model C:/source.ifc. Error Code -10007 (A3D_LOAD_CANNOT_LOAD_MODEL)",
+        )
+
+    fallback_called = {}
+
+    def fake_fallback(*, ifc_path: Path, output_dir: Path, primary_error: ConversionAuthorityError) -> None:
+        fallback_called["ifc_path"] = ifc_path
+        fallback_called["primary_error"] = primary_error.message
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _write_minimal_converter_sidecars(output_dir)
+
+    monkeypatch.setattr(adapter, "_run_powershell_conversion", fake_primary_failure)
+    monkeypatch.setattr(adapter, "_run_ifcopenshell_openusd_fallback", fake_fallback, raising=False)
+
+    result = adapter.convert(
+        job={"conversion_job_id": "stream_conv_fallback"},
+        ifc_ready_event=ifc_ready_payload(
+            ifc_artifact={
+                "artifact_id": "artifact_ifc_fallback",
+                "format": "ifc",
+                "filename": "source.ifc",
+                "url": "edge-local://fixtures/source.ifc",
+            }
+        ),
+        output_dir=tmp_path / "out",
+    )
+
+    assert fallback_called["ifc_path"] == ifc_file.resolve()
+    assert "A3D_LOAD_CANNOT_LOAD_MODEL" in fallback_called["primary_error"]
+    assert Path(result["model_path"]).name == "model.usdc"
+    assert result["quality_metrics"]["materialization_strategy"] == "ifcopenshell_openusd_fallback"
+
+
+def test_adapter_does_not_fallback_for_non_import_converter_failure(tmp_path: Path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=repo_root,
+        powershell_exe="powershell.exe",
+        work_dir=repo_root,
+    )
+
+    def fake_primary_failure(*, ifc_path: Path, output_dir: Path) -> None:
+        raise ConversionAuthorityError("converter_failed", "license checkout failed")
+
+    def fallback_must_not_run(**_kwargs) -> None:
+        raise AssertionError("fallback should only run for primary IFC import failures")
+
+    monkeypatch.setattr(adapter, "_run_powershell_conversion", fake_primary_failure)
+    monkeypatch.setattr(adapter, "_run_ifcopenshell_openusd_fallback", fallback_must_not_run, raising=False)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter.convert(
+            job={"conversion_job_id": "stream_conv_no_fallback"},
+            ifc_ready_event=ifc_ready_payload(
+                ifc_artifact={
+                    "artifact_id": "artifact_ifc_no_fallback",
+                    "format": "ifc",
+                    "filename": "source.ifc",
+                    "url": "edge-local://fixtures/source.ifc",
+                }
+            ),
+            output_dir=tmp_path / "out",
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_failed"
+    assert raised.message == "license checkout failed"
+
+
+def test_adapter_rejects_placeholder_written_by_fallback(tmp_path: Path, monkeypatch):
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(
+        repo_root=repo_root,
+        powershell_exe="powershell.exe",
+        work_dir=repo_root,
+    )
+
+    def fake_primary_failure(*, ifc_path: Path, output_dir: Path) -> None:
+        raise ConversionAuthorityError(
+            "converter_failed",
+            "Failed to import model C:/source.ifc. Error Code -10007 (A3D_LOAD_CANNOT_LOAD_MODEL)",
+        )
+
+    def fake_placeholder_fallback(**kwargs) -> None:
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "model.usdc").write_bytes(b"worker adapter usdc placeholder\n")
+
+    monkeypatch.setattr(adapter, "_run_powershell_conversion", fake_primary_failure)
+    monkeypatch.setattr(
+        adapter,
+        "_run_ifcopenshell_openusd_fallback",
+        fake_placeholder_fallback,
+        raising=False,
+    )
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter.convert(
+            job={"conversion_job_id": "stream_conv_placeholder"},
+            ifc_ready_event=ifc_ready_payload(
+                ifc_artifact={
+                    "artifact_id": "artifact_ifc_placeholder",
+                    "format": "ifc",
+                    "filename": "source.ifc",
+                    "url": "edge-local://fixtures/source.ifc",
+                }
+            ),
+            output_dir=tmp_path / "out",
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "placeholder_usdc"
+
+
+def test_ifcopenshell_openusd_fallback_writes_openable_usdc_and_sidecars(tmp_path: Path, monkeypatch):
+    _clear_pxr_test_stubs(monkeypatch)
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, work_dir=repo_root)
+
+    fake_ifcopenshell = types.ModuleType("ifcopenshell")
+    fake_geom = types.ModuleType("ifcopenshell.geom")
+
+    class FakeModel:
+        schema = "IFC4"
+
+        def by_type(self, name: str):
+            return [object(), object()] if name == "IfcProduct" else []
+
+    class FakeSettings:
+        USE_WORLD_COORDS = "USE_WORLD_COORDS"
+
+        def set(self, *_args):
+            return None
+
+    class FakeGeometry:
+        verts = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        faces = (0, 1, 2)
+
+    class FakeShape:
+        guid = "2abc"
+        name = "Demo element"
+        type = "IfcBuildingElementProxy"
+        geometry = FakeGeometry()
+
+    class FakeIterator:
+        def __init__(self):
+            self.done = False
+
+        def initialize(self) -> bool:
+            return True
+
+        def get(self):
+            return FakeShape()
+
+        def next(self) -> bool:
+            if self.done:
+                return False
+            self.done = True
+            return False
+
+    fake_ifcopenshell.open = lambda _path: FakeModel()
+    fake_geom.settings = FakeSettings
+    fake_geom.iterator = lambda *_args: FakeIterator()
+    fake_ifcopenshell.geom = fake_geom
+    monkeypatch.setitem(sys.modules, "ifcopenshell", fake_ifcopenshell)
+    monkeypatch.setitem(sys.modules, "ifcopenshell.geom", fake_geom)
+
+    output_dir = tmp_path / "out"
+    adapter._run_ifcopenshell_openusd_fallback(
+        ifc_path=ifc_file,
+        output_dir=output_dir,
+        primary_error=ConversionAuthorityError("converter_failed", "A3D_LOAD_CANNOT_LOAD_MODEL"),
+    )
+
+    from pxr import Usd
+
+    assert Usd.Stage.Open(str(output_dir / "model.usdc")) is not None
+    mapping = json.loads((output_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    metrics = json.loads((output_dir / "quality_metrics.json").read_text(encoding="utf-8"))
+    assert mapping["mock"] is False
+    assert mapping["summary"]["mapped_count"] == 1
+    assert mapping["summary"]["fake_mapping_count"] == 0
+    assert metrics["materialization_strategy"] == "ifcopenshell_openusd_fallback"
+    assert metrics["hard_quality_gates"]["usdc_openable"] is True
+    assert metrics["hard_quality_gates"]["has_renderable_prims"] is True
+
+
+def test_ifcopenshell_openusd_fallback_missing_dependency_remains_unavailable(
+    tmp_path: Path, monkeypatch
+):
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, work_dir=repo_root)
+    monkeypatch.setitem(sys.modules, "ifcopenshell", None)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_ifcopenshell_openusd_fallback(
+            ifc_path=ifc_file,
+            output_dir=tmp_path / "out",
+            primary_error=ConversionAuthorityError(
+                "converter_failed", "A3D_LOAD_CANNOT_LOAD_MODEL"
+            ),
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_unavailable"
+
+
+def test_ifcopenshell_openusd_fallback_rejects_no_renderable_geometry(
+    tmp_path: Path, monkeypatch
+):
+    _clear_pxr_test_stubs(monkeypatch)
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, work_dir=repo_root)
+
+    fake_ifcopenshell = types.ModuleType("ifcopenshell")
+    fake_geom = types.ModuleType("ifcopenshell.geom")
+
+    class FakeModel:
+        schema = "IFC4"
+
+    class FakeSettings:
+        USE_WORLD_COORDS = "USE_WORLD_COORDS"
+
+        def set(self, *_args):
+            return None
+
+    class FakeGeometry:
+        verts = ()
+        faces = ()
+
+    class FakeShape:
+        guid = "2abc"
+        geometry = FakeGeometry()
+
+    class FakeIterator:
+        def initialize(self) -> bool:
+            return True
+
+        def get(self):
+            return FakeShape()
+
+        def next(self) -> bool:
+            return False
+
+    fake_ifcopenshell.open = lambda _path: FakeModel()
+    fake_geom.settings = FakeSettings
+    fake_geom.iterator = lambda *_args: FakeIterator()
+    fake_ifcopenshell.geom = fake_geom
+    monkeypatch.setitem(sys.modules, "ifcopenshell", fake_ifcopenshell)
+    monkeypatch.setitem(sys.modules, "ifcopenshell.geom", fake_geom)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_ifcopenshell_openusd_fallback(
+            ifc_path=ifc_file,
+            output_dir=tmp_path / "out",
+            primary_error=ConversionAuthorityError(
+                "converter_failed", "A3D_LOAD_CANNOT_LOAD_MODEL"
+            ),
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "fallback_no_renderable_geometry"

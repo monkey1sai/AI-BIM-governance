@@ -269,6 +269,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     undefined,
     config.streamingConversionInternalToken || undefined,
   );
+  const startedAt = Date.now();
   // coordinator-auto-poll-streaming-conversion §6:in-process auto-poll registry
   // (keyed by conversion_job_id),dispatch 後 schedule、manual ingest endpoint
   // 觸發前 cancel、shutdown(dispose())清空。
@@ -299,6 +300,15 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       service: "bim-review-coordinator",
       kit_signaling_port: config.kitSignalingPort,
     });
+  });
+
+  app.get("/api/runtime/status", (_request, response) => {
+    response.json(buildRuntimeStatus({
+      config,
+      startedAt,
+      sessions: store.list(),
+      ifcReadyJobs: externalIfcReadyStore.list(),
+    }));
   });
 
   app.post("/api/review-sessions", async (request, response, next) => {
@@ -609,6 +619,18 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     } catch (error) {
       next(error);
     }
+  });
+
+  app.get("/api/external/ifc-ready", (request, response) => {
+    const limit = parseListLimit(request.query.limit);
+    const jobs = externalIfcReadyStore
+      .list()
+      .slice()
+      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+    response.json({
+      count: jobs.length,
+      items: jobs.slice(0, limit).map((job) => summarizeIfcReadyJob(job, store.get(job.review_session_id || ""))),
+    });
   });
 
   app.get("/api/external/ifc-ready/:jobId", (request, response) => {
@@ -1115,6 +1137,156 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   };
 
   return { app, server, io, config, store, eventLog, dispose };
+}
+
+interface RuntimeStatusInput {
+  config: CoordinatorConfig;
+  startedAt: number;
+  sessions: ReviewSession[];
+  ifcReadyJobs: IfcReadyIntakeJob[];
+}
+
+function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> {
+  const activeSessions = input.sessions.filter((session) => session.status === "active");
+  const participantCount = input.sessions.reduce((total, session) => total + session.participants.length, 0);
+  return {
+    service: {
+      status: "ok",
+      name: "bim-review-coordinator",
+      uptime_seconds: Math.max(0, Math.floor((Date.now() - input.startedAt) / 1000)),
+      generated_at: new Date().toISOString(),
+    },
+    configured_endpoints: {
+      coordinator: {
+        host: input.config.host,
+        port: input.config.port,
+        public_host: input.config.publicHost,
+      },
+      viewer: {
+        browser_url_base: "http://127.0.0.1:5173",
+        handoff_path: "/ui/open?session=<review_session_id>",
+      },
+      conversion_authority: {
+        base_url: input.config.streamingConversionApiBase,
+        authority: "bim-streaming-server",
+      },
+      kit: input.config.kitInstanceEndpoints.map((endpoint) => ({
+        id: endpoint.id,
+        signalingServer: endpoint.signalingServer,
+        signalingPort: endpoint.signalingPort,
+        mediaServer: endpoint.mediaServer,
+        mediaPort: endpoint.mediaPort,
+      })),
+    },
+    sessions: {
+      count: input.sessions.length,
+      active_count: activeSessions.length,
+      participant_count: participantCount,
+      items: input.sessions.map(summarizeSessionForRuntime),
+    },
+    kit_instance_bindings: input.sessions.flatMap((session) =>
+      session.kit_instance_bindings.map((binding) => ({
+        session_id: session.session_id,
+        kit_instance_id: binding.kit_instance_id,
+        status: binding.status,
+        assigned_artifact_ids: binding.assigned_artifact_ids,
+        stream_config: binding.stream_config,
+        started_at: binding.started_at,
+        last_heartbeat_at: binding.last_heartbeat_at,
+        released_at: binding.released_at,
+      })),
+    ),
+    ifc_ready_jobs: {
+      count: input.ifcReadyJobs.length,
+      recent: input.ifcReadyJobs
+        .slice()
+        .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+        .slice(0, 10)
+        .map((job) => summarizeIfcReadyJob(job, input.sessions.find((session) => session.session_id === job.review_session_id) ?? null)),
+    },
+    observations: {
+      classification: "coordinator_visible_runtime_summary",
+      note: "read-only coordinator observations; Kit internal stage state still requires DataChannel or Kit log evidence.",
+      web_plane: {
+        coordinator_port: input.config.port,
+        viewer_port: 5173,
+      },
+      host_native_plane: {
+        conversion_api_base: input.config.streamingConversionApiBase,
+        kit_signal_ports: input.config.kitInstanceEndpoints.map((endpoint) => endpoint.signalingPort),
+        kit_media_ports: input.config.kitInstanceEndpoints.map((endpoint) => endpoint.mediaPort).filter((port) => port !== null),
+      },
+    },
+  };
+}
+
+function summarizeSessionForRuntime(session: ReviewSession): Record<string, unknown> {
+  const expectedStage = expectedStageBinding(session);
+  return {
+    session_id: session.session_id,
+    status: session.status,
+    project_id: session.project_id,
+    model_version_id: session.model_version_id,
+    participant_count: session.participants.length,
+    participants: session.participants.map((participant) => ({
+      user_id: participant.user_id,
+      display_name: participant.display_name ?? null,
+      last_seen_at: participant.last_seen_at,
+    })),
+    expected_stage_url: expectedStage?.url ?? null,
+    expected_mapping_url: expectedStage?.mapping_url ?? null,
+    conversion_job_id: expectedStage?.conversion_job_id ?? null,
+    conversion_status: expectedStage?.conversion_status ?? null,
+    kit_instance_ids: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
+    created_at: session.created_at,
+    updated_at: session.updated_at,
+  };
+}
+
+function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | null): Record<string, unknown> {
+  const expectedStage = session ? expectedStageBinding(session) : null;
+  return {
+    ifc_ready_job_id: job.ifc_ready_job_id,
+    status: job.status,
+    tenant_id: job.tenant_id,
+    project_id: job.project_id,
+    external_model_version_id: job.external_model_version_id,
+    external_conversion_task_id: job.external_conversion_task_id ?? null,
+    correlation_id: job.correlation_id,
+    source_ifc_ref: job.source_ifc_ref,
+    source_ifc_etag: job.source_ifc_etag,
+    download_status: job.download_status ?? null,
+    download_failure: job.download_failure ?? null,
+    local_path: job.local_path ?? null,
+    host_local_path: job.host_local_path ?? null,
+    conversion_job_id: job.conversion_job_id,
+    conversion_status: job.conversion_status,
+    conversion_authority: job.conversion_authority,
+    dispatch_error: job.dispatch_error ?? null,
+    callback_outbox_id: job.callback_outbox_id ?? null,
+    artifact_manifest_ref: job.artifact_manifest_ref ?? null,
+    review_session_id: job.review_session_id ?? null,
+    web_view_session_id: job.web_view_session_id ?? null,
+    viewer_url: job.viewer_url ?? null,
+    expected_stage_url: expectedStage?.url ?? null,
+    expected_mapping_url: expectedStage?.mapping_url ?? null,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+  };
+}
+
+function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {
+  return session.artifact_bindings
+    .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
+    .slice()
+    .sort((left, right) => left.load_order - right.load_order)[0] ?? null;
+}
+
+function parseListLimit(value: unknown): number {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(parsed)) return 20;
+  return Math.min(100, Math.max(1, parsed));
 }
 
 function headersToMap(headers: express.Request["headers"]): Record<string, string | undefined> {

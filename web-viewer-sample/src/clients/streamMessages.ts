@@ -17,6 +17,7 @@ export function buildOpenStageRequest(
         event_type: "openStageRequest",
         payload: {
             url,
+            requested_stage_url: url,
             ...(primary
                 ? {
                       stage_composition: {

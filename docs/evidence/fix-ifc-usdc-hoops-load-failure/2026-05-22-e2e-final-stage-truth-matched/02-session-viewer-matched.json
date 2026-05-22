@@ -1,0 +1,123 @@
+{
+  "snapshot": {
+    "href": "http://127.0.0.1:5173/?session=review_session_5f549af0631b&streamTimeoutMs=180000",
+    "title": "BIM Review Omniverse Web Viewer",
+    "readyState": "complete",
+    "bodyText": "BIM Review Omniverse Web Viewer\nStage truth\nmatched\nexpected: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nloaded: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nWebRTC: started · kit_host_native_001 127.0.0.1:49100/47998\n瀏覽器審查端 (Web Viewer)\n步驟 ④ / 5\n①\n上傳建模 (Upload)\n②\n自動轉換 (Convert)\n③\n建立會議 (Meeting)\n④\n標記問題 (Mark)\n⑤\n紀錄回寫 (Record)\n本場審查會議\n進行中\n會議識別碼 (Session id)：review_session_5f549af0631b\n可審查模型：已就緒\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n轉檔品質摘要 (Conversion summary)\n已就緒\nFIXTURE NAME\n—\nSOURCE IFC ENTITY COUNT\n5,128\nSIDECAR CARRIER COUNT\n5,128\nMATERIALIZATION STRATEGY\nifcopenshell_openusd_fallback\nCOVERAGE RATIO\n1.0000\nCOVERAGE STATUS\npass\nCONVERSION DURATION (S)\n—\nCONVERSION JOB ID\nstream_conv_20260522112506_2b79ba1d\nCONVERSION AUTHORITY\nbim-streaming-server\nPRIMARY ARTIFACT\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nSECONDARY LAYERS\n0\n架構導覽 (Repo map)\n圖片 ①-⑥\n這裡把示意圖中的六個節點轉成可追蹤狀態，讓 demo 操作時能看見誰負責資料、誰負責檔案、誰負責 stream。\n①\nweb-viewer-sample\nBrowser Client / 使用者操作入口\n目前正在操作\nREST / WebSocket / DataChannel\nUI state、操作意圖、顯示用 cache\n右側面板負責把使用者操作轉成 session、metadata、stream command 與 annotation event。\n②\nbim-review-coordinator\nSession / Collaboration Control Plane\n已接入 demo 流程\nREST + Socket.IO\nreview session、presence、collaboration event、stream config\nSession id：review_session_5f549af0631b\n③\ncompany-cloud bim-control\nExternal control-plane authority / 本地僅 shadow\nmetadata 已進入 UI\nREST metadata\nproject、model version、artifact、issue、annotation metadata 權威在外部雲端\nmodel=ready, artifacts=0\n④\nexternal IFC Worker\nCustomer-edge IFC producer\n已取得檔案 URL\nPOST /api/external/ifc-ready\n產出 IFC 並通知 coordinator；不在本 repo runtime 內\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n⑤\nbim-streaming-server conversion\nStreaming-owned IFC→USDC job\n已完成前置轉檔\nREST conversion authority\nIFC→USDC job、mapping quality、model.usdc readiness、conversion result callback\n本場 session 已拿到 streaming-owned model/mapping URL。\n⑥\nbim-streaming-server\nOmniverse Kit Runtime / WebRTC + DataChannel\nDataChannel 已回應\nWebRTC + DataChannel\nIFC→USDC authority、USD runtime、viewport rendering、selection、camera、highlight overlay\nopenedStageResult\nDemo 流程 (Data flow)\n可操作 + 未完成\n依照流程按下按鈕，就能把 REST、artifact URL、Socket.IO、WebRTC / DataChannel 的資料流串起來。\n1\n建立 / 載入審查會議\n已完成\nREST\nweb-viewer-sample -> bim-review-coordinator\n重新載入 session\n2\n取得模型、議題與 artifact metadata\nmetadata 已取得\nREST\ncoordinator -> company-cloud shadow/outbox\n載入 bootstrap\n3\n確認檔案與 mapping URL\nURL 已顯示\nStreaming artifact URL\ncoordinator -> streaming artifact refs\n載入 mapping\n4\n連線協作事件通道\n已連線\nSocket.IO\nweb-viewer-sample <-> coordinator\n連線即時頻道\n5\n載入 USDC 到 Omniverse stream\n已送出指令\nDataChannel\nweb-viewer-sample -> bim-streaming-server -> edge artifact refs\nOpen stage\n6\n標示問題與聚焦元件\n已有回應\nDataChannel\nweb-viewer-sample <-> bim-streaming-server\n高亮示範問題\n7\n建立審查標註並回寫\n可操作\nSocket.IO / REST\nweb-viewer-sample -> coordinator -> callback outbox\n建立標註\n8\n從 demo 介面觸發 IFC -> USDC 轉檔\n已完成\nREST B-scheme intake\nexternal IFC Worker -> coordinator -> streaming\n開啟 coordinator console\n示範操作 (Demo actions)\n建立或載入審查會議\n↳ 連到審查協調服務、取得本場會議的連線資訊\n連線即時頻道\n↳ 用於與其他審查人員同步操作 (Socket.IO)\n載入可審查 3D 模型\n↳ 把已轉換好的 3D 模型載入到串流畫面 (Open stage)\n標示示範問題\n↳ 在 3D 模型上把問題位置高亮給審查人員看\n建立審查標註\n↳ 把審查意見寫回主資料庫 (Step ⑤)\n清除高亮\n元件對照表 (Element mapping)\n尚未載入 mapping\n對照表把 BIM 建築元件對應到 3D 模型內的位置，確保「點到問題」會精準高亮對應元件。\n載入元件對照表用選取元件試標問題用選取元件試聚焦\n▸ 展開互動實驗室與技術細節 (Interaction lab + technical details)\n步驟 ④ 標記問題\n下一步 → 紀錄回寫 (⑤)\n審查狀態 (Review status)\n進行中\nReview session 啟用中，模型狀態：ready\nSession 狀態\nreview_session_5f549af0631b\n成果檔\nDERIVED ready\nload 0 · same_instance · mapping ready\nUSD / USDC 成果檔\nBIM: 許良宇圖書館建築 2026\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nUSD Stage 樹狀結構\n重設",
+    "bodyLength": 3735,
+    "containsSession": true,
+    "containsConversionJob": true,
+    "containsExpectedStage": true,
+    "containsLoadedStage": true,
+    "containsMatched": true,
+    "containsMismatch": false,
+    "containsDisconnected": false,
+    "containsChildren": true,
+    "stageTruthPanels": [
+      "Stage truth\nmatched\nexpected: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nloaded: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nWebRTC: started · kit_host_native_001 127.0.0.1:49100/47998"
+    ],
+    "videos": [
+      {
+        "index": 0,
+        "readyState": 4,
+        "networkState": 2,
+        "paused": false,
+        "ended": false,
+        "currentTime": 2.933,
+        "videoWidth": 1920,
+        "videoHeight": 1080,
+        "hasSrcObject": true
+      }
+    ]
+  },
+  "snapshots": [
+    {
+      "at": "2026-05-22T12:16:30.073Z",
+      "snapshot": {
+        "href": "http://127.0.0.1:5173/?session=review_session_5f549af0631b&streamTimeoutMs=180000",
+        "title": "BIM Review Omniverse Web Viewer",
+        "readyState": "loading",
+        "bodyText": "",
+        "bodyLength": 0,
+        "containsSession": false,
+        "containsConversionJob": false,
+        "containsExpectedStage": false,
+        "containsLoadedStage": false,
+        "containsMatched": false,
+        "containsMismatch": false,
+        "containsDisconnected": false,
+        "containsChildren": false,
+        "stageTruthPanels": [],
+        "videos": []
+      }
+    },
+    {
+      "at": "2026-05-22T12:16:32.088Z",
+      "snapshot": {
+        "href": "http://127.0.0.1:5173/?session=review_session_5f549af0631b&streamTimeoutMs=180000",
+        "title": "BIM Review Omniverse Web Viewer",
+        "readyState": "complete",
+        "bodyText": "BIM Review Omniverse Web Viewer\nStage truth\npending\nexpected: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nloaded: not_observed\nWebRTC: started · kit_host_native_001 127.0.0.1:49100/47998\n瀏覽器審查端 (Web Viewer)\n步驟 ④ / 5\n①\n上傳建模 (Upload)\n②\n自動轉換 (Convert)\n③\n建立會議 (Meeting)\n④\n標記問題 (Mark)\n⑤\n紀錄回寫 (Record)\n本場審查會議\n進行中\n會議識別碼 (Session id)：review_session_5f549af0631b\n可審查模型：已就緒\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n轉檔品質摘要 (Conversion summary)\n已就緒\nFIXTURE NAME\n—\nSOURCE IFC ENTITY COUNT\n5,128\nSIDECAR CARRIER COUNT\n5,128\nMATERIALIZATION STRATEGY\nifcopenshell_openusd_fallback\nCOVERAGE RATIO\n1.0000\nCOVERAGE STATUS\npass\nCONVERSION DURATION (S)\n—\nCONVERSION JOB ID\nstream_conv_20260522112506_2b79ba1d\nCONVERSION AUTHORITY\nbim-streaming-server\nPRIMARY ARTIFACT\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nSECONDARY LAYERS\n0\n架構導覽 (Repo map)\n圖片 ①-⑥\n這裡把示意圖中的六個節點轉成可追蹤狀態，讓 demo 操作時能看見誰負責資料、誰負責檔案、誰負責 stream。\n①\nweb-viewer-sample\nBrowser Client / 使用者操作入口\n目前正在操作\nREST / WebSocket / DataChannel\nUI state、操作意圖、顯示用 cache\n右側面板負責把使用者操作轉成 session、metadata、stream command 與 annotation event。\n②\nbim-review-coordinator\nSession / Collaboration Control Plane\n已接入 demo 流程\nREST + Socket.IO\nreview session、presence、collaboration event、stream config\nSession id：review_session_5f549af0631b\n③\ncompany-cloud bim-control\nExternal control-plane authority / 本地僅 shadow\nmetadata 已進入 UI\nREST metadata\nproject、model version、artifact、issue、annotation metadata 權威在外部雲端\nmodel=ready, artifacts=0\n④\nexternal IFC Worker\nCustomer-edge IFC producer\n已取得檔案 URL\nPOST /api/external/ifc-ready\n產出 IFC 並通知 coordinator；不在本 repo runtime 內\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n⑤\nbim-streaming-server conversion\nStreaming-owned IFC→USDC job\n已完成前置轉檔\nREST conversion authority\nIFC→USDC job、mapping quality、model.usdc readiness、conversion result callback\n本場 session 已拿到 streaming-owned model/mapping URL。\n⑥\nbim-streaming-server\nOmniverse Kit Runtime / WebRTC + DataChannel\n等待 stream command\nWebRTC + DataChannel\nIFC→USDC authority、USD runtime、viewport rendering、selection、camera、highlight overlay\n用下方 Open Stage / Highlight / Focus 送出指令。\nDemo 流程 (Data flow)\n可操作 + 未完成\n依照流程按下按鈕，就能把 REST、artifact URL、Socket.IO、WebRTC / DataChannel 的資料流串起來。\n1\n建立 / 載入審查會議\n已完成\nREST\nweb-viewer-sample -> bim-review-coordinator\n重新載入 session\n2\n取得模型、議題與 artifact metadata\nmetadata 已取得\nREST\ncoordinator -> company-cloud shadow/outbox\n載入 bootstrap\n3\n確認檔案與 mapping URL\nURL 已顯示\nStreaming artifact URL\ncoordinator -> streaming artifact refs\n載入 mapping\n4\n連線協作事件通道\n已連線\nSocket.IO\nweb-viewer-sample <-> coordinator\n連線即時頻道\n5\n載入 USDC 到 Omniverse stream\n可操作\nDataChannel\nweb-viewer-sample -> bim-streaming-server -> edge artifact refs\nOpen stage\n6\n標示問題與聚焦元件\n等待 Kit 回應\nDataChannel\nweb-viewer-sample <-> bim-streaming-server\n高亮示範問題\n7\n建立審查標註並回寫\n可操作\nSocket.IO / REST\nweb-viewer-sample -> coordinator -> callback outbox\n建立標註\n8\n從 demo 介面觸發 IFC -> USDC 轉檔\n已完成\nREST B-scheme intake\nexternal IFC Worker -> coordinator -> streaming\n開啟 coordinator console\n示範操作 (Demo actions)\n建立或載入審查會議\n↳ 連到審查協調服務、取得本場會議的連線資訊\n連線即時頻道\n↳ 用於與其他審查人員同步操作 (Socket.IO)\n載入可審查 3D 模型\n↳ 把已轉換好的 3D 模型載入到串流畫面 (Open stage)\n標示示範問題\n↳ 在 3D 模型上把問題位置高亮給審查人員看\n建立審查標註\n↳ 把審查意見寫回主資料庫 (Step ⑤)\n清除高亮\n元件對照表 (Element mapping)\n尚未載入 mapping\n對照表把 BIM 建築元件對應到 3D 模型內的位置，確保「點到問題」會精準高亮對應元件。\n載入元件對照表用選取元件試標問題用選取元件試聚焦\n▸ 展開互動實驗室與技術細節 (Interaction lab + technical details)\n步驟 ④ 標記問題\n下一步 → 紀錄回寫 (⑤)\n審查狀態 (Review status)\n進行中\nReview session 啟用中，模型狀態：ready\nSession 狀態\nreview_session_5f549af0631b\n成果檔\nDERIVED ready\nload 0 · same_instance · mapping ready\nUSD / USDC 成果檔\nBIM: 許良宇圖書館建築 2026\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nUSD Stage 樹狀結構\n重設",
+        "bodyLength": 3696,
+        "containsSession": true,
+        "containsConversionJob": true,
+        "containsExpectedStage": true,
+        "containsLoadedStage": false,
+        "containsMatched": false,
+        "containsMismatch": false,
+        "containsDisconnected": false,
+        "containsChildren": true,
+        "stageTruthPanels": [
+          "Stage truth\npending\nexpected: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nloaded: not_observed\nWebRTC: started · kit_host_native_001 127.0.0.1:49100/47998"
+        ],
+        "videos": [
+          {
+            "index": 0,
+            "readyState": 4,
+            "networkState": 2,
+            "paused": false,
+            "ended": false,
+            "currentTime": 0.928,
+            "videoWidth": 1920,
+            "videoHeight": 1080,
+            "hasSrcObject": true
+          }
+        ]
+      }
+    },
+    {
+      "at": "2026-05-22T12:16:34.101Z",
+      "snapshot": {
+        "href": "http://127.0.0.1:5173/?session=review_session_5f549af0631b&streamTimeoutMs=180000",
+        "title": "BIM Review Omniverse Web Viewer",
+        "readyState": "complete",
+        "bodyText": "BIM Review Omniverse Web Viewer\nStage truth\nmatched\nexpected: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nloaded: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nWebRTC: started · kit_host_native_001 127.0.0.1:49100/47998\n瀏覽器審查端 (Web Viewer)\n步驟 ④ / 5\n①\n上傳建模 (Upload)\n②\n自動轉換 (Convert)\n③\n建立會議 (Meeting)\n④\n標記問題 (Mark)\n⑤\n紀錄回寫 (Record)\n本場審查會議\n進行中\n會議識別碼 (Session id)：review_session_5f549af0631b\n可審查模型：已就緒\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n轉檔品質摘要 (Conversion summary)\n已就緒\nFIXTURE NAME\n—\nSOURCE IFC ENTITY COUNT\n5,128\nSIDECAR CARRIER COUNT\n5,128\nMATERIALIZATION STRATEGY\nifcopenshell_openusd_fallback\nCOVERAGE RATIO\n1.0000\nCOVERAGE STATUS\npass\nCONVERSION DURATION (S)\n—\nCONVERSION JOB ID\nstream_conv_20260522112506_2b79ba1d\nCONVERSION AUTHORITY\nbim-streaming-server\nPRIMARY ARTIFACT\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nSECONDARY LAYERS\n0\n架構導覽 (Repo map)\n圖片 ①-⑥\n這裡把示意圖中的六個節點轉成可追蹤狀態，讓 demo 操作時能看見誰負責資料、誰負責檔案、誰負責 stream。\n①\nweb-viewer-sample\nBrowser Client / 使用者操作入口\n目前正在操作\nREST / WebSocket / DataChannel\nUI state、操作意圖、顯示用 cache\n右側面板負責把使用者操作轉成 session、metadata、stream command 與 annotation event。\n②\nbim-review-coordinator\nSession / Collaboration Control Plane\n已接入 demo 流程\nREST + Socket.IO\nreview session、presence、collaboration event、stream config\nSession id：review_session_5f549af0631b\n③\ncompany-cloud bim-control\nExternal control-plane authority / 本地僅 shadow\nmetadata 已進入 UI\nREST metadata\nproject、model version、artifact、issue、annotation metadata 權威在外部雲端\nmodel=ready, artifacts=0\n④\nexternal IFC Worker\nCustomer-edge IFC producer\n已取得檔案 URL\nPOST /api/external/ifc-ready\n產出 IFC 並通知 coordinator；不在本 repo runtime 內\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n⑤\nbim-streaming-server conversion\nStreaming-owned IFC→USDC job\n已完成前置轉檔\nREST conversion authority\nIFC→USDC job、mapping quality、model.usdc readiness、conversion result callback\n本場 session 已拿到 streaming-owned model/mapping URL。\n⑥\nbim-streaming-server\nOmniverse Kit Runtime / WebRTC + DataChannel\nDataChannel 已回應\nWebRTC + DataChannel\nIFC→USDC authority、USD runtime、viewport rendering、selection、camera、highlight overlay\nopenedStageResult\nDemo 流程 (Data flow)\n可操作 + 未完成\n依照流程按下按鈕，就能把 REST、artifact URL、Socket.IO、WebRTC / DataChannel 的資料流串起來。\n1\n建立 / 載入審查會議\n已完成\nREST\nweb-viewer-sample -> bim-review-coordinator\n重新載入 session\n2\n取得模型、議題與 artifact metadata\nmetadata 已取得\nREST\ncoordinator -> company-cloud shadow/outbox\n載入 bootstrap\n3\n確認檔案與 mapping URL\nURL 已顯示\nStreaming artifact URL\ncoordinator -> streaming artifact refs\n載入 mapping\n4\n連線協作事件通道\n已連線\nSocket.IO\nweb-viewer-sample <-> coordinator\n連線即時頻道\n5\n載入 USDC 到 Omniverse stream\n已送出指令\nDataChannel\nweb-viewer-sample -> bim-streaming-server -> edge artifact refs\nOpen stage\n6\n標示問題與聚焦元件\n已有回應\nDataChannel\nweb-viewer-sample <-> bim-streaming-server\n高亮示範問題\n7\n建立審查標註並回寫\n可操作\nSocket.IO / REST\nweb-viewer-sample -> coordinator -> callback outbox\n建立標註\n8\n從 demo 介面觸發 IFC -> USDC 轉檔\n已完成\nREST B-scheme intake\nexternal IFC Worker -> coordinator -> streaming\n開啟 coordinator console\n示範操作 (Demo actions)\n建立或載入審查會議\n↳ 連到審查協調服務、取得本場會議的連線資訊\n連線即時頻道\n↳ 用於與其他審查人員同步操作 (Socket.IO)\n載入可審查 3D 模型\n↳ 把已轉換好的 3D 模型載入到串流畫面 (Open stage)\n標示示範問題\n↳ 在 3D 模型上把問題位置高亮給審查人員看\n建立審查標註\n↳ 把審查意見寫回主資料庫 (Step ⑤)\n清除高亮\n元件對照表 (Element mapping)\n尚未載入 mapping\n對照表把 BIM 建築元件對應到 3D 模型內的位置，確保「點到問題」會精準高亮對應元件。\n載入元件對照表用選取元件試標問題用選取元件試聚焦\n▸ 展開互動實驗室與技術細節 (Interaction lab + technical details)\n步驟 ④ 標記問題\n下一步 → 紀錄回寫 (⑤)\n審查狀態 (Review status)\n進行中\nReview session 啟用中，模型狀態：ready\nSession 狀態\nreview_session_5f549af0631b\n成果檔\nDERIVED ready\nload 0 · same_instance · mapping ready\nUSD / USDC 成果檔\nBIM: 許良宇圖書館建築 2026\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nUSD Stage 樹狀結構\n重設",
+        "bodyLength": 3735,
+        "containsSession": true,
+        "containsConversionJob": true,
+        "containsExpectedStage": true,
+        "containsLoadedStage": true,
+        "containsMatched": true,
+        "containsMismatch": false,
+        "containsDisconnected": false,
+        "containsChildren": true,
+        "stageTruthPanels": [
+          "Stage truth\nmatched\nexpected: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nloaded: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nWebRTC: started · kit_host_native_001 127.0.0.1:49100/47998"
+        ],
+        "videos": [
+          {
+            "index": 0,
+            "readyState": 4,
+            "networkState": 2,
+            "paused": false,
+            "ended": false,
+            "currentTime": 2.933,
+            "videoWidth": 1920,
+            "videoHeight": 1080,
+            "hasSrcObject": true
+          }
+        ]
+      }
+    }
+  ]
+}

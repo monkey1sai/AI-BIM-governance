@@ -42,6 +42,10 @@ describe("coordinator dev console", () => {
 
     expect(ui.status).toBe(200);
     expect(ui.text).toContain("審查協調 (Review Coordinator)");
+    expect(ui.text).toContain("閉環 Runtime Dashboard");
+    expect(ui.text).toContain("/api/runtime/status");
+    expect(ui.text).toContain("Kit / WebRTC");
+    expect(ui.text).toContain("expected stage URL");
     expect(ui.text).toContain("sourceFileInput");
     expect(ui.text).toContain("/api/dev/conversions/mock");
     expect(ui.text).toContain("/api/external/ifc-ready");

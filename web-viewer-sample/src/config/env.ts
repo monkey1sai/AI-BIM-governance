@@ -3,7 +3,10 @@ function queryParam(name: string): string | null {
     return new URLSearchParams(globalThis.location.search).get(name);
 }
 
-const rawSessionId = queryParam("sessionId");
+// coordinator `/ui/open?session=review_session_xxx` redirects the browser to
+// the Vite viewer with the same `session` query key. Keep `sessionId` as the
+// legacy explicit key, but treat `session` as the primary coordinator handoff.
+const rawSessionId = queryParam("session") || queryParam("sessionId");
 const hasExplicitEmptySessionId = rawSessionId !== null && rawSessionId.trim() === "";
 
 function positiveNumberConfig(queryName: string, envName: string, fallback: number): number {

@@ -30,6 +30,8 @@ interface AppStreamProps {
     handleCustomEvent: (event: any) => void;
     onFocus: () => void;
     onBlur: () => void;
+    onStopped?: (event: StreamEvent) => void;
+    onTerminated?: (event: StreamEvent) => void;
 }
 
 interface AppStreamState {
@@ -107,8 +109,8 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                     onStart: (message: StreamEvent) => this._onStart(message),
                     onStreamStats: (message: StreamEvent) => this._onStreamStats(message),
                     onCustomEvent: (message: any) => this._onCustomEvent(message),
-                    onStop: (message: StreamEvent) => { console.log(message) },
-                    onTerminate: (message: StreamEvent) => { console.log(message) }
+                    onStop: (message: StreamEvent) => this._onStop(message),
+                    onTerminate: (message: StreamEvent) => this._onTerminate(message)
                 };
             }
                 
@@ -135,8 +137,8 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                     onUpdate: (message: StreamEvent) => this._onUpdate(message),
                     onStart: (message: StreamEvent) => this._onStart(message),
                     onCustomEvent: (message: any) => this._onCustomEvent(message),
-                    onStop: (message: StreamEvent) => { console.log(message) },
-                    onTerminate: (message: StreamEvent) => { console.log(message) },
+                    onStop: (message: StreamEvent) => this._onStop(message),
+                    onTerminate: (message: StreamEvent) => this._onTerminate(message),
                 };
             }
                 
@@ -178,8 +180,8 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         }
     }
 
-    static sendMessage(message: any) {
-        AppStreamer.sendMessage(message);
+    static sendMessage(message: any): Promise<any> {
+        return AppStreamer.sendMessage(message);
     }
 
     static stop() {
@@ -230,10 +232,14 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
 
     _onStop(message: any) {
         console.info('Stream stopped', message);
+        this.setState({ streamReady: false });
+        this.props.onStopped?.(message);
     }
 
     _onTerminate(message: any) {
         console.info('Stream terminated', message);
+        this.setState({ streamReady: false });
+        this.props.onTerminated?.(message);
     }
 
     render() {
