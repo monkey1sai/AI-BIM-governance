@@ -59,6 +59,12 @@ export interface CoordinatorConfig {
   storageRoot: string;                    // coordinator 寫入路徑;docker compose 顯式設 /workspace/storage,host-native 預設 <cwd>/storage
   storageHostRoot: string;                // host view storage root,寫進 dispatch payload host_local_path
   publicHost: string;                     // viewer_url 用的對外 host(coordinator 對 LAN IP);default 127.0.0.1
+  // coordinator-auto-poll-streaming-conversion:dispatch 成功後 in-process 自動 poll
+  // streaming-server `/api/conversions/<id>/result` 直到 terminal,自動跑既有 ingest path,
+  // 不需要外部手動 POST /api/internal/conversions/<id>/ingest。test fixture 可關掉。
+  conversionPollEnabled: boolean;         // env CONVERSION_POLL_ENABLED,default true
+  conversionPollIntervalSeconds: number;  // env CONVERSION_POLL_INTERVAL_SECONDS,default 5
+  conversionPollMaxAttempts: number;      // env CONVERSION_POLL_MAX_ATTEMPTS,default 60(= 5 分鐘上限)
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -66,6 +72,16 @@ function numberFromEnv(name: string, fallback: number): number {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBooleanEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "") return fallback;
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  return fallback;
 }
 
 function nullableNumberFromEnv(name: string): number | null {
@@ -207,6 +223,11 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     storageHostRoot:
       process.env.STORAGE_HOST_ROOT || process.env.RUNTIME_STORAGE_ROOT || path.join(cwd, "storage"),
     publicHost: process.env.PUBLIC_HOST || "127.0.0.1",
+    // coordinator-auto-poll-streaming-conversion:default 啟用 polling;test fixture
+    // 應在 loadConfig overrides 內傳 conversionPollEnabled: false。
+    conversionPollEnabled: parseBooleanEnv("CONVERSION_POLL_ENABLED", true),
+    conversionPollIntervalSeconds: numberFromEnv("CONVERSION_POLL_INTERVAL_SECONDS", 5),
+    conversionPollMaxAttempts: numberFromEnv("CONVERSION_POLL_MAX_ATTEMPTS", 60),
     ...overrides,
   };
 }

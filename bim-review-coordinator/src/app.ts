@@ -14,7 +14,12 @@ import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
-import { StreamingConversionClient } from "./services/streamingConversionClient.js";
+import {
+  StreamingConversionClient,
+  isTerminalConversionResult,
+  type PollerHandle,
+  type StreamingConversionResult,
+} from "./services/streamingConversionClient.js";
 import {
   allocateKitInstanceBindings,
   allocateLocalKitInstance,
@@ -236,6 +241,9 @@ export interface CoordinatorApp {
   config: CoordinatorConfig;
   store: SessionStore;
   eventLog: EventLog;
+  // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
+  // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
+  dispose: () => void;
 }
 
 type RawBodyRequest = express.Request & { rawBody?: string };
@@ -261,6 +269,10 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     undefined,
     config.streamingConversionInternalToken || undefined,
   );
+  // coordinator-auto-poll-streaming-conversion §6:in-process auto-poll registry
+  // (keyed by conversion_job_id),dispatch 後 schedule、manual ingest endpoint
+  // 觸發前 cancel、shutdown(dispose())清空。
+  const pollerRegistry = new Map<string, PollerHandle>();
   // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
   const callbackOutbox = new CallbackOutbox(
     config.callbackOutboxMaxAttempts,
@@ -574,6 +586,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
           hostLocalPath: downloadResult.host_local_path,
         });
         externalIfcReadyStore.markDispatched(job.ifc_ready_job_id, dispatch.conversion_job_id, dispatch.status);
+        // coordinator-auto-poll-streaming-conversion §4.3:dispatch 成功後 in-process
+        // schedule poller(若 conversionPollEnabled);既有 poller 不雙起。
+        if (config.conversionPollEnabled && !pollerRegistry.has(dispatch.conversion_job_id)) {
+          schedulePollerForConversion(dispatch.conversion_job_id);
+        }
       } catch (dispatchError) {
         externalIfcReadyStore.markDispatchFailed(
           job.ifc_ready_job_id,
@@ -758,6 +775,72 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     return { session, replay: false };
   }
 
+  // coordinator-auto-poll-streaming-conversion §4.1:把 manual endpoint 與 auto-poll
+  // 共用的「fetch result → terminal 判定 → ingest」chain 抽成 helper。`result` 可選傳入
+  // (auto-poll 已有 fetch 結果可直接給,manual endpoint 走 fetchConversionResult)。
+  type StreamingResultIngestSuccess = Extract<ConversionIngestOutcome, { ok: true }>;
+  type StreamingResultIngestOutcome =
+    | { ok: true; outcome: StreamingResultIngestSuccess; conversion_status: "ready" | "failed"; failed: boolean }
+    | { ok: false; status: number; detail: string; conversion_job_id?: string; conversion_status?: string };
+
+  async function ingestStreamingConversionResult(
+    conversionJobId: string,
+    options: { result?: StreamingConversionResult; source: "manual" | "auto-poll" } = { source: "manual" },
+  ): Promise<StreamingResultIngestOutcome> {
+    const result = options.result ?? (await streamingConversionClient.fetchConversionResult(conversionJobId));
+    const correlationId = result.correlation_id;
+    if (!correlationId) {
+      return { ok: false, status: 422, detail: "streaming conversion result has no correlation_id" };
+    }
+    const { terminal, failed } = isTerminalConversionResult(result);
+    if (!terminal) {
+      return {
+        ok: false,
+        status: 409,
+        detail: "conversion result is not terminal yet",
+        conversion_job_id: conversionJobId,
+        conversion_status: result.model_status ?? result.status ?? "unknown",
+      };
+    }
+    const report = conversionResultReportSchema.parse({
+      correlation_id: correlationId,
+      conversion_job_id: result.conversion_job_id,
+      status: failed ? "failed" : "ready",
+      artifacts: {
+        usdc_ref: result.usdc_ref ?? null,
+        element_mapping_ref: result.element_mapping_ref ?? null,
+        manifest_ref: result.manifest_ref ?? null,
+      },
+      reason: failed ? result.reason || "conversion_failed" : undefined,
+      retryable: false,
+    });
+    const outcome = ingestConversionReport(report);
+    if (!outcome.ok) {
+      return { ok: false, status: outcome.status, detail: outcome.detail };
+    }
+    return { ok: true, outcome, conversion_status: failed ? "failed" : "ready", failed };
+  }
+
+  function schedulePollerForConversion(conversionJobId: string): void {
+    const handle = streamingConversionClient.pollConversionResult(conversionJobId, {
+      intervalMs: config.conversionPollIntervalSeconds * 1000,
+      maxAttempts: config.conversionPollMaxAttempts,
+      onTerminal: async (result) => {
+        try {
+          await ingestStreamingConversionResult(conversionJobId, { result, source: "auto-poll" });
+        } catch (err) {
+          console.warn("auto-poll ingest failed", { conversionJobId, err: err instanceof Error ? err.message : String(err) });
+        } finally {
+          pollerRegistry.delete(conversionJobId);
+        }
+      },
+      onError: (err, attempt) => {
+        console.warn("auto-poll fetch error", { conversionJobId, attempt, err: err instanceof Error ? err.message : String(err) });
+      },
+    });
+    pollerRegistry.set(conversionJobId, handle);
+  }
+
   function ingestConversionReport(
     report: z.infer<typeof conversionResultReportSchema>,
   ): ConversionIngestOutcome {
@@ -884,59 +967,28 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   app.post("/api/internal/conversions/:conversionJobId/ingest", async (request, response, next) => {
     try {
       const conversionJobId = request.params.conversionJobId;
-      const result = await streamingConversionClient.fetchConversionResult(conversionJobId);
-      const correlationId = result.correlation_id;
-      if (!correlationId) {
-        response.status(422).json({
-          detail: "streaming conversion result has no correlation_id",
-          conversion_job_id: conversionJobId,
-        });
-        return;
+      // coordinator-auto-poll-streaming-conversion §4.4:manual endpoint 觸發前 cancel
+      // 對應 auto-poller,避免後續 onTerminal 觸發第二次 ingest(double callback)。
+      const existing = pollerRegistry.get(conversionJobId);
+      if (existing) {
+        existing.cancel();
+        pollerRegistry.delete(conversionJobId);
       }
-      // 只有 terminal 結果才入 callback outbox。非終結（queued/running）不得
-      // 被誤判為 failed，否則會提前送 conversion_failed 並持久化失敗結果。
-      const failed =
-        result.model_status === "failed" ||
-        result.status === "failed" ||
-        result.status === "cancelled";
-      const ready =
-        !failed &&
-        (result.ready === true ||
-          result.model_status === "ready" ||
-          result.status === "succeeded" ||
-          result.status === "succeeded_with_warnings");
-      if (!failed && !ready) {
-        response.status(409).json({
-          detail: "conversion result is not terminal yet",
-          conversion_job_id: conversionJobId,
-          conversion_status: result.model_status ?? result.status ?? "unknown",
-        });
-        return;
-      }
-      const report = conversionResultReportSchema.parse({
-        correlation_id: correlationId,
-        conversion_job_id: result.conversion_job_id,
-        status: failed ? "failed" : "ready",
-        artifacts: {
-          usdc_ref: result.usdc_ref ?? null,
-          element_mapping_ref: result.element_mapping_ref ?? null,
-          manifest_ref: result.manifest_ref ?? null,
-        },
-        reason: failed ? result.reason || "conversion_failed" : undefined,
-        retryable: false,
-      });
-      const outcome = ingestConversionReport(report);
+      const outcome = await ingestStreamingConversionResult(conversionJobId, { source: "manual" });
       if (!outcome.ok) {
-        response.status(outcome.status).json({ detail: outcome.detail });
+        const body: Record<string, unknown> = { detail: outcome.detail };
+        if (outcome.conversion_job_id) body.conversion_job_id = outcome.conversion_job_id;
+        if (outcome.conversion_status) body.conversion_status = outcome.conversion_status;
+        response.status(outcome.status).json(body);
         return;
       }
       response.status(202).json({
-        ifc_ready_job: outcome.ifc_ready_job,
-        callback: outcome.callback,
-        conversion_status: failed ? "failed" : "ready",
-        session: outcome.session,
-        session_replay: outcome.session_replay,
-        session_reason: outcome.session_reason ?? null,
+        ifc_ready_job: outcome.outcome.ifc_ready_job,
+        callback: outcome.outcome.callback,
+        conversion_status: outcome.conversion_status,
+        session: outcome.outcome.session,
+        session_replay: outcome.outcome.session_replay,
+        session_reason: outcome.outcome.session_reason ?? null,
       });
     } catch (error) {
       next(error);
@@ -1053,7 +1105,16 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   registerReviewNamespace(io, store, eventLog);
 
-  return { app, server, io, config, store, eventLog };
+  // coordinator-auto-poll-streaming-conversion §6:dispose 清空所有 in-process auto
+  // poller timer。process shutdown / 測試 teardown 必呼叫,避免 keep-alive 阻 exit。
+  const dispose = (): void => {
+    for (const handle of pollerRegistry.values()) {
+      handle.cancel();
+    }
+    pollerRegistry.clear();
+  };
+
+  return { app, server, io, config, store, eventLog, dispose };
 }
 
 function headersToMap(headers: express.Request["headers"]): Record<string, string | undefined> {

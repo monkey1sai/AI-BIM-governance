@@ -59,6 +59,11 @@ const defaultConfig: CoordinatorConfig = {
   storageRoot: "/tmp/storage",
   storageHostRoot: "/tmp/storage",
   publicHost: "127.0.0.1",
+  // coordinator-auto-poll-streaming-conversion §2:test fixture 預設關 polling
+  // 避免 unit test 啟動 in-process timer 干擾 isolation。
+  conversionPollEnabled: false,
+  conversionPollIntervalSeconds: 5,
+  conversionPollMaxAttempts: 60,
 };
 
 const multiEndpointConfig: CoordinatorConfig = {
