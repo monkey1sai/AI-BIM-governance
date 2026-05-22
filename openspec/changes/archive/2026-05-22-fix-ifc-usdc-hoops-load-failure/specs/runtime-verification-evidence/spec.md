@@ -28,6 +28,8 @@ Single Kit render evidence MUST prove that the browser viewer caused Kit to load
 - **THEN** visual preview evidence MUST NOT be classified as passed
 - **AND** the evidence records a `stale_stage_or_mismatch` blocker
 
+## ADDED Requirements
+
 ### Requirement: Kit and browser readiness evidence is explicit
 
 Kit/WebRTC evidence SHALL include disconnect and reconnect observations when they occur during E2E. A run that disconnects after a few seconds MUST record whether the disconnect was caused by browser lifecycle, AppStreamer lifecycle, Kit WebRTC server, or an unresolved runtime limitation.

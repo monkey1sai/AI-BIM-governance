@@ -140,6 +140,23 @@ Remaining before archive:
 - Implementation PR #101 must be merged into `main`.
 - Archive must run from updated `main` on a separate archive branch, then sync specs and roadmap/HTML per `AGENTS.md`.
 
+Archive closeout evidence on synced main (2026-05-22):
+
+- Evidence directory:
+  - `docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-archive-closeout-e2e/`
+- Chrome/CDP reopened `http://192.168.10.105:8004/ui` after PR #101 was merged and local `main` was fast-forwarded to `origin/main`.
+- Dashboard evidence:
+  - `01-runtime-dashboard.png`
+  - `01-runtime-dashboard.json`: observed `downloaded`, `ready`, `Kit / WebRTC`, active session/participant state, `stream_conv_20260522112506_2b79ba1d`, `review_session_5f549af0631b`, and expected `model.usdc` URL.
+- Viewer evidence:
+  - `02-session-viewer-matched.png`
+  - `02-session-viewer-matched.json`: observed `Stage truth` + `matched`, expected stage URL equal to `http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc`, WebRTC started, and video `1920x1080`.
+- Reload evidence:
+  - `03-session-viewer-reloaded.png`
+  - `03-session-viewer-reloaded.json`: same Chrome tab reload returned to matched state with video `1920x1080`.
+- Summary:
+  - `summary.json`: records dashboard/viewer/reload `ok=true` for `review_session_5f549af0631b`.
+
 ## Archive gate
 
 Do not archive this change until L1-L4 pass. A failed conversion with better diagnostics is not sufficient; the final accepted result must include a real, openable USD/USDC artifact for the target IFC.

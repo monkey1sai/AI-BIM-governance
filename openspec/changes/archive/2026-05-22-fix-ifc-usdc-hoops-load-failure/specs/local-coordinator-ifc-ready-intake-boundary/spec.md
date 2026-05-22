@@ -2,7 +2,7 @@
 
 > Delta against `openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md`。本 change 補足 coordinator 對 IFC-ready job 列表與 runtime dashboard 的 read-only 可觀測 API，不改變 coordinator 非轉檔權威的邊界。
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Coordinator GET job endpoint exposes download and viewer state
 

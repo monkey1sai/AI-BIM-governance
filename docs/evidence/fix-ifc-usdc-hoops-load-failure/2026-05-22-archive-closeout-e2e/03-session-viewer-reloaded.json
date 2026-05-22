@@ -1,0 +1,225 @@
+{
+  "url": "http://127.0.0.1:5173/?session=review_session_5f549af0631b&streamTimeoutMs=180000",
+  "expected_stage_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc",
+  "state": {
+    "href": "http://127.0.0.1:5173/?session=review_session_5f549af0631b&streamTimeoutMs=180000",
+    "title": "BIM Review Omniverse Web Viewer",
+    "text": "BIM Review Omniverse Web Viewer\nStage truth\nmatched\nexpected: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nloaded: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\nWebRTC: started · kit_host_native_001 127.0.0.1:49100/47998\n瀏覽器審查端 (Web Viewer)\n步驟 ④ / 5\n①\n上傳建模 (Upload)\n②\n自動轉換 (Convert)\n③\n建立會議 (Meeting)\n④\n標記問題 (Mark)\n⑤\n紀錄回寫 (Record)\n本場審查會議\n進行中\n會議識別碼 (Session id)：review_session_5f549af0631b\n可審查模型：已就緒\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n轉檔品質摘要 (Conversion summary)\n已就緒\nFIXTURE NAME\n—\nSOURCE IFC ENTITY COUNT\n5,128\nSIDECAR CARRIER COUNT\n5,128\nMATERIALIZATION STRATEGY\nifcopenshell_openusd_fallback\nCOVERAGE RATIO\n1.0000\nCOVERAGE STATUS\npass\nCONVERSION DURATION (S)\n—\nCONVERSION JOB ID\nstream_conv_20260522112506_2b79ba1d\nCONVERSION AUTHORITY\nbim-streaming-server\nPRIMARY ARTIFACT\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nSECONDARY LAYERS\n0\n架構導覽 (Repo map)\n圖片 ①-⑥\n這裡把示意圖中的六個節點轉成可追蹤狀態，讓 demo 操作時能看見誰負責資料、誰負責檔案、誰負責 stream。\n①\nweb-viewer-sample\nBrowser Client / 使用者操作入口\n目前正在操作\nREST / WebSocket / DataChannel\nUI state、操作意圖、顯示用 cache\n右側面板負責把使用者操作轉成 session、metadata、stream command 與 annotation event。\n②\nbim-review-coordinator\nSession / Collaboration Control Plane\n已接入 demo 流程\nREST + Socket.IO\nreview session、presence、collaboration event、stream config\nSession id：review_session_5f549af0631b\n③\ncompany-cloud bim-control\nExternal control-plane authority / 本地僅 shadow\nmetadata 已進入 UI\nREST metadata\nproject、model version、artifact、issue、annotation metadata 權威在外部雲端\nmodel=ready, artifacts=0\n④\nexternal IFC Worker\nCustomer-edge IFC producer\n已取得檔案 URL\nPOST /api/external/ifc-ready\n產出 IFC 並通知 coordinator；不在本 repo runtime 內\nhttp://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\n⑤\nbim-streaming-server conversion\nStreaming-owned IFC→USDC job\n已完成前置轉檔\nREST conversion authority\nIFC→USDC job、mapping quality、model.usdc readiness、conversion result callback\n本場 session 已拿到 streaming-owned model/mapping URL。\n⑥\nbim-streaming-server\nOmniverse Kit Runtime / WebRTC + DataChannel\nDataChannel 已回應\nWebRTC + DataChannel\nIFC→USDC authority、USD runtime、viewport rendering、selection、camera、highlight overlay\nloadingStateResponse\nDemo 流程 (Data flow)\n可操作 + 未完成\n依照流程按下按鈕，就能把 REST、artifact URL、Socket.IO、WebRTC / DataChannel 的資料流串起來。\n1\n建立 / 載入審查會議\n已完成\nREST\nweb-viewer-sample -> bim-review-coordinator\n重新載入 session\n2\n取得模型、議題與 artifact metadata\nmetadata 已取得\nREST\ncoordinator -> company-cloud shadow/outbox\n載入 bootstrap\n3\n確認檔案與 mapping URL\nURL 已顯示\nStreaming artifact URL\ncoordinator -> streaming artifact refs\n載入 mapping\n4\n連線協作事件通道\n已連線\nSocket.IO\nweb-viewer-sample <-> coordinator\n連線即時頻道\n5\n載入 USDC 到 Omniverse stream\n已送出指令\nDataChannel\nweb-viewer-sample -> bim-streaming-server -> edge artifact refs\nOpen stage\n6\n標示問題與聚焦元件\n已有回應\nDataChannel\nweb-viewer-sample <-> bim-streaming-server\n高亮示範問題\n7\n建立審查標註並回寫\n可操作\nSocket.IO / REST\nweb-viewer-sample -> coordinator -> callback outbox\n建立標註\n8\n從 demo 介面觸發 IFC -> USDC 轉檔\n已完成\nREST B-scheme intake\nexternal IFC Worker -> coordinator -> streaming\n開啟 coordinator console\n示範操作 (Demo actions)\n建立或載入審查會議\n↳ 連到審查協調服務、取得本場會議的連線資訊\n連線即時頻道\n↳ 用於與其他審查人員同步操作 (Socket.IO)\n載入可審查 3D 模型\n↳ 把已轉換好的 3D 模型載入到串流畫面 (Open stage)\n標示示範問題\n↳ 在 3D 模型上把問題位置高亮給審查人員看\n建立審查標註\n↳ 把審查意見寫回主資料庫 (Step ⑤)\n清除高亮\n元件對照表 (Element mapping)\n尚未載入 mapping\n對照表把 BIM 建築元件對應到 3D 模型內的位置，確保「點到問題」會精準高亮對應元件。\n載入元件對照表用選取元件試標問題用選取元件試聚焦\n▸ 展開互動實驗室與技術細節 (Interaction lab + technical details)\n步驟 ④ 標記問題\n下一步 → 紀錄回寫 (⑤)\n審查狀態 (Review status)\n進行中\nReview session 啟用中，模型狀態：ready\nSession 狀態\nreview_session_5f549af0631b\n成果檔\nDERIVED ready\nload 0 · same_instance · mapping ready\nUSD / USDC 成果檔\nBIM: 許良宇圖書館建築 2026\nauto_usdc_stream_conv_20260522112506_2b79ba1d\nUSD Stage 樹狀結構\n重設",
+    "hasStageTruthMatched": true,
+    "hasMismatch": false,
+    "hasDisconnected": false,
+    "hasReady": true,
+    "hasDownloaded": false,
+    "hasKitWebrtc": false,
+    "readyState": 4,
+    "videoWidth": 1920,
+    "videoHeight": 1080,
+    "hasSrcObject": true
+  },
+  "console": [
+    {
+      "type": "info",
+      "args": "2026-05-22T12:41:56.088Z INFO    gfn-client-sdk/api Is Secure Context:true"
+    },
+    {
+      "type": "log",
+      "args": "2026-05-22T12:41:56.090Z VERBOSE gfn-client-sdk/device refreshing information from browser..."
+    },
+    {
+      "type": "info",
+      "args": "2026-05-22T12:41:56.105Z INFO    gfn-client-sdk/gamepad gamepad handler created (connected:false)"
+    },
+    {
+      "type": "debug",
+      "args": "[vite] connecting..."
+    },
+    {
+      "type": "debug",
+      "args": "[vite] connected."
+    },
+    {
+      "type": "log",
+      "args": "2026-05-22T12:41:56.125Z VERBOSE gfn-client-sdk/device got information from browser:"
+    },
+    {
+      "type": "log",
+      "args": "2026-05-22T12:41:56.125Z VERBOSE gfn-client-sdk/device {\"os\":\"windows\",\"kind\":1,\"version\":\"11.0.22621.0+\",\"manufacturer\":\"\",\"product\":\"\",\"browser\":\"Chrome\",\"browserVersion\":\"148\"}"
+    },
+    {
+      "type": "info",
+      "args": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+    },
+    {
+      "type": "info",
+      "args": "[fast-mvp] auto-attach session from query string:review_session_5f549af0631b"
+    },
+    {
+      "type": "info",
+      "args": "2026-05-22T12:41:56.224Z INFO    gfn-client-sdk/api received overrides tool overrides: {}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Starting stream.\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:41:57.120Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "info",
+      "args": "Object"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Session started successfully\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:41:57.247Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "info",
+      "args": "streamReady"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message sent to the stream: {\\\"type\\\":\\\"config\\\",\\\"value\\\":{\\\"supports_localized_text_input\\\":true}}.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:41:57.248Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message successfully recieved from stream.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:41:57.257Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Config message successfully recieved from stream: {\\\"supports_localized_text_input\\\":true}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:41:57.258Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message sent to the stream: {\\\"type\\\":\\\"resize\\\",\\\"value\\\":{\\\"height\\\":1080,\\\"width\\\":1920}}.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:41:59.636Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "Sending request to open asset: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc."
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"openStageRequest\\\",\\\"payload\\\":{\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"requested_stage_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"stage_composition\\\":{\\\"primary\\\":{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"},\\\"secondary_layers\\\":[]},\\\"artifact_bindings\\\":[{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"}]}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:00.257Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"loadingStateQuery\\\",\\\"payload\\\":{}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:00.526Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "info",
+      "args": "Kit is ready to load assets"
+    },
+    {
+      "type": "log",
+      "args": "Sending request to open asset: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc."
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"openStageRequest\\\",\\\"payload\\\":{\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"requested_stage_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"stage_composition\\\":{\\\"primary\\\":{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"},\\\"secondary_layers\\\":[]},\\\"artifact_bindings\\\":[{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"}]}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:00.541Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "info",
+      "args": "2026-05-22T12:42:00.852Z INFO    gfn-client-sdk/api Is Secure Context:true"
+    },
+    {
+      "type": "log",
+      "args": "2026-05-22T12:42:00.852Z VERBOSE gfn-client-sdk/device refreshing information from browser..."
+    },
+    {
+      "type": "info",
+      "args": "2026-05-22T12:42:00.857Z INFO    gfn-client-sdk/gamepad gamepad handler created (connected:false)"
+    },
+    {
+      "type": "debug",
+      "args": "[vite] connecting..."
+    },
+    {
+      "type": "debug",
+      "args": "[vite] connected."
+    },
+    {
+      "type": "log",
+      "args": "2026-05-22T12:42:00.872Z VERBOSE gfn-client-sdk/device got information from browser:"
+    },
+    {
+      "type": "log",
+      "args": "2026-05-22T12:42:00.872Z VERBOSE gfn-client-sdk/device {\"os\":\"windows\",\"kind\":1,\"version\":\"11.0.22621.0+\",\"manufacturer\":\"\",\"product\":\"\",\"browser\":\"Chrome\",\"browserVersion\":\"148\"}"
+    },
+    {
+      "type": "info",
+      "args": "2026-05-22T12:42:00.937Z INFO    gfn-client-sdk/api received overrides tool overrides: {}"
+    },
+    {
+      "type": "info",
+      "args": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+    },
+    {
+      "type": "info",
+      "args": "[fast-mvp] auto-attach session from query string:review_session_5f549af0631b"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Starting stream.\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:01.022Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "info",
+      "args": "Object"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Session started successfully\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:01.074Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "info",
+      "args": "streamReady"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message sent to the stream: {\\\"type\\\":\\\"config\\\",\\\"value\\\":{\\\"supports_localized_text_input\\\":true}}.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:01.074Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message successfully recieved from stream.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:01.081Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Config message successfully recieved from stream: {\\\"supports_localized_text_input\\\":true}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:01.081Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message sent to the stream: {\\\"type\\\":\\\"resize\\\",\\\"value\\\":{\\\"height\\\":1080,\\\"width\\\":1920}}.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:03.438Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "Sending request to open asset: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc."
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"openStageRequest\\\",\\\"payload\\\":{\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"requested_stage_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"stage_composition\\\":{\\\"primary\\\":{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"},\\\"secondary_layers\\\":[]},\\\"artifact_bindings\\\":[{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"}]}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:04.083Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"loadingStateQuery\\\",\\\"payload\\\":{}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:04.345Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "info",
+      "args": "Kit is ready to load assets"
+    },
+    {
+      "type": "log",
+      "args": "Sending request to open asset: http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc."
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"openStageRequest\\\",\\\"payload\\\":{\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"requested_stage_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"stage_composition\\\":{\\\"primary\\\":{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"},\\\"secondary_layers\\\":[]},\\\"artifact_bindings\\\":[{\\\"binding_id\\\":\\\"binding_auto_usdc\\\",\\\"artifact_group_id\\\":\\\"ag_test001\\\",\\\"model_version_id\\\":\\\"test001\\\",\\\"artifact_id\\\":\\\"auto_usdc_stream_conv_20260522112506_2b79ba1d\\\",\\\"artifact_role\\\":\\\"derived\\\",\\\"url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc\\\",\\\"mapping_url\\\":\\\"http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/element_mapping.json\\\",\\\"load_order\\\":0,\\\"routing_policy\\\":\\\"same_instance\\\",\\\"ready_status\\\":\\\"ready\\\",\\\"conversion_authority\\\":\\\"bim-streaming-server\\\",\\\"conversion_job_id\\\":\\\"stream_conv_20260522112506_2b79ba1d\\\",\\\"conversion_status\\\":\\\"ready\\\"}]}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:04.362Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"loadingStateQuery\\\",\\\"payload\\\":{}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:04.628Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    },
+    {
+      "type": "log",
+      "args": "Requesting children for path: /World."
+    },
+    {
+      "type": "log",
+      "args": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Message being sent to the stream: {\\\"event_type\\\":\\\"getChildrenRequest\\\",\\\"payload\\\":{\\\"prim_path\\\":\\\"/World\\\",\\\"filters\\\":[\\\"USDGeom\\\"]}}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-22T12:42:04.644Z\",\"browser\":\"Chrome\",\"browserVersion\":\"148.0.7778.169\",\"os\":\"Windows\",\"osVersion\":\"11.0.22621.0+\",\"platformType\":\"desktop\"}"
+    }
+  ]
+}

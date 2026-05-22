@@ -140,31 +140,27 @@ Evidence before threshold lock MUST use a measure-first policy: coverage report 
 
 ### Requirement: Single Kit render evidence uses real worker artifacts
 
-Single Kit render evidence MUST 使用 `bim-streaming-server` internal-only 轉檔產出的 artifacts 來驗證從 IFC source 到 browser viewport 的 review-session path（B 方案：`_worker` 已自 repo 刪除，對外入口為 `bim-review-coordinator` `POST /api/external/ifc-ready`，轉檔權威為 `bim-streaming-server`）。Evidence 必須包含 `conversion_job_id` 與 `external_model_version_id` binding，讓 rendered stage 可追溯回 source IFC（`source_ifc_ref`/`source_ifc_etag`）。
+Single Kit render evidence MUST prove that the browser viewer caused Kit to load the `model.usdc` produced by the active `bim-streaming-server` conversion job for the current IFC-ready run. Evidence MUST include the current `ifc_ready_job_id`, `conversion_job_id`, `review_session_id`, expected stage URL, Kit stage-load evidence, non-zero browser video dimensions, and visual proof.
 
-Visual preview step 必須使用既有 `web-viewer-sample` + `bim-review-coordinator` + `bim-streaming-server` path 載入 streaming-produced `model.usdc`；不得要求任何已刪除的 `_worker`/`_bim-control` 服務，也不得要求 `bim-review-coordinator` 在本地 parse 或 render USD/USDC。重量模型檔只在客戶落地端流動；雲端僅收 metadata-only callback。
+#### Scenario: Kit stage-load proof matches current conversion job
 
-#### Scenario: Streaming-owned artifact 在 browser render
+- **WHEN** a Chrome E2E run opens the viewer for a ready review session
+- **THEN** evidence records the expected `model.usdc` URL from coordinator stream config
+- **AND** records DataChannel or Kit log proof that the loaded stage URL matches the expected URL
+- **AND** records `openedStageResult` or `loadingStateResponse` evidence when available
 
-- **WHEN** valid IFC 經外部落地端 IFC Worker → `bim-review-coordinator` `POST /api/external/ifc-ready` intake → `bim-streaming-server` internal conversion 產出、經 coordinator routing、由 `bim-streaming-server` 載入，並顯示在 `web-viewer-sample`
-- **THEN** evidence 記錄 source IFC identity（`source_ifc_ref`/`etag`）、`conversion_job_id`、`external_model_version_id`、`model.usdc` 參照、mapping 參照、`openedStageResult`、非零 video dimensions，以及 viewport screenshot 或等效 visual proof
-- **AND** evidence 記錄 `conversion_authority="bim-streaming-server"`，且不得宣稱任何 `_worker`-hosted artifact
+#### Scenario: React metadata is insufficient
 
-#### Scenario: Kit 或 GPU prerequisite 不可用
+- **WHEN** the viewer displays `model.status="ready"` and the converted `model.usdc` URL in React UI
+- **BUT** there is no matching Kit-loaded stage evidence
+- **THEN** conversion evidence MAY remain passed
+- **AND** single-Kit render evidence MUST remain `not_observed`, `blocked`, or `failed`
 
-- **WHEN** internal conversion 成功，但目前環境無法執行 Kit/GPU/browser verification（含 runtime image Linux Kit launcher 的 NVIDIA graphics/Vulkan/GPU/Kit license 阻塞）
-- **THEN** evidence 分別記錄 conversion success，並將 single Kit render evidence 標為 `blocked` 或 `deferred`，同時列出 missing runtime prerequisite
-- **AND** `deferred` MUST NOT 被報為 `passed`，且 host-local Kit MUST NOT 充當 substitute pass
+#### Scenario: Stale demo stage invalidates visual pass
 
-#### Scenario: Conversion passed 但 visual preview blocked
-
-- **WHEN** internal conversion 成功，但 `web-viewer-sample`、coordinator、Kit runtime、WebRTC、GPU 或 browser automation 不可用
-- **THEN** evidence 將 conversion result 與 visual preview 分層記錄，將 visual preview 標為 `blocked`，且不得宣稱 converted USDC 已在 web UI 被 visually inspected
-
-#### Scenario: Cloud callback delivery is layered separately
-
-- **WHEN** internal conversion 成功並產出 metadata，但公司雲端 callback endpoint 不可達（OQ1 pending）
-- **THEN** evidence 將 `cloud_callback_outbox` 與 conversion / render 分層記錄，記 retry / `dead_letter` 狀態，且 conversion / render evidence 不因 callback 未送達而被否定
+- **WHEN** browser screenshot or Kit log shows `許良宇圖書館建築_2026.usdc` while the current expected stage URL points to a different conversion job
+- **THEN** visual preview evidence MUST NOT be classified as passed
+- **AND** the evidence records a `stale_stage_or_mismatch` blocker
 
 ### Requirement: Batch storage IFC evidence calibrates mapping baseline
 
@@ -472,3 +468,36 @@ Verification evidence SHALL demonstrate that coordinator stream config can expos
 - **WHEN** coordinator stream config contains `model.status="converting"`, `"failed"`, `"missing"`, or `"blocked"`
 - **THEN** viewer E2E evidence records that no normal `openStageRequest` should be sent
 - **AND** conversion failure or pending status remains owned by coordinator and streaming conversion authority
+
+### Requirement: Kit and browser readiness evidence is explicit
+
+Kit/WebRTC evidence SHALL include disconnect and reconnect observations when they occur during E2E. A run that disconnects after a few seconds MUST record whether the disconnect was caused by browser lifecycle, AppStreamer lifecycle, Kit WebRTC server, or an unresolved runtime limitation.
+
+#### Scenario: Kit WebRTC server disconnects the client
+
+- **WHEN** Kit logs contain `NVST_R_BUSY, dropping frame` followed by `Client disconnected from WebRTC server`
+- **THEN** evidence classifies WebRTC viewer stability as non-passed
+- **AND** records the Kit log path, line numbers or excerpts, process age, and active connection summary when available
+
+#### Scenario: Reconnect requires closing the whole browser
+
+- **WHEN** a reload cannot reconnect but closing all Chrome processes allows a new connection
+- **THEN** evidence records the behavior as a browser/AppStreamer/Kit lifecycle blocker
+- **AND** the implementation MUST either provide a clean reconnect path or keep archive blocked with that deterministic reason
+
+### Requirement: Demo runtime smoke emits reviewable evidence artifacts
+
+Chrome human-like E2E evidence SHALL start from the operator page (`/ui`) and cover the full observable path from IFC-ready job to viewer stage-load. It MUST save evidence artifacts that can be inspected without relying on memory of a manual run.
+
+#### Scenario: E2E starts from coordinator UI
+
+- **WHEN** archive-gate E2E runs
+- **THEN** it opens `http://192.168.10.105:8004/ui` or the configured coordinator UI host
+- **AND** it observes or triggers the IFC-ready job through UI-visible state
+- **AND** it opens the viewer from the UI handoff rather than directly typing an already-known viewer URL only
+
+#### Scenario: E2E evidence artifacts are saved
+
+- **WHEN** E2E completes or stops on a blocker
+- **THEN** evidence includes screenshot, HAR or network summary, browser console summary, coordinator runtime snapshot, and Kit/WebRTC evidence summary
+- **AND** `acceptance.md` references those artifacts or their deterministic command outputs

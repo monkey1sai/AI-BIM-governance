@@ -1,0 +1,22 @@
+{
+  "evidenceDir": "C:\\Repos\\active\\iot\\AI-BIM-governance\\docs\\evidence\\fix-ifc-usdc-hoops-load-failure\\2026-05-22-archive-closeout-e2e",
+  "dashboard": {
+    "ok": true
+  },
+  "viewer": {
+    "ok": true,
+    "session_id": "review_session_5f549af0631b",
+    "expected_stage_url": "http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc",
+    "video": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "reload": {
+    "ok": true,
+    "video": {
+      "width": 1920,
+      "height": 1080
+    }
+  }
+}

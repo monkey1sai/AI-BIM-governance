@@ -2,9 +2,9 @@
 
 > Delta against `openspec/specs/demo-fast-mvp-orchestration/spec.md`。本 change 將 `/ui` 從三卡 happy-path demo 擴充為 closed-loop runtime dashboard，讓 operator 能直接觀察 IFC-ready download、conversion、review session、Kit/WebRTC 與 viewer 狀態。
 
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Coordinator /ui provides 3-card single-column fast-mvp happy path
+### Requirement: Coordinator /ui provides closed-loop runtime dashboard
 
 `bim-review-coordinator` `/ui` SHALL continue to support the fast MVP happy path for submitting an IFC-ready payload, polling the job, and opening the viewer. In addition, `/ui` SHALL present a first-viewport runtime dashboard that separates IFC-ready intake, IFC download, internal conversion job, artifact readiness, review session binding, Kit/WebRTC endpoint state, and viewer/session participation. The dashboard MUST NOT treat a stale `/api/assets` demo entry as proof that the current session has loaded the current conversion artifact.
 
@@ -31,6 +31,8 @@
 - **WHEN** `/api/assets` still contains legacy demo assets such as `許良宇圖書館建築_2026.usdc`
 - **THEN** those assets MAY appear in a debug/details section or selector
 - **AND** the dashboard MUST NOT mark the current closed-loop run as passed because a legacy demo asset is visible or rendered
+
+## MODIFIED Requirements
 
 ### Requirement: Fast MVP runbook SHALL include hybrid Docker web-plane path
 

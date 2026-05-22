@@ -145,6 +145,7 @@
 <li><a href="#5-openspec-change">5. 下一階段 OpenSpec change 候選清單</a><ul>
 <li><a href="#50a-current-next-burn-down2026-05-19">5.0A Current next burn-down（2026-05-19）</a></li>
 <li><a href="#50-archived">5.0 已完成 / Archived</a><ul>
+<li><a href="#fix-ifc-usdc-hoops-load-failure">已歸檔：fix-ifc-usdc-hoops-load-failure</a></li>
 <li><a href="#docker-web-plane-host-native-kit">已歸檔：docker-web-plane-host-native-kit</a></li>
 <li><a href="#1worker-real-conversion-quality">已歸檔 #1：worker-real-conversion-quality</a></li>
 </ul>
@@ -305,7 +306,12 @@
 <p><strong>2026-05-18 更新（Phase B apply 已 merged + archived｜<code>local-coordinator-ifc-ready-intake-boundary</code>）</strong>：B 方案 apply（T0–T9）已於 rolling PR #63 <strong>merged</strong>（squash <code>17553a0</code>），並依 <code>AGENTS.md §1.6</code> 完成 <strong>OpenSpec sync/archive</strong>（archive folder <code>openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/</code>；<code>openspec/specs/</code> 19 → <strong>23</strong>：ADD 4＝<code>local-coordinator-ifc-ready-intake-boundary</code>/<code>external-cloud-callback-lifecycle</code>/<code>local-artifact-shadow-metadata</code>/<code>runtime-image-linux-kit-launcher-readiness</code>；MODIFIED 5＝<code>conversion-webhook-lifecycle</code>/<code>streaming-ifc-usdc-conversion-authority</code>/<code>documentation-source-of-truth</code>/<code>demo-runtime-readiness-smoke</code>/<code>runtime-verification-evidence</code>；<code>worker-rvt-ifc-bridge</code>/<code>bim-control-revit-intake-facade</code>/<code>worker-artifact-pipeline</code> 收斂為單一「capability removed from product runtime」requirement）。<code>openspec validate --specs --strict</code> = <strong>23 passed / 0 failed</strong>。<strong>架構正式邊界</strong>：<code>_worker</code> / <code>_bim-control</code> 已自 repo 刪除（removed from product runtime，非降級）；對外入口 = <code>bim-review-coordinator</code> <code>POST /api/external/ifc-ready</code>、<code>bim-streaming-server</code> internal-only、轉檔結果走 metadata-only callback outbox、本地僅最小 shadow metadata（control-plane 權威屬外部公司雲端，不 mirror）。<strong>驗證狀態（誠實，依 §1.6 未標 §1.3 passed）</strong>：coordinator <code>npm run verify</code>（vitest 130）與 repo-root pytest 6 / streaming pytest 5 綠（程式/契約層）；<strong>runtime image Linux Kit launcher = <code>deferred</code></strong>（GPU/Kit graphics-vulkan 阻塞，非 passed，不用 host-local Kit 充當）；OQ1（雲端 callback endpoint/auth）/ OQ5（SSO）真實對接仍 pending（凍結契約緩解）。<strong>Phase B 候選（§5）/ 下一步（§10）狀態</strong>：本 change 已 land＋archived，從候選池移除、不再是 Phase B 待升格項；溯源見 §1.4。</p>
 <p><strong>2026-05-19 更新（下一輪 burn-down reset｜對齊 Drive 12h Claude Design 2026-05-14/15）</strong>：新增 <a href="AI-BIM-governance-next-burn-down-2026-05-19.md"><code>AI-BIM-governance-next-burn-down-2026-05-19.md</code></a> 作為 Drive-ready 下一輪 burn-down。結論：5/14/15 工作台的 C1/C2 仍有效但改名並收斂為 B-scheme runtime evidence（<code>runtime-image-linux-kit-launcher-readiness-pass</code>、<code>bscheme-real-streaming-conversion-evidence</code>、<code>single-kit-webrtc-visual-evidence</code>）；C3 <code>revit-intake-rvt-ifc-bridge-evidence</code> <strong>已失效</strong>，不得重開 <code>_bim-control</code> / <code>_worker</code> 產品 runtime。13-file worker batch / <code>minimum_coverage_locked</code> 已轉為 archive-only historical evidence，不再是 Phase B 後的下一輪 product runtime 候選。§5 / §6 / §10 已同步加入目前仍有效的候選、deferred / blocked runtime evidence 與建議順序。</p>
 <p><strong>2026-05-19 更新（B 方案 intake smoke 現行證據）</strong>：<code>scripts/smoke-bscheme-intake.ps1</code> 已從 contract-stub API-only smoke 擴成「contract checks + optional real <code>storage/*.ifc</code> → coordinator intake → streaming conversion polling → coordinator callback outbox」的最小整合驗證入口。本 8caa worktree 的 <code>storage/*.ifc</code> 目前為 <strong>0 檔</strong>，因此 <code>real_ifc_fixture=blocked</code>、<code>real_ifc_intake_conversion=blocked</code>；contract/API 層仍通過（repo-root pytest 7、coordinator verify 140、streaming conversion pytest 10、callback outbox passed）。GPU/Kit 層本次 <code>runtime_image_kit_launcher=deferred</code>，實際 blocker 為 <strong>Docker engine not available</strong>；single Kit render 為 <code>deferred</code>、multi-viewer 與 USD stage composition 為 <code>not_observed</code>。證據：<code>docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json</code> 與 <code>docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json</code>。</p>
+<p><strong>2026-05-22 更新(<code>coordinator-auto-poll-streaming-conversion</code> archive 對齊;fast-mvp loop zero-touch automation 完成)</strong>:本 change(implementation PR #98,2026-05-22 merged,squash <code>2103bf7</code>)已完成 <strong>OpenSpec sync/archive</strong>(archive folder <code>openspec/changes/archive/2026-05-22-coordinator-auto-poll-streaming-conversion/</code>;<code>openspec/specs/</code> 26 保持 <strong>26</strong>,本次為 <code>conversion-webhook-lifecycle</code> capability <strong>MODIFIED</strong> 1 個 requirement(<code>Coordinator ingests host-native conversion result into callback outbox</code> 加 SHALL auto-poll 子條款 + 3 新 Scenario + implementation status note);totals + 0 added / ~ 1 modified / - 0 removed)。<code>openspec validate --specs --strict</code> = <strong>26 passed / 0 failed</strong>。本 change 補實該 requirement 早已寫的「ingest through polling, an internal result loop, or an equivalent internal callback」但 polling / internal result loop <strong>皆未實作</strong>的 gap:<code>bim-review-coordinator/src/services/streamingConversionClient.ts</code> 加 module-level <code>isTerminalConversionResult</code> helper + class method <code>pollConversionResult(jobId, options): PollerHandle</code>(setTimeout chain 避免 setInterval overlap、cancel()、max attempts → poll_timeout fake failed result);<code>bim-review-coordinator/src/config.ts</code> 加 <code>conversionPollEnabled</code>(default true)/ <code>conversionPollIntervalSeconds</code>(default 5)/ <code>conversionPollMaxAttempts</code>(default 60 = 5 分鐘 ceiling)+ <code>parseBooleanEnv</code>;<code>bim-review-coordinator/src/app.ts</code> 加 <code>pollerRegistry: Map&lt;conversion_job_id, PollerHandle&gt;</code>、refactor 既有 manual ingest 邏輯抽成共用 helper <code>ingestStreamingConversionResult</code>、dispatch 成功後 <code>schedulePollerForConversion</code>、manual endpoint 開頭 cancel + delete registry(去重)、<code>CoordinatorApp</code> 加 <code>dispose()</code> shutdown hook。<strong>Verification(本 change L1-L4)</strong>:coordinator <code>npm run verify</code> = 12 files / <strong>173 tests passed</strong>(168 既有 + 5 新 <code>auto-poll-conversion.test.ts</code> cover happy path / failed / duplicate dispatch budget / manual cancel auto / disabled config);streaming-server <code>pytest tests -q</code> = <strong>31 passed</strong>(不動,regression OK);root pytest 9 passed;GitNexus pre-impact LOW for <code>fetchConversionResult</code> / <code>createCoordinatorApp</code>;<strong>L4 真實 runtime end-to-end 第一次 zero-touch 跑通</strong>:docker compose recreate coordinator(讀新 code,帶 absolute <code>RUNTIME_STORAGE_ROOT</code>)→ <code>POST /api/external/ifc-ready</code> → fixture trick 確保 IFC 落地 → <strong>無任何 manual POST ingest</strong> → 40 秒內 coordinator <code>GET /api/external/ifc-ready/&lt;job&gt;</code> 返回 <code>conversion_status: ready</code> + <code>viewer_url: http://127.0.0.1:8004/ui/open?session=review_session_&lt;id&gt;</code>(2026-05-22 timestamp)。<strong>注意</strong>:本 archive 不持久化 poller state(coordinator restart 後 in-memory timers lost,手動 endpoint 仍可救);不解雲端 callback outbox retry / dead-letter(另一條既有 requirement 不動);不引入 streaming-server push callback(本 change 走 coordinator pull)。<strong>fast-mvp loop 從 spec 到 code 從 zero-touch 自動化的角度完整收尾(架構完整對齊 + 自動跑通)</strong>:OpenSpec changes archived = <code>remove-conflict-review-from-fast-mvp</code> + <code>fast-ifc-link-demo-loop</code> + <code>streaming-server-prefer-local-ifc-path</code> + <code>coordinator-auto-poll-streaming-conversion</code>(4 段);hotfix bundle = PR #94 / #95 / #96 / #98。</p>
+<p><strong>2026-05-22 更新(<code>fix-ifc-usdc-hoops-load-failure</code> archive 對齊;真實 IFC→USDC→Kit/WebRTC viewer 閉環完成)</strong>:本 change(implementation PR #101,2026-05-22 merged,squash <code>4c7a76c</code>)已完成 <strong>OpenSpec sync/archive</strong>(archive folder <code>openspec/changes/archive/2026-05-22-fix-ifc-usdc-hoops-load-failure/</code>;<code>openspec/specs/</code> 26 保持 <strong>26</strong>,本次為 <code>demo-fast-mvp-orchestration</code>(+1 added/~1 modified)、<code>host-native-conversion-authority-service</code>(~1)、<code>local-coordinator-ifc-ready-intake-boundary</code>(+3)、<code>runtime-verification-evidence</code>(+2/~1)、<code>session-first-review-viewer</code>(~3)、<code>streaming-ifc-usdc-conversion-authority</code>(~1);totals +6 added / ~7 modified / -0 removed)。<code>openspec validate --specs --strict</code> = <strong>26 passed / 0 failed</strong>。本 change 將目標 341MB IFC 的 HOOPS <code>A3D_LOAD_CANNOT_LOAD_MODEL</code> 失敗收斂為 scoped IfcOpenShell + OpenUSD fallback:只在 primary Kit/HOOPS 明確 IFC import/load failure 且 IFC 可解析時產生真實 <code>model.usdc</code> 與 sidecars,並經 USD openability / mesh count / placeholder gate 後才發布 ready。<strong>Current runtime evidence passed</strong>:<code>ifcready_1779449084006_3a0fd2cb</code> → <code>stream_conv_20260522112506_2b79ba1d</code> → <code>review_session_5f549af0631b</code>;<code>conversion_status=ready</code>;Chrome E2E 從 <code>http://192.168.10.105:8004/ui</code> 開始,<code>/ui</code> dashboard 顯示 downloaded/ready/Kit-WebRTC/session/participant 狀態;viewer 顯示 <code>Stage truth matched</code>,loaded URL 等於 <code>http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc</code>,video <code>1920x1080</code>,同一 Chrome tab reload 後仍 matched。證據路徑:<code>docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-e2e-final-stage-truth-matched/</code>；archive closeout 在 synced main 上另重跑 Chrome/CDP,證據路徑:<code>docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-archive-closeout-e2e/</code>。<strong>狀態調整</strong>:<code>bscheme-real-streaming-conversion-evidence</code> 與 <code>single-kit-webrtc-visual-evidence</code> 從下一輪 P0 候選移入 archived evidence;但 <code>runtime-image-linux-kit-launcher-readiness</code> 仍 <strong>deferred</strong>(Docker GPU runtime 未因 host-native Kit evidence 升等),OQ1 cloud callback auth 與 OQ5 SSO 仍 pending。</p>
+<p><strong>2026-05-22 更新(<code>streaming-server-prefer-local-ifc-path</code> archive 對齊;fast-mvp loop final landing,含 hotfix bundle)</strong>:本 change(implementation PR #96,2026-05-22 merged,squash <code>3c7dbd5</code>)已完成 <strong>OpenSpec sync/archive</strong>(archive folder <code>openspec/changes/archive/2026-05-22-streaming-server-prefer-local-ifc-path/</code>;<code>openspec/specs/</code> 26 保持 <strong>26</strong>,本次為 <code>conversion-webhook-lifecycle</code> capability <strong>+2 ADD requirement</strong>:(i)<code>Coordinator dispatch payload carries local path references</code>(backfill <code>fast-ifc-link-demo-loop</code> archive PR #93 缺漏的 requirement body,3 Scenarios);(ii)<code>Streaming-server consumes shared-volume local IFC path before url fetch</code>(本 change ADD,3 Scenarios);兩個 requirement 都帶 implementation status note;totals + 2 added / ~ 0 modified / - 0 removed)。<code>openspec validate --specs --strict</code> = <strong>26 passed / 0 failed</strong>。本 change 為 fast-mvp loop 的最後一塊拼圖:fast-ifc-link-demo-loop archive 內已宣告但 streaming-server 端未實作的 consumer 行為,本 change 補實「streaming-server SHALL prefer <code>host_local_path</code> / <code>local_path</code> over url」。<strong>Hotfix bundle(同日 2026-05-22 收斂)</strong>:PR #94 <code>fix(coordinator): storageRoot 加 host-native fallback</code>(<code>config.ts:206</code> default <code>/workspace/storage</code> → <code>path.join(cwd, "storage")</code>,修 host-native node 跑時 ENOTDIR <code>mkdir '/workspace/storage'</code>);PR #95 <code>fix(compose): coordinator service env 加 STORAGE_ROOT + STORAGE_HOST_ROOT</code>(coordinator service environment block 漏設 STORAGE_ROOT,IFC 寫到 container-local fs 而非 shared volume);PR #96 本 change(streaming-server <code>Ifc2UsdcPowershellConverterAdapter._resolve_local_ifc</code> 新解析順序 host_local_path → local_path → 既有 url fallback + <code>_try_local_path</code> storage_root sandbox helper;<code>conversion_authority._ifc_artifact</code> propagate <code>local_path</code> / <code>host_local_path</code> 進 job dict)。<strong>Verification(本 change L1-L3)</strong>:streaming-server <code>pytest tests -q</code> = <strong>31 passed</strong>(+8 新 case:adapter 5 + propagation 2 + sandbox 1);coordinator <code>npm run verify</code> = 11 files / <strong>168 tests passed</strong>(regression OK,coordinator side 不動);root pytest 9 passed;GitNexus pre-impact LOW for <code>_ifc_artifact</code> / <code>_resolve_local_ifc</code> / <code>_url_to_local_path</code>(d=1 callers 都在同 module / class)。<strong>注意</strong>:本 archive 不升等 render tier(<code>single_kit_render</code> / WebRTC <code>49100</code> / browser visual 仍 <code>not_observed</code>),不解 OQ1/OQ5;L4 真實 happy path 需 user 設 <code>.env</code> <code>RUNTIME_STORAGE_ROOT=&lt;host absolute path&gt;</code>、recreate coordinator container、重啟 host-native streaming-server 帶 <code>STORAGE_ROOT=&lt;host absolute path&gt;</code>,本 archive 不包含此環境設定步驟(留給 user runbook)。<strong>fast-mvp loop 兩段 archive(<code>remove-conflict-review-from-fast-mvp</code> + <code>fast-ifc-link-demo-loop</code>)+ 三段 hotfix(PR #94 / #95 / #96)整體把外部 IFC Worker → coordinator → streaming-server → viewer 連結這條 happy path 從 spec 到 code 完整對齊</strong>。</p>
 <p><strong>2026-05-21 更新（<code>backfill-coordinator-webhook-and-auto-session</code> archive 對齊）</strong>：本 change（implementation PR #85，2026-05-21 merged）已完成 <strong>OpenSpec sync/archive</strong>（archive folder <code>openspec/changes/archive/2026-05-21-backfill-coordinator-webhook-and-auto-session/</code>；<code>openspec/specs/</code> 25 保持 <strong>25</strong>，本次為 MODIFIED capabilities：<code>conversion-webhook-lifecycle</code> / <code>local-coordinator-ifc-ready-intake-boundary</code> / <code>review-session-request-lifecycle</code> 各 +1 modified requirement（加 implementation status note），scenarios 全保留；totals + 0 added / ~ 3 modified / - 0 removed）。<code>openspec validate --specs --strict</code> = <strong>25 passed / 0 failed</strong>。本 archive 把 archive <code>2026-05-21-coordinator-ifc-ready-worker-webhook</code> 的 documentation lag 收斂：worker compatibility intake + conversion-ready 自動 review session handoff 已落地、11 個 spec scenarios 對應 TDD-driven test 全綠。<strong>注意</strong>：本 archive 不升等 render tier（<code>single_kit_render</code> / WebRTC <code>49100</code> / browser visual 仍 <code>not_observed</code>），不解 OQ1（雲端 callback endpoint/auth）/ OQ5（SSO）；後續若需 render tier 證據，需 Kit build + GPU host 前置另立 change。</p>
+<p><strong>2026-05-21 更新(<code>fast-ifc-link-demo-loop</code> archive 對齊;fast-mvp loop successor 收尾)</strong>:本 change(implementation PR #92,2026-05-21 merged,squash <code>fb9dea3</code>)已完成 <strong>OpenSpec sync/archive</strong>(archive folder <code>openspec/changes/archive/2026-05-21-fast-ifc-link-demo-loop/</code>;<code>openspec/specs/</code> 26 保持 <strong>26</strong>,本次為 MODIFIED 4 個 capability 加 implementation status note:<code>local-coordinator-ifc-ready-intake-boundary</code> + <code>conversion-webhook-lifecycle</code> + <code>demo-fast-mvp-orchestration</code> + <code>documentation-source-of-truth</code>;totals + 0 added / ~ 4 modified / - 0 removed;完整 ADD requirement bodies 落在 archive folder 內,等 follow-up sync 完整內容)。<code>openspec validate --specs --strict</code> = <strong>26 passed / 0 failed</strong>。本 change 是 fast-mvp loop 的 <strong>successor</strong>(predecessor <code>remove-conflict-review-from-fast-mvp</code> 已於同日 PR #90/#91 archived),補上「外部 IFC Worker(Postman 模擬)送 ifc-ready → coordinator <strong>同步下載 IFC 至 shared volume</strong> + dispatch streaming-server → 轉檔 ready 後 coordinator <strong>自動 setViewerLink</strong> 並輸出 <code>viewer_url</code> → client 點連結直接看 stream」這條 happy path。<strong>實作摘要</strong>:<code>bim-review-coordinator/src/services/ifcDownloader.ts</code>(non-strict mode fallback placeholder);store/types/streamingConversionClient 加 download/local_path/host_local_path/viewer_url 欄位 + binding;<code>POST /api/external/ifc-ready</code> 同步下載 → 202/502;<code>GET /api/external/ifc-ready/:jobId</code> 暴露 viewer_url;新 <code>GET /ui/open?session=</code> 302 redirect;<code>ingestConversionReport</code> ready 分支加 setViewerLink;<code>/ui</code> main 加 3 卡 fast MVP;<code>docs/postman/</code> Postman collection;<code>AGENTS.md §3.4</code> + <code>bim-review-coordinator/CLAUDE.md</code> 加 carve-out。<strong>Verification(5 級)</strong>:coordinator <code>npm run verify</code> = 11 files / 166 tests passed;viewer build + <code>test:session-first</code> passed;root pytest 9 passed;<code>openspec validate --specs --strict</code> 26 passed;docker compose up + netstat 確認 <code>5173 → 127.0.0.1</code> / <code>8004 → 0.0.0.0</code>;<code>docker exec /ui/open?session=review_session_test</code> → 302 + <code>Location: http://127.0.0.1:5173/?session=review_session_test</code>;<code>/ui/open?session=invalid</code> → 400;<code>/ui</code> 含 3 卡 fast MVP 字串。<strong>注意</strong>:不升等 render tier(<code>single_kit_render</code> 仍 <code>not_observed</code>);不解 OQ1/OQ5;viewer 全螢幕版面留 follow-up;real MinIO dev 機可能不可達,non-strict fallback placeholder 通過 test。<strong>fast-mvp loop 兩段 archive(predecessor + successor)整體達成 demo level happy path</strong>。</p>
+<p><strong>2026-05-21 更新（<code>remove-conflict-review-from-fast-mvp</code> archive 對齊;fast-mvp loop predecessor)</strong>：本 change（implementation PR #90，2026-05-21 merged，squash <code>9e57015</code>）已完成 <strong>OpenSpec sync/archive</strong>（archive folder <code>openspec/changes/archive/2026-05-21-remove-conflict-review-from-fast-mvp/</code>；<code>openspec/specs/</code> 26 保持 <strong>26</strong>,本次為 MODIFIED capability:<code>review-session-request-lifecycle</code> +1 modified requirement(Coordinator exposes lifecycle event audit log 加 implementation status note),scenarios 全保留;totals + 0 added / ~ 1 modified / - 0 removed)。<code>openspec validate --specs --strict</code> = <strong>26 passed / 0 failed</strong>。本 change 為<strong>純減法 + 一行 compose port bind + docs/spec 退役 note</strong>:刪 coordinator highlight/selection/annotation Socket.IO handlers、刪 <code>BimControlClient.getReviewIssues</code> / <code>createAnnotation</code> / <code>/api/model-versions/:id/review-bootstrap</code> endpoint、<code>registerReviewNamespace</code> 改 signature、dev-console step bar 5→3、刪 IssuePanel/EventLogPanel/types/issues 整檔、Window.tsx 清 issue state/methods/render、DemoControlPanel 4 issue props 改 optional、<code>compose.host-kit.yml</code> <code>viewer.ports</code> 改 <code>127.0.0.1:5173:5173</code>(對應 memory <code>webrtc-1on1-entrypoint-via-coordinator-ui</code> 邊界)、AGENTS.md §5.4/§5.5/§7.4 + coordinator CLAUDE.md 加退役 note。23 files / +96 / -625 lines。<strong>Verification(5 級)</strong>:coordinator <code>npm run verify</code> = 11 files / 166 tests passed;viewer build + <code>test:session-first</code> passed;root pytest 9 passed;<code>openspec validate --specs --strict</code> 26 passed;<code>docker compose up --build coordinator viewer</code> 兩 container Up;<code>netstat</code> 確認 <code>0.0.0.0:5173</code> 已消失僅剩 <code>127.0.0.1:5173</code>;<code>docker exec coordinator /health</code> status=ok;<code>/ui</code> 字串斷言通過(「步驟 ③ / 3」true,「標示問題位置/建立審查標註/guidedHighlightIssue」全 false);L5 mcp__claude-in-chrome navigate permission denied 改以 container 內 fetch 字串斷言代替。<strong>注意</strong>:本 archive 為 fast-mvp loop 的 <strong>predecessor</strong>,NoSuccessorWhilePredecessorOpen gate 已開,可進 successor <code>fast-ifc-link-demo-loop</code>(整體 design 見 <code>docs/superpowers/specs/2026-05-21-fast-mvp-loop-overall-design.md</code> §4);本 change 不升等 render tier(<code>single_kit_render</code> / WebRTC <code>49100</code> / browser visual 仍 <code>not_observed</code>),不解 OQ1/OQ5。</p>
 <p><strong>2026-05-21 更新（<code>docker-web-plane-host-native-kit</code> archive 對齊）</strong>：本 change（implementation PR #88，2026-05-21 merged，squash <code>2bdf09f</code>）已完成 <strong>OpenSpec sync/archive</strong>（archive folder <code>openspec/changes/archive/2026-05-21-docker-web-plane-host-native-kit/</code>；<code>openspec/specs/</code> 25 → <strong>26</strong>：ADD <code>docker-web-plane-host-native-kit</code> capability，MODIFIED <code>demo-fast-mvp-orchestration</code> +1 requirement；totals +7 requirements）。本 archive 把 fast MVP 後的單機可部署流程固定為「Docker 只跑 <code>bim-review-coordinator:8004</code> + <code>web-viewer-sample:5173</code> web plane，NVIDIA Kit/WebRTC <code>49100</code>/<code>47998</code> 與 host-native conversion authority <code>49101</code> 留在 OS 上」。implementation evidence 已驗：coordinator health 200、viewer HTTP 200、container-to-host conversion bridge、host-native Kit TCP probe、artifact refs reachability；<strong>但不升等 Docker GPU Kit readiness，也不宣稱 browser visual render passed</strong>。後續 B-scheme runtime evidence 可沿用此 hybrid web-plane path，但仍需另行收集 streaming-owned real conversion quality 與 single Kit/WebRTC visual proof。</p>
 <p><strong>2026-05-21 更新（<code>backfill-coordinator-webhook-and-auto-session</code> apply 落地：補 archive <code>coordinator-ifc-ready-worker-webhook</code> 的 spec drift）</strong>：先前 archive <code>2026-05-21-coordinator-ifc-ready-worker-webhook</code> 把 worker compatibility intake + conversion-ready 自動建 review session 寫進正式規格但 code 從未實作（archive commit 自承 documentation lag；retro-audit <code>a32fcd6</code> 確認）。本 change 為 implementation-only backfill：(i) <code>bim-review-coordinator/src/app.ts</code> 加入 <code>normalizeIntakePayload</code> helper，支援 worker <code>status="ifc_ready"</code> / <code>ifc_path</code> / <code>project_id</code> / <code>version</code> / <code>task_id</code> payload 並正規化為 canonical <code>ExternalIfcReadyEvent</code>（worker compat 缺 <code>X-Correlation-Id</code> / <code>X-Idempotency-Key</code> 時從 <code>worker:project_id::version::task_id</code> 派生，explicit headers 仍優先）；(ii) <code>ingestConversionReport</code> terminal <code>ready</code> 分支接 <code>autoCreateOrActivateSession</code> helper，與 <code>callbackOutbox.enqueue</code> <strong>並行不耦合</strong>，重用既有 <code>SessionStore.create</code> + <code>allocateKitInstanceBindings</code> + <code>chooseReadyUsdc</code>，對 <code>correlation_id</code> / <code>external_model_version_id</code> idempotent；terminal <code>failed</code> 不建可串流 session。<strong>Spec delta</strong>：採 Option B（NO-OP-ish MODIFIED re-affirm，三份 capability <code>local-coordinator-ifc-ready-intake-boundary</code> / <code>review-session-request-lifecycle</code> / <code>conversion-webhook-lifecycle</code> 各加一段 implementation status note，scenarios 全保留）。<strong>Verification（2026-05-21 re-apply supplement）</strong>：補上圖片中實際外部 IFC Worker payload guard：<code>ifc_path="http://192.168.20.234:9000/bim-control/899/xxx/model.ifc"</code>、<code>project_id="899"</code>、<code>version="xxx"</code>、<code>task_id="task_img_001"</code>；coordinator <code>npm run verify</code> = <strong>11 files / 167 tests passed</strong>；root contracts pytest <strong>9 passed</strong>；<code>openspec validate --specs --strict</code> = <strong>25 passed / 0 failed</strong>；11 個 spec scenarios（intake 4 + auto-session 4 + webhook seam 3）逐個對應 unit/contract test（見 <code>docs/verification/2026-05-21-backfill-coordinator-webhook-and-auto-session.md</code>）。<strong>Render tier 維持 <code>not_observed</code></strong>（<code>single_kit_render</code> / WebRTC <code>49100</code> / browser visual 需 Kit build + GPU host 前置，本 change 不升等）；OQ1（雲端 callback endpoint/auth）/ OQ5（SSO）仍 pending。</p>
 <p><strong>2026-05-21 更新（<code>recap</code> archive 對齊）</strong>：本 change（implementation PR #79，2026-05-21 merged）已完成 <strong>OpenSpec sync/archive</strong>（archive folder <code>openspec/changes/archive/2026-05-21-recap/</code>；<code>openspec/specs/</code> 24 → <strong>25</strong>：ADD <code>demo-fast-mvp-orchestration</code> capability，+6 added requirements；totals + 6 added / ~ 0 modified / - 0 removed）。<code>openspec validate --specs --strict</code> = <strong>25 passed / 0 failed</strong>。本 archive 把「用 repo 既有 services + scripts，30 分鐘到 fast MVP demo」的單機短路徑寫進正式規格：runbook 路徑、host vs container 邊界（streaming-server 強制 Windows host-native；WSL Kit graphics 阻擋）、port matrix（49100/49101/8004/5173）、三步劇本（start-all → demo-health-check → smoke-bscheme-intake）、驗收長相對齊 tier 狀態語意（<code>passed</code> / <code>failed</code> / <code>blocked</code> / <code>deferred</code> / <code>not_observed</code>）、明確排除 roadmap Phase 1/2/5/6 元件、所有 runbook 引用 grep-verifiable。<strong>注意</strong>：本 capability 與既有 runtime capability 正交，不修改任何 production source；tasks.md 23/24 未勾選為 documentation lag（implementation PR 已 merged），不影響 archive。</p>
@@ -485,7 +491,7 @@
 <p><strong>2026-05-18/19 archive 結果</strong>：Plan B v2 的 6 點已落地為現行規格：<code>_worker</code>/<code>_bim-control</code> removed from product runtime、對外 intake 收斂於 coordinator、streaming server internal-only、metadata-only callback outbox、最小 local shadow metadata、OQ1/OQ5 pending。後續只能補 runtime evidence，不再回頭重開已刪服務。</p>
 </blockquote>
 <h3 id="12-openspec-specsopenspecspecs">1.2 已歸檔的 OpenSpec specs（權威：<code>openspec/specs/</code>）</h3>
-<p>下列 <strong>24</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。<strong>[2026-05-20 <code>introduce-host-native-conversion-authority-service</code> archive]</strong> 新增 <code>host-native-conversion-authority-service</code>（23 → 24），並補強 coordinator dispatch / result ingestion / smoke evidence / streaming conversion authority requirements。<strong>[2026-05-18 <code>local-coordinator-ifc-ready-intake-boundary</code> archive]</strong> 新增 4 capability（19 → 23）；<code>worker-artifact-pipeline</code>/<code>bim-control-revit-intake-facade</code>/<code>worker-rvt-ifc-bridge</code> 已收斂為單一「removed from product runtime」requirement（B 方案：<code>_worker</code>/<code>_bim-control</code> 自 repo 刪除，僅 test fixture 模擬，非 runtime）。</p>
+<p>下列 <strong>26</strong> 個 capability 為目前 repo <strong>現行規格</strong>（各 <code>spec.md</code>）；歷史 delta 與 merge 過程見 <strong>§1.4</strong> <code>openspec/changes/archive/</code>。<strong>[2026-05-22 <code>fix-ifc-usdc-hoops-load-failure</code> archive]</strong> 不新增 capability，將 6 個現行 capability 補齊為真實 IFC→USDC fallback、closed-loop <code>/ui</code> dashboard、session-first stage truth、Chrome E2E stage-load evidence 與 WebRTC disconnect/reload gate。<strong>[2026-05-21 <code>docker-web-plane-host-native-kit</code> archive]</strong> 新增 <code>docker-web-plane-host-native-kit</code> 後，<code>openspec/specs/</code> 維持 <strong>26</strong>。<strong>[2026-05-20 <code>introduce-host-native-conversion-authority-service</code> archive]</strong> 新增 <code>host-native-conversion-authority-service</code>（23 → 24），並補強 coordinator dispatch / result ingestion / smoke evidence / streaming conversion authority requirements。<strong>[2026-05-18 <code>local-coordinator-ifc-ready-intake-boundary</code> archive]</strong> 新增 4 capability（19 → 23）；<code>worker-artifact-pipeline</code>/<code>bim-control-revit-intake-facade</code>/<code>worker-rvt-ifc-bridge</code> 已收斂為單一「removed from product runtime」requirement（B 方案：<code>_worker</code>/<code>_bim-control</code> 自 repo 刪除，僅 test fixture 模擬，非 runtime）。</p>
 <table>
 <thead>
 <tr>
@@ -542,7 +548,7 @@
 <td><code>session-first-review-viewer</code></td>
 <td>2/3</td>
 <td>2</td>
-<td>✓ Viewer 從 review_request_id / session_id bootstrap</td>
+<td>✓ Viewer 從 review_request_id / session_id bootstrap；<code>?session=</code> 以 coordinator stream config primary artifact 作為 expected stage，並顯示 stage truth matched / mismatch / disconnected</td>
 </tr>
 <tr>
 <td><code>demo-runtime-readiness-smoke</code></td>
@@ -554,7 +560,7 @@
 <td><code>runtime-verification-evidence</code></td>
 <td>0</td>
 <td>6</td>
-<td>✓ 證據分層（contract / real conversion / storage batch baseline / single-Kit / multi-Kit / stress）</td>
+<td>✓ 證據分層（contract / real conversion / storage batch baseline / single-Kit / multi-Kit / stress）；Chrome E2E 必須證明 Kit-loaded stage URL 等於 current conversion <code>model.usdc</code>，React metadata alone 不足</td>
 </tr>
 <tr>
 <td><code>runtime-verification-task-status</code></td>
@@ -584,13 +590,13 @@
 <td><code>streaming-ifc-usdc-conversion-authority</code></td>
 <td>1/4</td>
 <td>4</td>
-<td>✓ <code>bim-streaming-server</code> 成為 IFC→USDC conversion job / status / result authority</td>
+<td>✓ <code>bim-streaming-server</code> 成為 IFC→USDC conversion job / status / result authority；可解析 IFC 遇到 HOOPS import/load failure 時可走 scoped fallback，但仍必須通過 publishable artifact gates</td>
 </tr>
 <tr>
 <td><code>host-native-conversion-authority-service</code></td>
 <td>1/4</td>
 <td>4</td>
-<td>✓ <code>bim-streaming-server</code> 可獨立啟動 host-native HTTP conversion authority（預設 <code>127.0.0.1:49101</code>，internal-only；<code>GET /health</code>、<code>POST /api/conversions/ifc-to-usdc</code>、job status/result API）；轉檔 service 與 live Kit/WebRTC viewport runtime 分層，不宣稱 render readiness</td>
+<td>✓ <code>bim-streaming-server</code> 可獨立啟動 host-native HTTP conversion authority（預設 <code>127.0.0.1:49101</code>，internal-only；<code>GET /health</code>、<code>POST /api/conversions/ifc-to-usdc</code>、job status/result API）；HOOPS <code>A3D_LOAD_CANNOT_LOAD_MODEL</code> 可由 IfcOpenShell + OpenUSD fallback 產生真實 <code>model.usdc</code>；轉檔 service 與 live Kit/WebRTC viewport runtime 分層</td>
 </tr>
 <tr>
 <td><code>conversion-webhook-lifecycle</code></td>
@@ -626,7 +632,7 @@
 <td><code>local-coordinator-ifc-ready-intake-boundary</code></td>
 <td>1/2</td>
 <td>3-A</td>
-<td>✓ B 方案：<code>bim-review-coordinator</code> 為唯一對外 IFC-ready intake（<code>POST /api/external/ifc-ready</code>，caller=落地端 IFC Worker）；Service auth（可替換 AuthProvider）/ idempotency / <code>external_model_version_id</code> binding；<code>bim-streaming-server</code> internal-only</td>
+<td>✓ B 方案：<code>bim-review-coordinator</code> 為唯一對外 IFC-ready intake（<code>POST /api/external/ifc-ready</code>，caller=落地端 IFC Worker）；Service auth（可替換 AuthProvider）/ idempotency / <code>external_model_version_id</code> binding；<code>bim-streaming-server</code> internal-only；read-only job list / runtime status 支援 <code>/ui</code> dashboard</td>
 </tr>
 <tr>
 <td><code>external-cloud-callback-lifecycle</code></td>
@@ -892,6 +898,11 @@ browser visual render:                not_observed by this archive; no new viewp
 <td><code>2026-05-21-docker-web-plane-host-native-kit</code></td>
 <td><code>docker-web-plane-host-native-kit</code>（ADD，新 capability）；<code>demo-fast-mvp-orchestration</code>（ADD requirement）</td>
 <td>Hybrid deployable single-machine flow：Docker 只啟 <code>coordinator</code>/<code>viewer</code> web plane（host ports <code>8004</code>/<code>5173</code>），NVIDIA Kit/WebRTC <code>49100</code>/<code>47998</code> 與 host-native conversion authority <code>49101</code> 留在 OS；新增 compose/env/runbook/start/check scripts，文件化 container-to-host bridge、browser-visible Kit endpoints、artifact output root/public refs、metadata-only callback 邊界。<code>openspec/specs/</code> 25 → 26；archive 不把 hybrid pass 升等為 Docker GPU Kit pass，也不宣稱 browser visual render passed</td>
+</tr>
+<tr>
+<td><code>2026-05-22-fix-ifc-usdc-hoops-load-failure</code></td>
+<td><code>demo-fast-mvp-orchestration</code>、<code>host-native-conversion-authority-service</code>、<code>local-coordinator-ifc-ready-intake-boundary</code>、<code>runtime-verification-evidence</code>、<code>session-first-review-viewer</code>、<code>streaming-ifc-usdc-conversion-authority</code>（MODIFY/ADD requirements）</td>
+<td>真實 341MB IFC closed-loop：HOOPS <code>A3D_LOAD_CANNOT_LOAD_MODEL</code> 時由 scoped IfcOpenShell + OpenUSD fallback 產生 openable <code>model.usdc</code> 與 sidecars；coordinator <code>/ui</code> dashboard 顯示 IFC-ready download / conversion job / artifact / session / Kit-WebRTC / viewer count；viewer 強制 session-first expected stage 並用 AppStreamer Promise replies 記錄 <code>openedStageResult</code> / <code>loadingStateResponse</code>。Chrome E2E 證據顯示 <code>ifcready_1779449084006_3a0fd2cb</code> → <code>stream_conv_20260522112506_2b79ba1d</code> → <code>review_session_5f549af0631b</code>，<code>Stage truth matched</code>、video <code>1920x1080</code>、reload 後仍 matched；archive 不把 Docker GPU launcher、OQ1 cloud callback auth 或 OQ5 SSO 標成 passed</td>
 </tr>
 </tbody>
 </table>
@@ -1892,23 +1903,23 @@ A：可以，但**不是把 #2 spec 換掉**：
 <tr>
 <td>2</td>
 <td><code>bscheme-real-streaming-conversion-evidence</code></td>
-<td><strong>P0 / evidence burn-down（host-native spec archived）</strong></td>
+<td><strong>✓ archived / completed by <code>fix-ifc-usdc-hoops-load-failure</code></strong></td>
 <td><code>bim-review-coordinator</code> + <code>bim-streaming-server</code></td>
-<td>在已歸檔 <code>host-native-conversion-authority-service</code> 規格上，跑 current evidence：contract-correct IFC-ready payload → coordinator intake → <code>127.0.0.1:49101</code> host-native conversion → streaming-owned <code>conversion_job_id</code> / result / mapping quality metrics → metadata-only callback outbox；保留 <code>external_model_version_id</code> binding</td>
+<td>已以 current evidence 證明：contract-correct IFC-ready payload → coordinator intake → <code>127.0.0.1:49101</code> host-native fallback conversion → streaming-owned <code>conversion_job_id</code> / result / mapping quality metrics → local viewer handoff；保留 <code>external_model_version_id</code> binding</td>
 <td>不重建 <code>_worker</code>；不把 historical worker evidence 或 spec archive 升等為 B-scheme runtime pass</td>
 </tr>
 <tr>
 <td>3</td>
 <td><code>single-kit-webrtc-visual-evidence</code></td>
-<td><strong>P0 / blocked by #1</strong></td>
+<td><strong>✓ archived / completed by <code>fix-ifc-usdc-hoops-load-failure</code></strong></td>
 <td><code>bim-streaming-server</code> + <code>web-viewer-sample</code></td>
-<td>用 streaming-produced artifact 開 stage，記錄 <code>openedStageResult</code>、非零 video dimensions、viewport screenshot 或等效 visual proof</td>
+<td>已以 Chrome E2E 證明 streaming-produced artifact 被 Kit/WebRTC viewer 載入：<code>openedStageResult</code> / <code>loadingStateResponse</code>、非零 <code>1920x1080</code> video dimensions、viewport screenshots、reload recovery</td>
 <td>不把 API-only pass、Socket.IO pass、舊截圖當 current WebRTC pass</td>
 </tr>
 <tr>
 <td>4</td>
 <td><code>same-kit-multi-viewer-session-evidence</code></td>
-<td><strong>P1 / after #3</strong></td>
+<td><strong>P1 / after single-viewer closed loop</strong></td>
 <td>viewer + coordinator + streaming</td>
 <td>同一 Kit endpoint 支援至少兩個 viewer session，session / presence / callback 狀態分層清楚</td>
 <td>不與 dedicated multi-Kit 混在同一驗證</td>
@@ -1940,7 +1951,7 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tbody>
 </table>
 <blockquote>
-<p><strong>2026-05-21 archive 補充</strong>：<code>docker-web-plane-host-native-kit</code> 已從候選/提案狀態移入正式 specs。它提供下一輪 P0 evidence 可重用的 hybrid web-plane run path，但不是新的 GPU/Kit pass，也不取代 <code>runtime-image-linux-kit-launcher-readiness-pass</code>、<code>bscheme-real-streaming-conversion-evidence</code> 或 <code>single-kit-webrtc-visual-evidence</code>。</p>
+<p><strong>2026-05-22 archive 補充</strong>：<code>fix-ifc-usdc-hoops-load-failure</code> 已把 <code>bscheme-real-streaming-conversion-evidence</code> 與 <code>single-kit-webrtc-visual-evidence</code> 的 current single-viewer closed-loop evidence 移入正式 specs。<code>docker-web-plane-host-native-kit</code> 仍是可重用的 hybrid web-plane run path；它與本次 host-native Kit/WebRTC pass 都不升等 <code>runtime-image-linux-kit-launcher-readiness-pass</code>（Docker GPU launcher 仍 deferred）。</p>
 </blockquote>
 <p><strong>目前 deferred / blocked / not_observed runtime evidence</strong></p>
 <table>
@@ -1959,13 +1970,13 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><code>mapping_quality</code></td>
-<td><code>not_observed</code>：host-native conversion authority 規格已 archive，但 current runtime evidence 尚未證明 streaming-owned real quality metrics</td>
-<td>跟 #2 一起補，不能沿用 worker-era mapping evidence，也不能把 spec archive 當 runtime pass</td>
+<td><code>passed(current single job)</code>：<code>stream_conv_20260522112506_2b79ba1d</code> 具 streaming-owned fallback quality metrics 與 sidecars；仍不代表 full production coverage baseline locked</td>
+<td>後續若要 production baseline，另跑 batch/coverage change；不能沿用 worker-era mapping evidence</td>
 </tr>
 <tr>
 <td><code>single_kit_render</code></td>
-<td><code>deferred</code>：Kit/GPU/WebRTC live render 未跑</td>
-<td>#1 passed 後跑 browser / Kit render validation</td>
+<td><code>passed(current single job)</code>：Chrome E2E 證明 current <code>model.usdc</code> loaded URL、video dimensions、reload recovery</td>
+<td>後續擴展 same-Kit multi-viewer / dedicated multi-Kit 前，以此作 single-viewer closed-loop baseline</td>
 </tr>
 <tr>
 <td><code>single_kit_multi_viewer</code></td>
@@ -1974,8 +1985,8 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tr>
 <tr>
 <td><code>usd_stage_composition</code></td>
-<td><code>not_observed</code>：未用 streaming-owned artifacts 實際開 stage</td>
-<td>#2 + #3 合併驗證</td>
+<td><code>passed(current primary stage)</code>：已用 streaming-owned <code>model.usdc</code> 走 session-first primary stage load；multi-layer/subLayer composition 仍需另證</td>
+<td>後續若要多 artifact composition，另走 <code>streaming-usd-stage-composition</code> focused evidence</td>
 </tr>
 <tr>
 <td>OQ1</td>
@@ -1990,6 +2001,49 @@ A：可以，但**不是把 #2 spec 換掉**：
 </tbody>
 </table>
 <h3 id="50-archived">5.0 已完成 / Archived</h3>
+<h4 id="fix-ifc-usdc-hoops-load-failure">已歸檔：<code>fix-ifc-usdc-hoops-load-failure</code></h4>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>狀態</strong></td>
+<td>✓ 已 archive：<code>openspec/changes/archive/2026-05-22-fix-ifc-usdc-hoops-load-failure/</code></td>
+</tr>
+<tr>
+<td><strong>目標</strong></td>
+<td>把使用者 Postman 送入的真實 IFC 從 HOOPS import failure 收斂為 openable USDC，並建立 <code>/ui</code> → viewer → Kit/WebRTC 的 stage-load truth 閉環</td>
+</tr>
+<tr>
+<td><strong>解決的 v1 phase / v2 layer</strong></td>
+<td>Phase 1/4 conversion authority + Layer 2 browser viewer + Layer 4 streaming runtime</td>
+</tr>
+<tr>
+<td><strong>repo 邊界</strong></td>
+<td><code>bim-review-coordinator</code> intake/dashboard/session；<code>bim-streaming-server</code> conversion authority + Kit/WebRTC runtime；<code>web-viewer-sample</code> session-first viewer；不重開 <code>_worker</code> / <code>_bim-control</code> product runtime</td>
+</tr>
+<tr>
+<td><strong>KPI / evidence</strong></td>
+<td><code>ifcready_1779449084006_3a0fd2cb</code> → <code>stream_conv_20260522112506_2b79ba1d</code> → <code>review_session_5f549af0631b</code>；<code>conversion_status=ready</code>；Chrome E2E 從 <code>http://192.168.10.105:8004/ui</code> 開始，viewer <code>Stage truth matched</code>，loaded URL 等於 current <code>model.usdc</code>，video <code>1920x1080</code>，reload 後仍 matched</td>
+</tr>
+<tr>
+<td><strong>證據路徑</strong></td>
+<td>implementation evidence: <code>docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-e2e-final-stage-truth-matched/</code>; archive-closeout evidence on synced main: <code>docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-archive-closeout-e2e/</code></td>
+</tr>
+<tr>
+<td><strong>仍未宣稱完成</strong></td>
+<td>Docker GPU Kit launcher readiness、dedicated multi-Kit instance、external company-cloud callback auth(OQ1)、SSO(OQ5)、production mapping baseline locked</td>
+</tr>
+<tr>
+<td><strong>驗證指令</strong></td>
+<td><code>openspec validate --specs --strict</code>、coordinator npm test/build、viewer session-first/summary/build、streaming pytest、Chrome E2E evidence snapshots</td>
+</tr>
+</tbody>
+</table>
 <h4 id="docker-web-plane-host-native-kit">已歸檔：<code>docker-web-plane-host-native-kit</code></h4>
 <table>
 <thead>
@@ -2664,15 +2718,9 @@ A：可以，但**不是把 #2 spec 換掉**：
   runtime-image-linux-kit-launcher-readiness-pass
     → 先讓 Docker engine 可用並啟動 runtime image；若 graphics/Vulkan blocker 仍出現，再解除 container NVIDIA graphics/Vulkan 問題，讓 produced Linux Kit launcher 在 runtime image 內真的啟動。
 
-  bscheme-real-streaming-conversion-evidence
-    → host-native conversion authority 與 Docker web-plane hybrid path 已 archive；下一步可用 Docker `8004`/`5173` web-plane + OS `127.0.0.1:49101` host-native conversion，補 current streaming-owned result / mapping quality / callback outbox evidence。
-
-  single-kit-webrtc-visual-evidence
-    → 用 streaming-produced artifact 開 stage，留下 openedStageResult、video dimensions、screenshot 或等效 visual proof。
-
 P1 (P0 passed 後):
   same-kit-multi-viewer-session-evidence
-    → 先驗同一 Kit endpoint 多 viewer，再考慮 dedicated multi-Kit。
+    → 已有 single-viewer closed-loop baseline；下一步先驗同一 Kit endpoint 多 viewer，再考慮 dedicated multi-Kit。
 
 P0-hold / capacity-gated:
   streaming-multi-instance-orchestration
@@ -2685,7 +2733,7 @@ Blocked by external OQ:
     → OQ5 pending；等公司 SSO / token introspection 決策。
 
 Archive-only / not next product runtime:
-  worker-real-conversion-quality、worker mapping lineage、canonical 13-file batch、queue retention
+  fix-ifc-usdc-hoops-load-failure、worker-real-conversion-quality、worker mapping lineage、canonical 13-file batch、queue retention
     → 已作 worker-era evidence / archive lineage；Phase B 後不再作本 repo product runtime 候選。
 
 P3-frozen:
@@ -3547,17 +3595,16 @@ B → C 觸發：
    - 禁止：不得用 host-local Kit、不得用 <code>nvidia-smi</code> compute-only 當 pass。</p>
 </li>
 <li>
-<p><strong>補 B-scheme real streaming conversion evidence</strong>：
-   - 正路徑：外部 IFC-ready payload → <code>bim-review-coordinator</code> <code>POST /api/external/ifc-ready</code> → <code>bim-streaming-server</code> internal conversion API → metadata-only callback outbox。
-   - 可用部署路徑：已歸檔 <code>docker-web-plane-host-native-kit</code>，可用 Docker web-plane (<code>8004</code> / <code>5173</code>) + OS host-native conversion (<code>49101</code>) 來跑單機 evidence。
-   - 成功標準：evidence 包含 <code>external_model_version_id</code> binding、<code>conversion_job_id</code>、streaming-owned mapping quality metrics、artifact manifest ref、callback outbox 狀態。
-   - 誠實分層：callback OQ1 pending 不否定 conversion；mapping quality 若未產生就標 <code>not_observed</code> / <code>blocked</code>。
-   - 禁止：不得沿用 historical <code>_worker</code> mapping / conversion / browser evidence 當 B-scheme pass。</p>
+<p><strong>B-scheme real streaming conversion + single Kit/WebRTC visual proof 已完成（current single-job baseline）</strong>：
+   - 已歸檔：<code>openspec/changes/archive/2026-05-22-fix-ifc-usdc-hoops-load-failure/</code>。
+   - 證據：<code>docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-e2e-final-stage-truth-matched/</code>。
+   - current baseline：外部 IFC-ready payload → coordinator intake/download → <code>49101</code> host-native fallback conversion → <code>model.usdc</code> ready → <code>/ui</code> dashboard → viewer <code>Stage truth matched</code> → Kit/WebRTC video <code>1920x1080</code> → reload recovery。
+   - 誠實分層：OQ1 callback auth pending 不否定 conversion；Docker GPU launcher readiness 不因 host-native Kit evidence 升等。</p>
 </li>
 <li>
-<p><strong>補 single Kit / WebRTC visual proof</strong>：
-   - 前置：第 1 點 Kit launcher passed，且第 2 點有 streaming-produced artifact。
-   - 成功標準：<code>openedStageResult</code>、非零 video dimensions、viewport screenshot 或等效 visual proof。
+<p><strong>下一個 runtime 擴展：same-Kit multi-viewer evidence</strong>：
+   - 前置：沿用第 2 點 single-viewer closed-loop baseline。
+   - 成功標準：同一 Kit endpoint 至少兩個 viewer tabs/session，dashboard 與 runtime status 能分層顯示 viewer/participant count、WebRTC lifecycle 與 session handoff。
    - 若 Kit/GPU/browser 仍不可用，分層記 <code>blocked</code> / <code>deferred</code> / <code>not_observed</code>，不得宣稱 web UI 已檢視成果。</p>
 </li>
 <li>

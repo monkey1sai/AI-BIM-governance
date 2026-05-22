@@ -5,50 +5,32 @@ TBD - created by archiving change architecture-rework-2026-05-14. Update Purpose
 ## Requirements
 ### Requirement: `bim-streaming-server` owns IFC→USDC conversion jobs under B 方案
 
-`bim-streaming-server` SHALL be the authority for IFC→USDC conversion jobs as an internal conversion engine. It SHALL accept an internal conversion request from `bim-review-coordinator` (not an external `ifc_ready` handoff and not from `_worker`), create `conversion_job_id`, manage conversion state, run or orchestrate headless conversion, produce USDC and mapping artifacts, and expose internal job status/result endpoints. It SHALL NOT expose an external IFC-ready entry point. The internal conversion API `POST /api/conversions/ifc-to-usdc` SHALL support configured service-token authentication, idempotent replay, and explicit 4xx request rejection without changing the IFC→USDC conversion core.
+`bim-streaming-server` SHALL remain the authority for IFC→USDC conversion jobs as an internal conversion engine. When the primary Kit/HOOPS converter cannot import a source IFC but the source IFC is locally readable and parseable by an approved host-native IFC parser, `bim-streaming-server` SHALL attempt a real geometry fallback conversion within the same conversion authority boundary before publishing a terminal failed result. The fallback MUST produce a real OpenUSD/USDC stage and the required sidecars; it MUST NOT publish placeholder USDC, fake mapping, or smoke-only artifacts as ready.
 
-#### Scenario: Internal conversion request creates streaming conversion job
+#### Scenario: HOOPS import failure falls back to real OpenUSD conversion
 
-- **WHEN** `bim-review-coordinator` sends a valid internal conversion request to `bim-streaming-server`
-- **THEN** `bim-streaming-server` creates a conversion job
-- **AND** the response includes `conversion_job_id`, `status="queued"`, `authority="bim-streaming-server"`, and `correlation_id`
+- **WHEN** a valid internal conversion request points to a local IFC that has been downloaded by `bim-review-coordinator`
+- **AND** the primary Kit/HOOPS conversion fails with an IFC import failure such as `A3D_LOAD_CANNOT_LOAD_MODEL`
+- **AND** the IFC can be parsed and tessellated by the host-native fallback converter
+- **THEN** `bim-streaming-server` attempts fallback conversion under the same `conversion_job_id`
+- **AND** the final result returns `ready=true`, `model.status="ready"`, and a `model_usdc` artifact ref only if the fallback writes an openable `model.usdc`
+- **AND** the result includes `element_mapping`, `entity_index`, `metadata`, lineage, and quality metrics generated from the real IFC geometry
+- **AND** `bim-review-coordinator` can ingest the ready result for local web view handoff and callback outbox metadata
 
-#### Scenario: Authenticated internal request is required when configured
+#### Scenario: fallback prerequisites missing remain honest non-ready failures
 
-- **WHEN** `bim-streaming-server` is configured with an internal conversion token
-- **THEN** `POST /api/conversions/ifc-to-usdc` MUST require `X-Internal-Conversion-Token`
-- **AND** a missing token returns 401 without creating a conversion job
-- **AND** an invalid token returns 403 without creating a conversion job
+- **WHEN** the primary converter fails and the fallback parser or OpenUSD runtime is unavailable
+- **THEN** the conversion job records a non-ready failure with actionable diagnostics
+- **AND** `bim-streaming-server` MUST NOT mark `model.status="ready"`
+- **AND** coordinator/viewer readiness remains non-passed
 
-#### Scenario: Duplicate internal request is idempotent
+#### Scenario: fallback output is validated before ready publication
 
-- **WHEN** `bim-review-coordinator` retries the same internal conversion request with the same `idempotency_key` and compatible payload
-- **THEN** `bim-streaming-server` returns the existing conversion job
-- **AND** it MUST NOT create a second active conversion job for the same retry
-
-#### Scenario: Conflicting idempotency key is rejected
-
-- **WHEN** `bim-review-coordinator` reuses an already accepted `idempotency_key` with a different request fingerprint
-- **THEN** `bim-streaming-server` returns 409
-- **AND** it MUST NOT create a new conversion job
-
-#### Scenario: Invalid internal request is rejected
-
-- **WHEN** the request is not an `ifc_ready`-shaped internal conversion request or is missing required IFC artifact fields
-- **THEN** `bim-streaming-server` returns 400
-- **AND** it MUST NOT create a conversion job
-
-#### Scenario: Conversion result is owned by streaming server
-
-- **WHEN** IFC→USDC conversion succeeds
-- **THEN** `bim-streaming-server` result endpoint returns the derived `model.usdc`, `element_mapping.json`, `entity_index.json`, and quality metrics
-- **AND** `bim-review-coordinator` consumes the result to drive callback and local web view, while `bim-streaming-server` remains the conversion authority
-
-#### Scenario: Conversion job failure is honest
-
-- **WHEN** converter execution fails, USDC is missing, USDC cannot be opened, or mapping generation fails past allowed policy
-- **THEN** `bim-streaming-server` marks the job `failed` or `succeeded_with_warnings` only when explicitly allowed
-- **AND** it MUST NOT publish `model.status="ready"` for a placeholder or missing model
+- **WHEN** fallback conversion writes `model.usdc`
+- **THEN** `bim-streaming-server` opens the produced stage with USD runtime before publishing the result
+- **AND** validates that at least one renderable mesh prim exists
+- **AND** validates that required sidecars exist
+- **AND** rejects placeholder or fake smoke outputs
 
 ### Requirement: Heavy conversion execution does not block live WebRTC runtime
 
