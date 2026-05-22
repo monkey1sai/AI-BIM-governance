@@ -24,6 +24,18 @@ services:
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
       CALLBACK_OUTBOX_STORE_PATH: /workspace/storage/coordinator/callback-outbox.json
       KIT_INSTANCE_ENDPOINTS: '[{"id":"kit_local_gpu_001","signalingServer":"127.0.0.1","signalingPort":49100,"mediaServer":"127.0.0.1","mediaPort":47998}]'
+      # fast-ifc-link-demo-loop §2:同步下載 IFC 寫入 shared volume。
+      # STORAGE_ROOT 必須對齊下方 volumes mount destination(/workspace/storage);
+      # 否則 coordinator 走 config.ts default `<cwd>/storage`,IFC 會寫到 container
+      # local fs(/workspace/bim-review-coordinator/storage),不會落到 host shared
+      # volume,host-native streaming-server 取不到。
+      STORAGE_ROOT: /workspace/storage
+      # STORAGE_HOST_ROOT:寫進 dispatch payload `host_local_path` 供 streaming-server
+      # 從 host fs 直接讀(streaming-server 為 host-native,看的是 host path)。
+      # 預設與 volumes mount source 同源,user 若要對 host-native streaming-server 用
+      # 應在 .env 設 RUNTIME_STORAGE_ROOT 為 host absolute path
+      # (例:RUNTIME_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage)。
+      STORAGE_HOST_ROOT: ${RUNTIME_STORAGE_ROOT:-./storage}
     ports:
       - "8004:8004"
     volumes:
