@@ -28,12 +28,23 @@ dashboard 對同一 job 永不顯示矛盾的 ready 狀態。
   + `mapping_has_ifc_type` + `mapping_has_ifc_name`;若任一不存在 SHALL 顯示
   `incomplete`,不偽宣告為 `yes`
 
-#### Scenario: Dashboard readiness aligns with viewer readiness
+#### Scenario: Dashboard readiness aligns with viewer readiness on Semantic tier
 
-- **WHEN** viewer 對同一 session 顯示 Semantic ready = `incomplete`
-- **THEN** `/ui` dashboard 對同 session SHALL 顯示同 Semantic ready 狀態
-- **AND** 兩端 MUST NOT 因不同欄位來源出現矛盾(例如 dashboard 顯示 yes 但
-  viewer 顯示 no)
+- **WHEN** dashboard 與 viewer 對同一 session 觀察 Semantic ready
+- **THEN** 兩端 SHALL 從同一份 `quality_metrics_summary` 欄位來源計算
+  (`semantic_mapping_fidelity` / `mapping_has_ifc_type` / `mapping_has_ifc_name`,
+  C1 提供;dashboard 透過 `/api/review-sessions/:id/stream-config` 取得,
+  與 viewer `getStreamConfig` 相同 endpoint)
+- **AND** terminal happy-path 狀態(conversion 已 ready、quality summary 已寫入)
+  兩端 SHALL 顯示一致的 Semantic ready 值
+- **AND** transient race(例如 conversion 剛 ready 但 dashboard 還沒 refresh)
+  允許短暫不一致;不視為違反 spec
+- **NOTE**:File ready 與 Runtime ready 屬於不同視角(dashboard 看 server-side
+  proxy 狀態如 `download_status`、`viewer_url`;viewer 看 client-runtime
+  evidence 如 WebRTC `started`、`stageLoadStatus="matched"`),terminal 狀態必然
+  存在 timing gap。兩端對 server-side 角度的 happy-path 不衝突;但 Runtime tier
+  允許 dashboard 在 viewer 連上前先標 `yes`(viewer_url 已產生),這屬於
+  server-side proxy view 的正確語意,不視為兩端矛盾
 
 ### Requirement: Coordinator /ui dashboard renames demo steps
 

@@ -320,10 +320,13 @@
       </section>
 
       <div data-testid="legacy-assets-disclaimer" class="runtime-warning" style="margin-top:16px;">
-        <strong>注意:</strong>此 dashboard <strong>不渲染</strong> 舊
-        <code>/api/assets</code> demo asset 清單。viewer 端的 USDAsset 下拉 / USDStage
-        tree 為 debug 區段,僅在 <code>?debug=1</code> 啟用;legacy demo asset
-        <strong>不代表 當前 session model</strong>。
+        <strong>Legacy asset 顯示原則:</strong>本 dashboard 不渲染舊
+        <code>/api/assets</code> demo asset(spec scenario「Stale demo asset
+        is visible only as debug context with disclaimer」對應 viewer 端)。
+        viewer 透過 <code>?debug=1</code> 啟用的 USDAsset 下拉 / USDStage tree
+        屬 debug 工具,任何 legacy demo asset(例如 <code>許良宇圖書館建築_2026.usdc</code>)
+        <strong>不代表 當前 session model</strong>。current model 由
+        <code>session stream_config.stage_composition.primary</code> 為準。
       </div>
     </section>
 
@@ -758,19 +761,28 @@
       return 'no';
     }
 
-    function renderTriReadyBadges(latestJob) {
+    function renderTriReadyBadges(latestJob, qualitySummary) {
       const fileEl = document.getElementById('triReadyFile');
       const runtimeEl = document.getElementById('triReadyRuntime');
       const semanticEl = document.getElementById('triReadySemantic');
       if (fileEl) fileEl.textContent = computeFileReady(latestJob);
       if (runtimeEl) runtimeEl.textContent = computeRuntimeReady(latestJob);
-      // quality summary may live on stream_config; here we proxy through job
-      // fields that coordinator forwards (C1 fields). Without forwarding, semantic
-      // stays 'no'(不偽宣告)。
-      const qualitySummary = latestJob && latestJob.quality_metrics_summary
-        ? latestJob.quality_metrics_summary
-        : null;
-      if (semanticEl) semanticEl.textContent = computeSemanticReady(qualitySummary);
+      // Review feedback(Critical #1):`IfcReadyIntakeJob` schema 無
+      // `quality_metrics_summary` 欄位,原本從 latestJob.quality_metrics_summary
+      // 取永遠為 null → Semantic 永遠 no。改為由 caller(refreshRuntimeDashboard)
+      // 從 `/api/review-sessions/:id/stream-config` 取 quality_metrics_summary
+      // 後傳入,確保 C1 fallback 完成後 Semantic ready 真能 yes。
+      if (semanticEl) semanticEl.textContent = computeSemanticReady(qualitySummary || null);
+    }
+
+    function resetTriReadyAndQueueDom() {
+      // Review feedback:fetch failed path 必須 reset,避免陳舊值留 UI 誤導 operator。
+      const ids = ['triReadyFile', 'triReadyRuntime', 'triReadySemantic',
+                   'dispatchQueueInFlight', 'dispatchQueueList', 'dispatchQueueDropped'];
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '—';
+      }
     }
 
     function renderDispatchQueue(jobs) {
@@ -797,6 +809,22 @@
       }
     }
 
+    async function fetchQualitySummaryForJob(latestJob) {
+      // Review feedback(Critical #1):從 `/api/review-sessions/:id/stream-config`
+      // 取 quality_metrics_summary,而非從 latestJob(IfcReadyIntakeJob schema 無此欄位)。
+      // 若 job 還沒綁 review_session 或 stream-config 404,回 null(Semantic→no,不偽宣告)。
+      const sessionId = latestJob?.review_session_id || latestJob?.web_view_session_id;
+      if (!sessionId) return null;
+      try {
+        const response = await fetch(`/api/review-sessions/${encodeURIComponent(sessionId)}/stream-config`);
+        if (!response.ok) return null;
+        const streamConfig = await response.json();
+        return streamConfig?.quality_metrics_summary || null;
+      } catch {
+        return null;
+      }
+    }
+
     async function refreshRuntimeDashboard() {
       setRuntimeStatus('warn', '更新中');
       try {
@@ -810,13 +838,18 @@
         const jobs = await jobsResponse.json();
         renderRuntimeDashboard(runtime, jobs);
         // coordinator-ui-tri-ready-and-queue:三段 ready 與 queue 區段渲染。
+        // Semantic ready 須從 review session 的 stream_config 取
+        // quality_metrics_summary(IfcReadyIntakeJob schema 不含此欄位)。
         const latest = Array.isArray(jobs?.items) ? jobs.items[0] : null;
-        renderTriReadyBadges(latest);
+        const qualitySummary = await fetchQualitySummaryForJob(latest);
+        renderTriReadyBadges(latest, qualitySummary);
         renderDispatchQueue(jobs);
         setRuntimeStatus('ok', '已更新');
       } catch (error) {
         setRuntimeStatus('bad', '更新失敗');
         runtimeWebrtcStatus.textContent = error instanceof Error ? error.message : String(error);
+        // Review feedback:fetch 失敗時 reset DOM 避免陳舊值留 UI。
+        resetTriReadyAndQueueDom();
       }
     }
 
