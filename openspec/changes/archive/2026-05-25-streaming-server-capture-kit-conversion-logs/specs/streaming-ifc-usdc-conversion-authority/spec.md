@@ -2,7 +2,7 @@
 
 > Delta against `openspec/specs/streaming-ifc-usdc-conversion-authority/spec.md`(本檔僅含本 change 的差異)。本 change 加觀察性:Kit subprocess silent fail(`exit 0` 但無 USDC)時,result 必須帶 stdout/stderr log 完整路徑,且 error message 含 tail 摘要,讓 operator 不需要重跑 conversion 就能 debug Kit 本身的失敗。
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Conversion failures expose actionable diagnostic
 
