@@ -17,9 +17,26 @@ export interface ConversionQualityMetricsSummary {
     coverage_ratio?: number | null;
     coverage_status?: string | null;
     conversion_duration_seconds?: number | null;
+    // streaming-server-fallback-semantic-mapping(C1):fallback 提供的 IFC 語意
+    // mapping fidelity 訊號。viewer 依 mapping_has_ifc_type / mapping_has_ifc_name
+    // 與 semantic_mapping_fidelity 判定 Semantic ready。
+    semantic_mapping_fidelity?: string | null;
+    mapping_has_ifc_type?: boolean | null;
+    mapping_has_ifc_name?: boolean | null;
 }
 
-export type ReviewLifecycleStatus = "created" | "active" | "closing" | "closed" | "failed" | "blocked_conversion" | "queued_for_instance";
+// coordinator-serial-conversion-dispatch-queue(C4):lifecycle 加
+// queued_for_conversion / dropped_on_restart。viewer 對 queued 不嘗試 WebRTC。
+export type ReviewLifecycleStatus =
+    | "created"
+    | "active"
+    | "closing"
+    | "closed"
+    | "failed"
+    | "blocked_conversion"
+    | "queued_for_instance"
+    | "queued_for_conversion"
+    | "dropped_on_restart";
 
 export interface KitInstanceBinding {
     kit_instance_id: string;

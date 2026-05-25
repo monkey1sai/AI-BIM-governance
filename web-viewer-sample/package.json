@@ -17,7 +17,8 @@
         "preview": "vite preview",
         "verify": "npm run build",
         "test:session-first": "node scripts/verify-session-first-contract.mjs",
-        "test:conversion-summary-card": "node scripts/verify-conversion-summary-card.mjs"
+        "test:conversion-summary-card": "node scripts/verify-conversion-summary-card.mjs",
+        "test:tri-ready-states": "node scripts/verify-tri-ready-states.mjs"
     },
     "eslintConfig": {
         "extends": [
