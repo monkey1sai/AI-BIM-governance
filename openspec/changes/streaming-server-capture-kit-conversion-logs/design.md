@@ -145,3 +145,9 @@ Async `BeginOutputReadLine` + event handler 是 .NET 官方推薦解法。我們
 ## 7. Spec impact
 
 `streaming-ifc-usdc-conversion-authority` capability MODIFIED 1 個 requirement(或新 ADD「Conversion subprocess diagnostic capture」)。從 spec wording 看既有 `Conversion failures are observable and retryable` 之類 requirement,我加 sub-clause:「failure result SHALL include `kit_stdout_log` and `kit_stderr_log` absolute paths pointing to host fs files containing the full Kit subprocess streams; failure error message SHALL include a tail summary」。
+
+## 8. Apply gap found after archive correction
+
+補做 implementation apply 時,`bim-streaming-server/scripts/tests/test-convert-ifc-to-usdc.ps1` 暴露一個既有 PowerShell path regression:`Resolve-IfcInputs` 先呼叫 `ConvertTo-AbsolutePath`,而該 helper 直接把 `.\_test_ifc_data\*.ifc` 交給 `[System.IO.Path]::GetFullPath(...)`;在 Windows/.NET 下 `*` 被視為非法 path character,導致 plan-only test 在真正跑到 Kit subprocess 前就失敗。
+
+這個 gap 會遮蔽本 change 的最低層 script verification:即使 log capture implementation 正確,plan-only converter smoke 也無法通過。修法是新增 wildcard-aware path expansion helper:非 wildcard path 仍走既有 canonical `ConvertTo-AbsolutePath`;wildcard pattern 則只把相對 pattern anchor 到 `$RepoRoot`,保留 `*` / `?` 給 `Get-ChildItem -Path` 處理。

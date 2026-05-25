@@ -10,20 +10,20 @@
 
 ## 1. GitNexus pre-impact analysis
 
-- [ ] 1.1 `gitnexus_impact({target:"_run_powershell_conversion"})`(or whichever Python method invokes ps1)
-- [ ] 1.2 `gitnexus_impact({target:"Ifc2UsdcPowershellConverterAdapter"})`
-- [ ] 1.3 任一 HIGH/CRITICAL → stop 回報
+- [x] 1.1 `gitnexus_impact({target:"_run_powershell_conversion"})`(or whichever Python method invokes ps1)
+- [x] 1.2 `gitnexus_impact({target:"Ifc2UsdcPowershellConverterAdapter"})`
+- [x] 1.3 任一 HIGH/CRITICAL → stop 回報
 
 ## 2. ps1 redirect Kit subprocess stdout/stderr
 
-- [ ] 2.1 `bim-streaming-server/scripts/convert-ifc-to-usdc.ps1`:line ~285 之後改 startInfo 加:
+- [x] 2.1 `bim-streaming-server/scripts/convert-ifc-to-usdc.ps1`:line ~285 之後改 startInfo 加:
       - `$startInfo.RedirectStandardOutput = $true`
       - `$startInfo.RedirectStandardError = $true`
-- [ ] 2.2 加 `$stdoutLog` / `$stderrLog` 變數(`Join-Path $artifactDir "kit-stdout.log" / "kit-stderr.log"`)
-- [ ] 2.3 加 `StreamWriter` + `Register-ObjectEvent` async pipe(per `design.md` §2)
-- [ ] 2.4 `BeginOutputReadLine` / `BeginErrorReadLine` 在 process start 後立即呼叫
-- [ ] 2.5 `finally` 內:`WaitForExit()` 二次 call ensure async drain → `Unregister-Event` → `StreamWriter.Close` → `process.Dispose`
-- [ ] 2.6 失敗 throw 改寫成 multi-line message,含:
+- [x] 2.2 加 `$stdoutLog` / `$stderrLog` 變數(`Join-Path $artifactDir "kit-stdout.log" / "kit-stderr.log"`)
+- [x] 2.3 加 `StreamWriter` + `Register-ObjectEvent` async pipe(per `design.md` §2)
+- [x] 2.4 `BeginOutputReadLine` / `BeginErrorReadLine` 在 process start 後立即呼叫
+- [x] 2.5 `finally` 內:`WaitForExit()` 二次 call ensure async drain → `Unregister-Event` → `StreamWriter.Close` → `process.Dispose`
+- [x] 2.6 失敗 throw 改寫成 multi-line message,含:
       - 既有 reason 字串
       - `kit_stdout_log:` <path>
       - `kit_stderr_log:` <path>
@@ -32,34 +32,37 @@
 
 ## 3. Python adapter 帶 log path 進 result.error
 
-- [ ] 3.1 `bim-streaming-server/source/extensions/.../ifc2usdc_powershell_adapter.py`:
+- [x] 3.1 `bim-streaming-server/source/extensions/.../ifc2usdc_powershell_adapter.py`:
       - subprocess.run `result.returncode != 0` 時,從 `result.stderr` / 或 ps1 throw message 用 regex 抓 `kit_stdout_log:\s*(.+)$` + `kit_stderr_log:\s*(.+)$`(每行一個)
       - 若解到 path,把 `ConversionAuthorityError("converter_failed", message, metadata={kit_stdout_log, kit_stderr_log})` 帶 metadata(若 ConversionAuthorityError 不接 metadata,加 attribute)
-- [ ] 3.2 `host_native_conversion_service` 寫 result error dict 時,從 ConversionAuthorityError 拿 metadata 寫進 `error.kit_stdout_log` / `error.kit_stderr_log`
+- [x] 3.2 `host_native_conversion_service` 寫 result error dict 時,從 ConversionAuthorityError 拿 metadata 寫進 `error.kit_stdout_log` / `error.kit_stderr_log`
 
 ## 4. Pytest
 
-- [ ] 4.1 `bim-streaming-server/tests/test_host_native_conversion_service.py` 加 case:
+- [x] 4.1 `bim-streaming-server/tests/test_host_native_conversion_service.py` 加 case:
       - fake `ConverterAdapter` 拋 `ConversionAuthorityError("converter_failed", "<msg with kit_stdout_log:/path; kit_stderr_log:/path>", metadata=...)`
       - 跑 conversion API
       - `GET /result` response `error` 含 `kit_stdout_log` + `kit_stderr_log` 欄位
-- [ ] 4.2 `tests/test_conversion_authority_api.py` 既有 case 不破
+- [x] 4.2 `tests/test_conversion_authority_api.py` 既有 case 不破
 
 ## 5. OpenSpec spec delta finalize
 
-- [ ] 5.1 `openspec/changes/streaming-server-capture-kit-conversion-logs/specs/streaming-ifc-usdc-conversion-authority/spec.md`:`## MODIFIED Requirements` 加 SHALL 子條款
-- [ ] 5.2 `npx openspec validate streaming-server-capture-kit-conversion-logs --strict` 綠
-- [ ] 5.3 `npx openspec validate --specs --strict` 整體仍綠
+- [x] 5.1 `openspec/changes/streaming-server-capture-kit-conversion-logs/specs/streaming-ifc-usdc-conversion-authority/spec.md`:`## MODIFIED Requirements` 加 SHALL 子條款
+- [x] 5.2 `npx openspec validate streaming-server-capture-kit-conversion-logs --strict` 綠
+- [x] 5.3 `npx openspec validate --specs --strict` 整體仍綠
 
 ## 6. L1 verify
 
-- [ ] 6.1 `cd bim-streaming-server && python -m pytest tests -q`(31 既有 + 新)
-- [ ] 6.2 `cd bim-review-coordinator && npm run verify`(coordinator 不動,regression)
-- [ ] 6.3 `python -m pytest tests -p no:cacheprovider`(root)
+- [x] 6.1 `cd bim-streaming-server && python -m pytest tests -q`(31 既有 + 新)
+- [x] 6.2 `cd bim-review-coordinator && npm run verify`(coordinator 不動,regression)
+- [x] 6.3 `python -m pytest tests -p no:cacheprovider`(root)
+- [x] 6.4 `cd bim-streaming-server && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\test-convert-ifc-to-usdc.ps1`
+      - gap:plan-only script test failed because `ConvertTo-AbsolutePath` passed wildcard `*.ifc` to `.NET GetFullPath`
+      - fix:wildcard patterns keep wildcard tokens and are only anchored under repo root before `Get-ChildItem -Path`
 
 ## 7. L3 GitNexus post-change
 
-- [ ] 7.1 `gitnexus_detect_changes({scope:"all"})` 確認 scope
+- [x] 7.1 `gitnexus_detect_changes({scope:"all"})` 確認 scope
 
 ## 8. L4 真實 runtime
 

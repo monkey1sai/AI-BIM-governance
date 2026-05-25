@@ -3,6 +3,7 @@
 ## L1 — Unit / pytest
 
 - `cd bim-streaming-server && python -m pytest tests -q` **PASS**(31 既有 + 1-2 新)
+- `cd bim-streaming-server && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\tests\test-convert-ifc-to-usdc.ps1` **PASS**(plan-only wildcard path regression guard)
 - `cd bim-review-coordinator && npm run verify` **PASS**(173 既有,coordinator 不動)
 - `python -m pytest tests -p no:cacheprovider` **PASS**(9 既有)
 
