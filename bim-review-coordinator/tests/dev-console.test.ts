@@ -61,6 +61,38 @@ describe("coordinator dev console", () => {
     expect(consolePage.text).toContain("/api/review-sessions");
   });
 
+  // coordinator-ui-tri-ready-and-queue:Edge BIM Data Server Console 區段
+  it("exposes Edge BIM Data Server Console tri-ready + dispatch queue + step rename", async () => {
+    const app = makeApp();
+    const ui = await request(app.app).get("/ui");
+    expect(ui.status).toBe(200);
+
+    // Edge Console section + step rename(4 個 step header literal)
+    expect(ui.text).toContain("Edge BIM Data Server Console");
+    expect(ui.text).toContain("① 接收 IFC-ready webhook");
+    expect(ui.text).toContain("② 產生本機 USDC 資料包");
+    expect(ui.text).toContain("③ 啟動 Kit / WebRTC 串流");
+    expect(ui.text).toContain("④ 驗證 BIM 語意對照");
+
+    // 三段 ready data-testid + dispatch queue section + legacy disclaimer
+    expect(ui.text).toContain('data-testid="tri-ready-badges"');
+    expect(ui.text).toContain('data-testid="dispatch-queue-section"');
+    expect(ui.text).toContain('data-testid="legacy-assets-disclaimer"');
+
+    // inline JS:tri-ready compute functions + C1 / C4 field 引用
+    expect(ui.text).toContain("function computeFileReady");
+    expect(ui.text).toContain("function computeRuntimeReady");
+    expect(ui.text).toContain("function computeSemanticReady");
+    expect(ui.text).toContain("semantic_mapping_fidelity");
+    expect(ui.text).toContain("mapping_has_ifc_type");
+    expect(ui.text).toContain("mapping_has_ifc_name");
+    expect(ui.text).toContain("queued_for_conversion");
+    expect(ui.text).toContain("dropped_on_restart");
+
+    // legacy disclaimer 文案
+    expect(ui.text).toContain("不代表 當前 session model");
+  });
+
   it("serves the dev console script", async () => {
     const app = makeApp();
 

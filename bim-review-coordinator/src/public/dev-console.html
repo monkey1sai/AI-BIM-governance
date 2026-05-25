@@ -261,6 +261,72 @@
       </div>
     </section>
 
+    <!-- coordinator-ui-tri-ready-and-queue:Edge BIM Data Server Console。
+         File / Runtime / Semantic 三段 ready 與 viewer 對齊;dispatch queue
+         可視化(來自 C4 lifecycle);step 文案改為 Edge BIM Data Server Console
+         命名,不再使用「審查問題 / 標註 / 多人協作」字樣。 -->
+    <section class="demo-card" id="edgeBimServerConsoleCard">
+      <div class="runtime-toolbar">
+        <div class="runtime-toolbar__copy">
+          <h1 class="demo-card__title">Edge BIM Data Server Console</h1>
+          <p class="demo-card__subtitle">
+            落地端重量資料伺服器的可信狀態面板。File / Runtime / Semantic 三段
+            ready 取代單一 ready 字樣,避免 stage matched 被誤解為 IFC 語意正確。
+          </p>
+        </div>
+      </div>
+
+      <ol class="runtime-kv" style="list-style:none; padding-left:0; margin:12px 0;">
+        <li data-testid="edge-console-step-1">① 接收 IFC-ready webhook</li>
+        <li data-testid="edge-console-step-2">② 產生本機 USDC 資料包</li>
+        <li data-testid="edge-console-step-3">③ 啟動 Kit / WebRTC 串流</li>
+        <li data-testid="edge-console-step-4">④ 驗證 BIM 語意對照</li>
+      </ol>
+
+      <div class="demo-summary-grid" data-testid="tri-ready-badges">
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">File ready</div>
+          <div id="triReadyFile" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">model.usdc 可載入</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">Runtime ready</div>
+          <div id="triReadyRuntime" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">WebRTC + stage matched</div>
+        </div>
+        <div class="demo-summary-item">
+          <div class="demo-summary-item__label">Semantic ready</div>
+          <div id="triReadySemantic" class="demo-summary-item__value">—</div>
+          <div class="demo-summary-item__hint">mapping 帶 IFC type / name</div>
+        </div>
+      </div>
+
+      <section data-testid="dispatch-queue-section" style="margin-top:16px;">
+        <h2 class="runtime-panel__title">Conversion Dispatch Queue</h2>
+        <p class="demo-card__subtitle">
+          coordinator 端 in-memory FIFO,單一 in-flight slot。並發 ifc-ready POST
+          時其餘 job 標 <code>queued_for_conversion</code> 並帶 1-based queue_position。
+          coordinator restart 後 in-memory queue 清空,operator 須重新 POST
+          (<code>dropped_on_restart</code>)。
+        </p>
+        <dl class="runtime-kv">
+          <dt>In-flight</dt>
+          <dd id="dispatchQueueInFlight">—</dd>
+          <dt>Queued</dt>
+          <dd id="dispatchQueueList">—</dd>
+          <dt>Dropped on restart</dt>
+          <dd id="dispatchQueueDropped">—</dd>
+        </dl>
+      </section>
+
+      <div data-testid="legacy-assets-disclaimer" class="runtime-warning" style="margin-top:16px;">
+        <strong>注意:</strong>此 dashboard <strong>不渲染</strong> 舊
+        <code>/api/assets</code> demo asset 清單。viewer 端的 USDAsset 下拉 / USDStage
+        tree 為 debug 區段,僅在 <code>?debug=1</code> 啟用;legacy demo asset
+        <strong>不代表 當前 session model</strong>。
+      </div>
+    </section>
+
     <!-- fast-ifc-link-demo-loop §5:3 卡單欄垂直 fast MVP happy path。 -->
     <section class="demo-card" id="fastIfcReadyCard">
       <h2 class="demo-card__title" style="font-size:18px;">① 提交 IFC source(模擬外部 ifc-ready)</h2>
@@ -665,6 +731,72 @@
       runtimeRefreshStatus.textContent = label;
     }
 
+    // coordinator-ui-tri-ready-and-queue:三段 ready 計算與 viewer
+    // `src/utils/triReady.ts` 對齊。Semantic ready 嚴格依
+    // semantic_mapping_fidelity + mapping_has_ifc_type + mapping_has_ifc_name。
+    function computeFileReady(job) {
+      if (!job) return 'no';
+      if (job.download_status === 'downloaded' && job.conversion_status === 'ready') return 'yes';
+      return 'no';
+    }
+
+    function computeRuntimeReady(job) {
+      if (!job) return 'no';
+      if (job.viewer_url && job.conversion_status === 'ready') return 'yes';
+      if (job.status === 'queued_for_instance') return 'incomplete';
+      return 'no';
+    }
+
+    function computeSemanticReady(qualitySummary) {
+      if (!qualitySummary || typeof qualitySummary !== 'object') return 'no';
+      const hasFidelity = typeof qualitySummary.semantic_mapping_fidelity === 'string'
+        && qualitySummary.semantic_mapping_fidelity.length > 0;
+      const hasType = qualitySummary.mapping_has_ifc_type === true;
+      const hasName = qualitySummary.mapping_has_ifc_name === true;
+      if (hasFidelity && hasType && hasName) return 'yes';
+      if (hasFidelity || hasType || hasName) return 'incomplete';
+      return 'no';
+    }
+
+    function renderTriReadyBadges(latestJob) {
+      const fileEl = document.getElementById('triReadyFile');
+      const runtimeEl = document.getElementById('triReadyRuntime');
+      const semanticEl = document.getElementById('triReadySemantic');
+      if (fileEl) fileEl.textContent = computeFileReady(latestJob);
+      if (runtimeEl) runtimeEl.textContent = computeRuntimeReady(latestJob);
+      // quality summary may live on stream_config; here we proxy through job
+      // fields that coordinator forwards (C1 fields). Without forwarding, semantic
+      // stays 'no'(不偽宣告)。
+      const qualitySummary = latestJob && latestJob.quality_metrics_summary
+        ? latestJob.quality_metrics_summary
+        : null;
+      if (semanticEl) semanticEl.textContent = computeSemanticReady(qualitySummary);
+    }
+
+    function renderDispatchQueue(jobs) {
+      const list = Array.isArray(jobs && jobs.items) ? jobs.items : [];
+      const inFlight = list.find((job) => job.status === 'dispatched' && (job.conversion_status === 'queued' || job.conversion_status === 'running'));
+      const queued = list.filter((job) => job.status === 'queued_for_conversion');
+      const dropped = list.filter((job) => job.status === 'dropped_on_restart');
+
+      const inFlightEl = document.getElementById('dispatchQueueInFlight');
+      const queuedEl = document.getElementById('dispatchQueueList');
+      const droppedEl = document.getElementById('dispatchQueueDropped');
+      if (inFlightEl) {
+        inFlightEl.textContent = inFlight ? `${inFlight.ifc_ready_job_id} (${inFlight.conversion_status || 'queued'})` : '無';
+      }
+      if (queuedEl) {
+        queuedEl.textContent = queued.length
+          ? queued.map((job) => `${job.ifc_ready_job_id} (queue_position=${job.queue_position ?? '?'})`).join(' · ')
+          : '無';
+      }
+      if (droppedEl) {
+        droppedEl.textContent = dropped.length
+          ? `${dropped.length} 個 job 須 operator 重新 POST(in-memory queue 已清空)`
+          : '無';
+      }
+    }
+
     async function refreshRuntimeDashboard() {
       setRuntimeStatus('warn', '更新中');
       try {
@@ -677,6 +809,10 @@
         const runtime = await runtimeResponse.json();
         const jobs = await jobsResponse.json();
         renderRuntimeDashboard(runtime, jobs);
+        // coordinator-ui-tri-ready-and-queue:三段 ready 與 queue 區段渲染。
+        const latest = Array.isArray(jobs?.items) ? jobs.items[0] : null;
+        renderTriReadyBadges(latest);
+        renderDispatchQueue(jobs);
         setRuntimeStatus('ok', '已更新');
       } catch (error) {
         setRuntimeStatus('bad', '更新失敗');
