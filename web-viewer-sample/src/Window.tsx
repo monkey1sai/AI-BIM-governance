@@ -18,9 +18,11 @@ import USDStage from "./USDStage";
 import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import ArtifactPanel from "./components/ArtifactPanel";
-import PresencePanel from "./components/PresencePanel";
-import ReviewLauncher from "./components/ReviewLauncher";
 import DemoControlPanel from "./components/DemoControlPanel";
+import { computeFileReady, computeRuntimeReady, computeSemanticReady, triReadyLabel } from "./utils/triReady";
+// viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
+// MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
+// collaboration events」)。
 import { BimControlClient } from "./clients/bimControlClient";
 import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
@@ -188,6 +190,15 @@ function getQueryPort(...names: string[]): number | null {
 function isSpectatorStreamMode(): boolean {
     const mode = getQueryParam("streamRole", "stream_role", "viewerMode", "viewer_mode");
     return mode?.toLowerCase() === "spectator" || mode?.toLowerCase() === "view_only";
+}
+
+// viewer-edge-bim-server-console:`?debug=1` 控制 legacy USDAsset 下拉、
+// USDStage tree、DemoControlPanel debug 區段是否渲染。預設(無 query)
+// 主畫面收斂為 Edge BIM Data Server Console;debug 等價於把 Inspector ④
+// 「技術細節」展開。
+function isDebugQueryEnabled(): boolean {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("debug") === "1";
 }
 
 function hasDirectStreamEndpointOverride(): boolean {
@@ -1674,6 +1685,23 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
 
                 <div className={`stage-truth-panel stage-truth-panel--${this.state.stageLoadStatus}`}>
+                    {/* viewer-edge-bim-server-console:TopBar 顯示 project_id /
+                        external_model_version_id / review_session_id;欄位缺失顯示
+                        「未取得」placeholder,不偽宣告(spec scenario:TopBar surfaces
+                        project / version / session identity)。 */}
+                    <div className="stage-truth-panel__row" data-testid="edge-console-topbar">
+                        <strong>Edge BIM Data Server</strong>
+                        <span>project: {this.state.latestStreamConfig?.session_id ? "—" : "未取得"}</span>
+                        <span>version: {this.state.latestStreamConfig?.session_id ? "—" : "未取得"}</span>
+                        <span>session: {this.state.reviewSessionId || "未取得"}</span>
+                    </div>
+                    {/* viewer-edge-bim-server-console:三段 ready 取代單一 ready 字樣,
+                        避免使用者誤把 stage matched 等同於 IFC 語意正確。 */}
+                    <div className="stage-truth-panel__row" data-testid="tri-ready-badges">
+                        <span>File: <strong>{triReadyLabel(computeFileReady(this.state.latestStreamConfig))}</strong></span>
+                        <span>Runtime: <strong>{triReadyLabel(computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus))}</strong></span>
+                        <span>Semantic: <strong>{triReadyLabel(computeSemanticReady(this.state.latestStreamConfig?.quality_metrics_summary))}</strong></span>
+                    </div>
                     <div className="stage-truth-panel__row">
                         <strong>Stage truth</strong>
                         <span>{this.state.stageLoadStatus}</span>
@@ -1757,6 +1785,8 @@ export default class App extends React.Component<AppProps, AppState> {
 
                 {this.state.showUI &&
                 <>
+                    {/* viewer-edge-bim-server-console:Inspector ① 本機資料包(BindingPanel)。
+                        ReviewLauncher / PresencePanel 已刪;ArtifactPanel 保留作 binding 顯示。 */}
                     <div
                         style={{
                             position: "absolute",
@@ -1769,39 +1799,35 @@ export default class App extends React.Component<AppProps, AppState> {
                             boxShadow: "0 0 8px rgba(0,0,0,0.18)",
                         }}
                     >
-                        <ReviewLauncher
-                            width={sidebarWidth}
-                            status={this.state.reviewStatus}
-                        />
-                        <PresencePanel
-                            width={sidebarWidth}
-                            sessionId={this.state.reviewSessionId}
-                        />
                         <ArtifactPanel
                             width={sidebarWidth}
                             artifacts={this.state.reviewArtifacts}
                             artifactBindings={this.state.latestStreamConfig?.artifact_bindings || []}
                         />
                     </div>
-                        
-                    {/* USD Asset Selector */}
-                    <USDAsset
-                        usdAssets={this.state.usdAssets}
-                        selectedAssetUrl={this.state.selectedUSDAsset?.url}
-                        onSelectUSDAsset={(value) => this._onSelectUSDAsset(value)}
-                        width={sidebarWidth}
-                    />
-                    {/* USD Stage Listing */}
-                    <USDStage
-                        ref={this.usdStageRef}
-                        width={sidebarWidth}
-                        usdPrims={this.state.usdPrims}
-                        onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
-                        selectedUSDPrims={this.state.selectedUSDPrims}
-                        fillUSDPrim={(value) => this._onFillUSDPrim(value)}
-                        onReset={() => this._onStageReset()}
-                        />
-                    </>
+
+                    {/* viewer-edge-bim-server-console:USDAsset / USDStage 是 debug 工具,
+                        預設不渲染;`?debug=1` 才顯示作為 Inspector ④ 技術細節入口。 */}
+                    {isDebugQueryEnabled() && (
+                        <>
+                            <USDAsset
+                                usdAssets={this.state.usdAssets}
+                                selectedAssetUrl={this.state.selectedUSDAsset?.url}
+                                onSelectUSDAsset={(value) => this._onSelectUSDAsset(value)}
+                                width={sidebarWidth}
+                            />
+                            <USDStage
+                                ref={this.usdStageRef}
+                                width={sidebarWidth}
+                                usdPrims={this.state.usdPrims}
+                                onSelectUSDPrims={(value) => this._onSelectUSDPrims(value)}
+                                selectedUSDPrims={this.state.selectedUSDPrims}
+                                fillUSDPrim={(value) => this._onFillUSDPrim(value)}
+                                onReset={() => this._onStageReset()}
+                            />
+                        </>
+                    )}
+                </>
                 }
             </div>
             );

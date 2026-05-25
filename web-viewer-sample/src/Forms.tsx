@@ -12,7 +12,8 @@
 
 import { Component } from 'react';
 import { getApplications, getApplicationVersions, getApplicationVersionProfiles } from './Endpoints';
-import ArchitectureOverview from './components/ArchitectureOverview';
+// viewer-edge-bim-server-console:repo map / Architecture overview UI 已從 fast
+// MVP 主流程移除(spec session-first-review-viewer REMOVED multi-artifact controls)。
 
 const nextButtonStyle = {
     width: '200px',
@@ -135,7 +136,6 @@ export class AppOnlyForm extends Component <AppOnlyProps, AppOnlyState>{
                         </div>
                         <button type="button" className="nvidia-button" onClick={() => this.props.onNext(this.state)} style={nextButtonStyle}>下一步</button>
                     </div>
-                    <ArchitectureOverview />
                 </div>
             </div>
         )
