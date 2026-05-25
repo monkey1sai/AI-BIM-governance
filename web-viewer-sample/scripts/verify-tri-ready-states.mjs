@@ -111,7 +111,9 @@ assert.equal(
     "yes",
 );
 
-// Fixture F:fidelity 空字串視為 no(不偽宣告)
+// Fixture F:fidelity 空字串視為缺失,但 type/name 仍 true → incomplete(不偽宣告 yes)。
+// 註:hasFidelity 嚴格要求非空 string(length > 0),空字串 falsy;只要 type/name
+// 任一存在就走 `if (hasFidelity || hasType || hasName)` 分支 → incomplete。
 assert.equal(
     computeSemanticReady({
         semantic_mapping_fidelity: "",

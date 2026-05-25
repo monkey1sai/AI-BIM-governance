@@ -66,6 +66,11 @@ interface AppState {
     selectedUSDAsset: USDAssetType | null;
     reviewSessionId: string | null;
     reviewRequestId: string | null;
+    // viewer-edge-bim-server-console:TopBar 用 project / version identity。
+    // 來源 = ReviewSession.project_id / model_version_id(BIM control schema);
+    // 缺失時 TopBar 顯示「未取得」placeholder,不偽宣告。
+    currentProjectId: string | null;
+    currentModelVersionId: string | null;
     reviewLifecycleStatus: ReviewLifecycleStatus | null;
     reviewStatus: string;
     reviewArtifacts: ReviewArtifact[];
@@ -244,12 +249,23 @@ function displayNameFromStageUrl(url: string): string {
 }
 
 function isBlockedLifecycle(status: ReviewLifecycleStatus | null): boolean {
-    return status === "blocked_conversion" || status === "queued_for_instance" || status === "closing" || status === "closed" || status === "failed";
+    // viewer-edge-bim-server-console:queued_for_conversion(C4 lifecycle)與
+    // dropped_on_restart(C4 lifecycle)都不應觸發 WebRTC 連線,視為 blocked。
+    return status === "blocked_conversion"
+        || status === "queued_for_instance"
+        || status === "queued_for_conversion"
+        || status === "dropped_on_restart"
+        || status === "closing"
+        || status === "closed"
+        || status === "failed";
 }
 
 function lifecycleStatusText(status: ReviewLifecycleStatus | null): string {
     if (status === "blocked_conversion") return "成果檔仍在轉換或 mapping 尚未就緒";
     if (status === "queued_for_instance") return "等待 Kit / GPU instance 配額";
+    // viewer-edge-bim-server-console:C4 lifecycle 對應字串。
+    if (status === "queued_for_conversion") return "等待 conversion dispatch 輪到";
+    if (status === "dropped_on_restart") return "coordinator restart 後 queue 已清空,operator 須重新 POST";
     if (status === "created") return "審查請求已建立，等待 session 綁定";
     if (status === "active") return "Review session 啟用中";
     if (status === "closing") return "Review session 關閉中";
@@ -285,6 +301,8 @@ export default class App extends React.Component<AppProps, AppState> {
             selectedUSDAsset: null,
             reviewSessionId: null,
             reviewRequestId: null,
+            currentProjectId: null,
+            currentModelVersionId: null,
             reviewLifecycleStatus: null,
             reviewStatus: "Review bootstrap 尚未載入",
             reviewArtifacts: [],
@@ -780,9 +798,24 @@ export default class App extends React.Component<AppProps, AppState> {
             const streamEndpointChanged = !sameStreamEndpoint(this.state.activeStreamEndpoint, activeStreamEndpoint);
             const endpointEvent = `Kit endpoint：${streamEndpointLabel(activeStreamEndpoint)}`;
 
+            // viewer-edge-bim-server-console:TopBar 顯示 project / version identity。
+            // 來源優先序:ReviewSession → ReviewSessionRequest → reviewEnv defaults。
+            const currentProjectId = loadedSession?.project_id
+                || createdSession?.project_id
+                || reviewRequest?.project_id
+                || reviewEnv.defaultProjectId
+                || null;
+            const currentModelVersionId = loadedSession?.model_version_id
+                || createdSession?.model_version_id
+                || reviewRequest?.model_version_id
+                || bootstrapModelVersionId
+                || null;
+
             this.setState({
                 reviewSessionId: sessionId,
                 reviewRequestId: reviewRequest?.review_request_id || loadedSession?.review_request_id || null,
+                currentProjectId,
+                currentModelVersionId,
                 reviewLifecycleStatus: streamConfig.lifecycle_status,
                 reviewStatus: `${lifecycleStatusText(streamConfig.lifecycle_status)}，模型狀態：${streamConfig.model.status}`,
                 reviewArtifacts: artifacts,
@@ -1652,7 +1685,12 @@ export default class App extends React.Component<AppProps, AppState> {
 
         const sidebarWidth = 300;
         const demoPanelWidth = 360;
-        const showDemoPanel = reviewEnv.showDemoPanel && !reviewEnv.hasExplicitEmptySessionId;
+        // viewer-edge-bim-server-console:DemoControlPanel 含 mapping verification +
+        // Socket.IO log + issue 試標等 debug 區段,fast MVP 主流程不顯示。
+        // 預設只有 `?debug=1` 才渲染(對齊 Inspector ④ 技術細節 spec scenario)。
+        const showDemoPanel = isDebugQueryEnabled()
+            && reviewEnv.showDemoPanel
+            && !reviewEnv.hasExplicitEmptySessionId;
         const demoPanelRight = this.state.showUI ? sidebarWidth : 0;
         const streamReservedWidth = this.state.showUI
             ? sidebarWidth + (showDemoPanel ? demoPanelWidth : 0)
@@ -1691,16 +1729,16 @@ export default class App extends React.Component<AppProps, AppState> {
                         project / version / session identity)。 */}
                     <div className="stage-truth-panel__row" data-testid="edge-console-topbar">
                         <strong>Edge BIM Data Server</strong>
-                        <span>project: {this.state.latestStreamConfig?.session_id ? "—" : "未取得"}</span>
-                        <span>version: {this.state.latestStreamConfig?.session_id ? "—" : "未取得"}</span>
-                        <span>session: {this.state.reviewSessionId || "未取得"}</span>
+                        <span data-testid="topbar-project">project: {this.state.currentProjectId || "未取得"}</span>
+                        <span data-testid="topbar-version">version: {this.state.currentModelVersionId || "未取得"}</span>
+                        <span data-testid="topbar-session">session: {this.state.reviewSessionId || "未取得"}</span>
                     </div>
                     {/* viewer-edge-bim-server-console:三段 ready 取代單一 ready 字樣,
                         避免使用者誤把 stage matched 等同於 IFC 語意正確。 */}
                     <div className="stage-truth-panel__row" data-testid="tri-ready-badges">
-                        <span>File: <strong>{triReadyLabel(computeFileReady(this.state.latestStreamConfig))}</strong></span>
-                        <span>Runtime: <strong>{triReadyLabel(computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus))}</strong></span>
-                        <span>Semantic: <strong>{triReadyLabel(computeSemanticReady(this.state.latestStreamConfig?.quality_metrics_summary))}</strong></span>
+                        <span data-testid="tri-ready-file">File: <strong>{triReadyLabel(computeFileReady(this.state.latestStreamConfig))}</strong></span>
+                        <span data-testid="tri-ready-runtime">Runtime: <strong>{triReadyLabel(computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus))}</strong></span>
+                        <span data-testid="tri-ready-semantic">Semantic: <strong>{triReadyLabel(computeSemanticReady(this.state.latestStreamConfig?.quality_metrics_summary))}</strong></span>
                     </div>
                     <div className="stage-truth-panel__row">
                         <strong>Stage truth</strong>
