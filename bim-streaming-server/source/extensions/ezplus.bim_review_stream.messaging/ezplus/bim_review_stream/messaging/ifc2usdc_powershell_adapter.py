@@ -450,8 +450,9 @@ class Ifc2UsdcPowershellConverterAdapter:
         except Exception:
             pass
 
-        mapping_items: list[dict[str, str]] = []
+        mapping_items: list[dict[str, Any]] = []
         entity_items: list[dict[str, Any]] = []
+        ifc_class_xforms: set[str] = set()
         shape_count = 0
         skipped_shape_count = 0
         while True:
@@ -478,33 +479,57 @@ class Ifc2UsdcPowershellConverterAdapter:
                 skipped_shape_count += 1
             else:
                 shape_count += 1
-                prim_path = f"/World/IfcShape_{shape_count:06d}"
+                ifc_guid = str(getattr(shape, "guid", "") or "")
+                ifc_name = str(getattr(shape, "name", "") or "")
+                ifc_type = str(getattr(shape, "type", "") or "")
+
+                # streaming-server-fallback-semantic-mapping:IFC-class grouped
+                # prim path. Per-class Xform 只 Define 一次;GUID/class 任一含
+                # 非 USD-legal 字元時走 _safe_usd_prim_name 做 sanitize。
+                class_token = self._resolve_ifc_class_token(ifc_type)
+                guid_token = self._resolve_guid_token(ifc_guid, shape_count)
+                if class_token not in ifc_class_xforms:
+                    UsdGeom.Xform.Define(stage, f"/World/{class_token}")
+                    ifc_class_xforms.add(class_token)
+                prim_path = f"/World/{class_token}/{guid_token}"
+                if stage.GetPrimAtPath(prim_path).IsValid():
+                    prim_path = (
+                        f"/World/{class_token}/{guid_token}_{shape_count:06d}"
+                    )
+
                 mesh = UsdGeom.Mesh.Define(stage, prim_path)
                 mesh.CreatePointsAttr(points)
                 mesh.CreateFaceVertexCountsAttr(face_counts)
                 mesh.CreateFaceVertexIndicesAttr(face_indices)
                 mesh.CreateExtentAttr(self._mesh_extent(points, vec3_type=Gf.Vec3f))
 
-                ifc_guid = str(getattr(shape, "guid", "") or "")
-                ifc_name = str(getattr(shape, "name", "") or "")
-                ifc_type = str(getattr(shape, "type", "") or "")
                 prim = mesh.GetPrim()
                 if ifc_guid:
                     prim.SetCustomDataByKey("ifcGlobalId", ifc_guid)
                     prim.SetCustomDataByKey("ifc_guid", ifc_guid)
-                    mapping_items.append(
-                        {"ifc_guid": ifc_guid, "usd_prim_path": prim_path}
-                    )
                 if ifc_name:
                     prim.SetCustomDataByKey("ifcName", ifc_name)
                 if ifc_type:
                     prim.SetCustomDataByKey("ifcType", ifc_type)
+
+                entity_id = f"entity_{shape_count:06d}"
+                if ifc_guid:
+                    mapping_items.append(
+                        {
+                            "ifc_guid": ifc_guid,
+                            "usd_prim_path": prim_path,
+                            "ifc_type": ifc_type or None,
+                            "ifc_name": ifc_name or None,
+                            "entity_id": entity_id,
+                        }
+                    )
                 entity_items.append(
                     {
                         "ifc_guid": ifc_guid or None,
                         "ifc_type": ifc_type or None,
                         "name": ifc_name or None,
                         "usd_prim_path": prim_path,
+                        "entity_id": entity_id,
                     }
                 )
 
@@ -574,6 +599,12 @@ class Ifc2UsdcPowershellConverterAdapter:
             "skipped_shape_count": skipped_shape_count,
             "primary_converter_error": primary_error.message,
         }
+        # streaming-server-fallback-semantic-mapping:declare semantic fidelity
+        # so coordinator /ui 與 viewer 可不必 re-parse mapping_items 即判定
+        # Semantic ready。flags 取 mapping_items 為主而非 entity_items,因為
+        # mapping items 才是 viewer 對外消費的 IFC GUID → USD prim 對照表。
+        mapping_has_ifc_type = any(item.get("ifc_type") for item in mapping_items)
+        mapping_has_ifc_name = any(item.get("ifc_name") for item in mapping_items)
         quality_metrics = {
             "source_ifc_entity_count": source_count,
             "mapped_count": mapped_count,
@@ -583,6 +614,9 @@ class Ifc2UsdcPowershellConverterAdapter:
             "materialization_strategy": "ifcopenshell_openusd_fallback",
             "sidecar_carrier_count": shape_count,
             "minimum_coverage_baseline_locked": False,
+            "semantic_mapping_fidelity": "ifc_class_grouped_with_name",
+            "mapping_has_ifc_type": mapping_has_ifc_type,
+            "mapping_has_ifc_name": mapping_has_ifc_name,
             "hard_quality_gates": {
                 "usdc_openable": True,
                 "has_renderable_prims": True,
@@ -602,6 +636,34 @@ class Ifc2UsdcPowershellConverterAdapter:
         quality_metrics_path.write_text(
             json.dumps(quality_metrics, ensure_ascii=False), encoding="utf-8"
         )
+
+    @staticmethod
+    def _safe_usd_prim_name(text: str) -> str | None:
+        """Sanitize an arbitrary string into a USD-legal prim name segment.
+
+        USD prim names must match `[A-Za-z_][A-Za-z0-9_]*`. Returns ``None``
+        for empty input (callers fall back to a deterministic placeholder).
+        """
+        if not text:
+            return None
+        sanitized = "".join(
+            ch if ch.isalnum() or ch == "_" else "_" for ch in text
+        )
+        if not sanitized:
+            return None
+        if not (sanitized[0].isalpha() or sanitized[0] == "_"):
+            sanitized = "_" + sanitized
+        return sanitized
+
+    @classmethod
+    def _resolve_ifc_class_token(cls, ifc_type: str) -> str:
+        """Return USD-legal IFC class token, defaulting to ``Unclassified``."""
+        return cls._safe_usd_prim_name(ifc_type) or "Unclassified"
+
+    @classmethod
+    def _resolve_guid_token(cls, ifc_guid: str, shape_index: int) -> str:
+        """Return USD-legal GUID token, defaulting to ``Shape_NNNNNN``."""
+        return cls._safe_usd_prim_name(ifc_guid) or f"Shape_{shape_index:06d}"
 
     def _usd_mesh_data_from_ifcopenshell(
         self,
