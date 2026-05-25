@@ -641,8 +641,6 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       // dispatch,改 enqueue 進 in-memory FIFO。worker 單一 in-flight slot
       // 序列化呼叫 streaming-server,避免並發踩到同一 GPU/Kit pipeline。
       // 失敗或成功都由 dispatcher closure 直接 mark 進 store,worker 不卡。
-      const queuePosition = conversionDispatchQueue.getQueuedJobIds().length + 1;
-      externalIfcReadyStore.markQueuedForConversion(job.ifc_ready_job_id, queuePosition);
       pendingDispatchEvents.set(job.ifc_ready_job_id, {
         event,
         correlationId: auth.correlationId,
@@ -651,6 +649,15 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         hostLocalPath: downloadResult.host_local_path,
       });
       conversionDispatchQueue.enqueue(job.ifc_ready_job_id);
+      // Review feedback(HIGH #1):queue_position 必須在 enqueue 之後讀,因為
+      // worker 可能 sync 啟動把 job 立即推進 in-flight(此時 queue 內沒這個
+      // jobId,getQueuePosition 回 0)。原本 enqueue 前計算 length+1 會在
+      // single-job 場景錯誤標 queue_position=1,而 queue 內已沒這個 job。
+      const queuePosition = conversionDispatchQueue.getQueuePosition(job.ifc_ready_job_id);
+      externalIfcReadyStore.markQueuedForConversion(
+        job.ifc_ready_job_id,
+        queuePosition ?? 0,
+      );
 
       // fast-ifc-link-demo-loop §2.3:同步下載完成 → 202 Accepted(下載完,
       // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
@@ -1173,11 +1180,20 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   // coordinator-auto-poll-streaming-conversion §6:dispose 清空所有 in-process auto
   // poller timer。process shutdown / 測試 teardown 必呼叫,避免 keep-alive 阻 exit。
+  // coordinator-serial-conversion-dispatch-queue:dispose 同時 drain 未派工的
+  // queue,把 jobs 標記 dropped_on_restart(in-memory queue 非 disk-persistent;
+  // restart 後 operator 必須重新 POST,跟 spec scenario「Coordinator restart
+  // drops queued jobs」對齊)。
   const dispose = (): void => {
     for (const handle of pollerRegistry.values()) {
       handle.cancel();
     }
     pollerRegistry.clear();
+    const droppedJobIds = conversionDispatchQueue.drain();
+    for (const jobId of droppedJobIds) {
+      externalIfcReadyStore.markDroppedOnRestart(jobId);
+      pendingDispatchEvents.delete(jobId);
+    }
   };
 
   return { app, server, io, config, store, eventLog, dispose };

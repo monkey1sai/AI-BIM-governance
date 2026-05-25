@@ -330,4 +330,60 @@ describe("Restart drop semantics", () => {
     expect(dropped).toEqual(["X", "Y"]);
     expect(fresh.getQueuedJobIds()).toEqual([]);
   });
+
+  // Review feedback(HIGH #2):dispose() 必須真實觸發 markDroppedOnRestart,
+  // 才能讓 spec scenario「Coordinator restart drops queued jobs」不只是 hollow
+  // helper(原本 markDroppedOnRestart 只在 store 有 method,但 app lifecycle
+  // 沒接線)。
+  it("app.dispose() 把佇列中未派工 job 標 dropped_on_restart", async () => {
+    // controllable stub:回 202 但 hold response 等 release,造成 in-flight 卡住
+    const stub = await startControllableStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: stub.baseUrl });
+
+    // POST A:讓它 in-flight(stub 不 release)
+    const resA = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_dispose_A", "idem_dispose_A"))
+      .send(payload());
+    expect(resA.status).toBe(202);
+    const jobA = resA.body.ifc_ready_job_id as string;
+    await waitFor(() => stub.bodies.length >= 1);
+
+    // POST B、C:這兩個應該停在 queued_for_conversion
+    const resB = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_dispose_B", "idem_dispose_B"))
+      .send(payload({ external_model_version_id: "ext_mv_dispose_B" }));
+    const resC = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_dispose_C", "idem_dispose_C"))
+      .send(payload({ external_model_version_id: "ext_mv_dispose_C" }));
+    const jobB = resB.body.ifc_ready_job_id as string;
+    const jobC = resC.body.ifc_ready_job_id as string;
+
+    // 驗 B / C 為 queued_for_conversion
+    const bView = await request(app.app).get(`/api/external/ifc-ready/${jobB}`);
+    const cView = await request(app.app).get(`/api/external/ifc-ready/${jobC}`);
+    expect(bView.body.status).toBe("queued_for_conversion");
+    expect(cView.body.status).toBe("queued_for_conversion");
+
+    // 觸發 dispose(模擬 coordinator process shutdown / restart 準備動作)
+    app.dispose();
+
+    // dispose 之後 B / C 應該被標 dropped_on_restart;A 仍 in-flight(dispose
+    // 不會強制中斷已 in-flight 的 dispatcher 呼叫)。
+    const bAfter = await request(app.app).get(`/api/external/ifc-ready/${jobB}`);
+    const cAfter = await request(app.app).get(`/api/external/ifc-ready/${jobC}`);
+    expect(bAfter.body.status).toBe("dropped_on_restart");
+    expect(bAfter.body.queue_position).toBeNull();
+    expect(cAfter.body.status).toBe("dropped_on_restart");
+    expect(cAfter.body.queue_position).toBeNull();
+
+    // A 在 in-flight 期間 dispose,不會被 mark dropped(只 queued 被影響)
+    const aAfter = await request(app.app).get(`/api/external/ifc-ready/${jobA}`);
+    expect(aAfter.body.status).not.toBe("dropped_on_restart");
+
+    // teardown release 讓 stub 完成,避免 dangling promise
+    stub.releaseNext();
+  });
 });
