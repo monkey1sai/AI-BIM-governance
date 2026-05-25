@@ -143,8 +143,15 @@ export interface ExternalIfcReadyEvent {
 
 export type IfcReadyIntakeStatus =
   | "accepted"
+  // coordinator-serial-conversion-dispatch-queue:downloaded 之後等待 in-flight
+  // dispatch slot;同時持有正整數 queue_position(1-based)。
+  | "queued_for_conversion"
   | "dispatched"
   | "dispatch_failed"
+  // coordinator-serial-conversion-dispatch-queue:coordinator process 重啟或
+  // queue 被顯式 drain 時,仍在 queued_for_conversion 的 job 被標為此狀態。
+  // operator 須重新 POST(in-memory only;非 disk-persistent queue)。
+  | "dropped_on_restart"
   | "failed";
 
 /**
@@ -179,6 +186,9 @@ export interface IfcReadyIntakeJob {
   // （correlation_id / external_model_version_id 已是 job 主索引，此處只記
   // 反向 session_id，不改 SessionStore schema）。
   review_session_id?: string | null;
+  // coordinator-serial-conversion-dispatch-queue:1-based position 在 conversion
+  // dispatch queue 中(0 = in-flight,null = 不在 queue 內)。dispatched 後清空。
+  queue_position?: number | null;
   // fast-ifc-link-demo-loop §2.2 / §3.1:同步下載階段 + viewer_url 出現條件
   download_status?: "pending" | "downloading" | "downloaded" | "failed" | null;
   download_failure?: string | null;

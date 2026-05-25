@@ -65,6 +65,28 @@ function authHeaders(overrides: Record<string, string> = {}): Record<string, str
   };
 }
 
+/**
+ * coordinator-serial-conversion-dispatch-queue:dispatch 改為 in-memory queue
+ * 非同步處理,POST response 立即帶 status="queued_for_conversion"。test 需要
+ * 等 worker 把 in-flight job 推進到 dispatched / dispatch_failed 才 assert。
+ */
+async function waitForDispatchEnd(
+  appHandle: CoordinatorApp,
+  jobId: string,
+  expectedStatuses: string[] = ["dispatched", "dispatch_failed", "failed"],
+  timeoutMs = 3000,
+): Promise<Record<string, unknown>> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const res = await request(appHandle.app).get(`/api/external/ifc-ready/${jobId}`);
+    if (res.status === 200 && typeof res.body?.status === "string" && expectedStatuses.includes(res.body.status)) {
+      return res.body as Record<string, unknown>;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Job ${jobId} did not reach ${expectedStatuses.join("/")} within ${timeoutMs}ms`);
+}
+
 async function startStreamingConversionStub(): Promise<{ baseUrl: string; bodies: unknown[] }> {
   const bodies: unknown[] = [];
   activeStreamingServer = http.createServer((req, res) => {
@@ -107,9 +129,11 @@ describe("POST /api/external/ifc-ready", () => {
     expect(res.body.external_model_version_id).toBe(CONTRACT.example.external_model_version_id);
     expect(res.body.correlation_id).toBe("corr_test_001");
     expect(res.body.source_ifc_ref).toBe((CONTRACT.example.source_ifc as { ref: string }).ref);
-    // streaming 不可達 → 接受但派工失敗（intake 本身未被否定）
-    expect(res.body.status).toBe("dispatch_failed");
-    expect(res.body.conversion_authority).toBeNull();
+    // coordinator-serial-conversion-dispatch-queue:POST 回應現為 async dispatch
+    // 階段(queued_for_conversion);streaming 不可達 → worker 拋 error → 標 dispatch_failed。
+    const final = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatch_failed"]);
+    expect(final.status).toBe("dispatch_failed");
+    expect(final.conversion_authority).toBeNull();
   });
 
   it("lists recent IFC-ready jobs with dashboard-safe progress fields", async () => {
@@ -125,10 +149,15 @@ describe("POST /api/external/ifc-ready", () => {
       .set(authHeaders({ "X-Correlation-Id": "corr_list_002", "X-Idempotency-Key": "idem_list_002" }))
       .send(payload({ external_model_version_id: "ext_mv_demo_002" }));
 
-    const listed = await request(app.app).get("/api/external/ifc-ready?limit=1");
-
     expect(first.status).toBe(202);
     expect(second.status).toBe(202);
+    // coordinator-serial-conversion-dispatch-queue:等兩個 jobs 都被 worker
+    // 推進到 dispatched(streaming stub 立即回 202),再 query listed。
+    await waitForDispatchEnd(app, first.body.ifc_ready_job_id);
+    await waitForDispatchEnd(app, second.body.ifc_ready_job_id);
+
+    const listed = await request(app.app).get("/api/external/ifc-ready?limit=1");
+
     expect(listed.status).toBe(200);
     expect(listed.body.count).toBe(2);
     expect(listed.body.items).toHaveLength(1);
@@ -210,9 +239,11 @@ describe("POST /api/external/ifc-ready", () => {
       .send(payload());
 
     expect(res.status).toBe(202);
-    expect(res.body.status).toBe("dispatched");
-    expect(res.body.conversion_job_id).toBe("stream_conv_test_001");
-    expect(res.body.conversion_authority).toBe("bim-streaming-server");
+    // coordinator-serial-conversion-dispatch-queue:wait for worker to dispatch.
+    const final = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatched"]);
+    expect(final.status).toBe("dispatched");
+    expect(final.conversion_job_id).toBe("stream_conv_test_001");
+    expect(final.conversion_authority).toBe("bim-streaming-server");
     expect(streaming.bodies).toHaveLength(1);
     expect((streaming.bodies[0] as Record<string, unknown>).event_type).toBe("ifc_ready");
   });
@@ -395,6 +426,8 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
       .send(workerPayload());
 
     expect(res.status).toBe(202);
+    // coordinator-serial-conversion-dispatch-queue:等 worker 完成 dispatch。
+    await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatched"]);
     expect(streaming.bodies).toHaveLength(1);
     const dispatched = streaming.bodies[0] as Record<string, unknown>;
     // canonical streaming internal contract

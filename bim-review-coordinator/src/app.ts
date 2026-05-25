@@ -13,6 +13,7 @@ import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
+import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import {
   StreamingConversionClient,
@@ -274,6 +275,56 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
   // (keyed by conversion_job_id),dispatch 後 schedule、manual ingest endpoint
   // 觸發前 cancel、shutdown(dispose())清空。
   const pollerRegistry = new Map<string, PollerHandle>();
+  // coordinator-serial-conversion-dispatch-queue:序列化對 streaming-server 的
+  // dispatch。downloaded 後 enqueue;單一 in-flight slot;失敗不卡後續。
+  const conversionDispatchQueue = new ConversionDispatchQueue();
+  // pendingDispatchEvents:enqueue 階段暫存 dispatch 所需 args,worker 取出用。
+  // jobId → { event, correlationId, externalModelVersionId, localPath, hostLocalPath }
+  const pendingDispatchEvents = new Map<
+    string,
+    {
+      event: ExternalIfcReadyEvent;
+      correlationId: string;
+      externalModelVersionId: string;
+      localPath: string;
+      hostLocalPath: string;
+    }
+  >();
+  // dispatcher closure 用 streamingConversionClient / externalIfcReadyStore /
+  // pollerRegistry / schedulePollerForConversion(hoisted)。注意 enqueue 必須
+  // 在 setDispatcher 之後才能正確處理 worker。
+  conversionDispatchQueue.setDispatcher(async (jobId) => {
+    const pending = pendingDispatchEvents.get(jobId);
+    pendingDispatchEvents.delete(jobId);
+    if (!pending) {
+      externalIfcReadyStore.markDispatchFailed(
+        jobId,
+        "pending dispatch event lost before worker pickup",
+      );
+      return;
+    }
+    try {
+      const dispatch = await streamingConversionClient.createConversionJob(pending.event, {
+        correlationId: pending.correlationId,
+        externalModelVersionId: pending.externalModelVersionId,
+        localPath: pending.localPath,
+        hostLocalPath: pending.hostLocalPath,
+      });
+      externalIfcReadyStore.markDispatched(
+        jobId,
+        dispatch.conversion_job_id,
+        dispatch.status,
+      );
+      if (config.conversionPollEnabled && !pollerRegistry.has(dispatch.conversion_job_id)) {
+        schedulePollerForConversion(dispatch.conversion_job_id);
+      }
+    } catch (dispatchError) {
+      externalIfcReadyStore.markDispatchFailed(
+        jobId,
+        dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+      );
+    }
+  });
   // T5：轉檔結果回拋公司雲端（metadata-only outbox / retry / dead-letter）。
   const callbackOutbox = new CallbackOutbox(
     config.callbackOutboxMaxAttempts,
@@ -586,35 +637,35 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       }
       externalIfcReadyStore.markDownloaded(job.ifc_ready_job_id, downloadResult.local_path, downloadResult.host_local_path);
 
-      // ifc-ready 已接受 + IFC bytes 已落地 shared volume。dispatch streaming-server
-      // 帶 local_path / host_local_path;dispatch 失敗不否定 intake 本身(可重試)。
-      try {
-        const dispatch = await streamingConversionClient.createConversionJob(event, {
-          correlationId: auth.correlationId,
-          externalModelVersionId: auth.externalModelVersionId,
-          localPath: downloadResult.local_path,
-          hostLocalPath: downloadResult.host_local_path,
-        });
-        externalIfcReadyStore.markDispatched(job.ifc_ready_job_id, dispatch.conversion_job_id, dispatch.status);
-        // coordinator-auto-poll-streaming-conversion §4.3:dispatch 成功後 in-process
-        // schedule poller(若 conversionPollEnabled);既有 poller 不雙起。
-        if (config.conversionPollEnabled && !pollerRegistry.has(dispatch.conversion_job_id)) {
-          schedulePollerForConversion(dispatch.conversion_job_id);
-        }
-      } catch (dispatchError) {
-        externalIfcReadyStore.markDispatchFailed(
-          job.ifc_ready_job_id,
-          dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
-        );
-      }
+      // coordinator-serial-conversion-dispatch-queue:downloaded 後不直接同步
+      // dispatch,改 enqueue 進 in-memory FIFO。worker 單一 in-flight slot
+      // 序列化呼叫 streaming-server,避免並發踩到同一 GPU/Kit pipeline。
+      // 失敗或成功都由 dispatcher closure 直接 mark 進 store,worker 不卡。
+      pendingDispatchEvents.set(job.ifc_ready_job_id, {
+        event,
+        correlationId: auth.correlationId,
+        externalModelVersionId: auth.externalModelVersionId,
+        localPath: downloadResult.local_path,
+        hostLocalPath: downloadResult.host_local_path,
+      });
+      conversionDispatchQueue.enqueue(job.ifc_ready_job_id);
+      // Review feedback(HIGH #1):queue_position 必須在 enqueue 之後讀,因為
+      // worker 可能 sync 啟動把 job 立即推進 in-flight(此時 queue 內沒這個
+      // jobId,getQueuePosition 回 0)。原本 enqueue 前計算 length+1 會在
+      // single-job 場景錯誤標 queue_position=1,而 queue 內已沒這個 job。
+      const queuePosition = conversionDispatchQueue.getQueuePosition(job.ifc_ready_job_id);
+      externalIfcReadyStore.markQueuedForConversion(
+        job.ifc_ready_job_id,
+        queuePosition ?? 0,
+      );
 
-      // fast-ifc-link-demo-loop §2.3:同步下載完成 → 202 Accepted(下載完 + dispatch 完,
-      // conversion 仍 queued/running 屬於 server-side 後續處理,語意上保留 202)。
-      // download_status / message 由 job state + body 傳達。
+      // fast-ifc-link-demo-loop §2.3:同步下載完成 → 202 Accepted(下載完,
+      // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
+      // 觀察 queued_for_conversion → dispatched 變化)。
       const finalJob = externalIfcReadyStore.get(job.ifc_ready_job_id);
       response.status(202).json({
         ...finalJob,
-        message: "IFC 已下載至本地共享卷,轉檔已派工",
+        message: "IFC 已下載至本地共享卷,轉檔已進入派工佇列",
       });
     } catch (error) {
       next(error);
@@ -1129,11 +1180,20 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   // coordinator-auto-poll-streaming-conversion §6:dispose 清空所有 in-process auto
   // poller timer。process shutdown / 測試 teardown 必呼叫,避免 keep-alive 阻 exit。
+  // coordinator-serial-conversion-dispatch-queue:dispose 同時 drain 未派工的
+  // queue,把 jobs 標記 dropped_on_restart(in-memory queue 非 disk-persistent;
+  // restart 後 operator 必須重新 POST,跟 spec scenario「Coordinator restart
+  // drops queued jobs」對齊)。
   const dispose = (): void => {
     for (const handle of pollerRegistry.values()) {
       handle.cancel();
     }
     pollerRegistry.clear();
+    const droppedJobIds = conversionDispatchQueue.drain();
+    for (const jobId of droppedJobIds) {
+      externalIfcReadyStore.markDroppedOnRestart(jobId);
+      pendingDispatchEvents.delete(jobId);
+    }
   };
 
   return { app, server, io, config, store, eventLog, dispose };
