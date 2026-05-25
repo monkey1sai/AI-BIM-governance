@@ -1,0 +1,40 @@
+﻿{
+    "scope":  "follow-up FU3 partial — coordinator /ui C3 verified, C4 queue lifecycle observed, C1 fallback + C2 viewer chrome visual deferred",
+    "services":  {
+                     "conversion_authority_49101":  "host-native, PID 29888, GET /health returns 200 + role=conversion-only",
+                     "viewer_5173":  "docker rebuild from main b4d83dd, container ai-bim-web-plane-host-kit-viewer-1, listening",
+                     "coordinator_8004":  "docker rebuild from main b4d83dd, container ai-bim-web-plane-host-kit-coordinator-1, listening",
+                     "kit_49100":  "host-native via scripts/start-all.ps1 -SkipViewer -SkipCoordinator -SkipConversionService, PID 21700, listening"
+                 },
+    "c3_ui_new_version_verified":  {
+                                       "steps_literal":  {
+                                                             "s1":  "① 接收 IFC-ready webhook",
+                                                             "s3":  "③ 啟動 Kit / WebRTC 串流",
+                                                             "s4":  "④ 驗證 BIM 語意對照",
+                                                             "s2":  "② 產生本機 USDC 資料包"
+                                                         },
+                                       "dispatch_queue_section":  true,
+                                       "tri_ready_section":  true,
+                                       "edge_console_card_present":  true,
+                                       "legacy_disclaimer_section":  true,
+                                       "tri_ready_initial_state":  "all no (no ifc-ready job at navigation time)"
+                                   },
+    "c1_fallback_evidence_deferred_reason":  {
+                                                 "root_cause":  "hybrid mode path translation: docker container ./storage relative path passed to host-native 49101 whose storage_root resolves to host CWD; STORAGE_HOST_ROOT env not set on docker compose to absolute host path",
+                                                 "remediation":  "set RUNTIME_STORAGE_ROOT or STORAGE_HOST_ROOT to absolute host path in .env.web-plane.host-kit (matches PR #95 hotfix from 2026-05-22)",
+                                                 "conversion_error_message":  "local IFC path is outside storage_root: /workspace/storage/ifc-cache/ifcready_1779700667771_97aaaf62/source.ifc",
+                                                 "conversion_error_code":  "invalid_ifc_input",
+                                                 "real_ifc_job_id":  "ifcready_1779700667771_97aaaf62 (storage/許良宇圖書館建築_2026 - 轉檔測試12.ifc, 341MB)"
+                                             },
+    "collected_at":  "2026-05-25T17:23:44.1637687+08:00",
+    "c4_queue_lifecycle_observed":  {
+                                        "queue_position_at_enqueue":  0,
+                                        "transition":  "queue_position 0 (in-flight) -\u003e null (after dispatched, conversion_status=failed because fixture is placeholder bytes)",
+                                        "new_message_on_post":  "IFC 已下載至本地共享卷,轉檔已進入派工佇列",
+                                        "ifc_ready_job_id":  "ifcready_1779700557899_5ebc720c (fixture-bytes.ifc smoke run)"
+                                    },
+    "c2_viewer_visual_evidence_deferred_reason":  {
+                                                      "blocker":  "user denied chrome navigate to viewer 5173 (cannot self-drive viewer page text/dom assertion in this session)",
+                                                      "fallback_validation":  "production build pass + verify-tri-ready-states.mjs / verify-conversion-summary-card.mjs / verify-session-first-contract.mjs all pass (source-level contract)"
+                                                  }
+}
