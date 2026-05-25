@@ -185,7 +185,9 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(submit.status).toBe(202);
     const jobId = submit.body.ifc_ready_job_id as string;
     expect(jobId).toMatch(/^ifcready_/);
-    expect(stub.dispatchCount.value).toBe(1);
+    // coordinator-serial-conversion-dispatch-queue:dispatch 改為 async worker,
+    // POST 立即回應後 worker 才 tick → 呼叫 streaming stub。等 dispatchCount=1。
+    await waitFor(() => stub.dispatchCount.value === 1);
 
     await waitFor(async () => {
       const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
@@ -269,6 +271,15 @@ describe("coordinator auto-poll streaming conversion", () => {
       .set(authHeaders("corr_ap_manual_001", "idem_ap_manual_001"))
       .send(dispatchPayload());
     const jobId = submit.body.ifc_ready_job_id as string;
+
+    // coordinator-serial-conversion-dispatch-queue:等 async dispatch worker
+    // 完成 + schedule poller,然後才 trigger manual ingest 以驗證 cancel
+    // poller(否則 manual 在 poller 還未 schedule 前 fire,cancel 是 no-op,
+    // 後續 poller 仍 fire → 雙 ingest)。
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.status === "dispatched";
+    });
 
     const manual = await request(app.app)
       .post(`/api/internal/conversions/stream_conv_auto_poll_test/ingest`)

@@ -54,6 +54,9 @@ export class ExternalIfcReadyStore {
       conversion_status: null,
       conversion_authority: null,
       dispatch_error: null,
+      // coordinator-serial-conversion-dispatch-queue:預設 null,在 enqueue
+      // 階段被 markQueuedForConversion 改為 1-based,dispatched 後清回 null。
+      queue_position: null,
       // fast-ifc-link-demo-loop §2:新 job 預設 download_status="pending",
       // app handler 進入同步下載後改為 downloading / downloaded / failed。
       download_status: "pending",
@@ -79,6 +82,33 @@ export class ExternalIfcReadyStore {
     job.conversion_status = conversionStatus;
     job.conversion_authority = "bim-streaming-server";
     job.dispatch_error = null;
+    // coordinator-serial-conversion-dispatch-queue:離開 queue,清 1-based 位置。
+    job.queue_position = null;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
+  /** coordinator-serial-conversion-dispatch-queue:downloaded 後等待 dispatch slot。 */
+  markQueuedForConversion(jobId: string, queuePosition: number): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.status = "queued_for_conversion";
+    job.queue_position = queuePosition;
+    job.dispatch_error = null;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
+  /**
+   * coordinator-serial-conversion-dispatch-queue:coordinator process 重啟或
+   * queue 被顯式 drain 時,標記未及 dispatch 的 job。operator 須重新 POST。
+   */
+  markDroppedOnRestart(jobId: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.status = "dropped_on_restart";
+    job.queue_position = null;
+    job.dispatch_error = "coordinator restart dropped in-memory queue; operator must re-POST";
     job.updated_at = new Date().toISOString();
     return job;
   }
