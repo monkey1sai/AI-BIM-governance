@@ -66,10 +66,25 @@
 
 ## 8. L4 真實 runtime
 
-- [ ] 8.1 streaming-server 重啟讀新 code(kill 7488 + 重新 launch)
-- [ ] 8.2 用 user 341MB IFC URL 透過 Postman / Python urllib 重跑 一次
-- [ ] 8.3 看 `GET /api/external/ifc-ready/<job>` 內 dispatch_error 或 streaming-server `GET /result` 內 error 是否含 `kit_stdout_log` / `kit_stderr_log` path
-- [ ] 8.4 `tail bim-streaming-server/_cache/host-native-conversion/artifacts/<conv>/kit-stderr.log` 看 Kit 真實錯誤訊息
+- [x] 8.1 streaming-server 重啟讀新 code(kill 7488 + 重新 launch)
+      - L4 restart:PID `36380`,`STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage`,
+        `GET http://127.0.0.1:49101/health` 回 `status=ok` / `role=conversion-only`
+- [x] 8.2 用 user 341MB IFC URL 透過 Postman / Python urllib 重跑 一次
+      - user 341MB IFC local cache:`storage/ifc-cache/ifcready_1779687625000_064c6813/source.ifc`
+        (`332760325` bytes)
+      - direct streaming POST job:`stream_conv_20260525055218_115177da`
+- [x] 8.3 看 `GET /api/external/ifc-ready/<job>` 內 dispatch_error 或 streaming-server `GET /result` 內 error 是否含 `kit_stdout_log` / `kit_stderr_log` path
+      - L4 result terminal:`status=succeeded`,`ready=true`,
+        `materialization_strategy=ifcopenshell_openusd_fallback`,
+        `source_ifc_entity_count=4889`,`mapped_count=4889`
+      - 因 result 成功,依 spec 沒有 `error` object;成功情境改驗證
+        `kit-stdout.log` / `kit-stderr.log` retained on disk alongside `model.usdc`
+- [x] 8.4 `tail bim-streaming-server/_cache/host-native-conversion/artifacts/<conv>/kit-stderr.log` 看 Kit 真實錯誤訊息
+      - `bim-streaming-server/_cache/host-native-conversion/artifacts/stream_conv_20260525055218_115177da/kit-stderr.log`
+        tail 顯示 Kit / HOOPS primary import failure:
+        `A3D_LOAD_CANNOT_LOAD_MODEL` / error code `-10007`
+      - 同 artifact dir 另有 `kit-stdout.log` 與 `model.usdc`;證明本 change 的 subprocess
+        stdout/stderr capture 在真實 runtime 下可觀察
 
 ## 9. Commit / PR / merge
 
