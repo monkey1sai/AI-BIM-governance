@@ -46,6 +46,25 @@ function ConvertTo-AbsolutePath {
     return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Path))
 }
 
+function ConvertTo-AbsolutePatternPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path
+    )
+
+    if (-not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($Path)) {
+        return ConvertTo-AbsolutePath -Path $Path
+    }
+
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return $Path
+    }
+
+    # .NET GetFullPath rejects wildcard characters on Windows. Keep wildcard
+    # tokens intact and only anchor relative patterns under the repo root.
+    return Join-Path $RepoRoot $Path
+}
+
 function Resolve-IfcInputs {
     param(
         [Parameter(Mandatory = $true)]
@@ -56,7 +75,7 @@ function Resolve-IfcInputs {
     $missingPatterns = New-Object System.Collections.Generic.List[string]
 
     foreach ($pattern in $Patterns) {
-        $fullPattern = ConvertTo-AbsolutePath -Path $pattern
+        $fullPattern = ConvertTo-AbsolutePatternPath -Path $pattern
 
         if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($fullPattern)) {
             $found = @(
