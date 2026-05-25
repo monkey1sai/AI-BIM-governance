@@ -939,3 +939,322 @@ def test_ifcopenshell_openusd_fallback_rejects_no_renderable_geometry(
 
     assert raised is not None
     assert raised.code == "fallback_no_renderable_geometry"
+
+
+# --- streaming-server-fallback-semantic-mapping:fallback semantic mapping fidelity ---
+
+
+def _run_fallback_with_single_shape(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    ifc_guid: str,
+    ifc_name: str,
+    ifc_type: str,
+) -> tuple[dict, dict, dict]:
+    """Run `_run_ifcopenshell_openusd_fallback` against a single mocked shape and
+    return parsed (mapping_doc, entity_index_doc, quality_metrics_doc)."""
+    _clear_pxr_test_stubs(monkeypatch)
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, work_dir=repo_root)
+
+    fake_ifcopenshell = types.ModuleType("ifcopenshell")
+    fake_geom = types.ModuleType("ifcopenshell.geom")
+
+    class FakeModel:
+        schema = "IFC4"
+
+        def by_type(self, name: str):
+            return [object()] if name == "IfcProduct" else []
+
+    class FakeSettings:
+        USE_WORLD_COORDS = "USE_WORLD_COORDS"
+
+        def set(self, *_args):
+            return None
+
+    class FakeGeometry:
+        verts = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        faces = (0, 1, 2)
+
+    class FakeShape:
+        guid = ifc_guid
+        name = ifc_name
+        type = ifc_type
+        geometry = FakeGeometry()
+
+    class FakeIterator:
+        def __init__(self):
+            self.done = False
+
+        def initialize(self) -> bool:
+            return True
+
+        def get(self):
+            return FakeShape()
+
+        def next(self) -> bool:
+            if self.done:
+                return False
+            self.done = True
+            return False
+
+    fake_ifcopenshell.open = lambda _path: FakeModel()
+    fake_geom.settings = FakeSettings
+    fake_geom.iterator = lambda *_args: FakeIterator()
+    fake_ifcopenshell.geom = fake_geom
+    monkeypatch.setitem(sys.modules, "ifcopenshell", fake_ifcopenshell)
+    monkeypatch.setitem(sys.modules, "ifcopenshell.geom", fake_geom)
+
+    output_dir = tmp_path / "out"
+    adapter._run_ifcopenshell_openusd_fallback(
+        ifc_path=ifc_file,
+        output_dir=output_dir,
+        primary_error=ConversionAuthorityError(
+            "converter_failed", "A3D_LOAD_CANNOT_LOAD_MODEL"
+        ),
+    )
+
+    mapping_doc = json.loads((output_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    entity_index_doc = json.loads((output_dir / "entity_index.json").read_text(encoding="utf-8"))
+    metrics_doc = json.loads((output_dir / "quality_metrics.json").read_text(encoding="utf-8"))
+    return mapping_doc, entity_index_doc, metrics_doc
+
+
+def test_fallback_mapping_carries_ifc_type_and_name(tmp_path: Path, monkeypatch):
+    mapping_doc, _entity_doc, _metrics = _run_fallback_with_single_shape(
+        tmp_path,
+        monkeypatch,
+        ifc_guid="GUID_A",
+        ifc_name="樓梯1",
+        ifc_type="IfcStair",
+    )
+    assert mapping_doc["items"], "fallback mapping must have at least one item"
+    item = mapping_doc["items"][0]
+    assert item["ifc_type"] == "IfcStair"
+    assert item["ifc_name"] == "樓梯1"
+    assert isinstance(item["entity_id"], str) and item["entity_id"]
+
+
+def test_fallback_prim_paths_are_ifc_class_grouped(tmp_path: Path, monkeypatch):
+    mapping_doc, _entity_doc, _metrics = _run_fallback_with_single_shape(
+        tmp_path,
+        monkeypatch,
+        ifc_guid="GUID_B",
+        ifc_name="梁1",
+        ifc_type="IfcBeam",
+    )
+    item = mapping_doc["items"][0]
+    assert item["usd_prim_path"].startswith("/World/IfcBeam/"), item["usd_prim_path"]
+
+
+def test_fallback_unclassified_grouping(tmp_path: Path, monkeypatch):
+    mapping_doc, _entity_doc, _metrics = _run_fallback_with_single_shape(
+        tmp_path,
+        monkeypatch,
+        ifc_guid="GUID_C",
+        ifc_name="",
+        ifc_type="",
+    )
+    item = mapping_doc["items"][0]
+    assert item["usd_prim_path"].startswith("/World/Unclassified/"), item["usd_prim_path"]
+    # ifc_type / ifc_name keys MUST still be present (may be null)
+    assert "ifc_type" in item and item["ifc_type"] in (None, "")
+    assert "ifc_name" in item and item["ifc_name"] in (None, "")
+
+
+def test_fallback_prim_path_sanitization(tmp_path: Path, monkeypatch):
+    mapping_doc, _entity_doc, _metrics = _run_fallback_with_single_shape(
+        tmp_path,
+        monkeypatch,
+        ifc_guid="abc$def-XYZ!",
+        ifc_name="Demo",
+        ifc_type="IfcBuildingElementProxy",
+    )
+    item = mapping_doc["items"][0]
+    path = item["usd_prim_path"]
+    assert path.startswith("/World/IfcBuildingElementProxy/"), path
+    assert "$" not in path
+    assert "!" not in path
+    assert "-" not in path
+    # path segments must be USD-legal: each /-separated segment is [A-Za-z_][A-Za-z0-9_]*
+    import re
+
+    for segment in path.split("/")[1:]:
+        assert re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", segment), f"illegal USD segment: {segment!r}"
+
+
+def test_fallback_quality_metrics_semantic_fields(tmp_path: Path, monkeypatch):
+    _mapping_doc, _entity_doc, metrics = _run_fallback_with_single_shape(
+        tmp_path,
+        monkeypatch,
+        ifc_guid="GUID_D",
+        ifc_name="梁2",
+        ifc_type="IfcBeam",
+    )
+    assert metrics["semantic_mapping_fidelity"] == "ifc_class_grouped_with_name"
+    assert metrics["mapping_has_ifc_type"] is True
+    assert metrics["mapping_has_ifc_name"] is True
+    # legacy quality fields must still be present
+    assert metrics["materialization_strategy"] == "ifcopenshell_openusd_fallback"
+    assert metrics["hard_quality_gates"]["usdc_openable"] is True
+
+
+def test_fallback_entity_id_alignment(tmp_path: Path, monkeypatch):
+    mapping_doc, entity_doc, _metrics = _run_fallback_with_single_shape(
+        tmp_path,
+        monkeypatch,
+        ifc_guid="GUID_E",
+        ifc_name="柱1",
+        ifc_type="IfcColumn",
+    )
+    items = mapping_doc["items"]
+    entities = entity_doc["entities"]
+    assert len(items) == len(entities) == 1
+    mapping_ids = {item["entity_id"] for item in items}
+    entity_ids = {ent["entity_id"] for ent in entities}
+    assert mapping_ids == entity_ids
+    # cross-reference: matching entity record carries same ifc_guid + usd_prim_path
+    item = items[0]
+    matching = next(ent for ent in entities if ent["entity_id"] == item["entity_id"])
+    assert matching["ifc_guid"] == item["ifc_guid"]
+    assert matching["usd_prim_path"] == item["usd_prim_path"]
+
+
+def test_fallback_mapping_backward_compat_keys(tmp_path: Path, monkeypatch):
+    mapping_doc, _entity_doc, _metrics = _run_fallback_with_single_shape(
+        tmp_path,
+        monkeypatch,
+        ifc_guid="GUID_F",
+        ifc_name="牆1",
+        ifc_type="IfcWall",
+    )
+    item = mapping_doc["items"][0]
+    # legacy schema keys retained for backward-compatible consumers
+    assert "ifc_guid" in item
+    assert "usd_prim_path" in item
+    assert item["ifc_guid"] == "GUID_F"
+
+
+def _run_fallback_with_multiple_shapes(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    shapes: list[dict[str, str]],
+) -> tuple[dict, dict, dict]:
+    """Multi-shape variant of `_run_fallback_with_single_shape`,用於驗證
+    multi-shape invariant(prim path uniqueness、entity_id 對齊、跨 class 衝突)。"""
+    _clear_pxr_test_stubs(monkeypatch)
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, work_dir=repo_root)
+
+    fake_ifcopenshell = types.ModuleType("ifcopenshell")
+    fake_geom = types.ModuleType("ifcopenshell.geom")
+
+    class FakeModel:
+        schema = "IFC4"
+
+    class FakeSettings:
+        USE_WORLD_COORDS = "USE_WORLD_COORDS"
+
+        def set(self, *_args):
+            return None
+
+    class FakeGeometry:
+        verts = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        faces = (0, 1, 2)
+
+    class FakeShape:
+        def __init__(self, *, guid: str, name: str, ifc_type: str):
+            self.guid = guid
+            self.name = name
+            self.type = ifc_type
+            self.geometry = FakeGeometry()
+
+    class FakeIterator:
+        def __init__(self, shape_specs: list[dict[str, str]]):
+            self._shapes = [
+                FakeShape(guid=s["guid"], name=s["name"], ifc_type=s["ifc_type"])
+                for s in shape_specs
+            ]
+            self._index = 0
+
+        def initialize(self) -> bool:
+            return len(self._shapes) > 0
+
+        def get(self):
+            return self._shapes[self._index]
+
+        def next(self) -> bool:
+            self._index += 1
+            return self._index < len(self._shapes)
+
+    fake_ifcopenshell.open = lambda _path: FakeModel()
+    fake_geom.settings = FakeSettings
+    fake_geom.iterator = lambda *_args: FakeIterator(shapes)
+    fake_ifcopenshell.geom = fake_geom
+    monkeypatch.setitem(sys.modules, "ifcopenshell", fake_ifcopenshell)
+    monkeypatch.setitem(sys.modules, "ifcopenshell.geom", fake_geom)
+
+    output_dir = tmp_path / "out"
+    adapter._run_ifcopenshell_openusd_fallback(
+        ifc_path=ifc_file,
+        output_dir=output_dir,
+        primary_error=ConversionAuthorityError("converter_failed", "A3D_LOAD_CANNOT_LOAD_MODEL"),
+    )
+
+    mapping_doc = json.loads((output_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    entity_index_doc = json.loads((output_dir / "entity_index.json").read_text(encoding="utf-8"))
+    metrics_doc = json.loads((output_dir / "quality_metrics.json").read_text(encoding="utf-8"))
+    return mapping_doc, entity_index_doc, metrics_doc
+
+
+def test_fallback_sanitized_clash_does_not_overwrite_prim(tmp_path: Path, monkeypatch):
+    """不同原始 GUID 但 sanitize 成同 token,prim path 必須 unique。"""
+    mapping_doc, _entity_doc, _metrics = _run_fallback_with_multiple_shapes(
+        tmp_path,
+        monkeypatch,
+        shapes=[
+            {"guid": "abc$", "name": "牆 A", "ifc_type": "IfcWall"},
+            {"guid": "abc!", "name": "牆 B", "ifc_type": "IfcWall"},
+            {"guid": "abc-", "name": "牆 C", "ifc_type": "IfcWall"},
+        ],
+    )
+    items = mapping_doc["items"]
+    paths = [item["usd_prim_path"] for item in items]
+    assert len(items) == 3, "三個 shape 都應該有對應 mapping item"
+    assert len(set(paths)) == 3, f"prim path 必須 unique:{paths}"
+    assert all(p.startswith("/World/IfcWall/abc_") for p in paths)
+
+
+def test_fallback_entity_id_one_to_one_with_entity_index_multi_shape(tmp_path: Path, monkeypatch):
+    """multi-shape 場景下 mapping items 與 entity_index entry 1:1 對齊。"""
+    mapping_doc, entity_doc, _metrics = _run_fallback_with_multiple_shapes(
+        tmp_path,
+        monkeypatch,
+        shapes=[
+            {"guid": "GUID_AA", "name": "梁 1", "ifc_type": "IfcBeam"},
+            {"guid": "GUID_BB", "name": "柱 1", "ifc_type": "IfcColumn"},
+            {"guid": "GUID_CC", "name": "牆 1", "ifc_type": "IfcWall"},
+        ],
+    )
+    items = mapping_doc["items"]
+    entities = entity_doc["entities"]
+    assert len(items) == len(entities) == 3
+    mapping_ids = {item["entity_id"] for item in items}
+    entity_ids = {ent["entity_id"] for ent in entities}
+    assert mapping_ids == entity_ids
+    for item in items:
+        matching = next(ent for ent in entities if ent["entity_id"] == item["entity_id"])
+        assert matching["ifc_guid"] == item["ifc_guid"]
+        assert matching["usd_prim_path"] == item["usd_prim_path"]
