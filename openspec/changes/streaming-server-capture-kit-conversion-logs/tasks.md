@@ -6,7 +6,8 @@
 
 - [x] 0.1 切 worktree + branch(`codex/openspec/streaming-server-capture-kit-conversion-logs` from `origin/main`)
 - [x] 0.2 寫 proposal / design / tasks / acceptance / spec deltas
-- [ ] 0.3 Commit scaffold
+- [x] 0.3 Commit scaffold
+      - scaffold / primary implementation 已先由 PR #100 merge;本 branch 追加 apply gap follow-up
 
 ## 1. GitNexus pre-impact analysis
 
@@ -88,8 +89,11 @@
 
 ## 9. Commit / PR / merge
 
-- [ ] 9.1 stage + commit(繁中 message)
-- [ ] 9.2 push + gh pr create
+- [x] 9.1 stage + commit(繁中 message)
+      - `fb80a91 fix(streaming): handle IFC wildcard plan paths`
+      - `388b661 docs(openspec): 記錄 L4 轉檔觀察證據`
+- [x] 9.2 push + gh pr create
+      - follow-up PR #103:`https://github.com/monkey1sai/AI-BIM-governance/pull/103`
 - [ ] 9.3 CI / reviewer / merge
 
 ## 10. Post-merge sync + archive
