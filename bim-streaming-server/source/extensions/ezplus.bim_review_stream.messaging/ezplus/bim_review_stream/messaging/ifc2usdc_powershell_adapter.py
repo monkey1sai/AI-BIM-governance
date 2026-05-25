@@ -486,16 +486,22 @@ class Ifc2UsdcPowershellConverterAdapter:
                 # streaming-server-fallback-semantic-mapping:IFC-class grouped
                 # prim path. Per-class Xform 只 Define 一次;GUID/class 任一含
                 # 非 USD-legal 字元時走 _safe_usd_prim_name 做 sanitize。
+                # collision suffix 用 while-loop counter:不同原始 GUID
+                # (例如 `abc$` / `abc!` / `abc-`)可能 sanitize 成同一 token,
+                # 必須以「下一個未使用的 __N 後綴」確保 prim path 在 stage 內
+                # 唯一,避免 UsdGeom.Mesh.Define 對既有 prim reapply 而 silently
+                # overwrite 前一個 shape 的 mesh attr。
                 class_token = self._resolve_ifc_class_token(ifc_type)
                 guid_token = self._resolve_guid_token(ifc_guid, shape_count)
                 if class_token not in ifc_class_xforms:
                     UsdGeom.Xform.Define(stage, f"/World/{class_token}")
                     ifc_class_xforms.add(class_token)
-                prim_path = f"/World/{class_token}/{guid_token}"
-                if stage.GetPrimAtPath(prim_path).IsValid():
-                    prim_path = (
-                        f"/World/{class_token}/{guid_token}_{shape_count:06d}"
-                    )
+                candidate = f"/World/{class_token}/{guid_token}"
+                suffix = 1
+                while stage.GetPrimAtPath(candidate).IsValid():
+                    candidate = f"/World/{class_token}/{guid_token}__{suffix}"
+                    suffix += 1
+                prim_path = candidate
 
                 mesh = UsdGeom.Mesh.Define(stage, prim_path)
                 mesh.CreatePointsAttr(points)
