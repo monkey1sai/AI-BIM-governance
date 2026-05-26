@@ -861,6 +861,7 @@ OpenSpec       = 需求 / 規格 / 驗收條件
 Git Branch     = 實作隔離（codex/openspec/<change-id>）
 Pull Request   = 審查與討論
 GitHub Actions = 自動驗證
+PR Review Agent = 自動整理風險 / 驗證命令 / blocker / warning
 Merge          = 正式接受變更
 Archive        = 把 delta specs 併入 openspec/specs/
 ```
@@ -872,7 +873,7 @@ Archive        = 把 delta specs 併入 openspec/specs/
    - OpenSpec artifacts 預設使用繁體中文；API、schema、CLI、status enum、log/error 與 OpenSpec parser 必要標頭保留原文
 3. `/openspec apply <change-id>` 實作並更新 task `[ ] → [x]`
 4. 開 PR 跑最小驗證並回報結果
-5. PR review + GitHub Actions 自動驗證
+5. PR review + GitHub Actions 自動驗證 + `pr-review-agent` 自動審查報告
 6. Merge 後執行 OpenSpec sync/archive
 7. 依 SaaS roadmap `§1.6` 同步更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`
    - 更新 `§1.2` specs 清單
@@ -895,6 +896,7 @@ Archive        = 把 delta specs 併入 openspec/specs/
 ### 11.2 PR Checklist
 
 - [ ] 對應的 OpenSpec change 存在（或本 PR 為純 docs/refactor 不需要）
+- [ ] `pr-review-agent` 已產生 report；若狀態為 `blocked` / `failed`，需修正或明確記錄人工 override 理由
 - [ ] 若本 PR 完成 OpenSpec sync/archive，已同步更新 SaaS roadmap `§1.6` 要求的章節，或明確標註不適用原因
 - [ ] 若本 PR 更新 SaaS roadmap，已同步產生/更新同名 HTML 檢視版，或明確標註不適用原因
 - [ ] PR merge 後已 fetch/prune，且本地 `main` 乾淨對齊 `origin/main`，沒有殘留本地-only commit
@@ -905,6 +907,27 @@ Archive        = 把 delta specs 併入 openspec/specs/
 - [ ] 涉及 UI 變更時，符合 `BIM_REVIEW_DEMO_UI_GUIDELINES.md`
 - [ ] 涉及驗證時，依 `runtime-verification-evidence` 分層記錄（不混用單一 pass/fail）
 - [ ] 使用 GitNexus：`gitnexus_impact` 評估影響、`gitnexus_detect_changes` 確認 scope
+
+### 11.2.A PR Review Agent Gate
+
+`pr-review-agent` 是自動審查 gate，不是 merge bot。它會讀 PR diff，輸出 `pr-review-agent.json` 與 `pr-review-agent.md`，整理 changed paths、OpenSpec change、最小驗證命令、GitNexus evidence、blockers、warnings 與 human review notes。
+
+狀態解讀：
+
+| Status | 意義 |
+|---|---|
+| `passed` | 必要 deterministic checks 通過，仍需人工 review / CODEOWNERS / branch protection |
+| `warning` | 可進入人工審查，但 reviewer 必須看 warning |
+| `blocked` | 缺少必要證據、OpenSpec、GitNexus 或 repo boundary 說明，不應 merge |
+| `failed` | 必要命令或 report 產生失敗，不應 merge |
+
+本機重跑：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 -BaseSha origin/main -HeadSha HEAD
+```
+
+Rollout 建議：先讓 workflow report-only 觀察 false positive / false negative；穩定後再把 `pr-review-agent` status check 設為 branch protection required check。若造成阻塞，停用 `.github/workflows/pr-review-agent.yml` 或改回 report-only，不影響 product runtime。
 
 ### 11.3 Post-merge 本地 `main` 對齊
 

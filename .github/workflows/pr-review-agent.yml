@@ -1,0 +1,139 @@
+name: PR Review Agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  pr-review-agent:
+    name: pr-review-agent
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Install Python review dependencies
+        shell: pwsh
+        run: |
+          npm install -g @fission-ai/openspec gitnexus
+          python -m pip install --upgrade pip
+          python -m pip install pytest fastapi httpx
+
+      - name: Install coordinator dependencies
+        shell: pwsh
+        working-directory: bim-review-coordinator
+        run: npm ci
+
+      - name: Install viewer dependencies
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm install --no-audit --no-fund
+
+      - name: Prepare GitNexus index
+        shell: pwsh
+        run: |
+          gitnexus analyze --skip-agents-md --name AI-BIM-governance .
+          $gitnexusAnalyzeExitCode = $LASTEXITCODE
+          if ($gitnexusAnalyzeExitCode -ne 0) {
+            Write-Warning "GitNexus analyze failed with exit code $gitnexusAnalyzeExitCode; the review agent will report GitNexus availability separately."
+          }
+          exit 0
+
+      - name: Run PR review agent
+        id: review
+        shell: pwsh
+        continue-on-error: true
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          $args = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', 'scripts/pr-review-agent.ps1',
+            '-BaseSha', '${{ github.event.pull_request.base.sha }}',
+            '-HeadSha', '${{ github.event.pull_request.head.sha }}',
+            '-PrNumber', '${{ github.event.pull_request.number }}',
+            '-RunId', '${{ github.run_id }}',
+            '-OutputDir', 'artifacts/pr-review-agent',
+            '-AllowGitNexusUnavailable'
+          )
+          if ($env:PR_DRAFT -eq 'true') {
+            $args += '-ReportOnly'
+          }
+          & powershell @args
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (Test-Path artifacts/pr-review-agent/pr-review-agent.md) {
+            Get-Content artifacts/pr-review-agent/pr-review-agent.md -Raw >> $env:GITHUB_STEP_SUMMARY
+          }
+          exit 0
+
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-review-agent-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: artifacts/pr-review-agent
+          if-no-files-found: error
+
+      - name: Comment review summary
+        if: always() && github.event.pull_request.head.repo.fork == false
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if (-not (Test-Path artifacts/pr-review-agent/pr-review-agent.md)) {
+            Write-Host 'No review summary found; skipping comment.'
+            exit 0
+          }
+          $body = Get-Content artifacts/pr-review-agent/pr-review-agent.md -Raw
+          $payload = @{ body = $body } | ConvertTo-Json -Depth 4
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-RestMethod `
+            -Method Post `
+            -Uri "https://api.github.com/repos/$env:REPO/issues/$env:PR_NUMBER/comments" `
+            -Headers $headers `
+            -Body $payload `
+            -ContentType 'application/json' | Out-Null
+
+      - name: Enforce review verdict
+        if: always()
+        shell: pwsh
+        run: |
+          $exitCode = '${{ steps.review.outputs.exit_code }}'
+          if ([string]::IsNullOrWhiteSpace($exitCode)) {
+            Write-Error 'PR review agent did not produce an exit code.'
+            exit 1
+          }
+          if ($exitCode -ne '0') {
+            Write-Error "PR review agent failed with exit code $exitCode."
+            exit [int]$exitCode
+          }
+          Write-Host 'PR review agent passed or ran in report-only mode.'
