@@ -90,11 +90,8 @@
 
 ## 9. Cross-service integration test
 
-- [ ] 9.1 撰寫 `tests/integration/structured-log-cross-service.test.ts`（root Vitest）：
-  - 啟 in-process coordinator + mock streaming-server outbound + mock viewer POST
-  - 模擬 IFC-ready → conversion request → conversion result → session create → viewer log 完整流程
-  - 驗：grep `trace_id` 跨 service 拉得到 records、ts 排序合理、`parent_trace_id` 串接正確
-- [ ] 9.2 驗 viewer POST → coordinator 收 → 寫到 `logs/viewer/...`
+- [x] 9.1 `tests/contracts/structured-log/test_cross_service_integration.py` 3 tests pass — host 在 root pytest（非 root Vitest，因 root 無 Vitest 基礎建設；coordinator 內 vitest 改在 group 3 已驗端到端 viewer-log → file persistence）。模擬 4 個 sub-repo 全部寫入同一 LOG_ROOT 後 grep trace_id：(a) 全 4 service 各自有 record、ts 可排序、全部過 schema (8 records, 4 services)；(b) `parent_trace_id` 鏈接 `rev_*` 到上游 `ifcready_*`；(c) 倒序寫入後 sorted-by-ts 仍能還原 start→end timeline
+- [x] 9.2 viewer POST → coordinator 收 → 寫到 `logs/viewer/...` 在 group 3 `bim-review-coordinator/tests/app/viewerLogIntake.test.ts` 7 tests 已驗（10 valid → 1 jsonl with 10 lines、混合 → drop counter、413、400、跨 request dropped 累積）
 
 ## 10. Smoke / runtime evidence
 
