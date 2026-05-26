@@ -6,13 +6,14 @@ $modulePath = Join-Path $repoRoot 'scripts\lib\preflight-env.ps1'
 . $modulePath
 
 # helper: 建一個 sandbox 含 .env / .env.example 並回路徑
+# 注意:[string] cast 會把 $null 轉成 "",所以用 IsNullOrEmpty 區分「沒給」vs「給空字串」
 function New-EnvSandbox {
     param([string] $EnvContent, [string] $ExampleContent, [string] $FileName = '.env')
     $sb = New-TestSandbox -Prefix 'preflight-env'
-    if ($null -ne $EnvContent) {
+    if (-not [string]::IsNullOrEmpty($EnvContent)) {
         Set-Content -LiteralPath (Join-Path $sb $FileName) -Value $EnvContent
     }
-    if ($null -ne $ExampleContent) {
+    if (-not [string]::IsNullOrEmpty($ExampleContent)) {
         Set-Content -LiteralPath (Join-Path $sb "$FileName.example") -Value $ExampleContent
     }
     return $sb
