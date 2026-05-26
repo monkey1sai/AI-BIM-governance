@@ -117,7 +117,7 @@ Required additional evidence before archive:
 Resolved dashboard + viewer evidence (2026-05-22):
 
 - Evidence directory:
-  - `docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-e2e-final-stage-truth-matched/`
+  - `evidence/2026-05-22-e2e-final-stage-truth-matched/` (relocated 2026-05-26 from `docs/evidence/fix-ifc-usdc-hoops-load-failure/` to archive sibling per spec `documentation-source-of-truth`)
 - Runtime snapshots:
   - `00-runtime-status.json`: coordinator reports `ifcready_1779449084006_3a0fd2cb`, `conversion_job_id="stream_conv_20260522112506_2b79ba1d"`, `conversion_status="ready"`, `review_session_id="review_session_5f549af0631b"`, `expected_stage_url="http://127.0.0.1:49101/artifacts/stream_conv_20260522112506_2b79ba1d/model.usdc"`.
   - `00-ifc-ready-list.json`: read-only job list exposes `download_status="downloaded"`, `conversion_status="ready"`, `viewer_url`, expected stage/mapping URLs, and omits secret/idempotency fields from the dashboard list.
@@ -143,7 +143,7 @@ Remaining before archive:
 Archive closeout evidence on synced main (2026-05-22):
 
 - Evidence directory:
-  - `docs/evidence/fix-ifc-usdc-hoops-load-failure/2026-05-22-archive-closeout-e2e/`
+  - `evidence/2026-05-22-archive-closeout-e2e/` (relocated 2026-05-26 from `docs/evidence/fix-ifc-usdc-hoops-load-failure/` to archive sibling per spec `documentation-source-of-truth`)
 - Chrome/CDP reopened `http://192.168.10.105:8004/ui` after PR #101 was merged and local `main` was fast-forwarded to `origin/main`.
 - Dashboard evidence:
   - `01-runtime-dashboard.png`
