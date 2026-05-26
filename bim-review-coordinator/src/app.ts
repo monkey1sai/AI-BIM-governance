@@ -12,6 +12,7 @@ import { AuthError, createAuthProvider, createUserAuthProvider } from "./service
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
+import { createLogger, type StructLogger } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
@@ -247,14 +248,28 @@ export interface CoordinatorApp {
   config: CoordinatorConfig;
   store: SessionStore;
   eventLog: EventLog;
+  structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
   dispose: () => void;
 }
 
+export interface CreateCoordinatorAppOptions {
+  /**
+   * Pre-built structured logger. Tests use this to write into a tmp dir and
+   * assert on records. Omit to let the app build one against $LOG_ROOT or the
+   * default `./logs`. Whether or not the default logger emits an env_snapshot
+   * is controlled by NODE_ENV (suppressed under `test`).
+   */
+  structLog?: StructLogger;
+}
+
 type RawBodyRequest = express.Request & { rawBody?: string };
 
-export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
+export function createCoordinatorApp(
+  overrides: Partial<CoordinatorConfig> = {},
+  options: CreateCoordinatorAppOptions = {},
+): CoordinatorApp {
   const config = loadConfig(overrides);
   const app = express();
   const server = http.createServer(app);
@@ -264,8 +279,16 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       credentials: false,
     },
   });
+  const structLog =
+    options.structLog ??
+    createLogger("coordinator", {
+      // Skip the env snapshot under vitest / NODE_ENV=test to avoid filling the
+      // gitignored `logs/` directory during the test suite. Tests that exercise
+      // the env_snapshot path build their own logger via options.structLog.
+      skipEnvSnapshot: process.env.NODE_ENV === "test",
+    });
   const store = new SessionStore(config.sessionStoreDir);
-  const eventLog = new EventLog(config.eventLogDir);
+  const eventLog = new EventLog(config.eventLogDir, { structLog });
   const bimControlClient = new BimControlClient(config.bimControlApiBase);
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
@@ -916,13 +939,30 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
         try {
           await ingestStreamingConversionResult(conversionJobId, { result, source: "auto-poll" });
         } catch (err) {
-          console.warn("auto-poll ingest failed", { conversionJobId, err: err instanceof Error ? err.message : String(err) });
+          structLog.withTraceId(`stream_conv_${conversionJobId}`).anomaly(
+            "autoPoll",
+            "auto-poll ingest failed",
+            {
+              anomaly_kind: "unexpected_state",
+              reason: err instanceof Error ? err.message : String(err),
+              conversion_job_id: conversionJobId,
+            },
+          );
         } finally {
           pollerRegistry.delete(conversionJobId);
         }
       },
       onError: (err, attempt) => {
-        console.warn("auto-poll fetch error", { conversionJobId, attempt, err: err instanceof Error ? err.message : String(err) });
+        structLog.withTraceId(`stream_conv_${conversionJobId}`).anomaly(
+          "autoPoll",
+          "auto-poll fetch error",
+          {
+            anomaly_kind: "retry",
+            reason: err instanceof Error ? err.message : String(err),
+            conversion_job_id: conversionJobId,
+            attempt,
+          },
+        );
       },
     });
     pollerRegistry.set(conversionJobId, handle);
@@ -1212,7 +1252,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     }
   };
 
-  return { app, server, io, config, store, eventLog, dispose };
+  return { app, server, io, config, store, eventLog, structLog, dispose };
 }
 
 interface RuntimeStatusInput {

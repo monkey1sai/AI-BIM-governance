@@ -17,16 +17,16 @@
 
 ## 2. TypeScript adapter — coordinator (`bim-review-coordinator/src/lib/structLog.ts`)
 
-- [ ] 2.1 跑 `gitnexus_impact` 對 `bim-review-coordinator/src/app.ts` / `index.ts` / `services/eventLog.ts` — HIGH/CRITICAL risk 先回報
-- [ ] 2.2 實作 `createLogger(service, opts)` + public API（debug/info/warn/error/fatal/network/audit/lifecycle/anomaly/envSnapshot/withTraceId）
-- [ ] 2.3 實作 `run_id` 生成（`run_<YYYYMMDD>_<HHMMSS>_<6 hex>`）
-- [ ] 2.4 實作 daily rotate（每筆檢查 date 跳變 → close 舊 stream / 開新）+ stdout dual sink（`process.stdout.write`）
-- [ ] 2.5 實作 `redactEnvValue(key, value)` + `redactDataBeforeWrite(data)` depth-defense
-- [ ] 2.6 實作 safe stringify wrapper（circular ref / BigInt / Date / Error serializer）
-- [ ] 2.7 實作 fail-soft sink failure handling + `_recovery/` fallback + ring buffer last 100
-- [ ] 2.8 `createLogger()` return 前 emit `env_snapshot`
-- [ ] 2.9 `tests/lib/structLog.test.ts` 覆蓋：寫一筆 → 通過 schema、`withTraceId` child 繼承、redaction（password、env allow-list 內外）、circular ref 降級、daily rotate mock 跨午夜、seq 遞增
-- [ ] 2.10 改寫 `src/index.ts` / `src/app.ts` / `src/services/eventLog.ts` 的 `console.*` 到 `structLog`（其餘 service file 留後續 PR）
+- [x] 2.1 跑 `gitnexus_impact` 對 `EventLog` (Class) / `createCoordinatorApp` (Function) — 兩者 LOW risk / 0 upstream，安全進改寫
+- [x] 2.2 實作 `createLogger(service, opts)` + public API（debug/info/warn/error/fatal/network/audit/lifecycle/anomaly/envSnapshot/withTraceId/writeRaw/noteDropped/flushAndClose）
+- [x] 2.3 實作 `run_id` 生成（`run_<YYYYMMDD>_<HHMMSS>_<6 hex>`）
+- [x] 2.4 實作 daily rotate（每筆檢查 date 跳變 → close 舊 stream / 開新）+ stdout dual sink（`process.stdout.write`）
+- [x] 2.5 實作 `redactEnvValue(key, value)` + `redactDataBeforeWrite(data)` depth-defense（schema 欄位名白名單避免 `key`/`auth` 誤判 + circular ref 防護）
+- [x] 2.6 實作 safe stringify wrapper（circular ref / BigInt / Date / Error serializer）
+- [x] 2.7 實作 fail-soft sink failure handling + `_recovery/` fallback + ring buffer last 100
+- [x] 2.8 `createLogger()` return 前 emit `env_snapshot`（test mode 跳過避免日誌污染）
+- [x] 2.9 `tests/lib/structLog.test.ts` 16 tests pass — 覆蓋 schema 合規 / `withTraceId` child / redaction / circular / daily rotate / seq 遞增 / sink failure / writeRaw
+- [x] 2.10 改寫 `src/index.ts` (1 處) / `src/app.ts` (2 處 auto-poll) / `src/services/eventLog.ts` (2 處 malformed/legacy) 的 `console.*` 到 `structLog`（structLog 注入透過 EventLog options，向後相容）
 
 ## 3. coordinator viewer-log intake + health endpoint
 
@@ -37,15 +37,15 @@
 
 ## 4. coordinator EventLog 雙 sink mirror
 
-- [ ] 4.1 在 `src/services/eventLog.ts` `append()` 既有路徑後加 `structLog.lifecycle(...)` 呼叫
-- [ ] 4.2 撰寫 EventLog event type → `(subject_kind, phase)` 對應表並寫進 docs/contracts/structured-log-schema.md：
+- [x] 4.1 在 `src/services/eventLog.ts` `append()` 既有路徑後加 `structLog.lifecycle(...)` 呼叫（透過 `mirrorToStructuredLog` private method，best-effort try/catch 不影響 caller）
+- [x] 4.2 撰寫 EventLog event type → `(subject_kind, phase)` 對應表並寫進 `docs/contracts/structured-log-schema.md` §9 + `STRUCTURED_LIFECYCLE_MAP` constant：
   - `sessionCreated` → `subject_kind=review_session, phase=start`
   - `sessionActive` → `subject_kind=review_session, phase=active`
   - `sessionClosing` → `subject_kind=review_session, phase=closing`
   - `sessionClosed` → `subject_kind=review_session, phase=closed`
   - `kitInstanceReleased` → `subject_kind=kit_subprocess, phase=closed`
   - `kitInstancesReleased` → `subject_kind=kit_subprocess, phase=closed`（多 kit 一筆 record）
-- [ ] 4.3 `tests/services/eventLog.test.ts` 加 case：`append('sessionCreated')` 後驗 `logs/coordinator/<date>/...` 出現對應 lifecycle record；`/api/.../lifecycle-events` API response 與既有 baseline diff = 0
+- [x] 4.3 `tests/services/eventLogMirror.test.ts` 4 tests pass — 涵蓋 sessionCreated → lifecycle start、6 個 type 對應 subject_kind/phase、無 logger backward compat、storage/event-log/ 檔案 shape 不變
 
 ## 5. Browser adapter — viewer (`web-viewer-sample/src/lib/structLog.ts`)
 

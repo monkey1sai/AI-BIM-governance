@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isSafeSessionId } from "./sessionStore.js";
 import { nowIso } from "../utils/time.js";
+import type { LifecycleSubjectKind, StructLogger } from "../lib/structLog.js";
 
 export interface SessionEvent {
   event_id: string;
@@ -23,9 +24,38 @@ const LIFECYCLE_EVENT_TYPES = new Set([
   "kitInstancesReleased",
 ]);
 
+interface LifecycleMapping {
+  subject_kind: LifecycleSubjectKind;
+  phase: "start" | "active" | "closing" | "closed";
+}
+
+// Source of truth: docs/contracts/structured-log-schema.md §9 EventLog mirror.
+// Any new EventLog type MUST add a row here (or fall through to the default).
+const STRUCTURED_LIFECYCLE_MAP: Record<string, LifecycleMapping> = {
+  sessionCreated: { subject_kind: "review_session", phase: "start" },
+  sessionActive: { subject_kind: "review_session", phase: "active" },
+  sessionClosing: { subject_kind: "review_session", phase: "closing" },
+  sessionClosed: { subject_kind: "review_session", phase: "closed" },
+  kitInstanceReleased: { subject_kind: "kit_subprocess", phase: "closed" },
+  kitInstancesReleased: { subject_kind: "kit_subprocess", phase: "closed" },
+};
+
+export interface EventLogOptions {
+  /**
+   * Structured log adapter — when present, every successful `append()` also
+   * emits a parallel `lifecycle` record per docs/contracts/structured-log-schema.md §9.
+   * Existing callers (unit tests that construct `new EventLog(dir)`) keep
+   * working without the mirror.
+   */
+  structLog?: StructLogger;
+}
+
 export class EventLog {
-  constructor(private readonly rootDir: string) {
+  private readonly structLog?: StructLogger;
+
+  constructor(private readonly rootDir: string, options: EventLogOptions = {}) {
     fs.mkdirSync(this.rootDir, { recursive: true });
+    this.structLog = options.structLog;
   }
 
   append(sessionId: string, type: string, payload: unknown): SessionEvent {
@@ -40,7 +70,36 @@ export class EventLog {
       created_at: nowIso(),
     };
     fs.appendFileSync(this.filePath(sessionId), `${JSON.stringify(event)}\n`, "utf8");
+    this.mirrorToStructuredLog(event);
     return event;
+  }
+
+  private mirrorToStructuredLog(event: SessionEvent): void {
+    if (!this.structLog) return;
+    const mapping =
+      STRUCTURED_LIFECYCLE_MAP[event.type] ??
+      ({ subject_kind: "review_session", phase: "active" } as LifecycleMapping);
+    let subjectId = event.session_id;
+    if (event.type === "kitInstanceReleased") {
+      const released = (event.payload as { kit_instance_id?: unknown })?.kit_instance_id;
+      if (typeof released === "string") subjectId = released;
+    } else if (event.type === "kitInstancesReleased") {
+      const released = (event.payload as { kit_instance_ids?: unknown })?.kit_instance_ids;
+      if (Array.isArray(released)) subjectId = released.map(String).join(",");
+    }
+    try {
+      this.structLog
+        .withTraceId(`rev_${event.session_id}`)
+        .lifecycle("eventLog", `${event.type} (sequence=${event.sequence})`, {
+          phase: mapping.phase,
+          subject_kind: mapping.subject_kind,
+          subject_id: subjectId,
+          event_id: event.event_id,
+          eventlog_type: event.type,
+        });
+    } catch {
+      // Best-effort mirror — never let structured log issues affect EventLog callers.
+    }
   }
 
   list(sessionId: string): SessionEvent[] {
@@ -54,9 +113,18 @@ export class EventLog {
         try {
           events.push(JSON.parse(line) as StoredSessionEvent);
         } catch (error) {
-          console.warn(
-            `EventLog: skipping malformed event in ${path.basename(file)} line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          const reason = error instanceof Error ? error.message : String(error);
+          const msg = `EventLog: skipping malformed event in ${path.basename(file)} line ${index + 1}: ${reason}`;
+          if (this.structLog) {
+            this.structLog.anomaly("eventLog", msg, {
+              anomaly_kind: "unexpected_state",
+              reason,
+              file: path.basename(file),
+              line_number: index + 1,
+            });
+          } else {
+            console.warn(msg);
+          }
         }
       });
       return withSequences(events);
@@ -84,9 +152,18 @@ export class EventLog {
       const payload = JSON.parse(fs.readFileSync(legacyFile, "utf8")) as { items?: StoredSessionEvent[] };
       return Array.isArray(payload.items) ? payload.items : [];
     } catch (error) {
-      console.warn(
-        `EventLog: legacy file ${path.basename(legacyFile)} unreadable: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const reason = error instanceof Error ? error.message : String(error);
+      const msg = `EventLog: legacy file ${path.basename(legacyFile)} unreadable: ${reason}`;
+      if (this.structLog) {
+        this.structLog.anomaly("eventLog", msg, {
+          anomaly_kind: "unexpected_state",
+          reason,
+          file: path.basename(legacyFile),
+          phase: "legacy_read",
+        });
+      } else {
+        console.warn(msg);
+      }
       return [];
     }
   }

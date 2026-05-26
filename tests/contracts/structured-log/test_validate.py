@@ -108,6 +108,30 @@ def test_event_type_enum_covers_seven_documented_values():
     )
 
 
+def test_env_allowlist_json_and_markdown_agree():
+    """Drift guard: env-allowlist.json (machine source) and the .md (human doc) MUST list the same keys."""
+    import re
+
+    json_path = _HERE / "env-allowlist.json"
+    md_path = _HERE.parent.parent.parent / "docs" / "contracts" / "structured-log-env-allowlist.md"
+
+    assert json_path.is_file(), f"missing {json_path}"
+    assert md_path.is_file(), f"missing {md_path}"
+
+    with json_path.open(encoding="utf-8") as fh:
+        json_keys = set(json.load(fh)["allow_list"])
+
+    md_text = md_path.read_text(encoding="utf-8")
+    # The allow-list table starts at "## Allow-list" and ends at the next "## " heading.
+    section = md_text.split("## Allow-list", 1)[1].split("\n## ", 1)[0]
+    # Rows look like `| `KEY` | ... | ... |`. Strip out header / separator rows.
+    md_keys = set(re.findall(r"^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|", section, flags=re.MULTILINE))
+
+    assert json_keys == md_keys, (
+        f"env allow-list drift:\n  only_in_json={json_keys - md_keys}\n  only_in_md={md_keys - json_keys}"
+    )
+
+
 def test_lifecycle_subject_kinds_match_contract():
     """Guard against subject_kind drift between schema.json and structured-log-schema.md."""
     schema = _load_schema()

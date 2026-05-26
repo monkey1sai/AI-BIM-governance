@@ -10,7 +10,12 @@ Thumbs.db
 # Cross-service structured log baseline sink root (per
 # docs/contracts/structured-log-schema.md §6.1). Adapters write
 # logs/<service>/<YYYY-MM-DD>/<service>-<run_id>.jsonl here.
+# The match is broad because tests in bim-review-coordinator/ run with cwd
+# inside that sub-repo, producing bim-review-coordinator/logs/.
 /logs/
+/bim-review-coordinator/logs/
+/web-viewer-sample/logs/
+/scripts/logs/
 
 # Local runtime-manager env (real values; .env.runtime-manager.docker.example stays tracked)
 .env.runtime-manager.docker
