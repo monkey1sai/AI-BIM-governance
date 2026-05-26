@@ -85,4 +85,4 @@ docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml down -v
 
 | Date       | Operator | Branch / Commit                                | Notes |
 |------------|----------|------------------------------------------------|-------|
-| YYYY-MM-DD | YOUR_NAME| `docs/one-click-deploy-design-2026-05-26 @ XXXXXX` | (pending first run) |
+| 2026-05-26 | monkey1sai + Claude | `docs/one-click-deploy-design-2026-05-26 @ 2b9715b` | Step 1/2/5 pass(cold start → deploy 1m 42s 全綠 → idempotent re-run 5s + Phase 4 全 skip + verify 全 200)。Step 3/4(coordinator UI / WebRTC 畫面)、Step 6(-Build force rebuild)、Step 7(關 Docker Desktop fail injection)需要人類目視 / 手動操作,留 PR review 階段補驗 |
