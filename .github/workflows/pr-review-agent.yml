@@ -34,8 +34,9 @@ jobs:
         run: |
           npm install -g @fission-ai/openspec gitnexus
           python -m pip install --upgrade pip
-          python -m pip install pytest
+          python -m pip install pytest fastapi httpx
           npm ci --prefix bim-review-coordinator
+          npm install --prefix web-viewer-sample --no-audit --no-fund
           gitnexus analyze --skip-agents-md --name AI-BIM-governance .
 
       - name: Run PR review agent
