@@ -351,8 +351,19 @@ Write-DeployTag -Tag 'ok' -Message "Phase 2 complete ($fixActions actions)" -Log
 # ============================================================
 Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
 
+# Phase 2 跑了 docker compose rm / build,docker container 與 wslrelay 等 port forwarder
+# 狀態可能變動。Re-audit ports 避免用 Phase 1 的 stale 資料問互動。
+$ports = Test-PortAvailability -RepoRoot $RepoRoot
+
+# Docker Desktop 在 Windows 用以下 process 做 container port forward,不是「陌生 PID」:
+$dockerForwarderNames = @('wslrelay.exe','com.docker.backend.exe','docker.exe','vpnkit.exe','vpnkit-bridge.exe')
+
 $strangerPortPids = @($ports.docker + $ports.hostNative |
-    Where-Object { $_.status -eq 'OCCUPIED' -and -not $_.ourPidFile })
+    Where-Object {
+        $_.status -eq 'OCCUPIED' `
+        -and -not $_.ourPidFile `
+        -and ($_.name -notin $dockerForwarderNames)
+    })
 
 if ($strangerPortPids.Count -eq 0 -and $hostNative.venv -ne 'WRONG_VERSION') {
     Write-DeployTag -Tag 'ok' -Message 'no dangerous action needed' -LogPath $LogPath | Out-Null
