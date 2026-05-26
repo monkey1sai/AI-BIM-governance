@@ -21,6 +21,7 @@ function New-TestOutputDir {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$env:PR_REVIEW_AGENT_REQUIRE_AI = $null
 
 # Test 1: OpenSpec-only PR produces schema-valid report and detects change id.
 $out1 = New-TestOutputDir
@@ -37,6 +38,10 @@ $loaded1 = Get-Content -LiteralPath $result1.json_path -Raw | ConvertFrom-Json
 Assert-True ($loaded1.schema_version -eq 'pr-review-agent/v1') 'schema version present'
 Assert-True ($loaded1.openspec_changes -contains 'add-pr-review-agent') 'OpenSpec change id detected'
 Assert-True ($loaded1.validation_commands -contains 'openspec validate add-pr-review-agent') 'OpenSpec validation command planned'
+$optionalAiWarning = $loaded1.warnings | Where-Object { $_.kind -eq 'optional_ai_adapter_skipped' } | Select-Object -First 1
+$optionalAiNote = $loaded1.human_review_notes | Where-Object { $_ -match 'Optional AI adapter' } | Select-Object -First 1
+Assert-True ($null -eq $optionalAiWarning) 'optional AI skip is not a warning by default'
+Assert-True ($null -ne $optionalAiNote) 'optional AI skip is recorded as a human note'
 Assert-True (Test-Path -LiteralPath $result1.markdown_path) 'markdown summary written'
 Remove-Item -LiteralPath $out1 -Recurse -Force
 
@@ -65,7 +70,8 @@ $result3 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
 $loaded3 = Get-Content -LiteralPath $result3.json_path -Raw | ConvertFrom-Json
 $secretBlockers = @($loaded3.blockers | Where-Object { $_.kind -eq 'secret_path' })
 Assert-True ($secretBlockers.Count -ge 2) 'secret path blockers recorded'
-Assert-True (($secretBlockers | ForEach-Object { $_.message }) -notmatch 'PASSWORD=|TOKEN=') 'secret values are not printed'
+$secretLeaks = @($secretBlockers | ForEach-Object { $_.message } | Where-Object { $_ -match 'PASSWORD=|TOKEN=' })
+Assert-True ($secretLeaks.Count -eq 0) 'secret values are not printed'
 Remove-Item -LiteralPath $out3 -Recurse -Force
 
 # Test 4: Retired runtime reintroduction is blocked.
@@ -193,6 +199,26 @@ try {
 } finally {
     Pop-Location
     Remove-Item -LiteralPath $tempGit -Recurse -Force
+}
+
+# Test 11: Working-tree rename parsing reports the new path only.
+$tempRenameGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-rename-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $tempRenameGit -Force | Out-Null
+Push-Location $tempRenameGit
+try {
+    git init -q
+    git config user.email 'pr-review-agent@example.invalid'
+    git config user.name 'PR Review Agent Test'
+    Set-Content -LiteralPath 'old name.txt' -Value 'base' -Encoding UTF8
+    git add 'old name.txt'
+    git commit -q -m 'base'
+    git mv 'old name.txt' 'new name.txt'
+    $renamePaths = @(Get-PrReviewChangedPathsFromGit -RepoRoot $tempRenameGit)
+    Assert-True ($renamePaths -contains 'new name.txt') 'working-tree rename includes new path'
+    Assert-True (-not ($renamePaths -contains 'old name.txt')) 'working-tree rename excludes old path'
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $tempRenameGit -Recurse -Force
 }
 
 Write-Host '[test-pr-review-agent] all assertions passed'

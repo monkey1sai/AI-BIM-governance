@@ -69,6 +69,28 @@ function Get-PrReviewPowerShell {
     return 'powershell.exe'
 }
 
+function ConvertFrom-PrReviewPorcelainStatus {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string[]] $Records)
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $Records.Count; $i++) {
+        $record = $Records[$i]
+        if ([string]::IsNullOrWhiteSpace($record) -or $record.Length -lt 4) { continue }
+
+        $statusCode = $record.Substring(0, 2)
+        $pathText = $record.Substring(3)
+        if ($statusCode -match '[RC]' -and ($i + 1) -lt $Records.Count) {
+            [void]$paths.Add($pathText)
+            $i++
+            continue
+        }
+        [void]$paths.Add($pathText)
+    }
+
+    return @($paths.ToArray())
+}
+
 function Get-PrReviewChangedPathsFromGit {
     [CmdletBinding()]
     param(
@@ -88,17 +110,10 @@ function Get-PrReviewChangedPathsFromGit {
         }
     }
     if ($paths.Count -eq 0) {
-        $paths = @(git -c "safe.directory=$safeRoot" status --porcelain=v1 -uall 2>$null | ForEach-Object {
-            if ($_.Length -gt 3) {
-                $statusCode = $_.Substring(0, 2)
-                $pathText = $_.Substring(3)
-                if ($statusCode -match '[RC]' -and $pathText -match ' -> ') {
-                    ($pathText -split ' -> ', 2)[1]
-                } else {
-                    $pathText
-                }
-            }
-        })
+        $lineTerminators = [char[]]"`r`n"
+        $statusOutput = git -c "safe.directory=$safeRoot" status --porcelain=v1 -z -uall 2>$null | Out-String
+        $statusRecords = @($statusOutput -split "`0" | ForEach-Object { $_.TrimEnd($lineTerminators) } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $paths = @(ConvertFrom-PrReviewPorcelainStatus -Records $statusRecords)
     }
     return @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { ConvertTo-PrReviewPath $_ } | Sort-Object -Unique)
 }
@@ -535,9 +550,8 @@ function Invoke-PrReviewAgent {
         [void]$warnings.Add((New-PrReviewIssue -Kind 'gitnexus_warning' -Severity 'medium' -Message "GitNexus detect changes did not pass: $($gitnexus.status)."))
     }
 
-    if ([string]::IsNullOrWhiteSpace($env:PR_REVIEW_AGENT_REQUIRE_AI)) {
-        [void]$warnings.Add((New-PrReviewIssue -Kind 'optional_ai_adapter_skipped' -Severity 'medium' -Message 'Optional AI adapter is not required for this gate and was skipped.'))
-    } elseif ([string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) {
+    $optionalAiSkipped = [string]::IsNullOrWhiteSpace($env:PR_REVIEW_AGENT_REQUIRE_AI)
+    if (-not $optionalAiSkipped -and [string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) {
         [void]$blockers.Add((New-PrReviewIssue -Kind 'ai_adapter_unavailable' -Severity 'high' -Message 'PR_REVIEW_AGENT_REQUIRE_AI is set but OPENAI_API_KEY is unavailable.'))
     }
 
@@ -560,6 +574,7 @@ function Invoke-PrReviewAgent {
     if ($ReportOnly) { [void]$humanNotes.Add('Report-only mode is enabled; this run should not be treated as merge approval.') }
     if ($openSpecChangeIds.Count -gt 0) { [void]$humanNotes.Add("OpenSpec changes detected: $($openSpecChangeIds -join ', ')") }
     if ($ChangedPaths.Count -eq 0) { [void]$humanNotes.Add('No changed paths were detected; verify base/head configuration.') }
+    if ($optionalAiSkipped) { [void]$humanNotes.Add('Optional AI adapter is not required by policy and was skipped.') }
 
     $report = [ordered]@{
         schema_version      = 'pr-review-agent/v1'

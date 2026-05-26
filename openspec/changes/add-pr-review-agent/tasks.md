@@ -21,7 +21,7 @@
 - [x] 3.2 設定 workflow 最小權限：`contents: read`、`pull-requests: write`、`checks: write`；fork PR 不暴露 secret。
 - [x] 3.3 將 review report JSON / markdown 上傳為 workflow artifact。
 - [x] 3.4 將 markdown summary 回寫到 PR comment 或 check summary，摘要只保留 verdict、blockers、warnings、commands 與 artifact link。
-- [x] 3.5 第一版 workflow 預設 deterministic gate 可運作；optional AI adapter 若未設定，必須記錄 skipped / warning 而不是產生假通過。
+- [x] 3.5 第一版 workflow 預設 deterministic gate 可運作；optional AI adapter 若未被 policy 要求，必須記錄 skipped note 而不是產生假通過或預設 warning。
 
 ## 4. Tests And Fixtures
 
@@ -61,5 +61,16 @@ Validation notes:
   - PowerShell parse checks passed for `scripts/pr-review-agent.ps1`, `scripts/lib/pr-review-agent.ps1`, and `scripts/tests/test-pr-review-agent.ps1`.
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-pr-review-agent.ps1` passed.
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 -OutputDir artifacts\pr-review-agent-local-fix -AllowGitNexusUnavailable -AllowUnavailableCommands` completed with `status=warning risk=medium`, with only the optional AI adapter warning.
+  - `git diff --check` passed with only LF/CRLF normalization warnings.
+  - `gitnexus detect-changes --repo AI-BIM-governance` completed with `No changes detected`, while retaining the stale/sibling worktree warning.
+- PR review feedback fixes on 2026-05-26:
+  - optional AI adapter is now recorded as a human review note by default, not a warning, unless `PR_REVIEW_AGENT_REQUIRE_AI` makes it mandatory;
+  - working-tree changed-path fallback now parses `git status --porcelain=v1 -z`, including rename/copy records with spaces or shell-special path characters;
+  - secret path tests now assert that no blocker message leaks token/password-like values.
+- Re-validation after PR review feedback fixes:
+  - `openspec validate add-pr-review-agent` passed.
+  - PowerShell parse checks passed for `scripts/pr-review-agent.ps1`, `scripts/lib/pr-review-agent.ps1`, and `scripts/tests/test-pr-review-agent.ps1`.
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-pr-review-agent.ps1` passed.
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 -OutputDir artifacts\pr-review-agent-local-review-fix -AllowGitNexusUnavailable -AllowUnavailableCommands` completed with `status=passed risk=low`.
   - `git diff --check` passed with only LF/CRLF normalization warnings.
   - `gitnexus detect-changes --repo AI-BIM-governance` completed with `No changes detected`, while retaining the stale/sibling worktree warning.
