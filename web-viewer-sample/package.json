@@ -15,10 +15,11 @@
         "build": "vite build",
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
         "preview": "vite preview",
-        "verify": "npm run build",
+        "verify": "npm run build && npm run test:struct-log",
         "test:session-first": "node scripts/verify-session-first-contract.mjs",
         "test:conversion-summary-card": "node scripts/verify-conversion-summary-card.mjs",
-        "test:tri-ready-states": "node scripts/verify-tri-ready-states.mjs"
+        "test:tri-ready-states": "node scripts/verify-tri-ready-states.mjs",
+        "test:struct-log": "node scripts/verify-struct-log.mjs"
     },
     "eslintConfig": {
         "extends": [

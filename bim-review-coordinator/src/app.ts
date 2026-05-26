@@ -12,7 +12,13 @@ import { AuthError, createAuthProvider, createUserAuthProvider } from "./service
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
-import { createLogger, type StructLogger } from "./lib/structLog.js";
+import {
+  createLogger,
+  persistRecordsToServicePaths,
+  validateLogRecordBasic,
+  type LogRecord,
+  type StructLogger,
+} from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
@@ -757,7 +763,16 @@ export function createCoordinatorApp(
     });
   });
 
+  // Local-dev-only structured log endpoints (cross-service-structured-log-baseline)
+  // intentionally do NOT require the internal token; they are reached via
+  // 127.0.0.1 binding. Production hardening is a future change.
+  const STRUCT_LOG_UNAUTH_PATHS = new Set(["/viewer-log", "/structLog/health"]);
+
   app.use("/api/internal", (request, response, next) => {
+    if (STRUCT_LOG_UNAUTH_PATHS.has(request.path)) {
+      next();
+      return;
+    }
     if (!isInternalRequestAuthorized(headersToMap(request.headers), config.internalApiAuthToken)) {
       response.status(401).json({ detail: "missing or invalid internal API token" });
       return;
@@ -1143,6 +1158,90 @@ export function createCoordinatorApp(
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Structured log baseline endpoints (capability:
+  // cross-service-structured-log-baseline). LOCAL-DEV-ONLY: these intentionally
+  // do NOT require auth — they rely on the coordinator binding to 127.0.0.1.
+  // Production hardening (token, IP allow-list) is a future change.
+  // ---------------------------------------------------------------------------
+
+  const VIEWER_LOG_BYTE_LIMIT = 256 * 1024; // 256 KiB per spec §6
+  const VIEWER_LOG_MAX_RECORDS = 500;
+
+  const viewerLogIntakeStats = {
+    records_received: 0,
+    records_accepted: 0,
+    records_dropped: 0,
+    requests_rejected_oversized: 0,
+    last_drop_reason: null as string | null,
+  };
+
+  app.post(
+    "/api/internal/viewer-log",
+    express.json({
+      limit: VIEWER_LOG_BYTE_LIMIT,
+      verify: (req, _res, buf) => {
+        (req as RawBodyRequest).rawBody = buf.toString("utf8");
+      },
+    }),
+    (request, response, next) => {
+      try {
+        // express.json with the limit returns 413 automatically on oversized body
+        // (handled by the global error handler below). Aside from that, we just
+        // need an array of records.
+        const body = request.body as unknown;
+        if (!Array.isArray(body)) {
+          response.status(400).json({ detail: "expected JSON array of LogRecord", accepted: 0, dropped: 0 });
+          return;
+        }
+        if (body.length > VIEWER_LOG_MAX_RECORDS) {
+          response.status(413).json({
+            detail: `batch exceeds ${VIEWER_LOG_MAX_RECORDS} records`,
+            accepted: 0,
+            dropped: body.length,
+          });
+          return;
+        }
+        viewerLogIntakeStats.records_received += body.length;
+        const validated: LogRecord[] = [];
+        let droppedThisBatch = 0;
+        for (const candidate of body) {
+          const result = validateLogRecordBasic(candidate);
+          if (result.valid) {
+            validated.push(result.record);
+          } else {
+            droppedThisBatch += 1;
+            viewerLogIntakeStats.last_drop_reason = result.reason;
+          }
+        }
+        const persisted = persistRecordsToServicePaths(validated, config.logRoot);
+        const totalDropped = droppedThisBatch + persisted.dropped;
+        viewerLogIntakeStats.records_accepted += persisted.written;
+        viewerLogIntakeStats.records_dropped += totalDropped;
+        for (let i = 0; i < totalDropped; i += 1) {
+          structLog.noteDropped("viewer_intake_validation_or_sink");
+        }
+        response.json({
+          accepted: persisted.written,
+          dropped: totalDropped,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get("/api/internal/structLog/health", (_request, response) => {
+    response.json({
+      run_id: structLog.runId,
+      current_file: structLog.currentFile(),
+      records_written: structLog.recordsWritten(),
+      records_dropped: structLog.recordsDropped(),
+      last_failure: structLog.lastFailure(),
+      viewer_intake: { ...viewerLogIntakeStats },
+    });
+  });
+
   // B-scheme T7 §8.1-8.3：local web view session / artifact resolution。
   // 使用者 auth 用可替換 provider（不做死 EZPLUS SSO；sso_binding 在 OQ5
   // 確認前恆 pending_oq5）。實際 USDC streaming 仍走既有 stream-config 路徑。
@@ -1227,6 +1326,13 @@ export function createCoordinatorApp(
     if (error instanceof MetadataOnlyViolation) {
       // 雲地分離鐵律：metadata-only callback 不得帶大型模型本體。
       response.status(422).json({ detail: error.message });
+      return;
+    }
+    // express.json() with `limit` throws an error tagged `entity.too.large`.
+    // Surface as 413 for cross-service-structured-log-baseline viewer-log intake.
+    const tagged = error as { type?: string; status?: number };
+    if (tagged && (tagged.type === "entity.too.large" || tagged.status === 413)) {
+      response.status(413).json({ detail: "request body too large", accepted: 0, dropped: 0 });
       return;
     }
     response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });

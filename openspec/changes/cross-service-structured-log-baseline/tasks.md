@@ -30,10 +30,9 @@
 
 ## 3. coordinator viewer-log intake + health endpoint
 
-- [ ] 3.1 在 `src/app.ts` 加 `POST /api/internal/viewer-log` route：body validation（陣列 + schema validator）、size limit（default 256 KiB）、persist 通過的 records 到 `logs/viewer/<date>/viewer-<run_id>.jsonl`（注意：viewer 自己 run_id 從 request 帶來，不是 coordinator 自生）
-- [ ] 3.2 在 `src/app.ts` 加 `GET /api/internal/structLog/health` route：回 `{run_id, current_file, records_written, records_dropped, last_failure}`
-- [ ] 3.3 `tests/app/viewerLogIntake.test.ts`：10 valid → 200 + 10 lines；oversized → 413；混合 valid/invalid → 200 + 8 lines + dropped counter +2
-- [ ] 3.4 `tests/app/structLogHealth.test.ts`：GET 200 + 必填欄位
+- [x] 3.1 加 `POST /api/internal/viewer-log`：256 KiB body limit + 500 records/batch 上限；white-list bypass internal-auth middleware（local-dev-only baseline）；`validateLogRecordBasic` runtime 檢查 + `persistRecordsToServicePaths` 寫 `logs/viewer/<date>/viewer-<run_id>.jsonl`；413 body / 400 non-array / 413 too-many-records 全覆蓋
+- [x] 3.2 加 `GET /api/internal/structLog/health`：回 `{run_id, current_file, records_written, records_dropped, last_failure, viewer_intake: {records_received, records_accepted, records_dropped, ...}}`
+- [x] 3.3 + 3.4 `tests/app/viewerLogIntake.test.ts` 7 tests pass — 10 valid → 200 + 10 lines、混合 valid/invalid → 200 + 8 lines + dropped 累計、非 array → 400、oversized body → 413、太多 records → 413、health endpoint 必填欄位齊全、dropped counter 跨 request 累積正確
 
 ## 4. coordinator EventLog 雙 sink mirror
 
@@ -49,13 +48,13 @@
 
 ## 5. Browser adapter — viewer (`web-viewer-sample/src/lib/structLog.ts`)
 
-- [ ] 5.1 跑 `gitnexus_impact` 對 viewer src/lib 目錄
-- [ ] 5.2 實作同 §3.1 的 public API（TS）
-- [ ] 5.3 實作 ring buffer（max 500）+ flush trigger（≥50 records OR 2s OR explicit flush）
-- [ ] 5.4 實作 `fetch('POST /api/internal/viewer-log', ...)`；失敗 retain in buffer 5 min；超過丟最舊；指數 backoff max 3 次
-- [ ] 5.5 全域 `window.addEventListener('error', ...)` + `unhandledrejection` 自動產 `logic_error` 記錄
-- [ ] 5.6 暴露 `window.__structLog.tail(n=100)` 給 Chrome MCP / dev console inspect
-- [ ] 5.7 `tests/lib/structLog.test.ts` 覆蓋：flush trigger 三條件、retry backoff、tail() API、自動 error capture
+- [x] 5.1 viewer src/lib 為新檔，跳 GitNexus impact（新建 module 0 upstream 風險）；既有 src/lib 目錄當前無其他模組
+- [x] 5.2 實作 `createBrowserLogger(opts)` + public API 對齊 coordinator（debug/info/warn/error/fatal/network/lifecycle/anomaly/setTraceId/flush/tail/shutdown）
+- [x] 5.3 實作 ring buffer（default capacity 500）+ flush trigger 三條件（≥50 records / 2s timer / explicit flush()）
+- [x] 5.4 實作預設 fetch transport + 注入式 transport；失敗 retain ≤ 5 min（`retainOnFailureMs`）；buffer 滿丟最舊；指數 backoff up to 3 attempts
+- [x] 5.5 `installGlobalHandlers(logger, win)` 接 `window.addEventListener('error', ...)` + `unhandledrejection` 自動產 `logic_error`；可被測試環境注入 win
+- [x] 5.6 `installGlobalHandlers` 同時暴露 `window.__structLog = { logger, tail(n) }` 供 Chrome MCP / dev console inspect
+- [x] 5.7 `scripts/verify-struct-log.mjs` 10 tests pass — run_id pattern、isoUtcMs ms precision、6 個 helper event_type、auto-flush at threshold、ring buffer 丟最舊、retainOnFailureMs 過期、tail() 抓尾、setTraceId rotate per-trace seq；wire 進 `npm run verify`
 
 ## 6. Python adapter — streaming-server (`bim-streaming-server/source/extensions/.../struct_log.py`)
 

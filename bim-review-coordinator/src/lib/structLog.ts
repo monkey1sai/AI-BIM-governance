@@ -335,6 +335,106 @@ export function safeStringify(record: unknown): string {
   });
 }
 
+// -------------------- Runtime validator for viewer-log intake --------------------
+
+const VALID_LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error", "fatal"]);
+const VALID_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "logic_error",
+  "operation_anomaly",
+  "env_snapshot",
+  "lifecycle",
+  "audit",
+  "network",
+  "general",
+]);
+const VALID_SERVICES: ReadonlySet<string> = new Set(["coordinator", "streaming-server", "viewer", "scripts"]);
+const RUN_ID_PATTERN = /^run_\d{8}_\d{6}_[0-9a-f]{6}$/;
+const TRACE_ID_PATTERN = /^(ifcready_|rev_|stream_conv_|script_|external_)[A-Za-z0-9_\-]+$/;
+const ISO_MS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+export type ValidationResult = { valid: true; record: LogRecord } | { valid: false; reason: string };
+
+/**
+ * Lightweight runtime validation used by viewer-log intake to drop malformed
+ * records without dragging ajv into the production bundle. Spec-strictness lives
+ * in the contract tests (tests/contracts/structured-log/test_validate.py and
+ * the ajv-backed Vitest sibling).
+ */
+export function validateLogRecordBasic(input: unknown): ValidationResult {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return { valid: false, reason: "not_an_object" };
+  }
+  const rec = input as Record<string, unknown>;
+  const required = ["ts", "level", "event_type", "service", "component", "run_id", "trace_id", "msg", "data"] as const;
+  for (const field of required) {
+    if (!(field in rec)) return { valid: false, reason: `missing_${field}` };
+  }
+  if (typeof rec.ts !== "string" || !ISO_MS_PATTERN.test(rec.ts)) return { valid: false, reason: "bad_ts" };
+  if (typeof rec.level !== "string" || !VALID_LEVELS.has(rec.level)) return { valid: false, reason: "bad_level" };
+  if (typeof rec.event_type !== "string" || !VALID_EVENT_TYPES.has(rec.event_type)) {
+    return { valid: false, reason: "bad_event_type" };
+  }
+  if (typeof rec.service !== "string" || !VALID_SERVICES.has(rec.service)) {
+    return { valid: false, reason: "bad_service" };
+  }
+  if (typeof rec.component !== "string" || rec.component.length === 0) {
+    return { valid: false, reason: "bad_component" };
+  }
+  if (typeof rec.run_id !== "string" || !RUN_ID_PATTERN.test(rec.run_id)) {
+    return { valid: false, reason: "bad_run_id" };
+  }
+  if (typeof rec.trace_id !== "string" || !TRACE_ID_PATTERN.test(rec.trace_id)) {
+    return { valid: false, reason: "bad_trace_id" };
+  }
+  if (typeof rec.msg !== "string" || rec.msg.length === 0 || rec.msg.length > 2000) {
+    return { valid: false, reason: "bad_msg" };
+  }
+  if (rec.data === null || typeof rec.data !== "object" || Array.isArray(rec.data)) {
+    return { valid: false, reason: "bad_data" };
+  }
+  return { valid: true, record: rec as unknown as LogRecord };
+}
+
+// -------------------- Persistence helper (used by viewer-log intake) --------------------
+
+export interface PersistResult {
+  written: number;
+  dropped: number;
+  droppedReasons: Map<string, number>;
+}
+
+/**
+ * Persist a batch of already-validated records straight to
+ * `<logRoot>/<service>/<YYYY-MM-DD>/<service>-<run_id>.jsonl`. Used by the
+ * coordinator's `POST /api/internal/viewer-log` handler to write viewer
+ * records under `logs/viewer/...` instead of coordinator's own file.
+ */
+export function persistRecordsToServicePaths(
+  records: LogRecord[],
+  logRoot: string = defaultLogRoot(),
+): PersistResult {
+  const result: PersistResult = { written: 0, dropped: 0, droppedReasons: new Map() };
+  for (const record of records) {
+    const dateDir = dateDirFromIso(record.ts);
+    const dir = path.join(logRoot, record.service, dateDir);
+    if (!ensureDir(dir)) {
+      result.dropped += 1;
+      result.droppedReasons.set("mkdir_failed", (result.droppedReasons.get("mkdir_failed") ?? 0) + 1);
+      continue;
+    }
+    const file = path.join(dir, `${record.service}-${record.run_id}.jsonl`);
+    try {
+      fs.appendFileSync(file, safeStringify(record) + "\n", { encoding: "utf-8" });
+      result.written += 1;
+    } catch (err) {
+      const reason = err instanceof Error ? err.name : "append_failed";
+      result.dropped += 1;
+      result.droppedReasons.set(reason, (result.droppedReasons.get(reason) ?? 0) + 1);
+    }
+  }
+  return result;
+}
+
 export function extractStackTail(err: unknown, max: number = 8): string[] {
   if (!err || typeof err !== "object") return [];
   const stack = (err as { stack?: unknown }).stack;
