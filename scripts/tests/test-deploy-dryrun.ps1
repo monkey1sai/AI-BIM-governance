@@ -4,8 +4,8 @@
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $deploy = Join-Path $repoRoot 'scripts\deploy.ps1'
 
-# 跑 -DryRun 並抓 stdout
-$output = & $deploy -DryRun 2>&1 | Out-String
+# 跑 -DryRun 並抓所有 stream(Write-Host 走 Information stream,要 *>&1 才能 capture)
+$output = & $deploy -DryRun *>&1 | Out-String
 $exitCode = $LASTEXITCODE
 
 # Test 1: 退 0

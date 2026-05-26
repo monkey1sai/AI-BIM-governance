@@ -8,10 +8,10 @@ Set-StrictMode -Version Latest
 function Test-DockerEnvironment {
     [CmdletBinding()]
     param(
-        [scriptblock] $DockerCommand = { param($Args) docker @Args 2>&1 },
-        [scriptblock] $ComposeCommand = { param($Args) docker @Args 2>&1 },
+        [scriptblock] $DockerCommand = { param($ArgList) docker @ArgList 2>&1 },
+        [scriptblock] $ComposeCommand = { param($ArgList) docker @ArgList 2>&1 },
         [scriptblock] $EngineProbe = {
-            param($Args)
+            param($ArgList)
             $stdout = docker info --format '{{json .}}' 2>&1
             @{ ExitCode = $LASTEXITCODE; Stdout = ($stdout | Out-String).Trim() }
         },
@@ -28,7 +28,8 @@ function Test-DockerEnvironment {
 
     # docker CLI
     try {
-        $cliOut = & $DockerCommand @(@('--version'))
+        # 強制 to string:真 docker CLI 回 array of lines,-match 在 array 上不 populate $Matches
+        $cliOut = (& $DockerCommand @(@('--version'))) | Out-String
         if ($cliOut -match 'Docker version\s+([\d\.]+)') {
             $audit.cliVersion = $Matches[1]
         }
@@ -38,7 +39,7 @@ function Test-DockerEnvironment {
 
     # docker compose v2
     try {
-        $cmpOut = & $ComposeCommand @(@('compose', 'version'))
+        $cmpOut = (& $ComposeCommand @(@('compose', 'version'))) | Out-String
         if ($cmpOut -match 'Docker Compose version\s+v?(\d+)\.') {
             $audit.composeV2 = [int]$Matches[1] -ge 2
         }

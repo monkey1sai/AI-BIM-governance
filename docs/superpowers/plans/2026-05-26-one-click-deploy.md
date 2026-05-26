@@ -362,9 +362,9 @@ $modulePath = Join-Path $repoRoot 'scripts\lib\preflight-docker.ps1'
 
 # Test 1: docker CLI 存在 + compose v2 + engine running → cliVersion 等欄位齊全
 $result = Test-DockerEnvironment `
-    -DockerCommand { param($Args) "Docker version 27.0.3, build x" } `
-    -ComposeCommand { param($Args) "Docker Compose version v2.29.0" } `
-    -EngineProbe { param($Args) @{ ExitCode = 0; Stdout = '{"ServerVersion":"27.0.3"}' } } `
+    -DockerCommand { param($ArgList) "Docker version 27.0.3, build x" } `
+    -ComposeCommand { param($ArgList) "Docker Compose version v2.29.0" } `
+    -EngineProbe { param($ArgList) @{ ExitCode = 0; Stdout = '{"ServerVersion":"27.0.3"}' } } `
     -RepoRoot (New-TestSandbox -Prefix 'preflight-docker')
 
 Assert-True ($result.cliVersion -ne $null) 'cliVersion populated'
@@ -375,8 +375,8 @@ Write-TestPass 'happy path returns full audit'
 # Test 2: docker CLI 不在 → cliVersion=null + 整體 ok=false
 $result = Test-DockerEnvironment `
     -DockerCommand { throw 'docker not found' } `
-    -ComposeCommand { param($Args) '' } `
-    -EngineProbe { param($Args) @{ ExitCode = 1; Stdout = '' } } `
+    -ComposeCommand { param($ArgList) '' } `
+    -EngineProbe { param($ArgList) @{ ExitCode = 1; Stdout = '' } } `
     -RepoRoot (New-TestSandbox -Prefix 'preflight-docker')
 
 Assert-True ($null -eq $result.cliVersion) 'cliVersion null when docker absent'
@@ -385,9 +385,9 @@ Write-TestPass 'docker missing flagged'
 
 # Test 3: engine 沒跑 → engineRunning=false
 $result = Test-DockerEnvironment `
-    -DockerCommand { param($Args) "Docker version 27.0.3" } `
-    -ComposeCommand { param($Args) "Docker Compose version v2.29.0" } `
-    -EngineProbe { param($Args) @{ ExitCode = 1; Stdout = '' } } `
+    -DockerCommand { param($ArgList) "Docker version 27.0.3" } `
+    -ComposeCommand { param($ArgList) "Docker Compose version v2.29.0" } `
+    -EngineProbe { param($ArgList) @{ ExitCode = 1; Stdout = '' } } `
     -RepoRoot (New-TestSandbox -Prefix 'preflight-docker')
 
 Assert-True ($result.engineRunning -eq $false) 'engineRunning=false when engine probe non-zero'
@@ -398,9 +398,9 @@ $sandbox = New-TestSandbox -Prefix 'preflight-docker-env'
 try {
     Set-Content -LiteralPath (Join-Path $sandbox '.env.web-plane.host-kit') -Value 'COORDINATOR_PORT=8004'
     $result = Test-DockerEnvironment `
-        -DockerCommand { param($Args) "Docker version 27" } `
-        -ComposeCommand { param($Args) "Docker Compose version v2.0" } `
-        -EngineProbe { param($Args) @{ ExitCode = 0; Stdout = '{}' } } `
+        -DockerCommand { param($ArgList) "Docker version 27" } `
+        -ComposeCommand { param($ArgList) "Docker Compose version v2.0" } `
+        -EngineProbe { param($ArgList) @{ ExitCode = 0; Stdout = '{}' } } `
         -RepoRoot $sandbox
 
     Assert-True ($result.envFile -eq '.env.web-plane.host-kit') 'real env file picked over .example'
@@ -413,9 +413,9 @@ $sandbox = New-TestSandbox -Prefix 'preflight-docker-env'
 try {
     Set-Content -LiteralPath (Join-Path $sandbox '.env.web-plane.host-kit.example') -Value 'COORDINATOR_PORT=8004'
     $result = Test-DockerEnvironment `
-        -DockerCommand { param($Args) "Docker version 27" } `
-        -ComposeCommand { param($Args) "Docker Compose version v2.0" } `
-        -EngineProbe { param($Args) @{ ExitCode = 0; Stdout = '{}' } } `
+        -DockerCommand { param($ArgList) "Docker version 27" } `
+        -ComposeCommand { param($ArgList) "Docker Compose version v2.0" } `
+        -EngineProbe { param($ArgList) @{ ExitCode = 0; Stdout = '{}' } } `
         -RepoRoot $sandbox
     Assert-True ($result.envFile -eq '.env.web-plane.host-kit.example') 'example fallback'
     Write-TestPass 'envFile falls back to .example'
@@ -447,10 +447,10 @@ Set-StrictMode -Version Latest
 function Test-DockerEnvironment {
     [CmdletBinding()]
     param(
-        [scriptblock] $DockerCommand = { param($Args) docker @Args 2>&1 },
-        [scriptblock] $ComposeCommand = { param($Args) docker @Args 2>&1 },
+        [scriptblock] $DockerCommand = { param($ArgList) docker @ArgList 2>&1 },
+        [scriptblock] $ComposeCommand = { param($ArgList) docker @ArgList 2>&1 },
         [scriptblock] $EngineProbe = {
-            param($Args)
+            param($ArgList)
             $stdout = docker info --format '{{json .}}' 2>&1
             @{ ExitCode = $LASTEXITCODE; Stdout = ($stdout | Out-String).Trim() }
         },
@@ -2375,8 +2375,8 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $deploy = Join-Path $repoRoot 'scripts\deploy.ps1'
 
-# 跑 -DryRun 並抓 stdout
-$output = & $deploy -DryRun 2>&1 | Out-String
+# 跑 -DryRun 並抓所有 stream(Write-Host 走 Information stream,要 *>&1 才能 capture)
+$output = & $deploy -DryRun *>&1 | Out-String
 $exitCode = $LASTEXITCODE
 
 # Test 1: 退 0
