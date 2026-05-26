@@ -36,6 +36,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest
           npm ci --prefix bim-review-coordinator
+          gitnexus analyze --skip-agents-md --name AI-BIM-governance .
 
       - name: Run PR review agent
         id: review
@@ -56,8 +57,7 @@ jobs:
             '-PrNumber', '${{ github.event.pull_request.number }}',
             '-RunId', '${{ github.run_id }}',
             '-OutputDir', 'artifacts/pr-review-agent',
-            '-AllowGitNexusUnavailable',
-            '-AllowUnavailableCommands'
+            '-AllowGitNexusUnavailable'
           )
           if ($env:PR_DRAFT -eq 'true') {
             $args += '-ReportOnly'
