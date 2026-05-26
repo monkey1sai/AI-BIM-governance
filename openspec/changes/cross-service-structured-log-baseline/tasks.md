@@ -71,22 +71,22 @@
 
 ## 7. PowerShell module — `scripts/lib/StructLog.psm1`
 
-- [ ] 7.1 實作 `New-StructLogger -Service -Component -LogRoot` 工廠
-- [ ] 7.2 實作 `Write-StructInfo` / `Write-StructWarn` / `Write-StructError` / `Write-StructAudit` / `Write-StructLifecycle` / `Write-StructAnomaly` / `Write-StructNetwork` / `Write-StructEnvSnapshot` 函式
-- [ ] 7.3 `ConvertTo-Json -Compress -Depth 8` 一筆一行 + `Add-Content -LiteralPath` daily rotate
-- [ ] 7.4 redaction helper `Get-RedactedEnvVar`
-- [ ] 7.5 `New-StructLogger` return 前 emit `env_snapshot`
-- [ ] 7.6 fail-soft：sink fail 寫 stderr、不 throw
-- [ ] 7.7 接 `BIM_TRACE_ID` 環境變數作為 trace_id 預設值
-- [ ] 7.8 `scripts/tests/StructLog.Tests.ps1`（Pester）覆蓋與 §2.9 對等內容
+- [x] 7.1 `New-StructLogger -Service -Component -LogRoot` 工廠（自帶 InitialTraceId / Now / BufferLimit / AllowListPath / SkipEnvSnapshot / InMemoryOnly / RecordSink 旗標）
+- [x] 7.2 全部 8 個 `Write-Struct*` helper（Debug/Info/Warn/Error/Fatal + Network/Audit/Lifecycle/Anomaly + EnvSnapshot）；皆可用 pipeline `$logger | Write-StructXxx`
+- [x] 7.3 `ConvertTo-Json -Compress -Depth 8` 單行 + `Add-Content -LiteralPath` daily rotate；夜過午檢查 `Record.ts.Substring(0,10)`，跨日改寫新檔
+- [x] 7.4 `Get-RedactedEnvVar` + `ConvertTo-StructLogRedactedData` (schema 欄位 reserve-list 含 `key`/`auth`/`status` 避免誤判) + 循環/OrderedDictionary 防護
+- [x] 7.5 `New-StructLogger` return 前自動 `Write-StructEnvSnapshot`（test 可加 `-SkipEnvSnapshot`）
+- [x] 7.6 fail-soft：sink fail 寫 stderr、降級進 `_recovery/`、ring buffer 100、`LastFailure` 記時間 + 原因
+- [x] 7.7 啟動時若 `BIM_TRACE_ID` 環境變數有設定即取作為 InitialTraceId
+- [x] 7.8 `scripts/tests/test-struct-log.ps1` (plain assert pattern, 對齊既有 test-smoke-evidence.ps1) — 13 tests pass: run id 規範、ISO 時間、env redaction 三段、circular/ordered dict 防護、ConvertTo-StructLogRedactedData 保留 `vars[].key`、env_snapshot 命中 secret pattern 不洩漏值、全 8 helper 對應 event_type、`BIM_TRACE_ID` 沿用、seq per trace_id、跨午夜 rotate、sink failure fail-soft
 
 ## 8. Retention script — `scripts/log-retention/prune-logs.ps1`
 
-- [ ] 8.1 實作 prune 邏輯：scan `logs/<service>/<YYYY-MM-DD>/`，比較 date 與今日 UTC，>30 天列入刪除候選
-- [ ] 8.2 `-DryRun`（預設）只列出；`-Apply` 才真砍
-- [ ] 8.3 邊界：剛好 30 天的不砍、31 天的砍；不砍 `logs/` 本身、不砍 `<service>/` 本身
-- [ ] 8.4 接受 `-LogRoot` 參數（預設 `./logs`）+ `-RetentionDays` 參數（預設 30，讀 `LOG_RETENTION_DAYS` env）
-- [ ] 8.5 `scripts/log-retention/tests/Prune-Logs.Tests.ps1`（Pester）覆蓋：建假 fixture 含 5/15/30/45/60 天前的 dir，分別驗 `-DryRun` / `-Apply` 行為
+- [x] 8.1 Scan `<LogRoot>/<service>/<YYYY-MM-DD>/`，跳 `_recovery/` 與非日期目錄；UTC `Today - RetentionDays = cutoff`，`entryDate < cutoff` 進刪除候選
+- [x] 8.2 預設 dry-run（only logs `WOULD`），`-Apply` 才真執行 `Remove-Item -Recurse -Force`；輸出 `[pscustomobject]` 含 `candidate_count / deleted_count / skipped_count`
+- [x] 8.3 邊界：30 天剛好留、31 天砍；不砍 `LogRoot` 自己、不砍 `<service>/` 自己、不砍 `_recovery/` 與非 YYYY-MM-DD 目錄
+- [x] 8.4 接受 `-LogRoot`（fallback `LOG_ROOT` env / `<repo-root>/logs`）+ `-RetentionDays`（fallback `LOG_RETENTION_DAYS` env / 30）+ `-TodayUtc`（test-only 替換 today）+ `-Quiet`
+- [x] 8.5 `scripts/log-retention/tests/test-prune-logs.ps1` 5 tests pass — dry-run 不動、apply 刪 >30 天、保 5/15/30 + `_recovery/` + 非日期、custom 14 天 cutoff 改寫候選數、missing log root 零 count、`LOG_RETENTION_DAYS` env 沿用
 
 ## 9. Cross-service integration test
 
