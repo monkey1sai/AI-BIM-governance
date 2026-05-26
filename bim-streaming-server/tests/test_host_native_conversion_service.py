@@ -1258,3 +1258,209 @@ def test_fallback_entity_id_one_to_one_with_entity_index_multi_shape(tmp_path: P
         matching = next(ent for ent in entities if ent["entity_id"] == item["entity_id"])
         assert matching["ifc_guid"] == item["ifc_guid"]
         assert matching["usd_prim_path"] == item["usd_prim_path"]
+
+
+# --- streaming-server-enumeration-semantic-mapping ----------------------------
+
+
+def _make_enumeration_adapter(tmp_path: Path) -> Ifc2UsdcPowershellConverterAdapter:
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    return Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, work_dir=repo_root)
+
+
+def _write_usd_stage_with_ifc_prims(usdc_path: Path, prims_spec: list[dict[str, str]]) -> None:
+    """寫一個 USD stage with CustomData 模擬 HOOPS / C1 fallback 產出的 prim。"""
+    from pxr import Sdf, Usd, UsdGeom
+
+    usdc_path.parent.mkdir(parents=True, exist_ok=True)
+    stage = Usd.Stage.CreateNew(str(usdc_path))
+    world = UsdGeom.Xform.Define(stage, "/World")
+    stage.SetDefaultPrim(world.GetPrim())
+    for idx, spec in enumerate(prims_spec, start=1):
+        path = spec.get("path") or f"/World/Prim_{idx:06d}"
+        mesh = UsdGeom.Mesh.Define(stage, path)
+        prim = mesh.GetPrim()
+        if spec.get("ifc_guid"):
+            prim.SetCustomDataByKey("ifcGlobalId", spec["ifc_guid"])
+        if spec.get("ifc_type"):
+            prim.SetCustomDataByKey("ifcType", spec["ifc_type"])
+        if spec.get("ifc_name"):
+            prim.SetCustomDataByKey("ifcName", spec["ifc_name"])
+    stage.GetRootLayer().Save()
+
+
+def test_enumeration_path_writes_semantic_fields(tmp_path: Path, monkeypatch):
+    _clear_pxr_test_stubs(monkeypatch)
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    usdc = out_dir / "model.usdc"
+    _write_usd_stage_with_ifc_prims(
+        usdc,
+        [
+            {"path": "/World/IfcWall/wall_001", "ifc_guid": "GUID_A1", "ifc_type": "IfcWall", "ifc_name": "外牆 1"},
+            {"path": "/World/IfcBeam/beam_001", "ifc_guid": "GUID_B1", "ifc_type": "IfcBeam", "ifc_name": "梁 1"},
+        ],
+    )
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+
+    quality = adapter._enumerate_usd_stage(
+        model_path=usdc,
+        ifc_path=ifc_source,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+
+    assert quality["materialization_strategy"] == "usd_stage_enumeration"
+    assert quality["semantic_mapping_fidelity"] == "ifc_class_grouped_with_name"
+    assert quality["mapping_has_ifc_type"] is True
+    assert quality["mapping_has_ifc_name"] is True
+
+    mapping_doc = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    items = mapping_doc["items"]
+    assert len(items) == 2
+    for item in items:
+        for key in ("ifc_guid", "usd_prim_path", "ifc_type", "ifc_name", "entity_id"):
+            assert key in item
+    assert {item["ifc_type"] for item in items} == {"IfcWall", "IfcBeam"}
+
+    index_doc = json.loads((out_dir / "entity_index.json").read_text(encoding="utf-8"))
+    entities = index_doc["entities"]
+    assert isinstance(entities, list) and len(entities) == 2
+    # entity_id alignment
+    mapping_ids = {item["entity_id"] for item in items}
+    entity_ids = {ent["entity_id"] for ent in entities}
+    assert mapping_ids == entity_ids
+
+
+def test_enumeration_path_empty_custom_data_stays_honest(tmp_path: Path, monkeypatch):
+    _clear_pxr_test_stubs(monkeypatch)
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    usdc = out_dir / "model.usdc"
+    # 兩個純 mesh prim 完全沒 IFC custom data
+    _write_usd_stage_with_ifc_prims(
+        usdc,
+        [
+            {"path": "/World/Naked_1"},
+            {"path": "/World/Naked_2"},
+        ],
+    )
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+
+    quality = adapter._enumerate_usd_stage(
+        model_path=usdc,
+        ifc_path=ifc_source,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+
+    # 誠實:沒 IFC data 就是 None / False,不偽宣告
+    assert quality["semantic_mapping_fidelity"] is None
+    assert quality["mapping_has_ifc_type"] is False
+    assert quality["mapping_has_ifc_name"] is False
+    mapping_doc = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    assert mapping_doc["items"] == []
+
+
+def test_adopt_path_supplements_missing_semantic_fields(tmp_path: Path):
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # converter emit 完整 sidecars,但 quality 沒寫 semantic 欄位
+    (out_dir / "element_mapping.json").write_text(
+        json.dumps(
+            {
+                "mock": False,
+                "summary": {"mapped_count": 2, "fake_mapping_count": 0},
+                "items": [
+                    {"ifc_guid": "GUID_X", "usd_prim_path": "/World/IfcWall/x",
+                     "ifc_type": "IfcWall", "ifc_name": "牆"},
+                    {"ifc_guid": "GUID_Y", "usd_prim_path": "/World/IfcBeam/y",
+                     "ifc_type": "IfcBeam", "ifc_name": "梁"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "entity_index.json").write_text(json.dumps({"entities": []}), encoding="utf-8")
+    (out_dir / "metadata.json").write_text(json.dumps({"source": "converter"}), encoding="utf-8")
+    (out_dir / "quality_metrics.json").write_text(
+        json.dumps(
+            {
+                "source_ifc_entity_count": 2,
+                "mapped_count": 2,
+                "materialization_strategy": "converter_native",
+                "coverage_status": "pass",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    quality = adapter._adopt_converter_sidecars(
+        output_dir=out_dir,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+    assert quality is not None
+    assert quality["semantic_mapping_fidelity"] == "ifc_class_grouped_with_name"
+    assert quality["mapping_has_ifc_type"] is True
+    assert quality["mapping_has_ifc_name"] is True
+    # converter native 既有欄位不被蓋
+    assert quality["materialization_strategy"] == "converter_native"
+    assert quality["coverage_status"] == "pass"
+
+
+def test_adopt_path_does_not_overwrite_existing_semantic(tmp_path: Path):
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "element_mapping.json").write_text(
+        json.dumps(
+            {
+                "mock": False,
+                "summary": {"mapped_count": 1, "fake_mapping_count": 0},
+                "items": [
+                    {"ifc_guid": "GUID_Z", "usd_prim_path": "/World/x",
+                     "ifc_type": "IfcDoor", "ifc_name": "門"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "entity_index.json").write_text(json.dumps({"entities": []}), encoding="utf-8")
+    (out_dir / "metadata.json").write_text(json.dumps({"source": "converter"}), encoding="utf-8")
+    # converter 自己已寫 semantic_mapping_fidelity:adopt 不可蓋
+    (out_dir / "quality_metrics.json").write_text(
+        json.dumps(
+            {
+                "source_ifc_entity_count": 1,
+                "materialization_strategy": "converter_native",
+                "semantic_mapping_fidelity": "converter_native_high_fidelity",
+                "mapping_has_ifc_type": True,
+                "mapping_has_ifc_name": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    quality = adapter._adopt_converter_sidecars(
+        output_dir=out_dir,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+    assert quality is not None
+    # 既有值不被蓋
+    assert quality["semantic_mapping_fidelity"] == "converter_native_high_fidelity"
+    assert quality["mapping_has_ifc_type"] is True
+    # converter 寫 False 也保留,不被 mapping 推導蓋掉
+    assert quality["mapping_has_ifc_name"] is False

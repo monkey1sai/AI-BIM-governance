@@ -774,6 +774,36 @@ class Ifc2UsdcPowershellConverterAdapter:
             mapping_path.write_text(
                 emitted_mapping.read_text(encoding="utf-8"), encoding="utf-8"
             )
+        # streaming-server-enumeration-semantic-mapping:supplement missing
+        # semantic fields(non-fabricating)。converter 自己有寫的 keys 不被蓋:
+        # 用 `is None`(value 寫成 null)與 `not in`(key 不存在)雙重 guard,
+        # 確保 `False` / `""` 之類有意義的 truthy / falsy 值仍視為 converter
+        # 已寫,不 supplement。
+        if quality.get("semantic_mapping_fidelity") is None or \
+                "mapping_has_ifc_type" not in quality or \
+                "mapping_has_ifc_name" not in quality:
+            try:
+                mapping_doc = json.loads(emitted_mapping.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                mapping_doc = None
+            if isinstance(mapping_doc, dict):
+                items = mapping_doc.get("items")
+                if isinstance(items, list):
+                    has_type = any(
+                        bool(item.get("ifc_type")) for item in items if isinstance(item, dict)
+                    )
+                    has_name = any(
+                        bool(item.get("ifc_name")) for item in items if isinstance(item, dict)
+                    )
+                    if quality.get("semantic_mapping_fidelity") is None:
+                        if has_type and has_name:
+                            quality["semantic_mapping_fidelity"] = "ifc_class_grouped_with_name"
+                        elif has_type or has_name:
+                            quality["semantic_mapping_fidelity"] = "usd_enumeration_with_ifc_custom_data"
+                    if "mapping_has_ifc_type" not in quality:
+                        quality["mapping_has_ifc_type"] = has_type
+                    if "mapping_has_ifc_name" not in quality:
+                        quality["mapping_has_ifc_name"] = has_name
         return quality
 
     def _enumerate_usd_stage(
@@ -794,30 +824,60 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"unavailable to enumerate {model_path.name}: {exc}",
             ) from exc
 
-        stage = Usd.Stage.Open(str(model_path))  # pragma: no cover
-        if stage is None:  # pragma: no cover
+        stage = Usd.Stage.Open(str(model_path))
+        if stage is None:
             raise ConversionAuthorityError(
                 "usdc_not_openable",
                 f"Produced USDC could not be opened by USD: {model_path}",
             )
 
-        prims = [p for p in stage.Traverse()]  # pragma: no cover
-        imageable = [  # pragma: no cover
-            p for p in prims if UsdGeom.Imageable(p)
-        ]
-        mapping_items = []  # pragma: no cover
-        for prim in prims:  # pragma: no cover
-            ifc_guid = prim.GetCustomDataByKey("ifc:guid") or prim.GetCustomDataByKey(
-                "ifcGlobalId"
+        prims = [p for p in stage.Traverse()]
+        imageable = [p for p in prims if UsdGeom.Imageable(p)]
+        # streaming-server-enumeration-semantic-mapping:抽 IFC type/name from
+        # USD prim CustomData(C1 fallback 與 HOOPS converter 共用 ifcGlobalId
+        # / ifcType / ifcName 命名;容忍 `ifc:` prefix 變體)。
+        mapping_items: list[dict[str, Any]] = []
+        entity_items: list[dict[str, Any]] = []
+        for prim_index, prim in enumerate(prims, start=1):
+            ifc_guid = self._read_ifc_custom_data(prim, "ifc:guid", "ifcGlobalId", "ifc_guid")
+            if not ifc_guid:
+                continue
+            ifc_type = self._read_ifc_custom_data(prim, "ifc:type", "ifcType", "ifc_type")
+            ifc_name = self._read_ifc_custom_data(prim, "ifc:name", "ifcName", "ifc_name")
+            entity_id = f"entity_{prim_index:06d}"
+            usd_prim_path = str(prim.GetPath())
+            mapping_items.append(
+                {
+                    "ifc_guid": ifc_guid,
+                    "usd_prim_path": usd_prim_path,
+                    "ifc_type": ifc_type,
+                    "ifc_name": ifc_name,
+                    "entity_id": entity_id,
+                }
             )
-            if ifc_guid:
-                mapping_items.append(
-                    {"ifc_guid": str(ifc_guid), "usd_prim_path": str(prim.GetPath())}
-                )
-        source_count = len(mapping_items) or len(prims)  # pragma: no cover
-        mapped_count = len(mapping_items)  # pragma: no cover
+            entity_items.append(
+                {
+                    "ifc_guid": ifc_guid,
+                    "ifc_type": ifc_type,
+                    "name": ifc_name,
+                    "usd_prim_path": usd_prim_path,
+                    "entity_id": entity_id,
+                }
+            )
 
-        mapping_doc = {  # pragma: no cover
+        source_count = len(mapping_items) or len(prims)
+        mapped_count = len(mapping_items)
+
+        has_type = any(item.get("ifc_type") for item in mapping_items)
+        has_name = any(item.get("ifc_name") for item in mapping_items)
+        if has_type and has_name:
+            semantic_fidelity: str | None = "ifc_class_grouped_with_name"
+        elif has_type or has_name:
+            semantic_fidelity = "usd_enumeration_with_ifc_custom_data"
+        else:
+            semantic_fidelity = None
+
+        mapping_doc = {
             "mock": False,
             "summary": {
                 "mapped_count": mapped_count,
@@ -825,26 +885,30 @@ class Ifc2UsdcPowershellConverterAdapter:
             },
             "items": mapping_items,
         }
-        index_doc = {  # pragma: no cover
-            "entities": [str(p.GetPath()) for p in prims],
+        # entity_index 全 prim 仍保留(供 debug / 統計),其中 IFC 對應 entry
+        # 含完整語意欄位;裸 mesh prim 仍記在 entities 內但無 IFC 欄位。
+        index_doc = {
+            "entities": entity_items if entity_items else [
+                {"usd_prim_path": str(p.GetPath())} for p in prims
+            ],
         }
-        metadata_doc = {  # pragma: no cover
+        metadata_doc = {
             "source": "ifc_ready",
             "source_ifc": ifc_path.name,
             "usd_root_layer": model_path.name,
             "prim_count": len(prims),
             "imageable_prim_count": len(imageable),
         }
-        mapping_path.write_text(  # pragma: no cover
+        mapping_path.write_text(
             json.dumps(mapping_doc, ensure_ascii=False), encoding="utf-8"
         )
-        entity_index_path.write_text(  # pragma: no cover
+        entity_index_path.write_text(
             json.dumps(index_doc, ensure_ascii=False), encoding="utf-8"
         )
-        metadata_path.write_text(  # pragma: no cover
+        metadata_path.write_text(
             json.dumps(metadata_doc, ensure_ascii=False), encoding="utf-8"
         )
-        return {  # pragma: no cover
+        return {
             "source_ifc_entity_count": source_count,
             "mapped_count": mapped_count,
             "unmapped_count": max(source_count - mapped_count, 0),
@@ -853,12 +917,29 @@ class Ifc2UsdcPowershellConverterAdapter:
             "materialization_strategy": "usd_stage_enumeration",
             "sidecar_carrier_count": 0,
             "minimum_coverage_baseline_locked": False,
+            "semantic_mapping_fidelity": semantic_fidelity,
+            "mapping_has_ifc_type": has_type,
+            "mapping_has_ifc_name": has_name,
             "hard_quality_gates": {
                 "usdc_openable": True,
                 "has_renderable_prims": len(imageable) > 0,
                 "placeholder_output": False,
             },
         }
+
+    @staticmethod
+    def _read_ifc_custom_data(prim: Any, *keys: str) -> str | None:
+        """讀 USD prim CustomData,容忍多種 IFC key naming(`ifc:guid` /
+        `ifcGlobalId` / `ifc_guid` 等)。回 None when missing / empty。"""
+        for key in keys:
+            try:
+                value = prim.GetCustomDataByKey(key)
+            except Exception:  # noqa: BLE001
+                continue
+            if value in (None, ""):
+                continue
+            return str(value)
+        return None
 
 
 def _default_powershell_exe() -> str:
