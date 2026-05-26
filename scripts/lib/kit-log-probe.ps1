@@ -4,6 +4,7 @@
 Set-StrictMode -Version Latest
 
 $script:KitReadyKeywords = @(
+    'app ready',
     'Application started',
     'launching Linux Kit',
     'Streaming started'
