@@ -30,15 +30,32 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install PR review agent dependencies
+      - name: Install Python review dependencies
         shell: pwsh
         run: |
           npm install -g @fission-ai/openspec gitnexus
           python -m pip install --upgrade pip
           python -m pip install pytest fastapi httpx
-          npm ci --prefix bim-review-coordinator
-          npm install --prefix web-viewer-sample --no-audit --no-fund
+
+      - name: Install coordinator dependencies
+        shell: pwsh
+        working-directory: bim-review-coordinator
+        run: npm ci
+
+      - name: Install viewer dependencies
+        shell: pwsh
+        working-directory: web-viewer-sample
+        run: npm install --no-audit --no-fund
+
+      - name: Prepare GitNexus index
+        shell: pwsh
+        run: |
           gitnexus analyze --skip-agents-md --name AI-BIM-governance .
+          $gitnexusAnalyzeExitCode = $LASTEXITCODE
+          if ($gitnexusAnalyzeExitCode -ne 0) {
+            Write-Warning "GitNexus analyze failed with exit code $gitnexusAnalyzeExitCode; the review agent will report GitNexus availability separately."
+          }
+          exit 0
 
       - name: Run PR review agent
         id: review
