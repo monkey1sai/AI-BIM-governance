@@ -1,0 +1,489 @@
+# scripts\deploy.ps1
+# Mode C(hybrid)一鍵部屬入口。
+# 對應 docs/superpowers/specs/2026-05-26-one-click-deploy-design.md。
+#
+# Mode A 入口:scripts\start-all.ps1(完全不動)
+# Mode B 入口:scripts\start-runtime-manager-docker.ps1(完全不動)
+# Mode C 入口:本檔
+#
+# 使用:
+#   .\scripts\deploy.ps1                          # 全自動 hybrid 部屬
+#   .\scripts\deploy.ps1 -DryRun                  # 只看 fix plan,不動真實狀態
+#   .\scripts\deploy.ps1 -Force                   # 互動 guard 全部視同 y
+#   .\scripts\deploy.ps1 -Build                   # 強制 docker compose build
+#   .\scripts\deploy.ps1 -SkipKit                 # 不啟 host-native Kit(viewer 沒畫面)
+
+[CmdletBinding()]
+param(
+    [switch] $DryRun,
+    [switch] $Force,
+    [switch] $Build,
+    [switch] $Pull,
+    [string] $EnvFile = '',
+    [switch] $SkipKit,
+    [switch] $SkipConversion,
+    [switch] $SkipDocker,
+    [int]    $KitSignalPort = 49100,
+    [int]    $KitMediaPort  = 47998,
+    [switch] $StrictPostVerify
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$script:DeployStart = Get-Date
+
+$RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+$RunDir   = Join-Path $RepoRoot 'scripts\.run'
+$LogPath  = Join-Path $RunDir   'deploy.log'
+
+# Import lib modules
+$libDir = Join-Path $PSScriptRoot 'lib'
+. (Join-Path $libDir 'deploy-report.ps1')
+. (Join-Path $libDir 'preflight-docker.ps1')
+. (Join-Path $libDir 'preflight-host-native.ps1')
+. (Join-Path $libDir 'preflight-env.ps1')
+. (Join-Path $libDir 'preflight-ports.ps1')
+. (Join-Path $libDir 'preflight-volume-alignment.ps1')
+. (Join-Path $libDir 'host-native-launcher.ps1')
+. (Join-Path $libDir 'kit-log-probe.ps1')
+
+if (-not (Test-Path -LiteralPath $RunDir)) {
+    New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
+}
+
+# 提前宣告以下 script-scope 變數,Print-FinalSummary 才能用
+$script:resolvedEnvFile = ''
+$script:volume = $null
+
+# ============================================================
+# Helper: Print-FinalSummary(在 Phase 1 之前定義,讓任何階段都可呼叫)
+# ============================================================
+function Print-FinalSummary {
+    param([int] $ExitCode, [string] $FailedPhase)
+    $elapsed = (Get-Date) - $script:DeployStart
+    Write-Host ''
+    Write-Host '=== Deploy Summary ===' -ForegroundColor Cyan
+    Write-Host "Mode:         hybrid (web-plane Docker + host-native Kit)"
+    Write-Host ("Elapsed:      {0:N0}m {1:N0}s" -f $elapsed.TotalMinutes, $elapsed.Seconds)
+    if ($script:resolvedEnvFile) { Write-Host "EnvFile:      $($script:resolvedEnvFile)" }
+    if ($script:volume -and $script:volume.runtimeStorageRoot) {
+        Write-Host "Storage root: $($script:volume.runtimeStorageRoot) ($($script:volume.status))"
+    }
+    if ($ExitCode -eq 0) {
+        Write-Host ''
+        Write-Host 'Next:' -ForegroundColor Green
+        Write-Host '  > open http://127.0.0.1:8004/ui            (coordinator UI / WebRTC entry)'
+        Write-Host '  > tail scripts\.run\bim-streaming-server.log -Wait'
+        Write-Host '  > stop all:'
+        Write-Host '      .\scripts\stop-runtime-manager-docker.ps1'
+        Write-Host '      .\scripts\stop-all.ps1 -SkipCoordinator -SkipViewer'
+    } else {
+        Write-Host ''
+        Write-Host "Status: FAILED (exit $ExitCode, $FailedPhase)" -ForegroundColor Red
+        Write-Host 'What might be running (NOT auto-rolled-back):'
+        foreach ($pidFile in Get-ChildItem -LiteralPath $RunDir -Filter '*.pid' -ErrorAction SilentlyContinue) {
+            $procId = (Get-Content $pidFile.FullName | Select-Object -First 1).Trim()
+            Write-Host "  > $($pidFile.BaseName) PID $procId"
+        }
+        Write-Host ''
+        Write-Host 'To recover:'
+        Write-Host '  > .\scripts\stop-all.ps1 -SkipCoordinator -SkipViewer'
+        Write-Host '  > .\scripts\stop-runtime-manager-docker.ps1'
+        Write-Host '  > re-run: .\scripts\deploy.ps1 -Force'
+    }
+}
+
+# ============================================================
+# Phase 1: Preflight (read-only audit)
+# ============================================================
+Write-DeployHeader -Title 'Phase 1: Preflight (read-only)'
+
+$docker     = Test-DockerEnvironment       -RepoRoot $RepoRoot
+$hostNative = Test-HostNativeEnvironment   -RepoRoot $RepoRoot
+$envFiles   = Test-EnvFiles                -RepoRoot $RepoRoot
+$ports      = Test-PortAvailability        -RepoRoot $RepoRoot
+$resolvedEnvFile = if ([string]::IsNullOrWhiteSpace($EnvFile)) {
+    if ($docker.envFile) { $docker.envFile } else { '.env.web-plane.host-kit.example' }
+} else { $EnvFile }
+$script:resolvedEnvFile = $resolvedEnvFile
+$volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+$script:volume = $volume
+
+# Audit summary 印出
+function Report-Audit {
+    if ($docker.cliVersion)   { Write-DeployTag -Tag 'ok'   -Message "docker cli=$($docker.cliVersion)" -LogPath $LogPath | Out-Null }
+    else                      { Write-DeployTag -Tag 'fail' -Message 'docker CLI not found (install Docker Desktop: https://docs.docker.com/desktop/install/windows-install/)' -LogPath $LogPath | Out-Null }
+    if ($docker.composeV2)    { Write-DeployTag -Tag 'ok'   -Message 'docker compose v2' -LogPath $LogPath | Out-Null }
+    else                      { Write-DeployTag -Tag 'fail' -Message 'docker compose v2 missing' -LogPath $LogPath | Out-Null }
+    if ($docker.engineRunning){ Write-DeployTag -Tag 'ok'   -Message 'docker engine running' -LogPath $LogPath | Out-Null }
+    else                      { Write-DeployTag -Tag 'fail' -Message 'docker engine not running (start Docker Desktop and wait until tray icon settles)' -LogPath $LogPath | Out-Null }
+    if ($docker.envFile)      { Write-DeployTag -Tag 'ok'   -Message "envFile=$($docker.envFile)" -LogPath $LogPath | Out-Null }
+    else                      { Write-DeployTag -Tag 'fail' -Message '.env.web-plane.host-kit / .example not found in repo root' -LogPath $LogPath | Out-Null }
+
+    foreach ($key in @('venv','kitLauncher','nvidiaDriver')) {
+        $st = $hostNative.$key
+        if ($st -eq 'OK')      { Write-DeployTag -Tag 'ok'   -Message "host-native $key=$st" -LogPath $LogPath | Out-Null }
+        elseif ($st -eq 'MISSING') {
+            if ($key -eq 'venv')          { Write-DeployTag -Tag 'fix'  -Message "host-native venv MISSING (will create via python -m venv in Phase 2)" -LogPath $LogPath | Out-Null }
+            elseif ($key -eq 'nvidiaDriver') { Write-DeployTag -Tag 'fail' -Message 'nvidia-smi missing (install NVIDIA driver)' -LogPath $LogPath | Out-Null }
+        }
+        elseif ($st -eq 'WRONG_VERSION'){ Write-DeployTag -Tag 'ask'  -Message "host-native venv WRONG_VERSION (Phase 3 will ask)" -LogPath $LogPath | Out-Null }
+        elseif ($st -eq 'MISSING_PATH') { Write-DeployTag -Tag 'fail' -Message "host-native $key MISSING_PATH (expected: bim-streaming-server\scripts\start-streaming-server.ps1)" -LogPath $LogPath | Out-Null }
+    }
+
+    foreach ($ef in $envFiles) {
+        if (-not $ef.envExists) {
+            Write-DeployTag -Tag 'fix' -Message "$($ef.file) missing (will Copy-Item from .example in Phase 2)" -LogPath $LogPath | Out-Null
+        } elseif ($ef.missing.Count -gt 0) {
+            Write-DeployTag -Tag 'fix' -Message "$($ef.file) missing keys: $($ef.missing -join ',') (will append default in Phase 2)" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'ok' -Message "$($ef.file) complete" -LogPath $LogPath | Out-Null
+        }
+    }
+
+    foreach ($p in @($ports.docker; $ports.hostNative)) {
+        if ($p.status -eq 'FREE') {
+            Write-DeployTag -Tag 'ok' -Message "port $($p.port) FREE" -LogPath $LogPath | Out-Null
+        } elseif ($p.ourPidFile) {
+            Write-DeployTag -Tag 'skip' -Message "port $($p.port) occupied by our PID $($p.pid) ($($p.name)) — already running, will skip start" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'ask' -Message "port $($p.port) occupied by stranger PID $($p.pid) ($($p.name)) — Phase 3 will ask" -LogPath $LogPath | Out-Null
+        }
+    }
+
+    switch ($volume.status) {
+        'ALIGNED'     { Write-DeployTag -Tag 'ok'   -Message "volume aligned root=$($volume.runtimeStorageRoot)" -LogPath $LogPath | Out-Null }
+        'MISSING_KEY' { Write-DeployTag -Tag 'fix'  -Message "RUNTIME_STORAGE_ROOT missing in $resolvedEnvFile (will append <RepoRoot>\storage in Phase 2)" -LogPath $LogPath | Out-Null }
+        'WRONG_LEAF'  { Write-DeployTag -Tag 'fail' -Message "RUNTIME_STORAGE_ROOT=$($volume.runtimeStorageRoot) leaf=$($volume.leaf) is not 'storage' (host-native conversion-service requires storage/ subdir; fix .env or rename)" -LogPath $LogPath | Out-Null }
+    }
+}
+Report-Audit
+
+# 把 audit 物件序列化進 deploy-audit.json(spec §8.3)
+$auditObj = [pscustomobject]@{
+    docker      = $docker
+    hostNative  = $hostNative
+    envFiles    = $envFiles
+    ports       = $ports
+    volume      = $volume
+    envFileUsed = $resolvedEnvFile
+}
+$auditObj | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $RunDir 'deploy-audit.json')
+
+# 判斷 hard fail(unfixable)
+$hardFails = @()
+if (-not $docker.cliVersion)    { $hardFails += 'docker_cli_missing' }
+if (-not $docker.composeV2)     { $hardFails += 'docker_compose_v2_missing' }
+if (-not $docker.engineRunning) { $hardFails += 'docker_engine_not_running' }
+if (-not $docker.envFile)       { $hardFails += 'env_file_missing_entirely' }
+if ($hostNative.nvidiaDriver -eq 'MISSING')   { $hardFails += 'nvidia_smi_missing' }
+if ($hostNative.kitLauncher -eq 'MISSING_PATH'){ $hardFails += 'kit_launcher_missing' }
+if ($volume.status -eq 'WRONG_LEAF')          { $hardFails += 'runtime_storage_root_wrong_leaf' }
+if ($hardFails.Count -gt 0) {
+    Write-DeployTag -Tag 'fail' -Message "Phase 1 unfixable: $($hardFails -join ',')" -LogPath $LogPath | Out-Null
+    Print-FinalSummary -ExitCode 1 -FailedPhase 'Phase 1 preflight'
+    exit 1
+}
+
+# ============================================================
+# Phase 2: Auto-fix
+# ============================================================
+Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
+
+if ($DryRun) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 2 auto-fix DRY-RUN (no actions executed)' -LogPath $LogPath | Out-Null
+    Print-FinalSummary -ExitCode 0 -FailedPhase ''
+    exit 0
+}
+
+$fixActions = 0
+
+# fix: .venv
+if ($hostNative.venv -eq 'MISSING') {
+    Write-DeployTag -Tag 'fix' -Message 'creating .venv via python -m venv' -LogPath $LogPath | Out-Null
+    & python -m venv (Join-Path $RepoRoot '.venv')
+    if ($LASTEXITCODE -ne 0) {
+        Write-DeployTag -Tag 'fail' -Message 'python -m venv failed' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
+        exit 2
+    }
+    $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    foreach ($req in @('requirements.txt','bim-streaming-server\requirements.txt')) {
+        $reqPath = Join-Path $RepoRoot $req
+        if (Test-Path -LiteralPath $reqPath) {
+            Write-DeployTag -Tag 'fix' -Message "pip install -r $req" -LogPath $LogPath | Out-Null
+            & $venvPy -m pip install -r $reqPath
+            if ($LASTEXITCODE -ne 0) {
+                Write-DeployTag -Tag 'fail' -Message "pip install -r $req failed" -LogPath $LogPath | Out-Null
+                Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (pip install)'
+                exit 2
+            }
+        }
+    }
+    $fixActions++
+}
+
+# fix: .env / .env.example missing-key merge
+foreach ($ef in $envFiles) {
+    $envPath     = Join-Path $RepoRoot $ef.file
+    $examplePath = "$envPath.example"
+    if ((-not $ef.envExists) -and $ef.exampleExists) {
+        Write-DeployTag -Tag 'fix' -Message "Copy-Item $examplePath -> $envPath" -LogPath $LogPath | Out-Null
+        Copy-Item -LiteralPath $examplePath -Destination $envPath -Force
+        $fixActions++
+    } elseif ($ef.missing.Count -gt 0) {
+        Write-DeployTag -Tag 'fix' -Message "appending $($ef.missing.Count) missing keys to $($ef.file)" -LogPath $LogPath | Out-Null
+        Add-Content -LiteralPath $envPath -Value ''
+        Add-Content -LiteralPath $envPath -Value "# auto-appended by deploy.ps1 (missing-key merge from .env.example)"
+        foreach ($k in $ef.missing) {
+            # 從 .example 取預設值
+            $defaultValue = ''
+            foreach ($line in Get-Content -LiteralPath $examplePath) {
+                if ($line -match "^\s*$([regex]::Escape($k))\s*=\s*(.*)$") {
+                    $defaultValue = $Matches[1]
+                    break
+                }
+            }
+            Add-Content -LiteralPath $envPath -Value "$k=$defaultValue"
+        }
+        $fixActions++
+    }
+}
+
+# fix: volume — MISSING_KEY → append RUNTIME_STORAGE_ROOT=<RepoRoot>\storage
+if ($volume.status -eq 'MISSING_KEY') {
+    $envPath = Join-Path $RepoRoot $resolvedEnvFile
+    $absStorage = Join-Path $RepoRoot 'storage'
+    Write-DeployTag -Tag 'fix' -Message "appending RUNTIME_STORAGE_ROOT=$absStorage to $resolvedEnvFile" -LogPath $LogPath | Out-Null
+    Add-Content -LiteralPath $envPath -Value ''
+    Add-Content -LiteralPath $envPath -Value "# auto-appended by deploy.ps1 (volume alignment)"
+    Add-Content -LiteralPath $envPath -Value "RUNTIME_STORAGE_ROOT=$absStorage"
+    # 重新 audit
+    $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+    $script:volume = $volume
+    if ($volume.status -ne 'ALIGNED') {
+        Write-DeployTag -Tag 'fail' -Message 'volume alignment still not OK after fix' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (volume fix)'
+        exit 2
+    }
+    $fixActions++
+}
+
+# fix: 清 stale PID file
+foreach ($pidFile in Get-ChildItem -LiteralPath $RunDir -Filter '*.pid' -ErrorAction SilentlyContinue) {
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($pidFile.Name)
+    $removed = Remove-StalePidFile -Name $name -RunDir $RunDir
+    if ($removed) {
+        Write-DeployTag -Tag 'fix' -Message "removed stale PID file $($pidFile.Name)" -LogPath $LogPath | Out-Null
+        $fixActions++
+    }
+}
+
+# fix: 建本地目錄
+foreach ($d in @('scripts\.run', 'logs\nvstreamer', 'storage\ifc-cache')) {
+    $abs = Join-Path $RepoRoot $d
+    if (-not (Test-Path -LiteralPath $abs)) {
+        Write-DeployTag -Tag 'fix' -Message "mkdir $d" -LogPath $LogPath | Out-Null
+        New-Item -ItemType Directory -Path $abs -Force | Out-Null
+        $fixActions++
+    }
+}
+
+# fix: 容器衝突自動 rm(spec §7.1)
+if (-not $SkipDocker) {
+    $rmArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'rm','-f','-s','coordinator','viewer')
+    Write-DeployTag -Tag 'fix' -Message "docker $($rmArgs -join ' ') (clear any conflicting containers; named volumes preserved)" -LogPath $LogPath | Out-Null
+    Push-Location $RepoRoot
+    try { docker @rmArgs *> (Join-Path $RunDir 'docker-compose-rm.log') } finally { Pop-Location }
+    $fixActions++
+}
+
+# fix: 第一次 docker compose build(image 不存在時自動)
+if (-not $SkipDocker) {
+    $imageProbe = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'images','-q','coordinator','viewer')
+    Push-Location $RepoRoot
+    try {
+        $imageIds = docker @imageProbe 2>$null
+    } finally { Pop-Location }
+    $hasImages = -not [string]::IsNullOrWhiteSpace(($imageIds | Out-String))
+
+    if ($Build -or -not $hasImages) {
+        $why = if ($Build) { 'forced by -Build' } else { 'first time (no image found)' }
+        Write-DeployTag -Tag 'fix' -Message "docker compose build coordinator viewer ($why) — may take 3-5 min" -LogPath $LogPath | Out-Null
+        $buildArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'build','coordinator','viewer')
+        Push-Location $RepoRoot
+        try {
+            docker @buildArgs *> (Join-Path $RunDir 'docker-compose-build.log')
+            $buildExit = $LASTEXITCODE
+        } finally { Pop-Location }
+        if ($buildExit -ne 0) {
+            Write-DeployTag -Tag 'fail' -Message "docker compose build failed (see scripts\.run\docker-compose-build.log)" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (docker build)'
+            exit 2
+        }
+        $fixActions++
+    }
+}
+
+# fix: docker compose pull(opt-in)
+if ($Pull -and -not $SkipDocker) {
+    Write-DeployTag -Tag 'fix' -Message 'docker compose pull (opt-in)' -LogPath $LogPath | Out-Null
+    Push-Location $RepoRoot
+    try { docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file $resolvedEnvFile pull } finally { Pop-Location }
+    $fixActions++
+}
+
+Write-DeployTag -Tag 'ok' -Message "Phase 2 complete ($fixActions actions)" -LogPath $LogPath | Out-Null
+
+# ============================================================
+# Phase 3: Interactive guard(動到別人活著的 process 才問)
+# ============================================================
+Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
+
+$strangerPortPids = @($ports.docker + $ports.hostNative |
+    Where-Object { $_.status -eq 'OCCUPIED' -and -not $_.ourPidFile })
+
+if ($strangerPortPids.Count -eq 0 -and $hostNative.venv -ne 'WRONG_VERSION') {
+    Write-DeployTag -Tag 'ok' -Message 'no dangerous action needed' -LogPath $LogPath | Out-Null
+}
+
+foreach ($sp in $strangerPortPids) {
+    $prompt = "port $($sp.port) occupied by PID $($sp.pid) ($($sp.name)). Stop-Process? (y/N)"
+    if ($Force) {
+        Write-DeployTag -Tag 'fix' -Message "$prompt -> y (--Force)" -LogPath $LogPath | Out-Null
+        Stop-Process -Id $sp.pid -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-DeployTag -Tag 'ask' -Message $prompt -LogPath $LogPath | Out-Null
+        $response = Read-Host 'y/N'
+        if ($response -match '^[Yy]') {
+            Stop-Process -Id $sp.pid -Force -ErrorAction SilentlyContinue
+            Write-DeployTag -Tag 'fix' -Message "killed PID $($sp.pid)" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'fail' -Message "user declined to kill PID $($sp.pid)" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (user declined)'
+            exit 3
+        }
+    }
+}
+
+if ($hostNative.venv -eq 'WRONG_VERSION') {
+    $prompt = '.venv has wrong Python version (<3.11). Recreate? (will delete .venv) (y/N)'
+    if ($Force) {
+        Write-DeployTag -Tag 'fix' -Message "$prompt -> y (--Force)" -LogPath $LogPath | Out-Null
+        Remove-Item -LiteralPath (Join-Path $RepoRoot '.venv') -Recurse -Force
+        & python -m venv (Join-Path $RepoRoot '.venv')
+    } else {
+        Write-DeployTag -Tag 'ask' -Message $prompt -LogPath $LogPath | Out-Null
+        $response = Read-Host 'y/N'
+        if ($response -match '^[Yy]') {
+            Remove-Item -LiteralPath (Join-Path $RepoRoot '.venv') -Recurse -Force
+            & python -m venv (Join-Path $RepoRoot '.venv')
+        } else {
+            Write-DeployTag -Tag 'fail' -Message 'user declined .venv recreate' -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (user declined)'
+            exit 3
+        }
+    }
+}
+
+# ============================================================
+# Phase 4: Start (依賴順序 4a → 4b → 4c)
+# ============================================================
+Write-DeployHeader -Title 'Phase 4: Start services'
+
+# 4a: host-native conversion-service
+if ($SkipConversion) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native conversion (--SkipConversion)' -LogPath $LogPath | Out-Null
+} elseif (Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $RunDir) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native conversion already running' -LogPath $LogPath | Out-Null
+} else {
+    Write-DeployTag -Tag 'ok' -Message 'Phase 4a starting host-native conversion-service' -LogPath $LogPath | Out-Null
+    $startInfo = Start-HostNativeConversion -RepoRoot $RepoRoot -RuntimeStorageRoot $volume.runtimeStorageRoot
+    Write-DeployTag -Tag 'ok' -Message "conversion PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
+    $ok = Wait-HostNativeHealth -Name 'conversion-service' -Url 'http://127.0.0.1:49101/health' -TimeoutSec 30
+    if (-not $ok) {
+        Write-DeployTag -Tag 'fail' -Message 'stage=4a Phase 4a conversion-service /health did not return 200 within 30s' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (conversion)'
+        exit 4
+    }
+    Write-DeployTag -Tag 'ok' -Message 'Phase 4a conversion-service ready (:49101 /health 200)' -LogPath $LogPath | Out-Null
+}
+
+# 4b: host-native Kit
+if ($SkipKit) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native Kit (--SkipKit)' -LogPath $LogPath | Out-Null
+} elseif (Test-AlreadyRunning -Name 'bim-streaming-server' -RunDir $RunDir) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native Kit already running' -LogPath $LogPath | Out-Null
+} else {
+    Write-DeployTag -Tag 'ok' -Message 'Phase 4b starting host-native Kit streaming' -LogPath $LogPath | Out-Null
+    $startInfo = Start-HostNativeKit -RepoRoot $RepoRoot -SignalPort $KitSignalPort -StreamPort $KitMediaPort
+    Write-DeployTag -Tag 'ok' -Message "Kit PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
+    $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $KitSignalPort -TimeoutSec 90
+    if (-not $kitRes.ready) {
+        Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b Kit not ready in 90s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword))" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (Kit)'
+        exit 4
+    }
+    Write-DeployTag -Tag 'ok' -Message "Phase 4b Kit ready (:$KitSignalPort LISTEN + '$($kitRes.matchedKeyword)')" -LogPath $LogPath | Out-Null
+}
+
+# 4c: docker compose
+if ($SkipDocker) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose (--SkipDocker)' -LogPath $LogPath | Out-Null
+} else {
+    Write-DeployTag -Tag 'ok' -Message 'Phase 4c running scripts\start-web-plane-docker.ps1' -LogPath $LogPath | Out-Null
+    Push-Location $RepoRoot
+    try {
+        & "$PSScriptRoot\start-web-plane-docker.ps1" -EnvFile $resolvedEnvFile *> (Join-Path $RunDir 'docker-compose-up.log')
+        $dockerExit = $LASTEXITCODE
+    } finally { Pop-Location }
+    if ($dockerExit -ne 0) {
+        Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (docker)'
+        exit 4
+    }
+    Write-DeployTag -Tag 'ok' -Message 'Phase 4c docker compose up complete' -LogPath $LogPath | Out-Null
+}
+
+# ============================================================
+# Phase 5: Post-start verify (best-effort)
+# ============================================================
+Write-DeployHeader -Title 'Phase 5: Post-start verify (best-effort)'
+
+$verifyFails = @()
+
+function Probe-Url {
+    param([string] $Name, [string] $Url)
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) {
+            Write-DeployTag -Tag 'ok' -Message "verify $Name http=$($r.StatusCode) at $Url" -LogPath $LogPath | Out-Null
+            return $true
+        }
+        Write-DeployTag -Tag 'warn' -Message "verify $Name http=$($r.StatusCode) at $Url" -LogPath $LogPath | Out-Null
+        return $false
+    } catch {
+        Write-DeployTag -Tag 'warn' -Message "verify $Name unreachable at $Url :: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
+        return $false
+    }
+}
+
+if (-not $SkipDocker) {
+    if (-not (Probe-Url -Name 'coordinator' -Url 'http://127.0.0.1:8004/health')) { $verifyFails += 'coordinator' }
+    if (-not (Probe-Url -Name 'viewer'      -Url 'http://127.0.0.1:5173'))        { $verifyFails += 'viewer' }
+}
+if (-not $SkipConversion) {
+    if (-not (Probe-Url -Name 'conversion'  -Url 'http://127.0.0.1:49101/health')) { $verifyFails += 'conversion' }
+}
+
+if ($StrictPostVerify -and $verifyFails.Count -gt 0) {
+    Write-DeployTag -Tag 'fail' -Message "Phase 5 strict verify failed: $($verifyFails -join ',')" -LogPath $LogPath | Out-Null
+    Print-FinalSummary -ExitCode 5 -FailedPhase 'Phase 5 (strict verify)'
+    exit 5
+}
+
+# ============================================================
+# Final Summary(Print-FinalSummary 已在 Phase 1 之前定義)
+# ============================================================
+Print-FinalSummary -ExitCode 0 -FailedPhase ''
+exit 0
