@@ -205,11 +205,25 @@ function Get-PrReviewOpenSpecChangeIds {
     $ids = New-Object System.Collections.Generic.HashSet[string]
     foreach ($path in $ChangedPaths) {
         $normalized = ConvertTo-PrReviewPath $path
+        if ($normalized -match '^openspec/changes/archive/') { continue }
         if ($normalized -match '^openspec/changes/([^/]+)/') {
             [void]$ids.Add($Matches[1])
         }
     }
     return @($ids | Sort-Object)
+}
+
+function Test-PrReviewHasFormalOpenSpecEvidence {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string[]] $ChangedPaths)
+
+    foreach ($path in $ChangedPaths) {
+        $normalized = ConvertTo-PrReviewPath $path
+        if ($normalized -match '^openspec/(specs|changes/archive)/') {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Test-PrReviewPathIsDocsOnly {
@@ -362,6 +376,11 @@ function Get-PrReviewValidationPlan {
     $plans = New-Object System.Collections.Generic.List[object]
     $ps = Get-PrReviewPowerShell
     $added = New-Object System.Collections.Generic.HashSet[string]
+    if (($ChangedPaths | ForEach-Object { ConvertTo-PrReviewPath $_ }) -match '^(openspec/specs|openspec/changes/archive)/') {
+        if ($added.Add('openspec:specs')) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name 'openspec validate --specs --strict' -Owner 'openspec' -Cwd $RepoRoot -FileName 'openspec' -Arguments @('validate', '--specs', '--strict')))
+        }
+    }
     foreach ($changeId in $OpenSpecChangeIds) {
         if ($added.Add("openspec:$changeId")) {
             [void]$plans.Add((New-PrReviewCommandPlan -Name "openspec validate $changeId" -Owner 'openspec' -Cwd $RepoRoot -FileName 'openspec' -Arguments @('validate', $changeId)))
@@ -619,7 +638,8 @@ function Invoke-PrReviewAgent {
     foreach ($b in @($guards.blockers)) { [void]$blockers.Add($b) }
     foreach ($w in @($guards.warnings)) { [void]$warnings.Add($w) }
 
-    if ((Test-PrReviewNeedsOpenSpec -ChangedPaths $ChangedPaths) -and $openSpecChangeIds.Count -eq 0) {
+    $hasFormalOpenSpecEvidence = Test-PrReviewHasFormalOpenSpecEvidence -ChangedPaths $ChangedPaths
+    if ((Test-PrReviewNeedsOpenSpec -ChangedPaths $ChangedPaths) -and $openSpecChangeIds.Count -eq 0 -and -not $hasFormalOpenSpecEvidence) {
         [void]$blockers.Add((New-PrReviewIssue -Kind 'missing_openspec' -Severity 'high' -Message 'Behavior, workflow, code, or repo-boundary changes require an OpenSpec change id or documented exception.'))
     }
 
@@ -675,6 +695,7 @@ function Invoke-PrReviewAgent {
     $humanNotes = New-Object System.Collections.Generic.List[string]
     if ($ReportOnly) { [void]$humanNotes.Add('Report-only mode is enabled; this run should not be treated as merge approval.') }
     if ($openSpecChangeIds.Count -gt 0) { [void]$humanNotes.Add("OpenSpec changes detected: $($openSpecChangeIds -join ', ')") }
+    if ($hasFormalOpenSpecEvidence -and $openSpecChangeIds.Count -eq 0) { [void]$humanNotes.Add('OpenSpec archive or formal spec evidence detected; active change-id validation was skipped.') }
     if ($ChangedPaths.Count -eq 0) { [void]$humanNotes.Add('No changed paths were detected; verify base/head configuration.') }
     if ($optionalAiSkipped) { [void]$humanNotes.Add('Optional AI adapter is not required by policy and was skipped.') }
 
