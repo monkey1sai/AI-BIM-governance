@@ -47,18 +47,37 @@ try {
     }
     $message = $_ | Out-String
     $report = [ordered]@{
-        schema_version = 'pr-review-agent/v1'
-        status         = 'failed'
-        risk_level     = 'high'
-        generated_at   = (Get-Date).ToUniversalTime().ToString('o')
-        blockers       = @([ordered]@{
+        schema_version      = 'pr-review-agent/v1'
+        status              = 'failed'
+        risk_level          = 'high'
+        report_only         = [bool]$ReportOnly
+        pr_number           = $PrNumber
+        base_ref            = $BaseRef
+        head_ref            = $HeadRef
+        base_sha            = $BaseSha
+        head_sha            = $HeadSha
+        run_id              = $RunId
+        generated_at        = (Get-Date).ToUniversalTime().ToString('o')
+        changed_paths       = @($ChangedPath)
+        openspec_changes    = @()
+        validation_commands = @()
+        checks              = @()
+        blockers            = @([ordered]@{
             kind     = 'report_generation_failed'
             severity = 'high'
             path     = ''
             message  = $message
         })
-        warnings       = @()
-        checks         = @()
+        warnings            = @()
+        human_review_notes  = @('Report generation failed before the full review pipeline could complete.')
+        gitnexus            = [ordered]@{
+            required   = $false
+            status     = 'not_run'
+            command    = ''
+            summary    = 'Report generation failed before GitNexus could run.'
+            risk_level = 'unknown'
+            affected   = @()
+        }
     }
     [System.IO.File]::WriteAllText((Join-Path $OutputDir 'pr-review-agent.json'), ($report | ConvertTo-Json -Depth 20), [System.Text.UTF8Encoding]::new($false))
     [System.IO.File]::WriteAllText((Join-Path $OutputDir 'pr-review-agent.md'), "# PR Review Agent Summary`n`nReport generation failed.`n", [System.Text.UTF8Encoding]::new($false))

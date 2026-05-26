@@ -74,3 +74,16 @@ Validation notes:
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 -OutputDir artifacts\pr-review-agent-local-review-fix -AllowGitNexusUnavailable -AllowUnavailableCommands` completed with `status=passed risk=low`.
   - `git diff --check` passed with only LF/CRLF normalization warnings.
   - `gitnexus detect-changes --repo AI-BIM-governance` completed with `No changes detected`, while retaining the stale/sibling worktree warning.
+- Additional PR review feedback fixes on 2026-05-26:
+  - `-AllowGitNexusUnavailable` now only downgrades `unavailable`; actual GitNexus `failed` results stay blocking.
+  - Base/head diff resolution now fails fast instead of falling back to an empty clean checkout status.
+  - GitHub Actions now provisions OpenSpec / GitNexus / pytest / coordinator npm dependencies and no longer passes `-AllowUnavailableCommands`.
+  - Failure fallback reports now keep the documented schema fields.
+  - Retired-runtime workflow/script guard checks newly added diff lines when base/head are available, avoiding blockers from pre-existing text.
+- Re-validation after additional PR review feedback fixes:
+  - `openspec validate add-pr-review-agent` passed.
+  - PowerShell parse checks passed for `scripts/pr-review-agent.ps1`, `scripts/lib/pr-review-agent.ps1`, and `scripts/tests/test-pr-review-agent.ps1`.
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-pr-review-agent.ps1` passed.
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 -BaseSha origin/main -HeadSha HEAD -OutputDir artifacts\pr-review-agent-local-prdiff -AllowGitNexusUnavailable` completed with `status=warning risk=medium`; the only warning is local GitNexus current-worktree index unavailable.
+  - `git diff --check origin/main...HEAD` passed.
+  - `gitnexus detect-changes --repo C:\Users\IOT\.codex\worktrees\d67f\AI-BIM-governance` is unavailable locally because the current worktree is not registered in GitNexus; `gitnexus analyze --skip-agents-md --name AI-BIM-governance` hit the existing `C:\Repos\active\iot\AI-BIM-governance` alias, and a unique-alias analyze did not finalize. CI provisions a fresh GitNexus index before running the gate.

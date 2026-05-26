@@ -14,6 +14,17 @@ function Assert-True {
     if (-not $Condition) { throw "ASSERT FAILED: $Message" }
 }
 
+function Assert-Throws {
+    param([Parameter(Mandatory = $true)][scriptblock] $ScriptBlock, [Parameter(Mandatory = $true)][string] $Message)
+    $thrown = $false
+    try {
+        & $ScriptBlock
+    } catch {
+        $thrown = $true
+    }
+    Assert-True $thrown $Message
+}
+
 function New-TestOutputDir {
     $path = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-test-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $path -Force | Out-Null
@@ -114,6 +125,19 @@ Assert-True ($null -eq $gitnexusAllowedBlocker) 'allowed GitNexus unavailable do
 Assert-True ($null -ne $gitnexusWarning) 'allowed GitNexus unavailable records warning'
 Remove-Item -LiteralPath $out6 -Recurse -Force
 
+# Test 6b: GitNexus execution failure still blocks even when unavailable tooling is allowed.
+$out6b = New-TestOutputDir
+$result6b = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+    -ChangedPaths @('scripts/pr-review-agent.ps1', 'openspec/changes/add-pr-review-agent/tasks.md') `
+    -OutputDir $out6b `
+    -SkipCommandExecution `
+    -SimulateGitNexusFailure `
+    -AllowGitNexusUnavailable
+$loaded6b = Get-Content -LiteralPath $result6b.json_path -Raw | ConvertFrom-Json
+$gitnexusFailedBlocker = $loaded6b.blockers | Where-Object { $_.kind -eq 'gitnexus_failed' } | Select-Object -First 1
+Assert-True ($null -ne $gitnexusFailedBlocker) 'GitNexus failed result blocks even when unavailable is allowed'
+Remove-Item -LiteralPath $out6b -Recurse -Force
+
 # Test 7: Retired runtime guard definitions are allowed, but runtime wiring is blocked.
 $out7 = New-TestOutputDir
 $result7 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
@@ -145,6 +169,39 @@ try {
     if (Test-Path -LiteralPath $tempWiringPath) {
         Remove-Item -LiteralPath $tempWiringPath -Force
     }
+}
+
+# Test 7c: Retired runtime guard only blocks newly added wiring lines when base/head are available.
+$tempGuardGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-guard-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $tempGuardGit -Force | Out-Null
+Push-Location $tempGuardGit
+try {
+    git init -q
+    git config user.email 'pr-review-agent@example.invalid'
+    git config user.name 'PR Review Agent Test'
+    New-Item -ItemType Directory -Path scripts | Out-Null
+    Set-Content -LiteralPath 'scripts/pre-existing.ps1' -Value @('Push-Location _worker', 'Write-Host base') -Encoding UTF8
+    git add scripts/pre-existing.ps1
+    git commit -q -m 'base'
+    $guardBaseSha = (git rev-parse HEAD).Trim()
+    Set-Content -LiteralPath 'scripts/pre-existing.ps1' -Value @('Push-Location _worker', 'Write-Host edited') -Encoding UTF8
+    git add scripts/pre-existing.ps1
+    git commit -q -m 'edit unrelated line'
+    $guardHeadSha = (git rev-parse HEAD).Trim()
+    $preExistingGuard = Get-PrReviewPathGuardFindings -ChangedPaths @('scripts/pre-existing.ps1') -RepoRoot $tempGuardGit -BaseSha $guardBaseSha -HeadSha $guardHeadSha
+    $preExistingBlocker = $preExistingGuard.blockers | Where-Object { $_.kind -eq 'retired_runtime_reference' } | Select-Object -First 1
+    Assert-True ($null -eq $preExistingBlocker) 'pre-existing retired runtime wiring is not re-blocked'
+
+    Set-Content -LiteralPath 'scripts/new-wiring.ps1' -Value 'Push-Location _worker' -Encoding UTF8
+    git add scripts/new-wiring.ps1
+    git commit -q -m 'add retired wiring'
+    $guardNewHeadSha = (git rev-parse HEAD).Trim()
+    $newGuard = Get-PrReviewPathGuardFindings -ChangedPaths @('scripts/new-wiring.ps1') -RepoRoot $tempGuardGit -BaseSha $guardHeadSha -HeadSha $guardNewHeadSha
+    $newBlocker = $newGuard.blockers | Where-Object { $_.kind -eq 'retired_runtime_reference' } | Select-Object -First 1
+    Assert-True ($null -ne $newBlocker) 'new retired runtime wiring is blocked'
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $tempGuardGit -Recurse -Force
 }
 
 # Test 8: Path planner maps owners to commands.
@@ -196,6 +253,7 @@ try {
     $mergeBasePaths = @(Get-PrReviewChangedPathsFromGit -RepoRoot $tempGit -BaseSha $baseSha -HeadSha $headSha)
     Assert-True ($mergeBasePaths -contains 'feature.txt') 'merge-base diff includes PR head changes'
     Assert-True (-not ($mergeBasePaths -contains 'main.txt')) 'merge-base diff excludes base-only changes'
+    Assert-Throws { Get-PrReviewChangedPathsFromGit -RepoRoot $tempGit -BaseSha 'missing-base-sha' -HeadSha $headSha } 'invalid base/head diff throws'
 } finally {
     Pop-Location
     Remove-Item -LiteralPath $tempGit -Recurse -Force
@@ -220,5 +278,17 @@ try {
     Pop-Location
     Remove-Item -LiteralPath $tempRenameGit -Recurse -Force
 }
+
+# Test 12: Wrapper fallback report keeps the stable schema when report generation fails.
+$out12 = New-TestOutputDir
+$wrapperPath = Join-Path $repoRoot 'scripts\pr-review-agent.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $wrapperPath -BaseSha missing-base-sha -HeadSha missing-head-sha -OutputDir $out12 *> $null
+Assert-True ($LASTEXITCODE -eq 1) 'wrapper exits nonzero on invalid base/head'
+$failedReport = Get-Content -LiteralPath (Join-Path $out12 'pr-review-agent.json') -Raw | ConvertFrom-Json
+$failedFields = @($failedReport.PSObject.Properties.Name)
+foreach ($field in @('changed_paths', 'openspec_changes', 'validation_commands', 'human_review_notes', 'gitnexus')) {
+    Assert-True ($failedFields -contains $field) "fallback report contains $field"
+}
+Remove-Item -LiteralPath $out12 -Recurse -Force
 
 Write-Host '[test-pr-review-agent] all assertions passed'
