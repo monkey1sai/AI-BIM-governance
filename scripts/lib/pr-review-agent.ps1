@@ -490,7 +490,7 @@ function Invoke-PrReviewGitNexus {
         $record.summary = ($output -split "`r?`n" | Where-Object { $_ } | Select-Object -First 20) -join "`n"
         if ($exitCode -eq 0) {
             $record.status = 'passed'
-        } elseif ($record.summary -match 'Repository ".+" not found|Available:|not indexed|registry entry .* was not added') {
+        } elseif (Test-PrReviewGitNexusUnavailableMessage -Summary $record.summary) {
             $record.status = 'unavailable'
         } else {
             $record.status = 'failed'
@@ -502,6 +502,13 @@ function Invoke-PrReviewGitNexus {
         $ErrorActionPreference = $previousErrorActionPreference
     }
     return [pscustomobject]$record
+}
+
+function Test-PrReviewGitNexusUnavailableMessage {
+    [CmdletBinding()]
+    param([string] $Summary)
+
+    return $Summary -match 'Repository ".+" not found|Available:|not indexed|No indexed repositories found|Run:\s*gitnexus analyze|registry entry .* was not added'
 }
 
 function Get-PrReviewRiskLevel {

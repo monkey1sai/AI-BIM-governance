@@ -171,6 +171,10 @@ $gitnexusFailedBlocker = $loaded6b.blockers | Where-Object { $_.kind -eq 'gitnex
 Assert-True ($null -ne $gitnexusFailedBlocker) 'GitNexus failed result blocks even when unavailable is allowed'
 Remove-Item -LiteralPath $out6b -Recurse -Force
 
+# Test 6c: GitNexus registry/index setup failures are classified as unavailable, not execution failures.
+Assert-True (Test-PrReviewGitNexusUnavailableMessage -Summary 'node.exe : GitNexus: No indexed repositories found. Run: gitnexus analyze') 'GitNexus missing registry is unavailable'
+Assert-True (-not (Test-PrReviewGitNexusUnavailableMessage -Summary 'TypeError: Cannot read properties of undefined')) 'unexpected GitNexus errors are not downgraded'
+
 # Test 7: Retired runtime guard definitions are allowed, but runtime wiring is blocked.
 $out7 = New-TestOutputDir
 $result7 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
