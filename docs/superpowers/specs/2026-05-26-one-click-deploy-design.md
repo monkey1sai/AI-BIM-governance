@@ -1,4 +1,4 @@
-# 一鍵部屬(Mode C hybrid) Design
+# 一鍵部署(Mode C hybrid) Design
 
 > Brainstorming 產出 spec,2026-05-26。
 > 路徑:`docs/superpowers/specs/2026-05-26-one-click-deploy-design.md`。
@@ -8,7 +8,7 @@
 
 ## 1. Goal
 
-提供一個 `.\scripts\deploy.ps1`,讓使用者在 Windows host + NVIDIA GPU 機器上,**用一條指令** 啟動 Mode C(hybrid)部屬:Docker compose 跑 coordinator + viewer,host-native PowerShell 跑 conversion-service + Kit streaming。前置條件不對時自動修(限定安全項目),動到別人的活著的 process / 危險動作前先問,完成後印可診斷的 summary。
+提供一個 `.\scripts\deploy.ps1`,讓使用者在 Windows host + NVIDIA GPU 機器上,**用一條指令** 啟動 Mode C(hybrid)部署:Docker compose 跑 coordinator + viewer,host-native PowerShell 跑 conversion-service + Kit streaming。前置條件不對時自動修(限定安全項目),動到別人的活著的 process / 危險動作前先問,完成後印可診斷的 summary。
 
 成功標準:
 
@@ -43,7 +43,7 @@ repo 既有三種 startup mode:
 
 brainstorming 過程拍板:
 
-1. **Approach B**:`deploy.ps1` 是薄 orchestrator(100-150 行),所有檢查 / 修復 / 啟動邏輯分到 `scripts\lib\*.ps1` modules。Module 全部 read-only(或在明確 phase 才動手),便於 Pester 單測。
+1. **Approach B**:`deploy.ps1` 是 Mode C orchestrator,核心檢查 / 修復 / 啟動邏輯優先分到 `scripts\lib\*.ps1` modules；第一版因 Phase 0-5 串接與 diagnostics 約 500 行,後續若重複邏輯增加再拆更細。Module 全部 read-only(或在明確 phase 才動手),便於 Pester 單測。
 2. **Mode C 唯一**:不接 `-Mode native|docker|hybrid` 多軌切換。
 3. **Detect + Auto-fix**:能修的安全項目自動修(venv / .env missing-key / stale PID / 建目錄 / 第一次 docker build / container 衝突);動到活著的別人 process 才問;系統級安裝、改 `.env` 已有 key 實值、改 compose YAML、改 git source state 一律不做。
 4. **入口**:新建 `scripts\deploy.ps1`,保留 `start-all.ps1` / `start-web-plane-docker.ps1` / `start-runtime-manager-docker.ps1` 原樣;deploy.ps1 在 Phase 4c 直接呼叫 `start-web-plane-docker.ps1`。
@@ -60,9 +60,9 @@ brainstorming 過程拍板:
 
 | 項目 | 為什麼不做 |
 |---|---|
-| Mode A / Mode B 的一鍵部屬 | 使用者第二輪確認只擔 Mode C |
-| Production 部屬(Windows Service / Task Scheduler / NSSM autostart) | 不是 dev 一鍵範圍 |
-| 跨主機部屬(把 coordinator / streaming 拆到不同 host) | 同上 |
+| Mode A / Mode B 的一鍵部署 | 使用者第二輪確認只擔 Mode C |
+| Production 部署(Windows Service / Task Scheduler / NSSM autostart) | 不是 dev 一鍵範圍 |
+| 跨主機部署(把 coordinator / streaming 拆到不同 host) | 同上 |
 | 安裝 Docker Desktop / NVIDIA driver / Node / Python / Kit Launcher 本身 | preflight 偵測到缺 → 退 1 + 印官方安裝網址;不下載 installer |
 | 改 `compose.runtime-manager.yml` / `compose.host-kit.yml` 內容 | compose YAML 是 source-of-truth |
 | 改 `start-all.ps1` 等既有 script 行為 | 向後相容 |
@@ -105,7 +105,7 @@ brainstorming 過程拍板:
 
 ```
 scripts\
-├── deploy.ps1                          # 100-150 行薄 orchestrator(Mode C 專用)
+├── deploy.ps1                          # Mode C orchestrator(目前約 500 行;後續視重複度再拆)
 ├── lib\
 │   ├── deploy-report.ps1               # 統一 [ok]/[fix]/[ask]/[skip]/[warn]/[fail]
 │   ├── preflight-docker.ps1            # docker / compose v2 / engine running / .env.web-plane.host-kit
@@ -205,7 +205,7 @@ result 同時寫到 `scripts\.run\deploy-audit.json`(machine-readable,CI 可 par
 | Code | 意義 | 對應 stage |
 |---|---|---|
 | 0 | 全部 OK,服務都起來了(或 -DryRun 完成) | — |
-| 1 | preflight 發現 unfixable(沒裝 Docker / nvidia-smi 不在 / Volume leaf 錯) | Phase 1 |
+| 1 | preflight 發現 unfixable(沒裝 Docker / nvidia-smi 不在 / Volume leaf 錯；`-DryRun` 例外,只報告並退 0) | Phase 1 |
 | 2 | auto-fix 過程中失敗(npm/pip/.env merge/docker build) | Phase 2 |
 | 3 | 互動 guard 被使用者拒絕 | Phase 3 |
 | 4 | startup 任一 stage 失敗 | Phase 4(log 標 stage=4a/4b/4c) |

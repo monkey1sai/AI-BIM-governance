@@ -144,7 +144,7 @@ function Report-Audit {
         }
     }
 
-    foreach ($p in @($ports.docker; $ports.hostNative)) {
+    foreach ($p in @($ports.docker) + @($ports.hostNative)) {
         if ($p.status -eq 'FREE') {
             Write-DeployTag -Tag 'ok' -Message "port $($p.port) FREE" -LogPath $LogPath | Out-Null
         } elseif ($p.ourPidFile) {
@@ -182,6 +182,16 @@ if (-not $docker.envFile)       { $hardFails += 'env_file_missing_entirely' }
 if ($hostNative.nvidiaDriver -eq 'MISSING')   { $hardFails += 'nvidia_smi_missing' }
 if ($hostNative.kitLauncher -eq 'MISSING_PATH'){ $hardFails += 'kit_launcher_missing' }
 if ($volume.status -eq 'WRONG_LEAF')          { $hardFails += 'runtime_storage_root_wrong_leaf' }
+if ($DryRun) {
+    Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
+    if ($hardFails.Count -gt 0) {
+        Write-DeployTag -Tag 'skip' -Message "Phase 2 auto-fix DRY-RUN (hard fails reported: $($hardFails -join ',')); no actions executed" -LogPath $LogPath | Out-Null
+    } else {
+        Write-DeployTag -Tag 'skip' -Message 'Phase 2 auto-fix DRY-RUN (no actions executed)' -LogPath $LogPath | Out-Null
+    }
+    Print-FinalSummary -ExitCode 0 -FailedPhase ''
+    exit 0
+}
 if ($hardFails.Count -gt 0) {
     Write-DeployTag -Tag 'fail' -Message "Phase 1 unfixable: $($hardFails -join ',')" -LogPath $LogPath | Out-Null
     Print-FinalSummary -ExitCode 1 -FailedPhase 'Phase 1 preflight'
@@ -192,12 +202,6 @@ if ($hardFails.Count -gt 0) {
 # Phase 2: Auto-fix
 # ============================================================
 Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
-
-if ($DryRun) {
-    Write-DeployTag -Tag 'skip' -Message 'Phase 2 auto-fix DRY-RUN (no actions executed)' -LogPath $LogPath | Out-Null
-    Print-FinalSummary -ExitCode 0 -FailedPhase ''
-    exit 0
-}
 
 $fixActions = 0
 
@@ -247,14 +251,8 @@ foreach ($ef in $envFiles) {
         Add-Content -LiteralPath $envPath -Value ''
         Add-Content -LiteralPath $envPath -Value "# auto-appended by deploy.ps1 (missing-key merge from .env.example)"
         foreach ($k in $ef.missing) {
-            # 從 .example 取預設值
-            $defaultValue = ''
-            foreach ($line in Get-Content -LiteralPath $examplePath) {
-                if ($line -match "^\s*$([regex]::Escape($k))\s*=\s*(.*)$") {
-                    $defaultValue = $Matches[1]
-                    break
-                }
-            }
+            # 從 .example 取預設值,支援 KEY=value 與 KEY: value 兩種格式
+            $defaultValue = Get-EnvExampleDefaultValue -Path $examplePath -Key $k
             Add-Content -LiteralPath $envPath -Value "$k=$defaultValue"
         }
         $fixActions++

@@ -141,7 +141,7 @@ function Start-HostNativeConversion {
         -Name 'bim-streaming-conversion-service' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
         -FilePath 'powershell.exe' `
-        -ArgumentList @('-NoExit','-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher) `
+        -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher) `
         -RunDir $runDir)
 }
 

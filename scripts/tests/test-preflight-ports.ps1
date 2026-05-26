@@ -6,15 +6,19 @@ $modulePath = Join-Path $repoRoot 'scripts\lib\preflight-ports.ps1'
 . $modulePath
 
 # Test 1: 全 FREE
-$result = Test-PortAvailability -RepoRoot (New-TestSandbox -Prefix 'preflight-ports') `
-    -PortLookup { param($port) $null } `
-    -ProcessNameLookup { param($procId) $null }
-Assert-True ($result.docker.Count -eq 2) 'docker has 2 ports'
-Assert-True ($result.hostNative.Count -eq 3) 'hostNative has 3 ports'
-foreach ($p in @($result.docker; $result.hostNative)) {
-    Assert-Equal 'FREE' $p.status "port $($p.port) FREE"
+$sandbox = New-TestSandbox -Prefix 'preflight-ports'
+try {
+    $result = Test-PortAvailability -RepoRoot $sandbox `
+        -PortLookup { param($port) $null } `
+        -ProcessNameLookup { param($procId) $null }
+    Assert-True ($result.docker.Count -eq 2) 'docker has 2 ports'
+    Assert-True ($result.hostNative.Count -eq 3) 'hostNative has 3 ports'
+    foreach ($p in @($result.docker) + @($result.hostNative)) {
+        Assert-Equal 'FREE' $p.status "port $($p.port) FREE"
+    }
+    Write-TestPass 'all ports free'
 }
-Write-TestPass 'all ports free'
+finally { Remove-TestSandbox -Path $sandbox }
 
 # Test 2: :49100 被陌生 PID 佔(不在 PID file)
 $sandbox = New-TestSandbox -Prefix 'preflight-ports-pid'
