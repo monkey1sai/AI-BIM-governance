@@ -19,6 +19,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PR review agent dependencies
+        shell: pwsh
+        run: |
+          npm install -g @fission-ai/openspec gitnexus
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          npm ci --prefix bim-review-coordinator
+
       - name: Run PR review agent
         id: review
         shell: pwsh
