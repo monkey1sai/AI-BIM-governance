@@ -1,0 +1,100 @@
+name: PR Review Agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  pr-review-agent:
+    name: pr-review-agent
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run PR review agent
+        id: review
+        shell: pwsh
+        continue-on-error: true
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GITHUB_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          $args = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', 'scripts/pr-review-agent.ps1',
+            '-BaseSha', '${{ github.event.pull_request.base.sha }}',
+            '-HeadSha', '${{ github.event.pull_request.head.sha }}',
+            '-PrNumber', '${{ github.event.pull_request.number }}',
+            '-RunId', '${{ github.run_id }}',
+            '-OutputDir', 'artifacts/pr-review-agent'
+          )
+          if ($env:PR_DRAFT -eq 'true') {
+            $args += '-ReportOnly'
+          }
+          & powershell @args
+          $exitCode = $LASTEXITCODE
+          "exit_code=$exitCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (Test-Path artifacts/pr-review-agent/pr-review-agent.md) {
+            Get-Content artifacts/pr-review-agent/pr-review-agent.md -Raw >> $env:GITHUB_STEP_SUMMARY
+          }
+          exit 0
+
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-review-agent-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: artifacts/pr-review-agent
+          if-no-files-found: error
+
+      - name: Comment review summary
+        if: always() && github.event.pull_request.head.repo.fork == false
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if (-not (Test-Path artifacts/pr-review-agent/pr-review-agent.md)) {
+            Write-Host 'No review summary found; skipping comment.'
+            exit 0
+          }
+          $body = Get-Content artifacts/pr-review-agent/pr-review-agent.md -Raw
+          $payload = @{ body = $body } | ConvertTo-Json -Depth 4
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-RestMethod `
+            -Method Post `
+            -Uri "https://api.github.com/repos/$env:REPO/issues/$env:PR_NUMBER/comments" `
+            -Headers $headers `
+            -Body $payload `
+            -ContentType 'application/json' | Out-Null
+
+      - name: Enforce review verdict
+        if: always()
+        shell: pwsh
+        run: |
+          $exitCode = '${{ steps.review.outputs.exit_code }}'
+          if ([string]::IsNullOrWhiteSpace($exitCode)) {
+            Write-Error 'PR review agent did not produce an exit code.'
+            exit 1
+          }
+          if ($exitCode -ne '0') {
+            Write-Error "PR review agent failed with exit code $exitCode."
+            exit [int]$exitCode
+          }
+          Write-Host 'PR review agent passed or ran in report-only mode.'

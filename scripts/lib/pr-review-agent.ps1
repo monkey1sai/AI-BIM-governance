@@ -1,0 +1,542 @@
+# Shared helpers for PR review agent reports.
+
+Set-StrictMode -Version Latest
+
+$Script:PrReviewGateStatuses = @('passed', 'warning', 'blocked', 'failed')
+$Script:PrReviewRiskLevels = @('low', 'medium', 'high', 'critical')
+$Script:RetiredRuntimeNames = @('_worker', '_bim-control', '_s3_storage', '_conversion-service', '_conversion-server')
+
+function ConvertTo-PrReviewPath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    return ($Path -replace '\\', '/').TrimStart('/')
+}
+
+function New-PrReviewIssue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Kind,
+        [Parameter(Mandatory = $true)][string] $Message,
+        [string] $Path = '',
+        [string] $Severity = 'medium'
+    )
+
+    return [ordered]@{
+        kind     = $Kind
+        severity = $Severity
+        path     = $Path
+        message  = $Message
+    }
+}
+
+function New-PrReviewCheck {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $Owner,
+        [Parameter(Mandatory = $true)][string] $Status,
+        [string] $Command = '',
+        [string] $Cwd = '',
+        [int] $ExitCode = 0,
+        [string] $Summary = '',
+        [string] $EvidencePath = ''
+    )
+
+    return [ordered]@{
+        name          = $Name
+        owner         = $Owner
+        status        = $Status
+        command       = $Command
+        cwd           = $Cwd
+        exit_code     = $ExitCode
+        summary       = $Summary
+        evidence_path = $EvidencePath
+    }
+}
+
+function Get-PrReviewPowerShell {
+    [CmdletBinding()]
+    param()
+
+    $current = (Get-Process -Id $PID -ErrorAction SilentlyContinue).Path
+    if (-not [string]::IsNullOrWhiteSpace($current) -and (Test-Path -LiteralPath $current)) {
+        return $current
+    }
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh) { return $pwsh.Source }
+    return 'powershell.exe'
+}
+
+function Get-PrReviewChangedPathsFromGit {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
+
+    $safeRoot = $RepoRoot -replace '\\', '/'
+    $paths = @()
+    if (-not [string]::IsNullOrWhiteSpace($BaseSha) -and -not [string]::IsNullOrWhiteSpace($HeadSha)) {
+        $paths = @(git -c "safe.directory=$safeRoot" diff --name-only $BaseSha $HeadSha 2>$null)
+    }
+    if ($paths.Count -eq 0) {
+        $paths = @(git -c "safe.directory=$safeRoot" status --porcelain=v1 -uall 2>$null | ForEach-Object {
+            if ($_.Length -gt 3) { $_.Substring(3) }
+        })
+    }
+    return @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { ConvertTo-PrReviewPath $_ } | Sort-Object -Unique)
+}
+
+function Get-PrReviewOpenSpecChangeIds {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string[]] $ChangedPaths)
+
+    $ids = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($path in $ChangedPaths) {
+        $normalized = ConvertTo-PrReviewPath $path
+        if ($normalized -match '^openspec/changes/([^/]+)/') {
+            [void]$ids.Add($Matches[1])
+        }
+    }
+    return @($ids | Sort-Object)
+}
+
+function Test-PrReviewPathIsDocsOnly {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $p = ConvertTo-PrReviewPath $Path
+    if ($p -match '^(docs|openspec)/') { return $true }
+    if ($p -match '^(README|AGENTS|CLAUDE|CODE_GOAL_DOCKER_KIT_MVP)\.md$') { return $true }
+    if ($p -match '\.(md|txt|png|jpg|jpeg|svg|html)$') { return $true }
+    return $false
+}
+
+function Test-PrReviewNeedsOpenSpec {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string[]] $ChangedPaths)
+
+    foreach ($path in $ChangedPaths) {
+        $p = ConvertTo-PrReviewPath $path
+        if ($p -match '^openspec/changes/') { continue }
+        if ($p -match '^(\.github/workflows|scripts|bim-review-coordinator|web-viewer-sample|bim-streaming-server|tests)/') {
+            return $true
+        }
+        if ($p -in @('README.md', 'AGENTS.md') -or $p -eq 'docs/PROJECT_DEVELOPMENT_WORKFLOW.md') {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-PrReviewNeedsGitNexus {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string[]] $ChangedPaths)
+
+    foreach ($path in $ChangedPaths) {
+        $p = ConvertTo-PrReviewPath $path
+        if ($p -match '^(scripts|bim-review-coordinator|web-viewer-sample|bim-streaming-server|tests)/') {
+            if ($p -notmatch '\.(md|txt|json|png|jpg|jpeg|svg|html)$') { return $true }
+        }
+        if ($p -match '^\.github/workflows/') { return $true }
+    }
+    return $false
+}
+
+function Get-PrReviewPathGuardFindings {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string[]] $ChangedPaths,
+        [Parameter(Mandatory = $true)][string] $RepoRoot
+    )
+
+    $blockers = New-Object System.Collections.Generic.List[object]
+    $warnings = New-Object System.Collections.Generic.List[object]
+    foreach ($path in $ChangedPaths) {
+        $p = ConvertTo-PrReviewPath $path
+        $leaf = [System.IO.Path]::GetFileName($p)
+
+        $isEnvExample = ($leaf -eq '.env.example' -or $leaf -match '^\.env\..*\.example$')
+        $isEnvValue = ($leaf -eq '.env' -or ($leaf -match '^\.env\.' -and -not $isEnvExample))
+        if ($isEnvValue) {
+            [void]$blockers.Add((New-PrReviewIssue -Kind 'secret_path' -Severity 'critical' -Path $p -Message 'PR modifies a real environment file; do not change secret values in repo.'))
+        } elseif ($isEnvExample) {
+            [void]$warnings.Add((New-PrReviewIssue -Kind 'env_contract' -Severity 'medium' -Path $p -Message 'Environment example changed; human reviewer should check placeholder contract.'))
+        }
+
+        if ($p -match '(^|/)(id_rsa|id_ed25519|credentials|token|secret)(\.|/|$)' -or $p -match '\.(pem|p12|pfx|key)$') {
+            [void]$blockers.Add((New-PrReviewIssue -Kind 'secret_path' -Severity 'critical' -Path $p -Message 'PR modifies a credential/private-key-like path. Secret values are not printed.'))
+        }
+
+        if ($p -match '^(\.codex/skills|\.claude/skills/generated|\.gitnexus)(/|$)') {
+            [void]$blockers.Add((New-PrReviewIssue -Kind 'generated_tooling_path' -Severity 'high' -Path $p -Message 'Generated local tooling state must not be committed as product source.'))
+        }
+
+        foreach ($name in $Script:RetiredRuntimeNames) {
+            $escaped = [regex]::Escape($name)
+            if ($p -match "^$escaped(/|$)") {
+                [void]$blockers.Add((New-PrReviewIssue -Kind 'retired_runtime_path' -Severity 'critical' -Path $p -Message "Retired runtime '$name' must not be reintroduced as a product folder."))
+            }
+        }
+
+        if ($p -match '^(\.github/workflows|scripts)/') {
+            $fullPath = Join-Path $RepoRoot ($p -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+            if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+                $content = Get-Content -LiteralPath $fullPath -Raw -ErrorAction SilentlyContinue
+                foreach ($name in $Script:RetiredRuntimeNames) {
+                    if ($content -match [regex]::Escape($name)) {
+                        [void]$blockers.Add((New-PrReviewIssue -Kind 'retired_runtime_reference' -Severity 'high' -Path $p -Message "Workflow/script references retired runtime '$name'; keep retired services out of current runtime gates."))
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        blockers = @($blockers.ToArray())
+        warnings = @($warnings.ToArray())
+    }
+}
+
+function New-PrReviewCommandPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $Owner,
+        [Parameter(Mandatory = $true)][string] $Cwd,
+        [Parameter(Mandatory = $true)][string] $FileName,
+        [Parameter(Mandatory = $true)][string[]] $Arguments
+    )
+
+    return [ordered]@{
+        name      = $Name
+        owner     = $Owner
+        cwd       = $Cwd
+        file_name = $FileName
+        arguments = @($Arguments)
+        command   = "$FileName $($Arguments -join ' ')"
+    }
+}
+
+function Get-PrReviewValidationPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string[]] $ChangedPaths,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [string[]] $OpenSpecChangeIds = @()
+    )
+
+    $plans = New-Object System.Collections.Generic.List[object]
+    $ps = Get-PrReviewPowerShell
+    $added = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($changeId in $OpenSpecChangeIds) {
+        if ($added.Add("openspec:$changeId")) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name "openspec validate $changeId" -Owner 'openspec' -Cwd $RepoRoot -FileName 'openspec' -Arguments @('validate', $changeId)))
+        }
+    }
+
+    foreach ($path in $ChangedPaths) {
+        $p = ConvertTo-PrReviewPath $path
+        if ($p -match '^bim-review-coordinator/' -and $added.Add('bim-review-coordinator')) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name 'bim-review-coordinator verify' -Owner 'bim-review-coordinator' -Cwd (Join-Path $RepoRoot 'bim-review-coordinator') -FileName 'npm' -Arguments @('run', 'verify')))
+        }
+        if ($p -match '^web-viewer-sample/' -and $added.Add('web-viewer-sample')) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name 'web-viewer-sample verify' -Owner 'web-viewer-sample' -Cwd (Join-Path $RepoRoot 'web-viewer-sample') -FileName 'npm' -Arguments @('run', 'verify')))
+        }
+        if ($p -match '^bim-streaming-server/' -and $added.Add('bim-streaming-server-api')) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name 'bim-streaming-server conversion API tests' -Owner 'bim-streaming-server' -Cwd (Join-Path $RepoRoot 'bim-streaming-server') -FileName 'python' -Arguments @('-m', 'pytest', 'tests/test_conversion_authority_api.py', '-q')))
+        }
+        if ($p -match '^bim-streaming-server/' -and $added.Add('bim-streaming-server-stage')) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name 'bim-streaming-server stage-loading contract' -Owner 'bim-streaming-server' -Cwd (Join-Path $RepoRoot 'bim-streaming-server') -FileName $ps -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/tests/test-stage-loading-contract.ps1')))
+        }
+        if ($p -match '^tests/' -and $added.Add('tests')) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name 'root contracts and fakes tests' -Owner 'tests' -Cwd $RepoRoot -FileName 'python' -Arguments @('-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider')))
+        }
+        if ($p -match '^scripts/' -and $added.Add('scripts')) {
+            [void]$plans.Add((New-PrReviewCommandPlan -Name 'script-level PR review agent tests' -Owner 'scripts' -Cwd $RepoRoot -FileName $ps -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/tests/test-pr-review-agent.ps1')))
+        }
+    }
+
+    return @($plans.ToArray())
+}
+
+function Invoke-PrReviewCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] $Plan,
+        [switch] $SkipExecution
+    )
+
+    if ($SkipExecution) {
+        return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status 'skipped' -Command $Plan.command -Cwd $Plan.cwd -Summary 'Command execution skipped by dry-run fixture.'
+    }
+
+    if (-not (Test-Path -LiteralPath $Plan.cwd -PathType Container)) {
+        return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status 'failed' -Command $Plan.command -Cwd $Plan.cwd -ExitCode 1 -Summary 'Working directory does not exist.'
+    }
+
+    Push-Location $Plan.cwd
+    try {
+        $commandArgs = @()
+        foreach ($arg in @($Plan.arguments)) {
+            $commandArgs += [string]$arg
+        }
+        $output = & $Plan.file_name @commandArgs 2>&1 | Out-String
+        $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+    } catch {
+        $output = $_ | Out-String
+        $exitCode = 1
+    } finally {
+        Pop-Location
+    }
+
+    $status = if ($exitCode -eq 0) { 'passed' } else { 'failed' }
+    $summary = ($output -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 8) -join "`n"
+    if ([string]::IsNullOrWhiteSpace($summary)) { $summary = "exit_code=$exitCode" }
+    return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status $status -Command $Plan.command -Cwd $Plan.cwd -ExitCode $exitCode -Summary $summary
+}
+
+function Invoke-PrReviewGitNexus {
+    [CmdletBinding()]
+    param(
+        [switch] $NeedsGitNexus,
+        [switch] $SkipGitNexus,
+        [switch] $AllowUnavailable,
+        [switch] $SimulateUnavailable
+    )
+
+    $record = [ordered]@{
+        required      = [bool]$NeedsGitNexus
+        status        = 'not_required'
+        command       = ''
+        summary       = ''
+        risk_level    = 'none'
+        affected      = @()
+    }
+
+    if (-not $NeedsGitNexus) { return ,$record }
+    if ($SkipGitNexus) {
+        $record.status = if ($AllowUnavailable) { 'warning' } else { 'unavailable' }
+        $record.summary = 'GitNexus execution skipped by caller.'
+        return ,$record
+    }
+    if ($SimulateUnavailable) {
+        $record.status = 'unavailable'
+        $record.summary = 'GitNexus unavailable simulated by test fixture.'
+        return ,$record
+    }
+
+    $cmd = Get-Command gitnexus -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $record.status = 'unavailable'
+        $record.summary = 'gitnexus CLI not found on PATH.'
+        return ,$record
+    }
+
+    $record.command = 'gitnexus detect-changes'
+    try {
+        $output = & gitnexus detect-changes 2>&1 | Out-String
+        $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+        $record.status = if ($exitCode -eq 0) { 'passed' } else { 'failed' }
+        $record.summary = ($output -split "`r?`n" | Where-Object { $_ } | Select-Object -First 20) -join "`n"
+    } catch {
+        $record.status = 'failed'
+        $record.summary = $_ | Out-String
+    }
+    return ,$record
+}
+
+function Get-PrReviewRiskLevel {
+    [CmdletBinding()]
+    param(
+        [object[]] $Blockers,
+        [object[]] $Warnings,
+        [object[]] $Checks,
+        $GitNexus
+    )
+
+    foreach ($blocker in @($Blockers)) {
+        if ($blocker.severity -eq 'critical') { return 'critical' }
+    }
+    foreach ($check in @($Checks)) {
+        if ($check.status -eq 'failed') { return 'high' }
+    }
+    if ($GitNexus.required -and $GitNexus.status -in @('unavailable', 'failed')) { return 'high' }
+    if (@($Blockers).Count -gt 0) { return 'high' }
+    if (@($Warnings).Count -gt 0) { return 'medium' }
+    return 'low'
+}
+
+function ConvertTo-PrReviewMarkdown {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)] $Report)
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('# PR Review Agent Summary')
+    [void]$lines.Add('')
+    [void]$lines.Add("| Field | Value |")
+    [void]$lines.Add("|---|---|")
+    [void]$lines.Add('| Status | `' + $Report.status + '` |')
+    [void]$lines.Add('| Risk | `' + $Report.risk_level + '` |')
+    [void]$lines.Add('| PR | `' + $Report.pr_number + '` |')
+    [void]$lines.Add('| Head | `' + $Report.head_ref + '` / `' + $Report.head_sha + '` |')
+    [void]$lines.Add('| Base | `' + $Report.base_ref + '` / `' + $Report.base_sha + '` |')
+    [void]$lines.Add('')
+    [void]$lines.Add('## Blockers')
+    if (@($Report.blockers).Count -eq 0) {
+        [void]$lines.Add('- None')
+    } else {
+        foreach ($b in $Report.blockers) { [void]$lines.Add("- [$($b.severity)] $($b.path) $($b.message)") }
+    }
+    [void]$lines.Add('')
+    [void]$lines.Add('## Warnings')
+    if (@($Report.warnings).Count -eq 0) {
+        [void]$lines.Add('- None')
+    } else {
+        foreach ($w in $Report.warnings) { [void]$lines.Add("- [$($w.severity)] $($w.path) $($w.message)") }
+    }
+    [void]$lines.Add('')
+    [void]$lines.Add('## Validation Commands')
+    if (@($Report.validation_commands).Count -eq 0) {
+        [void]$lines.Add('- None selected')
+    } else {
+        foreach ($cmd in $Report.validation_commands) { [void]$lines.Add('- `' + $cmd + '`') }
+    }
+    [void]$lines.Add('')
+    [void]$lines.Add('## Checks')
+    if (@($Report.checks).Count -eq 0) {
+        [void]$lines.Add('- None')
+    } else {
+        foreach ($check in $Report.checks) { [void]$lines.Add('- `' + $check.status + '` ' + $check.name + ' (' + $check.owner + ')') }
+    }
+    [void]$lines.Add('')
+    [void]$lines.Add('## Human Review Notes')
+    if (@($Report.human_review_notes).Count -eq 0) {
+        [void]$lines.Add('- None')
+    } else {
+        foreach ($note in $Report.human_review_notes) { [void]$lines.Add("- $note") }
+    }
+    return ($lines -join "`n") + "`n"
+}
+
+function Invoke-PrReviewAgent {
+    [CmdletBinding()]
+    param(
+        [string] $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path,
+        [string[]] $ChangedPaths,
+        [string] $BaseRef = $env:GITHUB_BASE_REF,
+        [string] $HeadRef = $env:GITHUB_HEAD_REF,
+        [string] $BaseSha = '',
+        [string] $HeadSha = '',
+        [string] $PrNumber = $env:PR_NUMBER,
+        [string] $RunId = $env:GITHUB_RUN_ID,
+        [string] $OutputDir = (Join-Path (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path 'artifacts\pr-review-agent'),
+        [switch] $ReportOnly,
+        [switch] $SkipCommandExecution,
+        [switch] $SkipGitNexus,
+        [switch] $AllowGitNexusUnavailable,
+        [switch] $SimulateGitNexusUnavailable
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = [Guid]::NewGuid().ToString('N') }
+    if (-not $ChangedPaths -or $ChangedPaths.Count -eq 0) {
+        $ChangedPaths = Get-PrReviewChangedPathsFromGit -RepoRoot $RepoRoot -BaseSha $BaseSha -HeadSha $HeadSha
+    } else {
+        $ChangedPaths = @($ChangedPaths | ForEach-Object { ConvertTo-PrReviewPath $_ } | Sort-Object -Unique)
+    }
+
+    $openSpecChangeIds = @(Get-PrReviewOpenSpecChangeIds -ChangedPaths $ChangedPaths)
+    $guards = Get-PrReviewPathGuardFindings -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot
+    $blockers = New-Object System.Collections.Generic.List[object]
+    $warnings = New-Object System.Collections.Generic.List[object]
+    foreach ($b in @($guards.blockers)) { [void]$blockers.Add($b) }
+    foreach ($w in @($guards.warnings)) { [void]$warnings.Add($w) }
+
+    if ((Test-PrReviewNeedsOpenSpec -ChangedPaths $ChangedPaths) -and $openSpecChangeIds.Count -eq 0) {
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'missing_openspec' -Severity 'high' -Message 'Behavior, workflow, code, or repo-boundary changes require an OpenSpec change id or documented exception.'))
+    }
+
+    $plans = @(Get-PrReviewValidationPlan -ChangedPaths $ChangedPaths -RepoRoot $RepoRoot -OpenSpecChangeIds $openSpecChangeIds)
+    $checks = New-Object System.Collections.Generic.List[object]
+    foreach ($plan in $plans) {
+        $check = Invoke-PrReviewCommand -Plan $plan -SkipExecution:$SkipCommandExecution
+        [void]$checks.Add($check)
+        if ($check.status -eq 'failed') {
+            [void]$blockers.Add((New-PrReviewIssue -Kind 'validation_failed' -Severity 'high' -Path $check.cwd -Message "Required validation failed: $($check.name)."))
+        }
+    }
+
+    $needsGitNexus = Test-PrReviewNeedsGitNexus -ChangedPaths $ChangedPaths
+    $gitnexus = Invoke-PrReviewGitNexus -NeedsGitNexus:$needsGitNexus -SkipGitNexus:$SkipGitNexus -AllowUnavailable:$AllowGitNexusUnavailable -SimulateUnavailable:$SimulateGitNexusUnavailable
+    if ($needsGitNexus -and $gitnexus.status -in @('unavailable', 'failed') -and -not $AllowGitNexusUnavailable) {
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'gitnexus_unavailable' -Severity 'high' -Message "GitNexus detect changes is required for code/script changes but status is '$($gitnexus.status)'."))
+    } elseif ($needsGitNexus -and $gitnexus.status -ne 'passed') {
+        [void]$warnings.Add((New-PrReviewIssue -Kind 'gitnexus_warning' -Severity 'medium' -Message "GitNexus detect changes did not pass: $($gitnexus.status)."))
+    }
+
+    if ([string]::IsNullOrWhiteSpace($env:PR_REVIEW_AGENT_REQUIRE_AI)) {
+        [void]$warnings.Add((New-PrReviewIssue -Kind 'optional_ai_adapter_skipped' -Severity 'medium' -Message 'Optional AI adapter is not required for this gate and was skipped.'))
+    } elseif ([string]::IsNullOrWhiteSpace($env:OPENAI_API_KEY)) {
+        [void]$blockers.Add((New-PrReviewIssue -Kind 'ai_adapter_unavailable' -Severity 'high' -Message 'PR_REVIEW_AGENT_REQUIRE_AI is set but OPENAI_API_KEY is unavailable.'))
+    }
+
+    $blockerArray = @($blockers.ToArray())
+    $warningArray = @($warnings.ToArray())
+    $checkArray = @($checks.ToArray())
+    $risk = Get-PrReviewRiskLevel -Blockers $blockerArray -Warnings $warningArray -Checks $checkArray -GitNexus $gitnexus
+    $hasFailedCheck = @($checkArray | Where-Object { $_.status -eq 'failed' }).Count -gt 0
+    $status = if ($hasFailedCheck) {
+        'failed'
+    } elseif ($blockerArray.Count -gt 0) {
+        'blocked'
+    } elseif ($warningArray.Count -gt 0) {
+        'warning'
+    } else {
+        'passed'
+    }
+
+    $humanNotes = New-Object System.Collections.Generic.List[string]
+    if ($ReportOnly) { [void]$humanNotes.Add('Report-only mode is enabled; this run should not be treated as merge approval.') }
+    if ($openSpecChangeIds.Count -gt 0) { [void]$humanNotes.Add("OpenSpec changes detected: $($openSpecChangeIds -join ', ')") }
+    if ($ChangedPaths.Count -eq 0) { [void]$humanNotes.Add('No changed paths were detected; verify base/head configuration.') }
+
+    $report = [ordered]@{
+        schema_version      = 'pr-review-agent/v1'
+        status              = $status
+        risk_level          = $risk
+        report_only         = [bool]$ReportOnly
+        pr_number           = $PrNumber
+        base_ref            = $BaseRef
+        head_ref            = $HeadRef
+        base_sha            = $BaseSha
+        head_sha            = $HeadSha
+        run_id              = $RunId
+        generated_at        = (Get-Date).ToUniversalTime().ToString('o')
+        changed_paths       = @($ChangedPaths)
+        openspec_changes    = @($openSpecChangeIds)
+        validation_commands = @($plans | ForEach-Object { $_.command })
+        checks              = $checkArray
+        blockers            = $blockerArray
+        warnings            = $warningArray
+        human_review_notes  = @($humanNotes)
+        gitnexus            = $gitnexus
+    }
+
+    if (-not (Test-Path -LiteralPath $OutputDir)) {
+        New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
+    }
+    $jsonPath = Join-Path $OutputDir 'pr-review-agent.json'
+    $markdownPath = Join-Path $OutputDir 'pr-review-agent.md'
+    $json = $report | ConvertTo-Json -Depth 20
+    [System.IO.File]::WriteAllText($jsonPath, $json, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($markdownPath, (ConvertTo-PrReviewMarkdown -Report $report), [System.Text.UTF8Encoding]::new($false))
+
+    return [pscustomobject]@{
+        report        = $report
+        json_path     = $jsonPath
+        markdown_path = $markdownPath
+    }
+}

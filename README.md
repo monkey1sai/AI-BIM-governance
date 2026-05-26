@@ -151,6 +151,7 @@ Session / collaboration → bim-review-coordinator
 | [`AGENTS.md`](AGENTS.md) | **Repo 邊界與資料權威**（最高優先） | 不確定哪個服務該做什麼、資料權威歸誰 |
 | [`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`](docs/PROJECT_DEVELOPMENT_WORKFLOW.md) | **開發流程入口** | 新進工程師 onboarding、PR review、demo 簡報 |
 | [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md) | **SaaS 路線圖** | 架構決策、OpenSpec owner、技術 review |
+| [`docs/PR_REVIEW_AGENT.md`](docs/PR_REVIEW_AGENT.md) | **PR review agent gate** | 自動審查報告、blocker / warning 解讀、本機重跑 |
 | [`openspec/specs/`](openspec/specs/) | **Capability specs** | 修改任何服務前先讀對應 capability spec 與 archived change |
 
 ---
@@ -235,11 +236,17 @@ OpenSpec = 需求 / 規格 / 驗收條件
 Git Branch = 實作隔離
 Pull Request = 審查與討論
 GitHub Actions = 自動驗證
+PR Review Agent = 自動整理風險、驗證命令、blocker / warning 的 gate
 Merge = 正式接受變更
 Archive = 把變更規格併入正式規格
 ```
 
 - 每個 `/openspec new <change-id>` 先從最新 `main` 建立 `codex/openspec/<change-id>` branch。
 - `/openspec apply <change-id>` 的實作、測試、文件與 task 勾選都留在該 branch。
-- 開 PR 後由 review 討論與 GitHub Actions 驗證決定是否 merge。
+- 開 PR 後由 review 討論、GitHub Actions 驗證與 `pr-review-agent` 報告決定是否可進入 merge；agent 不自動 merge，也不取代人工審查 / CODEOWNERS / branch protection。
 - merge 後才執行 OpenSpec sync/archive，將 delta specs 併入正式 `openspec/specs/`。
+- 本機可重跑自動審查：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 -BaseSha origin/main -HeadSha HEAD
+```
