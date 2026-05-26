@@ -7,4 +7,4 @@
 
 - [ ] 2.1 對 Coordinator 排隊佇列加入本地持久化 (sqlite 或 file-based)
 - [ ] 2.2 在 CI 流程中整合 GitNexus 跨界防禦的自動校驗指令
-- [ ] 2.3 在 WebRTC DataChannel 中對 Stage 載入指令加入連線狀態狀態機
+- [ ] 2.3 在 WebRTC DataChannel 中對 Stage 載入指令加入連線狀態機

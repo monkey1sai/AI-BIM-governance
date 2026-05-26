@@ -45,12 +45,14 @@ finally { Remove-TestSandbox -Path $sb }
 # Test 2b: default value lookup 支援 = / : 兩種 separator,並略過註解
 $sb = New-EnvSandbox `
     -EnvContent $null `
-    -ExampleContent "# ignored`nA=one`nB: two`nC='three'"
+    -ExampleContent "# ignored`nA=one`nB: two`nC='three'`nD=value # comment`nE='value # not comment'"
 try {
     $examplePath = Join-Path $sb '.env.example'
     Assert-Equal 'one' (Get-EnvExampleDefaultValue -Path $examplePath -Key 'A') 'A default from equals'
     Assert-Equal 'two' (Get-EnvExampleDefaultValue -Path $examplePath -Key 'B') 'B default from colon'
     Assert-Equal 'three' (Get-EnvExampleDefaultValue -Path $examplePath -Key 'C') 'C default strips quotes'
+    Assert-Equal 'value' (Get-EnvExampleDefaultValue -Path $examplePath -Key 'D') 'D default strips inline comment'
+    Assert-Equal 'value # not comment' (Get-EnvExampleDefaultValue -Path $examplePath -Key 'E') 'E quoted default keeps hash'
     Assert-Equal '' (Get-EnvExampleDefaultValue -Path $examplePath -Key 'MISSING') 'missing key default empty'
     Write-TestPass 'default value lookup'
 }

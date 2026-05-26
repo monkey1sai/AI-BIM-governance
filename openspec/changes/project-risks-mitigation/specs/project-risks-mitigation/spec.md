@@ -2,7 +2,7 @@
 
 ### Requirement: RISK-IN-MEMORY-QUEUE-PERSISTENCE
 
-`bim-review-coordinator` 中的轉檔排隊調度任務若僅保存在記憶體中，在服務器重啟或異常崩潰時，未完成的轉檔任務會被清空，導致外部公司雲端永遠無法獲得 Callback 回報。系統應建立持久化隊列以應對崩潰恢復。
+`bim-review-coordinator` 中的轉檔排隊調度任務若僅保存在記憶體中，在伺服器重啟或異常崩潰時，未完成的轉檔任務會被清空，導致外部公司雲端永遠無法獲得 Callback 回報。系統應建立持久化隊列以應對崩潰恢復。
 
 #### Scenario: Coordinator restart drops in-memory queue items
 - **WHEN** `bim-review-coordinator` 在多個轉檔任務排隊中時重啟或崩潰

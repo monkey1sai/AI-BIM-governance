@@ -35,14 +35,20 @@ function Get-EnvExampleDefaultValue {
         if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#')) { continue }
         if ($trimmed -match "^\s*$escapedKey\s*[:=]\s*(.*)$") {
             $value = $Matches[1].Trim()
-            if (
+            $isQuoted = (
                 $value.Length -ge 2 -and
                 (
                     ($value.StartsWith('"') -and $value.EndsWith('"')) -or
                     ($value.StartsWith("'") -and $value.EndsWith("'"))
                 )
-            ) {
+            )
+            if ($isQuoted) {
                 $value = $value.Substring(1, $value.Length - 2)
+            } else {
+                $commentIndex = $value.IndexOf('#')
+                if ($commentIndex -ge 0) {
+                    $value = $value.Substring(0, $commentIndex).Trim()
+                }
             }
             return $value
         }

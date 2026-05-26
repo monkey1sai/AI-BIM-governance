@@ -1,4 +1,4 @@
-# 一鍵部屬(Mode C hybrid) Design
+# 一鍵部署(Mode C hybrid) Design
 
 > Brainstorming 產出 spec,2026-05-26。
 > 路徑:`docs/superpowers/specs/2026-05-26-one-click-deploy-design.md`。
@@ -8,7 +8,7 @@
 
 ## 1. Goal
 
-提供一個 `.\scripts\deploy.ps1`,讓使用者在 Windows host + NVIDIA GPU 機器上,**用一條指令** 啟動 Mode C(hybrid)部屬:Docker compose 跑 coordinator + viewer,host-native PowerShell 跑 conversion-service + Kit streaming。前置條件不對時自動修(限定安全項目),動到別人的活著的 process / 危險動作前先問,完成後印可診斷的 summary。
+提供一個 `.\scripts\deploy.ps1`,讓使用者在 Windows host + NVIDIA GPU 機器上,**用一條指令** 啟動 Mode C(hybrid)部署:Docker compose 跑 coordinator + viewer,host-native PowerShell 跑 conversion-service + Kit streaming。前置條件不對時自動修(限定安全項目),動到別人的活著的 process / 危險動作前先問,完成後印可診斷的 summary。
 
 成功標準:
 
@@ -60,9 +60,9 @@ brainstorming 過程拍板:
 
 | 項目 | 為什麼不做 |
 |---|---|
-| Mode A / Mode B 的一鍵部屬 | 使用者第二輪確認只擔 Mode C |
-| Production 部屬(Windows Service / Task Scheduler / NSSM autostart) | 不是 dev 一鍵範圍 |
-| 跨主機部屬(把 coordinator / streaming 拆到不同 host) | 同上 |
+| Mode A / Mode B 的一鍵部署 | 使用者第二輪確認只擔 Mode C |
+| Production 部署(Windows Service / Task Scheduler / NSSM autostart) | 不是 dev 一鍵範圍 |
+| 跨主機部署(把 coordinator / streaming 拆到不同 host) | 同上 |
 | 安裝 Docker Desktop / NVIDIA driver / Node / Python / Kit Launcher 本身 | preflight 偵測到缺 → 退 1 + 印官方安裝網址;不下載 installer |
 | 改 `compose.runtime-manager.yml` / `compose.host-kit.yml` 內容 | compose YAML 是 source-of-truth |
 | 改 `start-all.ps1` 等既有 script 行為 | 向後相容 |
