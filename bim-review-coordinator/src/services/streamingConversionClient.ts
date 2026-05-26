@@ -1,4 +1,4 @@
-import type { ExternalIfcReadyEvent } from "../types.js";
+import type { ConversionQualityMetricsSummary, ExternalIfcReadyEvent } from "../types.js";
 
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.4）。
@@ -302,4 +302,68 @@ export class StreamingConversionClient {
       raw: parsed,
     };
   }
+}
+
+/**
+ * coordinator-forward-quality-metrics-summary:從 terminal streaming conversion
+ * result 萃取 `ConversionQualityMetricsSummary`,供 coordinator auto-ingest 寫進
+ * review session 的 `quality_metrics_summary` slot。viewer / `/ui` 依此計算
+ * Semantic ready;C1 fallback 三個 semantic 欄位(`semantic_mapping_fidelity` /
+ * `mapping_has_ifc_type` / `mapping_has_ifc_name`)在這條路徑被 propagate。
+ *
+ * Best-effort:result 無 `quality_metrics` 區段時回 `null`,caller 不阻擋 session
+ * 建立(與既有 `quality_metrics_summary: null` 行為等價,backward compatible)。
+ */
+export function buildQualityMetricsSummary(
+  result: StreamingConversionResult,
+): ConversionQualityMetricsSummary | null {
+  const raw = result.raw as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== "object") return null;
+  const quality = raw.quality_metrics as Record<string, unknown> | undefined;
+  if (!quality || typeof quality !== "object") return null;
+
+  const str = (key: string): string | null => {
+    const v = quality[key];
+    return typeof v === "string" ? v : null;
+  };
+  const num = (key: string): number | null => {
+    const v = quality[key];
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  };
+  const bool = (key: string): boolean | null => {
+    const v = quality[key];
+    return typeof v === "boolean" ? v : null;
+  };
+
+  // phase_timings.conversion_total.duration_seconds(對齊 dev-console.html 的
+  // fallback 取法)
+  const phaseTimings = quality.phase_timings as Record<string, unknown> | undefined;
+  let conversionDuration: number | null = null;
+  if (phaseTimings && typeof phaseTimings === "object") {
+    const ct = phaseTimings.conversion_total as Record<string, unknown> | undefined;
+    if (ct && typeof ct === "object") {
+      const d = ct.duration_seconds;
+      if (typeof d === "number" && Number.isFinite(d)) conversionDuration = d;
+    }
+  }
+
+  const fixtureName =
+    typeof raw.original_filename === "string" ? (raw.original_filename as string) : null;
+  const artifactGroupId =
+    typeof raw.artifact_group_id === "string" ? (raw.artifact_group_id as string) : null;
+
+  return {
+    fixture_name: fixtureName,
+    conversion_job_id: result.conversion_job_id ?? null,
+    artifact_group_id: artifactGroupId,
+    source_ifc_entity_count: num("source_ifc_entity_count"),
+    sidecar_carrier_count: num("sidecar_carrier_count"),
+    materialization_strategy: str("materialization_strategy"),
+    coverage_ratio: num("coverage_ratio"),
+    coverage_status: str("coverage_status"),
+    conversion_duration_seconds: conversionDuration,
+    semantic_mapping_fidelity: str("semantic_mapping_fidelity"),
+    mapping_has_ifc_type: bool("mapping_has_ifc_type"),
+    mapping_has_ifc_name: bool("mapping_has_ifc_name"),
+  };
 }

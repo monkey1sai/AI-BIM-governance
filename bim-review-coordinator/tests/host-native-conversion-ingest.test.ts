@@ -173,6 +173,97 @@ describe("host-native conversion result ingest (pull)", () => {
     expect(res.status).toBe(401);
   });
 
+  // coordinator-forward-quality-metrics-summary:三個 scenario verifying ingest
+  // 把 quality_metrics 萃取進 session.quality_metrics_summary,並從
+  // stream-config response forward 給 viewer / `/ui`。
+  it("ingest forwards C1 semantic mapping fidelity into stream-config quality_metrics_summary", async () => {
+    const READY_WITH_SEMANTIC = {
+      ...READY_RESULT,
+      original_filename: "270_demo_model.ifc",
+      artifact_group_id: "ag_demo_270",
+      quality_metrics: {
+        source_ifc_entity_count: 4889,
+        sidecar_carrier_count: 4889,
+        materialization_strategy: "ifcopenshell_openusd_fallback",
+        coverage_ratio: 1.0,
+        coverage_status: "pass",
+        semantic_mapping_fidelity: "ifc_class_grouped_with_name",
+        mapping_has_ifc_type: true,
+        mapping_has_ifc_name: true,
+        phase_timings: { conversion_total: { duration_seconds: 73.5 } },
+      },
+    };
+    const base = await startStreamingStub(READY_WITH_SEMANTIC);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+    const ingest = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    expect(ingest.status).toBe(202);
+    const sessionId = ingest.body.session?.session_id as string;
+    expect(sessionId).toMatch(/^review_session_/);
+
+    const sc = await request(app.app).get(`/api/review-sessions/${sessionId}/stream-config`);
+    expect(sc.status).toBe(200);
+    const summary = sc.body.quality_metrics_summary;
+    expect(summary).toBeTruthy();
+    expect(summary.semantic_mapping_fidelity).toBe("ifc_class_grouped_with_name");
+    expect(summary.mapping_has_ifc_type).toBe(true);
+    expect(summary.mapping_has_ifc_name).toBe(true);
+    expect(summary.materialization_strategy).toBe("ifcopenshell_openusd_fallback");
+    expect(summary.source_ifc_entity_count).toBe(4889);
+    expect(summary.coverage_ratio).toBe(1.0);
+    expect(summary.coverage_status).toBe("pass");
+    expect(summary.conversion_duration_seconds).toBe(73.5);
+    expect(summary.fixture_name).toBe("270_demo_model.ifc");
+    expect(summary.artifact_group_id).toBe("ag_demo_270");
+    expect(summary.conversion_job_id).toBe("stream_conv_test_001");
+  });
+
+  it("ingest with quality_metrics partial only forwards existing keys (null elsewhere)", async () => {
+    const READY_PARTIAL = {
+      ...READY_RESULT,
+      quality_metrics: {
+        materialization_strategy: "sidecar",
+        coverage_status: "warn",
+      },
+    };
+    const base = await startStreamingStub(READY_PARTIAL);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+    const ingest = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    const sessionId = ingest.body.session?.session_id as string;
+    const sc = await request(app.app).get(`/api/review-sessions/${sessionId}/stream-config`);
+    const summary = sc.body.quality_metrics_summary;
+    expect(summary).toBeTruthy();
+    expect(summary.materialization_strategy).toBe("sidecar");
+    expect(summary.coverage_status).toBe("warn");
+    // missing keys 必須是 null 不是 undefined(schema stable)
+    expect(summary.semantic_mapping_fidelity).toBeNull();
+    expect(summary.mapping_has_ifc_type).toBeNull();
+    expect(summary.mapping_has_ifc_name).toBeNull();
+    expect(summary.source_ifc_entity_count).toBeNull();
+    expect(summary.conversion_duration_seconds).toBeNull();
+  });
+
+  it("ingest with no quality_metrics keeps stream-config quality_metrics_summary null (backward compat)", async () => {
+    const { quality_metrics: _omit, ...resultWithoutQuality } = READY_RESULT;
+    const base = await startStreamingStub(resultWithoutQuality);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+    const ingest = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+    const sessionId = ingest.body.session?.session_id as string;
+    const sc = await request(app.app).get(`/api/review-sessions/${sessionId}/stream-config`);
+    expect(sc.body.quality_metrics_summary).toBeNull();
+  });
+
   it("non-terminal (queued/running) result is not coerced to failed", async () => {
     const base = await startStreamingStub({
       conversion_job_id: "stream_conv_test_001",
