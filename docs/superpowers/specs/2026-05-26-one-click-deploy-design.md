@@ -381,9 +381,9 @@ To recover:
 
 ## 9. Testing Strategy
 
-### 9.1 Layer 1 — Unit (Pester)
+### 9.1 Layer 1 — Unit(repo 風格:純 PowerShell + `Assert-*` helpers)
 
-範本沿用 `scripts\tests\test-pr-review-agent.ps1`(PR #120 帶進來)。每個 lib module 一份:
+範本沿用 `scripts\tests\test-pr-review-agent.ps1`(PR #120 帶進來)。**注意:repo 沒用 Pester**,而是用「dot-source 受測 module + 自訂 `Assert-True` / `Assert-Throws` / `New-TestOutputDir` helpers」的純 PowerShell 風格。每個 lib module 一份:
 
 ```
 scripts\tests\
@@ -416,30 +416,33 @@ scripts\tests\
 | Kit log 空 → ready=false(timeout 才回) | kit-log-probe |
 | `[ok ] foo` 顏色 / log line 解析正確 | deploy-report |
 
-Mock 策略:
+Mock 策略(repo 風格,**不用 Pester `Mock`**):
 
-- Docker:`Mock docker { ... }` 攔截 CLI,回 fixture stdout/exit
-- Process / Port:`Mock Get-NetTCPConnection` / `Mock Get-Process`
-- 檔案系統:Pester `TestDrive` 臨時 sandbox
+- Docker:用 PowerShell function override / 受測 module 接受 `-DockerCommand` 可注入函式參數,test 內傳 fake closure 回 fixture stdout/exit
+- Process / Port:同上,受測 module 接受可注入 `-PortLookup` / `-ProcessLookup` 函式;test 內傳 fake
+- 檔案系統:`New-TestOutputDir` 在 `[System.IO.Path]::GetTempPath()` 下建臨時 sandbox,test 結束 `Remove-Item -Recurse -Force` 清掉(對齊 `test-pr-review-agent.ps1`)
 
 ### 9.2 Layer 2 — Integration `-DryRun`
 
 ```powershell
-# scripts\tests\test-deploy-dryrun.ps1
-Describe 'deploy.ps1 -DryRun' {
-    It 'completes with exit 0 on a clean tree' {
-        $output = & "$PSScriptRoot\..\deploy.ps1" -DryRun 2>&1
-        $LASTEXITCODE | Should -Be 0
-        $output | Should -Match '\[ok\s+\] Phase 1 preflight'
-        $output | Should -Match 'Phase 2 auto-fix.*DRY-RUN'
-        $output | Should -Not -Match '\[fix\s+\] '
-    }
+# scripts\tests\test-deploy-dryrun.ps1(repo 風格)
+. (Join-Path $PSScriptRoot 'test-helpers.ps1')
 
-    It 'detects missing .venv and reports plan without creating it' {
-        & "$PSScriptRoot\..\deploy.ps1" -DryRun
-        Test-Path "$PSScriptRoot\..\..\.venv" | Should -Be $false
-    }
-}
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+
+# Test: -DryRun 在 clean tree 上應退 0、印 preflight、不印 [fix ]
+$output = & "$PSScriptRoot\..\deploy.ps1" -DryRun 2>&1
+Assert-True ($LASTEXITCODE -eq 0) '-DryRun should exit 0'
+Assert-True ($output -match '\[ok\s+\] Phase 1 preflight') 'Phase 1 preflight printed'
+Assert-True ($output -match 'Phase 2 auto-fix.*DRY-RUN') 'Phase 2 marked DRY-RUN'
+Assert-True (-not ($output -match '\[fix\s+\] ')) 'no [fix ] action printed under -DryRun'
+
+# Test: -DryRun 偵測缺 .venv 不會真的建
+# (先清臨時 sandbox 的 .venv 假設)
+$preExisted = Test-Path -LiteralPath "$repoRoot\.venv"
+& "$PSScriptRoot\..\deploy.ps1" -DryRun
+$postExisted = Test-Path -LiteralPath "$repoRoot\.venv"
+Assert-True ($preExisted -eq $postExisted) '-DryRun must not create .venv'
 ```
 
 `-DryRun` 不能動真實狀態(不啟 process、不動 docker、不寫檔)。
