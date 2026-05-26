@@ -77,6 +77,12 @@ PR review agent SHALL 驗證包含 non-trivial behavior、architecture、workflo
 - **THEN** agent 會執行 `openspec validate <change-id>`
 - **AND** report 會記錄 validation command、result 與 change id
 
+#### Scenario: PR 包含 OpenSpec archive 或 formal spec closeout
+
+- **WHEN** changed paths 包含 `openspec/changes/archive/<date>-<change-id>/` 或 `openspec/specs/<capability>/spec.md`
+- **THEN** agent 會執行 `openspec validate --specs --strict`
+- **AND** agent MUST NOT 將 `openspec/changes/archive/` 誤判為 active change id `archive`
+
 #### Scenario: Behavior change 沒有 OpenSpec change
 
 - **WHEN** changed paths 顯示 production code、workflow、API、data-flow、repo-boundary 或 verification policy changes，但沒有 OpenSpec change
@@ -174,4 +180,3 @@ PR review agent SHALL 將每次 run 分類為 `passed`、`warning`、`blocked` �
 - **WHEN** required checks 通過且只剩 non-blocking warnings
 - **THEN** gate status MAY 為 `warning`
 - **AND** report MUST 列出哪些 warnings 需要 human attention
-

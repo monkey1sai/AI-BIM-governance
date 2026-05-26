@@ -57,6 +57,40 @@ Assert-True (-not ($loaded1.gitnexus -is [array])) 'gitnexus report serializes a
 Assert-True (Test-Path -LiteralPath $result1.markdown_path) 'markdown summary written'
 Remove-Item -LiteralPath $out1 -Recurse -Force
 
+# Test 1b: Archived OpenSpec paths do not look like active change id "archive" and validate formal specs.
+$archiveIds = @(Get-PrReviewOpenSpecChangeIds -ChangedPaths @(
+    'openspec/changes/archive/2026-05-26-add-pr-review-agent/tasks.md',
+    'openspec/changes/archive/2026-05-26-add-pr-review-agent/specs/pull-request-review-agent/spec.md',
+    'openspec/specs/pull-request-review-agent/spec.md'
+))
+Assert-True (-not ($archiveIds -contains 'archive')) 'archive folder is not treated as active OpenSpec change id'
+$archivePlan = Get-PrReviewValidationPlan -RepoRoot $repoRoot `
+    -ChangedPaths @(
+        'openspec/changes/archive/2026-05-26-add-pr-review-agent/tasks.md',
+        'openspec/specs/pull-request-review-agent/spec.md'
+    ) `
+    -OpenSpecChangeIds $archiveIds
+$archiveCommands = @($archivePlan | ForEach-Object { $_.command })
+Assert-True ($archiveCommands -contains 'openspec validate --specs --strict') 'archive/formal spec changes validate strict specs'
+Assert-True (-not ($archiveCommands -contains 'openspec validate archive')) 'archive validation command is not planned'
+
+$out1c = New-TestOutputDir
+$result1c = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+    -ChangedPaths @(
+        'scripts/lib/pr-review-agent.ps1',
+        'openspec/specs/pull-request-review-agent/spec.md',
+        'openspec/changes/archive/2026-05-26-add-pr-review-agent/tasks.md'
+    ) `
+    -OutputDir $out1c `
+    -SkipCommandExecution `
+    -SkipGitNexus `
+    -AllowGitNexusUnavailable
+$loaded1c = Get-Content -LiteralPath $result1c.json_path -Raw | ConvertFrom-Json
+$missingSpec1c = $loaded1c.blockers | Where-Object { $_.kind -eq 'missing_openspec' } | Select-Object -First 1
+Assert-True ($null -eq $missingSpec1c) 'formal spec evidence covers archive closeout script changes'
+Assert-True ($loaded1c.validation_commands -contains 'openspec validate --specs --strict') 'archive closeout script changes still validate strict specs'
+Remove-Item -LiteralPath $out1c -Recurse -Force
+
 # Test 2: Service code change without OpenSpec blocks.
 $out2 = New-TestOutputDir
 $result2 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
