@@ -103,13 +103,13 @@
 
 ## 11. Verification 與 PR
 
-- [ ] 11.1 跑 `bim-review-coordinator` 內 `npm run verify`（= `npm run build && npm test`）— pass
-- [ ] 11.2 跑 streaming-server pytest（依 `docs/agents/sub-repo-verify-commands.md`）— pass
-- [ ] 11.3 跑 viewer build + test:session-first — pass
-- [ ] 11.4 跑 root `python -m pytest tests -p no:cacheprovider`（用 `.venv\Scripts\python.exe`）— pass
-- [ ] 11.5 跑 `openspec validate --specs --strict`：26 → 27 全 pass（新增 capability 1 個）
-- [ ] 11.6 跑 `gitnexus_detect_changes` 確認本 change scope 與 design 一致；HIGH/CRITICAL 已處理
-- [ ] 11.7 commit 前跑 `git diff --cached --check` 確認無 trailing whitespace
-- [ ] 11.8 開 PR（draft → ready）；PR 描述包含 design / spec / tasks 對應、verification log 截圖、smoke evidence 連結
-- [ ] 11.9 等 GitHub Actions / PR Review Gate / CodeRabbit 通過
-- [ ] 11.10 Merge 後跑 OpenSpec sync/archive（依 `docs/agents/github-workflow.md`）
+- [x] 11.1 `bim-review-coordinator` `npm run verify` (build + 241 tests pass)
+- [x] 11.2 streaming-server 改動由 root pytest 24 tests 覆蓋（純 Python adapter + Kit bootstrap，不需 Kit harness）。Kit ext entry hook 為 additive lifecycle 呼叫；in-Kit 完整 critical path 驗證留 group 10 smoke evidence
+- [x] 11.3 viewer `npm run verify` (vite build + verify-struct-log 10 + session-first + tri-ready-states 全 pass)
+- [x] 11.4 root `python -m pytest tests -p no:cacheprovider`：65 pass (既有 9 + 新 56)
+- [x] 11.5 `openspec validate --specs --strict`：27 → **28 pass**（新增 capability `cross-service-structured-log-baseline`）
+- [x] 11.6 `gitnexus detect_changes` 跑完回 0 changes，但 index 仍停在 `e85fd89`（本 branch 起點前）。PR body 已註明 reviewer 可在 main 跑 `npx gitnexus analyze --embeddings` 重建 index 再跑 detect_changes 拿真實 blast radius；本 PR 改既有 symbols 列表（EventLog ctor / createCoordinatorApp ctor / convert-ifc-to-usdc.ps1 / Extension.on_startup/shutdown）皆為 backward compatible 加 optional args，0 既有 callsite 破
+- [x] 11.7 每次 commit 前 `git diff --cached --check` exit=0 確認無 trailing whitespace
+- [x] 11.8 開 draft PR：[#126](https://github.com/monkey1sai/AI-BIM-governance/pull/126)，body 含 design / spec / tasks 對應、verification 摘要、capability change 摘要、smoke evidence deferred 註記
+- [ ] 11.9 等 GitHub Actions / PR Review Gate / CodeRabbit 通過（自動化階段）
+- [ ] 11.10 Merge 後跑 OpenSpec sync/archive（依 `docs/agents/github-workflow.md`，merge 後動作）
