@@ -1,4 +1,4 @@
-## Context
+## 背景
 
 目前 repo 已有 OpenSpec + GitHub workflow 的治理規則：OpenSpec 是需求 / 規格 / 驗收條件，Pull Request 是審查與討論邊界，GitHub Actions 是自動驗證邊界。實際 repo 中 `.github/workflows/` 尚未建立，但 root `scripts/verify-all.ps1` / `scripts/verify-all.sh` 已是跨服務最小驗證入口。
 
@@ -6,9 +6,9 @@
 
 此 change 是 repo workflow / CI capability，不是 BIM runtime capability。它不得改變 `bim-review-coordinator`、`bim-streaming-server`、`web-viewer-sample`、外部 IFC Worker 或外部公司雲端的責任邊界。
 
-## Goals / Non-Goals
+## 目標 / 非目標
 
-**Goals:**
+**目標：**
 
 - 每個 PR 都自動產生一份人看得懂、可重播、可比對的 review agent report。
 - 自動檢查 OpenSpec 對齊、repo 邊界、secrets / `.env` 實值修改、generated tooling 檔案、測試 / build / smoke 結果與 GitNexus 影響範圍。
@@ -16,7 +16,7 @@
 - 將 HIGH / CRITICAL 風險、缺少 OpenSpec change、未說明的跨邊界變更、測試失敗與 secrets 風險變成 PR gate blocker。
 - 將 agent 結論輸出成 GitHub status check / PR comment / workflow artifact，讓使用者不用從一堆 log 裡猜結果。
 
-**Non-Goals:**
+**非目標：**
 
 - 不自動 merge PR。
 - 不自動 dismiss human review、CODEOWNERS 或 branch protection。
@@ -25,9 +25,9 @@
 - 不要求 GPU / Kit / browser E2E 在每個 PR 都執行；硬體相依項目需要被分類成 `blocked`、`deferred` 或 `not_required`，不能冒充 passed。
 - 不修改 product runtime API、Socket.IO event、DataChannel payload、storage layout 或 session schema。
 
-## Decisions
+## 決策
 
-### Decision 1: GitHub Actions owns trigger, root scripts own review report generation
+### 決策 1：GitHub Actions 負責觸發，root scripts 負責產生 review report
 
 PR review agent 由 `.github/workflows/pr-review-agent.yml` 在 `pull_request` 的 `opened`、`synchronize`、`reopened`、`ready_for_review` 事件觸發。Workflow 只負責 checkout、設定 runtime、呼叫 root script、上傳 artifact 與回寫 PR comment / status check。
 
@@ -35,7 +35,7 @@ PR review agent 由 `.github/workflows/pr-review-agent.yml` 在 `pull_request` �
 
 替代方案是只用 GitHub Actions inline shell，但日後很難本機復現，也難以測試 report schema。
 
-### Decision 2: Deterministic gates first, optional AI review second
+### 決策 2：deterministic gates 優先，optional AI review 次之
 
 Agent report 必須先收集可機器驗證的 deterministic gates：
 
@@ -50,7 +50,7 @@ LLM / Codex / external AI review 可以作為第二層 reviewer comment，但不
 
 替代方案是直接讓 LLM 讀 diff 後 approve，但這會把測試、secret scan 與 repo 邊界檢查變成模型主觀判斷，風險太高。
 
-### Decision 3: Report schema is stable and PR-readable
+### 決策 3：report schema 必須穩定且 PR 可讀
 
 每次 run 都產生 machine-readable JSON 與 markdown summary。JSON 至少包含：
 
@@ -64,7 +64,7 @@ LLM / Codex / external AI review 可以作為第二層 reviewer comment，但不
 
 Markdown summary 要保留同樣結論，但用人話呈現：這個 PR 改了哪裡、跑了什麼、哪裡擋住、哪些風險要人工看。
 
-### Decision 4: Fail closed only for safety-critical conditions
+### 決策 4：只在 safety-critical 條件下 fail closed
 
 Review gate MUST block when：
 
@@ -77,7 +77,7 @@ Review gate MUST block when：
 
 Review gate MAY return `warning` when optional AI adapter、GPU / Kit E2E、browser evidence 或外部服務不可用，前提是該 PR 的 changed paths 不要求該層 evidence。
 
-### Decision 5: Path-based validation planner keeps PR feedback fast
+### 決策 5：path-based validation planner 保持 PR feedback 快速
 
 Review agent 先分類 changed paths，再選擇最小必要檢查：
 
@@ -92,13 +92,13 @@ Review agent 先分類 changed paths，再選擇最小必要檢查：
 
 若 path planner 不確定，回退到 `scripts/verify-all.ps1` / `.sh`，並在 report 記錄為 broad validation。
 
-### Decision 6: Permissions and secrets are minimal
+### 決策 6：permissions 與 secrets 採最小化
 
 GitHub Actions workflow 預設使用最小權限：`contents: read`、`pull-requests: write`、`checks: write`。需要外部 AI service 時，必須透過 GitHub Actions secrets 設定，且 workflow 不得在 fork PR 暴露 secret。Fork PR 可跑 deterministic read-only checks，AI adapter 自動跳過並在 report 記錄原因。
 
 Rollback 方式：停用或刪除 `.github/workflows/pr-review-agent.yml`，保留 scripts / docs 也不影響 product runtime。
 
-## Risks / Trade-offs
+## 風險 / 取捨
 
 - [Risk] Agent 被誤解成可以完全取代人類審查 → Mitigation: spec 明確要求不可自動 merge、不可取代 CODEOWNERS / branch protection，輸出只作 gate 與 evidence。
 - [Risk] 每個 PR 都跑完整驗證太慢 → Mitigation: path-based planner 先選最小必要 checks，不確定才回退 broad validation。
@@ -107,7 +107,7 @@ Rollback 方式：停用或刪除 `.github/workflows/pr-review-agent.yml`，保�
 - [Risk] Fork PR 無法安全使用 secrets → Mitigation: fork PR 只跑 read-only deterministic checks，AI adapter 跳過並輸出 warning。
 - [Risk] Report 太長沒人看 → Mitigation: PR comment 只保留摘要、blockers、commands 與 artifact link；完整 JSON / markdown 放 workflow artifact。
 
-## Migration Plan
+## 遷移計畫
 
 1. 新增 `pull-request-review-agent` spec 與 task checklist。
 2. 後續 apply 時先實作本機 dry-run script 與 schema 測試。
@@ -115,7 +115,7 @@ Rollback 方式：停用或刪除 `.github/workflows/pr-review-agent.yml`，保�
 4. 確認 false positive / false negative 後，再把 `pr-review-agent` status check 設為 branch protection required check。
 5. 若 workflow 造成阻塞，停用 workflow trigger 或將 gate mode 改為 report-only，產品 runtime 不需 rollback。
 
-## Open Questions
+## 待釐清問題
 
 - 是否要讓 agent 寫 GitHub review `APPROVE`，或只寫 status check `passed`？本 change 預設只要求 status / comment gate，不要求 GitHub review approval。
 - 是否要把 external AI adapter 納入第一版 apply？本 change 預設 deterministic gate 先落地，AI adapter 可作 follow-up。

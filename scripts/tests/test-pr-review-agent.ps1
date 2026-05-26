@@ -53,6 +53,7 @@ $optionalAiWarning = $loaded1.warnings | Where-Object { $_.kind -eq 'optional_ai
 $optionalAiNote = $loaded1.human_review_notes | Where-Object { $_ -match 'Optional AI adapter' } | Select-Object -First 1
 Assert-True ($null -eq $optionalAiWarning) 'optional AI skip is not a warning by default'
 Assert-True ($null -ne $optionalAiNote) 'optional AI skip is recorded as a human note'
+Assert-True (-not ($loaded1.gitnexus -is [array])) 'gitnexus report serializes as an object'
 Assert-True (Test-Path -LiteralPath $result1.markdown_path) 'markdown summary written'
 Remove-Item -LiteralPath $out1 -Recurse -Force
 
@@ -84,6 +85,38 @@ Assert-True ($secretBlockers.Count -ge 2) 'secret path blockers recorded'
 $secretLeaks = @($secretBlockers | ForEach-Object { $_.message } | Where-Object { $_ -match 'PASSWORD=|TOKEN=' })
 Assert-True ($secretLeaks.Count -eq 0) 'secret values are not printed'
 Remove-Item -LiteralPath $out3 -Recurse -Force
+
+# Test 3b: Secret and generated-tooling deletions are allowed as cleanup warnings.
+$tempCleanupGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-cleanup-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $tempCleanupGit -Force | Out-Null
+Push-Location $tempCleanupGit
+try {
+    git init -q
+    git config user.email 'pr-review-agent@example.invalid'
+    git config user.name 'PR Review Agent Test'
+    New-Item -ItemType Directory -Path deploy | Out-Null
+    New-Item -ItemType Directory -Path '.gitnexus' | Out-Null
+    Set-Content -LiteralPath '.env' -Value 'TOKEN=redacted' -Encoding UTF8
+    Set-Content -LiteralPath 'deploy/private.pem' -Value 'redacted' -Encoding UTF8
+    Set-Content -LiteralPath '.gitnexus/state.json' -Value '{}' -Encoding UTF8
+    git add -f .env deploy/private.pem .gitnexus/state.json
+    git commit -q -m 'base'
+    $cleanupBaseSha = (git rev-parse HEAD).Trim()
+    Remove-Item -LiteralPath '.env' -Force
+    Remove-Item -LiteralPath 'deploy/private.pem' -Force
+    Remove-Item -LiteralPath '.gitnexus/state.json' -Force
+    git add -A
+    git commit -q -m 'remove unsafe files'
+    $cleanupHeadSha = (git rev-parse HEAD).Trim()
+    $cleanupGuards = Get-PrReviewPathGuardFindings -ChangedPaths @('.env', 'deploy/private.pem', '.gitnexus/state.json') -RepoRoot $tempCleanupGit -BaseSha $cleanupBaseSha -HeadSha $cleanupHeadSha
+    $cleanupBlockers = @($cleanupGuards.blockers | Where-Object { $_.kind -in @('secret_path', 'generated_tooling_path') })
+    $cleanupWarnings = @($cleanupGuards.warnings | Where-Object { $_.kind -in @('secret_path_deleted', 'generated_tooling_path_deleted') })
+    Assert-True ($cleanupBlockers.Count -eq 0) 'cleanup deletions do not block secret/generated path guards'
+    Assert-True ($cleanupWarnings.Count -ge 2) 'cleanup deletions produce human review warnings'
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $tempCleanupGit -Recurse -Force
+}
 
 # Test 4: Retired runtime reintroduction is blocked.
 $out4 = New-TestOutputDir

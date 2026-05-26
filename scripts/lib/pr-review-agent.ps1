@@ -105,10 +105,10 @@ function Get-PrReviewAddedLinesForPath {
     }
 
     $safeRoot = $RepoRoot -replace '\\', '/'
-    $mergeBase = (git -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
+    $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
     if ([string]::IsNullOrWhiteSpace($mergeBase)) { return @() }
 
-    $diffLines = @(git -c "safe.directory=$safeRoot" diff --unified=0 --no-ext-diff $mergeBase $HeadSha -- $Path 2>$null)
+    $diffLines = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --unified=0 --no-ext-diff $mergeBase $HeadSha -- $Path 2>$null)
     if ($LASTEXITCODE -ne 0) { return @() }
 
     $added = New-Object System.Collections.Generic.List[string]
@@ -118,6 +118,30 @@ function Get-PrReviewAddedLinesForPath {
         [void]$added.Add($line.Substring(1))
     }
     return @($added.ToArray())
+}
+
+function Test-PrReviewDeletedPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Path,
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BaseSha) -or [string]::IsNullOrWhiteSpace($HeadSha)) {
+        return $false
+    }
+
+    $safeRoot = $RepoRoot -replace '\\', '/'
+    $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($mergeBase)) { return $false }
+
+    $statusLine = (git -C $RepoRoot -c "safe.directory=$safeRoot" diff --name-status --no-ext-diff $mergeBase $HeadSha -- $Path 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($statusLine)) { return $false }
+
+    $statusCode = ($statusLine -split "`t", 2)[0]
+    return ($statusCode -eq 'D')
 }
 
 function Get-PrReviewChangedPathsFromGit {
@@ -131,14 +155,14 @@ function Get-PrReviewChangedPathsFromGit {
     $safeRoot = $RepoRoot -replace '\\', '/'
     $paths = @()
     if (-not [string]::IsNullOrWhiteSpace($BaseSha) -and -not [string]::IsNullOrWhiteSpace($HeadSha)) {
-        $mergeBase = (git -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
+        $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
         if (-not [string]::IsNullOrWhiteSpace($mergeBase)) {
-            $paths = @(git -c "safe.directory=$safeRoot" diff --name-only $mergeBase $HeadSha 2>$null)
+            $paths = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --name-only $mergeBase $HeadSha 2>$null)
             if ($LASTEXITCODE -ne 0) {
                 throw "Unable to resolve PR diff from merge base '$mergeBase' to head '$HeadSha'."
             }
         } else {
-            $paths = @(git -c "safe.directory=$safeRoot" diff --name-only "$BaseSha...$HeadSha" 2>$null)
+            $paths = @(git -C $RepoRoot -c "safe.directory=$safeRoot" diff --name-only "$BaseSha...$HeadSha" 2>$null)
             if ($LASTEXITCODE -ne 0) {
                 throw "Unable to resolve PR diff range '$BaseSha...$HeadSha'."
             }
@@ -147,7 +171,7 @@ function Get-PrReviewChangedPathsFromGit {
     }
     if ($paths.Count -eq 0) {
         $lineTerminators = [char[]]"`r`n"
-        $statusOutput = git -c "safe.directory=$safeRoot" status --porcelain=v1 -z -uall 2>$null | Out-String
+        $statusOutput = git -C $RepoRoot -c "safe.directory=$safeRoot" status --porcelain=v1 -z -uall 2>$null | Out-String
         $statusRecords = @($statusOutput -split "`0" | ForEach-Object { $_.TrimEnd($lineTerminators) } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
         $paths = @(ConvertFrom-PrReviewPorcelainStatus -Records $statusRecords)
     }
@@ -244,21 +268,34 @@ function Get-PrReviewPathGuardFindings {
     foreach ($path in $ChangedPaths) {
         $p = ConvertTo-PrReviewPath $path
         $leaf = [System.IO.Path]::GetFileName($p)
+        $isDeletedPath = Test-PrReviewDeletedPath -RepoRoot $RepoRoot -Path $p -BaseSha $BaseSha -HeadSha $HeadSha
 
         $isEnvExample = ($leaf -eq '.env.example' -or $leaf -match '^\.env\..*\.example$')
         $isEnvValue = ($leaf -eq '.env' -or ($leaf -match '^\.env\.' -and -not $isEnvExample))
         if ($isEnvValue) {
-            [void]$blockers.Add((New-PrReviewIssue -Kind 'secret_path' -Severity 'critical' -Path $p -Message 'PR modifies a real environment file; do not change secret values in repo.'))
+            if ($isDeletedPath) {
+                [void]$warnings.Add((New-PrReviewIssue -Kind 'secret_path_deleted' -Severity 'medium' -Path $p -Message 'PR deletes a real environment file; verify secret rotation or incident remediation.'))
+            } else {
+                [void]$blockers.Add((New-PrReviewIssue -Kind 'secret_path' -Severity 'critical' -Path $p -Message 'PR modifies a real environment file; do not change secret values in repo.'))
+            }
         } elseif ($isEnvExample) {
             [void]$warnings.Add((New-PrReviewIssue -Kind 'env_contract' -Severity 'medium' -Path $p -Message 'Environment example changed; human reviewer should check placeholder contract.'))
         }
 
         if ($p -match '(^|/)(id_rsa|id_ed25519|credentials|token|secret)(\.|/|$)' -or $p -match '\.(pem|p12|pfx|key)$') {
-            [void]$blockers.Add((New-PrReviewIssue -Kind 'secret_path' -Severity 'critical' -Path $p -Message 'PR modifies a credential/private-key-like path. Secret values are not printed.'))
+            if ($isDeletedPath) {
+                [void]$warnings.Add((New-PrReviewIssue -Kind 'secret_path_deleted' -Severity 'medium' -Path $p -Message 'PR deletes a credential/private-key-like path; verify secret rotation or incident remediation.'))
+            } else {
+                [void]$blockers.Add((New-PrReviewIssue -Kind 'secret_path' -Severity 'critical' -Path $p -Message 'PR modifies a credential/private-key-like path. Secret values are not printed.'))
+            }
         }
 
         if ($p -match '^(\.codex/skills|\.claude/skills/generated|\.gitnexus)(/|$)') {
-            [void]$blockers.Add((New-PrReviewIssue -Kind 'generated_tooling_path' -Severity 'high' -Path $p -Message 'Generated local tooling state must not be committed as product source.'))
+            if ($isDeletedPath) {
+                [void]$warnings.Add((New-PrReviewIssue -Kind 'generated_tooling_path_deleted' -Severity 'medium' -Path $p -Message 'PR deletes generated local tooling state; verify cleanup scope.'))
+            } else {
+                [void]$blockers.Add((New-PrReviewIssue -Kind 'generated_tooling_path' -Severity 'high' -Path $p -Message 'Generated local tooling state must not be committed as product source.'))
+            }
         }
 
         foreach ($name in $Script:RetiredRuntimeNames) {
@@ -419,28 +456,28 @@ function Invoke-PrReviewGitNexus {
         affected      = @()
     }
 
-    if (-not $NeedsGitNexus) { return ,$record }
+    if (-not $NeedsGitNexus) { return [pscustomobject]$record }
     if ($SkipGitNexus) {
         $record.status = if ($AllowUnavailable) { 'warning' } else { 'unavailable' }
         $record.summary = 'GitNexus execution skipped by caller.'
-        return ,$record
+        return [pscustomobject]$record
     }
     if ($SimulateUnavailable) {
         $record.status = 'unavailable'
         $record.summary = 'GitNexus unavailable simulated by test fixture.'
-        return ,$record
+        return [pscustomobject]$record
     }
     if ($SimulateFailure) {
         $record.status = 'failed'
         $record.summary = 'GitNexus failed simulated by test fixture.'
-        return ,$record
+        return [pscustomobject]$record
     }
 
     $cmd = Get-Command gitnexus -ErrorAction SilentlyContinue
     if (-not $cmd) {
         $record.status = 'unavailable'
         $record.summary = 'gitnexus CLI not found on PATH.'
-        return ,$record
+        return [pscustomobject]$record
     }
 
     if ([string]::IsNullOrWhiteSpace($RepoName)) { $RepoName = 'AI-BIM-governance' }
@@ -464,7 +501,7 @@ function Invoke-PrReviewGitNexus {
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
-    return ,$record
+    return [pscustomobject]$record
 }
 
 function Get-PrReviewRiskLevel {

@@ -1,8 +1,8 @@
-## Why
+## 為何
 
 AI coding 產生的 diff、文件與驗證證據常常很大，人工逐次檢查容易漏掉 repo 邊界、測試缺口、OpenSpec 對齊與高風險檔案變更。這個 change 要建立一個每次 PR 都會自動執行的 review agent gate，先幫使用者整理「能不能安全進入人工審查」的結論與證據。
 
-## What Changes
+## 變更內容
 
 - 新增 PR review agent capability，定義每個 PR 必須產生可審查的自動審查報告。
 - 定義 agent 要收集的最小證據：diff scope、OpenSpec change 對應、repo 邊界檢查、測試/建置結果、GitNexus detect changes 結果或不可用原因、風險分級與阻擋項目。
@@ -11,17 +11,17 @@ AI coding 產生的 diff、文件與驗證證據常常很大，人工逐次檢�
 - 明確限制自動化範圍：review agent 不自動 merge、不取代 CODEOWNERS / branch protection / human review，也不把本機 skill 或生成工具狀態變成產品需求。
 - 不修改 product runtime API、資料結構、事件、storage、session 或 WebRTC / Kit runtime 邊界。
 
-## Capabilities
+## 能力
 
-### New Capabilities
+### 新增能力
 
 - `pull-request-review-agent`: 定義 PR 自動審查 agent 的觸發時機、證據輸出、通過/阻擋條件、人工審查邊界與 repo boundary guardrails。
 
-### Modified Capabilities
+### 修改後的能力
 
-- None.
+- 無。
 
-## Impact
+## 影響
 
 - 主要 owner folder：`.github/`、`scripts/`、`docs/`、`openspec/changes/add-pr-review-agent/`。
 - 後續 apply 可能新增 GitHub Actions workflow、review prompt / policy 文件、PR review report schema 與本機驗證 script。

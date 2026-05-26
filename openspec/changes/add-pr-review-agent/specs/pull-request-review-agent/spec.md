@@ -1,167 +1,173 @@
 ## ADDED Requirements
 
-### Requirement: PR review agent runs for every reviewable pull request
+### Requirement: 每個可審查 pull request 都會執行 PR review agent
 
-The repository SHALL run an automated PR review agent gate for every reviewable pull request targeting the protected integration branch.
+本 repository SHALL 針對每個 targeting protected integration branch 的可審查 pull request 執行自動化 PR review agent gate。
 
-#### Scenario: PR is opened or updated
+#### Scenario: PR 被開啟或更新
 
-- **WHEN** a pull request is opened, reopened, marked ready for review, or updated with new commits
-- **THEN** the PR review agent gate runs against the current head SHA
-- **AND** the gate records the base ref, head ref, base SHA, head SHA, PR number, trigger event, and run timestamp
+- **WHEN** pull request 被 opened、reopened、marked ready for review，或有新 commits 更新
+- **THEN** PR review agent gate 會針對目前 head SHA 執行
+- **AND** gate 會記錄 base ref、head ref、base SHA、head SHA、PR number、trigger event 與 run timestamp
 
-#### Scenario: Draft PR is updated
+#### Scenario: Draft PR 被更新
 
-- **WHEN** a draft pull request receives new commits
-- **THEN** the PR review agent MAY run in report-only mode
-- **AND** it MUST NOT mark the merge gate passed until the pull request is ready for review
+- **WHEN** draft pull request 收到新 commits
+- **THEN** PR review agent MAY 以 report-only mode 執行
+- **AND** 在 pull request ready for review 前，它 MUST NOT 將 merge gate 標示為 passed
 
-### Requirement: PR review agent publishes reviewable evidence
+### Requirement: PR review agent 發布可審查 evidence
 
-The PR review agent SHALL publish a machine-readable report and a human-readable summary for each run.
+PR review agent SHALL 為每次 run 發布 machine-readable report 與 human-readable summary。
 
-#### Scenario: Review report is created
+#### Scenario: Review report 被建立
 
-- **WHEN** the PR review agent completes
-- **THEN** it produces a JSON report containing `status`, `risk_level`, `changed_paths`, `openspec_changes`, `validation_commands`, `checks`, `blockers`, `warnings`, `human_review_notes`, and `gitnexus`
-- **AND** it publishes a markdown summary as a PR comment, status check summary, or workflow artifact
+- **WHEN** PR review agent 完成
+- **THEN** 它會產生包含 `status`、`risk_level`、`changed_paths`、`openspec_changes`、`validation_commands`、`checks`、`blockers`、`warnings`、`human_review_notes` 與 `gitnexus` 的 JSON report
+- **AND** 它會將 markdown summary 發布為 PR comment、status check summary 或 workflow artifact
 
-#### Scenario: Report generation fails
+#### Scenario: Report generation 失敗
 
-- **WHEN** the agent cannot produce a report that identifies what was checked
-- **THEN** the gate status MUST be `failed`
-- **AND** the PR output MUST say that review evidence is unavailable
+- **WHEN** agent 無法產生可辨識已檢查項目的 report
+- **THEN** gate status MUST 為 `failed`
+- **AND** PR output MUST 說明 review evidence unavailable
 
-### Requirement: PR review agent preserves human approval boundaries
+### Requirement: PR review agent 保留 human approval boundaries
 
-The PR review agent SHALL NOT replace human review, CODEOWNERS, branch protection, or merge authorization.
+PR review agent SHALL NOT 取代 human review、CODEOWNERS、branch protection 或 merge authorization。
 
-#### Scenario: Automated gate passes
+#### Scenario: Automated gate 通過
 
-- **WHEN** all required checks pass and the agent marks the review gate as `passed`
-- **THEN** the PR still requires any configured human review, CODEOWNERS approval, branch protection, and merge policy
-- **AND** the agent MUST NOT merge the pull request automatically
+- **WHEN** 所有 required checks 通過，且 agent 將 review gate 標示為 `passed`
+- **THEN** PR 仍需要任何已設定的 human review、CODEOWNERS approval、branch protection 與 merge policy
+- **AND** agent MUST NOT 自動 merge pull request
 
-#### Scenario: Automated GitHub review is emitted
+#### Scenario: Automated GitHub review 被送出
 
-- **WHEN** the implementation chooses to write a GitHub review event
-- **THEN** the review body MUST state that it is an automated gate verdict
-- **AND** it MUST NOT dismiss, override, or substitute required human approvals
+- **WHEN** implementation 選擇寫入 GitHub review event
+- **THEN** review body MUST 說明它是 automated gate verdict
+- **AND** 它 MUST NOT dismiss、override 或 substitute required human approvals
 
-### Requirement: Deterministic checks run before optional AI judgment
+### Requirement: Deterministic checks 必須先於 optional AI judgment
 
-The PR review agent SHALL base pass/block decisions on deterministic checks before using any optional AI reviewer output.
+PR review agent SHALL 先以 deterministic checks 作為 pass/block 決策基礎，再使用任何 optional AI reviewer output。
 
-#### Scenario: Deterministic checks pass and AI adapter is unavailable
+#### Scenario: Deterministic checks 通過且 AI adapter unavailable
 
-- **WHEN** all required deterministic checks pass and the optional AI adapter is unavailable
-- **THEN** the gate MAY return `passed` or `warning` according to configured policy
-- **AND** the report MUST record that AI review was skipped and why
+- **WHEN** 所有 required deterministic checks 通過，且 optional AI adapter unavailable
+- **THEN** gate MAY 依 configured policy 回傳 `passed` 或 `warning`
+- **AND** report MUST 記錄 AI review 被 skipped 以及原因
 
-#### Scenario: Deterministic checks fail
+#### Scenario: Deterministic checks 失敗
 
-- **WHEN** any required deterministic check fails
-- **THEN** optional AI reviewer output MUST NOT convert the gate to `passed`
-- **AND** the report MUST list the failed command or check as a blocker
+- **WHEN** 任一 required deterministic check 失敗
+- **THEN** optional AI reviewer output MUST NOT 將 gate 轉為 `passed`
+- **AND** report MUST 將 failed command 或 check 列為 blocker
 
-### Requirement: PR review agent validates OpenSpec alignment
+### Requirement: PR review agent 驗證 OpenSpec alignment
 
-The PR review agent SHALL verify that PRs containing non-trivial behavior, architecture, workflow, API, data-flow, or repo-boundary changes are backed by an OpenSpec change or an explicit documented exception.
+PR review agent SHALL 驗證包含 non-trivial behavior、architecture、workflow、API、data-flow 或 repo-boundary changes 的 PR，有對應 OpenSpec change 或明確 documented exception。
 
-#### Scenario: PR includes OpenSpec change artifacts
+#### Scenario: PR 包含 OpenSpec change artifacts
 
-- **WHEN** changed paths include `openspec/changes/<change-id>/`
-- **THEN** the agent runs `openspec validate <change-id>`
-- **AND** the report records the validation command, result, and change id
+- **WHEN** changed paths 包含 `openspec/changes/<change-id>/`
+- **THEN** agent 會執行 `openspec validate <change-id>`
+- **AND** report 會記錄 validation command、result 與 change id
 
-#### Scenario: Behavior change has no OpenSpec change
+#### Scenario: Behavior change 沒有 OpenSpec change
 
-- **WHEN** changed paths indicate production code, workflow, API, data-flow, repo-boundary, or verification policy changes without an OpenSpec change
-- **THEN** the gate status MUST be `blocked`
-- **AND** the report MUST ask for an OpenSpec change id or a documented exception
+- **WHEN** changed paths 顯示 production code、workflow、API、data-flow、repo-boundary 或 verification policy changes，但沒有 OpenSpec change
+- **THEN** gate status MUST 為 `blocked`
+- **AND** report MUST 要求 OpenSpec change id 或 documented exception
 
-### Requirement: PR review agent enforces repo boundary guardrails
+### Requirement: PR review agent 強制 repo boundary guardrails
 
-The PR review agent SHALL check PRs for changes that violate the repo boundary rules documented in `AGENTS.md`, README, and OpenSpec specs.
+PR review agent SHALL 檢查 PR 是否違反 `AGENTS.md`、README 與 OpenSpec specs 記錄的 repo boundary rules。
 
-#### Scenario: Retired runtime is reintroduced
+#### Scenario: Retired runtime 被重新引入
 
-- **WHEN** a PR adds startup, health check, smoke, runtime dependency, or required workflow references that treat retired `_worker`, `_bim-control`, `_s3_storage`, `_conversion-service`, or `_conversion-server` as current product runtime
-- **THEN** the gate status MUST be `blocked`
-- **AND** the report MUST identify the path and boundary rule that was violated
+- **WHEN** PR 新增 startup、health check、smoke、runtime dependency 或 required workflow references，將 retired `_worker`、`_bim-control`、`_s3_storage`、`_conversion-service` 或 `_conversion-server` 當作 current product runtime
+- **THEN** gate status MUST 為 `blocked`
+- **AND** report MUST 指出 path 與 violated boundary rule
 
-#### Scenario: Runtime boundary changes are documented
+#### Scenario: Runtime boundary changes 有文件記錄
 
-- **WHEN** a PR changes responsibilities between `bim-review-coordinator`, `bim-streaming-server`, `web-viewer-sample`, external IFC Worker, or external company cloud
-- **THEN** the report MUST identify the affected owner boundary
-- **AND** the gate MUST require matching OpenSpec requirement or design documentation before it can pass
+- **WHEN** PR 改變 `bim-review-coordinator`、`bim-streaming-server`、`web-viewer-sample`、external IFC Worker 或 external company cloud 之間的 responsibilities
+- **THEN** report MUST 指出 affected owner boundary
+- **AND** gate MUST 要求 matching OpenSpec requirement 或 design documentation 後才能 pass
 
-### Requirement: PR review agent blocks secret and environment-value changes
+### Requirement: PR review agent 阻擋 secret 與 environment-value changes
 
-The PR review agent SHALL block unsafe secret, credential, private key, and real environment-value modifications.
+PR review agent SHALL 阻擋 unsafe secret、credential、private key 與 real environment-value modifications。
 
-#### Scenario: Secret-like file is modified
+#### Scenario: Secret-like file 被修改
 
-- **WHEN** a PR modifies private keys, credentials, token files, or existing `.env` secret values
-- **THEN** the gate status MUST be `blocked`
-- **AND** the report MUST identify the file path without printing the secret value
+- **WHEN** PR 修改 private keys、credentials、token files 或 existing `.env` secret values
+- **THEN** gate status MUST 為 `blocked`
+- **AND** report MUST 在不印出 secret value 的情況下指出 file path
 
-#### Scenario: Environment example is updated
+#### Scenario: Secret-like file 被刪除
 
-- **WHEN** a PR modifies `.env.example` or adds documented placeholder variables without real secret values
-- **THEN** the gate MAY pass if other checks pass
-- **AND** the report MUST record the env contract change for human review
+- **WHEN** PR 只刪除 private keys、credentials、token files 或 existing `.env` secret values
+- **THEN** gate MAY 以 warning 進入 human review
+- **AND** report MUST 要求 reviewer 確認 secret rotation 或 incident remediation
 
-### Requirement: PR review agent selects smallest necessary validation
+#### Scenario: Environment example 被更新
 
-The PR review agent SHALL choose validation commands from changed paths and record skipped checks with reasons.
+- **WHEN** PR 修改 `.env.example` 或新增 documented placeholder variables 且沒有 real secret values
+- **THEN** gate MAY 在其他 checks 通過時 pass
+- **AND** report MUST 記錄 env contract change 供 human review
+
+### Requirement: PR review agent 選擇最小必要 validation
+
+PR review agent SHALL 從 changed paths 選擇 validation commands，並記錄 skipped checks 與原因。
 
 #### Scenario: Service-owned code changes
 
-- **WHEN** changed paths touch `bim-review-coordinator/`, `web-viewer-sample/`, `bim-streaming-server/`, `tests/`, or `scripts/`
-- **THEN** the agent selects the smallest useful test, build, smoke, or parse check for the affected owner
-- **AND** the report records the command, working directory, result, and owner
+- **WHEN** changed paths 觸及 `bim-review-coordinator/`、`web-viewer-sample/`、`bim-streaming-server/`、`tests/` 或 `scripts/`
+- **THEN** agent 會為 affected owner 選擇最小有用的 test、build、smoke 或 parse check
+- **AND** report 會記錄 command、working directory、result 與 owner
 
-#### Scenario: Required validation cannot run in the environment
+#### Scenario: Required validation 無法在環境中執行
 
-- **WHEN** a required check needs unavailable GPU, Kit SDK, browser automation, network, or credentials
-- **THEN** the agent records the check as `blocked`, `deferred`, or `not_required` according to the changed paths
-- **AND** it MUST NOT claim that unavailable validation passed
+- **WHEN** required check 需要 unavailable GPU、Kit SDK、browser automation、network 或 credentials
+- **THEN** agent 會依 changed paths 將 check 記錄為 `blocked`、`deferred` 或 `not_required`
+- **AND** 它 MUST NOT 宣稱 unavailable validation passed
 
-#### Scenario: Required local tooling is unavailable during rollout
+#### Scenario: Required local tooling 在 rollout 期間 unavailable
 
-- **WHEN** the GitHub-hosted runner lacks a local validation tool such as OpenSpec or GitNexus
-- **AND** the workflow has an explicit tooling-only rollout exception
-- **THEN** the agent records the check as `skipped` with a warning
-- **AND** it MUST NOT claim that unavailable validation passed
+- **WHEN** GitHub-hosted runner 缺少 OpenSpec 或 GitNexus 等 local validation tool
+- **AND** workflow 有明確 tooling-only rollout exception
+- **THEN** agent 會將 check 記錄為 `skipped` 並附 warning
+- **AND** 它 MUST NOT 宣稱 unavailable validation passed
 
-### Requirement: PR review agent integrates GitNexus impact evidence
+### Requirement: PR review agent 整合 GitNexus impact evidence
 
-The PR review agent SHALL collect GitNexus change detection or record a clear unavailable reason before the gate passes code changes.
+PR review agent SHALL 在 code changes 通過 gate 前收集 GitNexus change detection，或記錄清楚的 unavailable reason。
 
-#### Scenario: Code paths changed and GitNexus succeeds
+#### Scenario: Code paths changed 且 GitNexus succeeds
 
-- **WHEN** changed paths include source code or scripts and GitNexus detect changes succeeds
-- **THEN** the report records affected symbols, affected flows, risk level, and whether the result is within the expected scope
+- **WHEN** changed paths 包含 source code 或 scripts，且 GitNexus detect changes succeeds
+- **THEN** report 會記錄 affected symbols、affected flows、risk level，以及 result 是否在 expected scope 內
 
-#### Scenario: Code paths changed and GitNexus is unavailable
+#### Scenario: Code paths changed 且 GitNexus unavailable
 
-- **WHEN** changed paths include source code or scripts and GitNexus detect changes is stale, unavailable, or fails
-- **THEN** the gate status MUST be `blocked` unless the PR includes an explicit docs-only or tooling-only exception
-- **AND** the report MUST record the command or tool status that failed
+- **WHEN** changed paths 包含 source code 或 scripts，且 GitNexus detect changes stale、unavailable 或 fails
+- **THEN** gate status MUST 為 `blocked`，除非 PR 包含明確 docs-only 或 tooling-only exception
+- **AND** report MUST 記錄 failed command 或 tool status
 
-### Requirement: PR review agent classifies risk and blockers consistently
+### Requirement: PR review agent 一致分類 risk 與 blockers
 
-The PR review agent SHALL classify each run as `passed`, `warning`, `blocked`, or `failed`, and each risk as `low`, `medium`, `high`, or `critical`.
+PR review agent SHALL 將每次 run 分類為 `passed`、`warning`、`blocked` 或 `failed`，並將每個 risk 分類為 `low`、`medium`、`high` 或 `critical`。
 
-#### Scenario: High or critical risk is unresolved
+#### Scenario: High 或 critical risk 未解決
 
-- **WHEN** deterministic checks, GitNexus evidence, path policy, or AI reviewer output identifies unresolved HIGH or CRITICAL risk
-- **THEN** the gate status MUST be `blocked`
-- **AND** the report MUST list the mitigation needed before merge
+- **WHEN** deterministic checks、GitNexus evidence、path policy 或 AI reviewer output 識別出 unresolved HIGH 或 CRITICAL risk
+- **THEN** gate status MUST 為 `blocked`
+- **AND** report MUST 列出 merge 前需要的 mitigation
 
-#### Scenario: Only non-blocking warnings remain
+#### Scenario: 只剩 non-blocking warnings
 
-- **WHEN** required checks pass and only non-blocking warnings remain
-- **THEN** the gate status MAY be `warning`
-- **AND** the report MUST list which warnings require human attention
+- **WHEN** required checks 通過且只剩 non-blocking warnings
+- **THEN** gate status MAY 為 `warning`
+- **AND** report MUST 列出哪些 warnings 需要 human attention

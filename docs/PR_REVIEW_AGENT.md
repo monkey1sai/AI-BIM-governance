@@ -56,7 +56,7 @@ Markdown summary 只保留人要先看的內容：verdict、blockers、warnings�
 ## Guardrails
 
 - 不印出 secret 值，只回報檔案路徑與風險類型。
-- 修改既有 `.env`、private key、token / credential 檔案時一律 blocked；`.env.example` 或 `.env.*.example` 可作為 contract 變更進入人工審查。
+- 修改既有 `.env`、private key、token / credential 檔案時一律 blocked；若 PR 只刪除這類檔案，允許進入人工審查但必須以 warning 要求確認 rotation / remediation；`.env.example` 或 `.env.*.example` 可作為 contract 變更進入人工審查。
 - 不允許把 retired `_worker`、`_bim-control`、`_s3_storage`、`_conversion-service`、`_conversion-server` 重新寫成 current product runtime dependency。
 - Code 或 script 變更需要 GitNexus detect changes evidence；若 unavailable，除 docs-only / tooling-only / rollout exception 外 fail closed；若 GitNexus 已執行但回報 failed，不可降級成 warning。
 - Optional AI adapter 不可把 deterministic failure 改成 passed；預設未要求 AI verdict 時只記錄 human note，不把 gate 降成 warning。
