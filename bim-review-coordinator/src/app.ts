@@ -17,6 +17,7 @@ import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import {
   StreamingConversionClient,
+  buildQualityMetricsSummary,
   isTerminalConversionResult,
   type PollerHandle,
   type StreamingConversionResult,
@@ -98,6 +99,10 @@ const createSessionSchema = z.object({
       coverage_ratio: z.number().nullish(),
       coverage_status: z.string().nullish(),
       conversion_duration_seconds: z.number().nullish(),
+      // coordinator-forward-quality-metrics-summary:C1 三個 semantic 欄位
+      semantic_mapping_fidelity: z.string().nullish(),
+      mapping_has_ifc_type: z.boolean().nullish(),
+      mapping_has_ifc_name: z.boolean().nullish(),
     })
     .passthrough()
     .nullish(),
@@ -766,6 +771,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
     job: IfcReadyIntakeJob,
     artifacts: { usdc_ref?: string | null; element_mapping_ref?: string | null; manifest_ref?: string | null },
     conversionJobId: string | null,
+    qualitySummary: ConversionQualityMetricsSummary | null = null,
   ): { session: ReviewSession; replay: boolean } | { session: null; reason: string } {
     // D11：以 job.review_session_id 為 idempotency 主索引（job 已被 correlation_id /
     // external_model_version_id 唯一索引）。重入回既有 session。
@@ -830,7 +836,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       kit_instance: legacyKitInstanceFromBinding(kitInstanceBindings[0], config),
       artifact_bindings: artifactBindings,
       kit_instance_bindings: kitInstanceBindings,
-      quality_metrics_summary: null,
+      // coordinator-forward-quality-metrics-summary:從 streaming conversion
+      // result 萃取的 quality summary(含 C1 三個 semantic 欄位)由 caller
+      // (ingestStreamingConversionResult)透過 ingestConversionReport 傳入。
+      // null 時與舊邏輯等價,backward compatible。
+      quality_metrics_summary: qualitySummary,
     });
     // lifecycle audit event parity（與 explicit /api/review-sessions caller
     // 路徑等價；Risk mitigation）。
@@ -887,7 +897,11 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
       reason: failed ? result.reason || "conversion_failed" : undefined,
       retryable: false,
     });
-    const outcome = ingestConversionReport(report);
+    // coordinator-forward-quality-metrics-summary:把 result 內 quality_metrics
+    // 萃取成 summary 並透過 ingestConversionReport 帶進 autoCreateOrActivateSession,
+    // 寫入 session.quality_metrics_summary,讓 viewer / `/ui` Semantic ready 有資料。
+    const qualitySummary = buildQualityMetricsSummary(result);
+    const outcome = ingestConversionReport(report, qualitySummary);
     if (!outcome.ok) {
       return { ok: false, status: outcome.status, detail: outcome.detail };
     }
@@ -916,6 +930,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
 
   function ingestConversionReport(
     report: z.infer<typeof conversionResultReportSchema>,
+    qualitySummary: ConversionQualityMetricsSummary | null = null,
   ): ConversionIngestOutcome {
     const normalizedStatus = normalizeConversionReportStatus(report.status);
     const job = externalIfcReadyStore.getByCorrelation(report.correlation_id);
@@ -994,6 +1009,7 @@ export function createCoordinatorApp(overrides: Partial<CoordinatorConfig> = {})
           manifest_ref: report.artifacts?.manifest_ref ?? null,
         },
         conversionJobId,
+        qualitySummary,
       );
       if (result.session) {
         session = result.session;

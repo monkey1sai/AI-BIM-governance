@@ -77,6 +77,12 @@ export interface ConversionQualityMetricsSummary {
   coverage_ratio?: number | null;
   coverage_status?: string | null;
   conversion_duration_seconds?: number | null;
+  // coordinator-forward-quality-metrics-summary:C1 fallback semantic mapping
+  // 提供的三個欄位,viewer / `/ui` 用來判定 Semantic ready。strictly additive +
+  // optional,既有 explicit caller 不需提供。
+  semantic_mapping_fidelity?: string | null;
+  mapping_has_ifc_type?: boolean | null;
+  mapping_has_ifc_name?: boolean | null;
 }
 
 export interface ReviewSession {
