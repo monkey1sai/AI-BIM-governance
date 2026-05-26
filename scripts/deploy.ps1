@@ -443,13 +443,25 @@ if ($SkipDocker) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose (--SkipDocker)' -LogPath $LogPath | Out-Null
 } else {
     Write-DeployTag -Tag 'ok' -Message 'Phase 4c running scripts\start-web-plane-docker.ps1' -LogPath $LogPath | Out-Null
-    Push-Location $RepoRoot
-    try {
-        & "$PSScriptRoot\start-web-plane-docker.ps1" -EnvFile $resolvedEnvFile *> (Join-Path $RunDir 'docker-compose-up.log')
-        $dockerExit = $LASTEXITCODE
-    } finally { Pop-Location }
+    # 用 Start-Process 隔離子 script:start-web-plane-docker.ps1 內 $ErrorActionPreference='Stop',
+    # 而 docker compose up 的進度訊息('Container ... Creating')會被 PowerShell 5.1 promote
+    # 成 NativeCommandError。隔離成 new process 把它的 stderr 寫進 .err.log,不污染父流程。
+    $upLog  = Join-Path $RunDir 'docker-compose-up.log'
+    $upErr  = Join-Path $RunDir 'docker-compose-up.err.log'
+    $childArgs = @(
+        '-NoProfile','-ExecutionPolicy','Bypass','-File',
+        (Join-Path $PSScriptRoot 'start-web-plane-docker.ps1'),
+        '-EnvFile', $resolvedEnvFile
+    )
+    $proc = Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList $childArgs `
+        -WorkingDirectory $RepoRoot `
+        -RedirectStandardOutput $upLog `
+        -RedirectStandardError $upErr `
+        -Wait -PassThru -WindowStyle Hidden
+    $dockerExit = $proc.ExitCode
     if ($dockerExit -ne 0) {
-        Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log)" -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log + .err.log)" -LogPath $LogPath | Out-Null
         Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (docker)'
         exit 4
     }
