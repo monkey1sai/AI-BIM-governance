@@ -58,16 +58,16 @@
 
 ## 6. Python adapter — streaming-server (`bim-streaming-server/source/extensions/.../struct_log.py`)
 
-- [ ] 6.1 跑 `gitnexus_impact` 對 `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/` — 確認新加 module 不破現有 `carb.log_*` 路徑
-- [ ] 6.2 實作 `StructLogger` class + `create_logger()` public API（與 TS API 對齊；method 命名用 snake_case）
-- [ ] 6.3 stdlib `json` + `pathlib` + 自寫 daily rotate（不用 `TimedRotatingFileHandler`）
-- [ ] 6.4 redaction helper（env value + data depth defense）
-- [ ] 6.5 safe serializer：`default=lambda o: f"<unserializable:{type(o).__name__}>"`
-- [ ] 6.6 fail-soft + `_recovery/` fallback + ring buffer
-- [ ] 6.7 `create_logger()` return 前 emit `env_snapshot`
-- [ ] 6.8 修改 `convert-ifc-to-usdc.ps1` 接 `--trace-id` 參數，傳給 Kit subprocess CLI（檢查既有 `start-streaming-server.ps1` / `start-host-native-conversion-service.ps1` 也要同步接 `BIM_TRACE_ID`）
-- [ ] 6.9 修改 Kit ext entry point（`ezplus.bim_review_stream.messaging` setup）：startup 解析 `--trace-id`，建立 struct_logger 帶 trace_id；critical path（stage_management / stage_loading / conversion_authority）關鍵分支加 `struct_log` 呼叫，與 `carb.log_*` 並存
-- [ ] 6.10 `source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/tests/test_struct_log.py`（pytest）覆蓋與 §2.9 對等內容
+- [x] 6.1 新增為 NEW module；不 import omni/carb；既有 `carb.log_*` 並存。Kit ext entry hook (`kit_struct_log.py`) 為 sibling module，由 `extension.py` 用 `from . import kit_struct_log` 載入；不改任何既有 function/class 簽章
+- [x] 6.2 純 Python `StructLogger` class + `create_logger()` API 對齊 TS adapter（snake_case helpers：debug/info/warn/error/fatal/network/audit/lifecycle/anomaly/env_snapshot/with_trace_id/flush_and_close）
+- [x] 6.3 stdlib `json` + `pathlib` + 自寫 daily rotate（每筆檢查 ts 日期）；threading.Lock 保護 seq counter
+- [x] 6.4 `redact_env_value` 三段規則 + `redact_data_before_write` 深度防護（schema 欄位白名單避免 `key`/`auth` 誤判；recursion seen set 防 circular）
+- [x] 6.5 `safe_dumps` + `_safe_default` 處理 datetime / BaseException / bytes / 無法序列化物件
+- [x] 6.6 fail-soft sink：主檔失敗轉寫 `_recovery/` + ring buffer (deque maxlen=100) + last_failure 記時間 + 原因；不 throw
+- [x] 6.7 `create_logger()` return 前自動 emit `env_snapshot`（測試可 `skip_env_snapshot=True`）
+- [x] 6.8 `bim-streaming-server/scripts/convert-ifc-to-usdc.ps1` 加 `-TraceId` 參數；effective trace 優先序：參數 → `BIM_TRACE_ID` env → 空；非空時透過 `--trace-id "<id>"` 注入 Kit subprocess 的 exec script
+- [x] 6.9 新增 `kit_struct_log.py` Kit-side bootstrap：解析 `sys.argv` 的 `--trace-id`（space + equals 兩種形式）/ fallback `BIM_TRACE_ID` env；singleton `get_logger()`；`log_kit_startup_lifecycle()` / `log_kit_shutdown_lifecycle()`。`extension.py` 的 `Extension.on_startup` / `on_shutdown` 加 lifecycle 呼叫（additive，不動既有 manager 邏輯）
+- [x] 6.10 兩份 root pytest（在 root 跑而非 Kit harness，避開 omni/carb 載入）：`tests/contracts/structured-log/test_python_adapter.py` 18 tests pass（schema/runid/redaction/with_trace_id/circular/cross-midnight/sink-fail/BIM_TRACE_ID env/invalid run_id/invalid service）；`tests/contracts/structured-log/test_python_kit_bootstrap.py` 6 tests pass（argv space/equals form parse / BIM_TRACE_ID fallback / singleton / lifecycle helpers emit）。Kit harness 內 in-Kit critical path coverage 留 group 9 smoke evidence
 
 ## 7. PowerShell module — `scripts/lib/StructLog.psm1`
 

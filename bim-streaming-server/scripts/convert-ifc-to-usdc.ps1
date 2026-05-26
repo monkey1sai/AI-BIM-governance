@@ -21,7 +21,11 @@ param(
 
     [switch] $PlanOnly,
 
-    [switch] $Json
+    [switch] $Json,
+
+    # cross-service-structured-log-baseline: 跨服務 trace_id 載體。
+    # 若呼叫者沒傳，則保留環境變數 BIM_TRACE_ID（若有）並透傳給 Kit subprocess。
+    [string] $TraceId = ""
 )
 
 Set-StrictMode -Version Latest
@@ -288,7 +292,22 @@ function Invoke-KitConversion {
         throw "Kit converter wrapper not found: $wrapperScript"
     }
 
-    $execScript = "`"$wrapperScript`" --process-script `"$hoopsMain`" --input-path `"$($Item.IfcPath)`" --output-path `"$($Item.OutputPath)`" --config-path `"$resolvedConfigPath`""
+    # cross-service-structured-log-baseline §4.2: forward inbound trace_id to Kit
+    # subprocess via `--trace-id=...` so the streaming-server adapter inside Kit
+    # can adopt it as its active trace.
+    $effectiveTraceId = if (-not [string]::IsNullOrWhiteSpace($TraceId)) {
+        $TraceId
+    } elseif ($env:BIM_TRACE_ID) {
+        $env:BIM_TRACE_ID
+    } else {
+        ""
+    }
+    $traceArg = if ($effectiveTraceId) {
+        " --trace-id `"$effectiveTraceId`""
+    } else {
+        ""
+    }
+    $execScript = "`"$wrapperScript`" --process-script `"$hoopsMain`" --input-path `"$($Item.IfcPath)`" --output-path `"$($Item.OutputPath)`" --config-path `"$resolvedConfigPath`"$traceArg"
     $kitArgs = @(
         "--ext-folder", (Join-Path $buildRoot "exts"),
         "--ext-folder", (Join-Path $buildRoot "extscache"),
