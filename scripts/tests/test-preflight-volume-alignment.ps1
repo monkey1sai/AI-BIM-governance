@@ -25,7 +25,7 @@ try {
         -Value "COORDINATOR_PORT=8004"
     $result = Test-VolumeAlignment -RepoRoot $sb -EnvFile '.env.web-plane.host-kit'
     Assert-Equal 'MISSING_KEY' $result.status 'no key → MISSING_KEY'
-    Assert-Equal $null $result.runtimeStorageRoot 'no path'
+    Assert-True ($null -eq $result.runtimeStorageRoot) 'no path'
     Write-TestPass 'missing key'
 }
 finally { Remove-TestSandbox -Path $sb }
