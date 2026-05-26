@@ -8,7 +8,7 @@ $modulePath = Join-Path $repoRoot 'scripts\lib\preflight-ports.ps1'
 # Test 1: 全 FREE
 $result = Test-PortAvailability -RepoRoot (New-TestSandbox -Prefix 'preflight-ports') `
     -PortLookup { param($port) $null } `
-    -ProcessNameLookup { param($pid) $null }
+    -ProcessNameLookup { param($procId) $null }
 Assert-True ($result.docker.Count -eq 2) 'docker has 2 ports'
 Assert-True ($result.hostNative.Count -eq 3) 'hostNative has 3 ports'
 foreach ($p in @($result.docker; $result.hostNative)) {
@@ -24,7 +24,7 @@ try {
     # 不寫任何 .pid 進去,模擬「不是我們的」
     $result = Test-PortAvailability -RepoRoot $sandbox `
         -PortLookup { param($port) if ($port -eq 49100) { 12345 } else { $null } } `
-        -ProcessNameLookup { param($pid) if ($pid -eq 12345) { 'kit.exe' } else { $null } }
+        -ProcessNameLookup { param($procId) if ($procId -eq 12345) { 'kit.exe' } else { $null } }
 
     $kit = $result.hostNative | Where-Object { $_.port -eq 49100 } | Select-Object -First 1
     Assert-Equal 'OCCUPIED' $kit.status '49100 OCCUPIED'
@@ -44,7 +44,7 @@ try {
 
     $result = Test-PortAvailability -RepoRoot $sandbox `
         -PortLookup { param($port) if ($port -eq 49100) { 12345 } else { $null } } `
-        -ProcessNameLookup { param($pid) if ($pid -eq 12345) { 'powershell.exe' } else { $null } }
+        -ProcessNameLookup { param($procId) if ($procId -eq 12345) { 'powershell.exe' } else { $null } }
 
     $kit = $result.hostNative | Where-Object { $_.port -eq 49100 } | Select-Object -First 1
     Assert-True ($kit.ourPidFile -eq $true) '49100 in our PID file'

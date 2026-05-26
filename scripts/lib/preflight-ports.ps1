@@ -31,9 +31,9 @@ function Test-PortAvailability {
             if ($conn) { return $conn.OwningProcess } else { return $null }
         },
         [scriptblock] $ProcessNameLookup = {
-            param($pid)
+            param($procId)
             try {
-                $proc = Get-Process -Id $pid -ErrorAction Stop
+                $proc = Get-Process -Id $procId -ErrorAction Stop
                 return $proc.ProcessName + '.exe'
             } catch { return $null }
         }
