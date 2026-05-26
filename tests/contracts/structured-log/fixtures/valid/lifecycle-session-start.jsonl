@@ -1,0 +1,1 @@
+{"ts":"2026-05-26T14:23:00.000Z","level":"info","event_type":"lifecycle","service":"coordinator","component":"reviewSession","run_id":"run_20260526_142010_a3f900","trace_id":"rev_20260526_1234abcd","msg":"review session created","data":{"phase":"start","subject_kind":"review_session","subject_id":"review_session_xxx"}}

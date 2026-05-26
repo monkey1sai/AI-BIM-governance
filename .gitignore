@@ -7,6 +7,11 @@ Thumbs.db
 *.tmp
 *.bak
 
+# Cross-service structured log baseline sink root (per
+# docs/contracts/structured-log-schema.md §6.1). Adapters write
+# logs/<service>/<YYYY-MM-DD>/<service>-<run_id>.jsonl here.
+/logs/
+
 # Local runtime-manager env (real values; .env.runtime-manager.docker.example stays tracked)
 .env.runtime-manager.docker
 .agents/

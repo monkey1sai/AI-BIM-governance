@@ -6,14 +6,14 @@
 
 ## 1. Shared schema 契約與 fixtures
 
-- [ ] 1.1 撰寫 `docs/contracts/structured-log-schema.md` — 完整 schema、7 個 event_type、data sub-schema、redaction 規則、trace_id 命名約定、傳遞通道
-- [ ] 1.2 撰寫 `docs/contracts/structured-log-env-allowlist.md` — 列出 `NODE_ENV` / `STORAGE_ROOT` / `IFC_DOWNLOAD_STRICT` / `KIT_RUNTIME_PORT` / `COORDINATOR_PORT` / `VIEWER_PORT` / `LOG_RETENTION_DAYS` 等明碼 env，所有新增 env 必 PR 一併改本檔
-- [ ] 1.3 撰寫 `tests/contracts/structured-log/schema.json`（JSON Schema draft-07）覆蓋 7 個 event_type 與其 data sub-schema
-- [ ] 1.4 建 `tests/contracts/structured-log/fixtures/` 各 event_type 1~3 sample（合法 + edge case；至少 14 個 fixture）
-- [ ] 1.5 撰寫 `tests/contracts/structured-log/validate.contract.test.ts`（root Vitest）驗證 fixtures pass / 反例 fail
-- [ ] 1.6 撰寫 `tests/contracts/structured-log/test_validate.py`（root pytest）同 1.5
-- [ ] 1.7 評估 ajv (TS) / jsonschema (Python) 與 ad-hoc validator 二選一；若選 ad-hoc，撰寫共用 helper；若要新加 dep，於本 task 補理由（design D1 open question）
-- [ ] 1.8 `.gitignore` 新增 `/logs/` 條目
+- [x] 1.1 撰寫 `docs/contracts/structured-log-schema.md` — 完整 schema、7 個 event_type、data sub-schema、redaction 規則、trace_id 命名約定、傳遞通道
+- [x] 1.2 撰寫 `docs/contracts/structured-log-env-allowlist.md` — 列出 `NODE_ENV` / `STORAGE_ROOT` / `IFC_DOWNLOAD_STRICT` / `KIT_RUNTIME_PORT` / `COORDINATOR_PORT` / `VIEWER_PORT` / `LOG_RETENTION_DAYS` 等明碼 env，所有新增 env 必 PR 一併改本檔
+- [x] 1.3 撰寫 `tests/contracts/structured-log/schema.json`（JSON Schema draft-07）覆蓋 7 個 event_type 與其 data sub-schema
+- [x] 1.4 建 `tests/contracts/structured-log/fixtures/` 各 event_type 1~3 sample（合法 + edge case；至少 14 個 fixture）→ 17 valid + 6 invalid, all asserted by both Python & TS validators
+- [x] 1.5 撰寫 TS contract validator → `bim-review-coordinator/tests/contracts/structured-log/validate.contract.test.ts`（Vitest + ajv，讀 root 共享 fixtures；root 無 Vitest setup，所以 host 在 coordinator package）
+- [x] 1.6 撰寫 `tests/contracts/structured-log/test_validate.py`（root pytest，已用 `.venv` 內預裝 `jsonschema 4.25.1`）
+- [x] 1.7 決定：Python 用 `jsonschema 4.25.1`（已在 root `.venv`，0 dep change）；TS 用 `ajv ^8.17.1` 作 coordinator `devDependencies`（ad-hoc draft-07 interpreter 風險高、ajv 是 Node 業界標準、僅 devDep 不進 production bundle）
+- [x] 1.8 `.gitignore` 新增 `/logs/` 條目（連同來源註解指回 `docs/contracts/structured-log-schema.md` §6.1）
 
 ## 2. TypeScript adapter — coordinator (`bim-review-coordinator/src/lib/structLog.ts`)
 

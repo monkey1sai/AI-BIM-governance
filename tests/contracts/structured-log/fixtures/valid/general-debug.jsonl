@@ -1,0 +1,1 @@
+{"ts":"2026-05-26T14:23:15.100Z","level":"debug","event_type":"general","service":"viewer","component":"app","run_id":"run_20260526_142315_aa1100","trace_id":"rev_20260526_1234abcd","msg":"viewer flush triggered (size threshold)","data":{"buffer_size":50,"flush_reason":"size"}}
