@@ -29,7 +29,10 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# Continue(非 Stop):docker / docker compose 進度寫 stderr,PowerShell 5.1 native
+# command 對 stderr 在 Stop policy 下會被 promote 成 terminating error。我們改用
+# $LASTEXITCODE 主動檢查,native cmd stderr 只當訊息看。
+$ErrorActionPreference = 'Continue'
 $script:DeployStart = Get-Date
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -231,6 +234,14 @@ foreach ($ef in $envFiles) {
         Write-DeployTag -Tag 'fix' -Message "Copy-Item $examplePath -> $envPath" -LogPath $LogPath | Out-Null
         Copy-Item -LiteralPath $examplePath -Destination $envPath -Force
         $fixActions++
+        # 若剛 copy 的是 host-kit env,$resolvedEnvFile 要切到真檔(否則後續 volume
+        # alignment / rm / build 仍指 .example)
+        if ($ef.file -eq '.env.web-plane.host-kit') {
+            $resolvedEnvFile = '.env.web-plane.host-kit'
+            $script:resolvedEnvFile = $resolvedEnvFile
+            $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+            $script:volume = $volume
+        }
     } elseif ($ef.missing.Count -gt 0) {
         Write-DeployTag -Tag 'fix' -Message "appending $($ef.missing.Count) missing keys to $($ef.file)" -LogPath $LogPath | Out-Null
         Add-Content -LiteralPath $envPath -Value ''
