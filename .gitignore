@@ -115,6 +115,12 @@ _s3_storage/static/projects/
 !_fixtures/**/*.json
 
 # ----------------------------
+# Roadmap / plan HTML derived views (spec: documentation-source-of-truth)
+# Markdown is the source of truth; HTML is on-demand only, not tracked.
+# ----------------------------
+docs/plans/*.html
+
+# ----------------------------
 # OpenSpec apply worktrees (opsx-worktree-provision)
 # ----------------------------
 .worktrees/

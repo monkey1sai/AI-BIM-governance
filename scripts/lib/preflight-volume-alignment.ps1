@@ -70,7 +70,7 @@ function Test-VolumeAlignment {
 
     $leaf = Split-Path -Leaf $resolved
 
-    $status = if ($leaf -eq 'storage') { 'ALIGNED' } else { 'WRONG_LEAF' }
+    $status = if ($leaf -ieq 'storage') { 'ALIGNED' } else { 'WRONG_LEAF' }
 
     return [pscustomobject]@{
         runtimeStorageRoot = $resolved

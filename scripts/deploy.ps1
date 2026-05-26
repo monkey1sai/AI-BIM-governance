@@ -29,7 +29,10 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# Continue(非 Stop):docker / docker compose 進度寫 stderr,PowerShell 5.1 native
+# command 對 stderr 在 Stop policy 下會被 promote 成 terminating error。我們改用
+# $LASTEXITCODE 主動檢查,native cmd stderr 只當訊息看。
+$ErrorActionPreference = 'Continue'
 $script:DeployStart = Get-Date
 
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -75,8 +78,8 @@ function Print-FinalSummary {
         Write-Host '  > open http://127.0.0.1:8004/ui            (coordinator UI / WebRTC entry)'
         Write-Host '  > tail scripts\.run\bim-streaming-server.log -Wait'
         Write-Host '  > stop all:'
-        Write-Host '      .\scripts\stop-runtime-manager-docker.ps1'
-        Write-Host '      .\scripts\stop-all.ps1 -SkipCoordinator -SkipViewer'
+        Write-Host '      docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit down'
+        Write-Host '      .\scripts\stop-all.ps1'
     } else {
         Write-Host ''
         Write-Host "Status: FAILED (exit $ExitCode, $FailedPhase)" -ForegroundColor Red
@@ -87,8 +90,8 @@ function Print-FinalSummary {
         }
         Write-Host ''
         Write-Host 'To recover:'
-        Write-Host '  > .\scripts\stop-all.ps1 -SkipCoordinator -SkipViewer'
-        Write-Host '  > .\scripts\stop-runtime-manager-docker.ps1'
+        Write-Host '  > .\scripts\stop-all.ps1'
+        Write-Host '  > docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit down'
         Write-Host '  > re-run: .\scripts\deploy.ps1 -Force'
     }
 }
@@ -141,7 +144,7 @@ function Report-Audit {
         }
     }
 
-    foreach ($p in @($ports.docker; $ports.hostNative)) {
+    foreach ($p in @($ports.docker) + @($ports.hostNative)) {
         if ($p.status -eq 'FREE') {
             Write-DeployTag -Tag 'ok' -Message "port $($p.port) FREE" -LogPath $LogPath | Out-Null
         } elseif ($p.ourPidFile) {
@@ -179,6 +182,16 @@ if (-not $docker.envFile)       { $hardFails += 'env_file_missing_entirely' }
 if ($hostNative.nvidiaDriver -eq 'MISSING')   { $hardFails += 'nvidia_smi_missing' }
 if ($hostNative.kitLauncher -eq 'MISSING_PATH'){ $hardFails += 'kit_launcher_missing' }
 if ($volume.status -eq 'WRONG_LEAF')          { $hardFails += 'runtime_storage_root_wrong_leaf' }
+if ($DryRun) {
+    Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
+    if ($hardFails.Count -gt 0) {
+        Write-DeployTag -Tag 'skip' -Message "Phase 2 auto-fix DRY-RUN (hard fails reported: $($hardFails -join ',')); no actions executed" -LogPath $LogPath | Out-Null
+    } else {
+        Write-DeployTag -Tag 'skip' -Message 'Phase 2 auto-fix DRY-RUN (no actions executed)' -LogPath $LogPath | Out-Null
+    }
+    Print-FinalSummary -ExitCode 0 -FailedPhase ''
+    exit 0
+}
 if ($hardFails.Count -gt 0) {
     Write-DeployTag -Tag 'fail' -Message "Phase 1 unfixable: $($hardFails -join ',')" -LogPath $LogPath | Out-Null
     Print-FinalSummary -ExitCode 1 -FailedPhase 'Phase 1 preflight'
@@ -189,12 +202,6 @@ if ($hardFails.Count -gt 0) {
 # Phase 2: Auto-fix
 # ============================================================
 Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
-
-if ($DryRun) {
-    Write-DeployTag -Tag 'skip' -Message 'Phase 2 auto-fix DRY-RUN (no actions executed)' -LogPath $LogPath | Out-Null
-    Print-FinalSummary -ExitCode 0 -FailedPhase ''
-    exit 0
-}
 
 $fixActions = 0
 
@@ -231,19 +238,21 @@ foreach ($ef in $envFiles) {
         Write-DeployTag -Tag 'fix' -Message "Copy-Item $examplePath -> $envPath" -LogPath $LogPath | Out-Null
         Copy-Item -LiteralPath $examplePath -Destination $envPath -Force
         $fixActions++
+        # 若剛 copy 的是 host-kit env,$resolvedEnvFile 要切到真檔(否則後續 volume
+        # alignment / rm / build 仍指 .example)
+        if ($ef.file -eq '.env.web-plane.host-kit') {
+            $resolvedEnvFile = '.env.web-plane.host-kit'
+            $script:resolvedEnvFile = $resolvedEnvFile
+            $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+            $script:volume = $volume
+        }
     } elseif ($ef.missing.Count -gt 0) {
         Write-DeployTag -Tag 'fix' -Message "appending $($ef.missing.Count) missing keys to $($ef.file)" -LogPath $LogPath | Out-Null
         Add-Content -LiteralPath $envPath -Value ''
         Add-Content -LiteralPath $envPath -Value "# auto-appended by deploy.ps1 (missing-key merge from .env.example)"
         foreach ($k in $ef.missing) {
-            # 從 .example 取預設值
-            $defaultValue = ''
-            foreach ($line in Get-Content -LiteralPath $examplePath) {
-                if ($line -match "^\s*$([regex]::Escape($k))\s*=\s*(.*)$") {
-                    $defaultValue = $Matches[1]
-                    break
-                }
-            }
+            # 從 .example 取預設值,支援 KEY=value 與 KEY: value 兩種格式
+            $defaultValue = Get-EnvExampleDefaultValue -Path $examplePath -Key $k
             Add-Content -LiteralPath $envPath -Value "$k=$defaultValue"
         }
         $fixActions++
@@ -289,39 +298,61 @@ foreach ($d in @('scripts\.run', 'logs\nvstreamer', 'storage\ifc-cache')) {
     }
 }
 
-# fix: 容器衝突自動 rm(spec §7.1)
+# 先查 coordinator + viewer 是不是已經 running(idempotent 重跑要避免破壞正常 container)
+$webPlaneRunning = $false
 if (-not $SkipDocker) {
-    $rmArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'rm','-f','-s','coordinator','viewer')
-    Write-DeployTag -Tag 'fix' -Message "docker $($rmArgs -join ' ') (clear any conflicting containers; named volumes preserved)" -LogPath $LogPath | Out-Null
+    $psProbe = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'ps','--status','running','-q','coordinator','viewer')
     Push-Location $RepoRoot
-    try { docker @rmArgs *> (Join-Path $RunDir 'docker-compose-rm.log') } finally { Pop-Location }
-    $fixActions++
+    try {
+        $runningIds = docker @psProbe 2>$null
+    } finally { Pop-Location }
+    # 兩個 service 都各回一個 container id → 兩行 = web-plane 全 running
+    $runningCount = @(($runningIds | Out-String).Trim() -split "`n" | Where-Object { $_.Trim() }).Count
+    $webPlaneRunning = $runningCount -ge 2
+}
+
+# fix: 容器衝突自動 rm(spec §7.1)— 但 idempotent re-run 時 skip
+if (-not $SkipDocker) {
+    if ($webPlaneRunning) {
+        Write-DeployTag -Tag 'skip' -Message 'docker compose rm: coordinator + viewer already running' -LogPath $LogPath | Out-Null
+    } else {
+        $rmArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'rm','-f','-s','coordinator','viewer')
+        Write-DeployTag -Tag 'fix' -Message "docker $($rmArgs -join ' ') (clear any conflicting containers; named volumes preserved)" -LogPath $LogPath | Out-Null
+        Push-Location $RepoRoot
+        try { docker @rmArgs *> (Join-Path $RunDir 'docker-compose-rm.log') } finally { Pop-Location }
+        $fixActions++
+    }
 }
 
 # fix: 第一次 docker compose build(image 不存在時自動)
 if (-not $SkipDocker) {
-    $imageProbe = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'images','-q','coordinator','viewer')
-    Push-Location $RepoRoot
-    try {
-        $imageIds = docker @imageProbe 2>$null
-    } finally { Pop-Location }
-    $hasImages = -not [string]::IsNullOrWhiteSpace(($imageIds | Out-String))
-
-    if ($Build -or -not $hasImages) {
-        $why = if ($Build) { 'forced by -Build' } else { 'first time (no image found)' }
-        Write-DeployTag -Tag 'fix' -Message "docker compose build coordinator viewer ($why) — may take 3-5 min" -LogPath $LogPath | Out-Null
-        $buildArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'build','coordinator','viewer')
+    # web-plane 已 running 表示 image 必然存在 → skip build(idempotent)
+    if ($webPlaneRunning -and -not $Build) {
+        Write-DeployTag -Tag 'skip' -Message 'docker compose build: coordinator + viewer already running (image exists)' -LogPath $LogPath | Out-Null
+    } else {
+        $imageProbe = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'images','-q','coordinator','viewer')
         Push-Location $RepoRoot
         try {
-            docker @buildArgs *> (Join-Path $RunDir 'docker-compose-build.log')
-            $buildExit = $LASTEXITCODE
+            $imageIds = docker @imageProbe 2>$null
         } finally { Pop-Location }
-        if ($buildExit -ne 0) {
-            Write-DeployTag -Tag 'fail' -Message "docker compose build failed (see scripts\.run\docker-compose-build.log)" -LogPath $LogPath | Out-Null
-            Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (docker build)'
-            exit 2
+        $hasImages = -not [string]::IsNullOrWhiteSpace(($imageIds | Out-String))
+
+        if ($Build -or -not $hasImages) {
+            $why = if ($Build) { 'forced by -Build' } else { 'first time (no image found)' }
+            Write-DeployTag -Tag 'fix' -Message "docker compose build coordinator viewer ($why) — may take 3-5 min" -LogPath $LogPath | Out-Null
+            $buildArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'build','coordinator','viewer')
+            Push-Location $RepoRoot
+            try {
+                docker @buildArgs *> (Join-Path $RunDir 'docker-compose-build.log')
+                $buildExit = $LASTEXITCODE
+            } finally { Pop-Location }
+            if ($buildExit -ne 0) {
+                Write-DeployTag -Tag 'fail' -Message "docker compose build failed (see scripts\.run\docker-compose-build.log)" -LogPath $LogPath | Out-Null
+                Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (docker build)'
+                exit 2
+            }
+            $fixActions++
         }
-        $fixActions++
     }
 }
 
@@ -340,8 +371,19 @@ Write-DeployTag -Tag 'ok' -Message "Phase 2 complete ($fixActions actions)" -Log
 # ============================================================
 Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
 
+# Phase 2 跑了 docker compose rm / build,docker container 與 wslrelay 等 port forwarder
+# 狀態可能變動。Re-audit ports 避免用 Phase 1 的 stale 資料問互動。
+$ports = Test-PortAvailability -RepoRoot $RepoRoot
+
+# Docker Desktop 在 Windows 用以下 process 做 container port forward,不是「陌生 PID」:
+$dockerForwarderNames = @('wslrelay.exe','com.docker.backend.exe','docker.exe','vpnkit.exe','vpnkit-bridge.exe')
+
 $strangerPortPids = @($ports.docker + $ports.hostNative |
-    Where-Object { $_.status -eq 'OCCUPIED' -and -not $_.ourPidFile })
+    Where-Object {
+        $_.status -eq 'OCCUPIED' `
+        -and -not $_.ourPidFile `
+        -and ($_.name -notin $dockerForwarderNames)
+    })
 
 if ($strangerPortPids.Count -eq 0 -and $hostNative.venv -ne 'WRONG_VERSION') {
     Write-DeployTag -Tag 'ok' -Message 'no dangerous action needed' -LogPath $LogPath | Out-Null
@@ -430,15 +472,29 @@ if ($SkipKit) {
 # 4c: docker compose
 if ($SkipDocker) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose (--SkipDocker)' -LogPath $LogPath | Out-Null
+} elseif ($webPlaneRunning) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose: coordinator + viewer already running' -LogPath $LogPath | Out-Null
 } else {
     Write-DeployTag -Tag 'ok' -Message 'Phase 4c running scripts\start-web-plane-docker.ps1' -LogPath $LogPath | Out-Null
-    Push-Location $RepoRoot
-    try {
-        & "$PSScriptRoot\start-web-plane-docker.ps1" -EnvFile $resolvedEnvFile *> (Join-Path $RunDir 'docker-compose-up.log')
-        $dockerExit = $LASTEXITCODE
-    } finally { Pop-Location }
+    # 用 Start-Process 隔離子 script:start-web-plane-docker.ps1 內 $ErrorActionPreference='Stop',
+    # 而 docker compose up 的進度訊息('Container ... Creating')會被 PowerShell 5.1 promote
+    # 成 NativeCommandError。隔離成 new process 把它的 stderr 寫進 .err.log,不污染父流程。
+    $upLog  = Join-Path $RunDir 'docker-compose-up.log'
+    $upErr  = Join-Path $RunDir 'docker-compose-up.err.log'
+    $childArgs = @(
+        '-NoProfile','-ExecutionPolicy','Bypass','-File',
+        (Join-Path $PSScriptRoot 'start-web-plane-docker.ps1'),
+        '-EnvFile', $resolvedEnvFile
+    )
+    $proc = Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList $childArgs `
+        -WorkingDirectory $RepoRoot `
+        -RedirectStandardOutput $upLog `
+        -RedirectStandardError $upErr `
+        -Wait -PassThru -WindowStyle Hidden
+    $dockerExit = $proc.ExitCode
     if ($dockerExit -ne 0) {
-        Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log)" -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log + .err.log)" -LogPath $LogPath | Out-Null
         Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (docker)'
         exit 4
     }

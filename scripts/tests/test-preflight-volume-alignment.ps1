@@ -51,7 +51,19 @@ try {
 }
 finally { Remove-TestSandbox -Path $sb }
 
-# Test 5: relative path ./storage → 解析 leaf=storage,基於 RepoRoot
+# Test 5: Windows path leaf 大小寫不敏感,Storage 也視為 aligned
+$sb = New-TestSandbox -Prefix 'preflight-vol'
+try {
+    Set-Content -LiteralPath (Join-Path $sb '.env.web-plane.host-kit') `
+        -Value "RUNTIME_STORAGE_ROOT=$sb\Storage"
+    $result = Test-VolumeAlignment -RepoRoot $sb -EnvFile '.env.web-plane.host-kit'
+    Assert-Equal 'ALIGNED' $result.status 'leaf=Storage → ALIGNED'
+    Assert-Equal 'Storage' $result.leaf 'leaf preserves input case'
+    Write-TestPass 'case-insensitive storage leaf'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 6: relative path ./storage → 解析 leaf=storage,基於 RepoRoot
 $sb = New-TestSandbox -Prefix 'preflight-vol'
 try {
     Set-Content -LiteralPath (Join-Path $sb '.env.web-plane.host-kit') `

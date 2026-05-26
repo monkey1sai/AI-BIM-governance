@@ -23,6 +23,33 @@ function Get-EnvKeyList {
     return $keys
 }
 
+function Get-EnvExampleDefaultValue {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $Key
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    $escapedKey = [regex]::Escape($Key)
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        $trimmed = $line.Trim()
+        if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#')) { continue }
+        if ($trimmed -match "^\s*$escapedKey\s*[:=]\s*(.*)$") {
+            $value = $Matches[1].Trim()
+            if (
+                $value.Length -ge 2 -and
+                (
+                    ($value.StartsWith('"') -and $value.EndsWith('"')) -or
+                    ($value.StartsWith("'") -and $value.EndsWith("'"))
+                )
+            ) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            return $value
+        }
+    }
+    return ''
+}
+
 function Get-EnvAudit {
     [CmdletBinding()]
     param(

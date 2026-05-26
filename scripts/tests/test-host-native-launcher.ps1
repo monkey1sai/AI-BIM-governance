@@ -56,4 +56,9 @@ $parent = Resolve-ConversionParentRoot -RuntimeStorageRoot 'C:\repo\storage'
 Assert-Equal 'C:\repo' $parent 'parent of C:\repo\storage = C:\repo'
 Write-TestPass 'Resolve-ConversionParentRoot'
 
+# Test 7: background launcher 不使用 -NoExit,避免 wrapper process 偽裝成服務仍活著
+$moduleContent = Get-Content -LiteralPath $modulePath -Raw
+Assert-True (-not ($moduleContent -match "'-NoExit'")) 'launcher argument list has no -NoExit'
+Write-TestPass 'no -NoExit launcher arg'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

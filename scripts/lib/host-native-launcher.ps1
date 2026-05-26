@@ -123,8 +123,15 @@ function Start-HostNativeConversion {
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     }
 
-    # 反向對齊:host-native conversion 看的 work dir = storage 的 parent
+    # 反向對齊(spec §7.4 方案 A):
+    # - STORAGE_ROOT 是 conversion service 內 ifc2usdc_powershell_adapter.py 用來驗
+    #   dispatch payload host_local_path 必須在其下的 sandbox 根。coordinator 給的
+    #   host_local_path = <RuntimeStorageRoot>\ifc-cache\<job>\source.ifc,所以
+    #   STORAGE_ROOT 必須 = RuntimeStorageRoot,IFC path 才落在 sandbox 內。
+    # - STREAMING_CONVERSION_WORK_DIR 是給 launcher 工作目錄(spec 註解保留 parent
+    #   對齊以容 Resolve-ConversionWorkDir 的 storage subdir 推導)
     $parentRoot = Resolve-ConversionParentRoot -RuntimeStorageRoot $RuntimeStorageRoot
+    $env:STORAGE_ROOT                  = $RuntimeStorageRoot
     $env:STREAMING_CONVERSION_WORK_DIR = $parentRoot
     $env:STREAMING_CONVERSION_HOST     = '127.0.0.1'
     $env:STREAMING_CONVERSION_PORT     = "$Port"
@@ -134,7 +141,7 @@ function Start-HostNativeConversion {
         -Name 'bim-streaming-conversion-service' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
         -FilePath 'powershell.exe' `
-        -ArgumentList @('-NoExit','-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher) `
+        -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher) `
         -RunDir $runDir)
 }
 

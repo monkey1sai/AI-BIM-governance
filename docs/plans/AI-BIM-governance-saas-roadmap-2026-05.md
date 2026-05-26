@@ -1,5 +1,7 @@
 # AI-BIM-governance：SaaS 路線圖規劃（2026-05）
 
+> **HTML 檢視**：本檔（`.md`）為 source-of-truth。如需 HTML 檢視，本機跑 doc / 規劃 skill 由本檔 on-demand 生成；HTML **不入 repo**（spec `documentation-source-of-truth` 規定 `docs/plans/*.html` 為 ignored，2026-05-26 起生效）。
+>
 > **文件性質**：roadmap / planning artifact（不是 OpenSpec change，不修改產品程式碼）
 > **依據輸入**：使用者於 2026-05-08 提供的兩張架構圖（v1 路線圖 + v2 目標架構）
 > **基準**：撰寫時 `main` HEAD `5a01487`（與 `origin/main` 同步）；OpenSpec 規格權威見 `openspec/specs/`，已歸檔提案見 `openspec/changes/archive/`（§1.4）。
