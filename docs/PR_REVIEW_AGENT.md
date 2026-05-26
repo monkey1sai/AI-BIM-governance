@@ -17,7 +17,7 @@
 |---|---|
 | `low` | 只有 docs/spec 或低風險 tooling 變更，必要 checks 通過 |
 | `medium` | 有 warning、非阻擋 GitNexus/AI/GPU 限制，或需要 reviewer 留意的 workflow 變更 |
-| `high` | 測試失敗、GitNexus unavailable 且有 code/script 變更、未說明的跨 owner 邊界變更 |
+| `high` | 測試失敗、GitNexus unavailable 且沒有明確 tooling-only / rollout exception、未說明的跨 owner 邊界變更 |
 | `critical` | secret/private key/real `.env` 風險，或明確破壞 repo runtime boundary |
 
 ## 必要報告欄位
@@ -58,7 +58,7 @@ Markdown summary 只保留人要先看的內容：verdict、blockers、warnings�
 - 不印出 secret 值，只回報檔案路徑與風險類型。
 - 修改既有 `.env`、private key、token / credential 檔案時一律 blocked；`.env.example` 或 `.env.*.example` 可作為 contract 變更進入人工審查。
 - 不允許把 retired `_worker`、`_bim-control`、`_s3_storage`、`_conversion-service`、`_conversion-server` 重新寫成 current product runtime dependency。
-- Code 或 script 變更需要 GitNexus detect changes evidence；若 unavailable，除 docs-only / tooling-only exception 外 fail closed。
+- Code 或 script 變更需要 GitNexus detect changes evidence；若 unavailable，除 docs-only / tooling-only / rollout exception 外 fail closed。
 - Optional AI adapter 不可把 deterministic failure 改成 passed。
 
 ## 本機重跑
@@ -93,7 +93,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 
 1. 先讓 workflow 在 PR 上產生 report 與 comment，觀察 false positive / false negative。
 2. 確認審查訊號穩定後，再把 `pr-review-agent` status check 加到 branch protection required checks。
-3. 若 workflow 造成阻塞，可停用 `.github/workflows/pr-review-agent.yml` 或讓 job 只跑 report-only；不影響 product runtime。
+3. 第一版 GitHub-hosted runner 若缺 OpenSpec / GitNexus 等本機工具，workflow 會把工具缺失記為 warning；等 runner provisioning 穩定後，再移除 exception 並升級為 hard gate。
+4. 若 workflow 造成阻塞，可停用 `.github/workflows/pr-review-agent.yml` 或讓 job 只跑 report-only；不影響 product runtime。
 
 ## 人工審查邊界
 

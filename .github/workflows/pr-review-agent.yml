@@ -37,7 +37,9 @@ jobs:
             '-HeadSha', '${{ github.event.pull_request.head.sha }}',
             '-PrNumber', '${{ github.event.pull_request.number }}',
             '-RunId', '${{ github.run_id }}',
-            '-OutputDir', 'artifacts/pr-review-agent'
+            '-OutputDir', 'artifacts/pr-review-agent',
+            '-AllowGitNexusUnavailable',
+            '-AllowUnavailableCommands'
           )
           if ($env:PR_DRAFT -eq 'true') {
             $args += '-ReportOnly'

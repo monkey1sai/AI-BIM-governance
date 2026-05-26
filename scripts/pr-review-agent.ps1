@@ -11,7 +11,8 @@ param(
     [switch] $ReportOnly,
     [switch] $SkipCommandExecution,
     [switch] $SkipGitNexus,
-    [switch] $AllowGitNexusUnavailable
+    [switch] $AllowGitNexusUnavailable,
+    [switch] $AllowUnavailableCommands
 )
 
 Set-StrictMode -Version Latest
@@ -22,9 +23,9 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $RepoRoot 'artifacts\pr-review-agent'
 }
 
-. (Join-Path $PSScriptRoot 'lib\pr-review-agent.ps1')
-
 try {
+    . (Join-Path $PSScriptRoot 'lib\pr-review-agent.ps1')
+
     $result = Invoke-PrReviewAgent `
         -RepoRoot $RepoRoot `
         -ChangedPaths $ChangedPath `
@@ -38,24 +39,31 @@ try {
         -ReportOnly:$ReportOnly `
         -SkipCommandExecution:$SkipCommandExecution `
         -SkipGitNexus:$SkipGitNexus `
-        -AllowGitNexusUnavailable:$AllowGitNexusUnavailable
+        -AllowGitNexusUnavailable:$AllowGitNexusUnavailable `
+        -AllowUnavailableCommands:$AllowUnavailableCommands
 } catch {
     if (-not (Test-Path -LiteralPath $OutputDir)) {
         New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
     }
+    $message = $_ | Out-String
     $report = [ordered]@{
         schema_version = 'pr-review-agent/v1'
         status         = 'failed'
         risk_level     = 'high'
         generated_at   = (Get-Date).ToUniversalTime().ToString('o')
-        blockers       = @((New-PrReviewIssue -Kind 'report_generation_failed' -Severity 'high' -Message ($_ | Out-String)))
+        blockers       = @([ordered]@{
+            kind     = 'report_generation_failed'
+            severity = 'high'
+            path     = ''
+            message  = $message
+        })
         warnings       = @()
         checks         = @()
     }
     [System.IO.File]::WriteAllText((Join-Path $OutputDir 'pr-review-agent.json'), ($report | ConvertTo-Json -Depth 20), [System.Text.UTF8Encoding]::new($false))
     [System.IO.File]::WriteAllText((Join-Path $OutputDir 'pr-review-agent.md'), "# PR Review Agent Summary`n`nReport generation failed.`n", [System.Text.UTF8Encoding]::new($false))
     Write-Host "[pr-review-agent] status=failed"
-    Write-Host ($_ | Out-String)
+    Write-Host $message
     if (-not $ReportOnly) { exit 1 }
     exit 0
 }

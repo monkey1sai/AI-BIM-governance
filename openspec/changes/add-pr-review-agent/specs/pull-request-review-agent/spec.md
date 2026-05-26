@@ -128,6 +128,13 @@ The PR review agent SHALL choose validation commands from changed paths and reco
 - **THEN** the agent records the check as `blocked`, `deferred`, or `not_required` according to the changed paths
 - **AND** it MUST NOT claim that unavailable validation passed
 
+#### Scenario: Required local tooling is unavailable during rollout
+
+- **WHEN** the GitHub-hosted runner lacks a local validation tool such as OpenSpec or GitNexus
+- **AND** the workflow has an explicit tooling-only rollout exception
+- **THEN** the agent records the check as `skipped` with a warning
+- **AND** it MUST NOT claim that unavailable validation passed
+
 ### Requirement: PR review agent integrates GitNexus impact evidence
 
 The PR review agent SHALL collect GitNexus change detection or record a clear unavailable reason before the gate passes code changes.

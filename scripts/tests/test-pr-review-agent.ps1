@@ -93,7 +93,55 @@ $gitnexusBlocker = $loaded5.blockers | Where-Object { $_.kind -eq 'gitnexus_unav
 Assert-True ($null -ne $gitnexusBlocker) 'GitNexus unavailable blocker recorded for script change'
 Remove-Item -LiteralPath $out5 -Recurse -Force
 
-# Test 6: Path planner maps owners to commands.
+# Test 6: GitNexus unavailable can be downgraded when the caller declares a tooling-only rollout exception.
+$out6 = New-TestOutputDir
+$result6 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+    -ChangedPaths @('scripts/pr-review-agent.ps1', 'openspec/changes/add-pr-review-agent/tasks.md') `
+    -OutputDir $out6 `
+    -SkipCommandExecution `
+    -SimulateGitNexusUnavailable `
+    -AllowGitNexusUnavailable
+$loaded6 = Get-Content -LiteralPath $result6.json_path -Raw | ConvertFrom-Json
+$gitnexusAllowedBlocker = $loaded6.blockers | Where-Object { $_.kind -eq 'gitnexus_unavailable' } | Select-Object -First 1
+$gitnexusWarning = $loaded6.warnings | Where-Object { $_.kind -eq 'gitnexus_warning' } | Select-Object -First 1
+Assert-True ($null -eq $gitnexusAllowedBlocker) 'allowed GitNexus unavailable does not block'
+Assert-True ($null -ne $gitnexusWarning) 'allowed GitNexus unavailable records warning'
+Remove-Item -LiteralPath $out6 -Recurse -Force
+
+# Test 7: Retired runtime guard definitions are allowed, but runtime wiring is blocked.
+$out7 = New-TestOutputDir
+$result7 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+    -ChangedPaths @('scripts/lib/pr-review-agent.ps1', 'openspec/changes/add-pr-review-agent/tasks.md') `
+    -OutputDir $out7 `
+    -SkipCommandExecution `
+    -SkipGitNexus `
+    -AllowGitNexusUnavailable
+$loaded7 = Get-Content -LiteralPath $result7.json_path -Raw | ConvertFrom-Json
+$selfGuardBlocker = $loaded7.blockers | Where-Object { $_.kind -eq 'retired_runtime_reference' } | Select-Object -First 1
+Assert-True ($null -eq $selfGuardBlocker) 'retired runtime guard list does not self-block'
+Remove-Item -LiteralPath $out7 -Recurse -Force
+
+$tempWiringPath = Join-Path $repoRoot 'scripts\tmp-retired-runtime-wiring.ps1'
+try {
+    Set-Content -LiteralPath $tempWiringPath -Value 'Push-Location _worker' -Encoding UTF8
+    $out7b = New-TestOutputDir
+    $result7b = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+        -ChangedPaths @('scripts/tmp-retired-runtime-wiring.ps1', 'openspec/changes/add-pr-review-agent/tasks.md') `
+        -OutputDir $out7b `
+        -SkipCommandExecution `
+        -SkipGitNexus `
+        -AllowGitNexusUnavailable
+    $loaded7b = Get-Content -LiteralPath $result7b.json_path -Raw | ConvertFrom-Json
+    $wiringBlocker = $loaded7b.blockers | Where-Object { $_.kind -eq 'retired_runtime_reference' } | Select-Object -First 1
+    Assert-True ($null -ne $wiringBlocker) 'retired runtime wiring reference is blocked'
+    Remove-Item -LiteralPath $out7b -Recurse -Force
+} finally {
+    if (Test-Path -LiteralPath $tempWiringPath) {
+        Remove-Item -LiteralPath $tempWiringPath -Force
+    }
+}
+
+# Test 8: Path planner maps owners to commands.
 $plan = Get-PrReviewValidationPlan -RepoRoot $repoRoot `
     -ChangedPaths @(
         'bim-review-coordinator/src/index.ts',
@@ -110,5 +158,41 @@ Assert-True ($owners -contains 'web-viewer-sample') 'planner includes viewer own
 Assert-True ($owners -contains 'bim-streaming-server') 'planner includes streaming owner'
 Assert-True ($owners -contains 'tests') 'planner includes tests owner'
 Assert-True ($owners -contains 'scripts') 'planner includes scripts owner'
+
+# Test 9: Missing commands are recorded as skipped/unavailable instead of crashing report generation.
+$missingPlan = New-PrReviewCommandPlan -Name 'missing command fixture' -Owner 'scripts' -Cwd $repoRoot -FileName 'definitely-missing-pr-review-agent-command' -Arguments @('--version')
+$missingCheck = Invoke-PrReviewCommand -Plan $missingPlan
+Assert-True ($missingCheck.status -eq 'skipped') 'missing command is skipped'
+Assert-True ($missingCheck.exit_code -eq 127) 'missing command has unavailable exit code'
+
+# Test 10: PR diff uses merge-base so base-branch-only changes are not reviewed.
+$tempGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-git-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $tempGit -Force | Out-Null
+Push-Location $tempGit
+try {
+    git init -q
+    git config user.email 'pr-review-agent@example.invalid'
+    git config user.name 'PR Review Agent Test'
+    Set-Content -LiteralPath 'base.txt' -Value 'base' -Encoding UTF8
+    git add base.txt
+    git commit -q -m 'base'
+    git branch main
+    git switch -q -c feature
+    Set-Content -LiteralPath 'feature.txt' -Value 'feature' -Encoding UTF8
+    git add feature.txt
+    git commit -q -m 'feature'
+    $headSha = (git rev-parse HEAD).Trim()
+    git switch -q main
+    Set-Content -LiteralPath 'main.txt' -Value 'main' -Encoding UTF8
+    git add main.txt
+    git commit -q -m 'main'
+    $baseSha = (git rev-parse HEAD).Trim()
+    $mergeBasePaths = @(Get-PrReviewChangedPathsFromGit -RepoRoot $tempGit -BaseSha $baseSha -HeadSha $headSha)
+    Assert-True ($mergeBasePaths -contains 'feature.txt') 'merge-base diff includes PR head changes'
+    Assert-True (-not ($mergeBasePaths -contains 'main.txt')) 'merge-base diff excludes base-only changes'
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $tempGit -Recurse -Force
+}
 
 Write-Host '[test-pr-review-agent] all assertions passed'

@@ -50,3 +50,16 @@ Validation notes:
 - `gitnexus detect-changes` without `--repo` was ambiguous because this machine has multiple indexed repositories.
 - `gitnexus detect-changes --repo AI-BIM-governance` completed with `No changes detected`, but warned that the selected index belongs to `C:\Repos\active\iot\AI-BIM-governance` and the current `d67f` worktree is a sibling clone ahead of the indexed commit; treat this as stale/sibling evidence, not a clean current-worktree GitNexus pass.
 - `git status --short --branch` showed only this OpenSpec change plus necessary `.github/workflows/`, `docs/`, `scripts/`, `README.md`, and `docs/PROJECT_DEVELOPMENT_WORKFLOW.md` changes.
+- Follow-up PR review fixes on 2026-05-26:
+  - changed-path detection now uses merge-base semantics instead of base/head tip comparison;
+  - retired runtime guard now blocks dependency/startup wiring instead of any guard-list text mention;
+  - GitHub-hosted rollout can record missing OpenSpec / GitNexus tools as warning rather than self-blocking;
+  - report generation fallback now works even when the library fails to load.
+- Re-validation after the follow-up fixes:
+  - `openspec validate add-pr-review-agent` passed.
+  - `openspec status --change add-pr-review-agent` showed artifacts complete.
+  - PowerShell parse checks passed for `scripts/pr-review-agent.ps1`, `scripts/lib/pr-review-agent.ps1`, and `scripts/tests/test-pr-review-agent.ps1`.
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-pr-review-agent.ps1` passed.
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 -OutputDir artifacts\pr-review-agent-local-fix -AllowGitNexusUnavailable -AllowUnavailableCommands` completed with `status=warning risk=medium`, with only the optional AI adapter warning.
+  - `git diff --check` passed with only LF/CRLF normalization warnings.
+  - `gitnexus detect-changes --repo AI-BIM-governance` completed with `No changes detected`, while retaining the stale/sibling worktree warning.

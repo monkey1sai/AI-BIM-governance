@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $Script:PrReviewGateStatuses = @('passed', 'warning', 'blocked', 'failed')
 $Script:PrReviewRiskLevels = @('low', 'medium', 'high', 'critical')
 $Script:RetiredRuntimeNames = @('_worker', '_bim-control', '_s3_storage', '_conversion-service', '_conversion-server')
+$Script:RetiredRuntimeWiringPattern = '(working-directory|cwd|cd\s|Push-Location|Set-Location|Join-Path|Start-Process|npm|node|python|pytest|uvicorn|docker|compose|health|localhost|127\.0\.0\.1|port|start|run|service|dependency|required|endpoint|url|path)'
 
 function ConvertTo-PrReviewPath {
     [CmdletBinding()]
@@ -79,14 +80,47 @@ function Get-PrReviewChangedPathsFromGit {
     $safeRoot = $RepoRoot -replace '\\', '/'
     $paths = @()
     if (-not [string]::IsNullOrWhiteSpace($BaseSha) -and -not [string]::IsNullOrWhiteSpace($HeadSha)) {
-        $paths = @(git -c "safe.directory=$safeRoot" diff --name-only $BaseSha $HeadSha 2>$null)
+        $mergeBase = (git -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($mergeBase)) {
+            $paths = @(git -c "safe.directory=$safeRoot" diff --name-only $mergeBase $HeadSha 2>$null)
+        } else {
+            $paths = @(git -c "safe.directory=$safeRoot" diff --name-only "$BaseSha...$HeadSha" 2>$null)
+        }
     }
     if ($paths.Count -eq 0) {
         $paths = @(git -c "safe.directory=$safeRoot" status --porcelain=v1 -uall 2>$null | ForEach-Object {
-            if ($_.Length -gt 3) { $_.Substring(3) }
+            if ($_.Length -gt 3) {
+                $statusCode = $_.Substring(0, 2)
+                $pathText = $_.Substring(3)
+                if ($statusCode -match '[RC]' -and $pathText -match ' -> ') {
+                    ($pathText -split ' -> ', 2)[1]
+                } else {
+                    $pathText
+                }
+            }
         })
     }
     return @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { ConvertTo-PrReviewPath $_ } | Sort-Object -Unique)
+}
+
+function Test-PrReviewRetiredRuntimeWiringReference {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Content,
+        [Parameter(Mandatory = $true)][string] $RuntimeName
+    )
+
+    $escaped = [regex]::Escape($RuntimeName)
+    foreach ($line in ($Content -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith('#')) { continue }
+        if ($trimmed -match 'RetiredRuntimeNames|retired_runtime|Retired runtime|retired services|current runtime gates') { continue }
+        if ($trimmed -notmatch $escaped) { continue }
+        if ($trimmed -match "(^|[\s:=`"'])$escaped([/\\`"']|$)" -and $trimmed -match $Script:RetiredRuntimeWiringPattern) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Get-PrReviewOpenSpecChangeIds {
@@ -181,12 +215,12 @@ function Get-PrReviewPathGuardFindings {
             }
         }
 
-        if ($p -match '^(\.github/workflows|scripts)/') {
+        if ($p -match '^(\.github/workflows|scripts)/' -and $p -notmatch '^scripts/tests/') {
             $fullPath = Join-Path $RepoRoot ($p -replace '/', [System.IO.Path]::DirectorySeparatorChar)
             if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
                 $content = Get-Content -LiteralPath $fullPath -Raw -ErrorAction SilentlyContinue
                 foreach ($name in $Script:RetiredRuntimeNames) {
-                    if ($content -match [regex]::Escape($name)) {
+                    if (Test-PrReviewRetiredRuntimeWiringReference -Content $content -RuntimeName $name) {
                         [void]$blockers.Add((New-PrReviewIssue -Kind 'retired_runtime_reference' -Severity 'high' -Path $p -Message "Workflow/script references retired runtime '$name'; keep retired services out of current runtime gates."))
                         break
                     }
@@ -274,11 +308,17 @@ function Invoke-PrReviewCommand {
         return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status 'skipped' -Command $Plan.command -Cwd $Plan.cwd -Summary 'Command execution skipped by dry-run fixture.'
     }
 
+    if (-not (Get-Command $Plan.file_name -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $Plan.file_name -PathType Leaf)) {
+        return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status 'skipped' -Command $Plan.command -Cwd $Plan.cwd -ExitCode 127 -Summary "Command not found on PATH: $($Plan.file_name)."
+    }
+
     if (-not (Test-Path -LiteralPath $Plan.cwd -PathType Container)) {
         return New-PrReviewCheck -Name $Plan.name -Owner $Plan.owner -Status 'failed' -Command $Plan.command -Cwd $Plan.cwd -ExitCode 1 -Summary 'Working directory does not exist.'
     }
 
     Push-Location $Plan.cwd
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
         $commandArgs = @()
         foreach ($arg in @($Plan.arguments)) {
@@ -290,6 +330,7 @@ function Invoke-PrReviewCommand {
         $output = $_ | Out-String
         $exitCode = 1
     } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
         Pop-Location
     }
 
@@ -305,7 +346,8 @@ function Invoke-PrReviewGitNexus {
         [switch] $NeedsGitNexus,
         [switch] $SkipGitNexus,
         [switch] $AllowUnavailable,
-        [switch] $SimulateUnavailable
+        [switch] $SimulateUnavailable,
+        [string] $RepoName = ''
     )
 
     $record = [ordered]@{
@@ -336,15 +378,20 @@ function Invoke-PrReviewGitNexus {
         return ,$record
     }
 
-    $record.command = 'gitnexus detect-changes'
+    if ([string]::IsNullOrWhiteSpace($RepoName)) { $RepoName = 'AI-BIM-governance' }
+    $record.command = "gitnexus detect-changes --repo $RepoName"
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        $output = & gitnexus detect-changes 2>&1 | Out-String
+        $output = & gitnexus detect-changes --repo $RepoName 2>&1 | Out-String
         $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
         $record.status = if ($exitCode -eq 0) { 'passed' } else { 'failed' }
         $record.summary = ($output -split "`r?`n" | Where-Object { $_ } | Select-Object -First 20) -join "`n"
     } catch {
         $record.status = 'failed'
         $record.summary = $_ | Out-String
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
     return ,$record
 }
@@ -438,6 +485,7 @@ function Invoke-PrReviewAgent {
         [switch] $SkipCommandExecution,
         [switch] $SkipGitNexus,
         [switch] $AllowGitNexusUnavailable,
+        [switch] $AllowUnavailableCommands,
         [switch] $SimulateGitNexusUnavailable
     )
 
@@ -466,11 +514,21 @@ function Invoke-PrReviewAgent {
         [void]$checks.Add($check)
         if ($check.status -eq 'failed') {
             [void]$blockers.Add((New-PrReviewIssue -Kind 'validation_failed' -Severity 'high' -Path $check.cwd -Message "Required validation failed: $($check.name)."))
+        } elseif ($check.status -eq 'skipped' -and $check.exit_code -eq 127) {
+            if ($AllowUnavailableCommands) {
+                [void]$warnings.Add((New-PrReviewIssue -Kind 'validation_unavailable' -Severity 'medium' -Path $check.cwd -Message "Validation command unavailable: $($check.name). $($check.summary)"))
+            } else {
+                [void]$blockers.Add((New-PrReviewIssue -Kind 'validation_unavailable' -Severity 'high' -Path $check.cwd -Message "Required validation command unavailable: $($check.name). $($check.summary)"))
+            }
         }
     }
 
     $needsGitNexus = Test-PrReviewNeedsGitNexus -ChangedPaths $ChangedPaths
-    $gitnexus = Invoke-PrReviewGitNexus -NeedsGitNexus:$needsGitNexus -SkipGitNexus:$SkipGitNexus -AllowUnavailable:$AllowGitNexusUnavailable -SimulateUnavailable:$SimulateGitNexusUnavailable
+    $repoName = Split-Path -Leaf $RepoRoot
+    $gitnexus = Invoke-PrReviewGitNexus -NeedsGitNexus:$needsGitNexus -SkipGitNexus:$SkipGitNexus -AllowUnavailable:$AllowGitNexusUnavailable -SimulateUnavailable:$SimulateGitNexusUnavailable -RepoName $repoName
+    if ($needsGitNexus -and $AllowGitNexusUnavailable -and $gitnexus.status -in @('unavailable', 'failed')) {
+        $gitnexus.status = 'warning'
+    }
     if ($needsGitNexus -and $gitnexus.status -in @('unavailable', 'failed') -and -not $AllowGitNexusUnavailable) {
         [void]$blockers.Add((New-PrReviewIssue -Kind 'gitnexus_unavailable' -Severity 'high' -Message "GitNexus detect changes is required for code/script changes but status is '$($gitnexus.status)'."))
     } elseif ($needsGitNexus -and $gitnexus.status -ne 'passed') {
