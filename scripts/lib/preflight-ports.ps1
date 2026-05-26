@@ -6,15 +6,42 @@
 Set-StrictMode -Version Latest
 
 function Get-PidsFromRunDir {
-    param([Parameter(Mandatory = $true)][string] $RunDir)
+    param(
+        [Parameter(Mandatory = $true)][string] $RunDir,
+        [scriptblock] $ChildPidLookup = {
+            param($parentId)
+            try {
+                Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction Stop |
+                    ForEach-Object { [int]$_.ProcessId }
+            } catch { @() }
+        }
+    )
     $set = @{}
     if (-not (Test-Path -LiteralPath $RunDir)) { return $set }
+    # 收 PID file 內的 wrapper PID
+    $wrapperIds = @()
     foreach ($file in Get-ChildItem -LiteralPath $RunDir -Filter '*.pid' -ErrorAction SilentlyContinue) {
         $content = Get-Content -LiteralPath $file.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($content) {
             $procId = 0
             if ([int]::TryParse($content.Trim(), [ref]$procId)) {
                 $set[$procId] = $file.Name
+                $wrapperIds += $procId
+            }
+        }
+    }
+    # 遞迴展開子孫 PID(host-native-launcher 用 powershell.exe wrapper spawn 真 process,
+    # :49100 owner 是 kit.exe child,:49101 owner 是 python.exe child — 都該視作 "ours")
+    $stack = @($wrapperIds)
+    while ($stack.Count -gt 0) {
+        $current = [int]$stack[0]
+        $stack = @($stack | Select-Object -Skip 1)
+        $children = @(& $ChildPidLookup $current)
+        foreach ($child in $children) {
+            $childId = [int]$child
+            if (-not $set.ContainsKey($childId)) {
+                $set[$childId] = "descendant-of-$current"
+                $stack += $childId
             }
         }
     }
@@ -56,13 +83,16 @@ function Test-PortAvailability {
                 ourPidFile = $false
             }
         }
-        $name = & $ProcessNameLookup $portPid
+        # Get-NetTCPConnection.OwningProcess 是 UInt32,Get-PidsFromRunDir set key 是 Int32
+        # → hashtable ContainsKey 對 type mismatch 回 false。統一 cast [int]。
+        $portPidInt = [int]$portPid
+        $name = & $ProcessNameLookup $portPidInt
         return [pscustomobject]@{
             port      = $Port
             status    = 'OCCUPIED'
-            pid       = $portPid
+            pid       = $portPidInt
             name      = $name
-            ourPidFile = $ourPids.ContainsKey($portPid)
+            ourPidFile = $ourPids.ContainsKey($portPidInt)
         }
     }
 
