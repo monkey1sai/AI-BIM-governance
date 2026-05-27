@@ -131,8 +131,26 @@ describe("bim-review-coordinator", () => {
       .post(`/api/review-sessions/${created.body.session_id}/join`)
       .send({ user_id: "viewer_001", display_name: "Viewer One" });
 
+    const streamConfig = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
     const status = await request(app.app).get("/api/runtime/status");
 
+    expect(streamConfig.status).toBe(200);
+    expect(streamConfig.body.kit_instance_bindings).toHaveLength(2);
+    expect(streamConfig.body.kit_instance_bindings[1]).toMatchObject({
+      kit_instance_id: "kit_local_002",
+      assigned_artifact_ids: ["auto_usdc_stream_conv_status_001"],
+      stream_config: {
+        signalingServer: "127.0.0.1",
+        signalingPort: 49110,
+        mediaServer: "127.0.0.1",
+        mediaPort: 48008,
+      },
+    });
+    expect(streamConfig.body.viewport_sharing).toMatchObject({
+      mode: "single_kit_shared_state",
+      shared_state: true,
+      spectator_ready: true,
+    });
     expect(status.status).toBe(200);
     expect(status.body.service.status).toBe("ok");
     expect(status.body.configured_endpoints.kit).toHaveLength(2);

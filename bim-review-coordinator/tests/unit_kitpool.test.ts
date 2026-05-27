@@ -26,6 +26,7 @@ import type { CoordinatorConfig } from "../src/config.js";
 const defaultConfig: CoordinatorConfig = {
   host: "127.0.0.1",
   port: 8004,
+  coordinatorPublicBaseUrl: "http://127.0.0.1:8004",
   bimControlApiBase: "",
   conversionApiBase: "http://127.0.0.1:49101",
   kitStreamServer: "kit-server.local",
@@ -59,6 +60,7 @@ const defaultConfig: CoordinatorConfig = {
   storageRoot: "/tmp/storage",
   storageHostRoot: "/tmp/storage",
   publicHost: "127.0.0.1",
+  viewerPublicBaseUrl: "http://127.0.0.1:5173",
   // coordinator-auto-poll-streaming-conversion §2:test fixture 預設關 polling
   // 避免 unit test 啟動 in-process timer 干擾 isolation。
   conversionPollEnabled: false,

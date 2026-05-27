@@ -1,0 +1,424 @@
+{
+  "classification": {
+    "viewer_handoff_lan_url": "passed",
+    "same_session_bootstrap": "passed",
+    "coordinator_participant_evidence": "passed",
+    "single_kit_multi_viewer": "passed"
+  },
+  "target_urls": {
+    "handoff_url": "http://192.168.10.105:55062/ui/open?session=review_session_29c2bd85a11d&redirect=http://evil.example",
+    "redirect_location": "http://192.168.10.105:55063/?session=review_session_29c2bd85a11d&coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A55062&coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A55062",
+    "viewer_one_url": "http://192.168.10.105:55063/?session=review_session_29c2bd85a11d&coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A55062&coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A55062&userId=viewer_001&displayName=Viewer+One",
+    "viewer_two_url": "http://192.168.10.105:55063/?session=review_session_29c2bd85a11d&coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A55062&coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A55062&userId=viewer_002&displayName=Viewer+Two&streamRole=spectator"
+  },
+  "screenshots": {
+    "viewer_one": "docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/final_runs/run_5/screenshots/final_execution_viewer_one.png",
+    "viewer_two": "docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/final_runs/run_5/screenshots/final_execution_viewer_two.png"
+  },
+  "lan_mode": true,
+  "public_host": "192.168.10.105",
+  "kit_instance_endpoints": [
+    {
+      "id": "kit_local_001",
+      "signalingServer": "192.168.10.105",
+      "signalingPort": 49200,
+      "mediaServer": "192.168.10.105",
+      "mediaPort": 48200
+    },
+    {
+      "id": "kit_local_001_spectator_001",
+      "signalingServer": "192.168.10.105",
+      "signalingPort": 49210,
+      "mediaServer": "192.168.10.105",
+      "mediaPort": 48210
+    }
+  ],
+  "browser_diagnostics": {
+    "viewer_one": {
+      "console": [
+        {
+          "type": "info",
+          "text": "2026-05-27T05:00:47.665Z INFO    gfn-client-sdk/api Is Secure Context:false"
+        },
+        {
+          "type": "log",
+          "text": "2026-05-27T05:00:47.667Z VERBOSE gfn-client-sdk/device refreshing information from browser..."
+        },
+        {
+          "type": "info",
+          "text": "2026-05-27T05:00:47.676Z INFO    gfn-client-sdk/gamepad gamepad handler created (connected:false)"
+        },
+        {
+          "type": "debug",
+          "text": "[vite] connecting..."
+        },
+        {
+          "type": "debug",
+          "text": "[vite] connected."
+        },
+        {
+          "type": "log",
+          "text": "2026-05-27T05:00:47.693Z VERBOSE gfn-client-sdk/device got information from browser:"
+        },
+        {
+          "type": "log",
+          "text": "2026-05-27T05:00:47.693Z VERBOSE gfn-client-sdk/device {\"os\":\"windows\",\"kind\":1,\"version\":\"0\",\"manufacturer\":\"\",\"product\":\"\",\"browser\":\"Unknown\",\"browserVersion\":\"0\"}"
+        },
+        {
+          "type": "info",
+          "text": "2026-05-27T05:00:47.730Z INFO    gfn-client-sdk/api received overrides tool overrides: {}"
+        },
+        {
+          "type": "info",
+          "text": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+        },
+        {
+          "type": "info",
+          "text": "[fast-mvp] auto-attach session from query string:review_session_29c2bd85a11d"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Starting stream.\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:47.836Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        },
+        {
+          "type": "info",
+          "text": "{action: start, status: inProgress, info: Starting stream.}"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Session started successfully\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:47.931Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        },
+        {
+          "type": "info",
+          "text": "streamReady"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message sent to the stream: {\\\"type\\\":\\\"config\\\",\\\"value\\\":{\\\"supports_localized_text_input\\\":true}}.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:47.932Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message successfully recieved from stream.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:47.934Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Config message successfully recieved from stream: {\\\"supports_localized_text_input\\\":true}\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:47.935Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        }
+      ],
+      "page_errors": []
+    },
+    "viewer_two": {
+      "console": [
+        {
+          "type": "info",
+          "text": "2026-05-27T05:00:47.987Z INFO    gfn-client-sdk/api Is Secure Context:false"
+        },
+        {
+          "type": "log",
+          "text": "2026-05-27T05:00:47.989Z VERBOSE gfn-client-sdk/device refreshing information from browser..."
+        },
+        {
+          "type": "info",
+          "text": "2026-05-27T05:00:48.000Z INFO    gfn-client-sdk/gamepad gamepad handler created (connected:false)"
+        },
+        {
+          "type": "debug",
+          "text": "[vite] connecting..."
+        },
+        {
+          "type": "debug",
+          "text": "[vite] connected."
+        },
+        {
+          "type": "log",
+          "text": "2026-05-27T05:00:48.015Z VERBOSE gfn-client-sdk/device got information from browser:"
+        },
+        {
+          "type": "log",
+          "text": "2026-05-27T05:00:48.015Z VERBOSE gfn-client-sdk/device {\"os\":\"windows\",\"kind\":1,\"version\":\"0\",\"manufacturer\":\"\",\"product\":\"\",\"browser\":\"Unknown\",\"browserVersion\":\"0\"}"
+        },
+        {
+          "type": "info",
+          "text": "2026-05-27T05:00:48.054Z INFO    gfn-client-sdk/api received overrides tool overrides: {}"
+        },
+        {
+          "type": "info",
+          "text": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+        },
+        {
+          "type": "info",
+          "text": "[fast-mvp] auto-attach session from query string:review_session_29c2bd85a11d"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"inProgress\",\"status\":100,\"detail\":\"Starting stream.\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:48.169Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        },
+        {
+          "type": "info",
+          "text": "{action: start, status: inProgress, info: Starting stream.}"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Session started successfully\",\"request\":\"start\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:48.233Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        },
+        {
+          "type": "info",
+          "text": "streamReady"
+        },
+        {
+          "type": "log",
+          "text": "{\"type\":\"info\",\"title\":\"success\",\"status\":200,\"detail\":\"Message sent to the stream: {\\\"type\\\":\\\"config\\\",\\\"value\\\":{\\\"supports_localized_text_input\\\":true}}.\",\"request\":\"message\",\"sessionId\":null,\"requestId\":null,\"timestamp\":\"2026-05-27T05:00:48.234Z\",\"browser\":\"Unknown\",\"browserVersion\":\"0\",\"os\":\"Windows\",\"osVersion\":\"0\",\"platformType\":\"desktop\"}"
+        }
+      ],
+      "page_errors": []
+    }
+  },
+  "video_wait": {
+    "viewer_one": true,
+    "viewer_two": true
+  },
+  "session_id": "review_session_29c2bd85a11d",
+  "session": {
+    "session_id": "review_session_29c2bd85a11d",
+    "tenant_id": "tenant_demo_001",
+    "project_id": "project_webwright_001",
+    "model_version_id": "version_webwright_001",
+    "status": "active",
+    "mode": "single_kit_shared_state",
+    "created_by": "webwright_validation",
+    "created_at": "2026-05-27T05:00:46.718Z",
+    "updated_at": "2026-05-27T05:00:48.152Z",
+    "kit_instance": {
+      "instance_id": "kit_local_001",
+      "provider": "local_fixed",
+      "status": "ready",
+      "stream_server": "192.168.10.105",
+      "signaling_port": 49200,
+      "media_server": "192.168.10.105",
+      "media_port": 48200
+    },
+    "artifact_bindings": [
+      {
+        "binding_id": "binding_1",
+        "artifact_group_id": "ag_webwright_001",
+        "model_version_id": "version_webwright_001",
+        "artifact_id": "usdc_webwright_ready_001",
+        "display_name": null,
+        "source_ifc_filename": null,
+        "artifact_role": "derived",
+        "url": "http://192.168.10.105:49101/artifacts/webwright/model.usdc",
+        "mapping_url": "http://192.168.10.105:49101/artifacts/webwright/element_mapping.json",
+        "load_order": 0,
+        "routing_policy": "same_instance",
+        "ready_status": "ready",
+        "conversion_authority": "bim-streaming-server",
+        "conversion_job_id": "conv_webwright_ready_001",
+        "conversion_status": "ready",
+        "failure_code": null,
+        "diagnostic": null
+      }
+    ],
+    "kit_instance_bindings": [
+      {
+        "kit_instance_id": "kit_local_001",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "usdc_webwright_ready_001"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "192.168.10.105",
+          "signalingPort": 49200,
+          "mediaServer": "192.168.10.105",
+          "mediaPort": 48200
+        },
+        "started_at": "2026-05-27T05:00:46.718Z",
+        "last_heartbeat_at": "2026-05-27T05:00:46.718Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "local-slot-1"
+        }
+      }
+    ],
+    "participants": [
+      {
+        "user_id": "viewer_001",
+        "display_name": "Viewer One",
+        "joined_at": "2026-05-27T05:00:47.822Z",
+        "last_seen_at": "2026-05-27T05:00:47.822Z"
+      },
+      {
+        "user_id": "viewer_002",
+        "display_name": "Viewer Two",
+        "joined_at": "2026-05-27T05:00:48.152Z",
+        "last_seen_at": "2026-05-27T05:00:48.152Z"
+      }
+    ],
+    "quality_metrics_summary": {
+      "fixture_name": "webwright-ready-fixture.ifc",
+      "conversion_job_id": "conv_webwright_ready_001",
+      "artifact_group_id": "ag_webwright_001",
+      "source_ifc_entity_count": 1,
+      "sidecar_carrier_count": 1,
+      "materialization_strategy": "sidecar",
+      "coverage_ratio": 1,
+      "coverage_status": "pass",
+      "conversion_duration_seconds": 1
+    }
+  },
+  "runtime_status": {
+    "service": {
+      "status": "ok",
+      "name": "bim-review-coordinator",
+      "uptime_seconds": 2,
+      "generated_at": "2026-05-27T05:00:48.482Z"
+    },
+    "configured_endpoints": {
+      "coordinator": {
+        "host": "0.0.0.0",
+        "port": 55062,
+        "public_host": "192.168.10.105",
+        "public_base_url": "http://192.168.10.105:55062"
+      },
+      "viewer": {
+        "browser_url_base": "http://192.168.10.105:55063",
+        "handoff_path": "/ui/open?session=<review_session_id>",
+        "coordinator_api_base": "http://192.168.10.105:55062",
+        "coordinator_socket_url": "http://192.168.10.105:55062"
+      },
+      "conversion_authority": {
+        "base_url": "http://127.0.0.1:49101",
+        "authority": "bim-streaming-server"
+      },
+      "kit": [
+        {
+          "id": "kit_local_001",
+          "signalingServer": "192.168.10.105",
+          "signalingPort": 49200,
+          "mediaServer": "192.168.10.105",
+          "mediaPort": 48200
+        },
+        {
+          "id": "kit_local_001_spectator_001",
+          "signalingServer": "192.168.10.105",
+          "signalingPort": 49210,
+          "mediaServer": "192.168.10.105",
+          "mediaPort": 48210
+        }
+      ]
+    },
+    "sessions": {
+      "count": 1,
+      "active_count": 1,
+      "participant_count": 2,
+      "items": [
+        {
+          "session_id": "review_session_29c2bd85a11d",
+          "status": "active",
+          "project_id": "project_webwright_001",
+          "model_version_id": "version_webwright_001",
+          "participant_count": 2,
+          "participants": [
+            {
+              "user_id": "viewer_001",
+              "display_name": "Viewer One",
+              "last_seen_at": "2026-05-27T05:00:47.822Z"
+            },
+            {
+              "user_id": "viewer_002",
+              "display_name": "Viewer Two",
+              "last_seen_at": "2026-05-27T05:00:48.152Z"
+            }
+          ],
+          "expected_stage_url": "http://192.168.10.105:49101/artifacts/webwright/model.usdc",
+          "expected_mapping_url": "http://192.168.10.105:49101/artifacts/webwright/element_mapping.json",
+          "conversion_job_id": "conv_webwright_ready_001",
+          "conversion_status": "ready",
+          "kit_instance_ids": [
+            "kit_local_001"
+          ],
+          "created_at": "2026-05-27T05:00:46.718Z",
+          "updated_at": "2026-05-27T05:00:48.152Z"
+        }
+      ]
+    },
+    "kit_instance_bindings": [
+      {
+        "session_id": "review_session_29c2bd85a11d",
+        "kit_instance_id": "kit_local_001",
+        "status": "ready",
+        "assigned_artifact_ids": [
+          "usdc_webwright_ready_001"
+        ],
+        "stream_config": {
+          "signalingServer": "192.168.10.105",
+          "signalingPort": 49200,
+          "mediaServer": "192.168.10.105",
+          "mediaPort": 48200
+        },
+        "started_at": "2026-05-27T05:00:46.718Z",
+        "last_heartbeat_at": "2026-05-27T05:00:46.718Z",
+        "released_at": null
+      }
+    ],
+    "ifc_ready_jobs": {
+      "count": 0,
+      "recent": []
+    },
+    "observations": {
+      "classification": "coordinator_visible_runtime_summary",
+      "note": "read-only coordinator observations; Kit internal stage state still requires DataChannel or Kit log evidence.",
+      "web_plane": {
+        "coordinator_port": 55062,
+        "viewer_port": 5173
+      },
+      "host_native_plane": {
+        "conversion_api_base": "http://127.0.0.1:49101",
+        "kit_signal_ports": [
+          49200,
+          49210
+        ],
+        "kit_media_ports": [
+          48200,
+          48210
+        ]
+      }
+    }
+  },
+  "page_evidence": {
+    "viewer_one": {
+      "url": "http://192.168.10.105:55063/?session=review_session_29c2bd85a11d&coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A55062&coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A55062&userId=viewer_001&displayName=Viewer+One",
+      "topbar_session": "session: review_session_29c2bd85a11d",
+      "tri_ready": "File: yes\nRuntime: incomplete\nSemantic: no",
+      "stage_truth": "Edge BIM Data Server\nproject: project_webwright_001\nversion: version_webwright_001\nsession: review_session_29c2bd85a11d\nFile: yes\nRuntime: incomplete\nSemantic: no\nStage truth\npending\nexpected: http://192.168.10.105:49101/artifacts/webwright/model.usdc\nloaded: not_observed\nWebRTC: started · kit_local_001 192.168.10.105:49200/48200",
+      "videos": [
+        {
+          "readyState": 4,
+          "videoWidth": 1920,
+          "videoHeight": 1080,
+          "currentTime": 0.350754,
+          "paused": false,
+          "srcObject": true
+        }
+      ]
+    },
+    "viewer_two": {
+      "url": "http://192.168.10.105:55063/?session=review_session_29c2bd85a11d&coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A55062&coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A55062&userId=viewer_002&displayName=Viewer+Two&streamRole=spectator",
+      "topbar_session": "session: review_session_29c2bd85a11d",
+      "tri_ready": "File: yes\nRuntime: incomplete\nSemantic: no",
+      "stage_truth": "Edge BIM Data Server\nproject: project_webwright_001\nversion: version_webwright_001\nsession: review_session_29c2bd85a11d\nFile: yes\nRuntime: incomplete\nSemantic: no\nStage truth\npending\nexpected: http://192.168.10.105:49101/artifacts/webwright/model.usdc\nloaded: not_observed\nWebRTC: started · kit_local_001_spectator_001 192.168.10.105:49210/48210",
+      "videos": [
+        {
+          "readyState": 4,
+          "videoWidth": 1920,
+          "videoHeight": 1080,
+          "currentTime": 0.045655,
+          "paused": false,
+          "srcObject": true
+        }
+      ]
+    }
+  }
+}

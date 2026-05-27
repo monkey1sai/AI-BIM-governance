@@ -385,7 +385,7 @@
 
     <section class="demo-card" id="fastViewerLinkCard">
       <h2 class="demo-card__title" style="font-size:18px;">③ 開啟 viewer</h2>
-      <p class="demo-card__subtitle">轉檔 ready 時自動填入 viewer_url。點「開啟 viewer」會走 coordinator <code>/ui/open?session=</code> 302 → host loopback <code>127.0.0.1:5173/?session=</code>。</p>
+      <p class="demo-card__subtitle">轉檔 ready 時自動填入 viewer_url。點「開啟 viewer」會走 coordinator <code>/ui/open?session=</code> 302 → 設定中的 browser-visible viewer URL，LAN client 不會被導到自己的 <code>127.0.0.1</code>。</p>
       <div class="demo-result-grid">
         <div class="demo-result-item">
           <div class="demo-result-item__label">viewer_url</div>
@@ -1591,7 +1591,7 @@
     document.getElementById('footerOpenViewer').addEventListener('click', (e) => {
       e.preventDefault();
       if (sessionId.value) openViewerWithSession();
-      else window.open('http://127.0.0.1:5173', '_blank');
+      else window.open('/ui', '_blank');
     });
 
     refreshStatus();

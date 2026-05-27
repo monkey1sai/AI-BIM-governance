@@ -21,6 +21,7 @@ export interface KitInstanceEndpointConfig {
 export interface CoordinatorConfig {
   host: string;
   port: number;
+  coordinatorPublicBaseUrl: string;
   bimControlApiBase: string;
   conversionApiBase: string;
   kitStreamServer: string;
@@ -59,6 +60,7 @@ export interface CoordinatorConfig {
   storageRoot: string;                    // coordinator 寫入路徑;docker compose 顯式設 /workspace/storage,host-native 預設 <cwd>/storage
   storageHostRoot: string;                // host view storage root,寫進 dispatch payload host_local_path
   publicHost: string;                     // viewer_url 用的對外 host(coordinator 對 LAN IP);default 127.0.0.1
+  viewerPublicBaseUrl: string;            // browser-visible viewer origin;default follows PUBLIC_HOST:VIEWER_PORT
   // coordinator-auto-poll-streaming-conversion:dispatch 成功後 in-process 自動 poll
   // streaming-server `/api/conversions/<id>/result` 直到 terminal,自動跑既有 ingest path,
   // 不需要外部手動 POST /api/internal/conversions/<id>/ingest。test fixture 可關掉。
@@ -101,6 +103,40 @@ function csvFromEnv(name: string, fallback: string[]): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeBaseUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\/+$/, "");
+}
+
+function normalizePublicBaseUrl(value: string | undefined, name: string): string | null {
+  const normalized = normalizeBaseUrl(value);
+  if (!normalized) return null;
+  if (!/^https?:\/\//i.test(normalized)) {
+    throw new Error(`${name} must be an absolute http(s) URL.`);
+  }
+  const url = new URL(normalized);
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error(`${name} must use http or https.`);
+  }
+  if (url.search || url.hash || url.username || url.password) {
+    throw new Error(`${name} must not include query, hash, or credentials.`);
+  }
+  const pathname = url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${pathname === "" ? "" : pathname}`;
+}
+
+function publicBaseUrlFromHost(hostOrUrl: string, port: number): string {
+  const normalized = normalizeBaseUrl(hostOrUrl) || "127.0.0.1";
+  if (/^https?:\/\//i.test(normalized)) return normalizePublicBaseUrl(normalized, "PUBLIC_HOST") || "http://127.0.0.1";
+  return `http://${normalized}:${port}`;
 }
 
 function readString(value: unknown): string | null {
@@ -177,6 +213,15 @@ function conversionApiBaseFromEnv(): string {
 
 export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): CoordinatorConfig {
   const cwd = process.cwd();
+  const host = process.env.HOST || "127.0.0.1";
+  const port = numberFromEnv("PORT", 8004);
+  const publicHost = process.env.PUBLIC_HOST || "127.0.0.1";
+  const viewerPublicBaseUrl =
+    normalizePublicBaseUrl(process.env.VIEWER_PUBLIC_BASE_URL, "VIEWER_PUBLIC_BASE_URL") ||
+    publicBaseUrlFromHost(publicHost, numberFromEnv("VIEWER_PORT", 5173));
+  const coordinatorPublicBaseUrl =
+    normalizePublicBaseUrl(process.env.COORDINATOR_PUBLIC_BASE_URL, "COORDINATOR_PUBLIC_BASE_URL") ||
+    publicBaseUrlFromHost(publicHost, port);
   const kitStreamServer = kitHostFromEnv("KIT_STREAM_SERVER", "127.0.0.1");
   const kitSignalingPort = numberFromEnv("KIT_SIGNALING_PORT", 49100);
   const kitMediaServer = kitHostFromEnv("KIT_MEDIA_SERVER", kitStreamServer);
@@ -189,8 +234,9 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     mediaPort: kitMediaPort,
   };
   return {
-    host: process.env.HOST || "127.0.0.1",
-    port: numberFromEnv("PORT", 8004),
+    host,
+    port,
+    coordinatorPublicBaseUrl,
     bimControlApiBase: process.env.BIM_CONTROL_API_BASE || "",
     conversionApiBase: conversionApiBaseFromEnv(),
     kitStreamServer,
@@ -201,7 +247,11 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     devAuthToken: process.env.DEV_AUTH_TOKEN || "dev-token",
     sessionStoreDir: process.env.SESSION_STORE_DIR || path.join(cwd, "data", "sessions"),
     eventLogDir: process.env.EVENT_LOG_DIR || path.join(cwd, "data", "events"),
-    corsOrigins: csvFromEnv("CORS_ORIGINS", ["http://127.0.0.1:5173", "http://localhost:5173"]),
+    corsOrigins: csvFromEnv("CORS_ORIGINS", uniqueStrings([
+      "http://127.0.0.1:5173",
+      "http://localhost:5173",
+      new URL(viewerPublicBaseUrl).origin,
+    ])),
     internalApiAuthToken: process.env.INTERNAL_API_AUTH_TOKEN || "dev-internal-token",
     streamingConversionApiBase:
       process.env.STREAMING_CONVERSION_API_BASE || DEFAULT_STREAMING_CONVERSION_API_BASE,
@@ -225,7 +275,8 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     storageRoot: process.env.STORAGE_ROOT || path.join(cwd, "storage"),
     storageHostRoot:
       process.env.STORAGE_HOST_ROOT || process.env.RUNTIME_STORAGE_ROOT || path.join(cwd, "storage"),
-    publicHost: process.env.PUBLIC_HOST || "127.0.0.1",
+    publicHost,
+    viewerPublicBaseUrl,
     // coordinator-auto-poll-streaming-conversion:default 啟用 polling;test fixture
     // 應在 loadConfig overrides 內傳 conversionPollEnabled: false。
     conversionPollEnabled: parseBooleanEnv("CONVERSION_POLL_ENABLED", true),

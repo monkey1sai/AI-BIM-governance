@@ -7,6 +7,10 @@ const originalStreamingConversionApiBase = process.env.STREAMING_CONVERSION_API_
 const originalKitStreamServer = process.env.KIT_STREAM_SERVER;
 const originalKitMediaServer = process.env.KIT_MEDIA_SERVER;
 const originalStorageRoot = process.env.STORAGE_ROOT;
+const originalPublicHost = process.env.PUBLIC_HOST;
+const originalViewerPublicBaseUrl = process.env.VIEWER_PUBLIC_BASE_URL;
+const originalCoordinatorPublicBaseUrl = process.env.COORDINATOR_PUBLIC_BASE_URL;
+const originalCorsOrigins = process.env.CORS_ORIGINS;
 
 afterEach(() => {
   if (originalConversionApiBase === undefined) {
@@ -38,6 +42,67 @@ afterEach(() => {
   } else {
     process.env.STORAGE_ROOT = originalStorageRoot;
   }
+
+  if (originalPublicHost === undefined) {
+    delete process.env.PUBLIC_HOST;
+  } else {
+    process.env.PUBLIC_HOST = originalPublicHost;
+  }
+
+  if (originalViewerPublicBaseUrl === undefined) {
+    delete process.env.VIEWER_PUBLIC_BASE_URL;
+  } else {
+    process.env.VIEWER_PUBLIC_BASE_URL = originalViewerPublicBaseUrl;
+  }
+
+  if (originalCoordinatorPublicBaseUrl === undefined) {
+    delete process.env.COORDINATOR_PUBLIC_BASE_URL;
+  } else {
+    process.env.COORDINATOR_PUBLIC_BASE_URL = originalCoordinatorPublicBaseUrl;
+  }
+
+  if (originalCorsOrigins === undefined) {
+    delete process.env.CORS_ORIGINS;
+  } else {
+    process.env.CORS_ORIGINS = originalCorsOrigins;
+  }
+});
+
+describe("loadConfig public browser bases", () => {
+  it("normalizes explicit public base URL env vars to origins", () => {
+    process.env.VIEWER_PUBLIC_BASE_URL = "http://192.168.10.105:5173/";
+    process.env.COORDINATOR_PUBLIC_BASE_URL = "https://review.example.test:8004/";
+
+    const config = loadConfig();
+
+    expect(config.viewerPublicBaseUrl).toBe("http://192.168.10.105:5173");
+    expect(config.coordinatorPublicBaseUrl).toBe("https://review.example.test:8004");
+  });
+
+  it("rejects scheme-less public base URL env vars", () => {
+    process.env.VIEWER_PUBLIC_BASE_URL = "192.168.10.105:5173";
+
+    expect(() => loadConfig()).toThrow(/VIEWER_PUBLIC_BASE_URL must be an absolute http\(s\) URL/);
+  });
+
+  it("preserves public base URL path prefixes", () => {
+    delete process.env.CORS_ORIGINS;
+    process.env.VIEWER_PUBLIC_BASE_URL = "https://review.example.test/bim-viewer/";
+    process.env.COORDINATOR_PUBLIC_BASE_URL = "https://review.example.test/coordinator/";
+
+    const config = loadConfig();
+
+    expect(config.viewerPublicBaseUrl).toBe("https://review.example.test/bim-viewer");
+    expect(config.coordinatorPublicBaseUrl).toBe("https://review.example.test/coordinator");
+    expect(config.corsOrigins).toContain("https://review.example.test");
+    expect(config.corsOrigins).not.toContain("https://review.example.test/bim-viewer");
+  });
+
+  it("rejects public base URL env vars with query strings", () => {
+    process.env.COORDINATOR_PUBLIC_BASE_URL = "http://192.168.10.105:8004/ui?x=1";
+
+    expect(() => loadConfig()).toThrow(/COORDINATOR_PUBLIC_BASE_URL must not include query/);
+  });
 });
 
 describe("loadConfig conversion API base", () => {

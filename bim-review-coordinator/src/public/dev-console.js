@@ -139,21 +139,6 @@ function emitHeartbeat() {
   emit("heartbeat", { session_id: sessionId.value || "review_session_demo_001", actor_id: userId.value });
 }
 
-function applyStreamEndpointParams(params, streamConfig) {
-  const binding = Array.isArray(streamConfig?.kit_instance_bindings)
-    ? streamConfig.kit_instance_bindings[0]
-    : null;
-  const endpoint = binding?.stream_config || streamConfig?.webrtc || {};
-  if (binding?.kit_instance_id) params.set("kitInstanceId", binding.kit_instance_id);
-  if (endpoint.signalingServer) params.set("signalingServer", endpoint.signalingServer);
-  if (endpoint.signalingPort) params.set("signalingPort", String(endpoint.signalingPort));
-  if (endpoint.mediaServer) params.set("mediaServer", endpoint.mediaServer);
-  if (endpoint.mediaPort !== undefined && endpoint.mediaPort !== null) {
-    params.set("mediaPort", String(endpoint.mediaPort));
-  }
-  params.set("streamTimeoutMs", "90000");
-}
-
 async function openViewerWithSession() {
   if (!sessionId.value) {
     if (typeof window.startDemoSession === "function") {
@@ -167,22 +152,12 @@ async function openViewerWithSession() {
     return;
   }
   const params = new URLSearchParams({
-    sessionId: sessionId.value,
+    session: sessionId.value,
     projectId: projectId.value,
     modelVersionId: modelVersionId.value,
     userId: userId.value,
     displayName: displayName.value
   });
-  if (sessionId.value) {
-    try {
-      const response = await fetch(sessionPath("/stream-config"), { headers: { Accept: "application/json" } });
-      if (response.ok) {
-        applyStreamEndpointParams(params, await response.json());
-      }
-    } catch (error) {
-      console.warn("Unable to attach stream endpoint params to viewer URL", error);
-    }
-  }
-  const viewer = window.open(`http://127.0.0.1:5173/?${params.toString()}`, "bim_review_primary_viewer");
+  const viewer = window.open(`/ui/open?${params.toString()}`, "bim_review_primary_viewer");
   viewer?.focus?.();
 }
