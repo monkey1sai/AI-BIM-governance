@@ -52,9 +52,19 @@ function Test-PortAvailability {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [int] $KitSignalPort = 49100,
+        [int] $KitMediaPort = 47998,
+        [int] $ConversionPort = 49101,
+        [int[]] $ExtraHostNativePorts = @(),
+        [int[]] $ExtraHostNativeUdpPorts = @(),
         [scriptblock] $PortLookup = {
             param($port)
             $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($conn) { return $conn.OwningProcess } else { return $null }
+        },
+        [scriptblock] $UdpPortLookup = {
+            param($port)
+            $conn = Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($conn) { return $conn.OwningProcess } else { return $null }
         },
         [scriptblock] $ProcessNameLookup = {
@@ -67,16 +77,18 @@ function Test-PortAvailability {
     )
 
     $dockerPorts     = @(8004, 5173)
-    $hostNativePorts = @(49100, 49101, 47998)
+    $hostNativeTcpPorts = @(@($KitSignalPort, $ConversionPort) + $ExtraHostNativePorts | Sort-Object -Unique)
+    $hostNativeUdpPorts = @(@($KitMediaPort) + $ExtraHostNativeUdpPorts | Sort-Object -Unique)
     $runDir          = Join-Path $RepoRoot 'scripts\.run'
     $ourPids         = Get-PidsFromRunDir -RunDir $runDir
 
     function Resolve-PortStatus {
-        param([int] $Port)
-        $portPid = & $PortLookup $Port
+        param([int] $Port, [string] $Protocol)
+        $portPid = if ($Protocol -eq 'UDP') { & $UdpPortLookup $Port } else { & $PortLookup $Port }
         if ($null -eq $portPid) {
             return [pscustomobject]@{
                 port      = $Port
+                protocol  = $Protocol
                 status    = 'FREE'
                 pid       = $null
                 name      = $null
@@ -89,6 +101,7 @@ function Test-PortAvailability {
         $name = & $ProcessNameLookup $portPidInt
         return [pscustomobject]@{
             port      = $Port
+            protocol  = $Protocol
             status    = 'OCCUPIED'
             pid       = $portPidInt
             name      = $name
@@ -96,8 +109,11 @@ function Test-PortAvailability {
         }
     }
 
-    $docker     = @($dockerPorts     | ForEach-Object { Resolve-PortStatus $_ })
-    $hostNative = @($hostNativePorts | ForEach-Object { Resolve-PortStatus $_ })
+    $docker = @($dockerPorts | ForEach-Object { Resolve-PortStatus -Port $_ -Protocol 'TCP' })
+    $hostNative = @(
+        $hostNativeTcpPorts | ForEach-Object { Resolve-PortStatus -Port $_ -Protocol 'TCP' }
+        $hostNativeUdpPorts | ForEach-Object { Resolve-PortStatus -Port $_ -Protocol 'UDP' }
+    )
 
     return [pscustomobject]@{
         docker     = $docker

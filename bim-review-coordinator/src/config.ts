@@ -152,6 +152,24 @@ function readNumber(value: unknown): number | null {
   return null;
 }
 
+function integerFromEnv(names: string[], fallback: number, options: { min?: number; max?: number } = {}): number {
+  const name = names.find((candidate) => process.env[candidate] !== undefined);
+  if (!name) return fallback;
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || String(parsed) !== raw.trim()) {
+    throw new Error(`${name} must be an integer.`);
+  }
+  if (options.min !== undefined && parsed < options.min) {
+    throw new Error(`${name} must be >= ${options.min}.`);
+  }
+  if (options.max !== undefined && parsed > options.max) {
+    throw new Error(`${name} must be <= ${options.max}.`);
+  }
+  return parsed;
+}
+
 function localIpv4ForStreaming(): string | null {
   const interfaces = os.networkInterfaces();
   for (const addresses of Object.values(interfaces)) {
@@ -187,17 +205,82 @@ function endpointFromUnknown(value: unknown, index: number, fallback: KitInstanc
 
 function kitInstanceEndpointsFromEnv(name: string, fallback: KitInstanceEndpointConfig): KitInstanceEndpointConfig[] {
   const value = process.env[name];
-  if (!value) return [fallback];
+  if (!value) return withGeneratedSpectatorEndpoints([fallback]);
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return [fallback];
-    const endpoints = parsed
-      .map((item, index) => endpointFromUnknown(item, index, fallback))
-      .filter((endpoint): endpoint is KitInstanceEndpointConfig => endpoint !== null);
-    return endpoints.length > 0 ? endpoints : [fallback];
-  } catch {
-    return [fallback];
+    parsed = JSON.parse(value) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${name} must be a JSON array; raw=${JSON.stringify(value)}; error=${message}`);
   }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${name} must be a JSON array; raw=${JSON.stringify(value)}.`);
+  }
+  const endpoints = parsed
+    .map((item, index) => endpointFromUnknown(item, index, fallback))
+    .filter((endpoint): endpoint is KitInstanceEndpointConfig => endpoint !== null);
+  if (endpoints.length === 0) {
+    throw new Error(`${name} produced no valid Kit endpoints from raw=${JSON.stringify(value)}.`);
+  }
+  return withGeneratedSpectatorEndpoints(endpoints);
+}
+
+function endpointKey(endpoint: KitInstanceEndpointConfig): string {
+  return `${endpoint.signalingServer}:${endpoint.signalingPort}:${endpoint.mediaServer}:${endpoint.mediaPort ?? ""}`;
+}
+
+function withGeneratedSpectatorEndpoints(endpoints: KitInstanceEndpointConfig[]): KitInstanceEndpointConfig[] {
+  if (endpoints.length !== 1) return endpoints;
+
+  const count = integerFromEnv(["KIT_SPECTATOR_COUNT"], 0, { min: 0, max: 32 });
+  if (count === 0) return endpoints;
+
+  const signalingStart = integerFromEnv(["KIT_SPECTATOR_SIGNALING_PORT_START"], 49110, { min: 1, max: 65535 });
+  const mediaStart = integerFromEnv(
+    ["KIT_SPECTATOR_MEDIA_PORT_START", "KIT_SPECTATOR_STREAM_PORT_START"],
+    48008,
+    { min: 1, max: 65535 },
+  );
+  const stride = integerFromEnv(["KIT_SPECTATOR_PORT_STRIDE"], 10, { min: 1, max: 1000 });
+  const [primary] = endpoints;
+  const used = new Set([endpointKey(primary)]);
+  const usedSignalingPorts = new Set<number>([primary.signalingPort]);
+  const usedMediaPorts = new Set<number>();
+  if (primary.mediaPort !== null && primary.mediaPort !== undefined) {
+    usedMediaPorts.add(primary.mediaPort);
+  }
+  const spectators: KitInstanceEndpointConfig[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const signalingPort = signalingStart + index * stride;
+    const mediaPort = mediaStart + index * stride;
+    if (signalingPort > 65535 || mediaPort > 65535) {
+      throw new Error("KIT_SPECTATOR_* generated a port outside 1-65535.");
+    }
+    if (usedSignalingPorts.has(signalingPort)) {
+      throw new Error(`KIT_SPECTATOR_* generated a duplicate signaling port: ${signalingPort}.`);
+    }
+    if (usedMediaPorts.has(mediaPort)) {
+      throw new Error(`KIT_SPECTATOR_* generated a duplicate media port: ${mediaPort}.`);
+    }
+    const endpoint: KitInstanceEndpointConfig = {
+      id: `${primary.id}_spectator_${String(index + 1).padStart(2, "0")}`,
+      signalingServer: primary.signalingServer,
+      signalingPort,
+      mediaServer: primary.mediaServer,
+      mediaPort,
+    };
+    const key = endpointKey(endpoint);
+    if (used.has(key)) {
+      throw new Error("KIT_SPECTATOR_* generated a duplicate Kit endpoint.");
+    }
+    used.add(key);
+    usedSignalingPorts.add(signalingPort);
+    usedMediaPorts.add(mediaPort);
+    spectators.push(endpoint);
+  }
+
+  return [...endpoints, ...spectators];
 }
 
 function conversionApiBaseFromEnv(): string {

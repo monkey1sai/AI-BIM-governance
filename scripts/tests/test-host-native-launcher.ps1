@@ -61,4 +61,44 @@ $moduleContent = Get-Content -LiteralPath $modulePath -Raw
 Assert-True (-not ($moduleContent -match "'-NoExit'")) 'launcher argument list has no -NoExit'
 Write-TestPass 'no -NoExit launcher arg'
 
+# Test 8: Kit launcher wiring preserves spectator stream args
+Assert-True ($moduleContent -match "'-SpectatorSignalPorts'") 'launcher forwards spectator signal ports'
+Assert-True ($moduleContent -match "'-SpectatorStreamPorts'") 'launcher forwards spectator stream ports'
+Write-TestPass 'spectator stream args forwarded'
+
+# Test 9: conversion launcher clears stale public artifacts URL when no URL is provided
+Assert-True ($moduleContent -match 'Remove-Item Env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL') 'launcher clears stale public artifacts URL'
+Write-TestPass 'public artifacts URL env cleared when unset'
+
+# Test 10: Stop-HostNativeService stops child processes before wrapper PID
+$sb = New-TestSandbox -Prefix 'hn-launcher-stop'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $runDir 'svc.pid') -Value '100'
+    $stopped = @()
+    $didStop = Stop-HostNativeService -Name 'svc' -RunDir $runDir `
+        -ChildPidLookup {
+            param($procId)
+            if ($procId -eq 100) { @(101) }
+            elseif ($procId -eq 101) { @(102) }
+            else { @() }
+        } `
+        -StopProcessFn {
+            param($procId)
+            $script:stopped += $procId
+        }
+    Assert-True ($didStop -eq $true) 'service tree stop returns true'
+    Assert-Equal '102,101,100' ($stopped -join ',') 'children stopped before wrapper'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $runDir 'svc.pid'))) 'pid file removed'
+    Write-TestPass 'Stop-HostNativeService process tree'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 11: spectator stream settings receive the same publicIp override
+$streamingScript = Join-Path $repoRoot 'bim-streaming-server\scripts\start-streaming-server.ps1'
+$streamingContent = Get-Content -LiteralPath $streamingScript -Raw
+Assert-True ($streamingContent -match 'spectatorStream/\$\(\$endpoint\.Index\)/publicIp') 'spectator publicIp setting exists'
+Write-TestPass 'spectator publicIp setting forwarded'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

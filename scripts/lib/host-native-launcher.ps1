@@ -51,6 +51,49 @@ function Remove-StalePidFile {
     return $false
 }
 
+function Stop-HostNativeService {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $RunDir,
+        [scriptblock] $ChildPidLookup = {
+            param($parentId)
+            try {
+                Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction Stop |
+                    ForEach-Object { [int]$_.ProcessId }
+            } catch { @() }
+        },
+        [scriptblock] $StopProcessFn = {
+            param($procId)
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        }
+    )
+    $pidFile = Join-Path $RunDir "$Name.pid"
+    if (-not (Test-Path -LiteralPath $pidFile)) { return $false }
+    $raw = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    $procId = 0
+    if (-not $raw -or -not [int]::TryParse($raw.Trim(), [ref]$procId)) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    $ids = @()
+    $stack = @($procId)
+    while ($stack.Count -gt 0) {
+        $current = [int]$stack[0]
+        $stack = @($stack | Select-Object -Skip 1)
+        if ($ids -notcontains $current) {
+            $ids += $current
+            $stack += @(& $ChildPidLookup $current)
+        }
+    }
+    for ($i = $ids.Count - 1; $i -ge 0; $i--) {
+        & $StopProcessFn ([int]$ids[$i])
+    }
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
 function Start-HostNativeService {
     [CmdletBinding()]
     param(
@@ -116,7 +159,9 @@ function Start-HostNativeConversion {
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [Parameter(Mandatory = $true)][string] $RuntimeStorageRoot,
-        [int] $Port = 49101
+        [int] $Port = 49101,
+        [string] $BindHost = '127.0.0.1',
+        [string] $PublicArtifactsUrl = ''
     )
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
@@ -133,8 +178,13 @@ function Start-HostNativeConversion {
     $parentRoot = Resolve-ConversionParentRoot -RuntimeStorageRoot $RuntimeStorageRoot
     $env:STORAGE_ROOT                  = $RuntimeStorageRoot
     $env:STREAMING_CONVERSION_WORK_DIR = $parentRoot
-    $env:STREAMING_CONVERSION_HOST     = '127.0.0.1'
+    $env:STREAMING_CONVERSION_HOST     = $BindHost
     $env:STREAMING_CONVERSION_PORT     = "$Port"
+    if (-not [string]::IsNullOrWhiteSpace($PublicArtifactsUrl)) {
+        $env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL = $PublicArtifactsUrl
+    } else {
+        Remove-Item Env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL -ErrorAction SilentlyContinue
+    }
 
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'
     return (Start-HostNativeService `
@@ -151,25 +201,39 @@ function Start-HostNativeKit {
         [Parameter(Mandatory = $true)][string] $RepoRoot,
         [int] $SignalPort = 49100,
         [int] $StreamPort = 47998,
-        [string] $PublicIp = '127.0.0.1'
+        [string] $PublicIp = '127.0.0.1',
+        [int[]] $SpectatorSignalPorts = @(),
+        [int[]] $SpectatorStreamPorts = @()
     )
+    if ($SpectatorSignalPorts.Count -ne $SpectatorStreamPorts.Count) {
+        throw "SpectatorSignalPorts and SpectatorStreamPorts must have the same number of entries."
+    }
+
     $runDir = Join-Path $RepoRoot 'scripts\.run'
     if (-not (Test-Path -LiteralPath $runDir)) {
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     }
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-streaming-server.ps1'
+    $arguments = @(
+        '-ExecutionPolicy','Bypass','-NoProfile','-File', $launcher,
+        '-InstanceId','kit_local_001',
+        '-SignalPort',"$SignalPort",
+        '-StreamPort',"$StreamPort",
+        '-PublicIp', $PublicIp,
+        '-ResetUser',
+        '-SkipAutoLoad'
+    )
+    if ($SpectatorSignalPorts.Count -gt 0) {
+        $arguments += '-SpectatorSignalPorts'
+        $arguments += ($SpectatorSignalPorts -join ',')
+        $arguments += '-SpectatorStreamPorts'
+        $arguments += ($SpectatorStreamPorts -join ',')
+    }
+
     return (Start-HostNativeService `
         -Name 'bim-streaming-server' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
         -FilePath 'powershell.exe' `
-        -ArgumentList @(
-            '-ExecutionPolicy','Bypass','-NoProfile','-File', $launcher,
-            '-InstanceId','kit_local_001',
-            '-SignalPort',"$SignalPort",
-            '-StreamPort',"$StreamPort",
-            '-PublicIp', $PublicIp,
-            '-ResetUser',
-            '-SkipAutoLoad'
-        ) `
+        -ArgumentList $arguments `
         -RunDir $runDir)
 }
