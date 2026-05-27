@@ -1588,7 +1588,15 @@ function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): st
   return url.toString();
 }
 
-const VIEWER_REDIRECT_QUERY_PARAMS = ["projectId", "modelVersionId", "userId", "displayName", "streamRole"] as const;
+const VIEWER_REDIRECT_QUERY_PARAMS = [
+  "projectId",
+  "modelVersionId",
+  "userId",
+  "displayName",
+  "streamRole",
+  "kitInstanceId",
+  "kit_instance_id",
+] as const;
 
 function queryParamString(value: unknown): string | null {
   const candidate = Array.isArray(value) ? value[0] : value;

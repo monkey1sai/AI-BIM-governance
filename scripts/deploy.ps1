@@ -183,9 +183,16 @@ function Resolve-DeployPublicBaseUrl {
         [Parameter(Mandatory = $true)][string] $Name,
         [Parameter(Mandatory = $true)][string] $EnvFile,
         [Parameter(Mandatory = $true)][string] $HostName,
-        [Parameter(Mandatory = $true)][int] $Port
+        [Parameter(Mandatory = $true)][int] $Port,
+        [switch] $PreferDerived
     )
-    $configured = Get-DeployEnvValue -Name $Name -EnvFile $EnvFile -Default ''
+    $configured = ''
+    if (-not [string]::IsNullOrWhiteSpace($EnvFile) -and (Test-Path -LiteralPath $EnvFile)) {
+        $configured = Get-EnvExampleDefaultValue -Path $EnvFile -Key $Name
+    }
+    if ([string]::IsNullOrWhiteSpace($configured) -and -not $PreferDerived) {
+        $configured = [Environment]::GetEnvironmentVariable($Name)
+    }
     if (-not [string]::IsNullOrWhiteSpace($configured)) {
         $trimmed = $configured.Trim().TrimEnd('/')
         if (-not ($trimmed -match '^https?://')) {
@@ -194,6 +201,43 @@ function Resolve-DeployPublicBaseUrl {
         return $trimmed
     }
     return "http://${HostName}:$Port"
+}
+
+function Resolve-DeployOrigin {
+    param([Parameter(Mandatory = $true)][string] $BaseUrl)
+    $uri = [uri]$BaseUrl
+    if (-not $uri.IsAbsoluteUri -or -not ($uri.Scheme -eq 'http' -or $uri.Scheme -eq 'https')) {
+        throw "Base URL must be an absolute http(s) URL: $BaseUrl"
+    }
+    return $uri.GetLeftPart([System.UriPartial]::Authority).TrimEnd('/')
+}
+
+function Resolve-DeployCorsOrigins {
+    param(
+        [Parameter(Mandatory = $true)][string] $EnvFile,
+        [Parameter(Mandatory = $true)][string] $ViewerPublicBaseUrl
+    )
+    $configured = Get-DeployEnvValue -Name 'CORS_ORIGINS' -EnvFile $EnvFile -Default ''
+    $values = @(
+        'http://127.0.0.1:5173',
+        'http://localhost:5173'
+    )
+    if (-not [string]::IsNullOrWhiteSpace($configured)) {
+        $values += @($configured -split ',')
+    }
+    $values += (Resolve-DeployOrigin -BaseUrl $ViewerPublicBaseUrl)
+
+    $seen = @{}
+    $result = @()
+    foreach ($value in $values) {
+        $normalized = $value.Trim().TrimEnd('/')
+        if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
+        $key = $normalized.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $result += $normalized
+    }
+    return ($result -join ',')
 }
 
 function Resolve-HealthProbeHost {
@@ -470,8 +514,9 @@ $kitRuntimeSignature = New-KitRuntimeSignature `
     -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
     -SpectatorStreamPorts $resolvedSpectatorMediaPorts `
     -AllowedStageHosts $resolvedAllowedStageHosts
-$script:coordinatorPublicUrl = Resolve-DeployPublicBaseUrl -Name 'COORDINATOR_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedCoordinatorPort
-$script:viewerPublicUrl = Resolve-DeployPublicBaseUrl -Name 'VIEWER_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedViewerPort
+$script:coordinatorPublicUrl = Resolve-DeployPublicBaseUrl -Name 'COORDINATOR_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedCoordinatorPort -PreferDerived:$shouldDerivePublicTopologyValues
+$script:viewerPublicUrl = Resolve-DeployPublicBaseUrl -Name 'VIEWER_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedViewerPort -PreferDerived:$shouldDerivePublicTopologyValues
+$resolvedCorsOrigins = Resolve-DeployCorsOrigins -EnvFile $resolvedEnvFile -ViewerPublicBaseUrl $script:viewerPublicUrl
 
 [Environment]::SetEnvironmentVariable('PUBLIC_HOST', $resolvedPublicHost, 'Process')
 [Environment]::SetEnvironmentVariable('KIT_SIGNALING_PORT', [string]$resolvedKitSignalPort, 'Process')
@@ -488,6 +533,7 @@ Set-DeployEnvIfNeeded -Name 'WEB_VIEWER_COORDINATOR_SOCKET_URL' -Value $script:c
 Set-DeployEnvIfNeeded -Name 'VIEWER_PUBLIC_BASE_URL' -Value $script:viewerPublicUrl -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'COORDINATOR_PUBLIC_BASE_URL' -Value $script:coordinatorPublicUrl -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL' -Value "http://${resolvedPublicHost}:49101/artifacts" -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
+[Environment]::SetEnvironmentVariable('CORS_ORIGINS', $resolvedCorsOrigins, 'Process')
 [Environment]::SetEnvironmentVariable('BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS', $resolvedAllowedStageHosts, 'Process')
 
 $ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
@@ -568,6 +614,7 @@ $auditObj = [pscustomobject]@{
         conversionBindHost  = $resolvedConversionBindHost
         conversionHealthHost = $resolvedConversionHealthHost
         conversionPublicArtifactsUrl = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL')
+        corsOrigins         = $resolvedCorsOrigins
         allowedStageHosts   = $resolvedAllowedStageHosts
         kitSignalPort       = $resolvedKitSignalPort
         kitMediaPort        = $resolvedKitMediaPort
