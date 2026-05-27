@@ -51,6 +51,49 @@ function Remove-StalePidFile {
     return $false
 }
 
+function Stop-HostNativeService {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $RunDir,
+        [scriptblock] $ChildPidLookup = {
+            param($parentId)
+            try {
+                Get-CimInstance Win32_Process -Filter "ParentProcessId=$parentId" -ErrorAction Stop |
+                    ForEach-Object { [int]$_.ProcessId }
+            } catch { @() }
+        },
+        [scriptblock] $StopProcessFn = {
+            param($procId)
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        }
+    )
+    $pidFile = Join-Path $RunDir "$Name.pid"
+    if (-not (Test-Path -LiteralPath $pidFile)) { return $false }
+    $raw = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    $procId = 0
+    if (-not $raw -or -not [int]::TryParse($raw.Trim(), [ref]$procId)) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    $ids = @()
+    $stack = @($procId)
+    while ($stack.Count -gt 0) {
+        $current = [int]$stack[0]
+        $stack = @($stack | Select-Object -Skip 1)
+        if ($ids -notcontains $current) {
+            $ids += $current
+            $stack += @(& $ChildPidLookup $current)
+        }
+    }
+    for ($i = $ids.Count - 1; $i -ge 0; $i--) {
+        & $StopProcessFn ([int]$ids[$i])
+    }
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
 function Start-HostNativeService {
     [CmdletBinding()]
     param(

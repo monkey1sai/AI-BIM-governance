@@ -299,6 +299,9 @@ foreach ($endpoint in $SpectatorEndpointSpecs) {
     $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/streamType=webrtc"
     $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/signalPort=$($endpoint.SignalingPort)"
     $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/streamPort=$($endpoint.StreamPort)"
+    if (-not [string]::IsNullOrWhiteSpace($resolvedPublicIp)) {
+        $args += "--/exts/omni.kit.livestream.app/spectatorStream/$($endpoint.Index)/publicIp=$resolvedPublicIp"
+    }
 }
 if (-not $SkipAutoLoad) {
     $kitPath = $resolvedUsd.Replace("\", "/")

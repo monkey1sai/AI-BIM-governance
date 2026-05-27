@@ -60,14 +60,19 @@ finally { Remove-TestSandbox -Path $sandbox }
 $sandbox = New-TestSandbox -Prefix 'preflight-ports-spectator'
 try {
     $result = Test-PortAvailability -RepoRoot $sandbox `
-        -ExtraHostNativePorts @(49110, 48008, 49110) `
+        -ExtraHostNativePorts @(49110, 49110) `
+        -ExtraHostNativeUdpPorts @(48008) `
         -PortLookup { param($port) if ($port -eq 49110) { 24680 } else { $null } } `
+        -UdpPortLookup { param($port) if ($port -eq 48008) { 13579 } else { $null } } `
         -ProcessNameLookup { param($procId) if ($procId -eq 24680) { 'kit.exe' } else { $null } }
 
     Assert-True ($result.hostNative.Count -eq 5) 'hostNative includes unique spectator ports'
     $spectator = $result.hostNative | Where-Object { $_.port -eq 49110 } | Select-Object -First 1
     Assert-Equal 'OCCUPIED' $spectator.status 'spectator port occupied'
     Assert-Equal 24680 $spectator.pid 'spectator port pid'
+    $spectatorMedia = $result.hostNative | Where-Object { $_.protocol -eq 'UDP' -and $_.port -eq 48008 } | Select-Object -First 1
+    Assert-Equal 'OCCUPIED' $spectatorMedia.status 'spectator UDP media port occupied'
+    Assert-Equal 13579 $spectatorMedia.pid 'spectator UDP media port pid'
     Write-TestPass 'spectator ports included in preflight'
 }
 finally { Remove-TestSandbox -Path $sandbox }
