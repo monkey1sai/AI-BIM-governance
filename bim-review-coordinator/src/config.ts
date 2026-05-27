@@ -206,16 +206,23 @@ function endpointFromUnknown(value: unknown, index: number, fallback: KitInstanc
 function kitInstanceEndpointsFromEnv(name: string, fallback: KitInstanceEndpointConfig): KitInstanceEndpointConfig[] {
   const value = process.env[name];
   if (!value) return withGeneratedSpectatorEndpoints([fallback]);
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return withGeneratedSpectatorEndpoints([fallback]);
-    const endpoints = parsed
-      .map((item, index) => endpointFromUnknown(item, index, fallback))
-      .filter((endpoint): endpoint is KitInstanceEndpointConfig => endpoint !== null);
-    return withGeneratedSpectatorEndpoints(endpoints.length > 0 ? endpoints : [fallback]);
-  } catch {
-    return withGeneratedSpectatorEndpoints([fallback]);
+    parsed = JSON.parse(value) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${name} must be a JSON array; raw=${JSON.stringify(value)}; error=${message}`);
   }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${name} must be a JSON array; raw=${JSON.stringify(value)}.`);
+  }
+  const endpoints = parsed
+    .map((item, index) => endpointFromUnknown(item, index, fallback))
+    .filter((endpoint): endpoint is KitInstanceEndpointConfig => endpoint !== null);
+  if (endpoints.length === 0) {
+    throw new Error(`${name} produced no valid Kit endpoints from raw=${JSON.stringify(value)}.`);
+  }
+  return withGeneratedSpectatorEndpoints(endpoints);
 }
 
 function endpointKey(endpoint: KitInstanceEndpointConfig): string {

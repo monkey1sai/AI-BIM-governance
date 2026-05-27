@@ -139,6 +139,8 @@ function Start-HostNativeConversion {
     $env:STREAMING_CONVERSION_PORT     = "$Port"
     if (-not [string]::IsNullOrWhiteSpace($PublicArtifactsUrl)) {
         $env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL = $PublicArtifactsUrl
+    } else {
+        Remove-Item Env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL -ErrorAction SilentlyContinue
     }
 
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'

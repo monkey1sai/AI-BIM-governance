@@ -1,5 +1,5 @@
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 const originalConversionApiBase = process.env.CONVERSION_API_BASE;
@@ -18,6 +18,25 @@ const originalKitSpectatorSignalingPortStart = process.env.KIT_SPECTATOR_SIGNALI
 const originalKitSpectatorMediaPortStart = process.env.KIT_SPECTATOR_MEDIA_PORT_START;
 const originalKitSpectatorStreamPortStart = process.env.KIT_SPECTATOR_STREAM_PORT_START;
 const originalKitSpectatorPortStride = process.env.KIT_SPECTATOR_PORT_STRIDE;
+
+const kitEndpointEnvNames = [
+  "KIT_INSTANCE_ENDPOINTS",
+  "KIT_SPECTATOR_COUNT",
+  "KIT_SPECTATOR_SIGNALING_PORT_START",
+  "KIT_SPECTATOR_MEDIA_PORT_START",
+  "KIT_SPECTATOR_STREAM_PORT_START",
+  "KIT_SPECTATOR_PORT_STRIDE",
+] as const;
+
+function clearKitEndpointEnv(): void {
+  for (const name of kitEndpointEnvNames) {
+    delete process.env[name];
+  }
+}
+
+beforeEach(() => {
+  clearKitEndpointEnv();
+});
 
 afterEach(() => {
   if (originalConversionApiBase === undefined) {
@@ -259,6 +278,18 @@ describe("loadConfig Kit endpoint", () => {
     expect(config.kitInstanceEndpoints).toHaveLength(2);
     expect(config.kitInstanceEndpoints[1].id).toBe("kit_explicit_spectator");
     expect(config.kitInstanceEndpoints[1].signalingPort).toBe(49300);
+  });
+
+  it("rejects malformed KIT_INSTANCE_ENDPOINTS values", () => {
+    process.env.KIT_INSTANCE_ENDPOINTS = "{not-json";
+
+    expect(() => loadConfig()).toThrow(/KIT_INSTANCE_ENDPOINTS must be a JSON array/);
+  });
+
+  it("rejects KIT_INSTANCE_ENDPOINTS that produce no valid endpoints", () => {
+    process.env.KIT_INSTANCE_ENDPOINTS = JSON.stringify([{ id: "missing_port" }]);
+
+    expect(() => loadConfig()).toThrow(/KIT_INSTANCE_ENDPOINTS produced no valid Kit endpoints/);
   });
 
   it("rejects invalid spectator count values", () => {

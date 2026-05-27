@@ -214,6 +214,55 @@ function New-PortSequence {
     return $ports
 }
 
+function Assert-NoSpectatorPortCollisions {
+    param(
+        [Parameter(Mandatory = $true)][int[]] $SpectatorSignalPorts,
+        [Parameter(Mandatory = $true)][int[]] $SpectatorMediaPorts,
+        [Parameter(Mandatory = $true)][int] $PrimarySignalPort,
+        [Parameter(Mandatory = $true)][int] $PrimaryMediaPort
+    )
+    if ($SpectatorSignalPorts -contains $PrimarySignalPort) {
+        throw "KIT_SPECTATOR_SIGNALING_PORT generated a port that conflicts with primary Kit signaling port: $PrimarySignalPort"
+    }
+    if ($SpectatorMediaPorts -contains $PrimaryMediaPort) {
+        throw "KIT_SPECTATOR_MEDIA_PORT generated a port that conflicts with primary Kit media port: $PrimaryMediaPort"
+    }
+    foreach ($port in $SpectatorSignalPorts) {
+        if ($SpectatorMediaPorts -contains $port) {
+            throw "KIT_SPECTATOR_* generated overlapping signaling/media port: $port"
+        }
+    }
+}
+
+function Test-WebPlaneRefreshRequired {
+    param(
+        [switch] $Build,
+        [switch] $PublicHostExplicit,
+        [string] $ConversionBindHost,
+        [string] $ResolvedPublicHost,
+        [int] $SpectatorCount,
+        [Parameter(Mandatory = $true)][string] $EnvFile
+    )
+    if ($Build -or $PublicHostExplicit) { return $true }
+    if (-not [string]::IsNullOrWhiteSpace($ConversionBindHost)) { return $true }
+    if (-not (Test-LoopbackHost -HostName $ResolvedPublicHost)) { return $true }
+    if ($SpectatorCount -gt 0) { return $true }
+
+    $topologyEnvNames = @(
+        'VIEWER_BIND_HOST',
+        'KIT_SIGNALING_HOST',
+        'KIT_MEDIA_HOST',
+        'WEB_VIEWER_COORDINATOR_API_BASE',
+        'WEB_VIEWER_COORDINATOR_SOCKET_URL',
+        'VIEWER_PUBLIC_BASE_URL',
+        'COORDINATOR_PUBLIC_BASE_URL'
+    )
+    foreach ($name in $topologyEnvNames) {
+        if (Test-DeployValueConfigured -Name $name -EnvFile $EnvFile) { return $true }
+    }
+    return $false
+}
+
 function Set-DeployEnvIfNeeded {
     param(
         [Parameter(Mandatory = $true)][string] $Name,
@@ -280,8 +329,12 @@ $resolvedSpectatorStride = Resolve-DeployIntValue `
     -Max 1000
 $resolvedSpectatorSignalPorts = @(New-PortSequence -Count $resolvedSpectatorCount -Start $resolvedSpectatorSignalStart -Stride $resolvedSpectatorStride -Name 'KIT_SPECTATOR_SIGNALING_PORT')
 $resolvedSpectatorMediaPorts = @(New-PortSequence -Count $resolvedSpectatorCount -Start $resolvedSpectatorMediaStart -Stride $resolvedSpectatorStride -Name 'KIT_SPECTATOR_MEDIA_PORT')
+Assert-NoSpectatorPortCollisions `
+    -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
+    -SpectatorMediaPorts $resolvedSpectatorMediaPorts `
+    -PrimarySignalPort $KitSignalPort `
+    -PrimaryMediaPort $KitMediaPort
 $isPublicHostExplicit = -not [string]::IsNullOrWhiteSpace($PublicHost)
-$shouldRefreshWebPlane = $Build -or $isPublicHostExplicit
 $resolvedConversionBindHost = if (-not [string]::IsNullOrWhiteSpace($ConversionBindHost)) {
     $ConversionBindHost.Trim()
 } elseif (Test-LoopbackHost -HostName $resolvedPublicHost) {
@@ -289,6 +342,13 @@ $resolvedConversionBindHost = if (-not [string]::IsNullOrWhiteSpace($ConversionB
 } else {
     '0.0.0.0'
 }
+$shouldRefreshWebPlane = Test-WebPlaneRefreshRequired `
+    -Build:$Build `
+    -PublicHostExplicit:$isPublicHostExplicit `
+    -ConversionBindHost $ConversionBindHost `
+    -ResolvedPublicHost $resolvedPublicHost `
+    -SpectatorCount $resolvedSpectatorCount `
+    -EnvFile $resolvedEnvFile
 $script:coordinatorPublicUrl = Resolve-DeployPublicBaseUrl -Name 'COORDINATOR_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedCoordinatorPort
 $script:viewerPublicUrl = Resolve-DeployPublicBaseUrl -Name 'VIEWER_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedViewerPort
 

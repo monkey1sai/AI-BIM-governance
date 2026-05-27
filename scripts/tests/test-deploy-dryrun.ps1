@@ -34,4 +34,19 @@ Write-TestPass 'deploy-audit.json present'
 Assert-True (-not ($output -match 'Phase 4:')) 'Phase 4 not entered under -DryRun'
 Write-TestPass 'Phase 4 skipped'
 
+# Test 7: spectator ports must not collide with primary Kit ports
+$collisionOut = Join-Path $repoRoot 'scripts\.run\deploy-collision-test.out.log'
+$collisionErr = Join-Path $repoRoot 'scripts\.run\deploy-collision-test.err.log'
+$collisionProc = Start-Process -FilePath 'powershell.exe' `
+    -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$deploy,'-DryRun','-SpectatorCount','1','-KitSpectatorSignalPortStart','49100') `
+    -RedirectStandardOutput $collisionOut `
+    -RedirectStandardError $collisionErr `
+    -Wait -PassThru -WindowStyle Hidden
+$collisionOutput = ((Get-Content -LiteralPath $collisionOut -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content -LiteralPath $collisionErr -Raw -ErrorAction SilentlyContinue))
+$collisionExit = $collisionProc.ExitCode
+Remove-Item -LiteralPath $collisionOut, $collisionErr -ErrorAction SilentlyContinue
+Assert-True ($collisionExit -ne 0) 'spectator/primary collision exits non-zero'
+Assert-True ($collisionOutput -match 'conflicts with primary Kit signaling port') 'spectator/primary collision message'
+Write-TestPass 'spectator primary collision rejected'
+
 Write-Host "`n=== test-deploy-dryrun.ps1: ALL PASSED ===" -ForegroundColor Green

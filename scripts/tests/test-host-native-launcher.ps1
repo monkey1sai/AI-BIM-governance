@@ -66,4 +66,8 @@ Assert-True ($moduleContent -match "'-SpectatorSignalPorts'") 'launcher forwards
 Assert-True ($moduleContent -match "'-SpectatorStreamPorts'") 'launcher forwards spectator stream ports'
 Write-TestPass 'spectator stream args forwarded'
 
+# Test 9: conversion launcher clears stale public artifacts URL when no URL is provided
+Assert-True ($moduleContent -match 'Remove-Item Env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL') 'launcher clears stale public artifacts URL'
+Write-TestPass 'public artifacts URL env cleared when unset'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green
