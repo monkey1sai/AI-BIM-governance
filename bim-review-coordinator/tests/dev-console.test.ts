@@ -93,7 +93,7 @@ describe("coordinator dev console", () => {
 
     const response = await request(app.app)
       .get(
-        "/ui/open?session=review_session_test_001&userId=viewer_001&displayName=Viewer%20One&streamRole=spectator&signalingServer=evil.example"
+        "/ui/open?session=review_session_test_001&userId=viewer_001&displayName=Viewer%20One&streamRole=spectator&kitInstanceId=kit_local_001_spectator_02&signalingServer=evil.example"
       )
       .redirects(0);
 
@@ -102,6 +102,7 @@ describe("coordinator dev console", () => {
     expect(location).toContain("userId=viewer_001");
     expect(location).toContain("displayName=Viewer+One");
     expect(location).toContain("streamRole=spectator");
+    expect(location).toContain("kitInstanceId=kit_local_001_spectator_02");
     expect(location).not.toContain("signalingServer=");
     expect(location).not.toContain("evil.example");
   });

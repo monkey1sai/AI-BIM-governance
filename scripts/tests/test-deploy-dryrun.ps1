@@ -63,6 +63,7 @@ $lanExit = $LASTEXITCODE
 Assert-Equal 0 $lanExit 'LAN env dry-run exit 0'
 $lanAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
 Assert-Equal 'http://192.168.10.105:49101/artifacts' $lanAudit.runtime.conversionPublicArtifactsUrl 'LAN artifact URL derived from PUBLIC_HOST'
+Assert-True ($lanAudit.runtime.corsOrigins -match 'http://192\.168\.10\.105:5173') 'LAN viewer origin added to coordinator CORS origins'
 Assert-True ($lanAudit.runtime.allowedStageHosts -match '192\.168\.10\.105:49101') 'LAN public artifact host added to Kit stage allowlist'
 Assert-Equal 49200 $lanAudit.runtime.kitSignalPort 'primary Kit signal port from env file'
 Assert-Equal 48200 $lanAudit.runtime.kitMediaPort 'primary Kit media port from env file'
