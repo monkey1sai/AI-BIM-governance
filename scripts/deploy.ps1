@@ -867,24 +867,34 @@ Write-DeployHeader -Title 'Phase 4: Start services'
 # 4a: host-native conversion-service
 if ($SkipConversion) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native conversion (--SkipConversion)' -LogPath $LogPath | Out-Null
-} elseif (Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $RunDir) {
-    Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native conversion already running' -LogPath $LogPath | Out-Null
 } else {
-    Write-DeployTag -Tag 'ok' -Message 'Phase 4a starting host-native conversion-service' -LogPath $LogPath | Out-Null
-    $startInfo = Start-HostNativeConversion `
-        -RepoRoot $RepoRoot `
-        -RuntimeStorageRoot $volume.runtimeStorageRoot `
-        -BindHost $resolvedConversionBindHost `
-        -PublicArtifactsUrl ([Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL'))
-    Write-DeployTag -Tag 'ok' -Message "conversion PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
     $conversionHealthUrl = "http://${resolvedConversionHealthHost}:49101/health"
-    $ok = Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 30
-    if (-not $ok) {
-        Write-DeployTag -Tag 'fail' -Message "stage=4a Phase 4a conversion-service $conversionHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
-        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (conversion)'
-        exit 4
+    $conversionAlreadyRunning = Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $RunDir
+    if ($conversionAlreadyRunning) {
+        if (Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 5) {
+            Write-DeployTag -Tag 'skip' -Message "Phase 4a host-native conversion already running ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'fix' -Message "Phase 4a restarting host-native conversion because wrapper is alive but $conversionHealthUrl is unhealthy" -LogPath $LogPath | Out-Null
+            Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
+            $conversionAlreadyRunning = $false
+        }
     }
-    Write-DeployTag -Tag 'ok' -Message "Phase 4a conversion-service ready ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
+    if (-not $conversionAlreadyRunning) {
+        Write-DeployTag -Tag 'ok' -Message 'Phase 4a starting host-native conversion-service' -LogPath $LogPath | Out-Null
+        $startInfo = Start-HostNativeConversion `
+            -RepoRoot $RepoRoot `
+            -RuntimeStorageRoot $volume.runtimeStorageRoot `
+            -BindHost $resolvedConversionBindHost `
+            -PublicArtifactsUrl ([Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL'))
+        Write-DeployTag -Tag 'ok' -Message "conversion PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
+        $ok = Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 30
+        if (-not $ok) {
+            Write-DeployTag -Tag 'fail' -Message "stage=4a Phase 4a conversion-service $conversionHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (conversion)'
+            exit 4
+        }
+        Write-DeployTag -Tag 'ok' -Message "Phase 4a conversion-service ready ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
+    }
 }
 
 # 4b: host-native Kit
