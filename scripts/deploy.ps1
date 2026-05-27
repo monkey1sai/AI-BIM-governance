@@ -348,6 +348,22 @@ $resolvedPublicHostRaw = if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {
 $resolvedPublicHost = Resolve-HostNameOnly -Value $resolvedPublicHostRaw
 $resolvedCoordinatorPort = Resolve-DeployIntValue -Name 'COORDINATOR_PORT' -EnvFile $resolvedEnvFile -Default 8004 -Min 1 -Max 65535
 $resolvedViewerPort = Resolve-DeployIntValue -Name 'VIEWER_PORT' -EnvFile $resolvedEnvFile -Default 5173 -Min 1 -Max 65535
+$resolvedKitSignalPort = Resolve-DeployIntValue `
+    -Name 'KIT_SIGNALING_PORT' `
+    -EnvFile $resolvedEnvFile `
+    -Default 49100 `
+    -ExplicitValue $KitSignalPort `
+    -HasExplicitValue:($PSBoundParameters.ContainsKey('KitSignalPort')) `
+    -Min 1 `
+    -Max 65535
+$resolvedKitMediaPort = Resolve-DeployIntValue `
+    -Name 'KIT_MEDIA_PORT' `
+    -EnvFile $resolvedEnvFile `
+    -Default 47998 `
+    -ExplicitValue $KitMediaPort `
+    -HasExplicitValue:($PSBoundParameters.ContainsKey('KitMediaPort')) `
+    -Min 1 `
+    -Max 65535
 $resolvedSpectatorCount = Resolve-DeployIntValue `
     -Name 'KIT_SPECTATOR_COUNT' `
     -EnvFile $resolvedEnvFile `
@@ -385,8 +401,8 @@ $resolvedSpectatorMediaPorts = @(New-PortSequence -Count $resolvedSpectatorCount
 Assert-NoSpectatorPortCollisions `
     -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
     -SpectatorMediaPorts $resolvedSpectatorMediaPorts `
-    -PrimarySignalPort $KitSignalPort `
-    -PrimaryMediaPort $KitMediaPort
+    -PrimarySignalPort $resolvedKitSignalPort `
+    -PrimaryMediaPort $resolvedKitMediaPort
 $isPublicHostExplicit = -not [string]::IsNullOrWhiteSpace($PublicHost)
 $resolvedConversionBindHost = if (-not [string]::IsNullOrWhiteSpace($ConversionBindHost)) {
     $ConversionBindHost.Trim()
@@ -406,14 +422,16 @@ $shouldRefreshWebPlane = Test-WebPlaneRefreshRequired `
 $resolvedConversionHealthHost = Resolve-HealthProbeHost -BindHost $resolvedConversionBindHost
 $kitRuntimeSignature = New-KitRuntimeSignature `
     -PublicHost $resolvedPublicHost `
-    -SignalPort $KitSignalPort `
-    -StreamPort $KitMediaPort `
+    -SignalPort $resolvedKitSignalPort `
+    -StreamPort $resolvedKitMediaPort `
     -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
     -SpectatorStreamPorts $resolvedSpectatorMediaPorts
 $script:coordinatorPublicUrl = Resolve-DeployPublicBaseUrl -Name 'COORDINATOR_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedCoordinatorPort
 $script:viewerPublicUrl = Resolve-DeployPublicBaseUrl -Name 'VIEWER_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedViewerPort
 
 [Environment]::SetEnvironmentVariable('PUBLIC_HOST', $resolvedPublicHost, 'Process')
+[Environment]::SetEnvironmentVariable('KIT_SIGNALING_PORT', [string]$resolvedKitSignalPort, 'Process')
+[Environment]::SetEnvironmentVariable('KIT_MEDIA_PORT', [string]$resolvedKitMediaPort, 'Process')
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_COUNT', [string]$resolvedSpectatorCount, 'Process')
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_SIGNALING_PORT_START', [string]$resolvedSpectatorSignalStart, 'Process')
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_MEDIA_PORT_START', [string]$resolvedSpectatorMediaStart, 'Process')
@@ -427,7 +445,7 @@ Set-DeployEnvIfNeeded -Name 'VIEWER_PUBLIC_BASE_URL' -Value $script:viewerPublic
 Set-DeployEnvIfNeeded -Name 'COORDINATOR_PUBLIC_BASE_URL' -Value $script:coordinatorPublicUrl -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL' -Value "http://${resolvedPublicHost}:49101/artifacts" -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 
-$ports = Test-PortAvailability -RepoRoot $RepoRoot -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
 $script:volume = $volume
 
@@ -505,6 +523,8 @@ $auditObj = [pscustomobject]@{
         conversionBindHost  = $resolvedConversionBindHost
         conversionHealthHost = $resolvedConversionHealthHost
         conversionPublicArtifactsUrl = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL')
+        kitSignalPort       = $resolvedKitSignalPort
+        kitMediaPort        = $resolvedKitMediaPort
         spectatorCount      = $resolvedSpectatorCount
         spectatorSignalPorts = $resolvedSpectatorSignalPorts
         spectatorMediaPorts  = $resolvedSpectatorMediaPorts
@@ -737,7 +757,7 @@ Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
 
 # Phase 2 跑了 docker compose rm / build,docker container 與 wslrelay 等 port forwarder
 # 狀態可能變動。Re-audit ports 避免用 Phase 1 的 stale 資料問互動。
-$ports = Test-PortAvailability -RepoRoot $RepoRoot -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 
 # Docker Desktop 在 Windows 用以下 process 做 container port forward,不是「陌生 PID」:
 $dockerForwarderNames = @('wslrelay.exe','com.docker.backend.exe','docker.exe','vpnkit.exe','vpnkit-bridge.exe')
@@ -837,20 +857,20 @@ if ($SkipKit) {
         Write-DeployTag -Tag 'ok' -Message 'Phase 4b starting host-native Kit streaming' -LogPath $LogPath | Out-Null
         $startInfo = Start-HostNativeKit `
             -RepoRoot $RepoRoot `
-            -SignalPort $KitSignalPort `
-            -StreamPort $KitMediaPort `
+            -SignalPort $resolvedKitSignalPort `
+            -StreamPort $resolvedKitMediaPort `
             -PublicIp $resolvedPublicHost `
             -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
             -SpectatorStreamPorts $resolvedSpectatorMediaPorts
         Write-DeployTag -Tag 'ok' -Message "Kit PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
-        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $KitSignalPort -TimeoutSec 90
+        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -TimeoutSec 90
         if (-not $kitRes.ready) {
             Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b Kit not ready in 90s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword))" -LogPath $LogPath | Out-Null
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (Kit)'
             exit 4
         }
         Set-KitRuntimeSignature -Path $script:kitRuntimeSignaturePath -Value $kitRuntimeSignature
-        Write-DeployTag -Tag 'ok' -Message "Phase 4b Kit ready (:$KitSignalPort LISTEN + '$($kitRes.matchedKeyword)')" -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'ok' -Message "Phase 4b Kit ready (:$resolvedKitSignalPort LISTEN + '$($kitRes.matchedKeyword)')" -LogPath $LogPath | Out-Null
     }
 }
 

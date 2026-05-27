@@ -53,6 +53,8 @@ Write-TestPass 'spectator primary collision rejected'
 $lanEnv = Join-Path $repoRoot 'scripts\.run\deploy-lan-test.env'
 Set-Content -LiteralPath $lanEnv -Encoding ascii -Value @(
     'PUBLIC_HOST=192.168.10.105',
+    'KIT_SIGNALING_PORT=49200',
+    'KIT_MEDIA_PORT=48200',
     'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL=http://127.0.0.1:49101/artifacts',
     'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-test\storage'
 )
@@ -61,6 +63,8 @@ $lanExit = $LASTEXITCODE
 Assert-Equal 0 $lanExit 'LAN env dry-run exit 0'
 $lanAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
 Assert-Equal 'http://192.168.10.105:49101/artifacts' $lanAudit.runtime.conversionPublicArtifactsUrl 'LAN artifact URL derived from PUBLIC_HOST'
+Assert-Equal 49200 $lanAudit.runtime.kitSignalPort 'primary Kit signal port from env file'
+Assert-Equal 48200 $lanAudit.runtime.kitMediaPort 'primary Kit media port from env file'
 Remove-Item -LiteralPath $lanEnv -ErrorAction SilentlyContinue
 Write-TestPass 'LAN env derives public artifacts URL'
 
