@@ -65,6 +65,9 @@ export interface CoordinatorConfig {
   conversionPollEnabled: boolean;         // env CONVERSION_POLL_ENABLED,default true
   conversionPollIntervalSeconds: number;  // env CONVERSION_POLL_INTERVAL_SECONDS,default 5
   conversionPollMaxAttempts: number;      // env CONVERSION_POLL_MAX_ATTEMPTS,default 60(= 5 分鐘上限)
+  // cross-service-structured-log-baseline: 結構化 log 寫入根目錄。
+  // 預設 LOG_ROOT env 或 <cwd>/logs;tests fixture 應在 overrides 內傳 tmp 路徑避免污染 repo。
+  logRoot: string;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -228,6 +231,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     conversionPollEnabled: parseBooleanEnv("CONVERSION_POLL_ENABLED", true),
     conversionPollIntervalSeconds: numberFromEnv("CONVERSION_POLL_INTERVAL_SECONDS", 5),
     conversionPollMaxAttempts: numberFromEnv("CONVERSION_POLL_MAX_ATTEMPTS", 60),
+    logRoot: process.env.LOG_ROOT || path.join(cwd, "logs"),
     ...overrides,
   };
 }

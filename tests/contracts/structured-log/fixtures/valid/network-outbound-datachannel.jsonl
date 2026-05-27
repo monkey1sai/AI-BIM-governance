@@ -1,0 +1,1 @@
+{"ts":"2026-05-26T14:25:00.000Z","level":"info","event_type":"network","service":"viewer","component":"webrtcClient","run_id":"run_20260526_142455_d3e400","trace_id":"rev_20260526_1234abcd","msg":"DataChannel openStageRequest sent","data":{"direction":"outbound","protocol":"datachannel","peer":"streaming-server","status":"openStageRequest"}}

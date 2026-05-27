@@ -35,7 +35,9 @@ jobs:
         run: |
           npm install -g @fission-ai/openspec gitnexus
           python -m pip install --upgrade pip
-          python -m pip install pytest fastapi httpx
+          # jsonschema is required by tests/contracts/structured-log/test_validate.py
+          # and test_python_adapter.py per cross-service-structured-log-baseline §6.
+          python -m pip install pytest fastapi httpx jsonschema
 
       - name: Install coordinator dependencies
         shell: pwsh

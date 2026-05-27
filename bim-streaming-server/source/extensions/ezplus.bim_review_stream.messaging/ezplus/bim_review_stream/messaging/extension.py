@@ -10,6 +10,7 @@
 
 from .stage_loading import LoadingManager
 from .stage_management import StageManager
+from . import kit_struct_log
 import omni.ext
 
 
@@ -22,6 +23,10 @@ class Extension(omni.ext.IExt):
     messaging managers"""
     def on_startup(self):
         """This is called every time the extension is activated."""
+        # cross-service-structured-log-baseline: emit lifecycle start for the
+        # Kit subprocess (additive — `carb.log_*` channels stay).
+        kit_struct_log.log_kit_startup_lifecycle()
+
         # Internal messaging state
         self._loading_manager: LoadingManager = LoadingManager()
         self._stage_manager: StageManager = StageManager()
@@ -36,3 +41,6 @@ class Extension(omni.ext.IExt):
         if self._stage_manager:
             self._stage_manager.on_shutdown()
             self._stage_manager = None
+
+        # cross-service-structured-log-baseline: emit lifecycle closed.
+        kit_struct_log.log_kit_shutdown_lifecycle()

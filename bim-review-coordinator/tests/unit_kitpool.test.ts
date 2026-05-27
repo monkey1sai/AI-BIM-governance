@@ -64,6 +64,7 @@ const defaultConfig: CoordinatorConfig = {
   conversionPollEnabled: false,
   conversionPollIntervalSeconds: 5,
   conversionPollMaxAttempts: 60,
+  logRoot: "/tmp/logs",
 };
 
 const multiEndpointConfig: CoordinatorConfig = {

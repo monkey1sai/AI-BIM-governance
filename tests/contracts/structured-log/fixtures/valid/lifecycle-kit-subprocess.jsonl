@@ -1,0 +1,1 @@
+{"ts":"2026-05-25T05:52:18.110Z","level":"info","event_type":"lifecycle","service":"scripts","component":"convert-ifc-to-usdc","run_id":"run_20260525_055201_115177","trace_id":"stream_conv_20260525055218_115177da","msg":"kit subprocess started","data":{"phase":"start","subject_kind":"kit_subprocess","subject_id":"36380"}}

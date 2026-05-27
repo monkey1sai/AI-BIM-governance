@@ -1,0 +1,1 @@
+{"ts":"2026-05-26T14:23:15.000Z","level":"error","event_type":"logic_error","service":"coordinator","component":"app","run_id":"run_20260526_142010_a3f9","trace_id":"rev_20260526_1234abcd","msg":"missing data.error.stack_tail","caller":"src/app.ts:42","error":{"name":"X","message":"y","stack_tail":["z"]},"data":{"error":{"name":"X","message":"y"}}}

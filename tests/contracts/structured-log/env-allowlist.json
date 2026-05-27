@@ -1,0 +1,26 @@
+{
+  "$comment": "Machine-readable source of truth for env_snapshot allow-list. Companion to docs/contracts/structured-log-env-allowlist.md (human-readable). Adapters in all four languages (TS coordinator, TS viewer, Python streaming-server, PowerShell scripts) MUST read this file. Contract test test_validate.py asserts the documented table matches this list.",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "allow_list_version": 1,
+  "allow_list": [
+    "NODE_ENV",
+    "STORAGE_ROOT",
+    "LOG_ROOT",
+    "LOG_RETENTION_DAYS",
+    "BIM_TRACE_ID",
+    "COORDINATOR_PORT",
+    "COORDINATOR_HOST",
+    "VIEWER_PORT",
+    "KIT_RUNTIME_PORT",
+    "KIT_CONVERSION_PORT",
+    "IFC_DOWNLOAD_STRICT",
+    "IFC_DOWNLOAD_FALLBACK_ON_FETCH_ERROR",
+    "CONVERSION_SERVICE_BASE_URL",
+    "CONVERSION_RESULT_CALLBACK_URL",
+    "EXTERNAL_CLOUD_BIM_CONTROL_BASE_URL",
+    "OPENSPEC_CHANGE",
+    "BIM_RUNTIME_PROFILE",
+    "RUN_ID_PREFIX"
+  ],
+  "secret_patterns": ["TOKEN", "SECRET", "KEY", "PASSWORD", "AUTH", "CREDENTIAL"]
+}
