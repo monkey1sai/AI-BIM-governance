@@ -6,11 +6,18 @@ const originalConversionApiBase = process.env.CONVERSION_API_BASE;
 const originalStreamingConversionApiBase = process.env.STREAMING_CONVERSION_API_BASE;
 const originalKitStreamServer = process.env.KIT_STREAM_SERVER;
 const originalKitMediaServer = process.env.KIT_MEDIA_SERVER;
+const originalKitMediaPort = process.env.KIT_MEDIA_PORT;
 const originalStorageRoot = process.env.STORAGE_ROOT;
 const originalPublicHost = process.env.PUBLIC_HOST;
 const originalViewerPublicBaseUrl = process.env.VIEWER_PUBLIC_BASE_URL;
 const originalCoordinatorPublicBaseUrl = process.env.COORDINATOR_PUBLIC_BASE_URL;
 const originalCorsOrigins = process.env.CORS_ORIGINS;
+const originalKitInstanceEndpoints = process.env.KIT_INSTANCE_ENDPOINTS;
+const originalKitSpectatorCount = process.env.KIT_SPECTATOR_COUNT;
+const originalKitSpectatorSignalingPortStart = process.env.KIT_SPECTATOR_SIGNALING_PORT_START;
+const originalKitSpectatorMediaPortStart = process.env.KIT_SPECTATOR_MEDIA_PORT_START;
+const originalKitSpectatorStreamPortStart = process.env.KIT_SPECTATOR_STREAM_PORT_START;
+const originalKitSpectatorPortStride = process.env.KIT_SPECTATOR_PORT_STRIDE;
 
 afterEach(() => {
   if (originalConversionApiBase === undefined) {
@@ -35,6 +42,12 @@ afterEach(() => {
     delete process.env.KIT_MEDIA_SERVER;
   } else {
     process.env.KIT_MEDIA_SERVER = originalKitMediaServer;
+  }
+
+  if (originalKitMediaPort === undefined) {
+    delete process.env.KIT_MEDIA_PORT;
+  } else {
+    process.env.KIT_MEDIA_PORT = originalKitMediaPort;
   }
 
   if (originalStorageRoot === undefined) {
@@ -65,6 +78,42 @@ afterEach(() => {
     delete process.env.CORS_ORIGINS;
   } else {
     process.env.CORS_ORIGINS = originalCorsOrigins;
+  }
+
+  if (originalKitInstanceEndpoints === undefined) {
+    delete process.env.KIT_INSTANCE_ENDPOINTS;
+  } else {
+    process.env.KIT_INSTANCE_ENDPOINTS = originalKitInstanceEndpoints;
+  }
+
+  if (originalKitSpectatorCount === undefined) {
+    delete process.env.KIT_SPECTATOR_COUNT;
+  } else {
+    process.env.KIT_SPECTATOR_COUNT = originalKitSpectatorCount;
+  }
+
+  if (originalKitSpectatorSignalingPortStart === undefined) {
+    delete process.env.KIT_SPECTATOR_SIGNALING_PORT_START;
+  } else {
+    process.env.KIT_SPECTATOR_SIGNALING_PORT_START = originalKitSpectatorSignalingPortStart;
+  }
+
+  if (originalKitSpectatorMediaPortStart === undefined) {
+    delete process.env.KIT_SPECTATOR_MEDIA_PORT_START;
+  } else {
+    process.env.KIT_SPECTATOR_MEDIA_PORT_START = originalKitSpectatorMediaPortStart;
+  }
+
+  if (originalKitSpectatorStreamPortStart === undefined) {
+    delete process.env.KIT_SPECTATOR_STREAM_PORT_START;
+  } else {
+    process.env.KIT_SPECTATOR_STREAM_PORT_START = originalKitSpectatorStreamPortStart;
+  }
+
+  if (originalKitSpectatorPortStride === undefined) {
+    delete process.env.KIT_SPECTATOR_PORT_STRIDE;
+  } else {
+    process.env.KIT_SPECTATOR_PORT_STRIDE = originalKitSpectatorPortStride;
   }
 });
 
@@ -149,6 +198,73 @@ describe("loadConfig Kit endpoint", () => {
     expect(config.kitMediaServer).not.toBe("auto");
     expect(config.kitStreamServer.length).toBeGreaterThan(0);
     expect(config.kitMediaServer.length).toBeGreaterThan(0);
+  });
+
+  it("generates configured spectator endpoints from a single primary endpoint", () => {
+    process.env.KIT_STREAM_SERVER = "192.0.2.10";
+    process.env.KIT_MEDIA_SERVER = "192.0.2.10";
+    process.env.KIT_MEDIA_PORT = "47998";
+    process.env.KIT_SPECTATOR_COUNT = "5";
+
+    const config = loadConfig();
+
+    expect(config.kitInstanceEndpoints).toHaveLength(6);
+    expect(config.kitInstanceEndpoints[0]).toMatchObject({
+      id: "kit_local_001",
+      signalingPort: 49100,
+      mediaPort: 47998,
+    });
+    expect(config.kitInstanceEndpoints.slice(1).map((endpoint) => endpoint.signalingPort))
+      .toEqual([49110, 49120, 49130, 49140, 49150]);
+    expect(config.kitInstanceEndpoints.slice(1).map((endpoint) => endpoint.mediaPort))
+      .toEqual([48008, 48018, 48028, 48038, 48048]);
+  });
+
+  it("respects custom spectator count and port stride", () => {
+    process.env.KIT_MEDIA_PORT = "47998";
+    process.env.KIT_SPECTATOR_COUNT = "2";
+    process.env.KIT_SPECTATOR_SIGNALING_PORT_START = "49210";
+    process.env.KIT_SPECTATOR_MEDIA_PORT_START = "48210";
+    process.env.KIT_SPECTATOR_PORT_STRIDE = "2";
+
+    const config = loadConfig();
+
+    expect(config.kitInstanceEndpoints.map((endpoint) => endpoint.signalingPort))
+      .toEqual([49100, 49210, 49212]);
+    expect(config.kitInstanceEndpoints.map((endpoint) => endpoint.mediaPort))
+      .toEqual([47998, 48210, 48212]);
+  });
+
+  it("does not append generated spectators when KIT_INSTANCE_ENDPOINTS already defines multiple endpoints", () => {
+    process.env.KIT_SPECTATOR_COUNT = "5";
+    process.env.KIT_INSTANCE_ENDPOINTS = JSON.stringify([
+      {
+        id: "kit_primary",
+        signalingServer: "192.0.2.10",
+        signalingPort: 49100,
+        mediaServer: "192.0.2.10",
+        mediaPort: 47998,
+      },
+      {
+        id: "kit_explicit_spectator",
+        signalingServer: "192.0.2.10",
+        signalingPort: 49300,
+        mediaServer: "192.0.2.10",
+        mediaPort: 48300,
+      },
+    ]);
+
+    const config = loadConfig();
+
+    expect(config.kitInstanceEndpoints).toHaveLength(2);
+    expect(config.kitInstanceEndpoints[1].id).toBe("kit_explicit_spectator");
+    expect(config.kitInstanceEndpoints[1].signalingPort).toBe(49300);
+  });
+
+  it("rejects invalid spectator count values", () => {
+    process.env.KIT_SPECTATOR_COUNT = "many";
+
+    expect(() => loadConfig()).toThrow(/KIT_SPECTATOR_COUNT must be an integer/);
   });
 });
 

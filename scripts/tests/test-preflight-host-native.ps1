@@ -15,6 +15,12 @@ try {
     $kitLauncher = Join-Path $sandbox 'bim-streaming-server\scripts\start-streaming-server.ps1'
     New-Item -ItemType Directory -Path (Split-Path -Parent $kitLauncher) -Force | Out-Null
     Set-Content -LiteralPath $kitLauncher -Value '# fake'
+    $runtimeLauncher = Join-Path $sandbox 'bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat'
+    $kitExe = Join-Path $sandbox 'bim-streaming-server\_build\windows-x86_64\release\kit\kit.exe'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $runtimeLauncher) -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path -Parent $kitExe) -Force | Out-Null
+    Set-Content -LiteralPath $runtimeLauncher -Value '@echo off'
+    Set-Content -LiteralPath $kitExe -Value 'fake'
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
@@ -22,6 +28,8 @@ try {
 
     Assert-Equal 'OK' $result.venv 'venv OK'
     Assert-Equal 'OK' $result.kitLauncher 'kitLauncher OK'
+    Assert-Equal 'OK' $result.kitRuntime 'kitRuntime OK'
+    Assert-True ($result.kitBuildRequired -eq $false) 'kit build not required'
     Assert-Equal 'OK' $result.nvidiaDriver 'nvidiaDriver OK'
     Assert-True ($result.ok -eq $true) 'overall ok'
     Write-TestPass 'happy path'
@@ -77,6 +85,31 @@ try {
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
     Assert-Equal 'MISSING_PATH' $result.kitLauncher 'Kit launcher MISSING_PATH'
     Write-TestPass 'Kit launcher missing flagged'
+}
+finally { Remove-TestSandbox -Path $sandbox }
+
+# Test 6: wrapper 存在但 _build runtime artifact 缺失 → NEEDS_BUILD
+$sandbox = New-TestSandbox -Prefix 'preflight-hn'
+try {
+    $venvDir = Join-Path $sandbox '.venv\Scripts'
+    New-Item -ItemType Directory -Path $venvDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $venvDir 'python.exe') -Value 'fake'
+    $kitLauncher = Join-Path $sandbox 'bim-streaming-server\scripts\start-streaming-server.ps1'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $kitLauncher) -Force | Out-Null
+    Set-Content -LiteralPath $kitLauncher -Value '# fake'
+
+    $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
+        -PythonVersionProbe { param($exe) '3.12.4' } `
+        -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
+
+    Assert-Equal 'OK' $result.kitLauncher 'Kit wrapper OK'
+    Assert-Equal 'NEEDS_BUILD' $result.kitRuntime 'Kit runtime NEEDS_BUILD'
+    Assert-True ($result.kitBuildRequired -eq $true) 'kit build required'
+    Assert-True ($result.kitBuildReason -match 'streaming_launcher') 'missing launcher reason included'
+    Assert-True ($result.kitBuildReason -match 'kit_exe') 'missing kit.exe reason included'
+    Assert-Equal 'cd bim-streaming-server; .\repo.bat build' $result.kitBuildCommand 'build command hint'
+    Assert-True ($result.ok -eq $false) 'overall false until build artifacts exist'
+    Write-TestPass 'Kit runtime build requirement flagged'
 }
 finally { Remove-TestSandbox -Path $sandbox }
 

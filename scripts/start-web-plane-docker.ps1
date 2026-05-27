@@ -85,6 +85,10 @@ $resolvedEnvFile = Resolve-HybridEnvFile -Requested $EnvFile
 $envValues = Read-EnvFile -Path $resolvedEnvFile
 $coordinatorPort = Value-OrDefault -Values $envValues -Name "COORDINATOR_PORT" -Default "8004"
 $viewerPort = Value-OrDefault -Values $envValues -Name "VIEWER_PORT" -Default "5173"
+$publicHost = Value-OrDefault -Values $envValues -Name "PUBLIC_HOST" -Default "127.0.0.1"
+$coordinatorPublicUrl = Value-OrDefault -Values $envValues -Name "COORDINATOR_PUBLIC_BASE_URL" -Default "http://${publicHost}:$coordinatorPort"
+$viewerPublicUrl = Value-OrDefault -Values $envValues -Name "VIEWER_PUBLIC_BASE_URL" -Default "http://${publicHost}:$viewerPort"
+$viewerBindHost = Value-OrDefault -Values $envValues -Name "VIEWER_BIND_HOST" -Default "127.0.0.1"
 $composeArgs = @(
     "compose",
     "-f", "compose.runtime-manager.yml",
@@ -107,7 +111,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "[hybrid] mode: Docker web plane + host-native Kit/conversion" -ForegroundColor Green
 Write-Host "[hybrid] env file: $resolvedEnvFile" -ForegroundColor Green
-Write-Host "[hybrid] coordinator: http://127.0.0.1:$coordinatorPort" -ForegroundColor Green
-Write-Host "[hybrid] viewer:      http://127.0.0.1:$viewerPort" -ForegroundColor Green
+Write-Host "[hybrid] coordinator: $coordinatorPublicUrl" -ForegroundColor Green
+Write-Host "[hybrid] viewer:      $viewerPublicUrl (bind=$viewerBindHost)" -ForegroundColor Green
 Write-Host "[hybrid] next: pwsh -File scripts/check-web-plane-docker.ps1 -EnvFile $resolvedEnvFile" -ForegroundColor Green
 Write-Host "[hybrid] host-native conversion: pwsh -File bim-streaming-server/scripts/start-host-native-conversion-service.ps1" -ForegroundColor Yellow

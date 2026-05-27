@@ -56,4 +56,20 @@ try {
 }
 finally { Remove-TestSandbox -Path $sandbox }
 
+# Test 4: spectator ports 會納入 host-native port audit
+$sandbox = New-TestSandbox -Prefix 'preflight-ports-spectator'
+try {
+    $result = Test-PortAvailability -RepoRoot $sandbox `
+        -ExtraHostNativePorts @(49110, 48008, 49110) `
+        -PortLookup { param($port) if ($port -eq 49110) { 24680 } else { $null } } `
+        -ProcessNameLookup { param($procId) if ($procId -eq 24680) { 'kit.exe' } else { $null } }
+
+    Assert-True ($result.hostNative.Count -eq 5) 'hostNative includes unique spectator ports'
+    $spectator = $result.hostNative | Where-Object { $_.port -eq 49110 } | Select-Object -First 1
+    Assert-Equal 'OCCUPIED' $spectator.status 'spectator port occupied'
+    Assert-Equal 24680 $spectator.pid 'spectator port pid'
+    Write-TestPass 'spectator ports included in preflight'
+}
+finally { Remove-TestSandbox -Path $sandbox }
+
 Write-Host "`n=== test-preflight-ports.ps1: ALL PASSED ===" -ForegroundColor Green

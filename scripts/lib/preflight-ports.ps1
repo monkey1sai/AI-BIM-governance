@@ -52,6 +52,7 @@ function Test-PortAvailability {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [int[]] $ExtraHostNativePorts = @(),
         [scriptblock] $PortLookup = {
             param($port)
             $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -67,7 +68,7 @@ function Test-PortAvailability {
     )
 
     $dockerPorts     = @(8004, 5173)
-    $hostNativePorts = @(49100, 49101, 47998)
+    $hostNativePorts = @(@(49100, 49101, 47998) + $ExtraHostNativePorts | Sort-Object -Unique)
     $runDir          = Join-Path $RepoRoot 'scripts\.run'
     $ourPids         = Get-PidsFromRunDir -RunDir $runDir
 

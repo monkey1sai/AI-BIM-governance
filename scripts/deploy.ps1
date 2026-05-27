@@ -23,8 +23,14 @@ param(
     [switch] $SkipKit,
     [switch] $SkipConversion,
     [switch] $SkipDocker,
+    [string] $PublicHost = '',
+    [string] $ConversionBindHost = '',
     [int]    $KitSignalPort = 49100,
     [int]    $KitMediaPort  = 47998,
+    [int]    $SpectatorCount = 5,
+    [int]    $KitSpectatorSignalPortStart = 49110,
+    [int]    $KitSpectatorMediaPortStart = 48008,
+    [int]    $KitSpectatorPortStride = 10,
     [switch] $StrictPostVerify
 )
 
@@ -57,6 +63,8 @@ if (-not (Test-Path -LiteralPath $RunDir)) {
 # 提前宣告以下 script-scope 變數,Print-FinalSummary 才能用
 $script:resolvedEnvFile = ''
 $script:volume = $null
+$script:coordinatorPublicUrl = ''
+$script:viewerPublicUrl = ''
 
 # ============================================================
 # Helper: Print-FinalSummary(在 Phase 1 之前定義,讓任何階段都可呼叫)
@@ -75,7 +83,10 @@ function Print-FinalSummary {
     if ($ExitCode -eq 0) {
         Write-Host ''
         Write-Host 'Next:' -ForegroundColor Green
-        Write-Host '  > open http://127.0.0.1:8004/ui            (coordinator UI / WebRTC entry)'
+        $coordinatorUrl = if ($script:coordinatorPublicUrl) { $script:coordinatorPublicUrl } else { 'http://127.0.0.1:8004' }
+        $viewerUrl = if ($script:viewerPublicUrl) { $script:viewerPublicUrl } else { 'http://127.0.0.1:5173' }
+        Write-Host "  > open $coordinatorUrl/ui            (coordinator UI / WebRTC entry)"
+        Write-Host "  > viewer base: $viewerUrl"
         Write-Host '  > tail scripts\.run\bim-streaming-server.log -Wait'
         Write-Host '  > stop all:'
         Write-Host '      docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit down'
@@ -96,6 +107,97 @@ function Print-FinalSummary {
     }
 }
 
+function Get-DeployEnvValue {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $EnvFile,
+        [string] $Default = ''
+    )
+    $envValue = [Environment]::GetEnvironmentVariable($Name)
+    if (-not [string]::IsNullOrWhiteSpace($envValue)) { return $envValue.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($EnvFile) -and (Test-Path -LiteralPath $EnvFile)) {
+        $fileValue = Get-EnvExampleDefaultValue -Path $EnvFile -Key $Name
+        if (-not [string]::IsNullOrWhiteSpace($fileValue)) { return $fileValue.Trim() }
+    }
+    return $Default
+}
+
+function Test-DeployValueConfigured {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $EnvFile
+    )
+    $value = Get-DeployEnvValue -Name $Name -EnvFile $EnvFile -Default ''
+    return (-not [string]::IsNullOrWhiteSpace($value))
+}
+
+function Resolve-DeployIntValue {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $EnvFile,
+        [Parameter(Mandatory = $true)][int] $Default,
+        [int] $ExplicitValue = 0,
+        [switch] $HasExplicitValue,
+        [int] $Min = 0,
+        [int] $Max = 65535
+    )
+    $raw = if ($HasExplicitValue) { [string]$ExplicitValue } else { Get-DeployEnvValue -Name $Name -EnvFile $EnvFile -Default ([string]$Default) }
+    $parsed = 0
+    if (-not [int]::TryParse($raw, [ref]$parsed)) {
+        throw "$Name must be an integer: $raw"
+    }
+    if ($parsed -lt $Min -or $parsed -gt $Max) {
+        throw "$Name must be between $Min and ${Max}: $parsed"
+    }
+    return $parsed
+}
+
+function Resolve-HostNameOnly {
+    param([Parameter(Mandatory = $true)][string] $Value)
+    $trimmed = $Value.Trim()
+    if ($trimmed -match '^https?://') {
+        return ([uri]$trimmed).Host
+    }
+    return $trimmed
+}
+
+function Test-LoopbackHost {
+    param([Parameter(Mandatory = $true)][string] $HostName)
+    $normalized = (Resolve-HostNameOnly -Value $HostName).ToLowerInvariant()
+    return ($normalized -eq 'localhost' -or $normalized -eq '::1' -or $normalized.StartsWith('127.'))
+}
+
+function New-PortSequence {
+    param(
+        [Parameter(Mandatory = $true)][int] $Count,
+        [Parameter(Mandatory = $true)][int] $Start,
+        [Parameter(Mandatory = $true)][int] $Stride,
+        [Parameter(Mandatory = $true)][string] $Name
+    )
+    if ($Count -lt 0 -or $Count -gt 32) { throw "$Name count must be between 0 and 32." }
+    if ($Stride -lt 1) { throw "$Name stride must be >= 1." }
+    $ports = @()
+    for ($i = 0; $i -lt $Count; $i++) {
+        $port = $Start + ($i * $Stride)
+        if ($port -lt 1 -or $port -gt 65535) { throw "$Name generated port outside 1-65535: $port" }
+        if ($ports -contains $port) { throw "$Name generated duplicate port: $port" }
+        $ports += [int]$port
+    }
+    return $ports
+}
+
+function Set-DeployEnvIfNeeded {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $Value,
+        [switch] $Force,
+        [Parameter(Mandatory = $true)][string] $EnvFile
+    )
+    if ($Force -or -not (Test-DeployValueConfigured -Name $Name -EnvFile $EnvFile)) {
+        [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
+    }
+}
+
 # ============================================================
 # Phase 1: Preflight (read-only audit)
 # ============================================================
@@ -104,11 +206,79 @@ Write-DeployHeader -Title 'Phase 1: Preflight (read-only)'
 $docker     = Test-DockerEnvironment       -RepoRoot $RepoRoot
 $hostNative = Test-HostNativeEnvironment   -RepoRoot $RepoRoot
 $envFiles   = Test-EnvFiles                -RepoRoot $RepoRoot
-$ports      = Test-PortAvailability        -RepoRoot $RepoRoot
 $resolvedEnvFile = if ([string]::IsNullOrWhiteSpace($EnvFile)) {
     if ($docker.envFile) { $docker.envFile } else { '.env.web-plane.host-kit.example' }
 } else { $EnvFile }
 $script:resolvedEnvFile = $resolvedEnvFile
+$resolvedPublicHostRaw = if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {
+    $PublicHost
+} else {
+    Get-DeployEnvValue -Name 'PUBLIC_HOST' -EnvFile $resolvedEnvFile -Default '127.0.0.1'
+}
+$resolvedPublicHost = Resolve-HostNameOnly -Value $resolvedPublicHostRaw
+$resolvedCoordinatorPort = Resolve-DeployIntValue -Name 'COORDINATOR_PORT' -EnvFile $resolvedEnvFile -Default 8004 -Min 1 -Max 65535
+$resolvedViewerPort = Resolve-DeployIntValue -Name 'VIEWER_PORT' -EnvFile $resolvedEnvFile -Default 5173 -Min 1 -Max 65535
+$resolvedSpectatorCount = Resolve-DeployIntValue `
+    -Name 'KIT_SPECTATOR_COUNT' `
+    -EnvFile $resolvedEnvFile `
+    -Default 5 `
+    -ExplicitValue $SpectatorCount `
+    -HasExplicitValue:($PSBoundParameters.ContainsKey('SpectatorCount')) `
+    -Min 0 `
+    -Max 32
+$resolvedSpectatorSignalStart = Resolve-DeployIntValue `
+    -Name 'KIT_SPECTATOR_SIGNALING_PORT_START' `
+    -EnvFile $resolvedEnvFile `
+    -Default 49110 `
+    -ExplicitValue $KitSpectatorSignalPortStart `
+    -HasExplicitValue:($PSBoundParameters.ContainsKey('KitSpectatorSignalPortStart')) `
+    -Min 1 `
+    -Max 65535
+$resolvedSpectatorMediaStart = Resolve-DeployIntValue `
+    -Name 'KIT_SPECTATOR_MEDIA_PORT_START' `
+    -EnvFile $resolvedEnvFile `
+    -Default 48008 `
+    -ExplicitValue $KitSpectatorMediaPortStart `
+    -HasExplicitValue:($PSBoundParameters.ContainsKey('KitSpectatorMediaPortStart')) `
+    -Min 1 `
+    -Max 65535
+$resolvedSpectatorStride = Resolve-DeployIntValue `
+    -Name 'KIT_SPECTATOR_PORT_STRIDE' `
+    -EnvFile $resolvedEnvFile `
+    -Default 10 `
+    -ExplicitValue $KitSpectatorPortStride `
+    -HasExplicitValue:($PSBoundParameters.ContainsKey('KitSpectatorPortStride')) `
+    -Min 1 `
+    -Max 1000
+$resolvedSpectatorSignalPorts = @(New-PortSequence -Count $resolvedSpectatorCount -Start $resolvedSpectatorSignalStart -Stride $resolvedSpectatorStride -Name 'KIT_SPECTATOR_SIGNALING_PORT')
+$resolvedSpectatorMediaPorts = @(New-PortSequence -Count $resolvedSpectatorCount -Start $resolvedSpectatorMediaStart -Stride $resolvedSpectatorStride -Name 'KIT_SPECTATOR_MEDIA_PORT')
+$isPublicHostExplicit = -not [string]::IsNullOrWhiteSpace($PublicHost)
+$shouldRefreshWebPlane = $Build -or $isPublicHostExplicit
+$resolvedConversionBindHost = if (-not [string]::IsNullOrWhiteSpace($ConversionBindHost)) {
+    $ConversionBindHost.Trim()
+} elseif (Test-LoopbackHost -HostName $resolvedPublicHost) {
+    '127.0.0.1'
+} else {
+    '0.0.0.0'
+}
+$script:coordinatorPublicUrl = "http://${resolvedPublicHost}:$resolvedCoordinatorPort"
+$script:viewerPublicUrl = "http://${resolvedPublicHost}:$resolvedViewerPort"
+
+[Environment]::SetEnvironmentVariable('PUBLIC_HOST', $resolvedPublicHost, 'Process')
+[Environment]::SetEnvironmentVariable('KIT_SPECTATOR_COUNT', [string]$resolvedSpectatorCount, 'Process')
+[Environment]::SetEnvironmentVariable('KIT_SPECTATOR_SIGNALING_PORT_START', [string]$resolvedSpectatorSignalStart, 'Process')
+[Environment]::SetEnvironmentVariable('KIT_SPECTATOR_MEDIA_PORT_START', [string]$resolvedSpectatorMediaStart, 'Process')
+[Environment]::SetEnvironmentVariable('KIT_SPECTATOR_PORT_STRIDE', [string]$resolvedSpectatorStride, 'Process')
+Set-DeployEnvIfNeeded -Name 'VIEWER_BIND_HOST' -Value ($(if (Test-LoopbackHost -HostName $resolvedPublicHost) { '127.0.0.1' } else { '0.0.0.0' })) -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+Set-DeployEnvIfNeeded -Name 'KIT_SIGNALING_HOST' -Value $resolvedPublicHost -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+Set-DeployEnvIfNeeded -Name 'KIT_MEDIA_HOST' -Value $resolvedPublicHost -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+Set-DeployEnvIfNeeded -Name 'WEB_VIEWER_COORDINATOR_API_BASE' -Value $script:coordinatorPublicUrl -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+Set-DeployEnvIfNeeded -Name 'WEB_VIEWER_COORDINATOR_SOCKET_URL' -Value $script:coordinatorPublicUrl -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+Set-DeployEnvIfNeeded -Name 'VIEWER_PUBLIC_BASE_URL' -Value $script:viewerPublicUrl -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+Set-DeployEnvIfNeeded -Name 'COORDINATOR_PUBLIC_BASE_URL' -Value $script:coordinatorPublicUrl -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+Set-DeployEnvIfNeeded -Name 'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL' -Value "http://${resolvedPublicHost}:49101/artifacts" -Force:$isPublicHostExplicit -EnvFile $resolvedEnvFile
+
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -ExtraHostNativePorts @($resolvedSpectatorSignalPorts + $resolvedSpectatorMediaPorts)
 $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
 $script:volume = $volume
 
@@ -132,6 +302,14 @@ function Report-Audit {
         }
         elseif ($st -eq 'WRONG_VERSION'){ Write-DeployTag -Tag 'ask'  -Message "host-native venv WRONG_VERSION (Phase 3 will ask)" -LogPath $LogPath | Out-Null }
         elseif ($st -eq 'MISSING_PATH') { Write-DeployTag -Tag 'fail' -Message "host-native $key MISSING_PATH (expected: bim-streaming-server\scripts\start-streaming-server.ps1)" -LogPath $LogPath | Out-Null }
+    }
+
+    if ($hostNative.kitRuntime -eq 'OK') {
+        Write-DeployTag -Tag 'ok' -Message 'host-native kitRuntime=OK' -LogPath $LogPath | Out-Null
+    } elseif ($hostNative.kitRuntime -eq 'NEEDS_BUILD') {
+        Write-DeployTag -Tag 'fix' -Message "host-native kitRuntime=NEEDS_BUILD ($($hostNative.kitBuildReason); Phase 2 will run: $($hostNative.kitBuildCommand))" -LogPath $LogPath | Out-Null
+    } else {
+        Write-DeployTag -Tag 'fail' -Message "host-native kitRuntime=$($hostNative.kitRuntime)" -LogPath $LogPath | Out-Null
     }
 
     foreach ($ef in $envFiles) {
@@ -170,6 +348,15 @@ $auditObj = [pscustomobject]@{
     ports       = $ports
     volume      = $volume
     envFileUsed = $resolvedEnvFile
+    runtime     = [pscustomobject]@{
+        publicHost          = $resolvedPublicHost
+        coordinatorPublicUrl = $script:coordinatorPublicUrl
+        viewerPublicUrl     = $script:viewerPublicUrl
+        conversionBindHost  = $resolvedConversionBindHost
+        spectatorCount      = $resolvedSpectatorCount
+        spectatorSignalPorts = $resolvedSpectatorSignalPorts
+        spectatorMediaPorts  = $resolvedSpectatorMediaPorts
+    }
 }
 $auditObj | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $RunDir 'deploy-audit.json')
 
@@ -227,6 +414,31 @@ if ($hostNative.venv -eq 'MISSING') {
             }
         }
     }
+    $fixActions++
+}
+
+# fix: Kit runtime build artifacts — missing _build launcher/kit.exe means start-streaming-server
+# would otherwise fail later and deploy.ps1 would wait for Phase 4b timeout.
+if (-not $SkipKit -and $hostNative.kitBuildRequired) {
+    $kitBuildLog = Join-Path $RunDir 'kit-repo-build.log'
+    Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server repo.bat build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
+    Push-Location (Join-Path $RepoRoot 'bim-streaming-server')
+    try {
+        & .\repo.bat build *> $kitBuildLog
+        $kitBuildExit = $LASTEXITCODE
+    } finally { Pop-Location }
+    if ($kitBuildExit -ne 0) {
+        Write-DeployTag -Tag 'fail' -Message "Kit repo.bat build failed (see scripts\.run\kit-repo-build.log)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (kit build)'
+        exit 2
+    }
+    $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
+    if ($hostNative.kitRuntime -ne 'OK') {
+        Write-DeployTag -Tag 'fail' -Message "Kit build completed but runtime artifacts are still missing: $($hostNative.kitBuildReason)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (kit build artifacts)'
+        exit 2
+    }
+    Write-DeployTag -Tag 'ok' -Message 'Kit runtime build artifacts ready' -LogPath $LogPath | Out-Null
     $fixActions++
 }
 
@@ -373,7 +585,7 @@ Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
 
 # Phase 2 跑了 docker compose rm / build,docker container 與 wslrelay 等 port forwarder
 # 狀態可能變動。Re-audit ports 避免用 Phase 1 的 stale 資料問互動。
-$ports = Test-PortAvailability -RepoRoot $RepoRoot
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -ExtraHostNativePorts @($resolvedSpectatorSignalPorts + $resolvedSpectatorMediaPorts)
 
 # Docker Desktop 在 Windows 用以下 process 做 container port forward,不是「陌生 PID」:
 $dockerForwarderNames = @('wslrelay.exe','com.docker.backend.exe','docker.exe','vpnkit.exe','vpnkit-bridge.exe')
@@ -440,7 +652,11 @@ if ($SkipConversion) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native conversion already running' -LogPath $LogPath | Out-Null
 } else {
     Write-DeployTag -Tag 'ok' -Message 'Phase 4a starting host-native conversion-service' -LogPath $LogPath | Out-Null
-    $startInfo = Start-HostNativeConversion -RepoRoot $RepoRoot -RuntimeStorageRoot $volume.runtimeStorageRoot
+    $startInfo = Start-HostNativeConversion `
+        -RepoRoot $RepoRoot `
+        -RuntimeStorageRoot $volume.runtimeStorageRoot `
+        -BindHost $resolvedConversionBindHost `
+        -PublicArtifactsUrl ([Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL'))
     Write-DeployTag -Tag 'ok' -Message "conversion PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
     $ok = Wait-HostNativeHealth -Name 'conversion-service' -Url 'http://127.0.0.1:49101/health' -TimeoutSec 30
     if (-not $ok) {
@@ -458,7 +674,13 @@ if ($SkipKit) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native Kit already running' -LogPath $LogPath | Out-Null
 } else {
     Write-DeployTag -Tag 'ok' -Message 'Phase 4b starting host-native Kit streaming' -LogPath $LogPath | Out-Null
-    $startInfo = Start-HostNativeKit -RepoRoot $RepoRoot -SignalPort $KitSignalPort -StreamPort $KitMediaPort
+    $startInfo = Start-HostNativeKit `
+        -RepoRoot $RepoRoot `
+        -SignalPort $KitSignalPort `
+        -StreamPort $KitMediaPort `
+        -PublicIp $resolvedPublicHost `
+        -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
+        -SpectatorStreamPorts $resolvedSpectatorMediaPorts
     Write-DeployTag -Tag 'ok' -Message "Kit PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
     $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $KitSignalPort -TimeoutSec 90
     if (-not $kitRes.ready) {
@@ -472,7 +694,7 @@ if ($SkipKit) {
 # 4c: docker compose
 if ($SkipDocker) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose (--SkipDocker)' -LogPath $LogPath | Out-Null
-} elseif ($webPlaneRunning) {
+} elseif ($webPlaneRunning -and -not $shouldRefreshWebPlane) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose: coordinator + viewer already running' -LogPath $LogPath | Out-Null
 } else {
     Write-DeployTag -Tag 'ok' -Message 'Phase 4c running scripts\start-web-plane-docker.ps1' -LogPath $LogPath | Out-Null
@@ -486,6 +708,9 @@ if ($SkipDocker) {
         (Join-Path $PSScriptRoot 'start-web-plane-docker.ps1'),
         '-EnvFile', $resolvedEnvFile
     )
+    if ($Build) {
+        $childArgs += '-Build'
+    }
     $proc = Start-Process -FilePath 'powershell.exe' `
         -ArgumentList $childArgs `
         -WorkingDirectory $RepoRoot `

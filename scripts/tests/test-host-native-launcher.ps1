@@ -61,4 +61,9 @@ $moduleContent = Get-Content -LiteralPath $modulePath -Raw
 Assert-True (-not ($moduleContent -match "'-NoExit'")) 'launcher argument list has no -NoExit'
 Write-TestPass 'no -NoExit launcher arg'
 
+# Test 8: Kit launcher wiring preserves spectator stream args
+Assert-True ($moduleContent -match "'-SpectatorSignalPorts'") 'launcher forwards spectator signal ports'
+Assert-True ($moduleContent -match "'-SpectatorStreamPorts'") 'launcher forwards spectator stream ports'
+Write-TestPass 'spectator stream args forwarded'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

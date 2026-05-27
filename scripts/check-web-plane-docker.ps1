@@ -244,7 +244,10 @@ $envValues = Read-EnvFile -Path $resolvedEnvFile
 $hostBridgeProfile = Value-OrDefault -Values $envValues -Name "HOST_BRIDGE_PROFILE" -Default "windows-docker-desktop"
 $coordinatorPort = Value-OrDefault -Values $envValues -Name "COORDINATOR_PORT" -Default "8004"
 $viewerPort = Value-OrDefault -Values $envValues -Name "VIEWER_PORT" -Default "5173"
-$kitHost = Value-OrDefault -Values $envValues -Name "KIT_SIGNALING_HOST" -Default "127.0.0.1"
+$publicHost = Value-OrDefault -Values $envValues -Name "PUBLIC_HOST" -Default "127.0.0.1"
+$coordinatorPublicUrl = Value-OrDefault -Values $envValues -Name "COORDINATOR_PUBLIC_BASE_URL" -Default "http://${publicHost}:$coordinatorPort"
+$viewerPublicUrl = Value-OrDefault -Values $envValues -Name "VIEWER_PUBLIC_BASE_URL" -Default "http://${publicHost}:$viewerPort"
+$kitHost = Value-OrDefault -Values $envValues -Name "KIT_SIGNALING_HOST" -Default $publicHost
 $kitPortRaw = Value-OrDefault -Values $envValues -Name "KIT_SIGNALING_PORT" -Default "49100"
 $kitPort = 49100
 $parsedKitPort = 0
@@ -260,6 +263,8 @@ if ([string]::IsNullOrWhiteSpace($ConversionApiBase)) {
 Write-Host "[info] hybrid_mode=web-plane-docker-host-native-kit" -ForegroundColor Cyan
 Write-Host "[info] env_file=$resolvedEnvFile" -ForegroundColor Cyan
 Write-Host "[info] host_bridge_profile=$hostBridgeProfile" -ForegroundColor Cyan
+Write-Host "[info] coordinator_public_url=$coordinatorPublicUrl" -ForegroundColor Cyan
+Write-Host "[info] viewer_public_url=$viewerPublicUrl" -ForegroundColor Cyan
 
 $composeArgs = Get-ComposeArgs -ResolvedEnvFile $resolvedEnvFile
 [void](Test-Http -Tier "docker_web_plane_health:coordinator" -Url "http://127.0.0.1:$coordinatorPort/health")
