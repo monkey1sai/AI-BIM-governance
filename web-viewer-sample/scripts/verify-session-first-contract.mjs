@@ -74,6 +74,8 @@ for (const token of [
     "stage-truth-panel",
     "Boolean(this.state.reviewSessionId)",
     "this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)",
+    "isSpectatorStreamMode",
+    "const spectatorBinding = isSpectatorStreamMode()",
     // remove-conflict-review-from-fast-mvp:review-bootstrap endpoint 與 getReviewBootstrap 已退役;
     // session-first 仍保留(先 GET session → 拿 model_version_id),但 bootstrap 取代為 stream-config 內 artifacts。
 ]) {
@@ -94,6 +96,26 @@ assert.match(
     envSource,
     /queryParam\("session"\)\s*\|\|\s*queryParam\("sessionId"\)/,
     "viewer must accept coordinator /ui/open handoff query key `session` before falling back to legacy `sessionId`",
+);
+assert.match(
+    envSource,
+    /trustedCoordinatorBaseFromQuery\("coordinatorApiBase"\)/,
+    "viewer must validate coordinatorApiBase from coordinator /ui/open handoff before localhost defaults",
+);
+assert.match(
+    envSource,
+    /trustedCoordinatorBaseFromQuery\("coordinatorSocketUrl"\)/,
+    "viewer must validate coordinatorSocketUrl from handoff and fall back to trusted coordinatorApiBase",
+);
+assert.match(
+    envSource,
+    /VITE_ALLOWED_COORDINATOR_ORIGINS/,
+    "viewer must support an explicit trusted coordinator origin allowlist",
+);
+assert.match(
+    envSource,
+    /parsed\.hostname === browserHost/,
+    "viewer must accept same-host coordinator handoff for LAN deployments",
 );
 
 assert.match(
@@ -125,6 +147,11 @@ assert.match(
     windowSource,
     /const expectedStageUrl = expectedStageUrlFromStreamConfig\(streamConfig\)[\s\S]*?const selectedUSDAsset = expectedStageAsset/,
     "session-first viewer must prefer stream_config stage_composition primary URL over stale /api/assets entries",
+);
+assert.match(
+    windowSource,
+    /function sameStreamTransportEndpoint[\s\S]*?signalingServer[\s\S]*?signalingPort[\s\S]*?mediaServer[\s\S]*?mediaPort/,
+    "spectator binding selection must compare the full transport endpoint, not only ids or ports",
 );
 assert.doesNotMatch(
     windowSource,

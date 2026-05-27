@@ -183,6 +183,6 @@ async function openViewerWithSession() {
       console.warn("Unable to attach stream endpoint params to viewer URL", error);
     }
   }
-  const viewer = window.open(`http://127.0.0.1:5173/?${params.toString()}`, "bim_review_primary_viewer");
+  const viewer = window.open(`/ui/open?session=${encodeURIComponent(sessionId.value)}`, "bim_review_primary_viewer");
   viewer?.focus?.();
 }

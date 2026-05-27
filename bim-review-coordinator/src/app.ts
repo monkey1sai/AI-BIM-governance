@@ -377,7 +377,7 @@ export function createCoordinatorApp(
       },
     }),
   );
-  mountDevConsole(app);
+  mountDevConsole(app, config);
 
   app.get("/health", (_request, response) => {
     response.json({
@@ -1069,11 +1069,12 @@ export function createCoordinatorApp(
       if (result.session) {
         session = result.session;
         session_replay = result.replay;
-        // fast-ifc-link-demo-loop §3.2:轉檔 ready + session 建好,組 viewer_url
-        // 並寫進 ifc_ready job state。viewer_url 走 coordinator `/ui/open?session=`
-        // redirect,client 端 browser 收到後改連 host loopback `127.0.0.1:5173/?session=`。
+        // fast-ifc-link-demo-loop §3.2 + LAN handoff:轉檔 ready + session
+        // 建好後,寫入 coordinator /ui/open URL。實際 viewer redirect 由
+        // trusted VIEWER_PUBLIC_BASE_URL / PUBLIC_HOST 組合,避免 LAN client 被導到
+        // 自己的 loopback。
         // 用 review session_id 當 web_view_session_id(fast MVP 簡化:不再分兩種 session)。
-        const viewerUrl = `http://${config.publicHost}:${config.port}/ui/open?session=${encodeURIComponent(session.session_id)}`;
+        const viewerUrl = buildCoordinatorOpenUrl(config, session.session_id);
         externalIfcReadyStore.setViewerLink(job.ifc_ready_job_id, session.session_id, viewerUrl);
       } else {
         session_reason = result.reason;
@@ -1383,10 +1384,13 @@ function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> 
         host: input.config.host,
         port: input.config.port,
         public_host: input.config.publicHost,
+        public_base_url: input.config.coordinatorPublicBaseUrl,
       },
       viewer: {
-        browser_url_base: "http://127.0.0.1:5173",
+        browser_url_base: input.config.viewerPublicBaseUrl,
         handoff_path: "/ui/open?session=<review_session_id>",
+        coordinator_api_base: input.config.coordinatorPublicBaseUrl,
+        coordinator_socket_url: input.config.coordinatorPublicBaseUrl,
       },
       conversion_authority: {
         base_url: input.config.streamingConversionApiBase,
@@ -1556,16 +1560,15 @@ function latestIfcReadyJobForExternalModelVersion(
     .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))[0];
 }
 
-function mountDevConsole(app: express.Express): void {
+function mountDevConsole(app: express.Express, config: CoordinatorConfig): void {
   const publicDir = resolvePublicDir();
   app.use("/dev-console-assets", express.static(publicDir));
   app.get(["/ui", "/dev-console"], (_request, response) => {
     response.sendFile(path.join(publicDir, "dev-console.html"));
   });
 
-  // fast-ifc-link-demo-loop §3.4:server-side redirect to host loopback viewer。
-  // viewer 已綁 127.0.0.1:5173,LAN 連不到;LAN client 拿 `/ui/open?session=` URL
-  // 後 browser 收到 302 → 改連自己機器 loopback 開 viewer。session id 驗證
+  // fast-ifc-link-demo-loop §3.4 + LAN handoff:server-side redirect to
+  // browser-visible viewer URL。session id 驗證
   // `^(lwv_|review_session_)[A-Za-z0-9_]+$`(支援 lwv_ + review_session_ 兩種 prefix
   // 因為 fast MVP 簡化用 review session id 當 viewer attach key)。
   app.get("/ui/open", (request, response) => {
@@ -1575,8 +1578,22 @@ function mountDevConsole(app: express.Express): void {
       response.status(400).json({ detail: "invalid session id" });
       return;
     }
-    response.redirect(302, `http://127.0.0.1:5173/?session=${encodeURIComponent(session)}`);
+    response.redirect(302, buildViewerRedirectUrl(config, session));
   });
+}
+
+function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): string {
+  const url = new URL("/ui/open", `${config.coordinatorPublicBaseUrl}/`);
+  url.searchParams.set("session", session);
+  return url.toString();
+}
+
+function buildViewerRedirectUrl(config: CoordinatorConfig, session: string): string {
+  const url = new URL("/", `${config.viewerPublicBaseUrl}/`);
+  url.searchParams.set("session", session);
+  url.searchParams.set("coordinatorApiBase", config.coordinatorPublicBaseUrl);
+  url.searchParams.set("coordinatorSocketUrl", config.coordinatorPublicBaseUrl);
+  return url.toString();
 }
 
 function resolvePublicDir(): string {
@@ -1757,6 +1774,64 @@ function streamConfigWithRuntimeOverride(
   };
 }
 
+function sameStreamEndpoint(
+  left: KitInstanceBinding["stream_config"],
+  right: KitInstanceBinding["stream_config"],
+): boolean {
+  return left.signalingServer === right.signalingServer
+    && left.signalingPort === right.signalingPort
+    && left.mediaServer === right.mediaServer
+    && (left.mediaPort ?? null) === (right.mediaPort ?? null);
+}
+
+function runtimeKitInstanceBindings(session: ReviewSession, config: CoordinatorConfig): KitInstanceBinding[] {
+  const persisted = session.kit_instance_bindings.map((binding) => ({
+    ...binding,
+    stream_config: streamConfigWithRuntimeOverride(binding.stream_config, config),
+  }));
+  const primaryBinding = persisted[0];
+  if (!primaryBinding || session.mode !== "single_kit_shared_state") {
+    return persisted;
+  }
+
+  const existingEndpoints = new Set(persisted.map((binding) => {
+    const stream = binding.stream_config;
+    return `${stream.signalingServer}:${stream.signalingPort}:${stream.mediaServer}:${stream.mediaPort ?? ""}`;
+  }));
+  const spectatorEndpoints = config.kitInstanceEndpoints
+    .filter((endpoint) => endpoint.id !== primaryBinding.kit_instance_id)
+    .map((endpoint) => ({
+      id: endpoint.id,
+      stream_config: streamConfigWithRuntimeOverride({
+        signalingServer: endpoint.signalingServer,
+        signalingPort: endpoint.signalingPort,
+        mediaServer: endpoint.mediaServer,
+        mediaPort: endpoint.mediaPort,
+      }, config),
+    }))
+    .filter((endpoint) => !sameStreamEndpoint(endpoint.stream_config, primaryBinding.stream_config))
+    .filter((endpoint) => {
+      const stream = endpoint.stream_config;
+      const key = `${stream.signalingServer}:${stream.signalingPort}:${stream.mediaServer}:${stream.mediaPort ?? ""}`;
+      if (existingEndpoints.has(key)) return false;
+      existingEndpoints.add(key);
+      return true;
+    });
+
+  return [
+    ...persisted,
+    ...spectatorEndpoints.map((endpoint, index) => ({
+      ...primaryBinding,
+      kit_instance_id: endpoint.id,
+      stream_config: endpoint.stream_config,
+      gpu_profile: {
+        profile: primaryBinding.gpu_profile.profile,
+        capacity_slot: `same-kit-spectator-${index + 1}`,
+      },
+    })),
+  ];
+}
+
 function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config: CoordinatorConfig): StreamConfigResponse {
   const artifactBindings =
     session.artifact_bindings.length > 0
@@ -1765,11 +1840,11 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
   const readyBinding = chooseReadyBinding(artifactBindings);
   const statusBinding = readyBinding ?? chooseStreamingStatusBinding(artifactBindings);
   const readyUsdc = chooseReadyUsdc(artifacts);
-  const kitInstanceBindings = session.kit_instance_bindings.map((binding) => ({
-    ...binding,
-    stream_config: streamConfigWithRuntimeOverride(binding.stream_config, config),
-  }));
+  const kitInstanceBindings = runtimeKitInstanceBindings(session, config);
   const primaryKitBinding = kitInstanceBindings[0];
+  const spectatorReady = primaryKitBinding
+    ? kitInstanceBindings.some((binding) => !sameStreamEndpoint(binding.stream_config, primaryKitBinding.stream_config))
+    : false;
   const modelBinding = statusBinding;
   const loadableDerivedBindings = orderedLoadableDerivedBindings(artifactBindings);
   const primaryStageBinding = loadableDerivedBindings[0] ?? readyBinding ?? null;
@@ -1810,7 +1885,7 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
       mode: session.mode,
       primary_kit_instance_id: primaryKitBinding?.kit_instance_id || null,
       shared_state: session.mode === "single_kit_shared_state" || kitInstanceBindings.length <= 1,
-      spectator_ready: kitInstanceBindings.some((binding) => binding.stream_config.signalingPort !== primaryKitBinding?.stream_config.signalingPort),
+      spectator_ready: spectatorReady,
     },
   };
 }

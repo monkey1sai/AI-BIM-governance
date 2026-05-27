@@ -21,7 +21,7 @@ afterEach(async () => {
   }
 });
 
-function makeApp(): CoordinatorApp {
+function makeApp(overrides: Parameters<typeof createCoordinatorApp>[0] = {}): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-dev-console-test-"));
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
@@ -29,6 +29,7 @@ function makeApp(): CoordinatorApp {
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
     bimControlApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
+    ...overrides,
   });
   return active;
 }
@@ -57,8 +58,57 @@ describe("coordinator dev console", () => {
     expect(ui.text).not.toContain("emitHighlight()");
     expect(ui.text).toContain("步驟 ③ / 3");
     expect(ui.text).toContain("工程參數與 Raw API / Socket controls");
+    expect(ui.text).toContain("browser-visible viewer URL");
     expect(consolePage.status).toBe(200);
     expect(consolePage.text).toContain("/api/review-sessions");
+  });
+
+  it("redirects /ui/open to configured browser-visible viewer URL", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
+      viewerPublicBaseUrl: "http://192.168.10.105:5173",
+      publicHost: "192.168.10.105",
+    });
+
+    const response = await request(app.app)
+      .get("/ui/open?session=review_session_test_001&redirect=http://evil.example")
+      .redirects(0);
+
+    expect(response.status).toBe(302);
+    const location = response.headers.location as string;
+    expect(location).toContain("http://192.168.10.105:5173/");
+    expect(location).toContain("session=review_session_test_001");
+    expect(location).toContain("coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A8004");
+    expect(location).toContain("coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A8004");
+    expect(location).not.toContain("127.0.0.1:5173");
+    expect(location).not.toContain("evil.example");
+  });
+
+  it("runtime status exposes browser-visible viewer and coordinator bases", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
+      viewerPublicBaseUrl: "http://192.168.10.105:5173",
+      publicHost: "192.168.10.105",
+    });
+
+    const status = await request(app.app).get("/api/runtime/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body.configured_endpoints.coordinator.public_base_url).toBe("http://192.168.10.105:8004");
+    expect(status.body.configured_endpoints.viewer.browser_url_base).toBe("http://192.168.10.105:5173");
+    expect(status.body.configured_endpoints.viewer.coordinator_api_base).toBe("http://192.168.10.105:8004");
+    expect(status.body.configured_endpoints.viewer.coordinator_socket_url).toBe("http://192.168.10.105:8004");
+  });
+
+  it("rejects invalid viewer session ids before redirecting", async () => {
+    const app = makeApp({
+      viewerPublicBaseUrl: "http://192.168.10.105:5173",
+    });
+
+    const response = await request(app.app).get("/ui/open?session=http://evil.example").redirects(0);
+
+    expect(response.status).toBe(400);
+    expect(response.body.detail).toBe("invalid session id");
   });
 
   // coordinator-ui-tri-ready-and-queue:Edge BIM Data Server Console 區段
@@ -101,6 +151,8 @@ describe("coordinator dev console", () => {
     expect(response.status).toBe(200);
     expect(response.text).toContain("joinSession");
     expect(response.text).toContain("bim_review_primary_viewer");
+    expect(response.text).toContain("/ui/open?session=");
+    expect(response.text).not.toContain("http://127.0.0.1:5173/?");
   });
 
   it("proxies dev mock conversion requests to the conversion service", async () => {

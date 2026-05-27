@@ -235,6 +235,15 @@ function sameStreamEndpoint(a: StreamEndpoint, b: StreamEndpoint): boolean {
         && a.mediaport === b.mediaport;
 }
 
+type KitStreamEndpoint = ReviewStreamConfig["kit_instance_bindings"][number]["stream_config"];
+
+function sameStreamTransportEndpoint(a: KitStreamEndpoint, b: KitStreamEndpoint): boolean {
+    return a.signalingServer === b.signalingServer
+        && a.signalingPort === b.signalingPort
+        && a.mediaServer === b.mediaServer
+        && (a.mediaPort ?? null) === (b.mediaPort ?? null);
+}
+
 function makeRequestId(prefix: string): string {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -623,7 +632,13 @@ export default class App extends React.Component<AppProps, AppState> {
         const requestedBinding = requestedKitInstanceId
             ? streamConfig.kit_instance_bindings.find((binding) => binding.kit_instance_id === requestedKitInstanceId)
             : null;
-        const selectedBinding = requestedBinding || streamConfig.kit_instance_bindings[0] || null;
+        const primaryBinding = streamConfig.kit_instance_bindings[0] || null;
+        const spectatorBinding = isSpectatorStreamMode() && primaryBinding
+            ? streamConfig.kit_instance_bindings.find((binding) =>
+                !sameStreamTransportEndpoint(binding.stream_config, primaryBinding.stream_config)
+            )
+            : null;
+        const selectedBinding = requestedBinding || spectatorBinding || primaryBinding;
         const selectedConfig = selectedBinding?.stream_config || streamConfig.webrtc;
 
         return {

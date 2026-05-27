@@ -1,0 +1,11 @@
+step 0 params: repo_root=C:\Repos\active\iot\AI-BIM-governance\.worktrees\fix-lan-webrtc-multi-viewer-handoff
+step 1 network: public_host=192.168.10.105 lan_mode=True
+step wait coordinator: ready http://127.0.0.1:55062/health status=200
+step wait viewer: ready http://127.0.0.1:55063 status=200
+step 2 session: created review_session_29c2bd85a11d
+step 3 handoff: status=302 location=http://192.168.10.105:55063/?session=review_session_29c2bd85a11d&coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A55062&coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A55062
+step 4 video_wait: {"viewer_one": true, "viewer_two": true}
+step 6 participants: count=2
+step 5 screenshot: viewer_one C:\Repos\active\iot\AI-BIM-governance\.worktrees\fix-lan-webrtc-multi-viewer-handoff\docs\evidence\fix-lan-webrtc-multi-viewer-handoff\webwright\final_runs\run_5\screenshots\final_execution_viewer_one.png
+step 5 screenshot: viewer_two C:\Repos\active\iot\AI-BIM-governance\.worktrees\fix-lan-webrtc-multi-viewer-handoff\docs\evidence\fix-lan-webrtc-multi-viewer-handoff\webwright\final_runs\run_5\screenshots\final_execution_viewer_two.png
+step 7 report: C:\Repos\active\iot\AI-BIM-governance\.worktrees\fix-lan-webrtc-multi-viewer-handoff\docs\evidence\fix-lan-webrtc-multi-viewer-handoff\webwright\final_runs\run_5\report.json
