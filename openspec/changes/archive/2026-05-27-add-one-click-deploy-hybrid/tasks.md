@@ -76,7 +76,7 @@
 - [x] 9.5 `gitnexus analyze --embeddings`:5,260 nodes / 9,419 edges(+218);`detect_changes scope=compare base=main` → `risk_level: low` / `affected_processes: 0`。
 - [x] 9.6 `git diff --name-only main...HEAD` = 22 個檔(deploy.ps1 + 8 lib + 10 tests + 3 docs)+ OpenSpec change(本檔)。`start-all.ps1` / `start-web-plane-docker.ps1` / `start-runtime-manager-docker.ps1` / `compose.*.yml` 完全沒動。
 - [x] 9.7 `git diff --check`:無 trailing whitespace(僅 LF/CRLF 正規化 warning,Windows host 預期行為)。
-- [ ] 9.8 PR #124 reviewer 在 GitHub UI 補驗 Step 3 / 4 / 6 / 7(瀏覽器目視 / `-Build` / 關 Docker Desktop fail injection)。
+- [x] 9.8 PR #124 reviewer 在 GitHub UI 補驗 Step 3 / 4 / 6 / 7(瀏覽器目視 / `-Build` / 關 Docker Desktop fail injection)。歸檔備註(2026-05-27):PR #124 已 merge 進 main(commit `9b756b1`)且後續 hotfix(`8c84fe9` conversion wrapper unhealthy 重啟、`4752ceb` Kit stage allowlist、`9f4d541` LAN multi-viewer + Kit build preflight)皆已落地;使用者確認人工 smoke(Step 3 / 4 / 6 / 7)在 PR review 階段已驗證,本 task 收尾。
 
 Validation notes:
 

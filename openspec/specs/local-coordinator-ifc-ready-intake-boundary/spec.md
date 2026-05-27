@@ -149,6 +149,12 @@ The coordinator SHALL support a configured `VIEWER_PUBLIC_BASE_URL` for the brow
 - **AND** it includes a browser-visible coordinator API base and Socket.IO base derived from trusted coordinator configuration
 - **AND** a remote client MUST NOT need to guess or rewrite `127.0.0.1:8004`
 
+#### Scenario: Runtime status exposes remaining loopback gaps
+
+- **WHEN** operator opens `/ui` after a conversion-ready job
+- **THEN** the displayed viewer URL, coordinator handoff URL, expected stage URL, and Kit endpoint MUST make loopback-vs-LAN values visible
+- **AND** if any browser-facing value still points to `127.0.0.1` while LAN profile is intended, the task remains a configuration gap rather than a completed client validation
+
 #### Scenario: Redirect target is not caller-controlled
 
 - **WHEN** a caller supplies an extra query parameter such as `redirect=http://evil.example`

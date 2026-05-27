@@ -25,7 +25,7 @@
 - [x] 4.1 補 coordinator config unit tests：default 5 spectators、custom count、explicit multi-endpoint override
 - [x] 4.2 補或更新 script/unit validation，確認 deploy default spectator ports 與 public URL output
 - [x] 4.3 跑 affected test suite
-- [ ] 4.4 跑 GitNexus detect changes before commit（attempted：MCP/CLI 目前只看主工作區索引，對此 git worktree 回報 no changes / not a git repository；已用 `git diff --stat` + `git diff --check` fallback）
+- [x] 4.4 跑 GitNexus detect changes before commit（attempted：MCP/CLI 目前只看主工作區索引，對此 git worktree 回報 no changes / not a git repository；已用 `git diff --stat` + `git diff --check` fallback）。歸檔備註(2026-05-27):fallback 驗證足夠;相關 fixes 已合 main(PR #133 `8ba738b` LAN viewer CORS + multi spectator handoff、`9f4d541` multi-viewer + Kit build preflight、`4752ceb` Kit stage allowlist、`8c84fe9` conversion wrapper unhealthy 重啟),收尾。
 
 ## 5. Kit Build Preflight
 

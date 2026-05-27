@@ -15,27 +15,22 @@
 - **AND** 必須在 host port `8004` expose coordinator
 - **AND** 必須在 host port `5173` expose viewer
 
-#### Scenario: Coordinator container 在 Docker mode 對外 bind
+#### Scenario: LAN profile publishes viewer on configured bind host
 
-- **WHEN** coordinator 以 container 執行在 hybrid Docker web-plane mode
-- **THEN** container process 必須在 port `8004` bind `0.0.0.0`
-- **AND** Docker 必須把 host port `8004` publish 到 coordinator container
-- **AND** 當 OS firewall 與 network policy 允許時，host 或 LAN clients 必須能到達 `http://<host-address>:8004/health`
-- **AND** external IFC-ready API access 仍必須要求 configured service auth 與 allowlist controls
+- **WHEN** operator 使用 LAN demo profile 啟動 hybrid Docker web-plane mode
+- **THEN** viewer host port publish address MUST be configurable without source changes
+- **AND** LAN profile MUST allow `VIEWER_BIND_HOST=0.0.0.0` or an equivalent explicit host bind
+- **AND** local development MAY keep loopback binding when LAN exposure is not requested
+- **AND** generated operator output MUST show the configured browser-visible coordinator and viewer URLs
 
-#### Scenario: Host-local coordinator 預設維持 loopback
+#### Scenario: One-click deploy detects missing Kit runtime build artifacts
 
-- **WHEN** `bim-review-coordinator` 直接在 host 啟動且沒有明確設定 `HOST`
-- **THEN** 它必須預設 bind loopback，而不是 `0.0.0.0`
-- **AND** 若要 expose 到 loopback 之外，必須由 operator 明確設定，例如 `HOST=0.0.0.0`
-
-#### Scenario: NVIDIA runtime 維持 host-native
-
-- **WHEN** 使用 hybrid Docker web-plane mode
-- **THEN** `bim-streaming-server` Kit/WebRTC 必須維持 host-native runtime
-- **AND** WebRTC signaling 必須在 port `49100` 保持 browser-visible
-- **AND** media stream port 必須在 port `47998` 保持 browser-visible，除非明確另行設定
-- **AND** host-native conversion authority 必須在 port `49101` 可達
+- **WHEN** operator runs hybrid deployment without `-SkipKit`
+- **AND** `bim-streaming-server\_build\windows-x86_64\release\ezplus.bim_review_stream_streaming.kit.bat` or `kit\kit.exe` is missing
+- **THEN** preflight MUST classify host-native Kit runtime as `NEEDS_BUILD`
+- **AND** Phase 2 auto-fix MUST run `.\repo.bat build` from `bim-streaming-server`
+- **AND** build failure MUST stop before Phase 4b and point to a persisted build log
+- **AND** deploy MUST NOT wait for the Kit readiness timeout merely to discover that the runtime build artifacts are missing
 
 ### Requirement: Coordinator container SHALL bridge to host-native conversion authority
 
@@ -93,6 +88,13 @@ Coordinator container SHALL 透過 container-to-host bridge 呼叫 host-native c
 - **THEN** operator 必須能設定 browser-visible Kit host address，而不需要修改 product source code
 - **AND** coordinator stream config 必須使用該 configured host address 作為 viewer-facing Kit endpoint fields
 
+#### Scenario: LAN runtime parameters are applied consistently
+
+- **WHEN** operator sets a browser-visible LAN host such as `192.168.10.105`
+- **THEN** coordinator redirect base, viewer coordinator API/socket bases, Kit signaling/media host fields, and artifact public base MUST be configurable from deployment parameters
+- **AND** the deployed config MUST NOT silently mix LAN viewer URLs with `127.0.0.1` coordinator, Kit, or artifact URLs unless the consuming runtime is explicitly host-local
+- **AND** runtime status or validation output MUST identify any remaining loopback value that would make a LAN client connect to itself
+
 ### Requirement: Hybrid validation SHALL distinguish web-plane readiness from GPU-container readiness
 
 Hybrid validation SHALL 分別回報 Docker coordinator/viewer 與 host-native bridge 的 readiness，不得混同 Docker GPU Kit readiness。
@@ -117,22 +119,6 @@ Hybrid validation SHALL 分別回報 Docker coordinator/viewer 與 host-native b
 
 Hybrid deployment SHALL 定義 completed IFC→USDC outputs 寫在哪裡、如何被 reference，以及哪個 service 擁有 lifecycle。
 
-#### Scenario: Conversion authority 寫入 per-job artifacts
-
-- **WHEN** host-native conversion job succeeded
-- **THEN** `bim-streaming-server` conversion authority 必須把 derived artifacts 寫到 configured artifacts root
-- **AND** default local artifacts root 必須 git-ignored 且位於 `storage/` 之外
-- **AND** job output directory 必須以 `conversion_job_id` scope
-- **AND** publishable output set 必須包含 `model.usdc`、`element_mapping.json`、`entity_index.json`、`metadata.json`
-
-#### Scenario: Conversion result 回傳 metadata refs
-
-- **WHEN** coordinator ingest succeeded conversion result
-- **THEN** result 必須 expose USDC model、element mapping 與 manifest metadata 的 refs 或 URLs
-- **AND** coordinator 必須只把這些 refs 當成 metadata 保存
-- **AND** coordinator 不得把 `.usdc` bytes 複製到自己的 store
-- **AND** cloud callback outbox 必須只送 metadata refs，不送大型 artifact bodies
-
 #### Scenario: Artifact refs 對 runtime 可見
 
 - **WHEN** conversion result 包含 `model.usdc`、`element_mapping.json` 與 `metadata.json` refs
@@ -141,12 +127,12 @@ Hybrid deployment SHALL 定義 completed IFC→USDC outputs 寫在哪裡、如�
 - **AND** LAN 或 remote viewer deployments 必須設定 consuming runtime 可解析的 host 或 DNS name
 - **AND** 若 refs 已產生但無法從 expected consumer perspective fetch，validation helper 必須回報 blocked
 
-#### Scenario: Operator 可設定 durable artifact roots
+#### Scenario: LAN artifacts base is explicit
 
-- **WHEN** operator 準備將 hybrid mode 用於 repeated demo 或 deployable single-machine use
-- **THEN** runbook 必須文件化 default artifacts root 與 jobs directory
-- **AND** operator 必須能在不修改 product source code 的情況下設定 artifacts root、jobs directory 與 public artifacts URL
-- **AND** check 或 runbook 必須說明如何 inspect 與 clean demo artifacts，且不得刪除 active review-session 或 callback-outbox references
+- **WHEN** operator enables LAN demo handoff
+- **THEN** `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` MUST be set or derived to a URL reachable by the consuming Kit/runtime perspective
+- **AND** `/ui` SHOULD surface the expected stage URL so operator can see whether it still points to client-loopback
+- **AND** validation MUST NOT treat a ready conversion as browser-renderable until the expected stage URL has been proven loadable by Kit
 
 ### Requirement: Hybrid deployment SHALL preserve B-scheme boundaries
 

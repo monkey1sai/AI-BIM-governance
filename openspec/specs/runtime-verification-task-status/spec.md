@@ -78,6 +78,21 @@ Dedicated multi-Kit process routing is out of scope for this pass and SHALL rema
 - **AND** the primary and spectator streams MUST expose distinct signaling ports and, when configured, distinct media / stream ports
 - **AND** the evidence MUST record that this is same-Kit primary/spectator evidence, not dedicated multi-Kit evidence
 
+#### Scenario: Default spectator capacity is generated
+
+- **WHEN** hybrid host-native Kit deployment starts without an explicit spectator count override
+- **THEN** the runtime topology MUST generate 5 spectator viewer slots in addition to the primary stream
+- **AND** the generated spectator endpoints MUST use deterministic, distinct signaling and media/stream port pairs
+- **AND** coordinator stream config MUST expose those spectator endpoints as distinct `kit_instance_bindings`
+- **AND** `viewport_sharing.spectator_ready` MUST be `true` when at least one distinct spectator endpoint is available
+
+#### Scenario: Operator controls spectator capacity
+
+- **WHEN** operator sets spectator count to `N`
+- **THEN** host-native Kit launch MUST receive exactly `N` spectator signaling ports and `N` spectator media/stream ports
+- **AND** coordinator stream config MUST expose no more than `N` generated spectator bindings unless the operator explicitly provides a full endpoint list
+- **AND** invalid or duplicate spectator port topology MUST fail validation rather than silently collapsing multiple viewers onto the same primary endpoint
+
 #### Scenario: Browser E2E targets two same-session viewers
 
 - **WHEN** `web-viewer-sample` is opened for same-Kit concurrent runtime verification
@@ -90,11 +105,6 @@ Dedicated multi-Kit process routing is out of scope for this pass and SHALL rema
 - **WHEN** two browser pages connect only to the same primary WebRTC endpoint
 - **THEN** the evidence MAY classify same-session bootstrap and participant coordination
 - **AND** the same-Kit concurrent streaming tier MUST remain `blocked` until primary/spectator stream evidence exists
-
-#### Scenario: Dedicated multi-Kit process routing is out of scope for this pass
-
-- **WHEN** the product requires isolated GPU runtimes or multiple Kit processes
-- **THEN** that validation MUST remain deferred until GPU purchase and deployment provide a dedicated capacity tier with its own endpoint pool and E2E evidence
 
 ### Requirement: Demo observation tasks require current evidence
 
