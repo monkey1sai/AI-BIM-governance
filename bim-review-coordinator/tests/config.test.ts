@@ -266,6 +266,19 @@ describe("loadConfig Kit endpoint", () => {
 
     expect(() => loadConfig()).toThrow(/KIT_SPECTATOR_COUNT must be an integer/);
   });
+
+  it("rejects generated spectator ports that collide with primary ports", () => {
+    process.env.KIT_MEDIA_PORT = "47998";
+    process.env.KIT_SPECTATOR_COUNT = "1";
+    process.env.KIT_SPECTATOR_SIGNALING_PORT_START = "49100";
+
+    expect(() => loadConfig()).toThrow(/duplicate signaling port: 49100/);
+
+    process.env.KIT_SPECTATOR_SIGNALING_PORT_START = "49110";
+    process.env.KIT_SPECTATOR_MEDIA_PORT_START = "47998";
+
+    expect(() => loadConfig()).toThrow(/duplicate media port: 47998/);
+  });
 });
 
 describe("loadConfig storageRoot fallback", () => {

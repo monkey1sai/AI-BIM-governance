@@ -156,15 +156,43 @@ function Resolve-HostNameOnly {
     param([Parameter(Mandatory = $true)][string] $Value)
     $trimmed = $Value.Trim()
     if ($trimmed -match '^https?://') {
-        return ([uri]$trimmed).Host
+        $hostValue = ([uri]$trimmed).Host
+        if ($hostValue -match ':' -and -not $hostValue.StartsWith('[')) {
+            return "[$hostValue]"
+        }
+        return $hostValue
+    }
+    if ($trimmed -match '[/\?#@]') {
+        throw "PUBLIC_HOST must be a host or IP only; do not include a path, query, fragment, or credentials."
+    }
+    if ($trimmed -match ':' -and -not ($trimmed.StartsWith('[') -and $trimmed.EndsWith(']'))) {
+        throw "PUBLIC_HOST must not include a port. Use COORDINATOR_PUBLIC_BASE_URL / VIEWER_PUBLIC_BASE_URL for custom ports or paths."
     }
     return $trimmed
 }
 
 function Test-LoopbackHost {
     param([Parameter(Mandatory = $true)][string] $HostName)
-    $normalized = (Resolve-HostNameOnly -Value $HostName).ToLowerInvariant()
+    $normalized = (Resolve-HostNameOnly -Value $HostName).Trim([char[]]'[]').ToLowerInvariant()
     return ($normalized -eq 'localhost' -or $normalized -eq '::1' -or $normalized.StartsWith('127.'))
+}
+
+function Resolve-DeployPublicBaseUrl {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)][string] $EnvFile,
+        [Parameter(Mandatory = $true)][string] $HostName,
+        [Parameter(Mandatory = $true)][int] $Port
+    )
+    $configured = Get-DeployEnvValue -Name $Name -EnvFile $EnvFile -Default ''
+    if (-not [string]::IsNullOrWhiteSpace($configured)) {
+        $trimmed = $configured.Trim().TrimEnd('/')
+        if (-not ($trimmed -match '^https?://')) {
+            throw "$Name must be an absolute http(s) URL."
+        }
+        return $trimmed
+    }
+    return "http://${HostName}:$Port"
 }
 
 function New-PortSequence {
@@ -261,8 +289,8 @@ $resolvedConversionBindHost = if (-not [string]::IsNullOrWhiteSpace($ConversionB
 } else {
     '0.0.0.0'
 }
-$script:coordinatorPublicUrl = "http://${resolvedPublicHost}:$resolvedCoordinatorPort"
-$script:viewerPublicUrl = "http://${resolvedPublicHost}:$resolvedViewerPort"
+$script:coordinatorPublicUrl = Resolve-DeployPublicBaseUrl -Name 'COORDINATOR_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedCoordinatorPort
+$script:viewerPublicUrl = Resolve-DeployPublicBaseUrl -Name 'VIEWER_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedViewerPort
 
 [Environment]::SetEnvironmentVariable('PUBLIC_HOST', $resolvedPublicHost, 'Process')
 [Environment]::SetEnvironmentVariable('KIT_SPECTATOR_COUNT', [string]$resolvedSpectatorCount, 'Process')

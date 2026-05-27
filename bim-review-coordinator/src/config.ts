@@ -237,6 +237,11 @@ function withGeneratedSpectatorEndpoints(endpoints: KitInstanceEndpointConfig[])
   const stride = integerFromEnv(["KIT_SPECTATOR_PORT_STRIDE"], 10, { min: 1, max: 1000 });
   const [primary] = endpoints;
   const used = new Set([endpointKey(primary)]);
+  const usedSignalingPorts = new Set<number>([primary.signalingPort]);
+  const usedMediaPorts = new Set<number>();
+  if (primary.mediaPort !== null && primary.mediaPort !== undefined) {
+    usedMediaPorts.add(primary.mediaPort);
+  }
   const spectators: KitInstanceEndpointConfig[] = [];
 
   for (let index = 0; index < count; index += 1) {
@@ -244,6 +249,12 @@ function withGeneratedSpectatorEndpoints(endpoints: KitInstanceEndpointConfig[])
     const mediaPort = mediaStart + index * stride;
     if (signalingPort > 65535 || mediaPort > 65535) {
       throw new Error("KIT_SPECTATOR_* generated a port outside 1-65535.");
+    }
+    if (usedSignalingPorts.has(signalingPort)) {
+      throw new Error(`KIT_SPECTATOR_* generated a duplicate signaling port: ${signalingPort}.`);
+    }
+    if (usedMediaPorts.has(mediaPort)) {
+      throw new Error(`KIT_SPECTATOR_* generated a duplicate media port: ${mediaPort}.`);
     }
     const endpoint: KitInstanceEndpointConfig = {
       id: `${primary.id}_spectator_${String(index + 1).padStart(2, "0")}`,
@@ -257,6 +268,8 @@ function withGeneratedSpectatorEndpoints(endpoints: KitInstanceEndpointConfig[])
       throw new Error("KIT_SPECTATOR_* generated a duplicate Kit endpoint.");
     }
     used.add(key);
+    usedSignalingPorts.add(signalingPort);
+    usedMediaPorts.add(mediaPort);
     spectators.push(endpoint);
   }
 
