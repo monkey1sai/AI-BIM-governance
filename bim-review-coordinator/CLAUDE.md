@@ -1,7 +1,9 @@
 # bim-review-coordinator — Local Boundary Rules
 
-> 完整跨 repo 邊界見根目錄 `AGENTS.md` §1.A、§10、§11。
-> 此檔只列「在此 repo 工作時必須遵守的最小規則」。
+本檔是 sibling [`AGENTS.md`](AGENTS.md) 的 Claude 鏡像入口；七段 schema（Role / Owns / Does Not Own / Required Boundaries / Before Editing / Verify / Done Criteria）以 sibling `AGENTS.md` 為準，本檔只列在此 repo 工作時必須遵守的最小規則。
+
+> 完整跨 repo 邊界見根目錄 [`AGENTS.md`](../AGENTS.md) §1 與 [`docs/agents/repo-boundary-detail.md`](../docs/agents/repo-boundary-detail.md)。
+> 衝突時依根目錄 [`CLAUDE.md`](../CLAUDE.md) §1 優先序解析。
 
 ## Role
 
