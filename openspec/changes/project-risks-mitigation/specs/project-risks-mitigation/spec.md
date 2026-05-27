@@ -2,48 +2,96 @@
 
 ### Requirement: RISK-IN-MEMORY-QUEUE-PERSISTENCE
 
-`bim-review-coordinator` 中的轉檔排隊調度任務若僅保存在記憶體中，在伺服器重啟或異常崩潰時，未完成的轉檔任務會被清空，導致外部公司雲端永遠無法獲得 Callback 回報。系統應建立持久化隊列以應對崩潰恢復。
+`bim-review-coordinator` 的 IFC→USDC 轉檔排隊調度 (`ConversionDispatchQueue`) MUST 採用 in-memory FIFO 並接受「coordinator 重啟即遺失 queued 任務」的風險邊界。系統 SHALL 在重啟或 graceful shutdown 時透過 `drain()` 將仍在 `queued_for_conversion` 的 job 標記為 `dropped_on_restart`，並 MUST NOT 假裝其可被自動續做。任何「持久化升級」(sqlite / Redis / RabbitMQ) MUST 透過獨立 OpenSpec change 立案，不在本 change 內實作。
 
 #### Scenario: Coordinator restart drops in-memory queue items
-- **WHEN** `bim-review-coordinator` 在多個轉檔任務排隊中時重啟或崩潰
-- **THEN** 所有處於 `queued_for_conversion` 的任務狀態會被標記為 `dropped_on_restart`，且無法被自動接續處理，需要操作員重新手動 POST。
+
+- **WHEN** `bim-review-coordinator` 在多個轉檔任務排隊中時被重啟、graceful shutdown 或 crash
+- **THEN** 所有處於 `queued_for_conversion` 的 job MUST 透過 `ConversionDispatchQueue.drain()` 被標記為 `dropped_on_restart`
+- **AND** 系統 MUST NOT 自動重派 `dropped_on_restart` 的 job
+- **AND** 操作員 SHALL 透過外部公司雲端重新 POST `/api/external/ifc-ready` 來續做
+
+#### Scenario: Persistence upgrade is out of scope
+
+- **WHEN** 任何 contributor 想把 in-memory queue 換成 sqlite / Redis / RabbitMQ
+- **THEN** MUST 開獨立 OpenSpec change 並另行立 spec、design、tasks
+- **AND** 本 spec 的 risk acceptance 邊界 MUST NOT 被視為自動授權升級實作
 
 ---
 
 ### Requirement: RISK-CI-GPU-VERIFICATION-BLINDSPOT
 
-專案高度依賴 Windows Host-Native NVIDIA GPU 來執行 Kit Viewport 渲染與 WebRTC 串流，使得在無實體 GPU 的標準 CI/CD 環境下，無法進行畫面正確性與 WebRTC 連線健全性的自動化集成測試。
+CI 環境因無實體 NVIDIA GPU，SHALL 將 Kit Viewport 渲染與 WebRTC 串流相關驗證歸類為 `blocked_gpu_runtime_unavailable`，並 MUST NOT 阻擋主線 CI pass/fail。GPU-bound 驗證 SHALL 改由 host-native smoke runbook (`docs/runbooks/one-click-deploy-smoke.md`) 與 OpenSpec evidence 文件人工蓋章。
 
-#### Scenario: Running verification scripts on no-GPU CI environment
-- **WHEN** 持續整合 (CI) 環境在沒有實體 NVIDIA 顯示卡的情況下運行驗證腳本
-- **THEN** 涉及到 3D 渲染與 WebRTC 串流的相關測試被標記為 `blocked_gpu_runtime_unavailable`，造成 3D 畫面與串流品質的黑盒盲區。
+#### Scenario: CI runs without physical GPU
+
+- **WHEN** 持續整合 (CI) 環境在無 NVIDIA 顯示卡下執行驗證腳本
+- **THEN** GPU / Kit 渲染相關 step MUST 被明確標記 `blocked_gpu_runtime_unavailable`
+- **AND** CI workflow MUST NOT 把 `blocked_gpu_runtime_unavailable` 視為 fail
+- **AND** affected functional pass MUST 改由 host-native smoke runbook 由 reviewer 人工蓋章
+
+#### Scenario: GPU evidence is recorded out-of-band
+
+- **WHEN** PR 觸及 Kit runtime / WebRTC / streaming server 程式碼
+- **THEN** PR description 或 OpenSpec change 的 evidence 段 SHALL 引用 `docs/runbooks/one-click-deploy-smoke.md` Smoke Pass Log 對應 row
+- **AND** 該 row MUST 含 commit hash 與 reviewer 簽名
 
 ---
 
 ### Requirement: RISK-FALLBACK-VISUAL-INCONSISTENCY
 
-當原生 HOOPS 或 Kit 轉檔失敗時，系統會調用 `IfcOpenShell` 與 `pxr` Fallback 方案產出備用的 USDC 模型，但兩者轉檔管線不同，可能會產出結構或外觀不一致的 3D 模型。
+`bim-streaming-server` 的 IFC→USDC 轉換 SHALL 以 HOOPS 原生 Kit pipeline 為 primary。當 fallback (`IfcOpenShell` + `pxr`) 被觸發時，conversion result MUST 在 `metadata.json` 標註 `source = "ifcopenshell_openusd_fallback"`（即 `_run_ifcopenshell_openusd_fallback` 寫入的 marker），使下游 reviewer 能識別視覺一致性風險。重命名 `source` key 或改 marker 值 MUST 透過獨立 OpenSpec change；實作層級的視覺迴歸測試 (visual regression) MUST 透過獨立 OpenSpec change 立案。
 
-#### Scenario: Fallback path activates and produces model
-- **WHEN** `bim-streaming-server` 遭遇 Kit 轉換失敗並觸發 `IfcOpenShell/OpenUSD` Fallback 備份路徑
-- **THEN** 產出的備用 USDC 與原生 HOOPS 轉換出的模型在 Mesh 節點結構（Prim Tree）、材質精度上可能存在視覺表現不一致，容易導致審查人員產生視覺誤判。
+#### Scenario: Fallback pipeline is taken
+
+- **WHEN** `bim-streaming-server` 因 HOOPS / Kit 轉換失敗而觸發 `IfcOpenShell` + `pxr` fallback
+- **THEN** 產出的 `metadata.json` MUST 包含 `"source": "ifcopenshell_openusd_fallback"`（由 `_run_ifcopenshell_openusd_fallback` 寫入）
+- **AND** reviewer SHALL 透過該 marker 識別 mesh 結構 / 材質精度可能與 primary pipeline 不一致
+
+#### Scenario: Visual regression test is out of scope
+
+- **WHEN** 任何 contributor 想加 fallback vs primary 視覺迴歸測試
+- **THEN** MUST 開獨立 OpenSpec change 並另行立 spec、design、tasks
+- **AND** 本 spec 的 marker 義務 MUST NOT 被視為自動授權 visual regression test 實作
 
 ---
 
 ### Requirement: RISK-WEBRTC-DATA-CHANNEL-RACE
 
-由於 Kit 啟動為非同步，為了避免與瀏覽器連線競速而使用了 `-SkipAutoLoad`，改由瀏覽器端在建立 WebRTC 連線後，透過 DataChannel 發送 `openStageRequest` 加載模型，這在併發或網路延遲時存在競態風險。
+`bim-streaming-server` Kit instance MUST 啟用 `-SkipAutoLoad`，並 SHALL 把 stage 載入決策權交給 browser-side `web-viewer-sample` 透過 DataChannel 的 `openStageRequest`。Kit 端 `_on_open_stage` handler MUST 以 last-write-wins 行為處理衝突的 `openStageRequest`（後到請求覆蓋 `_requested_stage_url`），且 MUST NOT 卡死 Kit thread。專屬 race detection 結構化 log key、正式 DataChannel state machine、`openStageRequest` 排他鎖 MUST 透過獨立 OpenSpec change 立案。
 
-#### Scenario: Multiple concurrent open stage requests
-- **WHEN** 網路有高延遲，且多個會話 Client 同時透過 DataChannel 對同一個 Kit 實例發送不同模型的 `openStageRequest`
-- **THEN** 轉檔與 Kit 舞台加載狀態可能會發生競態衝突，造成 Kit 舞台資料混亂或加載執行緒卡死。
+#### Scenario: DataChannel race with conflicting open requests
+
+- **WHEN** 多個 viewer client 同時對同一 Kit instance 發送不同模型的 `openStageRequest`
+- **THEN** `_on_open_stage` SHALL 以後到請求覆蓋前一個（透過 `self._requested_stage_url = requested_url` 賦值）
+- **AND** Kit thread MUST NOT 因 race 而卡死或當機
+- **AND** 衝突 race detection 的明確 struct log key MUST NOT 在本 spec 範圍內被引入（屬 successor change）
+
+#### Scenario: DataChannel state machine is out of scope
+
+- **WHEN** 任何 contributor 想引入正式 state machine 與 exclusive lock
+- **THEN** MUST 開獨立 OpenSpec change 並另行立 spec、design、tasks
+- **AND** 本 spec 的 last-write-wins + struct log 義務 MUST NOT 被視為自動授權 state machine 實作
 
 ---
 
 ### Requirement: RISK-AI-AGENT-HISTORICAL-HALLUCINATION
 
-專案中退役服務（`_worker` / `_bim-control`）的歷史文件與 placeholder 大量殘留，使得 AI 程式助手在生成代碼時，容易產生歷史幻覺而違背雲地分離的鐵律（如在 callback 中傳遞模型本體）。
+AI agent (Claude Code / Codex / Gemini 等) 在本 repo 上操作時 MUST 以 `AGENTS.md` 為 source of truth，CLAUDE.md / GEMINI.md 為鏡像入口。任何修改 production code 之 PR SHALL 經由 `.github/workflows/pr-review-agent.yml` 自動審查閘門檢查跨界與退役服務引用。退役服務 (`_worker` / `_bim-control`) 與其歷史文件 MUST NOT 被當成現行架構參考。CI 整合 GitNexus 自動跨界校驗 MUST 透過獨立 OpenSpec change 立案。
 
-#### Scenario: AI agent references legacy components
-- **WHEN** AI 程式助手在沒有嚴格的 `AGENTS.md` 規則限制下，依據殘留的歷史文件進行 API 設計
-- **THEN** 生成的代碼可能會越過服務邊界（例如使 Coordinator 進行 3D 渲染，或是在 Callback 傳遞大檔案二進制），破壞專案的核心安全邊界。
+#### Scenario: AI agent references retired service
+
+- **WHEN** AI agent 在生成 / 修改代碼時引用 `_worker` 或 `_bim-control` 作為現行 runtime service
+- **THEN** human reviewer 或 PR review agent SHALL 標記為跨界 violation 並拒絕 merge
+- **AND** correct path SHALL 改引用 `bim-review-coordinator` / `bim-streaming-server` / `web-viewer-sample` 三個現行 service
+
+#### Scenario: Cross-boundary write attempt
+
+- **WHEN** AI agent 試圖讓 `bim-review-coordinator` 渲染 3D 或在 callback outbox 傳模型 bytes
+- **THEN** human reviewer 或 PR review agent SHALL 標記為違反 `bim-review-coordinator/CLAUDE.md` Must Not 條款並拒絕 merge
+
+#### Scenario: GitNexus CI integration is out of scope
+
+- **WHEN** 任何 contributor 想把 GitNexus 跨界校驗整合到 CI workflow
+- **THEN** MUST 開獨立 OpenSpec change 並另行立 spec、design、tasks
+- **AND** 本 spec 的 AGENTS.md + PR review agent 義務 MUST NOT 被視為自動授權 CI 整合實作
