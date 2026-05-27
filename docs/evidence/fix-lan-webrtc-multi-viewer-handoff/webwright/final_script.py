@@ -47,6 +47,17 @@ def write_log(log_file: Path, message: str) -> None:
     print(message, flush=True)
 
 
+def npm_command() -> str:
+    return "npm.cmd" if os.name == "nt" else "npm"
+
+
+def repo_relative(path: Path, repo_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return path.name
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -269,7 +280,7 @@ def run(args: argparse.Namespace) -> int:
     log_file = run_dir / "final_script_log.txt"
     shutil.copy2(Path(__file__).resolve(), run_dir / "final_script.py")
 
-    write_log(log_file, f"step 0 params: repo_root={repo_root}")
+    write_log(log_file, "step 0 params: repo_root=<repo>")
     public_host = args.public_host or detect_lan_ipv4() or "127.0.0.1"
     lan_mode = not public_host.startswith("127.")
     coordinator_port = args.coordinator_port or free_port()
@@ -346,14 +357,14 @@ def run(args: argparse.Namespace) -> int:
     }
     try:
         coordinator_proc = start_process(
-            ["npm.cmd", "run", "dev"],
+            [npm_command(), "run", "dev"],
             repo_root / "bim-review-coordinator",
             coordinator_env,
             run_dir / "coordinator.stdout.log",
             run_dir / "coordinator.stderr.log",
         )
         viewer_proc = start_process(
-            ["npm.cmd", "run", "dev", "--", "--host", "0.0.0.0", "--port", str(viewer_port), "--strictPort"],
+            [npm_command(), "run", "dev", "--", "--host", "0.0.0.0", "--port", str(viewer_port), "--strictPort"],
             repo_root / "web-viewer-sample",
             viewer_env,
             run_dir / "viewer.stdout.log",
@@ -432,8 +443,8 @@ def run(args: argparse.Namespace) -> int:
             for page, label in [(page_one, "viewer_one"), (page_two, "viewer_two")]:
                 screenshot = run_dir / "screenshots" / f"final_execution_{label}.png"
                 page.screenshot(path=str(screenshot), full_page=False)
-                report["screenshots"][label] = str(screenshot)
-                write_log(log_file, f"step 5 screenshot: {label} {screenshot}")
+                report["screenshots"][label] = repo_relative(screenshot, repo_root)
+                write_log(log_file, f"step 5 screenshot: {label} {repo_relative(screenshot, repo_root)}")
 
             for page, label, videos in [(page_one, "viewer_one", videos_one), (page_two, "viewer_two", videos_two)]:
                 page_evidence[label] = {
@@ -455,7 +466,7 @@ def run(args: argparse.Namespace) -> int:
 
         report_path = run_dir / "report.json"
         report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        write_log(log_file, f"step 7 report: {report_path}")
+        write_log(log_file, f"step 7 report: {repo_relative(report_path, repo_root)}")
 
         critical_ok = (
             report["classification"]["viewer_handoff_lan_url"] == "passed"

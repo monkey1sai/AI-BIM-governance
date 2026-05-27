@@ -12,8 +12,8 @@
     "viewer_two_url": "http://192.168.10.105:56532/?session=review_session_621073d99273&coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A56531&coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A56531&userId=viewer_002&displayName=Viewer+Two&streamRole=spectator"
   },
   "screenshots": {
-    "viewer_one": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\fix-lan-webrtc-multi-viewer-handoff\\docs\\evidence\\fix-lan-webrtc-multi-viewer-handoff\\webwright\\final_runs\\run_4\\screenshots\\final_execution_viewer_one.png",
-    "viewer_two": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\fix-lan-webrtc-multi-viewer-handoff\\docs\\evidence\\fix-lan-webrtc-multi-viewer-handoff\\webwright\\final_runs\\run_4\\screenshots\\final_execution_viewer_two.png"
+    "viewer_one": "docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/final_runs/run_4/screenshots/final_execution_viewer_one.png",
+    "viewer_two": "docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/final_runs/run_4/screenshots/final_execution_viewer_two.png"
   },
   "lan_mode": true,
   "public_host": "192.168.10.105",

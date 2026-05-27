@@ -7,6 +7,9 @@ const originalStreamingConversionApiBase = process.env.STREAMING_CONVERSION_API_
 const originalKitStreamServer = process.env.KIT_STREAM_SERVER;
 const originalKitMediaServer = process.env.KIT_MEDIA_SERVER;
 const originalStorageRoot = process.env.STORAGE_ROOT;
+const originalPublicHost = process.env.PUBLIC_HOST;
+const originalViewerPublicBaseUrl = process.env.VIEWER_PUBLIC_BASE_URL;
+const originalCoordinatorPublicBaseUrl = process.env.COORDINATOR_PUBLIC_BASE_URL;
 
 afterEach(() => {
   if (originalConversionApiBase === undefined) {
@@ -38,6 +41,48 @@ afterEach(() => {
   } else {
     process.env.STORAGE_ROOT = originalStorageRoot;
   }
+
+  if (originalPublicHost === undefined) {
+    delete process.env.PUBLIC_HOST;
+  } else {
+    process.env.PUBLIC_HOST = originalPublicHost;
+  }
+
+  if (originalViewerPublicBaseUrl === undefined) {
+    delete process.env.VIEWER_PUBLIC_BASE_URL;
+  } else {
+    process.env.VIEWER_PUBLIC_BASE_URL = originalViewerPublicBaseUrl;
+  }
+
+  if (originalCoordinatorPublicBaseUrl === undefined) {
+    delete process.env.COORDINATOR_PUBLIC_BASE_URL;
+  } else {
+    process.env.COORDINATOR_PUBLIC_BASE_URL = originalCoordinatorPublicBaseUrl;
+  }
+});
+
+describe("loadConfig public browser bases", () => {
+  it("normalizes explicit public base URL env vars to origins", () => {
+    process.env.VIEWER_PUBLIC_BASE_URL = "http://192.168.10.105:5173/";
+    process.env.COORDINATOR_PUBLIC_BASE_URL = "https://review.example.test:8004/";
+
+    const config = loadConfig();
+
+    expect(config.viewerPublicBaseUrl).toBe("http://192.168.10.105:5173");
+    expect(config.coordinatorPublicBaseUrl).toBe("https://review.example.test:8004");
+  });
+
+  it("rejects scheme-less public base URL env vars", () => {
+    process.env.VIEWER_PUBLIC_BASE_URL = "192.168.10.105:5173";
+
+    expect(() => loadConfig()).toThrow(/VIEWER_PUBLIC_BASE_URL must be an absolute http\(s\) URL/);
+  });
+
+  it("rejects public base URL env vars with paths", () => {
+    process.env.COORDINATOR_PUBLIC_BASE_URL = "http://192.168.10.105:8004/ui";
+
+    expect(() => loadConfig()).toThrow(/COORDINATOR_PUBLIC_BASE_URL must be an origin-only URL/);
+  });
 });
 
 describe("loadConfig conversion API base", () => {

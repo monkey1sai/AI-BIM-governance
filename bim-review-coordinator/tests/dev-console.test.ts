@@ -84,6 +84,28 @@ describe("coordinator dev console", () => {
     expect(location).not.toContain("evil.example");
   });
 
+  it("forwards only whitelisted viewer identity params through /ui/open", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
+      viewerPublicBaseUrl: "http://192.168.10.105:5173",
+      publicHost: "192.168.10.105",
+    });
+
+    const response = await request(app.app)
+      .get(
+        "/ui/open?session=review_session_test_001&userId=viewer_001&displayName=Viewer%20One&streamRole=spectator&signalingServer=evil.example"
+      )
+      .redirects(0);
+
+    expect(response.status).toBe(302);
+    const location = response.headers.location as string;
+    expect(location).toContain("userId=viewer_001");
+    expect(location).toContain("displayName=Viewer+One");
+    expect(location).toContain("streamRole=spectator");
+    expect(location).not.toContain("signalingServer=");
+    expect(location).not.toContain("evil.example");
+  });
+
   it("runtime status exposes browser-visible viewer and coordinator bases", async () => {
     const app = makeApp({
       coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
@@ -151,7 +173,9 @@ describe("coordinator dev console", () => {
     expect(response.status).toBe(200);
     expect(response.text).toContain("joinSession");
     expect(response.text).toContain("bim_review_primary_viewer");
-    expect(response.text).toContain("/ui/open?session=");
+    expect(response.text).toContain("/ui/open?");
+    expect(response.text).toContain("userId");
+    expect(response.text).toContain("displayName");
     expect(response.text).not.toContain("http://127.0.0.1:5173/?");
   });
 

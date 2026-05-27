@@ -1578,7 +1578,7 @@ function mountDevConsole(app: express.Express, config: CoordinatorConfig): void 
       response.status(400).json({ detail: "invalid session id" });
       return;
     }
-    response.redirect(302, buildViewerRedirectUrl(config, session));
+    response.redirect(302, buildViewerRedirectUrl(config, session, request.query));
   });
 }
 
@@ -1588,11 +1588,24 @@ function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): st
   return url.toString();
 }
 
-function buildViewerRedirectUrl(config: CoordinatorConfig, session: string): string {
+const VIEWER_REDIRECT_QUERY_PARAMS = ["projectId", "modelVersionId", "userId", "displayName", "streamRole"] as const;
+
+function queryParamString(value: unknown): string | null {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (typeof candidate !== "string") return null;
+  const trimmed = candidate.trim();
+  return trimmed ? trimmed : null;
+}
+
+function buildViewerRedirectUrl(config: CoordinatorConfig, session: string, forwardedQuery: Record<string, unknown> = {}): string {
   const url = new URL("/", `${config.viewerPublicBaseUrl}/`);
   url.searchParams.set("session", session);
   url.searchParams.set("coordinatorApiBase", config.coordinatorPublicBaseUrl);
   url.searchParams.set("coordinatorSocketUrl", config.coordinatorPublicBaseUrl);
+  for (const param of VIEWER_REDIRECT_QUERY_PARAMS) {
+    const value = queryParamString(forwardedQuery[param]);
+    if (value) url.searchParams.set(param, value);
+  }
   return url.toString();
 }
 

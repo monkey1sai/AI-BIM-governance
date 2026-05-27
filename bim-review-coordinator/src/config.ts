@@ -116,9 +116,25 @@ function normalizeBaseUrl(value: string | undefined): string | null {
   return trimmed.replace(/\/+$/, "");
 }
 
+function normalizePublicBaseUrl(value: string | undefined, name: string): string | null {
+  const normalized = normalizeBaseUrl(value);
+  if (!normalized) return null;
+  if (!/^https?:\/\//i.test(normalized)) {
+    throw new Error(`${name} must be an absolute http(s) URL.`);
+  }
+  const url = new URL(normalized);
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error(`${name} must use http or https.`);
+  }
+  if (url.pathname !== "/" || url.search || url.hash || url.username || url.password) {
+    throw new Error(`${name} must be an origin-only URL without path, query, hash, or credentials.`);
+  }
+  return url.origin;
+}
+
 function publicBaseUrlFromHost(hostOrUrl: string, port: number): string {
   const normalized = normalizeBaseUrl(hostOrUrl) || "127.0.0.1";
-  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (/^https?:\/\//i.test(normalized)) return normalizePublicBaseUrl(normalized, "PUBLIC_HOST") || "http://127.0.0.1";
   return `http://${normalized}:${port}`;
 }
 
@@ -200,10 +216,10 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   const port = numberFromEnv("PORT", 8004);
   const publicHost = process.env.PUBLIC_HOST || "127.0.0.1";
   const viewerPublicBaseUrl =
-    normalizeBaseUrl(process.env.VIEWER_PUBLIC_BASE_URL) ||
+    normalizePublicBaseUrl(process.env.VIEWER_PUBLIC_BASE_URL, "VIEWER_PUBLIC_BASE_URL") ||
     publicBaseUrlFromHost(publicHost, numberFromEnv("VIEWER_PORT", 5173));
   const coordinatorPublicBaseUrl =
-    normalizeBaseUrl(process.env.COORDINATOR_PUBLIC_BASE_URL) ||
+    normalizePublicBaseUrl(process.env.COORDINATOR_PUBLIC_BASE_URL, "COORDINATOR_PUBLIC_BASE_URL") ||
     publicBaseUrlFromHost(publicHost, port);
   const kitStreamServer = kitHostFromEnv("KIT_STREAM_SERVER", "127.0.0.1");
   const kitSignalingPort = numberFromEnv("KIT_SIGNALING_PORT", 49100);
