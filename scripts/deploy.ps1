@@ -209,6 +209,46 @@ function Resolve-HealthProbeHost {
     return $hostName
 }
 
+function Format-DeployHostPort {
+    param(
+        [Parameter(Mandatory = $true)][string] $HostName,
+        [Parameter(Mandatory = $true)][int] $Port
+    )
+    $hostOnly = (Resolve-HostNameOnly -Value $HostName).Trim([char[]]'[]').ToLowerInvariant()
+    return ("{0}:{1}" -f $hostOnly, $Port)
+}
+
+function Resolve-AllowedStageHosts {
+    param(
+        [Parameter(Mandatory = $true)][string] $EnvFile,
+        [Parameter(Mandatory = $true)][string] $PublicHost,
+        [Parameter(Mandatory = $true)][int] $ConversionPort
+    )
+    $configured = Get-DeployEnvValue -Name 'BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS' -EnvFile $EnvFile -Default ''
+    $values = if ([string]::IsNullOrWhiteSpace($configured)) {
+        @(
+            '127.0.0.1:8005',
+            'localhost:8005',
+            ("127.0.0.1:{0}" -f $ConversionPort),
+            ("localhost:{0}" -f $ConversionPort)
+        )
+    } else {
+        @($configured -split ',')
+    }
+    $values += (Format-DeployHostPort -HostName $PublicHost -Port $ConversionPort)
+
+    $seen = @{}
+    $result = @()
+    foreach ($value in $values) {
+        $normalized = $value.Trim().ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
+        if ($seen.ContainsKey($normalized)) { continue }
+        $seen[$normalized] = $true
+        $result += $normalized
+    }
+    return ($result -join ',')
+}
+
 function New-PortSequence {
     param(
         [Parameter(Mandatory = $true)][int] $Count,
@@ -283,7 +323,8 @@ function New-KitRuntimeSignature {
         [Parameter(Mandatory = $true)][int] $SignalPort,
         [Parameter(Mandatory = $true)][int] $StreamPort,
         [Parameter(Mandatory = $true)][int[]] $SpectatorSignalPorts,
-        [Parameter(Mandatory = $true)][int[]] $SpectatorStreamPorts
+        [Parameter(Mandatory = $true)][int[]] $SpectatorStreamPorts,
+        [Parameter(Mandatory = $true)][string] $AllowedStageHosts
     )
     return ([pscustomobject]@{
         publicHost           = $PublicHost
@@ -291,6 +332,7 @@ function New-KitRuntimeSignature {
         streamPort           = $StreamPort
         spectatorSignalPorts = @($SpectatorSignalPorts)
         spectatorStreamPorts = @($SpectatorStreamPorts)
+        allowedStageHosts    = $AllowedStageHosts
     } | ConvertTo-Json -Compress)
 }
 
@@ -420,12 +462,14 @@ $shouldRefreshWebPlane = Test-WebPlaneRefreshRequired `
     -SpectatorCount $resolvedSpectatorCount `
     -EnvFile $resolvedEnvFile
 $resolvedConversionHealthHost = Resolve-HealthProbeHost -BindHost $resolvedConversionBindHost
+$resolvedAllowedStageHosts = Resolve-AllowedStageHosts -EnvFile $resolvedEnvFile -PublicHost $resolvedPublicHost -ConversionPort 49101
 $kitRuntimeSignature = New-KitRuntimeSignature `
     -PublicHost $resolvedPublicHost `
     -SignalPort $resolvedKitSignalPort `
     -StreamPort $resolvedKitMediaPort `
     -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
-    -SpectatorStreamPorts $resolvedSpectatorMediaPorts
+    -SpectatorStreamPorts $resolvedSpectatorMediaPorts `
+    -AllowedStageHosts $resolvedAllowedStageHosts
 $script:coordinatorPublicUrl = Resolve-DeployPublicBaseUrl -Name 'COORDINATOR_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedCoordinatorPort
 $script:viewerPublicUrl = Resolve-DeployPublicBaseUrl -Name 'VIEWER_PUBLIC_BASE_URL' -EnvFile $resolvedEnvFile -HostName $resolvedPublicHost -Port $resolvedViewerPort
 
@@ -444,6 +488,7 @@ Set-DeployEnvIfNeeded -Name 'WEB_VIEWER_COORDINATOR_SOCKET_URL' -Value $script:c
 Set-DeployEnvIfNeeded -Name 'VIEWER_PUBLIC_BASE_URL' -Value $script:viewerPublicUrl -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'COORDINATOR_PUBLIC_BASE_URL' -Value $script:coordinatorPublicUrl -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 Set-DeployEnvIfNeeded -Name 'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL' -Value "http://${resolvedPublicHost}:49101/artifacts" -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
+[Environment]::SetEnvironmentVariable('BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS', $resolvedAllowedStageHosts, 'Process')
 
 $ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
@@ -523,6 +568,7 @@ $auditObj = [pscustomobject]@{
         conversionBindHost  = $resolvedConversionBindHost
         conversionHealthHost = $resolvedConversionHealthHost
         conversionPublicArtifactsUrl = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL')
+        allowedStageHosts   = $resolvedAllowedStageHosts
         kitSignalPort       = $resolvedKitSignalPort
         kitMediaPort        = $resolvedKitMediaPort
         spectatorCount      = $resolvedSpectatorCount
