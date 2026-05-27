@@ -1583,7 +1583,7 @@ function mountDevConsole(app: express.Express, config: CoordinatorConfig): void 
 }
 
 function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): string {
-  const url = new URL("/ui/open", `${config.coordinatorPublicBaseUrl}/`);
+  const url = new URL("ui/open", `${config.coordinatorPublicBaseUrl}/`);
   url.searchParams.set("session", session);
   return url.toString();
 }
@@ -1598,7 +1598,7 @@ function queryParamString(value: unknown): string | null {
 }
 
 function buildViewerRedirectUrl(config: CoordinatorConfig, session: string, forwardedQuery: Record<string, unknown> = {}): string {
-  const url = new URL("/", `${config.viewerPublicBaseUrl}/`);
+  const url = new URL("", `${config.viewerPublicBaseUrl}/`);
   url.searchParams.set("session", session);
   url.searchParams.set("coordinatorApiBase", config.coordinatorPublicBaseUrl);
   url.searchParams.set("coordinatorSocketUrl", config.coordinatorPublicBaseUrl);

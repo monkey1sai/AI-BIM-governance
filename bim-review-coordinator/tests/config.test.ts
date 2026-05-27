@@ -10,6 +10,7 @@ const originalStorageRoot = process.env.STORAGE_ROOT;
 const originalPublicHost = process.env.PUBLIC_HOST;
 const originalViewerPublicBaseUrl = process.env.VIEWER_PUBLIC_BASE_URL;
 const originalCoordinatorPublicBaseUrl = process.env.COORDINATOR_PUBLIC_BASE_URL;
+const originalCorsOrigins = process.env.CORS_ORIGINS;
 
 afterEach(() => {
   if (originalConversionApiBase === undefined) {
@@ -59,6 +60,12 @@ afterEach(() => {
   } else {
     process.env.COORDINATOR_PUBLIC_BASE_URL = originalCoordinatorPublicBaseUrl;
   }
+
+  if (originalCorsOrigins === undefined) {
+    delete process.env.CORS_ORIGINS;
+  } else {
+    process.env.CORS_ORIGINS = originalCorsOrigins;
+  }
 });
 
 describe("loadConfig public browser bases", () => {
@@ -78,10 +85,23 @@ describe("loadConfig public browser bases", () => {
     expect(() => loadConfig()).toThrow(/VIEWER_PUBLIC_BASE_URL must be an absolute http\(s\) URL/);
   });
 
-  it("rejects public base URL env vars with paths", () => {
-    process.env.COORDINATOR_PUBLIC_BASE_URL = "http://192.168.10.105:8004/ui";
+  it("preserves public base URL path prefixes", () => {
+    delete process.env.CORS_ORIGINS;
+    process.env.VIEWER_PUBLIC_BASE_URL = "https://review.example.test/bim-viewer/";
+    process.env.COORDINATOR_PUBLIC_BASE_URL = "https://review.example.test/coordinator/";
 
-    expect(() => loadConfig()).toThrow(/COORDINATOR_PUBLIC_BASE_URL must be an origin-only URL/);
+    const config = loadConfig();
+
+    expect(config.viewerPublicBaseUrl).toBe("https://review.example.test/bim-viewer");
+    expect(config.coordinatorPublicBaseUrl).toBe("https://review.example.test/coordinator");
+    expect(config.corsOrigins).toContain("https://review.example.test");
+    expect(config.corsOrigins).not.toContain("https://review.example.test/bim-viewer");
+  });
+
+  it("rejects public base URL env vars with query strings", () => {
+    process.env.COORDINATOR_PUBLIC_BASE_URL = "http://192.168.10.105:8004/ui?x=1";
+
+    expect(() => loadConfig()).toThrow(/COORDINATOR_PUBLIC_BASE_URL must not include query/);
   });
 });
 

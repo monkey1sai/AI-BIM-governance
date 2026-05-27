@@ -126,10 +126,11 @@ function normalizePublicBaseUrl(value: string | undefined, name: string): string
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error(`${name} must use http or https.`);
   }
-  if (url.pathname !== "/" || url.search || url.hash || url.username || url.password) {
-    throw new Error(`${name} must be an origin-only URL without path, query, hash, or credentials.`);
+  if (url.search || url.hash || url.username || url.password) {
+    throw new Error(`${name} must not include query, hash, or credentials.`);
   }
-  return url.origin;
+  const pathname = url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${pathname === "" ? "" : pathname}`;
 }
 
 function publicBaseUrlFromHost(hostOrUrl: string, port: number): string {
@@ -249,7 +250,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     corsOrigins: csvFromEnv("CORS_ORIGINS", uniqueStrings([
       "http://127.0.0.1:5173",
       "http://localhost:5173",
-      viewerPublicBaseUrl,
+      new URL(viewerPublicBaseUrl).origin,
     ])),
     internalApiAuthToken: process.env.INTERNAL_API_AUTH_TOKEN || "dev-internal-token",
     streamingConversionApiBase:

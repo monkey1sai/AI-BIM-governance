@@ -106,6 +106,21 @@ describe("coordinator dev console", () => {
     expect(location).not.toContain("evil.example");
   });
 
+  it("preserves configured path prefixes in /ui/open redirects", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "https://review.example.test/coordinator",
+      viewerPublicBaseUrl: "https://review.example.test/bim-viewer",
+      publicHost: "review.example.test",
+    });
+
+    const response = await request(app.app).get("/ui/open?session=review_session_test_001").redirects(0);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toContain("https://review.example.test/bim-viewer/");
+    expect(response.headers.location).toContain("coordinatorApiBase=https%3A%2F%2Freview.example.test%2Fcoordinator");
+  });
+
+
   it("runtime status exposes browser-visible viewer and coordinator bases", async () => {
     const app = makeApp({
       coordinatorPublicBaseUrl: "http://192.168.10.105:8004",

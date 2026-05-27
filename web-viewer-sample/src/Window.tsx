@@ -632,7 +632,9 @@ export default class App extends React.Component<AppProps, AppState> {
         const requestedBinding = requestedKitInstanceId
             ? streamConfig.kit_instance_bindings.find((binding) => binding.kit_instance_id === requestedKitInstanceId)
             : null;
-        const primaryBinding = streamConfig.kit_instance_bindings[0] || null;
+        const primaryBinding = streamConfig.kit_instance_bindings.find((binding) =>
+            sameStreamTransportEndpoint(binding.stream_config, streamConfig.webrtc)
+        ) || streamConfig.kit_instance_bindings[0] || null;
         const spectatorBinding = isSpectatorStreamMode() && primaryBinding
             ? streamConfig.kit_instance_bindings.find((binding) =>
                 !sameStreamTransportEndpoint(binding.stream_config, primaryBinding.stream_config)

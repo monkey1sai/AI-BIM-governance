@@ -122,7 +122,7 @@ def wait_http(url: str, timeout_seconds: float, log_file: Path, label: str) -> N
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
-                if 200 <= response.status < 500:
+                if 200 <= response.status < 300:
                     write_log(log_file, f"step wait {label}: ready {url} status={response.status}")
                     return
         except Exception as exc:  # noqa: BLE001 - diagnostics are written to the evidence log.
