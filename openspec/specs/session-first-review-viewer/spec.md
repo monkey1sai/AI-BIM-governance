@@ -18,11 +18,19 @@ when a valid `session` query value is present. The viewer MUST NOT render the
 `USDAsset` picker or `USDStage` tree by default; these debug surfaces SHALL be
 gated behind the `?debug=1` query parameter.
 
+When the coordinator handoff includes `coordinatorApiBase` and `coordinatorSocketUrl`, the viewer SHALL use those browser-visible endpoints before falling back to Vite environment variables or localhost defaults. A remote client opening a coordinator-provided viewer URL MUST NOT silently call its own `127.0.0.1:8004` for session or socket state.
+
 #### Scenario: Coordinator handoff uses session query key
 
-- **WHEN** a browser opens `http://127.0.0.1:5173/?session=<review_session_id>`
+- **WHEN** a browser opens `http://<viewer-host>:5173/?session=<review_session_id>`
 - **THEN** the viewer loads that coordinator session
 - **AND** it MUST NOT ignore the query key and auto-create an unrelated session
+
+#### Scenario: Handoff endpoint overrides localhost defaults
+
+- **WHEN** a browser opens a coordinator-generated viewer URL with `coordinatorApiBase=http://192.168.10.105:8004` and `coordinatorSocketUrl=http://192.168.10.105:8004`
+- **THEN** the viewer uses those endpoints for REST and Socket.IO calls
+- **AND** it MUST NOT fall back to `http://127.0.0.1:8004` for that session
 
 #### Scenario: Expected stage URL is derived from stream config
 

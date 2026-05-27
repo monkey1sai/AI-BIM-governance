@@ -32,6 +32,8 @@
 >
 > **2026-05-27 更新（`cross-service-structured-log-baseline` archive 對齊;跨服務 structured log baseline 落地）**：本 change（implementation PR #126，2026-05-27 merged，squash `d2e9bf9`）已完成 **OpenSpec sync/archive**（archive folder `openspec/changes/archive/2026-05-27-cross-service-structured-log-baseline/`；`openspec/specs/` 28 → **29**：ADD 1 新 capability `cross-service-structured-log-baseline` 含 10 個 requirements / 24 scenarios，0 MODIFIED / 0 REMOVED — 完全 additive）。`openspec validate --specs --strict` = **29 passed / 0 failed**。本 change 把跨 4 個執行單元（coordinator TS / streaming-server Python+Kit / viewer Browser / PowerShell scripts）的 structured log 收斂成一份 schema：7 個 `event_type`（`logic_error` / `operation_anomaly` / `env_snapshot` / `lifecycle` / `audit` / `network` / `general`）× 5 個 `level`；env redaction allow-list（`tests/contracts/structured-log/env-allowlist.json` 機器讀 + `docs/contracts/structured-log-env-allowlist.md` 人讀 + drift contract test）；`trace_id` 命名（`ifcready_*` / `rev_*` / `stream_conv_*` / `script_*`）與跨通道傳遞（HTTP `X-Trace-Id` header / Socket.IO field / WebRTC DataChannel envelope / Kit subprocess `--trace-id` CLI / PowerShell `BIM_TRACE_ID` env）；`logs/<service>/<YYYY-MM-DD>/<service>-<run_id>.jsonl` 佈局 + 30 天 retention script；coordinator `POST /api/internal/viewer-log`（local-dev-only，bypass internal auth middleware）+ `GET /api/internal/structLog/health`；EventLog 雙 sink mirror（6 個 EventLog type → lifecycle subject_kind/phase）。**0 production dep** — Python `jsonschema` 走 root `.venv` 既有 4.25.1 / TS `ajv` 進 coordinator devDep / Pwsh stdlib only / Browser fetch only。**Verification（5 級）**：root pytest = **65 passed**（既有 9 + 新 56）；coordinator `npm run verify` = 17 files / **241 passed**（既有 187 + 新 54）；viewer `npm run verify` = vite build + verify-struct-log 10 + session-first + tri-ready-states 全 pass；PowerShell `test-struct-log.ps1` = **13 passed**、`test-prune-logs.ps1` = **5 passed**；`openspec validate --specs --strict` = 28 → **29 passed / 0 failed**。**GitNexus post-analyze**（worktree fresh index）：`detect_changes` = 2 file / 0 changed_symbols / 0 affected processes / risk=LOW；`EventLog`（Class）/ `createCoordinatorApp`（Function）upstream impact 各 = 0 callers / LOW（皆 backward-compatible additive args，0 既有 callsite 破）。**注意**：本 archive 為 roadmap 候選 **#8 `observability-audit-baseline`**（Prometheus / Grafana / Loki，Phase 6 凍結）鋪 schema/檔案佈局 baseline，**不取代** #8；viewer-log endpoint 在 production 上線前必補 internal token auth；Group 10 smoke evidence（IFC-ready → conversion → session → close 真實閉環 + 4 service `trace_id` grep 串得起）需 Kit live runtime + GPU，本 archive 未升等任何 §1.3 runtime tier 為 passed。
 >
+> **2026-05-27 更新（`fix-lan-webrtc-multi-viewer-handoff` archive 對齊;LAN viewer handoff + same-Kit multi-viewer 落地）**：本 change（implementation PR #128，2026-05-27 merged，squash `c0c8ed9`）已完成 **OpenSpec sync/archive**（archive folder `openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/`；`openspec/specs/` 維持 **29**：MODIFIED 5＝`demo-runtime-readiness-smoke` / `local-coordinator-ifc-ready-intake-boundary` / `multi-artifact-kit-routing` / `runtime-verification-task-status` / `session-first-review-viewer`，ADD 0 / REMOVE 0）。本 change 修正 `/ui/open` 與 viewer query handoff：client 端不再被導到自己的 `127.0.0.1`，而是使用 browser-visible viewer/coordinator public base；同時把 same-session multi-viewer 從「同一 primary endpoint 競用」改為 `single_kit_shared_state` 的 primary + spectator stream binding。**Verification**：coordinator `npm run verify` = 17 files / **250 tests passed**；viewer `npm run test:session-first` passed；viewer `npm run build` passed（既有 chunk-size warning）；`openspec validate fix-lan-webrtc-multi-viewer-handoff --type change --strict` passed；Webwright evidence `docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/run_5/report.json` 顯示 LAN handoff / same-session bootstrap / coordinator participant evidence / `single_kit_multi_viewer` 全 passed，兩個 viewer 皆有 video；`run_4` 保留 primary-only runtime 的 blocker 證據。**注意**：本 archive 完成 same-Kit primary/spectator multi-viewer，不升等 dedicated multi-Kit instance；`streaming-multi-instance-orchestration` 仍需至少兩個 GPU-backed Kit endpoints 與 24GB 級 GPU capacity。
+>
 > **2026-05-12 更新（OpenSpec archive 後 roadmap 對齊規範）**：新增 **§1.6**，明定每次 OpenSpec sync / archive 後，必須同步更新本 roadmap 的 spec 清單、歸檔 change 溯源、Phase 狀態、候選優先級與驗證證據引用，避免 `openspec/specs/` 與本文件漂移。
 >
 > **2026-05-18 更新（Phase B apply 已 merged + archived｜`local-coordinator-ifc-ready-intake-boundary`）**：B 方案 apply（T0–T9）已於 rolling PR #63 **merged**（squash `17553a0`），並依 `AGENTS.md §1.6` 完成 **OpenSpec sync/archive**（archive folder `openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/`；`openspec/specs/` 19 → **23**：ADD 4＝`local-coordinator-ifc-ready-intake-boundary`/`external-cloud-callback-lifecycle`/`local-artifact-shadow-metadata`/`runtime-image-linux-kit-launcher-readiness`；MODIFIED 5＝`conversion-webhook-lifecycle`/`streaming-ifc-usdc-conversion-authority`/`documentation-source-of-truth`/`demo-runtime-readiness-smoke`/`runtime-verification-evidence`；`worker-rvt-ifc-bridge`/`bim-control-revit-intake-facade`/`worker-artifact-pipeline` 收斂為單一「capability removed from product runtime」requirement）。`openspec validate --specs --strict` = **23 passed / 0 failed**。**架構正式邊界**：`_worker` / `_bim-control` 已自 repo 刪除（removed from product runtime，非降級）；對外入口 = `bim-review-coordinator` `POST /api/external/ifc-ready`、`bim-streaming-server` internal-only、轉檔結果走 metadata-only callback outbox、本地僅最小 shadow metadata（control-plane 權威屬外部公司雲端，不 mirror）。**驗證狀態（誠實，依 §1.6 未標 §1.3 passed）**：coordinator `npm run verify`（vitest 130）與 repo-root pytest 6 / streaming pytest 5 綠（程式/契約層）；**runtime image Linux Kit launcher = `deferred`**（GPU/Kit graphics-vulkan 阻塞，非 passed，不用 host-local Kit 充當）；OQ1（雲端 callback endpoint/auth）/ OQ5（SSO）真實對接仍 pending（凍結契約緩解）。**Phase B 候選（§5）/ 下一步（§10）狀態**：本 change 已 land＋archived，從候選池移除、不再是 Phase B 待升格項；溯源見 §1.4。
@@ -228,7 +230,7 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 
 ### 1.2 已歸檔的 OpenSpec specs（權威：`openspec/specs/`）
 
-下列 **29** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。**[2026-05-27 `cross-service-structured-log-baseline` archive]** 新增 `cross-service-structured-log-baseline`（28 → 29）：跨 4 個執行單元（coordinator TS / streaming-server Python+Kit / viewer Browser / PowerShell scripts）的統一 structured log baseline；共用 JSON Schema (7 event_type × 5 level) + env allow-list 脫敏 + `trace_id` 跨通道傳遞 + `logs/<service>/<YYYY-MM-DD>/*.jsonl` 佈局 + 30 天 retention；coordinator `POST /api/internal/viewer-log` + `GET /api/internal/structLog/health`（local-dev-only，無 auth）；EventLog 雙 sink mirror；0 production dep，與既有 `EventLog`/`carb.log_*` 並存。本 change 為 roadmap 候選 #8 `observability-audit-baseline`（Prometheus/Grafana/Loki，Phase 6 凍結）鋪 schema/檔案佈局 baseline，不取代。**[2026-05-26 `add-pr-review-agent` archive]** 新增 `pull-request-review-agent` repository governance capability，定義 PR review gate report schema、path guards、validation planning、GitNexus evidence 與 GitHub Actions verdict；不修改產品 runtime。**[2026-05-25 `streaming-server-capture-kit-conversion-logs` archive]** 不新增 capability，為 `streaming-ifc-usdc-conversion-authority` 新增 Kit subprocess stdout/stderr diagnostic capture requirement，讓 Kit/HOOPS silent failure 可由 artifact dir 內的 `kit-stdout.log` / `kit-stderr.log` 追查。**[2026-05-22 `fix-ifc-usdc-hoops-load-failure` archive]** 不新增 capability，將 6 個現行 capability 補齊為真實 IFC→USDC fallback、closed-loop `/ui` dashboard、session-first stage truth、Chrome E2E stage-load evidence 與 WebRTC disconnect/reload gate。**[2026-05-21 `docker-web-plane-host-native-kit` archive]** 新增 `docker-web-plane-host-native-kit` 後，`openspec/specs/` 維持 **26**。**[2026-05-20 `introduce-host-native-conversion-authority-service` archive]** 新增 `host-native-conversion-authority-service`（23 → 24），並補強 coordinator dispatch / result ingestion / smoke evidence / streaming conversion authority requirements。**[2026-05-18 `local-coordinator-ifc-ready-intake-boundary` archive]** 新增 4 capability（19 → 23）；`worker-artifact-pipeline`/`bim-control-revit-intake-facade`/`worker-rvt-ifc-bridge` 已收斂為單一「removed from product runtime」requirement（B 方案：`_worker`/`_bim-control` 自 repo 刪除，僅 test fixture 模擬，非 runtime）。
+下列 **29** 個 capability 為目前 repo **現行規格**（各 `spec.md`）；歷史 delta 與 merge 過程見 **§1.4** `openspec/changes/archive/`。**[2026-05-27 `fix-lan-webrtc-multi-viewer-handoff` archive]** 不新增 capability（29 → 29），同步修改 5 個既有 capability：`/ui/open` 改用 browser-visible public base，避免 client 被導到自己的 `127.0.0.1`；viewer 只接受 trusted coordinator query handoff；same-session multi-viewer 改以 same-Kit primary + spectator bindings 取得兩條不同 WebRTC transport endpoint；Webwright `run_5` 已驗 `single_kit_multi_viewer=passed`，但 dedicated multi-Kit 仍 capacity-gated。**[2026-05-27 `cross-service-structured-log-baseline` archive]** 新增 `cross-service-structured-log-baseline`（28 → 29）：跨 4 個執行單元（coordinator TS / streaming-server Python+Kit / viewer Browser / PowerShell scripts）的統一 structured log baseline；共用 JSON Schema (7 event_type × 5 level) + env allow-list 脫敏 + `trace_id` 跨通道傳遞 + `logs/<service>/<YYYY-MM-DD>/*.jsonl` 佈局 + 30 天 retention；coordinator `POST /api/internal/viewer-log` + `GET /api/internal/structLog/health`（local-dev-only，無 auth）；EventLog 雙 sink mirror；0 production dep，與既有 `EventLog`/`carb.log_*` 並存。本 change 為 roadmap 候選 #8 `observability-audit-baseline`（Prometheus/Grafana/Loki，Phase 6 凍結）鋪 schema/檔案佈局 baseline，不取代。**[2026-05-26 `add-pr-review-agent` archive]** 新增 `pull-request-review-agent` repository governance capability，定義 PR review gate report schema、path guards、validation planning、GitNexus evidence 與 GitHub Actions verdict；不修改產品 runtime。**[2026-05-25 `streaming-server-capture-kit-conversion-logs` archive]** 不新增 capability，為 `streaming-ifc-usdc-conversion-authority` 新增 Kit subprocess stdout/stderr diagnostic capture requirement，讓 Kit/HOOPS silent failure 可由 artifact dir 內的 `kit-stdout.log` / `kit-stderr.log` 追查。**[2026-05-22 `fix-ifc-usdc-hoops-load-failure` archive]** 不新增 capability，將 6 個現行 capability 補齊為真實 IFC→USDC fallback、closed-loop `/ui` dashboard、session-first stage truth、Chrome E2E stage-load evidence 與 WebRTC disconnect/reload gate。**[2026-05-21 `docker-web-plane-host-native-kit` archive]** 新增 `docker-web-plane-host-native-kit` 後，`openspec/specs/` 維持 **26**。**[2026-05-20 `introduce-host-native-conversion-authority-service` archive]** 新增 `host-native-conversion-authority-service`（23 → 24），並補強 coordinator dispatch / result ingestion / smoke evidence / streaming conversion authority requirements。**[2026-05-18 `local-coordinator-ifc-ready-intake-boundary` archive]** 新增 4 capability（19 → 23）；`worker-artifact-pipeline`/`bim-control-revit-intake-facade`/`worker-rvt-ifc-bridge` 已收斂為單一「removed from product runtime」requirement（B 方案：`_worker`/`_bim-control` 自 repo 刪除，僅 test fixture 模擬，非 runtime）。
 
 | Spec | 對應 v1 Phase | 對應 v2 Layer | 狀態 |
 |---|---|---|---|
@@ -237,10 +239,10 @@ PDF 平台：Revit → (公司雲端只存 metadata) → IFC Worker → .ifc    
 | `worker-demo-upload-convert-ui` | 0/1 | 2 | ✓ Worker demo UI on 8005；含 lineage / conversion quality view |
 | `legacy-storage-conversion-retirement` | 1 | 3 | ✓ `_s3_storage` / `_conversion-service` 退役完成 |
 | `review-session-request-lifecycle` | 2/3 | 3-A/C | ✓ created/active/closing/closed/failed + queued_for_instance + close vs release 分離 + lifecycle audit endpoint / `sequence` event schema |
-| `multi-artifact-kit-routing` | 3 | 3-C / 4 | ✓ artifact_bindings + kit_instance_bindings + same/dedicated/shared 三種 routing |
+| `multi-artifact-kit-routing` | 3 | 3-C / 4 | ✓ artifact_bindings + kit_instance_bindings + same/dedicated/shared 三種 routing；same-Kit primary/spectator multi-viewer evidence 已 passed，dedicated multi-Kit 仍 capacity-gated |
 | `streaming-multi-layer-payload-loading` | 1/2 | 4 | ✓ multi-binding load + applied_mode 誠實回傳 |
-| `session-first-review-viewer` | 2/3 | 2 | ✓ Viewer 從 review_request_id / session_id bootstrap；`?session=` 以 coordinator stream config primary artifact 作為 expected stage，並顯示 stage truth matched / mismatch / disconnected |
-| `demo-runtime-readiness-smoke` | 0/1/2/3 | 6 | ✓ Demo readiness 分層 smoke contract；B 方案新增 `rvt_intake`、`rvt_to_ifc_bridge`、`streaming_conversion_job`、`mapping_quality`、`single_kit_multi_viewer`、`usd_stage_composition` tiers |
+| `session-first-review-viewer` | 2/3 | 2 | ✓ Viewer 從 review_request_id / session_id bootstrap；`?session=` 以 coordinator stream config primary artifact 作為 expected stage，並顯示 stage truth matched / mismatch / disconnected；LAN handoff 只信任 same-host / loopback / allow-listed coordinator origins，避免 client 端落到自己的 `127.0.0.1` |
+| `demo-runtime-readiness-smoke` | 0/1/2/3 | 6 | ✓ Demo readiness 分層 smoke contract；B 方案新增 `rvt_intake`、`rvt_to_ifc_bridge`、`streaming_conversion_job`、`mapping_quality`、`single_kit_multi_viewer`、`usd_stage_composition` tiers；`single_kit_multi_viewer` current primary/spectator evidence passed |
 | `runtime-verification-evidence` | 0 | 6 | ✓ 證據分層（contract / real conversion / storage batch baseline / single-Kit / multi-Kit / stress）；Chrome E2E 必須證明 Kit-loaded stage URL 等於 current conversion `model.usdc`，React metadata alone 不足 |
 | `runtime-verification-task-status` | 3 | 6 | ✓ checklist 語意：GPU / concurrent runtime items 不得因 blocker classification 被視為完成 |
 | `documentation-source-of-truth` | cross-cutting | repo governance | ✓ workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威 |
@@ -394,20 +396,31 @@ Kit subprocess log capture:            kit-stdout.log / kit-stderr.log retained 
 primary Kit/HOOPS diagnostic:          kit-stderr.log shows A3D_LOAD_CANNOT_LOAD_MODEL / error code -10007
 terminal result:                       succeeded via ifcopenshell_openusd_fallback; ready=true; source_ifc_entity_count=4889; mapped_count=4889
 scope boundary:                        observability only; no new service-status UI, no new artifact/session binding rule, no Docker GPU launcher upgrade
+
+# 2026-05-27 fix-lan-webrtc-multi-viewer-handoff（archive closeout evidence）
+implementation PR:                     #128 merged; squash c0c8ed9
+archive folder:                         openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/
+LAN viewer handoff:                     passed; /ui/open uses browser-visible viewer/coordinator public bases, no client-side 127.0.0.1 redirect
+same-session multi-viewer:              passed in Webwright run_5; review_session_29c2bd85a11d; primary + spectator Kit bindings
+primary-only runtime evidence:          run_4 retained as blocker evidence for same primary endpoint competition
+WebRTC video evidence:                  viewer_one=true; viewer_two=true; endpoints 192.168.10.105:49200/48200 and 192.168.10.105:49210/48210
+validation:                             coordinator 250 tests; viewer session-first/build; openspec strict; diff/secret/path checks passed
+scope boundary:                         same-Kit primary/spectator multi-viewer only; dedicated multi-Kit instance remains GPU capacity-gated
 ```
 
 > **證據文件**：
 > - 2026-05-08 baseline：`docs/verification/2026-05-08-spec-end-to-end-verification.md`
 > - 2026-05-11 real conversion：`docs/verification/2026-05-11-worker-real-conversion-quality.md`
 > - Single Kit/browser 截圖與 summary：`docs/verification/evidence/2026-05-11-worker-real-conversion-quality/`
+> - 2026-05-27 LAN handoff + same-Kit multi-viewer：`docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/run_5/report.json`
 >
 > **限制**：`worker-real-conversion-quality` 已解除 placeholder converter blocker；`worker-mapping-lineage-quality-baseline` 已將 `minimum_coverage_ratio=1.0` / all-IFC-entity semantics 與 lineage API 併入現行 specs，但 canonical 13-file real batch 尚未完成，因此不得宣稱 full production coverage baseline 已鎖定。
 
-> **註（2026-05-12）**：`multi-artifact-kit-routing` 的 dedicated_instance runtime 不再列為既有分支驗證狀態；後續必須等 GPU 購買與部署完成、可提供至少兩個 GPU-backed Kit endpoints 後，才重新啟動驗證並更新 `runtime-verification-evidence`。
+> **註（2026-05-27）**：same-Kit primary/spectator multi-viewer 已由 `fix-lan-webrtc-multi-viewer-handoff` 補齊；`multi-artifact-kit-routing` 的 dedicated_instance runtime 仍不列為既有分支驗證狀態。後續必須等 GPU 購買與部署完成、可提供至少兩個 GPU-backed Kit endpoints 後，才重新啟動 dedicated multi-Kit 驗證並更新 `runtime-verification-evidence`。
 
 ### 1.4 OpenSpec 已歸檔 change → 現行 `openspec/specs/` 溯源
 
-> **用途**： roadmap 只摘要狀態；**需求句式與 Requirement 編號以各 spec 為準**。下列為 `openspec/changes/archive/` 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-26 盤點）。
+> **用途**： roadmap 只摘要狀態；**需求句式與 Requirement 編號以各 spec 為準**。下列為 `openspec/changes/archive/` 目錄（folder 名）與本 repo 現行 capability 的對應（2026-05-27 盤點）。
 
 | 已歸檔 change（`openspec/changes/archive/`） | 影響的現行 spec（`openspec/specs/`） | 摘要 |
 |---|---|---|
@@ -436,6 +449,7 @@ scope boundary:                        observability only; no new service-status
 | `2026-05-25-coordinator-ui-tri-ready-and-queue` | `demo-fast-mvp-orchestration`（ADD 3 / MODIFY 1 requirements） | coordinator `/ui` 加 Edge BIM Data Server Console section：三段 ready badges（Semantic 從 `/api/review-sessions/:id/stream-config` 取 quality_metrics_summary，與 viewer 共用同份欄位來源）、Conversion Dispatch Queue 區段（in-flight / queued / dropped_on_restart）、4 step header literal、legacy `/api/assets` disclaimer。spec scenario「Dashboard readiness aligns with viewer readiness」釐清 Semantic tier 必須 align、Runtime tier 允許 server-side proxy view 在 viewer 連上前先標 yes、transient race 允許不一致。fetch 失敗 path reset DOM 避免陳舊值。vitest 176 passed。Implementation PR #109 merged（squash `5f20c04`）；archive 不引入 React / SPA framework、不改 `/ui` 後端 API 路由 |
 | `2026-05-25-streaming-server-capture-kit-conversion-logs` | `streaming-ifc-usdc-conversion-authority`（ADD requirement） | Kit subprocess diagnostic capture：`convert-ifc-to-usdc.ps1` 將 Kit/HOOPS stdout/stderr 以 async redirect 寫入 conversion artifact dir 的 `kit-stdout.log` / `kit-stderr.log`，避免 large output pipe deadlock；失敗 result SHALL 暴露 log path 與 stderr/stdout tail 摘要，成功 result 仍保留 log file 供 baseline 對照。L4 證據：`stream_conv_20260525055218_115177da` 對 341MB IFC 重跑，`kit-stderr.log` 顯示 `A3D_LOAD_CANNOT_LOAD_MODEL` / `-10007`，同 job 最終由 `ifcopenshell_openusd_fallback` 成功；archive 不新增 coordinator service-status UI、不改 artifact/session binding、不升等 Docker GPU launcher / OQ1 / OQ5 |
 | `2026-05-27-cross-service-structured-log-baseline` | `cross-service-structured-log-baseline`（ADD，新 capability） | 跨 4 個執行單元（bim-review-coordinator TS / bim-streaming-server Python+Kit / web-viewer-sample Browser / PowerShell scripts）的統一 structured log baseline：共用 JSON Schema（7 個 event_type × 5 個 level）、env redaction allow-list（JSON 機器讀 + Markdown 人讀 + drift 檢查）、`trace_id` 命名與跨通道傳遞（HTTP `X-Trace-Id` header / Socket.IO field / WebRTC DataChannel envelope / Kit CLI `--trace-id` / PowerShell `BIM_TRACE_ID` env）、`logs/<service>/<YYYY-MM-DD>/<service>-<run_id>.jsonl` 佈局 + 30 天 retention script、coordinator `POST /api/internal/viewer-log` + `GET /api/internal/structLog/health`（local-dev-only，無 auth bypass internal middleware）、EventLog 雙 sink mirror（6 個 EventLog type → lifecycle subject_kind/phase）。0 production dep、與既有 `EventLog`/`carb.log_*`/`kit-stdout.log` 並存。`openspec/specs/` 28 → 29。Implementation PR #126 merged（squash `d2e9bf9`，2026-05-27）；GitNexus detect_changes 對 worktree fresh index 跑：2 file / 0 changed_symbols / 0 affected processes / risk=LOW；`EventLog` + `createCoordinatorApp` upstream impact 各 0 callers / LOW（皆為 backward-compatible additive args）。Verification：root pytest 65 / coordinator vitest 241 / viewer build+verify-struct-log 10 / PowerShell 13+5 全 pass。**Out of scope（記為未來 follow-up）**：Prometheus/Grafana/Loki（roadmap 候選 #8 `observability-audit-baseline`，本 change 是 baseline 鋪路而非取代）、viewer-log endpoint production token auth、Group 10 smoke evidence 跑真實 IFC-ready → conversion → session → close 閉環的 Kit live runtime evidence |
+| `2026-05-27-fix-lan-webrtc-multi-viewer-handoff` | `demo-runtime-readiness-smoke`（ADD 1 requirement）；`local-coordinator-ifc-ready-intake-boundary`、`multi-artifact-kit-routing`、`runtime-verification-task-status`、`session-first-review-viewer`（MODIFY） | LAN WebRTC handoff + same-Kit multi-viewer：coordinator `/ui/open` 使用 browser-visible viewer/coordinator public base URL，不再把 client 導向自己的 `127.0.0.1`；public base validation 拒絕 scheme-less URL / query / hash / credentials 並保留 reverse-proxy path prefix；dev console 改走 `/ui/open`；viewer query handoff 只信任 same-host / loopback / allow-listed coordinator origins；same-session spectator 選擇完整 WebRTC transport endpoint distinct from primary，並先依 `streamConfig.webrtc` 匹配 primary binding，避免 order-dependent misroute。Implementation PR #128 merged（squash `c0c8ed9`，2026-05-27）。Verification：coordinator `npm run verify` = 17 files / 250 tests；viewer `npm run test:session-first` + build passed；Webwright `run_5` 證明 `viewer_handoff_lan_url` / `same_session_bootstrap` / `coordinator_participant_evidence` / `single_kit_multi_viewer` 全 passed，兩 viewer video true；`run_4` 保留 primary-only blocker evidence。**Out of scope**：dedicated multi-Kit instance、production TURN/STUN hardening、外部 OQ1/OQ5 |
 
 ```txt
 規格目錄約定：
@@ -582,12 +596,12 @@ OpenSpec archive 後，至少檢查：
 | v1 路線圖項目 | 對應 spec | 狀態 |
 |---|---|---|
 | created → active → closing → closed → instance released | `review-session-request-lifecycle` Req4/5 | ✓ Spec + control-plane 證據完整 |
-| 多 artifact / 多 instance 調度 | `multi-artifact-kit-routing` | ⏸ **dedicated_instance runtime 等待 GPU 購買與部署後執行**（spec ✓，main 上單 Kit + Socket.IO 並發 2 tabs OK；至少兩個 GPU-backed Kit endpoints 可用前不宣稱 runtime passed / failed） |
+| 多 artifact / 多 instance 調度 | `multi-artifact-kit-routing` | ⚠ same-Kit primary/spectator multi-viewer 已 passed；⏸ **dedicated_instance runtime 等待 GPU 購買與部署後執行**（至少兩個 GPU-backed Kit endpoints 可用前不宣稱 dedicated multi-Kit runtime passed / failed） |
 | startup policy / artifact group / model_version | `review-session-request-lifecycle` Req1 | ✓ |
 
 **Gap**：
 
-1. `multi-artifact-kit-routing` Req2 的 `dedicated_instance` routing 在 `main` 上 runtime 證據尚未補齊；最新狀態改為**等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，候選 #2 / #2A 只保留 routing contract 與後續執行條件，不列為進行中或 passed / failed。
+1. `fix-lan-webrtc-multi-viewer-handoff` 已補齊 same-Kit primary/spectator multi-viewer 證據；`multi-artifact-kit-routing` Req2 的 `dedicated_instance` routing 在 `main` 上 runtime 證據仍未補齊，狀態維持**等待 GPU 購買與部署後執行**。在至少兩個 GPU-backed Kit endpoints 可用前，候選 #2 / #2A 只保留 routing contract 與後續執行條件，不列為進行中或 passed / failed。
 2. `failed` 狀態下的 retry / rerun spec 還沒定義。
 3. tenant 隔離的 GPU profile / quota 還沒進入 spec。
 
@@ -806,12 +820,14 @@ A：可以，但**不是把 #2 spec 換掉**：
 | 1 | `runtime-image-linux-kit-launcher-readiness-pass` | **P0 / deferred blocker** | `bim-streaming-server` + Docker runtime | `scripts/verify-runtime-kit-launcher.ps1` 顯示 runtime image 內 produced Linux Kit launcher 真正啟動；container 不再缺 NVIDIA graphics/Vulkan libs；evidence 從 `deferred` 升為 `passed` | 不用 host-local Kit、不用 `nvidia-smi` compute-only 充當 pass |
 | 2 | `bscheme-real-streaming-conversion-evidence` | **✓ archived / completed by `fix-ifc-usdc-hoops-load-failure`** | `bim-review-coordinator` + `bim-streaming-server` | 已以 current evidence 證明：contract-correct IFC-ready payload → coordinator intake → `127.0.0.1:49101` host-native fallback conversion → streaming-owned `conversion_job_id` / result / mapping quality metrics → local viewer handoff；保留 `external_model_version_id` binding | 不重建 `_worker`；不把 historical worker evidence 或 spec archive 升等為 B-scheme runtime pass |
 | 3 | `single-kit-webrtc-visual-evidence` | **✓ archived / completed by `fix-ifc-usdc-hoops-load-failure`** | `bim-streaming-server` + `web-viewer-sample` | 已以 Chrome E2E 證明 streaming-produced artifact 被 Kit/WebRTC viewer 載入：`openedStageResult` / `loadingStateResponse`、非零 `1920x1080` video dimensions、viewport screenshots、reload recovery | 不把 API-only pass、Socket.IO pass、舊截圖當 current WebRTC pass |
-| 4 | `same-kit-multi-viewer-session-evidence` | **P1 / after single-viewer closed loop** | viewer + coordinator + streaming | 同一 Kit endpoint 支援至少兩個 viewer session，session / presence / callback 狀態分層清楚 | 不與 dedicated multi-Kit 混在同一驗證 |
+| 4 | `same-kit-multi-viewer-session-evidence` | **✓ archived / completed by `fix-lan-webrtc-multi-viewer-handoff`** | viewer + coordinator + streaming | 已以 Webwright run_5 證明同一 review session 兩個 LAN viewer 可透過 same-Kit primary + spectator endpoints 同時看到 WebRTC video；`/ui/open` 不再導向 client 自己的 `127.0.0.1` | 不與 dedicated multi-Kit 混在同一驗證；不把 primary-only run_4 blocker 當 pass |
 | 5 | `streaming-multi-instance-orchestration` | **P0-hold** | streaming runtime / coordinator Kit pool | 至少兩個 GPU-backed Kit endpoints + 24GB 級 GPU capacity 到位後，驗 dedicated instance routing | GPU 未到位前不標 in-progress、passed 或 failed |
 | 6 | `company-cloud-callback-auth-binding` | **blocked by OQ1** | coordinator callback outbox + 外部公司雲端 | 外部 endpoint/auth 確認後，將 outbox target/auth 從 placeholder 轉成 real integration evidence | 不假設 endpoint、不傳 `.usdc` 本體、不把 dead-letter 視為 conversion failed |
 | 7 | `local-web-view-sso-binding` | **blocked by OQ5** | coordinator user auth + 外部 SSO | 公司 SSO/token introspection 確認後，替換 local-dev provider 並維持 current local web view contract | 不寫死 EZPLUS SSO、不把 dev token 當正式 pass |
 
 > **2026-05-22 archive 補充**：`fix-ifc-usdc-hoops-load-failure` 已把 `bscheme-real-streaming-conversion-evidence` 與 `single-kit-webrtc-visual-evidence` 的 current single-viewer closed-loop evidence 移入正式 specs。`docker-web-plane-host-native-kit` 仍是可重用的 hybrid web-plane run path；它與本次 host-native Kit/WebRTC pass 都不升等 `runtime-image-linux-kit-launcher-readiness-pass`（Docker GPU launcher 仍 deferred）。
+>
+> **2026-05-27 archive 補充**：`fix-lan-webrtc-multi-viewer-handoff` 已把 same-Kit primary/spectator multi-viewer 從 P1 候選移入 archived evidence；dedicated multi-Kit instance 仍維持 P0-hold / capacity-gated。
 
 **目前 deferred / blocked / not_observed runtime evidence**
 
@@ -820,12 +836,25 @@ A：可以，但**不是把 #2 spec 換掉**：
 | `runtime_image_kit_launcher` | `deferred`：2026-05-19 smoke 顯示 Docker engine not available，因此尚未驗到 runtime image Kit launcher；先前 container graphics/Vulkan blocker 仍列為 Docker 可用後需再觀察的下一層風險 | 先啟動/修復 Docker engine，重跑 `scripts/verify-runtime-kit-launcher.ps1`；若回到 `libGLX_nvidia.so.0` / graphics-Vulkan failure，再修 NVIDIA Container Toolkit graphics capability 或 WSL2 GL/Vulkan passthrough |
 | `mapping_quality` | `passed(current single job)`：`stream_conv_20260522112506_2b79ba1d` 具 streaming-owned fallback quality metrics 與 sidecars；仍不代表 full production coverage baseline locked | 後續若要 production baseline，另跑 batch/coverage change；不能沿用 worker-era mapping evidence |
 | `single_kit_render` | `passed(current single job)`：Chrome E2E 證明 current `model.usdc` loaded URL、video dimensions、reload recovery | 後續擴展 same-Kit multi-viewer / dedicated multi-Kit 前，以此作 single-viewer closed-loop baseline |
-| `single_kit_multi_viewer` | `not_observed`：未收多 viewer browser evidence | #3 passed 後再跑 |
+| `single_kit_multi_viewer` | `passed(current primary/spectator run)`：Webwright run_5 顯示 LAN handoff、same-session bootstrap、participant evidence 與兩個 viewer video 全 passed；run_4 primary-only runtime 仍保留為 blocker evidence | dedicated multi-Kit 不受此 pass 影響；後續等兩個 GPU-backed Kit endpoints 到位後再跑 `streaming-multi-instance-orchestration` |
 | `usd_stage_composition` | `passed(current primary stage)`：已用 streaming-owned `model.usdc` 走 session-first primary stage load；multi-layer/subLayer composition 仍需另證 | 後續若要多 artifact composition，另走 `streaming-usd-stage-composition` focused evidence |
 | OQ1 | `pending`：公司雲端 callback endpoint/auth 未確認 | 等外部平台 team 提供 endpoint/auth；保留 contract + outbox |
 | OQ5 | `pending`：公司 SSO / user auth provider 未確認 | 等 SSO 決策；保留可替換 provider |
 
 ### 5.0 已完成 / Archived
+
+#### 已歸檔：`fix-lan-webrtc-multi-viewer-handoff`
+
+| 項目 | 內容 |
+|---|---|
+| **狀態** | ✓ 已 archive：`openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/` |
+| **目標** | 修正 LAN client 打開 viewer 時被導向自身 `127.0.0.1` 的 handoff 問題，並補齊 same-session same-Kit multi-viewer evidence |
+| **解決的 v1 phase / v2 layer** | Phase 2/3 review session handoff + Layer 2 browser viewer + Layer 4 WebRTC runtime |
+| **repo 邊界** | `bim-review-coordinator` public URL / stream-config / dev console；`web-viewer-sample` trusted query handoff + primary/spectator endpoint selection；不修改外部公司雲端、不重開 retired runtime |
+| **KPI / evidence** | Webwright `run_5`：`review_session_29c2bd85a11d`，`viewer_handoff_lan_url=passed`，`same_session_bootstrap=passed`，`coordinator_participant_evidence=passed`，`single_kit_multi_viewer=passed`，viewer_one/viewer_two video wait 均 true |
+| **證據路徑** | `docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/run_5/report.json`；`run_4` 保留 primary-only blocker evidence |
+| **仍未宣稱完成** | dedicated multi-Kit instance、production TURN/STUN hardening、external company-cloud callback auth(OQ1)、SSO(OQ5) |
+| **驗證指令** | coordinator `npm run verify`、viewer `npm run test:session-first`、viewer `npm run build`、`openspec validate fix-lan-webrtc-multi-viewer-handoff --type change --strict`、Webwright evidence run |
 
 #### 已歸檔：`fix-ifc-usdc-hoops-load-failure`
 
@@ -1059,9 +1088,9 @@ Current P0 (下一輪先做):
   runtime-image-linux-kit-launcher-readiness-pass
     → 先讓 Docker engine 可用並啟動 runtime image；若 graphics/Vulkan blocker 仍出現，再解除 container NVIDIA graphics/Vulkan 問題，讓 produced Linux Kit launcher 在 runtime image 內真的啟動。
 
-P1 (P0 passed 後):
-  same-kit-multi-viewer-session-evidence
-    → 已有 single-viewer closed-loop baseline；下一步先驗同一 Kit endpoint 多 viewer，再考慮 dedicated multi-Kit。
+Completed current host-native/WebRTC baseline:
+  fix-ifc-usdc-hoops-load-failure → fix-lan-webrtc-multi-viewer-handoff
+    → 已有 single-viewer closed-loop baseline，也已驗同一 review session 的 same-Kit primary/spectator multi-viewer；下一步不再重跑 P1 same-Kit，除非要做 regression evidence。
 
 P0-hold / capacity-gated:
   streaming-multi-instance-orchestration
@@ -1074,7 +1103,7 @@ Blocked by external OQ:
     → OQ5 pending；等公司 SSO / token introspection 決策。
 
 Archive-only / not next product runtime:
-  fix-ifc-usdc-hoops-load-failure、worker-real-conversion-quality、worker mapping lineage、canonical 13-file batch、queue retention
+  fix-ifc-usdc-hoops-load-failure、fix-lan-webrtc-multi-viewer-handoff、worker-real-conversion-quality、worker mapping lineage、canonical 13-file batch、queue retention
     → 已作 worker-era evidence / archive lineage；Phase B 後不再作本 repo product runtime 候選。
 
 P3-frozen:
@@ -1086,14 +1115,13 @@ P3-frozen:
 
 ```txt
 runtime-image-linux-kit-launcher-readiness-pass
-  └─→ single-kit-webrtc-visual-evidence
-       └─→ same-kit-multi-viewer-session-evidence
-            └─→ streaming-multi-instance-orchestration（GPU capacity gated）
+  └─→ streaming-multi-instance-orchestration（GPU capacity gated）
 
 bscheme-real-streaming-conversion-evidence
   ├─→ streaming-owned mapping_quality evidence
   ├─→ usd_stage_composition evidence
   └─→ single-kit-webrtc-visual-evidence
+       └─→ fix-lan-webrtc-multi-viewer-handoff（completed same-Kit primary/spectator multi-viewer）
 
 company-cloud-callback-auth-binding（OQ1 pending）
 local-web-view-sso-binding（OQ5 pending）
@@ -1536,14 +1564,15 @@ B → C 觸發：
    - 轉檔失敗可觀察性已補齊：`openspec/changes/archive/2026-05-25-streaming-server-capture-kit-conversion-logs/` 要求 Kit subprocess stdout/stderr 留在 artifact dir；後續遇到 Kit/HOOPS silent failure 先看 `kit-stderr.log` / `kit-stdout.log`，不要再只看 `model.usdc` 是否存在。
    - 誠實分層：OQ1 callback auth pending 不否定 conversion；Docker GPU launcher readiness 不因 host-native Kit evidence 升等。
 
-3. **下一個 runtime 擴展：same-Kit multi-viewer evidence**：
-   - 前置：沿用第 2 點 single-viewer closed-loop baseline。
-   - 成功標準：同一 Kit endpoint 至少兩個 viewer tabs/session，dashboard 與 runtime status 能分層顯示 viewer/participant count、WebRTC lifecycle 與 session handoff。
-   - 若 Kit/GPU/browser 仍不可用，分層記 `blocked` / `deferred` / `not_observed`，不得宣稱 web UI 已檢視成果。
+3. **same-Kit multi-viewer evidence 已完成（current primary/spectator baseline）**：
+   - 已歸檔：`openspec/changes/archive/2026-05-27-fix-lan-webrtc-multi-viewer-handoff/`。
+   - 證據：`docs/evidence/fix-lan-webrtc-multi-viewer-handoff/webwright/run_5/report.json`。
+   - current baseline：coordinator `/ui/open` LAN handoff 不導向 client 自己的 `127.0.0.1`；同一 review session 兩個 viewer 使用 same-Kit primary + spectator WebRTC endpoints，兩邊 video wait 均 true。
+   - 誠實分層：run_4 的 primary-only runtime 仍是 blocker evidence；本 pass 不代表 dedicated multi-Kit，也不解 production TURN/STUN。
 
-4. **先 same-Kit multi-viewer，再 dedicated multi-Kit**：
-   - Same-Kit multi-viewer 可在 single Kit render 成立後驗證。
+4. **下一個 runtime 擴展只剩 dedicated multi-Kit / GPU capacity-gated**：
    - `streaming-multi-instance-orchestration` 維持 P0-hold：至少兩個 GPU-backed Kit endpoints + 24GB 級 GPU capacity 到位前，不啟動 dedicated instance runtime verification，也不標 in-progress、passed 或 failed。
+   - 若要做 regression，可重跑 same-Kit primary/spectator Webwright；但它不再是下一輪 P1 候選。
 
 5. **OQ1 / OQ5 等外部平台輸入，不在本 repo 內猜答案**：
    - OQ1：公司雲端 callback endpoint/auth；現階段保留 contract + callback outbox retry/dead-letter。
