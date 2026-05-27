@@ -1,36 +1,55 @@
 ## Context
 
-在 B 方案（雲地分離）架構下，專案的邊界已經收斂。但在實際運行中，轉檔排隊佇列的穩定性、CI/CD 自動化測試的完備性、Fallback 機制產出的模型視覺一致性、網路高延遲下的競態條件，以及 AI 開發流程的合規性防線仍有待加強。本設計旨在提出針對這五個風險的應對策略與長遠架構規畫。
+B 方案（雲地分離）架構下，邊界已收斂。實際運行中，本專案有五個風險點：
+
+1. coordinator in-memory queue 在重啟時遺失 queued job
+2. CI 無 GPU 環境，Kit 渲染與 WebRTC 串流無法自動化驗證
+3. fallback (IfcOpenShell + pxr) 與 primary (HOOPS Kit) 視覺一致性
+4. WebRTC DataChannel `openStageRequest` 在 race 條件下的行為
+5. AI agent 在含退役服務歷史文件的 repo 上做設計時的越界與幻覺風險
+
+這五點在 main 上**都已有意識地被接受**並各自有最小 mitigation。但缺少正式 OpenSpec 把「接受邊界」與「最小義務」明文化，導致後續 PR 反而可能誤改最小行為，或 AI agent 把現行行為誤判為待修 bug。
+
+本 change 的設計目標：**只做 spec 層級的明文化，不做實作升級**。實作升級各自獨立 OpenSpec change。
 
 ## Goals / Non-Goals
 
 **Goals:**
-- 提供五個風險的具體緩解與防禦設計方案。
-- 在不影響目前 B 方案最小閉環的基礎上，定義未來的系統加固方向。
+- 把五個風險寫成 SHALL/MUST spec，定義「接受邊界 + 最小義務 + 升級實作必須另開 change」三件事
+- 讓 spec 通過 `openspec validate --strict`
+- 為 PR reviewer 與 AI agent 提供可引用的明文依據
 
 **Non-Goals:**
-- 在本分支中立刻實作 Redis 或數據庫持久化隊列代碼（此工作將在後續專屬的實作變更中完成）。
-- 本地配置虛擬 GPU 或雲端 GPU 測試節點。
+- ❌ 在本 change 把 in-memory queue 升級為 sqlite / Redis（另開 change）
+- ❌ 在本 change 加 fallback vs primary visual regression test（另開 change）
+- ❌ 在本 change 引入 DataChannel state machine 或 exclusive lock（另開 change）
+- ❌ 在本 change 把 GitNexus 跨界校驗整合到 CI workflow（另開 change）
+- ❌ 本地配置虛擬 GPU 或雲端 GPU 測試節點（另開 change）
 
 ## Decisions
 
-### 決策 1：轉檔排隊佇列的持久化
-- **方案**：將目前 Coordinator 的 `in-memory` FIFO 隊列，改為結合輕量級持久化（如 sqlite 或 file-based 隊列，或未來引入 Redis/RabbitMQ）的持久化佇列。
-- **好處**：當 Coordinator 重啟時，未完成的轉換任務可從持久化存儲中重新載入並重試，避免狀態遺失。
+### Decision 1：spec 描述「已接受的最小行為」而非「目標未來行為」
 
-### 決策 2：CI 盲區的模擬合約與三段 Ready 測試覆蓋
-- **方案**：在 CI 中強制以 mock/fake 以及 JSON contract 作為主要驗證手段。對於 GPU Kit 渲染部分，以 `observability note` 與 `verification readiness JSON` 來分段評估，並將 "GPU / Kit 實體運行" 獨立於主線 CI pass/fail 外，以免阻塞部署。
+- **採用**：5 個 Requirement 都用「MUST 採用 in-memory FIFO」「MUST 透過 drain() 標記 dropped_on_restart」這類描述當下行為的 SHALL/MUST。
+- **不採用**：「MUST 升級為 sqlite」「MUST 引入 state machine」這類描述未來目標的 SHALL/MUST。
+- **原因**：spec 是當前 main 行為的契約，不是 wishlist。Wishlist 應該是 successor change 的 proposal，而非本 change 的 spec。
 
-### 決策 3：建立 Fallback 模型視覺比對規範
-- **方案**：在本地開發機（具有 GPU）環境中，增加視覺測試工具（Visual Regression Test），確保 fallback 方案生成的 USDC 與 HOOPS 轉換的版本，在關鍵 prim 與結構上對齊。
+### Decision 2：每個 Requirement 多加一個 "out of scope" scenario
 
-### 決策 4：WebRTC DataChannel 握手與狀態機加鎖
-- **方案**：在 Kit server 與 Coordinator 端引入狀態機，確保只有在 WebRTC DataChannel 狀態為 `open`，且 Kit 完成前置 initialization 後，才允許接收並執行 `openStageRequest`；並對併發請求進行排他性加鎖。
+- **採用**：每個 Requirement 加一個 `#### Scenario: <topic> is out of scope` block，明寫「若要升級實作 MUST 另開 OpenSpec change」。
+- **原因**：避免後續 contributor 引用本 spec 的 risk 描述當作「自動授權」去改 production code。
 
-### 決策 5：利用 GitNexus 和 AI Journal 建立防越界防線
-- **方案**：在 `CLAUDE.md` 和 `AGENTS.md` 中寫死 Source of Truth 優先序與禁止跨界規則，並在 CI 流程中加入 GitNexus 自動檢測，若 AI 修改跨越服務邊界則拒絕 merge。
+### Decision 3：tasks.md 把 §2 三個 follow-up tasks 標為 deferred-to-successor-change
+
+- **採用**：原 §2 的 sqlite queue / CI GitNexus / DataChannel state machine 三個 task 標成 `[~]`（deferred）並指向應立的 successor change 框架。
+- **不採用**：把 task 留 `[ ]` 然後嘗試在本 PR 做（會超出 scope 並破壞最小閉環）。
+- **原因**：明文化 deferred 讓後續 reviewer 不會誤以為本 change 未完成。
 
 ## Risks / Trade-offs
 
-- [持久化佇列] → 增加本地 coordinator 的 I/O 負擔。
-- [CI 模擬驗證] → 測試無法 100% 反映真實 GPU 驅動崩潰或 WebRTC 連線抖動問題。
+- **trade-off：spec 不推進實作升級**：好處是 commit 範圍小、可審；壞處是真實 mitigation 仍依賴後續 change，spec pass 不等於 risk 已消除。
+- **risk：spec 與實際行為脫鉤**：若未來 main 上的 `ConversionDispatchQueue.drain()` 行為被移除，本 spec 就會「過時」。緩解：spec 條文裡 hardcode 具體 symbol name (`ConversionDispatchQueue.drain()`)，AI agent / reviewer 改該 symbol 時容易連動發現。
+
+## Open Questions
+
+(none — scope 已收斂)
