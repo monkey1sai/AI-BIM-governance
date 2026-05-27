@@ -40,12 +40,12 @@ CI 環境因無實體 NVIDIA GPU，SHALL 將 Kit Viewport 渲染與 WebRTC 串�
 
 ### Requirement: RISK-FALLBACK-VISUAL-INCONSISTENCY
 
-`bim-streaming-server` 的 IFC→USDC 轉換 SHALL 以 HOOPS 原生 Kit pipeline 為 primary。當 fallback (`IfcOpenShell` + `pxr`) 被觸發時，conversion result MUST 在 `metadata.json` 標註 `conversion_pipeline=fallback` 或等效 marker，使下游 reviewer 能識別視覺一致性風險。實作層級的視覺迴歸測試 (visual regression) MUST 透過獨立 OpenSpec change 立案。
+`bim-streaming-server` 的 IFC→USDC 轉換 SHALL 以 HOOPS 原生 Kit pipeline 為 primary。當 fallback (`IfcOpenShell` + `pxr`) 被觸發時，conversion result MUST 在 `metadata.json` 標註 `source = "ifcopenshell_openusd_fallback"`（即 `_run_ifcopenshell_openusd_fallback` 寫入的 marker），使下游 reviewer 能識別視覺一致性風險。重命名 `source` key 或改 marker 值 MUST 透過獨立 OpenSpec change；實作層級的視覺迴歸測試 (visual regression) MUST 透過獨立 OpenSpec change 立案。
 
 #### Scenario: Fallback pipeline is taken
 
 - **WHEN** `bim-streaming-server` 因 HOOPS / Kit 轉換失敗而觸發 `IfcOpenShell` + `pxr` fallback
-- **THEN** 產出的 `metadata.json` (或等效 conversion-result envelope) MUST 標註 `conversion_pipeline=fallback` 或等效 marker
+- **THEN** 產出的 `metadata.json` MUST 包含 `"source": "ifcopenshell_openusd_fallback"`（由 `_run_ifcopenshell_openusd_fallback` 寫入）
 - **AND** reviewer SHALL 透過該 marker 識別 mesh 結構 / 材質精度可能與 primary pipeline 不一致
 
 #### Scenario: Visual regression test is out of scope
@@ -58,14 +58,14 @@ CI 環境因無實體 NVIDIA GPU，SHALL 將 Kit Viewport 渲染與 WebRTC 串�
 
 ### Requirement: RISK-WEBRTC-DATA-CHANNEL-RACE
 
-`bim-streaming-server` Kit instance MUST 啟用 `-SkipAutoLoad`，並 SHALL 把 stage 載入決策權交給 browser-side `web-viewer-sample` 透過 DataChannel 的 `openStageRequest`。Kit 端 MUST NOT 在 DataChannel 未 `open` 前接受 stage 操作；當 race 發生時 (例如同 Kit instance 收到衝突 `openStageRequest`)，系統 SHALL 以「last write wins + struct log」記錄，並 MUST NOT 卡死 Kit thread。完整 state machine 與 lock 實作 MUST 透過獨立 OpenSpec change 立案。
+`bim-streaming-server` Kit instance MUST 啟用 `-SkipAutoLoad`，並 SHALL 把 stage 載入決策權交給 browser-side `web-viewer-sample` 透過 DataChannel 的 `openStageRequest`。Kit 端 `_on_open_stage` handler MUST 以 last-write-wins 行為處理衝突的 `openStageRequest`（後到請求覆蓋 `_requested_stage_url`），且 MUST NOT 卡死 Kit thread。專屬 race detection 結構化 log key、正式 DataChannel state machine、`openStageRequest` 排他鎖 MUST 透過獨立 OpenSpec change 立案。
 
 #### Scenario: DataChannel race with conflicting open requests
 
 - **WHEN** 多個 viewer client 同時對同一 Kit instance 發送不同模型的 `openStageRequest`
-- **THEN** Kit 端 SHALL 以後到請求覆蓋前一個 (last write wins)
-- **AND** struct log MUST 記錄 race detection event (`stage_loading.race_detected` 或等效)
+- **THEN** `_on_open_stage` SHALL 以後到請求覆蓋前一個（透過 `self._requested_stage_url = requested_url` 賦值）
 - **AND** Kit thread MUST NOT 因 race 而卡死或當機
+- **AND** 衝突 race detection 的明確 struct log key MUST NOT 在本 spec 範圍內被引入（屬 successor change）
 
 #### Scenario: DataChannel state machine is out of scope
 
