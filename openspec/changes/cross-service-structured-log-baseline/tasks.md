@@ -108,8 +108,8 @@
 - [x] 11.3 viewer `npm run verify` (vite build + verify-struct-log 10 + session-first + tri-ready-states 全 pass)
 - [x] 11.4 root `python -m pytest tests -p no:cacheprovider`：65 pass (既有 9 + 新 56)
 - [x] 11.5 `openspec validate --specs --strict`：27 → **28 pass**（新增 capability `cross-service-structured-log-baseline`）
-- [x] 11.6 `gitnexus detect_changes` 跑完回 0 changes，但 index 仍停在 `e85fd89`（本 branch 起點前）。PR body 已註明 reviewer 可在 main 跑 `npx gitnexus analyze --embeddings` 重建 index 再跑 detect_changes 拿真實 blast radius；本 PR 改既有 symbols 列表（EventLog ctor / createCoordinatorApp ctor / convert-ifc-to-usdc.ps1 / Extension.on_startup/shutdown）皆為 backward compatible 加 optional args，0 既有 callsite 破
+- [x] 11.6 GitNexus re-analyze 完成後（worktree 索引到 `c8a0723`，2 commits behind HEAD 但皆是 tests/docs）：`gitnexus detect_changes` → 2 files changed / 0 changed_symbols / 0 affected processes / risk=LOW。對 `EventLog` (Class) + `createCoordinatorApp` (Function) 跑 `gitnexus_impact` upstream → 兩者都 risk=LOW / impactedCount=0，確認 backward-compatible additive args 沒影響任何 caller
 - [x] 11.7 每次 commit 前 `git diff --cached --check` exit=0 確認無 trailing whitespace
-- [x] 11.8 開 draft PR：[#126](https://github.com/monkey1sai/AI-BIM-governance/pull/126)，body 含 design / spec / tasks 對應、verification 摘要、capability change 摘要、smoke evidence deferred 註記
+- [x] 11.8 開 [PR #126](https://github.com/monkey1sai/AI-BIM-governance/pull/126)，body 含 design / spec / tasks 對應、verification 摘要、capability change 摘要、smoke evidence deferred 註記。Draft → Ready-for-review transition 完成（`gh pr ready 126`）
 - [ ] 11.9 等 GitHub Actions / PR Review Gate / CodeRabbit 通過（自動化階段）
 - [ ] 11.10 Merge 後跑 OpenSpec sync/archive（依 `docs/agents/github-workflow.md`，merge 後動作）
