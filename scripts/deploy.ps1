@@ -7,10 +7,11 @@
 # Mode C 入口:本檔
 #
 # 使用:
-#   .\scripts\deploy.ps1                          # 全自動 hybrid 部屬
+#   .\scripts\deploy.ps1                          # 全自動 hybrid 部屬(預設 LAN demo host:192.168.10.105)
 #   .\scripts\deploy.ps1 -DryRun                  # 只看 fix plan,不動真實狀態
 #   .\scripts\deploy.ps1 -Force                   # 互動 guard 全部視同 y
 #   .\scripts\deploy.ps1 -Build                   # 強制 docker compose build
+#   .\scripts\deploy.ps1 -PublicHost 127.0.0.1    # 覆蓋公開位址(例如只做本機 demo)
 #   .\scripts\deploy.ps1 -SkipKit                 # 不啟 host-native Kit(viewer 沒畫面)
 
 [CmdletBinding()]
@@ -44,6 +45,7 @@ $script:DeployStart = Get-Date
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $RunDir   = Join-Path $RepoRoot 'scripts\.run'
 $LogPath  = Join-Path $RunDir   'deploy.log'
+$script:DefaultPublicHost = '192.168.10.105'
 
 # Import lib modules
 $libDir = Join-Path $PSScriptRoot 'lib'
@@ -429,7 +431,7 @@ $script:resolvedEnvFile = $resolvedEnvFile
 $resolvedPublicHostRaw = if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {
     $PublicHost
 } else {
-    Get-DeployEnvValue -Name 'PUBLIC_HOST' -EnvFile $resolvedEnvFile -Default '127.0.0.1'
+    Get-DeployEnvValue -Name 'PUBLIC_HOST' -EnvFile $resolvedEnvFile -Default $script:DefaultPublicHost
 }
 $resolvedPublicHost = Resolve-HostNameOnly -Value $resolvedPublicHostRaw
 $resolvedCoordinatorPort = Resolve-DeployIntValue -Name 'COORDINATOR_PORT' -EnvFile $resolvedEnvFile -Default 8004 -Min 1 -Max 65535

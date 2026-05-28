@@ -49,7 +49,44 @@ Assert-True ($collisionExit -ne 0) 'spectator/primary collision exits non-zero'
 Assert-True ($collisionOutput -match 'conflicts with primary Kit signaling port') 'spectator/primary collision message'
 Write-TestPass 'spectator primary collision rejected'
 
-# Test 8: LAN PUBLIC_HOST from env file derives artifact URLs over loopback defaults
+function Clear-DeployTopologyEnv {
+    foreach ($name in @(
+        'PUBLIC_HOST',
+        'VIEWER_BIND_HOST',
+        'KIT_SIGNALING_HOST',
+        'KIT_MEDIA_HOST',
+        'WEB_VIEWER_COORDINATOR_API_BASE',
+        'WEB_VIEWER_COORDINATOR_SOCKET_URL',
+        'VIEWER_PUBLIC_BASE_URL',
+        'COORDINATOR_PUBLIC_BASE_URL',
+        'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL'
+    )) {
+        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    }
+}
+
+# Test 8: default PUBLIC_HOST derives LAN demo topology when env file omits it
+Clear-DeployTopologyEnv
+$defaultHostEnv = Join-Path $repoRoot 'scripts\.run\deploy-default-host-test.env'
+Set-Content -LiteralPath $defaultHostEnv -Encoding ascii -Value @(
+    'KIT_SIGNALING_PORT=49210',
+    'KIT_MEDIA_PORT=48210',
+    'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-default-host-test\storage'
+)
+$defaultHostOutput = & $deploy -DryRun -EnvFile $defaultHostEnv *>&1 | Out-String
+$defaultHostExit = $LASTEXITCODE
+Assert-Equal 0 $defaultHostExit 'default LAN host dry-run exit 0'
+$defaultHostAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
+Assert-Equal '192.168.10.105' $defaultHostAudit.runtime.publicHost 'default PUBLIC_HOST is LAN demo IP'
+Assert-Equal 'http://192.168.10.105:8004' $defaultHostAudit.runtime.coordinatorPublicUrl 'default coordinator URL uses LAN demo IP'
+Assert-Equal 'http://192.168.10.105:5173' $defaultHostAudit.runtime.viewerPublicUrl 'default viewer URL uses LAN demo IP'
+Assert-Equal 'http://192.168.10.105:49101/artifacts' $defaultHostAudit.runtime.conversionPublicArtifactsUrl 'default artifact URL uses LAN demo IP'
+Assert-True ($defaultHostAudit.runtime.corsOrigins -match 'http://192\.168\.10\.105:5173') 'default LAN viewer origin added to coordinator CORS origins'
+Remove-Item -LiteralPath $defaultHostEnv -ErrorAction SilentlyContinue
+Write-TestPass 'default PUBLIC_HOST derives LAN demo topology'
+
+# Test 9: LAN PUBLIC_HOST from env file derives artifact URLs over loopback defaults
+Clear-DeployTopologyEnv
 $lanEnv = Join-Path $repoRoot 'scripts\.run\deploy-lan-test.env'
 Set-Content -LiteralPath $lanEnv -Encoding ascii -Value @(
     'PUBLIC_HOST=192.168.10.105',

@@ -9,6 +9,7 @@
 - NVIDIA GPU + driver(`nvidia-smi` 在 PATH)
 - Docker Desktop 已裝且 running(tray icon settled)
 - Node 18+ / Python 3.12+ 已裝(`.venv` 由 deploy 自動建)
+- LAN demo 預設公開位址為 `192.168.10.105`；同網段裝置要能連到這台 host 的 `8004` / `5173` / `49100` / `47998` 與 spectator ports
 
 ## Steps
 
@@ -33,17 +34,17 @@ docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml down -v
 .\scripts\deploy.ps1
 ```
 
-**Expected:** 5-6 個 `[fix ]` lines(create .venv / pip / Copy-Item .env / docker compose build / etc),全程 < 10 分鐘,退 0。
+**Expected:** 5-6 個 `[fix ]` lines(create .venv / pip / Copy-Item .env / docker compose build / etc),全程 < 10 分鐘,退 0。Summary 顯示 coordinator / viewer public URL 使用 `192.168.10.105`。
 
 ### 3. Open coordinator UI
 
-開 <http://127.0.0.1:8004/ui>
+開 <http://192.168.10.105:8004/ui>
 
 **Expected:** Coordinator dashboard 載入。
 
 ### 4. Verify WebRTC handshake
 
-開 <http://127.0.0.1:5173>(viewer 由 docker compose 提供)。
+開 <http://192.168.10.105:5173>(viewer 由 docker compose 提供)。
 
 **Expected:** Viewer 跑起來,session 建立,WebRTC handshake 成功,viewport 有畫面(`readyState=4` + 影像尺寸 > 0,參考 memory `webrtc-no-video-reset-user-recovery`)。
 
@@ -66,7 +67,7 @@ docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml down -v
 .\scripts\deploy.ps1 -Build
 ```
 
-**Expected:** Docker image 重 build、container recreate、host-native 不重啟(若 PID 仍活)。
+**Expected:** Docker image 重 build、container recreate、host-native 不重啟(若 PID 仍活)，public URL 仍維持 `192.168.10.105`。
 
 ### 7. Failure injection
 
