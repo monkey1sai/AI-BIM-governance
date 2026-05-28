@@ -185,13 +185,16 @@ function Start-HostNativeConversion {
     } else {
         Remove-Item Env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL -ErrorAction SilentlyContinue
     }
+    $env:PYTHONNOUSERSITE = '1'
 
     $launcher = Join-Path $RepoRoot 'bim-streaming-server\scripts\start-host-native-conversion-service.ps1'
+    $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    $pythonExe = if (Test-Path -LiteralPath $venvPython -PathType Leaf) { $venvPython } else { 'python' }
     return (Start-HostNativeService `
         -Name 'bim-streaming-conversion-service' `
         -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') `
         -FilePath 'powershell.exe' `
-        -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher) `
+        -ArgumentList @('-ExecutionPolicy','Bypass','-NoProfile','-File',$launcher,'-PythonExe',$pythonExe) `
         -RunDir $runDir)
 }
 

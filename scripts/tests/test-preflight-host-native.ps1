@@ -24,9 +24,11 @@ try {
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'OK' $result.venv 'venv OK'
+    Assert-Equal 'OK' $result.pythonDependencies 'pythonDependencies OK'
     Assert-Equal 'OK' $result.kitLauncher 'kitLauncher OK'
     Assert-Equal 'OK' $result.kitRuntime 'kitRuntime OK'
     Assert-True ($result.kitBuildRequired -eq $false) 'kit build not required'
@@ -57,6 +59,7 @@ try {
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.10.5' } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
     Assert-Equal 'WRONG_VERSION' $result.venv 'venv WRONG_VERSION'
     Write-TestPass 'Python <3.11 flagged'
@@ -82,6 +85,7 @@ try {
     Set-Content -LiteralPath (Join-Path $venvDir 'python.exe') -Value 'fake'
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
     Assert-Equal 'MISSING_PATH' $result.kitLauncher 'Kit launcher MISSING_PATH'
     Write-TestPass 'Kit launcher missing flagged'
@@ -100,6 +104,7 @@ try {
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'OK' $result.kitLauncher 'Kit wrapper OK'
@@ -110,6 +115,44 @@ try {
     Assert-Equal 'cd bim-streaming-server; .\repo.bat build' $result.kitBuildCommand 'build command hint'
     Assert-True ($result.ok -eq $false) 'overall false until build artifacts exist'
     Write-TestPass 'Kit runtime build requirement flagged'
+}
+finally { Remove-TestSandbox -Path $sandbox }
+
+# Test 7: Python service dependencies incompatible → INCOMPATIBLE
+$sandbox = New-TestSandbox -Prefix 'preflight-hn'
+try {
+    $venvDir = Join-Path $sandbox '.venv\Scripts'
+    New-Item -ItemType Directory -Path $venvDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $venvDir 'python.exe') -Value 'fake'
+
+    $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
+        -PythonVersionProbe { param($exe) '3.12.4' } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'INCOMPATIBLE'; Reason = 'starlette 1.1.0 incompatible with fastapi 0.111.0'; FastApi = '0.111.0'; Starlette = '1.1.0'; Uvicorn = '0.45.0' } } `
+        -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
+
+    Assert-Equal 'INCOMPATIBLE' $result.pythonDependencies 'pythonDependencies INCOMPATIBLE'
+    Assert-True ($result.pythonDependencyReason -match 'starlette 1\.1\.0') 'dependency reason includes starlette drift'
+    Assert-True ($result.ok -eq $false) 'overall false when Python deps incompatible'
+    Write-TestPass 'Python dependency incompatibility flagged'
+}
+finally { Remove-TestSandbox -Path $sandbox }
+
+# Test 8: Python service dependencies missing → MISSING
+$sandbox = New-TestSandbox -Prefix 'preflight-hn'
+try {
+    $venvDir = Join-Path $sandbox '.venv\Scripts'
+    New-Item -ItemType Directory -Path $venvDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $venvDir 'python.exe') -Value 'fake'
+
+    $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
+        -PythonVersionProbe { param($exe) '3.12.4' } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'MISSING'; Reason = 'missing fastapi'; FastApi = ''; Starlette = ''; Uvicorn = '' } } `
+        -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
+
+    Assert-Equal 'MISSING' $result.pythonDependencies 'pythonDependencies MISSING'
+    Assert-True ($result.pythonDependencyReason -match 'missing fastapi') 'dependency reason includes missing package'
+    Assert-True ($result.ok -eq $false) 'overall false when Python deps missing'
+    Write-TestPass 'Python dependency missing flagged'
 }
 finally { Remove-TestSandbox -Path $sandbox }
 

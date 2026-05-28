@@ -26,6 +26,96 @@ function Get-KitRuntimeBuildArtifacts {
     }
 }
 
+function Test-HostNativePythonDependencies {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string] $PythonExe)
+
+    $probe = @'
+import importlib.metadata as metadata
+import json
+
+required = {
+    "fastapi": "0.111.0",
+    "starlette": "0.37.2",
+    "uvicorn": "0.45.0",
+}
+
+versions = {}
+missing = []
+for name in required:
+    try:
+        versions[name] = metadata.version(name)
+    except metadata.PackageNotFoundError:
+        versions[name] = ""
+        missing.append(name)
+
+def parse_version(value):
+    parts = []
+    for item in value.split("."):
+        digits = "".join(ch for ch in item if ch.isdigit())
+        parts.append(int(digits or 0))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+status = "OK"
+reason = ""
+if missing:
+    status = "MISSING"
+    reason = "missing " + ",".join(missing)
+else:
+    fastapi_version = parse_version(versions["fastapi"])
+    starlette_version = parse_version(versions["starlette"])
+    if fastapi_version != parse_version("0.111.0"):
+        status = "INCOMPATIBLE"
+        reason = "fastapi " + versions["fastapi"] + " does not match repo baseline 0.111.0"
+    elif starlette_version < parse_version("0.37.2") or starlette_version >= parse_version("0.38.0"):
+        status = "INCOMPATIBLE"
+        reason = "starlette " + versions["starlette"] + " incompatible with fastapi 0.111.0"
+    elif parse_version(versions["uvicorn"]) != parse_version("0.45.0"):
+        status = "INCOMPATIBLE"
+        reason = "uvicorn " + versions["uvicorn"] + " does not match repo baseline 0.45.0"
+
+print(json.dumps({
+    "Status": status,
+    "Reason": reason,
+    "FastApi": versions["fastapi"],
+    "Starlette": versions["starlette"],
+    "Uvicorn": versions["uvicorn"],
+}))
+'@
+
+    try {
+        $out = & $PythonExe -c $probe 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
+            return @{
+                Status = 'MISSING'
+                Reason = (($out | Out-String).Trim())
+                FastApi = ''
+                Starlette = ''
+                Uvicorn = ''
+            }
+        }
+        $parsed = ($out | Out-String) | ConvertFrom-Json
+        return @{
+            Status = [string]$parsed.Status
+            Reason = [string]$parsed.Reason
+            FastApi = [string]$parsed.FastApi
+            Starlette = [string]$parsed.Starlette
+            Uvicorn = [string]$parsed.Uvicorn
+        }
+    } catch {
+        return @{
+            Status = 'MISSING'
+            Reason = $_.Exception.Message
+            FastApi = ''
+            Starlette = ''
+            Uvicorn = ''
+        }
+    }
+}
+
 function Test-HostNativeEnvironment {
     [CmdletBinding()]
     param(
@@ -38,6 +128,10 @@ function Test-HostNativeEnvironment {
                 return $null
             } catch { return $null }
         },
+        [scriptblock] $PythonDependencyProbe = {
+            param($exe)
+            Test-HostNativePythonDependencies -PythonExe $exe
+        },
         [scriptblock] $NvidiaSmiProbe = {
             $cmd = Get-Command nvidia-smi -ErrorAction SilentlyContinue
             if (-not $cmd) { return @{ Exists = $false; ExitCode = -1 } }
@@ -48,6 +142,12 @@ function Test-HostNativeEnvironment {
 
     $audit = [ordered]@{
         venv                    = 'MISSING'
+        pythonExe               = ''
+        pythonDependencies      = 'MISSING'
+        pythonDependencyReason  = ''
+        pythonDependencyFastApi = ''
+        pythonDependencyStarlette = ''
+        pythonDependencyUvicorn = ''
         kitLauncher             = 'MISSING_PATH'
         kitLauncherPath         = ''
         kitRuntime              = 'NEEDS_BUILD'
@@ -63,6 +163,7 @@ function Test-HostNativeEnvironment {
     # .venv
     $pyExe = Join-Path $RepoRoot '.venv\Scripts\python.exe'
     if (Test-Path -LiteralPath $pyExe) {
+        $audit.pythonExe = $pyExe
         $ver = & $PythonVersionProbe $pyExe
         if ($ver) {
             $parts = $ver.Split('.')
@@ -70,6 +171,12 @@ function Test-HostNativeEnvironment {
             $minor = [int]$parts[1]
             if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
                 $audit.venv = 'OK'
+                $deps = & $PythonDependencyProbe $pyExe
+                $audit.pythonDependencies = [string]$deps.Status
+                $audit.pythonDependencyReason = [string]$deps.Reason
+                $audit.pythonDependencyFastApi = [string]$deps.FastApi
+                $audit.pythonDependencyStarlette = [string]$deps.Starlette
+                $audit.pythonDependencyUvicorn = [string]$deps.Uvicorn
             } else {
                 $audit.venv = 'WRONG_VERSION'
             }
@@ -99,6 +206,6 @@ function Test-HostNativeEnvironment {
         $audit.nvidiaDriver = 'OK'
     }
 
-    $audit.ok = ($audit.venv -eq 'OK' -and $audit.kitLauncher -eq 'OK' -and $audit.kitRuntime -eq 'OK' -and $audit.nvidiaDriver -eq 'OK')
+    $audit.ok = ($audit.venv -eq 'OK' -and $audit.pythonDependencies -eq 'OK' -and $audit.kitLauncher -eq 'OK' -and $audit.kitRuntime -eq 'OK' -and $audit.nvidiaDriver -eq 'OK')
     return [pscustomobject]$audit
 }

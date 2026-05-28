@@ -70,7 +70,13 @@ Write-TestPass 'spectator stream args forwarded'
 Assert-True ($moduleContent -match 'Remove-Item Env:STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL') 'launcher clears stale public artifacts URL'
 Write-TestPass 'public artifacts URL env cleared when unset'
 
-# Test 10: Stop-HostNativeService stops child processes before wrapper PID
+# Test 10: conversion launcher routes through repo .venv Python and disables user-site packages
+Assert-True ($moduleContent -match "\.venv\\Scripts\\python\.exe") 'conversion launcher resolves repo venv Python'
+Assert-True ($moduleContent -match "'-PythonExe'") 'conversion launcher passes -PythonExe to child script'
+Assert-True ($moduleContent -match 'PYTHONNOUSERSITE') 'conversion launcher disables user-site packages'
+Write-TestPass 'conversion launcher uses isolated repo Python'
+
+# Test 11: Stop-HostNativeService stops child processes before wrapper PID
 $sb = New-TestSandbox -Prefix 'hn-launcher-stop'
 try {
     $runDir = Join-Path $sb 'scripts\.run'
@@ -95,7 +101,7 @@ try {
 }
 finally { Remove-TestSandbox -Path $sb }
 
-# Test 11: spectator stream settings receive the same publicIp override
+# Test 12: spectator stream settings receive the same publicIp override
 $streamingScript = Join-Path $repoRoot 'bim-streaming-server\scripts\start-streaming-server.ps1'
 $streamingContent = Get-Content -LiteralPath $streamingScript -Raw
 Assert-True ($streamingContent -match 'spectatorStream/\$\(\$endpoint\.Index\)/publicIp') 'spectator publicIp setting exists'

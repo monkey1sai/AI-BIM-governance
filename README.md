@@ -12,17 +12,78 @@
 
 ---
 
-## 給客戶的 5 步驟 Demo 故事
+## Demo / Deploy 快速入口
+
+本 repo 的本機 demo 預設使用 **Mode C hybrid**：
+
+```txt
+Docker web-plane          : bim-review-coordinator(:8004) + web-viewer-sample(:5173)
+Windows host-native GPU   : bim-streaming-server Kit/WebRTC(:49100/47998) + conversion-service(:49101)
+LAN demo public host      : 192.168.10.105
+```
+
+這是目前給客戶看 demo 的標準路徑。不要用全 Docker GPU profile 取代它；Kit graphics / WebRTC runtime 仍以 Windows host-native 為準。
+
+### Demo 前置條件
+
+- Windows host。
+- Docker Desktop 已啟動，tray icon 穩定。
+- NVIDIA driver 可用，`nvidia-smi` 在 PATH。
+- Node / Python / Kit runtime 已照 repo 既有方式準備；缺 `.venv`、缺 `.env.web-plane.host-kit`、缺 safe directory 時 `deploy.ps1` 會做安全修復。
+- 同網段裝置要能連到 `192.168.10.105` 的 `8004`、`5173`、`49100`、`47998`，以及 spectator ports。
+
+### 一鍵部署
+
+```powershell
+cd C:\Repos\active\iot\AI-BIM-governance
+
+# 只看會做什麼，不啟服務
+.\scripts\deploy.ps1 -DryRun
+
+# Demo cold/warm deploy；預設 public host = 192.168.10.105
+.\scripts\deploy.ps1 -Build
+```
+
+如果只在本機用 `127.0.0.1` demo，才覆蓋 public host：
+
+```powershell
+.\scripts\deploy.ps1 -Build -PublicHost 127.0.0.1
+```
+
+成功後打開：
+
+```txt
+Coordinator UI : http://192.168.10.105:8004/ui
+Viewer base    : http://192.168.10.105:5173
+Conversion API : http://192.168.10.105:49101/health
+```
+
+常用診斷：
+
+```powershell
+Get-Content scripts\.run\deploy.log -Wait
+Get-Content scripts\.run\bim-streaming-server.log -Wait
+docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit ps
+```
+
+停止 demo：
+
+```powershell
+docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit down
+.\scripts\stop-all.ps1
+```
+
+### 給客戶的 5 步驟 Demo 故事
 
 | 步驟 | 客戶看到 | 現行邊界 | URL / 入口 |
 |---|---|---|---|
 | ① IFC 就緒通知 | 客戶落地端已產生 IFC，通知本地審查服務 | 外部 IFC Worker → `bim-review-coordinator` | `POST /api/external/ifc-ready` |
-| ② 自動轉換 | 系統建立 conversion job，產生可串流的 USDC / mapping / manifest | `bim-review-coordinator` → `bim-streaming-server` internal API | `http://127.0.0.1:8004` / internal `49101` |
-| ③ 建立會議 | 一鍵開啟審查會議，取得 stream config | `bim-review-coordinator` | <http://127.0.0.1:8004> |
-| ④ 標記問題 | 瀏覽器觀看 3D 串流，點選問題高亮元件 | `web-viewer-sample` + `bim-streaming-server` | <http://127.0.0.1:5173> / WebRTC `49100` |
+| ② 自動轉換 | 系統建立 conversion job，產生可串流的 USDC / mapping / manifest | `bim-review-coordinator` → `bim-streaming-server` internal API | coordinator `8004` / conversion `49101` |
+| ③ 建立會議 | 一鍵開啟審查會議，取得 stream config | `bim-review-coordinator` | <http://192.168.10.105:8004/ui> |
+| ④ 標記問題 | 瀏覽器觀看 3D 串流，點選問題高亮元件 | `web-viewer-sample` + `bim-streaming-server` | <http://192.168.10.105:5173> / WebRTC `49100` |
 | ⑤ 回拋結果 | 轉檔與審查 metadata 進入 callback outbox，回拋外部公司雲端 | `bim-review-coordinator` callback outbox | metadata-only callback |
 
-> **最快 demo 路徑**：啟動 coordinator `8004`、streaming server、viewer `5173`。若 Kit / GPU 尚未啟動，streaming、WebRTC 與 GPU 相關項目要標成 blocked / not observed，不要標成 passed。
+若 Kit / GPU 尚未啟動，streaming、WebRTC 與 GPU 相關項目要標成 `blocked` / `not_observed`，不要標成 `passed`。
 
 每個面對 demo 觀眾的 UI 都遵守
 [`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md)：
@@ -33,9 +94,48 @@
 - 每個按鈕一句「會發生什麼」。
 - 失敗時直接指出哪個服務沒開、怎麼驗證。
 
+### 開啟 primary + 4 spectator viewers
+
+`deploy.ps1` 會用同一個 Kit runtime 建 primary stream，再用 spectator ports 產生多 viewer endpoint。若 demo 目標是 **1 個 primary + 4 個 spectator viewer**，用 `-SpectatorCount 4` 明確鎖定總共 5 個 viewer：
+
+```powershell
+.\scripts\deploy.ps1 -Build -SpectatorCount 4
+```
+
+預設 port 配置：
+
+| viewer | role | kitInstanceId | signaling | media |
+|---|---|---|---|---|
+| Primary | primary | `kit_local_001` | `192.168.10.105:49100` | `192.168.10.105:47998` |
+| Spec 1 | spectator | `kit_local_001_spectator_01` | `192.168.10.105:49110` | `192.168.10.105:48008` |
+| Spec 2 | spectator | `kit_local_001_spectator_02` | `192.168.10.105:49120` | `192.168.10.105:48018` |
+| Spec 3 | spectator | `kit_local_001_spectator_03` | `192.168.10.105:49130` | `192.168.10.105:48028` |
+| Spec 4 | spectator | `kit_local_001_spectator_04` | `192.168.10.105:49140` | `192.168.10.105:48038` |
+
+開啟方式：
+
+1. 打開 <http://192.168.10.105:8004/ui>。
+2. 建立或載入 demo review session，複製畫面上的 `review_session_id`。
+3. 把下方 `$session` 換成該 session id，在 PowerShell 開 5 個 viewer tab/window。
+
+```powershell
+$session = "review_session_xxx"
+$base = "http://192.168.10.105:8004/ui/open?session=$session"
+
+Start-Process "$base&userId=viewer_primary&displayName=Primary"
+
+1..4 | ForEach-Object {
+    $spec = "{0:D2}" -f $_
+    $kit = "kit_local_001_spectator_$spec"
+    Start-Process "$base&userId=viewer_spec_$spec&displayName=Spec_$spec&streamRole=spectator&kitInstanceId=$kit"
+}
+```
+
+`/ui/open` 會把 request 轉到 trusted viewer URL，並自動補上 `coordinatorApiBase` / `coordinatorSocketUrl`，所以 LAN client 不會被導到自己的 `127.0.0.1`。若 spectator 畫面卡在 busy/disconnected，先看 `scripts\.run\bim-streaming-server.log`，並確認對應 signaling/media ports 沒被防火牆或其他 process 擋住。
+
 ---
 
-## Docker-first Runtime Manager MVP
+## 進階：Docker-first Runtime Manager MVP（非 demo 預設）
 
 `CODE_GOAL_DOCKER_KIT_MVP.md` 的 MVP 驗收路徑只接受 Docker Compose。Host-local
 `uvicorn` / `npm run dev` / host Kit launcher 只保留作為 legacy/debug，不作為 MVP pass
@@ -84,7 +184,7 @@ build 成功、以及 Docker build 產出的 Linux launcher 可啟動時才可�
 
 ---
 
-## 本機 Debug 啟動
+## 手動 Debug 啟動（非一鍵 demo）
 
 本段落只供 B 方案 local debug 使用，不作 Docker-first MVP evidence。
 

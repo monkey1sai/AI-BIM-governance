@@ -564,6 +564,14 @@ function Report-Audit {
         elseif ($st -eq 'MISSING_PATH') { Write-DeployTag -Tag 'fail' -Message "host-native $key MISSING_PATH (expected: bim-streaming-server\scripts\start-streaming-server.ps1)" -LogPath $LogPath | Out-Null }
     }
 
+    if ($hostNative.venv -eq 'OK') {
+        if ($hostNative.pythonDependencies -eq 'OK') {
+            Write-DeployTag -Tag 'ok' -Message "host-native pythonDependencies=OK (fastapi=$($hostNative.pythonDependencyFastApi), starlette=$($hostNative.pythonDependencyStarlette), uvicorn=$($hostNative.pythonDependencyUvicorn))" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'fix' -Message "host-native pythonDependencies=$($hostNative.pythonDependencies) ($($hostNative.pythonDependencyReason); Phase 2 will pip install -r bim-streaming-server\requirements.txt)" -LogPath $LogPath | Out-Null
+        }
+    }
+
     if ($hostNative.kitRuntime -eq 'OK') {
         Write-DeployTag -Tag 'ok' -Message 'host-native kitRuntime=OK' -LogPath $LogPath | Out-Null
     } elseif ($hostNative.kitRuntime -eq 'NEEDS_BUILD') {
@@ -659,6 +667,33 @@ Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
 
 $fixActions = 0
 
+function Install-DeployPythonRequirements {
+    param(
+        [Parameter(Mandatory = $true)][string] $VenvPython,
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $LogPath
+    )
+    $installed = $false
+    foreach ($req in @('requirements.txt','bim-streaming-server\requirements.txt')) {
+        $reqPath = Join-Path $RepoRoot $req
+        if (Test-Path -LiteralPath $reqPath) {
+            Write-DeployTag -Tag 'fix' -Message "pip install -r $req" -LogPath $LogPath | Out-Null
+            & $VenvPython -m pip install -r $reqPath
+            if ($LASTEXITCODE -ne 0) {
+                Write-DeployTag -Tag 'fail' -Message "pip install -r $req failed" -LogPath $LogPath | Out-Null
+                Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (pip install)'
+                exit 2
+            }
+            $installed = $true
+        }
+    }
+    if (-not $installed) {
+        Write-DeployTag -Tag 'fail' -Message 'Python requirements missing (expected requirements.txt or bim-streaming-server\requirements.txt)' -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (pip requirements missing)'
+        exit 2
+    }
+}
+
 # fix: .venv
 if ($hostNative.venv -eq 'MISSING') {
     Write-DeployTag -Tag 'fix' -Message 'creating .venv via python -m venv' -LogPath $LogPath | Out-Null
@@ -668,19 +703,19 @@ if ($hostNative.venv -eq 'MISSING') {
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (venv create)'
         exit 2
     }
+    $fixActions++
+}
+
+if ($hostNative.venv -eq 'MISSING' -or ($hostNative.venv -eq 'OK' -and $hostNative.pythonDependencies -ne 'OK')) {
     $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    foreach ($req in @('requirements.txt','bim-streaming-server\requirements.txt')) {
-        $reqPath = Join-Path $RepoRoot $req
-        if (Test-Path -LiteralPath $reqPath) {
-            Write-DeployTag -Tag 'fix' -Message "pip install -r $req" -LogPath $LogPath | Out-Null
-            & $venvPy -m pip install -r $reqPath
-            if ($LASTEXITCODE -ne 0) {
-                Write-DeployTag -Tag 'fail' -Message "pip install -r $req failed" -LogPath $LogPath | Out-Null
-                Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (pip install)'
-                exit 2
-            }
-        }
+    Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
+    $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
+    if ($hostNative.pythonDependencies -ne 'OK') {
+        Write-DeployTag -Tag 'fail' -Message "Python dependencies still not OK after pip install: $($hostNative.pythonDependencies) $($hostNative.pythonDependencyReason)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (python dependencies)'
+        exit 2
     }
+    Write-DeployTag -Tag 'ok' -Message "Python deps ready (fastapi=$($hostNative.pythonDependencyFastApi), starlette=$($hostNative.pythonDependencyStarlette), uvicorn=$($hostNative.pythonDependencyUvicorn))" -LogPath $LogPath | Out-Null
     $fixActions++
 }
 
@@ -894,17 +929,38 @@ if ($hostNative.venv -eq 'WRONG_VERSION') {
         Write-DeployTag -Tag 'fix' -Message "$prompt -> y (--Force)" -LogPath $LogPath | Out-Null
         Remove-Item -LiteralPath (Join-Path $RepoRoot '.venv') -Recurse -Force
         & python -m venv (Join-Path $RepoRoot '.venv')
+        if ($LASTEXITCODE -ne 0) {
+            Write-DeployTag -Tag 'fail' -Message 'python -m venv failed' -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (venv recreate)'
+            exit 3
+        }
+        $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+        Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
+        $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
     } else {
         Write-DeployTag -Tag 'ask' -Message $prompt -LogPath $LogPath | Out-Null
         $response = Read-Host 'y/N'
         if ($response -match '^[Yy]') {
             Remove-Item -LiteralPath (Join-Path $RepoRoot '.venv') -Recurse -Force
             & python -m venv (Join-Path $RepoRoot '.venv')
+            if ($LASTEXITCODE -ne 0) {
+                Write-DeployTag -Tag 'fail' -Message 'python -m venv failed' -LogPath $LogPath | Out-Null
+                Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (venv recreate)'
+                exit 3
+            }
+            $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+            Install-DeployPythonRequirements -VenvPython $venvPy -RepoRoot $RepoRoot -LogPath $LogPath
+            $hostNative = Test-HostNativeEnvironment -RepoRoot $RepoRoot
         } else {
             Write-DeployTag -Tag 'fail' -Message 'user declined .venv recreate' -LogPath $LogPath | Out-Null
             Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (user declined)'
             exit 3
         }
+    }
+    if ($hostNative.venv -ne 'OK' -or $hostNative.pythonDependencies -ne 'OK') {
+        Write-DeployTag -Tag 'fail' -Message "Python environment still not OK after .venv recreate: venv=$($hostNative.venv) deps=$($hostNative.pythonDependencies) $($hostNative.pythonDependencyReason)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 3 -FailedPhase 'Phase 3 (python environment)'
+        exit 3
     }
 }
 
