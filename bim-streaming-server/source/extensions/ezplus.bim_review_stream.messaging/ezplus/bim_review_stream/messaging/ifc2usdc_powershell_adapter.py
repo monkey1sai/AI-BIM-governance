@@ -725,6 +725,13 @@ class Ifc2UsdcPowershellConverterAdapter:
         present we adopt them; otherwise we enumerate the produced USD stage.
         We never fabricate fake mapping content (the store would reject it, and
         D7/OQ2 forbid polluting B-scheme evidence).
+
+        streaming-server-ifcopenshell-semantic-sidecar-pass: when adoption misses
+        and the IFC source is still on disk, run a serial IfcOpenShell pass to
+        write `ifc_semantic_sidecar.json` co-located with model.usdc; the
+        enumeration path will read it as a supplement when prim CustomData has
+        no IFC keys (HOOPS happy path reality). The pass MUST NOT block ready
+        publication on its own failure.
         """
         adopted = self._adopt_converter_sidecars(
             output_dir=output_dir,
@@ -732,8 +739,20 @@ class Ifc2UsdcPowershellConverterAdapter:
             entity_index_path=entity_index_path,
             metadata_path=metadata_path,
         )
-        if adopted is not None:
+        # streaming-server-ifcopenshell-semantic-sidecar-pass:adopt 拿到 sidecars
+        # 但 semantic 三欄位全 falsy(HOOPS happy path 真實情境:四檔都 emit 但
+        # mapping_has_ifc_type / mapping_has_ifc_name 都 false)時,SHALL 仍跑
+        # sidecar pass 補語意,對齊 spec scenario「HOOPS success without IFC
+        # CustomData triggers sidecar pass」。
+        if adopted is not None and (
+            bool(adopted.get("mapping_has_ifc_type"))
+            or bool(adopted.get("mapping_has_ifc_name"))
+        ):
             return adopted
+        self._run_ifcopenshell_semantic_sidecar(
+            ifc_source_path=ifc_path,
+            artifact_dir=output_dir,
+        )
         return self._enumerate_usd_stage(
             model_path=model_path,
             ifc_path=ifc_path,
@@ -865,13 +884,58 @@ class Ifc2UsdcPowershellConverterAdapter:
                 }
             )
 
+        # streaming-server-ifcopenshell-semantic-sidecar-pass: 當 prim CustomData
+        # 抽不到 IFC 語意(HOOPS happy path 真實情境),改讀 `ifc_semantic_sidecar.json`
+        # supplement。對齊策略 v1:enumeration mesh prim 順序 vs sidecar entries
+        # 順序 best-effort 1:1。CustomData 已抽到時不 shadow。
+        mapping_source = "prim_custom_data" if mapping_items else "none"
+        if not mapping_items:
+            sidecar_doc = self._load_ifc_semantic_sidecar(mapping_path.parent)
+            if isinstance(sidecar_doc, dict):
+                mesh_prims = [p for p in prims if UsdGeom.Mesh(p)]
+                supplemented = False
+                for mesh_index, prim in enumerate(mesh_prims):
+                    entry = self._sidecar_entry_for_mesh_index(sidecar_doc, mesh_index)
+                    if not isinstance(entry, dict):
+                        continue
+                    ifc_guid = entry.get("ifc_guid")
+                    if not ifc_guid:
+                        continue
+                    ifc_type = entry.get("ifc_type")
+                    ifc_name = entry.get("ifc_name")
+                    entity_id = f"entity_{mesh_index + 1:06d}"
+                    usd_prim_path = str(prim.GetPath())
+                    mapping_items.append(
+                        {
+                            "ifc_guid": str(ifc_guid),
+                            "usd_prim_path": usd_prim_path,
+                            "ifc_type": ifc_type,
+                            "ifc_name": ifc_name,
+                            "entity_id": entity_id,
+                        }
+                    )
+                    entity_items.append(
+                        {
+                            "ifc_guid": str(ifc_guid),
+                            "ifc_type": ifc_type,
+                            "name": ifc_name,
+                            "usd_prim_path": usd_prim_path,
+                            "entity_id": entity_id,
+                        }
+                    )
+                    supplemented = True
+                if supplemented:
+                    mapping_source = "ifc_semantic_sidecar"
+
         source_count = len(mapping_items) or len(prims)
         mapped_count = len(mapping_items)
 
         has_type = any(item.get("ifc_type") for item in mapping_items)
         has_name = any(item.get("ifc_name") for item in mapping_items)
-        if has_type and has_name:
-            semantic_fidelity: str | None = "ifc_class_grouped_with_name"
+        if mapping_source == "ifc_semantic_sidecar":
+            semantic_fidelity: str | None = "usd_enumeration_with_ifc_sidecar_supplement"
+        elif has_type and has_name:
+            semantic_fidelity = "ifc_class_grouped_with_name"
         elif has_type or has_name:
             semantic_fidelity = "usd_enumeration_with_ifc_custom_data"
         else:
@@ -939,6 +1003,125 @@ class Ifc2UsdcPowershellConverterAdapter:
             if value in (None, ""):
                 continue
             return str(value)
+        return None
+
+    def _run_ifcopenshell_semantic_sidecar(
+        self,
+        *,
+        ifc_source_path: Path,
+        artifact_dir: Path,
+    ) -> Path | None:
+        """streaming-server-ifcopenshell-semantic-sidecar-pass.
+
+        Open the IFC source with IfcOpenShell, iterate `IfcProduct`, and write
+        `ifc_semantic_sidecar.json` co-located with `model.usdc`. Returns the
+        sidecar path on success; returns ``None`` (without raising) when the IFC
+        source is missing, ifcopenshell cannot be imported, or parsing fails.
+        Never blocks an already-ready HOOPS conversion result.
+        """
+        ifc_source_path = Path(ifc_source_path)
+        if not ifc_source_path.is_file():
+            return None
+        try:
+            import ifcopenshell  # type: ignore[import-not-found]
+        except Exception:  # noqa: BLE001
+            return None
+        if ifcopenshell is None:  # sys.modules["ifcopenshell"] = None case
+            return None
+        try:
+            ifc_file = ifcopenshell.open(str(ifc_source_path))
+        except Exception:  # noqa: BLE001
+            return None
+        entries: list[dict[str, Any]] = []
+        try:
+            products = ifc_file.by_type("IfcProduct")
+        except Exception:  # noqa: BLE001
+            # CodeRabbit P0: parse failure SHALL return None without writing
+            # an empty sidecar (對齊 helper docstring「never raises」+
+            # spec scenario「Missing IFC source or IfcOpenShell unavailable
+            # stays honest」)。
+            return None
+        shape_index = 0
+        for product in products:
+            # CodeRabbit P2 → P0: 只收 has-Representation 的 IfcProduct(過濾
+            # IfcSite / IfcBuilding / IfcBuildingStorey / IfcSpace 等空間 /
+            # 容器 product)。HOOPS USD mesh prim 對齊 sidecar entries 走
+            # ordinal index,把空間 product 留在 sidecar 會讓 mesh-index ↔
+            # sidecar-index 全錯位。
+            try:
+                representation = getattr(product, "Representation", None)
+            except Exception:  # noqa: BLE001
+                representation = None
+            if representation is None:
+                continue
+            try:
+                guid_raw = getattr(product, "GlobalId", None)
+            except Exception:  # noqa: BLE001
+                guid_raw = None
+            if not guid_raw:
+                continue
+            try:
+                ifc_type_raw = product.is_a() if hasattr(product, "is_a") else None
+            except Exception:  # noqa: BLE001
+                ifc_type_raw = None
+            try:
+                name_raw = getattr(product, "Name", None)
+            except Exception:  # noqa: BLE001
+                name_raw = None
+            entries.append(
+                {
+                    "ifc_guid": str(guid_raw),
+                    "ifc_type": str(ifc_type_raw) if ifc_type_raw else None,
+                    "ifc_name": str(name_raw) if name_raw else None,
+                    "shape_index": shape_index,
+                }
+            )
+            shape_index += 1
+        sidecar_doc = {
+            "format_version": "1",
+            "ifc_source": str(ifc_source_path),
+            "entries": entries,
+            "summary": {
+                "count": len(entries),
+                "has_type": any(bool(e.get("ifc_type")) for e in entries),
+                "has_name": any(bool(e.get("ifc_name")) for e in entries),
+            },
+        }
+        artifact_dir = Path(artifact_dir)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        sidecar_path = artifact_dir / "ifc_semantic_sidecar.json"
+        try:
+            sidecar_path.write_text(
+                json.dumps(sidecar_doc, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            return None
+        return sidecar_path
+
+    @staticmethod
+    def _load_ifc_semantic_sidecar(artifact_dir: Path) -> dict[str, Any] | None:
+        """Load `ifc_semantic_sidecar.json` from artifact dir; None when absent / invalid."""
+        sidecar_path = Path(artifact_dir) / "ifc_semantic_sidecar.json"
+        if not sidecar_path.is_file():
+            return None
+        try:
+            doc = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return doc if isinstance(doc, dict) else None
+
+    @staticmethod
+    def _sidecar_entry_for_mesh_index(
+        sidecar_doc: Mapping[str, Any], mesh_index: int
+    ) -> dict[str, Any] | None:
+        """Best-effort ordinal join: mesh prim index ↔ sidecar entry index."""
+        entries = sidecar_doc.get("entries") if isinstance(sidecar_doc, dict) else None
+        if not isinstance(entries, list):
+            return None
+        if 0 <= mesh_index < len(entries):
+            entry = entries[mesh_index]
+            return entry if isinstance(entry, dict) else None
         return None
 
 
