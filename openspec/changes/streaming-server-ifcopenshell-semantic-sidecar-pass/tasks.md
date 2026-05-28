@@ -47,29 +47,35 @@
 
 ## 2. Implementation
 
-- [ ] 2.1 加 module-level helper
-      `_run_ifcopenshell_semantic_sidecar(ifc_source_path, artifact_dir, *, logger=None)`
-      到 `ifc2usdc_powershell_adapter.py`(設計 D1 + D2)。
-- [ ] 2.2 加 module-level helper `_load_sidecar_if_present(artifact_dir)` 與
-      `_sidecar_entry_for_index(sidecar_doc, prim_index)`(設計 D3)。
-- [ ] 2.3 修改 `_enumerate_usd_stage` signature 加 optional `sidecar_path` 參數;
-      既有 prim CustomData loop 不動;loop 結束後 mapping_items 為空時讀 sidecar
-      supplement;quality_metrics 推導擴充支援 fidelity value
-      `"usd_enumeration_with_ifc_sidecar_supplement"`(設計 D3 + D4)。
-- [ ] 2.4 修改 `_materialize_sidecars` main flow:在 `_adopt_converter_sidecars`
-      未拿到 IFC semantic 時,序列呼叫 `_run_ifcopenshell_semantic_sidecar` 後
-      把 sidecar_path 傳進 `_enumerate_usd_stage`(設計 D5)。
-- [ ] 2.5 確認 `_run_ifcopenshell_openusd_fallback` 與 C1 archive 行為不被
+- [x] 2.1 加 `Ifc2UsdcPowershellConverterAdapter._run_ifcopenshell_semantic_sidecar(
+      *, ifc_source_path, artifact_dir)` 到
+      `ifc2usdc_powershell_adapter.py`(設計 D1 + D2;CodeRabbit P0 fix:
+      `by_type` 失敗 SHALL return None 不寫 sidecar;過濾 IfcProduct 有
+      Representation,避免 IfcSite/IfcBuilding/IfcBuildingStorey/IfcSpace
+      把 mesh-index 對齊全錯位)。
+- [x] 2.2 加 static method `_load_ifc_semantic_sidecar(artifact_dir)` 與
+      `_sidecar_entry_for_mesh_index(sidecar_doc, mesh_index)`(設計 D3)。
+- [x] 2.3 修改 `_enumerate_usd_stage`:不改 signature(從 `mapping_path.parent`
+      自動找 sidecar);既有 prim CustomData loop 不動;loop 結束後
+      mapping_items 為空時讀 sidecar supplement;quality_metrics 推導擴充支援
+      fidelity value `"usd_enumeration_with_ifc_sidecar_supplement"`(設計 D3
+      + D4)。
+- [x] 2.4 修改 `_materialize_sidecars` main flow:adopt 拿到 sidecars 但
+      `mapping_has_ifc_type` / `mapping_has_ifc_name` 全 falsy 時 SHALL 仍跑
+      sidecar pass + enumeration(CodeRabbit P0 fix;對齊 spec scenario
+      「HOOPS success without IFC CustomData triggers sidecar pass」)。
+- [x] 2.5 確認 `_run_ifcopenshell_openusd_fallback` 與 C1 archive 行為不被
       影響(fallback path 自寫 mapping/quality 不讀 sidecar)。
-- [ ] 2.6 跑 task 1.7 test 全綠;repo 既有 fallback + C6 enumeration test 不
+- [x] 2.6 跑 task 1.7 test 全綠;repo 既有 fallback + C6 enumeration test 不
       破壞。
 
 ## 3. Verify
 
-- [ ] 3.1 `cd bim-streaming-server && python -m pytest tests -q`(streaming
-      sub-repo 全綠)。
-- [ ] 3.2 repo root `python -m pytest tests -p no:cacheprovider -q`(root
-      contracts 不退化)。
+- [ ] 3.1 `cd bim-streaming-server && .venv\Scripts\python.exe -m pytest tests -q`
+      (streaming sub-repo 全綠;對齊 CLAUDE.md §3 venv 強制要求,避免
+      user-site packages 撞 FastAPI/Starlette 版本)。
+- [ ] 3.2 repo root `.venv\Scripts\python.exe -m pytest tests -p no:cacheprovider -q`
+      (root contracts 不退化;同上 venv 規範)。
 - [ ] 3.3 `npx openspec validate streaming-server-ifcopenshell-semantic-sidecar-pass --strict`。
 - [ ] 3.4 `npx openspec validate --specs --strict`(全 specs 維持 pass)。
 - [ ] 3.5 GitNexus post-impact:`gitnexus_detect_changes()` 確認改動範圍

@@ -274,3 +274,12 @@ L4 (apply 後,真機 evidence):
   (對齊 `queue-batch-dispatch-and-post-usdc-artifact-retention` strategy A
   scratch retention),sidecar pass 回 None。demo 主鏈不受影響,只是 Semantic
   ready 維持 no(誠實)。
+
+- **Sidecar 暴露於 /artifacts public mount**(CodeRabbit P2,follow-up):
+  `host_native_conversion_service.py` 把 `config.artifacts_root` 整個 mount 在
+  `/artifacts` StaticFiles。`ifc_semantic_sidecar.json` 寫在 artifact dir 內,
+  與既有 `element_mapping.json` / `entity_index.json` / `quality_metrics.json`
+  公開暴露程度一致(它們都含 IFC GUID / Name)。本 change 不增量擴大 attack
+  surface 也不縮小;後續若要把 mapping / sidecar 從公開 tree 拉出,屬獨立
+  hardening change(會牽動 coordinator artifact_refs URL contract 與 viewer
+  fetch path),不在本 sidecar pass scope。

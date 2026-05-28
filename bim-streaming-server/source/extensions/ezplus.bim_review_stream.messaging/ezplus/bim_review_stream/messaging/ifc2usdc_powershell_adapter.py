@@ -739,7 +739,15 @@ class Ifc2UsdcPowershellConverterAdapter:
             entity_index_path=entity_index_path,
             metadata_path=metadata_path,
         )
-        if adopted is not None:
+        # streaming-server-ifcopenshell-semantic-sidecar-pass:adopt 拿到 sidecars
+        # 但 semantic 三欄位全 falsy(HOOPS happy path 真實情境:四檔都 emit 但
+        # mapping_has_ifc_type / mapping_has_ifc_name 都 false)時,SHALL 仍跑
+        # sidecar pass 補語意,對齊 spec scenario「HOOPS success without IFC
+        # CustomData triggers sidecar pass」。
+        if adopted is not None and (
+            bool(adopted.get("mapping_has_ifc_type"))
+            or bool(adopted.get("mapping_has_ifc_name"))
+        ):
             return adopted
         self._run_ifcopenshell_semantic_sidecar(
             ifc_source_path=ifc_path,
@@ -1028,16 +1036,38 @@ class Ifc2UsdcPowershellConverterAdapter:
         try:
             products = ifc_file.by_type("IfcProduct")
         except Exception:  # noqa: BLE001
-            products = []
-        for shape_index, product in enumerate(products):
-            guid_raw = getattr(product, "GlobalId", None)
+            # CodeRabbit P0: parse failure SHALL return None without writing
+            # an empty sidecar (對齊 helper docstring「never raises」+
+            # spec scenario「Missing IFC source or IfcOpenShell unavailable
+            # stays honest」)。
+            return None
+        shape_index = 0
+        for product in products:
+            # CodeRabbit P2 → P0: 只收 has-Representation 的 IfcProduct(過濾
+            # IfcSite / IfcBuilding / IfcBuildingStorey / IfcSpace 等空間 /
+            # 容器 product)。HOOPS USD mesh prim 對齊 sidecar entries 走
+            # ordinal index,把空間 product 留在 sidecar 會讓 mesh-index ↔
+            # sidecar-index 全錯位。
+            try:
+                representation = getattr(product, "Representation", None)
+            except Exception:  # noqa: BLE001
+                representation = None
+            if representation is None:
+                continue
+            try:
+                guid_raw = getattr(product, "GlobalId", None)
+            except Exception:  # noqa: BLE001
+                guid_raw = None
             if not guid_raw:
                 continue
             try:
                 ifc_type_raw = product.is_a() if hasattr(product, "is_a") else None
             except Exception:  # noqa: BLE001
                 ifc_type_raw = None
-            name_raw = getattr(product, "Name", None)
+            try:
+                name_raw = getattr(product, "Name", None)
+            except Exception:  # noqa: BLE001
+                name_raw = None
             entries.append(
                 {
                     "ifc_guid": str(guid_raw),
@@ -1046,6 +1076,7 @@ class Ifc2UsdcPowershellConverterAdapter:
                     "shape_index": shape_index,
                 }
             )
+            shape_index += 1
         sidecar_doc = {
             "format_version": "1",
             "ifc_source": str(ifc_source_path),

@@ -1470,20 +1470,42 @@ def test_adopt_path_does_not_overwrite_existing_semantic(tmp_path: Path):
 
 
 class _FakeIfcProduct:
-    def __init__(self, *, guid: str, ifc_type: str, name: str | None):
+    """Fake IfcProduct with a truthy Representation by default (renderable).
+
+    Pass `representation=None` to simulate spatial / container products
+    (IfcSite / IfcBuilding / IfcBuildingStorey / IfcSpace) that the sidecar
+    pass MUST skip.
+    """
+
+    def __init__(
+        self,
+        *,
+        guid: str,
+        ifc_type: str,
+        name: str | None,
+        representation: object = "fake-representation",
+    ):
         self.GlobalId = guid
         self._ifc_type = ifc_type
         self.Name = name
+        self.Representation = representation
 
     def is_a(self) -> str:
         return self._ifc_type
 
 
-def _install_fake_ifcopenshell(monkeypatch, products: list[_FakeIfcProduct]) -> None:
+def _install_fake_ifcopenshell(
+    monkeypatch,
+    products: list[_FakeIfcProduct],
+    *,
+    by_type_raises: bool = False,
+) -> None:
     fake_module = types.ModuleType("ifcopenshell")
 
     class FakeIfcFile:
         def by_type(self, type_name: str):
+            if by_type_raises:
+                raise RuntimeError("simulated ifc parser failure")
             if type_name == "IfcProduct":
                 return list(products)
             return []
@@ -1723,3 +1745,144 @@ def test_materialize_sidecars_runs_sidecar_pass_when_hoops_has_no_ifc_custom_dat
     mapping_doc = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
     guids = {item["ifc_guid"] for item in mapping_doc["items"]}
     assert guids == {"MAT_GUID_A", "MAT_GUID_B"}
+
+
+def test_sidecar_pass_skips_ifcproduct_without_representation(tmp_path: Path, monkeypatch):
+    """CodeRabbit P0 fix: IfcSite / IfcBuilding / IfcBuildingStorey / IfcSpace
+    (spatial/container products without Representation) MUST be excluded from
+    sidecar entries, otherwise mesh-index ↔ sidecar-index ordinal join is
+    全錯位."""
+    adapter = _make_enumeration_adapter(tmp_path)
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+    _install_fake_ifcopenshell(
+        monkeypatch,
+        [
+            # 空間 / 容器 product:沒 Representation,SHALL 被過濾
+            _FakeIfcProduct(guid="SITE_GUID", ifc_type="IfcSite", name="基地", representation=None),
+            _FakeIfcProduct(guid="BLDG_GUID", ifc_type="IfcBuilding", name="主建", representation=None),
+            _FakeIfcProduct(guid="STOREY_GUID", ifc_type="IfcBuildingStorey", name="一樓", representation=None),
+            # 真實 renderable product:SHALL 入 sidecar
+            _FakeIfcProduct(guid="WALL_GUID", ifc_type="IfcWall", name="牆"),
+            _FakeIfcProduct(guid="BEAM_GUID", ifc_type="IfcBeam", name="梁"),
+        ],
+    )
+
+    sidecar_path = adapter._run_ifcopenshell_semantic_sidecar(
+        ifc_source_path=ifc_source,
+        artifact_dir=artifact_dir,
+    )
+
+    assert sidecar_path is not None
+    doc = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    # 只有兩個 renderable product 進 sidecar
+    assert doc["summary"]["count"] == 2
+    guids = {entry["ifc_guid"] for entry in doc["entries"]}
+    assert guids == {"WALL_GUID", "BEAM_GUID"}
+    assert "SITE_GUID" not in guids
+    # shape_index 從 0 連續,不留 spatial product 留下的 gap
+    shape_indexes = [entry["shape_index"] for entry in doc["entries"]]
+    assert shape_indexes == [0, 1]
+
+
+def test_sidecar_pass_returns_none_when_by_type_raises(tmp_path: Path, monkeypatch):
+    """CodeRabbit P0 fix: by_type 失敗 SHALL return None 且不寫 sidecar
+    (對齊 docstring「never raises」+ spec「parse failure → None」contract)。"""
+    adapter = _make_enumeration_adapter(tmp_path)
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+    _install_fake_ifcopenshell(monkeypatch, [], by_type_raises=True)
+
+    result = adapter._run_ifcopenshell_semantic_sidecar(
+        ifc_source_path=ifc_source,
+        artifact_dir=artifact_dir,
+    )
+
+    assert result is None
+    assert not (artifact_dir / "ifc_semantic_sidecar.json").exists()
+
+
+def test_materialize_runs_sidecar_pass_when_adopt_returns_semantic_falsy(
+    tmp_path: Path, monkeypatch
+):
+    """CodeRabbit P0 fix: HOOPS emit 四檔 sidecars 但 mapping 無 IFC type/name 時,
+    _materialize_sidecars SHALL 仍跑 sidecar pass + enumeration supplement
+    (對齊 spec scenario「HOOPS success without IFC CustomData triggers sidecar pass」)。
+    """
+    _clear_pxr_test_stubs(monkeypatch)
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    usdc = out_dir / "model.usdc"
+    # HOOPS-produced prim 沒 IFC CustomData
+    _write_usd_stage_with_ifc_prims(
+        usdc,
+        [
+            {"path": "/World/HoopsMesh_X"},
+            {"path": "/World/HoopsMesh_Y"},
+        ],
+    )
+    # converter (HOOPS) 自己 emit 四個 sidecars,但 mapping 沒 ifc_type / ifc_name
+    (out_dir / "element_mapping.json").write_text(
+        json.dumps(
+            {
+                "mock": False,
+                "summary": {"mapped_count": 2, "fake_mapping_count": 0},
+                "items": [
+                    {"ifc_guid": "GUID_NO_SEMANTIC_1", "usd_prim_path": "/World/HoopsMesh_X"},
+                    {"ifc_guid": "GUID_NO_SEMANTIC_2", "usd_prim_path": "/World/HoopsMesh_Y"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "entity_index.json").write_text(json.dumps({"entities": []}), encoding="utf-8")
+    (out_dir / "metadata.json").write_text(json.dumps({"source": "converter"}), encoding="utf-8")
+    # quality 沒 semantic 欄位 + items 也沒 ifc_type/name → adopt supplement 推導出
+    # mapping_has_ifc_type=False, mapping_has_ifc_name=False
+    (out_dir / "quality_metrics.json").write_text(
+        json.dumps(
+            {
+                "source_ifc_entity_count": 2,
+                "mapped_count": 2,
+                "materialization_strategy": "converter_native",
+                "coverage_status": "pass",
+            }
+        ),
+        encoding="utf-8",
+    )
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+    _install_fake_ifcopenshell(
+        monkeypatch,
+        [
+            _FakeIfcProduct(guid="REAL_GUID_X", ifc_type="IfcSlab", name="樓板"),
+            _FakeIfcProduct(guid="REAL_GUID_Y", ifc_type="IfcColumn", name="柱"),
+        ],
+    )
+
+    quality = adapter._materialize_sidecars(
+        model_path=usdc,
+        ifc_path=ifc_source,
+        output_dir=out_dir,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+
+    # 1) sidecar JSON 落地
+    sidecar_path = out_dir / "ifc_semantic_sidecar.json"
+    assert sidecar_path.is_file()
+    # 2) enumeration 重寫 element_mapping,semantic 三欄位 truthy
+    assert quality["materialization_strategy"] == "usd_stage_enumeration"
+    assert quality["semantic_mapping_fidelity"] == "usd_enumeration_with_ifc_sidecar_supplement"
+    assert quality["mapping_has_ifc_type"] is True
+    assert quality["mapping_has_ifc_name"] is True
+    # 3) mapping items 來自 sidecar(不是 adopt path 的 GUID_NO_SEMANTIC_*)
+    mapping_doc = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    guids = {item["ifc_guid"] for item in mapping_doc["items"]}
+    assert guids == {"REAL_GUID_X", "REAL_GUID_Y"}
