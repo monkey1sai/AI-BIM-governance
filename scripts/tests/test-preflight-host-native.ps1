@@ -156,4 +156,22 @@ try {
 }
 finally { Remove-TestSandbox -Path $sandbox }
 
+# Test 9: real repo .venv dependency probe must survive Windows PowerShell native argument quoting
+$realPy = Join-Path $repoRoot '.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $realPy -PathType Leaf) {
+    $null = & $realPy -c 'import fastapi, starlette, uvicorn; print(1)' 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $result = Test-HostNativePythonDependencies -PythonExe $realPy
+        Assert-Equal 'OK' $result.Status 'real .venv dependency probe OK'
+        Assert-Equal '0.111.0' $result.FastApi 'real .venv fastapi baseline'
+        Assert-Equal '0.37.2' $result.Starlette 'real .venv starlette baseline'
+        Assert-Equal '0.45.0' $result.Uvicorn 'real .venv uvicorn baseline'
+        Write-TestPass 'real .venv dependency probe'
+    } else {
+        Write-TestPass 'real .venv dependency probe skipped (packages unavailable)'
+    }
+} else {
+    Write-TestPass 'real .venv dependency probe skipped (.venv missing)'
+}
+
 Write-Host "`n=== test-preflight-host-native.ps1: ALL PASSED ===" -ForegroundColor Green

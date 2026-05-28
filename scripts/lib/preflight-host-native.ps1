@@ -86,7 +86,7 @@ print(json.dumps({
 '@
 
     try {
-        $out = & $PythonExe -c $probe 2>&1
+        $out = $probe | & $PythonExe - 2>&1
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) {
             return @{
