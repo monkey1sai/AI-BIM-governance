@@ -29,7 +29,7 @@ LAN demo public host      : 192.168.10.105
 - Windows host。
 - Docker Desktop 已啟動，tray icon 穩定。
 - NVIDIA driver 可用，`nvidia-smi` 在 PATH。
-- Node / Python / Kit runtime 已照 repo 既有方式準備；缺 `.venv`、缺 `.env.web-plane.host-kit`、缺 safe directory 時 `deploy.ps1` 會做安全修復。
+- Node / Python / Kit runtime 已照 repo 既有方式準備；缺 `.venv`、缺 Python service dependencies、缺 `.env.web-plane.host-kit`、缺 safe directory 時 `deploy.ps1` 會做安全修復。
 - 同網段裝置要能連到 `192.168.10.105` 的 `8004`、`5173`、`49100`、`47998`，以及 spectator ports。
 
 ### 一鍵部署
@@ -44,26 +44,12 @@ cd C:\Repos\active\iot\AI-BIM-governance
 .\scripts\deploy.ps1 -Build
 ```
 
-如果只在本機用 `127.0.0.1` demo，才覆蓋 public host：
-
-```powershell
-.\scripts\deploy.ps1 -Build -PublicHost 127.0.0.1
-```
-
 成功後打開：
 
 ```txt
 Coordinator UI : http://192.168.10.105:8004/ui
 Viewer base    : http://192.168.10.105:5173
 Conversion API : http://192.168.10.105:49101/health
-```
-
-常用診斷：
-
-```powershell
-Get-Content scripts\.run\deploy.log -Wait
-Get-Content scripts\.run\bim-streaming-server.log -Wait
-docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit ps
 ```
 
 停止 demo：
@@ -73,26 +59,124 @@ docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file
 .\scripts\stop-all.ps1
 ```
 
-### 給客戶的 5 步驟 Demo 故事
+### 如何設定參數
 
-| 步驟 | 客戶看到 | 現行邊界 | URL / 入口 |
-|---|---|---|---|
-| ① IFC 就緒通知 | 客戶落地端已產生 IFC，通知本地審查服務 | 外部 IFC Worker → `bim-review-coordinator` | `POST /api/external/ifc-ready` |
-| ② 自動轉換 | 系統建立 conversion job，產生可串流的 USDC / mapping / manifest | `bim-review-coordinator` → `bim-streaming-server` internal API | coordinator `8004` / conversion `49101` |
-| ③ 建立會議 | 一鍵開啟審查會議，取得 stream config | `bim-review-coordinator` | <http://192.168.10.105:8004/ui> |
-| ④ 標記問題 | 瀏覽器觀看 3D 串流，點選問題高亮元件 | `web-viewer-sample` + `bim-streaming-server` | <http://192.168.10.105:5173> / WebRTC `49100` |
-| ⑤ 回拋結果 | 轉檔與審查 metadata 進入 callback outbox，回拋外部公司雲端 | `bim-review-coordinator` callback outbox | metadata-only callback |
+`deploy.ps1` 的參數來源優先序：
 
-若 Kit / GPU 尚未啟動，streaming、WebRTC 與 GPU 相關項目要標成 `blocked` / `not_observed`，不要標成 `passed`。
+```txt
+CLI flag > .env.web-plane.host-kit > .env.web-plane.host-kit.example > deploy.ps1 default
+```
 
-每個面對 demo 觀眾的 UI 都遵守
-[`docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md`](docs/plans/BIM_REVIEW_DEMO_UI_GUIDELINES.md)：
+最常用的做法是用 CLI flag 做一次性覆蓋；需要長期保存的機器設定才寫進 `.env.web-plane.host-kit`。`PUBLIC_HOST` 必須是 host 或 IP，不要帶 `http://`、port、path、query。
 
-- 業務語言優先。
-- 線性 5 步驟流程條。
-- 狀態號誌化。
-- 每個按鈕一句「會發生什麼」。
-- 失敗時直接指出哪個服務沒開、怎麼驗證。
+常用範例：
+
+```powershell
+# LAN demo；預設即為 192.168.10.105
+.\scripts\deploy.ps1 -Build
+
+# 本機-only demo；viewer 只綁 127.0.0.1
+.\scripts\deploy.ps1 -Build -PublicHost 127.0.0.1
+
+# primary + 4 spectator viewer slots
+.\scripts\deploy.ps1 -Build -SpectatorCount 4
+
+# 只啟 conversion + Kit，不啟 Docker web-plane
+.\scripts\deploy.ps1 -SkipDocker
+
+# 只看 preflight / auto-fix plan，不啟服務
+.\scripts\deploy.ps1 -DryRun
+```
+
+Deploy flags：
+
+| Flag | 用途 | 何時用 |
+|---|---|---|
+| `-DryRun` | 只跑 preflight、寫 `deploy-audit.json`，不做 Phase 2/4 真實動作 | demo 前檢查 |
+| `-Build` | 強制 `docker compose up --build` coordinator / viewer | Dockerfile 或前端/後端 image 改過 |
+| `-Pull` | Phase 2 顯式 `docker compose pull` | 需要拉遠端 image 時 |
+| `-Force` | Phase 3 互動 guard 全部視同 yes | 確認可停陌生 port PID 或重建 `.venv` 時 |
+| `-EnvFile <path>` | 使用指定 env file | 多台 demo 主機維護不同設定 |
+| `-PublicHost <host>` | 覆蓋 browser-visible host | LAN demo IP 或 local-only 切換 |
+| `-ConversionBindHost <host>` | 覆蓋 conversion-service bind host | debug 49101 綁定問題 |
+| `-KitSignalPort`, `-KitMediaPort` | 覆蓋 primary Kit signaling / media port | 預設 port 被佔用 |
+| `-SpectatorCount` | spectator 數量，不含 primary | primary + 4 時設 `4` |
+| `-KitSpectatorSignalPortStart`, `-KitSpectatorMediaPortStart`, `-KitSpectatorPortStride` | spectator port 序列設定 | 多組 demo 或避開 port collision |
+| `-SkipConversion` | 跳過 Phase 4a conversion-service | rare debug；完整 demo 不建議 |
+| `-SkipKit` | 跳過 Phase 4b Kit/WebRTC | 只驗 web-plane/API |
+| `-SkipDocker` | 跳過 Phase 4c Docker web-plane | 只驗 host-native conversion + Kit |
+| `-StrictPostVerify` | Phase 5 warning 改成 exit 5 | CI 或嚴格 smoke |
+
+`.env.web-plane.host-kit` 常用 key：
+
+| Key | 預設 / 作用 |
+|---|---|
+| `PUBLIC_HOST` | 預設 `192.168.10.105`；給 viewer / coordinator / Kit WebRTC 的公開位址 |
+| `COORDINATOR_PORT`, `VIEWER_PORT` | 預設 `8004` / `5173` |
+| `VIEWER_BIND_HOST` | LAN demo 會設 `0.0.0.0`；local-only 用 `127.0.0.1` |
+| `HOST_CONVERSION_API_BASE` | container 連 host-native conversion API；Windows Docker Desktop 預設 `http://host.docker.internal:49101` |
+| `WEB_VIEWER_COORDINATOR_API_BASE`, `WEB_VIEWER_COORDINATOR_SOCKET_URL` | browser 連 coordinator；未設時由 `PUBLIC_HOST` + `COORDINATOR_PORT` 推導 |
+| `VIEWER_PUBLIC_BASE_URL`, `COORDINATOR_PUBLIC_BASE_URL` | `/ui/open` redirect 與 summary URL；未設時由 `PUBLIC_HOST` 推導 |
+| `KIT_SIGNALING_HOST`, `KIT_MEDIA_HOST` | browser-visible Kit host；未設時由 `PUBLIC_HOST` 推導 |
+| `KIT_SIGNALING_PORT`, `KIT_MEDIA_PORT` | primary stream 預設 `49100` / `47998` |
+| `KIT_SPECTATOR_COUNT` | spectator 數量；預設 `5`，primary + 4 請設 `4` |
+| `KIT_SPECTATOR_SIGNALING_PORT_START`, `KIT_SPECTATOR_MEDIA_PORT_START`, `KIT_SPECTATOR_PORT_STRIDE` | spectator ports 預設 `49110`、`48008`、stride `10` |
+| `STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL` | browser/Kit-visible conversion artifacts URL；LAN 預設 `http://192.168.10.105:49101/artifacts` |
+| `RUNTIME_STORAGE_ROOT` | deploy 缺值時會補 `<RepoRoot>\storage`；leaf 必須是 `storage` |
+
+### 如何看 log
+
+一鍵部署的主 log 都在 `scripts\.run\`。先看 `deploy.log`，再依失敗 phase 打開對應 log。
+
+```powershell
+Get-Content scripts\.run\deploy.log -Tail 120 -Wait
+Get-Content scripts\.run\bim-streaming-conversion-service.log -Tail 120 -Wait
+Get-Content scripts\.run\bim-streaming-conversion-service.log.err -Tail 120 -Wait
+Get-Content scripts\.run\bim-streaming-server.log -Tail 120 -Wait
+Get-Content scripts\.run\bim-streaming-server.log.err -Tail 120 -Wait
+Get-Content scripts\.run\docker-compose-up.log -Tail 120 -Wait
+Get-Content scripts\.run\docker-compose-up.err.log -Tail 120 -Wait
+docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit ps
+docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit logs -f --tail=100 coordinator viewer
+```
+
+| Log / artifact | 內容 |
+|---|---|
+| `scripts\.run\deploy.log` | Phase 1-5 的 `[ok] / [fix] / [ask] / [warn] / [fail]` 主線 |
+| `scripts\.run\deploy-audit.json` | preflight resolved config：public host、ports、env file、volume、spectator ports |
+| `scripts\.run\bim-streaming-conversion-service.log(.err)` | Phase 4a host-native conversion-service stdout/stderr |
+| `scripts\.run\bim-streaming-server.log(.err)` | Phase 4b host-native Kit/WebRTC stdout/stderr |
+| `scripts\.run\docker-compose-up.log` / `.err.log` | Phase 4c web-plane Docker startup |
+| `scripts\.run\*.pid` | host-native wrapper PID files；`stop-all.ps1` 會用它們停服務 |
+| `scripts\.run\bim-streaming-server.params.json` | Kit runtime signature；public host / ports 改變時 deploy 會重啟 Kit |
+
+### 如何 debug
+
+先用 phase 判斷壞在哪一層：
+
+```powershell
+.\scripts\deploy.ps1 -DryRun
+Get-Content scripts\.run\deploy.log -Tail 160
+```
+
+| 失敗位置 | 先看 | 常用處理 |
+|---|---|---|
+| Phase 1 Docker | `docker version`、Docker Desktop tray | 啟動 Docker Desktop，等 engine running |
+| Phase 1 Python deps | `.\.venv\Scripts\python.exe -c "import fastapi, starlette, uvicorn; print(fastapi.__version__, starlette.__version__, uvicorn.__version__)"` | `.\.venv\Scripts\python.exe -m pip install -r .\bim-streaming-server\requirements.txt` |
+| Phase 1 port occupied | `Get-NetTCPConnection -LocalPort 8004,5173,49100,49101 -ErrorAction SilentlyContinue` | 若是自己的 PID，先 `.\scripts\stop-all.ps1`；陌生 PID 需人工確認或 `-Force` |
+| Phase 1 volume | `Get-Content .env.web-plane.host-kit | Select-String RUNTIME_STORAGE_ROOT` | 確認 path leaf 是 `storage` |
+| Phase 4a conversion | `scripts\.run\bim-streaming-conversion-service.log.err`、`http://127.0.0.1:49101/health` | 修 Python deps / port / STORAGE_ROOT，再重跑 |
+| Phase 4b Kit | `scripts\.run\bim-streaming-server.log.err`、`nvidia-smi`、port `49100` | 確認 NVIDIA driver、Kit runtime build artifacts；必要時在 `bim-streaming-server` 跑 `.\repo.bat build` |
+| Phase 4c Docker | `scripts\.run\docker-compose-up.err.log`、`docker compose ... ps` | 看 coordinator/viewer container logs，必要時 `-Build` |
+| Phase 5 verify | `http://127.0.0.1:8004/health`、`http://127.0.0.1:5173`、`http://127.0.0.1:49101/health` | 對應服務健康檢查，若要嚴格失敗用 `-StrictPostVerify` |
+
+清乾淨再重跑：
+
+```powershell
+.\scripts\stop-all.ps1
+docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml --env-file .env.web-plane.host-kit down
+.\scripts\deploy.ps1 -Force
+```
 
 ### 開啟 primary + 4 spectator viewers
 
@@ -133,78 +217,65 @@ Start-Process "$base&userId=viewer_primary&displayName=Primary"
 
 `/ui/open` 會把 request 轉到 trusted viewer URL，並自動補上 `coordinatorApiBase` / `coordinatorSocketUrl`，所以 LAN client 不會被導到自己的 `127.0.0.1`。若 spectator 畫面卡在 busy/disconnected，先看 `scripts\.run\bim-streaming-server.log`，並確認對應 signaling/media ports 沒被防火牆或其他 process 擋住。
 
----
+### README 真實性檢查
 
-## 進階：Docker-first Runtime Manager MVP（非 demo 預設）
+本 README 的 deploy 內容以這些檔案為準：
 
-`CODE_GOAL_DOCKER_KIT_MVP.md` 的 MVP 驗收路徑只接受 Docker Compose。Host-local
-`uvicorn` / `npm run dev` / host Kit launcher 只保留作為 legacy/debug，不作為 MVP pass
-evidence。
+| Source | 用來核對 |
+|---|---|
+| `scripts\deploy.ps1` | CLI flags、預設值、phase、log path、exit behavior |
+| `.env.web-plane.host-kit.example` | LAN demo env key 與預設值 |
+| `compose.host-kit.yml` | coordinator/viewer port mapping 與 container env |
+| `bim-review-coordinator\tests\dev-console.test.ts` | `/ui/open` redirect 與 allowed query params |
+| `docs\runbooks\one-click-deploy-smoke.md` | one-click deploy smoke 預期 |
 
-Docker-first Kit MVP 的硬邊界：
-
-- `streaming-server` GPU image 必須在 Docker build 階段於 Linux container 內執行
-  `./repo.sh build`，產生 Linux Kit app。
-- 現有 `bim-streaming-server/source/apps` 是 NVIDIA `kit-app-template` 產物；Docker MVP
-  不重新互動產生 source，而是在乾淨 Linux builder 內 build 現有 source。
-- 缺少 Linux launcher 不是可接受的前置 blocker；這代表 `failed_linux_kit_build`。
-- Host-local Windows `_build`、`repo.bat`、PowerShell launcher 或 host Kit launcher 不算
-  MVP pass、GPU runtime pass 或 Kit viewport pass evidence。
-- `web-viewer-sample` container 使用 Node 20 與 npm 10，符合 `package.json` engines
-  contract，並以 `engine-strict` 驗證。
-
-主要入口：
+修改 README 後至少跑：
 
 ```powershell
-cd C:\Repos\active\iot\AI-BIM-governance
-Copy-Item .env.runtime-manager.docker.example .env.runtime-manager.docker
-docker compose -f compose.runtime-manager.yml --env-file .env.runtime-manager.docker config
-.\scripts\start-runtime-manager-docker.ps1 -Build
-.\scripts\check-runtime-manager-docker.ps1
+rg -n "給客戶的 5 步[驟]|Docker[-]first Runtime Manager MVP|CODE_GOAL_DOCKER_KIT_[M]VP|Demo 故事[位]置" README.md
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy.ps1 -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\tests\test-deploy-dryrun.ps1
+git diff --check -- README.md
 ```
 
-Kit 管理前端：
-
-```txt
-http://127.0.0.1:5174
-```
-
-GPU Kit profile 只有在本機 Docker Desktop、NVIDIA Container Toolkit、container 內 Linux Kit
-build 成功、以及 Docker build 產出的 Linux launcher 可啟動時才可宣告 pass：
-
-```powershell
-.\scripts\start-runtime-manager-docker.ps1 -Build -WithGpu
-.\scripts\check-runtime-manager-docker.ps1 -WithGpu
-```
-
-若 NVIDIA runtime / GPU / license / auth / NVIDIA package network 這類外部依賴不可用，
-驗證結果可記錄為 `blocked_external_dependency` 或 `blocked_gpu_runtime_unavailable`。
-若 Dockerfile 沒執行 Linux build、build pipeline 缺失、或 image 內缺 Linux launcher，
-必須記錄為 `failed_linux_kit_build`，不得用 host-local Kit 取代 GPU container pass。
+第一個 `rg` 預期沒有輸出；`deploy.ps1 -DryRun` 預期退 0，並在 Phase 1 顯示 `host-native pythonDependencies=OK`。
 
 ---
 
 ## 手動 Debug 啟動（非一鍵 demo）
 
-本段落只供 B 方案 local debug 使用，不作 Docker-first MVP evidence。
+本段落只供 local debug 使用，不是 demo 預設路徑。demo 優先用 `.\scripts\deploy.ps1 -Build`。
 
-每個服務獨立 terminal，依序啟動：
+每個服務獨立 terminal，依序啟動。
+
+Terminal 1：coordinator `8004`
 
 ```powershell
-# Repo root
-cd C:\Repos\active\iot\AI-BIM-governance
-
-# 1. 審查協調 / 外部 IFC-ready intake / callback outbox (8004)
-cd bim-review-coordinator
+cd C:\Repos\active\iot\AI-BIM-governance\bim-review-coordinator
 npm install
 npm run dev
+```
 
-# 2. Omniverse Kit 串流 + IFC→USDC authority
-cd ..\bim-streaming-server
+Terminal 2：conversion authority `49101`
+
+```powershell
+cd C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server
+if (-not (Test-Path ..\.venv\Scripts\python.exe)) { python -m venv ..\.venv }
+..\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-host-native-conversion-service.ps1 -PythonExe ..\.venv\Scripts\python.exe
+```
+
+Terminal 3：Kit / WebRTC `49100` / `47998`
+
+```powershell
+cd C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server
 .\scripts\start-streaming-server.ps1 -SkipAutoLoad
+```
 
-# 3. 瀏覽器審查端 (5173)
-cd ..\web-viewer-sample
+Terminal 4：viewer `5173`
+
+```powershell
+cd C:\Repos\active\iot\AI-BIM-governance\web-viewer-sample
 npm install
 npm run dev -- --host 127.0.0.1
 ```
@@ -217,17 +288,17 @@ npm run dev -- --host 127.0.0.1
 
 ## 服務分工與邊界
 
-| 目錄 | 角色 | Demo 故事位置 | 責任邊界 |
-|---|---|---|---|
-| `bim-review-coordinator/` | 外部 IFC-ready intake + Session / Collaboration Control Plane | ①③⑤ | 驗證 service auth、建立 local conversion job、dispatch streaming conversion、維護 callback outbox、建立 review session、廣播 collaboration event；不渲染 3D、不保存大型模型本體。 |
-| `bim-streaming-server/` | IFC→USDC Conversion Authority + Omniverse Kit Runtime / WebRTC | ②④ | Internal-only conversion engine，產生 USDC / mapping / entity index / manifest；負責 Kit viewport、WebRTC、DataChannel command；不管理 project / user / annotation 權威。 |
-| `web-viewer-sample/` | Browser Client / User Interaction Layer | ④ | 顯示串流畫面、建立或加入 review session、送 DataChannel command、送 annotation / collaboration event；不啟動 Kit、不保存資料權威、不直連已刪 runtime。 |
-| `tests/contracts/` | API / event contracts | — | 描述外部 IFC Worker、公司雲端 callback、metadata-only contract。 |
-| `tests/fakes/` | Test-only external platform doubles | — | 模擬外部 IFC Worker 與公司雲端，不是 runtime profile。 |
-| `docs/contracts/` | API / event contracts | — | REST、Socket.IO、DataChannel 與 local runbook contract。 |
-| `docs/plans/` | Implementation plans | — | 目前執行計畫與驗收 checklist。 |
-| `docs/wiki/` | Graphify wiki snapshot | — | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
-| `scripts/` | Root verification scripts | — | 跨服務健康檢查與 B 方案驗證入口；不得把已刪 runtime 標成必跑 pass gate。 |
+| 目錄 | 角色 | 責任邊界 |
+|---|---|---|
+| `bim-review-coordinator/` | 外部 IFC-ready intake + Session / Collaboration Control Plane | 驗證 service auth、建立 local conversion job、dispatch streaming conversion、維護 callback outbox、建立 review session、廣播 collaboration event；不渲染 3D、不保存大型模型本體。 |
+| `bim-streaming-server/` | IFC→USDC Conversion Authority + Omniverse Kit Runtime / WebRTC | Internal-only conversion engine，產生 USDC / mapping / entity index / manifest；負責 Kit viewport、WebRTC、DataChannel command；不管理 project / user / annotation 權威。 |
+| `web-viewer-sample/` | Browser Client / User Interaction Layer | 顯示串流畫面、建立或加入 review session、送 DataChannel command、送 annotation / collaboration event；不啟動 Kit、不保存資料權威、不直連已刪 runtime。 |
+| `tests/contracts/` | API / event contracts | 描述外部 IFC Worker、公司雲端 callback、metadata-only contract。 |
+| `tests/fakes/` | Test-only external platform doubles | 模擬外部 IFC Worker 與公司雲端，不是 runtime profile。 |
+| `docs/contracts/` | API / event contracts | REST、Socket.IO、DataChannel 與 local runbook contract。 |
+| `docs/plans/` | Implementation plans | 目前執行計畫與驗收 checklist。 |
+| `docs/wiki/` | Graphify wiki snapshot | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
+| `scripts/` | Root verification scripts | 跨服務健康檢查與 B 方案驗證入口；不得把已刪 runtime 標成必跑 pass gate。 |
 
 ### Source of Truth
 
