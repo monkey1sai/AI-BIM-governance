@@ -32,21 +32,31 @@ function Test-HostNativePythonDependencies {
 
     $probe = @'
 import importlib.metadata as metadata
+import importlib.util
 import json
 
-required = {
+versioned_required = {
     "fastapi": "0.111.0",
     "starlette": "0.37.2",
     "uvicorn": "0.45.0",
 }
+import_required = ("pxr", "ifcopenshell")
 
 versions = {}
 missing = []
-for name in required:
+for name in versioned_required:
     try:
         versions[name] = metadata.version(name)
     except metadata.PackageNotFoundError:
         versions[name] = ""
+        missing.append(name)
+
+for name in import_required:
+    try:
+        spec = importlib.util.find_spec(name)
+    except Exception:
+        spec = None
+    if spec is None:
         missing.append(name)
 
 def parse_version(value):

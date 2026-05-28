@@ -78,6 +78,7 @@ $defaultHostExit = $LASTEXITCODE
 Assert-Equal 0 $defaultHostExit 'default LAN host dry-run exit 0'
 $defaultHostAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
 Assert-Equal '192.168.10.105' $defaultHostAudit.runtime.publicHost 'default PUBLIC_HOST is LAN demo IP'
+Assert-Equal '0.0.0.0' $defaultHostAudit.runtime.conversionBindHost 'default LAN conversion binds all interfaces'
 Assert-Equal 'http://192.168.10.105:8004' $defaultHostAudit.runtime.coordinatorPublicUrl 'default coordinator URL uses LAN demo IP'
 Assert-Equal 'http://192.168.10.105:5173' $defaultHostAudit.runtime.viewerPublicUrl 'default viewer URL uses LAN demo IP'
 Assert-Equal 'http://192.168.10.105:49101/artifacts' $defaultHostAudit.runtime.conversionPublicArtifactsUrl 'default artifact URL uses LAN demo IP'
@@ -99,6 +100,7 @@ $lanOutput = & $deploy -DryRun -EnvFile $lanEnv *>&1 | Out-String
 $lanExit = $LASTEXITCODE
 Assert-Equal 0 $lanExit 'LAN env dry-run exit 0'
 $lanAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
+Assert-Equal '0.0.0.0' $lanAudit.runtime.conversionBindHost 'LAN conversion binds all interfaces'
 Assert-Equal 'http://192.168.10.105:49101/artifacts' $lanAudit.runtime.conversionPublicArtifactsUrl 'LAN artifact URL derived from PUBLIC_HOST'
 Assert-True ($lanAudit.runtime.corsOrigins -match 'http://192\.168\.10\.105:5173') 'LAN viewer origin added to coordinator CORS origins'
 Assert-True ($lanAudit.runtime.allowedStageHosts -match '192\.168\.10\.105:49101') 'LAN public artifact host added to Kit stage allowlist'

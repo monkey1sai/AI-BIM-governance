@@ -159,19 +159,66 @@ finally { Remove-TestSandbox -Path $sandbox }
 # Test 9: real repo .venv dependency probe must survive Windows PowerShell native argument quoting
 $realPy = Join-Path $repoRoot '.venv\Scripts\python.exe'
 if (Test-Path -LiteralPath $realPy -PathType Leaf) {
-    $null = & $realPy -c 'import fastapi, starlette, uvicorn; print(1)' 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        $result = Test-HostNativePythonDependencies -PythonExe $realPy
+    $result = Test-HostNativePythonDependencies -PythonExe $realPy
+    if ($result.Status -eq 'OK') {
         Assert-Equal 'OK' $result.Status 'real .venv dependency probe OK'
         Assert-Equal '0.111.0' $result.FastApi 'real .venv fastapi baseline'
         Assert-Equal '0.37.2' $result.Starlette 'real .venv starlette baseline'
         Assert-Equal '0.45.0' $result.Uvicorn 'real .venv uvicorn baseline'
         Write-TestPass 'real .venv dependency probe'
-    } else {
+    } elseif ($result.Status -eq 'MISSING') {
         Write-TestPass 'real .venv dependency probe skipped (packages unavailable)'
+    } else {
+        throw "Unexpected real .venv dependency probe status: $($result.Status) $($result.Reason)"
     }
 } else {
     Write-TestPass 'real .venv dependency probe skipped (.venv missing)'
+}
+
+# Test 10: sidecar runtime imports missing -> MISSING
+if (Test-Path -LiteralPath $realPy -PathType Leaf) {
+    $null = & $realPy -c 'import fastapi, starlette, uvicorn; print(1)' 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $sandbox = New-TestSandbox -Prefix 'preflight-hn-sidecar'
+        $oldPythonPath = [Environment]::GetEnvironmentVariable('PYTHONPATH', 'Process')
+        try {
+            @'
+import importlib.util
+
+_real_find_spec = importlib.util.find_spec
+
+def _masked_find_spec(name, *args, **kwargs):
+    if name in {"pxr", "ifcopenshell"}:
+        return None
+    return _real_find_spec(name, *args, **kwargs)
+
+importlib.util.find_spec = _masked_find_spec
+'@ | Set-Content -LiteralPath (Join-Path $sandbox 'sitecustomize.py') -Encoding utf8
+            $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($oldPythonPath)) {
+                $sandbox
+            } else {
+                "$sandbox;$oldPythonPath"
+            }
+
+            $result = Test-HostNativePythonDependencies -PythonExe $realPy
+            Assert-Equal 'MISSING' $result.Status 'missing sidecar runtime imports flagged'
+            Assert-True ($result.Reason -match 'pxr') 'dependency reason includes pxr'
+            Assert-True ($result.Reason -match 'ifcopenshell') 'dependency reason includes ifcopenshell'
+            Write-TestPass 'sidecar runtime imports missing flagged'
+        }
+        finally {
+            if ([string]::IsNullOrWhiteSpace($oldPythonPath)) {
+                Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+            } else {
+                $env:PYTHONPATH = $oldPythonPath
+            }
+            Remove-TestSandbox -Path $sandbox
+        }
+    } else {
+        Write-TestPass 'sidecar runtime import probe skipped (base packages unavailable)'
+    }
+} else {
+    Write-TestPass 'sidecar runtime import probe skipped (.venv missing)'
 }
 
 Write-Host "`n=== test-preflight-host-native.ps1: ALL PASSED ===" -ForegroundColor Green

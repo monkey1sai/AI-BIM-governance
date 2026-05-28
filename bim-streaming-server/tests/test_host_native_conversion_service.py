@@ -271,7 +271,20 @@ def test_adapter_builds_powershell_command_and_confirms_usdc(tmp_path: Path, mon
         (out_dir / "model.usdc").write_bytes(b"PXR-USDC-real\n")
         # also emit converter-owned sidecars so _adopt path returns real metrics
         (out_dir / "element_mapping.json").write_text(
-            '{"mock": false, "summary": {"mapped_count": 1, "fake_mapping_count": 0}}',
+            json.dumps(
+                {
+                    "mock": False,
+                    "summary": {"mapped_count": 1, "fake_mapping_count": 0},
+                    "items": [
+                        {
+                            "ifc_guid": "2abc",
+                            "usd_prim_path": "/World/IfcShape_000001",
+                            "ifc_type": "IfcBuildingElementProxy",
+                            "ifc_name": "Demo element",
+                        }
+                    ],
+                }
+            ),
             encoding="utf-8",
         )
         (out_dir / "entity_index.json").write_text('{"entities": []}', encoding="utf-8")
@@ -584,7 +597,14 @@ def _write_minimal_converter_sidecars(output_dir: Path) -> None:
             {
                 "mock": False,
                 "summary": {"mapped_count": 1, "fake_mapping_count": 0},
-                "items": [{"ifc_guid": "2abc", "usd_prim_path": "/World/IfcShape_000001"}],
+                "items": [
+                    {
+                        "ifc_guid": "2abc",
+                        "usd_prim_path": "/World/IfcShape_000001",
+                        "ifc_type": "IfcBuildingElementProxy",
+                        "ifc_name": "Demo element",
+                    }
+                ],
             }
         ),
         encoding="utf-8",

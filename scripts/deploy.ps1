@@ -67,6 +67,7 @@ $script:resolvedEnvFile = ''
 $script:volume = $null
 $script:coordinatorPublicUrl = ''
 $script:viewerPublicUrl = ''
+$script:conversionRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-conversion-service.params.json'
 $script:kitRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-server.params.json'
 
 # ============================================================
@@ -382,6 +383,21 @@ function New-KitRuntimeSignature {
     } | ConvertTo-Json -Compress)
 }
 
+function New-ConversionRuntimeSignature {
+    param(
+        [Parameter(Mandatory = $true)][string] $BindHost,
+        [Parameter(Mandatory = $true)][int] $Port,
+        [Parameter(Mandatory = $true)][string] $HealthHost,
+        [string] $PublicArtifactsUrl = ''
+    )
+    return ([pscustomobject]@{
+        bindHost           = $BindHost
+        port               = $Port
+        healthHost         = $HealthHost
+        publicArtifactsUrl = $PublicArtifactsUrl
+    } | ConvertTo-Json -Compress)
+}
+
 function Test-KitRuntimeSignatureMatches {
     param(
         [Parameter(Mandatory = $true)][string] $Path,
@@ -537,6 +553,12 @@ Set-DeployEnvIfNeeded -Name 'COORDINATOR_PUBLIC_BASE_URL' -Value $script:coordin
 Set-DeployEnvIfNeeded -Name 'STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL' -Value "http://${resolvedPublicHost}:49101/artifacts" -Force:$shouldDerivePublicTopologyValues -EnvFile $resolvedEnvFile
 [Environment]::SetEnvironmentVariable('CORS_ORIGINS', $resolvedCorsOrigins, 'Process')
 [Environment]::SetEnvironmentVariable('BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS', $resolvedAllowedStageHosts, 'Process')
+$resolvedConversionPublicArtifactsUrl = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL')
+$conversionRuntimeSignature = New-ConversionRuntimeSignature `
+    -BindHost $resolvedConversionBindHost `
+    -Port 49101 `
+    -HealthHost $resolvedConversionHealthHost `
+    -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl
 
 $ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
@@ -623,7 +645,7 @@ $auditObj = [pscustomobject]@{
         viewerPublicUrl     = $script:viewerPublicUrl
         conversionBindHost  = $resolvedConversionBindHost
         conversionHealthHost = $resolvedConversionHealthHost
-        conversionPublicArtifactsUrl = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_PUBLIC_ARTIFACTS_URL')
+        conversionPublicArtifactsUrl = $resolvedConversionPublicArtifactsUrl
         corsOrigins         = $resolvedCorsOrigins
         allowedStageHosts   = $resolvedAllowedStageHosts
         kitSignalPort       = $resolvedKitSignalPort
@@ -974,10 +996,23 @@ if ($SkipConversion) {
     Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native conversion (--SkipConversion)' -LogPath $LogPath | Out-Null
 } else {
     $conversionHealthUrl = "http://${resolvedConversionHealthHost}:49101/health"
+    $conversionPublicHealthUrl = "http://${resolvedPublicHost}:49101/health"
+    $conversionPublicHealthRequired = -not (Test-LoopbackHost -HostName $resolvedPublicHost)
     $conversionAlreadyRunning = Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $RunDir
+    if ($conversionAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:conversionRuntimeSignaturePath -Expected $conversionRuntimeSignature)) {
+        Write-DeployTag -Tag 'fix' -Message 'Phase 4a restarting host-native conversion because runtime parameters changed' -LogPath $LogPath | Out-Null
+        Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
+        $conversionAlreadyRunning = $false
+    }
     if ($conversionAlreadyRunning) {
         if (Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 5) {
-            Write-DeployTag -Tag 'skip' -Message "Phase 4a host-native conversion already running ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
+            if ($conversionPublicHealthRequired -and -not (Wait-HostNativeHealth -Name 'conversion-service-public' -Url $conversionPublicHealthUrl -TimeoutSec 5)) {
+                Write-DeployTag -Tag 'fix' -Message "Phase 4a restarting host-native conversion because public health is unreachable at $conversionPublicHealthUrl" -LogPath $LogPath | Out-Null
+                Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
+                $conversionAlreadyRunning = $false
+            } else {
+                Write-DeployTag -Tag 'skip' -Message "Phase 4a host-native conversion already running ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
+            }
         } else {
             Write-DeployTag -Tag 'fix' -Message "Phase 4a restarting host-native conversion because wrapper is alive but $conversionHealthUrl is unhealthy" -LogPath $LogPath | Out-Null
             Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
@@ -998,6 +1033,15 @@ if ($SkipConversion) {
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (conversion)'
             exit 4
         }
+        if ($conversionPublicHealthRequired) {
+            $publicOk = Wait-HostNativeHealth -Name 'conversion-service-public' -Url $conversionPublicHealthUrl -TimeoutSec 30
+            if (-not $publicOk) {
+                Write-DeployTag -Tag 'fail' -Message "stage=4a Phase 4a conversion-service public URL $conversionPublicHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
+                Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (conversion public reachability)'
+                exit 4
+            }
+        }
+        Set-KitRuntimeSignature -Path $script:conversionRuntimeSignaturePath -Value $conversionRuntimeSignature
         Write-DeployTag -Tag 'ok' -Message "Phase 4a conversion-service ready ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
     }
 }
@@ -1099,6 +1143,9 @@ if (-not $SkipDocker) {
 }
 if (-not $SkipConversion) {
     if (-not (Probe-Url -Name 'conversion'  -Url 'http://127.0.0.1:49101/health')) { $verifyFails += 'conversion' }
+    if (-not (Test-LoopbackHost -HostName $resolvedPublicHost)) {
+        if (-not (Probe-Url -Name 'conversion-public' -Url "http://${resolvedPublicHost}:49101/health")) { $verifyFails += 'conversion-public' }
+    }
 }
 
 if ($StrictPostVerify -and $verifyFails.Count -gt 0) {
