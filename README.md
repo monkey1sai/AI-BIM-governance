@@ -213,6 +213,7 @@ Start-Process "$base&userId=viewer_primary&displayName=Primary"
     $kit = "kit_local_001_spectator_$spec"
     Start-Process "$base&userId=viewer_spec_$spec&displayName=Spec_$spec&streamRole=spectator&kitInstanceId=$kit"
 }
+ '&streamRole=spectator&kitInstanceId=kit_local_001_spectator_02'
 ```
 
 `/ui/open` 會把 request 轉到 trusted viewer URL，並自動補上 `coordinatorApiBase` / `coordinatorSocketUrl`，所以 LAN client 不會被導到自己的 `127.0.0.1`。若 spectator 畫面卡在 busy/disconnected，先看 `scripts\.run\bim-streaming-server.log`，並確認對應 signaling/media ports 沒被防火牆或其他 process 擋住。
