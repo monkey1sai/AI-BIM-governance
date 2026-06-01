@@ -87,7 +87,9 @@ def _is_http_stage_url(url: str) -> bool:
 
 
 def _http_stage_allowed_hosts() -> set[str]:
-    raw = os.environ.get("BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS", "")
+    # strip() 先處理:純空白值("   ")視同未設,走 warn+default,而非靜默產生空 allow-list
+    # (對齊 PowerShell 側 IsNullOrWhiteSpace 語意,避免 whitespace-only 繞過告警)。
+    raw = os.environ.get("BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS", "").strip()
     if raw:
         values = raw.split(",")
     else:
