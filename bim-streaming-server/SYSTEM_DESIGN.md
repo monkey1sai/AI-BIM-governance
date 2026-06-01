@@ -364,20 +364,34 @@ Notable choices:
 > (that envelope + strict-pydantic design is **[DEFERRED]**). What runs today:
 > the messaging extension registers **camelCase event-type strings** with the
 > Kit event dispatcher and dispatches each to a handler that receives a **raw
-> Python dict payload** (no envelope wrapper, no schema model). The actually
-> registered incoming commands are:
+> Python dict payload** (no envelope wrapper, no schema model). Both handler
+> groups in the `ezplus.bim_review_stream.messaging` extension normalize raw
+> dicts via `_payload_dict` / `_payload_list` (no pydantic). The actually
+> registered incoming commands span two handler groups:
 >
+> `LoadingManager` (`stage_loading.py`) — stage load / artifact / progress:
 > - `openStageRequest` → `_on_open_stage` (load/swap a stage; URL gated by the
 >   `BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS` allowlist, HTTP stages cached per
 >   §11 as-built note)
 > - `loadArtifactGroupRequest` → `_on_load_artifact_group`
 > - `loadingStateQuery` → `_on_load_state_query`
 >
-> with outgoing results `openedStageResult`, `loadArtifactGroupResult`,
-> `loadingStateResponse`, `updateProgressAmount`, `updateProgressActivity`.
-> Payloads are normalized with a small `_payload_dict` helper rather than a
-> validated model. The "twelve commands" table below is the **target**
-> protocol surface and does not match the as-built command set.
+> `StageManager` (`stage_management.py`) — stage interaction / selection:
+> - `getChildrenRequest` → `_on_get_children`
+> - `selectPrimsRequest` → `_on_select_prims`
+> - `makePrimsPickable` → `_on_make_pickable`
+> - `resetStage` → `_on_reset_camera`
+> - `highlightPrimsRequest` → `_on_highlight_prims`
+> - `clearHighlightRequest` → `_on_clear_highlight`
+> - `focusPrimRequest` → `_on_focus_prim`
+>
+> with outgoing results from `LoadingManager` (`openedStageResult`,
+> `loadArtifactGroupResult`, `loadingStateResponse`, `updateProgressAmount`,
+> `updateProgressActivity`) and from `StageManager` (`stageSelectionChanged`,
+> `getChildrenResponse`, `makePrimsPickableResponse`, plus the corresponding
+> reset / highlight / focus acknowledgements). The "twelve commands" table
+> below is the **target** protocol surface and does not match this as-built
+> command set.
 
 **[DEFERRED] — target envelope and command set:**
 
