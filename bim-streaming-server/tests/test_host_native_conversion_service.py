@@ -2278,6 +2278,31 @@ def test_adapter_ctor_raises_when_storage_root_missing(tmp_path: Path, monkeypat
     assert raised.code == "converter_unavailable"
 
 
+def test_adapter_ctor_raises_when_storage_root_blank(tmp_path: Path, monkeypatch):
+    """#13 review fix:顯式 storage_root="" (空字串、非 None)與 STORAGE_ROOT 為純
+    空白皆不得被當成有效 sandbox base — 否則 Path("").resolve() 會靜默退化成 cwd。
+    兩者皆空白 → 建構時 raise converter_unavailable(對齊 missing 契約)。"""
+    monkeypatch.delenv("STORAGE_ROOT", raising=False)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root="")
+    except ConversionAuthorityError as exc:
+        raised = exc
+    assert raised is not None
+    assert raised.code == "converter_unavailable"
+
+    # STORAGE_ROOT 設成純空白字串也不得繞過(strip 後為空 → 視同未設)。
+    monkeypatch.setenv("STORAGE_ROOT", "   ")
+    raised_env: ConversionAuthorityError | None = None
+    try:
+        Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path)
+    except ConversionAuthorityError as exc:
+        raised_env = exc
+    assert raised_env is not None
+    assert raised_env.code == "converter_unavailable"
+
+
 def test_adapter_from_env_raises_when_storage_root_missing(tmp_path: Path, monkeypatch):
     """#13:adapter_from_env 在 env 與 os.environ 皆無 STORAGE_ROOT 時 → raise
     converter_unavailable(顯式讀並傳 storage_root,缺失即誠實 blocker)。"""

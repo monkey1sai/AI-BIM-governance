@@ -32,7 +32,10 @@ ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 # fixture-bytes.ifc(89MB)— 從之前 demo conversion 已驗 parseable
 IFC_SOURCE = REPO_ROOT / "storage" / "fixture-bytes.ifc"
 
-adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=REPO_ROOT)
+adapter = Ifc2UsdcPowershellConverterAdapter(
+    repo_root=REPO_ROOT,
+    storage_root=REPO_ROOT / "storage",
+)
 
 print(f"[L4] IFC source: {IFC_SOURCE} ({IFC_SOURCE.stat().st_size / 1024 / 1024:.1f} MB)")
 print(f"[L4] artifact_dir: {ARTIFACT_DIR}")

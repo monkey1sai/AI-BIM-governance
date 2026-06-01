@@ -67,33 +67,30 @@ class Ifc2UsdcPowershellConverterAdapter:
         # dispatch payload host_local_path / local_path. Source = 顯式 storage_root
         # 參數,否則 env STORAGE_ROOT(compose 對齊)。兩者皆缺時不得 fallback
         # Path.cwd()(會把整個 cwd 變成可信沙箱),而是 raise 誠實 blocker。
-        if storage_root is not None:
-            self.storage_root = Path(storage_root).resolve()
-        else:
-            env_root = os.environ.get("STORAGE_ROOT")
-            if not env_root:
-                raise ConversionAuthorityError(
-                    "converter_unavailable",
-                    "STORAGE_ROOT is not configured: refusing to fall back to the "
-                    "current working directory as the IFC sandbox base. Set the "
-                    "STORAGE_ROOT environment variable or pass storage_root explicitly.",
-                )
-            self.storage_root = Path(env_root).resolve()
+        # storage_root / STORAGE_ROOT 皆須為非空白值。空字串(strip 後為空)不得
+        # 被當成有效來源——否則 Path("").resolve() 會靜默退化成 cwd 沙箱,正是
+        # spec「never silently fall back to CWD」明文禁止的。顯式參數優先,其次
+        # env STORAGE_ROOT;兩者皆空白即 raise 誠實 blocker。
+        explicit_root = str(storage_root).strip() if storage_root is not None else ""
+        env_root = (os.environ.get("STORAGE_ROOT") or "").strip()
+        chosen_root = explicit_root or env_root
+        if not chosen_root:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "STORAGE_ROOT is not configured: refusing to fall back to the "
+                "current working directory as the IFC sandbox base. Set the "
+                "STORAGE_ROOT environment variable or pass storage_root explicitly.",
+            )
+        self.storage_root = Path(chosen_root).resolve()
 
     # -- preflight -----------------------------------------------------------
 
     def preflight(self) -> None:
         """Fail fast (and honestly) when any real converter prerequisite is missing."""
         missing: list[str] = []
-        # storage sandbox base must be configured (env STORAGE_ROOT or explicit
-        # storage_root). __init__ already rejects a missing source, but re-assert
-        # here so a stale/empty storage_root is an honest blocker, never a silent
-        # cwd sandbox.
-        if not getattr(self, "storage_root", None):
-            missing.append(
-                "STORAGE_ROOT is not configured (set the STORAGE_ROOT environment "
-                "variable or pass storage_root explicitly)"
-            )
+        # storage sandbox base 已由 __init__ 強制(顯式 storage_root 或 env
+        # STORAGE_ROOT,空白/缺失即 raise converter_unavailable),self.storage_root
+        # 因此恆為非空 Path;不在此重複檢查一個永遠 truthy 的屬性(死碼會給假安全感)。
         if not self.ps1_path.is_file():
             missing.append(f"converter script not found: {self.ps1_path}")
         if not self._powershell_resolvable():
@@ -341,7 +338,10 @@ class Ifc2UsdcPowershellConverterAdapter:
             # result.error 內,operator 可直接 tail 完整 Kit subprocess log。
             metadata: dict = {}
             combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
-            meta_match = re.search(r"##CONV_META##\s*(\{.*?\})", combined, re.DOTALL)
+            # 單行 compact JSON(ps1 用 ConvertTo-Json -Compress):用貪婪 (\{.*\})
+            # 吃到該行最後一個右括號 + 行錨 $,避免非貪婪在 log path 含字面右括號時
+            # 提早截斷;不用 DOTALL 讓 . 不跨行,MULTILINE 讓 $ 對應每一行尾。
+            meta_match = re.search(r"##CONV_META##[ \t]*(\{.*\})\s*$", combined, re.MULTILINE)
             if meta_match:
                 try:
                     parsed_meta = json.loads(meta_match.group(1))

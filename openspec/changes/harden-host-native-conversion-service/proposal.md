@@ -35,6 +35,7 @@ Owner = `bim-streaming-server`；coordinator / web-viewer-sample / callback outb
   - `bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/{host_native_conversion_service,conversion_authority,ifc2usdc_powershell_adapter}.py`
   - `bim-streaming-server/scripts/{convert-ifc-to-usdc,start-host-native-conversion-service}.ps1`
   - `bim-streaming-server/tests/{test_host_native_conversion_service,test_conversion_authority_api}.py`
+  - `docs/evidence/streaming-server-ifcopenshell-semantic-sidecar-pass/l4_verify_sidecar_pass.py`（#13 連帶：直接建構 adapter 的 evidence script 補傳 `storage_root=<repo>/storage`，否則新契約下建構即 raise）
   - `openspec/changes/harden-host-native-conversion-service/`
 - Runtime boundary：純 streaming-server 內部 hardening。host-native conversion service `127.0.0.1:49101` 對外 API surface 不變（`/health` body additive 新增 `reason`；`/artifacts` 由 flat mount 改 scoped route，但 URL 形狀 `/artifacts/{job_id}/{filename}` 不變）。不改 coordinator / viewer / callback outbox / DataChannel command。
 - API：`GET /health` body additive 新增 `reason`（degraded 時）；`GET /artifacts/{job_id}/{filename}` 行為收斂為 per-job + traversal-safe，既有合法 URL 仍可取檔。
