@@ -1991,6 +1991,30 @@ def test_artifacts_route_rejects_path_traversal_with_404(tmp_path: Path):
     assert b"TOP-SECRET" not in escaped_multi.content
 
 
+def test_artifacts_route_rejects_cross_job_backslash_with_404(tmp_path: Path):
+    """spec「擋跨 job 存取」+ Copilot/Codex P2 review:Windows 上 filename 含 encoded
+    backslash(%5C)會被 Path 當路徑分隔,只驗 artifacts_root(不驗 per-job)會放行
+    sibling job 讀取。per-job guard 兩層 relative_to 必須擋下 → 404。
+    (Windows 上 %5C 真正穿透到 guard;Linux 上反斜線非分隔、檔案不存在亦回 404。)"""
+    client = _client(tmp_path, converter=FakeSuccessfulConverter())
+    job_a = client.post(
+        "/api/conversions/ifc-to-usdc", json=ifc_ready_payload()
+    ).json()["conversion_job_id"]
+    client.get(f"/api/conversions/{job_a}/result")
+    # 第二個 job(不同 event/correlation → 不同 job_id),在 artifacts_root 下成為 sibling
+    job_b = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(event_id="evt_ifc_hn_002", correlation_id="corr_hn_002"),
+    ).json()["conversion_job_id"]
+    client.get(f"/api/conversions/{job_b}/result")
+    assert job_a != job_b
+
+    # 從 job A 用 encoded backslash / forward slash 跨到 job B 的 model.usdc → 必須 404
+    for sep in ("%5C", "%2f"):
+        cross = client.get(f"/artifacts/{job_a}/..{sep}{job_b}{sep}model.usdc")
+        assert cross.status_code == 404, f"cross-job via {sep} 應 404,不得讀到 sibling job"
+
+
 def test_artifacts_route_returns_404_for_missing_job_or_filename(tmp_path: Path):
     """spec scenario「Missing job or filename returns 404」:不存在的 job 或
     filename → 404。"""

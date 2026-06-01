@@ -139,9 +139,15 @@ def build_app(
 
     @app.get("/artifacts/{job_id}/{filename}")
     def _serve_artifact(job_id: str, filename: str):
-        candidate = (_artifacts_root / job_id / filename).resolve()
+        # per-job scope:job_dir 必須在 artifacts_root 內(擋 job_id 穿越),candidate
+        # 必須在 job_dir 內(擋 filename 穿越與跨 job)。Windows 上 filename 含 encoded
+        # backslash(%5C)會被 Path 當路徑分隔,只驗 artifacts_root 會放行 sibling job
+        # 的跨 job 讀取,故兩層都要 relative_to。
+        job_dir = (_artifacts_root / job_id).resolve()
+        candidate = (job_dir / filename).resolve()
         try:
-            candidate.relative_to(_artifacts_root)
+            job_dir.relative_to(_artifacts_root)
+            candidate.relative_to(job_dir)
         except ValueError:
             raise HTTPException(status_code=404)
         if not candidate.is_file():

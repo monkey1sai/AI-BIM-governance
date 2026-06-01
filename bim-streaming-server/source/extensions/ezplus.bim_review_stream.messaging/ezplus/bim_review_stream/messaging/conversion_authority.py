@@ -177,7 +177,13 @@ def create_conversion_api_app(
             except ConversionAuthorityError as exc:
                 status = "degraded"
                 conversion_ready = False
-                reason: str | None = exc.code or exc.message
+                # message 為主、code 為輔:degraded reason 要給 operator 可行動的
+                # blocker 文字,而非只回錯誤碼(code 恆非空會蓋掉 message)。
+                reason: str | None = exc.message or exc.code
+            except Exception as exc:  # noqa: BLE001 - /health 為 introspection,不應因 converter 異常回 500
+                status = "degraded"
+                conversion_ready = False
+                reason = f"preflight raised {type(exc).__name__}: {exc}"
             else:
                 status = "ok"
                 conversion_ready = True

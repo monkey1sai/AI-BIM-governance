@@ -64,6 +64,10 @@ if ([string]::IsNullOrWhiteSpace($env:STORAGE_ROOT)) {
     $repoRoot = Split-Path -Parent $serverRoot
     $env:STORAGE_ROOT = Join-Path $repoRoot "storage"
 }
+# 確保 sandbox base 目錄存在,否則 adapter 會在 request 期才因目錄缺失 fail、難診斷。
+if (-not (Test-Path $env:STORAGE_ROOT)) {
+    New-Item -ItemType Directory -Force -Path $env:STORAGE_ROOT | Out-Null
+}
 Write-Host "STORAGE_ROOT: $($env:STORAGE_ROOT)"
 
 Push-Location $moduleDir
