@@ -27,7 +27,6 @@ const defaultConfig: CoordinatorConfig = {
   host: "127.0.0.1",
   port: 8004,
   coordinatorPublicBaseUrl: "http://127.0.0.1:8004",
-  bimControlApiBase: "",
   conversionApiBase: "http://127.0.0.1:49101",
   kitStreamServer: "kit-server.local",
   kitSignalingPort: 49100,
@@ -67,6 +66,8 @@ const defaultConfig: CoordinatorConfig = {
   conversionPollIntervalSeconds: 5,
   conversionPollMaxAttempts: 60,
   logRoot: "/tmp/logs",
+  // harden-coordinator-ifc-intake:strict 下 non-2xx IFC download 回 502；fixture 預設 false。
+  ifcDownloadStrict: false,
 };
 
 const multiEndpointConfig: CoordinatorConfig = {

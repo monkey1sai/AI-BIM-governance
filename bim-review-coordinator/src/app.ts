@@ -10,7 +10,6 @@ import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
 import { AuthError, createAuthProvider, createUserAuthProvider } from "./services/authProvider.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
-import { BimControlClient } from "./services/bimControlClient.js";
 import { EventLog } from "./services/eventLog.js";
 import {
   createLogger,
@@ -295,7 +294,6 @@ export function createCoordinatorApp(
     });
   const store = new SessionStore(config.sessionStoreDir);
   const eventLog = new EventLog(config.eventLogDir, { structLog });
-  const bimControlClient = new BimControlClient(config.bimControlApiBase);
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
@@ -399,7 +397,7 @@ export function createCoordinatorApp(
   app.post("/api/review-sessions", async (request, response, next) => {
     try {
       const input = createSessionSchema.parse(request.body);
-      const artifacts = await safeArtifacts(bimControlClient, input.model_version_id);
+      const artifacts: Artifact[] = [];
       const readyUsdc = chooseReadyUsdc(artifacts);
       const artifactBindings = buildArtifactBindings(input.model_version_id, artifacts, input.artifact_bindings, input.routing_policy);
       const kitInstanceBindings = allocateKitInstanceBindings(
@@ -501,22 +499,17 @@ export function createCoordinatorApp(
     }
   });
 
-  app.get("/api/review-sessions/:sessionId/stream-config", async (request, response, next) => {
-    try {
-      if (!isSafeSessionId(request.params.sessionId)) {
-        response.status(400).json({ detail: "Invalid review session id." });
-        return;
-      }
-      const session = store.get(request.params.sessionId);
-      if (!session) {
-        response.status(404).json({ detail: "Review session not found." });
-        return;
-      }
-      const artifacts = await safeArtifacts(bimControlClient, session.model_version_id);
-      response.json(buildStreamConfig(session, artifacts, config));
-    } catch (error) {
-      next(error);
+  app.get("/api/review-sessions/:sessionId/stream-config", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
     }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    response.json(buildStreamConfig(session, [], config));
   });
 
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
@@ -657,6 +650,7 @@ export function createCoordinatorApp(
         storageRoot: config.storageRoot,
         storageHostRoot: config.storageHostRoot,
         timeoutMs: config.ifcDownloadTimeoutSeconds * 1000,
+        fallbackOnFetchError: !config.ifcDownloadStrict,
       });
       if (!downloadResult.ok) {
         externalIfcReadyStore.markDownloadFailed(job.ifc_ready_job_id, `${downloadResult.reason}: ${downloadResult.message}`);
@@ -1624,14 +1618,6 @@ function resolvePublicDir(): string {
   }
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   return path.join(moduleDir, "public");
-}
-
-async function safeArtifacts(client: BimControlClient, modelVersionId: string): Promise<Artifact[]> {
-  try {
-    return await client.getArtifacts(modelVersionId);
-  } catch {
-    return [];
-  }
 }
 
 async function proxyConversionService(

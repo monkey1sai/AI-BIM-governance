@@ -18,6 +18,7 @@ const originalKitSpectatorSignalingPortStart = process.env.KIT_SPECTATOR_SIGNALI
 const originalKitSpectatorMediaPortStart = process.env.KIT_SPECTATOR_MEDIA_PORT_START;
 const originalKitSpectatorStreamPortStart = process.env.KIT_SPECTATOR_STREAM_PORT_START;
 const originalKitSpectatorPortStride = process.env.KIT_SPECTATOR_PORT_STRIDE;
+const originalIfcDownloadStrict = process.env.IFC_DOWNLOAD_STRICT;
 
 const kitEndpointEnvNames = [
   "KIT_INSTANCE_ENDPOINTS",
@@ -36,6 +37,7 @@ function clearKitEndpointEnv(): void {
 
 beforeEach(() => {
   clearKitEndpointEnv();
+  delete process.env.IFC_DOWNLOAD_STRICT;
 });
 
 afterEach(() => {
@@ -134,6 +136,12 @@ afterEach(() => {
   } else {
     process.env.KIT_SPECTATOR_PORT_STRIDE = originalKitSpectatorPortStride;
   }
+
+  if (originalIfcDownloadStrict === undefined) {
+    delete process.env.IFC_DOWNLOAD_STRICT;
+  } else {
+    process.env.IFC_DOWNLOAD_STRICT = originalIfcDownloadStrict;
+  }
 });
 
 describe("loadConfig public browser bases", () => {
@@ -193,6 +201,20 @@ describe("loadConfig conversion API base", () => {
     delete process.env.STREAMING_CONVERSION_API_BASE;
 
     expect(loadConfig().conversionApiBase).toBe("http://127.0.0.1:49222");
+  });
+});
+
+describe("loadConfig IFC download strictness", () => {
+  it("enables strict IFC download when IFC_DOWNLOAD_STRICT is set truthy", () => {
+    process.env.IFC_DOWNLOAD_STRICT = "true";
+
+    expect(loadConfig().ifcDownloadStrict).toBe(true);
+  });
+
+  it("defaults ifcDownloadStrict to false when IFC_DOWNLOAD_STRICT is unset", () => {
+    delete process.env.IFC_DOWNLOAD_STRICT;
+
+    expect(loadConfig().ifcDownloadStrict).toBe(false);
   });
 });
 

@@ -30,7 +30,6 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    bimControlApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
     ...overrides,
   });

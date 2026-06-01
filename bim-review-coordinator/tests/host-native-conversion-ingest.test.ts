@@ -77,7 +77,6 @@ function makeApp(streamingBase: string, overrides: Partial<CoordinatorConfig> = 
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    bimControlApiBase: "http://127.0.0.1:1",
     streamingConversionApiBase: streamingBase,
     callbackOutboxMaxAttempts: 2,
     corsOrigins: ["http://127.0.0.1:5173"],

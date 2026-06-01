@@ -133,7 +133,6 @@ function makeApp(streamingBase: string, overrides: Partial<CoordinatorConfig> = 
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
     streamingConversionApiBase: streamingBase,
-    bimControlApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
     conversionPollEnabled: true,
     // 50ms tick → 半秒內 ~10 次 poll,test 跑完很快
