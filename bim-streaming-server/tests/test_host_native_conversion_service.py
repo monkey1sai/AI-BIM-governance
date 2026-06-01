@@ -3,6 +3,7 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 MODULE_DIR = (
@@ -30,6 +31,11 @@ from ifc2usdc_powershell_adapter import (  # noqa: E402
 
 
 class FakeSuccessfulConverter:
+    def preflight(self) -> None:
+        # harden-host-native-conversion-service #4: a ready converter exposes a
+        # passing preflight so GET /health can report status="ok". No-op = ready.
+        return None
+
     def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
         output_dir.mkdir(parents=True, exist_ok=True)
         model_path = output_dir / "model.usdc"
@@ -110,6 +116,18 @@ def ifc_ready_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+@pytest.fixture(autouse=True)
+def _default_storage_root(monkeypatch, tmp_path_factory):
+    """harden-host-native-conversion-service #13: the adapter now refuses to fall
+    back to ``Path.cwd()`` and requires an explicit sandbox base (STORAGE_ROOT env
+    or ``storage_root=``). Adapter-constructing tests that do not pass an explicit
+    ``storage_root`` rely on a configured ``STORAGE_ROOT``; set a per-test temp
+    root so those constructions are sandboxed instead of raising. Tests asserting
+    the *missing* STORAGE_ROOT contract override this with ``monkeypatch.delenv``.
+    """
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path_factory.mktemp("storage_root")))
 
 
 # --- service contract (load existing factory; conversion-only identity) -----
@@ -548,11 +566,18 @@ def test_run_powershell_conversion_regex_extracts_log_paths_from_ps1_throw(tmp_p
     (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
     adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root)
 
-    # 真實 ps1 throw shape(對齊 convert-ifc-to-usdc.ps1::Invoke-KitConversion line ~360 throw heredoc)
+    # 真實 ps1 throw shape(對齊 convert-ifc-to-usdc.ps1::Invoke-KitConversion）。
+    # harden-host-native-conversion-service #11:log path 改由結構化 sentinel
+    # `##CONV_META## {json}` 抽取(非脆弱 prose regex);保留人類可讀 prose 兩行
+    # 供 operator 閱讀。JSON string 內 Windows path 的反斜線須跳脫(json.dumps 處理)。
     stdout_log_path = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\host-native-conversion\artifacts\stream_conv_demo\kit-stdout.log"
     stderr_log_path = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\host-native-conversion\artifacts\stream_conv_demo\kit-stderr.log"
+    sentinel = "##CONV_META## " + json.dumps(
+        {"kit_stdout_log": stdout_log_path, "kit_stderr_log": stderr_log_path}
+    )
     ps1_throw = (
         "Kit CAD conversion completed but output was not created: C:\\foo\\model.usdc\n"
+        f"{sentinel}\n"
         f"  kit_stdout_log: {stdout_log_path}\n"
         f"  kit_stderr_log: {stderr_log_path}\n"
         "  ---- stderr tail (last 100 lines) ----\n"
@@ -1906,3 +1931,434 @@ def test_materialize_runs_sidecar_pass_when_adopt_returns_semantic_falsy(
     mapping_doc = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
     guids = {item["ifc_guid"] for item in mapping_doc["items"]}
     assert guids == {"REAL_GUID_X", "REAL_GUID_Y"}
+
+
+# ============================================================================
+# harden-host-native-conversion-service CH-1 — 5 條 hardening spec scenario
+# (#3 traversal-safe /artifacts、#4 honest health、#10 全檔 placeholder 掃描、
+#  #11 結構化 sentinel log path、#13 storage sandbox root 顯式化)
+# ============================================================================
+
+
+# --- #3 Conversion artifacts served through a per-job, traversal-safe route ---
+
+
+def test_artifacts_route_serves_completed_job_model_usdc(tmp_path: Path):
+    """spec scenario「Completed job artifact is retrievable」:完成 job 後
+    GET /artifacts/{job_id}/model.usdc → 200 且 bytes 與產出一致。"""
+    client = _client(tmp_path, converter=FakeSuccessfulConverter())
+
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = create.json()["conversion_job_id"]
+    # 等 background 完成並確認 ready(model.usdc 已落地)
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["model"]["status"] == "ready"
+
+    response = client.get(f"/artifacts/{conversion_job_id}/model.usdc")
+
+    assert response.status_code == 200
+    # FakeSuccessfulConverter 寫入的真實 bytes
+    assert response.content == b"PXR-USDC-fake-openable\n"
+
+
+def test_artifacts_route_rejects_path_traversal_with_404(tmp_path: Path):
+    """spec scenario「Path traversal attempt is rejected」:帶 ../ 會 resolve 到
+    artifacts_root 之外的請求 → 404 且不洩漏 root 外檔案內容。"""
+    client = _client(tmp_path, converter=FakeSuccessfulConverter())
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = create.json()["conversion_job_id"]
+    client.get(f"/api/conversions/{conversion_job_id}/result")
+
+    # artifacts_root = tmp_path/svc/artifacts;在其 parent(tmp_path/svc)放一個
+    # 不該被取到的 secret,用 ../ 嘗試逃逸。
+    secret = tmp_path / "svc" / "SECRET_outside_artifacts.txt"
+    secret.parent.mkdir(parents=True, exist_ok=True)
+    secret.write_bytes(b"TOP-SECRET-SHOULD-NOT-BE-SERVED")
+
+    # job_id 逃逸:`%2e%2e`(encoded `..`)是單一 path segment,會 routing-match 到
+    # job_id="..",進到 handler 後 resolve 落在 artifacts_root 之外 → relative_to
+    # guard 擋下回 404(真正觸發 traversal guard,非 routing 404)。
+    escaped = client.get("/artifacts/%2e%2e/SECRET_outside_artifacts.txt")
+    assert escaped.status_code == 404
+    assert b"TOP-SECRET" not in escaped.content
+
+    # 多段 `..%2f..` 逃逸:無論被 router 正規化或進到 guard,結果都 SHALL 為 404
+    # 且 SHALL NOT 回傳 artifacts_root 之外的 secret 內容。
+    escaped_multi = client.get(
+        f"/artifacts/{conversion_job_id}/%2e%2e%2f%2e%2e%2fSECRET_outside_artifacts.txt"
+    )
+    assert escaped_multi.status_code == 404
+    assert b"TOP-SECRET" not in escaped_multi.content
+
+
+def test_artifacts_route_rejects_cross_job_backslash_with_404(tmp_path: Path):
+    """spec「擋跨 job 存取」+ Copilot/Codex P2 review:Windows 上 filename 含 encoded
+    backslash(%5C)會被 Path 當路徑分隔,只驗 artifacts_root(不驗 per-job)會放行
+    sibling job 讀取。per-job guard 兩層 relative_to 必須擋下 → 404。
+    (Windows 上 %5C 真正穿透到 guard;Linux 上反斜線非分隔、檔案不存在亦回 404。)"""
+    client = _client(tmp_path, converter=FakeSuccessfulConverter())
+    job_a = client.post(
+        "/api/conversions/ifc-to-usdc", json=ifc_ready_payload()
+    ).json()["conversion_job_id"]
+    client.get(f"/api/conversions/{job_a}/result")
+    # 第二個 job(不同 event/correlation → 不同 job_id),在 artifacts_root 下成為 sibling
+    job_b = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(event_id="evt_ifc_hn_002", correlation_id="corr_hn_002"),
+    ).json()["conversion_job_id"]
+    client.get(f"/api/conversions/{job_b}/result")
+    assert job_a != job_b
+
+    # 從 job A 用 encoded backslash / forward slash 跨到 job B 的 model.usdc → 必須 404
+    for sep in ("%5C", "%2f"):
+        cross = client.get(f"/artifacts/{job_a}/..{sep}{job_b}{sep}model.usdc")
+        assert cross.status_code == 404, f"cross-job via {sep} 應 404,不得讀到 sibling job"
+
+
+def test_artifacts_route_returns_404_for_missing_job_or_filename(tmp_path: Path):
+    """spec scenario「Missing job or filename returns 404」:不存在的 job 或
+    filename → 404。"""
+    client = _client(tmp_path, converter=FakeSuccessfulConverter())
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = create.json()["conversion_job_id"]
+    client.get(f"/api/conversions/{conversion_job_id}/result")
+
+    # 不存在的 job_id
+    missing_job = client.get("/artifacts/stream_conv_does_not_exist/model.usdc")
+    assert missing_job.status_code == 404
+
+    # 存在的 job、不存在的 filename
+    missing_file = client.get(f"/artifacts/{conversion_job_id}/no_such_file.usdc")
+    assert missing_file.status_code == 404
+
+
+# --- #4 Health endpoint reflects converter preflight readiness ----------------
+
+
+class _FakePreflightUnavailableConverter:
+    """preflight 會 raise converter_unavailable 的 fake converter(未就緒)。"""
+
+    def preflight(self) -> None:
+        raise ConversionAuthorityError(
+            "converter_unavailable",
+            "host-native converter prerequisites missing (fixture).",
+        )
+
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        raise ConversionAuthorityError("converter_unavailable", "not configured (fixture).")
+
+
+def test_health_reports_ok_when_converter_preflight_passes(tmp_path: Path):
+    """spec scenario「Converter ready reports ok」。"""
+    client = _client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["ifc_to_usdc_conversion"] is True
+    # conversion-only 身分維持
+    assert body["authority"] == "bim-streaming-server"
+    assert body["role"] == "conversion-only"
+    assert body["claims"]["webrtc_49100"] is False
+    assert body["claims"]["kit_launcher"] is False
+    assert body["claims"]["viewport_render"] is False
+
+
+def test_health_reports_degraded_when_preflight_raises(tmp_path: Path):
+    """spec scenario「Converter not ready reports degraded without lying」:
+    注入 preflight 會 raise 的 fake converter → degraded + reason,HTTP 仍 200。"""
+    client = _client(
+        tmp_path, converter=_FakePreflightUnavailableConverter(), run_background=False
+    )
+
+    response = client.get("/health")
+
+    assert response.status_code == 200  # health 為身分 introspection,非 liveness probe
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["ifc_to_usdc_conversion"] is False
+    assert isinstance(body.get("reason"), str) and body["reason"]
+    # 不得謊報就緒
+    assert body["claims"]["ifc_to_usdc_conversion"] is False
+    assert body["authority"] == "bim-streaming-server"
+
+
+def test_health_reports_degraded_when_converter_not_configured(tmp_path: Path):
+    """spec scenario「Converter not ready」的 converter=None 落到
+    HeadlessConverterNotConfigured 變體:其 preflight raise → degraded。"""
+    from conversion_authority import HeadlessConverterNotConfigured
+
+    client = _client(
+        tmp_path, converter=HeadlessConverterNotConfigured(), run_background=False
+    )
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["ifc_to_usdc_conversion"] is False
+    assert isinstance(body.get("reason"), str) and body["reason"]
+
+
+# --- #10 Placeholder detection scans the full published artifact --------------
+
+
+def _adapter_with_ps1(tmp_path: Path) -> Ifc2UsdcPowershellConverterAdapter:
+    """建一個 ps1 齊備、storage_root 顯式的 adapter(供 convert 路徑測試)。"""
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "demo-model.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    return Ifc2UsdcPowershellConverterAdapter(
+        repo_root=repo_root,
+        powershell_exe="powershell.exe",
+        work_dir=repo_root,
+        storage_root=repo_root,
+    )
+
+
+def test_adapter_convert_rejects_placeholder_marker_beyond_prefix(tmp_path: Path, monkeypatch):
+    """#10 adapter convert 路徑:placeholder 標記寫在 >4096 offset(前面填約 5KB
+    合法 bytes)→ 仍 raise placeholder_usdc(證明 adapter 掃全檔非僅前綴)。"""
+    adapter = _adapter_with_ps1(tmp_path)
+
+    def fake_run_ps1(*, ifc_path: Path, output_dir: Path) -> None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # 前 5KB 合法,placeholder 標記落在 4096 之後
+        (output_dir / "model.usdc").write_bytes(
+            b"PXR-USDC-real-prefix\n" + b"B" * 5000 + b"\nplaceholder\n"
+        )
+
+    monkeypatch.setattr(adapter, "_run_powershell_conversion", fake_run_ps1)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter.convert(
+            job={"conversion_job_id": "stream_conv_ph_offset"},
+            ifc_ready_event=ifc_ready_payload(),
+            output_dir=tmp_path / "out",
+        )
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "placeholder_usdc"
+
+
+def test_store_publish_gate_rejects_placeholder_marker_beyond_prefix(tmp_path: Path):
+    """#10 store _assert_publishable_outputs 路徑:placeholder 在 >4096 offset →
+    job failed、error.code == placeholder_usdc(透過 build_app 全 HTTP 棧)。"""
+
+    class _PlaceholderBeyondPrefixConverter(FakeSuccessfulConverter):
+        def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+            result = super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
+            Path(result["model_path"]).write_bytes(
+                b"PXR-USDC-real-prefix\n" + b"C" * 5000 + b"\nplaceholder\n"
+            )
+            return result
+
+    client = _client(tmp_path, converter=_PlaceholderBeyondPrefixConverter())
+    create = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = create.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    assert result["status"] == "failed"
+    assert result["ready"] is False
+    assert result["error"]["code"] == "placeholder_usdc"
+
+
+def test_placeholder_markers_single_source_shared_between_modules():
+    """CH-1 共用契約:_PLACEHOLDER_MARKERS single source = conversion_authority;
+    adapter import 同一份(消除 producer / gate 脫節)。"""
+    import conversion_authority
+    import ifc2usdc_powershell_adapter
+
+    assert conversion_authority._PLACEHOLDER_MARKERS == (b"placeholder",)
+    # adapter 引用的是同一個 object(同 identity),不是各寫一份 literal
+    assert (
+        ifc2usdc_powershell_adapter._PLACEHOLDER_MARKERS
+        is conversion_authority._PLACEHOLDER_MARKERS
+    )
+
+
+# --- #11 Conversion failure log paths via a structured ##CONV_META## sentinel --
+
+
+def _adapter_for_sentinel(tmp_path: Path) -> Ifc2UsdcPowershellConverterAdapter:
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    return Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, storage_root=repo_root)
+
+
+def _patch_subprocess_returning(monkeypatch, *, returncode: int, stderr: str, stdout: str = "") -> None:
+    class _FakeCompleted:
+        pass
+
+    _FakeCompleted.returncode = returncode
+    _FakeCompleted.stderr = stderr
+    _FakeCompleted.stdout = stdout
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeCompleted())
+
+
+def test_sentinel_yields_log_paths_with_windows_drive_path(tmp_path: Path, monkeypatch):
+    """spec scenario「Structured sentinel yields log paths」:##CONV_META## 單行 JSON
+    含 Windows C:\\ 絕對路徑 → 抽進 metadata 的 kit_stdout_log / kit_stderr_log。"""
+    adapter = _adapter_for_sentinel(tmp_path)
+    stdout_log = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\artifacts\stream_conv_demo\kit-stdout.log"
+    stderr_log = r"C:\Repos\active\iot\AI-BIM-governance\bim-streaming-server\_cache\artifacts\stream_conv_demo\kit-stderr.log"
+    combined = (
+        "convert failed: output not created\n"
+        "##CONV_META## "
+        + json.dumps({"kit_stdout_log": stdout_log, "kit_stderr_log": stderr_log})
+        + "\n  ---- stderr tail (last 100 lines) ----\n<lines>\n"
+    )
+    _patch_subprocess_returning(monkeypatch, returncode=1, stderr=combined)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_failed"
+    assert raised.metadata.get("kit_stdout_log") == stdout_log
+    assert raised.metadata.get("kit_stderr_log") == stderr_log
+
+
+def test_missing_sentinel_degrades_to_empty_metadata_without_unexpected_raise(
+    tmp_path: Path, monkeypatch
+):
+    """spec scenario「Missing or corrupt sentinel degrades safely」(無 sentinel 變體):
+    僅有人類可讀 prose、無 ##CONV_META## → metadata 空,仍正常 raise converter_failed
+    (不拋非預期例外),其餘失敗診斷欄位不變。"""
+    adapter = _adapter_for_sentinel(tmp_path)
+    combined = (
+        "convert-ifc-to-usdc.ps1 failed\n"
+        "  kit_stdout_log: C:\\some\\human\\readable\\prose\\stdout.log\n"
+        "  ---- stderr tail (last 100 lines) ----\n<lines>\n"
+    )
+    _patch_subprocess_returning(monkeypatch, returncode=1, stderr=combined)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_failed"
+    # 無 sentinel → 不從 prose 臆測 log path,metadata 缺省
+    assert "kit_stdout_log" not in raised.metadata
+    assert "kit_stderr_log" not in raised.metadata
+
+
+def test_corrupt_sentinel_json_degrades_to_empty_metadata(tmp_path: Path, monkeypatch):
+    """spec scenario「Missing or corrupt sentinel degrades safely」(損壞 JSON 變體):
+    ##CONV_META## 後接損壞 JSON → fallback 空 metadata,不因解析失敗拋非預期例外。"""
+    adapter = _adapter_for_sentinel(tmp_path)
+    combined = (
+        "convert failed\n"
+        '##CONV_META## {"kit_stdout_log": "C:\\broken\\path, "kit_stderr_log" :::}\n'
+        "  ---- stderr tail (last 100 lines) ----\n<lines>\n"
+    )
+    _patch_subprocess_returning(monkeypatch, returncode=1, stderr=combined)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter._run_powershell_conversion(ifc_path=tmp_path / "fake.ifc", output_dir=tmp_path / "out")
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    # 解析失敗不得變成非預期例外型別;仍是 converter_failed
+    assert raised is not None
+    assert raised.code == "converter_failed"
+    assert "kit_stdout_log" not in raised.metadata
+    assert "kit_stderr_log" not in raised.metadata
+
+
+# --- #13 Conversion sandbox root is explicit, never silently falls back to CWD -
+
+
+def test_adapter_ctor_raises_when_storage_root_missing(tmp_path: Path, monkeypatch):
+    """spec scenario「Missing STORAGE_ROOT fails honestly at startup」:未設
+    STORAGE_ROOT 且未顯式傳入 → 建構時 raise converter_unavailable,不退化 cwd。"""
+    monkeypatch.delenv("STORAGE_ROOT", raising=False)  # 覆寫 autouse fixture 設的值
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path)
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_unavailable"
+
+
+def test_adapter_ctor_raises_when_storage_root_blank(tmp_path: Path, monkeypatch):
+    """#13 review fix:顯式 storage_root="" (空字串、非 None)與 STORAGE_ROOT 為純
+    空白皆不得被當成有效 sandbox base — 否則 Path("").resolve() 會靜默退化成 cwd。
+    兩者皆空白 → 建構時 raise converter_unavailable(對齊 missing 契約)。"""
+    monkeypatch.delenv("STORAGE_ROOT", raising=False)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root="")
+    except ConversionAuthorityError as exc:
+        raised = exc
+    assert raised is not None
+    assert raised.code == "converter_unavailable"
+
+    # STORAGE_ROOT 設成純空白字串也不得繞過(strip 後為空 → 視同未設)。
+    monkeypatch.setenv("STORAGE_ROOT", "   ")
+    raised_env: ConversionAuthorityError | None = None
+    try:
+        Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path)
+    except ConversionAuthorityError as exc:
+        raised_env = exc
+    assert raised_env is not None
+    assert raised_env.code == "converter_unavailable"
+
+
+def test_adapter_from_env_raises_when_storage_root_missing(tmp_path: Path, monkeypatch):
+    """#13:adapter_from_env 在 env 與 os.environ 皆無 STORAGE_ROOT 時 → raise
+    converter_unavailable(顯式讀並傳 storage_root,缺失即誠實 blocker)。"""
+    monkeypatch.delenv("STORAGE_ROOT", raising=False)
+
+    raised: ConversionAuthorityError | None = None
+    try:
+        adapter_from_env(tmp_path, env={})
+    except ConversionAuthorityError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.code == "converter_unavailable"
+
+
+def test_adapter_sandbox_root_is_explicit_storage_root(tmp_path: Path):
+    """spec scenario「Explicit STORAGE_ROOT bounds the sandbox」(顯式傳入變體):
+    storage_root 顯式傳入 → adapter.storage_root == 該 root(resolve 後)。"""
+    storage = tmp_path / "explicit_storage"
+    storage.mkdir()
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path, storage_root=storage)
+
+    assert adapter.storage_root == storage.resolve()
+
+
+def test_adapter_sandbox_root_from_env_storage_root(tmp_path: Path, monkeypatch):
+    """spec scenario「Explicit STORAGE_ROOT bounds the sandbox」(env 變體):
+    STORAGE_ROOT env 設為某 storage 目錄 → adapter sandbox = 該目錄。"""
+    storage = tmp_path / "env_storage"
+    storage.mkdir()
+    monkeypatch.setenv("STORAGE_ROOT", str(storage))
+
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=tmp_path)
+
+    assert adapter.storage_root == storage.resolve()

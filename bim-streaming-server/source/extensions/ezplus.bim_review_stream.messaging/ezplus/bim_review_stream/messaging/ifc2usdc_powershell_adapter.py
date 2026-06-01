@@ -31,10 +31,7 @@ import re
 import shutil
 import subprocess
 
-from conversion_authority import ConversionAuthorityError
-
-
-_PLACEHOLDER_MARKERS = (b"placeholder", b"worker adapter usdc placeholder")
+from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
 
 
 class Ifc2UsdcPowershellConverterAdapter:
@@ -67,19 +64,33 @@ class Ifc2UsdcPowershellConverterAdapter:
         self.work_dir = Path(work_dir) if work_dir else self.repo_root
         self.ps1_path = self.repo_root / "scripts" / "convert-ifc-to-usdc.ps1"
         # streaming-server-prefer-local-ifc-path: shared volume sandbox base for
-        # dispatch payload host_local_path / local_path. Defaults to env STORAGE_ROOT
-        # (compose 對齊),or cwd 作為 host-native fallback。
-        if storage_root is not None:
-            self.storage_root = Path(storage_root).resolve()
-        else:
-            env_root = os.environ.get("STORAGE_ROOT")
-            self.storage_root = (Path(env_root) if env_root else Path.cwd()).resolve()
+        # dispatch payload host_local_path / local_path. Source = 顯式 storage_root
+        # 參數,否則 env STORAGE_ROOT(compose 對齊)。兩者皆缺時不得 fallback
+        # Path.cwd()(會把整個 cwd 變成可信沙箱),而是 raise 誠實 blocker。
+        # storage_root / STORAGE_ROOT 皆須為非空白值。空字串(strip 後為空)不得
+        # 被當成有效來源——否則 Path("").resolve() 會靜默退化成 cwd 沙箱,正是
+        # spec「never silently fall back to CWD」明文禁止的。顯式參數優先,其次
+        # env STORAGE_ROOT;兩者皆空白即 raise 誠實 blocker。
+        explicit_root = str(storage_root).strip() if storage_root is not None else ""
+        env_root = (os.environ.get("STORAGE_ROOT") or "").strip()
+        chosen_root = explicit_root or env_root
+        if not chosen_root:
+            raise ConversionAuthorityError(
+                "converter_unavailable",
+                "STORAGE_ROOT is not configured: refusing to fall back to the "
+                "current working directory as the IFC sandbox base. Set the "
+                "STORAGE_ROOT environment variable or pass storage_root explicitly.",
+            )
+        self.storage_root = Path(chosen_root).resolve()
 
     # -- preflight -----------------------------------------------------------
 
     def preflight(self) -> None:
         """Fail fast (and honestly) when any real converter prerequisite is missing."""
         missing: list[str] = []
+        # storage sandbox base 已由 __init__ 強制(顯式 storage_root 或 env
+        # STORAGE_ROOT,空白/缺失即 raise converter_unavailable),self.storage_root
+        # 因此恆為非空 Path;不在此重複檢查一個永遠 truthy 的屬性(死碼會給假安全感)。
         if not self.ps1_path.is_file():
             missing.append(f"converter script not found: {self.ps1_path}")
         if not self._powershell_resolvable():
@@ -138,8 +149,10 @@ class Ifc2UsdcPowershellConverterAdapter:
                 "missing_output",
                 f"Converter did not produce model.usdc at {model_path}",
             )
-        head = model_path.read_bytes()[:4096].lower()
-        if any(marker in head for marker in _PLACEHOLDER_MARKERS):
+        # placeholder marker 可能落在檔案任何位置(非僅前 4096 bytes),因此掃
+        # 全檔 read_bytes();偵測到即拒絕發佈,避免假 ready 的 placeholder USDC。
+        body = model_path.read_bytes().lower()
+        if any(marker in body for marker in _PLACEHOLDER_MARKERS):
             raise ConversionAuthorityError(
                 "placeholder_usdc",
                 "Converter produced a placeholder model.usdc; refusing to publish.",
@@ -316,19 +329,29 @@ class Ifc2UsdcPowershellConverterAdapter:
                 f"Failed to launch PowerShell converter: {exc}",
             ) from exc
         if completed.returncode != 0:
-            # streaming-server-capture-kit-conversion-logs §3:ps1 wrapper 在 throw
-            # message 內附 `kit_stdout_log: <path>` / `kit_stderr_log: <path>` 兩行
-            # (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。regex 抓 absolute
-            # path,放進 ConversionAuthorityError.metadata,讓 host_native_conversion_service
-            # 寫進 result.error 內,operator 可直接 tail 完整 Kit subprocess log。
+            # streaming-server-capture-kit-conversion-logs §3:ps1 wrapper emit 一行
+            # `##CONV_META## {"kit_stdout_log":"<path>","kit_stderr_log":"<path>"}`
+            # (見 convert-ifc-to-usdc.ps1 Invoke-KitConversion)。sentinel + JSON 取代
+            # 脆弱的 prose regex:用 re.search 抓 JSON payload,json.loads 解析失敗
+            # fallback 空 dict 不 crash。kit_stdout_log/kit_stderr_log 放進
+            # ConversionAuthorityError.metadata,讓 host_native_conversion_service 寫進
+            # result.error 內,operator 可直接 tail 完整 Kit subprocess log。
             metadata: dict = {}
             combined = "\n".join(filter(None, (completed.stderr or "", completed.stdout or "")))
-            stdout_match = re.search(r"kit_stdout_log:\s*(.+?)(?:\s*$|\r?\n)", combined, re.MULTILINE)
-            stderr_match = re.search(r"kit_stderr_log:\s*(.+?)(?:\s*$|\r?\n)", combined, re.MULTILINE)
-            if stdout_match:
-                metadata["kit_stdout_log"] = stdout_match.group(1).strip()
-            if stderr_match:
-                metadata["kit_stderr_log"] = stderr_match.group(1).strip()
+            # 單行 compact JSON(ps1 用 ConvertTo-Json -Compress):用貪婪 (\{.*\})
+            # 吃到該行最後一個右括號 + 行錨 $,避免非貪婪在 log path 含字面右括號時
+            # 提早截斷;不用 DOTALL 讓 . 不跨行,MULTILINE 讓 $ 對應每一行尾。
+            meta_match = re.search(r"##CONV_META##[ \t]*(\{.*\})\s*$", combined, re.MULTILINE)
+            if meta_match:
+                try:
+                    parsed_meta = json.loads(meta_match.group(1))
+                except (ValueError, TypeError):
+                    parsed_meta = {}
+                if isinstance(parsed_meta, dict):
+                    for key in ("kit_stdout_log", "kit_stderr_log"):
+                        value = parsed_meta.get(key)
+                        if value:
+                            metadata[key] = str(value).strip()
             # streaming-server-capture-kit-conversion-logs review fix(2026-05-22):
             # 把 log path 與 spec-required "---- stderr tail (last 100 lines) ----"
             # 標頭顯式 prepend 到 message 開頭,再放 tail,避免 truncation 把 spec
@@ -1142,6 +1165,9 @@ def adapter_from_env(repo_root: Path, env: Mapping[str, str] | None = None):
         timeout = int(timeout_raw) if timeout_raw else 600
     except ValueError:
         timeout = 600
+    # STORAGE_ROOT 沙箱基底顯式從環境讀出並傳入 constructor;缺失時由
+    # constructor raise converter_unavailable(不得 fallback Path.cwd())。
+    storage_root = _path("STORAGE_ROOT")
     return Ifc2UsdcPowershellConverterAdapter(
         repo_root=Path(repo_root),
         powershell_exe=src.get("STREAMING_CONVERSION_POWERSHELL_EXE") or _default_powershell_exe(),
@@ -1150,4 +1176,5 @@ def adapter_from_env(repo_root: Path, env: Mapping[str, str] | None = None):
         config_path=_path("STREAMING_CONVERSION_CONFIG_PATH"),
         timeout_seconds=timeout,
         work_dir=_path("STREAMING_CONVERSION_WORK_DIR"),
+        storage_root=storage_root,
     )

@@ -238,6 +238,70 @@ def test_placeholder_usdc_fails_without_ready_result(tmp_path: Path):
     assert result["model"]["status"] != "ready"
 
 
+# --- harden-host-native-conversion-service CH-1（store 路徑：#10 全檔掃描 / #3 URL 形狀）---
+# placeholder 偵測 SHALL 掃完整 model.usdc，不得只看前綴；publish store 與 adapter
+# 共用 conversion_authority._PLACEHOLDER_MARKERS 單一 source（見 spec
+# host-native-conversion-authority-service「Placeholder detection SHALL scan the
+# full published artifact」）。
+
+
+class FakePlaceholderBeyondPrefixConverter(FakeSuccessfulConverter):
+    """placeholder 標記寫在 >4096 bytes offset：前面填約 5KB 合法 bytes，
+    確保 store 只看前綴（舊 [:4096] 行為）會放行、全檔掃描才會擋。"""
+
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        result = super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
+        # 前 5KB 全是合法的非 placeholder bytes，placeholder 標記落在 4096 之後。
+        model_path = Path(result["model_path"])
+        model_path.write_bytes(b"PXR-USDC-real-prefix\n" + b"A" * 5000 + b"\nplaceholder\n")
+        return result
+
+
+def test_placeholder_marker_beyond_prefix_is_rejected_by_store(tmp_path: Path):
+    """#10 store 路徑：placeholder 標記在 >4096 offset 時 publish gate 仍 raise。"""
+    client = make_client(tmp_path, converter=FakePlaceholderBeyondPrefixConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    assert result["status"] == "failed"
+    assert result["ready"] is False
+    assert result["error"]["code"] == "placeholder_usdc"
+    assert result["model"]["status"] != "ready"
+
+
+def test_legitimate_usdc_passes_store_publish_gate(tmp_path: Path):
+    """#10 store 路徑 regression：全檔皆無 placeholder 標記的真實 USDC 仍放行。"""
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    assert result["status"] == "succeeded"
+    assert result["ready"] is True
+    assert result["model"]["status"] == "ready"
+
+
+def test_success_result_artifact_url_uses_per_job_scoped_shape(tmp_path: Path):
+    """#3 store 路徑：_artifact_url 產生的 URL 形狀為 /artifacts/{job_id}/{filename}，
+    與 traversal-safe per-job route 對齊（見 spec scenario「Completed job artifact
+    is retrievable」的 URL-shape 子句）。"""
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    model_url = result["artifacts"]["model_usdc"]["url"]
+    assert model_url == f"http://testserver/artifacts/{conversion_job_id}/model.usdc"
+    # 每個 sidecar 也都走同一 per-job scoped 形狀
+    assert result["artifacts"]["element_mapping"]["url"] == (
+        f"http://testserver/artifacts/{conversion_job_id}/element_mapping.json"
+    )
+
+
 # --- B-scheme（local-coordinator-ifc-ready-intake-boundary T4 §5.3）契約測試 ---
 # bim-streaming-server 為 internal-only 轉檔引擎；唯一支援的 caller 是
 # bim-review-coordinator（內部 conversion request）。非 ifc_ready 形狀拒絕；

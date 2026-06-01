@@ -334,6 +334,7 @@ function Invoke-KitConversion {
     $stderrLog = Join-Path $artifactDir "kit-stderr.log"
     Write-Host "[ifc-convert] kit_stdout_log: $stdoutLog"
     Write-Host "[ifc-convert] kit_stderr_log: $stderrLog"
+    Write-Host ('##CONV_META## ' + (ConvertTo-Json -Compress @{ kit_stdout_log = $stdoutLog; kit_stderr_log = $stderrLog }))
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new($kitExe)
     $startInfo.UseShellExecute = $false
@@ -404,6 +405,7 @@ function Invoke-KitConversion {
         } else {
             "Kit CAD conversion completed but output was not created: $($Item.OutputPath)"
         }
+        Write-Host ('##CONV_META## ' + (ConvertTo-Json -Compress @{ kit_stdout_log = $stdoutLog; kit_stderr_log = $stderrLog }))
         throw @"
 $reason
   kit_stdout_log: $stdoutLog
