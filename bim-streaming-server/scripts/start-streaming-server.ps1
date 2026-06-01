@@ -28,6 +28,8 @@ param(
     [ValidateSet("", "error", "warning", "info", "debug", "verbose")]
     [string] $StreamSdkLogLevel = "",
 
+    [string] $AllowedStageHosts = '',
+
     [switch] $PreflightOnly
 )
 
@@ -278,8 +280,15 @@ if ($resolvedPortableRoot) {
 if ($ResetUser) {
     $args += "--reset-user"
 }
-if ([string]::IsNullOrWhiteSpace($env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS)) {
-    $env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS = "127.0.0.1:8005,localhost:8005,127.0.0.1:49101,localhost:49101"
+if (-not [string]::IsNullOrWhiteSpace($AllowedStageHosts)) {
+    $env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS = $AllowedStageHosts
+}
+elseif (-not [string]::IsNullOrWhiteSpace($env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS)) {
+    # env 已設，沿用呼叫端提供的 allow-list
+}
+else {
+    Write-Warning "BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS 未設定，套用 localhost-only 內建預設；若 coordinator 非 localhost 請改設此環境變數或 -AllowedStageHosts。"
+    $env:BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS = "127.0.0.1:49101,localhost:49101"
 }
 $sourceExtensions = Join-Path $RepoRoot "source\extensions"
 if (Test-Path -LiteralPath $sourceExtensions -PathType Container) {

@@ -273,9 +273,8 @@ function Resolve-AllowedStageHosts {
     )
     $configured = Get-DeployEnvValue -Name 'BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS' -EnvFile $EnvFile -Default ''
     $values = if ([string]::IsNullOrWhiteSpace($configured)) {
+        Write-Warning "BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS 未設定，使用內建預設 stage allowed-hosts (127.0.0.1:$ConversionPort, localhost:$ConversionPort)。"
         @(
-            '127.0.0.1:8005',
-            'localhost:8005',
             ("127.0.0.1:{0}" -f $ConversionPort),
             ("localhost:{0}" -f $ConversionPort)
         )

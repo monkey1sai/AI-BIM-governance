@@ -1,6 +1,9 @@
+import os
 import sys
 import types
 from pathlib import Path
+
+_ALLOWED_STAGE_HOSTS_ENV = "BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS"
 
 
 def install_stage_loading_stubs() -> None:
@@ -83,7 +86,10 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
-from stage_loading import LoadingManager  # noqa: E402
+from stage_loading import (  # noqa: E402
+    LoadingManager,
+    _http_stage_allowed_hosts,
+)
 
 
 def make_manager() -> LoadingManager:
@@ -94,12 +100,12 @@ def test_stage_composition_takes_precedence_over_legacy_url():
     manager = make_manager()
     primary = {
         "artifact_id": "artifact_primary",
-        "url": "http://127.0.0.1:8005/objects/primary.usdc",
+        "url": "http://127.0.0.1:49101/objects/primary.usdc",
         "load_order": 0,
     }
     secondary = {
         "artifact_id": "artifact_secondary",
-        "url": "http://127.0.0.1:8005/objects/secondary.usdc",
+        "url": "http://127.0.0.1:49101/objects/secondary.usdc",
         "load_order": 1,
     }
 
@@ -117,3 +123,34 @@ def test_stage_composition_takes_precedence_over_legacy_url():
     assert context["applied_mode"] == "stage_composition"
     assert context["applied_primary"]["artifact_id"] == "artifact_primary"
     assert context["secondary_bindings"][0]["artifact_id"] == "artifact_secondary"
+
+
+def test_allowed_hosts_uses_env_var():
+    # setUp: 還原用的原始值
+    original = os.environ.get(_ALLOWED_STAGE_HOSTS_ENV)
+    try:
+        os.environ[_ALLOWED_STAGE_HOSTS_ENV] = "192.168.1.1:49101"
+        assert _http_stage_allowed_hosts() == {"192.168.1.1:49101"}
+    finally:
+        # tearDown: 還原 os.environ 避免污染
+        if original is None:
+            os.environ.pop(_ALLOWED_STAGE_HOSTS_ENV, None)
+        else:
+            os.environ[_ALLOWED_STAGE_HOSTS_ENV] = original
+
+
+def test_allowed_hosts_empty_env_falls_back():
+    # setUp: 還原用的原始值
+    original = os.environ.get(_ALLOWED_STAGE_HOSTS_ENV)
+    try:
+        os.environ[_ALLOWED_STAGE_HOSTS_ENV] = ""
+        hosts = _http_stage_allowed_hosts()
+        assert "127.0.0.1:49101" in hosts
+        # 退役 _worker 的 :8005 不得留在內建預設
+        assert not any(":8005" in host for host in hosts)
+    finally:
+        # tearDown: 還原 os.environ 避免污染
+        if original is None:
+            os.environ.pop(_ALLOWED_STAGE_HOSTS_ENV, None)
+        else:
+            os.environ[_ALLOWED_STAGE_HOSTS_ENV] = original
