@@ -16,6 +16,10 @@ CONVERSION_API_ENDPOINTS = {
 }
 CONVERSION_STATUSES = ("queued", "running", "succeeded", "succeeded_with_warnings", "failed", "cancelled")
 CONVERSION_STAGES = ("queued", "running_headless_converter", "done", "conversion_failed", "cancelled")
+# Single source of truth for placeholder-output detection. Shared with the
+# worker adapter (imports `_PLACEHOLDER_MARKERS` from here) so the "looks like a
+# placeholder USDC" rule cannot drift between producer and authority gate.
+_PLACEHOLDER_MARKERS = (b"placeholder",)
 
 
 class ConversionAuthorityError(RuntimeError):
@@ -52,6 +56,12 @@ class ConversionAuthoritySettings:
 
 
 class HeadlessConverterNotConfigured:
+    def preflight(self) -> None:
+        raise ConversionAuthorityError(
+            "converter_unavailable",
+            "Headless IFC to USDC converter is not configured for this process.",
+        )
+
     def convert(self, *, job: dict[str, Any], ifc_ready_event: dict[str, Any], output_dir: Path) -> dict[str, Any]:
         raise ConversionAuthorityError(
             "converter_unavailable",
@@ -147,25 +157,52 @@ def create_conversion_api_app(
 
     @app.get("/health")
     def health():
-        """Conversion-only identity.
+        """Conversion-only identity, honestly reported.
 
         This host-native service owns IFC->USDC conversion only. It MUST NOT
         claim WebRTC (`49100`), Kit launcher, or viewport readiness; those are
         separately health-checked tiers (see demo-runtime-readiness-smoke spec).
+
+        `ifc_to_usdc_conversion` reflects a real converter preflight rather than
+        a hard-coded `True`: if the converter cannot be reached (or exposes no
+        preflight), we report `status="degraded"` with `ifc_to_usdc_conversion`
+        False and a `reason` string, while keeping HTTP 200 so the readiness
+        smoke can distinguish "process up" from "conversion actually available".
         """
-        return {
-            "status": "ok",
+        converter = store.converter
+        preflight = getattr(converter, "preflight", None)
+        if callable(preflight):
+            try:
+                preflight()
+            except ConversionAuthorityError as exc:
+                status = "degraded"
+                conversion_ready = False
+                reason: str | None = exc.code or exc.message
+            else:
+                status = "ok"
+                conversion_ready = True
+                reason = None
+        else:
+            status = "degraded"
+            conversion_ready = False
+            reason = "converter exposes no preflight"
+        payload = {
+            "status": status,
             "authority": "bim-streaming-server",
             "service": "host-native-conversion-authority",
             "role": "conversion-only",
+            "ifc_to_usdc_conversion": conversion_ready,
             "endpoints": CONVERSION_API_ENDPOINTS,
             "claims": {
-                "ifc_to_usdc_conversion": True,
+                "ifc_to_usdc_conversion": conversion_ready,
                 "webrtc_49100": False,
                 "kit_launcher": False,
                 "viewport_render": False,
             },
         }
+        if reason is not None:
+            payload["reason"] = reason
+        return payload
 
     return app
 
@@ -413,8 +450,8 @@ class StreamingConversionStore:
         for key, path in output_paths.items():
             if not path.is_file():
                 raise ConversionAuthorityError("missing_output", f"Converter output does not exist: {key}={path}")
-        model_bytes = output_paths["model_path"].read_bytes()[:4096].lower()
-        if b"placeholder" in model_bytes or b"worker adapter usdc placeholder" in model_bytes:
+        model_bytes = output_paths["model_path"].read_bytes().lower()
+        if any(marker in model_bytes for marker in _PLACEHOLDER_MARKERS):
             raise ConversionAuthorityError("placeholder_usdc", "Generated model.usdc looks like a placeholder output.")
         gates = quality_metrics.get("hard_quality_gates") or {}
         if gates and not gates.get("usdc_openable"):

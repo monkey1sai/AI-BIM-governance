@@ -129,18 +129,25 @@ def build_app(
     )
     # Serve produced artifacts so the URLs advertised in results
     # (public_artifacts_url default = this service /artifacts) are reachable
-    # by coordinator/viewer instead of dead links.
-    try:
-        from fastapi.staticfiles import StaticFiles
+    # by coordinator/viewer instead of dead links. Scoped, traversal-safe route
+    # (not StaticFiles) so a crafted job_id/filename cannot escape artifacts_root.
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
 
-        Path(config.artifacts_root).mkdir(parents=True, exist_ok=True)
-        app.mount(
-            "/artifacts",
-            StaticFiles(directory=str(config.artifacts_root)),
-            name="artifacts",
-        )
-    except Exception:  # noqa: BLE001 - static mount is best-effort, not core
-        pass
+    Path(config.artifacts_root).mkdir(parents=True, exist_ok=True)
+    _artifacts_root = Path(config.artifacts_root).resolve()
+
+    @app.get("/artifacts/{job_id}/{filename}")
+    def _serve_artifact(job_id: str, filename: str):
+        candidate = (_artifacts_root / job_id / filename).resolve()
+        try:
+            candidate.relative_to(_artifacts_root)
+        except ValueError:
+            raise HTTPException(status_code=404)
+        if not candidate.is_file():
+            raise HTTPException(status_code=404)
+        return FileResponse(str(candidate))
+
     return app
 
 

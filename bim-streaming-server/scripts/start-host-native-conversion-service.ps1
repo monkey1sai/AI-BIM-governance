@@ -58,6 +58,14 @@ $env:STREAMING_CONVERSION_PORT = "$Port"
 Write-Host "host-native conversion authority -> http://${BindHost}:${Port} (conversion-only; not WebRTC/Kit)"
 Write-Host "module dir: $moduleDir"
 
+# storage sandbox root: the conversion authority refuses to fall back to cwd, so
+# default STORAGE_ROOT to the repo's storage/ dir when the operator did not set it.
+if ([string]::IsNullOrWhiteSpace($env:STORAGE_ROOT)) {
+    $repoRoot = Split-Path -Parent $serverRoot
+    $env:STORAGE_ROOT = Join-Path $repoRoot "storage"
+}
+Write-Host "STORAGE_ROOT: $($env:STORAGE_ROOT)"
+
 Push-Location $moduleDir
 try {
     & $PythonExe "-c" "import host_native_conversion_service as s; raise SystemExit(s.main())"
