@@ -31,8 +31,6 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
 _HTTP_STAGE_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
 _DEFAULT_HTTP_STAGE_ALLOWED_HOSTS = (
-    "127.0.0.1:8005",
-    "localhost:8005",
     "127.0.0.1:49101",
     "localhost:49101",
 )
@@ -90,7 +88,16 @@ def _is_http_stage_url(url: str) -> bool:
 
 def _http_stage_allowed_hosts() -> set[str]:
     raw = os.environ.get("BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS", "")
-    values = raw.split(",") if raw else _DEFAULT_HTTP_STAGE_ALLOWED_HOSTS
+    if raw:
+        values = raw.split(",")
+    else:
+        carb.log_warn(
+            "BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS is not set; using "
+            f"localhost-only default allow-list {_DEFAULT_HTTP_STAGE_ALLOWED_HOSTS}. "
+            "If the coordinator is not on localhost, set "
+            "BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS to the coordinator host:port."
+        )
+        values = _DEFAULT_HTTP_STAGE_ALLOWED_HOSTS
     return {value.strip().lower() for value in values if value.strip()}
 
 

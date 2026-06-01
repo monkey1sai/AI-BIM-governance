@@ -109,4 +109,21 @@ Assert-Equal 48200 $lanAudit.runtime.kitMediaPort 'primary Kit media port from e
 Remove-Item -LiteralPath $lanEnv -ErrorAction SilentlyContinue
 Write-TestPass 'LAN env derives public artifacts URL and stage allowlist'
 
+# Test 10: clean env (no BIM_REVIEW_STREAM_ALLOWED_STAGE_HOSTS) falls back to 49101 default, never retired :8005
+Clear-DeployTopologyEnv
+$cleanStageEnv = Join-Path $repoRoot 'scripts\.run\deploy-clean-stage-test.env'
+Set-Content -LiteralPath $cleanStageEnv -Encoding ascii -Value @(
+    'KIT_SIGNALING_PORT=49220',
+    'KIT_MEDIA_PORT=48220',
+    'RUNTIME_STORAGE_ROOT=C:\tmp\ai-bim-governance-clean-stage-test\storage'
+)
+$cleanStageOutput = & $deploy -DryRun -EnvFile $cleanStageEnv *>&1 | Out-String
+$cleanStageExit = $LASTEXITCODE
+Assert-Equal 0 $cleanStageExit 'clean stage-host env dry-run exit 0'
+$cleanStageAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
+Assert-True ($cleanStageAudit.runtime.allowedStageHosts -notmatch '8005') 'clean env drops retired :8005 from stage allowlist'
+Assert-True ($cleanStageAudit.runtime.allowedStageHosts -match '127\.0\.0\.1:49101') 'clean env falls back to 127.0.0.1:49101 stage host'
+Remove-Item -LiteralPath $cleanStageEnv -ErrorAction SilentlyContinue
+Write-TestPass 'clean env stage allowlist drops :8005 and keeps 49101 default'
+
 Write-Host "`n=== test-deploy-dryrun.ps1: ALL PASSED ===" -ForegroundColor Green
