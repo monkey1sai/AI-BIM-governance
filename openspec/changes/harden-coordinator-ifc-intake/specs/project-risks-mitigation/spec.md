@@ -1,6 +1,6 @@
-# project-risks-mitigation — Spec Delta (harden-coordinator-ifc-intake)
+# project-risks-mitigation 規格增量 (harden-coordinator-ifc-intake)
 
-> Delta against `openspec/specs/project-risks-mitigation/spec.md`。
+> 對 `openspec/specs/project-risks-mitigation/spec.md` 的規格增量。
 > 補充 `RISK-IN-MEMORY-QUEUE-PERSISTENCE` 的 graceful shutdown 接線:既有 requirement 要求 graceful shutdown 時 `drain()` + mark `dropped_on_restart`,但 `dispose()` 從未接上 process termination signal,真實 SIGTERM/SIGINT 下從不被觸發。本 delta 明確要求 signal 接線。
 
 ## ADDED Requirements

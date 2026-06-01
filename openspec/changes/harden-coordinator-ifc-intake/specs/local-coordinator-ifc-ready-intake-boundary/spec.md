@@ -1,6 +1,6 @@
-# local-coordinator-ifc-ready-intake-boundary — Spec Delta (harden-coordinator-ifc-intake)
+# local-coordinator-ifc-ready-intake-boundary 規格增量 (harden-coordinator-ifc-intake)
 
-> Delta against `openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md`。
+> 對 `openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md` 的規格增量。
 > 補足 IFC-ready intake 在 explicit strict mode 下的誠實下載行為:strict 下 HTTP 拿不到 IFC SHALL 回 502 download_failed,而非靜默回 placeholder ok。
 
 ## ADDED Requirements

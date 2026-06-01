@@ -17,7 +17,14 @@ export interface ShutdownDeps {
 
 export function createGracefulShutdown(deps: ShutdownDeps): () => Promise<void> {
   return async (): Promise<void> => {
-    await deps.dispose();
+    // dispose 失敗(例如 drain in-memory queue 時拋錯)也不能中止 shutdown——否則
+    // io/server 不關、exit(0) 不跑,進程 hang 到 SIGKILL,正好違背本 module 的
+    // graceful 目的。盡力 drain 後不論成敗都繼續關閉與退出。
+    try {
+      await deps.dispose();
+    } catch {
+      // 已盡力 drain；吞掉錯誤,繼續關閉序列。
+    }
     deps.io.close(() => {
       deps.server.close(() => {
         deps.exit(0);
