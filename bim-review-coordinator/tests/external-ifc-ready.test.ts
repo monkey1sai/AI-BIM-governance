@@ -329,9 +329,46 @@ describe("POST /api/external/ifc-ready", () => {
 
     expect(res.status).toBe(502);
     expect(res.body.download_status).toBe("failed");
+    // #9 review fix:pin 502 來自 HTTP non-2xx(reason=http_status),而非 timeout /
+    // invalid_source_ref 等其他 download 失敗——否則 strict 接線 regress 成別的原因
+    // 仍會綠,失去「non-2xx 必須不被吞掉」的保護意義。
+    expect(res.body.reason).toBe("http_status");
     // strict-fail 在 enqueue 之前 return,給一小段時間確認沒有 stray dispatch。
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(streaming.bodies).toHaveLength(0);
+  });
+
+  // #9 review fix(對稱保護網):non-strict 預設下,同一個 http non-2xx source MUST
+  // 維持既有 fallback——回 placeholder、202 accepted、且照常 dispatch streaming-server。
+  // 這條鎖住「strict 接線不破壞 demo loop」:若未來有人翻轉 default 或 invert
+  // !config.ifcDownloadStrict,本測試會紅。
+  it("non-strict(預設)下 http source 回 non-2xx → placeholder fallback → 202 且照常 dispatch", async () => {
+    const streaming = await startStreamingConversionStub();
+    const source = await startNon2xxIfcSourceStub(404);
+    const app = makeApp({
+      ifcDownloadStrict: false,
+      streamingConversionApiBase: streaming.baseUrl,
+    });
+
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders())
+      .send(
+        payload({
+          source_ifc: {
+            ref: source.ifcUrl,
+            etag: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            filename: "demo-model.ifc",
+            format: "ifc",
+          },
+        }),
+      );
+
+    expect(res.status).toBe(202);
+    expect(res.body.download_status).not.toBe("failed");
+    // fallback 走 placeholder → 照常 enqueue dispatch；給一小段時間讓 in-process queue 派工。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(streaming.bodies.length).toBeGreaterThan(0);
   });
 });
 
