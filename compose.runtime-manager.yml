@@ -18,7 +18,6 @@ services:
       # B-scheme T2：legacy mock service API bases 已移除（兩 mock 服務刪除）。
       # 對外 IFC-ready intake / 公司雲端 callback 設定由 T3/T5 引入；coordinator
       # 不再 depends_on 已刪服務，獨立啟動。
-      BIM_CONTROL_API_BASE: ""
       STREAMING_CONVERSION_API_BASE: http://streaming-server:49101
       CONVERSION_API_BASE: http://streaming-server:49101
       INTERNAL_API_AUTH_TOKEN: ${INTERNAL_API_AUTH_TOKEN:-dev-internal-token}
@@ -36,6 +35,11 @@ services:
       # 應在 .env 設 RUNTIME_STORAGE_ROOT 為 host absolute path
       # (例:RUNTIME_STORAGE_ROOT=C:\Repos\active\iot\AI-BIM-governance\storage)。
       STORAGE_HOST_ROOT: ${RUNTIME_STORAGE_ROOT:-./storage}
+      # IFC_DOWNLOAD_STRICT:控制 HTTP 取 IFC 失敗時的行為。
+      # false(此 dev default):fetch 失敗時 fallback 寫 placeholder,demo loop 不中斷。
+      # production MUST 設 "true":strict 下 HTTP 拿不到 IFC(non-2xx)直接回 502 +
+      # download_status=failed,不靜默產 placeholder,避免假資料流入下游 conversion。
+      IFC_DOWNLOAD_STRICT: "false"
     ports:
       - "8004:8004"
     volumes:

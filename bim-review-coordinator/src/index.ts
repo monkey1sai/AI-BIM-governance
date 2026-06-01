@@ -1,6 +1,6 @@
 import { createCoordinatorApp } from "./app.js";
 
-const { server, config, structLog } = createCoordinatorApp();
+const { server, io, config, structLog, dispose } = createCoordinatorApp();
 
 server.listen(config.port, config.host, () => {
   structLog.lifecycle(
@@ -13,3 +13,15 @@ server.listen(config.port, config.host, () => {
     },
   );
 });
+
+const shutdown = async (): Promise<void> => {
+  await dispose();
+  server.close(() => {
+    io.close(() => {
+      process.exit(0);
+    });
+  });
+};
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

@@ -34,7 +34,6 @@ describe("POST /api/internal/viewer-log", () => {
       sessionStoreDir: join(storageRoot, "sessions"),
       eventLogDir: join(storageRoot, "events"),
       callbackOutboxStorePath: join(storageRoot, "callback-outbox.json"),
-      bimControlApiBase: "http://127.0.0.1:1",
       corsOrigins: ["http://127.0.0.1:5173"],
       logRoot,
     });
@@ -144,7 +143,6 @@ describe("GET /api/internal/structLog/health", () => {
       sessionStoreDir: join(storageRoot, "sessions"),
       eventLogDir: join(storageRoot, "events"),
       callbackOutboxStorePath: join(storageRoot, "callback-outbox.json"),
-      bimControlApiBase: "http://127.0.0.1:1",
       corsOrigins: ["http://127.0.0.1:5173"],
       logRoot,
     });
