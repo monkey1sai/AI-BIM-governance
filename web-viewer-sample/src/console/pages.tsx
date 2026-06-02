@@ -3,7 +3,7 @@
 import React, { useCallback, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import { A1A10, AppCardDef, PAGES } from "./data";
-import { governanceClient, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { DiffItemRow, DiffStatus, governanceClient, RuleResultRow, RuleRunStatus } from "./governanceClient";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
@@ -158,17 +158,74 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
 }
 
 export function VersionDiffPage() {
+  const [base, setBase] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\許良宇圖書館建築_2026.ifc");
+  const [target, setTarget] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\許良宇圖書館建築_2026 - 轉檔測試2.ifc");
+  const [diff, setDiff] = useState<DiffStatus | null>(null);
+  const [items, setItems] = useState<DiffItemRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const run = useCallback(async () => {
+    setBusy(true); setErr(null); setDiff(null); setItems([]);
+    try {
+      const { diff_id } = await governanceClient.createDiff({ base_ifc_path: base, target_ifc_path: target });
+      let st: DiffStatus | null = null;
+      for (let i = 0; i < 120; i++) {
+        st = await governanceClient.getDiff(diff_id);
+        if (st.status === "succeeded" || st.status === "failed") break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      setDiff(st);
+      if (st && st.status === "succeeded") setItems(await governanceClient.getDiffItems(diff_id));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [base, target]);
+
+  const counts = diff?.summary?.counts ?? {};
   return (
     <>
       <h1>模型版本差異與責任追蹤 · A2</h1>
-      <p className="ec-lead">以 IFC GlobalId 多級對齊兩個 model version，標記 added / removed / moved / property changed。前端骨架 + OpenSpec spec 已就緒；後端待建。</p>
-      <Panel title="Diff Builder（骨架）" prov="p1">
-        <Field k="diff key（多級）" v="GlobalId → source id → type+name+location hash → geometry hash" prov="p1" />
-        <Field k="schema" v="model_diffs / model_diff_items" prov="p1" />
-        <Field k="API" v="POST /api/diffs · GET /api/diffs/{id}/items?change_type=moved" prov="p1" />
-        <Field k="3D overlay 顏色（綠/紅/橘/藍）" v="顯示層；走 client highlight，非 server-push" prov="p15" />
+      <p className="ec-lead">
+        以 IFC GlobalId 多級對齊（GlobalId → Tag → type+name+location）比對兩個 model version，
+        標記 added / removed / moved / property changed。純 CPU，不需 GPU。
+      </p>
+      <Panel title="Diff Builder" sub="POST /api/governance/diffs（經 coordinator proxy → governance-service）" prov="asbuilt">
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <input className="ec-btn" style={{ width: "100%" }} value={base} onChange={(e) => setBase(e.target.value)} />
+          <input className="ec-btn" style={{ width: "100%" }} value={target} onChange={(e) => setTarget(e.target.value)} />
+          <div>
+            <Btn primary disabled={busy} caption="GlobalId 多級對齊" onClick={run}>{busy ? "比對中…" : "Run Diff"}</Btn>
+          </div>
+        </div>
+        {err && <p className="ec-warn-note">未連線後端（proxy / governance-service 需啟動）：{err}</p>}
+        {diff && (
+          <div className="ec-grid" style={{ marginTop: 12 }}>
+            <Metric value={diff.summary?.matched ?? "—"} label="matched" />
+            <Metric value={counts.added ?? 0} label="added" />
+            <Metric value={counts.removed ?? 0} label="removed" tone="bad" />
+            <Metric value={counts.moved ?? 0} label="moved" tone="warn" />
+            <Metric value={counts.property_changed ?? 0} label="property changed" />
+          </div>
+        )}
+        {items.length > 0 && (
+          <table className="ec-table" style={{ marginTop: 12 }}>
+            <thead><tr><th>change</th><th>ifc_type</th><th>ifc_guid</th><th>summary</th></tr></thead>
+            <tbody>
+              {items.slice(0, 40).map((it, i) => (
+                <tr key={i}><td>{it.change_type}</td><td>{it.ifc_type}</td><td>{it.ifc_guid}</td><td>{it.change_summary}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </Panel>
-      <p className="ec-warn-note">A2 後端為 change 3（model-version-diff-globalid）；本頁為誠實骨架，不顯示任何捏造 diff 數字。</p>
+      <Panel title="範圍與誠實標示" prov="asbuilt">
+        <Field k="geometry_changed" v="MVP 未做幾何 tessellation 比對（僅 placement/pset）" prov="p1" />
+        <Field k="3D overlay 顏色（綠/紅/橘/藍）" v="走 client highlightPrimsRequest，非 server-push" prov="p15" />
+        <Field k="Issue impact（resolved/reopened/new）" v="待 Issue DB" prov="p1" />
+      </Panel>
     </>
   );
 }

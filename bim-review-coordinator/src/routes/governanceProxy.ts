@@ -71,4 +71,22 @@ export function registerGovernanceProxy(app: Express): void {
       true,
     );
   });
+
+  // A2 model-version diff proxy（透傳 governance-service /api/diffs*）。
+  app.post("/api/governance/diffs", (request, response) => {
+    void forward(response, "POST", "/api/diffs", request.body);
+  });
+  app.get("/api/governance/diffs/:diffId", (request, response) => {
+    void forward(response, "GET", `/api/diffs/${encodeURIComponent(request.params.diffId)}`);
+  });
+  app.get("/api/governance/diffs/:diffId/items", (request, response) => {
+    void forward(
+      response,
+      "GET",
+      `/api/diffs/${encodeURIComponent(request.params.diffId)}/items${queryString(request.originalUrl)}`,
+    );
+  });
+  app.post("/api/governance/diffs/:diffId/apply-overlay", (request, response) => {
+    void forward(response, "POST", `/api/diffs/${encodeURIComponent(request.params.diffId)}/apply-overlay`, request.body);
+  });
 }

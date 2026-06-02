@@ -59,4 +59,41 @@ export const governanceClient = {
       `/api/governance/rule-runs/${id}/results${status ? `?status=${status}` : ""}`
     ).then((r) => r.results),
   exportUrl: (id: string) => `${COORD_BASE}/api/governance/rule-runs/${id}/export?fmt=excel`,
+
+  // A2 model-version diff（GlobalId 多級對齊）
+  createDiff: (req: DiffRequest) =>
+    jsonFetch<{ diff_id: string; status: string }>("/api/governance/diffs", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  getDiff: (id: string) => jsonFetch<DiffStatus>(`/api/governance/diffs/${id}`),
+  getDiffItems: (id: string, changeType?: string) =>
+    jsonFetch<{ items: DiffItemRow[] }>(
+      `/api/governance/diffs/${id}/items${changeType ? `?change_type=${changeType}` : ""}`
+    ).then((r) => r.items),
 };
+
+export interface DiffRequest {
+  base_ifc_path: string;
+  target_ifc_path: string;
+  base_model_version_id?: string;
+  target_model_version_id?: string;
+}
+export interface DiffStatus {
+  diff_id: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  summary: {
+    base_count: number;
+    target_count: number;
+    matched: number;
+    counts: Record<string, number>;
+    warnings: string[];
+  } | null;
+}
+export interface DiffItemRow {
+  change_type: string;
+  ifc_guid: string | null;
+  ifc_type?: string;
+  ifc_name?: string | null;
+  change_summary: string;
+}
