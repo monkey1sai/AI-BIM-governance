@@ -1,0 +1,10 @@
+{
+  "model_path": "docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\model.usdc",
+  "default_prim": "/World",
+  "up_axis": "Z",
+  "meters_per_unit": 1.0,
+  "mesh_count": 1,
+  "mesh_paths": [
+    "/World/Elements/IfcWall/G_3tk8X2hAzDbP6Dh8yarqTc/Body_000"
+  ]
+}

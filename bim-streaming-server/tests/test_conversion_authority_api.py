@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -57,6 +58,31 @@ class FakeSuccessfulConverter:
                 },
             },
         }
+
+
+class FakeIdentityConverter(FakeSuccessfulConverter):
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        result = super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
+        extra_docs = {
+            "pset_index_path": ("pset_index.json", {"items": [{"entity_id": "ifc:GUID_A", "psets": {}}]}),
+            "spatial_index_path": ("spatial_index.json", {"items": [{"entity_id": "ifc:GUID_A", "relationships": []}]}),
+            "bbox_index_path": ("bbox_index.json", {"items": [{"entity_id": "ifc:GUID_A", "bbox_local": [0, 0, 0, 1, 1, 1]}]}),
+            "quality_metrics_path": ("quality_metrics.json", {"mapping_fidelity": "guid_exact"}),
+            "geo_reference_path": ("geo_reference.json", {"available": False, "warnings": ["geo_reference_missing"]}),
+        }
+        for key, (filename, body) in extra_docs.items():
+            path = output_dir / filename
+            path.write_text(json.dumps(body), encoding="utf-8")
+            result[key] = path
+        result["quality_metrics"] = {
+            **result["quality_metrics"],
+            "materialization_strategy": "ifcopenshell_openusd_identity",
+            "identity_authoring_profile": "ifcopenshell_openusd_identity",
+            "mapping_fidelity": "guid_exact",
+            "semantic_mapping_fidelity": "guid_exact",
+            "warnings": ["geo_reference_missing"],
+        }
+        return result
 
 
 class FakePlaceholderConverter(FakeSuccessfulConverter):
@@ -172,6 +198,39 @@ def test_conversion_success_result_owns_usdc_mapping_entity_index_and_callback_p
     assert job["callback_payload"]["event_type"] == "streaming_conversion_result"
     assert job["callback_payload"]["authority"] == "bim-streaming-server"
     assert job["callback_payload"]["result"]["model"]["status"] == "ready"
+
+
+def test_identity_conversion_result_exposes_additive_artifact_refs_without_sidecar_bodies(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeIdentityConverter())
+
+    response = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(conversion_profile="ifcopenshell_openusd_identity"),
+    )
+    conversion_job_id = response.json()["conversion_job_id"]
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+
+    artifacts = result["artifacts"]
+    for key, filename in {
+        "pset_index": "pset_index.json",
+        "spatial_index": "spatial_index.json",
+        "bbox_index": "bbox_index.json",
+        "quality_metrics": "quality_metrics.json",
+        "geo_reference": "geo_reference.json",
+    }.items():
+        assert artifacts[key]["role"] == key
+        assert artifacts[key]["format"] in {"json", "usda"}
+        assert artifacts[key]["url"].endswith(f"/{filename}")
+    assert result["quality_metrics"]["mapping_fidelity"] == "guid_exact"
+    assert result["quality_metrics"]["identity_authoring_profile"] == "ifcopenshell_openusd_identity"
+
+    job = client.get(f"/api/conversions/{conversion_job_id}").json()
+    callback_json = json.dumps(job["callback_payload"], ensure_ascii=False)
+    assert "pset_index" in callback_json
+    assert '"psets":' not in callback_json
+    assert '"relationships":' not in callback_json
+    assert '"bbox_local":' not in callback_json
+    assert "geo_reference_missing" in callback_json
 
 
 def test_lists_ready_conversion_results_for_model_version(tmp_path: Path):

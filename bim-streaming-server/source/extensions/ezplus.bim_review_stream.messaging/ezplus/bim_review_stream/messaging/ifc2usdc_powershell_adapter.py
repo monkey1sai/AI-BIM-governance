@@ -32,6 +32,7 @@ import shutil
 import subprocess
 
 from conversion_authority import ConversionAuthorityError, _PLACEHOLDER_MARKERS
+from ifc_openusd_identity_author import IDENTITY_PROFILE, IfcOpenUsdIdentityAuthor
 
 
 class Ifc2UsdcPowershellConverterAdapter:
@@ -132,6 +133,36 @@ class Ifc2UsdcPowershellConverterAdapter:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         model_path = output_dir / "model.usdc"
+        conversion_profile = self._conversion_profile(job=job, ifc_ready_event=ifc_ready_event)
+        if conversion_profile == IDENTITY_PROFILE:
+            authored = IfcOpenUsdIdentityAuthor(
+                ifc_path=ifc_path,
+                output_dir=output_dir,
+                source_model_version_id=str(
+                    job.get("model_version_id")
+                    or ifc_ready_event.get("model_version_id")
+                    or ""
+                )
+                or None,
+            ).author()
+            paths = authored["paths"]
+            return {
+                "model_path": paths["model_path"],
+                "mapping_path": paths["mapping_path"],
+                "entity_index_path": paths["entity_index_path"],
+                "metadata_path": paths["metadata_path"],
+                "pset_index_path": paths["pset_index_path"],
+                "spatial_index_path": paths["spatial_index_path"],
+                "bbox_index_path": paths["bbox_index_path"],
+                "quality_metrics_path": paths["quality_metrics_path"],
+                "geo_reference_path": paths["geo_reference_path"],
+                "quality_metrics": authored["quality_metrics"],
+            }
+        if conversion_profile:
+            raise ConversionAuthorityError(
+                "invalid_conversion_profile",
+                f"Unsupported conversion_profile: {conversion_profile}",
+            )
 
         try:
             self._run_powershell_conversion(ifc_path=ifc_path, output_dir=output_dir)
@@ -187,6 +218,18 @@ class Ifc2UsdcPowershellConverterAdapter:
         from shutil import which
 
         return which(self.powershell_exe) is not None
+
+    def _conversion_profile(
+        self,
+        *,
+        job: Mapping[str, Any],
+        ifc_ready_event: Mapping[str, Any],
+    ) -> str | None:
+        raw = job.get("conversion_profile") or ifc_ready_event.get("conversion_profile")
+        if raw is None:
+            return None
+        value = str(raw).strip()
+        return value or None
 
     def _resolve_local_ifc(self, ifc_ready_event: Mapping[str, Any]) -> Path:
         artifact = ifc_ready_event.get("ifc_artifact")
@@ -957,15 +1000,20 @@ class Ifc2UsdcPowershellConverterAdapter:
         has_name = any(item.get("ifc_name") for item in mapping_items)
         if mapping_source == "ifc_semantic_sidecar":
             semantic_fidelity: str | None = "usd_enumeration_with_ifc_sidecar_supplement"
+            mapping_fidelity: str | None = "sidecar_ordinal"
         elif has_type and has_name:
             semantic_fidelity = "ifc_class_grouped_with_name"
+            mapping_fidelity = "usd_custom_data"
         elif has_type or has_name:
             semantic_fidelity = "usd_enumeration_with_ifc_custom_data"
+            mapping_fidelity = "usd_custom_data"
         else:
             semantic_fidelity = None
+            mapping_fidelity = "unmapped"
 
         mapping_doc = {
             "mock": False,
+            "mapping_fidelity": mapping_fidelity,
             "summary": {
                 "mapped_count": mapped_count,
                 "fake_mapping_count": 0,
@@ -1004,6 +1052,7 @@ class Ifc2UsdcPowershellConverterAdapter:
             "materialization_strategy": "usd_stage_enumeration",
             "sidecar_carrier_count": 0,
             "minimum_coverage_baseline_locked": False,
+            "mapping_fidelity": mapping_fidelity,
             "semantic_mapping_fidelity": semantic_fidelity,
             "mapping_has_ifc_type": has_type,
             "mapping_has_ifc_name": has_name,

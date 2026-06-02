@@ -412,6 +412,11 @@ class StreamingConversionStore:
                 path=output_paths["metadata_path"],
             ),
         }
+        optional_artifacts = self._optional_artifact_payloads(
+            suffix=suffix,
+            converter_result=converter_result,
+        )
+        artifacts.update(optional_artifacts)
         lineage = {
             "source_rvt_artifact_id": job["source_rvt_artifact_id"],
             "ifc_artifact_id": job["ifc_artifact"]["artifact_id"],
@@ -424,6 +429,14 @@ class StreamingConversionStore:
                 {"from": artifacts["model_usdc"]["artifact_id"], "to": artifacts["entity_index"]["artifact_id"], "type": "has_sidecar"},
             ],
         }
+        for artifact in optional_artifacts.values():
+            lineage["relations"].append(
+                {
+                    "from": artifacts["model_usdc"]["artifact_id"],
+                    "to": artifact["artifact_id"],
+                    "type": "has_sidecar",
+                }
+            )
         return {
             "conversion_job_id": job["conversion_job_id"],
             "authority": "bim-streaming-server",
@@ -447,6 +460,39 @@ class StreamingConversionStore:
             "quality_metrics": quality_metrics,
             "lineage": lineage,
         }
+
+    def _optional_artifact_payloads(
+        self,
+        *,
+        suffix: str,
+        converter_result: Mapping[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        optional_specs = {
+            "pset_index": ("pset_index_path", "json"),
+            "spatial_index": ("spatial_index_path", "json"),
+            "bbox_index": ("bbox_index_path", "json"),
+            "quality_metrics": ("quality_metrics_path", "json"),
+            "geo_reference": ("geo_reference_path", None),
+        }
+        artifacts: dict[str, dict[str, Any]] = {}
+        for role, (key, explicit_format) in optional_specs.items():
+            value = converter_result.get(key)
+            if not value:
+                continue
+            path = Path(value)
+            if not path.is_file():
+                raise ConversionAuthorityError(
+                    "missing_output",
+                    f"Converter optional artifact does not exist: {key}={path}",
+                )
+            format_ = explicit_format or ("usda" if path.suffix.lower() == ".usda" else "json")
+            artifacts[role] = self._artifact_payload(
+                artifact_id=f"artifact_stream_{role}_{suffix}",
+                role=role,
+                format_=format_,
+                path=path,
+            )
+        return artifacts
 
     def _required_output_paths(self, converter_result: Mapping[str, Any]) -> dict[str, Path]:
         keys = ("model_path", "mapping_path", "entity_index_path", "metadata_path")

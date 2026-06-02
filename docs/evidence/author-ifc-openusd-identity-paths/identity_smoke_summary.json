@@ -1,0 +1,141 @@
+{
+  "change_id": "author-ifc-openusd-identity-paths",
+  "generated_at": "2026-06-02T08:00:50.384517+00:00",
+  "dependency_versions": {
+    "ifcopenshell": "0.8.5",
+    "pxr_usd": "0.26.5"
+  },
+  "input_ifc": "docs\\evidence\\author-ifc-openusd-identity-paths\\input_identity_smoke.ifc",
+  "input_wall_guid": "3tk8X2hAzDbP6Dh8yarqTc",
+  "conversion_job_id": "stream_conv_20260602080050_a0cc1bdc",
+  "conversion_status": "succeeded",
+  "identity_profile": "ifcopenshell_openusd_identity",
+  "stage_open_result": {
+    "model_path": "docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\model.usdc",
+    "default_prim": "/World",
+    "up_axis": "Z",
+    "meters_per_unit": 1.0,
+    "mesh_count": 1,
+    "mesh_paths": [
+      "/World/Elements/IfcWall/G_3tk8X2hAzDbP6Dh8yarqTc/Body_000"
+    ]
+  },
+  "mapping_check": {
+    "mapping_fidelity": "guid_exact",
+    "mapped_count": 1,
+    "all_targets_exist": true,
+    "missing_targets": [],
+    "sample": [
+      {
+        "ifc_guid": "3tk8X2hAzDbP6Dh8yarqTc",
+        "usd_prim_path": "/World/Elements/IfcWall/G_3tk8X2hAzDbP6Dh8yarqTc",
+        "ifc_type": "IfcWall",
+        "ifc_class": "IfcWall",
+        "ifc_name": "Identity Smoke Wall",
+        "entity_id": "ifc:3tk8X2hAzDbP6Dh8yarqTc",
+        "mapping_fidelity": "guid_exact"
+      }
+    ]
+  },
+  "sidecar_check": {
+    "pset_item_count": 1,
+    "pset_sample": [
+      {
+        "entity_id": "ifc:3tk8X2hAzDbP6Dh8yarqTc",
+        "ifc_guid": "3tk8X2hAzDbP6Dh8yarqTc",
+        "usd_prim_path": "/World/Elements/IfcWall/G_3tk8X2hAzDbP6Dh8yarqTc",
+        "psets": {
+          "Pset_WallCommon": {
+            "FireRating": "2hr",
+            "IsExternal": true,
+            "id": 36
+          }
+        }
+      }
+    ],
+    "spatial_item_count": 1,
+    "spatial_sample": [
+      {
+        "entity_id": "ifc:3tk8X2hAzDbP6Dh8yarqTc",
+        "ifc_guid": "3tk8X2hAzDbP6Dh8yarqTc",
+        "usd_prim_path": "/World/Elements/IfcWall/G_3tk8X2hAzDbP6Dh8yarqTc",
+        "relationships": [
+          {
+            "type": "spatial_container",
+            "related_entity_id": "ifc:3CRm8LnKXDVwqybFJA0Abp",
+            "related_ifc_type": "IfcBuildingStorey",
+            "related_name": "Level 01"
+          }
+        ]
+      }
+    ],
+    "bbox_item_count": 1,
+    "bbox_sample": [
+      {
+        "entity_id": "ifc:3tk8X2hAzDbP6Dh8yarqTc",
+        "ifc_guid": "3tk8X2hAzDbP6Dh8yarqTc",
+        "usd_prim_path": "/World/Elements/IfcWall/G_3tk8X2hAzDbP6Dh8yarqTc",
+        "bbox_local": [
+          0.0,
+          0.0,
+          0.0,
+          2.0,
+          0.20000000298023224,
+          1.0
+        ],
+        "bbox_world": null
+      }
+    ],
+    "geo_reference": {
+      "format_version": 1,
+      "available": false,
+      "crs": null,
+      "local_origin": null,
+      "true_north_degrees": null,
+      "model_to_world_matrix": null,
+      "warnings": [
+        "geo_reference_missing"
+      ]
+    }
+  },
+  "quality_metrics": {
+    "source_ifc_entity_count": 1,
+    "mapped_count": 1,
+    "unmapped_count": 0,
+    "coverage_ratio": 1.0,
+    "coverage_status": "pass",
+    "materialization_strategy": "ifcopenshell_openusd_identity",
+    "identity_authoring_profile": "ifcopenshell_openusd_identity",
+    "mapping_fidelity": "guid_exact",
+    "semantic_mapping_fidelity": "guid_exact",
+    "mapping_has_ifc_type": true,
+    "mapping_has_ifc_name": true,
+    "sidecar_carrier_count": 1,
+    "minimum_coverage_baseline_locked": false,
+    "shape_count": 1,
+    "skipped_shape_count": 0,
+    "warnings": [
+      "geo_reference_missing"
+    ],
+    "hard_quality_gates": {
+      "usdc_openable": true,
+      "has_renderable_prims": true,
+      "placeholder_output": false
+    }
+  },
+  "metadata_only_guard": {
+    "conversion_result_contains_pset_body": false,
+    "conversion_result_contains_bbox_body": false,
+    "artifact_roles": [
+      "bbox_index",
+      "element_mapping",
+      "entity_index",
+      "geo_reference",
+      "metadata",
+      "model_usdc",
+      "pset_index",
+      "quality_metrics",
+      "spatial_index"
+    ]
+  }
+}
