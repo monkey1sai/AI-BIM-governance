@@ -20,6 +20,7 @@ import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
 import ArtifactPanel from "./components/ArtifactPanel";
 import DemoControlPanel from "./components/DemoControlPanel";
 import { computeFileReady, computeRuntimeReady, computeSemanticReady, triReadyLabel } from "./utils/triReady";
+import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
 // collaboration events」)。
@@ -51,14 +52,6 @@ export interface AppProps {
     mediaport: number | null
     accessToken: string
     onStreamFailed: () => void;
-}
-
-interface StreamEndpoint {
-    kitInstanceId: string | null;
-    signalingserver: string;
-    signalingport: number;
-    mediaserver: string;
-    mediaport: number | null;
 }
 
 interface AppState {
@@ -227,23 +220,6 @@ function streamEndpointLabel(endpoint: StreamEndpoint): string {
     return `${kit}${endpoint.signalingserver}:${endpoint.signalingport}${media}`;
 }
 
-function sameStreamEndpoint(a: StreamEndpoint, b: StreamEndpoint): boolean {
-    return a.kitInstanceId === b.kitInstanceId
-        && a.signalingserver === b.signalingserver
-        && a.signalingport === b.signalingport
-        && a.mediaserver === b.mediaserver
-        && a.mediaport === b.mediaport;
-}
-
-type KitStreamEndpoint = ReviewStreamConfig["kit_instance_bindings"][number]["stream_config"];
-
-function sameStreamTransportEndpoint(a: KitStreamEndpoint, b: KitStreamEndpoint): boolean {
-    return a.signalingServer === b.signalingServer
-        && a.signalingPort === b.signalingPort
-        && a.mediaServer === b.mediaServer
-        && (a.mediaPort ?? null) === (b.mediaPort ?? null);
-}
-
 function makeRequestId(prefix: string): string {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -257,32 +233,6 @@ function displayNameFromStageUrl(url: string): string {
     return tail.includes("?") ? tail.split("?")[0] : tail;
 }
 
-function isBlockedLifecycle(status: ReviewLifecycleStatus | null): boolean {
-    // viewer-edge-bim-server-console:queued_for_conversion(C4 lifecycle)與
-    // dropped_on_restart(C4 lifecycle)都不應觸發 WebRTC 連線,視為 blocked。
-    return status === "blocked_conversion"
-        || status === "queued_for_instance"
-        || status === "queued_for_conversion"
-        || status === "dropped_on_restart"
-        || status === "closing"
-        || status === "closed"
-        || status === "failed";
-}
-
-function lifecycleStatusText(status: ReviewLifecycleStatus | null): string {
-    if (status === "blocked_conversion") return "成果檔仍在轉換或 mapping 尚未就緒";
-    if (status === "queued_for_instance") return "等待 Kit / GPU instance 配額";
-    // viewer-edge-bim-server-console:C4 lifecycle 對應字串。
-    if (status === "queued_for_conversion") return "等待 conversion dispatch 輪到";
-    if (status === "dropped_on_restart") return "coordinator restart 後 queue 已清空,operator 須重新 POST";
-    if (status === "created") return "審查請求已建立，等待 session 綁定";
-    if (status === "active") return "Review session 啟用中";
-    if (status === "closing") return "Review session 關閉中";
-    if (status === "closed") return "Review session 已關閉";
-    if (status === "failed") return "Review session 建立失敗";
-    return "Review bootstrap 尚未載入";
-}
-
 export default class App extends React.Component<AppProps, AppState> {
     
     private usdStageRef = React.createRef<USDStage>();
@@ -293,6 +243,7 @@ export default class App extends React.Component<AppProps, AppState> {
     private loadingStateRetryId: number | null = null;
     private stageLoadTimeoutId: number | null = null;
     private deferredOpenStageId: number | null = null;
+    private _pollForKitReadyId: number | null = null;
     private loadingStatePollCount = 0;
     private pendingStageUrl: string | null = null;
     private pendingMappingHighlightRequestId: string | null = null;
@@ -358,6 +309,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
         this._clearDeferredOpenStage();
+        this._clearPollForKitReady();
         this.reviewSocket?.disconnect();
     }
 
@@ -635,9 +587,15 @@ export default class App extends React.Component<AppProps, AppState> {
         const primaryBinding = streamConfig.kit_instance_bindings.find((binding) =>
             sameStreamTransportEndpoint(binding.stream_config, streamConfig.webrtc)
         ) || streamConfig.kit_instance_bindings[0] || null;
+        // viewer-edge-bim-server-console:旁觀者優先用 viewport_sharing
+        // primary_kit_instance_id 直接比 kit_instance_id 挑非 primary 那一路;
+        // 缺 primary_kit_instance_id 時退回 transport port-diff(既有行為)。
+        const primaryKitInstanceId = streamConfig.viewport_sharing?.primary_kit_instance_id ?? null;
         const spectatorBinding = isSpectatorStreamMode() && primaryBinding
-            ? streamConfig.kit_instance_bindings.find((binding) =>
-                !sameStreamTransportEndpoint(binding.stream_config, primaryBinding.stream_config)
+            ? selectSpectatorBinding(
+                streamConfig.kit_instance_bindings,
+                primaryKitInstanceId,
+                primaryBinding.stream_config,
             )
             : null;
         const selectedBinding = requestedBinding || spectatorBinding || primaryBinding;
@@ -988,11 +946,14 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
             this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
+                // viewer-edge-bim-server-console:spectator 沿用 primary 已載入的
+                // Kit stage,本端不再自行 openStage,直接視為 stage_truth=matched。
                 this.setState((state) => ({
                     showStream: true,
                     showUI: true,
                     isLoading: false,
                     loadingText: "旁觀串流已連線",
+                    stageLoadStatus: 'matched',
                     reviewEvents: [...state.reviewEvents, "Spectator stream 已連線，沿用目前 Kit stage"],
                 }));
                 return;
@@ -1019,13 +980,22 @@ export default class App extends React.Component<AppProps, AppState> {
     * Once received, the 'isKitReady' flag is set to true and polling ends
     */
     async _pollForKitReady() {
+        // 進入點先清掉 pending id:目前這次 callback 已不再是排程中的 timer。
+        this._pollForKitReadyId = null;
         if (this.state.isKitReady === true) return
 
         console.info("polling Kit availability")
         this._queryLoadingState()
-        setTimeout(() => this._pollForKitReady(), 3000); // Poll every 3 seconds
+        // Poll every 3 seconds;存 id 讓 componentWillUnmount 能取消,避免卸載後 setState。
+        this._pollForKitReadyId = window.setTimeout(() => this._pollForKitReady(), 3000);
     }
-    
+
+    private _clearPollForKitReady(): void {
+        if (this._pollForKitReadyId === null) return;
+        window.clearTimeout(this._pollForKitReadyId);
+        this._pollForKitReadyId = null;
+    }
+
     /**
      * @function _getAsset
      * 
