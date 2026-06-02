@@ -51,6 +51,10 @@ assert.equal(routedRequest.payload.stage_composition.primary.artifact_id, bindin
 assert.deepEqual(routedRequest.payload.stage_composition.secondary_layers, []);
 
 const windowSource = readSource("src/Window.tsx");
+// #17 vitest 抽出:lifecycle / endpoint 純函式從 Window.tsx 搬到 utils/windowHelpers.ts,
+// 視為 Window 邏輯的一部分,正向 token 檢查兩檔聯集(否定斷言仍只看 Window.tsx)。
+const windowHelpersSource = readSource("src/utils/windowHelpers.ts");
+const windowLogicSource = `${windowSource}\n${windowHelpersSource}`;
 for (const token of [
     "review_request_id",
     "blocked_conversion",
@@ -79,7 +83,7 @@ for (const token of [
     // remove-conflict-review-from-fast-mvp:review-bootstrap endpoint 與 getReviewBootstrap 已退役;
     // session-first 仍保留(先 GET session → 拿 model_version_id),但 bootstrap 取代為 stream-config 內 artifacts。
 ]) {
-    assert.ok(windowSource.includes(token), `Window.tsx is missing ${token}`);
+    assert.ok(windowLogicSource.includes(token), `Window.tsx/windowHelpers is missing ${token}`);
 }
 // 額外確認 review-bootstrap path 已從 Window.tsx 移除
 assert.ok(!windowSource.includes("getReviewBootstrap"), "Window.tsx must NOT call getReviewBootstrap after remove-conflict-review-from-fast-mvp");
@@ -149,7 +153,7 @@ assert.match(
     "session-first viewer must prefer stream_config stage_composition primary URL over stale /api/assets entries",
 );
 assert.match(
-    windowSource,
+    windowLogicSource,
     /function sameStreamTransportEndpoint[\s\S]*?signalingServer[\s\S]*?signalingPort[\s\S]*?mediaServer[\s\S]*?mediaPort/,
     "spectator binding selection must compare the full transport endpoint, not only ids or ports",
 );
@@ -209,5 +213,41 @@ const artifactPanelSource = readSource("src/components/ArtifactPanel.tsx");
 for (const token of ["artifactBindings", "ready_status", "mapping_url", "load_order"]) {
     assert.ok(artifactPanelSource.includes(token), `ArtifactPanel.tsx is missing ${token}`);
 }
+
+// harden-web-viewer-test-resilience: source-level contracts shared across the apply agents
+assert.ok(
+    windowSource.includes("_pollForKitReadyId"),
+    "Window.tsx must name the Kit-ready poll handle _pollForKitReadyId",
+);
+assert.ok(
+    windowSource.includes("spectator_ready") && windowSource.includes("'matched'"),
+    "Window.tsx spectator branch must gate stageLoadStatus 'matched' on coordinator viewport_sharing.spectator_ready",
+);
+
+const appStreamSource = readSource("src/AppStream.tsx");
+assert.ok(
+    appStreamSource.includes("terminate(false)"),
+    "AppStream.tsx must tear down the stream via AppStreamer.terminate(false)",
+);
+assert.ok(
+    !appStreamSource.includes("._stream ="),
+    "AppStream.tsx must not assign ._stream directly after switching to AppStreamer.terminate(false)",
+);
+assert.ok(
+    !appStreamSource.includes("as any"),
+    "AppStream.tsx must not use `as any` after switching to AppStreamer.terminate(false)",
+);
+
+const appSource = readSource("src/App.tsx");
+assert.ok(
+    appSource.includes("MAX_POLL_RETRIES"),
+    "App.tsx must define the MAX_POLL_RETRIES constant",
+);
+
+const indexHtmlSource = readSource("index.html");
+assert.ok(
+    !indexHtmlSource.includes("gfn-client-sdk.js"),
+    "index.html must not load gfn-client-sdk.js",
+);
 
 console.log("[verify] session-first viewer contract passed");

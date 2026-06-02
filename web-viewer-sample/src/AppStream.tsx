@@ -66,106 +66,148 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         if (!this._requested) {
             this._requested = true;
 
-            let streamProps: StreamProps;
-            let streamConfig: DirectConfig | GFNConfig;
-            let streamSource: StreamType.DIRECT | StreamType.GFN;
-
+            // The GFN client SDK exposes a `GFN` global that the GFN stream config
+            // depends on. Load it lazily and only for the gfn source so non-gfn
+            // builds (local / stream) don't pull NVIDIA CDN script at all.
             if (StreamConfig.source === 'gfn') {
-                    streamSource = StreamType.GFN;
-                    streamConfig = {
-                        //@ts-ignore
-                        GFN             : GFN,
-                        catalogClientId : StreamConfig.gfn.catalogClientId,
-                        clientId        : StreamConfig.gfn.clientId,
-                        cmsId           : StreamConfig.gfn.cmsId,
-                        onUpdate        : (message: StreamEvent) => this._onUpdate(message),
-                        onStart         : (message: StreamEvent) => this._onStart(message),
-                        onCustomEvent   : (message: any) => this._onCustomEvent(message)
+                const existing = document.getElementById('gfn-client-sdk-script');
+                if (existing) {
+                    // script 標籤已存在但全域 GFN 可能仍在下載中(remount 命中既有 script);
+                    // ready 才直接 init,否則補掛 load/error 等就緒,避免 GFN 未定義就 _initStream 觸 ReferenceError。
+                    //@ts-ignore GFN global is provided by the lazily-loaded SDK script
+                    if (typeof GFN !== 'undefined') {
+                        this._initStream();
+                    } else {
+                        existing.addEventListener('load', () => this._initStream());
+                        existing.addEventListener('error', () => {
+                            console.error('Failed to load GFN client SDK script');
+                            this.props.onStreamFailed();
+                        });
                     }
-            }
-
-            else if (StreamConfig.source === 'local') {
-                streamSource = StreamType.DIRECT;
-                streamConfig = {
-                    videoElementId: 'remote-video',
-                    audioElementId: 'remote-audio',
-                    server: this.props.signalingserver || StreamConfig.local.server,
-                    authenticate: Boolean(this.props.accessToken),
-                    ...(this.props.accessToken ? { accessToken: this.props.accessToken } : {}),
-                    maxReconnects: 20,
-                    signalingServer: this.props.signalingserver || StreamConfig.local.server,
-                    signalingPort: this.props.signalingport || StreamConfig.local.signalingPort,
-                    mediaServer: this.props.mediaserver || StreamConfig.local.server,
-                    ...((this.props.mediaport || StreamConfig.local.mediaPort) != null && {
-                        mediaPort: this.props.mediaport || StreamConfig.local.mediaPort,
-                    }),
-                    nativeTouchEvents: true,
-                    // No hardcoded width/height/fps — library defaults (1920x1080/60) match the
-                    // server's renderer.resolution in the .kit file. The server's actual encoded
-                    // size may differ (e.g. 1920x1008 in headless mode) due to streaming-layer
-                    // internals; onStreamStats below detects that and calls AppStreamer.resize()
-                    // so client and server converge on whatever size the encoder actually delivers.
-                    onUpdate: (message: StreamEvent) => this._onUpdate(message),
-                    onStart: (message: StreamEvent) => this._onStart(message),
-                    onStreamStats: (message: StreamEvent) => this._onStreamStats(message),
-                    onCustomEvent: (message: any) => this._onCustomEvent(message),
-                    onStop: (message: StreamEvent) => this._onStop(message),
-                    onTerminate: (message: StreamEvent) => this._onTerminate(message)
-                };
-            }
-                
-            else if (StreamConfig.source === 'stream') {
-                streamSource =  StreamType.DIRECT;
-                streamConfig = {
-                    signalingServer: this.props.signalingserver,
-                    signalingPort: this.props.signalingport,
-                    mediaServer: this.props.mediaserver,
-                    mediaPort: this.props.mediaport,
-                    backendUrl: this.props.backendUrl,
-                    sessionId: this.props.sessionId,
-                    autoLaunch: true,
-                    cursor: 'free',
-                    mic: false,
-                    videoElementId: 'remote-video',
-                    audioElementId: 'remote-audio',
-                    authenticate: false,
-                    maxReconnects: 20,
-                    nativeTouchEvents: true,
-                    width: 1920,
-                    height: 1080,
-                    fps: 60,
-                    onUpdate: (message: StreamEvent) => this._onUpdate(message),
-                    onStart: (message: StreamEvent) => this._onStart(message),
-                    onCustomEvent: (message: any) => this._onCustomEvent(message),
-                    onStop: (message: StreamEvent) => this._onStop(message),
-                    onTerminate: (message: StreamEvent) => this._onTerminate(message),
-                };
-            }
-                
-            else {
-                console.error(`Unknown stream source: ${StreamConfig.source}`);
-                return
-            }
-
-            try {
-                streamProps = {streamConfig, streamSource}
-                AppStreamer.connect(streamProps)
-                .then((result: StreamEvent) => {
-                    console.info(result);
-                })
-                .catch((error: StreamEvent) => {
-                    console.error(error);
-                });
-            }
-            catch (error) {
-                console.error(error);
+                } else {
+                    const script = document.createElement('script');
+                    script.id = 'gfn-client-sdk-script';
+                    script.src = 'https://sdk.nvidia.com/gfn/client-sdk/1.x/gfn-client-sdk.js';
+                    script.onload = () => this._initStream();
+                    script.onerror = () => {
+                        console.error('Failed to load GFN client SDK script');
+                        this.props.onStreamFailed();
+                    };
+                    document.head.appendChild(script);
+                }
+            } else {
+                this._initStream();
             }
         }
     }
 
+    _initStream() {
+        let streamProps: StreamProps;
+        let streamConfig: DirectConfig | GFNConfig;
+        let streamSource: StreamType.DIRECT | StreamType.GFN;
+
+        if (StreamConfig.source === 'gfn') {
+            // #32:用 globalThis 讀取 GFN(缺失時為 undefined 而非裸變數 ReferenceError),
+            // 未就緒就走可控失敗回饋,確保 CSP / 離線 / 載入失敗不炸整頁。
+            //@ts-ignore GFN global is provided by the lazily-loaded SDK script
+            const gfnGlobal = globalThis.GFN;
+            if (gfnGlobal === undefined) {
+                console.error('GFN client SDK global is not available');
+                this.props.onStreamFailed();
+                return;
+            }
+            streamSource = StreamType.GFN;
+            streamConfig = {
+                GFN             : gfnGlobal,
+                catalogClientId : StreamConfig.gfn.catalogClientId,
+                clientId        : StreamConfig.gfn.clientId,
+                cmsId           : StreamConfig.gfn.cmsId,
+                onUpdate        : (message: StreamEvent) => this._onUpdate(message),
+                onStart         : (message: StreamEvent) => this._onStart(message),
+                onCustomEvent   : (message: any) => this._onCustomEvent(message)
+            }
+        }
+
+        else if (StreamConfig.source === 'local') {
+            streamSource = StreamType.DIRECT;
+            streamConfig = {
+                videoElementId: 'remote-video',
+                audioElementId: 'remote-audio',
+                server: this.props.signalingserver || StreamConfig.local.server,
+                authenticate: Boolean(this.props.accessToken),
+                ...(this.props.accessToken ? { accessToken: this.props.accessToken } : {}),
+                maxReconnects: 20,
+                signalingServer: this.props.signalingserver || StreamConfig.local.server,
+                signalingPort: this.props.signalingport || StreamConfig.local.signalingPort,
+                mediaServer: this.props.mediaserver || StreamConfig.local.server,
+                ...((this.props.mediaport || StreamConfig.local.mediaPort) != null && {
+                    mediaPort: this.props.mediaport || StreamConfig.local.mediaPort,
+                }),
+                nativeTouchEvents: true,
+                // No hardcoded width/height/fps — library defaults (1920x1080/60) match the
+                // server's renderer.resolution in the .kit file. The server's actual encoded
+                // size may differ (e.g. 1920x1008 in headless mode) due to streaming-layer
+                // internals; onStreamStats below detects that and calls AppStreamer.resize()
+                // so client and server converge on whatever size the encoder actually delivers.
+                onUpdate: (message: StreamEvent) => this._onUpdate(message),
+                onStart: (message: StreamEvent) => this._onStart(message),
+                onStreamStats: (message: StreamEvent) => this._onStreamStats(message),
+                onCustomEvent: (message: any) => this._onCustomEvent(message),
+                onStop: (message: StreamEvent) => this._onStop(message),
+                onTerminate: (message: StreamEvent) => this._onTerminate(message)
+            };
+        }
+
+        else if (StreamConfig.source === 'stream') {
+            streamSource =  StreamType.DIRECT;
+            streamConfig = {
+                signalingServer: this.props.signalingserver,
+                signalingPort: this.props.signalingport,
+                mediaServer: this.props.mediaserver,
+                mediaPort: this.props.mediaport,
+                backendUrl: this.props.backendUrl,
+                sessionId: this.props.sessionId,
+                autoLaunch: true,
+                cursor: 'free',
+                mic: false,
+                videoElementId: 'remote-video',
+                audioElementId: 'remote-audio',
+                authenticate: false,
+                maxReconnects: 20,
+                nativeTouchEvents: true,
+                width: 1920,
+                height: 1080,
+                fps: 60,
+                onUpdate: (message: StreamEvent) => this._onUpdate(message),
+                onStart: (message: StreamEvent) => this._onStart(message),
+                onCustomEvent: (message: any) => this._onCustomEvent(message),
+                onStop: (message: StreamEvent) => this._onStop(message),
+                onTerminate: (message: StreamEvent) => this._onTerminate(message),
+            };
+        }
+
+        else {
+            console.error(`Unknown stream source: ${StreamConfig.source}`);
+            return
+        }
+
+        try {
+            streamProps = {streamConfig, streamSource}
+            AppStreamer.connect(streamProps)
+            .then((result: StreamEvent) => {
+                console.info(result);
+            })
+            .catch((error: StreamEvent) => {
+                console.error(error);
+            });
+        }
+        catch (error) {
+            console.error(error);
+        }
+    }
+
     componentWillUnmount() {
-        AppStreamer.stop();
-        (AppStreamer as any)._stream = null; // Accessing a private member
+        AppStreamer.terminate(false);
     }
 
     componentDidUpdate(_prevProps: AppStreamProps, prevState: AppStreamState, _snapshot: any) {
@@ -185,8 +227,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     }
 
     static stop() {
-        AppStreamer.stop();
-        (AppStreamer as any)._stream = null; // Accessing a private member
+        AppStreamer.terminate(false);
     }
 
     _onStart(message: any) {

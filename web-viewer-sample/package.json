@@ -15,7 +15,9 @@
         "build": "vite build",
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
         "preview": "vite preview",
-        "verify": "npm run build && npm run test:struct-log",
+        "verify": "npm run build && npm run test && npm run test:struct-log",
+        "test": "vitest run",
+        "test:watch": "vitest",
         "test:session-first": "node scripts/verify-session-first-contract.mjs",
         "test:conversion-summary-card": "node scripts/verify-conversion-summary-card.mjs",
         "test:tri-ready-states": "node scripts/verify-tri-ready-states.mjs",
@@ -49,7 +51,9 @@
         "eslint": "^8.55.0",
         "eslint-plugin-react-hooks": "^4.6.0",
         "eslint-plugin-react-refresh": "^0.4.5",
+        "jsdom": "^24.1.0",
         "typescript": "^5.2.2",
-        "vite": "^5.0.8"
+        "vite": "^5.0.8",
+        "vitest": "^1.6.0"
     }
 }

@@ -1,3 +1,5 @@
+import { resolveBimControlBase } from "./envHelpers";
+
 function queryParam(name: string): string | null {
     if (typeof globalThis.location === "undefined") return null;
     return new URLSearchParams(globalThis.location.search).get(name);
@@ -72,7 +74,7 @@ function positiveNumberConfig(queryName: string, envName: string, fallback: numb
 export const reviewEnv = {
     coordinatorApiBase: queryCoordinatorApiBase || envCoordinatorApiBase,
     coordinatorSocketUrl: queryCoordinatorSocketUrl || queryCoordinatorApiBase || import.meta.env.VITE_COORDINATOR_SOCKET_URL || envCoordinatorApiBase,
-    bimControlApiBase: import.meta.env.VITE_BIM_CONTROL_API_BASE || queryCoordinatorApiBase || envCoordinatorApiBase,
+    bimControlApiBase: resolveBimControlBase(queryCoordinatorApiBase, envCoordinatorApiBase),
     defaultProjectId: queryParam("projectId") || import.meta.env.VITE_DEFAULT_PROJECT_ID || "project_demo_001",
     defaultModelVersionId: queryParam("modelVersionId") || import.meta.env.VITE_DEFAULT_MODEL_VERSION_ID || "version_demo_001",
     defaultReviewRequestId: queryParam("reviewRequestId") || queryParam("review_request_id") || import.meta.env.VITE_DEFAULT_REVIEW_REQUEST_ID || "",

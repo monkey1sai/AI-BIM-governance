@@ -30,8 +30,11 @@ import {
     destroyStreamingSession,
     StreamItem
 } from './Endpoints';
+import { shouldRetryPoll } from './utils/pollHelpers';
 
 export const headerHeight: number = 60;
+
+const MAX_POLL_RETRIES = 36;
 
 enum StreamStatus {
     IDLE,
@@ -104,7 +107,7 @@ class App extends Component<{}, AppState>{
     /**
      * Resets application state to default values
     */
-    private _resetState() {
+    private _resetState(connectionText: string = '') {
         this.setState({
             currentForm: StreamConfig.source === "local" ? Forms.Stream : Forms.AppOnly,
             useWebUI: true,
@@ -117,7 +120,7 @@ class App extends Component<{}, AppState>{
             selectedApplicationVersion: '',
             selectedApplicationProfile: '',
             streamStatus: StreamStatus.IDLE,
-            connectionText: '',
+            connectionText,
             backendUrl: '',
             signalingserver: '',
             signalingport: 0,
@@ -133,7 +136,7 @@ class App extends Component<{}, AppState>{
      * 
      * @param sessionId - The ID of the session
      */
-    async pollForSessionReady(sessionId: string) {
+    async pollForSessionReady(sessionId: string, retryCount = 0) {
         try {
             console.info("polling for session");
             const response = await getStreamingSessionInfo(this.state.streamServer, sessionId);
@@ -143,12 +146,22 @@ class App extends Component<{}, AppState>{
                 console.info("Delay complete. Setting up stream...");
                 this.setupStream(response.data as StreamItem);
             }
-            else {
-                setTimeout(() => this.pollForSessionReady(sessionId), 10000);
+            else if (shouldRetryPoll(retryCount, MAX_POLL_RETRIES)) {
+                setTimeout(() => this.pollForSessionReady(sessionId, retryCount + 1), 10000);
                 console.log( `Waiting for session ${sessionId} to be ready... Last checked at ${new Date().toLocaleTimeString()}`)
+            }
+            else {
+                console.error(`Session ${sessionId} did not become ready after ${MAX_POLL_RETRIES} retries.`);
+                this._resetState("等待 streaming session 就緒逾時，請重試。")
             }
         } catch (error) {
             console.error('Error polling session info:', error);
+            if (shouldRetryPoll(retryCount, MAX_POLL_RETRIES)) {
+                setTimeout(() => this.pollForSessionReady(sessionId, retryCount + 1), 10000);
+            }
+            else {
+                this._resetState("等待 streaming session 就緒逾時，請重試。")
+            }
         }
     }
 
