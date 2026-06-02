@@ -112,6 +112,17 @@ def create_conversion_api_app(
             background_tasks.add_task(store.complete_conversion_job, job["conversion_job_id"])
         return job
 
+    # harden-internal-auth-and-config-hygiene #2: these read-only GET handlers
+    # (list / {id} / {id}/result, plus the artifacts served via
+    # `public_artifacts_url`) are intentionally NOT token-protected. Their trust
+    # boundary is the loopback-only binding — the host-native service defaults to
+    # `DEFAULT_HOST=127.0.0.1` (see host_native_conversion_service.py), so only
+    # local callers (the coordinator polling /result) can reach them. The write
+    # path (POST /api/conversions/ifc-to-usdc) already enforces
+    # `internal_conversion_token` above for defense-in-depth. If
+    # `STREAMING_CONVERSION_HOST` is ever set to a non-loopback address, these
+    # GET / artifacts paths should also be put behind token protection, since the
+    # loopback assumption that makes them safe no longer holds.
     @app.get("/api/conversions")
     def list_conversions(
         model_version_id: str | None = None,

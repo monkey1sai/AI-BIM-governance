@@ -17,7 +17,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="AI-BIM Kit Manager API", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        # 預設 ["*"]（未設 KIT_MANAGER_CORS_ORIGINS 時）以維持既有 dev 行為；
+        # 可透過環境變數收緊白名單，見 settings.py 的 _parse_cors_origins（#26）。
+        allow_origins=settings.cors_origins,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )

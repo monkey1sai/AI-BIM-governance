@@ -20,6 +20,9 @@ function Resolve-HybridEnvFile {
     if (Test-Path -LiteralPath ".env.web-plane.host-kit") {
         return ".env.web-plane.host-kit"
     }
+    # diagnostic 工具:只做 check 不啟動 runtime,missing real env 不強制 throw(與 deploy.ps1
+    # 一致的訊息,但此處只發 Warning 並 degrade 到 .example;Read-EnvFile 對不存在的檔回空表)。
+    Write-Warning ".env.web-plane.host-kit not found; falling back to .example — dev/demo only, set production values in a real .env"
     return ".env.web-plane.host-kit.example"
 }
 

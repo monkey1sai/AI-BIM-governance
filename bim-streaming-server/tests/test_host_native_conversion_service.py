@@ -185,6 +185,15 @@ def test_host_native_service_enforces_internal_token(tmp_path: Path):
     )
 
     missing = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    # harden-internal-auth-and-config-hygiene #2: align the host-native enforcement
+    # test with the authority layer's existing 401/403/202 ladder — a *present but
+    # wrong* token MUST be rejected with 403 (distinct from 401 missing-token), not
+    # silently accepted.
+    invalid = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(),
+        headers={"X-Internal-Conversion-Token": "wrong-token"},
+    )
     valid = client.post(
         "/api/conversions/ifc-to-usdc",
         json=ifc_ready_payload(),
@@ -192,7 +201,35 @@ def test_host_native_service_enforces_internal_token(tmp_path: Path):
     )
 
     assert missing.status_code == 401
+    assert invalid.status_code == 403
     assert valid.status_code == 202
+
+
+def test_host_native_load_config_reads_token_from_env():
+    """harden-internal-auth-and-config-hygiene #2: load_config maps
+    STREAMING_CONVERSION_INTERNAL_TOKEN into internal_conversion_token, and the
+    `or None` normalization means an empty string is treated as "no token"
+    (None) rather than an empty-but-truthy secret that would 401 every caller.
+    """
+    set_token = load_config({"STREAMING_CONVERSION_INTERNAL_TOKEN": "abc"})
+    assert set_token.internal_conversion_token == "abc"
+
+    blank_token = load_config({"STREAMING_CONVERSION_INTERNAL_TOKEN": ""})
+    assert blank_token.internal_conversion_token is None
+
+
+def test_host_native_service_unconfigured_token_keeps_demo_open(tmp_path: Path):
+    """harden-internal-auth-and-config-hygiene #2 (regression guard): with no token
+    configured (the default), the demo POST path stays open — an ifc-to-usdc
+    request WITHOUT an X-Internal-Conversion-Token header still returns 202. This
+    locks in that hardening the *configured* case never accidentally starts
+    requiring a token when none is set.
+    """
+    client = _client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+
+    assert response.status_code == 202
 
 
 def test_host_native_service_failed_conversion_is_not_ready(tmp_path: Path):
