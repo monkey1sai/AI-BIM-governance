@@ -81,6 +81,8 @@ bim-streaming-server/_cache/
 bim-streaming-server/extscache/
 bim-streaming-server/cache/
 bim-streaming-server/logs/
+# defence-in-depth:bim-streaming-server/.gitignore 已涵蓋 *.etl(含寫到 cwd 的);此為備援,防 sub-repo .gitignore 被移除時 .etl 仍被忽略
+bim-streaming-server/*.etl
 bim-streaming-server/kit/logs/
 
 # ----------------------------

@@ -7,13 +7,12 @@ repo-root pytest 目標，取代已刪 `_worker`/`_bim-control` 在 verify 的�
 """
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tests"))
+# Cross-package import path (tests/ -> sys.path) is centralized in conftest.py.
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from fakes import (  # noqa: E402
     CloudBimControlApi,
@@ -27,7 +26,7 @@ from fakes import (  # noqa: E402
 
 
 def _contract(name: str) -> dict:
-    return json.loads((ROOT / "tests" / "contracts" / name).read_text(encoding="utf-8"))
+    return json.loads((REPO_ROOT / "tests" / "contracts" / name).read_text(encoding="utf-8"))
 
 
 def test_ifc_ready_contract_parses_with_required_fields():
@@ -79,6 +78,11 @@ def test_external_ifc_worker_client_double_builds_worker_compatibility_payload()
 def test_external_ifc_worker_client_rejects_unsupported_scheme():
     with pytest.raises(ValueError, match="Unsupported coordinator base_url scheme"):
         post_ifc_ready("file:///tmp/coordinator")
+
+
+def test_external_ifc_worker_client_rejects_non_allowlisted_host():
+    with pytest.raises(ValueError, match="host not allowed"):
+        post_ifc_ready("http://evil.example.com")
 
 
 def test_cloud_bim_control_double_records_callbacks_and_filters():

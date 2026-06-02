@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string[]] $IfcPath,
 
+    # 刻意保留的 typo alias(OutputNamne),向後相容既有呼叫者,勿改 — 移除/改名都會 breaking
     [Alias("OutputNamne")]
     [string] $OutputName = "{source-file-name}.usdc",
 
