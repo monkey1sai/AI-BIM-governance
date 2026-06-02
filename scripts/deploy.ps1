@@ -442,7 +442,18 @@ $docker     = Test-DockerEnvironment       -RepoRoot $RepoRoot
 $hostNative = Test-HostNativeEnvironment   -RepoRoot $RepoRoot
 $envFiles   = Test-EnvFiles                -RepoRoot $RepoRoot
 $resolvedEnvFile = if ([string]::IsNullOrWhiteSpace($EnvFile)) {
-    if ($docker.envFile) { $docker.envFile } else { '.env.web-plane.host-kit.example' }
+    # $docker.envFile 解析順序(見 preflight-docker.ps1 Test-DockerEnvironment):
+    #   real .env.web-plane.host-kit 存在 → '.env.web-plane.host-kit'
+    #   只有 .example 存在             → '.env.web-plane.host-kit.example'(dev/demo fallback,發 Warning)
+    #   兩者皆無                       → $null(throw,不把不存在的 --env-file 往後傳)
+    if ($docker.envFile -eq '.env.web-plane.host-kit.example') {
+        Write-Warning '.env.web-plane.host-kit not found; falling back to .example — dev/demo only, set production values in a real .env'
+        $docker.envFile
+    } elseif ($docker.envFile) {
+        $docker.envFile
+    } else {
+        throw "env_file_missing: .env.web-plane.host-kit / .env.web-plane.host-kit.example not found in repo root ($RepoRoot)"
+    }
 } else { $EnvFile }
 $script:resolvedEnvFile = $resolvedEnvFile
 $resolvedPublicHostRaw = if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {

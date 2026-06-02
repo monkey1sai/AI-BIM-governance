@@ -119,6 +119,13 @@ const participantSchema = z.object({
   display_name: z.string().optional(),
 });
 
+// `type` is an open string (no enum) and the body is `.passthrough()` on
+// purpose: retired collaboration event types (`highlightRequest` /
+// `selectionUpdate` / `annotationCreate`, removed 2026-05-21 in
+// `remove-conflict-review-from-fast-mvp`) are still accepted into the raw
+// event log for archive compatibility. The lifecycle view filters them out
+// via EventLog.listLifecycle()'s allowlist; the full EventLog.list() keeps
+// them so historical logs replay intact.
 const appendEventSchema = z
   .object({
     type: z.string().min(1),
@@ -758,10 +765,17 @@ export function createCoordinatorApp(
     });
   });
 
-  // Local-dev-only structured log endpoints (cross-service-structured-log-baseline)
-  // intentionally do NOT require the internal token; they are reached via
-  // 127.0.0.1 binding. Production hardening is a future change.
-  const STRUCT_LOG_UNAUTH_PATHS = new Set(["/viewer-log", "/structLog/health"]);
+  // Internal API auth boundary (cross-service-structured-log-baseline).
+  // The two paths below are an intentional, narrowly-scoped allowlist; every
+  // other `/api/internal/*` route still requires a valid internal token:
+  //   - `/viewer-log`     : log ingest must never drop records because of an
+  //                         auth failure — data-plane availability for the log
+  //                         pipeline takes priority over gating writes.
+  //   - `/structLog/health`: a liveness/probe surface for monitoring; health
+  //                         checks must stay reachable without credentials.
+  // These endpoints are reached via the 127.0.0.1 binding, so the open paths
+  // are not exposed beyond the local host.
+  const STRUCT_LOG_UNAUTH_PATHS = new Set(["/viewer-log", "/structLog/health"]); // Intentionally unauth — see justification above
 
   app.use("/api/internal", (request, response, next) => {
     if (STRUCT_LOG_UNAUTH_PATHS.has(request.path)) {
