@@ -220,8 +220,8 @@ assert.ok(
     "Window.tsx must name the Kit-ready poll handle _pollForKitReadyId",
 );
 assert.ok(
-    windowSource.includes("stageLoadStatus: 'matched'"),
-    "Window.tsx spectator branch must set stageLoadStatus: 'matched'",
+    windowSource.includes("spectator_ready") && windowSource.includes("'matched'"),
+    "Window.tsx spectator branch must gate stageLoadStatus 'matched' on coordinator viewport_sharing.spectator_ready",
 );
 
 const appStreamSource = readSource("src/AppStream.tsx");

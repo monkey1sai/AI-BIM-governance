@@ -8,4 +8,8 @@ describe("resolveBimControlBase", () => {
     it("falls back to the env coordinator base when query is empty", () => {
         expect(resolveBimControlBase("", "e")).toBe("e");
     });
+
+    it("falls back to the env coordinator base when query is null", () => {
+        expect(resolveBimControlBase(null, "e")).toBe("e");
+    });
 });

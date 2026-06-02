@@ -157,6 +157,7 @@ stage-load evidence.
 
 #### Scenario: Spectator trusts primary stage composition
 
-- **WHEN** viewer 以 spectator 角色連上 coordinator 已標記 `spectator_ready` 的 Kit
+- **WHEN** viewer 以 spectator 角色連上 coordinator 且 `viewport_sharing.spectator_ready === true`
 - **THEN** viewer SHALL 將 spectator 的 stage-load 狀態視為 `matched`(信任 primary 已在 serving stage),使 Runtime ready 能轉 `yes`
-- **AND** spectator MUST NOT 因缺自身 stage-load 證據而永久停在 `pending` / Runtime `incomplete`
+- **AND** spectator MUST NOT 在 `spectator_ready` 為真時仍因缺自身 stage-load 證據而停在 `pending`
+- **AND** 當 `spectator_ready` 非真時 viewer SHALL 維持 `pending`,不偽宣告 Runtime ready

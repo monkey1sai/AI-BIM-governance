@@ -946,14 +946,16 @@ export default class App extends React.Component<AppProps, AppState> {
             this.setState({ streamDiagnostic: null, webrtcLifecycleStatus: "started" });
             this._clearStreamStartTimeout();
             if (isSpectatorStreamMode()) {
-                // viewer-edge-bim-server-console:spectator 沿用 primary 已載入的
-                // Kit stage,本端不再自行 openStage,直接視為 stage_truth=matched。
+                // viewer-edge-bim-server-console:spectator 沿用 primary 已載入的 Kit stage,
+                // 本端不自行 openStage;但僅當 coordinator 標記 viewport_sharing.spectator_ready
+                // 才視為 stage_truth=matched,否則維持 pending(不偽宣告 Runtime ready)。
+                const spectatorReady = this.state.latestStreamConfig?.viewport_sharing?.spectator_ready === true;
                 this.setState((state) => ({
                     showStream: true,
                     showUI: true,
                     isLoading: false,
-                    loadingText: "旁觀串流已連線",
-                    stageLoadStatus: 'matched',
+                    loadingText: spectatorReady ? "旁觀串流已連線" : "旁觀串流已連線，等待 primary stage 就緒",
+                    stageLoadStatus: spectatorReady ? 'matched' : 'pending',
                     reviewEvents: [...state.reviewEvents, "Spectator stream 已連線，沿用目前 Kit stage"],
                 }));
                 return;

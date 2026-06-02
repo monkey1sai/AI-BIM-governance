@@ -79,7 +79,12 @@ export function selectSpectatorBinding(
     primaryKitInstanceId: string | null | undefined,
     primaryWebrtc: KitStreamEndpoint,
 ): KitInstanceBinding | null {
-    if (primaryKitInstanceId) {
+    // primaryKitInstanceId 必須真的存在於 bindings 才用 id 顯式挑選;否則(coordinator
+    // 資料不一致 / 缺 id)退回 transport port-diff fallback,避免誤選到 primary binding。
+    const primaryPresent = primaryKitInstanceId
+        ? bindings.some((binding) => binding.kit_instance_id === primaryKitInstanceId)
+        : false;
+    if (primaryPresent) {
         return bindings.find((binding) => binding.kit_instance_id !== primaryKitInstanceId) || null;
     }
     return bindings.find((binding) => !sameStreamTransportEndpoint(binding.stream_config, primaryWebrtc)) || null;

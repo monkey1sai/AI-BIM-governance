@@ -107,10 +107,18 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         let streamSource: StreamType.DIRECT | StreamType.GFN;
 
         if (StreamConfig.source === 'gfn') {
+            // #32:用 globalThis 讀取 GFN(缺失時為 undefined 而非裸變數 ReferenceError),
+            // 未就緒就走可控失敗回饋,確保 CSP / 離線 / 載入失敗不炸整頁。
+            //@ts-ignore GFN global is provided by the lazily-loaded SDK script
+            const gfnGlobal = globalThis.GFN;
+            if (gfnGlobal === undefined) {
+                console.error('GFN client SDK global is not available');
+                this.props.onStreamFailed();
+                return;
+            }
             streamSource = StreamType.GFN;
             streamConfig = {
-                //@ts-ignore
-                GFN             : GFN,
+                GFN             : gfnGlobal,
                 catalogClientId : StreamConfig.gfn.catalogClientId,
                 clientId        : StreamConfig.gfn.clientId,
                 cmsId           : StreamConfig.gfn.cmsId,

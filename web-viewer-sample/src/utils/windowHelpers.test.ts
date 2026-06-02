@@ -121,4 +121,11 @@ describe("selectSpectatorBinding", () => {
         const selected = selectSpectatorBinding([primaryBinding], undefined, primaryTransport);
         expect(selected).toBeNull();
     });
+
+    it("falls back to transport port-diff when primaryKitInstanceId is not in bindings", () => {
+        // coordinator 資料不一致:primaryKitInstanceId 不在 bindings → 不可用 id 顯式挑
+        // (否則可能選到實際 primary),改走 transport port-diff fallback。
+        const selected = selectSpectatorBinding(bindings, "kit_nonexistent", primaryTransport);
+        expect(selected).toBe(spectatorBinding);
+    });
 });
