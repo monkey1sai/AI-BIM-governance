@@ -17,6 +17,17 @@ export interface StreamingConversionDispatchResult {
   authority?: string;
 }
 
+export interface StreamingConversionBinding {
+  correlationId: string;
+  externalModelVersionId: string;
+  /** fast-ifc-link-demo-loop §4.1:coordinator container view path,優先使用。 */
+  localPath?: string;
+  /** fast-ifc-link-demo-loop §4.1:host view path,streaming-server host-native 用。 */
+  hostLocalPath?: string;
+  /** Internal-only opt-in;外部 IFC-ready contract 不宣告 profile。 */
+  conversionProfile?: string;
+}
+
 /**
  * streaming-owned conversion result（host-native `GET /api/conversions/{id}/result`）。
  * coordinator 只消費 metadata refs，不取 `.usdc` 本體（雲端 callback 為
@@ -84,16 +95,9 @@ export interface PollConversionResultOptions {
  */
 export function toInternalIfcReadyEvent(
   event: ExternalIfcReadyEvent,
-  binding: {
-    correlationId: string;
-    externalModelVersionId: string;
-    /** fast-ifc-link-demo-loop §4.1:coordinator container view path,優先使用。 */
-    localPath?: string;
-    /** fast-ifc-link-demo-loop §4.1:host view path,streaming-server host-native 用。 */
-    hostLocalPath?: string;
-  },
+  binding: StreamingConversionBinding,
 ): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     event_type: "ifc_ready",
     event_id: event.event_id || `evt_${binding.correlationId}`,
     correlation_id: binding.correlationId,
@@ -123,6 +127,10 @@ export function toInternalIfcReadyEvent(
     // callback_url 作為關聯線索，實際投遞與 outbox 不在 T3 範圍。
     callback_url: event.callback_url ?? null,
   };
+  if (binding.conversionProfile) {
+    payload.conversion_profile = binding.conversionProfile;
+  }
+  return payload;
 }
 
 export class StreamingConversionClient {
@@ -142,14 +150,7 @@ export class StreamingConversionClient {
 
   async createConversionJob(
     event: ExternalIfcReadyEvent,
-    binding: {
-      correlationId: string;
-      externalModelVersionId: string;
-      /** fast-ifc-link-demo-loop §4.1:coordinator container view path,寫進 payload。 */
-      localPath?: string;
-      /** fast-ifc-link-demo-loop §4.1:host view path,streaming-server host-native 用。 */
-      hostLocalPath?: string;
-    },
+    binding: StreamingConversionBinding,
   ): Promise<StreamingConversionDispatchResult> {
     const url = new URL(
       "api/conversions/ifc-to-usdc",

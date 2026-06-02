@@ -706,6 +706,352 @@ def _clear_pxr_test_stubs(monkeypatch) -> None:
         monkeypatch.delitem(sys.modules, name, raising=False)
 
 
+# --- author-ifc-openusd-identity-paths: IFC-first OpenUSD identity authoring ---
+
+
+def test_identity_path_generation_is_deterministic_usd_safe_and_preserves_originals():
+    from ifc_openusd_identity_author import build_identity_root_path, usd_safe_identifier
+
+    encoded_class = usd_safe_identifier("Ifc Wall/Type", fallback="Unclassified")
+    encoded_guid = usd_safe_identifier("19nzyxtx5CXwVzdF/4phxj", fallback="Shape")
+    identity = build_identity_root_path("Ifc Wall/Type", "19nzyxtx5CXwVzdF/4phxj")
+
+    assert encoded_class == "Ifc_Wall_Type"
+    assert encoded_guid == "_19nzyxtx5CXwVzdF_4phxj"
+    assert identity.path == "/World/Elements/Ifc_Wall_Type/G_19nzyxtx5CXwVzdF_4phxj"
+    assert identity.ifc_type == "Ifc Wall/Type"
+    assert identity.ifc_guid == "19nzyxtx5CXwVzdF/4phxj"
+    assert identity.class_token == "Ifc_Wall_Type"
+    assert identity.guid_token == "G_19nzyxtx5CXwVzdF_4phxj"
+
+
+def _install_fake_identity_ifcopenshell(
+    monkeypatch,
+    shapes: list[dict[str, str]],
+) -> None:
+    fake_ifcopenshell = types.ModuleType("ifcopenshell")
+    fake_geom = types.ModuleType("ifcopenshell.geom")
+
+    class FakeModel:
+        schema = "IFC4"
+
+        def by_type(self, name: str):
+            if name == "IfcProduct":
+                return [
+                    _FakeIfcProduct(
+                        guid=shape["guid"],
+                        ifc_type=shape["ifc_type"],
+                        name=shape.get("name"),
+                    )
+                    for shape in shapes
+                ]
+            return []
+
+    class FakeSettings:
+        USE_WORLD_COORDS = "USE_WORLD_COORDS"
+
+        def set(self, *_args):
+            return None
+
+    class FakeGeometry:
+        verts = (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        faces = (0, 1, 2)
+
+    class FakeShape:
+        def __init__(self, spec: dict[str, str]):
+            self.guid = spec["guid"]
+            self.name = spec.get("name") or ""
+            self.type = spec["ifc_type"]
+            self.geometry = FakeGeometry()
+
+    class FakeIterator:
+        def __init__(self):
+            self._shapes = [FakeShape(shape) for shape in shapes]
+            self._index = 0
+
+        def initialize(self) -> bool:
+            return len(self._shapes) > 0
+
+        def get(self):
+            return self._shapes[self._index]
+
+        def next(self) -> bool:
+            self._index += 1
+            return self._index < len(self._shapes)
+
+    fake_ifcopenshell.open = lambda _path: FakeModel()
+    fake_geom.settings = FakeSettings
+    fake_geom.iterator = lambda *_args: FakeIterator()
+    fake_ifcopenshell.geom = fake_geom
+    monkeypatch.setitem(sys.modules, "ifcopenshell", fake_ifcopenshell)
+    monkeypatch.setitem(sys.modules, "ifcopenshell.geom", fake_geom)
+
+
+def _run_identity_authoring(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    shapes: list[dict[str, str]],
+) -> tuple[Path, dict[str, Path], dict]:
+    _clear_pxr_test_stubs(monkeypatch)
+    _install_fake_identity_ifcopenshell(monkeypatch, shapes)
+    ifc_file = tmp_path / "source.ifc"
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    output_dir = tmp_path / "identity-out"
+
+    from ifc_openusd_identity_author import IfcOpenUsdIdentityAuthor
+
+    result = IfcOpenUsdIdentityAuthor(
+        ifc_path=ifc_file,
+        output_dir=output_dir,
+        source_model_version_id="version_identity_001",
+    ).author()
+    paths = {key: Path(value) for key, value in result["paths"].items()}
+    quality_metrics = result["quality_metrics"]
+    return output_dir, paths, quality_metrics
+
+
+def test_identity_authoring_creates_stable_element_roots_and_split_mesh_children(
+    tmp_path: Path,
+    monkeypatch,
+):
+    output_dir, paths, _metrics = _run_identity_authoring(
+        tmp_path,
+        monkeypatch,
+        shapes=[
+            {"guid": "GUID_A", "name": "Wall body A", "ifc_type": "IfcWall"},
+            {"guid": "GUID_A", "name": "Wall body B", "ifc_type": "IfcWall"},
+        ],
+    )
+
+    from pxr import Usd
+
+    stage = Usd.Stage.Open(str(paths["model_path"]))
+    assert stage is not None
+    root_path = "/World/Elements/IfcWall/G_GUID_A"
+    root = stage.GetPrimAtPath(root_path)
+    assert root.IsValid()
+    assert root.GetCustomDataByKey("bim:ifc_guid") == "GUID_A"
+    assert root.GetCustomDataByKey("bim:ifc_type") == "IfcWall"
+    assert root.GetCustomDataByKey("bim:ifc_name") == "Wall body A"
+    assert root.GetCustomDataByKey("bim:source_model_version_id") == "version_identity_001"
+    assert stage.GetPrimAtPath(f"{root_path}/Body_000").IsValid()
+    assert stage.GetPrimAtPath(f"{root_path}/Body_001").IsValid()
+
+    mapping = json.loads((output_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    assert mapping["mapping_fidelity"] == "guid_exact"
+    assert mapping["items"] == [
+        {
+            "ifc_guid": "GUID_A",
+            "usd_prim_path": root_path,
+            "ifc_type": "IfcWall",
+            "ifc_class": "IfcWall",
+            "ifc_name": "Wall body A",
+            "entity_id": "ifc:GUID_A",
+            "mapping_fidelity": "guid_exact",
+        }
+    ]
+
+
+def test_identity_authoring_emits_guid_exact_mapping_and_joinable_geo_indexes(
+    tmp_path: Path,
+    monkeypatch,
+):
+    output_dir, paths, metrics = _run_identity_authoring(
+        tmp_path,
+        monkeypatch,
+        shapes=[
+            {"guid": "GUID_WALL", "name": "Wall", "ifc_type": "IfcWall"},
+            {"guid": "GUID_DOOR", "name": "Door", "ifc_type": "IfcDoor"},
+        ],
+    )
+
+    expected_paths = {
+        "model_path",
+        "mapping_path",
+        "entity_index_path",
+        "metadata_path",
+        "pset_index_path",
+        "spatial_index_path",
+        "bbox_index_path",
+        "quality_metrics_path",
+        "geo_reference_path",
+    }
+    assert expected_paths.issubset(paths.keys())
+    for key in expected_paths:
+        assert paths[key].is_file(), key
+
+    mapping = json.loads((output_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    entity_index = json.loads((output_dir / "entity_index.json").read_text(encoding="utf-8"))
+    pset_index = json.loads((output_dir / "pset_index.json").read_text(encoding="utf-8"))
+    spatial_index = json.loads((output_dir / "spatial_index.json").read_text(encoding="utf-8"))
+    bbox_index = json.loads((output_dir / "bbox_index.json").read_text(encoding="utf-8"))
+    quality = json.loads((output_dir / "quality_metrics.json").read_text(encoding="utf-8"))
+
+    assert mapping["format_version"] == 2
+    assert mapping["mapping_fidelity"] == "guid_exact"
+    mapping_ids = {item["entity_id"] for item in mapping["items"]}
+    assert mapping_ids == {"ifc:GUID_WALL", "ifc:GUID_DOOR"}
+    for doc in (entity_index, pset_index, spatial_index, bbox_index):
+        assert {item["entity_id"] for item in doc["items"]} == mapping_ids
+    for item in bbox_index["items"]:
+        assert len(item["bbox_local"]) == 6
+        assert item["bbox_world"] is None
+    assert metrics["mapping_fidelity"] == quality["mapping_fidelity"] == "guid_exact"
+    assert quality["identity_authoring_profile"] == "ifcopenshell_openusd_identity"
+    assert quality["hard_quality_gates"]["usdc_openable"] is True
+    assert quality["hard_quality_gates"]["has_renderable_prims"] is True
+
+
+def test_identity_authoring_writes_psets_and_spatial_relationships_as_sidecars(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _clear_pxr_test_stubs(monkeypatch)
+    _install_fake_identity_ifcopenshell(
+        monkeypatch,
+        [{"guid": "GUID_SIDE_DATA", "name": "Side data wall", "ifc_type": "IfcWall"}],
+    )
+    ifc_file = tmp_path / "source.ifc"
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    output_dir = tmp_path / "identity-out"
+
+    from ifc_openusd_identity_author import IfcOpenUsdIdentityAuthor
+
+    monkeypatch.setattr(
+        IfcOpenUsdIdentityAuthor,
+        "_product_by_guid",
+        lambda self, ifc_model, ifc_guid: {"guid": ifc_guid},
+    )
+    monkeypatch.setattr(
+        IfcOpenUsdIdentityAuthor,
+        "_extract_psets",
+        lambda self, product: {"Pset_WallCommon": {"FireRating": "2hr"}},
+    )
+    monkeypatch.setattr(
+        IfcOpenUsdIdentityAuthor,
+        "_extract_spatial_relationships",
+        lambda self, product: [
+            {
+                "type": "spatial_container",
+                "related_entity_id": "ifc:STOREY_GUID",
+                "related_ifc_type": "IfcBuildingStorey",
+                "related_name": "Level 01",
+            }
+        ],
+    )
+
+    IfcOpenUsdIdentityAuthor(ifc_path=ifc_file, output_dir=output_dir).author()
+
+    psets = json.loads((output_dir / "pset_index.json").read_text(encoding="utf-8"))
+    spatial = json.loads((output_dir / "spatial_index.json").read_text(encoding="utf-8"))
+
+    assert psets["items"][0]["entity_id"] == "ifc:GUID_SIDE_DATA"
+    assert psets["items"][0]["psets"]["Pset_WallCommon"]["FireRating"] == "2hr"
+    assert spatial["items"][0]["usd_prim_path"] == "/World/Elements/IfcWall/G_GUID_SIDE_DATA"
+    assert spatial["items"][0]["relationships"] == [
+        {
+            "type": "spatial_container",
+            "related_entity_id": "ifc:STOREY_GUID",
+            "related_ifc_type": "IfcBuildingStorey",
+            "related_name": "Level 01",
+        }
+    ]
+    assert "/Level" not in spatial["items"][0]["usd_prim_path"]
+
+
+def test_identity_authoring_missing_geo_records_quality_warning_not_fabricated(
+    tmp_path: Path,
+    monkeypatch,
+):
+    output_dir, _paths, metrics = _run_identity_authoring(
+        tmp_path,
+        monkeypatch,
+        shapes=[{"guid": "GUID_GEO", "name": "Geo missing", "ifc_type": "IfcColumn"}],
+    )
+
+    geo = json.loads((output_dir / "geo_reference.json").read_text(encoding="utf-8"))
+    assert geo["available"] is False
+    assert geo["crs"] is None
+    assert geo["model_to_world_matrix"] is None
+    assert "geo_reference_missing" in geo["warnings"]
+    assert "geo_reference_missing" in metrics["warnings"]
+
+
+def test_sidecar_ordinal_mapping_is_explicitly_not_guid_exact(tmp_path: Path, monkeypatch):
+    _clear_pxr_test_stubs(monkeypatch)
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    usdc = out_dir / "model.usdc"
+    _write_usd_stage_with_ifc_prims(usdc, [{"path": "/World/NakedMesh"}])
+    _write_sidecar_doc(
+        out_dir,
+        [{"ifc_guid": "GUID_SIDE", "ifc_type": "IfcWall", "ifc_name": "Sidecar wall", "shape_index": 0}],
+    )
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+
+    quality = adapter._enumerate_usd_stage(
+        model_path=usdc,
+        ifc_path=ifc_source,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+
+    assert quality["mapping_fidelity"] == "sidecar_ordinal"
+    mapping = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    assert mapping["mapping_fidelity"] == "sidecar_ordinal"
+
+
+def test_identity_profile_convert_uses_ifc_directly_without_powershell_or_revit(
+    tmp_path: Path,
+    monkeypatch,
+):
+    _clear_pxr_test_stubs(monkeypatch)
+    _install_fake_identity_ifcopenshell(
+        monkeypatch,
+        [{"guid": "GUID_PROFILE", "name": "Profile wall", "ifc_type": "IfcWall"}],
+    )
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "convert-ifc-to-usdc.ps1").write_text("# fake", encoding="utf-8")
+    ifc_file = repo_root / "fixtures" / "source.ifc"
+    ifc_file.parent.mkdir(parents=True)
+    ifc_file.write_text("ISO-10303-21;", encoding="utf-8")
+    adapter = Ifc2UsdcPowershellConverterAdapter(repo_root=repo_root, work_dir=repo_root)
+
+    def powershell_must_not_run(**_kwargs):
+        raise AssertionError("identity profile must not require PowerShell, HOOPS, Revit Connector, or Revit add-in")
+
+    monkeypatch.setattr(adapter, "_run_powershell_conversion", powershell_must_not_run)
+
+    result = adapter.convert(
+        job={
+            "conversion_job_id": "stream_conv_identity",
+            "conversion_profile": "ifcopenshell_openusd_identity",
+            "model_version_id": "version_identity_001",
+        },
+        ifc_ready_event=ifc_ready_payload(
+            conversion_profile="ifcopenshell_openusd_identity",
+            ifc_artifact={
+                "artifact_id": "artifact_ifc_identity",
+                "format": "ifc",
+                "filename": "source.ifc",
+                "url": "edge-local://fixtures/source.ifc",
+            },
+        ),
+        output_dir=tmp_path / "out",
+    )
+
+    assert Path(result["model_path"]).is_file()
+    assert result["quality_metrics"]["identity_authoring_profile"] == "ifcopenshell_openusd_identity"
+    assert result["quality_metrics"]["mapping_fidelity"] == "guid_exact"
+    assert Path(result["pset_index_path"]).name == "pset_index.json"
+    assert Path(result["geo_reference_path"]).name == "geo_reference.json"
+
+
 def test_adapter_falls_back_when_hoops_cannot_load_parseable_ifc(tmp_path: Path, monkeypatch):
     repo_root = tmp_path / "repo"
     (repo_root / "scripts").mkdir(parents=True)

@@ -1,0 +1,17 @@
+{
+  "mapping_fidelity": "guid_exact",
+  "mapped_count": 1,
+  "all_targets_exist": true,
+  "missing_targets": [],
+  "sample": [
+    {
+      "ifc_guid": "3tk8X2hAzDbP6Dh8yarqTc",
+      "usd_prim_path": "/World/Elements/IfcWall/G_3tk8X2hAzDbP6Dh8yarqTc",
+      "ifc_type": "IfcWall",
+      "ifc_class": "IfcWall",
+      "ifc_name": "Identity Smoke Wall",
+      "entity_id": "ifc:3tk8X2hAzDbP6Dh8yarqTc",
+      "mapping_fidelity": "guid_exact"
+    }
+  ]
+}

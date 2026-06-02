@@ -1,0 +1,407 @@
+{
+  "conversion_job_id": "stream_conv_20260602080050_a0cc1bdc",
+  "job_id": "stream_conv_20260602080050_a0cc1bdc",
+  "authority": "bim-streaming-server",
+  "event_id": "evt_identity_smoke_20260602080049",
+  "idempotency_key": "evt_identity_smoke_20260602080049",
+  "request_fingerprint": "{\"conversion_profile\":\"ifcopenshell_openusd_identity\",\"correlation_id\":\"corr_identity_smoke_20260602080049\",\"event_type\":\"ifc_ready\",\"ifc_artifact\":{\"artifact_id\":\"artifact_identity_smoke_ifc\",\"filename\":\"input_identity_smoke.ifc\",\"format\":\"ifc\",\"host_local_path\":\"C:\\\\Repos\\\\active\\\\iot\\\\AI-BIM-governance\\\\.worktrees\\\\author-ifc-openusd-identity-paths\\\\docs\\\\evidence\\\\author-ifc-openusd-identity-paths\\\\input_identity_smoke.ifc\",\"local_path\":\"C:\\\\Repos\\\\active\\\\iot\\\\AI-BIM-governance\\\\.worktrees\\\\author-ifc-openusd-identity-paths\\\\docs\\\\evidence\\\\author-ifc-openusd-identity-paths\\\\input_identity_smoke.ifc\",\"url\":\"file:///C:/Repos/active/iot/AI-BIM-governance/.worktrees/author-ifc-openusd-identity-paths/docs/evidence/author-ifc-openusd-identity-paths/input_identity_smoke.ifc\"},\"model_version_id\":\"version_identity_smoke_20260602080049\",\"project_id\":\"project_identity_smoke\",\"requested_outputs\":[\"usdc\",\"element_mapping\",\"entity_index\",\"metadata\",\"pset_index\",\"spatial_index\",\"bbox_index\",\"quality_metrics\",\"geo_reference\"],\"tenant_id\":\"tenant_identity_smoke\"}",
+  "event_type": "ifc_ready",
+  "correlation_id": "corr_identity_smoke_20260602080049",
+  "tenant_id": "tenant_identity_smoke",
+  "project_id": "project_identity_smoke",
+  "model_version_id": "version_identity_smoke_20260602080049",
+  "export_job_id": null,
+  "source_rvt_artifact_id": null,
+  "ifc_artifact": {
+    "artifact_id": "artifact_identity_smoke_ifc",
+    "format": "ifc",
+    "filename": "input_identity_smoke.ifc",
+    "url": "file:///C:/Repos/active/iot/AI-BIM-governance/.worktrees/author-ifc-openusd-identity-paths/docs/evidence/author-ifc-openusd-identity-paths/input_identity_smoke.ifc",
+    "checksum_sha256": null,
+    "local_path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\input_identity_smoke.ifc",
+    "host_local_path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\input_identity_smoke.ifc"
+  },
+  "status": "succeeded",
+  "stage": "done",
+  "target_format": "usdc",
+  "requested_outputs": [
+    "usdc",
+    "element_mapping",
+    "entity_index",
+    "metadata",
+    "pset_index",
+    "spatial_index",
+    "bbox_index",
+    "quality_metrics",
+    "geo_reference"
+  ],
+  "callback_url": null,
+  "created_at": "2026-06-02T08:00:50.194221+00:00",
+  "updated_at": "2026-06-02T08:00:50.331429+00:00",
+  "ifc_ready_event": {
+    "event_type": "ifc_ready",
+    "event_id": "evt_identity_smoke_20260602080049",
+    "correlation_id": "corr_identity_smoke_20260602080049",
+    "tenant_id": "tenant_identity_smoke",
+    "project_id": "project_identity_smoke",
+    "model_version_id": "version_identity_smoke_20260602080049",
+    "conversion_profile": "ifcopenshell_openusd_identity",
+    "ifc_artifact": {
+      "artifact_id": "artifact_identity_smoke_ifc",
+      "format": "ifc",
+      "filename": "input_identity_smoke.ifc",
+      "url": "file:///C:/Repos/active/iot/AI-BIM-governance/.worktrees/author-ifc-openusd-identity-paths/docs/evidence/author-ifc-openusd-identity-paths/input_identity_smoke.ifc",
+      "local_path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\input_identity_smoke.ifc",
+      "host_local_path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\input_identity_smoke.ifc"
+    },
+    "requested_outputs": [
+      "usdc",
+      "element_mapping",
+      "entity_index",
+      "metadata",
+      "pset_index",
+      "spatial_index",
+      "bbox_index",
+      "quality_metrics",
+      "geo_reference"
+    ]
+  },
+  "result": {
+    "conversion_job_id": "stream_conv_20260602080050_a0cc1bdc",
+    "authority": "bim-streaming-server",
+    "status": "succeeded",
+    "ready": true,
+    "tenant_id": "tenant_identity_smoke",
+    "project_id": "project_identity_smoke",
+    "model_version_id": "version_identity_smoke_20260602080049",
+    "correlation_id": "corr_identity_smoke_20260602080049",
+    "ifc_artifact_id": "artifact_identity_smoke_ifc",
+    "model": {
+      "status": "ready",
+      "format": "usdc",
+      "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/model.usdc"
+    },
+    "source_ifc_filename": "input_identity_smoke.ifc",
+    "usdc_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/model.usdc",
+    "mapping_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/element_mapping.json",
+    "manifest_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/metadata.json",
+    "artifacts": {
+      "model_usdc": {
+        "artifact_id": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+        "role": "model_usdc",
+        "format": "usdc",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\model.usdc",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/model.usdc"
+      },
+      "element_mapping": {
+        "artifact_id": "artifact_stream_mapping_20260602080050_a0cc1bdc",
+        "role": "element_mapping",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\element_mapping.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/element_mapping.json"
+      },
+      "entity_index": {
+        "artifact_id": "artifact_stream_entity_index_20260602080050_a0cc1bdc",
+        "role": "entity_index",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\entity_index.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/entity_index.json"
+      },
+      "metadata": {
+        "artifact_id": "artifact_stream_metadata_20260602080050_a0cc1bdc",
+        "role": "metadata",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\metadata.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/metadata.json"
+      },
+      "pset_index": {
+        "artifact_id": "artifact_stream_pset_index_20260602080050_a0cc1bdc",
+        "role": "pset_index",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\pset_index.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/pset_index.json"
+      },
+      "spatial_index": {
+        "artifact_id": "artifact_stream_spatial_index_20260602080050_a0cc1bdc",
+        "role": "spatial_index",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\spatial_index.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/spatial_index.json"
+      },
+      "bbox_index": {
+        "artifact_id": "artifact_stream_bbox_index_20260602080050_a0cc1bdc",
+        "role": "bbox_index",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\bbox_index.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/bbox_index.json"
+      },
+      "quality_metrics": {
+        "artifact_id": "artifact_stream_quality_metrics_20260602080050_a0cc1bdc",
+        "role": "quality_metrics",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\quality_metrics.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/quality_metrics.json"
+      },
+      "geo_reference": {
+        "artifact_id": "artifact_stream_geo_reference_20260602080050_a0cc1bdc",
+        "role": "geo_reference",
+        "format": "json",
+        "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\geo_reference.json",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/geo_reference.json"
+      }
+    },
+    "quality_metrics": {
+      "source_ifc_entity_count": 1,
+      "mapped_count": 1,
+      "unmapped_count": 0,
+      "coverage_ratio": 1.0,
+      "coverage_status": "pass",
+      "materialization_strategy": "ifcopenshell_openusd_identity",
+      "identity_authoring_profile": "ifcopenshell_openusd_identity",
+      "mapping_fidelity": "guid_exact",
+      "semantic_mapping_fidelity": "guid_exact",
+      "mapping_has_ifc_type": true,
+      "mapping_has_ifc_name": true,
+      "sidecar_carrier_count": 1,
+      "minimum_coverage_baseline_locked": false,
+      "shape_count": 1,
+      "skipped_shape_count": 0,
+      "warnings": [
+        "geo_reference_missing"
+      ],
+      "hard_quality_gates": {
+        "usdc_openable": true,
+        "has_renderable_prims": true,
+        "placeholder_output": false
+      }
+    },
+    "lineage": {
+      "source_rvt_artifact_id": null,
+      "ifc_artifact_id": "artifact_identity_smoke_ifc",
+      "usdc_artifact_id": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+      "mapping_artifact_id": "artifact_stream_mapping_20260602080050_a0cc1bdc",
+      "entity_index_artifact_id": "artifact_stream_entity_index_20260602080050_a0cc1bdc",
+      "relations": [
+        {
+          "from": "artifact_identity_smoke_ifc",
+          "to": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "type": "converted_to"
+        },
+        {
+          "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "to": "artifact_stream_mapping_20260602080050_a0cc1bdc",
+          "type": "has_sidecar"
+        },
+        {
+          "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "to": "artifact_stream_entity_index_20260602080050_a0cc1bdc",
+          "type": "has_sidecar"
+        },
+        {
+          "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "to": "artifact_stream_pset_index_20260602080050_a0cc1bdc",
+          "type": "has_sidecar"
+        },
+        {
+          "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "to": "artifact_stream_spatial_index_20260602080050_a0cc1bdc",
+          "type": "has_sidecar"
+        },
+        {
+          "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "to": "artifact_stream_bbox_index_20260602080050_a0cc1bdc",
+          "type": "has_sidecar"
+        },
+        {
+          "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "to": "artifact_stream_quality_metrics_20260602080050_a0cc1bdc",
+          "type": "has_sidecar"
+        },
+        {
+          "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "to": "artifact_stream_geo_reference_20260602080050_a0cc1bdc",
+          "type": "has_sidecar"
+        }
+      ]
+    }
+  },
+  "callback_payload": {
+    "event_type": "streaming_conversion_result",
+    "authority": "bim-streaming-server",
+    "correlation_id": "corr_identity_smoke_20260602080049",
+    "tenant_id": "tenant_identity_smoke",
+    "project_id": "project_identity_smoke",
+    "model_version_id": "version_identity_smoke_20260602080049",
+    "conversion_job_id": "stream_conv_20260602080050_a0cc1bdc",
+    "status": "succeeded",
+    "result": {
+      "conversion_job_id": "stream_conv_20260602080050_a0cc1bdc",
+      "authority": "bim-streaming-server",
+      "status": "succeeded",
+      "ready": true,
+      "tenant_id": "tenant_identity_smoke",
+      "project_id": "project_identity_smoke",
+      "model_version_id": "version_identity_smoke_20260602080049",
+      "correlation_id": "corr_identity_smoke_20260602080049",
+      "ifc_artifact_id": "artifact_identity_smoke_ifc",
+      "model": {
+        "status": "ready",
+        "format": "usdc",
+        "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/model.usdc"
+      },
+      "source_ifc_filename": "input_identity_smoke.ifc",
+      "usdc_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/model.usdc",
+      "mapping_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/element_mapping.json",
+      "manifest_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/metadata.json",
+      "artifacts": {
+        "model_usdc": {
+          "artifact_id": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+          "role": "model_usdc",
+          "format": "usdc",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\model.usdc",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/model.usdc"
+        },
+        "element_mapping": {
+          "artifact_id": "artifact_stream_mapping_20260602080050_a0cc1bdc",
+          "role": "element_mapping",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\element_mapping.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/element_mapping.json"
+        },
+        "entity_index": {
+          "artifact_id": "artifact_stream_entity_index_20260602080050_a0cc1bdc",
+          "role": "entity_index",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\entity_index.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/entity_index.json"
+        },
+        "metadata": {
+          "artifact_id": "artifact_stream_metadata_20260602080050_a0cc1bdc",
+          "role": "metadata",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\metadata.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/metadata.json"
+        },
+        "pset_index": {
+          "artifact_id": "artifact_stream_pset_index_20260602080050_a0cc1bdc",
+          "role": "pset_index",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\pset_index.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/pset_index.json"
+        },
+        "spatial_index": {
+          "artifact_id": "artifact_stream_spatial_index_20260602080050_a0cc1bdc",
+          "role": "spatial_index",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\spatial_index.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/spatial_index.json"
+        },
+        "bbox_index": {
+          "artifact_id": "artifact_stream_bbox_index_20260602080050_a0cc1bdc",
+          "role": "bbox_index",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\bbox_index.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/bbox_index.json"
+        },
+        "quality_metrics": {
+          "artifact_id": "artifact_stream_quality_metrics_20260602080050_a0cc1bdc",
+          "role": "quality_metrics",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\quality_metrics.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/quality_metrics.json"
+        },
+        "geo_reference": {
+          "artifact_id": "artifact_stream_geo_reference_20260602080050_a0cc1bdc",
+          "role": "geo_reference",
+          "format": "json",
+          "path": "C:\\Repos\\active\\iot\\AI-BIM-governance\\.worktrees\\author-ifc-openusd-identity-paths\\docs\\evidence\\author-ifc-openusd-identity-paths\\artifacts-success\\stream_conv_20260602080050_a0cc1bdc\\geo_reference.json",
+          "url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/geo_reference.json"
+        }
+      },
+      "quality_metrics": {
+        "source_ifc_entity_count": 1,
+        "mapped_count": 1,
+        "unmapped_count": 0,
+        "coverage_ratio": 1.0,
+        "coverage_status": "pass",
+        "materialization_strategy": "ifcopenshell_openusd_identity",
+        "identity_authoring_profile": "ifcopenshell_openusd_identity",
+        "mapping_fidelity": "guid_exact",
+        "semantic_mapping_fidelity": "guid_exact",
+        "mapping_has_ifc_type": true,
+        "mapping_has_ifc_name": true,
+        "sidecar_carrier_count": 1,
+        "minimum_coverage_baseline_locked": false,
+        "shape_count": 1,
+        "skipped_shape_count": 0,
+        "warnings": [
+          "geo_reference_missing"
+        ],
+        "hard_quality_gates": {
+          "usdc_openable": true,
+          "has_renderable_prims": true,
+          "placeholder_output": false
+        }
+      },
+      "lineage": {
+        "source_rvt_artifact_id": null,
+        "ifc_artifact_id": "artifact_identity_smoke_ifc",
+        "usdc_artifact_id": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+        "mapping_artifact_id": "artifact_stream_mapping_20260602080050_a0cc1bdc",
+        "entity_index_artifact_id": "artifact_stream_entity_index_20260602080050_a0cc1bdc",
+        "relations": [
+          {
+            "from": "artifact_identity_smoke_ifc",
+            "to": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "type": "converted_to"
+          },
+          {
+            "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "to": "artifact_stream_mapping_20260602080050_a0cc1bdc",
+            "type": "has_sidecar"
+          },
+          {
+            "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "to": "artifact_stream_entity_index_20260602080050_a0cc1bdc",
+            "type": "has_sidecar"
+          },
+          {
+            "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "to": "artifact_stream_pset_index_20260602080050_a0cc1bdc",
+            "type": "has_sidecar"
+          },
+          {
+            "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "to": "artifact_stream_spatial_index_20260602080050_a0cc1bdc",
+            "type": "has_sidecar"
+          },
+          {
+            "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "to": "artifact_stream_bbox_index_20260602080050_a0cc1bdc",
+            "type": "has_sidecar"
+          },
+          {
+            "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "to": "artifact_stream_quality_metrics_20260602080050_a0cc1bdc",
+            "type": "has_sidecar"
+          },
+          {
+            "from": "artifact_stream_usdc_20260602080050_a0cc1bdc",
+            "to": "artifact_stream_geo_reference_20260602080050_a0cc1bdc",
+            "type": "has_sidecar"
+          }
+        ]
+      }
+    }
+  },
+  "callback_delivery": {
+    "status": "skipped",
+    "target_url": null,
+    "reason": "no callback_url; coordinator polls /result, cloud callback is T5 outbox"
+  },
+  "execution_boundary": {
+    "owner": "bim-streaming-server",
+    "live_webrtc_runtime": "separately_health_checked",
+    "converter_lane": "headless_subprocess_or_worker_lane"
+  }
+}
