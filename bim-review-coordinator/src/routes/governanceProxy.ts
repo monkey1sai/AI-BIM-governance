@@ -89,4 +89,21 @@ export function registerGovernanceProxy(app: Express): void {
   app.post("/api/governance/diffs/:diffId/apply-overlay", (request, response) => {
     void forward(response, "POST", `/api/diffs/${encodeURIComponent(request.params.diffId)}/apply-overlay`, request.body);
   });
+
+  // A3 cross-discipline federation proxy（透傳 governance-service /api/federated-sets*）。
+  app.post("/api/governance/federated-sets", (request, response) => {
+    void forward(response, "POST", "/api/federated-sets", request.body);
+  });
+  app.get("/api/governance/federated-sets/:setId", (request, response) => {
+    void forward(response, "GET", `/api/federated-sets/${encodeURIComponent(request.params.setId)}`);
+  });
+  app.post("/api/governance/federated-sets/:setId/members", (request, response) => {
+    void forward(response, "POST", `/api/federated-sets/${encodeURIComponent(request.params.setId)}/members`, request.body);
+  });
+  app.post("/api/governance/federated-sets/:setId/validate-coords", (request, response) => {
+    void forward(response, "POST", `/api/federated-sets/${encodeURIComponent(request.params.setId)}/validate-coords`, request.body);
+  });
+  app.post("/api/governance/federated-sets/:setId/build", (request, response) => {
+    void forward(response, "POST", `/api/federated-sets/${encodeURIComponent(request.params.setId)}/build`, request.body);
+  });
 }
