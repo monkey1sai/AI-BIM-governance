@@ -21,6 +21,7 @@ import {
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
+import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
   StreamingConversionClient,
   buildQualityMetricsSummary,
@@ -1323,6 +1324,9 @@ export function createCoordinatorApp(
   app.get("/api/dev/conversions/:jobId", async (request, response) => {
     await proxyConversionService(response, config.conversionApiBase, "GET", `/api/conversions/${encodeURIComponent(request.params.jobId)}`);
   });
+
+  // A1 治理 rule-run proxy（瀏覽器 → :8004 → governance-service 127.0.0.1:49102 loopback）。
+  registerGovernanceProxy(app);
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof z.ZodError) {
