@@ -82,7 +82,7 @@ def test_external_ifc_worker_client_rejects_unsupported_scheme():
 
 def test_external_ifc_worker_client_rejects_non_allowlisted_host():
     with pytest.raises(ValueError, match="host not allowed"):
-        post_ifc_ready("http://evil.example.com/api/external/ifc-ready")
+        post_ifc_ready("http://evil.example.com")
 
 
 def test_cloud_bim_control_double_records_callbacks_and_filters():
