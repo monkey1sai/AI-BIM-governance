@@ -1,0 +1,535 @@
+{
+  "summary": {
+    "rule_set": "default-governance",
+    "version": "1.0",
+    "total": 7126,
+    "passed": 7055,
+    "failed": 71,
+    "errored": 0,
+    "score": 99.0,
+    "target_summary": {
+      "DOOR-FIRERATING-REQUIRED": 72,
+      "ELEMENT-NAME-REQUIRED": 6715,
+      "WALL-STOREY-ASSIGNED": 339
+    },
+    "warnings": [
+      "rule ELEMENT-NAME-REQUIRED: 'IfcBuildingElement' 不在 schema，改用別名 'IfcBuiltElement'"
+    ],
+    "schema": "IFC4X3",
+    "ifc_source_filename": "fixture-bytes.ifc"
+  },
+  "sample_failed": [
+    {
+      "ifc_guid": "3$xKPHQlD10AG1nzmJabuU",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670",
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670:1",
+          "Pset_DoorCommon",
+          "Pset_DoorWindowGlazingType",
+          "Pset_EnvironmentalImpactIndicators",
+          "Pset_ManufacturerTypeInformation",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3$xKPHQlD10AG1nzmJabWw",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146",
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146:1",
+          "Pset_DoorCommon",
+          "Pset_DoorWindowGlazingType",
+          "Pset_EnvironmentalImpactIndicators",
+          "Pset_ManufacturerTypeInformation",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "1$6rKosWT5r9WGrkrSURLd",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):964015",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "單開-矩形- (1):60 x 230 cm (廁所用):964015",
+          "單開-矩形- (1):60 x 230 cm (廁所用):964015:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "08EdJUuVD0bvrClEZJ$JaB",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):2449258",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "單開-矩形- (1):60 x 230 cm (廁所用):2449258",
+          "單開-矩形- (1):60 x 230 cm (廁所用):2449258:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "08EdJUuVD0bvrClEZJ$Jdi",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):2449293",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "單開-矩形- (1):60 x 230 cm (廁所用):2449258",
+          "單開-矩形- (1):60 x 230 cm (廁所用):2449258:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3vPG3_YKT0v8uSahVRkyEX",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):2450829",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "單開-矩形- (1):60 x 230 cm (廁所用):2449258",
+          "單開-矩形- (1):60 x 230 cm (廁所用):2449258:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "0zwbDetyr4YQBdNMNLpHrQ",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2601029",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2601029",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2601029:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "0zwbDetyr4YQBdNMNLpHoM",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "門-開口:150 x 230mm 2:2601353",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_DoorBaseQuantities",
+          "門-開口:150 x 230mm 2:2601353",
+          "門-開口:150 x 230mm 2:2601353:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3TEoigASv8oAf7Vn3HlHXk",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2624775",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2601029",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2601029:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3TEoigASv8oAf7Vn3HlGvh",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):70 x 230 cm (廁所用):2628354",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "單開-矩形- (1):70 x 230 cm (廁所用):2628354",
+          "單開-矩形- (1):70 x 230 cm (廁所用):2628354:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "1rzx$Fh756O9FXGRWB7bRP",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_100×230:2668095",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_100×230:2668095",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_100×230:2668095:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "1rzx$Fh756O9FXGRWB7bPl",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "門-開口:100 x 230mm:2668169",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_DoorBaseQuantities",
+          "門-開口:100 x 230mm:2668169",
+          "門-開口:100 x 230mm:2668169:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "1rzx$Fh756O9FXGRWB7bOy",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2668250",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2668250",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2668250:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3UhXtya8D28vyfPhD3irl_",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2678636",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2668250",
+          "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2668250:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "0d3f9hpYn6CR8RaFQ2G9GD",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w120:2756934",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w120:2756934",
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w120:2756934:1",
+          "Pset_DoorCommon",
+          "Pset_DoorWindowGlazingType",
+          "Pset_EnvironmentalImpactIndicators",
+          "Pset_ManufacturerTypeInformation",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "2hq1EgdWXDM9GYihUsQrzZ",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):FD3-90 x 230 cm:2842582",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "單開-矩形- (1):FD3-90 x 230 cm:2842582",
+          "單開-矩形- (1):FD3-90 x 230 cm:2842582:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "0NZ4sZGD16HfOvwGio2fE3",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w120:2942987",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w120:2756934",
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w120:2756934:1",
+          "Pset_DoorCommon",
+          "Pset_DoorWindowGlazingType",
+          "Pset_EnvironmentalImpactIndicators",
+          "Pset_ManufacturerTypeInformation",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "0IehbmSJL2dhXpE0J6dmZb",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w71.24 D14:2994721",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w71.24 D14:2994721",
+          "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w71.24 D14:2994721:1",
+          "Pset_DoorCommon",
+          "Pset_DoorWindowGlazingType",
+          "Pset_EnvironmentalImpactIndicators",
+          "Pset_ManufacturerTypeInformation",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "1dK8wFXXr7LQQyPhE9N$Fz",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):90 x 230 cm:3159040",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_BodyGeometryValidation",
+          "Qto_DoorBaseQuantities",
+          "單開-矩形- (1):90 x 230 cm:3159040",
+          "單開-矩形- (1):90 x 230 cm:3159040:1"
+        ]
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3UKF_5N7D6hRZf$8duslj9",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "門-開口:90 x 230mm:3660347",
+      "rule_code": "DOOR-FIRERATING-REQUIRED",
+      "severity": "high",
+      "status": "fail",
+      "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+      "evidence": {
+        "predicate": "property_required",
+        "pset": "Pset_DoorCommon",
+        "property": "FireRating",
+        "value": null,
+        "pset_found": true,
+        "psets_read": [
+          "Pset_DoorCommon",
+          "Pset_EnvironmentalImpactIndicators",
+          "Qto_DoorBaseQuantities",
+          "門-開口:90 x 230mm:3660347",
+          "門-開口:90 x 230mm:3660347:1"
+        ]
+      },
+      "usd_prim_path": null
+    }
+  ],
+  "honesty_notes": [
+    "usd_prim_path 為 null：未 join 真實 element_mapping（真模型多元素 mapping 待真實轉檔產出，p1）。",
+    "ifctester 未安裝、未使用；規則為純 ifcopenshell predicate。",
+    "本 evidence 為 CPU-only，未依賴 GPU / Kit / WebRTC。"
+  ]
+}
