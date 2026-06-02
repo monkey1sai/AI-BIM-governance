@@ -4,9 +4,12 @@
 - NVIDIA Kit 官方 USD 指南：`root_layer.subLayerPaths.append(...)` 疊合多個 USD 檔。
 - pxr 26.5 本體 API（ground-truth introspection 驗證）：Sdf.Layer.CreateNew /
   subLayerPaths / Usd.Stage.Open / UsdGeom.SetStageUpAxis / SetDefaultPrim / MakeInvisible。
-- LIVERPS caveat：sublayer 是最弱的 composition arc（適合「不破壞 member 內部 opinion」的
-  whole-layer 疊合）；sessionLayer 為暫態（不持久化），故 federation 用具名 root layer + N
-  subLayers，不用 sessionLayer 作持久層。member 的 model.usdc **永不被開啟寫入（immutable）**。
+- USD composition（已對齊 OpenUSD glossary）：sublayer 是 whole-layer 非破壞疊合；其 opinion
+  在 LIVERPS 的 **Local（最強）** 步驟解析——subLayerPaths[0] 最強（見下方排序註解）。sublayer
+  本身**不是** LIVERPS 七弧（Local/Inherits/VariantSets/Relocates/References/Payload/Specializes）
+  之一，也不做 reference/payload 的 namespace 隔離。sessionLayer 為暫態（不持久化），故 federation
+  用具名 root layer + N subLayers，不用 sessionLayer 作持久層。member 的 model.usdc
+  **永不被開啟寫入（immutable）**。
 """
 from __future__ import annotations
 
