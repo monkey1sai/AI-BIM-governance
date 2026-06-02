@@ -1,0 +1,10 @@
+# governance-service 執行期依賴。
+# 注意：host-native Python 3.12（C:\Program Files\Python312）已內建全部依賴，
+# 本檔僅作為依賴清單/文件；ifcopenshell 於 Windows 通常以 wheel/host 安裝，
+# 不一定能透過 pip 於任意環境取得。無新增「非既有」生產依賴（皆 host 已具備）。
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.0
+openpyxl>=3.1
+PyYAML>=6.0
+# ifcopenshell（host-native，>=0.8.5）— 由 host Python 提供，非經本 requirements 安裝
