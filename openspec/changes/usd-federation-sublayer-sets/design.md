@@ -21,7 +21,7 @@ Review Room 載入 federated USD ◄── 既有 openStageRequest（p1 整合�
 
 ## USD composition 決策（誠實）
 
-- **sublayer**（非 reference / payload）作 whole-discipline 疊合：sublayer 是最弱的 LIVERPS arc（L<I<V<E<**R**<**P**<**S**），適合「不覆寫 member 內部 opinion」的非破壞疊合。
+- **sublayer** 作 whole-discipline 非破壞疊合：sublayer opinion 在 LIVERPS 的 **Local（最強）** 步驟解析（subLayerPaths[0] 最強）。sublayer 本身**不是** LIVERPS 七弧之一；LIVERPS 由強到弱為 Local > Inherits > VariantSets > Relocates > References > Payload > Specializes。相對 reference / payload，sublayer **不做 namespace 隔離**（疊在同 prim path 上合併）。
 - **具名 root layer** 持久化（`federated_review.usda`）；**sessionLayer 為暫態**（記憶體內、關閉即消失），不作 federation 持久層。
 - **member usdc immutable**：只把 member 路徑寫進 root.subLayerPaths，從不開啟 member 寫入；可見度以 root layer 上的 `over` 套用。
 

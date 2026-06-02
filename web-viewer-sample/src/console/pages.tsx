@@ -305,7 +305,7 @@ export function FederationPage() {
         )}
       </Panel>
       <Panel title="範圍與誠實標示" prov="asbuilt">
-        <Field k="疊合機制" v="sublayer（最弱 LIVERPS 弧，非破壞）；sessionLayer 僅暫態，不作持久層" prov="asbuilt" />
+        <Field k="疊合機制" v="sublayer 非破壞疊合；opinion 於 LIVERPS Local（最強）步驟解析，subLayerPaths[0] 最強；sessionLayer 僅暫態不作持久層" prov="asbuilt" />
         <Field k="member model.usdc" v="immutable（federation 只寫具名 root layer）" prov="asbuilt" />
         <Field k="member usd_path" v="指向 conversion authority 產出的 USD（本服務唯讀）" prov="asbuilt" />
         <Field k="per-member transform" v="已記錄但 MVP 未套用" prov="p1" />
