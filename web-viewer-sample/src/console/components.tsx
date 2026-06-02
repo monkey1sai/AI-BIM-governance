@@ -1,0 +1,87 @@
+// 誠實 UI 元件：每個資料 / 按鈕強制帶 provenance；不放假數字。
+import React from "react";
+import { Prov, PROV_LABEL, PROV_CLASS } from "./data";
+
+export function ProvTag({ prov }: { prov: Prov }) {
+  return <span className={`ec-prov ${PROV_CLASS[prov]}`}>{PROV_LABEL[prov]}</span>;
+}
+
+export function Panel({
+  title,
+  sub,
+  prov,
+  actions,
+  children,
+}: {
+  title: string;
+  sub?: string;
+  prov?: Prov;
+  actions?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section className="ec-panel">
+      <div className="ec-panel-h">
+        <span className="ec-t">{title}</span>
+        {sub && <span className="ec-s">{sub}</span>}
+        <span style={{ flex: 1 }} />
+        {prov && <ProvTag prov={prov} />}
+        {actions}
+      </div>
+      <div className="ec-panel-b">{children}</div>
+    </section>
+  );
+}
+
+export function Field({ k, v, prov }: { k: string; v: React.ReactNode; prov?: Prov }) {
+  return (
+    <div className="ec-field">
+      <span className="ec-k">{k}</span>
+      <span className="ec-v">
+        {v} {prov && <ProvTag prov={prov} />}
+      </span>
+    </div>
+  );
+}
+
+export function Metric({ value, label, tone }: { value: React.ReactNode; label: string; tone?: "warn" | "bad" }) {
+  return (
+    <div>
+      <div className={`ec-metric ${tone ?? ""}`}>{value}</div>
+      <div className="ec-s">{label}</div>
+    </div>
+  );
+}
+
+// 按鈕強制 caption（說明來源 / 行為），呼應原型誠實契約。
+export function Btn({
+  children,
+  caption,
+  prov,
+  primary,
+  disabled,
+  onClick,
+}: {
+  children: React.ReactNode;
+  caption?: string;
+  prov?: Prov;
+  primary?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button className={`ec-btn ${primary ? "primary" : ""}`} disabled={disabled} onClick={onClick}>
+      {children}
+      {prov && <ProvTag prov={prov} />}
+      {caption && <span className="ec-cap">{caption}</span>}
+    </button>
+  );
+}
+
+export function HealthChip({ name, state, prov }: { name: string; state: string; prov: Prov }) {
+  return (
+    <span className={`ec-prov ${PROV_CLASS[prov]}`} title={PROV_LABEL[prov]}>
+      {name}:{state}
+    </span>
+  );
+}

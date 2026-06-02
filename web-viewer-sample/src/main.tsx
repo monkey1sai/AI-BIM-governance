@@ -13,6 +13,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.tsx";
+import EdgeConsole from "./console/EdgeConsole";
 import "./index.css";
 import "./styles/demo-theme.css";
 
@@ -33,6 +34,8 @@ if (initialSession && /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(initialSessio
     window.__INITIAL_SESSION_FROM_QUERY__ = null;
 }
 
+// /console[/...] 路徑掛載落地端 Edge Console（A1–A10 操作頁）；其餘路徑維持既有 viewer App 不變。
+const isEdgeConsole = /(^|\/)console(\/|$)/.test(window.location.pathname);
 ReactDOM.createRoot(document.getElementById("root")!).render(
-    <App />
+    isEdgeConsole ? <EdgeConsole /> : <App />
 );
