@@ -81,6 +81,8 @@ bim-streaming-server/_cache/
 bim-streaming-server/extscache/
 bim-streaming-server/cache/
 bim-streaming-server/logs/
+# NvStreamer 偶爾寫 .etl 到 cwd 而非 logs/
+bim-streaming-server/*.etl
 bim-streaming-server/kit/logs/
 
 # ----------------------------

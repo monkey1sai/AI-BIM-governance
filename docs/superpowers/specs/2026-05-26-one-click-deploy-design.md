@@ -4,6 +4,8 @@
 > 路徑:`docs/superpowers/specs/2026-05-26-one-click-deploy-design.md`。
 > 下一步:writing-plans 接力產出 implementation plan。
 
+> **⚠️ SUPERSEDED**:本文件為 2026-05-26 brainstorming 草稿,設計決策已由 `openspec/changes/archive/2026-05-27-add-one-click-deploy-hybrid/` 的正式 OpenSpec spec 取代並為準。本草稿僅保留歷史脈絡,勿引用為現行權威。
+
 ---
 
 ## 1. Goal

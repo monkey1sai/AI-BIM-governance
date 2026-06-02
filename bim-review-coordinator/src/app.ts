@@ -669,6 +669,7 @@ export function createCoordinatorApp(
       // dispatch,改 enqueue 進 in-memory FIFO。worker 單一 in-flight slot
       // 序列化呼叫 streaming-server,避免並發踩到同一 GPU/Kit pipeline。
       // 失敗或成功都由 dispatcher closure 直接 mark 進 store,worker 不卡。
+      // INVARIANT: pendingDispatchEvents.set() MUST 同步先於 enqueue(),兩行之間嚴禁插入 await — Node 單執行緒下確保 worker 取用前 map 已就緒,否則引入真 race
       pendingDispatchEvents.set(job.ifc_ready_job_id, {
         event,
         correlationId: auth.correlationId,

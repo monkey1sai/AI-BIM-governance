@@ -36,6 +36,8 @@ param(
 )
 
 Set-StrictMode -Version Latest
+# spectator port sequence 上限常數(避免 magic number 散落在驗證/解析兩處)
+$script:MaxSpectatorCount = 32
 # Continue(非 Stop):docker / docker compose 進度寫 stderr,PowerShell 5.1 native
 # command 對 stderr 在 Stop policy 下會被 promote 成 terminating error。我們改用
 # $LASTEXITCODE 主動檢查,native cmd stderr 只當訊息看。
@@ -302,7 +304,7 @@ function New-PortSequence {
         [Parameter(Mandatory = $true)][int] $Stride,
         [Parameter(Mandatory = $true)][string] $Name
     )
-    if ($Count -lt 0 -or $Count -gt 32) { throw "$Name count must be between 0 and 32." }
+    if ($Count -lt 0 -or $Count -gt $script:MaxSpectatorCount) { throw "$Name count must be between 0 and $($script:MaxSpectatorCount)." }
     if ($Stride -lt 1) { throw "$Name stride must be >= 1." }
     $ports = @()
     for ($i = 0; $i -lt $Count; $i++) {
@@ -474,7 +476,7 @@ $resolvedSpectatorCount = Resolve-DeployIntValue `
     -ExplicitValue $SpectatorCount `
     -HasExplicitValue:($PSBoundParameters.ContainsKey('SpectatorCount')) `
     -Min 0 `
-    -Max 32
+    -Max $script:MaxSpectatorCount
 $resolvedSpectatorSignalStart = Resolve-DeployIntValue `
     -Name 'KIT_SPECTATOR_SIGNALING_PORT_START' `
     -EnvFile $resolvedEnvFile `
@@ -746,6 +748,7 @@ if (-not $SkipKit -and $hostNative.kitBuildRequired) {
     $kitBuildLog = Join-Path $RunDir 'kit-repo-build.log'
     Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server repo.bat build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
     Push-Location (Join-Path $RepoRoot 'bim-streaming-server')
+    $kitBuildExit = -1  # strict-mode fail-safe:確保失敗路徑仍走到 Final Summary
     try {
         & .\repo.bat build *> $kitBuildLog
         $kitBuildExit = $LASTEXITCODE
@@ -838,6 +841,7 @@ $webPlaneRunning = $false
 if (-not $SkipDocker) {
     $psProbe = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'ps','--status','running','-q','coordinator','viewer')
     Push-Location $RepoRoot
+    $runningIds = @()  # strict-mode fail-safe:確保失敗路徑仍走到 Final Summary
     try {
         $runningIds = docker @psProbe 2>$null
     } finally { Pop-Location }
@@ -877,6 +881,7 @@ if (-not $SkipDocker) {
             Write-DeployTag -Tag 'fix' -Message "docker compose build coordinator viewer ($why) — may take 3-5 min" -LogPath $LogPath | Out-Null
             $buildArgs = @('compose','-f','compose.runtime-manager.yml','-f','compose.host-kit.yml','--env-file',$resolvedEnvFile,'build','coordinator','viewer')
             Push-Location $RepoRoot
+            $buildExit = -1  # strict-mode fail-safe:確保失敗路徑仍走到 Final Summary
             try {
                 docker @buildArgs *> (Join-Path $RunDir 'docker-compose-build.log')
                 $buildExit = $LASTEXITCODE

@@ -21,6 +21,9 @@ from typing import Any
 
 _CONTRACT_PATH = Path(__file__).resolve().parents[1] / "contracts" / "ifc_ready_payload.json"
 
+# Local/dev hosts only: this fixture must never reach an arbitrary external host.
+_ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "host.docker.internal"})
+
 
 def load_contract() -> dict[str, Any]:
     return json.loads(_CONTRACT_PATH.read_text(encoding="utf-8"))
@@ -74,6 +77,8 @@ def post_ifc_ready(
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError(f"Unsupported coordinator base_url scheme: {parsed.scheme or '<missing>'}")
+    if parsed.hostname not in _ALLOWED_HOSTS:
+        raise ValueError(f"host not allowed: {parsed.hostname}")
     url = base_url.rstrip("/") + load_contract()["transport"]["path"]
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
@@ -81,7 +86,7 @@ def post_ifc_ready(
     for key, value in headers.items():
         req.add_header(key, value)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (test fixture, local URL)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310  # test fixture; host validated above
             body = resp.read().decode("utf-8")
             status = resp.status
     except urllib.error.HTTPError as exc:
