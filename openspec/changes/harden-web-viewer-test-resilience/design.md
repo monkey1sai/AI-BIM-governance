@@ -56,6 +56,13 @@ baseline（動工前，現況 package.json）→ apply 後同尺再比：
 - GitNexus：改前 `impact({target, direction:'upstream', repo:'web-viewer-sample'})`、改後 `detect_changes({repo:'web-viewer-sample'})`。
 - 手動 demo（無法 unit 的部分）：spectator 連線後 Runtime tri-state 轉 `yes`（#16）、spectator 正確挑到 spectator binding（#15）、stream disconnect/重連不殘留舊 peer（#8）。
 
+## Deferred follow-ups（兩輪 review 揭露，本 PR 不擴大 scope）
+
+- **reviewRequestId + BimControlClient legacy 路徑 endpoint gap**（Codex）：viewer 用 `?reviewRequestId=` 開啟時，`BimControlClient.getReviewSessionRequest()` / `.getArtifacts()` 打 `/api/review-session-requests/{id}`、`/api/model-versions/{id}/artifacts`，coordinator 只有 `/api/review-sessions`、`/api/external/ifc-ready`，會 404。此為 bim-control 退役後的**既有 gap**（非 #18 引入：實測 `VITE_BIM_CONTROL_API_BASE` 未在任何 deploy/config 設定，預設下 #18 前後皆打 coordinator；主路徑 session-first 不受影響）。完整修法 = viewer 遷移到 coordinator endpoint 或 coordinator 補對應 route，與 `BimControlClient → ReviewMetadataClient` 改名一併處理（跨 repo）。
+- **#28 逾時不釋放 streaming session**（Codex）：逾時 `_resetState` 清掉 `sessionId` 但未 `destroyStreamingSession`，server 端 session 可能孤兒到 idle timeout。viewer 主動 release 牽涉 server lifecycle boundary，列 follow-up（原 baseline 為無上限 poll、永不 reset，#28 已是淨改善）。
+- **#16 spectator readiness 不 refresh**（Codex）：`spectator_ready=false` 時維持 pending（符合本 change spec「非真時 pending」），但 coordinator 連線後才 flip `spectator_ready` 時 viewer 不自動 refresh、需 reload。spec 未要求即時 refresh；列 follow-up（加 streamConfig re-poll / socket 監聽 viewport_sharing 變化）。
+- **reconnect await terminate / GFN unmount guard**（Codex P2）：`_reconnectStream` 未 await teardown（reconnect 既有 async pattern）；`source==='gfn'` unmount-during-load 的 `onload` 競態（demo 走 stream/local 不踩）。皆 pre-existing / 窄窗，列 follow-up。
+
 ## Rollout
 
 單一 PR；merge 後 archive 並同步 roadmap §1.6。改名（ReviewMetadataClient）若需要另開獨立 change。
