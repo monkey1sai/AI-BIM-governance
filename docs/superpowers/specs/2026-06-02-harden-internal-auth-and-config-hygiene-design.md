@@ -1,6 +1,6 @@
 # Design：harden-internal-auth-and-config-hygiene（L4 第一批）
 
-> **執行權威 = OpenSpec change `harden-internal-auth-and-config-hygiene`**。本 design 為 2026-06-02 brainstorming 收斂記錄；實作細節、spec delta、驗證證據以該 OpenSpec change 的 proposal / design / specs / tasks 為準（避免設計權威多源，參見 spec `documentation-source-of-truth` 的 superseded-draft 規範）。
+> **⚠️ SUPERSEDED（2026-06-02 archived）**：本 design 為 brainstorming 收斂記錄，已由 OpenSpec change archive `openspec/changes/archive/2026-06-02-harden-internal-auth-and-config-hygiene/` 的正式 spec 取代並為準（含 review 收斂的調整：#29 evidence 搬移移出走獨立 historical-correction PR、#26 空 list / compose env fix）。本草稿僅保留歷史脈絡，勿引用為現行權威（依 spec `documentation-source-of-truth` 的 superseded-draft 規範）。
 
 ## 背景
 
