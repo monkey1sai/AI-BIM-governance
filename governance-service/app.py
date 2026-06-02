@@ -47,6 +47,11 @@ from diff_engine.api import router as diff_router  # noqa: E402
 
 app.include_router(diff_router)
 
+# A3 cross-discipline federation（USD sublayer 疊合，獨立 router 模組）。
+from federation.api import router as federation_router  # noqa: E402
+
+app.include_router(federation_router)
+
 
 def _rule_set_path(name: Optional[str]) -> str:
     name = name or "default-governance"

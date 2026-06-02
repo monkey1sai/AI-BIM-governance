@@ -3,7 +3,7 @@
 import React, { useCallback, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import { A1A10, AppCardDef, PAGES } from "./data";
-import { DiffItemRow, DiffStatus, governanceClient, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffItemRow, DiffStatus, FederatedBuildResult, governanceClient, RuleResultRow, RuleRunStatus } from "./governanceClient";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
@@ -231,17 +231,86 @@ export function VersionDiffPage() {
 }
 
 export function FederationPage() {
+  const [members, setMembers] = useState([
+    { discipline: "ARC", usd_path: "", layer_order: 1, model_version_id: "arc_v1" },
+    { discipline: "STR", usd_path: "", layer_order: 2, model_version_id: "str_v1" },
+  ]);
+  const [setId, setSetId] = useState<string | null>(null);
+  const [coord, setCoord] = useState<CoordReport | null>(null);
+  const [build, setBuild] = useState<FederatedBuildResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const setMember = (i: number, k: string, v: string | number) =>
+    setMembers((ms) => ms.map((m, j) => (j === i ? { ...m, [k]: v } : m)));
+
+  const prepare = useCallback(async () => {
+    setBusy(true); setErr(null); setCoord(null); setBuild(null);
+    try {
+      const { set_id } = await governanceClient.createFederatedSet("coord-meeting");
+      for (const m of members) {
+        await governanceClient.addFederatedMember(set_id, {
+          model_version_id: m.model_version_id, discipline: m.discipline, usd_path: m.usd_path,
+          layer_order: m.layer_order, root_prim: `/World/${m.discipline}`,
+        });
+      }
+      setSetId(set_id);
+      setCoord(await governanceClient.validateCoords(set_id));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [members]);
+
+  const doBuild = useCallback(async () => {
+    if (!setId) return;
+    setBusy(true); setErr(null);
+    try {
+      setBuild(await governanceClient.buildFederatedSet(setId));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [setId]);
+
   return (
     <>
       <h1>跨專業模型 Federation · A3</h1>
-      <p className="ec-lead">用 OpenUSD sublayer 把多個 discipline 模型疊在同一 stage，不破壞原始 model.usdc。前端骨架 + OpenSpec spec 已就緒；後端待建。</p>
-      <Panel title="Federation Builder（骨架）" prov="p1">
-        <Field k="疊合機制" v="sublayer（最弱 LIVERPS 弧）+ reference；sessionLayer 僅暫態" prov="p1" />
-        <Field k="schema" v="federated_model_sets / federated_model_members" prov="p1" />
-        <Field k="API" v="POST /api/federated-sets · /members · /build · /validate-coords" prov="p1" />
-        <Field k="不變式" v="member model.usdc byte 不變（immutable）" prov="p1" />
+      <p className="ec-lead">
+        用 OpenUSD sublayer 把多個 discipline 模型疊在同一 stage，不破壞原始 model.usdc。
+        純 CPU pxr authoring（USD 26.5），對齊 NVIDIA Kit USD 指南。
+      </p>
+      <Panel title="Federation Builder" sub="POST /api/governance/federated-sets（經 coordinator proxy → governance-service）" prov="asbuilt">
+        {members.map((m, i) => (
+          <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+            <input className="ec-btn" style={{ width: 90 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
+            <input className="ec-btn" style={{ flex: 1 }} placeholder="member .usd / .usdc 路徑（conversion 產出）" value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
+            <input className="ec-btn" style={{ width: 64 }} type="number" value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <Btn disabled={busy} caption="create set + members + validate-coords" onClick={prepare}>準備 + 驗證坐標系</Btn>
+          <Btn primary disabled={busy || !setId} caption="POST …/build → federated_review.usda" onClick={doBuild}>Build Federated USD</Btn>
+        </div>
+        {err && <p className="ec-warn-note">未連線後端 / member USD 不存在：{err}</p>}
+        {coord && <Field k="共享坐標系驗證" v={coord.consistent ? "一致 ✓" : `不一致：${coord.issues.join("; ")}`} prov="asbuilt" />}
+        {build && (
+          <div style={{ marginTop: 8 }}>
+            <Field k="federated_review.usda" v={build.usda_path} prov="asbuilt" />
+            <Field k="subLayer order（強→弱）" v={build.sublayer_order.join("  →  ")} prov="asbuilt" />
+            <Field k="member 數" v={build.member_count} prov="asbuilt" />
+          </div>
+        )}
       </Panel>
-      <p className="ec-warn-note">A3 後端為 change 4（usd-federation-sublayer-sets）；座標系驗證為 #1 風險，先 validate-coords 再 build。</p>
+      <Panel title="範圍與誠實標示" prov="asbuilt">
+        <Field k="疊合機制" v="sublayer（最弱 LIVERPS 弧，非破壞）；sessionLayer 僅暫態，不作持久層" prov="asbuilt" />
+        <Field k="member model.usdc" v="immutable（federation 只寫具名 root layer）" prov="asbuilt" />
+        <Field k="member usd_path" v="指向 conversion authority 產出的 USD（本服務唯讀）" prov="asbuilt" />
+        <Field k="per-member transform" v="已記錄但 MVP 未套用" prov="p1" />
+        <Field k="Open in Review Room（載入 federated USD）" v="走既有 openStageRequest" prov="p1" />
+      </Panel>
     </>
   );
 }
