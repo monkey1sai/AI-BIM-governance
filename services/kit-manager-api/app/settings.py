@@ -8,7 +8,10 @@ def _parse_cors_origins(raw: str) -> list[str]:
     # 僅在明確提供 comma-separated origins 時才收緊白名單（#26 收緊旋鈕）。
     if not raw.strip():
         return ["*"]
-    return [s.strip() for s in raw.split(",") if s.strip()]
+    parsed = [s.strip() for s in raw.split(",") if s.strip()]
+    # 非空輸入但全是逗號/空白(如 "," / ", ,")filter 後為空 → 回 ["*"],
+    # 避免 allow_origins=[] 意外擋掉所有 cross-origin(Copilot review)。
+    return parsed or ["*"]
 
 
 @dataclass(frozen=True)

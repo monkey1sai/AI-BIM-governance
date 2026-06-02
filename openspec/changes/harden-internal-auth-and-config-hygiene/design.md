@@ -31,7 +31,7 @@ L4 第一批 6 項（#2 #6 #23 #26 #29 #36），brainstorming 收斂（design do
 
 4. **#26（可設定 CORS）**：`settings.py` `Settings` 加 `cors_origins: list[str]` + `_parse_cors_origins(raw)`（`raw.strip()` 空→`['*']` dev 不破，否則逗號分隔）；`main.py` `allow_origins` 改用 `settings.cors_origins`；env `KIT_MANAGER_CORS_ORIGINS`。`from_env()` 沿用既有 `os.getenv` 模式。
 
-5. **#29（搬 untracked evidence）**：`git mv`（或 mkdir+add）2 個 untracked JSON 到 `openspec/changes/archive/<change-id>/evidence/`（慣例參考 `2026-05-22-fix-ifc-usdc-hoops-load-failure` 的 `evidence/`）。輔助檔留原處。
+5. **#29（移出本 change，defer 到獨立 historical-correction PR）**：原計畫搬 untracked evidence 到 archive sibling，但 `openspec/AGENTS.md` L30 規定改 `archive/` 內檔案需獨立 historical-correction PR（不可混在 feature change；Codex P1 指出）。故 #29 移出本 change，另開獨立 PR 處理 evidence 搬移。`documentation-source-of-truth` 的 evidence-to-archive 規範透過該獨立 PR 滿足。
 
 6. **#36（test + comment）**：`tests/services/eventLogFilter.test.ts`（Case1 append highlightRequest/selectionUpdate/annotationCreate/sessionCreated 後 `listLifecycle` 只回 sessionCreated；Case2 `list` 全量仍含 3 collaboration type）；`appendEventSchema` 附近 comment 說明刻意 passthrough（archive compatibility）。
 

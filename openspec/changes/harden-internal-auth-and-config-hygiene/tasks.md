@@ -25,11 +25,9 @@
 - [ ] 4.2 `main.py` `allow_origins` 改用 `settings.cors_origins`（不動 methods/headers）
 - [ ] 4.3 新增 `tests/test_settings_cors.py`（未設→`['*']`、`'a,b'`→兩元素）
 
-## 5. #29 evidence 搬到 archive sibling
+## 5. #29 evidence 搬到 archive sibling（移出本 change → 獨立 historical-correction PR）
 
-- [ ] 5.1 `docs/evidence/.../l4-artifact-2026-05-28/ifc_semantic_sidecar.json` → `openspec/changes/archive/2026-05-28-streaming-server-ifcopenshell-semantic-sidecar-pass/evidence/l4-artifact-2026-05-28/`
-- [ ] 5.2 `docs/verification/.../dev-health-check-evidence.json` → `openspec/changes/archive/2026-05-14-stabilize-demo-runtime-readiness/evidence/`
-- [ ] 5.3 git add（tracked）；輔助 `.md`/`.py`/`runbook.md` 留原處；`git status` 兩 untracked 消失
+- [ ] 5.1 **defer**：`openspec/AGENTS.md` L30「MUST NOT 修改 archive 內任何檔案；歷史 correction 需獨立 PR」（Codex P1）。evidence 搬移不可混在本 feature change，移出；另開獨立 historical-correction PR 處理 2 個 untracked evidence → archive sibling（`documentation-source-of-truth` 規範由該獨立 PR 滿足）。本 change 不碰 `archive/`。
 
 ## 6. #36 退役 event 過濾固化
 

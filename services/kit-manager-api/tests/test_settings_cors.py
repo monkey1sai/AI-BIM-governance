@@ -23,3 +23,12 @@ def test_cors_origins_empty_string_falls_back_to_wildcard(monkeypatch):
     settings = Settings.from_env()
 
     assert settings.cors_origins == ["*"]
+
+
+def test_cors_origins_comma_only_falls_back_to_wildcard(monkeypatch):
+    # 非空輸入但 filter 後為空(全逗號/空白)→ ["*"],避免 allow_origins=[] 擋所有 origin(Copilot review)
+    monkeypatch.setenv("KIT_MANAGER_CORS_ORIGINS", ", ,")
+
+    settings = Settings.from_env()
+
+    assert settings.cors_origins == ["*"]

@@ -18,7 +18,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         # 預設 ["*"]（未設 KIT_MANAGER_CORS_ORIGINS 時）以維持既有 dev 行為；
-        # 可透過環境變數收緊白名單，見 settings._parse_cors_origins（#26）。
+        # 可透過環境變數收緊白名單，見 settings.py 的 _parse_cors_origins（#26）。
         allow_origins=settings.cors_origins,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
