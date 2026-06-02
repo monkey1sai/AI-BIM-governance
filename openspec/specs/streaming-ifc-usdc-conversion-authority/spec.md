@@ -494,7 +494,7 @@ HOOPS 結果、且 MUST 只在 prim CustomData 不帶 IFC keys 時被
 
 ### Requirement: Identity authoring SHALL emit GUID-exact mapping and ai-bim-geo indexes
 
-When `conversion_profile = "ifcopenshell_openusd_identity"` succeeds, `bim-streaming-server` SHALL emit artifacts that downstream consumers can use without re-parsing the IFC source. The artifacts SHALL include GUID-exact mapping, entity metadata, Pset/property data, spatial relationships, local/world bounding boxes, quality metrics, and geo reference metadata when available from the IFC source.
+When `conversion_profile = "ifcopenshell_openusd_identity"` succeeds, `bim-streaming-server` SHALL emit artifacts that downstream consumers can use without re-parsing the IFC source. The artifacts SHALL include GUID-exact mapping, entity metadata, Pset/property data, spatial relationships, local/world bounding boxes, quality metrics, and an explicit geo reference artifact that reports availability and warnings without fabricating unsupported geo values.
 
 #### Scenario: Element mapping declares guid_exact fidelity
 
@@ -512,12 +512,13 @@ When `conversion_profile = "ifcopenshell_openusd_identity"` succeeds, `bim-strea
 - **AND** `spatial_index` SHALL represent storey / space / system membership as relationships or index data rather than prim path segments
 - **AND** `bbox_index` SHALL include local bounding boxes and SHOULD include world bounding boxes when geo reference data is available
 
-#### Scenario: Geo reference is explicit and non-fabricating
+#### Scenario: Geo reference artifact is explicit and non-fabricating
 
-- **WHEN** the IFC source exposes project units, coordinate reference, true north, local origin, or model-to-world transform data
-- **THEN** identity authoring SHALL emit geo reference metadata in `geo_reference.usda`, `geo_reference.json`, or an equivalent artifact reference
+- **WHEN** identity authoring publishes ready conversion artifacts
+- **THEN** the artifact set SHALL include `geo_reference.usda`, `geo_reference.json`, or an equivalent geo reference artifact reference
+- **AND** the geo reference artifact SHALL declare whether CRS, local origin, true north, and model-to-world transform values are available, unavailable, or not extracted
 - **AND** SHALL keep mesh geometry in local/project coordinates unless an explicit transform policy says otherwise
-- **AND** SHALL record missing or incomplete geo data as `quality_metrics` warnings instead of fabricating CRS or transform values
+- **AND** SHALL record missing, unavailable, incomplete, or not-yet-extracted geo data as artifact warnings and `quality_metrics` warnings instead of fabricating CRS or transform values
 
 #### Scenario: Artifacts support ai-bim-geo consumers
 
@@ -553,4 +554,3 @@ The IFC-first identity authoring route SHALL be additive to the existing convers
 - **WHEN** `web-viewer-sample` needs to focus or highlight failed elements
 - **THEN** it SHALL consume `usd_prim_path` values from conversion artifacts or coordinator-provided stream config
 - **AND** SHALL NOT call the internal host-native conversion service directly to compute mapping or parse IFC
-
