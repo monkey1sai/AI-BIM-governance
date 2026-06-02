@@ -25,7 +25,7 @@
 
 1. **#17 vitest 版本與環境**：選 `vitest@^1.x`（對齊 `vite@^5.0.8`、`engines.node` 限 ^20，避免 vitest 2/3 拉高需求或引入未驗證 breaking）；DOM 用 `jsdom@^24`（生態最穩、與 testing-library 相容性最佳，為日後 component test 預留）；**本輪 NOT 引入 `@testing-library/*`**，只測純函式。新增獨立 `vitest.config.ts`（`test.environment='jsdom'`、`globals=true`、`include=['src/**/*.{test,spec}.{ts,tsx}']`），不動 `vite.config.ts` build 路徑；`tsconfig.json` `types` 加 `vitest/globals`。
 
-2. **#8 公開 API 已證實（非推測）**：實裝 SDK 5.6.0 `dist/omniverse-webrtc-streaming-library.d.ts` L44 `static terminate(terminateApp?: boolean, _force?: boolean /* @deprecated */): Promise<StreamEvent>`，JSDoc 明說「The stream reference will be reset and will no longer be accessible」。`App.tsx` L223 `_resetStream` 已是正確用法（`terminate()` 無手動清 `_stream`），`AppStream` 兩處 hack 與之對齊即可。`terminate(false)` = 清 client 端 stream + SDK 自重置 `_stream`，但**不**殺 server 端 Kit process（符合 viewer 不得停 Kit 的 boundary）。`stop()` 方法名保留（避免動呼叫端），語意僅 cleanup。
+2. **#8 公開 API 已證實（非推測）**：`package.json` pin `^5.6.0`、實裝 5.17.0；`dist/omniverse-webrtc-streaming-library.d.ts` L71 `static terminate(terminateApp?: boolean): Promise<StreamEvent>`（單一參數，無 `_force`），JSDoc 明說「If `terminateApp` is true, then the Kit app instance will also be terminated」與「the stream reference will be reset and will no longer be accessible」。`App.tsx` `_resetStream` 已是正確用法（`terminate()` 無手動清 `_stream`），`AppStream` 兩處 hack 與之對齊即可。`terminate(false)` = 清 client 端 stream + SDK 自重置 `_stream`，但**不**殺 server 端 Kit process（符合 viewer 不得停 Kit 的 boundary）。`stop()` 方法名保留（避免動呼叫端），語意僅 cleanup。
 
 3. **#15 用既有欄位顯式辨識 primary（零跨 repo）**：viewer 端 `ReviewStreamConfig.viewport_sharing.primary_kit_instance_id` 已存在（`types/review.ts` L104-108）。判定規則：`kit_instance_id === viewport_sharing.primary_kit_instance_id` 即 primary，其餘為 spectator——不需 coordinator 新增任何欄位。抽 `selectSpectatorBinding(bindings, primaryKitInstanceId, webrtc)` 純函式，primary id 缺失時退回既有 port-diff fallback（向後相容）。
 
@@ -35,7 +35,7 @@
 
 6. **timer / class-method 測試策略**：class component method 的 timer 行為直接 unit test 成本偏高（需 instantiate React component）。決策：能抽成純函式的決策（如 `shouldRetryPoll(retryCount, max)`）寫 vitest；timer 生命週期（存 id / unmount clear）以 **source-level 斷言 + 手動 demo** 驗證，timer unit test 標 best-effort，不阻塞本輪。
 
-7. **既有 .mjs 並存策略**：`verify-tri-ready-states` / `verify-struct-log` 邏輯改寫成 `src/utils/triReady.test.ts` / `src/lib/structLog.test.ts`（直接 import，免 transpile），但**暫保留原 `.mjs`** 直到 vitest 版穩定綠燈；`verify-session-first-contract`（跨檔 source-level contract guard）長期保留。
+7. **既有 .mjs 並存策略（本輪實際交付）**：本輪 vitest 覆蓋抽出的純函式（`windowHelpers` / `pollHelpers` / `envHelpers`）與 `triReady`（`triReady.test.ts`，含 #16 spectator `started + matched → yes` 情境）；`verify-struct-log` 改寫成 `structLog.test.ts` **defer**（該 `.mjs` 已 10 test 綠燈，本輪不重寫）。既有 4 個 `.mjs` 一律**暫保留**直到 vitest 版穩定；`verify-session-first-contract`（跨檔 source-level contract guard）因 #17 抽函式改查 `Window.tsx + windowHelpers.ts` 聯集，長期保留。
 
 ## Risks / Trade-offs
 

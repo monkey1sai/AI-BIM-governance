@@ -980,8 +980,9 @@ export default class App extends React.Component<AppProps, AppState> {
     * Once received, the 'isKitReady' flag is set to true and polling ends
     */
     async _pollForKitReady() {
-        // 進入點先清掉 pending id:目前這次 callback 已不再是排程中的 timer。
-        this._pollForKitReadyId = null;
+        // 進入點先取消任何 pending chain:正常遞迴時舊 timer 已觸發(clearTimeout 為 no-op),
+        // in-mount 重入(_onStreamStarted 多次觸發)時取消孤兒 timer,確保同時只有一條 poll chain。
+        this._clearPollForKitReady();
         if (this.state.isKitReady === true) return
 
         console.info("polling Kit availability")

@@ -72,7 +72,18 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
             if (StreamConfig.source === 'gfn') {
                 const existing = document.getElementById('gfn-client-sdk-script');
                 if (existing) {
-                    this._initStream();
+                    // script 標籤已存在但全域 GFN 可能仍在下載中(remount 命中既有 script);
+                    // ready 才直接 init,否則補掛 load/error 等就緒,避免 GFN 未定義就 _initStream 觸 ReferenceError。
+                    //@ts-ignore GFN global is provided by the lazily-loaded SDK script
+                    if (typeof GFN !== 'undefined') {
+                        this._initStream();
+                    } else {
+                        existing.addEventListener('load', () => this._initStream());
+                        existing.addEventListener('error', () => {
+                            console.error('Failed to load GFN client SDK script');
+                            this.props.onStreamFailed();
+                        });
+                    }
                 } else {
                     const script = document.createElement('script');
                     script.id = 'gfn-client-sdk-script';

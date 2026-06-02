@@ -107,7 +107,7 @@ class App extends Component<{}, AppState>{
     /**
      * Resets application state to default values
     */
-    private _resetState() {
+    private _resetState(connectionText: string = '') {
         this.setState({
             currentForm: StreamConfig.source === "local" ? Forms.Stream : Forms.AppOnly,
             useWebUI: true,
@@ -120,7 +120,7 @@ class App extends Component<{}, AppState>{
             selectedApplicationVersion: '',
             selectedApplicationProfile: '',
             streamStatus: StreamStatus.IDLE,
-            connectionText: '',
+            connectionText,
             backendUrl: '',
             signalingserver: '',
             signalingport: 0,
@@ -152,8 +152,7 @@ class App extends Component<{}, AppState>{
             }
             else {
                 console.error(`Session ${sessionId} did not become ready after ${MAX_POLL_RETRIES} retries.`);
-                this.setState({ connectionText: "等待 streaming session 就緒逾時，請重試。" })
-                this._resetState()
+                this._resetState("等待 streaming session 就緒逾時，請重試。")
             }
         } catch (error) {
             console.error('Error polling session info:', error);
@@ -161,8 +160,7 @@ class App extends Component<{}, AppState>{
                 setTimeout(() => this.pollForSessionReady(sessionId, retryCount + 1), 10000);
             }
             else {
-                this.setState({ connectionText: "等待 streaming session 就緒逾時，請重試。" })
-                this._resetState()
+                this._resetState("等待 streaming session 就緒逾時，請重試。")
             }
         }
     }
