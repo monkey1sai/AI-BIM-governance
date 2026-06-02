@@ -49,4 +49,4 @@
 - [x] 6.1 Record real IFC evidence under `docs/evidence/author-ifc-openusd-identity-paths/`, including conversion result, quality metrics, stage-open result, and mapping sample.
 - [x] 6.2 Update relevant runbook or contract docs if the internal conversion profile or artifact package schema becomes user-facing to operators. No operator-facing contract was added; evidence records the internal profile and artifact package.
 - [x] 6.3 Prepare PR summary in Traditional Chinese with changed files, validation, dependency/license risk, and rollback path.
-- [ ] 6.4 After merge, archive the OpenSpec change and sync the new requirement into `openspec/specs/streaming-ifc-usdc-conversion-authority/spec.md`.
+- [x] 6.4 After merge, archive the OpenSpec change and sync the new requirement into `openspec/specs/streaming-ifc-usdc-conversion-authority/spec.md`.
