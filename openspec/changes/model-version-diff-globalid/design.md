@@ -44,6 +44,8 @@ model_diff_items(id, model_diff_id, change_type[added|removed|moved|geometry_cha
 ## 驗證策略與環境限制
 
 - **單元（合成，確定性）**：base（W-A 在原點、W-B）vs target（W-A 移動 10m + pset 改、W-C 新增、W-B 移除）→ 斷言 added=1 / removed=1 / moved=1 / property_changed=1 / matched=1。
-- **真實版本對（GUID 對齊證明）**：`許良宇圖書館建築_2026.ifc`（base）vs `… 轉檔測試2.ifc`（target），皆 IFC4X3 7139 IfcElement、GUID 共同 7137 → 斷言 matched>7000、計數一致（matched+removed=base_count、matched+added=target_count）。CPU ~26s。
+- **真實 identity round-trip（誠實揭露）**：storage 內 `許良宇*.ifc` 13 個變體彼此 **byte 完全相同**（同一 SHA1）。故 `許良宇圖書館建築_2026.ifc` vs `轉檔測試2.ifc` 為 identity 檢查，只證明 GUID 多級對齊在真實 7139 元素規模能找到「全部匹配、0 變更」（matched>7000、removed=added=0、計數一致）。**不是**變更分類測試。
+- **真實模型變更分類**：開兩份真實 IFC、把其中一份 **in-memory 修改**（位移 8 元素 + 加屬性 8 元素）→ 斷言 diff 在真實 IFC4X3 模型偵測到 `moved>0` 與 `property_changed>0`（test_real_model_modified_classification）。這才是真模型分類證據。CPU ~26s。
+- **合成（確定性，全分類）**：added=1 / removed=1 / moved=1 / property_changed=1 / matched=1。
 - **API E2E（TestClient）**：合成 IFC 寫檔 → POST /api/diffs → poll → items → apply-overlay 501。
 - **環境**：host-native `C:\Program Files\Python312\python.exe`（ifcopenshell 0.8.5 + numpy）；不需 GPU。
