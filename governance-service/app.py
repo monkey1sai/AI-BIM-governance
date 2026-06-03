@@ -42,6 +42,11 @@ store = Store(DB_PATH)
 # 已完成 run 的記憶體快取（供 Excel 匯出；亦可由 DB 重建）。
 _RUN_CACHE: dict[str, RuleRunResult] = {}
 
+# A2 model-version diff（獨立 router 模組，掛入同一 governance-service app）。
+from diff_engine.api import router as diff_router  # noqa: E402
+
+app.include_router(diff_router)
+
 
 def _rule_set_path(name: Optional[str]) -> str:
     name = name or "default-governance"
