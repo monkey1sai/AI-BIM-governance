@@ -1,6 +1,6 @@
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
 >
-> 何時讀本檔：定位 A1–A10、定義 user-facing 完成標準、規劃 frontend E2E 驗收、改 deploy / runtime / scripts 入口時。
+> 何時讀本檔：定位 A1–A10、定義 user-facing 完成標準、規劃 frontend / 真實 IFC E2E 驗收、改 deploy / runtime / scripts 入口時。
 
 # Product Operability And Script Contract
 
@@ -82,7 +82,35 @@ PR 描述中 user-facing change 必須包含：
 | Manual test steps |  |
 | Known gaps |  |
 
-## 5. Script Contract
+## 5. Real IFC Semantic Viewer E2E
+
+真實 IFC semantic viewer E2E 的核心輸入是主工作區 local `storage/` 內 IFC，不是 git-tracked fixture。New worktree 只帶 git-tracked files；`storage/` 這類 ignored/local artifact 不會自動出現在新 worktree。
+
+目前指定的主工作區 IFC：
+
+```txt
+C:\Repos\active\iot\AI-BIM-governance\storage\270_0dac5239-a2aa-4257-9946-c2b6da6bd24d_model.ifc
+C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
+```
+
+### MUST
+
+- 在新 worktree / branch 內跑真實 IFC semantic viewer E2E 時，直接讀主工作區 IFC 絕對路徑，或建立 gitignored local fixture folder / junction / symlink。
+- 使用上述 IFC 跑 identity conversion profile，並保留 source IFC path、size、hash 或等價可追溯資訊。
+- 驗證 stage truth：`expected artifact URL`、`loaded artifact URL`、`matched = true`。
+- 透過 coordinator / web UI 開 browser viewer，保存 browser screenshot、WebRTC frame visible evidence、console log、Kit host/session id。
+- Evidence 預設放在 `docs/evidence/viewer-validate-ifc-semantics-real-ifc/`，或明確對應 change id 的 `docs/evidence/<change-id>/`。
+- 大型輸出只保留 summary JSON、抽樣 mapping、測試結果與截圖；mapping / pset / spatial / bbox 太大時只保留 sample（例如前 20 筆）。
+- Full-system E2E complete 必須同時有 governance CPU semantic E2E 與 Kit WebRTC visual/runtime E2E。
+
+### MUST NOT
+
+- 不得把上述 IFC commit 進 git。
+- 不得複製大型 IFC / `model.usdc` / 巨大 artifact 到 repo tracked path。
+- 不得用 fake mapping、placeholder USDC、或只有 CPU/backend semantic result 宣稱 viewer/runtime E2E passed。
+- 不得在缺少 Kit WebRTC visual/runtime evidence 時宣告 full-system E2E complete。
+
+## 6. Script Contract
 
 `scripts/deploy.ps1` 是 canonical one-click deploy entrypoint。
 
@@ -114,7 +142,7 @@ Internal adapters 只能被 canonical entrypoints 或明確 runbook 呼叫：
 - SHOULD 在本機 runtime 可用時跑 `.\scripts\deploy.ps1 -Force -StrictPostVerify`。
 - MUST 不新增 root-level `scripts/start-*.ps1`、`scripts/smoke-*.ps1`、`scripts/check-*.ps1`、`scripts/*-docker.ps1`，除非同步更新 `scripts/script-registry.json` 與 `scripts/SCRIPT_CONTRACT.md` 並提供理由。
 
-## 6. PR Deploy Path Verification Table
+## 7. PR Deploy Path Verification Table
 
 涉及 runtime / docker / Kit / viewer / ports / env 的 PR 必須包含：
 
