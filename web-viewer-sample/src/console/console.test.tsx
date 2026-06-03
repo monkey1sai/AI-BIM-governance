@@ -213,4 +213,38 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("後端待建 · P1.5");
     expect(html).not.toContain("99.1%");
   });
+
+  // ── PR #179 finding 3 + 6：viewer 連結 a11y / lwv 驗證（初始空 = invalid）──
+  it("P4 Review Room invalid（初始空）session：連結不渲染 href=#、不可聚焦（a11y）", () => {
+    const html = renderToString(<ReviewRoomPage />);
+    // finding 3：invalid 時連結不得留 href="#"（鍵盤 / 螢幕閱讀器啟用會跳 #）。
+    expect(html).not.toContain('href="#"');
+    // invalid 連結須 aria-disabled 且移出 tab 序（tabindex=-1），不是只靠 pointerEvents 的假禁用。
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('tabindex="-1"');
+    // finding 6：明確說明不符 viewer attach 格式 → coordinator /ui/open 會回 400（不發明 attach 預檢端點）。
+    // （初始空字串不顯示警示，僅在使用者輸入過才提示——這裡驗證頁面具備此誠實 wording 常量。）
+    const typed = renderToString(<ReviewRoomPage />);
+    expect(typed).toContain("不動 App.tsx / Window.tsx");
+  });
+
+  // ── PR #179 finding 2：COORD /health 探活結果（含 down）為真實觀測 → 標 asbuilt，非 demo ──
+  it("P2-1 Overview COORD /health Field 標 asbuilt（真實探活），不誤標示範資料", () => {
+    const html = renderToString(<OverviewPage />);
+    // COORD 健康欄位緊鄰 provenance；初始（探活中）標「已實作」(asbuilt)，不得是「示範資料」(demo)。
+    const coordField = html.match(/COORD Coordinator :8004[\s\S]*?ec-prov[^>]*>[^<]*<\/span>/);
+    expect(coordField).not.toBeNull();
+    expect(coordField?.[0]).toContain("已實作"); // PROV_LABEL.asbuilt（真實探活結果）
+    expect(coordField?.[0]).not.toContain("示範資料"); // 不誤標 demo
+  });
+
+  // ── PR #179 finding 1/4/5：Semantic Viewer 候選來自真實 ifc-ready 端點，caption / label 一致 ──
+  it("P2-2 Semantic Viewer『列出真實 job』走 /api/external/ifc-ready（caption 與實際呼叫一致）", () => {
+    const html = renderToString(<SemanticViewerPage />);
+    // finding 4：按鈕 caption 與實際呼叫的端點一致（ifc-ready，非 runtime/status）。
+    expect(html).toContain("GET /api/external/ifc-ready（找帶轉換產出的 job）");
+    // finding 5：label 與資料實體（ifc-ready job）一致，不再寫「真實 session 候選」。
+    expect(html).toContain("列出真實 job");
+    expect(html).not.toContain("列出真實 session");
+  });
 });

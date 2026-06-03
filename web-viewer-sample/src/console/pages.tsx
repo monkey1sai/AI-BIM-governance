@@ -67,10 +67,12 @@ export function OverviewPage() {
       </p>
       <Panel title="落地端健康狀態 · Edge Health" sub="coordinator / kit 為 as-built；conversion / gpu 無遙測標未取得，不畫成 fail" prov="asbuilt">
         <div className="ec-grid">
+          {/* /health 探活結果（up / down / 探活中）皆為真實觀測 → 一律標 asbuilt（真實探活）；
+              down 是「真的探到不可達」，不是示範資料。demo 只保留給完全沒有真實遙測來源的值。 */}
           <Field
             k="COORD Coordinator :8004"
             v={health === "ok" ? "control plane · /health ok" : health === "down" ? "未連線（/health 不可達）" : "control plane（探活中…）"}
-            prov={health === "down" ? "demo" : "asbuilt"}
+            prov="asbuilt"
           />
           <Field k="KIT Runtime 49100/47998" v="local_fixed" prov="asbuilt" />
           <Field k="CONV Conversion :49101" v="未取得" prov="demo" />
@@ -661,7 +663,7 @@ export function FederationPage() {
 }
 
 // ── P2-2 Semantic Viewer（H）：載入真實 element_mapping.json，嚴守 fake-vs-real 隔離 ──
-// mapping URL 來源：真實 session 的 expected_mapping_url（runtime/status）或操作員貼入。
+// mapping URL 來源：帶轉換產出的真實 ifc-ready job（/api/external/ifc-ready）定位，或操作員貼入。
 // 凡 mock / allow_fake_mapping / fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律標
 // demo 並「拒絕當正式 mapping 驗證」，禁覆蓋 / 禁冒充真 mapping。點構件 highlight 需 viewer
 // DataChannel（console 殼層無此鏈）→ 誠實標 p1，不做假按鈕。
@@ -672,18 +674,21 @@ export function SemanticViewerPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // 從 runtime/status 撈帶 expected_mapping_url 的真實 session，方便操作員選擇真實 artifact。
+  // 列出帶轉換產出（expected_stage_url）的真實 ifc-ready job，方便操作員定位真實 mapping artifact。
+  // 真實端點：GET /api/external/ifc-ready（IfcReadyListItem 帶 expected_stage_url；coordinator 不持有
+  // mapping_url 欄位，故只列「有 stage 產出」的 job 作候選，mapping URL 仍由操作員貼入）。
+  // 誠實：有資料就填真實候選；佇列為空時誠實顯示為空，不留永遠空白的假列表。
   const loadCandidates = useCallback(async () => {
     setErr(null);
     try {
-      const rt = await coordinatorClient.runtimeStatus();
-      const withMap = rt.sessions.items.filter((s) => s.expected_stage_url);
-      // sessions.items 無 mapping_url，但 ifc_ready_jobs 可間接定位；這裡以 sessions 帶 stage 的為候選，
-      // 真正 mapping_url 由 session detail / expected_mapping_url 提供（操作員亦可直接貼 URL）。
-      setCandidates([]);
-      if (withMap.length === 0) setErr("runtime/status 無帶 mapping 的 session（可直接貼 mapping URL 載入）");
+      const { items } = await coordinatorClient.listIfcReady(50);
+      const withStage = items.filter((j) => j.expected_stage_url);
+      setCandidates(withStage);
+      if (withStage.length === 0) {
+        setErr("無帶轉換產出（expected_stage_url）的 ifc-ready job（可直接貼 mapping URL 載入）");
+      }
     } catch (e) {
-      setErr(`未連線 coordinator /api/runtime/status：${String(e)}`);
+      setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`);
     }
   }, []);
 
@@ -714,15 +719,18 @@ export function SemanticViewerPage() {
         嚴守 fake-vs-real 隔離：mock / fake mapping 一律標示為示範資料，不冒充真實對映。
       </p>
 
-      <Panel title="載入 mapping artifact" sub="mapping URL（conversion artifact）；可從 runtime/status 的真實 session 取得，或直接貼入" prov="artifact">
+      <Panel title="載入 mapping artifact" sub="mapping URL（conversion artifact）；可從 ifc-ready job（帶轉換產出）定位，或直接貼入" prov="artifact">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} placeholder="element_mapping.json 的 URL（artifact 來源）" value={mapUrl} onChange={(e) => setMapUrl(e.target.value)} />
           <Btn primary disabled={busy || !mapUrl.trim()} caption="fetch mapping JSON" onClick={loadMapping}>{busy ? "載入中…" : "載入 mapping"}</Btn>
-          <Btn caption="GET /api/runtime/status（找帶 mapping 的 session）" onClick={loadCandidates}>列出真實 session</Btn>
+          <Btn caption="GET /api/external/ifc-ready（找帶轉換產出的 job）" onClick={loadCandidates}>列出真實 job</Btn>
         </div>
         {err && <p className="ec-warn-note">{err}</p>}
         {candidates.length > 0 && (
-          <p className="ec-note">真實 session 候選：{candidates.map((c) => c.ifc_ready_job_id).join(" · ")}</p>
+          <p className="ec-note">
+            真實 job 候選（帶轉換產出 expected_stage_url）：
+            {candidates.map((c) => `${c.ifc_ready_job_id}${c.review_session_id ? `（session ${c.review_session_id}）` : ""}`).join(" · ")}
+          </p>
         )}
         <p className="ec-note">mapping 為 conversion artifact（權威在 streaming-server / artifact store）；本頁唯讀檢視，不寫回、不覆蓋真實 mapping。</p>
       </Panel>
@@ -1030,10 +1038,14 @@ export function RuntimePage() {
 // as-built；highlight 走 client 主動拉（不復活 server-push）；section/snapshot 待建。
 export function ReviewRoomPage() {
   const [sessionId, setSessionId] = useState("");
-  const valid = /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sessionId.trim());
   const sid = sessionId.trim();
-  const viewerLocalUrl = valid ? `/?session=${encodeURIComponent(sid)}` : "#";
-  const viewerOpenUrl = valid ? coordinatorClient.openInViewerUrl(sid) : "#";
+  // session id 必須符合 viewer attach（main.tsx）與 coordinator /ui/open（app.ts:1590）共用的權威格式
+  // /^(lwv_|review_session_)[A-Za-z0-9_]+$/。不符者 viewer 無法 attach、coordinator /ui/open 直接回 400，
+  // 故拒絕產生連結（不產生會被後端打回的壞連結，不發明「attach 預檢」幻覺端點）。
+  const valid = /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sid);
+  // invalid 時連結為 undefined（不渲染成可互動 anchor），避免 href="#" 被鍵盤 / 螢幕閱讀器啟用後跳到 #。
+  const viewerLocalUrl = valid ? `/?session=${encodeURIComponent(sid)}` : undefined;
+  const viewerOpenUrl = valid ? coordinatorClient.openInViewerUrl(sid) : undefined;
 
   return (
     <>
@@ -1046,17 +1058,18 @@ export function ReviewRoomPage() {
       <Panel title="在既有 viewer 開啟 · Open in viewer" sub="輸入 review_session_id（lwv_ / review_session_ 前綴）；連到既有 viewer，不動 App.tsx / Window.tsx" prov="asbuilt">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 360 }} placeholder="review_session_xxx 或 lwv_xxx" value={sessionId} onChange={(e) => setSessionId(e.target.value)} />
-          {/* 真實 gating：session id 格式不合則 disabled（非可點假連結）。 */}
-          <a className={`ec-btn ${valid ? "primary" : ""}`} href={viewerOpenUrl} target="_blank" rel="noreferrer"
+          {/* 真實 gating：session id 格式不合（viewer / coordinator 都會拒）則不渲染 href、不可聚焦
+              （tabIndex=-1）、aria-disabled，鍵盤與螢幕閱讀器都無法啟用，不是只靠 pointerEvents 的假禁用。 */}
+          <a className={`ec-btn ${valid ? "primary" : ""}`} {...(valid ? { href: viewerOpenUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
              style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
             coordinator /ui/open（redirect）
           </a>
-          <a className="ec-btn" href={viewerLocalUrl} target="_blank" rel="noreferrer"
+          <a className="ec-btn" {...(valid ? { href: viewerLocalUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
              style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
             本地 viewer /?session=
           </a>
         </div>
-        {!valid && sessionId.length > 0 && <p className="ec-warn-note">session id 格式不符（需 lwv_ 或 review_session_ 前綴 + 英數底線）；連結停用。</p>}
+        {!valid && sessionId.length > 0 && <p className="ec-warn-note">此 session id 不符 viewer attach 格式（需 lwv_ 或 review_session_ 前綴 + 英數底線）；viewer 無法 attach、coordinator /ui/open 會回 400 → 連結停用，不產生壞連結。</p>}
         <p className="ec-note">
           coordinator <code>/ui/open?session=</code> 為 server-side redirect 至 browser-visible viewer（as-built，app.ts）；
           本地 <code>/?session=</code> 由既有 main.tsx 解析 attach。本頁僅導引，不在 console 殼層內掛載 WebRTC。
