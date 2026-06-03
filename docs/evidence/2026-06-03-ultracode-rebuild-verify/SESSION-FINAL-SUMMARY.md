@@ -32,7 +32,7 @@
 1. **GitNexus index stale**：pr-review-agent 持續報 medium warning（Blockers=None）。需 `npx gitnexus analyze --embeddings` 重建（per memory 可能 LadybugDB EBUSY/crash，故未於收尾時跑，留待專門處理）。
 2. **#174 第 4 P2 的互動式失效未有自動測試**：console.test.tsx 為 `renderToString`-only（無 @testing-library），成員變更作廢 set 的 change→re-render 行為未覆蓋；以 tsc + 既有靜態誠實標記維持綠燈。
 3. **前端 P2–P4**：Overview 三 panel / Semantic viewer 真實 body / Coordinator·Intake·Runtime 頁 / A4–A10 vision / Review Room console↔viewer DataChannel 整合，見 `frontend-06-gap-report.md`，為結構化後續 initiative（本輪僅 P1 mainline）。
-4. **本 evidence 目錄未進 git**（與既有 local-evidence pattern 一致，untracked）；如需版本控管可另開 docs PR。
+4. **本 evidence 目錄已透過本 PR 納入版本控管（tracked）**，與既有 35 個 tracked evidence 一致。
 5. **pre-existing 雜項**：13 個更早 session 的 `codex/openspec/*` 本地 branch、1 個閒置 worktree `agent-entry-boundaries`（位於 main tip、無 PR、非本 session 產物，未動）——可另行清理。
 
 ## 最終狀態

@@ -1,6 +1,8 @@
-"""A1/A2/A3 over-the-wire 實測 runner — 對 running governance-service :49102。
-誠實原則:只記錄真實回應;identity diff 誠實標 0 change;失敗即記錄非假裝 pass。
-輸出 evidence JSON 到本目錄。"""
+"""A1 over-the-wire 實測 runner — 對 running governance-service :49102。
+（檔名保留 a1a3 是歷史命名；本腳本實際只跑 A1 rule-run + Excel export。
+A2/A3/Issues/BCF 的 over-the-wire 實測在 sibling run-a2a3-otw.py。）
+誠實原則:只記錄真實回應;失敗即記錄非假裝 pass。
+輸出 a1-otw-evidence.json 到本目錄。"""
 import urllib.request, json, time, os, sys
 
 BASE = "http://127.0.0.1:49102"

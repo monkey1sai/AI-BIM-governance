@@ -7,7 +7,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIXT = r"C:\Repos\active\iot\AI-BIM-governance\storage\fixture-bytes.ifc"
 A1_RUN = None  # 從 a1-otw-evidence.json 讀
 try:
-    A1_RUN = json.load(open(os.path.join(HERE, "a1-otw-evidence.json"), encoding="utf-8"))["A1"]["run_id"]
+    with open(os.path.join(HERE, "a1-otw-evidence.json"), encoding="utf-8") as f:
+        A1_RUN = json.load(f)["A1"]["run_id"]
 except Exception:
     pass
 EVID = {}
@@ -106,7 +107,9 @@ if A1_RUN:
 st, iss = call("POST", "/api/issues", {"title": "OTW lifecycle probe", "severity": "high",
               "ifc_guid": "TEST_GUID", "model_version_id": "otw-2026-06-03-a1"})
 iid = iss.get("id")
-st, tr = call("POST", f"/api/issues/{iid}/transition", {"to_status": "in_review", "note": "otw"})
+# 合法 transition：store.py ISSUE_STATUSES 不含 "in_review"；open 的合法目標為
+# {assigned,in_progress,resolved,rejected}（_ALLOWED["open"]），用 in_progress。
+st, tr = call("POST", f"/api/issues/{iid}/transition", {"to_status": "in_progress", "note": "otw"})
 st, got = call("GET", f"/api/issues/{iid}")
 issues_evid["lifecycle"] = {"created_id": iid, "after_transition_status": (got.get("issue") or {}).get("status"),
                             "events": len(got.get("events", []))}
@@ -116,12 +119,14 @@ try:
     st, bcf = call("GET", "/api/bcf/export?model_version_id=otw-2026-06-03-a1", raw_bytes=True)
     issues_evid["bcf_export"] = {"status": st, "bytes": len(bcf), "sig": bcf[:2].hex()}
     print(f"BCF export bytes={len(bcf)} sig={bcf[:2].hex()} (PK=504b)")
-    open(os.path.join(HERE, "bcf-export-sample.bcfzip"), "wb").write(bcf)
+    with open(os.path.join(HERE, "bcf-export-sample.bcfzip"), "wb") as f:
+        f.write(bcf)
 except Exception as e:
     issues_evid["bcf_export"] = {"error": str(e)}
     print("BCF export ERROR:", e)
 EVID["Issues_BCF"] = issues_evid
 
-json.dump(EVID, open(os.path.join(HERE, "a2a3-issues-otw-evidence.json"), "w", encoding="utf-8"),
-          ensure_ascii=False, indent=2)
+# 落檔到 evidence 目錄（HERE），讓 A2/A3/Issues/BCF 輸出可被歸檔複查。
+with open(os.path.join(HERE, "a2a3-issues-otw-evidence.json"), "w", encoding="utf-8") as f:
+    json.dump(EVID, f, ensure_ascii=False, indent=2)
 print("WROTE a2a3-issues-otw-evidence.json")

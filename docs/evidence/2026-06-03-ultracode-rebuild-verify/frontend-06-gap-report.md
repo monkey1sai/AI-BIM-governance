@@ -8,13 +8,13 @@
 
 | 類別 | 路徑 | 角色 |
 |---|---|---|
-| 06 規格（live OpenSpec capability） | `C:/Repos/active/iot/AI-BIM-governance/openspec/specs/edge-console-operator-frontend/spec.md` | 骨架鐵律 / 兩段式導覽 / provenance 誠實鐵律的 **source of truth**（**但 A2/A3 條款已過時**，見 §4） |
-| 06 shell 設計 | `C:/Repos/active/iot/AI-BIM-governance/openspec/changes/archive/2026-06-03-edge-console-shell/design.md` | 路由決策（零依賴 hash / `/console` pathname）、跨 repo 資料流、誠實系統 |
-| 雲端設計原型（06 骨架視覺/結構權威） | `C:/Repos/design/bim-desigin-arich/project/coordinator/console/` 之 `app.jsx`/`data.jsx`/`pages.jsx`/`pages2.jsx`/`components.jsx` | 兩段式 IA、頁面殼、誠實 provenance 系統原型 |
-| A1–A10 權威功能規格 | `C:/Repos/design/bim-desigin-arich/bim-desigin-arich (4)/roadmap-data.jsx`（`RM_APPS`） | 每 app 的 DB schema / REST api / ui 面板 / mvp 驗收 / sprint steps / risks |
-| 現有實作 | `C:/Repos/active/iot/AI-BIM-governance/web-viewer-sample/src/console/` 之 `EdgeConsole.tsx`/`pages.tsx`/`components.tsx`/`data.ts`/`governanceClient.ts`/`console.test.tsx`/`edge-console.css` | 目標 repo 落地現況 |
-| coordinator proxy | `C:/Repos/active/iot/AI-BIM-governance/bim-review-coordinator/src/routes/governanceProxy.ts` | 決定哪些 `/api/governance/*` 已 live |
-| 後端 | `C:/Repos/active/iot/AI-BIM-governance/governance-service/`（`app.py` + `diff_engine/api.py` / `federation/api.py` / `issues/api.py` / `bcf/api.py`） | 決定哪些前端可「真實驗證」 |
+| 06 規格（live OpenSpec capability） | `openspec/specs/edge-console-operator-frontend/spec.md` | 骨架鐵律 / 兩段式導覽 / provenance 誠實鐵律的 **source of truth**（**但 A2/A3 條款已過時**，見 §4） |
+| 06 shell 設計 | `openspec/changes/archive/2026-06-03-edge-console-shell/design.md` | 路由決策（零依賴 hash / `/console` pathname）、跨 repo 資料流、誠實系統 |
+| 雲端設計原型（06 骨架視覺/結構權威）｜**外部 repo** | `C:/Repos/design/bim-desigin-arich/project/coordinator/console/` 之 `app.jsx`/`data.jsx`/`pages.jsx`/`pages2.jsx`/`components.jsx`（外部設計原型 repo，非本 repo） | 兩段式 IA、頁面殼、誠實 provenance 系統原型 |
+| A1–A10 權威功能規格｜**外部 repo** | `C:/Repos/design/bim-desigin-arich/bim-desigin-arich (4)/roadmap-data.jsx`（`RM_APPS`）（外部設計原型 repo，非本 repo） | 每 app 的 DB schema / REST api / ui 面板 / mvp 驗收 / sprint steps / risks |
+| 現有實作 | `web-viewer-sample/src/console/` 之 `EdgeConsole.tsx`/`pages.tsx`/`components.tsx`/`data.ts`/`governanceClient.ts`/`console.test.tsx`/`edge-console.css` | 目標 repo 落地現況 |
+| coordinator proxy | `bim-review-coordinator/src/routes/governanceProxy.ts` | 決定哪些 `/api/governance/*` 已 live |
+| 後端 | `governance-service/`（`app.py` + `diff_engine/api.py` / `federation/api.py` / `issues/api.py` / `bcf/api.py`） | 決定哪些前端可「真實驗證」 |
 
 ---
 
