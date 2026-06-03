@@ -112,6 +112,59 @@ class IssueStore:
             )
         return self.get_issue(issue_id)
 
+    def create_issues_batch(self, items: list[dict]) -> dict:
+        """批次建立 issue：單一交易（全有或全無，ISS-004）+ 來源冪等（同
+        (source_type, source_ref) 不重複建，ISS-002）。每筆 dict 含 create_issue
+        參數。回傳 {"created": [issue_id...], "skipped": int}。"""
+        created_ids: list[str] = []
+        skipped = 0
+        now = _now()
+        conn = self._conn()
+        conn.isolation_level = None
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("BEGIN IMMEDIATE")
+            for it in items:
+                source_type = it.get("source_type", "manual")
+                source_ref = it.get("source_ref")
+                if source_ref is not None:
+                    existing = conn.execute(
+                        "SELECT id FROM issues WHERE source_type=? AND source_ref=?",
+                        (source_type, source_ref),
+                    ).fetchone()
+                    if existing:
+                        skipped += 1
+                        continue
+                ifc_guid = it.get("ifc_guid")
+                kind = "issue" if ifc_guid else "annotation"
+                issue_id = _new_id("iss")
+                conn.execute(
+                    "INSERT INTO issues(id, kind, title, description, status, severity, assignee, ifc_guid, usd_prim_path,"
+                    " model_version_id, source_type, source_ref, created_at, updated_at)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (issue_id, kind, it.get("title"), it.get("description"), "open", it.get("severity", "medium"),
+                     it.get("assignee"), ifc_guid, it.get("usd_prim_path"), it.get("model_version_id"),
+                     source_type, source_ref, now, now),
+                )
+                conn.execute(
+                    "INSERT INTO issue_events(id, issue_id, event_type, from_status, to_status, note, created_at)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (_new_id("ev"), issue_id, "created", None, "open", f"source={source_type}", now),
+                )
+                created_ids.append(issue_id)
+            conn.execute("COMMIT")
+        except Exception:
+            # BEGIN IMMEDIATE 自身失敗（如 busy_timeout 後 database is locked）時無交易可
+            # rollback，guard 住以免次生例外遮蔽原始主因；無交易時等同零部分寫入。
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            conn.close()
+        return {"created": created_ids, "skipped": skipped}
+
     def get_issue(self, issue_id: str):
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -134,20 +187,35 @@ class IssueStore:
             return [dict(r) for r in conn.execute(query, args).fetchall()]
 
     def transition(self, issue_id: str, to_status: str, note: str | None = None) -> dict:
-        issue = self.get_issue(issue_id)
-        if not issue:
-            raise KeyError(issue_id)
         if to_status not in ISSUE_STATUSES:
             raise TransitionError(f"unknown status: {to_status}")
-        frm = issue["status"]
-        if to_status not in _ALLOWED.get(frm, set()):
-            raise TransitionError(f"illegal transition {frm} -> {to_status}")
-        now = _now()
-        with self._conn() as conn:
-            conn.execute("UPDATE issues SET status=?, updated_at=? WHERE id=?", (to_status, now, issue_id))
+        conn = self._conn()
+        conn.isolation_level = None  # 自行控制交易；BEGIN IMMEDIATE 序列化並發 transition
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT status FROM issues WHERE id=?", (issue_id,)).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                raise KeyError(issue_id)
+            frm = row["status"]
+            if to_status not in _ALLOWED.get(frm, set()):
+                conn.execute("ROLLBACK")
+                raise TransitionError(f"illegal transition {frm} -> {to_status}")
+            now = _now()
+            cur = conn.execute(
+                "UPDATE issues SET status=?, updated_at=? WHERE id=? AND status=?",
+                (to_status, now, issue_id, frm),
+            )
+            if cur.rowcount == 0:
+                conn.execute("ROLLBACK")
+                raise TransitionError("concurrent modification; please retry")
             conn.execute(
                 "INSERT INTO issue_events(id, issue_id, event_type, from_status, to_status, note, created_at)"
                 " VALUES(?,?,?,?,?,?,?)",
                 (_new_id("ev"), issue_id, "transition", frm, to_status, note, now),
             )
+            conn.execute("COMMIT")
+        finally:
+            conn.close()
         return self.get_issue(issue_id)

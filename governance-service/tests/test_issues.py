@@ -101,3 +101,83 @@ def test_issues_from_diff(client_and_db):
 def test_from_rule_run_not_found(client_and_db):
     client, _ = client_and_db
     assert client.post("/api/issues/from-rule-run/nope").status_code == 404
+
+
+def test_from_rule_run_idempotent(client_and_db):
+    """ISS-002：同一 run 重複 from-rule-run 不重複建 issue（來源冪等）。"""
+    client, db_path = client_and_db
+    run_id = _seed_rule_run(db_path)
+    first = client.post(f"/api/issues/from-rule-run/{run_id}").json()
+    assert first["created"] == 3
+    second = client.post(f"/api/issues/from-rule-run/{run_id}").json()
+    assert second["created"] == 0
+    assert second["skipped"] == 3
+    # 總 issue 數仍 3
+    rule_issues = [i for i in client.get("/api/issues").json()["issues"] if i["source_type"] == "rule_result"]
+    assert len(rule_issues) == 3
+
+
+def test_from_diff_binds_target_model_version_id(client_and_db):
+    """ISS-001/BCFUSD-1：diff issue SHALL 綁 target_model_version_id（_seed_diff target='t'）。"""
+    client, db_path = client_and_db
+    diff_id = _seed_diff(db_path)
+    resp = client.post(f"/api/issues/from-diff/{diff_id}")
+    assert resp.status_code == 201
+    diff_issues = [i for i in client.get("/api/issues").json()["issues"] if i["source_type"] == "diff_item"]
+    assert len(diff_issues) == 1
+    assert diff_issues[0]["model_version_id"] == "t"
+
+
+def test_from_diff_idempotent(client_and_db):
+    """ISS-002：同一 diff 重複 from-diff 不重複建 issue。"""
+    client, db_path = client_and_db
+    diff_id = _seed_diff(db_path)
+    first = client.post(f"/api/issues/from-diff/{diff_id}").json()
+    assert first["created"] == 1
+    second = client.post(f"/api/issues/from-diff/{diff_id}").json()
+    assert second["created"] == 0
+    assert second["skipped"] == 1
+
+
+def test_concurrent_transition_single_winner(tmp_path):
+    """ISS-003：並發 transition 經 BEGIN IMMEDIATE 序列化，恰一個贏家、無自相矛盾雙 transition。"""
+    import concurrent.futures
+
+    from issues.store import IssueStore, TransitionError
+
+    store = IssueStore(str(tmp_path / "concurrent.db"))
+    issue = store.create_issue(title="並發測試", ifc_guid="CONCURRENTGUID00000001", model_version_id="mv1")
+    iid = issue["id"]
+
+    def _attempt(target: str):
+        try:
+            store.transition(iid, target)
+            return target
+        except TransitionError:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(_attempt, "resolved"), pool.submit(_attempt, "rejected")]
+        outcomes = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    winners = [o for o in outcomes if o is not None]
+    assert len(winners) == 1  # 恰一個成功
+    final = store.get_issue(iid)
+    assert final["status"] in {"resolved", "rejected"}
+    transition_events = [e for e in store.get_events(iid) if e["event_type"] == "transition"]
+    assert len(transition_events) == 1  # 無自相矛盾的雙 transition
+
+
+def test_create_issues_batch_atomic_rollback_on_failure(tmp_path):
+    """ISS-004：批次中途失敗整批回滾，不留部分寫入（all-or-nothing）。"""
+    from issues.store import IssueStore
+
+    store = IssueStore(str(tmp_path / "atomic.db"))
+    items = [
+        {"title": "good", "ifc_guid": "G1", "source_type": "rule_result", "source_ref": "r1"},
+        # title=object() 無法繫結 sqlite 參數 → 第二筆 INSERT raise，觸發整批 ROLLBACK
+        {"title": object(), "ifc_guid": "G2", "source_type": "rule_result", "source_ref": "r2"},
+    ]
+    with pytest.raises(Exception):
+        store.create_issues_batch(items)
+    assert store.list_issues() == []  # 第一筆 good 也不得留存

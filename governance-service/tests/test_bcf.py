@@ -9,7 +9,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-from bcf.bcf_writer import build_bcfzip
+from bcf.bcf_writer import _iso, build_bcfzip
 
 
 def _unzip(data: bytes) -> dict[str, bytes]:
@@ -103,6 +103,29 @@ def test_empty_issue_list_yields_zero():
     assert list(files) == ["bcf.version"]  # 只有 version、無 topic
 
 
+def test_invalid_ifc_guid_excluded():
+    """bcf-002：非 22 字元合法 IfcGuid 不匯出，避免產出違反 BCF 2.1 XSD 的 .bcfzip。"""
+    data, count = build_bcfzip([_sample_issue(ifc_guid="TOO_SHORT")])
+    assert count == 0
+    files = _unzip(data)
+    assert len([n for n in files if n.endswith("markup.bcf")]) == 0
+
+
+def test_none_model_version_renders_unbound():
+    """bcf-005：缺 model_version 時 comment 輸出 'unbound'，不得洩漏 Python None 字面。"""
+    data, _ = build_bcfzip([_sample_issue(model_version_id=None)])
+    files = _unzip(data)
+    markup = ET.fromstring(next(v for n, v in files.items() if n.endswith("markup.bcf")))
+    comment = markup.find("Comment").findtext("Comment")
+    assert "model_version=unbound" in comment
+    assert "model_version=None" not in comment
+
+
+def test_naive_timestamp_treated_as_utc():
+    """bcf-003：naive 時間戳視為 UTC，不吃系統本地時區偏移。"""
+    assert _iso("2026-06-01T10:00:00") == "2026-06-01T10:00:00Z"
+
+
 # ---- API 端點（掛載 + 過濾 + 404）----
 
 @pytest.fixture()
@@ -140,3 +163,15 @@ def test_api_export_404_when_no_formal_issue(client_and_db):
 
     resp = client.get("/api/bcf/export")
     assert resp.status_code == 404
+
+
+def test_ifc_guid_with_trailing_newline_excluded():
+    """bcf-002：22 合法字元 + 尾端換行（共 23）不得通過 guard 洩漏進 .bcfzip。
+
+    re.match + `$` 會在結尾單一換行前匹配；fullmatch 完全錨定才擋得住。
+    """
+    leaky = _sample_issue(ifc_guid="1aB2cD3eF4gH5iJ6kL7mN8\n")  # 22 合法字元 + \n
+    data, count = build_bcfzip([leaky])
+    assert count == 0, "尾端換行的 IfcGuid 應被排除，不得產出違反 BCF 2.1 XSD 的 topic"
+    files = _unzip(data)
+    assert list(files) == ["bcf.version"]  # 只有 version、無 topic

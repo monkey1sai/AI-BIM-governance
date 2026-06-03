@@ -89,17 +89,21 @@ def issues_from_rule_run(run_id: str):
     if not run:
         raise HTTPException(status_code=404, detail="rule run not found")
     failed = rule_store.get_results(run_id, "fail")
-    store = _get_store()
-    created = []
-    for r in failed:
-        issue = store.create_issue(
-            title=f"{r['rule_code']}: {r.get('ifc_type') or ''} {r.get('ifc_name') or ''}".strip(),
-            description=r.get("message"), severity=r.get("severity", "medium"),
-            ifc_guid=r.get("ifc_guid"), usd_prim_path=r.get("usd_prim_path"),
-            model_version_id=run.get("model_version_id"), source_type="rule_result", source_ref=r.get("id"),
-        )
-        created.append(issue["id"])
-    return {"created": len(created), "issue_ids": created}
+    items = [
+        {
+            "title": f"{r['rule_code']}: {r.get('ifc_type') or ''} {r.get('ifc_name') or ''}".strip(),
+            "description": r.get("message"),
+            "severity": r.get("severity", "medium"),
+            "ifc_guid": r.get("ifc_guid"),
+            "usd_prim_path": r.get("usd_prim_path"),
+            "model_version_id": run.get("model_version_id"),
+            "source_type": "rule_result",
+            "source_ref": r.get("id"),
+        }
+        for r in failed
+    ]
+    result = _get_store().create_issues_batch(items)
+    return {"created": len(result["created"]), "skipped": result["skipped"], "issue_ids": result["created"]}
 
 
 @router.post("/api/issues/from-diff/{diff_id}", status_code=201)
@@ -107,17 +111,25 @@ def issues_from_diff(diff_id: str, change_type: Optional[str] = Query(None), lim
     from diff_engine.store import DiffStore
 
     diff_store = DiffStore(_db_path())
-    if not diff_store.get_diff(diff_id):
+    diff_row = diff_store.get_diff(diff_id)
+    if not diff_row:
         raise HTTPException(status_code=404, detail="diff not found")
+    # ISS-001/BCFUSD-1：diff item 代表 target 模型狀態，綁 target_model_version_id
+    # （誠實鐵律：model_version_id 綁定所有 issue；缺版本綁定會讓 BCF 匯出與 diff-impact 統計斷裂）
+    mv = diff_row.get("target_model_version_id")
     items = diff_store.get_items(diff_id, change_type)[:limit]
-    store = _get_store()
-    created = []
-    for it in items:
-        issue = store.create_issue(
-            title=f"diff {it['change_type']}: {it.get('ifc_type') or ''}".strip(),
-            description=it.get("change_summary"), severity=_DIFF_SEVERITY.get(it["change_type"], "medium"),
-            ifc_guid=it.get("ifc_guid"), usd_prim_path=it.get("target_usd_prim_path") or it.get("base_usd_prim_path"),
-            source_type="diff_item", source_ref=it.get("id"),
-        )
-        created.append(issue["id"])
-    return {"created": len(created), "issue_ids": created}
+    payload = [
+        {
+            "title": f"diff {it['change_type']}: {it.get('ifc_type') or ''}".strip(),
+            "description": it.get("change_summary"),
+            "severity": _DIFF_SEVERITY.get(it["change_type"], "medium"),
+            "ifc_guid": it.get("ifc_guid"),
+            "usd_prim_path": it.get("target_usd_prim_path") or it.get("base_usd_prim_path"),
+            "model_version_id": mv,
+            "source_type": "diff_item",
+            "source_ref": it.get("id"),
+        }
+        for it in items
+    ]
+    result = _get_store().create_issues_batch(payload)
+    return {"created": len(result["created"]), "skipped": result["skipped"], "issue_ids": result["created"]}
