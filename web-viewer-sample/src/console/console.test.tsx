@@ -24,17 +24,37 @@ describe("edge console honesty smoke", () => {
     expect(html).not.toContain("99.1%"); // 無願景假數字
   });
 
-  it("A2 / A3 帶 provenance、不顯示捏造數字", () => {
+  it("A1 補匯出 Excel（真實）與在 3D 中標示（誠實 p1，無 DataChannel）", () => {
+    const html = renderToString(<IssuesRuleCenterPage />);
+    // [匯出 Excel]：client exportUrl 直連 proxy，真實下載（asbuilt）。
+    expect(html).toContain("匯出 Excel");
+    // [在 3D 中標示]：console 無 viewer DataChannel → 誠實標 p1，且按鈕 disabled（非假按鈕）。
+    expect(html).toContain("在 3D 中標示");
+    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    expect(html).toContain("DataChannel"); // 誠實說明：需 viewer DataChannel
+  });
+
+  it("A2 補 apply-overlay：誠實標 p15，不假裝成功", () => {
     const a2 = renderToString(<VersionDiffPage />);
     expect(a2).toContain("ec-prov"); // provenance 標記存在
     expect(a2).not.toContain("99.1%"); // 無願景假數字
+    // apply-overlay 後端誠實回 501 → UI 標 p15 + 說明走 client highlightPrimsRequest，非 server-push。
+    expect(a2).toContain("套用 3D Overlay");
+    expect(a2).toContain("後端待建 · P1.5"); // PROV_LABEL.p15
+    expect(a2).toContain("501"); // 誠實顯示後端回應碼，不偽裝成功
+  });
 
+  it("A3 補 member visibility toggle：build 時帶入，改動須重新 Build（誠實，不捏造即時）", () => {
     // A3 federation 後端已實作（per-member transform + review-room handoff），但仍誠實標 provenance
     // 與真實邊界（member immutable），不捏造數字。
     const a3 = renderToString(<FederationPage />);
     expect(a3).toContain("ec-prov");
     expect(a3).toContain("immutable"); // member usdc immutable 邊界
     expect(a3).not.toContain("99.1%");
+    // visibility checkbox 存在；誠實標示「無即時切換、須重新 Build」（不捏造即時能力）。
+    expect(a3).toContain("visible");
+    expect(a3).toContain("重新 Build");
+    expect(a3).toContain("visibility_default");
   });
 
   it("Overview 無任何願景假數字", () => {

@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import { A1A10, AppCardDef, PAGES, Prov } from "./data";
-import { CoordReport, DiffIssueImpact, DiffItemRow, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
@@ -105,6 +105,28 @@ export function IssuesRuleCenterPage() {
             <Metric value={run.score ?? "—"} label="score" />
           </div>
         )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          {/* [匯出 Excel]：client exportUrl 直連 coordinator proxy → governance-service openpyxl，真實下載（asbuilt）。
+              成功 run 前 disabled（沒有 runId 不可匯出）——真實 gating，非假按鈕。 */}
+          <Btn caption="GET /api/governance/rule-runs/:id/export?fmt=excel" disabled={!runId || run?.status !== "succeeded"} onClick={async () => {
+            if (!runId) return;
+            setErr(null);
+            try {
+              const res = await fetch(governanceClient.exportUrl(runId));
+              if (!res.ok) { setErr(`Excel 匯出 ${res.status}：${res.statusText}`); return; }
+              const blob = await res.blob();
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = `rule-run-${runId}.xlsx`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            } catch (e) { setErr(String(e)); }
+          }}>匯出 Excel</Btn>
+          {/* [在 3D 中標示]：console 為 /console 獨立殼層，與 viewer <App/> 互斥掛載，無 WebRTC
+              DataChannel；highlightPrimsRequest 需 viewer DataChannel（Window 內），此鏈未接 →
+              誠實標 p1（後續整合），永遠 disabled，不做點了沒反應的假按鈕。 */}
+          <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合">在 3D 中標示</Btn>
+        </div>
         {failed.length > 0 && (
           <table className="ec-table" style={{ marginTop: 12 }}>
             <thead><tr><th>rule_code</th><th>severity</th><th>ifc_type</th><th>ifc_guid</th><th>usd_prim_path</th></tr></thead>
@@ -118,6 +140,11 @@ export function IssuesRuleCenterPage() {
             </tbody>
           </table>
         )}
+        <p className="ec-note" style={{ marginTop: 8 }}>
+          [匯出 Excel] 為真實下載（openpyxl，asbuilt）。[在 3D 中標示] 需 viewer 的 WebRTC DataChannel
+          （<code>highlightPrimsRequest</code>）；Edge Console 為 <code>/console</code> 獨立殼層，與 viewer 互斥掛載、
+          目前無 DataChannel，故誠實標 <code>p1</code>（後續整合），未對映 <code>usd_prim_path=null</code> 本就無法標示。
+        </p>
       </Panel>
 
       <Panel title="語意驗收訊號 · 真實 IFC 實測" sub={`${A1_EVIDENCE.file} · ${A1_EVIDENCE.schema} · ${A1_EVIDENCE.date}`} prov="artifact">
@@ -221,11 +248,12 @@ export function VersionDiffPage() {
   const [items, setItems] = useState<DiffItemRow[]>([]);
   const [impact, setImpact] = useState<DiffIssueImpact | null>(null);
   const [includeGeo, setIncludeGeo] = useState(false);
+  const [overlay, setOverlay] = useState<DiffOverlayResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const run = useCallback(async () => {
-    setBusy(true); setErr(null); setDiff(null); setItems([]); setImpact(null);
+    setBusy(true); setErr(null); setDiff(null); setItems([]); setImpact(null); setOverlay(null);
     try {
       const { diff_id } = await governanceClient.createDiff({ base_ifc_path: base, target_ifc_path: target, include_geometry: includeGeo });
       setDiffId(diff_id);
@@ -287,10 +315,23 @@ export function VersionDiffPage() {
             </tbody>
           </table>
         )}
-        {diffId && items.length > 0 && (
-          <div style={{ marginTop: 10 }}>
-            <Btn caption="POST from-diff（綁 ifc_guid）" onClick={async () => { try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>變更構件建 issue</Btn>
-          </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <Btn caption="POST from-diff（綁 ifc_guid）" disabled={!diffId || items.length === 0} onClick={async () => { if (!diffId) return; try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>變更構件建 issue</Btn>
+          {/* [套用 3D Overlay]：呼叫真實端點 POST …/apply-overlay。後端誠實回 501（p15）——
+              3D 著色走 client highlightPrimsRequest（需 viewer DataChannel），非後端 server-push。
+              此處顯示後端誠實訊息（含 501），SHALL NOT 假裝成功。成功 diff 前 disabled。 */}
+          <Btn prov="p15" disabled={busy || !diffId} caption="POST /api/governance/diffs/:id/apply-overlay（後端誠實回 501）" onClick={async () => {
+            if (!diffId) return;
+            setBusy(true); setErr(null);
+            try { setOverlay(await governanceClient.applyDiffOverlay(diffId)); }
+            finally { setBusy(false); }
+          }}>套用 3D Overlay</Btn>
+        </div>
+        {overlay && (
+          <p className={overlay.ok ? "ec-note" : "ec-warn-note"} style={{ marginTop: 8 }}>
+            apply-overlay → {overlay.status}：{overlay.detail}
+            {!overlay.ok && overlay.status === 501 && "（p15：3D 著色走 client highlightPrimsRequest，需 viewer DataChannel；後端不做 server-push）"}
+          </p>
         )}
         {impact && (
           <div className="ec-grid" style={{ marginTop: 12 }}>
@@ -303,7 +344,7 @@ export function VersionDiffPage() {
       </Panel>
       <Panel title="範圍與誠實標示" prov="asbuilt">
         <Field k="geometry_changed" v="opt-in 已實作（include_geometry：ifcopenshell.geom bbox/vertex/volume hash，較重）" prov="asbuilt" />
-        <Field k="3D overlay 顏色（綠/紅/橘/藍）" v="走 client highlightPrimsRequest，非 server-push" prov="p15" />
+        <Field k="3D overlay 顏色（綠/紅/橘/藍）" v="apply-overlay 端點誠實回 501；著色走 client highlightPrimsRequest（需 viewer DataChannel），非 server-push" prov="p15" />
         <Field k="Issue impact" v="已實作（possibly_addressed 啟發式 / still_open / new，連動 Issue DB）" prov="asbuilt" />
       </Panel>
     </>
@@ -312,8 +353,8 @@ export function VersionDiffPage() {
 
 export function FederationPage() {
   const [members, setMembers] = useState([
-    { discipline: "ARC", usd_path: "", layer_order: 1, model_version_id: "arc_v1", tx: 0, ty: 0, tz: 0 },
-    { discipline: "STR", usd_path: "", layer_order: 2, model_version_id: "str_v1", tx: 0, ty: 0, tz: 0 },
+    { discipline: "ARC", usd_path: "", layer_order: 1, model_version_id: "arc_v1", tx: 0, ty: 0, tz: 0, visible: true },
+    { discipline: "STR", usd_path: "", layer_order: 2, model_version_id: "str_v1", tx: 0, ty: 0, tz: 0, visible: true },
   ]);
   const [setId, setSetId] = useState<string | null>(null);
   const [coord, setCoord] = useState<CoordReport | null>(null);
@@ -322,7 +363,7 @@ export function FederationPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const setMember = (i: number, k: string, v: string | number) =>
+  const setMember = (i: number, k: string, v: string | number | boolean) =>
     setMembers((ms) => ms.map((m, j) => (j === i ? { ...m, [k]: v } : m)));
 
   const prepare = useCallback(async () => {
@@ -334,6 +375,7 @@ export function FederationPage() {
         await governanceClient.addFederatedMember(set_id, {
           model_version_id: m.model_version_id, discipline: m.discipline, usd_path: m.usd_path,
           layer_order: m.layer_order, root_prim: `/World/${m.discipline}`,
+          visibility_default: m.visible,
           transform_json: (t[0] || t[1] || t[2]) ? JSON.stringify({ translate: t }) : undefined,
         });
       }
@@ -383,6 +425,11 @@ export function FederationPage() {
             <input className="ec-btn" style={{ width: 80 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
             <input className="ec-btn" style={{ flex: 1 }} placeholder="member .usd / .usdc 路徑（conversion 產出）" value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
             <input className="ec-btn" style={{ width: 52 }} type="number" title="layer_order（小=強）" value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
+            {/* visibility：唯一真實後端能力是 build 時的 visibility_default（隱藏 member 寫成 invisible token）。
+                無「不重建即時切換」端點 → 誠實作法：勾選後須重新 Build 才生效（見下方標示），不捏造即時能力。 */}
+            <label className="ec-s" title="visible（build 時帶入 visibility_default；改動需重新 Build）" style={{ display: "flex", gap: 3, alignItems: "center" }}>
+              <input type="checkbox" checked={m.visible} onChange={(e) => setMember(i, "visible", e.target.checked)} /> visible
+            </label>
             <span className="ec-note" style={{ opacity: 0.7 }}>位移</span>
             <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 X" value={m.tx} onChange={(e) => setMember(i, "tx", Number(e.target.value))} />
             <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 Y" value={m.ty} onChange={(e) => setMember(i, "ty", Number(e.target.value))} />
@@ -400,6 +447,11 @@ export function FederationPage() {
             <Field k="federated_review.usda" v={build.usda_path} prov="asbuilt" />
             <Field k="subLayer order（強→弱）" v={build.sublayer_order.join("  →  ")} prov="asbuilt" />
             <Field k="member 數" v={build.member_count} prov="asbuilt" />
+            <Field
+              k="hidden members（visibility=false）"
+              v={build.hidden.length > 0 ? build.hidden.join("  ·  ") : "（無，全部 visible）"}
+              prov="asbuilt"
+            />
             {build.transformed && build.transformed.length > 0 && (
               <Field k="per-member transform" v={build.transformed.map((t) => `${t.root_prim}:[${t.ops.join("+")}]`).join("   ")} prov="asbuilt" />
             )}
@@ -426,6 +478,7 @@ export function FederationPage() {
         <Field k="member model.usdc" v="immutable（federation 只寫具名 root layer）" prov="asbuilt" />
         <Field k="member usd_path" v="指向 conversion authority 產出的 USD（本服務唯讀）" prov="asbuilt" />
         <Field k="per-member transform" v="已實作：root layer over xformOp（member immutable）；順序 scale→rotateXYZ→translate，translate 最外層" prov="asbuilt" />
+        <Field k="member visibility" v="build 時帶入 visibility_default（隱藏 member 寫成 invisible，回傳 hidden[]）；無「不重建即時切換」端點，改 visible 須重新 Build 才生效（不捏造即時能力）" prov="asbuilt" />
         <Field k="Open in Review Room" v="產出 viewer 消費的 stage_composition handoff；GPU 串流由 host-native Kit + coordinator session 負責，本服務 CPU loopback 不開串流" prov="asbuilt" />
       </Panel>
     </>
