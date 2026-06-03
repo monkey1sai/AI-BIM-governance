@@ -682,10 +682,10 @@ export function SemanticViewerPage() {
     setErr(null);
     try {
       const { items } = await coordinatorClient.listIfcReady(50);
-      const withStage = items.filter((j) => j.expected_stage_url);
-      setCandidates(withStage);
-      if (withStage.length === 0) {
-        setErr("無帶轉換產出（expected_stage_url）的 ifc-ready job（可直接貼 mapping URL 載入）");
+      const withMap = items.filter((j) => j.expected_mapping_url);
+      setCandidates(withMap);
+      if (withMap.length === 0) {
+        setErr("無帶 mapping 產出（expected_mapping_url）的 ifc-ready job（可直接貼 mapping URL 載入）");
       }
     } catch (e) {
       setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`);
@@ -723,14 +723,24 @@ export function SemanticViewerPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} placeholder="element_mapping.json 的 URL（artifact 來源）" value={mapUrl} onChange={(e) => setMapUrl(e.target.value)} />
           <Btn primary disabled={busy || !mapUrl.trim()} caption="fetch mapping JSON" onClick={loadMapping}>{busy ? "載入中…" : "載入 mapping"}</Btn>
-          <Btn caption="GET /api/external/ifc-ready（找帶轉換產出的 job）" onClick={loadCandidates}>列出真實 job</Btn>
+          <Btn caption="GET /api/external/ifc-ready（找帶 mapping 產出的 job）" onClick={loadCandidates}>列出真實 job</Btn>
         </div>
         {err && <p className="ec-warn-note">{err}</p>}
         {candidates.length > 0 && (
-          <p className="ec-note">
-            真實 job 候選（帶轉換產出 expected_stage_url）：
-            {candidates.map((c) => `${c.ifc_ready_job_id}${c.review_session_id ? `（session ${c.review_session_id}）` : ""}`).join(" · ")}
-          </p>
+          <div className="ec-note" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <span>真實 job 候選（帶 mapping 產出，點選自動填入 mapping URL）：</span>
+            {candidates.map((c) => (
+              <button
+                key={c.ifc_ready_job_id}
+                type="button"
+                className="ec-btn ec-s"
+                title={c.expected_mapping_url ?? ""}
+                onClick={() => { if (c.expected_mapping_url) setMapUrl(c.expected_mapping_url); }}
+              >
+                {c.ifc_ready_job_id}{c.review_session_id ? `（session ${c.review_session_id}）` : ""}
+              </button>
+            ))}
+          </div>
         )}
         <p className="ec-note">mapping 為 conversion artifact（權威在 streaming-server / artifact store）；本頁唯讀檢視，不寫回、不覆蓋真實 mapping。</p>
       </Panel>

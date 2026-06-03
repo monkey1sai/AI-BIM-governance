@@ -242,7 +242,8 @@ describe("edge console honesty smoke", () => {
   it("P2-2 Semantic Viewer『列出真實 job』走 /api/external/ifc-ready（caption 與實際呼叫一致）", () => {
     const html = renderToString(<SemanticViewerPage />);
     // finding 4：按鈕 caption 與實際呼叫的端點一致（ifc-ready，非 runtime/status）。
-    expect(html).toContain("GET /api/external/ifc-ready（找帶轉換產出的 job）");
+    // PR #179 round-2 finding（codex :685）：候選改篩 expected_mapping_url 並可點選自動填入 mapping URL。
+    expect(html).toContain("GET /api/external/ifc-ready（找帶 mapping 產出的 job）");
     // finding 5：label 與資料實體（ifc-ready job）一致，不再寫「真實 session 候選」。
     expect(html).toContain("列出真實 job");
     expect(html).not.toContain("列出真實 session");

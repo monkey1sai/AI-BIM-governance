@@ -103,6 +103,7 @@ export interface IfcReadyListItem {
   review_session_id: string | null;
   viewer_url: string | null;
   expected_stage_url: string | null;
+  expected_mapping_url: string | null;
   created_at: string;
 }
 
