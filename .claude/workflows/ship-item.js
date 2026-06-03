@@ -40,10 +40,10 @@ context：
 2. commit，訊息繁中，結尾附 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>。
 3. git push -u origin <branch>（遇 force-push deny 改用新 commit 取代 amend）。
 4. 回報這次 ship 的改動面：git diff --stat origin/main...HEAD（已 commit 的 diff）與 git log。
-5. 開 PR（gh pr create --base main，繁中），依上面 user-facing 規則附對應驗收表或註明不適用。
+5. 開 PR：branch 尚無 PR 才 gh pr create --base main；已有 PR（上面給定 PR 號）則**沿用、不重複建立**（重複 create 會失敗中斷）。繁中，依上面 user-facing 規則附對應驗收表或註明不適用。
 6. gh pr checks <n> --watch 等官方 checks。
 7. CI 變綠後再等 ~90-120s reviewer buffer。
-8. 取當前 head 上的新 inline comment（--paginate 取全部頁，用 startswith 篩當前 head，不用 group_by）：HEAD=$(gh pr view <n> --json headRefOid --jq .headRefOid)；gh api --paginate repos/${REPO}/pulls/<n>/comments | jq -s "add | map(select(.original_commit_id|startswith(\\"\${HEAD:0:9}\\")))"。
+8. 取當前 head 上的新 inline comment（--paginate 取全部頁，用 commit_id startswith 篩當前 head（用 commit_id「現所在 commit」非 original_commit_id「首次 commit」，後者會漏掉留在當前 head 的新 comment），不用 group_by）：HEAD=$(gh pr view <n> --json headRefOid --jq .headRefOid)；gh api --paginate repos/${REPO}/pulls/<n>/comments | jq -s "add | map(select(.commit_id|startswith(\\"\${HEAD:0:9}\\")))"。
 9. GATE：官方 checks 全綠（pr-review-agent + CodeRabbit）且當前 head 無新 substantive P1/P2 → gh pr merge <n> --squash --delete-branch → closeout（git worktree remove、git fetch --prune、本地 main --ff-only 對齊 origin/main）。
 10. 有新 substantive 發現 → 修 → push → 對每一次 push 各自重跑 step 6-9 的 buffer cycle，SHALL NOT 只看 check 狀態就 merge。
 

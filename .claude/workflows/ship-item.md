@@ -9,15 +9,15 @@
 ## 步驟
 
 1. **commit 前 check**：`git diff --cached --check`，擋掉 trailing whitespace 與 EOF blank line；有就先修乾淨再 commit。
-2. **commit**：訊息用繁體中文，結尾附：
+2. **commit（條件式）**：若無新 staged 改動（work item 已 commit 在 branch）則**跳過**此步；否則訊息用繁體中文，結尾附：
 
    ```txt
    Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
    ```
 
 3. **push**：`git push -u origin <branch>`。遇 deny rule（如 force-push）改等價路徑——用新 commit 取代 `--amend`，不要硬推。
-4. **回報 diff/log**：回報 `git diff --stat`（這次 ship 的改動面）與 `git log`（這次的 commit）。
-5. **開 PR**：`gh pr create --base main`，title / body 繁體中文。
+4. **回報 diff/log**：回報 `git diff --stat origin/main...HEAD`（這次 ship 的 **commit** 改動面，非 worktree diff）與 `git log`（這次的 commit）。
+5. **開 PR（若尚無）**：branch 尚無 PR 才 `gh pr create --base main`（已有 PR——如 resume/watch 既有 PR——則沿用，不重複建立）；title / body 繁體中文。
    - 若是 **user-facing capability**，依 `AGENTS.md §0.1` 在 PR body 附 **Frontend Verification table**：
 
      | 欄位 | 內容 |
@@ -34,12 +34,12 @@
    - 純 tooling / docs / spec（無 production code）→ 不適用上述兩表，但 SHALL 在 body 明確說明這點。
 6. **觀測 CI**：`gh pr checks <n> --watch`，等官方 checks 跑完。
 7. **reviewer buffer**：CI 變綠後 **再等 ~90–120s**。reviewer（pr-review-agent / CodeRabbit / Codex / Copilot）常在 CI 變綠之後才貼出 inline P1/P2，太早查會漏掉。
-8. **查當前 head 上的新 inline comment**：用 `--paginate` 取**全部頁**（預設 `gh api` 只回第一頁 30 筆，留言多的 PR 會漏掉後頁的 P1/P2），並依當前 head commit 前綴**過濾**（不要用 `group_by`——它在未排序輸入上結果不可靠；用 `select(... startswith ...)` 直接篩當前 head 即可）：
+8. **查當前 head 上的新 inline comment**：用 `--paginate` 取**全部頁**（預設 `gh api` 只回第一頁 30 筆，留言多的 PR 會漏掉後頁的 P1/P2），並用 **`commit_id`**（該 comment **現所在**的 commit）篩當前 head——**不是** `original_commit_id`（comment **首次**留下的 commit；用它會漏掉留在當前 head 上的新 comment）；也**不要用 `group_by`**（未排序輸入不可靠）：
 
    ```bash
    HEAD=$(gh pr view <n> --json headRefOid --jq '.headRefOid')
    gh api --paginate repos/monkey1sai/AI-BIM-governance/pulls/<n>/comments \
-     | jq -s "add | map(select(.original_commit_id | startswith(\"${HEAD:0:9}\")))"
+     | jq -s "add | map(select(.commit_id | startswith(\"${HEAD:0:9}\")))"
    ```
 
    只看綁在 **當前 head commit** 上的 comment，舊 head 上已處理過的不算。
