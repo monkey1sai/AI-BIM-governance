@@ -102,6 +102,15 @@ export const governanceClient = {
     jsonFetch<{ created: number; issue_ids: string[] }>(`/api/governance/issues/from-rule-run/${runId}`, { method: "POST" }),
   issuesFromDiff: (diffId: string) =>
     jsonFetch<{ created: number; issue_ids: string[] }>(`/api/governance/issues/from-diff/${diffId}`, { method: "POST" }),
+
+  // BCF 匯出（只含正式 issue：kind=issue 且有 ifc_guid）。直連下載 URL。
+  bcfExportUrl: (params?: { model_version_id?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.model_version_id) qs.set("model_version_id", params.model_version_id);
+    if (params?.status) qs.set("status", params.status);
+    const q = qs.toString();
+    return `${COORD_BASE}/api/governance/bcf/export${q ? `?${q}` : ""}`;
+  },
 };
 
 export interface IssueRow {

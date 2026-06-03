@@ -131,4 +131,9 @@ export function registerGovernanceProxy(app: Express): void {
   app.post("/api/governance/issues/from-diff/:diffId", (request, response) => {
     void forward(response, "POST", `/api/issues/from-diff/${encodeURIComponent(request.params.diffId)}${queryString(request.originalUrl)}`, request.body);
   });
+
+  // BCF 匯出 proxy（issue → BCF 2.1 .bcfzip，二進位透傳）。
+  app.get("/api/governance/bcf/export", (request, response) => {
+    void forward(response, "GET", `/api/bcf/export${queryString(request.originalUrl)}`, undefined, true);
+  });
 }

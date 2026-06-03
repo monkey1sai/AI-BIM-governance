@@ -146,7 +146,22 @@ export function IssuesRuleCenterPage() {
         prov="asbuilt"
         actions={<Btn caption="POST from-rule-run" disabled={!runId} onClick={makeIssuesFromRun}>失敗構件建 issue</Btn>}
       >
-        <Btn caption="GET /api/governance/issues" onClick={loadIssues}>載入 issues</Btn>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn caption="GET /api/governance/issues" onClick={loadIssues}>載入 issues</Btn>
+          <Btn caption="GET /api/governance/bcf/export（只含正式 issue）" onClick={async () => {
+            setErr(null);
+            try {
+              const res = await fetch(governanceClient.bcfExportUrl());
+              if (!res.ok) { setErr(`BCF 匯出 ${res.status}：需至少一個正式 issue（kind=issue 且有 ifc_guid）`); return; }
+              const blob = await res.blob();
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = "governance-issues.bcfzip";
+              a.click();
+              URL.revokeObjectURL(a.href);
+            } catch (e) { setErr(String(e)); }
+          }}>匯出 BCF 2.1</Btn>
+        </div>
         {issues.length > 0 && (
           <table className="ec-table" style={{ marginTop: 10 }}>
             <thead><tr><th>kind</th><th>severity</th><th>status</th><th>ifc_guid</th><th>title</th><th /></tr></thead>
