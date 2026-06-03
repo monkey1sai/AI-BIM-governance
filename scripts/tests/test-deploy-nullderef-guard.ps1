@@ -35,7 +35,9 @@ function Test-KitRuntimeSignatureMatches {
 $sb = New-TestSandbox -Prefix 'deploy-nullderef-002-red'
 try {
     $emptySig = Join-Path $sb 'bim-streaming-server.params.json'
-    Set-Content -LiteralPath $emptySig -Value '' -NoNewline
+    # 建真零位元組空檔(版本無關):Set-Content -NoNewline 在部分 Windows PowerShell 5.1 缺席,
+    # 改用 .NET WriteAllText 確保 powershell.exe / pwsh 皆建出 0-byte 檔。
+    [System.IO.File]::WriteAllText($emptySig, '')
     Assert-Throws {
         $r = (Get-Content -LiteralPath $emptySig -Raw -ErrorAction SilentlyContinue).Trim()
         $r
@@ -50,7 +52,8 @@ finally { Remove-TestSandbox -Path $sb }
 $sb = New-TestSandbox -Prefix 'deploy-nullderef-002-empty'
 try {
     $emptySig = Join-Path $sb 'bim-streaming-server.params.json'
-    Set-Content -LiteralPath $emptySig -Value '' -NoNewline
+    # 真零位元組空檔(版本無關),理由同上。
+    [System.IO.File]::WriteAllText($emptySig, '')
     $result = $null
     # 直接呼叫受測複本:期望 $false,且過程不得 throw(用內層旗標表達「期望不 throw」)。
     $threw = $false
@@ -99,7 +102,8 @@ finally { Remove-TestSandbox -Path $sb }
 $sb = New-TestSandbox -Prefix 'deploy-nullderef-001-red'
 try {
     $emptyPid = Join-Path $sb 'bim-streaming-server.pid'
-    Set-Content -LiteralPath $emptyPid -Value '' -NoNewline
+    # 真零位元組空檔(版本無關),理由同上。
+    [System.IO.File]::WriteAllText($emptyPid, '')
     Assert-Throws {
         $r = (Get-Content $emptyPid -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
         $r
@@ -118,7 +122,9 @@ function Get-FailedPidSummaryLines {
     $lines = @()
     foreach ($pidFile in Get-ChildItem -LiteralPath $RunDir -Filter '*.pid' -ErrorAction SilentlyContinue) {
         $raw = Get-Content $pidFile.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
-        $procId = if ($raw) { $raw.Trim() } else { '(empty)' }
+        # 與 deploy.ps1 :110 guard 等價:用 IsNullOrWhiteSpace 而非 `if ($raw)`,
+        # 否則純空白 .pid('   ')因 truthy 會落到 .Trim() 印出空 PID 而非 '(empty)'。
+        $procId = if (-not [string]::IsNullOrWhiteSpace($raw)) { $raw.Trim() } else { '(empty)' }
         $lines += "  > $($pidFile.BaseName) PID $procId"
     }
     return $lines
@@ -127,7 +133,8 @@ function Get-FailedPidSummaryLines {
 $sb = New-TestSandbox -Prefix 'deploy-nullderef-001-empty'
 try {
     $emptyPid = Join-Path $sb 'bim-streaming-server.pid'
-    Set-Content -LiteralPath $emptyPid -Value '' -NoNewline
+    # 真零位元組空檔(版本無關),理由同上。
+    [System.IO.File]::WriteAllText($emptyPid, '')
     $threw = $false
     $lines = @()
     try { $lines = @(Get-FailedPidSummaryLines -RunDir $sb) }
@@ -136,6 +143,27 @@ try {
     Assert-Equal 1 $lines.Count 'one summary line produced for the empty .pid file'
     Assert-True ($lines[0] -match 'bim-streaming-server PID \(empty\)') 'empty .pid reported as PID (empty), summary still diagnosable'
     Write-TestPass 'DEPLOY-001 GREEN: empty .pid -> summary line "(empty)", no throw'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# ---------------------------------------------------------------------------
+# DEPLOY-001 補充:只含空白的 .pid → '(empty)'(reviewer 回饋的真值缺口)。
+# PowerShell 中純空白字串為 truthy,舊的 `if ($raw)` 會落到 .Trim() 印出空 PID;
+# IsNullOrWhiteSpace guard 必須讓純空白也落 '(empty)',否則失敗診斷會印出 "PID "(空白)。
+# ---------------------------------------------------------------------------
+$sb = New-TestSandbox -Prefix 'deploy-nullderef-001-whitespace'
+try {
+    $wsPid = Join-Path $sb 'bim-streaming-server.pid'
+    # 寫入只含空白(空格 + tab)的 .pid;不靠換行,確保第一行就是純空白。
+    [System.IO.File]::WriteAllText($wsPid, "   `t  ")
+    $threw = $false
+    $lines = @()
+    try { $lines = @(Get-FailedPidSummaryLines -RunDir $sb) }
+    catch { $threw = $true }
+    Assert-True (-not $threw) 'Final Summary PID loop does not throw on whitespace-only .pid file (DEPLOY-001)'
+    Assert-Equal 1 $lines.Count 'one summary line produced for the whitespace-only .pid file'
+    Assert-True ($lines[0] -match 'bim-streaming-server PID \(empty\)') 'whitespace-only .pid reported as PID (empty), not a blank PID'
+    Write-TestPass 'DEPLOY-001 GREEN: whitespace-only .pid -> "(empty)", no blank PID'
 }
 finally { Remove-TestSandbox -Path $sb }
 

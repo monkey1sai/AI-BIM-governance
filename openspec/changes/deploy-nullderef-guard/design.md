@@ -15,14 +15,14 @@
 
 ## Decisions
 
-### Decision 1：DEPLOY-001 用「行模式 + 旗標 if」guard
+### Decision 1：DEPLOY-001 用「行模式 + `IsNullOrWhiteSpace` 旗標 if」guard
 
 ```powershell
 $raw = Get-Content $pidFile.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
-$procId = if ($raw) { $raw.Trim() } else { '(empty)' }
+$procId = if (-not [string]::IsNullOrWhiteSpace($raw)) { $raw.Trim() } else { '(empty)' }
 ```
 
-`if ($raw)` 對 `$null`、空字串、全空白皆為 falsy（PowerShell truthiness），落到 `'(empty)'`。沿用原本的行模式（`Get-Content | Select-Object -First 1`，取第一行）而非改 `-Raw`，最小化 diff 並保留「PID 在第一行」的既有語意。失敗診斷的可讀性（顯示 `(empty)`）優先於完整 PID。
+判斷式用 `[string]::IsNullOrWhiteSpace($raw)`：`$null`、空字串、**只含空白**三者皆落到 `'(empty)'`。注意 PowerShell truthiness 與此處需求不同——純空白字串（如 `'   '`）在 PowerShell 中是 **truthy**，故 `if ($raw)` 會誤入 `.Trim()` 分支印出空白 PID（reviewer 回饋的真值缺口）；`IsNullOrWhiteSpace` 才能把純空白也歸到 `'(empty)'`。沿用原本的行模式（`Get-Content | Select-Object -First 1`，取第一行）而非改 `-Raw`，最小化 diff 並保留「PID 在第一行」的既有語意。失敗診斷的可讀性（顯示 `(empty)`）優先於完整 PID。
 
 ### Decision 2：DEPLOY-002 用 `$null -ne $raw` 顯式 guard（PS5.1 相容）
 

@@ -11,7 +11,7 @@
 
 ## What Changes
 
-- **deploy.ps1 DEPLOY-001**：`Print-FinalSummary` 失敗分支的 `.pid` 讀取改為 null/empty guard——`$raw = Get-Content ... | Select-Object -First 1; $procId = if ($raw) { $raw.Trim() } else { '(empty)' }`，空 / 缺檔顯示 `(empty)`，不讓 Final Summary 自身 throw。
+- **deploy.ps1 DEPLOY-001**：`Print-FinalSummary` 失敗分支的 `.pid` 讀取改為 null/empty/whitespace guard——`$raw = Get-Content ... | Select-Object -First 1; $procId = if (-not [string]::IsNullOrWhiteSpace($raw)) { $raw.Trim() } else { '(empty)' }`，空 / 缺檔 / 只含空白皆顯示 `(empty)`，不讓 Final Summary 自身 throw。（用 `IsNullOrWhiteSpace` 而非 `if ($raw)`：PowerShell 中純空白字串為 truthy，`if ($raw)` 會誤入 `.Trim()` 印出空白 PID。）
 - **deploy.ps1 DEPLOY-002**：`Test-KitRuntimeSignatureMatches` 改為 PS5.1 相容 guard——`$raw = Get-Content ...; $actual = if ($null -ne $raw) { $raw.Trim() } else { '' }`，存在但空的 signature 檔回 `$false`（不相符）不 throw。
 - 新增 `scripts/tests/test-deploy-nullderef-guard.ps1`：以既有純 PowerShell harness（`test-helpers.ps1` dot-source + 自訂 assert + temp sandbox，不依賴 Pester）覆蓋兩處 guard。每處先以 RED 斷言證明未防禦寫法在 strict-mode 下確實 throw，再以 GREEN 斷言證明已防禦寫法安全並保留 happy path。
 - spec delta：MODIFIED `one-click-deploy-hybrid` 的「Final Summary 可診斷性」requirement，明確化 Final Summary 與 idempotent re-run 路徑 SHALL 對空 / 缺失 `.pid` / signature 檔做 null-safe 讀取，不得在印出診斷前 crash。

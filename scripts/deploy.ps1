@@ -102,11 +102,13 @@ function Print-FinalSummary {
         Write-Host "Status: FAILED (exit $ExitCode, $FailedPhase)" -ForegroundColor Red
         Write-Host 'What might be running (NOT auto-rolled-back):'
         foreach ($pidFile in Get-ChildItem -LiteralPath $RunDir -Filter '*.pid' -ErrorAction SilentlyContinue) {
-            # null/empty guard:空 / 不存在 / 只含空白的 .pid 不能讓 Final Summary 自身 throw
+            # null/empty/whitespace guard:空 / 不存在 / 只含空白的 .pid 不能讓 Final Summary 自身 throw
             # (Get-Content 對空檔回 $null → .Trim() 是對 null 的方法呼叫 → strict-mode terminating
-            #  error,會繞過整段失敗診斷)。失敗路徑的可診斷性優先於完整 PID 顯示。
+            #  error,會繞過整段失敗診斷)。注意:PowerShell 中純空白字串(如 '   ')為 truthy,
+            # 若用 `if ($raw)` 會落到 .Trim() 印出空 PID;改用 [string]::IsNullOrWhiteSpace 讓純空白也落 '(empty)'。
+            # 失敗路徑的可診斷性優先於完整 PID 顯示。
             $raw = Get-Content $pidFile.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
-            $procId = if ($raw) { $raw.Trim() } else { '(empty)' }
+            $procId = if (-not [string]::IsNullOrWhiteSpace($raw)) { $raw.Trim() } else { '(empty)' }
             Write-Host "  > $($pidFile.BaseName) PID $procId"
         }
         Write-Host ''
