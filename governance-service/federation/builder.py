@@ -66,6 +66,16 @@ def _apply_member_transform(stage: Usd.Stage, root_prim: str, ops: dict) -> list
     federation 三 op 之間維持 translate→rotateXYZ→scale（translate 較外、scale 較內），符合
     federation 自身的標準 TRS world=T·R·S。op 加 `:fed` 命名空間以與 member 自身 op 區隔
     （不 clobber）。member 既有 op 仍保留在 xformOpOrder 內，幾何仍受其作用。
+
+    `!resetXformStack!` 特例（A3-4 / Codex P1 二次）：USD 的 `!resetXformStack!` 是 xformOpOrder
+    的特殊 token，**只在出現於 index 0 時才生效**（語意：重置/忽略繼承自父層的變換，自此 prim 起
+    重新累積）。pxr ground-truth：reset token 不在第一位時 USD 會**忽略它前面的所有 op**。若把
+    federation `:fed` ops 一律塞到最前，當 member 既有 xformOpOrder 以 `!resetXformStack!` 開頭時
+    會變成 `['xformOp:translate:fed', '!resetXformStack!', ...]` → fed ops 被整段忽略、federation
+    translate 完全沒套用（真 pxr 重現：原點停留 (0,0,0)）。故重排 SHALL 保留 leading
+    `!resetXformStack!` 在 index 0；fed ops 插在 reset **之後**（仍在 member 幾何 ops 之前 → fed
+    仍為「reset 之後的最外層」，世界置放語意不變、reset 語意也保留）。
+    目標順序：`['!resetXformStack!', <fed ops>, <member 既有非-reset ops>]`。
     """
     over = stage.OverridePrim(root_prim)
     xf = UsdGeom.Xformable(over)
@@ -84,11 +94,17 @@ def _apply_member_transform(stage: Usd.Stage, root_prim: str, ops: dict) -> list
     if applied:
         # 顯式重排：federation :fed ops 移到 xformOpOrder 最前（最外層），member 既有 op
         # 保留在後（最內層）。避免 federation translate 被 member 既有 scale/rotate 連帶作用。
+        # 特例：若 member 既有 xformOpOrder 以 `!resetXformStack!` 開頭，該 token MUST 留在
+        # index 0（否則 USD 會忽略它前面的 fed ops，federation translate 失效）；fed ops 插在
+        # reset 之後、member 幾何 ops 之前。
         order_attr = xf.GetXformOpOrderAttr()
         current = [str(n) for n in (order_attr.Get() or [])]
-        fed_ops = [n for n in current if n.endswith(":fed")]
-        member_ops = [n for n in current if not n.endswith(":fed")]
-        order_attr.Set(fed_ops + member_ops)
+        reset_token = "!resetXformStack!"
+        leading_reset = current[:1] if current and current[0] == reset_token else []
+        rest = current[len(leading_reset):]
+        fed_ops = [n for n in rest if n.endswith(":fed")]
+        member_ops = [n for n in rest if not n.endswith(":fed")]
+        order_attr.Set(leading_reset + fed_ops + member_ops)
     return applied
 
 

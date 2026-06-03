@@ -282,6 +282,68 @@ def test_federation_transform_full_trs_with_member_existing_scale(tmp_path):
     assert (round(p[0], 3), round(p[1], 3), round(p[2], 3)) == (1.0, 4.0, 3.0)
 
 
+def _member_with_reset_and_scale(path: str, disc: str, scale_xyz) -> str:
+    """member root prim 帶 `!resetXformStack!` + scale op，xformOpOrder=
+    ['!resetXformStack!', 'xformOp:scale']，用來重現 Codex P1 二次（reset token）。
+
+    `!resetXformStack!` 合法且常見（重置繼承自父層的變換）。SetResetXformStack(True) 會把該
+    token 放到 xformOpOrder 的 index 0。
+    """
+    path = _fwd(path)
+    stage = Usd.Stage.CreateNew(path)
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 0.001)
+    world = stage.DefinePrim("/World", "Xform")
+    stage.SetDefaultPrim(world)
+    arc = UsdGeom.Xform.Define(stage, f"/World/{disc}")
+    arc.AddScaleOp().Set(Gf.Vec3f(*scale_xyz))  # member 既有 scale op
+    arc.SetResetXformStack(True)  # 於 index 0 放入 !resetXformStack!
+    UsdGeom.Cube.Define(stage, f"/World/{disc}/Box")
+    stage.GetRootLayer().Save()
+    return path
+
+
+def test_federation_transform_applies_when_member_has_reset_xform_stack(tmp_path):
+    """Codex P1 二次回歸：member 既有 xformOpOrder 以 `!resetXformStack!` 開頭時，federation
+    translate=(100,0,0) SHALL 仍然套用。
+
+    `!resetXformStack!` 是 USD 特殊 token，**只在 index 0 才生效**（重置繼承自父層的變換）。
+    錯誤實作（把 fed ops 一律塞到最前）會變成 ['xformOp:translate:fed', '!resetXformStack!',
+    'xformOp:scale'] → reset 不在第一位 → USD 忽略它前面的 fed ops → federation translate 完全
+    沒套用（真 pxr 重現：原點停留 (0,0,0)）。正確修法：保留 leading reset 在 index 0、fed ops
+    插在 reset 之後，使原點落 (100,0,0)；member scale=2 仍作用，故 local(1,0,0) 落 (102,0,0)。
+    """
+    arc = _member_with_reset_and_scale(_fwd(tmp_path / "arc.usda"), "ARC", (2, 2, 2))
+    strr = _member(_fwd(tmp_path / "str.usda"), "STR")
+    before = _sha(arc)
+    members = [
+        {"usd_path": arc, "discipline": "ARC", "layer_order": 1, "root_prim": "/World/ARC",
+         "visibility_default": True,
+         "transform_json": json.dumps({"translate": [100, 0, 0]})},
+        {"usd_path": strr, "discipline": "STR", "layer_order": 2, "root_prim": "/World/STR",
+         "visibility_default": True},
+    ]
+    res = build_federated_usda(members, _fwd(tmp_path / "fed.usda"), meters_per_unit=0.001)
+    # member usdc immutable（federation 只寫 root layer，從不開 member 檔寫入）
+    assert _sha(arc) == before
+    stage = Usd.Stage.Open(res["usda_path"])
+    xf = UsdGeom.Xformable(stage.GetPrimAtPath("/World/ARC"))
+    order = [str(n) for n in xf.GetXformOpOrderAttr().Get()]
+    # !resetXformStack! 保留在 index 0；fed translate 緊接其後；member 既有 scale 在最內層。
+    assert order[0] == "!resetXformStack!"
+    assert order[1].endswith("translate:fed")
+    assert order[-1] == "xformOp:scale"  # member 既有 op 仍保留（未 clobber）
+    # reset 語意保留（仍重置繼承自父層的變換）。
+    assert xf.GetResetXformStack() is True
+    m = xf.GetLocalTransformation()
+    o = m.Transform(Gf.Vec3d(0, 0, 0))
+    p = m.Transform(Gf.Vec3d(1, 0, 0))
+    # federation translate 真的套用（非錯誤實作的 (0,0,0)）：原點落 (100,0,0)。
+    assert (round(o[0], 3), round(o[1], 3), round(o[2], 3)) == (100.0, 0.0, 0.0)
+    # member scale=2 仍作用在幾何：local(1,0,0)→(2,0,0)，再 federation +100 →(102,0,0)。
+    assert (round(p[0], 3), round(p[1], 3), round(p[2], 3)) == (102.0, 0.0, 0.0)
+
+
 def test_build_preserves_member_meters_per_unit(tmp_path):
     """A3-3：member metersPerUnit=0.001 時 federated stage SHALL 保留 0.001，不回退 0.01。"""
     arc = _member(_fwd(tmp_path / "arc.usda"), "ARC", mpu=0.001)
