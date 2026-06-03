@@ -1,6 +1,5 @@
 // Edge Console 誠實性 smoke：確認頁面可渲染、provenance 標記存在、A1 顯示「實測」證據、
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
-import React from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AppsPage, FederationPage, IssuesRuleCenterPage, OverviewPage, VersionDiffPage } from "./pages";
@@ -19,8 +18,10 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("7126"); // 真實評估構件數
     expect(html).toContain("實測 artifact");
     expect(html).toContain("執行規則檢核");
-    expect(html).toContain("IDS-XML"); // 誠實標 IDS 待建
-    expect(html).toContain("後端待建"); // BCF / Issue DB 待建
+    expect(html).toContain("IDS-XML"); // IDS 匯入後端已實作（ifctester）
+    // BCF 2.1 匯出後端已落地（純 stdlib，不依賴 GPLv3）→ 頁面誠實標「已實作」而非「待建」。
+    expect(html).toContain("匯出 BCF 2.1");
+    expect(html).not.toContain("99.1%"); // 無願景假數字
   });
 
   it("A2 / A3 帶 provenance、不顯示捏造數字", () => {

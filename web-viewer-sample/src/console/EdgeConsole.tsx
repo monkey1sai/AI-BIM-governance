@@ -1,6 +1,6 @@
 // AI-BIM Governance Edge Console 殼層：三欄 grid + 兩段式導覽 + ChatUSD 欄（可折疊）。
 // 零依賴 hash 路由（不引入 react-router、不擾動既有 App ?session bootstrap）。
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import "./edge-console.css";
 import { PAGES } from "./data";
 import {

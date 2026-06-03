@@ -10,7 +10,6 @@
  * its affiliates is strictly prohibited.
  */
 
-import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.tsx";
 import EdgeConsole from "./console/EdgeConsole";

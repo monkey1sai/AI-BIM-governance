@@ -13,7 +13,9 @@ export interface StreamEndpoint {
     signalingserver: string;
     signalingport: number;
     mediaserver: string;
-    mediaport: number | null;
+    // mediaport 用 undefined 表示「未指定」,與串流 library DirectConfig.mediaPort
+    // （number | undefined）相容；缺值時 library 自行套預設,不傳 null。
+    mediaport: number | undefined;
 }
 
 export type KitStreamEndpoint = ReviewStreamConfig["kit_instance_bindings"][number]["stream_config"];

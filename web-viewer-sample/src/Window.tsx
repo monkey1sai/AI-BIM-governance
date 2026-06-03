@@ -27,7 +27,7 @@ import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStream
 import { BimControlClient } from "./clients/bimControlClient";
 import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinatorClient";
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
-import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest, severityToColor } from "./clients/streamMessages";
+import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
 import { demoPrimPath } from "./clients/demoDefaults";
 import { reviewEnv } from "./config/env";
 import type { DemoLogEntry } from "./types/demo";
@@ -49,7 +49,7 @@ export interface AppProps {
     signalingserver: string
     signalingport: number
     mediaserver: string
-    mediaport: number | null
+    mediaport: number | undefined
     accessToken: string
     onStreamFailed: () => void;
 }
@@ -210,13 +210,13 @@ function resolveInitialStreamEndpoint(props: AppProps): StreamEndpoint {
         signalingserver: getQueryParam("signalingServer", "signalingserver") || props.signalingserver || StreamConfig.local.server,
         signalingport: getQueryPort("signalingPort", "signalingport") || props.signalingport || StreamConfig.local.signalingPort,
         mediaserver: getQueryParam("mediaServer", "mediaserver") || props.mediaserver || StreamConfig.local.server,
-        mediaport: getQueryPort("mediaPort", "mediaport") ?? props.mediaport ?? StreamConfig.local.mediaPort ?? null,
+        mediaport: getQueryPort("mediaPort", "mediaport") ?? props.mediaport ?? StreamConfig.local.mediaPort ?? undefined,
     };
 }
 
 function streamEndpointLabel(endpoint: StreamEndpoint): string {
     const kit = endpoint.kitInstanceId ? `${endpoint.kitInstanceId} ` : "";
-    const media = endpoint.mediaport !== null ? `/${endpoint.mediaport}` : "";
+    const media = endpoint.mediaport !== undefined ? `/${endpoint.mediaport}` : "";
     return `${kit}${endpoint.signalingserver}:${endpoint.signalingport}${media}`;
 }
 
@@ -249,7 +249,6 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
-    private pendingIssueHighlightRequestId: string | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -606,7 +605,7 @@ export default class App extends React.Component<AppProps, AppState> {
             signalingserver: selectedConfig.signalingServer,
             signalingport: selectedConfig.signalingPort,
             mediaserver: selectedConfig.mediaServer,
-            mediaport: selectedConfig.mediaPort ?? null,
+            mediaport: selectedConfig.mediaPort ?? undefined,
         };
     }
 

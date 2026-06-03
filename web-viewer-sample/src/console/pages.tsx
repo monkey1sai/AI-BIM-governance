@@ -1,8 +1,8 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import React, { useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
-import { A1A10, AppCardDef, PAGES } from "./data";
+import { A1A10, AppCardDef, PAGES, Prov } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
@@ -32,7 +32,7 @@ export function OverviewPage() {
         <Field k="A1 治理與模型檢核（rule-run authority）" v="backend 已實作" prov="asbuilt" />
         <Field k="A2 版本差異 · A3 Federation" v="已實作（GlobalId diff + USD sublayer federation）" prov="asbuilt" />
         <Field k="Issue 資料庫（lifecycle + audit + 來源綁定）· IDS 匯入" v="已實作" prov="asbuilt" />
-        <Field k="BCF 匯出（issue→.bcfzip）" v="待建" prov="p1" />
+        <Field k="BCF 匯出（issue→.bcfzip）" v="已實作（純 stdlib，不依賴 GPLv3）" prov="asbuilt" />
       </Panel>
     </>
   );
@@ -136,7 +136,7 @@ export function IssuesRuleCenterPage() {
         <Field k="WALL-STOREY-ASSIGNED" v="IfcWall · 空間指派" prov="asbuilt" />
         <Field k="IDS-XML 匯入（buildingSMART IDS）" v="已實作（ifctester 0.8.5；填 IDS 路徑即用 IDS 規則跑）" prov="asbuilt" />
         <Field k="Excel 匯出" v="openpyxl" prov="asbuilt" />
-        <Field k="BCF 匯出（issue→.bcfzip）" v="待建（bcf 模組 + LGPL 閘門）" prov="p15" />
+        <Field k="BCF 匯出（issue→.bcfzip）" v="已實作（純 stdlib zipfile/ElementTree，不依賴 GPLv3）" prov="asbuilt" />
         <Field k="Issue 生命週期資料庫" v="open→assigned→resolved/rejected→reopened + audit" prov="asbuilt" />
       </Panel>
 
@@ -432,7 +432,7 @@ export function FederationPage() {
   );
 }
 
-export function StubPage({ title, note, items }: { title: string; note: string; items: [string, string, "asbuilt" | "demo" | "p1" | "p15"][] }) {
+export function StubPage({ title, note, items }: { title: string; note: string; items: [string, string, Prov][] }) {
   return (
     <>
       <h1>{title}</h1>
