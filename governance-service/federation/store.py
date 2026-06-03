@@ -94,3 +94,21 @@ class FederationStore:
                 "UPDATE federated_model_sets SET status='built', build_usda_path=? WHERE id=?",
                 (usda_path, set_id),
             )
+
+    def get_build_path(self, set_id: str) -> str | None:
+        """回傳該 set 目前記錄的 build_usda_path（無 / 未 build 時 None）。"""
+        row = self.get_set(set_id)
+        return row.get("build_usda_path") if row else None
+
+    def mark_build_stale(self, set_id: str) -> None:
+        """把該 set 標為非 built 並清除 build_usda_path（DB 端）。
+
+        用於 build 因座標系不一致而中止：先前若已 build 過，舊的 build pointer 不得殘留，
+        否則 review-room 會誤把過時且現已無效的 federated stage 當作 ready。on-disk
+        artifact 的刪除由呼叫端（api.build_set）負責，本方法只負責 DB 狀態。
+        """
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE federated_model_sets SET status='draft', build_usda_path=NULL WHERE id=?",
+                (set_id,),
+            )

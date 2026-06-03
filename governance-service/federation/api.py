@@ -159,6 +159,18 @@ def build_set(set_id: str):
     # 不得靜默把 Y-up member 宣告成 Z-up，也不得硬編 upAxis=Z 或讓單位回退 0.01。
     coord_report = validate_coords(members)
     if not coord_report["consistent"]:
+        # 座標系不一致 → 中止 build。若此 set 先前已 build 過，舊的 federated_review.usda
+        # 與 DB build pointer SHALL NOT 殘留為「現行有效」——否則 review-room 會把過時且
+        # 現已無效的 stage 當作 ready 交給 Kit 載入。回 409 前先清除 stale build（A3-3/A3-4）。
+        stale_path = store.get_build_path(set_id)
+        store.mark_build_stale(set_id)
+        if stale_path and os.path.exists(stale_path):
+            try:
+                os.remove(stale_path)
+            except OSError:
+                # 刪不掉（被佔用等）不應掩蓋座標不一致的主因；DB 已標 stale，review-room
+                # 改看 status/path 仍會回 ready=false。
+                pass
         raise HTTPException(
             status_code=409,
             detail={

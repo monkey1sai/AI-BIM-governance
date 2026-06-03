@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 
+import pytest
 from pxr import Gf, Usd, UsdGeom
 
 from federation import build_federated_usda, open_federated_prim_paths, validate_coords
@@ -195,6 +196,92 @@ def test_per_member_transform_world_coords_scale_then_translate(tmp_path):
     assert (round(p[0], 3), round(p[1], 3), round(p[2], 3)) == (102.0, 0.0, 0.0)
 
 
+def _member_with_local_scale(path: str, disc: str, scale_xyz) -> str:
+    """member root prim 自帶 local scale（模擬 IFC→USD 常見的單位 scale），
+    xformOpOrder=['xformOp:scale']（無 :fed suffix），用來重現 Codex P1。
+    """
+    path = _fwd(path)
+    stage = Usd.Stage.CreateNew(path)
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 0.001)
+    world = stage.DefinePrim("/World", "Xform")
+    stage.SetDefaultPrim(world)
+    arc = UsdGeom.Xform.Define(stage, f"/World/{disc}")
+    arc.AddScaleOp().Set(Gf.Vec3f(*scale_xyz))  # member 既有 scale op
+    UsdGeom.Cube.Define(stage, f"/World/{disc}/Box")
+    stage.GetRootLayer().Save()
+    return path
+
+
+def test_federation_transform_outermost_when_member_has_existing_ops(tmp_path):
+    """Codex P1 回歸：member 自帶 xformOp:scale=2 時，federation translate=(100,0,0)
+    SHALL 為最外層（不被 member scale 連帶放大）。
+
+    錯誤實作（federation op append 到 member 既有 op 之後 = 最內層）會讓 member scale 連帶
+    放大 federation translate，local 原點落 (200,0,0)；正確（federation 最外層）應落 (100,0,0)，
+    且 member scale 仍作用在幾何上，故 local (1,0,0) 落 (102,0,0)。
+    """
+    arc = _member_with_local_scale(_fwd(tmp_path / "arc.usda"), "ARC", (2, 2, 2))
+    strr = _member(_fwd(tmp_path / "str.usda"), "STR")
+    before = _sha(arc)
+    members = [
+        {"usd_path": arc, "discipline": "ARC", "layer_order": 1, "root_prim": "/World/ARC",
+         "visibility_default": True,
+         "transform_json": json.dumps({"translate": [100, 0, 0]})},
+        {"usd_path": strr, "discipline": "STR", "layer_order": 2, "root_prim": "/World/STR",
+         "visibility_default": True},
+    ]
+    res = build_federated_usda(members, _fwd(tmp_path / "fed.usda"), meters_per_unit=0.001)
+    # member usdc immutable（federation 只寫 root layer，從不開 member 檔寫入）
+    assert _sha(arc) == before
+    stage = Usd.Stage.Open(res["usda_path"])
+    xf = UsdGeom.Xformable(stage.GetPrimAtPath("/World/ARC"))
+    order = [str(n) for n in xf.GetXformOpOrderAttr().Get()]
+    # federation translate:fed 在最外層（list[0]），member 既有 scale 在最內層（list[-1]）。
+    assert order[0].endswith("translate:fed")
+    assert order[-1] == "xformOp:scale"  # member 既有 op 仍保留（未 clobber）
+    m = xf.GetLocalTransformation()
+    o = m.Transform(Gf.Vec3d(0, 0, 0))
+    p = m.Transform(Gf.Vec3d(1, 0, 0))
+    # federation translate 不被 member scale 放大：原點落 (100,0,0)，而非 (200,0,0)。
+    assert (round(o[0], 3), round(o[1], 3), round(o[2], 3)) == (100.0, 0.0, 0.0)
+    # member scale=2 仍作用在幾何：local(1,0,0)→(2,0,0)，再 federation +100 →(102,0,0)。
+    assert (round(p[0], 3), round(p[1], 3), round(p[2], 3)) == (102.0, 0.0, 0.0)
+
+
+def test_federation_transform_full_trs_with_member_existing_scale(tmp_path):
+    """Codex P1 延伸：member 自帶 scale=2 + federation 完整 TRS（translate/rotateXYZ/scale）。
+
+    federation 三 op 仍維持自身標準 TRS（translate 最外、scale 最內），整組 federation 變換
+    為最外層、member 既有 scale 為最內層。驗世界座標與 op 排序。
+    """
+    arc = _member_with_local_scale(_fwd(tmp_path / "arc.usda"), "ARC", (2, 2, 2))
+    strr = _member(_fwd(tmp_path / "str.usda"), "STR")
+    members = [
+        {"usd_path": arc, "discipline": "ARC", "layer_order": 1, "root_prim": "/World/ARC",
+         "visibility_default": True,
+         "transform_json": json.dumps({"translate": [1, 2, 3], "rotateXYZ": [0, 0, 90], "scale": [1, 1, 1]})},
+        {"usd_path": strr, "discipline": "STR", "layer_order": 2, "root_prim": "/World/STR",
+         "visibility_default": True},
+    ]
+    res = build_federated_usda(members, _fwd(tmp_path / "fed.usda"), meters_per_unit=0.001)
+    stage = Usd.Stage.Open(res["usda_path"])
+    xf = UsdGeom.Xformable(stage.GetPrimAtPath("/World/ARC"))
+    order = [str(n) for n in xf.GetXformOpOrderAttr().Get()]
+    # federation 三 :fed op 在前（translate 最外、scale 最內），member 既有 scale 在最末（最內層）。
+    assert order[0].endswith("translate:fed")
+    assert order[1].endswith("rotateXYZ:fed")
+    assert order[2].endswith("scale:fed")
+    assert order[-1] == "xformOp:scale"  # member 既有 op 保留在最內層
+    m = xf.GetLocalTransformation()
+    # local 原點 → 世界 = federation T = (1,2,3)（不被 member scale 連帶）。
+    o = m.Transform(Gf.Vec3d(0, 0, 0))
+    assert (round(o[0], 3), round(o[1], 3), round(o[2], 3)) == (1.0, 2.0, 3.0)
+    # local (1,0,0)：member scale=2 →(2,0,0)，fed R(z90)→(0,2,0)，fed T→(1,4,3)。
+    p = m.Transform(Gf.Vec3d(1, 0, 0))
+    assert (round(p[0], 3), round(p[1], 3), round(p[2], 3)) == (1.0, 4.0, 3.0)
+
+
 def test_build_preserves_member_meters_per_unit(tmp_path):
     """A3-3：member metersPerUnit=0.001 時 federated stage SHALL 保留 0.001，不回退 0.01。"""
     arc = _member(_fwd(tmp_path / "arc.usda"), "ARC", mpu=0.001)
@@ -204,12 +291,12 @@ def test_build_preserves_member_meters_per_unit(tmp_path):
         {"usd_path": strr, "discipline": "STR", "layer_order": 2, "root_prim": "/World/STR", "visibility_default": True},
     ]
     res = build_federated_usda(members, _fwd(tmp_path / "fed.usda"), meters_per_unit=0.001)
-    assert res["meters_per_unit"] == 0.001
+    assert res["meters_per_unit"] == pytest.approx(0.001)
     stage = Usd.Stage.Open(res["usda_path"])
-    assert round(UsdGeom.GetStageMetersPerUnit(stage), 9) == 0.001
+    assert UsdGeom.GetStageMetersPerUnit(stage) == pytest.approx(0.001)
     # 對照：不傳 meters_per_unit 會回退 pxr 預設 0.01（差 10 倍），證明傳遞確實有效。
     res2 = build_federated_usda(members, _fwd(tmp_path / "fed2.usda"))
-    assert res2["meters_per_unit"] == 0.01
+    assert res2["meters_per_unit"] == pytest.approx(0.01)
 
 
 def test_member_without_transform_has_no_fed_ops(tmp_path):

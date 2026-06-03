@@ -25,7 +25,7 @@
 - **AND** SHALL NOT 靜默回退 pxr 預設 0.01（避免整體尺度差 10 倍）
 - **AND** build 結果 SHALL 回報採用的 meters_per_unit 供呼叫端稽核
 
-### Requirement: build 前 SHALL 驗證共享坐標系並在不一致時拒絕
+### Requirement: build 前 SHALL 可驗證共享坐標系
 
 `governance-service` SHALL 在 build 前比對各 member 的坐標系（upAxis / metersPerUnit），回報是否一致與差異清單（federation #1 風險）。當 upAxis 或 metersPerUnit 不一致時，build SHALL 拒絕並回報差異，SHALL NOT 把不一致的 member（如 Y-up）靜默宣告成 Z-up 後產出幾何錯誤的 federated stage。
 

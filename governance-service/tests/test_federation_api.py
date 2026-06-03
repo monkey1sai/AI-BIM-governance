@@ -51,7 +51,7 @@ def test_federation_api_end_to_end(client, tmp_path):
     assert "/World/ARC" in res["prim_sample"] and "/World/STR" in res["prim_sample"]
     # A3-3 / A3-4：build 從驗證後一致的 member 取座標系，不硬編、不回退單位。
     assert res["up_axis"] == "Z"
-    assert res["meters_per_unit"] == 0.001
+    assert res["meters_per_unit"] == pytest.approx(0.001)
 
 
 def test_build_rejects_inconsistent_up_axis(client, tmp_path):
@@ -87,6 +87,40 @@ def test_review_room_descriptor_after_build(client, tmp_path):
     assert rr["stage_composition"]["primary"]["url"] == rr["stage_url"]
     assert rr["stage_composition"]["secondary_layers"] == []
     assert {m["discipline"] for m in rr["members"]} == {"ARC", "STR"}
+
+
+def test_build_clears_stale_artifact_when_coords_become_inconsistent(client, tmp_path):
+    """Codex P2：先成功 build，之後加入 Y-up member 使座標不一致再 build → 回 409，
+    且先前的 build artifact SHALL 被清除（DB pointer + on-disk usda），review-room 回 ready=false。
+
+    否則 review-room 會把過時且現已無效的 federated stage 當作 ready 交給 Kit。
+    """
+    arc = _member_file(tmp_path / "arc.usda", "ARC", up="Z")
+    strr = _member_file(tmp_path / "str.usda", "STR", up="Z")
+    set_id = client.post("/api/federated-sets", json={"name": "stale"}).json()["set_id"]
+    client.post(f"/api/federated-sets/{set_id}/members", json={"model_version_id": "arc_v1", "discipline": "ARC", "usd_path": arc, "layer_order": 1, "root_prim": "/World/ARC"})
+    client.post(f"/api/federated-sets/{set_id}/members", json={"model_version_id": "str_v1", "discipline": "STR", "usd_path": strr, "layer_order": 2, "root_prim": "/World/STR"})
+
+    # 先成功 build（兩 member 皆 Z-up）
+    first = client.post(f"/api/federated-sets/{set_id}/build").json()
+    built_path = first["usda_path"]
+    assert os.path.exists(built_path)
+    assert client.get(f"/api/federated-sets/{set_id}/review-room").json()["ready"] is True
+
+    # 加入一個 Y-up member 使座標系不一致
+    ydisc = _member_file(tmp_path / "mep.usda", "MEP", up="Y")
+    client.post(f"/api/federated-sets/{set_id}/members", json={"model_version_id": "mep_v1", "discipline": "MEP", "usd_path": ydisc, "layer_order": 3, "root_prim": "/World/MEP"})
+
+    # 再 build → 409，且清除 stale build
+    resp = client.post(f"/api/federated-sets/{set_id}/build")
+    assert resp.status_code == 409
+    assert any("up_axis" in i for i in resp.json()["detail"]["issues"])
+    # stale on-disk artifact 被刪除
+    assert not os.path.exists(built_path)
+    # review-room 回 ready=false（不再把過時 stage 當作可載入）
+    rr = client.get(f"/api/federated-sets/{set_id}/review-room").json()
+    assert rr["ready"] is False
+    assert rr["stage_composition"] is None
 
 
 def test_review_room_404_unknown_set(client):

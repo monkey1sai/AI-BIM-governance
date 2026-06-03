@@ -49,21 +49,29 @@ def _parse_transform(transform_json: Any) -> Optional[dict]:
 def _apply_member_transform(stage: Usd.Stage, root_prim: str, ops: dict) -> list[str]:
     """在 root(最強) layer 上對 member root_prim author over + xformOp（member 檔不動）。
 
-    pxr 的 Add*Op 會讀現有（composed）xformOpOrder 再 append，故 member 自身 transform
-    完整保留（值仍從 member 弱層解析），federation op 落在 member op 之後加入。
+    pxr 的 Add*Op 會讀現有（composed）xformOpOrder 再 **append**，故 member 自身 transform
+    完整保留（值仍從 member 弱層解析）。但 append 把 federation op 放在 xformOpOrder **末端
+    （最內層/most-local）**——當 member 自帶 op（如 IFC→USD 常見的單位 scale / up-axis rotate）
+    時，member 既有 op 會排在前面（最外層/least-local），federation 的 translate 反而被 member
+    既有 scale/rotate **連帶縮放/旋轉**，置放錯誤（真 pxr 重現：member scale=2 + fed
+    translate=(100,0,0) → 原點落 (200,0,0)，應為 (100,0,0)）。這正是 A3-1 要消除的失效模式。
+
+    修法（A3-1 / Codex P1）：append 完成後**顯式重排** xformOpOrder，使 federation `:fed`
+    ops 在 **最前（最外層/least-local）**、member 既有 op 在 **後（最內層/most-local）**。
 
     xformOp 求值語義（pxr ground-truth）：xformOpOrder 由左至右是 least-local→most-local，
     對點求值時**由右至左**套用（list 最後一個 op 最內層/most-local、最先作用到點；list 第一個
-    op 最外層/least-local、最後作用）。標準 TRS world = T·R·S 要求 translate 在 xformOpOrder
-    **最前（最外層）**、scale 在**最後（最內層）**。故加入順序為 translate→rotateXYZ→scale，
-    使 xformOpOrder = [translate, rotateXYZ, scale]，translate 不會被 member/自身 scale 連帶
-    縮放、rotate 連帶旋轉。op 加 `:fed` 命名空間以與 member 自身 op 區隔（不 clobber）。
+    op 最外層/least-local、最後作用）。federation transform 是「把整個 member（含其自身座標系）
+    放到 world 的某位置」，故 federation 變換 SHALL 為最外層（最後套用），member 既有 op 為內層。
+    federation 三 op 之間維持 translate→rotateXYZ→scale（translate 較外、scale 較內），符合
+    federation 自身的標準 TRS world=T·R·S。op 加 `:fed` 命名空間以與 member 自身 op 區隔
+    （不 clobber）。member 既有 op 仍保留在 xformOpOrder 內，幾何仍受其作用。
     """
     over = stage.OverridePrim(root_prim)
     xf = UsdGeom.Xformable(over)
     applied: list[str] = []
-    # 加入順序 = translate→rotateXYZ→scale，使 xformOpOrder=[translate, rotateXYZ, scale]：
-    # translate 最外層（least-local）、scale 最內層（most-local），符合 world=T·R·S。
+    # 先 append federation :fed ops（pxr Add*Op 會讀現有 xformOpOrder 再加到末端）。
+    # federation 三 op 之間：translate→rotateXYZ→scale（translate 較外、scale 較內）。
     if "translate" in ops:
         xf.AddTranslateOp(opSuffix="fed").Set(Gf.Vec3d(*ops["translate"]))
         applied.append("translate")
@@ -73,6 +81,14 @@ def _apply_member_transform(stage: Usd.Stage, root_prim: str, ops: dict) -> list
     if "scale" in ops:
         xf.AddScaleOp(opSuffix="fed").Set(Gf.Vec3f(*ops["scale"]))
         applied.append("scale")
+    if applied:
+        # 顯式重排：federation :fed ops 移到 xformOpOrder 最前（最外層），member 既有 op
+        # 保留在後（最內層）。避免 federation translate 被 member 既有 scale/rotate 連帶作用。
+        order_attr = xf.GetXformOpOrderAttr()
+        current = [str(n) for n in (order_attr.Get() or [])]
+        fed_ops = [n for n in current if n.endswith(":fed")]
+        member_ops = [n for n in current if not n.endswith(":fed")]
+        order_attr.Set(fed_ops + member_ops)
     return applied
 
 
