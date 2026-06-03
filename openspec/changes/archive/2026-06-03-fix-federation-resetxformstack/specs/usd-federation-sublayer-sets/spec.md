@@ -1,8 +1,5 @@
-# usd-federation-sublayer-sets Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change a3-transform-review-room. Update Purpose after archive.
-## Requirements
 ### Requirement: federation SHALL 支援 per-member transform 且不破壞 member
 
 federation build SHALL 能對每個 member 套用可選的 transform（translate / rotateXYZ / scale），且 member 的 USD 檔 SHALL NOT 被修改（immutable）。transform SHALL 只 author 在 federation 的 root layer，並 SHALL 與 member 自身既有的 transform 合成（不得 clobber）。per-member transform SHALL 遵循標準 TRS（world = T·R·S）：translate 為 xformOpOrder 最外層（least-local）、scale 為最內層（most-local），使 translate 不被 member 或自身 scale 連帶縮放、不被 rotate 連帶旋轉。正確性 SHALL 以真實 pxr 計算的世界座標驗證，SHALL NOT 僅斷言 xformOp 字面順序。此外，per-member transform 套用 SHALL 保留 member 既有 `!resetXformStack!` 語意：若 member 的 `xformOpOrder` 以 `!resetXformStack!` 開頭，該 token SHALL 維持在 index 0（federation ops SHALL 置於 reset 之後、member 幾何 ops 之前），使含 `!resetXformStack!` 的 member 上 federation transform 仍正確套用、不被 USD 因 reset token 不在第一位而忽略。
@@ -32,19 +29,3 @@ federation build SHALL 能對每個 member 套用可選的 transform（translate
 
 - **WHEN** member 未提供 transform
 - **THEN** federation build SHALL NOT 對該 member 的 prim author 任何 federation transform op
-
-### Requirement: federation SHALL 提供 Review Room handoff descriptor
-
-`governance-service` SHALL 提供端點，把已 build 的 federated stage 以 viewer 可消費的 `stage_composition`（primary + secondary_layers）形式交給 Review Room；且 SHALL 誠實標示 GPU 串流由 host-native Kit 負責，本服務不啟動串流。
-
-#### Scenario: build 後回傳 stage_composition handoff
-
-- **WHEN** 一個 federated set 已 build 後查詢其 review-room
-- **THEN** 回應 SHALL 標 `ready=true` 並含 `stage_composition.primary`，其 url 指向該 set 的 `federated_review.usda`
-- **AND** 回應 SHALL 說明此 stage 交由 host-native Kit review session 載入，governance-service 不啟動 GPU 串流
-
-#### Scenario: 尚未 build 時誠實導引
-
-- **WHEN** 一個尚未 build 的 federated set 被查詢 review-room
-- **THEN** 回應 SHALL 標 `ready=false` 且 SHALL NOT 回傳 stage_composition
-- **AND** 回應 SHALL 導引使用者先執行 build

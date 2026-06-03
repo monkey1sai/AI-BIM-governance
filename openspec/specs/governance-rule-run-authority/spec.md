@@ -5,7 +5,9 @@ TBD - created by archiving change governance-rule-run-service. Update Purpose af
 ## Requirements
 ### Requirement: 落地端 SHALL 提供對真實 IFC 執行宣告式治理規則集的 rule-run authority
 
-落地端 SHALL 提供一個內部服務 `governance-service`，接受 IFC 來源與規則集，對 IFC 構件套用宣告式規則（屬性必填、命名規則、空間指派等），並產出每構件 pass/fail 結果、governance score 與彙總。規則 SHALL 以 `ifcopenshell` predicate 實作，SHALL NOT 要求 GPU、Kit、WebRTC 或 ifctester。
+落地端 SHALL 提供一個內部服務 `governance-service`，接受 IFC 來源與規則集，對 IFC 構件套用宣告式規則（屬性必填、命名規則、空間指派等），並產出每構件 pass/fail/error 結果、governance score 與彙總。規則 SHALL 以 `ifcopenshell` predicate 實作，SHALL NOT 要求 GPU、Kit、WebRTC 或 ifctester。
+
+governance score SHALL 誠實反映評估結果：score = passed / (passed + failed + errored)。評估失敗（`error`）SHALL 計入分母、視同未通過，SHALL NOT 被排除在分母之外而使部分或全部評估失敗的 run 呈現為虛假滿分。當無任何適用構件（分母為 0）時 score SHALL 為 100.0（vacuous）。
 
 #### Scenario: 對真實 IFC 跑規則集產出帶 GUID 的結果
 
@@ -13,14 +15,22 @@ TBD - created by archiving change governance-rule-run-service. Update Purpose af
 - **THEN** `governance-service` SHALL 以 host-native `ifcopenshell` 唯讀解析該 IFC
 - **AND** SHALL 對每條規則枚舉目標 IFC 型別的構件並套用 predicate
 - **AND** 每筆結果 SHALL 帶該構件真實的 `ifc_guid`、`ifc_type`、`ifc_name`、`rule_code`、`severity` 與 `status`（`pass` / `fail` / `error`）
-- **AND** SHALL 計算 governance score = passed / (passed + failed)
-- **AND** SHALL NOT 依賴 GPU / Kit / WebRTC / ifctester
+- **AND** SHALL 計算 governance score = passed / (passed + failed + errored)
+- **AND** SHALL NOT 依賴 GPU / Kit / WebRTC
+
+#### Scenario: 全部構件評估失敗時 score 不得呈現為滿分
+
+- **WHEN** 一條規則對每個目標構件評估都拋出例外（如損壞模型或錯誤 predicate），使該 run 全部為 `error`、`passed == 0`
+- **THEN** governance score SHALL 為 0.0（`errored` 計入分母）
+- **AND** SHALL NOT 因「分母只算 passed + failed」而回報 100.0
+- **AND** 彙總 SHALL 保留 `errored` 計數供消費端辨識評估失敗
 
 #### Scenario: 規則真的從模型萃取屬性與空間關係（非僅枚舉）
 
 - **WHEN** 一條 `property_required` 規則檢核某 Pset 屬性（如防火門 `Pset_DoorCommon.FireRating`）
 - **THEN** `governance-service` SHALL 透過 `ifcopenshell` 解析該構件的 property sets 取值
 - **AND** 結果 evidence SHALL 記錄實際讀到的 Pset 清單與該屬性值
+- **AND** 查找屬性時 SHALL 排除 `ifcopenshell` `get_psets()` 注入的合成 key（如 `id`），SHALL NOT 因合成 key 而使規則假性通過
 - **AND** 一條 `spatial_contained` 規則 SHALL 透過 IFC 空間關係判定構件是否被指派到樓層 / 空間
 
 #### Scenario: 跨 IFC schema 型別別名
@@ -83,6 +93,11 @@ TBD - created by archiving change governance-rule-run-service. Update Purpose af
 
 `governance-service` SHALL 能以 buildingSMART IDS（透過 `ifctester`）作為 rule-run 的規則來源。以 IDS 跑時，結果 SHALL 與 YAML 引擎一致地映射為帶真實 `ifc_guid` 的 pass/fail，並計分。`/health` SHALL 如實回報 `ifctester` 是否安裝。
 
+IDS 計分 SHALL 誠實，SHALL NOT 因 `ifctester` 內部狀態殘留或零適用構件而捏造通過：
+
+- **跨 model 不得殘留洩漏**：以同一已載入的 IDS specs 物件先後對多份 model 執行時，前一份 model 的逐構件通過狀態 SHALL NOT 洩漏到後一份。實作 SHALL 在每次驗證進入點重置 `ifctester` 不會自行清理的 requirement facet 殘留通過集合，使後一份 model 的不合規構件 SHALL NOT 因與前一份構件共用底層 STEP id 而被誤判為 pass。
+- **required 構件缺席 SHALL 誠實 fail**：非 prohibited 的 required specification（`minOccurs` 非 0）在 model 中找不到任何適用構件、且 `ifctester` 判該 specification 不通過時，SHALL 產出一筆 specification 級 fail（誠實反映 required 構件缺席），SHALL NOT 因無逐構件 result 而回 score=100。
+
 #### Scenario: 以 IDS 跑 rule-run 產出帶 GUID 的結果
 
 - **WHEN** rule-run 提供一個可讀的 IDS 來源（`ids_path`）與 IFC
@@ -95,3 +110,39 @@ TBD - created by archiving change governance-rule-run-service. Update Purpose af
 - **WHEN** 查詢 `/health`
 - **THEN** `governance-service` SHALL 如實回報 `ifctester`（已安裝時為 `true`）
 - **AND** 未提供 `ids_path` 時 SHALL 仍以內建 YAML 規則集跑（兩來源並存）
+
+#### Scenario: 重用同一 IDS specs 物件跨多份 model 不得殘留假通過
+
+- **WHEN** 以同一已載入的 IDS specs 物件，先對一份「滿足某 IDS 要求」的 model 驗證，再對另一份「不滿足同要求」的 model 驗證
+- **THEN** 第二份 model 的驗證結果 SHALL 至少有一筆 fail
+- **AND** 其 governance score SHALL 小於 100
+- **AND** 第二份 model 的不合規構件 SHALL NOT 因與第一份 model 構件共用底層 STEP id 而被誤判為 pass
+
+#### Scenario: required spec 零適用構件 SHALL 誠實 fail 而非 100% pass
+
+- **WHEN** 一個非 prohibited 的 required specification（`minOccurs` 非 0）在目標 model 中找不到任何適用構件，且 `ifctester` 判該 specification 不通過
+- **THEN** `governance-service` SHALL 產出一筆 specification 級 fail，誠實反映「required 構件缺席」
+- **AND** governance score SHALL 小於 100，SHALL NOT 因無逐構件 result 而回 100
+- **AND** 該補上的 fail SHALL NOT 捏造不存在構件的 `ifc_guid`
+
+### Requirement: IDS rule-run 彙總 SHALL 唯一可辨識且 error 計數誠實
+
+以 buildingSMART IDS 作為規則來源時，rule-run 的對外彙總（`target_summary` / `errored`）SHALL 誠實且可辨識：每個 specification SHALL 在彙總中有唯一 key，SHALL NOT 因同名或未命名而互相覆寫導致構件計數低報；`errored` SHALL 由結果推導，SHALL NOT 結構性寫死；prohibited applicability 等 specification 級違規 SHALL NOT 被靜默當成乾淨通過。
+
+#### Scenario: 同名 specification 不互相覆寫彙總
+
+- **WHEN** 一份 IDS 含多個同名或未命名的 specification
+- **THEN** 每個 specification SHALL 在 `target_summary` 有唯一 key（以 IDS identifier，否則名稱加索引後綴）
+- **AND** 彙總的構件計數 SHALL NOT 因 key 衝突而被覆寫低報
+
+#### Scenario: errored 計數由結果推導
+
+- **WHEN** 產生 IDS rule-run 的彙總
+- **THEN** `errored` SHALL 等於結果中 `status == "error"` 的筆數
+- **AND** SHALL NOT 結構性寫死為 0
+
+#### Scenario: prohibited specification 不得靜默通過
+
+- **WHEN** 一個 prohibited applicability 的 specification 經 validate 後判定為違規（`status` 為 False）卻未產生任何逐構件 result
+- **THEN** rule-run SHALL 為每個 applicable 構件補一筆 `fail`，誠實反映 specification 級違規
+- **AND** 該 run 的 score SHALL NOT 因此呈現為滿分

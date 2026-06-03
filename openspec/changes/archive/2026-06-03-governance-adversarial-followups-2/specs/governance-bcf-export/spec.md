@@ -1,8 +1,9 @@
-# governance-bcf-export Specification
+# governance-bcf-export — Spec Delta (governance-adversarial-followups-2)
 
-## Purpose
-TBD - created by archiving change a1-bcf-export. Update Purpose after archive.
-## Requirements
+> BCF GPLv3 依賴敘述誠實校正：匯出模組執行期不 import bcf-client，但 ifctester 會 transitive 安裝 bcf-client(GPLv3)；不得宣稱「環境不依賴 GPLv3」（F5）。保留 issue-bcf-integrity 既有 BCF 2.1 XSD 完整性（合法 IfcGuid、unbound 佔位字、naive 時間視為 UTC）。
+
+## MODIFIED Requirements
+
 ### Requirement: governance-service SHALL 把正式 issue 匯出為 BCF 2.1
 
 `governance-service` SHALL 提供端點把正式 issue（`kind=issue` 且有 `ifc_guid`）匯出為 buildingSMART BCF 2.1 `.bcfzip`。匯出模組 SHALL 於執行期僅以標準庫（`zipfile` + `xml`）產生 `.bcfzip`，SHALL NOT import `bcf-client`（GPLv3），且匯出產物 SHALL NOT 含 `bcf-client` 任何程式碼。敘述上 SHALL 誠實：A1 IDS 匯入所需的 `ifctester` 會在環境 **transitive 安裝 `bcf-client`（GPLv3）**，因此 SHALL NOT 宣稱「整個環境不依賴 GPLv3」；正確範圍為「BCF 匯出模組與其產物不連結該套件」。每個 topic 的 viewpoint SHALL 以 IFC `GlobalId`（`IfcGuid`）定位構件；`IfcGuid` SHALL 為合法的 22 字元 base64-IFC 編碼，不符者 SHALL NOT 匯出（避免產出違反 BCF 2.1 XSD 的 `.bcfzip`）。comment SHALL 帶 `model_version` 以保留溯源；缺值時 SHALL 以明確佔位字（如 `unbound`）輸出，SHALL NOT 洩漏程式語言內部的 `None` 字面。時間戳 SHALL 以 UTC（`Z` 結尾）輸出，無時區資訊的 naive 時間 SHALL 視為 UTC（不套用系統本地時區偏移）。瀏覽器 SHALL 只經 coordinator proxy 取得 `.bcfzip`，不直連內部服務。
