@@ -1,0 +1,166 @@
+{
+  "ids_title": "fire-rating-smoke",
+  "tool": "ifctester 0.8.5 (buildingSMART IDS)",
+  "summary": {
+    "rule_set": "ids",
+    "version": "ids",
+    "total": 72,
+    "passed": 1,
+    "failed": 71,
+    "errored": 0,
+    "score": 1.4,
+    "target_summary": {
+      "Doors need FireRating (IDS smoke)": 72
+    },
+    "warnings": [
+      "規則來源：buildingSMART IDS（ifctester）"
+    ],
+    "ifc_source_filename": "許良宇圖書館建築_2026.ifc"
+  },
+  "sample_failed": [
+    {
+      "ifc_guid": "3$xKPHQlD10AG1nzmJabuU",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3$xKPHQlD10AG1nzmJabWw",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "1$6rKosWT5r9WGrkrSURLd",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):964015",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "08EdJUuVD0bvrClEZJ$JaB",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):2449258",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "08EdJUuVD0bvrClEZJ$Jdi",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):2449293",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3vPG3_YKT0v8uSahVRkyEX",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):60 x 230 cm (廁所用):2450829",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "0zwbDetyr4YQBdNMNLpHrQ",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2601029",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "0zwbDetyr4YQBdNMNLpHoM",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "門-開口:150 x 230mm 2:2601353",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3TEoigASv8oAf7Vn3HlHXk",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "TA_玻纖木紋橫拉門_一般_單開_推拉_牆邊_垂直拉手:D02_80×230:2624775",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    },
+    {
+      "ifc_guid": "3TEoigASv8oAf7Vn3HlGvh",
+      "ifc_type": "IfcDoor",
+      "ifc_name": "單開-矩形- (1):70 x 230 cm (廁所用):2628354",
+      "rule_code": "Doors need FireRating (IDS smoke)",
+      "severity": "required",
+      "status": "fail",
+      "message": "IDS 要求未滿足：Property",
+      "evidence": {
+        "ids": true,
+        "requirement": "<ifctester.facet.Property object at 0x000002964CF00E90>"
+      },
+      "usd_prim_path": null
+    }
+  ],
+  "sample_ids_written": true,
+  "honesty_notes": [
+    "規則來源為 buildingSMART IDS（ifctester），非 YAML 引擎；CPU-only，無 GPU。"
+  ]
+}

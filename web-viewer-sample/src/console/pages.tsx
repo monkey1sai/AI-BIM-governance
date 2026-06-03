@@ -31,8 +31,8 @@ export function OverviewPage() {
       <Panel title="Phase Backlog" sub="近期重點 A1–A3；A4–A10 為 ROADMAP">
         <Field k="A1 治理與模型檢核（rule-run authority）" v="backend 已實作" prov="asbuilt" />
         <Field k="A2 版本差異 · A3 Federation" v="已實作（GlobalId diff + USD sublayer federation）" prov="asbuilt" />
-        <Field k="Issue 資料庫（lifecycle + audit + 來源綁定）" v="已實作" prov="asbuilt" />
-        <Field k="BCF 匯出 / IDS 匯入" v="待建" prov="p1" />
+        <Field k="Issue 資料庫（lifecycle + audit + 來源綁定）· IDS 匯入" v="已實作" prov="asbuilt" />
+        <Field k="BCF 匯出（issue→.bcfzip）" v="待建" prov="p1" />
       </Panel>
     </>
   );
@@ -40,6 +40,7 @@ export function OverviewPage() {
 
 export function IssuesRuleCenterPage() {
   const [ifcPath, setIfcPath] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc");
+  const [idsPath, setIdsPath] = useState("");
   const [run, setRun] = useState<RuleRunStatus | null>(null);
   const [failed, setFailed] = useState<RuleResultRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -58,7 +59,7 @@ export function IssuesRuleCenterPage() {
   const doRun = useCallback(async () => {
     setBusy(true); setErr(null); setRun(null); setFailed([]);
     try {
-      const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: ifcPath });
+      const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: ifcPath, ids_path: idsPath || undefined });
       setRunId(rule_run_id);
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -73,14 +74,14 @@ export function IssuesRuleCenterPage() {
     } finally {
       setBusy(false);
     }
-  }, [ifcPath]);
+  }, [ifcPath, idsPath]);
 
   return (
     <>
       <h1>問題與語意驗收 · Issues & Rule Center（A1）</h1>
       <p className="ec-lead">
         A1 治理與模型檢核：對真實 IFC 跑宣告式規則集，產出 governance score 與帶真實 ifc_guid 的失敗構件。
-        規則引擎為純 CPU host-native ifcopenshell（不依賴 ifctester）。
+        規則引擎為純 CPU host-native ifcopenshell；可選用 buildingSMART IDS（ifctester）規則。
       </p>
 
       <Panel title="A1 rule-run authority" sub="governance-service :49102（經 coordinator proxy）" prov="asbuilt">
@@ -90,6 +91,10 @@ export function IssuesRuleCenterPage() {
           <Btn primary disabled={busy} caption="POST /api/governance/rule-runs" onClick={doRun}>
             {busy ? "執行中…" : "執行規則檢核"}
           </Btn>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+          <input className="ec-btn" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑 — 改用 ifctester 跑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
+          <span className="ec-s">填 IDS 則以 IDS 規則跑（否則用內建 YAML 規則集）</span>
         </div>
         {err && <p className="ec-warn-note">未連線後端（proxy / governance-service 需啟動）：{err}</p>}
         {run && (
@@ -129,7 +134,7 @@ export function IssuesRuleCenterPage() {
         <Field k="DOOR-FIRERATING-REQUIRED" v="IfcDoor · Pset_DoorCommon.FireRating" prov="asbuilt" />
         <Field k="ELEMENT-NAME-REQUIRED" v="IfcBuildingElement/IfcBuiltElement · Name" prov="asbuilt" />
         <Field k="WALL-STOREY-ASSIGNED" v="IfcWall · 空間指派" prov="asbuilt" />
-        <Field k="IDS-XML 匯入" v="待建（需 pip install ifctester + smoke）" prov="p1" />
+        <Field k="IDS-XML 匯入（buildingSMART IDS）" v="已實作（ifctester 0.8.5；填 IDS 路徑即用 IDS 規則跑）" prov="asbuilt" />
         <Field k="Excel 匯出" v="openpyxl" prov="asbuilt" />
         <Field k="BCF 匯出（issue→.bcfzip）" v="待建（bcf 模組 + LGPL 閘門）" prov="p15" />
         <Field k="Issue 生命週期資料庫" v="open→assigned→resolved/rejected→reopened + audit" prov="asbuilt" />

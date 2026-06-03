@@ -7,4 +7,5 @@ uvicorn>=0.29
 pydantic>=2.0
 openpyxl>=3.1
 PyYAML>=6.0
+ifctester>=0.8.5  # A1 IDS-XML 匯入（buildingSMART IDS）；pip 安裝會附帶 bcf-client（供 BCF 匯出）
 # ifcopenshell（host-native，>=0.8.5）— 由 host Python 提供，非經本 requirements 安裝

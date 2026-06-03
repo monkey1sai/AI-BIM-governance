@@ -8,6 +8,7 @@ export interface RuleRunRequest {
   rule_set?: string;
   model_version_id?: string;
   element_mapping_path?: string;
+  ids_path?: string; // 提供時改用 buildingSMART IDS（ifctester）
 }
 
 export interface RuleRunStatus {
