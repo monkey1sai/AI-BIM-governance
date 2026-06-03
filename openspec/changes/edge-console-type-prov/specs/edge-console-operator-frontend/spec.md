@@ -53,7 +53,7 @@ Edge Console 的 provenance 標示 SHALL 與後端實際落地狀態一致。BCF
 
 ## MODIFIED Requirements
 
-### Requirement: A1/A2/A3 SHALL 在介面可驗證並誠實標示落地狀態
+### Requirement: A1 SHALL 在介面可驗證；A2/A3 SHALL 為標示待建的骨架
 
 Edge Console SHALL 讓 A1 在介面可驗證：顯示真實 IFC 實測 artifact 與規則集，並能觸發實時 rule-run。A2（模型版本差異）/ A3（跨專業 Federation）後端已落地，SHALL 以 as-built 操作頁呈現（Diff Builder / Federation Builder 經 coordinator proxy 操作），並誠實標示真實邊界（如 member USD immutable），SHALL NOT 顯示捏造的 diff / federation 數字。規則集中各項 SHALL 依其後端實際落地狀態標 provenance：已落地（rule-run / IDS 匯入 / BCF 匯出 / Issue 生命週期資料庫）標 `asbuilt`，僅待建項才標 `p1` / `p15`。
 

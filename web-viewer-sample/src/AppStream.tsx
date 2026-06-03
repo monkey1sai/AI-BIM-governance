@@ -140,10 +140,13 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 signalingServer: this.props.signalingserver || StreamConfig.local.server,
                 signalingPort: this.props.signalingport || StreamConfig.local.signalingPort,
                 mediaServer: this.props.mediaserver || StreamConfig.local.server,
-                // StreamConfig.local.mediaPort 在 config 為 null（型別即 null）,故僅當
-                // props.mediaport 為有效 number 時才帶 mediaPort;缺值時略過該欄,
-                // 交給 library 套預設(避免傳 null / undefined 觸型別不相容)。
-                ...(this.props.mediaport != null && {
+                // mediaport 的「未指定」哨兵有兩種：undefined（Window 路徑 StreamEndpoint
+                // 缺值時）與 0（App.tsx state 初始 / _resetState 的 mediaport: number=0）。
+                // 兩者都代表沒有有效 port，必須略過 mediaPort 欄交給 library 套預設；
+                // 僅當 props.mediaport 為真正設定的非零 number 時才帶入（還原 EC-02 前
+                // `(this.props.mediaport || StreamConfig.local.mediaPort) != null` 的 falsy-0
+                // 語意，同時保留 number|undefined 型別不傳 null / undefined）。
+                ...(this.props.mediaport != null && this.props.mediaport !== 0 && {
                     mediaPort: this.props.mediaport,
                 }),
                 nativeTouchEvents: true,
@@ -167,7 +170,12 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 signalingServer: this.props.signalingserver,
                 signalingPort: this.props.signalingport,
                 mediaServer: this.props.mediaserver,
-                mediaPort: this.props.mediaport,
+                // 與 local 分支一致處理 mediaport 的未指定哨兵（undefined / App.tsx
+                // state 初始的 0）：缺值時略過 mediaPort 欄交給 library 套預設，
+                // 不把 0 / undefined 當有效 port 傳入 DirectConfig.mediaPort。
+                ...(this.props.mediaport != null && this.props.mediaport !== 0 && {
+                    mediaPort: this.props.mediaport,
+                }),
                 backendUrl: this.props.backendUrl,
                 sessionId: this.props.sessionId,
                 autoLaunch: true,
