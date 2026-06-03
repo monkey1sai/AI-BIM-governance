@@ -2,7 +2,7 @@
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
+import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, ReviewRoomPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
 import EdgeConsole from "./EdgeConsole";
 import { coordinatorClient } from "./coordinatorClient";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
@@ -197,5 +197,20 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("技術");
     expect(html).toContain("clean"); // Tweaks scenario 按鈕
     expect(html).toContain("warn");
+  });
+
+  // ── P4 Review Room（G）v1：連到既有 viewer，不在 console 內嵌 3D，不動 App/Window ──
+  it("P4 Review Room 提供「在既有 viewer 開啟」連結且誠實標 3D 在既有 viewer", () => {
+    const html = renderToString(<ReviewRoomPage />);
+    expect(html).toContain("在既有 viewer 開啟");
+    // 真實 viewer 入口：coordinator /ui/open（server-side redirect，as-built）+ 本地 /?session=。
+    expect(html).toContain("/ui/open");
+    expect(html).toContain("?session=");
+    // 誠實標示：3D viewport 在既有 viewer（非 console 殼層）；不動 App.tsx / Window.tsx。
+    expect(html).toContain("既有 viewer");
+    expect(html).toContain("不動 App.tsx / Window.tsx");
+    // 工具列誠實 provenance：section / snapshot 待建（p15），不假裝已實作。
+    expect(html).toContain("後端待建 · P1.5");
+    expect(html).not.toContain("99.1%");
   });
 });

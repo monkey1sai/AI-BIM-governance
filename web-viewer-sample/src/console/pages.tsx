@@ -1022,6 +1022,77 @@ export function RuntimePage() {
   );
 }
 
+// ── P4 Review Room（G）v1：維持殼層狀態 + 加「在既有 viewer 開啟」連結 ──
+// 真實 3D viewport 在既有 <App/> viewer（非 console）。本頁不動 App.tsx / Window.tsx，
+// 只提供連到既有 viewer 入口的連結：coordinator /ui/open?session=（server-side redirect，
+// 查證自 app.ts:1587）或本地 viewer /?session=（main.tsx 解析 ?session= attach）。
+// 工具列誠實標來源：openStage/focusPrim/selectPrims/clearHighlight 為 viewer DataChannel
+// as-built；highlight 走 client 主動拉（不復活 server-push）；section/snapshot 待建。
+export function ReviewRoomPage() {
+  const [sessionId, setSessionId] = useState("");
+  const valid = /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sessionId.trim());
+  const sid = sessionId.trim();
+  const viewerLocalUrl = valid ? `/?session=${encodeURIComponent(sid)}` : "#";
+  const viewerOpenUrl = valid ? coordinatorClient.openInViewerUrl(sid) : "#";
+
+  return (
+    <>
+      <h1>Review Room · 審查室（G）</h1>
+      <p className="ec-lead">
+        USD over WebRTC live viewport 在<strong>既有 viewer（web-viewer-sample &lt;App/&gt;）</strong>，非 console 殼層內。
+        本頁 v1：提供連到既有 viewer 入口的連結（不在 console 內嵌 3D）；highlight 走 Review-Room 主動拉 → client DataChannel，不復活 server-push。
+      </p>
+
+      <Panel title="在既有 viewer 開啟 · Open in viewer" sub="輸入 review_session_id（lwv_ / review_session_ 前綴）；連到既有 viewer，不動 App.tsx / Window.tsx" prov="asbuilt">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="ec-btn" style={{ minWidth: 360 }} placeholder="review_session_xxx 或 lwv_xxx" value={sessionId} onChange={(e) => setSessionId(e.target.value)} />
+          {/* 真實 gating：session id 格式不合則 disabled（非可點假連結）。 */}
+          <a className={`ec-btn ${valid ? "primary" : ""}`} href={viewerOpenUrl} target="_blank" rel="noreferrer"
+             style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
+            coordinator /ui/open（redirect）
+          </a>
+          <a className="ec-btn" href={viewerLocalUrl} target="_blank" rel="noreferrer"
+             style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
+            本地 viewer /?session=
+          </a>
+        </div>
+        {!valid && sessionId.length > 0 && <p className="ec-warn-note">session id 格式不符（需 lwv_ 或 review_session_ 前綴 + 英數底線）；連結停用。</p>}
+        <p className="ec-note">
+          coordinator <code>/ui/open?session=</code> 為 server-side redirect 至 browser-visible viewer（as-built，app.ts）；
+          本地 <code>/?session=</code> 由既有 main.tsx 解析 attach。本頁僅導引，不在 console 殼層內掛載 WebRTC。
+        </p>
+      </Panel>
+
+      <Panel title="工具列 · Tool Rail（既有 viewer 內）" sub="每顆工具標來源：viewer DataChannel as-built 指令 vs 待建" prov="asbuilt">
+        <table className="ec-table">
+          <thead><tr><th>工具</th><th>command</th><th>provenance</th></tr></thead>
+          <tbody>
+            {([
+              ["載入 USD", "openStage", "asbuilt"],
+              ["聚焦元件", "focusPrim", "asbuilt"],
+              ["選取元件", "selectPrims", "asbuilt"],
+              ["清除高亮", "clearHighlight", "asbuilt"],
+              ["高亮元件", "highlightPrims（client 主動拉，非 server-push）", "p15"],
+              ["剖面", "sectionRequest", "p15"],
+              ["截圖", "snapshot", "p15"],
+            ] as [string, string, Prov][]).map(([l, cmd, p]) => (
+              <tr key={cmd}><td>{l}</td><td>{cmd}</td><td><ProvTag prov={p} /></td></tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="ec-note">Load / Focus / Select / Clear 為 viewer DataChannel as-built 指令；Highlight 走 Review Room 主動拉 prim_paths（不復活 server-push · P1.5）；Section / Snapshot 後端未實作。</p>
+      </Panel>
+
+      <Panel title="範圍與誠實標示" prov="asbuilt">
+        <Field k="3D viewport" v="在既有 viewer（<App/>），非 console 殼層；本頁僅連結導引" prov="asbuilt" />
+        <Field k="server→viewer push highlight / 多人廣播" v="2026-05-21 已退役（remove-conflict-review-from-fast-mvp）；加回需另開 OpenSpec" prov="p15" />
+        <Field k="section / snapshot" v="待建" prov="p15" />
+        <Field k="不動 App.tsx / Window.tsx" v="本頁僅提供連結，不改 viewer 主體（守 console 邊界）" prov="asbuilt" />
+      </Panel>
+    </>
+  );
+}
+
 export function StubPage({ title, note, items }: { title: string; note: string; items: [string, string, Prov][] }) {
   return (
     <>

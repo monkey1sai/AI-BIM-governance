@@ -12,9 +12,9 @@ import {
   IntakePage,
   IssuesRuleCenterPage,
   OverviewPage,
+  ReviewRoomPage,
   RuntimePage,
   SemanticViewerPage,
-  StubPage,
   VersionDiffPage,
 } from "./pages";
 
@@ -45,8 +45,7 @@ function renderBody(page: string, go: (k: string) => void) {
     case "coordinator": return <CoordinatorPage />;
     case "intake": return <IntakePage />;
     case "runtime": return <RuntimePage />;
-    case "review":
-      return <StubPage title="Review Room · 審查室" note="USD over WebRTC live viewport + tool rail。highlight 走 Review-Room 主動拉 → client DataChannel，不復活 server-push。" items={[["openStage / focusPrim / selectPrims / clearHighlight", "viewer DataChannel as-built", "asbuilt"], ["highlightPrims（client→runtime）", "buildHighlightPrimsRequest", "asbuilt"], ["server→viewer push highlight / 多人廣播", "retired", "p15"], ["section / snapshot", "待建", "p15"]]} />;
+    case "review": return <ReviewRoomPage />;
     case "semantic": return <SemanticViewerPage />;
     default: return <OverviewPage />;
   }
