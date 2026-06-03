@@ -1,7 +1,11 @@
 // A1 治理 rule-run client — 只打 coordinator :8004 的 /api/governance/* proxy（loopback 轉發至
 // governance-service 127.0.0.1:49102）。瀏覽器永不直連內部服務（邊界 B1）。
+// coordinator base 用全站／部署一致的正規 env 名 VITE_COORDINATOR_API_BASE（compose 注入、deploy.ps1
+// 經 WEB_VIEWER_COORDINATOR_API_BASE 設定、config/env.ts 亦讀此名）。保留舊名 VITE_COORDINATOR_BASE
+// 為相容 fallback（正規名優先），預設與 config/env.ts 一致為 http://127.0.0.1:8004。
+const env = (import.meta as { env?: Record<string, string> }).env;
 const COORD_BASE: string =
-  (import.meta as { env?: Record<string, string> }).env?.VITE_COORDINATOR_BASE ?? "http://127.0.0.1:8004";
+  env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? "http://127.0.0.1:8004";
 
 export interface RuleRunRequest {
   ifc_source_path: string;
