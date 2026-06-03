@@ -36,16 +36,18 @@ context：
 - 是否 user-facing capability：${USER_FACING ? '是，PR body 需附 Frontend Verification table（見 AGENTS.md §0.1）' : '否（若動 runtime/deploy 仍需 Deploy Path Verification table；純 tooling/docs/spec 需在 body 註明不適用兩表）'}
 
 你 MUST 親手用 git / gh 跑（本腳本只是包裝，不替你等 CI、不替你 merge）：
-1. 若有 staged 改動才 commit（commit 前 git diff --cached --check 擋 trailing whitespace / EOF blank，有就先修）；work item 已 commit 在 branch 上、無新 staged 改動則跳過 commit。
-2. commit，訊息繁中，結尾附 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>。
+0. 先確保 checkout 到目標 branch：若上面給定 branch 且當前不在該 branch（git rev-parse --abbrev-ref HEAD 比對），先 git checkout <branch> 再動作，避免 commit/push 推錯 branch。
+1. commit 條件式——**僅在有新 staged 改動時才 commit**：先 git diff --cached --check 擋 trailing whitespace / EOF blank（有就先修乾淨）；若 work item 已 commit 在 branch 上、git diff --cached 為空（無新 staged 改動），**SHALL 跳過 commit**，不要產生空 commit。
+2. （承上，有 staged 改動時）commit，訊息繁中，結尾附 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>。
 3. git push -u origin <branch>（遇 force-push deny 改用新 commit 取代 amend）。
 4. 回報這次 ship 的改動面：git diff --stat origin/main...HEAD（已 commit 的 diff）與 git log。
 5. 開 PR：branch 尚無 PR 才 gh pr create --base main；已有 PR（上面給定 PR 號）則**沿用、不重複建立**（重複 create 會失敗中斷）。繁中，依上面 user-facing 規則附對應驗收表或註明不適用。
 6. gh pr checks <n> --watch 等官方 checks。
 7. CI 變綠後再等 ~90-120s reviewer buffer。
-8. 取當前 head 上的新 inline comment（--paginate 取全部頁，用 commit_id startswith 篩當前 head（用 commit_id「現所在 commit」非 original_commit_id「首次 commit」，後者會漏掉留在當前 head 的新 comment），不用 group_by）：HEAD=$(gh pr view <n> --json headRefOid --jq .headRefOid)；gh api --paginate repos/${REPO}/pulls/<n>/comments | jq -s "add | map(select(.commit_id|startswith(\\"\${HEAD:0:9}\\")))"。
-9. GATE：官方 checks 全綠（pr-review-agent + CodeRabbit）且當前 head 無新 substantive P1/P2 → gh pr merge <n> --squash --delete-branch → closeout（git worktree remove、git fetch --prune、本地 main --ff-only 對齊 origin/main）。
-10. 有新 substantive 發現 → 修 → push → 對每一次 push 各自重跑 step 6-9 的 buffer cycle，SHALL NOT 只看 check 狀態就 merge。
+8. 查 reviewer 發現（三處來源，全部 --paginate，任一處有未解除 substantive P1/P2 / Blocker 都 hold）：HEAD=$(gh pr view <n> --json headRefOid --jq .headRefOid)。(a) inline diff comment：gh api --paginate repos/${REPO}/pulls/<n>/comments | jq -s "add | map(select(.commit_id|startswith(\\"\${HEAD:0:9}\\")))"（用 commit_id「現所在 commit」非 original_commit_id「首次 commit」，後者會漏掉留在當前 head 的新 comment；不用 group_by）。(b) PR-level review（summary / CHANGES_REQUESTED，整體 verdict 常落這）：gh api --paginate repos/${REPO}/pulls/<n>/reviews。(c) PR 對話串 issue comment（pr-review-agent summary 的 Blockers 走 issue endpoint，不在 /pulls/comments 內）：gh api --paginate repos/${REPO}/issues/<n>/comments。
+9. 跨 push carry-forward：不可只看「當前 head 是否還有新 comment」就放行。reviewer 在舊 head 提出的 substantive P1/P2，若 push 新 head 但並未真正修復（reviewer 未重貼確認、或只是 commit_id 被推離當前 head），仍視為未解除。SHALL 自行維護一份「已知未解除 substantive 發現」清單，跨每次 push 沿用、逐項判斷是否確已修復，不可清空重來；comment 因 commit_id 移出當前 head 而被篩掉，不可據此當已解決。
+10. GATE：官方 checks 全綠（pr-review-agent + CodeRabbit）且 step 8 三處來源無新增 substantive P1/P2、step 9 carry-forward 清單已全數解除 → gh pr merge <n> --squash --delete-branch → closeout。closeout worktree 守衛：git worktree remove 只能用在 linked/disposable worktree（路徑在 .worktrees/ 下）；先判斷 GIT_DIR=$(git rev-parse --git-dir) 與 COMMON=$(git rev-parse --git-common-dir)，若 GIT_DIR==COMMON 且 toplevel 不在 .worktrees/ 下代表是「主 checkout」，**SHALL NOT git worktree remove 主 checkout**（會出錯/危險），只做 git fetch --prune + 本地 main --ff-only 對齊 origin/main；只有 disposable worktree 才 git worktree remove <toplevel>。
+11. 有新 substantive 發現（或 carry-forward 清單仍有未解項）→ 修 → push → 對每一次 push 各自重跑 step 6-10 的 buffer cycle，SHALL NOT 只看 check 狀態就 merge。
 
 誠實鐵律：絕不 merge 過 production code 的真 P1/P2，絕不偽裝 CI 綠。production code 的 P1/P2 一律 hold 修到好；非 production 產物（evidence / docs scaffolding）的 advisory nit 在官方 gate 全綠時 MAY judgment-merge，不無限迴圈。
 

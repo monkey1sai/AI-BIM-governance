@@ -15,7 +15,7 @@
 
 - [x] 3.1 寫 Workflow-tool 腳本：`meta` 為 pure literal、body 用 `args`（`branch` / `prNumber` / `userFacing`）派 agent 執行 ship-cycle。
 - [x] 3.2 回傳 schema 結果（`merged` / `prNumber` / `mergeCommit` / `heldReason`）。
-- [x] 3.3 `node --check` 通過（無 TS 語法、無 `Date.now()` / `Math.random()`）。
+- [x] 3.3 語法正確性以 **Workflow runtime 載入**為準（本檔是 Workflow-tool 腳本，由 Workflow runtime 注入 `args` / `phase` / `log` / `agent` 後執行，非 standalone Node 程式）；無 TS 語法、無 `Date.now()` / `Math.random()`。註：`node --check` 對含 top-level `export` / `await` 的檔在**某些 Node 模式**可能以 CommonJS 解析而報錯，故**不以 standalone `node --check` 為唯一語法判準**（與 Copilot 對 ESM/CommonJS 的提醒一致）；不為此改成 `.mjs` 或加 `package.json` `type`（會牽動 `.gitignore` / 引用，超出本 change 範圍）。本機 Node v22 實測 `node --check` exit 0。
 
 ## 4. 文件化 docs/agents/github-workflow.md
 
