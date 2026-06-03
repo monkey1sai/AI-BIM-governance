@@ -102,7 +102,11 @@ function Print-FinalSummary {
         Write-Host "Status: FAILED (exit $ExitCode, $FailedPhase)" -ForegroundColor Red
         Write-Host 'What might be running (NOT auto-rolled-back):'
         foreach ($pidFile in Get-ChildItem -LiteralPath $RunDir -Filter '*.pid' -ErrorAction SilentlyContinue) {
-            $procId = (Get-Content $pidFile.FullName | Select-Object -First 1).Trim()
+            # null/empty guard:空 / 不存在 / 只含空白的 .pid 不能讓 Final Summary 自身 throw
+            # (Get-Content 對空檔回 $null → .Trim() 是對 null 的方法呼叫 → strict-mode terminating
+            #  error,會繞過整段失敗診斷)。失敗路徑的可診斷性優先於完整 PID 顯示。
+            $raw = Get-Content $pidFile.FullName -ErrorAction SilentlyContinue | Select-Object -First 1
+            $procId = if ($raw) { $raw.Trim() } else { '(empty)' }
             Write-Host "  > $($pidFile.BaseName) PID $procId"
         }
         Write-Host ''
@@ -405,7 +409,11 @@ function Test-KitRuntimeSignatureMatches {
         [Parameter(Mandatory = $true)][string] $Expected
     )
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
-    $actual = (Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue).Trim()
+    # null guard:存在但空的 signature 檔 → Get-Content -Raw 回 $null;-ErrorAction SilentlyContinue
+    # 擋不住對 $null 的 .Trim() 方法呼叫(PS5.1 / strict-mode 下 terminating)。空檔視為「不相符」,
+    # 讓 idempotent re-run 走重新寫 signature 路徑而非 crash。
+    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    $actual = if ($null -ne $raw) { $raw.Trim() } else { '' }
     return ($actual -eq $Expected)
 }
 
