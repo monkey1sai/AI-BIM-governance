@@ -19,12 +19,14 @@ def open_ids(ids_path: str):
 
 
 def _spec_code(spec: Any, index: int) -> str:
-    """為每個 IDS specification 產生穩定且唯一的彙總 key（ids-001）。"""
+    """為每個 IDS specification 產生穩定且唯一的彙總 key（ids-001）。
+
+    一律附加迴圈索引：即使兩個 specification 帶相同 @identifier 或相同名稱，也保證
+    在 target_summary 不互相覆寫（外部 review P2：重複 identifier 仍會覆寫低報）。
+    """
     identifier = getattr(spec, "identifier", None)
-    if identifier:
-        return str(identifier)
-    name = getattr(spec, "name", None) or "IDS-SPEC"
-    return f"{name}#{index}"
+    base = str(identifier) if identifier else (getattr(spec, "name", None) or "IDS-SPEC")
+    return f"{base}#{index}"
 
 
 def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
@@ -39,6 +41,28 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
         # target_summary 互相覆寫而低報。優先用 IDS @identifier，否則名稱加索引。
         code = _spec_code(spec, index)
         target_summary[code] = len(applicable)
+        # ids-002 + 外部 review P2：prohibited applicability（maxOccurs==0）構件存在即違規，
+        # ifctester 對 prohibited 跳過 requirement 驗證（passed_entities 不填）。必須在
+        # requirement 迴圈「前」攔截，否則每個 requirement × applicable 會吐重複 fail
+        # （過度計數且語意錯）。偵測後跳過 requirement 迴圈；status False（有違規 applicable
+        # 構件）時每個 applicable 補一筆 specification 級 fail。maxOccurs 取不到時（非 ifctester
+        # 真物件）退回下方零-result fallback guard。
+        if getattr(spec, "maxOccurs", None) == 0:
+            if getattr(spec, "status", None) is False:
+                for el in applicable:
+                    results.append(
+                        RuleResult(
+                            ifc_guid=getattr(el, "GlobalId", None),
+                            ifc_type=el.is_a(),
+                            ifc_name=getattr(el, "Name", None),
+                            rule_code=code,
+                            severity="required",
+                            status="fail",
+                            message="IDS prohibited：此構件不應存在（specification 級違規）",
+                            evidence={"ids": True, "spec_status": False, "prohibited": True},
+                        )
+                    )
+            continue
         produced_before = len(results)
         for req in spec.requirements:
             passed_ids = {e.id() for e in getattr(req, "passed_entities", []) or []}

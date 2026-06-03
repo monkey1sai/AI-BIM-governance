@@ -25,6 +25,12 @@
 
 ## 6. Spec + 驗證
 - [x] 6.1 `specs/governance-rule-run-authority/spec.md` delta（MODIFIED 計分 + ADDED IDS 彙總誠實）
-- [ ] 6.2 `"/c/Program Files/Python312/python.exe" -m pytest governance-service/tests -q` 全綠
-- [ ] 6.3 `npx openspec validate a1-rule-engine-honesty --strict` 通過
-- [ ] 6.4 多 agent 對抗複驗（refute-by-default）確認 7 finding 真閉合、無誠實 regression
+- [x] 6.2 `"/c/Program Files/Python312/python.exe" -m pytest governance-service/tests -q` 全綠（53 passed）
+- [x] 6.3 `npx openspec validate a1-rule-engine-honesty --strict` 通過
+- [x] 6.4 多 agent 對抗複驗（refute-by-default）7/7 真閉合、critic overall_safe、零新誠實 regression
+
+## 7. 外部 review（Copilot / Codex）追補
+- [x] 7.1 A1-RE-03 擴及 `app.py` 模組 docstring + `/health` 註解（governance-service 主入口的 ifctester/BCF/IDS 過時敘述）
+- [x] 7.2 P2：`_spec_code` 一律附索引，重複 @identifier 也不覆寫
+- [x] 7.3 P2：prohibited（maxOccurs==0）在 requirement 迴圈前攔截，避免含 requirements 時過度計數
+- [x] 7.4 `models.py` score docstring 同步 pass/(pass+fail+errored)

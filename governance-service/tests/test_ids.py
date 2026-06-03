@@ -98,3 +98,48 @@ def test_ids_prohibited_spec_emits_fail_not_silent_pass():
     run = run_ids(model, _FakeSpecs([_ProhibitedSpec([d1, d2])]))
     assert run.failed == 2, "prohibited 構件應誠實 fail，而非被當乾淨 pass"
     assert run.score == 0.0
+
+
+class _SameIdSpec:
+    """模擬兩個帶相同 @identifier 的 specification。"""
+
+    def __init__(self, applicable):
+        self.name = "X"
+        self.identifier = "DUP-ID"
+        self.applicable_entities = applicable
+        self.requirements = []
+        self.status = True
+
+
+def test_ids_target_summary_unique_for_duplicate_identifiers():
+    """外部 review P2：兩 spec 帶相同 @identifier 也不得在 target_summary 互相覆寫。"""
+    model, d1, d2 = _doors_model()
+    run = run_ids(model, _FakeSpecs([_SameIdSpec([d1, d2]), _SameIdSpec([d1])]))
+    assert len(run.target_summary) == 2, f"相同 identifier 仍應有唯一 key：{run.target_summary}"
+    assert sum(run.target_summary.values()) == 3  # 2 + 1 applicable，未被覆寫
+
+
+class _Req:
+    passed_entities: list = []
+
+
+class _ProhibitedSpecWithReqs:
+    """prohibited（maxOccurs=0）但帶 requirements 的 specification。"""
+
+    def __init__(self, applicable):
+        self.name = "No insulation allowed"
+        self.identifier = None
+        self.maxOccurs = 0
+        self.applicable_entities = applicable
+        self.requirements = [_Req(), _Req()]  # 2 條 requirement
+        self.status = False
+
+
+def test_ids_prohibited_with_requirements_not_overcounted():
+    """外部 review P2：prohibited spec 含 requirements 時不得走 requirement 迴圈過度計數。"""
+    model, d1, d2 = _doors_model()
+    run = run_ids(model, _FakeSpecs([_ProhibitedSpecWithReqs([d1, d2])]))
+    # 2 applicable × specification 級 fail = 2（非 2 requirements × 2 applicable = 4）
+    assert run.failed == 2, f"prohibited+requirements 不得過度計數，實得 failed={run.failed}"
+    assert all(r.evidence.get("prohibited") for r in run.results)
+    assert run.score == 0.0
