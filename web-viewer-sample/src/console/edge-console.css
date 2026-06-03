@@ -60,6 +60,11 @@
 .ec-p1::before { background:var(--ec-red); }
 .ec-p15 { color:var(--ec-vio); background:var(--ec-vio-2); }
 .ec-p15::before { background:var(--ec-vio); }
+/* p3 / p4：roadmap vision phase（虛線框，標願景未建）*/
+.ec-p3 { color:var(--ec-vio); background:var(--ec-vio-2); border-style:dashed; }
+.ec-p3::before { background:var(--ec-vio); }
+.ec-p4 { color:var(--ec-fg-3); background:var(--ec-bg-3); border-style:dashed; }
+.ec-p4::before { background:var(--ec-fg-3); }
 
 /* panels / fields / buttons */
 .ec-panel { background:var(--ec-panel); border:1px solid var(--ec-line); border-radius:6px;

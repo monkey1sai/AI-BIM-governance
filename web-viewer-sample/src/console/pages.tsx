@@ -2,7 +2,7 @@
 // 任何數字非真即標 artifact / demo，絕不捏造。
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
-import { A1A10, AppCardDef, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
+import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
@@ -306,7 +306,7 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
   const Card = (a: AppCardDef) => (
     <div
       key={a.code}
-      className={`ec-appcard ${a.tier === "roadmap" ? "roadmap" : ""} ${a.route ? "" : "disabled"}`}
+      className={`ec-appcard ${a.tier === "roadmap" ? "roadmap" : ""} ${a.route ? "clickable" : "disabled"}`}
       onClick={() => a.route && onOpen(a.route)}
     >
       <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -320,12 +320,81 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
   return (
     <>
       <h1>應用導引 · Applications A1–A10</h1>
-      <p className="ec-lead">十個應用模組入口。近期重點 A1–A3 為聚焦項；A4–A10 為 ROADMAP，標真實 Phase，後端未上線者灰掉不可點。</p>
-      <Panel title="近期重點 · Focus" sub="A1–A3">
+      <p className="ec-lead">
+        十個應用模組入口。近期重點 A1–A3 為聚焦項（後端已實作、可真實驗證）；A4–A10 為 ROADMAP，
+        標真實 Phase，點卡片開「願景詳頁」（schema/api/ui/mvp/risks），**後端未建、整段標願景**。
+      </p>
+      <Panel title="近期重點 · Focus" sub="A1–A3（後端已實作）">
         <div className="ec-grid">{focus.map(Card)}</div>
       </Panel>
-      <Panel title="後期願景 · Roadmap" sub="A4–A10 · Phase 3–4">
+      <Panel title="後期願景 · Roadmap" sub="A4–A10 · Phase 3–4（後端未建，點卡看願景詳頁）">
         <div className="ec-grid">{roadmap.map(Card)}</div>
+      </Panel>
+    </>
+  );
+}
+
+// ── P3-1 A4–A10 vision 詳頁（泛用，吃 A1A10_DETAIL）──
+// 誠實鐵律：整頁標願景（p3/p4）；明確標「後端未建」；scenario 為範例情境（願景敘事），
+// api 為願景 API 設計（非已實作 route）。禁當真實實測 / 禁捏造數字。
+export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: string) => void }) {
+  const d: AppVisionDetail | undefined = A1A10_DETAIL[slug];
+  if (!d) {
+    return (
+      <>
+        <h1>未知應用</h1>
+        <p className="ec-lead">找不到 slug=<code>{slug}</code> 的願景詳頁。</p>
+        <Btn caption="回 Applications" onClick={() => onOpen("apps")}>← 回應用導引</Btn>
+      </>
+    );
+  }
+  return (
+    <>
+      <h1>{d.code} · {d.title}<span style={{ marginLeft: 10 }}><ProvTag prov={d.prov} /></span></h1>
+      <p className="ec-lead">{d.en} · Phase {d.phase} · {d.pitch}</p>
+      <Btn caption="回 Applications" onClick={() => onOpen("apps")}>← 回應用導引</Btn>
+
+      <Panel title="目標 · Goal" sub="此應用後端未建；以下為願景規格（roadmap）" prov={d.prov}>
+        <p className="ec-note" style={{ color: "var(--ec-fg-2)" }}>{d.goal}</p>
+        <p className="ec-warn-note">後端未建（vision）：本頁所有 schema / api / 數字皆為願景設計，非本系統真實實測。</p>
+      </Panel>
+
+      <Panel title="範例情境 · Example scenario" sub="願景敘事（非真實 run），具體數字為原型情境" prov={d.prov}>
+        <Field k="情境" v={d.scenarioHead} prov={d.prov} />
+        <Field k="範例輸出" v={d.scenarioResult} prov={d.prov} />
+      </Panel>
+
+      <Panel title="DB schema（願景設計）" prov={d.prov}>
+        {d.schema.map((s) => <Field key={s.t} k={s.t} v={s.f} prov={d.prov} />)}
+      </Panel>
+
+      <Panel title="REST API（願景設計，非已實作 route）" prov={d.prov}>
+        <div>
+          {d.api.map((a) => (
+            <div className="ec-ep" key={a.u}>
+              <span className={`ec-ep-m ec-ep-${a.m.toLowerCase()}`}>{a.m}</span>
+              <span className="ec-ep-p">{a.u}</span>
+              <span className="ec-ep-note">· {a.d}</span>
+            </div>
+          ))}
+        </div>
+        <p className="ec-warn-note">以上為 roadmap 願景 API 設計；後端尚未實作這些 route（不可當真實端點呼叫）。</p>
+      </Panel>
+
+      <Panel title="UI 面板（願景）" prov={d.prov}>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.ui.map((x) => <li key={x}>{x}</li>)}</ul>
+      </Panel>
+
+      <Panel title="MVP 驗收條件（願景）" prov={d.prov}>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.mvp.map((x) => <li key={x}>{x}</li>)}</ul>
+      </Panel>
+
+      <Panel title="Sprint steps（願景）" prov={d.prov}>
+        {d.steps.map((s) => <Field key={s.sp} k={`${s.sp} · ${s.t}`} v={s.d} prov={d.prov} />)}
+      </Panel>
+
+      <Panel title="風險 · Risks（願景）" prov={d.prov}>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-amb)" }}>{d.risks.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
     </>
   );

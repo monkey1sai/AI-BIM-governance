@@ -2,9 +2,10 @@
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AppsPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
+import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
+import EdgeConsole from "./EdgeConsole";
 import { coordinatorClient } from "./coordinatorClient";
-import { DEPENDENCIES, ENDPOINTS } from "./data";
+import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
 
 describe("edge console honesty smoke", () => {
@@ -149,5 +150,52 @@ describe("edge console honesty smoke", () => {
     expect(runtime).toContain("stream-config");
     expect(runtime).toContain("未取得"); // GPU 無遙測標未取得
     expect(runtime).not.toContain("92.4%");
+  });
+
+  // ── P3-1 A4–A10 vision 詳頁：整段標願景 + 「後端未建」+ scenario 標範例情境（非實測）──
+  it("P3-1 每個 A4–A10 vision 詳頁含「後端未建」且 scenario 標範例情境（非真實 run）", () => {
+    for (const slug of Object.keys(A1A10_DETAIL)) {
+      const html = renderToString(<AppVisionPage slug={slug} onOpen={() => {}} />);
+      // 明確標後端未建（願景）。
+      expect(html, slug).toContain("後端未建");
+      // scenario 必須標「範例情境 / 願景敘事」，不可呈現為真實 run。
+      expect(html, slug).toContain("範例情境");
+      expect(html, slug).toContain("非真實 run");
+      // 願景 API 設計明確標非已實作 route（不可當真實端點）。
+      expect(html, slug).toContain("非已實作 route");
+      // 無 A1/A2 願景假數字（呼應原型「No fabricated marketing numbers」）。
+      expect(html, slug).not.toContain("99.1%");
+      expect(html, slug).not.toContain("92.4%");
+      // 原型 scenario 內具體數字（如 312 / 17,000）若出現，必伴隨「範例情境/願景敘事」框定，
+      // 不得單獨作為實測——這裡以「不出現裸寫的 312 扇門 / 17,000 frames 實測語」近似驗證。
+      expect(html, slug).not.toContain("實測 312");
+      expect(html, slug).not.toContain("實測 17,000");
+    }
+  });
+
+  it("P3-1 A4–A10 roadmap 卡片皆可點（route 指向 vision 詳頁）且標 p3/p4", () => {
+    const roadmap = A1A10.filter((a) => a.tier === "roadmap");
+    expect(roadmap.length).toBe(7);
+    expect(roadmap.every((a) => a.route?.startsWith("app/"))).toBe(true);
+    // A5 = p3（RM phase 3），其餘 = p4。
+    expect(A1A10.find((a) => a.code === "A5")?.prov).toBe("p3");
+    expect(roadmap.filter((a) => a.code !== "A5").every((a) => a.prov === "p4")).toBe(true);
+  });
+
+  // ── P3-2 / P3-3 殼層：Agent suggested prompts（disabled 輸入）+ FlowBar + Tweaks ──
+  it("P3-2/P3-3 EdgeConsole 殼層含 Agent prompts（disabled 輸入）+ FlowBar + Tweaks", () => {
+    const html = renderToString(<EdgeConsole />);
+    // P3-2：suggested prompts + 寫入限制 + disabled 輸入框（非可用的假輸入）。
+    expect(html).toContain("SUGGESTED");
+    expect(html).toContain("AI 僅能改 review / session layer");
+    expect(html).toMatch(/<input[^>]*disabled/);
+    // P3-3：FlowBar 5 步（預設 tech 標籤）+ Tweaks（操作員/技術用語、scenario clean/warn）。
+    expect(html).toContain("①"); // FlowBar step 1 標號
+    expect(html).toContain("Intake"); // 預設 register=tech 的步驟標籤
+    expect(html).toContain("Record"); // FlowBar 末步
+    expect(html).toContain("操作員"); // Tweaks register 按鈕
+    expect(html).toContain("技術");
+    expect(html).toContain("clean"); // Tweaks scenario 按鈕
+    expect(html).toContain("warn");
   });
 });
