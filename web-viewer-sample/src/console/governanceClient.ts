@@ -77,6 +77,23 @@ export const governanceClient = {
       `/api/governance/diffs/${id}/items${changeType ? `?change_type=${changeType}` : ""}`
     ).then((r) => r.items),
   diffIssueImpact: (id: string) => jsonFetch<DiffIssueImpact>(`/api/governance/diffs/${id}/issue-impact`),
+  // 3D colour overlay：後端誠實回 501（p15）—— overlay 走 client highlightPrimsRequest（需 viewer
+  // DataChannel），非後端 server-push。不吞錯、不假裝成功：直接回傳後端的 {ok, status, detail}，
+  // 由 UI 誠實顯示「後端未提供（p15）」。後端離線（proxy 502）則 ok=false 並帶 detail。
+  applyDiffOverlay: (id: string): Promise<DiffOverlayResult> =>
+    fetch(`${COORD_BASE}/api/governance/diffs/${id}/apply-overlay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    }).then(async (res) => {
+      let detail = "";
+      try {
+        const body = (await res.json()) as { detail?: string };
+        detail = typeof body?.detail === "string" ? body.detail : JSON.stringify(body);
+      } catch {
+        detail = res.statusText;
+      }
+      return { ok: res.ok, status: res.status, detail };
+    }),
 
   // A3 cross-discipline federation（OpenUSD sublayer）
   createFederatedSet: (name: string) =>
@@ -144,6 +161,12 @@ export interface DiffIssueImpact {
   possibly_addressed: { count: number; issue_ids: string[] };
   still_open: { count: number; issue_ids: string[] };
   new: { count: number };
+}
+// apply-overlay 回應：後端目前誠實回 501（p15），故以 ok/status/detail 描述，UI 不假裝成功。
+export interface DiffOverlayResult {
+  ok: boolean;
+  status: number;
+  detail: string;
 }
 export interface DiffStatus {
   diff_id: string;
