@@ -76,3 +76,9 @@ git fetch origin --prune
 - 哪些 branch 刻意保留，以及保留原因。
 - `main` 是否已對齊 `origin/main`。
 - `git branch --no-merged origin/main` 與 `git branch -r --no-merged origin/main` 的剩餘結果。
+
+---
+
+## Per-item ship-cycle 自動化（ship-item workflow）
+
+每完成一個可驗證的 work item，agent SHALL 自動走 repo 級 ship-cycle（commit→push→PR→CI watch→buffered auto-merge→closeout），不應要求使用者靠記憶逐步手動執行。**權威程序與完整閘門以 `.claude/workflows/ship-item.md` 為準**（可執行版 `.claude/workflows/ship-item.js`，`Workflow({name:'ship-item', args:{branch, prNumber, userFacing}})`）；本節僅為指標，避免雙重規範漂移。摘要：官方 gate（`pr-review-agent` + `CodeRabbit`）全綠 + ~90–120s reviewer buffer + 當前 head 無新 substantive P1/P2 → `gh pr merge --squash --delete-branch` + 上節 closeout 盤點。詳細誠實鐵律、production vs non-production 判斷層次、與既有 consent gate 的調和，見 `ship-item.md`。
