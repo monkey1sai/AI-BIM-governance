@@ -71,6 +71,7 @@ export const governanceClient = {
     jsonFetch<{ items: DiffItemRow[] }>(
       `/api/governance/diffs/${id}/items${changeType ? `?change_type=${changeType}` : ""}`
     ).then((r) => r.items),
+  diffIssueImpact: (id: string) => jsonFetch<DiffIssueImpact>(`/api/governance/diffs/${id}/issue-impact`),
 
   // A3 cross-discipline federation（OpenUSD sublayer）
   createFederatedSet: (name: string) =>
@@ -118,6 +119,15 @@ export interface DiffRequest {
   target_ifc_path: string;
   base_model_version_id?: string;
   target_model_version_id?: string;
+  include_geometry?: boolean;
+}
+export interface DiffIssueImpact {
+  diff_id: string;
+  base_model_version_id: string | null;
+  note: string;
+  possibly_addressed: { count: number; issue_ids: string[] };
+  still_open: { count: number; issue_ids: string[] };
+  new: { count: number };
 }
 export interface DiffStatus {
   diff_id: string;
