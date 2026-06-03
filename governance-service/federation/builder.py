@@ -13,15 +13,59 @@
 """
 from __future__ import annotations
 
+import json
 import os
-from typing import Any
+from typing import Any, Optional
 
-from pxr import Usd, UsdGeom
+from pxr import Gf, Usd, UsdGeom
 
 
 def _usd_ref(path: str) -> str:
     # USD subLayerPaths 用正斜線（跨平台）。
     return os.path.abspath(path).replace("\\", "/")
+
+
+def _parse_transform(transform_json: Any) -> Optional[dict]:
+    """解析 member 的 transform（translate / rotateXYZ / scale，皆 3 元素，皆可選）。"""
+    if not transform_json:
+        return None
+    try:
+        data = json.loads(transform_json) if isinstance(transform_json, str) else transform_json
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    out: dict = {}
+    for key in ("translate", "rotateXYZ", "scale"):
+        v = data.get(key)
+        if isinstance(v, (list, tuple)) and len(v) == 3:
+            try:
+                out[key] = [float(x) for x in v]
+            except (ValueError, TypeError):
+                continue
+    return out or None
+
+
+def _apply_member_transform(stage: Usd.Stage, root_prim: str, ops: dict) -> list[str]:
+    """在 root(最強) layer 上對 member root_prim author over + xformOp（member 檔不動）。
+
+    pxr 的 Add*Op 會讀現有（composed）xformOpOrder 再 append，故 member 自身 transform
+    完整保留（值仍從 member 弱層解析），federation op 落在 outermost（最後套用）= world 置放。
+    依 scale→rotateXYZ→translate 加，使 translate 最外層（標準 TRS）。op 加 `:fed` 命名空間。
+    """
+    over = stage.OverridePrim(root_prim)
+    xf = UsdGeom.Xformable(over)
+    applied: list[str] = []
+    if "scale" in ops:
+        xf.AddScaleOp(opSuffix="fed").Set(Gf.Vec3f(*ops["scale"]))
+        applied.append("scale")
+    if "rotateXYZ" in ops:
+        xf.AddRotateXYZOp(opSuffix="fed").Set(Gf.Vec3f(*ops["rotateXYZ"]))
+        applied.append("rotateXYZ")
+    if "translate" in ops:
+        xf.AddTranslateOp(opSuffix="fed").Set(Gf.Vec3d(*ops["translate"]))
+        applied.append("translate")
+    return applied
 
 
 def build_federated_usda(
@@ -54,13 +98,20 @@ def build_federated_usda(
     stage.SetDefaultPrim(world)
 
     hidden: list[str] = []
+    transformed: list[dict] = []
     for m in ordered:
+        root_prim = m.get("root_prim")
+        if not root_prim:
+            continue
         if not m.get("visibility_default", True):
-            root_prim = m.get("root_prim")
-            if root_prim:
-                # 在 root layer 上 author over visibility=invisible（不動 member 檔）。
-                UsdGeom.Imageable(stage.OverridePrim(root_prim)).MakeInvisible()
-                hidden.append(root_prim)
+            # 在 root layer 上 author over visibility=invisible（不動 member 檔）。
+            UsdGeom.Imageable(stage.OverridePrim(root_prim)).MakeInvisible()
+            hidden.append(root_prim)
+        ops = _parse_transform(m.get("transform_json"))
+        if ops:
+            applied = _apply_member_transform(stage, root_prim, ops)
+            if applied:
+                transformed.append({"root_prim": root_prim, "ops": applied})
 
     root.Save()
     return {
@@ -68,6 +119,7 @@ def build_federated_usda(
         "sublayer_order": [str(p) for p in root.subLayerPaths],
         "member_count": len(ordered),
         "hidden": hidden,
+        "transformed": transformed,
         "default_prim": default_prim,
         "up_axis": up_axis,
     }

@@ -109,6 +109,9 @@ export function registerGovernanceProxy(app: Express): void {
   app.post("/api/governance/federated-sets/:setId/build", (request, response) => {
     void forward(response, "POST", `/api/federated-sets/${encodeURIComponent(request.params.setId)}/build`, request.body);
   });
+  app.get("/api/governance/federated-sets/:setId/review-room", (request, response) => {
+    void forward(response, "GET", `/api/federated-sets/${encodeURIComponent(request.params.setId)}/review-room`);
+  });
 
   // Issue tracking proxy（透傳 governance-service /api/issues*）。
   // 注意：HTTP 請求/回應透傳，issue 權威在 governance-service；非復活 2026-05-21 退役的

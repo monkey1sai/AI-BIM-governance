@@ -1,5 +1,5 @@
 // Edge Console 誠實性 smoke：確認頁面可渲染、provenance 標記存在、A1 顯示「實測」證據、
-// A2/A3 誠實標待建、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
+// A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -23,9 +23,17 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("後端待建"); // BCF / Issue DB 待建
   });
 
-  it("A2 / A3 為誠實骨架，標後端待建，不顯示捏造數字", () => {
-    expect(renderToString(<VersionDiffPage />)).toContain("後端待建");
-    expect(renderToString(<FederationPage />)).toContain("後端待建");
+  it("A2 / A3 帶 provenance、不顯示捏造數字", () => {
+    const a2 = renderToString(<VersionDiffPage />);
+    expect(a2).toContain("ec-prov"); // provenance 標記存在
+    expect(a2).not.toContain("99.1%"); // 無願景假數字
+
+    // A3 federation 後端已實作（per-member transform + review-room handoff），但仍誠實標 provenance
+    // 與真實邊界（member immutable），不捏造數字。
+    const a3 = renderToString(<FederationPage />);
+    expect(a3).toContain("ec-prov");
+    expect(a3).toContain("immutable"); // member usdc immutable 邊界
+    expect(a3).not.toContain("99.1%");
   });
 
   it("Overview 無任何願景假數字", () => {
