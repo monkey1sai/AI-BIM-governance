@@ -137,32 +137,57 @@ def test_cross_type_same_tag_not_misaligned():
     assert added.ifc_type == "IfcDoor"
 
 
-def test_same_key_cluster_pairing_is_stable():
-    """A2-003：同 type+Name+loc 鍵的多構件配對須穩定可重現（以 GlobalId 次鍵排序），
-    property_changed 證據歸屬不依 by_type 迭代序。"""
-    ga, gb = "0aaaaaaaaaaaaaaaaaaaa0", "0bbbbbbbbbbbbbbbbbbbb0"  # 固定可比較的 GlobalId 次鍵
+def test_same_key_cluster_pairing_is_stable(monkeypatch):
+    """A2-003：同 type+Name+loc 鍵簇內多構件，配對前以 GlobalId 次鍵排序再 zip，
+    使 property_changed 證據歸屬穩定可重現、不依插入/迭代序。
+
+    本測試**強制落到第三級**：base 與 target 的 GlobalId 互不相交（→ 第一級 GUID
+    全不中）、Tag 皆 None（→ 第二級 (is_a, Tag) 不中），同鍵 = IfcWall|WC|(4000,0,0)。
+    base 兩構件 (ga=EXISTING, gb=DEMOLISHED)、target 兩構件 (gc=EXISTING, gd=DEMOLISHED)，
+    依 GlobalId 字典序正確配對應為 ga↔gc(同 EXISTING)、gb↔gd(同 DEMOLISHED) → 0 變更。
+    target 以**反向插入順序**(先 gd 後 gc)建立：若未排序而按插入序 zip，會交叉錯配成
+    ga↔gd、gb↔gc(Status 張冠李戴) → 2 個 property_changed。以此鑑別排序是否生效。
+    """
+    # 固定可比較的 GlobalId 次鍵；ga<gb（base）、gc<gd（target），四者互不相交。
+    ga, gb = "0aaaaaaaaaaaaaaaaaaaa0", "0bbbbbbbbbbbbbbbbbbbb0"
+    gc, gd = "0cccccccccccccccccccc0", "0dddddddddddddddddddd0"
 
     def _build():
         base = ifcopenshell.file(schema="IFC4")
         target = ifcopenshell.file(schema="IFC4")
-        # base / target 各兩個 IfcWall 同鍵（同 Name、同 loc、無 Tag、GUID 不同）；
-        # 同 GlobalId 者 Status 一致、不同者不一致 → 穩定配對下應 0 個 property_changed。
         _element(base, "IfcWall", "WC", (4000, 0, 0), ga, status="EXISTING")
-        _element(base, "IfcWall", "WC", (4000, 0, 0), gb, status="NEW")
-        _element(target, "IfcWall", "WC", (4000, 0, 0), gb, status="NEW")
-        _element(target, "IfcWall", "WC", (4000, 0, 0), ga, status="EXISTING")
+        _element(base, "IfcWall", "WC", (4000, 0, 0), gb, status="DEMOLISHED")
+        # target 反向插入（gd 在 gc 前）：插入序 != GlobalId 排序序，逼出排序的鑑別力。
+        _element(target, "IfcWall", "WC", (4000, 0, 0), gd, status="DEMOLISHED")
+        _element(target, "IfcWall", "WC", (4000, 0, 0), gc, status="EXISTING")
         return base, target
 
+    # (1) 正常引擎（含 A2-003 排序）：穩定配對 ga↔gc、gb↔gd，Status 各自一致 → 0 變更。
     base, target = _build()
     diff = run_diff(base, target, move_tol=1.0)
-    assert diff.matched == 2
-    assert diff.counts.get("property_changed", 0) == 0  # 穩定配對：ga↔ga、gb↔gb，Status 相同
+    assert diff.matched == 2  # 經第三級 type+name+loc 對齊（GUID/Tag 皆不中）
+    assert diff.counts.get("property_changed", 0) == 0  # 穩定配對：Status 正確歸屬，無錯配
     assert diff.counts.get("added", 0) == 0
     assert diff.counts.get("removed", 0) == 0
-    # 可重現：再跑一次同樣輸入，配對與計數一致
+    assert diff.counts.get("moved", 0) == 0  # 同位置，不應有位移
+
+    # (2) 可重現：同輸入再跑一次，計數一致。
     base2, target2 = _build()
     diff2 = run_diff(base2, target2, move_tol=1.0)
     assert diff2.counts == diff.counts
+
+    # (3) 鑑別力證明：把第三級的穩定排序中性化（模擬移除 A2-003 修正，按插入序 zip）→
+    #     交叉錯配 ga↔gd、gb↔gc，Status 張冠李戴 → 恰好 2 個 property_changed。
+    #     此斷言確保本測試真的覆蓋排序邏輯：若 engine 不排序，這裡會偵測到錯配。
+    import diff_engine.engine as _engine
+
+    # raising=False：sorted 是 builtin、非 engine 模組屬性，注入模組層級同名以遮蔽
+    # builtin（Python 名稱解析模組層級優先），等同移除排序；monkeypatch 結束自動還原。
+    monkeypatch.setattr(_engine, "sorted", lambda seq, key=None: list(seq), raising=False)
+    base3, target3 = _build()
+    diff3 = run_diff(base3, target3, move_tol=1.0)
+    assert diff3.matched == 2
+    assert diff3.counts.get("property_changed", 0) == 2  # 未排序 → 張冠李戴錯配
 
 
 @pytest.mark.skipif(not (os.path.exists(BASE_IFC) and os.path.exists(TGT_IFC)), reason="real IFC fixture absent")
