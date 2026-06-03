@@ -54,15 +54,16 @@ def test_rule_run_end_to_end(client, synthetic_ifc_path):
     assert export.content[:2] == b"PK"  # xlsx 是 zip 容器
 
 
-def test_bcf_export_is_not_built(client, synthetic_ifc_path):
+def test_rule_run_bcf_export_redirects_to_issue_flow(client, synthetic_ifc_path):
     resp = client.post("/api/rule-runs", json={"ifc_source_path": synthetic_ifc_path})
     run_id = resp.json()["rule_run_id"]
     for _ in range(50):
         if client.get(f"/api/rule-runs/{run_id}").json()["status"] in ("succeeded", "failed"):
             break
-    # BCF 匯出誠實標 501（p15）
+    # rule-run 匯出僅 Excel；BCF 匯出走 issue → /api/bcf/export（誠實 400 + 導引，非空白成功）。
     bcf = client.get(f"/api/rule-runs/{run_id}/export", params={"fmt": "bcf"})
-    assert bcf.status_code == 501
+    assert bcf.status_code == 400
+    assert "/api/bcf/export" in bcf.json()["detail"]
 
 
 def test_missing_ifc_path_rejected(client):

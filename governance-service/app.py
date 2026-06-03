@@ -57,6 +57,11 @@ from issues.api import router as issue_router  # noqa: E402
 
 app.include_router(issue_router)
 
+# BCF 匯出（issue → BCF 2.1 .bcfzip，純 stdlib，不依賴 GPLv3 bcf-client）。
+from bcf.api import router as bcf_router  # noqa: E402
+
+app.include_router(bcf_router)
+
 
 def _rule_set_path(name: Optional[str]) -> str:
     name = name or "default-governance"
@@ -164,7 +169,7 @@ def get_rule_run_results(run_id: str, status: Optional[str] = Query(None)):
 @app.get("/api/rule-runs/{run_id}/export")
 def export_rule_run(run_id: str, fmt: str = Query("excel")):
     if fmt == "bcf":
-        raise HTTPException(status_code=501, detail="BCF export 為 p15（bcf 模組未安裝 + LGPL 閘門）")
+        raise HTTPException(status_code=400, detail="rule-run 匯出僅 Excel；BCF 匯出請先 from-rule-run 建 issue，再 GET /api/bcf/export")
     if fmt != "excel":
         raise HTTPException(status_code=400, detail="only fmt=excel is supported")
     run = _RUN_CACHE.get(run_id)
