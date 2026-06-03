@@ -51,4 +51,3 @@ diff 結果 SHALL 計數一致（matched + removed = base_count；matched + adde
 - **THEN** 它 SHALL 呼叫 coordinator `/api/governance/diffs`
 - **AND** SHALL NOT 直連 `127.0.0.1:49102`
 - **AND** diff SHALL 以背景工作執行並可輪詢狀態（queued → running → succeeded/failed）
-

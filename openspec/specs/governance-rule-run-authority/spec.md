@@ -78,4 +78,3 @@ TBD - created by archiving change governance-rule-run-service. Update Purpose af
 - **WHEN** 一個已完成的 rule-run 請求 `export?fmt=excel`
 - **THEN** `governance-service` SHALL 產出 `.xlsx`，每列含 `rule_code`、`severity`、`ifc_type`、`ifc_name`、`ifc_guid`、`usd_prim_path`、`message`
 - **AND** 列數 SHALL 等於失敗構件數，且不含捏造列
-

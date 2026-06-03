@@ -52,4 +52,3 @@ TBD - created by archiving change usd-federation-sublayer-sets. Update Purpose a
 - **WHEN** 瀏覽器建立 / 疊合 / 驗證 / build federation set
 - **THEN** 它 SHALL 呼叫 coordinator `/api/governance/federated-sets*`
 - **AND** SHALL NOT 直連 `127.0.0.1:49102`
-

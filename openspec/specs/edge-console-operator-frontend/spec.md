@@ -52,4 +52,3 @@ Edge Console SHALL 讓 A1 在介面可驗證：顯示真實 IFC 實測 artifact 
 - **WHEN** 操作員開啟 A2 或 A3 頁
 - **THEN** 前端 SHALL 顯示 schema / API / 風險骨架並標後端待建（p1）
 - **AND** SHALL NOT 顯示任何捏造的版本差異或 federation 數字
-
