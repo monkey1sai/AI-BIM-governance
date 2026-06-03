@@ -1,7 +1,11 @@
 """A2 model-version diff 引擎 — 用多級鍵對齊兩份 IFC 的 IfcElement，分類變更。
 
 CPU-only：對齊用 GlobalId/Tag/type+name+loc；moved 用 placement 平移；
-property_changed 用 pset hash。geometry_changed 為 p1（需 tessellation，MVP 不計算）。
+property_changed 用 pset hash。geometry_changed 為 opt-in（預設關閉，需顯式
+include_geometry=True 啟用，較重的 tessellation 比對）已實作（見 geometry.py）。
+
+三級對齊皆維持型別一致性：第一級 GlobalId 全域唯一、第二級鍵為複合鍵
+(is_a(), Tag)、第三級鍵為 type+Name+loc，避免跨型別構件誤配。
 """
 from __future__ import annotations
 
@@ -45,20 +49,21 @@ def run_diff(base: Any, target: Any, move_tol: float = 1.0, include_geometry: bo
             matched_base.add(be.id())
             matched_tgt.add(te.id())
 
-    # 第二級：Tag（source element id）
+    # 第二級：Tag（source element id）— 複合鍵 (is_a(), tag) 帶型別護欄，
+    # 避免跨型別共用 Tag 把「刪除+新增」誤判成同一構件（A2-001）。
     def _tagmap(els, matched):
-        out: dict[str, Any] = {}
+        out: dict[tuple[str, str], Any] = {}
         for e in els:
             if e.id() in matched:
                 continue
             t = K.tag_of(e)
             if t:
-                out.setdefault(t, e)
+                out.setdefault((e.is_a(), t), e)
         return out
 
     bt, tt = _tagmap(base_els, matched_base), _tagmap(tgt_els, matched_tgt)
-    for tag, be in bt.items():
-        te = tt.get(tag)
+    for key, be in bt.items():
+        te = tt.get(key)
         if te is not None and be.id() not in matched_base and te.id() not in matched_tgt:
             pairs.append((be, te, "tag"))
             matched_base.add(be.id())
@@ -73,12 +78,17 @@ def run_diff(base: Any, target: Any, move_tol: float = 1.0, include_geometry: bo
             out.setdefault(K.type_name_loc_key(e), []).append(e)
         return out
 
+    # 同鍵簇內配對前以穩定次鍵（GlobalId，缺則 entity id）排序再 zip，
+    # 讓 property_changed 等證據歸屬穩定可重現，不依 by_type 迭代序（A2-003）。
+    def _stable_key(e):
+        return (getattr(e, "GlobalId", None) or "", e.id())
+
     bk, tk = _keymap(base_els, matched_base), _keymap(tgt_els, matched_tgt)
     for key, bes in bk.items():
         tes = tk.get(key)
         if not tes:
             continue
-        for be, te in zip(bes, tes):
+        for be, te in zip(sorted(bes, key=_stable_key), sorted(tes, key=_stable_key)):
             if be.id() in matched_base or te.id() in matched_tgt:
                 continue
             pairs.append((be, te, "type_name_loc"))

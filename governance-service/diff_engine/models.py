@@ -4,7 +4,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
-# 變更類型：added / removed / moved / property_changed（geometry_changed 為 p1，MVP 不計算）。
+# 變更類型：added / removed / moved / geometry_changed / property_changed
+# （順序對齊下方 CHANGE_TYPES tuple；geometry_changed 為 opt-in，預設關閉，
+#  需顯式 include_geometry=True 啟用，已實作）。
 CHANGE_TYPES = ("added", "removed", "moved", "geometry_changed", "property_changed")
 
 
