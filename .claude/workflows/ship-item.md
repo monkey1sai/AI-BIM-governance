@@ -34,11 +34,12 @@
    - 純 tooling / docs / spec（無 production code）→ 不適用上述兩表，但 SHALL 在 body 明確說明這點。
 6. **觀測 CI**：`gh pr checks <n> --watch`，等官方 checks 跑完。
 7. **reviewer buffer**：CI 變綠後 **再等 ~90–120s**。reviewer（pr-review-agent / CodeRabbit / Codex / Copilot）常在 CI 變綠之後才貼出 inline P1/P2，太早查會漏掉。
-8. **查當前 head 上的新 inline comment**：
+8. **查當前 head 上的新 inline comment**：用 `--paginate` 取**全部頁**（預設 `gh api` 只回第一頁 30 筆，留言多的 PR 會漏掉後頁的 P1/P2），並依當前 head commit 前綴**過濾**（不要用 `group_by`——它在未排序輸入上結果不可靠；用 `select(... startswith ...)` 直接篩當前 head 即可）：
 
    ```bash
-   gh api repos/monkey1sai/AI-BIM-governance/pulls/<n>/comments \
-     | jq 'group_by(.original_commit_id)'
+   HEAD=$(gh pr view <n> --json headRefOid --jq '.headRefOid')
+   gh api --paginate repos/monkey1sai/AI-BIM-governance/pulls/<n>/comments \
+     | jq -s "add | map(select(.original_commit_id | startswith(\"${HEAD:0:9}\")))"
    ```
 
    只看綁在 **當前 head commit** 上的 comment，舊 head 上已處理過的不算。
@@ -58,3 +59,14 @@
 - **production code 的 P1/P2**：一律 hold，修到好才 merge，不放水。
 - **非 production 產物**（evidence artifact、docs scaffolding 腳本等）上的 advisory robustness nit：在官方 gate 全綠時可做 judgment-merge，不為了一個非阻斷性的 nit 無限迴圈。
 - merge 授權 = 官方 gate（pr-review-agent + CodeRabbit 全綠 + head 無新 substantive P1/P2）；但 Codex / Copilot 的 inline comment 常抓到真 bug，**不可只看 check 狀態就 merge**，必須交叉看 inline 發現。
+
+## 與既有 consent gate 的調和
+
+本檔依使用者 2026-06-03 明確授權的 buffered auto-merge 而生，是 **routine feature PR** 的權威 ship-cycle。當它與既有 `.claude/skills/pr-review-gate/SKILL.md`（「merge 須使用者逐次明確同意」）並存時，依 `CLAUDE.md §1` 優先序「使用者最新明確指令 > AGENTS / github-workflow > installed skills」，**routine feature PR 以本檔的 buffered gate 為準，不再逐次人工同意**。
+
+但下列 carve-out **不被本檔覆蓋、仍須使用者明確 consent**（與 `github-workflow.md` closeout 紀律一致）：
+
+- `revert-*` / release / hotfix branch 的刪除或 merge（語意上代表回滾／發版決策）。
+- 任何破壞性或對外（outward-facing）動作（刪資料、改權限、對外發佈、付款等）。
+
+> 本檔**刻意不修改** `pr-review-gate` skill 來放寬其 consent 要求（避免 agent 自我放寬審批門檻）；調和只在本權威檔以優先序聲明，consent skill 本體保留治理上述 carve-out。

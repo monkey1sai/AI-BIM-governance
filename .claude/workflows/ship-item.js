@@ -1,3 +1,6 @@
+// 這是 Workflow-tool 腳本（由 Workflow({name:'ship-item', args}) 執行），非 standalone Node 程式。
+// args / phase / log / agent 等 global 由 Workflow runtime 注入；`node --check` 只驗語法、無法獨立 run。
+// 權威程序與閘門見 .claude/workflows/ship-item.md。
 export const meta = {
   name: 'ship-item',
   description: '每完成一個 work item 自動 ship：commit→push→PR→diff/log→CI watch→+90~120s reviewer buffer→buffered auto-merge→closeout。權威程序見 .claude/workflows/ship-item.md。',
@@ -33,14 +36,14 @@ context：
 - 是否 user-facing capability：${USER_FACING ? '是，PR body 需附 Frontend Verification table（見 AGENTS.md §0.1）' : '否（若動 runtime/deploy 仍需 Deploy Path Verification table；純 tooling/docs/spec 需在 body 註明不適用兩表）'}
 
 你 MUST 親手用 git / gh 跑（本腳本只是包裝，不替你等 CI、不替你 merge）：
-1. commit 前 git diff --cached --check（擋 trailing whitespace / EOF blank），有就先修。
+1. 若有 staged 改動才 commit（commit 前 git diff --cached --check 擋 trailing whitespace / EOF blank，有就先修）；work item 已 commit 在 branch 上、無新 staged 改動則跳過 commit。
 2. commit，訊息繁中，結尾附 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>。
 3. git push -u origin <branch>（遇 force-push deny 改用新 commit 取代 amend）。
-4. 回報 git diff --stat 與 git log。
+4. 回報這次 ship 的改動面：git diff --stat origin/main...HEAD（已 commit 的 diff）與 git log。
 5. 開 PR（gh pr create --base main，繁中），依上面 user-facing 規則附對應驗收表或註明不適用。
 6. gh pr checks <n> --watch 等官方 checks。
 7. CI 變綠後再等 ~90-120s reviewer buffer。
-8. gh api repos/${REPO}/pulls/<n>/comments | jq 'group_by(.original_commit_id)'，只看當前 head 上的新 inline comment。
+8. 取當前 head 上的新 inline comment（--paginate 取全部頁，用 startswith 篩當前 head，不用 group_by）：HEAD=$(gh pr view <n> --json headRefOid --jq .headRefOid)；gh api --paginate repos/${REPO}/pulls/<n>/comments | jq -s "add | map(select(.original_commit_id|startswith(\\"\${HEAD:0:9}\\")))"。
 9. GATE：官方 checks 全綠（pr-review-agent + CodeRabbit）且當前 head 無新 substantive P1/P2 → gh pr merge <n> --squash --delete-branch → closeout（git worktree remove、git fetch --prune、本地 main --ff-only 對齊 origin/main）。
 10. 有新 substantive 發現 → 修 → push → 對每一次 push 各自重跑 step 6-9 的 buffer cycle，SHALL NOT 只看 check 狀態就 merge。
 
