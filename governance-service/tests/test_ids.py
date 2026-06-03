@@ -219,6 +219,8 @@ def test_ids_required_spec_zero_applicable_not_false_pass():
     run = run_ids(f, doc)
     assert run.failed >= 1, f"required 構件缺席必須誠實 fail，實得 {run}"
     assert run.score < 100.0, f"required 零適用不得假通過：score={run.score}"
-    # 補的 spec 級 fail 標記為 required_absent，且無捏造構件 guid
+    # 補的 spec 級 fail 標記為 required_absent，且無捏造構件 guid（ifc_guid=None 誠實）；
+    # ifc_type 以哨兵 "(spec)" 滿足 RuleResult.ifc_type 必填 str（Excel 匯出直寫 r.ifc_type）。
     absent = [r for r in run.results if r.evidence.get("required_absent")]
     assert absent and absent[0].ifc_guid is None
+    assert absent[0].ifc_type == "(spec)"

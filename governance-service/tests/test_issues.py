@@ -103,9 +103,10 @@ def test_from_rule_run_not_found(client_and_db):
     assert client.post("/api/issues/from-rule-run/nope").status_code == 404
 
 
-def test_from_rule_run_rejects_none_model_version_id(client_and_db):
-    """ISS-001/誠實鐵律：rule run 缺 model_version_id（schema 為 nullable）時，from-rule-run
-    SHALL 拒絕（422）而非建出 model_version_id=None 的無版本溯源 issue，與 from-diff 422 守門對稱。"""
+def test_from_rule_run_allows_none_model_version_id(client_and_db):
+    """rule-run issue 版本綁定為 best-effort：rule run 缺 model_version_id（schema 為 nullable，
+    例如 console 對未指派版本的臨時 IFC 檢核）時，from-rule-run 仍 201 建出 issue，且該 issue
+    model_version_id 為 None（rule_result 來源可接受）。與 from-diff 缺 target 的 422 刻意不對稱。"""
     from db import Store as RuleStore
     from rule_engine.models import RuleResult, RuleRunResult
 
@@ -121,10 +122,11 @@ def test_from_rule_run_rejects_none_model_version_id(client_and_db):
     rs.complete_run(run_id, run)
 
     resp = client.post(f"/api/issues/from-rule-run/{run_id}")
-    assert resp.status_code == 422  # 明確拒絕
-    # 無 NULL-mv 洩漏：不得留下任何 rule_result 來源 issue
+    assert resp.status_code == 201  # best-effort：仍建出
+    assert resp.json()["created"] == 1
     rule_issues = [i for i in client.get("/api/issues").json()["issues"] if i["source_type"] == "rule_result"]
-    assert rule_issues == []
+    assert len(rule_issues) == 1
+    assert rule_issues[0]["model_version_id"] is None  # 無版本綁定可接受（rule_result 來源）
 
 
 def test_from_rule_run_idempotent(client_and_db):

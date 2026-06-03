@@ -111,8 +111,10 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
         # `continue`，不會走到這裡），不會重複計數。
         if len(results) == produced_before and getattr(spec, "status", None) is False:
             if applicable:
-                # (a) 有 applicable 構件但每條 requirement 都零通過（prohibited 退階、或無 facet
-                #     可比對）：為每個 applicable 構件補一筆 fail。
+                # (a) 有 applicable 構件但每條 requirement 都零通過（spec.status=False 卻無逐
+                #     requirement 結果，例如無 facet 可比對）。此分支與 maxOccurs==0 的 prohibited
+                #     分支互斥（那分支已 `continue`），這裡**不是** prohibited case，故不得標
+                #     prohibited（否則誤導且污染下游以 evidence.prohibited 的判斷）：補 spec 級違規。
                 for el in applicable:
                     results.append(
                         RuleResult(
@@ -122,8 +124,8 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
                             rule_code=code,
                             severity="required",
                             status="fail",
-                            message="IDS prohibited：此構件不應存在（specification 級違規）",
-                            evidence={"ids": True, "spec_status": False, "prohibited": True},
+                            message="IDS specification 級違規：spec.status=False 但無逐 requirement 結果",
+                            evidence={"ids": True, "spec_status": False, "spec_level": True},
                         )
                     )
             else:
@@ -134,8 +136,8 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
                 results.append(
                     RuleResult(
                         ifc_guid=None,
-                        ifc_type=None,
-                        ifc_name=None,
+                        ifc_type="(spec)",
+                        ifc_name=code,
                         rule_code=code,
                         severity="required",
                         status="fail",

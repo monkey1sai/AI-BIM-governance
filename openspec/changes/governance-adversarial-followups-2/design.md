@@ -21,7 +21,9 @@ ifctester 0.8.5 的 `Specification.validate()` 已會重設 spec 級 `passed_ent
 
 `run_ids` 既有 fallback 只在 `applicable` 非空時補 fail。required spec（`minOccurs>=1`）零適用時 ifctester 回 `spec.status=False`、`applicable=[]`，舊碼完全不產 result → score=100。
 
-決策：fallback 條件去掉 `and applicable`；分兩路——applicable 非空維持原逐構件 fail；applicable 為空補一筆 **spec 級** fail（`ifc_guid=None`、evidence `required_absent=True`），誠實反映 required 構件缺席且不捏造構件 guid。與上方 prohibited(`maxOccurs==0`) 分支天然互斥（該分支已 `continue`），不重複計數。
+決策：fallback 條件去掉 `and applicable`；分兩路——applicable 非空維持原逐構件 fail（此分支非 prohibited，message 述為「specification 級違規：spec.status=False 但無逐 requirement 結果」、evidence `spec_level=True`，不標 prohibited 以免誤導與污染下游以 `evidence.prohibited` 的判斷）；applicable 為空補一筆 **spec 級** fail（`ifc_guid=None`、evidence `required_absent=True`），誠實反映 required 構件缺席且不捏造構件 guid。為滿足 `RuleResult.ifc_type` 必填 str（Excel 匯出直寫 `r.ifc_type`），spec 級 fail 以 `ifc_type="(spec)"`、`ifc_name=<spec code>` 標示（`ifc_guid` 維持 None，誠實表示無對應構件）。與上方 prohibited(`maxOccurs==0`) 分支天然互斥（該分支已 `continue`），不重複計數。
+
+此 required-absent 的 spec 級 fail 因無對應構件（`ifc_guid=None`）在 issue store 歸為 annotation、不匯出為 element-bound BCF issue——此為誠實行為（無元素可供 BCF viewpoint 定位），它仍透過 score 下修反映失敗。
 
 ### F3：唯一性護欄取代 setdefault 壓平
 
@@ -29,9 +31,11 @@ ifctester 0.8.5 的 `Specification.validate()` 已會重設 spec 級 `passed_ent
 
 決策：改用 `_tag_buckets` 保留每個複合鍵的所有構件，只有「兩側該鍵各恰 1 個」才以 Tag 配對；任一側 >1（歧義）不配，交給第三級 type+name+loc 或 removed/added。唯一-Tag 情況行為不變（既有 `test_tag_alignment_same_type_different_guid` 仍綠）。此法消除對 `by_type` 迭代序的依賴。
 
-### F4：from-rule-run 對稱 422
+### F4：from-rule-run 版本綁定刻意不對稱於 from-diff
 
-from-diff 已在 `target_model_version_id` 缺失時回 422；from-rule-run 卻用 `run.get("model_version_id")`，None 仍建 issue，誠實鐵律不對稱破口。決策：rule run 缺 `model_version_id` 時 raise 422（訊息與 from-diff 平行），並把 items 的 `model_version_id` 改用驗證後的 `mv` 區域變數。
+外部 reviewer（Codex P2）指出：console 的 rule-run 建立流程不帶 `model_version_id`（pages.tsx `doRun` 只傳 `ifc_source_path` / `ids_path`），對 from-rule-run 加「缺 mv → 422」會讓 console 正常流程全失效（真 regression）。決策：from-rule-run 的版本綁定維持 **best-effort**——`mv = run.get("model_version_id")` 可為 None 仍建 issue，仍以 `source_type=rule_result` + `source_ref` + run 溯源；rule-run 可能是對「尚未指派 model version」的臨時 IFC 檢核。
+
+**from-diff 的 422 保留不動**：diff 天生是兩個 `model_version` 的比對，缺 `target_model_version_id` 時 SHALL 回 422。兩者不對稱是刻意設計（反映來源本質差異），非破口。
 
 ### F5：以查證事實校正授權敘述
 
