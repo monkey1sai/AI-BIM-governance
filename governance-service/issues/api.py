@@ -88,6 +88,14 @@ def issues_from_rule_run(run_id: str):
     run = rule_store.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="rule run not found")
+    # ISS-001/誠實鐵律：rule run 缺 model_version_id 時拒絕（422），與 from-diff 對稱，
+    # 不建出無版本綁定的正式 issue（缺版本綁定會讓 BCF 匯出與跨工具溯源斷裂）。
+    mv = run.get("model_version_id")
+    if not mv:
+        raise HTTPException(
+            status_code=422,
+            detail="rule run 缺 model_version_id，無法建立版本綁定的 issue",
+        )
     failed = rule_store.get_results(run_id, "fail")
     items = [
         {
@@ -96,7 +104,7 @@ def issues_from_rule_run(run_id: str):
             "severity": r.get("severity", "medium"),
             "ifc_guid": r.get("ifc_guid"),
             "usd_prim_path": r.get("usd_prim_path"),
-            "model_version_id": run.get("model_version_id"),
+            "model_version_id": mv,
             "source_type": "rule_result",
             "source_ref": r.get("id"),
         }

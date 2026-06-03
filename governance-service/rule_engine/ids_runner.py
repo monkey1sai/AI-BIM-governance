@@ -29,8 +29,33 @@ def _spec_code(spec: Any, index: int) -> str:
     return f"{base}#{index}"
 
 
+def _reset_ids_residual_state(specs: Any) -> None:
+    """A1-IDS-REUSE-FALSEPASS：validate 前清掉 requirement facet 的殘留通過狀態，避免跨 model 洩漏。
+
+    ifctester 0.8.5 的 `Specification.validate()` 會自行重設 spec 級 passed_entities /
+    failed_entities / applicable_entities / status，但**不會重設 requirement facet 的
+    `passed_entities`**（只累加）。加上 ifcopenshell 跨 model 重用 STEP `.id()`（兩個不同
+    model 的構件常拿到相同 id），前一個 model 殘留在 facet.passed_entities 的 id 會讓本次
+    model 的不合規構件（恰好 id 相同）被 `el.id() in passed_ids` 誤判 pass → score=100 假通過。
+
+    因此每次 run_ids 進入點、validate 之前，只重置 ifctester 不會自行清理的 facet 級殘留
+    （`passed_entities` 與 `failures`）。spec 級狀態交給 ifctester 的 validate 重設，避免在此
+    覆寫破壞（也讓不經 ifctester validate 的測試 fake spec 行為不受影響）。屬性以型別探測，
+    對沒有這些屬性的物件安全略過。
+    """
+    for spec in getattr(specs, "specifications", []) or []:
+        for req in getattr(spec, "requirements", []) or []:
+            # facet.passed_entities 是 ifctester 從不重置的殘留來源（核心修復點）。
+            if isinstance(getattr(req, "passed_entities", None), set):
+                req.passed_entities.clear()
+            if isinstance(getattr(req, "failures", None), list):
+                req.failures.clear()
+
+
 def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
     """對已開啟的 model 跑已載入的 IDS specs，回傳 RuleRunResult。"""
+    # A1-IDS-REUSE-FALSEPASS：先清殘留再 validate，杜絕重用 specs 物件跨 model 的假通過。
+    _reset_ids_residual_state(specs)
     specs.validate(model)
     results: list[RuleResult] = []
     target_summary: dict[str, int] = {}
@@ -80,26 +105,42 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
                         evidence={"ids": True, "requirement": str(req)[:200]},
                     )
                 )
-        # ids-002：prohibited applicability（maxOccurs=0）等 specification 級失敗在
-        # 零-requirement 時不會產生任何逐構件 result，導致違規模型被當乾淨 pass。
-        # 若 spec 經 validate 後 status 為 False 卻沒產生任何 result，為每個
-        # applicable 構件補一筆 fail，誠實反映 specification 級違規。
-        if (
-            len(results) == produced_before
-            and getattr(spec, "status", None) is False
-            and applicable
-        ):
-            for el in applicable:
+        # ids-002 + Required-IDS-零適用誤報：spec 經 validate 後 status 為 False，卻沒產生
+        # 任何逐構件 result（兩種情況）時，補 specification 級 fail，誠實反映 spec 級違規，
+        # 不得回 score=100 掩蓋失敗。與上方 prohibited(maxOccurs==0) 分支互斥（該分支已
+        # `continue`，不會走到這裡），不會重複計數。
+        if len(results) == produced_before and getattr(spec, "status", None) is False:
+            if applicable:
+                # (a) 有 applicable 構件但每條 requirement 都零通過（prohibited 退階、或無 facet
+                #     可比對）：為每個 applicable 構件補一筆 fail。
+                for el in applicable:
+                    results.append(
+                        RuleResult(
+                            ifc_guid=getattr(el, "GlobalId", None),
+                            ifc_type=el.is_a(),
+                            ifc_name=getattr(el, "Name", None),
+                            rule_code=code,
+                            severity="required",
+                            status="fail",
+                            message="IDS prohibited：此構件不應存在（specification 級違規）",
+                            evidence={"ids": True, "spec_status": False, "prohibited": True},
+                        )
+                    )
+            else:
+                # (b) Required-IDS-零適用誤報：非 prohibited 的 required spec（minOccurs!=0）
+                #     找不到任何 applicable 構件 → ifctester 回 spec.status=False（required 構件
+                #     缺席）。先前因 applicable 為空而完全不產 result → score=100 假通過。
+                #     補一筆 spec 級 fail（無對應構件 guid），誠實反映「required 構件缺席」。
                 results.append(
                     RuleResult(
-                        ifc_guid=getattr(el, "GlobalId", None),
-                        ifc_type=el.is_a(),
-                        ifc_name=getattr(el, "Name", None),
+                        ifc_guid=None,
+                        ifc_type=None,
+                        ifc_name=None,
                         rule_code=code,
                         severity="required",
                         status="fail",
-                        message="IDS prohibited：此構件不應存在（specification 級違規）",
-                        evidence={"ids": True, "spec_status": False, "prohibited": True},
+                        message="IDS required 違規：此 specification 找不到任何適用構件（required 構件缺席）",
+                        evidence={"ids": True, "spec_status": False, "required_absent": True},
                     )
                 )
 

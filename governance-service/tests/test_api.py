@@ -1,7 +1,8 @@
 """governance-service API E2E（FastAPI TestClient，CPU-only，合成 IFC）。
 
 驗證 POST rule-run -> 背景執行 -> GET 狀態/結果 -> Excel 匯出全鏈路，
-並守誠實：每個 failed result 必有真實 ifc_guid；/health 誠實回報 ifctester=false。
+並守誠實：每個 failed result 必有真實 ifc_guid；ifctester 已安裝（host 0.8.5），
+/health 如實回報 ifctester=true（見 test_health_reports_ifctester_true）。
 """
 from __future__ import annotations
 

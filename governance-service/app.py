@@ -6,8 +6,9 @@ FastAPI，綁定 127.0.0.1:49102（loopback only，鏡像 host_native_conversion
 邊界與誠實守則：
 - 純 CPU、host-native ifcopenshell；不需 GPU / Kit。
 - ifctester 已安裝（host 0.8.5）→ 支援 buildingSMART IDS-XML rule-run；/health 如實回報 ifctester 安裝狀態。
-- BCF 2.1 匯出已實作（issue → .bcfzip，bcf/ 模組純 stdlib，不依賴 GPLv3 bcf-client）；
-  rule-run /export 仍僅 Excel，BCF 走 /api/bcf/export。
+- BCF 2.1 匯出已實作（issue → .bcfzip）：bcf/ 模組執行期只用 stdlib（zipfile+xml）、不 import
+  bcf-client；惟 ifctester（供 IDS）會在環境 transitive 安裝 bcf-client(GPLv3)，匯出產物不含其
+  程式碼。rule-run /export 仍僅 Excel，BCF 走 /api/bcf/export。
 """
 from __future__ import annotations
 
@@ -58,7 +59,8 @@ from issues.api import router as issue_router  # noqa: E402
 
 app.include_router(issue_router)
 
-# BCF 匯出（issue → BCF 2.1 .bcfzip，純 stdlib，不依賴 GPLv3 bcf-client）。
+# BCF 匯出（issue → BCF 2.1 .bcfzip）：匯出模組執行期只用 stdlib、不 import bcf-client；
+# ifctester 會在環境 transitive 安裝 bcf-client(GPLv3)，匯出產物不含其程式碼。
 from bcf.api import router as bcf_router  # noqa: E402
 
 app.include_router(bcf_router)

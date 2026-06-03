@@ -1,7 +1,12 @@
-"""自寫最小 BCF 2.1 .bcfzip 匯出（純 stdlib zipfile + xml）。
+"""自寫最小 BCF 2.1 .bcfzip 匯出（執行期只用 stdlib zipfile + xml）。
 
-**授權**：刻意不依賴 `bcf-client`（GPLv3，會污染專有服務）；BCF 為 buildingSMART
-開放標準，以 stdlib 自行 author markup/viewpoint 無授權問題。
+**授權（精確敘述）**：本匯出模組**執行期不 import `bcf-client`**（GPLv3），僅以 stdlib
+自行 author markup/viewpoint，匯出產物（.bcfzip）不含 `bcf-client` 任何程式碼。BCF 為
+buildingSMART 開放標準，以 stdlib 自行產生無授權問題。
+
+注意（誠實鐵律）：A1 IDS 匯入所需的 `ifctester` 會在環境**transitive 安裝 `bcf-client`
+（GPLv3）**（見 `requirements.txt`）。亦即整個 Python 環境確實存在 GPLv3 套件；不可宣稱
+「環境不依賴 GPLv3」。此模組與其產物不連結該套件，故 BCF 匯出本身不引入 copyleft 連結。
 
 對齊 BCF 結合 USD 開發原則：
 - 只匯出正式 issue（kind=issue，有 ifc_guid）；annotation 不匯出（rule 10）。

@@ -1,8 +1,9 @@
 """把 rule-run 結果匯出成 Excel（openpyxl，host 已內建）。
 
 本檔僅負責 rule-run → Excel（失敗構件清單 + summary）。BCF 2.1 匯出已於
-``bcf/`` 模組以純 stdlib（zipfile + xml）實作（見 ``app.py`` 的 ``/api/bcf/export``
-與 from-rule-run 流程，不依賴 GPLv3 bcf-client）。
+``bcf/`` 模組以 stdlib（zipfile + xml）實作（見 ``app.py`` 的 ``/api/bcf/export``）：
+該模組執行期不 import GPLv3 ``bcf-client``；惟 ``ifctester`` 會在環境 transitive 安裝
+``bcf-client``，匯出產物不含其程式碼。
 """
 from __future__ import annotations
 
