@@ -66,3 +66,75 @@ export const A1A10: AppCardDef[] = [
   { code: "A9", slug: "usd-copilot", title: "USD Code / ChatUSD", en: "USD Code Copilot", phase: 4, tier: "roadmap", dep: "omni", prov: "p15" },
   { code: "A10", slug: "robot-sim", title: "機器人 / 無人機巡檢", en: "Robot / Drone Sim", phase: 4, tier: "roadmap", dep: "omni", prov: "p15" },
 ];
+
+// ── 服務邊界拓樸（BoundaryDiagram 用，移植自設計原型 data.jsx SERVICES）─────────
+// 三欄：WEB-PLANE（瀏覽器可達）→ CONTROL-PLANE BOUNDARY（coordinator :8004）→
+// INTERNAL（瀏覽器永不直連）。port 已對齊本 repo 落地現況；governance-service :49102
+// 後端 A1/A2/A3 已實作（原型時代標 p1 已過時，這裡更正為 asbuilt）。
+export interface BoundaryNode {
+  id: string;
+  name: string;
+  sub: string;
+  port: string | null;
+  plane: "web" | "boundary" | "internal" | "external";
+  prov: Prov;
+}
+export const SERVICES: BoundaryNode[] = [
+  { id: "browser", name: "瀏覽器 Web-plane", sub: "operator / reviewer", port: null, plane: "web", prov: "asbuilt" },
+  { id: "viewer", name: "Review Room (web-viewer-sample)", sub: "USD over WebRTC", port: "127.0.0.1:5173", plane: "web", prov: "asbuilt" },
+  { id: "coordinator", name: "Review Coordinator", sub: "control plane（唯一對外）", port: "127.0.0.1:8004", plane: "boundary", prov: "asbuilt" },
+  { id: "streaming", name: "Streaming / Conversion authority", sub: "bim-streaming-server · 轉檔權威 + Kit 控制", port: "127.0.0.1:49101 · Kit 49100/47998", plane: "internal", prov: "asbuilt" },
+  { id: "governance", name: "Governance service", sub: "A1 rule-run / A2 diff / A3 federation", port: "127.0.0.1:49102", plane: "internal", prov: "asbuilt" },
+  { id: "cloud", name: "公司雲端 control-plane", sub: "bim-control · MySQL（metadata 權威）", port: "external", plane: "external", prov: "asbuilt" },
+];
+
+// ── coordinator 已實作 HTTP 路由清單（ENDPOINTS panel 用）─────────────────────
+// 權威：bim-review-coordinator/src/app.ts（2026-06-03 逐一查證為真實 route，非原型轉述）。
+// 只列瀏覽器 / 落地端 worker 可達的 coordinator-owned 端點；internal-token-only 端點（如
+// callback-outbox 直查）標 internal，誠實說明瀏覽器不可達。governance proxy（/api/governance/*）
+// 另由 governanceClient 走，不在此表重複。
+export interface EndpointDef {
+  m: "GET" | "POST";
+  path: string;
+  prov: Prov;
+  note?: string;
+}
+export const ENDPOINTS: EndpointDef[] = [
+  { m: "GET", path: "/health", prov: "asbuilt" },
+  { m: "GET", path: "/api/runtime/status", prov: "asbuilt", note: "coordinator-visible runtime summary（read-only）" },
+  { m: "POST", path: "/api/review-sessions", prov: "asbuilt" },
+  { m: "GET", path: "/api/review-sessions/:id", prov: "asbuilt" },
+  { m: "POST", path: "/api/review-sessions/:id/join", prov: "asbuilt" },
+  { m: "POST", path: "/api/review-sessions/:id/leave", prov: "asbuilt" },
+  { m: "GET", path: "/api/review-sessions/:id/stream-config", prov: "asbuilt" },
+  { m: "GET", path: "/api/review-sessions/:id/events", prov: "asbuilt" },
+  { m: "POST", path: "/api/review-sessions/:id/events", prov: "asbuilt" },
+  { m: "GET", path: "/api/review-sessions/:id/lifecycle-events", prov: "asbuilt" },
+  { m: "POST", path: "/api/review-sessions/:id/close", prov: "asbuilt" },
+  { m: "POST", path: "/api/external/ifc-ready", prov: "asbuilt", note: "唯一對外 IFC-ready intake" },
+  { m: "GET", path: "/api/external/ifc-ready", prov: "asbuilt" },
+  { m: "GET", path: "/api/external/ifc-ready/:jobId", prov: "asbuilt" },
+  { m: "GET", path: "/api/external/ifc-ready/:jobId/shadow", prov: "asbuilt" },
+  { m: "GET", path: "/ui/open?session=:id", prov: "asbuilt", note: "server-side redirect 至 browser-visible viewer" },
+  { m: "POST", path: "/api/internal/callback-outbox/deliver", prov: "asbuilt", note: "internal token only（瀏覽器不可達）" },
+];
+
+// ── 相依與授權風險（DEPENDENCIES panel 用，移植自設計原型 data.jsx）───────────
+// 誠實鐵律：A1 core 是零 GPU / 零 NVIDIA runtime，但**不可**寫成「零相依 / 零授權風險」。
+// 下列 LGPL / copyleft 元件商用前須法務確認。BCF 匯出本 repo 已改純 stdlib（不再依賴 GPLv3
+// bcf-client），故 BCF 列標 permissive 並註明；其餘 copyleft 元件照實標。
+export interface DependencyDef {
+  name: string;
+  license: string;
+  use: string;
+  risk: "copyleft" | "permissive" | "tbd";
+  note?: string;
+}
+export const DEPENDENCIES: DependencyDef[] = [
+  { name: "IfcOpenShell", license: "LGPL-3.0", use: "IFC 解析 / A1 rule-run / A2 diff", risk: "copyleft", note: "copyleft，商用前須法務確認" },
+  { name: "ifctester (IDS)", license: "LGPL-3.0", use: "A1 buildingSMART IDS 規則驗證", risk: "copyleft", note: "copyleft，商用前須法務確認" },
+  { name: "OpenUSD (pxr)", license: "Apache-2.0", use: "A3 federation USD authoring", risk: "permissive" },
+  { name: "openpyxl", license: "MIT", use: "A1 rule-run Excel 匯出", risk: "permissive" },
+  { name: "BCF 2.1 匯出（本 repo 自實作）", license: "本專案碼（純 stdlib zipfile/ElementTree）", use: "issue → .bcfzip", risk: "permissive", note: "已改純 stdlib，不依賴 GPLv3 bcf-client" },
+  { name: "本地 issue / shadow metadata DB", license: "—", use: "本地 issue 表 / shadow metadata", risk: "tbd" },
+];

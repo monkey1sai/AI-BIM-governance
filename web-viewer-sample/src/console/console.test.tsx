@@ -2,7 +2,10 @@
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AppsPage, FederationPage, IssuesRuleCenterPage, OverviewPage, VersionDiffPage } from "./pages";
+import { AppsPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
+import { coordinatorClient } from "./coordinatorClient";
+import { DEPENDENCIES, ENDPOINTS } from "./data";
+import { isFakeMappingDocument } from "../types/mapping";
 
 describe("edge console honesty smoke", () => {
   it("Applications 啟動器列出 A1–A10 並帶 provenance", () => {
@@ -71,5 +74,80 @@ describe("edge console honesty smoke", () => {
     expect(html).not.toContain("127 rules");
     expect(html).not.toContain("99.1%");
     expect(html).not.toContain("92.4%");
+  });
+
+  // ── P2-1 Overview：BoundaryDiagram + DEPENDENCIES + ENDPOINTS（誠實授權風險）──
+  it("P2-1 Overview DEPENDENCIES 標 copyleft 且不寫「零授權風險」", () => {
+    const html = renderToString(<OverviewPage />);
+    // 授權風險表必須出現 copyleft（LGPL 元件），且嚴禁「零授權風險 / 零相依」字串。
+    expect(html).toContain("copyleft");
+    expect(html).toContain("LGPL-3.0");
+    expect(html).not.toContain("零授權風險");
+    expect(html).not.toContain("零相依");
+    // 三欄服務邊界圖：WEB-PLANE → BOUNDARY → INTERNAL，視覺化「瀏覽器永不直連」。
+    expect(html).toContain("WEB-PLANE");
+    expect(html).toContain("瀏覽器永不直連");
+    // ENDPOINTS 路由清單：真實 coordinator route（查證自 app.ts）。
+    expect(html).toContain("/api/runtime/status");
+    expect(html).toContain("/api/external/ifc-ready");
+  });
+
+  it("P2-1 DEPENDENCIES 常量含 copyleft 條目，無「零授權風險」宣稱", () => {
+    expect(DEPENDENCIES.some((d) => d.risk === "copyleft")).toBe(true);
+    expect(DEPENDENCIES.every((d) => !/零授權風險|zero.?license.?risk/i.test(`${d.name}${d.use}${d.note ?? ""}`))).toBe(true);
+  });
+
+  // ── P2-2 Semantic Viewer：fake-vs-real 隔離（fake mapping 被標 demo / 拒絕當真）──
+  it("P2-2 Semantic Viewer 誠實標示 fake 隔離與 p1（無 DataChannel）", () => {
+    const html = renderToString(<SemanticViewerPage />);
+    expect(html).toContain("fake-vs-real 隔離");
+    expect(html).toContain("fake_for_smoke_test");
+    // 點構件 highlight 需 viewer DataChannel（console 無此鏈）→ 標 p1，不做假按鈕。
+    expect(html).toContain("DataChannel");
+    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    expect(html).not.toContain("99.1%");
+    expect(html).not.toContain("92.4%");
+  });
+
+  it("P2-2 fake mapping 文件被 isFakeMappingDocument 判為 fake（不冒充真 mapping）", () => {
+    // 四個 fake 旗標任一成立即當 fake（重用既有工具）。
+    expect(isFakeMappingDocument({ mock: true })).toBe(true);
+    expect(isFakeMappingDocument({ allow_fake_mapping: true })).toBe(true);
+    expect(isFakeMappingDocument({ summary: { fake_mapping_count: 3 } })).toBe(true);
+    expect(isFakeMappingDocument({ items: [{ mapping_method: "fake_for_smoke_test" }] })).toBe(true);
+    // 真實 mapping（無任何 fake 旗標）不被誤判。
+    expect(isFakeMappingDocument({ items: [{ ifc_guid: "g", usd_prim_path: "/World/X", mapping_method: "guid_exact" }] })).toBe(false);
+  });
+
+  // ── P2-3 Coordinator/Intake/Runtime：真實 body + 只打 :8004 + GPU 未取得標 demo ──
+  it("P2-3 coordinatorClient 只打 coordinator :8004（不直連 :49102 / :49101 / :49100）", () => {
+    expect(coordinatorClient.base).toContain(":8004");
+    const openUrl = coordinatorClient.openInViewerUrl("review_session_abc");
+    expect(openUrl).toContain(":8004");
+    expect(openUrl).not.toContain(":49102");
+    expect(openUrl).not.toContain(":49101");
+    expect(openUrl).not.toContain(":49100");
+    // 真實 coordinator 端點存在於 ENDPOINTS 清單（查證自 app.ts），未含幻覺端點。
+    const paths = ENDPOINTS.map((e) => e.path);
+    expect(paths).toContain("/api/runtime/status");
+    expect(paths.some((p) => p.startsWith("/api/governance/runtime"))).toBe(false); // 幻覺端點不得出現
+    expect(paths.some((p) => p === "/api/governance/uploads")).toBe(false); // 幻覺端點不得出現
+  });
+
+  it("P2-3 Coordinator/Intake/Runtime 真實 body：GPU / 首幀 無遙測標未取得（非 fail，非捏造）", () => {
+    const coord = renderToString(<CoordinatorPage />);
+    expect(coord).toContain("/api/runtime/status");
+    expect(coord).toContain("port listening ≠ has frame"); // 首幀誠實標示
+    expect(coord).not.toContain("99.1%");
+
+    const intake = renderToString(<IntakePage />);
+    expect(intake).toContain("/api/external/ifc-ready");
+    expect(intake).toContain("不承諾精準 GUID"); // mapping fidelity 誠實
+    expect(intake).toContain("未取得"); // conversion 秒數 / GPU 無遙測
+
+    const runtime = renderToString(<RuntimePage />);
+    expect(runtime).toContain("stream-config");
+    expect(runtime).toContain("未取得"); // GPU 無遙測標未取得
+    expect(runtime).not.toContain("92.4%");
   });
 });
