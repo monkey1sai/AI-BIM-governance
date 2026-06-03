@@ -26,6 +26,8 @@ installed skills / Graphify wiki / generated skills
 - 不修改 secrets / private keys / `.env` 實際機密值；不新增 production dependency 不解釋。
 - 修改 function / class / method 前依 GitNexus 規範做 impact analysis；HIGH / CRITICAL 先回報。
 - OpenSpec change 不得在 `main` 上開發；走 branch → PR → Actions → merge → sync/archive。
+- A1–A10 是本 repo 主要產品項；user-facing feature 必須可從前端 route 操作並有 browser E2E evidence，backend-only done 不接受。
+- deploy / runtime / demo 行為必須回到 `scripts/deploy.ps1` golden path；新增 root-level start / smoke / check script 預設視為邊界風險。
 
 完成任何工作前回報：
 
@@ -41,6 +43,7 @@ installed skills / Graphify wiki / generated skills
 | 何時需要 | 讀這份 |
 |---|---|
 | 跨 sub-repo 決策、改 repo boundary、查 data 權威歸屬、追資料流 | `docs/agents/repo-boundary-detail.md` |
+| 查 A1–A10、frontend operability、script/deploy contract | `docs/agents/product-operability-and-script-contract.md` |
 | 開 PR / 處理 GitHub Actions / OpenSpec sync-archive / branch closeout | `docs/agents/github-workflow.md` |
 | 修改 code symbol、跑 impact analysis、commit 前 detect_changes | `docs/agents/gitnexus-usage.md` |
 | 跑 sub-repo 驗證（pytest / npm test / build / Cloud VM 啟動） | `docs/agents/sub-repo-verify-commands.md` |

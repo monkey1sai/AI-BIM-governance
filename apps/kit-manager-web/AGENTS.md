@@ -51,5 +51,6 @@ cd apps/kit-manager-web; npm run build
 
 - 改動沒有把 Kit Manager UI 變成 server / runtime authority。
 - `npm run build` 通過，或清楚說明 build error 與 fix 計劃。
+- User-facing flow 完成時必須列 Frontend URL、Buttons tested、Fixture used、Expected visible result、E2E / screenshot evidence；只通過 API 或 build 不算完整驗收。
 - 若觸及 API contract，PR 描述 MUST 列出對應 `docs/contracts/kit-manager-api.contract.md` 是否同步。
 - 最終回覆列出 changed files、validation、known risks。

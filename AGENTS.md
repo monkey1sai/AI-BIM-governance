@@ -17,6 +17,14 @@
 - 只修改與任務直接相關的檔案與程式碼；不要順手重構、格式化、刪除註解或清理不理解的既有內容。
 - 每個實作切片都要能被驗證；完成時回報改動檔案、驗證指令、未跑測試原因與已知風險。
 
+### 產品定位與完成標準
+
+- `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；分頁「06 操作介面總覽」是使用者操作介面、按鈕、進度與可驗收流程的 UX 參考。
+- 凡是 user-facing capability，不得以「後端 / API / 測試完成」宣告 done。完成標準必須是：使用者可從前端 route 操作，點明確按鈕，使用預設 fixture，看到 loading / success / failure / retry 與關鍵 runtime ID，並有 Playwright / Chrome E2E 截圖或 trace 證據。
+- 最終回報 user-facing work 時必須列出：Frontend URL、Buttons tested、Test fixture used、Expected visible result、E2E command、Screenshot / evidence path、Known limitations。
+
+完整 A1–A10 對應、frontend operability rule 與 script contract 見 `docs/agents/product-operability-and-script-contract.md`。
+
 ### Secrets / `.env` 存取
 
 - 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
@@ -40,7 +48,11 @@
 AI-BIM-governance/
 ├── bim-review-coordinator/   # 唯一對外 IFC-ready intake + Session / Control Plane（:8004）
 ├── bim-streaming-server/     # Internal IFC→USDC authority + Kit Runtime（49100/49101）
+├── governance-service/       # A1/A2/A3 governance authority（:49102 loopback）
 ├── web-viewer-sample/        # Browser client（:5173）
+├── apps/kit-manager-web/     # Kit Manager operator UI
+├── services/kit-manager-api/ # Kit Manager API（:8010）
+├── scripts/                  # deploy / verify / script contract
 └── tests/{contracts,fakes}/  # 外部平台 contract + test-only fakes
 ```
 
@@ -66,7 +78,9 @@ flowchart LR
 [外部] 客戶落地端 IFC Worker = 外部 IFC 產出者（本 repo 不啟動）
 bim-review-coordinator = 唯一對外 IFC-ready intake + Session / 協作控制中心
 bim-streaming-server   = internal-only IFC→USDC conversion + Omniverse Kit / WebRTC runtime
+governance-service     = A1 rule-run / A2 diff / A3 federation / issue / BCF loopback authority
 web-viewer-sample      = Browser client / user interaction layer
+apps + services        = operator-facing Kit Manager UI / API
 tests/fakes + tests/contracts = 外部平台 test-only doubles，非 runtime profile
 _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅 tests/fakes 模擬
 ```
@@ -82,6 +96,7 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 何時需要 | 讀這份 |
 |---|---|
 | 跨 sub-repo 決策、改 repo boundary、查 data 權威歸屬、追資料流 | `docs/agents/repo-boundary-detail.md` |
+| 查 A1–A10 產品定位、frontend-operable done、script/deploy contract | `docs/agents/product-operability-and-script-contract.md` |
 | 開 PR / 處理 GitHub Actions / OpenSpec sync-archive / branch closeout | `docs/agents/github-workflow.md` |
 | 修改 code symbol（function/class/method）、跑 impact analysis、commit 前 detect_changes | `docs/agents/gitnexus-usage.md` |
 | 跑 sub-repo 驗證（pytest / npm test / build / Cloud VM 啟動） | `docs/agents/sub-repo-verify-commands.md` |

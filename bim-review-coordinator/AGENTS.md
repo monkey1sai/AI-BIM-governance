@@ -15,6 +15,8 @@
 - user presence / selection / issue focus / annotation event broadcast
 - 外部 IFC-ready service auth / idempotency / local conversion job binding
 - streaming conversion result → metadata-only callback outbox
+- browser-facing governance proxy（`/api/governance/*` → `governance-service :49102`）
+- user-facing frontend flow 所需的 session / status / identifier bridge
 
 ## Does Not Own
 
@@ -26,9 +28,11 @@
 ## Required Boundaries
 
 - `web-viewer-sample` 的 session / metadata / stream config 查詢應走本服務，不直連已刪 runtime。
+- 瀏覽器不得直連 internal loopback service；governance API 必須經本服務 proxy，缺席時誠實回 502 / visible failure state。
 - 本服務只協調 session、collaboration、intake 與 callback outbox，不取代外部公司雲端 control-plane 成為長期 metadata authority。
 - 不得引入 Omniverse / `pxr` / `omni.*` dependency。
 - 不得直接控制 Kit viewport、camera、material；runtime operation 屬於 `bim-streaming-server`。
+- User-facing flow 需要本服務參與時，API done 不等於 feature done；必須同步確認 `web-viewer-sample` 有可操作 route / button / E2E evidence。
 
 ## Before Editing
 
@@ -58,5 +62,6 @@ scripts\verify-all.ps1 -TsOnly
 ## Done Criteria
 
 - 變更沒有把 coordinator 變成 UI、file store、metadata authority 或 3D runtime。
+- 若改動支援 user-facing flow，必須回報前端驗收入口或清楚標示「後端切片，尚未可從前端驗收」。
 - 相關測試通過，或清楚說明未跑原因。
 - 最終回覆列出 changed files、validation、known risks。

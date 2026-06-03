@@ -1,0 +1,179 @@
+{
+  "schema_version": "script-registry/v1",
+  "policy": "Root-level scripts are allowed only when registered here. New start/smoke/check/deploy helper scripts should normally live under scripts/tests, scripts/dev, tests/e2e, scripts/lib, or a sub-repo.",
+  "canonical_entrypoints": [
+    "scripts/deploy.ps1",
+    "scripts/verify-all.ps1",
+    "scripts/stop-all.ps1"
+  ],
+  "scripts": [
+    {
+      "path": "scripts/deploy.ps1",
+      "role": "canonical-entrypoint",
+      "owner": "scripts",
+      "notes": "Canonical one-click deploy / demo golden path."
+    },
+    {
+      "path": "scripts/verify-all.ps1",
+      "role": "canonical-entrypoint",
+      "owner": "scripts",
+      "notes": "Canonical aggregate verification entrypoint."
+    },
+    {
+      "path": "scripts/verify-all.sh",
+      "role": "canonical-entrypoint-mirror",
+      "owner": "scripts",
+      "notes": "POSIX mirror of verify-all.ps1."
+    },
+    {
+      "path": "scripts/stop-all.ps1",
+      "role": "canonical-entrypoint",
+      "owner": "scripts",
+      "notes": "Canonical stop / cleanup entrypoint."
+    },
+    {
+      "path": "scripts/stop-all.sh",
+      "role": "canonical-entrypoint-mirror",
+      "owner": "scripts",
+      "notes": "POSIX mirror of stop-all.ps1."
+    },
+    {
+      "path": "scripts/start-all.ps1",
+      "role": "internal-adapter",
+      "owner": "scripts",
+      "notes": "Legacy Mode A adapter; deploy.ps1 is preferred golden path."
+    },
+    {
+      "path": "scripts/start-all.sh",
+      "role": "internal-adapter-mirror",
+      "owner": "scripts",
+      "notes": "POSIX mirror of start-all.ps1."
+    },
+    {
+      "path": "scripts/start-runtime-manager-docker.ps1",
+      "role": "internal-adapter",
+      "owner": "scripts",
+      "notes": "Mode B docker adapter; do not bypass deploy.ps1 for new deploy behavior."
+    },
+    {
+      "path": "scripts/start-web-plane-docker.ps1",
+      "role": "internal-adapter",
+      "owner": "scripts",
+      "notes": "Web plane docker adapter called by deploy.ps1."
+    },
+    {
+      "path": "scripts/stop-runtime-manager-docker.ps1",
+      "role": "internal-adapter",
+      "owner": "scripts",
+      "notes": "Runtime manager docker stop adapter."
+    },
+    {
+      "path": "scripts/check-runtime-manager-docker.ps1",
+      "role": "verifier",
+      "owner": "scripts",
+      "notes": "Runtime manager docker diagnostic."
+    },
+    {
+      "path": "scripts/check-web-plane-docker.ps1",
+      "role": "verifier",
+      "owner": "scripts",
+      "notes": "Web plane docker diagnostic."
+    },
+    {
+      "path": "scripts/dev-health-check.ps1",
+      "role": "verifier",
+      "owner": "scripts",
+      "notes": "Developer health check; not a deploy entrypoint."
+    },
+    {
+      "path": "scripts/demo-health-check.ps1",
+      "role": "verifier",
+      "owner": "scripts",
+      "notes": "Demo health check; not a deploy entrypoint."
+    },
+    {
+      "path": "scripts/verify-runtime-e2e-cdp.mjs",
+      "role": "browser-e2e-verifier",
+      "owner": "scripts",
+      "notes": "Runtime browser/CDP verification evidence."
+    },
+    {
+      "path": "scripts/verify-runtime-kit-launcher.ps1",
+      "role": "runtime-verifier",
+      "owner": "scripts",
+      "notes": "Runtime image Kit launcher evidence."
+    },
+    {
+      "path": "scripts/smoke-bscheme-intake.ps1",
+      "role": "smoke-test",
+      "owner": "scripts",
+      "notes": "B-scheme intake smoke. New smoke scripts should normally live under scripts/tests or tests/e2e."
+    },
+    {
+      "path": "scripts/smoke-host-native-conversion.ps1",
+      "role": "smoke-test",
+      "owner": "scripts",
+      "notes": "Host-native conversion smoke."
+    },
+    {
+      "path": "scripts/smoke-review-session.ps1",
+      "role": "legacy-smoke-test",
+      "owner": "scripts",
+      "notes": "Superseded mock-era review session smoke retained for historical evidence."
+    },
+    {
+      "path": "scripts/smoke-review-socket.ps1",
+      "role": "smoke-test",
+      "owner": "scripts",
+      "notes": "Socket.IO smoke."
+    },
+    {
+      "path": "scripts/smoke-worker-review-request.ps1",
+      "role": "legacy-smoke-test",
+      "owner": "scripts",
+      "notes": "Superseded worker-era smoke retained for historical evidence."
+    },
+    {
+      "path": "scripts/run-single-kit-demo.ps1",
+      "role": "legacy-demo",
+      "owner": "scripts",
+      "notes": "Superseded by B-scheme / deploy.ps1 path."
+    },
+    {
+      "path": "scripts/start-demo-streaming-server.ps1",
+      "role": "legacy-demo-adapter",
+      "owner": "scripts",
+      "notes": "Streaming demo helper; avoid using as new golden path."
+    },
+    {
+      "path": "scripts/start-local-review-mvp.ps1",
+      "role": "legacy-demo-adapter",
+      "owner": "scripts",
+      "notes": "Local review MVP helper; avoid using as new golden path."
+    },
+    {
+      "path": "scripts/open-demo-consoles.ps1",
+      "role": "operator-helper",
+      "owner": "scripts",
+      "notes": "Opens demo consoles; not a deploy entrypoint."
+    },
+    {
+      "path": "scripts/claude-commit-guard.ps1",
+      "role": "agent-hook",
+      "owner": "scripts",
+      "notes": "Claude PreToolUse hook target."
+    },
+    {
+      "path": "scripts/pr-review-agent.ps1",
+      "role": "agent-tooling",
+      "owner": "scripts",
+      "notes": "PR review agent CLI wrapper."
+    },
+    {
+      "path": "scripts/render-roadmap-html.py",
+      "role": "doc-generator",
+      "owner": "scripts",
+      "notes": "Roadmap HTML generator."
+    }
+  ]
+}
