@@ -68,6 +68,103 @@ def test_no_changes_when_identical():
     assert diff.counts.get("moved", 0) == 0
 
 
+# ---- A2-002：退階對齊（Tag / type+name+loc）路徑測試（含 A2-001 型別護欄）----
+
+def _element(f, ifc_type, name, xyz, guid, tag=None, status=None):
+    """合成任意型別 IfcElement，可指定 Tag 與 Pset_*Common.Status；風格沿用 _wall。"""
+    pt = f.create_entity("IfcCartesianPoint", Coordinates=tuple(float(v) for v in xyz))
+    ax = f.create_entity("IfcAxis2Placement3D", Location=pt)
+    plc = f.create_entity("IfcLocalPlacement", RelativePlacement=ax)
+    el = f.create_entity(ifc_type, GlobalId=guid, Name=name, ObjectPlacement=plc, Tag=tag)
+    if status is not None:
+        prop = f.create_entity("IfcPropertySingleValue", Name="Status", NominalValue=f.create_entity("IfcLabel", status))
+        pset = f.create_entity("IfcPropertySet", GlobalId=ifcopenshell.guid.new(), Name="Pset_Common", HasProperties=[prop])
+        f.create_entity("IfcRelDefinesByProperties", GlobalId=ifcopenshell.guid.new(), RelatedObjects=[el], RelatingPropertyDefinition=pset)
+    return el
+
+
+def test_tag_alignment_same_type_different_guid():
+    """(a) GUID 不同但 Tag 相同且同型別 → 應以 tag 對齊（evidence.match == 'tag'）。"""
+    base = ifcopenshell.file(schema="IFC4")
+    _element(base, "IfcWall", "W-A", (0, 0, 0), ifcopenshell.guid.new(), tag="123", status="EXISTING")
+    target = ifcopenshell.file(schema="IFC4")
+    # 不同 GUID、同 Tag、同型別 → GUID 級不中、Tag 級命中；移動以產生可觀察的 moved 證據
+    _element(target, "IfcWall", "W-A", (0, 0, 10000), ifcopenshell.guid.new(), tag="123", status="DEMOLISHED")
+
+    diff = run_diff(base, target, move_tol=1.0)
+    assert diff.matched == 1
+    assert diff.counts.get("added", 0) == 0
+    assert diff.counts.get("removed", 0) == 0
+    moved = diff.items_by_type("moved")
+    assert len(moved) == 1
+    assert moved[0].evidence["match"] == "tag"  # 退到 Tag 對齊
+    prop = diff.items_by_type("property_changed")
+    assert len(prop) == 1 and prop[0].evidence["match"] == "tag"
+
+
+def test_type_name_loc_alignment_when_guid_and_tag_differ():
+    """(b) GUID 與 Tag 都不同，但 type+Name+取整 loc 相同 → 以 type_name_loc 對齊。"""
+    base = ifcopenshell.file(schema="IFC4")
+    _element(base, "IfcWall", "W-A", (1000, 2000, 3000), ifcopenshell.guid.new(), tag="t-base", status="EXISTING")
+    target = ifcopenshell.file(schema="IFC4")
+    # 不同 GUID、不同 Tag、同 type+Name+loc → 退到第三級；改 Status 觸發 property_changed 以驗證歸屬
+    _element(target, "IfcWall", "W-A", (1000, 2000, 3000), ifcopenshell.guid.new(), tag="t-target", status="DEMOLISHED")
+
+    diff = run_diff(base, target, move_tol=1.0)
+    assert diff.matched == 1
+    assert diff.counts.get("added", 0) == 0
+    assert diff.counts.get("removed", 0) == 0
+    prop = diff.items_by_type("property_changed")
+    assert len(prop) == 1
+    assert prop[0].evidence["match"] == "type_name_loc"  # 退到第三級鍵
+
+
+def test_cross_type_same_tag_not_misaligned():
+    """(c) A2-001：被刪的牆與新增的門恰好同 Tag → 應 removed+added，不誤配成 1 配對 0 變更。"""
+    base = ifcopenshell.file(schema="IFC4")
+    _element(base, "IfcWall", "W-X", (0, 0, 0), ifcopenshell.guid.new(), tag="SHARED-TAG")
+    target = ifcopenshell.file(schema="IFC4")
+    _element(target, "IfcDoor", "D-Y", (0, 0, 0), ifcopenshell.guid.new(), tag="SHARED-TAG")
+
+    diff = run_diff(base, target, move_tol=1.0)
+    # 型別護欄：跨型別同 Tag 不得成對
+    assert diff.matched == 0
+    assert diff.counts.get("removed") == 1
+    assert diff.counts.get("added") == 1
+    removed = diff.items_by_type("removed")[0]
+    added = diff.items_by_type("added")[0]
+    assert removed.ifc_type == "IfcWall"
+    assert added.ifc_type == "IfcDoor"
+
+
+def test_same_key_cluster_pairing_is_stable():
+    """A2-003：同 type+Name+loc 鍵的多構件配對須穩定可重現（以 GlobalId 次鍵排序），
+    property_changed 證據歸屬不依 by_type 迭代序。"""
+    ga, gb = "0aaaaaaaaaaaaaaaaaaaa0", "0bbbbbbbbbbbbbbbbbbbb0"  # 固定可比較的 GlobalId 次鍵
+
+    def _build():
+        base = ifcopenshell.file(schema="IFC4")
+        target = ifcopenshell.file(schema="IFC4")
+        # base / target 各兩個 IfcWall 同鍵（同 Name、同 loc、無 Tag、GUID 不同）；
+        # 同 GlobalId 者 Status 一致、不同者不一致 → 穩定配對下應 0 個 property_changed。
+        _element(base, "IfcWall", "WC", (4000, 0, 0), ga, status="EXISTING")
+        _element(base, "IfcWall", "WC", (4000, 0, 0), gb, status="NEW")
+        _element(target, "IfcWall", "WC", (4000, 0, 0), gb, status="NEW")
+        _element(target, "IfcWall", "WC", (4000, 0, 0), ga, status="EXISTING")
+        return base, target
+
+    base, target = _build()
+    diff = run_diff(base, target, move_tol=1.0)
+    assert diff.matched == 2
+    assert diff.counts.get("property_changed", 0) == 0  # 穩定配對：ga↔ga、gb↔gb，Status 相同
+    assert diff.counts.get("added", 0) == 0
+    assert diff.counts.get("removed", 0) == 0
+    # 可重現：再跑一次同樣輸入，配對與計數一致
+    base2, target2 = _build()
+    diff2 = run_diff(base2, target2, move_tol=1.0)
+    assert diff2.counts == diff.counts
+
+
 @pytest.mark.skipif(not (os.path.exists(BASE_IFC) and os.path.exists(TGT_IFC)), reason="real IFC fixture absent")
 def test_real_identity_roundtrip_all_matched():
     """誠實揭露：storage 內的 許良宇*.ifc 變體彼此 byte 完全相同（同一 SHA1）。

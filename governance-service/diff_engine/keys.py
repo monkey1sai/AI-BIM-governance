@@ -1,10 +1,13 @@
-"""多級對齊鍵與比較訊號（CPU-only，不做幾何 tessellation）。
+"""多級對齊鍵與比較訊號（CPU-only；本模組僅算對齊鍵與 pset hash，幾何
+tessellation 不在此，由 geometry.py 負責）。
 
-對齊優先序（roadmap A2 S1·W1）：
-1. IFC GlobalId（exact）
-2. Tag（Revit ElementId 常存於此，作 source element id）
+對齊優先序（roadmap A2 S1·W1）— 每級皆維持型別一致性，避免跨型別誤配：
+1. IFC GlobalId（exact，全域唯一）
+2. (ifc_type, Tag) 複合鍵（Revit ElementId 常存於 Tag，作 source element id；
+   型別護欄避免跨型別共用 Tag 誤配，見 engine.py A2-001）
 3. ifc_type + Name + 取整後的 placement 位置 hash
-（4. geometry hash fallback 為 p1，MVP 不計算 — 需 tessellation，誠實標示）
+（幾何 signature 比對為 opt-in，預設關閉，需顯式 include_geometry=True 啟用，
+ 已實作於 geometry.py）
 
 比較訊號：
 - moved：placement 平移差（numpy 4x4 local placement translation）
