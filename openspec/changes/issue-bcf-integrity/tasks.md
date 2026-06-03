@@ -19,6 +19,7 @@
 - [x] 3.2 `issues/store.py`：新增 `create_issues_batch`（單一交易 + 來源冪等，ISS-002/004）。
 - [x] 3.3 `issues/api.py`：`from-diff` 綁 `target_model_version_id`（ISS-001/BCFUSD-1）；兩端點改用 batch。
 - [x] 3.4 `bcf/bcf_writer.py`：`_iso` naive→UTC（bcf-003）、`_disp` 缺值→unbound（bcf-005）、`_IFC_GUID_RE` 22 字元過濾（bcf-002）。
+- [x] 3.5 `issues/api.py`：`from-diff` 在 diff 缺 `target_model_version_id` 時 raise 422 拒絕，不建無版本綁定 issue（reviewer P2 / 誠實鐵律）；新增 `test_from_diff_rejects_none_target_model_version_id`。
 
 ## 4. Verify
 

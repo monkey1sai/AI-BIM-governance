@@ -6,7 +6,7 @@
 
 ### Requirement: issue SHALL 以 ifc_guid 綁定；無 guid 僅為標註（BCF 對齊）
 
-issue SHALL 以 `ifc_guid` 為跨工具主鍵並 SHALL 綁 `model_version_id` 以保留版本溯源。由 A2 diff 來源建立的 issue SHALL 綁該 diff 的 **target** 模型版本（`target_model_version_id`），因 diff item 代表 target 模型相對 base 的變更。**無 `ifc_guid` 的條目 SHALL 標為 `kind=annotation`（視覺標註），SHALL NOT 視為正式可交換 issue**（BCF 原則 rule 10）。
+issue SHALL 以 `ifc_guid` 為跨工具主鍵並 SHALL 綁 `model_version_id` 以保留版本溯源。由 A2 diff 來源建立的 issue SHALL 綁該 diff 的 **target** 模型版本（`target_model_version_id`），因 diff item 代表 target 模型相對 base 的變更。當該 diff 未帶 `target_model_version_id`（diff API 宣告該欄為 optional）時，from-diff SHALL 拒絕（不得建立無版本綁定 issue）。**無 `ifc_guid` 的條目 SHALL 標為 `kind=annotation`（視覺標註），SHALL NOT 視為正式可交換 issue**（BCF 原則 rule 10）。
 
 #### Scenario: 有/無 guid 的 kind 區分
 
@@ -20,6 +20,12 @@ issue SHALL 以 `ifc_guid` 為跨工具主鍵並 SHALL 綁 `model_version_id` �
 - **WHEN** 從一個 base→target 的 diff 呼叫 from-diff 建立 issue
 - **THEN** 每個 diff issue 的 `model_version_id` SHALL 等於該 diff 的 `target_model_version_id`
 - **AND** SHALL NOT 留下 `model_version_id` 為空（缺版本綁定會讓 BCF 匯出與 diff-impact 統計斷裂）
+
+#### Scenario: from-diff 在 diff 缺 target model version 時拒絕
+
+- **WHEN** 對一個 `target_model_version_id` 為空（diff API 宣告 optional）的 diff 呼叫 from-diff
+- **THEN** SHALL 以 `422` 拒絕，並 SHALL NOT 建立任何 issue
+- **AND** SHALL NOT 留下 `model_version_id` 為空的無版本綁定 issue（避免 NULL 版本洩漏破壞溯源）
 
 ### Requirement: issue SHALL 可由 rule-run / diff 來源批次產生並保留來源綁定
 

@@ -128,6 +128,26 @@ def test_from_diff_binds_target_model_version_id(client_and_db):
     assert diff_issues[0]["model_version_id"] == "t"
 
 
+def test_from_diff_rejects_none_target_model_version_id(client_and_db):
+    """ISS-001/BCFUSD-1：diff 缺 target_model_version_id（API 宣告 optional）時，from-diff
+    SHALL 拒絕（422）而非建出 model_version_id=None 的無版本溯源 issue（誠實鐵律）。"""
+    from diff_engine.models import DiffItem, DiffResult
+    from diff_engine.store import DiffStore
+
+    client, db_path = client_and_db
+    ds = DiffStore(db_path)
+    # target_mv=None：diff 本身缺 target 版本
+    diff_id = ds.create_diff("b", None, "b.ifc", "t.ifc")
+    items = [DiffItem(change_type="moved", ifc_guid="GNULLMV", ifc_type="IfcWall", ifc_name="W", change_summary="moved 5m")]
+    ds.complete_diff(diff_id, DiffResult(base_count=1, target_count=1, matched=1, counts={"moved": 1}, items=items))
+
+    resp = client.post(f"/api/issues/from-diff/{diff_id}")
+    assert resp.status_code == 422  # 明確拒絕
+    # 無 NULL-mv 洩漏：不得留下任何 diff_item 來源 issue
+    diff_issues = [i for i in client.get("/api/issues").json()["issues"] if i["source_type"] == "diff_item"]
+    assert diff_issues == []
+
+
 def test_from_diff_idempotent(client_and_db):
     """ISS-002：同一 diff 重複 from-diff 不重複建 issue。"""
     client, db_path = client_and_db

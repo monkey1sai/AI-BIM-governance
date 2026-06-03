@@ -117,6 +117,13 @@ def issues_from_diff(diff_id: str, change_type: Optional[str] = Query(None), lim
     # ISS-001/BCFUSD-1：diff item 代表 target 模型狀態，綁 target_model_version_id
     # （誠實鐵律：model_version_id 綁定所有 issue；缺版本綁定會讓 BCF 匯出與 diff-impact 統計斷裂）
     mv = diff_row.get("target_model_version_id")
+    # diff API 宣告 target_model_version_id 為 optional；若該 diff 未帶版本，
+    # 直接拒絕而非建出 model_version_id=None 的無版本溯源 issue（誠實鐵律：所有 issue 綁 model_version）。
+    if not mv:
+        raise HTTPException(
+            status_code=422,
+            detail="diff 缺 target_model_version_id，無法建立版本綁定的 issue",
+        )
     items = diff_store.get_items(diff_id, change_type)[:limit]
     payload = [
         {
