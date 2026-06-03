@@ -61,7 +61,7 @@ TBD - created by archiving change usd-federation-sublayer-sets. Update Purpose a
 - **THEN** SHALL 正確標明 sublayer 為 whole-layer 非破壞疊合，其 opinion 在 LIVERPS 的 Local（最強）步驟解析（subLayerPaths[0] 最強）
 - **AND** SHALL NOT 稱 sublayer 為「最弱 arc」或 LIVERPS 七弧之一（sublayer 不在七弧內）
 - **AND** SHALL 標明 sessionLayer 為暫態、不作持久層（federation 用具名 root layer）
-- **AND** per-member transform 套用 SHALL 標為未做（p1）
+- **AND** per-member transform 套用 SHALL 標為已實作（遵循標準 TRS 並保留 member 既有 `!resetXformStack!`；詳見 spec `usd-federation-sublayer-sets`），SHALL NOT 再標為未做 / p1
 
 ### Requirement: federation SHALL 經 coordinator proxy
 

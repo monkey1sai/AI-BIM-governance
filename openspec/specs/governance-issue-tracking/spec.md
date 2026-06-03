@@ -17,7 +17,7 @@ TBD - created by archiving change governance-issue-db. Update Purpose after arch
 
 ### Requirement: issue SHALL 以 ifc_guid 綁定；無 guid 僅為標註（BCF 對齊）
 
-issue SHALL 以 `ifc_guid` 為跨工具主鍵並 SHALL 綁 `model_version_id` 以保留版本溯源。由 A2 diff 來源建立的 issue SHALL 綁該 diff 的 **target** 模型版本（`target_model_version_id`），因 diff item 代表 target 模型相對 base 的變更。當該 diff 未帶 `target_model_version_id`（diff API 宣告該欄為 optional）時，from-diff SHALL 拒絕（不得建立無版本綁定 issue）。**無 `ifc_guid` 的條目 SHALL 標為 `kind=annotation`（視覺標註），SHALL NOT 視為正式可交換 issue**（BCF 原則 rule 10）。
+issue SHALL 以 `ifc_guid` 為跨工具主鍵。版本溯源（`model_version_id`）綁定要求依來源而定，不是無條件：**diff-sourced issue SHALL 綁該 diff 的 target 模型版本（`target_model_version_id`）**，因 diff item 代表 target 模型相對 base 的變更；當該 diff 未帶 `target_model_version_id`（diff API 宣告該欄為 optional）時，from-diff SHALL 拒絕（不得建立無版本綁定 issue）。**rule-run-sourced issue 的版本綁定為 best-effort（`model_version_id` MAY 為空）**：rule-run 可能是對尚未指派版本的臨時 IFC 檢核，此類 issue 仍以 `source_type` / `source_ref` 與 run 提供溯源（詳見下方批次來源 Requirement，與 from-diff 刻意不對稱）。**無 `ifc_guid` 的條目 SHALL 標為 `kind=annotation`（視覺標註），SHALL NOT 視為正式可交換 issue**（BCF 原則 rule 10）。
 
 #### Scenario: 有/無 guid 的 kind 區分
 

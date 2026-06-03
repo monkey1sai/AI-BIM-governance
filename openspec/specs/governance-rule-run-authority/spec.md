@@ -55,11 +55,11 @@ governance score SHALL 誠實反映評估結果：score = passed / (passed + fai
 - **THEN** `governance-service` SHALL NOT 把該 mapping 當作真實 `guid_exact` 覆蓋率
 - **AND** SHALL 記錄 warning 表明 `usd_prim_path` 不代表真實覆蓋率
 
-#### Scenario: ifctester / IDS 與 BCF 匯出誠實標示為未建
+#### Scenario: ifctester 安裝誠實回報；rule-run /export 僅 Excel，BCF 走 /api/bcf/export
 
 - **WHEN** 查詢服務 `GET /health`
 - **THEN** `governance-service` SHALL 如實回報 `ifctester` 是否安裝（未安裝時為 `false`）
-- **AND** 當請求 BCF 匯出（`export?fmt=bcf`）時 SHALL 回應「未建」而非產出假 BCF
+- **AND** 對 rule-run 的 `export?fmt=bcf` SHALL 回 `400` 並導引「BCF 匯出請先 from-rule-run 建 issue，再 `GET /api/bcf/export`」（rule-run `/export` 僅產 Excel；BCF 2.1 匯出已落地於 `bcf/` 模組與 `/api/bcf/export`，SHALL NOT 宣稱 BCF「未建」或產出假 BCF）
 - **AND** rule-run 的計分與結果 SHALL NOT 因 ifctester / IDS 未安裝而捏造通過
 
 ### Requirement: rule-run SHALL 維持 loopback 與 coordinator-proxy 邊界且不阻塞串流
