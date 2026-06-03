@@ -50,9 +50,9 @@ issue SHALL 以 `ifc_guid` 為跨工具主鍵。版本溯源（`model_version_id
 #### Scenario: 從 rule-run 失敗構件建 issue
 
 - **WHEN** 對一個有失敗構件的 rule-run 呼叫 from-rule-run
-- **THEN** SHALL 為每個失敗構件建立一個 issue
-- **AND** 每個 issue SHALL 帶該構件真實的 `ifc_guid` 與 `source_type=rule_result`
-- **AND** 因有 `ifc_guid`，`kind` SHALL 為 `issue`
+- **THEN** SHALL 為每個失敗結果建立一個 issue
+- **AND** 帶真實 `ifc_guid` 的失敗結果 SHALL `kind=issue`（正式、可交換）並帶 `source_type=rule_result`
+- **AND** 無 `ifc_guid` 的 spec 級失敗（如 required IDS specification 零適用構件）SHALL `kind=annotation`，SHALL NOT 捏造 `ifc_guid`（誠實；仍以 `source_type` / `source_ref` 溯源）
 - **AND** 若該 rule run 有 `model_version_id` 則綁定之；缺時 `model_version_id` MAY 為空（best-effort）
 
 #### Scenario: rule-run 缺 model_version_id 時仍以 best-effort 建 issue

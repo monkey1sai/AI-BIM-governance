@@ -84,13 +84,13 @@ viewer 串流端點的 `mediaport` 流經處（`StreamEndpoint`、`AppProps`、`
 
 ### Requirement: UI provenance 標示 SHALL 與實際落地一致（BCF 匯出為 asbuilt）
 
-Edge Console 的 provenance 標示 SHALL 與後端實際落地狀態一致。BCF 2.1 匯出後端已落地（`governance-service/bcf/`，純 stdlib，不依賴 GPLv3）且前端按鈕可用，故相關標示 SHALL 標為 `asbuilt`（已實作），SHALL NOT 標為 `p1` / `p15`（待建）。資料體與其說明註解 SHALL NOT 自相矛盾。
+Edge Console 的 provenance 標示 SHALL 與後端實際落地狀態一致。BCF 2.1 匯出後端已落地（`governance-service/bcf/` 匯出模組純 stdlib、不 import GPLv3 `bcf-client`、產物不含其程式碼；惟 `ifctester` 會在環境 transitive 安裝 `bcf-client`，見 `governance-bcf-export` spec）且前端按鈕可用，故相關標示 SHALL 標為 `asbuilt`（已實作），SHALL NOT 標為 `p1` / `p15`（待建）。資料體與其說明註解 SHALL NOT 自相矛盾。
 
 #### Scenario: BCF 匯出標已實作
 
 - **WHEN** 操作員開啟 Overview 或 A1 Rule Center 規則集
 - **THEN** BCF 匯出（issue→.bcfzip）項 SHALL 標 `asbuilt`（已實作）
-- **AND** 說明 SHALL 保留「純 stdlib，不依賴 GPLv3」
+- **AND** 說明 SHALL 誠實描述「匯出模組純 stdlib、不 import GPLv3 `bcf-client`」（SHALL NOT 宣稱整個環境不依賴 GPLv3——`ifctester` 會 transitive 安裝之）
 - **AND** SHALL NOT 標為待建（p1 / p15）
 
 #### Scenario: 資料註解與資料體一致
