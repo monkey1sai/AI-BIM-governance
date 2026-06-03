@@ -33,6 +33,11 @@ Thumbs.db
 !.claude/skills/archive-and-closeout/
 !.claude/skills/opsx-worktree-provision/
 !.claude/skills/opsx-worktree-guard/
+# Tracked per-item ship-cycle workflow (2026-06-03)
+!.claude/workflows/
+.claude/workflows/*
+!.claude/workflows/ship-item.md
+!.claude/workflows/ship-item.js
 .codex/
 .vscode/
 .gitnexus/
