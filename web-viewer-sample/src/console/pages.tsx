@@ -366,12 +366,18 @@ export function FederationPage() {
   const [room, setRoom] = useState<ReviewRoomDescriptor | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false); // 成員在 prepare 後被改動 → 已建 set 失效，須重新準備
 
-  const setMember = (i: number, k: string, v: string | number | boolean) =>
+  // prepare 會把每個 member 的 visibility_default / transform_json 烘進後端 set；之後任一欄位（含 visible）
+  // 變動，build 仍會沿用烘進去的舊值 → UI 勾選與實際 build 結果分歧。誠實作法：作廢 set_id（Build 自動 disable）
+  // 並標記 dirty，提示須重新「準備 + 驗證坐標系」，不捏造「改了就立即生效」的假象。
+  const setMember = (i: number, k: string, v: string | number | boolean) => {
     setMembers((ms) => ms.map((m, j) => (j === i ? { ...m, [k]: v } : m)));
+    if (setId) { setSetId(null); setCoord(null); setBuild(null); setRoom(null); setDirty(true); }
+  };
 
   const prepare = useCallback(async () => {
-    setBusy(true); setErr(null); setCoord(null); setBuild(null); setRoom(null);
+    setBusy(true); setErr(null); setCoord(null); setBuild(null); setRoom(null); setDirty(false);
     try {
       const { set_id } = await governanceClient.createFederatedSet("coord-meeting");
       for (const m of members) {
@@ -444,6 +450,11 @@ export function FederationPage() {
           <Btn disabled={busy} caption="create set + members + validate-coords" onClick={prepare}>準備 + 驗證坐標系</Btn>
           <Btn primary disabled={busy || !setId} caption="POST …/build → federated_review.usda" onClick={doBuild}>Build Federated USD</Btn>
         </div>
+        {dirty && !setId && (
+          <p className="ec-warn-note" style={{ marginTop: 6 }}>
+            成員設定已變更，先前的「準備 + 驗證坐標系」結果已作廢；請重新準備後再 Build（避免畫面勾選與實際 build 結果不一致）。
+          </p>
+        )}
         {err && <p className="ec-warn-note">未連線後端 / member USD 不存在：{err}</p>}
         {coord && <Field k="共享坐標系驗證" v={coord.consistent ? "一致 ✓" : `不一致：${coord.issues.join("; ")}`} prov="asbuilt" />}
         {build && (
