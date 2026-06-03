@@ -89,6 +89,9 @@ export function registerGovernanceProxy(app: Express): void {
   app.post("/api/governance/diffs/:diffId/apply-overlay", (request, response) => {
     void forward(response, "POST", `/api/diffs/${encodeURIComponent(request.params.diffId)}/apply-overlay`, request.body);
   });
+  app.get("/api/governance/diffs/:diffId/issue-impact", (request, response) => {
+    void forward(response, "GET", `/api/diffs/${encodeURIComponent(request.params.diffId)}/issue-impact`);
+  });
 
   // A3 cross-discipline federation proxy（透傳 governance-service /api/federated-sets*）。
   app.post("/api/governance/federated-sets", (request, response) => {

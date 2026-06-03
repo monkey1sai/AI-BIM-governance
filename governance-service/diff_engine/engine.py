@@ -29,7 +29,7 @@ def _guid_map(elements: list) -> dict:
     return out
 
 
-def run_diff(base: Any, target: Any, move_tol: float = 1.0) -> DiffResult:
+def run_diff(base: Any, target: Any, move_tol: float = 1.0, include_geometry: bool = False) -> DiffResult:
     base_els = base.by_type("IfcElement")
     tgt_els = target.by_type("IfcElement")
     matched_base: set[int] = set()
@@ -106,6 +106,16 @@ def run_diff(base: Any, target: Any, move_tol: float = 1.0) -> DiffResult:
                 change_summary=f"matched by {how}; property_sets changed",
                 evidence={"match": how, "base_pset_hash": bh[:12], "target_pset_hash": th[:12]},
             ))
+        if include_geometry:
+            from .geometry import geometry_hash
+
+            gbh, gth = geometry_hash(be), geometry_hash(te)
+            if gbh and gth and gbh != gth:
+                items.append(DiffItem(
+                    change_type="geometry_changed", ifc_guid=guid, ifc_type=te.is_a(), ifc_name=getattr(te, "Name", None),
+                    change_summary=f"matched by {how}; geometry changed",
+                    evidence={"match": how, "base_geom_hash": gbh[:12], "target_geom_hash": gth[:12]},
+                ))
 
     # 未配對 → removed / added
     for e in base_els:
@@ -131,9 +141,10 @@ def run_diff(base: Any, target: Any, move_tol: float = 1.0) -> DiffResult:
         matched=len(pairs),
         counts=counts,
         items=items,
-        warnings=["geometry_changed 為 p1：MVP 未做幾何 tessellation 比對（僅 placement/pset）"],
+        warnings=([] if include_geometry
+                  else ["geometry_changed 未計算：include_geometry=false（僅 placement/pset）；設 include_geometry=true 啟用幾何 tessellation 比對（較重）"]),
     )
 
 
-def run_diff_on_paths(base_path: str, target_path: str, move_tol: float = 1.0) -> DiffResult:
-    return run_diff(open_model(base_path), open_model(target_path), move_tol=move_tol)
+def run_diff_on_paths(base_path: str, target_path: str, move_tol: float = 1.0, include_geometry: bool = False) -> DiffResult:
+    return run_diff(open_model(base_path), open_model(target_path), move_tol=move_tol, include_geometry=include_geometry)
