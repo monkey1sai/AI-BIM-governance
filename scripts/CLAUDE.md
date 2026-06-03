@@ -14,4 +14,6 @@
 pwsh scripts/verify-all.ps1 -TsOnly
 ```
 
+Deploy / runtime / demo 行為以 `scripts/deploy.ps1` 為 golden path；新增 root-level start / smoke / check script 前先讀 [`SCRIPT_CONTRACT.md`](SCRIPT_CONTRACT.md) 與 [`script-registry.json`](script-registry.json)。
+
 完整跨 sub-repo 驗證指令見根目錄 [`docs/agents/sub-repo-verify-commands.md`](../docs/agents/sub-repo-verify-commands.md)。

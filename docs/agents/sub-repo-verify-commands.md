@@ -6,6 +6,44 @@
 
 每個 sub-repo 都有自己的 repo-local `AGENTS.md` / `CLAUDE.md`（七段 schema），本檔只匯總 root 層常用的「跑哪個 sub-repo 的什麼指令」清單。
 
+## Frontend-operable verification
+
+User-facing capability 不得只用 backend/API 測試宣告完成。最終驗收需回報：
+
+```txt
+Frontend URL
+Buttons tested
+Fixture used
+Expected visible result
+E2E command
+Screenshot / trace / evidence path
+Known limitations
+```
+
+優先驗證入口：
+
+```powershell
+cd web-viewer-sample
+npm run build
+```
+
+若已有對應 browser E2E，必須跑 Playwright / Chrome E2E 並保留 screenshot / trace / console / network evidence。若無法跑瀏覽器，必須標為 blocked / not observed，不能宣稱 frontend-complete。
+
+## Deploy path verification
+
+Runtime / Docker / Kit / viewer / env / port / conversion-service 改動必須更新或明確驗證 canonical deploy path：
+
+```powershell
+.\scripts\deploy.ps1 -DryRun
+.\scripts\verify-all.ps1
+```
+
+本機 runtime 可用時優先補：
+
+```powershell
+.\scripts\deploy.ps1 -Force -StrictPostVerify
+```
+
 ## Root contracts / fakes
 
 ```powershell
@@ -41,6 +79,26 @@ npm run build
 ```
 
 Network 入口走 coordinator `:8004/ui`（LAN IP）；viewer `:5173` 是 Kit 1:1 endpoint，不可當入口直接暴露。
+
+## services/kit-manager-api (FastAPI, port 8010)
+
+```powershell
+cd services/kit-manager-api
+python -m pytest tests -q
+```
+
+若 root venv 可用：
+
+```powershell
+..\..\.venv\Scripts\python.exe -m pytest tests -q
+```
+
+## apps/kit-manager-web (Vite)
+
+```powershell
+cd apps/kit-manager-web
+npm run build
+```
 
 ---
 
