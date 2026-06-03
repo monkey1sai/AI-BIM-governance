@@ -1,7 +1,7 @@
 # agent-operability-governance Specification
 
 ## Purpose
-TBD - created by archiving change agent-entry-boundaries. Update Purpose after archive.
+本 capability 收斂 repo agent 的操作性治理規則：agent 進行 user-facing 治理開發時，行為邊界 SHALL 對齊 A1–A10 產品定位（以設計站「05 BIM治理與模型檢核」/「06 操作介面總覽」為定位與操作性語意參考、程式碼與 contract 為行為權威）；user-facing 能力的「完成」SHALL 以前端可操作（frontend-operable，含 browser E2E evidence）為準，不接受 backend-only done；deploy / runtime 行為 SHALL 流經 canonical 腳本（`scripts/deploy.ps1` golden path），新增 root-level start/smoke/check 腳本預設視為邊界風險。
 ## Requirements
 ### Requirement: Agent boundary SHALL align A1-A10 product positioning
 

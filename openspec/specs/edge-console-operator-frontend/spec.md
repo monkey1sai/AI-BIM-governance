@@ -37,7 +37,7 @@ Edge Console SHALL 只透過 `bim-review-coordinator`（`:8004`）的 `/api/gove
 - **THEN** coordinator proxy SHALL 回傳 502（非 200）
 - **AND** 前端 SHALL 顯示未連線提示，SHALL NOT 顯示捏造的 rule-run 結果
 
-### Requirement: A1 SHALL 在介面可驗證；A2/A3 SHALL 為標示待建的骨架
+### Requirement: A1 SHALL 在介面可驗證；A2/A3 SHALL 以 as-built 操作頁呈現
 
 Edge Console SHALL 讓 A1 在介面可驗證：顯示真實 IFC 實測 artifact 與規則集，並能觸發實時 rule-run。A2（模型版本差異）/ A3（跨專業 Federation）後端已落地，SHALL 以 as-built 操作頁呈現（Diff Builder / Federation Builder 經 coordinator proxy 操作），並誠實標示真實邊界（如 member USD immutable），SHALL NOT 顯示捏造的 diff / federation 數字。規則集中各項 SHALL 依其後端實際落地狀態標 provenance：已落地（rule-run / IDS 匯入 / BCF 匯出 / Issue 生命週期資料庫）標 `asbuilt`，僅待建項才標 `p1` / `p15`。
 
@@ -124,7 +124,7 @@ Edge Console 的治理 client（A1 rule-run、A2 diff、A3 federation，以及 I
 
 ### Requirement: A1 Rule Center SHALL 提供真實 Excel 匯出與誠實標示的 3D 標示入口
 
-A1 Rule Center（`IssuesRuleCenterPage`）SHALL 提供 [匯出 Excel] 入口，經 coordinator proxy `GET /api/governance/rule-runs/:id/export?fmt=excel` 觸發 governance-service 真實匯出並下載，標 `asbuilt`；成功 rule-run 前 SHALL `disabled`（無 run 不可匯出）。A1 SHALL 提供 [在 3D 中標示] 入口；因 Edge Console（`/console`）與 viewer（`<App/>`）互斥掛載、殼層無 WebRTC DataChannel，`highlightPrimsRequest` 鏈未接，該入口 SHALL 標 `p1` 並 `disabled` 且誠實說明「需 viewer DataChannel（後續整合）」，SHALL NOT 呈現為點了無回應的假按鈕；未對映 `usd_prim_path=null` SHALL 誠實顯示無法標示。
+A1 Rule Center（`IssuesRuleCenterPage`）SHALL 提供 [匯出 Excel] 入口，經 coordinator proxy `GET /api/governance/rule-runs/:id/export?fmt=excel` 觸發 governance-service 真實匯出並下載，標 `asbuilt`；成功 rule-run 前 SHALL `disabled`（無 run 不可匯出）。A1 SHALL 提供 [在 3D 中標示] 入口；因 Edge Console（`/console`）與 viewer（`<App/>`）互斥掛載、殼層無 WebRTC DataChannel，`highlightPrimsRequest` 鏈未接，該入口 SHALL 標 `p1` 並 `disabled` 且誠實說明「需 viewer DataChannel（後續整合）」，SHALL NOT 呈現為點了無回應的假按鈕；當 failed 構件的 `usd_prim_path` 為 null（未對映到 USD prim）時，SHALL 誠實顯示其無法在 3D 標示。
 
 #### Scenario: Excel 匯出為真實下載且成功 run 前 disabled
 
