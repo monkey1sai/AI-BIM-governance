@@ -1,0 +1,89 @@
+{
+  "base": "http://127.0.0.1:49152",
+  "results": [
+    {
+      "label": "committed-fixture (IFC4X3, 預期 7126/99.0/0 errored)",
+      "ifc": "fixture-bytes.ifc",
+      "run_id": "rr_bb7550fd7071",
+      "status": "succeeded",
+      "score": 99.0,
+      "summary": {
+        "rule_set": "default-governance",
+        "version": "1.0",
+        "total": 7126,
+        "passed": 7055,
+        "failed": 71,
+        "errored": 0,
+        "score": 99.0,
+        "target_summary": {
+          "DOOR-FIRERATING-REQUIRED": 72,
+          "ELEMENT-NAME-REQUIRED": 6715,
+          "WALL-STOREY-ASSIGNED": 339
+        },
+        "warnings": [
+          "rule ELEMENT-NAME-REQUIRED: 'IfcBuildingElement' 不在 schema，改用別名 'IfcBuiltElement'"
+        ]
+      },
+      "failed_count": 71,
+      "failed_sample": [
+        {
+          "id": "res_76e358f1184d",
+          "rule_run_id": "rr_bb7550fd7071",
+          "ifc_guid": "3$xKPHQlD10AG1nzmJabuU",
+          "usd_prim_path": null,
+          "rule_code": "DOOR-FIRERATING-REQUIRED",
+          "severity": "high",
+          "status": "fail",
+          "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+          "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670\", \"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670:1\", \"Pset_DoorCommon\", \"Pset_DoorWindowGlazingType\", \"Pset_EnvironmentalImpactIndicators\", \"Pset_ManufacturerTypeInformation\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\"]}"
+        },
+        {
+          "id": "res_3aae6ea6ceaf",
+          "rule_run_id": "rr_bb7550fd7071",
+          "ifc_guid": "3$xKPHQlD10AG1nzmJabWw",
+          "usd_prim_path": null,
+          "rule_code": "DOOR-FIRERATING-REQUIRED",
+          "severity": "high",
+          "status": "fail",
+          "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+          "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146\", \"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146:1\", \"Pset_DoorCommon\", \"Pset_DoorWindowGlazingType\", \"Pset_EnvironmentalImpactIndicators\", \"Pset_ManufacturerTypeInformation\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\"]}"
+        },
+        {
+          "id": "res_6186d7f09f67",
+          "rule_run_id": "rr_bb7550fd7071",
+          "ifc_guid": "1$6rKosWT5r9WGrkrSURLd",
+          "usd_prim_path": null,
+          "rule_code": "DOOR-FIRERATING-REQUIRED",
+          "severity": "high",
+          "status": "fail",
+          "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+          "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Pset_DoorCommon\", \"Pset_EnvironmentalImpactIndicators\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\", \"單開-矩形- (1):60 x 230 cm (廁所用):964015\", \"單開-矩形- (1):60 x 230 cm (廁所用):964015:1\"]}"
+        }
+      ]
+    },
+    {
+      "label": "real-model-270",
+      "ifc": "270_0dac5239-a2aa-4257-9946-c2b6da6bd24d_model.ifc",
+      "run_id": "rr_a6b7dcec3f46",
+      "status": "succeeded",
+      "score": 100.0,
+      "summary": {
+        "rule_set": "default-governance",
+        "version": "1.0",
+        "total": 1413,
+        "passed": 1413,
+        "failed": 0,
+        "errored": 0,
+        "score": 100.0,
+        "target_summary": {
+          "DOOR-FIRERATING-REQUIRED": 0,
+          "ELEMENT-NAME-REQUIRED": 1413,
+          "WALL-STOREY-ASSIGNED": 0
+        },
+        "warnings": []
+      },
+      "failed_count": 0,
+      "failed_sample": []
+    }
+  ]
+}

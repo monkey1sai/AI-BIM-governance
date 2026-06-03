@@ -1,0 +1,619 @@
+{
+  "total": 34,
+  "confirmed": 34,
+  "strong": 33,
+  "findings": [
+    {
+      "id": "A1-RE-01",
+      "subsystem": "a1-rule-engine",
+      "severity": "high",
+      "kind": "honesty",
+      "file": "governance-service/rule_engine/engine.py",
+      "line": "99-104",
+      "title": "全構件 error 時 score 回報 100.0(假性滿分,違反誠實鐵律)",
+      "why": "誠實鐵律要求『無願景假數字』。當模型損壞或規則寫錯(壞 regex / predicate 對每個構件 raise)時,整批檢核其實一條都沒通過,但治理分數顯示 100 滿分。消費端(UI / API)只讀 score 會誤以為模型完全合規,這正是把『未取得 / 評估失敗』偽裝成 pass。summary 雖帶 errored,但 score 是 headline 數字、會被單獨顯示。",
+      "proposed_fix": "errored>0 時不應回報乾淨滿分:建議 denom 改含 errored(errored 視同未通過),或當 passed==0 且 (failed+errored)>0 時 score=0.0,或當 errored>0 時讓 score 回 None/標『未完整評估』。至少在 summary_dict 與 API 回傳中讓 errored>0 的 run 不能呈現為 100 分綠燈。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "high",
+        "high"
+      ]
+    },
+    {
+      "id": "A1-RE-02",
+      "subsystem": "a1-rule-engine",
+      "severity": "medium",
+      "kind": "test-gap",
+      "file": "governance-service/tests/test_rule_engine.py",
+      "line": "1-93",
+      "title": "IFC4X3 跨 schema 型別別名(IfcBuildingElement→IfcBuiltElement)零測試覆蓋",
+      "why": "別名 fallback 依賴『by_type 對 wrong-schema 名稱會 raise RuntimeError』這個 ifcopenshell 行為(我已實測 IFC4X3 對 IfcBuildingElement 確實 raise);一旦未來 ifcopenshell 版本改成回空 list 而非 raise,_resolve_elements 會在 except RuntimeError 永遠取不到,靜默回傳 [] 且整條規則被跳過——而現有測試一個都抓不到這個 regression。這是 spec 宣告的功能但無迴歸防護。",
+      "proposed_fix": "新增測試:用 ifcopenshell.file(schema='IFC4X3') 建一個含 IfcWall/IfcDoor 的 model,套用 target_ifc_type=IfcBuildingElement 的規則,斷言 (a) elements 非空(走別名萃取到構件)、(b) run.warnings 含『改用別名 IfcBuiltElement』。可選再加一個 all-error→score 的測試補 A1-RE-01。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "low"
+      ]
+    },
+    {
+      "id": "A1-RE-03",
+      "subsystem": "a1-rule-engine",
+      "severity": "low",
+      "kind": "honesty",
+      "file": "governance-service/rule_engine/excel_export.py",
+      "line": "1-5",
+      "title": "excel_export.py docstring 謊稱 BCF 匯出未實作 / 延後 p15(與已落地的 bcf/ 模組及 CLAUDE.md 矛盾)",
+      "why": "誠實鐵律要求每個輸出/狀態標正確 provenance。雖然這是 code comment 而非 UI 元素,但它對讀者宣稱一個已交付功能不存在,且授權敘述錯誤,會誤導後續維護者重複實作或誤判依賴風險。屬陳述不實的 stale doc,低嚴重度但可直接修正。",
+      "proposed_fix": "把 docstring 更新為現況:BCF 匯出已於 bcf/ 模組以純 stdlib 實作(見 app.py /api/bcf/export 與 from-rule-run 流程);本檔僅負責 rule-run→Excel。移除過時的『未安裝 / LGPL gate / p15』敘述。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "A1-RE-04",
+      "subsystem": "a1-rule-engine",
+      "severity": "low",
+      "kind": "bug",
+      "file": "governance-service/rule_engine/predicates.py",
+      "line": "36-41",
+      "title": "any-pset 模式下 get_psets 注入的合成 'id' key 會被當成真實屬性匹配",
+      "why": "這是 get_psets 的實作細節洩漏進 predicate 判定。雖然目前 default-governance.yaml 三條規則都有指定 pset 或用 attribute/spatial,不會觸發;但這是潛在的假 pass 來源:任何 any-pset 規則(尤其使用者自訂規則集)若屬性名恰為 'id' 會無條件通過,且 evidence 看起來像真的讀到值。屬 correctness 防禦缺口。",
+      "proposed_fix": "在 any-pset 與指定-pset 兩個分支查找前先排除合成 key,例如比對時跳過 'id'(if prop != 'id' and prop in bucket),或對 bucket 取 {k:v for k,v in bucket.items() if k!='id'} 再查。並可加一條 docstring 註明 get_psets 會帶 id。",
+      "confidence": "medium",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "bcf-001",
+      "subsystem": "a1-bcf-export",
+      "severity": "high",
+      "kind": "honesty",
+      "file": "governance-service/bcf/bcf_writer.py",
+      "line": "60-64 (manifest); root cause governance-service/issues/api.py:105-123",
+      "title": "diff 來源的正式 issue 匯出 BCF 時 model_version=None,違反「issue 必綁 model_version」誠實鐵律與 spec",
+      "why": "誠實鐵律明列「model_version_id 綁定所有 issue」,spec governance-bcf-export(spec.md:8)寫 `comment SHALL 帶 model_version 以保留溯源`,bcf_writer.py 檔頭(line 9)宣稱「BCF issue 綁 model_version(rule 4)」。但 diff 來源這一整類 formal issue 實際 model_version=None,溯源斷裂——接收端(Revit/Solibri/BIMcollab)無法知道這 issue 對應哪個模型版本,等同把無版本溯源的 issue 假裝成有溯源的正式 BCF topic。",
+      "proposed_fix": "在 issues/api.py:issues_from_diff 讀取 diff 記錄並傳 model_version_id(用 diff.target_model_version_id 或 base_model_version_id,diff_engine/store.py:15-16 已有);或在 build_bcfzip / export_bcf 對 model_version_id 為空的 formal issue 採誠實處理(跳過並回報、或輸出明確「未綁版本」而非 Python 的 None repr)。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "high",
+        "high"
+      ]
+    },
+    {
+      "id": "bcf-002",
+      "subsystem": "a1-bcf-export",
+      "severity": "medium",
+      "kind": "spec-mismatch",
+      "file": "governance-service/bcf/bcf_writer.py",
+      "line": "74",
+      "title": "viewpoint 的 IfcGuid 未做 BCF 2.1 schema 的 22 字元/pattern 驗證,可產出違反 XSD 的 .bcfzip",
+      "why": "lens 要求 BCF 2.1 spec 合規。輸出非 22 字元 IfcGuid 的 .bcfzip 會被有做 schema 驗證的接收工具(Solibri / BIMcollab)直接拒收,「BCF 2.1 合規」的宣稱只在 guid 剛好合法時成立。手動 issue 或上游髒資料即可觸發。",
+      "proposed_fix": "在 build_bcfzip 過濾或 normalize:對 ifc_guid 不符 `^[0-9A-Za-z_$]{22}$` 的 issue 視為不可匯出(跳過 + 計數回報),或在 issue 建立端(store.create_issue)就拒絕非法 GlobalId 不讓它變成 kind=issue。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "bcf-003",
+      "subsystem": "a1-bcf-export",
+      "severity": "low",
+      "kind": "bug",
+      "file": "governance-service/bcf/bcf_writer.py",
+      "line": "33-40",
+      "title": "_iso 對 naive(無時區)時間戳會依伺服器本地時區偏移,污染 BCF CreationDate/Comment Date",
+      "why": "雖然 issues/store.py:58-59 寫 created_at 一律用 `datetime.now(timezone.utc).isoformat()`(tz-aware),目前主路徑不會踩到;但這是潛在 correctness bug——任何來自他處的 naive 時間戳(未來別的來源、匯入、測試資料)都會被靜默位移,讓 BCF 的 CreationDate / Comment Date 對接收端而言是錯的時間。BCF 時間欄位是 xs:dateTime,時區語意必須正確。",
+      "proposed_fix": "naive 時視為 UTC:解析後若 `tzinfo is None` 用 `.replace(tzinfo=timezone.utc)` 而非 `.astimezone(timezone.utc)`,避免吃到系統本地偏移。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "bcf-004",
+      "subsystem": "a1-bcf-export",
+      "severity": "medium",
+      "kind": "test-gap",
+      "file": "governance-service/tests/test_bcf.py",
+      "line": "20-33, 53-65",
+      "title": "測試缺口:無任何 case 覆蓋 formal issue model_version_id=None 的匯出,誠實缺口被綠燈掩蓋",
+      "why": "lens 要求 real test-gap。現有 8 個測試全綠,但對「issue→bcfzip 是否綁 model_version_id」這個被點名的核心問題,測試刻意只取有 model_version 的資料,等於用調過的 fixture 讓誠實缺口(bcf-001)永遠不會被測出來。",
+      "proposed_fix": "新增測試:(a) build_bcfzip 餵 model_version_id=None 的 formal issue,斷言期望行為(跳過或誠實標記,而非輸出字面 None);(b) 端到端 from-diff 建 issue 後 export,驗證 comment 內 model_version 為真實版本。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "bcf-005",
+      "subsystem": "a1-bcf-export",
+      "severity": "low",
+      "kind": "honesty",
+      "file": "governance-service/bcf/bcf_writer.py",
+      "line": "64",
+      "title": "comment 內把 Python None 以字面 'None' 寫進 BCF,違反 provenance 標註誠實原則",
+      "why": "誠實鐵律要求每個輸出元素標 provenance、無遙測標「未取得」而非捏造。把後端的缺值以程式語言內部 token `None` 洩漏進對外交換的 BCF comment,既不專業也不是誠實的「未取得/未綁定」表述,接收端會看到字面 None 而誤以為是內容。與 bcf-001 同根但屬獨立的輸出層誠實瑕疵(即使上游修好 model_version,ifc_guid/source_type 仍可能為 None)。",
+      "proposed_fix": "對缺值統一輸出明確語意(如省略該欄位、或寫 '未取得' / 'unbound'),不要讓 Python None repr 進入對外 XML。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "ids-001",
+      "subsystem": "a1-ids-import",
+      "severity": "medium",
+      "kind": "bug",
+      "file": "governance-service/rule_engine/ids_runner.py",
+      "line": "29-30",
+      "title": "target_summary 以 spec.name 為 key,同名/未命名 specification 互相覆寫,彙總低報",
+      "why": "target_summary 與 rule_code 是 summary_dict() 對外契約的一部分(被 issues/BCF/Edge Console 消費),用來呈現「每條規則評估了幾個構件」。同名或多個未命名 spec(極常見:很多 IDS 不填 name)會讓彙總靜默低報、且結果無法區分來源 spec,違反「每個 UI/輸出元素標 provenance、不得誤導」的誠實鐵律。",
+      "proposed_fix": "改用穩定且唯一的 key:優先用 spec.identifier(IDS 提供的 @identifier),否則用 enumerate 索引做後綴(如 f\"{name}#{i}\"),確保每個 specification 在 target_summary 與 rule_code 都不互相覆寫;result 另存 spec_index 以利歸屬。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "ids-002",
+      "subsystem": "a1-ids-import",
+      "severity": "low",
+      "kind": "honesty",
+      "file": "governance-service/rule_engine/ids_runner.py",
+      "line": "31-46",
+      "title": "prohibited applicability(maxOccurs=0)且無 requirements 的 spec 被靜默丟棄,違規模型回報 score=100",
+      "why": "違規(prohibited 構件存在)被當成乾淨 pass,直接違反誠實鐵律(假 pass)。不過可達性受限:經唯一外部入口 app.py→run_ids_file→ids.open 時,空 <requirements/> 的 prohibited spec 不符 IDS 1.0 XSD(實測 ids.open 直接 raise IdsXmlValidationError);schema-valid 的 prohibited(帶至少一個 requirement,或 requirement-level cardinality=prohibited)實測 runner 回報正確(fail/score 0.0)。因此目前僅在程式內直接呼叫 run_ids 並手工建構零-requirement prohibited spec 時可觸發,production API 路徑不可達。",
+      "proposed_fix": "在彙總前對每個 spec 檢查 spec.status:若 spec.status is False 但該 spec 未產生任何 fail result(prohibited-applicability 情境),為每個 applicable_entity 補一筆 status=fail 的 RuleResult(message 標明 prohibited 違規),確保 spec 級失敗不會在零-requirement 時消失。",
+      "confidence": "medium",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "ids-003",
+      "subsystem": "a1-ids-import",
+      "severity": "low",
+      "kind": "honesty",
+      "file": "governance-service/rule_engine/ids_runner.py",
+      "line": "60",
+      "title": "RuleRunResult.errored 在 IDS 路徑硬寫 0,與 YAML 引擎的真實 error 計數不一致(誤導對外契約)",
+      "why": "errored 是 summary 對外契約欄位,YAML 與 IDS 兩條路徑應語意一致。IDS 路徑把 errored 結構性寫死成 0(非由評估推導),消費端比較兩種 run 時會誤以為 IDS 永遠零錯誤;ifctester 內部對單一 facet 例外的吞吐行為未反映到此欄位,屬「以假數字呈現」的弱誠實問題。",
+      "proposed_fix": "errored 改為由 results 推導(`sum(1 for r in results if r.status == 'error')`,目前恆 0 但語意正確);或在 message/warnings 明確標註 IDS 路徑的 error 維度由 ifctester 內部處理、此欄位不代表逐構件錯誤計數,避免與 YAML 語意混淆。",
+      "confidence": "medium",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "A2-001",
+      "subsystem": "a2-diff",
+      "severity": "high",
+      "kind": "bug",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/diff_engine/engine.py",
+      "line": "49-65",
+      "title": "Tag(第二級)對齊未檢查 ifc_type，跨型別共用 Tag 會把『刪除+新增』誤判為同一構件、靜默吞掉變更",
+      "why": "違反 spec『未配對者 SHALL 分類為 added/removed』與誠實鐵律（不得隱藏變更）：一面被刪的牆與一扇新增的門被靜默報成『1 配對、0 變更』，治理 reviewer 會完全看不到這兩個變更，且後續 issue-impact 的 still_open/new 計數也跟著錯。",
+      "proposed_fix": "Tag 配對時加型別護欄：只有 `be.is_a() == te.is_a()` 才成對（或把 Tag key 改成 `(e.is_a(), tag)` 複合鍵），與第一/三級的 type 一致性對齊。並補一個跨型別同 Tag 的回歸測試。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "high",
+        "high"
+      ]
+    },
+    {
+      "id": "A2-002",
+      "subsystem": "a2-diff",
+      "severity": "medium",
+      "kind": "test-gap",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/tests/test_diff_engine.py",
+      "line": "47-135",
+      "title": "Tag(第二級)與 type+name+loc(第三級)退階對齊路徑完全無測試覆蓋，僅 GUID 路徑被驗證",
+      "why": "核心 spec 能力(多級退階對齊)有一半未驗證；A2-001 這類 Tag 級 bug 正是因為缺測試才能潛伏。任何對 _tagmap/_keymap 的修改都沒有測試網保護，regression 風險高。",
+      "proposed_fix": "新增測試：(a) 兩構件 GUID 不同但 Tag 相同 → 應以 tag 對齊(evidence['match']=='tag')；(b) GUID 與 Tag 都不同但 type+Name+取整 loc 相同 → 應以 type_name_loc 對齊。順帶覆蓋 A2-001 的跨型別同 Tag 案例。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "A2-003",
+      "subsystem": "a2-diff",
+      "severity": "low",
+      "kind": "bug",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/diff_engine/engine.py",
+      "line": "76-86",
+      "title": "第三級對齊用 zip 配對同鍵多構件，配對順序依 by_type 迭代序、非穩定語意；同鍵多構件且 pset 不同時 property_changed 歸屬可能張冠李戴",
+      "why": "計數層面安全(不影響 added/removed/moved 總數)，但 property_changed 的證據(evidence)在同鍵簇內可能對應錯誤構件，弱化『每個輸出可證據化』的誠實要求。屬邊緣情境故 low。",
+      "proposed_fix": "同鍵簇內配對前先以更穩定的次鍵排序(如 GlobalId 或 pset_hash)再 zip，或在 change_summary/evidence 標注『同鍵簇內為啟發式配對』以保持誠實；至少加一個同鍵多構件的測試固定行為。",
+      "confidence": "medium",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "A3-1",
+      "subsystem": "a3-federation",
+      "severity": "high",
+      "kind": "bug",
+      "file": "governance-service/federation/builder.py",
+      "line": "59-67 (邏輯) / 53-54 (錯誤註解)",
+      "title": "per-member transform 的 xformOp 加入順序反了，標準 TRS 被破壞（translate 被 scale/rotate 連帶縮放旋轉）",
+      "why": "A3 per-member transform 的用途是把各專業模型在『世界座標』對位置放（coordination meeting 對齊）。目前實作讓 translate 成為最內層 op，導致平移量被 member 自身的 scale 放大、被 member 自身的 rotate 旋轉，置放結果錯誤。任何 member root 帶非單位 scale 或非零 rotate（真實 IFC→USD 模型常見）時，federation 對位會明顯偏掉，違反 A3 跨專業疊合的正確性。",
+      "proposed_fix": "反轉加入順序：先 AddTranslateOp，再 AddRotateXYZOp，最後 AddScaleOp，使 xformOpOrder = [translate, rotateXYZ, scale]（translate 最外層/least-local、scale 最內層/most-local），符合標準 world = T·R·S。同步修正 builder.py:53-54 與 77 行附近的註解（『translate 最外層』『最後套用』論述目前與實際相反）。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "high",
+        "high"
+      ]
+    },
+    {
+      "id": "A3-2",
+      "subsystem": "a3-federation",
+      "severity": "medium",
+      "kind": "test-gap",
+      "file": "governance-service/tests/test_federation_builder.py",
+      "line": "154,157",
+      "title": "測試把錯誤的 TRS op 順序當『正確（translate 最外層）』斷言，鎖死了 A3-1 的 bug",
+      "why": "這是 honesty/test-gap：測試的文字斷言（『標準 TRS』『最外層』）與 USD 實際語義相反，給出『transform 正確』的假信心。修 A3-1 時若不同步改這些斷言，正確的修法反而會讓現有測試變紅。應改為對合成 stage 上 root_prim 用 GetLocalTransformation().Transform(point) 比對期望世界座標（如 scale2+translate100 → (0,0,0)↦(100,0,0)、(1,0,0)↦(102,0,0)）。",
+      "proposed_fix": "把順序斷言改成數值斷言：建 member→套 {scale,rotateXYZ,translate}→Usd.Stage.Open→UsdGeom.Xformable(prim).GetLocalTransformation().Transform(Gf.Vec3d(...)) 比對手算世界座標；並更正註解對 least-to-most-local 的描述。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "A3-3",
+      "subsystem": "a3-federation",
+      "severity": "medium",
+      "kind": "bug",
+      "file": "governance-service/federation/builder.py",
+      "line": "90-98,116",
+      "title": "build 不傳遞 / 不驗證 metersPerUnit，federated stage 單位靜默回退成 0.01（與 member 0.001 差 10 倍）",
+      "why": "下游 host-native Kit review session（review-room handoff 載入 federated_review.usda）若讀 stage metersPerUnit，會拿到 0.01 而非 member 真實的 0.001，造成 10 倍尺度誤判。federation 宣稱對齊共享座標系（coords.py 註解：federation #1 風險就是 unit 差異），卻在產出端丟失 member 單位，屬實際輸出與宣稱不符。",
+      "proposed_fix": "build_federated_usda 在開 stage 後，依 member 的 metersPerUnit（一致時取該值；不一致應拒絕或明確記錄）呼叫 UsdGeom.SetStageMetersPerUnit(stage, mpu)，並在回傳 dict 加 meters_per_unit 欄位讓呼叫端可稽核。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "low"
+      ]
+    },
+    {
+      "id": "A3-4",
+      "subsystem": "a3-federation",
+      "severity": "medium",
+      "kind": "bug",
+      "file": "governance-service/federation/api.py",
+      "line": "130-146",
+      "title": "build 端點不檢查座標一致性且硬編 upAxis=Z，Y-up member 會被靜默宣告成 Z-up",
+      "why": "coords.py 開宗明義說 upAxis/origin/unit 差異是 federation #1 風險，且 validate_coords 專門偵測 upAxis 不一致。但 build 路徑完全略過此檢查並硬套 Z-up，real Y-up（部分 DCC/CAD 匯出）member 疊進來會方向錯亂，產生看似成功實則錯誤的 federated stage——典型『假 pass』。",
+      "proposed_fix": "build 前先跑 validate_coords，upAxis/metersPerUnit 不一致時回 409/422 並回報 issues（或在明確 force 旗標下才續行並標註）；一致時把該 upAxis（與 metersPerUnit，見 A3-3）傳給 build_federated_usda，而非硬編 Z。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "ISS-001",
+      "subsystem": "issues-db",
+      "severity": "high",
+      "kind": "honesty",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/issues/api.py",
+      "line": "105-123",
+      "title": "from-diff 建立的 issue 未綁 model_version_id，違反「model_version_id 綁定所有 issue」鐵律",
+      "why": "誠實鐵律明文「IFC GlobalId 為主鍵，model_version_id 綁定所有 issue」。A2 diff 來源的 issue 變成 model_version_id=NULL：(1) bcf/api.py:18-24 export_bcf 用 model_version_id 過濾時這些 issue 全部漏掉；(2) bcf_writer.py:60-64 會把 model_version=None 寫進 BCF topic comment（假/缺 provenance）；(3) diff_engine/api.py:94-128 diff_issue_impact 完全依賴 list_issues(model_version_id=base_mv) 做跨版本比對，NULL 的 diff issue 永遠配不上。資料就在 get_diff 回傳裡卻被丟掉。",
+      "proposed_fix": "在 issues_from_diff 取 diff_row = diff_store.get_diff(diff_id)（已有 None 檢查），create_issue 傳 model_version_id=diff_row.get('target_model_version_id')（diff 產出的 issue 屬於 target 版本）。同步在 test_issues.py 的 _seed_diff 給 base/target mv 並 assert diff issue 帶 model_version_id。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "id": "ISS-002",
+      "subsystem": "issues-db",
+      "severity": "high",
+      "kind": "bug",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/issues/api.py",
+      "line": "83-123",
+      "title": "from-rule-run / from-diff 無冪等性，重複呼叫產生重複 issue（source_ref 存而不查）",
+      "why": "issue 生命週期語意上一筆 rule_result / diff_item 應對應一筆 issue。重複 POST /api/issues/from-rule-run/{run_id}（retry、使用者重按、coordinator proxy 重送）會把同 3 筆失敗構件灌成 6、9 筆 issue，污染 issue 計數、BCF 匯出 topic 數、diff_issue_impact 統計，且無法事後辨識哪些是重複（source_ref 相同但 id 不同）。",
+      "proposed_fix": "建立前先 SELECT id FROM issues WHERE source_type=? AND source_ref=? 命中則 skip（並可回報 skipped 數），或對 (source_type, source_ref) 加 UNIQUE 部分索引 + INSERT OR IGNORE。新增重複呼叫的冪等性測試。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "high"
+      ]
+    },
+    {
+      "id": "ISS-003",
+      "subsystem": "issues-db",
+      "severity": "medium",
+      "kind": "bug",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/issues/store.py",
+      "line": "136-153",
+      "title": "transition() 讀-改-寫跨兩條連線，狀態機存在 TOCTOU race / lost update",
+      "why": "兩個並發 transition 同一 issue 可同時讀到 status='open'，各自通過 _ALLOWED 檢查（open→resolved 與 open→rejected 皆合法），先後 UPDATE：後者覆蓋前者（lost update），但 issue_events 留下兩筆矛盾 transition（open→resolved 與 open→rejected），audit log 自相矛盾、無法重播（違反 store.py docstring「BCF rule 9：可重播、可驗證」）。狀態機保護被繞過。",
+      "proposed_fix": "把讀+檢查+寫收進單一連線與單一交易：用 conn.execute('BEGIN IMMEDIATE') 後在同連線 SELECT status，驗證合法再 UPDATE ... WHERE id=? AND status=?，以 rowcount==0 偵測並發落空後 raise TransitionError；或對 issues 連線啟用 WAL + busy_timeout 並用條件式 UPDATE。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "ISS-004",
+      "subsystem": "issues-db",
+      "severity": "medium",
+      "kind": "bug",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/issues/api.py",
+      "line": "94-123",
+      "title": "批次建立 issue 每筆獨立交易、無整體 atomicity，中途失敗留下部分寫入",
+      "why": "若批次跑到一半（如某筆觸發 OperationalError、程序被收掉、worker 重啟），前面已 commit 的 issue 留存、後面未建，端點回傳的 created 計數與實際不一致且不可回滾。配合 ISS-002 無冪等，重試會再疊加重複，難以收斂到正確集合。",
+      "proposed_fix": "讓整個 batch 共用單一連線單一交易（executemany 或同一 with 區塊內逐筆 execute，最後一次 commit），失敗整批 rollback；搭配 ISS-002 的 (source_type, source_ref) 唯一性使重試安全。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "ISS-005",
+      "subsystem": "issues-db",
+      "severity": "medium",
+      "kind": "test-gap",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/tests/test_issues.py",
+      "line": "37-104",
+      "title": "test_issues.py 缺冪等性、diff issue model_version 綁定、並發 transition 三項關鍵覆蓋",
+      "why": "ISS-001（diff 漏綁 mv）、ISS-002（無冪等）、ISS-003（transition race）這三個 issue 生命週期核心風險都在現有測試盲區內，CI 全綠也抓不到，等同回歸防線缺口（誠實鐵律的 provenance 與 BCF model_version 綁定都未被測試守住）。",
+      "proposed_fix": "新增：(1) from-rule-run / from-diff 呼叫兩次 assert issue 數不翻倍（冪等）；(2) _seed_diff 帶 target_model_version_id 並 assert 產出 issue.model_version_id 等於該值；(3) 至少一個衝突 transition 測試（open→resolved 後 open→rejected 應被擋），驗證狀態機在重入下的正確性。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "EC-01",
+      "subsystem": "frontend-console",
+      "severity": "medium",
+      "kind": "spec-mismatch",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/web-viewer-sample/src/console/pages.tsx",
+      "line": "435 (型別定義); 觸發點 EdgeConsole.tsx:40,46",
+      "title": "StubPage items 型別漏列 'artifact'，使三處 as-built provenance 標示成型別錯誤（誠實鐵律要求 artifact 為合法 provenance）",
+      "why": "誠實鐵律要求每個 UI 元素標 provenance，且 'artifact'（實測 artifact）是後端權威 provenance 之一（PROV_LABEL 有定義）。StubPage 的窄化 union 把合法的 artifact provenance 變成型別錯誤，等於用較弱的型別把『實測 artifact』排除在 stub 頁之外。intake 的 conversion quality_metrics / semantic_mapping_fidelity 本應標 artifact（實測值來源），現在只是因為型別不一致才能編譯過（vite build 不跑 tsc，所以 silently ship）。應將 StubPage items 第三欄型別改為 data.ts 的 Prov，與其餘元件一致。",
+      "proposed_fix": "pages.tsx:435 把 `[string, string, \"asbuilt\" | \"demo\" | \"p1\" | \"p15\"][]` 改成 `[string, string, Prov][]`（Prov 已從 data.ts import 鏈可取得；目前 pages.tsx 已 import A1A10/AppCardDef/PAGES，加 import { Prov } 即可）。修正後 EdgeConsole.tsx:40/46 的 artifact 即合法，三個 TS2322 消除，且語意正確（實測 artifact 正確標示）。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "medium"
+      ]
+    },
+    {
+      "id": "EC-02",
+      "subsystem": "frontend-console",
+      "severity": "medium",
+      "kind": "bug",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/web-viewer-sample/src/AppStream.tsx",
+      "line": "133, 167 (prop 定義在 25)",
+      "title": "AppStream mediaPort number|null 與 streaming library DirectConfig 的 number|undefined 不相容（型別正確性 / regression 風險）",
+      "why": "這是 seed (b) 的確認。library 的 DirectConfig.mediaPort 只接受 number|undefined。目前 stream.config.json source=\"local\"（:3），:131-159 的 local 分支 :143-145 有 guard（mediaPort 非 null 才放入物件），所以 runtime 不會把 null 丟進去——故非當前 live crash。但 :167 stream 分支無 guard 直接 `mediaPort: this.props.mediaport`，一旦把 source 切成 \"stream\"（同一份 code 支援的合法設定）就會把 null 傳進 library，行為未定義。屬型別正確性破口 + 設定切換 regression 風險。vite build 不跑 tsc 所以 CI（verify=build+test）抓不到，會 silently ship。",
+      "proposed_fix": "把 mediaport 流經處正規化為 number|undefined：最小修法是在 :167 與 :213/:25 把 `null` 改成 `undefined`（或在 stream 分支套用與 local 同樣的 `...(this.props.mediaport != null && { mediaPort: this.props.mediaport })` guard）。注意：跨檔（Window.tsx:46/213、AppProps）改 null→undefined 屬 d=1 連動，需一致修改 prop 型別。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    },
+    {
+      "id": "EC-03",
+      "subsystem": "frontend-console",
+      "severity": "low",
+      "kind": "honesty",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/web-viewer-sample/src/console/pages.tsx",
+      "line": "OverviewPage pages.tsx:35; rule-set 表 pages.tsx:139",
+      "title": "BCF 2.1 匯出已 as-built 且 UI 已接線可用，但三處 provenance 仍標『待建』(p1/p15)——provenance 標示與事實不符",
+      "why": "誠實鐵律：每個 UI 元素須標正確 provenance（asbuilt/artifact/demo/p1/p15）。BCF 匯出實際為 as-built（後端有模組、有路由、有 proxy，前端有可用按鈕），卻在 Overview 與 rule-set 表標成『待建 p1 / p15』。方向上是『低估能力』（非危險的『誇大假宣告』），故 severity 低；但仍是 provenance 與事實不符的標示錯誤，且自相矛盾（同頁一邊說待建一邊放可用按鈕），會誤導 demo 受眾。建議把這兩處 prov 改為 asbuilt 並更新文案（保留 LGPL/GPLv3 規避說明即可，因為實作正是純 stdlib 規避）。",
+      "proposed_fix": "pages.tsx:35 與 :139 的 BCF 匯出 Field 改 `prov=\"asbuilt\"`、v 改為已實作描述（如『已實作（純 stdlib zipfile+xml，不依賴 GPLv3 bcf-client）』）。對齊 pages.tsx:139 同表其他 asbuilt 項與 governance-service/CLAUDE.md。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "EC-04",
+      "subsystem": "frontend-console",
+      "severity": "low",
+      "kind": "hygiene",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/web-viewer-sample/src/console/data.ts",
+      "line": "54 (註解) vs 57-58 (資料)",
+      "title": "data.ts A1A10 註解陳述 A2/A3 為『前端骨架 + spec（p1）』與實際 prov=asbuilt 及後端落地不符（過時註解）",
+      "why": "渲染出來的 provenance（asbuilt）是正確的（後端真的有 A2/A3），所以這不是 UI �currency違反；但 source-of-truth 檔的註解過時、與資料體相互矛盾，違反『data.ts = 單一真相源 / 誠實 provenance 系統』的自我宣告（:1-2）。屬文件 hygiene，建議同步註解避免後續 reviewer 被誤導成 A2/A3 還沒落地。",
+      "proposed_fix": "data.ts:54 註解更新為 A2/A3 backend 亦 AS-BUILT（diff_engine + federation router 已 include），與 :57-58 的 prov=asbuilt 一致。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "EC-05",
+      "subsystem": "frontend-console",
+      "severity": "low",
+      "kind": "hygiene",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/web-viewer-sample/src/Window.tsx",
+      "line": "EdgeConsole.tsx:3; pages.tsx:3; Window.tsx:30, 252",
+      "title": "多個 unused 宣告（React imports、severityToColor、pendingIssueHighlightRequestId）— lint --max-warnings 0 會擋",
+      "why": "seed (c) 的確認。屬純 hygiene：vite build 不跑 tsc 也不跑 eslint，所以 verify=build+test 不會擋；但若 CI/開發者跑 `npm run lint`（repo CLAUDE.md 說 lint baseline 尚未清零、可手動跑），--max-warnings 0 會 fail。severityToColor 未用代表 diff/issue 顏色映射目前無人呼叫（與 pages.tsx 自述『3D overlay 顏色走 client highlightPrimsRequest』可能脫鉤，但非當前範圍 bug）。pendingIssueHighlightRequestId 是死欄位（issue highlight 驗證鏈未接）。",
+      "proposed_fix": "移除未用的 React default import（採用 new JSX transform 後 import React 多餘）、移除 Window.tsx:30 的 severityToColor import 與 :252 的 pendingIssueHighlightRequestId 欄位；或若 issue-highlight 驗證鏈本應接上，則補實作（超出本 review 範圍，先記為死碼）。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "DEPLOY-001",
+      "subsystem": "scripts-deploy",
+      "severity": "medium",
+      "kind": "spec-mismatch",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/scripts/deploy.ps1",
+      "line": "105",
+      "title": "Print-FinalSummary 失敗分支對空 .pid 檔呼叫 .Trim() 會 null-deref crash,繞過 Final Summary(直接違反 #22 新增的「Final Summary 可診斷性」spec 要求)",
+      "why": "openspec/specs/one-click-deploy-hybrid/spec.md:196-198「Final Summary 可診斷性」要求:失敗時 deploy.ps1 SHALL 走到 Print-FinalSummary 才退出,MUST NOT 因 strict-mode 下未初始化/異常在印出 Final Summary 之前 crash、吃掉失敗診斷摘要(此 requirement 正是 CH-5 #22 / PR #147 新增)。本行的 null-deref 正好落在該 requirement 要保護的函式失敗分支內:一個空 .pid 檔(crash/中斷寫入留下的 stale 檔,或其他入口 start-all.ps1 留下的)就會讓 Print-FinalSummary 自身 throw,使用者看不到 recovery 指令與真正 fail 原因。#22 只補了 $kitBuildExit/$buildExit/$runningIds 三個 native-command 變數的 fail-safe,漏了 Print-FinalSummary 自己這個 null-deref。Phase 1 success/dry-run 走 ExitCode=0 分支(line 89-99),不碰此迴圈,所以現有 test-deploy-dryrun.ps1 永遠測不到。",
+      "proposed_fix": "加 null/empty guard,與其他 reader 對齊,例如:`$raw = Get-Content $pidFile.FullName -ErrorAction SilentlyContinue | Select-Object -First 1; $procId = if ($raw) { $raw.Trim() } else { '(empty)' }`。並補一個失敗分支 + 空 pid 檔的 Print-FinalSummary 測試(目前 scripts/tests 完全沒有覆蓋 Print-FinalSummary)。",
+      "confidence": "high",
+      "real_votes": 1,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "medium"
+      ]
+    },
+    {
+      "id": "DEPLOY-002",
+      "subsystem": "scripts-deploy",
+      "severity": "low",
+      "kind": "bug",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/scripts/deploy.ps1",
+      "line": "407-409",
+      "title": "Test-KitRuntimeSignatureMatches 對「存在但空」的 signature 檔呼叫 .Trim() 同類 null-deref;-ErrorAction SilentlyContinue 擋不住 null 方法呼叫,且在 Phase 4 會繞過 Final Summary",
+      "why": "signature 檔正常由 Set-KitRuntimeSignature(line 412-422)以 compressed JSON 寫入(非空),故一般情況不會空 → confidence medium。但中斷寫入 / 外部 truncate 可留空檔,屆時 Phase 4 idempotent re-run 路徑會 throw,且與 DEPLOY-001 同樣繞過 Print-FinalSummary(spec one-click-deploy-hybrid「Final Summary 可診斷性」)。與 DEPLOY-001 同一 null-.Trim() class,屬防禦面尚未補齊。",
+      "proposed_fix": "`$actual = ((Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue) ?? '').Trim()` (PS7) 或 PS5.1 相容寫法:`$raw = Get-Content ...; $actual = if ($null -ne $raw) { $raw.Trim() } else { '' }`。",
+      "confidence": "medium",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "HON-1",
+      "subsystem": "honesty-audit",
+      "severity": "low",
+      "kind": "honesty",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/web-viewer-sample/src/console/data.ts",
+      "line": "54-58",
+      "title": "data.ts 過時註解宣稱 A2/A3 為「前端骨架+spec（p1）」，與實際 asbuilt 程式碼及 prov 標記矛盾",
+      "why": "誠實 provenance 系統的單一真相源（data.ts 開頭自述『Edge Console 單一真相源…每個區塊/應用都標真實 provenance 與 phase』）內部自相矛盾：權威清單已升級 A2/A3 為 asbuilt，但解釋註解仍停在舊的 p1 骨架狀態。雖非使用者畫面直接顯示（僅原始碼註解），但會誤導維護者對落地真實度的判讀，違反『每個元素標真實 provenance、不留與事實衝突的描述』精神。屬低嚴重度文件漂移，非執行期假數字。",
+      "proposed_fix": "更新 data.ts:54 註解使其與 line 56-58 的 prov 標記一致，例如改為『A1 backend AS-BUILT（PR #151）；A2 model-version diff（GlobalId 多級對齊 + 選配 geometry_changed）與 A3 USD sublayer federation 後端均已實作（asbuilt）；A4–A10 roadmap。』以消除自相矛盾。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "low",
+        "low"
+      ]
+    },
+    {
+      "id": "BCFUSD-1",
+      "subsystem": "bcf-usd-principle",
+      "severity": "high",
+      "kind": "spec-mismatch",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/issues/api.py",
+      "line": "116-121",
+      "title": "from-diff 建立的 issue 未綁 model_version_id（違反「所有 issue 綁 model_version」鐵律）",
+      "why": "違反指派原則「所有 issue 綁 model_version；model_version_id 綁定所有 issue」與 issues/store.py 檔頭自述「issue 綁 model_version_id + ifc_guid（主鍵，BCF rule 3/4）」。實質下游破壞鏈：(1) BCF 匯出帶 model_version_id 過濾時（bcf/api.py:24 store.list_issues(model_version_id=...)）永遠撈不到這些 diff issue；(2) BCF markup comment 會印出 model_version=None（bcf_writer.py:64 mv=issue.get(\"model_version_id\")），等於對外 .bcfzip 出現無 provenance 的 issue，違反誠實鐵律「每個輸出元素標 provenance」；(3) diff_issue_impact 用 model_version_id 交叉比對 issue（diff_engine/api.py:112 list_issues(model_version_id=base_mv)），diff 自己建出的 issue 因 mv=NULL 反而不會被自己的版本撈到，啟發式 still_open/possibly_addressed 統計失真。",
+      "proposed_fix": "在 issues_from_diff 取出 diff record 後，把 target_model_version_id 傳入 create_issue（diff item 代表 target 模型的狀態，故綁 target 版本最符語意；若需可同時記 base）。例如：row = diff_store.get_diff(diff_id); 然後 create_issue(..., model_version_id=row.get(\"target_model_version_id\"), ...)。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "high",
+        "high"
+      ]
+    },
+    {
+      "id": "BCFUSD-2",
+      "subsystem": "bcf-usd-principle",
+      "severity": "medium",
+      "kind": "test-gap",
+      "file": "C:/Repos/active/iot/AI-BIM-governance/governance-service/tests/test_issues.py",
+      "line": "90-98",
+      "title": "test_issues_from_diff 未驗 model_version_id 綁定，導致 BCFUSD-1 漏網",
+      "why": "正因為測試沒覆蓋「diff issue 必須綁 model_version_id」這條核心不變量，BCFUSD-1 的 NULL 綁定才會通過全綠測試。這是讓 spec 違反長期存活的直接 test-gap，符合『真實 test-gap』而非最佳實踐建議。",
+      "proposed_fix": "在 test_issues_from_diff 加一條斷言 diff_issues[0][\"model_version_id\"] == \"t\"（target），修 BCFUSD-1 後即可作為迴歸守門；可一併在 test_issues_from_rule_run 補 model_version_id 斷言。",
+      "confidence": "high",
+      "real_votes": 2,
+      "votes": 2,
+      "verdict_sev": [
+        "medium",
+        "medium"
+      ]
+    }
+  ]
+}

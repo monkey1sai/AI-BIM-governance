@@ -1,0 +1,23 @@
+# Kit / WebRTC viewer console handshake — 2026-06-03 live re-verify
+# 來源：chrome devtools console（viewer :5173，read_console_messages 實擷），session review_session_d154f4f56dd3
+# 完整握手序列（一個乾淨 stream 週期；時間為 UTC）。證明 transport + DataChannel + Kit stage-load 全鏈路真實成立。
+
+[08:14:08.731Z] [start]  inProgress status=100 "Starting stream."          (omniverse-webrtc-streaming-library)
+[08:14:08]      [INFO]   streamReady                                        (AppStream.tsx:169)
+[08:14:08.871Z] [message] success 200 "Message sent to the stream: {type:config,value:{supports_localized_text_input:true}}"
+[08:14:08.874Z] [message] success 200 "Message successfully recieved from stream."          <-- DataChannel 上行+回應
+[08:14:08.874Z] [message] success 200 "Config message successfully recieved from stream: {supports_localized_text_input:true}"
+[08:14:11.257Z] [message] success 200 "Message sent to the stream: {type:resize,value:{height:1080,width:1920}}"
+[08:14:11]      [LOG]    Sending request to open asset: .../stream_conv_20260528071743_b74a3e04/model.usdc   (Window.tsx:890)
+[08:14:11.875Z] [message] inProgress 100 openStageRequest payload={url, requested_stage_url, stage_composition.primary(ag_270V4, mv 270V4_d28a1574..., role=derived, ready_status=ready, conversion_authority=bim-streaming-server, conversion_job_id=stream_conv_20260528071743_b74a3e04, conversion_status=succeeded), secondary_layers:[]}
+[08:14:13.376Z] [message] inProgress 100 loadingStateQuery
+[08:14:13]      [INFO]   Kit is ready to load assets                        (Window.tsx:1202)
+[08:14:13.393Z] [message] inProgress 100 openStageRequest (同上 stage_composition)
+[08:14:14.894Z] [message] inProgress 100 loadingStateQuery
+[08:14:14.911Z] [message] inProgress 100 getChildrenRequest payload={prim_path:/World, filters:[USDGeom]}
+[08:14:14]      [LOG]    Kit App sent stage prims                           (Window.tsx:1317)   <-- 幾何已載入 stage
+[08:14:14.929Z] [message] inProgress 100 makePrimsPickable payload={paths:[]}
+
+# 註：08:22 另有一次完整重連，序列相同（start→streamReady→config recieved→resize 1920x1080→openStageRequest→
+#     Kit is ready→getChildrenRequest /World[USDGeom]→Kit App sent stage prims）。共擷 48 則，皆 host-native，非 mock。
+# Browser: Chrome 148.0.7778.217 / Windows 11；viewer node module @nvidia_omniverse-webrtc-streaming-library。

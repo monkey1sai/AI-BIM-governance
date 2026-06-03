@@ -1,0 +1,279 @@
+{
+  "create": {
+    "session_id": "review_session_d154f4f56dd3",
+    "tenant_id": "tenant_demo_001",
+    "project_id": "270",
+    "model_version_id": "270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+    "status": "active",
+    "mode": "single_kit_shared_state",
+    "created_by": "e2e_opus48",
+    "created_at": "2026-06-03T08:13:53.564Z",
+    "updated_at": "2026-06-03T08:13:53.564Z",
+    "kit_instance": {
+      "instance_id": "kit_local_001",
+      "provider": "local_fixed",
+      "status": "ready",
+      "stream_server": "127.0.0.1",
+      "signaling_port": 49100,
+      "media_server": "127.0.0.1",
+      "media_port": 47998
+    },
+    "artifact_bindings": [
+      {
+        "binding_id": "binding_1",
+        "artifact_group_id": "ag_270V4",
+        "model_version_id": "270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+        "artifact_id": "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+        "display_name": null,
+        "source_ifc_filename": null,
+        "artifact_role": "derived",
+        "url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/model.usdc",
+        "mapping_url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/element_mapping.json",
+        "load_order": 0,
+        "routing_policy": "same_instance",
+        "ready_status": "ready",
+        "conversion_authority": "bim-streaming-server",
+        "conversion_job_id": "stream_conv_20260528071743_b74a3e04",
+        "conversion_status": "succeeded",
+        "failure_code": null,
+        "diagnostic": null
+      }
+    ],
+    "kit_instance_bindings": [
+      {
+        "kit_instance_id": "kit_local_001",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49100,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 47998
+        },
+        "started_at": "2026-06-03T08:13:53.564Z",
+        "last_heartbeat_at": "2026-06-03T08:13:53.564Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "local-slot-1"
+        }
+      }
+    ],
+    "participants": [],
+    "quality_metrics_summary": null
+  },
+  "stream_config": {
+    "session_id": "review_session_d154f4f56dd3",
+    "lifecycle_status": "active",
+    "source": "local_fixed",
+    "webrtc": {
+      "signalingServer": "127.0.0.1",
+      "signalingPort": 49100,
+      "mediaServer": "127.0.0.1",
+      "mediaPort": 47998
+    },
+    "model": {
+      "status": "ready",
+      "artifact_id": "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+      "url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/model.usdc",
+      "mapping_url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/element_mapping.json",
+      "conversion_authority": "bim-streaming-server",
+      "conversion_job_id": "stream_conv_20260528071743_b74a3e04",
+      "conversion_status": "succeeded",
+      "failure_code": null,
+      "diagnostic": null
+    },
+    "artifacts": [],
+    "artifact_bindings": [
+      {
+        "binding_id": "binding_1",
+        "artifact_group_id": "ag_270V4",
+        "model_version_id": "270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+        "artifact_id": "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+        "display_name": null,
+        "source_ifc_filename": null,
+        "artifact_role": "derived",
+        "url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/model.usdc",
+        "mapping_url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/element_mapping.json",
+        "load_order": 0,
+        "routing_policy": "same_instance",
+        "ready_status": "ready",
+        "conversion_authority": "bim-streaming-server",
+        "conversion_job_id": "stream_conv_20260528071743_b74a3e04",
+        "conversion_status": "succeeded",
+        "failure_code": null,
+        "diagnostic": null
+      }
+    ],
+    "kit_instance_bindings": [
+      {
+        "kit_instance_id": "kit_local_001",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49100,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 47998
+        },
+        "started_at": "2026-06-03T08:13:53.564Z",
+        "last_heartbeat_at": "2026-06-03T08:13:53.564Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "local-slot-1"
+        }
+      },
+      {
+        "kit_instance_id": "kit_local_001_spectator_01",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49110,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 48008
+        },
+        "started_at": "2026-06-03T08:13:53.564Z",
+        "last_heartbeat_at": "2026-06-03T08:13:53.564Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "same-kit-spectator-1"
+        }
+      },
+      {
+        "kit_instance_id": "kit_local_001_spectator_02",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49120,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 48018
+        },
+        "started_at": "2026-06-03T08:13:53.564Z",
+        "last_heartbeat_at": "2026-06-03T08:13:53.564Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "same-kit-spectator-2"
+        }
+      },
+      {
+        "kit_instance_id": "kit_local_001_spectator_03",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49130,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 48028
+        },
+        "started_at": "2026-06-03T08:13:53.564Z",
+        "last_heartbeat_at": "2026-06-03T08:13:53.564Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "same-kit-spectator-3"
+        }
+      },
+      {
+        "kit_instance_id": "kit_local_001_spectator_04",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49140,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 48038
+        },
+        "started_at": "2026-06-03T08:13:53.564Z",
+        "last_heartbeat_at": "2026-06-03T08:13:53.564Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "same-kit-spectator-4"
+        }
+      },
+      {
+        "kit_instance_id": "kit_local_001_spectator_05",
+        "provider": "local_fixed",
+        "tenant_id": "tenant_demo_001",
+        "assigned_artifact_ids": [
+          "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f"
+        ],
+        "status": "ready",
+        "stream_config": {
+          "signalingServer": "127.0.0.1",
+          "signalingPort": 49150,
+          "mediaServer": "127.0.0.1",
+          "mediaPort": 48048
+        },
+        "started_at": "2026-06-03T08:13:53.564Z",
+        "last_heartbeat_at": "2026-06-03T08:13:53.564Z",
+        "released_at": null,
+        "gpu_profile": {
+          "profile": "local_fixed",
+          "capacity_slot": "same-kit-spectator-5"
+        }
+      }
+    ],
+    "quality_metrics_summary": null,
+    "stage_composition": {
+      "applied_policy": "coordinator_load_order",
+      "primary_artifact_id": "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+      "secondary_artifact_ids": [],
+      "primary": {
+        "binding_id": "binding_1",
+        "artifact_group_id": "ag_270V4",
+        "model_version_id": "270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+        "artifact_id": "ifc_270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+        "display_name": null,
+        "source_ifc_filename": null,
+        "artifact_role": "derived",
+        "url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/model.usdc",
+        "mapping_url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/element_mapping.json",
+        "load_order": 0,
+        "routing_policy": "same_instance",
+        "ready_status": "ready",
+        "conversion_authority": "bim-streaming-server",
+        "conversion_job_id": "stream_conv_20260528071743_b74a3e04",
+        "conversion_status": "succeeded",
+        "failure_code": null,
+        "diagnostic": null
+      },
+      "secondary_layers": []
+    },
+    "viewport_sharing": {
+      "mode": "single_kit_shared_state",
+      "primary_kit_instance_id": "kit_local_001",
+      "shared_state": true,
+      "spectator_ready": true
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "A1": {
+    "run_id": "rr_6a9f7d5f9cbd",
+    "status": "succeeded",
+    "score": 99.0,
+    "summary": {
+      "rule_set": "default-governance",
+      "version": "1.0",
+      "total": 7126,
+      "passed": 7055,
+      "failed": 71,
+      "errored": 0,
+      "score": 99.0,
+      "target_summary": {
+        "DOOR-FIRERATING-REQUIRED": 72,
+        "ELEMENT-NAME-REQUIRED": 6715,
+        "WALL-STOREY-ASSIGNED": 339
+      },
+      "warnings": [
+        "rule ELEMENT-NAME-REQUIRED: 'IfcBuildingElement' 不在 schema，改用別名 'IfcBuiltElement'"
+      ]
+    },
+    "elapsed_s": 6.1,
+    "failed_count": 71,
+    "failed_sample": [
+      {
+        "id": "res_1289adcd7f5a",
+        "rule_run_id": "rr_6a9f7d5f9cbd",
+        "ifc_guid": "3$xKPHQlD10AG1nzmJabuU",
+        "usd_prim_path": null,
+        "rule_code": "DOOR-FIRERATING-REQUIRED",
+        "severity": "high",
+        "status": "fail",
+        "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+        "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670\", \"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:772670:1\", \"Pset_DoorCommon\", \"Pset_DoorWindowGlazingType\", \"Pset_EnvironmentalImpactIndicators\", \"Pset_ManufacturerTypeInformation\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\"]}"
+      },
+      {
+        "id": "res_7d30b576d9d8",
+        "rule_run_id": "rr_6a9f7d5f9cbd",
+        "ifc_guid": "3$xKPHQlD10AG1nzmJabWw",
+        "usd_prim_path": null,
+        "rule_code": "DOOR-FIRERATING-REQUIRED",
+        "severity": "high",
+        "status": "fail",
+        "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+        "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146\", \"Doors_Swing_Moelven-Modus_Glass-Front-Door-1:Glass Front Door w100 D11:773146:1\", \"Pset_DoorCommon\", \"Pset_DoorWindowGlazingType\", \"Pset_EnvironmentalImpactIndicators\", \"Pset_ManufacturerTypeInformation\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\"]}"
+      },
+      {
+        "id": "res_4162822f90a9",
+        "rule_run_id": "rr_6a9f7d5f9cbd",
+        "ifc_guid": "1$6rKosWT5r9WGrkrSURLd",
+        "usd_prim_path": null,
+        "rule_code": "DOOR-FIRERATING-REQUIRED",
+        "severity": "high",
+        "status": "fail",
+        "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+        "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Pset_DoorCommon\", \"Pset_EnvironmentalImpactIndicators\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\", \"單開-矩形- (1):60 x 230 cm (廁所用):964015\", \"單開-矩形- (1):60 x 230 cm (廁所用):964015:1\"]}"
+      },
+      {
+        "id": "res_ec1fd312c86d",
+        "rule_run_id": "rr_6a9f7d5f9cbd",
+        "ifc_guid": "08EdJUuVD0bvrClEZJ$JaB",
+        "usd_prim_path": null,
+        "rule_code": "DOOR-FIRERATING-REQUIRED",
+        "severity": "high",
+        "status": "fail",
+        "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+        "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Pset_DoorCommon\", \"Pset_EnvironmentalImpactIndicators\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\", \"單開-矩形- (1):60 x 230 cm (廁所用):2449258\", \"單開-矩形- (1):60 x 230 cm (廁所用):2449258:1\"]}"
+      },
+      {
+        "id": "res_ac1d5f2e5e9a",
+        "rule_run_id": "rr_6a9f7d5f9cbd",
+        "ifc_guid": "08EdJUuVD0bvrClEZJ$Jdi",
+        "usd_prim_path": null,
+        "rule_code": "DOOR-FIRERATING-REQUIRED",
+        "severity": "high",
+        "status": "fail",
+        "message": "防火門必須在 Pset_DoorCommon 具備 FireRating 屬性",
+        "evidence_json": "{\"predicate\": \"property_required\", \"pset\": \"Pset_DoorCommon\", \"property\": \"FireRating\", \"value\": null, \"pset_found\": true, \"psets_read\": [\"Pset_DoorCommon\", \"Pset_EnvironmentalImpactIndicators\", \"Qto_BodyGeometryValidation\", \"Qto_DoorBaseQuantities\", \"單開-矩形- (1):60 x 230 cm (廁所用):2449258\", \"單開-矩形- (1):60 x 230 cm (廁所用):2449258:1\"]}"
+      }
+    ],
+    "excel_bytes": 9455,
+    "excel_sig": "504b"
+  }
+}
