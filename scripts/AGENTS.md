@@ -15,7 +15,7 @@
 - `smoke-*.ps1` / `run-single-kit-demo.ps1` / `verify-runtime-*.ps1` — 現有 smoke / evidence scripts；新增同類腳本預設不得放 root scripts
 - `scripts/lib/` — preflight / launcher / structured log 共用 module
 - `scripts/log-retention/` — log 保存策略
-- `scripts/tests/` — script-level pester / pytest 測試
+- `scripts/tests/` — script-level tests；本 repo 目前以自訂 assert + temp sandbox 為主，Pester 不是預設必需
 - `claude-commit-guard.ps1` — Claude PreToolUse hook target
 - `pr-review-agent.ps1` — PR review agent CLI
 - `render-roadmap-html.py` — roadmap doc generator

@@ -10,7 +10,7 @@
 
 - 分頁「05 BIM治理與模型檢核」：A1–A10 是本 repo 的 10 大主要開發項目。
 - 分頁「06 操作介面總覽」：使用者操作介面、按鈕功能、進度與可驗收流程參考。
-- 本機設計原始碼參考：`C:\Repos\design\bim-desigin-arich\project`。
+- 設計站原始碼可依個人環境 clone / 定位；本 PR 使用使用者提供的本機 clone 作為一次性查證來源，該本機路徑不納入 repo contract。
 
 程式碼與 contracts 仍是行為 source of truth；設計站負責產品方向、操作介面語意與驗收期待。
 
