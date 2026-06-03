@@ -139,6 +139,9 @@ def test_per_member_transform_composes_without_clobbering_member(tmp_path):
 
 
 def test_per_member_transform_rotate_and_scale(tmp_path):
+    # A3-2：以「真實 pxr 計算的世界座標」驗 TRS 正確性，不只斷言 op 字面順序。
+    # rotateXYZ Z=90° 把 +X 轉到 +Y；scale=2 縮放；translate=(1,2,3) 平移。
+    # 標準 world=T·R·S：local p → R·S·p 後再 +T（translate 不被 scale/rotate 連帶作用）。
     arc = _member(_fwd(tmp_path / "arc.usda"), "ARC")
     strr = _member(_fwd(tmp_path / "str.usda"), "STR")
     members = [
@@ -150,11 +153,63 @@ def test_per_member_transform_rotate_and_scale(tmp_path):
     ]
     res = build_federated_usda(members, _fwd(tmp_path / "fed.usda"))
     applied = next(t["ops"] for t in res["transformed"] if t["root_prim"] == "/World/ARC")
-    # translate 必在最後（outermost，標準 TRS）
-    assert applied == ["scale", "rotateXYZ", "translate"]
+    # 加入順序 = translate→rotateXYZ→scale（xformOpOrder 由左至右 least→most local）。
+    assert applied == ["translate", "rotateXYZ", "scale"]
     stage = Usd.Stage.Open(res["usda_path"])
-    order = list(UsdGeom.Xformable(stage.GetPrimAtPath("/World/ARC")).GetXformOpOrderAttr().Get())
-    assert order[-1].endswith("translate:fed")  # translate 為最外層 op
+    xf = UsdGeom.Xformable(stage.GetPrimAtPath("/World/ARC"))
+    m = xf.GetLocalTransformation()
+    # local 原點 → 世界 = T（scale/rotate 不影響原點）= (1,2,3)。
+    o = m.Transform(Gf.Vec3d(0, 0, 0))
+    assert (round(o[0], 3), round(o[1], 3), round(o[2], 3)) == (1.0, 2.0, 3.0)
+    # local (1,0,0)：S→(2,0,0)，R(z=90°)→(0,2,0)，T→(1,4,3)。
+    p = m.Transform(Gf.Vec3d(1, 0, 0))
+    assert (round(p[0], 3), round(p[1], 3), round(p[2], 3)) == (1.0, 4.0, 3.0)
+    # xformOpOrder：translate 最外層（list[0]）、scale 最內層（list[-1]）。
+    order = [str(n) for n in xf.GetXformOpOrderAttr().Get()]
+    assert order[0].endswith("translate:fed")
+    assert order[-1].endswith("scale:fed")
+
+
+def test_per_member_transform_world_coords_scale_then_translate(tmp_path):
+    """A3-2 核心：scale=2 + translate=(100,0,0) 下，用真實 pxr 世界座標驗標準 TRS。
+
+    錯誤實作（scale 最外層、translate 最內層）會把 translate 連帶 scale，local 原點落到
+    (200,0,0)；正確 world=T·S 應落在 (100,0,0)、local(1,0,0) 落在 (102,0,0)。
+    """
+    arc = _member(_fwd(tmp_path / "arc.usda"), "ARC")
+    strr = _member(_fwd(tmp_path / "str.usda"), "STR")
+    members = [
+        {"usd_path": arc, "discipline": "ARC", "layer_order": 1, "root_prim": "/World/ARC",
+         "visibility_default": True,
+         "transform_json": json.dumps({"scale": [2, 2, 2], "translate": [100, 0, 0]})},
+        {"usd_path": strr, "discipline": "STR", "layer_order": 2, "root_prim": "/World/STR",
+         "visibility_default": True},
+    ]
+    res = build_federated_usda(members, _fwd(tmp_path / "fed.usda"))
+    stage = Usd.Stage.Open(res["usda_path"])
+    m = UsdGeom.Xformable(stage.GetPrimAtPath("/World/ARC")).GetLocalTransformation()
+    o = m.Transform(Gf.Vec3d(0, 0, 0))
+    p = m.Transform(Gf.Vec3d(1, 0, 0))
+    # 標準 TRS：translate 不被 scale 放大。
+    assert (round(o[0], 3), round(o[1], 3), round(o[2], 3)) == (100.0, 0.0, 0.0)
+    assert (round(p[0], 3), round(p[1], 3), round(p[2], 3)) == (102.0, 0.0, 0.0)
+
+
+def test_build_preserves_member_meters_per_unit(tmp_path):
+    """A3-3：member metersPerUnit=0.001 時 federated stage SHALL 保留 0.001，不回退 0.01。"""
+    arc = _member(_fwd(tmp_path / "arc.usda"), "ARC", mpu=0.001)
+    strr = _member(_fwd(tmp_path / "str.usda"), "STR", mpu=0.001)
+    members = [
+        {"usd_path": arc, "discipline": "ARC", "layer_order": 1, "root_prim": "/World/ARC", "visibility_default": True},
+        {"usd_path": strr, "discipline": "STR", "layer_order": 2, "root_prim": "/World/STR", "visibility_default": True},
+    ]
+    res = build_federated_usda(members, _fwd(tmp_path / "fed.usda"), meters_per_unit=0.001)
+    assert res["meters_per_unit"] == 0.001
+    stage = Usd.Stage.Open(res["usda_path"])
+    assert round(UsdGeom.GetStageMetersPerUnit(stage), 9) == 0.001
+    # 對照：不傳 meters_per_unit 會回退 pxr 預設 0.01（差 10 倍），證明傳遞確實有效。
+    res2 = build_federated_usda(members, _fwd(tmp_path / "fed2.usda"))
+    assert res2["meters_per_unit"] == 0.01
 
 
 def test_member_without_transform_has_no_fed_ops(tmp_path):

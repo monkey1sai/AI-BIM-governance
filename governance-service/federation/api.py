@@ -18,6 +18,23 @@ router = APIRouter()
 _store = None
 
 
+def _consistent_coords(report: dict) -> tuple[str, Optional[float]]:
+    """從一致的 validate_coords 報告抽出唯一的 (up_axis, meters_per_unit)。
+
+    只在 report["consistent"] is True 時呼叫；此時所有 member 的 up_axis / meters_per_unit
+    皆相同，取任一筆即代表全體。無法解析時退回 ("Z", None) 由 builder 自行處理。
+    """
+    members = report.get("members") or {}
+    for entry in members.values():
+        if not isinstance(entry, dict) or "error" in entry:
+            continue
+        up = str(entry.get("up_axis") or "Z")
+        up_axis = "Z" if up.upper().endswith("Z") else "Y"
+        mpu = entry.get("meters_per_unit")
+        return up_axis, (float(mpu) if mpu is not None else None)
+    return "Z", None
+
+
 def _get_store():
     global _store
     path = os.environ.get("GOV_DB_PATH", _DB_PATH)
@@ -138,9 +155,26 @@ def build_set(set_id: str):
     for m in members:
         if not os.path.exists(m["usd_path"]):
             raise HTTPException(status_code=400, detail=f"member usd missing: {m['usd_path']}")
+    # build 前先驗證共享坐標系；upAxis / metersPerUnit 不一致時拒絕（A3-4 / A3-3），
+    # 不得靜默把 Y-up member 宣告成 Z-up，也不得硬編 upAxis=Z 或讓單位回退 0.01。
+    coord_report = validate_coords(members)
+    if not coord_report["consistent"]:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "coordinate systems inconsistent; federate aborted",
+                "issues": coord_report["issues"],
+                "members": coord_report["members"],
+            },
+        )
+    up_axis, meters_per_unit = _consistent_coords(coord_report)
     fed_out = os.environ.get("GOV_FED_OUT", _FED_OUT)
     out_path = os.path.join(fed_out, set_id, "federated_review.usda")
-    result = build_federated_usda(members, out_path)
+    # 把驗證後一致的 upAxis / metersPerUnit 傳給 builder，不硬編 Z（A3-4），
+    # 並顯式保留 member 的 metersPerUnit，避免回退 0.01（A3-3）。
+    result = build_federated_usda(
+        members, out_path, up_axis=up_axis, meters_per_unit=meters_per_unit
+    )
     store.set_build_result(set_id, result["usda_path"])
     result["prim_sample"] = open_federated_prim_paths(result["usda_path"], limit=30)
     return result

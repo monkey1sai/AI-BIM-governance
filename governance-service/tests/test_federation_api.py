@@ -9,11 +9,11 @@ from fastapi.testclient import TestClient
 from pxr import Usd, UsdGeom
 
 
-def _member_file(path, disc: str) -> str:
+def _member_file(path, disc: str, up: str = "Z", mpu: float = 0.001) -> str:
     path = str(path).replace("\\", "/")
     stage = Usd.Stage.CreateNew(path)
-    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
-    UsdGeom.SetStageMetersPerUnit(stage, 0.001)
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z if up == "Z" else UsdGeom.Tokens.y)
+    UsdGeom.SetStageMetersPerUnit(stage, mpu)
     world = stage.DefinePrim("/World", "Xform")
     stage.SetDefaultPrim(world)
     UsdGeom.Xform.Define(stage, f"/World/{disc}")
@@ -49,6 +49,22 @@ def test_federation_api_end_to_end(client, tmp_path):
     assert res["sublayer_order"][0].endswith("arc.usda")  # layer_order 1 最強
     assert os.path.exists(res["usda_path"])
     assert "/World/ARC" in res["prim_sample"] and "/World/STR" in res["prim_sample"]
+    # A3-3 / A3-4：build 從驗證後一致的 member 取座標系，不硬編、不回退單位。
+    assert res["up_axis"] == "Z"
+    assert res["meters_per_unit"] == 0.001
+
+
+def test_build_rejects_inconsistent_up_axis(client, tmp_path):
+    """A3-4：member upAxis 不一致時 build SHALL 回 409 並回報 issues，不靜默宣告成 Z-up。"""
+    arc = _member_file(tmp_path / "arc.usda", "ARC", up="Z")
+    strr = _member_file(tmp_path / "str.usda", "STR", up="Y")  # Y-up，與 ARC 不一致
+    set_id = client.post("/api/federated-sets", json={"name": "mismatch"}).json()["set_id"]
+    client.post(f"/api/federated-sets/{set_id}/members", json={"model_version_id": "arc_v1", "discipline": "ARC", "usd_path": arc, "layer_order": 1, "root_prim": "/World/ARC"})
+    client.post(f"/api/federated-sets/{set_id}/members", json={"model_version_id": "str_v1", "discipline": "STR", "usd_path": strr, "layer_order": 2, "root_prim": "/World/STR"})
+    resp = client.post(f"/api/federated-sets/{set_id}/build")
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert any("up_axis" in i for i in detail["issues"])
 
 
 def test_review_room_descriptor_after_build(client, tmp_path):

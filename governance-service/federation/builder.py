@@ -50,21 +50,29 @@ def _apply_member_transform(stage: Usd.Stage, root_prim: str, ops: dict) -> list
     """在 root(最強) layer 上對 member root_prim author over + xformOp（member 檔不動）。
 
     pxr 的 Add*Op 會讀現有（composed）xformOpOrder 再 append，故 member 自身 transform
-    完整保留（值仍從 member 弱層解析），federation op 落在 outermost（最後套用）= world 置放。
-    依 scale→rotateXYZ→translate 加，使 translate 最外層（標準 TRS）。op 加 `:fed` 命名空間。
+    完整保留（值仍從 member 弱層解析），federation op 落在 member op 之後加入。
+
+    xformOp 求值語義（pxr ground-truth）：xformOpOrder 由左至右是 least-local→most-local，
+    對點求值時**由右至左**套用（list 最後一個 op 最內層/most-local、最先作用到點；list 第一個
+    op 最外層/least-local、最後作用）。標準 TRS world = T·R·S 要求 translate 在 xformOpOrder
+    **最前（最外層）**、scale 在**最後（最內層）**。故加入順序為 translate→rotateXYZ→scale，
+    使 xformOpOrder = [translate, rotateXYZ, scale]，translate 不會被 member/自身 scale 連帶
+    縮放、rotate 連帶旋轉。op 加 `:fed` 命名空間以與 member 自身 op 區隔（不 clobber）。
     """
     over = stage.OverridePrim(root_prim)
     xf = UsdGeom.Xformable(over)
     applied: list[str] = []
-    if "scale" in ops:
-        xf.AddScaleOp(opSuffix="fed").Set(Gf.Vec3f(*ops["scale"]))
-        applied.append("scale")
-    if "rotateXYZ" in ops:
-        xf.AddRotateXYZOp(opSuffix="fed").Set(Gf.Vec3f(*ops["rotateXYZ"]))
-        applied.append("rotateXYZ")
+    # 加入順序 = translate→rotateXYZ→scale，使 xformOpOrder=[translate, rotateXYZ, scale]：
+    # translate 最外層（least-local）、scale 最內層（most-local），符合 world=T·R·S。
     if "translate" in ops:
         xf.AddTranslateOp(opSuffix="fed").Set(Gf.Vec3d(*ops["translate"]))
         applied.append("translate")
+    if "rotateXYZ" in ops:
+        xf.AddRotateXYZOp(opSuffix="fed").Set(Gf.Vec3f(*ops["rotateXYZ"]))
+        applied.append("rotateXYZ")
+    if "scale" in ops:
+        xf.AddScaleOp(opSuffix="fed").Set(Gf.Vec3f(*ops["scale"]))
+        applied.append("scale")
     return applied
 
 
@@ -73,11 +81,16 @@ def build_federated_usda(
     out_path: str,
     default_prim: str = "/World",
     up_axis: str = "Z",
+    meters_per_unit: Optional[float] = None,
 ) -> dict[str, Any]:
     """以 subLayer 疊合 members 產出 federated_review.usda。
 
     members: [{usd_path, discipline, layer_order, visibility_default, root_prim?}]
-    回傳 subLayer 順序、隱藏清單、defaultPrim / upAxis。members 檔案不被修改。
+    up_axis / meters_per_unit：federated stage 的座標系宣告。呼叫端（api.build_set）SHALL 先
+    跑 validate_coords 確認各 member 一致，再把該一致值傳入；不得硬編。`meters_per_unit` 留空時
+    退回 pxr stage 預設（0.01），但這會與 metersPerUnit=0.001 的 member 差 10 倍，故呼叫端應
+    顯式傳入 member 的一致值（A3-3）。
+    回傳 subLayer 順序、隱藏清單、defaultPrim / upAxis / meters_per_unit。members 檔案不被修改。
     """
     ordered = sorted(members, key=lambda m: m.get("layer_order", 0))
     out_path = os.path.abspath(out_path)
@@ -94,6 +107,10 @@ def build_federated_usda(
 
     stage = Usd.Stage.Open(root)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z if up_axis.upper() == "Z" else UsdGeom.Tokens.y)
+    # 顯式宣告 federated stage 的 metersPerUnit，避免靜默回退 0.01（A3-3）。
+    if meters_per_unit is not None:
+        UsdGeom.SetStageMetersPerUnit(stage, float(meters_per_unit))
+    effective_mpu = float(UsdGeom.GetStageMetersPerUnit(stage))
     world = stage.OverridePrim(default_prim)  # 非破壞性 over，作 defaultPrim
     stage.SetDefaultPrim(world)
 
@@ -122,6 +139,7 @@ def build_federated_usda(
         "transformed": transformed,
         "default_prim": default_prim,
         "up_axis": up_axis,
+        "meters_per_unit": effective_mpu,
     }
 
 
