@@ -108,7 +108,7 @@ export function IssuesRuleCenterPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
           {/* [匯出 Excel]：client exportUrl 直連 coordinator proxy → governance-service openpyxl，真實下載（asbuilt）。
               成功 run 前 disabled（沒有 runId 不可匯出）——真實 gating，非假按鈕。 */}
-          <Btn caption="GET /api/governance/rule-runs/:id/export?fmt=excel" disabled={!runId || run?.status !== "succeeded"} onClick={async () => {
+          <Btn prov="asbuilt" caption="GET /api/governance/rule-runs/:id/export?fmt=excel" disabled={!runId || run?.status !== "succeeded"} onClick={async () => {
             if (!runId) return;
             setErr(null);
             try {
@@ -319,11 +319,15 @@ export function VersionDiffPage() {
           <Btn caption="POST from-diff（綁 ifc_guid）" disabled={!diffId || items.length === 0} onClick={async () => { if (!diffId) return; try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>變更構件建 issue</Btn>
           {/* [套用 3D Overlay]：呼叫真實端點 POST …/apply-overlay。後端誠實回 501（p15）——
               3D 著色走 client highlightPrimsRequest（需 viewer DataChannel），非後端 server-push。
-              此處顯示後端誠實訊息（含 501），SHALL NOT 假裝成功。成功 diff 前 disabled。 */}
-          <Btn prov="p15" disabled={busy || !diffId} caption="POST /api/governance/diffs/:id/apply-overlay（後端誠實回 501）" onClick={async () => {
+              此處顯示後端誠實訊息（含 501），SHALL NOT 假裝成功。
+              真實 gating：須 diff 真的成功（status==="succeeded"）才 enable；失敗 / 無結果保持 disabled，
+              不做點了無意義的假按鈕。applyDiffOverlay 對 HTTP 錯誤回 {ok,status,detail}，但 coordinator
+              不可達時 fetch 會 reject → 此處 catch 後設 err（誠實顯示無法連線），不靜默無反應。 */}
+          <Btn prov="p15" disabled={busy || diff?.status !== "succeeded"} caption="POST /api/governance/diffs/:id/apply-overlay（後端誠實回 501）" onClick={async () => {
             if (!diffId) return;
             setBusy(true); setErr(null);
             try { setOverlay(await governanceClient.applyDiffOverlay(diffId)); }
+            catch (e) { setOverlay(null); setErr(`無法套用 3D Overlay（無法連線 coordinator / 套用失敗）：${String(e)}`); }
             finally { setBusy(false); }
           }}>套用 3D Overlay</Btn>
         </div>

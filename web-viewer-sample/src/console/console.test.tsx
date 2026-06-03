@@ -28,6 +28,10 @@ describe("edge console honesty smoke", () => {
     const html = renderToString(<IssuesRuleCenterPage />);
     // [匯出 Excel]：client exportUrl 直連 proxy，真實下載（asbuilt）。
     expect(html).toContain("匯出 Excel");
+    // [匯出 Excel] SHALL 標 asbuilt（誠實標示操作員看得到 provenance），且初始（無成功 run）SHALL disabled。
+    const excelBtn = html.match(/<button[^>]*disabled[^>]*>[^<]*?匯出 Excel[\s\S]*?<\/button>/);
+    expect(excelBtn).not.toBeNull();
+    expect(excelBtn?.[0]).toContain("已實作"); // PROV_LABEL.asbuilt
     // [在 3D 中標示]：console 無 viewer DataChannel → 誠實標 p1，且按鈕 disabled（非假按鈕）。
     expect(html).toContain("在 3D 中標示");
     expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
@@ -42,6 +46,11 @@ describe("edge console honesty smoke", () => {
     expect(a2).toContain("套用 3D Overlay");
     expect(a2).toContain("後端待建 · P1.5"); // PROV_LABEL.p15
     expect(a2).toContain("501"); // 誠實顯示後端回應碼，不偽裝成功
+    // 初始（尚無成功 diff）時 [套用 3D Overlay] SHALL disabled（真實 gating，須 diff status===succeeded
+    // 才 enable；失敗 / 無結果保持 disabled）——非點了無意義的假按鈕。
+    const overlayBtn = a2.match(/<button[^>]*>[\s\S]*?套用 3D Overlay[\s\S]*?<\/button>/);
+    expect(overlayBtn).not.toBeNull();
+    expect(overlayBtn?.[0]).toContain("disabled");
   });
 
   it("A3 補 member visibility toggle：build 時帶入，改動須重新 Build（誠實，不捏造即時）", () => {

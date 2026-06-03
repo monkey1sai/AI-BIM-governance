@@ -27,7 +27,7 @@ A1 Rule Center（`IssuesRuleCenterPage`）SHALL 提供 [匯出 Excel] 入口，�
 
 ### Requirement: A2 VersionDiff SHALL 經 apply-overlay 端點誠實呈現後端狀態，SHALL NOT 偽裝成功
 
-A2 VersionDiffPage SHALL 提供 [套用 3D Overlay] 入口，經 coordinator proxy `POST /api/governance/diffs/:id/apply-overlay` 呼叫 governance-service。該端點後端誠實回 501（3D 著色走 client `highlightPrimsRequest`，非後端 server-push），故前端 SHALL 標 `p15` 並顯示後端誠實回應（含狀態碼與說明），SHALL NOT 把 501 / 502 偽裝成成功，SHALL NOT 顯示捏造的 overlay 結果。成功 diff 前該入口 SHALL `disabled`。
+A2 VersionDiffPage SHALL 提供 [套用 3D Overlay] 入口，經 coordinator proxy `POST /api/governance/diffs/:id/apply-overlay` 呼叫 governance-service。該端點後端誠實回 501（3D 著色走 client `highlightPrimsRequest`，非後端 server-push），故前端 SHALL 標 `p15` 並顯示後端誠實回應（含狀態碼與說明），SHALL NOT 把 501 / 502 偽裝成成功，SHALL NOT 顯示捏造的 overlay 結果。該入口 SHALL 僅在 diff 真的成功（`status === "succeeded"`）時 enable；尚無 diff、diff `failed` 或無結果時 SHALL `disabled`。當 coordinator / base URL 不可達導致 `applyDiffOverlay` 的 fetch reject 時，前端 SHALL 誠實顯示錯誤（無法連線 coordinator / 套用失敗），SHALL NOT 靜默無回應。
 
 #### Scenario: apply-overlay 回 501 時誠實顯示，不偽裝成功
 
@@ -38,9 +38,16 @@ A2 VersionDiffPage SHALL 提供 [套用 3D Overlay] 入口，經 coordinator pro
 
 #### Scenario: 成功 diff 前 apply-overlay 入口 disabled
 
-- **WHEN** 尚未取得成功 diff（無 `diffId`）
+- **WHEN** 尚未取得成功 diff（無 `diffId`，或 diff `status` 為 `queued` / `running` / `failed`，或尚無結果）
 - **THEN** [套用 3D Overlay] 按鈕 SHALL `disabled`
-- **AND** SHALL NOT 在無 diff 時送出 apply-overlay 請求
+- **AND** 僅在 diff `status === "succeeded"` 時 SHALL enable
+- **AND** SHALL NOT 在無成功 diff 時送出 apply-overlay 請求
+
+#### Scenario: coordinator 不可達時 apply-overlay 誠實顯示錯誤，不靜默
+
+- **WHEN** 操作員在成功 diff 後點 [套用 3D Overlay]，但 coordinator / base URL 不可達導致 `applyDiffOverlay` 的 fetch reject
+- **THEN** 前端 SHALL 攔截該 reject 並誠實顯示錯誤訊息（無法連線 coordinator / 套用失敗）
+- **AND** SHALL NOT 靜默無回應或殘留舊的 overlay 結果
 
 ### Requirement: A3 Federation SHALL 提供 build 時 member visibility 並誠實標示須重新 Build
 
