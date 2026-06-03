@@ -71,6 +71,22 @@ export const governanceClient = {
     jsonFetch<{ items: DiffItemRow[] }>(
       `/api/governance/diffs/${id}/items${changeType ? `?change_type=${changeType}` : ""}`
     ).then((r) => r.items),
+
+  // A3 cross-discipline federation（OpenUSD sublayer）
+  createFederatedSet: (name: string) =>
+    jsonFetch<{ set_id: string; status: string }>("/api/governance/federated-sets", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  addFederatedMember: (setId: string, member: FederatedMember) =>
+    jsonFetch<{ member_id: string }>(`/api/governance/federated-sets/${setId}/members`, {
+      method: "POST",
+      body: JSON.stringify(member),
+    }),
+  validateCoords: (setId: string) =>
+    jsonFetch<CoordReport>(`/api/governance/federated-sets/${setId}/validate-coords`, { method: "POST" }),
+  buildFederatedSet: (setId: string) =>
+    jsonFetch<FederatedBuildResult>(`/api/governance/federated-sets/${setId}/build`, { method: "POST" }),
 };
 
 export interface DiffRequest {
@@ -96,4 +112,25 @@ export interface DiffItemRow {
   ifc_type?: string;
   ifc_name?: string | null;
   change_summary: string;
+}
+
+export interface FederatedMember {
+  model_version_id: string;
+  discipline: string;
+  usd_path: string;
+  layer_order?: number;
+  visibility_default?: boolean;
+  root_prim?: string;
+}
+export interface CoordReport {
+  consistent: boolean;
+  members: Record<string, { up_axis?: string; meters_per_unit?: number; default_prim?: string | null; error?: string }>;
+  issues: string[];
+}
+export interface FederatedBuildResult {
+  usda_path: string;
+  sublayer_order: string[];
+  member_count: number;
+  hidden: string[];
+  prim_sample?: string[];
 }
