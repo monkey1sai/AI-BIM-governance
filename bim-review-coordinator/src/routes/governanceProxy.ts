@@ -106,4 +106,26 @@ export function registerGovernanceProxy(app: Express): void {
   app.post("/api/governance/federated-sets/:setId/build", (request, response) => {
     void forward(response, "POST", `/api/federated-sets/${encodeURIComponent(request.params.setId)}/build`, request.body);
   });
+
+  // Issue tracking proxy（透傳 governance-service /api/issues*）。
+  // 注意：HTTP 請求/回應透傳，issue 權威在 governance-service；非復活 2026-05-21 退役的
+  // socket collaboration server-push（getReviewIssues / createAnnotation 等）。
+  app.post("/api/governance/issues", (request, response) => {
+    void forward(response, "POST", "/api/issues", request.body);
+  });
+  app.get("/api/governance/issues", (request, response) => {
+    void forward(response, "GET", `/api/issues${queryString(request.originalUrl)}`);
+  });
+  app.get("/api/governance/issues/:issueId", (request, response) => {
+    void forward(response, "GET", `/api/issues/${encodeURIComponent(request.params.issueId)}`);
+  });
+  app.post("/api/governance/issues/:issueId/transition", (request, response) => {
+    void forward(response, "POST", `/api/issues/${encodeURIComponent(request.params.issueId)}/transition`, request.body);
+  });
+  app.post("/api/governance/issues/from-rule-run/:runId", (request, response) => {
+    void forward(response, "POST", `/api/issues/from-rule-run/${encodeURIComponent(request.params.runId)}`, request.body);
+  });
+  app.post("/api/governance/issues/from-diff/:diffId", (request, response) => {
+    void forward(response, "POST", `/api/issues/from-diff/${encodeURIComponent(request.params.diffId)}${queryString(request.originalUrl)}`, request.body);
+  });
 }

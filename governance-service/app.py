@@ -52,6 +52,11 @@ from federation.api import router as federation_router  # noqa: E402
 
 app.include_router(federation_router)
 
+# Issue tracking（issue 生命週期 + audit + A1/A2 來源綁定，獨立 router 模組）。
+from issues.api import router as issue_router  # noqa: E402
+
+app.include_router(issue_router)
+
 
 def _rule_set_path(name: Optional[str]) -> str:
     name = name or "default-governance"

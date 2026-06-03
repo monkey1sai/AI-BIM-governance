@@ -3,7 +3,7 @@
 import React, { useCallback, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import { A1A10, AppCardDef, PAGES } from "./data";
-import { CoordReport, DiffItemRow, DiffStatus, FederatedBuildResult, governanceClient, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffItemRow, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, RuleResultRow, RuleRunStatus } from "./governanceClient";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
@@ -30,8 +30,9 @@ export function OverviewPage() {
       </Panel>
       <Panel title="Phase Backlog" sub="近期重點 A1–A3；A4–A10 為 ROADMAP">
         <Field k="A1 治理與模型檢核（rule-run authority）" v="backend 已實作" prov="asbuilt" />
-        <Field k="A2 版本差異 · A3 Federation" v="前端骨架 + spec" prov="p1" />
-        <Field k="Issue 資料庫 / BCF 匯出 / IDS 匯入" v="待建" prov="p1" />
+        <Field k="A2 版本差異 · A3 Federation" v="已實作（GlobalId diff + USD sublayer federation）" prov="asbuilt" />
+        <Field k="Issue 資料庫（lifecycle + audit + 來源綁定）" v="已實作" prov="asbuilt" />
+        <Field k="BCF 匯出 / IDS 匯入" v="待建" prov="p1" />
       </Panel>
     </>
   );
@@ -43,11 +44,22 @@ export function IssuesRuleCenterPage() {
   const [failed, setFailed] = useState<RuleResultRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [issues, setIssues] = useState<IssueRow[]>([]);
+
+  const loadIssues = useCallback(async () => {
+    try { setIssues(await governanceClient.listIssues()); } catch { /* 後端離線：誠實留空 */ }
+  }, []);
+  const makeIssuesFromRun = useCallback(async () => {
+    if (!runId) return;
+    try { await governanceClient.issuesFromRuleRun(runId); await loadIssues(); } catch (e) { setErr(String(e)); }
+  }, [runId, loadIssues]);
 
   const doRun = useCallback(async () => {
     setBusy(true); setErr(null); setRun(null); setFailed([]);
     try {
       const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: ifcPath });
+      setRunId(rule_run_id);
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
         st = await governanceClient.getRuleRun(rule_run_id);
@@ -120,7 +132,31 @@ export function IssuesRuleCenterPage() {
         <Field k="IDS-XML 匯入" v="待建（需 pip install ifctester + smoke）" prov="p1" />
         <Field k="Excel 匯出" v="openpyxl" prov="asbuilt" />
         <Field k="BCF 匯出（issue→.bcfzip）" v="待建（bcf 模組 + LGPL 閘門）" prov="p15" />
-        <Field k="Issue 生命週期資料庫" v="待建" prov="p1" />
+        <Field k="Issue 生命週期資料庫" v="open→assigned→resolved/rejected→reopened + audit" prov="asbuilt" />
+      </Panel>
+
+      <Panel
+        title="Issue Center"
+        sub="rule-run 失敗構件 → issue（綁 ifc_guid，BCF rule 3/10：無 guid 僅視覺標註）"
+        prov="asbuilt"
+        actions={<Btn caption="POST from-rule-run" disabled={!runId} onClick={makeIssuesFromRun}>失敗構件建 issue</Btn>}
+      >
+        <Btn caption="GET /api/governance/issues" onClick={loadIssues}>載入 issues</Btn>
+        {issues.length > 0 && (
+          <table className="ec-table" style={{ marginTop: 10 }}>
+            <thead><tr><th>kind</th><th>severity</th><th>status</th><th>ifc_guid</th><th>title</th><th /></tr></thead>
+            <tbody>
+              {issues.slice(0, 30).map((it) => (
+                <tr key={it.id}>
+                  <td>{it.kind}</td><td>{it.severity}</td><td>{it.status}</td><td>{it.ifc_guid}</td><td>{it.title}</td>
+                  <td>{it.status !== "resolved" && it.status !== "rejected" && (
+                    <Btn caption="transition" onClick={async () => { await governanceClient.transitionIssue(it.id, "resolved"); loadIssues(); }}>resolve</Btn>
+                  )}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </Panel>
     </>
   );
