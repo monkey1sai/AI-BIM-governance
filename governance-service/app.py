@@ -71,6 +71,7 @@ class RuleRunRequest(BaseModel):
     rule_set: Optional[str] = None
     model_version_id: Optional[str] = None
     element_mapping_path: Optional[str] = None
+    ids_path: Optional[str] = None  # 提供時改用 buildingSMART IDS（ifctester）而非 YAML 規則集
 
 
 @app.get("/health")
@@ -90,20 +91,32 @@ def health():
 
 @app.post("/api/rule-runs", status_code=202)
 def create_rule_run(req: RuleRunRequest, background: BackgroundTasks):
-    rule_set_path = _rule_set_path(req.rule_set)
     if not os.path.exists(req.ifc_source_path):
         raise HTTPException(status_code=400, detail=f"ifc_source_path not found: {req.ifc_source_path}")
-    run_id = store.create_run(req.model_version_id, req.ifc_source_path, req.rule_set or "default-governance")
-    background.add_task(_execute, run_id, req.ifc_source_path, rule_set_path, req.element_mapping_path)
+    if req.ids_path:
+        if not os.path.exists(req.ids_path):
+            raise HTTPException(status_code=400, detail=f"ids_path not found: {req.ids_path}")
+        rule_set_path = None
+        rule_set_label = os.path.basename(req.ids_path)
+    else:
+        rule_set_path = _rule_set_path(req.rule_set)
+        rule_set_label = req.rule_set or "default-governance"
+    run_id = store.create_run(req.model_version_id, req.ifc_source_path, rule_set_label)
+    background.add_task(_execute, run_id, req.ifc_source_path, rule_set_path, req.element_mapping_path, req.ids_path)
     return {"rule_run_id": run_id, "status": "queued"}
 
 
-def _execute(run_id: str, ifc_path: str, rule_set_path: str, mapping_path: Optional[str]) -> None:
+def _execute(run_id: str, ifc_path: str, rule_set_path: Optional[str], mapping_path: Optional[str], ids_path: Optional[str] = None) -> None:
     try:
         store.mark_running(run_id)
         model = open_model(ifc_path)
-        rule_set = load_rule_set(rule_set_path)
-        run = run_rules(model, rule_set)
+        if ids_path:
+            from rule_engine.ids_runner import run_ids_file
+
+            run = run_ids_file(model, ids_path)
+        else:
+            rule_set = load_rule_set(rule_set_path)
+            run = run_rules(model, rule_set)
         if mapping_path and os.path.exists(mapping_path):
             mapping, meta = load_element_mapping(mapping_path)
             if is_fake_mapping(meta):

@@ -20,12 +20,12 @@ def client(tmp_path, monkeypatch):
     return TestClient(app_module.app)
 
 
-def test_health_reports_ifctester_false(client):
+def test_health_reports_ifctester_true(client):
     body = client.get("/health").json()
     assert body["status"] == "ok"
     assert body["ifcopenshell"] is True
-    # 誠實：ifctester 未安裝
-    assert body["ifctester"] is False
+    # ifctester 已安裝（IDS-XML 匯入啟用）
+    assert body["ifctester"] is True
     assert "default-governance" in body["rule_sets"]
 
 
