@@ -1,14 +1,63 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
-import { A1A10, AppCardDef, PAGES, Prov } from "./data";
+import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
+// 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
+// fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
+import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
 
+// 三欄服務邊界圖（移植自原型 BoundaryDiagram）：WEB-PLANE → CONTROL-PLANE BOUNDARY → INTERNAL。
+// 純展示（asbuilt 拓樸）；視覺化「瀏覽器只打 coordinator :8004」鐵律。
+function BoundaryDiagram() {
+  const col = (plane: "web" | "boundary" | "internal" | "external", cap: string, cls: string) => (
+    <div className={`ec-bd-col ${cls}`}>
+      <div className="ec-bd-cap">{cap}</div>
+      {SERVICES.filter((s) => s.plane === plane).map((s) => (
+        <div className="ec-bd-node" key={s.id}>
+          <div className="ec-bd-name">{s.name}</div>
+          <div className="ec-bd-sub">{s.sub}</div>
+          {s.port && <div className="ec-bd-port">{s.port}</div>}
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div className="ec-boundary">
+      {col("web", "WEB-PLANE · 瀏覽器可達", "web")}
+      <div className="ec-bd-link"><span className="ec-bd-arrow">→</span><span>僅此一條<br />HTTPS / WSS</span></div>
+      {col("boundary", "CONTROL-PLANE BOUNDARY", "boundary")}
+      <div className="ec-bd-link"><span className="ec-bd-arrow">→</span><span>internal<br />loopback</span></div>
+      <div className="ec-bd-col internal">
+        <div className="ec-bd-cap">INTERNAL · 瀏覽器永不直連</div>
+        {SERVICES.filter((s) => s.plane === "internal" || s.plane === "external").map((s) => (
+          <div className="ec-bd-node" key={s.id}>
+            <div className="ec-bd-name">{s.name}</div>
+            <div className="ec-bd-sub">{s.sub}</div>
+            {s.port && <div className="ec-bd-port">{s.port}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function OverviewPage() {
+  // 可選接 coordinator /health 探活（真實端點）。未連線時誠實顯示「未連線」，不假裝 healthy。
+  const [health, setHealth] = useState<"unknown" | "ok" | "down">("unknown");
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.health()
+      .then((h) => { if (alive) setHealth(h.status === "ok" ? "ok" : "down"); })
+      .catch(() => { if (alive) setHealth("down"); });
+    return () => { alive = false; };
+  }, []);
+  const builtCount = ENDPOINTS.length;
   return (
     <>
       <h1>系統總覽 · Edge Console Overview</h1>
@@ -18,16 +67,58 @@ export function OverviewPage() {
       </p>
       <Panel title="落地端健康狀態 · Edge Health" sub="coordinator / kit 為 as-built；conversion / gpu 無遙測標未取得，不畫成 fail" prov="asbuilt">
         <div className="ec-grid">
-          <Field k="COORD Coordinator :8004" v="control plane" prov="asbuilt" />
+          {/* /health 探活結果（up / down / 探活中）皆為真實觀測 → 一律標 asbuilt（真實探活）；
+              down 是「真的探到不可達」，不是示範資料。demo 只保留給完全沒有真實遙測來源的值。 */}
+          <Field
+            k="COORD Coordinator :8004"
+            v={health === "ok" ? "control plane · /health ok" : health === "down" ? "未連線（/health 不可達）" : "control plane（探活中…）"}
+            prov="asbuilt"
+          />
           <Field k="KIT Runtime 49100/47998" v="local_fixed" prov="asbuilt" />
           <Field k="CONV Conversion :49101" v="未取得" prov="demo" />
           <Field k="GPU" v="未取得" prov="demo" />
           <Field k="GOV governance-service :49102" v="rule-run authority" prov="asbuilt" />
         </div>
+        <p className="ec-note">COORD /health 為真實探活；conversion / gpu 無統一遙測來源 → 標「未取得」（idle，非 fail），不捏造數值。</p>
       </Panel>
-      <Panel title="邊界 · Boundary" prov="asbuilt">
-        <p className="ec-note">瀏覽器 → Coordinator :8004 only。streaming 49100/47998、conversion 49101、governance 49102 為內部 loopback，瀏覽器不直連。</p>
+
+      <Panel title="服務邊界 · Web-plane → Coordinator → Internal" sub="瀏覽器只與 coordinator :8004 對話；49100/49101/49102 為內部，永不直連" prov="asbuilt">
+        <BoundaryDiagram />
       </Panel>
+
+      <Panel title={`已實作面 · Coordinator HTTP 介面（${builtCount} 個路由）`} sub="權威：bim-review-coordinator/src/app.ts（逐一查證）" prov="asbuilt">
+        <div>
+          {ENDPOINTS.map((e) => (
+            <div className="ec-ep" key={e.m + e.path}>
+              <span className={`ec-ep-m ec-ep-${e.m.toLowerCase()}`}>{e.m}</span>
+              <span className="ec-ep-p">{e.path}</span>
+              {e.note && <span className="ec-ep-note">· {e.note}</span>}
+            </div>
+          ))}
+        </div>
+        <p className="ec-note">另有 A1/A2/A3 governance proxy（<code>/api/governance/*</code>）由 governanceClient 走，透傳至 governance-service :49102。</p>
+      </Panel>
+
+      <Panel
+        title="相依與授權風險 · License posture"
+        sub="A1 core 雖零 GPU / 零 NVIDIA runtime，仍依賴下列元件；LGPL / copyleft 商用前須法務確認（不得宣稱無授權風險）"
+        prov="asbuilt"
+      >
+        <table className="ec-table">
+          <thead><tr><th>元件</th><th>授權</th><th>用途</th><th>風險</th></tr></thead>
+          <tbody>
+            {DEPENDENCIES.map((d) => (
+              <tr key={d.name}>
+                <td>{d.name}</td>
+                <td>{d.license}</td>
+                <td>{d.use}{d.note ? ` · ${d.note}` : ""}</td>
+                <td><span className={`ec-risk ec-risk-${d.risk}`}>{d.risk === "copyleft" ? "copyleft（須法務）" : d.risk === "permissive" ? "permissive" : "待定"}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+
       <Panel title="Phase Backlog" sub="近期重點 A1–A3；A4–A10 為 ROADMAP">
         <Field k="A1 治理與模型檢核（rule-run authority）" v="backend 已實作" prov="asbuilt" />
         <Field k="A2 版本差異 · A3 Federation" v="已實作（GlobalId diff + USD sublayer federation）" prov="asbuilt" />
@@ -217,7 +308,7 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
   const Card = (a: AppCardDef) => (
     <div
       key={a.code}
-      className={`ec-appcard ${a.tier === "roadmap" ? "roadmap" : ""} ${a.route ? "" : "disabled"}`}
+      className={`ec-appcard ${a.tier === "roadmap" ? "roadmap" : ""} ${a.route ? "clickable" : "disabled"}`}
       onClick={() => a.route && onOpen(a.route)}
     >
       <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -231,12 +322,81 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
   return (
     <>
       <h1>應用導引 · Applications A1–A10</h1>
-      <p className="ec-lead">十個應用模組入口。近期重點 A1–A3 為聚焦項；A4–A10 為 ROADMAP，標真實 Phase，後端未上線者灰掉不可點。</p>
-      <Panel title="近期重點 · Focus" sub="A1–A3">
+      <p className="ec-lead">
+        十個應用模組入口。近期重點 A1–A3 為聚焦項（後端已實作、可真實驗證）；A4–A10 為 ROADMAP，
+        標真實 Phase，點卡片開「願景詳頁」（schema/api/ui/mvp/risks），**後端未建、整段標願景**。
+      </p>
+      <Panel title="近期重點 · Focus" sub="A1–A3（後端已實作）">
         <div className="ec-grid">{focus.map(Card)}</div>
       </Panel>
-      <Panel title="後期願景 · Roadmap" sub="A4–A10 · Phase 3–4">
+      <Panel title="後期願景 · Roadmap" sub="A4–A10 · Phase 3–4（後端未建，點卡看願景詳頁）">
         <div className="ec-grid">{roadmap.map(Card)}</div>
+      </Panel>
+    </>
+  );
+}
+
+// ── P3-1 A4–A10 vision 詳頁（泛用，吃 A1A10_DETAIL）──
+// 誠實鐵律：整頁標願景（p3/p4）；明確標「後端未建」；scenario 為範例情境（願景敘事），
+// api 為願景 API 設計（非已實作 route）。禁當真實實測 / 禁捏造數字。
+export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: string) => void }) {
+  const d: AppVisionDetail | undefined = A1A10_DETAIL[slug];
+  if (!d) {
+    return (
+      <>
+        <h1>未知應用</h1>
+        <p className="ec-lead">找不到 slug=<code>{slug}</code> 的願景詳頁。</p>
+        <Btn caption="回 Applications" onClick={() => onOpen("apps")}>← 回應用導引</Btn>
+      </>
+    );
+  }
+  return (
+    <>
+      <h1>{d.code} · {d.title}<span style={{ marginLeft: 10 }}><ProvTag prov={d.prov} /></span></h1>
+      <p className="ec-lead">{d.en} · Phase {d.phase} · {d.pitch}</p>
+      <Btn caption="回 Applications" onClick={() => onOpen("apps")}>← 回應用導引</Btn>
+
+      <Panel title="目標 · Goal" sub="此應用後端未建；以下為願景規格（roadmap）" prov={d.prov}>
+        <p className="ec-note" style={{ color: "var(--ec-fg-2)" }}>{d.goal}</p>
+        <p className="ec-warn-note">後端未建（vision）：本頁所有 schema / api / 數字皆為願景設計，非本系統真實實測。</p>
+      </Panel>
+
+      <Panel title="範例情境 · Example scenario" sub="願景敘事（非真實 run），具體數字為原型情境" prov={d.prov}>
+        <Field k="情境" v={d.scenarioHead} prov={d.prov} />
+        <Field k="範例輸出" v={d.scenarioResult} prov={d.prov} />
+      </Panel>
+
+      <Panel title="DB schema（願景設計）" prov={d.prov}>
+        {d.schema.map((s) => <Field key={s.t} k={s.t} v={s.f} prov={d.prov} />)}
+      </Panel>
+
+      <Panel title="REST API（願景設計，非已實作 route）" prov={d.prov}>
+        <div>
+          {d.api.map((a) => (
+            <div className="ec-ep" key={a.u}>
+              <span className={`ec-ep-m ec-ep-${a.m.toLowerCase()}`}>{a.m}</span>
+              <span className="ec-ep-p">{a.u}</span>
+              <span className="ec-ep-note">· {a.d}</span>
+            </div>
+          ))}
+        </div>
+        <p className="ec-warn-note">以上為 roadmap 願景 API 設計；後端尚未實作這些 route（不可當真實端點呼叫）。</p>
+      </Panel>
+
+      <Panel title="UI 面板（願景）" prov={d.prov}>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.ui.map((x) => <li key={x}>{x}</li>)}</ul>
+      </Panel>
+
+      <Panel title="MVP 驗收條件（願景）" prov={d.prov}>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.mvp.map((x) => <li key={x}>{x}</li>)}</ul>
+      </Panel>
+
+      <Panel title="Sprint steps（願景）" prov={d.prov}>
+        {d.steps.map((s) => <Field key={s.sp} k={`${s.sp} · ${s.t}`} v={s.d} prov={d.prov} />)}
+      </Panel>
+
+      <Panel title="風險 · Risks（願景）" prov={d.prov}>
+        <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-amb)" }}>{d.risks.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
     </>
   );
@@ -497,6 +657,460 @@ export function FederationPage() {
         <Field k="per-member transform" v="已實作：root layer over xformOp（member immutable）；順序 scale→rotateXYZ→translate，translate 最外層" prov="asbuilt" />
         <Field k="member visibility" v="build 時帶入 visibility_default（隱藏 member 寫成 invisible，回傳 hidden[]）；無「不重建即時切換」端點，改 visible 須重新 Build 才生效（不捏造即時能力）" prov="asbuilt" />
         <Field k="Open in Review Room" v="產出 viewer 消費的 stage_composition handoff；GPU 串流由 host-native Kit + coordinator session 負責，本服務 CPU loopback 不開串流" prov="asbuilt" />
+      </Panel>
+    </>
+  );
+}
+
+// ── P2-2 Semantic Viewer（H）：載入真實 element_mapping.json，嚴守 fake-vs-real 隔離 ──
+// mapping URL 來源：帶轉換產出的真實 ifc-ready job（/api/external/ifc-ready）定位，或操作員貼入。
+// 凡 mock / allow_fake_mapping / fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律標
+// demo 並「拒絕當正式 mapping 驗證」，禁覆蓋 / 禁冒充真 mapping。點構件 highlight 需 viewer
+// DataChannel（console 殼層無此鏈）→ 誠實標 p1，不做假按鈕。
+export function SemanticViewerPage() {
+  const [mapUrl, setMapUrl] = useState("");
+  const [doc, setDoc] = useState<ElementMappingDocument | null>(null);
+  const [candidates, setCandidates] = useState<IfcReadyListItem[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // 列出帶轉換產出（expected_stage_url）的真實 ifc-ready job，方便操作員定位真實 mapping artifact。
+  // 真實端點：GET /api/external/ifc-ready（IfcReadyListItem 帶 expected_stage_url；coordinator 不持有
+  // mapping_url 欄位，故只列「有 stage 產出」的 job 作候選，mapping URL 仍由操作員貼入）。
+  // 誠實：有資料就填真實候選；佇列為空時誠實顯示為空，不留永遠空白的假列表。
+  const loadCandidates = useCallback(async () => {
+    setErr(null);
+    try {
+      const { items } = await coordinatorClient.listIfcReady(50);
+      const withMap = items.filter((j) => j.expected_mapping_url);
+      setCandidates(withMap);
+      if (withMap.length === 0) {
+        setErr("無帶 mapping 產出（expected_mapping_url）的 ifc-ready job（可直接貼 mapping URL 載入）");
+      }
+    } catch (e) {
+      setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`);
+    }
+  }, []);
+
+  const loadMapping = useCallback(async () => {
+    if (!mapUrl.trim()) return;
+    setBusy(true); setErr(null); setDoc(null);
+    try {
+      const res = await fetch(mapUrl.trim(), { headers: { Accept: "application/json" } });
+      if (!res.ok) { setErr(`載入 mapping ${res.status} ${res.statusText}`); return; }
+      const json = (await res.json()) as ElementMappingDocument;
+      setDoc(json);
+    } catch (e) {
+      setErr(`無法載入 / 解析 mapping JSON：${String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [mapUrl]);
+
+  const fake = doc ? isFakeMappingDocument(doc) : false;
+  const blockReason = doc ? mappingVerificationBlockReason(doc) : null;
+  const items = doc?.items ?? [];
+
+  return (
+    <>
+      <h1>Semantic Viewer · IFC→USD 語意檢核（H）</h1>
+      <p className="ec-lead">
+        載入轉換產出的 <code>element_mapping.json</code>（IFC GUID ⇔ USD Prim Path），檢視語意對照。
+        嚴守 fake-vs-real 隔離：mock / fake mapping 一律標示為示範資料，不冒充真實對映。
+      </p>
+
+      <Panel title="載入 mapping artifact" sub="mapping URL（conversion artifact）；可從 ifc-ready job（帶轉換產出）定位，或直接貼入" prov="artifact">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="ec-btn" style={{ minWidth: 420 }} placeholder="element_mapping.json 的 URL（artifact 來源）" value={mapUrl} onChange={(e) => setMapUrl(e.target.value)} />
+          <Btn primary disabled={busy || !mapUrl.trim()} caption="fetch mapping JSON" onClick={loadMapping}>{busy ? "載入中…" : "載入 mapping"}</Btn>
+          <Btn caption="GET /api/external/ifc-ready（找帶 mapping 產出的 job）" onClick={loadCandidates}>列出真實 job</Btn>
+        </div>
+        {err && <p className="ec-warn-note">{err}</p>}
+        {candidates.length > 0 && (
+          <div className="ec-note" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <span>真實 job 候選（帶 mapping 產出，點選自動填入 mapping URL）：</span>
+            {candidates.map((c) => (
+              <button
+                key={c.ifc_ready_job_id}
+                type="button"
+                className="ec-btn ec-s"
+                title={c.expected_mapping_url ?? ""}
+                onClick={() => { if (c.expected_mapping_url) setMapUrl(c.expected_mapping_url); }}
+              >
+                {c.ifc_ready_job_id}{c.review_session_id ? `（session ${c.review_session_id}）` : ""}
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="ec-note">mapping 為 conversion artifact（權威在 streaming-server / artifact store）；本頁唯讀檢視，不寫回、不覆蓋真實 mapping。</p>
+      </Panel>
+
+      {doc && (
+        <>
+          {fake && (
+            <div className="ec-fake-banner">
+              偵測到 fake / mock mapping（{blockReason}）。此資料<strong>僅可做 smoke test</strong>，已標示為示範資料，
+              不列入正式 mapping 驗證、不冒充真實對映。
+            </div>
+          )}
+          <Panel
+            title="mapping 摘要"
+            sub={fake ? "此 mapping 為示範資料（fake / mock）" : "真實 mapping artifact"}
+            prov={fake ? "demo" : "artifact"}
+          >
+            <div className="ec-grid">
+              <Metric value={doc.summary?.mapped_count ?? items.length} label="mapped" />
+              <Metric value={doc.summary?.unmapped_ifc_count ?? (doc.unmapped_ifc_guids?.length ?? "—")} label="unmapped IFC" tone="warn" />
+              <Metric value={doc.summary?.unmapped_usd_count ?? (doc.unmapped_usd_prims?.length ?? "—")} label="unmapped USD" tone="warn" />
+              <Metric value={doc.summary?.fake_mapping_count ?? (fake ? "≥1" : 0)} label="fake mapping" tone={fake ? "bad" : undefined} />
+            </div>
+            <Field k="mapping_version" v={doc.mapping_version ?? "—"} prov={fake ? "demo" : "artifact"} />
+            <Field k="model_version_id" v={doc.model_version_id ?? "—"} prov={fake ? "demo" : "artifact"} />
+          </Panel>
+
+          {items.length > 0 && (
+            <Panel title="元件對照 · IFC GUID ⇔ USD Prim Path" sub="逐筆標示是否為 fake item（不混淆真假）" prov={fake ? "demo" : "artifact"}>
+              <table className="ec-table">
+                <thead><tr><th>ifc_class</th><th>name</th><th>ifc_guid</th><th>usd_prim_path</th><th>method</th><th /></tr></thead>
+                <tbody>
+                  {items.slice(0, 40).map((it, i) => {
+                    const itemFake = isFakeMappingItem(it);
+                    return (
+                      <tr key={i}>
+                        <td>{it.ifc_class ?? ""}</td>
+                        <td>{it.name ?? ""}</td>
+                        <td>{it.ifc_guid ?? <span className="ec-warn-note">null</span>}</td>
+                        <td>{it.usd_prim_path ?? <span className="ec-warn-note">null（未對映）</span>}</td>
+                        <td>{it.mapping_method ?? ""}{itemFake && <span className="ec-prov ec-demo" style={{ marginLeft: 6 }}>fake</span>}</td>
+                        <td>
+                          <Btn prov="p1" disabled caption="需 viewer DataChannel（focusPrim / highlightPrims）">在 3D 標示</Btn>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Panel>
+          )}
+        </>
+      )}
+
+      <Panel title="範圍與誠實標示" prov="asbuilt">
+        <Field k="mapping fake-vs-real 隔離" v="mock / allow_fake_mapping / fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake（重用既有 isFakeMappingDocument）" prov="asbuilt" />
+        <Field k="點構件 → 3D highlight" v="需 viewer 的 WebRTC DataChannel（focusPrim / highlightPrims）；console 殼層與 viewer 互斥掛載、無 DataChannel → 標 p1，不做假按鈕" prov="p1" />
+        <Field k="mapping 權威" v="conversion artifact（streaming-server / artifact store 唯讀）；本頁不覆蓋、不冒充" prov="asbuilt" />
+      </Panel>
+    </>
+  );
+}
+
+// ── P2-3 Coordinator Console（B）：接 coordinator 自有 REST（只打 :8004）──
+// 真實端點：GET /api/runtime/status（sessions / kit bindings / ifc_ready jobs / observations）。
+// callback-outbox 直查需 internal token（瀏覽器不可達）→ 改由 ifc_ready job 的 callback_outbox_id
+// 觀察，不捏造 outbox 三態互動。GPU / 首幀無遙測 → 標未取得，禁畫 fail。
+export function CoordinatorPage() {
+  const [rt, setRt] = useState<RuntimeStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setErr(null);
+    try { setRt(await coordinatorClient.runtimeStatus()); }
+    catch (e) { setErr(`未連線 coordinator /api/runtime/status：${String(e)}`); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <>
+      <h1>Coordinator Console · 控制平面（B）</h1>
+      <p className="ec-lead">
+        會議生命週期 / Kit 綁定 / IFC-ready 派工 / callback outbox，全經 coordinator :8004。
+        本頁讀 <code>/api/runtime/status</code>（coordinator-visible read-only summary）；瀏覽器不直連 49100/49101/49102。
+        誠實標示：Kit 首幀 / GPU 無統一遙測（port listening ≠ has frame）→ 不畫成 fail、不捏造秒數。
+      </p>
+      <Panel
+        title="Review sessions · 生命週期"
+        sub="GET /api/runtime/status · status：created / active / closing / closed / failed（KitInstance 權威 enum）"
+        prov="asbuilt"
+        actions={<Btn disabled={busy} caption="GET /api/runtime/status" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
+      >
+        {err && <p className="ec-warn-note">{err}</p>}
+        {rt && (
+          <>
+            <div className="ec-grid" style={{ marginBottom: 10 }}>
+              <Metric value={rt.sessions.count} label="sessions" />
+              <Metric value={rt.sessions.active_count} label="active" />
+              <Metric value={rt.sessions.participant_count} label="participants" />
+              <Metric value={rt.ifc_ready_jobs.count} label="ifc-ready jobs" />
+            </div>
+            {rt.sessions.items.length > 0 ? (
+              <table className="ec-table">
+                <thead><tr><th>session_id</th><th>status</th><th>model_version</th><th>participants</th><th>kit_instance</th></tr></thead>
+                <tbody>
+                  {rt.sessions.items.slice(0, 30).map((s) => (
+                    <tr key={s.session_id}>
+                      <td>{s.session_id}</td><td>{s.status}</td><td>{s.model_version_id}</td>
+                      <td>{s.participant_count}</td><td>{s.kit_instance_ids.join(", ") || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <p className="ec-note">目前無 session（coordinator 已連線，列表為空——非錯誤）。</p>}
+          </>
+        )}
+      </Panel>
+
+      {rt && (
+        <Panel title="Kit Endpoint 綁定 · kit_instance_bindings" sub="state = KitInstance.status 權威 enum；last frame 無資料源 → 不顯示假秒數" prov="asbuilt">
+          {rt.kit_instance_bindings.length > 0 ? (
+            <table className="ec-table">
+              <thead><tr><th>kit_instance_id</th><th>session</th><th>state</th><th>last_heartbeat</th></tr></thead>
+              <tbody>
+                {rt.kit_instance_bindings.slice(0, 20).map((b, i) => (
+                  <tr key={i}>
+                    <td>{b.kit_instance_id}</td><td>{b.session_id}</td><td>{b.status}</td>
+                    <td>{b.last_heartbeat_at ?? <span className="ec-warn-note">未取得</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p className="ec-note">無 Kit 綁定（無 active session 時為空）。</p>}
+          <p className="ec-note">「port listening ≠ has frame」：首幀 / GPU 無統一遙測來源 → 不畫成 fail、不捏造秒數。</p>
+        </Panel>
+      )}
+
+      {rt && (
+        <Panel title="Callback outbox · 回寫公司雲端" sub="僅 metadata，非雙向同步；直查 outbox 需 internal token（瀏覽器不可達）" prov="asbuilt">
+          {rt.ifc_ready_jobs.recent.filter((j) => j.callback_outbox_id).length > 0 ? (
+            <table className="ec-table">
+              <thead><tr><th>ifc_ready_job</th><th>conversion_status</th><th>callback_outbox_id</th></tr></thead>
+              <tbody>
+                {rt.ifc_ready_jobs.recent.filter((j) => j.callback_outbox_id).slice(0, 20).map((j) => (
+                  <tr key={j.ifc_ready_job_id}>
+                    <td>{j.ifc_ready_job_id}</td><td>{j.conversion_status ?? "—"}</td><td>{j.callback_outbox_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p className="ec-note">目前無帶 callback_outbox_id 的 job。outbox 三態詳情（delivered/pending/dead_letter）需 internal-token 端點，瀏覽器不可達 → 此處僅顯示 coordinator 摘要可見的關聯，不捏造投遞數。</p>}
+        </Panel>
+      )}
+    </>
+  );
+}
+
+// ── P2-3 Model Intake（C）：IFC-ready intake 佇列 + conversion quality（誠實）──
+// 真實端點：GET /api/external/ifc-ready[?limit]。conversion quality / mapping fidelity 為 artifact；
+// 無真實遙測的數值（GPU / 秒數）一律標未取得，不捏造、不承諾精準 GUID。
+export function IntakePage() {
+  const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setErr(null);
+    try { setJobs((await coordinatorClient.listIfcReady(50)).items); }
+    catch (e) { setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <>
+      <h1>Model Intake · 接收與轉換（C）</h1>
+      <p className="ec-lead">
+        外部 IFC Worker → coordinator <code>/api/external/ifc-ready</code> → 內部轉換 authority（bim-streaming-server）。
+        本頁讀 intake 佇列；轉換品質 / mapping 可信度為 artifact，不承諾精準 GUID。
+      </p>
+      <Panel
+        title="IFC-ready intake 佇列"
+        sub="GET /api/external/ifc-ready?limit=1..100 · status / download_status 為 as-built"
+        prov="asbuilt"
+        actions={<Btn disabled={busy} caption="GET /api/external/ifc-ready" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
+      >
+        {err && <p className="ec-warn-note">{err}</p>}
+        {jobs.length > 0 ? (
+          <table className="ec-table">
+            <thead><tr><th>ifc_ready_job_id</th><th>status</th><th>download</th><th>conversion</th><th>authority</th><th>session</th></tr></thead>
+            <tbody>
+              {jobs.slice(0, 40).map((j) => (
+                <tr key={j.ifc_ready_job_id}>
+                  <td>{j.ifc_ready_job_id}</td><td>{j.status}</td>
+                  <td>{j.download_status ?? "—"}</td><td>{j.conversion_status ?? "—"}</td>
+                  <td>{j.conversion_authority ?? "—"}</td><td>{j.review_session_id ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p className="ec-note">{err ? "" : "目前無 intake job（coordinator 已連線，佇列為空——非錯誤）。"}</p>}
+      </Panel>
+
+      <Panel title="轉換品質與 mapping 可信度 · 誠實標示" sub="coordinator 不計算，只轉發 conversion authority 值；無遙測欄位標未取得" prov="artifact">
+        <Field k="quality_metrics_summary" v="coverage_status / unmapped_count / coverage_ratio（pass-through artifact，隨 conversion result 提供）" prov="artifact" />
+        <Field k="semantic_mapping_fidelity" v="guid_exact / ifc_class_grouped_with_name（缺欄位時 fallback null）" prov="artifact" />
+        <Field k="精準 GUID 對映" v="MVP 不承諾精準 GUID；需 streaming adapter force IfcOpenShell USD 模式（PoC），允許人工校正" prov="demo" />
+        <Field k="conversion 秒數 / GPU" v="未取得（無統一遙測來源）" prov="demo" />
+        <Field k="manual mapping correction UI" v="待建" prov="p15" />
+      </Panel>
+    </>
+  );
+}
+
+// ── P2-3 Runtime Dashboard（F）：Kit 綁定 / stream-config（coordinator read-only）──
+// 真實端點：GET /api/runtime/status（host_native_plane / kit bindings）+
+// GET /api/review-sessions/:id/stream-config。GPU / conversion 無遙測 → 標未取得，禁畫 fail。
+export function RuntimePage() {
+  const [rt, setRt] = useState<RuntimeStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [scSession, setScSession] = useState("");
+  const [sc, setSc] = useState<string | null>(null);
+  const [scErr, setScErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setErr(null);
+    try { setRt(await coordinatorClient.runtimeStatus()); }
+    catch (e) { setErr(`未連線 coordinator /api/runtime/status：${String(e)}`); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const fetchStreamConfig = useCallback(async () => {
+    if (!scSession.trim()) return;
+    setScErr(null); setSc(null);
+    try { setSc(JSON.stringify(await coordinatorClient.streamConfig(scSession.trim()), null, 2)); }
+    catch (e) { setScErr(`stream-config 讀取失敗：${String(e)}`); }
+  }, [scSession]);
+
+  return (
+    <>
+      <h1>Runtime Dashboard · 串流執行狀態（F）</h1>
+      <p className="ec-lead">
+        Kit 實例綁定 / stream-config，由 coordinator <strong>read-only proxy</strong> 轉發；瀏覽器永不直連 49100/49101。
+        GPU / 轉換秒數無統一遙測 → 標未取得（idle，非 fail）。
+      </p>
+      <Panel
+        title="Host-native plane 觀測"
+        sub="GET /api/runtime/status · observations（read-only；Kit 內部 stage state 仍需 DataChannel / log 佐證）"
+        prov="asbuilt"
+        actions={<Btn disabled={busy} caption="GET /api/runtime/status" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
+      >
+        {err && <p className="ec-warn-note">{err}</p>}
+        {rt && (
+          <>
+            <Field k="conversion authority" v={`${rt.configured_endpoints.conversion_authority.authority} · ${rt.configured_endpoints.conversion_authority.base_url}`} prov="asbuilt" />
+            <Field k="Kit signal ports" v={rt.observations.host_native_plane.kit_signal_ports.join(", ") || "—"} prov="asbuilt" />
+            <Field k="Kit media ports" v={rt.observations.host_native_plane.kit_media_ports.join(", ") || "—"} prov="asbuilt" />
+            <Field k="GPU / VRAM / util" v="未取得（streaming 未提供統一 GPU 遙測）" prov="demo" />
+            <Field k="觀測分類" v={rt.observations.note} prov="asbuilt" />
+          </>
+        )}
+      </Panel>
+
+      {rt && (
+        <Panel title="Kit 實例綁定 · kit_instance_bindings" sub="provider local_fixed；state = KitInstance.status 權威 enum" prov="asbuilt">
+          {rt.kit_instance_bindings.length > 0 ? (
+            <table className="ec-table">
+              <thead><tr><th>kit_instance_id</th><th>session</th><th>state</th><th>started_at</th></tr></thead>
+              <tbody>
+                {rt.kit_instance_bindings.slice(0, 20).map((b, i) => (
+                  <tr key={i}><td>{b.kit_instance_id}</td><td>{b.session_id}</td><td>{b.status}</td><td>{b.started_at ?? "—"}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p className="ec-note">無 Kit 綁定（無 active session 時為空；routing_policy=dedicated_instance 超出 endpoint 數會停在 queued_for_instance）。</p>}
+        </Panel>
+      )}
+
+      <Panel title="stream-config · 給 viewer 的連線資訊" sub="GET /api/review-sessions/:id/stream-config（coordinator owner）" prov="asbuilt">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="ec-btn" style={{ minWidth: 320 }} placeholder="review_session_id" value={scSession} onChange={(e) => setScSession(e.target.value)} />
+          <Btn disabled={!scSession.trim()} caption="GET …/stream-config" onClick={fetchStreamConfig}>讀取 stream-config</Btn>
+        </div>
+        {scErr && <p className="ec-warn-note">{scErr}</p>}
+        {sc && <pre className="ec-note" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{sc}</pre>}
+        <p className="ec-note">stream-config 為 coordinator owner 的真實端點；GPU 串流由 host-native Kit 負責，本面板僅唯讀轉發連線資訊，不開串流、不捏造遙測。</p>
+      </Panel>
+
+      <Panel title="治理規則執行綁定（A1）" sub="governance-service :49102 為內部服務（經 coordinator proxy）" prov="asbuilt">
+        <Field k="rule-run authority" v="A1 後端已實作（見 Issues · Rule Center 頁可真實觸發）" prov="asbuilt" />
+      </Panel>
+    </>
+  );
+}
+
+// ── P4 Review Room（G）v1：維持殼層狀態 + 加「在既有 viewer 開啟」連結 ──
+// 真實 3D viewport 在既有 <App/> viewer（非 console）。本頁不動 App.tsx / Window.tsx，
+// 只提供連到既有 viewer 入口的連結：coordinator /ui/open?session=（server-side redirect，
+// 查證自 app.ts:1587）或本地 viewer /?session=（main.tsx 解析 ?session= attach）。
+// 工具列誠實標來源：openStage/focusPrim/selectPrims/clearHighlight 為 viewer DataChannel
+// as-built；highlight 走 client 主動拉（不復活 server-push）；section/snapshot 待建。
+export function ReviewRoomPage() {
+  const [sessionId, setSessionId] = useState("");
+  const sid = sessionId.trim();
+  // session id 必須符合 viewer attach（main.tsx）與 coordinator /ui/open（app.ts:1590）共用的權威格式
+  // /^(lwv_|review_session_)[A-Za-z0-9_]+$/。不符者 viewer 無法 attach、coordinator /ui/open 直接回 400，
+  // 故拒絕產生連結（不產生會被後端打回的壞連結，不發明「attach 預檢」幻覺端點）。
+  const valid = /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sid);
+  // invalid 時連結為 undefined（不渲染成可互動 anchor），避免 href="#" 被鍵盤 / 螢幕閱讀器啟用後跳到 #。
+  const viewerLocalUrl = valid ? `/?session=${encodeURIComponent(sid)}` : undefined;
+  const viewerOpenUrl = valid ? coordinatorClient.openInViewerUrl(sid) : undefined;
+
+  return (
+    <>
+      <h1>Review Room · 審查室（G）</h1>
+      <p className="ec-lead">
+        USD over WebRTC live viewport 在<strong>既有 viewer（web-viewer-sample &lt;App/&gt;）</strong>，非 console 殼層內。
+        本頁 v1：提供連到既有 viewer 入口的連結（不在 console 內嵌 3D）；highlight 走 Review-Room 主動拉 → client DataChannel，不復活 server-push。
+      </p>
+
+      <Panel title="在既有 viewer 開啟 · Open in viewer" sub="輸入 review_session_id（lwv_ / review_session_ 前綴）；連到既有 viewer，不動 App.tsx / Window.tsx" prov="asbuilt">
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="ec-btn" style={{ minWidth: 360 }} placeholder="review_session_xxx 或 lwv_xxx" value={sessionId} onChange={(e) => setSessionId(e.target.value)} />
+          {/* 真實 gating：session id 格式不合（viewer / coordinator 都會拒）則不渲染 href、不可聚焦
+              （tabIndex=-1）、aria-disabled，鍵盤與螢幕閱讀器都無法啟用，不是只靠 pointerEvents 的假禁用。 */}
+          <a className={`ec-btn ${valid ? "primary" : ""}`} {...(valid ? { href: viewerOpenUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
+             style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
+            coordinator /ui/open（redirect）
+          </a>
+          <a className="ec-btn" {...(valid ? { href: viewerLocalUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
+             style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
+            本地 viewer /?session=
+          </a>
+        </div>
+        {!valid && sessionId.length > 0 && <p className="ec-warn-note">此 session id 不符 viewer attach 格式（需 lwv_ 或 review_session_ 前綴 + 英數底線）；viewer 無法 attach、coordinator /ui/open 會回 400 → 連結停用，不產生壞連結。</p>}
+        <p className="ec-note">
+          coordinator <code>/ui/open?session=</code> 為 server-side redirect 至 browser-visible viewer（as-built，app.ts）；
+          本地 <code>/?session=</code> 由既有 main.tsx 解析 attach。本頁僅導引，不在 console 殼層內掛載 WebRTC。
+        </p>
+      </Panel>
+
+      <Panel title="工具列 · Tool Rail（既有 viewer 內）" sub="每顆工具標來源：viewer DataChannel as-built 指令 vs 待建" prov="asbuilt">
+        <table className="ec-table">
+          <thead><tr><th>工具</th><th>command</th><th>provenance</th></tr></thead>
+          <tbody>
+            {([
+              ["載入 USD", "openStage", "asbuilt"],
+              ["聚焦元件", "focusPrim", "asbuilt"],
+              ["選取元件", "selectPrims", "asbuilt"],
+              ["清除高亮", "clearHighlight", "asbuilt"],
+              ["高亮元件", "highlightPrims（client 主動拉，非 server-push）", "p15"],
+              ["剖面", "sectionRequest", "p15"],
+              ["截圖", "snapshot", "p15"],
+            ] as [string, string, Prov][]).map(([l, cmd, p]) => (
+              <tr key={cmd}><td>{l}</td><td>{cmd}</td><td><ProvTag prov={p} /></td></tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="ec-note">Load / Focus / Select / Clear 為 viewer DataChannel as-built 指令；Highlight 走 Review Room 主動拉 prim_paths（不復活 server-push · P1.5）；Section / Snapshot 後端未實作。</p>
+      </Panel>
+
+      <Panel title="範圍與誠實標示" prov="asbuilt">
+        <Field k="3D viewport" v="在既有 viewer（<App/>），非 console 殼層；本頁僅連結導引" prov="asbuilt" />
+        <Field k="server→viewer push highlight / 多人廣播" v="2026-05-21 已退役（remove-conflict-review-from-fast-mvp）；加回需另開 OpenSpec" prov="p15" />
+        <Field k="section / snapshot" v="待建" prov="p15" />
+        <Field k="不動 App.tsx / Window.tsx" v="本頁僅提供連結，不改 viewer 主體（守 console 邊界）" prov="asbuilt" />
       </Panel>
     </>
   );

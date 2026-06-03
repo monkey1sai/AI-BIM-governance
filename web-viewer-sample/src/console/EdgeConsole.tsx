@@ -1,14 +1,20 @@
-// AI-BIM Governance Edge Console 殼層：三欄 grid + 兩段式導覽 + ChatUSD 欄（可折疊）。
+// AI-BIM Governance Edge Console 殼層：三欄 grid + 兩段式導覽 + ChatUSD 欄（可折疊）
+// + FlowBar（Intake→Convert→Meeting→Mark→Record）+ Tweaks（操作員/技術用語、scenario）。
 // 零依賴 hash 路由（不引入 react-router、不擾動既有 App ?session bootstrap）。
 import { useEffect, useState } from "react";
 import "./edge-console.css";
-import { PAGES } from "./data";
+import { PAGES, Prov } from "./data";
 import {
   AppsPage,
+  AppVisionPage,
+  CoordinatorPage,
   FederationPage,
+  IntakePage,
   IssuesRuleCenterPage,
   OverviewPage,
-  StubPage,
+  ReviewRoomPage,
+  RuntimePage,
+  SemanticViewerPage,
   VersionDiffPage,
 } from "./pages";
 
@@ -28,31 +34,74 @@ function usePageHash(): [string, (k: string) => void] {
 }
 
 function renderBody(page: string, go: (k: string) => void) {
+  // app/<slug> → A4–A10 vision 詳頁（P3-1）。
+  if (page.startsWith("app/")) return <AppVisionPage slug={page.slice(4)} onOpen={go} />;
   switch (page) {
     case "overview": return <OverviewPage />;
     case "issues": return <IssuesRuleCenterPage />;
     case "apps": return <AppsPage onOpen={go} />;
     case "version-diff": return <VersionDiffPage />;
     case "federation": return <FederationPage />;
-    case "coordinator":
-      return <StubPage title="Coordinator Console · 控制平面" note="會議生命週期 / Kit 綁定 / 轉檔派工 / callback outbox / 事件流，全經 coordinator :8004。" items={[["Review sessions (created/active/closing/closed/failed)", "POST /api/review-sessions", "asbuilt"], ["conversion dispatch / IFC-ready", "/api/external/ifc-ready", "asbuilt"], ["Callback outbox 三態", "/api/internal/callback-outbox/*", "asbuilt"], ["Socket.IO /review (presence/heartbeat)", "joinSession/presenceUpdated", "asbuilt"], ["server→viewer push highlight / annotation", "retired 2026-05-21", "p15"]]} />;
-    case "intake":
-      return <StubPage title="Model Intake · 接收與轉換" note="IFC-ready intake → conversion → quality metrics → mapping fidelity。" items={[["IFC-ready intake", "GET /api/external/ifc-ready/:jobId", "asbuilt"], ["conversion quality_metrics", "coverage_status / unmapped_count", "artifact"], ["semantic_mapping_fidelity", "guid_exact / ifc_class_grouped_with_name", "artifact"], ["manual mapping correction UI", "待建", "p15"]]} />;
-    case "runtime":
-      return <StubPage title="Runtime Dashboard · 串流執行狀態" note="Kit 綁定 / stream-config，由 coordinator read-only 轉發；瀏覽器不直連 49100/49101。" items={[["kit_instance_bindings", "GET /api/review-sessions/:id/stream-config", "asbuilt"], ["GPU", "未取得（idle，非 fail）", "demo"], ["governance rule-run binding (A1)", "governance-service :49102", "asbuilt"]]} />;
-    case "review":
-      return <StubPage title="Review Room · 審查室" note="USD over WebRTC live viewport + tool rail。highlight 走 Review-Room 主動拉 → client DataChannel，不復活 server-push。" items={[["openStage / focusPrim / selectPrims / clearHighlight", "viewer DataChannel as-built", "asbuilt"], ["highlightPrims（client→runtime）", "buildHighlightPrimsRequest", "asbuilt"], ["server→viewer push highlight / 多人廣播", "retired", "p15"], ["section / snapshot", "待建", "p15"]]} />;
-    case "semantic":
-      return <StubPage title="Semantic Viewer · IFC→USD 語意檢核" note="載入真實 element_mapping.json + entity_index.json，點構件 → client highlight/focus 真實 usd_prim_path；A1 失敗構件可在此 3D 標示。" items={[["mapping entities (IFC GUID ⇔ USD Prim Path)", "element_mapping.json", "artifact"], ["viewer commands", "focusPrim / highlightPrims (client)", "asbuilt"], ["A1 failed → highlight overlay", "change 2 整合", "p1"]]} />;
+    case "coordinator": return <CoordinatorPage />;
+    case "intake": return <IntakePage />;
+    case "runtime": return <RuntimePage />;
+    case "review": return <ReviewRoomPage />;
+    case "semantic": return <SemanticViewerPage />;
     default: return <OverviewPage />;
   }
+}
+
+// 用語對照（操作員 biz ↔ 技術 tech）。register=biz 顯示業務語、tech 顯示技術語。
+const NAV_LABEL: Record<string, { tech: string; biz: string }> = {
+  overview: { tech: "Overview", biz: "總覽" },
+  coordinator: { tech: "Coordinator Console", biz: "審查控制台" },
+  intake: { tech: "Model Intake", biz: "建模接收與轉換" },
+  issues: { tech: "Issues · Rule Center", biz: "問題與語意驗收" },
+  apps: { tech: "Applications · A1–A10", biz: "應用導引 · A1–A10" },
+  runtime: { tech: "Runtime Dashboard", biz: "串流執行狀態" },
+  review: { tech: "Review Room", biz: "審查室" },
+  semantic: { tech: "Semantic Viewer", biz: "語意檢核" },
+};
+
+// FlowBar（P3-3）：5 步操作員心智模型 Intake→Convert→Meeting→Mark→Record。
+// state 為各步真實落地狀態（asbuilt / p15）；非資料宣稱，純流程示意。
+const FLOW: { n: string; tech: string; biz: string; state: Prov; page: string }[] = [
+  { n: "①", tech: "Intake", biz: "接收建模來源", state: "asbuilt", page: "intake" },
+  { n: "②", tech: "Convert", biz: "自動轉換 3D", state: "asbuilt", page: "intake" },
+  { n: "③", tech: "Meeting", biz: "建立審查會議", state: "asbuilt", page: "coordinator" },
+  { n: "④", tech: "Mark", biz: "標記問題位置", state: "p15", page: "review" },
+  { n: "⑤", tech: "Record", biz: "紀錄回寫雲端", state: "asbuilt", page: "coordinator" },
+];
+
+function FlowBar({ active, register, go }: { active: string; register: "tech" | "biz"; go: (k: string) => void }) {
+  return (
+    <div className="ec-flow">
+      {FLOW.map((f, i) => (
+        <span key={f.tech} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            className={`ec-flow-step ${active === f.page ? "active" : ""} ${f.state === "p15" ? "p15" : ""}`}
+            onClick={() => go(f.page)}
+            title={f.state === "p15" ? "Mark（3D 高亮）為 P1.5 待建" : "as-built"}
+          >
+            <span className="ec-flow-n">{f.n}</span>{register === "biz" ? f.biz : f.tech}
+          </button>
+          {i < FLOW.length - 1 && <span className="ec-flow-arrow">→</span>}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 export default function EdgeConsole() {
   const [page, go] = usePageHash();
   const [agentOpen, setAgentOpen] = useState(true);
+  // Tweaks（P3-3）：register=操作員/技術用語；scenario=clean/warn（UI 偏好；真實頁一律用 live API）。
+  const [register, setRegister] = useState<"tech" | "biz">("tech");
+  const [scenario, setScenario] = useState<"clean" | "warn">("clean");
   const gov = PAGES.filter((p) => p.plane === "governance");
   const omni = PAGES.filter((p) => p.plane === "omniverse");
+  const navText = (key: string, fallback: string) => (NAV_LABEL[key] ? NAV_LABEL[key][register] : fallback);
+  const flowActive = page.startsWith("app/") ? "apps" : page;
 
   return (
     <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"}`}>
@@ -72,25 +121,56 @@ export default function EdgeConsole() {
         <div className="ec-group">GOVERNANCE PLATFORM · 零 GPU</div>
         {gov.map((p) => (
           <button key={p.key} className={page === p.key ? "active" : ""} onClick={() => go(p.key)}>
-            <span className="ec-key">{p.no}</span>{p.label}
+            <span className="ec-key">{p.no}</span>{navText(p.key, p.label)}
           </button>
         ))}
         <div className="ec-group">OMNIVERSE RUNTIME · KIT/USD/GPU</div>
         {omni.map((p) => (
           <button key={p.key} className={page === p.key ? "active" : ""} onClick={() => go(p.key)}>
-            <span className="ec-key">{p.no}</span>{p.label}
+            <span className="ec-key">{p.no}</span>{navText(p.key, p.label)}
           </button>
         ))}
       </nav>
 
-      <main className="ec-main">{renderBody(page, go)}</main>
+      <main className="ec-main">
+        <div className="ec-mainhead">
+          <FlowBar active={flowActive} register={register} go={go} />
+          <span className="ec-spacer" />
+          {/* Tweaks（P3-3）：操作員/技術用語切換、scenario clean/warn（UI 偏好，不改真實資料）。 */}
+          <div className="ec-tweaks">
+            <span className="ec-tw-group">
+              <span className="ec-tw-lab">用語</span>
+              <button className={register === "biz" ? "on" : ""} onClick={() => setRegister("biz")}>操作員</button>
+              <button className={register === "tech" ? "on" : ""} onClick={() => setRegister("tech")}>技術</button>
+            </span>
+            <span className="ec-tw-group">
+              <span className="ec-tw-lab">情境</span>
+              <button className={scenario === "clean" ? "on" : ""} onClick={() => setScenario("clean")} title="UI 偏好；真實頁一律以 live API 為準">clean</button>
+              <button className={scenario === "warn" ? "on" : ""} onClick={() => setScenario("warn")} title="UI 偏好；真實頁一律以 live API 為準">warn</button>
+            </span>
+          </div>
+        </div>
+        {renderBody(page, go)}
+      </main>
 
       <aside className={`ec-agent ${agentOpen ? "" : "hidden"}`}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <strong>Chat USD Agent</strong>
-          <span className="ec-prov ec-p15">ROADMAP · A9</span>
+          <span className="ec-prov ec-p4">ROADMAP · A9</span>
         </div>
-        <p className="ec-note">A9 USD Code / ChatUSD Copilot 為 Phase 4 願景；後端未建置，互動僅示意。AI 僅能改 review / session layer，不寫回 source model。</p>
+        <p className="ec-note">A9 USD Code / ChatUSD Copilot 為 Phase 4 願景；後端（usd-code microservice）未建置，互動僅示意。</p>
+        {/* P3-2：suggested prompts（disabled，僅示意）+ 寫入限制聲明 + disabled 輸入框。 */}
+        <div className="ec-prompts">
+          <b>SUGGESTED · USD-AWARE（PREVIEW · 後端未建）</b>
+          <div className="ec-prompt">找出所有沒有 FireRating 的防火門</div>
+          <div className="ec-prompt">把語意未對映的構件標出來</div>
+          <div className="ec-prompt">列出 coverage &lt; 95% 的子系統</div>
+        </div>
+        <p className="ec-warn-note">寫入限制（規格）：AI 僅能改 review / session layer，不寫回 source model。</p>
+        <div className="ec-agent-input">
+          <span>›</span>
+          <input placeholder="ChatUSD 助理 · 後端待建（A9 · Phase 4）" disabled />
+        </div>
       </aside>
 
       <footer className="ec-foot">

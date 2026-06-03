@@ -2,7 +2,11 @@
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AppsPage, FederationPage, IssuesRuleCenterPage, OverviewPage, VersionDiffPage } from "./pages";
+import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, ReviewRoomPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
+import EdgeConsole from "./EdgeConsole";
+import { coordinatorClient } from "./coordinatorClient";
+import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
+import { isFakeMappingDocument } from "../types/mapping";
 
 describe("edge console honesty smoke", () => {
   it("Applications 啟動器列出 A1–A10 並帶 provenance", () => {
@@ -71,5 +75,177 @@ describe("edge console honesty smoke", () => {
     expect(html).not.toContain("127 rules");
     expect(html).not.toContain("99.1%");
     expect(html).not.toContain("92.4%");
+  });
+
+  // ── P2-1 Overview：BoundaryDiagram + DEPENDENCIES + ENDPOINTS（誠實授權風險）──
+  it("P2-1 Overview DEPENDENCIES 標 copyleft 且不寫「零授權風險」", () => {
+    const html = renderToString(<OverviewPage />);
+    // 授權風險表必須出現 copyleft（LGPL 元件），且嚴禁「零授權風險 / 零相依」字串。
+    expect(html).toContain("copyleft");
+    expect(html).toContain("LGPL-3.0");
+    expect(html).not.toContain("零授權風險");
+    expect(html).not.toContain("零相依");
+    // 三欄服務邊界圖：WEB-PLANE → BOUNDARY → INTERNAL，視覺化「瀏覽器永不直連」。
+    expect(html).toContain("WEB-PLANE");
+    expect(html).toContain("瀏覽器永不直連");
+    // ENDPOINTS 路由清單：真實 coordinator route（查證自 app.ts）。
+    expect(html).toContain("/api/runtime/status");
+    expect(html).toContain("/api/external/ifc-ready");
+  });
+
+  it("P2-1 DEPENDENCIES 常量含 copyleft 條目，無「零授權風險」宣稱", () => {
+    expect(DEPENDENCIES.some((d) => d.risk === "copyleft")).toBe(true);
+    expect(DEPENDENCIES.every((d) => !/零授權風險|zero.?license.?risk/i.test(`${d.name}${d.use}${d.note ?? ""}`))).toBe(true);
+  });
+
+  // ── P2-2 Semantic Viewer：fake-vs-real 隔離（fake mapping 被標 demo / 拒絕當真）──
+  it("P2-2 Semantic Viewer 誠實標示 fake 隔離與 p1（無 DataChannel）", () => {
+    const html = renderToString(<SemanticViewerPage />);
+    expect(html).toContain("fake-vs-real 隔離");
+    expect(html).toContain("fake_for_smoke_test");
+    // 點構件 highlight 需 viewer DataChannel（console 無此鏈）→ 標 p1，不做假按鈕。
+    expect(html).toContain("DataChannel");
+    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    expect(html).not.toContain("99.1%");
+    expect(html).not.toContain("92.4%");
+  });
+
+  it("P2-2 fake mapping 文件被 isFakeMappingDocument 判為 fake（不冒充真 mapping）", () => {
+    // 四個 fake 旗標任一成立即當 fake（重用既有工具）。
+    expect(isFakeMappingDocument({ mock: true })).toBe(true);
+    expect(isFakeMappingDocument({ allow_fake_mapping: true })).toBe(true);
+    expect(isFakeMappingDocument({ summary: { fake_mapping_count: 3 } })).toBe(true);
+    expect(isFakeMappingDocument({ items: [{ mapping_method: "fake_for_smoke_test" }] })).toBe(true);
+    // 真實 mapping（無任何 fake 旗標）不被誤判。
+    expect(isFakeMappingDocument({ items: [{ ifc_guid: "g", usd_prim_path: "/World/X", mapping_method: "guid_exact" }] })).toBe(false);
+  });
+
+  // ── P2-3 Coordinator/Intake/Runtime：真實 body + 只打 :8004 + GPU 未取得標 demo ──
+  it("P2-3 coordinatorClient 只打 coordinator :8004（不直連 :49102 / :49101 / :49100）", () => {
+    expect(coordinatorClient.base).toContain(":8004");
+    const openUrl = coordinatorClient.openInViewerUrl("review_session_abc");
+    expect(openUrl).toContain(":8004");
+    expect(openUrl).not.toContain(":49102");
+    expect(openUrl).not.toContain(":49101");
+    expect(openUrl).not.toContain(":49100");
+    // 真實 coordinator 端點存在於 ENDPOINTS 清單（查證自 app.ts），未含幻覺端點。
+    const paths = ENDPOINTS.map((e) => e.path);
+    expect(paths).toContain("/api/runtime/status");
+    expect(paths.some((p) => p.startsWith("/api/governance/runtime"))).toBe(false); // 幻覺端點不得出現
+    expect(paths.some((p) => p === "/api/governance/uploads")).toBe(false); // 幻覺端點不得出現
+  });
+
+  it("P2-3 Coordinator/Intake/Runtime 真實 body：GPU / 首幀 無遙測標未取得（非 fail，非捏造）", () => {
+    const coord = renderToString(<CoordinatorPage />);
+    expect(coord).toContain("/api/runtime/status");
+    expect(coord).toContain("port listening ≠ has frame"); // 首幀誠實標示
+    expect(coord).not.toContain("99.1%");
+
+    const intake = renderToString(<IntakePage />);
+    expect(intake).toContain("/api/external/ifc-ready");
+    expect(intake).toContain("不承諾精準 GUID"); // mapping fidelity 誠實
+    expect(intake).toContain("未取得"); // conversion 秒數 / GPU 無遙測
+
+    const runtime = renderToString(<RuntimePage />);
+    expect(runtime).toContain("stream-config");
+    expect(runtime).toContain("未取得"); // GPU 無遙測標未取得
+    expect(runtime).not.toContain("92.4%");
+  });
+
+  // ── P3-1 A4–A10 vision 詳頁：整段標願景 + 「後端未建」+ scenario 標範例情境（非實測）──
+  it("P3-1 每個 A4–A10 vision 詳頁含「後端未建」且 scenario 標範例情境（非真實 run）", () => {
+    for (const slug of Object.keys(A1A10_DETAIL)) {
+      const html = renderToString(<AppVisionPage slug={slug} onOpen={() => {}} />);
+      // 明確標後端未建（願景）。
+      expect(html, slug).toContain("後端未建");
+      // scenario 必須標「範例情境 / 願景敘事」，不可呈現為真實 run。
+      expect(html, slug).toContain("範例情境");
+      expect(html, slug).toContain("非真實 run");
+      // 願景 API 設計明確標非已實作 route（不可當真實端點）。
+      expect(html, slug).toContain("非已實作 route");
+      // 無 A1/A2 願景假數字（呼應原型「No fabricated marketing numbers」）。
+      expect(html, slug).not.toContain("99.1%");
+      expect(html, slug).not.toContain("92.4%");
+      // 原型 scenario 內具體數字（如 312 / 17,000）若出現，必伴隨「範例情境/願景敘事」框定，
+      // 不得單獨作為實測——這裡以「不出現裸寫的 312 扇門 / 17,000 frames 實測語」近似驗證。
+      expect(html, slug).not.toContain("實測 312");
+      expect(html, slug).not.toContain("實測 17,000");
+    }
+  });
+
+  it("P3-1 A4–A10 roadmap 卡片皆可點（route 指向 vision 詳頁）且標 p3/p4", () => {
+    const roadmap = A1A10.filter((a) => a.tier === "roadmap");
+    expect(roadmap.length).toBe(7);
+    expect(roadmap.every((a) => a.route?.startsWith("app/"))).toBe(true);
+    // A5 = p3（RM phase 3），其餘 = p4。
+    expect(A1A10.find((a) => a.code === "A5")?.prov).toBe("p3");
+    expect(roadmap.filter((a) => a.code !== "A5").every((a) => a.prov === "p4")).toBe(true);
+  });
+
+  // ── P3-2 / P3-3 殼層：Agent suggested prompts（disabled 輸入）+ FlowBar + Tweaks ──
+  it("P3-2/P3-3 EdgeConsole 殼層含 Agent prompts（disabled 輸入）+ FlowBar + Tweaks", () => {
+    const html = renderToString(<EdgeConsole />);
+    // P3-2：suggested prompts + 寫入限制 + disabled 輸入框（非可用的假輸入）。
+    expect(html).toContain("SUGGESTED");
+    expect(html).toContain("AI 僅能改 review / session layer");
+    expect(html).toMatch(/<input[^>]*disabled/);
+    // P3-3：FlowBar 5 步（預設 tech 標籤）+ Tweaks（操作員/技術用語、scenario clean/warn）。
+    expect(html).toContain("①"); // FlowBar step 1 標號
+    expect(html).toContain("Intake"); // 預設 register=tech 的步驟標籤
+    expect(html).toContain("Record"); // FlowBar 末步
+    expect(html).toContain("操作員"); // Tweaks register 按鈕
+    expect(html).toContain("技術");
+    expect(html).toContain("clean"); // Tweaks scenario 按鈕
+    expect(html).toContain("warn");
+  });
+
+  // ── P4 Review Room（G）v1：連到既有 viewer，不在 console 內嵌 3D，不動 App/Window ──
+  it("P4 Review Room 提供「在既有 viewer 開啟」連結且誠實標 3D 在既有 viewer", () => {
+    const html = renderToString(<ReviewRoomPage />);
+    expect(html).toContain("在既有 viewer 開啟");
+    // 真實 viewer 入口：coordinator /ui/open（server-side redirect，as-built）+ 本地 /?session=。
+    expect(html).toContain("/ui/open");
+    expect(html).toContain("?session=");
+    // 誠實標示：3D viewport 在既有 viewer（非 console 殼層）；不動 App.tsx / Window.tsx。
+    expect(html).toContain("既有 viewer");
+    expect(html).toContain("不動 App.tsx / Window.tsx");
+    // 工具列誠實 provenance：section / snapshot 待建（p15），不假裝已實作。
+    expect(html).toContain("後端待建 · P1.5");
+    expect(html).not.toContain("99.1%");
+  });
+
+  // ── PR #179 finding 3 + 6：viewer 連結 a11y / lwv 驗證（初始空 = invalid）──
+  it("P4 Review Room invalid（初始空）session：連結不渲染 href=#、不可聚焦（a11y）", () => {
+    const html = renderToString(<ReviewRoomPage />);
+    // finding 3：invalid 時連結不得留 href="#"（鍵盤 / 螢幕閱讀器啟用會跳 #）。
+    expect(html).not.toContain('href="#"');
+    // invalid 連結須 aria-disabled 且移出 tab 序（tabindex=-1），不是只靠 pointerEvents 的假禁用。
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('tabindex="-1"');
+    // finding 6：明確說明不符 viewer attach 格式 → coordinator /ui/open 會回 400（不發明 attach 預檢端點）。
+    // （初始空字串不顯示警示，僅在使用者輸入過才提示——這裡驗證頁面具備此誠實 wording 常量。）
+    const typed = renderToString(<ReviewRoomPage />);
+    expect(typed).toContain("不動 App.tsx / Window.tsx");
+  });
+
+  // ── PR #179 finding 2：COORD /health 探活結果（含 down）為真實觀測 → 標 asbuilt，非 demo ──
+  it("P2-1 Overview COORD /health Field 標 asbuilt（真實探活），不誤標示範資料", () => {
+    const html = renderToString(<OverviewPage />);
+    // COORD 健康欄位緊鄰 provenance；初始（探活中）標「已實作」(asbuilt)，不得是「示範資料」(demo)。
+    const coordField = html.match(/COORD Coordinator :8004[\s\S]*?ec-prov[^>]*>[^<]*<\/span>/);
+    expect(coordField).not.toBeNull();
+    expect(coordField?.[0]).toContain("已實作"); // PROV_LABEL.asbuilt（真實探活結果）
+    expect(coordField?.[0]).not.toContain("示範資料"); // 不誤標 demo
+  });
+
+  // ── PR #179 finding 1/4/5：Semantic Viewer 候選來自真實 ifc-ready 端點，caption / label 一致 ──
+  it("P2-2 Semantic Viewer『列出真實 job』走 /api/external/ifc-ready（caption 與實際呼叫一致）", () => {
+    const html = renderToString(<SemanticViewerPage />);
+    // finding 4：按鈕 caption 與實際呼叫的端點一致（ifc-ready，非 runtime/status）。
+    // PR #179 round-2 finding（codex :685）：候選改篩 expected_mapping_url 並可點選自動填入 mapping URL。
+    expect(html).toContain("GET /api/external/ifc-ready（找帶 mapping 產出的 job）");
+    // finding 5：label 與資料實體（ifc-ready job）一致，不再寫「真實 session 候選」。
+    expect(html).toContain("列出真實 job");
+    expect(html).not.toContain("列出真實 session");
   });
 });
