@@ -5,8 +5,9 @@ FastAPI，綁定 127.0.0.1:49102（loopback only，鏡像 host_native_conversion
 
 邊界與誠實守則：
 - 純 CPU、host-native ifcopenshell；不需 GPU / Kit。
-- ifctester / IDS-XML 匯入未安裝 → /health 誠實回報 ifctester=false；IDS 為 p1 後續。
-- BCF 匯出（issue -> .bcfzip）為 p15（bcf 模組未安裝 + LGPL 閘門），本切片只提供 Excel。
+- ifctester 已安裝（host 0.8.5）→ 支援 buildingSMART IDS-XML rule-run；/health 如實回報 ifctester 安裝狀態。
+- BCF 2.1 匯出已實作（issue → .bcfzip，bcf/ 模組純 stdlib，不依賴 GPLv3 bcf-client）；
+  rule-run /export 仍僅 Excel，BCF 走 /api/bcf/export。
 """
 from __future__ import annotations
 
@@ -85,7 +86,7 @@ def health():
         "service": "governance-service",
         "status": "ok",
         "ifcopenshell": importlib.util.find_spec("ifcopenshell") is not None,
-        # 誠實回報：ifctester 未安裝；IDS-XML 匯入為 p1 後續
+        # 誠實回報 ifctester 實際安裝狀態（host 已安裝 → 支援 IDS-XML rule-run）
         "ifctester": importlib.util.find_spec("ifctester") is not None,
         "rule_sets": [
             os.path.splitext(os.path.basename(p))[0]

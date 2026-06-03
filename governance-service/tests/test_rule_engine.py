@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 
+import ifcopenshell
+import ifcopenshell.guid
 import pytest
 
 from rule_engine import load_rule_set, open_model, run_rules
@@ -90,3 +92,64 @@ def test_engine_on_real_ifc():
         assert model.by_guid(r.ifc_guid) is not None
 
     assert 0.0 <= run.score <= 100.0
+
+
+def test_all_error_run_scores_zero_not_full(synthetic_model):
+    """A1-RE-01：每個構件評估都 error 時，score 必須誠實為 0，不得假性滿分。"""
+    rs = {
+        "rule_set": "all-error",
+        "version": "1",
+        "rules": [
+            {
+                "rule_code": "BAD-REGEX",
+                "target_ifc_type": "IfcDoor",
+                "severity": "high",
+                # 不合法 regex（未閉合括號）→ 每個構件 re.error → status=error
+                "predicate": {"type": "naming_convention", "pattern": "("},
+            }
+        ],
+    }
+    run = run_rules(synthetic_model, rs)
+    assert run.errored >= 1
+    assert run.passed == 0 and run.failed == 0
+    assert run.score == 0.0, "全 error 不得回報滿分（誠實鐵律）"
+
+
+def test_ifc4x3_type_alias_resolves_and_warns():
+    """A1-RE-02：IFC4X3 無 IfcBuildingElement，應退到別名 IfcBuiltElement 並 warn。"""
+    f = ifcopenshell.file(schema="IFC4X3")
+    f.create_entity("IfcWall", GlobalId=ifcopenshell.guid.new(), Name="W-43")
+    rs = {
+        "rule_set": "alias",
+        "version": "1",
+        "rules": [
+            {
+                "rule_code": "ELEMENT-NAME-REQUIRED",
+                "target_ifc_type": "IfcBuildingElement",
+                "severity": "medium",
+                "predicate": {"type": "attribute_required", "attribute": "Name"},
+            }
+        ],
+    }
+    run = run_rules(f, rs)
+    assert run.total >= 1, "應透過別名 IfcBuiltElement 萃取到 IfcWall"
+    assert any("別名" in w and "IfcBuiltElement" in w for w in run.warnings)
+
+
+def test_any_pset_does_not_match_synthetic_id_key(synthetic_model):
+    """A1-RE-04：any-pset 查找 property 'id' 不得匹配 get_psets 注入的合成 id。"""
+    rs = {
+        "rule_set": "id-probe",
+        "version": "1",
+        "rules": [
+            {
+                "rule_code": "NO-FALSE-ID",
+                "target_ifc_type": "IfcDoor",
+                "severity": "low",
+                # 不指定 pset（any-pset 模式）、查 property 'id'
+                "predicate": {"type": "property_required", "property": "id"},
+            }
+        ],
+    }
+    run = run_rules(synthetic_model, rs)
+    assert run.passed == 0, "合成 id key 不得讓 property:id 規則假性通過"
