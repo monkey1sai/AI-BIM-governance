@@ -51,6 +51,32 @@ def test_federation_api_end_to_end(client, tmp_path):
     assert "/World/ARC" in res["prim_sample"] and "/World/STR" in res["prim_sample"]
 
 
+def test_review_room_descriptor_after_build(client, tmp_path):
+    arc = _member_file(tmp_path / "arc.usda", "ARC")
+    strr = _member_file(tmp_path / "str.usda", "STR")
+    set_id = client.post("/api/federated-sets", json={"name": "coord-meeting"}).json()["set_id"]
+    client.post(f"/api/federated-sets/{set_id}/members", json={"model_version_id": "arc_v1", "discipline": "ARC", "usd_path": arc, "layer_order": 1, "root_prim": "/World/ARC"})
+    client.post(f"/api/federated-sets/{set_id}/members", json={"model_version_id": "str_v1", "discipline": "STR", "usd_path": strr, "layer_order": 2, "root_prim": "/World/STR"})
+
+    # build 前：尚未就緒，誠實導引去 build
+    pre = client.get(f"/api/federated-sets/{set_id}/review-room").json()
+    assert pre["ready"] is False and pre["stage_composition"] is None and "build" in pre["note"]
+
+    client.post(f"/api/federated-sets/{set_id}/build")
+
+    # build 後：handoff descriptor 形如 viewer streamConfig.stage_composition
+    rr = client.get(f"/api/federated-sets/{set_id}/review-room").json()
+    assert rr["ready"] is True
+    assert rr["stage_url"].endswith("federated_review.usda")
+    assert rr["stage_composition"]["primary"]["url"] == rr["stage_url"]
+    assert rr["stage_composition"]["secondary_layers"] == []
+    assert {m["discipline"] for m in rr["members"]} == {"ARC", "STR"}
+
+
+def test_review_room_404_unknown_set(client):
+    assert client.get("/api/federated-sets/nope/review-room").status_code == 404
+
+
 def test_build_requires_two_members(client, tmp_path):
     arc = _member_file(tmp_path / "a.usda", "ARC")
     set_id = client.post("/api/federated-sets", json={"name": "x"}).json()["set_id"]

@@ -89,6 +89,8 @@ export const governanceClient = {
     jsonFetch<CoordReport>(`/api/governance/federated-sets/${setId}/validate-coords`, { method: "POST" }),
   buildFederatedSet: (setId: string) =>
     jsonFetch<FederatedBuildResult>(`/api/governance/federated-sets/${setId}/build`, { method: "POST" }),
+  reviewRoom: (setId: string) =>
+    jsonFetch<ReviewRoomDescriptor>(`/api/governance/federated-sets/${setId}/review-room`),
 
   // Issue tracking
   listIssues: (status?: string) =>
@@ -165,6 +167,18 @@ export interface FederatedMember {
   layer_order?: number;
   visibility_default?: boolean;
   root_prim?: string;
+  transform_json?: string; // {"translate":[x,y,z],"rotateXYZ":[..],"scale":[..]}（皆可選）
+}
+export interface ReviewRoomDescriptor {
+  set_id: string;
+  ready: boolean;
+  stage_url: string | null;
+  stage_composition: {
+    primary: { url: string; name: string; discipline: string };
+    secondary_layers: unknown[];
+  } | null;
+  members?: { discipline: string; usd_path: string; layer_order: number }[];
+  note: string;
 }
 export interface CoordReport {
   consistent: boolean;
@@ -176,5 +190,6 @@ export interface FederatedBuildResult {
   sublayer_order: string[];
   member_count: number;
   hidden: string[];
+  transformed?: { root_prim: string; ops: string[] }[];
   prim_sample?: string[];
 }

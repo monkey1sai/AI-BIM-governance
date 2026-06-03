@@ -82,6 +82,51 @@ def validate_set_coords(set_id: str):
     return validate_coords(members)
 
 
+@router.get("/api/federated-sets/{set_id}/review-room")
+def review_room(set_id: str):
+    """產出 Review Room handoff descriptor：把已 build 的 federated stage 以 viewer 消費的
+    stage_composition（primary + secondary_layers）形式交給 host-native Kit review session。
+
+    誠實邊界：governance-service 為 CPU loopback，不啟動 GPU 串流；本端點只給「要載入什麼」，
+    實際 WebRTC 串流由 host-native Kit + coordinator session 負責。
+    """
+    store = _get_store()
+    row = store.get_set(set_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="federation set not found")
+    usda = row.get("build_usda_path")
+    ready = bool(usda) and os.path.exists(usda)
+    if not ready:
+        return {
+            "set_id": set_id,
+            "ready": False,
+            "stage_url": None,
+            "stage_composition": None,
+            "note": "尚未 build；請先 POST …/build 產出 federated_review.usda 再開 Review Room。",
+        }
+    stage_url = os.path.abspath(usda).replace("\\", "/")
+    members = store.get_members(set_id)
+    return {
+        "set_id": set_id,
+        "ready": True,
+        "stage_url": stage_url,
+        # 與 viewer streamConfig.stage_composition 同形：primary 即 federated_review.usda
+        # （已 sublayer 疊合所有 member），故 secondary_layers 留空。
+        "stage_composition": {
+            "primary": {"url": stage_url, "name": "federated_review", "discipline": "FED"},
+            "secondary_layers": [],
+        },
+        "members": [
+            {"discipline": m["discipline"], "usd_path": m["usd_path"], "layer_order": m["layer_order"]}
+            for m in members
+        ],
+        "note": (
+            "把此 stage_composition 交給 host-native Kit review session 載入 federated_review.usda"
+            "（已疊合所有 member）。governance-service 為 CPU loopback，不啟動 GPU 串流。"
+        ),
+    }
+
+
 @router.post("/api/federated-sets/{set_id}/build")
 def build_set(set_id: str):
     store = _get_store()

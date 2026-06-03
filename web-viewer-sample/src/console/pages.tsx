@@ -3,7 +3,7 @@
 import React, { useCallback, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import { A1A10, AppCardDef, PAGES } from "./data";
-import { CoordReport, DiffIssueImpact, DiffItemRow, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffIssueImpact, DiffItemRow, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
@@ -312,12 +312,13 @@ export function VersionDiffPage() {
 
 export function FederationPage() {
   const [members, setMembers] = useState([
-    { discipline: "ARC", usd_path: "", layer_order: 1, model_version_id: "arc_v1" },
-    { discipline: "STR", usd_path: "", layer_order: 2, model_version_id: "str_v1" },
+    { discipline: "ARC", usd_path: "", layer_order: 1, model_version_id: "arc_v1", tx: 0, ty: 0, tz: 0 },
+    { discipline: "STR", usd_path: "", layer_order: 2, model_version_id: "str_v1", tx: 0, ty: 0, tz: 0 },
   ]);
   const [setId, setSetId] = useState<string | null>(null);
   const [coord, setCoord] = useState<CoordReport | null>(null);
   const [build, setBuild] = useState<FederatedBuildResult | null>(null);
+  const [room, setRoom] = useState<ReviewRoomDescriptor | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -325,13 +326,15 @@ export function FederationPage() {
     setMembers((ms) => ms.map((m, j) => (j === i ? { ...m, [k]: v } : m)));
 
   const prepare = useCallback(async () => {
-    setBusy(true); setErr(null); setCoord(null); setBuild(null);
+    setBusy(true); setErr(null); setCoord(null); setBuild(null); setRoom(null);
     try {
       const { set_id } = await governanceClient.createFederatedSet("coord-meeting");
       for (const m of members) {
+        const t = [Number(m.tx) || 0, Number(m.ty) || 0, Number(m.tz) || 0];
         await governanceClient.addFederatedMember(set_id, {
           model_version_id: m.model_version_id, discipline: m.discipline, usd_path: m.usd_path,
           layer_order: m.layer_order, root_prim: `/World/${m.discipline}`,
+          transform_json: (t[0] || t[1] || t[2]) ? JSON.stringify({ translate: t }) : undefined,
         });
       }
       setSetId(set_id);
@@ -345,9 +348,21 @@ export function FederationPage() {
 
   const doBuild = useCallback(async () => {
     if (!setId) return;
-    setBusy(true); setErr(null);
+    setBusy(true); setErr(null); setRoom(null);
     try {
       setBuild(await governanceClient.buildFederatedSet(setId));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [setId]);
+
+  const openRoom = useCallback(async () => {
+    if (!setId) return;
+    setBusy(true); setErr(null);
+    try {
+      setRoom(await governanceClient.reviewRoom(setId));
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -364,10 +379,14 @@ export function FederationPage() {
       </p>
       <Panel title="Federation Builder" sub="POST /api/governance/federated-sets（經 coordinator proxy → governance-service）" prov="asbuilt">
         {members.map((m, i) => (
-          <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4 }}>
-            <input className="ec-btn" style={{ width: 90 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
+          <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
+            <input className="ec-btn" style={{ width: 80 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
             <input className="ec-btn" style={{ flex: 1 }} placeholder="member .usd / .usdc 路徑（conversion 產出）" value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
-            <input className="ec-btn" style={{ width: 64 }} type="number" value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
+            <input className="ec-btn" style={{ width: 52 }} type="number" title="layer_order（小=強）" value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
+            <span className="ec-note" style={{ opacity: 0.7 }}>位移</span>
+            <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 X" value={m.tx} onChange={(e) => setMember(i, "tx", Number(e.target.value))} />
+            <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 Y" value={m.ty} onChange={(e) => setMember(i, "ty", Number(e.target.value))} />
+            <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 Z" value={m.tz} onChange={(e) => setMember(i, "tz", Number(e.target.value))} />
           </div>
         ))}
         <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
@@ -381,6 +400,24 @@ export function FederationPage() {
             <Field k="federated_review.usda" v={build.usda_path} prov="asbuilt" />
             <Field k="subLayer order（強→弱）" v={build.sublayer_order.join("  →  ")} prov="asbuilt" />
             <Field k="member 數" v={build.member_count} prov="asbuilt" />
+            {build.transformed && build.transformed.length > 0 && (
+              <Field k="per-member transform" v={build.transformed.map((t) => `${t.root_prim}:[${t.ops.join("+")}]`).join("   ")} prov="asbuilt" />
+            )}
+            <div style={{ marginTop: 6 }}>
+              <Btn caption="GET …/review-room（stage_composition handoff）" onClick={openRoom}>Open in Review Room</Btn>
+            </div>
+          </div>
+        )}
+        {room && (
+          <div style={{ marginTop: 8 }}>
+            {room.ready && room.stage_composition ? (
+              <>
+                <Field k="stage_composition.primary" v={room.stage_composition.primary.url} prov="asbuilt" />
+                <Field k="交給 host-native Kit review session" v={room.note} prov="demo" />
+              </>
+            ) : (
+              <p className="ec-warn-note">{room.note}</p>
+            )}
           </div>
         )}
       </Panel>
@@ -388,8 +425,8 @@ export function FederationPage() {
         <Field k="疊合機制" v="sublayer 非破壞疊合；opinion 於 LIVERPS Local（最強）步驟解析，subLayerPaths[0] 最強；sessionLayer 僅暫態不作持久層" prov="asbuilt" />
         <Field k="member model.usdc" v="immutable（federation 只寫具名 root layer）" prov="asbuilt" />
         <Field k="member usd_path" v="指向 conversion authority 產出的 USD（本服務唯讀）" prov="asbuilt" />
-        <Field k="per-member transform" v="已記錄但 MVP 未套用" prov="p1" />
-        <Field k="Open in Review Room（載入 federated USD）" v="走既有 openStageRequest" prov="p1" />
+        <Field k="per-member transform" v="已實作：root layer over xformOp（member immutable）；順序 scale→rotateXYZ→translate，translate 最外層" prov="asbuilt" />
+        <Field k="Open in Review Room" v="產出 viewer 消費的 stage_composition handoff；GPU 串流由 host-native Kit + coordinator session 負責，本服務 CPU loopback 不開串流" prov="asbuilt" />
       </Panel>
     </>
   );
