@@ -21,7 +21,7 @@ interface AppStreamProps {
     signalingserver: string
     signalingport: number
     mediaserver: string
-    mediaport: number | null
+    mediaport: number | undefined
     accessToken: string
     style?: React.CSSProperties;
     onStarted: () => void;
@@ -140,8 +140,11 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 signalingServer: this.props.signalingserver || StreamConfig.local.server,
                 signalingPort: this.props.signalingport || StreamConfig.local.signalingPort,
                 mediaServer: this.props.mediaserver || StreamConfig.local.server,
-                ...((this.props.mediaport || StreamConfig.local.mediaPort) != null && {
-                    mediaPort: this.props.mediaport || StreamConfig.local.mediaPort,
+                // StreamConfig.local.mediaPort 在 config 為 null（型別即 null）,故僅當
+                // props.mediaport 為有效 number 時才帶 mediaPort;缺值時略過該欄,
+                // 交給 library 套預設(避免傳 null / undefined 觸型別不相容)。
+                ...(this.props.mediaport != null && {
+                    mediaPort: this.props.mediaport,
                 }),
                 nativeTouchEvents: true,
                 // No hardcoded width/height/fps — library defaults (1920x1080/60) match the

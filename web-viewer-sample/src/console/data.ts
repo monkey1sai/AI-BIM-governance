@@ -51,7 +51,9 @@ export interface AppCardDef {
 }
 
 // A1–A10 權威清單（轉述自設計原型 roadmap-data.jsx RM_APPS）。
-// 本 repo 落地狀態：A1 backend AS-BUILT（PR #151）；A2/A3 為前端骨架 + spec（p1）；A4–A10 roadmap。
+// 本 repo 落地狀態：A1 backend AS-BUILT（rule-run + IDS 匯入 + BCF 2.1 匯出）；
+// A2 backend AS-BUILT（GlobalId 多級 diff + geometry_changed opt-in + issue-impact）；
+// A3 backend AS-BUILT（USD sublayer federation + per-member transform + review-room handoff）；A4–A10 roadmap。
 export const A1A10: AppCardDef[] = [
   { code: "A1", slug: "governance", title: "BIM 治理與模型檢核", en: "Governance & Rule Checker", phase: 1, tier: "focus", dep: "core+omni", prov: "asbuilt", route: "issues" },
   { code: "A2", slug: "version-diff", title: "模型版本差異與責任追蹤", en: "Model Version Diff", phase: 2, tier: "focus", dep: "core", prov: "asbuilt", route: "version-diff" },
