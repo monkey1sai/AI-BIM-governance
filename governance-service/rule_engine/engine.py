@@ -43,7 +43,7 @@ def load_rule_set(path: str) -> dict:
     """讀取規則集（``.yaml`` 或 ``.json``）。"""
     with open(path, encoding="utf-8") as fh:
         if path.endswith(".json"):
-            data = yaml.safe_load(fh) if False else json.load(fh)
+            data = json.load(fh)
         else:
             data = yaml.safe_load(fh)
     if not isinstance(data, dict) or not isinstance(data.get("rules"), list):

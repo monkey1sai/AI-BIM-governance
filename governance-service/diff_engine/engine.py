@@ -51,20 +51,29 @@ def run_diff(base: Any, target: Any, move_tol: float = 1.0, include_geometry: bo
 
     # 第二級：Tag（source element id）— 複合鍵 (is_a(), tag) 帶型別護欄，
     # 避免跨型別共用 Tag 把「刪除+新增」誤判成同一構件（A2-001）。
-    def _tagmap(els, matched):
-        out: dict[tuple[str, str], Any] = {}
+    # A2-DUP-TAG（同型別重複 Tag 幻影配對）：先統計每個 (is_a, tag) 複合鍵在各側的出現次數，
+    # 只有「base 與 target 該鍵各恰 1 個」時才以 Tag 配對。任一側該鍵 >1（歧義）時不以 Tag
+    # 配對，落到第三級 type_name_loc 或 removed/added。先前以 setdefault 壓平只留第一個，
+    # 同型別同 Tag 多構件會被丟掉並依插入序產生幻影 moved + 假 removed/added（非確定）。
+    def _tag_buckets(els, matched):
+        # 回傳 {(is_a, tag): [elements]}（保留所有同鍵構件以判斷歧義，不壓平）。
+        out: dict[tuple[str, str], list] = {}
         for e in els:
             if e.id() in matched:
                 continue
             t = K.tag_of(e)
             if t:
-                out.setdefault((e.is_a(), t), e)
+                out.setdefault((e.is_a(), t), []).append(e)
         return out
 
-    bt, tt = _tagmap(base_els, matched_base), _tagmap(tgt_els, matched_tgt)
-    for key, be in bt.items():
-        te = tt.get(key)
-        if te is not None and be.id() not in matched_base and te.id() not in matched_tgt:
+    bt, tt = _tag_buckets(base_els, matched_base), _tag_buckets(tgt_els, matched_tgt)
+    for key, bes in bt.items():
+        tes = tt.get(key)
+        # 唯一性護欄：兩側該複合鍵皆恰 1 個才配對；任一側 >1 為歧義，留待後續級別處理。
+        if not tes or len(bes) != 1 or len(tes) != 1:
+            continue
+        be, te = bes[0], tes[0]
+        if be.id() not in matched_base and te.id() not in matched_tgt:
             pairs.append((be, te, "tag"))
             matched_base.add(be.id())
             matched_tgt.add(te.id())

@@ -143,3 +143,84 @@ def test_ids_prohibited_with_requirements_not_overcounted():
     assert run.failed == 2, f"prohibited+requirements 不得過度計數，實得 failed={run.failed}"
     assert all(r.evidence.get("prohibited") for r in run.results)
     assert run.score == 0.0
+
+
+def _good_door_model():
+    """有 FireRating 的單門模型。"""
+    f = ifcopenshell.file(schema="IFC4")
+    f.create_entity("IfcProject", GlobalId=_g(), Name="P")
+    d = f.create_entity("IfcDoor", GlobalId=_g(), Name="GoodDoor")
+    prop = f.create_entity("IfcPropertySingleValue", Name="FireRating", NominalValue=f.create_entity("IfcLabel", "EI60"))
+    pset = f.create_entity("IfcPropertySet", GlobalId=_g(), Name="Pset_DoorCommon", HasProperties=[prop])
+    f.create_entity("IfcRelDefinesByProperties", GlobalId=_g(), RelatedObjects=[d], RelatingPropertyDefinition=pset)
+    return f, d
+
+
+def _bad_door_model():
+    """缺 FireRating 的單門模型。"""
+    f = ifcopenshell.file(schema="IFC4")
+    f.create_entity("IfcProject", GlobalId=_g(), Name="P")
+    d = f.create_entity("IfcDoor", GlobalId=_g(), Name="BadDoor")
+    return f, d
+
+
+def test_ids_reused_specs_across_models_no_false_pass():
+    """A1-IDS-REUSE-FALSEPASS：同一 specs 物件先後對「有 FireRating 門」再對「缺 FireRating 門」。
+
+    ifctester 0.8.5 不重置 facet.passed_entities，加上 ifcopenshell 跨 model 重用 STEP id，
+    第二個 model 的不合規門曾被殘留 pass 洩漏誤判 pass、score=100。修復後第二次必須 failed>=1
+    且 score<100。用真實 ifctester（非 fake spec）驗，確保覆蓋實際洩漏路徑。
+    """
+    from ifctester import facet as F
+    from ifctester import ids
+
+    # 單一 specs 物件，跨兩 model 重用
+    spec = ids.Specification(name="Doors need FireRating")
+    spec.applicability.append(F.Entity(name="IFCDOOR"))
+    spec.requirements.append(F.Property(propertySet="Pset_DoorCommon", baseName="FireRating", dataType="IFCLABEL"))
+    doc = ids.Ids(title="reuse")
+    doc.specifications.append(spec)
+
+    m_good, d_good = _good_door_model()
+    m_bad, d_bad = _bad_door_model()
+    # ifcopenshell 跨 file 常給相同 .id()（洩漏前提）
+    assert d_good.id() == d_bad.id(), "前提：跨 model STEP id 重用（否則無法重現洩漏）"
+
+    run_good = run_ids(m_good, doc)
+    assert run_good.passed == 1 and run_good.failed == 0 and run_good.score == 100.0
+
+    run_bad = run_ids(m_bad, doc)  # 重用同一 doc/spec
+    assert run_bad.failed >= 1, f"重用 specs 後不合規門必須 fail，實得 {run_bad}"
+    assert run_bad.score < 100.0, f"殘留 pass 洩漏導致假通過：score={run_bad.score}"
+    assert run_bad.passed == 0
+
+
+def test_ids_required_spec_zero_applicable_not_false_pass():
+    """Required-IDS-零適用誤報：required spec（minOccurs!=0）在模型無該適用構件時不得回 score=100。
+
+    ifctester 對 minOccurs>=1 的 spec、模型無 applicable 構件時回 spec.status=False（required 構件
+    缺席）。先前因 applicable 為空而完全不產 result → score=100 掩蓋失敗。修復後補 spec 級 fail、score<100。
+    """
+    from ifctester import facet as F
+    from ifctester import ids
+
+    f = ifcopenshell.file(schema="IFC4")
+    f.create_entity("IfcProject", GlobalId=_g(), Name="P")
+    f.create_entity("IfcWall", GlobalId=_g(), Name="W1")  # 只有牆，無門
+
+    spec = ids.Specification(name="At least 1 door required", minOccurs=1, maxOccurs="unbounded")
+    spec.applicability.append(F.Entity(name="IFCDOOR"))
+    spec.requirements.append(
+        F.Property(propertySet="Pset_DoorCommon", baseName="FireRating", dataType="IFCLABEL", cardinality="required")
+    )
+    doc = ids.Ids(title="required-absent")
+    doc.specifications.append(spec)
+
+    run = run_ids(f, doc)
+    assert run.failed >= 1, f"required 構件缺席必須誠實 fail，實得 {run}"
+    assert run.score < 100.0, f"required 零適用不得假通過：score={run.score}"
+    # 補的 spec 級 fail 標記為 required_absent，且無捏造構件 guid（ifc_guid=None 誠實）；
+    # ifc_type 以哨兵 "(spec)" 滿足 RuleResult.ifc_type 必填 str（Excel 匯出直寫 r.ifc_type）。
+    absent = [r for r in run.results if r.evidence.get("required_absent")]
+    assert absent and absent[0].ifc_guid is None
+    assert absent[0].ifc_type == "(spec)"

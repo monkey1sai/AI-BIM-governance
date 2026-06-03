@@ -1,6 +1,10 @@
-"""A3 共享坐標系驗證 — federation #1 風險（discipline 間 origin/unit/upAxis 差異）。
+"""A3 共享坐標系驗證 — federation #1 風險（discipline 間 unit / upAxis 差異）。
 
-讀每個 member 的 upAxis / metersPerUnit / defaultPrim，報告是否一致。
+讀每個 member 的 upAxis 與 metersPerUnit，據此判定跨 member 是否一致（consistent）；
+defaultPrim 僅一併讀出並回報於 members 資訊，**不**參與一致性判定。
+
+誠實範圍：本檢核只比對 upAxis 與 metersPerUnit，**不**驗證 origin（世界座標原點平移）。
+origin 對齊不在此函式範圍內。
 """
 from __future__ import annotations
 

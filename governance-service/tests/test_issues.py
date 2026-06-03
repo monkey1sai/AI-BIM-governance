@@ -103,6 +103,32 @@ def test_from_rule_run_not_found(client_and_db):
     assert client.post("/api/issues/from-rule-run/nope").status_code == 404
 
 
+def test_from_rule_run_allows_none_model_version_id(client_and_db):
+    """rule-run issue 版本綁定為 best-effort：rule run 缺 model_version_id（schema 為 nullable，
+    例如 console 對未指派版本的臨時 IFC 檢核）時，from-rule-run 仍 201 建出 issue，且該 issue
+    model_version_id 為 None（rule_result 來源可接受）。與 from-diff 缺 target 的 422 刻意不對稱。"""
+    from db import Store as RuleStore
+    from rule_engine.models import RuleResult, RuleRunResult
+
+    client, db_path = client_and_db
+    rs = RuleStore(db_path)
+    run_id = rs.create_run(None, "x.ifc", "default-governance")  # model_version_id=None
+    results = [
+        RuleResult(ifc_guid="GNOMV1", ifc_type="IfcDoor", ifc_name="D", rule_code="DOOR-FIRERATING-REQUIRED",
+                   severity="high", status="fail", message="缺 FireRating")
+    ]
+    run = RuleRunResult(rule_set="default-governance", version="1", target_summary={}, total=1, passed=0,
+                        failed=1, errored=0, score=0.0, results=results)
+    rs.complete_run(run_id, run)
+
+    resp = client.post(f"/api/issues/from-rule-run/{run_id}")
+    assert resp.status_code == 201  # best-effort：仍建出
+    assert resp.json()["created"] == 1
+    rule_issues = [i for i in client.get("/api/issues").json()["issues"] if i["source_type"] == "rule_result"]
+    assert len(rule_issues) == 1
+    assert rule_issues[0]["model_version_id"] is None  # 無版本綁定可接受（rule_result 來源）
+
+
 def test_from_rule_run_idempotent(client_and_db):
     """ISS-002：同一 run 重複 from-rule-run 不重複建 issue（來源冪等）。"""
     client, db_path = client_and_db

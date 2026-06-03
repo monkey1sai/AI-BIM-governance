@@ -137,6 +137,35 @@ def test_cross_type_same_tag_not_misaligned():
     assert added.ifc_type == "IfcDoor"
 
 
+def test_same_type_duplicate_tag_no_phantom_pairing():
+    """A2-DUP-TAG：同型別有 2 個相同 Tag 的構件時，不得以 Tag 配對而產生幻影 moved + 假 removed/added。
+
+    先前第二級用 setdefault((is_a, tag), e) 壓平，同 (is_a, Tag) 多構件只留第一個、第二個被丟，
+    再依插入序交叉錯配，產生幻影 moved（名稱張冠李戴）+ 假 removed/added，且非確定（隨插入序漂移）。
+    修復：先統計每個複合鍵在各側的出現次數，只有「兩側該鍵各恰 1 個」才以 Tag 配對；歧義（任一側 >1）
+    時落第三級 type_name_loc 或 removed/added。
+
+    本案例 base/target 各有同型別、同 Tag "DUP" 的 WA/WB 兩牆（GUID 全不中 → 逼到 Tag 級），
+    target 以**反向插入序**建立以暴露 setdefault 的插入序依賴；兩牆都沒移動。
+    正確結果：WA↔WA、WB↔WB（經第三級 type+name+loc 配對）→ matched=2、0 個 moved/removed/added。
+    """
+    base = ifcopenshell.file(schema="IFC4")
+    target = ifcopenshell.file(schema="IFC4")
+    _element(base, "IfcWall", "WA", (0, 0, 0), ifcopenshell.guid.new(), tag="DUP")
+    _element(base, "IfcWall", "WB", (5000, 0, 0), ifcopenshell.guid.new(), tag="DUP")
+    # target 反向插入（WB 在 WA 前）：插入序 != base，逼出 setdefault 的插入序依賴。
+    _element(target, "IfcWall", "WB", (5000, 0, 0), ifcopenshell.guid.new(), tag="DUP")
+    _element(target, "IfcWall", "WA", (0, 0, 0), ifcopenshell.guid.new(), tag="DUP")
+
+    diff = run_diff(base, target, move_tol=1.0)
+    assert diff.matched == 2, f"歧義 Tag 應落第三級各自配對，實得 matched={diff.matched}"
+    assert diff.counts.get("moved", 0) == 0, "不得有幻影 moved"
+    assert diff.counts.get("removed", 0) == 0, "不得有假 removed"
+    assert diff.counts.get("added", 0) == 0, "不得有假 added"
+    # 歧義 Tag 不以 tag 配對 → 落第三級 type_name_loc（不應出現 match==tag）
+    assert all(it.evidence.get("match") != "tag" for it in diff.items)
+
+
 def test_same_key_cluster_pairing_is_stable(monkeypatch):
     """A2-003：同 type+Name+loc 鍵簇內多構件，配對前以 GlobalId 次鍵排序再 zip，
     使 property_changed 證據歸屬穩定可重現、不依插入/迭代序。
