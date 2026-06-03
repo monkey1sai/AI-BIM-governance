@@ -175,4 +175,3 @@ A3 FederationPage SHALL 在 member 表提供 `visible` 切換，於 build 前以
 - **THEN** 前端 SHALL 以 `visibility_default=false` 帶入該 member 後再 build
 - **AND** build 成功後 SHALL 顯示後端回傳的 `hidden members`（visibility=false）
 - **AND** 前端 SHALL 誠實標示「無不重建即時切換端點，改 visible 須重新 Build 才生效」，SHALL NOT 宣稱可即時切換 visibility
-

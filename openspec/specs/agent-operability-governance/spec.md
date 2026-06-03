@@ -41,4 +41,3 @@ Every user-facing capability SHALL be verifiable from a frontend screen. Complet
 - **THEN** it SHALL update or explicitly verify `scripts/deploy.ps1`
 - **AND** it SHALL report `.\scripts\deploy.ps1 -DryRun` or explain why it could not be run
 - **AND** it SHALL update `scripts/script-registry.json` and `scripts/SCRIPT_CONTRACT.md` if a root-level script is added.
-
