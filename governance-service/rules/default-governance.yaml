@@ -3,7 +3,7 @@ version: "1.0"
 description: >
   MVP 治理規則集 — 純 ifcopenshell predicate（不依賴 ifctester / IDS）。
   涵蓋「屬性必填 / 命名規則 / 空間指派」三類，皆從真實 IFC 模型萃取證據。
-  IDS-XML 匯入為後續 p1 項目（需先 pip install ifctester 並留下 smoke 證據）。
+  IDS-XML 匯入亦已支援（ifctester；見 rule_engine/ids_runner.py）；本檔為內建 YAML 規則集。
 rules:
   - rule_code: DOOR-FIRERATING-REQUIRED
     target_ifc_type: IfcDoor

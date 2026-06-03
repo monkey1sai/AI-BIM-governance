@@ -15,6 +15,10 @@ from typing import Any
 import ifcopenshell.util.element as ifc_el
 
 _EMPTY = (None, "")
+# ifcopenshell.util.element.get_psets() 會在每個 Pset bucket 注入合成 'id' key
+# （該 Pset 的 STEP id），它不是真實屬性。查找屬性時排除，避免 property: id
+# 之類規則匹配到合成 key 而假性通過（A1-RE-04）。
+_SYNTHETIC_PSET_KEYS = frozenset({"id"})
 
 
 def eval_property_required(el: Any, pred: dict) -> tuple[bool, dict]:
@@ -28,14 +32,16 @@ def eval_property_required(el: Any, pred: dict) -> tuple[bool, dict]:
     prop = pred["property"]
     value = None
     pset_found = False
+    synthetic = prop in _SYNTHETIC_PSET_KEYS
     if pset_name:
         bucket = psets.get(pset_name)
         if bucket is not None:
             pset_found = True
-            value = bucket.get(prop)
+            if not synthetic:
+                value = bucket.get(prop)
     else:
         for bucket in psets.values():
-            if prop in bucket:
+            if not synthetic and prop in bucket:
                 value = bucket.get(prop)
                 pset_found = True
                 break

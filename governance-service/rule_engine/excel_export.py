@@ -1,7 +1,8 @@
 """把 rule-run 結果匯出成 Excel（openpyxl，host 已內建）。
 
-A1 第一階段先交付 rule-run -> Excel；BCF 匯出（issue -> .bcfzip）因 ifcopenshell
-``bcf`` 模組未安裝 + LGPL 授權閘門，標 p15 後續，不在本切片實作。
+本檔僅負責 rule-run → Excel（失敗構件清單 + summary）。BCF 2.1 匯出已於
+``bcf/`` 模組以純 stdlib（zipfile + xml）實作（見 ``app.py`` 的 ``/api/bcf/export``
+與 from-rule-run 流程，不依賴 GPLv3 bcf-client）。
 """
 from __future__ import annotations
 

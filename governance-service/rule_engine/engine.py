@@ -2,8 +2,8 @@
 
 規則集是宣告式 DSL（YAML / JSON 皆可）：每條 rule 指定 ``target_ifc_type``、
 ``severity``、``predicate``。引擎逐型別枚舉構件、套 predicate、收集
-pass/fail/error 並計分。**不依賴 ifctester / IDS**（host 未安裝；IDS 匯入
-為後續 p1 項目）。
+pass/fail/error 並計分。YAML 引擎本身**不依賴 ifctester**；IDS-XML 規則來源
+另由 ``ids_runner`` 提供（ifctester 已安裝）。
 """
 from __future__ import annotations
 
@@ -100,7 +100,10 @@ def run_rules(model: Any, rule_set: dict) -> RuleRunResult:
     failed = sum(1 for r in results if r.status == "fail")
     errored = sum(1 for r in results if r.status == "error")
     total = len(results)
-    denom = passed + failed
+    # 誠實計分（A1-RE-01）：errored（評估失敗 / 未取得）計入分母、視同未通過，
+    # 全構件 error 時 score 為 0 而非假性滿分。errored == 0 時與舊式等價（真實
+    # 模型 99.0 不受影響）；total == 0（無適用構件）時 vacuously 100.0。
+    denom = passed + failed + errored
     score = round(100.0 * passed / denom, 1) if denom else 100.0
     return RuleRunResult(
         rule_set=str(rule_set.get("rule_set", "unnamed")),

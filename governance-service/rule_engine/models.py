@@ -42,7 +42,7 @@ class RuleRunResult:
     passed: int
     failed: int
     errored: int
-    score: float  # 0-100，pass / (pass+fail)
+    score: float  # 0-100，pass / (pass+fail+errored)（errored 視同未通過，誠實計分）
     results: list[RuleResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
