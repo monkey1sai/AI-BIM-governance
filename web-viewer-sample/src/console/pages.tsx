@@ -115,11 +115,13 @@ export function IssuesRuleCenterPage() {
               const res = await fetch(governanceClient.exportUrl(runId));
               if (!res.ok) { setErr(`Excel 匯出 ${res.status}：${res.statusText}`); return; }
               const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
-              a.href = URL.createObjectURL(blob);
+              a.href = url;
               a.download = `rule-run-${runId}.xlsx`;
               a.click();
-              URL.revokeObjectURL(a.href);
+              // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放，導致（尤其較大檔）下載被中止（CodeRabbit）。
+              setTimeout(() => URL.revokeObjectURL(url), 0);
             } catch (e) { setErr(String(e)); }
           }}>匯出 Excel</Btn>
           {/* [在 3D 中標示]：console 為 /console 獨立殼層，與 viewer <App/> 互斥掛載，無 WebRTC
