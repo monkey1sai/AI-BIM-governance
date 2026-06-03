@@ -1,0 +1,52 @@
+{
+  "reverify_date": "2026-06-03",
+  "context": "Session 收尾前對 Kit/WebRTC 視覺 runtime E2E 做 live 再驗證（deploy stack 仍在線）。所有數值為當下實機讀取，非 mock、非捏造。",
+  "stack_health": {
+    "coordinator_8004_health": "200 {status:ok, service:bim-review-coordinator, kit_signaling_port:49100}",
+    "viewer_5173": "200 (NVIDIA web viewer index)",
+    "conversion_49101_health": "200 {status:ok, authority:bim-streaming-server, role:conversion-only, ifc_to_usdc_conversion:true}",
+    "kit_signaling_49100": "up (GET / 回 501 Not Implemented = WS/signaling 端點，非 HTTP GET，屬正常)"
+  },
+  "session": {
+    "session_id": "review_session_d154f4f56dd3",
+    "project_id": "270",
+    "model_version_id": "270V4_d28a1574-5600-4bd7-bac1-f607e744810f",
+    "kit_instance": "kit_local_001",
+    "kit_stream": "127.0.0.1:49100 (signaling) / 47998 (media)",
+    "user": "e2e_opus48"
+  },
+  "stage_truth": {
+    "matched": true,
+    "expected_url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/model.usdc",
+    "loaded_url": "http://192.168.10.105:49101/artifacts/stream_conv_20260528071743_b74a3e04/model.usdc",
+    "file": "yes",
+    "runtime": "yes",
+    "semantic": "no",
+    "source": "viewer HUD（screenshot ss_6886yy460）+ JS innerText 探測雙證"
+  },
+  "webrtc_video": {
+    "videoWidth": 1920,
+    "videoHeight": 1080,
+    "readyState": 4,
+    "readyState_meaning": "HAVE_ENOUGH_DATA",
+    "paused": false,
+    "srcObject_present": true,
+    "datachannel": "config/message successfully recieved from stream（見 console log）"
+  },
+  "kit_stage_load": {
+    "open_asset": "Sending request to open asset: .../model.usdc (Window.tsx:890)",
+    "kit_ready": "Kit is ready to load assets (Window.tsx:1202)",
+    "children_query": "getChildrenRequest /World [USDGeom]",
+    "stage_prims": "Kit App sent stage prims (Window.tsx:1317) — 幾何已載入 stage"
+  },
+  "screenshot": {
+    "captured": true,
+    "tool": "chrome MCP computer screenshot (save_to_disk=true)",
+    "id": "ss_6886yy460",
+    "dims": "1444x840 jpeg",
+    "shows": "viewer HUD：project 270 / version 270V4_d28a1574... / session review_session_d154f4f56dd3；File: yes · Runtime: yes · Semantic: no；Stage truth matched；expected == loaded（同一 model.usdc）；WebRTC: started · kit_local_001 127.0.0.1:49100/47998；右上『成果檔 DERIVED ready · load 0 · same_instance · mapping ready』",
+    "persisted_location": "browser-managed（chrome MCP 截圖存於擴充管理路徑，未回傳 host 檔案系統路徑，故未落入本 evidence 目錄）；影像本體已呈現於 session 對話 transcript 供使用者檢視",
+    "honesty_note": "viewport 為黑畫面：project 270 為真實 georeferenced 模型，Kit 預設相機落原點未框住遠處幾何。屬 viewer 相機框取問題，非 pipeline 失敗（Kit App sent stage prims 已證幾何在 stage）。未捏造『看得見模型』。"
+  },
+  "verdict": "Kit/WebRTC 視覺 runtime E2E 之 transport + DataChannel + Kit stage-load + stage truth matched + session id 全數實機再驗成立（2026-06-03）。rendered 影格黑為相機框取，已誠實標。"
+}

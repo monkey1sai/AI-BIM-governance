@@ -1,0 +1,37 @@
+{
+  "lifecycle": {
+    "id": "iss_e28165bd630e",
+    "t1": 200,
+    "t2": 200,
+    "final_status": "resolved",
+    "events": [
+      "open",
+      "in_progress",
+      "resolved"
+    ]
+  },
+  "illegal_transition_rejected": {
+    "status": 400,
+    "detail": "{\"detail\":\"illegal transition resolved -> in_progress\"}"
+  },
+  "bcf_export": {
+    "status": 200,
+    "bytes": 72454,
+    "sig": "504b",
+    "entries": [
+      "bcf.version",
+      "3ec14f3b-1202-41c5-923a-1705ad39c4ff/markup.bcf",
+      "3ec14f3b-1202-41c5-923a-1705ad39c4ff/viewpoint.bcfv",
+      "34fd68c8-b138-45c7-a1c5-393ec73171d5/markup.bcf",
+      "34fd68c8-b138-45c7-a1c5-393ec73171d5/viewpoint.bcfv",
+      "32dcd790-112d-4fe7-baff-5b77f465a57f/markup.bcf",
+      "32dcd790-112d-4fe7-baff-5b77f465a57f/viewpoint.bcfv",
+      "ac6b015b-adcd-4f60-8062-b072d07a6a1d/markup.bcf",
+      "ac6b015b-adcd-4f60-8062-b072d07a6a1d/viewpoint.bcfv",
+      "125d77a5-1850-491e-9455-0a6e3e056c9b/markup.bcf",
+      "125d77a5-1850-491e-9455-0a6e3e056c9b/viewpoint.bcfv",
+      "ec804cf4-346b-4160-9258-72524087c7b8/markup.bcf"
+    ]
+  },
+  "A3_set_members": 2
+}
