@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import io
+import re
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
@@ -18,6 +19,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 _NOW_FMT = "%Y-%m-%dT%H:%M:%SZ"
+# BCF 2.1 XSD：IfcGuid 為 22 字元 base64-IFC 編碼（0-9 A-Z a-z _ $）
+_IFC_GUID_RE = re.compile(r"^[0-9A-Za-z_$]{22}$")
 
 # BCF 2.1 TopicStatus 對映（我們內部狀態 → BCF）
 _STATUS_MAP = {
@@ -34,10 +37,18 @@ def _iso(value: str | None) -> str:
     if value:
         # 內部存 ISO（含 +00:00）；正規化成 BCF 的 Z 結尾
         try:
-            return datetime.fromisoformat(value).astimezone(timezone.utc).strftime(_NOW_FMT)
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)  # naive 視為 UTC（bcf-003）
+            return dt.astimezone(timezone.utc).strftime(_NOW_FMT)
         except Exception:
             pass
     return datetime.now(timezone.utc).strftime(_NOW_FMT)
+
+
+def _disp(value: Any) -> str:
+    """對外 BCF 文字：缺值輸出 'unbound' 而非 Python None 字面（bcf-005 誠實 provenance）。"""
+    return "unbound" if value in (None, "") else str(value)
 
 
 def _text(parent: ET.Element, tag: str, value: Any) -> ET.Element:
@@ -61,7 +72,7 @@ def _markup_xml(issue: dict, topic_guid: str, vp_guid: str) -> bytes:
     comment = ET.SubElement(markup, "Comment", {"Guid": str(uuid.uuid4())})
     _text(comment, "Date", _iso(issue.get("created_at")))
     _text(comment, "Author", "governance-service")
-    _text(comment, "Comment", f"{desc}\n[model_version={mv} · ifc_guid={issue.get('ifc_guid')} · source={issue.get('source_type')}]".strip())
+    _text(comment, "Comment", f"{desc}\n[model_version={_disp(mv)} · ifc_guid={_disp(issue.get('ifc_guid'))} · source={_disp(issue.get('source_type'))}]".strip())
     vps = ET.SubElement(markup, "Viewpoints", {"Guid": vp_guid})
     _text(vps, "Viewpoint", "viewpoint.bcfv")
     return _serialize(markup)
@@ -89,6 +100,10 @@ def build_bcfzip(issues: list[dict]) -> tuple[bytes, int]:
         for issue in issues:
             if issue.get("kind") != "issue" or not issue.get("ifc_guid"):
                 continue  # BCF rule 10：annotation / 無 guid 不匯出為正式 BCF issue
+            if not _IFC_GUID_RE.fullmatch(issue["ifc_guid"]):
+                # bcf-002：非 22 字元合法 IfcGuid 不匯出，避免產出違反 BCF 2.1 XSD 的 .bcfzip。
+                # 用 fullmatch 完全錨定：re.match + `$` 會在結尾單一 \n 前匹配，22 字元+尾換行會漏網。
+                continue
             topic_guid = str(uuid.uuid4())
             vp_guid = str(uuid.uuid4())
             z.writestr(f"{topic_guid}/markup.bcf", _markup_xml(issue, topic_guid, vp_guid))
