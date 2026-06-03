@@ -87,7 +87,31 @@ export const governanceClient = {
     jsonFetch<CoordReport>(`/api/governance/federated-sets/${setId}/validate-coords`, { method: "POST" }),
   buildFederatedSet: (setId: string) =>
     jsonFetch<FederatedBuildResult>(`/api/governance/federated-sets/${setId}/build`, { method: "POST" }),
+
+  // Issue tracking
+  listIssues: (status?: string) =>
+    jsonFetch<{ issues: IssueRow[] }>(`/api/governance/issues${status ? `?status=${status}` : ""}`).then((r) => r.issues),
+  transitionIssue: (id: string, toStatus: string, note?: string) =>
+    jsonFetch<IssueRow>(`/api/governance/issues/${id}/transition`, {
+      method: "POST",
+      body: JSON.stringify({ to_status: toStatus, note }),
+    }),
+  issuesFromRuleRun: (runId: string) =>
+    jsonFetch<{ created: number; issue_ids: string[] }>(`/api/governance/issues/from-rule-run/${runId}`, { method: "POST" }),
+  issuesFromDiff: (diffId: string) =>
+    jsonFetch<{ created: number; issue_ids: string[] }>(`/api/governance/issues/from-diff/${diffId}`, { method: "POST" }),
 };
+
+export interface IssueRow {
+  id: string;
+  kind: "issue" | "annotation";
+  title: string;
+  status: string;
+  severity: string;
+  ifc_guid: string | null;
+  usd_prim_path: string | null;
+  source_type: string;
+}
 
 export interface DiffRequest {
   base_ifc_path: string;
