@@ -35,6 +35,12 @@ import { mappingVerificationBlockReason, type ElementMappingDocument, type Eleme
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
 import type { ReviewLifecycleStatus, ReviewSession, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
 import type { HighlightItem, StreamMessage } from "./types/streamMessages";
+// 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（client 主動拉，不 server-push）。
+import { GovernanceOverlay } from "./console/GovernanceOverlay";
+import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
+import { HighlightBridge, type FailedElement, type HighlightResult } from "./console/governance/highlightBridge";
+import { MappingCache } from "./console/governance/mappingCache";
+import { evaluateCoverageGate } from "./console/governance/govEndpoints";
 
 
 interface USDPrimType {
@@ -82,6 +88,8 @@ interface AppState {
     selectedUSDPrims: Set<USDPrimType>;
     isKitReady: boolean;
     showStream: boolean;
+    // 統一治理控制台 MVP：治理失敗構件（A3 rule-run 失敗）餵給 overlay 在 3D 標紅；初期空陣列（誠實，無假資料）。
+    govFailedElements?: FailedElement[];
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
@@ -249,6 +257,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
+    // 統一治理控制台 MVP：當前 model version 的 MappingCache（鎖單一版本，Task C3 餵入）；未載入前為 null。
+    private _mappingCache: MappingCache | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -544,6 +554,20 @@ export default class App extends React.Component<AppProps, AppState> {
         const video = document.getElementById("remote-video") as HTMLVideoElement | null;
         if (!video) return false;
         return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+    }
+
+    // 統一治理控制台 MVP：治理失敗構件 → HighlightBridge 經既有 DataChannel 在 3D 標紅（client 主動拉）。
+    // MappingCache 未載入時誠實回 unmapped（沒有對映可標示，不捏造 prim、不假裝成功）。
+    private _overlayHighlight(failed: FailedElement): HighlightResult {
+        if (!this._mappingCache) {
+            return { ok: false, reason: "unmapped" };
+        }
+        const bridge = new HighlightBridge({
+            cache: this._mappingCache,
+            sendMessage: (m) => this._sendStreamMessage(m),
+            dataChannelReady: () => this.state.showStream && this._hasRemoteVideoFrame(),
+        });
+        return bridge.highlightFailed(failed);
     }
 
     private _canOpenSelectedAsset(): boolean {
@@ -1856,6 +1880,31 @@ export default class App extends React.Component<AppProps, AppState> {
                     )}
                 </>
                 }
+
+                {/* 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（position:absolute,
+                    z-index:20，late sibling，不改既有 viewer / AppStream / DemoControlPanel / ArtifactPanel 子樹）。
+                    showStream=false 時不渲染（不擋 loading 畫面）。coverage 由 evaluateCoverageGate 誠實導出，
+                    _mappingCache 未載入時顯「未知」狀態（不假裝非降級、不捏造 coverage%）。 */}
+                {this.state.showStream && (() => {
+                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame() });
+                    const ratio = this._mappingCache?.coverageRatio() ?? null;
+                    const coverage = this._mappingCache
+                        ? (() => {
+                            const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache.isFake });
+                            return { coverageOk: gate.coverageOk, degraded: gate.degraded, ratio };
+                        })()
+                        // 尚未載入 mapping：誠實「未知」——既不顯假 coverage%，也不誤報降級橫幅。
+                        : { coverageOk: false, degraded: false, ratio: null };
+                    return (
+                        <GovernanceOverlay
+                            panelState={inputs.panelState}
+                            coverage={coverage}
+                            failedElements={this.state.govFailedElements ?? []}
+                            onHighlight={(f) => this._overlayHighlight(f)}
+                            onClearHighlight={() => { if (inputs.panelState.canOperate) this._sendStreamMessage(buildClearHighlightRequest()); }}
+                        />
+                    );
+                })()}
             </div>
             );
         }
