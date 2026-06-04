@@ -1896,18 +1896,14 @@ export default class App extends React.Component<AppProps, AppState> {
 
                 {/* 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（position:absolute,
                     z-index:20，late sibling，不改既有 viewer / AppStream / DemoControlPanel / ArtifactPanel 子樹）。
-                    showStream=false 時不渲染（不擋 loading 畫面）。coverage 由 evaluateCoverageGate 誠實導出，
-                    _mappingCache 未載入時顯「未知」狀態（不假裝非降級、不捏造 coverage%）。 */}
+                    showStream=false 時不渲染（不擋 loading 畫面）。coverage 一律經 evaluateCoverageGate 誠實導出，
+                    _mappingCache 未載入時 ratio=null → gate 判 degraded（顯「coverage 未知」降級橫幅），
+                    不假裝非降級、不捏造 coverage%（與 evaluateCoverageGate null 語意一致）。 */}
                 {this.state.showStream && (() => {
                     const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame() });
                     const ratio = this._mappingCache?.coverageRatio() ?? null;
-                    const coverage = this._mappingCache
-                        ? (() => {
-                            const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache.isFake });
-                            return { coverageOk: gate.coverageOk, degraded: gate.degraded, ratio };
-                        })()
-                        // 尚未載入 mapping：誠實「未知」——既不顯假 coverage%，也不誤報降級橫幅。
-                        : { coverageOk: false, degraded: false, ratio: null };
+                    const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache?.isFake ?? false });
+                    const coverage = { coverageOk: gate.coverageOk, degraded: gate.degraded, ratio };
                     return (
                         <GovernanceOverlay
                             panelState={inputs.panelState}

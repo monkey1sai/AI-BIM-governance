@@ -8,6 +8,9 @@ describe("operator console 路由判定（保留既有 viewer）", () => {
     expect(isOperatorConsolePath("/console/coordinator", "")).toBe(true);
     expect(isOperatorConsolePath("/", "#/console/intake")).toBe(true);
   });
+  it("巢狀 /foo/console 不誤判為 operator（pathname 只認根層 /console）", () => {
+    expect(isOperatorConsolePath("/foo/console", "")).toBe(false);
+  });
   it("一般 viewer 路徑（含 ?session=）→ 非 operator（維持 <App/>）", () => {
     expect(isOperatorConsolePath("/", "")).toBe(false);
     expect(isOperatorConsolePath("/", "")).toBe(false);

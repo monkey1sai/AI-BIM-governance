@@ -20,4 +20,11 @@ describe("IntakeSelectPage A1 進件（選現成模型，不手填路徑）", ()
     expect(html).not.toContain(":49101");
     expect(html).not.toContain(":49100");
   });
+
+  it("初始渲染含穩定選取子：intake-refresh + intake-empty（table/radio/error 屬非同步狀態，由 browser E2E 覆蓋）", () => {
+    // renderToString 無法觸發 coordinator 非同步抓取，初始為空佇列（非錯誤）→ 只斷言恆在的選取子。
+    const html = renderToString(<IntakeSelectPage />);
+    expect(html).toContain('data-testid="intake-refresh"');
+    expect(html).toContain('data-testid="intake-empty"');
+  });
 });

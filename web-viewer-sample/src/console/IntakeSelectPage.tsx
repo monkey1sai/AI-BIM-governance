@@ -36,13 +36,13 @@ export function IntakeSelectPage() {
         title="選取現成模型 · IFC-ready（已轉換）"
         sub="GET /api/external/ifc-ready?limit=1..100 · 只列有 expected_stage_url 的 job"
         prov="asbuilt"
-        actions={<Btn disabled={busy} caption="GET /api/external/ifc-ready" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
+        actions={<Btn disabled={busy} data-testid="intake-refresh" caption="GET /api/external/ifc-ready" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
       >
-        {err && <p className="ec-warn-note">{err}</p>}
+        {err && <p className="ec-warn-note" data-testid="intake-error">{err}</p>}
         {jobs.length === 0 && !err ? (
-          <p className="ec-note">目前無可選現成模型（coordinator 已連線，佇列為空——非錯誤）。</p>
+          <p className="ec-note" data-testid="intake-empty">目前無可選現成模型（coordinator 已連線，佇列為空——非錯誤）。</p>
         ) : (
-          <table className="ec-table">
+          <table className="ec-table" data-testid="intake-table">
             <thead><tr><th>選取</th><th>ifc_ready_job_id</th><th>conversion</th><th>session</th></tr></thead>
             <tbody>
               {jobs.slice(0, 50).map((j) => (
@@ -51,6 +51,8 @@ export function IntakeSelectPage() {
                     <input
                       type="radio"
                       name="intake-model"
+                      data-testid="intake-radio"
+                      aria-label={`選取 ${j.ifc_ready_job_id}`}
                       checked={selected === j.ifc_ready_job_id}
                       onChange={() => setSelected(j.ifc_ready_job_id)}
                     />

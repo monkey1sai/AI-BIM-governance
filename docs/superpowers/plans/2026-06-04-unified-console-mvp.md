@@ -13,9 +13,9 @@
 
 **Tech Stack:** TypeScript + React 18（class component viewer + function component console）、Vite 5、Vitest 1.6（jsdom + `renderToString` smoke 測試風格，見既有 `src/console/console.test.tsx`）、NVIDIA omniverse-webrtc-streaming-library。後端為既有 coordinator（Express，`bim-review-coordinator`，`:8004`）+ governance-service（`:49102`，僅經 coordinator proxy）。
 
-**北極星 source of truth：**
-- live spec：`openspec/specs/unified-governance-console/spec.md`（5 requirements；原 change 已於 #181 歸檔至 `openspec/changes/archive/2026-06-04-unified-governance-console/`，讀 live spec 為準）。
-- design doc：`docs/superpowers/specs/2026-06-04-unified-governance-console-design.md`（§2 架構 / §3 路由 / §6 MVP 切片 / §7 fallback / §8 新元件+重構flag / §10 已裁示 Q1-Q3）。
+**參考依據（supporting references；非權威）：** 依 repo `documentation-source-of-truth` policy，**權威為 live spec + 程式碼 / API contracts**，本計畫與下列文件皆為輔助參考；任何衝突以 live spec 與 code contract 為準。
+- live spec（權威）：`openspec/specs/unified-governance-console/spec.md`（5 requirements；原 change 已於 #181 歸檔至 `openspec/changes/archive/2026-06-04-unified-governance-console/`，讀 live spec 為準）。
+- design doc（supporting reference）：`docs/superpowers/specs/2026-06-04-unified-governance-console-design.md`（§2 架構 / §3 路由 / §6 MVP 切片 / §7 fallback / §8 新元件+重構flag / §10 已裁示 Q1-Q3）。
 
 **誠實鐵律（不可退化，沿用既有 Edge Console 契約）：**
 1. 畫面與真實落地一致、無假數字（禁 127 rules / 53 BCF / 73–100 分 / 99.1% GUID / 92.4% mapping）。
@@ -59,7 +59,7 @@
 | `src/console/GovernanceOverlay.tsx` | **A1–A10 治理 overlay 框架元件**（function component，吃 props，不自管 WebRTC）：右側治理清單/動作，MVP 接 A2（語意映射檢視）/A3（規則·IDS 檢核）/A4（治理分）/A8（Issue·BCF）；A5/A6/A9/A10 標 `p3`/`p4` disabled；點 failed 構件呼叫注入的 `onHighlight(item)`（接 HighlightBridge）；spectator 由 `govPanelState` 決定 disabled。 |
 | `src/console/GovernanceOverlay.test.tsx` | overlay smoke（renderToString）：含 A2/A3/A4/A8 區塊、provenance、spectator disabled、未對映顯「無法在 3D 標示」+ coverage%、無假數字。 |
 | `src/console/governance/overlay.css` | overlay 容器樣式（沿用 `edge-console.css` 的 `--ec-*` token；`position:absolute` 疊在 viewer 右側；spectator disabled 視覺）。 |
-| `src/console/OperatorConsole.tsx` | **三個獨立 operator 頁殼**（hash 路由 `#/console/coordinator|intake|runtime`，沿用既有 `EdgeConsole.tsx` 的 `usePageHash` 零依賴路由模式）；複用既有 `CoordinatorPage` / `IntakePage` / `RuntimePage`（`console/pages.tsx`）；**不混入 A1–A10 overlay**。 |
+| `src/console/OperatorConsole.tsx` | **三個獨立 operator 頁殼**（hash 路由 `#/console/coordinator\|intake\|runtime`，沿用既有 `EdgeConsole.tsx` 的 `usePageHash` 零依賴路由模式）；複用既有 `CoordinatorPage` / `IntakePage` / `RuntimePage`（`console/pages.tsx`）；**不混入 A1–A10 overlay**。 |
 | `src/console/OperatorConsole.test.tsx` | operator 殼 smoke：三頁皆獨立 render、皆不含 A1–A10 治理 overlay 標記。 |
 | `src/console/IntakeSelectPage.tsx` | `/console/intake` 的 A1 進件「從現成模型清單選取」面板（讀既有 `coordinatorClient.listIfcReady`，列 `expected_stage_url` 的 job 供選；**不要求手填路徑**）。 |
 | `src/console/IntakeSelectPage.test.tsx` | intake 選取 smoke：呈現現成清單 UI、無「手填模型路徑」input、provenance 標示。 |

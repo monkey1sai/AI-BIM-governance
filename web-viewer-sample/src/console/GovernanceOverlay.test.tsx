@@ -102,4 +102,55 @@ describe("GovernanceOverlay failed 構件 → 3D 標紅 / 未對映誠實", () =
     expect(html).toContain("85"); // coverage% 顯示（0.85 → 85%）
     expect(html).toContain("無法在 3D 標示"); // 誠實降級文案
   });
+
+  it("同一 ifc_guid 多筆不同 rule_code 各自獨立列（rowKey=rule_code::ifc_guid，不互相覆蓋）", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        panelState={{ canOperate: true, disabledReason: null }}
+        coverage={{ coverageOk: true, degraded: false, ratio: 1.0 }}
+        failedElements={[
+          { ifc_guid: "DUP_GUID", severity: "error", rule_code: "RULE-1" },
+          { ifc_guid: "DUP_GUID", severity: "warning", rule_code: "RULE-2" },
+        ]}
+        onHighlight={() => ({ ok: true, primPath: "/World/X", requestId: "r" })}
+        onClearHighlight={() => {}}
+      />,
+    );
+    // 兩筆不同 rule_code 各自成列（rowKey 區分），不因相同 ifc_guid 而碰撞合併。
+    expect(html).toContain("RULE-1");
+    expect(html).toContain("RULE-2");
+    const rowCount = html.split('data-testid="gov-failed-row"').length - 1;
+    expect(rowCount).toBe(2);
+  });
+});
+
+describe("GovernanceOverlay 穩定選取子（data-testid，供 E2E）", () => {
+  it("可操作 + 有 failed 構件 → 渲染 gov-highlight / gov-clear / gov-failed-row", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        panelState={{ canOperate: true, disabledReason: null }}
+        coverage={{ coverageOk: true, degraded: false, ratio: 1.0 }}
+        failedElements={[{ ifc_guid: "GUID_A", severity: "error", rule_code: "R1" }]}
+        onHighlight={() => ({ ok: true, primPath: "/World/X", requestId: "r" })}
+        onClearHighlight={() => {}}
+      />,
+    );
+    expect(html).toContain('data-testid="gov-highlight"');
+    expect(html).toContain('data-testid="gov-clear"');
+    expect(html).toContain('data-testid="gov-failed-row"');
+  });
+
+  it("降級 + spectator → 渲染 gov-coverage-degraded / gov-readonly-banner", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        panelState={{ canOperate: false, disabledReason: "spectator_read_only" }}
+        coverage={{ coverageOk: false, degraded: true, ratio: 0.85 }}
+        failedElements={[]}
+        onHighlight={() => ({ ok: false, reason: "unmapped" })}
+        onClearHighlight={() => {}}
+      />,
+    );
+    expect(html).toContain('data-testid="gov-coverage-degraded"');
+    expect(html).toContain('data-testid="gov-readonly-banner"');
+  });
 });

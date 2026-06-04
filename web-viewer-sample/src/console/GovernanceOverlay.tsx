@@ -33,6 +33,10 @@ const ROADMAP_ENGINES: { code: string; title: string; prov: Prov }[] = [
   { code: "A10", title: "報表 / 稽核 / 封存", prov: "p4" },
 ];
 
+// 每列穩定 key：rule_code + ifc_guid。同一 ifc_guid 可能有多筆不同 rule_code 的失敗，
+// 只用 ifc_guid 當 key 會碰撞（React key 重複 + lastResult 互相覆蓋）。
+const rowKey = (f: FailedElement) => `${f.rule_code ?? "norule"}::${f.ifc_guid}`;
+
 export function GovernanceOverlay(props: GovernanceOverlayProps) {
   const readOnly = !props.panelState.canOperate;
   const reason = props.panelState.disabledReason;
@@ -45,7 +49,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
     const res = props.onHighlight(failed);
     setLastResult((prev) => ({
       ...prev,
-      [failed.ifc_guid]: res.ok
+      [rowKey(failed)]: res.ok
         ? `已在 3D 標示：${res.primPath}`
         : res.reason === "unmapped"
           ? "無法在 3D 標示（未對映 usd_prim_path）"
@@ -59,7 +63,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         <span className="gov-overlay-t">治理 · A1–A10</span>
         <ProvTag prov="asbuilt" />
       </div>
-      {reason && <div className="gov-banner">{GOV_PANEL_REASON_TEXT[reason]}</div>}
+      {reason && <div className="gov-banner" data-testid="gov-readonly-banner">{GOV_PANEL_REASON_TEXT[reason]}</div>}
 
       <Panel title="MVP 已接引擎" sub="A2 語意映射 · A3 規則/IDS · A4 治理分 · A8 Issue/BCF（design §5）" prov="asbuilt">
         {MVP_ENGINES.map((e) => (
@@ -75,10 +79,10 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         title="治理失敗構件 · 在 live 3D 標示"
         sub="點 failed 構件 → HighlightBridge 經 DataChannel 在 3D 標紅（client 主動拉，非 server-push）"
         prov="asbuilt"
-        actions={<Btn caption="clearHighlightRequest（client 主動拉）" disabled={!props.panelState.canOperate} onClick={() => props.onClearHighlight()}>清除 3D 標示</Btn>}
+        actions={<Btn caption="clearHighlightRequest（client 主動拉）" data-testid="gov-clear" disabled={!props.panelState.canOperate} onClick={() => props.onClearHighlight()}>清除 3D 標示</Btn>}
       >
         {props.coverage.degraded && (
-          <div className="gov-banner">
+          <div className="gov-banner" data-testid="gov-coverage-degraded">
             coverage {coveragePct === null ? "未知" : `${coveragePct}%`}（&lt; 100%）：部分未對映構件
             <strong> 無法在 3D 標示</strong>，依既有 spec 誠實降級，不捏造 prim path。
           </div>
@@ -93,15 +97,15 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
             <thead><tr><th>rule_code</th><th>severity</th><th>ifc_guid</th><th /></tr></thead>
             <tbody>
               {props.failedElements.slice(0, 50).map((f) => (
-                <tr key={f.ifc_guid}>
+                <tr key={rowKey(f)} data-testid="gov-failed-row">
                   <td>{f.rule_code ?? "—"}</td>
                   <td>{f.severity}</td>
                   <td>{f.ifc_guid}</td>
                   <td>
-                    <Btn caption="highlightPrimsRequest（client 主動拉）" disabled={!props.panelState.canOperate} onClick={() => handleHighlight(f)}>
+                    <Btn caption="highlightPrimsRequest（client 主動拉）" data-testid="gov-highlight" disabled={!props.panelState.canOperate} onClick={() => handleHighlight(f)}>
                       在 3D 標示
                     </Btn>
-                    {lastResult[f.ifc_guid] && <span className="ec-note" style={{ marginLeft: 6 }}>{lastResult[f.ifc_guid]}</span>}
+                    {lastResult[rowKey(f)] && <span className="ec-note" style={{ marginLeft: 6 }}>{lastResult[rowKey(f)]}</span>}
                   </td>
                 </tr>
               ))}

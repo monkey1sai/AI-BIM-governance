@@ -30,6 +30,7 @@ export function evaluateCoverageGate(input: CoverageGateInput): CoverageGateResu
     // fake / 未知覆蓋：不可信 → 降級（warn 不 fail），不假裝 1.0。
     return { ...base, coverageOk: false, degraded: true, warnOnly: true };
   }
-  const coverageOk = input.coverageRatio >= MVP_MIN_COVERAGE;
-  return { ...base, coverageOk, degraded: !coverageOk, warnOnly: !coverageOk };
+  const coverageOk = input.coverageRatio >= MVP_MIN_COVERAGE;          // locked 1.0 = pass
+  const degraded = input.coverageRatio < LOW_COVERAGE_THRESHOLD;        // fallback path only < 0.9
+  return { ...base, coverageOk, degraded, warnOnly: !coverageOk };      // measure-first：低於 locked 1.0 一律 warn
 }

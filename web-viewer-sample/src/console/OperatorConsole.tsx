@@ -8,7 +8,9 @@ import { IntakeSelectPage } from "./IntakeSelectPage";
 
 export type OperatorPage = "coordinator" | "intake" | "runtime";
 
-function readPage(): OperatorPage {
+// 純函式（從 window.location.hash 解出當前頁）→ named export 便於單元測試。
+// 註：hashchange 監聽與 nav 點擊互動（go()）無法在無 @testing-library 環境單測，由 browser E2E 覆蓋。
+export function readPage(): OperatorPage {
   const h = window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#/, "");
   if (h === "intake") return "intake";
   if (h === "runtime") return "runtime";
@@ -46,10 +48,10 @@ export default function OperatorConsole() {
       <nav className="ec-nav">
         <div className="ec-group">OPERATOR</div>
         {NAV.map((n) => (
-          <button key={n.key} className={page === n.key ? "active" : ""} onClick={() => go(n.key)}>{n.label}</button>
+          <button key={n.key} data-testid={`op-nav-${n.key}`} className={page === n.key ? "active" : ""} onClick={() => go(n.key)}>{n.label}</button>
         ))}
       </nav>
-      <main className="ec-main"><OperatorBody page={page} /></main>
+      <main className="ec-main" data-testid="op-page"><OperatorBody page={page} /></main>
       <footer className="ec-foot"><span>operator 頁不含 A1–A10 治理 overlay · 治理只疊在 primary viewer</span></footer>
     </div>
   );

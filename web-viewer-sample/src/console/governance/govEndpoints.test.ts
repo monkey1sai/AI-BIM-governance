@@ -14,6 +14,15 @@ describe("MVP identity profile + coverage gate（誠實降級，零新引擎）"
     expect(g.degraded).toBe(false);
   });
 
+  it("coverage 0.95（0.9≤r<1.0，warn band）→ 不達標但不降級（warnOnly）", () => {
+    // measure-first：低於 locked 1.0 即 warn（coverageOk=false, warnOnly=true），但未跌破 fallback
+    // 觸發閾值 0.9，故不進降級路徑（degraded=false）。
+    const g = evaluateCoverageGate({ coverageRatio: 0.95, isFake: false });
+    expect(g.coverageOk).toBe(false);
+    expect(g.degraded).toBe(false);
+    expect(g.warnOnly).toBe(true);
+  });
+
   it("coverage 0.85（<0.9）→ degraded（warn 不 fail，measure-first）", () => {
     const g = evaluateCoverageGate({ coverageRatio: 0.85, isFake: false });
     expect(g.coverageOk).toBe(false);
