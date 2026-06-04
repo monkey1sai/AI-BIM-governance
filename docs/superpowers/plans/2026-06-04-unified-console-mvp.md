@@ -14,7 +14,7 @@
 **Tech Stack:** TypeScript + React 18（class component viewer + function component console）、Vite 5、Vitest 1.6（jsdom + `renderToString` smoke 測試風格，見既有 `src/console/console.test.tsx`）、NVIDIA omniverse-webrtc-streaming-library。後端為既有 coordinator（Express，`bim-review-coordinator`，`:8004`）+ governance-service（`:49102`，僅經 coordinator proxy）。
 
 **北極星 source of truth：**
-- spec delta：`openspec/changes/unified-governance-console/specs/unified-governance-console/spec.md`（5 requirements）。
+- live spec：`openspec/specs/unified-governance-console/spec.md`（5 requirements；原 change 已於 #181 歸檔至 `openspec/changes/archive/2026-06-04-unified-governance-console/`，讀 live spec 為準）。
 - design doc：`docs/superpowers/specs/2026-06-04-unified-governance-console-design.md`（§2 架構 / §3 路由 / §6 MVP 切片 / §7 fallback / §8 新元件+重構flag / §10 已裁示 Q1-Q3）。
 
 **誠實鐵律（不可退化，沿用既有 Edge Console 契約）：**
