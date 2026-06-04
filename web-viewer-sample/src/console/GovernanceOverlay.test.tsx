@@ -10,6 +10,8 @@ const baseProps = {
   failedElements: [],
   onHighlight: () => ({ ok: true as const, primPath: "/World/X", requestId: "r1" }),
   onClearHighlight: () => {},
+  onRunRuleCheck: () => {},
+  onCreateIssues: () => {},
 };
 
 describe("GovernanceOverlay A1–A10 overlay（MVP 接 A2/A3/A4/A8）", () => {
@@ -152,5 +154,87 @@ describe("GovernanceOverlay 穩定選取子（data-testid，供 E2E）", () => {
     );
     expect(html).toContain('data-testid="gov-coverage-degraded"');
     expect(html).toContain('data-testid="gov-readonly-banner"');
+  });
+});
+
+// ── W1：A3 rule-run 動作 + 狀態（誠實） ──
+describe("GovernanceOverlay A3 rule-run（W1）", () => {
+  it("渲染 gov-run-rulecheck，可操作時 enabled；無 session（無 onRunRuleCheck）時 disabled", () => {
+    const enabled = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "idle" }} />);
+    expect(enabled).toContain('data-testid="gov-run-rulecheck"');
+    const runBtn = enabled.match(/<button[^>]*data-testid="gov-run-rulecheck"[^>]*>/);
+    expect(runBtn?.[0]).not.toContain("disabled"); // canOperate + onRunRuleCheck → enabled
+
+    // 不可操作（spectator）→ disabled。
+    const ro = renderToString(
+      <GovernanceOverlay {...baseProps} panelState={{ canOperate: false, disabledReason: "spectator_read_only" }} ruleCheck={{ status: "idle" }} />,
+    );
+    const roBtn = ro.match(/<button[^>]*data-testid="gov-run-rulecheck"[^>]*>/);
+    expect(roBtn?.[0]).toContain("disabled");
+  });
+
+  it("running → 顯示「執行中…」；error → 顯示錯誤訊息；succeeded → 顯示 score + counts（誠實）", () => {
+    const running = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "running" }} />);
+    expect(running).toContain("執行中…");
+
+    const errored = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "error", error: "尚無 review session" }} />);
+    expect(errored).toContain("尚無 review session");
+
+    const ok = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 88, total: 100, failed: 12 }} />);
+    expect(ok).toContain("88");
+    expect(ok).toContain("12");
+  });
+});
+
+// ── W2：highlight 送出誠實文案 + Kit 非同步確認覆寫 ──
+describe("GovernanceOverlay highlight 誠實（W2）", () => {
+  const failedProps = {
+    ...baseProps,
+    failedElements: [{ ifc_guid: "GUID_A", severity: "error", rule_code: "R1" }],
+  };
+  it("highlightConfirm 到達 → 顯示確認文案（覆寫「已送出」）", () => {
+    const html = renderToString(
+      <GovernanceOverlay {...failedProps} highlightConfirm={{ GUID_A: "已在 3D 標示（Kit 已選取）" }} />,
+    );
+    expect(html).toContain('data-testid="gov-highlight-status"');
+    expect(html).toContain("已在 3D 標示（Kit 已選取）");
+  });
+  it("未對映 reason=unmapped 仍誠實（送出文案不冒充已標示）", () => {
+    // renderToString 不觸發 onClick，故驗證「已送出（非已標示）」這個誠實字面不存在於初始 DOM，
+    // 也驗證確認文案僅在 highlightConfirm 提供時出現。
+    const html = renderToString(<GovernanceOverlay {...failedProps} />);
+    expect(html).not.toContain("已在 3D 標示：/World"); // 不再有舊的「已標示：primPath」假確認
+  });
+});
+
+// ── W3：A8 issue / BCF 動作（誠實 gating） ──
+describe("GovernanceOverlay A8 issue / BCF（W3）", () => {
+  it("gov-a8-issue：rule-run 未 succeeded → disabled；succeeded → enabled", () => {
+    const idle = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "idle" }} />);
+    const idleBtn = idle.match(/<button[^>]*data-testid="gov-a8-issue"[^>]*>/);
+    expect(idleBtn?.[0]).toContain("disabled");
+
+    const ok = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 90, total: 10, failed: 1 }} />);
+    const okBtn = ok.match(/<button[^>]*data-testid="gov-a8-issue"[^>]*>/);
+    expect(okBtn?.[0]).not.toContain("disabled");
+  });
+
+  it("bcfUrl 提供 → 渲染 gov-a8-bcf 下載連結（href）；缺 model version → 誠實提示，不捏造 URL", () => {
+    const withUrl = renderToString(
+      <GovernanceOverlay {...baseProps} bcfUrl="http://127.0.0.1:8004/api/governance/bcf/export?model_version_id=mv_1" />,
+    );
+    expect(withUrl).toContain('data-testid="gov-a8-bcf"');
+    expect(withUrl).toContain('href="http://127.0.0.1:8004/api/governance/bcf/export?model_version_id=mv_1"');
+
+    const noUrl = renderToString(<GovernanceOverlay {...baseProps} />);
+    expect(noUrl).toContain('data-testid="gov-a8-bcf-missing"');
+    expect(noUrl).not.toContain('data-testid="gov-a8-bcf"');
+  });
+
+  it("issueCreate=created → 顯示「已從 rule-run 開 N 筆 issue」（誠實）", () => {
+    const html = renderToString(
+      <GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 90 }} issueCreate={{ status: "created", created: 7 }} />,
+    );
+    expect(html).toContain("已從 rule-run 開 7 筆 issue");
   });
 });

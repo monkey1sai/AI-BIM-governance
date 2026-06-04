@@ -25,6 +25,14 @@ export function IntakeSelectPage() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // W6：選取後可「開啟審查 viewer」。viewer_url 由 coordinator 提供（前端不捏造路徑）；
+  // 缺 viewer_url 的 job 不可開（按鈕 disabled + 誠實說明），不做假導航。
+  const selectedJob = jobs.find((j) => j.ifc_ready_job_id === selected) ?? null;
+  const canOpen = Boolean(selectedJob?.viewer_url);
+  const openViewer = () => {
+    if (selectedJob?.viewer_url) window.location.assign(selectedJob.viewer_url);
+  };
+
   return (
     <>
       <h1>模型進件 · A1（選取現成模型）</h1>
@@ -36,7 +44,20 @@ export function IntakeSelectPage() {
         title="選取現成模型 · IFC-ready（已轉換）"
         sub="GET /api/external/ifc-ready?limit=1..100 · 只列有 expected_stage_url 的 job"
         prov="asbuilt"
-        actions={<Btn disabled={busy} data-testid="intake-refresh" caption="GET /api/external/ifc-ready" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
+        actions={
+          <>
+            <Btn disabled={busy} data-testid="intake-refresh" caption="GET /api/external/ifc-ready" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>
+            <Btn
+              primary
+              data-testid="intake-open"
+              caption="window.location.assign(job.viewer_url)（coordinator 提供）"
+              disabled={!canOpen}
+              onClick={openViewer}
+            >
+              開啟審查 viewer
+            </Btn>
+          </>
+        }
       >
         {err && <p className="ec-warn-note" data-testid="intake-error">{err}</p>}
         {jobs.length === 0 && !err ? (
@@ -64,6 +85,11 @@ export function IntakeSelectPage() {
               ))}
             </tbody>
           </table>
+        )}
+        {selectedJob && !canOpen && (
+          <p className="ec-note" data-testid="intake-open-blocked">
+            此 job 尚無 viewer_url（coordinator 未提供可開啟的 viewer 入口）→「開啟審查 viewer」停用，不做假導航。
+          </p>
         )}
         <p className="ec-note">進件來源為現成清單選取；模型路徑由 coordinator / conversion authority 持有，前端不手填、不直連內部埠。</p>
       </Panel>

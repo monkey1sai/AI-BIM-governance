@@ -1,15 +1,14 @@
 // web-viewer-sample/src/console/governance/mappingCache.ts
 // MappingCache：client 端快取 element_mapping 的 ifc_guid ↔ usd_prim_path 雙向 index。
 // 鎖單一 model version（Q2：不做跨版本智能失效）。只讀 + 不寫回；mapping 權威在 conversion artifact。
+// W5：coverage 不由本快取計算 —— 真實 element_mapping summary 只有 {mapped_count, fake_mapping_count}，
+//     無分母（source_ifc_entity_count），自算會誤判。coverage 改由 streamConfig.quality_metrics_summary
+//     .coverage_ratio 原樣提供（型別文件規定 viewer MUST NOT compute）。本快取只保留 isFake + 雙向 index。
 import { isFakeMappingDocument, type ElementMappingDocument, type ElementMappingItem } from "../../types/mapping";
 
 export class MappingCache {
   readonly modelVersionId: string | null;
   readonly isFake: boolean;
-  // coverage 分子用 summary.mapped_count（來源側統計的已對映實體數），分母用 source_ifc_entity_count；
-  // 兩者皆來自 conversion summary，不用 client 端 index 大小冒充（index 只覆蓋有完整 guid+prim 的 item）。
-  private readonly summaryMappedCount: number | null;
-  private readonly sourceEntityCount: number | null;
   private readonly guidToPrim: Map<string, string>;
   private readonly primToGuid: Map<string, string>;
 
@@ -17,13 +16,9 @@ export class MappingCache {
     modelVersionId: string | null,
     items: ElementMappingItem[],
     isFake: boolean,
-    summaryMappedCount: number | null,
-    sourceEntityCount: number | null,
   ) {
     this.modelVersionId = modelVersionId;
     this.isFake = isFake;
-    this.summaryMappedCount = summaryMappedCount;
-    this.sourceEntityCount = sourceEntityCount;
     this.guidToPrim = new Map();
     this.primToGuid = new Map();
     if (!isFake) {
@@ -40,17 +35,7 @@ export class MappingCache {
   static fromDocument(doc: ElementMappingDocument, modelVersionId: string | null): MappingCache {
     const items = Array.isArray(doc.items) ? doc.items : [];
     const isFake = isFakeMappingDocument(doc);
-    const summary = doc.summary as { source_ifc_entity_count?: number; mapped_count?: number } | undefined;
-    const sourceEntityCount =
-      typeof summary?.source_ifc_entity_count === "number" ? summary.source_ifc_entity_count : null;
-    const summaryMappedCount = typeof summary?.mapped_count === "number" ? summary.mapped_count : null;
-    return new MappingCache(
-      modelVersionId ?? doc.model_version_id ?? null,
-      items,
-      isFake,
-      summaryMappedCount,
-      sourceEntityCount,
-    );
+    return new MappingCache(modelVersionId ?? doc.model_version_id ?? null, items, isFake);
   }
 
   primPathForGuid(ifcGuid: string): string | null {
@@ -67,12 +52,5 @@ export class MappingCache {
 
   belongsTo(modelVersionId: string | null): boolean {
     return this.modelVersionId !== null && this.modelVersionId === modelVersionId;
-  }
-
-  coverageRatio(): number | null {
-    if (this.isFake) return null; // fake 不算覆蓋率
-    if (this.sourceEntityCount === null || this.sourceEntityCount <= 0) return null;
-    const numerator = this.summaryMappedCount ?? this.mappedCount;
-    return numerator / this.sourceEntityCount;
   }
 }

@@ -10,12 +10,37 @@ import type { FailedElement, HighlightResult } from "./governance/highlightBridg
 // DRY（E3 type consistency）：直接復用 govPanelState 的 union，不另立平行 OverlayPanelState。
 import { GOV_PANEL_REASON_TEXT, type GovPanelState } from "./governance/govPanelState";
 
+// W1：A3 rule-run 執行狀態（誠實：running→「執行中…」、error→訊息、succeeded→score+counts）。
+export interface RuleCheckState {
+  status: "idle" | "running" | "succeeded" | "failed" | "error";
+  score?: number | null;
+  total?: number;
+  failed?: number;
+  error?: string;
+}
+
+// W3：A8 從 rule-run 開 issue 的結果（誠實：created 筆數 / 錯誤訊息，不假裝成功）。
+export interface IssueCreateState {
+  status: "idle" | "creating" | "created" | "error";
+  created?: number;
+  error?: string;
+}
+
 export interface GovernanceOverlayProps {
   panelState: GovPanelState;
   coverage: { coverageOk: boolean; degraded: boolean; ratio: number | null };
   failedElements: FailedElement[];
   onHighlight: (failed: FailedElement) => HighlightResult;
   onClearHighlight: () => void;
+  // W1：A3 rule-run。onRunRuleCheck 由 Window 注入（起 run + 輪詢 + 餵 govFailedElements）。
+  onRunRuleCheck?: () => void;
+  ruleCheck?: RuleCheckState;
+  // W2：Kit 非同步回傳的標示確認（key=ifc_guid）。到達後覆寫「已送出」為確認文案。
+  highlightConfirm?: Record<string, string>;
+  // W3：A8 issue / BCF。onCreateIssues 由 Window 注入；bcfUrl 為直連下載 anchor（不捏造）。
+  onCreateIssues?: () => void;
+  issueCreate?: IssueCreateState;
+  bcfUrl?: string;
 }
 
 // MVP 接的已有引擎（design §5 權威對映）。
@@ -43,14 +68,38 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
   const [lastResult, setLastResult] = useState<Record<string, string>>({});
   const coveragePct = props.coverage.ratio === null ? null : Math.round(props.coverage.ratio * 100);
 
+  // W1：A3 rule-run 狀態文案（誠實）。
+  const rc = props.ruleCheck;
+  const ruleCheckText = (() => {
+    if (!rc || rc.status === "idle") return null;
+    if (rc.status === "running") return "執行中…（建立 rule-run 後輪詢狀態）";
+    if (rc.status === "error") return `規則檢核失敗：${rc.error ?? "未知錯誤"}`;
+    if (rc.status === "failed") return "rule-run 後端回報 failed（檢核未成功完成）";
+    // succeeded
+    const score = rc.score === null || rc.score === undefined ? "—" : rc.score;
+    return `完成：治理分 ${score}，total=${rc.total ?? "?"}、failed=${rc.failed ?? "?"}`;
+  })();
+  const ruleCheckSucceeded = rc?.status === "succeeded";
+
+  // W3：A8 issue 建立狀態文案（誠實）。
+  const ic = props.issueCreate;
+  const issueCreateText = (() => {
+    if (!ic || ic.status === "idle") return null;
+    if (ic.status === "creating") return "建立中…（issues/from-rule-run）";
+    if (ic.status === "error") return `開立 issue 失敗：${ic.error ?? "未知錯誤"}`;
+    return `已從 rule-run 開 ${ic.created ?? 0} 筆 issue`;
+  })();
+
   const handleHighlight = (failed: FailedElement) => {
     // 防禦縱深：!canOperate（spectator / 未就緒）時不觸發治理動作；按鈕已 disabled，這是第二道保險（對齊 spec「spectator SHALL NOT 觸發」）。
     if (!props.panelState.canOperate) return;
     const res = props.onHighlight(failed);
     setLastResult((prev) => ({
       ...prev,
+      // W2 誠實：成功只代表「請求已送出」（client→DataChannel），Kit 是否真的選到該構件需非同步確認，
+      // 由 props.highlightConfirm[ifc_guid] 到達後覆寫此文案。不在送出當下假稱「已標示」。
       [rowKey(failed)]: res.ok
-        ? `已在 3D 標示：${res.primPath}`
+        ? "已送出 3D 標示請求（client→DataChannel，待 Kit 確認）"
         : res.reason === "unmapped"
           ? "無法在 3D 標示（未對映 usd_prim_path）"
           : "等待 viewer 連線（DataChannel 未就緒）",
@@ -73,6 +122,29 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
             <ProvTag prov={e.prov} />
           </div>
         ))}
+      </Panel>
+
+      {/* W1：A3 規則 / IDS 檢核 —— 由當前 review session 起 rule-run，輪詢後把 failed 構件餵入下方清單。 */}
+      <Panel
+        title="A3 規則 / IDS 檢核 · 從本 session 起跑"
+        sub="POST /api/governance/rule-runs/for-session/:sessionId（coordinator 端解析 server IFC 路徑）"
+        prov="asbuilt"
+        actions={
+          <Btn
+            caption="POST rule-runs/for-session/:sessionId（client 主動拉）"
+            data-testid="gov-run-rulecheck"
+            disabled={!props.panelState.canOperate || !props.onRunRuleCheck}
+            onClick={() => props.onRunRuleCheck?.()}
+          >
+            {rc?.status === "running" ? "檢核中…" : "執行規則檢核"}
+          </Btn>
+        }
+      >
+        {ruleCheckText ? (
+          <Field k="rule-run 狀態" v={ruleCheckText} prov="asbuilt" />
+        ) : (
+          <p className="ec-note">尚未起跑規則檢核（按右上「執行規則檢核」；需 primary viewer + 已建立 session）。</p>
+        )}
       </Panel>
 
       <Panel
@@ -105,7 +177,12 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
                     <Btn caption="highlightPrimsRequest（client 主動拉）" data-testid="gov-highlight" disabled={!props.panelState.canOperate} onClick={() => handleHighlight(f)}>
                       在 3D 標示
                     </Btn>
-                    {lastResult[rowKey(f)] && <span className="ec-note" style={{ marginLeft: 6 }}>{lastResult[rowKey(f)]}</span>}
+                    {/* W2：Kit 非同步確認（highlightConfirm[ifc_guid]）優先；未到達則顯示「已送出」即時回饋。 */}
+                    {(props.highlightConfirm?.[f.ifc_guid] ?? lastResult[rowKey(f)]) && (
+                      <span className="ec-note" data-testid="gov-highlight-status" style={{ marginLeft: 6 }}>
+                        {props.highlightConfirm?.[f.ifc_guid] ?? lastResult[rowKey(f)]}
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -113,6 +190,34 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
           </table>
         )}
         <Field k="3D 著色機制" v="client highlightPrimsRequest 經 viewer DataChannel；不復活 2026-05-21 退役 server-push" prov="asbuilt" />
+      </Panel>
+
+      {/* W3：A8 Issue / BCF —— 從本次 rule-run 開 issue（須先 succeeded）；BCF 為直連下載（不捏造）。 */}
+      <Panel
+        title="A8 Issue / BCF · 從本次 rule-run"
+        sub="POST /api/governance/issues/from-rule-run/:runId · BCF GET /api/governance/bcf/export"
+        prov="asbuilt"
+        actions={
+          <Btn
+            caption="POST issues/from-rule-run/:runId（須 rule-run succeeded）"
+            data-testid="gov-a8-issue"
+            disabled={!props.panelState.canOperate || !ruleCheckSucceeded || !props.onCreateIssues}
+            onClick={() => props.onCreateIssues?.()}
+          >
+            {ic?.status === "creating" ? "開立中…" : "從 rule-run 開 issue"}
+          </Btn>
+        }
+      >
+        {issueCreateText && <Field k="issue 建立" v={issueCreateText} prov="asbuilt" />}
+        {props.bcfUrl ? (
+          <a className="ec-btn" data-testid="gov-a8-bcf" href={props.bcfUrl} target="_blank" rel="noreferrer">
+            下載 BCF 2.1
+            <span className="ec-cap">GET /api/governance/bcf/export（直連下載）</span>
+          </a>
+        ) : (
+          <p className="ec-note" data-testid="gov-a8-bcf-missing">尚無 model version，無法產生 BCF 下載連結（誠實，不捏造 URL）。</p>
+        )}
+        <Field k="開 issue 前置" v="須先成功跑完 A3 規則檢核（succeeded），否則按鈕 disabled" prov="asbuilt" />
       </Panel>
 
       <Panel title="後期願景 · 各自獨立 OpenSpec change" sub="A5/A6/A9/A10 後端未建（Q3）→ disabled，不假裝 ready" prov="asbuilt">

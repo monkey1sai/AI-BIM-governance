@@ -27,4 +27,12 @@ describe("IntakeSelectPage A1 進件（選現成模型，不手填路徑）", ()
     expect(html).toContain('data-testid="intake-refresh"');
     expect(html).toContain('data-testid="intake-empty"');
   });
+
+  // W6：選取後可「開啟審查 viewer」。初始（無選取、無 viewer_url）→ 按鈕渲染且 disabled（不做假導航）。
+  it("含 intake-open 按鈕；初始未選取 → disabled（不假導航）", () => {
+    const html = renderToString(<IntakeSelectPage />);
+    expect(html).toContain('data-testid="intake-open"');
+    const openBtn = html.match(/<button[^>]*data-testid="intake-open"[^>]*>/);
+    expect(openBtn?.[0]).toContain("disabled"); // 初始未選取 / 無 viewer_url → disabled
+  });
 });

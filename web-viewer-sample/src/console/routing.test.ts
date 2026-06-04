@@ -16,4 +16,17 @@ describe("operator console 路由判定（保留既有 viewer）", () => {
     expect(isOperatorConsolePath("/", "")).toBe(false);
     expect(isOperatorConsolePath("/viewer", "")).toBe(false);
   });
+
+  // W8：短 hash #coordinator / #intake / #runtime → operator（無 session= 時）。
+  it("短 hash #coordinator / #intake / #runtime（query 無 session=）→ operator", () => {
+    expect(isOperatorConsolePath("/", "#coordinator")).toBe(true);
+    expect(isOperatorConsolePath("/", "#intake")).toBe(true);
+    expect(isOperatorConsolePath("/", "#runtime")).toBe(true);
+  });
+  it("短 hash 但 query 帶 session= → 非 operator（viewer ?session= 進件優先）", () => {
+    expect(isOperatorConsolePath("/", "#coordinator", "?session=review_session_x")).toBe(false);
+  });
+  it("巢狀 /foo/console（即使帶短 hash 以外）仍非 operator（pathname 只認根層 /console）", () => {
+    expect(isOperatorConsolePath("/foo/console", "")).toBe(false);
+  });
 });

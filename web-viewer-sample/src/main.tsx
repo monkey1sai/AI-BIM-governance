@@ -35,7 +35,7 @@ if (initialSession && /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(initialSessio
 }
 
 // /console[/...] 或 #/console[/...] 掛統一治理控制台 operator 三頁；其餘維持既有 viewer App 不變。
-const useOperatorConsole = isOperatorConsolePath(window.location.pathname, window.location.hash);
+const useOperatorConsole = isOperatorConsolePath(window.location.pathname, window.location.hash, window.location.search);
 ReactDOM.createRoot(document.getElementById("root")!).render(
     useOperatorConsole ? <OperatorConsole /> : <App />
 );

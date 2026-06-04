@@ -58,6 +58,13 @@ export const governanceClient = {
       method: "POST",
       body: JSON.stringify(req),
     }),
+  // 統一治理控制台 MVP（W1）：由 review session 直接起 rule-run；server IFC 路徑由 coordinator 端解析
+  // （瀏覽器不持有、不手填模型路徑，守邊界 B1）。後端誠實 404（無進件 IFC）/ 502（governance 離線）。
+  createRuleRunForSession: (sessionId: string, body?: { ids_path?: string; rule_set?: string }) =>
+    jsonFetch<{ rule_run_id: string; status: string }>(
+      `/api/governance/rule-runs/for-session/${sessionId}`,
+      { method: "POST", body: JSON.stringify(body ?? {}) }
+    ),
   getRuleRun: (id: string) => jsonFetch<RuleRunStatus>(`/api/governance/rule-runs/${id}`),
   getResults: (id: string, status?: string) =>
     jsonFetch<{ results: RuleResultRow[] }>(

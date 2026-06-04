@@ -12,7 +12,9 @@ export const MVP_COVERAGE_DENOMINATOR = "source_ifc_entity_count" as const;
 export const LOW_COVERAGE_THRESHOLD = 0.9 as const;
 
 export interface CoverageGateInput {
-  coverageRatio: number | null; // 來自 MappingCache.coverageRatio()
+  // W5：source-agnostic —— ratio 來自 streamConfig.quality_metrics_summary.coverage_ratio（原樣，
+  // viewer 不自算）。本函式只判 gate，不關心 ratio 來源（MappingCache 不再提供 coverageRatio）。
+  coverageRatio: number | null;
   isFake: boolean;
 }
 
