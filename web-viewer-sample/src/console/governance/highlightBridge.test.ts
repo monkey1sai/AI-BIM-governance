@@ -4,7 +4,11 @@ import { HighlightBridge } from "./highlightBridge";
 import { MappingCache } from "./mappingCache";
 import type { ElementMappingDocument } from "../../types/mapping";
 
-const DOC: ElementMappingDocument = {
+// summary 的 source_ifc_entity_count 是 conversion summary 的真實 runtime 欄位，
+// 共用型別 ElementMappingSummary 未宣告它，故以 intersection 明確帶入（誠實對映真實資料）。
+const DOC: ElementMappingDocument & {
+  summary: { mapped_count: number; source_ifc_entity_count: number; fake_mapping_count: number };
+} = {
   mock: false,
   model_version_id: "mv_1",
   summary: { mapped_count: 1, source_ifc_entity_count: 1, fake_mapping_count: 0 },
@@ -30,8 +34,7 @@ describe("HighlightBridge（client 主動拉 → DataChannel，不 server-push�
     const sent: unknown[] = [];
     const bridge = new HighlightBridge({ cache, sendMessage: (m) => sent.push(m), dataChannelReady: () => true });
     const res = bridge.highlightFailed({ ifc_guid: "GUID_MISSING", severity: "error" });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("unmapped");
+    expect(res).toEqual({ ok: false, reason: "unmapped" });
     expect(sent).toHaveLength(0); // 不送假 prim
   });
 
@@ -40,8 +43,7 @@ describe("HighlightBridge（client 主動拉 → DataChannel，不 server-push�
     const send = vi.fn();
     const bridge = new HighlightBridge({ cache, sendMessage: send, dataChannelReady: () => false });
     const res = bridge.highlightFailed({ ifc_guid: "GUID_A", severity: "error" });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("datachannel_not_ready");
+    expect(res).toEqual({ ok: false, reason: "datachannel_not_ready" });
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -50,8 +52,7 @@ describe("HighlightBridge（client 主動拉 → DataChannel，不 server-push�
     const sent: unknown[] = [];
     const bridge = new HighlightBridge({ cache: fakeCache, sendMessage: (m) => sent.push(m), dataChannelReady: () => true });
     const res = bridge.highlightFailed({ ifc_guid: "GUID_A", severity: "error" });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("unmapped");
+    expect(res).toEqual({ ok: false, reason: "unmapped" });
     expect(sent).toHaveLength(0);
   });
 });
