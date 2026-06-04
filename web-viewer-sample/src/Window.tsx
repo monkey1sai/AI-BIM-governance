@@ -2055,7 +2055,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     const lifecycleActive = lifecycle === "active" || lifecycle === "created";
                     const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame(), lifecycleActive });
                     const ratio = this.state.latestStreamConfig?.quality_metrics_summary?.coverage_ratio ?? null;
-                    const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache?.isFake ?? false });
+                    // R6（誠實）：_mappingCache 為 null（尚未載入 / 未知）視為 fake → degraded，
+                    // 不在 client 無法標示時仍顯示有把握的 coverage%（保守誠實）。
+                    const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache?.isFake ?? true });
                     // R7：把 warnOnly 透傳給 overlay —— coverage ∈ [0.9,1.0) 時非 degraded 但低於鎖定 1.0，
                     // overlay 顯示 measure-first 警示（非 fallback 降級），讓操作員看見「未達 100%」。
                     const coverage = { coverageOk: gate.coverageOk, degraded: gate.degraded, ratio, warnOnly: gate.warnOnly };

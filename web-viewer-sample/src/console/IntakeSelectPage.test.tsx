@@ -42,10 +42,12 @@ describe("IntakeSelectPage A1 進件（選現成模型，不手填路徑）", ()
 
 // ── R3（安全）：viewer_url 驗證 —— 拒 open-redirect / javascript: / data: ──
 describe("isSafeViewerUrl（R3 安全驗證，純函式）", () => {
-  it("接受 http(s) 絕對 URL 與同源相對路徑；拒 javascript:/data:/缺值", () => {
-    expect(isSafeViewerUrl("http://127.0.0.1:8004/ui/open?session=lwv_1")).toBe(true);
-    expect(isSafeViewerUrl("https://example.test/viewer")).toBe(true);
-    expect(isSafeViewerUrl("/ui/open?session=lwv_1")).toBe(true); // 同源相對路徑（base=origin → http(s)）
+  it("只接受同源 / coordinator origin；拒跨來源 open-redirect + javascript:/data:/缺值", () => {
+    expect(isSafeViewerUrl("http://127.0.0.1:8004/ui/open?session=lwv_1")).toBe(true); // coordinator origin（coordinatorClient.base）
+    expect(isSafeViewerUrl("/ui/open?session=lwv_1")).toBe(true); // 同源相對路徑（base=origin）
+    // R6：跨來源 https 即使是合法 scheme 也拒（open-redirect / phishing）。
+    expect(isSafeViewerUrl("https://attacker.example/viewer")).toBe(false);
+    expect(isSafeViewerUrl("https://example.test/viewer")).toBe(false);
     // 不安全 scheme 一律拒。
     expect(isSafeViewerUrl("javascript:alert(1)")).toBe(false);
     // eslint-disable-next-line no-script-url

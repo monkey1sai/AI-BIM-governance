@@ -12,7 +12,11 @@ export function isSafeViewerUrl(u?: string | null): boolean {
   if (!u) return false;
   try {
     const parsed = new URL(u, window.location.origin);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    // R6（安全強化）：只查 protocol 仍放行 https://attacker.example（open-redirect / phishing）。
+    // viewer_url 由 coordinator 提供，正當來源即同源（viewer app）或 coordinator origin → 限這兩者。
+    const coordinatorOrigin = new URL(coordinatorClient.base, window.location.origin).origin;
+    return parsed.origin === window.location.origin || parsed.origin === coordinatorOrigin;
   } catch {
     return false;
   }
@@ -46,9 +50,9 @@ export function IntakeSelectPage() {
   const viewerUrlSafe = isSafeViewerUrl(selectedJob?.viewer_url);
   const canOpen = viewerUrlSafe;
   const openViewer = () => {
-    if (selectedJob?.viewer_url && isSafeViewerUrl(selectedJob.viewer_url)) {
-      window.location.assign(selectedJob.viewer_url);
-    }
+    const raw = selectedJob?.viewer_url;
+    if (!raw || !isSafeViewerUrl(raw)) return;
+    window.location.assign(new URL(raw, window.location.origin).toString());
   };
 
   return (
