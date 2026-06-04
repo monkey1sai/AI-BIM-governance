@@ -40,6 +40,8 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
   const coveragePct = props.coverage.ratio === null ? null : Math.round(props.coverage.ratio * 100);
 
   const handleHighlight = (failed: FailedElement) => {
+    // 防禦縱深：!canOperate（spectator / 未就緒）時不觸發治理動作；按鈕已 disabled，這是第二道保險（對齊 spec「spectator SHALL NOT 觸發」）。
+    if (!props.panelState.canOperate) return;
     const res = props.onHighlight(failed);
     setLastResult((prev) => ({
       ...prev,
@@ -73,6 +75,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         title="治理失敗構件 · 在 live 3D 標示"
         sub="點 failed 構件 → HighlightBridge 經 DataChannel 在 3D 標紅（client 主動拉，非 server-push）"
         prov="asbuilt"
+        actions={<Btn caption="clearHighlightRequest（client 主動拉）" disabled={!props.panelState.canOperate} onClick={() => props.onClearHighlight()}>清除 3D 標示</Btn>}
       >
         {props.coverage.degraded && (
           <div className="gov-banner">

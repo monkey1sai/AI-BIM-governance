@@ -47,9 +47,4 @@ export class HighlightBridge {
     this.deps.sendMessage(buildHighlightPrimsRequest([item], true, requestId));
     return { ok: true, primPath, requestId };
   }
-
-  clear(buildClear: () => StreamMessage): void {
-    if (!this.deps.dataChannelReady()) return;
-    this.deps.sendMessage(buildClear());
-  }
 }

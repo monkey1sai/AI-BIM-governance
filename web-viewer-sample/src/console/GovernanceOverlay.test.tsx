@@ -53,6 +53,8 @@ describe("GovernanceOverlay spectator 唯讀 / 等待 viewer（誠實 disabled�
     expect(html).toContain("gov-readonly"); // 容器標唯讀（CSS 禁用操作）
     // 面板內容仍渲染（不隱藏）：A2/A3/A4/A8 仍在。
     expect(html).toContain("A2");
+    // 清除標示鈕對 spectator 仍可見（不隱藏，誠實唯讀），且 disabled。
+    expect(html).toContain("清除 3D 標示");
   });
 
   it("DataChannel 未就緒 → 顯示等待 viewer 連線文案", () => {
@@ -83,6 +85,8 @@ describe("GovernanceOverlay failed 構件 → 3D 標紅 / 未對映誠實", () =
     expect(html).toContain("GUID_A");
     expect(html).toContain("DOOR-FIRERATING-REQUIRED");
     expect(html).toContain("在 3D 標示");
+    // 清除標示鈕存在且接 onClearHighlight（修正 dead wiring：原 prop 傳入卻未使用）。
+    expect(html).toContain("清除 3D 標示");
   });
 
   it("coverage 降級（<90%）→ 顯示 coverage% 與「部分構件無法在 3D 標示」（誠實，不捏造）", () => {
