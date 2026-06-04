@@ -65,6 +65,10 @@ export class MappingCache {
     return this.guidToPrim.size;
   }
 
+  belongsTo(modelVersionId: string | null): boolean {
+    return this.modelVersionId !== null && this.modelVersionId === modelVersionId;
+  }
+
   coverageRatio(): number | null {
     if (this.isFake) return null; // fake 不算覆蓋率
     if (this.sourceEntityCount === null || this.sourceEntityCount <= 0) return null;

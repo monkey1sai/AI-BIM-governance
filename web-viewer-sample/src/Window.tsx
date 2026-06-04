@@ -1221,6 +1221,13 @@ export default class App extends React.Component<AppProps, AppState> {
         console.log(`Sending request to select: ${selectedUsdPrims}.`);
         this.setState({ selectedUSDPrims: selectedUsdPrims });
         const paths: string[] = Array.from(selectedUsdPrims).map(obj => obj.path);
+        // 統一治理控制台 MVP（R3 點 3D → ifc_guid 方向）：經 MappingCache 反查 ifc_guid 帶進治理；
+        // 無對映誠實記事件（不捏造 guid）。Phase D 再接 overlay。
+        const firstPath = paths[0];
+        if (firstPath && this._mappingCache) {
+            const guid = this._mappingCache.guidForPrimPath(firstPath);
+            this._appendReviewEvent(guid ? `點選 3D 構件 → ifc_guid=${guid}（帶進治理）` : `點選 3D 構件 ${firstPath} → 無對映 ifc_guid`);
+        }
         const message: AppStreamMessageType = {
             event_type: "selectPrimsRequest",
             payload: {
@@ -1276,6 +1283,12 @@ export default class App extends React.Component<AppProps, AppState> {
             const payload = await response.json();
             if (!isElementMappingDocument(payload)) {
                 throw new Error("mapping JSON shape is invalid");
+            }
+            // 統一治理控制台 MVP（Q2）：鎖當前 model version 的 MappingCache；換版本則重建（不跨版本智能失效）。
+            // fake mapping 由 MappingCache 內部拒絕（不冒充真實覆蓋 / 不提供假 prim）。
+            const mvId = this.state.currentModelVersionId;
+            if (!this._mappingCache || !this._mappingCache.belongsTo(mvId)) {
+                this._mappingCache = MappingCache.fromDocument(payload, mvId);
             }
             const items = Array.isArray(payload.items)
                 ? payload.items.filter((item): item is Record<string, unknown> => isRecord(item) && Boolean(item['usd_prim_path']))

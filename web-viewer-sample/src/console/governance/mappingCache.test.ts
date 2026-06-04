@@ -66,3 +66,12 @@ describe("MappingCache fake 隔離 + coverage（誠實，不灌水）", () => {
     expect(cache.coverageRatio()).toBeNull();
   });
 });
+
+describe("MappingCache 鎖單一 model version（Q2：不跨版本失效）", () => {
+  it("belongsTo 判定當前鎖定版本（不同版本回 false，提示需重建）", () => {
+    const doc: ElementMappingDocument = { mock: false, model_version_id: "mv_1", summary: { mapped_count: 1, fake_mapping_count: 0 }, items: [{ ifc_guid: "g", usd_prim_path: "/W/x" }] };
+    const cache = MappingCache.fromDocument(doc, "mv_1");
+    expect(cache.belongsTo("mv_1")).toBe(true);
+    expect(cache.belongsTo("mv_2")).toBe(false); // 換版本 → 不複用舊 cache（誠實，不跨版本智能失效）
+  });
+});
