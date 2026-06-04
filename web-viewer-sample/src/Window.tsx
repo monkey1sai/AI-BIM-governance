@@ -274,7 +274,9 @@ export default class App extends React.Component<AppProps, AppState> {
     private _mappingCacheUrl: string | null = null;
     // W2：治理標示送出後，等待 Kit highlightPrimsResult 非同步確認的 request（與既有 mapping-verify 的
     // pendingMappingHighlightRequestId 分開，互不干擾）。
-    private _pendingGovHighlights: Record<string, { ifc_guid: string; primPath: string }> = {};
+    // F1：一併記 rowKey（rule_code::ifc_guid），確認回來時以 rowKey 寫 govHighlightConfirm，
+    // 避免同一 ifc_guid 多筆不同 rule_code 的列共用 / 互相覆蓋確認狀態。
+    private _pendingGovHighlights: Record<string, { ifc_guid: string; rowKey: string; primPath: string }> = {};
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -598,9 +600,11 @@ export default class App extends React.Component<AppProps, AppState> {
         });
         const res = bridge.highlightFailed(failed);
         // W2：送出成功只代表「已送出」，Kit 是否真的選到該構件由 highlightPrimsResult 非同步確認。
-        // 記下 requestId → (ifc_guid, primPath)，待回應比對 selected/missing 後寫 govHighlightConfirm。
+        // 記下 requestId → (ifc_guid, rowKey, primPath)，待回應比對 selected/missing 後寫 govHighlightConfirm。
         if (res.ok) {
-            this._pendingGovHighlights[res.requestId] = { ifc_guid: failed.ifc_guid, primPath: res.primPath };
+            // F1：rowKey 鏡像 overlay 的 `${rule_code ?? "norule"}::${ifc_guid}`，每列獨立確認。
+            const rowKey = `${failed.rule_code ?? "norule"}::${failed.ifc_guid}`;
+            this._pendingGovHighlights[res.requestId] = { ifc_guid: failed.ifc_guid, rowKey, primPath: res.primPath };
         }
         return res;
     }
@@ -1745,7 +1749,8 @@ export default class App extends React.Component<AppProps, AppState> {
                     && fallbackPaths.length === 0;
                 nextState.govHighlightConfirm = {
                     ...this.state.govHighlightConfirm,
-                    [govPending.ifc_guid]: confirmed ? "已在 3D 標示（Kit 已選取）" : "Kit 未選到該構件（missing/fallback）",
+                    // F1：以 rowKey 為 key（與 overlay 讀取一致），同一 ifc_guid 多筆不同 rule_code 各自獨立確認。
+                    [govPending.rowKey]: confirmed ? "已在 3D 標示（Kit 已選取）" : "Kit 未選到該構件（missing/fallback）",
                 };
                 delete this._pendingGovHighlights[requestId];
             }
@@ -1788,7 +1793,8 @@ export default class App extends React.Component<AppProps, AppState> {
             if (prims[0]) this._reverseLookupGuid(prims[0]);
             if (prims.length === 0) {
                 console.log('Kit App communicates an empty stage selection.');
-                this.setState({ selectedUSDPrims: new Set<USDPrimType>() });
+                // F3：取消選取時一併清掉治理選取 guid，避免 overlay 的 gov-selected-guid 行殘留舊 guid（誠實）。
+                this.setState({ selectedUSDPrims: new Set<USDPrimType>(), govSelectedGuid: null });
             }
             else {
                 console.log('Kit App communicates selection of a USDPrimType: ' + prims.join(', '));

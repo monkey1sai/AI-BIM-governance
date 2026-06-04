@@ -18,6 +18,16 @@ export type HighlightResult =
   | { ok: true; primPath: string; requestId: string }
   | { ok: false; reason: "unmapped" | "datachannel_not_ready" };
 
+// severityToColor 只特判 "error"/"warning"，其餘一律藍。治理 rule engine 可能吐 critical/high/medium/low
+// 等其他標籤，先正規化成 severityToColor 認得的 error/warning（大小寫不敏感），其餘原樣透傳（→ 預設藍）。
+// 不改 severityToColor 本身（共用於 mapping-verify 等既有路徑）。
+export function normalizeSeverity(sev: string): string {
+  const s = sev.toLowerCase();
+  if (s === "critical" || s === "high" || s === "error") return "error";
+  if (s === "medium" || s === "warning") return "warning";
+  return sev;
+}
+
 export interface HighlightBridgeDeps {
   cache: MappingCache;
   sendMessage: (message: StreamMessage) => void;
@@ -38,7 +48,7 @@ export class HighlightBridge {
     const item: HighlightItem = {
       prim_path: primPath,
       ifc_guid: failed.ifc_guid,
-      color: severityToColor(failed.severity),
+      color: severityToColor(normalizeSeverity(failed.severity)),
       label: failed.label || failed.rule_code || failed.ifc_guid,
       source: "governance_failed",
       issue_id: failed.rule_code ? `gov:${failed.rule_code}:${failed.ifc_guid}` : `gov:${failed.ifc_guid}`,

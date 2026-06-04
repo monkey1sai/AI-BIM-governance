@@ -36,7 +36,8 @@ export interface GovernanceOverlayProps {
   // W1：A3 rule-run。onRunRuleCheck 由 Window 注入（起 run + 輪詢 + 餵 govFailedElements）。
   onRunRuleCheck?: () => void;
   ruleCheck?: RuleCheckState;
-  // W2：Kit 非同步回傳的標示確認（key=ifc_guid）。到達後覆寫「已送出」為確認文案。
+  // W2：Kit 非同步回傳的標示確認。到達後覆寫「已送出」為確認文案。
+  // F1：key=rowKey（rule_code::ifc_guid），與每列 key 一致 —— 同一 ifc_guid 多筆不同 rule_code 各自獨立。
   highlightConfirm?: Record<string, string>;
   // W3：A8 issue / BCF。onCreateIssues 由 Window 注入；bcfUrl 為直連下載 anchor（不捏造）。
   onCreateIssues?: () => void;
@@ -199,10 +200,12 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
                     <Btn caption="highlightPrimsRequest（client 主動拉）" data-testid="gov-highlight" disabled={!props.panelState.canOperate} onClick={() => handleHighlight(f)}>
                       在 3D 標示
                     </Btn>
-                    {/* W2：Kit 非同步確認（highlightConfirm[ifc_guid]）優先；未到達則顯示「已送出」即時回饋。 */}
-                    {(props.highlightConfirm?.[f.ifc_guid] ?? lastResult[rowKey(f)]) && (
+                    {/* W2：Kit 非同步確認優先；未到達則顯示「已送出」即時回饋。
+                        F1：以 rowKey（rule_code::ifc_guid）為 key，與 lastResult 一致 —— 同一 ifc_guid 多筆不同
+                        rule_code 的列各自獨立確認，不互相覆蓋。 */}
+                    {(props.highlightConfirm?.[rowKey(f)] ?? lastResult[rowKey(f)]) && (
                       <span className="ec-note" data-testid="gov-highlight-status" style={{ marginLeft: 6 }}>
-                        {props.highlightConfirm?.[f.ifc_guid] ?? lastResult[rowKey(f)]}
+                        {props.highlightConfirm?.[rowKey(f)] ?? lastResult[rowKey(f)]}
                       </span>
                     )}
                   </td>
@@ -229,7 +232,14 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
           <Btn
             caption="POST issues/from-rule-run/:runId（須 rule-run succeeded）"
             data-testid="gov-a8-issue"
-            disabled={!props.panelState.canOperate || !ruleCheckSucceeded || !props.onCreateIssues}
+            // F2：creating 中與 created 後都 disabled（避免連點重複開 issue 集）；succeeded 文案見下方 issueCreateText。
+            disabled={
+              !props.panelState.canOperate ||
+              !ruleCheckSucceeded ||
+              !props.onCreateIssues ||
+              ic?.status === "creating" ||
+              ic?.status === "created"
+            }
             onClick={() => props.onCreateIssues?.()}
           >
             {ic?.status === "creating" ? "開立中…" : "從 rule-run 開 issue"}

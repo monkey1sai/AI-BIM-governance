@@ -126,6 +126,45 @@ describe("GovernanceOverlay failed 構件 → 3D 標紅 / 未對映誠實", () =
     const rowCount = html.split('data-testid="gov-failed-row"').length - 1;
     expect(rowCount).toBe(2);
   });
+
+  // F1：highlightConfirm 以 rowKey（rule_code::ifc_guid）為 key —— 同一 ifc_guid 多筆不同 rule_code
+  // 的列各自獨立確認，不共用 / 互相覆蓋（修正：原以 f.ifc_guid 為 key 會讓兩列共用同一確認狀態）。
+  it("highlightConfirm 以 rowKey 索引 → 同 ifc_guid 不同 rule_code 各列確認狀態獨立", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        {...baseProps}
+        failedElements={[
+          { ifc_guid: "DUP_GUID", severity: "error", rule_code: "RULE-1" },
+          { ifc_guid: "DUP_GUID", severity: "warning", rule_code: "RULE-2" },
+        ]}
+        highlightConfirm={{
+          "RULE-1::DUP_GUID": "已在 3D 標示（Kit 已選取）",
+          "RULE-2::DUP_GUID": "Kit 未選到該構件（missing/fallback）",
+        }}
+      />,
+    );
+    // 兩種不同確認文案同時出現 → 證明各列以 rowKey 分別讀取，未被同一 ifc_guid key 合併成單一狀態。
+    expect(html).toContain("已在 3D 標示（Kit 已選取）");
+    expect(html).toContain("Kit 未選到該構件（missing/fallback）");
+    const statusCount = html.split('data-testid="gov-highlight-status"').length - 1;
+    expect(statusCount).toBe(2); // 兩列各一個狀態 span（非共用一個）
+  });
+
+  it("highlightConfirm 只填一列的 rowKey → 另一列（同 ifc_guid 不同 rule_code）不顯示確認（無洩漏）", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        {...baseProps}
+        failedElements={[
+          { ifc_guid: "DUP_GUID", severity: "error", rule_code: "RULE-1" },
+          { ifc_guid: "DUP_GUID", severity: "warning", rule_code: "RULE-2" },
+        ]}
+        highlightConfirm={{ "RULE-1::DUP_GUID": "已在 3D 標示（Kit 已選取）" }}
+      />,
+    );
+    // 只 RULE-1 列有確認；RULE-2 列不因共用 ifc_guid 而誤顯示（rowKey 隔離）。
+    const statusCount = html.split('data-testid="gov-highlight-status"').length - 1;
+    expect(statusCount).toBe(1);
+  });
 });
 
 describe("GovernanceOverlay 穩定選取子（data-testid，供 E2E）", () => {
@@ -248,8 +287,9 @@ describe("GovernanceOverlay highlight 誠實（W2）", () => {
     failedElements: [{ ifc_guid: "GUID_A", severity: "error", rule_code: "R1" }],
   };
   it("highlightConfirm 到達 → 顯示確認文案（覆寫「已送出」）", () => {
+    // F1：highlightConfirm 以 rowKey（rule_code::ifc_guid）為 key（此列 rule_code=R1 → "R1::GUID_A"）。
     const html = renderToString(
-      <GovernanceOverlay {...failedProps} highlightConfirm={{ GUID_A: "已在 3D 標示（Kit 已選取）" }} />,
+      <GovernanceOverlay {...failedProps} highlightConfirm={{ "R1::GUID_A": "已在 3D 標示（Kit 已選取）" }} />,
     );
     expect(html).toContain('data-testid="gov-highlight-status"');
     expect(html).toContain("已在 3D 標示（Kit 已選取）");
@@ -291,6 +331,29 @@ describe("GovernanceOverlay A8 issue / BCF（W3）", () => {
       <GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 90 }} issueCreate={{ status: "created", created: 7 }} />,
     );
     expect(html).toContain("已從 rule-run 開 7 筆 issue");
+  });
+
+  // F2：created 後 gov-a8-issue disabled（避免連點重複開 issue 集）；creating 中亦 disabled。
+  it("gov-a8-issue：issueCreate=created → 已開過，按鈕 disabled（防重複建立）", () => {
+    const created = renderToString(
+      <GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 90 }} issueCreate={{ status: "created", created: 3 }} />,
+    );
+    const createdBtn = created.match(/<button[^>]*data-testid="gov-a8-issue"[^>]*>/);
+    expect(createdBtn?.[0]).toContain("disabled");
+    // 對照：succeeded 但尚未開（idle）→ enabled（確認不是恆 disabled）。
+    const idleIssue = renderToString(
+      <GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 90 }} issueCreate={{ status: "idle" }} />,
+    );
+    const idleBtn = idleIssue.match(/<button[^>]*data-testid="gov-a8-issue"[^>]*>/);
+    expect(idleBtn?.[0]).not.toContain("disabled");
+  });
+
+  it("gov-a8-issue：issueCreate=creating → 開立中，按鈕 disabled", () => {
+    const creating = renderToString(
+      <GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 90 }} issueCreate={{ status: "creating" }} />,
+    );
+    const creatingBtn = creating.match(/<button[^>]*data-testid="gov-a8-issue"[^>]*>/);
+    expect(creatingBtn?.[0]).toContain("disabled");
   });
 });
 
