@@ -2,6 +2,7 @@
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { GovernanceOverlay } from "./GovernanceOverlay";
+import { GOV_PANEL_REASON_TEXT } from "./governance/govPanelState";
 
 const baseProps = {
   panelState: { canOperate: true, disabledReason: null as null },
@@ -34,5 +35,36 @@ describe("GovernanceOverlay A1–A10 overlay（MVP 接 A2/A3/A4/A8）", () => {
     expect(html).not.toContain("99.1%");
     expect(html).not.toContain("92.4%");
     expect(html).not.toContain("127 rules");
+  });
+});
+
+describe("GovernanceOverlay spectator 唯讀 / 等待 viewer（誠實 disabled，非隱藏）", () => {
+  it("spectator → 顯示唯讀橫幅且操作鈕 disabled，但面板仍可見（不隱藏）", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        panelState={{ canOperate: false, disabledReason: "spectator_read_only" }}
+        coverage={{ coverageOk: true, degraded: false, ratio: 1.0 }}
+        failedElements={[{ ifc_guid: "G1", severity: "error" }]}
+        onHighlight={() => ({ ok: true, primPath: "/World/X", requestId: "r" })}
+        onClearHighlight={() => {}}
+      />,
+    );
+    expect(html).toContain(GOV_PANEL_REASON_TEXT.spectator_read_only); // 誠實表態
+    expect(html).toContain("gov-readonly"); // 容器標唯讀（CSS 禁用操作）
+    // 面板內容仍渲染（不隱藏）：A2/A3/A4/A8 仍在。
+    expect(html).toContain("A2");
+  });
+
+  it("DataChannel 未就緒 → 顯示等待 viewer 連線文案", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        panelState={{ canOperate: false, disabledReason: "waiting_viewer" }}
+        coverage={{ coverageOk: true, degraded: false, ratio: 1.0 }}
+        failedElements={[]}
+        onHighlight={() => ({ ok: false, reason: "datachannel_not_ready" })}
+        onClearHighlight={() => {}}
+      />,
+    );
+    expect(html).toContain(GOV_PANEL_REASON_TEXT.waiting_viewer);
   });
 });

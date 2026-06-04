@@ -7,7 +7,7 @@ import { Btn, Panel, ProvTag } from "./components";
 import type { Prov } from "./data";
 import type { FailedElement, HighlightResult } from "./governance/highlightBridge";
 // DRY（E3 type consistency）：直接復用 govPanelState 的 union，不另立平行 OverlayPanelState。
-import type { GovPanelState } from "./governance/govPanelState";
+import { GOV_PANEL_REASON_TEXT, type GovPanelState } from "./governance/govPanelState";
 
 export interface GovernanceOverlayProps {
   panelState: GovPanelState;
@@ -33,12 +33,15 @@ const ROADMAP_ENGINES: { code: string; title: string; prov: Prov }[] = [
 ];
 
 export function GovernanceOverlay(props: GovernanceOverlayProps) {
+  const readOnly = !props.panelState.canOperate;
+  const reason = props.panelState.disabledReason;
   return (
-    <div className="gov-overlay" role="complementary" aria-label="A1–A10 治理 overlay">
+    <div className={`gov-overlay ${readOnly ? "gov-readonly" : ""}`} role="complementary" aria-label="A1–A10 治理 overlay">
       <div className="gov-overlay-h">
         <span className="gov-overlay-t">治理 · A1–A10</span>
         <ProvTag prov="asbuilt" />
       </div>
+      {reason && <div className="gov-banner">{GOV_PANEL_REASON_TEXT[reason]}</div>}
 
       <Panel title="MVP 已接引擎" sub="A2 語意映射 · A3 規則/IDS · A4 治理分 · A8 Issue/BCF（design §5）" prov="asbuilt">
         {MVP_ENGINES.map((e) => (
