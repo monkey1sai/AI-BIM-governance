@@ -1,6 +1,8 @@
 // web-viewer-sample/src/console/GovernanceOverlay.test.tsx
+import { act } from "react";
 import { renderToString } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it } from "vitest";
 import { GovernanceOverlay } from "./GovernanceOverlay";
 import { GOV_PANEL_REASON_TEXT } from "./governance/govPanelState";
 
@@ -289,5 +291,116 @@ describe("GovernanceOverlay A8 issue / BCF（W3）", () => {
       <GovernanceOverlay {...baseProps} ruleCheck={{ status: "succeeded", score: 90 }} issueCreate={{ status: "created", created: 7 }} />,
     );
     expect(html).toContain("已從 rule-run 開 7 筆 issue");
+  });
+});
+
+// ── T2：viewport pick 反查的 ifc_guid 顯示給操作員 ──
+describe("GovernanceOverlay selectedGuid（T2）", () => {
+  it("selectedGuid 非 null → 顯示 gov-selected-guid 行（含 ifc_guid）", () => {
+    const html = renderToString(<GovernanceOverlay {...baseProps} selectedGuid="2O2Fr$t4X7Zf8NOew3FLOH" />);
+    expect(html).toContain('data-testid="gov-selected-guid"');
+    expect(html).toContain("2O2Fr$t4X7Zf8NOew3FLOH");
+    expect(html).toContain("點選 3D 構件 → ifc_guid=");
+  });
+
+  it("selectedGuid 省略 / null → 不顯示該行（誠實：無對映不顯示假 guid）", () => {
+    const omitted = renderToString(<GovernanceOverlay {...baseProps} />);
+    expect(omitted).not.toContain('data-testid="gov-selected-guid"');
+    const nullGuid = renderToString(<GovernanceOverlay {...baseProps} selectedGuid={null} />);
+    expect(nullGuid).not.toContain('data-testid="gov-selected-guid"');
+  });
+});
+
+// ── T4：失敗構件超過 50 筆 → 誠實標註其餘未列出（不靜默截斷） ──
+describe("GovernanceOverlay failed 截斷誠實（T4）", () => {
+  const mkFailed = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ ifc_guid: `G${i}`, severity: "error" as const, rule_code: `R${i}` }));
+
+  it("failedElements > 50 → 渲染 gov-failed-truncated 標註總數，且只列前 50 列", () => {
+    const html = renderToString(<GovernanceOverlay {...baseProps} failedElements={mkFailed(63)} />);
+    expect(html).toContain('data-testid="gov-failed-truncated"');
+    // renderToString 會在插值（{length}）兩側插入 <!-- --> 標記，故分段斷言而非整串比對。
+    expect(html).toContain("顯示前 50 筆／共");
+    expect(html).toContain("63");
+    expect(html).toContain("筆失敗構件（其餘未列出）");
+    const rowCount = html.split('data-testid="gov-failed-row"').length - 1;
+    expect(rowCount).toBe(50); // 上限仍 50 列
+  });
+
+  it("failedElements = 50（邊界）→ 無截斷標註（未超過上限）", () => {
+    const html = renderToString(<GovernanceOverlay {...baseProps} failedElements={mkFailed(50)} />);
+    expect(html).not.toContain('data-testid="gov-failed-truncated"');
+    const rowCount = html.split('data-testid="gov-failed-row"').length - 1;
+    expect(rowCount).toBe(50);
+  });
+});
+
+// ── T5：BCF 匯出範圍誠實（model-version-scoped，非 run-scoped） ──
+describe("GovernanceOverlay BCF 範圍誠實（T5）", () => {
+  it("bcfUrl 提供 → 渲染 gov-a8-bcf-scope 範圍說明（本 model version 所有正式 issue）", () => {
+    const html = renderToString(
+      <GovernanceOverlay {...baseProps} bcfUrl="http://127.0.0.1:8004/api/governance/bcf/export?model_version_id=mv_1" />,
+    );
+    expect(html).toContain('data-testid="gov-a8-bcf-scope"');
+    expect(html).toContain("BCF 匯出為本 model version 所有正式 issue（非僅本次 rule-run）");
+  });
+
+  it("無 bcfUrl → 不顯示範圍說明（無下載連結時不誤掛範圍文案）", () => {
+    const html = renderToString(<GovernanceOverlay {...baseProps} />);
+    expect(html).not.toContain('data-testid="gov-a8-bcf-scope"');
+  });
+});
+
+// ── T1：清除 3D 標示時一併清掉本地每列狀態文案（jsdom 互動測試） ──
+describe("GovernanceOverlay 清除標示重設本地狀態（T1）", () => {
+  let container: HTMLDivElement | null = null;
+
+  // 告知 React 這是 act() 測試環境（消除「not configured to support act」warning）。
+  (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+  afterEach(() => {
+    if (container) {
+      document.body.removeChild(container);
+      container = null;
+    }
+  });
+
+  it("點「在 3D 標示」→ 出現 gov-highlight-status；點「清除 3D 標示」→ 本地狀態文案清除", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const props = {
+      ...baseProps,
+      failedElements: [{ ifc_guid: "GUID_A", severity: "error" as const, rule_code: "R1" }],
+      onHighlight: () => ({ ok: true as const, primPath: "/World/X", requestId: "r1" }),
+      onClearHighlight: () => {},
+    };
+    act(() => {
+      root.render(<GovernanceOverlay {...props} />);
+    });
+    // 初始：尚未送出 → 無狀態文案。
+    expect(container.querySelector('[data-testid="gov-highlight-status"]')).toBeNull();
+
+    // 點「在 3D 標示」→ 本地 lastResult 寫入「已送出…」。
+    const highlightBtn = container.querySelector('[data-testid="gov-highlight"]') as HTMLButtonElement;
+    expect(highlightBtn).not.toBeNull();
+    act(() => {
+      highlightBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const status = container.querySelector('[data-testid="gov-highlight-status"]');
+    expect(status).not.toBeNull();
+    expect(status?.textContent).toContain("已送出 3D 標示請求");
+
+    // 點「清除 3D 標示」→ 本地狀態文案清除（T1 修復：handleClearHighlight 重設 lastResult）。
+    const clearBtn = container.querySelector('[data-testid="gov-clear"]') as HTMLButtonElement;
+    expect(clearBtn).not.toBeNull();
+    act(() => {
+      clearBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="gov-highlight-status"]')).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
   });
 });

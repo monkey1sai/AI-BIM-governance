@@ -42,6 +42,9 @@ export interface GovernanceOverlayProps {
   onCreateIssues?: () => void;
   issueCreate?: IssueCreateState;
   bcfUrl?: string;
+  // T2：viewport 點選後反查到的 ifc_guid（由 Window._reverseLookupGuid 設定）。非 null 才顯示，
+  // 點選無對映時 Window 會設 null（誠實：不顯示假 guid）。
+  selectedGuid?: string | null;
 }
 
 // MVP 接的已有引擎（design §5 權威對映）。
@@ -90,6 +93,14 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
     if (ic.status === "error") return `開立 issue 失敗：${ic.error ?? "未知錯誤"}`;
     return `已從 rule-run 開 ${ic.created ?? 0} 筆 issue`;
   })();
+
+  // T1：清除 3D 標示時一併清掉本地每列狀態文案（lastResult），避免殘留「已送出…」誤導。
+  // props.highlightConfirm 由 Window 在 onClearHighlight 內 reset（govHighlightConfirm:{}），此處只負責本地 state。
+  const handleClearHighlight = () => {
+    if (!props.panelState.canOperate) return;
+    props.onClearHighlight();
+    setLastResult({});
+  };
 
   const handleHighlight = (failed: FailedElement) => {
     // 防禦縱深：!canOperate（spectator / 未就緒）時不觸發治理動作；按鈕已 disabled，這是第二道保險（對齊 spec「spectator SHALL NOT 觸發」）。
@@ -152,7 +163,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         title="治理失敗構件 · 在 live 3D 標示"
         sub="點 failed 構件 → HighlightBridge 經 DataChannel 在 3D 標紅（client 主動拉，非 server-push）"
         prov="asbuilt"
-        actions={<Btn caption="clearHighlightRequest（client 主動拉）" data-testid="gov-clear" disabled={!props.panelState.canOperate} onClick={() => props.onClearHighlight()}>清除 3D 標示</Btn>}
+        actions={<Btn caption="clearHighlightRequest（client 主動拉）" data-testid="gov-clear" disabled={!props.panelState.canOperate} onClick={handleClearHighlight}>清除 3D 標示</Btn>}
       >
         {props.coverage.degraded && (
           <div className="gov-banner" data-testid="gov-coverage-degraded">
@@ -169,6 +180,10 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
             coverage &lt;100%（未達 MVP 鎖定 1.0；measure-first 警示，非 fallback 降級）
           </p>
         )}
+        {/* T2：viewport 點選後反查到的 ifc_guid（誠實：只有非 null 才顯示；無對映時 Window 設 null → 不顯示假 guid）。 */}
+        {props.selectedGuid ? (
+          <p className="ec-note" data-testid="gov-selected-guid">點選 3D 構件 → ifc_guid={props.selectedGuid}</p>
+        ) : null}
         {props.failedElements.length === 0 ? (
           <p className="ec-note">目前無治理失敗構件（或尚未跑檢核）。</p>
         ) : (
@@ -196,6 +211,12 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
             </tbody>
           </table>
         )}
+        {/* T4：保留 50 列上限，但 >50 時誠實標註其餘未列出（不靜默截斷）。 */}
+        {props.failedElements.length > 50 && (
+          <p className="ec-note" data-testid="gov-failed-truncated">
+            顯示前 50 筆／共 {props.failedElements.length} 筆失敗構件（其餘未列出）
+          </p>
+        )}
         <Field k="3D 著色機制" v="client highlightPrimsRequest 經 viewer DataChannel；不復活 2026-05-21 退役 server-push" prov="asbuilt" />
       </Panel>
 
@@ -217,10 +238,17 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
       >
         {issueCreateText && <Field k="issue 建立" v={issueCreateText} prov="asbuilt" />}
         {props.bcfUrl ? (
-          <a className="ec-btn" data-testid="gov-a8-bcf" href={props.bcfUrl} target="_blank" rel="noreferrer">
-            下載 BCF 2.1
-            <span className="ec-cap">GET /api/governance/bcf/export（直連下載）</span>
-          </a>
+          <>
+            <a className="ec-btn" data-testid="gov-a8-bcf" href={props.bcfUrl} target="_blank" rel="noreferrer">
+              下載 BCF 2.1
+              <span className="ec-cap">GET /api/governance/bcf/export（直連下載）</span>
+            </a>
+            {/* T5：誠實標註 BCF 匯出範圍 —— bcfExportUrl 以 model_version_id 為範圍（該 model version 所有正式
+                issue），非僅本次 rule-run；不誤導操作員以為是 run-scoped。後端端點無 run filter，不捏造。 */}
+            <p className="ec-note" data-testid="gov-a8-bcf-scope">
+              BCF 匯出為本 model version 所有正式 issue（非僅本次 rule-run）
+            </p>
+          </>
         ) : (
           <p className="ec-note" data-testid="gov-a8-bcf-missing">尚無 model version，無法產生 BCF 下載連結（誠實，不捏造 URL）。</p>
         )}

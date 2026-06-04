@@ -6,6 +6,9 @@ import { resolveGovPanelState, type GovPanelState, type StreamRole } from "./gov
 export interface ViewerOverlayStatus {
   spectator: boolean;
   streamReady: boolean; // = showStream && hasRemoteVideoFrame()
+  // T6：review session lifecycle 是否 active（active/created）。非 active（queued/blocked/failed/
+  // closing/closed/dropped）時治理動作唯讀。預設 true 以維持既有呼叫端相容（不帶則不限制）。
+  lifecycleActive?: boolean;
 }
 
 export interface OverlayInputs {
@@ -17,5 +20,7 @@ export interface OverlayInputs {
 export function deriveOverlayInputs(status: ViewerOverlayStatus): OverlayInputs {
   const streamRole: StreamRole = status.spectator ? "spectator" : "primary";
   const dataChannelReady = status.streamReady;
-  return { streamRole, dataChannelReady, panelState: resolveGovPanelState({ streamRole, dataChannelReady }) };
+  // 未帶 lifecycleActive 時視為 true（不阻擋），維持既有測試與呼叫端行為。
+  const lifecycleActive = status.lifecycleActive ?? true;
+  return { streamRole, dataChannelReady, panelState: resolveGovPanelState({ streamRole, dataChannelReady, lifecycleActive }) };
 }

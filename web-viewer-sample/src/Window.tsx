@@ -526,6 +526,19 @@ export default class App extends React.Component<AppProps, AppState> {
             loadedStageUrl: finalLoadedUrl || null,
             stageLoadStatus: matched ? "matched" : "unproven",
         });
+        // T3：stage 就緒後，非 debug 一般檢視也自動載入 element_mapping（否則 _mappingCache 恆 null，
+        // overlay 標示永遠 unmapped）。僅在「有 mapping_url 且該 url 尚未載入」時觸發；無 mapping_url 不做事
+        // （overlay 誠實顯示 unmapped / coverage 未知）。不改既有 stage-load 流程與 debug onLoadMapping 路徑。
+        this._maybeAutoLoadMapping();
+    }
+
+    // T3：自動載入 element_mapping 的守門。reuse _loadElementMapping（其內以 _mappingCacheUrl 守重建），
+    // 此處只負責「避免對同一 url 重複起 fetch」。誠實：無 mapping_url 時不觸發（不捏造對映）。
+    private _maybeAutoLoadMapping(): void {
+        const mappingUrl = this.state.mappingUrl || this._resolveMappingUrl(this.state.latestStreamConfig, this.state.reviewArtifacts);
+        if (!mappingUrl) return; // 無 mapping_url → 誠實不做事（overlay 顯示 unmapped / coverage 未知）。
+        if (this._mappingCacheUrl === mappingUrl) return; // 該 url 已載入 → 不重複拉。
+        void this._loadElementMapping();
     }
 
     private _completeStageLoadFromVisibleStream(): boolean {
@@ -2030,7 +2043,11 @@ export default class App extends React.Component<AppProps, AppState> {
                     streamConfig.quality_metrics_summary.coverage_ratio（型別文件規定 viewer MUST NOT compute，
                     原樣呈現）；缺值時 ratio=null → gate 判 degraded（顯「coverage 未知」降級橫幅），不捏造 coverage%。 */}
                 {this.state.showStream && (() => {
-                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame() });
+                    // T6：把 review session lifecycle 是否 active 納入 overlay 可操作性。active 狀態僅 active/created；
+                    // queued/blocked/failed/closing/closed/dropped 一律視為非 active（治理動作唯讀，誠實表態）。
+                    const lifecycle = this.state.reviewLifecycleStatus;
+                    const lifecycleActive = lifecycle === "active" || lifecycle === "created";
+                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame(), lifecycleActive });
                     const ratio = this.state.latestStreamConfig?.quality_metrics_summary?.coverage_ratio ?? null;
                     const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache?.isFake ?? false });
                     // R7：把 warnOnly 透傳給 overlay —— coverage ∈ [0.9,1.0) 時非 degraded 但低於鎖定 1.0，
@@ -2045,13 +2062,21 @@ export default class App extends React.Component<AppProps, AppState> {
                             coverage={coverage}
                             failedElements={this.state.govFailedElements ?? []}
                             onHighlight={(f) => this._overlayHighlight(f)}
-                            onClearHighlight={() => { if (inputs.panelState.canOperate) this._sendStreamMessage(buildClearHighlightRequest()); }}
+                            onClearHighlight={() => {
+                                if (!inputs.panelState.canOperate) return;
+                                this._sendStreamMessage(buildClearHighlightRequest());
+                                // T1：清除 3D 標示時一併清掉每列確認狀態（govHighlightConfirm）與 pending highlight 對映，
+                                // 否則操作員仍看到殘留「已在 3D 標示 / 已送出…」誤導（overlay 端另清本地 lastResult）。
+                                this._pendingGovHighlights = {};
+                                this.setState({ govHighlightConfirm: {} });
+                            }}
                             onRunRuleCheck={() => { void this._runGovernanceRuleCheck(); }}
                             ruleCheck={this.state.govRuleCheck}
                             highlightConfirm={this.state.govHighlightConfirm}
                             onCreateIssues={() => { void this._createGovIssues(); }}
                             issueCreate={this.state.govIssueCreate}
                             bcfUrl={bcfUrl}
+                            selectedGuid={this.state.govSelectedGuid ?? null}
                         />
                     );
                 })()}
