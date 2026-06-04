@@ -22,18 +22,18 @@
 
 ### Requirement: operator 頁 SHALL 分離於三條獨立路由，SHALL NOT 混入 A1–A10 治理 overlay
 
-統一治理控制台 SHALL 提供三個**獨立 operator 頁**（非 viewer overlay）：`/console/coordinator`（Coordinator 控制台：sessions / control，參考 bim-desigin-arich「02 Coordinator 控制台」設計）、`/console/intake`（模型進件 / 版本，A1）、`/console/runtime`（Kit / WebRTC runtime 狀態）。這三頁 SHALL NOT 混入 A1–A10 業務治理 overlay；A1–A10 治理 SHALL 僅疊在 primary viewer overlay。`/console/intake` 的 A1 進件 SHALL 讓操作員從現成模型清單選取，SHALL NOT 要求手填模型路徑。
+統一治理控制台 SHALL 提供三個**獨立 operator 頁**（非 viewer overlay）：`/console#coordinator`（Coordinator 控制台：sessions / control，參考 bim-desigin-arich「02 Coordinator 控制台」設計）、`/console#intake`（模型進件 / 版本，A1）、`/console#runtime`（Kit / WebRTC runtime 狀態）。operator 頁以 `/console` 為掛載點、各頁以 hash 區分（`#coordinator` / `#intake` / `#runtime`），與既有 `EdgeConsole.tsx` 零依賴 hash 路由一致（`window.location.hash`，預設空 hash 顯示 overview）；SHALL NOT 引入後端 path router 的獨立子路徑。這三頁 SHALL NOT 混入 A1–A10 業務治理 overlay；A1–A10 治理 SHALL 僅疊在 primary viewer overlay。`/console#intake` 的 A1 進件 SHALL 讓操作員從現成模型清單選取，SHALL NOT 要求手填模型路徑。
 
 #### Scenario: 三個 operator 頁獨立且不含 A1–A10 治理 overlay
 
-- **WHEN** 操作員開啟 `/console/coordinator` 或 `/console/intake` 或 `/console/runtime`
+- **WHEN** 操作員開啟 `/console#coordinator` 或 `/console#intake` 或 `/console#runtime`
 - **THEN** 該頁 SHALL 呈現為獨立 operator 頁（Coordinator 控制 / 進件版本 / runtime 狀態）
 - **AND** 該頁 SHALL NOT 內嵌 A1–A10 業務治理 overlay
 - **AND** A1–A10 業務治理 SHALL 僅出現在 primary viewer 的 overlay，不混入 operator 頁
 
 #### Scenario: A1 進件於現成模型清單選取，不手填路徑
 
-- **WHEN** 操作員在 `/console/intake` 進行 A1 進件
+- **WHEN** 操作員在 `/console#intake` 進行 A1 進件
 - **THEN** 介面 SHALL 提供現成模型 / 版本清單供選取
 - **AND** SHALL NOT 要求操作員手動輸入模型檔案路徑
 
@@ -45,7 +45,7 @@
 
 - **WHEN** 操作員在 A1–A10 overlay 對一個帶有效 `usd_prim_path` 的治理失敗構件按「在 3D 標示」
 - **THEN** HighlightBridge SHALL 以該 `usd_prim_path` 組成 `highlightPrimsRequest`
-- **AND** SHALL 經 primary viewer 既有的 WebRTC DataChannel（`Window._sendStreamMessage`，client 主動拉）送至 Kit runtime
+- **AND** SHALL 經 primary viewer 既有的 WebRTC DataChannel（`web-viewer-sample/src/Window.tsx` React 元件的 private method `_sendStreamMessage`，client 主動拉，非 browser global `Window`）送至 Kit runtime
 - **AND** SHALL NOT 透過已退役的 server-push highlight 機制標示
 
 #### Scenario: 點 3D 構件反查 IFC GUID 帶進治理
@@ -80,13 +80,13 @@ MVP 垂直切片（A1 進件 → A2 轉檔 / 語意映射 → A3 規則檢核 �
 
 ### Requirement: 前端 SHALL 只經 coordinator :8004，SHALL NOT 直連 :49102；誠實 provenance + 後端離線 502
 
-統一治理控制台前端（含 A1–A10 overlay、三個 operator 頁、HighlightBridge / MappingCache 的資料存取）SHALL 只經 coordinator `:8004`（`/api/governance/*` proxy、`/api/external/ifc-ready`、`/api/review-sessions`、stream-config 等已驗證端點），SHALL NOT 直連 `governance-service` 的 `127.0.0.1:49102`，亦 SHALL NOT 直連 `bim-streaming-server` 的 `49100/47998`。前端 SHALL 對每塊資料與每顆動作標誠實 provenance（`asbuilt` / `artifact` / `demo` / `p1` / `p15`），待建項 SHALL 標 `p1` / `p15` 並 `disabled`。當 coordinator / 後端不可達時，前端 SHALL 誠實顯示 502（後端離線），SHALL NOT 偽裝成功、SHALL NOT 顯示捏造數值、SHALL NOT 殘留舊結果假裝成功。
+統一治理控制台前端（含 A1–A10 overlay、三個 operator 頁、HighlightBridge / MappingCache 的**治理 / 資料 API** 存取）SHALL 只經 coordinator `:8004`（`/api/governance/*` proxy、`/api/external/ifc-ready`、`/api/review-sessions`、stream-config 等已驗證端點）取得治理資料，SHALL NOT 直連 `governance-service` 的 `127.0.0.1:49102`，亦 SHALL NOT 以治理 / 資料 API 目的直連 `bim-streaming-server` 的 `49100/47998`。**例外 carve-out（既有合法 runtime 通道）**：primary viewer（`web-viewer-sample`）與 Kit 之間的 WebRTC 視訊串流及 DataChannel JSON command（含 `highlightPrimsRequest` / `focusPrimRequest`）是既有的 client-主動 runtime 通道（`:49100` signaling / media），不在此禁令範圍內；HighlightBridge 透過此 DataChannel 推送高亮指令屬合法用途，與 AGENTS.md §3.5/§6 viewer↔streaming-server boundary 一致。前端 SHALL 對每塊資料與每顆動作標誠實 provenance（`asbuilt` / `artifact` / `demo` / `p1` / `p15`），待建項 SHALL 標 `p1` / `p15` 並 `disabled`。當 coordinator / 後端不可達時，前端 SHALL 誠實顯示 502（後端離線），SHALL NOT 偽裝成功、SHALL NOT 顯示捏造數值、SHALL NOT 殘留舊結果假裝成功。
 
 #### Scenario: 治理請求經 coordinator proxy，不直連內部埠
 
 - **WHEN** 前端（overlay 或 operator 頁）需要觸發或讀取 A1–A10 治理資料
 - **THEN** 它 SHALL 呼叫 coordinator `:8004` 的 `/api/governance/*`（或其他已驗證 coordinator 端點）
-- **AND** SHALL NOT 直接連線 `governance-service` 的 `127.0.0.1:49102` 或 streaming 的 `49100/47998`
+- **AND** SHALL NOT 直接連線 `governance-service` 的 `127.0.0.1:49102` 或以治理 / 資料 API 目的直連 streaming 的 `49100/47998`（primary viewer↔Kit 的 WebRTC DataChannel 屬合法 runtime 通道、不在禁令內）
 
 #### Scenario: 後端離線時誠實顯示 502，不偽裝成功
 

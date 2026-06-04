@@ -56,14 +56,14 @@ Edge Console SHALL 讓 A1 在介面可驗證：顯示真實 IFC 實測 artifact 
 
 ### Requirement: provenance 型別 SHALL 接受後端權威值（含 artifact）
 
-Edge Console 任何帶 provenance 的元件（含 `StubPage` 等頁面骨架）SHALL 以 `data.ts` 既有的單一真相 `Prov` 型別標註其 provenance 欄位，SHALL 接受全部權威值 `asbuilt | artifact | demo | p1 | p15`。SHALL NOT 在頁面層自行寫死缺漏值的窄化 union，以免合法的後端權威 provenance（如真實實測 `artifact`）無法標示而觸型別錯誤。
+Edge Console 任何帶 provenance 的元件（含 `StubPage` 等頁面骨架）SHALL 以 `data.ts` 既有的單一真相 `Prov` 型別標註其 provenance 欄位，SHALL 接受全部權威值 `asbuilt | artifact | demo | p1 | p15 | p3 | p4`（其中 `p3` = RM phase 3 願景、`p4` = RM phase 4 願景，與 `data.ts` Prov 型別及 A4–A10 roadmap prov 標示一致）。SHALL NOT 在頁面層自行寫死缺漏值的窄化 union，以免合法的後端權威 provenance（如真實實測 `artifact`、或願景標示 `p3`/`p4`）無法標示而觸型別錯誤。
 
 #### Scenario: 頁面骨架可標示 artifact provenance
 
 - **WHEN** Model Intake / Semantic Viewer 等頁以 `StubPage` 標示來自 committed evidence 的真實實測項
 - **THEN** 該項 SHALL 能以 `provenance="artifact"` 標示
 - **AND** 型別檢查（`tsc --noEmit`）SHALL NOT 因 `'artifact'` 報 TS2322
-- **AND** provenance 欄位型別 SHALL 等同 `data.ts` 的 `Prov`，不另寫死窄化 union
+- **AND** provenance 欄位型別 SHALL 等同 `data.ts` 的 `Prov`（`asbuilt | artifact | demo | p1 | p15 | p3 | p4`），不另寫死窄化 union
 
 ### Requirement: mediaPort 型別 SHALL 與串流 library 相容（number | undefined）
 
