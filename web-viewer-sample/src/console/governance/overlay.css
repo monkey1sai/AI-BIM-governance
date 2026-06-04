@@ -1,0 +1,17 @@
+/* web-viewer-sample/src/console/governance/overlay.css
+ * A1–A10 治理 overlay 容器：疊在 primary viewer live 3D 右側。沿用 edge-console.css 的 --ec-* token。 */
+.gov-overlay {
+  position: absolute; top: 0; right: 0; width: 340px; height: 100%;
+  background: rgba(11, 13, 16, 0.92); color: #e7ebf0;
+  border-left: 1px solid #262c33; overflow-y: auto; padding: 12px;
+  font: 13px/1.5 ui-monospace, "Cascadia Code", "Consolas", monospace; z-index: 20;
+}
+.gov-overlay-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.gov-overlay-t { color: #76b900; font-weight: 700; letter-spacing: .04em; }
+.gov-overlay.gov-readonly { opacity: .98; }
+.gov-overlay.gov-readonly .ec-btn:not(.gov-readonly-allowed) { pointer-events: none; opacity: .45; }
+.gov-engine { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed #262c33; }
+.gov-engine-code { color: #545d68; width: 28px; }
+.gov-engine-title { flex: 1; }
+.gov-overlay .gov-banner { padding: 8px 10px; border-radius: 4px; margin: 8px 0;
+  background: rgba(244, 183, 64, .14); color: #f4b740; border: 1px solid #2f363f; }
