@@ -1326,7 +1326,49 @@ export function createCoordinatorApp(
   });
 
   // A1 治理 rule-run proxy（瀏覽器 → :8004 → governance-service 127.0.0.1:49102 loopback）。
-  registerGovernanceProxy(app);
+  // unified-console-mvp:注入 session→server-side IFC 路徑 resolver，讓
+  // `POST /api/governance/rule-runs/for-session/:sessionId` 能用瀏覽器手上唯一
+  // 的 session_id 解析出 host-side IFC 路徑後透傳。resolver 只讀 coordinator
+  // 自己的 SessionStore + ExternalIfcReadyStore（不新增資料權威），失敗回誠實 reason。
+  registerGovernanceProxy(app, {
+    isSafeSessionId,
+    resolveRuleRunSessionContext: (sessionId) => {
+      const session = store.get(sessionId);
+      if (!session) {
+        return { ok: false, reason: "Review session not found." };
+      }
+      // session → ifc-ready job：conversion-ready auto-session 時由
+      // recordReviewSession 寫入 job.review_session_id 反向參照（app.ts ~905）。
+      const job = externalIfcReadyStore
+        .list()
+        .filter((candidate) => candidate.review_session_id === sessionId)
+        .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0];
+      if (!job) {
+        return {
+          ok: false,
+          reason:
+            "No IFC-ready job linked to this session; rule-run requires an IFC ingested via /api/external/ifc-ready.",
+        };
+      }
+      // host_local_path = governance-service host 視角可讀的絕對路徑（markDownloaded
+      // 於同步下載完成時寫入，app.ts ~674）。container 視角 local_path 作為 fallback。
+      const ifcSourcePath = job.host_local_path || job.local_path || null;
+      if (!ifcSourcePath) {
+        return {
+          ok: false,
+          reason: "IFC for this session has not been downloaded to a server-side path yet.",
+        };
+      }
+      return {
+        ok: true,
+        context: {
+          ifc_source_path: ifcSourcePath,
+          model_version_id: session.model_version_id,
+          ifc_ready_job_id: job.ifc_ready_job_id,
+        },
+      };
+    },
+  });
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     if (error instanceof z.ZodError) {
