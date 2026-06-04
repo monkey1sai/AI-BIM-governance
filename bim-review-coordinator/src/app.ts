@@ -1325,6 +1325,60 @@ export function createCoordinatorApp(
     await proxyConversionService(response, config.conversionApiBase, "GET", `/api/conversions/${encodeURIComponent(request.params.jobId)}`);
   });
 
+  // console-mapping-proxy:element_mapping 經 coordinator proxy 給 viewer。
+  // 邊界:viewer 只打 :8004（SHALL NOT HTTP 直連 :49101）；coordinator server-side 從
+  // config.conversionApiBase（host 可達的 host.docker.internal:49101）抓 mapping，帶全域 CORS 回傳。
+  // 誠實:sessionId 非法 → 400；session 不存在 / 無 mapping_url binding → 404；conversion
+  // 不可達 → 502（由 proxyConversionService 處理）。coordinator 僅 resolve+forward，不解讀/不保存 mapping。
+  app.get("/api/governance/element-mapping/for-session/:sessionId", async (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    // 把 mapping_url 正規化成 path+query；拒 protocol-relative（//host/..）與非絕對路徑，
+    // 避免 server-side fetch 被導向 config.conversionApiBase 以外的 host（SSRF）。
+    const toUpstreamPath = (raw: string): string | null => {
+      let p: string;
+      try {
+        const parsed = new URL(raw);
+        p = `${parsed.pathname}${parsed.search}`;
+      } catch {
+        p = raw;
+      }
+      return p.startsWith("/") && !p.startsWith("//") ? p : null;
+    };
+    // 只 proxy 屬於本 session binding 的 artifact path（白名單，防任意 URL SSRF）；對 host 差異穩健。
+    const boundPaths = (session.artifact_bindings ?? [])
+      .map((binding) => binding.mapping_url)
+      .filter((url): url is string => typeof url === "string" && url.length > 0)
+      .map(toUpstreamPath)
+      .filter((path): path is string => path !== null);
+    if (boundPaths.length === 0) {
+      response.status(404).json({ detail: "No element_mapping bound to this review session." });
+      return;
+    }
+    // 多 binding：viewer 以 ?url= 指定要哪個 binding 的 mapping（選對 asset）；未指定用第一個
+    // （單 artifact MVP 行為不變）。指定值須屬於本 session binding，否則 404（不 proxy 任意 URL）。
+    const requestedRaw = typeof request.query.url === "string" ? request.query.url : null;
+    let upstreamPath: string | null;
+    if (requestedRaw) {
+      const requestedPath = toUpstreamPath(requestedRaw);
+      upstreamPath = requestedPath && boundPaths.includes(requestedPath) ? requestedPath : null;
+    } else {
+      upstreamPath = boundPaths[0];
+    }
+    if (!upstreamPath) {
+      response.status(404).json({ detail: "Requested mapping_url is not bound to this review session." });
+      return;
+    }
+    await proxyConversionService(response, config.conversionApiBase, "GET", upstreamPath);
+  });
+
   // A1 治理 rule-run proxy（瀏覽器 → :8004 → governance-service 127.0.0.1:49102 loopback）。
   // unified-console-mvp:注入 session→server-side IFC 路徑 resolver，讓
   // `POST /api/governance/rule-runs/for-session/:sessionId` 能用瀏覽器手上唯一

@@ -1403,11 +1403,22 @@ export default class App extends React.Component<AppProps, AppState> {
 
         this.setState({ mappingStatus: "正在載入 element_mapping.json", mappingUrl });
         try {
-            const response = await fetch(mappingUrl, { headers: { Accept: "application/json" } });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+            // console-mapping-proxy：有 review session 時經 coordinator :8004 proxy 載入
+            // （守邊界：viewer SHALL NOT HTTP 直連 :49101，且解 hybrid/LAN 跨來源 CORS —— 直連
+            // artifact 端點無 CORS 會 Failed to fetch、使 MappingCache 空、標示恆誤判未對映）。
+            // 無 review session（debug / 本機直開檔）才 fallback 直抓 mapping_url。
+            const sessionId = this.state.reviewSessionId;
+            let payload: unknown;
+            if (sessionId) {
+                // 帶 mappingUrl：多 binding 時讓 coordinator 以 session binding 白名單選對該 asset 的 mapping。
+                payload = await governanceClient.elementMappingForSession(sessionId, mappingUrl);
+            } else {
+                const response = await fetch(mappingUrl, { headers: { Accept: "application/json" } });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                payload = await response.json();
             }
-            const payload = await response.json();
             if (!isElementMappingDocument(payload)) {
                 throw new Error("mapping JSON shape is invalid");
             }
