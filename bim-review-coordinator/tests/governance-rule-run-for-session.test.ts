@@ -1,0 +1,317 @@
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { type AddressInfo } from "node:net";
+import request from "supertest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import type { CoordinatorConfig } from "../src/config.js";
+
+// unified-console-mvp:`POST /api/governance/rule-runs/for-session/:sessionId`。
+// 瀏覽器只有 session_id（不知 server-side IFC path）；coordinator 從自己的
+// SessionStore + ExternalIfcReadyStore 解析出 host-side IFC 路徑，再透傳給
+// governance-service `POST /api/rule-runs`。誠實：無法解析回 404；governance
+// 不可達回 502；絕不偽造 path / 成功。
+
+const CORRELATION = "corr_gov_session_001";
+const IDEMPOTENCY = "idem_gov_session_001";
+
+let active: CoordinatorApp | null = null;
+let governanceStub: http.Server | null = null;
+let savedGovBase: string | undefined;
+
+beforeEach(() => {
+  savedGovBase = process.env.GOVERNANCE_API_BASE;
+});
+
+afterEach(async () => {
+  if (active) {
+    active.io.close();
+    await new Promise<void>((resolve) => active?.server.close(() => resolve()));
+    active = null;
+  }
+  if (governanceStub) {
+    await new Promise<void>((resolve) => governanceStub?.close(() => resolve()));
+    governanceStub = null;
+  }
+  if (savedGovBase === undefined) {
+    delete process.env.GOVERNANCE_API_BASE;
+  } else {
+    process.env.GOVERNANCE_API_BASE = savedGovBase;
+  }
+});
+
+function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-gov-session-test-"));
+  active = createCoordinatorApp({
+    sessionStoreDir: path.join(root, "sessions"),
+    eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    storageRoot: path.join(root, "storage"),
+    storageHostRoot: path.join(root, "storage"),
+    corsOrigins: ["http://127.0.0.1:5173"],
+    // streaming/poll 不啟用,避免背景 timer 干擾
+    conversionPollEnabled: false,
+    ...overrides,
+  });
+  return active;
+}
+
+/**
+ * governance-service `POST /api/rule-runs` stub。記錄收到的 body 供 assert
+ * forward payload；回 202 {rule_run_id, status}（與真實服務同形狀）。
+ */
+async function startGovernanceStub(): Promise<{ baseUrl: string; bodies: Array<Record<string, unknown>> }> {
+  const bodies: Array<Record<string, unknown>> = [];
+  governanceStub = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString("utf8");
+    });
+    req.on("end", () => {
+      if (req.method === "POST" && req.url === "/api/rule-runs") {
+        bodies.push(JSON.parse(body || "{}"));
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ rule_run_id: "rr_stub_001", status: "queued" }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ detail: "not found" }));
+    });
+  });
+  await new Promise<void>((resolve) => governanceStub?.listen(0, "127.0.0.1", () => resolve()));
+  const address = governanceStub.address() as AddressInfo;
+  return { baseUrl: `http://127.0.0.1:${address.port}`, bodies };
+}
+
+/**
+ * 透過真實 intake 路徑落地一個 IFC-ready job 並讓 coordinator 自動建 session：
+ * 1. POST /api/external/ifc-ready（http source → strict 下載到 shared volume，
+ *    寫入 host_local_path），完成後 enqueue 派工。
+ * 2. dispatcher 把 job dispatch 到 streaming stub（拿到 conversion_job_id）。
+ * 3. POST /api/internal/conversions/<id>/ingest 餵 ready result → coordinator
+ *    autoCreateOrActivateSession + recordReviewSession（job.review_session_id 連回）。
+ * 回傳 { sessionId, hostLocalPath, ifcReadyJobId }。
+ */
+async function seedSessionWithDownloadedIfc(
+  app: CoordinatorApp,
+  streamingBase: string,
+  ifcSourceUrl: string,
+): Promise<{ sessionId: string; hostLocalPath: string; ifcReadyJobId: string }> {
+  const intake = await request(app.app)
+    .post("/api/external/ifc-ready")
+    .set({
+      "X-Webhook-Secret": "dev-webhook-secret",
+      "X-Correlation-Id": CORRELATION,
+      "X-Idempotency-Key": IDEMPOTENCY,
+    })
+    .send({
+      event: "ifc_ready",
+      tenant_id: "tenant_demo_001",
+      project_id: "project_demo_001",
+      external_model_version_id: "version_demo_001",
+      external_conversion_task_id: "task_demo_001",
+      source_ifc: { ref: ifcSourceUrl, etag: "etag_demo_001", filename: "model.ifc", format: "ifc" },
+      requested_outputs: ["usdc", "element_mapping"],
+    });
+  expect(intake.status).toBe(202);
+  const ifcReadyJobId = intake.body.ifc_ready_job_id as string;
+
+  // 等 dispatcher 把 job 推進 dispatched（拿到 conversion_job_id）。
+  let conversionJobId: string | null = null;
+  for (let i = 0; i < 300; i += 1) {
+    const job = await request(app.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
+    if (job.body?.status === "dispatched" && job.body?.conversion_job_id) {
+      conversionJobId = job.body.conversion_job_id as string;
+      break;
+    }
+    if (job.body?.status === "dispatch_failed") {
+      throw new Error(`dispatch failed: ${job.body?.dispatch_error}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!conversionJobId) throw new Error("job did not reach dispatched");
+
+  const ingest = await request(app.app)
+    .post(`/api/internal/conversions/${conversionJobId}/ingest`)
+    .set({ "X-Internal-Token": "dev-internal-token" })
+    .send({});
+  expect(ingest.status).toBe(202);
+  const sessionId = ingest.body?.session?.session_id as string;
+  expect(sessionId).toMatch(/^review_session_/);
+
+  const finalJob = await request(app.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
+  const hostLocalPath = finalJob.body.host_local_path as string;
+  expect(hostLocalPath).toBeTruthy();
+  return { sessionId, hostLocalPath, ifcReadyJobId };
+}
+
+/** streaming stub：接受 dispatch + 回 ready result（含 usdc + element_mapping）。 */
+async function startStreamingStub(): Promise<string> {
+  const ready = {
+    conversion_job_id: "stream_conv_gov_001",
+    authority: "bim-streaming-server",
+    status: "succeeded",
+    ready: true,
+    correlation_id: CORRELATION,
+    model: { status: "ready", format: "usdc", url: "http://127.0.0.1:49101/artifacts/stream_conv_gov_001/model.usdc" },
+    artifacts: {
+      model_usdc: { url: "http://127.0.0.1:49101/artifacts/stream_conv_gov_001/model.usdc" },
+      element_mapping: { url: "http://127.0.0.1:49101/artifacts/stream_conv_gov_001/element_mapping.json" },
+    },
+  };
+  const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ conversion_job_id: "stream_conv_gov_001", status: "queued", authority: "bim-streaming-server", correlation_id: CORRELATION }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/api/conversions/stream_conv_gov_001/result") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(ready));
+      return;
+    }
+    res.writeHead(404).end("{}");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address() as AddressInfo;
+  // 掛到 governanceStub teardown 之外:用單獨 close。為簡化,複用 activeStreamingServers。
+  activeStreamingServers.push(server);
+  return `http://127.0.0.1:${address.port}`;
+}
+
+const activeStreamingServers: http.Server[] = [];
+afterEach(async () => {
+  for (const s of activeStreamingServers.splice(0)) {
+    await new Promise<void>((resolve) => s.close(() => resolve()));
+  }
+});
+
+/** IFC source stub：回 200 + 少量 bytes，讓 strict 下載真實落地 host_local_path。 */
+async function startIfcSourceStub(): Promise<string> {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/octet-stream" });
+    res.end(Buffer.from("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n"));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address() as AddressInfo;
+  activeStreamingServers.push(server);
+  return `http://127.0.0.1:${address.port}/edge/source.ifc`;
+}
+
+describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
+  it("解析 session 的 host-side IFC 路徑並透傳給 governance-service，回 {rule_run_id, status}", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ rule_run_id: "rr_stub_001", status: "queued" });
+    // forward payload 必須帶解析出的 host-side IFC 路徑 + model_version_id。
+    expect(gov.bodies).toHaveLength(1);
+    expect(gov.bodies[0].ifc_source_path).toBe(hostLocalPath);
+    expect(gov.bodies[0].model_version_id).toBe("version_demo_001");
+  });
+
+  it("override body 的 rule_set / ids_path 會被一併透傳", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+      .send({ rule_set: "fire-egress", ids_path: "/host/ids/fire.ids" });
+
+    expect(res.status).toBe(202);
+    expect(gov.bodies).toHaveLength(1);
+    expect(gov.bodies[0].rule_set).toBe("fire-egress");
+    expect(gov.bodies[0].ids_path).toBe("/host/ids/fire.ids");
+  });
+
+  it("session 不存在 → 404 with detail，且不打 governance", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/review_session_does_not_exist`)
+      .send({});
+
+    expect(res.status).toBe(404);
+    expect(typeof res.body.detail).toBe("string");
+    expect(gov.bodies).toHaveLength(0);
+  });
+
+  it("session 存在但無法解析出 IFC 路徑（未經 intake 下載）→ 404，且不打 governance", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+
+    // 直接用顯式 create session（不走 IFC-ready intake，因此沒有 host_local_path）。
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_demo",
+            artifact_id: "artifact_usdc_demo",
+            artifact_role: "derived",
+            url: "http://127.0.0.1:49101/artifacts/x/model.usdc",
+            mapping_url: "http://127.0.0.1:49101/artifacts/x/element_mapping.json",
+            load_order: 0,
+            ready_status: "ready",
+          },
+        ],
+      });
+    expect(created.status).toBe(200);
+    const sessionId = created.body.session_id as string;
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+      .send({});
+
+    expect(res.status).toBe(404);
+    expect(typeof res.body.detail).toBe("string");
+    expect(gov.bodies).toHaveLength(0);
+  });
+
+  it("無效 session id 格式 → 400", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/..%2Fetc`)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("governance-service 不可達 → 502（誠實，不偽造成功）", async () => {
+    // 指向一個沒有監聽的 port。
+    process.env.GOVERNANCE_API_BASE = "http://127.0.0.1:1";
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+      .send({});
+
+    expect(res.status).toBe(502);
+    expect(typeof res.body.detail).toBe("string");
+  });
+});

@@ -35,6 +35,14 @@ import { mappingVerificationBlockReason, type ElementMappingDocument, type Eleme
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
 import type { ReviewLifecycleStatus, ReviewSession, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
 import type { HighlightItem, StreamMessage } from "./types/streamMessages";
+// 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（client 主動拉，不 server-push）。
+import { GovernanceOverlay, type RuleCheckState, type IssueCreateState } from "./console/GovernanceOverlay";
+import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
+import { HighlightBridge, type FailedElement, type HighlightResult } from "./console/governance/highlightBridge";
+import { MappingCache } from "./console/governance/mappingCache";
+import { evaluateCoverageGate } from "./console/governance/govEndpoints";
+// 統一治理控制台 MVP（W1/W3）：A3 rule-run / A8 issue / BCF 都打 coordinator :8004 的 /api/governance/* proxy。
+import { governanceClient, type RuleResultRow, type RuleRunStatus } from "./console/governanceClient";
 
 
 interface USDPrimType {
@@ -82,6 +90,17 @@ interface AppState {
     selectedUSDPrims: Set<USDPrimType>;
     isKitReady: boolean;
     showStream: boolean;
+    // 統一治理控制台 MVP：治理失敗構件（A3 rule-run 失敗）餵給 overlay 在 3D 標紅；初期空陣列（誠實，無假資料）。
+    govFailedElements?: FailedElement[];
+    // W1：A3 rule-run id + 執行狀態（idle/running/succeeded/failed/error）。
+    govRuleRunId?: string;
+    govRuleCheck?: RuleCheckState;
+    // W2：Kit 非同步回傳的標示確認（key=ifc_guid → 誠實確認文案）。
+    govHighlightConfirm?: Record<string, string>;
+    // W3：A8 從 rule-run 開 issue 的結果。
+    govIssueCreate?: IssueCreateState;
+    // W4：點 live 3D 構件反查到的 ifc_guid（帶進治理）。
+    govSelectedGuid?: string | null;
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
@@ -249,6 +268,15 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
+    // 統一治理控制台 MVP：當前 model version 的 MappingCache（鎖單一版本，Task C3 餵入）；未載入前為 null。
+    private _mappingCache: MappingCache | null = null;
+    // W9：cache 建立時用的 mapping_url；換 url（即使同 model version）也需重建。
+    private _mappingCacheUrl: string | null = null;
+    // W2：治理標示送出後，等待 Kit highlightPrimsResult 非同步確認的 request（與既有 mapping-verify 的
+    // pendingMappingHighlightRequestId 分開，互不干擾）。
+    // F1：一併記 rowKey（rule_code::ifc_guid），確認回來時以 rowKey 寫 govHighlightConfirm，
+    // 避免同一 ifc_guid 多筆不同 rule_code 的列共用 / 互相覆蓋確認狀態。
+    private _pendingGovHighlights: Record<string, { ifc_guid: string; rowKey: string; primPath: string }> = {};
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -500,6 +528,19 @@ export default class App extends React.Component<AppProps, AppState> {
             loadedStageUrl: finalLoadedUrl || null,
             stageLoadStatus: matched ? "matched" : "unproven",
         });
+        // T3：stage 就緒後，非 debug 一般檢視也自動載入 element_mapping（否則 _mappingCache 恆 null，
+        // overlay 標示永遠 unmapped）。僅在「有 mapping_url 且該 url 尚未載入」時觸發；無 mapping_url 不做事
+        // （overlay 誠實顯示 unmapped / coverage 未知）。不改既有 stage-load 流程與 debug onLoadMapping 路徑。
+        this._maybeAutoLoadMapping();
+    }
+
+    // T3：自動載入 element_mapping 的守門。reuse _loadElementMapping（其內以 _mappingCacheUrl 守重建），
+    // 此處只負責「避免對同一 url 重複起 fetch」。誠實：無 mapping_url 時不觸發（不捏造對映）。
+    private _maybeAutoLoadMapping(): void {
+        const mappingUrl = this.state.mappingUrl || this._resolveMappingUrl(this.state.latestStreamConfig, this.state.reviewArtifacts);
+        if (!mappingUrl) return; // 無 mapping_url → 誠實不做事（overlay 顯示 unmapped / coverage 未知）。
+        if (this._mappingCacheUrl === mappingUrl) return; // 該 url 已載入 → 不重複拉。
+        void this._loadElementMapping();
     }
 
     private _completeStageLoadFromVisibleStream(): boolean {
@@ -544,6 +585,120 @@ export default class App extends React.Component<AppProps, AppState> {
         const video = document.getElementById("remote-video") as HTMLVideoElement | null;
         if (!video) return false;
         return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0;
+    }
+
+    // 統一治理控制台 MVP：治理失敗構件 → HighlightBridge 經既有 DataChannel 在 3D 標紅（client 主動拉）。
+    // MappingCache 未載入時誠實回 unmapped（沒有對映可標示，不捏造 prim、不假裝成功）。
+    private _overlayHighlight(failed: FailedElement): HighlightResult {
+        if (!this._mappingCache) {
+            return { ok: false, reason: "unmapped" };
+        }
+        const bridge = new HighlightBridge({
+            cache: this._mappingCache,
+            sendMessage: (m) => this._sendStreamMessage(m),
+            dataChannelReady: () => this.state.showStream && this._hasRemoteVideoFrame(),
+        });
+        const res = bridge.highlightFailed(failed);
+        // W2：送出成功只代表「已送出」，Kit 是否真的選到該構件由 highlightPrimsResult 非同步確認。
+        // 記下 requestId → (ifc_guid, rowKey, primPath)，待回應比對 selected/missing 後寫 govHighlightConfirm。
+        if (res.ok) {
+            // F1：rowKey 鏡像 overlay 的 `${rule_code ?? "norule"}::${ifc_guid}`，每列獨立確認。
+            const rowKey = `${failed.rule_code ?? "norule"}::${failed.ifc_guid}`;
+            this._pendingGovHighlights[res.requestId] = { ifc_guid: failed.ifc_guid, rowKey, primPath: res.primPath };
+        }
+        return res;
+    }
+
+    // W1：A3 rule-run —— 由當前 review session 起跑（coordinator 端解析 server IFC 路徑），輪詢狀態，
+    // succeeded 後取 failed 結果映射成 FailedElement 餵 overlay。誠實：無 session / 失敗都據實表態。
+    private async _runGovernanceRuleCheck(): Promise<void> {
+        // R1：禁止重入（避免重複觸發多條輪詢）。running 中再點直接忽略。
+        if (this.state.govRuleCheck?.status === "running") return;
+        const sessionId = this.state.reviewSessionId;
+        if (!sessionId) {
+            this.setState({ govRuleCheck: { status: "error", error: "尚無 review session" } });
+            return;
+        }
+        // R1：開新 run 前清空上一輪殘留狀態（failed 構件 / 確認 / issue / runId / pending highlights），
+        // 避免舊結果殘留誤導操作員。
+        this._pendingGovHighlights = {};
+        this.setState({
+            govRuleCheck: { status: "running" },
+            govFailedElements: [],
+            govHighlightConfirm: {},
+            govIssueCreate: undefined,
+            govRuleRunId: undefined,
+        });
+        this._appendReviewEvent("A3 規則檢核：建立 rule-run（for-session）");
+        try {
+            const { rule_run_id } = await governanceClient.createRuleRunForSession(sessionId);
+            this.setState({ govRuleRunId: rule_run_id });
+            // 輪詢最多 60×1s（沿用 IssuesRuleCenterPage.doRun 節奏）。
+            let status: RuleRunStatus | null = null;
+            for (let i = 0; i < 60; i++) {
+                status = await governanceClient.getRuleRun(rule_run_id);
+                if (status.status === "succeeded" || status.status === "failed") break;
+                await new Promise((r) => setTimeout(r, 1000));
+            }
+            if (!status || status.status === "failed") {
+                this.setState({ govRuleCheck: { status: "failed" } });
+                this._appendReviewEvent("A3 規則檢核：rule-run 回報 failed");
+                return;
+            }
+            if (status.status !== "succeeded") {
+                this.setState({ govRuleCheck: { status: "error", error: "rule-run 逾時未完成（>60s）" } });
+                return;
+            }
+            const rows = await governanceClient.getResults(rule_run_id, "failed");
+            const failedElements: FailedElement[] = rows
+                .filter((r): r is RuleResultRow & { ifc_guid: string } => typeof r.ifc_guid === "string" && r.ifc_guid.length > 0)
+                .map((r) => ({ ifc_guid: r.ifc_guid, severity: r.severity, rule_code: r.rule_code, label: r.message }));
+            this.setState({
+                govFailedElements: failedElements,
+                govRuleCheck: {
+                    status: "succeeded",
+                    score: status.score,
+                    total: status.summary?.total,
+                    failed: status.summary?.failed,
+                },
+            });
+            this._appendReviewEvent(`A3 規則檢核完成：治理分 ${status.score ?? "—"}，failed=${status.summary?.failed ?? "?"}（含 ifc_guid 可標示 ${failedElements.length} 筆）`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.setState({ govRuleCheck: { status: "error", error: message } });
+            this._appendReviewEvent(`A3 規則檢核失敗：${message}`);
+        }
+    }
+
+    // W3：A8 從本次 rule-run 開 issue（須先有 succeeded 的 govRuleRunId）。誠實：無 run / 失敗皆據實表態。
+    private async _createGovIssues(): Promise<void> {
+        // R2：禁止重入（避免連點導致重複開 issue）。creating 中再點直接忽略。
+        if (this.state.govIssueCreate?.status === "creating") return;
+        const runId = this.state.govRuleRunId;
+        if (!runId) {
+            this._appendReviewEvent("A8 開 issue 略過：尚無成功的 rule-run");
+            this.setState({ govIssueCreate: { status: "error", error: "尚無 rule-run" } });
+            return;
+        }
+        this.setState({ govIssueCreate: { status: "creating" } });
+        try {
+            const { created } = await governanceClient.issuesFromRuleRun(runId);
+            this.setState({ govIssueCreate: { status: "created", created } });
+            this._appendReviewEvent(`已從 rule-run 開 ${created} 筆 issue`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.setState({ govIssueCreate: { status: "error", error: message } });
+            this._appendReviewEvent(`A8 開 issue 失敗：${message}`);
+        }
+    }
+
+    // W4：live 3D 點選 / debug 清單共用的 prim → ifc_guid 反查（DRY）。誠實：無對映記事件且 guid=null。
+    private _reverseLookupGuid(path: string): void {
+        // R8：live viewport 點選常落在 child mesh prim（如 …/G_<guid>/mesh_0），exact path 非 mapping key；
+        // 改用 ancestor 解析（往父層走，直到命中 mapped prim），命不中才回 null（誠實，不捏造）。
+        const guid = this._mappingCache?.guidForPrimPathOrAncestor(path) ?? null;
+        this._appendReviewEvent(guid ? `點選 3D 構件 → ifc_guid=${guid}（帶進治理）` : `點選 3D 構件 ${path} → 無對映 ifc_guid`);
+        this.setState({ govSelectedGuid: guid });
     }
 
     private _canOpenSelectedAsset(): boolean {
@@ -1197,6 +1352,9 @@ export default class App extends React.Component<AppProps, AppState> {
         console.log(`Sending request to select: ${selectedUsdPrims}.`);
         this.setState({ selectedUSDPrims: selectedUsdPrims });
         const paths: string[] = Array.from(selectedUsdPrims).map(obj => obj.path);
+        // 統一治理控制台 MVP（W4 點 3D → ifc_guid 方向）：經 MappingCache 反查 ifc_guid 帶進治理；
+        // 無對映誠實記事件（不捏造 guid）。與 live viewport 點選（stageSelectionChanged）共用 _reverseLookupGuid。
+        if (paths[0]) this._reverseLookupGuid(paths[0]);
         const message: AppStreamMessageType = {
             event_type: "selectPrimsRequest",
             payload: {
@@ -1252,6 +1410,14 @@ export default class App extends React.Component<AppProps, AppState> {
             const payload = await response.json();
             if (!isElementMappingDocument(payload)) {
                 throw new Error("mapping JSON shape is invalid");
+            }
+            // 統一治理控制台 MVP（Q2）：鎖當前 model version 的 MappingCache；換版本則重建（不跨版本智能失效）。
+            // W9：mapping_url 改變（即使同 model version，例如重轉換產出新 artifact）也需重建，避免讀到舊對映。
+            // fake mapping 由 MappingCache 內部拒絕（不冒充真實覆蓋 / 不提供假 prim）。
+            const mvId = this.state.currentModelVersionId;
+            if (!this._mappingCache || !this._mappingCache.belongsTo(mvId) || this._mappingCacheUrl !== mappingUrl) {
+                this._mappingCache = MappingCache.fromDocument(payload, mvId);
+                this._mappingCacheUrl = mappingUrl;
             }
             const items = Array.isArray(payload.items)
                 ? payload.items.filter((item): item is Record<string, unknown> => isRecord(item) && Boolean(item['usd_prim_path']))
@@ -1572,6 +1738,23 @@ export default class App extends React.Component<AppProps, AppState> {
                 this.pendingMappingHighlightRequestId = null;
             }
 
+            // W2：治理 overlay 標示的非同步確認（與上方 mapping-verify 分開的 pending map）。誠實判定：
+            // Kit 真的選到該 primPath 且無 missing 才算「已標示」，否則標 missing/fallback。
+            const govPending = requestId ? this._pendingGovHighlights[requestId] : undefined;
+            if (govPending) {
+                // R6 誠實：Kit 用 fallback path 不算真正確認（鏡像上方 mapping-verify predicate 的 fallback 檢查）。
+                const confirmed = result === "success"
+                    && selectedPaths.includes(govPending.primPath)
+                    && missingPaths.length === 0
+                    && fallbackPaths.length === 0;
+                nextState.govHighlightConfirm = {
+                    ...this.state.govHighlightConfirm,
+                    // F1：以 rowKey 為 key（與 overlay 讀取一致），同一 ifc_guid 多筆不同 rule_code 各自獨立確認。
+                    [govPending.rowKey]: confirmed ? "已在 3D 標示（Kit 已選取）" : "Kit 未選到該構件（missing/fallback）",
+                };
+                delete this._pendingGovHighlights[requestId];
+            }
+
             this.setState(nextState as Pick<AppState, keyof AppState>);
         }
 
@@ -1606,9 +1789,12 @@ export default class App extends React.Component<AppProps, AppState> {
                 : [];
 
             console.log(prims.constructor.name);
+            // W4：live viewport 點選 → 反查 ifc_guid 帶進治理（與 USDStage 清單點選共用 helper，DRY）。
+            if (prims[0]) this._reverseLookupGuid(prims[0]);
             if (prims.length === 0) {
                 console.log('Kit App communicates an empty stage selection.');
-                this.setState({ selectedUSDPrims: new Set<USDPrimType>() });
+                // F3：取消選取時一併清掉治理選取 guid，避免 overlay 的 gov-selected-guid 行殘留舊 guid（誠實）。
+                this.setState({ selectedUSDPrims: new Set<USDPrimType>(), govSelectedGuid: null });
             }
             else {
                 console.log('Kit App communicates selection of a USDPrimType: ' + prims.join(', '));
@@ -1856,6 +2042,52 @@ export default class App extends React.Component<AppProps, AppState> {
                     )}
                 </>
                 }
+
+                {/* 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（position:absolute,
+                    z-index:20，late sibling，不改既有 viewer / AppStream / DemoControlPanel / ArtifactPanel 子樹）。
+                    showStream=false 時不渲染（不擋 loading 畫面）。W5：coverage 來源改為
+                    streamConfig.quality_metrics_summary.coverage_ratio（型別文件規定 viewer MUST NOT compute，
+                    原樣呈現）；缺值時 ratio=null → gate 判 degraded（顯「coverage 未知」降級橫幅），不捏造 coverage%。 */}
+                {this.state.showStream && (() => {
+                    // T6：把 review session lifecycle 是否 active 納入 overlay 可操作性。active 狀態僅 active/created；
+                    // queued/blocked/failed/closing/closed/dropped 一律視為非 active（治理動作唯讀，誠實表態）。
+                    const lifecycle = this.state.reviewLifecycleStatus;
+                    const lifecycleActive = lifecycle === "active" || lifecycle === "created";
+                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame(), lifecycleActive });
+                    const ratio = this.state.latestStreamConfig?.quality_metrics_summary?.coverage_ratio ?? null;
+                    // R6（誠實）：_mappingCache 為 null（尚未載入 / 未知）視為 fake → degraded，
+                    // 不在 client 無法標示時仍顯示有把握的 coverage%（保守誠實）。
+                    const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache?.isFake ?? true });
+                    // R7：把 warnOnly 透傳給 overlay —— coverage ∈ [0.9,1.0) 時非 degraded 但低於鎖定 1.0，
+                    // overlay 顯示 measure-first 警示（非 fallback 降級），讓操作員看見「未達 100%」。
+                    const coverage = { coverageOk: gate.coverageOk, degraded: gate.degraded, ratio, warnOnly: gate.warnOnly };
+                    const bcfUrl = this.state.currentModelVersionId
+                        ? governanceClient.bcfExportUrl({ model_version_id: this.state.currentModelVersionId })
+                        : undefined;
+                    return (
+                        <GovernanceOverlay
+                            panelState={inputs.panelState}
+                            coverage={coverage}
+                            failedElements={this.state.govFailedElements ?? []}
+                            onHighlight={(f) => this._overlayHighlight(f)}
+                            onClearHighlight={() => {
+                                if (!inputs.panelState.canOperate) return;
+                                this._sendStreamMessage(buildClearHighlightRequest());
+                                // T1：清除 3D 標示時一併清掉每列確認狀態（govHighlightConfirm）與 pending highlight 對映，
+                                // 否則操作員仍看到殘留「已在 3D 標示 / 已送出…」誤導（overlay 端另清本地 lastResult）。
+                                this._pendingGovHighlights = {};
+                                this.setState({ govHighlightConfirm: {} });
+                            }}
+                            onRunRuleCheck={() => { void this._runGovernanceRuleCheck(); }}
+                            ruleCheck={this.state.govRuleCheck}
+                            highlightConfirm={this.state.govHighlightConfirm}
+                            onCreateIssues={() => { void this._createGovIssues(); }}
+                            issueCreate={this.state.govIssueCreate}
+                            bcfUrl={bcfUrl}
+                            selectedGuid={this.state.govSelectedGuid ?? null}
+                        />
+                    );
+                })()}
             </div>
             );
         }
