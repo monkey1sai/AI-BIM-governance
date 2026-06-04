@@ -1325,6 +1325,39 @@ export function createCoordinatorApp(
     await proxyConversionService(response, config.conversionApiBase, "GET", `/api/conversions/${encodeURIComponent(request.params.jobId)}`);
   });
 
+  // console-mapping-proxy:element_mapping 經 coordinator proxy 給 viewer。
+  // 邊界:viewer 只打 :8004（SHALL NOT HTTP 直連 :49101）；coordinator server-side 從
+  // config.conversionApiBase（host 可達的 host.docker.internal:49101）抓 mapping，帶全域 CORS 回傳。
+  // 誠實:sessionId 非法 → 400；session 不存在 / 無 mapping_url binding → 404；conversion
+  // 不可達 → 502（由 proxyConversionService 處理）。coordinator 僅 resolve+forward，不解讀/不保存 mapping。
+  app.get("/api/governance/element-mapping/for-session/:sessionId", async (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    const mappingUrl =
+      (session.artifact_bindings ?? []).find((binding) => binding.mapping_url)?.mapping_url ?? null;
+    if (!mappingUrl) {
+      response.status(404).json({ detail: "No element_mapping bound to this review session." });
+      return;
+    }
+    // mapping_url 多為絕對 URL（artifact 端點，含 LAN host）；取其 path+query 後一律經
+    // config.conversionApiBase（容器可達）抓，避免直接打不一定可達的 LAN host。
+    let upstreamPath: string;
+    try {
+      const parsed = new URL(mappingUrl);
+      upstreamPath = `${parsed.pathname}${parsed.search}`;
+    } catch {
+      upstreamPath = mappingUrl.startsWith("/") ? mappingUrl : `/${mappingUrl}`;
+    }
+    await proxyConversionService(response, config.conversionApiBase, "GET", upstreamPath);
+  });
+
   // A1 治理 rule-run proxy（瀏覽器 → :8004 → governance-service 127.0.0.1:49102 loopback）。
   // unified-console-mvp:注入 session→server-side IFC 路徑 resolver，讓
   // `POST /api/governance/rule-runs/for-session/:sessionId` 能用瀏覽器手上唯一

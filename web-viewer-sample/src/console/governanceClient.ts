@@ -72,6 +72,11 @@ export const governanceClient = {
     ).then((r) => r.results),
   exportUrl: (id: string) => `${COORD_BASE}/api/governance/rule-runs/${id}/export?fmt=excel`,
 
+  // console-mapping-proxy：viewer 經 coordinator :8004 proxy 載入 element_mapping（守邊界：
+  // SHALL NOT HTTP 直連 :49101）。回傳原樣 element_mapping JSON（呼叫端以 isElementMappingDocument 驗證）。
+  elementMappingForSession: (sessionId: string) =>
+    jsonFetch<unknown>(`/api/governance/element-mapping/for-session/${encodeURIComponent(sessionId)}`),
+
   // A2 model-version diff（GlobalId 多級對齊）
   createDiff: (req: DiffRequest) =>
     jsonFetch<{ diff_id: string; status: string }>("/api/governance/diffs", {
