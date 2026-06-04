@@ -5,6 +5,19 @@ import { useCallback, useEffect, useState } from "react";
 import { Btn, Panel } from "./components";
 import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
 
+// R3（安全）：viewer_url 即使由 coordinator 提供仍需驗證，否則 open-redirect / javascript: / data: 風險。
+// 僅允許 http(s) 絕對 URL 或同源相對路徑（以 window.location.origin 為 base 解析後 protocol 必為 http/https）；
+// javascript: / data: / 其他 scheme 一律拒絕。匯出為純函式以便直接單元測試。
+export function isSafeViewerUrl(u?: string | null): boolean {
+  if (!u) return false;
+  try {
+    const parsed = new URL(u, window.location.origin);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function IntakeSelectPage() {
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -27,10 +40,15 @@ export function IntakeSelectPage() {
 
   // W6：選取後可「開啟審查 viewer」。viewer_url 由 coordinator 提供（前端不捏造路徑）；
   // 缺 viewer_url 的 job 不可開（按鈕 disabled + 誠實說明），不做假導航。
+  // R3（安全）：viewer_url 需先過 isSafeViewerUrl（拒 open-redirect / javascript: / data:）才導航。
   const selectedJob = jobs.find((j) => j.ifc_ready_job_id === selected) ?? null;
-  const canOpen = Boolean(selectedJob?.viewer_url);
+  const hasViewerUrl = Boolean(selectedJob?.viewer_url);
+  const viewerUrlSafe = isSafeViewerUrl(selectedJob?.viewer_url);
+  const canOpen = viewerUrlSafe;
   const openViewer = () => {
-    if (selectedJob?.viewer_url) window.location.assign(selectedJob.viewer_url);
+    if (selectedJob?.viewer_url && isSafeViewerUrl(selectedJob.viewer_url)) {
+      window.location.assign(selectedJob.viewer_url);
+    }
   };
 
   return (
@@ -87,8 +105,10 @@ export function IntakeSelectPage() {
           </table>
         )}
         {selectedJob && !canOpen && (
-          <p className="ec-note" data-testid="intake-open-blocked">
-            此 job 尚無 viewer_url（coordinator 未提供可開啟的 viewer 入口）→「開啟審查 viewer」停用，不做假導航。
+          <p className="ec-warn-note" data-testid="intake-open-blocked">
+            {hasViewerUrl
+              ? "viewer_url 非安全 http(s)/同源路徑，拒絕導航"
+              : "此 job 尚無 viewer_url（coordinator 未提供可開啟的 viewer 入口）→「開啟審查 viewer」停用，不做假導航。"}
           </p>
         )}
         <p className="ec-note">進件來源為現成清單選取；模型路徑由 coordinator / conversion authority 持有，前端不手填、不直連內部埠。</p>

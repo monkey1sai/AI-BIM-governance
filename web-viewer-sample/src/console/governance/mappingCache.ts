@@ -46,6 +46,21 @@ export class MappingCache {
     return this.primToGuid.get(primPath) ?? null;
   }
 
+  // R8：live 點選常落在 child mesh prim（如 /World/IfcWall/_A/Mesh），exact path 非 mapping key。
+  // 先試 exact，命不中則逐層往父走（剝掉尾段 /seg），直到命中 mapped prim 或到 root；皆無則 null（誠實）。
+  // guidForPrimPath 維持 exact，供其他需精確比對的呼叫端。
+  guidForPrimPathOrAncestor(primPath: string): string | null {
+    let path = primPath;
+    while (path.length > 0) {
+      const guid = this.primToGuid.get(path);
+      if (guid) return guid;
+      const idx = path.lastIndexOf("/");
+      if (idx <= 0) break; // 到 root（"/Foo" → idx=0）或無 "/" → 停（不再往上）
+      path = path.slice(0, idx);
+    }
+    return null;
+  }
+
   get mappedCount(): number {
     return this.guidToPrim.size;
   }

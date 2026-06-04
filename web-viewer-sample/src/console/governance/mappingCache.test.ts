@@ -25,6 +25,21 @@ describe("MappingCache 雙向查詢（鎖單一 model version）", () => {
     expect(cache.guidForPrimPath("/World/IfcDoor/_B")).toBe("GUID_B");
   });
 
+  // R8：live 點選常落在 child mesh prim → guidForPrimPathOrAncestor 往父走命中 mapped ancestor。
+  it("guidForPrimPathOrAncestor：child mesh prim 解析到父層 mapped guid", () => {
+    const cache = MappingCache.fromDocument(REAL, "mv_001");
+    // exact key 仍命中。
+    expect(cache.guidForPrimPathOrAncestor("/World/IfcWall/_A")).toBe("GUID_A");
+    // child path（mapping 無此 key）→ 往父層走，命中 /World/IfcWall/_A。
+    expect(cache.guidForPrimPathOrAncestor("/World/IfcWall/_A/Mesh")).toBe("GUID_A");
+    // 多層 child 一樣解析（如 …/G_<guid>/mesh_0 形態）。
+    expect(cache.guidForPrimPathOrAncestor("/World/IfcDoor/_B/mesh_0/sub")).toBe("GUID_B");
+    // 完全無對映祖先 → null（誠實，不捏造）。
+    expect(cache.guidForPrimPathOrAncestor("/World/Unknown/Mesh")).toBeNull();
+    // guidForPrimPath（exact）對 child path 仍回 null（不破壞 exact 語意）。
+    expect(cache.guidForPrimPath("/World/IfcWall/_A/Mesh")).toBeNull();
+  });
+
   it("未對映 guid 回 null（不捏造）", () => {
     const cache = MappingCache.fromDocument(REAL, "mv_001");
     expect(cache.primPathForGuid("GUID_MISSING")).toBeNull();

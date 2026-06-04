@@ -595,12 +595,23 @@ export default class App extends React.Component<AppProps, AppState> {
     // W1：A3 rule-run —— 由當前 review session 起跑（coordinator 端解析 server IFC 路徑），輪詢狀態，
     // succeeded 後取 failed 結果映射成 FailedElement 餵 overlay。誠實：無 session / 失敗都據實表態。
     private async _runGovernanceRuleCheck(): Promise<void> {
+        // R1：禁止重入（避免重複觸發多條輪詢）。running 中再點直接忽略。
+        if (this.state.govRuleCheck?.status === "running") return;
         const sessionId = this.state.reviewSessionId;
         if (!sessionId) {
             this.setState({ govRuleCheck: { status: "error", error: "尚無 review session" } });
             return;
         }
-        this.setState({ govRuleCheck: { status: "running" } });
+        // R1：開新 run 前清空上一輪殘留狀態（failed 構件 / 確認 / issue / runId / pending highlights），
+        // 避免舊結果殘留誤導操作員。
+        this._pendingGovHighlights = {};
+        this.setState({
+            govRuleCheck: { status: "running" },
+            govFailedElements: [],
+            govHighlightConfirm: {},
+            govIssueCreate: undefined,
+            govRuleRunId: undefined,
+        });
         this._appendReviewEvent("A3 規則檢核：建立 rule-run（for-session）");
         try {
             const { rule_run_id } = await governanceClient.createRuleRunForSession(sessionId);
@@ -644,6 +655,8 @@ export default class App extends React.Component<AppProps, AppState> {
 
     // W3：A8 從本次 rule-run 開 issue（須先有 succeeded 的 govRuleRunId）。誠實：無 run / 失敗皆據實表態。
     private async _createGovIssues(): Promise<void> {
+        // R2：禁止重入（避免連點導致重複開 issue）。creating 中再點直接忽略。
+        if (this.state.govIssueCreate?.status === "creating") return;
         const runId = this.state.govRuleRunId;
         if (!runId) {
             this._appendReviewEvent("A8 開 issue 略過：尚無成功的 rule-run");
@@ -664,7 +677,9 @@ export default class App extends React.Component<AppProps, AppState> {
 
     // W4：live 3D 點選 / debug 清單共用的 prim → ifc_guid 反查（DRY）。誠實：無對映記事件且 guid=null。
     private _reverseLookupGuid(path: string): void {
-        const guid = this._mappingCache?.guidForPrimPath(path) ?? null;
+        // R8：live viewport 點選常落在 child mesh prim（如 …/G_<guid>/mesh_0），exact path 非 mapping key；
+        // 改用 ancestor 解析（往父層走，直到命中 mapped prim），命不中才回 null（誠實，不捏造）。
+        const guid = this._mappingCache?.guidForPrimPathOrAncestor(path) ?? null;
         this._appendReviewEvent(guid ? `點選 3D 構件 → ifc_guid=${guid}（帶進治理）` : `點選 3D 構件 ${path} → 無對映 ifc_guid`);
         this.setState({ govSelectedGuid: guid });
     }
@@ -1710,9 +1725,11 @@ export default class App extends React.Component<AppProps, AppState> {
             // Kit 真的選到該 primPath 且無 missing 才算「已標示」，否則標 missing/fallback。
             const govPending = requestId ? this._pendingGovHighlights[requestId] : undefined;
             if (govPending) {
+                // R6 誠實：Kit 用 fallback path 不算真正確認（鏡像上方 mapping-verify predicate 的 fallback 檢查）。
                 const confirmed = result === "success"
                     && selectedPaths.includes(govPending.primPath)
-                    && missingPaths.length === 0;
+                    && missingPaths.length === 0
+                    && fallbackPaths.length === 0;
                 nextState.govHighlightConfirm = {
                     ...this.state.govHighlightConfirm,
                     [govPending.ifc_guid]: confirmed ? "已在 3D 標示（Kit 已選取）" : "Kit 未選到該構件（missing/fallback）",
@@ -2016,7 +2033,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame() });
                     const ratio = this.state.latestStreamConfig?.quality_metrics_summary?.coverage_ratio ?? null;
                     const gate = evaluateCoverageGate({ coverageRatio: ratio, isFake: this._mappingCache?.isFake ?? false });
-                    const coverage = { coverageOk: gate.coverageOk, degraded: gate.degraded, ratio };
+                    // R7：把 warnOnly 透傳給 overlay —— coverage ∈ [0.9,1.0) 時非 degraded 但低於鎖定 1.0，
+                    // overlay 顯示 measure-first 警示（非 fallback 降級），讓操作員看見「未達 100%」。
+                    const coverage = { coverageOk: gate.coverageOk, degraded: gate.degraded, ratio, warnOnly: gate.warnOnly };
                     const bcfUrl = this.state.currentModelVersionId
                         ? governanceClient.bcfExportUrl({ model_version_id: this.state.currentModelVersionId })
                         : undefined;

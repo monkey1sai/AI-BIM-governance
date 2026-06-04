@@ -28,7 +28,8 @@ export interface IssueCreateState {
 
 export interface GovernanceOverlayProps {
   panelState: GovPanelState;
-  coverage: { coverageOk: boolean; degraded: boolean; ratio: number | null };
+  // R7：widen 以帶 warnOnly（coverage ∈ [0.9,1.0) 時 measure-first 警示，非 fallback 降級）。
+  coverage: { coverageOk: boolean; degraded: boolean; ratio: number | null; warnOnly?: boolean };
   failedElements: FailedElement[];
   onHighlight: (failed: FailedElement) => HighlightResult;
   onClearHighlight: () => void;
@@ -133,7 +134,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
           <Btn
             caption="POST rule-runs/for-session/:sessionId（client 主動拉）"
             data-testid="gov-run-rulecheck"
-            disabled={!props.panelState.canOperate || !props.onRunRuleCheck}
+            disabled={!props.panelState.canOperate || !props.onRunRuleCheck || rc?.status === "running"}
             onClick={() => props.onRunRuleCheck?.()}
           >
             {rc?.status === "running" ? "檢核中…" : "執行規則檢核"}
@@ -161,6 +162,12 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         )}
         {!props.coverage.degraded && coveragePct !== null && (
           <Metric value={`${coveragePct}%`} label="mapping coverage" />
+        )}
+        {/* R7：coverage ∈ [0.9,1.0) → 非 degraded 但低於 MVP 鎖定 1.0，measure-first 誠實警示（非 fallback 降級）。 */}
+        {!props.coverage.degraded && props.coverage.warnOnly && props.coverage.ratio !== null && (
+          <p className="ec-warn-note" data-testid="gov-coverage-warn">
+            coverage &lt;100%（未達 MVP 鎖定 1.0；measure-first 警示，非 fallback 降級）
+          </p>
         )}
         {props.failedElements.length === 0 ? (
           <p className="ec-note">目前無治理失敗構件（或尚未跑檢核）。</p>

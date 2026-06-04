@@ -62,7 +62,7 @@ export const governanceClient = {
   // （瀏覽器不持有、不手填模型路徑，守邊界 B1）。後端誠實 404（無進件 IFC）/ 502（governance 離線）。
   createRuleRunForSession: (sessionId: string, body?: { ids_path?: string; rule_set?: string }) =>
     jsonFetch<{ rule_run_id: string; status: string }>(
-      `/api/governance/rule-runs/for-session/${sessionId}`,
+      `/api/governance/rule-runs/for-session/${encodeURIComponent(sessionId)}`,
       { method: "POST", body: JSON.stringify(body ?? {}) }
     ),
   getRuleRun: (id: string) => jsonFetch<RuleRunStatus>(`/api/governance/rule-runs/${id}`),

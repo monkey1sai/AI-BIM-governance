@@ -184,6 +184,59 @@ describe("GovernanceOverlay A3 rule-run（W1）", () => {
     expect(ok).toContain("88");
     expect(ok).toContain("12");
   });
+
+  // R5：running 中 gov-run-rulecheck disabled（避免連點重複起輪詢；與 Window R1 重入守門配對）。
+  it("running → gov-run-rulecheck disabled（即使 canOperate + onRunRuleCheck）", () => {
+    const running = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "running" }} />);
+    const runBtn = running.match(/<button[^>]*data-testid="gov-run-rulecheck"[^>]*>/);
+    expect(runBtn?.[0]).toContain("disabled");
+    expect(running).toContain("檢核中…"); // 標籤仍為「檢核中…」
+
+    // 對照：idle 時可操作 → 不 disabled（確認不是恆 disabled）。
+    const idle = renderToString(<GovernanceOverlay {...baseProps} ruleCheck={{ status: "idle" }} />);
+    const idleBtn = idle.match(/<button[^>]*data-testid="gov-run-rulecheck"[^>]*>/);
+    expect(idleBtn?.[0]).not.toContain("disabled");
+  });
+});
+
+// ── R7：sub-100% coverage warnOnly → overlay 警示（measure-first，非 fallback 降級） ──
+describe("GovernanceOverlay coverage warnOnly（R7）", () => {
+  it("coverage ∈ [0.9,1.0)（非 degraded、warnOnly）→ 顯示 gov-coverage-warn 警示 + Metric%", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        {...baseProps}
+        coverage={{ coverageOk: false, degraded: false, ratio: 0.95, warnOnly: true }}
+      />,
+    );
+    expect(html).toContain('data-testid="gov-coverage-warn"');
+    expect(html).toContain("未達 MVP 鎖定 1.0");
+    expect(html).toContain("measure-first 警示，非 fallback 降級");
+    expect(html).toContain("95%"); // Metric 仍顯示百分比
+    // 非 degraded → 不顯示降級橫幅。
+    expect(html).not.toContain('data-testid="gov-coverage-degraded"');
+  });
+
+  it("coverage=1.0（warnOnly=false）→ 無警示（不誤報）", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        {...baseProps}
+        coverage={{ coverageOk: true, degraded: false, ratio: 1.0, warnOnly: false }}
+      />,
+    );
+    expect(html).not.toContain('data-testid="gov-coverage-warn"');
+    expect(html).toContain("100%");
+  });
+
+  it("degraded（<90%）→ 顯示降級橫幅，不顯示 warn 警示（避免重複）", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        {...baseProps}
+        coverage={{ coverageOk: false, degraded: true, ratio: 0.85, warnOnly: true }}
+      />,
+    );
+    expect(html).toContain('data-testid="gov-coverage-degraded"');
+    expect(html).not.toContain('data-testid="gov-coverage-warn"');
+  });
 });
 
 // ── W2：highlight 送出誠實文案 + Kit 非同步確認覆寫 ──
