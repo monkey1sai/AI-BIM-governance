@@ -73,9 +73,15 @@ export const governanceClient = {
   exportUrl: (id: string) => `${COORD_BASE}/api/governance/rule-runs/${id}/export?fmt=excel`,
 
   // console-mapping-proxy：viewer 經 coordinator :8004 proxy 載入 element_mapping（守邊界：
-  // SHALL NOT HTTP 直連 :49101）。回傳原樣 element_mapping JSON（呼叫端以 isElementMappingDocument 驗證）。
-  elementMappingForSession: (sessionId: string) =>
-    jsonFetch<unknown>(`/api/governance/element-mapping/for-session/${encodeURIComponent(sessionId)}`),
+  // SHALL NOT HTTP 直連 :49101）。多 binding 時以 mappingUrl 指定要哪個 binding 的 mapping
+  // （coordinator 以 session binding 白名單驗證，選對 asset 且防任意 URL）。回傳原樣
+  // element_mapping JSON（呼叫端以 isElementMappingDocument 驗證）。
+  elementMappingForSession: (sessionId: string, mappingUrl?: string) =>
+    jsonFetch<unknown>(
+      `/api/governance/element-mapping/for-session/${encodeURIComponent(sessionId)}${
+        mappingUrl ? `?url=${encodeURIComponent(mappingUrl)}` : ""
+      }`
+    ),
 
   // A2 model-version diff（GlobalId 多級對齊）
   createDiff: (req: DiffRequest) =>

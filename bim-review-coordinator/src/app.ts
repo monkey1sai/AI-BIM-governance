@@ -1340,20 +1340,41 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
-    const mappingUrl =
-      (session.artifact_bindings ?? []).find((binding) => binding.mapping_url)?.mapping_url ?? null;
-    if (!mappingUrl) {
+    // 把 mapping_url 正規化成 path+query；拒 protocol-relative（//host/..）與非絕對路徑，
+    // 避免 server-side fetch 被導向 config.conversionApiBase 以外的 host（SSRF）。
+    const toUpstreamPath = (raw: string): string | null => {
+      let p: string;
+      try {
+        const parsed = new URL(raw);
+        p = `${parsed.pathname}${parsed.search}`;
+      } catch {
+        p = raw;
+      }
+      return p.startsWith("/") && !p.startsWith("//") ? p : null;
+    };
+    // 只 proxy 屬於本 session binding 的 artifact path（白名單，防任意 URL SSRF）；對 host 差異穩健。
+    const boundPaths = (session.artifact_bindings ?? [])
+      .map((binding) => binding.mapping_url)
+      .filter((url): url is string => typeof url === "string" && url.length > 0)
+      .map(toUpstreamPath)
+      .filter((path): path is string => path !== null);
+    if (boundPaths.length === 0) {
       response.status(404).json({ detail: "No element_mapping bound to this review session." });
       return;
     }
-    // mapping_url 多為絕對 URL（artifact 端點，含 LAN host）；取其 path+query 後一律經
-    // config.conversionApiBase（容器可達）抓，避免直接打不一定可達的 LAN host。
-    let upstreamPath: string;
-    try {
-      const parsed = new URL(mappingUrl);
-      upstreamPath = `${parsed.pathname}${parsed.search}`;
-    } catch {
-      upstreamPath = mappingUrl.startsWith("/") ? mappingUrl : `/${mappingUrl}`;
+    // 多 binding：viewer 以 ?url= 指定要哪個 binding 的 mapping（選對 asset）；未指定用第一個
+    // （單 artifact MVP 行為不變）。指定值須屬於本 session binding，否則 404（不 proxy 任意 URL）。
+    const requestedRaw = typeof request.query.url === "string" ? request.query.url : null;
+    let upstreamPath: string | null;
+    if (requestedRaw) {
+      const requestedPath = toUpstreamPath(requestedRaw);
+      upstreamPath = requestedPath && boundPaths.includes(requestedPath) ? requestedPath : null;
+    } else {
+      upstreamPath = boundPaths[0];
+    }
+    if (!upstreamPath) {
+      response.status(404).json({ detail: "Requested mapping_url is not bound to this review session." });
+      return;
     }
     await proxyConversionService(response, config.conversionApiBase, "GET", upstreamPath);
   });

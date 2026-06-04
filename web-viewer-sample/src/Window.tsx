@@ -1410,7 +1410,8 @@ export default class App extends React.Component<AppProps, AppState> {
             const sessionId = this.state.reviewSessionId;
             let payload: unknown;
             if (sessionId) {
-                payload = await governanceClient.elementMappingForSession(sessionId);
+                // 帶 mappingUrl：多 binding 時讓 coordinator 以 session binding 白名單選對該 asset 的 mapping。
+                payload = await governanceClient.elementMappingForSession(sessionId, mappingUrl);
             } else {
                 const response = await fetch(mappingUrl, { headers: { Accept: "application/json" } });
                 if (!response.ok) {
