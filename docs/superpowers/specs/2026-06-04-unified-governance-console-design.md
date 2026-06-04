@@ -179,10 +179,10 @@ MVP（已有引擎 A2/A3/A4/A8 + A1 進件 + HighlightBridge）
 - **R4 後端離線**：governance / coordinator proxy 離線回 502；前端誠實顯示，SHALL NOT 偽裝成功或顯示舊結果。
 - **R5 spectator 誤操作**：spectator 唯讀靠 GovPanelState disabled；SHALL 以 `streamRole` / 角色判定，避免把操作面板誤暴露給 spectator。
 
-### 未決問題（Open Questions）
+### 已裁示決策（2026-06-04 使用者拍板）
 
-- **Q1**：overlay 框架抽取的粒度——一次抽到位 vs 漸進式（建議漸進式，先保留既有 viewer 行為），由實作 change 在 design 階段收斂。
-- **Q2**：MappingCache 的失效/重整策略（新版本 conversion 後 element_mapping 更新時）——MVP 以單一 model version 為界，多版本切換的快取失效留待 +A7 階段。
-- **Q3**：A5/A6/A9/A10 新引擎與「報表/稽核/封存」的具體後端契約——超出本北極星與 MVP scope，各自獨立 change 規格化。
+- **Q1（overlay 框架抽取粒度）→ 漸進式，不一次到位**：先保留既有 viewer 行為、逐步遷移；抽取步驟由實作 change 在其 design 階段收斂。
+- **Q2（MappingCache 失效/重整策略）→ MVP 鎖單一 model version**：MappingCache **不做跨版本智能失效**；多版本切換的快取失效留待 +A7 階段另立議題。
+- **Q3（A5/A6/A9/A10 新引擎 + 報表/稽核/封存後端契約）→ 全部拆成獨立 OpenSpec change**：各自獨立規格化，**SHALL NOT 併入本北極星 PR #180、SHALL NOT 併入 MVP scope**。
 
-> Q1–Q3 皆不阻擋 MVP；MVP scope（§6）與 fallback（§7）已以既有引擎與既有 spec 完整界定。
+> 三項已裁示，皆不阻擋 MVP；MVP scope（§6）與 fallback（§7）已以既有引擎與既有 spec 完整界定。
