@@ -2,8 +2,9 @@
 // A1–A10 治理 overlay 框架：疊在 primary viewer live 3D 右側。MVP 只接已有引擎 A2/A3/A4/A8；
 // A5/A6/A9/A10 標願景 disabled（誠實，不假裝 ready）。所有治理動作在 live 3D 上；點 failed 構件
 // 經 onHighlight（HighlightBridge）在 3D 標紅。本元件不自管 WebRTC（props 注入），守 console 邊界。
+import { useState } from "react";
 import "./governance/overlay.css";
-import { Btn, Panel, ProvTag } from "./components";
+import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import type { Prov } from "./data";
 import type { FailedElement, HighlightResult } from "./governance/highlightBridge";
 // DRY（E3 type consistency）：直接復用 govPanelState 的 union，不另立平行 OverlayPanelState。
@@ -35,6 +36,21 @@ const ROADMAP_ENGINES: { code: string; title: string; prov: Prov }[] = [
 export function GovernanceOverlay(props: GovernanceOverlayProps) {
   const readOnly = !props.panelState.canOperate;
   const reason = props.panelState.disabledReason;
+  const [lastResult, setLastResult] = useState<Record<string, string>>({});
+  const coveragePct = props.coverage.ratio === null ? null : Math.round(props.coverage.ratio * 100);
+
+  const handleHighlight = (failed: FailedElement) => {
+    const res = props.onHighlight(failed);
+    setLastResult((prev) => ({
+      ...prev,
+      [failed.ifc_guid]: res.ok
+        ? `已在 3D 標示：${res.primPath}`
+        : res.reason === "unmapped"
+          ? "無法在 3D 標示（未對映 usd_prim_path）"
+          : "等待 viewer 連線（DataChannel 未就緒）",
+    }));
+  };
+
   return (
     <div className={`gov-overlay ${readOnly ? "gov-readonly" : ""}`} role="complementary" aria-label="A1–A10 治理 overlay">
       <div className="gov-overlay-h">
@@ -51,6 +67,45 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
             <ProvTag prov={e.prov} />
           </div>
         ))}
+      </Panel>
+
+      <Panel
+        title="治理失敗構件 · 在 live 3D 標示"
+        sub="點 failed 構件 → HighlightBridge 經 DataChannel 在 3D 標紅（client 主動拉，非 server-push）"
+        prov="asbuilt"
+      >
+        {props.coverage.degraded && (
+          <div className="gov-banner">
+            coverage {coveragePct === null ? "未知" : `${coveragePct}%`}（&lt; 100%）：部分未對映構件
+            <strong> 無法在 3D 標示</strong>，依既有 spec 誠實降級，不捏造 prim path。
+          </div>
+        )}
+        {!props.coverage.degraded && coveragePct !== null && (
+          <Metric value={`${coveragePct}%`} label="mapping coverage" />
+        )}
+        {props.failedElements.length === 0 ? (
+          <p className="ec-note">目前無治理失敗構件（或尚未跑檢核）。</p>
+        ) : (
+          <table className="ec-table">
+            <thead><tr><th>rule_code</th><th>severity</th><th>ifc_guid</th><th /></tr></thead>
+            <tbody>
+              {props.failedElements.slice(0, 50).map((f) => (
+                <tr key={f.ifc_guid}>
+                  <td>{f.rule_code ?? "—"}</td>
+                  <td>{f.severity}</td>
+                  <td>{f.ifc_guid}</td>
+                  <td>
+                    <Btn caption="highlightPrimsRequest（client 主動拉）" disabled={!props.panelState.canOperate} onClick={() => handleHighlight(f)}>
+                      在 3D 標示
+                    </Btn>
+                    {lastResult[f.ifc_guid] && <span className="ec-note" style={{ marginLeft: 6 }}>{lastResult[f.ifc_guid]}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <Field k="3D 著色機制" v="client highlightPrimsRequest 經 viewer DataChannel；不復活 2026-05-21 退役 server-push" prov="asbuilt" />
       </Panel>
 
       <Panel title="後期願景 · 各自獨立 OpenSpec change" sub="A5/A6/A9/A10 後端未建（Q3）→ disabled，不假裝 ready" prov="asbuilt">

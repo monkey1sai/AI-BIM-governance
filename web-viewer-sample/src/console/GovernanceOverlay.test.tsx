@@ -68,3 +68,34 @@ describe("GovernanceOverlay spectator 唯讀 / 等待 viewer（誠實 disabled�
     expect(html).toContain(GOV_PANEL_REASON_TEXT.waiting_viewer);
   });
 });
+
+describe("GovernanceOverlay failed 構件 → 3D 標紅 / 未對映誠實", () => {
+  it("列出 failed 構件（含 rule_code / ifc_guid）且提供「在 3D 標示」鈕", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        panelState={{ canOperate: true, disabledReason: null }}
+        coverage={{ coverageOk: true, degraded: false, ratio: 1.0 }}
+        failedElements={[{ ifc_guid: "GUID_A", severity: "error", rule_code: "DOOR-FIRERATING-REQUIRED" }]}
+        onHighlight={() => ({ ok: true, primPath: "/World/IfcWall/_A", requestId: "r" })}
+        onClearHighlight={() => {}}
+      />,
+    );
+    expect(html).toContain("GUID_A");
+    expect(html).toContain("DOOR-FIRERATING-REQUIRED");
+    expect(html).toContain("在 3D 標示");
+  });
+
+  it("coverage 降級（<90%）→ 顯示 coverage% 與「部分構件無法在 3D 標示」（誠實，不捏造）", () => {
+    const html = renderToString(
+      <GovernanceOverlay
+        panelState={{ canOperate: true, disabledReason: null }}
+        coverage={{ coverageOk: false, degraded: true, ratio: 0.85 }}
+        failedElements={[{ ifc_guid: "GUID_X", severity: "error" }]}
+        onHighlight={() => ({ ok: false, reason: "unmapped" })}
+        onClearHighlight={() => {}}
+      />,
+    );
+    expect(html).toContain("85"); // coverage% 顯示（0.85 → 85%）
+    expect(html).toContain("無法在 3D 標示"); // 誠實降級文案
+  });
+});
