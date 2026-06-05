@@ -171,5 +171,5 @@
 - **CH-C 部分完成**：coordinator 側角色權威已落地（`b196852`：`POST /api/review-sessions/:id/stage-binding` 驗 `source_client_id`/primary，非 UI-only gate）。**streaming-server（Kit，host-native GPU）DataChannel 的 `source_client_id` 強制仍 GPU-pending**——需探索 `bim-streaming-server` 並在 host GPU Kit runtime 上真驗（此環境無 GPU）。
 - **CH-E 已完成（`79a0076`）**：coordinator gated 服務 React UnifiedConsole 於 `:8004/ui`（六 hash 路由），dev-console 的 real-IFC/Kit 面板已移植成 React 頁。啟用需先 `cd web-viewer-sample && npm run build:ui` 產 `dist-ui`（compose 唯讀 bind-mount → `/workspace/console-dist`，env `CONSOLE_DIST_DIR`）；**未產出 / 無 `index.html` 時自動回退 dev-console.html（零風險，不影響既有部署）**。採 `vite build --base=/ui/ --outDir dist-ui` 獨立輸出，不動既有 `dist` / `:5173` viewer，故**不需改 coordinator Dockerfile**。
 - **真實 3D 影像**需 host GPU；此環境 viewer Runtime=no（誠實降級，不偽造 matched）；harness 用可決定性佔位，不假造前端狀態機。
-- **OpenSpec change-id**：repo 有 `openspec/changes/unified-console-mvp/`（已 merged MVP）；fe-redesign 系列 PR #184 尚未掛上專屬 change，review gate 可能標 blocker（流程項，非功能缺口）。
+- **OpenSpec change-id**：已新增 `openspec/changes/unified-console-fe-redesign/`（`npx openspec validate --strict` ✅）對應 PR #184；pr-review-agent `missing_openspec` high blocker 已解，CI 兩 check（CodeRabbit / pr-review-agent）皆 **pass**、0 blocker（餘一個 GitNexus detect-changes medium warning，非阻斷）。
 - overlay 右側於窄視窗略裁切（layout polish，留 CH-A 設計系統期）。
