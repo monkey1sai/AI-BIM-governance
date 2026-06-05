@@ -1741,6 +1741,12 @@ function mountDevConsole(app: express.Express, config: CoordinatorConfig): void 
     response.sendFile(path.join(publicDir, "dev-console.html"));
   });
 
+  // CH-E/CH-G（RK6 CRITICAL）：/ui/console 顯式 301 收斂到 /ui。
+  // 必須是「精確路徑」route，嚴禁用 /ui/* 萬用 —— 否則會吞掉下方凍結的 /ui/open handoff。
+  app.get("/ui/console", (_request, response) => {
+    response.redirect(301, "/ui");
+  });
+
   // fast-ifc-link-demo-loop §3.4 + LAN handoff:server-side redirect to
   // browser-visible viewer URL。session id 驗證
   // `^(lwv_|review_session_)[A-Za-z0-9_]+$`(支援 lwv_ + review_session_ 兩種 prefix

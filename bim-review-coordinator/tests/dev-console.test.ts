@@ -83,6 +83,31 @@ describe("coordinator dev console", () => {
     expect(location).not.toContain("evil.example");
   });
 
+  it("CH-E/RK6：/ui/console 301 收斂到 /ui，且不以 /ui/* 萬用吞掉凍結的 /ui/open", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
+      viewerPublicBaseUrl: "http://192.168.10.105:5173",
+      publicHost: "192.168.10.105",
+    });
+
+    // /ui/console → 301 /ui（顯式收斂，非 /ui/* 萬用）。
+    const consoleRedirect = await request(app.app).get("/ui/console").redirects(0);
+    expect(consoleRedirect.status).toBe(301);
+    expect(consoleRedirect.headers.location).toBe("/ui");
+
+    // RK6：/ui/open 仍 302 到 viewer，未被 /ui/console 或任何 /ui/* 萬用吞掉（凍結 handoff 逐字保留）。
+    const openRedirect = await request(app.app)
+      .get("/ui/open?session=review_session_rk6_guard")
+      .redirects(0);
+    expect(openRedirect.status).toBe(302);
+    expect(openRedirect.headers.location).toContain("http://192.168.10.105:5173/");
+    expect(openRedirect.headers.location).toContain("session=review_session_rk6_guard");
+
+    // /ui 仍服務 console（200），未被 301 影響。
+    const ui = await request(app.app).get("/ui");
+    expect(ui.status).toBe(200);
+  });
+
   it("forwards only whitelisted viewer identity params through /ui/open", async () => {
     const app = makeApp({
       coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
