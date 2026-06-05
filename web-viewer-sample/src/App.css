@@ -137,6 +137,17 @@ video#remote-video {
     cursor: pointer;
 }
 
+/* CH-B：USD/BIM 語意樹改置於左側 dock。原 NVIDIA .usdStageContainer 為右側絕對定位（right:0,
+   height:calc(100%-185px)），於 left-dock 內覆寫為填滿 dock，使其成為可點選的左側面板。 */
+[data-testid="usd-stage-left-dock"] .usdStageContainer {
+    position: absolute;
+    inset: 0;
+    left: 0;
+    right: auto;
+    width: 100%;
+    height: 100%;
+}
+
 .landing-layout {
     display: grid;
     grid-template-columns: minmax(280px, 420px) minmax(520px, 1fr);

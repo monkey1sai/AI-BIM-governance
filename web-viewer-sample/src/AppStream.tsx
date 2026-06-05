@@ -329,7 +329,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                         <div
                             id="harness-viewport-label"
                             data-testid="harness-viewport-label"
-                            style={{ position: 'fixed', zIndex: 50, top: 70, left: 8, padding: '4px 8px', background: 'rgba(118,185,0,0.9)', color: '#04210b', fontWeight: 700, fontSize: 12, borderRadius: 4, fontFamily: 'monospace' }}
+                            style={{ position: 'fixed', zIndex: 50, top: 70, left: 320, padding: '4px 8px', background: 'rgba(118,185,0,0.9)', color: '#04210b', fontWeight: 700, fontSize: 12, borderRadius: 4, fontFamily: 'monospace' }}
                         >
                             HARNESS VIEWPORT — initializing…
                         </div>

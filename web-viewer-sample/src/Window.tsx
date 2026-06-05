@@ -1397,13 +1397,19 @@ export default class App extends React.Component<AppProps, AppState> {
         // 統一治理控制台 MVP（W4 點 3D → ifc_guid 方向）：經 MappingCache 反查 ifc_guid 帶進治理；
         // 無對映誠實記事件（不捏造 guid）。與 live viewport 點選（stageSelectionChanged）共用 _reverseLookupGuid。
         if (paths[0]) this._reverseLookupGuid(paths[0]);
-        const message: AppStreamMessageType = {
-            event_type: "selectPrimsRequest",
-            payload: {
-                paths: paths
-            }
-        };
-        this._sendStreamMessage(message);
+
+        // CH-B spectator gate：view-only 角色不送任何 mutating 指令（誠實，不做 best-effort 隱性送出）。
+        // 後端權威另在 streaming server 以 source_client_id 驗證（CH-C），前端 gate 僅 UX。
+        if (isSpectatorStreamMode()) {
+            this._appendReviewEvent(`spectator（view-only）：略過 select / focus（${paths[0] || "none"}）`);
+            return;
+        }
+
+        this._sendStreamMessage({ event_type: "selectPrimsRequest", payload: { paths } });
+        // CH-B：點語意樹節點 → 相機以該元件聚焦（spec：點 prim path → 相機聚焦）。
+        if (paths[0]) {
+            this._sendStreamMessage(buildFocusPrimRequest(paths[0]));
+        }
 
         selectedUsdPrims.forEach(usdPrim => {this._onFillUSDPrim(usdPrim)});
     }
@@ -2075,13 +2081,30 @@ export default class App extends React.Component<AppProps, AppState> {
                     {/* viewer-edge-bim-server-console:USDAsset / USDStage 是 debug 工具,
                         預設不渲染;`?debug=1` 才顯示作為 Inspector ④ 技術細節入口。 */}
                     {isDebugQueryEnabled() && (
-                        <>
-                            <USDAsset
-                                usdAssets={this.state.usdAssets}
-                                selectedAssetUrl={this.state.selectedUSDAsset?.url}
-                                onSelectUSDAsset={(value) => this._onSelectUSDAsset(value)}
-                                width={sidebarWidth}
-                            />
+                        <USDAsset
+                            usdAssets={this.state.usdAssets}
+                            selectedAssetUrl={this.state.selectedUSDAsset?.url}
+                            onSelectUSDAsset={(value) => this._onSelectUSDAsset(value)}
+                            width={sidebarWidth}
+                        />
+                    )}
+                    {/* CH-B：USD/BIM 語意樹。有 usdPrims（stage 已載入）即顯示為可操作面板，
+                        不再僅限 ?debug=1（USDAsset 下拉維持 debug 工具）。 */}
+                    {(isDebugQueryEnabled() || this.state.usdPrims.length > 0) && (
+                        <div
+                            data-testid="usd-stage-left-dock"
+                            style={{
+                                position: "absolute",
+                                left: 0,
+                                top: headerHeight,
+                                width: sidebarWidth,
+                                // 明確高度（top..bottom）讓 dock 真正撐開；bottom 留白避開左下 stage-truth 面板（bottom:12, z:6）。
+                                bottom: 150,
+                                overflow: "hidden",
+                                // 左側語意樹須在治理 overlay（z-index 20）與 stage-truth（z 6）之上才可點選操作（spec：左側 USD 樹）。
+                                zIndex: 25,
+                            }}
+                        >
                             <USDStage
                                 ref={this.usdStageRef}
                                 width={sidebarWidth}
@@ -2091,7 +2114,7 @@ export default class App extends React.Component<AppProps, AppState> {
                                 fillUSDPrim={(value) => this._onFillUSDPrim(value)}
                                 onReset={() => this._onStageReset()}
                             />
-                        </>
+                        </div>
                     )}
                 </>
                 }
