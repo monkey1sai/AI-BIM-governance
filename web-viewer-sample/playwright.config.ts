@@ -18,18 +18,20 @@ export default defineConfig({
     ["html", { outputFolder: "../artifacts/e2e/report", open: "never" }],
   ],
   use: {
-    baseURL: process.env.E2E_VIEWER_BASE_URL || "http://127.0.0.1:5174",
+    baseURL: process.env.E2E_VIEWER_BASE_URL || "http://127.0.0.1:5180",
     trace: "on",
     screenshot: "on",
     video: "retain-on-failure",
     viewport: { width: 1440, height: 900 },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // 專用 E2E port 5180（strictPort + reuseExistingServer:false）：Playwright 每次起一台全新、確定是本 repo
+  // 最新碼的 viewer dev server，避開被 docker 容器佔用的 5173/5174，杜絕「打到陳舊 server」的假象。
   webServer: [
     {
-      command: "npm run dev -- --host 127.0.0.1 --port 5174",
-      url: "http://127.0.0.1:5174",
-      reuseExistingServer: true,
+      command: "npm run dev -- --host 127.0.0.1 --port 5180 --strictPort",
+      url: "http://127.0.0.1:5180",
+      reuseExistingServer: false,
       timeout: 120_000,
     },
   ],

@@ -1325,6 +1325,52 @@ export function createCoordinatorApp(
     await proxyConversionService(response, config.conversionApiBase, "GET", `/api/conversions/${encodeURIComponent(request.params.jobId)}`);
   });
 
+  // real-ifc-fixture-intake：列出本機 ./storage 下的真實 IFC fixture，供前端 demo-control 選取。
+  // source_ref 用 coordinator 自身 loopback http URL：（docker）容器內 127.0.0.1:<port> 即 coordinator 自己，
+  // 讓 ifc-ready download 能「真實」抓到這份 IFC bytes 寫進 shared volume，再走既有
+  // ifc-ready → 序列化派工 → streaming-server 轉檔的真實 worker 流程（非 mock）。
+  app.get("/api/dev/ifc-sources", (_request, response) => {
+    try {
+      const root = config.storageRoot;
+      const entries = fs.existsSync(root) ? fs.readdirSync(root, { withFileTypes: true }) : [];
+      const items = entries
+        .filter((entry) => entry.isFile() && /\.ifc$/i.test(entry.name))
+        .map((entry) => {
+          let sizeBytes = 0;
+          try {
+            sizeBytes = fs.statSync(path.join(root, entry.name)).size;
+          } catch {
+            /* size 取不到不阻擋列舉 */
+          }
+          return {
+            filename: entry.name,
+            size_bytes: sizeBytes,
+            source_ref: `http://127.0.0.1:${config.port}/api/dev/ifc-file/${encodeURIComponent(entry.name)}`,
+          };
+        })
+        .sort((left, right) => left.filename.localeCompare(right.filename));
+      response.json({ storage_root: root, count: items.length, items });
+    } catch (error) {
+      response.status(500).json({ detail: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // 服務單一 storage IFC fixture 的 bytes（僅 top-level *.ifc，name 不得含路徑分隔以擋穿越）。
+  // 供 ifc-ready download 真實取得 IFC；coordinator 不視為 bytes 權威（同 fast-ifc-link carve-out）。
+  app.get("/api/dev/ifc-file/:name", (request, response) => {
+    const name = request.params.name;
+    if (!/^[^/\\]+\.ifc$/i.test(name)) {
+      response.status(400).json({ detail: "invalid ifc fixture name" });
+      return;
+    }
+    const full = path.resolve(config.storageRoot, name);
+    if (!fs.existsSync(full)) {
+      response.status(404).json({ detail: "ifc fixture not found" });
+      return;
+    }
+    response.type("application/octet-stream").sendFile(full);
+  });
+
   // console-mapping-proxy:element_mapping 經 coordinator proxy 給 viewer。
   // 邊界:viewer 只打 :8004（SHALL NOT HTTP 直連 :49101）；coordinator server-side 從
   // config.conversionApiBase（host 可達的 host.docker.internal:49101）抓 mapping，帶全域 CORS 回傳。
