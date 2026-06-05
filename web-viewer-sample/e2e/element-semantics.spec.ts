@@ -34,6 +34,10 @@ test.describe("CH-H2：點構件 → ②IFC語意 + ⑥空間（for-session 真�
     await expect(page.getByTestId("sem-spatial")).toBeVisible();
     await expect(page.getByTestId("sem-roadmap")).toBeVisible(); // ⑤幾何/分類碼誠實 roadmap
 
+    // ③ IFC 結構（依類別計數，真實 element_mapping 派生）
+    await expect(page.getByTestId("structure-stats")).toBeVisible();
+    await expect(page.getByTestId("struct-row").first()).toBeVisible({ timeout: 20_000 });
+
     await page.screenshot({ path: "../artifacts/e2e/element-semantics.png", fullPage: true });
   });
 });

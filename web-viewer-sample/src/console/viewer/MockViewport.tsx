@@ -4,6 +4,7 @@
 import { ModelInfoCard, type ModelInfoModel, type QualityMetricsSummary } from "./ModelInfoCard";
 import { MappingTable } from "./MappingTable";
 import { IfcSemanticPanel } from "./IfcSemanticPanel";
+import { StructureStats } from "./StructureStats";
 import { coordinatorClient } from "../coordinatorClient";
 
 export interface ArtifactBindingLite {
@@ -86,6 +87,8 @@ export function MockViewport(props: MockViewportProps) {
             mappedCount={props.mappedCount}
             isFake={props.isFake}
           />
+          {/* ③ IFC 結構（依類別計數，真實 element_mapping 派生；空間巢狀樹 roadmap）。 */}
+          <StructureStats mappingUrl={mappingSrc} />
         </div>
 
         <div className="gv-mock__col gv-mock__col--wide">
