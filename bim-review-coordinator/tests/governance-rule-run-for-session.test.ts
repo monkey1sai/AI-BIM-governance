@@ -315,3 +315,79 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     expect(typeof res.body.detail).toBe("string");
   });
 });
+
+// CH-H2:GET /api/governance/elements/for-session/:sessionId/:guid。
+// coordinator 解析 session→host IFC 路徑後 forward governance-service GET /api/elements/semantics
+// （帶 ifc_source_path + ifc_guid）；server IFC 絕對路徑不外洩瀏覽器。誠實：400/404/502。
+async function startGovernanceElementsStub(): Promise<{ baseUrl: string; urls: string[] }> {
+  const urls: string[] = [];
+  governanceStub = http.createServer((req, res) => {
+    if (req.method === "GET" && (req.url ?? "").startsWith("/api/elements/semantics")) {
+      urls.push(req.url ?? "");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ifc_guid: "G1", ifc_type: "IfcDoor", psets: {}, spatial: [], classification: null }));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ detail: "not found" }));
+  });
+  await new Promise<void>((resolve) => governanceStub?.listen(0, "127.0.0.1", () => resolve()));
+  const address = governanceStub.address() as AddressInfo;
+  return { baseUrl: `http://127.0.0.1:${address.port}`, urls };
+}
+
+describe("GET /api/governance/elements/for-session/:sessionId/:guid", () => {
+  const GUID = "3$xKPHQlD10AG1nzmJabuU";
+
+  it("解析 session host-side IFC 路徑並 forward 至 governance /api/elements/semantics（帶 ifc_source_path + ifc_guid）", async () => {
+    const gov = await startGovernanceElementsStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+
+    const res = await request(app.app).get(
+      `/api/governance/elements/for-session/${sessionId}/${encodeURIComponent(GUID)}`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.ifc_type).toBe("IfcDoor");
+    // forward URL 必須帶解析出的 host-side IFC 路徑 + guid（瀏覽器從未傳 path）。
+    expect(gov.urls).toHaveLength(1);
+    expect(gov.urls[0]).toContain(`ifc_source_path=${encodeURIComponent(hostLocalPath)}`);
+    expect(gov.urls[0]).toContain(`ifc_guid=${encodeURIComponent(GUID)}`);
+  });
+
+  it("session 不存在 → 404，且不打 governance", async () => {
+    const gov = await startGovernanceElementsStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+    const res = await request(app.app).get(
+      `/api/governance/elements/for-session/review_session_does_not_exist/${encodeURIComponent(GUID)}`,
+    );
+    expect(res.status).toBe(404);
+    expect(gov.urls).toHaveLength(0);
+  });
+
+  it("無效 session id 格式 → 400", async () => {
+    const app = makeApp();
+    const res = await request(app.app).get(`/api/governance/elements/for-session/..%2Fetc/${encodeURIComponent(GUID)}`);
+    expect(res.status).toBe(400);
+  });
+
+  it("過長 ifc_guid → 400（擋注入/異常）", async () => {
+    const gov = await startGovernanceElementsStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+    const { sessionId } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    const res = await request(app.app).get(
+      `/api/governance/elements/for-session/${sessionId}/${"x".repeat(65)}`,
+    );
+    expect(res.status).toBe(400);
+    expect(gov.urls).toHaveLength(0);
+  });
+});

@@ -14,13 +14,13 @@
 
 ## 2. CH-H2 — 後端 per-element 語意端點 + ②③⑥ 真資料
 
-- [ ] 2.1 governance-service per-element 語意端點：`ifcopenshell get_psets`/`get_container`/type/predefined_type/tag（輸入 server IFC 路徑 + ifc_guid）
-- [ ] 2.2 coordinator `GET /api/governance/elements/for-session/:sessionId/:guid`：resolve session→IFC 路徑→forward（沿用 rule-runs/for-session 模式，前端只打 :8004）
-- [ ] 2.3 前端 ② IFC 語意面板（Type/PredefinedType/ObjectType/Tag/Pset_*/Quantity_*）：點構件 lazy fetch
-- [ ] 2.4 前端 ⑥ 空間關係（Contained In/IfcBuildingStorey/Building/Site）
-- [ ] 2.5 前端 ③ 分層結構樹（IfcProject>Site>Building>Storey + type 計數）
-- [ ] 2.6 ⑤ 幾何(BBox/體積/材質) + 分類碼(MasterFormat/OmniClass/Uniformat)：誠實 ⌛roadmap/N/A（不捏造）
-- [ ] 2.7 E2E `element-semantics.spec.ts`（點構件→② Pset/Type、⑥ spatial 出現）+ governance-service pytest 端點測試
+- [x] 2.1 governance-service `GET /api/elements/semantics`：真 `ifcopenshell get_psets`(剝合成 id)/`get_container`+`get_aggregate` 空間鏈/type/predefined_type/object_type/tag（輸入 server IFC 路徑 + ifc_guid；404/400）— live 驗：真 IfcDoor 多 Pset+Qto + IfcBuildingStorey>Building>Site>Project
+- [x] 2.2 coordinator `GET /api/governance/elements/for-session/:sessionId/:guid`：resolve session→host IFC 路徑→forward（沿用 rule-runs/for-session resolver，server path 不外洩；400/404/502）
+- [ ] 2.3 前端 ② IFC 語意面板（Type/PredefinedType/ObjectType/Tag/Pset_*/Quantity_*）：點構件 lazy fetch（CH-H2 frontend）
+- [ ] 2.4 前端 ⑥ 空間關係（Contained In/IfcBuildingStorey/Building/Site）（CH-H2 frontend）
+- [ ] 2.5 前端 ③ 分層結構樹（IfcProject>Site>Building>Storey + type 計數）（CH-H2 frontend）
+- [ ] 2.6 ⑤ 幾何(BBox/體積/材質) + 分類碼(MasterFormat/OmniClass/Uniformat)：誠實 ⌛roadmap/N/A（端點已回 null+roadmap；前端顯示待 2.3）
+- [~] 2.7 governance-service pytest（test_element_semantics 4 passed；全 suite 82）+ coordinator vitest（for-session/elements 10 passed）✅；前端 E2E `element-semantics.spec.ts` 待 2.3（點構件→② Pset/Type、⑥ spatial）
 
 ## 3. 驗證 / 對抗 / 對齊
 
