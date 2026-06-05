@@ -127,7 +127,7 @@
 | CH-G/RK6 `/ui/console` 301 + `/ui/open` 守衛 | `be1af4a` | ✅ | coordinator supertest；Playwright ui-open-regression |
 | PR#184 風險修正（ifc-sources 契約 / ifc-file loopback / register / kit auth） | `81d0b56` | ✅ | coordinator vitest 290；live smoke；E2E |
 | CH-F Stage/Artifact Binding composer | `ad910c8` | ✅ | Playwright stage-artifact-binding / primary-spectator-authority |
-| CH-C 後端角色權威（coordinator stage-binding source_client_id/primary） | `b196852` | ✅ coordinator 側 | coordinator vitest；primary-spectator-authority（streaming DataChannel 強制仍 GPU-pending，見 §11） |
+| CH-C 後端角色權威（coordinator stage-binding source_client_id/primary） | `b196852` | ✅ coordinator 側 | coordinator vitest；primary-spectator-authority（streaming-server source_client_id 強制 + host-native Kit DataChannel E2E 真驗待補，見 §11） |
 | CH-E React UnifiedConsole 上 `:8004/ui`（六路由 + gated 服務） | `79a0076` | ✅ | Playwright unified-console-routes（六路由 + nav）；全 12 specs 綠 |
 
 ### 9.1 真實 ./storage IFC 工作流（demo-control）
@@ -168,8 +168,9 @@
 
 ## 11. 已知限制 / 未完成（誠實）
 
-- **CH-C 部分完成**：coordinator 側角色權威已落地（`b196852`：`POST /api/review-sessions/:id/stage-binding` 驗 `source_client_id`/primary，非 UI-only gate）。**streaming-server（Kit，host-native GPU）DataChannel 的 `source_client_id` 強制仍 GPU-pending**——需探索 `bim-streaming-server` 並在 host GPU Kit runtime 上真驗（此環境無 GPU）。
+- **CH-C 部分完成**：coordinator 側角色權威已落地（`b196852`：`POST /api/review-sessions/:id/stage-binding` 驗 `source_client_id`/primary，非 UI-only gate）。**streaming-server（host-native Kit）DataChannel 的 `source_client_id` 強制尚未實作、且未在 host-native Kit runtime 上跑真實 primary/spectator WebRTC DataChannel E2E**——待補。**此項非 GPU 缺席**：此 host 具 NVIDIA RTX 4060 Ti（driver 580.97，WDDM 繪圖模式），host-native Kit 串流進程現正執行（`kit.exe` PID 40232，`omni.kit.livestream.webrtc`，listen signaling 49100 + spectator 49110–49150 + media 47998），conversion authority `:49101` `/health`=200，該真實 IFC session 有 ready Kit binding。查證見 `docs/verification/2026-06-05-host-gpu-runtime-reality-check.md`。
 - **CH-E 已完成（`79a0076`）**：coordinator gated 服務 React UnifiedConsole 於 `:8004/ui`（六 hash 路由），dev-console 的 real-IFC/Kit 面板已移植成 React 頁。啟用需先 `cd web-viewer-sample && npm run build:ui` 產 `dist-ui`（compose 唯讀 bind-mount → `/workspace/console-dist`，env `CONSOLE_DIST_DIR`）；**未產出 / 無 `index.html` 時自動回退 dev-console.html（零風險，不影響既有部署）**。採 `vite build --base=/ui/ --outDir dist-ui` 獨立輸出，不動既有 `dist` / `:5173` viewer，故**不需改 coordinator Dockerfile**。
-- **真實 3D 影像**需 host GPU；此環境 viewer Runtime=no（誠實降級，不偽造 matched）；harness 用可決定性佔位，不假造前端狀態機。
+- **真實 3D 影像**需 host-native Kit（GPU 渲染）。在「未啟動 host Kit / 純 harness」的 run 中 viewer Runtime=no 並誠實降級為可決定性佔位、不偽造 matched；這是該次 run 的快照，**非環境能力上限**——本 host 具 GPU 與 host-native Kit runtime（本任務稽核時 Kit 即在 49100 listen），啟動連線後可達真 runtime。本任務 E2E 為 CI 可決定性**刻意採 harness 佔位**，未實際打 WebRTC handshake 截取 live 影格（能力可達 ≠ 已截幀驗證；後者待補一次瀏覽器 WebRTC 截幀）。
+- **真正受限的是 Docker/WSL2 容器 plane**（缺 libGLX_nvidia / Vulkan ICD，容器內即時 RTX 渲染 blocked；見 `docs/verification/2026-05-20-wsl-toolkit-graphics-blocker.md`），故 Kit 渲染走 host-native；此牆在容器 plane，不在 host。先前我把它誤寫成「此環境無 GPU」，特此更正。
 - **OpenSpec change-id**：已新增 `openspec/changes/unified-console-fe-redesign/`（`npx openspec validate --strict` ✅）對應 PR #184；pr-review-agent `missing_openspec` high blocker 已解，CI 兩 check（CodeRabbit / pr-review-agent）皆 **pass**、0 blocker（餘一個 GitNexus detect-changes medium warning，非阻斷）。
 - overlay 右側於窄視窗略裁切（layout polish，留 CH-A 設計系統期）。

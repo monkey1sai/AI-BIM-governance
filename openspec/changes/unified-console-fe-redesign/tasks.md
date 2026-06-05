@@ -27,7 +27,7 @@
 
 - [x] 5.1 `BindingComposer`（多選 ready USDC → 指定唯一 primary → load_order → 交易式 `composeStageRequest`，Kit `bindingApplied` 確認才 applied，保留 last-good）
 - [x] 5.2 coordinator `POST /api/review-sessions/:id/stage-binding` 以 `source_client_id`/primary 後端角色權威（非 UI-only gate）；E2E stage-artifact-binding / primary-spectator-authority
-- [ ] 5.3 streaming-server（host GPU Kit）DataChannel `source_client_id` 強制（需 host GPU runtime 真驗，見 proposal Non-goals / 已知限制）
+- [ ] 5.3 streaming-server（host-native Kit）DataChannel `source_client_id` 後端強制 + host-native Kit runtime 上的 WebRTC DataChannel E2E 真驗（待補；host GPU/Kit runtime 在線，非環境缺 GPU——見 proposal Non-goals / 已知限制）
 
 ## 6. CH-E React UnifiedConsole 上 :8004/ui
 
