@@ -1899,12 +1899,16 @@ function latestIfcReadyJobForExternalModelVersion(
 function mountDevConsole(app: express.Express, config: CoordinatorConfig): void {
   const publicDir = resolvePublicDir();
   app.use("/dev-console-assets", express.static(publicDir));
-  app.get(["/ui", "/dev-console"], (_request, response) => {
-    response.sendFile(path.join(publicDir, "dev-console.html"));
-  });
 
-  // CH-E/CH-G（RK6 CRITICAL）：/ui/console 顯式 301 收斂到 /ui。
-  // 必須是「精確路徑」route，嚴禁用 /ui/* 萬用 —— 否則會吞掉下方凍結的 /ui/open handoff。
+  // CH-E:設定 CONSOLE_DIST_DIR 且該目錄含 index.html → /ui 服務 React UnifiedConsole;
+  // 否則(未設定 / 目錄不存在)回退既有 dev-console.html(zero-risk 預設,不影響既有部署)。
+  const consoleDist =
+    config.consoleDistDir && fs.existsSync(path.join(config.consoleDistDir, "index.html"))
+      ? config.consoleDistDir
+      : null;
+
+  // CH-E/CH-G(RK6 CRITICAL):/ui/console(301→/ui)與 /ui/open(302 handoff)必須在任何 /ui static /
+  // SPA fallback「之前」註冊為精確路徑;嚴禁讓 /ui/* 萬用吞掉凍結的 /ui/open handoff。
   app.get("/ui/console", (_request, response) => {
     response.redirect(301, "/ui");
   });
@@ -1922,6 +1926,26 @@ function mountDevConsole(app: express.Express, config: CoordinatorConfig): void 
     }
     response.redirect(302, buildViewerRedirectUrl(config, session, request.query));
   });
+
+  if (consoleDist) {
+    // /dev-console 仍保留 vanilla 後援面板(精確路徑,不影響 /ui)。
+    app.get("/dev-console", (_request, response) => {
+      response.sendFile(path.join(publicDir, "dev-console.html"));
+    });
+    // React console 靜態:assets 於 /ui/assets/*(vite base=/ui/)。index:false → 目錄請求不自動回 index,
+    // 一律落到下方 SPA fallback(行為可預期);redirect:false → 不為缺斜線發 301。只服務真實檔案。
+    app.use("/ui", express.static(consoleDist, { index: false, redirect: false }));
+    // SPA fallback:/ui 與未命中靜態的 /ui/*(hash 路由 / 重新整理)皆回 index.html。
+    // /ui/console、/ui/open 已於上方先行攔截,不落入此 fallback。
+    app.get(["/ui", "/ui/*"], (_request, response) => {
+      response.sendFile(path.join(consoleDist, "index.html"));
+    });
+  } else {
+    // 未設定 CONSOLE_DIST_DIR:既有 zero-risk 行為,/ui 與 /dev-console 皆服務 vanilla dev-console.html。
+    app.get(["/ui", "/dev-console"], (_request, response) => {
+      response.sendFile(path.join(publicDir, "dev-console.html"));
+    });
+  }
 }
 
 function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): string {

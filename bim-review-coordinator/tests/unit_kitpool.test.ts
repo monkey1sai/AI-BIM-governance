@@ -68,6 +68,9 @@ const defaultConfig: CoordinatorConfig = {
   logRoot: "/tmp/logs",
   // harden-coordinator-ifc-intake:strict 下 non-2xx IFC download 回 502；fixture 預設 false。
   ifcDownloadStrict: false,
+  // CH-D forward-only kit proxy base / CH-E React console dist（fixture 預設值）。
+  kitManagerApiBase: "http://127.0.0.1:8010",
+  consoleDistDir: "",
 };
 
 const multiEndpointConfig: CoordinatorConfig = {
