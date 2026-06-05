@@ -3,6 +3,7 @@
 // 放進中央。有真實 Kit 幀時，Window 不渲染本元件（讓 <video> 顯示）。誠實鐵律：缺資料顯誠實狀態、不捏造。
 import { ModelInfoCard, type ModelInfoModel, type QualityMetricsSummary } from "./ModelInfoCard";
 import { MappingTable } from "./MappingTable";
+import { IfcSemanticPanel } from "./IfcSemanticPanel";
 
 export interface ArtifactBindingLite {
   artifact_id?: string | null;
@@ -31,6 +32,7 @@ export interface MockViewportProps {
   onSelectGuid?: (guid: string) => void;
   reservedRight?: number;
   reservedLeft?: number;
+  sessionId?: string | null;
 }
 
 const DASH = "—";
@@ -82,6 +84,8 @@ export function MockViewport(props: MockViewportProps) {
 
         <div className="gv-mock__col gv-mock__col--wide">
           <MappingTable mappingUrl={props.mappingUrl} selectedGuid={selectedGuid} onSelectGuid={props.onSelectGuid} />
+          {/* CH-H2：點構件 → ② IFC 語意 + ⑥ 空間（真實 ifcopenshell 萃取，經 coordinator for-session proxy）。 */}
+          <IfcSemanticPanel sessionId={props.sessionId} selectedGuid={selectedGuid} />
         </div>
       </div>
     </div>

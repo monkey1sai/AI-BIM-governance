@@ -2205,6 +2205,7 @@ export default class App extends React.Component<AppProps, AppState> {
                         onSelectGuid={(g) => this.setState({ govSelectedGuid: g })}
                         reservedRight={352}
                         reservedLeft={this.state.showUI ? sidebarWidth : 0}
+                        sessionId={this.state.reviewSessionId}
                     />
                 )}
 
