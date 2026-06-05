@@ -16,8 +16,9 @@ import glob
 import importlib.util
 import json
 import os
-from typing import Optional
+from typing import Any, Optional
 
+import ifcopenshell.util.element as ifc_el
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -94,6 +95,76 @@ def health():
             os.path.splitext(os.path.basename(p))[0]
             for p in sorted(glob.glob(os.path.join(RULES_DIR, "*.yaml")))
         ],
+    }
+
+
+# CH-H2：per-element 語意查詢端點（範本面板②IFC語意 / ⑥空間關係 的真實資料來源）。
+# 真的以 ifcopenshell 讀 Pset/Quantity + 空間容納鏈 + type/predefined_type/tag；瀏覽器只經 coordinator
+# :8004 /api/governance/elements/for-session/:sessionId/:guid proxy（coordinator resolve server IFC 路徑後 forward）。
+# 誠實鐵律：分類碼(MasterFormat/OmniClass/Uniformat) 與幾何(BBox/體積/材質) 未萃取 → 回 null + roadmap，不捏造。
+_SEMANTIC_SYNTHETIC_KEYS = frozenset({"id"})
+
+
+def _strip_synthetic_psets(psets: dict) -> dict:
+    out: dict = {}
+    for name, bucket in (psets or {}).items():
+        if isinstance(bucket, dict):
+            out[name] = {k: v for k, v in bucket.items() if k not in _SEMANTIC_SYNTHETIC_KEYS}
+        else:
+            out[name] = bucket
+    return out
+
+
+def _spatial_chain(el: Any) -> list[dict]:
+    """空間容納鏈：containing storey → building → site → project（真的走 get_container/get_aggregate）。"""
+    chain: list[dict] = []
+    seen: set[int] = set()
+    node = ifc_el.get_container(el)
+    while node is not None:
+        try:
+            nid = node.id()
+        except Exception:
+            break
+        if nid in seen:
+            break
+        seen.add(nid)
+        chain.append({
+            "ifc_type": node.is_a(),
+            "name": getattr(node, "Name", None),
+            "global_id": getattr(node, "GlobalId", None),
+        })
+        node = ifc_el.get_aggregate(node)
+    return chain
+
+
+@app.get("/api/elements/semantics")
+def element_semantics(
+    ifc_source_path: str = Query(...),
+    ifc_guid: str = Query(...),
+):
+    if not os.path.exists(ifc_source_path):
+        raise HTTPException(status_code=400, detail=f"ifc_source_path not found: {ifc_source_path}")
+    model = open_model(ifc_source_path)
+    try:
+        el = model.by_guid(ifc_guid)
+    except Exception:
+        el = None
+    if el is None:
+        raise HTTPException(status_code=404, detail=f"ifc_guid not found: {ifc_guid}")
+    psets = _strip_synthetic_psets(ifc_el.get_psets(el) or {})
+    return {
+        "ifc_guid": ifc_guid,
+        "ifc_type": el.is_a(),
+        "ifc_name": getattr(el, "Name", None),
+        "predefined_type": getattr(el, "PredefinedType", None),
+        "object_type": getattr(el, "ObjectType", None),
+        "tag": getattr(el, "Tag", None),
+        "psets": psets,
+        "spatial": _spatial_chain(el),
+        # 誠實 roadmap：以下維度目前 pipeline 無來源 → null，不捏造（前端顯 roadmap/N/A）。
+        "classification": None,
+        "geometry": None,
+        "roadmap": ["classification: MasterFormat/OmniClass/Uniformat", "geometry: bbox/volume/material"],
     }
 
 
