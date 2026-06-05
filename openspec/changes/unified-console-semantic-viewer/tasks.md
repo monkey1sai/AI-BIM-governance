@@ -24,7 +24,7 @@
 
 ## 3. 驗證 / 對抗 / 對齊
 
-- [ ] 3.1 `web-viewer-sample` `npx tsc --noEmit` 0 error + `npm test` 綠 + Playwright 全 specs 綠（截圖不空白）
-- [ ] 3.2 `governance-service` pytest 綠（含語意端點）；`bim-review-coordinator` build + vitest 綠（含 proxy）
-- [ ] 3.3 rebuild→deploy→真實 ./storage IFC 走新 viewer→A1(rule-run)/A2(diff)/A3(federation) 功能驗證
-- [ ] 3.4 對齊 `frontend-redesign-ia-and-phases.html`；多 agent 交叉對抗驗證；fix/risk/bug/block/smoke 全清
+- [x] 3.1 `web-viewer-sample` `npx tsc --noEmit` 0 error + `npm test` **162 passed** + Playwright **13 specs 全綠**（gov-viewer-layout 截圖不空白；無回歸）— CH-H1a 範圍
+- [~] 3.2 `governance-service` pytest（per-element 語意端點待 CH-H2）；`bim-review-coordinator` CH-H1a 純前端未改（CH-H2 補 proxy 時驗）
+- [x] 3.3 rebuild（dist-ui + docker viewer）→deploy→真實 ./storage IFC 走新 viewer（real-ifc 三鏈綠）→A1(rule-run score 99 / 7126 構件 / 71 真 failed+ifc_guid)/A2(diff 202)/A3(federation 201) 功能驗證；governance-service 已啟動 :49102
+- [~] 3.4 IA 對齊部分（CH-H1b/CH-H2 進一步）；**多 agent 對抗驗證 round 1 完成**（4 opus lens + 對抗確認 → 1 confirmed high：ModelInfoCard 捏造 guid_exact → 已修 `7f9e431` + 鎖單元測試）；CH-H1b/CH-H2 後續 round 續清
