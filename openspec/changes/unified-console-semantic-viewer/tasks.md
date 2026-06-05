@@ -14,7 +14,7 @@
 
 ## 2. CH-H2 — 後端 per-element 語意端點 + ②③⑥ 真資料
 
-- [x] 2.1 governance-service `GET /api/elements/semantics`：真 `ifcopenshell get_psets`(剝合成 id)/`get_container`+`get_aggregate` 空間鏈/type/predefined_type/object_type/tag（輸入 server IFC 路徑 + ifc_guid；404/400）— live 驗：真 IfcDoor 多 Pset+Qto + IfcBuildingStorey>Building>Site>Project
+- [x] 2.1 governance-service `GET /api/elements/semantics`：真 `ifcopenshell get_psets`(剝合成 id)/`get_container`+`get_aggregate` 空間鏈/type/predefined_type/object_type/tag（輸入 server IFC 路徑 + ifc_guid；404/400）— live 驗 ×2：fixture-bytes 真 IfcDoor 多 Pset+Qto；**真 87MB 許良宇 IFC 200/5.5s 空間鏈 Storey>Building>Site>Project**（scales to 真實部署模型）
 - [x] 2.2 coordinator `GET /api/governance/elements/for-session/:sessionId/:guid`：resolve session→host IFC 路徑→forward（沿用 rule-runs/for-session resolver，server path 不外洩；400/404/502）
 - [ ] 2.3 前端 ② IFC 語意面板（Type/PredefinedType/ObjectType/Tag/Pset_*/Quantity_*）：點構件 lazy fetch（CH-H2 frontend）
 - [ ] 2.4 前端 ⑥ 空間關係（Contained In/IfcBuildingStorey/Building/Site）（CH-H2 frontend）
