@@ -30,6 +30,8 @@ import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSo
 import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
 import { demoPrimPath } from "./clients/demoDefaults";
 import { reviewEnv } from "./config/env";
+import { harnessEnabled } from "./harness/harnessConfig";
+import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
 import type { DemoLogEntry } from "./types/demo";
 import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
@@ -811,7 +813,47 @@ export default class App extends React.Component<AppProps, AppState> {
         }
     }
 
+    // Harness 專用 bootstrap：注入可決定性 session + ready 的 HARNESS_STAGE_URL，
+    // 跳過 coordinator（避免 CORS / 真轉檔依賴）。只造「後端資料」，前端狀態機
+    // （openStage / loadingState / USD 樹 / overlay）全部照真實邏輯跑，由 FakeAppStreamer 回應 Kit。
+    private _bootstrapHarnessSession(): void {
+        const stageUrl = HARNESS_STAGE_URL;
+        const harnessAsset: USDAssetType = { name: "Sample Building (harness)", url: stageUrl };
+        const streamConfig: ReviewStreamConfig = {
+            session_id: "review_session_harness0001",
+            lifecycle_status: "active",
+            source: "local_fixed",
+            webrtc: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: null },
+            model: { status: "ready", artifact_id: "artifact_harness_primary", url: stageUrl, mapping_url: null },
+            artifacts: [],
+            artifact_bindings: [],
+            kit_instance_bindings: [],
+        };
+        this.setState({
+            reviewSessionId: streamConfig.session_id,
+            reviewRequestId: null,
+            currentProjectId: "project_harness_demo",
+            currentModelVersionId: "version_harness_demo",
+            reviewLifecycleStatus: "active",
+            reviewStatus: "harness session（deterministic，無 coordinator / 無真實 Kit）",
+            reviewArtifacts: [],
+            latestStreamConfig: streamConfig,
+            mappingUrl: null,
+            usdAssets: [harnessAsset],
+            selectedUSDAsset: harnessAsset,
+            expectedStageUrl: stageUrl,
+            loadedStageUrl: null,
+            stageLoadStatus: "pending",
+            showUI: true,
+            reviewEvents: [...this.state.reviewEvents, "harness session 已注入（deterministic）"],
+        });
+    }
+
     private async _bootstrapReview(): Promise<void> {
+        if (harnessEnabled()) {
+            this._bootstrapHarnessSession();
+            return;
+        }
         try {
             if (reviewEnv.hasExplicitEmptySessionId) {
                 this.setState((state) => ({

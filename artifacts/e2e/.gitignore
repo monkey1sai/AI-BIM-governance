@@ -1,0 +1,4 @@
+# Playwright 原始輸出（trace / video / 失敗截圖）與 HTML 報告體積大且可重生，不入庫。
+# 只保留具名的證據截圖（*.png 於本目錄）。
+_output/
+report/

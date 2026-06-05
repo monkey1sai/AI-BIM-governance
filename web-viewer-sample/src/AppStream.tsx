@@ -11,8 +11,12 @@
  */
 import React, { Component } from 'react';
 import PropTypes from 'prop-types';
-import { AppStreamer, StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamStats, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
+import { StreamEvent, StreamProps, DirectConfig, GFNConfig, StreamStats, StreamType } from '@nvidia/omniverse-webrtc-streaming-library';
 import StreamConfig from '../stream.config.json';
+// 串流引擎一律經 getStreamer()：harness 關閉時 === 真實 AppStreamer（prod 行為零變更），
+// harness 開啟時為可決定性 FakeAppStreamer（只換 transport + 假 Kit 大腦，不碰前端狀態機）。
+import { getStreamer } from './harness/streamer';
+import { harnessEnabled } from './harness/harnessConfig';
 
 
 interface AppStreamProps {
@@ -204,7 +208,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
 
         try {
             streamProps = {streamConfig, streamSource}
-            AppStreamer.connect(streamProps)
+            getStreamer().connect(streamProps)
             .then((result: StreamEvent) => {
                 console.info(result);
             })
@@ -218,7 +222,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     }
 
     componentWillUnmount() {
-        AppStreamer.terminate(false);
+        getStreamer().terminate(false);
     }
 
     componentDidUpdate(_prevProps: AppStreamProps, prevState: AppStreamState, _snapshot: any) {
@@ -234,11 +238,11 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
     }
 
     static sendMessage(message: any): Promise<any> {
-        return AppStreamer.sendMessage(message);
+        return getStreamer().sendMessage(message);
     }
 
     static stop() {
-        AppStreamer.terminate(false);
+        getStreamer().terminate(false);
     }
 
     _onStart(message: any) {
@@ -279,7 +283,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         if (!w || !h) return;
         if (this._negotiatedSize && this._negotiatedSize.w === w && this._negotiatedSize.h === h) return;
         this._negotiatedSize = { w, h };
-        AppStreamer.resize(w, h).catch((err: unknown) => console.warn('AppStreamer.resize failed', err));
+        getStreamer().resize(w, h).catch((err: unknown) => console.warn('AppStreamer.resize failed', err));
     }
 
     _onStop(message: any) {
@@ -321,6 +325,15 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                         ...this.props.style
                     }}
                 >
+                    {harnessEnabled() && (
+                        <div
+                            id="harness-viewport-label"
+                            data-testid="harness-viewport-label"
+                            style={{ position: 'fixed', zIndex: 50, top: 70, left: 8, padding: '4px 8px', background: 'rgba(118,185,0,0.9)', color: '#04210b', fontWeight: 700, fontSize: 12, borderRadius: 4, fontFamily: 'monospace' }}
+                        >
+                            HARNESS VIEWPORT — initializing…
+                        </div>
+                    )}
                     <video
                         key={'video-canvas'}
                         id={'remote-video'}
