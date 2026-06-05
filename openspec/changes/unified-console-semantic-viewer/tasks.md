@@ -4,7 +4,7 @@
 
 ## 1. CH-H1 — 前端全幅語意驗證版面（純前端，可逆）
 
-- [~] 1.1 `console/viewer/`：CH-H1a 先交付 MockViewport 組合（①模型資訊 + ④對構表 + viewport 狀態 echo + layers），**全分頁 nav（模型/問題）+ 把 A1/A2/A3 ops 移進「問題」分頁的完整 GovViewerLayout 外殼留 CH-H1b**
+- [~] 1.1 `console/viewer/`：CH-H1a MockViewport（①④+狀態 echo+layers）+ **CH-H1b 範本式 section nav（模型 active/問題·治理/批註·測量·創切·書籤 誠實 roadmap）已做**；把 A1/A2/A3 ops 實際移進「問題」分頁的完整 GovViewerLayout（Window.tsx 重構，RK5）留較大 follow-up PR
 - [x] 1.2 `ModelInfoCard.tsx`（①）：真資料（quality_metrics_summary fixture/轉換時間/元件數 + mapped_count）；coverage% 由 coverage_ratio 原樣×100 + `isFakeMappingDocument` 誠實檢查
 - [x] 1.3 `MappingTable.tsx`（④）：真 `element_mapping.json`（guid/class/name/prim_path/confidence/method）+ fake-vs-real 隔離（fake banner + 逐列 fake）+ 誠實空狀態（無 mapping_url）
 - [x] 1.4 `MockViewport.tsx`：取代空白視區——`showStream && !_hasRemoteVideoFrame()` 顯資訊濃密佔位（Stage URL/loaded layers/selected echo，明標 deterministic·no-GPU）；有真 Kit 幀 Window 不渲染本元件讓 `<video>` 顯示
