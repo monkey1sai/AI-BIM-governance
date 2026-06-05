@@ -18,7 +18,7 @@
 - [x] 2.2 coordinator `GET /api/governance/elements/for-session/:sessionId/:guid`：resolve session→host IFC 路徑→forward（沿用 rule-runs/for-session resolver，server path 不外洩；400/404/502）
 - [x] 2.3 前端 ② IFC 語意面板（Type/PredefinedType/ObjectType/Tag/Pset_*/Quantity_*）：點構件 lazy fetch（IfcSemanticPanel/IfcSemanticView）— browser e2e PASS
 - [x] 2.4 前端 ⑥ 空間關係（IfcBuildingStorey/Building/Site 容納鏈）— browser e2e PASS
-- [ ] 2.5 前端 ③ 分層結構樹（IfcProject>Site>Building>Storey + type 計數）— 仍用既有 USD 樹，分層+計數留 CH-H1b/後續
+- [~] 2.5 前端 ③ 結構：**依類別計數 MVP 已做**（StructureStats，真實 element_mapping 派生 IfcWall N/IfcColumn N…，browser e2e 驗）；完整空間巢狀樹（Project>Site>Building>Storey）需後端 hierarchy 端點 → 誠實 roadmap、留後續
 - [x] 2.6 ⑤ 幾何(BBox/體積/材質) + 分類碼(MasterFormat/OmniClass/Uniformat)：誠實 ⌛roadmap/N/A（端點回 null+roadmap；前端 sem-roadmap 顯示，不捏造）
 - [x] 2.7 governance-service pytest（4+全 82）+ coordinator vitest（10）+ **前端 browser E2E `element-semantics`（真 session→點對構表→②Pset/Type+⑥空間+⑤roadmap）PASS** + node 全鏈 smoke（:8004 for-session 200，真 87MB IFC）
 - [x] 2.8 對抗修復：(a) MockViewport gate 改為無 GPU 真 session 也可用；(b) ④對構表改經 coordinator element-mapping proxy（守邊界 + CORS-safe，不直連 :49101）— 皆 e2e 驗 + 無回歸
@@ -28,4 +28,4 @@
 - [x] 3.1 `web-viewer-sample` `npx tsc --noEmit` 0 error + `npm test` **162 passed** + Playwright **13 specs 全綠**（gov-viewer-layout 截圖不空白；無回歸）— CH-H1a 範圍
 - [~] 3.2 `governance-service` pytest（per-element 語意端點待 CH-H2）；`bim-review-coordinator` CH-H1a 純前端未改（CH-H2 補 proxy 時驗）
 - [x] 3.3 rebuild（dist-ui + docker viewer）→deploy→真實 ./storage IFC 走新 viewer（real-ifc 三鏈綠）→A1(rule-run score 99 / 7126 構件 / 71 真 failed+ifc_guid)/A2(diff 202)/A3(federation 201) 功能驗證；governance-service 已啟動 :49102
-- [~] 3.4 IA 對齊部分（CH-H1b/CH-H2 進一步）；**多 agent 對抗驗證 round 1 完成**（4 opus lens + 對抗確認 → 1 confirmed high：ModelInfoCard 捏造 guid_exact → 已修 `7f9e431` + 鎖單元測試）；CH-H1b/CH-H2 後續 round 續清
+- [~] 3.4 IA 對齊部分（CH-H1b 後續）；**多 agent 對抗驗證 2 輪 + live-e2e**：round1（CH-H1a，4 opus）→ 1 high（guid_exact 捏造）修 `7f9e431`；live-e2e → 2 high（MockViewport gate 無 GPU 不可用、④直連 :49101 違邊界/CORS）修 `8ee9c04`；round2（CH-H2，3 opus correctness/honesty+boundary/regression）→ **0 high/blocker**。共修 3 真 bug。CH-H1b 完整版面 + repo-wide 對抗為後續。
