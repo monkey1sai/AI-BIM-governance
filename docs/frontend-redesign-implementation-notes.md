@@ -127,8 +127,8 @@
 | CH-G/RK6 `/ui/console` 301 + `/ui/open` 守衛 | `be1af4a` | ✅ | coordinator supertest；Playwright ui-open-regression |
 | PR#184 風險修正（ifc-sources 契約 / ifc-file loopback / register / kit auth） | `81d0b56` | ✅ | coordinator vitest 290；live smoke；E2E |
 | CH-F Stage/Artifact Binding composer | `ad910c8` | ✅ | Playwright stage-artifact-binding / primary-spectator-authority |
-| CH-C 後端 source_client_id 角色權威 | — | ❌ 未做 | 需 GPU Kit runtime 才能真驗（見 §11） |
-| CH-E React UnifiedConsole 上 `:8004/ui` | — | ❌ 未做 | 需改 coordinator Dockerfile 服務 dist（見 §11） |
+| CH-C 後端角色權威（coordinator stage-binding source_client_id/primary） | `b196852` | ✅ coordinator 側 | coordinator vitest；primary-spectator-authority（streaming DataChannel 強制仍 GPU-pending，見 §11） |
+| CH-E React UnifiedConsole 上 `:8004/ui`（六路由 + gated 服務） | `79a0076` | ✅ | Playwright unified-console-routes（六路由 + nav）；全 12 specs 綠 |
 
 ### 9.1 真實 ./storage IFC 工作流（demo-control）
 
@@ -143,11 +143,11 @@
 
 | 舊入口 | 現況 | 最終（CH-E/G） |
 |---|---|---|
-| `:8004/ui` | dev-console.html（含 real-IFC + Kit 面板）✅ | React UnifiedConsole（CH-E 未做） |
-| `:8004/ui/console` | **301 → `/ui`** ✅（RK6 guard） | 同 |
-| `:8004/ui/open?session=` | **302 凍結** ✅（supertest + Playwright 守衛） | 不變 |
-| `#/demo-control` / `#/kit` | dev-console 面板可達 ✅ | React 路由（CH-E） |
-| `#/coordinator|intake|runtime|review` | React console 在 `:5173`（未上 :8004） | CH-E 上 :8004 |
+| `:8004/ui` | **React UnifiedConsole** ✅（`CONSOLE_DIST_DIR` gated；未設定/無 `index.html` 自動回退 dev-console.html） | 達成 |
+| `:8004/ui/console` | **301 → `/ui`** ✅（RK6 guard，先行精確註冊不被吞） | 同 |
+| `:8004/ui/open?session=` | **302 凍結** ✅（supertest + Playwright 守衛；CH-E 重排序後仍逐字保留） | 不變 |
+| `#/demo-control` / `#/kit` | **React 路由可達 `:8004/ui`** ✅（unified-console-routes + kit-proxy + real-ifc-storage-intake 驗） | 達成 |
+| `#/coordinator|intake|runtime|review` | **React console 在 `:8004/ui`** ✅（六路由 hash + nav 切換） | 達成 |
 
 ### 9.3 primary / spectator 與 Binding
 
@@ -159,16 +159,17 @@
 | Item | Result |
 |---|---|
 | E2E 指令 | `cd web-viewer-sample && npm run test:e2e` |
-| E2E specs（9） | viewer-harness、viewer-tree-focus、real-ifc-storage-intake、real-ifc-conversion-lineage、real-ifc-viewer-lineage、kit-proxy、ui-open-regression、stage-artifact-binding、primary-spectator-authority（**unified-console-routes 待 CH-E**） |
-| coordinator | `npm run verify` → vitest **290 passed** |
-| viewer | `npm run build` ✅；`npm test` → **149 passed** |
-| 真實 IFC fixture | `許良宇圖書館建築_2026.ifc` / `demo_lib_2026.ifc` → `stream_conv_* succeeded` → 真 model.usdc + element_mapping.json |
-| 證據截圖 | `artifacts/e2e/{viewer-harness-boot,viewer-tree-focus,real-ifc-storage-intake,real-ifc-conversion-lineage,real-ifc-viewer-lineage,kit-proxy,ui-open-regression,stage-artifact-binding,primary-spectator-authority}.png`（trace/video 於 `_output/`，gitignored） |
+| E2E specs（12，全綠） | viewer-harness、viewer-tree-focus、real-ifc-storage-intake、real-ifc-conversion-lineage、real-ifc-viewer-lineage、kit-proxy、ui-open-regression、stage-artifact-binding、primary-spectator-authority（×2）、**unified-console-routes（×2，CH-E 新增）** |
+| CH-E E2E 結果 | 首輪 10 passed / 2 skipped（轉檔未 ready，誠實 conditional skip）；轉檔 ready 後重跑 lineage 兩鏈 → **12 全綠** |
+| coordinator | `npm run build`(tsc) ✅；`npm test` → vitest **291 passed** |
+| viewer | `npx tsc --noEmit` ✅；`npm test` → vitest **158 passed** |
+| 真實 IFC fixture | `許良宇圖書館建築_2026.ifc`（87MB）→ `stream_conv_20260605093932_f79903a0` → 真 `model.usdc` + `element_mapping.json` + `artifact_id`；session `review_session_cff0b3fc5faf` |
+| 證據截圖 | `artifacts/e2e/{viewer-harness-boot,viewer-tree-focus,real-ifc-storage-intake,real-ifc-conversion-lineage,real-ifc-viewer-lineage,kit-proxy,ui-open-regression,stage-artifact-binding,primary-spectator-authority,unified-console-routes,unified-console-nav}.png`（trace/video 於 `_output/`，gitignored） |
 
 ## 11. 已知限制 / 未完成（誠實）
 
-- **CH-C（後端角色權威）未做**：streaming-server（Kit，host-native GPU）以 `source_client_id` 驗 primary/spectator 的 DataChannel mutating 指令。目前為前端 gate + coordinator `/api/kit/*` dev-token；完整後端強制需探索 `bim-streaming-server` 並在 GPU Kit runtime 上驗證（此環境無 GPU）。
-- **CH-E（React UnifiedConsole 上 :8004）未做**：需改 coordinator Dockerfile 把 `web-viewer-sample/dist` 服務在 `/ui`、`routing.ts` 認 `#/coordinator|intake|runtime|review|kit|demo-control`、把 dev-console 的 real-IFC/Kit 面板移植成 React 頁；之後補 `unified-console-routes.spec`。目前 real-IFC/Kit 在同源 dev-console.html（interim，合規）。
+- **CH-C 部分完成**：coordinator 側角色權威已落地（`b196852`：`POST /api/review-sessions/:id/stage-binding` 驗 `source_client_id`/primary，非 UI-only gate）。**streaming-server（Kit，host-native GPU）DataChannel 的 `source_client_id` 強制仍 GPU-pending**——需探索 `bim-streaming-server` 並在 host GPU Kit runtime 上真驗（此環境無 GPU）。
+- **CH-E 已完成（`79a0076`）**：coordinator gated 服務 React UnifiedConsole 於 `:8004/ui`（六 hash 路由），dev-console 的 real-IFC/Kit 面板已移植成 React 頁。啟用需先 `cd web-viewer-sample && npm run build:ui` 產 `dist-ui`（compose 唯讀 bind-mount → `/workspace/console-dist`，env `CONSOLE_DIST_DIR`）；**未產出 / 無 `index.html` 時自動回退 dev-console.html（零風險，不影響既有部署）**。採 `vite build --base=/ui/ --outDir dist-ui` 獨立輸出，不動既有 `dist` / `:5173` viewer，故**不需改 coordinator Dockerfile**。
 - **真實 3D 影像**需 host GPU；此環境 viewer Runtime=no（誠實降級，不偽造 matched）；harness 用可決定性佔位，不假造前端狀態機。
-- **OpenSpec change-id**：repo 有 `openspec/changes/unified-console-mvp/`；本 PR 尚未掛上對應 change，review gate 可能標 blocker。
-- overlay 右側於窄視窗略裁切（layout polish，留 CH-A/CH-E）。
+- **OpenSpec change-id**：repo 有 `openspec/changes/unified-console-mvp/`（已 merged MVP）；fe-redesign 系列 PR #184 尚未掛上專屬 change，review gate 可能標 blocker（流程項，非功能缺口）。
+- overlay 右側於窄視窗略裁切（layout polish，留 CH-A 設計系統期）。
