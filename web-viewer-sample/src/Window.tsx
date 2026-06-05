@@ -834,10 +834,30 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         this.setState({ govBindingApplyState: { status: "applying" } });
         this._appendReviewEvent(`套用 binding revision=${revisionId}（primary=${primary.artifact_id}, layers=${selection.length}）`);
-        this._sendStreamMessage({
-            event_type: "composeStageRequest",
-            payload: { binding_revision_id: revisionId, artifacts: selection },
-        });
+        const compose = () =>
+            this._sendStreamMessage({
+                event_type: "composeStageRequest",
+                payload: { binding_revision_id: revisionId, artifacts: selection },
+            });
+        // CH-C：真實模式先過 coordinator 後端角色權威（source_client_id / primary），通過才送 DataChannel 重組 stage；
+        // 後端拒絕（403）→ honest failed，不偽宣告。harness 模式無 coordinator → 直接走假 Kit（authority 由 coordinator 單元測試驗證）。
+        if (!harnessEnabled() && this.state.reviewSessionId) {
+            void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(this.state.reviewSessionId)}/stage-binding`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ source_client_id: reviewEnv.defaultUserId, role: "primary", binding_revision_id: revisionId, primary_artifact_id: primary.artifact_id }),
+            })
+                .then((r) => {
+                    if (!r.ok) {
+                        this.setState({ govBindingApplyState: { status: "failed", reason: `coordinator 後端權威拒絕（${r.status}）` } });
+                        return;
+                    }
+                    compose();
+                })
+                .catch((error) => this.setState({ govBindingApplyState: { status: "failed", reason: error instanceof Error ? error.message : String(error) } }));
+            return;
+        }
+        compose();
     }
 
     private _bootstrapHarnessSession(): void {

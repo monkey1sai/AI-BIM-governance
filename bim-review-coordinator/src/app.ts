@@ -603,6 +603,68 @@ export function createCoordinatorApp(
     response.json(closed);
   });
 
+  // CH-C：Stage / Artifact Binding 後端角色權威（source_client_id / primary）。非 UI-only gate：
+  // 變更型 binding 交易必須由 session 的 primary client 發起，否則 403（spectator / 非 primary / 非持有者一律拒絕）。
+  // 每 session 僅一個 primary（first-wins，以 source_client_id 綁定）；記錄 active / last-good binding revision（交易）。
+  // 邊界：Kit DataChannel select/focus/compose 的 source_client_id 強制屬 bim-streaming-server（host GPU runtime），
+  // 此 coordinator 端權威為 binding 交易的後端授權邊界；Kit 端 per-message 強制標 GPU-pending（見 docs §11）。
+  const stageBindingAuthority = new Map<string, { primaryClientId: string; revisions: string[] }>();
+  app.post("/api/review-sessions/:sessionId/stage-binding", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const sourceClientId = typeof body.source_client_id === "string" ? body.source_client_id.trim() : "";
+    const role = typeof body.role === "string" ? body.role : "";
+    const bindingRevisionId = typeof body.binding_revision_id === "string" ? body.binding_revision_id.trim() : "";
+    const primaryArtifactId = typeof body.primary_artifact_id === "string" ? body.primary_artifact_id.trim() : "";
+    if (!sourceClientId) {
+      response.status(400).json({ detail: "source_client_id required" });
+      return;
+    }
+    if (role !== "primary") {
+      // 後端拒絕（非 UI-only）：spectator / 非 primary 不得套用 binding。
+      response.status(403).json({ detail: "stage binding requires primary role authority", role: role || null });
+      return;
+    }
+    const reg = stageBindingAuthority.get(session.session_id);
+    if (reg && reg.primaryClientId !== sourceClientId) {
+      response.status(403).json({ detail: "another client holds primary authority for this session", primary_client_id: reg.primaryClientId });
+      return;
+    }
+    if (!primaryArtifactId) {
+      response.status(400).json({ detail: "binding transaction requires exactly one primary_artifact_id" });
+      return;
+    }
+    if (!bindingRevisionId) {
+      response.status(400).json({ detail: "binding_revision_id required" });
+      return;
+    }
+    const current = reg ?? { primaryClientId: sourceClientId, revisions: [] };
+    const lastGood = current.revisions.length > 0 ? current.revisions[current.revisions.length - 1] : null;
+    current.revisions.push(bindingRevisionId);
+    stageBindingAuthority.set(session.session_id, current);
+    eventLog.append(session.session_id, "stageBindingApplied", {
+      binding_revision_id: bindingRevisionId,
+      primary_artifact_id: primaryArtifactId,
+      source_client_id: sourceClientId,
+    });
+    response.json({
+      status: "applied",
+      session_id: session.session_id,
+      active_binding_revision: bindingRevisionId,
+      last_good_binding_revision: lastGood,
+      primary_client_id: sourceClientId,
+      primary_artifact_id: primaryArtifactId,
+    });
+  });
+
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：
   // 唯一對外 IFC-ready intake。caller = 客戶落地端 IFC Worker（落地端內網，
   // machine-to-machine）。streaming 為 internal-only 轉檔引擎（T4）。

@@ -134,6 +134,41 @@ describe("coordinator dev console", () => {
     expect(res.status).toBe(403);
   });
 
+  it("CH-C: stage-binding 後端角色權威（spectator/非 primary 403、primary first-wins、active/last-good revision、缺 primary 400）", async () => {
+    const app = makeApp();
+    const created = await request(app.app).post("/api/review-sessions").send({
+      project_id: "project_demo_001",
+      model_version_id: "version_demo_001",
+      created_by: "dev_user_001",
+      routing_policy: "same_instance",
+      artifact_bindings: [],
+      kit_profile: {},
+    });
+    expect(created.status).toBeLessThan(300);
+    const sid = created.body.session_id as string;
+    expect(sid).toBeTruthy();
+    const bind = (b: Record<string, unknown>) =>
+      request(app.app).post(`/api/review-sessions/${sid}/stage-binding`).send(b);
+
+    // spectator / 非 primary → 403（後端拒絕，非 UI-only）。
+    expect((await bind({ source_client_id: "c_spec", role: "spectator", binding_revision_id: "binding_rev_1", primary_artifact_id: "a1" })).status).toBe(403);
+    // primary（first-wins）→ 200。
+    const p1 = await bind({ source_client_id: "c_primary", role: "primary", binding_revision_id: "binding_rev_1", primary_artifact_id: "a1" });
+    expect(p1.status).toBe(200);
+    expect(p1.body.active_binding_revision).toBe("binding_rev_1");
+    expect(p1.body.primary_client_id).toBe("c_primary");
+    expect(p1.body.last_good_binding_revision).toBeNull();
+    // 另一 client 宣稱 primary → 403（已有 primary 持有者）。
+    expect((await bind({ source_client_id: "c_other", role: "primary", binding_revision_id: "binding_rev_2", primary_artifact_id: "a1" })).status).toBe(403);
+    // 原 primary 再套用 → 200 + last_good = binding_rev_1（交易式 revision 串）。
+    const p2 = await bind({ source_client_id: "c_primary", role: "primary", binding_revision_id: "binding_rev_2", primary_artifact_id: "a1" });
+    expect(p2.status).toBe(200);
+    expect(p2.body.active_binding_revision).toBe("binding_rev_2");
+    expect(p2.body.last_good_binding_revision).toBe("binding_rev_1");
+    // 缺 primary_artifact_id → 400（交易需恰好一個 primary）。
+    expect((await bind({ source_client_id: "c_primary", role: "primary", binding_revision_id: "binding_rev_3" })).status).toBe(400);
+  });
+
   it("forwards only whitelisted viewer identity params through /ui/open", async () => {
     const app = makeApp({
       coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
