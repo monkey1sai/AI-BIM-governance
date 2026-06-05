@@ -42,6 +42,8 @@ import { GovernanceOverlay, type RuleCheckState, type IssueCreateState, type Sta
 import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
 import { HighlightBridge, type FailedElement, type HighlightResult } from "./console/governance/highlightBridge";
 import { MappingCache } from "./console/governance/mappingCache";
+import { MockViewport } from "./console/viewer/MockViewport";
+import "./console/viewer/viewer.css";
 import { evaluateCoverageGate } from "./console/governance/govEndpoints";
 // 統一治理控制台 MVP（W1/W3）：A3 rule-run / A8 issue / BCF 都打 coordinator :8004 的 /api/governance/* proxy。
 import { governanceClient, type RuleResultRow, type RuleRunStatus } from "./console/governanceClient";
@@ -2180,6 +2182,31 @@ export default class App extends React.Component<AppProps, AppState> {
                     )}
                 </>
                 }
+
+                {/* CH-H1：中央視區「不空白」—— 無真實 WebRTC 幀（harness 或尚未出幀）時，以資訊濃密 mock
+                    viewport 取代空白（明標 deterministic·no-GPU，避免被當壞掉），把範本①模型資訊+④對構表+選取 echo
+                    放進中央；取得真實 Kit 幀（_hasRemoteVideoFrame）後不渲染，讓 <video> live 3D 顯示。additive：
+                    不改 AppStream / GovernanceOverlay / stage-truth / spectator 既有機制。 */}
+                {this.state.showStream && !this._hasRemoteVideoFrame() && (
+                    <MockViewport
+                        harness={harnessEnabled()}
+                        stageUrl={this.state.expectedStageUrl}
+                        loadedStageUrl={this.state.loadedStageUrl}
+                        webrtcStatus={this.state.webrtcLifecycleStatus}
+                        selectedGuid={this.state.govSelectedGuid ?? null}
+                        bindings={this.state.latestStreamConfig?.artifact_bindings ?? []}
+                        model={this.state.latestStreamConfig?.model ?? null}
+                        metrics={this.state.latestStreamConfig?.quality_metrics_summary ?? null}
+                        projectId={this.state.currentProjectId}
+                        modelVersionId={this.state.currentModelVersionId}
+                        mappedCount={this._mappingCache?.mappedCount ?? null}
+                        isFake={this._mappingCache?.isFake}
+                        mappingUrl={this.state.latestStreamConfig?.model?.mapping_url ?? null}
+                        onSelectGuid={(g) => this.setState({ govSelectedGuid: g })}
+                        reservedRight={352}
+                        reservedLeft={this.state.showUI ? sidebarWidth : 0}
+                    />
+                )}
 
                 {/* 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（position:absolute,
                     z-index:20，late sibling，不改既有 viewer / AppStream / DemoControlPanel / ArtifactPanel 子樹）。

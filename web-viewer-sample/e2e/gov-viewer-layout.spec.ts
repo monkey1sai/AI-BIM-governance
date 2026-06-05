@@ -1,0 +1,33 @@
+import { test, expect } from "@playwright/test";
+
+// CH-H1：中央 3D 視區「不再空白」。harness（無 GPU）下，原本中央是空白 <video>；現以資訊濃密 mock viewport
+// 取代——明標 deterministic·no-GPU（非壞掉），含範本①模型資訊卡 + ④對構表（誠實空狀態）+ loaded layers + 選取 echo。
+// 截圖證明「不空白、友善」。真實 ①④ 資料 + live 3D 由 real-ifc 路徑驗。
+test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", () => {
+  test("?harness=1 中央顯資訊濃密 mock viewport（banner/stage/model-info/mapping/layers），非空白", async ({ page }) => {
+    await page.goto("/?harness=1");
+
+    const mv = page.getByTestId("mock-viewport");
+    await expect(mv).toBeVisible({ timeout: 30_000 });
+
+    // 明標非壞掉
+    await expect(page.getByTestId("mock-viewport-banner")).toContainText(/no-GPU|deterministic/);
+
+    // 範本①模型資訊卡 + ④對構表 都在中央（不再只有空白視區）
+    await expect(page.getByTestId("model-info-card")).toBeVisible();
+    await expect(page.getByTestId("mapping-table")).toBeVisible();
+
+    // harness 無 mapping_url → 誠實空狀態（不捏造對構），而非假資料
+    await expect(page.getByTestId("mapping-empty")).toBeVisible();
+
+    // 資訊濃密證據：harness 三圖層（Building Shell / Levels / MEP）
+    await expect(page.getByTestId("mock-layer-count")).toHaveText(/[1-9]/);
+    await expect(page.getByTestId("mock-layers")).toBeVisible();
+
+    // viewport 狀態區（stage / selected echo）存在
+    await expect(page.getByTestId("mock-stage-url")).toBeVisible();
+    await expect(page.getByTestId("mock-selected")).toBeVisible();
+
+    await page.screenshot({ path: "../artifacts/e2e/gov-viewer-layout.png", fullPage: true });
+  });
+});

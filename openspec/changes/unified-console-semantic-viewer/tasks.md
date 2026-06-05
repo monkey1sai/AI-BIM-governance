@@ -4,13 +4,13 @@
 
 ## 1. CH-H1 — 前端全幅語意驗證版面（純前端，可逆）
 
-- [ ] 1.1 `console/viewer/GovViewerLayout.tsx`：範本 6 分區 CSS grid 外殼 + 分頁 nav（模型/問題）；既有治理能力安置進「問題」分頁
-- [ ] 1.2 `ModelInfoCard.tsx`（①）：真資料（quality_metrics_summary fixture/轉換時間/元件數 + element_mapping.summary）；coverage% client 算 + `isFakeMappingDocument` 誠實檢查
-- [ ] 1.3 `MappingTable.tsx`（④）：真 `element_mapping.json`（guid/class/name/prim_path/confidence/method）+ fake-vs-real 隔離（fake banner）
-- [ ] 1.4 `MockViewport.tsx`：取代空白視區——`harnessEnabled() || !_hasRemoteVideoFrame()` 顯資訊濃密佔位（Stage URL/loaded prims/selected prim/highlight echo/camera state，明標 no-GPU 決定性）；有真 Kit 幀自動切 `<video>`
-- [ ] 1.5 工具列 select/pan/orbit/zoom 接既有 DataChannel；section/measure 誠實 p15 disabled；③ 結構樹用既有 USD 樹
-- [ ] 1.6 `Window.tsx` 掛載新版面（先 `gitnexus_impact`，RK5 HIGH，邏輯抽元件降爆炸半徑；spectator 三層權威保留）
-- [ ] 1.7 E2E `gov-viewer-layout.spec.ts`（harness）：6 面板容器都在、① 真 coverage、④ mapping rows、mock viewport 顯 Stage/prims/selected（截圖不空白）、點樹→focus echo
+- [~] 1.1 `console/viewer/`：CH-H1a 先交付 MockViewport 組合（①模型資訊 + ④對構表 + viewport 狀態 echo + layers），**全分頁 nav（模型/問題）+ 把 A1/A2/A3 ops 移進「問題」分頁的完整 GovViewerLayout 外殼留 CH-H1b**
+- [x] 1.2 `ModelInfoCard.tsx`（①）：真資料（quality_metrics_summary fixture/轉換時間/元件數 + mapped_count）；coverage% 由 coverage_ratio 原樣×100 + `isFakeMappingDocument` 誠實檢查
+- [x] 1.3 `MappingTable.tsx`（④）：真 `element_mapping.json`（guid/class/name/prim_path/confidence/method）+ fake-vs-real 隔離（fake banner + 逐列 fake）+ 誠實空狀態（無 mapping_url）
+- [x] 1.4 `MockViewport.tsx`：取代空白視區——`showStream && !_hasRemoteVideoFrame()` 顯資訊濃密佔位（Stage URL/loaded layers/selected echo，明標 deterministic·no-GPU）；有真 Kit 幀 Window 不渲染本元件讓 `<video>` 顯示
+- [ ] 1.5 工具列 select/pan/orbit/zoom 接既有 DataChannel；section/measure 誠實 p15 disabled；③ 結構樹用既有 USD 樹（留 CH-H1b）
+- [x] 1.6 `Window.tsx` additive 掛載 MockViewport（gitnexus_impact GovernanceOverlay=LOW；單一 conditional block，不改 AppStream/overlay/stage-truth/spectator）
+- [x] 1.7 E2E `gov-viewer-layout.spec.ts`（harness）：mock-viewport/banner/model-info-card/mapping-table/layers/selected 皆在、截圖不空白；viewer-harness + viewer-tree-focus 無回歸
 
 ## 2. CH-H2 — 後端 per-element 語意端點 + ②③⑥ 真資料
 
