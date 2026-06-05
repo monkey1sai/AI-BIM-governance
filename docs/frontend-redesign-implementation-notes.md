@@ -115,3 +115,60 @@
 - 改 code symbol 前 `gitnexus_impact`，commit 前 `gitnexus_detect_changes`；HIGH/CRITICAL 先回報。
 - 不硬編 production URL，service endpoint 走 env/config；不留無作用 placeholder 按鈕；不留隱藏 mock-only success；不靜默失敗。
 - commit 前 `git diff --cached --check`；只 `git add` 本工作檔，不掃無關 dirty。
+
+## 9. 實作進度（branch `feat/fe-redesign-foundation` / PR #184）
+
+| 期 | commit | 狀態 | 驗證 |
+|---|---|---|---|
+| CH-0 基礎（harness + Playwright） | `dfc8894` | ✅ | viewer build/vitest；Playwright viewer-harness |
+| CH-B viewer 樹→聚焦 + spectator gate | `c93b9f6` | ✅ | Playwright viewer-tree-focus |
+| 真實 IFC 垂直切片（intake→轉檔→session→viewer） | `1dfc271` | ✅ | Playwright real-ifc-storage-intake / conversion-lineage / viewer-lineage；真 USDC+mapping |
+| CH-D `/api/kit/*` forward-only proxy | `26fb07e` | ✅ | Playwright kit-proxy（direct :8010=0；mutating 需 token） |
+| CH-G/RK6 `/ui/console` 301 + `/ui/open` 守衛 | `be1af4a` | ✅ | coordinator supertest；Playwright ui-open-regression |
+| PR#184 風險修正（ifc-sources 契約 / ifc-file loopback / register / kit auth） | `81d0b56` | ✅ | coordinator vitest 290；live smoke；E2E |
+| CH-F Stage/Artifact Binding composer | `ad910c8` | ✅ | Playwright stage-artifact-binding / primary-spectator-authority |
+| CH-C 後端 source_client_id 角色權威 | — | ❌ 未做 | 需 GPU Kit runtime 才能真驗（見 §11） |
+| CH-E React UnifiedConsole 上 `:8004/ui` | — | ❌ 未做 | 需改 coordinator Dockerfile 服務 dist（見 §11） |
+
+### 9.1 真實 ./storage IFC 工作流（demo-control）
+
+1. 開 `http://127.0.0.1:8004/ui#/demo-control`。
+2. 「IFC fixture」下拉由 `GET /api/dev/ifc-sources` 列出 `./storage/*.ifc`（`source_id`/`filename`/`relative_path`/`size_bytes`/`modified_at`，**無絕對路徑、無 source_ref**）；預選 `許良宇圖書館建築_2026.ifc`。空時顯示 `storage_empty`。
+3. 「註冊並轉檔（真實）」→ `POST /api/dev/ifc-sources/:sourceId/register`：coordinator 內部 **loopback self-fetch** ifc-file → 既有 `POST /api/external/ifc-ready` 真實 intake → 序列派工 streaming-server `ifc-to-usdc` 真轉檔。瀏覽器只給 `source_id`，不構造 URL、不接觸 bytes。
+4. 輪詢 `GET /api/external/ifc-ready/:jobId` → 顯示 runtime 狀態（converting/ready/runtime_blocked/conversion_timeout/download_failed）+ lineage（job_id/model_version_id/conversion_job_id/artifact_id/usdc_url/mapping）。
+5. ready → auto review session + `viewer_url`(/ui/open)；經 `/ui/open?session=…` 進 viewer 顯示來源 IFC lineage + USDC artifact。
+6. 安全：`ifc-file` loopback-only（擋 LAN bytes）；變更型 `/api/kit/*` 需 `x-dev-token`；`ENABLE_DEV_ROUTES=false` 關閉全部 `/api/dev/*`。
+
+### 9.2 Route 遷移現況
+
+| 舊入口 | 現況 | 最終（CH-E/G） |
+|---|---|---|
+| `:8004/ui` | dev-console.html（含 real-IFC + Kit 面板）✅ | React UnifiedConsole（CH-E 未做） |
+| `:8004/ui/console` | **301 → `/ui`** ✅（RK6 guard） | 同 |
+| `:8004/ui/open?session=` | **302 凍結** ✅（supertest + Playwright 守衛） | 不變 |
+| `#/demo-control` / `#/kit` | dev-console 面板可達 ✅ | React 路由（CH-E） |
+| `#/coordinator|intake|runtime|review` | React console 在 `:5173`（未上 :8004） | CH-E 上 :8004 |
+
+### 9.3 primary / spectator 與 Binding
+
+- 三層縱深：UI `disabled`+`aria-disabled`+誠實 reason banner（`resolveGovPanelState`）；前端 command 層 spectator 不送 mutating（`_applyBinding`/`_onSelectUSDPrims` guard）；後端 coordinator `/api/kit/*` mutating 需 token（CH-D）。**streaming DataChannel 的 source_client_id 後端權威（CH-C）未做**。
+- Binding：選 1..N ready USDC → 指定唯一 primary → load_order → 交易式 `composeStageRequest` → Kit `bindingApplied` 確認才宣告 applied（保留 last-good revision；失敗不偽宣告）。
+
+## 10. PR 驗證表
+
+| Item | Result |
+|---|---|
+| E2E 指令 | `cd web-viewer-sample && npm run test:e2e` |
+| E2E specs（9） | viewer-harness、viewer-tree-focus、real-ifc-storage-intake、real-ifc-conversion-lineage、real-ifc-viewer-lineage、kit-proxy、ui-open-regression、stage-artifact-binding、primary-spectator-authority（**unified-console-routes 待 CH-E**） |
+| coordinator | `npm run verify` → vitest **290 passed** |
+| viewer | `npm run build` ✅；`npm test` → **149 passed** |
+| 真實 IFC fixture | `許良宇圖書館建築_2026.ifc` / `demo_lib_2026.ifc` → `stream_conv_* succeeded` → 真 model.usdc + element_mapping.json |
+| 證據截圖 | `artifacts/e2e/{viewer-harness-boot,viewer-tree-focus,real-ifc-storage-intake,real-ifc-conversion-lineage,real-ifc-viewer-lineage,kit-proxy,ui-open-regression,stage-artifact-binding,primary-spectator-authority}.png`（trace/video 於 `_output/`，gitignored） |
+
+## 11. 已知限制 / 未完成（誠實）
+
+- **CH-C（後端角色權威）未做**：streaming-server（Kit，host-native GPU）以 `source_client_id` 驗 primary/spectator 的 DataChannel mutating 指令。目前為前端 gate + coordinator `/api/kit/*` dev-token；完整後端強制需探索 `bim-streaming-server` 並在 GPU Kit runtime 上驗證（此環境無 GPU）。
+- **CH-E（React UnifiedConsole 上 :8004）未做**：需改 coordinator Dockerfile 把 `web-viewer-sample/dist` 服務在 `/ui`、`routing.ts` 認 `#/coordinator|intake|runtime|review|kit|demo-control`、把 dev-console 的 real-IFC/Kit 面板移植成 React 頁；之後補 `unified-console-routes.spec`。目前 real-IFC/Kit 在同源 dev-console.html（interim，合規）。
+- **真實 3D 影像**需 host GPU；此環境 viewer Runtime=no（誠實降級，不偽造 matched）；harness 用可決定性佔位，不假造前端狀態機。
+- **OpenSpec change-id**：repo 有 `openspec/changes/unified-console-mvp/`；本 PR 尚未掛上對應 change，review gate 可能標 blocker。
+- overlay 右側於窄視窗略裁切（layout polish，留 CH-A/CH-E）。
