@@ -41,11 +41,17 @@ test.describe("真實 IFC fixture 垂直切片（real coordinator + streaming，
       .poll(async () => (await page.getByTestId("lin-conversion-job").textContent()) || "", { timeout: 90_000 })
       .toContain("stream_conv_");
 
-    // lineage 欄位須為真實值（非 —）。
-    await expect(page.getByTestId("lin-source-path")).toContainText("/api/dev/ifc-file/");
+    // lineage 欄位須為真實值（非 —）；source_path 為「相對路徑」（非絕對、非 URL）。
+    await expect(page.getByTestId("lin-source-id")).toContainText("ifcsrc_");
+    await expect(page.getByTestId("lin-source-path")).toContainText(".ifc");
     await expect(page.getByTestId("lin-source-filename")).toContainText(".ifc");
     await expect(page.getByTestId("lin-job-id")).toContainText("ifcready_");
     await expect(page.getByTestId("lin-model-version")).toContainText("mv_realifc");
+
+    // 安全（PR #184 風險修正）：面板「絕不」顯示絕對檔案系統路徑，也不暴露 public ifc-file byte URL。
+    const panelText = await panel.innerText();
+    expect(panelText, "no absolute fs path in UI").not.toMatch(/[A-Za-z]:\\|\/workspace\/|\/Repos\//);
+    expect(panelText, "no public ifc-file byte URL in UI").not.toContain("/api/dev/ifc-file/");
 
     // runtime 狀態須為誠實值（converting / ready / runtime_blocked / conversion_timeout），不可停在 idle/registering。
     const stateEl = page.getByTestId("ifc-runtime-state");
@@ -63,7 +69,7 @@ test.describe("真實 IFC fixture 垂直切片（real coordinator + streaming，
       await expect(page.getByTestId("lin-viewer-url")).toContainText("/ui/open?session=");
     }
 
-    await page.screenshot({ path: "../artifacts/e2e/real-ifc-intake.png", fullPage: true });
+    await page.screenshot({ path: "../artifacts/e2e/real-ifc-storage-intake.png", fullPage: true });
 
     const finalState = (await stateEl.textContent()) || "";
     const convStatus = (await page.getByTestId("lin-conversion-status").textContent()) || "";

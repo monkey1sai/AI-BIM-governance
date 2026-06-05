@@ -278,8 +278,10 @@
       </div>
       <table style="width:100%; border-collapse:collapse; font-size:13px; text-align:left;">
         <tbody>
-          <tr><td style="padding:3px 8px; color:#94a3b8;">source_ifc_path</td><td data-testid="lin-source-path" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">source_id</td><td data-testid="lin-source-id" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">source_ifc_relative_path</td><td data-testid="lin-source-path" style="font-family:monospace;">—</td></tr>
           <tr><td style="padding:3px 8px; color:#94a3b8;">source_ifc_filename</td><td data-testid="lin-source-filename">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">source_ifc_size_bytes</td><td data-testid="lin-source-size">—</td></tr>
           <tr><td style="padding:3px 8px; color:#94a3b8;">ifc_ready_job_id</td><td data-testid="lin-job-id" style="font-family:monospace;">—</td></tr>
           <tr><td style="padding:3px 8px; color:#94a3b8;">model_version_id</td><td data-testid="lin-model-version" style="font-family:monospace;">—</td></tr>
           <tr><td style="padding:3px 8px; color:#94a3b8;">conversion_job_id</td><td data-testid="lin-conversion-job" style="font-family:monospace;">—</td></tr>
@@ -310,20 +312,31 @@
         let pollTimer = null;
         const stop = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
 
+        let sourcesById = {};
         async function loadSources() {
           try {
             const r = await fetch('/api/dev/ifc-sources');
             const j = await r.json();
             sel.innerHTML = '';
-            (j.items || []).forEach((it) => {
+            sourcesById = {};
+            const items = (j.items || []);
+            items.forEach((it) => {
+              sourcesById[it.source_id] = it;
               const o = document.createElement('option');
-              o.value = JSON.stringify({ ref: it.source_ref, name: it.filename });
-              o.textContent = it.filename + ' (' + Math.round((it.size_bytes || 0) / 1024) + ' KB)';
+              o.value = it.source_id; // 只用 source_id，前端不構造 URL、不接觸 bytes
+              o.textContent = it.filename + ' (' + Math.round((it.size_bytes || 0) / 1024) + ' KB · ' + String(it.modified_at || '').slice(0, 10) + ')';
               sel.appendChild(o);
             });
-            if (!(j.items || []).length) {
-              const o = document.createElement('option'); o.textContent = '（./storage 無 .ifc fixture）'; sel.appendChild(o);
+            if (!items.length) {
+              const o = document.createElement('option'); o.value = ''; o.textContent = '（No real IFC files found under ./storage）'; sel.appendChild(o);
+              stateEl.textContent = 'runtime: storage_empty (No real IFC files found under ./storage)';
+              return;
             }
+            // 預選 許良宇圖書館建築_2026.ifc（若有），否則最大者，否則第一個。
+            let preferred = items.find((it) => it.filename === '許良宇圖書館建築_2026.ifc');
+            if (!preferred) preferred = items.slice().sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0))[0];
+            if (preferred) sel.value = preferred.source_id;
+            stateEl.textContent = 'runtime: idle';
           } catch (e) { stateEl.textContent = 'runtime: load_sources_failed: ' + e.message; }
         }
 
@@ -366,21 +379,28 @@
 
         async function register() {
           stop();
-          let chosen; try { chosen = JSON.parse(sel.value); } catch (_) { stateEl.textContent = 'runtime: no_fixture_selected'; return; }
-          const filename = chosen.name, ref = chosen.ref;
-          const mv = rid('mv_realifc'); const task = rid('task_realifc');
-          set('lin-source-path', ref); set('lin-source-filename', filename); set('lin-model-version', mv);
+          const sourceId = sel.value;
+          const meta = sourcesById[sourceId];
+          if (!sourceId || !meta) { stateEl.textContent = 'runtime: no_fixture_selected'; return; }
+          const mv = rid('mv_realifc');
+          set('lin-source-id', sourceId);
+          set('lin-source-path', meta.relative_path); // 相對路徑（非絕對、非 URL）
+          set('lin-source-filename', meta.filename);
+          set('lin-source-size', (meta.size_bytes || 0) + ' bytes');
+          set('lin-model-version', mv);
           set('lin-conversion-job', ''); set('lin-artifact-id', ''); set('lin-usdc-url', ''); set('lin-mapping', ''); set('lin-session-id', ''); set('lin-viewer-url', '');
           openViewer.style.display = 'none';
           stateEl.textContent = 'runtime: registering';
           try {
-            const r = await fetch('/api/external/ifc-ready', {
+            // 只給 source_id；coordinator 內部 loopback self-fetch ifc-file → 真實 intake。瀏覽器不接觸 bytes。
+            const r = await fetch('/api/dev/ifc-sources/' + encodeURIComponent(sourceId) + '/register', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'dev-webhook-secret', 'X-Correlation-Id': rid('corr'), 'X-Idempotency-Key': rid('idem') },
-              body: JSON.stringify({ event: 'ifc_ready', tenant_id: 'tenant_demo_001', project_id: 'project_real_ifc_demo', external_model_version_id: mv, external_conversion_task_id: task, source_ifc: { ref: ref, etag: 'fixture-' + filename, filename: filename } }),
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model_version_id: mv, project_id: 'project_real_ifc_demo' }),
             });
             const j = await r.json().catch(() => ({}));
             set('lin-job-id', j.ifc_ready_job_id);
+            if (j.external_model_version_id) set('lin-model-version', j.external_model_version_id);
             set('lin-download-status', j.download_status);
             set('lin-conversion-status', j.conversion_status || '(queued)');
             if (j.ifc_ready_job_id) {

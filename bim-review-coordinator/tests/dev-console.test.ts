@@ -108,6 +108,32 @@ describe("coordinator dev console", () => {
     expect(ui.status).toBe(200);
   });
 
+  it("PR#184 risk: /api/dev/ifc-sources 契約形狀（root + items，無絕對路徑 / storage_root / source_ref）", async () => {
+    const ifcRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-ifc-sources-test-"));
+    fs.writeFileSync(path.join(ifcRoot, "sample.ifc"), "ISO-10303-21;\nEND-ISO-10303-21;\n");
+    const app = makeApp({ storageRoot: ifcRoot });
+
+    const res = await request(app.app).get("/api/dev/ifc-sources");
+    expect(res.status).toBe(200);
+    expect(res.body.root).toMatchObject({ exists: true, readable: true, item_count: 1 });
+    const item = res.body.items[0];
+    expect(item.source_id).toMatch(/^ifcsrc_/);
+    expect(item.filename).toBe("sample.ifc");
+    expect(item.relative_path).toBe("sample.ifc");
+    expect(typeof item.size_bytes).toBe("number");
+    expect(item.modified_at).toBeTruthy();
+    // 契約：絕不洩漏絕對路徑 / storage_root / public source_ref。
+    expect("storage_root" in res.body).toBe(false);
+    expect("source_ref" in item).toBe(false);
+    expect(JSON.stringify(res.body)).not.toContain(ifcRoot);
+  });
+
+  it("PR#184 risk: 變更型 /api/kit/* 無 dev token 一律 403", async () => {
+    const app = makeApp();
+    const res = await request(app.app).post("/api/kit/instances/current/open").send({});
+    expect(res.status).toBe(403);
+  });
+
   it("forwards only whitelisted viewer identity params through /ui/open", async () => {
     const app = makeApp({
       coordinatorPublicBaseUrl: "http://192.168.10.105:8004",

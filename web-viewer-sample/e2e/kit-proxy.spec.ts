@@ -27,7 +27,17 @@ test.describe("CH-D：Kit Manager 經 /api/kit proxy（forward-only，無直連 
     const kitProxyCalls = requests.filter((u) => /\/api\/kit\//.test(u));
     expect(kitProxyCalls.length, "browser should call coordinator /api/kit/*").toBeGreaterThan(0);
 
+    // 變更型 /api/kit/* 需 operator/dev 授權（PR #184 風險修正）：無 token → 403；有 dev token → 非 403（轉發）。
+    const noAuth = await page.request.post(`${COORDINATOR}/api/kit/instances/current/open`, { data: {}, failOnStatusCode: false });
+    expect(noAuth.status(), "mutating kit without auth must be 403").toBe(403);
+    const withAuth = await page.request.post(`${COORDINATOR}/api/kit/instances/current/open`, {
+      data: {},
+      headers: { "x-dev-token": "dev-token" },
+      failOnStatusCode: false,
+    });
+    expect(withAuth.status(), "mutating kit with dev token must be forwarded (not 403)").not.toBe(403);
+
     await page.screenshot({ path: "../artifacts/e2e/kit-proxy.png", fullPage: true });
-    console.log("CH-D kit-proxy calls:", kitProxyCalls.length, "| direct :8010:", direct8010.length);
+    console.log("CH-D kit-proxy calls:", kitProxyCalls.length, "| direct :8010:", direct8010.length, "| mutating noAuth:", noAuth.status(), "withAuth:", withAuth.status());
   });
 });
