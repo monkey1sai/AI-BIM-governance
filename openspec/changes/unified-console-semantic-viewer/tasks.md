@@ -16,11 +16,12 @@
 
 - [x] 2.1 governance-service `GET /api/elements/semantics`：真 `ifcopenshell get_psets`(剝合成 id)/`get_container`+`get_aggregate` 空間鏈/type/predefined_type/object_type/tag（輸入 server IFC 路徑 + ifc_guid；404/400）— live 驗 ×2：fixture-bytes 真 IfcDoor 多 Pset+Qto；**真 87MB 許良宇 IFC 200/5.5s 空間鏈 Storey>Building>Site>Project**（scales to 真實部署模型）
 - [x] 2.2 coordinator `GET /api/governance/elements/for-session/:sessionId/:guid`：resolve session→host IFC 路徑→forward（沿用 rule-runs/for-session resolver，server path 不外洩；400/404/502）
-- [ ] 2.3 前端 ② IFC 語意面板（Type/PredefinedType/ObjectType/Tag/Pset_*/Quantity_*）：點構件 lazy fetch（CH-H2 frontend）
-- [ ] 2.4 前端 ⑥ 空間關係（Contained In/IfcBuildingStorey/Building/Site）（CH-H2 frontend）
-- [ ] 2.5 前端 ③ 分層結構樹（IfcProject>Site>Building>Storey + type 計數）（CH-H2 frontend）
-- [ ] 2.6 ⑤ 幾何(BBox/體積/材質) + 分類碼(MasterFormat/OmniClass/Uniformat)：誠實 ⌛roadmap/N/A（端點已回 null+roadmap；前端顯示待 2.3）
-- [~] 2.7 governance-service pytest（test_element_semantics 4 passed；全 suite 82）+ coordinator vitest（for-session/elements 10 passed）✅；前端 E2E `element-semantics.spec.ts` 待 2.3（點構件→② Pset/Type、⑥ spatial）
+- [x] 2.3 前端 ② IFC 語意面板（Type/PredefinedType/ObjectType/Tag/Pset_*/Quantity_*）：點構件 lazy fetch（IfcSemanticPanel/IfcSemanticView）— browser e2e PASS
+- [x] 2.4 前端 ⑥ 空間關係（IfcBuildingStorey/Building/Site 容納鏈）— browser e2e PASS
+- [ ] 2.5 前端 ③ 分層結構樹（IfcProject>Site>Building>Storey + type 計數）— 仍用既有 USD 樹，分層+計數留 CH-H1b/後續
+- [x] 2.6 ⑤ 幾何(BBox/體積/材質) + 分類碼(MasterFormat/OmniClass/Uniformat)：誠實 ⌛roadmap/N/A（端點回 null+roadmap；前端 sem-roadmap 顯示，不捏造）
+- [x] 2.7 governance-service pytest（4+全 82）+ coordinator vitest（10）+ **前端 browser E2E `element-semantics`（真 session→點對構表→②Pset/Type+⑥空間+⑤roadmap）PASS** + node 全鏈 smoke（:8004 for-session 200，真 87MB IFC）
+- [x] 2.8 對抗修復：(a) MockViewport gate 改為無 GPU 真 session 也可用；(b) ④對構表改經 coordinator element-mapping proxy（守邊界 + CORS-safe，不直連 :49101）— 皆 e2e 驗 + 無回歸
 
 ## 3. 驗證 / 對抗 / 對齊
 
