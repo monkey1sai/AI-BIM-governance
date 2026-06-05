@@ -4,6 +4,7 @@
 import { ModelInfoCard, type ModelInfoModel, type QualityMetricsSummary } from "./ModelInfoCard";
 import { MappingTable } from "./MappingTable";
 import { IfcSemanticPanel } from "./IfcSemanticPanel";
+import { coordinatorClient } from "../coordinatorClient";
 
 export interface ArtifactBindingLite {
   artifact_id?: string | null;
@@ -40,6 +41,11 @@ const DASH = "—";
 export function MockViewport(props: MockViewportProps) {
   const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0 } = props;
   const layers = bindings.filter((b) => b.ready_status === "ready");
+  // ④對構表資料源：經 coordinator :8004 element-mapping for-session proxy（CORS-safe + 守邊界，
+  // 瀏覽器不直連 :49101 artifact server）。harness 無真實 coordinator session → null（誠實空狀態）。
+  const mappingSrc = !harness && props.sessionId
+    ? `${coordinatorClient.base}/api/governance/element-mapping/for-session/${encodeURIComponent(props.sessionId)}`
+    : null;
   const pad =
     reservedRight || reservedLeft ? { paddingRight: reservedRight || undefined, paddingLeft: reservedLeft || undefined } : undefined;
   return (
@@ -83,7 +89,7 @@ export function MockViewport(props: MockViewportProps) {
         </div>
 
         <div className="gv-mock__col gv-mock__col--wide">
-          <MappingTable mappingUrl={props.mappingUrl} selectedGuid={selectedGuid} onSelectGuid={props.onSelectGuid} />
+          <MappingTable mappingUrl={mappingSrc} selectedGuid={selectedGuid} onSelectGuid={props.onSelectGuid} />
           {/* CH-H2：點構件 → ② IFC 語意 + ⑥ 空間（真實 ifcopenshell 萃取，經 coordinator for-session proxy）。 */}
           <IfcSemanticPanel sessionId={props.sessionId} selectedGuid={selectedGuid} />
         </div>

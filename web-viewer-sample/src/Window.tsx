@@ -2187,7 +2187,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     viewport 取代空白（明標 deterministic·no-GPU，避免被當壞掉），把範本①模型資訊+④對構表+選取 echo
                     放進中央；取得真實 Kit 幀（_hasRemoteVideoFrame）後不渲染，讓 <video> live 3D 顯示。additive：
                     不改 AppStream / GovernanceOverlay / stage-truth / spectator 既有機制。 */}
-                {this.state.showStream && !this._hasRemoteVideoFrame() && (
+                {!this._hasRemoteVideoFrame()
+                    && (harnessEnabled() || (Boolean(this.state.reviewSessionId) && Boolean(this.state.expectedStageUrl)))
+                    && (
                     <MockViewport
                         harness={harnessEnabled()}
                         stageUrl={this.state.expectedStageUrl}
