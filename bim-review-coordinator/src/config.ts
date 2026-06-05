@@ -23,6 +23,7 @@ export interface CoordinatorConfig {
   port: number;
   coordinatorPublicBaseUrl: string;
   conversionApiBase: string;
+  kitManagerApiBase: string;
   kitStreamServer: string;
   kitSignalingPort: number;
   kitMediaServer: string;
@@ -323,6 +324,9 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     port,
     coordinatorPublicBaseUrl,
     conversionApiBase: conversionApiBaseFromEnv(),
+    // CH-D：kit-manager-api base（forward-only proxy 用）。docker compose 顯式設 host.docker.internal:8010；
+    // host-native 預設 127.0.0.1:8010。Kit 控制權威仍在 kit-manager（RK1）。
+    kitManagerApiBase: process.env.KIT_MANAGER_API_BASE || "http://127.0.0.1:8010",
     kitStreamServer,
     kitSignalingPort,
     kitMediaServer,

@@ -395,6 +395,41 @@
       })();
     </script>
 
+    <!-- CH-D：Kit Manager 模型台（經 coordinator /api/kit/* forward proxy；瀏覽器禁直連 :8010）。 -->
+    <section class="demo-card" id="kitProxyPanel" data-testid="kit-proxy-panel">
+      <h1 class="demo-card__title">Kit Manager 模型台（經 /api/kit proxy）</h1>
+      <p class="demo-card__subtitle">
+        瀏覽器一律打 coordinator <code>:8004 /api/kit/*</code>（forward → kit-manager <code>:8010</code> loopback）；
+        禁直連 :8010。RK1：Kit 控制權威留 kit-manager，coordinator 只轉發。
+      </p>
+      <div style="display:flex; gap:8px; margin:10px 0;">
+        <button id="kitStatusBtn" data-testid="kit-status-btn" class="nvidia-button">查 Kit 狀態 + USDC（經 proxy）</button>
+      </div>
+      <table style="width:100%; font-size:13px; text-align:left;">
+        <tbody>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/health</td><td data-testid="kit-health">—</td></tr>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/instances/current</td><td data-testid="kit-instance">—</td></tr>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/usdc</td><td data-testid="kit-usdc-count">—</td></tr>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">proxy boundary</td><td data-testid="kit-proxy-note">瀏覽器 → :8004 /api/kit/*（forward → :8010，無直連）</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <script>
+      // CH-D：Kit panel（自包含 IIFE）。全部經 coordinator /api/kit/* 同源 proxy，證明 forward + 無直連 :8010。
+      (function () {
+        const q = (s) => document.querySelector(s);
+        const set = (id, v) => { const el = q('[data-testid="' + id + '"]'); if (el) el.textContent = (v == null || v === '') ? '—' : String(v); };
+        const btn = q('[data-testid="kit-status-btn"]');
+        async function go() {
+          set('kit-health', '…'); set('kit-instance', '…'); set('kit-usdc-count', '…');
+          try { const r = await fetch('/api/kit/health'); const j = await r.json().catch(() => ({})); set('kit-health', r.status + ' ' + (j.status || j.kit_status || JSON.stringify(j).slice(0, 60))); } catch (e) { set('kit-health', 'error: ' + e.message); }
+          try { const r = await fetch('/api/kit/instances/current'); const j = await r.json().catch(() => ({})); set('kit-instance', r.status + ' status=' + (j.status || j.state || JSON.stringify(j).slice(0, 50))); } catch (e) { set('kit-instance', 'error: ' + e.message); }
+          try { const r = await fetch('/api/kit/usdc'); const j = await r.json().catch(() => ({})); const arr = Array.isArray(j) ? j : (j.items || j.artifacts || j.usdc || []); set('kit-usdc-count', r.status + ' count=' + (Array.isArray(arr) ? arr.length : '?')); } catch (e) { set('kit-usdc-count', 'error: ' + e.message); }
+        }
+        if (btn) btn.addEventListener('click', go);
+      })();
+    </script>
+
     <!-- coordinator-ui-tri-ready-and-queue:Edge BIM Data Server Console。
          File / Runtime / Semantic 三段 ready 與 viewer 對齊;dispatch queue
          可視化(來自 C4 lifecycle);step 文案改為 Edge BIM Data Server Console

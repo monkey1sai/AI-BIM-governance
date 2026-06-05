@@ -1371,6 +1371,25 @@ export function createCoordinatorApp(
     response.type("application/octet-stream").sendFile(full);
   });
 
+  // CH-D：/api/kit/* forward-only reverse-proxy → kit-manager（loopback :8010）。
+  // RK1：Kit 控制權威留 kit-manager；coordinator 只轉發（沿用 proxyConversionService 的通用 forward 邏輯，
+  // 保留 status/content-type），不解讀/不保存 Kit 狀態。瀏覽器一律打 :8004，禁直連 :8010。
+  app.get("/api/kit/health", async (_request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "GET", "/health");
+  });
+  app.get("/api/kit/usdc", async (_request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "GET", "/api/usdc");
+  });
+  app.get("/api/kit/instances/current", async (_request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "GET", "/api/kit/instances/current");
+  });
+  app.post("/api/kit/instances/current/open", async (request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "POST", "/api/kit/instances/current/open", request.body ?? {});
+  });
+  app.post("/api/kit/instances/current/close", async (request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "POST", "/api/kit/instances/current/close", request.body ?? {});
+  });
+
   // console-mapping-proxy:element_mapping 經 coordinator proxy 給 viewer。
   // 邊界:viewer 只打 :8004（SHALL NOT HTTP 直連 :49101）；coordinator server-side 從
   // config.conversionApiBase（host 可達的 host.docker.internal:49101）抓 mapping，帶全域 CORS 回傳。
