@@ -48,7 +48,9 @@ export function ModelInfoCard({ model, metrics, projectId, modelVersionId, mappe
   const m = metrics ?? {};
   const rows: [string, ReactNode, string?][] = [
     ["IFC 檔案", m.fixture_name || DASH, "lin-fixture"],
-    ["轉換配置", m.semantic_mapping_fidelity || (model?.mapping_url ? "guid_exact" : DASH), "lin-fidelity"],
+    // 誠實鐵律（govEndpoints「不把非 guid_exact 當 guid_exact」/ pages.tsx 記載缺欄位 fallback null）：
+    // semantic_mapping_fidelity 缺欄位即顯「未取得」，SHALL NOT 因 mapping_url 存在就捏造 guid_exact。
+    ["轉換配置", m.semantic_mapping_fidelity || DASH, "lin-fidelity"],
     ["轉換時間", m.conversion_duration_seconds != null ? `${m.conversion_duration_seconds}s` : DASH, "lin-duration"],
     ["USD Stage", basename(model?.url), "lin-usd-stage"],
     ["artifact_id", model?.artifact_id || DASH, "lin-artifact"],
