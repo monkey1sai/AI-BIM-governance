@@ -28,6 +28,11 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     await expect(page.getByTestId("mock-stage-url")).toBeVisible();
     await expect(page.getByTestId("mock-selected")).toBeVisible();
 
+    // CH-H1b：範本式 section nav（模型 active；批註等 roadmap 誠實 disabled）
+    await expect(page.getByTestId("gv-nav")).toBeVisible();
+    await expect(page.getByTestId("nav-model")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("nav-批註")).toBeDisabled();
+
     await page.screenshot({ path: "../artifacts/e2e/gov-viewer-layout.png", fullPage: true });
   });
 });

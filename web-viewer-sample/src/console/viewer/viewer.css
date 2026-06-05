@@ -65,3 +65,14 @@
 .gv-pset { margin: 6px 0; border-top: 1px solid #1c222a; padding-top: 6px; }
 .gv-pset:first-of-type { border-top: 0; padding-top: 0; }
 .gv-pset__name { color: #67e8f9; font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+
+/* CH-H1b：範本式 section nav */
+.gv-nav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; border-bottom: 1px solid #1c222a; padding-bottom: 8px; }
+.gv-nav__item {
+  background: #11151a; color: #cbd5e1; border: 1px solid #262c33; border-radius: 6px;
+  padding: 4px 12px; font-size: 13px; cursor: pointer;
+}
+.gv-nav__item:hover:not(:disabled) { border-color: #4d6b00; }
+.gv-nav__item.active { background: rgba(118, 185, 0, 0.14); border-color: #76b900; color: #e2e8f0; font-weight: 600; }
+.gv-nav__item:disabled { opacity: 0.5; cursor: not-allowed; }
+.gv-nav__rm { color: #f4b740; margin-left: 4px; font-size: 11px; }
