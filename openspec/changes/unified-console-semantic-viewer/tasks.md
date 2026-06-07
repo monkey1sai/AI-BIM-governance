@@ -18,7 +18,7 @@
 - [x] 2.2 coordinator `GET /api/governance/elements/for-session/:sessionId/:guid`：resolve session→host IFC 路徑→forward（沿用 rule-runs/for-session resolver，server path 不外洩；400/404/502）
 - [x] 2.3 前端 ② IFC 語意面板（Type/PredefinedType/ObjectType/Tag/Pset_*/Quantity_*）：點構件 lazy fetch（IfcSemanticPanel/IfcSemanticView）— browser e2e PASS
 - [x] 2.4 前端 ⑥ 空間關係（IfcBuildingStorey/Building/Site 容納鏈）— browser e2e PASS
-- [~] 2.5 前端 ③ 結構：**依類別計數 MVP 已做**（StructureStats，真實 element_mapping 派生 IfcWall N/IfcColumn N…，browser e2e 驗）；完整空間巢狀樹（Project>Site>Building>Storey）需後端 hierarchy 端點 → 誠實 roadmap、留後續
+- [x] 2.5 前端 ③ 結構：**完整空間巢狀樹已做**（governance `GET /api/spatial-tree` 真走 ifcopenshell IsDecomposedBy/ContainsElements 遞迴 IfcProject>Site>Building>Storey + 每節點類別計數；coordinator spatial-tree/for-session proxy；前端 SpatialTreeView 遞迴）— **live browser e2e 驗 struct-tree-node（真實 session）**；harness 退類別計數。pytest 2 + coordinator vitest 3 + viewer vitest
 - [x] 2.6 ⑤ 幾何(BBox/體積/材質) + 分類碼(MasterFormat/OmniClass/Uniformat)：誠實 ⌛roadmap/N/A（端點回 null+roadmap；前端 sem-roadmap 顯示，不捏造）
 - [x] 2.7 governance-service pytest（4+全 82）+ coordinator vitest（10）+ **前端 browser E2E `element-semantics`（真 session→點對構表→②Pset/Type+⑥空間+⑤roadmap）PASS** + node 全鏈 smoke（:8004 for-session 200，真 87MB IFC）
 - [x] 2.8 對抗修復：(a) MockViewport gate 改為無 GPU 真 session 也可用；(b) ④對構表改經 coordinator element-mapping proxy（守邊界 + CORS-safe，不直連 :49101）— 皆 e2e 驗 + 無回歸
