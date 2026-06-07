@@ -62,17 +62,7 @@ export function MockViewport(props: MockViewportProps) {
         </span>
       </div>
 
-      {/* CH-H1b：範本式 section nav（誠實標示實作狀態）。模型=本語意檢視（active）；問題=A1/A2/A3
-          治理操作（在右側治理 overlay，live）；批註/測量/創切/書籤=需 live 3D 工具，誠實標 roadmap。 */}
-      <nav className="gv-nav" data-testid="gv-nav" aria-label="viewer sections">
-        <button className="gv-nav__item active" data-testid="nav-model" aria-current="page">模型</button>
-        <button className="gv-nav__item" data-testid="nav-issues" title="A1/A2/A3 治理操作於右側治理 overlay（live）">問題 · 治理</button>
-        {(["批註", "測量", "創切", "書籤"] as const).map((label) => (
-          <button key={label} className="gv-nav__item" data-testid={`nav-${label}`} disabled aria-disabled
-                  title="需 live 3D 工具（DataChannel）— roadmap，未實作不假裝可用">{label}<span className="gv-nav__rm">⌛</span></button>
-        ))}
-      </nav>
-
+      {/* section nav 已上移至 viewer 層分頁列（Window.tsx），「問題」分頁隱 MockViewport 後仍可切回。 */}
       <div className="gv-mock__grid">
         <div className="gv-mock__col">
           {/* viewport 狀態 echo：證明互動通路暢通（選取/高亮會回饋到這） */}

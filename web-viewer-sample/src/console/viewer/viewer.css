@@ -1,7 +1,14 @@
 /* CH-H1 semantic viewer — 深色操作員風（對齊 edge-console token + Anthropic 設計準則：深底、語義色、密集表格、不空白） */
+/* 完整問題分頁：viewer 層分頁列（模型/問題）。絕對置頂、高 z-index 蓋在內容/overlay 之上。 */
+.gv-tabbar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 21;
+  display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
+  padding: 5px 10px; background: rgba(11, 13, 16, 0.96); border-bottom: 1px solid #262c33;
+}
+
 .gv-mock {
   position: absolute;
-  inset: 0;
+  top: 40px; left: 0; right: 0; bottom: 0;
   overflow: auto;
   background: radial-gradient(1200px 600px at 50% -10%, #12181f 0%, #0b0d10 60%);
   color: #cbd5e1;
