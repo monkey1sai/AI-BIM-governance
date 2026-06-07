@@ -43,6 +43,8 @@ export interface IssueCreateState {
 }
 
 export interface GovernanceOverlayProps {
+  /** overlay=右側 340px 疊層（模型分頁）；panel=全幅（問題分頁）。預設 overlay，不改既有行為。 */
+  variant?: "overlay" | "panel";
   panelState: GovPanelState;
   // R7：widen 以帶 warnOnly（coverage ∈ [0.9,1.0) 時 measure-first 警示，非 fallback 降級）。
   coverage: { coverageOk: boolean; degraded: boolean; ratio: number | null; warnOnly?: boolean };
@@ -142,7 +144,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
   };
 
   return (
-    <div className={`gov-overlay ${readOnly ? "gov-readonly" : ""}`} role="complementary" aria-label="A1–A10 治理 overlay">
+    <div className={`gov-overlay ${props.variant === "panel" ? "gov-overlay--panel" : ""} ${readOnly ? "gov-readonly" : ""}`} role="complementary" aria-label="A1–A10 治理 overlay" data-testid="gov-overlay">
       <div className="gov-overlay-h">
         <span className="gov-overlay-t">治理 · A1–A10</span>
         <ProvTag prov="asbuilt" />

@@ -109,6 +109,8 @@ interface AppState {
     govBindingActiveRevision?: string | null;
     govBindingLastGoodRevision?: string | null;
     govBindingApplyState?: BindingApplyState;
+    // 完整問題分頁：viewer 分頁（模型=語意檢視 / 問題=治理操作全幅）。
+    viewerTab: "model" | "issues";
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
@@ -316,6 +318,7 @@ export default class App extends React.Component<AppProps, AppState> {
             selectedUSDPrims: new Set<USDPrimType>(),
             isKitReady: false,
             showStream: false,
+            viewerTab: "model",
             showUI: false,
             loadingText: "正在載入成果檔清單...",
             streamDiagnostic: null,
@@ -2009,8 +2012,25 @@ export default class App extends React.Component<AppProps, AppState> {
                             width: `calc(100% - ${streamReservedWidth}px)`
                 }}>
                     
+                {/* 完整問題分頁：viewer 層分頁列（模型=語意檢視 / 問題=治理操作全幅 / 批註等 roadmap 誠實 disabled）。
+                    lift 自 MockViewport section nav，使「問題」分頁隱 MockViewport 後仍可切回。 */}
+                {(harnessEnabled() || Boolean(this.state.reviewSessionId)) && (
+                    <nav className="gv-tabbar" data-testid="gv-nav" aria-label="viewer sections" style={{ zIndex: 21 }}>
+                        <button className={`gv-nav__item ${this.state.viewerTab === "model" ? "active" : ""}`} data-testid="nav-model"
+                                aria-current={this.state.viewerTab === "model" ? "page" : undefined}
+                                onClick={() => this.setState({ viewerTab: "model" })}>模型</button>
+                        <button className={`gv-nav__item ${this.state.viewerTab === "issues" ? "active" : ""}`} data-testid="nav-issues"
+                                aria-current={this.state.viewerTab === "issues" ? "page" : undefined}
+                                onClick={() => this.setState({ viewerTab: "issues" })}>問題 · 治理</button>
+                        {["批註", "測量", "創切", "書籤"].map((label) => (
+                            <button key={label} className="gv-nav__item" data-testid={`nav-${label}`} disabled aria-disabled
+                                    title="需 live 3D 工具（DataChannel）— roadmap，未實作不假裝可用">{label}<span className="gv-nav__rm">⌛</span></button>
+                        ))}
+                    </nav>
+                )}
+
                 {/* Loading text indicator */}
-                {!this.state.showStream && 
+                {!this.state.showStream &&
                     <div className="loading-indicator-label">
                         {this.state.loadingText}
                         {this.state.streamDiagnostic &&
@@ -2187,7 +2207,8 @@ export default class App extends React.Component<AppProps, AppState> {
                     viewport 取代空白（明標 deterministic·no-GPU，避免被當壞掉），把範本①模型資訊+④對構表+選取 echo
                     放進中央；取得真實 Kit 幀（_hasRemoteVideoFrame）後不渲染，讓 <video> live 3D 顯示。additive：
                     不改 AppStream / GovernanceOverlay / stage-truth / spectator 既有機制。 */}
-                {!this._hasRemoteVideoFrame()
+                {this.state.viewerTab === "model"
+                    && !this._hasRemoteVideoFrame()
                     && (harnessEnabled() || (Boolean(this.state.reviewSessionId) && Boolean(this.state.expectedStageUrl)))
                     && (
                     <MockViewport
@@ -2216,14 +2237,17 @@ export default class App extends React.Component<AppProps, AppState> {
                     showStream=false 時不渲染（不擋 loading 畫面）。W5：coverage 來源改為
                     streamConfig.quality_metrics_summary.coverage_ratio（型別文件規定 viewer MUST NOT compute，
                     原樣呈現）；缺值時 ratio=null → gate 判 degraded（顯「coverage 未知」降級橫幅），不捏造 coverage%。 */}
-                {this.state.showStream && (() => {
+                {(this.state.showStream || (this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId))) && (() => {
                     // T6：把 review session lifecycle 是否 active 納入 overlay 可操作性。active 狀態僅 active/created；
                     // queued/blocked/failed/closing/closed/dropped 一律視為非 active（治理動作唯讀，誠實表態）。
                     const lifecycle = this.state.reviewLifecycleStatus;
                     const lifecycleActive = lifecycle === "active" || lifecycle === "created";
                     // CH-F：harness 模式下假串流已連（onStart 已觸發 streamReady），對 overlay 視為 dataChannel-ready，
                     // 讓 primary 可操作（binding/highlight/rule-check）；spectator 仍由 isSpectatorStreamMode() 擋下。
-                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: harnessEnabled() || this._hasRemoteVideoFrame(), lifecycleActive });
+                    // 問題分頁（有 session）：治理面板可操作（rule-run 經 for-session、issue/BCF 經 proxy，皆不需 live 3D）；
+                    // 需 DataChannel 的 3D 高亮/binding 仍由各自 send-level dataChannelReady 守門誠實降級，不假裝成功。
+                    const issuesTabReady = this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId);
+                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: harnessEnabled() || this._hasRemoteVideoFrame() || issuesTabReady, lifecycleActive });
                     const ratio = this.state.latestStreamConfig?.quality_metrics_summary?.coverage_ratio ?? null;
                     // R6（誠實）：_mappingCache 為 null（尚未載入 / 未知）視為 fake → degraded，
                     // 不在 client 無法標示時仍顯示有把握的 coverage%（保守誠實）。
@@ -2240,6 +2264,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     );
                     return (
                         <GovernanceOverlay
+                            variant={this.state.viewerTab === "issues" ? "panel" : "overlay"}
                             panelState={inputs.panelState}
                             coverage={coverage}
                             failedElements={this.state.govFailedElements ?? []}
