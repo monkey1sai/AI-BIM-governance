@@ -83,6 +83,92 @@ describe("coordinator dev console", () => {
     expect(location).not.toContain("evil.example");
   });
 
+  it("CH-E/RK6：/ui/console 301 收斂到 /ui，且不以 /ui/* 萬用吞掉凍結的 /ui/open", async () => {
+    const app = makeApp({
+      coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
+      viewerPublicBaseUrl: "http://192.168.10.105:5173",
+      publicHost: "192.168.10.105",
+    });
+
+    // /ui/console → 301 /ui（顯式收斂，非 /ui/* 萬用）。
+    const consoleRedirect = await request(app.app).get("/ui/console").redirects(0);
+    expect(consoleRedirect.status).toBe(301);
+    expect(consoleRedirect.headers.location).toBe("/ui");
+
+    // RK6：/ui/open 仍 302 到 viewer，未被 /ui/console 或任何 /ui/* 萬用吞掉（凍結 handoff 逐字保留）。
+    const openRedirect = await request(app.app)
+      .get("/ui/open?session=review_session_rk6_guard")
+      .redirects(0);
+    expect(openRedirect.status).toBe(302);
+    expect(openRedirect.headers.location).toContain("http://192.168.10.105:5173/");
+    expect(openRedirect.headers.location).toContain("session=review_session_rk6_guard");
+
+    // /ui 仍服務 console（200），未被 301 影響。
+    const ui = await request(app.app).get("/ui");
+    expect(ui.status).toBe(200);
+  });
+
+  it("PR#184 risk: /api/dev/ifc-sources 契約形狀（root + items，無絕對路徑 / storage_root / source_ref）", async () => {
+    const ifcRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bim-ifc-sources-test-"));
+    fs.writeFileSync(path.join(ifcRoot, "sample.ifc"), "ISO-10303-21;\nEND-ISO-10303-21;\n");
+    const app = makeApp({ storageRoot: ifcRoot });
+
+    const res = await request(app.app).get("/api/dev/ifc-sources");
+    expect(res.status).toBe(200);
+    expect(res.body.root).toMatchObject({ exists: true, readable: true, item_count: 1 });
+    const item = res.body.items[0];
+    expect(item.source_id).toMatch(/^ifcsrc_/);
+    expect(item.filename).toBe("sample.ifc");
+    expect(item.relative_path).toBe("sample.ifc");
+    expect(typeof item.size_bytes).toBe("number");
+    expect(item.modified_at).toBeTruthy();
+    // 契約：絕不洩漏絕對路徑 / storage_root / public source_ref。
+    expect("storage_root" in res.body).toBe(false);
+    expect("source_ref" in item).toBe(false);
+    expect(JSON.stringify(res.body)).not.toContain(ifcRoot);
+  });
+
+  it("PR#184 risk: 變更型 /api/kit/* 無 dev token 一律 403", async () => {
+    const app = makeApp();
+    const res = await request(app.app).post("/api/kit/instances/current/open").send({});
+    expect(res.status).toBe(403);
+  });
+
+  it("CH-C: stage-binding 後端角色權威（spectator/非 primary 403、primary first-wins、active/last-good revision、缺 primary 400）", async () => {
+    const app = makeApp();
+    const created = await request(app.app).post("/api/review-sessions").send({
+      project_id: "project_demo_001",
+      model_version_id: "version_demo_001",
+      created_by: "dev_user_001",
+      routing_policy: "same_instance",
+      artifact_bindings: [],
+      kit_profile: {},
+    });
+    expect(created.status).toBeLessThan(300);
+    const sid = created.body.session_id as string;
+    expect(sid).toBeTruthy();
+    const bind = (b: Record<string, unknown>) =>
+      request(app.app).post(`/api/review-sessions/${sid}/stage-binding`).send(b);
+
+    // spectator / 非 primary → 403（後端拒絕，非 UI-only）。
+    expect((await bind({ source_client_id: "c_spec", role: "spectator", binding_revision_id: "binding_rev_1", primary_artifact_id: "a1" })).status).toBe(403);
+    // primary（first-wins）→ 200。
+    const p1 = await bind({ source_client_id: "c_primary", role: "primary", binding_revision_id: "binding_rev_1", primary_artifact_id: "a1" });
+    expect(p1.status).toBe(200);
+    expect(p1.body.active_binding_revision).toBe("binding_rev_1");
+    expect(p1.body.primary_client_id).toBe("c_primary");
+    expect(p1.body.last_good_binding_revision).toBeNull();
+    // 另一 client 宣稱 primary → 403（已有 primary 持有者）。
+    expect((await bind({ source_client_id: "c_other", role: "primary", binding_revision_id: "binding_rev_2", primary_artifact_id: "a1" })).status).toBe(403);
+    // 原 primary 再套用 → 200 + last_good = binding_rev_1（交易式 revision 串）。
+    const p2 = await bind({ source_client_id: "c_primary", role: "primary", binding_revision_id: "binding_rev_2", primary_artifact_id: "a1" });
+    expect(p2.status).toBe(200);
+    expect(p2.body.active_binding_revision).toBe("binding_rev_2");
+    expect(p2.body.last_good_binding_revision).toBe("binding_rev_1");
+    // 缺 primary_artifact_id → 400（交易需恰好一個 primary）。
+    expect((await bind({ source_client_id: "c_primary", role: "primary", binding_revision_id: "binding_rev_3" })).status).toBe(400);
+  });
+
   it("forwards only whitelisted viewer identity params through /ui/open", async () => {
     const app = makeApp({
       coordinatorPublicBaseUrl: "http://192.168.10.105:8004",

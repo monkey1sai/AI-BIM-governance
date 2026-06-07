@@ -29,4 +29,24 @@ describe("operator console 路由判定（保留既有 viewer）", () => {
   it("巢狀 /foo/console（即使帶短 hash 以外）仍非 operator（pathname 只認根層 /console）", () => {
     expect(isOperatorConsolePath("/foo/console", "")).toBe(false);
   });
+
+  // CH-E：6 路由 + #/ 前綴 + coordinator /ui 正規入口。
+  it("短 hash 支援 #/ 前綴與新路由 review / kit / demo-control（query 無 session=）", () => {
+    expect(isOperatorConsolePath("/", "#/coordinator")).toBe(true);
+    expect(isOperatorConsolePath("/", "#/review")).toBe(true);
+    expect(isOperatorConsolePath("/", "#/kit")).toBe(true);
+    expect(isOperatorConsolePath("/", "#/demo-control")).toBe(true);
+    expect(isOperatorConsolePath("/", "#review")).toBe(true);
+  });
+  it("coordinator 服務的 /ui pathname → operator console（CH-E 正規入口）", () => {
+    expect(isOperatorConsolePath("/ui", "")).toBe(true);
+    expect(isOperatorConsolePath("/ui", "#/kit")).toBe(true);
+    expect(isOperatorConsolePath("/ui/", "")).toBe(true);
+  });
+  it("/ui 但帶 ?session= → 非 operator（viewer attach 優先；理論上不會出現但保險）", () => {
+    expect(isOperatorConsolePath("/ui", "#/kit", "?session=review_session_x")).toBe(false);
+  });
+  it("未知短 hash（#/nope）→ 非 operator", () => {
+    expect(isOperatorConsolePath("/", "#/nope")).toBe(false);
+  });
 });

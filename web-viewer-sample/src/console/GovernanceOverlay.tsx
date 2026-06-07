@@ -7,8 +7,24 @@ import "./governance/overlay.css";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import type { Prov } from "./data";
 import type { FailedElement, HighlightResult } from "./governance/highlightBridge";
+import type { ArtifactBinding } from "../types/artifacts";
 // DRY（E3 type consistency）：直接復用 govPanelState 的 union，不另立平行 OverlayPanelState。
 import { GOV_PANEL_REASON_TEXT, type GovPanelState } from "./governance/govPanelState";
+
+// CH-F：Stage / Artifact Binding 交易選擇（對映規格 StageArtifactBinding）。
+export interface StageArtifactBinding {
+  artifact_id: string;
+  model_version_id: string;
+  usdc_url?: string;
+  role: "primary" | "secondary";
+  load_order: number;
+  ready: boolean;
+}
+
+export interface BindingApplyState {
+  status: "idle" | "applying" | "applied" | "failed";
+  reason?: string;
+}
 
 // W1：A3 rule-run 執行狀態（誠實：running→「執行中…」、error→訊息、succeeded→score+counts）。
 export interface RuleCheckState {
@@ -46,6 +62,12 @@ export interface GovernanceOverlayProps {
   // T2：viewport 點選後反查到的 ifc_guid（由 Window._reverseLookupGuid 設定）。非 null 才顯示，
   // 點選無對映時 Window 會設 null（誠實：不顯示假 guid）。
   selectedGuid?: string | null;
+  // CH-F：Stage / Artifact Binding。bindingArtifacts = ready USDC（coordinator artifact_bindings 過濾 ready）。
+  bindingArtifacts?: ArtifactBinding[];
+  bindingActiveRevision?: string | null;
+  bindingLastGoodRevision?: string | null;
+  bindingApplyState?: BindingApplyState;
+  onApplyBinding?: (selection: StageArtifactBinding[], revisionId: string) => void;
 }
 
 // MVP 接的已有引擎（design §5 權威對映）。
@@ -159,6 +181,16 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
           <p className="ec-note">尚未起跑規則檢核（按右上「執行規則檢核」；需 primary viewer + 已建立 session）。</p>
         )}
       </Panel>
+
+      {/* CH-F：Stage / Artifact Binding 主入口（primary 可操作；spectator 唯讀 disabled）。 */}
+      <BindingComposer
+        artifacts={props.bindingArtifacts ?? []}
+        canOperate={props.panelState.canOperate}
+        activeRevision={props.bindingActiveRevision ?? null}
+        lastGoodRevision={props.bindingLastGoodRevision ?? null}
+        applyState={props.bindingApplyState}
+        onApply={props.onApplyBinding}
+      />
 
       <Panel
         title="治理失敗構件 · 在 live 3D 標示"
@@ -275,5 +307,131 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         ))}
       </Panel>
     </div>
+  );
+}
+
+// CH-F：Stage / Artifact Binding composer。選 1..N ready USDC、指定「恰好一個」primary、改 load_order、交易式套用。
+// spectator（!canOperate）：控制可見但 disabled（aria 由 Btn/input disabled 帶出）+ apply 不送 mutating 指令（誠實鐵律）。
+function BindingComposer(props: {
+  artifacts: ArtifactBinding[];
+  canOperate: boolean;
+  activeRevision: string | null;
+  lastGoodRevision: string | null;
+  applyState?: BindingApplyState;
+  onApply?: (selection: StageArtifactBinding[], revisionId: string) => void;
+}) {
+  const ready = props.artifacts.filter((a) => a.ready_status === "ready" && a.url);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [primaryId, setPrimaryId] = useState<string | null>(null);
+  const [loadOrders, setLoadOrders] = useState<Record<string, number>>({});
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const orderOf = (a: ArtifactBinding) => loadOrders[a.artifact_id] ?? a.load_order ?? 0;
+
+  const apply = () => {
+    setLocalError(null);
+    if (!props.canOperate) return; // 防禦縱深：spectator / 未就緒不送 mutating 指令
+    const chosen = ready.filter((a) => selected[a.artifact_id]);
+    if (chosen.length === 0) {
+      setLocalError("請至少選 1 個 ready USDC artifact");
+      return;
+    }
+    if (!primaryId || !chosen.some((a) => a.artifact_id === primaryId)) {
+      setLocalError("請在已選 artifact 中指定「恰好一個」primary");
+      return;
+    }
+    const selection: StageArtifactBinding[] = chosen
+      .map((a) => ({
+        artifact_id: a.artifact_id,
+        model_version_id: a.model_version_id,
+        usdc_url: a.url ?? undefined,
+        role: (a.artifact_id === primaryId ? "primary" : "secondary") as "primary" | "secondary",
+        load_order: orderOf(a),
+        ready: true,
+      }))
+      .sort((x, y) => x.load_order - y.load_order);
+    props.onApply?.(selection, `binding_rev_${Date.now()}`);
+  };
+
+  const applyText = (() => {
+    const s = props.applyState;
+    if (!s || s.status === "idle") return null;
+    if (s.status === "applying") return "套用中…（composeStageRequest，等待 Kit bindingApplied 確認）";
+    if (s.status === "failed") return `套用失敗：${s.reason ?? "未知"}（保留上次成功 binding，不偽宣告）`;
+    return "已套用（Kit 已確認 bindingApplied）";
+  })();
+
+  return (
+    <Panel
+      title="Stage / Artifact Binding（主入口）"
+      sub="選 1..N ready USDC → 指定唯一 primary → 調 load_order → 交易式套用 → 重組 stage（composeStageRequest）"
+      prov="asbuilt"
+      actions={
+        <Btn
+          caption="composeStageRequest（client 主動拉；交易式套用 binding 並重組 stage）"
+          data-testid="binding-apply"
+          disabled={!props.canOperate || props.applyState?.status === "applying"}
+          onClick={apply}
+        >
+          {props.applyState?.status === "applying" ? "套用中…" : "套用 binding 並重組 stage"}
+        </Btn>
+      }
+    >
+      {ready.length === 0 ? (
+        <p className="ec-note" data-testid="binding-empty">目前無 ready USDC artifact 可組（誠實：不假裝 ready）。</p>
+      ) : (
+        <table className="ec-table" data-testid="binding-table">
+          <thead>
+            <tr><th>選</th><th>primary</th><th>artifact</th><th>load_order</th><th>ready</th></tr>
+          </thead>
+          <tbody>
+            {ready.map((a) => (
+              <tr key={a.artifact_id} data-testid="binding-row">
+                <td>
+                  <input
+                    type="checkbox"
+                    data-testid={`binding-select-${a.artifact_id}`}
+                    checked={!!selected[a.artifact_id]}
+                    disabled={!props.canOperate}
+                    aria-disabled={!props.canOperate}
+                    onChange={() => setSelected((prev) => ({ ...prev, [a.artifact_id]: !prev[a.artifact_id] }))}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="radio"
+                    name="binding-primary"
+                    data-testid={`binding-primary-${a.artifact_id}`}
+                    checked={primaryId === a.artifact_id}
+                    disabled={!props.canOperate || !selected[a.artifact_id]}
+                    aria-disabled={!props.canOperate}
+                    onChange={() => setPrimaryId(a.artifact_id)}
+                  />
+                </td>
+                <td>{a.display_name || a.artifact_id}</td>
+                <td>
+                  <input
+                    type="number"
+                    data-testid={`binding-loadorder-${a.artifact_id}`}
+                    value={orderOf(a)}
+                    disabled={!props.canOperate}
+                    aria-disabled={!props.canOperate}
+                    style={{ width: 56 }}
+                    onChange={(e) => setLoadOrders((p) => ({ ...p, [a.artifact_id]: Number(e.target.value) }))}
+                  />
+                </td>
+                <td>{a.ready_status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {localError && <p className="ec-warn-note" data-testid="binding-error">{localError}</p>}
+      {applyText && <Field k="binding 套用" v={applyText} prov="asbuilt" />}
+      <p className="ec-note" data-testid="binding-active-revision">active binding revision：{props.activeRevision ?? "（尚未套用）"}</p>
+      {props.lastGoodRevision && props.lastGoodRevision !== props.activeRevision && (
+        <p className="ec-note" data-testid="binding-lastgood">last good binding revision：{props.lastGoodRevision}</p>
+      )}
+    </Panel>
   );
 }

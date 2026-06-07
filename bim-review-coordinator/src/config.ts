@@ -23,6 +23,7 @@ export interface CoordinatorConfig {
   port: number;
   coordinatorPublicBaseUrl: string;
   conversionApiBase: string;
+  kitManagerApiBase: string;
   kitStreamServer: string;
   kitSignalingPort: number;
   kitMediaServer: string;
@@ -72,6 +73,10 @@ export interface CoordinatorConfig {
   // cross-service-structured-log-baseline: 結構化 log 寫入根目錄。
   // 預設 LOG_ROOT env 或 <cwd>/logs;tests fixture 應在 overrides 內傳 tmp 路徑避免污染 repo。
   logRoot: string;
+  // CH-E:React UnifiedConsole build(vite base=/ui/)的 dist 目錄。env CONSOLE_DIST_DIR;
+  // default 空字串＝未設定 → /ui 回退既有 dev-console.html(zero-risk,不影響既有部署)。
+  // 設定且目錄含 index.html 時,coordinator 於 /ui 服務 React console(static + SPA fallback)。
+  consoleDistDir: string;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -323,6 +328,9 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     port,
     coordinatorPublicBaseUrl,
     conversionApiBase: conversionApiBaseFromEnv(),
+    // CH-D：kit-manager-api base（forward-only proxy 用）。docker compose 顯式設 host.docker.internal:8010；
+    // host-native 預設 127.0.0.1:8010。Kit 控制權威仍在 kit-manager（RK1）。
+    kitManagerApiBase: process.env.KIT_MANAGER_API_BASE || "http://127.0.0.1:8010",
     kitStreamServer,
     kitSignalingPort,
     kitMediaServer,
@@ -368,6 +376,8 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     conversionPollIntervalSeconds: numberFromEnv("CONVERSION_POLL_INTERVAL_SECONDS", 5),
     conversionPollMaxAttempts: numberFromEnv("CONVERSION_POLL_MAX_ATTEMPTS", 60),
     logRoot: process.env.LOG_ROOT || path.join(cwd, "logs"),
+    // CH-E:未設定＝空字串 → mountDevConsole 回退 dev-console.html(zero-risk 預設)。
+    consoleDistDir: process.env.CONSOLE_DIST_DIR || "",
     ...overrides,
   };
 }

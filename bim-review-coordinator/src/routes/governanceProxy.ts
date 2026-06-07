@@ -131,6 +131,64 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     void forward(response, "POST", "/api/rule-runs", forwardBody);
   });
 
+  // CH-H2:per-element 語意 for-session proxy（範本面板②IFC語意/⑥空間 的前端資料來源）。
+  // 瀏覽器只持 session_id + ifc_guid，不知 server-side IFC path；coordinator 沿用同一 resolver
+  // 解析 session→host IFC 路徑後 forward governance-service GET /api/elements/semantics。
+  // 邊界：coordinator 只解析+透傳，server IFC 絕對路徑不外洩到瀏覽器（與 rule-runs/for-session 一致）。
+  // 誠實：400（session/guid 不合法）、404（無法解析 IFC 路徑）、502（governance 不可達）。
+  app.get("/api/governance/elements/for-session/:sessionId/:guid", (request, response) => {
+    const sessionId = request.params.sessionId;
+    const guid = request.params.guid;
+    const isSafe = deps.isSafeSessionId ?? (() => true);
+    if (!isSafe(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    // ifc_guid 基本守門（IFC GlobalId 為 22 字元 base64[0-9A-Za-z_$]；放寬到 64 容錯，擋過長/注入）。
+    if (typeof guid !== "string" || guid.length === 0 || guid.length > 64) {
+      response.status(400).json({ detail: "Invalid ifc_guid." });
+      return;
+    }
+    if (!deps.resolveRuleRunSessionContext) {
+      response.status(501).json({ detail: "session→IFC resolution is not configured." });
+      return;
+    }
+    const resolution = deps.resolveRuleRunSessionContext(sessionId);
+    if (!resolution.ok) {
+      response.status(404).json({ detail: resolution.reason });
+      return;
+    }
+    const qs =
+      `?ifc_source_path=${encodeURIComponent(resolution.context.ifc_source_path)}` +
+      `&ifc_guid=${encodeURIComponent(guid)}`;
+    void forward(response, "GET", `/api/elements/semantics${qs}`);
+  });
+
+  // CH-H2 ③：空間巢狀樹 for-session proxy（範本面板③ IfcProject>Site>Building>Storey + 類別計數）。
+  // 同 elements/for-session：coordinator resolve session→host IFC 路徑後 forward governance GET /api/spatial-tree。
+  app.get("/api/governance/spatial-tree/for-session/:sessionId", (request, response) => {
+    const sessionId = request.params.sessionId;
+    const isSafe = deps.isSafeSessionId ?? (() => true);
+    if (!isSafe(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    if (!deps.resolveRuleRunSessionContext) {
+      response.status(501).json({ detail: "session→IFC resolution is not configured." });
+      return;
+    }
+    const resolution = deps.resolveRuleRunSessionContext(sessionId);
+    if (!resolution.ok) {
+      response.status(404).json({ detail: resolution.reason });
+      return;
+    }
+    void forward(
+      response,
+      "GET",
+      `/api/spatial-tree?ifc_source_path=${encodeURIComponent(resolution.context.ifc_source_path)}`,
+    );
+  });
+
   app.get("/api/governance/rule-runs/:runId", (request, response) => {
     void forward(response, "GET", `/api/rule-runs/${encodeURIComponent(request.params.runId)}`);
   });

@@ -603,6 +603,68 @@ export function createCoordinatorApp(
     response.json(closed);
   });
 
+  // CH-C：Stage / Artifact Binding 後端角色權威（source_client_id / primary）。非 UI-only gate：
+  // 變更型 binding 交易必須由 session 的 primary client 發起，否則 403（spectator / 非 primary / 非持有者一律拒絕）。
+  // 每 session 僅一個 primary（first-wins，以 source_client_id 綁定）；記錄 active / last-good binding revision（交易）。
+  // 邊界：Kit DataChannel select/focus/compose 的 source_client_id 強制屬 bim-streaming-server（host GPU runtime），
+  // 此 coordinator 端權威為 binding 交易的後端授權邊界；Kit 端 per-message 強制標 GPU-pending（見 docs §11）。
+  const stageBindingAuthority = new Map<string, { primaryClientId: string; revisions: string[] }>();
+  app.post("/api/review-sessions/:sessionId/stage-binding", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const sourceClientId = typeof body.source_client_id === "string" ? body.source_client_id.trim() : "";
+    const role = typeof body.role === "string" ? body.role : "";
+    const bindingRevisionId = typeof body.binding_revision_id === "string" ? body.binding_revision_id.trim() : "";
+    const primaryArtifactId = typeof body.primary_artifact_id === "string" ? body.primary_artifact_id.trim() : "";
+    if (!sourceClientId) {
+      response.status(400).json({ detail: "source_client_id required" });
+      return;
+    }
+    if (role !== "primary") {
+      // 後端拒絕（非 UI-only）：spectator / 非 primary 不得套用 binding。
+      response.status(403).json({ detail: "stage binding requires primary role authority", role: role || null });
+      return;
+    }
+    const reg = stageBindingAuthority.get(session.session_id);
+    if (reg && reg.primaryClientId !== sourceClientId) {
+      response.status(403).json({ detail: "another client holds primary authority for this session", primary_client_id: reg.primaryClientId });
+      return;
+    }
+    if (!primaryArtifactId) {
+      response.status(400).json({ detail: "binding transaction requires exactly one primary_artifact_id" });
+      return;
+    }
+    if (!bindingRevisionId) {
+      response.status(400).json({ detail: "binding_revision_id required" });
+      return;
+    }
+    const current = reg ?? { primaryClientId: sourceClientId, revisions: [] };
+    const lastGood = current.revisions.length > 0 ? current.revisions[current.revisions.length - 1] : null;
+    current.revisions.push(bindingRevisionId);
+    stageBindingAuthority.set(session.session_id, current);
+    eventLog.append(session.session_id, "stageBindingApplied", {
+      binding_revision_id: bindingRevisionId,
+      primary_artifact_id: primaryArtifactId,
+      source_client_id: sourceClientId,
+    });
+    response.json({
+      status: "applied",
+      session_id: session.session_id,
+      active_binding_revision: bindingRevisionId,
+      last_good_binding_revision: lastGood,
+      primary_client_id: sourceClientId,
+      primary_artifact_id: primaryArtifactId,
+    });
+  });
+
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：
   // 唯一對外 IFC-ready intake。caller = 客戶落地端 IFC Worker（落地端內網，
   // machine-to-machine）。streaming 為 internal-only 轉檔引擎（T4）。
@@ -1325,6 +1387,171 @@ export function createCoordinatorApp(
     await proxyConversionService(response, config.conversionApiBase, "GET", `/api/conversions/${encodeURIComponent(request.params.jobId)}`);
   });
 
+  // real-ifc-fixture-intake：列出本機 ./storage 下的真實 IFC fixture 供前端選取。
+  // 契約：docs/contracts/worker-api.md「Dev IFC Source Selection」。回應「絕不」洩漏絕對路徑，
+  // 不回 source_ref（bytes 取得由 register 端在 loopback 內部完成）；僅 top-level *.ifc、忽略 symlink、
+  // 穩定 source_id（base64url(filename)）。
+  app.get("/api/dev/ifc-sources", (_request, response) => {
+    if (!devRoutesEnabled()) {
+      response.status(404).json({ detail: "dev routes disabled" });
+      return;
+    }
+    const root = path.resolve(config.storageRoot);
+    let exists = false;
+    let readable = false;
+    let entries: fs.Dirent[] = [];
+    try {
+      exists = fs.existsSync(root) && fs.statSync(root).isDirectory();
+      if (exists) {
+        entries = fs.readdirSync(root, { withFileTypes: true });
+        readable = true;
+      }
+    } catch {
+      readable = false;
+    }
+    const items = entries
+      // isFile() 對 readdir(withFileTypes) 的 Dirent 不跟隨 symlink（symlink → isSymbolicLink()），故自動忽略 symlink。
+      .filter((entry) => entry.isFile() && /\.ifc$/i.test(entry.name))
+      .map((entry) => {
+        let sizeBytes = 0;
+        let modifiedAt = new Date(0).toISOString();
+        try {
+          const stat = fs.statSync(path.join(root, entry.name));
+          sizeBytes = stat.size;
+          modifiedAt = stat.mtime.toISOString();
+        } catch {
+          /* stat 失敗不阻擋列舉，size 留 0 */
+        }
+        return {
+          source_id: sourceIdForFilename(entry.name),
+          filename: entry.name,
+          relative_path: entry.name, // top-level，相對 storageRoot
+          size_bytes: sizeBytes,
+          modified_at: modifiedAt,
+        };
+      })
+      .sort((left, right) => left.filename.localeCompare(right.filename));
+    response.json({ root: { exists, readable, item_count: items.length }, items });
+  });
+
+  // 服務單一 storage IFC fixture 的 bytes —— 僅供 coordinator「自身 loopback self-fetch」用（register 內部）。
+  // 安全：loopback-only（擋 0.0.0.0 綁定下的 LAN client 暴露）+ dev gate + 僅 top-level *.ifc + 路徑 containment。
+  // 瀏覽器永不需要也拿不到此路由（list 不回 source_ref；register 走內部 loopback）。
+  app.get("/api/dev/ifc-file/:name", (request, response) => {
+    if (!devRoutesEnabled()) {
+      response.status(404).json({ detail: "dev routes disabled" });
+      return;
+    }
+    if (!isLoopbackRequest(request)) {
+      response.status(403).json({ detail: "ifc-file is loopback-only (coordinator self-fetch)" });
+      return;
+    }
+    const name = request.params.name;
+    if (!/^[^/\\]+\.ifc$/i.test(name)) {
+      response.status(400).json({ detail: "invalid ifc fixture name" });
+      return;
+    }
+    const root = path.resolve(config.storageRoot);
+    const full = path.resolve(root, name);
+    if (full !== path.join(root, name)) {
+      response.status(400).json({ detail: "path traversal blocked" });
+      return;
+    }
+    try {
+      if (!fs.statSync(full).isFile()) {
+        response.status(404).json({ detail: "ifc fixture not found" });
+        return;
+      }
+    } catch {
+      response.status(404).json({ detail: "ifc fixture not found" });
+      return;
+    }
+    response.type("application/octet-stream").sendFile(full);
+  });
+
+  // 以 source_id 註冊真實 ./storage IFC 進審查流程：coordinator 內部 self-POST /api/external/ifc-ready
+  // （source_ifc.ref 指向 loopback-only ifc-file，coordinator 自身真實下載 bytes → 序列派工轉檔）。
+  // 瀏覽器只給 source_id，永不構造 URL、永不接觸 bytes。對映 worker-api 契約的 source→conversion 起點。
+  app.post("/api/dev/ifc-sources/:sourceId/register", async (request, response) => {
+    if (!devRoutesEnabled()) {
+      response.status(404).json({ detail: "dev routes disabled" });
+      return;
+    }
+    const filename = filenameForSourceId(request.params.sourceId, config.storageRoot);
+    if (!filename) {
+      response.status(404).json({ detail: "unknown or stale source_id" });
+      return;
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const stamp = `${Date.now()}_${process.hrtime.bigint().toString(36)}`;
+    const projectId = typeof body.project_id === "string" && body.project_id ? body.project_id : "project_real_ifc_demo";
+    const modelVersionId =
+      typeof body.model_version_id === "string" && body.model_version_id ? body.model_version_id : `mv_realifc_${stamp}`;
+    const selfBase = `http://127.0.0.1:${config.port}`;
+    const ref = `${selfBase}/api/dev/ifc-file/${encodeURIComponent(filename)}`;
+    try {
+      const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Webhook-Secret": config.externalIntakeWebhookSecret,
+          "X-Correlation-Id": `corr_devreg_${stamp}`,
+          "X-Idempotency-Key": `idem_devreg_${stamp}`,
+        },
+        body: JSON.stringify({
+          event: "ifc_ready",
+          tenant_id: "tenant_demo_001",
+          project_id: projectId,
+          external_model_version_id: modelVersionId,
+          external_conversion_task_id: `task_devreg_${stamp}`,
+          source_ifc: { ref, etag: `devstorage:${filename}`, filename },
+        }),
+      });
+      const text = await upstream.text();
+      const contentType = upstream.headers.get("content-type") || "application/json; charset=utf-8";
+      // 補回前端要顯示的 lineage 起點（source_id / filename / relative_path），避免前端再持有檔名映射。
+      response.status(upstream.status).type(contentType).send(
+        text
+          ? JSON.stringify({
+              ...(JSON.parse(text) as Record<string, unknown>),
+              source_id: request.params.sourceId,
+              source_ifc_filename: filename,
+              source_ifc_relative_path: filename,
+            })
+          : "{}",
+      );
+    } catch (error) {
+      response.status(502).json({ detail: `register failed: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  });
+
+  // CH-D：/api/kit/* forward-only reverse-proxy → kit-manager（loopback :8010）。
+  // RK1：Kit 控制權威留 kit-manager；coordinator 只轉發（沿用 proxyConversionService 的通用 forward 邏輯，
+  // 保留 status/content-type），不解讀/不保存 Kit 狀態。瀏覽器一律打 :8004，禁直連 :8010。
+  app.get("/api/kit/health", async (_request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "GET", "/health");
+  });
+  app.get("/api/kit/usdc", async (_request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "GET", "/api/usdc");
+  });
+  app.get("/api/kit/instances/current", async (_request, response) => {
+    await proxyConversionService(response, config.kitManagerApiBase, "GET", "/api/kit/instances/current");
+  });
+  app.post("/api/kit/instances/current/open", async (request, response) => {
+    if (!isKitMutationAuthorized(request, config.devAuthToken)) {
+      response.status(403).json({ detail: "kit mutation requires operator/dev auth (x-dev-token); CH-C 之後改 session primary authority" });
+      return;
+    }
+    await proxyConversionService(response, config.kitManagerApiBase, "POST", "/api/kit/instances/current/open", request.body ?? {});
+  });
+  app.post("/api/kit/instances/current/close", async (request, response) => {
+    if (!isKitMutationAuthorized(request, config.devAuthToken)) {
+      response.status(403).json({ detail: "kit mutation requires operator/dev auth (x-dev-token); CH-C 之後改 session primary authority" });
+      return;
+    }
+    await proxyConversionService(response, config.kitManagerApiBase, "POST", "/api/kit/instances/current/close", request.body ?? {});
+  });
+
   // console-mapping-proxy:element_mapping 經 coordinator proxy 給 viewer。
   // 邊界:viewer 只打 :8004（SHALL NOT HTTP 直連 :49101）；coordinator server-side 從
   // config.conversionApiBase（host 可達的 host.docker.internal:49101）抓 mapping，帶全域 CORS 回傳。
@@ -1672,8 +1899,18 @@ function latestIfcReadyJobForExternalModelVersion(
 function mountDevConsole(app: express.Express, config: CoordinatorConfig): void {
   const publicDir = resolvePublicDir();
   app.use("/dev-console-assets", express.static(publicDir));
-  app.get(["/ui", "/dev-console"], (_request, response) => {
-    response.sendFile(path.join(publicDir, "dev-console.html"));
+
+  // CH-E:設定 CONSOLE_DIST_DIR 且該目錄含 index.html → /ui 服務 React UnifiedConsole;
+  // 否則(未設定 / 目錄不存在)回退既有 dev-console.html(zero-risk 預設,不影響既有部署)。
+  const consoleDist =
+    config.consoleDistDir && fs.existsSync(path.join(config.consoleDistDir, "index.html"))
+      ? config.consoleDistDir
+      : null;
+
+  // CH-E/CH-G(RK6 CRITICAL):/ui/console(301→/ui)與 /ui/open(302 handoff)必須在任何 /ui static /
+  // SPA fallback「之前」註冊為精確路徑;嚴禁讓 /ui/* 萬用吞掉凍結的 /ui/open handoff。
+  app.get("/ui/console", (_request, response) => {
+    response.redirect(301, "/ui");
   });
 
   // fast-ifc-link-demo-loop §3.4 + LAN handoff:server-side redirect to
@@ -1689,6 +1926,26 @@ function mountDevConsole(app: express.Express, config: CoordinatorConfig): void 
     }
     response.redirect(302, buildViewerRedirectUrl(config, session, request.query));
   });
+
+  if (consoleDist) {
+    // /dev-console 仍保留 vanilla 後援面板(精確路徑,不影響 /ui)。
+    app.get("/dev-console", (_request, response) => {
+      response.sendFile(path.join(publicDir, "dev-console.html"));
+    });
+    // React console 靜態:assets 於 /ui/assets/*(vite base=/ui/)。index:false → 目錄請求不自動回 index,
+    // 一律落到下方 SPA fallback(行為可預期);redirect:false → 不為缺斜線發 301。只服務真實檔案。
+    app.use("/ui", express.static(consoleDist, { index: false, redirect: false }));
+    // SPA fallback:/ui 與未命中靜態的 /ui/*(hash 路由 / 重新整理)皆回 index.html。
+    // /ui/console、/ui/open 已於上方先行攔截,不落入此 fallback。
+    app.get(["/ui", "/ui/*"], (_request, response) => {
+      response.sendFile(path.join(consoleDist, "index.html"));
+    });
+  } else {
+    // 未設定 CONSOLE_DIST_DIR:既有 zero-risk 行為,/ui 與 /dev-console 皆服務 vanilla dev-console.html。
+    app.get(["/ui", "/dev-console"], (_request, response) => {
+      response.sendFile(path.join(publicDir, "dev-console.html"));
+    });
+  }
 }
 
 function buildCoordinatorOpenUrl(config: CoordinatorConfig, session: string): string {
@@ -1733,6 +1990,53 @@ function resolvePublicDir(): string {
   }
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   return path.join(moduleDir, "public");
+}
+
+// ── real-ifc-fixture-intake 安全 helpers（PR #184 風險修正）─────────────────────
+// 穩定、path-safe、可逆的 source_id（base64url(filename)）。對映 docs/contracts/worker-api.md
+// 的 ifc-sources 契約：回應「絕不」洩漏絕對路徑，僅 top-level *.ifc，忽略 symlink，拒絕 stale/out-of-root id。
+function sourceIdForFilename(filename: string): string {
+  return "ifcsrc_" + Buffer.from(filename, "utf8").toString("base64url");
+}
+
+function filenameForSourceId(sourceId: string, storageRoot: string): string | null {
+  if (typeof sourceId !== "string" || !sourceId.startsWith("ifcsrc_")) return null;
+  let filename: string;
+  try {
+    filename = Buffer.from(sourceId.slice("ifcsrc_".length), "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+  // 僅允許 top-level *.ifc（無路徑分隔，擋穿越），且實際存在於 storageRoot（拒絕 stale / out-of-root）。
+  if (!/^[^/\\]+\.ifc$/i.test(filename)) return null;
+  const root = path.resolve(storageRoot);
+  const full = path.resolve(root, filename);
+  if (full !== path.join(root, filename)) return null;
+  try {
+    if (!fs.statSync(full).isFile()) return null;
+  } catch {
+    return null;
+  }
+  return filename;
+}
+
+// 僅 loopback（coordinator 自身 self-fetch）可取 IFC bytes；擋 0.0.0.0 綁定下的 LAN client 暴露。
+function isLoopbackRequest(request: express.Request): boolean {
+  const raw = (request.ip || request.socket?.remoteAddress || "").toString();
+  const ip = raw.replace(/^::ffff:/, "");
+  return ip === "127.0.0.1" || ip === "::1";
+}
+
+// /api/dev/* demo 路由開關（production / 非 demo 應設 ENABLE_DEV_ROUTES=false → 404）。
+function devRoutesEnabled(): boolean {
+  return process.env.ENABLE_DEV_ROUTES !== "false";
+}
+
+// 變更型 /api/kit/* 需 operator/dev 授權（dev token header）。CH-C 之後改為 session primary authority。
+// 前端 gate 僅 UX；此處為「轉發前」的後端授權邊界（coordinator 仍只轉發，Kit 權威留 kit-manager）。
+function isKitMutationAuthorized(request: express.Request, devToken: string): boolean {
+  const token = request.header("x-dev-token") || request.header("x-operator-token");
+  return Boolean(token && devToken && token === devToken);
 }
 
 async function proxyConversionService(

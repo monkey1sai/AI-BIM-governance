@@ -30,16 +30,20 @@ import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSo
 import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
 import { demoPrimPath } from "./clients/demoDefaults";
 import { reviewEnv } from "./config/env";
+import { harnessEnabled } from "./harness/harnessConfig";
+import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
 import type { DemoLogEntry } from "./types/demo";
 import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
 import type { ReviewLifecycleStatus, ReviewSession, ReviewSessionRequest, ReviewStreamConfig } from "./types/review";
 import type { HighlightItem, StreamMessage } from "./types/streamMessages";
 // 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（client 主動拉，不 server-push）。
-import { GovernanceOverlay, type RuleCheckState, type IssueCreateState } from "./console/GovernanceOverlay";
+import { GovernanceOverlay, type RuleCheckState, type IssueCreateState, type StageArtifactBinding, type BindingApplyState } from "./console/GovernanceOverlay";
 import { deriveOverlayInputs } from "./console/governance/windowOverlayGlue";
 import { HighlightBridge, type FailedElement, type HighlightResult } from "./console/governance/highlightBridge";
 import { MappingCache } from "./console/governance/mappingCache";
+import { MockViewport } from "./console/viewer/MockViewport";
+import "./console/viewer/viewer.css";
 import { evaluateCoverageGate } from "./console/governance/govEndpoints";
 // 統一治理控制台 MVP（W1/W3）：A3 rule-run / A8 issue / BCF 都打 coordinator :8004 的 /api/governance/* proxy。
 import { governanceClient, type RuleResultRow, type RuleRunStatus } from "./console/governanceClient";
@@ -101,6 +105,10 @@ interface AppState {
     govIssueCreate?: IssueCreateState;
     // W4：點 live 3D 構件反查到的 ifc_guid（帶進治理）。
     govSelectedGuid?: string | null;
+    // CH-F：Stage / Artifact Binding 狀態（active / last-good revision + 套用交易狀態）。
+    govBindingActiveRevision?: string | null;
+    govBindingLastGoodRevision?: string | null;
+    govBindingApplyState?: BindingApplyState;
     showUI: boolean;
     isLoading: boolean;
     loadingText: string; 
@@ -811,7 +819,93 @@ export default class App extends React.Component<AppProps, AppState> {
         }
     }
 
+    // Harness 專用 bootstrap：注入可決定性 session + ready 的 HARNESS_STAGE_URL，
+    // 跳過 coordinator（避免 CORS / 真轉檔依賴）。只造「後端資料」，前端狀態機
+    // （openStage / loadingState / USD 樹 / overlay）全部照真實邏輯跑，由 FakeAppStreamer 回應 Kit。
+    // CH-F：交易式套用 Stage / Artifact Binding。spectator / 未就緒不送 mutating 指令（前端 gate 僅 UX）。
+    // composeStageRequest → 等 Kit 回 bindingApplied 才更新 active revision（不偽宣告成功；失敗保留 last-good）。
+    private _applyBinding(selection: StageArtifactBinding[], revisionId: string): void {
+        if (isSpectatorStreamMode()) {
+            this._appendReviewEvent(`spectator（view-only）：略過 binding 套用（${revisionId}）`);
+            return;
+        }
+        const primary = selection.find((s) => s.role === "primary");
+        if (!primary) {
+            this.setState({ govBindingApplyState: { status: "failed", reason: "缺少 primary artifact" } });
+            return;
+        }
+        this.setState({ govBindingApplyState: { status: "applying" } });
+        this._appendReviewEvent(`套用 binding revision=${revisionId}（primary=${primary.artifact_id}, layers=${selection.length}）`);
+        const compose = () =>
+            this._sendStreamMessage({
+                event_type: "composeStageRequest",
+                payload: { binding_revision_id: revisionId, artifacts: selection },
+            });
+        // CH-C：真實模式先過 coordinator 後端角色權威（source_client_id / primary），通過才送 DataChannel 重組 stage；
+        // 後端拒絕（403）→ honest failed，不偽宣告。harness 模式無 coordinator → 直接走假 Kit（authority 由 coordinator 單元測試驗證）。
+        if (!harnessEnabled() && this.state.reviewSessionId) {
+            void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(this.state.reviewSessionId)}/stage-binding`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ source_client_id: reviewEnv.defaultUserId, role: "primary", binding_revision_id: revisionId, primary_artifact_id: primary.artifact_id }),
+            })
+                .then((r) => {
+                    if (!r.ok) {
+                        this.setState({ govBindingApplyState: { status: "failed", reason: `coordinator 後端權威拒絕（${r.status}）` } });
+                        return;
+                    }
+                    compose();
+                })
+                .catch((error) => this.setState({ govBindingApplyState: { status: "failed", reason: error instanceof Error ? error.message : String(error) } }));
+            return;
+        }
+        compose();
+    }
+
+    private _bootstrapHarnessSession(): void {
+        const stageUrl = HARNESS_STAGE_URL;
+        const harnessAsset: USDAssetType = { name: "Sample Building (harness)", url: stageUrl };
+        // CH-F：harness 提供多個 ready derived USDC artifact，供 BindingComposer 選 1..N / 指定 primary / 調 load_order。
+        const harnessBindings: ArtifactBinding[] = [
+            { binding_id: "b_h_building", artifact_group_id: "ag_harness", model_version_id: "version_harness_demo", artifact_id: "artifact_h_building", display_name: "Building Shell", source_ifc_filename: "sample-building.ifc", artifact_role: "derived", url: stageUrl, mapping_url: null, load_order: 0, routing_policy: "same_instance", ready_status: "ready" },
+            { binding_id: "b_h_levels", artifact_group_id: "ag_harness", model_version_id: "version_harness_demo", artifact_id: "artifact_h_levels", display_name: "Levels Overlay", source_ifc_filename: "sample-building.ifc", artifact_role: "derived", url: "harness://stage/World/levels.usdc", mapping_url: null, load_order: 1, routing_policy: "same_instance", ready_status: "ready" },
+            { binding_id: "b_h_mep", artifact_group_id: "ag_harness", model_version_id: "version_harness_demo", artifact_id: "artifact_h_mep", display_name: "MEP Overlay", source_ifc_filename: "sample-building.ifc", artifact_role: "derived", url: "harness://stage/World/mep.usdc", mapping_url: null, load_order: 2, routing_policy: "same_instance", ready_status: "ready" },
+        ];
+        const streamConfig: ReviewStreamConfig = {
+            session_id: "review_session_harness0001",
+            lifecycle_status: "active",
+            source: "local_fixed",
+            webrtc: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: null },
+            model: { status: "ready", artifact_id: "artifact_h_building", url: stageUrl, mapping_url: null },
+            artifacts: [],
+            artifact_bindings: harnessBindings,
+            kit_instance_bindings: [],
+        };
+        this.setState({
+            reviewSessionId: streamConfig.session_id,
+            reviewRequestId: null,
+            currentProjectId: "project_harness_demo",
+            currentModelVersionId: "version_harness_demo",
+            reviewLifecycleStatus: "active",
+            reviewStatus: "harness session（deterministic，無 coordinator / 無真實 Kit）",
+            reviewArtifacts: [],
+            latestStreamConfig: streamConfig,
+            mappingUrl: null,
+            usdAssets: [harnessAsset],
+            selectedUSDAsset: harnessAsset,
+            expectedStageUrl: stageUrl,
+            loadedStageUrl: null,
+            stageLoadStatus: "pending",
+            showUI: true,
+            reviewEvents: [...this.state.reviewEvents, "harness session 已注入（deterministic）"],
+        });
+    }
+
     private async _bootstrapReview(): Promise<void> {
+        if (harnessEnabled()) {
+            this._bootstrapHarnessSession();
+            return;
+        }
         try {
             if (reviewEnv.hasExplicitEmptySessionId) {
                 this.setState((state) => ({
@@ -1355,13 +1449,19 @@ export default class App extends React.Component<AppProps, AppState> {
         // 統一治理控制台 MVP（W4 點 3D → ifc_guid 方向）：經 MappingCache 反查 ifc_guid 帶進治理；
         // 無對映誠實記事件（不捏造 guid）。與 live viewport 點選（stageSelectionChanged）共用 _reverseLookupGuid。
         if (paths[0]) this._reverseLookupGuid(paths[0]);
-        const message: AppStreamMessageType = {
-            event_type: "selectPrimsRequest",
-            payload: {
-                paths: paths
-            }
-        };
-        this._sendStreamMessage(message);
+
+        // CH-B spectator gate：view-only 角色不送任何 mutating 指令（誠實，不做 best-effort 隱性送出）。
+        // 後端權威另在 streaming server 以 source_client_id 驗證（CH-C），前端 gate 僅 UX。
+        if (isSpectatorStreamMode()) {
+            this._appendReviewEvent(`spectator（view-only）：略過 select / focus（${paths[0] || "none"}）`);
+            return;
+        }
+
+        this._sendStreamMessage({ event_type: "selectPrimsRequest", payload: { paths } });
+        // CH-B：點語意樹節點 → 相機以該元件聚焦（spec：點 prim path → 相機聚焦）。
+        if (paths[0]) {
+            this._sendStreamMessage(buildFocusPrimRequest(paths[0]));
+        }
 
         selectedUsdPrims.forEach(usdPrim => {this._onFillUSDPrim(usdPrim)});
     }
@@ -1836,6 +1936,18 @@ export default class App extends React.Component<AppProps, AppState> {
                 this._makePickable(children);
             }
         }
+        // CH-F：Kit 確認 binding 已套用 → 更新 active + last-good revision（交易完成；誠實：只有確認才宣告 applied）。
+        else if (event.event_type === "bindingApplied") {
+            const revision = getPayloadString(payload, "binding_revision_id");
+            if (revision) {
+                this.setState((state) => ({
+                    govBindingActiveRevision: revision,
+                    govBindingLastGoodRevision: revision,
+                    govBindingApplyState: { status: "applied" },
+                    reviewEvents: [...state.reviewEvents, `binding 已套用（Kit 確認）：${revision}`],
+                }));
+            }
+        }
         // other messages from app to kit
         else if (event.messageRecipient === "kit") {
             console.log("onCustomEvent");
@@ -2033,13 +2145,30 @@ export default class App extends React.Component<AppProps, AppState> {
                     {/* viewer-edge-bim-server-console:USDAsset / USDStage 是 debug 工具,
                         預設不渲染;`?debug=1` 才顯示作為 Inspector ④ 技術細節入口。 */}
                     {isDebugQueryEnabled() && (
-                        <>
-                            <USDAsset
-                                usdAssets={this.state.usdAssets}
-                                selectedAssetUrl={this.state.selectedUSDAsset?.url}
-                                onSelectUSDAsset={(value) => this._onSelectUSDAsset(value)}
-                                width={sidebarWidth}
-                            />
+                        <USDAsset
+                            usdAssets={this.state.usdAssets}
+                            selectedAssetUrl={this.state.selectedUSDAsset?.url}
+                            onSelectUSDAsset={(value) => this._onSelectUSDAsset(value)}
+                            width={sidebarWidth}
+                        />
+                    )}
+                    {/* CH-B：USD/BIM 語意樹。有 usdPrims（stage 已載入）即顯示為可操作面板，
+                        不再僅限 ?debug=1（USDAsset 下拉維持 debug 工具）。 */}
+                    {(isDebugQueryEnabled() || this.state.usdPrims.length > 0) && (
+                        <div
+                            data-testid="usd-stage-left-dock"
+                            style={{
+                                position: "absolute",
+                                left: 0,
+                                top: headerHeight,
+                                width: sidebarWidth,
+                                // 明確高度（top..bottom）讓 dock 真正撐開；bottom 留白避開左下 stage-truth 面板（bottom:12, z:6）。
+                                bottom: 150,
+                                overflow: "hidden",
+                                // 左側語意樹須在治理 overlay（z-index 20）與 stage-truth（z 6）之上才可點選操作（spec：左側 USD 樹）。
+                                zIndex: 25,
+                            }}
+                        >
                             <USDStage
                                 ref={this.usdStageRef}
                                 width={sidebarWidth}
@@ -2049,10 +2178,38 @@ export default class App extends React.Component<AppProps, AppState> {
                                 fillUSDPrim={(value) => this._onFillUSDPrim(value)}
                                 onReset={() => this._onStageReset()}
                             />
-                        </>
+                        </div>
                     )}
                 </>
                 }
+
+                {/* CH-H1：中央視區「不空白」—— 無真實 WebRTC 幀（harness 或尚未出幀）時，以資訊濃密 mock
+                    viewport 取代空白（明標 deterministic·no-GPU，避免被當壞掉），把範本①模型資訊+④對構表+選取 echo
+                    放進中央；取得真實 Kit 幀（_hasRemoteVideoFrame）後不渲染，讓 <video> live 3D 顯示。additive：
+                    不改 AppStream / GovernanceOverlay / stage-truth / spectator 既有機制。 */}
+                {!this._hasRemoteVideoFrame()
+                    && (harnessEnabled() || (Boolean(this.state.reviewSessionId) && Boolean(this.state.expectedStageUrl)))
+                    && (
+                    <MockViewport
+                        harness={harnessEnabled()}
+                        stageUrl={this.state.expectedStageUrl}
+                        loadedStageUrl={this.state.loadedStageUrl}
+                        webrtcStatus={this.state.webrtcLifecycleStatus}
+                        selectedGuid={this.state.govSelectedGuid ?? null}
+                        bindings={this.state.latestStreamConfig?.artifact_bindings ?? []}
+                        model={this.state.latestStreamConfig?.model ?? null}
+                        metrics={this.state.latestStreamConfig?.quality_metrics_summary ?? null}
+                        projectId={this.state.currentProjectId}
+                        modelVersionId={this.state.currentModelVersionId}
+                        mappedCount={this._mappingCache?.mappedCount ?? null}
+                        isFake={this._mappingCache?.isFake}
+                        mappingUrl={this.state.latestStreamConfig?.model?.mapping_url ?? null}
+                        onSelectGuid={(g) => this.setState({ govSelectedGuid: g })}
+                        reservedRight={352}
+                        reservedLeft={this.state.showUI ? sidebarWidth : 0}
+                        sessionId={this.state.reviewSessionId}
+                    />
+                )}
 
                 {/* 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（position:absolute,
                     z-index:20，late sibling，不改既有 viewer / AppStream / DemoControlPanel / ArtifactPanel 子樹）。
@@ -2064,7 +2221,9 @@ export default class App extends React.Component<AppProps, AppState> {
                     // queued/blocked/failed/closing/closed/dropped 一律視為非 active（治理動作唯讀，誠實表態）。
                     const lifecycle = this.state.reviewLifecycleStatus;
                     const lifecycleActive = lifecycle === "active" || lifecycle === "created";
-                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: this._hasRemoteVideoFrame(), lifecycleActive });
+                    // CH-F：harness 模式下假串流已連（onStart 已觸發 streamReady），對 overlay 視為 dataChannel-ready，
+                    // 讓 primary 可操作（binding/highlight/rule-check）；spectator 仍由 isSpectatorStreamMode() 擋下。
+                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: harnessEnabled() || this._hasRemoteVideoFrame(), lifecycleActive });
                     const ratio = this.state.latestStreamConfig?.quality_metrics_summary?.coverage_ratio ?? null;
                     // R6（誠實）：_mappingCache 為 null（尚未載入 / 未知）視為 fake → degraded，
                     // 不在 client 無法標示時仍顯示有把握的 coverage%（保守誠實）。
@@ -2075,6 +2234,10 @@ export default class App extends React.Component<AppProps, AppState> {
                     const bcfUrl = this.state.currentModelVersionId
                         ? governanceClient.bcfExportUrl({ model_version_id: this.state.currentModelVersionId })
                         : undefined;
+                    // CH-F：ready USDC artifacts（coordinator artifact_bindings 過濾 ready + derived + 有 url）供 BindingComposer。
+                    const bindingArtifacts = (this.state.latestStreamConfig?.artifact_bindings ?? []).filter(
+                        (b) => b.ready_status === "ready" && b.artifact_role === "derived" && Boolean(b.url),
+                    );
                     return (
                         <GovernanceOverlay
                             panelState={inputs.panelState}
@@ -2096,6 +2259,11 @@ export default class App extends React.Component<AppProps, AppState> {
                             issueCreate={this.state.govIssueCreate}
                             bcfUrl={bcfUrl}
                             selectedGuid={this.state.govSelectedGuid ?? null}
+                            bindingArtifacts={bindingArtifacts}
+                            bindingActiveRevision={this.state.govBindingActiveRevision ?? null}
+                            bindingLastGoodRevision={this.state.govBindingLastGoodRevision ?? null}
+                            bindingApplyState={this.state.govBindingApplyState}
+                            onApplyBinding={(selection, revisionId) => this._applyBinding(selection, revisionId)}
                         />
                     );
                 })()}

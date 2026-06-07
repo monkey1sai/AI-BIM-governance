@@ -17,6 +17,9 @@ services:
       # dockerized coordinator 的 governance proxy 必須走 host.docker.internal 連回；
       # 否則 governanceApiBase() fallback 到 container loopback 127.0.0.1:49102 → 502 Bad Gateway。
       GOVERNANCE_API_BASE: ${HOST_GOVERNANCE_API_BASE:-http://host.docker.internal:49102}
+      # CH-D：dockerized coordinator 經 host.docker.internal 連回 host-native kit-manager（:8010），
+      # 供 /api/kit/* forward-only proxy（瀏覽器禁直連 :8010）。Kit 控制權威仍留 kit-manager（RK1）。
+      KIT_MANAGER_API_BASE: ${HOST_KIT_MANAGER_API_BASE:-http://host.docker.internal:8010}
       KIT_STREAM_SERVER: ${KIT_SIGNALING_HOST:-${PUBLIC_HOST:-127.0.0.1}}
       KIT_SIGNALING_PORT: ${KIT_SIGNALING_PORT:-49100}
       KIT_MEDIA_SERVER: ${KIT_MEDIA_HOST:-${KIT_SIGNALING_HOST:-${PUBLIC_HOST:-127.0.0.1}}}

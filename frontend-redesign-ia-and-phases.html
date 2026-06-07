@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-BIM-governance 前端 IA 與分期路線圖</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'Noto Sans TC', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1240px; margin: 0 auto; }
+    .header { margin-bottom: 1.5rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #76b900; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.85rem; margin-left: 1.75rem; }
+    h2.section { font-size: 1rem; color: #cbd5e1; margin: 2rem 0 0.75rem; font-weight: 600; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 980px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.85rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.74rem; line-height: 1.5; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.72rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>AI-BIM-governance · 前端 IA 與分期重構路線圖</h1>
+      </div>
+      <p class="subtitle">唯讀規劃 · 瀏覽器唯一可達面 = coordinator :8004 · 誠實降級鐵律 · primary 操作 / spectator 唯讀</p>
+    </div>
+
+    <!-- ============================ DIAGRAM 1: IA 總圖 ============================ -->
+    <h2 class="section">① 資訊架構（IA）總圖 — 合併後的可達面與平面</h2>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 660">
+        <defs>
+          <marker id="ah" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/></marker>
+          <marker id="ahc" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/></marker>
+          <marker id="ahr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/></marker>
+          <marker id="aha" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/></marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/></pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+
+        <!-- Users -->
+        <rect x="24" y="300" width="104" height="56" rx="6" fill="#0f172a"/>
+        <rect x="24" y="300" width="104" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="76" y="324" fill="white" font-size="11" font-weight="600" text-anchor="middle">使用者</text>
+        <text x="76" y="340" fill="#94a3b8" font-size="9" text-anchor="middle">LAN 瀏覽器</text>
+
+        <!-- ===== Coordinator :8004 boundary (the only reachable surface) ===== -->
+        <rect x="160" y="34" width="600" height="592" rx="12" fill="rgba(52,211,153,0.04)" stroke="#34d399" stroke-width="1.2" stroke-dasharray="8,4"/>
+        <text x="174" y="54" fill="#34d399" font-size="11" font-weight="700">coordinator :8004 — 瀏覽器唯一可達面</text>
+
+        <!-- /ui UnifiedConsole (frontend) -->
+        <rect x="184" y="74" width="262" height="232" rx="8" fill="#0f172a"/>
+        <rect x="184" y="74" width="262" height="232" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="315" y="96" fill="white" font-size="12" font-weight="700" text-anchor="middle">:8004/ui — UnifiedConsole</text>
+        <text x="315" y="111" fill="#22d3ee" font-size="8" text-anchor="middle">正規 console 入口（合併後・項目4/5）</text>
+        <!-- plane 1 -->
+        <rect x="198" y="122" width="234" height="96" rx="6" fill="rgba(8,51,68,0.25)" stroke="#155e6b" stroke-width="1"/>
+        <text x="208" y="138" fill="#67e8f9" font-size="8" font-weight="600">GOVERNANCE PLATFORM · 零 GPU</text>
+        <text x="208" y="155" fill="#cbd5e1" font-size="8.5">#/coordinator · 控制台（移植・真實）</text>
+        <text x="208" y="170" fill="#cbd5e1" font-size="8.5">#/intake · Model Intake + 開模 + Binding</text>
+        <text x="208" y="185" fill="#cbd5e1" font-size="8.5">#/runtime · Kit 綁定 / 串流觀測</text>
+        <text x="208" y="200" fill="#cbd5e1" font-size="8.5">#/review · 失敗構件派工（handoff）</text>
+        <text x="208" y="214" fill="#cbd5e1" font-size="8.5">#/kit · Kit 模型台（經 /api/kit proxy）</text>
+        <!-- plane 2 -->
+        <rect x="198" y="226" width="234" height="68" rx="6" fill="rgba(76,29,149,0.18)" stroke="#5b3da8" stroke-width="1"/>
+        <text x="208" y="242" fill="#c4b5fd" font-size="8" font-weight="600">GOVERNANCE A1–A10</text>
+        <text x="208" y="258" fill="#cbd5e1" font-size="8.5">#/overview · #/issues · #/apps …</text>
+        <text x="208" y="273" fill="#cbd5e1" font-size="8.5">A1–A3 asbuilt · A4–A10 願景(disabled)</text>
+        <text x="208" y="288" fill="#a78bfa" font-size="7.5">Review Room → primary viewer overlay 深連結</text>
+
+        <!-- /ui/open handoff (frozen) -->
+        <rect x="184" y="326" width="262" height="50" rx="6" fill="#0f172a"/>
+        <rect x="184" y="326" width="262" height="50" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="315" y="346" fill="white" font-size="11" font-weight="600" text-anchor="middle">:8004/ui/open?session=…</text>
+        <text x="315" y="362" fill="#fda4af" font-size="8" text-anchor="middle">handoff 302 → viewer（逐字節凍結・CI guard）</text>
+
+        <!-- coordinator backend services -->
+        <rect x="184" y="404" width="120" height="50" rx="6" fill="#0f172a"/>
+        <rect x="184" y="404" width="120" height="50" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="244" y="424" fill="white" font-size="10" font-weight="600" text-anchor="middle">coordinator REST</text>
+        <text x="244" y="440" fill="#94a3b8" font-size="8" text-anchor="middle">session / intake / runtime</text>
+
+        <rect x="184" y="470" width="120" height="48" rx="6" fill="#0f172a"/>
+        <rect x="184" y="470" width="120" height="48" rx="6" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="244" y="489" fill="white" font-size="10" font-weight="600" text-anchor="middle">governanceProxy</text>
+        <text x="244" y="504" fill="#94a3b8" font-size="8" text-anchor="middle">A1–A3 → :49102</text>
+
+        <rect x="184" y="534" width="120" height="48" rx="6" fill="#0f172a"/>
+        <rect x="184" y="534" width="120" height="48" rx="6" fill="rgba(120,53,15,0.35)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="244" y="553" fill="white" font-size="10" font-weight="600" text-anchor="middle">kitProxy ★新增</text>
+        <text x="244" y="568" fill="#fcd34d" font-size="8" text-anchor="middle">/api/kit/* → :8010</text>
+
+        <!-- viewer <App/> -->
+        <rect x="476" y="74" width="262" height="316" rx="8" fill="#0f172a"/>
+        <rect x="476" y="74" width="262" height="316" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="607" y="96" fill="white" font-size="12" font-weight="700" text-anchor="middle">viewer &lt;App/&gt;</text>
+        <text x="607" y="111" fill="#22d3ee" font-size="8" text-anchor="middle">經 /ui/open 進場 · WebRTC 連 streaming-server</text>
+
+        <rect x="490" y="124" width="234" height="74" rx="6" fill="rgba(8,51,68,0.25)" stroke="#155e6b" stroke-width="1"/>
+        <text x="500" y="140" fill="#67e8f9" font-size="8.5" font-weight="600">&lt;USDStage&gt; 左側 USD 樹（項目1）</text>
+        <text x="500" y="156" fill="#cbd5e1" font-size="8.5">點 prim path → 相機以該元件聚焦</text>
+        <text x="500" y="171" fill="#cbd5e1" font-size="8.5">viewport 點選 → 回灌樹 + 展開祖先</text>
+        <text x="500" y="187" fill="#94a3b8" font-size="8">useViewerInteraction（A1/A2/A3 共用）</text>
+
+        <rect x="490" y="206" width="234" height="52" rx="6" fill="rgba(8,51,68,0.25)" stroke="#155e6b" stroke-width="1"/>
+        <text x="500" y="223" fill="#67e8f9" font-size="8.5" font-weight="600">&lt;ViewportLayer&gt; 16:10 WebRTC</text>
+        <text x="500" y="239" fill="#cbd5e1" font-size="8.5">primary 操作 · spectator 唯讀跟隨</text>
+        <text x="500" y="252" fill="#94a3b8" font-size="8">DataChannel: open/focus/select/highlight</text>
+
+        <rect x="490" y="266" width="234" height="110" rx="6" fill="rgba(76,29,149,0.18)" stroke="#5b3da8" stroke-width="1"/>
+        <text x="500" y="282" fill="#c4b5fd" font-size="8.5" font-weight="600">&lt;GovernanceOverlay&gt; 右側治理疊層</text>
+        <text x="500" y="299" fill="#cbd5e1" font-size="8.5">&lt;OperationBar&gt; + &lt;ObservationPanel&gt;</text>
+        <text x="500" y="313" fill="#94a3b8" font-size="8">　操作/觀測 共用（項目1）· rule-run/issue/BCF</text>
+        <text x="500" y="330" fill="#cbd5e1" font-size="8.5">&lt;BindingComposer mode=live&gt; ★主入口</text>
+        <text x="500" y="344" fill="#94a3b8" font-size="8">　選 N 個 USDC · 指定 primary · 重載 stage（項目3）</text>
+        <text x="500" y="361" fill="#fbbf24" font-size="7.5">spectator → 全 aria-disabled + 誠實 banner</text>
+
+        <!-- internal / loopback plane -->
+        <rect x="788" y="120" width="188" height="300" rx="12" fill="rgba(148,163,184,0.05)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="6,4"/>
+        <text x="800" y="140" fill="#94a3b8" font-size="9" font-weight="600">internal / loopback（瀏覽器不可達）</text>
+
+        <rect x="806" y="156" width="150" height="56" rx="6" fill="#0f172a"/>
+        <rect x="806" y="156" width="150" height="56" rx="6" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="881" y="178" fill="white" font-size="10" font-weight="600" text-anchor="middle">governance-service</text>
+        <text x="881" y="194" fill="#94a3b8" font-size="8.5" text-anchor="middle">:49102 · A1–A3 權威</text>
+
+        <rect x="806" y="226" width="150" height="56" rx="6" fill="#0f172a"/>
+        <rect x="806" y="226" width="150" height="56" rx="6" fill="rgba(120,53,15,0.35)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="881" y="248" fill="white" font-size="10" font-weight="600" text-anchor="middle">kit-manager</text>
+        <text x="881" y="264" fill="#fcd34d" font-size="8.5" text-anchor="middle">:8010 → loopback（前端退役）</text>
+
+        <rect x="806" y="296" width="150" height="60" rx="6" fill="#0f172a"/>
+        <rect x="806" y="296" width="150" height="60" rx="6" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="881" y="318" fill="white" font-size="10" font-weight="600" text-anchor="middle">streaming-server</text>
+        <text x="881" y="333" fill="#94a3b8" font-size="8" text-anchor="middle">Kit · Signaling :1280</text>
+        <text x="881" y="346" fill="#94a3b8" font-size="8" text-anchor="middle">Media :1281 · WebRTC</text>
+
+        <!-- ===== arrows ===== -->
+        <!-- users → /ui -->
+        <line x1="128" y1="318" x2="182" y2="200" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#ahc)"/>
+        <text x="120" y="248" fill="#94a3b8" font-size="8">HTTPS /ui</text>
+        <!-- users → /ui/open -->
+        <line x1="128" y1="340" x2="182" y2="351" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ahr)"/>
+        <text x="120" y="372" fill="#fb7185" font-size="8">handoff</text>
+        <!-- /ui/open → viewer (302) -->
+        <line x1="446" y1="351" x2="475" y2="300" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#ahr)"/>
+        <text x="452" y="332" fill="#fb7185" font-size="8">302</text>
+        <!-- /ui → coordinator REST -->
+        <line x1="244" y1="306" x2="244" y2="402" stroke="#34d399" stroke-width="1.4" marker-end="url(#ah)"/>
+        <!-- REST → governanceProxy -->
+        <line x1="244" y1="454" x2="244" y2="468" stroke="#34d399" stroke-width="1.2" marker-end="url(#ah)"/>
+        <!-- REST → kitProxy -->
+        <line x1="290" y1="454" x2="290" y2="532" stroke="#fbbf24" stroke-width="1.2" marker-end="url(#aha)"/>
+        <!-- governanceProxy → :49102 -->
+        <path d="M 304 492 Q 760 470 804 188" fill="none" stroke="#a78bfa" stroke-width="1.3" marker-end="url(#ah)"/>
+        <text x="560" y="476" fill="#a78bfa" font-size="8">loopback → :49102</text>
+        <!-- kitProxy → :8010 -->
+        <path d="M 304 556 Q 770 540 804 268" fill="none" stroke="#fbbf24" stroke-width="1.3" marker-end="url(#aha)"/>
+        <text x="600" y="556" fill="#fbbf24" font-size="8">/api/kit → :8010 loopback</text>
+        <!-- viewer → streaming -->
+        <line x1="738" y1="232" x2="804" y2="318" stroke="#fb923c" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="744" y="290" fill="#fb923c" font-size="8">WebRTC</text>
+        <!-- console handoff → viewer (review/kit) -->
+        <path d="M 446 250 Q 462 250 462 200 Q 462 168 478 168" fill="none" stroke="#22d3ee" stroke-width="1.4" stroke-dasharray="4,4" marker-end="url(#ahc)"/>
+        <text x="430" y="190" fill="#22d3ee" font-size="7.5">HandoffButton</text>
+
+        <!-- legend -->
+        <text x="640" y="412" fill="white" font-size="9" font-weight="600">圖例</text>
+        <rect x="640" y="420" width="14" height="9" rx="2" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/><text x="660" y="428" fill="#94a3b8" font-size="8">前端</text>
+        <rect x="700" y="420" width="14" height="9" rx="2" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/><text x="720" y="428" fill="#94a3b8" font-size="8">coordinator 後端</text>
+        <rect x="640" y="434" width="14" height="9" rx="2" fill="rgba(120,53,15,0.35)" stroke="#fbbf24" stroke-width="1"/><text x="660" y="442" fill="#94a3b8" font-size="8">Kit/proxy</text>
+        <rect x="700" y="434" width="14" height="9" rx="2" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1"/><text x="720" y="442" fill="#94a3b8" font-size="8">治理權威/DB</text>
+        <line x1="640" y1="452" x2="654" y2="452" stroke="#fb7185" stroke-width="1.4" stroke-dasharray="4,3"/><text x="660" y="455" fill="#94a3b8" font-size="8">handoff</text>
+        <text x="700" y="455" fill="#fbbf24" font-size="8">★ = 本次新增</text>
+      </svg>
+    </div>
+
+    <!-- ============================ DIAGRAM 2: 分期依賴鏈 ============================ -->
+    <h2 class="section">② 分期落地依賴鏈 — CH-A → CH-G（每期可獨立驗證 · 走 branch→PR→Actions→merge）</h2>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 380">
+        <defs>
+          <marker id="ah2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#76b900"/></marker>
+          <marker id="ah2d" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8"/></marker>
+          <pattern id="grid2" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/></pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid2)"/>
+
+        <!-- spine nodes -->
+        <!-- CH-A P0 -->
+        <rect x="24" y="150" width="138" height="78" rx="8" fill="#0f172a"/>
+        <rect x="24" y="150" width="138" height="78" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="34" y="146" fill="#76b900" font-size="9" font-weight="700">P0</text>
+        <text x="93" y="172" fill="white" font-size="11" font-weight="700" text-anchor="middle">CH-A</text>
+        <text x="93" y="188" fill="#cbd5e1" font-size="8" text-anchor="middle">設計系統 token</text>
+        <text x="93" y="200" fill="#cbd5e1" font-size="8" text-anchor="middle">+ 共用元件骨架</text>
+        <text x="93" y="218" fill="#34d399" font-size="7.5" text-anchor="middle">風險 低 · 純前端</text>
+
+        <!-- CH-B P1 -->
+        <rect x="196" y="150" width="138" height="78" rx="8" fill="#0f172a"/>
+        <rect x="196" y="150" width="138" height="78" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="206" y="146" fill="#76b900" font-size="9" font-weight="700">P1</text>
+        <text x="265" y="172" fill="white" font-size="11" font-weight="700" text-anchor="middle">CH-B</text>
+        <text x="265" y="188" fill="#cbd5e1" font-size="8" text-anchor="middle">viewer 樹→聚焦</text>
+        <text x="265" y="200" fill="#cbd5e1" font-size="8" text-anchor="middle">A1 操作/觀測 + gate</text>
+        <text x="265" y="218" fill="#fb7185" font-size="7.5" text-anchor="middle">風險 高 · Window.tsx</text>
+
+        <!-- CH-D P2 -->
+        <rect x="368" y="150" width="138" height="78" rx="8" fill="#0f172a"/>
+        <rect x="368" y="150" width="138" height="78" rx="8" fill="rgba(120,53,15,0.35)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="378" y="146" fill="#76b900" font-size="9" font-weight="700">P2</text>
+        <text x="437" y="172" fill="white" font-size="11" font-weight="700" text-anchor="middle">CH-D</text>
+        <text x="437" y="188" fill="#cbd5e1" font-size="8" text-anchor="middle">kit /api/kit/*</text>
+        <text x="437" y="200" fill="#cbd5e1" font-size="8" text-anchor="middle">reverse-proxy</text>
+        <text x="437" y="218" fill="#fbbf24" font-size="7.5" text-anchor="middle">邊界風險 · 先行 PR</text>
+
+        <!-- CH-E P3 -->
+        <rect x="540" y="150" width="138" height="78" rx="8" fill="#0f172a"/>
+        <rect x="540" y="150" width="138" height="78" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="550" y="146" fill="#76b900" font-size="9" font-weight="700">P3</text>
+        <text x="609" y="172" fill="white" font-size="11" font-weight="700" text-anchor="middle">CH-E</text>
+        <text x="609" y="188" fill="#cbd5e1" font-size="8" text-anchor="middle">console handoff</text>
+        <text x="609" y="200" fill="#cbd5e1" font-size="8" text-anchor="middle">+ 合併頁(項2+4)</text>
+        <text x="609" y="218" fill="#fb7185" font-size="7.5" text-anchor="middle">風險 高 · bootstrap</text>
+
+        <!-- CH-F P4 -->
+        <rect x="712" y="150" width="138" height="78" rx="8" fill="#0f172a"/>
+        <rect x="712" y="150" width="138" height="78" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="722" y="146" fill="#76b900" font-size="9" font-weight="700">P4</text>
+        <text x="781" y="172" fill="white" font-size="11" font-weight="700" text-anchor="middle">CH-F</text>
+        <text x="781" y="188" fill="#cbd5e1" font-size="8" text-anchor="middle">Binding 主入口</text>
+        <text x="781" y="200" fill="#cbd5e1" font-size="8" text-anchor="middle">overlay + intake</text>
+        <text x="781" y="218" fill="#fb7185" font-size="7.5" text-anchor="middle">風險 高 · 雙寫一致</text>
+
+        <!-- CH-G P5 -->
+        <rect x="884" y="150" width="92" height="78" rx="8" fill="#0f172a"/>
+        <rect x="884" y="150" width="92" height="78" rx="8" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="894" y="146" fill="#76b900" font-size="9" font-weight="700">P5</text>
+        <text x="930" y="172" fill="white" font-size="11" font-weight="700" text-anchor="middle">CH-G</text>
+        <text x="930" y="188" fill="#cbd5e1" font-size="8" text-anchor="middle">URL 收斂</text>
+        <text x="930" y="200" fill="#cbd5e1" font-size="8" text-anchor="middle">移除舊別名</text>
+        <text x="930" y="218" fill="#fb7185" font-size="7" text-anchor="middle">CRITICAL</text>
+
+        <!-- CH-C parallel (below) -->
+        <rect x="282" y="288" width="170" height="64" rx="8" fill="#0f172a"/>
+        <rect x="282" y="288" width="170" height="64" rx="8" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="292" y="284" fill="#76b900" font-size="9" font-weight="700">P1.5（並行）</text>
+        <text x="367" y="310" fill="white" font-size="11" font-weight="700" text-anchor="middle">CH-C</text>
+        <text x="367" y="326" fill="#cbd5e1" font-size="8" text-anchor="middle">streaming 角色權威</text>
+        <text x="367" y="339" fill="#94a3b8" font-size="7.5" text-anchor="middle">source_client_id 驗證 · 跨 sub-repo</text>
+
+        <!-- spine arrows -->
+        <line x1="162" y1="189" x2="194" y2="189" stroke="#76b900" stroke-width="1.6" marker-end="url(#ah2)"/>
+        <line x1="334" y1="189" x2="366" y2="189" stroke="#76b900" stroke-width="1.6" marker-end="url(#ah2)"/>
+        <line x1="506" y1="189" x2="538" y2="189" stroke="#76b900" stroke-width="1.6" marker-end="url(#ah2)"/>
+        <line x1="678" y1="189" x2="710" y2="189" stroke="#76b900" stroke-width="1.6" marker-end="url(#ah2)"/>
+        <line x1="850" y1="189" x2="882" y2="189" stroke="#76b900" stroke-width="1.6" marker-end="url(#ah2)"/>
+
+        <!-- CH-B → CH-C (parallel branch) -->
+        <line x1="265" y1="228" x2="330" y2="286" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4,4" marker-end="url(#ah2d)"/>
+        <!-- CH-C → CH-E (rejoin: role authority feeds spectator gating) -->
+        <path d="M 452 320 Q 560 320 595 230" fill="none" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4,4" marker-end="url(#ah2d)"/>
+        <text x="470" y="338" fill="#94a3b8" font-size="7.5">角色權威 → spectator gate</text>
+
+        <!-- CH-D can parallel CH-B/CH-C note -->
+        <text x="437" y="252" fill="#fbbf24" font-size="7.5" text-anchor="middle">可與 CH-B/CH-C 並行</text>
+
+        <!-- title legend -->
+        <text x="24" y="40" fill="white" font-size="10" font-weight="600">依賴鏈：CH-A → CH-B →（CH-C 並行）→ CH-D → CH-E → CH-F → CH-G</text>
+        <text x="24" y="58" fill="#94a3b8" font-size="8">實線 = 強相依（須先完成）　虛線 = 並行/收尾匯入　每期 done 條件 = browser E2E evidence</text>
+
+        <!-- mapping items→changes -->
+        <text x="24" y="90" fill="#64748b" font-size="8">項目對映：項目1→CH-B　項目2→CH-E　項目3→CH-F　項目4→CH-D+CH-E　項目5→CH-G</text>
+      </svg>
+    </div>
+
+    <!-- info cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header"><div class="card-dot rose"></div><h3>三條紅線（必盯）</h3></div>
+        <ul>
+          <li>• RK6 CRITICAL：CH-G redirect 必須精確列舉，禁用 <code>/ui/*</code> 萬用（會吃掉 /ui/open）+ CI guard</li>
+          <li>• RK5 HIGH：P1/P3/P4 都改 Window.tsx，動前 MUST gitnexus_impact，邏輯抽 hook</li>
+          <li>• RK1 HIGH：kitProxy 只 forward，Kit 控制權威留 kit-manager（守邊界）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot cyan"></div><h3>primary / spectator 一致性</h3></div>
+        <ul>
+          <li>• 單一判定來源：viewer 走 resolveGovPanelState，console 走 operatorOpsState</li>
+          <li>• 三層縱深：UI disabled → send no-op → 後端 source_client_id（權威）</li>
+          <li>• spectator 不隱藏按鈕：aria-disabled + 理由 banner（誠實鐵律）</li>
+          <li>• 前端 gate 僅 UX，非授權邊界（文件須明示）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-dot amber"></div><h3>關鍵裁決</h3></div>
+        <ul>
+          <li>• /ui/console 不存在 → 改為 301 安全網收斂到 /ui</li>
+          <li>• console 不長 WebRTC，3D 操作一律 handoff 跳 primary viewer</li>
+          <li>• :8010 經 /api/kit/* proxy 化、改 loopback、前端退役</li>
+          <li>• A1 先落地抽象，A2/A3 接同一 hook 列後續 change</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">AI-BIM-governance · 唯讀規劃產物 · 設計尺規 = Anthropic 前端原則 + NVIDIA Kit primary/spectator · 2026-06-05</p>
+  </div>
+</body>
+</html>

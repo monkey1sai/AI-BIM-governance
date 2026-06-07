@@ -40,10 +40,17 @@ services:
       # production MUST 設 "true":strict 下 HTTP 拿不到 IFC(non-2xx)直接回 502 +
       # download_status=failed,不靜默產 placeholder,避免假資料流入下游 conversion。
       IFC_DOWNLOAD_STRICT: "${IFC_DOWNLOAD_STRICT:-false}"
+      # CH-E:React UnifiedConsole build(vite base=/ui/）的 dist 目錄(container 內路徑)。
+      # 對齊下方 volumes 的 mount destination;設定後 coordinator 於 /ui 服務 React console。
+      # dist-ui 由 host `npm run build:ui` 產出並 bind-mount 進來;若 host 端目錄不存在 / 無 index.html,
+      # mountDevConsole 自動回退 dev-console.html(zero-risk)。
+      CONSOLE_DIST_DIR: /workspace/console-dist
     ports:
       - "8004:8004"
     volumes:
       - ${RUNTIME_STORAGE_ROOT:-./storage}:/workspace/storage
+      # CH-E:React console build 唯讀掛入(host 端 web-viewer-sample/dist-ui → container /workspace/console-dist)。
+      - ./web-viewer-sample/dist-ui:/workspace/console-dist:ro
 
   viewer:
     build:

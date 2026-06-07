@@ -261,6 +261,195 @@
       </div>
     </section>
 
+    <!-- real-ifc-fixture-intake：從 ./storage 選真實 IFC fixture → 真 coordinator ifc-ready（self loopback 真下載）
+         → 序列化派工 streaming-server 轉檔 → auto review session → viewer_url(/ui/open)。
+         誠實鐵律：顯示真實 runtime 狀態（converting / conversion_failed / runtime_blocked / conversion_timeout / ready），
+         不偽造成功。reachable at :8004/ui#/demo-control。 -->
+    <section class="demo-card" id="realIfcDemoControl" data-testid="real-ifc-demo-control">
+      <h1 class="demo-card__title">真實 IFC Fixture 垂直切片（demo-control）</h1>
+      <p class="demo-card__subtitle">
+        從 <code>./storage</code> 選真實 IFC → 真 coordinator <code>POST /api/external/ifc-ready</code> →
+        轉檔 → 自動審查 session → viewer。誠實顯示 runtime 狀態，不偽造成功。
+      </p>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0;">
+        <label for="ifcFixtureSelect">IFC fixture</label>
+        <select id="ifcFixtureSelect" data-testid="ifc-fixture-select" style="min-width:360px;"></select>
+        <button id="ifcRegisterBtn" data-testid="ifc-register-btn" class="nvidia-button">註冊並轉檔（真實）</button>
+      </div>
+      <table style="width:100%; border-collapse:collapse; font-size:13px; text-align:left;">
+        <tbody>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">source_id</td><td data-testid="lin-source-id" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">source_ifc_relative_path</td><td data-testid="lin-source-path" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">source_ifc_filename</td><td data-testid="lin-source-filename">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">source_ifc_size_bytes</td><td data-testid="lin-source-size">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">ifc_ready_job_id</td><td data-testid="lin-job-id" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">model_version_id</td><td data-testid="lin-model-version" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">conversion_job_id</td><td data-testid="lin-conversion-job" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">conversion_status</td><td data-testid="lin-conversion-status">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">download_status</td><td data-testid="lin-download-status">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">artifact_id</td><td data-testid="lin-artifact-id" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">usdc_url / usd_stage_url</td><td data-testid="lin-usdc-url" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">mapping_summary</td><td data-testid="lin-mapping">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">review_session_id</td><td data-testid="lin-session-id" style="font-family:monospace;">—</td></tr>
+          <tr><td style="padding:3px 8px; color:#94a3b8;">viewer_url（/ui/open）</td><td data-testid="lin-viewer-url" style="font-family:monospace; word-break:break-all;">—</td></tr>
+        </tbody>
+      </table>
+      <div style="margin-top:8px;">
+        <span data-testid="ifc-runtime-state" style="font-weight:700; color:#76b900;">runtime: idle</span>
+        <a id="ifcOpenViewer" data-testid="ifc-open-viewer" href="#" target="_blank" rel="noopener" style="margin-left:12px; display:none;">開 viewer（/ui/open）→</a>
+      </div>
+    </section>
+    <script>
+      // real-ifc-fixture-intake demo-control（自包含 IIFE；真實 coordinator API，誠實狀態）。
+      (function () {
+        const q = (s) => document.querySelector(s);
+        const sel = q('[data-testid="ifc-fixture-select"]');
+        const btn = q('[data-testid="ifc-register-btn"]');
+        const stateEl = q('[data-testid="ifc-runtime-state"]');
+        const openViewer = q('[data-testid="ifc-open-viewer"]');
+        const set = (id, v) => { const el = q('[data-testid="' + id + '"]'); if (el) el.textContent = (v == null || v === '') ? '—' : String(v); };
+        const rid = (p) => p + '_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+        let pollTimer = null;
+        const stop = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+
+        let sourcesById = {};
+        async function loadSources() {
+          try {
+            const r = await fetch('/api/dev/ifc-sources');
+            const j = await r.json();
+            sel.innerHTML = '';
+            sourcesById = {};
+            const items = (j.items || []);
+            items.forEach((it) => {
+              sourcesById[it.source_id] = it;
+              const o = document.createElement('option');
+              o.value = it.source_id; // 只用 source_id，前端不構造 URL、不接觸 bytes
+              o.textContent = it.filename + ' (' + Math.round((it.size_bytes || 0) / 1024) + ' KB · ' + String(it.modified_at || '').slice(0, 10) + ')';
+              sel.appendChild(o);
+            });
+            if (!items.length) {
+              const o = document.createElement('option'); o.value = ''; o.textContent = '（No real IFC files found under ./storage）'; sel.appendChild(o);
+              stateEl.textContent = 'runtime: storage_empty (No real IFC files found under ./storage)';
+              return;
+            }
+            // 預選 許良宇圖書館建築_2026.ifc（若有），否則最大者，否則第一個。
+            let preferred = items.find((it) => it.filename === '許良宇圖書館建築_2026.ifc');
+            if (!preferred) preferred = items.slice().sort((a, b) => (b.size_bytes || 0) - (a.size_bytes || 0))[0];
+            if (preferred) sel.value = preferred.source_id;
+            stateEl.textContent = 'runtime: idle';
+          } catch (e) { stateEl.textContent = 'runtime: load_sources_failed: ' + e.message; }
+        }
+
+        async function enrich(job) {
+          // 由 auto session 的 stream-config 補 artifact_id / usdc_url / mapping（取不到留 —，誠實）。
+          try {
+            const sid = job.web_view_session_id; if (!sid) return;
+            const r = await fetch('/api/review-sessions/' + encodeURIComponent(sid) + '/stream-config');
+            if (!r.ok) return;
+            const sc = await r.json();
+            set('lin-artifact-id', sc.model && sc.model.artifact_id);
+            set('lin-usdc-url', sc.model && sc.model.url);
+            if (sc.model && sc.model.mapping_url) set('lin-mapping', 'mapping_url: ' + sc.model.mapping_url);
+          } catch (_) { /* 誠實：補欄失敗不偽造 */ }
+        }
+
+        function startPoll(jobId) {
+          let n = 0;
+          const tick = async () => {
+            n++;
+            try {
+              const r = await fetch('/api/external/ifc-ready/' + encodeURIComponent(jobId));
+              const j = await r.json();
+              set('lin-download-status', j.download_status);
+              set('lin-conversion-status', j.conversion_status);
+              set('lin-conversion-job', j.conversion_job_id);
+              set('lin-session-id', j.web_view_session_id);
+              if (j.viewer_url) { set('lin-viewer-url', j.viewer_url); openViewer.href = j.viewer_url; openViewer.style.display = 'inline'; }
+              const cs = (j.conversion_status || '').toLowerCase();
+              if (j.viewer_url) { stateEl.textContent = 'runtime: ready'; await enrich(j); stop(); }
+              else if (j.download_status === 'failed') { stateEl.textContent = 'runtime: download_failed'; stop(); }
+              else if (cs === 'failed') { stateEl.textContent = 'runtime: conversion_failed'; stop(); }
+              else if (cs.indexOf('block') >= 0) { stateEl.textContent = 'runtime: runtime_blocked'; stop(); }
+              else if (n >= 36) { stateEl.textContent = 'runtime: conversion_timeout (still ' + (j.conversion_status || 'pending') + ' after ~180s)'; stop(); }
+              else { stateEl.textContent = 'runtime: converting (' + (j.conversion_status || 'queued') + ')'; }
+            } catch (e) { stateEl.textContent = 'runtime: poll_error: ' + e.message; }
+          };
+          pollTimer = setInterval(tick, 5000); tick();
+        }
+
+        async function register() {
+          stop();
+          const sourceId = sel.value;
+          const meta = sourcesById[sourceId];
+          if (!sourceId || !meta) { stateEl.textContent = 'runtime: no_fixture_selected'; return; }
+          const mv = rid('mv_realifc');
+          set('lin-source-id', sourceId);
+          set('lin-source-path', meta.relative_path); // 相對路徑（非絕對、非 URL）
+          set('lin-source-filename', meta.filename);
+          set('lin-source-size', (meta.size_bytes || 0) + ' bytes');
+          set('lin-model-version', mv);
+          set('lin-conversion-job', ''); set('lin-artifact-id', ''); set('lin-usdc-url', ''); set('lin-mapping', ''); set('lin-session-id', ''); set('lin-viewer-url', '');
+          openViewer.style.display = 'none';
+          stateEl.textContent = 'runtime: registering';
+          try {
+            // 只給 source_id；coordinator 內部 loopback self-fetch ifc-file → 真實 intake。瀏覽器不接觸 bytes。
+            const r = await fetch('/api/dev/ifc-sources/' + encodeURIComponent(sourceId) + '/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model_version_id: mv, project_id: 'project_real_ifc_demo' }),
+            });
+            const j = await r.json().catch(() => ({}));
+            set('lin-job-id', j.ifc_ready_job_id);
+            if (j.external_model_version_id) set('lin-model-version', j.external_model_version_id);
+            set('lin-download-status', j.download_status);
+            set('lin-conversion-status', j.conversion_status || '(queued)');
+            if (j.ifc_ready_job_id) {
+              stateEl.textContent = j.download_status === 'failed' ? 'runtime: download_failed' : 'runtime: converting';
+              if (j.download_status !== 'failed') startPoll(j.ifc_ready_job_id);
+            } else { stateEl.textContent = 'runtime: register_rejected (' + r.status + ')'; }
+          } catch (e) { stateEl.textContent = 'runtime: register_error: ' + e.message; }
+        }
+
+        if (btn) btn.addEventListener('click', register);
+        loadSources();
+      })();
+    </script>
+
+    <!-- CH-D：Kit Manager 模型台（經 coordinator /api/kit/* forward proxy；瀏覽器禁直連 :8010）。 -->
+    <section class="demo-card" id="kitProxyPanel" data-testid="kit-proxy-panel">
+      <h1 class="demo-card__title">Kit Manager 模型台（經 /api/kit proxy）</h1>
+      <p class="demo-card__subtitle">
+        瀏覽器一律打 coordinator <code>:8004 /api/kit/*</code>（forward → kit-manager <code>:8010</code> loopback）；
+        禁直連 :8010。RK1：Kit 控制權威留 kit-manager，coordinator 只轉發。
+      </p>
+      <div style="display:flex; gap:8px; margin:10px 0;">
+        <button id="kitStatusBtn" data-testid="kit-status-btn" class="nvidia-button">查 Kit 狀態 + USDC（經 proxy）</button>
+      </div>
+      <table style="width:100%; font-size:13px; text-align:left;">
+        <tbody>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/health</td><td data-testid="kit-health">—</td></tr>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/instances/current</td><td data-testid="kit-instance">—</td></tr>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">GET /api/kit/usdc</td><td data-testid="kit-usdc-count">—</td></tr>
+          <tr><td style="color:#94a3b8; padding:3px 8px;">proxy boundary</td><td data-testid="kit-proxy-note">瀏覽器 → :8004 /api/kit/*（forward → :8010，無直連）</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <script>
+      // CH-D：Kit panel（自包含 IIFE）。全部經 coordinator /api/kit/* 同源 proxy，證明 forward + 無直連 :8010。
+      (function () {
+        const q = (s) => document.querySelector(s);
+        const set = (id, v) => { const el = q('[data-testid="' + id + '"]'); if (el) el.textContent = (v == null || v === '') ? '—' : String(v); };
+        const btn = q('[data-testid="kit-status-btn"]');
+        async function go() {
+          set('kit-health', '…'); set('kit-instance', '…'); set('kit-usdc-count', '…');
+          try { const r = await fetch('/api/kit/health'); const j = await r.json().catch(() => ({})); set('kit-health', r.status + ' ' + (j.status || j.kit_status || JSON.stringify(j).slice(0, 60))); } catch (e) { set('kit-health', 'error: ' + e.message); }
+          try { const r = await fetch('/api/kit/instances/current'); const j = await r.json().catch(() => ({})); set('kit-instance', r.status + ' status=' + (j.status || j.state || JSON.stringify(j).slice(0, 50))); } catch (e) { set('kit-instance', 'error: ' + e.message); }
+          try { const r = await fetch('/api/kit/usdc'); const j = await r.json().catch(() => ({})); const arr = Array.isArray(j) ? j : (j.items || j.artifacts || j.usdc || []); set('kit-usdc-count', r.status + ' count=' + (Array.isArray(arr) ? arr.length : '?')); } catch (e) { set('kit-usdc-count', 'error: ' + e.message); }
+        }
+        if (btn) btn.addEventListener('click', go);
+      })();
+    </script>
+
     <!-- coordinator-ui-tri-ready-and-queue:Edge BIM Data Server Console。
          File / Runtime / Semantic 三段 ready 與 viewer 對齊;dispatch queue
          可視化(來自 C4 lifecycle);step 文案改為 Edge BIM Data Server Console
