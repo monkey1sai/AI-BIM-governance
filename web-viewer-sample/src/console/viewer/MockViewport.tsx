@@ -47,6 +47,10 @@ export function MockViewport(props: MockViewportProps) {
   const mappingSrc = !harness && props.sessionId
     ? `${coordinatorClient.base}/api/governance/element-mapping/for-session/${encodeURIComponent(props.sessionId)}`
     : null;
+  // ③ 空間巢狀樹資料源：coordinator spatial-tree for-session proxy（真實 session）；harness 無 → null（退類別計數/空）。
+  const spatialSrc = !harness && props.sessionId
+    ? `${coordinatorClient.base}/api/governance/spatial-tree/for-session/${encodeURIComponent(props.sessionId)}`
+    : null;
   const pad =
     reservedRight || reservedLeft ? { paddingRight: reservedRight || undefined, paddingLeft: reservedLeft || undefined } : undefined;
   return (
@@ -98,8 +102,8 @@ export function MockViewport(props: MockViewportProps) {
             mappedCount={props.mappedCount}
             isFake={props.isFake}
           />
-          {/* ③ IFC 結構（依類別計數，真實 element_mapping 派生；空間巢狀樹 roadmap）。 */}
-          <StructureStats mappingUrl={mappingSrc} />
+          {/* ③ IFC 結構：真實 session 顯空間巢狀樹（spatial-tree proxy）；harness 退類別計數/空。 */}
+          <StructureStats spatialUrl={spatialSrc} mappingUrl={mappingSrc} />
         </div>
 
         <div className="gv-mock__col gv-mock__col--wide">

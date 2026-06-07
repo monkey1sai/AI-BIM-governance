@@ -76,3 +76,8 @@
 .gv-nav__item.active { background: rgba(118, 185, 0, 0.14); border-color: #76b900; color: #e2e8f0; font-weight: 600; }
 .gv-nav__item:disabled { opacity: 0.5; cursor: not-allowed; }
 .gv-nav__rm { color: #f4b740; margin-left: 4px; font-size: 11px; }
+
+/* CH-H2 ③ 空間巢狀樹 */
+.gv-tree { font-size: 12px; }
+.gv-tree__node { padding: 2px 0; color: #cbd5e1; border-left: 1px solid #1c222a; padding-left: 6px; }
+.gv-tree__counts { color: #94a3b8; margin-left: 8px; font-size: 11px; }

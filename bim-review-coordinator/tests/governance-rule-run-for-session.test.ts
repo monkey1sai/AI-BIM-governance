@@ -391,3 +391,53 @@ describe("GET /api/governance/elements/for-session/:sessionId/:guid", () => {
     expect(gov.urls).toHaveLength(0);
   });
 });
+
+// CH-H2 ③：GET /api/governance/spatial-tree/for-session/:sessionId（resolve host IFC 路徑 → forward GET /api/spatial-tree）。
+async function startGovernanceSpatialStub(): Promise<{ baseUrl: string; urls: string[] }> {
+  const urls: string[] = [];
+  governanceStub = http.createServer((req, res) => {
+    if (req.method === "GET" && (req.url ?? "").startsWith("/api/spatial-tree")) {
+      urls.push(req.url ?? "");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ tree: { ifc_type: "IfcProject", name: "P", children: [], type_counts: {} } }));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ detail: "not found" }));
+  });
+  await new Promise<void>((resolve) => governanceStub?.listen(0, "127.0.0.1", () => resolve()));
+  const address = governanceStub.address() as AddressInfo;
+  return { baseUrl: `http://127.0.0.1:${address.port}`, urls };
+}
+
+describe("GET /api/governance/spatial-tree/for-session/:sessionId", () => {
+  it("解析 session host IFC 路徑並 forward 至 governance /api/spatial-tree（帶 ifc_source_path）", async () => {
+    const gov = await startGovernanceSpatialStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+
+    const res = await request(app.app).get(`/api/governance/spatial-tree/for-session/${sessionId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.tree.ifc_type).toBe("IfcProject");
+    expect(gov.urls).toHaveLength(1);
+    expect(gov.urls[0]).toContain(`ifc_source_path=${encodeURIComponent(hostLocalPath)}`);
+  });
+
+  it("session 不存在 → 404，不打 governance", async () => {
+    const gov = await startGovernanceSpatialStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+    const res = await request(app.app).get(`/api/governance/spatial-tree/for-session/review_session_nope`);
+    expect(res.status).toBe(404);
+    expect(gov.urls).toHaveLength(0);
+  });
+
+  it("無效 session id → 400", async () => {
+    const app = makeApp();
+    const res = await request(app.app).get(`/api/governance/spatial-tree/for-session/..%2Fetc`);
+    expect(res.status).toBe(400);
+  });
+});

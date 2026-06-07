@@ -164,6 +164,31 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     void forward(response, "GET", `/api/elements/semantics${qs}`);
   });
 
+  // CH-H2 ③：空間巢狀樹 for-session proxy（範本面板③ IfcProject>Site>Building>Storey + 類別計數）。
+  // 同 elements/for-session：coordinator resolve session→host IFC 路徑後 forward governance GET /api/spatial-tree。
+  app.get("/api/governance/spatial-tree/for-session/:sessionId", (request, response) => {
+    const sessionId = request.params.sessionId;
+    const isSafe = deps.isSafeSessionId ?? (() => true);
+    if (!isSafe(sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    if (!deps.resolveRuleRunSessionContext) {
+      response.status(501).json({ detail: "session→IFC resolution is not configured." });
+      return;
+    }
+    const resolution = deps.resolveRuleRunSessionContext(sessionId);
+    if (!resolution.ok) {
+      response.status(404).json({ detail: resolution.reason });
+      return;
+    }
+    void forward(
+      response,
+      "GET",
+      `/api/spatial-tree?ifc_source_path=${encodeURIComponent(resolution.context.ifc_source_path)}`,
+    );
+  });
+
   app.get("/api/governance/rule-runs/:runId", (request, response) => {
     void forward(response, "GET", `/api/rule-runs/${encodeURIComponent(request.params.runId)}`);
   });

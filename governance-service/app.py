@@ -168,6 +168,49 @@ def element_semantics(
     }
 
 
+# CH-H2 ③：真實空間巢狀樹（範本面板③ IfcProject>Site>Building>Storey + 每節點類別計數）。
+# 真的走 ifcopenshell IsDecomposedBy(IfcRelAggregates) 遞迴 + ContainsElements(IfcRelContainedInSpatialStructure)
+# 統計直接容納元素的類別。瀏覽器只經 coordinator /api/governance/spatial-tree/for-session/:sid proxy。
+def _spatial_subtree(node: Any, seen: set[int]) -> dict:
+    try:
+        nid = node.id()
+    except Exception:
+        nid = None
+    type_counts: dict[str, int] = {}
+    for rel in getattr(node, "ContainsElements", []) or []:
+        for el in getattr(rel, "RelatedElements", []) or []:
+            t = el.is_a()
+            type_counts[t] = type_counts.get(t, 0) + 1
+    children: list[dict] = []
+    if nid is None or nid not in seen:
+        if nid is not None:
+            seen.add(nid)
+        for rel in getattr(node, "IsDecomposedBy", []) or []:
+            for child in getattr(rel, "RelatedObjects", []) or []:
+                # 只遞迴空間結構元素（Site/Building/Storey/Space），不遞迴一般元件 decomposition。
+                if child.is_a("IfcSpatialStructureElement") or child.is_a("IfcSpatialElement"):
+                    children.append(_spatial_subtree(child, seen))
+    return {
+        "ifc_type": node.is_a(),
+        "name": getattr(node, "Name", None),
+        "global_id": getattr(node, "GlobalId", None),
+        "type_counts": type_counts,
+        "children": children,
+    }
+
+
+@app.get("/api/spatial-tree")
+def spatial_tree(ifc_source_path: str = Query(...)):
+    if not os.path.exists(ifc_source_path):
+        raise HTTPException(status_code=400, detail=f"ifc_source_path not found: {ifc_source_path}")
+    model = open_model(ifc_source_path)
+    roots = model.by_type("IfcProject")
+    if not roots:
+        raise HTTPException(status_code=404, detail="no IfcProject in model")
+    seen: set[int] = set()
+    return {"tree": _spatial_subtree(roots[0], seen)}
+
+
 @app.post("/api/rule-runs", status_code=202)
 def create_rule_run(req: RuleRunRequest, background: BackgroundTasks):
     if not os.path.exists(req.ifc_source_path):

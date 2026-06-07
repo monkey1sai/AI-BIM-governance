@@ -1,7 +1,7 @@
 // CH-H2 ③：結構類別計數派生 + 純展示單元測。
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { classCountsFromDoc, StructureStatsView } from "./StructureStats";
+import { classCountsFromDoc, SpatialTreeView, StructureStatsView } from "./StructureStats";
 
 describe("classCountsFromDoc（依 ifc_class 分組計數，降序）", () => {
   it("由真實 element_mapping items 派生類別計數並降序", () => {
@@ -19,6 +19,25 @@ describe("classCountsFromDoc（依 ifc_class 分組計數，降序）", () => {
   });
 });
 
+describe("SpatialTreeView（空間巢狀樹）", () => {
+  it("遞迴顯 Project>Site>Building>Storey + 類別計數（Ifc 前綴去除）", () => {
+    const node = {
+      ifc_type: "IfcProject", name: "P",
+      children: [{
+        ifc_type: "IfcSite", name: "Site A",
+        children: [{ ifc_type: "IfcBuildingStorey", name: "2F", type_counts: { IfcWall: 256, IfcColumn: 48 }, children: [] }],
+      }],
+    };
+    const html = renderToString(<SpatialTreeView node={node} />);
+    expect(html).toContain("IfcProject");
+    expect(html).toContain("IfcSite");
+    expect(html).toContain("IfcBuildingStorey");
+    expect(html).toContain("2F");
+    expect(html).toContain("Wall 256");
+    expect(html).toContain("Column 48");
+  });
+});
+
 describe("StructureStatsView", () => {
   it("顯類別 + 計數 + 總數，且標 roadmap（空間巢狀未假造）", () => {
     const html = renderToString(<StructureStatsView counts={[{ ifc_class: "IfcWall", count: 256 }, { ifc_class: "IfcColumn", count: 48 }]} total={304} />);
@@ -26,6 +45,6 @@ describe("StructureStatsView", () => {
     expect(html).toContain("256");
     expect(html).toContain("IfcColumn");
     expect(html).toContain('data-testid="struct-total"');
-    expect(html).toMatch(/roadmap/); // 空間巢狀誠實 roadmap
+    expect(html).toMatch(/類別計數|真實 session/); // fallback：完整空間巢狀需真實 session
   });
 });
