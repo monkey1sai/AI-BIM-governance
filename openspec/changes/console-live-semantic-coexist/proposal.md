@@ -10,7 +10,7 @@
 
 - **`MockViewport.tsx`**：新增 `liveMode?: boolean` prop。`liveMode=true`（已出真 Kit 幀）時 banner 誠實標「語意側欄 · live 3D 已出幀」（**不再宣稱 no-GPU**），並套 `gv-mock--live` 改為左側語意側欄；`liveMode=false` 維持既有中央 deterministic·no-GPU 佔位。reserved padding 僅 non-live 套用。
 - **`Window.tsx`**：MockViewport mount gate 移除 `!_hasRemoteVideoFrame()`（取得真幀後**不卸載**），改傳 `liveMode={this._hasRemoteVideoFrame()}`。`viewerTab==="model"` 與 session/expectedStageUrl 條件不變；問題分頁（`viewerTab!=="model"`）仍不掛載。
-- **`viewer.css`**：新增 `.gv-mock--live`（左側 400px 側欄、單欄 grid、z-index 18，不覆蓋中央 `<video>`、不與右側 340px 治理 overlay 水平重疊）。
+- **`viewer.css`**：新增 `.gv-mock--live`（左緣 400px 半透明語意側欄、單欄 grid、z-index 26 —— 高於左側 USD 樹 dock(25) 與治理 overlay(20)，確保語意內容恆可見不被既有左側 dock 蓋住〔reviewer P1〕；模型置中不受遮蔽、與右側 340px 治理 overlay 水平不重疊）。完整 reserved-space（側欄與 live 3D 完全並排不疊放 video 左緣、且不蓋 stage-truth 尾端）版面列為後續 follow-up（reviewer P2，非本 change 範圍）。
 - **部署**：重建 docker `viewer` image 使 `:5173`（`/ui/open` 入口）反映上述前端改動。
 - E2E：`element-semantics`（點對構表 row → ②IFC語意/⑥空間/⑤roadmap，與 live 3D 並存）+ `issues-tab`（模型↔問題切換）+ `gov-viewer-layout`（harness 不空白）三支 live 驗綠。
 
