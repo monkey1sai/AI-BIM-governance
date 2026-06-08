@@ -169,3 +169,166 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-tweaks button.on { border-color:var(--ec-grn); color:var(--ec-grn); background:var(--ec-grn-2); }
 .ec-mainhead { display:flex; align-items:center; gap:12px; margin:0 0 14px; flex-wrap:wrap; }
 .ec-mainhead .ec-spacer { flex:1; }
+
+/* ── Coordinator governance tabs（Phase 1 CSS-only support）── */
+.ec-actions {
+  display:flex;
+  flex-direction:row;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  margin:10px 0 12px;
+}
+.ec-actions .ec-btn {
+  max-width:100%;
+}
+.ec-actions[role="tablist"],
+.ec-tabs {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  margin:0 0 12px;
+}
+.ec-tab {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  max-width:100%;
+  background:var(--ec-bg-3);
+  color:var(--ec-fg-2);
+  border:1px solid var(--ec-line-2);
+  border-radius:5px;
+  padding:6px 12px;
+  cursor:pointer;
+  font:inherit;
+}
+.ec-actions[role="tablist"] .ec-btn[aria-selected="true"],
+.ec-tab[aria-selected="true"],
+.ec-tab.active {
+  border-color:var(--ec-grn);
+}
+.ec-actions[role="tablist"] .ec-btn[aria-selected="false"],
+.ec-tab[aria-selected="false"] {
+  color:var(--ec-fg-3);
+}
+.ec-tab:hover:not(:disabled) {
+  border-color:var(--ec-grn);
+  color:var(--ec-grn);
+}
+
+.ec-governance-status {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  border:1px solid var(--ec-line-2);
+  border-radius:6px;
+  background:var(--ec-bg-3);
+  color:var(--ec-fg-2);
+  padding:4px 8px;
+  font-size:11px;
+}
+.ec-status-dot {
+  width:8px;
+  height:8px;
+  flex:0 0 8px;
+  border-radius:50%;
+  background:var(--ec-fg-4);
+}
+.ec-status-dot.ok,
+.ec-status-dot[data-status="ok"],
+.ec-governance-status.ok .ec-status-dot,
+.ec-governance-status[data-status="ok"] .ec-status-dot {
+  background:var(--ec-grn);
+}
+.ec-status-dot.warn,
+.ec-status-dot[data-status="warn"],
+.ec-governance-status.warn .ec-status-dot,
+.ec-governance-status[data-status="warn"] .ec-status-dot {
+  background:var(--ec-amb);
+}
+.ec-status-dot.bad,
+.ec-status-dot[data-status="bad"],
+.ec-governance-status.bad .ec-status-dot,
+.ec-governance-status[data-status="bad"] .ec-status-dot {
+  background:var(--ec-red);
+}
+
+.ec-panel details,
+.ec-tech-details {
+  margin:10px 0 12px;
+  border:1px solid var(--ec-line);
+  border-radius:6px;
+  background:var(--ec-bg-3);
+  color:var(--ec-fg-2);
+}
+.ec-panel summary,
+.ec-tech-details summary {
+  cursor:pointer;
+  color:var(--ec-fg-3);
+  padding:7px 10px;
+  user-select:none;
+}
+.ec-panel summary::marker,
+.ec-tech-details summary::marker {
+  color:var(--ec-grn);
+}
+.ec-panel details[open] summary,
+.ec-tech-details[open] summary {
+  border-bottom:1px solid var(--ec-line);
+}
+.ec-panel summary:hover,
+.ec-tech-details summary:hover {
+  color:var(--ec-grn);
+}
+.ec-panel details > :not(summary),
+.ec-tech-details > :not(summary) {
+  margin-left:10px;
+  margin-right:10px;
+}
+
+.ec-atc-table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+.ec-atc-table th {
+  text-align:left;
+  color:var(--ec-fg-3);
+  font-weight:500;
+  padding:6px 8px;
+  border-bottom:1px solid var(--ec-line-2);
+}
+.ec-atc-table td {
+  padding:6px 8px;
+  border-bottom:1px solid var(--ec-line);
+  color:var(--ec-fg-2);
+}
+.ec-atc-table tr:hover td {
+  background:var(--ec-bg-3);
+}
+
+.ec-evidence-pill {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  max-width:100%;
+  border:1px solid var(--ec-line-2);
+  border-radius:8px;
+  background:var(--ec-bg-3);
+  color:var(--ec-fg-3);
+  padding:2px 7px;
+  font-size:10px;
+}
+.ec-evidence-pill.ok {
+  border-color:var(--ec-grn);
+  color:var(--ec-grn);
+}
+.ec-evidence-pill.warn {
+  border-color:var(--ec-amb);
+  color:var(--ec-amb);
+}
+.ec-evidence-pill.bad {
+  border-color:var(--ec-red);
+  color:var(--ec-red);
+}
