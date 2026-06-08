@@ -290,9 +290,9 @@ export function deriveClassicDashboard(rt: RuntimeStatus | null): ClassicDashboa
       };
     }
     return {
-      tone: "green",
-      label: "Kit runtime 可用",
-      detail: "目前沒有阻塞中的 Kit runtime lease",
+      tone: "yellow",
+      label: "Kit endpoint 已配置",
+      detail: "process evidence 未取得；等 lease / heartbeat 後判定 Kit alive",
     };
   })();
 

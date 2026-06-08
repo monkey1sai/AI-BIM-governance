@@ -178,7 +178,9 @@ describe("runtime governance helper", () => {
   });
 
   it("configured kit endpoints become PRI/SPC free rows without leases", () => {
-    const rows = buildEndpointRows(makeRuntime());
+    const runtime = makeRuntime();
+    const rows = buildEndpointRows(runtime);
+    const dashboard = deriveClassicDashboard(runtime);
 
     expect(rows).toHaveLength(2);
     expect(rows.map((row) => row.code)).toEqual(["PRI", "SPC"]);
@@ -193,6 +195,9 @@ describe("runtime governance helper", () => {
     expect(rows[0].technicalDetail).toContain("kit_instance=kit-primary");
     expect(rows[0].technicalDetail).toContain("media=127.0.0.1:47998");
     expect(rows[0].technicalDetail).toContain("session=—");
+    expect(dashboard.kitRuntime.tone).toBe("yellow");
+    expect(dashboard.kitRuntime.label).toContain("Kit endpoint 已配置");
+    expect(dashboard.kitRuntime.detail).toContain("process evidence 未取得");
   });
 
   it("released Kit binding uses free-readiness evidence rules", () => {
