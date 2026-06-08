@@ -26,8 +26,8 @@ branch_plan: new | continue-existing   # 來自 change-id-resolve
 ### Step 1：cwd 驗證
 
 ```
-!`git rev-parse --show-toplevel`
-!`git rev-parse --git-common-dir`
+git rev-parse --show-toplevel
+git rev-parse --git-common-dir
 ```
 
 若 cwd 不是 main worktree（top-level path 與 git-common-dir 不對應）→ STOP `cwd-not-main`。
@@ -35,7 +35,7 @@ branch_plan: new | continue-existing   # 來自 change-id-resolve
 ### Step 2：同步 origin
 
 ```
-!`git fetch origin --prune`
+git fetch origin --prune
 ```
 
 ### Step 3：解析目標
@@ -57,8 +57,8 @@ branch: codex/openspec/<change_id>
 ### Step 5：建立或重用
 
 ```
-!`git rev-parse --verify --quiet refs/heads/<branch>`              # local_exists
-!`git rev-parse --verify --quiet refs/remotes/origin/<branch>`     # remote_exists
+git rev-parse --verify --quiet refs/heads/<branch>              # local_exists
+git rev-parse --verify --quiet refs/remotes/origin/<branch>     # remote_exists
 ```
 
 | target_path 存在? | local_exists | remote_exists | 動作 |

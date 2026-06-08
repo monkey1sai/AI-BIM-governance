@@ -18,7 +18,7 @@ allowed-tools: Bash(gh pr*) Bash(gh api*) Bash(git push*) Bash(git status*) Bash
 ### Step 1：取得 PR 狀態
 
 ```
-!`gh pr view <pr-number> --json number,title,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,labels,reviews`
+gh pr view <pr-number> --json number,title,state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,labels,reviews
 ```
 
 判定：
@@ -28,7 +28,7 @@ allowed-tools: Bash(gh pr*) Bash(gh api*) Bash(git push*) Bash(git status*) Bash
 ### Step 2：等待 CI checks
 
 ```
-!`gh pr checks <pr-number>`
+gh pr checks <pr-number>
 ```
 
 統計：
@@ -42,8 +42,8 @@ allowed-tools: Bash(gh pr*) Bash(gh api*) Bash(git push*) Bash(git status*) Bash
 ### Step 3：列出 review comments
 
 ```
-!`gh pr view <pr-number> --json reviews,comments`
-!`gh api repos/{owner}/{repo}/pulls/<pr-number>/comments`
+gh pr view <pr-number> --json reviews,comments
+gh api repos/{owner}/{repo}/pulls/<pr-number>/comments
 ```
 
 分類：
@@ -87,7 +87,7 @@ allowed-tools: Bash(gh pr*) Bash(gh api*) Bash(git push*) Bash(git status*) Bash
 只有使用者明確同意才執行：
 
 ```
-!`gh pr merge <pr-number> --squash --delete-branch`
+gh pr merge <pr-number> --squash --delete-branch
 ```
 
 注意：

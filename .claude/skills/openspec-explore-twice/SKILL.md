@@ -66,7 +66,7 @@ openspec/changes/<change-id>/
 ### Step 4：驗證
 
 ```
-!`openspec validate <change-id> --strict`
+openspec validate <change-id> --strict
 ```
 
 必須綠燈。失敗 → 回到對應 Round 補強。

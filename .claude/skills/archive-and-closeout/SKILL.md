@@ -20,9 +20,9 @@ allowed-tools: Bash(git switch*) Bash(git pull*) Bash(git status*) Bash(git fetc
 ### Step 1：同步 main 並驗證 predecessor
 
 ```
-!`git switch main`
-!`git pull origin main --ff-only`
-!`git status --short`
+git switch main
+git pull origin main --ff-only
+git status --short
 ```
 
 確認：
@@ -32,7 +32,7 @@ allowed-tools: Bash(git switch*) Bash(git pull*) Bash(git status*) Bash(git fetc
 ### Step 2：建立 archive branch
 
 ```
-!`git switch -c codex/openspec/archive-<change-id>`
+git switch -c codex/openspec/archive-<change-id>
 ```
 
 命名固定：`codex/openspec/archive-<change-id>`。
@@ -40,7 +40,7 @@ allowed-tools: Bash(git switch*) Bash(git pull*) Bash(git status*) Bash(git fetc
 ### Step 3：執行 openspec archive
 
 ```
-!`openspec archive <change-id>`
+openspec archive <change-id>
 ```
 
 該指令會：
@@ -70,9 +70,9 @@ allowed-tools: Bash(git switch*) Bash(git pull*) Bash(git status*) Bash(git fetc
 ### Step 6：四層驗證
 
 ```
-!`openspec validate --strict`
-!`git diff --check`
-!`gitnexus detect-changes --scope staged`
+openspec validate --strict
+git diff --check
+gitnexus detect-changes --scope staged
 ```
 
 `openspec validate --strict`（不帶 change-id）會驗整個 specs 目錄。
@@ -91,15 +91,15 @@ docs(openspec): archive <change-id> and sync roadmap
 ### Step 8：Push 並開 archive PR
 
 ```
-!`git push -u origin codex/openspec/archive-<change-id>`
+git push -u origin codex/openspec/archive-<change-id>
 ```
 
 ```
-!`gh pr create \
+gh pr create \
   --base main \
   --head codex/openspec/archive-<change-id> \
   --title "docs(openspec): archive <change-id> and sync roadmap" \
-  --body-file <archive PR body>`
+  --body-file <archive PR body>
 ```
 
 archive PR body 模板：
@@ -153,10 +153,10 @@ archive PR 通常 risk 較低（只動 specs/docs），但 review gate 仍必須
 archive PR merge 後：
 
 ```
-!`git switch main`
-!`git fetch origin --prune`
-!`git status --short --branch`
-!`git branch --no-merged origin/main`
+git switch main
+git fetch origin --prune
+git status --short --branch
+git branch --no-merged origin/main
 ```
 
 刪除已 merged / superseded branch：

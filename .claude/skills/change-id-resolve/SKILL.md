@@ -19,7 +19,7 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git rev-parse*) Bash(gh p
 ### Step 1：確認 main 乾淨
 
 ```
-!`git status --porcelain`
+git status --porcelain
 ```
 
 若有 uncommitted changes → 回報 BLOCKER：`dirty-working-tree`，停止。
@@ -27,8 +27,8 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git rev-parse*) Bash(gh p
 ### Step 2：同步 origin
 
 ```
-!`git fetch origin --prune`
-!`git rev-parse origin/main`
+git fetch origin --prune
+git rev-parse origin/main
 ```
 
 ### Step 3：讀 main 上的 roadmap
@@ -42,7 +42,7 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git rev-parse*) Bash(gh p
 ### Step 4：列出 `openspec/changes/` 現況
 
 ```
-!`ls openspec/changes/`
+ls openspec/changes/
 ```
 
 找出非 `archive` 的目錄 → 這些是當前 active changes。
@@ -54,7 +54,7 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git rev-parse*) Bash(gh p
 驗證：
 
 ```
-!`gh pr list --state all --search "<predecessor-change-id> in:title" --json number,state,title --limit 10`
+gh pr list --state all --search "<predecessor-change-id> in:title" --json number,state,title --limit 10
 ```
 
 判定條件：
@@ -66,7 +66,7 @@ allowed-tools: Bash(git status*) Bash(git fetch*) Bash(git rev-parse*) Bash(gh p
 ### Step 6：檢查當前 change 是否已有 open PR
 
 ```
-!`gh pr list --state open --search "head:codex/openspec/<change-id>" --json number,state,headRefName,title --limit 5`
+gh pr list --state open --search "head:codex/openspec/<change-id>" --json number,state,headRefName,title --limit 5
 ```
 
 若有 → `branch_plan = "continue-existing"`，記錄 `existing_pr` 編號。
