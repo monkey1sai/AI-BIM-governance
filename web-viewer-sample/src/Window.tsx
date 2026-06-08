@@ -2203,15 +2203,17 @@ export default class App extends React.Component<AppProps, AppState> {
                 </>
                 }
 
-                {/* CH-H1：中央視區「不空白」—— 無真實 WebRTC 幀（harness 或尚未出幀）時，以資訊濃密 mock
-                    viewport 取代空白（明標 deterministic·no-GPU，避免被當壞掉），把範本①模型資訊+④對構表+選取 echo
-                    放進中央；取得真實 Kit 幀（_hasRemoteVideoFrame）後不渲染，讓 <video> live 3D 顯示。additive：
-                    不改 AppStream / GovernanceOverlay / stage-truth / spectator 既有機制。 */}
+                {/* CH-H1/H3：模型分頁語意檢視（①模型資訊 ②IFC語意 ③結構 ④對構 ⑥空間）。
+                    無真實 WebRTC 幀（harness 或尚未出幀）→ 中央資訊濃密 mock viewport（deterministic·no-GPU，非壞掉）；
+                    CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後**不再卸載**，改以 liveMode 切左側語意側欄，與中央
+                    <video> live 3D 並存（對齊 AI-BIM-Geo Viewer 範本：①③ 左欄 + ②④⑥ 隨點構件），GPU 出畫面時語意
+                    面板不消失。additive：不改 AppStream / GovernanceOverlay / stage-truth / spectator 既有機制；
+                    問題分頁仍 viewerTab!=="model" 不掛載（不擾全幅治理）。 */}
                 {this.state.viewerTab === "model"
-                    && !this._hasRemoteVideoFrame()
                     && (harnessEnabled() || (Boolean(this.state.reviewSessionId) && Boolean(this.state.expectedStageUrl)))
                     && (
                     <MockViewport
+                        liveMode={this._hasRemoteVideoFrame()}
                         harness={harnessEnabled()}
                         stageUrl={this.state.expectedStageUrl}
                         loadedStageUrl={this.state.loadedStageUrl}
