@@ -5,6 +5,7 @@ import { Btn, Field, Metric, Panel, ProvTag } from "./components";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
+import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
@@ -823,79 +824,13 @@ export function CoordinatorPage() {
 
   return (
     <>
-      <h1>Coordinator Console · 控制平面（B）</h1>
+      <h1>Coordinator Console · C / Hybrid Runtime Orchestrator</h1>
       <p className="ec-lead">
         會議生命週期 / Kit 綁定 / IFC-ready 派工 / callback outbox，全經 coordinator :8004。
         本頁讀 <code>/api/runtime/status</code>（coordinator-visible read-only summary）；瀏覽器不直連 49100/49101/49102。
         誠實標示：Kit 首幀 / GPU 無統一遙測（port listening ≠ has frame）→ 不畫成 fail、不捏造秒數。
       </p>
-      <Panel
-        title="Review sessions · 生命週期"
-        sub="GET /api/runtime/status · status：created / active / closing / closed / failed（KitInstance 權威 enum）"
-        prov="asbuilt"
-        actions={<Btn disabled={busy} caption="GET /api/runtime/status" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
-      >
-        {err && <p className="ec-warn-note">{err}</p>}
-        {rt && (
-          <>
-            <div className="ec-grid" style={{ marginBottom: 10 }}>
-              <Metric value={rt.sessions.count} label="sessions" />
-              <Metric value={rt.sessions.active_count} label="active" />
-              <Metric value={rt.sessions.participant_count} label="participants" />
-              <Metric value={rt.ifc_ready_jobs.count} label="ifc-ready jobs" />
-            </div>
-            {rt.sessions.items.length > 0 ? (
-              <table className="ec-table">
-                <thead><tr><th>session_id</th><th>status</th><th>model_version</th><th>participants</th><th>kit_instance</th></tr></thead>
-                <tbody>
-                  {rt.sessions.items.slice(0, 30).map((s) => (
-                    <tr key={s.session_id}>
-                      <td>{s.session_id}</td><td>{s.status}</td><td>{s.model_version_id}</td>
-                      <td>{s.participant_count}</td><td>{s.kit_instance_ids.join(", ") || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : <p className="ec-note">目前無 session（coordinator 已連線，列表為空——非錯誤）。</p>}
-          </>
-        )}
-      </Panel>
-
-      {rt && (
-        <Panel title="Kit Endpoint 綁定 · kit_instance_bindings" sub="state = KitInstance.status 權威 enum；last frame 無資料源 → 不顯示假秒數" prov="asbuilt">
-          {rt.kit_instance_bindings.length > 0 ? (
-            <table className="ec-table">
-              <thead><tr><th>kit_instance_id</th><th>session</th><th>state</th><th>last_heartbeat</th></tr></thead>
-              <tbody>
-                {rt.kit_instance_bindings.slice(0, 20).map((b, i) => (
-                  <tr key={i}>
-                    <td>{b.kit_instance_id}</td><td>{b.session_id}</td><td>{b.status}</td>
-                    <td>{b.last_heartbeat_at ?? <span className="ec-warn-note">未取得</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : <p className="ec-note">無 Kit 綁定（無 active session 時為空）。</p>}
-          <p className="ec-note">「port listening ≠ has frame」：首幀 / GPU 無統一遙測來源 → 不畫成 fail、不捏造秒數。</p>
-        </Panel>
-      )}
-
-      {rt && (
-        <Panel title="Callback outbox · 回寫公司雲端" sub="僅 metadata，非雙向同步；直查 outbox 需 internal token（瀏覽器不可達）" prov="asbuilt">
-          {rt.ifc_ready_jobs.recent.filter((j) => j.callback_outbox_id).length > 0 ? (
-            <table className="ec-table">
-              <thead><tr><th>ifc_ready_job</th><th>conversion_status</th><th>callback_outbox_id</th></tr></thead>
-              <tbody>
-                {rt.ifc_ready_jobs.recent.filter((j) => j.callback_outbox_id).slice(0, 20).map((j) => (
-                  <tr key={j.ifc_ready_job_id}>
-                    <td>{j.ifc_ready_job_id}</td><td>{j.conversion_status ?? "—"}</td><td>{j.callback_outbox_id}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : <p className="ec-note">目前無帶 callback_outbox_id 的 job。outbox 三態詳情（delivered/pending/dead_letter）需 internal-token 端點，瀏覽器不可達 → 此處僅顯示 coordinator 摘要可見的關聯，不捏造投遞數。</p>}
-        </Panel>
-      )}
+      <CoordinatorGovernanceTabs rt={rt} busy={busy} err={err} onRefresh={load} />
     </>
   );
 }

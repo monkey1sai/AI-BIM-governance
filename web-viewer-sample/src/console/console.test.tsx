@@ -4,7 +4,8 @@ import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, ReviewRoomPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
 import EdgeConsole from "./EdgeConsole";
-import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
+import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
 
@@ -138,7 +139,19 @@ describe("edge console honesty smoke", () => {
   it("P2-3 Coordinator/Intake/Runtime 真實 body：GPU / 首幀 無遙測標未取得（非 fail，非捏造）", () => {
     const coord = renderToString(<CoordinatorPage />);
     expect(coord).toContain("/api/runtime/status");
+    expect(coord).toContain("A Classic Dashboard");
+    expect(coord).toContain("B ATC Tower");
+    expect(coord).toContain("C Lifecycle Flow");
+    expect(coord).toContain("D Terminal / Debug");
     expect(coord).toContain("port listening ≠ has frame"); // 首幀誠實標示
+    expect(coord).toContain("Open primary URL 不等於 occupied");
+    expect(coord).toContain("occupied 必須等 browser first-frame evidence");
+    expect(coord).toContain("等待第一幀畫面");
+    expect(coord).toContain("Classic Dashboard 是 operator 第一眼總覽");
+    expect(coord).toContain("ATC Tower 是 endpoint / viewer lease 的航管塔");
+    expect(coord).toContain("Lifecycle Flow 用來判斷為什麼還不能算 ready");
+    expect(coord).toContain("Terminal / Debug 是工程證據頁");
+    expect(coord).toContain("Kit-side evidence + Browser-side evidence");
     expect(coord).not.toContain("99.1%");
 
     const intake = renderToString(<IntakePage />);
@@ -150,6 +163,75 @@ describe("edge console honesty smoke", () => {
     expect(runtime).toContain("stream-config");
     expect(runtime).toContain("未取得"); // GPU 無遙測標未取得
     expect(runtime).not.toContain("92.4%");
+  });
+
+  it("C/Hybrid Coordinator Console Phase 1 顯示四視角 contract，不在總覽放 raw JSON", () => {
+    const html = renderToString(<CoordinatorPage />);
+
+    expect(html).toContain("Classic Dashboard 是 operator 第一眼總覽");
+    expect(html).toContain("ATC Tower 是 endpoint / viewer lease 的航管塔");
+    expect(html).toContain("Lifecycle Flow 用來判斷為什麼還不能算 ready");
+    expect(html).toContain("Terminal / Debug 是工程證據頁");
+    expect(html).toContain("Kit-side evidence + Browser-side evidence");
+    expect(html).not.toContain('"session_id"');
+    expect(html).not.toContain("stack trace");
+  });
+
+  it("Classic Dashboard stageTruth 總覽不展開 expected_stage_url 技術細節", () => {
+    const rt: RuntimeStatus = {
+      service: { status: "ok", name: "bim-review-coordinator", uptime_seconds: 42, generated_at: "2026-06-08T00:00:00Z" },
+      configured_endpoints: {
+        coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" },
+        viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/ui/open" },
+        conversion_authority: { base_url: "http://127.0.0.1:49101", authority: "local_fixed" },
+        kit: [
+          {
+            id: "kit-primary",
+            signalingServer: "127.0.0.1",
+            signalingPort: 49100,
+            mediaServer: "127.0.0.1",
+            mediaPort: 49101,
+          },
+        ],
+      },
+      sessions: {
+        count: 1,
+        active_count: 1,
+        participant_count: 1,
+        items: [
+          {
+            session_id: "review_session_secret",
+            status: "active",
+            project_id: "project-1",
+            model_version_id: "model-1",
+            participant_count: 1,
+            expected_stage_url: "http://example.test/model.usdc",
+            conversion_status: "succeeded",
+            kit_instance_ids: ["kit-primary"],
+            created_at: "2026-06-08T00:00:00Z",
+            updated_at: "2026-06-08T00:00:00Z",
+          },
+        ],
+      },
+      kit_instance_bindings: [],
+      ifc_ready_jobs: { count: 0, recent: [] },
+      observations: {
+        classification: "runtime_status",
+        note: "fake runtime for SSR privacy regression",
+        web_plane: { coordinator_port: 8004, viewer_port: 5173 },
+        host_native_plane: { conversion_api_base: "http://127.0.0.1:49101", kit_signal_ports: [49100], kit_media_ports: [49101] },
+      },
+    };
+
+    const html = renderToString(<CoordinatorGovernanceTabs rt={rt} busy={false} err={null} onRefresh={() => {}} />);
+    const stageTruthOverview = html.match(/stageTruth[\s\S]{0,160}/)?.[0] ?? "";
+
+    expect(html).toContain("stage loaded 未觀測");
+    expect(html).toContain("展開技術細節");
+    expect(html).toContain("stage truth detail");
+    expect(html).toContain("expected_stage_url=http://example.test/model.usdc");
+    expect(stageTruthOverview).not.toContain("example.test");
+    expect(html).not.toContain('"session_id"');
   });
 
   // ── P3-1 A4–A10 vision 詳頁：整段標願景 + 「後端未建」+ scenario 標範例情境（非實測）──
