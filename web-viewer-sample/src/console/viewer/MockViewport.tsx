@@ -35,12 +35,15 @@ export interface MockViewportProps {
   reservedRight?: number;
   reservedLeft?: number;
   sessionId?: string | null;
+  // CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後仍掛載——改為左側語意側欄，與中央 live 3D <video> 並存
+  // （對齊範本：①③ 左欄 + ②④⑥ 隨點構件），而非整片消失。誠實鐵律：liveMode 下 banner 標「live 3D 已出幀」，不再宣稱 no-GPU。
+  liveMode?: boolean;
 }
 
 const DASH = "—";
 
 export function MockViewport(props: MockViewportProps) {
-  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0 } = props;
+  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false } = props;
   const layers = bindings.filter((b) => b.ready_status === "ready");
   // ④對構表資料源：經 coordinator :8004 element-mapping for-session proxy（CORS-safe + 守邊界，
   // 瀏覽器不直連 :49101 artifact server）。harness 無真實 coordinator session → null（誠實空狀態）。
@@ -51,15 +54,27 @@ export function MockViewport(props: MockViewportProps) {
   const spatialSrc = !harness && props.sessionId
     ? `${coordinatorClient.base}/api/governance/spatial-tree/for-session/${encodeURIComponent(props.sessionId)}`
     : null;
+  // liveMode（已出真 Kit 幀）：固定左側欄，不套 reserved padding（不覆蓋中央 live 3D）。非 liveMode：維持中央佔位（既有行為）。
   const pad =
-    reservedRight || reservedLeft ? { paddingRight: reservedRight || undefined, paddingLeft: reservedLeft || undefined } : undefined;
+    !liveMode && (reservedRight || reservedLeft)
+      ? { paddingRight: reservedRight || undefined, paddingLeft: reservedLeft || undefined }
+      : undefined;
   return (
-    <div className="gv-mock" data-testid="mock-viewport" style={pad}>
+    <div className={`gv-mock${liveMode ? " gv-mock--live" : ""}`} data-testid="mock-viewport" style={pad}>
       <div className="gv-mock__banner" data-testid="mock-viewport-banner">
-        <span className="gv-dot" /> Mock Viewport · <strong>deterministic · no-GPU</strong>
-        <span className="gv-mock__hint">
-          {harness ? "harness 決定性模式（不連真 Kit）" : "尚未取得真實 WebRTC 視訊幀"}；此為刻意佔位非錯誤，取得真 Kit 幀後自動切換為 live 3D。
-        </span>
+        {liveMode ? (
+          <>
+            <span className="gv-dot" /> 語意側欄 · <strong>live 3D 已出幀</strong>
+            <span className="gv-mock__hint">中央為 live 3D 視訊（真 Kit 幀）；此側欄同步 ①模型資訊 / ②IFC語意 / ③結構 / ④對構 / ⑥空間，點構件即查語意。</span>
+          </>
+        ) : (
+          <>
+            <span className="gv-dot" /> Mock Viewport · <strong>deterministic · no-GPU</strong>
+            <span className="gv-mock__hint">
+              {harness ? "harness 決定性模式（不連真 Kit）" : "尚未取得真實 WebRTC 視訊幀"}；此為刻意佔位非錯誤，取得真 Kit 幀後自動切換為 live 3D。
+            </span>
+          </>
+        )}
       </div>
 
       {/* section nav 已上移至 viewer 層分頁列（Window.tsx），「問題」分頁隱 MockViewport 後仍可切回。 */}

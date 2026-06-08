@@ -16,6 +16,17 @@
   padding: 14px;
   box-sizing: border-box;
 }
+/* CH-H3：live 3D 已出幀時，MockViewport 不再整片覆蓋中央，改為左緣語意側欄（半透明），與中央 <video> live 3D
+   並存（對齊 AI-BIM-Geo Viewer 範本：左欄①③ + 隨點構件②④⑥；模型置中不受遮蔽）。
+   z-index 26：高於左側 USD 樹 dock(25) 與治理 overlay(20)，確保語意內容恆在最上層可見（reviewer P1：避免被左側
+   USD dock 蓋住而隱藏語意）；右側治理 overlay 在 right:0，與本左緣側欄水平不重疊。 */
+.gv-mock.gv-mock--live {
+  right: auto; width: 400px; max-width: 46vw;
+  background: rgba(11, 13, 16, 0.92);
+  border-right: 1px solid #2f363f;
+  z-index: 26;
+}
+.gv-mock.gv-mock--live .gv-mock__grid { grid-template-columns: 1fr; }
 .gv-mock__banner {
   display: flex;
   align-items: center;
