@@ -58,7 +58,7 @@ docs/verification/<date>-<change-id>.md     # verification evidence
 #### Layer 1：OpenSpec strict validate
 
 ```
-!`openspec validate <change-id> --strict`
+openspec validate <change-id> --strict
 ```
 
 不過 → 修 spec/delta，回 Step 2。
@@ -69,16 +69,16 @@ docs/verification/<date>-<change-id>.md     # verification evidence
 
 ```
 # external platform contracts + test-only fakes
-!`cd "<cwd_hint>" && python -m pytest tests -x`
+cd "<cwd_hint>" && python -m pytest tests -x
 
 # bim-review-coordinator
-!`cd "<cwd_hint>/bim-review-coordinator" && npm test`
+cd "<cwd_hint>/bim-review-coordinator" && npm test
 
 # bim-streaming-server conversion authority API（Kit/GPU runtime 可依環境跳過）
-!`cd "<cwd_hint>/bim-streaming-server" && python -m pytest tests/test_conversion_authority_api.py -x`
+cd "<cwd_hint>/bim-streaming-server" && python -m pytest tests/test_conversion_authority_api.py -x
 
 # web-viewer-sample
-!`cd "<cwd_hint>/web-viewer-sample" && npm run build`
+cd "<cwd_hint>/web-viewer-sample" && npm run build
 ```
 
 **重要**：
@@ -89,7 +89,7 @@ docs/verification/<date>-<change-id>.md     # verification evidence
 #### Layer 3：diff 衛生檢查
 
 ```
-!`git -C "<cwd_hint>" diff --check`
+git -C "<cwd_hint>" diff --check
 ```
 
 阻擋 whitespace / formatting 問題。
@@ -97,7 +97,7 @@ docs/verification/<date>-<change-id>.md     # verification evidence
 #### Layer 4：GitNexus scope drift 驗證
 
 ```
-!`gitnexus detect-changes --scope staged --cwd "<cwd_hint>"`
+gitnexus detect-changes --scope staged --cwd "<cwd_hint>"
 ```
 
 呼叫 `gitnexus-blast-radius post-change` skill，比對 `affected_symbols` 是否 ⊆ tasks.md 預期 scope。
@@ -124,15 +124,15 @@ Commit message 用 Conventional Commits（PR #31/#33/#35 已成熟格式）：
 ### Step 5：Push 與開 PR
 
 ```
-!`git -C "<cwd_hint>" push -u origin codex/openspec/<change-id>`
+git -C "<cwd_hint>" push -u origin codex/openspec/<change-id>
 ```
 
 ```
-!`gh pr create \
+gh pr create \
   --base main \
   --head codex/openspec/<change-id> \
   --title "<type>(<bounded-service>): <change-id> - <摘要>" \
-  --body-file <generated PR body>`
+  --body-file <generated PR body>
 ```
 
 > `gh pr create` 認 branch 不認 cwd，可從 main worktree 或 `<cwd_hint>` 任一處呼叫。
