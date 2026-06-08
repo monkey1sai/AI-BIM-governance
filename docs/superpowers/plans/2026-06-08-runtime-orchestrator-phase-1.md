@@ -1006,4 +1006,3 @@ Execution authority remains:
 - Spec coverage: This Phase 1 plan covers the four tab shell, A Classic Dashboard, B ATC Tower read-only, readiness wording, evidence hard rules, and repo boundary contract. Phase 2-5 remain intentionally outside this plan and are named by acceptance gaps, not hidden inside Phase 1.
 - Placeholder scan: No step uses vague instructions such as undefined handlers or unnamed tests. All new files, commands, and expected outputs are listed.
 - Type consistency: `RuntimeStatus`, `RuntimeKitBinding`, and `RuntimeSessionSummary` are imported from `../coordinatorClient`; helper return types are consumed by `RuntimeGovernanceTabs.tsx` with matching property names.
-
