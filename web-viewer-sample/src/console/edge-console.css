@@ -206,7 +206,10 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-actions[role="tablist"] .ec-btn[aria-selected="true"],
 .ec-tab[aria-selected="true"],
 .ec-tab.active {
+  background:var(--ec-grn);
   border-color:var(--ec-grn);
+  color:#0b0d10;
+  font-weight:600;
 }
 .ec-actions[role="tablist"] .ec-btn[aria-selected="false"],
 .ec-tab[aria-selected="false"] {

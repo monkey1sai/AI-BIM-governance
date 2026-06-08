@@ -152,6 +152,12 @@ describe("edge console honesty smoke", () => {
     expect(coord).toContain("Lifecycle Flow 用來判斷為什麼還不能算 ready");
     expect(coord).toContain("Terminal / Debug 是工程證據頁");
     expect(coord).toContain("Kit-side evidence + Browser-side evidence");
+    expect(coord).toContain("Kit Runtime");
+    expect(coord).toContain("Endpoint Pool");
+    expect(coord).toContain("Active Sessions");
+    expect(coord).toContain("Viewer Evidence");
+    expect(coord).toContain("Stage Truth");
+    expect(coord).toContain("Recent Risk");
     expect(coord).not.toContain("99.1%");
 
     const intake = renderToString(<IntakePage />);
@@ -173,6 +179,12 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("Lifecycle Flow 用來判斷為什麼還不能算 ready");
     expect(html).toContain("Terminal / Debug 是工程證據頁");
     expect(html).toContain("Kit-side evidence + Browser-side evidence");
+    expect(html).toContain("Kit Runtime");
+    expect(html).toContain("Endpoint Pool");
+    expect(html).toContain("Active Sessions");
+    expect(html).toContain("Viewer Evidence");
+    expect(html).toContain("Stage Truth");
+    expect(html).toContain("Recent Risk");
     expect(html).not.toContain('"session_id"');
     expect(html).not.toContain("stack trace");
   });
@@ -224,7 +236,7 @@ describe("edge console honesty smoke", () => {
     };
 
     const html = renderToString(<CoordinatorGovernanceTabs rt={rt} busy={false} err={null} onRefresh={() => {}} />);
-    const stageTruthOverview = html.match(/stageTruth[\s\S]{0,160}/)?.[0] ?? "";
+    const stageTruthOverview = html.match(/Stage Truth[\s\S]{0,160}/)?.[0] ?? "";
 
     expect(html).toContain("stage loaded 未觀測");
     expect(html).toContain("展開技術細節");

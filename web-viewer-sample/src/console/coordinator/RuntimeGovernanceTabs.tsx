@@ -74,17 +74,21 @@ function ClassicTab({
       <p className="ec-note">● 綠 可審查模型已就緒 · ● 黃 等待第一幀畫面 · ● 紅 Runtime 無法連線。</p>
       <div className="ec-grid">
         <Metric value={summary.overall.label} label={summary.overall.detail} tone={metricTone(summary.overall.tone)} />
+        <Metric value={summary.kitRuntime.label} label={`Kit Runtime · ${summary.kitRuntime.detail}`} tone={metricTone(summary.kitRuntime.tone)} />
         <Metric value={summary.endpointPool.value} label={summary.endpointPool.detail} />
         <Metric value={summary.activeSessions.value} label={summary.activeSessions.detail} />
         <Metric value={summary.viewerEvidence.value} label={summary.viewerEvidence.detail} tone="warn" />
+        <Metric value={summary.recentRisk.label} label={summary.recentRisk.detail} tone={metricTone(summary.recentRisk.tone)} />
       </div>
-      <Field k="overall status" v={`${summary.overall.label} · ${summary.overall.detail}`} prov="asbuilt" />
-      <Field k="endpointPool" v={`${summary.endpointPool.value} · ${summary.endpointPool.detail}`} prov="asbuilt" />
-      <Field k="activeSessions" v={`${summary.activeSessions.value} · ${summary.activeSessions.detail}`} prov="asbuilt" />
-      <Field k="viewerEvidence" v={`${summary.viewerEvidence.value} · ${summary.viewerEvidence.detail}`} prov="asbuilt" />
-      <Field k="stageTruth" v={`${summary.stageTruth.value} · 技術細節已折疊`} prov="asbuilt" />
+      <Field k="Kit Runtime" v={`${summary.kitRuntime.label} · ${summary.kitRuntime.detail}`} prov="asbuilt" />
+      <Field k="Endpoint Pool" v={`${summary.endpointPool.value} · ${summary.endpointPool.detail}`} prov="asbuilt" />
+      <Field k="Active Sessions" v={`${summary.activeSessions.value} · ${summary.activeSessions.detail}`} prov="asbuilt" />
+      <Field k="Viewer Evidence" v={`${summary.viewerEvidence.value} · ${summary.viewerEvidence.detail}`} prov="asbuilt" />
+      <Field k="Stage Truth" v={`${summary.stageTruth.value} · 技術細節已折疊`} prov="asbuilt" />
+      <Field k="Recent Risk" v={`${summary.recentRisk.label} · ${summary.recentRisk.detail}`} prov="asbuilt" />
       <details>
         <summary>展開技術細節</summary>
+        <Field k="overall status" v={`${summary.overall.label} · ${summary.overall.detail}`} prov="asbuilt" />
         <Field k="runtime service" v={rt ? `${rt.service.name} · ${rt.service.status} · generated_at=${rt.service.generated_at}` : "未取得"} prov="asbuilt" />
         <Field
           k="coordinator"
@@ -97,7 +101,6 @@ function ClassicTab({
           prov="asbuilt"
         />
         <Field k="stage truth detail" v={summary.stageTruth.detail} prov="asbuilt" />
-        <Field k="recent risk" v={`${summary.recentRisk.label} · ${summary.recentRisk.detail}`} prov="asbuilt" />
       </details>
       <div className="ec-actions">
         <Btn caption="endpoint / viewer lease" onClick={() => go("atc")}>看 ATC Tower</Btn>
