@@ -19,7 +19,7 @@ allowed-tools: Bash(gitnexus*) Bash(git diff*) Bash(git status*)
 ### Step 1：刷新 index
 
 ```
-!`gitnexus analyze --embeddings --skills --skip-agents-md`
+gitnexus analyze --embeddings --skills --skip-agents-md
 ```
 
 若工具警告 index stale → 重跑一次再進行下一步。`--skip-agents-md` 避免覆蓋 tracked AGENTS / CLAUDE 段落。
@@ -29,7 +29,7 @@ allowed-tools: Bash(gitnexus*) Bash(git diff*) Bash(git status*)
 對使用者指定 / 從 `tasks.md` 解析出的每個 symbol：
 
 ```
-!`gitnexus impact --target <symbol> --direction upstream`
+gitnexus impact --target <symbol> --direction upstream
 ```
 
 蒐集：
@@ -67,7 +67,7 @@ recommendations:
 ### Step 1：偵測 staged scope
 
 ```
-!`gitnexus detect-changes --scope staged`
+gitnexus detect-changes --scope staged
 ```
 
 蒐集：
@@ -92,14 +92,14 @@ recommendations:
 若 `gitnexus detect-changes` 失敗（resolver 對 worktree index 沒及時刷新）：
 
 ```
-!`gitnexus analyze --embeddings --skills --skip-agents-md`
-!`gitnexus detect-changes --scope staged`
+gitnexus analyze --embeddings --skills --skip-agents-md
+gitnexus detect-changes --scope staged
 ```
 
 仍失敗 → 用 `git diff --name-only` 作 fallback evidence：
 
 ```
-!`git diff --name-only --cached`
+git diff --name-only --cached
 ```
 
 在 PR body 明確標註「GitNexus detect-changes failed, using git diff as fallback」，**不能**把 fallback 當永久替代（這是 PR #35 曾真實出現的風險，要明文揭露）。

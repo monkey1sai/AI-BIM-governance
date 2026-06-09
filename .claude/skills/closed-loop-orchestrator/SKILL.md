@@ -145,9 +145,9 @@ warnings: [...]
 執行前先確認：
 
 ```
-!`git status --short --branch`
-!`git rev-parse origin/main`
-!`gh pr list --state open --limit 5 --json number,title,headRefName,state`
+git status --short --branch
+git rev-parse origin/main
+gh pr list --state open --limit 5 --json number,title,headRefName,state
 ```
 
 讀 [docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md](docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md) 確認下一個 active change id。

@@ -55,9 +55,9 @@ scope 政策（已與使用者確認）：copy 範圍只有「已提交程式碼
 ### Step 3：位置檢查
 
 ```
-!`git rev-parse --show-toplevel`
-!`git rev-parse --git-common-dir`
-!`git worktree list --porcelain`
+git rev-parse --show-toplevel
+git rev-parse --git-common-dir
+git worktree list --porcelain
 ```
 
 判定（`<repo_root>` = main worktree top-level）：
