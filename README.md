@@ -24,6 +24,8 @@ LAN demo public host      : 192.168.10.105
 
 這是目前給客戶看 demo 的標準路徑。不要用全 Docker GPU profile 取代它；Kit graphics / WebRTC runtime 仍以 Windows host-native 為準。
 
+完整 demo 編排與驗收 runbook：[`docs/demo/fast-mvp-demo-recap.md`](docs/demo/fast-mvp-demo-recap.md)。
+
 ### Demo 前置條件
 
 - Windows host。
@@ -322,7 +324,9 @@ Session / collaboration → bim-review-coordinator
 |---|---|---|
 | [`AGENTS.md`](AGENTS.md) | **Repo 邊界與資料權威**（最高優先） | 不確定哪個服務該做什麼、資料權威歸誰 |
 | [`docs/PROJECT_DEVELOPMENT_WORKFLOW.md`](docs/PROJECT_DEVELOPMENT_WORKFLOW.md) | **開發流程入口** | 新進工程師 onboarding、PR review、demo 簡報 |
-| [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md) | **SaaS 路線圖** | 架構決策、OpenSpec owner、技術 review |
+| [`docs/plans/ai-bim-governance-設計規格.md`](docs/plans/ai-bim-governance-設計規格.md) | **功能需求與 UI 驗收語意** | A1–A10 功能、操作流程、可信度標記、雲端 / 落地端架構對齊 |
+| [`docs/plans/ai-bim-governance-prototype.html`](docs/plans/ai-bim-governance-prototype.html) | **可點擊產品原型** | 需要直接操作需求原型、檢查頁面分群與按鈕語意 |
+| [`docs/demo/fast-mvp-demo-recap.md`](docs/demo/fast-mvp-demo-recap.md) | **Demo runbook** | 要把 coordinator + streaming-server + viewer 閉環跑給人看 |
 | [`docs/PR_REVIEW_AGENT.md`](docs/PR_REVIEW_AGENT.md) | **PR review agent gate** | 自動審查報告、blocker / warning 解讀、本機重跑 |
 | [`openspec/specs/`](openspec/specs/) | **Capability specs** | 修改任何服務前先讀對應 capability spec 與 archived change |
 

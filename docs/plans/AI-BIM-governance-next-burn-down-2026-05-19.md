@@ -9,7 +9,7 @@
 | Drive `12h-claude-design-run-2026-05-14.md` / `12h-claude-design-2026-05-14-1944` | 取得 5/14 「B 方案 land 後第一輪 risk burn-down」的舊候選與 NOT-DO | 5/14 的 `_worker` / `_bim-control` burn-down 語意已被 5/18 Phase B 移除，僅保留為 archive context |
 | Drive `12h-claude-design-2026-05-15-0704` | 取得 C1/C2/C3 與 runtime gap 順序 | C1/C2 仍有效但需改名為 B-scheme runtime evidence；C3 已失效，不能再啟動 `_bim-control` / `_worker` facade/bridge |
 | Repo `origin/main` | `70a0dd2 docs(openspec): 歸檔 local-coordinator-ifc-ready-intake-boundary 並 sync specs (#64)` | 本輪基準已是 merged + archived 後的 main；`_worker` / `_bim-control` 已 removed from product runtime |
-| Roadmap | `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` | §1.2 / §1.4 已有 23 specs 與 Phase B archive；§5 / §6 / §10 仍需收斂下一輪排序 |
+| Legacy roadmap | `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`（已於 2026-06 source-of-truth 切換中移除） | 本 burn-down 保留歷史脈絡；現行功能需求改看 `docs/plans/ai-bim-governance-設計規格.md` 與 `docs/plans/ai-bim-governance-prototype.html` |
 | Recent archive | `2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp`、`2026-05-18-local-coordinator-ifc-ready-intake-boundary` | Docker-first runtime MVP 已 archive；B-scheme coordinator intake + streaming internal + callback outbox 已 archive；Kit launcher runtime evidence 仍 deferred |
 | Runtime evidence | `docs/verification/evidence/2026-05-18-bscheme-intake-smoke/bscheme-readiness.json`、`docs/verification/evidence/2026-05-18-t0-kit-launcher/kit-launcher-readiness.json` | API/contract layers passed；mapping quality、single Kit render、WebRTC、USD stage composition 未觀察；runtime image Kit launcher deferred |
 

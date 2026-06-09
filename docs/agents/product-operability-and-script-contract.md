@@ -6,13 +6,26 @@
 
 ## 1. 產品定位來源
 
-外部設計站 `https://bim-docs.jackshappybot.com/` 是本 repo 的產品定位參考：
+Repo-local 產品功能需求主來源：
 
+- `docs/plans/ai-bim-governance-設計規格.md`：A1–A10 功能需求、介面呈現、互動流程、可信度標記與工程實作建議。
+- `docs/plans/ai-bim-governance-prototype.html`：可點擊操作原型；此 HTML 是原型 source artifact，不是由 Markdown 生成的衍生檢視。
+
+外部設計站 `https://bim-docs.jackshappybot.com/` 是產品定位與架構參考：
+
+- 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」：主系統採雲端與客戶落地端分離架構；外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - 分頁「05 BIM治理與模型檢核」：A1–A10 是本 repo 的 10 大主要開發項目。
 - 分頁「06 操作介面總覽」：使用者操作介面、按鈕功能、進度與可驗收流程參考。
 - 設計站原始碼可依個人環境 clone / 定位；本 PR 使用使用者提供的本機 clone 作為一次性查證來源，該本機路徑不納入 repo contract。
 
-程式碼與 contracts 仍是行為 source of truth；設計站負責產品方向、操作介面語意與驗收期待。
+程式碼與 contracts 仍是行為 source of truth；repo-local 設計規格 / prototype 負責功能需求與操作語意；外部設計站負責主系統架構、產品定位與驗收期待。
+
+EdgeConsole product shell contract（對齊 `feat/edge-console-product-shell`）：
+
+- 正式產品殼層入口是 coordinator `/ui`；home 必須顯示「今天要做什麼」與 Smart Todo。
+- 核心 route：`#/a1`、`#/viewer`、`#/conv`、`#/sessions`、`#/instances`、`#/minio`。
+- Operator-tool route `#/kit`、`#/demo-control` 必須保留，不得 silently 移除。
+- A1 rule-run / Issue / BCF 可由 API / 表格完成；3D highlight、first frame、stage truth 必須有 GPU-backed review session，不得宣稱零 GPU 完成 3D。
 
 ## 2. A1–A10 開發項目
 
@@ -29,7 +42,7 @@
 | A9 | 設計 / 審查 Copilot | future controlled operation-plan layer, session-layer only |
 | A10 | 機器人 / 自動巡檢模擬 | future Isaac / robot simulation lane |
 
-Repo 定位：先做可賣、可驗收的 CORE governance flow；Omniverse / Kit / Isaac 類能力視為 3D / GPU 加值，必須用真實 runtime evidence 才能宣稱 passed。
+Repo 定位：先做可賣、可驗收的 CORE governance flow；Omniverse / Kit / Isaac 類能力是 3D / GPU runtime lane，必須用真實 review session、first frame、DataChannel 或 runtime evidence 才能宣稱 passed。
 
 ## 3. Frontend Operability Requirement
 

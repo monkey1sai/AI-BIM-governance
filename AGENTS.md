@@ -19,6 +19,8 @@
 
 ### 產品定位與完成標準
 
+- Repo 功能需求的主來源為 `docs/plans/ai-bim-governance-設計規格.md` 與可點擊原型 `docs/plans/ai-bim-governance-prototype.html`；舊 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` 不再作為需求權威。
+- 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；分頁「06 操作介面總覽」是使用者操作介面、按鈕、進度與可驗收流程的 UX 參考。
 - 凡是 user-facing capability，不得以「後端 / API / 測試完成」宣告 done。完成標準必須是：使用者可從前端 route 操作，點明確按鈕，使用預設 fixture，看到 loading / success / failure / retry 與關鍵 runtime ID，並有 Playwright / Chrome E2E 截圖或 trace 證據。
 - 最終回報 user-facing work 時必須列出：Frontend URL、Buttons tested、Test fixture used、Expected visible result、E2E command、Screenshot / evidence path、Known limitations。
@@ -67,6 +69,7 @@
 
 - 不在 `main` 上開發；plan / 設計文件預設繁體中文，API 路徑 / schema 欄位 / CLI flags / status enum / log / error / 外部產品名稱保留原文。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 是本機 agent/tooling 產物，預設維持 ignored（含以 `skills` CLI 裝進 `.claude/skills/` 的技能）。
+- Repo-local `.codex/skills` SHALL 對齊 `.claude/skills` 作為本機 skill inventory；OpenSpec / opsx closed-loop skills 已退役，需求拆解與執行治理改由 Superpowers skills 負責。
 - 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus generated skill 檔，除非使用者明確要求改變 repo policy。
 
 完整 GitHub PR workflow 見 `docs/agents/github-workflow.md`。

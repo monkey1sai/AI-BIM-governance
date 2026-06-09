@@ -283,7 +283,7 @@ acceptance (all true):
     - openspec/changes/archive/<date>-remove-conflict-review-from-fast-mvp/ exists
     - openspec/specs/review-session-request-lifecycle/spec.md merged delta
     - npx openspec validate --specs --strict → all pass
-    - docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md updated (AGENTS.md §1.6)
+    - historical roadmap-era docs updated (current product requirements now live in docs/plans/ai-bim-governance-設計規格.md + docs/plans/ai-bim-governance-prototype.html)
 
   Change 2 land + archived:
     - PR merged
