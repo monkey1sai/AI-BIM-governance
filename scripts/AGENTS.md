@@ -18,7 +18,6 @@
 - `scripts/tests/` — script-level tests；本 repo 目前以自訂 assert + temp sandbox 為主，Pester 不是預設必需
 - `claude-commit-guard.ps1` — Claude PreToolUse hook target
 - `pr-review-agent.ps1` — PR review agent CLI
-- `render-roadmap-html.py` — roadmap doc generator
 - `SCRIPT_CONTRACT.md` / `script-registry.json` — root-level script contract 與允許清單
 
 ## Does Not Own
