@@ -99,7 +99,7 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 - 使用上述 IFC 跑 identity conversion profile，並保留 source IFC path、size、hash 或等價可追溯資訊。
 - 驗證 stage truth：`expected artifact URL`、`loaded artifact URL`、`matched = true`。
 - 透過 coordinator / web UI 開 browser viewer，保存 browser screenshot、WebRTC frame visible evidence、console log、Kit host/session id。
-- Evidence 預設放在 `docs/evidence/viewer-validate-ifc-semantics-real-ifc/`，或明確對應 change id 的 `docs/evidence/<change-id>/`。
+- Evidence 預設放在 `docs/evidence/viewer-validate-ifc-semantics-real-ifc/`，或對應該批變更的 `docs/evidence/<slug>/`（PR / feature slug）。
 - 大型輸出只保留 summary JSON、抽樣 mapping、測試結果與截圖；mapping / pset / spatial / bbox 太大時只保留 sample（例如前 20 筆）。
 - Full-system E2E complete 必須同時有 governance CPU semantic E2E 與 Kit WebRTC visual/runtime E2E。
 
