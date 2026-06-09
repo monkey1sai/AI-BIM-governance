@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'test-helpers.ps1')
 . (Join-Path $PSScriptRoot '..\lib\rebuild-test-deploy.ps1')
 
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $testName = 'rebuild-test-deploy'
 $sandbox = New-TestSandbox -Prefix $testName
 
@@ -157,6 +158,13 @@ try {
 
     $deployExitResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $deployExitRoot -AllowNonFixedPathForTests -CommandRunner $deployExitRunner
     Assert-Equal 7 $deployExitResult.DeployExitCode 'deploy.ps1 exit code is returned without terminating caller'
+
+    $wrapper = Join-Path $repoRoot 'scripts\dev\rebuild-test-deploy.ps1'
+    Assert-True (Test-Path -LiteralPath $wrapper) 'wrapper exists'
+    $wrapperText = Get-Content -LiteralPath $wrapper -Raw
+    Assert-True ($wrapperText -match '\[switch\]\s+\$Build') 'wrapper exposes Build switch'
+    $forbiddenWrapperToken = 'Dry' + 'Run'
+    Assert-True ($wrapperText -notmatch [regex]::Escape($forbiddenWrapperToken)) 'wrapper does not expose forbidden token'
 
     Write-TestPass $testName
 } catch {
