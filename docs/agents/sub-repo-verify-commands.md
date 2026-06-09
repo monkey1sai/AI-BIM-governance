@@ -38,6 +38,21 @@ Runtime / Docker / Kit / viewer / env / port / conversion-service 改動必須�
 .\scripts\verify-all.ps1
 ```
 
+測試部署區重建固定使用 build-only helper：
+
+```powershell
+.\scripts\dev\rebuild-test-deploy.ps1 -Build
+```
+
+Helper 會重建 `D:\Users\deploy\AI-bim-geo` 並在部署區執行：
+
+```powershell
+cd D:\Users\deploy\AI-bim-geo
+.\scripts\deploy.ps1 -Build
+```
+
+禁止 `-DryRun`。若 fetch `origin main` 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
+
 本機 runtime 可用時優先補：
 
 ```powershell

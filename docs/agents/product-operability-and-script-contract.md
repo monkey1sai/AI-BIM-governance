@@ -114,6 +114,16 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 
 `scripts/deploy.ps1` 是 canonical one-click deploy entrypoint。
 
+測試驗證部署環境：
+
+- Deployment checkout 固定為 `D:\Users\deploy\AI-bim-geo`。
+- 當使用者要求「請測試部署區重建」或同義口令時，MUST 從目前 repo 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`。
+- Helper MUST freshly fetch `origin main`；fetch 失敗時停止，不得使用 stale `origin/main`。
+- Helper MUST 在 reset 前回報 deployment checkout local changes 摘要；重建口令代表部署區可被 reset / clean。
+- Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`；MUST 保留 `.github/workflows/`。
+- Helper 完成清理後 MUST 從 `D:\Users\deploy\AI-bim-geo` 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path。
+- 禁止 `-DryRun`；若 sandbox 需要寫入 `D:\Users\deploy\AI-bim-geo` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
+
 正式 operator entrypoints：
 
 - `scripts/deploy.ps1`：golden deploy / demo path。
@@ -140,6 +150,7 @@ Internal adapters 只能被 canonical entrypoints 或明確 runbook 呼叫：
 - MUST 更新或明確驗證 `scripts/deploy.ps1`。
 - MUST 至少跑或說明無法跑 `.\scripts\deploy.ps1 -DryRun`。
 - SHOULD 在本機 runtime 可用時跑 `.\scripts\deploy.ps1 -Force -StrictPostVerify`。
+- 測試驗證部署重建 MUST 從目前 repo 走 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；helper 會從 deployment checkout 執行 `.\scripts\deploy.ps1 -Build`。
 - MUST 不新增 root-level `scripts/start-*.ps1`、`scripts/smoke-*.ps1`、`scripts/check-*.ps1`、`scripts/*-docker.ps1`，除非同步更新 `scripts/script-registry.json` 與 `scripts/SCRIPT_CONTRACT.md` 並提供理由。
 
 ## 7. PR Deploy Path Verification Table
