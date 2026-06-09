@@ -126,50 +126,37 @@ Repo root `AGENTS.md` 與 `CLAUDE.md` 是 agent session 啟動時自動載入的
 - **WHEN** PR 把某段內容搬到 sub-file，但主檔的 link 指向錯誤路徑（404）
 - **THEN** review MUST 要求修正 link
 
-### Requirement: IDE skill mirrors SHALL be stubs, not duplicates
+### Requirement: Repo-local Codex skills SHALL align with Claude skills
 
-`AI-BIM-governance/` 為了支援多種 agent IDE（Codex / Cursor / Windsurf 等），保留四套 opsx skill / workflow mirror。其中 **source-of-truth SHALL 為 `.agent/`**（IDE-neutral）。其餘 IDE-specific mirror（`.cursor/skills/`、`.cursor/commands/`、`.windsurf/skills/`、`.windsurf/workflows/`）SHALL 為 **thin stub**：保留 IDE-specific frontmatter（讓 IDE 抓得到 skill entry），body SHALL 只含一行「Stub: 內容已 dedupe 到 `.agent/<path>`」+ 指向 `.agent/` 對應檔的 relative link。
+`AI-BIM-governance/` 的 repo-local skill inventory SHALL 以 `.claude/skills/` 為本機對齊來源，並同步到 `.codex/skills/` 供 Codex session 使用。兩者都是本機 agent/tooling 產物，SHALL 維持 ignored；PR 不應提交 `.claude/skills/`、`.codex/skills/` 或 generated skill 檔本體，除非使用者明確要求改變 repo policy。
 
-任何規範修改 SHALL 改 `.agent/` source-of-truth，不改 stub；stub 不再承載業務內容。
+OpenSpec / opsx closed-loop skills 已退役；需求拆解、分期執行與完成驗證 SHALL 使用 Superpowers skills（`writing-plans`、`subagent-driven-development`、`verification-before-completion`）作為主線治理。`.agent/`、`.cursor/`、`.windsurf/` 不再是 opsx skill source-of-truth。
 
-`.claude/skills/` 屬於 Claude-specific closed-loop 進階 skills（apply-and-verify / openspec-explore-twice / opsx-worktree-guard / opsx-worktree-provision / archive-and-closeout / pr-review-gate / change-id-resolve / gitnexus-blast-radius / closed-loop-orchestrator），SHALL NOT 視為三套 mirror 的重複層，本 requirement 不涵蓋 `.claude/skills/`。
+#### Scenario: `.codex/skills` 與 `.claude/skills` 不一致
 
-#### Scenario: PR 在 .cursor/.windsurf 寫了大段 body 內容
+- **WHEN** 本機檢查發現 `.codex/skills` 與 `.claude/skills` 的 top-level skill 名稱或檔案內容不同
+- **THEN** agent MUST 先回報差異；若使用者要求同步，SHALL 以 `.claude/skills` 對齊 `.codex/skills`，並保留備份路徑
 
-- **WHEN** PR 在 `.cursor/skills/openspec-propose/SKILL.md` 或 `.windsurf/workflows/opsx-apply.md` 等 mirror 檔加入超過 5 行的業務內容
-- **THEN** review MUST 要求把內容搬回 `.agent/` 對應檔，mirror 改為 stub
+#### Scenario: PR 嘗試提交本機 skill inventory
 
-#### Scenario: 三套 mirror 內容不一致
+- **WHEN** PR diff 包含 `.codex/skills/`、`.claude/skills/` 或 generated skill 本體
+- **THEN** review MUST 阻擋，除非 PR 說明明確引用使用者要求改變 repo policy
 
-- **WHEN** 對同一個 opsx skill / workflow，`.agent/`、`.cursor/`、`.windsurf/` 三份 body 內容（非 frontmatter）不一致
-- **THEN** review MUST 以 `.agent/` 為準；`.cursor/` / `.windsurf/` 須改回 stub 並 link 到 `.agent/`
+#### Scenario: 文件新增退役 OpenSpec slash workflow
 
-#### Scenario: 新增一個 opsx 性質 workflow
+- **WHEN** 文件新增 `/openspec new`、`/openspec apply`、`openspec validate` 作為新開發流程
+- **THEN** review MUST 要求改成 Superpowers plan / checklist / verification workflow；`openspec/specs/` 可保留為歷史或 capability artifact，但不得作為已退役 skill 的操作入口
 
-- **WHEN** 要新增一個跨 IDE 共用的 opsx workflow（例：`opsx-rebase`）
-- **THEN** 完整內容 SHALL 寫在 `.agent/workflows/opsx-rebase.md`（或 `.agent/skills/...`）；`.cursor/commands/opsx-rebase.md` 與 `.windsurf/workflows/opsx-rebase.md` SHALL 為 stub 樣板
+### Requirement: Agent IDE mirror docs SHALL not reintroduce opsx source-of-truth
 
-#### Scenario: `.claude/skills/` 內 skill 被誤判為 mirror
+若 repo 未來重新加入 Cursor / Windsurf / 其他 IDE 的 skill or workflow stub，該文件 SHALL 明確標記為 IDE-specific launcher 或 compatibility note，不得把 `.agent/`、`.cursor/`、`.windsurf/` 宣告為 opsx source-of-truth，也不得複製 `.claude/skills` / `.codex/skills` 內容。
 
-- **WHEN** PR 把 `.claude/skills/apply-and-verify/SKILL.md` 也 stub 化、指向某個 `.agent/` 對應檔
-- **THEN** review MUST 阻擋；`.claude/skills/` 是 Claude-specific closed-loop 進階層，不對應 `.agent/` source-of-truth
+#### Scenario: `.agent/` 被重新宣告為 source-of-truth
 
-### Requirement: Stub format SHALL be uniform and link-back
+- **WHEN** PR 文件聲稱 `.agent/` 是 opsx workflow 或 skill 的唯一 source-of-truth
+- **THEN** review MUST 要求移除該聲明，改以 `AGENTS.md` + `docs/agents/*.md` + Superpowers workflow 描述開發治理
 
-IDE mirror stub 的 body SHALL 採統一格式，至少包含：
+#### Scenario: IDE stub 複製 skill body
 
-1. 一行明示「Stub: 內容已 dedupe 到 source-of-truth」
-2. 一個 relative path link 指回 `.agent/` 對應檔
-3. 一句「任何規範修改 SHALL 改 `.agent/`，不改本 stub」
-
-frontmatter SHALL 保留各 IDE 原有的 metadata schema（`name`、`description`、`category`、`tags` 等），不得砍掉，否則 IDE 可能掃不到 skill 入口。
-
-#### Scenario: stub 沒有 link 回 .agent/
-
-- **WHEN** PR 把某 mirror 改成 stub，但 body 沒附 relative path link 指向 `.agent/`
-- **THEN** review MUST 要求補 link，否則 agent / 人類讀到 stub 不知道 source-of-truth 在哪
-
-#### Scenario: stub 砍掉 frontmatter
-
-- **WHEN** PR 把 `.cursor/skills/openspec-propose/SKILL.md` 的 frontmatter 砍掉只留 body link
-- **THEN** review MUST 要求補回 IDE-specific frontmatter；IDE 沒掃到 skill 入口會直接 silent failure
+- **WHEN** PR 在 `.cursor/`、`.windsurf/` 或其他 IDE launcher 複製 `.claude/skills` / `.codex/skills` 的完整 body
+- **THEN** review MUST 要求改成短 launcher / compatibility note，避免多份 skill body drift

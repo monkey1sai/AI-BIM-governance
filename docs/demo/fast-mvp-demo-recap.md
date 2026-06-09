@@ -2,7 +2,7 @@
 
 > **Source of truth**：本 runbook 服從 [`AGENTS.md`](../../AGENTS.md) 與 [`CLAUDE.md`](../../CLAUDE.md)。若任何指令字串或邊界宣告與這兩份文件衝突，以那兩份為準。
 >
-> **與 long roadmap 的關係**：[`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](../plans/AI-BIM-governance-saas-roadmap-2026-05.md) 規劃 6–9 個月 8 個 Phase 與 NT$50–70 萬硬體投入；本 runbook 只覆蓋「用 repo 既有資產 + 既有 GPU 主機，30 分鐘到 demo」這條短路徑，是 roadmap 的早期驗證手段，**不是 roadmap 的替代**。
+> **與產品規格的關係**：[`docs/plans/ai-bim-governance-設計規格.md`](../plans/ai-bim-governance-設計規格.md) 與 [`docs/plans/ai-bim-governance-prototype.html`](../plans/ai-bim-governance-prototype.html) 是 A1–A10 功能需求與操作原型；本 runbook 只覆蓋「用 repo 既有資產 + 既有 GPU 主機，30 分鐘到 demo」這條短路徑，是 demo 編排與驗收手冊，**不是產品需求規格的替代**。
 
 ## 1. 為什麼有這份 runbook
 
@@ -185,4 +185,4 @@ Browser 層面的 demo 成功定義（不在 smoke evidence 內，需主操作�
 
 - runbook 與既有 scripts 的指令字串**用相對路徑引用**，避免硬編字串造成漂移
 - 任何指令字串改動（如 `scripts/start-all.ps1` 改名、port 改變、tier 名稱改變）必須回頭更新本 runbook
-- runbook 不收 GPU SKU / 廠商型號等硬體採購建議 — 那是 [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](../plans/AI-BIM-governance-saas-roadmap-2026-05.md) 的職責
+- runbook 不收 GPU SKU / 廠商型號等硬體採購建議；硬體 / runtime 採購決策須另以 OpenSpec change 或專門設計文件立案，不寫進 demo 劇本

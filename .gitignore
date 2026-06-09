@@ -133,9 +133,11 @@ _s3_storage/static/projects/
 
 # ----------------------------
 # Roadmap / plan HTML derived views (spec: documentation-source-of-truth)
-# Markdown is the source of truth; HTML is on-demand only, not tracked.
+# Generated HTML views stay on-demand only. The interactive governance
+# prototype below is tracked because it is a source artifact, not a derived view.
 # ----------------------------
 docs/plans/*.html
+!docs/plans/ai-bim-governance-prototype.html
 
 # ----------------------------
 # OpenSpec apply worktrees (opsx-worktree-provision)

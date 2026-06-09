@@ -96,7 +96,7 @@ C3 coordinator-ui-tri-ready-and-queue
 ### 4.1 C1 `streaming-server-fallback-semantic-mapping`
 
 **Capability MODIFIED**：`streaming-ifc-usdc-conversion-authority`
-**Branch**：`codex/openspec/streaming-server-fallback-semantic-mapping`
+**Superpowers plan id**：`streaming-server-fallback-semantic-mapping`
 
 **目標**：`_run_ifcopenshell_openusd_fallback` 產出的 `element_mapping.json` /
 `model.usdc` prim 結構 / `quality_metrics.json` 必須帶 IFC 語意，viewer 才有 Semantic
@@ -162,7 +162,7 @@ ready 的真資料來源。
 ### 4.2 C4 `coordinator-serial-conversion-dispatch-queue`
 
 **Capability MODIFIED**：`local-coordinator-ifc-ready-intake-boundary`
-**Branch**：`codex/openspec/coordinator-serial-conversion-dispatch-queue`
+**Superpowers plan id**：`coordinator-serial-conversion-dispatch-queue`
 
 **目標**：`POST /api/external/ifc-ready` 並發呼叫不會打爆下游單一 host-native
 conversion pipeline；待處理 jobs 顯式進入 queue，operator 與 viewer 都能看到。
@@ -228,7 +228,7 @@ t3    POST ifc-ready #C → lifecycle="queued_for_conversion" → queue_position
 ### 4.3 C2 `viewer-edge-bim-server-console`
 
 **Capability MODIFIED**：`session-first-review-viewer`
-**Branch**：`codex/openspec/viewer-edge-bim-server-console`
+**Superpowers plan id**：`viewer-edge-bim-server-console`
 
 **目標**：把 `web-viewer-sample` 從「fast MVP 審查 demo 操作面板」重新定位為「落地端
 BIM 重量資料伺服器的可信狀態面板」。
@@ -364,7 +364,7 @@ RENAME / RESTRUCTURE:
 ### 4.4 C3 `coordinator-ui-tri-ready-and-queue`
 
 **Capability MODIFIED**：`demo-fast-mvp-orchestration`
-**Branch**：`codex/openspec/coordinator-ui-tri-ready-and-queue`
+**Superpowers plan id**：`coordinator-ui-tri-ready-and-queue`
 
 **目標**：`bim-review-coordinator/src/public/dev-console.html`（`/ui`）對齊 viewer
 的三段 ready 與 step 文案，並顯式展示 conversion dispatch queue。
@@ -466,19 +466,19 @@ Phase 2（消費 Phase 1 contract）
   └ C3 coordinator-ui-tri-ready-and-queue           (bim-review-coordinator)
 ```
 
-每個 change 走標準 OpenSpec + GitHub workflow（[`AGENTS.md §0.1 + §1.A`](
+每個 change 走標準 Superpowers + GitHub workflow（[`AGENTS.md §0.1 + §1.A`](
 ../../AGENTS.md)）：
 
 ```txt
-git switch -c codex/openspec/<change-id> from latest main
-/openspec new <change-id>
-implement + tests + smoke
+git switch -c codex/superpowers/<work-id> from latest main
+Superpowers writing-plans → task checklist
+implement + tests + smoke + verification-before-completion
 gh pr create
 GitHub Actions auto-verify
 merge
-/openspec sync + archive
-docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md 同步更新
-HTML view 同步更新
+closeout docs / evidence / worktree
+如功能需求或操作語意改變，需同步更新 docs/plans/ai-bim-governance-設計規格.md 與必要的 prototype。
+generated HTML view 不提交；prototype 本體例外
 ```
 
 ## 6. 驗收與 demo
@@ -522,4 +522,5 @@ Fail / Block:
   - [`streaming-ifc-usdc-conversion-authority`](../../openspec/specs/streaming-ifc-usdc-conversion-authority/spec.md)
   - [`local-coordinator-ifc-ready-intake-boundary`](../../openspec/specs/local-coordinator-ifc-ready-intake-boundary/spec.md)
 - Repo 邊界：[`AGENTS.md`](../../AGENTS.md) §1.A / §3.4 / §3.5 / §3.6 / §10 / §11
-- Roadmap：[`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](./AI-BIM-governance-saas-roadmap-2026-05.md)
+- 產品需求規格：[`docs/plans/ai-bim-governance-設計規格.md`](./ai-bim-governance-設計規格.md)
+- 可點擊 prototype：[`docs/plans/ai-bim-governance-prototype.html`](./ai-bim-governance-prototype.html)

@@ -12,7 +12,8 @@ The repository SHALL provide one canonical fast MVP demo runbook at `docs/demo/f
 #### Scenario: A new operator finds the demo runbook from the repo root
 
 - **WHEN** a new operator looks for "how do I demo this" starting from the repo root
-- **THEN** `CLAUDE.md` and `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` SHALL cross-link to `docs/demo/fast-mvp-demo-recap.md`
+- **THEN** `README.md` SHALL cross-link to `docs/demo/fast-mvp-demo-recap.md`
+- **AND** product requirement docs (`docs/plans/ai-bim-governance-設計規格.md` / `docs/plans/ai-bim-governance-prototype.html`) SHALL NOT replace the demo runbook
 - **AND** `docs/demo/fast-mvp-demo-recap.md` SHALL be the single source for demo orchestration knowledge
 
 #### Scenario: Runbook references existing verification entries rather than duplicating them

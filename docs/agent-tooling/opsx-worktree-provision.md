@@ -1,10 +1,10 @@
 # opsx-worktree-provision — 設計留底
 
-> Tooling-only 設計文件。**不入 OpenSpec change**，作為 `.claude/skills/opsx-worktree-provision/` 與 `closed-loop-orchestrator` Phase A 行為的 source of truth。日後規則調整應先改本文件再改 skill。
+> **退役歷史文件**：`opsx-worktree-provision`、`closed-loop-orchestrator` 與 OpenSpec / opsx closed-loop skills 已不再作為本 repo 的現行開發 workflow。現行規範以 `AGENTS.md` 的 Superpowers + GitNexus + gstack pipeline 為準，repo-local `.codex/skills` 對齊 `.claude/skills`，兩者維持 ignored。本文件只保留 2026-05 tooling 設計脈絡，不再是 source of truth。
 
 ## 0. 動機
 
-依 [AGENTS.md](../../AGENTS.md) 與 [CLAUDE.md](../../CLAUDE.md) §Git 與本機 agent 產物：
+下列為 2026-05 舊流程引用，僅供歷史理解，不得作為新工作流入口：
 
 > OpenSpec change 不得直接在 `main` 上開發；`/openspec new <change-id>` 前先切到 `codex/openspec/<change-id>`，實作走 PR、GitHub Actions、merge，merge 後才 sync/archive specs。
 

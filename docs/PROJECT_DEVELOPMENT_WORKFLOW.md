@@ -1,17 +1,17 @@
 # AI-BIM-governance 專案開發流程 v3
 
-> **依新版架構圖 v1（PoC → SaaS 路線圖）+ v2（SaaS 級目標架構與落地順序）重寫。**
+> **歷史說明**：本文件仍保留 2026-05 開發流程、Phase 與候選編號脈絡。2026-06 起，repo 功能需求主來源改為 [`docs/plans/ai-bim-governance-設計規格.md`](plans/ai-bim-governance-設計規格.md) 與 [`docs/plans/ai-bim-governance-prototype.html`](plans/ai-bim-governance-prototype.html)；舊 `AI-BIM-governance-saas-roadmap-2026-05.md` 已移除。
 >
 > 本次調整核心：**把 Omniverse 能力發揮到最大**（擬真建築、真實物理、環境感測、模擬驅動 AI 分析），並在 B 方案下把 `_worker` 收斂為 RVT→IFC bridge、把 `bim-streaming-server` 定義為 IFC→USDC conversion authority，同時讓 review session request、session lifecycle、多 artifact / 多 instance 收進正式控制面。
 >
-> **本文件 = 開發流程入口**；OpenSpec 候選編號（#1-#9 / #1A / #2A）、NVIDIA Reference 採用決策矩陣、MCP 查詢結果、§11.4 Multi-Kit Instance 並行的官方定義、硬體配置（§9.0-§9.8）以 [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md) 為準，本文件不重述。
+> **本文件 = 開發流程入口**；A1–A10 功能需求、UI 操作語意、可信度標記與雲端 / 落地端分離架構以設計規格與 prototype 為準；行為正確性仍以 `openspec/specs/`、contracts 與程式碼為準。
 >
 > **本文件不取代 source of truth**：
 > - Repo 邊界 → [`AGENTS.md`](../AGENTS.md)
 > - Capability requirements → [`openspec/specs/`](../openspec/specs/) 10 份 spec
 > - API 規格 → [`docs/contracts/`](contracts/) 7 份合約
 > - 驗證證據 → [`docs/verification/`](verification/)
-> - **SaaS 路線圖（OpenSpec 候選 / NVIDIA 採用決策 / 硬體配置）** → [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md)
+> - **功能需求 / UI 原型** → [`docs/plans/ai-bim-governance-設計規格.md`](plans/ai-bim-governance-設計規格.md), [`docs/plans/ai-bim-governance-prototype.html`](plans/ai-bim-governance-prototype.html)
 >
 > 本文件是把它們組合成可執行的開發路線。
 
@@ -382,7 +382,7 @@ flowchart TB
 - [x] 一鍵啟動腳本 + 健康檢查
 - [x] 4 個 smoke tests
 - [x] 各服務 `/health` endpoint
-- [x] OpenSpec + GitHub PR workflow
+- [x] Superpowers + GitHub PR workflow
 
 **驗收命令**：
 
@@ -530,19 +530,19 @@ cd bim-review-coordinator && npm test -- lifecycle
    - 統一處理 rate limit、CORS、auth header
    - **等公司業務系統接入時點才啟動**，對應 SaaS 路線圖 §2 Phase 6 表「API Gateway / rate limit」列
 
-**規劃 OpenSpec change（建議命名）**：
+**規劃 Superpowers plan（建議 id）**：
 
 ```txt
 # P0-hold 候選（業務語意層）— 等待 GPU 購買與部署後執行
-/openspec new streaming-multi-instance-orchestration
+streaming-multi-instance-orchestration
 
 # P2 候選（mock 階段）
-/openspec new notification-webhook-service
+notification-webhook-service
 
 # P2.5 候選（採用 NVIDIA reference impl；前置條件 #1 land + GPU capacity 到位 + #2 runtime evidence land）
-/openspec new streaming-ovas-helm-baseline
+streaming-ovas-helm-baseline
 
-# Phase 4 細項（待 #1 land 與 GPU capacity 到位後逐項評估，目前不開新 spec）
+# Phase 4 細項（待 #1 land 與 GPU capacity 到位後逐項評估，目前不開新 plan）
 # - async worker pool / Redis cache：Phase 4.7 / 4.8 / 4.9
 # - object storage abstraction：Phase 4 細項
 
@@ -597,19 +597,19 @@ cd bim-review-coordinator && npm test -- lifecycle
    - 需 NVIDIA Nucleus 或自建 USD live transport（Tier A 起才適合啟動）
    - **對應 SaaS 路線圖 P2.5 候選 #1A `streaming-collaboration-presence-layer-upgrade`**
 
-**規劃 OpenSpec change（建議命名）**：
+**規劃 Superpowers plan（建議 id）**：
 
 ```txt
 # P0 候選（紅星，解 IFC→USDC blocker）
-/openspec new worker-real-conversion-quality
+worker-real-conversion-quality
 
 # P2 候選（contract + mock）
-/openspec new ai-rule-carbon-result-contract
+ai-rule-carbon-result-contract
 
 # P2.5 候選（採用 NVIDIA reference impl；前置：Nucleus 或自建 USD live transport）
-/openspec new streaming-collaboration-presence-layer-upgrade
+streaming-collaboration-presence-layer-upgrade
 
-# 不開新 spec（Kit base 已內建，屬 §9 啟動 app extension list 對齊 spike）
+# 不開新 plan（Kit base 已內建，屬 §9 啟動 app extension list 對齊 spike）
 # - RTX Realtime / Path Tracing：app `.kit` 加 omni.hydra.rtx / omni.rtx.settings.core
 # - PhysX 5：app `.kit` 加 omni.physx.bundle
 # - MDL 高精度材質：app `.kit` 加 omni.mdl* / omni.kit.material.library
@@ -631,7 +631,7 @@ cd bim-review-coordinator && npm test -- lifecycle
 
 > **目標**：CI/CD、container deployment、observability、tracing、backup / DR、billing / usage metering、SLA / SLO、SSO + RBAC + 多租戶、Revit Plugin、Admin Console、External API。
 >
-> **依使用者 2026-05-08 決策，本 phase 所有細項一律暫不啟動 OpenSpec change**，等公司業務系統（CRM / SSO / billing / IT 維運 SLA）接入時程後才會逐項解凍。對應 SaaS 路線圖 §6 P3-frozen 候選 #7 / #8 / #9 + §2 Phase 6 表的「⏸ 等待業務接入」標記。
+> **依使用者 2026-05-08 決策，本 phase 所有細項一律暫不啟動 Superpowers plan / 實作**，等公司業務系統（CRM / SSO / billing / IT 維運 SLA）接入時程後才會逐項解凍。對應 SaaS 路線圖 §6 P3-frozen 候選 #7 / #8 / #9 + §2 Phase 6 表的「⏸ 等待業務接入」標記。
 >
 > **凍結例外**：P2.5 候選 #2A `streaming-ovas-helm-baseline` **不等 #9 解凍即可探索**（只解 streaming runtime，不涉及 SLA / billing / multi-tenant 等 Phase 6 範圍）；P0-hold / P1 / P2 / P2.5 候選與 §12.6 DevOps 基礎也不受此凍結影響。
 >
@@ -826,11 +826,12 @@ sequenceDiagram
 | 11 份 Capability spec | [`openspec/specs/`](../openspec/specs/) |
 | 已 archive 的 OpenSpec change | [`openspec/changes/archive/`](../openspec/changes/archive/) |
 | **2026-05-08 端到端驗證證據** | [`docs/verification/2026-05-08-spec-end-to-end-verification.md`](verification/2026-05-08-spec-end-to-end-verification.md) |
-| **SaaS 路線圖**（OpenSpec 候選 #1-#9 + #1A/#2A 編號、NVIDIA Reference 採用決策矩陣 §13、§11.4 Multi-Kit Instance 並行官方定義、硬體 §9.0-§9.8、MCP 查詢結果 §11） | [`docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`](plans/AI-BIM-governance-saas-roadmap-2026-05.md) |
+| **功能需求與 UI 驗收語意**（A1–A10、操作流程、可信度標記、雲端 / 落地端架構對齊） | [`docs/plans/ai-bim-governance-設計規格.md`](plans/ai-bim-governance-設計規格.md) |
+| **可點擊產品原型** | [`docs/plans/ai-bim-governance-prototype.html`](plans/ai-bim-governance-prototype.html) |
 
 ### 10.1 11 份 Capability Spec 對應 Phase
 
-> 對應 SaaS 路線圖 §1.4 OpenSpec 已歸檔 change → 現行 spec 溯源表。
+> 本表保留 2026-05 roadmap-era Phase 對照；新功能需求請先讀設計規格與 prototype，再回到 OpenSpec specs 判斷可實作行為。
 
 | Capability | Phase | 狀態 |
 |---|---|---|
@@ -846,59 +847,54 @@ sequenceDiagram
 | `runtime-verification-task-status` | 3 | ✅（checklist 語意：GPU / concurrent runtime 不得因 blocker 視為完成；PR #20 same-Kit primary／spectator evidence 已 land） |
 | `documentation-source-of-truth` | cross-cutting | ✅（workflow v3 / SaaS roadmap / README / OpenSpec specs 分工權威） |
 
-> **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。本文件與 [SaaS 路線圖 2026-05](plans/AI-BIM-governance-saas-roadmap-2026-05.md) 屬 **OpenSpec 補充 planning artifact**（分工見頂部 metadata），不在上述優先順序內覆蓋 `openspec/specs/` 權威。
+> **衝突解決順序**（同 [`AGENTS.md §0.1`](../AGENTS.md)）：使用者最新明確指令 > `AGENTS.md` > `CLAUDE.md` > OpenSpec > installed skills / wiki。本文件屬 **OpenSpec 補充 planning artifact**（分工見頂部 metadata），不得覆蓋 `openspec/specs/`、contracts 或程式碼權威。
 
 ---
 
 ## 11. 開發協作流程
 
-### 11.1 OpenSpec + GitHub PR Workflow
+### 11.1 Superpowers + GitHub PR Workflow
 
 > 完整定義以 [`AGENTS.md §0.1`](../AGENTS.md) 為準。
 
 ```txt
-OpenSpec       = 需求 / 規格 / 驗收條件
-Git Branch     = 實作隔離（codex/openspec/<change-id>）
+Design spec    = 需求 / 規格 / 驗收條件
+Superpowers    = plan / execution governance（writing-plans → subagent-driven-development → verification-before-completion）
+Git Branch     = 實作隔離（codex/superpowers/<work-id> 或 task-specific branch）
 Pull Request   = 審查與討論
 GitHub Actions = 自動驗證
 PR Review Agent = 自動整理風險 / 驗證命令 / blocker / warning
 Merge          = 正式接受變更
-Archive        = 把 delta specs 併入 openspec/specs/
+Closeout       = 更新設計規格 / docs / evidence，並收斂本地 worktree
 ```
 
 **標準流程**：
 
-1. 從最新 `main` 建立 `codex/openspec/<change-id>` branch
-2. `/openspec new <change-id>` 在該 branch 建 proposal / design / tasks / delta specs
-   - OpenSpec artifacts 預設使用繁體中文；API、schema、CLI、status enum、log/error 與 OpenSpec parser 必要標頭保留原文
-3. `/openspec apply <change-id>` 實作並更新 task `[ ] → [x]`
-4. 開 PR 跑最小驗證並回報結果
-5. PR review + GitHub Actions 自動驗證 + `pr-review-agent` 自動審查報告
-6. Merge 後執行 OpenSpec sync/archive
-7. 依 SaaS roadmap `§1.6` 同步更新 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md`
-   - 更新 `§1.2` specs 清單
-   - 更新 `§1.4` archive 溯源
-   - 更新 `§2` Phase 狀態
-   - 更新 `§5` 候選清單
-   - 更新 `§7` 風險
-   - 更新 `§10` 下一步
-   - 若沒有新的 runtime evidence，不更新 `§1.3` passed 狀態
-8. 使用文件/規劃相關 skill 產生或更新同名 HTML 檢視版 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.html`
-   - HTML 內容必須源自同名 Markdown
-   - HTML 只作為人類檢視用衍生檔，Markdown 仍是 source of truth
+1. 從最新 `main` 建立 `codex/superpowers/<work-id>` 或 task-specific branch；不得在 `main` 上開發
+2. 非平凡功能先用 Superpowers `writing-plans` 產出分期 plan；若只是純 docs/refactor，PR 需明確記錄不需要 plan 的原因
+   - Plan / 設計文件預設使用繁體中文；API、schema、CLI、status enum、log/error 與外部產品名稱保留原文
+3. 用 Superpowers `subagent-driven-development` 或等價小步驟執行；逐 task 更新 checklist / plan 狀態
+4. 完成前用 Superpowers `verification-before-completion` 對照需求、diff 與驗證證據，不得只用主觀判斷宣告完成
+5. 開 PR 前跑最小驗證並回報結果；user-facing change 必須附 gstack / browser evidence
+6. PR review + GitHub Actions 自動驗證 + `pr-review-agent` 自動審查報告
+7. 若 change 影響 A1–A10 功能需求、操作介面或雲端 / 落地端分離架構，更新 `docs/plans/ai-bim-governance-設計規格.md`，必要時同步更新 `docs/plans/ai-bim-governance-prototype.html`
+   - 不得只改 prototype 而不更新設計規格
+   - 不得把 prototype 的 demo data 宣告成 runtime evidence
+   - 若沒有新的 runtime evidence，不更新任何 passed / ready 宣稱
+8. 生成型 HTML 檢視不得提交；`docs/plans/ai-bim-governance-prototype.html` 例外，因它是可點擊需求原型本體，不是由 Markdown 生成的衍生檔
 9. PR merge 後收斂本地工作樹
    - 執行 `git fetch origin --prune`
    - 切回 `main` 並確認工作區乾淨
    - 本地 `main` 必須指向 `origin/main`
    - 若因 PR squash/merge commit 出現 `main...origin/main` ahead/behind，先確認 ahead 內容已被遠端 merge commit 吸收，再對齊 `origin/main`
-   - 不用 merge/pull 方式手動解同內容衝突；功能開發與文件變更都應留在 feature / `codex/openspec/<change-id>` branch
+   - 不用 merge/pull 方式手動解同內容衝突；功能開發與文件變更都應留在 feature / task branch
 
 ### 11.2 PR Checklist
 
-- [ ] 對應的 OpenSpec change 存在（或本 PR 為純 docs/refactor 不需要）
+- [ ] 對應的 Superpowers plan / checklist 存在；若本 PR 為純 docs/refactor 不需要，已在 PR 說明中記錄原因
 - [ ] `pr-review-agent` 已產生 report；若狀態為 `blocked` / `failed`，需修正或明確記錄人工 override 理由
-- [ ] 若本 PR 完成 OpenSpec sync/archive，已同步更新 SaaS roadmap `§1.6` 要求的章節，或明確標註不適用原因
-- [ ] 若本 PR 更新 SaaS roadmap，已同步產生/更新同名 HTML 檢視版，或明確標註不適用原因
+- [ ] 若本 PR 影響 A1–A10、操作介面或雲端 / 落地端分離架構，已同步更新設計規格；必要時更新 prototype
+- [ ] 若本 PR 更新 prototype，已確認它不是把 demo data 當成 runtime evidence
 - [ ] PR merge 後已 fetch/prune，且本地 `main` 乾淨對齊 `origin/main`，沒有殘留本地-only commit
 - [ ] 修改不違反 `AGENTS.md` repo 邊界
 - [ ] Python tests 從各服務目錄下執行：`cd <svc> && python3 -m pytest tests`
@@ -910,7 +906,7 @@ Archive        = 把 delta specs 併入 openspec/specs/
 
 ### 11.2.A PR Review Agent Gate
 
-`pr-review-agent` 是自動審查 gate，不是 merge bot。它會讀 PR diff，輸出 `pr-review-agent.json` 與 `pr-review-agent.md`，整理 changed paths、OpenSpec change、最小驗證命令、GitNexus evidence、blockers、warnings 與 human review notes。
+`pr-review-agent` 是自動審查 gate，不是 merge bot。它會讀 PR diff，輸出 `pr-review-agent.json` 與 `pr-review-agent.md`，整理 changed paths、Superpowers plan / checklist、最小驗證命令、GitNexus evidence、blockers、warnings 與 human review notes。
 
 狀態解讀：
 
@@ -918,7 +914,7 @@ Archive        = 把 delta specs 併入 openspec/specs/
 |---|---|
 | `passed` | 必要 deterministic checks 通過，仍需人工 review / CODEOWNERS / branch protection |
 | `warning` | 可進入人工審查，但 reviewer 必須看 warning |
-| `blocked` | 缺少必要證據、OpenSpec、GitNexus 或 repo boundary 說明，不應 merge |
+| `blocked` | 缺少必要證據、Superpowers plan / checklist、GitNexus 或 repo boundary 說明，不應 merge |
 | `failed` | 必要命令或 report 產生失敗，不應 merge |
 
 本機重跑：
@@ -962,8 +958,8 @@ cd web-viewer-sample      && npm run test:session-first && npm run build
 ./bim-streaming-server/scripts/tests/test-stage-loading-contract.ps1   # non-GPU contract
 ./scripts/start-all.ps1                                                # 啟動所有服務（含 streaming）
 
-# OpenSpec 驗證
-openspec validate <change-id>
+# 文件 / 規範正向檢查（確認新 workflow 入口仍指向 Superpowers）
+rg -n "Superpowers.*workflow|verification-before-completion|codex/superpowers" AGENTS.md docs openspec
 ```
 
 ---
@@ -977,12 +973,12 @@ openspec validate <change-id>
 > 解開這個 blocker 才能讓 IFC → USD 品質保證管線（v2 圖右側 ⭐）真正跑起來。
 
 1. **真實 IFC → USDC converter**（取代 placeholder）— P0 候選 #1
-   - 開 OpenSpec change：`/openspec new worker-real-conversion-quality`
+   - 建立 Superpowers plan：`worker-real-conversion-quality`
    - 評估方案：IfcOpenShell / NVIDIA Connect for Revit / Speckle（NVIDIA Kit base **沒有** IFC converter，MCP 已驗）
    - KPI：mapping coverage ≥ 50% on 89 MB demo IFC（具體門檻在 explore 階段定）；90 MB IFC conversion ≤ 預設門檻
    - **`ifc-usd-quality-gate` 的 coverage check（geometry / material / IFC GUID ↔ USD prim path）已整合進 #1 KPI**；是否拆分獨立 spec 在 #1 land 後再評估
 2. **Root multi-Kit launcher** — P0-hold 候選 #2
-   - 開 OpenSpec change：`/openspec new streaming-multi-instance-orchestration`（業務語意層；等待 GPU 購買與部署後執行）
+   - 建立 Superpowers plan：`streaming-multi-instance-orchestration`（業務語意層；等待 GPU 購買與部署後執行）
    - `scripts/start-multi-kit.{ps1,sh}`：啟動 ≥ 2 Kit instance（不同 signaling port pair）
    - GPU-backed endpoints 到位後，驗證 `dedicated_instance` routing 在實機並行 stream，並更新 `runtime-verification-evidence` §6.4
    - **層級邊界**：#2 是「業務語意層」spec（routing policy + `kit_instance_bindings[]` 紀錄）；Kit container 真實啟停 / pool / scheduling 屬 runtime infrastructure 層（Phase 4.4 / 4.5 / 4.11），Tier A 自寫 `KitInstancePool`，Tier B+ 換 OVAS（→ P2.5 候選 #2A）。詳見 SaaS 路線圖 §11.4 Multi-Kit Instance 並行的官方定義
@@ -991,12 +987,12 @@ openspec validate <change-id>
 
 1. `closing` state 完整實作（累積最終 annotation / snapshot 後再 `closed`）
 2. **Kit instance release flow 各階段事件回寫** — P1 候選 #4
-   - 開 OpenSpec change：`/openspec new coordinator-session-lifecycle-events-audit`
+   - 建立 Superpowers plan：`coordinator-session-lifecycle-events-audit`
    - 把現有 lifecycle-events（reviewRequestCreated / sessionBound）整理成 append-only event schema
    - 至少含 `reviewRequestCreated` / `sessionCreated` / `sessionActive` / `sessionClosing` / `sessionClosed` / `kitInstanceReleased` 6 種事件
    - 為 P2 候選 #6 webhook 鋪路（**production-grade audit log 持久化屬 Phase 6 凍結**）
 3. **Artifact lineage graph query API** — P1 候選 #3
-   - 開 OpenSpec change：`/openspec new worker-artifact-lineage-api`
+   - 建立 Superpowers plan：`worker-artifact-lineage-api`
    - `GET /api/artifacts/{id}/lineage` 回完整祖系 + 子代鏈
    - worker UI 顯示 source → derived → mapping 三層樹
 4. `shared_state` routing policy 跨 instance Socket.IO 同步
@@ -1005,16 +1001,16 @@ openspec validate <change-id>
 ### 12.3 第三優先：P2 候選（contract + mock 階段）
 
 1. **D. AI Rule Carbon Service contract** — P2 候選 #5
-   - 開 OpenSpec change：`/openspec new ai-rule-carbon-result-contract`
+   - 建立 Superpowers plan：`ai-rule-carbon-result-contract`
    - 涵蓋 IDS / code check / carbon / IAQ / HVAC / prediction / report 7 種輸出 schema
    - 先做 contract 與 mock service，不做真實 AI
 2. **E. Notification / Webhook Service mock** — P2 候選 #6
-   - 開 OpenSpec change：`/openspec new notification-webhook-service`
+   - 建立 Superpowers plan：`notification-webhook-service`
    - subscription / delivery / retry / dead-letter 行為定義
    - 訂閱 P1 候選 #4 的 lifecycle events
    - **production-grade webhook delivery（重試 / dead-letter / 簽章驗證）屬 Phase 6 凍結**
 
-> Phase 4 細項（`async-worker-pool-and-redis` / `object-storage-abstraction` 等）目前**不開新 spec**；待 #1 land 與 GPU capacity 到位後逐項評估。詳見 §7 Phase 4 規劃 OpenSpec change 段落。
+> Phase 4 細項（`async-worker-pool-and-redis` / `object-storage-abstraction` 等）目前**不開新 plan**；待 #1 land 與 GPU capacity 到位後逐項評估。詳見 §7 Phase 4 規劃 Superpowers plan 段落。
 
 ### 12.4 P2.5：採用 NVIDIA reference implementation
 
@@ -1034,7 +1030,7 @@ openspec validate <change-id>
 
 ### 12.5 P3-frozen：⏸ 等公司業務系統接入
 
-> 依使用者 2026-05-08 決策，下列候選一律暫不啟動 OpenSpec change，等公司業務系統（CRM / SSO / billing / IT 維運 SLA）接入時程後再逐項解凍。詳見 SaaS 路線圖 §6 P3-frozen + §2 Phase 6 表。
+> 依使用者 2026-05-08 決策，下列候選一律暫不啟動 Superpowers plan / 實作，等公司業務系統（CRM / SSO / billing / IT 維運 SLA）接入時程後再逐項解凍。詳見 SaaS 路線圖 §6 P3-frozen + §2 Phase 6 表。
 
 1. **P3-frozen 候選 #7 `tenant-rbac-foundation`** — ⏸ 等 SSO / IdP 接入時點
    - 把現有 `tenant_id` 從 metadata field 升級為跨服務隔離邊界
