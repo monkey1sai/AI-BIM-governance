@@ -168,12 +168,6 @@
       "role": "agent-tooling",
       "owner": "scripts",
       "notes": "PR review agent CLI wrapper."
-    },
-    {
-      "path": "scripts/render-roadmap-html.py",
-      "role": "doc-generator",
-      "owner": "scripts",
-      "notes": "Roadmap HTML generator."
     }
   ]
 }
