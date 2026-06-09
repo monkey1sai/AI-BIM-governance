@@ -16,9 +16,12 @@
 // callback-outbox 直查（/api/internal/callback-outbox/:id）需 internal token，瀏覽器不可達 →
 //   不在此 client 提供；outbox 摘要改由 ifc_ready job 的 callback_outbox_id 觀察（誠實標 demo/未取得）。
 
+import { defaultCoordinatorBase } from "./coordinatorBase";
+
 const env = (import.meta as { env?: Record<string, string> }).env;
+
 const COORD_BASE: string =
-  env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? "http://127.0.0.1:8004";
+  env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();
 
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });

@@ -2,7 +2,25 @@
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, ReviewRoomPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
+import {
+  A1GovernanceWorkbenchPage,
+  AppsPage,
+  AppVisionPage,
+  ConversionSchedulingPage,
+  CoordinatorPage,
+  FederationPage,
+  IntakePage,
+  IssuesRuleCenterPage,
+  KitGpuFleetPage,
+  MinioDataPage,
+  OverviewPage,
+  ReviewRoomPage,
+  RuntimePage,
+  SemanticViewerPage,
+  SessionManagementPage,
+  ViewerPresentationPage,
+  VersionDiffPage,
+} from "./pages";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
@@ -310,6 +328,53 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("技術");
     expect(html).toContain("clean"); // Tweaks scenario 按鈕
     expect(html).toContain("warn");
+  });
+
+  it("完整產品操作台 shell 顯示 prototype 的四組資訊架構", () => {
+    const html = renderToString(<EdgeConsole />);
+    expect(html).toContain("工作台");
+    expect(html).toContain("核心治理");
+    expect(html).toContain("OMNIVERSE RUNTIME");
+    expect(html).toContain("落地端控制台");
+    expect(html).toContain("IFC→USD 轉檔排程");
+    expect(html).toContain("Kit / GPU 機隊");
+    expect(html).toContain("MinIO 資料");
+    expect(html).toContain("Chat USD Agent");
+  });
+
+  it("prototype 核心頁面可 render：A1 stepper、3D viewer、conversion、session、Kit/GPU、MinIO", () => {
+    const a1 = renderToString(<A1GovernanceWorkbenchPage />);
+    expect(a1).toContain("上傳模型");
+    expect(a1).toContain("自動檢核");
+    expect(a1).toContain("開 Issue");
+    expect(a1).toContain("匯出 BCF");
+    expect(a1).toContain("governance-service :49102");
+
+    const viewer = renderToString(<ViewerPresentationPage />);
+    expect(viewer).toContain("3D Viewer 呈現");
+    expect(viewer).toContain("openStage");
+    expect(viewer).toContain("highlightPrimsRequest");
+    expect(viewer).toContain("DataChannel");
+
+    const conv = renderToString(<ConversionSchedulingPage />);
+    expect(conv).toContain("IFC→USD 轉檔排程");
+    expect(conv).toContain("mapping coverage");
+    expect(conv).toContain("/api/external/ifc-ready");
+
+    const sessions = renderToString(<SessionManagementPage />);
+    expect(sessions).toContain("Session 管理");
+    expect(sessions).toContain("first frame");
+    expect(sessions).toContain("Reclaim stale spectator");
+
+    const fleet = renderToString(<KitGpuFleetPage />);
+    expect(fleet).toContain("Kit / GPU 機隊");
+    expect(fleet).toContain("1 GPU = 1 Kit stream");
+    expect(fleet).toContain("drain");
+
+    const minio = renderToString(<MinioDataPage />);
+    expect(minio).toContain("MinIO 資料");
+    expect(minio).toContain("bim-control");
+    expect(minio).toContain("model.usdc");
   });
 
   // ── P4 Review Room（G）v1：連到既有 viewer，不在 console 內嵌 3D，不動 App/Window ──

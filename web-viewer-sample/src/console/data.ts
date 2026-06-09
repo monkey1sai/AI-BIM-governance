@@ -30,18 +30,50 @@ export interface PageDef {
   no: string;
   label: string;
   plane: "governance" | "omniverse";
+  group: "workspace" | "core" | "omniverse" | "coordinator" | "system";
+  sub?: string;
+  badge?: string;
 }
 
-// 兩段式導覽（雲地邊界視覺化）：Governance Platform（零 GPU）/ Omniverse Runtime（綁 GPU）。
+export const NAV_GROUPS: { key: PageDef["group"]; title: string; sub: string }[] = [
+  { key: "workspace", title: "工作台", sub: "WORKSPACE" },
+  { key: "core", title: "核心治理", sub: "CORE · 語意 / 規則 / 問題" },
+  { key: "omniverse", title: "OMNIVERSE RUNTIME", sub: "KIT · USD · GPU" },
+  { key: "coordinator", title: "落地端控制台", sub: "COORDINATOR · 1..N GPU" },
+  { key: "system", title: "SYSTEM", sub: "Runtime · Admin · Spec" },
+];
+
+// prototype product console 導覽。保留既有 route aliases（overview/coordinator/intake/review/semantic）
+// 以免舊測試與 deep links 斷掉。
 export const PAGES: PageDef[] = [
-  { key: "overview", no: "A", label: "Overview", plane: "governance" },
-  { key: "coordinator", no: "B", label: "Coordinator Console", plane: "governance" },
-  { key: "intake", no: "C", label: "Model Intake", plane: "governance" },
-  { key: "issues", no: "D", label: "Issues · 語意驗收 / Rule Center", plane: "governance" },
-  { key: "apps", no: "E", label: "Applications · A1–A10", plane: "governance" },
-  { key: "runtime", no: "F", label: "Runtime Dashboard", plane: "omniverse" },
-  { key: "review", no: "G", label: "Review Room", plane: "omniverse" },
-  { key: "semantic", no: "H", label: "Semantic Viewer", plane: "omniverse" },
+  { key: "home", no: "⌂", label: "今天要做什麼", plane: "governance", group: "workspace" },
+  { key: "a1", no: "A1", label: "治理與模型檢核", plane: "governance", group: "core", badge: "P0" },
+  { key: "a2", no: "A2", label: "版本差異與責任", plane: "governance", group: "core" },
+  { key: "a3", no: "A3", label: "跨專業疊合", plane: "governance", group: "core" },
+  { key: "a4", no: "A4", label: "語意搜尋問答", plane: "governance", group: "core" },
+  { key: "a5", no: "A5", label: "IoT / FM 數位分身", plane: "governance", group: "core" },
+  { key: "issues", no: "BC", label: "Issue / BCF", plane: "governance", group: "core", badge: "A1" },
+  { key: "reports", no: "RP", label: "報表中心", plane: "governance", group: "core" },
+  { key: "viewer", no: "3D", label: "3D Viewer 呈現", plane: "omniverse", group: "omniverse" },
+  { key: "gpu", no: "01", label: "GPU 審查室", plane: "omniverse", group: "omniverse", badge: "MVP" },
+  { key: "a6", no: "A6", label: "4D / 5D 施工模擬", plane: "omniverse", group: "omniverse" },
+  { key: "a7", no: "A7", label: "Reality Capture 比對", plane: "omniverse", group: "omniverse" },
+  { key: "a8", no: "A8", label: "Synthetic Data", plane: "omniverse", group: "omniverse" },
+  { key: "a9", no: "A9", label: "設計 / 審查 Copilot", plane: "omniverse", group: "omniverse" },
+  { key: "a10", no: "A10", label: "機器人 / 巡檢模擬", plane: "omniverse", group: "omniverse" },
+  { key: "conv", no: "CV", label: "IFC→USD 轉檔排程", plane: "governance", group: "coordinator", badge: "P1" },
+  { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "coordinator" },
+  { key: "instances", no: "KG", label: "Kit / GPU 機隊", plane: "omniverse", group: "coordinator" },
+  { key: "minio", no: "M", label: "MinIO 資料", plane: "governance", group: "coordinator" },
+  { key: "runtime", no: "RT", label: "Runtime 監控", plane: "omniverse", group: "system" },
+  { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system" },
+  { key: "spec", no: "▦", label: "設計規格說明", plane: "governance", group: "system" },
+  { key: "overview", no: "OV", label: "Overview", plane: "governance", group: "system" },
+  { key: "coordinator", no: "CO", label: "Coordinator Console", plane: "governance", group: "coordinator" },
+  { key: "intake", no: "IN", label: "Model Intake", plane: "governance", group: "coordinator" },
+  { key: "review", no: "G", label: "Review Room", plane: "omniverse", group: "omniverse" },
+  { key: "semantic", no: "SE", label: "Semantic Viewer", plane: "omniverse", group: "omniverse" },
+  { key: "apps", no: "AP", label: "Applications · A1–A10", plane: "governance", group: "system" },
 ];
 
 export interface AppCardDef {
@@ -127,7 +159,7 @@ export const ENDPOINTS: EndpointDef[] = [
 ];
 
 // ── 相依與授權風險（DEPENDENCIES panel 用，移植自設計原型 data.jsx）───────────
-// 誠實鐵律：A1 core 是零 GPU / 零 NVIDIA runtime，但**不可**寫成「零相依 / 零授權風險」。
+// 誠實鐵律：A1 core 的規則檢核在 governance-service（CPU）完成，但**不可**寫成「零相依 / 零授權風險」。
 // 下列 LGPL / copyleft 元件商用前須法務確認。BCF 匯出本 repo 已改純 stdlib（不再依賴 GPLv3
 // bcf-client），故 BCF 列標 permissive 並註明；其餘 copyleft 元件照實標。
 export interface DependencyDef {
