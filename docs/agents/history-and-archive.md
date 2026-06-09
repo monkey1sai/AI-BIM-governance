@@ -1,13 +1,13 @@
 > Loaded lazily by AGENTS.md / CLAUDE.md。Source-of-truth: AGENTS.md。
 >
-> 何時讀本檔：解讀 OpenSpec archive 文件、看舊 PR / commit、了解為什麼 `_worker` / `_bim-control` 在 archive 文件出現但不在 product runtime 時。
+> 何時讀本檔：看舊 PR / commit、解讀歷史 OpenSpec spec archive（流程已退役，僅供歷史參考）、了解為什麼 `_worker` / `_bim-control` 在歷史文件出現但不在 product runtime 時。
 
 # 歷史 `_worker` / `_bim-control` 退役脈絡
 
 `_worker/` 與 `_bim-control/` 已自 repo product runtime 刪除（[2026-05-18 B 方案落地]，change `local-coordinator-ifc-ready-intake-boundary` / PR #63）。它們只可作為：
 
 - 歷史脈絡（解讀舊 archive 文件）
-- OpenSpec archive context
+- 歷史 OpenSpec spec archive context（流程已退役，僅供歷史參考）
 - `tests/fakes` / `tests/contracts` 的 test-double 對照
 
 不得作為現行 startup、health check、smoke、review-session dependency 或 agent repo 邊界。
