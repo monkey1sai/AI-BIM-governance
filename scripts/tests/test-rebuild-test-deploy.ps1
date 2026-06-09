@@ -55,9 +55,15 @@ try {
     }.GetNewClosure()
 
     $script:calls = $calls
-    Assert-Throws {
+    $fetchFailureMessage = $null
+    try {
         Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', 'main') -WorkingDirectory $cleanupRoot -CommandRunner $runner
-    } 'fetch failure is surfaced as a blocker'
+    } catch {
+        $fetchFailureMessage = $_.Exception.Message
+    }
+    Assert-True (-not [string]::IsNullOrWhiteSpace($fetchFailureMessage)) 'fetch failure is surfaced as a blocker'
+    Assert-True ($fetchFailureMessage -match 'exit code 23') 'fetch failure includes exit code'
+    Assert-True ($fetchFailureMessage -match 'fetch failed') 'fetch failure includes command output'
     Assert-True ($calls.Count -gt 0) 'fetch command was attempted'
     Assert-True ($calls[0] -match 'git fetch origin main') 'fetch command included origin main'
 
@@ -68,6 +74,89 @@ try {
     $okResult = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('status', '--short') -WorkingDirectory $cleanupRoot -CommandRunner $okRunner
     Assert-Equal 0 $okResult.ExitCode 'successful command returns exit code'
     Assert-Equal 'ok' $okResult.Output 'successful command returns output'
+
+    $stderrCmd = Join-Path $sandbox 'native-stderr-ok.cmd'
+    "@echo off`r`necho native stderr ok 1>&2`r`nexit /b 0`r`n" | Set-Content -LiteralPath $stderrCmd -Encoding ascii
+    $stderrResult = Invoke-TestDeployGitCommand -Tool 'cmd.exe' -Arguments @('/c', $stderrCmd) -WorkingDirectory $cleanupRoot
+    Assert-Equal 0 $stderrResult.ExitCode 'native stderr command returns exit code zero'
+    Assert-True ($stderrResult.Output -match 'native stderr ok') 'native stderr is captured without throwing'
+
+    $rebuildRoot = Join-Path $sandbox 'rebuild-root'
+    $rebuildDeployRoot = Join-Path $sandbox 'rebuild-deploy'
+    New-Item -ItemType Directory -Path $rebuildRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $rebuildDeployRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $rebuildDeployRoot 'scripts') -Force | Out-Null
+    'deploy' | Set-Content -LiteralPath (Join-Path $rebuildDeployRoot 'scripts\deploy.ps1') -Encoding ascii
+
+    $rebuildCalls = New-Object 'System.Collections.Generic.List[string]'
+    $rebuildRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $script:rebuildCalls.Add("$Tool $($Arguments -join ' ') @ $WorkingDirectory")
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'fetch origin main') {
+            return [pscustomobject]@{ ExitCode = 23; Output = 'fetch failed' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+
+    $script:rebuildCalls = $rebuildCalls
+    $deployWasCalled = $false
+    $deployRunner = {
+        param([string] $DeployRoot)
+        $script:deployWasCalled = $true
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+
+    $rebuildFailureMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $rebuildDeployRoot -AllowNonFixedPathForTests -CommandRunner $rebuildRunner -DeployRunner $deployRunner | Out-Null
+    } catch {
+        $rebuildFailureMessage = $_.Exception.Message
+    }
+    Assert-True (-not [string]::IsNullOrWhiteSpace($rebuildFailureMessage)) 'rebuild fetch failure is surfaced'
+    Assert-True ($rebuildFailureMessage -match 'exit code 23') 'rebuild fetch failure includes exit code'
+    Assert-True ($rebuildFailureMessage -match 'fetch failed') 'rebuild fetch failure includes command output'
+    Assert-True (($rebuildCalls -join "`n") -match 'git fetch origin main') 'rebuild attempted fetch'
+    Assert-True (-not (($rebuildCalls -join "`n") -match 'git reset --hard origin/main')) 'rebuild stops before reset'
+    Assert-True (-not (($rebuildCalls -join "`n") -match 'git clean -fdx')) 'rebuild stops before clean'
+    Assert-True (-not $deployWasCalled) 'rebuild stops before deploy'
+
+    $deployExitRoot = Join-Path $sandbox 'deploy-exit-root'
+    New-Item -ItemType Directory -Path (Join-Path $deployExitRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $deployExitRoot 'scripts') -Force | Out-Null
+    "exit 7`r`n" | Set-Content -LiteralPath (Join-Path $deployExitRoot 'scripts\deploy.ps1') -Encoding ascii
+    $deployExitCalls = New-Object 'System.Collections.Generic.List[string]'
+    $deployExitRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $script:deployExitCalls.Add("$Tool $($Arguments -join ' ') @ $WorkingDirectory")
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abcdef123456' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $script:deployExitCalls = $deployExitCalls
+
+    $deployExitResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $deployExitRoot -AllowNonFixedPathForTests -CommandRunner $deployExitRunner
+    Assert-Equal 7 $deployExitResult.DeployExitCode 'deploy.ps1 exit code is returned without terminating caller'
 
     Write-TestPass $testName
 } catch {

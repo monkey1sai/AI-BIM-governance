@@ -103,17 +103,25 @@ function Invoke-TestDeployGitCommand {
     if ($null -ne $CommandRunner) {
         $result = & $CommandRunner $Tool $Arguments $WorkingDirectory
     } else {
-        Push-Location -LiteralPath $WorkingDirectory
+        $stdoutPath = [System.IO.Path]::GetTempFileName()
+        $stderrPath = [System.IO.Path]::GetTempFileName()
         try {
-            $output = & $Tool @Arguments 2>&1
-            $outputText = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
-            $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+            $process = Start-Process -FilePath $Tool -ArgumentList $Arguments -WorkingDirectory $WorkingDirectory -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait -PassThru
+            $stdoutText = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction Stop } else { '' }
+            $stderrText = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw -ErrorAction Stop } else { '' }
+            $outputParts = @()
+            if (-not [string]::IsNullOrEmpty($stdoutText)) {
+                $outputParts += $stdoutText.TrimEnd([char[]]@("`r", "`n"))
+            }
+            if (-not [string]::IsNullOrEmpty($stderrText)) {
+                $outputParts += $stderrText.TrimEnd([char[]]@("`r", "`n"))
+            }
             $result = [pscustomobject]@{
-                ExitCode = $exitCode
-                Output = $outputText
+                ExitCode = [int]$process.ExitCode
+                Output = ($outputParts -join [Environment]::NewLine)
             }
         } finally {
-            Pop-Location
+            Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -131,15 +139,23 @@ function Invoke-TestDeployRebuild {
         [string] $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path,
         [string] $DeploymentPath = $script:TestDeployFixedPath,
         [scriptblock] $CommandRunner = $null,
-        [scriptblock] $DeployRunner = $null
+        [scriptblock] $DeployRunner = $null,
+        [switch] $AllowNonFixedPathForTests
     )
 
     if (-not $Build) {
         throw 'Invoke-TestDeployRebuild requires -Build.'
     }
+    if ($AllowNonFixedPathForTests -and $null -eq $CommandRunner) {
+        throw 'AllowNonFixedPathForTests requires CommandRunner.'
+    }
 
     $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
-    $deployRoot = Assert-TestDeployPath -Path $DeploymentPath
+    $deployRoot = if ($AllowNonFixedPathForTests) {
+        Normalize-TestDeployPath -Path $DeploymentPath
+    } else {
+        Assert-TestDeployPath -Path $DeploymentPath
+    }
 
     $origin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner
     $originUrl = $origin.Output.Trim()
@@ -182,7 +198,7 @@ function Invoke-TestDeployRebuild {
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
 
-    $removed = Remove-TestDeployAgentTooling -DeploymentPath $deployRoot
+    $removed = Remove-TestDeployAgentTooling -DeploymentPath $deployRoot -AllowNonFixedPathForTests:$AllowNonFixedPathForTests
     $deployScript = Join-Path $deployRoot 'scripts\deploy.ps1'
     if (-not (Test-Path -LiteralPath $deployScript -PathType Leaf)) {
         throw "deployment script missing after rebuild: $deployScript"
@@ -193,13 +209,9 @@ function Invoke-TestDeployRebuild {
     if ($null -ne $DeployRunner) {
         $deployResult = & $DeployRunner $deployRoot
     } else {
-        Push-Location -LiteralPath $deployRoot
-        try {
-            & .\scripts\deploy.ps1 -Build
-            $deployExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
-            $deployResult = [pscustomobject]@{ ExitCode = $deployExitCode }
-        } finally {
-            Pop-Location
+        $deployProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build') -WorkingDirectory $deployRoot -NoNewWindow -Wait -PassThru
+        $deployResult = [pscustomobject]@{
+            ExitCode = [int]$deployProcess.ExitCode
         }
     }
 
