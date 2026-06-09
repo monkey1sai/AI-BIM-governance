@@ -89,3 +89,124 @@ function Remove-TestDeployAgentTooling {
 
     return @($removed.ToArray())
 }
+
+function Invoke-TestDeployGitCommand {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $Tool,
+        [Parameter(Mandatory = $true)][string[]] $Arguments,
+        [Parameter(Mandatory = $true)][string] $WorkingDirectory,
+        [scriptblock] $CommandRunner = $null
+    )
+
+    $command = "$Tool $($Arguments -join ' ')"
+    if ($null -ne $CommandRunner) {
+        $result = & $CommandRunner $Tool $Arguments $WorkingDirectory
+    } else {
+        Push-Location -LiteralPath $WorkingDirectory
+        try {
+            $output = & $Tool @Arguments 2>&1
+            $outputText = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+            $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+            $result = [pscustomobject]@{
+                ExitCode = $exitCode
+                Output = $outputText
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    if ($result.ExitCode -ne 0) {
+        throw "$command failed with exit code $($result.ExitCode): $($result.Output)"
+    }
+
+    return $result
+}
+
+function Invoke-TestDeployRebuild {
+    [CmdletBinding()]
+    param(
+        [switch] $Build,
+        [string] $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path,
+        [string] $DeploymentPath = $script:TestDeployFixedPath,
+        [scriptblock] $CommandRunner = $null,
+        [scriptblock] $DeployRunner = $null
+    )
+
+    if (-not $Build) {
+        throw 'Invoke-TestDeployRebuild requires -Build.'
+    }
+
+    $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $deployRoot = Assert-TestDeployPath -Path $DeploymentPath
+
+    $origin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner
+    $originUrl = $origin.Output.Trim()
+    if ([string]::IsNullOrWhiteSpace($originUrl)) {
+        throw 'current repo origin URL is empty'
+    }
+
+    if (-not (Test-Path -LiteralPath $deployRoot -PathType Container)) {
+        New-Item -ItemType Directory -Path $deployRoot -Force | Out-Null
+    }
+
+    $deployGitDir = Join-Path $deployRoot '.git'
+    if (-not (Test-Path -LiteralPath $deployGitDir)) {
+        $existing = @(Get-ChildItem -LiteralPath $deployRoot -Force -ErrorAction SilentlyContinue)
+        if ($existing.Count -gt 0) {
+            foreach ($item in $existing) {
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+            }
+            Write-Host "[rebuild-test-deploy] rebuilt non-git deployment directory: $deployRoot"
+        }
+
+        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', $originUrl, $deployRoot) -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner | Out-Null
+    } else {
+        $deployOrigin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+        $deployOriginUrl = $deployOrigin.Output.Trim()
+        if ($deployOriginUrl -ne $originUrl) {
+            throw "deployment checkout origin mismatch. expected='$originUrl' actual='$deployOriginUrl'"
+        }
+    }
+
+    $headBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', '--short', 'HEAD') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+    $statusBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('status', '--short') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+    if (-not [string]::IsNullOrWhiteSpace($statusBefore.Output)) {
+        $statusLines = @($statusBefore.Output -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        Write-Host "[rebuild-test-deploy] discarding deployment local changes count=$($statusLines.Count) head=$($headBefore.Output.Trim())"
+        Write-Host $statusBefore.Output
+    }
+
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', 'main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+
+    $removed = Remove-TestDeployAgentTooling -DeploymentPath $deployRoot
+    $deployScript = Join-Path $deployRoot 'scripts\deploy.ps1'
+    if (-not (Test-Path -LiteralPath $deployScript -PathType Leaf)) {
+        throw "deployment script missing after rebuild: $deployScript"
+    }
+
+    $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+
+    if ($null -ne $DeployRunner) {
+        $deployResult = & $DeployRunner $deployRoot
+    } else {
+        Push-Location -LiteralPath $deployRoot
+        try {
+            & .\scripts\deploy.ps1 -Build
+            $deployExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+            $deployResult = [pscustomobject]@{ ExitCode = $deployExitCode }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    return [pscustomobject]@{
+        DeploymentPath = $deployRoot
+        OriginMainCommit = $commit.Output.Trim()
+        RemovedAgentToolingCount = @($removed).Count
+        DeployExitCode = [int]$deployResult.ExitCode
+    }
+}

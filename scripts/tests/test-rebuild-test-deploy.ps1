@@ -44,6 +44,31 @@ try {
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot '.github\workflows\ci.yml')) '.github workflows kept'
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot 'scripts\deploy.ps1')) 'deploy.ps1 kept'
 
+    $calls = New-Object 'System.Collections.Generic.List[string]'
+    $runner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $script:calls.Add("$Tool $($Arguments -join ' ') @ $WorkingDirectory")
+        if ($Arguments -contains 'fetch') {
+            return [pscustomobject]@{ ExitCode = 23; Output = 'fetch failed' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+
+    $script:calls = $calls
+    Assert-Throws {
+        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', 'main') -WorkingDirectory $cleanupRoot -CommandRunner $runner
+    } 'fetch failure is surfaced as a blocker'
+    Assert-True ($calls.Count -gt 0) 'fetch command was attempted'
+    Assert-True ($calls[0] -match 'git fetch origin main') 'fetch command included origin main'
+
+    $okRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }
+    $okResult = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('status', '--short') -WorkingDirectory $cleanupRoot -CommandRunner $okRunner
+    Assert-Equal 0 $okResult.ExitCode 'successful command returns exit code'
+    Assert-Equal 'ok' $okResult.Output 'successful command returns output'
+
     Write-TestPass $testName
 } catch {
     Write-TestFail $testName $_.Exception.Message
