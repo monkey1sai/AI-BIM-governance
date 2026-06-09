@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 $script:TestDeployFixedPath = 'D:\Users\deploy\AI-bim-geo'
 $script:TestDeployRootToolingDirNames = @(
@@ -56,26 +57,32 @@ function Get-TestDeployRootToolingDirs {
 function Remove-TestDeployAgentTooling {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][string] $DeploymentPath
+        [Parameter(Mandatory = $true)][string] $DeploymentPath,
+        [switch] $AllowNonFixedPathForTests
     )
 
-    $root = Normalize-TestDeployPath -Path $DeploymentPath
+    $root = if ($AllowNonFixedPathForTests) {
+        Normalize-TestDeployPath -Path $DeploymentPath
+    } else {
+        Assert-TestDeployPath -Path $DeploymentPath
+    }
+
     if (-not (Test-Path -LiteralPath $root -PathType Container)) {
         throw "deployment path does not exist: $root"
     }
 
     $removed = New-Object 'System.Collections.Generic.List[string]'
     foreach ($fileName in @('AGENTS.md', 'CLAUDE.md')) {
-        $files = Get-ChildItem -LiteralPath $root -Filter $fileName -Recurse -File -Force -ErrorAction SilentlyContinue
+        $files = Get-ChildItem -LiteralPath $root -Filter $fileName -Recurse -File -Force -ErrorAction Stop
         foreach ($file in $files) {
-            Remove-Item -LiteralPath $file.FullName -Force
+            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
             $removed.Add($file.FullName) | Out-Null
         }
     }
 
     foreach ($dirPath in (Get-TestDeployRootToolingDirs -DeploymentPath $root)) {
         if (Test-Path -LiteralPath $dirPath -PathType Container) {
-            Remove-Item -LiteralPath $dirPath -Recurse -Force
+            Remove-Item -LiteralPath $dirPath -Recurse -Force -ErrorAction Stop
             $removed.Add($dirPath) | Out-Null
         }
     }

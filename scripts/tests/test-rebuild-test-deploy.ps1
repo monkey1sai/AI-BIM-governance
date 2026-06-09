@@ -17,10 +17,12 @@ try {
     Assert-Throws { Assert-TestDeployPath -Path $sandbox } 'temporary sandbox path is rejected'
 
     $cleanupRoot = Join-Path $sandbox 'AI-bim-geo'
+    $toolingDirNames = @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf')
     New-Item -ItemType Directory -Path $cleanupRoot -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $cleanupRoot '.github\workflows') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $cleanupRoot '.agent\skills\x') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $cleanupRoot '.claude\workflows') -Force | Out-Null
+    foreach ($dirName in $toolingDirNames) {
+        New-Item -ItemType Directory -Path (Join-Path $cleanupRoot "$dirName\content") -Force | Out-Null
+    }
     New-Item -ItemType Directory -Path (Join-Path $cleanupRoot 'apps\kit-manager-web') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $cleanupRoot 'scripts') -Force | Out-Null
     'root agent' | Set-Content -LiteralPath (Join-Path $cleanupRoot 'AGENTS.md') -Encoding ascii
@@ -29,13 +31,16 @@ try {
     'workflow' | Set-Content -LiteralPath (Join-Path $cleanupRoot '.github\workflows\ci.yml') -Encoding ascii
     'deploy' | Set-Content -LiteralPath (Join-Path $cleanupRoot 'scripts\deploy.ps1') -Encoding ascii
 
-    $removed = Remove-TestDeployAgentTooling -DeploymentPath $cleanupRoot
+    Assert-Throws { Remove-TestDeployAgentTooling -DeploymentPath $cleanupRoot } 'temporary cleanup root requires explicit test escape'
+
+    $removed = Remove-TestDeployAgentTooling -DeploymentPath $cleanupRoot -AllowNonFixedPathForTests
     Assert-True ($removed.Count -ge 4) 'agent/tooling paths are reported as removed'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot 'AGENTS.md'))) 'root AGENTS.md removed'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot 'CLAUDE.md'))) 'root CLAUDE.md removed'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot 'apps\kit-manager-web\AGENTS.md'))) 'nested AGENTS.md removed'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot '.agent'))) 'root .agent removed'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot '.claude'))) 'root .claude removed'
+    foreach ($dirName in $toolingDirNames) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $cleanupRoot $dirName))) "root $dirName removed"
+    }
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot '.github\workflows\ci.yml')) '.github workflows kept'
     Assert-True (Test-Path -LiteralPath (Join-Path $cleanupRoot 'scripts\deploy.ps1')) 'deploy.ps1 kept'
 
