@@ -6,6 +6,28 @@ export function ProvTag({ prov }: { prov: Prov }) {
   return <span className={`ec-prov ${PROV_CLASS[prov]}`}>{PROV_LABEL[prov]}</span>;
 }
 
+// 可信度圖例（信任機制）：把 4 階 provenance 分類學攤成首頁 key；標籤一律取自 PROV_LABEL（不寫死）。
+const PROV_LEGEND_TIERS: { prov: Prov; meaning: string }[] = [
+  { prov: "asbuilt", meaning: "已寫好、真的能用" },
+  { prov: "artifact", meaning: "有實測產出（截圖／檔案）佐證" },
+  { prov: "demo", meaning: "介面通了、資料是示範用" },
+  { prov: "p4", meaning: "後端未建、先佔位（願景 / 待建）" },
+];
+
+export function ProvLegend() {
+  return (
+    <p className="ec-note" aria-label="可信度圖例（信任機制）">
+      可信度圖例（每個區塊都會標）：
+      {PROV_LEGEND_TIERS.map((t, i) => (
+        <span key={t.prov} style={{ marginLeft: 8 }}>
+          <ProvTag prov={t.prov} /> <span style={{ opacity: 0.75 }}>{t.meaning}</span>
+          {i < PROV_LEGEND_TIERS.length - 1 ? " ·" : ""}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function Panel({
   title,
   sub,
