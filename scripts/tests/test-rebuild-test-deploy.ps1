@@ -18,7 +18,7 @@ try {
     Assert-Throws { Assert-TestDeployPath -Path $sandbox } 'temporary sandbox path is rejected'
 
     $cleanupRoot = Join-Path $sandbox 'AI-bim-geo'
-    $toolingDirNames = @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf')
+    $toolingDirNames = @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf', '.github\skills', '.github\prompts')
     New-Item -ItemType Directory -Path $cleanupRoot -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $cleanupRoot '.github\workflows') -Force | Out-Null
     foreach ($dirName in $toolingDirNames) {
@@ -56,9 +56,10 @@ try {
     }.GetNewClosure()
 
     $script:calls = $calls
+    $mainRefSpec = '+refs/heads/main:refs/remotes/origin/main'
     $fetchFailureMessage = $null
     try {
-        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', 'main') -WorkingDirectory $cleanupRoot -CommandRunner $runner
+        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $cleanupRoot -CommandRunner $runner
     } catch {
         $fetchFailureMessage = $_.Exception.Message
     }
@@ -66,7 +67,7 @@ try {
     Assert-True ($fetchFailureMessage -match 'exit code 23') 'fetch failure includes exit code'
     Assert-True ($fetchFailureMessage -match 'fetch failed') 'fetch failure includes command output'
     Assert-True ($calls.Count -gt 0) 'fetch command was attempted'
-    Assert-True ($calls[0] -match 'git fetch origin main') 'fetch command included origin main'
+    Assert-True ($calls[0] -match [regex]::Escape("git fetch origin $mainRefSpec")) 'fetch command updates origin/main ref'
 
     $okRunner = {
         param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
@@ -103,7 +104,7 @@ try {
         if ($commandText -eq 'status --short') {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
-        if ($commandText -eq 'fetch origin main') {
+        if ($commandText -eq "fetch origin $mainRefSpec") {
             return [pscustomobject]@{ ExitCode = 23; Output = 'fetch failed' }
         }
         return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
@@ -126,7 +127,7 @@ try {
     Assert-True (-not [string]::IsNullOrWhiteSpace($rebuildFailureMessage)) 'rebuild fetch failure is surfaced'
     Assert-True ($rebuildFailureMessage -match 'exit code 23') 'rebuild fetch failure includes exit code'
     Assert-True ($rebuildFailureMessage -match 'fetch failed') 'rebuild fetch failure includes command output'
-    Assert-True (($rebuildCalls -join "`n") -match 'git fetch origin main') 'rebuild attempted fetch'
+    Assert-True (($rebuildCalls -join "`n") -match [regex]::Escape("git fetch origin $mainRefSpec")) 'rebuild attempted explicit origin/main ref update'
     Assert-True (-not (($rebuildCalls -join "`n") -match 'git reset --hard origin/main')) 'rebuild stops before reset'
     Assert-True (-not (($rebuildCalls -join "`n") -match 'git clean -fdx')) 'rebuild stops before clean'
     Assert-True (-not $deployWasCalled) 'rebuild stops before deploy'

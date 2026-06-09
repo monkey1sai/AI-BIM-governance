@@ -48,6 +48,8 @@ cd D:\Users\deploy\AI-bim-geo
 - `.claude/`
 - `.cursor/`
 - `.windsurf/`
+- `.github/skills/`
+- `.github/prompts/`
 
 不得排除：
 
@@ -70,7 +72,7 @@ scripts/dev/rebuild-test-deploy.ps1
 3. Read current repo `origin` URL and verify `origin/main` exists.
 4. If deployment path is not a git checkout, create a checkout from the same origin URL. If the fixed deployment path exists but is non-empty, the script may replace its contents only after the exact-path safety check passes, and must report that it rebuilt a non-git deployment directory.
 5. If deployment path is already a git checkout, verify its `origin` URL matches the current repo origin URL.
-6. Fetch `origin main`. If fetch fails, stop before reset / cleanup / deploy; cached `origin/main` is not an acceptable substitute.
+6. Fetch `origin` with explicit refspec `+refs/heads/main:refs/remotes/origin/main`. If fetch fails, stop before reset / cleanup / deploy; cached `origin/main` is not an acceptable substitute.
 7. Reset deployment checkout to `origin/main`.
 8. Remove the Exclusion Policy paths from the deployment checkout only.
 9. Verify `scripts\deploy.ps1` exists after cleanup.
@@ -143,7 +145,7 @@ Fetching `origin/main` is mandatory. A cached local `origin/main` ref is not eno
 
 Required guard:
 
-- Run `git fetch origin main` before reset.
+- Run `git fetch origin +refs/heads/main:refs/remotes/origin/main` before reset.
 - If network or auth blocks fetch, stop before reset / cleanup / deploy.
 - Report the fetch failure as the blocker.
 - Do not deploy stale code silently.

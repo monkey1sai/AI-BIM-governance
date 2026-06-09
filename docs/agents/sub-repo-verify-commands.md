@@ -51,7 +51,8 @@ cd D:\Users\deploy\AI-bim-geo
 .\scripts\deploy.ps1 -Build
 ```
 
-禁止 `-DryRun`。若 fetch `origin main` 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
+禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
+清理規則會移除 agent/tooling docs 與 `.github\skills` / `.github\prompts`，但保留 `.github\workflows`。
 
 本機 runtime 可用時優先補：
 

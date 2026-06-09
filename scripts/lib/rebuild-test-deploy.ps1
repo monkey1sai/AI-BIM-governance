@@ -8,7 +8,9 @@ $script:TestDeployRootToolingDirNames = @(
     '.agent',
     '.claude',
     '.cursor',
-    '.windsurf'
+    '.windsurf',
+    '.github\skills',
+    '.github\prompts'
 )
 
 function Normalize-TestDeployPath {
@@ -194,7 +196,8 @@ function Invoke-TestDeployRebuild {
         Write-Host $statusBefore.Output
     }
 
-    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', 'main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+    $mainRefSpec = '+refs/heads/main:refs/remotes/origin/main'
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
 

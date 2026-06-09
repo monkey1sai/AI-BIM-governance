@@ -131,7 +131,7 @@ function Assert-TestDeployPath {
 }
 
 function Get-TestDeployRootToolingDirs {
-    return @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf')
+    return @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf', '.github\skills', '.github\prompts')
 }
 
 function Remove-TestDeployAgentTooling {
@@ -206,9 +206,9 @@ Append these tests inside the `try { ... }` block in `scripts/tests/test-rebuild
 
     $script:calls = $calls
     Assert-Throws {
-        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', 'main') -WorkingDirectory $cleanupRoot -CommandRunner $runner
+        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', '+refs/heads/main:refs/remotes/origin/main') -WorkingDirectory $cleanupRoot -CommandRunner $runner
     } 'fetch failure is surfaced as a blocker'
-    Assert-True ($calls[0] -match 'git fetch origin main') 'fetch command was attempted'
+    Assert-True ($calls[0] -match 'git fetch origin \+refs/heads/main:refs/remotes/origin/main') 'fetch command was attempted'
 
     $okRunner = {
         param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
@@ -307,7 +307,7 @@ function Invoke-TestDeployRebuild {
         Write-Host $statusBefore.Output
     }
 
-    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', 'main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', '+refs/heads/main:refs/remotes/origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
 
@@ -502,9 +502,9 @@ In the "測試驗證部署環境" section, replace the block with:
 
 - Deployment checkout 固定為 `D:\Users\deploy\AI-bim-geo`。
 - 當使用者要求「請測試部署區重建」或同義口令時，MUST 從目前 repo 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`。
-- Helper MUST freshly fetch `origin main`；fetch 失敗時停止，不得使用 stale `origin/main`。
+- Helper MUST freshly fetch `origin` with `+refs/heads/main:refs/remotes/origin/main`；fetch 失敗時停止，不得使用 stale `origin/main`。
 - Helper MUST 在 reset 前回報 deployment checkout local changes 摘要；重建口令代表部署區可被 reset / clean。
-- Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`；MUST 保留 `.github/workflows/`。
+- Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`；MUST 保留 `.github/workflows/`。
 - Helper 完成清理後 MUST 從 `D:\Users\deploy\AI-bim-geo` 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path。
 - 禁止 `-DryRun`；若 sandbox 需要寫入 `D:\Users\deploy\AI-bim-geo` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
 ```
@@ -527,7 +527,7 @@ cd D:\Users\deploy\AI-bim-geo
 .\scripts\deploy.ps1 -Build
 ```
 
-禁止 `-DryRun`。若 fetch `origin main` 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
+禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
 ````
 
 - [ ] **Step 5: Verify docs contain the command and no helper dry-run**
@@ -593,7 +593,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\dev\rebuild-test
 Expected:
 
 - If sandbox blocks writes to `D:\Users\deploy\AI-bim-geo`, rerun the same command with escalation approval.
-- If `git fetch origin main` fails, stop and report the fetch failure as blocker.
+- If `git fetch origin +refs/heads/main:refs/remotes/origin/main` fails, stop and report the fetch failure as blocker.
 - If deploy exits nonzero, report deployment failure with `origin_main_commit`, `deploy_exit_code`, and the relevant `scripts\.run\deploy.log` path.
 - If deploy exits zero, report that the environment was rebuilt from freshly fetched `origin/main` and launched through `D:\Users\deploy\AI-bim-geo\scripts\deploy.ps1 -Build`.
 
