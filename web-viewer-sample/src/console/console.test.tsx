@@ -4,6 +4,7 @@ import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, ReviewRoomPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
 import EdgeConsole from "./EdgeConsole";
+import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
@@ -252,6 +253,16 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("terminate");
     expect(html).toContain("port listening");
     expect(html).toContain("NVIDIA");
+  });
+
+  it("ProvLegend 可信度圖例顯示 4 階分類學（已實作/實測/示範/後端未建）+ 白話意思", () => {
+    const html = renderToString(<ProvLegend />);
+    expect(html).toContain("可信度圖例");
+    expect(html).toContain("已實作");
+    expect(html).toContain("實測 artifact");
+    expect(html).toContain("示範資料");
+    expect(html).toContain("後端未建");
+    expect(html).toContain("真的能用");
   });
 
   // ── P3-1 A4–A10 vision 詳頁：整段標願景 + 「後端未建」+ scenario 標範例情境（非實測）──
