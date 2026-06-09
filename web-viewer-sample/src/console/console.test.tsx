@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { AppsPage, AppVisionPage, CoordinatorPage, FederationPage, IntakePage, IssuesRuleCenterPage, OverviewPage, ReviewRoomPage, RuntimePage, SemanticViewerPage, VersionDiffPage } from "./pages";
 import EdgeConsole from "./EdgeConsole";
 import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
-import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
+import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
 
@@ -244,6 +244,14 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("expected_stage_url=http://example.test/model.usdc");
     expect(stageTruthOverview).not.toContain("example.test");
     expect(html).not.toContain('"session_id"');
+  });
+
+  it("LifecycleTab 顯示 NVIDIA 官方 GPU/串流硬約束（1 GPU/stream・無 migrate・port≠frame）", () => {
+    const html = renderToString(<LifecycleTab />);
+    expect(html).toContain("1 GPU");
+    expect(html).toContain("terminate");
+    expect(html).toContain("port listening");
+    expect(html).toContain("NVIDIA");
   });
 
   // ── P3-1 A4–A10 vision 詳頁：整段標願景 + 「後端未建」+ scenario 標範例情境（非實測）──

@@ -166,7 +166,7 @@ function AtcTab({ rt }: { rt: RuntimeStatus | null }) {
   );
 }
 
-function LifecycleTab() {
+export function LifecycleTab() {
   return (
     <Panel title="Lifecycle Flow" sub="判斷為什麼還不能算 ready；Phase 1 read-only" prov="asbuilt">
       <p className="ec-note">Lifecycle Flow 用來判斷為什麼還不能算 ready.</p>
@@ -177,6 +177,13 @@ function LifecycleTab() {
         <Field k="Endpoint" v="free -> reserved -> signaling -> connected -> draining；connected 仍需 first-frame evidence" prov="asbuilt" />
         <Field k="Stage" v="expected_stage_url -> Kit loaded -> browser first-frame；缺任一證據都維持 pending" prov="asbuilt" />
       </div>
+      <p className="ec-note">GPU / 串流硬約束（NVIDIA Omniverse OVAS 官方）— 維運真相，不做會誤導的承諾：</p>
+      <div className="ec-grid">
+        <Field k="1 GPU = 1 stream" v="每個 GPU worker 限一個 stream；同時 session 數 ≤ GPU 數。多個 spectator 共看同一 stream 不另吃 GPU。" prov="asbuilt" />
+        <Field k="無 migrate API" v="session 綁單一 GPU pod 跑到結束（create→connect→disconnect→terminate）。換 GPU = terminate + recreate，啟動約 30–40s、shader cache 冷可達 15min+；不提供無縫遷移。" prov="asbuilt" />
+        <Field k="port listening ≠ has frame" v="只有 browser first-frame evidence 才算 viewer 真看到畫面；埠有 listen 不代表可審查 ready。" prov="asbuilt" />
+      </div>
+      <p className="ec-note">來源：NVIDIA Omniverse OVAS deployment requirements / limitations（docs.omniverse.nvidia.com/ovas）。</p>
     </Panel>
   );
 }
