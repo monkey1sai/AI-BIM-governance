@@ -4,7 +4,7 @@
 
 本文件是 `AI-BIM-governance/` workspace 的 **agent 入口** — 定義 agent 行為對齊與 repo 邊界的 source of truth。為了控制每次 session 啟動的 context 預算，細節已 lazy-load 到 `docs/agents/*.md` sub-files（見下方 index）。
 
-衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > OpenSpec artifacts > installed skills / Graphify wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。
+衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / Graphify wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。
 
 ---
 
@@ -33,14 +33,14 @@
 - 不允許：修改既有 `.env` 的實際機密值。
 - 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
 
-### OpenSpec 與本機 agent 產物
+### 開發流程與本機 agent 產物
 
-- OpenSpec 只記錄可審查的需求、設計、spec、tasks；不取代 repo 邊界，也不管理本機 skill 安裝。
-- 本 repo 的 OpenSpec artifacts 預設必須使用繁體中文；API 路徑、schema 欄位、CLI flags、status enum、log/error、外部產品名稱與 OpenSpec parser 必要標頭（例如 `## MODIFIED Requirements`、`### Requirement:`、`#### Scenario:`）保留原文。
-- `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 目前是本機 agent/tooling 產物，預設維持 ignored。
+- 非平凡功能用 superpowers `writing-plans` 產出分期 plan（存 `docs/superpowers/plans/`），再用 `subagent-driven-development` 逐 task 實作，並以 `verification-before-completion` 作為 done-gate（無證據不得宣告完成）。
+- 不在 `main` 上開發；每筆變更走 branch → PR → GitHub Actions → merge。plan / 設計文件預設繁體中文；API 路徑、schema 欄位、CLI flags、status enum、log/error、外部產品名稱保留原文。
+- `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 是本機 agent/tooling 產物，預設維持 ignored（含以 `skills` CLI 裝進 `.claude/skills/` 的技能）。
 - 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus generated skill 檔，除非使用者明確要求改變 repo policy。
 
-完整 GitHub PR workflow / archive closeout 流程見 `docs/agents/github-workflow.md`。
+完整 GitHub PR workflow 見 `docs/agents/github-workflow.md`。
 
 ---
 
@@ -99,10 +99,10 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 |---|---|
 | 跨 sub-repo 決策、改 repo boundary、查 data 權威歸屬、追資料流 | `docs/agents/repo-boundary-detail.md` |
 | 查 A1–A10 產品定位、frontend-operable done、真實 IFC E2E、script/deploy contract | `docs/agents/product-operability-and-script-contract.md` |
-| 開 PR / 處理 GitHub Actions / OpenSpec sync-archive / branch closeout | `docs/agents/github-workflow.md` |
+| 開 PR / 處理 GitHub Actions / branch closeout | `docs/agents/github-workflow.md` |
 | 修改 code symbol（function/class/method）、跑 impact analysis、commit 前 detect_changes | `docs/agents/gitnexus-usage.md` |
 | 跑 sub-repo 驗證（pytest / npm test / build / Cloud VM 啟動） | `docs/agents/sub-repo-verify-commands.md` |
-| 解讀 OpenSpec archive、看舊 PR、了解退役服務脈絡 | `docs/agents/history-and-archive.md` |
+| 看舊 PR、了解退役服務與歷史 spec 脈絡 | `docs/agents/history-and-archive.md` |
 
 新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 100 行（目標 ≤ 80）。預算規範見 spec `agent-doc-context-budget`。
 
