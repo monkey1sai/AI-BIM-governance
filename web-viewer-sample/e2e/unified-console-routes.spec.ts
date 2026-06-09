@@ -1,25 +1,22 @@
 import { test, expect } from "@playwright/test";
 
-// CH-E：coordinator :8004/ui 服務 React UnifiedConsole（vite base=/ui/，gated on CONSOLE_DIST_DIR）。
-// 驗六個 hash 路由各自掛對應 operator 頁，且 nav 點擊可切換。/ui/console 301、/ui/open 302 凍結由
-// ui-open-regression.spec 另行覆蓋；本 spec 專注「六頁可達 + nav 切換」這條前端可操作鏈。
+// B 方案：coordinator :8004/ui 改掛 EdgeConsole 產品操作台（取代 OperatorConsole 六頁）。
+// 本 spec 專注「EdgeConsole 殼層可達 + 換台後仍保留的 operator-tool 路由（#/kit、#/demo-control）」。
+// 完整 prototype 頁（home /「今天要做什麼」、#/a1、#/viewer、#/conv、#/sessions、#/instances、#/minio）
+// 由 product-console-integration.spec.ts 覆蓋。/ui/console 301、/ui/open 302 凍結由 ui-open-regression.spec 覆蓋。
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
-test.describe("CH-E：統一治理控制台六路由（:8004/ui React console）", () => {
-  test("/ui 直接導航：六 hash 路由各渲染對應 operator 頁（含 #/kit、#/demo-control）", async ({ page }) => {
-    // /ui 無 hash → 預設 coordinator 頁；nav 六鍵皆在（前端真實可見入口）。
+test.describe("B 操作台：:8004/ui EdgeConsole 路由 + 保留 operator-tool 路由", () => {
+  test("/ui 掛 EdgeConsole 殼層；保留 #/kit、#/demo-control、#/review、#/runtime 可達", async ({ page }) => {
+    // /ui 無 hash → EdgeConsole HomePage（今天要做什麼）。
     await page.goto(`${COORDINATOR}/ui`);
-    await expect(page.getByTestId("op-page")).toBeVisible({ timeout: 20_000 });
-    for (const k of ["coordinator", "intake", "demo-control", "review", "runtime", "kit"]) {
-      await expect(page.getByTestId(`op-nav-${k}`)).toBeVisible();
-    }
-    await expect(page.getByRole("heading", { name: /Coordinator Console/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /今天要做什麼/ })).toBeVisible({ timeout: 20_000 });
 
-    // #/kit → Kit 模型台（/api/kit proxy 面板）。
+    // #/kit → Kit 模型台（/api/kit proxy 面板）——換 EdgeConsole 後仍保留（非 silently 砍）。
     await page.goto(`${COORDINATOR}/ui#/kit`);
     await expect(page.getByTestId("kit-proxy-panel")).toBeVisible({ timeout: 15_000 });
 
-    // #/demo-control → 真實 IFC 進件垂直切片。
+    // #/demo-control → 真實 IFC 進件垂直切片——保留（真實 IFC E2E 入口）。
     await page.goto(`${COORDINATOR}/ui#/demo-control`);
     await expect(page.getByTestId("real-ifc-demo-control")).toBeVisible({ timeout: 15_000 });
 
@@ -27,32 +24,21 @@ test.describe("CH-E：統一治理控制台六路由（:8004/ui React console）
     await page.goto(`${COORDINATOR}/ui#/review`);
     await expect(page.getByRole("heading", { name: /審查室/ })).toBeVisible({ timeout: 15_000 });
 
-    // #/intake → 模型進件（選取現成模型）。
-    await page.goto(`${COORDINATOR}/ui#/intake`);
-    await expect(page.getByRole("heading", { name: /模型進件/ })).toBeVisible({ timeout: 15_000 });
-
-    // #/runtime → Runtime Dashboard。
+    // #/runtime → Runtime 監控。
     await page.goto(`${COORDINATOR}/ui#/runtime`);
-    await expect(page.getByRole("heading", { name: /Runtime Dashboard/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: /Runtime/ })).toBeVisible({ timeout: 15_000 });
 
     await page.screenshot({ path: "../artifacts/e2e/unified-console-routes.png", fullPage: true });
   });
 
-  test("nav 點擊切換頁面（hash 更新 + 內容切換，零依賴 hash 路由）", async ({ page }) => {
-    await page.goto(`${COORDINATOR}/ui#/coordinator`);
-    await expect(page.getByTestId("op-page")).toBeVisible({ timeout: 20_000 });
+  test("EdgeConsole nav 點擊切換頁面（hash 更新 + 內容切換，零依賴 hash 路由）", async ({ page }) => {
+    await page.goto(`${COORDINATOR}/ui#/a1`);
+    await expect(page.getByRole("heading", { name: /A1 · 治理與模型檢核/ })).toBeVisible({ timeout: 20_000 });
 
-    await page.getByTestId("op-nav-kit").click();
-    await expect(page).toHaveURL(/#\/kit$/);
-    await expect(page.getByTestId("kit-proxy-panel")).toBeVisible();
-
-    await page.getByTestId("op-nav-demo-control").click();
-    await expect(page).toHaveURL(/#\/demo-control$/);
-    await expect(page.getByTestId("real-ifc-demo-control")).toBeVisible();
-
-    await page.getByTestId("op-nav-review").click();
-    await expect(page).toHaveURL(/#\/review$/);
-    await expect(page.getByRole("heading", { name: /審查室/ })).toBeVisible();
+    // 點 nav 切到 A2 版本差異（core 治理 group 內的另一頁）。
+    await page.getByRole("button", { name: /Version Diff/ }).first().click();
+    await expect(page).toHaveURL(/#\/?a2$/);
+    await expect(page.getByRole("heading", { name: /版本差異/ })).toBeVisible({ timeout: 15_000 });
 
     await page.screenshot({ path: "../artifacts/e2e/unified-console-nav.png", fullPage: true });
   });

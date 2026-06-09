@@ -48,6 +48,62 @@ function BoundaryDiagram() {
   );
 }
 
+function MiniCard({ code, title, desc, prov = "asbuilt" }: { code: string; title: string; desc: string; prov?: Prov }) {
+  return (
+    <div className="ec-mini-card">
+      <div className="ec-mini-head"><span className="ec-code">{code}</span><ProvTag prov={prov} /></div>
+      <div className="ec-mini-title">{title}</div>
+      <p className="ec-note">{desc}</p>
+    </div>
+  );
+}
+
+function LifecycleStrip({ steps }: { steps: string[] }) {
+  return (
+    <div className="ec-flow" style={{ margin: "8px 0 12px" }}>
+      {steps.map((s, i) => (
+        <span key={s} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span className={`ec-flow-step ${i === 0 ? "active" : ""}`}><span className="ec-flow-n">{i + 1}</span>{s}</span>
+          {i < steps.length - 1 && <span className="ec-flow-arrow">→</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function HomePage({ onOpen }: { onOpen: (route: string) => void }) {
+  const actions = [
+    ["A1", "跑一次治理檢核", "上傳或選取模型，自動檢查命名、分類、防火、LOD 是否合規。", "a1"],
+    ["A2", "比較兩個版本", "看 v06 / v07 新增、修改、刪除與 issue 影響。", "a2"],
+    ["A3", "打開跨專業疊合", "把建築、結構、機電模型組成 federation review room。", "a3"],
+    ["BC", "整理 Issue / BCF", "把 A1/A2/A3/A5 的問題輸出成 BCF / Excel / 報表。", "issues"],
+    ["CV", "查看轉檔排程", "確認 IFC-ready、conversion job、mapping coverage、stage writeback。", "conv"],
+    ["SS", "檢查 Session / Viewer", "看 primary/spectator 是否真的收到 first frame。", "sessions"],
+  ] as const;
+  return (
+    <>
+      <h1>今天要做什麼 · AI-BIM Governance 工作台</h1>
+      <p className="ec-lead">這是 operator 的第一屏：先看哪件事能交付、哪件事卡住、哪個 runtime 只是宣稱 ready。所有能力都保留 provenance，不把 roadmap 說成已完成。</p>
+      <Panel title="Smart Todo" sub="從 prototype 收斂出的常用入口；按鈕只導向已存在頁面，不做隱藏副作用" prov="asbuilt">
+        <div className="ec-grid">
+          {actions.map(([code, title, desc, route]) => (
+            <button key={route} className="ec-action-card" onClick={() => onOpen(route)}>
+              <span className="ec-code">{code}</span>
+              <strong>{title}</strong>
+              <span>{desc}</span>
+            </button>
+          ))}
+        </div>
+      </Panel>
+      <Panel title="Recent Risk" sub="用業務語言呈現，不把技術 ID 放第一層" prov="demo">
+        <Field k="黃 · 有 viewer 等待第一幀" v="到 Session 管理看 first_frame_at / heartbeat" prov="demo" />
+        <Field k="黃 · 有 IFC 已轉檔但 mapping coverage 待確認" v="到 IFC→USD 轉檔排程看 coverage" prov="demo" />
+        <Field k="綠 · A1 rule-run 可用" v="governance-service :49102 經 coordinator proxy" prov="asbuilt" />
+      </Panel>
+    </>
+  );
+}
+
 export function OverviewPage() {
   // 可選接 coordinator /health 探活（真實端點）。未連線時誠實顯示「未連線」，不假裝 healthy。
   const [health, setHealth] = useState<"unknown" | "ok" | "down">("unknown");
@@ -102,7 +158,7 @@ export function OverviewPage() {
 
       <Panel
         title="相依與授權風險 · License posture"
-        sub="A1 core 雖零 GPU / 零 NVIDIA runtime，仍依賴下列元件；LGPL / copyleft 商用前須法務確認（不得宣稱無授權風險）"
+        sub="A1 core 的規則檢核在 governance-service（CPU）完成，仍依賴下列元件；LGPL / copyleft 商用前須法務確認（不得宣稱無授權風險）"
         prov="asbuilt"
       >
         <table className="ec-table">
@@ -125,6 +181,277 @@ export function OverviewPage() {
         <Field k="A2 版本差異 · A3 Federation" v="已實作（GlobalId diff + USD sublayer federation）" prov="asbuilt" />
         <Field k="Issue 資料庫（lifecycle + audit + 來源綁定）· IDS 匯入" v="已實作" prov="asbuilt" />
         <Field k="BCF 匯出（issue→.bcfzip）" v="已實作（純 stdlib，不依賴 GPLv3）" prov="asbuilt" />
+      </Panel>
+    </>
+  );
+}
+
+export function A1GovernanceWorkbenchPage() {
+  const rules = [
+    ["NAMING-STD-01", "命名規則", "passed"],
+    ["SPACE-CODE-02", "樓層 / 空間", "passed"],
+    ["CLASS-UNI-03", "分類碼缺漏", "failed"],
+    ["ARC-DOOR-REQ-001", "防火門 FireRating", "failed"],
+    ["LOD-LOI-REQ", "LOD / LOI 不足", "failed"],
+  ];
+  return (
+    <>
+      <h1>A1 · 治理與模型檢核</h1>
+      <p className="ec-lead">上傳模型或選取已轉檔成功的 IFC/USDC，跑自動規則檢核，直接產生 Issue 與 BCF/Excel。規則檢核在 governance-service（CPU）完成；3D 高亮需 GPU viewport（依 review session 派發）。</p>
+      <Panel title="A1 五步引導式流程" sub="對齊 prototype：上傳 → 檢核 → 結果 → 開 Issue → 交付" prov="asbuilt">
+        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 BCF"]} />
+        <div className="ec-grid">
+          <MiniCard code="01" title="上傳 / 選取模型" desc="可選 storage fixture、ifc-ready job，或後續接大檔上傳；目前已存在真實 IFC fixture 與 rule-run 路徑。" prov="asbuilt" />
+          <MiniCard code="02" title="governance-service :49102" desc="A1 rule-run authority，經 coordinator /api/governance/* proxy 呼叫，不由 browser 直連內部服務。" prov="asbuilt" />
+          <MiniCard code="03" title="3D 高亮" desc="需 viewer DataChannel 與 usd_prim_path 對映；無 first frame / mapping 時不得宣稱已高亮。" prov="p1" />
+        </div>
+      </Panel>
+      <Panel title="結果記分板 · Demo layout with artifact baseline" sub="真實 artifact baseline 保留；prototype 分數只作版型示意" prov="artifact">
+        <div className="ec-grid">
+          <Metric value={A1_EVIDENCE.total} label="artifact 評估構件" />
+          <Metric value={A1_EVIDENCE.passed} label="passed" />
+          <Metric value={A1_EVIDENCE.failed} label="failed" tone="warn" />
+          <Metric value={`${A1_EVIDENCE.score}%`} label="score" />
+        </div>
+        <table className="ec-table" style={{ marginTop: 12 }}>
+          <thead><tr><th>rule</th><th>用途</th><th>state</th></tr></thead>
+          <tbody>{rules.map(([rule, use, state]) => (
+            <tr key={rule}><td>{rule}</td><td>{use}</td><td>{state === "passed" ? <ProvTag prov="asbuilt" /> : <ProvTag prov="artifact" />}</td></tr>
+          ))}</tbody>
+        </table>
+      </Panel>
+      <Panel title="主要操作" sub="已建與待建分開；不提供假按鈕" prov="asbuilt">
+        <Btn caption="governance-service rule-run" prov="asbuilt">執行規則檢核</Btn>{" "}
+        <Btn caption="issues from rule-run" prov="asbuilt">失敗構件建 issue</Btn>{" "}
+        <Btn caption="BCF / Excel export" prov="asbuilt">匯出 BCF / Excel</Btn>{" "}
+        <Btn disabled caption="需 viewer DataChannel + first frame + stage match" prov="p1">在 3D 高亮</Btn>
+      </Panel>
+    </>
+  );
+}
+
+export function ViewerPresentationPage() {
+  const capabilities: [string, string, Prov][] = [
+    ["openStage", "載入 selected USD / USDC stage；success 還需要 loaded stage URL 證據", "asbuilt"],
+    ["focusPrim / selectPrims", "點清單或 mapping table 可聚焦 / 選取 USD prim", "asbuilt"],
+    ["clearHighlight", "清除 viewer overlay / selection", "asbuilt"],
+    ["highlightPrimsRequest", "A1/A2/A4 結果轉 3D highlight；需 browser DataChannel", "p15"],
+    ["first_frame_at", "viewer 是否真的看到畫面，不等於 port open", "p1"],
+    ["stage matched", "expected_stage_url == loaded stage URL 才算 stage truth", "p1"],
+  ];
+  return (
+    <>
+      <h1>3D Viewer 呈現 · USD over WebRTC</h1>
+      <p className="ec-lead">此頁說明打開 3D viewer 時 operator 應看到什麼：模型畫面、語意表、mapping table、selected prim、DataChannel ready、first frame、stage truth。真正 viewport 仍在既有 viewer，不在 console 內重渲染 WebRTC。</p>
+      <Panel title="Viewport 狀態" sub="Kit-side evidence + Browser-side evidence 必須分開" prov="asbuilt">
+        <div className="ec-grid">
+          <Field k="Stage URL" v="expected stage from review session / ifc-ready job" prov="asbuilt" />
+          <Field k="DataChannel" v="ready 才能送 openStage / focusPrim / highlight" prov="asbuilt" />
+          <Field k="WebRTC first frame" v="尚需 browser 回報 first_frame_at" prov="p1" />
+          <Field k="Stage truth" v="expected == loaded 才能宣稱 matched" prov="p1" />
+        </div>
+      </Panel>
+      <Panel title="Viewer command matrix" sub="對齊 existing Window.tsx / DataChannel 邊界" prov="asbuilt">
+        <table className="ec-table">
+          <thead><tr><th>command / evidence</th><th>operator 看到的功能</th><th>status</th></tr></thead>
+          <tbody>{capabilities.map(([cmd, desc, prov]) => (
+            <tr key={cmd}><td>{cmd}</td><td>{desc}</td><td><ProvTag prov={prov} /></td></tr>
+          ))}</tbody>
+        </table>
+      </Panel>
+      <Panel title="A1-A10 在 3D Viewer 的呈現用途" prov="demo">
+        <div className="ec-grid">
+          <MiniCard code="A1/A2/A4" title="可選 overlay" desc="規則失敗、版本差異、語意搜尋結果都可轉成 highlight，但需 mapping + first frame。" prov="p1" />
+          <MiniCard code="A3/A5/A6/A7/A10" title="核心 3D 場景" desc="federation、IoT/FM、4D/5D、scan compare、robot route 都以 3D 場景為主。" prov="p4" />
+          <MiniCard code="A8" title="render capture" desc="Synthetic Data 需要 Replicator / camera / output writer，屬後期 runtime pipeline。" prov="p4" />
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+export function ConversionSchedulingPage() {
+  const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setBusy(true); setErr(null);
+    try { setJobs((await coordinatorClient.listIfcReady(50)).items); }
+    catch (e) { setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  return (
+    <>
+      <h1>IFC→USD 轉檔排程</h1>
+      <p className="ec-lead">從 MinIO / storage 發現 source IFC，排進 conversion authority，由 `bim-streaming-server` 產出 `model.usdc`、mapping summary，再通知 Kit / Review Session。</p>
+      <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={load}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
+        <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
+        {err && <p className="ec-warn-note">{err}</p>}
+        <Field k="conversion authority" v="bim-streaming-server owns heavy conversion" prov="asbuilt" />
+        <Field k="mapping coverage" v="property / relationship / attribute coverage 必須顯示；不得承諾 100% lossless" prov="p1" />
+        <Field k="插隊 / 重試 / concurrency" v="UI rule 已定義，controlled action endpoint 待建" prov="p1" />
+      </Panel>
+      <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
+        {jobs.length ? (
+          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>session</th><th>stage</th></tr></thead>
+            <tbody>{jobs.slice(0, 20).map((j) => (
+              <tr key={j.ifc_ready_job_id}><td>{j.ifc_ready_job_id}</td><td>{j.project_id}</td><td>{j.conversion_status ?? "—"}</td><td>{j.review_session_id ?? "—"}</td><td>{j.expected_stage_url ?? "—"}</td></tr>
+            ))}</tbody></table>
+        ) : <p className="ec-note">尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。</p>}
+      </Panel>
+    </>
+  );
+}
+
+export function SessionManagementPage() {
+  const [rt, setRt] = useState<RuntimeStatus | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    setErr(null);
+    try { setRt(await coordinatorClient.runtimeStatus()); }
+    catch (e) { setErr(`未連線 coordinator /api/runtime/status：${String(e)}`); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const sessions = rt?.sessions.items ?? [];
+  return (
+    <>
+      <h1>Session 管理 · Primary / Spectator ATC</h1>
+      <p className="ec-lead">每個 endpoint 像 runway，每個 primary / spectator viewer 像飛機。Open URL 不等於 occupied；occupied 必須有 browser first frame / heartbeat / stage match evidence。</p>
+      <Panel title="Endpoint readiness rules" sub="port listening != has frame" prov="asbuilt" actions={<Btn caption="GET /api/runtime/status" onClick={load}>重新整理</Btn>}>
+        {err && <p className="ec-warn-note">{err}</p>}
+        <div className="ec-grid">
+          <Field k="Open primary URL" v="只代表 browser 被導向，不代表 endpoint occupied" prov="asbuilt" />
+          <Field k="Open spectator URL" v="只代表 spectator link 已產生，不代表 first frame" prov="asbuilt" />
+          <Field k="occupied" v="必須等 browser first_frame_at + heartbeat" prov="p1" />
+          <Field k="stage matched" v="expected_stage_url == loaded stage URL" prov="p1" />
+        </div>
+      </Panel>
+      <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
+        {sessions.length ? (
+          <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th></tr></thead>
+            <tbody>{sessions.map((s) => (
+              <tr key={s.session_id}><td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td></tr>
+            ))}</tbody></table>
+        ) : <p className="ec-note">目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。</p>}
+      </Panel>
+      <Panel title="Controlled actions" sub="會改狀態的動作必須有 reason + audit log" prov="p1">
+        <Btn caption="browser-visible URL only" prov="asbuilt">Open primary URL</Btn>{" "}
+        <Btn caption="browser-visible URL only" prov="asbuilt">Open spectator URL</Btn>{" "}
+        <Btn caption="semi-auto allowed for stale spectator" prov="p1">Reclaim stale spectator</Btn>{" "}
+        <Btn disabled caption="requires explicit reason + audited intent to Kit Manager" prov="p1">Force release / restart primary</Btn>
+      </Panel>
+    </>
+  );
+}
+
+export function KitGpuFleetPage() {
+  return (
+    <>
+      <h1>Kit / GPU 機隊</h1>
+      <p className="ec-lead">此頁是 runtime operator 的機隊視角：哪台 GPU 在服務哪個 Kit stream，哪台可接新 session，哪些節點 drain，哪些 restart/release 必須由 Kit Manager 執行。</p>
+      <Panel title="Fleet model" sub="Coordinator 顯示治理狀態，不直接管理 GPU process" prov="asbuilt">
+        <div className="ec-grid">
+          <MiniCard code="1 GPU" title="1 GPU = 1 Kit stream" desc="primary 使用獨立 Kit stream；spectator 預設共享同一 stream，除非未來需求是獨立視角。" prov="asbuilt" />
+          <MiniCard code="drain" title="排空不接新 session" desc="drain 後 existing session 可跑完；新 session 不再派到該節點。" prov="p1" />
+          <MiniCard code="move" title="搬移不是無縫遷移" desc="拖 session 到另一台 GPU 表示 terminate + recreate，約 30-40s 並重載 stage。" prov="p1" />
+        </div>
+      </Panel>
+      <Panel title="Node snapshot" sub="實際 GPU/VRAM 遙測仍需 kit-manager-api / runtime manager 提供" prov="demo">
+        <table className="ec-table"><thead><tr><th>node</th><th>GPU</th><th>state</th><th>operation</th></tr></thead><tbody>
+          <tr><td>edge-gpu-01</td><td>L40 · 48GB</td><td>running · S-270</td><td>drain / restart intent</td></tr>
+          <tr><td>edge-gpu-02</td><td>L40 · 48GB</td><td>running · S-899</td><td>drain / restart intent</td></tr>
+          <tr><td>edge-gpu-03</td><td>RTX 6000 · 48GB</td><td>idle</td><td>assign pending session</td></tr>
+        </tbody></table>
+        <p className="ec-note">此表為 prototype fleet model 的 UI evidence；真實 restart/release 必須送 audited intent 給 Kit Manager，不能由 coordinator/browser 直接做。</p>
+      </Panel>
+    </>
+  );
+}
+
+export function MinioDataPage() {
+  const files: [string, string, Prov][] = [
+    ["model.ifc", "source IFC from customer-edge worker / MinIO", "asbuilt"],
+    ["model.rvt", "optional source RVT artifact", "demo"],
+    ["elements.json", "parsed metadata / semantic source", "asbuilt"],
+    ["geometries.json", "geometry extraction artifact", "asbuilt"],
+    ["chunks/", "large parsed chunks", "asbuilt"],
+    ["spatial_tree.json", "spatial lookup tree", "asbuilt"],
+    ["model.usdc", "expected generated output after conversion", "p1"],
+  ];
+  return (
+    <>
+      <h1>MinIO 資料</h1>
+      <p className="ec-lead">資料頁讓 operator 看懂 project / model / version / files 關係；它不是完整 S3 browser。`bim-control` bucket 與 `model.usdc` writeback 是轉檔治理鏈的一部分。</p>
+      <Panel title="Bucket layout" sub="bim-control private bucket · project/category/version/files" prov="demo">
+        <div className="ec-tree">
+          <div>bim-control/</div>
+          <div className="indent">project_real_ifc_demo/</div>
+          <div className="indent two">OpenBIM/Architecture/v07/files/</div>
+          {files.map(([f, d, p]) => <div className="indent three" key={f}><span className="ec-tree-file">{f}</span> <span className="ec-note">{d}</span> <ProvTag prov={p} /></div>)}
+        </div>
+      </Panel>
+      <Panel title="與功能頁的關係" prov="asbuilt">
+        <Field k="A1" v="rule-run 讀 IFC / semantic artifact" prov="asbuilt" />
+        <Field k="A2" v="versions / diff compare 需要版本路徑與 model_version_id" prov="asbuilt" />
+        <Field k="A3" v="federation 需要多專業 USD layer / stage paths" prov="asbuilt" />
+        <Field k="3D Viewer" v="openStage 使用 generated model.usdc / model.usd URL" prov="asbuilt" />
+      </Panel>
+    </>
+  );
+}
+
+export function ReportsPage() {
+  return (
+    <StubPage
+      title="報表中心"
+      note="把治理檢核、版本差異、mapping coverage、FM / clash summary 收成可交付文件。"
+      items={[
+        ["Governance report", "A1 rule-run / Issue / BCF / Excel", "asbuilt"],
+        ["Version diff summary", "A2 diff impact report", "asbuilt"],
+        ["Mapping coverage", "conversion mapping summary report", "p1"],
+        ["Review package", "session + evidence + screenshots", "p1"],
+      ]}
+    />
+  );
+}
+
+export function AdminPage() {
+  return (
+    <StubPage
+      title="系統管理"
+      note="RBAC、ruleset、runtime policy 的管理面。此頁不直接刪資料、不改機密、不直接 restart GPU process。"
+      items={[
+        ["RBAC / members", "待接 control-plane identity", "p1"],
+        ["Rulesets", "A1 IDS / YAML ruleset 管理", "p1"],
+        ["Runtime policy", "restart / release 必須 reason + audit", "p1"],
+      ]}
+    />
+  );
+}
+
+export function SpecPage() {
+  return (
+    <>
+      <h1>設計規格說明</h1>
+      <p className="ec-lead">此頁保留 prototype 到 repo 的落地對照：完整操作台是 frontend product shell；conversion / Kit / WebRTC / MinIO 權威仍在各自 repo 邊界。</p>
+      <Panel title="Repo boundary contract" prov="asbuilt">
+        <Field k="bim-review-coordinator" v="session / lifecycle / lease / audit / policy 權威；發 audited intent" prov="asbuilt" />
+        <Field k="bim-streaming-server" v="IFC→USDC conversion authority + Kit/WebRTC/USD runtime" prov="asbuilt" />
+        <Field k="web-viewer-sample" v="browser client / primary + spectator evidence source" prov="asbuilt" />
+        <Field k="kit-manager-api" v="Kit process / endpoint pool / restart / release executor" prov="p1" />
+      </Panel>
+    </>
+  );
+}
+
+export function GpuReviewRoomPage() {
+  return (
+    <>
+      <ReviewRoomPage />
+      <Panel title="GPU 審查室補充" sub="prototype 的 GPU review room 是 viewer + runtime evidence，不是另開一個 renderer" prov="asbuilt">
+        <Field k="Mock Viewport" v="沒有真實 WebRTC first frame 時顯示 deterministic no-GPU，不宣稱 live 3D" prov="asbuilt" />
+        <Field k="Primary / Spectator" v="viewer role 與 first frame evidence 由 browser 回報" prov="p1" />
       </Panel>
     </>
   );
@@ -444,7 +771,7 @@ export function VersionDiffPage() {
       <h1>模型版本差異與責任追蹤 · A2</h1>
       <p className="ec-lead">
         以 IFC GlobalId 多級對齊（GlobalId → Tag → type+name+location）比對兩個 model version，
-        標記 added / removed / moved / property changed。純 CPU，不需 GPU。
+        標記 added / removed / moved / property changed；差異計算在 CPU 完成。
       </p>
       <Panel title="Diff Builder" sub="POST /api/governance/diffs（經 coordinator proxy → governance-service）" prov="asbuilt">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

@@ -3,23 +3,37 @@
 // 零依賴 hash 路由（不引入 react-router、不擾動既有 App ?session bootstrap）。
 import { useEffect, useState } from "react";
 import "./edge-console.css";
-import { PAGES, Prov } from "./data";
+import { NAV_GROUPS, PAGES, Prov } from "./data";
 import {
+  A1GovernanceWorkbenchPage,
+  AdminPage,
   AppsPage,
   AppVisionPage,
+  ConversionSchedulingPage,
   CoordinatorPage,
   FederationPage,
+  GpuReviewRoomPage,
+  HomePage,
   IntakePage,
   IssuesRuleCenterPage,
+  KitGpuFleetPage,
+  MinioDataPage,
   OverviewPage,
+  ReportsPage,
   ReviewRoomPage,
   RuntimePage,
   SemanticViewerPage,
+  SessionManagementPage,
+  SpecPage,
+  ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
+// operator-tool 路由保留：#/kit、#/demo-control 原由 OperatorConsole 服務；換 EdgeConsole 後仍可達（非 silently 砍）。
+import { KitConsolePage } from "./KitConsolePage";
+import { RealIfcConsolePage } from "./RealIfcConsolePage";
 
 function usePageHash(): [string, (k: string) => void] {
-  const read = () => window.location.hash.replace(/^#/, "") || "overview";
+  const read = () => window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "") || "home";
   const [page, setPage] = useState(read);
   useEffect(() => {
     const on = () => setPage(read());
@@ -37,6 +51,26 @@ function renderBody(page: string, go: (k: string) => void) {
   // app/<slug> → A4–A10 vision 詳頁（P3-1）。
   if (page.startsWith("app/")) return <AppVisionPage slug={page.slice(4)} onOpen={go} />;
   switch (page) {
+    case "home": return <HomePage onOpen={go} />;
+    case "a1": return <A1GovernanceWorkbenchPage />;
+    case "a2": return <VersionDiffPage />;
+    case "a3": return <FederationPage />;
+    case "a4": return <AppVisionPage slug="ai-search" onOpen={go} />;
+    case "a5": return <AppVisionPage slug="iot-fm" onOpen={go} />;
+    case "a6": return <AppVisionPage slug="4d-5d" onOpen={go} />;
+    case "a7": return <AppVisionPage slug="reality-capture" onOpen={go} />;
+    case "a8": return <AppVisionPage slug="synthetic-data" onOpen={go} />;
+    case "a9": return <AppVisionPage slug="usd-copilot" onOpen={go} />;
+    case "a10": return <AppVisionPage slug="robot-sim" onOpen={go} />;
+    case "viewer": return <ViewerPresentationPage />;
+    case "gpu": return <GpuReviewRoomPage />;
+    case "conv": return <ConversionSchedulingPage />;
+    case "sessions": return <SessionManagementPage />;
+    case "instances": return <KitGpuFleetPage />;
+    case "minio": return <MinioDataPage />;
+    case "reports": return <ReportsPage />;
+    case "admin": return <AdminPage />;
+    case "spec": return <SpecPage />;
     case "overview": return <OverviewPage />;
     case "issues": return <IssuesRuleCenterPage />;
     case "apps": return <AppsPage onOpen={go} />;
@@ -47,12 +81,34 @@ function renderBody(page: string, go: (k: string) => void) {
     case "runtime": return <RuntimePage />;
     case "review": return <ReviewRoomPage />;
     case "semantic": return <SemanticViewerPage />;
-    default: return <OverviewPage />;
+    case "kit": return <KitConsolePage />;
+    case "demo-control": return <RealIfcConsolePage />;
+    default: return <HomePage onOpen={go} />;
   }
 }
 
 // 用語對照（操作員 biz ↔ 技術 tech）。register=biz 顯示業務語、tech 顯示技術語。
 const NAV_LABEL: Record<string, { tech: string; biz: string }> = {
+  home: { tech: "Today", biz: "今天要做什麼" },
+  a1: { tech: "A1 Governance", biz: "治理與模型檢核" },
+  a2: { tech: "A2 Version Diff", biz: "版本差異與責任" },
+  a3: { tech: "A3 Federation", biz: "跨專業疊合" },
+  a4: { tech: "A4 Semantic Search", biz: "語意搜尋問答" },
+  a5: { tech: "A5 IoT/FM", biz: "IoT / FM 數位分身" },
+  a6: { tech: "A6 4D/5D", biz: "4D / 5D 施工模擬" },
+  a7: { tech: "A7 Reality Capture", biz: "Reality Capture 比對" },
+  a8: { tech: "A8 Synthetic Data", biz: "Synthetic Data" },
+  a9: { tech: "A9 ChatUSD", biz: "設計 / 審查 Copilot" },
+  a10: { tech: "A10 Robot Sim", biz: "機器人 / 巡檢模擬" },
+  viewer: { tech: "3D Viewer", biz: "3D Viewer 呈現" },
+  gpu: { tech: "GPU Review Room", biz: "GPU 審查室" },
+  conv: { tech: "Conversion Queue", biz: "IFC→USD 轉檔排程" },
+  sessions: { tech: "Session ATC", biz: "Session 管理" },
+  instances: { tech: "Kit/GPU Fleet", biz: "Kit / GPU 機隊" },
+  minio: { tech: "MinIO Data", biz: "MinIO 資料" },
+  reports: { tech: "Reports", biz: "報表中心" },
+  admin: { tech: "Admin", biz: "系統管理" },
+  spec: { tech: "Design Spec", biz: "設計規格說明" },
   overview: { tech: "Overview", biz: "總覽" },
   coordinator: { tech: "Coordinator Console", biz: "審查控制台" },
   intake: { tech: "Model Intake", biz: "建模接收與轉換" },
@@ -61,6 +117,18 @@ const NAV_LABEL: Record<string, { tech: string; biz: string }> = {
   runtime: { tech: "Runtime Dashboard", biz: "串流執行狀態" },
   review: { tech: "Review Room", biz: "審查室" },
   semantic: { tech: "Semantic Viewer", biz: "語意檢核" },
+};
+
+const COPILOT_PROMPTS: Record<string, string[]> = {
+  home: ["這個專案現在卡在哪？", "幫我列今天最該處理的 3 件事", "v07 送審前還缺什麼？"],
+  a1: ["找出所有 FireDoor 但 FireRating 為空的構件", "把 Critical issue 的構件高亮為紅色", "列出 Mapping coverage < 95% 的子系統"],
+  a2: ["v07 比 v06 改了什麼？", "哪些變更會影響成本？", "上一版的 issue 修掉了嗎？"],
+  a4: ["三樓所有沒填防火時效的防火門", "體積最大的 10 個房間", "屬於 L2 但分類碼空白的構件"],
+  a5: ["現在哪個區域溫度異常？", "列出逾期未處理的維保工單", "B1 機房本月用電趨勢"],
+  conv: ["哪些轉檔任務卡住或失敗了？", "把 988 的模型插隊優先轉", "列出 coverage < 95% 的任務"],
+  sessions: ["哪個 session 有 viewer 收不到 frame？", "把閒置超過 15 分鐘的 session 回收", "S-270 現在幾個人在看？"],
+  instances: ["哪台 GPU 還能接新 session？", "把新審查排到最閒的節點", "edge-gpu-02 的 VRAM 還夠嗎？"],
+  minio: ["270 專案有幾個模型？", "哪些模型還沒轉成 USD？", "model.ifc 最大的是哪一個？"],
 };
 
 // FlowBar（P3-3）：5 步操作員心智模型 Intake→Convert→Meeting→Mark→Record。
@@ -98,10 +166,9 @@ export default function EdgeConsole() {
   // Tweaks（P3-3）：register=操作員/技術用語；scenario=clean/warn（UI 偏好；真實頁一律用 live API）。
   const [register, setRegister] = useState<"tech" | "biz">("tech");
   const [scenario, setScenario] = useState<"clean" | "warn">("clean");
-  const gov = PAGES.filter((p) => p.plane === "governance");
-  const omni = PAGES.filter((p) => p.plane === "omniverse");
   const navText = (key: string, fallback: string) => (NAV_LABEL[key] ? NAV_LABEL[key][register] : fallback);
   const flowActive = page.startsWith("app/") ? "apps" : page;
+  const prompts = COPILOT_PROMPTS[flowActive] ?? COPILOT_PROMPTS.home;
 
   return (
     <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"}`}>
@@ -112,23 +179,23 @@ export default function EdgeConsole() {
         <div className="ec-chips">
           <span className="ec-prov ec-asbuilt">COORD :8004</span>
           <span className="ec-prov ec-asbuilt">GOV :49102</span>
-          <span className="ec-prov ec-demo">GPU 未取得</span>
+          <span className="ec-prov ec-demo">GPU · 依 session 派發</span>
         </div>
         <button className="ec-btn" onClick={() => setAgentOpen((v) => !v)}>{agentOpen ? "⟩ Agent" : "⟨ Agent"}</button>
       </header>
 
       <nav className="ec-nav">
-        <div className="ec-group">GOVERNANCE PLATFORM · 零 GPU</div>
-        {gov.map((p) => (
-          <button key={p.key} className={page === p.key ? "active" : ""} onClick={() => go(p.key)}>
-            <span className="ec-key">{p.no}</span>{navText(p.key, p.label)}
-          </button>
-        ))}
-        <div className="ec-group">OMNIVERSE RUNTIME · KIT/USD/GPU</div>
-        {omni.map((p) => (
-          <button key={p.key} className={page === p.key ? "active" : ""} onClick={() => go(p.key)}>
-            <span className="ec-key">{p.no}</span>{navText(p.key, p.label)}
-          </button>
+        {NAV_GROUPS.map((group) => (
+          <div key={group.key}>
+            <div className="ec-group">{group.title}<span>{group.sub}</span></div>
+            {PAGES.filter((p) => p.group === group.key).map((p) => (
+              <button key={p.key} className={page === p.key ? "active" : ""} title={p.label} onClick={() => go(p.key)}>
+                <span className="ec-key">{p.no}</span>
+                <span>{navText(p.key, p.label)}</span>
+                {p.badge && <span className="ec-nav-badge">{p.badge}</span>}
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
 
@@ -158,13 +225,14 @@ export default function EdgeConsole() {
           <strong>Chat USD Agent</strong>
           <span className="ec-prov ec-p4">ROADMAP · A9</span>
         </div>
-        <p className="ec-note">A9 USD Code / ChatUSD Copilot 為 Phase 4 願景；後端（usd-code microservice）未建置，互動僅示意。</p>
-        {/* P3-2：suggested prompts（disabled，僅示意）+ 寫入限制聲明 + disabled 輸入框。 */}
+        <p className="ec-note">A9 USD Code / ChatUSD Copilot 為 Phase 4 願景；本欄先顯示 page-aware prompts 與 tool trace 版型，狀態改動需人工確認與 audit。</p>
         <div className="ec-prompts">
           <b>SUGGESTED · USD-AWARE（PREVIEW · 後端未建）</b>
-          <div className="ec-prompt">找出所有沒有 FireRating 的防火門</div>
-          <div className="ec-prompt">把語意未對映的構件標出來</div>
-          <div className="ec-prompt">列出 coverage &lt; 95% 的子系統</div>
+          {prompts.map((prompt) => <div className="ec-prompt" key={prompt}>{prompt}</div>)}
+        </div>
+        <div className="ec-toolcall">
+          <div><span className="ec-dot g" /> kit_mcp.search_prims <span className="ec-s">preview</span></div>
+          <p className="ec-note">tool trace 僅作透明化版型；真正 MCP/NeMo 執行尚未接入。</p>
         </div>
         <p className="ec-warn-note">寫入限制（規格）：AI 僅能改 review / session layer，不寫回 source model。</p>
         <div className="ec-agent-input">
