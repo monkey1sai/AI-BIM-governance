@@ -28,13 +28,15 @@
 
 .ec-nav { grid-area:nav; background:var(--ec-bg-2); border-right:1px solid var(--ec-line);
   overflow-y:auto; padding:10px 0; }
-.ec-nav .ec-group { color:var(--ec-fg-4); font-size:10px; letter-spacing:.12em; padding:12px 14px 4px; }
+.ec-nav .ec-group { color:var(--ec-fg-4); font-size:10px; letter-spacing:.12em; padding:12px 14px 4px; display:flex; flex-direction:column; gap:1px; }
+.ec-nav .ec-group span { color:var(--ec-fg-4); letter-spacing:0; font-size:9px; opacity:.78; }
 .ec-nav button { display:flex; gap:9px; align-items:center; width:100%; text-align:left;
   background:none; border:0; color:var(--ec-fg-2); padding:7px 14px; cursor:pointer; font:inherit; }
 .ec-nav button:hover { background:var(--ec-bg-3); color:var(--ec-fg); }
 .ec-nav button.active { background:var(--ec-grn-2); color:var(--ec-fg);
   box-shadow:inset 3px 0 0 var(--ec-grn); }
 .ec-nav .ec-key { color:var(--ec-fg-4); width:14px; }
+.ec-nav-badge { margin-left:auto; color:var(--ec-grn); border:1px solid var(--ec-grn-3); background:var(--ec-grn-2); border-radius:3px; padding:0 5px; font-size:9px; }
 
 .ec-main { grid-area:main; overflow-y:auto; padding:18px 22px; }
 .ec-main h1 { font-size:19px; margin:0 0 4px; color:var(--ec-fg); }
@@ -106,6 +108,21 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-appcard.clickable:hover { border-color:var(--ec-vio); }
 .ec-note { color:var(--ec-fg-3); font-size:11px; margin:8px 0; }
 .ec-warn-note { color:var(--ec-amb); font-size:11px; }
+.ec-mini-card { background:var(--ec-bg-3); border:1px solid var(--ec-line); border-radius:6px; padding:10px 12px; min-width:0; }
+.ec-mini-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.ec-mini-title { color:var(--ec-fg); font-weight:600; }
+.ec-action-card { background:var(--ec-bg-3); border:1px solid var(--ec-line); border-radius:6px; color:var(--ec-fg-2);
+  padding:12px; display:flex; flex-direction:column; gap:5px; text-align:left; cursor:pointer; font:inherit; min-height:112px; }
+.ec-action-card:hover { border-color:var(--ec-grn); color:var(--ec-fg); }
+.ec-action-card span:last-child { color:var(--ec-fg-3); font-size:11px; }
+.ec-tree { font-family:var(--ec-mono); color:var(--ec-fg-2); font-size:12px; line-height:1.8; overflow:auto; }
+.ec-tree .indent { padding-left:18px; }
+.ec-tree .two { padding-left:36px; }
+.ec-tree .three { padding-left:54px; }
+.ec-tree-file { color:var(--ec-cyan); }
+.ec-toolcall { border:1px solid var(--ec-line); border-radius:6px; padding:8px 10px; background:var(--ec-bg-3); margin-top:12px; }
+.ec-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--ec-fg-4); }
+.ec-dot.g { background:var(--ec-grn); box-shadow:0 0 8px var(--ec-grn); }
 
 /* ── BoundaryDiagram（P2-1 Overview）：web-plane → boundary → internal 三欄 ── */
 .ec-boundary { display:flex; align-items:stretch; gap:8px; flex-wrap:wrap; }
@@ -334,4 +351,9 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-evidence-pill.bad {
   border-color:var(--ec-red);
   color:var(--ec-red);
+}
+
+@media (max-width: 980px) {
+  .ec-root { grid-template-columns:210px 1fr; grid-template-areas:"top top" "nav main" "foot foot"; }
+  .ec-agent { display:none; }
 }
