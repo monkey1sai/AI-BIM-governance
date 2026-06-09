@@ -3,14 +3,9 @@
 // coordinator base 用全站／部署一致的正規 env 名 VITE_COORDINATOR_API_BASE（compose 注入、deploy.ps1
 // 經 WEB_VIEWER_COORDINATOR_API_BASE 設定、config/env.ts 亦讀此名）。保留舊名 VITE_COORDINATOR_BASE
 // 為相容 fallback（正規名優先），預設與 config/env.ts 一致為 http://127.0.0.1:8004。
+import { defaultCoordinatorBase } from "./coordinatorBase";
+
 const env = (import.meta as { env?: Record<string, string> }).env;
-function defaultCoordinatorBase(): string {
-  if (typeof window === "undefined") return "http://127.0.0.1:8004";
-  const { origin, pathname, port } = window.location;
-  const devPorts = new Set(["5173", "5174", "5180"]);
-  if (pathname.startsWith("/ui") && !devPorts.has(port)) return origin;
-  return "http://127.0.0.1:8004";
-}
 
 const COORD_BASE: string =
   env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();

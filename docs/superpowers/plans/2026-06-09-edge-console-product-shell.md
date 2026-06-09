@@ -18,7 +18,7 @@
 
 ---
 
-### Task 1：建 branch + 套用 stash 基底
+## Task 1：建 branch + 套用 stash 基底
 
 **Files:** 全 console 檔（apply）。
 

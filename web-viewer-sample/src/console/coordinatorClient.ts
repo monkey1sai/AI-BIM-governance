@@ -16,14 +16,9 @@
 // callback-outbox 直查（/api/internal/callback-outbox/:id）需 internal token，瀏覽器不可達 →
 //   不在此 client 提供；outbox 摘要改由 ifc_ready job 的 callback_outbox_id 觀察（誠實標 demo/未取得）。
 
+import { defaultCoordinatorBase } from "./coordinatorBase";
+
 const env = (import.meta as { env?: Record<string, string> }).env;
-function defaultCoordinatorBase(): string {
-  if (typeof window === "undefined") return "http://127.0.0.1:8004";
-  const { origin, pathname, port } = window.location;
-  const devPorts = new Set(["5173", "5174", "5180"]);
-  if (pathname.startsWith("/ui") && !devPorts.has(port)) return origin;
-  return "http://127.0.0.1:8004";
-}
 
 const COORD_BASE: string =
   env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();

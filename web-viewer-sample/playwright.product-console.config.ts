@@ -4,6 +4,8 @@ import { defineConfig, devices } from "@playwright/test";
 // It intentionally avoids the viewer webServer from playwright.config.ts.
 export default defineConfig({
   testDir: "./e2e",
+  // 僅跑產品操作台 evidence specs；不收 viewer-harness 等需 webServer/baseURL 的 spec（避免相對導航失敗或誤跑無關套件）。
+  testMatch: ["product-console-integration.spec.ts", "unified-console-routes.spec.ts"],
   outputDir: "../artifacts/e2e/_product_console_output",
   timeout: 60_000,
   expect: { timeout: 15_000 },

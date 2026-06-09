@@ -220,10 +220,10 @@ export function A1GovernanceWorkbenchPage() {
           ))}</tbody>
         </table>
       </Panel>
-      <Panel title="主要操作" sub="已建與待建分開；不提供假按鈕" prov="asbuilt">
-        <Btn caption="governance-service rule-run" prov="asbuilt">執行規則檢核</Btn>{" "}
-        <Btn caption="issues from rule-run" prov="asbuilt">失敗構件建 issue</Btn>{" "}
-        <Btn caption="BCF / Excel export" prov="asbuilt">匯出 BCF / Excel</Btn>{" "}
+      <Panel title="主要操作" sub="已建動作導向 Issue / Rule Center 真實執行；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
+        <Btn caption="→ Issue / Rule Center 執行 rule-run" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>執行規則檢核</Btn>{" "}
+        <Btn caption="→ Issue / Rule Center 從失敗建 issue" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>失敗構件建 issue</Btn>{" "}
+        <Btn caption="→ Issue / Rule Center 匯出 BCF / Excel" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>匯出 BCF / Excel</Btn>{" "}
         <Btn disabled caption="需 viewer DataChannel + first frame + stage match" prov="p1">在 3D 高亮</Btn>
       </Panel>
     </>
@@ -335,10 +335,10 @@ export function SessionManagementPage() {
             ))}</tbody></table>
         ) : <p className="ec-note">目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。</p>}
       </Panel>
-      <Panel title="Controlled actions" sub="會改狀態的動作必須有 reason + audit log" prov="p1">
-        <Btn caption="browser-visible URL only" prov="asbuilt">Open primary URL</Btn>{" "}
-        <Btn caption="browser-visible URL only" prov="asbuilt">Open spectator URL</Btn>{" "}
-        <Btn caption="semi-auto allowed for stale spectator" prov="p1">Reclaim stale spectator</Btn>{" "}
+      <Panel title="Controlled actions" sub="Phase 1 read-only；會改狀態的動作須 reason + audit log，控制端點尚未接（不提供假按鈕）" prov="p1">
+        <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open primary URL</Btn>{" "}
+        <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open spectator URL</Btn>{" "}
+        <Btn disabled caption="Phase 1 read-only：stale spectator reclaim 待接" prov="p1">Reclaim stale spectator</Btn>{" "}
         <Btn disabled caption="requires explicit reason + audited intent to Kit Manager" prov="p1">Force release / restart primary</Btn>
       </Panel>
     </>
