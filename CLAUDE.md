@@ -28,6 +28,16 @@ installed skills / Graphify wiki / generated skills
 - A1–A10 是本 repo 主要產品項；user-facing feature 必須可從前端 route 操作並有 browser E2E evidence，backend-only done 不接受。
 - deploy / runtime / demo 行為必須回到 `scripts/deploy.ps1` golden path；新增 root-level start / smoke / check script 預設視為邊界風險。
 
+開發管線（四套工具不平權，固定「主流程 + 輔助」；完整版見 `AGENTS.md` §0.1）：
+
+```txt
+設計/prototype → Superpowers 拆 plan → GitNexus impact → 實作 → gstack UI/E2E/screenshot 驗收 → GitNexus detect_changes → PR
+```
+
+- **Superpowers**＝plan / execution governance（主線）；**GitNexus**＝impact / detect_changes；**gstack**＝browser QA / screenshot / E2E（user-facing 驗收唯一證據）；**Matt Pocock skills**＝僅 issue / triage / domain-doc 輔助，不得當主線。
+- 禁止：Matt Pocock 取代 Superpowers plan／Superpowers 宣告 UI 完成卻不跑 gstack／GitNexus 當產品設計依據／gstack 改 backend symbol 跳過 GitNexus impact。
+- 誠實鐵律：前端要真能操作、不可只接 mock；無 backend 處 UI 須標 `DEMO DATA`／`NOT BUILT`／`not observed`。
+
 完成任何工作前回報：
 
 ```txt

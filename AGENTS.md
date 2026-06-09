@@ -33,10 +33,39 @@
 - 不允許：修改既有 `.env` 的實際機密值。
 - 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
 
-### 開發流程與本機 agent 產物
+### 開發管線（四套工具：主流程 + 輔助，不平權混用）
 
-- 非平凡功能用 superpowers `writing-plans` 產出分期 plan（存 `docs/superpowers/plans/`），再用 `subagent-driven-development` 逐 task 實作，並以 `verification-before-completion` 作為 done-gate（無證據不得宣告完成）。
-- 不在 `main` 上開發；每筆變更走 branch → PR → GitHub Actions → merge。plan / 設計文件預設繁體中文；API 路徑、schema 欄位、CLI flags、status enum、log/error、外部產品名稱保留原文。
+四套工具各有單一職責，組成一條固定管線；**不得平權混用、不得互相取代**：
+
+```txt
+設計規格 / prototype
+  → Superpowers 拆 plan
+  → GitNexus 影響分析（impact）
+  → 實作
+  → gstack UI / E2E / screenshot 驗收
+  → GitNexus detect_changes
+  → branch → PR → Actions → merge
+```
+
+| 工具 | 唯一職責（單線，不可越界） |
+|---|---|
+| **Superpowers** | 主線 plan / execution governance：`writing-plans` 拆分期 plan → `subagent-driven-development` 執行 → `verification-before-completion` done-gate |
+| **GitNexus** | code intelligence：改 symbol 前 `impact`（HIGH / CRITICAL 先回報）、commit 前 `detect_changes` 驗 scope |
+| **gstack** | browser QA / screenshot / E2E evidence：user-facing 完成的**唯一驗收證據來源** |
+| **Matt Pocock skills** | 僅 optional 輔助：issue / triage / domain-doc；**不得當主線** |
+
+禁止（anti-patterns）：
+
+- ❌ 用 Matt Pocock skills 取代 Superpowers plan。
+- ❌ 用 Superpowers 宣告 UI 完成而不跑 gstack。
+- ❌ 用 GitNexus 當產品設計依據（設計來自 spec / prototype，非 call graph）。
+- ❌ 用 gstack 改 backend symbol 而跳過 GitNexus impact。
+
+誠實鐵律（repo contract：前端要真的能操作，不能只接 mock）：某部分還沒 backend 時，UI 須誠實標 `DEMO DATA`／`NOT BUILT`／`not observed`，不得假裝 ready。完成標準與 frontend-operable rule 見上方「產品定位與完成標準」。
+
+### 本機 agent 產物
+
+- 不在 `main` 上開發；plan / 設計文件預設繁體中文，API 路徑 / schema 欄位 / CLI flags / status enum / log / error / 外部產品名稱保留原文。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 是本機 agent/tooling 產物，預設維持 ignored（含以 `skills` CLI 裝進 `.claude/skills/` 的技能）。
 - 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus generated skill 檔，除非使用者明確要求改變 repo policy。
 
