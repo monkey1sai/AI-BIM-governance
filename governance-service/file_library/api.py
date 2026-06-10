@@ -16,7 +16,10 @@ from fastapi import APIRouter
 router = APIRouter()
 
 _SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
-_DEFAULT_ROOT = os.path.join(_SERVICE_ROOT, "storage")
+# 預設 root = repo 根 storage/（spec §4.1）：真實三專案 270/889/990 放在 repo 根層，
+# 非 service 層 governance-service/storage/（後者只放 governance.db / federated/）。
+# 故由 _SERVICE_ROOT(=governance-service/) 的父層(=repo 根)組 storage/。
+_DEFAULT_ROOT = os.path.join(os.path.dirname(_SERVICE_ROOT), "storage")
 
 
 def _library_root() -> str:
