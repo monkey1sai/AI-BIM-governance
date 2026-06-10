@@ -69,10 +69,11 @@ browser
 
 第一選擇是 Docker build 內建 EdgeConsole bundle：
 
+- 使用 coordinator web-plane 專用 Dockerfile；不可只改共用 `infra/docker/node-dev.Dockerfile`，因為目前該 Dockerfile 只 copy `SERVICE_DIR`，拿不到 `web-viewer-sample` 來源。
 - 在 Docker build 階段用 `web-viewer-sample` 的 package lock 安裝依賴並執行 `npm run build:ui`。
 - 將輸出的 `dist-ui` 複製到 coordinator image 內固定路徑，例如 `/workspace/console-dist`。
 - `compose.host-kit.yml` 設定 `CONSOLE_DIST_DIR=/workspace/console-dist`。
-- host bind mount `./web-viewer-sample/dist-ui:/workspace/console-dist:ro` 不應在 host 產物缺失時覆蓋 image 內建 bundle。
+- 移除或避免 host bind mount `./web-viewer-sample/dist-ui:/workspace/console-dist:ro`；空目錄 bind mount 會覆蓋 image 內建 bundle，導致 `/ui` 又 fallback 或 assets 404。
 
 此選擇比 host-side build 穩定，因為測試部署 checkout 會清掉 ignored artifact，也不保證有 host `node_modules`。
 
@@ -115,15 +116,17 @@ browser
 
 建議修改面：
 
-- Dockerfile 或 compose 設定：讓 coordinator image 或 web-plane build 產出並服務 `console-dist`。
-- `scripts/deploy.ps1`：`-Build` 後驗證 `/ui` 回應含 EdgeConsole marker，例如 `AI · BIM Governance`，並記錄 fallback 狀態。
-- `scripts/start-web-plane-docker.ps1`：避免空 bind mount 覆蓋 image 內建 bundle。
-- 測試：補一個 deploy/web-plane smoke，確認 `/ui` 與 `/dev-console` 可區分。
+- 新增 coordinator web-plane 專用 Dockerfile：同一個 image 內建 `bim-review-coordinator` 與 `web-viewer-sample/dist-ui`。
+- `compose.runtime-manager.yml` coordinator 改用專用 Dockerfile，並移除 host `dist-ui` bind mount。
+- `scripts/deploy.ps1`：`-Build` 後驗證 `/ui` 回應是 Vite SPA shell（HTML 參照 `/ui/assets/*`），並記錄 fallback 狀態。
+- `scripts/deploy.ps1` 或 web-plane check 需額外驗證 `/ui/assets/*` 至少一個 JS/CSS asset 可 200；不能只看 `/ui` HTML 200。
+- 測試：補一個 deploy/web-plane smoke，確認 `/ui` 與 `/dev-console` 可區分，且 `/ui/open` 仍先於 SPA fallback。
 
 驗收：
 
 - `.\scripts\dev\rebuild-test-deploy.ps1 -Build`
-- `GET http://192.168.10.105:8004/ui` 含 `AI · BIM Governance`
+- `GET http://192.168.10.105:8004/ui` 是 Vite SPA shell，含 `/ui/assets/` 參照；`AI · BIM Governance` 需由 browser E2E 驗證，因文字在 JS bundle 中。
+- `GET http://192.168.10.105:8004/ui/assets/<built-asset>` 至少一個 bundle asset 回 200
 - `GET http://192.168.10.105:8004/dev-console` 含 `Review Coordinator`
 - `GET /ui/open?session=bad` 仍回 400；合法 session 仍 302
 - browser 截圖保存 `/ui#/a1`

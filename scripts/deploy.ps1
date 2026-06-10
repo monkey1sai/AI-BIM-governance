@@ -1162,9 +1162,47 @@ function Probe-Url {
     }
 }
 
+function Probe-Text {
+    param([string] $Name, [string] $Url, [string] $Pattern)
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        $content = [string]$r.Content
+        if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400 -and $content -match $Pattern) {
+            Write-DeployTag -Tag 'ok' -Message "verify $Name matched pattern at $Url" -LogPath $LogPath | Out-Null
+            return [pscustomobject]@{ Ok = $true; Content = $content }
+        }
+        Write-DeployTag -Tag 'warn' -Message "verify $Name pattern missing at $Url" -LogPath $LogPath | Out-Null
+        return [pscustomobject]@{ Ok = $false; Content = $content }
+    } catch {
+        Write-DeployTag -Tag 'warn' -Message "verify $Name unreachable at $Url :: $($_.Exception.Message)" -LogPath $LogPath | Out-Null
+        return [pscustomobject]@{ Ok = $false; Content = '' }
+    }
+}
+
+function Probe-UiAsset {
+    param([string] $Name, [string] $UiUrl, [string] $Html)
+    $match = [regex]::Match($Html, '(?:src|href)="(?<asset>/ui/assets/[^"]+\.(?:js|css))"')
+    if (-not $match.Success) {
+        Write-DeployTag -Tag 'warn' -Message "verify $Name no /ui/assets bundle reference found" -LogPath $LogPath | Out-Null
+        return $false
+    }
+
+    $ui = [uri]$UiUrl
+    $assetUrl = "$($ui.Scheme)://$($ui.Authority)$($match.Groups['asset'].Value)"
+    return Probe-Url -Name $Name -Url $assetUrl
+}
+
 if (-not $SkipDocker) {
     if (-not (Probe-Url -Name 'coordinator' -Url 'http://127.0.0.1:8004/health')) { $verifyFails += 'coordinator' }
     if (-not (Probe-Url -Name 'viewer'      -Url 'http://127.0.0.1:5173'))        { $verifyFails += 'viewer' }
+    $coordinatorBaseUrl = if ($script:coordinatorPublicUrl) { $script:coordinatorPublicUrl.TrimEnd('/') } else { 'http://127.0.0.1:8004' }
+    $coordinatorUiUrl = "$coordinatorBaseUrl/ui"
+    $uiProbe = Probe-Text -Name 'coordinator-ui-edge-console-shell' -Url $coordinatorUiUrl -Pattern '/ui/assets/'
+    if (-not $uiProbe.Ok) {
+        $verifyFails += 'coordinator-ui-edge-console-shell'
+    } elseif (-not (Probe-UiAsset -Name 'coordinator-ui-edge-console-asset' -UiUrl $coordinatorUiUrl -Html $uiProbe.Content)) {
+        $verifyFails += 'coordinator-ui-edge-console-asset'
+    }
 }
 if (-not $SkipConversion) {
     if (-not (Probe-Url -Name 'conversion'  -Url 'http://127.0.0.1:49101/health')) { $verifyFails += 'conversion' }
