@@ -2,27 +2,57 @@ import { test, expect } from "@playwright/test";
 
 // MinIO file-server source（storage/{270,889,990}/{機電,水電,消防}/*.ifc）端到端：
 // #/minio 真樹可見三專案；#/a1 由選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現。
-// 需 coordinator :8004 + governance-service :49102（BIM_FILE_LIBRARY_ROOT 指主 worktree storage）。
-// 前置不滿足時 conditional skip（誠實：不假裝跑過）。
+//
+// *** 服務這幾頁的是 COORDINATOR 的「已 build dist-ui」（package.json `build:ui` → dist-ui），
+//     不是 playwright.config.ts webServer 在 :5180 起的 fresh viewer。:5180 那台與本 spec 全程
+//     無關（本 spec 一律 page.goto 到 COORDINATOR /ui/#/...）。前置紀律（乾淨環境必做）：
+//       1. cd web-viewer-sample && npm run build:ui    # 用本 branch 的碼重 build dist-ui
+//       2. 重啟 coordinator（:8004）讓它服務新的 dist-ui；BIM_FILE_LIBRARY_ROOT 指主 worktree
+//          storage（含 270/889/990）。docker 容器佔 :8004 時，build:ui 只更新 dist 不會自動換掉
+//          容器內陳舊 dist-ui → 須重建/重啟該服務，否則打到陳舊 UI（已知 gotcha）。
+//       3. 若 coordinator 跑在別的 port，用 E2E_COORDINATOR_BASE_URL 覆寫。
+//     此前置目前靠人工紀律；beforeEach 會用「本 branch 才有的 UI 標記」守門，環境沒對齊就 skip
+//     （誠實：不假裝跑過，也不留下誤導的 locator timeout）。
+//
+// 需 coordinator :8004（服務本 branch dist-ui）+ governance-service :49102
+// （BIM_FILE_LIBRARY_ROOT 指主 worktree storage）。前置不滿足時 conditional skip。
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
 test.describe("MinIO file-server source 端到端", () => {
   test.setTimeout(180_000);
 
-  test.beforeEach(async ({ request }) => {
-    // 前置守門：files/tree 必須回 270/889/990，否則 skip（環境未備妥）。
-    let ok = false;
+  test.beforeEach(async ({ request, page }) => {
+    // 守門 (1)：backend API。files/tree 必須回 270/889/990，否則 skip（檔案庫未備妥）。
+    let apiOk = false;
     try {
       const res = await request.get(`${COORDINATOR}/api/governance/files/tree`);
       if (res.ok()) {
         const body = await res.json();
         const ids = new Set((body.projects || []).map((p: { project_id: string }) => p.project_id));
-        ok = ["270", "889", "990"].every((id) => ids.has(id));
+        apiOk = ["270", "889", "990"].every((id) => ids.has(id));
       }
     } catch {
-      ok = false;
+      apiOk = false;
     }
-    test.skip(!ok, "檔案庫未備妥（需 governance-service + BIM_FILE_LIBRARY_ROOT 指主 worktree storage 含 270/889/990）");
+    test.skip(!apiOk, "檔案庫未備妥（需 governance-service + BIM_FILE_LIBRARY_ROOT 指主 worktree storage 含 270/889/990）");
+
+    // 守門 (2)：服務這頁的 coordinator dist-ui 必須是本 branch 的碼。
+    // 只驗 API 不夠：backend 備妥但 coordinator dist-ui 仍舊版時，後續 toBeVisible 會逾時失敗，
+    // 失敗訊號是 locator timeout 而非「環境未對齊」→ 誤導 debug。改用「本 branch 才有的 UI 標記」
+    // a1-fs-project（三層選擇器；main 不存在）當判據：導到 #/a1 後短逾時內看不到即 skip，
+    // 讓環境沒對齊走 skip（誠實）而非 timeout，也避免打到陳舊 dist-ui 留下假象。
+    let uiOk = false;
+    try {
+      await page.goto(`${COORDINATOR}/ui/#/a1`);
+      await page.getByTestId("a1-fs-project").waitFor({ state: "visible", timeout: 15_000 });
+      uiOk = true;
+    } catch {
+      uiOk = false;
+    }
+    test.skip(
+      !uiOk,
+      "coordinator dist-ui 非本 branch（#/a1 缺 a1-fs-project 選擇器）：需 `npm run build:ui` 後重啟服務 :8004 dist-ui 的 coordinator（見檔頭前置）。",
+    );
   });
 
   test("#/minio 真樹可見 270/889/990 三專案與版本檔", async ({ page }) => {
