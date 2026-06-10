@@ -433,4 +433,38 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("列出真實 job");
     expect(html).not.toContain("列出真實 session");
   });
+
+  // ── minio-fileserver-source spec：MinioData 接真檔案庫樹 + A1 三層檔案庫選擇器 ──
+  it("MinioData 接真檔案庫 API（loading 態 + 誠實 local_fs 文案 + usdc 仍 p1）", () => {
+    const html = renderToString(<MinioDataPage />);
+    // 載入態可見（renderToString 首幀無 fetch 結果 → loading）。
+    expect(html).toContain("載入");
+    // 誠實標記：local file-server 來源（比照 bim-control 規約）；真 S3/MinIO 待接。
+    expect(html).toContain("local file-server");
+    expect(html).toContain("bim-control");
+    // bucket layout 規約示意仍標 demo（規約示意非實況）。
+    expect(html).toContain("示範資料"); // PROV_LABEL.demo
+    // model.usdc 轉檔產物仍 p1，不因本 spec 翻綠。
+    expect(html).toContain("model.usdc");
+    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    // 無願景假數字。
+    expect(html).not.toContain("99.1%");
+  });
+
+  it("A1 Rule Center 新增『從檔案庫選擇』三層選擇器（手動輸入保留）", () => {
+    const html = renderToString(<IssuesRuleCenterPage />);
+    // 檔案庫選擇器標題/說明可見。
+    expect(html).toContain("從檔案庫選擇");
+    // 三層選擇 select 存在（project / model / version）。
+    expect(html).toContain("data-testid=\"a1-fs-project\"");
+    expect(html).toContain("data-testid=\"a1-fs-model\"");
+    expect(html).toContain("data-testid=\"a1-fs-version\"");
+    // 既有手動輸入框與預設 fixture 仍在（向後相容 a1-real-ifc-slice E2E）。
+    expect(html).toContain("fixture-bytes.ifc");
+    expect(html).toContain("執行規則檢核");
+    // live-run 記分板用獨立 data-testid 包裹（讓 E2E 能只斷言「真 run 後出現的區塊」，
+    // 不被恆顯的 artifact-baseline / A1 workbench 記分板誤判通過）。renderToString 首幀
+    // run=null → 此區塊不渲染，故 smoke 斷言「不存在」即可確認 gating 正確。
+    expect(html).not.toContain("data-testid=\"a1-rulerun-scoreboard\"");
+  });
 });
