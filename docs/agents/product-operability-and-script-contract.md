@@ -123,6 +123,7 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 - Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`；MUST 保留 `.github/workflows/`。
 - Helper 完成清理後 MUST 從 `D:\Users\deploy\AI-bim-geo` 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path。
 - 禁止 `-DryRun`；若 sandbox 需要寫入 `D:\Users\deploy\AI-bim-geo` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
+- 若 `deploy.ps1 -Build` Phase 3 被外部 host-native runtime blocker 擋住（例如 `kit.exe` 佔用 49100/49110+，或 conversion `python.exe` 佔用 49101），已授權 agent 停止該 blocking PID、記錄 port / PID / process name，然後重跑同一條 `.\scripts\deploy.ps1 -Build`；不得停止無關 process，也不得改用 `-Force` / `-DryRun`。
 
 正式 operator entrypoints：
 
