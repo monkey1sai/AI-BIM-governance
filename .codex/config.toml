@@ -1,0 +1,5 @@
+[sandbox_workspace_write]
+network_access = true
+
+[plugins."cloudflare@openai-curated"]
+enabled = false
