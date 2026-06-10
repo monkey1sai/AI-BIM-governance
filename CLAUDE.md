@@ -27,7 +27,7 @@ installed skills / Graphify wiki / generated skills
 - 非平凡功能用 superpowers `writing-plans` → `subagent-driven-development` → `verification-before-completion`；不在 `main` 上開發，走 branch → PR → Actions → merge。
 - A1–A10 是本 repo 主要產品項；user-facing feature 必須可從前端 route 操作並有 browser E2E evidence，backend-only done 不接受。
 - deploy / runtime / demo 行為必須回到 `scripts/deploy.ps1` golden path；新增 root-level start / smoke / check script 預設視為邊界風險。
-- 測試部署區重建口令固定執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；helper 必須從 freshly fetched `origin/main` 重建 `D:\Users\deploy\AI-bim-geo`，排除 agent/tooling 檔案後由部署區執行 `.\scripts\deploy.ps1 -Build`。禁止 `-DryRun`。
+- 測試部署區重建口令固定執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；helper 必須從 freshly fetched `origin/main` 重建 `D:\Users\deploy\AI-bim-geo`，排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/` 後由部署區執行 `.\scripts\deploy.ps1 -Build`。禁止 `-DryRun`。
 - 已授權：若 `deploy.ps1 -Build` 被外部 `kit.exe` / conversion `python.exe` 等 host-native runtime blocker 佔用必要 ports 擋住，可停止該 blocking PID 並重跑同一條 `-Build`；不得改用 `-Force` / `-DryRun`。
 
 開發管線（四套工具不平權，固定「主流程 + 輔助」；完整版見 `AGENTS.md` §0.1）：

@@ -50,11 +50,14 @@ cd D:\Users\deploy\AI-bim-geo
 - `.windsurf/`
 - `.github/skills/`
 - `.github/prompts/`
+- `docs/`
+- `openspec/`
+- `patches/`
 
 不得排除：
 
 - `.github/workflows/`
-- production scripts / services / tests / docs
+- production scripts / services / tests
 - `scripts/deploy.ps1`
 
 ## Proposed Implementation

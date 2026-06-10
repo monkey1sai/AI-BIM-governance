@@ -131,7 +131,7 @@ function Assert-TestDeployPath {
 }
 
 function Get-TestDeployRootToolingDirs {
-    return @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf', '.github\skills', '.github\prompts')
+    return @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf', '.github\skills', '.github\prompts', 'docs', 'openspec', 'patches')
 }
 
 function Remove-TestDeployAgentTooling {
@@ -482,7 +482,7 @@ Expected: commit succeeds with only the wrapper and test update staged.
 Replace the existing test deploy bullet with this exact text:
 
 ```markdown
-- 當使用者要求「請測試部署區重建」或同義口令時，agent MUST 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；該 helper 會用 freshly fetched `origin/main` 重建 deployment checkout `D:\Users\deploy\AI-bim-geo`、排除 agent/tooling 檔案，並從部署區執行 `.\scripts\deploy.ps1 -Build`。禁止使用 `-DryRun`、禁止使用 stale `origin/main`、禁止改用當前 worktree 或 sub-repo 啟動命令。
+- 當使用者要求「請測試部署區重建」或同義口令時，agent MUST 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；該 helper 會用 freshly fetched `origin/main` 重建 deployment checkout `D:\Users\deploy\AI-bim-geo`、排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/`，並從部署區執行 `.\scripts\deploy.ps1 -Build`。禁止使用 `-DryRun`、禁止使用 stale `origin/main`、禁止改用當前 worktree 或 sub-repo 啟動命令。
 ```
 
 - [ ] **Step 2: Update `CLAUDE.md` mirror**
@@ -490,7 +490,7 @@ Replace the existing test deploy bullet with this exact text:
 Replace the existing test deploy bullet with this exact text:
 
 ```markdown
-- 測試部署區重建口令固定執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；helper 必須從 freshly fetched `origin/main` 重建 `D:\Users\deploy\AI-bim-geo`，排除 agent/tooling 檔案後由部署區執行 `.\scripts\deploy.ps1 -Build`。禁止 `-DryRun`。
+- 測試部署區重建口令固定執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；helper 必須從 freshly fetched `origin/main` 重建 `D:\Users\deploy\AI-bim-geo`，排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/` 後由部署區執行 `.\scripts\deploy.ps1 -Build`。禁止 `-DryRun`。
 ```
 
 - [ ] **Step 3: Update `docs/agents/product-operability-and-script-contract.md`**
@@ -504,7 +504,7 @@ In the "測試驗證部署環境" section, replace the block with:
 - 當使用者要求「請測試部署區重建」或同義口令時，MUST 從目前 repo 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`。
 - Helper MUST freshly fetch `origin` with `+refs/heads/main:refs/remotes/origin/main`；fetch 失敗時停止，不得使用 stale `origin/main`。
 - Helper MUST 在 reset 前回報 deployment checkout local changes 摘要；重建口令代表部署區可被 reset / clean。
-- Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`；MUST 保留 `.github/workflows/`。
+- Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`、`docs/`、`openspec/`、`patches/`；MUST 保留 `.github/workflows/`。
 - Helper 完成清理後 MUST 從 `D:\Users\deploy\AI-bim-geo` 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path。
 - 禁止 `-DryRun`；若 sandbox 需要寫入 `D:\Users\deploy\AI-bim-geo` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
 ```
@@ -528,6 +528,7 @@ cd D:\Users\deploy\AI-bim-geo
 ```
 
 禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
+清理規則會移除 agent/tooling docs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows`。
 ````
 
 - [ ] **Step 5: Verify docs contain the command and no helper dry-run**

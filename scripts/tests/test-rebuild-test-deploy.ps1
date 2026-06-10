@@ -18,7 +18,7 @@ try {
     Assert-Throws { Assert-TestDeployPath -Path $sandbox } 'temporary sandbox path is rejected'
 
     $cleanupRoot = Join-Path $sandbox 'AI-bim-geo'
-    $toolingDirNames = @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf', '.github\skills', '.github\prompts')
+    $toolingDirNames = @('.codex', '.agents', '.agent', '.claude', '.cursor', '.windsurf', '.github\skills', '.github\prompts', 'docs', 'openspec', 'patches')
     New-Item -ItemType Directory -Path $cleanupRoot -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $cleanupRoot '.github\workflows') -Force | Out-Null
     foreach ($dirName in $toolingDirNames) {

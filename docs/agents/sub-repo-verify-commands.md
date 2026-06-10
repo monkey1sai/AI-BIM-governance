@@ -52,7 +52,7 @@ cd D:\Users\deploy\AI-bim-geo
 ```
 
 禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
-清理規則會移除 agent/tooling docs 與 `.github\skills` / `.github\prompts`，但保留 `.github\workflows`。
+清理規則會移除 agent/tooling docs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows`。
 若 `deploy.ps1 -Build` Phase 3 被外部 `kit.exe` / conversion `python.exe` 佔用必要 ports 擋住，已授權停止該 blocking PID 後重跑同一條 `-Build`；記錄 port / PID / process name，不得改用 `-Force` / `-DryRun`。
 
 本機 runtime 可用時優先補：

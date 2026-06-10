@@ -10,7 +10,10 @@ $script:TestDeployRootToolingDirNames = @(
     '.cursor',
     '.windsurf',
     '.github\skills',
-    '.github\prompts'
+    '.github\prompts',
+    'docs',
+    'openspec',
+    'patches'
 )
 
 function Normalize-TestDeployPath {
