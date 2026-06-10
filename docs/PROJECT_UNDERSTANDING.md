@@ -83,7 +83,7 @@ flowchart TD
 1. **直接檢視實際實作程式碼**：藉由 `view_file` 或 `grep_search` 獲取第一手代碼實作。
 2. **檢視 `tests/contracts/` 下的 JSON 契約檔案**：API Payload 與 callback 事件結構以此為最高標準。
 3. **檢視 `AGENTS.md`**：了解當前 B 方案的服務角色劃分。
-4. **參考 Graphify Wiki 輔助文檔**：文檔可能會有落後，不可直接作為修改依據。
+4. **參考輔助 wiki 文檔**：文檔可能會有落後，不可直接作為修改依據。
 
 ### B. 強制使用 GitNexus 靜態分析與變更偵測
 修改代碼前後，必須強制執行以下命令：

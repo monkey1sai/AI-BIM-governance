@@ -4,7 +4,7 @@
 
 本檔是 `AGENTS.md` 的 Claude 鏡像入口。`AI-BIM-governance/` 的 repo 邊界、agent 行為、GitHub workflow、GitNexus 規範、B 方案閉環全部以 [`AGENTS.md`](AGENTS.md) 為 source of truth。
 
-若本檔、Graphify wiki、generated skills 或任何歷史文件與 `AGENTS.md` 衝突，採用 `AGENTS.md`。
+若本檔、generated wiki、generated skills 或任何歷史文件與 `AGENTS.md` 衝突，採用 `AGENTS.md`。
 
 ## 1. Claude 行為對齊
 
@@ -14,7 +14,7 @@
 使用者最新明確指令
 AGENTS.md / repo-local boundary rules
 CLAUDE.md
-installed skills / Graphify wiki / generated skills
+installed skills / generated wiki / generated skills
 ```
 
 工作守則（精簡）：

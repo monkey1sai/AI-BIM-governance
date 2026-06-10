@@ -300,7 +300,7 @@ npm run dev -- --host 127.0.0.1
 | `tests/fakes/` | Test-only external platform doubles | 模擬外部 IFC Worker 與公司雲端，不是 runtime profile。 |
 | `docs/contracts/` | API / event contracts | REST、Socket.IO、DataChannel 與 local runbook contract。 |
 | `docs/plans/` | Implementation plans | 目前執行計畫與驗收 checklist。 |
-| `docs/wiki/` | Graphify wiki snapshot | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
+| `docs/wiki/` | GitNexus generated wiki | AI agent 與 reviewer 的探索輔助，最終以程式碼為準。 |
 | `scripts/` | Root verification scripts | 跨服務健康檢查與 B 方案驗證入口；不得把已刪 runtime 標成必跑 pass gate。 |
 
 ### Source of Truth
@@ -382,17 +382,6 @@ Shell / PowerShell script sanity：
 bash -n scripts/verify-all.sh
 powershell -NoProfile -Command "[scriptblock]::Create((Get-Content -Raw scripts/smoke-bscheme-intake.ps1)) | Out-Null"
 ```
-
----
-
-## AI Agent 輔助 Wiki
-
-Graphify（跨文件知識圖）：
-
-- Report: [`docs/wiki/graphify/GRAPH_REPORT.md`](docs/wiki/graphify/GRAPH_REPORT.md)
-- Interactive graph: [`docs/wiki/graphify/graph.html`](docs/wiki/graphify/graph.html)
-
-> 它只是輔助探索；**最終以程式碼與 contracts 文件為準**。
 
 ---
 

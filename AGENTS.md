@@ -4,7 +4,7 @@
 
 本文件是 `AI-BIM-governance/` workspace 的 **agent 入口** — 定義 agent 行為對齊與 repo 邊界的 source of truth。為了控制每次 session 啟動的 context 預算，細節已 lazy-load 到 `docs/agents/*.md` sub-files（見下方 index）。
 
-衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / Graphify wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。
+衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / generated wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。
 
 ---
 
@@ -146,7 +146,7 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 
 這些文件提供 AI agent 在陌生模組探索時的快速上下文，目的是縮短定位時間，不取代程式碼與 API contract。
 
-Graphify Wiki（跨文件知識圖）入口為 `README.md`，用於需求探索、架構導覽、影響面初步盤點；不得作為行為正確性的唯一依據，最終以程式碼與 contracts 為準。
+Generated wiki（跨文件知識圖）用於需求探索、架構導覽、影響面初步盤點；不得作為行為正確性的唯一依據，最終以程式碼與 contracts 為準。
 
 Source of Truth 優先順序：
 
@@ -154,7 +154,7 @@ Source of Truth 優先順序：
 1. 程式碼實作
 2. contracts 文件
 3. AGENTS 邊界定義（本文件 + docs/agents/*.md sub-files）
-4. wiki（Graphify）
+4. generated wiki
 ```
 
 若發現 wiki 與實作不一致，先以實作為準，並補更新 wiki。重大流程變更（API、事件、資料流）合併前應同步更新對應 wiki 入口頁。
