@@ -690,6 +690,10 @@ storage/889/{機電,水電,消防}/{4 版本}、storage/990/{機電,水電,消�
       // 既有手動輸入框與預設 fixture 仍在（向後相容 a1-real-ifc-slice E2E）。
       expect(html).toContain("fixture-bytes.ifc");
       expect(html).toContain("執行規則檢核");
+      // live-run 記分板用獨立 data-testid 包裹（讓 E2E 能只斷言「真 run 後出現的區塊」，
+      // 不被恆顯的 artifact-baseline / A1 workbench 記分板誤判通過）。renderToString 首幀
+      // run=null → 此區塊不渲染，故 smoke 斷言「不存在」即可確認 gating 正確。
+      expect(html).not.toContain("data-testid=\"a1-rulerun-scoreboard\"");
     });
   ```
 
@@ -860,6 +864,21 @@ storage/889/{機電,水電,消防}/{4 版本}、storage/990/{機電,水電,消�
         </div>
   ```
 
+- [ ] 替 live-run 記分板加 `data-testid`（**這是 Task 5 E2E 能分辨「真 run 結果 vs baked baseline」的關鍵**）。在 `web-viewer-sample/src/console/pages.tsx` 既有 `IssuesRuleCenterPage` 內，找到只在成功 run 後才渲染的 `{run && (...)}` 記分板區塊（現況約 L530-537，內含 `<Metric ... label="評估構件" />` … `<Metric value={run.score ...} label="score" />`），把它外層 `<div className="ec-grid" style={{ marginTop: 12 }}>` 加上 `data-testid="a1-rulerun-scoreboard"`。改成：
+
+  ```typescript
+        {run && (
+          <div className="ec-grid" data-testid="a1-rulerun-scoreboard" style={{ marginTop: 12 }}>
+            <Metric value={run.summary?.total ?? "—"} label="評估構件" />
+            <Metric value={run.summary?.passed ?? "—"} label="passed" />
+            <Metric value={run.summary?.failed ?? "—"} label="failed" tone="warn" />
+            <Metric value={run.score ?? "—"} label="score" />
+          </div>
+        )}
+  ```
+
+  說明：頁面同時存在兩個恆顯記分板（A1 workbench L210-216「結果記分板」、IssuesRuleCenterPage L582-588「語意驗收訊號 · 真實 IFC 實測」artifact baseline），兩者都帶 `label="score"` 且永遠渲染；只有這個 `{run && ...}` 區塊是「按下執行規則檢核、後端真的回 succeeded 後」才出現。Task 5 E2E 必須斷言**這個 testid**，而非 `getByText("評估構件"/"score")`，否則永遠假綠（baked panel 會滿足斷言）且觸發 Playwright strict-mode（同名文字多重命中）。此步**不得跳過**。
+
 - [ ] 跑測試確認 green。執行：
 
   ```bash
@@ -894,7 +913,24 @@ storage/889/{機電,水電,消防}/{4 版本}、storage/990/{機電,水電,消�
 
 驗 vertical slice：`#/minio` 真樹可見 270/889/990；`#/a1` 由選擇器選 `270/機電/ver 竣工.ifc` → 跑 rule-run → 檢核結果出現。截圖 + trace 落 `artifacts/e2e/minio-fileserver-source-*`。
 
-**前置（指揮官手動，非 workflow 自啟；spec §8）：** 啟動 governance-service 並把 `BIM_FILE_LIBRARY_ROOT` 指到主 worktree 的真實 storage（worktree 自身無 fixtures，見上方 BLOCKER 段）：
+**前置（指揮官手動，非 workflow 自啟；spec §8）：** 三件事缺一不可——(A) 重建前端 console dist、(B) 啟動 governance-service 並指好檔案庫 root、(C) 啟動 coordinator 並把 `/ui` 指到新 dist。
+
+**(A) 重建前端 console dist（關鍵；漏掉會打到陳舊 console、新 UI 元素永遠 FAIL）。** 本 plan 改的 `MinioDataPage`/`IssuesRuleCenterPage` 屬前端 console；coordinator `/ui` 服務的是**預先建置的靜態 dist**（實證 `bim-review-coordinator/src/app.ts` L1937 `express.static(consoleDist)`，`consoleDist=CONSOLE_DIST_DIR`；未設則 fallback 成 `dev-console.html`，新元件根本不存在）。Task 4 改完 source 後**必須**重建 `dist-ui`，否則 E2E beforeEach 的 API 守門會過（governance+proxy 起來即過），但接著斷言 `getByTestId("a1-fs-project")` 等新 UI 會直接 FAIL（這是本專案記載的 #1 陷阱「改 console 須 build:ui + 重啟 coordinator」「打到陳舊容器=改了沒效假象」）。兩條等價路徑擇一：
+
+  - **路徑 1（dev，最短）：** 在 worktree 內重建 dist-ui 並讓 coordinator 指過去：
+
+    ```powershell
+    cd "C:\Repos\active\iot\AI-BIM-governance\.worktrees\minio-fileserver-source\web-viewer-sample"
+    npm run build:ui   # 輸出 dist-ui（--base=/ui/ --outDir dist-ui，已存在於 package.json scripts）
+    # 啟動 coordinator 時設此 env（見 (C)）：
+    $env:CONSOLE_DIST_DIR = "C:\Repos\active\iot\AI-BIM-governance\.worktrees\minio-fileserver-source\web-viewer-sample\dist-ui"
+    ```
+
+  - **路徑 2（golden path，測試部署區）：** 走 `.\scripts\dev\rebuild-test-deploy.ps1 -Build` 從 freshly fetched `origin/main` 重建部署區（Docker image build 階段內含 `npm run build:ui` → `/workspace/console-dist`，`CONSOLE_DIST_DIR` 由 compose 設好），再對該部署區跑 E2E。此路徑須先把本 branch merge 或部署區指向本 branch。
+
+  注意：`npm run build`（Task 4 既有型別/建置檢查那條）跑的是 viewer 主 bundle，**不等於** `build:ui`（console dist）；兩者輸出不同目錄，必須各自跑。
+
+**(B) 啟動 governance-service 並把 `BIM_FILE_LIBRARY_ROOT` 指到主 worktree 的真實 storage**（worktree 自身無 fixtures，見上方 BLOCKER 段）：
 
 ```powershell
 $env:BIM_FILE_LIBRARY_ROOT = "C:\Repos\active\iot\AI-BIM-governance\storage"
@@ -902,7 +938,9 @@ $env:GOV_PORT = "49102"
 & "C:\Program Files\Python312\python.exe" "C:\Repos\active\iot\AI-BIM-governance\.worktrees\minio-fileserver-source\governance-service\app.py"
 ```
 
-並依 golden path 啟動 coordinator `:8004`（`scripts/deploy.ps1` 或既有啟動方式）。E2E 用 `E2E_COORDINATOR_BASE_URL`（預設 `http://127.0.0.1:8004`）連 coordinator。
+**(C) 啟動/重啟 coordinator `:8004`**，使其 `CONSOLE_DIST_DIR` 指向 (A) 重建的 `dist-ui`（dev 路徑），或走 golden path `scripts/deploy.ps1`（部署區路徑，dist 由 Docker image 內建）。**改 console 後務必重啟 coordinator**，讓新 dist 生效。E2E 用 `E2E_COORDINATOR_BASE_URL`（預設 `http://127.0.0.1:8004`）連 coordinator。
+
+> 自我驗證（跑 E2E 前先確認 (A)+(C) 真生效，避免打到陳舊 console）：`curl http://127.0.0.1:8004/ui/#/minio` 後檢查回的 `index.html` 是 Vite shell（含 `/ui/assets/*` bundle 連結）而非 legacy `Review Coordinator` dev-console；或直接看 E2E 第一個斷言 `getByTestId("a1-fs-project")` 是否找得到。
 
 **Files:**
 - Create: `web-viewer-sample/e2e/minio-fileserver-source.spec.ts`
@@ -945,13 +983,17 @@ $env:GOV_PORT = "49102"
       await page.goto(`${COORDINATOR}/ui/#/minio`);
 
       // 檔案庫 Panel 載入真樹後，三個 project_id 應可見。
-      await expect(page.getByText("270/", { exact: false })).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText("889/", { exact: false })).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText("990/", { exact: false })).toBeVisible({ timeout: 30_000 });
-      // 誠實標記：local file-server 文案存在。
-      await expect(page.getByText("local file-server", { exact: false })).toBeVisible();
-      // 版本檔（竣工）可見。
-      await expect(page.getByText("ver 竣工.ifc", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+      // 注意：getByText 可能在頁面多處命中（樹節點 + 其他文案）→ 一律 .first() 避免
+      // Playwright strict-mode（locator 解析到 >1 element 時 toBeVisible 會直接拋錯而非判可見）。
+      // 樹節點實作為 <span className="ec-tree-file">{project_id}/</span>，故用 main .ec-tree 收斂範圍 + .first()。
+      const tree = page.locator("main .ec-tree");
+      await expect(tree.getByText("270/", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+      await expect(tree.getByText("889/", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+      await expect(tree.getByText("990/", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+      // 誠實標記：local file-server 文案存在（lead 段 + Panel 副標可能多重命中 → .first()）。
+      await expect(page.getByText("local file-server", { exact: false }).first()).toBeVisible();
+      // 版本檔（竣工）可見（多專案/多模型下「ver 竣工.ifc」會多重命中 → .first()）。
+      await expect(tree.getByText("ver 竣工.ifc", { exact: false }).first()).toBeVisible({ timeout: 30_000 });
 
       await page.screenshot({ path: "../artifacts/e2e/minio-fileserver-source-minio-tree.png", fullPage: true });
     });
@@ -959,31 +1001,49 @@ $env:GOV_PORT = "49102"
     test("#/a1 選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現", async ({ page }) => {
       await page.goto(`${COORDINATOR}/ui/#/a1`);
 
+      // #/a1 是 A1GovernanceWorkbenchPage，內嵌兩個 a1-* slice（a1-real-ifc-slice +
+      // a1-rule-center-slice）。選擇器與 live-run 記分板都在 a1-rule-center-slice 內，
+      // 用 section 收斂範圍，避免與 a1-real-ifc-slice 的同名元素/文案衝突（strict-mode）。
+      const ruleCenter = page.getByTestId("a1-rule-center-slice");
+
       // 三層選擇器可見並依序選擇。
-      const projectSel = page.getByTestId("a1-fs-project");
+      const projectSel = ruleCenter.getByTestId("a1-fs-project");
       await expect(projectSel).toBeVisible({ timeout: 30_000 });
       await projectSel.selectOption("270");
-      await page.getByTestId("a1-fs-model").selectOption("機電");
+      await ruleCenter.getByTestId("a1-fs-model").selectOption("機電");
       // version 的 value 是絕對路徑；用 label（檔名）選。
-      await page.getByTestId("a1-fs-version").selectOption({ label: "ver 竣工.ifc" });
+      await ruleCenter.getByTestId("a1-fs-version").selectOption({ label: "ver 竣工.ifc" });
 
-      // 選定後手動輸入框（ifcPath）應被填入該檔絕對路徑。
-      const ifcInput = page.locator("input").filter({ hasText: "" }).first();
-      await expect(page.locator("input[value*='ver 竣工.ifc']")).toHaveCount(1, { timeout: 10_000 });
+      // 選定後 ifcPath 受控輸入框應被填入該檔絕對路徑（controlled input → 讀 inputValue()，
+      // 不靠 [value=...] attribute selector；React controlled input 不一定反映 value attribute）。
+      // rule-run authority Panel 的第一個 <input> 即 ifcPath 框（見 pages.tsx L520）。
+      const ifcInput = ruleCenter.locator("input").first();
+      await expect(ifcInput).toHaveValue(/ver 竣工\.ifc$/, { timeout: 10_000 });
 
-      // 跑 rule-run。
-      await page.getByRole("button", { name: /執行規則檢核/ }).click();
+      // 跑 rule-run（rule-run authority Panel 內的「執行規則檢核」按鈕）。
+      await ruleCenter.getByRole("button", { name: /執行規則檢核/ }).click();
 
-      // 記分板（評估構件 / score）出現 → 代表真 backend 跑出結果。
-      await expect(page.getByText("評估構件", { exact: false })).toBeVisible({ timeout: 120_000 });
-      await expect(page.getByText("score", { exact: false })).toBeVisible({ timeout: 120_000 });
+      // *** 關鍵硬 gate：只斷言 live-run 記分板（data-testid="a1-rulerun-scoreboard"），
+      //     此區塊僅在後端真的回 succeeded（run!=null）後才渲染（pages.tsx `{run && (...)}`）。
+      //     絕對不可改用 getByText("評估構件"/"score")：頁面有兩個恆顯記分板（A1 workbench
+      //     L210-216 + artifact baseline L582-588）都帶這些 label，會讓斷言永遠假綠且觸發
+      //     strict-mode 多重命中。a1-rulerun-scoreboard 是「真 run vs baked baseline」的唯一判別。 ***
+      const liveScoreboard = ruleCenter.getByTestId("a1-rulerun-scoreboard");
+      await expect(liveScoreboard).toBeVisible({ timeout: 120_000 });
+      // 區塊內含 score 指標 → 確認真結果而非空殼。
+      await expect(liveScoreboard.getByText("score", { exact: false })).toBeVisible();
+      // rule_run_status 翻成 succeeded（誠實：真的跑完，非只是出現空表）。
+      await expect(ruleCenter.getByText("succeeded", { exact: false }).first()).toBeVisible({ timeout: 120_000 });
 
       await page.screenshot({ path: "../artifacts/e2e/minio-fileserver-source-a1-rulerun.png", fullPage: true });
     });
   });
   ```
 
-  注意：上方 `ifcInput` 一行為冗餘探測，最終斷言用 `input[value*='ver 竣工.ifc']`。實作時若該 locator 因 controlled input 不反映 attribute，改用 `expect(page.getByTestId("a1-fs-version"))` 後讀 ifcPath 區的 `rule_run` 觸發即可——以實際 DOM 為準調整，但**不得**移除「rule-run 跑出記分板」這條硬斷言。
+  注意（**整段斷言的設計鐵律，執行者不得擅改弱化**）：
+  - **硬 gate 必須是 `getByTestId("a1-rulerun-scoreboard")`**，因為 #/a1 同時渲染三組記分板：A1 workbench「結果記分板」（pages.tsx L210-216，恆顯，baked `A1_EVIDENCE`）、IssuesRuleCenterPage「語意驗收訊號·真實 IFC 實測」artifact baseline（L582-588，恆顯，baked），以及只有真 run 後才出現的 `{run && (...)}` 區塊（L530-537）。前兩者都帶 `label="評估構件"`/`label="score"` 且永遠在 DOM → 用 `getByText("評估構件"/"score")` 當 gate 會**永遠通過（假綠）**且因多重命中觸發 **Playwright strict-mode 直接報錯**。故 Task 4 已要求替 `{run && ...}` 區塊加 `data-testid="a1-rulerun-scoreboard"`，此處只斷言該 testid。
+  - **所有 `getByText` 一律 `.first()` 或用 section/`main .ec-tree` 收斂**（既有 `product-console-integration.spec.ts` L43-46、`issues-tab.spec` 都這樣做），否則同名文字多重命中會 crash。
+  - **不得**把硬 gate 退回 `getByText`、不得移除「rule-run 真的跑出 live 記分板」這條斷言；若 controlled input 的 `toHaveValue` 在實機因故不穩，可改讀 `inputValue()` 比較字串，但**不得**改成只斷言「選了 version」就算過（那證明不了 rule-run 真的執行）。
 
 - [ ] 跑 E2E（前置服務已由指揮官啟動）。執行：
 
