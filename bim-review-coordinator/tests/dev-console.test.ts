@@ -62,6 +62,42 @@ describe("coordinator dev console", () => {
     expect(consolePage.text).toContain("/api/review-sessions");
   });
 
+  it("serves EdgeConsole dist from /ui while keeping /dev-console and /ui/open separate", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-console-dist-test-"));
+    const consoleDist = path.join(root, "console-dist");
+    const assetsDir = path.join(consoleDist, "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(consoleDist, "index.html"),
+      '<!doctype html><html><head><script type="module" src="/ui/assets/index-test.js"></script></head><body><div id="root">Vite Shell</div></body></html>',
+    );
+    fs.writeFileSync(path.join(assetsDir, "index-test.js"), 'document.body.dataset.edgeConsole = "loaded";');
+    const app = makeApp({
+      consoleDistDir: consoleDist,
+      coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
+      viewerPublicBaseUrl: "http://192.168.10.105:5173",
+      publicHost: "192.168.10.105",
+    });
+
+    const ui = await request(app.app).get("/ui");
+    const asset = await request(app.app).get("/ui/assets/index-test.js");
+    const devConsole = await request(app.app).get("/dev-console");
+    const invalidOpen = await request(app.app).get("/ui/open?session=bad");
+    const validOpen = await request(app.app).get("/ui/open?session=review_session_console_dist").redirects(0);
+
+    expect(ui.status).toBe(200);
+    expect(ui.text).toContain("Vite Shell");
+    expect(ui.text).toContain("/ui/assets/index-test.js");
+    expect(asset.status).toBe(200);
+    expect(asset.text).toContain("edgeConsole");
+    expect(devConsole.status).toBe(200);
+    expect(devConsole.text).toContain("審查協調 (Review Coordinator)");
+    expect(invalidOpen.status).toBe(400);
+    expect(validOpen.status).toBe(302);
+    expect(validOpen.headers.location).toContain("http://192.168.10.105:5173/");
+    expect(validOpen.headers.location).toContain("session=review_session_console_dist");
+  });
+
   it("redirects /ui/open to configured browser-visible viewer URL", async () => {
     const app = makeApp({
       coordinatorPublicBaseUrl: "http://192.168.10.105:8004",
