@@ -33,11 +33,16 @@ Thumbs.db
 !.claude/skills/archive-and-closeout/
 !.claude/skills/opsx-worktree-provision/
 !.claude/skills/opsx-worktree-guard/
-# Tracked per-item ship-cycle workflow (2026-06-03)
+# Tracked project-authored skills (2026-06-10)
+!.claude/skills/spec-to-done/
+!.claude/skills/omniverse-cad-to-simready/
+!.claude/skills/omniverse-realtime-viewer/
+!.claude/skills/omniverse-usd-performance-tuning/
+# Tracked agent assets: workflows/commands/agents/settings (2026-06-10)
 !.claude/workflows/
-.claude/workflows/*
-!.claude/workflows/ship-item.md
-!.claude/workflows/ship-item.js
+!.claude/commands/
+!.claude/agents/
+!.claude/settings.json
 .codex/
 .vscode/
 .gitnexus/
