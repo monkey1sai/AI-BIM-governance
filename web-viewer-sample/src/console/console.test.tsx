@@ -1,7 +1,9 @@
 // Edge Console 誠實性 smoke：確認頁面可渲染、provenance 標記存在、A1 顯示「實測」證據、
 // A2/A3 帶 provenance 與真實邊界、無願景假數字。用 renderToString（不需 @testing-library / 網路）。
+import { act } from "react";
 import { renderToString } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   A1GovernanceWorkbenchPage,
   AppsPage,
@@ -24,6 +26,7 @@ import {
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
+import { governanceClient, type FilesTreeResponse } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
@@ -432,5 +435,378 @@ describe("edge console honesty smoke", () => {
     // finding 5：label 與資料實體（ifc-ready job）一致，不再寫「真實 session 候選」。
     expect(html).toContain("列出真實 job");
     expect(html).not.toContain("列出真實 session");
+  });
+
+  // ── minio-fileserver-source spec：MinioData 接真檔案庫樹 + A1 三層檔案庫選擇器 ──
+  it("MinioData 接真檔案庫 API（loading 態 + 誠實 local_fs 文案 + usdc 仍 p1）", () => {
+    const html = renderToString(<MinioDataPage />);
+    // 載入態可見（renderToString 首幀無 fetch 結果 → loading）。
+    expect(html).toContain("載入");
+    // 誠實標記：local file-server 來源（比照 bim-control 規約）；真 S3/MinIO 待接。
+    expect(html).toContain("local file-server");
+    expect(html).toContain("bim-control");
+    // bucket layout 規約示意仍標 demo（規約示意非實況）。
+    expect(html).toContain("示範資料"); // PROV_LABEL.demo
+    // model.usdc 轉檔產物仍 p1，不因本 spec 翻綠。
+    expect(html).toContain("model.usdc");
+    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    // 無願景假數字。
+    expect(html).not.toContain("99.1%");
+  });
+
+  it("A1 Rule Center 新增『從檔案庫選擇』三層選擇器（手動輸入保留）", () => {
+    const html = renderToString(<IssuesRuleCenterPage />);
+    // 檔案庫選擇器標題/說明可見。
+    expect(html).toContain("從檔案庫選擇");
+    // 三層選擇 select 存在（project / model / version）。
+    expect(html).toContain("data-testid=\"a1-fs-project\"");
+    expect(html).toContain("data-testid=\"a1-fs-model\"");
+    expect(html).toContain("data-testid=\"a1-fs-version\"");
+    // 既有手動輸入框與預設 fixture 仍在（向後相容 a1-real-ifc-slice E2E）。
+    expect(html).toContain("fixture-bytes.ifc");
+    expect(html).toContain("執行規則檢核");
+    // live-run 記分板用獨立 data-testid 包裹（讓 E2E 能只斷言「真 run 後出現的區塊」，
+    // 不被恆顯的 artifact-baseline / A1 workbench 記分板誤判通過）。renderToString 首幀
+    // run=null → 此區塊不渲染，故 smoke 斷言「不存在」即可確認 gating 正確。
+    expect(html).not.toContain("data-testid=\"a1-rulerun-scoreboard\"");
+  });
+});
+
+// ── minio-fileserver-source spec §7.3：client-render（真樹 + 互動）驗收 ──
+// renderToString 只能驗 SSR 首幀（loading/空殼，run=null、tree=null），永遠到不了
+// populated/error 態與 onChange data-binding。此處用 createRoot + act + vi.spyOn 補上
+// 三態（loading 已由 SSR 涵蓋）與「A1 選定版本後填入 ifcPath」這條 spec §7.3 明文行為。
+describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 + 互動）", () => {
+  // 含 270/機電/ver 竣工.ifc 的真實樹形狀（比照 governanceClient.test.ts fixture 與 spec 範例）。
+  const VER_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc";
+  const tree: FilesTreeResponse = {
+    root: "C:/Repos/active/iot/AI-BIM-governance/storage",
+    source_kind: "local_fs",
+    projects: [
+      {
+        project_id: "270",
+        models: [
+          {
+            model_id: "機電",
+            versions: [
+              { name: "ver 竣工.ifc", path: VER_PATH, size_bytes: 22618, mtime: "2026-06-10T17:17:00+08:00" },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  let container: HTMLDivElement;
+  // React 18 act 環境旗標（消除「testing environment is not configured to support act」警告）。
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  // MinioData populated 態：filesTree() 回真樹後，render 出 project/model/version（feature 賣點，
+  // SSR 永遠到不了，因首幀 tree=null 走 loading 分支）。並驗 source_kind / root 出現在 Panel sub。
+  it("MinioData filesTree() 回真樹 → render project/model/version（asbuilt 真樹，非 loading 殼）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 filesTree microtask 入 state
+
+    const html = container.innerHTML;
+    // populated 真樹節點：project / model / version 檔名（loading 態不可能出現這些）。
+    expect(html).toContain("270/");
+    expect(html).toContain("機電/");
+    expect(html).toContain("ver 竣工.ifc");
+    // Panel sub 顯示真實 source_kind / root（誠實標記，非 demo）。
+    expect(html).toContain("source_kind=local_fs");
+    expect(html).toContain("C:/Repos/active/iot/AI-BIM-governance/storage");
+    // 已離開 loading 態（不再顯示「載入中…」）。
+    expect(html).not.toContain("載入中…（GET /api/governance/files/tree）");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // MinioData error 態：filesTree() reject → 顯示誠實「未連線後端」文案（pages.tsx:421），
+  // 不吞錯、不假裝有樹。SSR 首幀走 loading，永遠到不了此分支。
+  it("MinioData filesTree() reject → error 態誠實標「未連線後端」（不吞錯、不偽裝有樹）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const html = container.innerHTML;
+    expect(html).toContain("未連線後端（coordinator / governance-service 需啟動）");
+    expect(html).toContain("proxy 502"); // 誠實顯示錯誤原因，不吞
+    expect(html).not.toContain("載入中…（GET /api/governance/files/tree）"); // 已離開 loading
+    expect(html).not.toContain("ver 竣工.ifc"); // error 態不得渲染假樹
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // MinioData empty 態：filesTree() 成功但 projects=[]（root 下無兩層結構 / 全為保留目錄）→
+  // 顯示誠實「檔案庫為空」文案（pages.tsx:423），不假裝有樹。SSR 首幀走 loading，
+  // 此分支需 !loading && !err && projectCount===0，唯有 client-render 微任務跑完才到得了。
+  it("MinioData filesTree() 回空 projects → empty 態顯示「檔案庫為空」（非 loading、非假樹）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue({
+      root: "C:/Repos/active/iot/AI-BIM-governance/storage",
+      source_kind: "local_fs",
+      projects: [],
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const html = container.innerHTML;
+    expect(html).toContain("檔案庫為空：未在 root 下找到"); // pages.tsx:423 空狀態文案
+    expect(html).not.toContain("載入中…（GET /api/governance/files/tree）"); // 已離開 loading
+    expect(html).not.toContain("未連線後端"); // 成功回應，非 error 態
+    expect(html).not.toContain("ver 竣工.ifc"); // 空樹不得渲染假版本節點
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // spec §7.3 核心：A1 選擇器選定 project→model→version 後，ifcPath input 值更新為該 version.path。
+  // 這條對應 load-bearing handler onChange={(e)=>{ if(e.target.value) setIfcPath(e.target.value); }}（pages.tsx）。
+  // 先確認初始 input = 預設 fixture 路徑；逐層選取後 input.value 變成檔案庫選定的絕對路徑。
+  it("A1 選 project→model→version → ifcPath input value 更新為 version.path（spec §7.3 data-binding）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 fsTree 入 state、三層 select enable
+
+    const projectSel = container.querySelector<HTMLSelectElement>('[data-testid="a1-fs-project"]');
+    const modelSel = container.querySelector<HTMLSelectElement>('[data-testid="a1-fs-model"]');
+    const versionSel = container.querySelector<HTMLSelectElement>('[data-testid="a1-fs-version"]');
+    expect(projectSel).not.toBeNull();
+    expect(modelSel).not.toBeNull();
+    expect(versionSel).not.toBeNull();
+
+    // ifcPath input = value 與兩個 select（idsPath input 有 placeholder）共存 → 取第一個 minWidth input。
+    const ifcInput = () =>
+      Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
+        (el) => !el.placeholder,
+      )!;
+    // 初始為預設 fixture 路徑（手動輸入保留，向後相容 a1-real-ifc-slice E2E）。
+    expect(ifcInput().value).toContain("fixture-bytes.ifc");
+    // 載入後 project select 已 enable（disabled={!fsTree}）。
+    expect(projectSel!.disabled).toBe(false);
+
+    // 選 project=270 → model select enable 並列出「機電」。
+    await act(async () => {
+      projectSel!.value = "270";
+      projectSel!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(modelSel!.disabled).toBe(false);
+
+    // 選 model=機電 → version select enable 並列出「ver 竣工.ifc」(option value=絕對 path)。
+    await act(async () => {
+      modelSel!.value = "機電";
+      modelSel!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(versionSel!.disabled).toBe(false);
+
+    // 選 version → onChange 觸發 setIfcPath(e.target.value=version.path)：
+    // 這是 spec §7.3 明文要求「A1 選擇器選定後 input 值更新」的 load-bearing 行為。
+    await act(async () => {
+      versionSel!.value = VER_PATH;
+      versionSel!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // 斷言 data-binding 真的生效：ifcPath input value === 檔案庫選定的絕對路徑（非預設 fixture）。
+    expect(ifcInput().value).toBe(VER_PATH);
+    expect(ifcInput().value).not.toContain("fixture-bytes.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // A1 選擇器 graceful degradation：filesTree() reject → 顯示誠實「檔案庫不可用…可改用下方
+  // 手動輸入路徑」（pages.tsx:597），且手動輸入框照常可用（保留預設 fixture、仍可編輯）。
+  // SSR 首幀 fsErr=null 走 loading 文案，唯有 client-render 微任務跑完（catch→setFsErr）才到得了。
+  it("A1 filesTree() reject → 選擇器標「檔案庫不可用」graceful degrade，手動輸入照常可用", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 catch→setFsErr 入 state
+
+    const html = container.innerHTML;
+    // 誠實 graceful-degradation 文案（pages.tsx:597）：標不可用 + 指向手動輸入。
+    expect(html).toContain("檔案庫不可用");
+    expect(html).toContain("可改用下方手動輸入路徑");
+    expect(html).toContain("proxy 502"); // 顯示原因，不吞錯
+    // 已離開「載入檔案庫中…」（fsErr 已設）。
+    expect(html).not.toContain("載入檔案庫中…（GET /api/governance/files/tree）");
+
+    // 手動輸入框仍可用（保留預設 fixture 路徑，graceful degrade 不擋手動流程）。
+    const ifcInput = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
+      (el) => !el.placeholder,
+    )!;
+    expect(ifcInput.disabled).toBe(false);
+    expect(ifcInput.value).toContain("fixture-bytes.ifc");
+    // 仍可手動改路徑（驗證受控輸入未被 fsErr 凍結）。
+    await act(async () => {
+      ifcInput.value = "C:/manual/typed.ifc";
+      ifcInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const after = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
+      (el) => !el.placeholder,
+    )!;
+    expect(after.value).toBe("C:/manual/typed.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // reviewer P2（Codex）：version <select> 須為「持值」受控元件——選定後不得跳回 placeholder；
+  // 換 project/model 後 version 選擇與「由選擇器填入的 ifcPath」一併清空（避免殘留舊選擇
+  // 被誤送出檢核）；手動輸入的路徑不受清理影響。
+  it("A1 version select 持有選定值；換 project 清 selector 填入的 ifcPath、手動輸入不受影響", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const ifcInput = () =>
+      Array.from(container.querySelectorAll<HTMLInputElement>("input")).find((el) => !el.placeholder)!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    await pick("a1-fs-project", "270");
+    await pick("a1-fs-model", "機電");
+    await pick("a1-fs-version", VER_PATH);
+    // 受控持值：選定後 select 顯示選中項，不再被 value="" 打回 placeholder。
+    expect(sel("a1-fs-version").value).toBe(VER_PATH);
+    expect(ifcInput().value).toBe(VER_PATH);
+
+    // 換 project → version 重置、由選擇器填入的 ifcPath 清空（不殘留舊選擇）。
+    await pick("a1-fs-project", "");
+    expect(sel("a1-fs-version").value).toBe("");
+    expect(ifcInput().value).toBe("");
+
+    // 手動輸入的路徑不被換層清理：重選到 version 後手動覆寫，再換 model → 保留手動值。
+    // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
+    // 真正觸發 onChange 入 state（直接設 .value 會被 tracker 視為無變化而吞掉）。
+    await pick("a1-fs-project", "270");
+    await pick("a1-fs-model", "機電");
+    await pick("a1-fs-version", VER_PATH);
+    await act(async () => {
+      const el = ifcInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(ifcInput().value).toBe("C:/manual/typed.ifc"); // 手動值已真正入 state
+    await pick("a1-fs-model", "");
+    expect(ifcInput().value).toBe("C:/manual/typed.ifc"); // 換層清理不波及手動值
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // reviewer P2（Codex, round 2）：version 選回 placeholder（value=""）也要清「由選擇器
+  // 填入的」ifcPath——只 reset selVersion 會讓 input 殘留舊選擇被誤送出；手動值不波及。
+  it("A1 version 清回 placeholder → selector 填入的 ifcPath 清空、手動值保留", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const ifcInput = () =>
+      Array.from(container.querySelectorAll<HTMLInputElement>("input")).find((el) => !el.placeholder)!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // 選定 version 後清回 placeholder → ifcPath 一併清空（不殘留舊選擇）。
+    await pick("a1-fs-project", "270");
+    await pick("a1-fs-model", "機電");
+    await pick("a1-fs-version", VER_PATH);
+    expect(ifcInput().value).toBe(VER_PATH);
+    await pick("a1-fs-version", "");
+    expect(sel("a1-fs-version").value).toBe("");
+    expect(ifcInput().value).toBe("");
+
+    // 手動覆寫後再清 placeholder → 手動值保留（清理只針對 selector 填入值）。
+    await pick("a1-fs-version", VER_PATH);
+    await act(async () => {
+      const el = ifcInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await pick("a1-fs-version", "");
+    expect(ifcInput().value).toBe("C:/manual/typed.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // reviewer Major（CodeRabbit）：error 態須有使用者可觸發的重試（不必整頁 reload）。
+  // 第一次 filesTree() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染真樹。
+  it("MinioData error 態點「重試」→ 重打 filesTree() → 成功渲染真樹（不必整頁 reload）", async () => {
+    const spy = vi
+      .spyOn(governanceClient, "filesTree")
+      .mockRejectedValueOnce(new Error("proxy 502"))
+      .mockResolvedValueOnce(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.innerHTML).toContain("未連線後端");
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="minio-tree-retry"]');
+    expect(retry).not.toBeNull();
+    await act(async () => { retry!.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const html = container.innerHTML;
+    expect(html).toContain("ver 竣工.ifc"); // 重試成功 → 真樹渲染
+    expect(html).not.toContain("未連線後端"); // error 態已清除
+    expect(spy).toHaveBeenCalledTimes(2); // 真的重打了一次
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 同上（A1 檔案庫選擇器）：graceful degrade 之外提供「重試載入檔案庫」，成功後選擇器可用。
+  it("A1 檔案庫不可用點「重試載入檔案庫」→ 重打 filesTree() → 選擇器 enable", async () => {
+    const spy = vi
+      .spyOn(governanceClient, "filesTree")
+      .mockRejectedValueOnce(new Error("proxy 502"))
+      .mockResolvedValueOnce(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.innerHTML).toContain("檔案庫不可用");
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="a1-fs-retry"]');
+    expect(retry).not.toBeNull();
+    await act(async () => { retry!.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.innerHTML).not.toContain("檔案庫不可用");
+    const projectSel = container.querySelector<HTMLSelectElement>('[data-testid="a1-fs-project"]');
+    expect(projectSel!.disabled).toBe(false); // fsTree 已載入 → 選擇器可用
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    await act(async () => { root.unmount(); });
   });
 });

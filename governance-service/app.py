@@ -66,6 +66,11 @@ from bcf.api import router as bcf_router  # noqa: E402
 
 app.include_router(bcf_router)
 
+# A1 file-library browse（唯讀 local file-server 模擬層：storage/{projectId}/{modelId}/*.ifc 樹）。
+from file_library.api import router as file_library_router  # noqa: E402
+
+app.include_router(file_library_router)
+
 
 def _rule_set_path(name: Optional[str]) -> str:
     name = name or "default-governance"

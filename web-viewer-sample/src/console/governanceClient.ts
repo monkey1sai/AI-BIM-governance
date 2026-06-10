@@ -56,6 +56,10 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const governanceClient = {
   base: COORD_BASE,
+  // A1 file-library browse：唯讀 local file-server tree（storage/{projectId}/{modelId}/*.ifc）。
+  // 經 coordinator :8004 proxy → governance-service /api/files/tree。source_kind 為誠實標記
+  // （local_fs；未來真 MinIO 接上改 s3）。
+  filesTree: () => jsonFetch<FilesTreeResponse>("/api/governance/files/tree"),
   createRuleRun: (req: RuleRunRequest) =>
     jsonFetch<{ rule_run_id: string; status: string }>("/api/governance/rule-runs", {
       method: "POST",
@@ -240,4 +244,25 @@ export interface FederatedBuildResult {
   hidden: string[];
   transformed?: { root_prim: string; ops: string[] }[];
   prim_sample?: string[];
+}
+
+// A1 file-library browse 型別樹（/api/governance/files/tree 回應）。
+export interface FileVersionRow {
+  name: string;
+  path: string; // 絕對路徑，給 rule-run ifc_source_path 用
+  size_bytes: number;
+  mtime: string; // ISO8601
+}
+export interface FileModelRow {
+  model_id: string;
+  versions: FileVersionRow[];
+}
+export interface FileProjectRow {
+  project_id: string;
+  models: FileModelRow[];
+}
+export interface FilesTreeResponse {
+  root: string;
+  source_kind: "local_fs" | "s3"; // 誠實標記：目前 local_fs；未來真 MinIO 改 s3
+  projects: FileProjectRow[];
 }

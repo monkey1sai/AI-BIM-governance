@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
-import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, FileProjectRow, FilesTreeResponse, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
@@ -377,29 +377,90 @@ export function KitGpuFleetPage() {
 }
 
 export function MinioDataPage() {
-  const files: [string, string, Prov][] = [
-    ["model.ifc", "source IFC from customer-edge worker / MinIO", "asbuilt"],
-    ["model.rvt", "optional source RVT artifact", "demo"],
-    ["elements.json", "parsed metadata / semantic source", "asbuilt"],
-    ["geometries.json", "geometry extraction artifact", "asbuilt"],
-    ["chunks/", "large parsed chunks", "asbuilt"],
-    ["spatial_tree.json", "spatial lookup tree", "asbuilt"],
-    ["model.usdc", "expected generated output after conversion", "p1"],
-  ];
+  const [tree, setTree] = useState<FilesTreeResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  // 抽成可重跑的 loader：初載與 error 態「重試」共用同一條真實 fetch 路徑
+  //（coordinator/governance 暫時離線時不必整頁 reload）。React 18 unmount 後
+  // setState 為 no-op，毋須 alive flag。
+  const loadTree = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      setTree(await governanceClient.filesTree());
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTree();
+  }, [loadTree]);
+
+  const projectCount = tree?.projects.length ?? 0;
+
   return (
     <>
       <h1>MinIO 資料</h1>
-      <p className="ec-lead">資料頁讓 operator 看懂 project / model / version / files 關係；它不是完整 S3 browser。`bim-control` bucket 與 `model.usdc` writeback 是轉檔治理鏈的一部分。</p>
-      <Panel title="Bucket layout" sub="bim-control private bucket · project/category/version/files" prov="demo">
+      <p className="ec-lead">
+        資料頁讓 operator 看懂 project / model / version / files 關係；它不是完整 S3 browser。
+        目前為 local file-server 來源（比照 <code>bim-control/{"{projectId}"}/{"{modelId}"}</code> 規約）；真 S3/MinIO 待接。
+      </p>
+
+      <Panel
+        title="檔案庫 · file library（真實樹）"
+        sub={tree ? `source_kind=${tree.source_kind} · root=${tree.root}` : "local file-server 來源（比照 bim-control 規約）；真 S3/MinIO 待接"}
+        prov="asbuilt"
+      >
+        {loading && <p className="ec-note">載入中…（GET /api/governance/files/tree）</p>}
+        {err && (
+          <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span>未連線後端（coordinator / governance-service 需啟動）：{err}</span>
+            <Btn data-testid="minio-tree-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadTree(); }}>
+              重試
+            </Btn>
+          </div>
+        )}
+        {!loading && !err && projectCount === 0 && (
+          <p className="ec-note">檔案庫為空：未在 root 下找到 <code>{"{projectId}"}/{"{modelId}"}/*.ifc</code> 兩層結構（檢查 BIM_FILE_LIBRARY_ROOT）。</p>
+        )}
+        {tree && projectCount > 0 && (
+          <div className="ec-tree">
+            {tree.projects.map((p) => (
+              <div key={p.project_id}>
+                <div><span className="ec-tree-file">{p.project_id}/</span> <ProvTag prov="asbuilt" /></div>
+                {p.models.map((m) => (
+                  <div className="indent" key={m.model_id}>
+                    <div>{m.model_id}/</div>
+                    {m.versions.map((v) => (
+                      <div className="indent two" key={v.name}>
+                        <span className="ec-tree-file">{v.name}</span>{" "}
+                        <span className="ec-note">{(v.size_bytes / 1024).toFixed(1)} KB · {v.mtime}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Bucket layout（規約示意）" sub="bim-control private bucket · project/model/version/files（示意，非實況）" prov="demo">
         <div className="ec-tree">
           <div>bim-control/</div>
-          <div className="indent">project_real_ifc_demo/</div>
-          <div className="indent two">OpenBIM/Architecture/v07/files/</div>
-          {files.map(([f, d, p]) => <div className="indent three" key={f}><span className="ec-tree-file">{f}</span> <span className="ec-note">{d}</span> <ProvTag prov={p} /></div>)}
+          <div className="indent">{"{projectId}"}/</div>
+          <div className="indent two">{"{modelId}"}/version/files/</div>
+          <div className="indent three"><span className="ec-tree-file">model.usdc</span> <span className="ec-note">expected generated output after conversion</span> <ProvTag prov="p1" /></div>
         </div>
+        <p className="ec-note">此 Panel 為 MinIO bucket 規約示意（示範資料）；<code>model.usdc</code> 為轉檔產物，後端待建（p1），不因本頁翻綠。</p>
       </Panel>
+
       <Panel title="與功能頁的關係" prov="asbuilt">
-        <Field k="A1" v="rule-run 讀 IFC / semantic artifact" prov="asbuilt" />
+        <Field k="A1" v="rule-run 讀檔案庫選定的 IFC（version.path → ifc_source_path）" prov="asbuilt" />
         <Field k="A2" v="versions / diff compare 需要版本路徑與 model_version_id" prov="asbuilt" />
         <Field k="A3" v="federation 需要多專業 USD layer / stage paths" prov="asbuilt" />
         <Field k="3D Viewer" v="openStage 使用 generated model.usdc / model.usd URL" prov="asbuilt" />
@@ -474,6 +535,43 @@ export function IssuesRuleCenterPage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [issues, setIssues] = useState<IssueRow[]>([]);
 
+  // A1 檔案庫選擇器：project → model → version 三層；選定填入 ifcPath（手動輸入保留）。
+  const [fsTree, setFsTree] = useState<FileProjectRow[] | null>(null);
+  const [fsErr, setFsErr] = useState<string | null>(null);
+  const [selProject, setSelProject] = useState("");
+  const [selModel, setSelModel] = useState("");
+  // 受控 version 選擇（值=version.path）：沒有 state 時 <select value=""> 會把使用者
+  // 的選擇立刻打回 placeholder（選了像沒選）。換 project/model 時一併重置。
+  const [selVersion, setSelVersion] = useState("");
+
+  // 抽成可重跑的 loader：初載與「重試載入檔案庫」共用（暫時離線不必整頁 reload）。
+  const loadFsTree = useCallback(async () => {
+    setFsErr(null);
+    try {
+      const t = await governanceClient.filesTree();
+      setFsTree(t.projects);
+    } catch (e) {
+      setFsErr(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadFsTree();
+  }, [loadFsTree]);
+
+  // 換 project/model 後，先前由選擇器填入的 ifcPath 已不代表當前選擇 → 清空它
+  //（避免使用者沒注意文字框殘留舊選擇就送出檢核）；手動輸入的路徑不受影響
+  //（僅當 ifcPath 仍等於上次選擇器填入值才清）。
+  const resetVersionPick = useCallback(() => {
+    if (selVersion) {
+      setIfcPath((cur) => (cur === selVersion ? "" : cur));
+    }
+    setSelVersion("");
+  }, [selVersion]);
+
+  const fsModels = fsTree?.find((p) => p.project_id === selProject)?.models ?? [];
+  const fsVersions = fsModels.find((m) => m.model_id === selModel)?.versions ?? [];
+
   const loadIssues = useCallback(async () => {
     try { setIssues(await governanceClient.listIssues()); } catch { /* 後端離線：誠實留空 */ }
   }, []);
@@ -516,6 +614,62 @@ export function IssuesRuleCenterPage() {
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="rule_run_status" v={busy ? "running" : run?.status ?? "idle"} prov="asbuilt" />
         </div>
+        <div className="ec-field" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 }}>
+          <span className="ec-k">從檔案庫選擇 <ProvTag prov="asbuilt" /></span>
+          {fsErr && (
+            <span className="ec-warn-note" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span>檔案庫不可用（{fsErr}）；可改用下方手動輸入路徑。</span>
+              <Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>
+                重試載入檔案庫
+              </Btn>
+            </span>
+          )}
+          {!fsErr && !fsTree && <span className="ec-s">載入檔案庫中…（GET /api/governance/files/tree）</span>}
+          {/* 三層 select 恆渲染（含 SSR 首幀）；未載入前 disabled 且只有 placeholder option —
+              誠實標示「還沒有可選項」，手動輸入照常可用，檔案庫不可用時 graceful degrade。 */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <select
+              data-testid="a1-fs-project"
+              className="ec-btn"
+              value={selProject}
+              disabled={!fsTree}
+              onChange={(e) => { setSelProject(e.target.value); setSelModel(""); resetVersionPick(); }}
+            >
+              <option value="">專案…</option>
+              {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
+            </select>
+            <select
+              data-testid="a1-fs-model"
+              className="ec-btn"
+              value={selModel}
+              disabled={!selProject}
+              onChange={(e) => { setSelModel(e.target.value); resetVersionPick(); }}
+            >
+              <option value="">模型…</option>
+              {fsModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
+            </select>
+            <select
+              data-testid="a1-fs-version"
+              className="ec-btn"
+              disabled={!selModel}
+              value={selVersion}
+              onChange={(e) => {
+                const picked = e.target.value;
+                if (picked) {
+                  setSelVersion(picked);
+                  setIfcPath(picked);
+                } else {
+                  // 清回 placeholder 也要清「由選擇器填入的」ifcPath（殘留舊選擇
+                  // 會被誤送出檢核）；手動輸入值同樣不受波及。
+                  resetVersionPick();
+                }
+              }}
+            >
+              <option value="">版本…（選定填入路徑）</option>
+              {fsVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
+            </select>
+          </div>
+        </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} value={ifcPath} onChange={(e) => setIfcPath(e.target.value)} />
           <Btn primary disabled={busy} caption="POST /api/governance/rule-runs" onClick={doRun}>
@@ -528,7 +682,7 @@ export function IssuesRuleCenterPage() {
         </div>
         {err && <p className="ec-warn-note">未連線後端（proxy / governance-service 需啟動）：{err}</p>}
         {run && (
-          <div className="ec-grid" style={{ marginTop: 12 }}>
+          <div className="ec-grid" data-testid="a1-rulerun-scoreboard" style={{ marginTop: 12 }}>
             <Metric value={run.summary?.total ?? "—"} label="評估構件" />
             <Metric value={run.summary?.passed ?? "—"} label="passed" />
             <Metric value={run.summary?.failed ?? "—"} label="failed" tone="warn" />
