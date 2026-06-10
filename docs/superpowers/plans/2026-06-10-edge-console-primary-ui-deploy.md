@@ -288,3 +288,55 @@ git commit -m "test(deploy): 驗證 EdgeConsole 主頁路由"
 ```
 
 Expected: a small, reviewable commit.
+
+---
+
+### Task 7: A1 Operable Integration
+
+**Files:**
+- Modify: `web-viewer-sample/src/console/pages.tsx`
+- Modify: `web-viewer-sample/src/console/console.test.tsx`
+
+- [x] **Step 1: Add a failing A1 integration test**
+
+Run before implementation:
+
+```powershell
+cd web-viewer-sample
+npx vitest run --no-cache src/console/console.test.tsx
+```
+
+Expected before fix: fail because `A1GovernanceWorkbenchPage` lacks `data-testid="a1-real-ifc-slice"` and `data-testid="a1-rule-center-slice"`.
+
+- [x] **Step 2: Embed existing operable slices into A1**
+
+Expected `A1GovernanceWorkbenchPage` includes:
+
+```tsx
+<section data-testid="a1-real-ifc-slice">
+  <RealIfcConsolePage />
+</section>
+<section data-testid="a1-rule-center-slice">
+  <IssuesRuleCenterPage />
+</section>
+```
+
+- [x] **Step 3: Expose rule-run IDs in the rule center**
+
+Expected `IssuesRuleCenterPage` renders visible fields:
+
+```tsx
+<Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
+<Field k="rule_run_status" v={busy ? "running" : run?.status ?? "idle"} prov="asbuilt" />
+```
+
+- [x] **Step 4: Re-run the focused A1 test**
+
+Run:
+
+```powershell
+cd web-viewer-sample
+npx vitest run --no-cache src/console/console.test.tsx
+```
+
+Expected: `25 passed`.

@@ -6,6 +6,7 @@ import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOIN
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
+import { RealIfcConsolePage } from "./RealIfcConsolePage";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
@@ -226,6 +227,12 @@ export function A1GovernanceWorkbenchPage() {
         <Btn caption="→ Issue / Rule Center 匯出 BCF / Excel" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>匯出 BCF / Excel</Btn>{" "}
         <Btn disabled caption="需 viewer DataChannel + first frame + stage match" prov="p1">在 3D 高亮</Btn>
       </Panel>
+      <section data-testid="a1-real-ifc-slice" className="ec-a1-inline-slice">
+        <RealIfcConsolePage />
+      </section>
+      <section data-testid="a1-rule-center-slice" className="ec-a1-inline-slice">
+        <IssuesRuleCenterPage />
+      </section>
     </>
   );
 }
@@ -505,6 +512,10 @@ export function IssuesRuleCenterPage() {
 
       <Panel title="A1 rule-run authority" sub="governance-service :49102（經 coordinator proxy）" prov="asbuilt">
         <p className="ec-note">後端已實作並以真實 IFC 驗證（見下方 artifact）。本頁經 coordinator <code>/api/governance/*</code> proxy 觸發實時 rule-run。</p>
+        <div className="ec-grid" style={{ marginBottom: 10 }}>
+          <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
+          <Field k="rule_run_status" v={busy ? "running" : run?.status ?? "idle"} prov="asbuilt" />
+        </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} value={ifcPath} onChange={(e) => setIfcPath(e.target.value)} />
           <Btn primary disabled={busy} caption="POST /api/governance/rule-runs" onClick={doRun}>
