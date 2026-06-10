@@ -553,6 +553,28 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { root.unmount(); });
   });
 
+  // MinioData empty 態：filesTree() 成功但 projects=[]（root 下無兩層結構 / 全為保留目錄）→
+  // 顯示誠實「檔案庫為空」文案（pages.tsx:423），不假裝有樹。SSR 首幀走 loading，
+  // 此分支需 !loading && !err && projectCount===0，唯有 client-render 微任務跑完才到得了。
+  it("MinioData filesTree() 回空 projects → empty 態顯示「檔案庫為空」（非 loading、非假樹）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue({
+      root: "C:/Repos/active/iot/AI-BIM-governance/storage",
+      source_kind: "local_fs",
+      projects: [],
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const html = container.innerHTML;
+    expect(html).toContain("檔案庫為空：未在 root 下找到"); // pages.tsx:423 空狀態文案
+    expect(html).not.toContain("載入中…（GET /api/governance/files/tree）"); // 已離開 loading
+    expect(html).not.toContain("未連線後端"); // 成功回應，非 error 態
+    expect(html).not.toContain("ver 竣工.ifc"); // 空樹不得渲染假版本節點
+
+    await act(async () => { root.unmount(); });
+  });
+
   // spec §7.3 核心：A1 選擇器選定 project→model→version 後，ifcPath input 值更新為該 version.path。
   // 這條對應 load-bearing handler onChange={(e)=>{ if(e.target.value) setIfcPath(e.target.value); }}（pages.tsx）。
   // 先確認初始 input = 預設 fixture 路徑；逐層選取後 input.value 變成檔案庫選定的絕對路徑。
@@ -602,6 +624,42 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // 斷言 data-binding 真的生效：ifcPath input value === 檔案庫選定的絕對路徑（非預設 fixture）。
     expect(ifcInput().value).toBe(VER_PATH);
     expect(ifcInput().value).not.toContain("fixture-bytes.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // A1 選擇器 graceful degradation：filesTree() reject → 顯示誠實「檔案庫不可用…可改用下方
+  // 手動輸入路徑」（pages.tsx:597），且手動輸入框照常可用（保留預設 fixture、仍可編輯）。
+  // SSR 首幀 fsErr=null 走 loading 文案，唯有 client-render 微任務跑完（catch→setFsErr）才到得了。
+  it("A1 filesTree() reject → 選擇器標「檔案庫不可用」graceful degrade，手動輸入照常可用", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 catch→setFsErr 入 state
+
+    const html = container.innerHTML;
+    // 誠實 graceful-degradation 文案（pages.tsx:597）：標不可用 + 指向手動輸入。
+    expect(html).toContain("檔案庫不可用");
+    expect(html).toContain("可改用下方手動輸入路徑");
+    expect(html).toContain("proxy 502"); // 顯示原因，不吞錯
+    // 已離開「載入檔案庫中…」（fsErr 已設）。
+    expect(html).not.toContain("載入檔案庫中…（GET /api/governance/files/tree）");
+
+    // 手動輸入框仍可用（保留預設 fixture 路徑，graceful degrade 不擋手動流程）。
+    const ifcInput = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
+      (el) => !el.placeholder,
+    )!;
+    expect(ifcInput.disabled).toBe(false);
+    expect(ifcInput.value).toContain("fixture-bytes.ifc");
+    // 仍可手動改路徑（驗證受控輸入未被 fsErr 凍結）。
+    await act(async () => {
+      ifcInput.value = "C:/manual/typed.ifc";
+      ifcInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const after = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
+      (el) => !el.placeholder,
+    )!;
+    expect(after.value).toBe("C:/manual/typed.ifc");
 
     await act(async () => { root.unmount(); });
   });

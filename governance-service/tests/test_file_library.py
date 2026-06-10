@@ -54,6 +54,15 @@ def _make_tree(root) -> None:
     deep = root / "270" / "機電" / "extra"
     deep.mkdir(parents=True, exist_ok=True)
     (deep / "deep.ifc").write_text("x", encoding="utf-8")
+    # 保留目錄：coordinator IFC 下載暫存 ifc-cache/ifcready_*/source.ifc 雖符兩層
+    # {dir}/{dir}/*.ifc 規則，但屬服務內部暫存（非 bim-control 專案），不得污染樹。
+    cache = root / "ifc-cache" / "ifcready_1779420878060_46b60df8"
+    cache.mkdir(parents=True)
+    (cache / "source.ifc").write_text("x", encoding="utf-8")
+    # coordinator 也是保留目錄名（未來可能掛 session IFC，預先排除）。
+    coord = root / "coordinator" / "session-x"
+    coord.mkdir(parents=True)
+    (coord / "model.ifc").write_text("x", encoding="utf-8")
 
 
 @pytest.fixture()
@@ -99,6 +108,19 @@ def test_top_level_loose_files_excluded(client):
     body = c.get("/api/files/tree").json()
     # fixture-bytes.ifc 在 root 一層、不符兩層結構 → 不得出現為 project
     assert "fixture-bytes" not in {p["project_id"] for p in body["projects"]}
+
+
+def test_reserved_dirs_excluded_from_projects(client):
+    # ifc-cache（coordinator IFC 下載暫存 ifcready_*/source.ifc）與 coordinator 雖符兩層
+    # {dir}/{dir}/*.ifc 規則，屬服務內部暫存目錄，不得入樹污染 #/minio 與 A1 專案下拉；
+    # 真實專案（270/889）不受影響。
+    c, _ = client
+    body = c.get("/api/files/tree").json()
+    project_ids = {p["project_id"] for p in body["projects"]}
+    assert "ifc-cache" not in project_ids
+    assert "coordinator" not in project_ids
+    # 排除為精準保留名單，不誤殺真實專案。
+    assert {"270", "889"} <= project_ids
 
 
 def test_version_sort_natural_with_completion_last(client):

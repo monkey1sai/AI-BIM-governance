@@ -21,6 +21,14 @@ _SERVICE_ROOT = os.path.dirname(os.path.dirname(__file__))
 # 故由 _SERVICE_ROOT(=governance-service/) 的父層(=repo 根)組 storage/。
 _DEFAULT_ROOT = os.path.join(os.path.dirname(_SERVICE_ROOT), "storage")
 
+# 保留目錄名（不視為 bim-control 專案，不入樹）：
+# - ifc-cache：coordinator IFC 下載暫存 ifcready_*/source.ifc，符兩層 {dir}/{dir}/*.ifc
+#   規則卻是服務內部暫存（部署區會隨 intake 持續增長），列入會生出大量假專案污染
+#   #/minio 樹與 A1 專案下拉。
+# - coordinator：coordinator 服務工作目錄（callback-outbox 等），未來可能掛 session IFC，
+#   預先排除。
+_RESERVED_PROJECT_DIRS = frozenset({"ifc-cache", "coordinator"})
+
 
 def _library_root() -> str:
     # 每次請求讀（而非 import 時固定），讓測試與 deploy 能以 env 覆寫。
@@ -82,6 +90,9 @@ def files_tree():
     projects: list[dict] = []
     for proj_entry in sorted(os.scandir(root), key=lambda e: _natural_key(e.name)):
         if not proj_entry.is_dir():
+            continue
+        # 保留目錄（服務內部暫存，如 ifc-cache / coordinator）不視為專案，不入樹。
+        if proj_entry.name.lower() in _RESERVED_PROJECT_DIRS:
             continue
         if not _is_within(root_real, proj_entry.path):
             continue

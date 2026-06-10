@@ -1,0 +1,76 @@
+{
+  "feature": "minio-fileserver-source",
+  "spec": "docs/superpowers/specs/2026-06-10-minio-fileserver-source-design.md",
+  "plan": "docs/superpowers/plans/2026-06-10-minio-fileserver-source.md",
+  "branch": "minio-fileserver-source (worktree)",
+  "date": "2026-06-10",
+  "engine": "playwright",
+  "vertical_slice_ok": true,
+  "e2e_spec": "web-viewer-sample/e2e/minio-fileserver-source.spec.ts",
+  "e2e_result": {
+    "command": "E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8014 npx playwright test e2e/minio-fileserver-source.spec.ts --reporter=list",
+    "exit_code": 0,
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "tests": [
+      { "name": "#/minio 真樹可見 270/889/990 三專案與版本檔", "status": "passed", "duration_ms": 870 },
+      { "name": "#/a1 選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現", "status": "passed", "duration_ms": 2100 }
+    ]
+  },
+  "runtime_topology": {
+    "note": "E2E page.goto targets the COORDINATOR /ui dist-ui (NOT the playwright :5180 vite webServer). Branch services were started fresh on alternate ports because the stale docker coordinator holds :8004 with an old bundle and no files/tree proxy.",
+    "coordinator": "http://127.0.0.1:8014 (branch, tsx src/index.ts, CONSOLE_DIST_DIR=freshly-built dist-ui, GOVERNANCE_API_BASE=http://127.0.0.1:49102)",
+    "governance_service": "http://127.0.0.1:49102 (branch app.py, BIM_FILE_LIBRARY_ROOT=C:/Repos/active/iot/AI-BIM-governance/storage)",
+    "dist_ui_built": "web-viewer-sample/dist-ui (npm run build:ui, built in 2.33s)",
+    "stale_8004_note": "Pre-existing docker coordinator on :8004 returns 404 for /api/governance/files/tree and serves an old /ui bundle (index-B98B2yRg.js); it does NOT contain this branch's code. Not used for evidence."
+  },
+  "routes_exercised": ["/ui/#/minio", "/ui/#/a1"],
+  "buttons_clicked": [
+    "三層選擇器 a1-fs-project (selectOption 270)",
+    "三層選擇器 a1-fs-model (selectOption 機電)",
+    "三層選擇器 a1-fs-version (selectOption label=ver 竣工.ifc)",
+    "執行規則檢核 / POST /api/governance/rule-runs"
+  ],
+  "default_fixture": {
+    "selected_via_ui": true,
+    "selected_path": "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc",
+    "size_bytes": 22618,
+    "note": "Selected from the file-library tree selector (no manual curl). Manual input box retained for backward compat (still prefilled with storage/fixture-bytes.ifc)."
+  },
+  "real_backend_evidence": {
+    "files_tree_api": "GET /api/governance/files/tree -> 200; source_kind=local_fs; root=C:\\Repos\\active\\iot\\AI-BIM-governance\\storage; project_ids=[270,889,990]; 270 models=[機電,水電,消防]; 270/機電 versions=[ver 000001.ifc, ver 000002.ifc, ver 000003.ifc, ver 竣工.ifc]; ver 竣工.ifc sorted LAST with size 22618 and absolute path.",
+    "reserved_dir_exclusion_note": "Original P4 E2E capture (against pre-fix code) listed project_ids=[270,889,990,ifc-cache] because storage/ifc-cache/ifcready_*/source.ifc (coordinator IFC download cache, ~60 dirs) matched the two-level {dir}/{dir}/*.ifc rule and polluted the #/minio tree + A1 project dropdown. Adversarial finding [c3] fix adds a reserved-dir exclusion set ({ifc-cache, coordinator}) in file_library/api.py. Re-probed post-fix against the same real storage (governance-service TestClient, BIM_FILE_LIBRARY_ROOT=C:/Repos/active/iot/AI-BIM-governance/storage): project_ids=[270,889,990] (ifc-cache/coordinator no longer appear), 270/889/990 unchanged. Covered by governance-service pytest test_reserved_dirs_excluded_from_projects.",
+    "mock": false,
+    "mock_markers_present": false,
+    "honesty_markers_in_ui": [
+      "local file-server 來源（比照 bim-control/{projectId}/{modelId} 規約）；真 S3/MinIO 待接",
+      "source_kind=local_fs panel subtitle",
+      "Bucket layout panel still prov=demo (規約示意)",
+      "model.usdc still prov=p1 (轉檔產物後端待建，未因本 spec 翻綠)"
+    ]
+  },
+  "rule_run_real_execution": {
+    "in_browser_rule_run_id": "rr_a76e2680c771",
+    "in_browser_status": "succeeded",
+    "in_browser_scoreboard": { "total": 14, "passed": 14, "failed": 0, "score": 100 },
+    "api_verified_rule_run_id": "rr_6c678a264a28",
+    "api_verified_status": "succeeded",
+    "api_verified_summary": { "rule_set": "default-governance", "version": "1.0", "total": 14, "passed": 14, "failed": 0, "errored": 0, "score": 100.0, "target_summary": { "DOOR-FIRERATING-REQUIRED": 0, "ELEMENT-NAME-REQUIRED": 14, "WALL-STOREY-ASSIGNED": 0 } },
+    "note": "Real ifcopenshell CPU rule-run against the genuinely UI-selected IFC (storage/270/機電/ver 竣工.ifc). Async 202->queued->succeeded. Two distinct run ids: one fired by the browser test, one fired by direct proxy POST for runtime-id capture — both succeeded with identical real summary."
+  },
+  "states_observed": ["loading (GET /api/governance/files/tree)", "success (tree rendered + scoreboard)", "succeeded (rule_run_status)"],
+  "states_not_directly_exercised_in_e2e": ["MinioData empty file-library state (projects=[]) — covered by vitest client-render case 'MinioData filesTree() 回空 projects → empty 態顯示「檔案庫為空」' (console.test.tsx), not re-driven in this browser run because real storage has 270/889/990", "MinioData error state — covered by vitest client-render case 'MinioData filesTree() reject → error 態誠實標「未連線後端」'", "A1 file-library selector fsErr graceful-degradation — covered by vitest client-render case 'A1 filesTree() reject → 選擇器標「檔案庫不可用」graceful degrade，手動輸入照常可用'", "rule-run failure/retry (run succeeded; failure path covered by coordinator 502 vitest + governanceClient reject test)"],
+  "states_coverage_note": "Adversarial finding [c4] fix added two vitest client-render cases (MinioData empty + A1 fsErr graceful-degradation) that the earlier renderToString SSR smoke could not reach (SSR first frame is always the loading branch; empty needs !loading&&!err&&projectCount===0, fsErr needs the catch→setFsErr microtask). The previous over-claim that empty/fsErr were 'covered by vitest console.test smoke' is replaced by these explicit createRoot+act cases. console.test.tsx: 32 tests passed.",
+  "gpu_3d": "N/A — this feature is CPU-only governance (ifcopenshell). No 3D viewer / stage truth / GPU review session is in scope for #/minio or #/a1 rule-run. The #/minio page references 3D Viewer relationship only as asbuilt metadata; model.usdc remains p1.",
+  "screenshots": [
+    "artifacts/e2e/minio-fileserver-source-minio-tree.png",
+    "artifacts/e2e/minio-fileserver-source-a1-rulerun.png"
+  ],
+  "traces": [
+    "artifacts/e2e/minio-fileserver-source-trace/minio-tree-chromium/trace.zip",
+    "artifacts/e2e/minio-fileserver-source-trace/a1-rulerun-chromium/trace.zip"
+  ],
+  "traces_note": "Playwright trace.zip live under the MAIN worktree at artifacts/e2e/minio-fileserver-source-trace/{minio-tree,a1-rulerun}-chromium/trace.zip (verified present: 794938 and 840456 bytes; playwright-feature-run.log alongside shows 2 passed). These full traces are local-only (large artifacts not committed per repo 'evidence 只存抽樣' convention); the durable sampled evidence committed under this docs/evidence/ dir is minio-tree.png + a1-rulerun.png + this summary.json. Adversarial finding [c1] flagged the path as artifacts/e2e/_output/...Mi-08e35-*/trace.zip — that _output location does not exist on disk; the canonical output is the minio-fileserver-source-trace/ path recorded here (configured by the spec's page.screenshot/trace outputDir), confirmed by directory listing.",
+  "full_suite_note": "Running `npx playwright test minio-fileserver-source` (substring) ran the whole e2e suite (18 tests): both minio-fileserver-source tests PASSED; 3 unrelated failures (kit-proxy needs Conversion API :8010, product-console-integration has a pre-existing strict-mode bug in its own spec heading locator, real-ifc-storage-intake needs streaming server) are NOT this feature and NOT regressions introduced here. Isolated `e2e/minio-fileserver-source.spec.ts` run is exit 0, 2 passed."
+}
