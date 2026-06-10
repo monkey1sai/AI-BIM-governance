@@ -14,6 +14,18 @@ import { test, expect } from "@playwright/test";
 //     此前置目前靠人工紀律；beforeEach 會用「本 branch 才有的 UI 標記」守門，環境沒對齊就 skip
 //     （誠實：不假裝跑過，也不留下誤導的 locator timeout）。
 //
+// *** 硬 gate 適用範圍（重要限制，勿誤解效力）：beforeEach 的兩道守門是 conditional skip，
+//     亦即「前置缺失 → test.skip → 計為 pass」。在 Playwright 語意裡 skip != fail，所以
+//     本 spec 只有在「外部（指揮官 golden-path 或未來 CI setup step）已確保前置滿足、且
+//     前置缺失時會讓 build 失敗」的前提下，才提供真正的 P4『硬 gate』效力。若把它丟進一個
+//     不保證前置的環境（例如某個只跑 playwright 卻不起 governance-service / 不 build:ui 的
+//     CI job），它會在環境未對齊時靜默全 skip 而仍綠燈 → 那是假信心，不是通過。
+//     本 repo 現況：.github/workflows 只有 pr-review-agent.yml，無任何 Playwright/e2e job，
+//     故此 skip-based 設計不會 false-green 任何既有自動化 gate；此 spec 純屬本機/指揮官手動 gate。
+//     若日後要把它升級成 CI 硬 gate：必須在 workflow 加一個「前置必備、缺失即 fail」的 setup
+//     step（啟動 governance-service + npm run build:ui + 重啟 coordinator），不能只靠這裡的
+//     conditional skip——否則它仍只是個「環境未對齊就靜默跳過」的測試。 ***
+//
 // 需 coordinator :8004（服務本 branch dist-ui）+ governance-service :49102
 // （BIM_FILE_LIBRARY_ROOT 指主 worktree storage）。前置不滿足時 conditional skip。
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
