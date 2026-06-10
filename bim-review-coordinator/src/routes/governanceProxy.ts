@@ -88,6 +88,12 @@ function queryString(originalUrl: string, fallback = ""): string {
 }
 
 export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps = {}): void {
+  // A1 file-library browse proxy（唯讀 local file-server tree，透傳 governance-service /api/files/tree）。
+  // 瀏覽器只打 :8004；樹 JSON 原樣透傳，coordinator 不解讀 / 不保存。
+  app.get("/api/governance/files/tree", (_request, response) => {
+    void forward(response, "GET", "/api/files/tree");
+  });
+
   app.post("/api/governance/rule-runs", (request, response) => {
     void forward(response, "POST", "/api/rule-runs", request.body);
   });
