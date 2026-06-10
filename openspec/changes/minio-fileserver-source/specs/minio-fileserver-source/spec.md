@@ -65,7 +65,7 @@ coordinator `governanceProxy` SHALL 提供白名單一條 `GET /api/governance/f
 
 ### Requirement: `#/a1` SHALL 提供檔案庫三層選擇器（持值受控 + 換層清理 + graceful degrade）
 
-`#/a1`（IssuesRuleCenterPage）SHALL 提供 project → model → version 三層選擇器：選定 version SHALL 將其絕對 `path` 填入既有 `ifc_source_path` 輸入框，且 version select SHALL 為持值受控元件（選定後 SHALL NOT 跳回 placeholder）。換 project/model 時 SHALL 重置 version 選擇並清空「由選擇器填入的」`ifc_source_path`（避免殘留舊選擇被誤送出檢核）；使用者手動輸入的路徑 SHALL NOT 被此清理波及。檔案庫不可用時 SHALL graceful degrade（誠實標示「檔案庫不可用」+ 提供「重試載入檔案庫」動作），手動輸入路徑流程 SHALL 照常可用。
+`#/a1`（IssuesRuleCenterPage）SHALL 提供 project → model → version 三層選擇器：選定 version SHALL 將其絕對 `path` 填入既有 `ifc_source_path` 輸入框，且 version select SHALL 為持值受控元件（選定後 SHALL NOT 跳回 placeholder）。換 project/model 或將 version 清回 placeholder 時 SHALL 重置 version 選擇並清空「由選擇器填入的」`ifc_source_path`（避免殘留舊選擇被誤送出檢核）；使用者手動輸入的路徑 SHALL NOT 被此清理波及。檔案庫不可用時 SHALL graceful degrade（誠實標示「檔案庫不可用」+ 提供「重試載入檔案庫」動作），手動輸入路徑流程 SHALL 照常可用。
 
 #### Scenario: 選定 version 填入路徑且 select 持值
 
@@ -78,6 +78,12 @@ coordinator `governanceProxy` SHALL 提供白名單一條 `GET /api/governance/f
 - **WHEN** 使用者已由選擇器填入路徑後改選其他 project
 - **THEN** version 選擇 SHALL 重置且選擇器填入的 `ifc_source_path` SHALL 清空
 - **AND** 若使用者已手動覆寫路徑，該手動值 SHALL 保留不被清
+
+#### Scenario: version 清回 placeholder 也清 selector 填入的路徑
+
+- **WHEN** 使用者選定 version 後將 version select 清回 placeholder（空值）
+- **THEN** version 選擇 SHALL 重置且「由選擇器填入的」`ifc_source_path` SHALL 清空
+- **AND** 使用者手動覆寫的路徑 SHALL 保留不被清
 
 #### Scenario: 檔案庫不可用 graceful degrade 且可重試
 

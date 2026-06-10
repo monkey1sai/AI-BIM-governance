@@ -717,6 +717,50 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { root.unmount(); });
   });
 
+  // reviewer P2（Codex, round 2）：version 選回 placeholder（value=""）也要清「由選擇器
+  // 填入的」ifcPath——只 reset selVersion 會讓 input 殘留舊選擇被誤送出；手動值不波及。
+  it("A1 version 清回 placeholder → selector 填入的 ifcPath 清空、手動值保留", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const ifcInput = () =>
+      Array.from(container.querySelectorAll<HTMLInputElement>("input")).find((el) => !el.placeholder)!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // 選定 version 後清回 placeholder → ifcPath 一併清空（不殘留舊選擇）。
+    await pick("a1-fs-project", "270");
+    await pick("a1-fs-model", "機電");
+    await pick("a1-fs-version", VER_PATH);
+    expect(ifcInput().value).toBe(VER_PATH);
+    await pick("a1-fs-version", "");
+    expect(sel("a1-fs-version").value).toBe("");
+    expect(ifcInput().value).toBe("");
+
+    // 手動覆寫後再清 placeholder → 手動值保留（清理只針對 selector 填入值）。
+    await pick("a1-fs-version", VER_PATH);
+    await act(async () => {
+      const el = ifcInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await pick("a1-fs-version", "");
+    expect(ifcInput().value).toBe("C:/manual/typed.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
   // reviewer Major（CodeRabbit）：error 態須有使用者可觸發的重試（不必整頁 reload）。
   // 第一次 filesTree() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染真樹。
   it("MinioData error 態點「重試」→ 重打 filesTree() → 成功渲染真樹（不必整頁 reload）", async () => {

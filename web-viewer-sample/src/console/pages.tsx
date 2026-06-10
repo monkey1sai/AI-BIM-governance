@@ -653,7 +653,17 @@ export function IssuesRuleCenterPage() {
               className="ec-btn"
               disabled={!selModel}
               value={selVersion}
-              onChange={(e) => { setSelVersion(e.target.value); if (e.target.value) setIfcPath(e.target.value); }}
+              onChange={(e) => {
+                const picked = e.target.value;
+                if (picked) {
+                  setSelVersion(picked);
+                  setIfcPath(picked);
+                } else {
+                  // 清回 placeholder 也要清「由選擇器填入的」ifcPath（殘留舊選擇
+                  // 會被誤送出檢核）；手動輸入值同樣不受波及。
+                  resetVersionPick();
+                }
+              }}
             >
               <option value="">版本…（選定填入路徑）</option>
               {fsVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
