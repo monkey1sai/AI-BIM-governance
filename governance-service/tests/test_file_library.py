@@ -8,9 +8,34 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 
 import pytest
 from fastapi.testclient import TestClient
+
+
+def _make_dir_link(target: str, link: str) -> None:
+    """在 link 處建一個指向 target 的目錄連結（給 traversal 測試用）。
+
+    優先 os.symlink（POSIX 或 Windows Developer Mode/admin），失敗時退回
+    Windows directory junction（mklink /J，免特權）。os.path.realpath 兩者
+    都會解析到 target，足以驅動 _is_within 的逃逸防線。兩者皆不可行才 skip，
+    避免本機 Windows 讓這條安全測試永遠空跑（CI 也沒有跑 governance pytest）。
+    """
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt":
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", link, target],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return
+    pytest.skip("此環境無法建立目錄 symlink 或 junction，略過 traversal 測試")
 
 
 def _make_tree(root) -> None:
@@ -100,7 +125,6 @@ def test_missing_root_returns_empty_200(tmp_path, monkeypatch):
     assert body["source_kind"] == "local_fs"
 
 
-@pytest.mark.skipif(os.name == "nt" and not os.environ.get("CI"), reason="Windows symlink 需權限；local 跳過，CI/POSIX 驗 traversal")
 def test_symlink_escape_excluded(tmp_path, monkeypatch):
     root = tmp_path / "lib"
     (root / "270" / "機電").mkdir(parents=True)
@@ -109,8 +133,8 @@ def test_symlink_escape_excluded(tmp_path, monkeypatch):
     outside = tmp_path / "outside"
     (outside / "機電").mkdir(parents=True)
     (outside / "機電" / "secret.ifc").write_text("x", encoding="utf-8")
-    # 在 root 下放一個指向 root 外的 project symlink
-    os.symlink(str(outside), str(root / "999"), target_is_directory=True)
+    # 在 root 下放一個指向 root 外的 project 目錄連結（symlink 或 junction）
+    _make_dir_link(str(outside), str(root / "999"))
     monkeypatch.setenv("BIM_FILE_LIBRARY_ROOT", str(root))
     monkeypatch.setenv("GOV_DB_PATH", str(tmp_path / "gov.db"))
     import app as app_module
