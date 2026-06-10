@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -NoProfile -Command 'Get-Process kit -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '\\\\''C:\\\\Repos\\\\active\\\\iot\\\\AI-BIM-governance\\\\bim-streaming-server\\\\_build\\\\*kit.exe'\\\\'' } | Select-Object Id, Path, StartTime | Format-Table -AutoSize -Wrap')",
+      "Bash(powershell -NoProfile -Command \"Write-Host 'pwsh ok'\")",
+      "Bash(powershell -NoProfile -Command \"Get-Process kit -ErrorAction SilentlyContinue | Select-Object Id, Path, StartTime\")",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File \"C:/Repos/active/iot/AI-BIM-governance/_tmp_inventory.ps1\")"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[verify-reminder] 改檔後請在所屬 repo 跑 verify (npm run verify / pytest tests -q)；跨 repo 改動跑 scripts/verify-all.ps1 或 scripts/verify-all.sh' 1>&2"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Repos/active/iot/AI-BIM-governance/scripts/claude-commit-guard.ps1\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr merge*)",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:/Repos/active/iot/AI-BIM-governance/scripts/hooks/require-gstack-evidence.ps1\"",
+            "timeout": 30,
+            "statusMessage": "gstack 前端證據閘…"
+          }
+        ]
+      }
+    ]
+  }
+}
