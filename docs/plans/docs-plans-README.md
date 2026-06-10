@@ -32,6 +32,6 @@
 ```
 ## 需求事實來源
 A1–A10 功能需求、UI 驗收語意與實作順序，一律以 docs/plans/ 為準：
-先讀 docs/plans/README.md，再讀 ai-bim-governance-開發軌跡與執行計畫.md（順序）
+先讀 docs/plans/docs-plans-README.md，再讀 ai-bim-governance-開發軌跡與執行計畫.md（順序）
 與 ai-bim-governance-設計規格.md（介面）。兩份 .html 是行為示意，不是程式碼範本。
 ```

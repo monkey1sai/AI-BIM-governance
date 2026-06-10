@@ -95,12 +95,12 @@ tests/fakes/
   NoSuccessorWhilePredecessorOpen gate 已清除：
   Phase B 程式碼層 change 可從 synced main 開
   codex/openspec/external-platform-webhook-intake-boundary 升格實作
-  （草稿見 docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md）。
+  （草稿已升格並 archived，見 openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/）。
 - 歷史 `_worker` / `_bim-control` 文件若尚未完全移除，僅保留作 archive context；
   `tests/fakes` 與 `tests/contracts` 才是外部平台模擬入口，非 runtime profile。
 ```
 
-> **[2026-05-18 修訂｜依 `planB.txt`]** 本決策已細化（取代上方「降級為 fake / offline profile」字面）：(1) `_worker` / `_bim-control` **自 repo 刪除**（非降級保留），測試改 `tests/fakes` + contract fixtures；(2) 對外 intake 收斂於 **`bim-review-coordinator`**（`POST /api/external/ifc-ready`），`bim-streaming-server` 僅 internal conversion engine；(3) webhook caller = 客戶落地端 IFC Worker（落地端內網，非公司測試機直連）；(4) 新增**雲端 callback outbox**（metadata-only，禁傳 `.usdc` 大檔）；(5) 公司雲端=control-plane / 本 repo=客戶落地端 data-plane 權威切分；(6) change-id `local-coordinator-ifc-ready-intake-boundary` 已於 PR #63 apply。完整方案見 `docs/plans/phase-b-external-platform-webhook-intake-DRAFT-2026-05.md`。**§10/§11 為現行閉環；其他歷史段落若與本決策衝突，以本節與 §10/§11 為準。**
+> **[2026-05-18 修訂｜依 `planB.txt`]** 本決策已細化（取代上方「降級為 fake / offline profile」字面）：(1) `_worker` / `_bim-control` **自 repo 刪除**（非降級保留），測試改 `tests/fakes` + contract fixtures；(2) 對外 intake 收斂於 **`bim-review-coordinator`**（`POST /api/external/ifc-ready`），`bim-streaming-server` 僅 internal conversion engine；(3) webhook caller = 客戶落地端 IFC Worker（落地端內網，非公司測試機直連）；(4) 新增**雲端 callback outbox**（metadata-only，禁傳 `.usdc` 大檔）；(5) 公司雲端=control-plane / 本 repo=客戶落地端 data-plane 權威切分；(6) change-id `local-coordinator-ifc-ready-intake-boundary` 已於 PR #63 apply。完整方案見 archived OpenSpec change `openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/`。**§10/§11 為現行閉環；其他歷史段落若與本決策衝突，以本節與 §10/§11 為準。**
 
 ---
 
