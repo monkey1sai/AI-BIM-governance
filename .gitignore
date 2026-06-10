@@ -43,8 +43,18 @@ Thumbs.db
 !.claude/commands/
 !.claude/agents/
 !.claude/settings.json
+# 所有層級的 .codex 預設忽略（含子專案 web-viewer-sample/.codex 等）
 .codex/
+# root .codex 例外：追蹤 codex 自製工具資產（config + skills），其餘（cache/worktrees）仍忽略
+!/.codex/
+/.codex/*
+!/.codex/config.toml
+!/.codex/skills/
+.superpowers/
 .vscode/
+# openspec/opsx 舊鏡像已下架，IDE-specific agent 目錄不再追蹤
+.windsurf/
+.cursor/
 .gitnexus/
 **/.gitnexus/
 .playwright-cli/
@@ -151,3 +161,15 @@ docs/plans/*.html
 
 # Ignore storage files by default
 storage/*
+
+# ----------------------------
+# Local cleanup / scratch artifacts
+# 本機暫存(cleanup patch、recovery log、備份、可重生的 Playwright 原始輸出)不入庫。
+# 具名的 E2E 證據截圖(artifacts/e2e/*.png 等)仍依 artifacts/e2e/.gitignore 設計追蹤入庫。
+# ----------------------------
+artifacts/git-cleanup-*/
+artifacts/*.patch
+artifacts/*.txt
+artifacts/preff-backup/
+artifacts/e2e/_product_console_output/
+artifacts/e2e/product-console-report/
