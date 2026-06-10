@@ -50,6 +50,8 @@ Thumbs.db
 /.codex/*
 !/.codex/config.toml
 !/.codex/skills/
+# generated/（cluster-* 等生成知識圖）為可重生生成物，不入庫
+/.codex/skills/generated/
 .superpowers/
 .vscode/
 # openspec/opsx 舊鏡像已下架，IDE-specific agent 目錄不再追蹤
