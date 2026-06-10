@@ -1,5 +1,7 @@
 # MinIO File-Server Source Implementation Plan
 
+**Document nature:** implementation plan（working note / runbook；非 capability spec——落地後權威以程式碼與 `openspec/specs/` 為準）
+
 **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 
 **Goal:** 把本機 `storage/{270,889,990}/{機電,水電,消防}/*.ifc` 兩層結構做成唯讀 file-library browse API，讓 `#/minio` 顯示真實檔案樹、`#/a1` 能用三層選擇器挑檔當 rule-run 來源。

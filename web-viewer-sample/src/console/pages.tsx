@@ -381,26 +381,24 @@ export function MinioDataPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    governanceClient
-      .filesTree()
-      .then((t) => {
-        if (alive) {
-          setTree(t);
-          setLoading(false);
-        }
-      })
-      .catch((e) => {
-        if (alive) {
-          setErr(String(e));
-          setLoading(false);
-        }
-      });
-    return () => {
-      alive = false;
-    };
+  // 抽成可重跑的 loader：初載與 error 態「重試」共用同一條真實 fetch 路徑
+  //（coordinator/governance 暫時離線時不必整頁 reload）。React 18 unmount 後
+  // setState 為 no-op，毋須 alive flag。
+  const loadTree = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      setTree(await governanceClient.filesTree());
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadTree();
+  }, [loadTree]);
 
   const projectCount = tree?.projects.length ?? 0;
 
@@ -418,7 +416,14 @@ export function MinioDataPage() {
         prov="asbuilt"
       >
         {loading && <p className="ec-note">載入中…（GET /api/governance/files/tree）</p>}
-        {err && <p className="ec-warn-note">未連線後端（coordinator / governance-service 需啟動）：{err}</p>}
+        {err && (
+          <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span>未連線後端（coordinator / governance-service 需啟動）：{err}</span>
+            <Btn data-testid="minio-tree-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadTree(); }}>
+              重試
+            </Btn>
+          </div>
+        )}
         {!loading && !err && projectCount === 0 && (
           <p className="ec-note">檔案庫為空：未在 root 下找到 <code>{"{projectId}"}/{"{modelId}"}/*.ifc</code> 兩層結構（檢查 BIM_FILE_LIBRARY_ROOT）。</p>
         )}
@@ -535,17 +540,34 @@ export function IssuesRuleCenterPage() {
   const [fsErr, setFsErr] = useState<string | null>(null);
   const [selProject, setSelProject] = useState("");
   const [selModel, setSelModel] = useState("");
+  // 受控 version 選擇（值=version.path）：沒有 state 時 <select value=""> 會把使用者
+  // 的選擇立刻打回 placeholder（選了像沒選）。換 project/model 時一併重置。
+  const [selVersion, setSelVersion] = useState("");
+
+  // 抽成可重跑的 loader：初載與「重試載入檔案庫」共用（暫時離線不必整頁 reload）。
+  const loadFsTree = useCallback(async () => {
+    setFsErr(null);
+    try {
+      const t = await governanceClient.filesTree();
+      setFsTree(t.projects);
+    } catch (e) {
+      setFsErr(String(e));
+    }
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    governanceClient
-      .filesTree()
-      .then((t) => alive && setFsTree(t.projects))
-      .catch((e) => alive && setFsErr(String(e)));
-    return () => {
-      alive = false;
-    };
-  }, []);
+    void loadFsTree();
+  }, [loadFsTree]);
+
+  // 換 project/model 後，先前由選擇器填入的 ifcPath 已不代表當前選擇 → 清空它
+  //（避免使用者沒注意文字框殘留舊選擇就送出檢核）；手動輸入的路徑不受影響
+  //（僅當 ifcPath 仍等於上次選擇器填入值才清）。
+  const resetVersionPick = useCallback(() => {
+    if (selVersion) {
+      setIfcPath((cur) => (cur === selVersion ? "" : cur));
+    }
+    setSelVersion("");
+  }, [selVersion]);
 
   const fsModels = fsTree?.find((p) => p.project_id === selProject)?.models ?? [];
   const fsVersions = fsModels.find((m) => m.model_id === selModel)?.versions ?? [];
@@ -594,7 +616,14 @@ export function IssuesRuleCenterPage() {
         </div>
         <div className="ec-field" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 }}>
           <span className="ec-k">從檔案庫選擇 <ProvTag prov="asbuilt" /></span>
-          {fsErr && <span className="ec-warn-note">檔案庫不可用（{fsErr}）；可改用下方手動輸入路徑。</span>}
+          {fsErr && (
+            <span className="ec-warn-note" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span>檔案庫不可用（{fsErr}）；可改用下方手動輸入路徑。</span>
+              <Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>
+                重試載入檔案庫
+              </Btn>
+            </span>
+          )}
           {!fsErr && !fsTree && <span className="ec-s">載入檔案庫中…（GET /api/governance/files/tree）</span>}
           {/* 三層 select 恆渲染（含 SSR 首幀）；未載入前 disabled 且只有 placeholder option —
               誠實標示「還沒有可選項」，手動輸入照常可用，檔案庫不可用時 graceful degrade。 */}
@@ -604,7 +633,7 @@ export function IssuesRuleCenterPage() {
               className="ec-btn"
               value={selProject}
               disabled={!fsTree}
-              onChange={(e) => { setSelProject(e.target.value); setSelModel(""); }}
+              onChange={(e) => { setSelProject(e.target.value); setSelModel(""); resetVersionPick(); }}
             >
               <option value="">專案…</option>
               {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
@@ -614,7 +643,7 @@ export function IssuesRuleCenterPage() {
               className="ec-btn"
               value={selModel}
               disabled={!selProject}
-              onChange={(e) => setSelModel(e.target.value)}
+              onChange={(e) => { setSelModel(e.target.value); resetVersionPick(); }}
             >
               <option value="">模型…</option>
               {fsModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
@@ -623,8 +652,8 @@ export function IssuesRuleCenterPage() {
               data-testid="a1-fs-version"
               className="ec-btn"
               disabled={!selModel}
-              value=""
-              onChange={(e) => { if (e.target.value) setIfcPath(e.target.value); }}
+              value={selVersion}
+              onChange={(e) => { setSelVersion(e.target.value); if (e.target.value) setIfcPath(e.target.value); }}
             >
               <option value="">版本…（選定填入路徑）</option>
               {fsVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}

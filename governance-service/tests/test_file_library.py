@@ -147,6 +147,61 @@ def test_missing_root_returns_empty_200(tmp_path, monkeypatch):
     assert body["source_kind"] == "local_fs"
 
 
+def test_runtime_storage_root_fallback(tmp_path, monkeypatch):
+    """無 BIM_FILE_LIBRARY_ROOT 時退 RUNTIME_STORAGE_ROOT（deploy .env 的 runtime 資料根權威）。
+
+    部署區 checkout 不含真 IFC，hardcode checkout storage/ 會永遠空樹；
+    故 root 解析鏈為 BIM_FILE_LIBRARY_ROOT → RUNTIME_STORAGE_ROOT → checkout 預設。
+    """
+    runtime_root = tmp_path / "runtime-storage"
+    runtime_root.mkdir()
+    _make_tree(runtime_root)
+    monkeypatch.delenv("BIM_FILE_LIBRARY_ROOT", raising=False)
+    monkeypatch.setenv("RUNTIME_STORAGE_ROOT", str(runtime_root))
+    monkeypatch.setenv("GOV_DB_PATH", str(tmp_path / "gov.db"))
+    import app as app_module
+
+    importlib.reload(app_module)
+    c = TestClient(app_module.app)
+    body = c.get("/api/files/tree").json()
+    assert os.path.realpath(body["root"]) == os.path.realpath(str(runtime_root))
+    assert {"270", "889"} <= {p["project_id"] for p in body["projects"]}
+
+
+def test_explicit_library_root_overrides_runtime_root(tmp_path, monkeypatch):
+    """兩個 env 同時存在時 BIM_FILE_LIBRARY_ROOT 優先（專屬覆寫 > 通用 runtime root）。"""
+    lib_root = tmp_path / "lib"
+    lib_root.mkdir()
+    _make_tree(lib_root)
+    other = tmp_path / "other-runtime"
+    other.mkdir()
+    monkeypatch.setenv("BIM_FILE_LIBRARY_ROOT", str(lib_root))
+    monkeypatch.setenv("RUNTIME_STORAGE_ROOT", str(other))
+    monkeypatch.setenv("GOV_DB_PATH", str(tmp_path / "gov.db"))
+    import app as app_module
+
+    importlib.reload(app_module)
+    c = TestClient(app_module.app)
+    body = c.get("/api/files/tree").json()
+    assert os.path.realpath(body["root"]) == os.path.realpath(str(lib_root))
+    assert {"270", "889"} <= {p["project_id"] for p in body["projects"]}
+
+
+def test_transient_oserror_skips_entry_not_500(client, monkeypatch):
+    """掃描中單檔 stat/mtime 失敗（OSError）→ 跳過該檔仍回 200，不得端點整體 500。"""
+    from file_library import api as fl_api
+
+    def _boom(_path: str) -> str:
+        raise OSError("transient stat failure")
+
+    monkeypatch.setattr(fl_api, "_iso_mtime", _boom)
+    c, _ = client
+    resp = c.get("/api/files/tree")
+    assert resp.status_code == 200
+    # 所有版本的 mtime 都失敗 → 全被跳過 → 空樹（誠實降級，不拋 500）。
+    assert resp.json()["projects"] == []
+
+
 def test_symlink_escape_excluded(tmp_path, monkeypatch):
     root = tmp_path / "lib"
     (root / "270" / "機電").mkdir(parents=True)

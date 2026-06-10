@@ -1,5 +1,6 @@
 # MinIO File-Server 來源落地（storage/270、889、990）設計
 
+- 文件性質：spec design（設計文件）。權威序：code > contracts > AGENTS > wiki；與實作衝突時以實作程式碼與 `openspec/specs/` capability spec 為準。
 - 日期：2026-06-10
 - 狀態：使用者已授權自主推進（「以 storage\270, 889, 990 當作 minIO 的 file server 來源…依照自己的理解推進任務」）
 - Phase 對應：M0-R2 殼層真資料化（`#/minio`）+ M1-R6 端到端驗收的資料地基（A1 檢核來源選擇器）

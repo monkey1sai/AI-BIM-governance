@@ -15,7 +15,7 @@ describe("governanceClient.filesTree", () => {
         {
           project_id: "270",
           models: [
-            { model_id: "機電", versions: [{ name: "ver 竣工.ifc", path: "C:/x/ver 竣工.ifc", size_bytes: 22618, mtime: "2026-06-10T17:17:00+08:00" }] },
+            { model_id: "機電", versions: [{ name: "ver 竣工.ifc", path: "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc", size_bytes: 22618, mtime: "2026-06-10T17:17:00+08:00" }] },
           ],
         },
       ],

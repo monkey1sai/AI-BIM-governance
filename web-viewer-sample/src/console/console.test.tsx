@@ -663,4 +663,106 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 
     await act(async () => { root.unmount(); });
   });
+
+  // reviewer P2（Codex）：version <select> 須為「持值」受控元件——選定後不得跳回 placeholder；
+  // 換 project/model 後 version 選擇與「由選擇器填入的 ifcPath」一併清空（避免殘留舊選擇
+  // 被誤送出檢核）；手動輸入的路徑不受清理影響。
+  it("A1 version select 持有選定值；換 project 清 selector 填入的 ifcPath、手動輸入不受影響", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const ifcInput = () =>
+      Array.from(container.querySelectorAll<HTMLInputElement>("input")).find((el) => !el.placeholder)!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    await pick("a1-fs-project", "270");
+    await pick("a1-fs-model", "機電");
+    await pick("a1-fs-version", VER_PATH);
+    // 受控持值：選定後 select 顯示選中項，不再被 value="" 打回 placeholder。
+    expect(sel("a1-fs-version").value).toBe(VER_PATH);
+    expect(ifcInput().value).toBe(VER_PATH);
+
+    // 換 project → version 重置、由選擇器填入的 ifcPath 清空（不殘留舊選擇）。
+    await pick("a1-fs-project", "");
+    expect(sel("a1-fs-version").value).toBe("");
+    expect(ifcInput().value).toBe("");
+
+    // 手動輸入的路徑不被換層清理：重選到 version 後手動覆寫，再換 model → 保留手動值。
+    // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
+    // 真正觸發 onChange 入 state（直接設 .value 會被 tracker 視為無變化而吞掉）。
+    await pick("a1-fs-project", "270");
+    await pick("a1-fs-model", "機電");
+    await pick("a1-fs-version", VER_PATH);
+    await act(async () => {
+      const el = ifcInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(ifcInput().value).toBe("C:/manual/typed.ifc"); // 手動值已真正入 state
+    await pick("a1-fs-model", "");
+    expect(ifcInput().value).toBe("C:/manual/typed.ifc"); // 換層清理不波及手動值
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // reviewer Major（CodeRabbit）：error 態須有使用者可觸發的重試（不必整頁 reload）。
+  // 第一次 filesTree() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染真樹。
+  it("MinioData error 態點「重試」→ 重打 filesTree() → 成功渲染真樹（不必整頁 reload）", async () => {
+    const spy = vi
+      .spyOn(governanceClient, "filesTree")
+      .mockRejectedValueOnce(new Error("proxy 502"))
+      .mockResolvedValueOnce(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.innerHTML).toContain("未連線後端");
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="minio-tree-retry"]');
+    expect(retry).not.toBeNull();
+    await act(async () => { retry!.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const html = container.innerHTML;
+    expect(html).toContain("ver 竣工.ifc"); // 重試成功 → 真樹渲染
+    expect(html).not.toContain("未連線後端"); // error 態已清除
+    expect(spy).toHaveBeenCalledTimes(2); // 真的重打了一次
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 同上（A1 檔案庫選擇器）：graceful degrade 之外提供「重試載入檔案庫」，成功後選擇器可用。
+  it("A1 檔案庫不可用點「重試載入檔案庫」→ 重打 filesTree() → 選擇器 enable", async () => {
+    const spy = vi
+      .spyOn(governanceClient, "filesTree")
+      .mockRejectedValueOnce(new Error("proxy 502"))
+      .mockResolvedValueOnce(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<IssuesRuleCenterPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.innerHTML).toContain("檔案庫不可用");
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="a1-fs-retry"]');
+    expect(retry).not.toBeNull();
+    await act(async () => { retry!.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.innerHTML).not.toContain("檔案庫不可用");
+    const projectSel = container.querySelector<HTMLSelectElement>('[data-testid="a1-fs-project"]');
+    expect(projectSel!.disabled).toBe(false); // fsTree 已載入 → 選擇器可用
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    await act(async () => { root.unmount(); });
+  });
 });
