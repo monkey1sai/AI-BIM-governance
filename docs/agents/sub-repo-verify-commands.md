@@ -38,6 +38,23 @@ Runtime / Docker / Kit / viewer / env / port / conversion-service 改動必須�
 .\scripts\verify-all.ps1
 ```
 
+測試部署區重建固定使用 build-only helper：
+
+```powershell
+.\scripts\dev\rebuild-test-deploy.ps1 -Build
+```
+
+Helper 會重建 `D:\Users\deploy\AI-bim-geo` 並在部署區執行：
+
+```powershell
+cd D:\Users\deploy\AI-bim-geo
+.\scripts\deploy.ps1 -Build
+```
+
+禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
+清理規則會移除 agent/tooling docs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows`。
+若 `deploy.ps1 -Build` Phase 3 被外部 `kit.exe` / conversion `python.exe` 佔用必要 ports 擋住，已授權停止該 blocking PID 後重跑同一條 `-Build`；記錄 port / PID / process name，不得改用 `-Force` / `-DryRun`。
+
 本機 runtime 可用時優先補：
 
 ```powershell
