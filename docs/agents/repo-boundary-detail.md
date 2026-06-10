@@ -768,7 +768,7 @@ session / collaboration 歸 coordinator
 
 這些文件提供 AI agent 在陌生模組探索時的快速上下文，目的是縮短定位時間，不取代程式碼與 API contract。
 
-Graphify Wiki（跨文件知識圖）
+Generated wiki（跨文件知識圖）
 
 入口：README.md
 用途：快速理解跨 repo 概念關聯、名詞對照、文件連結關係。
@@ -779,7 +779,7 @@ Source of Truth 優先順序
 程式碼實作
 contracts 文件
 AGENTS 邊界定義
-wiki（Graphify）
+generated wiki
 維護規範
 
 若發現 wiki 與實作不一致，先以實作為準，並補更新 wiki。

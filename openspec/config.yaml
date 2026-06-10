@@ -50,5 +50,5 @@ rules:
     - Please use Traditional Chinese if possible. 
     - Describe externally observable behavior and acceptance criteria.
     - Avoid encoding agent-specific implementation details as product requirements.
-    - Do not treat installed skills, Graphify wiki, or GitNexus generated skills as product source of truth.
+    - Do not treat installed skills, generated wiki, or GitNexus generated skills as product source of truth.
     - Preserve English API paths and protocol field names when they are part of the contract.

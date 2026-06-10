@@ -4,13 +4,13 @@
 
 ## Role
 
-`docs/` 是 **workspace 文件總入口**。它收 agent boundary lazy-load sub-files、跨 service contracts、Graphify wiki、operational runbooks、superpowers 等 agent-facing 與人 facing 文件；它不是程式碼或 contract 的權威源 —— 真正權威在程式碼與 OpenSpec spec。
+`docs/` 是 **workspace 文件總入口**。它收 agent boundary lazy-load sub-files、跨 service contracts、generated wiki、operational runbooks、superpowers 等 agent-facing 與人 facing 文件；它不是程式碼或 contract 的權威源 —— 真正權威在程式碼與 OpenSpec spec。
 
 ## Owns
 
 - `docs/agents/` — 根目錄 AGENTS.md / CLAUDE.md 的 lazy-load sub-files
 - `docs/contracts/` — 跨 sub-repo / 對外平台 contract 描述（與 `tests/contracts/` 對應）
-- `docs/wiki/` — Graphify / GitNexus generated wiki（curated corpus）
+- `docs/wiki/` — GitNexus generated wiki（落 `docs/wiki/gitnexus/`）
 - `docs/runbooks/` — operational runbook
 - `docs/architecture/` — 架構 snapshot / 決策記錄
 - `docs/superpowers/` — superpowers skill specs / 設計 doc
@@ -18,28 +18,25 @@
 - `docs/git/` / `docs/verification/` / `docs/evidence/` / `docs/demo/` / `docs/plans/` / `docs/postman/`
 - `docs/PROJECT_*.md`、`docs/PR_REVIEW_AGENT.md`、`docs/gitnexus-validation.md` 等頂層文件
 - `docs/current_task.md` — session-scoped working note
-- `docs/graphify-corpus/` — Graphify curated corpus 配置（規則見 memory `graphify-curated-corpus-pattern.md`）
 
 ## Does Not Own
 
 - 程式碼行為權威（屬於 sub-repo source）
 - contract 機械驗證（屬於 `tests/contracts/`）
 - OpenSpec spec 權威（屬於 `openspec/specs/<capability>/`）
-- 自動生成的 GitNexus wiki dump（屬於 `docs/wiki/gitnexus/`；不要 inline 進 curated corpus）
+- 自動生成的 GitNexus wiki dump（屬於 `docs/wiki/gitnexus/`）
 
 ## Required Boundaries
 
 - MUST 標明文件性質：agent boundary / contract / wiki / runbook / spec design / working note。
 - MUST 對齊 source of truth 順序：程式碼 > contracts > AGENTS 邊界 > wiki（規則見根目錄 `AGENTS.md` §3）。
 - MUST NOT 把 `docs/` 內任何文件當成 product / API 行為的權威 —— wiki 與實作不一致時以實作為準，並補更新 wiki。
-- MUST NOT 把 GitNexus 自動生成的 dump 混進 `docs/graphify-corpus/sources.txt`（規則見 memory `graphify-curated-corpus-pattern.md`）。
 
 ## Before Editing
 
 - 先讀目標子目錄的 README 或既有檔案。
 - 改 `docs/agents/*.md` MUST 確認 sub-file index 已在根目錄 `AGENTS.md` §2 與 `CLAUDE.md` §2 同步（見 spec `agent-doc-context-budget` Requirement 「Root entrypoint files SHALL maintain a complete sub-file index」）。
 - 改 contract 描述 MUST 同步檢查 `tests/contracts/` 與相關 sub-repo public API。
-- 改 Graphify curated corpus 配置 MUST 走 `docs/graphify-corpus/sources.txt` + `build_graph.py`；輸出落地 `docs/wiki/graphify/`，不要 `graphify .`。
 
 ## Verify
 
