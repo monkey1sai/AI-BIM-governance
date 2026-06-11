@@ -994,6 +994,119 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 
     await act(async () => { root.unmount(); });
   });
+
+  // 對稱補上 base 側（需求明文：「手動覆寫 input 時清空對應 model_version_id」適用 base/target
+  // 兩側）。base 先選版本再手動覆寫路徑（清 base 綁定）；target 走選擇器保留版本綁定 → assert
+  // createDiff 收到 base_model_version_id=undefined 但 target_model_version_id 仍在。若 base input
+  // onChange 沒清 baseVerId / baseSel.version，會殘留舊綁定隨 createDiff 送出，測試會紅。
+  it("A2 base input 手動覆寫 → 清 base_model_version_id，target 綁定不受影響", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2bov", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2bov",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // base 先選版本（建立綁定）再手動覆寫路徑（清綁定）；target 走選擇器保留版本綁定。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+
+    // 手動覆寫 base 路徑 → onChange 清 baseVerId + baseSel.version。
+    // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
+    // 真正觸發 onChange 入 state（直接設 .value 會被 tracker 視為無變化而吞掉）——沿用本檔
+    // target 側手動覆寫測試（上方）同款 idiom。
+    await act(async () => {
+      const el = baseInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed-base.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(baseInput().value).toBe("C:/manual/typed-base.ifc"); // 手動值已真正入 state
+    expect(sel("a2-base-version").value).toBe(""); // 覆寫後 base version select 回未選
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe("C:/manual/typed-base.ifc");
+    // 手填路徑 → base_model_version_id 清空（undefined，維持現行為），但 target 綁定保留。
+    expect(arg.base_model_version_id).toBeUndefined();
+    expect(arg.target_model_version_id).toBe("270/機電/ver 竣工 v2.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // A2 選擇器 graceful degradation（對稱於 A1 既有 fsErr 測試）：filesTree() reject → 顯示誠實
+  // 「檔案庫不可用…可改用下方手動輸入路徑」（pages.tsx a2-fs-error）+ 重試鈕（a2-fs-retry），
+  // 且 base/target 手動輸入框照常可用（保留預設 fixture、仍可編輯）。SSR 首幀 fsErr=null 走
+  // loading 文案，唯有 client-render 微任務跑完（catch→setFsErr）才到得了此分支。
+  it("A2 filesTree() reject → 選擇器標「檔案庫不可用」graceful degrade，base/target 手動輸入照常可用", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 catch→setFsErr 入 state
+
+    const html = container.innerHTML;
+    // 誠實 graceful-degradation 文案：標不可用 + 指向手動輸入。
+    expect(html).toContain("檔案庫不可用");
+    expect(html).toContain("可改用下方手動輸入路徑");
+    expect(html).toContain("proxy 502"); // 顯示原因，不吞錯
+    // 已離開「載入檔案庫中…」（fsErr 已設）。
+    expect(html).not.toContain("載入檔案庫中…（GET /api/governance/files/tree）");
+
+    // 使用者可觸發的重試鈕存在（不必整頁 reload）。
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="a2-fs-retry"]');
+    expect(retry).not.toBeNull();
+
+    // base/target 手動輸入框仍可用（保留預設 fixture 路徑，graceful degrade 不擋手動流程）。
+    const baseInput = container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const targetInput = container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
+    expect(baseInput.disabled).toBe(false);
+    expect(targetInput.disabled).toBe(false);
+    expect(baseInput.value).toContain(".ifc"); // 預設 fixture 路徑（受控值未被 fsErr 凍結）
+    // 仍可手動改 base 路徑（驗證受控輸入未被 fsErr 凍結）。
+    await act(async () => {
+      const el = container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!.value).toBe("C:/manual/typed.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
 });
 
 describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 schema，渲染層驗證；真後端值由 E2E 驗", () => {
