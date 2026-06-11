@@ -16,6 +16,13 @@ export class ExternalIfcReadyStore {
   private readonly jobsById = new Map<string, IfcReadyIntakeJob>();
   private readonly idempotencyIndex = new Map<string, string>();
   private readonly correlationIndex = new Map<string, string>();
+  /**
+   * conversion-artifact-id-sanitize（PR #206 review 修補）：sanitize 後 correlation 鍵
+   * 與原始鍵分桶。只供 conversion 結果回拋（getByCorrelation fallback）查詢，
+   * SHALL NOT 參與 intake 去重（findExisting）— 否則另一請求若以 sanitize 字串
+   * 為真實 X-Correlation-Id，會被誤判成既有 job 的 idempotent replay（aliasing）。
+   */
+  private readonly sanitizedCorrelationIndex = new Map<string, string>();
 
   /** 依 idempotency_key（或 correlation_id）回傳既有 job（idempotent replay）。 */
   findExisting(idempotencyKey: string, correlationId: string): IfcReadyIntakeJob | undefined {
@@ -80,14 +87,15 @@ export class ExternalIfcReadyStore {
    * coordinator dispatch 時對 correlation_id 跑 sanitize（worker 派生含冒號者會被
    * 改寫），conversion authority 儲存/回傳的是 **sanitize 後** correlation_id。
    * 結果回拋（ingestConversionReport → getByCorrelation）以該 sanitize 後鍵查詢，
-   * 若 correlationIndex 只登原始鍵則必 404 閉環斷裂。故同時登記原始鍵與 sanitize
-   * 後鍵（兩者相同時不重複），讓兩種回拋都命中同一 job。
+   * 若只登原始鍵則必 404 閉環斷裂。故原始鍵登 correlationIndex、sanitize 後鍵
+   * 登獨立的 sanitizedCorrelationIndex（兩者相同時不重複登記），讓兩種回拋都
+   * 命中同一 job，且 sanitize 鍵不污染 intake 去重域（見 index 宣告處註解）。
    */
   private registerCorrelationKeys(correlationId: string, jobId: string): void {
     this.correlationIndex.set(correlationId, jobId);
     const sanitized = sanitizeArtifactIdPart(correlationId);
     if (sanitized !== correlationId) {
-      this.correlationIndex.set(sanitized, jobId);
+      this.sanitizedCorrelationIndex.set(sanitized, jobId);
     }
   }
 
@@ -185,7 +193,10 @@ export class ExternalIfcReadyStore {
   }
 
   getByCorrelation(correlationId: string): IfcReadyIntakeJob | undefined {
-    const id = this.correlationIndex.get(correlationId);
+    // 先查原始鍵；查不到再查 sanitize 鍵（conversion 回拋帶的是 sanitize 後值）。
+    // 原始鍵優先：若另一 job 的真實 correlation 恰等於某 sanitize 值，回拋對帳
+    // 仍以「持有該原始鍵」的 job 為準，不被 sanitize 鍵搶走。
+    const id = this.correlationIndex.get(correlationId) ?? this.sanitizedCorrelationIndex.get(correlationId);
     return id ? this.jobsById.get(id) : undefined;
   }
 

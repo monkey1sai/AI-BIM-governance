@@ -606,7 +606,8 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
             return;
           }
         }
-        res.writeHead(200, { "Content-Type": "application/json" });
+        // 真 conversion API 受理回 202 Accepted（stub 對齊真 API 行為）。
+        res.writeHead(202, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
             conversion_job_id: "stream_conv_cjk",

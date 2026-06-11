@@ -1,5 +1,7 @@
 # Conversion artifact_id sanitize（中文 model_version_id 派工修復）Implementation Plan
 
+- 文件性質：working note（implementation plan；非 contract）。與實作衝突時以程式碼與 `openspec/specs/` 為準。
+
 **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 
 - **Goal:** 讓含中文（非 safe 字元）的 `external_model_version_id` 不再使 coordinator 對 conversion API 的派工被 `SAFE_ID_RE` 擋成 400，並讓 `#/conv` Ifc-ready jobs 表可見 `dispatch_error` 明細。

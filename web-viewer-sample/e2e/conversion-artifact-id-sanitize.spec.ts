@@ -102,7 +102,8 @@ async function startConversionStub(): Promise<void> {
         res.end(JSON.stringify({ detail: `Invalid ifc_artifact_id: ${artifactId}` }));
         return;
       }
-      res.writeHead(200, { "Content-Type": "application/json" });
+      // 真 conversion API 受理回 202 Accepted（stub 對齊真 API 行為）。
+      res.writeHead(202, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({ conversion_job_id: "stream_conv_e2e", status: "queued", authority: "bim-streaming-server" }),
       );

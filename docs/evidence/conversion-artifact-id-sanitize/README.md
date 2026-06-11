@@ -1,5 +1,7 @@
 # Evidence — conversion-artifact-id-sanitize（中文 model_version_id 派工修復 + dispatch_error 可見）
 
+- 文件性質：working note（驗收證據；非 contract / 非 runbook）。與實作衝突時以程式碼與 `openspec/specs/` 為準。
+
 對應 spec：`docs/superpowers/specs/2026-06-11-conversion-artifact-id-sanitize-design.md`
 對應 issue：#205
 

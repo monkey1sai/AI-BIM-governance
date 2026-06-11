@@ -26,7 +26,7 @@ Root cause（已實證）：
 1. 中文（任何非 safe 字元）的 `external_model_version_id` 不再導致 dispatch 400：coordinator 組出的 `ifc_artifact_id` 永遠通過 conversion 端 `SAFE_ID_RE`。
 2. sanitize 具確定性（同一 external id 永遠映出同一 artifact_id）且不碰撞（不同 external id 不會映到同一 artifact_id）。
 3. 純 safe 字元的既有 id **輸出不變**（向後相容：英文 id 的 artifact_id 與現行完全相同，不影響既有對帳/etag 慣例）。
-4. `#/conv` Ifc-ready jobs 表可見 `dispatch_error` 明細（有錯才顯示；無錯不佔版面），операtor 不需打 API 即可知道派工失敗原因。
+4. `#/conv` Ifc-ready jobs 表可見 `dispatch_error` 明細（有錯才顯示；無錯不佔版面），operator 不需打 API 即可知道派工失敗原因。
 
 ## 3. 非目標（明確不做）
 

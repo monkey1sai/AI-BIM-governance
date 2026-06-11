@@ -476,4 +476,37 @@ describe("conversion result reconciliation with sanitized correlation_id (cr1)",
     expect(res.body.ifc_ready_job.conversion_status).toBe("ready");
     expect(res.body.callback.event).toBe("conversion_result_ready");
   });
+
+  // PR #206 review 修補（P2 aliasing）：sanitize 後鍵不得污染 intake 去重域。
+  // 若 sanitize 鍵與原始鍵同登 correlationIndex，另一請求以「恰等於 sanitize 值」的
+  // 真實 X-Correlation-Id + 不同 idempotency key 進來，會被誤判成 job A 的
+  // idempotent replay。隔離成獨立 sanitizedCorrelationIndex 後必須建立新 job。
+  it("intake aliasing 回歸：raw correlation 恰為他 job 的 sanitize 值 → 新 job 而非 replay", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+
+    // job A：raw correlation 含冒號（sanitize 會改寫成 SANITIZED_CORRELATION）。
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "X-Webhook-Secret": "dev-webhook-secret",
+        "X-Correlation-Id": RAW_CORRELATION,
+        "X-Idempotency-Key": "idem_alias_a",
+      })
+      .send({ ...structuredClone(IFC_CONTRACT.example) });
+    expect(first.body.idempotent_replay).toBe(false);
+
+    // job B：真實 correlation 恰等於 A 的 sanitize 值、idempotency key 不同 →
+    // 必須是獨立新 job（非 A 的 idempotent replay）。
+    const second = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "X-Webhook-Secret": "dev-webhook-secret",
+        "X-Correlation-Id": SANITIZED_CORRELATION,
+        "X-Idempotency-Key": "idem_alias_b",
+      })
+      .send({ ...structuredClone(IFC_CONTRACT.example) });
+    expect(second.body.idempotent_replay).toBe(false);
+    expect(second.body.ifc_ready_job_id).not.toBe(first.body.ifc_ready_job_id);
+  });
 });
