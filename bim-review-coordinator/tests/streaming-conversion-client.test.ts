@@ -59,6 +59,27 @@ describe("toInternalIfcReadyEvent", () => {
     expect(artifact.artifact_id).toBe(`ifc_${EVENT.external_model_version_id}`);
   });
 
+  // rl1（對抗複驗回歸鎖補強）：修後 model_version_id / correlation_id / tenant_id /
+  // project_id / event_id 全過 sanitize。純 safe（全英文/數字）輸入時，sanitize 必須
+  // 是 identity——逐欄 === 原始值，鎖住「英文路徑零行為變化」性質，防未來 sanitize
+  // 規則改動（例如改成總是加 hash 後綴）悄悄回歸英文 id 的輸出。
+  it("全 safe 輸入 → 內部 identity 欄位逐欄 === 原始值（鎖 sanitize identity 性質）", () => {
+    const payload = toInternalIfcReadyEvent(EVENT, {
+      correlationId: "corr_identity",
+      externalModelVersionId: EVENT.external_model_version_id,
+    });
+    // 含 ifc_ 前綴的 artifact_id（前綴外的片段 === 原始 external id）。
+    expect((payload.ifc_artifact as { artifact_id: string }).artifact_id).toBe(
+      `ifc_${EVENT.external_model_version_id}`,
+    );
+    expect(payload.model_version_id).toBe(EVENT.external_model_version_id);
+    expect(payload.correlation_id).toBe("corr_identity");
+    expect(payload.tenant_id).toBe(EVENT.tenant_id);
+    expect(payload.project_id).toBe(EVENT.project_id);
+    // event_id 外部已帶（safe）→ 原樣（sanitize identity），非 fallback 形。
+    expect(payload.event_id).toBe(EVENT.event_id);
+  });
+
   // mv1（指揮官實證根治缺口）：conversion_authority.py:264 對 model_version_id 也跑
   // _safe_id（SAFE_ID_RE），中文 model_version_id 即使 artifact_id 已 sanitize 仍 400。
   it("中文 external id → payload.model_version_id 走 sanitize（通過 SAFE_ID_RE），external_model_version_id 保留原始", () => {

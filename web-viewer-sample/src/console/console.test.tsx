@@ -811,7 +811,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 });
 
-describe("ConversionSchedulingPage：dispatch_error 明細可見（真實後端欄位，無 mock 假資料）", () => {
+describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 schema，渲染層驗證；真後端值由 E2E 驗", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
   let container: HTMLDivElement;
   let prevActEnv: unknown;

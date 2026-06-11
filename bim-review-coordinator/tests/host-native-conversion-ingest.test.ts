@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -7,6 +8,7 @@ import { type AddressInfo } from "node:net";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { sanitizeArtifactIdPart } from "../src/services/streamingConversionClient.js";
 import type { CoordinatorConfig } from "../src/config.js";
 
 // introduce-host-native-conversion-authority-service / conversion-webhook-lifecycle
@@ -425,5 +427,53 @@ describe("conversion-ready auto-session handoff", () => {
     const types = (lifecycleRes.body.items as Array<{ type: string }>).map((it) => it.type);
     expect(types).toContain("sessionCreated");
     expect(types).toContain("sessionActive");
+  });
+});
+
+// cr1（對抗複驗 high regression — 本 fix 引入）：conversion authority 對 correlation_id
+// 跑 _safe_id，回傳的是 **sanitize 後** correlation_id（worker 派生含冒號者會被改寫）。
+// coordinator 的 ingestConversionReport → getByCorrelation 過去只以「原始」correlation_id
+// 建索引 → 凡 correlation 被 sanitize 改寫，結果回拋必 404 閉環斷裂。
+// 端到端對帳測試：worker 派生（冒號 correlation）案例 dispatch 後，模擬 conversion result
+// callback 以 sanitize 後 correlation_id 回拋 → 必須命中原 job（非 404）、狀態正確推進。
+describe("conversion result reconciliation with sanitized correlation_id (cr1)", () => {
+  // worker compat normalize 派生的含冒號 correlation_id（app.ts normalizeIntakePayload）。
+  const RAW_CORRELATION = "worker:899::xxx::task_recon_001";
+  const SANITIZED_CORRELATION = sanitizeArtifactIdPart(RAW_CORRELATION);
+
+  it("worker 派生冒號 correlation：result 以 sanitize 後 correlation 回拋 → 命中原 job（非 404）", async () => {
+    // 前置 sanity：sanitize 確實改寫了原始值（否則本測試無法證明雙鍵命中）。
+    expect(SANITIZED_CORRELATION).not.toBe(RAW_CORRELATION);
+    expect(SANITIZED_CORRELATION).toMatch(/^[A-Za-z0-9_.-]+$/);
+
+    // streaming result 回拋 sanitize 後 correlation_id（= 真 conversion_authority 行為）。
+    const readyResultSanitizedCorr = {
+      ...READY_RESULT,
+      correlation_id: SANITIZED_CORRELATION,
+    };
+    const base = await startStreamingStub(readyResultSanitizedCorr);
+    const app = makeApp(base);
+
+    // seed：以含冒號的 raw correlation 建立 ifc-ready job（worker 派生形狀）。
+    await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "X-Webhook-Secret": "dev-webhook-secret",
+        "X-Correlation-Id": RAW_CORRELATION,
+        "X-Idempotency-Key": "idem_recon_001",
+      })
+      .send({ ...structuredClone(IFC_CONTRACT.example) });
+
+    // ingest：result.correlation_id = sanitize 後值 → 必須仍命中原 job（非 404）。
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body.conversion_status).toBe("ready");
+    // 命中的是原 job（external_model_version_id 來自 contract example，未被改寫）。
+    expect(res.body.ifc_ready_job.conversion_status).toBe("ready");
+    expect(res.body.callback.event).toBe("conversion_result_ready");
   });
 });

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 import type { ExternalIfcReadyEvent, IfcReadyIntakeJob, ShadowMetadata } from "../types.js";
 
 /**
@@ -70,8 +71,24 @@ export class ExternalIfcReadyStore {
     };
     this.jobsById.set(jobId, job);
     this.idempotencyIndex.set(binding.idempotencyKey, jobId);
-    this.correlationIndex.set(binding.correlationId, jobId);
+    this.registerCorrelationKeys(binding.correlationId, jobId);
     return job;
+  }
+
+  /**
+   * conversion-artifact-id-sanitize（spec 2026-06-11，cr1 對抗複驗回歸修補）：
+   * coordinator dispatch 時對 correlation_id 跑 sanitize（worker 派生含冒號者會被
+   * 改寫），conversion authority 儲存/回傳的是 **sanitize 後** correlation_id。
+   * 結果回拋（ingestConversionReport → getByCorrelation）以該 sanitize 後鍵查詢，
+   * 若 correlationIndex 只登原始鍵則必 404 閉環斷裂。故同時登記原始鍵與 sanitize
+   * 後鍵（兩者相同時不重複），讓兩種回拋都命中同一 job。
+   */
+  private registerCorrelationKeys(correlationId: string, jobId: string): void {
+    this.correlationIndex.set(correlationId, jobId);
+    const sanitized = sanitizeArtifactIdPart(correlationId);
+    if (sanitized !== correlationId) {
+      this.correlationIndex.set(sanitized, jobId);
+    }
   }
 
   markDispatched(jobId: string, conversionJobId: string, conversionStatus: string): IfcReadyIntakeJob | undefined {

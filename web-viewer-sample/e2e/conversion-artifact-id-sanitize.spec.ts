@@ -23,6 +23,17 @@ import { test, expect, request as pwRequest, type APIRequestContext } from "@pla
 // 服務本 branch build 出的 dist-ui（CONSOLE_DIST_DIR），並把 conversion base 指向 in-test stub。
 // 前端由 coordinator 同源 /ui 服務 → coordinatorClient 走 same-origin → 完全打到本 stub 化的 coordinator。
 // playwright 仍會 auto-start :5180 viewer，但本 spec 一律 page.goto 到本 coordinator /ui，:5180 與本 spec 無關。
+//
+// *** conditional-skip 限制明文（f1b 對抗複驗補揭露；比照 minio-fileserver-source.spec.ts:17-27 先例）***
+//   beforeAll 的守門（dist-ui 未 build → test.skip）是 conditional skip：在 Playwright 語意裡
+//   skip != fail，亦即「前置缺失 → test.skip → 計為 pass」。所以若把本 spec 丟進一個不保證
+//   前置（不 build:ui / 不起 coordinator）的環境，它會在環境未對齊時靜默全 skip 而仍綠燈
+//   → 那是假信心，不是通過。本 spec 屬本機 / 指揮官手動 gate。
+//   本 repo 現況：.github/workflows 只有 pr-review-agent.yml，無任何 Playwright/e2e job，
+//   故此 skip-based 設計不會 false-green 任何既有自動化 gate。
+//   若日後要把它升級成 CI 硬 gate：必須在 workflow 加一個「前置必備、缺失即 fail」的 setup step
+//   （npm run build:ui + 起 conversion/IFC stub 或真 conversion API），不能只靠這裡的 conditional
+//   skip——否則它仍只是個「環境未對齊就靜默跳過」的測試。 ***
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_REPO_DIR = path.resolve(TEST_DIR, ".."); // web-viewer-sample/

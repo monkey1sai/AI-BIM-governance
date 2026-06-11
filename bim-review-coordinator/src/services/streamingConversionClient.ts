@@ -129,7 +129,13 @@ export function toInternalIfcReadyEvent(
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     event_type: "ifc_ready",
-    event_id: event.event_id || `evt_${binding.correlationId}`,
+    // conversion_authority.py:238 對 event_id 也跑 _safe_id（SAFE_ID_RE）。
+    // worker-compat normalize 不產 event_id → 走 fallback；correlationId 可能含冒號
+    // （worker:project::version::task），未 sanitize 則 dispatch 在 event_id 先炸 400。
+    // 外部帶的 event_id 同樣可能非 safe，一律過 sanitize。
+    event_id: event.event_id
+      ? sanitizeArtifactIdPart(event.event_id)
+      : `evt_${sanitizeArtifactIdPart(binding.correlationId)}`,
     // conversion_authority.py:261-264 對 correlation_id / tenant_id / project_id /
     // model_version_id 全跑 _safe_id（SAFE_ID_RE）；coordinator 派生的 correlation_id
     // 可能含冒號（worker:project::version::task），中文 project/tenant/model id 也常見。
