@@ -1,4 +1,5 @@
 import type { ConversionQualityMetricsSummary, ExternalIfcReadyEvent } from "../types.js";
+import crypto from "node:crypto";
 
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.4）。
@@ -89,6 +90,35 @@ export interface PollConversionResultOptions {
 }
 
 /**
+ * conversion-artifact-id-sanitize（spec 2026-06-11 §4.1）：把外部 model_version_id
+ * 轉成通過 conversion 端 `SAFE_ID_RE = ^[A-Za-z0-9_.-]+$` 的 artifact_id 片段。
+ *
+ * - 純 safe 字元 → 原樣回傳（零行為變化，既有英文 id 的 artifact_id 與現行完全相同）。
+ * - 含非 safe 字元 → `${safe}_${sha256hex(raw).slice(0,8)}`（確定性 + 防碰撞）。
+ * - safe 為空（全非 safe 字元）→ `mv_${sha256hex(raw).slice(0,8)}`（可讀前綴退化形）。
+ *
+ * 不放寬 conversion 端規則（id 進檔案路徑 / USD 命名，放寬有路徑安全風險），修在 coordinator 端。
+ */
+export function sanitizeArtifactIdPart(raw: string): string {
+  const safe = raw.replace(/[^A-Za-z0-9_.-]/g, "");
+  if (safe === raw) return raw;
+  const hash8 = crypto.createHash("sha256").update(raw).digest("hex").slice(0, 8);
+  return safe.length > 0 ? `${safe}_${hash8}` : `mv_${hash8}`;
+}
+
+/**
+ * conversion_authority.py:262-263 對 tenant_id / project_id 也跑 _safe_id，且這兩欄
+ * 在 coordinator 端無 SAFE_ID_RE 輸入驗證（authProvider.requiredIdentity 只擋空值），
+ * 中文 project / tenant 命名會在 dispatch 時被 conversion 端 _safe_id 擋成 400。
+ *
+ * 非字串（理論上 undefined / null）原樣透傳，讓 conversion authority 套用其 server-side
+ * 預設值（`tenant_demo_001` / `project_demo_001`），維持既有行為。
+ */
+function sanitizeSafeIdField(value: unknown): unknown {
+  return typeof value === "string" ? sanitizeArtifactIdPart(value) : value;
+}
+
+/**
  * external（B-scheme）→ internal streaming `ifc_ready_event`。
  * streaming 的 conversion_authority 仍以 `model_version_id` / `ifc_artifact`
  * 為輸入；coordinator 在邊界做轉換，外部契約維持 B-scheme。
@@ -99,17 +129,27 @@ export function toInternalIfcReadyEvent(
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     event_type: "ifc_ready",
-    event_id: event.event_id || `evt_${binding.correlationId}`,
-    correlation_id: binding.correlationId,
-    tenant_id: event.tenant_id,
-    project_id: event.project_id,
+    // conversion_authority.py:238 對 event_id 也跑 _safe_id（SAFE_ID_RE）。
+    // worker-compat normalize 不產 event_id → 走 fallback；correlationId 可能含冒號
+    // （worker:project::version::task），未 sanitize 則 dispatch 在 event_id 先炸 400。
+    // 外部帶的 event_id 同樣可能非 safe，一律過 sanitize。
+    event_id: event.event_id
+      ? sanitizeArtifactIdPart(event.event_id)
+      : `evt_${sanitizeArtifactIdPart(binding.correlationId)}`,
+    // conversion_authority.py:261-264 對 correlation_id / tenant_id / project_id /
+    // model_version_id 全跑 _safe_id（SAFE_ID_RE）；coordinator 派生的 correlation_id
+    // 可能含冒號（worker:project::version::task），中文 project/tenant/model id 也常見。
+    // 內部欄位走 sanitize 避免 dispatch 400；external_model_version_id 保留原始供對帳。
+    correlation_id: sanitizeArtifactIdPart(binding.correlationId),
+    tenant_id: sanitizeSafeIdField(event.tenant_id),
+    project_id: sanitizeSafeIdField(event.project_id),
     // streaming internal 仍用 model_version_id 欄位；以 external id 餵入並由
     // coordinator 保留 external 綁定（shadow / callback 關聯屬 T5/T6）。
-    model_version_id: binding.externalModelVersionId,
+    model_version_id: sanitizeArtifactIdPart(binding.externalModelVersionId),
     external_model_version_id: binding.externalModelVersionId,
     external_conversion_task_id: event.external_conversion_task_id ?? null,
     ifc_artifact: {
-      artifact_id: `ifc_${binding.externalModelVersionId}`,
+      artifact_id: `ifc_${sanitizeArtifactIdPart(binding.externalModelVersionId)}`,
       format: event.source_ifc.format || "ifc",
       filename: event.source_ifc.filename || null,
       url: event.source_ifc.ref,

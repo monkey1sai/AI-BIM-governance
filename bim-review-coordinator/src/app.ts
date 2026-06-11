@@ -1060,7 +1060,9 @@ export function createCoordinatorApp(
     qualitySummary: ConversionQualityMetricsSummary | null = null,
   ): ConversionIngestOutcome {
     const normalizedStatus = normalizeConversionReportStatus(report.status);
-    const job = externalIfcReadyStore.getByCorrelation(report.correlation_id);
+    // conversion-artifact-id-sanitize（PR #206 review P2）：correlation collision 時
+    // 以 report.conversion_job_id 消歧，避免 unsafe job 的結果套到同字串 job 上。
+    const job = externalIfcReadyStore.getByCorrelation(report.correlation_id, report.conversion_job_id ?? null);
     if (!job) {
       return { ok: false, status: 404, detail: "No IFC-ready job for correlation_id." };
     }

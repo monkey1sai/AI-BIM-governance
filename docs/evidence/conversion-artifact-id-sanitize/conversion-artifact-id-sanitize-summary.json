@@ -1,0 +1,56 @@
+{
+  "feature": "conversion-artifact-id-sanitize",
+  "spec": "docs/superpowers/specs/2026-06-11-conversion-artifact-id-sanitize-design.md",
+  "issue": "#205",
+  "engine": "playwright",
+  "engine_real": "@playwright/test chromium (Desktop Chrome), web-viewer-sample/playwright.config.ts",
+  "run": {
+    "date": "2026-06-11",
+    "spec_file": "web-viewer-sample/e2e/conversion-artifact-id-sanitize.spec.ts",
+    "command": "cd web-viewer-sample && npx playwright test conversion-artifact-id-sanitize.spec.ts",
+    "result": "1 passed (3.8s)",
+    "verticalSliceOk": true,
+    "log": "artifacts/e2e/conv-id-sanitize-run2.log"
+  },
+  "mode": "B - STUB CONVERSION API",
+  "mode_note": "真 conversion API (:8010/streaming) 需 host-native GPU runtime、未在本輪起。本 spec 自起 (a) Node http stub conversion server (與 conversion 端 SAFE_ID_RE /^[A-Za-z0-9_.-]+$/ 逐字同款規則)、(b) stub IFC source server、(c) 一台本 branch 碼 coordinator (tsx src/index.ts, OS 配 free port, CONSOLE_DIST_DIR=web-viewer-sample/dist-ui 同源服務 /ui)。真規則已在單元/整合層 (bim-review-coordinator/tests/external-ifc-ready.test.ts) 鎖死。截圖標 STUB CONVERSION API。",
+  "routes": [
+    "/ui#/conv (ConversionSchedulingPage, EdgeConsole case \"conv\", 由自起 coordinator 同源服務)"
+  ],
+  "buttons": [
+    "Refresh queue (getByRole button name /Refresh queue|讀取中/)"
+  ],
+  "fixture": "spec 自動 POST /api/external/ifc-ready 兩筆 (default fixture, 非手動 curl): external_model_version_id='271_pieple_管線' (中文成功路徑) 與 'forcefail_demo' (哨兵, stub 強制回 400)",
+  "backend_real": "真打自起 coordinator (本 branch 碼) 的 POST /api/external/ifc-ready 與 GET /api/external/ifc-ready/:jobId, 前端 coordinatorClient.listIfcReady 走 same-origin GET /api/external/ifc-ready。conversion 端為 STUB (與真 SAFE_ID_RE 同規則)。",
+  "runtimeIds": [
+    "ifcready_1781153867837_5f76456c",
+    "ifcready_1781153867868_53f20883"
+  ],
+  "runtimeIds_note": "兩筆真實 ifc_ready_job_id (自 coordinator 回傳, 從 trace network 抽出)。一筆中文 id job → status=dispatched (dispatch_error null), 一筆 forcefail job → status=dispatch_failed (dispatch_error 含 400 + STUB forced failure)。",
+  "observed_states": {
+    "loading": "Refresh queue 按鈕 /Refresh queue|讀取中/ 涵蓋載入態",
+    "success": "中文 id job 達 dispatched, conversion 欄=queued, 無 conv-dispatch-error 節點",
+    "failure": "forcefail job 達 dispatch_failed, dispatch 欄出現 conv-dispatch-error-<jobId> 節點, title 含 400",
+    "retry": "not observed — 重派/重試端點 (dispatch_failed re-dispatch) 非本 spec 目標 (spec §3)"
+  },
+  "assertions_passed": [
+    "POST 中文 ifc-ready 回 202, jobId matches /^ifcready_/",
+    "中文 id job status === dispatched, dispatch_error === null",
+    "forcefail job status === dispatch_failed, dispatch_error contains '400'",
+    "table.ec-table visible 後 cjk row 可見, conversion td.nth(2) text === 'queued', 無 conv-dispatch-error-<cjkJobId> 節點",
+    "forcefail conv-dispatch-error-<failJobId> 節點 visible, title 屬性 match /400/"
+  ],
+  "evidence": {
+    "screenshot": "artifacts/e2e/conversion-artifact-id-sanitize-conv.png",
+    "trace_dir": "artifacts/e2e/conversion-artifact-id-sanitize-trace/",
+    "trace_zip": "artifacts/e2e/conversion-artifact-id-sanitize-trace/conversion-artifact-id-san-6b1e1-ed；必失敗-job-顯-dispatch-error-chromium/trace.zip",
+    "html_report": "artifacts/e2e/conversion-artifact-id-sanitize-trace/report/index.html",
+    "worktree_tracked_evidence": ".worktrees/conversion-artifact-id-sanitize/docs/evidence/conversion-artifact-id-sanitize/ (README.md + conv-list.png)"
+  },
+  "not_observed": [
+    "真 conversion API (:8010) — 未起 (STUB CONVERSION API)",
+    "真 IFC→USDC 轉檔 — 未做",
+    "Kit / WebRTC 視覺、GPU-backed review session、stage truth matched — N/A: 本 feature 為轉檔排程清單頁 (#/conv), 非 3D/viewer 類, 無 review session / stage truth",
+    "dispatch_failed re-dispatch / 重試 — 非本 spec 目標 (spec §3)"
+  ]
+}

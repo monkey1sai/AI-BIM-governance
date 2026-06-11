@@ -76,7 +76,7 @@ describe("IntakeSelectPage R3：不安全 viewer_url → 停用 + 拒導航", ()
     created_at: "2026-06-03T00:00:00Z",
   };
   const jobs: IfcReadyListItem[] = [
-    { ...baseJob, ifc_ready_job_id: "job_unsafe", viewer_url: "javascript:alert(1)" },
+    { ...baseJob, ifc_ready_job_id: "job_unsafe", viewer_url: "javascript:alert(1)", dispatch_error: null },
   ];
 
   let container: HTMLDivElement;

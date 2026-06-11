@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 import type { ExternalIfcReadyEvent, IfcReadyIntakeJob, ShadowMetadata } from "../types.js";
 
 /**
@@ -15,6 +16,13 @@ export class ExternalIfcReadyStore {
   private readonly jobsById = new Map<string, IfcReadyIntakeJob>();
   private readonly idempotencyIndex = new Map<string, string>();
   private readonly correlationIndex = new Map<string, string>();
+  /**
+   * conversion-artifact-id-sanitize（PR #206 review 修補）：sanitize 後 correlation 鍵
+   * 與原始鍵分桶。只供 conversion 結果回拋（getByCorrelation fallback）查詢，
+   * SHALL NOT 參與 intake 去重（findExisting）— 否則另一請求若以 sanitize 字串
+   * 為真實 X-Correlation-Id，會被誤判成既有 job 的 idempotent replay（aliasing）。
+   */
+  private readonly sanitizedCorrelationIndex = new Map<string, string>();
 
   /** 依 idempotency_key（或 correlation_id）回傳既有 job（idempotent replay）。 */
   findExisting(idempotencyKey: string, correlationId: string): IfcReadyIntakeJob | undefined {
@@ -70,8 +78,25 @@ export class ExternalIfcReadyStore {
     };
     this.jobsById.set(jobId, job);
     this.idempotencyIndex.set(binding.idempotencyKey, jobId);
-    this.correlationIndex.set(binding.correlationId, jobId);
+    this.registerCorrelationKeys(binding.correlationId, jobId);
     return job;
+  }
+
+  /**
+   * conversion-artifact-id-sanitize（spec 2026-06-11，cr1 對抗複驗回歸修補）：
+   * coordinator dispatch 時對 correlation_id 跑 sanitize（worker 派生含冒號者會被
+   * 改寫），conversion authority 儲存/回傳的是 **sanitize 後** correlation_id。
+   * 結果回拋（ingestConversionReport → getByCorrelation）以該 sanitize 後鍵查詢，
+   * 若只登原始鍵則必 404 閉環斷裂。故原始鍵登 correlationIndex、sanitize 後鍵
+   * 登獨立的 sanitizedCorrelationIndex（兩者相同時不重複登記），讓兩種回拋都
+   * 命中同一 job，且 sanitize 鍵不污染 intake 去重域（見 index 宣告處註解）。
+   */
+  private registerCorrelationKeys(correlationId: string, jobId: string): void {
+    this.correlationIndex.set(correlationId, jobId);
+    const sanitized = sanitizeArtifactIdPart(correlationId);
+    if (sanitized !== correlationId) {
+      this.sanitizedCorrelationIndex.set(sanitized, jobId);
+    }
   }
 
   markDispatched(jobId: string, conversionJobId: string, conversionStatus: string): IfcReadyIntakeJob | undefined {
@@ -167,9 +192,24 @@ export class ExternalIfcReadyStore {
     return job;
   }
 
-  getByCorrelation(correlationId: string): IfcReadyIntakeJob | undefined {
-    const id = this.correlationIndex.get(correlationId);
-    return id ? this.jobsById.get(id) : undefined;
+  /**
+   * conversion 結果回拋對帳。原始鍵與 sanitize 鍵都列入候選；當兩者指向不同 job
+   * （collision：某 job 的 sanitize 值恰等於另一 job 的真實 correlation）時，
+   * 以 report 的 `conversion_job_id` 對 job 的 `conversion_job_id` 消歧，
+   * 不單靠 correlation 字串裁決（PR #206 review P2）。無法消歧時維持原始鍵優先。
+   */
+  getByCorrelation(correlationId: string, conversionJobId: string | null = null): IfcReadyIntakeJob | undefined {
+    const candidateIds = [this.correlationIndex.get(correlationId), this.sanitizedCorrelationIndex.get(correlationId)];
+    const candidates = [...new Set(candidateIds)]
+      .filter((id): id is string => Boolean(id))
+      .map((id) => this.jobsById.get(id))
+      .filter((job): job is IfcReadyIntakeJob => Boolean(job));
+    if (candidates.length === 0) return undefined;
+    if (conversionJobId) {
+      const matched = candidates.find((job) => job.conversion_job_id === conversionJobId);
+      if (matched) return matched;
+    }
+    return candidates[0];
   }
 
   /**

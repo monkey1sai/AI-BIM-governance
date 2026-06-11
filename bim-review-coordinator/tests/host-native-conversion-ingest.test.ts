@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -7,6 +8,9 @@ import { type AddressInfo } from "node:net";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
+import type { ExternalIfcReadyEvent } from "../src/types.js";
+import { sanitizeArtifactIdPart } from "../src/services/streamingConversionClient.js";
 import type { CoordinatorConfig } from "../src/config.js";
 
 // introduce-host-native-conversion-authority-service / conversion-webhook-lifecycle
@@ -425,5 +429,125 @@ describe("conversion-ready auto-session handoff", () => {
     const types = (lifecycleRes.body.items as Array<{ type: string }>).map((it) => it.type);
     expect(types).toContain("sessionCreated");
     expect(types).toContain("sessionActive");
+  });
+});
+
+// cr1（對抗複驗 high regression — 本 fix 引入）：conversion authority 對 correlation_id
+// 跑 _safe_id，回傳的是 **sanitize 後** correlation_id（worker 派生含冒號者會被改寫）。
+// coordinator 的 ingestConversionReport → getByCorrelation 過去只以「原始」correlation_id
+// 建索引 → 凡 correlation 被 sanitize 改寫，結果回拋必 404 閉環斷裂。
+// 端到端對帳測試：worker 派生（冒號 correlation）案例 dispatch 後，模擬 conversion result
+// callback 以 sanitize 後 correlation_id 回拋 → 必須命中原 job（非 404）、狀態正確推進。
+describe("conversion result reconciliation with sanitized correlation_id (cr1)", () => {
+  // worker compat normalize 派生的含冒號 correlation_id（app.ts normalizeIntakePayload）。
+  const RAW_CORRELATION = "worker:899::xxx::task_recon_001";
+  const SANITIZED_CORRELATION = sanitizeArtifactIdPart(RAW_CORRELATION);
+
+  it("worker 派生冒號 correlation：result 以 sanitize 後 correlation 回拋 → 命中原 job（非 404）", async () => {
+    // 前置 sanity：sanitize 確實改寫了原始值（否則本測試無法證明雙鍵命中）。
+    expect(SANITIZED_CORRELATION).not.toBe(RAW_CORRELATION);
+    expect(SANITIZED_CORRELATION).toMatch(/^[A-Za-z0-9_.-]+$/);
+
+    // streaming result 回拋 sanitize 後 correlation_id（= 真 conversion_authority 行為）。
+    const readyResultSanitizedCorr = {
+      ...READY_RESULT,
+      correlation_id: SANITIZED_CORRELATION,
+    };
+    const base = await startStreamingStub(readyResultSanitizedCorr);
+    const app = makeApp(base);
+
+    // seed：以含冒號的 raw correlation 建立 ifc-ready job（worker 派生形狀）。
+    await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "X-Webhook-Secret": "dev-webhook-secret",
+        "X-Correlation-Id": RAW_CORRELATION,
+        "X-Idempotency-Key": "idem_recon_001",
+      })
+      .send({ ...structuredClone(IFC_CONTRACT.example) });
+
+    // ingest：result.correlation_id = sanitize 後值 → 必須仍命中原 job（非 404）。
+    const res = await request(app.app)
+      .post("/api/internal/conversions/stream_conv_test_001/ingest")
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(res.body.conversion_status).toBe("ready");
+    // 命中的是原 job（external_model_version_id 來自 contract example，未被改寫）。
+    expect(res.body.ifc_ready_job.conversion_status).toBe("ready");
+    expect(res.body.callback.event).toBe("conversion_result_ready");
+  });
+
+  // PR #206 review 修補（P2 aliasing）：sanitize 後鍵不得污染 intake 去重域。
+  // 若 sanitize 鍵與原始鍵同登 correlationIndex，另一請求以「恰等於 sanitize 值」的
+  // 真實 X-Correlation-Id + 不同 idempotency key 進來，會被誤判成 job A 的
+  // idempotent replay。隔離成獨立 sanitizedCorrelationIndex 後必須建立新 job。
+  it("intake aliasing 回歸：raw correlation 恰為他 job 的 sanitize 值 → 新 job 而非 replay", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+
+    // job A：raw correlation 含冒號（sanitize 會改寫成 SANITIZED_CORRELATION）。
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "X-Webhook-Secret": "dev-webhook-secret",
+        "X-Correlation-Id": RAW_CORRELATION,
+        "X-Idempotency-Key": "idem_alias_a",
+      })
+      .send({ ...structuredClone(IFC_CONTRACT.example) });
+    expect(first.body.idempotent_replay).toBe(false);
+
+    // job B：真實 correlation 恰等於 A 的 sanitize 值、idempotency key 不同 →
+    // 必須是獨立新 job（非 A 的 idempotent replay）。
+    const second = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "X-Webhook-Secret": "dev-webhook-secret",
+        "X-Correlation-Id": SANITIZED_CORRELATION,
+        "X-Idempotency-Key": "idem_alias_b",
+      })
+      .send({ ...structuredClone(IFC_CONTRACT.example) });
+    expect(second.body.idempotent_replay).toBe(false);
+    expect(second.body.ifc_ready_job_id).not.toBe(first.body.ifc_ready_job_id);
+  });
+
+  // PR #206 review 修補（P2 collision 對帳）：job A（unsafe correlation，sanitize 後為 S）
+  // 與 job B（真實 correlation 恰為 S）並存時，A 的 conversion 結果以 S 回拋——
+  // 單靠 correlation 字串無法裁決，必須以 report.conversion_job_id 消歧分流。
+  it("collision 對帳：sanitize 值撞他 job 真實 correlation 時以 conversion_job_id 消歧", () => {
+    const EVENT = {
+      external_conversion_task_id: null,
+      source_ifc: { ref: "http://127.0.0.1:1/source.ifc", etag: "etag_collision" },
+      callback_url: null,
+    } as unknown as ExternalIfcReadyEvent;
+    const store = new ExternalIfcReadyStore();
+
+    const jobA = store.create(EVENT, {
+      correlationId: RAW_CORRELATION,
+      idempotencyKey: "idem_col_a",
+      tenantId: "t1",
+      projectId: "p1",
+      externalModelVersionId: "mv_col_a",
+    });
+    store.markDispatched(jobA.ifc_ready_job_id, "conv_job_A", "queued");
+
+    const jobB = store.create(EVENT, {
+      correlationId: SANITIZED_CORRELATION,
+      idempotencyKey: "idem_col_b",
+      tenantId: "t1",
+      projectId: "p1",
+      externalModelVersionId: "mv_col_b",
+    });
+    store.markDispatched(jobB.ifc_ready_job_id, "conv_job_B", "queued");
+
+    // A 的結果以 sanitize 後 correlation + A 的 conversion_job_id 回拋 → 命中 A（非 B）。
+    expect(store.getByCorrelation(SANITIZED_CORRELATION, "conv_job_A")?.ifc_ready_job_id).toBe(jobA.ifc_ready_job_id);
+    // B 的結果（同 correlation 字串、B 的 conversion_job_id）→ 命中 B。
+    expect(store.getByCorrelation(SANITIZED_CORRELATION, "conv_job_B")?.ifc_ready_job_id).toBe(jobB.ifc_ready_job_id);
+    // 無 conversion_job_id 可消歧時維持原始鍵優先（向後相容）。
+    expect(store.getByCorrelation(SANITIZED_CORRELATION)?.ifc_ready_job_id).toBe(jobB.ifc_ready_job_id);
+    // 非 collision 路徑不受影響：raw correlation 直查命中 A。
+    expect(store.getByCorrelation(RAW_CORRELATION)?.ifc_ready_job_id).toBe(jobA.ifc_ready_job_id);
   });
 });
