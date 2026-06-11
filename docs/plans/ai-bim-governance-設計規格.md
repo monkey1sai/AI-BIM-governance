@@ -2,13 +2,13 @@
 
 > 配套檔案：`ai-bim-governance-prototype.html`（可直接用瀏覽器打開的可點擊原型）
 > 對齊系統總覽：https://bim-docs.jackshappybot.com/ （01 系統架構 / 03 落地端入口 / 05 BIM 治理 / 06 操作介面總覽）
-> 版本：v2 · 2026-06-09
+> 版本：v2.1 · 2026-06-09 初版 · 2026-06-11 勘誤（route hash 無斜線、BCF 現行 2.1、版本層已落地——實測依據見《ai-bim-governance-互動實作規格與標準對齊.md》PART A）
 
 > **Repo 功能需求主來源**：本檔與 `ai-bim-governance-prototype.html` 是 repo 內 A1–A10 功能需求、操作流程與 UI 驗收語意的主要入口，取代舊 `AI-BIM-governance-saas-roadmap-2026-05.md`。
 >
 > **主系統架構**：以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準，採雲端與客戶落地端分離：外部公司雲端負責 control-plane，客戶落地端負責 IFC / Kit / MCP runtime data-plane。
 >
-> **對齊 `feat/edge-console-product-shell`**：正式產品殼層入口是 coordinator `/ui` 掛載的 EdgeConsole。核心 route contract：`/ui`（今天要做什麼）、`#/a1`、`#/viewer`、`#/conv`、`#/sessions`、`#/instances`、`#/minio`；並保留 operator-tool route `#/kit`、`#/demo-control`。驗收以 product shell E2E 能看到 home、A1 五步、3D Viewer、轉檔排程、Session、Kit/GPU 機隊、MinIO 頁為準。
+> **對齊 `feat/edge-console-product-shell`**：正式產品殼層入口是 coordinator `/ui` 掛載的 EdgeConsole。核心 route contract：`/ui`（今天要做什麼）、`#a1`、`#viewer`、`#conv`、`#sessions`、`#instances`、`#minio`；並保留 operator-tool route `#kit`、`#demo-control`。驗收以 product shell E2E 能看到 home、A1 五步、3D Viewer、轉檔排程、Session、Kit/GPU 機隊、MinIO 頁為準。
 
 ---
 
@@ -159,9 +159,9 @@
 ### A1 · 治理與模型檢核 ★核心（P0 · MIX · Phase 1）
 - **做什麼**：自動檢查 IFC/Revit 的命名、分類、樓層、空間、設備編碼、LOD/LOI、交付規範。
 - **在介面哪裡**：左側導覽置頂、掛 P0 徽章。主畫面是**五步 stepper**。
-- **怎麼操作**：① 拖檔上傳 → ② 自動檢核（進度條 + 逐條 log）→ ③ 記分板 287過/25擋 + 規則清單（紅燈可點開）→ ④ 一鍵把失敗轉成 Issue → ⑤ 打包 BCF 3.0 + Excel 交付。
+- **怎麼操作**：① 拖檔上傳 → ② 自動檢核（進度條 + 逐條 log）→ ③ 記分板 287過/25擋 + 規則清單（紅燈可點開）→ ④ 一鍵把失敗轉成 Issue → ⑤ 打包 BCF（現行 2.1，3.0 為目標）+ Excel 交付。
 - **3D 連動**：「在 3D 高亮失敗構件」需要已派發的 review session、WebRTC first frame 與 DataChannel；沒有 GPU viewport 時仍可交付規則結果、Issue 與 BCF，但不得宣稱已完成 3D 高亮。
-- **後端**：IfcOpenShell + ifctester（IDS/YAML）+ BCF 3.0 + Postgres 帳本。
+- **後端**：IfcOpenShell + ifctester（IDS/YAML）+ BCF（官方 bcf 庫 2.1/3.0；現行匯出 2.1）+ Postgres 帳本；browser 經 coordinator `/api/governance/*` proxy。
 - **可信度**：規則引擎 🟢已實作 · 3D 高亮 ⚪待建 / 需 viewer DataChannel + first frame · 雙向同步 ⚪待建。
 - **MVP 驗收**：能上傳 → 出規則結果 → 匯出 BCF。純 Core MVP 約 1.5～2 人月。
 
@@ -298,13 +298,13 @@ EdgeConsole product shell route 對照：
 | Route | 頁面 | 驗收重點 |
 |---|---|---|
 | `/ui` | 今天要做什麼 | 顯示 Smart Todo / 核心治理 / OMNIVERSE RUNTIME / 落地端控制台入口 |
-| `#/a1` | A1 治理與模型檢核 | 五步引導流程、governance-service :49102、3D 高亮誠實標待建 |
-| `#/viewer` | 3D Viewer 呈現 | DataChannel、`highlightPrimsRequest`、first frame / stage truth 誠實標 |
-| `#/conv` | IFC→USD 轉檔排程 | conversion authority / mapping coverage / queue 狀態 |
-| `#/sessions` | Session 管理 | primary / spectator、first frame / heartbeat / stage match |
-| `#/instances` | Kit / GPU 機隊 | `1 GPU = 1 Kit stream`、重啟搬移 / drain，不宣稱無縫遷移 |
-| `#/minio` | MinIO 資料 | `bim-control/`、`model.ifc`、`model.usdc` 等真實路徑語意 |
-| `#/kit`, `#/demo-control` | operator tools | 舊操作工具保留，不 silently 砍 |
+| `#a1` | A1 治理與模型檢核 | 五步引導流程、governance-service :49102、3D 高亮誠實標待建 |
+| `#viewer` | 3D Viewer 呈現 | DataChannel、`highlightPrimsRequest`、first frame / stage truth 誠實標 |
+| `#conv` | IFC→USD 轉檔排程 | conversion authority / mapping coverage / queue 狀態 |
+| `#sessions` | Session 管理 | primary / spectator、first frame / heartbeat / stage match |
+| `#instances` | Kit / GPU 機隊 | `1 GPU = 1 Kit stream`、重啟搬移 / drain，不宣稱無縫遷移 |
+| `#minio` | MinIO 資料 | `bim-control/`、`model.ifc`、`model.usdc` 等真實路徑語意 |
+| `#kit`, `#demo-control` | operator tools | 舊操作工具保留，不 silently 砍 |
 
 ### MinIO 實際資料結構（已從你的 MinIO server 確認）
 
@@ -312,7 +312,7 @@ bucket `bim-control`（PRIVATE · 12.6 GiB · 867 objects）：
 
 ```
 bim-control/
-└── {projectId}              270 / 899 / 988          ← 專案
+└── {projectId}              270 / 899 / 988          ← 專案（當時所見；2026-06-11 確認現況 270/889/990＋271，皆暫時測試檔）
     └── {modelId UUID}       例 123a909a-0f28-…        ← 一個模型
         ├── model.ifc        65.7 MB   來源 IFC（轉檔輸入）
         ├── model.rvt        222.9 MB  來源 Revit
@@ -323,7 +323,7 @@ bim-control/
         └── model.usdc      （待產生）  ← 轉檔輸出，目前還沒有
 ```
 
-**完整規劃結構（三層，使用者確認）**：`{projectId}` / `{OpenBIM 類別：機電・消防・管線・施工・牆面…}` / `{版本 v01・v02…}` / 檔案。目前 MinIO 第二層以 UUID 儲存（邏輯上＝類別），第三層「版本」**尚未實作**。轉好的 USD 以 projectId 為索引寫回同一資料夾（`model.usdc`）。應用對應：同專案的多個類別 → A3 跨專業疊合；版本層 → A2 版本差異。
+**完整規劃結構（三層，使用者確認）**：`{projectId}` / `{OpenBIM 類別：機電・消防・管線・施工・牆面…}` / `{版本 v01・v02…}` / 檔案。目前 MinIO 第二層以 UUID 儲存（邏輯上＝類別），第三層「版本」原規劃尚未實作 → **2026-06-11 已以 local_fs 落地**（`270/機電|水電|消防/000001~000003＋竣工.ifc`；真 S3/MinIO 待接、版本命名規約待定案）。轉好的 USD 以 projectId 為索引寫回同一資料夾（`model.usdc`）。應用對應：同專案的多個類別 → A3 跨專業疊合；版本層 → A2 版本差異。
 
 關鍵：每個模型資料夾目前**沒有 `.usd`** — 這正是轉檔排程要產生並回寫的東西。介面所有路徑、專案 / 模型代號都比照此真實結構。
 
@@ -345,7 +345,7 @@ bim-control/
 - **介面**：GPU 節點卡（GPU 型號·util·VRAM·Kit PID/埠·載入 stage·服務 session·端點池·健康）+ 可擴充提示 + 動作（載入模型／重啟 Kit／排空 drain／健康檢查）。
 
 ### ④ MinIO 資料
-- 把上面的真實結構做成可讀的瀏覽介面：專案（270/899/988）→ 模型 UUID → 檔案，每個檔案標角色（來源／已解析／待產生）。讓「複雜結構」一眼看懂，也說明它怎麼接到轉檔、Session、機隊。
+- 把上面的真實結構做成可讀的瀏覽介面：專案（測試現況 270/889/990）→ 類別 → 版本檔案，每個檔案標角色（來源／已解析／待產生）。讓「複雜結構」一眼看懂，也說明它怎麼接到轉檔、Session、機隊。
 
 > 三頁互相扣：**轉檔排程**的每筆任務 = 一個 modelId；**機隊**載入的 stage = 同一個 MinIO 路徑；**Session** 跑在某台機隊節點上。
 
