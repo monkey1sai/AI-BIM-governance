@@ -72,33 +72,41 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     // Run Diff → 真 backend。
     await page.getByRole("button", { name: /Run Diff/ }).click();
 
-    // 等「diff 真正 terminal」——直接觀察終態信號，不用 "matched" 文字當 proxy。
-    // 為何不用 "matched"：pages.tsx 的 run() polling loop 只有 status 為 succeeded/failed 才 break；
-    // 跑滿 120 圈仍非 terminal（network 異常拉長）時，迴圈仍會 setDiff(st)（st.status 可能還是
-    // running/queued），counts 卡照樣渲染、`matched` label（值為 "—"）即出現——此時 "matched 可見"
-    // 並不蘊含 status terminal，舊註解的蘊含鏈在此 edge case 不成立。改為等兩個真正的終態元素其一：
-    //   succeeded → 「套用 3D Overlay」鈕 enable（disabled={busy||diff?.status!=="succeeded"}）；
-    //   failed / 未連線 → 錯誤訊息「未連線後端…」（pages.tsx L1077 `{err && ...}`）出現。
-    // 任一先到即代表 run() 已落終態、busy=false，整體只有「這一個」120s 長等待，不會與 polling 的
-    // 120s 疊加把累積等待推過 180s 預算（beforeEach 15s + 本行 120s + 下方 5s < 180s）。
-    // 「套用 3D Overlay」鈕在本頁恆渲染（pages.tsx L1098 區塊在 `{diff && ...}` 之外，僅 disabled 切換），
-    // 故直接 toBeEnabled 等其變 enabled 即可，不需先等 visible（避免 visible+enabled 兩段 120s 疊加爆預算）。
+    // 等「diff polling loop 結束（落終態或放棄）」——直接觀察 loop 結束的 UI 信號，不用 "matched" 文字當 proxy。
+    // 為何不等「套用 3D Overlay」鈕 enable 當 loop-結束信號：該鈕 disabled={busy||diff?.status!=="succeeded"}，
+    // busy=false 只在 run() finally 觸發，而 finally 之前 succeeded 分支還 await 了 getDiffItems + diffIssueImpact
+    // （pages.tsx L1004–1007）。亦即「鈕 enable」等的不只是 diff loop 結束，還疊加了 items fetch 的 RTT；後端負荷
+    // 高、items API 慢時，這個 120s 可能被 items fetch 耗盡，race 兩支都以 false 結算，卻把錯誤報成「diff 未終態」，
+    // 誤導人去追 diff 引擎而非 items API（實際上 diff 早就 succeeded）。
+    // 改為觀察「diff loop 已結束」本身：run() loop 一 break/跑滿 120 圈就 setDiff(st)，使 {diff && …} 區塊渲染、
+    // `matched` Metric（pages.tsx L1080，與 status 同批 setDiff 後立即可見）出現——這個信號不含 items fetch RTT。
+    //   loop 結束（succeeded / failed / 跑滿放棄皆會 setDiff）→ `matched` Metric 可見；
+    //   createDiff / getDiff throw（未連線後端）→ 錯誤訊息「未連線後端…」（pages.tsx L1077 `{err && …}`）出現。
+    // 任一先到即代表 run() 的 diff 階段已結束，整體只有「這一個」120s 長等待，不與 polling 的 120s 疊加爆 180s 預算
+    // （beforeEach 15s + 本行 120s + 下方 succeeded gate 30s + evaluate/screenshot 幾秒 < 180s）。
+    // 註：「matched 可見」僅蘊含 loop 已結束、不蘊含 status===succeeded（跑滿 120 圈放棄時 st.status 可能仍 running）；
+    //    真正的 succeeded 判定交給下方專屬鈕 gate，本步只負責「diff 階段是否在 120s 內收尾」這件事。
     // 兩個 branch 各自 catch 成 boolean（不讓落敗 branch 在 race 結束後丟 unhandled rejection），
-    // 再斷言至少一個終態信號出現；兩者都 120s 未到 = diff 真的卡住，sawTerminal 為 false 直接失敗。
+    // 再斷言至少一個信號出現；兩者都 120s 未到 = diff loop 真的卡住，sawDiffSettled 為 false 直接失敗。
     const applyOverlayBtn = page.getByRole("button", { name: /套用 3D Overlay/ });
+    // matched 標籤是 Metric cell 的 last-child <div class="ec-s">matched</div>（pages.tsx L1080 + components.tsx
+    // Metric：<div><div class=ec-metric>{value}</div><div class=ec-s>matched</div></div>）。直接定位 .ec-grid 內
+    // 文字恰為 "matched" 的 .ec-s 葉節點（外層 cell 的文字含 value 前綴，不能用整 cell 比對）。#/a2 頁此文字唯一。
+    const matchedMetric = page.locator("main .ec-grid .ec-s", { hasText: /^matched$/ });
     const backendErr = page.getByText(/未連線後端/);
-    const sawTerminal = await Promise.race([
-      expect(applyOverlayBtn).toBeEnabled({ timeout: 120_000 }).then(() => true, () => false),
+    const sawDiffSettled = await Promise.race([
+      matchedMetric.waitFor({ state: "visible", timeout: 120_000 }).then(() => true, () => false),
       backendErr.waitFor({ state: "visible", timeout: 120_000 }).then(() => true, () => false),
     ]);
-    expect(sawTerminal, "diff 未在 120s 內落終態（succeeded 鈕 enable 或未連線錯誤皆未出現）").toBe(true);
+    expect(sawDiffSettled, "diff polling loop 未在 120s 內結束（matched 卡片或未連線錯誤皆未出現）").toBe(true);
 
-    // succeeded 直接 UI gate：上一步已確保 run() 落終態（succeeded 或 failed/未連線）。此鈕
+    // succeeded 直接 UI gate：上一步已確保 diff loop 結束（setDiff 已跑）。此鈕
     // disabled={busy || diff?.status !== "succeeded"} 是 UI 中唯一直接觀察 status==="succeeded" 的元素。
-    // 短逾時（5s）刻意為之：終態已到、busy 已 false，succeeded path 此鈕應已 enable；若 status==="failed"
-    // 或未連線此鈕永遠不會 enable，5s 立即以「鈕仍 disabled → status 非 succeeded」明確炸出，不再串一個
-    // 120s 把真失敗訊號掩蓋成 timeout。
-    await expect(applyOverlayBtn).toBeEnabled({ timeout: 5_000 });
+    // 此處 busy 可能仍為 true（succeeded 分支 finally 前還在 await getDiffItems/diffIssueImpact）——這正是要等的：
+    // 30s 給 items fetch 的 RTT 收尾後 busy→false、鈕 enable。逾時設 30s（非 5s）刻意涵蓋後端慢時的 items fetch；
+    // 若 status==="failed" 或未連線此鈕永遠不會 enable，30s 後即以「鈕仍 disabled → status 非 succeeded（或 items
+    // fetch 逾 30s）」明確炸出，diff 卡片此時已可見於畫面，錯誤明確指向 items/鈕而非把 diff 引擎誤判成 timeout。
+    await expect(applyOverlayBtn).toBeEnabled({ timeout: 30_000 });
 
     // 真實非全零：抓 added/removed/moved/property_changed 四個數字相加 > 0。
     // Metric 結構為 <div><big value></big><label></label></div>；用 evaluate 從 DOM 收 counts。
