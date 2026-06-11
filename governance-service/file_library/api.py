@@ -76,30 +76,58 @@ def _iter_dir(path: str):
         return
 
 
+def _ifc_version_entry(entry, root_real: str, name: str) -> dict | None:
+    """單一 *.ifc DirEntry → version dict；非 .ifc / 逃逸 / stat 失敗回 None（跳過該檔）。"""
+    if not entry.name.lower().endswith(".ifc"):
+        return None
+    if not _is_within(root_real, entry.path):
+        return None
+    try:
+        # stat / mtime 逐檔防護：單檔中途被刪/鎖（OSError）只跳過該檔，
+        # 不讓掃描中斷導致端點整體 500。
+        size_bytes = entry.stat().st_size
+        mtime = _iso_mtime(entry.path)
+    except OSError:
+        return None
+    return {
+        "name": name,
+        "path": os.path.realpath(entry.path),
+        "size_bytes": size_bytes,
+        "mtime": mtime,
+    }
+
+
 def _list_versions(model_dir: str, root_real: str) -> list[dict]:
+    # 單次掃 model_dir，把條目分流成檔案 / 子目錄（避免對同一目錄掃兩遍、降低 TOCTOU）：
+    # - 直屬 *.ifc → name = filename（兩層形狀）。
+    # - 子目錄（versionDir）→ 再下探一層收 *.ifc，name = "{versionDir}/{filename}"
+    #   （如松風庵 建築/v1/japanese_villa.ifc → "v1/japanese_villa.ifc"）。第四層以下忽略；
+    #   versionDir 內無 .ifc 則不產生條目。兩形狀混排走同一把 _version_sort_key。
+    sub_dirs: list = []
     versions: list[dict] = []
     for entry in _iter_dir(model_dir):
         try:
+            if entry.is_dir():
+                if _is_within(root_real, entry.path):
+                    sub_dirs.append(entry)
+                continue
             if not entry.is_file():
                 continue
-            if not entry.name.lower().endswith(".ifc"):
-                continue
-            if not _is_within(root_real, entry.path):
-                continue
-            # stat / mtime 逐檔防護：單檔中途被刪/鎖（OSError）只跳過該檔，
-            # 不讓掃描中斷導致端點整體 500。
-            size_bytes = entry.stat().st_size
-            mtime = _iso_mtime(entry.path)
         except OSError:
             continue
-        versions.append(
-            {
-                "name": entry.name,
-                "path": os.path.realpath(entry.path),
-                "size_bytes": size_bytes,
-                "mtime": mtime,
-            }
-        )
+        v = _ifc_version_entry(entry, root_real, entry.name)
+        if v is not None:
+            versions.append(v)
+    for ver_dir in sub_dirs:
+        for entry in _iter_dir(ver_dir.path):
+            try:
+                if not entry.is_file():
+                    continue
+            except OSError:
+                continue
+            v = _ifc_version_entry(entry, root_real, f"{ver_dir.name}/{entry.name}")
+            if v is not None:
+                versions.append(v)
     versions.sort(key=lambda v: _version_sort_key(v["name"]))
     return versions
 

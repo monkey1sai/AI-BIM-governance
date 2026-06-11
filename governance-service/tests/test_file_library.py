@@ -50,10 +50,19 @@ def _make_tree(root) -> None:
             (d / "notes.txt").write_text("ignore me", encoding="utf-8")
     # 頂層散檔（一層）不入樹
     (root / "fixture-bytes.ifc").write_text("x", encoding="utf-8")
-    # 三層（過深）不入樹
-    deep = root / "270" / "機電" / "extra"
-    deep.mkdir(parents=True, exist_ok=True)
-    (deep / "deep.ifc").write_text("x", encoding="utf-8")
+    # 三層版本目錄（新支援）：{project}/{model}/{versionDir}/*.ifc →
+    # name = "{versionDir}/{filename}"。在 270/機電 下放 v1/villa.ifc 驗三層入樹。
+    v1 = root / "270" / "機電" / "v1"
+    v1.mkdir(parents=True, exist_ok=True)
+    (v1 / "villa.ifc").write_text("x", encoding="utf-8")
+    # 第四層（過深）忽略：270/機電/v1/sub/too_deep.ifc 不入樹。
+    too_deep = root / "270" / "機電" / "v1" / "sub"
+    too_deep.mkdir(parents=True, exist_ok=True)
+    (too_deep / "too_deep.ifc").write_text("x", encoding="utf-8")
+    # 空 versionDir（無 .ifc）不產生條目：270/機電/empty_ver/notes.txt。
+    empty_ver = root / "270" / "機電" / "empty_ver"
+    empty_ver.mkdir(parents=True, exist_ok=True)
+    (empty_ver / "notes.txt").write_text("no ifc here", encoding="utf-8")
     # 保留目錄：coordinator IFC 下載暫存 ifc-cache/ifcready_*/source.ifc 雖符兩層
     # {dir}/{dir}/*.ifc 規則，但屬服務內部暫存（非 bim-control 專案），不得污染樹。
     cache = root / "ifc-cache" / "ifcready_1779420878060_46b60df8"
@@ -91,10 +100,12 @@ def test_tree_lists_two_level_ifc_only(client):
     assert set(models) == {"機電", "水電"}
     versions = models["機電"]["versions"]
     names = [v["name"] for v in versions]
-    # 只收 .ifc（notes.txt 被忽略）、過深的 extra/deep.ifc 不出現
+    # 只收 .ifc（notes.txt 被忽略）；三層 v1/villa.ifc 入樹（name 帶 versionDir 前綴）；
+    # 第四層 v1/sub/too_deep.ifc 與空 versionDir(empty_ver) 不出現。
     assert "notes.txt" not in names
-    assert "deep.ifc" not in names
-    assert set(names) == {"ver 000001.ifc", "ver 000002.ifc", "ver 竣工.ifc"}
+    assert "too_deep.ifc" not in names
+    assert "v1/sub/too_deep.ifc" not in names
+    assert set(names) == {"ver 000001.ifc", "ver 000002.ifc", "ver 竣工.ifc", "v1/villa.ifc"}
     # 每個 version 帶 path（絕對、可當 ifc_source_path）/size_bytes/mtime
     v0 = versions[0]
     assert os.path.isabs(v0["path"])
@@ -129,8 +140,53 @@ def test_version_sort_natural_with_completion_last(client):
     projects = {p["project_id"]: p for p in body["projects"]}
     models = {m["model_id"]: m for m in projects["270"]["models"]}
     names = [v["name"] for v in models["機電"]["versions"]]
-    # 自然排序 + ver 竣工.ifc 固定排最後（竣工是最終版語意）
-    assert names == ["ver 000001.ifc", "ver 000002.ifc", "ver 竣工.ifc"]
+    # 自然排序（含 versionDir 形狀混排）+ ver 竣工.ifc 固定排最後（竣工是最終版語意）
+    assert names == [
+        "v1/villa.ifc",
+        "ver 000001.ifc",
+        "ver 000002.ifc",
+        "ver 竣工.ifc",
+    ]
+
+
+def test_three_level_version_dir_listed_with_prefixed_name(client):
+    """三層 {project}/{model}/{versionDir}/*.ifc 入樹，name = "{versionDir}/{filename}"，path 絕對且存在。"""
+    c, root = client
+    body = c.get("/api/files/tree").json()
+    projects = {p["project_id"]: p for p in body["projects"]}
+    models = {m["model_id"]: m for m in projects["270"]["models"]}
+    versions = {v["name"]: v for v in models["機電"]["versions"]}
+    assert "v1/villa.ifc" in versions
+    v = versions["v1/villa.ifc"]
+    assert os.path.isabs(v["path"]) and os.path.exists(v["path"])
+    assert v["path"].endswith(os.path.join("v1", "villa.ifc"))
+    assert isinstance(v["size_bytes"], int) and v["size_bytes"] > 0
+
+
+def test_fourth_level_and_empty_version_dir_ignored(client):
+    """第四層（versionDir/sub/*.ifc）忽略；versionDir 內無 .ifc 不產生條目。"""
+    c, _ = client
+    body = c.get("/api/files/tree").json()
+    projects = {p["project_id"]: p for p in body["projects"]}
+    names = [v["name"] for v in projects["270"]["models"]["機電"]["versions"]] if False else [
+        v["name"] for m in projects["270"]["models"] if m["model_id"] == "機電" for v in m["versions"]
+    ]
+    assert all("too_deep" not in n for n in names)
+    assert all("empty_ver" not in n for n in names)
+
+
+def test_two_and_three_level_mixed_sort_completion_last(client):
+    """同 model 兩形狀混排：兩層檔 + 三層檔走同一把自然排序尺；ver 竣工.ifc 仍固定最後。"""
+    c, _ = client
+    body = c.get("/api/files/tree").json()
+    projects = {p["project_id"]: p for p in body["projects"]}
+    names = [
+        v["name"] for m in projects["270"]["models"] if m["model_id"] == "機電" for v in m["versions"]
+    ]
+    # v1/villa.ifc（v 開頭，非數字、非竣工）與兩層檔混排；竣工固定最後。
+    assert names[-1] == "ver 竣工.ifc"
+    assert "v1/villa.ifc" in names
+    assert set(names) == {"ver 000001.ifc", "ver 000002.ifc", "ver 竣工.ifc", "v1/villa.ifc"}
 
 
 def test_missing_root_returns_empty_200(tmp_path, monkeypatch):
