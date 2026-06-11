@@ -510,6 +510,80 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
     expect(res.body.idempotency_key).toBe("explicit_idem_999");
   });
 
+  it("中文 external_model_version_id 的 dispatch 不再被 conversion 端 SAFE_ID_RE 擋成 400", async () => {
+    // conversion-artifact-id-sanitize（spec 2026-06-11 §4）：以 conversion 端逐字同款
+    // 規則驗收 ifc_artifact.artifact_id；中文 id 經 coordinator sanitize 後必須通過，
+    // 證明 dispatch 不再被 400 擋下（job 走到 dispatched，dispatch_error 為 null）。
+    const SAFE_ID_RE = /^[A-Za-z0-9_.-]+$/;
+    activeStreamingServer = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const parsed = JSON.parse(body || "{}");
+        const artifactId = parsed?.ifc_artifact?.artifact_id ?? "";
+        if (!SAFE_ID_RE.test(artifactId)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: `Invalid ifc_artifact_id: ${artifactId}` }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            conversion_job_id: "stream_conv_cjk",
+            status: "queued",
+            authority: "bim-streaming-server",
+          }),
+        );
+      });
+    });
+    await new Promise<void>((r) => activeStreamingServer!.listen(0, "127.0.0.1", () => r()));
+    const convAddress = activeStreamingServer.address();
+    if (!convAddress || typeof convAddress === "string") {
+      throw new Error("Expected conversion stub to listen on a TCP port.");
+    }
+
+    // stub IFC source server 回最小 IFC bytes，讓 non-strict download 成功。
+    activeIfcSourceServer = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/octet-stream" });
+      res.end("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n");
+    });
+    await new Promise<void>((r) => activeIfcSourceServer!.listen(0, "127.0.0.1", () => r()));
+    const srcAddress = activeIfcSourceServer.address();
+    if (!srcAddress || typeof srcAddress === "string") {
+      throw new Error("Expected IFC source stub to listen on a TCP port.");
+    }
+    const ifcRef = `http://127.0.0.1:${srcAddress.port}/edge/271_pieple.ifc`;
+
+    const app = makeApp({ streamingConversionApiBase: `http://127.0.0.1:${convAddress.port}` });
+
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(
+        authHeaders({
+          "X-Correlation-Id": "corr_cjk_001",
+          "X-Idempotency-Key": "idem_cjk_001",
+        }),
+      )
+      .send(
+        payload({
+          external_model_version_id: "271_pieple_管線",
+          source_ifc: {
+            ref: ifcRef,
+            etag: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            filename: "271_pieple.ifc",
+            format: "ifc",
+          },
+        }),
+      );
+
+    expect(res.status).toBe(202);
+    // dispatch 終態走 top-level status（summarizeIfcReadyJob 的 dispatch 生命週期欄位）；
+    // 中文 id 通過 sanitize 後 conversion 端不再 400 → dispatched，dispatch_error 為 null。
+    const detail = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatched"]);
+    expect(detail.status).toBe("dispatched");
+    expect(detail.dispatch_error).toBeNull();
+  });
+
   it("worker payload 經 normalize 後 dispatch 給 streaming 仍走 canonical shape，不洩漏 worker 形狀", async () => {
     const streaming = await startStreamingConversionStub();
     const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });

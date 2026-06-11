@@ -127,7 +127,7 @@ export function toInternalIfcReadyEvent(
     external_model_version_id: binding.externalModelVersionId,
     external_conversion_task_id: event.external_conversion_task_id ?? null,
     ifc_artifact: {
-      artifact_id: `ifc_${binding.externalModelVersionId}`,
+      artifact_id: `ifc_${sanitizeArtifactIdPart(binding.externalModelVersionId)}`,
       format: event.source_ifc.format || "ifc",
       filename: event.source_ifc.filename || null,
       url: event.source_ifc.ref,

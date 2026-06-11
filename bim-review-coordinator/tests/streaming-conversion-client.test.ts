@@ -39,6 +39,25 @@ describe("toInternalIfcReadyEvent", () => {
 
     expect(payload.conversion_profile).toBe("ifcopenshell_openusd_identity");
   });
+
+  it("中文 external id → payload.ifc_artifact.artifact_id 走 sanitize 且通過 SAFE_ID_RE", () => {
+    const payload = toInternalIfcReadyEvent(
+      { ...EVENT, external_model_version_id: "271_pieple_管線" },
+      { correlationId: "corr_cjk", externalModelVersionId: "271_pieple_管線" },
+    );
+    const artifact = payload.ifc_artifact as { artifact_id: string };
+    expect(artifact.artifact_id).toMatch(/^ifc_[A-Za-z0-9_.-]+$/);
+    expect(artifact.artifact_id).toContain("ifc_271_pieple_");
+  });
+
+  it("純英文 external id → payload.ifc_artifact.artifact_id 與舊版完全相同（回歸鎖）", () => {
+    const payload = toInternalIfcReadyEvent(EVENT, {
+      correlationId: "corr_identity",
+      externalModelVersionId: EVENT.external_model_version_id,
+    });
+    const artifact = payload.ifc_artifact as { artifact_id: string };
+    expect(artifact.artifact_id).toBe(`ifc_${EVENT.external_model_version_id}`);
+  });
 });
 
 const SAFE_ID_RE = /^[A-Za-z0-9_.-]+$/; // = conversion_authority.py SAFE_ID_RE，逐字鎖規則
