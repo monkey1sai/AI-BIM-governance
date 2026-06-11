@@ -1302,6 +1302,8 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
   const BASE_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 000001.ifc";
   const TARGET_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc";
   const VILLA_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/松風庵/建築/v1/japanese_villa.ifc";
+  // VersionDiffPage target state 預設值（pages.tsx 初值）；target 未選版本時 createDiff 應沿用此值。
+  const DEFAULT_TARGET_PATH = "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\許良宇圖書館建築_2026 - 轉檔測試2.ifc";
   // 多專案 + 三層版本：270/機電（兩版）+ 松風庵/建築（一個三層 name 的版本）。
   const a2tree: FilesTreeResponse = {
     root: "C:/Repos/active/iot/AI-BIM-governance/storage",
@@ -1375,13 +1377,13 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     const createSpy = vi
       .spyOn(governanceClient, "createDiff")
       .mockResolvedValue({ diff_id: "d1", status: "queued" });
-    // getDiff 一次回 succeeded 結束輪詢（避免測試等 120 秒）。spec fixture summary 形狀比照 DiffStatus，
-    // 缺 base_count/target_count/warnings 欄位 → 用 as never 斷言（沿用既有測試 idiom）。
+    // getDiff 一次回 succeeded 結束輪詢（避免測試等 120 秒）。summary 形狀完整比照 DiffStatus.summary
+    // （base_count/target_count/matched/counts/warnings 皆備），免 as never 斷言。
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
       diff_id: "d1",
       status: "succeeded",
-      summary: { matched: 3, counts: { added: 2, removed: 0, moved: 0, property_changed: 1 } },
-    } as never);
+      summary: { base_count: 0, target_count: 0, matched: 3, counts: { added: 2, removed: 0, moved: 0, property_changed: 1 }, warnings: [] },
+    });
     vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
     vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
 
@@ -1483,6 +1485,11 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     expect(arg.base_ifc_path).toBe(VILLA_PATH);
     // 三層 name 原樣帶入 model_version_id（含子目錄段 v1/，不截斷）。
     expect(arg.base_model_version_id).toBe("松風庵/建築/v1/japanese_villa.ifc");
+    // target 側未選版本 → 沿用元件預設 target state（pages.tsx VersionDiffPage 初值），
+    // 鎖定 base/target 未被交叉接線：只動 base 不會污染 target_ifc_path。
+    expect(arg.target_ifc_path).toBe(DEFAULT_TARGET_PATH);
+    // target 未經三層選擇器 → 無版本綁定語意，model_version_id 應為空。
+    expect(arg.target_model_version_id).toBeFalsy();
 
     await act(async () => { root.unmount(); });
   });
@@ -1518,8 +1525,8 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
       diff_id: "d2",
       status: "succeeded",
-      summary: { matched: 0, counts: {} },
-    } as never);
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
     vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
     vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
 
