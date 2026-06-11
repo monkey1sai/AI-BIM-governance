@@ -103,6 +103,7 @@ export interface IfcReadyListItem {
   download_status: string | null;
   conversion_status: string | null;
   conversion_authority: string | null;
+  dispatch_error: string | null;
   review_session_id: string | null;
   viewer_url: string | null;
   expected_stage_url: string | null;
