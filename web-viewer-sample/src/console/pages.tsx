@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
-import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, FileProjectRow, FilesTreeResponse, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
@@ -924,10 +924,75 @@ export function VersionDiffPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // A2 檔案庫選擇器（複用 A1 IssuesRuleCenterPage 模式）：base / target 各一組
+  // project→model→version 三層；選定填入對應路徑 input + 帶出 model_version_id。
+  const [fsTree, setFsTree] = useState<FileProjectRow[] | null>(null);
+  const [fsErr, setFsErr] = useState<string | null>(null);
+  // model_version_id = "{project_id}/{model_id}/{version.name}"（供 /issue-impact 版本綁定）；
+  // 手動覆寫路徑 input 後清空（誠實：手填路徑無版本綁定語意）。
+  const [baseVerId, setBaseVerId] = useState("");
+  const [targetVerId, setTargetVerId] = useState("");
+  // 受控版本選擇（值 = version.path）；base / target 各一套 project/model/version 與「選擇器填入值」追蹤。
+  const [baseSel, setBaseSel] = useState({ project: "", model: "", version: "" });
+  const [targetSel, setTargetSel] = useState({ project: "", model: "", version: "" });
+
+  const loadFsTree = useCallback(async () => {
+    setFsErr(null);
+    try {
+      const t = await governanceClient.filesTree();
+      setFsTree(t.projects);
+    } catch (e) {
+      setFsErr(String(e));
+    }
+  }, []);
+  useEffect(() => { void loadFsTree(); }, [loadFsTree]);
+
+  // pickBaseVersion：選定一個版本 → 填 base input 路徑 + 記 model_version_id + setSel 全套。
+  // 僅由 base-version select onChange（且確有對應版本）呼叫；「清空 / 換層」走 clearBaseSelection。
+  const pickBaseVersion = useCallback((projectId: string, modelId: string, ver: FileVersionRow) => {
+    setBase(ver.path);
+    setBaseVerId(`${projectId}/${modelId}/${ver.name}`);
+    setBaseSel({ project: projectId, model: modelId, version: ver.path });
+  }, []);
+  // clearBaseSelection：換 base project / model（或選回版本 placeholder）的單一清空入口。
+  // 完整重設 selector state（project/model 由呼叫者指定、version 一律清）；只在「目前 base 路徑
+  // 正是先前由 selector 填入的版本路徑」時才清路徑——手動輸入的路徑不被波及。model_version_id
+  // 一律清（換層後版本綁定語意消失；手動路徑早已無 verId，再清無害）。
+  // 三個 setter 各自獨立呼叫（React 18 自動 batch），不在 updater 內互相觸發 setState
+  // （updater 須維持純函數契約）；以 render 快照 baseSel.version 判斷路徑是否為 selector 填入值。
+  const clearBaseSelection = useCallback((projectId: string, modelId: string) => {
+    const filledPath = baseSel.version;
+    setBase((cur) => (cur === filledPath ? "" : cur));
+    setBaseSel({ project: projectId, model: modelId, version: "" });
+    setBaseVerId("");
+  }, [baseSel.version]);
+  // pickTargetVersion / clearTargetSelection：target 側對稱（同上語意，獨立追蹤值）。
+  const pickTargetVersion = useCallback((projectId: string, modelId: string, ver: FileVersionRow) => {
+    setTarget(ver.path);
+    setTargetVerId(`${projectId}/${modelId}/${ver.name}`);
+    setTargetSel({ project: projectId, model: modelId, version: ver.path });
+  }, []);
+  const clearTargetSelection = useCallback((projectId: string, modelId: string) => {
+    const filledPath = targetSel.version;
+    setTarget((cur) => (cur === filledPath ? "" : cur));
+    setTargetSel({ project: projectId, model: modelId, version: "" });
+    setTargetVerId("");
+  }, [targetSel.version]);
+  const baseModels = fsTree?.find((p) => p.project_id === baseSel.project)?.models ?? [];
+  const baseVersions = baseModels.find((m) => m.model_id === baseSel.model)?.versions ?? [];
+  const targetModels = fsTree?.find((p) => p.project_id === targetSel.project)?.models ?? [];
+  const targetVersions = targetModels.find((m) => m.model_id === targetSel.model)?.versions ?? [];
+
   const run = useCallback(async () => {
     setBusy(true); setErr(null); setDiff(null); setItems([]); setImpact(null); setOverlay(null);
     try {
-      const { diff_id } = await governanceClient.createDiff({ base_ifc_path: base, target_ifc_path: target, include_geometry: includeGeo });
+      const { diff_id } = await governanceClient.createDiff({
+        base_ifc_path: base,
+        target_ifc_path: target,
+        base_model_version_id: baseVerId || undefined,
+        target_model_version_id: targetVerId || undefined,
+        include_geometry: includeGeo,
+      });
       setDiffId(diff_id);
       let st: DiffStatus | null = null;
       for (let i = 0; i < 120; i++) {
@@ -945,7 +1010,7 @@ export function VersionDiffPage() {
     } finally {
       setBusy(false);
     }
-  }, [base, target, includeGeo]);
+  }, [base, target, includeGeo, baseVerId, targetVerId]);
 
   const counts = diff?.summary?.counts ?? {};
   return (
@@ -957,8 +1022,51 @@ export function VersionDiffPage() {
       </p>
       <Panel title="Diff Builder" sub="POST /api/governance/diffs（經 coordinator proxy → governance-service）" prov="asbuilt">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <input className="ec-btn" style={{ width: "100%" }} value={base} onChange={(e) => setBase(e.target.value)} />
-          <input className="ec-btn" style={{ width: "100%" }} value={target} onChange={(e) => setTarget(e.target.value)} />
+          {fsErr && (
+            <span className="ec-warn-note" data-testid="a2-fs-error" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span>檔案庫不可用（{fsErr}）；可改用下方手動輸入路徑。</span>
+              <Btn data-testid="a2-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>重試載入檔案庫</Btn>
+            </span>
+          )}
+          {!fsErr && !fsTree && <span className="ec-s">載入檔案庫中…（GET /api/governance/files/tree）</span>}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span className="ec-k" style={{ minWidth: 48 }}>base</span>
+            <select data-testid="a2-base-project" className="ec-btn" value={baseSel.project} disabled={!fsTree}
+              onChange={(e) => clearBaseSelection(e.target.value, "")}>
+              <option value="">專案…</option>
+              {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
+            </select>
+            <select data-testid="a2-base-model" className="ec-btn" value={baseSel.model} disabled={!baseSel.project}
+              onChange={(e) => clearBaseSelection(baseSel.project, e.target.value)}>
+              <option value="">模型…</option>
+              {baseModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
+            </select>
+            <select data-testid="a2-base-version" className="ec-btn" value={baseSel.version} disabled={!baseSel.model}
+              onChange={(e) => { const v = baseVersions.find((x) => x.path === e.target.value); if (v) pickBaseVersion(baseSel.project, baseSel.model, v); else clearBaseSelection(baseSel.project, baseSel.model); }}>
+              <option value="">版本…（選定填入路徑）</option>
+              {baseVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span className="ec-k" style={{ minWidth: 48 }}>target</span>
+            <select data-testid="a2-target-project" className="ec-btn" value={targetSel.project} disabled={!fsTree}
+              onChange={(e) => clearTargetSelection(e.target.value, "")}>
+              <option value="">專案…</option>
+              {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
+            </select>
+            <select data-testid="a2-target-model" className="ec-btn" value={targetSel.model} disabled={!targetSel.project}
+              onChange={(e) => clearTargetSelection(targetSel.project, e.target.value)}>
+              <option value="">模型…</option>
+              {targetModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
+            </select>
+            <select data-testid="a2-target-version" className="ec-btn" value={targetSel.version} disabled={!targetSel.model}
+              onChange={(e) => { const v = targetVersions.find((x) => x.path === e.target.value); if (v) pickTargetVersion(targetSel.project, targetSel.model, v); else clearTargetSelection(targetSel.project, targetSel.model); }}>
+              <option value="">版本…（選定填入路徑）</option>
+              {targetVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
+            </select>
+          </div>
+          <input data-testid="a2-base-input" className="ec-btn" style={{ width: "100%" }} value={base} onChange={(e) => { setBase(e.target.value); setBaseVerId(""); setBaseSel((s) => ({ ...s, version: "" })); }} />
+          <input data-testid="a2-target-input" className="ec-btn" style={{ width: "100%" }} value={target} onChange={(e) => { setTarget(e.target.value); setTargetVerId(""); setTargetSel((s) => ({ ...s, version: "" })); }} />
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <Btn primary disabled={busy} caption="GlobalId 多級對齊" onClick={run}>{busy ? "比對中…" : "Run Diff"}</Btn>
             <label className="ec-s" style={{ display: "flex", gap: 4, alignItems: "center" }}>

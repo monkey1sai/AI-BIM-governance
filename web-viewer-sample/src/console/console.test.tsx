@@ -479,6 +479,9 @@ describe("edge console honesty smoke", () => {
 describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 + 互動）", () => {
   // 含 270/機電/ver 竣工.ifc 的真實樹形狀（比照 governanceClient.test.ts fixture 與 spec 範例）。
   const VER_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc";
+  // 第二版本：A2 base/target 各一組選擇器需可選到相異版本（base=v1、target=v2），
+  // 才能驗證 base/target 真的獨立接線、各自帶出相異 model_version_id。
+  const VER2_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工 v2.ifc";
   const tree: FilesTreeResponse = {
     root: "C:/Repos/active/iot/AI-BIM-governance/storage",
     source_kind: "local_fs",
@@ -490,6 +493,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
             model_id: "機電",
             versions: [
               { name: "ver 竣工.ifc", path: VER_PATH, size_bytes: 22618, mtime: "2026-06-10T17:17:00+08:00" },
+              { name: "ver 竣工 v2.ifc", path: VER2_PATH, size_bytes: 22777, mtime: "2026-06-10T18:18:00+08:00" },
             ],
           },
         ],
@@ -806,6 +810,754 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     const projectSel = container.querySelector<HTMLSelectElement>('[data-testid="a1-fs-project"]');
     expect(projectSel!.disabled).toBe(false); // fsTree 已載入 → 選擇器可用
     expect(spy).toHaveBeenCalledTimes(2);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // A2 VersionDiffPage 雙組三層選擇器（複用 A1 模式）：選定 base 版本 → 填 base input
+  // 並把 base_model_version_id（{project}/{model}/{version.name}）隨 createDiff 送出。
+  it("A2 VersionDiffPage 選 base 版本 → 填 base input 並送 base_model_version_id", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2", status: "queued" });
+    // getDiff 立刻回 succeeded 結束輪詢，避免測試卡在 setTimeout 迴圈。
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    // 受控持值 + 填入 base input。
+    expect(sel("a2-base-version").value).toBe(VER_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe(VER_PATH);
+    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 對稱補上 target 側（需求明文：base 與 target「各一組」三層選擇器，model_version_id 兩側
+  // 都「隨 createDiff 送出」）。選 base=v1、target=v2（fixture 第二版本），assert createDiff
+  // 同時收到 base_model_version_id 與『相異的』target_model_version_id——若 target 選擇器
+  // 沒接好 / 與 base 交叉接線 / 對 e.target.value 是 no-op，產不出這個相異的 target id，測試會紅。
+  it("A2 VersionDiffPage 選 base+target 版本 → 兩側 model_version_id 皆隨 createDiff 送出", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2bt", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2bt",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const targetInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // base 選 v1（沿用第一個測試的 270/機電/ver 竣工.ifc）。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    // target 選 v2（同 project/model 下的第二版本），驗證 target 三層選擇器獨立於 base。
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+
+    // 兩側受控持值 + 各自填入對應 input（base/target 不互相覆蓋）。
+    expect(sel("a2-base-version").value).toBe(VER_PATH);
+    expect(sel("a2-target-version").value).toBe(VER2_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+    expect(targetInput().value).toBe(VER2_PATH);
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe(VER_PATH);
+    expect(arg.target_ifc_path).toBe(VER2_PATH);
+    // 兩側 model_version_id 皆送出，且 target 相異於 base（證明 target 側真的接上、非沿用 base）。
+    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+    expect(arg.target_model_version_id).toBe("270/機電/ver 竣工 v2.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // target 側手動覆寫路徑 input → 清掉 target_model_version_id（誠實：手填路徑無版本綁定語意），
+  // 且不影響已選定的 base_model_version_id。對稱於 base 側既有行為。
+  it("A2 target input 手動覆寫 → 清 target_model_version_id，base 綁定不受影響", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2ov", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2ov",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const targetInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // base 走選擇器（保留版本綁定），target 先選版本再手動覆寫路徑（清綁定）。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+    expect(targetInput().value).toBe(VER2_PATH);
+
+    // 手動覆寫 target 路徑 → onChange 清 targetVerId + targetSel.version。
+    // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
+    // 真正觸發 onChange 入 state（直接設 .value 會被 tracker 視為無變化而吞掉）——沿用本檔
+    // A1 既有手動覆寫測試（上方）同款 idiom。
+    await act(async () => {
+      const el = targetInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed-target.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(targetInput().value).toBe("C:/manual/typed-target.ifc"); // 手動值已真正入 state
+    expect(sel("a2-target-version").value).toBe(""); // 覆寫後 target version select 回未選
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.target_ifc_path).toBe("C:/manual/typed-target.ifc");
+    // 手填路徑 → target_model_version_id 清空（undefined，維持現行為），但 base 綁定保留。
+    expect(arg.target_model_version_id).toBeUndefined();
+    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 對稱補上 base 側（需求明文：「手動覆寫 input 時清空對應 model_version_id」適用 base/target
+  // 兩側）。base 先選版本再手動覆寫路徑（清 base 綁定）；target 走選擇器保留版本綁定 → assert
+  // createDiff 收到 base_model_version_id=undefined 但 target_model_version_id 仍在。若 base input
+  // onChange 沒清 baseVerId / baseSel.version，會殘留舊綁定隨 createDiff 送出，測試會紅。
+  it("A2 base input 手動覆寫 → 清 base_model_version_id，target 綁定不受影響", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2bov", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2bov",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // base 先選版本（建立綁定）再手動覆寫路徑（清綁定）；target 走選擇器保留版本綁定。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+
+    // 手動覆寫 base 路徑 → onChange 清 baseVerId + baseSel.version。
+    // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
+    // 真正觸發 onChange 入 state（直接設 .value 會被 tracker 視為無變化而吞掉）——沿用本檔
+    // target 側手動覆寫測試（上方）同款 idiom。
+    await act(async () => {
+      const el = baseInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed-base.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(baseInput().value).toBe("C:/manual/typed-base.ifc"); // 手動值已真正入 state
+    expect(sel("a2-base-version").value).toBe(""); // 覆寫後 base version select 回未選
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe("C:/manual/typed-base.ifc");
+    // 手填路徑 → base_model_version_id 清空（undefined，維持現行為），但 target 綁定保留。
+    expect(arg.base_model_version_id).toBeUndefined();
+    expect(arg.target_model_version_id).toBe("270/機電/ver 竣工 v2.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // reviewer（quality I1）：對稱補上 A1 既有「換 project 清 selector 填入值、手動值不波及」於 base 側。
+  // A2 雙組選擇器最關鍵的非平凡邏輯是 clearBaseSelection（換 project/model select 的 onChange 直接
+  // 呼叫；version select 選回 placeholder 時 onChange 的 else arm 也落到同函數）內的
+  //   setBase((cur) => (cur === baseSel.version ? "" : cur))（target 對稱）——
+  // 選定版本後再「換 project」必須清掉「由選擇器填入的」base 路徑與 base_model_version_id，
+  // 但「手動輸入的」路徑不得被清（cur !== baseSel.version → 保留）。若此比較方向倒置 / off-by-one，
+  // createDiff 會默默帶舊版本路徑送出而不被既有測試擋下，故獨立補此 A2 base-side 換層清空驗收。
+  it("A2 base 選版本後換 project → 清 selector 填入的 base 路徑與 base_model_version_id、手動值不波及", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2bsw", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2bsw",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const setInputNative = (el: HTMLInputElement, value: string) => {
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // 選定 base 版本（建立 selector 填入值 + 綁定）。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+
+    // 換 project（選回 placeholder）→ selector 填入的 base 路徑與 version select 一併清空。
+    await pick("a2-base-project", "");
+    expect(sel("a2-base-version").value).toBe("");
+    expect(baseInput().value).toBe("");
+
+    // 換 model 同樣走 clearBaseSelection：重選版本後換 model → selector 填入值清空。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+    await pick("a2-base-model", "");
+    expect(baseInput().value).toBe("");
+
+    // 手動輸入的 base 路徑不被換層清理：重選版本後手動覆寫，再換 project → 保留手動值。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    await act(async () => { setInputNative(baseInput(), "C:/manual/typed-base.ifc"); });
+    expect(baseInput().value).toBe("C:/manual/typed-base.ifc"); // 手動值已真正入 state
+    await pick("a2-base-project", "");
+    expect(baseInput().value).toBe("C:/manual/typed-base.ifc"); // 換層清理不波及手動值
+
+    // 換層清空後送出 createDiff：base_model_version_id 已清（手動路徑無版本綁定語意）。
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe("C:/manual/typed-base.ifc");
+    expect(arg.base_model_version_id).toBeUndefined();
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // reviewer（quality I1）：target 側對稱版（clearTargetSelection 內
+  //   setTarget((cur) => (cur === targetSel.version ? "" : cur))）。
+  // 選定 target 版本後換 project/model → 清 selector 填入的 target 路徑與 target_model_version_id；
+  // 手動輸入值不波及。驗證 base/target 換層清理各自獨立、無交叉接線。
+  it("A2 target 選版本後換 project → 清 selector 填入的 target 路徑與 target_model_version_id、手動值不波及", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2tsw", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2tsw",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const targetInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
+    const setInputNative = (el: HTMLInputElement, value: string) => {
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // 選定 target 版本（v2）→ selector 填入 target 路徑 + 綁定。
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+    expect(targetInput().value).toBe(VER2_PATH);
+
+    // 換 project → selector 填入的 target 路徑與 version select 一併清空。
+    await pick("a2-target-project", "");
+    expect(sel("a2-target-version").value).toBe("");
+    expect(targetInput().value).toBe("");
+
+    // 手動輸入的 target 路徑不被換層清理：重選版本後手動覆寫，再換 model → 保留手動值。
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+    await act(async () => { setInputNative(targetInput(), "C:/manual/typed-target.ifc"); });
+    expect(targetInput().value).toBe("C:/manual/typed-target.ifc");
+    await pick("a2-target-model", "");
+    expect(targetInput().value).toBe("C:/manual/typed-target.ifc"); // 換層清理不波及手動值
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.target_ifc_path).toBe("C:/manual/typed-target.ifc");
+    expect(arg.target_model_version_id).toBeUndefined();
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // A2 選擇器 graceful degradation（對稱於 A1 既有 fsErr 測試）：filesTree() reject → 顯示誠實
+  // 「檔案庫不可用…可改用下方手動輸入路徑」（pages.tsx a2-fs-error）+ 重試鈕（a2-fs-retry），
+  // 且 base/target 手動輸入框照常可用（保留預設 fixture、仍可編輯）。SSR 首幀 fsErr=null 走
+  // loading 文案，唯有 client-render 微任務跑完（catch→setFsErr）才到得了此分支。
+  it("A2 filesTree() reject → 選擇器標「檔案庫不可用」graceful degrade，base/target 手動輸入照常可用", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 catch→setFsErr 入 state
+
+    const html = container.innerHTML;
+    // 誠實 graceful-degradation 文案：標不可用 + 指向手動輸入。
+    expect(html).toContain("檔案庫不可用");
+    expect(html).toContain("可改用下方手動輸入路徑");
+    expect(html).toContain("proxy 502"); // 顯示原因，不吞錯
+    // 已離開「載入檔案庫中…」（fsErr 已設）。
+    expect(html).not.toContain("載入檔案庫中…（GET /api/governance/files/tree）");
+
+    // 使用者可觸發的重試鈕存在（不必整頁 reload）。
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="a2-fs-retry"]');
+    expect(retry).not.toBeNull();
+
+    // base/target 手動輸入框仍可用（保留預設 fixture 路徑，graceful degrade 不擋手動流程）。
+    const baseInput = container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const targetInput = container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
+    expect(baseInput.disabled).toBe(false);
+    expect(targetInput.disabled).toBe(false);
+    expect(baseInput.value).toContain(".ifc"); // 預設 fixture 路徑（受控值未被 fsErr 凍結）
+    // 仍可手動改 base 路徑（驗證受控輸入未被 fsErr 凍結）。
+    await act(async () => {
+      const el = container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!.value).toBe("C:/manual/typed.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // reviewer（quality I2）：對稱於 A1 既有「重試載入檔案庫」完整流程（console.test.tsx A1 retry）。
+  // 既有 A2 graceful-degrade 測試只驗重試鈕 render，未驗點擊後真的重新載入。spec §2 明文重試鈕
+  // 是要求行為——須驗點 a2-fs-retry → filesTree() 第二次被呼叫並成功 → 雙組選擇器從 disabled
+  // 恢復 enable（base/target project select disabled=false），不必整頁 reload。
+  it("A2 檔案庫不可用點「重試載入檔案庫」→ 重打 filesTree() → base/target 選擇器 enable", async () => {
+    const spy = vi
+      .spyOn(governanceClient, "filesTree")
+      .mockRejectedValueOnce(new Error("proxy 502"))
+      .mockResolvedValueOnce(tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.innerHTML).toContain("檔案庫不可用");
+    // 失敗態（fsTree 仍 null）→ base/target project select 皆 disabled（disabled={!fsTree}）。
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="a2-base-project"]')!.disabled).toBe(true);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="a2-target-project"]')!.disabled).toBe(true);
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="a2-fs-retry"]');
+    expect(retry).not.toBeNull();
+    await act(async () => { retry!.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 第二次 filesTree() 成功 → 離開 error 態、雙組選擇器恢復 enable。
+    expect(container.innerHTML).not.toContain("檔案庫不可用");
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="a2-base-project"]')!.disabled).toBe(false);
+    expect(container.querySelector<HTMLSelectElement>('[data-testid="a2-target-project"]')!.disabled).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(2); // 真的重打了一次
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+// A2 VersionDiff 多專案 / 三層版本選擇器 client-render（spec §4.2/§6.2）。
+// 上方 A2 既有測試的 fixture 只有單一 project（270）/單一 model（機電），無法證明
+//   (1) project 下拉真的把「多個」project 都列出來（多專案可選）、
+//   (2) version 下拉能顯示「巢狀三層」版本名（如 v1/japanese_villa.ifc，name 帶子目錄）。
+// 此處用自帶含「松風庵/建築/v1/japanese_villa.ifc」的真實樹形狀（比照 storage 實際結構），
+// client-render 驗證多專案選擇與三層版本名顯示——SSR 首幀 fsTree=null 永遠到不了 populated 態。
+describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：base/target 三層 + model_version_id）", () => {
+  const BASE_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 000001.ifc";
+  const TARGET_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc";
+  const VILLA_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/松風庵/建築/v1/japanese_villa.ifc";
+  // VersionDiffPage target state 預設值（pages.tsx 初值）；target 未選版本時 createDiff 應沿用此值。
+  const DEFAULT_TARGET_PATH = "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\許良宇圖書館建築_2026 - 轉檔測試2.ifc";
+  // 多專案 + 三層版本：270/機電（兩版）+ 松風庵/建築（一個三層 name 的版本）。
+  const a2tree: FilesTreeResponse = {
+    root: "C:/Repos/active/iot/AI-BIM-governance/storage",
+    source_kind: "local_fs",
+    projects: [
+      {
+        project_id: "270",
+        models: [
+          {
+            model_id: "機電",
+            versions: [
+              { name: "ver 000001.ifc", path: BASE_PATH, size_bytes: 8155, mtime: "2026-06-10T17:00:00+08:00" },
+              { name: "ver 竣工.ifc", path: TARGET_PATH, size_bytes: 22618, mtime: "2026-06-10T17:17:00+08:00" },
+            ],
+          },
+        ],
+      },
+      {
+        project_id: "松風庵",
+        models: [
+          {
+            model_id: "建築",
+            versions: [
+              { name: "v1/japanese_villa.ifc", path: VILLA_PATH, size_bytes: 12345, mtime: "2026-06-11T09:00:00+08:00" },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  const sel = (testid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${testid}"]`)!;
+  const inputByTestId = (testid: string) => container.querySelector<HTMLInputElement>(`[data-testid="${testid}"]`)!;
+  const pick = async (testid: string, value: string) => {
+    await act(async () => {
+      sel(testid).value = value;
+      sel(testid).dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+  // 受控 input 須經 native value setter 才繞過 React value tracker 的 dedup、真正觸發 onChange 入 state
+  // （直接設 .value 會被 tracker 視為無變化吞掉）——沿用本檔既有手動覆寫測試同款 idiom。
+  const setInputNative = (el: HTMLInputElement, value: string) => {
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    nativeValueSetter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  // spec §4.2/§6.2 核心：base 走三層選定 270/機電/ver 000001.ifc、target 選 ver 竣工.ifc →
+  // 受控 input 值更新，且 createDiff 同時收到兩側 path 與兩側 model_version_id（{project}/{model}/{version.name}）。
+  // SSR 首幀 fsTree=null 到不了 populated 態，必走 client-render；getDiff 一次回 succeeded 結束輪詢。
+  it("base 選 270/機電/ver 000001.ifc + target 選 ver 竣工.ifc → input 值更新且 createDiff 收到 model_version_id", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d1", status: "queued" });
+    // getDiff 一次回 succeeded 結束輪詢（避免測試等 120 秒）。summary 形狀完整比照 DiffStatus.summary
+    // （base_count/target_count/matched/counts/warnings 皆備），免 as never 斷言。
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d1",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 3, counts: { added: 2, removed: 0, moved: 0, property_changed: 1 }, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 filesTree microtask 入 state
+
+    // base 三層
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", BASE_PATH);
+    // target 三層
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", TARGET_PATH);
+
+    // 受控 input 已被填入版本 path。
+    expect(inputByTestId("a2-base-input").value).toBe(BASE_PATH);
+    expect(inputByTestId("a2-target-input").value).toBe(TARGET_PATH);
+
+    // Run Diff → createDiff 收到 base/target path + model_version_id（version 綁定 spec §4.2）。
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        base_ifc_path: BASE_PATH,
+        target_ifc_path: TARGET_PATH,
+        base_model_version_id: "270/機電/ver 000001.ifc",
+        target_model_version_id: "270/機電/ver 竣工.ifc",
+      }),
+    );
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 多專案可選 + 三層版本名顯示（user-facing 證明）：base project 下拉含「松風庵」，
+  // 選松風庵/建築後，version 下拉 option 含三層 name「v1/japanese_villa.ifc」。
+  it("project 下拉含松風庵；選建築 → 版本下拉含三層 v1/japanese_villa.ifc（多專案 + 三層支援）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 filesTree microtask 入 state
+
+    // base project 下拉同時列出 270 與 松風庵（多專案可選，非只第一個）。
+    const projOptions = Array.from(sel("a2-base-project").options).map((o) => o.value);
+    expect(projOptions).toContain("270");
+    expect(projOptions).toContain("松風庵");
+    // target project 下拉對稱含松風庵（base/target 同源 fsTree，皆可選多專案）。
+    expect(Array.from(sel("a2-target-project").options).map((o) => o.value)).toContain("松風庵");
+
+    // 選松風庵/建築 → version option 含三層 name（name 帶子目錄 v1/ 也能正確顯示與選取）。
+    await pick("a2-base-project", "松風庵");
+    await pick("a2-base-model", "建築");
+    const verLabels = Array.from(sel("a2-base-version").options).map((o) => o.textContent);
+    expect(verLabels).toContain("v1/japanese_villa.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 選定三層版本 → createDiff 收到三層 model_version_id（{project}/{model}/{三層 name}）。
+  // 補強：上方既有 A2 測試只驗過「ver 竣工.ifc」這種 flat name 的 model_version_id；此處鎖定
+  // 「v1/japanese_villa.ifc」這種帶子目錄的 name 也原樣帶入綁定，不被截斷 / 改寫。
+  it("選松風庵/建築/v1/japanese_villa.ifc → createDiff 帶三層 base_model_version_id", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2villa", status: "queued" });
+    // getDiff 一次回 succeeded 結束輪詢（避免測試等 120 秒迴圈）。
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2villa",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    await pick("a2-base-project", "松風庵");
+    await pick("a2-base-model", "建築");
+    await pick("a2-base-version", VILLA_PATH);
+    // 受控 input 已被填入三層版本 path。
+    expect(container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!.value).toBe(VILLA_PATH);
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe(VILLA_PATH);
+    // 三層 name 原樣帶入 model_version_id（含子目錄段 v1/，不截斷）。
+    expect(arg.base_model_version_id).toBe("松風庵/建築/v1/japanese_villa.ifc");
+    // target 側未選版本 → 沿用元件預設 target state（pages.tsx VersionDiffPage 初值），
+    // 鎖定 base/target 未被交叉接線：只動 base 不會污染 target_ifc_path。
+    expect(arg.target_ifc_path).toBe(DEFAULT_TARGET_PATH);
+    // target 未經三層選擇器 → 無版本綁定語意，model_version_id 應為空（undefined，
+    // 對齊本檔其他同場景斷言；toBeFalsy 會放過 null/""/0，語意較弱故不用）。
+    expect(arg.target_model_version_id).toBeUndefined();
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // spec §4.2/§6.2 graceful degradation：filesTree() reject → 選擇器標誠實「檔案庫不可用…
+  // 可改用下方手動輸入路徑」（pages.tsx a2-fs-error）+ 顯示原因，base/target 手動輸入框照常可用。
+  // SSR 首幀 fsErr=null 走 loading 文案，唯有 client-render 微任務跑完（catch→setFsErr）才到此分支。
+  it("filesTree() reject → 選擇器標「檔案庫不可用」graceful degrade，手動輸入照常可用", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 catch→setFsErr 入 state
+
+    const html = container.innerHTML;
+    expect(html).toContain("檔案庫不可用");
+    expect(html).toContain("可改用下方手動輸入路徑");
+    expect(html).toContain("proxy 502"); // 顯示原因，不吞錯
+    // 使用者可觸發的重試鈕存在（spec §6.2 要求「不必整頁 reload 的重試」；pages.tsx a2-fs-retry）。
+    // 鎖住此鈕：若被誤刪或 testid 改名，graceful-degrade 合約應變紅。
+    expect(container.querySelector('[data-testid="a2-fs-retry"]')).not.toBeNull();
+    // base/target 手動輸入框照常可用（保留預設路徑、可編輯；對稱於舊 block）。
+    const baseInput = inputByTestId("a2-base-input");
+    expect(baseInput.disabled).toBe(false);
+    expect(inputByTestId("a2-target-input").disabled).toBe(false);
+    await act(async () => { setInputNative(inputByTestId("a2-base-input"), "C:/manual/base.ifc"); });
+    expect(inputByTestId("a2-base-input").value).toBe("C:/manual/base.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // spec §4.2 誠實鐵律：選定版本後手動覆寫 base input → 清空 base_model_version_id
+  // （手填路徑無版本綁定語意）。若 base input onChange 沒清 baseVerId / baseSel.version，
+  // 會殘留舊綁定隨 createDiff 送出，測試會紅。
+  it("選定版本後手動覆寫 base input → 清空 base_model_version_id（誠實：手填路徑無版本綁定）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
+    const createSpy = vi.spyOn(governanceClient, "createDiff").mockResolvedValue({ diff_id: "d2", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d2",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", BASE_PATH);
+    // 手動覆寫 base input → 版本綁定清空。
+    await act(async () => { setInputNative(inputByTestId("a2-base-input"), "C:/manual/override.ifc"); });
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    // base_model_version_id 應為 undefined（手填路徑無綁定）。
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe("C:/manual/override.ifc");
+    expect(arg.base_model_version_id).toBeUndefined();
+    // base 手動覆寫不得污染 target 側（target 未選版本：沿用預設路徑、無綁定）。
+    expect(arg.target_ifc_path).toBe(DEFAULT_TARGET_PATH);
+    expect(arg.target_model_version_id).toBeUndefined();
 
     await act(async () => { root.unmount(); });
   });
