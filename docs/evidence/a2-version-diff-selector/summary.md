@@ -53,6 +53,27 @@ succeeded 與否、松風庵三層可見截圖。詳細運行前置與既有覆�
 - **松風庵三層可見截圖**：[`a2-version-diff-selector-matsu-three-level.png`](a2-version-diff-selector-matsu-three-level.png)
   （base = 松風庵/建築）。
 
+## task#5 全套回歸驗收（2026-06-11，補錄）
+
+### 後端回歸：test_file_library.py（12 passed）
+
+指令：`"C:\Program Files\Python312\python.exe" -m pytest governance-service/tests/test_file_library.py -p no:cacheprovider -q`
+結果：**12 passed, 1 warning in 1.51s**（兩層回歸 9 + 三層新 3，無 fail）。
+
+### 前端回歸：console.test.tsx（63 passed）
+
+指令：`npm --prefix web-viewer-sample test -- --run console.test.tsx`
+結果：**2 files, 63 tests passed**（OperatorConsole 13 + console.test.tsx 50）。
+
+### minio E2E 回歸：minio-fileserver-source.spec.ts（2 skipped — 前置未對齊）
+
+指令：`npm --prefix web-viewer-sample exec -- playwright test e2e/minio-fileserver-source.spec.ts --reporter=line`
+結果：**2 skipped**（governance-service :49102 不在線；`beforeEach` 守門 (1) 觸發 conditional skip）。
+
+skipped ≠ fail；per spec task#5 描述「前置未對齊則全 skip，與本輪改動無關」。
+本 `file_library` 三層支援與 task#1 後端已由 12 passed pytest 覆蓋；minio E2E 的 file-server
+兩層（270/889/990）輸出由 `test_list_projects_two_layer` 等 9 項回歸守住，確認未破壞兩層路徑。
+
 ## 截圖抽樣說明（誠實）
 
 evidence 只存抽樣截圖（2 張 PNG，各 ~130–144KB），不存 trace/video 全量、不 commit 任何 IFC/usdc
