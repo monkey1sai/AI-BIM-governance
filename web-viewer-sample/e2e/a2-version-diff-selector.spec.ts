@@ -73,6 +73,13 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     await expect(page.getByText("matched", { exact: false }).first()).toBeVisible({ timeout: 120_000 });
     await expect(page.getByText("property changed", { exact: false }).first()).toBeVisible({ timeout: 120_000 });
 
+    // succeeded 直接 UI gate：counts 卡只看 diff!=null、succeeded/failed 都渲染，故「counts 可見」
+    // 不足以證明後端回 succeeded。pages.tsx L1106「套用 3D Overlay」鈕
+    // disabled={busy || diff?.status !== "succeeded"} 是 UI 中唯一直接觀察 status==="succeeded"
+    // 的元素（run() 結束 busy=false → 僅 status==="succeeded" 才 enable）。enabled 即明確斷言
+    // 後端確回 succeeded；若回 failed / 未連線此鈕保持 disabled（此時 sum>0 也會連帶失敗）。
+    await expect(page.getByRole("button", { name: /套用 3D Overlay/ })).toBeEnabled({ timeout: 120_000 });
+
     // 真實非全零：抓 added/removed/moved/property_changed 四個數字相加 > 0。
     // Metric 結構為 <div><big value></big><label></label></div>；用 evaluate 從 DOM 收 counts。
     const sum = await page.evaluate(() => {
