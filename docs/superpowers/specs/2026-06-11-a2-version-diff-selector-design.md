@@ -3,7 +3,7 @@
 - 文件性質：spec design（設計文件）。權威序：code > contracts > AGENTS > wiki；與實作衝突時以實作程式碼與 `openspec/specs/` capability spec 為準。
 - 日期：2026-06-11
 - Phase 對應：M5「A2 真差異」的 CPU 部分（v3 §3.2/§3.3：O3 版本層落地 → A2 IFC-diff）；3D onion-skin 需 M3，不在本輪。
-- userFacing：true（`#/a2` / `#/version-diff`）
+- userFacing：true（`#a2` / `#version-diff`）
 
 ## 1. 背景與現狀（盤點已實證）
 
@@ -17,7 +17,7 @@ A2 後端**完整 as-built**：governance-service `diff_engine/`（`POST /api/di
 ## 2. 目標（成功標準）
 
 1. file_library 支援第三層版本目錄：`{project}/{model}/{versionDir}/*.ifc` 入樹，version 條目 `name = "{versionDir}/{filename}"`（如 `v1/japanese_villa.ifc`）；既有兩層（檔名即版本）行為與輸出**完全不變**。`GET /api/files/tree` 的 projects 含 270/889/990/**松風庵**。
-2. `#/a2`（`VersionDiffPage`）有 base 與 target 各一組「專案→模型→版本」三層選擇器（複用 A1 既有 filesTree 模式），選定即填入對應路徑 input；手動輸入保留、檔案庫不可用時 graceful degradation（比照 A1）。
+2. `#a2`（`VersionDiffPage`）有 base 與 target 各一組「專案→模型→版本」三層選擇器（複用 A1 既有 filesTree 模式），選定即填入對應路徑 input；手動輸入保留、檔案庫不可用時 graceful degradation（比照 A1）。
 3. 選擇器選定時同步帶出 `base_model_version_id` / `target_model_version_id` = `"{project_id}/{model_id}/{version name}"`（供 `/issue-impact` 版本綁定；手動輸入路徑時兩欄留空維持現行為）。
 4. Browser E2E：選 `270/機電` 的 `ver 000001.ifc` vs `ver 竣工.ifc` → Run Diff → succeeded → 變更計數卡顯示真實非全零結果（8KB vs 22KB 兩版必有差異）；且 project 下拉可見「松風庵」（三層支援的 user-facing 證明）。
 
@@ -50,7 +50,7 @@ A2 後端**完整 as-built**：governance-service `diff_engine/`（`POST /api/di
 
 ### 4.3 資料流（一句話版）
 
-`#/a2` → `filesTree()`（含松風庵三層）→ 選 base/target 版本 → `POST /api/governance/diffs {base_ifc_path, target_ifc_path, base_model_version_id?, target_model_version_id?}` → 輪詢 succeeded → counts/items/issue-impact（全既有鏈路）。
+`#a2` → `filesTree()`（含松風庵三層）→ 選 base/target 版本 → `POST /api/governance/diffs {base_ifc_path, target_ifc_path, base_model_version_id?, target_model_version_id?}` → 輪詢 succeeded → counts/items/issue-impact（全既有鏈路）。
 
 ## 5. 錯誤處理
 
@@ -71,10 +71,10 @@ A2 後端**完整 as-built**：governance-service `diff_engine/`（`POST /api/di
 2. **前端 vitest**（`console.test.tsx` 既有模式）：VersionDiffPage 選擇器 render；選定後 base input 值更新且 model_version_id 帶出；fsErr graceful degradation；手動覆寫清空版本綁定。
 3. **Browser E2E（Playwright，`e2e/a2-version-diff-selector.spec.ts`）**：
    - 守門與檔頭 skip 限制揭露比照 `minio-fileserver-source.spec.ts` 先例。
-   - `#/a2`：base 選 `270/機電/ver 000001.ifc`、target 選 `270/機電/ver 竣工.ifc` → Run Diff → succeeded → counts 卡顯示且 added+removed+moved+property_changed 總和 > 0。
+   - `#a2`：base 選 `270/機電/ver 000001.ifc`、target 選 `270/機電/ver 竣工.ifc` → Run Diff → succeeded → counts 卡顯示且 added+removed+moved+property_changed 總和 > 0。
    - project 下拉含「松風庵」；切到 `松風庵/建築` 版本下拉含 `v1/japanese_villa.ifc`（三層支援 user-facing 證明）。
    - 截圖 + summary 落 `artifacts/e2e/a2-version-diff-selector-*` 與 tracked `docs/evidence/a2-version-diff-selector/`。
-4. **驗收基準**：全綠 + 四項回報；`#/minio` 與 `#/a1` 既有 E2E 不壞（file_library 回歸）。
+4. **驗收基準**：全綠 + 四項回報；`#minio` 與 `#a1` 既有 E2E 不壞（file_library 回歸）。
 
 ## 7. 風險與緩解
 

@@ -1,6 +1,6 @@
 # AI-BIM-Governance — 開發軌跡 · A1–A10 工程規格 · 執行計畫
 
-> 版本：v3 · 2026-06-10 · 本文件以 **readonly 模式**產出（兩份上傳檔完全未修改）
+> 版本：v3.1 · 2026-06-10 初版 · **2026-06-11 勘誤**（route hash 無斜線、BCF 現行 2.1、版本層已落地、governance 經 proxy——實測依據見《ai-bim-governance-互動實作規格與標準對齊.md》PART A）
 > 配套檔案：`ai-bim-governance-prototype.html`（v2 原型）、`ai-bim-governance-設計規格.md`（v2 規格）
 > 對齊：https://bim-docs.jackshappybot.com/ （系統總覽）· repo `C:\Repos\active\iot\AI-BIM-governance`（branch `feat/edge-console-product-shell`）
 > 執行前提：**你 + Claude 協作**（工作量以「輪次」計，一輪 ≈ 一次對話可完成並驗收的小目標）
@@ -49,8 +49,8 @@
 
 | 資產 | 內容 | 狀態 |
 |---|---|---|
-| Repo `C:\Repos\active\iot\AI-BIM-governance` | 目標落點；branch `feat/edge-console-product-shell` 定義產品殼層：coordinator `/ui` 掛 EdgeConsole（React 18 + TypeScript），route contract：`/ui`、`#/a1`、`#/viewer`、`#/conv`、`#/sessions`、`#/instances`、`#/minio` + operator 工具 `#/kit`、`#/demo-control` | ⚪ 你已說明**尚未實作**；實際現況待 M0 盤點 |
-| MinIO（內網 LAN） | bucket `bim-control`，PRIVATE，12.6 GiB / 867 objects；專案 270 / 899 / 988 | 🟢 在線，結構已實測（見 1.5） |
+| Repo `C:\Repos\active\iot\AI-BIM-governance` | 目標落點；branch `feat/edge-console-product-shell` 定義產品殼層：coordinator `/ui` 掛 EdgeConsole（React 18 + TypeScript），route contract：`/ui`、`#a1`、`#viewer`、`#conv`、`#sessions`、`#instances`、`#minio` + operator 工具 `#kit`、`#demo-control` | 🟢 殼層已上線（2026-06-11 實測 coordinator `/ui`，hash 無斜線；另多出 Review Room／Model Intake／五步管線等頁）；差距清單見《互動實作規格》PART A |
+| MinIO（內網 LAN） | bucket `bim-control`，PRIVATE，12.6 GiB / 867 objects；專案編號現況 270/889/990＋271（**2026-06-11 確認：皆為暫時測試 IFC 檔**，非正式專案） | 🟢 早期實測（見 1.5）；**短期真相源已改 local_fs storage**（D:\Users\deploy\AI-bim-geo\storage） |
 | 落地端 runtime 規劃 | Omniverse Kit 107、USD/RTX、WebRTC 串流、Coordinator :8004、MCP sidecars（omni-ui-mcp :9901 / kit-mcp :9902 / usd-code-mcp :9903）、governance-service :49102 | ⚪ 規劃確立，實機串流待建 |
 | 雲端 | Nuxt 3 + MySQL（control-plane：帳號、專案、權限） | 🟢 主平台既有 |
 
@@ -64,7 +64,7 @@
 | D4 | **Issue 共同出海口**：A1/A2/A3/A5 的問題全部進同一套 Issue/BCF schema | 各應用不必各做各的；統一指派、打包交付 |
 | D5 | AI 只在 **session layer** 操作、工具呼叫全程透明、危險動作真人確認 | 不碰 source model 才安全可還原；看得到 AI 做了什麼才放心 |
 | D6 | **1 GPU = 1 Kit instance = 1 stream**；同時 session 數 ≤ GPU 數；spectator 共看不另吃 GPU | 你要求向 NVIDIA 核實 → 官方 Kit App Streaming 文件明訂「GPU: 1 per stream」 |
-| D7 | MinIO 採**三層規劃**：projectId → OpenBIM 類別（機電/消防/管線/施工/牆面…）→ 版本 v01/v02；USD 以 projectId 為索引寫回同 modelId 資料夾 | 你的補充說明；第二層目前以 UUID 儲存（邏輯上＝類別）、第三層版本**尚未實作** |
+| D7 | MinIO 採**三層規劃**：projectId → OpenBIM 類別（機電/消防/管線/施工/牆面…）→ 版本 v01/v02；USD 以 projectId 為索引寫回同 modelId 資料夾 | 你的補充說明；第二層目前以 UUID 儲存（邏輯上＝類別）、第三層版本原「尚未實作」→ **2026-06-11 已以 local_fs 落地**：`270/機電|水電|消防/000001~000003＋竣工.ifc`（真 S3/MinIO 待接、版本命名規約待定案） |
 | D8 | 原型先不碰 repo（你選了 B） | repo 尚未實作，先把介面語意做對 |
 | D9 | **不做無縫 GPU 遷移**，拖放 = 重啟搬移（terminate + recreate）/ 排程偏好 / drain | 你的原則「官方支援才做」→ NVIDIA 官方無 migrate API，重啟約 30–40 秒、shader cache 冷可達 15 分鐘以上 |
 
@@ -74,7 +74,7 @@
 
 ```
 bim-control/
-└── {projectId}            270 / 899 / 988
+└── {projectId}            270 / 899 / 988   ←當時 bucket 所見；2026-06-11 確認現況為 270/889/990＋271（皆暫時測試檔）
     └── {modelId UUID}     例 123a909a-0f28-…（邏輯上＝OpenBIM 類別）
         ├── model.ifc        65.7 MB  來源 IFC（轉檔輸入）
         ├── model.rvt       222.9 MB  來源 Revit
@@ -113,9 +113,9 @@ bim-control/
 
 | 實體 | 關鍵欄位 | 白話 |
 |---|---|---|
-| Project | `projectId`(270/899/988)、名稱、階段 | 一個工程案 |
+| Project | `projectId`（測試現況：270/889/990＋271，皆暫時測試 IFC）、名稱、階段 | 一個工程案 |
 | Model | `modelId`(UUID)、projectId、discipline(OpenBIM 類別)、來源檔資訊 | MinIO 一個模型資料夾 |
-| Version | `versionId`(v01/v02…)、modelId、上傳者、時間、備註 | 同一模型的某一版（**儲存層尚未實作**，A2 前置） |
+| Version | `versionId`(v01/v02…)、modelId、上傳者、時間、備註 | 同一模型的某一版（local_fs 已落地檔名版本 000001~竣工；S3/MinIO 與命名規約待定，A2 可先用 ifcdiff 開工） |
 | Element | `elementGuid`(IFC GlobalId)、ifcClass、名稱、樓層、屬性 bag、`usdPath`(轉檔後對應 prim) | 一個構件（牆、門、管…）；`elementGuid ↔ usdPath` 對照表是 3D 連動的關鍵 |
 | RuleResult | `checkId`、ruleId、status(pass/fail)、severity、命中 elementGuids | A1 一條規則的檢核結果 |
 | Issue | `issueId`、來源(app)、severity、標題、描述、elementGuids、指派、狀態、BCF 欄位 | 共同出海口；A1/A2/A3/A5 都往這裡丟 |
@@ -128,7 +128,7 @@ bim-control/
 | 服務 | 埠 | 負責 |
 |---|---|---|
 | coordinator | :8004 | 控制塔：session/instance 排程、EdgeConsole `/ui` 殼層 |
-| governance-service | :49102 | A1 規則引擎、Issue/BCF、報表（CPU 即可） |
+| governance-service | :49102 | A1 規則引擎、Issue/BCF、報表（CPU 即可）；**browser 不直連，經 coordinator `/api/governance/*` proxy** |
 | conversion worker | (隨 coordinator 管理) | IFC→USD 轉檔（CPU 吃重） |
 | kit-mcp | :9902 | 對 Kit 場景下指令／查詢 prims |
 | usd-code-mcp | :9903 | 產生／執行 Python-USD 程式碼（A9） |
@@ -157,7 +157,7 @@ bim-control/
 }
 ```
 
-匯出 BCF 3.0 = 把 Issue 打包成 `.bcfzip`（每個 issue 一個資料夾：`markup.bcf` 描述 + `viewpoint.bcfv` 視角 + `snapshot.png` 截圖；沒有 3D 時 viewpoint/snapshot 可缺省，誠實標「無視角資訊」）。
+匯出 BCF = 把 Issue 打包成 `.bcfzip`（**現行實作 BCF 2.1**；官方 bcf 庫支援 2.1/3.0，3.0 為升級目標。每個 issue 一個資料夾：`markup.bcf` 描述 + `viewpoint.bcfv` 視角 + `snapshot.png` 截圖；沒有 3D 時 viewpoint/snapshot 可缺省，誠實標「無視角資訊」）。
 
 ### 2.0.4 3D 的三種角色（邊界，避免過度承諾）
 
@@ -186,7 +186,7 @@ bim-control/
 | F2 | 規則引擎：IfcOpenShell 解析 + ifctester 跑 IDS 規則 → pass/fail + 命中構件 | Must |
 | F3 | 結果記分板（通過/擋下/通過率/構件數）+ 規則清單（可展開看構件） | Must |
 | F4 | 失敗規則 → 批次建 Issue（進共同出海口） | Must |
-| F5 | 匯出 BCF 3.0 (.bcfzip) + Excel 清單 | Must |
+| F5 | 匯出 BCF (.bcfzip · 現行 2.1，3.0 為目標) + Excel 清單 | Must |
 | F6 | 規則庫管理：IDS/YAML 檔可增改、分專案啟用、設嚴重度 | Should |
 | F7 | 檢核歷史與趨勢（每版通過率） | Should |
 | F8 | 3D 高亮失敗構件（需 M4 的 review session + DataChannel） | Could（後期） |
@@ -216,14 +216,14 @@ bim-control/
   負責方: Architect
 ```
 
-**UI 對應**：route `#/a1`，五步 stepper（上傳→檢核→結果→Issue→BCF），原型已可走完整流程（示範資料）；右側 Copilot 三條建議指令 + 工具呼叫示範已腳本化。
+**UI 對應**：route `#a1`，五步 stepper（上傳→檢核→結果→Issue→BCF），原型已可走完整流程（示範資料）；右側 Copilot 三條建議指令 + 工具呼叫示範已腳本化。
 
 **驗收清單（A1 Core MVP 完成的定義）**
 - [ ] 用真實 `model.ifc`（65.7MB 那支）跑完檢核不爆記憶體、5 分鐘內出結果
 - [ ] 至少 10 條真規則（O2 工作坊定案）有 pass/fail 與命中構件
 - [ ] 失敗規則可批次轉 Issue，Issue 中心看得到、可改狀態
 - [ ] 匯出的 .bcfzip 能被第三方 BCF 檢視器（如 BIMcollab）打開
-- [ ] EdgeConsole `#/a1` 走的是真 API，不是示範資料；誠實標記翻成「已實作」
+- [ ] EdgeConsole `#a1` 走的是真 API，不是示範資料；誠實標記翻成「已實作」
 - 規格既有估計：純 Core MVP ≈ 1.5–2 人月（工程師口徑）；協作口徑見 PART 3 M1
 
 **依賴**：MinIO 讀取權限、Postgres、O2 規則清單。**不依賴** GPU/Kit（這是 P0 能最快落地的原因）。
@@ -409,7 +409,7 @@ M0 地基盤點 ──→ M1 A1 核心閉環（P0，最快見效）──→ M5 
 
 ### M0 · 地基盤點（2–3 輪）
 - **R1 repo 現況盤點（readonly）**：你授權資料夾 → Claude 列出目錄結構、能不能 build、coordinator/EdgeConsole 殼層與 route contract 差距 → 產出《現況與差距清單》。解 O1。
-- **R2 殼層跑起來**：EdgeConsole `/ui` 在本機起得來，`#/a1 #/viewer #/conv #/sessions #/instances #/minio` 路由都有頁（內容可先是原型移植的示範資料）。
+- **R2 殼層跑起來**：EdgeConsole `/ui` 在本機起得來，`#a1 #viewer #conv #sessions #instances #minio` 路由都有頁（內容可先是原型移植的示範資料）。
 - **R3 誠實標記設定化**：`provenance.json` + 讀取 API，前端標記改吃設定。
 - **DoD**：你在瀏覽器打開 `/ui` 能點到七頁；差距清單你看得懂。
 
@@ -417,23 +417,23 @@ M0 地基盤點 ──→ M1 A1 核心閉環（P0，最快見效）──→ M5 
 - **R1 規則引擎 PoC**：IfcOpenShell + ifctester 在本機吃真檔 `model.ifc`（65.7MB）跑 2–3 條示範規則 → 出 JSON 結果。先證明這條路通。
 - **R2 規則工作坊（要你出席）**：跟你一起定第一批 10 條檢核規則（白話描述→Claude 翻成 IDS/YAML）。解 O2。
 - **R3 governance-service 落地**：:49102 起服務、Postgres schema（RuleResult/Issue）、檢核 API 三支。
-- **R4 `#/a1` 接真 API**：五步 stepper 從示範資料換成真檢核；進度條是真進度。
+- **R4 `#a1` 接真 API**：五步 stepper 從示範資料換成真檢核；進度條是真進度。
 - **R5 Issue 中心 + BCF**：批次轉 Issue、`.bcfzip` 匯出、Excel 清單。
-- **R6 端到端驗收**：用三個專案（270/899/988）各跑一次完整五步；BCF 用第三方檢視器開啟驗證；誠實標記翻綠。
+- **R6 端到端驗收**：用三個測試專案（270/889/990）各跑一次完整五步；BCF 用第三方檢視器開啟驗證；誠實標記翻綠。
 - **DoD**：A1 驗收清單（PART 2）全勾。
 
 ### M2 · 轉檔管線（4–6 輪）
 - **R1 觸發機制選型**：MinIO bucket event vs 輪詢（解 O4）→ 官方文件核實後定案。
 - **R2 轉檔 worker PoC**：IfcOpenShell → USD，真檔轉出 `model.usdc`，能在 usdview/Kit 開啟。
 - **R3 coverage 報告**：property / relationship / attribute 轉換成功率統計（沿用「不承諾 100% 無損」原則）。
-- **R4 佇列服務 + `#/conv` 接真資料**：排隊、插隊、重試語意照原型，背後是真 job。
+- **R4 佇列服務 + `#conv` 接真資料**：排隊、插隊、重試語意照原型，背後是真 job。
 - **DoD**：丟一支新 model.ifc 進 MinIO → 不碰任何按鈕 → `model.usdc` 出現在同資料夾 + coverage 報告可看。
 
 ### M3 · Runtime 串流（5–8 輪）
 - **R1 環境確認**：GPU 台數/型號（解 O5）、Kit 107 安裝、USD Viewer streaming template 起得來。
 - **R2 單機串流 PoC**：一台 GPU 起 Kit → 瀏覽器 WebRTC 看到 first frame（健康判定照 D6：看 frame 不看埠）。
 - **R3 coordinator 排程**：session create/terminate、1 GPU = 1 stream 守門、endpoint pool（1 PRI + N SPC）。
-- **R4 `#/sessions` `#/instances` 接真資料**：含重啟搬移（confirm→terminate→recreate）與 drain，語意照 D9。
+- **R4 `#sessions` `#instances` 接真資料**：含重啟搬移（confirm→terminate→recreate）與 drain，語意照 D9。
 - **DoD**：兩個人同時在瀏覽器看同一 session（一人操作一人旁觀）；拖 session 到另一節點走完重啟搬移流程。
 
 ### M4 · 3D 連動（4–6 輪）
