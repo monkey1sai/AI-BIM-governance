@@ -809,6 +809,56 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 
     await act(async () => { root.unmount(); });
   });
+
+  // A2 VersionDiffPage 雙組三層選擇器（複用 A1 模式）：選定 base 版本 → 填 base input
+  // 並把 base_model_version_id（{project}/{model}/{version.name}）隨 createDiff 送出。
+  it("A2 VersionDiffPage 選 base 版本 → 填 base input 並送 base_model_version_id", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2", status: "queued" });
+    // getDiff 立刻回 succeeded 結束輪詢，避免測試卡在 setTimeout 迴圈。
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    // 受控持值 + 填入 base input。
+    expect(sel("a2-base-version").value).toBe(VER_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe(VER_PATH);
+    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
 });
 
 describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 schema，渲染層驗證；真後端值由 E2E 驗", () => {
