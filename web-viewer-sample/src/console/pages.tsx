@@ -958,13 +958,14 @@ export function VersionDiffPage() {
   // 完整重設 selector state（project/model 由呼叫者指定、version 一律清）；只在「目前 base 路徑
   // 正是先前由 selector 填入的版本路徑」時才清路徑——手動輸入的路徑不被波及。model_version_id
   // 一律清（換層後版本綁定語意消失；手動路徑早已無 verId，再清無害）。
+  // 三個 setter 各自獨立呼叫（React 18 自動 batch），不在 updater 內互相觸發 setState
+  // （updater 須維持純函數契約）；以 render 快照 baseSel.version 判斷路徑是否為 selector 填入值。
   const clearBaseSelection = useCallback((projectId: string, modelId: string) => {
-    setBaseSel((s) => {
-      setBase((cur) => (cur === s.version ? "" : cur));
-      return { project: projectId, model: modelId, version: "" };
-    });
+    const filledPath = baseSel.version;
+    setBase((cur) => (cur === filledPath ? "" : cur));
+    setBaseSel({ project: projectId, model: modelId, version: "" });
     setBaseVerId("");
-  }, []);
+  }, [baseSel.version]);
   // pickTargetVersion / clearTargetSelection：target 側對稱（同上語意，獨立追蹤值）。
   const pickTargetVersion = useCallback((projectId: string, modelId: string, ver: FileVersionRow) => {
     setTarget(ver.path);
@@ -972,12 +973,11 @@ export function VersionDiffPage() {
     setTargetSel({ project: projectId, model: modelId, version: ver.path });
   }, []);
   const clearTargetSelection = useCallback((projectId: string, modelId: string) => {
-    setTargetSel((s) => {
-      setTarget((cur) => (cur === s.version ? "" : cur));
-      return { project: projectId, model: modelId, version: "" };
-    });
+    const filledPath = targetSel.version;
+    setTarget((cur) => (cur === filledPath ? "" : cur));
+    setTargetSel({ project: projectId, model: modelId, version: "" });
     setTargetVerId("");
-  }, []);
+  }, [targetSel.version]);
   const baseModels = fsTree?.find((p) => p.project_id === baseSel.project)?.models ?? [];
   const baseVersions = baseModels.find((m) => m.model_id === baseSel.model)?.versions ?? [];
   const targetModels = fsTree?.find((p) => p.project_id === targetSel.project)?.models ?? [];

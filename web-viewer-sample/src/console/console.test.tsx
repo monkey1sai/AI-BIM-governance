@@ -1066,7 +1066,8 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 
   // reviewer（quality I1）：對稱補上 A1 既有「換 project 清 selector 填入值、手動值不波及」於 base 側。
-  // A2 雙組選擇器最關鍵的非平凡邏輯是 pickBaseVersion else 分支
+  // A2 雙組選擇器最關鍵的非平凡邏輯是 clearBaseSelection（換 project/model select 的 onChange 直接
+  // 呼叫；version select 選回 placeholder 時 onChange 的 else arm 也落到同函數）內的
   //   setBase((cur) => (cur === baseSel.version ? "" : cur))（target 對稱）——
   // 選定版本後再「換 project」必須清掉「由選擇器填入的」base 路徑與 base_model_version_id，
   // 但「手動輸入的」路徑不得被清（cur !== baseSel.version → 保留）。若此比較方向倒置 / off-by-one，
@@ -1116,7 +1117,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     expect(sel("a2-base-version").value).toBe("");
     expect(baseInput().value).toBe("");
 
-    // 換 model 同樣走 pickBaseVersion else 分支：重選版本後換 model → selector 填入值清空。
+    // 換 model 同樣走 clearBaseSelection：重選版本後換 model → selector 填入值清空。
     await pick("a2-base-project", "270");
     await pick("a2-base-model", "機電");
     await pick("a2-base-version", VER_PATH);
@@ -1146,7 +1147,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { root.unmount(); });
   });
 
-  // reviewer（quality I1）：target 側對稱版（pickTargetVersion else 分支
+  // reviewer（quality I1）：target 側對稱版（clearTargetSelection 內
   //   setTarget((cur) => (cur === targetSel.version ? "" : cur))）。
   // 選定 target 版本後換 project/model → 清 selector 填入的 target 路徑與 target_model_version_id；
   // 手動輸入值不波及。驗證 base/target 換層清理各自獨立、無交叉接線。
