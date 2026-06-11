@@ -168,6 +168,12 @@
       "role": "agent-tooling",
       "owner": "scripts",
       "notes": "PR review agent CLI wrapper."
+    },
+    {
+      "path": "scripts/git-prune-merged-branches.ps1",
+      "role": "maintenance-tool",
+      "owner": "scripts",
+      "notes": "Local-only maintenance: prune upstream-gone branches (default dry-run; -Force to delete). Not a deploy entrypoint."
     }
   ]
 }

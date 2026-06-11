@@ -6,7 +6,8 @@ export const meta = {
 
 // args 防護：harness 可能把 args 序列化成字串（見 fu-adversarial-verify-generic 實證）→ 字串就 parse。
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
-const ROOT = A.root || 'C:\\Repos\\active\\iot\\AI-BIM-governance'
+// ROOT 優先用 args.root（呼叫端傳入）；fallback 用 git toplevel 自動偵測；再 fallback 用已知本機路徑（避免找不到 git）。
+const ROOT = A.root || (await $`git rev-parse --show-toplevel`.text().catch(() => '')).trim() || 'C:\\Repos\\active\\iot\\AI-BIM-governance'
 
 // 每個面向回傳同一份結構化發現，skill 端據此畫狀態表、分流 safe/risky。
 const FINDINGS_SCHEMA = {
