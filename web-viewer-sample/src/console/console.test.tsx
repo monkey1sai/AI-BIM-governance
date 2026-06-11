@@ -1551,9 +1551,13 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     await act(async () => { runBtn.click(); });
     await act(async () => { await Promise.resolve(); });
     // base_model_version_id 應為 undefined（手填路徑無綁定）。
+    expect(createSpy).toHaveBeenCalledTimes(1);
     const arg = createSpy.mock.calls[0][0];
     expect(arg.base_ifc_path).toBe("C:/manual/override.ifc");
     expect(arg.base_model_version_id).toBeUndefined();
+    // base 手動覆寫不得污染 target 側（target 未選版本：沿用預設路徑、無綁定）。
+    expect(arg.target_ifc_path).toBe(DEFAULT_TARGET_PATH);
+    expect(arg.target_model_version_id).toBeUndefined();
 
     await act(async () => { root.unmount(); });
   });
