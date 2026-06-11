@@ -58,6 +58,35 @@ describe("toInternalIfcReadyEvent", () => {
     const artifact = payload.ifc_artifact as { artifact_id: string };
     expect(artifact.artifact_id).toBe(`ifc_${EVENT.external_model_version_id}`);
   });
+
+  // mv1（指揮官實證根治缺口）：conversion_authority.py:264 對 model_version_id 也跑
+  // _safe_id（SAFE_ID_RE），中文 model_version_id 即使 artifact_id 已 sanitize 仍 400。
+  it("中文 external id → payload.model_version_id 走 sanitize（通過 SAFE_ID_RE），external_model_version_id 保留原始", () => {
+    const raw = "271_pieple_管線";
+    const payload = toInternalIfcReadyEvent(
+      { ...EVENT, external_model_version_id: raw },
+      { correlationId: "corr_cjk", externalModelVersionId: raw },
+    );
+    const SAFE = /^[A-Za-z0-9_.-]+$/;
+    // 內部欄位 sanitize 後通過 conversion 端 SAFE_ID_RE。
+    expect(SAFE.test(payload.model_version_id as string)).toBe(true);
+    const hash8 = crypto.createHash("sha256").update(raw).digest("hex").slice(0, 8);
+    expect(payload.model_version_id).toBe(`271_pieple__${hash8}`);
+    // 對帳用 external_model_version_id 欄位保留原始中文，不受 sanitize 影響。
+    expect(payload.external_model_version_id).toBe(raw);
+  });
+
+  // mv2（指揮官審計）：conversion_authority.py:261 對 correlation_id 也跑 _safe_id；
+  // worker 派生 correlation_id 含冒號（worker:project::version::task），不在 SAFE_ID_RE。
+  it("含冒號的 worker 派生 correlation_id → payload.correlation_id 走 sanitize（通過 SAFE_ID_RE）", () => {
+    const rawCorr = "worker:899::xxx::task_001";
+    const payload = toInternalIfcReadyEvent(EVENT, {
+      correlationId: rawCorr,
+      externalModelVersionId: EVENT.external_model_version_id,
+    });
+    const SAFE = /^[A-Za-z0-9_.-]+$/;
+    expect(SAFE.test(payload.correlation_id as string)).toBe(true);
+  });
 });
 
 const SAFE_ID_RE = /^[A-Za-z0-9_.-]+$/; // = conversion_authority.py SAFE_ID_RE，逐字鎖規則

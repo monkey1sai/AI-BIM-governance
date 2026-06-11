@@ -120,6 +120,51 @@ async function startStreamingConversionStub(): Promise<{ baseUrl: string; bodies
   return { baseUrl: `http://127.0.0.1:${address.port}`, bodies };
 }
 
+// mv1/mv2（指揮官審計）：對齊真 conversion_authority.py:261-264 + _ifc_artifact 的
+// _safe_id 驗證面（model_version_id / correlation_id / tenant_id / project_id /
+// ifc_artifact.artifact_id 全跑 SAFE_ID_RE）；任一非 safe → 400（同真 API ValueError）。
+async function startSafeIdValidatingStub(): Promise<{ baseUrl: string; bodies: unknown[] }> {
+  const SAFE_ID_RE = /^[A-Za-z0-9_.-]+$/;
+  const bodies: unknown[] = [];
+  activeStreamingServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c.toString("utf8")));
+    req.on("end", () => {
+      if (req.method !== "POST" || req.url !== "/api/conversions/ifc-to-usdc") {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ detail: "not found" }));
+        return;
+      }
+      const parsed = JSON.parse(body || "{}") as Record<string, any>;
+      bodies.push(parsed);
+      const safeIdFields: Record<string, unknown> = {
+        ifc_artifact_id: parsed?.ifc_artifact?.artifact_id ?? "",
+        model_version_id: parsed?.model_version_id ?? "",
+        correlation_id: parsed?.correlation_id ?? "",
+        tenant_id: parsed?.tenant_id ?? "",
+        project_id: parsed?.project_id ?? "",
+      };
+      for (const [label, value] of Object.entries(safeIdFields)) {
+        if (typeof value !== "string" || !SAFE_ID_RE.test(value)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: `Invalid ${label}: ${String(value)}` }));
+          return;
+        }
+      }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({ conversion_job_id: "stream_conv_safeid", status: "queued", authority: "bim-streaming-server" }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => activeStreamingServer?.listen(0, "127.0.0.1", () => resolve()));
+  const address = activeStreamingServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected safe-id validating stub to listen on a TCP port.");
+  }
+  return { baseUrl: `http://127.0.0.1:${address.port}`, bodies };
+}
+
 // harden-coordinator-ifc-intake:回 non-2xx 的 IFC source stub。source_ifc.ref 指向
 // 它(http scheme,非 edge-local/minio——否則 downloader 走 placeholder 繞開 fetch),
 // strict 模式下 coordinator 同步下載拿到 non-2xx → 502,不 dispatch。
@@ -520,11 +565,23 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
       req.on("data", (c) => (body += c));
       req.on("end", () => {
         const parsed = JSON.parse(body || "{}");
-        const artifactId = parsed?.ifc_artifact?.artifact_id ?? "";
-        if (!SAFE_ID_RE.test(artifactId)) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ detail: `Invalid ifc_artifact_id: ${artifactId}` }));
-          return;
+        // mv1（指揮官實證根治缺口）：stub 升級為對齊真 conversion_authority.py:261-264
+        // 的 _safe_id 驗證面——model_version_id / correlation_id / tenant_id / project_id
+        // 全跑 SAFE_ID_RE，外加 ifc_artifact.artifact_id（_ifc_artifact）。任一非 safe → 400，
+        // 比照真 API ValueError → 400。
+        const safeIdFields: Record<string, unknown> = {
+          ifc_artifact_id: parsed?.ifc_artifact?.artifact_id ?? "",
+          model_version_id: parsed?.model_version_id ?? "",
+          correlation_id: parsed?.correlation_id ?? "",
+          tenant_id: parsed?.tenant_id ?? "",
+          project_id: parsed?.project_id ?? "",
+        };
+        for (const [label, value] of Object.entries(safeIdFields)) {
+          if (typeof value !== "string" || !SAFE_ID_RE.test(value)) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ detail: `Invalid ${label}: ${String(value)}` }));
+            return;
+          }
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
@@ -606,5 +663,27 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
     expect(dispatched.ifc_path).toBeUndefined();
     expect(dispatched.version).toBeUndefined();
     expect(dispatched.task_id).toBeUndefined();
+  });
+
+  it("mv2：worker 派生含冒號 correlation_id 經 sanitize 後 dispatch 不再被 SAFE_ID_RE 擋成 400", async () => {
+    // worker compat 缺 explicit X-Correlation-Id 時派生 `worker:project::version::task`（含冒號），
+    // 冒號不在 conversion 端 SAFE_ID_RE；未 sanitize 則真 API 對 correlation_id 跑 _safe_id → 400。
+    const streaming = await startSafeIdValidatingStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(workerAuthHeaders())
+      .send(workerPayload());
+
+    expect(res.status).toBe(202);
+    // 派生 correlation_id 含冒號（對帳/回應用原始值）。
+    expect(res.body.correlation_id).toBe("worker:project_worker_001::ver_worker_001::task_worker_001");
+    // sanitize 後內部 correlation_id 通過嚴格 stub（= 真 API SAFE_ID_RE）→ dispatched，dispatch_error null。
+    const detail = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatched"]);
+    expect(detail.status).toBe("dispatched");
+    expect(detail.dispatch_error).toBeNull();
+    // 送出 payload 的內部 correlation_id 已 sanitize（無冒號）。
+    const sent = streaming.bodies[0] as Record<string, unknown>;
+    expect(sent.correlation_id).toMatch(/^[A-Za-z0-9_.-]+$/);
   });
 });

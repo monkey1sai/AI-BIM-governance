@@ -107,6 +107,18 @@ export function sanitizeArtifactIdPart(raw: string): string {
 }
 
 /**
+ * conversion_authority.py:262-263 對 tenant_id / project_id 也跑 _safe_id，且這兩欄
+ * 在 coordinator 端無 SAFE_ID_RE 輸入驗證（authProvider.requiredIdentity 只擋空值），
+ * 中文 project / tenant 命名會在 dispatch 時被 conversion 端 _safe_id 擋成 400。
+ *
+ * 非字串（理論上 undefined / null）原樣透傳，讓 conversion authority 套用其 server-side
+ * 預設值（`tenant_demo_001` / `project_demo_001`），維持既有行為。
+ */
+function sanitizeSafeIdField(value: unknown): unknown {
+  return typeof value === "string" ? sanitizeArtifactIdPart(value) : value;
+}
+
+/**
  * external（B-scheme）→ internal streaming `ifc_ready_event`。
  * streaming 的 conversion_authority 仍以 `model_version_id` / `ifc_artifact`
  * 為輸入；coordinator 在邊界做轉換，外部契約維持 B-scheme。
@@ -118,12 +130,16 @@ export function toInternalIfcReadyEvent(
   const payload: Record<string, unknown> = {
     event_type: "ifc_ready",
     event_id: event.event_id || `evt_${binding.correlationId}`,
-    correlation_id: binding.correlationId,
-    tenant_id: event.tenant_id,
-    project_id: event.project_id,
+    // conversion_authority.py:261-264 對 correlation_id / tenant_id / project_id /
+    // model_version_id 全跑 _safe_id（SAFE_ID_RE）；coordinator 派生的 correlation_id
+    // 可能含冒號（worker:project::version::task），中文 project/tenant/model id 也常見。
+    // 內部欄位走 sanitize 避免 dispatch 400；external_model_version_id 保留原始供對帳。
+    correlation_id: sanitizeArtifactIdPart(binding.correlationId),
+    tenant_id: sanitizeSafeIdField(event.tenant_id),
+    project_id: sanitizeSafeIdField(event.project_id),
     // streaming internal 仍用 model_version_id 欄位；以 external id 餵入並由
     // coordinator 保留 external 綁定（shadow / callback 關聯屬 T5/T6）。
-    model_version_id: binding.externalModelVersionId,
+    model_version_id: sanitizeArtifactIdPart(binding.externalModelVersionId),
     external_model_version_id: binding.externalModelVersionId,
     external_conversion_task_id: event.external_conversion_task_id ?? null,
     ifc_artifact: {
