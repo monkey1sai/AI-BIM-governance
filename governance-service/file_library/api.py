@@ -1,7 +1,8 @@
 """A1 file-library browse REST（APIRouter，掛入 governance-service app）。
 
 唯讀 local file-server 模擬層（spec §4.1）：掃 BIM_FILE_LIBRARY_ROOT（預設 repo storage/）下
-兩層 {projectId}/{modelId}/*.ifc，回 project→model→version 樹，比照真實 MinIO
+兩層 {projectId}/{modelId}/*.ifc（檔名即版本）與三層 {projectId}/{modelId}/{versionDir}/*.ifc
+（version name = "{versionDir}/{filename}"，第四層忽略），回 project→model→version 樹，比照真實 MinIO
 bim-control/{projectId}/{modelId}/version 語意。source_kind="local_fs" 是誠實標記，未來真
 MinIO 接上時改 "s3"，前端文案跟著翻。不做上傳/刪除/改名（唯讀）；不接真 S3 client。
 """

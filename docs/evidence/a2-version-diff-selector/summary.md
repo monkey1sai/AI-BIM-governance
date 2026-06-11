@@ -50,8 +50,30 @@ succeeded 與否、松風庵三層可見截圖。詳細運行前置與既有覆�
 - 此 name 形狀 = `{versionDir}/{filename}`，由 governance-service `file_library/api.py` `_list_versions`
   三層下探（task#1）產出；coordinator proxy `GET /api/governance/files/tree` 本次回
   `projects = ["270","889","990","松風庵"]`、`松風庵/建築` 版本含 `v1/japanese_villa.ifc`，與 UI 下拉一致。
-- **松風庵三層可見截圖**：[`a2-version-diff-selector-matsu-three-level.png`](a2-version-diff-selector-matsu-three-level.png)
-  （base = 松風庵/建築）。
+- **松風庵截圖（如實描述）**：[`a2-version-diff-selector-matsu-three-level.png`](a2-version-diff-selector-matsu-three-level.png)
+  畫面顯示 base 已選「松風庵/建築」、版本下拉為收合 placeholder 狀態；`v1/japanese_villa.ifc`
+  option 的存在由 **passed 的 DOM 斷言**（`toHaveCount(1)`）證明，非截圖直接可見。
+
+## Final re-run（2026-06-11 21:36，spec 兩次重構後的最終版；P4/P5 對抗複驗閉合 I1）
+
+task#5 對 E2E spec 做了兩次重構（matched-metric race 終態信號、succeeded gate 30s），上方 12:17
+段為重構前舊版 run 的記錄（保留不竄改）。最終版 spec 的 live 重跑如下：
+
+- **spec 版本**：HEAD `bd3845a` 後最終版 — P5 verifier 以 Playwright trace 內嵌 source 與 HEAD
+  逐 byte 比對 **identical**（trace wallTime=1781185000184 = 21:36:40+0800，晚於兩次重構 commit）。
+- **結果**：**2 passed**（test1 全程 2.35s、test2 0.69s；180s budget 餘裕 ~98.7%，
+  succeeded gate 實耗 9ms/30s）。
+- **runtime id**：`diff_b4b296bc4847`（真 backend：`POST /api/governance/diffs` → poll → items →
+  issue-impact 全在 trace network 內）；counts = matched 4 / added 10 / removed 0 / moved 0 /
+  property_changed 4（與舊 run 同值 — deterministic 引擎對同檔對）。
+- **本次 base/target storage root**：`C:\Repos\active\iot\AI-BIM-governance\storage`（主工作區；
+  舊段的 `D:\Users\deploy\...` 為 task#4 取證時的部署區對齊路徑）。
+- **截圖**：`a2-version-diff-selector-diff-counts.png` 已更新為本次 run 版本
+  （sha256 前 8 碼 `3da3c700`）；matsu 圖兩次 run byte-identical（`13c7194a`）未動。
+- **counts 語意逐元素核對（P5 e3）**：verifier 以 TestClient 三次獨立重跑同檔對，`/items` 恰 14 筆
+  且 Counter==counts；added 10 筆逐一驗「target 有 base 無」；property_changed 4 筆為
+  `type_name_loc` 對齊（兩版 GlobalId 全量重生、Tag=None 的 fixture 特性），pset 真差異
+  （`Pset_SampleVersionMetadata.Completion 0.35→1.0`）；matched(4)+added(10)==target_count(14)。
 
 ## task#5 全套回歸驗收（2026-06-11，補錄）
 

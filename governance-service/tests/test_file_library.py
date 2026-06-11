@@ -1,6 +1,8 @@
 """file_library tree API（FastAPI TestClient，tmp root 造兩層 IFC 結構，CPU-only、毫秒級）。
 
-守 spec §4.1/§7：只列兩層 {projectId}/{modelId}/*.ifc、只收 .ifc（大小寫不敏感）、
+守 spec §4.1/§7：兩層 {projectId}/{modelId}/*.ifc（檔名即版本）與三層
+{projectId}/{modelId}/{versionDir}/*.ifc（name="{versionDir}/{filename}"）並收、第四層忽略、
+只收 .ifc（大小寫不敏感）、
 防 path traversal（root 外 symlink 不出現）、root 不存在/空 回 200 空 projects、
 ver 竣工.ifc 固定排最後。中文路徑（機電/水電/消防、竣工）全程 UTF-8。
 """
@@ -168,7 +170,7 @@ def test_fourth_level_and_empty_version_dir_ignored(client):
     c, _ = client
     body = c.get("/api/files/tree").json()
     projects = {p["project_id"]: p for p in body["projects"]}
-    names = [v["name"] for v in projects["270"]["models"]["機電"]["versions"]] if False else [
+    names = [
         v["name"] for m in projects["270"]["models"] if m["model_id"] == "機電" for v in m["versions"]
     ]
     assert all("too_deep" not in n for n in names)
