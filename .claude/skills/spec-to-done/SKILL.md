@@ -142,17 +142,19 @@ HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool
 - 前序產物(plan 檔、commits、evidence)都在 git/磁碟,不重做;P3 錨點 = startTaskIndex(per-task commit 訊息規定前綴 `task#N:`,崩潰時可從 git log 重建);P6 帶同一 prNumber(ship-item 沿用既有 PR,不重複 create)。
 - 時間戳一律由主對話經 args 注入(dateStamp);workflow 內禁時鐘/亂數 API。
 
-## 模型預算(Fable 5 max + Opus 4.8 max)
+## 模型預算(四級配置 haiku/sonnet/opus/fable;2026-06-11 降本調整,gates 不動)
 
-| 位置 | 模型 |
-|---|---|
-| 指揮官(主對話) | 當前 session(Fable) |
-| 讀 spec/codebase、GitNexus 導航/impact/detect、plan 解析、引擎偵測 | fable |
-| plan 作者、四軸 reviewer、implementer(非機械 task)、spec/quality reviewer、evidence 執行+裁決(同一 agent,opus)、fix-cycle | opus |
-| 機械性 task(1-2 檔、步驟完整、**非 user-facing**) | fable;沒把握 → opus |
-| P5 fu-adversarial-verify-generic、P6 ship-item | 既有 workflow 不收 model 參數,跑 runtime default(如實標註,本流程不謊稱其為 opus) |
+| 位置 | 模型 | 品質守恆(誰兜底) |
+|---|---|---|
+| 指揮官(主對話) | 當前 session(Fable) | — |
+| plan 解析(P3 Parse)、引擎偵測(P4 Probe) | haiku | 機械抽取/探測,錯誤顯性:抽壞 → implementer 立刻 BLOCKED;探錯 → E2E 起不來即 held |
+| GitNexus impact 預掃 + per-task impact、機械性 task implementer(1-2 檔、步驟完整、非 user-facing)、P1 四軸 reviewer、P3 spec/quality reviewer(首審)、P6 ship-item | sonnet | impact 只是風險輸入(CRITICAL gate 在指揮官);機械 impl 有雙 review;四軸/雙 review 有 plan-fix(opus)+final-review(opus)+P5 critic 三層兜底;ship 是程序性 buffered cycle |
+| plan 作者、非機械 implementer、NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復)、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | opus | 創造/修復/兜底層,**不降** |
+| P5 fu-adversarial-verify-generic(verifier + critic) | runtime default(=session 模型) | 抓雷主力(實績:#206 三顆連環雷 + fix 自引 regression 全在 merge 前攔下),**不動** |
 
+升級通道(自動,腳本內建):sonnet implementer 回 BLOCKED → 換 opus 重派;NEEDS_CONTEXT → opus 補脈絡重派。
 平行:P1 四軸 review、P5 per-finding verifier 平行;**P3 implementer 嚴禁平行**(實作衝突)。
+**降本原則**:hard gates(四軸 approved 條件/兩階段 review 閉合條件/P4 vertical slice 七項/P5 refute-by-default + critic/P6 buffered merge)一個不動;降級只發生在「產出被 ≥2 層更強 gate 複核」或「錯誤顯性必爆」的位置。等效性靠 gate 結構保證,非靠單點模型強度。
 
 ## 誠實鐵律(本流程的落實)
 

@@ -5,7 +5,7 @@ export const meta = {
   name: 'std-evidence',
   description: 'spec-to-done P4:偵測 browser 引擎(gstack→Playwright)→ 跑 E2E 收 evidence(截圖/trace 落 artifacts/e2e/)→ vertical slice 裁決。not observed 即 held。',
   phases: [
-    { title: 'Probe', detail: 'fable 偵測引擎可用性(gstack browse binary / Playwright deps)', model: 'fable' },
+    { title: 'Probe', detail: 'haiku 偵測引擎可用性(gstack browse binary / Playwright deps)', model: 'haiku' },
     { title: 'Evidence', detail: 'opus 跑 E2E、收 evidence、逐項裁決 vertical slice', model: 'opus' },
   ],
 }
@@ -70,7 +70,7 @@ const probe = await agent(`你是 browser 引擎可用性偵測員。依序檢�
    (Playwright webServer strictPort 不 reuse,:5180 被殘留 vite 占用會起不來;占用時在 detail 標 PID)
 兩層引擎都不可用 → engine=none。
 回傳 StructuredOutput:engine(gstack/playwright/none,取第一個 READY 的)、detail(各層實測結果、stack_down/port 占用註記)。`,
-  { label: 'probe:engine', phase: 'Probe', model: 'fable', schema: PROBE_SCHEMA })
+  { label: 'probe:engine', phase: 'Probe', model: 'haiku', schema: PROBE_SCHEMA })
 
 if (!probe || probe.engine === 'none') {
   return {

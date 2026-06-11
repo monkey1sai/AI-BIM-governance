@@ -5,7 +5,7 @@ export const meta = {
   name: 'std-implement',
   description: 'spec-to-done P3:mode=tasks 逐 task 序列實作(impact→TDD→spec review→quality review→commit);mode=fix 修 P5/P6 未閉合 findings。嚴禁平行 implementer。',
   phases: [
-    { title: 'Parse', detail: 'fable 讀 plan 抽出每 task 全文(implementer 不自讀 plan)', model: 'fable' },
+    { title: 'Parse', detail: 'haiku 讀 plan 抽出每 task 全文(機械抽取,錯誤顯性;implementer 不自讀 plan)', model: 'haiku' },
     { title: 'Implement', detail: '序列:per-task impact→implementer→spec review→quality review→commit 錨點' },
     { title: 'Fix', detail: 'mode=fix:fixer 修 findings + verify reviewer 驗閉合', model: 'opus' },
     { title: 'FinalReview', detail: 'opus 整體 diff vs plan+spec,產出 adversarial findings', model: 'opus' },
@@ -206,7 +206,7 @@ fullText 必須含該 task 的完整原文(含 Files 清單、全部 checkbox �
 symbols = 該 task 會**修改**的既有 function/class/method 名(新建的不算;沒有就空陣列)。
 mechanical = 該 task 只動 1-2 個檔、步驟完整可機械執行、且**不動使用者可見 UI**(動 UI 一律 false)。
 回傳 StructuredOutput:tasks[](index 從 0、title、fullText、files、symbols、mechanical)。`,
-  { label: 'parse:plan', phase: 'Parse', model: 'fable', schema: TASKS_SCHEMA })
+  { label: 'parse:plan', phase: 'Parse', model: 'haiku', schema: TASKS_SCHEMA })
 
 if (!parsed || !parsed.tasks.length) return { ok: false, held: 'plan_parse_failed', resumeHint: { startTaskIndex: START } }
 const tasks = parsed.tasks
@@ -238,7 +238,7 @@ ${symbolsToCheck.map((s) => `- ${s}`).join('\n')}
 分級:<5 affected=LOW;5-15=MEDIUM;>15 或多 processes=HIGH;critical path(auth/conversion authority/session 核心)=CRITICAL;圖中找不到=UNKNOWN。
 若 tool 報 index stale → bash 跑「npx gitnexus analyze --skip-agents-md」+「npx gitnexus status」確認(banner 不算成功)後重試;工具整體故障(crash/連不上)→ overallRisk=UNKNOWN 並在 note 寫明故障。
 回傳 StructuredOutput:overallRisk、note(直接 callers / 關鍵 processes / 故障說明)。`,
-      { label: `impact:${T}`, phase: 'Implement', model: 'fable', schema: TASK_IMPACT_SCHEMA })
+      { label: `impact:${T}`, phase: 'Implement', model: 'sonnet', schema: TASK_IMPACT_SCHEMA })
     if (imp && imp.overallRisk === 'CRITICAL') {
       return {
         ok: false, held: 'critical_impact', taskIndex: task.index, impactNote: imp.note,
@@ -271,7 +271,7 @@ ${disciplineFor(`task#${task.index}: `)}
 回傳 StructuredOutput:status(DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED)、commitSha(本 task 最後一個 commit 的 sha;**沒有任何 commit 不得回 DONE**)、summary、concerns[]、detectVerdict(pass/fallback/fail/skipped,依紀律第 6 條)。
 NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本身錯誤的證據)。不確定就誠實回報,不要硬做。`
 
-  const implModel = task.mechanical ? 'fable' : 'opus'
+  const implModel = task.mechanical ? 'sonnet' : 'opus'
   let impl = await agent(implPrompt(''), { label: `impl:${T}`, phase: 'Implement', model: implModel, schema: IMPL_SCHEMA })
 
   if (impl && impl.status === 'NEEDS_CONTEXT') {
@@ -280,8 +280,8 @@ NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本
     impl = await agent(implPrompt(`\n## 補充脈絡(前次回報缺:${impl.summary})\n請先 Read spec 全文 ${SPEC_PATH} 取得需求脈絡。\n${neighbor}`),
       { label: `impl:${T}:retry`, phase: 'Implement', model: 'opus', schema: IMPL_SCHEMA })
   }
-  if (impl && impl.status === 'BLOCKED' && implModel === 'fable') {
-    log(`${T} BLOCKED(fable)→ 換 opus 重派`)
+  if (impl && impl.status === 'BLOCKED' && implModel === 'sonnet') {
+    log(`${T} BLOCKED(sonnet)→ 換 opus 重派`)
     impl = await agent(implPrompt(`\n## 前次嘗試 BLOCKED:${impl.summary}(concerns:${(impl.concerns || []).join(';')})`),
       { label: `impl:${T}:opus`, phase: 'Implement', model: 'opus', schema: IMPL_SCHEMA })
   }
@@ -320,7 +320,7 @@ NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本
 ${task.fullText}
 檢查:漏做(需求沒實作)、多做(超出 task 的 scope creep)、做錯方向(實作偏離需求意圖)、測試是否真驗行為(非空測試)、誠實標註(無 backend 的 UI 是否標 DEMO DATA / NOT BUILT)。
 回傳 StructuredOutput:specOk、gaps[](每項 detail 引用具體檔案+行號)。`,
-    { label: `spec-review:${T}`, phase: 'Implement', model: 'opus', schema: SPEC_REVIEW_SCHEMA })
+    { label: `spec-review:${T}`, phase: 'Implement', model: 'sonnet', schema: SPEC_REVIEW_SCHEMA })
 
   let sr = await withRetry(reviewSpec, `${T} spec-review`)
   if (!sr) {
@@ -360,7 +360,7 @@ ${disciplineFor(`task#${task.index}: fix `)}
 ${task.title}(spec:${SPEC_PATH})
 評估:正確性 bug、錯誤處理、安全(secrets/injection)、測試品質(是否真驗行為)、可讀性。分級:critical(會壞/安全)、important(該修才能 merge)、minor(nit)。
 回傳 StructuredOutput:criticalCount、importantCount、minorNotes[]、detail(每個 critical/important 的檔案+行號+理由)。`,
-    { label: `quality-review:${T}`, phase: 'Implement', model: 'opus', schema: QUALITY_SCHEMA })
+    { label: `quality-review:${T}`, phase: 'Implement', model: 'sonnet', schema: QUALITY_SCHEMA })
 
   let qr = await withRetry(reviewQuality, `${T} quality-review`)
   if (!qr) return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'quality reviewer 連兩次回 null' }

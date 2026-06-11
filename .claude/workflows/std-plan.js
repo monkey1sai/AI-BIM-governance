@@ -5,8 +5,8 @@ export const meta = {
   description: 'spec-to-done P1:依 superpowers writing-plans 規格產 plan → 四軸 plan review(自動修 ≤2 輪)→ GitNexus impact 預掃(CRITICAL 早停)。',
   phases: [
     { title: 'Plan', detail: 'opus 作者照 writing-plans 規格寫 plan 檔並 commit', model: 'opus' },
-    { title: 'PlanReview', detail: '四軸平行 review:Completeness / Spec Alignment / Task Decomposition / Buildability', model: 'opus' },
-    { title: 'Impact', detail: 'fable 跑 GitNexus impact 預掃全部 plan symbols', model: 'fable' },
+    { title: 'PlanReview', detail: '四軸平行 review(sonnet;plan-fix 仍 opus,P3/P5 兜底):Completeness / Spec Alignment / Task Decomposition / Buildability', model: 'sonnet' },
+    { title: 'Impact', detail: 'sonnet 跑 GitNexus impact 預掃全部 plan symbols', model: 'sonnet' },
   ],
 }
 
@@ -144,7 +144,7 @@ let axisResults = {}
 let axisNullStreak = 0
 for (let round = 0; round <= MAX_FIX; round++) {
   const results = await parallel(pendingAxes.map((a) => () =>
-    agent(axisPrompt(a), { label: `plan-review:${a.key}`, phase: 'PlanReview', model: 'opus', schema: AXIS_SCHEMA })
+    agent(axisPrompt(a), { label: `plan-review:${a.key}`, phase: 'PlanReview', model: 'sonnet', schema: AXIS_SCHEMA })
   ))
   pendingAxes.forEach((a, i) => { if (results[i]) axisResults[a.key] = results[i] })
   // infra null(reviewer 掛掉)不可與「該軸未過」混為一談:連兩輪有 null → held reviewer_agent_failed
@@ -206,7 +206,7 @@ if (allSymbols.length) {
 ${allSymbols.map((s) => `   - ${s}`).join('\n')}
 4. 風險分級(repo 基準):<5 affected symbols 且少 processes=LOW;5-15 symbols / 2-5 processes=MEDIUM;>15 symbols 或多 processes=HIGH;觸及 critical path(auth/conversion authority/session 核心)=CRITICAL。個別 symbol 在圖中找不到(可能是新名或拼錯)→ 該 symbol risk=UNKNOWN 並在 note 說明,其餘照算(overallRisk 取其餘最大,blockers 記「N symbols not in graph」)。**GitNexus 工具整體故障**(crash / 連不上 / re-analyze 後仍全失敗,LadybugDB crash 是已知坑)→ overallRisk=UNKNOWN 並在 blockers 寫明故障細節。
 回傳 StructuredOutput:overallRisk、perSymbol[](symbol/risk/note:直接 callers 數與關鍵 processes)、blockers[](CRITICAL 理由或工具故障描述)、staleHandled。`,
-      { label: 'impact:prescan', phase: 'Impact', model: 'fable', schema: IMPACT_SCHEMA })
+      { label: 'impact:prescan', phase: 'Impact', model: 'sonnet', schema: IMPACT_SCHEMA })
     if (r) { impact = r; break }
     if (attempt === 1) impact = null
   }

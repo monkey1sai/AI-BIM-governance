@@ -52,7 +52,7 @@ context：
 誠實鐵律：絕不 merge 過 production code 的真 P1/P2，絕不偽裝 CI 綠。production code 的 P1/P2 一律 hold 修到好；非 production 產物（evidence / docs scaffolding）的 advisory nit 在官方 gate 全綠時 MAY judgment-merge，不無限迴圈。
 
 回傳 StructuredOutput：merged（是否已 squash-merge）、prNumber、mergeCommit（merge commit sha，未 merge 為 null）、heldReason（若未 merge，說明 hold 原因；已 merge 為 null）。`,
-  { label: `ship:${BRANCH || 'work-item'}`, phase: 'Ship', schema: RESULT_SCHEMA })
+  { label: `ship:${BRANCH || 'work-item'}`, phase: 'Ship', model: 'sonnet', schema: RESULT_SCHEMA })
 
 log(`ship-item 結果：merged=${result ? result.merged : 'null'} pr=${result ? result.prNumber : 'null'} held=${result ? result.heldReason : 'null'}`)
 return result
