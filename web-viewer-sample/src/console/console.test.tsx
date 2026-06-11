@@ -479,6 +479,9 @@ describe("edge console honesty smoke", () => {
 describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 + 互動）", () => {
   // 含 270/機電/ver 竣工.ifc 的真實樹形狀（比照 governanceClient.test.ts fixture 與 spec 範例）。
   const VER_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc";
+  // 第二版本：A2 base/target 各一組選擇器需可選到相異版本（base=v1、target=v2），
+  // 才能驗證 base/target 真的獨立接線、各自帶出相異 model_version_id。
+  const VER2_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工 v2.ifc";
   const tree: FilesTreeResponse = {
     root: "C:/Repos/active/iot/AI-BIM-governance/storage",
     source_kind: "local_fs",
@@ -490,6 +493,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
             model_id: "機電",
             versions: [
               { name: "ver 竣工.ifc", path: VER_PATH, size_bytes: 22618, mtime: "2026-06-10T17:17:00+08:00" },
+              { name: "ver 竣工 v2.ifc", path: VER2_PATH, size_bytes: 22777, mtime: "2026-06-10T18:18:00+08:00" },
             ],
           },
         ],
@@ -855,6 +859,137 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     expect(createSpy).toHaveBeenCalledTimes(1);
     const arg = createSpy.mock.calls[0][0];
     expect(arg.base_ifc_path).toBe(VER_PATH);
+    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 對稱補上 target 側（需求明文：base 與 target「各一組」三層選擇器，model_version_id 兩側
+  // 都「隨 createDiff 送出」）。選 base=v1、target=v2（fixture 第二版本），assert createDiff
+  // 同時收到 base_model_version_id 與『相異的』target_model_version_id——若 target 選擇器
+  // 沒接好 / 與 base 交叉接線 / 對 e.target.value 是 no-op，產不出這個相異的 target id，測試會紅。
+  it("A2 VersionDiffPage 選 base+target 版本 → 兩側 model_version_id 皆隨 createDiff 送出", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2bt", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2bt",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const baseInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!;
+    const targetInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // base 選 v1（沿用第一個測試的 270/機電/ver 竣工.ifc）。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    // target 選 v2（同 project/model 下的第二版本），驗證 target 三層選擇器獨立於 base。
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+
+    // 兩側受控持值 + 各自填入對應 input（base/target 不互相覆蓋）。
+    expect(sel("a2-base-version").value).toBe(VER_PATH);
+    expect(sel("a2-target-version").value).toBe(VER2_PATH);
+    expect(baseInput().value).toBe(VER_PATH);
+    expect(targetInput().value).toBe(VER2_PATH);
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe(VER_PATH);
+    expect(arg.target_ifc_path).toBe(VER2_PATH);
+    // 兩側 model_version_id 皆送出，且 target 相異於 base（證明 target 側真的接上、非沿用 base）。
+    expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
+    expect(arg.target_model_version_id).toBe("270/機電/ver 竣工 v2.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // target 側手動覆寫路徑 input → 清掉 target_model_version_id（誠實：手填路徑無版本綁定語意），
+  // 且不影響已選定的 base_model_version_id。對稱於 base 側既有行為。
+  it("A2 target input 手動覆寫 → 清 target_model_version_id，base 綁定不受影響", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2ov", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2ov",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const sel = (tid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+    const targetInput = () => container.querySelector<HTMLInputElement>('[data-testid="a2-target-input"]')!;
+    const pick = async (tid: string, value: string) => {
+      await act(async () => {
+        sel(tid).value = value;
+        sel(tid).dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+
+    // base 走選擇器（保留版本綁定），target 先選版本再手動覆寫路徑（清綁定）。
+    await pick("a2-base-project", "270");
+    await pick("a2-base-model", "機電");
+    await pick("a2-base-version", VER_PATH);
+    await pick("a2-target-project", "270");
+    await pick("a2-target-model", "機電");
+    await pick("a2-target-version", VER2_PATH);
+    expect(targetInput().value).toBe(VER2_PATH);
+
+    // 手動覆寫 target 路徑 → onChange 清 targetVerId + targetSel.version。
+    // 注意：受控 input 須經 native value setter 才會繞過 React value tracker 的 dedup、
+    // 真正觸發 onChange 入 state（直接設 .value 會被 tracker 視為無變化而吞掉）——沿用本檔
+    // A1 既有手動覆寫測試（上方）同款 idiom。
+    await act(async () => {
+      const el = targetInput();
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )!.set!;
+      nativeValueSetter.call(el, "C:/manual/typed-target.ifc");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(targetInput().value).toBe("C:/manual/typed-target.ifc"); // 手動值已真正入 state
+    expect(sel("a2-target-version").value).toBe(""); // 覆寫後 target version select 回未選
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.target_ifc_path).toBe("C:/manual/typed-target.ifc");
+    // 手填路徑 → target_model_version_id 清空（undefined，維持現行為），但 base 綁定保留。
+    expect(arg.target_model_version_id).toBeUndefined();
     expect(arg.base_model_version_id).toBe("270/機電/ver 竣工.ifc");
 
     await act(async () => { root.unmount(); });
