@@ -1,4 +1,5 @@
 import type { ConversionQualityMetricsSummary, ExternalIfcReadyEvent } from "../types.js";
+import crypto from "node:crypto";
 
 /**
  * B-scheme（local-coordinator-ifc-ready-intake-boundary T3 §4.4）。
@@ -86,6 +87,23 @@ export interface PollConversionResultOptions {
   onTerminal: (result: StreamingConversionResult) => void | Promise<void>;
   /** fetch 失敗時觀察(預設 swallow,下次再試);不影響 schedule 繼續。 */
   onError?: (error: unknown, attempt: number) => void;
+}
+
+/**
+ * conversion-artifact-id-sanitize（spec 2026-06-11 §4.1）：把外部 model_version_id
+ * 轉成通過 conversion 端 `SAFE_ID_RE = ^[A-Za-z0-9_.-]+$` 的 artifact_id 片段。
+ *
+ * - 純 safe 字元 → 原樣回傳（零行為變化，既有英文 id 的 artifact_id 與現行完全相同）。
+ * - 含非 safe 字元 → `${safe}_${sha256hex(raw).slice(0,8)}`（確定性 + 防碰撞）。
+ * - safe 為空（全非 safe 字元）→ `mv_${sha256hex(raw).slice(0,8)}`（可讀前綴退化形）。
+ *
+ * 不放寬 conversion 端規則（id 進檔案路徑 / USD 命名，放寬有路徑安全風險），修在 coordinator 端。
+ */
+export function sanitizeArtifactIdPart(raw: string): string {
+  const safe = raw.replace(/[^A-Za-z0-9_.-]/g, "");
+  if (safe === raw) return raw;
+  const hash8 = crypto.createHash("sha256").update(raw).digest("hex").slice(0, 8);
+  return safe.length > 0 ? `${safe}_${hash8}` : `mv_${hash8}`;
 }
 
 /**
