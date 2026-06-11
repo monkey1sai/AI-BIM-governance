@@ -947,29 +947,37 @@ export function VersionDiffPage() {
   }, []);
   useEffect(() => { void loadFsTree(); }, [loadFsTree]);
 
-  // pickVersion：選定版本 path → 填路徑 input + 記 model_version_id；清 placeholder → 清掉「選擇器填入的」值。
-  const pickBaseVersion = useCallback((projectId: string, modelId: string, ver?: FileVersionRow) => {
-    if (ver) {
-      setBase(ver.path);
-      setBaseVerId(`${projectId}/${modelId}/${ver.name}`);
-      setBaseSel({ project: projectId, model: modelId, version: ver.path });
-    } else {
-      setBaseSel((s) => ({ ...s, version: "" }));
-      setBase((cur) => (cur === baseSel.version ? "" : cur));
-      setBaseVerId("");
-    }
-  }, [baseSel.version]);
-  const pickTargetVersion = useCallback((projectId: string, modelId: string, ver?: FileVersionRow) => {
-    if (ver) {
-      setTarget(ver.path);
-      setTargetVerId(`${projectId}/${modelId}/${ver.name}`);
-      setTargetSel({ project: projectId, model: modelId, version: ver.path });
-    } else {
-      setTargetSel((s) => ({ ...s, version: "" }));
-      setTarget((cur) => (cur === targetSel.version ? "" : cur));
-      setTargetVerId("");
-    }
-  }, [targetSel.version]);
+  // pickBaseVersion：選定一個版本 → 填 base input 路徑 + 記 model_version_id + setSel 全套。
+  // 僅由 base-version select onChange（且確有對應版本）呼叫；「清空 / 換層」走 clearBaseSelection。
+  const pickBaseVersion = useCallback((projectId: string, modelId: string, ver: FileVersionRow) => {
+    setBase(ver.path);
+    setBaseVerId(`${projectId}/${modelId}/${ver.name}`);
+    setBaseSel({ project: projectId, model: modelId, version: ver.path });
+  }, []);
+  // clearBaseSelection：換 base project / model（或選回版本 placeholder）的單一清空入口。
+  // 完整重設 selector state（project/model 由呼叫者指定、version 一律清）；只在「目前 base 路徑
+  // 正是先前由 selector 填入的版本路徑」時才清路徑——手動輸入的路徑不被波及。model_version_id
+  // 一律清（換層後版本綁定語意消失；手動路徑早已無 verId，再清無害）。
+  const clearBaseSelection = useCallback((projectId: string, modelId: string) => {
+    setBaseSel((s) => {
+      setBase((cur) => (cur === s.version ? "" : cur));
+      return { project: projectId, model: modelId, version: "" };
+    });
+    setBaseVerId("");
+  }, []);
+  // pickTargetVersion / clearTargetSelection：target 側對稱（同上語意，獨立追蹤值）。
+  const pickTargetVersion = useCallback((projectId: string, modelId: string, ver: FileVersionRow) => {
+    setTarget(ver.path);
+    setTargetVerId(`${projectId}/${modelId}/${ver.name}`);
+    setTargetSel({ project: projectId, model: modelId, version: ver.path });
+  }, []);
+  const clearTargetSelection = useCallback((projectId: string, modelId: string) => {
+    setTargetSel((s) => {
+      setTarget((cur) => (cur === s.version ? "" : cur));
+      return { project: projectId, model: modelId, version: "" };
+    });
+    setTargetVerId("");
+  }, []);
   const baseModels = fsTree?.find((p) => p.project_id === baseSel.project)?.models ?? [];
   const baseVersions = baseModels.find((m) => m.model_id === baseSel.model)?.versions ?? [];
   const targetModels = fsTree?.find((p) => p.project_id === targetSel.project)?.models ?? [];
@@ -1024,17 +1032,17 @@ export function VersionDiffPage() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span className="ec-k" style={{ minWidth: 48 }}>base</span>
             <select data-testid="a2-base-project" className="ec-btn" value={baseSel.project} disabled={!fsTree}
-              onChange={(e) => { setBaseSel({ project: e.target.value, model: "", version: "" }); pickBaseVersion(e.target.value, "", undefined); }}>
+              onChange={(e) => clearBaseSelection(e.target.value, "")}>
               <option value="">專案…</option>
               {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
             </select>
             <select data-testid="a2-base-model" className="ec-btn" value={baseSel.model} disabled={!baseSel.project}
-              onChange={(e) => { setBaseSel((s) => ({ ...s, model: e.target.value, version: "" })); pickBaseVersion(baseSel.project, e.target.value, undefined); }}>
+              onChange={(e) => clearBaseSelection(baseSel.project, e.target.value)}>
               <option value="">模型…</option>
               {baseModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
             </select>
             <select data-testid="a2-base-version" className="ec-btn" value={baseSel.version} disabled={!baseSel.model}
-              onChange={(e) => { const v = baseVersions.find((x) => x.path === e.target.value); pickBaseVersion(baseSel.project, baseSel.model, v); }}>
+              onChange={(e) => { const v = baseVersions.find((x) => x.path === e.target.value); if (v) pickBaseVersion(baseSel.project, baseSel.model, v); else clearBaseSelection(baseSel.project, baseSel.model); }}>
               <option value="">版本…（選定填入路徑）</option>
               {baseVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
             </select>
@@ -1042,17 +1050,17 @@ export function VersionDiffPage() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span className="ec-k" style={{ minWidth: 48 }}>target</span>
             <select data-testid="a2-target-project" className="ec-btn" value={targetSel.project} disabled={!fsTree}
-              onChange={(e) => { setTargetSel({ project: e.target.value, model: "", version: "" }); pickTargetVersion(e.target.value, "", undefined); }}>
+              onChange={(e) => clearTargetSelection(e.target.value, "")}>
               <option value="">專案…</option>
               {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
             </select>
             <select data-testid="a2-target-model" className="ec-btn" value={targetSel.model} disabled={!targetSel.project}
-              onChange={(e) => { setTargetSel((s) => ({ ...s, model: e.target.value, version: "" })); pickTargetVersion(targetSel.project, e.target.value, undefined); }}>
+              onChange={(e) => clearTargetSelection(targetSel.project, e.target.value)}>
               <option value="">模型…</option>
               {targetModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
             </select>
             <select data-testid="a2-target-version" className="ec-btn" value={targetSel.version} disabled={!targetSel.model}
-              onChange={(e) => { const v = targetVersions.find((x) => x.path === e.target.value); pickTargetVersion(targetSel.project, targetSel.model, v); }}>
+              onChange={(e) => { const v = targetVersions.find((x) => x.path === e.target.value); if (v) pickTargetVersion(targetSel.project, targetSel.model, v); else clearTargetSelection(targetSel.project, targetSel.model); }}>
               <option value="">版本…（選定填入路徑）</option>
               {targetVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
             </select>
