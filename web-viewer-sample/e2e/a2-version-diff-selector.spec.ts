@@ -38,6 +38,11 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     test.skip(!apiOk, "檔案庫未備妥（需 governance-service + BIM_FILE_LIBRARY_ROOT 指主 worktree storage 含 270）");
 
     // 守門 (2)：coordinator dist-ui 是本 branch（#/a2 有 a2-base-project，main 不存在）。
+    // 此導航同時是各 test 的唯一導航：成功後 page 已停在 #/a2、fsTree 已載入、a2-base-project 可見，
+    // test body 直接複用此狀態、不再 page.goto（重複導航會觸發 React unmount/remount + filesTree 重載，
+    // 浪費 gate (2) 已建立的狀態並在後端慢時讓 selectOption 的隱含 waitFor 更易逾時）。
+    // 註：files/tree API 在 main / 本 branch 相同，無法用純 API 判斷 dist-ui 是否為本 branch，
+    //     故此 branch-gate 必須靠 UI 信號（a2-base-project 僅本 branch 有），導航無法省去。
     let uiOk = false;
     try {
       await page.goto(`${COORDINATOR}/ui/#/a2`);
@@ -50,8 +55,7 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
   });
 
   test("#/a2 選 270/機電 base/target 兩版 → Run Diff → succeeded → counts 非全零", async ({ page }) => {
-    await page.goto(`${COORDINATOR}/ui/#/a2`);
-
+    // beforeEach 已導航到 #/a2 且 a2-base-project 可見、fsTree 已載入；直接複用（不重複 goto）。
     // base：270 / 機電 / ver 000001.ifc（option value=絕對 path，用 label 選）。
     await page.getByTestId("a2-base-project").selectOption("270");
     await page.getByTestId("a2-base-model").selectOption("機電");
@@ -70,8 +74,9 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
 
     // counts 卡只在 diff!=null（後端回 succeeded/failed）才渲染（pages.tsx `{diff && (...)}`）；
     // matched 與其餘 Metric（added/removed/moved/property changed）同屬一個 render block，
-    // 故 matched 可見即代表整張 counts grid 已渲染——以 matched 單一 proxy 即可，
-    // 不在 failure path 串接第二個 120s 等待（會把累積等待推過 180s test 預算、掩蓋真訊號）。
+    // 故 matched 可見即代表整張 counts grid 已渲染、diff 已 terminal——以 matched 單一 proxy 即可。
+    // 此處 120s 是「等 diff 跑完」的唯一長等待；下方 succeeded gate 改短逾時，避免 failure path
+    // 在此之後再串一個 120s 把累積等待推過 180s test 預算、把真失敗訊號掩蓋成 timeout。
     await expect(page.getByText("matched", { exact: false }).first()).toBeVisible({ timeout: 120_000 });
 
     // succeeded 直接 UI gate：counts 卡只看 diff!=null、succeeded/failed 都渲染，故「counts 可見」
@@ -79,7 +84,14 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     // disabled={busy || diff?.status !== "succeeded"} 是 UI 中唯一直接觀察 status==="succeeded"
     // 的元素（run() 結束 busy=false → 僅 status==="succeeded" 才 enable）。enabled 即明確斷言
     // 後端確回 succeeded；若回 failed / 未連線此鈕保持 disabled（此時 sum>0 也會連帶失敗）。
-    await expect(page.getByRole("button", { name: /套用 3D Overlay/ })).toBeEnabled({ timeout: 120_000 });
+    //
+    // *** 短逾時（5s）刻意為之：run() 的 polling loop 只在 status 為 succeeded/failed（terminal）才
+    //     break + setDiff(st)（pages.tsx L1000-1003），故「matched 可見 → diff!=null」已蘊含 status
+    //     terminal、busy=false。此時再等 120s 並無 diff 仍在跑的可能；若 status==="failed" 此鈕永遠
+    //     不會 enable，120s 只會把累積等待（beforeEach + L75 + 本行）推過 180s 預算，變成 timeout 而
+    //     非明確 assertion failure、掩蓋真失敗訊號。改 5s 讓 failed / 未連線 path 立即以「鈕仍 disabled
+    //     → status 非 succeeded」明確炸出。
+    await expect(page.getByRole("button", { name: /套用 3D Overlay/ })).toBeEnabled({ timeout: 5_000 });
 
     // 真實非全零：抓 added/removed/moved/property_changed 四個數字相加 > 0。
     // Metric 結構為 <div><big value></big><label></label></div>；用 evaluate 從 DOM 收 counts。
@@ -118,8 +130,8 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     }
     test.skip(!matsuOk, "需後端三層掃描已部署 + 部署區同步松風庵真 IFC（task #11）");
 
-    await page.goto(`${COORDINATOR}/ui/#/a2`);
-
+    // beforeEach 已導航到 #/a2 且 fsTree 已載入；直接複用（不重複 goto）。matsuOk 的 API 查詢與
+    // 頁面 fsTree 看到的是同一份後端狀態（松風庵 是部署期前置、非 runtime race），複用安全。
     // project 下拉含松風庵（三層 fixture 的 project；需 BIM_FILE_LIBRARY_ROOT 含 storage/松風庵/）。
     const baseProject = page.getByTestId("a2-base-project");
     await expect(baseProject).toBeVisible({ timeout: 30_000 });
