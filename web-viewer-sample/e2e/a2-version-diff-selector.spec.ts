@@ -72,26 +72,33 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     // Run Diff → 真 backend。
     await page.getByRole("button", { name: /Run Diff/ }).click();
 
-    // counts 卡只在 diff!=null（後端回 succeeded/failed）才渲染（pages.tsx `{diff && (...)}`）；
-    // matched 與其餘 Metric（added/removed/moved/property changed）同屬一個 render block，
-    // 故 matched 可見即代表整張 counts grid 已渲染、diff 已 terminal——以 matched 單一 proxy 即可。
-    // 此處 120s 是「等 diff 跑完」的唯一長等待；下方 succeeded gate 改短逾時，避免 failure path
-    // 在此之後再串一個 120s 把累積等待推過 180s test 預算、把真失敗訊號掩蓋成 timeout。
-    await expect(page.getByText("matched", { exact: false }).first()).toBeVisible({ timeout: 120_000 });
+    // 等「diff 真正 terminal」——直接觀察終態信號，不用 "matched" 文字當 proxy。
+    // 為何不用 "matched"：pages.tsx 的 run() polling loop 只有 status 為 succeeded/failed 才 break；
+    // 跑滿 120 圈仍非 terminal（network 異常拉長）時，迴圈仍會 setDiff(st)（st.status 可能還是
+    // running/queued），counts 卡照樣渲染、`matched` label（值為 "—"）即出現——此時 "matched 可見"
+    // 並不蘊含 status terminal，舊註解的蘊含鏈在此 edge case 不成立。改為等兩個真正的終態元素其一：
+    //   succeeded → 「套用 3D Overlay」鈕 enable（disabled={busy||diff?.status!=="succeeded"}）；
+    //   failed / 未連線 → 錯誤訊息「未連線後端…」（pages.tsx L1077 `{err && ...}`）出現。
+    // 任一先到即代表 run() 已落終態、busy=false，整體只有「這一個」120s 長等待，不會與 polling 的
+    // 120s 疊加把累積等待推過 180s 預算（beforeEach 15s + 本行 120s + 下方 5s < 180s）。
+    // 「套用 3D Overlay」鈕在本頁恆渲染（pages.tsx L1098 區塊在 `{diff && ...}` 之外，僅 disabled 切換），
+    // 故直接 toBeEnabled 等其變 enabled 即可，不需先等 visible（避免 visible+enabled 兩段 120s 疊加爆預算）。
+    // 兩個 branch 各自 catch 成 boolean（不讓落敗 branch 在 race 結束後丟 unhandled rejection），
+    // 再斷言至少一個終態信號出現；兩者都 120s 未到 = diff 真的卡住，sawTerminal 為 false 直接失敗。
+    const applyOverlayBtn = page.getByRole("button", { name: /套用 3D Overlay/ });
+    const backendErr = page.getByText(/未連線後端/);
+    const sawTerminal = await Promise.race([
+      expect(applyOverlayBtn).toBeEnabled({ timeout: 120_000 }).then(() => true, () => false),
+      backendErr.waitFor({ state: "visible", timeout: 120_000 }).then(() => true, () => false),
+    ]);
+    expect(sawTerminal, "diff 未在 120s 內落終態（succeeded 鈕 enable 或未連線錯誤皆未出現）").toBe(true);
 
-    // succeeded 直接 UI gate：counts 卡只看 diff!=null、succeeded/failed 都渲染，故「counts 可見」
-    // 不足以證明後端回 succeeded。pages.tsx L1106「套用 3D Overlay」鈕
-    // disabled={busy || diff?.status !== "succeeded"} 是 UI 中唯一直接觀察 status==="succeeded"
-    // 的元素（run() 結束 busy=false → 僅 status==="succeeded" 才 enable）。enabled 即明確斷言
-    // 後端確回 succeeded；若回 failed / 未連線此鈕保持 disabled（此時 sum>0 也會連帶失敗）。
-    //
-    // *** 短逾時（5s）刻意為之：run() 的 polling loop 只在 status 為 succeeded/failed（terminal）才
-    //     break + setDiff(st)（pages.tsx L1000-1003），故「matched 可見 → diff!=null」已蘊含 status
-    //     terminal、busy=false。此時再等 120s 並無 diff 仍在跑的可能；若 status==="failed" 此鈕永遠
-    //     不會 enable，120s 只會把累積等待（beforeEach + L75 + 本行）推過 180s 預算，變成 timeout 而
-    //     非明確 assertion failure、掩蓋真失敗訊號。改 5s 讓 failed / 未連線 path 立即以「鈕仍 disabled
-    //     → status 非 succeeded」明確炸出。
-    await expect(page.getByRole("button", { name: /套用 3D Overlay/ })).toBeEnabled({ timeout: 5_000 });
+    // succeeded 直接 UI gate：上一步已確保 run() 落終態（succeeded 或 failed/未連線）。此鈕
+    // disabled={busy || diff?.status !== "succeeded"} 是 UI 中唯一直接觀察 status==="succeeded" 的元素。
+    // 短逾時（5s）刻意為之：終態已到、busy 已 false，succeeded path 此鈕應已 enable；若 status==="failed"
+    // 或未連線此鈕永遠不會 enable，5s 立即以「鈕仍 disabled → status 非 succeeded」明確炸出，不再串一個
+    // 120s 把真失敗訊號掩蓋成 timeout。
+    await expect(applyOverlayBtn).toBeEnabled({ timeout: 5_000 });
 
     // 真實非全零：抓 added/removed/moved/property_changed 四個數字相加 > 0。
     // Metric 結構為 <div><big value></big><label></label></div>；用 evaluate 從 DOM 收 counts。
