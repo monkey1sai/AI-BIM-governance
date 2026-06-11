@@ -54,6 +54,8 @@ GitNexus 紀律：本輪**修改的既有 symbol 僅 `_list_versions`（後端�
 - Modify: `C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\file_library\api.py`（`_list_versions`，L79-104）
 - Test: `C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py`（先在 Task 1 寫；本 Task 先確認既有測試綠）
 
+> **pytest 直譯器（Task 0/1/5 全用同一條，先讀再跑）：** `governance-service` 子 repo 的權威 verify 契約是 `governance-service/AGENTS.md` L41/L47，明文「走 host-native `C:\Program Files\Python312\python.exe`（具 ifcopenshell 0.8.5）」——所以本 Task 的 pytest **首選就是系統 `C:\Program Files\Python312\python.exe`，這是刻意而非疏漏**（root `CLAUDE.md` §3 的「pytest 必走 `.venv`」是針對 repo **根目錄** 的 `tests`，不是本子 repo；且本 worktree 內 **不存在** `governance-service\.venv`）。**唯一 fallback**（僅當系統 Python 出現 `ModuleNotFoundError` / FastAPI·Starlette 版本衝突而 collection 失敗時）：改用 repo 根 venv `C:\Repos\active\iot\AI-BIM-governance\.venv\Scripts\python.exe`（**這是本機唯一實際存在的 venv**，已驗證在 `C:\Repos\active\iot\AI-BIM-governance\.venv\Scripts\python.exe`）；下方所有 pytest 命令的 `C:\Program Files\Python312\python.exe` 都可整段替換成此 venv 路徑。**不要去找 `governance-service\.venv`（不存在），也不要在 worktree 內新建 venv。**
+
 **Steps:**
 
 - [ ] GitNexus impact（動 symbol 前必跑）。預期：`_list_versions` callers 僅 `files_tree`，risk LOW（單一內部 caller、回傳形狀不變）。
@@ -62,11 +64,13 @@ GitNexus 紀律：本輪**修改的既有 symbol 僅 `_list_versions`（後端�
   ```
   預期輸出：impacted 列出 `files_tree`；無跨服務 caller。若回 HIGH/CRITICAL 先停下回報。
 
-- [ ] 跑既有後端測試拿 baseline（改之前先量）。
+- [ ] 跑既有後端測試拿 baseline（改之前先量；直譯器選用見本 Task 上方「pytest 直譯器」框）。
   ```powershell
+  # 首選：host-native Python312（per governance-service/AGENTS.md L41/L47）。
   & "C:\Program Files\Python312\python.exe" -m pytest "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py" -p no:cacheprovider -q
   ```
-  預期輸出：現有 9 個測試全 pass（含 `test_tree_lists_two_level_ifc_only`、`test_version_sort_natural_with_completion_last` 等）。若 collection 失敗（缺 pytest），改用 worktree 內 `governance-service` 的 venv 或 `& "C:\Program Files\Python312\python.exe" -m pip install pytest fastapi` 後重跑（不寫進 requirements.txt）。
+  預期輸出：現有 9 個測試全 pass（含 `test_tree_lists_two_level_ifc_only`、`test_version_sort_natural_with_completion_last` 等）。
+  - **若 collection 失敗** —— 分兩種：(a) `No module named pytest/fastapi` ⇒ `& "C:\Program Files\Python312\python.exe" -m pip install pytest fastapi`（不寫進 requirements.txt）後重跑；(b) **import 進去但 FastAPI/Starlette/uvicorn 版本不相容**（user-site packages 撞版本，memory「pytest 必走 .venv」描述的症狀）⇒ 把上面整條 `C:\Program Files\Python312\python.exe` 換成 repo 根 venv `C:\Repos\active\iot\AI-BIM-governance\.venv\Scripts\python.exe`（**本機唯一存在的 venv**）後重跑。兩種都不要去找 `governance-service\.venv`（不存在）。
 
 - [ ] 在 `api.py` 把 `_list_versions` 改為下列實作（兩層段落逐字保留，僅在 sort 前插入三層下探迴圈）。Read L79-104 後，將整個 function 取代為：
   ```python
@@ -130,11 +134,13 @@ GitNexus 紀律：本輪**修改的既有 symbol 僅 `_list_versions`（後端�
       return versions
   ```
 
-- [ ] 跑既有後端測試確認兩層回歸未壞（三層測試在 Task 1 加）。
+- [ ] **本步驟不跑「依賴 `_make_tree` 三層結構」的測試（會必紅，非你改壞）。** 原因：既有 `_make_tree` 在 `270/機電/extra/deep.ifc` 放了一個三層檔（L54-56），新掃描會把它以 `name="extra/deep.ifc"` 收進 `機電` versions，於是 `test_tree_lists_two_level_ifc_only`（`assert set(names) == {三個兩層名}`）與 `test_version_sort_natural_with_completion_last`（`assert names == ["ver 000001.ifc","ver 000002.ifc","ver 竣工.ifc"]`）此刻**必定 fail**——這是預期中的紅，要等 Task 1 改 fixture 才會綠。**完整全綠驗證統一在 Task 1 末步做（見 Task 1「跑全後端 file_library 測試」）。** 本步驟只跑兩條**不受 `extra/deep.ifc` 影響**的最小 baseline 子集，確認 import / reload / 端點仍正常：
   ```powershell
-  & "C:\Program Files\Python312\python.exe" -m pytest "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py::test_tree_lists_two_level_ifc_only" "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py::test_version_sort_natural_with_completion_last" -p no:cacheprovider -q
+  # 首選（per governance-service/AGENTS.md L41/L47：本服務走 host-native Python312）；
+  # 若 collection 失敗（缺 pytest/fastapi）見本 Task 第二步的環境補裝 fallback。
+  & "C:\Program Files\Python312\python.exe" -m pytest "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py::test_missing_root_returns_empty_200" "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py::test_top_level_loose_files_excluded" -p no:cacheprovider -q
   ```
-  預期輸出：2 passed。注意：`test_make_tree` 既有的 `extra/deep.ifc` 此時會以 `name="extra/deep.ifc"` 出現在 `機電` versions（因 `extra/` 是第三層含 `.ifc`）——這會讓 `test_tree_lists_two_level_ifc_only` 的 `assert set(names) == {...}` 失敗。**Task 1 先改 fixture 與斷言**，故本步驟僅單獨跑上面兩條不依賴 `extra/` 的斷言路徑；`test_version_sort_natural_with_completion_last` 斷言 `機電` 為 `["ver 000001.ifc","ver 000002.ifc","ver 竣工.ifc"]`，若加入 `extra/deep.ifc` 排序會插在前面而失敗 → 故 Task 1 與 Task 0 視為同一個 commit 單元，先做 Task 1 改 fixture 再一起驗。
+  預期輸出：2 passed。（這兩條不依賴 `extra/deep.ifc`：前者根本不呼 `_make_tree`、後者只斷言頂層散檔 `fixture-bytes` 不成 project，皆不受三層入樹影響。）若**這兩條**紅了才是實作壞掉，須回頭查 `_list_versions`；`test_tree_lists_two_level_ifc_only` / `test_version_sort_natural_with_completion_last` 在此 fail 是預期，**不要試圖在此修它們**。
 
 - [ ] git add + commit（與 Task 1 合併為一個 commit；見 Task 1 末步）。
 
@@ -221,11 +227,11 @@ GitNexus 紀律：本輪**修改的既有 symbol 僅 `_list_versions`（後端�
       assert set(names) == {"ver 000001.ifc", "ver 000002.ifc", "ver 竣工.ifc", "v1/villa.ifc"}
   ```
 
-- [ ] 跑全後端 file_library 測試確認全綠（Task 0 + Task 1 一起驗）。
+- [ ] 跑全後端 file_library 測試確認全綠（Task 0 + Task 1 一起驗；**這是 Task 0 三層實作的正式全綠驗證點**）。直譯器選用見 Task 0 上方「pytest 直譯器」框（首選系統 Python312；版本衝突才換 repo 根 `.venv\Scripts\python.exe`）。
   ```powershell
   & "C:\Program Files\Python312\python.exe" -m pytest "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py" -p no:cacheprovider -q
   ```
-  預期輸出：原 9 + 新 3 = 12 passed（`test_tree_lists_two_level_ifc_only` 含 `v1/villa.ifc` 通過；traversal / 保留目錄 / runtime-root fallback 等回歸全綠）。
+  預期輸出：原 9 + 新 3 = 12 passed（`test_tree_lists_two_level_ifc_only` 含 `v1/villa.ifc` 通過；`test_version_sort_natural_with_completion_last` 在 fixture 改好後恢復綠；traversal / 保留目錄 / runtime-root fallback 等回歸全綠）。
 
 - [ ] GitNexus detect_changes（commit 前必跑）。
   ```
@@ -299,6 +305,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     }, []);
     useEffect(() => { void loadFsTree(); }, [loadFsTree]);
   ```
+  插入後 re-anchor：Read 這段上下各 5 行，確認它落在 `VersionDiffPage` 既有 state（最後一個 `useState`，即 `const [err, setErr] = useState<string | null>(null);`）之後、`run` callback（`const run = useCallback`）之前。**此時先不要跑 tsc**（helpers/JSX 尚未消費這些 state，`noUnusedLocals` 會誤報；型別 checkpoint 統一在 JSX 插完後做）。
 
 - [ ] 在 state 之後加兩個 helper（base / target 各自的「選版本」與「換 project/model 重置」邏輯），避免重複貼：
   ```tsx
@@ -330,7 +337,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
     const targetModels = fsTree?.find((p) => p.project_id === targetSel.project)?.models ?? [];
     const targetVersions = targetModels.find((m) => m.model_id === targetSel.model)?.versions ?? [];
   ```
-  （`FileVersionRow` 也需在 L6 import 清單；Read L6 確認，若無則加入 import。）
+  （`FileVersionRow` 也需在 L6 import 清單；Read L6 確認，若無則加入 import。）插入後 re-anchor：Read 這段確認 helpers 緊接在剛插入的 state 區之後、仍在 `run` callback 之前。**此時仍不要跑 tsc**（`baseVerId`/`targetVerId` 的值要等 step 6 run-callback 才被讀、JSX 要等 step 7 才消費衍生值，提前跑會 `noUnusedLocals` 誤報）；型別 checkpoint 統一放在 JSX 插完後（見下方「型別 checkpoint」步驟）。
 
 - [ ] 在 `run` callback（L927-948）把 `createDiff` 呼叫補上 model_version_id（手填路徑時為空字串 → 轉 undefined，維持現行為）：
   ```tsx
@@ -390,10 +397,19 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
               </select>
             </div>
   ```
+  插入後**立刻 re-anchor**：Read 剛插入的 JSX 區段上下各 5 行，確認 (a) 兩組 `<select>` 落在最外層 `<div style={{ display: "flex", flexDirection: "column", gap: 6 }}>` 內、且在原本兩個 `<input>` **之前**；(b) 下一步要改的兩個 `<input>`（`value={base}` / `value={target}`）行仍緊接在這段 JSX 之後。**前三個插入步驟（state / helpers / JSX）作用在 pages.tsx 不同位置，行號會累積位移——每步插完都用 Read 重新定位下一個 anchor，不要沿用本 plan 寫的固定行號（L960-961 等僅為初始參考）。**
 
-- [ ] 在 base/target input（L960-961）的 `onChange` 補上「手動覆寫清版本綁定」：把 `onChange={(e) => setBase(e.target.value)}` 改為 `onChange={(e) => { setBase(e.target.value); setBaseVerId(""); setBaseSel((s) => ({ ...s, version: "" })); }}`，target 同理改 `setTarget` / `setTargetVerId` / `setTargetSel`。並各加 `data-testid="a2-base-input"` / `data-testid="a2-target-input"` 方便 E2E/vitest 定位。
+- [ ] **型別 checkpoint（在改 input onChange 之前先擋一次，抓累積位移／import 漏接）。** 跑純型別檢查（`--noEmit`，不產 bundle、比 `vite build` 輕；`tsconfig.json` 已設 `noEmit:true`，`tsc` 會自動讀 cwd 的 `tsconfig.json`）。deps 須已裝（本 Task 第二步 `npm test` 與後續 `npm run build` 皆依賴同一份 `node_modules`；若尚未裝，`npm exec` 會按宣告的 `typescript` devDependency 自動補裝）：
+  ```powershell
+  & "C:\Program Files\nodejs\npm.cmd" --prefix "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\web-viewer-sample" exec -- tsc --noEmit
+  ```
+  預期輸出：無輸出（exit 0，tsc 無 error）。此時 state（步驟 4）+ helpers/衍生值（步驟 5）+ run-callback createDiff（步驟 6）+ JSX 選擇器（步驟 7）都已就位且**彼此自洽**，新宣告的 local 全被 JSX 或 run-callback 消費，故 `noUnusedLocals` 不會誤報。
+  - **常見真錯**：`FileVersionRow` 未 import（`Cannot find name 'FileVersionRow'`）→ 把 `FileVersionRow` 加進 `pages.tsx` L6 的 `./governanceClient` import 清單後重跑。
+  - **注意（為何 checkpoint 不能更早）**：`tsconfig.json` 開了 `noUnusedLocals`/`noUnusedParameters`，若在「只插完 state（步驟 4）、helpers/JSX 還沒進」時就跑 tsc，`pickBaseVersion`/`baseModels`/`baseVerId` 等會被當「宣告未使用」**誤報紅**——那是假錯，不是你寫壞。故型別 checkpoint 一律放在 JSX（步驟 7）插完之後這個自洽點，不要提前。
 
-- [ ] 跑型別檢查 + build 確認無 TS 錯（受控 state 與 import 都對）。
+- [ ] 在 base/target input（型別 checkpoint 通過後、緊接 JSX 選擇器之後那兩行 `<input>`；用 Read 重新定位、勿信固定行號）的 `onChange` 補上「手動覆寫清版本綁定」：把 `onChange={(e) => setBase(e.target.value)}` 改為 `onChange={(e) => { setBase(e.target.value); setBaseVerId(""); setBaseSel((s) => ({ ...s, version: "" })); }}`，target 同理改 `setTarget` / `setTargetVerId` / `setTargetSel`。並各加 `data-testid="a2-base-input"` / `data-testid="a2-target-input"` 方便 E2E/vitest 定位。
+
+- [ ] 跑型別檢查 + build 確認無 TS 錯（受控 state 與 import 都對；這是 Task 2 的最終全量 gate，含 input onChange 改動）。
   ```powershell
   & "C:\Program Files\nodejs\npm.cmd" --prefix "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\web-viewer-sample" run build
   ```
@@ -771,7 +787,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Steps:**
 
-- [ ] 後端全 file_library 測試（回歸鎖）。
+- [ ] 後端全 file_library 測試（回歸鎖）。直譯器選用見 Task 0 上方「pytest 直譯器」框（首選系統 Python312；版本衝突才換 repo 根 `.venv\Scripts\python.exe`）。
   ```powershell
   & "C:\Program Files\Python312\python.exe" -m pytest "C:\Repos\active\iot\AI-BIM-governance\.worktrees\a2-version-diff-selector\governance-service\tests\test_file_library.py" -p no:cacheprovider -q
   ```
