@@ -228,7 +228,7 @@ it("中文 external_model_version_id 的 dispatch 不再被 conversion 端 SAFE_
 
   // 斷言（poll 至 terminal-or-dispatched）：
   // const detail = await pollIfcReadyJob(appUnderTest, jobId);
-  // expect(detail.conversion_status).not.toBe("dispatch_failed");
+  // 斷言 dispatch 終態用 top-level `status`（summarizeIfcReadyJob 的 dispatch 生命週期欄位；沿用既有 waitForDispatchEnd(app, jobId, ["dispatched"]) helper 即 poll res.body.status），不要 assert conversion_status（dispatch 被 400 擋時未必寫入）。
   // expect(detail.dispatch_error).toBeNull();
 });
 ```
@@ -300,7 +300,7 @@ job 有 `dispatch_error` 時於該列附註顯示截斷後明細（完整字串�
 
 ### Steps
 
-- [ ] 在 `web-viewer-sample/src/console/console.test.tsx` 找到既有 `ConversionSchedulingPage` 的 `renderToString` 測試（L369 附近），在其後新增一個 mount 測試（沿用 `IntakeSelectPage.test.tsx` 的 `createRoot` + `act` + `vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue(...)` 模式）。檔頭若尚未 import `act`/`createRoot`/`coordinatorClient`/`vi`，比照 `IntakeSelectPage.test.tsx` L1–7 補上。append：
+- [ ] 在 `web-viewer-sample/src/console/console.test.tsx` 找到既有 `ConversionSchedulingPage` 的 `renderToString` 測試（L369 附近），在其後新增一個 mount 測試（沿用 `IntakeSelectPage.test.tsx` 的 `createRoot` + `act` + `vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue(...)` 模式）。檔頭若尚未 import `act`/`createRoot`/`coordinatorClient`/`vi`/`type IfcReadyListItem`，比照 `IntakeSelectPage.test.tsx` L1–7 補上（`IfcReadyListItem` 型別必補，否則 `const items: IfcReadyListItem[]` 會 tsc 紅）。append：
 
 ```ts
 describe("ConversionSchedulingPage：dispatch_error 明細可見（真實後端欄位，無 mock 假資料）", () => {
@@ -420,7 +420,7 @@ cd web-viewer-sample && git add src/console/pages.tsx src/console/console.test.t
 
 ### Steps
 
-- [ ] 建立 `web-viewer-sample/e2e/conversion-artifact-id-sanitize.spec.ts`。沿用 `real-ifc-storage-intake.spec.ts` 的 `COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004"` 慣例；POST ifc-ready 用 `request.newContext()` 對 coordinator 直打（webhook 簽章 header 比照 `bim-review-coordinator/tests/external-ifc-ready.test.ts` 既有 `WEBHOOK_SECRET` helper 算 HMAC；執行者先 Read 該測試取得簽章演算法與 header 名）。內容：
+- [ ] 建立 `web-viewer-sample/e2e/conversion-artifact-id-sanitize.spec.ts`。沿用 `real-ifc-storage-intake.spec.ts` 的 `COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004"` 慣例；POST ifc-ready 用 `request.newContext()` 對 coordinator 直打（webhook header 比照 `bim-review-coordinator/tests/external-ifc-ready.test.ts` 的 `authHeaders()`：帶靜態 `X-Webhook-Secret`（= `WEBHOOK_SECRET`，預設 "dev-webhook-secret"）+ `X-Correlation-Id` + `X-Idempotency-Key`，**非 HMAC**（該檔正常 intake 路徑無任何簽章運算）；執行者先 Read 該測試對齊 header 名）。內容：
 
 ```ts
 import { test, expect, request as pwRequest } from "@playwright/test";
@@ -462,7 +462,7 @@ test.describe("中文 model_version_id 派工修復 + dispatch_error 可見", ()
 });
 ```
 
-  注意：上方 `TODO-執行者` 為「對齊既有簽章/stub helper」的填空——執行者必須先 Read `bim-review-coordinator/tests/external-ifc-ready.test.ts`（webhook HMAC header 算法）與既有 e2e source stub 模式，把 `buildSignedIfcReadyPost`、`rowOf`、`failJobId` 逐項實作可跑，不得留 TODO 進 commit。若採 B 模式（STUB CONVERSION），起 stub 的方式記在 evidence README，且 spec 頁截圖須標 `STUB CONVERSION API`。
+  注意：上方 `TODO-執行者` 為「對齊既有簽章/stub helper」的填空——執行者必須先 Read `bim-review-coordinator/tests/external-ifc-ready.test.ts`（`authHeaders()` 的靜態 `X-Webhook-Secret` header，非 HMAC）與既有 e2e source stub 模式，把 `buildSignedIfcReadyPost`、`rowOf`、`failJobId` 逐項實作可跑，不得留 TODO 進 commit。若採 B 模式（STUB CONVERSION），起 stub 的方式記在 evidence README，且 spec 頁截圖須標 `STUB CONVERSION API`。
 
 - [ ] 啟動 coordinator（:8004）後跑 E2E（playwright 只 auto-start viewer :5180，coordinator 需另起；起法見 `docs/agents/sub-repo-verify-commands.md` 或 `bim-review-coordinator` `npm run dev`）：
 
