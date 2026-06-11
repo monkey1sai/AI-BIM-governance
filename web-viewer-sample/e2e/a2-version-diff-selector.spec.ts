@@ -69,9 +69,10 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     await page.getByRole("button", { name: /Run Diff/ }).click();
 
     // counts 卡只在 diff!=null（後端回 succeeded/failed）才渲染（pages.tsx `{diff && (...)}`）；
-    // 等 added/removed/moved/property changed 四個 Metric label 可見。
+    // matched 與其餘 Metric（added/removed/moved/property changed）同屬一個 render block，
+    // 故 matched 可見即代表整張 counts grid 已渲染——以 matched 單一 proxy 即可，
+    // 不在 failure path 串接第二個 120s 等待（會把累積等待推過 180s test 預算、掩蓋真訊號）。
     await expect(page.getByText("matched", { exact: false }).first()).toBeVisible({ timeout: 120_000 });
-    await expect(page.getByText("property changed", { exact: false }).first()).toBeVisible({ timeout: 120_000 });
 
     // succeeded 直接 UI gate：counts 卡只看 diff!=null、succeeded/failed 都渲染，故「counts 可見」
     // 不足以證明後端回 succeeded。pages.tsx L1106「套用 3D Overlay」鈕
@@ -99,7 +100,24 @@ test.describe("A2 版本 diff 檔案庫選擇器端到端", () => {
     await page.screenshot({ path: "../artifacts/e2e/a2-version-diff-selector-diff-counts.png", fullPage: true });
   });
 
-  test("base project 下拉含松風庵；選松風庵/建築 → 版本下拉含三層 v1/japanese_villa.ifc", async ({ page }) => {
+  test("base project 下拉含松風庵；選松風庵/建築 → 版本下拉含三層 v1/japanese_villa.ifc", async ({ request, page }) => {
+    // 守門：松風庵真 IFC 須已同步到部署區 storage（task #11 後續部署 checklist），否則 skip。
+    // beforeEach 只守 270（A2 主 fixture），不保證 松風庵 已部署；乾淨環境 / CI runner /
+    // 重建後未同步 松風庵 時，下方 hasText:"松風庵" toHaveCount(1) 會硬 FAIL（expected 0 to be 1），
+    // 與檔頭「前置缺失 → conditional skip」誠實鐵律相違——故此處讀 tree 補上 松風庵 skip-gate。
+    let matsuOk = false;
+    try {
+      const res = await request.get(`${COORDINATOR}/api/governance/files/tree`);
+      if (res.ok()) {
+        const body = await res.json();
+        const ids = new Set((body.projects || []).map((p: { project_id: string }) => p.project_id));
+        matsuOk = ids.has("松風庵");
+      }
+    } catch {
+      matsuOk = false;
+    }
+    test.skip(!matsuOk, "需後端三層掃描已部署 + 部署區同步松風庵真 IFC（task #11）");
+
     await page.goto(`${COORDINATOR}/ui/#/a2`);
 
     // project 下拉含松風庵（三層 fixture 的 project；需 BIM_FILE_LIBRARY_ROOT 含 storage/松風庵/）。
