@@ -8,6 +8,8 @@ import { type AddressInfo } from "node:net";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { ExternalIfcReadyStore } from "../src/services/externalIfcReadyStore.js";
+import type { ExternalIfcReadyEvent } from "../src/types.js";
 import { sanitizeArtifactIdPart } from "../src/services/streamingConversionClient.js";
 import type { CoordinatorConfig } from "../src/config.js";
 
@@ -508,5 +510,44 @@ describe("conversion result reconciliation with sanitized correlation_id (cr1)",
       .send({ ...structuredClone(IFC_CONTRACT.example) });
     expect(second.body.idempotent_replay).toBe(false);
     expect(second.body.ifc_ready_job_id).not.toBe(first.body.ifc_ready_job_id);
+  });
+
+  // PR #206 review 修補（P2 collision 對帳）：job A（unsafe correlation，sanitize 後為 S）
+  // 與 job B（真實 correlation 恰為 S）並存時，A 的 conversion 結果以 S 回拋——
+  // 單靠 correlation 字串無法裁決，必須以 report.conversion_job_id 消歧分流。
+  it("collision 對帳：sanitize 值撞他 job 真實 correlation 時以 conversion_job_id 消歧", () => {
+    const EVENT = {
+      external_conversion_task_id: null,
+      source_ifc: { ref: "http://127.0.0.1:1/source.ifc", etag: "etag_collision" },
+      callback_url: null,
+    } as unknown as ExternalIfcReadyEvent;
+    const store = new ExternalIfcReadyStore();
+
+    const jobA = store.create(EVENT, {
+      correlationId: RAW_CORRELATION,
+      idempotencyKey: "idem_col_a",
+      tenantId: "t1",
+      projectId: "p1",
+      externalModelVersionId: "mv_col_a",
+    });
+    store.markDispatched(jobA.ifc_ready_job_id, "conv_job_A", "queued");
+
+    const jobB = store.create(EVENT, {
+      correlationId: SANITIZED_CORRELATION,
+      idempotencyKey: "idem_col_b",
+      tenantId: "t1",
+      projectId: "p1",
+      externalModelVersionId: "mv_col_b",
+    });
+    store.markDispatched(jobB.ifc_ready_job_id, "conv_job_B", "queued");
+
+    // A 的結果以 sanitize 後 correlation + A 的 conversion_job_id 回拋 → 命中 A（非 B）。
+    expect(store.getByCorrelation(SANITIZED_CORRELATION, "conv_job_A")?.ifc_ready_job_id).toBe(jobA.ifc_ready_job_id);
+    // B 的結果（同 correlation 字串、B 的 conversion_job_id）→ 命中 B。
+    expect(store.getByCorrelation(SANITIZED_CORRELATION, "conv_job_B")?.ifc_ready_job_id).toBe(jobB.ifc_ready_job_id);
+    // 無 conversion_job_id 可消歧時維持原始鍵優先（向後相容）。
+    expect(store.getByCorrelation(SANITIZED_CORRELATION)?.ifc_ready_job_id).toBe(jobB.ifc_ready_job_id);
+    // 非 collision 路徑不受影響：raw correlation 直查命中 A。
+    expect(store.getByCorrelation(RAW_CORRELATION)?.ifc_ready_job_id).toBe(jobA.ifc_ready_job_id);
   });
 });

@@ -192,12 +192,24 @@ export class ExternalIfcReadyStore {
     return job;
   }
 
-  getByCorrelation(correlationId: string): IfcReadyIntakeJob | undefined {
-    // 先查原始鍵；查不到再查 sanitize 鍵（conversion 回拋帶的是 sanitize 後值）。
-    // 原始鍵優先：若另一 job 的真實 correlation 恰等於某 sanitize 值，回拋對帳
-    // 仍以「持有該原始鍵」的 job 為準，不被 sanitize 鍵搶走。
-    const id = this.correlationIndex.get(correlationId) ?? this.sanitizedCorrelationIndex.get(correlationId);
-    return id ? this.jobsById.get(id) : undefined;
+  /**
+   * conversion 結果回拋對帳。原始鍵與 sanitize 鍵都列入候選；當兩者指向不同 job
+   * （collision：某 job 的 sanitize 值恰等於另一 job 的真實 correlation）時，
+   * 以 report 的 `conversion_job_id` 對 job 的 `conversion_job_id` 消歧，
+   * 不單靠 correlation 字串裁決（PR #206 review P2）。無法消歧時維持原始鍵優先。
+   */
+  getByCorrelation(correlationId: string, conversionJobId: string | null = null): IfcReadyIntakeJob | undefined {
+    const candidateIds = [this.correlationIndex.get(correlationId), this.sanitizedCorrelationIndex.get(correlationId)];
+    const candidates = [...new Set(candidateIds)]
+      .filter((id): id is string => Boolean(id))
+      .map((id) => this.jobsById.get(id))
+      .filter((job): job is IfcReadyIntakeJob => Boolean(job));
+    if (candidates.length === 0) return undefined;
+    if (conversionJobId) {
+      const matched = candidates.find((job) => job.conversion_job_id === conversionJobId);
+      if (matched) return matched;
+    }
+    return candidates[0];
   }
 
   /**
