@@ -301,9 +301,26 @@ export function ConversionSchedulingPage() {
       </Panel>
       <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
         {jobs.length ? (
-          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>session</th><th>stage</th></tr></thead>
+          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th></tr></thead>
             <tbody>{jobs.slice(0, 20).map((j) => (
-              <tr key={j.ifc_ready_job_id}><td>{j.ifc_ready_job_id}</td><td>{j.project_id}</td><td>{j.conversion_status ?? "—"}</td><td>{j.review_session_id ?? "—"}</td><td>{j.expected_stage_url ?? "—"}</td></tr>
+              <tr key={j.ifc_ready_job_id}>
+                <td>{j.ifc_ready_job_id}</td>
+                <td>{j.project_id}</td>
+                <td>{j.conversion_status ?? "—"}</td>
+                <td>
+                  {j.dispatch_error ? (
+                    <span
+                      className="ec-warn-note"
+                      data-testid={`conv-dispatch-error-${j.ifc_ready_job_id}`}
+                      title={j.dispatch_error}
+                    >
+                      {j.dispatch_error.length > 80 ? `${j.dispatch_error.slice(0, 80)}…` : j.dispatch_error}
+                    </span>
+                  ) : "—"}
+                </td>
+                <td>{j.review_session_id ?? "—"}</td>
+                <td>{j.expected_stage_url ?? "—"}</td>
+              </tr>
             ))}</tbody></table>
         ) : <p className="ec-note">尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。</p>}
       </Panel>

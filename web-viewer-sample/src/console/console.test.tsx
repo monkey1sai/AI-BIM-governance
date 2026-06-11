@@ -25,7 +25,7 @@ import {
 } from "./pages";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
-import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
@@ -808,5 +808,48 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     expect(spy).toHaveBeenCalledTimes(2);
 
     await act(async () => { root.unmount(); });
+  });
+});
+
+describe("ConversionSchedulingPage：dispatch_error 明細可見（真實後端欄位，無 mock 假資料）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+  const baseJob = {
+    project_id: "271", download_status: "downloaded", conversion_authority: null,
+    review_session_id: null, viewer_url: null, expected_stage_url: null,
+    expected_mapping_url: null, created_at: "2026-06-11T00:00:00Z",
+  };
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  it("有 dispatch_error 的 job → 渲染錯誤明細節點；無 dispatch_error 的 job → 不渲染", async () => {
+    const items: IfcReadyListItem[] = [
+      { ...baseJob, ifc_ready_job_id: "ifcready_fail", external_model_version_id: "271_pieple_管線",
+        status: "dispatch_failed", conversion_status: "dispatch_failed",
+        dispatch_error: 'streaming conversion API 400: {"detail":"Invalid ifc_artifact_id: ifc_271_pieple_管線"}' },
+      { ...baseJob, ifc_ready_job_id: "ifcready_ok", external_model_version_id: "ext_ok",
+        status: "dispatched", conversion_status: "dispatched", dispatch_error: null },
+    ];
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: items.length, items });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const errNode = container.querySelector('[data-testid="conv-dispatch-error-ifcready_fail"]');
+    expect(errNode).not.toBeNull();
+    expect(errNode!.textContent).toContain("Invalid ifc_artifact_id");
+    expect(errNode!.getAttribute("title")).toContain("streaming conversion API 400");
+    // 無 dispatch_error 的 job 不得渲染錯誤節點
+    expect(container.querySelector('[data-testid="conv-dispatch-error-ifcready_ok"]')).toBeNull();
   });
 });
