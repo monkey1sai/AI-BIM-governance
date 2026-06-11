@@ -1292,6 +1292,137 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 });
 
+// A2 VersionDiff 多專案 / 三層版本選擇器 client-render（spec §4.2/§6.2）。
+// 上方 A2 既有測試的 fixture 只有單一 project（270）/單一 model（機電），無法證明
+//   (1) project 下拉真的把「多個」project 都列出來（多專案可選）、
+//   (2) version 下拉能顯示「巢狀三層」版本名（如 v1/japanese_villa.ifc，name 帶子目錄）。
+// 此處用自帶含「松風庵/建築/v1/japanese_villa.ifc」的真實樹形狀（比照 storage 實際結構），
+// client-render 驗證多專案選擇與三層版本名顯示——SSR 首幀 fsTree=null 永遠到不了 populated 態。
+describe("A2 VersionDiff 多專案 + 三層版本選擇器 client-render（spec §4.2/§6.2：松風庵/建築/v1 三層）", () => {
+  const BASE_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 000001.ifc";
+  const TARGET_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/機電/ver 竣工.ifc";
+  const VILLA_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/松風庵/建築/v1/japanese_villa.ifc";
+  // 多專案 + 三層版本：270/機電（兩版）+ 松風庵/建築（一個三層 name 的版本）。
+  const a2tree: FilesTreeResponse = {
+    root: "C:/Repos/active/iot/AI-BIM-governance/storage",
+    source_kind: "local_fs",
+    projects: [
+      {
+        project_id: "270",
+        models: [
+          {
+            model_id: "機電",
+            versions: [
+              { name: "ver 000001.ifc", path: BASE_PATH, size_bytes: 8155, mtime: "2026-06-10T17:00:00+08:00" },
+              { name: "ver 竣工.ifc", path: TARGET_PATH, size_bytes: 22618, mtime: "2026-06-10T17:17:00+08:00" },
+            ],
+          },
+        ],
+      },
+      {
+        project_id: "松風庵",
+        models: [
+          {
+            model_id: "建築",
+            versions: [
+              { name: "v1/japanese_villa.ifc", path: VILLA_PATH, size_bytes: 12345, mtime: "2026-06-11T09:00:00+08:00" },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  const sel = (testid: string) => container.querySelector<HTMLSelectElement>(`[data-testid="${testid}"]`)!;
+  const pick = async (testid: string, value: string) => {
+    await act(async () => {
+      sel(testid).value = value;
+      sel(testid).dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+
+  // 多專案可選 + 三層版本名顯示（user-facing 證明）：base project 下拉含「松風庵」，
+  // 選松風庵/建築後，version 下拉 option 含三層 name「v1/japanese_villa.ifc」。
+  it("project 下拉含松風庵；選建築 → 版本下拉含三層 v1/japanese_villa.ifc（多專案 + 三層支援）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); }); // 等 filesTree microtask 入 state
+
+    // base project 下拉同時列出 270 與 松風庵（多專案可選，非只第一個）。
+    const projOptions = Array.from(sel("a2-base-project").options).map((o) => o.value);
+    expect(projOptions).toContain("270");
+    expect(projOptions).toContain("松風庵");
+    // target project 下拉對稱含松風庵（base/target 同源 fsTree，皆可選多專案）。
+    expect(Array.from(sel("a2-target-project").options).map((o) => o.value)).toContain("松風庵");
+
+    // 選松風庵/建築 → version option 含三層 name（name 帶子目錄 v1/ 也能正確顯示與選取）。
+    await pick("a2-base-project", "松風庵");
+    await pick("a2-base-model", "建築");
+    const verLabels = Array.from(sel("a2-base-version").options).map((o) => o.textContent);
+    expect(verLabels).toContain("v1/japanese_villa.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // 選定三層版本 → createDiff 收到三層 model_version_id（{project}/{model}/{三層 name}）。
+  // 補強：上方既有 A2 測試只驗過「ver 竣工.ifc」這種 flat name 的 model_version_id；此處鎖定
+  // 「v1/japanese_villa.ifc」這種帶子目錄的 name 也原樣帶入綁定，不被截斷 / 改寫。
+  it("選松風庵/建築/v1/japanese_villa.ifc → createDiff 帶三層 base_model_version_id", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a2tree);
+    const createSpy = vi
+      .spyOn(governanceClient, "createDiff")
+      .mockResolvedValue({ diff_id: "d-a2villa", status: "queued" });
+    // getDiff 一次回 succeeded 結束輪詢（避免測試等 120 秒迴圈）。
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-a2villa",
+      status: "succeeded",
+      summary: { base_count: 0, target_count: 0, matched: 0, counts: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    await pick("a2-base-project", "松風庵");
+    await pick("a2-base-model", "建築");
+    await pick("a2-base-version", VILLA_PATH);
+    // 受控 input 已被填入三層版本 path。
+    expect(container.querySelector<HTMLInputElement>('[data-testid="a2-base-input"]')!.value).toBe(VILLA_PATH);
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    const arg = createSpy.mock.calls[0][0];
+    expect(arg.base_ifc_path).toBe(VILLA_PATH);
+    // 三層 name 原樣帶入 model_version_id（含子目錄段 v1/，不截斷）。
+    expect(arg.base_model_version_id).toBe("松風庵/建築/v1/japanese_villa.ifc");
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
 describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 schema，渲染層驗證；真後端值由 E2E 驗", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
   let container: HTMLDivElement;
