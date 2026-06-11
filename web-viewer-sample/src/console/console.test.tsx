@@ -1488,8 +1488,9 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     // target 側未選版本 → 沿用元件預設 target state（pages.tsx VersionDiffPage 初值），
     // 鎖定 base/target 未被交叉接線：只動 base 不會污染 target_ifc_path。
     expect(arg.target_ifc_path).toBe(DEFAULT_TARGET_PATH);
-    // target 未經三層選擇器 → 無版本綁定語意，model_version_id 應為空。
-    expect(arg.target_model_version_id).toBeFalsy();
+    // target 未經三層選擇器 → 無版本綁定語意，model_version_id 應為空（undefined，
+    // 對齊本檔其他同場景斷言；toBeFalsy 會放過 null/""/0，語意較弱故不用）。
+    expect(arg.target_model_version_id).toBeUndefined();
 
     await act(async () => { root.unmount(); });
   });
@@ -1507,9 +1508,13 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
     expect(html).toContain("檔案庫不可用");
     expect(html).toContain("可改用下方手動輸入路徑");
     expect(html).toContain("proxy 502"); // 顯示原因，不吞錯
-    // 手動輸入框仍可用（保留預設路徑、可編輯）。
+    // 使用者可觸發的重試鈕存在（spec §6.2 要求「不必整頁 reload 的重試」；pages.tsx a2-fs-retry）。
+    // 鎖住此鈕：若被誤刪或 testid 改名，graceful-degrade 合約應變紅。
+    expect(container.querySelector('[data-testid="a2-fs-retry"]')).not.toBeNull();
+    // base/target 手動輸入框照常可用（保留預設路徑、可編輯；對稱於舊 block）。
     const baseInput = inputByTestId("a2-base-input");
     expect(baseInput.disabled).toBe(false);
+    expect(inputByTestId("a2-target-input").disabled).toBe(false);
     await act(async () => { setInputNative(inputByTestId("a2-base-input"), "C:/manual/base.ifc"); });
     expect(inputByTestId("a2-base-input").value).toBe("C:/manual/base.ifc");
 
