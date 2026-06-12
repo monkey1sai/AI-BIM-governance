@@ -27,7 +27,7 @@ let active: CoordinatorApp | null = null;
 let activeStub: http.Server | null = null;
 
 afterEach(async () => {
-  if (active) active.dispose();
+  if (active) await active.dispose();
   if (activeStub) {
     await new Promise<void>((resolve) => activeStub?.close(() => resolve()));
     activeStub = null;

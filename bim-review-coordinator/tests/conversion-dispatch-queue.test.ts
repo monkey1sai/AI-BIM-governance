@@ -23,7 +23,7 @@ let active: CoordinatorApp | null = null;
 let activeStub: http.Server | null = null;
 
 afterEach(async () => {
-  if (active) active.dispose();
+  if (active) await active.dispose();
   if (activeStub) {
     await new Promise<void>((resolve) => activeStub?.close(() => resolve()));
     activeStub = null;
@@ -367,7 +367,7 @@ describe("Restart drop semantics", () => {
     expect(cView.body.status).toBe("queued_for_conversion");
 
     // 觸發 dispose(模擬 coordinator process shutdown / restart 準備動作)
-    app.dispose();
+    await app.dispose();
 
     // dispose 之後 B / C 應該被標 dropped_on_restart;A 仍 in-flight(dispose
     // 不會強制中斷已 in-flight 的 dispatcher 呼叫)。

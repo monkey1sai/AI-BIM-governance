@@ -268,7 +268,7 @@ export interface CoordinatorApp {
   // async（回 Promise）:minioWatcher.dispose() 需 await 其 in-flight tick settle 後才
   // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
   // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
-  dispose: () => void | Promise<void>;
+  dispose: () => Promise<void>;
 }
 
 export interface CreateCoordinatorAppOptions {
