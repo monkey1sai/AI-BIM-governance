@@ -66,4 +66,21 @@ describe(".env.example MINIO_WATCH_* parity（IMPORTANT — deploy-time missing-
       .find((line) => line.trim().startsWith("MINIO_WATCH_TENANT_ID="));
     expect(tenantLine?.trim()).toBe("MINIO_WATCH_TENANT_ID=");
   });
+
+  it("MINIO_WATCH_ENABLED 在 .env.example 不得為啟用值（防 deploy missing-key merge 把 watcher 預設開進生產）", () => {
+    // 對稱守衛（與上方 TENANT_ID 同安全意圖）：.env.example 是 deploy.ps1 Phase 2
+    // missing-key merge 的 key source。若這裡 commit 了 MINIO_WATCH_ENABLED=true，
+    // 而生產 .env 原本沒有此 key，merge 會把 =true 寫進生產 .env；credentials
+    // 尚未設定時 watcher 啟動後第一輪 list 立即打 MinIO 失敗（記 last_error 不 crash）。
+    // 允許空值或明確的關閉值（false/0/no/off）；禁止任何會被 config.ts parseBooleanEnv
+    // 視為啟用的值（true/1/yes/on，trim 後大小寫不敏感）。
+    expect(declaredKeys.has("MINIO_WATCH_ENABLED")).toBe(true);
+    const enabledLine = envExampleText
+      .split(/\r?\n/)
+      .find((line) => line.trim().startsWith("MINIO_WATCH_ENABLED="));
+    const rawValue = enabledLine?.trim().slice("MINIO_WATCH_ENABLED=".length) ?? "";
+    const normalized = rawValue.trim().toLowerCase();
+    const ENABLED_TOKENS = ["true", "1", "yes", "on"];
+    expect(ENABLED_TOKENS).not.toContain(normalized);
+  });
 });
