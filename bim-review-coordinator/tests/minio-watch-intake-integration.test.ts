@@ -206,6 +206,7 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
     const first = await request(active.app).post("/api/external/ifc-ready").set(headers).send(body);
     expect(first.status).toBe(202);
     const firstJobId = first.body.ifc_ready_job_id as string;
+    expect(firstJobId).toBeTruthy();
 
     const second = await request(active.app).post("/api/external/ifc-ready").set(headers).send(body);
     expect([200, 202]).toContain(second.status);
