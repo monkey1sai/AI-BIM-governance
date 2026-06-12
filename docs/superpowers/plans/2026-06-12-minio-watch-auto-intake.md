@@ -566,8 +566,11 @@ import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/clien
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // 最小 structLog 介面（避免 import app 造成循環依賴；app 傳入真 logger）。
+// withTraceId 為 optional：watcher 內部只呼叫 anomaly()，但真實 StructuredLogger 含
+// withTraceId — 測試樁與真 logger 都能不靠 as never 直接滿足此介面。
 interface WatcherLogger {
   anomaly: (op: string, msg: string, fields: Record<string, unknown>) => void;
+  withTraceId?: (id: string) => { anomaly: WatcherLogger["anomaly"] };
 }
 
 export interface MinioWatcherOptions {
@@ -1056,9 +1059,6 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
     const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
     const s3Base = await startS3Stub(state);
     // 先建 app（watcher 尚未啟動，因 selfBaseUrl 已給 → 立即啟動需 port；改為 listen 後啟動）
-    const tmpApp = createCoordinatorApp({ conversionPollEnabled: false }); // 借一個丟棄的 app 來占位不需要
-    tmpApp.dispose(); tmpApp.io.close();
-    await new Promise<void>((r) => tmpApp.server.close(() => r()));
 
     // 正式 app：listen(0) → 取得 port → selfBase 指自己
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-intake-self-"));
