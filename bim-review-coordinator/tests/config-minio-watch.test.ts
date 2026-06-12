@@ -10,6 +10,7 @@ const MINIO_KEYS = [
   "MINIO_WATCH_SECRET_KEY",
   "MINIO_WATCH_INTERVAL_SECONDS",
   "MINIO_WATCH_KEY_SUFFIX",
+  "MINIO_WATCH_SELF_BASE_URL",
 ];
 
 afterEach(() => {
@@ -27,6 +28,7 @@ describe("loadConfig MinIO watch fields", () => {
     expect(c.minioWatchSecretKey).toBe("");
     expect(c.minioWatchIntervalSeconds).toBe(60);
     expect(c.minioWatchKeySuffix).toBe("/model.ifc");
+    expect(c.minioWatchSelfBaseUrl).toBe("");
   });
 
   it("env 覆寫被讀入；interval 低於 10 夾為 10", () => {
