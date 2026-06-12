@@ -85,11 +85,36 @@ async function startConvStub(): Promise<number> {
   return listenOnRandomPort(convStub);
 }
 
-async function waitForHealth(base: string, timeoutMs = 60_000): Promise<void> {
+// afterAll 收尾：Windows 下 spawn 用 shell:true，coordinatorProc 指向 cmd.exe；單發 SIGTERM 只殺
+// shell，真正 bind port 的 node 子進程會變孤兒續占 freePort，重跑時新 coordinator bind 失敗 / waitForHealth
+// 逾時（見 I1）。Windows 改用 taskkill /F /T 連同子樹一起殺；Unix 維持 SIGTERM。
+async function stopCoordinator(proc: ChildProcess): Promise<void> {
+  const pid = proc.pid;
+  if (pid && process.platform === "win32") {
+    await new Promise<void>((resolve) => {
+      const killer = spawn("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
+      killer.on("exit", () => resolve());
+      killer.on("error", () => { try { proc.kill("SIGKILL"); } catch { /* already gone */ } resolve(); });
+    });
+    return;
+  }
+  try { proc.kill("SIGTERM"); } catch { /* already gone */ }
+}
+
+// earlyExit：coordinator 提早死掉（最常見＝freePort 在 close 與 coordinator bind 之間被別人搶走的
+// TOCTOU race，src/index.ts 觸 EADDRINUSE 退出，見 I2）時的明確訊息來源。沒有它時 waitForHealth 會
+// 沉默等滿 60s 才以無脈絡訊息逾時；有它時改為帶 stderr 尾段 fail-fast，方便人工判斷是否撞 port。
+async function waitForHealth(
+  base: string,
+  opts: { timeoutMs?: number; earlyExit?: () => string | null } = {},
+): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
   const api = await pwRequest.newContext();
   const start = Date.now();
   try {
     while (Date.now() - start < timeoutMs) {
+      const exitMsg = opts.earlyExit?.();
+      if (exitMsg) throw new Error(exitMsg);
       try { const res = await api.get(`${base}/health`, { timeout: 2000 }); if (res.ok()) return; } catch { /* not up */ }
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -140,20 +165,39 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
       MINIO_WATCH_BUCKET: "bim-control",
       MINIO_WATCH_ACCESS_KEY: "ak",
       MINIO_WATCH_SECRET_KEY: "sk",
+      // 1s 輪詢：config.ts 預設把 interval 夾到 10s 下限（防忙迴圈），不降檔則 baseline+第二輪
+      // 最長合計 20s，在繁忙/cold-start 機器逼近 180s setTimeout 上限有逾時風險（見 C1）。
+      // MINIO_WATCH_INTERVAL_FLOOR_SECONDS=1 是 config.ts 提供的唯一降檔入口（production 不設＝floor 10
+      // 不變），讓 spawn 出的 coordinator 真的以 1s 輪詢，baseline 與注入後觸發各最長 1s。
       MINIO_WATCH_INTERVAL_SECONDS: "1",
+      MINIO_WATCH_INTERVAL_FLOOR_SECONDS: "1",
     };
 
     const tsxBin = path.join(COORDINATOR_REPO_DIR, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
     coordinatorProc = spawn(tsxBin, ["src/index.ts"], {
       cwd: COORDINATOR_REPO_DIR, env, stdio: ["ignore", "pipe", "pipe"], shell: process.platform === "win32",
     });
+    // I2：留最近 stderr 尾段並記 exit code。freePort 探測（listen(0)→close）與 coordinator 實際 bind
+    // 之間有 TOCTOU 窗，被搶占時 src/index.ts 觸 EADDRINUSE 退出。把退出轉成 waitForHealth 的 earlyExit
+    // 訊號，連同 stderr 尾段 fail-fast，取代沉默 60s 逾時。
+    let stderrTail = "";
+    let coordinatorExited: number | null = null;
     coordinatorProc.stdout?.on("data", (d) => process.stdout.write(`[coordinator] ${d}`));
-    coordinatorProc.stderr?.on("data", (d) => process.stderr.write(`[coordinator:err] ${d}`));
-    await waitForHealth(coordinatorBase);
+    coordinatorProc.stderr?.on("data", (d) => {
+      process.stderr.write(`[coordinator:err] ${d}`);
+      stderrTail = (stderrTail + String(d)).slice(-1200);
+    });
+    coordinatorProc.on("exit", (code) => { coordinatorExited = code ?? -1; });
+    await waitForHealth(coordinatorBase, {
+      earlyExit: () =>
+        coordinatorExited === null
+          ? null
+          : `coordinator 在 health ready 前提早退出（code=${coordinatorExited}），疑似 ${freePort} 埠被搶占（I2 TOCTOU）。stderr 尾段：\n${stderrTail.trim() || "（無 stderr）"}`,
+    });
   });
 
   test.afterAll(async () => {
-    if (coordinatorProc) { coordinatorProc.kill("SIGTERM"); coordinatorProc = null; }
+    if (coordinatorProc) { await stopCoordinator(coordinatorProc); coordinatorProc = null; }
     for (const s of [s3Stub, convStub]) { if (s) await new Promise<void>((r) => s.close(() => r())); }
     s3Stub = null; convStub = null;
     if (tmpRoot && fs.existsSync(tmpRoot)) fs.rmSync(tmpRoot, { recursive: true, force: true });

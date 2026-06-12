@@ -86,7 +86,8 @@ export interface CoordinatorConfig {
   minioWatchPrefix: string;              // MINIO_WATCH_PREFIX，default 空
   minioWatchAccessKey: string;           // MINIO_WATCH_ACCESS_KEY（唯讀帳號；不落 tracked 檔）
   minioWatchSecretKey: string;           // MINIO_WATCH_SECRET_KEY（同上）
-  minioWatchIntervalSeconds: number;     // MINIO_WATCH_INTERVAL_SECONDS，default 60，下限 10
+  // MINIO_WATCH_INTERVAL_SECONDS，default 60，下限預設 10（可由 MINIO_WATCH_INTERVAL_FLOOR_SECONDS 降檔，僅供 E2E）
+  minioWatchIntervalSeconds: number;
   minioWatchKeySuffix: string;           // MINIO_WATCH_KEY_SUFFIX，default /model.ifc（規約檔名）
   // watcher intake payload 的 tenant_id。env MINIO_WATCH_TENANT_ID，default tenant_demo_001
   // （維持現行為）。部署切 tenant 時必設此值，否則所有 watcher intake 會帶錯 tenant
@@ -321,6 +322,10 @@ function conversionApiBaseFromEnv(): string {
 
 export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): CoordinatorConfig {
   const cwd = process.cwd();
+  // watcher 輪詢間隔下限（秒）。production 預設 10 防忙迴圈連打 MinIO；不設 env 時行為與舊版一致。
+  // 唯一降檔入口：MINIO_WATCH_INTERVAL_FLOOR_SECONDS（如 E2E 起 spawn coordinator 需 ≤10s 輪詢驗證
+  // 自動 intake 鏈時設為 1）。預設不設＝floor 10，故 config-minio-watch.test.ts 與生產皆維持夾為 10。
+  const minioWatchIntervalFloor = Math.max(0, numberFromEnv("MINIO_WATCH_INTERVAL_FLOOR_SECONDS", 10));
   const host = process.env.HOST || "127.0.0.1";
   const port = numberFromEnv("PORT", 8004);
   const publicHost = process.env.PUBLIC_HOST || "127.0.0.1";
@@ -402,14 +407,15 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     minioWatchPrefix: process.env.MINIO_WATCH_PREFIX || "",
     minioWatchAccessKey: process.env.MINIO_WATCH_ACCESS_KEY || "",
     minioWatchSecretKey: process.env.MINIO_WATCH_SECRET_KEY || "",
-    minioWatchIntervalSeconds: Math.max(10, numberFromEnv("MINIO_WATCH_INTERVAL_SECONDS", 60)),
+    minioWatchIntervalSeconds: Math.max(minioWatchIntervalFloor, numberFromEnv("MINIO_WATCH_INTERVAL_SECONDS", 60)),
     minioWatchKeySuffix: process.env.MINIO_WATCH_KEY_SUFFIX || "/model.ifc",
     minioWatchTenantId: process.env.MINIO_WATCH_TENANT_ID || "tenant_demo_001",
     minioWatchSelfBaseUrl: process.env.MINIO_WATCH_SELF_BASE_URL || "",
     ...overrides,
   };
-  // 下限 10 是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，
+  // 下限是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，
   // 否則 loadConfig({minioWatchIntervalSeconds: 3}) 會繞過 env 路徑的 Math.max。
-  merged.minioWatchIntervalSeconds = Math.max(10, merged.minioWatchIntervalSeconds);
+  // 預設 floor=10；唯一降檔入口為 MINIO_WATCH_INTERVAL_FLOOR_SECONDS（見上方註解）。
+  merged.minioWatchIntervalSeconds = Math.max(minioWatchIntervalFloor, merged.minioWatchIntervalSeconds);
   return merged;
 }

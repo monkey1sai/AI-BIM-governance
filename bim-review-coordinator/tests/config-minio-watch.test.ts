@@ -9,6 +9,7 @@ const MINIO_KEYS = [
   "MINIO_WATCH_ACCESS_KEY",
   "MINIO_WATCH_SECRET_KEY",
   "MINIO_WATCH_INTERVAL_SECONDS",
+  "MINIO_WATCH_INTERVAL_FLOOR_SECONDS",
   "MINIO_WATCH_KEY_SUFFIX",
   "MINIO_WATCH_TENANT_ID",
   "MINIO_WATCH_SELF_BASE_URL",
@@ -60,6 +61,24 @@ describe("loadConfig MinIO watch fields", () => {
     expect(c.minioWatchIntervalSeconds).toBe(10); // 下限夾住
     expect(c.minioWatchKeySuffix).toBe("/scene.ifc");
     expect(c.minioWatchTenantId).toBe("tenant_acme_042");
+  });
+
+  it("MINIO_WATCH_INTERVAL_FLOOR_SECONDS 降檔下限：E2E 可設 1s 輪詢（不設＝floor 10 不變）", () => {
+    process.env.MINIO_WATCH_INTERVAL_SECONDS = "1";
+    process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS = "1";
+    const c = loadConfig();
+    expect(c.minioWatchIntervalSeconds).toBe(1); // floor 被降到 1，1s 輪詢生效
+
+    // floor 仍夾住低於它的 interval：interval=0 但 floor=1 → 夾為 1
+    process.env.MINIO_WATCH_INTERVAL_SECONDS = "0";
+    process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS = "1";
+    expect(loadConfig().minioWatchIntervalSeconds).toBe(1);
+  });
+
+  it("overrides 的 interval 仍被 floor 夾住（floor 經 env 降檔後以降檔值為準）", () => {
+    process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS = "2";
+    // override 給 0.05（整合測試風格），但 env floor=2 → 夾為 2（floor 在 overrides 合併後仍生效）
+    expect(loadConfig({ minioWatchIntervalSeconds: 0.05 }).minioWatchIntervalSeconds).toBe(2);
   });
 
   it("MINIO_WATCH_SELF_BASE_URL env 被讀入 minioWatchSelfBaseUrl（整合測試注入 loopback 的 seam）", () => {
