@@ -94,7 +94,9 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
       conversionPollEnabled: false,
       // streaming 不可達 → dispatch_failed，但 intake job 仍建立（驗 intake 鏈足夠）
       streamingConversionApiBase: "http://127.0.0.1:1",
-      // non-strict：watcher 的 presigned ref 指向 s3 stub（GET 會失敗，但本測試只驗 intake 進 store）
+      // non-strict：watcher 的 presigned ref 指向 s3Stub；s3Stub 對 GET 亦回 200 XML（bytes 非真實
+      // IFC），ifcDownloadStrict=false 故 fallbackOnFetchError=false 路徑不觸發，download_status 抵達
+      // downloaded（下方 expect(job!.download_status).toBe("downloaded") 為證）。
       ifcDownloadStrict: false,
       storageRoot: path.join(root, "storage"),
       storageHostRoot: path.join(root, "storage"),
@@ -170,9 +172,9 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
   });
 
   it("同物件再觸發（模擬重啟重掃）→ idempotent_replay，不建第二筆 job", async () => {
-    // 直接對 intake POST 兩次同 idempotency key（等價 watcher 重啟後重掃同物件）
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
-    const s3Base = await startS3Stub(state);
+    // 直接對 intake POST 兩次同 idempotency key（等價 watcher 重啟後重掃同物件）。
+    // 不啟 S3 stub：本 case 不跑 watcher loop（minioWatchEnabled:false），source_ifc.ref 直接硬編
+    // http://127.0.0.1:1/x.ifc，不經 ListObjectsV2／presigned GET，故無需 startS3Stub。
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-idem-"));
     active = createCoordinatorApp({
       sessionStoreDir: path.join(root, "sessions"),
