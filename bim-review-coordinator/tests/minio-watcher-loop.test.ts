@@ -53,6 +53,25 @@ async function startIntakeStub(received: Array<{ body: Record<string, unknown>; 
   return `http://127.0.0.1:${a.port}`;
 }
 
+// 回 2xx 但 body 非 JSON（如 nginx/HTML 錯誤頁、502 代理頁），用以驗 triggerIntake 對
+// 無效 JSON 的防守：triggered_total 不得 +1（否則計數誇大為「成功觸發」與 last_triggered
+// 的 error 狀態不一致），且須記入 last_triggered.error。
+async function startNonJsonIntakeStub(received: Array<{ headers: http.IncomingHttpHeaders }>): Promise<string> {
+  intakeStub = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      received.push({ headers: req.headers });
+      res.writeHead(202, { "Content-Type": "text/html" });
+      res.end("<html><body>202 but not json</body></html>");
+    });
+  });
+  await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+  const a = intakeStub!.address();
+  if (!a || typeof a === "string") throw new Error("intake stub bind");
+  return `http://127.0.0.1:${a.port}`;
+}
+
 async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -161,5 +180,26 @@ describe("minioWatcher loop", () => {
     await waitFor(() => (watcher!.getStatus().last_error as string | null) !== null);
     expect(String(watcher!.getStatus().last_error)).toBeTruthy();
     expect(received.length).toBe(0);
+  });
+
+  it("intake 回 2xx 但非 JSON body → triggered_total 不 +1，last_triggered 記錯誤（計數與狀態一致）", async () => {
+    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startNonJsonIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    watcher = makeWatcher(s3Base, selfBase, state);
+
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
+    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    // intake 確實收到 POST（202），但回 HTML；watcher 不得把它計為成功觸發
+    await waitFor(() => received.length === 1);
+    await waitFor(() => watcher!.getStatus().last_triggered.length >= 1);
+
+    const st = watcher!.getStatus();
+    expect(st.triggered_total).toBe(0); // 非 JSON → 不算成功觸發
+    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.job_id).toBeNull();
+    expect(st.last_triggered[0]?.error).toBeTruthy(); // 記錯誤，與計數一致（非「成功但帶錯誤」）
+    expect(st.last_error).toBeNull(); // 單一物件失敗不污染整輪 last_error
   });
 });

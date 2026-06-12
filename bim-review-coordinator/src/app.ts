@@ -19,6 +19,7 @@ import {
   type StructLogger,
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
+import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
@@ -311,6 +312,35 @@ export function createCoordinatorApp(
     config.streamingConversionInternalToken || undefined,
   );
   const startedAt = Date.now();
+  // minio-watch-auto-intake（O4 B 案，env opt-in 預設關）。watcher 自打 loopback
+  // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
+  // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
+  let minioWatcher: MinioWatcherHandle | null = null;
+  function startMinioWatcherIfEnabled(): void {
+    if (!config.minioWatchEnabled || minioWatcher) return;
+    const address = server.address();
+    const boundPort =
+      address && typeof address !== "string" ? address.port : config.port;
+    const selfBaseUrl = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${boundPort}`;
+    minioWatcher = startMinioWatcher({
+      endpoint: config.minioWatchEndpoint,
+      bucket: config.minioWatchBucket,
+      prefix: config.minioWatchPrefix,
+      accessKey: config.minioWatchAccessKey,
+      secretKey: config.minioWatchSecretKey,
+      keySuffix: config.minioWatchKeySuffix,
+      intervalSeconds: config.minioWatchIntervalSeconds,
+      selfBaseUrl,
+      webhookSecret: config.externalIntakeWebhookSecret,
+      structLog,
+    });
+  }
+  // 已在 listen 上的 server（生產 index.ts / E2E）：listening 後啟動以取得實際 port。
+  server.on("listening", () => startMinioWatcherIfEnabled());
+  // supertest 整合測試不呼叫 listen；用 selfBaseUrl override 時可立即啟動。
+  if (config.minioWatchEnabled && config.minioWatchSelfBaseUrl) {
+    startMinioWatcherIfEnabled();
+  }
   // coordinator-auto-poll-streaming-conversion §6:in-process auto-poll registry
   // (keyed by conversion_job_id),dispatch 後 schedule、manual ingest endpoint
   // 觸發前 cancel、shutdown(dispose())清空。
@@ -781,6 +811,26 @@ export function createCoordinatorApp(
       count: jobs.length,
       items: jobs.slice(0, limit).map((job) => summarizeIfcReadyJob(job, store.get(job.review_session_id || ""))),
     });
+  });
+
+  // minio-watch-auto-intake：watcher 唯讀狀態（無 credentials 洩漏）。關閉時誠實
+  // 回 enabled=false（env opt-in）。last_triggered 只含 key，不含 presigned URL。
+  // 置於 /:jobId param route 之前，確保此靜態路徑優先匹配。
+  app.get("/api/external/minio-watch/status", (_request, response) => {
+    if (!config.minioWatchEnabled) {
+      response.json({
+        enabled: false,
+        bucket: config.minioWatchBucket || null,
+        prefix: config.minioWatchPrefix || null,
+        interval_seconds: config.minioWatchIntervalSeconds,
+        note: "未啟用（env MINIO_WATCH_ENABLED opt-in）",
+      });
+      return;
+    }
+    const status: MinioWatcherStatus | { enabled: true; note: string } = minioWatcher
+      ? minioWatcher.getStatus()
+      : { enabled: true, note: "watcher enabled but not yet started (server not listening)" };
+    response.json(status);
   });
 
   app.get("/api/external/ifc-ready/:jobId", (request, response) => {
@@ -1690,6 +1740,10 @@ export function createCoordinatorApp(
       handle.cancel();
     }
     pollerRegistry.clear();
+    if (minioWatcher) {
+      minioWatcher.dispose();
+      minioWatcher = null;
+    }
     const droppedJobIds = conversionDispatchQueue.drain();
     for (const jobId of droppedJobIds) {
       externalIfcReadyStore.markDroppedOnRestart(jobId);

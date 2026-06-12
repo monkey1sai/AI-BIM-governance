@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import type { AnomalyData } from "../lib/structLog.js";
 
 /**
  * minio-watch-auto-intake（O4 B 案）純函式核心：MinIO object key → intake 欄位導出、
@@ -94,11 +95,13 @@ export function deriveIntakeFromKey(input: {
   };
 }
 
-// 最小 structLog 介面（避免 import app 造成循環依賴；app 傳入真 logger）。
-// withTraceId 為 optional：watcher 內部只呼叫 anomaly()，但真實 StructuredLogger 含
-// withTraceId — 測試樁與真 logger 都能不靠 as never 直接滿足此介面。
+// 最小 structLog 介面（避免 import app 造成循環依賴；只 type-only import AnomalyData）。
+// anomaly 的 fields 用真實 AnomalyData（要求 anomaly_kind/reason）使真 StructLogger 結構
+// 可賦值——若放寬成 Record<string, unknown>，strict 函式型別檢查下真 logger（其 anomaly 參數
+// 較窄）不可賦值（app.ts 傳入會 TS2322）。watcher 的唯一呼叫點即傳 {anomaly_kind,reason,...}。
+// withTraceId 為 optional：watcher 內部只呼叫 anomaly()，但真實 StructuredLogger 含 withTraceId。
 interface WatcherLogger {
-  anomaly: (op: string, msg: string, fields: Record<string, unknown>) => void;
+  anomaly: (op: string, msg: string, fields: AnomalyData) => void;
   withTraceId?: (id: string) => { anomaly: WatcherLogger["anomaly"] };
 }
 
@@ -191,11 +194,20 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       status.skipped_malformed_total += 1;
       return;
     }
-    const presignedRef = await getSignedUrl(
-      client,
-      new GetObjectCommand({ Bucket: opts.bucket, Key: key }),
-      { expiresIn: 3600 },
-    );
+    // presign 失敗（credentials 失效 / client 已銷毀 / SDK 內部錯）只屬「此物件」失敗：
+    // 記入 recordTriggered 後 return，與下方 fetch try/catch 對等。不可讓例外向上浮到
+    // tick() 外層 catch——否則會覆蓋整輪 last_error 並中斷同輪其餘物件的觸發。
+    let presignedRef: string;
+    try {
+      presignedRef = await getSignedUrl(
+        client,
+        new GetObjectCommand({ Bucket: opts.bucket, Key: key }),
+        { expiresIn: 3600 },
+      );
+    } catch (err) {
+      recordTriggered(key, null, `presign failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
     const idemKey = idempotencyKeyFor(opts.bucket, key, etag);
     const corrId = correlationIdFor(opts.bucket, key, etag);
     const etagShort = derived.sourceEtagFrom(etag).slice(0, 8);
