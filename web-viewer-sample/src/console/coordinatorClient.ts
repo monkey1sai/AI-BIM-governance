@@ -111,6 +111,23 @@ export interface IfcReadyListItem {
   created_at: string;
 }
 
+// minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
+// 關閉時只有 enabled=false + note；啟用時帶完整計數。credentials 永不在此回應。
+export interface MinioWatchStatus {
+  enabled: boolean;
+  bucket?: string | null;
+  prefix?: string | null;
+  interval_seconds?: number;
+  note?: string;
+  last_poll_at?: string | null;
+  last_error?: string | null;
+  baseline_count?: number | null;
+  seen_count?: number;
+  triggered_total?: number;
+  skipped_malformed_total?: number;
+  last_triggered?: Array<{ key: string; job_id: string | null; error: string | null; at: string }>;
+}
+
 // F 頁 stream-config（app.ts:510）。GPU 遙測不在此回應 → 不捏造。
 export interface StreamConfigResponse {
   session_id: string;
@@ -124,6 +141,7 @@ export const coordinatorClient = {
   health: () => jsonGet<CoordinatorHealth>("/health"),
   runtimeStatus: () => jsonGet<RuntimeStatus>("/api/runtime/status"),
   listIfcReady: (limit = 20) => jsonGet<{ count: number; items: IfcReadyListItem[] }>(`/api/external/ifc-ready?limit=${limit}`),
+  minioWatchStatus: () => jsonGet<MinioWatchStatus>("/api/external/minio-watch/status"),
   streamConfig: (sessionId: string) => jsonGet<StreamConfigResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/stream-config`),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
