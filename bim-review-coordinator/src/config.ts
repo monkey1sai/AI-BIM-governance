@@ -88,6 +88,10 @@ export interface CoordinatorConfig {
   minioWatchSecretKey: string;           // MINIO_WATCH_SECRET_KEY（同上）
   minioWatchIntervalSeconds: number;     // MINIO_WATCH_INTERVAL_SECONDS，default 60，下限 10
   minioWatchKeySuffix: string;           // MINIO_WATCH_KEY_SUFFIX，default /model.ifc（規約檔名）
+  // watcher intake payload 的 tenant_id。env MINIO_WATCH_TENANT_ID，default tenant_demo_001
+  // （維持現行為）。部署切 tenant 時必設此值，否則所有 watcher intake 會帶錯 tenant
+  // （靜默資料污染進 store 與雲端 callback）。
+  minioWatchTenantId: string;            // MINIO_WATCH_TENANT_ID，default tenant_demo_001
   // 測試 seam：watcher 自打 loopback 的 base url。default 空＝執行期用 http://127.0.0.1:${port}。
   // 整合測試以 listen(0) 取得實際 port 後注入完整 base，避免依賴固定 8004。
   minioWatchSelfBaseUrl: string;
@@ -400,6 +404,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     minioWatchSecretKey: process.env.MINIO_WATCH_SECRET_KEY || "",
     minioWatchIntervalSeconds: Math.max(10, numberFromEnv("MINIO_WATCH_INTERVAL_SECONDS", 60)),
     minioWatchKeySuffix: process.env.MINIO_WATCH_KEY_SUFFIX || "/model.ifc",
+    minioWatchTenantId: process.env.MINIO_WATCH_TENANT_ID || "tenant_demo_001",
     minioWatchSelfBaseUrl: process.env.MINIO_WATCH_SELF_BASE_URL || "",
     ...overrides,
   };

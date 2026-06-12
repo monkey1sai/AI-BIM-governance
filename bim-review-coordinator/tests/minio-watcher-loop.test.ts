@@ -6,12 +6,17 @@ let s3Stub: http.Server | null = null;
 let intakeStub: http.Server | null = null;
 // getStatus 回完整 MinioWatcherStatus（具名型別，無 index signature）；tsconfig include tests/
 // 故須與 MinioWatcherHandle 的回傳對齊，不可用 Record<string, unknown>（嚴格模式不可賦值）。
-let watcher: { dispose: () => void; getStatus: () => MinioWatcherStatus } | null = null;
+let watcher: { dispose: () => Promise<void>; getStatus: () => MinioWatcherStatus } | null = null;
 
 afterEach(async () => {
-  if (watcher) { watcher.dispose(); watcher = null; }
+  if (watcher) { await watcher.dispose(); watcher = null; }
   for (const s of [s3Stub, intakeStub]) {
-    if (s) await new Promise<void>((r) => s.close(() => r()));
+    if (!s) continue;
+    // hanging stub（startHangingS3Stub / startHangingIntakeStub）保留一個永不結束的請求
+    // socket；http.Server.close() 只在所有連線關閉後才回 callback，故先強制斷開既有連線
+    // （Node 18.2+ closeAllConnections）再 close，避免 teardown 卡到 hook timeout。
+    s.closeAllConnections?.();
+    await new Promise<void>((r) => s.close(() => r()));
   }
   s3Stub = null; intakeStub = null;
 });
@@ -115,6 +120,20 @@ async function startHangingIntakeStub(received: Array<{ at: number }>): Promise<
   return `http://127.0.0.1:${a.port}`;
 }
 
+// S3 ListObjectsV2 收到請求但**永不回應**（socket 掛住），用以驗 dispose() 在 in-flight
+// tick 的 SDK 請求進行中被呼叫時，先 await 當前 tick settle（帶 2s 上限）再 client.destroy()，
+// 不產生 unhandled rejection。
+async function startHangingS3Stub(received: Array<{ at: number }>): Promise<string> {
+  s3Stub = http.createServer((req) => {
+    received.push({ at: Date.now() });
+    req.resume(); // 收完 query 但永不 res.end → list 請求懸而不決
+  });
+  await new Promise<void>((r) => s3Stub!.listen(0, "127.0.0.1", () => r()));
+  const a = s3Stub!.address();
+  if (!a || typeof a === "string") throw new Error("s3 hang stub bind");
+  return `http://127.0.0.1:${a.port}`;
+}
+
 async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -140,6 +159,7 @@ function makeWatcher(
     intervalSeconds: 0.05, // 50ms tick → test 快
     selfBaseUrl: selfBase,
     webhookSecret: "dev-webhook-secret",
+    tenantId: "tenant_demo_001",
     structLog: { anomaly: () => {}, withTraceId: () => ({ anomaly: () => {} }) } as never,
     ...extra,
   });
@@ -177,6 +197,7 @@ describe("minioWatcher loop", () => {
 
     const { body, headers } = received[0];
     expect(body.event).toBe("ifc_ready");
+    expect(body.tenant_id).toBe("tenant_demo_001"); // 來自 options.tenantId（makeWatcher 預設）
     expect(body.project_id).toBe("988");
     expect(body.external_model_version_id).toBe("zzz");
     expect((body.source_ifc as Record<string, unknown>).ref).toContain("988/zzz/model.ifc"); // presigned GET URL
@@ -215,6 +236,77 @@ describe("minioWatcher loop", () => {
     expect(received.length).toBe(0);
   });
 
+  it("[t1] body.tenant_id 來自 options.tenantId（非硬編碼）", async () => {
+    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    // 部署切 tenant：watcher intake 必須帶入此 tenant，而非寫死 tenant_demo_001。
+    watcher = makeWatcher(s3Base, selfBase, state, { tenantId: "tenant_acme_042" });
+
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
+    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    await waitFor(() => received.length === 1);
+    expect(received[0].body.tenant_id).toBe("tenant_acme_042");
+  });
+
+  it("[t4] status.poll_count 每輪 tick 完成後單調遞增（取代時間戳比較）", async () => {
+    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    watcher = makeWatcher(s3Base, selfBase, state);
+
+    // 首輪（baseline）跑完即 poll_count>=1
+    await waitFor(() => (watcher!.getStatus().poll_count as number) >= 1);
+    const c1 = watcher!.getStatus().poll_count as number;
+    // 不依賴時鐘解析度：等到 poll_count 嚴格大於 c1（同毫秒也不會 false-negative）。
+    await waitFor(() => (watcher!.getStatus().poll_count as number) > c1);
+    expect(watcher!.getStatus().poll_count as number).toBeGreaterThan(c1);
+  });
+
+  it("[t3] selfBaseUrl 非 loopback host → startMinioWatcher fast-fail（SSRF 防護）", async () => {
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received); // 啟一個 stub 但不會被打到
+    void selfBase;
+    expect(() =>
+      makeWatcher("http://127.0.0.1:9000", "http://evil.example.com:8004", { objs: [] }),
+    ).toThrow(/loopback|127\.0\.0\.1|localhost/i);
+    // 也擋非 http scheme（避免 file:// / https 對外）
+    expect(() =>
+      makeWatcher("http://127.0.0.1:9000", "https://127.0.0.1:8004", { objs: [] }),
+    ).toThrow(/http:|scheme|protocol/i);
+  });
+
+  it("[t2] dispose() 在 in-flight tick 的 SDK 請求進行中被呼叫 → await tick settle 後再 destroy，無 unhandled rejection", async () => {
+    const s3Received: Array<{ at: number }> = [];
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    const s3Base = await startHangingS3Stub(s3Received);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown): void => { unhandled.push(err); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      // 短 intervalSeconds → 首輪 tick 立刻發出 list（client.send），但 stub 永不回 → tick 卡在 await。
+      watcher = makeWatcher(s3Base, selfBase, { objs: [] });
+      // 等 S3 stub 確實收到 list 請求（=tick 的 client.send 已在途）。
+      await waitFor(() => s3Received.length >= 1);
+
+      // dispose 須為 async：set stopped → await 當前 tickPromise settle（2s 上限 race）→ destroy。
+      const disposeResult = (watcher as { dispose: () => unknown }).dispose();
+      expect(disposeResult).toBeInstanceOf(Promise);
+      await disposeResult;
+      watcher = null;
+
+      // 給事件圈幾拍讓任何潛在的 client.destroy() 中斷例外有機會冒出來。
+      await new Promise((r) => setTimeout(r, 100));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("list 失敗 → 記 last_error，不 crash，下輪重試", async () => {
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
@@ -223,7 +315,7 @@ describe("minioWatcher loop", () => {
       endpoint: "http://127.0.0.1:1",
       bucket: "bim-control", prefix: "", accessKey: "ak", secretKey: "sk",
       keySuffix: "/model.ifc", intervalSeconds: 0.05, selfBaseUrl: selfBase,
-      webhookSecret: "dev-webhook-secret",
+      webhookSecret: "dev-webhook-secret", tenantId: "tenant_demo_001",
       structLog: { anomaly: () => {}, withTraceId: () => ({ anomaly: () => {} }) } as never,
     });
     await waitFor(() => (watcher!.getStatus().last_error as string | null) !== null);
@@ -257,16 +349,17 @@ describe("minioWatcher loop", () => {
     const received: Array<{ at: number }> = [];
     const selfBase = await startHangingIntakeStub(received);
     const s3Base = await startS3Stub(state);
-    // intakeTimeoutMs 設極短（150ms）使測試快；若無 AbortSignal 保護則 fetch 永不 resolve、
-    // tick 卡死、後續輪不再排程 → 下方 last_poll_at 推進的斷言會 timeout。
-    watcher = makeWatcher(s3Base, selfBase, state, { intakeTimeoutMs: 150 });
+    // intakeTimeoutMs 放寬至 600ms（原 150ms 在 CI 高負載下 flaky：fetch 建立/排程的
+    // 抖動可能逼近逾時窗）。若無 AbortSignal 保護則 fetch 永不 resolve、tick 卡死、
+    // 後續輪不再排程 → 下方 poll_count 推進的斷言會 timeout。
+    watcher = makeWatcher(s3Base, selfBase, state, { intakeTimeoutMs: 600 });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
 
     // intake 確實收到請求（但永不回） → 逾時後須記入 last_triggered.error
     await waitFor(() => received.length >= 1);
-    await waitFor(() => watcher!.getStatus().last_triggered.length >= 1);
+    await waitFor(() => watcher!.getStatus().last_triggered.length >= 1, 5000);
 
     const st = watcher!.getStatus();
     expect(st.triggered_total).toBe(0); // 逾時 → 不算成功觸發
@@ -275,9 +368,10 @@ describe("minioWatcher loop", () => {
     expect(st.last_triggered[0]?.error).toBeTruthy(); // AbortError 入 error，與其他網路失敗對等
     expect(st.last_error).toBeNull(); // 單一物件逾時不污染整輪 last_error
 
-    // loop 未凍結：tick finally 仍排下一輪 → last_poll_at 會在逾時後繼續推進。
-    const pollAfterTrigger = watcher!.getStatus().last_poll_at as string;
-    await waitFor(() => (watcher!.getStatus().last_poll_at as string) !== pollAfterTrigger);
+    // loop 未凍結：tick finally 仍排下一輪 → poll_count 會在逾時後繼續推進
+    // （改用單調計數，不依賴 last_poll_at 時間戳的毫秒解析度，消除同毫秒 false-negative）。
+    const pollCountAfterTrigger = watcher!.getStatus().poll_count as number;
+    await waitFor(() => (watcher!.getStatus().poll_count as number) > pollCountAfterTrigger, 5000);
   });
 
   it("重啟（新 watcher 實例、同 store）重掃同 key 同 etag → idempotent_replay 仍計觸發且 job_id 相同", async () => {

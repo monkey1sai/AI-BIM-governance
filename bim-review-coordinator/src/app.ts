@@ -265,7 +265,10 @@ export interface CoordinatorApp {
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
-  dispose: () => void;
+  // async（回 Promise）:minioWatcher.dispose() 需 await 其 in-flight tick settle 後才
+  // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
+  // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
+  dispose: () => void | Promise<void>;
 }
 
 export interface CreateCoordinatorAppOptions {
@@ -332,6 +335,7 @@ export function createCoordinatorApp(
       intervalSeconds: config.minioWatchIntervalSeconds,
       selfBaseUrl,
       webhookSecret: config.externalIntakeWebhookSecret,
+      tenantId: config.minioWatchTenantId,
       structLog,
     });
   }
@@ -1735,14 +1739,16 @@ export function createCoordinatorApp(
   // queue,把 jobs 標記 dropped_on_restart(in-memory queue 非 disk-persistent;
   // restart 後 operator 必須重新 POST,跟 spec scenario「Coordinator restart
   // drops queued jobs」對齊)。
-  const dispose = (): void => {
+  const dispose = async (): Promise<void> => {
     for (const handle of pollerRegistry.values()) {
       handle.cancel();
     }
     pollerRegistry.clear();
     if (minioWatcher) {
-      minioWatcher.dispose();
+      // await：讓 in-flight tick settle 後再銷毀 S3 client（避免 unhandled rejection）。
+      const w = minioWatcher;
       minioWatcher = null;
+      await w.dispose();
     }
     const droppedJobIds = conversionDispatchQueue.drain();
     for (const jobId of droppedJobIds) {

@@ -10,6 +10,7 @@ const MINIO_KEYS = [
   "MINIO_WATCH_SECRET_KEY",
   "MINIO_WATCH_INTERVAL_SECONDS",
   "MINIO_WATCH_KEY_SUFFIX",
+  "MINIO_WATCH_TENANT_ID",
   "MINIO_WATCH_SELF_BASE_URL",
 ];
 
@@ -35,6 +36,7 @@ describe("loadConfig MinIO watch fields", () => {
     expect(c.minioWatchSecretKey).toBe("");
     expect(c.minioWatchIntervalSeconds).toBe(60);
     expect(c.minioWatchKeySuffix).toBe("/model.ifc");
+    expect(c.minioWatchTenantId).toBe("tenant_demo_001"); // 預設維持現行為
     expect(c.minioWatchSelfBaseUrl).toBe("");
   });
 
@@ -47,6 +49,7 @@ describe("loadConfig MinIO watch fields", () => {
     process.env.MINIO_WATCH_SECRET_KEY = "sk";
     process.env.MINIO_WATCH_INTERVAL_SECONDS = "3";
     process.env.MINIO_WATCH_KEY_SUFFIX = "/scene.ifc";
+    process.env.MINIO_WATCH_TENANT_ID = "tenant_acme_042";
     const c = loadConfig();
     expect(c.minioWatchEnabled).toBe(true);
     expect(c.minioWatchEndpoint).toBe("http://192.168.20.234:9000");
@@ -56,6 +59,7 @@ describe("loadConfig MinIO watch fields", () => {
     expect(c.minioWatchSecretKey).toBe("sk");
     expect(c.minioWatchIntervalSeconds).toBe(10); // 下限夾住
     expect(c.minioWatchKeySuffix).toBe("/scene.ifc");
+    expect(c.minioWatchTenantId).toBe("tenant_acme_042");
   });
 
   it("MINIO_WATCH_SELF_BASE_URL env 被讀入 minioWatchSelfBaseUrl（整合測試注入 loopback 的 seam）", () => {

@@ -79,6 +79,7 @@ const defaultConfig: CoordinatorConfig = {
   minioWatchSecretKey: "",
   minioWatchIntervalSeconds: 60,
   minioWatchKeySuffix: "/model.ifc",
+  minioWatchTenantId: "tenant_demo_001",
   minioWatchSelfBaseUrl: "",
 };
 

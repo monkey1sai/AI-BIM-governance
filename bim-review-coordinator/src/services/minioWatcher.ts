@@ -115,6 +115,10 @@ export interface MinioWatcherOptions {
   intervalSeconds: number;
   selfBaseUrl: string;       // loopback intake base，如 http://127.0.0.1:8004
   webhookSecret: string;
+  // intake payload 的 tenant_id（config.minioWatchTenantId，env MINIO_WATCH_TENANT_ID）。
+  // 不可硬編碼：部署切 tenant 時所有 watcher intake 必須帶入此值，否則 job 與雲端 callback
+  // 都會掛在錯誤 tenant 下（靜默資料污染）。
+  tenantId: string;
   // loopback intake POST 的逾時（ms），default 10_000。若 app 因負載/死鎖長時間不回
   // /api/external/ifc-ready，無此保護則 fetch 永不 resolve、tick() 無限 await、finally
   // 的下一輪 setTimeout 不觸發 → watcher loop 凍結。逾時的 AbortError 與其他網路失敗
@@ -125,7 +129,9 @@ export interface MinioWatcherOptions {
 }
 
 export interface MinioWatcherHandle {
-  dispose: () => void;
+  // async：先停排程 → await in-flight tick settle（2s 上限）→ client.destroy()，
+  // 避免在 SDK 請求進行中銷毀 client 觸發 unhandled rejection。呼叫端應 await。
+  dispose: () => Promise<void>;
   getStatus: () => MinioWatcherStatus;
 }
 
@@ -135,6 +141,9 @@ export interface MinioWatcherStatus {
   prefix: string;
   interval_seconds: number;
   last_poll_at: string | null;
+  // 單調遞增：每輪 tick 完成（list 成功、不論是否有觸發）後 +1。供「watcher loop 是否仍在
+  // 推進」的判斷，取代 last_poll_at 時間戳比較（同毫秒兩輪 timestamp 相等會 false-negative）。
+  poll_count: number;
   last_error: string | null;
   baseline_count: number | null;
   seen_count: number;
@@ -143,7 +152,37 @@ export interface MinioWatcherStatus {
   last_triggered: Array<{ key: string; job_id: string | null; error: string | null; at: string }>;
 }
 
+/**
+ * selfBaseUrl 安全約束（SSRF 防護）：watcher 對 selfBaseUrl 自打 `POST /api/external/ifc-ready`
+ * 並夾帶 `X-Webhook-Secret`。若 selfBaseUrl 由被注入的 env 指向任意外部 host，secret 會被
+ * 洩漏給該 host。故只允許 loopback host（127.0.0.1 / localhost）且 protocol 必為 http:。
+ * 違反即 throw（fail-fast，明示安全約束），不靜默降級。
+ */
+export function assertLoopbackSelfBaseUrl(selfBaseUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(selfBaseUrl);
+  } catch {
+    throw new Error(
+      `MinIO watcher selfBaseUrl 不是合法 URL：${selfBaseUrl}（安全約束：必須為 http://127.0.0.1 或 http://localhost 的 loopback intake）`,
+    );
+  }
+  if (url.protocol !== "http:") {
+    throw new Error(
+      `MinIO watcher selfBaseUrl 必須使用 http: scheme（收到 ${url.protocol}）。安全約束：watcher 夾帶 X-Webhook-Secret 自打 loopback intake，禁止非 http loopback。`,
+    );
+  }
+  if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") {
+    throw new Error(
+      `MinIO watcher selfBaseUrl host 必須為 127.0.0.1 或 localhost（收到 ${url.hostname}）。安全約束：防止 X-Webhook-Secret 經 SSRF 洩漏給任意 host。`,
+    );
+  }
+}
+
 export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle {
+  // SSRF 防護：watcher 自打 selfBaseUrl 並帶 webhook secret，selfBaseUrl 必須是 loopback http。
+  // 在建任何資源前 fail-fast（app 啟動段呼叫，等同 config 驗證）。
+  assertLoopbackSelfBaseUrl(opts.selfBaseUrl);
   // intake POST 逾時：未設或 ≤0 時用 10s 預設（防 watcher 因 app 不回應而凍結）。
   const intakeTimeoutMs = opts.intakeTimeoutMs && opts.intakeTimeoutMs > 0 ? opts.intakeTimeoutMs : 10_000;
   const client = new S3Client({
@@ -160,6 +199,7 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
     prefix: opts.prefix,
     interval_seconds: opts.intervalSeconds,
     last_poll_at: null,
+    poll_count: 0,
     last_error: null,
     baseline_count: null,
     seen_count: 0,
@@ -171,6 +211,9 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   let isFirstRound = true;
+  // 當前在途的 tick promise（含 in-flight 的 SDK list / presign / intake POST）。dispose 用它
+  // 等待當輪結束再 client.destroy()，避免在 client.send 進行中銷毀 client 觸發 unhandled rejection。
+  let tickPromise: Promise<void> | null = null;
 
   function recordTriggered(key: string, jobId: string | null, error: string | null): void {
     status.last_triggered.unshift({ key, job_id: jobId, error, at: new Date().toISOString() });
@@ -221,7 +264,7 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
     const etagShort = derived.sourceEtagFrom(etag).slice(0, 8);
     const body = {
       event: "ifc_ready",
-      tenant_id: "tenant_demo_001",
+      tenant_id: opts.tenantId,
       project_id: derived.projectId,
       external_model_version_id: derived.externalModelVersionId,
       external_conversion_task_id: `${derived.externalModelVersionId}_mw_${etagShort}`,
@@ -264,6 +307,7 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
     try {
       const objects = (await listAllKeys()).filter((o) => o.key.endsWith(opts.keySuffix));
       status.last_poll_at = new Date().toISOString();
+      status.poll_count += 1; // 單調遞增：list 成功即計一輪（供 loop liveness 判斷，免時鐘解析度依賴）
       status.last_error = null;
       if (isFirstRound) {
         for (const o of objects) seen.set(o.key, o.etag);
@@ -286,18 +330,40 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
         bucket: opts.bucket,
       });
     } finally {
-      if (!stopped) timer = setTimeout(() => void tick(), opts.intervalSeconds * 1000);
+      if (!stopped) timer = setTimeout(runTick, opts.intervalSeconds * 1000);
     }
   }
 
+  // 包一層：每次排程時把當輪 promise 存入 tickPromise，供 dispose 等待 in-flight tick settle。
+  function runTick(): void {
+    tickPromise = tick();
+  }
+
   // 首輪立即跑（不等一個 interval）。
-  timer = setTimeout(() => void tick(), 0);
+  timer = setTimeout(runTick, 0);
 
   return {
-    dispose: () => {
+    // dispose 為 async：先 stopped=true 停掉後續排程，再 await 當前 in-flight tick settle
+    //（帶 2s 上限 race，避免 tick 因外部卡住而讓 dispose 永不返回），最後才 client.destroy()。
+    // 這樣 in-flight 的 SDK list / presign / intake POST 會在 client 銷毀前自然收斂，不產生
+    // unhandled rejection（先前 sync dispose 立即 destroy 會中斷 in-flight client.send）。
+    dispose: async (): Promise<void> => {
       stopped = true;
       if (timer) clearTimeout(timer);
       timer = null;
+      const inFlight = tickPromise;
+      if (inFlight) {
+        // tick() 自身不 throw（內含 try/catch），但仍 race 一個上限保護以防永久卡住。
+        let capTimer: ReturnType<typeof setTimeout> | null = null;
+        const cap = new Promise<void>((resolve) => {
+          capTimer = setTimeout(resolve, 2000);
+        });
+        try {
+          await Promise.race([inFlight, cap]);
+        } finally {
+          if (capTimer) clearTimeout(capTimer);
+        }
+      }
       client.destroy();
     },
     getStatus: () => ({ ...status, last_triggered: [...status.last_triggered] }),
