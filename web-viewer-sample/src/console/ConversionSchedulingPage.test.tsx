@@ -100,6 +100,9 @@ describe("ConversionSchedulingPage：minio-watch 與 ifc-ready 錯誤獨立", ()
     expect(panel!.textContent).toContain("bim-control");
     // 計數字串 baseline / seen / 觸發 / 跳過
     expect(panel!.textContent).toContain("10 / 11 / 1 / 0");
+    // poll_count 渲染為「輪詢次數」（loop liveness 對操作者可見，非 dead field）。
+    expect(panel!.textContent).toContain("輪詢次數");
+    expect(panel!.textContent).toContain("3");
     // triggered table 帶 job id
     const triggered = container.querySelector('[data-testid="minio-watch-triggered"]');
     expect(triggered).not.toBeNull();

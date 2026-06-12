@@ -332,6 +332,7 @@ export function ConversionSchedulingPage() {
               <Field k="bucket" v={mw.bucket ?? "—"} prov="asbuilt" />
               <Field k="prefix" v={mw.prefix || "（無）"} prov="asbuilt" />
               <Field k="最近一輪" v={mw.last_poll_at ?? "尚未完成首輪"} prov="asbuilt" />
+              <Field k="輪詢次數" v={String(mw.poll_count ?? "—")} prov="asbuilt" />
               <Field k="baseline / seen / 觸發 / 跳過" v={`${mw.baseline_count ?? "—"} / ${mw.seen_count ?? 0} / ${mw.triggered_total ?? 0} / ${mw.skipped_malformed_total ?? 0}`} prov="asbuilt" />
               {mw.last_error && <Field k="最近錯誤" v={mw.last_error} prov="asbuilt" />}
               {mw.last_triggered && mw.last_triggered.length > 0 && (
