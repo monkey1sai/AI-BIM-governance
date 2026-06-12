@@ -180,6 +180,27 @@ watcher 用 SDK 的 `ListObjectsV2Command`（唯讀 list）與 `GetObjectCommand
 **Files:**
 - Modify: `bim-review-coordinator/package.json`
 - Modify: `bim-review-coordinator/package-lock.json`（npm install 產出）
+- Create: `bim-review-coordinator/tests/aws-sdk-credentials-guard.test.ts`（顯式 credentials 防護網，見下「依賴透明度與防護網」）
+
+**依賴透明度與防護網（quality review 補強，IMPORTANT #1 / #2）：**
+
+- **顯式 credentials 約束（IMPORTANT #1）**：`@aws-sdk/client-s3` 直接依賴鏈含
+  `@aws-sdk/credential-provider-node` → `@smithy/credential-provider-imds`。Task 3/5 的
+  `new S3Client({...})` **MUST** 顯式傳入 `credentials: { accessKeyId, secretAccessKey }`；
+  否則 SDK 預設 `defaultProvider()` 在非 EC2 環境（本 repo＝LAN MinIO）會嘗試 IMDS 探測
+  （`http://169.254.169.254/`）造成每次 watcher 初始化 ~5s timeout，或在有 `~/.aws`
+  shared-config 的開發機上「靜默撈到無關 AWS 金鑰」（更危險，已於 guard 的 mutation
+  驗證重現）。本 task 同步落地 dependency-layer guard
+  `tests/aws-sdk-credentials-guard.test.ts`（與尚未建的 `minioWatcher.ts` 無耦合），以哨兵
+  值等式 + <1s 解析時間驗證顯式 credentials 未落入 default chain；Task 3/5 的 PR checklist
+  須確認此 guard 綠。
+- **非預期傳遞依賴（IMPORTANT #2，透明度揭露）**：`@aws-sdk/core` 拉入
+  `@aws-sdk/credential-provider-login` → `@aws-sdk/nested-clients`（含多個 AWS 服務 client
+  stub）與 `@aws/lambda-invoke-store`（AWS 內部 Lambda 調用 store，`@aws` scope）。兩者均
+  **不直接使用**，僅 SDK 傳遞依賴、npm 無法直接排除。揭露於此供依賴審計追蹤；未來若
+  bundle size 成議題可評估 tree-shaking 或輕量替代。spec §4.1/§7 承諾的「唯讀兩 API 面」
+  指本服務**主動呼叫**的 API（`ListObjectsV2Command` + `GetObjectCommand` presigner），
+  不涵蓋第三方依賴設計引入的 stub。
 
 - [ ] 安裝（鎖兩個套件；`@aws-sdk/s3-request-presigner` 是 presigner，與 client-s3 同 family）。
 
@@ -559,7 +580,7 @@ cd bim-review-coordinator && npx vitest run tests/minio-watcher-loop.test.ts
 
 預期：fail（`startMinioWatcher is not a function` / import 解析失敗）。
 
-- [ ] 在 `src/services/minioWatcher.ts` 補 `startMinioWatcher`。S3Client `forcePathStyle:true`（MinIO 必要）、`region:"us-east-1"` placeholder；presign 用 `getSignedUrl(client, new GetObjectCommand(...), {expiresIn:3600})`。
+- [ ] 在 `src/services/minioWatcher.ts` 補 `startMinioWatcher`。S3Client `forcePathStyle:true`（MinIO 必要）、`region:"us-east-1"` placeholder；presign 用 `getSignedUrl(client, new GetObjectCommand(...), {expiresIn:3600})`。**MUST 顯式 `credentials: { accessKeyId: opts.accessKey, secretAccessKey: opts.secretKey }`（IMPORTANT #1：缺則落入 default chain → IMDS timeout / 靜默撈無關 AWS 金鑰）；完成後須跑 Task 2 落地的 `tests/aws-sdk-credentials-guard.test.ts` 確認綠。**
 
 ```ts
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
