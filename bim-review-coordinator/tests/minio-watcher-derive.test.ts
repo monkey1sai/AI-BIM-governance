@@ -41,6 +41,34 @@ describe("minioWatcher 純函式導出", () => {
     expect(r.reason).toContain("prefix");
   });
 
+  it("有效 prefix 但 key 不在 prefix 下（startsWith 失敗）→ ok=false 帶 reason", () => {
+    const r = deriveIntakeFromKey({ key: "tenant_b/899/xxx/model.ifc", prefix: "tenant_a/", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("prefix");
+  });
+
+  it("key 不以 keySuffix 結尾（過濾無關 object）→ ok=false 帶 reason", () => {
+    const r = deriveIntakeFromKey({ key: "899/xxx/model.usdc", prefix: "", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("suffix");
+  });
+
+  it("雙斜線 key（899//xxx/model.ifc）不可被 filter(Boolean) 靜默正規化成合法兩層", () => {
+    // 防 IMPORTANT #1：S3/MinIO 允許 '899//xxx/model.ifc' 為獨立 key（與 '899/xxx/model.ifc' 不同），
+    // 空 segment 必須判定非恰兩層 → ok=false，不可被當成 projectId='899'/modelId='xxx' 重複觸發
+    const r = deriveIntakeFromKey({ key: "899//xxx/model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("兩層");
+  });
+
+  it("結尾雙斜線 key（899/xxx//model.ifc）含空 segment → ok=false", () => {
+    const r = deriveIntakeFromKey({ key: "899/xxx//model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(false);
+  });
+
   it("idempotency key 為 bucket|key|etag 的確定性 sha256 前 16 hex，帶 mw_ 前綴", () => {
     const a = idempotencyKeyFor("bim-control", "899/xxx/model.ifc", '"abc123"');
     const b = idempotencyKeyFor("bim-control", "899/xxx/model.ifc", '"abc123"');

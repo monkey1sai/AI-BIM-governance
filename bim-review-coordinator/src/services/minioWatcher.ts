@@ -73,8 +73,11 @@ export function deriveIntakeFromKey(input: {
     return { ok: false, reason: `key 不以 suffix 結尾：${key}` };
   }
   const withoutSuffix = afterPrefix.slice(0, afterPrefix.length - keySuffix.length);
-  const segments = withoutSuffix.split("/").filter(Boolean);
-  if (segments.length !== 2) {
+  // 不用 filter(Boolean)：S3/MinIO 允許 `899//xxx/model.ifc`（含空 segment）為獨立 key，
+  // filter 會把空 segment 靜默吃掉，使雙斜線 key 被誤判為合法兩層而與正常 key 撞同一 projectId/modelId
+  // 重複觸發。改保留空 segment，恰兩層且皆非空才合法。
+  const segments = withoutSuffix.split("/");
+  if (segments.length !== 2 || segments.some((s) => s === "")) {
     return {
       ok: false,
       reason: `去 prefix/suffix 後非恰兩層（projectId/modelId）：${withoutSuffix}`,
