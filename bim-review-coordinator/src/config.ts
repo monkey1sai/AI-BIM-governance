@@ -77,6 +77,20 @@ export interface CoordinatorConfig {
   // default 空字串＝未設定 → /ui 回退既有 dev-console.html(zero-risk,不影響既有部署)。
   // 設定且目錄含 index.html 時,coordinator 於 /ui 服務 React console(static + SPA fallback)。
   consoleDistDir: string;
+  // minio-watch-auto-intake（O4 觸發機制 B 案，預設關）：env opt-in 的 MinIO
+  // ListObjectsV2 輪詢自動 intake。watcher 扮演本地自動化外部 IFC worker，
+  // 自打 loopback POST /api/external/ifc-ready；既有 intake/去重/dispatch 契約零變動。
+  minioWatchEnabled: boolean;            // MINIO_WATCH_ENABLED，default false
+  minioWatchEndpoint: string;            // MINIO_WATCH_ENDPOINT，如 http://192.168.20.234:9000
+  minioWatchBucket: string;              // MINIO_WATCH_BUCKET，如 bim-control
+  minioWatchPrefix: string;              // MINIO_WATCH_PREFIX，default 空
+  minioWatchAccessKey: string;           // MINIO_WATCH_ACCESS_KEY（唯讀帳號；不落 tracked 檔）
+  minioWatchSecretKey: string;           // MINIO_WATCH_SECRET_KEY（同上）
+  minioWatchIntervalSeconds: number;     // MINIO_WATCH_INTERVAL_SECONDS，default 60，下限 10
+  minioWatchKeySuffix: string;           // MINIO_WATCH_KEY_SUFFIX，default /model.ifc（規約檔名）
+  // 測試 seam：watcher 自打 loopback 的 base url。default 空＝執行期用 http://127.0.0.1:${port}。
+  // 整合測試以 listen(0) 取得實際 port 後注入完整 base，避免依賴固定 8004。
+  minioWatchSelfBaseUrl: string;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -378,6 +392,15 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     logRoot: process.env.LOG_ROOT || path.join(cwd, "logs"),
     // CH-E:未設定＝空字串 → mountDevConsole 回退 dev-console.html(zero-risk 預設)。
     consoleDistDir: process.env.CONSOLE_DIST_DIR || "",
+    minioWatchEnabled: parseBooleanEnv("MINIO_WATCH_ENABLED", false),
+    minioWatchEndpoint: process.env.MINIO_WATCH_ENDPOINT || "",
+    minioWatchBucket: process.env.MINIO_WATCH_BUCKET || "",
+    minioWatchPrefix: process.env.MINIO_WATCH_PREFIX || "",
+    minioWatchAccessKey: process.env.MINIO_WATCH_ACCESS_KEY || "",
+    minioWatchSecretKey: process.env.MINIO_WATCH_SECRET_KEY || "",
+    minioWatchIntervalSeconds: Math.max(10, numberFromEnv("MINIO_WATCH_INTERVAL_SECONDS", 60)),
+    minioWatchKeySuffix: process.env.MINIO_WATCH_KEY_SUFFIX || "/model.ifc",
+    minioWatchSelfBaseUrl: process.env.MINIO_WATCH_SELF_BASE_URL || "",
     ...overrides,
   };
 }
