@@ -64,8 +64,9 @@ P4 = userFacing ? Workflow({name:'std-evidence', args:{worktreeRoot, slug, specP
        held='no_browser_engine' → interactive session:主對話以 claude-in-chrome 親自取證(第 3 層;
          按本檔「Vertical slice 七項」逐項驗、產物落同樣 artifacts/e2e/ 慣例、自組 gaps:[{id,q}]、
          engine 誠實記 chrome)後重新裁決;headless/cron 無此層 → HELD
-       held='no_browser_evidence' 且 detail 顯示 backend stack 沒起 → 指揮官依 golden path
-         啟動(.\scripts\deploy.ps1;勿在 workflow 內自啟)後重跑 P4;否則 HELD(not observed 不得宣告 done)
+       held='no_browser_evidence' 且 detail 顯示 backend stack 沒起 → 指揮官依 golden path 啟動：
+         **先跑「啟動/重建 backend stack 前置」(見專節)清掉殘留 kit/conversion port,再跑** `.\scripts\deploy.ps1`
+         (勿在 workflow 內自啟)後重跑 P4;否則 HELD(not observed 不得宣告 done)
 P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         root: worktreeRoot, label: slug,
         findings: [...P3.finalReview.findings, ...((P4.evidence && P4.evidence.gaps) || [])],
@@ -142,6 +143,30 @@ HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool
 - 前序產物(plan 檔、commits、evidence)都在 git/磁碟,不重做;P3 錨點 = startTaskIndex(per-task commit 訊息規定前綴 `task#N:`,崩潰時可從 git log 重建);P6 帶同一 prNumber(ship-item 沿用既有 PR,不重複 create)。
 - 時間戳一律由主對話經 args 注入(dateStamp);workflow 內禁時鐘/亂數 API。
 
+## 啟動 / 重建 backend stack 前置:host-native port 乾淨化(防 deploy Read-Host 卡死)
+
+**鐵則**:跑 `.\scripts\deploy.ps1` 或 `.\scripts\dev\rebuild-test-deploy.ps1 -Build` **之前**,指揮官(主對話)
+MUST 先從主工作區 root 跑本技能 helper 清掉佔住必要 host-native port 的殘留:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\ensure-host-native-ports-free.ps1
+```
+
+- **為什麼**:Kit 無 live reload / migration(docs/plans 鐵則 #4、D9——換 stage 只能 terminate+recreate)。殘留的
+  `kit.exe`(49100 + spectator 49110…)/ conversion `python.exe`(49101)還佔著 port 時,`deploy.ps1` Phase 3 會把
+  它們當『非 docker-forwarder stranger』丟給 `Read-Host 'y/N'`(`deploy.ps1:961`);spec-to-done 無人值守 + stdin
+  非互動 → **無限阻塞、卡數小時**。`rebuild-test-deploy` 的 `git clean -fdx` 清掉 `scripts\.run\*.pid`,讓 deploy
+  連自己上一輪起的 process 都認不得 → 必觸發。
+- **helper 做什麼**:by-port(不依賴 `.pid` / workspace 路徑,跨主工作區 / worktree / 部署區 D:\ 通殺)tree-kill
+  `kit/python/nvstreamer` owner → **釋放 Kit 對 storage/*.usd(c) 的檔案鎖**(根治殘留導致 viewer 切不動 / 轉檔覆寫失敗),
+  輪詢等到全 FREE。對齊 CLAUDE.md 授權(停 blocking PID,不用 `-Force`/`-DryRun`);只動 host-native,docker plane 交給
+  deploy.ps1 idempotent 處理。
+- **退出碼處置**:`0` = port 全 FREE → 接著跑 deploy / rebuild。`1` = 逾時仍有殘留(helper 已列 PID,多為非 kit/python
+  程序、helper 不擅殺)→ 對話回報該 PID + port 並 **HELD**,不可硬跑 deploy(會撞 Read-Host)。`-DetectOnly` 只偵測不停
+  (啟動前先看一眼)。
+- **範圍限制(誠實)**:只解 host-native port 這條 Read-Host;`deploy.ps1:989` 的 `.venv WRONG_VERSION` Read-Host 不在
+  範圍(需重建 .venv 或 `-Force`,CLAUDE.md 禁),撞到 HELD 回報。spectator count 非預設 5 時須同步調整 helper 內 port 陣列。
+
 ## 模型預算(四級配置 haiku/sonnet/opus/fable;2026-06-11 降本調整,gates 不動)
 
 | 位置 | 模型 | 品質守恆(誰兜底) |
@@ -171,5 +196,5 @@ HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool
 3. commit trailer:本流程 commit 統一 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`(harness 規則);ship-item.md 釘 Opus 4.8 字樣 — 已知雙標準,squash 後實質影響極小。
 4. GitNexus detect-changes 在 linked worktree 看不到 staged(已知坑)→ implementer fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`,PR body 揭露;完全失敗記 `fail`,同 run 3 次 → held。
 5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
-6. 本組檔案(SKILL.md + 3 支 std-*.js)目前被 .gitignore 蓋住(repo policy:.claude/ 預設 local-only);要 commit / 跨機共享須使用者明確同意加 whitelist(`!` 例外,如 ship-item 先例)。
+6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。純動 `.claude/**` 的 PR 會被 pr-review-agent paths-ignore 跳過 review(#202);main 無 branch protection 故此 check 非 required。
 7. P1 四軸 review 第二輪起只重審上輪未過的軸(fixer 改 plan 可能影響已過軸)— 由 P3 per-task spec review 與 P5 critic 兜底,屬已知取捨。
