@@ -320,6 +320,11 @@ export function createCoordinatorApp(
   // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
   let minioWatcher: MinioWatcherHandle | null = null;
   function startMinioWatcherIfEnabled(): void {
+    // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
+    // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
+    // ——minioWatchEnabled=true && selfBaseUrl 已設 && 呼叫端又 listen()——也安全：
+    // 立即路徑會先把 minioWatcher 設好，listen callback 是非同步（Node 事件迴圈），
+    // "listening" 事件到達時 minioWatcher != null，此 guard 直接 return，不會啟第二個。
     if (!config.minioWatchEnabled || minioWatcher) return;
     const address = server.address();
     const boundPort =

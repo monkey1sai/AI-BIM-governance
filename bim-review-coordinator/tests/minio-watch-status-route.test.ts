@@ -9,7 +9,10 @@ let active: CoordinatorApp | null = null;
 
 afterEach(async () => {
   if (active) {
-    active.dispose();
+    // dispose 為 async（watcher 存在時 await in-flight tick settle）。必須先 await
+    // 完成才 io.close / server.close，與 shutdown.test.ts 不變式一致（dispose 先收斂
+    // 再關閉），避免 fire-and-forget 讓 timer/socket 洩漏到下一個測試。
+    await active.dispose();
     active.io.close();
     await new Promise<void>((r) => active?.server.close(() => r()));
     active = null;
