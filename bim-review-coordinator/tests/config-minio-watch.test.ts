@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 const MINIO_KEYS = [
@@ -12,6 +12,13 @@ const MINIO_KEYS = [
   "MINIO_WATCH_KEY_SUFFIX",
   "MINIO_WATCH_SELF_BASE_URL",
 ];
+
+// config.ts 頂層執行 dotenv.config()，vitest 首次 import 即把本地 .env 注入 process.env。
+// 只靠 afterEach 不夠：若某台機器的 .env 補了 MINIO_WATCH_*，第一個 case 仍會被污染。
+// 每個 case 跑前先 delete 一次，確保每個 case 從乾淨環境自行設值。
+beforeEach(() => {
+  for (const k of MINIO_KEYS) delete process.env[k];
+});
 
 afterEach(() => {
   for (const k of MINIO_KEYS) delete process.env[k];
@@ -49,6 +56,12 @@ describe("loadConfig MinIO watch fields", () => {
     expect(c.minioWatchSecretKey).toBe("sk");
     expect(c.minioWatchIntervalSeconds).toBe(10); // 下限夾住
     expect(c.minioWatchKeySuffix).toBe("/scene.ifc");
+  });
+
+  it("MINIO_WATCH_SELF_BASE_URL env 被讀入 minioWatchSelfBaseUrl（整合測試注入 loopback 的 seam）", () => {
+    process.env.MINIO_WATCH_SELF_BASE_URL = "http://127.0.0.1:9999";
+    const c = loadConfig();
+    expect(c.minioWatchSelfBaseUrl).toBe("http://127.0.0.1:9999");
   });
 
   it("overrides 直接設值優先於 env 預設", () => {
