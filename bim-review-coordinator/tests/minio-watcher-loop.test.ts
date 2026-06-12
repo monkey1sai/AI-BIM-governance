@@ -72,6 +72,49 @@ async function startNonJsonIntakeStub(received: Array<{ headers: http.IncomingHt
   return `http://127.0.0.1:${a.port}`;
 }
 
+// intake 對同一 idempotency key 永遠回同一 ifc_ready_job_id 且 idempotent_replay=true
+// （等價真 coordinator store 的去重）。用以驗「重啟新 watcher 實例重掃同 key 同 etag →
+// 仍 triggered（202 idempotent_replay 計觸發）且 job_id 與首次相同（同一筆 job）」。
+async function startIdempotentReplayIntakeStub(
+  received: Array<{ idemKey: string }>,
+): Promise<string> {
+  const jobByIdem = new Map<string, string>();
+  intakeStub = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const idemKey = String(req.headers["x-idempotency-key"] ?? "");
+      received.push({ idemKey });
+      let jobId = jobByIdem.get(idemKey);
+      const replay = jobId !== undefined;
+      if (jobId === undefined) {
+        jobId = `ifcready_replaystub_${jobByIdem.size + 1}`;
+        jobByIdem.set(idemKey, jobId);
+      }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ifc_ready_job_id: jobId, idempotent_replay: replay }));
+    });
+  });
+  await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+  const a = intakeStub!.address();
+  if (!a || typeof a === "string") throw new Error("intake stub bind");
+  return `http://127.0.0.1:${a.port}`;
+}
+
+// intake 收到請求但**永不回應**（socket 掛住），模擬 app 因負載/死鎖長時間不回
+// /api/external/ifc-ready。用以驗 triggerIntake 的 fetch 有 AbortSignal.timeout 保護：
+// 逾時後須記入 last_triggered.error 並讓 tick() 完成、下一輪照常排程（loop 不凍結）。
+async function startHangingIntakeStub(received: Array<{ at: number }>): Promise<string> {
+  intakeStub = http.createServer((req) => {
+    received.push({ at: Date.now() });
+    req.resume(); // 收完 body 但永不 res.end → 請求懸而不決
+  });
+  await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+  const a = intakeStub!.address();
+  if (!a || typeof a === "string") throw new Error("intake stub bind");
+  return `http://127.0.0.1:${a.port}`;
+}
+
 async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -81,7 +124,12 @@ async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   throw new Error("waitFor timeout");
 }
 
-function makeWatcher(s3Base: string, selfBase: string, state: { objs: S3Obj[] }) {
+function makeWatcher(
+  s3Base: string,
+  selfBase: string,
+  _state: { objs: S3Obj[] },
+  extra: Partial<Parameters<typeof startMinioWatcher>[0]> = {},
+) {
   return startMinioWatcher({
     endpoint: s3Base,
     bucket: "bim-control",
@@ -93,6 +141,7 @@ function makeWatcher(s3Base: string, selfBase: string, state: { objs: S3Obj[] })
     selfBaseUrl: selfBase,
     webhookSecret: "dev-webhook-secret",
     structLog: { anomaly: () => {}, withTraceId: () => ({ anomaly: () => {} }) } as never,
+    ...extra,
   });
 }
 
@@ -201,5 +250,71 @@ describe("minioWatcher loop", () => {
     expect(st.last_triggered[0]?.job_id).toBeNull();
     expect(st.last_triggered[0]?.error).toBeTruthy(); // 記錯誤，與計數一致（非「成功但帶錯誤」）
     expect(st.last_error).toBeNull(); // 單一物件失敗不污染整輪 last_error
+  });
+
+  it("intake 長時間不回應 → fetch 逾時不凍結 loop，記 last_triggered.error 後續輪續跑", async () => {
+    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ at: number }> = [];
+    const selfBase = await startHangingIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    // intakeTimeoutMs 設極短（150ms）使測試快；若無 AbortSignal 保護則 fetch 永不 resolve、
+    // tick 卡死、後續輪不再排程 → 下方 last_poll_at 推進的斷言會 timeout。
+    watcher = makeWatcher(s3Base, selfBase, state, { intakeTimeoutMs: 150 });
+
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
+    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+
+    // intake 確實收到請求（但永不回） → 逾時後須記入 last_triggered.error
+    await waitFor(() => received.length >= 1);
+    await waitFor(() => watcher!.getStatus().last_triggered.length >= 1);
+
+    const st = watcher!.getStatus();
+    expect(st.triggered_total).toBe(0); // 逾時 → 不算成功觸發
+    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.job_id).toBeNull();
+    expect(st.last_triggered[0]?.error).toBeTruthy(); // AbortError 入 error，與其他網路失敗對等
+    expect(st.last_error).toBeNull(); // 單一物件逾時不污染整輪 last_error
+
+    // loop 未凍結：tick finally 仍排下一輪 → last_poll_at 會在逾時後繼續推進。
+    const pollAfterTrigger = watcher!.getStatus().last_poll_at as string;
+    await waitFor(() => (watcher!.getStatus().last_poll_at as string) !== pollAfterTrigger);
+  });
+
+  it("重啟（新 watcher 實例、同 store）重掃同 key 同 etag → idempotent_replay 仍計觸發且 job_id 相同", async () => {
+    // 起手只有既有 baseline 物件 899（保證新 watcher baseline 非空、語意明確）。
+    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ idemKey: string }> = [];
+    const selfBase = await startIdempotentReplayIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+
+    // 第一個 watcher：baseline 後新增 988 → 觸發一次（store 首見此 idempotency key → 建 job）。
+    watcher = makeWatcher(s3Base, selfBase, state);
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
+    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    await waitFor(() => received.length === 1);
+    const firstStatus = watcher!.getStatus();
+    expect(firstStatus.triggered_total).toBe(1);
+    const firstJobId = firstStatus.last_triggered[0]?.job_id;
+    expect(firstJobId).toBeTruthy();
+
+    // 模擬重啟：dispose 舊 watcher（清掉 in-memory seen）。為讓新實例「重新看見」988 為
+    // 增量（而非吞進新 baseline 永不觸發），先移除 988 → 新 watcher baseline 不含它，再加回
+    // 同 key 同 etag。新 watcher 對它發 intake，store 以確定性 idempotency key 去重回 replay。
+    watcher.dispose();
+    state.objs = [{ key: "899/xxx/model.ifc", etag: "e1" }];
+    watcher = makeWatcher(s3Base, selfBase, state);
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
+    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    await waitFor(() => received.length === 2);
+    await waitFor(() => watcher!.getStatus().triggered_total >= 1);
+
+    const secondStatus = watcher!.getStatus();
+    // 兩次同一 idempotency key（重啟後 bucket/key/etag 不變 → idempotencyKeyFor 確定性）。
+    expect(received[1].idemKey).toBe(received[0].idemKey);
+    expect(received[1].idemKey).toMatch(/^mw_[0-9a-f]{16}$/);
+    // 202 idempotent_replay 仍計觸發（誠實統計，與既有 comment 一致）。
+    expect(secondStatus.triggered_total).toBe(1);
+    // 同一筆 job：store 回相同 ifc_ready_job_id，未建第二筆 job。
+    expect(secondStatus.last_triggered[0]?.job_id).toBe(firstJobId);
   });
 });

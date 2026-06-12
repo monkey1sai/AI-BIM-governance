@@ -115,6 +115,12 @@ export interface MinioWatcherOptions {
   intervalSeconds: number;
   selfBaseUrl: string;       // loopback intake base，如 http://127.0.0.1:8004
   webhookSecret: string;
+  // loopback intake POST 的逾時（ms），default 10_000。若 app 因負載/死鎖長時間不回
+  // /api/external/ifc-ready，無此保護則 fetch 永不 resolve、tick() 無限 await、finally
+  // 的下一輪 setTimeout 不觸發 → watcher loop 凍結。逾時的 AbortError 與其他網路失敗
+  // 同等對待（recordTriggered + return，不上浮）。比照 streamingConversionClient
+  // 的 AbortSignal.timeout(requestTimeoutMs) 模式。
+  intakeTimeoutMs?: number;
   structLog: WatcherLogger;
 }
 
@@ -138,6 +144,8 @@ export interface MinioWatcherStatus {
 }
 
 export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle {
+  // intake POST 逾時：未設或 ≤0 時用 10s 預設（防 watcher 因 app 不回應而凍結）。
+  const intakeTimeoutMs = opts.intakeTimeoutMs && opts.intakeTimeoutMs > 0 ? opts.intakeTimeoutMs : 10_000;
   const client = new S3Client({
     endpoint: opts.endpoint,
     region: "us-east-1",
@@ -235,6 +243,8 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
           "X-Idempotency-Key": idemKey,
         },
         body: JSON.stringify(body),
+        // app 死鎖/過載長時不回時逾時中斷，避免 tick() 無限 await 凍結整個 loop。
+        signal: AbortSignal.timeout(intakeTimeoutMs),
       });
       const text = await resp.text();
       if (resp.status >= 400) {
