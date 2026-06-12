@@ -148,9 +148,9 @@ HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool
 |---|---|---|
 | 指揮官(主對話) | 當前 session(Fable) | — |
 | plan 解析(P3 Parse)、引擎偵測(P4 Probe) | haiku | 機械抽取/探測,錯誤顯性:抽壞 → implementer 立刻 BLOCKED;探錯 → E2E 起不來即 held |
-| GitNexus impact 預掃 + per-task impact、機械性 task implementer(1-2 檔、步驟完整、非 user-facing)、P1 四軸 reviewer、P3 spec/quality reviewer(首審)、P6 ship-item | sonnet | impact 只是風險輸入(CRITICAL gate 在指揮官);機械 impl 有雙 review;四軸/雙 review 有 plan-fix(opus)+final-review(opus)+P5 critic 三層兜底;ship 是程序性 buffered cycle |
+| GitNexus impact 預掃 + per-task impact、機械性 task implementer(1-2 檔、步驟完整、非 user-facing)、P1 四軸 reviewer、P3 spec/quality reviewer(首審) | sonnet | impact 只是風險輸入(CRITICAL gate 在指揮官);機械 impl 有雙 review;四軸/雙 review 有 plan-fix(opus)+final-review(opus)+P5 critic 三層兜底 |
 | plan 作者、非機械 implementer、NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復)、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | opus | 創造/修復/兜底層,**不降** |
-| P5 fu-adversarial-verify-generic(verifier + critic) | runtime default(=session 模型) | 抓雷主力(實績:#206 三顆連環雷 + fix 自引 regression 全在 merge 前攔下),**不動** |
+| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | runtime default(=session 模型) | P5=抓雷主力(實績:#206 三顆連環雷 + fix 自引 regression 全在 merge 前攔下);P6=端到端代理操作(git/gh/merge 判斷),sonnet 首跑即出程序偏差(#208:無視指定 prNumber、把主工作區 WIP 打包成獨立 PR merge),2026-06-12 回退 default,**兩者不降** |
 
 升級通道(自動,腳本內建):sonnet implementer 回 BLOCKED → 換 opus 重派;NEEDS_CONTEXT → opus 補脈絡重派。
 平行:P1 四軸 review、P5 per-finding verifier 平行;**P3 implementer 嚴禁平行**(實作衝突)。
