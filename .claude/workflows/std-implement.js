@@ -236,7 +236,7 @@ for (const task of tasks) {
 ToolSearch 載入 mcp__gitnexus__impact;對下列 symbols 各跑 impact({target, direction:"upstream"}),回報最大風險:
 ${symbolsToCheck.map((s) => `- ${s}`).join('\n')}
 分級:<5 affected=LOW;5-15=MEDIUM;>15 或多 processes=HIGH;critical path(auth/conversion authority/session 核心)=CRITICAL。
-「圖中找不到」分兩種,不可一律 UNKNOWN:(a) symbol 是本 task 要**新建**的(task 全文寫明新檔/新模組/新函式)→ greenfield,回 LOW 並在 note 註明 new-symbol(blast radius=0,不存在是預期);(b) 既有 symbol 找不到 → 先 analyze 重試,仍找不到才 UNKNOWN。
+「圖中找不到」分兩種,不可一律 UNKNOWN:(a) symbol 是**尚未實作的新 symbol**(本 task 或 plan 中任一 task 要新建;plan 標題編號與 index 可能差一,以「codebase 現在不存在且 plan 有規劃」為準)→ greenfield,回 LOW 並在 note 註明 new-symbol(blast radius=0,不存在是預期,**絕不回 UNKNOWN**);(b) 既有 symbol(曾在 codebase 出現過)找不到 → 先 analyze 重試,仍找不到才 UNKNOWN。
 若 tool 報 index stale → bash 跑「npx gitnexus analyze --skip-agents-md」+「npx gitnexus status」確認(banner 不算成功)後重試;工具整體故障(crash/連不上)→ overallRisk=UNKNOWN 並在 note 寫明故障。UNKNOWN 只保留給真正的工具故障/既有 symbol 消失。
 回傳 StructuredOutput:overallRisk、note(直接 callers / 關鍵 processes / 故障說明)。`,
       { label: `impact:${T}`, phase: 'Implement', model: 'sonnet', schema: TASK_IMPACT_SCHEMA })
