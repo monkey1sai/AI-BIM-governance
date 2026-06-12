@@ -80,4 +80,50 @@ describe("ConversionSchedulingPage：minio-watch 與 ifc-ready 錯誤獨立", ()
     const panel = container.querySelector('[data-testid="minio-watch-panel"]');
     expect(panel!.textContent).toContain("未啟用");
   });
+
+  // spec §6.2：enabled=true → 計數 render。覆蓋整條 client-render 路徑（bucket/prefix/
+  // last_poll_at + baseline/seen/觸發/跳過 計數字串 + minio-watch-triggered table），
+  // 否則 pages.tsx 模板字串拼接或 table 條件渲染若有 typo，CI 抓不到（finding #2）。
+  it("minioWatchStatus enabled=true 時：渲染計數與 triggered table", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [okJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({
+      enabled: true, bucket: "bim-control", prefix: "", last_poll_at: "2026-06-12T06:00:00Z",
+      poll_count: 3, baseline_count: 10, seen_count: 11, triggered_total: 1, skipped_malformed_total: 0,
+      last_triggered: [{ key: "bim-control/271/v1/model.ifc", job_id: "ifcready_mw1", error: null, at: "2026-06-12T06:00:00Z" }],
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const panel = container.querySelector('[data-testid="minio-watch-panel"]');
+    expect(panel!.textContent).toContain("啟用中");
+    expect(panel!.textContent).toContain("bim-control");
+    // 計數字串 baseline / seen / 觸發 / 跳過
+    expect(panel!.textContent).toContain("10 / 11 / 1 / 0");
+    // triggered table 帶 job id
+    const triggered = container.querySelector('[data-testid="minio-watch-triggered"]');
+    expect(triggered).not.toBeNull();
+    expect(triggered!.textContent).toContain("ifcready_mw1");
+    expect(triggered!.textContent).toContain("bim-control/271/v1/model.ifc");
+    // race window 沒命中時不應殘留 note 文字
+    expect(panel!.textContent).not.toContain("not yet started");
+  });
+
+  // 後端 race window（coordinator app.ts:841）：minioWatchEnabled=true 但 watcher handle
+  // 尚未建立 → { enabled: true, note: "..." }，無 bucket/prefix/計數。enabled=true 分支
+  // 必須讓 note 穿透，否則操作者只看到一排 dash，無從判斷正常 race 還是真故障（finding #1）。
+  it("minioWatchStatus enabled=true 但僅帶 note（watcher 尚未啟動）：note 穿透顯示", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [okJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({
+      enabled: true, note: "watcher enabled but not yet started (server not listening)",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const panel = container.querySelector('[data-testid="minio-watch-panel"]');
+    // 仍顯示啟用中（enabled=true 分支），且 note 穿透
+    expect(panel!.textContent).toContain("啟用中");
+    expect(panel!.textContent).toContain("watcher enabled but not yet started");
+  });
 });

@@ -327,6 +327,7 @@ export function ConversionSchedulingPage() {
             </>
           ) : (
             <>
+              {mw.note && <p className="ec-note">{mw.note}</p>}
               <Field k="狀態" v="啟用中（env opt-in）" prov="asbuilt" />
               <Field k="bucket" v={mw.bucket ?? "—"} prov="asbuilt" />
               <Field k="prefix" v={mw.prefix || "（無）"} prov="asbuilt" />
