@@ -58,6 +58,7 @@ describe("GET /api/external/minio-watch/status", () => {
     expect(res.body.enabled).toBe(true);
     expect(res.body.bucket).toBe("bim-control");
     expect(res.body).toHaveProperty("last_poll_at");
+    expect(res.body).toHaveProperty("last_error");
     expect(res.body).toHaveProperty("triggered_total");
     expect(res.body).toHaveProperty("skipped_malformed_total");
     // credentials 仍不得出現
