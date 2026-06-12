@@ -337,7 +337,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     mediaServer: kitMediaServer,
     mediaPort: kitMediaPort,
   };
-  return {
+  const merged = {
     host,
     port,
     coordinatorPublicBaseUrl,
@@ -403,4 +403,8 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     minioWatchSelfBaseUrl: process.env.MINIO_WATCH_SELF_BASE_URL || "",
     ...overrides,
   };
+  // 下限 10 是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，
+  // 否則 loadConfig({minioWatchIntervalSeconds: 3}) 會繞過 env 路徑的 Math.max。
+  merged.minioWatchIntervalSeconds = Math.max(10, merged.minioWatchIntervalSeconds);
+  return merged;
 }

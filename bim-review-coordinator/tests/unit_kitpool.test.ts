@@ -71,6 +71,15 @@ const defaultConfig: CoordinatorConfig = {
   // CH-D forward-only kit proxy base / CH-E React console dist（fixture 預設值）。
   kitManagerApiBase: "http://127.0.0.1:8010",
   consoleDistDir: "",
+  minioWatchEnabled: false,
+  minioWatchEndpoint: "",
+  minioWatchBucket: "",
+  minioWatchPrefix: "",
+  minioWatchAccessKey: "",
+  minioWatchSecretKey: "",
+  minioWatchIntervalSeconds: 60,
+  minioWatchKeySuffix: "/model.ifc",
+  minioWatchSelfBaseUrl: "",
 };
 
 const multiEndpointConfig: CoordinatorConfig = {
