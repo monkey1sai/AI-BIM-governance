@@ -186,14 +186,37 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
       //    首掛載即自動 load（listIfcReady + minioWatchStatus），故 reload 後資料自動出現。
       await page.goto(`${coordinatorBase}/ui#/conv`);
 
-      // 5) MinIO 自動偵測 Panel：啟用中 + triggered≥1。
+      // 5) MinIO 自動偵測 Panel：啟用中 + triggered≥1（UI 直接斷言，不只後端對帳）。
       const panel = page.getByTestId("minio-watch-panel");
       await expect(panel).toBeVisible({ timeout: 20_000 });
       await expect(panel).toContainText("啟用中", { timeout: 20_000 });
+      // pages.tsx:336 把 triggered 渲染進「baseline / seen / 觸發 / 跳過」Field 的 .ec-v
+      //（格式 `${baseline} / ${seen} / ${triggered} / ${skipped}`）。後端步驟 3 已確認 triggered_total≥1，
+      //   故此值在 page.goto 後確定性渲染。鎖該 Field 的值欄、斷言第 3 槽（觸發）為非零整數，
+      //   讓「Panel triggered≥1」由 UI 層直接驗證，而非僅 backend API 對帳。
+      const triggeredField = panel
+        .locator(".ec-field", { hasText: "baseline / seen / 觸發 / 跳過" })
+        .locator(".ec-v");
+      await expect(triggeredField).toBeVisible({ timeout: 20_000 });
+      // .ec-v 內容為 `${baseline} / ${seen} / ${triggered} / ${skipped}` + 空白 + ProvTag 文字（如「已實作」），
+      //   故用 containText + 不錨末尾的 regex：第 3 槽（觸發）= [1-9]\d*（非零）。
+      await expect(triggeredField).toContainText(/\d+\s*\/\s*\d+\s*\/\s*[1-9]\d*\s*\/\s*\d+/);
 
       // 6) Ifc-ready jobs 表：988 的 job 自動出現（watcher 建立，非手動註冊）。
-      const row988 = page.locator("table.ec-table tbody tr").filter({ has: page.locator("td", { hasText: "988" }) });
+      //    須 scope 到「Ifc-ready jobs」Panel——另有 MinIO 自動偵測 triggered 表的列文字含
+      //    `988/auto/model.ifc`（子字串也含 "988"），若不限定 Panel 會誤命中該表。
+      //    project 欄是「正好 988」（非 988/auto/...），故 cell 用 /^988$/ 精確匹配。
+      const ifcReadyPanel = page.locator("section.ec-panel", { hasText: "Ifc-ready jobs" });
+      const row988 = ifcReadyPanel
+        .locator("table.ec-table tbody tr")
+        .filter({ has: page.locator("td", { hasText: /^988$/ }) });
       await expect(row988.first()).toBeVisible({ timeout: 20_000 });
+      // job 狀態須達 dispatched/queued 級：pages.tsx:357 表頭欄序為
+      //   job / project / conversion / dispatch / session / stage，conversion 欄（第 3 td，nth(2)）
+      //   渲染 j.conversion_status。watcher 自動派工後 markDispatched 把 conv stub 回的 status="queued"
+      //   存進 conversion_status，故此欄顯示 "queued"。直接斷言該欄=queued，確認 job 進 dispatched/queued 級
+      //   而非僅「有一列含 988」。
+      await expect(row988.first().locator("td").nth(2)).toContainText("queued", { timeout: 20_000 });
 
       await page.screenshot({ path: "../artifacts/e2e/minio-watch-auto-intake-conv.png", fullPage: true });
     } finally {

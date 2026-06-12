@@ -14,6 +14,10 @@
 - **vertical slice**：UI route `#/conv` → useEffect 自動 load → 真 coordinator
   `GET /api/external/ifc-ready` + `GET /api/external/minio-watch/status` → watcher 自動建立的 988 job
   + Panel triggered≥1。**全程不碰任何按鈕**（M2 DoD 前半「自動觸發」語意）。
+- **UI 層直接斷言（非僅後端對帳）**：除了後端 `triggered_total≥1`、`ifc-ready` 出現 988 之外，spec 另在
+  瀏覽器 DOM 直接斷言（1）MinIO 自動偵測 Panel 的「baseline / seen / 觸發 / 跳過」Field 第 3 槽（觸發）
+  為非零整數（triggered≥1 由 UI 呈現驗證）；（2）Ifc-ready jobs 表 988 列的 conversion 欄顯示
+  `queued`（job 達 dispatched/queued 級由 UI 呈現驗證）。
 - **conditional-skip 限制**：dist-ui 未 build → test.skip（Playwright skip != fail）。本 repo 無 Playwright
   CI job，故不 false-green 任何 gate；屬本機 / 指揮官手動 gate。
 
@@ -32,7 +36,9 @@
 - baseline 物件（`899/baseline/model.ifc`）僅登 seen 不觸發；測試 poll `minio-watch/status` 得 `baseline_count=1`。
 - 注入 `988/auto/model.ifc` 後下一輪 watcher 自動 intake：`ifc-ready?limit=50` 出現 `project_id="988"` 的 job、
   `minio-watch/status` 的 `triggered_total>=1`（全程未碰任何按鈕）。
-- 前端 `#/conv`（coordinator 同源 `/ui`）：`minio-watch-panel` 顯示「啟用中」、`Ifc-ready jobs` 表出現 988 列。
+- 前端 `#/conv`（coordinator 同源 `/ui`）：`minio-watch-panel` 顯示「啟用中」，且「baseline / seen / 觸發 / 跳過」
+  Field 實測渲染 `1 / 2 / 1 / 0`（觸發=1，UI 直接斷言為非零）；`Ifc-ready jobs` 表 988 列 conversion 欄
+  實測渲染 `queued`（UI 直接斷言）。
 - 截圖落 `artifacts/e2e/minio-watch-auto-intake-conv.png`（fullPage，~150 KB），三個 Panel（Pipeline /
   MinIO 自動偵測 / Ifc-ready jobs）皆渲染。
 
