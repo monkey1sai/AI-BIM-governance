@@ -28,6 +28,13 @@ describe(".env.example MINIO_WATCH_* parity（IMPORTANT — deploy-time missing-
   // config.ts 在 loadConfig() 內讀取的全部 MINIO_WATCH_* env keys（source of truth）。
   // 與 config-minio-watch.test.ts 的 MINIO_KEYS 同一組；任一新增 MINIO_WATCH_* env 讀取
   // 都應同步加入此清單與 .env.example，否則 deploy missing-key merge 會漏。
+  // 反向掃描:從 config.ts 原始碼動態提取全部 MINIO_WATCH_* env 讀取點,
+  // 防「config 新增 key 但漏更新本清單/.env.example」— 清單自身不可成為盲點。
+  const configSrc = readFileSync(path.join(here, "..", "src", "config.ts"), "utf8");
+  const configKeys = new Set(
+    Array.from(configSrc.matchAll(/MINIO_WATCH_[A-Z0-9_]+/g)).map((m) => m[0]),
+  );
+
   const REQUIRED_MINIO_WATCH_KEYS = [
     "MINIO_WATCH_ENABLED",
     "MINIO_WATCH_ENDPOINT",
@@ -83,4 +90,17 @@ describe(".env.example MINIO_WATCH_* parity（IMPORTANT — deploy-time missing-
     const ENABLED_TOKENS = ["true", "1", "yes", "on"];
     expect(ENABLED_TOKENS).not.toContain(normalized);
   });
+
+  it("config.ts 的 MINIO_WATCH_* 讀取點與 REQUIRED 清單三方一致（反向 parity）", () => {
+    const required = new Set(REQUIRED_MINIO_WATCH_KEYS);
+    // config.ts 內出現的每個 key 都必須在 REQUIRED 清單（防 config 加 key 漏同步）。
+    for (const k of configKeys) {
+      expect(required.has(k), `config.ts 讀取 ${k} 但 REQUIRED_MINIO_WATCH_KEYS 未列`).toBe(true);
+    }
+    // REQUIRED 清單的每個 key 都必須真的在 config.ts 出現（防清單殘留幽靈 key）。
+    for (const k of REQUIRED_MINIO_WATCH_KEYS) {
+      expect(configKeys.has(k), `REQUIRED 列了 ${k} 但 config.ts 未讀取`).toBe(true);
+    }
+  });
+
 });
