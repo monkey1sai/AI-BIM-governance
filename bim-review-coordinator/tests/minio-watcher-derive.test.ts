@@ -33,6 +33,14 @@ describe("minioWatcher 純函式導出", () => {
     expect(tooShallow.ok).toBe(false);
   });
 
+  it("prefix 非空且不以 '/' 結尾 → ok=false（避免靜默截斷 projectId）", () => {
+    // 防 IMPORTANT #2：prefix='89' 對上 key='899/xxx/model.ifc' 不可被當成命中後切出 projectId='9'
+    const r = deriveIntakeFromKey({ key: "899/xxx/model.ifc", prefix: "89", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("prefix");
+  });
+
   it("idempotency key 為 bucket|key|etag 的確定性 sha256 前 16 hex，帶 mw_ 前綴", () => {
     const a = idempotencyKeyFor("bim-control", "899/xxx/model.ifc", '"abc123"');
     const b = idempotencyKeyFor("bim-control", "899/xxx/model.ifc", '"abc123"');
