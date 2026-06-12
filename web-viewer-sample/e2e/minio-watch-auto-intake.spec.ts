@@ -98,7 +98,15 @@ async function stopCoordinator(proc: ChildProcess): Promise<void> {
     });
     return;
   }
-  try { proc.kill("SIGTERM"); } catch { /* already gone */ }
+  // Unix：SIGTERM 是 signal 送出即回，非等進程真正退出。若不 await-on-exit，afterAll 緊接的
+  // fs.rmSync(tmpRoot) 可能在 coordinator async shutdown（shutdown.ts）仍寫 SESSION_STORE_DIR /
+  // EVENT_LOG_DIR（皆在 tmpRoot 下）時觸發，在有 file-lock 語意的 CI 上造成清理失敗遺留 tmp。
+  // 等 exit 事件（3s 上限保護，逾時即放行避免測試卡住）後再 return。
+  await new Promise<void>((resolve) => {
+    const cap = setTimeout(resolve, 3000);
+    proc.once("exit", () => { clearTimeout(cap); resolve(); });
+    try { proc.kill("SIGTERM"); } catch { clearTimeout(cap); resolve(); }
+  });
 }
 
 // earlyExit：coordinator 提早死掉（最常見＝freePort 在 close 與 coordinator bind 之間被別人搶走的

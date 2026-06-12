@@ -325,7 +325,9 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   // watcher 輪詢間隔下限（秒）。production 預設 10 防忙迴圈連打 MinIO；不設 env 時行為與舊版一致。
   // 唯一降檔入口：MINIO_WATCH_INTERVAL_FLOOR_SECONDS（如 E2E 起 spawn coordinator 需 ≤10s 輪詢驗證
   // 自動 intake 鏈時設為 1）。預設不設＝floor 10，故 config-minio-watch.test.ts 與生產皆維持夾為 10。
-  const minioWatchIntervalFloor = Math.max(0, numberFromEnv("MINIO_WATCH_INTERVAL_FLOOR_SECONDS", 10));
+  // 守衛硬下限 1s：Math.max(1, …) 確保即使 FLOOR=0/負值也不會讓 minioWatchIntervalSeconds 降到 0，
+  // 否則 minioWatcher 的 setTimeout(runTick, 0) 會每輪 tick 完成立即重排，形成 event-loop 忙迴圈連打 MinIO。
+  const minioWatchIntervalFloor = Math.max(1, numberFromEnv("MINIO_WATCH_INTERVAL_FLOOR_SECONDS", 10));
   const host = process.env.HOST || "127.0.0.1";
   const port = numberFromEnv("PORT", 8004);
   const publicHost = process.env.PUBLIC_HOST || "127.0.0.1";

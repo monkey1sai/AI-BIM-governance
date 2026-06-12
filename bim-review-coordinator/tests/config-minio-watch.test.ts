@@ -75,6 +75,15 @@ describe("loadConfig MinIO watch fields", () => {
     expect(loadConfig().minioWatchIntervalSeconds).toBe(1);
   });
 
+  it("FLOOR=0 不得讓 interval 降到 0（防 setTimeout(…,0) event-loop 忙迴圈連打 MinIO）", () => {
+    // floor 守衛意圖是「防忙迴圈」；FLOOR=0 搭 INTERVAL=0 時，舊 Math.max(0,…) 會讓
+    // minioWatchIntervalSeconds=0 → minioWatcher setTimeout(runTick, 0) 每輪 tick 完成立即重排，
+    // 形成 Node event-loop 忙迴圈對 ListObjectsV2 不停打請求。下限必須 ≥1s。
+    process.env.MINIO_WATCH_INTERVAL_SECONDS = "0";
+    process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS = "0";
+    expect(loadConfig().minioWatchIntervalSeconds).toBeGreaterThanOrEqual(1);
+  });
+
   it("overrides 的 interval 仍被 floor 夾住（floor 經 env 降檔後以降檔值為準）", () => {
     process.env.MINIO_WATCH_INTERVAL_FLOOR_SECONDS = "2";
     // override 給 0.05（整合測試風格），但 env floor=2 → 夾為 2（floor 在 overrides 合併後仍生效）
