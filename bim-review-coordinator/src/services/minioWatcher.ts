@@ -179,10 +179,30 @@ export function assertLoopbackSelfBaseUrl(selfBaseUrl: string): void {
   }
 }
 
+/**
+ * keySuffix 邊界約束（Codex review P2 修復）：keySuffix 必須以 `/` 開頭。
+ * 非 boundary-aligned 後綴（如 `model.ifc`）下，`988/zzz/model.ifc` 去後綴會留下
+ * `988/zzz/`（trailing 空 segment）→ deriveIntakeFromKey 全數判 malformed →
+ * 每個命中物件都被永久 skip（靜默無作為）。不做自動補 `/` normalize：複合後綴
+ * （如 `_v2/model.ifc`，匹配 `988/zzz_v2/model.ifc`）語意上合法，盲目前置 `/`
+ * 會改變其匹配集合；故 fail-fast 要求 operator 明確給 boundary-aligned 值。
+ */
+export function assertBoundaryAlignedKeySuffix(keySuffix: string): void {
+  if (!keySuffix.startsWith("/")) {
+    throw new Error(
+      `MinIO watcher keySuffix 必須以 '/' 開頭（收到 ${JSON.stringify(keySuffix)}）。` +
+        `非 boundary-aligned 後綴會讓所有命中物件被 deriveIntakeFromKey 判為 malformed 而永久 skip（靜默無作為）。` +
+        `例：MINIO_WATCH_KEY_SUFFIX=/model.ifc。`,
+    );
+  }
+}
+
 export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle {
   // SSRF 防護：watcher 自打 selfBaseUrl 並帶 webhook secret，selfBaseUrl 必須是 loopback http。
   // 在建任何資源前 fail-fast（app 啟動段呼叫，等同 config 驗證）。
   assertLoopbackSelfBaseUrl(opts.selfBaseUrl);
+  // 非 boundary-aligned keySuffix → 全物件靜默 skip，啟動即拒（同上 fail-fast 精神）。
+  assertBoundaryAlignedKeySuffix(opts.keySuffix);
   // intake POST 逾時：未設或 ≤0 時用 10s 預設（防 watcher 因 app 不回應而凍結）。
   const intakeTimeoutMs = opts.intakeTimeoutMs && opts.intakeTimeoutMs > 0 ? opts.intakeTimeoutMs : 10_000;
   const client = new S3Client({
@@ -306,7 +326,25 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
         return "fail_transient";
       }
       // JSON.parse 失敗（2xx 但非 JSON，如代理錯誤頁）會 throw 進下方 catch → fail_transient。
-      const parsed = JSON.parse(text || "{}") as { ifc_ready_job_id?: string };
+      const parsed = JSON.parse(text || "{}") as {
+        ifc_ready_job_id?: string;
+        download_status?: string;
+      };
+      // Codex review P1（failed-replay）誠實化：intake 對同 idempotency key 的 replay
+      // 「不重下載也不重派工」是上游 spec（fast-ifc-link-demo-loop §2.6）既定不變量。
+      // 若 2xx 回的是 download 已失敗的既有 job（首次 POST 建了 job 但同步下載 502），
+      // 之後每輪重試都只會拿到同一筆失敗 job 的 200 replay，永遠不會自癒。比照 design
+      // §5「下載失敗：watcher 不重送、操作者從 #/conv 看到失敗 job」的既審取捨：標 seen
+      // 停止無效重試，失敗誠實記入 last_triggered（帶 job_id；不計 triggered_total，
+      // 與「計數須與 error 狀態一致」的既有測試規約對齊）。補救：手動 intake 或重新上傳換 etag。
+      if (parsed.download_status === "failed") {
+        recordTriggered(
+          key,
+          parsed.ifc_ready_job_id ?? null,
+          "intake replay: download_status=failed（job 已建、#/conv 可見；replay 不重下載，watcher 停止重試）",
+        );
+        return "skip_permanent";
+      }
       status.triggered_total += 1; // idempotent_replay 也計為觸發（誠實統計），不重複建 job 由 store 保證
       recordTriggered(key, parsed.ifc_ready_job_id ?? null, null);
       return "triggered";

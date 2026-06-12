@@ -78,7 +78,7 @@ watcher（每 60s）`ListObjectsV2` → 新 `*/model.ifc` → presigned URL + �
 | 單一物件 intake POST 失敗（presign / 網路 / 逾時 / HTTP error / 2xx 非 JSON） | 不標 seen，下輪重試（自癒，Codex review P1 修復）；錯誤記 last_triggered 可於 Panel 看到。重試命中既有去重回 idempotent_replay，不重複建 job |
 | 同物件重複觸發（重啟重掃） | idempotency key 確定性 → 既有去重回 idempotent_replay，不重複建 job |
 | key 層級不符規約 | skip + `skipped_malformed` 計數（確定性結果，計一次後不重試） |
-| presigned URL 過期才被下載 | 既有 intake 下載失敗路徑（download_failure 欄位），watcher 不重送（下輪 etag 未變不再觸發；操作者可從 `#/conv` 看到失敗 job） |
+| 下載失敗（presigned 過期 / MinIO 暫時不可達等，job 已建） | 既有 intake 下載失敗路徑（download_failure 欄位）。watcher 重試命中該 failed job 的 idempotent replay（replay 不重下載）時，誠實記入 status（帶 job_id、不計觸發）並停止無效重送；操作者可從 `#/conv` 看到失敗 job，補救走手動 intake / 重新上傳換 etag |
 | watcher 未啟用 | 一切如現狀；status API 回 enabled=false |
 
 ## 6. 測試與驗收
@@ -102,3 +102,4 @@ watcher（每 60s）`ListObjectsV2` → 新 `*/model.ifc` → presigned URL + �
 - **presigned URL 含簽章（敏感）**：不寫入 watcher status/log（last_triggered 只記 key 不記 URL）。
 - **與外部 IFC worker 並存**：同物件若 worker 也 POST（不同 idempotency key）會建第二筆 job — 屬部署拓樸決策（要嘛 worker 退役要嘛 watcher 不開），spec 揭露不在 code 層擋。
 - **credentials 安全**：env only；`.env.example` 加空欄位；deny 規則禁讀 .env 實值（agent 不碰）。
+- **misconfig 靜默空轉（Codex review 修復）**：非空 prefix 於 config 層自動補尾斜線；keySuffix 不以 `/` 開頭、或 `EXTERNAL_INTAKE_IP_ALLOWLIST` 非空卻不含 loopback（127.0.0.1/::1）→ 啟動 fail-fast，不讓 watcher 啟著卻永遠建不了 job。

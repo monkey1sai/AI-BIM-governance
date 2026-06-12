@@ -49,6 +49,8 @@
   詳見 design spec §7 與 openspec delta「已知限制」段。
 - 單一物件 intake POST 暫時性失敗（presign / 網路 / 逾時 / HTTP error）不標 seen、下輪自動重試
   （自癒；Codex review P1 修復後語意）。
+- 下載已失敗的 job（intake replay 不重下載）：watcher 誠實記入 status（帶 job_id、不計觸發）後
+  不再重送，失敗 job 於 `#/conv` 可見（design §5 既審取捨）；補救走手動 intake / 重新上傳換 etag。
 
 ## 截圖
 

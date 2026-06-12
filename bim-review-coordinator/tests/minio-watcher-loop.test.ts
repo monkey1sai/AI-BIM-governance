@@ -452,6 +452,71 @@ describe("minioWatcher loop", () => {
     expect(watcher!.getStatus().triggered_total).toBe(1);
   });
 
+  it("replay 回 download_status=failed 的既有 job → 不計觸發、誠實記錯誤、停止無效重試", async () => {
+    // Codex review P1（failed-replay）鎖定：首次 POST 建了 job 但同步下載失敗（502，job 留存），
+    // 重試命中同 idempotency key 拿到 200 replay（不重下載）。watcher 不得把它計成成功觸發
+    // 後靜默結束，也不得無限重試（replay 永遠不會自癒）；須記入 last_triggered 帶 job_id+error。
+    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ status: number }> = [];
+    let posts = 0;
+    intakeStub = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        posts += 1;
+        if (posts === 1) {
+          // 模擬真 intake：job 已建、同步下載失敗 → 502 + download_status=failed
+          received.push({ status: 502 });
+          res.writeHead(502, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: "IFC download failed", ifc_ready_job_id: "ifcready_dlfail", download_status: "failed" }));
+          return;
+        }
+        // 之後同 idempotency key → 200 idempotent replay of 已失敗 job（不重下載）
+        received.push({ status: 200 });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ifc_ready_job_id: "ifcready_dlfail", download_status: "failed", idempotent_replay: true }));
+      });
+    });
+    await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+    const a = intakeStub!.address();
+    if (!a || typeof a === "string") throw new Error("intake stub bind");
+    const selfBase = `http://127.0.0.1:${a.port}`;
+    const s3Base = await startS3Stub(state);
+    watcher = makeWatcher(s3Base, selfBase, state);
+
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
+    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+
+    // 第一輪 502（fail_transient 重試）→ 第二輪 200 replay failed（skip_permanent 停止）。
+    await waitFor(() => received.length >= 2, 5000);
+    await waitFor(() => {
+      const lt = watcher!.getStatus().last_triggered;
+      return lt.length >= 1 && lt[0]?.error !== null && lt[0]?.job_id === "ifcready_dlfail";
+    }, 5000);
+
+    const st = watcher!.getStatus();
+    expect(st.triggered_total).toBe(0); // failed-job replay 不得計成功觸發
+    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.job_id).toBe("ifcready_dlfail"); // 失敗綁 job_id（#/conv 可追）
+    expect(String(st.last_triggered[0]?.error)).toContain("download_status=failed");
+
+    // 停止無效重試：seen 已標，received 不再增長。
+    const lenAfterReplay = received.length;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(received.length).toBe(lenAfterReplay);
+  });
+
+  it("keySuffix 不以 '/' 開頭 → startMinioWatcher fast-fail（防全物件靜默 skip）", async () => {
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    expect(() =>
+      makeWatcher("http://127.0.0.1:9000", selfBase, { objs: [] }, { keySuffix: "model.ifc" }),
+    ).toThrow(/keySuffix.*'\/'|boundary-aligned/);
+    expect(() =>
+      makeWatcher("http://127.0.0.1:9000", selfBase, { objs: [] }, { keySuffix: "" }),
+    ).toThrow(/keySuffix/);
+  });
+
   it("重啟（新 watcher 實例、同 store）重掃同 key 同 etag → idempotent_replay 仍計觸發且 job_id 相同", async () => {
     // 起手只有既有 baseline 物件 899（保證新 watcher baseline 非空、語意明確）。
     const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };

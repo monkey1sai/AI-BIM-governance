@@ -8,7 +8,7 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
-import { AuthError, createAuthProvider, createUserAuthProvider } from "./services/authProvider.js";
+import { AuthError, createAuthProvider, createUserAuthProvider, isIpAllowed } from "./services/authProvider.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { EventLog } from "./services/eventLog.js";
 import {
@@ -326,6 +326,22 @@ export function createCoordinatorApp(
     // 立即路徑會先把 minioWatcher 設好，listen callback 是非同步（Node 事件迴圈），
     // "listening" 事件到達時 minioWatcher != null，此 guard 直接 return，不會啟第二個。
     if (!config.minioWatchEnabled || minioWatcher) return;
+    // minio-watch review P2 修復：watcher 的 loopback self-POST 同樣經過
+    // /api/external/ifc-ready 的 IP allowlist（authProvider 在 secret 之前先檢查 IP）。
+    // 硬化部署把 EXTERNAL_INTAKE_IP_ALLOWLIST 鎖成 edge CIDR 而漏掉 loopback 時，
+    // watcher 每輪 intake 都 403（列得到物件、永遠建不了 job）。127.0.0.1 與 ::1
+    // 雙雙不在 allowlist ⇒ 必然永久失敗 → 啟動 fail-fast（與 selfBaseUrl loopback
+    // assert 同精神），不靜默空轉。重用 authProvider 的 isIpAllowed 避免判定分歧。
+    if (
+      config.externalIntakeIpAllowlist.length > 0 &&
+      !isIpAllowed("127.0.0.1", config.externalIntakeIpAllowlist) &&
+      !isIpAllowed("::1", config.externalIntakeIpAllowlist)
+    ) {
+      throw new Error(
+        "MINIO_WATCH_ENABLED=true 但 EXTERNAL_INTAKE_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）：" +
+          "watcher 的 loopback intake 會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
+      );
+    }
     const address = server.address();
     const boundPort =
       address && typeof address !== "string" ? address.port : config.port;

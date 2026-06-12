@@ -76,6 +76,9 @@ describe("GET /api/external/minio-watch/status", () => {
       minioWatchIntervalSeconds: 10,
       // 測試 seam：避免 watcher 真打外網 intake
       minioWatchSelfBaseUrl: "http://127.0.0.1:1",
+      // loopback 守衛 pass path：allowlist 非空但含 127.0.0.1 → 不 fail-fast（與下方
+      // 「不含 loopback → throw」測試成對）。
+      externalIntakeIpAllowlist: ["10.0.0.0/8", "127.0.0.1"],
     });
     const res = await request(app.app).get("/api/external/minio-watch/status");
     expect(res.status).toBe(200);
@@ -101,5 +104,27 @@ describe("GET /api/external/minio-watch/status", () => {
     // 即使 tick 失敗，仍不得洩漏 credentials
     expect(errRes.body.secret_key).toBeUndefined();
     expect(errRes.body.access_key).toBeUndefined();
+  });
+
+  it("watcher 啟用但 EXTERNAL_INTAKE_IP_ALLOWLIST 不含 loopback → 啟動 fail-fast（防永久 403 靜默空轉）", () => {
+    // Codex review P2 鎖定：硬化部署把 allowlist 鎖 edge CIDR 漏掉 loopback 時，watcher
+    // 的 self-POST 在 secret 檢查前就被 authProvider 403。127.0.0.1/::1 雙雙不在名單
+    // ⇒ 必然永久失敗，啟動即拒而非每輪靜默 403。
+    expect(() =>
+      makeApp({
+        minioWatchEnabled: true,
+        minioWatchEndpoint: "http://127.0.0.1:1",
+        minioWatchBucket: "bim-control",
+        minioWatchAccessKey: "ak",
+        minioWatchSecretKey: "sk",
+        minioWatchIntervalSeconds: 10,
+        minioWatchSelfBaseUrl: "http://127.0.0.1:1", // 立即啟動路徑 → 同步 throw 可被捕捉
+        externalIntakeIpAllowlist: ["10.0.0.0/8", "192.168.20.0/24"],
+      }),
+    ).toThrow(/loopback|127\.0\.0\.1/);
+    // throw 時 createCoordinatorApp 未完成、active 未被賦值 → 無需清理。
+    // pass path（allowlist 含 loopback / 空 allowlist 不啟檢查）由上方
+    // 「watcher 啟用但 endpoint 不可達」測試以自訂 allowlist 覆蓋驗證（單一 app 生命週期，
+    // 不在本測試開第二個 app 以免覆蓋 active 洩漏 watcher）。
   });
 });
