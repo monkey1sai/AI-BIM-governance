@@ -120,6 +120,9 @@ export interface MinioWatchStatus {
   interval_seconds?: number;
   note?: string;
   last_poll_at?: string | null;
+  // 單調遞增 tick 計數（後端 MinioWatcherStatus.poll_count）。供 loop liveness 判斷，
+  // 免依賴時鐘解析度（同毫秒兩輪 last_poll_at 相等會無法區分）。enabled=false 時不帶。
+  poll_count?: number;
   last_error?: string | null;
   baseline_count?: number | null;
   seen_count?: number;

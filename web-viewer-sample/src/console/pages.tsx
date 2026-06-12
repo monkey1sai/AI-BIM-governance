@@ -281,15 +281,22 @@ export function ConversionSchedulingPage() {
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
   const [mw, setMw] = useState<MinioWatchStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [mwErr, setMwErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    setBusy(true); setErr(null);
-    try {
-      setJobs((await coordinatorClient.listIfcReady(50)).items);
-      setMw(await coordinatorClient.minioWatchStatus());
-    }
-    catch (e) { setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`); }
-    finally { setBusy(false); }
+    setBusy(true); setErr(null); setMwErr(null);
+    // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
+    // 端點尚未部署）不得污染 ifc-ready 的錯誤訊息，也不得讓 watcher Panel 靜默停在
+    // placeholder（誤導操作者以為「沒按 Refresh」）。各自有獨立錯誤 state。
+    const [jobsRes, mwRes] = await Promise.allSettled([
+      coordinatorClient.listIfcReady(50),
+      coordinatorClient.minioWatchStatus(),
+    ]);
+    if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
+    else setErr(`未連線 coordinator /api/external/ifc-ready：${String(jobsRes.reason)}`);
+    if (mwRes.status === "fulfilled") setMw(mwRes.value);
+    else setMwErr(`未連線 coordinator /api/external/minio-watch/status：${String(mwRes.reason)}`);
+    setBusy(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
   return (
@@ -309,7 +316,9 @@ export function ConversionSchedulingPage() {
         prov="asbuilt"
       >
         <div data-testid="minio-watch-panel">
-          {mw == null ? (
+          {mwErr ? (
+            <p className="ec-warn-note" data-testid="minio-watch-error">{mwErr}</p>
+          ) : mw == null ? (
             <p className="ec-note">尚未取得 watcher 狀態；按上方 Refresh queue 後顯示。</p>
           ) : mw.enabled === false ? (
             <>
