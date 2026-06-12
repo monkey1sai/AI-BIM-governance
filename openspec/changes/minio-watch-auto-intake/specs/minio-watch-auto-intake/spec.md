@@ -4,7 +4,9 @@
 
 ### Requirement: coordinator SHALL 以輪詢自動偵測 MinIO 新 IFC 並觸發既有 intake 鏈（O4 定案）
 
-watcher SHALL 為 env opt-in（`MINIO_WATCH_ENABLED` 預設 false，未啟用時系統行為與無此功能完全一致）。啟用時 SHALL 以 `ListObjectsV2`（含 `IsTruncated`/`NextContinuationToken` 分頁）定時輪詢指定 bucket/prefix，僅對 key 以設定後綴（預設 `/model.ifc`）結尾者反應。首輪 SHALL 只登記 baseline 不觸發；後續輪的新 key 或同 key 新 etag SHALL 觸發對 loopback `POST /api/external/ifc-ready`（帶既有 webhook secret 與 presigned GET URL），由既有下載/sanitize/dispatch/callback 鏈處理。idempotency key SHALL 由 `bucket|key|etag` 確定性導出，重啟重掃同物件 SHALL 命中既有去重（idempotent_replay，不重複建 job）。輪詢間隔 SHALL 受下限保護且下限 SHALL 在 config overrides 合併後仍生效。
+watcher SHALL 為 env opt-in（`MINIO_WATCH_ENABLED` 預設 false，未啟用時系統行為與無此功能完全一致）。啟用時 SHALL 以 `ListObjectsV2`（含 `IsTruncated`/`NextContinuationToken` 分頁）定時輪詢指定 bucket/prefix，僅對 key 以設定後綴（預設 `/model.ifc`）結尾者反應。首輪 SHALL 只登記 baseline 不觸發；後續輪的新 key 或同 key 新 etag SHALL 觸發對 loopback `POST /api/external/ifc-ready`（帶既有 webhook secret 與 presigned GET URL），由既有下載/sanitize/dispatch/callback 鏈處理。idempotency key SHALL 由 `bucket|key|etag` 確定性導出，重啟重掃同物件 SHALL 命中既有去重（idempotent_replay，不重複建 job）。輪詢間隔 SHALL 受下限保護且下限 SHALL 在 config overrides 合併後仍生效。單一物件的 intake 觸發失敗（presign / 網路 / 逾時 / HTTP error / 2xx 非 JSON）SHALL NOT 將該物件標記為已處理，watcher SHALL 於後續輪重試（漏抓自癒）；key 層級不符（malformed）為確定性結果，SHALL 計數一次後跳過、不重試。非空 `MINIO_WATCH_PREFIX` SHALL 於 config 層 normalize 為以 `/` 結尾（含 overrides 合併後），避免 boundary-misaligned prefix 造成整批靜默 skip。
+
+已知限制（v1 刻意取捨，review 揭露）：seen 狀態為 in-memory、不持久化；coordinator 重啟後首輪重建 baseline，**停機期間**新上傳的物件會被 baseline 吸收而不自動觸發（補救路徑：既有手動 webhook intake，或重新上傳使 etag 改變）。持久化 watermark 須與 intake 去重索引（同為 in-memory）一併設計，否則重啟後逕行全量觸發會重複建 job — 屬後續 change（與 bucket event 低延遲升級路同列）。
 
 #### Scenario: 新物件自動觸發（不碰任何按鈕）
 
@@ -21,6 +23,12 @@ watcher SHALL 為 env opt-in（`MINIO_WATCH_ENABLED` 預設 false，未啟用時
 
 - **WHEN** coordinator 重啟後 watcher 重掃到曾觸發過的同 key 同 etag 物件
 - **THEN** intake SHALL 回 idempotent replay（同一 job），SHALL NOT 重複建 job 或重複派工
+
+#### Scenario: intake 暫時性失敗自癒重試
+
+- **WHEN** 某新物件的 loopback intake POST 因暫時性原因失敗（presign 失敗 / 網路錯誤 / 逾時 / HTTP error / 2xx 非 JSON）
+- **THEN** watcher SHALL NOT 將該物件標記為已處理，SHALL 於後續輪重試直到成功
+- **AND** 重試若命中既有去重 SHALL 視為觸發成功（idempotent_replay，不重複建 job）
 
 ### Requirement: watcher SHALL 具備安全防護且狀態對 operator 誠實可見
 

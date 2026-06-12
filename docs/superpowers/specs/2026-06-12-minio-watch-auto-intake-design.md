@@ -75,8 +75,9 @@ watcher（每 60s）`ListObjectsV2` → 新 `*/model.ifc` → presigned URL + �
 | 情境 | 行為 |
 |---|---|
 | MinIO 不可達 / credentials 錯 | 該輪記 last_error 放棄，下輪重試；watcher Panel 可見錯誤 |
+| 單一物件 intake POST 失敗（presign / 網路 / 逾時 / HTTP error / 2xx 非 JSON） | 不標 seen，下輪重試（自癒，Codex review P1 修復）；錯誤記 last_triggered 可於 Panel 看到。重試命中既有去重回 idempotent_replay，不重複建 job |
 | 同物件重複觸發（重啟重掃） | idempotency key 確定性 → 既有去重回 idempotent_replay，不重複建 job |
-| key 層級不符規約 | skip + `skipped_malformed` 計數 |
+| key 層級不符規約 | skip + `skipped_malformed` 計數（確定性結果，計一次後不重試） |
 | presigned URL 過期才被下載 | 既有 intake 下載失敗路徑（download_failure 欄位），watcher 不重送（下輪 etag 未變不再觸發；操作者可從 `#/conv` 看到失敗 job） |
 | watcher 未啟用 | 一切如現狀；status API 回 enabled=false |
 
@@ -97,7 +98,7 @@ watcher（每 60s）`ListObjectsV2` → 新 `*/model.ifc` → presigned URL + �
 ## 7. 風險與緩解
 
 - **新 production dependency（@aws-sdk/client-s3）**：理由如 §4.1；鎖唯讀兩 API 面，PR body 揭露。
-- **in-memory seen 的記憶體上限**：bucket 867 objects 量級無虞；不做持久化（idempotency 鏈已保證重啟正確性）。
+- **in-memory seen 與重啟語意**：bucket 867 objects 量級記憶體無虞；不做持久化。idempotency 鏈保證的是「重掃**已觸發過**的物件不重複建 job」；**已知限制（Codex review 揭露）**：coordinator 停機期間上傳的物件會在重啟後被首輪 baseline 吸收而不自動觸發（補救：既有手動 webhook intake，或重新上傳使 etag 改變）。持久化 watermark 須與 intake 去重索引（同為 in-memory）一併設計，否則重啟後逕行全量觸發會對既有物件重複建 job — 屬後續 change。
 - **presigned URL 含簽章（敏感）**：不寫入 watcher status/log（last_triggered 只記 key 不記 URL）。
 - **與外部 IFC worker 並存**：同物件若 worker 也 POST（不同 idempotency key）會建第二筆 job — 屬部署拓樸決策（要嘛 worker 退役要嘛 watcher 不開），spec 揭露不在 code 層擋。
 - **credentials 安全**：env only；`.env.example` 加空欄位；deny 規則禁讀 .env 實值（agent 不碰）。

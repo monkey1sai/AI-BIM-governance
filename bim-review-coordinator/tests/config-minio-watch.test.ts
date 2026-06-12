@@ -101,4 +101,22 @@ describe("loadConfig MinIO watch fields", () => {
     expect(c.minioWatchEnabled).toBe(true);
     expect(c.minioWatchBucket).toBe("ov-bucket");
   });
+
+  it("非空 MINIO_WATCH_PREFIX 無尾斜線 → normalize 補 '/'（防 derive 整批靜默拒收）", () => {
+    // deriveIntakeFromKey 對非 boundary-aligned prefix fail-fast；config 層 normalize 讓
+    // operator 設 `tenant_a` 也得到預期行為，而非列得到物件卻全數 skipped_malformed。
+    process.env.MINIO_WATCH_PREFIX = "tenant_a";
+    expect(loadConfig().minioWatchPrefix).toBe("tenant_a/");
+    // 已帶尾斜線者不重複加
+    process.env.MINIO_WATCH_PREFIX = "tenant_b/";
+    expect(loadConfig().minioWatchPrefix).toBe("tenant_b/");
+    // 空字串保持空（= watch 全 bucket），不得被 normalize 成 "/"
+    delete process.env.MINIO_WATCH_PREFIX;
+    expect(loadConfig().minioWatchPrefix).toBe("");
+  });
+
+  it("overrides 的 prefix 也被 normalize（與 interval floor 同理，合併後生效）", () => {
+    expect(loadConfig({ minioWatchPrefix: "ov_tenant" }).minioWatchPrefix).toBe("ov_tenant/");
+    expect(loadConfig({ minioWatchPrefix: "" }).minioWatchPrefix).toBe("");
+  });
 });

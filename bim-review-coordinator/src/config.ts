@@ -419,5 +419,14 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   // 否則 loadConfig({minioWatchIntervalSeconds: 3}) 會繞過 env 路徑的 Math.max。
   // 預設 floor=10；唯一降檔入口為 MINIO_WATCH_INTERVAL_FLOOR_SECONDS（見上方註解）。
   merged.minioWatchIntervalSeconds = Math.max(minioWatchIntervalFloor, merged.minioWatchIntervalSeconds);
+  // 非空 watch prefix normalize 為以 '/' 結尾（Codex review P2 修復）：deriveIntakeFromKey
+  // 對非 boundary-aligned prefix 一律 fail-fast 拒收（防 `89` startsWith 命中 `899/...` 的
+  // 靜默污染）。若 operator 設 `MINIO_WATCH_PREFIX=tenant_a`（無尾斜線）原值直通，watcher
+  // 列得到物件卻全數 skipped_malformed（靜默無作為）。與 interval floor 同理：必須在
+  // overrides 合併後 normalize，否則 loadConfig({minioWatchPrefix:"x"}) 繞過 env 路徑。
+  // 空字串保持空（= watch 全 bucket）。
+  if (merged.minioWatchPrefix && !merged.minioWatchPrefix.endsWith("/")) {
+    merged.minioWatchPrefix = `${merged.minioWatchPrefix}/`;
+  }
   return merged;
 }

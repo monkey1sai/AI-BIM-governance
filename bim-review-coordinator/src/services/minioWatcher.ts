@@ -239,11 +239,22 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
     return out;
   }
 
-  async function triggerIntake(key: string, etag: string): Promise<void> {
+  // triggerIntake 回傳三態（Codex review P1 修復）：呼叫端（tick）據此決定是否把物件標進 seen。
+  // - "triggered"：intake 成功（含 idempotent_replay）→ 標 seen，之後同 etag 不再觸發。
+  // - "skip_permanent"：key 層級不符（malformed）→ 確定性結果，重試恆同果 → 標 seen，
+  //   只計數一次（避免每輪重 derive 灌水 skipped_malformed_total）。
+  // - "fail_transient"：presign / 網路 / 逾時 / HTTP error / 2xx 非 JSON → 不標 seen，
+  //   下輪重試（自癒）。重試時 idempotency key 由 bucket|key|etag 確定性導出：若前次 POST
+  //   其實已被 store 收下（如回應在途中斷線），重試會命中既有去重回 idempotent_replay，
+  //   不重複建 job。HTTP 4xx 也視為 transient：寧可按輪詢間隔反覆重試並在 last_triggered
+  //   留下可見錯誤，不可靜默放棄物件（interval floor 保證重試頻率有界）。
+  type TriggerOutcome = "triggered" | "skip_permanent" | "fail_transient";
+
+  async function triggerIntake(key: string, etag: string): Promise<TriggerOutcome> {
     const derived = deriveIntakeFromKey({ key, prefix: opts.prefix, keySuffix: opts.keySuffix });
     if (!derived.ok) {
       status.skipped_malformed_total += 1;
-      return;
+      return "skip_permanent";
     }
     // presign 失敗（credentials 失效 / client 已銷毀 / SDK 內部錯）只屬「此物件」失敗：
     // 記入 recordTriggered 後 return，與下方 fetch try/catch 對等。不可讓例外向上浮到
@@ -257,7 +268,7 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       );
     } catch (err) {
       recordTriggered(key, null, `presign failed: ${err instanceof Error ? err.message : String(err)}`);
-      return;
+      return "fail_transient";
     }
     const idemKey = idempotencyKeyFor(opts.bucket, key, etag);
     const corrId = correlationIdFor(opts.bucket, key, etag);
@@ -292,13 +303,16 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       const text = await resp.text();
       if (resp.status >= 400) {
         recordTriggered(key, null, `intake ${resp.status}: ${text.slice(0, 120)}`);
-      } else {
-        const parsed = JSON.parse(text || "{}") as { ifc_ready_job_id?: string };
-        status.triggered_total += 1; // idempotent_replay 也計為觸發（誠實統計），不重複建 job 由 store 保證
-        recordTriggered(key, parsed.ifc_ready_job_id ?? null, null);
+        return "fail_transient";
       }
+      // JSON.parse 失敗（2xx 但非 JSON，如代理錯誤頁）會 throw 進下方 catch → fail_transient。
+      const parsed = JSON.parse(text || "{}") as { ifc_ready_job_id?: string };
+      status.triggered_total += 1; // idempotent_replay 也計為觸發（誠實統計），不重複建 job 由 store 保證
+      recordTriggered(key, parsed.ifc_ready_job_id ?? null, null);
+      return "triggered";
     } catch (err) {
       recordTriggered(key, null, err instanceof Error ? err.message : String(err));
+      return "fail_transient";
     }
   }
 
@@ -317,8 +331,11 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
         for (const o of objects) {
           const prev = seen.get(o.key);
           if (prev === o.etag) continue; // 同 key 同 etag → 不觸發
-          seen.set(o.key, o.etag);
-          await triggerIntake(o.key, o.etag);
+          const outcome = await triggerIntake(o.key, o.etag);
+          // 自癒語意（Codex review P1 修復）：只有成功觸發或永久性 skip（malformed）才標 seen。
+          // 暫時性失敗不標 → 下輪重試。舊行為（先標 seen 再觸發）會讓一次 presign/網路/5xx
+          // 失敗永久吞掉該物件，與「每輪全量對帳漏抓自癒」的設計宣稱矛盾。
+          if (outcome !== "fail_transient") seen.set(o.key, o.etag);
         }
       }
       status.seen_count = seen.size;

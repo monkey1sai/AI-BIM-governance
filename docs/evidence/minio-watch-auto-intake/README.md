@@ -1,8 +1,8 @@
 # minio-watch-auto-intake — E2E Evidence
 
 - 文件性質：working note（驗收證據；非 contract / 非 runbook）。與實作衝突時以程式碼與 `openspec/specs/` 為準。
-- 設計 / plan：`docs/superpowers/plans/2026-06-12-minio-watch-auto-intake.md`（O4 觸發機制 B 案：輪詢 ListObjectsV2；
-  plan 內以 spec §3 / §4.1 / §7 inline 載明設計，本 branch 無獨立 `*-design.md` 檔，design 權威即此 plan）。
+- 設計 spec：`docs/superpowers/specs/2026-06-12-minio-watch-auto-intake-design.md`（O4 觸發機制 B 案：輪詢
+  ListObjectsV2；隨本 branch 入庫）；plan：`docs/superpowers/plans/2026-06-12-minio-watch-auto-intake.md`。
 - E2E spec：`web-viewer-sample/e2e/minio-watch-auto-intake.spec.ts`
 
 ## 驗收標記（誠實鐵律）
@@ -42,6 +42,16 @@
 - 截圖落 `artifacts/e2e/minio-watch-auto-intake-conv.png`（fullPage，~150 KB），三個 Panel（Pipeline /
   MinIO 自動偵測 / Ifc-ready jobs）皆渲染。
 
+## 已知限制（review 揭露，誠實鐵律）
+
+- **coordinator 停機期間上傳的物件不會在重啟後自動補觸發**：seen 為 in-memory，重啟後首輪重建
+  baseline 會把停機期間的新物件一併吸收（補救：既有手動 webhook intake，或重新上傳使 etag 改變）。
+  詳見 design spec §7 與 openspec delta「已知限制」段。
+- 單一物件 intake POST 暫時性失敗（presign / 網路 / 逾時 / HTTP error）不標 seen、下輪自動重試
+  （自癒；Codex review P1 修復後語意）。
+
 ## 截圖
 
-- `artifacts/e2e/minio-watch-auto-intake-conv.png`（gitignored artifacts 區；本檔記錄產生路徑與內容）。
+- tracked 入庫副本：`docs/evidence/minio-watch-auto-intake/minio-watch-auto-intake-conv.png`
+  （隨 PR 可審；`minio-watch-auto-intake-summary.json` 為對應 run summary）。
+- produced 原始路徑：`artifacts/e2e/minio-watch-auto-intake-conv.png`（gitignored artifacts 區）。

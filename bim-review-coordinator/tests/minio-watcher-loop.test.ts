@@ -360,8 +360,9 @@ describe("minioWatcher loop", () => {
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
-    // intake 確實收到 POST（202），但回 HTML；watcher 不得把它計為成功觸發
-    await waitFor(() => received.length === 1);
+    // intake 確實收到 POST（202），但回 HTML；watcher 不得把它計為成功觸發。
+    // 自癒語意下失敗物件每輪重試 → received 會持續累積，不可斷言恰好 1 筆（exact 會 flaky）。
+    await waitFor(() => received.length >= 1);
     await waitFor(() => watcher!.getStatus().last_triggered.length >= 1);
 
     const st = watcher!.getStatus();
@@ -400,6 +401,55 @@ describe("minioWatcher loop", () => {
     // （改用單調計數，不依賴 last_poll_at 時間戳的毫秒解析度，消除同毫秒 false-negative）。
     const pollCountAfterTrigger = watcher!.getStatus().poll_count as number;
     await waitFor(() => (watcher!.getStatus().poll_count as number) > pollCountAfterTrigger, 5000);
+  });
+
+  it("intake 暫時性失敗（5xx）→ 物件不標 seen、下輪重試，成功後鎖定不再重送（自癒）", async () => {
+    // Codex review P1 修復鎖定：舊行為在 triggerIntake 前就 seen.set，一次 5xx/網路失敗會讓
+    // 該物件之後每輪都命中 prev===etag 永不重試（與「漏抓自癒」宣稱矛盾）。
+    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ status: number }> = [];
+    let failRemaining = 1; // 第一筆回 500，之後回 202 成功
+    intakeStub = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        if (failRemaining > 0) {
+          failRemaining -= 1;
+          received.push({ status: 500 });
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "transient" }));
+          return;
+        }
+        received.push({ status: 202 });
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ifc_ready_job_id: "ifcready_retry_ok", idempotent_replay: false }));
+      });
+    });
+    await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+    const a = intakeStub!.address();
+    if (!a || typeof a === "string") throw new Error("intake stub bind");
+    const selfBase = `http://127.0.0.1:${a.port}`;
+    const s3Base = await startS3Stub(state);
+    watcher = makeWatcher(s3Base, selfBase, state);
+
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
+    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+
+    // 第一輪觸發吃到 500 → 不標 seen；下一輪重試吃到 202 → triggered_total=1。
+    await waitFor(() => watcher!.getStatus().triggered_total === 1, 5000);
+    expect(received.length).toBeGreaterThanOrEqual(2); // 至少一次失敗 + 一次成功 = 確實重試過
+    expect(received[0].status).toBe(500);
+    expect(received[received.length - 1].status).toBe(202);
+    const st = watcher!.getStatus();
+    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.job_id).toBe("ifcready_retry_ok");
+    expect(st.last_triggered[0]?.error).toBeNull();
+
+    // 成功後 seen 鎖定：再跑幾輪不得重送（received 長度穩定）。
+    const lenAfterSuccess = received.length;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(received.length).toBe(lenAfterSuccess);
+    expect(watcher!.getStatus().triggered_total).toBe(1);
   });
 
   it("重啟（新 watcher 實例、同 store）重掃同 key 同 etag → idempotent_replay 仍計觸發且 job_id 相同", async () => {
