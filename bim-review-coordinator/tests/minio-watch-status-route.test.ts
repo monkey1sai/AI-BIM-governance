@@ -32,6 +32,27 @@ function makeApp(overrides = {}): CoordinatorApp {
   return active;
 }
 
+// 輪詢 status endpoint 直到 predicate 成立（或逾時 throw）。watcher 首輪是
+// setTimeout(runTick, 0)，請求可能早於首輪 tick 完成；用此等到 tick 真的跑過、
+// 把錯誤寫進 last_error 後再斷言，否則 toHaveProperty 在 last_error 仍為 null 時
+// 同樣通過（只驗 key 存在不驗非空值），無法證明錯誤已被 watcher 捕捉。
+async function getStatusUntil(
+  app: CoordinatorApp,
+  predicate: (body: Record<string, unknown>) => boolean,
+  ms = 3000,
+): Promise<request.Response> {
+  const end = Date.now() + ms;
+  let last: request.Response | null = null;
+  while (Date.now() < end) {
+    last = await request(app.app).get("/api/external/minio-watch/status");
+    if (predicate(last.body as Record<string, unknown>)) return last;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(
+    `getStatusUntil timeout; last body = ${JSON.stringify(last?.body)}`,
+  );
+}
+
 describe("GET /api/external/minio-watch/status", () => {
   it("watcher 關閉（預設）→ enabled=false，不洩漏 credentials", async () => {
     const app = makeApp();
@@ -67,5 +88,18 @@ describe("GET /api/external/minio-watch/status", () => {
     // credentials 仍不得出現
     expect(res.body.secret_key).toBeUndefined();
     expect(res.body.access_key).toBeUndefined();
+
+    // 真正證明 last_error 是「被捕捉到的錯誤」而非僅存在欄位：等到首輪 tick（list
+    // 對不可達 127.0.0.1:1）失敗把錯誤寫進 last_error，再斷言其值含 ECONNREFUSED。
+    // 不加此輪詢時，請求可能早於 setTimeout(runTick, 0) 完成，last_error 仍為 null，
+    // 上面的 toHaveProperty 仍會通過——這正是先前的 test lie。
+    const errRes = await getStatusUntil(
+      app,
+      (body) => body.last_error != null,
+    );
+    expect(String(errRes.body.last_error)).toMatch(/ECONNREFUSED/);
+    // 即使 tick 失敗，仍不得洩漏 credentials
+    expect(errRes.body.secret_key).toBeUndefined();
+    expect(errRes.body.access_key).toBeUndefined();
   });
 });

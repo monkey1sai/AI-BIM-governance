@@ -394,7 +394,10 @@ describe("minioWatcher loop", () => {
     // 模擬重啟：dispose 舊 watcher（清掉 in-memory seen）。為讓新實例「重新看見」988 為
     // 增量（而非吞進新 baseline 永不觸發），先移除 988 → 新 watcher baseline 不含它，再加回
     // 同 key 同 etag。新 watcher 對它發 intake，store 以確定性 idempotency key 去重回 replay。
-    watcher.dispose();
+    // 必須 await：dispose 為 async（await in-flight tick settle）。若不等就改 state.objs
+    // 並建新 watcher，舊 watcher 50ms 輪詢的 in-flight tick 可能在 state 變更後才打到
+    // stub，多發一筆 intake 讓 received 累積到第 3 筆，打亂下方「恰好 2 筆」斷言而 flaky。
+    await watcher.dispose();
     state.objs = [{ key: "899/xxx/model.ifc", etag: "e1" }];
     watcher = makeWatcher(s3Base, selfBase, state);
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
