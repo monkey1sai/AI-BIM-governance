@@ -166,6 +166,34 @@ function makeWatcher(
 }
 
 describe("minioWatcher loop", () => {
+  it("ListObjectsV2 分頁：IsTruncated=true → 帶 continuation-token 取次頁，兩頁物件皆入 baseline", async () => {
+    // 鎖 minioWatcher 的 continuation 迴圈（其餘測試 stub 皆單頁，此分支否則永不執行）。
+    const tokenRequests: string[] = [];
+    s3Stub = http.createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://x");
+      const token = url.searchParams.get("continuation-token");
+      tokenRequests.push(token ?? "(first)");
+      res.writeHead(200, { "Content-Type": "application/xml" });
+      if (!token) {
+        res.end('<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>true</IsTruncated><NextContinuationToken>tok2</NextContinuationToken><Contents><Key>899/p1/model.ifc</Key><ETag>&quot;pe1&quot;</ETag><Size>10</Size></Contents></ListBucketResult>');
+      } else {
+        res.end('<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>false</IsTruncated><Contents><Key>900/p2/model.ifc</Key><ETag>&quot;pe2&quot;</ETag><Size>10</Size></Contents></ListBucketResult>');
+      }
+    });
+    await new Promise<void>((r) => s3Stub!.listen(0, "127.0.0.1", () => r()));
+    const a = s3Stub!.address();
+    if (!a || typeof a === "string") throw new Error("s3 stub bind");
+    const s3Base = `http://127.0.0.1:${a.port}`;
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    watcher = makeWatcher(s3Base, selfBase, { objs: [] });
+
+    // 兩頁皆入 baseline = continuation 真的走到第二頁。
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 2);
+    expect(tokenRequests).toContain("(first)");
+    expect(tokenRequests).toContain("tok2");
+  });
+
   it("首輪 baseline 不觸發（seen=N、triggered=0）", async () => {
     const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }, { key: "900/yyy/model.ifc", etag: "e2" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];

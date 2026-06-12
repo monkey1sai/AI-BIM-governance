@@ -65,7 +65,7 @@ describe(".env.example MINIO_WATCH_* parity（IMPORTANT — deploy-time missing-
     expect(missing).toEqual([]);
   });
 
-  it("MINIO_WATCH_TENANT_ID 必須存在且為空值（不給預設值，逼操作員顯式設定避免靜默帶錯 tenant）", () => {
+  it("MINIO_WATCH_TENANT_ID 必須存在且為空值（.env.example 不帶值；config 未設時回退 tenant_demo_001 為 spec 既定行為，運維切 tenant 須顯式設定）", () => {
     // 缺漏即 deploy missing-key merge 失效；給預設值則操作員可能誤以為不必設定。
     expect(declaredKeys.has("MINIO_WATCH_TENANT_ID")).toBe(true);
     const tenantLine = envExampleText
