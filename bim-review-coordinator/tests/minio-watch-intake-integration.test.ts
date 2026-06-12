@@ -17,12 +17,19 @@ afterEach(async () => {
     watcher = null;
   }
   if (active) {
-    active.dispose();
+    // dispose() 回 Promise（內部 await minioWatcher.dispose() 讓 in-flight S3 SDK 請求 settle
+    // 後才 client.destroy()）；fire-and-forget 會在特定負載下於 server.close() 之前非同步嘗試
+    // destroy client → unhandled rejection / 競態。對齊 auto-poll-conversion.test.ts 的 await。
+    await active.dispose();
     active.io.close();
     await new Promise<void>((r) => active?.server.close(() => r()));
     active = null;
   }
   if (s3Stub) {
+    // watcher 以 keep-alive 對 s3Stub 發 ListObjectsV2；watcher.dispose() 後 socket pool 內仍可能
+    // 殘留 keep-alive 連線。http.Server.close() 只在所有連線關閉後才回 callback，殘留連線會讓
+    // afterEach 卡到 hook timeout。對齊 minio-watcher-loop.test.ts：先強制斷連再 close。
+    s3Stub.closeAllConnections?.();
     await new Promise<void>((r) => s3Stub?.close(() => r()));
     s3Stub = null;
   }
@@ -118,19 +125,43 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
     // 新增物件 → watcher 下一輪觸發 intake（真 coordinator 真 store）
     state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
 
-    // job 進 store：GET /api/external/ifc-ready 出現 project_id=988
-    await waitFor(async () => {
-      const r = await request(active!.app).get("/api/external/ifc-ready?limit=50");
-      return (r.body.items as Array<{ project_id: string }>).some((j) => j.project_id === "988");
-    });
+    interface IfcReadyListJob {
+      project_id: string;
+      external_model_version_id: string;
+      download_status: string | null;
+      source_ifc_ref: string | null;
+      source_ifc_etag: string | null;
+    }
+    const fetch988 = async (): Promise<IfcReadyListJob | undefined> => {
+      const list = await request(active!.app).get("/api/external/ifc-ready?limit=50");
+      return (list.body.items as IfcReadyListJob[]).find((j) => j.project_id === "988");
+    };
 
-    const list = await request(active!.app).get("/api/external/ifc-ready?limit=50");
-    const job = (list.body.items as Array<{ project_id: string; external_model_version_id: string }>).find(
-      (j) => j.project_id === "988",
-    );
+    // spec §6.1：不只驗 job 存在，須證「watcher → 真 intake → store」端到端鏈正確。
+    // (1) download_status 須 waitFor 終態（此 wait 亦涵蓋「job 進 store」，故不另設前置 wait）：
+    //     intake route 在 create 之後、await downloadIfcToSharedVolume 之前即 markDownloading 讓
+    //     job 即 list-visible（與下方 triggered_total race 同源），同步讀會偶見 'downloading'。
+    //     ifcDownloadStrict=false 且 s3Stub 對 presigned GET 回 200 → markDownloaded → 'downloaded'。
+    await waitFor(async () => (await fetch988())?.download_status === "downloaded");
+    const job = await fetch988();
     expect(job).toBeTruthy();
     expect(job!.external_model_version_id).toBe("zzz");
     expect(port).toBeGreaterThan(0);
+    expect(job!.download_status).not.toBe("failed");
+    expect(job!.download_status).toBe("downloaded");
+    // (2) presigned source URL 含 SigV4 簽章參數（watcher 真的簽了 GET URL，非裸 key 拼接）。
+    expect(job!.source_ifc_ref).toMatch(/X-Amz-Signature=/);
+    expect(job!.source_ifc_ref).toContain("988/zzz/model.ifc");
+    // (3) etag 由 watcher 自 ListObjectsV2 帶入並落到 store（端到端透傳，非預設值）。
+    expect(job!.source_ifc_etag).toBe("e9");
+
+    // (4) watcher 端 last_triggered 記錄此 key 成功（job_id 有值、error 為 null），確認
+    //     intake 鏈未在 watcher 端報錯（與「job 進 store」互為兩端佐證）。
+    await waitFor(() => watcher!.getStatus().last_triggered.some((t) => t.key === "988/zzz/model.ifc"));
+    const triggered = watcher!.getStatus().last_triggered.find((t) => t.key === "988/zzz/model.ifc");
+    expect(triggered).toBeTruthy();
+    expect(triggered!.error).toBeNull();
+    expect(triggered!.job_id).toBeTruthy();
 
     // triggered_total 必須用 waitFor 而非同步斷言：coordinator 在 store.create 之後、
     // fetch 回應之前即把 job 寫入 store，故上面「job 進 store」可能先於 watcher 的
