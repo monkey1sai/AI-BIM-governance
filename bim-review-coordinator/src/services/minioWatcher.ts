@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /**
  * minio-watch-auto-intake（O4 B 案）純函式核心：MinIO object key → intake 欄位導出、
@@ -89,5 +91,193 @@ export function deriveIntakeFromKey(input: {
     projectId,
     externalModelVersionId,
     sourceEtagFrom: stripEtagQuotes,
+  };
+}
+
+// 最小 structLog 介面（避免 import app 造成循環依賴；app 傳入真 logger）。
+// withTraceId 為 optional：watcher 內部只呼叫 anomaly()，但真實 StructuredLogger 含
+// withTraceId — 測試樁與真 logger 都能不靠 as never 直接滿足此介面。
+interface WatcherLogger {
+  anomaly: (op: string, msg: string, fields: Record<string, unknown>) => void;
+  withTraceId?: (id: string) => { anomaly: WatcherLogger["anomaly"] };
+}
+
+export interface MinioWatcherOptions {
+  endpoint: string;
+  bucket: string;
+  prefix: string;
+  accessKey: string;
+  secretKey: string;
+  keySuffix: string;
+  intervalSeconds: number;
+  selfBaseUrl: string;       // loopback intake base，如 http://127.0.0.1:8004
+  webhookSecret: string;
+  structLog: WatcherLogger;
+}
+
+export interface MinioWatcherHandle {
+  dispose: () => void;
+  getStatus: () => MinioWatcherStatus;
+}
+
+export interface MinioWatcherStatus {
+  enabled: true;
+  bucket: string;
+  prefix: string;
+  interval_seconds: number;
+  last_poll_at: string | null;
+  last_error: string | null;
+  baseline_count: number | null;
+  seen_count: number;
+  triggered_total: number;
+  skipped_malformed_total: number;
+  last_triggered: Array<{ key: string; job_id: string | null; error: string | null; at: string }>;
+}
+
+export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle {
+  const client = new S3Client({
+    endpoint: opts.endpoint,
+    region: "us-east-1",
+    forcePathStyle: true, // MinIO 必要（path-style addressing）
+    credentials: { accessKeyId: opts.accessKey, secretAccessKey: opts.secretKey },
+  });
+
+  const seen = new Map<string, string>(); // key → etag
+  const status: MinioWatcherStatus = {
+    enabled: true,
+    bucket: opts.bucket,
+    prefix: opts.prefix,
+    interval_seconds: opts.intervalSeconds,
+    last_poll_at: null,
+    last_error: null,
+    baseline_count: null,
+    seen_count: 0,
+    triggered_total: 0,
+    skipped_malformed_total: 0,
+    last_triggered: [],
+  };
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  let isFirstRound = true;
+
+  function recordTriggered(key: string, jobId: string | null, error: string | null): void {
+    status.last_triggered.unshift({ key, job_id: jobId, error, at: new Date().toISOString() });
+    status.last_triggered = status.last_triggered.slice(0, 5);
+  }
+
+  async function listAllKeys(): Promise<Array<{ key: string; etag: string }>> {
+    const out: Array<{ key: string; etag: string }> = [];
+    let continuationToken: string | undefined;
+    do {
+      const resp = await client.send(
+        new ListObjectsV2Command({
+          Bucket: opts.bucket,
+          Prefix: opts.prefix || undefined,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const obj of resp.Contents ?? []) {
+        if (obj.Key) out.push({ key: obj.Key, etag: obj.ETag ?? "" });
+      }
+      continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return out;
+  }
+
+  async function triggerIntake(key: string, etag: string): Promise<void> {
+    const derived = deriveIntakeFromKey({ key, prefix: opts.prefix, keySuffix: opts.keySuffix });
+    if (!derived.ok) {
+      status.skipped_malformed_total += 1;
+      return;
+    }
+    const presignedRef = await getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: opts.bucket, Key: key }),
+      { expiresIn: 3600 },
+    );
+    const idemKey = idempotencyKeyFor(opts.bucket, key, etag);
+    const corrId = correlationIdFor(opts.bucket, key, etag);
+    const etagShort = derived.sourceEtagFrom(etag).slice(0, 8);
+    const body = {
+      event: "ifc_ready",
+      tenant_id: "tenant_demo_001",
+      project_id: derived.projectId,
+      external_model_version_id: derived.externalModelVersionId,
+      external_conversion_task_id: `${derived.externalModelVersionId}_mw_${etagShort}`,
+      source_ifc: {
+        ref: presignedRef,
+        etag: derived.sourceEtagFrom(etag),
+        filename: "model.ifc",
+        format: "ifc",
+      },
+      requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
+    };
+    try {
+      const resp = await fetch(`${opts.selfBaseUrl}/api/external/ifc-ready`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Webhook-Secret": opts.webhookSecret,
+          "X-Correlation-Id": corrId,
+          "X-Idempotency-Key": idemKey,
+        },
+        body: JSON.stringify(body),
+      });
+      const text = await resp.text();
+      if (resp.status >= 400) {
+        recordTriggered(key, null, `intake ${resp.status}: ${text.slice(0, 120)}`);
+      } else {
+        const parsed = JSON.parse(text || "{}") as { ifc_ready_job_id?: string };
+        status.triggered_total += 1; // idempotent_replay 也計為觸發（誠實統計），不重複建 job 由 store 保證
+        recordTriggered(key, parsed.ifc_ready_job_id ?? null, null);
+      }
+    } catch (err) {
+      recordTriggered(key, null, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function tick(): Promise<void> {
+    if (stopped) return;
+    try {
+      const objects = (await listAllKeys()).filter((o) => o.key.endsWith(opts.keySuffix));
+      status.last_poll_at = new Date().toISOString();
+      status.last_error = null;
+      if (isFirstRound) {
+        for (const o of objects) seen.set(o.key, o.etag);
+        status.baseline_count = seen.size;
+        isFirstRound = false;
+      } else {
+        for (const o of objects) {
+          const prev = seen.get(o.key);
+          if (prev === o.etag) continue; // 同 key 同 etag → 不觸發
+          seen.set(o.key, o.etag);
+          await triggerIntake(o.key, o.etag);
+        }
+      }
+      status.seen_count = seen.size;
+    } catch (err) {
+      status.last_error = err instanceof Error ? err.message : String(err);
+      opts.structLog.anomaly("minioWatch", "minio watch tick failed", {
+        anomaly_kind: "retry",
+        reason: status.last_error,
+        bucket: opts.bucket,
+      });
+    } finally {
+      if (!stopped) timer = setTimeout(() => void tick(), opts.intervalSeconds * 1000);
+    }
+  }
+
+  // 首輪立即跑（不等一個 interval）。
+  timer = setTimeout(() => void tick(), 0);
+
+  return {
+    dispose: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      client.destroy();
+    },
+    getStatus: () => ({ ...status, last_triggered: [...status.last_triggered] }),
   };
 }
