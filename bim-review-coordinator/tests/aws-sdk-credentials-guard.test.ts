@@ -32,7 +32,10 @@ describe("AWS SDK 顯式 credentials guard（IMPORTANT #1）", () => {
     "AWS_PROFILE",
     "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
     "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-  ];
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_ROLE_ARN",
+    "AWS_ROLE_SESSION_NAME",
+];
   const savedEnv = new Map<string, string | undefined>();
 
   // 隔離 ambient AWS env：否則 default chain 可能從 env 撈到值，讓哨兵等式失去鑑別力。
