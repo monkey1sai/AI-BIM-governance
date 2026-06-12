@@ -138,6 +138,12 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
       !fs.existsSync(path.join(CONSOLE_DIST_DIR, "index.html")),
       "dist-ui 未 build；先跑 `cd web-viewer-sample && npm run build:ui` 再執行本 spec。",
     );
+    // s3State 是模組頂層可變單例（L34），test 內以 push 注入 988（L224）會永久改動該物件。
+    // PW 1.60 的 --repeat-each 每輪 fresh-import 模組（已實測 moduleLoadId 每輪不同），故目前不跨輪洩漏；
+    // 但為避免「未來 PW 版本改為重用模組」或「本 describe 日後新增第二個 test」時，殘留的 988 被下一輪
+    // watcher 首掃當成 baseline（baseline_count≠1 且 triggered_total 卡 0 的靜默失敗），在守門之後顯式重置
+    // 回單一 baseline 物件，讓每次執行都從乾淨狀態起跑（defense-in-depth，與 L34 初值一致）。
+    s3State.objs = [{ key: "899/baseline/model.ifc", etag: "base1" }];
     const s3Port = await startS3Stub();
     const convPort = await startConvStub();
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-e2e-"));
