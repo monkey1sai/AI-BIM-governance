@@ -173,6 +173,8 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-flow-step { display:flex; align-items:center; gap:6px; border:1px solid var(--ec-line-2);
   border-radius:4px; padding:4px 9px; font-size:11px; color:var(--ec-fg-2); background:var(--ec-bg-3); }
 .ec-flow-step.active { border-color:var(--ec-grn); color:var(--ec-grn); }
+.ec-flow-step.done { border-color:#2e7d32; }
+.ec-flow-step.done .ec-flow-n { background:#2e7d32; }
 .ec-flow-step.p15 { border-style:dashed; color:var(--ec-vio); }
 .ec-flow-n { color:var(--ec-fg-4); }
 .ec-flow-arrow { color:var(--ec-fg-4); }

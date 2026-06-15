@@ -351,14 +351,13 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain("自動檢核");
     expect(a1).toContain("開 Issue");
     expect(a1).toContain("匯出 BCF");
-    expect(a1).toContain("governance-service :49102");
+    expect(a1).toContain("rule_run_id");
     expect(a1).toContain('data-testid="a1-real-ifc-slice"');
     expect(a1).toContain('data-testid="real-ifc-demo-control"');
-    expect(a1).toContain('data-testid="a1-rule-center-slice"');
-    expect(a1).toContain("A1 rule-run authority");
-    expect(a1).toContain("rule_run_id");
-    expect(a1).toContain("review_session_id");
-    expect(a1).toContain("viewer_url（/ui/open）");
+    expect(a1).toContain('data-testid="a1-step-run"');
+    expect(a1).toContain('data-testid="a1-step-issues"');
+    expect(a1).toContain('data-testid="a1-step-export"');
+    expect(a1).toContain("POST /api/governance/rule-runs");
 
     const viewer = renderToString(<ViewerPresentationPage />);
     expect(viewer).toContain("3D Viewer 呈現");

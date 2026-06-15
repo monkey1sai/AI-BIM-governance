@@ -1,7 +1,8 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
+import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
@@ -59,12 +60,19 @@ function MiniCard({ code, title, desc, prov = "asbuilt" }: { code: string; title
   );
 }
 
-function LifecycleStrip({ steps }: { steps: string[] }) {
+function LifecycleStrip({ steps, statuses }: { steps: string[]; statuses?: ("done" | "current" | "future")[] }) {
+  const cls = (i: number) => {
+    const st = statuses?.[i];
+    if (st === "done") return "done";
+    if (st === "current") return "active";
+    if (st === "future") return "";
+    return i === 0 ? "active" : "";
+  };
   return (
     <div className="ec-flow" style={{ margin: "8px 0 12px" }}>
       {steps.map((s, i) => (
         <span key={s} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span className={`ec-flow-step ${i === 0 ? "active" : ""}`}><span className="ec-flow-n">{i + 1}</span>{s}</span>
+          <span className={`ec-flow-step ${cls(i)}`}><span className="ec-flow-n">{i + 1}</span>{s}</span>
           {i < steps.length - 1 && <span className="ec-flow-arrow">→</span>}
         </span>
       ))}
@@ -188,50 +196,108 @@ export function OverviewPage() {
 }
 
 export function A1GovernanceWorkbenchPage() {
-  const rules = [
-    ["NAMING-STD-01", "命名規則", "passed"],
-    ["SPACE-CODE-02", "樓層 / 空間", "passed"],
-    ["CLASS-UNI-03", "分類碼缺漏", "failed"],
-    ["ARC-DOOR-REQ-001", "防火門 FireRating", "failed"],
-    ["LOD-LOI-REQ", "LOD / LOI 不足", "failed"],
-  ];
+  const [state, dispatch] = useReducer(a1Reducer, initialA1State);
+  const [pathInput, setPathInput] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc");
+  const [idsPath, setIdsPath] = useState("");
+  const ui = uiSteps(state);
+  const runId = state.run?.rule_run_id ?? null;
+
+  const doRun = useCallback(async () => {
+    if (!state.ifcPath) return;
+    dispatch({ type: "RUN" });
+    try {
+      const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: state.ifcPath, ids_path: idsPath || undefined });
+      let st: RuleRunStatus | null = null;
+      for (let i = 0; i < 60; i++) {
+        st = await governanceClient.getRuleRun(rule_run_id);
+        dispatch({ type: "RUN_PROGRESS", run: st });
+        if (st.status === "succeeded" || st.status === "failed") break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (st && st.status === "succeeded") {
+        const failed = await governanceClient.getResults(rule_run_id, "failed");
+        dispatch({ type: "RUN_DONE", run: st, failed });
+      } else {
+        dispatch({ type: "RUN_FAIL", error: st ? `rule-run ${st.status}` : "no status" });
+      }
+    } catch (e) {
+      dispatch({ type: "RUN_FAIL", error: String(e) });
+    }
+  }, [state.ifcPath, idsPath]);
+
+  const makeIssues = useCallback(async () => {
+    if (!runId) return;
+    try {
+      const { created } = await governanceClient.issuesFromRuleRun(runId);
+      dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
+    } catch { /* 後端離線：誠實不前進（不偽造 issued） */ }
+  }, [runId]);
+
+  const doExport = useCallback(async () => {
+    if (!runId) return;
+    try {
+      const res = await fetch(governanceClient.exportUrl(runId));
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = `rule-run-${runId}.xlsx`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      dispatch({ type: "EXPORT_OK" });
+    } catch { /* 誠實不前進 */ }
+  }, [runId]);
+
   return (
     <>
       <h1>A1 · 治理與模型檢核</h1>
-      <p className="ec-lead">上傳模型或選取已轉檔成功的 IFC/USDC，跑自動規則檢核，直接產生 Issue 與 BCF/Excel。規則檢核在 governance-service（CPU）完成；3D 高亮需 GPU viewport（依 review session 派發）。</p>
-      <Panel title="A1 五步引導式流程" sub="對齊 prototype：上傳 → 檢核 → 結果 → 開 Issue → 交付" prov="asbuilt">
-        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 BCF"]} />
-        <div className="ec-grid">
-          <MiniCard code="01" title="上傳 / 選取模型" desc="可選 storage fixture、ifc-ready job，或後續接大檔上傳；目前已存在真實 IFC fixture 與 rule-run 路徑。" prov="asbuilt" />
-          <MiniCard code="02" title="governance-service :49102" desc="A1 rule-run authority，經 coordinator /api/governance/* proxy 呼叫，不由 browser 直連內部服務。" prov="asbuilt" />
-          <MiniCard code="03" title="3D 高亮" desc="需 viewer DataChannel 與 usd_prim_path 對映；無 first frame / mapping 時不得宣稱已高亮。" prov="p1" />
+      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue 與 BCF/Excel。規則檢核在 governance-service（CPU）完成；3D 高亮需 GPU viewport（依 review session 派發，待建）。</p>
+
+      <Panel title="A1 五步引導式流程" sub="整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）" prov="asbuilt">
+        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 BCF"]} statuses={ui} />
+        <div className="ec-grid" style={{ marginBottom: 8 }}>
+          <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
+          <Field k="step" v={state.step} prov="asbuilt" />
+          {state.issueCount !== null && <Field k="已開 issue（artifact）" v={String(state.issueCount)} prov="asbuilt" />}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="ec-btn" data-testid="a1-step-path" style={{ minWidth: 420 }} value={pathInput}
+            onChange={(e) => setPathInput(e.target.value)} />
+          <Btn data-testid="a1-step-pick" caption="鎖定此模型路徑（進入步驟2）" onClick={() => dispatch({ type: "PICK_FILE", ifcPath: pathInput })}>選取模型</Btn>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+          <input className="ec-btn" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || state.step === "running"}
+            caption="POST /api/governance/rule-runs" onClick={doRun}>
+            {state.step === "running" ? "檢核中…" : "執行規則檢核"}
+          </Btn>
+          {state.runError && <span className="ec-warn-note">檢核失敗（可重試）：{state.error}</span>}
         </div>
       </Panel>
-      <Panel title="結果記分板 · Demo layout with artifact baseline" sub="真實 artifact baseline 保留；prototype 分數只作版型示意" prov="artifact">
-        <div className="ec-grid">
-          <Metric value={A1_EVIDENCE.total} label="artifact 評估構件" />
-          <Metric value={A1_EVIDENCE.passed} label="passed" />
-          <Metric value={A1_EVIDENCE.failed} label="failed" tone="warn" />
-          <Metric value={`${A1_EVIDENCE.score}%`} label="score" />
-        </div>
-        <table className="ec-table" style={{ marginTop: 12 }}>
-          <thead><tr><th>rule</th><th>用途</th><th>state</th></tr></thead>
-          <tbody>{rules.map(([rule, use, state]) => (
-            <tr key={rule}><td>{rule}</td><td>{use}</td><td>{state === "passed" ? <ProvTag prov="asbuilt" /> : <ProvTag prov="artifact" />}</td></tr>
-          ))}</tbody>
-        </table>
+
+      {state.run && (
+        <Panel title="結果記分板" sub="真實 rule-run summary；點規則列展開命中構件（GUID/名稱/樓層）" prov="asbuilt">
+          <div className="ec-grid" data-testid="a1-rulerun-scoreboard">
+            <Metric value={state.run.summary?.total ?? "—"} label="評估構件" />
+            <Metric value={state.run.summary?.passed ?? "—"} label="passed" />
+            <Metric value={state.run.summary?.failed ?? "—"} label="failed" tone="warn" />
+            <Metric value={state.run.score ?? "—"} label="score" />
+          </div>
+          {runId && state.failed.length > 0 && <FailureScoreboard runId={runId} failed={state.failed} />}
+        </Panel>
+      )}
+
+      <Panel title="交付" sub="開 Issue / 匯出 BCF·Excel 走真實後端；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
+        <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
+          caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>失敗構件建 Issue</Btn>{" "}
+        <Btn data-testid="a1-step-export" disabled={!runId || state.run?.status !== "succeeded"}
+          caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
+        <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合（M3/M4）">在 3D 高亮</Btn>
       </Panel>
-      <Panel title="主要操作" sub="已建動作導向 Issue / Rule Center 真實執行；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
-        <Btn caption="→ Issue / Rule Center 執行 rule-run" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>執行規則檢核</Btn>{" "}
-        <Btn caption="→ Issue / Rule Center 從失敗建 issue" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>失敗構件建 issue</Btn>{" "}
-        <Btn caption="→ Issue / Rule Center 匯出 BCF / Excel" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>匯出 BCF / Excel</Btn>{" "}
-        <Btn disabled caption="需 viewer DataChannel + first frame + stage match" prov="p1">在 3D 高亮</Btn>
-      </Panel>
+
       <section data-testid="a1-real-ifc-slice" className="ec-a1-inline-slice">
         <RealIfcConsolePage />
-      </section>
-      <section data-testid="a1-rule-center-slice" className="ec-a1-inline-slice">
-        <IssuesRuleCenterPage />
       </section>
     </>
   );
