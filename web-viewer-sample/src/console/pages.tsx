@@ -1075,7 +1075,8 @@ export function IssuesRuleCenterPage() {
               document.body.appendChild(a);
               a.click();
               document.body.removeChild(a);
-              URL.revokeObjectURL(a.href);
+              // 延後釋放 object URL:同步 revoke 會在瀏覽器開始讀取 blob 前就釋放,導致大 bcfzip 在慢機/Firefox 下載被中止(對齊 Excel/doExport 的延後模式)。
+              setTimeout(() => URL.revokeObjectURL(a.href), 0);
             } catch (e) { setErr(String(e)); }
           }}>匯出 BCF 2.1</Btn>
         </div>

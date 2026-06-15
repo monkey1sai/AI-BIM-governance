@@ -74,6 +74,9 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
 export type StepDot = "done" | "current" | "future";
 
 export function uiSteps(state: A1State): StepDot[] {
+  // 終態 delivered:閉環全部完成,五點全綠勾(spec §2.1「已完成=綠勾」)。
+  // 非終態走通用映射:末點(匯出)在 delivered 前皆 current/future,不能因 order-1=4 而誤標 current。
+  if (state.step === "delivered") return ["done", "done", "done", "done", "done"];
   const order = STEP_ORDER.indexOf(state.step);
   const currentUi = order === 0 ? -1 : order - 1;
   return [0, 1, 2, 3, 4].map((i) => (i < currentUi ? "done" : i === currentUi ? "current" : "future"));
