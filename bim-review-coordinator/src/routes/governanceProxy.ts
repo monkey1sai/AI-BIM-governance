@@ -205,6 +205,15 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
       `/api/rule-runs/${encodeURIComponent(request.params.runId)}/results${queryString(request.originalUrl)}`,
     );
   });
+  // A1 §4.2 失敗構件抽屜：按規則分組 + 分頁 + 樓層 enrichment 透傳（形狀比照 /results，
+  // 複用泛用 forward + queryString plumbing；coordinator 不解讀 payload）。
+  app.get("/api/governance/rule-runs/:runId/failures", (request, response) => {
+    void forward(
+      response,
+      "GET",
+      `/api/rule-runs/${encodeURIComponent(request.params.runId)}/failures${queryString(request.originalUrl)}`,
+    );
+  });
   app.get("/api/governance/rule-runs/:runId/export", (request, response) => {
     void forward(
       response,

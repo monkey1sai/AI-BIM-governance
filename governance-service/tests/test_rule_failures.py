@@ -28,9 +28,14 @@ def test_storey_from_element(synthetic_model):
 
 def _run(client, ifc_path) -> str:
     rid = client.post("/api/rule-runs", json={"ifc_source_path": ifc_path}).json()["rule_run_id"]
+    status = None
     for _ in range(50):
-        if client.get(f"/api/rule-runs/{rid}").json()["status"] in ("succeeded", "failed"):
+        status = client.get(f"/api/rule-runs/{rid}").json()
+        if status["status"] in ("succeeded", "failed"):
             break
+    # 比照 test_api.py:44:斷言 run 本身 succeeded;若背景任務拋例外以 status=failed
+    # 完成,下游 total>=1 會誤判為「無失敗構件」,此 guard 直接點出 rule run 本身失敗。
+    assert status and status["status"] == "succeeded", status
     return rid
 
 
