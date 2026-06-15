@@ -167,15 +167,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 - **範圍限制(誠實)**:只解 host-native port 這條 Read-Host;`deploy.ps1:989` 的 `.venv WRONG_VERSION` Read-Host 不在
   範圍(需重建 .venv 或 `-Force`,CLAUDE.md 禁),撞到 HELD 回報。spectator count 非預設 5 時須同步調整 helper 內 port 陣列。
 
-## 模型預算(四級配置 haiku/sonnet/opus/fable;2026-06-11 降本調整,gates 不動)
+## 模型預算(agent 三級 haiku/sonnet/opus + 指揮官/runtime-default=session;2026-06-11 降本,gates 不動)
+
+> ⚠ 2026-06-15:**Claude Fable 5 官方停用**。本流程 agent 呼叫的 `model:` 欄位**從不傳 fable**(四級降本那輪已全改 haiku/sonnet/opus);唯一「跑 fable」的是指揮官(主對話)與 P5/P6 的 runtime-default(= session 模型,過去是 Fable)。session 改 **Opus 4.8 max** 後,這兩處自動跑 Opus 4.8 max,**無 .js 改動需要**——本表只更新描述。
 
 | 位置 | 模型 | 品質守恆(誰兜底) |
 |---|---|---|
-| 指揮官(主對話) | 當前 session(Fable) | — |
+| 指揮官(主對話) | 當前 session(**Opus 4.8 max**;Fable 5 已停用) | — |
 | plan 解析(P3 Parse)、引擎偵測(P4 Probe) | haiku | 機械抽取/探測,錯誤顯性:抽壞 → implementer 立刻 BLOCKED;探錯 → E2E 起不來即 held |
 | GitNexus impact 預掃 + per-task impact、機械性 task implementer(1-2 檔、步驟完整、非 user-facing)、P1 四軸 reviewer、P3 spec/quality reviewer(首審) | sonnet | impact 只是風險輸入(CRITICAL gate 在指揮官);機械 impl 有雙 review;四軸/雙 review 有 plan-fix(opus)+final-review(opus)+P5 critic 三層兜底 |
 | plan 作者、非機械 implementer、NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復)、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | opus | 創造/修復/兜底層,**不降** |
-| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | runtime default(=session 模型) | P5=抓雷主力(實績:#206 三顆連環雷 + fix 自引 regression 全在 merge 前攔下);P6=端到端代理操作(git/gh/merge 判斷),sonnet 首跑即出程序偏差(#208:無視指定 prNumber、把主工作區 WIP 打包成獨立 PR merge),2026-06-12 回退 default,**兩者不降** |
+| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | runtime default(=session 模型,**現為 Opus 4.8 max**;Fable 5 停用前是 Fable) | P5=抓雷主力(實績:#206 三顆連環雷 + fix 自引 regression 全在 merge 前攔下);P6=端到端代理操作(git/gh/merge 判斷),sonnet 首跑即出程序偏差(#208:無視指定 prNumber、把主工作區 WIP 打包成獨立 PR merge),2026-06-12 回退 default,**兩者不降**(跑 spec-to-done 時 session 維持 Opus 4.8 max 即可) |
 
 升級通道(自動,腳本內建):sonnet implementer 回 BLOCKED → 換 opus 重派;NEEDS_CONTEXT → opus 補脈絡重派。
 平行:P1 四軸 review、P5 per-finding verifier 平行;**P3 implementer 嚴禁平行**(實作衝突)。
@@ -193,7 +195,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 
 1. AGENTS.md 寫 gstack 是「唯一驗收證據來源」,現實是 Playwright(歷史 evidence 全為 Playwright/Chrome 產)。本流程採「綁產物不綁品牌」;改字面需另開 docs PR。github-workflow.md 7 欄表的「gstack E2E command」欄同理 — 填實際引擎指令並括註引擎名。
 2. PR body 用 product-operability §4 的 10 列表;P7 回報用 AGENTS.md 7 欄表 — 兩版並存是權威檔既有張力,本流程兩處各用各的。
-3. commit trailer:本流程 commit 統一 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`(harness 規則);ship-item.md 釘 Opus 4.8 字樣 — 已知雙標準,squash 後實質影響極小。
+3. commit trailer:std-*.js 內的 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` 是 **harness attribution 文字、非模型調用**(改它不影響哪個模型實際跑;只要 session 是 Opus 4.8 max,agent 就跑 Opus 4.8)。Fable 5 停用後此 trailer 字面已是 legacy;要不要連同 harness 規則一起改成 Opus 4.8 屬另一個獨立決策(改 trailer 須與 harness commit 規則同步,否則 repo 出現雙 trailer)。squash 後實質影響極小。
 4. GitNexus detect-changes 在 linked worktree 看不到 staged(已知坑)→ implementer fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`,PR body 揭露;完全失敗記 `fail`,同 run 3 次 → held。
 5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
 6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。純動 `.claude/**` 的 PR 會被 pr-review-agent paths-ignore 跳過 review(#202);main 無 branch protection 故此 check 非 required。
