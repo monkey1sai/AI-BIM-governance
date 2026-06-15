@@ -55,12 +55,15 @@ def test_failures_endpoint_groups_paginates_enriches(client, synthetic_ifc_path)
     # 若 model.by_guid → _storey_from_element 的空間鏈查詢壞掉對所有構件回 null,
     # 上面的 "storey" in f 仍會綠 → 下面用「已知有容器」與「已知無容器」雙構件鎖死值。
     by_guid = {f["ifc_guid"]: f for f in body["items"]}
-    door_in_storey = next(f for f in body["items"] if f["ifc_type"] == "IfcDoor")
+    door_in_storey = next((f for f in body["items"] if f["ifc_type"] == "IfcDoor"), None)
+    assert door_in_storey is not None, f"expected IfcDoor in failures page, got: {[f['ifc_type'] for f in body['items']]}"
     assert door_in_storey["storey"] == "L1"  # D-002 缺 FireRating 失敗,且指派於 L1 → 非 null
     unassigned = next(
-        f for f in body["items"]
-        if f["ifc_type"] == "IfcWall" and f["rule_code"] == "WALL-STOREY-ASSIGNED"
+        (f for f in body["items"]
+         if f["ifc_type"] == "IfcWall" and f["rule_code"] == "WALL-STOREY-ASSIGNED"),
+        None,
     )
+    assert unassigned is not None, f"expected unassigned IfcWall in failures, got: {[(f['ifc_type'], f['rule_code']) for f in body['items']]}"
     assert unassigned["storey"] is None  # 無名牆未指派樓層 → 誠實 null,不捏造
     assert by_guid  # join 索引非空(防呆)
 
