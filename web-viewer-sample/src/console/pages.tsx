@@ -268,7 +268,11 @@ export function A1GovernanceWorkbenchPage() {
       if (!res.ok) { setActionErr(`匯出失敗：HTTP ${res.status}`); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = `rule-run-${runId}.xlsx`; a.click();
+      // 錨點須掛載於 document 才觸發 .click()：Firefox（Gecko）與部分 Edge 對 detached <a> 下載不可靠，
+      // 會靜默失敗（EXPORT_OK 永不 dispatch、UI 卡 scored 無回饋，違誠實鐵律）。appendChild→click→removeChild
+      // 為跨瀏覽器最安全慣例。
+      const a = document.createElement("a"); a.href = url; a.download = `rule-run-${runId}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 0);
       dispatch({ type: "EXPORT_OK" });
     } catch (e) {
@@ -727,14 +731,22 @@ function CopyGuidBtn({ guid }: { guid: string }) {
   );
 }
 
-function FailureRuleRow({ runId, ruleCode, count }: { runId: string; ruleCode: string; count: number }) {
+// export 供單元測試直接掛載驗收「同 tick 雙擊載入更多不得並行 fetch」（去重/鎖 spec §5）；
+// 非頁面公開 API，僅 FailureScoreboard 內部使用。
+export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; ruleCode: string; count: number }) {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<FailureRow[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 去重/鎖(spec §5)同步守門：setLoading(true) 在同一 event handler 內非同步可見(須等下一 render)，
+  // 同 tick 雙擊「載入更多」時 loading 閉包值未刷新 → 兩個 loadPage(rows.length) 並行各自 append，
+  // 產生重複行。loadingRef 為 mutable ref，set/clear 同步生效，能在第二次呼叫頂部立即攔截 in-flight 請求。
+  const loadingRef = useRef(false);
 
   const loadPage = useCallback(async (offset: number) => {
+    if (loadingRef.current) return; // 已有 in-flight loadPage → 同步擋掉並行的第二次呼叫(避免重複行)
+    loadingRef.current = true;
     setLoading(true); setErr(null);
     try {
       const res = await governanceClient.getFailures(runId, ruleCode, FAILURES_PAGE, offset);
@@ -743,6 +755,7 @@ function FailureRuleRow({ runId, ruleCode, count }: { runId: string; ruleCode: s
     } catch (e) {
       setErr(String(e));
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   }, [runId, ruleCode]);
@@ -998,7 +1011,10 @@ export function IssuesRuleCenterPage() {
               const a = document.createElement("a");
               a.href = url;
               a.download = `rule-run-${runId}.xlsx`;
+              // 錨點須掛載於 document 才觸發下載：Gecko / 部分 Edge 對 detached <a> 下載不可靠（靜默失敗）。
+              document.body.appendChild(a);
               a.click();
+              document.body.removeChild(a);
               // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放，導致（尤其較大檔）下載被中止（CodeRabbit）。
               setTimeout(() => URL.revokeObjectURL(url), 0);
             } catch (e) { setErr(String(e)); }
@@ -1055,7 +1071,10 @@ export function IssuesRuleCenterPage() {
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
               a.download = "governance-issues.bcfzip";
+              // 錨點須掛載於 document 才觸發下載：Gecko / 部分 Edge 對 detached <a> 下載不可靠（靜默失敗）。
+              document.body.appendChild(a);
               a.click();
+              document.body.removeChild(a);
               URL.revokeObjectURL(a.href);
             } catch (e) { setErr(String(e)); }
           }}>匯出 BCF 2.1</Btn>

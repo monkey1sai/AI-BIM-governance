@@ -10,6 +10,7 @@ import {
   AppVisionPage,
   ConversionSchedulingPage,
   CoordinatorPage,
+  FailureRuleRow,
   FederationPage,
   IntakePage,
   IssuesRuleCenterPage,
@@ -26,7 +27,7 @@ import {
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
-import { governanceClient, type FilesTreeResponse } from "./governanceClient";
+import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
@@ -1934,6 +1935,168 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     // 且與 issues 同步 disabled（兩個下游交付鈕共用 state-machine 語意）。
     expect(exportBtn().disabled, "running 子態（含 succeeded 快照）export 必須 disabled").toBe(true);
     expect(issuesBtn().disabled, "running 子態 issues 必須 disabled").toBe(true);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // [Important-1] doExport 觸發下載的錨點必須在 .click() 當下掛載於 document（appendChild→click→removeChild）。
+  // Firefox（Gecko）與部分 Edge 對「未掛載 DOM 的 <a>」觸發下載不可靠 → 匯出靜默失敗、EXPORT_OK 永不 dispatch、
+  // UI 卡 scored 且無錯誤回饋（違誠實鐵律）。此測試攔截 HTMLAnchorElement.prototype.click，在點擊當下記錄
+  // document.body.contains(該錨點)：修復前錨點 detached → contains=false（RED）；修復後 appendChild 已掛載 → true。
+  it("[Important-1] doExport 下載錨點在 .click() 當下已掛載於 document（跨瀏覽器安全，避免 Gecko 靜默失敗）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { rule_run_id: "rr_a1", rule_id: "naming", status: "failed", ifc_guid: "g1", element_name: "x", level: null } as unknown as RuleResultRow,
+    ]);
+    // 匯出成功路徑：fetch 回 ok + 真實 Blob；URL.createObjectURL/revokeObjectURL 在 jsdom 不存在 → 補 stub。
+    // 用 mockImplementation 每次回「全新」Response：Response body 只能讀一次，共用同一實例會在第二次
+    // res.blob() 觸發「Body has already been read」。
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(new Blob(["xlsx-bytes"]), { status: 200 }),
+    );
+    const urlCtor = globalThis.URL as unknown as {
+      createObjectURL?: (b: Blob) => string;
+      revokeObjectURL?: (u: string) => void;
+    };
+    urlCtor.createObjectURL = vi.fn(() => "blob:rr_a1");
+    urlCtor.revokeObjectURL = vi.fn(() => {});
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // scored → 匯出鈕 enable（前置條件）。先確認再安裝 click 攔截，避免攔截影響 pick/run 按鈕點擊。
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="a1-step-export"]')!.disabled).toBe(false);
+
+    // 攔截錨點 click：點擊當下記錄該錨點是否已在 document.body 內（這是 Gecko 下載可靠的前提）。
+    // 注意：click() 由 HTMLElement.prototype 提供（HTMLAnchorElement 未自有此方法），須 spy 父原型才攔得到；
+    // 對非下載錨點一律 call-through 原生實作，確保匯出按鈕自身的 .click() 仍正常派發 onClick。
+    let attachedAtClick: boolean | null = null;
+    const realClick = HTMLElement.prototype.click;
+    const clickSpy = vi
+      .spyOn(HTMLElement.prototype, "click")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this instanceof HTMLAnchorElement && (this.getAttribute("download") ?? "").includes("rule-run")) {
+          attachedAtClick = document.body.contains(this);
+          return; // 下載錨點不實際導航（jsdom 無下載），只記錄掛載狀態
+        }
+        realClick.call(this); // 其餘元素（含匯出按鈕）走原生 click → 正常觸發 onClick
+      });
+
+    // 點擊匯出 → doExport 成功路徑（fetch ok → 建錨點 → click）。
+    await clickByTestId("a1-step-export");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 只統計下載錨點的 click（call-through 的按鈕點擊不計入語意）。
+    expect(attachedAtClick, "doExport 應觸發下載錨點 .click() 並記錄掛載狀態").not.toBeNull();
+    expect(clickSpy).toHaveBeenCalled();
+    // 核心：點擊當下錨點必須已掛載（修復前 detached → false → Gecko/Edge 靜默失敗）。
+    expect(attachedAtClick, "下載錨點 .click() 當下必須已 appendChild 至 document.body").toBe(true);
+    // 收尾：錨點不得殘留在 document（removeChild 已清理）。
+    const leftover = Array.from(document.body.querySelectorAll("a")).filter((a) =>
+      (a.getAttribute("download") ?? "").includes("rule-run"),
+    );
+    expect(leftover.length, "click 後下載錨點應自 document 移除（removeChild）").toBe(0);
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+// [Important-2] FailureRuleRow「載入更多」去重/鎖（spec §5）：React 中 setLoading(true) 在同一 event
+// handler 內非同步可見（須等下一 render），同 tick 雙擊「載入更多」時 loading 閉包值未刷新，兩個
+// loadPage(rows.length) 並行執行、各自 [...prev, ...res.items] append → 重複行。修復前同步 loading guard
+// 失效，getFailures 被呼叫 3 次（1 初始 + 2 並行 load-more）；修復後本地 loadingRef 同步擋掉第二次 → 共 2 次。
+describe("FailureRuleRow 載入更多去重/鎖（spec §5：同 tick 雙擊不得並行 fetch）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  // 受控 deferred 工廠：每次 getFailures 回一個我們手動 resolve 的 promise，模擬「fetch 尚未回來」窗口，
+  // 讓同 tick 第二次點擊在第一次 in-flight 時發生（這正是並行競速的觸發條件）。
+  function makeDeferred() {
+    let resolve!: (v: { rule_run_id: string; rule_code: string | null; limit: number; offset: number; total: number; items: unknown[] }) => void;
+    const promise = new Promise<{ rule_run_id: string; rule_code: string | null; limit: number; offset: number; total: number; items: unknown[] }>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
+  it("[Important-2] 同 tick 雙擊『載入更多』→ getFailures 不得並行重複呼叫（去重/鎖）", async () => {
+    // total=120、每頁 50：初始載入後 canLoadMore，且足以再點兩次。
+    const page = (offset: number) => ({
+      rule_run_id: "rr_a1",
+      rule_code: "DOOR-FIRERATING-REQUIRED",
+      limit: 50,
+      offset,
+      total: 120,
+      items: Array.from({ length: 50 }, (_, i) => ({
+        ifc_guid: `g-${offset + i}`,
+        ifc_name: `door-${offset + i}`,
+        ifc_type: "IfcDoor",
+        storey: "1F",
+        severity: "error",
+        rule_code: "DOOR-FIRERATING-REQUIRED",
+        message: "missing FireRating",
+        usd_prim_path: null,
+      })),
+    });
+
+    const deferreds: ReturnType<typeof makeDeferred>[] = [];
+    const getSpy = vi.spyOn(governanceClient, "getFailures").mockImplementation((_id, _rule, _limit, offset) => {
+      const d = makeDeferred();
+      deferreds.push(d);
+      // 立刻記住該 promise 對應的 offset，待測試手動 resolve。
+      (d as unknown as { offset: number }).offset = offset ?? 0;
+      return d.promise as unknown as ReturnType<typeof governanceClient.getFailures>;
+    });
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<FailureRuleRow runId="rr_a1" ruleCode="DOOR-FIRERATING-REQUIRED" count={120} />);
+    });
+
+    // 展開 → 觸發初始 loadPage(0)（in-flight，deferred 未 resolve）。
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="a1-fail-toggle-DOOR-FIRERATING-REQUIRED"]')!;
+    await act(async () => { toggle.click(); });
+    // 解析初始頁 → rows=50、total=120 → 出現「載入更多」。
+    await act(async () => { deferreds[0].resolve(page(0)); await Promise.resolve(); });
+    expect(getSpy.mock.calls.length, "初始展開應呼叫一次 getFailures(offset=0)").toBe(1);
+
+    const moreBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-fail-more-DOOR-FIRERATING-REQUIRED"]');
+    expect(moreBtn(), "rows<total 時應出現載入更多").not.toBeNull();
+
+    // 核心：同一個 act tick（同 event 批次、render 尚未 flush）內連點兩次「載入更多」。
+    // 修復前：loading 閉包值未刷新、setLoading 非同步 → 第二次 guard 失效 → 並行第二次 getFailures（共 3 次）。
+    // 修復後：本地同步 loadingRef 立即擋掉第二次 → 仍只 1 次 load-more（共 2 次）。
+    const btn = moreBtn()!;
+    await act(async () => {
+      btn.click();
+      btn.click();
+    });
+
+    expect(
+      getSpy.mock.calls.length,
+      "同 tick 雙擊載入更多只能觸發一次 getFailures（去重/鎖），不得並行重複",
+    ).toBe(2);
+
+    // 收尾：resolve 尚未完成的 load-more deferred，避免懸掛。
+    await act(async () => {
+      for (const d of deferreds.slice(1)) d.resolve(page((d as unknown as { offset: number }).offset));
+      await Promise.resolve();
+    });
 
     await act(async () => { root.unmount(); });
   });
