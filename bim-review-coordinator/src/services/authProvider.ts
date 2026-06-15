@@ -97,7 +97,9 @@ function cidrContains(cidr: string, ip: string): boolean {
   return (baseInt & mask) === (ipInt & mask);
 }
 
-function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
+// export（minio-watch review P2 修復）：app.ts 的 watcher 啟動守衛重用同一份 allowlist
+// 判定邏輯（exact / CIDR / IPv4-mapped normalize），避免手刻第二份不一致的檢查。
+export function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
   const normalized = normalizeIp(clientIp || "");
   return allowlist.some((entry) => {
     const rule = entry.trim();

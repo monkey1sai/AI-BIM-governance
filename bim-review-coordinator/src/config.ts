@@ -77,6 +77,25 @@ export interface CoordinatorConfig {
   // default 空字串＝未設定 → /ui 回退既有 dev-console.html(zero-risk,不影響既有部署)。
   // 設定且目錄含 index.html 時,coordinator 於 /ui 服務 React console(static + SPA fallback)。
   consoleDistDir: string;
+  // minio-watch-auto-intake（O4 觸發機制 B 案，預設關）：env opt-in 的 MinIO
+  // ListObjectsV2 輪詢自動 intake。watcher 扮演本地自動化外部 IFC worker，
+  // 自打 loopback POST /api/external/ifc-ready；既有 intake/去重/dispatch 契約零變動。
+  minioWatchEnabled: boolean;            // MINIO_WATCH_ENABLED，default false
+  minioWatchEndpoint: string;            // MINIO_WATCH_ENDPOINT，如 http://192.168.20.234:9000
+  minioWatchBucket: string;              // MINIO_WATCH_BUCKET，如 bim-control
+  minioWatchPrefix: string;              // MINIO_WATCH_PREFIX，default 空
+  minioWatchAccessKey: string;           // MINIO_WATCH_ACCESS_KEY（唯讀帳號；不落 tracked 檔）
+  minioWatchSecretKey: string;           // MINIO_WATCH_SECRET_KEY（同上）
+  // MINIO_WATCH_INTERVAL_SECONDS，default 60，下限預設 10（可由 MINIO_WATCH_INTERVAL_FLOOR_SECONDS 降檔，僅供 E2E）
+  minioWatchIntervalSeconds: number;
+  minioWatchKeySuffix: string;           // MINIO_WATCH_KEY_SUFFIX，default /model.ifc（規約檔名）
+  // watcher intake payload 的 tenant_id。env MINIO_WATCH_TENANT_ID，default tenant_demo_001
+  // （維持現行為）。部署切 tenant 時必設此值，否則所有 watcher intake 會帶錯 tenant
+  // （靜默資料污染進 store 與雲端 callback）。
+  minioWatchTenantId: string;            // MINIO_WATCH_TENANT_ID，default tenant_demo_001
+  // 測試 seam：watcher 自打 loopback 的 base url。default 空＝執行期用 http://127.0.0.1:${port}。
+  // 整合測試以 listen(0) 取得實際 port 後注入完整 base，避免依賴固定 8004。
+  minioWatchSelfBaseUrl: string;
 }
 
 function numberFromEnv(name: string, fallback: number): number {
@@ -303,6 +322,12 @@ function conversionApiBaseFromEnv(): string {
 
 export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): CoordinatorConfig {
   const cwd = process.cwd();
+  // watcher 輪詢間隔下限（秒）。production 預設 10 防忙迴圈連打 MinIO；不設 env 時行為與舊版一致。
+  // 唯一降檔入口：MINIO_WATCH_INTERVAL_FLOOR_SECONDS（如 E2E 起 spawn coordinator 需 ≤10s 輪詢驗證
+  // 自動 intake 鏈時設為 1）。預設不設＝floor 10，故 config-minio-watch.test.ts 與生產皆維持夾為 10。
+  // 守衛硬下限 1s：Math.max(1, …) 確保即使 FLOOR=0/負值也不會讓 minioWatchIntervalSeconds 降到 0，
+  // 否則 minioWatcher 的 setTimeout(runTick, 0) 會每輪 tick 完成立即重排，形成 event-loop 忙迴圈連打 MinIO。
+  const minioWatchIntervalFloor = Math.max(1, numberFromEnv("MINIO_WATCH_INTERVAL_FLOOR_SECONDS", 10));
   const host = process.env.HOST || "127.0.0.1";
   const port = numberFromEnv("PORT", 8004);
   const publicHost = process.env.PUBLIC_HOST || "127.0.0.1";
@@ -323,7 +348,7 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     mediaServer: kitMediaServer,
     mediaPort: kitMediaPort,
   };
-  return {
+  const merged = {
     host,
     port,
     coordinatorPublicBaseUrl,
@@ -378,6 +403,30 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     logRoot: process.env.LOG_ROOT || path.join(cwd, "logs"),
     // CH-E:未設定＝空字串 → mountDevConsole 回退 dev-console.html(zero-risk 預設)。
     consoleDistDir: process.env.CONSOLE_DIST_DIR || "",
+    minioWatchEnabled: parseBooleanEnv("MINIO_WATCH_ENABLED", false),
+    minioWatchEndpoint: process.env.MINIO_WATCH_ENDPOINT || "",
+    minioWatchBucket: process.env.MINIO_WATCH_BUCKET || "",
+    minioWatchPrefix: process.env.MINIO_WATCH_PREFIX || "",
+    minioWatchAccessKey: process.env.MINIO_WATCH_ACCESS_KEY || "",
+    minioWatchSecretKey: process.env.MINIO_WATCH_SECRET_KEY || "",
+    minioWatchIntervalSeconds: Math.max(minioWatchIntervalFloor, numberFromEnv("MINIO_WATCH_INTERVAL_SECONDS", 60)),
+    minioWatchKeySuffix: process.env.MINIO_WATCH_KEY_SUFFIX || "/model.ifc",
+    minioWatchTenantId: process.env.MINIO_WATCH_TENANT_ID || "tenant_demo_001",
+    minioWatchSelfBaseUrl: process.env.MINIO_WATCH_SELF_BASE_URL || "",
     ...overrides,
   };
+  // 下限是安全保護（防忙迴圈連打 MinIO），必須在 overrides 合併後夾值，
+  // 否則 loadConfig({minioWatchIntervalSeconds: 3}) 會繞過 env 路徑的 Math.max。
+  // 預設 floor=10；唯一降檔入口為 MINIO_WATCH_INTERVAL_FLOOR_SECONDS（見上方註解）。
+  merged.minioWatchIntervalSeconds = Math.max(minioWatchIntervalFloor, merged.minioWatchIntervalSeconds);
+  // 非空 watch prefix normalize 為以 '/' 結尾（Codex review P2 修復）：deriveIntakeFromKey
+  // 對非 boundary-aligned prefix 一律 fail-fast 拒收（防 `89` startsWith 命中 `899/...` 的
+  // 靜默污染）。若 operator 設 `MINIO_WATCH_PREFIX=tenant_a`（無尾斜線）原值直通，watcher
+  // 列得到物件卻全數 skipped_malformed（靜默無作為）。與 interval floor 同理：必須在
+  // overrides 合併後 normalize，否則 loadConfig({minioWatchPrefix:"x"}) 繞過 env 路徑。
+  // 空字串保持空（= watch 全 bucket）。
+  if (merged.minioWatchPrefix && !merged.minioWatchPrefix.endsWith("/")) {
+    merged.minioWatchPrefix = `${merged.minioWatchPrefix}/`;
+  }
+  return merged;
 }

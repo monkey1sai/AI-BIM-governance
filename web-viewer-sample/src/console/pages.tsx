@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
@@ -279,13 +279,24 @@ export function ViewerPresentationPage() {
 
 export function ConversionSchedulingPage() {
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
+  const [mw, setMw] = useState<MinioWatchStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [mwErr, setMwErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    setBusy(true); setErr(null);
-    try { setJobs((await coordinatorClient.listIfcReady(50)).items); }
-    catch (e) { setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`); }
-    finally { setBusy(false); }
+    setBusy(true); setErr(null); setMwErr(null);
+    // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
+    // 端點尚未部署）不得污染 ifc-ready 的錯誤訊息，也不得讓 watcher Panel 靜默停在
+    // placeholder（誤導操作者以為「沒按 Refresh」）。各自有獨立錯誤 state。
+    const [jobsRes, mwRes] = await Promise.allSettled([
+      coordinatorClient.listIfcReady(50),
+      coordinatorClient.minioWatchStatus(),
+    ]);
+    if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
+    else setErr(`未連線 coordinator /api/external/ifc-ready：${String(jobsRes.reason)}`);
+    if (mwRes.status === "fulfilled") setMw(mwRes.value);
+    else setMwErr(`未連線 coordinator /api/external/minio-watch/status：${String(mwRes.reason)}`);
+    setBusy(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
   return (
@@ -298,6 +309,48 @@ export function ConversionSchedulingPage() {
         <Field k="conversion authority" v="bim-streaming-server owns heavy conversion" prov="asbuilt" />
         <Field k="mapping coverage" v="property / relationship / attribute coverage 必須顯示；不得承諾 100% lossless" prov="p1" />
         <Field k="插隊 / 重試 / concurrency" v="UI rule 已定義，controlled action endpoint 待建" prov="p1" />
+      </Panel>
+      <Panel
+        title="MinIO 自動偵測（O4）"
+        sub="watcher 輪詢 ListObjectsV2 → 新 */model.ifc → 自動 intake；來源 /api/external/minio-watch/status"
+        prov="asbuilt"
+      >
+        <div data-testid="minio-watch-panel">
+          {mwErr ? (
+            <p className="ec-warn-note" data-testid="minio-watch-error">{mwErr}</p>
+          ) : mw == null ? (
+            <p className="ec-note">尚未取得 watcher 狀態；按上方 Refresh queue 後顯示。</p>
+          ) : mw.enabled === false ? (
+            <>
+              <Field k="狀態" v="未啟用 — 需設定 env MINIO_WATCH_ENABLED opt-in" prov="asbuilt" />
+              <p className="ec-note">{mw.note ?? "watcher 預設關閉；狀態 API 為真，未偽稱功能在跑。"}</p>
+            </>
+          ) : (
+            <>
+              {mw.note && <p className="ec-note">{mw.note}</p>}
+              <Field k="狀態" v="啟用中（env opt-in）" prov="asbuilt" />
+              <Field k="bucket" v={mw.bucket ?? "—"} prov="asbuilt" />
+              <Field k="prefix" v={mw.prefix || "（無）"} prov="asbuilt" />
+              <Field k="最近一輪" v={mw.last_poll_at ?? "尚未完成首輪"} prov="asbuilt" />
+              <Field k="輪詢次數" v={String(mw.poll_count ?? "—")} prov="asbuilt" />
+              <Field k="baseline / seen / 觸發 / 跳過" v={`${mw.baseline_count ?? "—"} / ${mw.seen_count ?? 0} / ${mw.triggered_total ?? 0} / ${mw.skipped_malformed_total ?? 0}`} prov="asbuilt" />
+              {mw.last_error && <Field k="最近錯誤" v={mw.last_error} prov="asbuilt" />}
+              {mw.last_triggered && mw.last_triggered.length > 0 && (
+                <table className="ec-table" data-testid="minio-watch-triggered">
+                  <thead><tr><th>key</th><th>job</th><th>error</th><th>at</th></tr></thead>
+                  <tbody>{mw.last_triggered.map((t, i) => (
+                    <tr key={`${t.key}-${i}`}>
+                      <td>{t.key}</td>
+                      <td>{t.job_id ?? "—"}</td>
+                      <td>{t.error ?? "—"}</td>
+                      <td>{t.at}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              )}
+            </>
+          )}
+        </div>
       </Panel>
       <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
         {jobs.length ? (

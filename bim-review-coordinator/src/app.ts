@@ -8,7 +8,7 @@ import { Server } from "socket.io";
 import { z } from "zod";
 import type { CoordinatorConfig } from "./config.js";
 import { loadConfig } from "./config.js";
-import { AuthError, createAuthProvider, createUserAuthProvider } from "./services/authProvider.js";
+import { AuthError, createAuthProvider, createUserAuthProvider, isIpAllowed } from "./services/authProvider.js";
 import { CallbackOutbox, MetadataOnlyViolation } from "./services/callbackOutbox.js";
 import { EventLog } from "./services/eventLog.js";
 import {
@@ -19,6 +19,7 @@ import {
   type StructLogger,
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
+import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
@@ -264,7 +265,10 @@ export interface CoordinatorApp {
   structLog: StructLogger;
   // coordinator-auto-poll-streaming-conversion §6:cancel 全部 in-process auto-poll
   // timer。process shutdown / 測試 teardown 必呼叫,避免 timer keep-alive 阻 exit。
-  dispose: () => void;
+  // async（回 Promise）:minioWatcher.dispose() 需 await 其 in-flight tick settle 後才
+  // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
+  // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
+  dispose: () => Promise<void>;
 }
 
 export interface CreateCoordinatorAppOptions {
@@ -311,6 +315,57 @@ export function createCoordinatorApp(
     config.streamingConversionInternalToken || undefined,
   );
   const startedAt = Date.now();
+  // minio-watch-auto-intake（O4 B 案，env opt-in 預設關）。watcher 自打 loopback
+  // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
+  // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
+  let minioWatcher: MinioWatcherHandle | null = null;
+  function startMinioWatcherIfEnabled(): void {
+    // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
+    // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
+    // ——minioWatchEnabled=true && selfBaseUrl 已設 && 呼叫端又 listen()——也安全：
+    // 立即路徑會先把 minioWatcher 設好，listen callback 是非同步（Node 事件迴圈），
+    // "listening" 事件到達時 minioWatcher != null，此 guard 直接 return，不會啟第二個。
+    if (!config.minioWatchEnabled || minioWatcher) return;
+    // minio-watch review P2 修復：watcher 的 loopback self-POST 同樣經過
+    // /api/external/ifc-ready 的 IP allowlist（authProvider 在 secret 之前先檢查 IP）。
+    // 硬化部署把 EXTERNAL_INTAKE_IP_ALLOWLIST 鎖成 edge CIDR 而漏掉 loopback 時，
+    // watcher 每輪 intake 都 403（列得到物件、永遠建不了 job）。127.0.0.1 與 ::1
+    // 雙雙不在 allowlist ⇒ 必然永久失敗 → 啟動 fail-fast（與 selfBaseUrl loopback
+    // assert 同精神），不靜默空轉。重用 authProvider 的 isIpAllowed 避免判定分歧。
+    if (
+      config.externalIntakeIpAllowlist.length > 0 &&
+      !isIpAllowed("127.0.0.1", config.externalIntakeIpAllowlist) &&
+      !isIpAllowed("::1", config.externalIntakeIpAllowlist)
+    ) {
+      throw new Error(
+        "MINIO_WATCH_ENABLED=true 但 EXTERNAL_INTAKE_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）：" +
+          "watcher 的 loopback intake 會被 403 拒絕。請將 loopback 加入 allowlist，或關閉 MINIO_WATCH_ENABLED。",
+      );
+    }
+    const address = server.address();
+    const boundPort =
+      address && typeof address !== "string" ? address.port : config.port;
+    const selfBaseUrl = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${boundPort}`;
+    minioWatcher = startMinioWatcher({
+      endpoint: config.minioWatchEndpoint,
+      bucket: config.minioWatchBucket,
+      prefix: config.minioWatchPrefix,
+      accessKey: config.minioWatchAccessKey,
+      secretKey: config.minioWatchSecretKey,
+      keySuffix: config.minioWatchKeySuffix,
+      intervalSeconds: config.minioWatchIntervalSeconds,
+      selfBaseUrl,
+      webhookSecret: config.externalIntakeWebhookSecret,
+      tenantId: config.minioWatchTenantId,
+      structLog,
+    });
+  }
+  // 已在 listen 上的 server（生產 index.ts / E2E）：listening 後啟動以取得實際 port。
+  server.on("listening", () => startMinioWatcherIfEnabled());
+  // supertest 整合測試不呼叫 listen；用 selfBaseUrl override 時可立即啟動。
+  if (config.minioWatchEnabled && config.minioWatchSelfBaseUrl) {
+    startMinioWatcherIfEnabled();
+  }
   // coordinator-auto-poll-streaming-conversion §6:in-process auto-poll registry
   // (keyed by conversion_job_id),dispatch 後 schedule、manual ingest endpoint
   // 觸發前 cancel、shutdown(dispose())清空。
@@ -781,6 +836,26 @@ export function createCoordinatorApp(
       count: jobs.length,
       items: jobs.slice(0, limit).map((job) => summarizeIfcReadyJob(job, store.get(job.review_session_id || ""))),
     });
+  });
+
+  // minio-watch-auto-intake：watcher 唯讀狀態（無 credentials 洩漏）。關閉時誠實
+  // 回 enabled=false（env opt-in）。last_triggered 只含 key，不含 presigned URL。
+  // 置於 /:jobId param route 之前，確保此靜態路徑優先匹配。
+  app.get("/api/external/minio-watch/status", (_request, response) => {
+    if (!config.minioWatchEnabled) {
+      response.json({
+        enabled: false,
+        bucket: config.minioWatchBucket || null,
+        prefix: config.minioWatchPrefix || null,
+        interval_seconds: config.minioWatchIntervalSeconds,
+        note: "未啟用（env MINIO_WATCH_ENABLED opt-in）",
+      });
+      return;
+    }
+    const status: MinioWatcherStatus | { enabled: true; note: string } = minioWatcher
+      ? minioWatcher.getStatus()
+      : { enabled: true, note: "watcher enabled but not yet started (server not listening)" };
+    response.json(status);
   });
 
   app.get("/api/external/ifc-ready/:jobId", (request, response) => {
@@ -1685,11 +1760,17 @@ export function createCoordinatorApp(
   // queue,把 jobs 標記 dropped_on_restart(in-memory queue 非 disk-persistent;
   // restart 後 operator 必須重新 POST,跟 spec scenario「Coordinator restart
   // drops queued jobs」對齊)。
-  const dispose = (): void => {
+  const dispose = async (): Promise<void> => {
     for (const handle of pollerRegistry.values()) {
       handle.cancel();
     }
     pollerRegistry.clear();
+    if (minioWatcher) {
+      // await：讓 in-flight tick settle 後再銷毀 S3 client（避免 unhandled rejection）。
+      const w = minioWatcher;
+      minioWatcher = null;
+      await w.dispose();
+    }
     const droppedJobIds = conversionDispatchQueue.drain();
     for (const jobId of droppedJobIds) {
       externalIfcReadyStore.markDroppedOnRestart(jobId);

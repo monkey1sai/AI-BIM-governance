@@ -35,7 +35,7 @@ describe("/api/internal auth boundary", () => {
     if (app) {
       app.io.close();
       await new Promise<void>((resolve) => app?.server.close(() => resolve()));
-      app.dispose();
+      await app.dispose();
       app = null;
     }
     for (const root of [storageRoot, logRoot]) {

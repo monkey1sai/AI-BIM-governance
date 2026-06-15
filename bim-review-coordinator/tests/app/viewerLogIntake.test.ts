@@ -43,7 +43,7 @@ describe("POST /api/internal/viewer-log", () => {
     if (app) {
       app.io.close();
       await new Promise<void>((resolve) => app?.server.close(() => resolve()));
-      app.dispose();
+      await app.dispose();
       app = null;
     }
     for (const root of [storageRoot, logRoot]) {
@@ -152,7 +152,7 @@ describe("GET /api/internal/structLog/health", () => {
     if (app) {
       app.io.close();
       await new Promise<void>((resolve) => app?.server.close(() => resolve()));
-      app.dispose();
+      await app.dispose();
       app = null;
     }
     for (const root of [storageRoot, logRoot]) {

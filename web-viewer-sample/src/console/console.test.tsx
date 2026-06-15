@@ -1593,6 +1593,9 @@ describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 
         status: "dispatched", conversion_status: "dispatched", dispatch_error: null },
     ];
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: items.length, items });
+    // load() 在 listIfcReady 後仍會 await minioWatchStatus()；不 mock 會打真 fetch，
+    // jsdom 非同步 reject 時序不定 → 此測試會偶發掩蓋/翻覆（test lie）。固定為已啟用前停 stub。
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false, note: "test stub" });
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
     await act(async () => { await Promise.resolve(); });

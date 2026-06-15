@@ -1,0 +1,81 @@
+{
+  "feature": "minio-watch-auto-intake",
+  "spec": "docs/superpowers/specs/2026-06-12-minio-watch-auto-intake-design.md",
+  "plan": "docs/superpowers/plans/2026-06-12-minio-watch-auto-intake.md",
+  "phase": "M2-R1 (O4 觸發機制 B 案：輪詢 ListObjectsV2)",
+  "executed_at": "2026-06-12T09:00:18Z",
+  "engine": "playwright",
+  "engine_real": "playwright (chromium, @playwright/test)",
+  "command": "cd web-viewer-sample && npx playwright test e2e/minio-watch-auto-intake.spec.ts --reporter=list",
+  "result": "1 passed, 0 skipped, 0 failed",
+  "spec_file": "web-viewer-sample/e2e/minio-watch-auto-intake.spec.ts",
+  "test_title": "MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）› stub 注入新物件 → watcher 自動 intake → #/conv 出現 job + Panel triggered≥1（不碰按鈕）",
+  "vertical_slice_ok": true,
+  "no_buttons_clicked": true,
+  "honesty_markers": {
+    "STUB_MINIO": "本機 fake S3 stub（http server 回 ListObjectsV2 XML），非真 192.168.20.234:9000。presigned GET URL 由 AWS SDK 簽出指向 stub。spec 檔頭 L13-19 明文揭露。",
+    "STUB_CONVERSION_API": "stub 回 202 queued（conversion_job_id=stream_conv_mw_e2e）；job 進 dispatched/queued 級即達 vertical slice 目標。真 IFC→USDC 需 host-native GPU runtime，不在本機 E2E。",
+    "coordinator": "REAL — 真 coordinator (tsx src/index.ts) 自起於 OS 配 free port，MINIO_WATCH_ENABLED=true，interval floor 降至 1s（MINIO_WATCH_INTERVAL_FLOOR_SECONDS=1，僅 E2E 降檔，production 維持 floor 10）。intake/去重/dispatch/store 鏈為真實 backend，非 mock。",
+    "conditional_skip": "dist-ui 未 build → test.skip（Playwright skip != fail）。本 run dist-ui 已 build，實際 0 skipped。本 repo 無 Playwright CI job，故 skip 設計不 false-green 任何 gate。"
+  },
+  "route": "#/conv (coordinator 同源 /ui，ConversionSchedulingPage)",
+  "buttons": "無（M2 DoD 前半「自動觸發」語意 — useEffect 首掛載自動 load listIfcReady + minioWatchStatus；watcher 自動 ListObjectsV2 輪詢觸發 intake）",
+  "fixture": "default — beforeAll 啟動本機 stub 並注入 baseline 物件 899/baseline/model.ifc；test 內 push 注入 988/auto/model.ifc（etag auto9）觸發。不要求使用者手動 curl。",
+  "real_backend_apis_hit": [
+    "GET /api/external/minio-watch/status (真 coordinator watcher 狀態，唯讀)",
+    "GET /api/external/ifc-ready?limit=50 (真 coordinator intake store 列表)",
+    "POST /api/external/ifc-ready (watcher loopback self-POST，B-scheme intake，帶 X-Webhook-Secret/X-Idempotency-Key/X-Correlation-Id)",
+    "GET /{bucket}?list-type=2 → fake S3 stub (ListObjectsV2 XML)",
+    "POST /api/conversions/ifc-to-usdc → stub conversion (回 202 queued)"
+  ],
+  "runtime_ids": {
+    "ifc_ready_job_id": "ifcready_1781254818839_e7ee5017",
+    "project_id": "988",
+    "external_model_version_id": "auto",
+    "external_conversion_task_id": "auto_mw_auto9",
+    "conversion_job_id": "stream_conv_mw_e2e",
+    "conversion_status": "queued",
+    "conversion_authority": "bim-streaming-server",
+    "download_status": "downloaded",
+    "job_status": "dispatched",
+    "dispatch_error": null
+  },
+  "watcher_status_observed": {
+    "enabled": true,
+    "bucket": "bim-control",
+    "prefix": "",
+    "interval_seconds": 1,
+    "poll_count": 2,
+    "last_error": null,
+    "baseline_count": 1,
+    "seen_count": 2,
+    "triggered_total": 1,
+    "skipped_malformed_total": 0,
+    "last_triggered": [
+      { "key": "988/auto/model.ifc", "job_id": "ifcready_1781254818839_e7ee5017", "error": null, "at": "2026-06-12T09:00:18.850Z" }
+    ],
+    "security_note": "last_triggered 只記 key，不含 presigned URL（敏感簽章不入 status/log）— 符合 spec §7。status body 不含 access_key/secret_key。"
+  },
+  "ui_assertions_in_dom": [
+    "minio-watch-panel 可見且含「啟用中」",
+    "「baseline / seen / 觸發 / 跳過」Field 第 3 槽（觸發）為非零整數（實測渲染 1 / 2 / 1 / 0）— triggered≥1 由 UI 層直接驗證",
+    "Ifc-ready jobs 表 988 列可見（project 欄 /^988$/ 精確匹配）",
+    "988 列 conversion 欄（td nth(2)）顯示 queued — job 達 dispatched/queued 級由 UI 呈現驗證"
+  ],
+  "vertical_slice_checklist": {
+    "ui_route_reachable": "PASS — #/conv 於 coordinator 同源 /ui 可達",
+    "explicit_button_clickable": "N/A by design — M2 DoD 前半語意為「全自動觸發、不碰任何按鈕」；route 自動 useEffect load + watcher 自動輪詢觸發。頁面有 Refresh 等既有按鈕可點但本 slice 刻意不依賴",
+    "default_fixture_no_manual_curl": "PASS — beforeAll 啟 stub + 注入物件，無需使用者手動 curl",
+    "real_backend_not_mock": "PASS — 真 coordinator intake/去重/dispatch/store 鏈；MinIO 與 conversion 為 stub 但已明文 STUB 標記",
+    "runtime_id_visible": "PASS — ifc_ready_job_id=ifcready_1781254818839_e7ee5017、conversion_job_id=stream_conv_mw_e2e、external_conversion_task_id=auto_mw_auto9",
+    "loading_success_failure_retry_visible": "PARTIAL — success 路徑（job dispatched/queued、triggered_total 遞增、last_error=null）於 UI/狀態可見；failure/retry 狀態欄位存在於 status schema（last_error、last_triggered[].error、skipped_malformed_total）並由 coordinator 單元/loop 測試覆蓋，但本 browser E2E 僅走 happy path，未在瀏覽器層觸發 failure/retry 視覺態",
+    "screenshot_trace_landed": "PASS — 截圖 + trace.zip + report 已落主工作區 artifacts/e2e/"
+  },
+  "screenshots": [
+    "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/minio-watch-auto-intake-conv.png"
+  ],
+  "trace_bundle": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/minio-watch-auto-intake-trace/ (含 _output/.../trace.zip 549KB + report/index.html + test-finished-1.png)",
+  "evidence_source_note": "runtime_ids 與 watcher_status_observed 為 trace.zip 內瀏覽器實際 API 回應 body 解出（authoritative network capture），非臆測。對應 resources/685459...json (ifc-ready item) 與 resources/435f977...json (minio-watch status)。",
+  "p7_real_minio": "NOT OBSERVED — 對真 MinIO 192.168.20.234:9000 的 watch（唯讀 credentials 由指揮官提供入 env）尚未實測，待 P7 部署區由指揮官提供 credentials + 丟檔配合後補實測截圖。docs/evidence/minio-watch-auto-intake/README.md §P7 已標 not observed。",
+  "not_3d_viewer": "本 feature 非 3D/真實 IFC viewer 類（無 review session / stage truth / GPU-backed 渲染斷言）。watcher 是 intake 觸發自動化，stub conversion 不產生 USD 場景；故無 stage-truth matched 驗證適用。"
+}
