@@ -1820,4 +1820,71 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     await act(async () => { root.unmount(); });
   });
+
+  // [qr-t2-pollgen-race] createRuleRun await 視窗內按「選取模型」(PICK_FILE → step running→picked
+  // → pollGen 遞增)應中止後續輪詢。修復前 doRun 在 await createRuleRun 之後「重新捕捉」myGen，
+  // 把已遞增的新 gen 抓進來，守門永遠通過、舊輪詢 getRuleRun 仍照打(資源洩漏)。
+  // 此測試在 createRuleRun pending 時觸發 PICK_FILE，解析後 getRuleRun 不得被呼叫。
+  it("[qr-t2-pollgen-race] createRuleRun await 期間 PICK_FILE → 取消生效，getRuleRun 不再發（不重捕 gen）", async () => {
+    // 受控 deferred：createRuleRun 在我們手動 resolve 前保持 pending，模擬「await 視窗」。
+    let resolveCreate!: (v: { rule_run_id: string; status: "queued" }) => void;
+    const createPending = new Promise<{ rule_run_id: string; status: "queued" }>((res) => { resolveCreate = res; });
+    vi.spyOn(governanceClient, "createRuleRun").mockReturnValue(createPending);
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+
+    // idle→picked→running（doRun 啟動，卡在 await createRuleRun，輪詢尚未開始）。
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    expect(getSpy.mock.calls.length).toBe(0); // createRuleRun 未解析前不該有 getRuleRun
+
+    // 關鍵：createRuleRun 仍 pending 時使用者按「選取模型」→ PICK_FILE → step running→picked
+    // → pollGen 遞增（取消本輪輪詢）。
+    await clickByTestId("a1-step-pick");
+
+    // 解析 createRuleRun + 推進假時鐘：守門應在 await 之後立即攔截，輪詢永不啟動。
+    resolveCreate({ rule_run_id: "rr_a1", status: "queued" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+
+    expect(getSpy.mock.calls.length, "createRuleRun await 內取消後不得再發 getRuleRun").toBe(0);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // [qr-t2-terminal-status-whitelist] 後端 JSON 可能回型別 union 外的 terminal status（errored/cancelled）。
+  // 修復前 break 條件只認 succeeded/failed，遇 errored 會空轉 60 次（60s 假時鐘）才結束。
+  // 改成 in-progress 白名單（!queued && !running）後，任何 terminal status 即時中斷 → RUN_FAIL。
+  it("[qr-t2-terminal-status-whitelist] getRuleRun 回 errored（union 外 terminal）→ 立即中斷一次即 RUN_FAIL，不空轉", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 強制回傳型別 union 外的 terminal status。cast 繞過 TS 因為這正是「後端回了型別沒涵蓋的值」情境。
+    const erroredStatus = { ...fakeRunStatus("running"), status: "errored" } as unknown as RuleRunStatus;
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(erroredStatus);
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 第一輪即 errored → 白名單條件 break；不得 setTimeout 等下一輪。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // getRuleRun 只應被呼叫一次（即時中斷，非空轉 60 次）。
+    expect(getSpy.mock.calls.length, "errored 應即時中斷，getRuleRun 只呼叫一次").toBe(1);
+
+    // status !== succeeded → 走 RUN_FAIL 分支 → running-error 子態「可重試」提示。
+    const warnNote = Array.from(container.querySelectorAll(".ec-warn-note")).find((n) =>
+      n.textContent?.includes("可重試"),
+    );
+    expect(warnNote, "errored 應進 running-error 子態並顯示『可重試』").not.toBeUndefined();
+    expect(warnNote!.textContent).toContain("rule-run errored");
+
+    // 再推進 10 秒：確認沒有後續輪詢（已 break，loop 結束）。
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(getSpy.mock.calls.length, "break 後不應再發 getRuleRun").toBe(1);
+
+    await act(async () => { root.unmount(); });
+  });
 });

@@ -217,18 +217,21 @@ export function A1GovernanceWorkbenchPage() {
     // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
     // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
     dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
-    let myGen = pollGenRef.current;
+    // 開跑前捕捉 generation；不可在 await createRuleRun 之後重新捕捉，否則 await 視窗內
+    // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
+    const myGen = pollGenRef.current;
     try {
       const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: state.ifcPath, ids_path: idsPath || undefined });
-      // 捕捉本輪輪詢的 generation（RUN dispatch 已 commit、running effect 已跑過不遞增）。
-      myGen = pollGenRef.current;
+      if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
         if (pollGenRef.current !== myGen) return; // unmount / step 重置 → 中斷輪詢，不再發請求
         st = await governanceClient.getRuleRun(rule_run_id);
         if (pollGenRef.current !== myGen) return; // await 期間失效 → 不再 dispatch
         dispatch({ type: "RUN_PROGRESS", run: st });
-        if (st.status === "succeeded" || st.status === "failed") break;
+        // in-progress 白名單：只有 queued/running 才續輪詢；任何 terminal status（含後端
+        // 回的型別 union 外 errored/cancelled）即時中斷，不空轉 60 次。
+        if (st.status !== "queued" && st.status !== "running") break;
         await new Promise((r) => setTimeout(r, 1000));
       }
       if (pollGenRef.current !== myGen) return;
