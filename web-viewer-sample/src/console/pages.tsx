@@ -287,6 +287,9 @@ export function A1GovernanceWorkbenchPage() {
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="step" v={state.step} prov="asbuilt" />
           {state.issueCount !== null && <Field k="已開 issue（artifact）" v={String(state.issueCount)} prov="asbuilt" />}
+          {/* EXPORT_OK 落地後才出現的可見信號：供 E2E 直接驗「exported=true（artifact）」而非靠 RUN 清 run 的旁證 disabled。
+              比照 issueCount Field，僅在 state.exported 為 true 顯示；重跑保留（a1Machine：RUN 不清 exported）。 */}
+          {state.exported && <div data-testid="a1-exported-artifact"><Field k="已匯出（artifact）" v="excel" prov="asbuilt" /></div>}
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

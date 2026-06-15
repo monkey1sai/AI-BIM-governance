@@ -51,6 +51,14 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
     await page.getByTestId("a1-step-run").click();
     await page.getByTestId("a1-rulerun-scoreboard").waitFor({ state: "visible", timeout: 120_000 });
 
+    // 先等「scored」信號(RUN_DONE 已落地)再開失敗抽屜的 15s 視窗,縮短不確定性。
+    // 記分板在 RUN_PROGRESS(status=queued)就 render(pages.tsx:311 {state.run && …}),但 a1-failures-by-rule 需
+    // state.failed.length>0,而 failed 只在 RUN_DONE→scored 才有資料。高負載時 RUN_DONE 可能在記分板可見後數秒~分鐘才到,
+    // 若直接從這裡起算 failures-by-rule 的 15s,RUN_DONE 未到就先逾時造成假失敗。a1-step-issues 在 step=scored/issued/
+    // delivered 才 enable(pages.tsx:324),即 RUN_DONE 已落地的直接信號;以 120s(對齊 rule-run 量級)等它 enable 後,
+    // 失敗抽屜本身只需短視窗即出現。
+    await expect(page.getByTestId("a1-step-issues")).toBeEnabled({ timeout: 120_000 });
+
     // 失敗抽屜:FailureScoreboard 只在 state.failed.length>0 且聚出 rules.length>0 時 render
     // a1-failures-by-rule(pages.tsx:319/804)。fixture-bytes.ifc 有已知失敗(spec §1「A1_EVIDENCE failed:71」),
     // 故此抽屜「必須」出現——這正是 spec §2.2/§6 列為 E2E DoD 必要條件的核心 user-facing 功能(展開看 GUID+名稱+樓層+複製)。
@@ -60,8 +68,14 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
     const sawDrawer = await byRule.waitFor({ state: "visible", timeout: 15_000 }).then(() => true, () => false);
     expect(sawDrawer, "失敗抽屜 a1-failures-by-rule 未在 15s 內出現:fixture 應有已知失敗(failed>0);若環境用錯 IFC/feature 未 render 須先對齊再跑,不得靜默略過 spec §2.2/§6 核心 DoD").toBe(true);
     // 點第一條規則的展開 toggle → 命中構件表出現,含「storey」欄與「複製」鈕(GUID 可複製)。
-    await page.locator('[data-testid^="a1-fail-toggle-"]').first().click();
-    await expect(page.locator('[data-testid^="a1-fail-rule-"] th', { hasText: "storey" }).first()).toBeVisible({ timeout: 15_000 });
+    // 收窄斷言到「剛展開那條」rule card:從 toggle 的 data-testid 取出 ruleCode,再以 a1-fail-rule-${ruleCode} 定位該 card 的 th,
+    // 避免全頁掃 a1-fail-rule-* th 再 .first() 時選到其他(殘留/懶載入)規則行的 th 造成 false positive。
+    const firstToggle = page.locator('[data-testid^="a1-fail-toggle-"]').first();
+    const toggleId = await firstToggle.getAttribute("data-testid");
+    const ruleCode = (toggleId ?? "").replace("a1-fail-toggle-", "");
+    expect(ruleCode, "未能從 a1-fail-toggle-* 取得 ruleCode").not.toBe("");
+    await firstToggle.click();
+    await expect(page.locator(`[data-testid="a1-fail-rule-${ruleCode}"] th`, { hasText: "storey" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "複製" }).first()).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByTestId("a1-step-issues")).toBeEnabled({ timeout: 5_000 });
@@ -88,6 +102,12 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
     // 重跑後仍要驗匯出旗標被清,故先把它推到 delivered(EXPORT_OK)——這樣重跑才能證明 export 下游確實回退 disabled。
     await expect(page.getByTestId("a1-step-export")).toBeEnabled({ timeout: 10_000 });
     await page.getByTestId("a1-step-export").click();
+    // doExport 是 async(fetch→blob→dispatch EXPORT_OK);MUST 先等 exported=true 的可見信號(a1-exported-artifact,
+    // pages.tsx 僅在 state.exported 顯示)落地,才往下走 rerun。否則重跑的 RUN 會先把 run 清成 null 讓 export 鈕因
+    // !runId 而 disabled——那個 disabled 與 EXPORT_OK 是否到達無關,後端慢/離線時 EXPORT_OK 從未觸發測試仍會綠,
+    // 根本沒驗到 spec §2.1/§5 要求的「exported=true artifact 於重跑後保留」(a1Machine.ts:106 expect(s.exported).toBe(true))。
+    const exportedArtifact = page.getByTestId("a1-exported-artifact");
+    await expect(exportedArtifact).toBeVisible({ timeout: 15_000 });
 
     // 重跑:回檢核步再 RUN。重跑前同樣補 enabled 守門(scored/issued/delivered 態 step-run 應 re-enable,確認非 disabled 才 click)。
     await expect(page.getByTestId("a1-step-run")).toBeEnabled({ timeout: 5_000 });
@@ -99,6 +119,9 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
     await expect(page.getByTestId("a1-step-export")).toBeDisabled({ timeout: 10_000 });
     // 同時:已開 Issue artifact 必須仍可見(a1Machine.ts:86 重跑保留 issueCount)——「清下游旗標但保留已落地 artifact」(PATTERN-EVIDENCE-UPDATE)。
     await expect(issueArtifact).toBeVisible();
+    // 已匯出 artifact 同理:RUN 不清 exported(a1Machine.ts:46 spread 保留),故重跑後 exported=true 信號仍在——
+    // 這才是真正驗到「exported artifact 重跑後保留」(對齊 a1Machine.ts:106),而非僅旁證 export 鈕 disabled。
+    await expect(exportedArtifact).toBeVisible();
 
     // 重跑收尾:記分板重建(證據型更新,可重跑不崩)。
     await page.getByTestId("a1-rulerun-scoreboard").waitFor({ state: "visible", timeout: 120_000 });
