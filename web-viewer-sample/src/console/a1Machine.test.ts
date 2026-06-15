@@ -49,6 +49,27 @@ describe("a1Reducer 六態轉移", () => {
     expect(s.run).toBeNull();
     expect(s.issueCount).toBe(3);
   });
+  it("RUN 守門:已在 running 時再次 RUN 不重置 in-flight run(防舊 poll 結果污染新 run)", () => {
+    // 進 running 並已有一份輪詢中的 run;此時誤觸/雙擊 RUN 必須是 no-op,
+    // 否則 run 被清成 null 但 step 仍 running,讓上一輪 poll 的 RUN_DONE 通過守門寫進髒結果。
+    let s: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
+    s = a1Reducer(s, { type: "RUN" });
+    s = a1Reducer(s, { type: "RUN_PROGRESS", run: fakeRun("running") });
+    expect(s.step).toBe("running");
+    expect(s.run?.rule_run_id).toBe("rr_1");
+    const after = a1Reducer(s, { type: "RUN" });
+    expect(after).toBe(s); // 完全 no-op,引用不變
+    expect(after.run?.rule_run_id).toBe("rr_1"); // in-flight run 仍在,未被清空
+  });
+  it("重跑(RUN from delivered)清下游旗標但保留 exported artifact", () => {
+    // spec §2.1/§5:重跑清下游 state,但已落地 artifact(已匯出檔)保留可見。
+    let s: A1State = { ...initialA1State, step: "delivered", ifcPath: "x.ifc", run: fakeRun("succeeded"), issueCount: 3, exported: true };
+    s = a1Reducer(s, { type: "RUN" });
+    expect(s.step).toBe("running");
+    expect(s.run).toBeNull();
+    expect(s.exported).toBe(true); // 已匯出 artifact 保留
+    expect(s.issueCount).toBe(3); // 已開 Issue artifact 保留
+  });
   it("RUN_DONE 守門:非 running 態(舊 poll 回調)不前進 scored", () => {
     // 先 RUN 進 running,再 PICK_FILE 回 picked(清掉 run 上下文);舊 poll 的 RUN_DONE 不得強推 scored
     let s: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });

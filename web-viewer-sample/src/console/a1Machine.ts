@@ -38,6 +38,10 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
       return { ...initialA1State, step: event.ifcPath ? "picked" : "idle", ifcPath: event.ifcPath };
     case "RUN":
       if (!state.ifcPath) return state;
+      // 已在 running 時忽略再次 RUN(雙擊/誤觸):否則 run 被清成 null 但 step 仍 running,
+      // 讓上一輪尚未結束的 poll callback 之 RUN_DONE/RUN_FAIL 通過守門寫入髒結果污染新 run。
+      // 重跑語意(spec §2.1/§5)只允許從已完成步(picked/scored/issued/delivered)重觸發。
+      if (state.step === "running") return state;
       return { ...state, step: "running", run: null, failed: [], error: null, runError: false };
     case "RUN_PROGRESS":
       return state.step === "running" ? { ...state, run: event.run } : state;
