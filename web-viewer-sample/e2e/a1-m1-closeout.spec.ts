@@ -28,7 +28,9 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
   test.beforeEach(async ({ request, page }) => {
     let apiOk = false;
     try {
-      const res = await request.get(`${COORDINATOR}/api/governance/files/tree`);
+      // explicit 10s timeout：APIRequestContext 預設吃 test timeout(此處 180s)，不設會在慢/掛
+      // 後端把 30s+ 堆進整體預算，最後以噪音 global-timeout kill 而非乾淨 skip(對齊 a2 fail-fast 慣例)。
+      const res = await request.get(`${COORDINATOR}/api/governance/files/tree`, { timeout: 10_000 });
       apiOk = res.ok();
     } catch { apiOk = false; }
     test.skip(!apiOk, "governance proxy 未備妥(需 :49102 + coordinator proxy)");
@@ -49,15 +51,18 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
     await page.getByTestId("a1-step-run").click();
     await page.getByTestId("a1-rulerun-scoreboard").waitFor({ state: "visible", timeout: 120_000 });
 
-    // 失敗抽屜:FailureScoreboard 在有失敗時 render a1-failures-by-rule(fixture-bytes.ifc 有已知失敗)。
+    // 失敗抽屜:FailureScoreboard 只在 state.failed.length>0 且聚出 rules.length>0 時 render
+    // a1-failures-by-rule(pages.tsx:319/804)。fixture-bytes.ifc 有已知失敗(spec §1「A1_EVIDENCE failed:71」),
+    // 故此抽屜「必須」出現——這正是 spec §2.2/§6 列為 E2E DoD 必要條件的核心 user-facing 功能(展開看 GUID+名稱+樓層+複製)。
+    // 不可用 if(sawDrawer) 包成 optional:那會讓抽屜未現(錯誤 IFC / feature 未 render)時三條斷言全靜默跳過卻仍計 PASS,
+    // 使最關鍵閉環驗收失效、違反誠實鐵律。改 hard assert(對齊 a2-version-diff-selector.spec.ts:101 的 expect(...).toBe(true))。
     const byRule = page.getByTestId("a1-failures-by-rule");
     const sawDrawer = await byRule.waitFor({ state: "visible", timeout: 15_000 }).then(() => true, () => false);
-    if (sawDrawer) {
-      // 點第一條規則的展開 toggle → 命中構件表出現,含「storey」欄與「複製」鈕,且至少一列樓層非空白佐證 enrichment。
-      await page.locator('[data-testid^="a1-fail-toggle-"]').first().click();
-      await expect(page.locator('[data-testid^="a1-fail-rule-"] th', { hasText: "storey" }).first()).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByRole("button", { name: "複製" }).first()).toBeVisible({ timeout: 10_000 });
-    }
+    expect(sawDrawer, "失敗抽屜 a1-failures-by-rule 未在 15s 內出現:fixture 應有已知失敗(failed>0);若環境用錯 IFC/feature 未 render 須先對齊再跑,不得靜默略過 spec §2.2/§6 核心 DoD").toBe(true);
+    // 點第一條規則的展開 toggle → 命中構件表出現,含「storey」欄與「複製」鈕(GUID 可複製)。
+    await page.locator('[data-testid^="a1-fail-toggle-"]').first().click();
+    await expect(page.locator('[data-testid^="a1-fail-rule-"] th', { hasText: "storey" }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "複製" }).first()).toBeVisible({ timeout: 10_000 });
 
     await expect(page.getByTestId("a1-step-issues")).toBeEnabled({ timeout: 5_000 });
     await page.getByTestId("a1-step-issues").click();
@@ -66,11 +71,36 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
     await page.screenshot({ path: "../artifacts/e2e/a1-m1-closeout-flow.png", fullPage: true });
   });
 
-  test("重跑檢核 → 記分板重建(證據型更新,可重跑不崩)", async ({ page }) => {
+  test("重跑檢核 → 下游(Issue/匯出旗標)清空、已開 Issue artifact 仍在、記分板重建(證據型更新,可重跑不崩)", async ({ page }) => {
+    // spec §6 重跑路徑 DoD:回檢核步重跑 → 斷言「下游 Issue/匯出旗標清空、rule-run/issue artifact 仍在」。
+    // 先跑完一輪並「開 Issue」產出可保留的下游 artifact,重跑才有東西可驗「清旗標但留 artifact」。
     await page.getByTestId("a1-step-pick").click();
+    // 第一次 RUN 前守門:reducer 在 picked 才接受 RUN;直接 click disabled 鈕會無聲無效 → 後面 120s 空等而非明確失敗。
+    await expect(page.getByTestId("a1-step-run")).toBeEnabled({ timeout: 5_000 });
     await page.getByTestId("a1-step-run").click();
     await page.getByTestId("a1-rulerun-scoreboard").waitFor({ state: "visible", timeout: 120_000 });
+
+    // 開 Issue → issued 子態,issueCount 落地為「已開 issue（artifact）」Field(pages.tsx:289,只在 issueCount!==null 顯示)。
+    await expect(page.getByTestId("a1-step-issues")).toBeEnabled({ timeout: 5_000 });
+    await page.getByTestId("a1-step-issues").click();
+    const issueArtifact = page.getByText("已開 issue（artifact）");
+    await expect(issueArtifact).toBeVisible({ timeout: 15_000 });
+    // 重跑後仍要驗匯出旗標被清,故先把它推到 delivered(EXPORT_OK)——這樣重跑才能證明 export 下游確實回退 disabled。
+    await expect(page.getByTestId("a1-step-export")).toBeEnabled({ timeout: 10_000 });
+    await page.getByTestId("a1-step-export").click();
+
+    // 重跑:回檢核步再 RUN。重跑前同樣補 enabled 守門(scored/issued/delivered 態 step-run 應 re-enable,確認非 disabled 才 click)。
+    await expect(page.getByTestId("a1-step-run")).toBeEnabled({ timeout: 5_000 });
     await page.getByTestId("a1-step-run").click();
+
+    // RUN 同步把 step→running、run→null(a1Machine.ts:46):running 態下兩個下游鈕回退 disabled(pages.tsx:324/326),
+    // 即「下游旗標清空」的直接可觀察信號。real rule-run 需數秒~分鐘,此 running 視窗足以穩定斷言(對齊第一輪 120s 等待量級)。
+    await expect(page.getByTestId("a1-step-issues")).toBeDisabled({ timeout: 10_000 });
+    await expect(page.getByTestId("a1-step-export")).toBeDisabled({ timeout: 10_000 });
+    // 同時:已開 Issue artifact 必須仍可見(a1Machine.ts:86 重跑保留 issueCount)——「清下游旗標但保留已落地 artifact」(PATTERN-EVIDENCE-UPDATE)。
+    await expect(issueArtifact).toBeVisible();
+
+    // 重跑收尾:記分板重建(證據型更新,可重跑不崩)。
     await page.getByTestId("a1-rulerun-scoreboard").waitFor({ state: "visible", timeout: 120_000 });
     await page.screenshot({ path: "../artifacts/e2e/a1-m1-closeout-rerun.png", fullPage: true });
   });
