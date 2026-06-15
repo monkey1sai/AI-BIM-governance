@@ -305,6 +305,74 @@ def export_rule_run(run_id: str, fmt: str = Query("excel")):
     )
 
 
+def _storey_from_element(el: Any) -> Optional[str]:
+    """從構件的空間容納鏈取 containing storey 名稱;無樓層 → None(誠實,不捏造)。"""
+    for node in _spatial_chain(el):
+        if node.get("ifc_type") == "IfcBuildingStorey":
+            return node.get("name")
+    return None
+
+
+@app.get("/api/rule-runs/{run_id}/failures")
+def get_rule_run_failures(
+    run_id: str,
+    rule: Optional[str] = Query(None),
+    limit: int = Query(50),
+    offset: int = Query(0),
+):
+    run_row = store.get_run(run_id)
+    if not run_row:
+        raise HTTPException(status_code=404, detail="rule run not found")
+    rows = store.get_results(run_id, "fail")  # 內部 status 為 'fail'(非 'failed')
+    if rule:
+        rows = [r for r in rows if r.get("rule_code") == rule]
+    total = len(rows)
+    page = rows[offset : offset + limit]
+
+    # name/type/storey 未持久化 → 開 model 一次(無快取),loop 複用同一 handle 補齊。
+    model = None
+    ifc_path = run_row.get("ifc_source_path")
+    if page and ifc_path and os.path.exists(ifc_path):
+        try:
+            model = open_model(ifc_path)
+        except Exception:  # noqa: BLE001 - 開檔失敗則降級為無 enrichment,不整包失敗
+            model = None
+
+    items = []
+    for r in page:
+        guid = r.get("ifc_guid")
+        name = ifc_type = storey = None
+        if model is not None and guid:
+            try:
+                el = model.by_guid(guid)
+            except Exception:  # noqa: BLE001
+                el = None
+            if el is not None:
+                ifc_type = el.is_a()
+                name = getattr(el, "Name", None)
+                storey = _storey_from_element(el)
+        items.append({
+            "ifc_guid": guid,
+            "ifc_name": name,
+            "ifc_type": ifc_type,
+            "storey": storey,
+            "severity": r.get("severity"),
+            "rule_code": r.get("rule_code"),  # 每筆保留 rule_code,供未過濾呼叫前端分組
+            "message": r.get("message"),
+            "usd_prim_path": r.get("usd_prim_path"),
+        })
+    # 回傳形狀對齊 spec §4.2:top-level "rule_code"(echo `rule` 過濾,未過濾為 None)+ array key "items"。
+    # rule_run_id 為附加 echo(無害,不與 spec 必填欄位衝突)。
+    return {
+        "rule_run_id": run_id,
+        "rule_code": rule,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+        "items": items,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
 
