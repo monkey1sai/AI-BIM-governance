@@ -43,6 +43,27 @@ export interface RuleResultRow {
   message: string;
 }
 
+// A1 §4.2 失敗構件抽屜：後端開 model 補 name/type/storey（查詢期 enrichment，非持久化）。
+export interface FailureRow {
+  ifc_guid: string | null;
+  ifc_name: string | null;
+  ifc_type: string | null;
+  storey: string | null;
+  severity: string | null; // DB severity TEXT 可為 NULL → 後端 r.get("severity") 回 JSON null
+  rule_code: string;
+  message: string;
+  usd_prim_path: string | null;
+}
+
+export interface FailuresResponse {
+  rule_run_id: string;
+  rule_code: string | null; // 過濾時回填該規則碼；未過濾為 null
+  limit: number;
+  offset: number;
+  total: number;
+  items: FailureRow[];
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
     ...init,
@@ -77,6 +98,17 @@ export const governanceClient = {
     jsonFetch<{ results: RuleResultRow[] }>(
       `/api/governance/rule-runs/${id}/results${status ? `?status=${status}` : ""}`
     ).then((r) => r.results),
+  // A1 §4.2 失敗構件抽屜：按規則分組 + 分頁 + 樓層 enrichment（mirror getResults）。
+  // 經 coordinator :8004 proxy → governance-service GET /rule-runs/:id/failures。
+  getFailures: (id: string, rule?: string, limit = 50, offset = 0) => {
+    const qs = new URLSearchParams();
+    if (rule) qs.set("rule", rule);
+    qs.set("limit", String(limit));
+    qs.set("offset", String(offset));
+    return jsonFetch<FailuresResponse>(
+      `/api/governance/rule-runs/${id}/failures?${qs.toString()}`
+    );
+  },
   exportUrl: (id: string) => `${COORD_BASE}/api/governance/rule-runs/${id}/export?fmt=excel`,
 
   // console-mapping-proxy：viewer 經 coordinator :8004 proxy 載入 element_mapping（守邊界：

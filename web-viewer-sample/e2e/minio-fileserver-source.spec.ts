@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 // MinIO file-server source（storage/{270,889,990}/{機電,水電,消防}/*.ifc）端到端：
-// #/minio 真樹可見三專案；#/a1 由選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現。
+// #/minio 真樹可見三專案；#/issues 由選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現。
+// （本 branch 把檔案庫選擇器 + rule-run 記分板留在 #/issues 的 IssuesRuleCenterPage；
+//   #/a1 改為 reducer stepper，不再內嵌該選擇器。）
 //
 // *** 服務這幾頁的是 COORDINATOR 的「已 build dist-ui」（package.json `build:ui` → dist-ui），
 //     不是 playwright.config.ts webServer 在 :5180 起的 fresh viewer。:5180 那台與本 spec 全程
@@ -51,11 +53,13 @@ test.describe("MinIO file-server source 端到端", () => {
     // 守門 (2)：服務這頁的 coordinator dist-ui 必須是本 branch 的碼。
     // 只驗 API 不夠：backend 備妥但 coordinator dist-ui 仍舊版時，後續 toBeVisible 會逾時失敗，
     // 失敗訊號是 locator timeout 而非「環境未對齊」→ 誤導 debug。改用「本 branch 才有的 UI 標記」
-    // a1-fs-project（三層選擇器；main 不存在）當判據：導到 #/a1 後短逾時內看不到即 skip，
-    // 讓環境沒對齊走 skip（誠實）而非 timeout，也避免打到陳舊 dist-ui 留下假象。
+    // a1-fs-project（三層選擇器）當判據。本 branch 把內嵌 IssuesRuleCenterPage 從 #/a1 移除，
+    // #/a1 改為 reducer stepper（A1GovernanceWorkbenchPage），a1-fs-project 現只存在於 #/issues
+    // 路由（IssuesRuleCenterPage，pages.tsx:940）→ 守門導 #/issues 等該選擇器：短逾時內看不到即
+    // skip，讓環境沒對齊走 skip（誠實）而非 timeout，也避免打到陳舊 dist-ui 留下假象。
     let uiOk = false;
     try {
-      await page.goto(`${COORDINATOR}/ui/#/a1`);
+      await page.goto(`${COORDINATOR}/ui/#/issues`);
       await page.getByTestId("a1-fs-project").waitFor({ state: "visible", timeout: 15_000 });
       uiOk = true;
     } catch {
@@ -63,7 +67,7 @@ test.describe("MinIO file-server source 端到端", () => {
     }
     test.skip(
       !uiOk,
-      "coordinator dist-ui 非本 branch（#/a1 缺 a1-fs-project 選擇器）：需 `npm run build:ui` 後重啟服務 :8004 dist-ui 的 coordinator（見檔頭前置）。",
+      "coordinator dist-ui 非本 branch（#/issues 缺 a1-fs-project 選擇器）：需 `npm run build:ui` 後重啟服務 :8004 dist-ui 的 coordinator（見檔頭前置）。",
     );
   });
 
@@ -88,13 +92,15 @@ test.describe("MinIO file-server source 端到端", () => {
     await page.screenshot({ path: "../artifacts/e2e/minio-fileserver-source-minio-tree.png", fullPage: true });
   });
 
-  test("#/a1 選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現", async ({ page }) => {
-    await page.goto(`${COORDINATOR}/ui/#/a1`);
+  test("#/issues 選擇器選 270/機電/ver 竣工.ifc → rule-run → 檢核結果出現", async ({ page }) => {
+    await page.goto(`${COORDINATOR}/ui/#/issues`);
 
-    // #/a1 是 A1GovernanceWorkbenchPage，內嵌兩個 a1-* slice（a1-real-ifc-slice +
-    // a1-rule-center-slice）。選擇器與 live-run 記分板都在 a1-rule-center-slice 內，
-    // 用 section 收斂範圍，避免與 a1-real-ifc-slice 的同名元素/文案衝突（strict-mode）。
-    const ruleCenter = page.getByTestId("a1-rule-center-slice");
+    // 本 branch：檔案庫三層選擇器 + live-run 記分板都在 #/issues 的 IssuesRuleCenterPage
+    // （a1-fs-project / a1-rulerun-scoreboard 皆於此頁，pages.tsx:940/993）。#/a1 已改為
+    // reducer stepper，不再內嵌 IssuesRuleCenterPage（無 a1-rule-center-slice）→ 改導 #/issues。
+    // #/issues 只渲染 IssuesRuleCenterPage，這些 testid 在此頁唯一；用 main 收斂範圍避免
+    // strict-mode 多重命中。
+    const ruleCenter = page.locator("main");
 
     // 三層選擇器可見並依序選擇。
     const projectSel = ruleCenter.getByTestId("a1-fs-project");
@@ -106,7 +112,7 @@ test.describe("MinIO file-server source 端到端", () => {
 
     // 選定後 ifcPath 受控輸入框應被填入該檔絕對路徑（controlled input → 讀 inputValue()，
     // 不靠 [value=...] attribute selector；React controlled input 不一定反映 value attribute）。
-    // rule-run authority Panel 的第一個 <input> 即 ifcPath 框（見 pages.tsx L635）。
+    // IssuesRuleCenterPage 的第一個 <input> 即 ifcPath 框（三層選擇器是 <select> 不計，見 pages.tsx:982）。
     const ifcInput = ruleCenter.locator("input").first();
     await expect(ifcInput).toHaveValue(/ver 竣工\.ifc$/, { timeout: 10_000 });
 
@@ -114,10 +120,9 @@ test.describe("MinIO file-server source 端到端", () => {
     await ruleCenter.getByRole("button", { name: /執行規則檢核/ }).click();
 
     // *** 關鍵硬 gate：只斷言 live-run 記分板（data-testid="a1-rulerun-scoreboard"），
-    //     此區塊僅在後端真的回 succeeded（run!=null）後才渲染（pages.tsx `{run && (...)}`）。
-    //     絕對不可改用 getByText("評估構件"/"score")：頁面有兩個恆顯記分板（A1 workbench
-    //     L210-216 + artifact baseline L582-588）都帶這些 label，會讓斷言永遠假綠且觸發
-    //     strict-mode 多重命中。a1-rulerun-scoreboard 是「真 run vs baked baseline」的唯一判別。 ***
+    //     此區塊僅在後端真的回 run（run!=null）後才渲染（pages.tsx:992 `{run && (...)}`）。
+    //     絕對不可改用 getByText("評估構件"/"score")：那些 label 為記分板恆有欄位，靠 testid
+    //     才能斷定是「真跑出的 run」而非空殼，並避免 strict-mode 多重命中。 ***
     const liveScoreboard = ruleCenter.getByTestId("a1-rulerun-scoreboard");
     await expect(liveScoreboard).toBeVisible({ timeout: 120_000 });
     // 區塊內含 score 指標 → 確認真結果而非空殼。

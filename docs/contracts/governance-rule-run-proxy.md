@@ -22,6 +22,7 @@ POST /api/governance/rule-runs                         → POST /api/rule-runs
 POST /api/governance/rule-runs/for-session/{sessionId}  → POST /api/rule-runs   (resolves IFC path, see below)
 GET  /api/governance/rule-runs/{runId}                  → GET  /api/rule-runs/{runId}
 GET  /api/governance/rule-runs/{runId}/results          → GET  /api/rule-runs/{runId}/results
+GET  /api/governance/rule-runs/{runId}/failures         → GET  /api/rule-runs/{runId}/failures  (per-rule group, paginated, storey-enriched)
 GET  /api/governance/rule-runs/{runId}/export           → GET  /api/rule-runs/{runId}/export  (Excel binary)
 ```
 

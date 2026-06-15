@@ -1,9 +1,10 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
+import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
-import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
@@ -13,6 +14,14 @@ import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappi
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
+
+// A1 規則檢核的預設 IFC 路徑：部署可用 VITE_A1_DEFAULT_IFC_PATH 覆寫成該機 storage 的真實路徑。
+// 開發機 fallback 指向 repo 內 storage/fixture-bytes.ifc（dev/E2E 用）;部署區未設此 env 時操作員仍可手動改輸入框。
+// （#/a1 移除內嵌 file-library 選擇器後若仍寫死開發機絕對路徑,別機部署會在第一步 rule-run 即 ifc_source_path not found。）
+function defaultA1IfcPath(): string {
+  const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  return meta?.VITE_A1_DEFAULT_IFC_PATH || "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc";
+}
 
 // 三欄服務邊界圖（移植自原型 BoundaryDiagram）：WEB-PLANE → CONTROL-PLANE BOUNDARY → INTERNAL。
 // 純展示（asbuilt 拓樸）；視覺化「瀏覽器只打 coordinator :8004」鐵律。
@@ -59,12 +68,19 @@ function MiniCard({ code, title, desc, prov = "asbuilt" }: { code: string; title
   );
 }
 
-function LifecycleStrip({ steps }: { steps: string[] }) {
+function LifecycleStrip({ steps, statuses }: { steps: string[]; statuses?: ("done" | "current" | "future")[] }) {
+  const cls = (i: number) => {
+    const st = statuses?.[i];
+    if (st === "done") return "done";
+    if (st === "current") return "active";
+    if (st === "future") return "";
+    return i === 0 ? "active" : "";
+  };
   return (
     <div className="ec-flow" style={{ margin: "8px 0 12px" }}>
       {steps.map((s, i) => (
         <span key={s} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span className={`ec-flow-step ${i === 0 ? "active" : ""}`}><span className="ec-flow-n">{i + 1}</span>{s}</span>
+          <span className={`ec-flow-step ${cls(i)}`}><span className="ec-flow-n">{i + 1}</span>{s}</span>
           {i < steps.length - 1 && <span className="ec-flow-arrow">→</span>}
         </span>
       ))}
@@ -188,50 +204,151 @@ export function OverviewPage() {
 }
 
 export function A1GovernanceWorkbenchPage() {
-  const rules = [
-    ["NAMING-STD-01", "命名規則", "passed"],
-    ["SPACE-CODE-02", "樓層 / 空間", "passed"],
-    ["CLASS-UNI-03", "分類碼缺漏", "failed"],
-    ["ARC-DOOR-REQ-001", "防火門 FireRating", "failed"],
-    ["LOD-LOI-REQ", "LOD / LOI 不足", "failed"],
-  ];
+  const [state, dispatch] = useReducer(a1Reducer, initialA1State);
+  const [pathInput, setPathInput] = useState(defaultA1IfcPath);
+  const [idsPath, setIdsPath] = useState("");
+  // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
+  // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const ui = uiSteps(state);
+  const runId = state.run?.rule_run_id ?? null;
+
+  // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
+  // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
+  // 發 getRuleRun 的資源洩漏（最多 60 次）。reducer 守門已防髒資料寫入，此處再防無謂請求。
+  const pollGenRef = useRef(0);
+  useEffect(() => () => { pollGenRef.current += 1; }, []);
+  useEffect(() => { if (state.step !== "running") pollGenRef.current += 1; }, [state.step]);
+
+  const doRun = useCallback(async () => {
+    if (!state.ifcPath) return;
+    // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
+    // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
+    dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
+    // 開跑前捕捉 generation；不可在 await createRuleRun 之後重新捕捉，否則 await 視窗內
+    // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
+    const myGen = pollGenRef.current;
+    try {
+      const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: state.ifcPath, ids_path: idsPath || undefined });
+      if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
+      let st: RuleRunStatus | null = null;
+      for (let i = 0; i < 60; i++) {
+        if (pollGenRef.current !== myGen) return; // unmount / step 重置 → 中斷輪詢，不再發請求
+        st = await governanceClient.getRuleRun(rule_run_id);
+        if (pollGenRef.current !== myGen) return; // await 期間失效 → 不再 dispatch
+        dispatch({ type: "RUN_PROGRESS", run: st });
+        // in-progress 白名單：只有 queued/running 才續輪詢；任何 terminal status（含後端
+        // 回的型別 union 外 errored/cancelled）即時中斷，不空轉 60 次。
+        if (st.status !== "queued" && st.status !== "running") break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      if (pollGenRef.current !== myGen) return;
+      if (st && st.status === "succeeded") {
+        const failed = await governanceClient.getResults(rule_run_id, "failed");
+        if (pollGenRef.current !== myGen) return;
+        dispatch({ type: "RUN_DONE", run: st, failed });
+      } else {
+        dispatch({ type: "RUN_FAIL", error: st ? `rule-run ${st.status}` : "no status" });
+      }
+    } catch (e) {
+      if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
+      dispatch({ type: "RUN_FAIL", error: String(e) });
+    }
+  }, [state.ifcPath, state.step, state.runError, idsPath]);
+
+  const makeIssues = useCallback(async () => {
+    if (!runId) return;
+    setActionErr(null); // 重試前清掉上次錯誤
+    try {
+      const { created } = await governanceClient.issuesFromRuleRun(runId);
+      dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
+    } catch (e) {
+      // 後端離線：誠實不前進（不偽造 issued），但顯示失敗讓操作員知道（誠實鐵律）。
+      setActionErr(`建 Issue 失敗：${String(e)}`);
+    }
+  }, [runId]);
+
+  const doExport = useCallback(async () => {
+    if (!runId) return;
+    setActionErr(null); // 重試前清掉上次錯誤
+    try {
+      const res = await fetch(governanceClient.exportUrl(runId));
+      if (!res.ok) { setActionErr(`匯出失敗：HTTP ${res.status}`); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      // 錨點須掛載於 document 才觸發 .click()：Firefox（Gecko）與部分 Edge 對 detached <a> 下載不可靠，
+      // 會靜默失敗（EXPORT_OK 永不 dispatch、UI 卡 scored 無回饋，違誠實鐵律）。appendChild→click→removeChild
+      // 為跨瀏覽器最安全慣例。
+      const a = document.createElement("a"); a.href = url; a.download = `rule-run-${runId}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      dispatch({ type: "EXPORT_OK" });
+    } catch (e) {
+      setActionErr(`匯出失敗：${String(e)}`); // 誠實顯示失敗，不靜默
+    }
+  }, [runId]);
+
   return (
     <>
       <h1>A1 · 治理與模型檢核</h1>
-      <p className="ec-lead">上傳模型或選取已轉檔成功的 IFC/USDC，跑自動規則檢核，直接產生 Issue 與 BCF/Excel。規則檢核在 governance-service（CPU）完成；3D 高亮需 GPU viewport（依 review session 派發）。</p>
-      <Panel title="A1 五步引導式流程" sub="對齊 prototype：上傳 → 檢核 → 結果 → 開 Issue → 交付" prov="asbuilt">
-        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 BCF"]} />
-        <div className="ec-grid">
-          <MiniCard code="01" title="上傳 / 選取模型" desc="可選 storage fixture、ifc-ready job，或後續接大檔上傳；目前已存在真實 IFC fixture 與 rule-run 路徑。" prov="asbuilt" />
-          <MiniCard code="02" title="governance-service :49102" desc="A1 rule-run authority，經 coordinator /api/governance/* proxy 呼叫，不由 browser 直連內部服務。" prov="asbuilt" />
-          <MiniCard code="03" title="3D 高亮" desc="需 viewer DataChannel 與 usd_prim_path 對映；無 first frame / mapping 時不得宣稱已高亮。" prov="p1" />
+      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue 與 Excel 匯出。規則檢核在 governance-service（CPU）完成；BCF 匯出請至 Issues 頁（本頁尚未接入）；3D 高亮需 GPU viewport（依 review session 派發，待建）。</p>
+
+      <Panel title="A1 五步引導式流程" sub="整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）" prov="asbuilt">
+        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 Excel"]} statuses={ui} />
+        <div className="ec-grid" style={{ marginBottom: 8 }}>
+          <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
+          <Field k="step" v={state.step} prov="asbuilt" />
+          {state.issueCount !== null && <Field k="已開 issue（artifact）" v={String(state.issueCount)} prov="asbuilt" />}
+          {/* EXPORT_OK 落地後才出現的可見信號：供 E2E 直接驗「exported=true（artifact）」而非靠 RUN 清 run 的旁證 disabled。
+              比照 issueCount Field，僅在 state.exported 為 true 顯示；重跑保留（a1Machine：RUN 不清 exported）。 */}
+          {state.exported && <div data-testid="a1-exported-artifact"><Field k="已匯出（artifact）" v="excel" prov="asbuilt" /></div>}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input className="ec-btn" data-testid="a1-step-path" style={{ minWidth: 420 }} value={pathInput}
+            onChange={(e) => setPathInput(e.target.value)} />
+          <Btn data-testid="a1-step-pick" caption="鎖定此模型路徑（進入步驟2）" onClick={() => dispatch({ type: "PICK_FILE", ifcPath: pathInput })}>選取模型</Btn>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+          <input className="ec-btn" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+          {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
+              健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
+          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError)}
+            caption="POST /api/governance/rule-runs" onClick={doRun}>
+            {state.runError ? "重試檢核" : state.step === "running" ? "檢核中…" : "執行規則檢核"}
+          </Btn>
+          {state.runError && <span className="ec-warn-note">檢核失敗（可重試）：{state.error}</span>}
         </div>
       </Panel>
-      <Panel title="結果記分板 · Demo layout with artifact baseline" sub="真實 artifact baseline 保留；prototype 分數只作版型示意" prov="artifact">
-        <div className="ec-grid">
-          <Metric value={A1_EVIDENCE.total} label="artifact 評估構件" />
-          <Metric value={A1_EVIDENCE.passed} label="passed" />
-          <Metric value={A1_EVIDENCE.failed} label="failed" tone="warn" />
-          <Metric value={`${A1_EVIDENCE.score}%`} label="score" />
-        </div>
-        <table className="ec-table" style={{ marginTop: 12 }}>
-          <thead><tr><th>rule</th><th>用途</th><th>state</th></tr></thead>
-          <tbody>{rules.map(([rule, use, state]) => (
-            <tr key={rule}><td>{rule}</td><td>{use}</td><td>{state === "passed" ? <ProvTag prov="asbuilt" /> : <ProvTag prov="artifact" />}</td></tr>
-          ))}</tbody>
-        </table>
+
+      {state.run && (
+        <Panel title="結果記分板" sub="真實 rule-run summary；點規則列展開命中構件（GUID/名稱/樓層）" prov="asbuilt">
+          <div className="ec-grid" data-testid="a1-rulerun-scoreboard">
+            <Metric value={state.run.summary?.total ?? "—"} label="評估構件" />
+            <Metric value={state.run.summary?.passed ?? "—"} label="passed" />
+            <Metric value={state.run.summary?.failed ?? "—"} label="failed" tone="warn" />
+            <Metric value={state.run.score ?? "—"} label="score" />
+          </div>
+          {runId && state.failed.length > 0 && <FailureScoreboard runId={runId} failed={state.failed} />}
+        </Panel>
+      )}
+
+      <Panel title="交付" sub="開 Issue / 匯出 Excel 走真實後端；BCF 匯出在 Issues 頁；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
+        <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
+          caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>失敗構件建 Issue</Btn>{" "}
+        {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
+            不看 state.run 快照欄位：重跑 running 子態 RUN_PROGRESS 可能短暫帶 succeeded 快照（step 仍 running），
+            舊式 disabled={!runId||run?.status!=="succeeded"} 會在該瞬間誤解除 disabled、允許 running 子態匯出。 */}
+        <Btn data-testid="a1-step-export" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
+          caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
+        <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合（M3/M4）">在 3D 高亮</Btn>
+        {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
-      <Panel title="主要操作" sub="已建動作導向 Issue / Rule Center 真實執行；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
-        <Btn caption="→ Issue / Rule Center 執行 rule-run" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>執行規則檢核</Btn>{" "}
-        <Btn caption="→ Issue / Rule Center 從失敗建 issue" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>失敗構件建 issue</Btn>{" "}
-        <Btn caption="→ Issue / Rule Center 匯出 BCF / Excel" prov="asbuilt" onClick={() => { window.location.hash = "issues"; }}>匯出 BCF / Excel</Btn>{" "}
-        <Btn disabled caption="需 viewer DataChannel + first frame + stage match" prov="p1">在 3D 高亮</Btn>
-      </Panel>
+
       <section data-testid="a1-real-ifc-slice" className="ec-a1-inline-slice">
         <RealIfcConsolePage />
-      </section>
-      <section data-testid="a1-rule-center-slice" className="ec-a1-inline-slice">
-        <IssuesRuleCenterPage />
       </section>
     </>
   );
@@ -595,8 +712,139 @@ export function GpuReviewRoomPage() {
   );
 }
 
+// A1 §4.2 失敗構件抽屜：把扁平表換成「按規則分組 + 可展開 + 懶載入分頁 + 樓層 + GUID 複製」。
+// 失敗計數來自既有 getResults(id,"failed")；展開某規則才懶載入 getFailures（分頁、補 storey）。
+const FAILURES_PAGE = 50;
+
+function CopyGuidBtn({ guid }: { guid: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="ec-btn"
+      style={{ padding: "1px 6px", fontSize: 11 }}
+      title="複製 ifc_guid"
+      onClick={() => {
+        // navigator.clipboard 在非安全內容（http LAN）可能不存在 → 誠實降級，不假裝已複製。
+        const clip = (navigator as { clipboard?: { writeText: (t: string) => Promise<void> } }).clipboard;
+        if (!clip) return;
+        void clip.writeText(guid).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        });
+      }}
+    >
+      {copied ? "已複製" : "複製"}
+    </button>
+  );
+}
+
+// export 供單元測試直接掛載驗收「同 tick 雙擊載入更多不得並行 fetch」（去重/鎖 spec §5）；
+// 非頁面公開 API，僅 FailureScoreboard 內部使用。
+export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; ruleCode: string; count: number }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<FailureRow[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // 去重/鎖(spec §5)同步守門：setLoading(true) 在同一 event handler 內非同步可見(須等下一 render)，
+  // 同 tick 雙擊「載入更多」時 loading 閉包值未刷新 → 兩個 loadPage(rows.length) 並行各自 append，
+  // 產生重複行。loadingRef 為 mutable ref，set/clear 同步生效，能在第二次呼叫頂部立即攔截 in-flight 請求。
+  const loadingRef = useRef(false);
+
+  const loadPage = useCallback(async (offset: number) => {
+    if (loadingRef.current) return; // 已有 in-flight loadPage → 同步擋掉並行的第二次呼叫(避免重複行)
+    loadingRef.current = true;
+    setLoading(true); setErr(null);
+    try {
+      const res = await governanceClient.getFailures(runId, ruleCode, FAILURES_PAGE, offset);
+      setTotal(res.total);
+      setRows((prev) => (offset === 0 ? res.items : [...prev, ...res.items]));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
+  }, [runId, ruleCode]);
+
+  const toggle = useCallback(() => {
+    setOpen((o) => {
+      const next = !o;
+      // 去重/鎖(spec §5):loading 中再次 toggle(快速 close→open)時 rows 仍為 0、total 仍 null,
+      // 沒有 !loading 會再觸發一次 loadPage(0),兩個並行 fetch 競速 setRows 造成閃爍/重複更新。
+      if (next && rows.length === 0 && total === null && !loading) void loadPage(0);
+      return next;
+    });
+  }, [rows.length, total, loading, loadPage]);
+
+  const canLoadMore = total !== null && rows.length < total;
+
+  return (
+    <div className="ec-card" data-testid={`a1-fail-rule-${ruleCode}`} style={{ marginTop: 8 }}>
+      <button
+        type="button"
+        className="ec-btn"
+        data-testid={`a1-fail-toggle-${ruleCode}`}
+        style={{ width: "100%", justifyContent: "space-between", display: "flex" }}
+        onClick={toggle}
+      >
+        <span><strong>{ruleCode}</strong> · {count} 筆失敗</span>
+        <span>{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          {err && <p className="ec-warn-note">載入失敗構件失敗：{err}</p>}
+          {rows.length > 0 && (
+            <table className="ec-table">
+              <thead><tr><th>ifc_guid</th><th>ifc_name</th><th>ifc_type</th><th>storey</th><th></th></tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={`${r.ifc_guid ?? "null"}-${i}`}>
+                    <td><code>{r.ifc_guid ?? <span className="ec-warn-note">null</span>}</code></td>
+                    <td>{r.ifc_name ?? "—"}</td>
+                    <td>{r.ifc_type ?? "—"}</td>
+                    <td>{r.storey ?? "—"}</td>
+                    <td>{r.ifc_guid ? <CopyGuidBtn guid={r.ifc_guid} /> : null}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {loading && <span className="ec-s">載入中…（GET /api/governance/rule-runs/:id/failures）</span>}
+          {!loading && canLoadMore && (
+            <Btn data-testid={`a1-fail-more-${ruleCode}`} caption={`已載 ${rows.length}/${total}`} onClick={() => { void loadPage(rows.length); }}>
+              載入更多
+            </Btn>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 把 getResults(id,"failed") 的扁平列依 rule_code 聚合成「規則 → 失敗數」；全過規則不在此列（不可展開）。
+function FailureScoreboard({ runId, failed }: { runId: string; failed: RuleResultRow[] }) {
+  const counts = new Map<string, number>();
+  for (const r of failed) counts.set(r.rule_code, (counts.get(r.rule_code) ?? 0) + 1);
+  const rules = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  if (rules.length === 0) return null;
+  return (
+    <div data-testid="a1-failures-by-rule" style={{ marginTop: 12 }}>
+      <p className="ec-note" style={{ marginBottom: 4 }}>
+        失敗規則（點擊展開命中構件，懶載入分頁，補樓層、GUID 可複製）：
+      </p>
+      {rules.map(([code, count]) => (
+        // key 含 runId:重跑同一規則 code 但換 runId 時,React 須建新 instance,
+        // 否則沿用舊 instance 的 local state(已載入的 rows/total)會殘留上一輪的 GUID/storey。
+        <FailureRuleRow key={`${runId}:${code}`} runId={runId} ruleCode={code} count={count} />
+      ))}
+    </div>
+  );
+}
+
 export function IssuesRuleCenterPage() {
-  const [ifcPath, setIfcPath] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc");
+  const [ifcPath, setIfcPath] = useState(defaultA1IfcPath);
   const [idsPath, setIdsPath] = useState("");
   const [run, setRun] = useState<RuleRunStatus | null>(null);
   const [failed, setFailed] = useState<RuleResultRow[]>([]);
@@ -773,7 +1021,10 @@ export function IssuesRuleCenterPage() {
               const a = document.createElement("a");
               a.href = url;
               a.download = `rule-run-${runId}.xlsx`;
+              // 錨點須掛載於 document 才觸發下載：Gecko / 部分 Edge 對 detached <a> 下載不可靠（靜默失敗）。
+              document.body.appendChild(a);
               a.click();
+              document.body.removeChild(a);
               // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放，導致（尤其較大檔）下載被中止（CodeRabbit）。
               setTimeout(() => URL.revokeObjectURL(url), 0);
             } catch (e) { setErr(String(e)); }
@@ -783,19 +1034,9 @@ export function IssuesRuleCenterPage() {
               誠實標 p1（後續整合），永遠 disabled，不做點了沒反應的假按鈕。 */}
           <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合">在 3D 中標示</Btn>
         </div>
-        {failed.length > 0 && (
-          <table className="ec-table" style={{ marginTop: 12 }}>
-            <thead><tr><th>rule_code</th><th>severity</th><th>ifc_type</th><th>ifc_guid</th><th>usd_prim_path</th></tr></thead>
-            <tbody>
-              {failed.slice(0, 30).map((r, i) => (
-                <tr key={i}>
-                  <td>{r.rule_code}</td><td>{r.severity}</td><td>{(r as { ifc_type?: string }).ifc_type ?? ""}</td>
-                  <td>{r.ifc_guid}</td><td>{r.usd_prim_path ?? <span className="ec-warn-note">null（未對映）</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        {/* A1 §4.2 失敗構件抽屜：取代舊扁平表（failed.slice(0,30)）。按規則分組、可展開、
+            懶載入分頁 getFailures、補樓層、GUID 一鍵複製；全過規則不在此列。 */}
+        {runId && failed.length > 0 && <FailureScoreboard runId={runId} failed={failed} />}
         <p className="ec-note" style={{ marginTop: 8 }}>
           [匯出 Excel] 為真實下載（openpyxl，asbuilt）。[在 3D 中標示] 需 viewer 的 WebRTC DataChannel
           （<code>highlightPrimsRequest</code>）；Edge Console 為 <code>/console</code> 獨立殼層，與 viewer 互斥掛載、
@@ -840,8 +1081,12 @@ export function IssuesRuleCenterPage() {
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
               a.download = "governance-issues.bcfzip";
+              // 錨點須掛載於 document 才觸發下載：Gecko / 部分 Edge 對 detached <a> 下載不可靠（靜默失敗）。
+              document.body.appendChild(a);
               a.click();
-              URL.revokeObjectURL(a.href);
+              document.body.removeChild(a);
+              // 延後釋放 object URL:同步 revoke 會在瀏覽器開始讀取 blob 前就釋放,導致大 bcfzip 在慢機/Firefox 下載被中止(對齊 Excel/doExport 的延後模式)。
+              setTimeout(() => URL.revokeObjectURL(a.href), 0);
             } catch (e) { setErr(String(e)); }
           }}>匯出 BCF 2.1</Btn>
         </div>

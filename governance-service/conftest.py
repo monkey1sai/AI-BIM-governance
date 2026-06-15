@@ -28,7 +28,7 @@ def _build_synthetic_model() -> ifcopenshell.file:
     storey = f.create_entity("IfcBuildingStorey", GlobalId=_guid(), Name="L1")
 
     door_ok = f.create_entity("IfcDoor", GlobalId=_guid(), Name="D-001")
-    f.create_entity("IfcDoor", GlobalId=_guid(), Name="D-002")  # 缺 FireRating
+    door_no_rating = f.create_entity("IfcDoor", GlobalId=_guid(), Name="D-002")  # 缺 FireRating
     wall_ok = f.create_entity("IfcWall", GlobalId=_guid(), Name="W-001")
     f.create_entity("IfcWall", GlobalId=_guid(), Name=None)  # 無名 + 未指派樓層
 
@@ -47,11 +47,14 @@ def _build_synthetic_model() -> ifcopenshell.file:
         RelatedObjects=[door_ok],
         RelatingPropertyDefinition=pset,
     )
-    # wall_ok 指派到樓層
+    # wall_ok 與 door_no_rating 指派到樓層 L1。
+    # door_no_rating 雖因缺 FireRating 失敗,但仍真實容納於 L1 → 讓 failures 端點的
+    # HTTP enrichment(model.by_guid → _storey_from_element)有「失敗且有樓層」的構件可端對端驗值。
+    # 不動無名牆(維持未指派,test_rule_engine WALL-STOREY 1 pass/1 fail 與 storey null 分支不變)。
     f.create_entity(
         "IfcRelContainedInSpatialStructure",
         GlobalId=_guid(),
-        RelatedElements=[wall_ok],
+        RelatedElements=[wall_ok, door_no_rating],
         RelatingStructure=storey,
     )
     return f

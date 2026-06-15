@@ -136,6 +136,47 @@ def test_ifc4x3_type_alias_resolves_and_warns():
     assert any("別名" in w and "IfcBuiltElement" in w for w in run.warnings)
 
 
+def test_open_model_caches_per_process(synthetic_ifc_path):
+    """Important-1：open_model 對同一路徑須走 process-level lru_cache，避免每次
+    /failures『載入更多』對大型真實 IFC 全量重解析。同路徑兩次呼叫回同一 handle;
+    lru_cache marker(cache_clear/cache_info)存在 → 確為快取而非偶然 identity。"""
+    open_model.cache_clear()  # 隔離前面測試留下的快取狀態
+    m1 = open_model(synthetic_ifc_path)
+    m2 = open_model(synthetic_ifc_path)
+    assert m1 is m2, "同路徑第二次呼叫應命中快取、回同一 model 物件(不重解析)"
+    # 真的是 lru_cache（具 maxsize 上限的 per-process 快取），非偶然回同物件。
+    info = open_model.cache_info()
+    assert info.maxsize is not None and info.maxsize >= 1, "open_model 應為有上限的 lru_cache"
+    assert info.hits >= 1, "第二次呼叫應記為 cache hit"
+    open_model.cache_clear()  # 不污染後續測試（real IFC 等）
+
+
+def test_open_model_invalidates_on_inplace_overwrite(tmp_path):
+    """快取鍵含 mtime/size：同路徑檔案被原地覆寫後，open_model 須回新解析的 model（不回 stale）。
+    防『同一 server path 重新上傳/轉檔覆寫後重跑治理仍讀到舊模型』(reviewer P2)。"""
+    open_model.cache_clear()
+    path = str(tmp_path / "m.ifc")
+
+    m_a = ifcopenshell.file(schema="IFC4")
+    m_a.createIfcWall(ifcopenshell.guid.new(), None, "WALL_A")
+    m_a.write(path)
+    first = open_model(path)
+    assert any(w.Name == "WALL_A" for w in first.by_type("IfcWall"))
+
+    # 原地覆寫成內容不同（size 改變；多寫一個 wall 確保 byte 數不同）的新檔。
+    m_b = ifcopenshell.file(schema="IFC4")
+    m_b.createIfcWall(ifcopenshell.guid.new(), None, "WALL_B1")
+    m_b.createIfcWall(ifcopenshell.guid.new(), None, "WALL_B2")
+    os.utime(path, None)  # 確保 mtime 前進（避免極快測試同秒 mtime_ns 巧合）
+    m_b.write(path)
+
+    second = open_model(path)
+    assert second is not first, "原地覆寫後應重新解析、回不同 model 物件（快取已失效）"
+    names = {w.Name for w in second.by_type("IfcWall")}
+    assert names == {"WALL_B1", "WALL_B2"}, f"應反映覆寫後內容，實得 {names}"
+    open_model.cache_clear()
+
+
 def test_any_pset_does_not_match_synthetic_id_key(synthetic_model):
     """A1-RE-04：any-pset 查找 property 'id' 不得匹配 get_psets 注入的合成 id。"""
     rs = {

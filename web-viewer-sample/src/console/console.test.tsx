@@ -10,6 +10,7 @@ import {
   AppVisionPage,
   ConversionSchedulingPage,
   CoordinatorPage,
+  FailureRuleRow,
   FederationPage,
   IntakePage,
   IssuesRuleCenterPage,
@@ -26,7 +27,7 @@ import {
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
-import { governanceClient, type FilesTreeResponse } from "./governanceClient";
+import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
@@ -350,15 +351,15 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain("上傳模型");
     expect(a1).toContain("自動檢核");
     expect(a1).toContain("開 Issue");
-    expect(a1).toContain("匯出 BCF");
-    expect(a1).toContain("governance-service :49102");
+    // 末步標 Excel(本頁實際只 ?fmt=excel 匯出 .xlsx);BCF 匯出在 #/issues,不在此頁誇大標示（誠實鐵律）。
+    expect(a1).toContain("匯出 Excel");
+    expect(a1).toContain("rule_run_id");
     expect(a1).toContain('data-testid="a1-real-ifc-slice"');
     expect(a1).toContain('data-testid="real-ifc-demo-control"');
-    expect(a1).toContain('data-testid="a1-rule-center-slice"');
-    expect(a1).toContain("A1 rule-run authority");
-    expect(a1).toContain("rule_run_id");
-    expect(a1).toContain("review_session_id");
-    expect(a1).toContain("viewer_url（/ui/open）");
+    expect(a1).toContain('data-testid="a1-step-run"');
+    expect(a1).toContain('data-testid="a1-step-issues"');
+    expect(a1).toContain('data-testid="a1-step-export"');
+    expect(a1).toContain("POST /api/governance/rule-runs");
 
     const viewer = renderToString(<ViewerPresentationPage />);
     expect(viewer).toContain("3D Viewer 呈現");
@@ -1606,5 +1607,498 @@ describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 
     expect(errNode!.getAttribute("title")).toContain("streaming conversion API 400");
     // 無 dispatch_error 的 job 不得渲染錯誤節點
     expect(container.querySelector('[data-testid="conv-dispatch-error-ifcready_ok"]')).toBeNull();
+  });
+});
+
+// quality finding：A1GovernanceWorkbenchPage doRun 輪詢的 unmount / step-reset 守門 +
+// makeIssues / doExport 失敗的 UI 回饋（誠實鐵律：操作失敗使用者必須看得到）。
+// SSR renderToString 只驗首幀，永遠到不了「點 run → 輪詢中 unmount」與「建 Issue 失敗顯示錯誤」，
+// 故用 createRoot + act + vi.spyOn 補上 client-render 互動驗收。
+describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作失敗 UI 回饋）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+  const fakeRunStatus = (status: RuleRunStatus["status"]): RuleRunStatus => ({
+    rule_run_id: "rr_a1",
+    status,
+    score: 99,
+    rule_set: "default",
+    model_version_id: null,
+    summary: { total: 10, passed: 9, failed: 1, errored: 0, target_summary: {}, warnings: [] },
+  });
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  const clickByTestId = async (tid: string) => {
+    const el = container.querySelector<HTMLButtonElement>(`[data-testid="${tid}"]`)!;
+    await act(async () => { el.click(); });
+  };
+
+  // 取「選取模型」→「執行規則檢核」後進入輪詢；getRuleRun 永遠回 running（loop 不自然結束），
+  // 故 loop 卡在 setTimeout(1000)。unmount 後再推進假時鐘，loop 必須因 alive 守門中斷、
+  // 不再發出任何 getRuleRun 請求（資源洩漏修復的可觀測證據）。
+  it("[finding#1] doRun 輪詢中 unmount → 迴圈停止，不再發 getRuleRun（unmount 守門）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+
+    // 鎖定模型路徑（idle→picked）後執行規則檢核（picked→running，啟動輪詢）。
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 跑完 createRuleRun microtask + 第一次 getRuleRun（iteration 0）。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const callsBeforeUnmount = getSpy.mock.calls.length;
+    expect(callsBeforeUnmount).toBeGreaterThanOrEqual(1); // 輪詢確實已啟動
+
+    // 輪詢中 unmount（使用者切頁）。
+    await act(async () => { root.unmount(); });
+    // 推進 10 秒假時鐘 + flush microtasks：若無守門，loop 會再發出多次 getRuleRun。
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+
+    // unmount 後 getRuleRun 呼叫數不得再增加（迴圈已中斷，無資源洩漏）。
+    expect(getSpy.mock.calls.length).toBe(callsBeforeUnmount);
+  });
+
+  // 輪詢中使用者按「選取模型」重置 step（running→picked）：reducer 守門已防髒資料寫入，
+  // 但 loop 仍會繼續發 getRuleRun。step 離開 running 後 loop 必須中斷、不再發請求。
+  it("[finding#1] doRun 輪詢中 PICK_FILE 重置 step → 迴圈停止，不再發 getRuleRun（step 守門）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const callsBeforeReset = getSpy.mock.calls.length;
+    expect(callsBeforeReset).toBeGreaterThanOrEqual(1);
+
+    // 使用者中途按「選取模型」→ dispatch PICK_FILE → step running→picked。
+    await clickByTestId("a1-step-pick");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+
+    // step 已離開 running，舊輪詢迴圈必須中斷，不再發 getRuleRun。
+    expect(getSpy.mock.calls.length).toBe(callsBeforeReset);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // makeIssues（建 Issue）失敗時誠實顯示錯誤：後端離線/丟例外 → 頁面出現 ec-warn-note 提示
+  // （含錯誤原因），按鈕恢復可用。對齊 doRun 失敗的 runError 同款 UI 回饋（誠實鐵律）。
+  it("[finding#2] makeIssues 失敗 → 顯示 ec-warn-note 錯誤提示（不再靜默）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockRejectedValue(new Error("governance 502"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 輪詢一次即 succeeded → 結束 loop 並進 scored。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 進 scored 後「建 Issue」鈕應可用；點擊 → issuesFromRuleRun reject。
+    const issuesBtn = container.querySelector<HTMLButtonElement>('[data-testid="a1-step-issues"]')!;
+    expect(issuesBtn.disabled).toBe(false);
+    await clickByTestId("a1-step-issues");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 誠實 UI 回饋：出現 ec-warn-note 且含錯誤原因（不再靜默）。
+    const warn = container.querySelector('[data-testid="a1-action-error"]');
+    expect(warn).not.toBeNull();
+    expect(warn!.textContent).toContain("governance 502");
+    expect(warn!.className).toContain("ec-warn-note");
+    // 按鈕恢復可用（操作可重試）。
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="a1-step-issues"]')!.disabled).toBe(false);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // doExport（匯出 Excel）失敗時同樣誠實顯示錯誤：fetch 丟例外 → ec-warn-note 提示。
+  // 補：成功的 makeIssues 之後動作須清掉上次的錯誤提示（不殘留陳舊紅錯）。
+  it("[finding#2] doExport 失敗 → 顯示 ec-warn-note；下次成功動作清除舊錯誤", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
+    ]);
+    // 第一次匯出：fetch 丟例外（後端離線）。
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    const issuesSpy = vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 匯出 Excel（status===succeeded → 鈕 enable）→ fetch reject → 顯示錯誤。
+    const exportBtn = container.querySelector<HTMLButtonElement>('[data-testid="a1-step-export"]')!;
+    expect(exportBtn.disabled).toBe(false);
+    await clickByTestId("a1-step-export");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    const warn = container.querySelector('[data-testid="a1-action-error"]');
+    expect(warn).not.toBeNull();
+    expect(warn!.textContent).toContain("network down");
+    expect(fetchSpy).toHaveBeenCalled();
+
+    // 下次成功動作（建 Issue 成功）清除舊錯誤提示（不殘留陳舊紅錯）。
+    await clickByTestId("a1-step-issues");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(issuesSpy).toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="a1-action-error"]')).toBeNull();
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // [Critical] doRun 失敗（RUN_FAIL）→ running-error 子態：spec §5「允許重試」。
+  // 對應 quality finding：先前「可重試」文案顯示但 run 鈕因 step===running 被 disabled、
+  // 且 plain RUN 在 running 是 no-op，導致使用者點不到/點了沒反應。修法是 running-error 子態
+  // 把 run 鈕 enable，點擊走 RUN_RETRY 真重試。此測試走完整路徑：失敗 → 鈕仍可點 → 重試成功 → scored。
+  it("[Critical] doRun 失敗 → run 鈕在 running-error 子態仍可點 → 重試成功 → scored 記分板出現", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 第一輪輪詢回 failed（→ RUN_FAIL），重試後第二輪回 succeeded（→ RUN_DONE → scored）。
+    const getSpy = vi
+      .spyOn(governanceClient, "getRuleRun")
+      .mockResolvedValueOnce(fakeRunStatus("failed"))
+      .mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 第一輪輪詢即 failed → 結束 loop → dispatch RUN_FAIL → running-error 子態。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 誠實 UI：出現「可重試」紅字提示，且帶錯誤原因（rule-run failed）。
+    const warnNote = Array.from(container.querySelectorAll(".ec-warn-note")).find((n) =>
+      n.textContent?.includes("可重試"),
+    );
+    expect(warnNote, "RUN_FAIL 後應出現『可重試』提示").not.toBeUndefined();
+    expect(warnNote!.textContent).toContain("rule-run failed");
+
+    // 核心：run 鈕在 running-error 子態必須仍可點（修復前因 step===running 被 disabled，點不到）。
+    const runBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-step-run"]')!;
+    expect(runBtn().disabled, "running-error 子態 run 鈕必須 enable 才能重試（修復前為 disabled）").toBe(false);
+
+    const callsAfterFail = getSpy.mock.calls.length;
+    // 點「重試」→ 走 RUN_RETRY 真重試（修復前 dispatch plain RUN 在 running 是 no-op，輪詢不會重啟）。
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    // 重試真的重啟了輪詢（getRuleRun 再被呼叫），證明不是 no-op。
+    expect(getSpy.mock.calls.length, "重試應重啟輪詢（非 no-op）").toBeGreaterThan(callsAfterFail);
+
+    // 第二輪 succeeded → 進 scored；step 欄顯示 scored、記分板區塊出現、紅錯提示清除。
+    const stepField = Array.from(container.querySelectorAll(".ec-field")).find((f) =>
+      f.querySelector(".ec-k")?.textContent === "step",
+    );
+    expect(stepField?.querySelector(".ec-v")?.textContent).toContain("scored");
+    expect(container.querySelector('[data-testid="a1-rulerun-scoreboard"]')).not.toBeNull();
+    expect(
+      Array.from(container.querySelectorAll(".ec-warn-note")).some((n) => n.textContent?.includes("可重試")),
+      "重試成功後『可重試』提示應清除",
+    ).toBe(false);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // [qr-t2-pollgen-race] createRuleRun await 視窗內按「選取模型」(PICK_FILE → step running→picked
+  // → pollGen 遞增)應中止後續輪詢。修復前 doRun 在 await createRuleRun 之後「重新捕捉」myGen，
+  // 把已遞增的新 gen 抓進來，守門永遠通過、舊輪詢 getRuleRun 仍照打(資源洩漏)。
+  // 此測試在 createRuleRun pending 時觸發 PICK_FILE，解析後 getRuleRun 不得被呼叫。
+  it("[qr-t2-pollgen-race] createRuleRun await 期間 PICK_FILE → 取消生效，getRuleRun 不再發（不重捕 gen）", async () => {
+    // 受控 deferred：createRuleRun 在我們手動 resolve 前保持 pending，模擬「await 視窗」。
+    let resolveCreate!: (v: { rule_run_id: string; status: "queued" }) => void;
+    const createPending = new Promise<{ rule_run_id: string; status: "queued" }>((res) => { resolveCreate = res; });
+    vi.spyOn(governanceClient, "createRuleRun").mockReturnValue(createPending);
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+
+    // idle→picked→running（doRun 啟動，卡在 await createRuleRun，輪詢尚未開始）。
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    expect(getSpy.mock.calls.length).toBe(0); // createRuleRun 未解析前不該有 getRuleRun
+
+    // 關鍵：createRuleRun 仍 pending 時使用者按「選取模型」→ PICK_FILE → step running→picked
+    // → pollGen 遞增（取消本輪輪詢）。
+    await clickByTestId("a1-step-pick");
+
+    // 解析 createRuleRun + 推進假時鐘：守門應在 await 之後立即攔截，輪詢永不啟動。
+    resolveCreate({ rule_run_id: "rr_a1", status: "queued" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+
+    expect(getSpy.mock.calls.length, "createRuleRun await 內取消後不得再發 getRuleRun").toBe(0);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // [qr-t2-terminal-status-whitelist] 後端 JSON 可能回型別 union 外的 terminal status（errored/cancelled）。
+  // 修復前 break 條件只認 succeeded/failed，遇 errored 會空轉 60 次（60s 假時鐘）才結束。
+  // 改成 in-progress 白名單（!queued && !running）後，任何 terminal status 即時中斷 → RUN_FAIL。
+  it("[qr-t2-terminal-status-whitelist] getRuleRun 回 errored（union 外 terminal）→ 立即中斷一次即 RUN_FAIL，不空轉", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 強制回傳型別 union 外的 terminal status。cast 繞過 TS 因為這正是「後端回了型別沒涵蓋的值」情境。
+    const erroredStatus = { ...fakeRunStatus("running"), status: "errored" } as unknown as RuleRunStatus;
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(erroredStatus);
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 第一輪即 errored → 白名單條件 break；不得 setTimeout 等下一輪。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // getRuleRun 只應被呼叫一次（即時中斷，非空轉 60 次）。
+    expect(getSpy.mock.calls.length, "errored 應即時中斷，getRuleRun 只呼叫一次").toBe(1);
+
+    // status !== succeeded → 走 RUN_FAIL 分支 → running-error 子態「可重試」提示。
+    const warnNote = Array.from(container.querySelectorAll(".ec-warn-note")).find((n) =>
+      n.textContent?.includes("可重試"),
+    );
+    expect(warnNote, "errored 應進 running-error 子態並顯示『可重試』").not.toBeUndefined();
+    expect(warnNote!.textContent).toContain("rule-run errored");
+
+    // 再推進 10 秒：確認沒有後續輪詢（已 break，loop 結束）。
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(getSpy.mock.calls.length, "break 後不應再發 getRuleRun").toBe(1);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // [Important-2] a1-step-export 的 disabled 必須與 a1-step-issues 對齊 state-machine 語意
+  // （step ∈ {scored,issued,delivered} 才 enable），不得只看 state.run 的快照欄位。
+  // 重跑時存在一個 running 子態：RUN 清 run=null（export 暫 disabled），但下一輪 getRuleRun
+  // 回 succeeded → RUN_PROGRESS 把 state.run 寫成 status=succeeded，而 step 仍 running（RUN_PROGRESS
+  // 不改 step）。修復前 export disabled={!runId || run?.status!=="succeeded"} 在此瞬間會誤解除
+  // disabled，允許在 running 子態觸發匯出。此測試把元件凍結在該窗口（getResults 永不 resolve，
+  // 卡在 RUN_PROGRESS-succeeded 與 RUN_DONE 之間），斷言 export 仍 disabled、issues 同步 disabled。
+  it("[Important-2] 重跑 running 子態存在 succeeded 快照時，匯出鈕仍 disabled（與建 Issue 對齊 step 語意）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 第一輪輪詢回 succeeded → 進 scored（export enable）。重跑後第二輪也回 succeeded，
+    // 但 getResults 第二次永不 resolve → 元件凍結在 running 子態且 state.run.status=succeeded。
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    let getResultsCalls = 0;
+    vi.spyOn(governanceClient, "getResults").mockImplementation(() => {
+      getResultsCalls += 1;
+      // 第一次（首跑 RUN_DONE）正常 resolve 進 scored；第二次（重跑）永不 resolve，凍結在 running。
+      return getResultsCalls === 1 ? Promise.resolve([]) : new Promise<RuleResultRow[]>(() => {});
+    });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 首跑完成 → scored：export 與 issues 皆 enable（前置條件，確認鈕在 scored 真的可用）。
+    const exportBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-step-export"]')!;
+    const issuesBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-step-issues"]')!;
+    expect(exportBtn().disabled, "scored 態 export 應 enable").toBe(false);
+    expect(issuesBtn().disabled, "scored 態 issues 應 enable").toBe(false);
+
+    // 重跑：RUN 清 run=null → 下一輪 getRuleRun 回 succeeded → RUN_PROGRESS 寫 state.run.status=succeeded，
+    // step 仍 running（getResults 第二次 hang，RUN_DONE 不觸發）。元件凍結在「running + succeeded 快照」窗口。
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 凍結窗口斷言：step 仍 running（尚未 RUN_DONE），但 state.run.status === "succeeded"。
+    const stepField = Array.from(container.querySelectorAll(".ec-field")).find((f) =>
+      f.querySelector(".ec-k")?.textContent === "step",
+    );
+    expect(stepField?.querySelector(".ec-v")?.textContent, "應凍結在 running 子態").toContain("running");
+
+    // 核心斷言（修復前 export 在此瞬間被誤解除 disabled）：running 子態 export 必須 disabled，
+    // 且與 issues 同步 disabled（兩個下游交付鈕共用 state-machine 語意）。
+    expect(exportBtn().disabled, "running 子態（含 succeeded 快照）export 必須 disabled").toBe(true);
+    expect(issuesBtn().disabled, "running 子態 issues 必須 disabled").toBe(true);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // [Important-1] doExport 觸發下載的錨點必須在 .click() 當下掛載於 document（appendChild→click→removeChild）。
+  // Firefox（Gecko）與部分 Edge 對「未掛載 DOM 的 <a>」觸發下載不可靠 → 匯出靜默失敗、EXPORT_OK 永不 dispatch、
+  // UI 卡 scored 且無錯誤回饋（違誠實鐵律）。此測試攔截 HTMLAnchorElement.prototype.click，在點擊當下記錄
+  // document.body.contains(該錨點)：修復前錨點 detached → contains=false（RED）；修復後 appendChild 已掛載 → true。
+  it("[Important-1] doExport 下載錨點在 .click() 當下已掛載於 document（跨瀏覽器安全，避免 Gecko 靜默失敗）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
+    ]);
+    // 匯出成功路徑：fetch 回 ok + 真實 Blob；URL.createObjectURL/revokeObjectURL 在 jsdom 不存在 → 補 stub。
+    // 用 mockImplementation 每次回「全新」Response：Response body 只能讀一次，共用同一實例會在第二次
+    // res.blob() 觸發「Body has already been read」。
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(new Blob(["xlsx-bytes"]), { status: 200 }),
+    );
+    const urlCtor = globalThis.URL as unknown as {
+      createObjectURL?: (b: Blob) => string;
+      revokeObjectURL?: (u: string) => void;
+    };
+    urlCtor.createObjectURL = vi.fn(() => "blob:rr_a1");
+    urlCtor.revokeObjectURL = vi.fn(() => {});
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // scored → 匯出鈕 enable（前置條件）。先確認再安裝 click 攔截，避免攔截影響 pick/run 按鈕點擊。
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="a1-step-export"]')!.disabled).toBe(false);
+
+    // 攔截錨點 click：點擊當下記錄該錨點是否已在 document.body 內（這是 Gecko 下載可靠的前提）。
+    // 注意：click() 由 HTMLElement.prototype 提供（HTMLAnchorElement 未自有此方法），須 spy 父原型才攔得到；
+    // 對非下載錨點一律 call-through 原生實作，確保匯出按鈕自身的 .click() 仍正常派發 onClick。
+    let attachedAtClick: boolean | null = null;
+    const realClick = HTMLElement.prototype.click;
+    const clickSpy = vi
+      .spyOn(HTMLElement.prototype, "click")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this instanceof HTMLAnchorElement && (this.getAttribute("download") ?? "").includes("rule-run")) {
+          attachedAtClick = document.body.contains(this);
+          return; // 下載錨點不實際導航（jsdom 無下載），只記錄掛載狀態
+        }
+        realClick.call(this); // 其餘元素（含匯出按鈕）走原生 click → 正常觸發 onClick
+      });
+
+    // 點擊匯出 → doExport 成功路徑（fetch ok → 建錨點 → click）。
+    await clickByTestId("a1-step-export");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 只統計下載錨點的 click（call-through 的按鈕點擊不計入語意）。
+    expect(attachedAtClick, "doExport 應觸發下載錨點 .click() 並記錄掛載狀態").not.toBeNull();
+    expect(clickSpy).toHaveBeenCalled();
+    // 核心：點擊當下錨點必須已掛載（修復前 detached → false → Gecko/Edge 靜默失敗）。
+    expect(attachedAtClick, "下載錨點 .click() 當下必須已 appendChild 至 document.body").toBe(true);
+    // 收尾：錨點不得殘留在 document（removeChild 已清理）。
+    const leftover = Array.from(document.body.querySelectorAll("a")).filter((a) =>
+      (a.getAttribute("download") ?? "").includes("rule-run"),
+    );
+    expect(leftover.length, "click 後下載錨點應自 document 移除（removeChild）").toBe(0);
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+// [Important-2] FailureRuleRow「載入更多」去重/鎖（spec §5）：React 中 setLoading(true) 在同一 event
+// handler 內非同步可見（須等下一 render），同 tick 雙擊「載入更多」時 loading 閉包值未刷新，兩個
+// loadPage(rows.length) 並行執行、各自 [...prev, ...res.items] append → 重複行。修復前同步 loading guard
+// 失效，getFailures 被呼叫 3 次（1 初始 + 2 並行 load-more）；修復後本地 loadingRef 同步擋掉第二次 → 共 2 次。
+describe("FailureRuleRow 載入更多去重/鎖（spec §5：同 tick 雙擊不得並行 fetch）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  // 受控 deferred 工廠：每次 getFailures 回一個我們手動 resolve 的 promise，模擬「fetch 尚未回來」窗口，
+  // 讓同 tick 第二次點擊在第一次 in-flight 時發生（這正是並行競速的觸發條件）。
+  function makeDeferred() {
+    let resolve!: (v: { rule_run_id: string; rule_code: string | null; limit: number; offset: number; total: number; items: unknown[] }) => void;
+    const promise = new Promise<{ rule_run_id: string; rule_code: string | null; limit: number; offset: number; total: number; items: unknown[] }>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
+  it("[Important-2] 同 tick 雙擊『載入更多』→ getFailures 不得並行重複呼叫（去重/鎖）", async () => {
+    // total=120、每頁 50：初始載入後 canLoadMore，且足以再點兩次。
+    const page = (offset: number) => ({
+      rule_run_id: "rr_a1",
+      rule_code: "DOOR-FIRERATING-REQUIRED",
+      limit: 50,
+      offset,
+      total: 120,
+      items: Array.from({ length: 50 }, (_, i) => ({
+        ifc_guid: `g-${offset + i}`,
+        ifc_name: `door-${offset + i}`,
+        ifc_type: "IfcDoor",
+        storey: "1F",
+        severity: "error",
+        rule_code: "DOOR-FIRERATING-REQUIRED",
+        message: "missing FireRating",
+        usd_prim_path: null,
+      })),
+    });
+
+    const deferreds: ReturnType<typeof makeDeferred>[] = [];
+    const getSpy = vi.spyOn(governanceClient, "getFailures").mockImplementation((_id, _rule, _limit, offset) => {
+      const d = makeDeferred();
+      deferreds.push(d);
+      // 立刻記住該 promise 對應的 offset，待測試手動 resolve。
+      (d as unknown as { offset: number }).offset = offset ?? 0;
+      return d.promise as unknown as ReturnType<typeof governanceClient.getFailures>;
+    });
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<FailureRuleRow runId="rr_a1" ruleCode="DOOR-FIRERATING-REQUIRED" count={120} />);
+    });
+
+    // 展開 → 觸發初始 loadPage(0)（in-flight，deferred 未 resolve）。
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="a1-fail-toggle-DOOR-FIRERATING-REQUIRED"]')!;
+    await act(async () => { toggle.click(); });
+    // 解析初始頁 → rows=50、total=120 → 出現「載入更多」。
+    await act(async () => { deferreds[0].resolve(page(0)); await Promise.resolve(); });
+    expect(getSpy.mock.calls.length, "初始展開應呼叫一次 getFailures(offset=0)").toBe(1);
+
+    const moreBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-fail-more-DOOR-FIRERATING-REQUIRED"]');
+    expect(moreBtn(), "rows<total 時應出現載入更多").not.toBeNull();
+
+    // 核心：同一個 act tick（同 event 批次、render 尚未 flush）內連點兩次「載入更多」。
+    // 修復前：loading 閉包值未刷新、setLoading 非同步 → 第二次 guard 失效 → 並行第二次 getFailures（共 3 次）。
+    // 修復後：本地同步 loadingRef 立即擋掉第二次 → 仍只 1 次 load-more（共 2 次）。
+    const btn = moreBtn()!;
+    await act(async () => {
+      btn.click();
+      btn.click();
+    });
+
+    expect(
+      getSpy.mock.calls.length,
+      "同 tick 雙擊載入更多只能觸發一次 getFailures（去重/鎖），不得並行重複",
+    ).toBe(2);
+
+    // 收尾：resolve 尚未完成的 load-more deferred，避免懸掛。
+    await act(async () => {
+      for (const d of deferreds.slice(1)) d.resolve(page((d as unknown as { offset: number }).offset));
+      await Promise.resolve();
+    });
+
+    await act(async () => { root.unmount(); });
   });
 });

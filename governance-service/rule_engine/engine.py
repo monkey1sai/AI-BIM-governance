@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from typing import Any
 
 import ifcopenshell
@@ -51,11 +52,35 @@ def load_rule_set(path: str) -> dict:
     return data
 
 
-def open_model(ifc_path: str) -> Any:
-    """以 ifcopenshell 解析真實 IFC（CPU-only，不需 GPU / Kit）。"""
-    if not os.path.exists(ifc_path):
-        raise FileNotFoundError(ifc_path)
+@lru_cache(maxsize=4)
+def _open_model_cached(ifc_path: str, _token: tuple[int, int]) -> Any:
+    """實際解析；快取鍵含 ``_token``（mtime_ns + size），故同路徑但檔案被原地覆寫
+    （mtime/size 改變）會落到不同鍵 → 重新 parse，不回舊 model。``_token`` 由
+    ``open_model`` 帶入，caller 不直接呼叫此函式。"""
     return ifcopenshell.open(ifc_path)
+
+
+def open_model(ifc_path: str) -> Any:
+    """以 ifcopenshell 解析真實 IFC（CPU-only，不需 GPU / Kit）。
+
+    Important-1：per-process lru_cache（maxsize=4）。/failures 等端點對同一 rule-run
+    的同一 IFC 反覆開檔補 name/type/storey（每次『載入更多』一次），大型真實 IFC 全量
+    重解析成本高；快取讓同路徑後續呼叫直接命中、不重 parse。rule_engine 的所有 caller
+    皆唯讀（run_rules 只 by_type/get_psets/讀屬性，不改 model；diff_engine 另有獨立、
+    未快取的 open_model，需獨立 base/target 物件者不受影響），故共享 handle 安全。
+    multi-worker 下為 per-worker 範圍（finding 已接受）。
+
+    快取鍵 = (path, mtime_ns, size)：同路徑檔案被原地覆寫後 mtime/size 改變即自動失效、
+    重新解析，不回 stale model（治理分數/語意/spatial/`/failures` 不殘留舊檔）。
+    FileNotFoundError 在 stat 階段就拋、不進快取，缺檔不會毒化快取。
+    """
+    st = os.stat(ifc_path)  # 缺檔 → FileNotFoundError（不快取），保留原行為
+    return _open_model_cached(ifc_path, (st.st_mtime_ns, st.st_size))
+
+
+# 對外沿用 lru_cache 的內省/清除 API（測試與運維用）：實體快取在 _open_model_cached 上。
+open_model.cache_clear = _open_model_cached.cache_clear  # type: ignore[attr-defined]
+open_model.cache_info = _open_model_cached.cache_info  # type: ignore[attr-defined]
 
 
 def run_rules(model: Any, rule_set: dict) -> RuleRunResult:
