@@ -12,7 +12,7 @@
 
 ## 3. 前端 reducer + stepper + 失敗抽屜
 
-- [x] 3.1 `governanceClient.getFailures` + `RuleFailureRow`/`RuleFailuresResponse` 型別（array key `items`）
+- [x] 3.1 `governanceClient.getFailures` + `FailureRow`/`FailuresResponse` 型別（array key `items`）
 - [x] 3.2 純 reducer `a1Machine`（六態轉移 + `uiSteps`，重跑清下游保留 artifact）+ vitest（含 RUN_FAIL→重試→RUN_DONE runError reset 回歸鎖）
 - [x] 3.3 `#/a1`（`A1GovernanceWorkbenchPage`）重構為 reducer 驅動五步 stepper，接 inline `FailureScoreboard`，移除內嵌 `IssuesRuleCenterPage`
 - [x] 3.4 失敗抽屜逐規則展開（GUID+名稱+樓層+複製、懶載入分頁、輪詢去重鎖）；`LifecycleStrip` 吃 state；`edge-console.css` `.ec-flow-step.done`

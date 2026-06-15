@@ -15,6 +15,14 @@ import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappi
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
 
+// A1 規則檢核的預設 IFC 路徑：部署可用 VITE_A1_DEFAULT_IFC_PATH 覆寫成該機 storage 的真實路徑。
+// 開發機 fallback 指向 repo 內 storage/fixture-bytes.ifc（dev/E2E 用）;部署區未設此 env 時操作員仍可手動改輸入框。
+// （#/a1 移除內嵌 file-library 選擇器後若仍寫死開發機絕對路徑,別機部署會在第一步 rule-run 即 ifc_source_path not found。）
+function defaultA1IfcPath(): string {
+  const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  return meta?.VITE_A1_DEFAULT_IFC_PATH || "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc";
+}
+
 // 三欄服務邊界圖（移植自原型 BoundaryDiagram）：WEB-PLANE → CONTROL-PLANE BOUNDARY → INTERNAL。
 // 純展示（asbuilt 拓樸）；視覺化「瀏覽器只打 coordinator :8004」鐵律。
 function BoundaryDiagram() {
@@ -197,7 +205,7 @@ export function OverviewPage() {
 
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
-  const [pathInput, setPathInput] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc");
+  const [pathInput, setPathInput] = useState(defaultA1IfcPath);
   const [idsPath, setIdsPath] = useState("");
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
@@ -283,10 +291,10 @@ export function A1GovernanceWorkbenchPage() {
   return (
     <>
       <h1>A1 · 治理與模型檢核</h1>
-      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue 與 BCF/Excel。規則檢核在 governance-service（CPU）完成；3D 高亮需 GPU viewport（依 review session 派發，待建）。</p>
+      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue 與 Excel 匯出。規則檢核在 governance-service（CPU）完成；BCF 匯出請至 Issues 頁（本頁尚未接入）；3D 高亮需 GPU viewport（依 review session 派發，待建）。</p>
 
       <Panel title="A1 五步引導式流程" sub="整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）" prov="asbuilt">
-        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 BCF"]} statuses={ui} />
+        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 Excel"]} statuses={ui} />
         <div className="ec-grid" style={{ marginBottom: 8 }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="step" v={state.step} prov="asbuilt" />
@@ -327,7 +335,7 @@ export function A1GovernanceWorkbenchPage() {
         </Panel>
       )}
 
-      <Panel title="交付" sub="開 Issue / 匯出 BCF·Excel 走真實後端；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
+      <Panel title="交付" sub="開 Issue / 匯出 Excel 走真實後端；BCF 匯出在 Issues 頁；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>失敗構件建 Issue</Btn>{" "}
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
@@ -827,14 +835,16 @@ function FailureScoreboard({ runId, failed }: { runId: string; failed: RuleResul
         失敗規則（點擊展開命中構件，懶載入分頁，補樓層、GUID 可複製）：
       </p>
       {rules.map(([code, count]) => (
-        <FailureRuleRow key={code} runId={runId} ruleCode={code} count={count} />
+        // key 含 runId:重跑同一規則 code 但換 runId 時,React 須建新 instance,
+        // 否則沿用舊 instance 的 local state(已載入的 rows/total)會殘留上一輪的 GUID/storey。
+        <FailureRuleRow key={`${runId}:${code}`} runId={runId} ruleCode={code} count={count} />
       ))}
     </div>
   );
 }
 
 export function IssuesRuleCenterPage() {
-  const [ifcPath, setIfcPath] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc");
+  const [ifcPath, setIfcPath] = useState(defaultA1IfcPath);
   const [idsPath, setIdsPath] = useState("");
   const [run, setRun] = useState<RuleRunStatus | null>(null);
   const [failed, setFailed] = useState<RuleResultRow[]>([]);

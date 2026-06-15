@@ -31,8 +31,6 @@ export type A1Event =
   | { type: "EXPORT_OK" }
   | { type: "RESET" };
 
-const STEP_ORDER: A1Step[] = ["idle", "picked", "running", "scored", "issued", "delivered"];
-
 export function a1Reducer(state: A1State, event: A1Event): A1State {
   switch (event.type) {
     case "PICK_FILE":
@@ -74,10 +72,18 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
 export type StepDot = "done" | "current" | "future";
 
 export function uiSteps(state: A1State): StepDot[] {
-  // 終態 delivered:閉環全部完成,五點全綠勾(spec §2.1「已完成=綠勾」)。
-  // 非終態走通用映射:末點(匯出)在 delivered 前皆 current/future,不能因 order-1=4 而誤標 current。
-  if (state.step === "delivered") return ["done", "done", "done", "done", "done"];
-  const order = STEP_ORDER.indexOf(state.step);
-  const currentUi = order === 0 ? -1 : order - 1;
+  // 五個 UI 圓點:[上傳模型, 自動檢核, 結果記分板, 開 Issue, 匯出]。
+  // currentUi = 當前「綠圈」的點 index;其左側皆 done(綠勾)、右側皆 future(灰)。
+  // 對齊 spec §2.1「已完成=綠勾、當前=綠圈」與 Scenario「上傳完成自動亮步驟2」:
+  //   picked  → 模型已選定(第1點 done)、自動檢核為當前(第2點 current)        → currentUi=1
+  //   running → 自動檢核進行中(第2點 current)                                  → currentUi=1
+  //   scored  → 記分板已產出(第3點 current)                                    → currentUi=2
+  //   issued  → 已開 Issue(第4點 current)                                       → currentUi=3
+  //   delivered → 匯出完成,五點全綠勾(終態末點 done 而非 current)             → 全 done
+  // (舊式 order-1 會讓 picked 的第1點誤標 current 而非 done,違反上述 Scenario。)
+  const CURRENT_UI: Record<A1Step, number> = {
+    idle: -1, picked: 1, running: 1, scored: 2, issued: 3, delivered: 5,
+  };
+  const currentUi = CURRENT_UI[state.step];
   return [0, 1, 2, 3, 4].map((i) => (i < currentUi ? "done" : i === currentUi ? "current" : "future"));
 }

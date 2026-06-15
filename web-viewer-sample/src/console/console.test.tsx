@@ -351,7 +351,8 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain("上傳模型");
     expect(a1).toContain("自動檢核");
     expect(a1).toContain("開 Issue");
-    expect(a1).toContain("匯出 BCF");
+    // 末步標 Excel(本頁實際只 ?fmt=excel 匯出 .xlsx);BCF 匯出在 #/issues,不在此頁誇大標示（誠實鐵律）。
+    expect(a1).toContain("匯出 Excel");
     expect(a1).toContain("rule_run_id");
     expect(a1).toContain('data-testid="a1-real-ifc-slice"');
     expect(a1).toContain('data-testid="real-ifc-demo-control"');

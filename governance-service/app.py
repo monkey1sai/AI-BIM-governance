@@ -329,7 +329,7 @@ def get_rule_run_failures(
     total = len(rows)
     page = rows[offset : offset + limit]
 
-    # name/type/storey 未持久化 → 開 model 一次(無快取),loop 複用同一 handle 補齊。
+    # name/type/storey 未持久化 → 開 model 一次(open_model 帶 @lru_cache,同路徑後續呼叫命中快取),loop 複用同一 handle 補齊。
     model = None
     ifc_path = run_row.get("ifc_source_path")
     if page and ifc_path and os.path.exists(ifc_path):

@@ -125,10 +125,12 @@ describe("a1Reducer 六態轉移", () => {
     expect(after.step).toBe("picked");
     expect(after.runError).toBe(false);
   });
-  it("uiSteps:idle 全 future、picked 第1點 current、delivered 全 done(終態末點綠勾)", () => {
+  it("uiSteps:idle 全 future、picked 第1點 done·第2點 current(spec Scenario 上傳完成自動亮步驟2)、delivered 全 done", () => {
     expect(uiSteps(initialA1State)).toEqual(["future", "future", "future", "future", "future"]);
+    // spec §2.2 Scenario「上傳完成自動亮步驟2」:鎖定模型(picked)後第1點 SHALL 顯示已完成(done)、
+    // 第2點「自動檢核」SHALL 為當前(current)。舊式 order-1 映射會把第1點誤標 current,違反此 Scenario。
     const picked = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
-    expect(uiSteps(picked)).toEqual(["current", "future", "future", "future", "future"]);
+    expect(uiSteps(picked)).toEqual(["done", "current", "future", "future", "future"]);
     // 終態 delivered:匯出已完成,末點(匯出)應顯示 done(綠勾),而非 current(綠圈)——spec §2.1「已完成=綠勾」。
     const delivered: A1State = { ...initialA1State, step: "delivered" };
     expect(uiSteps(delivered)).toEqual(["done", "done", "done", "done", "done"]);

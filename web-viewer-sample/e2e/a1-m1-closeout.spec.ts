@@ -82,6 +82,11 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
 
     await expect(page.getByTestId("a1-step-issues")).toBeEnabled({ timeout: 5_000 });
     await page.getByTestId("a1-step-issues").click();
+    // a1-step-export 在 scored 子態本就 enable(與 a1-step-issues 同 gating),光斷言它 enable
+    // 證明不了 issuesFromRuleRun 真的成功——issue 建立失敗時只會冒 a1-action-error、export 仍 enable,測試卻會綠。
+    // 故直接驗「已開 issue（artifact）」可見(issueCount 落地的真信號)且無 a1-action-error,才是 issue 真建成的硬證。
+    await expect(page.getByText("已開 issue（artifact）")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("a1-action-error")).toBeHidden();
     await expect(page.getByTestId("a1-step-export")).toBeEnabled({ timeout: 10_000 });
 
     await page.screenshot({ path: "../artifacts/e2e/a1-m1-closeout-flow.png", fullPage: true });
