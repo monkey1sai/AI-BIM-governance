@@ -23,7 +23,9 @@ import { test, expect } from "@playwright/test";
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
 test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
-  test.setTimeout(180_000);
+  // 重跑 test 最壞路徑 ≈ 第一輪 rule-run 120s + issue/export ~45s + 第二輪 scoreboard 120s ≈ 285s,
+  // 180s 會在第二輪前被 global-timeout kill(看不到具體斷言失敗)。拉到 360s 讓慢速第二輪能回報真正失敗點。
+  test.setTimeout(360_000);
 
   test.beforeEach(async ({ request, page }) => {
     let apiOk = false;
@@ -95,7 +97,9 @@ test.describe("A1/M1 收尾:#a1 五步 stepper + 失敗抽屜", () => {
     await page.getByTestId("a1-rulerun-scoreboard").waitFor({ state: "visible", timeout: 120_000 });
 
     // 開 Issue → issued 子態,issueCount 落地為「已開 issue（artifact）」Field(pages.tsx:289,只在 issueCount!==null 顯示)。
-    await expect(page.getByTestId("a1-step-issues")).toBeEnabled({ timeout: 5_000 });
+    // a1-step-issues 在 step=scored/issued/delivered 才 enable(pages.tsx:327,RUN_DONE→scored 後),高負載/真 IFC
+    // 下 RUN_DONE 可能 >5s 才到 → 5s 太短會假失敗。對齊 flow test 的 scored-gate(line 60)用 120_000。
+    await expect(page.getByTestId("a1-step-issues")).toBeEnabled({ timeout: 120_000 });
     await page.getByTestId("a1-step-issues").click();
     const issueArtifact = page.getByText("已開 issue（artifact）");
     await expect(issueArtifact).toBeVisible({ timeout: 15_000 });
