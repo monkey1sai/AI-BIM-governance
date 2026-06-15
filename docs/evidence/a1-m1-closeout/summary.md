@@ -53,4 +53,4 @@ storey 非 null 樣本：8/8
 
 - 3D highlight 維持待建（`p1` disabled，需 M3/M4），非本輪範圍。
 - 取證走隔離 branch stack（非部署區）；merge 後部署區從新 main 重建即服務此 UI。
-- 一個非阻斷 React key warning（`FailureScoreboard` render path）已記錄，交 P5 對抗複驗裁決。
+- 一個非阻斷 React key warning（`FailureScoreboard` render path）：P5 對抗複驗判定為 **REFUTED**（產品碼 `key={code}` 自始正確，warning 來自 `console.test.tsx` 一個 `as unknown as RuleResultRow` cast 漏 `rule_code` 的測試 fixture）；已於 commit `ce8a59d` 把 fixture 改回真實 schema 修掉，vitest 重跑零 key-warning。
