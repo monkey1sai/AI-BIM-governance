@@ -326,7 +326,10 @@ export function A1GovernanceWorkbenchPage() {
       <Panel title="交付" sub="開 Issue / 匯出 BCF·Excel 走真實後端；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>失敗構件建 Issue</Btn>{" "}
-        <Btn data-testid="a1-step-export" disabled={!runId || state.run?.status !== "succeeded"}
+        {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
+            不看 state.run 快照欄位：重跑 running 子態 RUN_PROGRESS 可能短暫帶 succeeded 快照（step 仍 running），
+            舊式 disabled={!runId||run?.status!=="succeeded"} 會在該瞬間誤解除 disabled、允許 running 子態匯出。 */}
+        <Btn data-testid="a1-step-export" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
         <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合（M3/M4）">在 3D 高亮</Btn>
         {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}

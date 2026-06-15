@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from typing import Any
 
 import ifcopenshell
@@ -51,8 +52,18 @@ def load_rule_set(path: str) -> dict:
     return data
 
 
+@lru_cache(maxsize=4)
 def open_model(ifc_path: str) -> Any:
-    """以 ifcopenshell 解析真實 IFC（CPU-only，不需 GPU / Kit）。"""
+    """以 ifcopenshell 解析真實 IFC（CPU-only，不需 GPU / Kit）。
+
+    Important-1：per-process lru_cache（maxsize=4）。/failures 等端點對同一 rule-run
+    的同一 IFC 反覆開檔補 name/type/storey（每次『載入更多』一次），大型真實 IFC 全量
+    重解析成本高；快取讓同路徑後續呼叫直接命中、不重 parse。rule_engine 的所有 caller
+    皆唯讀（run_rules 只 by_type/get_psets/讀屬性，不改 model；diff_engine 另有獨立、
+    未快取的 open_model，需獨立 base/target 物件者不受影響），故共享 handle 安全。
+    multi-worker 下為 per-worker 範圍（finding 已接受）。FileNotFoundError 不會被
+    lru_cache 記住（只快取成功結果），缺檔不會毒化快取。
+    """
     if not os.path.exists(ifc_path):
         raise FileNotFoundError(ifc_path)
     return ifcopenshell.open(ifc_path)

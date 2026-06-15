@@ -136,6 +136,21 @@ def test_ifc4x3_type_alias_resolves_and_warns():
     assert any("別名" in w and "IfcBuiltElement" in w for w in run.warnings)
 
 
+def test_open_model_caches_per_process(synthetic_ifc_path):
+    """Important-1：open_model 對同一路徑須走 process-level lru_cache，避免每次
+    /failures『載入更多』對大型真實 IFC 全量重解析。同路徑兩次呼叫回同一 handle;
+    lru_cache marker(cache_clear/cache_info)存在 → 確為快取而非偶然 identity。"""
+    open_model.cache_clear()  # 隔離前面測試留下的快取狀態
+    m1 = open_model(synthetic_ifc_path)
+    m2 = open_model(synthetic_ifc_path)
+    assert m1 is m2, "同路徑第二次呼叫應命中快取、回同一 model 物件(不重解析)"
+    # 真的是 lru_cache（具 maxsize 上限的 per-process 快取），非偶然回同物件。
+    info = open_model.cache_info()
+    assert info.maxsize is not None and info.maxsize >= 1, "open_model 應為有上限的 lru_cache"
+    assert info.hits >= 1, "第二次呼叫應記為 cache hit"
+    open_model.cache_clear()  # 不污染後續測試（real IFC 等）
+
+
 def test_any_pset_does_not_match_synthetic_id_key(synthetic_model):
     """A1-RE-04：any-pset 查找 property 'id' 不得匹配 get_psets 注入的合成 id。"""
     rs = {

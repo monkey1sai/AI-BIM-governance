@@ -1887,4 +1887,54 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     await act(async () => { root.unmount(); });
   });
+
+  // [Important-2] a1-step-export 的 disabled 必須與 a1-step-issues 對齊 state-machine 語意
+  // （step ∈ {scored,issued,delivered} 才 enable），不得只看 state.run 的快照欄位。
+  // 重跑時存在一個 running 子態：RUN 清 run=null（export 暫 disabled），但下一輪 getRuleRun
+  // 回 succeeded → RUN_PROGRESS 把 state.run 寫成 status=succeeded，而 step 仍 running（RUN_PROGRESS
+  // 不改 step）。修復前 export disabled={!runId || run?.status!=="succeeded"} 在此瞬間會誤解除
+  // disabled，允許在 running 子態觸發匯出。此測試把元件凍結在該窗口（getResults 永不 resolve，
+  // 卡在 RUN_PROGRESS-succeeded 與 RUN_DONE 之間），斷言 export 仍 disabled、issues 同步 disabled。
+  it("[Important-2] 重跑 running 子態存在 succeeded 快照時，匯出鈕仍 disabled（與建 Issue 對齊 step 語意）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 第一輪輪詢回 succeeded → 進 scored（export enable）。重跑後第二輪也回 succeeded，
+    // 但 getResults 第二次永不 resolve → 元件凍結在 running 子態且 state.run.status=succeeded。
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    let getResultsCalls = 0;
+    vi.spyOn(governanceClient, "getResults").mockImplementation(() => {
+      getResultsCalls += 1;
+      // 第一次（首跑 RUN_DONE）正常 resolve 進 scored；第二次（重跑）永不 resolve，凍結在 running。
+      return getResultsCalls === 1 ? Promise.resolve([]) : new Promise<RuleResultRow[]>(() => {});
+    });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 首跑完成 → scored：export 與 issues 皆 enable（前置條件，確認鈕在 scored 真的可用）。
+    const exportBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-step-export"]')!;
+    const issuesBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-step-issues"]')!;
+    expect(exportBtn().disabled, "scored 態 export 應 enable").toBe(false);
+    expect(issuesBtn().disabled, "scored 態 issues 應 enable").toBe(false);
+
+    // 重跑：RUN 清 run=null → 下一輪 getRuleRun 回 succeeded → RUN_PROGRESS 寫 state.run.status=succeeded，
+    // step 仍 running（getResults 第二次 hang，RUN_DONE 不觸發）。元件凍結在「running + succeeded 快照」窗口。
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 凍結窗口斷言：step 仍 running（尚未 RUN_DONE），但 state.run.status === "succeeded"。
+    const stepField = Array.from(container.querySelectorAll(".ec-field")).find((f) =>
+      f.querySelector(".ec-k")?.textContent === "step",
+    );
+    expect(stepField?.querySelector(".ec-v")?.textContent, "應凍結在 running 子態").toContain("running");
+
+    // 核心斷言（修復前 export 在此瞬間被誤解除 disabled）：running 子態 export 必須 disabled，
+    // 且與 issues 同步 disabled（兩個下游交付鈕共用 state-machine 語意）。
+    expect(exportBtn().disabled, "running 子態（含 succeeded 快照）export 必須 disabled").toBe(true);
+    expect(issuesBtn().disabled, "running 子態 issues 必須 disabled").toBe(true);
+
+    await act(async () => { root.unmount(); });
+  });
 });
