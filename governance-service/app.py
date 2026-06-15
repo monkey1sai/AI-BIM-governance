@@ -317,8 +317,8 @@ def _storey_from_element(el: Any) -> Optional[str]:
 def get_rule_run_failures(
     run_id: str,
     rule: Optional[str] = Query(None),
-    limit: int = Query(50),
-    offset: int = Query(0),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
     run_row = store.get_run(run_id)
     if not run_row:

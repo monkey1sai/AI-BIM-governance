@@ -645,10 +645,12 @@ function FailureRuleRow({ runId, ruleCode, count }: { runId: string; ruleCode: s
   const toggle = useCallback(() => {
     setOpen((o) => {
       const next = !o;
-      if (next && rows.length === 0 && total === null) void loadPage(0);
+      // 去重/鎖(spec §5):loading 中再次 toggle(快速 close→open)時 rows 仍為 0、total 仍 null,
+      // 沒有 !loading 會再觸發一次 loadPage(0),兩個並行 fetch 競速 setRows 造成閃爍/重複更新。
+      if (next && rows.length === 0 && total === null && !loading) void loadPage(0);
       return next;
     });
-  }, [rows.length, total, loadPage]);
+  }, [rows.length, total, loading, loadPage]);
 
   const canLoadMore = total !== null && rows.length < total;
 
