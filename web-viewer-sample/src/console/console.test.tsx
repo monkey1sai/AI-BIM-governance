@@ -1607,3 +1607,165 @@ describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 
     expect(container.querySelector('[data-testid="conv-dispatch-error-ifcready_ok"]')).toBeNull();
   });
 });
+
+// quality finding：A1GovernanceWorkbenchPage doRun 輪詢的 unmount / step-reset 守門 +
+// makeIssues / doExport 失敗的 UI 回饋（誠實鐵律：操作失敗使用者必須看得到）。
+// SSR renderToString 只驗首幀，永遠到不了「點 run → 輪詢中 unmount」與「建 Issue 失敗顯示錯誤」，
+// 故用 createRoot + act + vi.spyOn 補上 client-render 互動驗收。
+describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作失敗 UI 回饋）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+  const fakeRunStatus = (status: RuleRunStatus["status"]): RuleRunStatus => ({
+    rule_run_id: "rr_a1",
+    status,
+    score: 99,
+    rule_set: "default",
+    model_version_id: null,
+    summary: { total: 10, passed: 9, failed: 1, errored: 0, target_summary: {}, warnings: [] },
+  });
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    vi.useFakeTimers();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  const clickByTestId = async (tid: string) => {
+    const el = container.querySelector<HTMLButtonElement>(`[data-testid="${tid}"]`)!;
+    await act(async () => { el.click(); });
+  };
+
+  // 取「選取模型」→「執行規則檢核」後進入輪詢；getRuleRun 永遠回 running（loop 不自然結束），
+  // 故 loop 卡在 setTimeout(1000)。unmount 後再推進假時鐘，loop 必須因 alive 守門中斷、
+  // 不再發出任何 getRuleRun 請求（資源洩漏修復的可觀測證據）。
+  it("[finding#1] doRun 輪詢中 unmount → 迴圈停止，不再發 getRuleRun（unmount 守門）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+
+    // 鎖定模型路徑（idle→picked）後執行規則檢核（picked→running，啟動輪詢）。
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 跑完 createRuleRun microtask + 第一次 getRuleRun（iteration 0）。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const callsBeforeUnmount = getSpy.mock.calls.length;
+    expect(callsBeforeUnmount).toBeGreaterThanOrEqual(1); // 輪詢確實已啟動
+
+    // 輪詢中 unmount（使用者切頁）。
+    await act(async () => { root.unmount(); });
+    // 推進 10 秒假時鐘 + flush microtasks：若無守門，loop 會再發出多次 getRuleRun。
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+
+    // unmount 後 getRuleRun 呼叫數不得再增加（迴圈已中斷，無資源洩漏）。
+    expect(getSpy.mock.calls.length).toBe(callsBeforeUnmount);
+  });
+
+  // 輪詢中使用者按「選取模型」重置 step（running→picked）：reducer 守門已防髒資料寫入，
+  // 但 loop 仍會繼續發 getRuleRun。step 離開 running 後 loop 必須中斷、不再發請求。
+  it("[finding#1] doRun 輪詢中 PICK_FILE 重置 step → 迴圈停止，不再發 getRuleRun（step 守門）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const callsBeforeReset = getSpy.mock.calls.length;
+    expect(callsBeforeReset).toBeGreaterThanOrEqual(1);
+
+    // 使用者中途按「選取模型」→ dispatch PICK_FILE → step running→picked。
+    await clickByTestId("a1-step-pick");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+
+    // step 已離開 running，舊輪詢迴圈必須中斷，不再發 getRuleRun。
+    expect(getSpy.mock.calls.length).toBe(callsBeforeReset);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // makeIssues（建 Issue）失敗時誠實顯示錯誤：後端離線/丟例外 → 頁面出現 ec-warn-note 提示
+  // （含錯誤原因），按鈕恢復可用。對齊 doRun 失敗的 runError 同款 UI 回饋（誠實鐵律）。
+  it("[finding#2] makeIssues 失敗 → 顯示 ec-warn-note 錯誤提示（不再靜默）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { rule_run_id: "rr_a1", rule_id: "naming", status: "failed", ifc_guid: "g1", element_name: "x", level: null } as unknown as RuleResultRow,
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockRejectedValue(new Error("governance 502"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 輪詢一次即 succeeded → 結束 loop 並進 scored。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 進 scored 後「建 Issue」鈕應可用；點擊 → issuesFromRuleRun reject。
+    const issuesBtn = container.querySelector<HTMLButtonElement>('[data-testid="a1-step-issues"]')!;
+    expect(issuesBtn.disabled).toBe(false);
+    await clickByTestId("a1-step-issues");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 誠實 UI 回饋：出現 ec-warn-note 且含錯誤原因（不再靜默）。
+    const warn = container.querySelector('[data-testid="a1-action-error"]');
+    expect(warn).not.toBeNull();
+    expect(warn!.textContent).toContain("governance 502");
+    expect(warn!.className).toContain("ec-warn-note");
+    // 按鈕恢復可用（操作可重試）。
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="a1-step-issues"]')!.disabled).toBe(false);
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // doExport（匯出 Excel）失敗時同樣誠實顯示錯誤：fetch 丟例外 → ec-warn-note 提示。
+  // 補：成功的 makeIssues 之後動作須清掉上次的錯誤提示（不殘留陳舊紅錯）。
+  it("[finding#2] doExport 失敗 → 顯示 ec-warn-note；下次成功動作清除舊錯誤", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { rule_run_id: "rr_a1", rule_id: "naming", status: "failed", ifc_guid: "g1", element_name: "x", level: null } as unknown as RuleResultRow,
+    ]);
+    // 第一次匯出：fetch 丟例外（後端離線）。
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    const issuesSpy = vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 匯出 Excel（status===succeeded → 鈕 enable）→ fetch reject → 顯示錯誤。
+    const exportBtn = container.querySelector<HTMLButtonElement>('[data-testid="a1-step-export"]')!;
+    expect(exportBtn.disabled).toBe(false);
+    await clickByTestId("a1-step-export");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    const warn = container.querySelector('[data-testid="a1-action-error"]');
+    expect(warn).not.toBeNull();
+    expect(warn!.textContent).toContain("network down");
+    expect(fetchSpy).toHaveBeenCalled();
+
+    // 下次成功動作（建 Issue 成功）清除舊錯誤提示（不殘留陳舊紅錯）。
+    await clickByTestId("a1-step-issues");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(issuesSpy).toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="a1-action-error"]')).toBeNull();
+
+    await act(async () => { root.unmount(); });
+  });
+});

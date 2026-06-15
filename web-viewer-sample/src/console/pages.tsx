@@ -1,6 +1,6 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
@@ -199,51 +199,76 @@ export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
   const [pathInput, setPathInput] = useState("C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc");
   const [idsPath, setIdsPath] = useState("");
+  // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
+  // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
+
+  // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
+  // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
+  // 發 getRuleRun 的資源洩漏（最多 60 次）。reducer 守門已防髒資料寫入，此處再防無謂請求。
+  const pollGenRef = useRef(0);
+  useEffect(() => () => { pollGenRef.current += 1; }, []);
+  useEffect(() => { if (state.step !== "running") pollGenRef.current += 1; }, [state.step]);
 
   const doRun = useCallback(async () => {
     if (!state.ifcPath) return;
     dispatch({ type: "RUN" });
+    let myGen = pollGenRef.current;
     try {
       const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: state.ifcPath, ids_path: idsPath || undefined });
+      // 捕捉本輪輪詢的 generation（RUN dispatch 已 commit、running effect 已跑過不遞增）。
+      myGen = pollGenRef.current;
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
+        if (pollGenRef.current !== myGen) return; // unmount / step 重置 → 中斷輪詢，不再發請求
         st = await governanceClient.getRuleRun(rule_run_id);
+        if (pollGenRef.current !== myGen) return; // await 期間失效 → 不再 dispatch
         dispatch({ type: "RUN_PROGRESS", run: st });
         if (st.status === "succeeded" || st.status === "failed") break;
         await new Promise((r) => setTimeout(r, 1000));
       }
+      if (pollGenRef.current !== myGen) return;
       if (st && st.status === "succeeded") {
         const failed = await governanceClient.getResults(rule_run_id, "failed");
+        if (pollGenRef.current !== myGen) return;
         dispatch({ type: "RUN_DONE", run: st, failed });
       } else {
         dispatch({ type: "RUN_FAIL", error: st ? `rule-run ${st.status}` : "no status" });
       }
     } catch (e) {
+      if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
   }, [state.ifcPath, idsPath]);
 
   const makeIssues = useCallback(async () => {
     if (!runId) return;
+    setActionErr(null); // 重試前清掉上次錯誤
     try {
       const { created } = await governanceClient.issuesFromRuleRun(runId);
       dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
-    } catch { /* 後端離線：誠實不前進（不偽造 issued） */ }
+    } catch (e) {
+      // 後端離線：誠實不前進（不偽造 issued），但顯示失敗讓操作員知道（誠實鐵律）。
+      setActionErr(`建 Issue 失敗：${String(e)}`);
+    }
   }, [runId]);
 
   const doExport = useCallback(async () => {
     if (!runId) return;
+    setActionErr(null); // 重試前清掉上次錯誤
     try {
       const res = await fetch(governanceClient.exportUrl(runId));
-      if (!res.ok) return;
+      if (!res.ok) { setActionErr(`匯出失敗：HTTP ${res.status}`); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = `rule-run-${runId}.xlsx`; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
       dispatch({ type: "EXPORT_OK" });
-    } catch { /* 誠實不前進 */ }
+    } catch (e) {
+      setActionErr(`匯出失敗：${String(e)}`); // 誠實顯示失敗，不靜默
+    }
   }, [runId]);
 
   return (
@@ -294,6 +319,7 @@ export function A1GovernanceWorkbenchPage() {
         <Btn data-testid="a1-step-export" disabled={!runId || state.run?.status !== "succeeded"}
           caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
         <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合（M3/M4）">在 3D 高亮</Btn>
+        {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
 
       <section data-testid="a1-real-ifc-slice" className="ec-a1-inline-slice">
