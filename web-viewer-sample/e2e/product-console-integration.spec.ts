@@ -20,7 +20,11 @@ test.describe("Product AI-BIM Governance console integration", () => {
     await page.goto(`${COORDINATOR}/ui#/a1`);
     await expect(page.getByRole("heading", { name: /A1/ })).toBeVisible();
     await expect(page.getByText("A1 五步引導式流程")).toBeVisible();
-    await expect(page.locator("main").getByText("governance-service :49102", { exact: true })).toBeVisible();
+    // 本 branch #/a1 改為 reducer 驅動的 stepper（A1GovernanceWorkbenchPage），已無內嵌
+    // MiniCard 的 exact 文字「governance-service :49102」。改斷言 stepper 上確實存在的
+    // a1-step-run 鈕 caption（pages.tsx:311，POST /api/governance/rule-runs），對齊新 UI。
+    await expect(page.getByTestId("a1-step-run")).toBeVisible();
+    await expect(page.locator("main").getByText("POST /api/governance/rule-runs", { exact: true }).first()).toBeVisible();
 
     await page.goto(`${COORDINATOR}/ui#/viewer`);
     await expect(page.getByRole("heading", { name: /3D Viewer/ })).toBeVisible();

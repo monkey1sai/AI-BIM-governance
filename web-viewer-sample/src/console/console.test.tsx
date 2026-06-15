@@ -1704,7 +1704,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
-      { rule_run_id: "rr_a1", rule_id: "naming", status: "failed", ifc_guid: "g1", element_name: "x", level: null } as unknown as RuleResultRow,
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
     ]);
     vi.spyOn(governanceClient, "issuesFromRuleRun").mockRejectedValue(new Error("governance 502"));
 
@@ -1738,7 +1738,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
-      { rule_run_id: "rr_a1", rule_id: "naming", status: "failed", ifc_guid: "g1", element_name: "x", level: null } as unknown as RuleResultRow,
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
     ]);
     // 第一次匯出：fetch 丟例外（後端離線）。
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
@@ -1947,7 +1947,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
-      { rule_run_id: "rr_a1", rule_id: "naming", status: "failed", ifc_guid: "g1", element_name: "x", level: null } as unknown as RuleResultRow,
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
     ]);
     // 匯出成功路徑：fetch 回 ok + 真實 Blob；URL.createObjectURL/revokeObjectURL 在 jsdom 不存在 → 補 stub。
     // 用 mockImplementation 每次回「全新」Response：Response body 只能讀一次，共用同一實例會在第二次
