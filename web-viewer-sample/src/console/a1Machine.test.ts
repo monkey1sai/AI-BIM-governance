@@ -33,6 +33,19 @@ describe("a1Reducer 六態轉移", () => {
     expect(s.runError).toBe(true);
     expect(s.error).toBe("boom");
   });
+  it("RUN_DONE 在先前 RUN_FAIL 後把 runError 清回 false(重試成功復原)", () => {
+    // 鎖住 a1Machine.ts RUN_DONE handler 清 runError/error:
+    // 一次失敗後重觸發 RUN 並成功完成,殘留的錯誤旗標必須一併清掉,否則 UI 會永遠掛著紅錯。
+    let s: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
+    s = a1Reducer(s, { type: "RUN" });
+    s = a1Reducer(s, { type: "RUN_FAIL", error: "boom" });
+    expect(s.runError).toBe(true);
+    s = a1Reducer(s, { type: "RUN" }); // 重試
+    s = a1Reducer(s, { type: "RUN_DONE", run: fakeRun("succeeded"), failed: [] });
+    expect(s.step).toBe("scored");
+    expect(s.runError).toBe(false);
+    expect(s.error).toBeNull();
+  });
   it("scored→issued→delivered", () => {
     let s: A1State = { ...initialA1State, step: "scored", ifcPath: "x.ifc", run: fakeRun("succeeded") };
     s = a1Reducer(s, { type: "CREATE_ISSUES_OK", issueCount: 3 });
