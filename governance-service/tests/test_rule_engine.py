@@ -151,6 +151,32 @@ def test_open_model_caches_per_process(synthetic_ifc_path):
     open_model.cache_clear()  # 不污染後續測試（real IFC 等）
 
 
+def test_open_model_invalidates_on_inplace_overwrite(tmp_path):
+    """快取鍵含 mtime/size：同路徑檔案被原地覆寫後，open_model 須回新解析的 model（不回 stale）。
+    防『同一 server path 重新上傳/轉檔覆寫後重跑治理仍讀到舊模型』(reviewer P2)。"""
+    open_model.cache_clear()
+    path = str(tmp_path / "m.ifc")
+
+    m_a = ifcopenshell.file(schema="IFC4")
+    m_a.createIfcWall(ifcopenshell.guid.new(), None, "WALL_A")
+    m_a.write(path)
+    first = open_model(path)
+    assert any(w.Name == "WALL_A" for w in first.by_type("IfcWall"))
+
+    # 原地覆寫成內容不同（size 改變；多寫一個 wall 確保 byte 數不同）的新檔。
+    m_b = ifcopenshell.file(schema="IFC4")
+    m_b.createIfcWall(ifcopenshell.guid.new(), None, "WALL_B1")
+    m_b.createIfcWall(ifcopenshell.guid.new(), None, "WALL_B2")
+    os.utime(path, None)  # 確保 mtime 前進（避免極快測試同秒 mtime_ns 巧合）
+    m_b.write(path)
+
+    second = open_model(path)
+    assert second is not first, "原地覆寫後應重新解析、回不同 model 物件（快取已失效）"
+    names = {w.Name for w in second.by_type("IfcWall")}
+    assert names == {"WALL_B1", "WALL_B2"}, f"應反映覆寫後內容，實得 {names}"
+    open_model.cache_clear()
+
+
 def test_any_pset_does_not_match_synthetic_id_key(synthetic_model):
     """A1-RE-04：any-pset 查找 property 'id' 不得匹配 get_psets 注入的合成 id。"""
     rs = {
