@@ -1768,4 +1768,56 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     await act(async () => { root.unmount(); });
   });
+
+  // [Critical] doRun 失敗（RUN_FAIL）→ running-error 子態：spec §5「允許重試」。
+  // 對應 quality finding：先前「可重試」文案顯示但 run 鈕因 step===running 被 disabled、
+  // 且 plain RUN 在 running 是 no-op，導致使用者點不到/點了沒反應。修法是 running-error 子態
+  // 把 run 鈕 enable，點擊走 RUN_RETRY 真重試。此測試走完整路徑：失敗 → 鈕仍可點 → 重試成功 → scored。
+  it("[Critical] doRun 失敗 → run 鈕在 running-error 子態仍可點 → 重試成功 → scored 記分板出現", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    // 第一輪輪詢回 failed（→ RUN_FAIL），重試後第二輪回 succeeded（→ RUN_DONE → scored）。
+    const getSpy = vi
+      .spyOn(governanceClient, "getRuleRun")
+      .mockResolvedValueOnce(fakeRunStatus("failed"))
+      .mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    // 第一輪輪詢即 failed → 結束 loop → dispatch RUN_FAIL → running-error 子態。
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 誠實 UI：出現「可重試」紅字提示，且帶錯誤原因（rule-run failed）。
+    const warnNote = Array.from(container.querySelectorAll(".ec-warn-note")).find((n) =>
+      n.textContent?.includes("可重試"),
+    );
+    expect(warnNote, "RUN_FAIL 後應出現『可重試』提示").not.toBeUndefined();
+    expect(warnNote!.textContent).toContain("rule-run failed");
+
+    // 核心：run 鈕在 running-error 子態必須仍可點（修復前因 step===running 被 disabled，點不到）。
+    const runBtn = () => container.querySelector<HTMLButtonElement>('[data-testid="a1-step-run"]')!;
+    expect(runBtn().disabled, "running-error 子態 run 鈕必須 enable 才能重試（修復前為 disabled）").toBe(false);
+
+    const callsAfterFail = getSpy.mock.calls.length;
+    // 點「重試」→ 走 RUN_RETRY 真重試（修復前 dispatch plain RUN 在 running 是 no-op，輪詢不會重啟）。
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    // 重試真的重啟了輪詢（getRuleRun 再被呼叫），證明不是 no-op。
+    expect(getSpy.mock.calls.length, "重試應重啟輪詢（非 no-op）").toBeGreaterThan(callsAfterFail);
+
+    // 第二輪 succeeded → 進 scored；step 欄顯示 scored、記分板區塊出現、紅錯提示清除。
+    const stepField = Array.from(container.querySelectorAll(".ec-field")).find((f) =>
+      f.querySelector(".ec-k")?.textContent === "step",
+    );
+    expect(stepField?.querySelector(".ec-v")?.textContent).toContain("scored");
+    expect(container.querySelector('[data-testid="a1-rulerun-scoreboard"]')).not.toBeNull();
+    expect(
+      Array.from(container.querySelectorAll(".ec-warn-note")).some((n) => n.textContent?.includes("可重試")),
+      "重試成功後『可重試』提示應清除",
+    ).toBe(false);
+
+    await act(async () => { root.unmount(); });
+  });
 });

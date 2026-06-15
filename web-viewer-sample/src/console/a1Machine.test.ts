@@ -35,16 +35,39 @@ describe("a1Reducer 六態轉移", () => {
   });
   it("RUN_DONE 在先前 RUN_FAIL 後把 runError 清回 false(重試成功復原)", () => {
     // 鎖住 a1Machine.ts RUN_DONE handler 清 runError/error:
-    // 一次失敗後重觸發 RUN 並成功完成,殘留的錯誤旗標必須一併清掉,否則 UI 會永遠掛著紅錯。
+    // 一次失敗後重觸發 RUN_RETRY 並成功完成,殘留的錯誤旗標必須一併清掉,否則 UI 會永遠掛著紅錯。
+    // 注意:此處用 RUN_RETRY(非 RUN)——RUN_FAIL 後 step 仍 running,plain RUN 是 no-op(防雙擊污染),
+    // 真正的重試走 running-error 專用的 RUN_RETRY,否則 UI 的「可重試」按鈕點了不會有反應。
     let s: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
     s = a1Reducer(s, { type: "RUN" });
     s = a1Reducer(s, { type: "RUN_FAIL", error: "boom" });
     expect(s.runError).toBe(true);
-    s = a1Reducer(s, { type: "RUN" }); // 重試
+    s = a1Reducer(s, { type: "RUN_RETRY" }); // 真重試(running-error 子態才有效)
+    expect(s.step).toBe("running");
+    expect(s.runError).toBe(false); // 重試立刻清掉紅錯旗標(進新一輪 running)
+    expect(s.run).toBeNull(); // 重新開跑:清掉上一輪 run 上下文
     s = a1Reducer(s, { type: "RUN_DONE", run: fakeRun("succeeded"), failed: [] });
     expect(s.step).toBe("scored");
     expect(s.runError).toBe(false);
     expect(s.error).toBeNull();
+  });
+  it("RUN_RETRY 守門:只在 running-error 子態(runError=true)有效,其餘態 no-op", () => {
+    // RUN_RETRY 是 RUN_FAIL 後 UI「可重試」按鈕的事件;它必須只在 running-error 子態前進,
+    // 不得在 (a) 健康 running(in-flight poll,runError=false)亂清 run 污染新 run,
+    // 也不得在 (b) 非 running 態(picked/scored/...)被舊 poll 誤觸而強推狀態。
+    // (a) 健康 running(剛 RUN,尚無 RUN_FAIL):RUN_RETRY no-op,引用不變、in-flight run 不被清。
+    let live: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
+    live = a1Reducer(live, { type: "RUN" });
+    live = a1Reducer(live, { type: "RUN_PROGRESS", run: fakeRun("running") });
+    expect(live.runError).toBe(false);
+    const afterLive = a1Reducer(live, { type: "RUN_RETRY" });
+    expect(afterLive).toBe(live); // 完全 no-op
+    expect(afterLive.run?.rule_run_id).toBe("rr_1"); // in-flight run 未被清
+    // (b) 非 running 態(picked):RUN_RETRY no-op,不強推 running。
+    const picked = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
+    const afterPicked = a1Reducer(picked, { type: "RUN_RETRY" });
+    expect(afterPicked).toBe(picked);
+    expect(afterPicked.step).toBe("picked");
   });
   it("scored→issued→delivered", () => {
     let s: A1State = { ...initialA1State, step: "scored", ifcPath: "x.ifc", run: fakeRun("succeeded") };

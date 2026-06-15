@@ -23,6 +23,7 @@ export const initialA1State: A1State = {
 export type A1Event =
   | { type: "PICK_FILE"; ifcPath: string }
   | { type: "RUN" }
+  | { type: "RUN_RETRY" }
   | { type: "RUN_PROGRESS"; run: RuleRunStatus }
   | { type: "RUN_DONE"; run: RuleRunStatus; failed: RuleResultRow[] }
   | { type: "RUN_FAIL"; error: string }
@@ -42,6 +43,12 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
       // 讓上一輪尚未結束的 poll callback 之 RUN_DONE/RUN_FAIL 通過守門寫入髒結果污染新 run。
       // 重跑語意(spec §2.1/§5)只允許從已完成步(picked/scored/issued/delivered)重觸發。
       if (state.step === "running") return state;
+      return { ...state, step: "running", run: null, failed: [], error: null, runError: false };
+    case "RUN_RETRY":
+      // RUN_FAIL 後的 running-error 子態(step 仍 running 但 runError=true)專用重試入口。
+      // plain RUN 在 running 是 no-op(防雙擊/in-flight poll 污染),所以「可重試」UI 必須走此事件
+      // 才能真的重開一輪;守門 runError=true 確保只在錯誤子態前進,健康 running / 非 running 態皆 no-op。
+      if (state.step !== "running" || !state.runError) return state;
       return { ...state, step: "running", run: null, failed: [], error: null, runError: false };
     case "RUN_PROGRESS":
       return state.step === "running" ? { ...state, run: event.run } : state;

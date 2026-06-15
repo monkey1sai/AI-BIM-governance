@@ -214,7 +214,9 @@ export function A1GovernanceWorkbenchPage() {
 
   const doRun = useCallback(async () => {
     if (!state.ifcPath) return;
-    dispatch({ type: "RUN" });
+    // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
+    // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
+    dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
     let myGen = pollGenRef.current;
     try {
       const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: state.ifcPath, ids_path: idsPath || undefined });
@@ -241,7 +243,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.ifcPath, idsPath]);
+  }, [state.ifcPath, state.step, state.runError, idsPath]);
 
   const makeIssues = useCallback(async () => {
     if (!runId) return;
@@ -293,9 +295,11 @@ export function A1GovernanceWorkbenchPage() {
           <input className="ec-btn" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || state.step === "running"}
+          {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
+              健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
+          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError)}
             caption="POST /api/governance/rule-runs" onClick={doRun}>
-            {state.step === "running" ? "檢核中…" : "執行規則檢核"}
+            {state.runError ? "重試檢核" : state.step === "running" ? "檢核中…" : "執行規則檢核"}
           </Btn>
           {state.runError && <span className="ec-warn-note">檢核失敗（可重試）：{state.error}</span>}
         </div>
