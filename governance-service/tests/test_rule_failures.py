@@ -70,7 +70,11 @@ def test_failures_endpoint_groups_paginates_enriches(client, synthetic_ifc_path)
 
 def test_failures_rule_filter_and_pagination(client, synthetic_ifc_path):
     rid = _run(client, synthetic_ifc_path)
-    code = client.get(f"/api/rule-runs/{rid}/failures").json()["items"][0]["rule_code"]
+    body = client.get(f"/api/rule-runs/{rid}/failures").json()
+    # guard:items 為空時直接點出業務語意(與 test_..._enriches 的 total>=1 一致),
+    # 而非讓下面 [0] 拋無上下文的 IndexError(看不出是哪個欄位 / 哪段業務壞掉)。
+    assert body["items"], f"failures returned no items: {body}"
+    code = body["items"][0]["rule_code"]
     one = client.get(f"/api/rule-runs/{rid}/failures", params={"rule": code, "limit": 1, "offset": 0}).json()
     assert one["rule_code"] == code  # spec §4.2:過濾時 top-level rule_code 回填該規則碼
     assert all(f["rule_code"] == code for f in one["items"])

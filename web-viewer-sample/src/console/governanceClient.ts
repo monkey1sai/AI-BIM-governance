@@ -49,7 +49,7 @@ export interface FailureRow {
   ifc_name: string | null;
   ifc_type: string | null;
   storey: string | null;
-  severity: string;
+  severity: string | null; // DB severity TEXT 可為 NULL → 後端 r.get("severity") 回 JSON null
   rule_code: string;
   message: string;
   usd_prim_path: string | null;
