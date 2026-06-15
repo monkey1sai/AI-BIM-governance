@@ -49,11 +49,35 @@ describe("a1Reducer 六態轉移", () => {
     expect(s.run).toBeNull();
     expect(s.issueCount).toBe(3);
   });
+  it("RUN_DONE 守門:非 running 態(舊 poll 回調)不前進 scored", () => {
+    // 先 RUN 進 running,再 PICK_FILE 回 picked(清掉 run 上下文);舊 poll 的 RUN_DONE 不得強推 scored
+    let s: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
+    s = a1Reducer(s, { type: "RUN" });
+    const picked = a1Reducer(s, { type: "PICK_FILE", ifcPath: "x.ifc" });
+    expect(picked.step).toBe("picked");
+    const after = a1Reducer(picked, { type: "RUN_DONE", run: fakeRun("succeeded"), failed: [] });
+    expect(after).toBe(picked);
+    expect(after.step).toBe("picked");
+  });
+  it("RUN_FAIL 守門:非 running 態(舊 poll 錯誤回調)不強設 running", () => {
+    // PICK_FILE 後處於 picked(沒在跑);舊 poll 的 RUN_FAIL 不得把 step 推回 running
+    const picked = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
+    expect(picked.step).toBe("picked");
+    const after = a1Reducer(picked, { type: "RUN_FAIL", error: "stale" });
+    expect(after).toBe(picked);
+    expect(after.step).toBe("picked");
+    expect(after.runError).toBe(false);
+  });
   it("uiSteps:idle 全 future、picked 第1點 current、delivered 末點 current", () => {
     expect(uiSteps(initialA1State)).toEqual(["future", "future", "future", "future", "future"]);
     const picked = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
     expect(uiSteps(picked)).toEqual(["current", "future", "future", "future", "future"]);
     const delivered: A1State = { ...initialA1State, step: "delivered" };
     expect(uiSteps(delivered)).toEqual(["done", "done", "done", "done", "current"]);
+  });
+  it("uiSteps:running/scored/issued 中間態逐點推進", () => {
+    expect(uiSteps({ ...initialA1State, step: "running" })).toEqual(["done", "current", "future", "future", "future"]);
+    expect(uiSteps({ ...initialA1State, step: "scored" })).toEqual(["done", "done", "current", "future", "future"]);
+    expect(uiSteps({ ...initialA1State, step: "issued" })).toEqual(["done", "done", "done", "current", "future"]);
   });
 });

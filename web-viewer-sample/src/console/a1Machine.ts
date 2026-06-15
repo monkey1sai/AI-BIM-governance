@@ -42,8 +42,10 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
     case "RUN_PROGRESS":
       return state.step === "running" ? { ...state, run: event.run } : state;
     case "RUN_DONE":
+      if (state.step !== "running") return state;
       return { ...state, step: "scored", run: event.run, failed: event.failed, runError: false, error: null };
     case "RUN_FAIL":
+      if (state.step !== "running") return state;
       return { ...state, step: "running", runError: true, error: event.error };
     case "CREATE_ISSUES_OK":
       if (!["scored", "issued", "delivered"].includes(state.step)) return state;
