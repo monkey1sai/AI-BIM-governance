@@ -241,6 +241,16 @@ describe("ConversionDispatchQueue (unit)", () => {
     expect(pos).toBe(3);
     expect(queue.getQueuePosition("R")).toBe(3);
   });
+
+  it("requeue 對已在 queue 中的 jobId 不重複 append（idempotent no-op，回現有 position）", () => {
+    const queue = new ConversionDispatchQueue();
+    // 不 setDispatcher → worker run 但 dispatcher==null，job 推回 queue（既有慣例 195-203）
+    queue.enqueue("A"); queue.enqueue("B"); queue.enqueue("C");
+    // B 已在 position 2；重複 requeue 不可再 append 一個 "B"
+    const pos = queue.requeue("B");
+    expect(pos).toBe(2);
+    expect(queue.getQueuedJobIds()).toEqual(["A", "B", "C"]);
+  });
 });
 
 describe("Concurrent IFC-ready POST → serial dispatch (integration)", () => {

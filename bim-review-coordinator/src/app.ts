@@ -276,11 +276,16 @@ export interface CoordinatorApp {
   // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
   // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
   dispose: () => Promise<void>;
-  // test-only read accessor：回報某 jobId 是否仍持有 enqueue 階段暫存的 dispatch 脈絡。
-  // production route(retry 422 守門)直接讀 closure 內 pendingDispatchEvents,不經此介面;
-  // 此 getter 只為測試斷言 delete-on-success 失敗路徑「保留 pending」的行為可被 falsify。
-  // 只暴露 boolean —— map 本體(含 unknown payload 型別)不外洩到公開介面,消費端拿不到
-  // .delete()/.clear() 也拿不到 unknown payload,維護者不會誤把它當 production 依賴。
+  /**
+   * @internal test-only read accessor：回報某 jobId 是否仍持有 enqueue 階段暫存的
+   * dispatch 脈絡。**不是 production 介面**——production route(retry 422 守門)直接讀
+   * closure 內 pendingDispatchEvents,不得經此 getter；此 getter 只為測試斷言
+   * delete-on-success 失敗路徑「保留 pending」的行為可被 falsify。
+   *
+   * `@internal` tag 讓 API extractor / consumer 在型別層看見 test-only 合約；只暴露
+   * boolean —— map 本體(含 unknown payload 型別)不外洩到公開介面,消費端拿不到
+   * .delete()/.clear() 也拿不到 unknown payload,維護者不會誤把它當 production 依賴。
+   */
   hasPendingDispatch: (jobId: string) => boolean;
 }
 

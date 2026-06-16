@@ -70,8 +70,17 @@ export class ConversionDispatchQueue {
     return true;
   }
 
-  /** 重新 enqueue（retry 用）並回新的 1-based queue position。 */
+  /**
+   * 重新 enqueue（retry 用）並回 1-based queue position。
+   *
+   * Idempotent：若 `jobId` 已在 queue 或正 in-flight，視為 no-op 直接回現有
+   * position（不重複 append）。這道去重防線在此 method 內自足，不依賴上游 route
+   * 的 state guard——避免 retry 被重複觸發（雙擊／競態的兩個 HTTP 請求）時把同一
+   * jobId append 兩次，導致 worker 對 downstream streaming server 重複 dispatch。
+   */
   requeue(jobId: string): number {
+    const existing = this.getQueuePosition(jobId);
+    if (existing !== null) return existing;
     this.enqueue(jobId);
     return this.getQueuePosition(jobId) ?? 0;
   }
