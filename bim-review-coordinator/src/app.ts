@@ -1268,6 +1268,13 @@ export function createCoordinatorApp(
   app.post("/api/internal/conversions/:conversionJobId/ingest", async (request, response, next) => {
     try {
       const conversionJobId = request.params.conversionJobId;
+      // m2a-coverage-report:即便 `/api/internal/*` 已過 internal-token，仍須跑
+      // isSafeConversionJobId 守門，避免未驗證字串流入 pollerRegistry / ingest，
+      // 與既有新路由維持一致的安全面（helper 存在即應在此 internal route 共用）。
+      if (!isSafeConversionJobId(conversionJobId)) {
+        response.status(400).json({ detail: "Invalid conversion job id." });
+        return;
+      }
       // coordinator-auto-poll-streaming-conversion §4.4:manual endpoint 觸發前 cancel
       // 對應 auto-poller,避免後續 onTerminal 觸發第二次 ingest(double callback)。
       const existing = pollerRegistry.get(conversionJobId);

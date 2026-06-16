@@ -176,6 +176,23 @@ describe("host-native conversion result ingest (pull)", () => {
     expect(res.status).toBe(401);
   });
 
+  // m2a-coverage-report:即便 internal token 已通過，未通過 isSafeConversionJobId
+  // 的 path 注入字串也必須在 route 入口被 400 擋下，不可流入
+  // pollerRegistry / ingestStreamingConversionResult。
+  it("rejects unsafe conversionJobId with 400 (path injection) even with valid token", async () => {
+    const base = await startStreamingStub(READY_RESULT);
+    const app = makeApp(base);
+    await seedIfcReadyJob(app);
+
+    const res = await request(app.app)
+      .post(`/api/internal/conversions/${encodeURIComponent("../../etc/passwd")}/ingest`)
+      .set({ "X-Internal-Token": INTERNAL_TOKEN })
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.detail).toBe("Invalid conversion job id.");
+  });
+
   // coordinator-forward-quality-metrics-summary:三個 scenario verifying ingest
   // 把 quality_metrics 萃取進 session.quality_metrics_summary,並從
   // stream-config response forward 給 viewer / `/ui`。
