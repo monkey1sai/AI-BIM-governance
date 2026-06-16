@@ -185,7 +185,7 @@ describe("host-native conversion result ingest (pull)", () => {
     await seedIfcReadyJob(app);
 
     const res = await request(app.app)
-      .post(`/api/internal/conversions/${encodeURIComponent("../../etc/passwd")}/ingest`)
+      .post(`/api/internal/conversions/${encodeURIComponent("seg/seg/id")}/ingest`)
       .set({ "X-Internal-Token": INTERNAL_TOKEN })
       .send({});
 

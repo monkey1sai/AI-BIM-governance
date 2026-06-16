@@ -608,7 +608,10 @@ export function createCoordinatorApp(
       }
       const name = err instanceof Error ? err.name : "";
       const code = name === "TimeoutError" || /timeout|aborted/i.test(msg) ? 503 : 502;
-      response.status(code).json({ detail: `Conversion authority unreachable: ${msg}` });
+      // 不把內部 authority URL / upstream body 外溢給 client（spec §2/§7：錯誤不外溢內部欄位）；
+      // 真實錯誤只記 server log 供診斷。
+      console.error(`[quality-metrics] conversion authority error ${code} for ${jobId}: ${msg}`);
+      response.status(code).json({ detail: "Conversion authority unreachable." });
     }
   });
 
