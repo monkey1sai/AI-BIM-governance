@@ -448,6 +448,19 @@ git commit -m "feat(coordinator): GET /api/conversions/:id/quality-metrics produ
   dispatch_error: string | null;
 ```
 
+> **必做：同步更新既有測試 fixture（否則 Step 4 `npm run build` 必 fail）。** `conversion_job_id` 是 **required key（值可為 `null`）**，不是 optional。`web-viewer-sample/src/console/ConversionSchedulingPage.test.tsx` 既有的 `okJob: IfcReadyListItem`（line 36-39）顯式標了 `IfcReadyListItem` 型別，且其 spread 來源 `baseJob`（line 31-35）目前**沒有** `conversion_job_id` 欄位 —— 補欄後 tsc 會在 `okJob` 報 missing-property。修法：在 `baseJob` 物件加一行 `conversion_job_id: null,`（`baseJob` 被 spread 進 `okJob`，補在 `baseJob` 即可一次覆蓋 `okJob`，無需逐一改）。確切改動：
+>
+> ```ts
+> const baseJob = {
+>   project_id: "271", download_status: "downloaded", conversion_authority: null,
+>   review_session_id: null, viewer_url: null, expected_stage_url: null,
+>   expected_mapping_url: null, created_at: "2026-06-11T00:00:00Z",
+>   conversion_job_id: null, // m2a-coverage-report:新 required key（值 null）；補齊既有 fixture
+> };
+> ```
+>
+> （`conversion_job_id` 維持 required `string | null`、不改成 optional，與 spec §2 目標 3 / §4.3「wire 已有」一致，也與 Task 5 Step 1 新測試 fixture 把 `conversion_job_id` 當「present 但值可 null」用法一致。改前先 grep 確認檔內沒有其他 `: IfcReadyListItem` literal fixture 漏補；目前僅 `okJob` 一處走 `baseJob`，Task 5 Step 1 的 `job` / `noConv` 已自帶 `conversion_job_id`，無需再補。）
+
 - [ ] **Step 3: 新增 response 型別 + client 方法**
 
 `web-viewer-sample/src/console/coordinatorClient.ts`：先確保檔頂 import 了 `ConversionQualityMetricsSummary`（若未 import，加 `import type { ConversionQualityMetricsSummary } from "../types/review";`）。在 `IfcReadyListItem` 附近加回應型別：
@@ -793,4 +806,5 @@ gh pr create --title "feat: #conv 轉檔 coverage 報告展開（M2-a 唯讀 pas
 - **spec §4.2 回歸界線（host-native-conversion-ingest / sessions / external-ifc-ready）** → Task 1 Step 7 + Task 3 Step 5。✓
 - **spec §3 非目標（不改轉檔引擎 / 不碰 ifc-ready 契約形狀 / 不動 dev route / 不直連 :49101）** → 計畫零涉 bim-streaming-server、`conversion_job_id` 只補型別、route 走 coordinator。✓
 - **型別一致性**：`conversionQualityMetrics` / `ConversionQualityMetricsResponse` / `isSafeConversionJobId` / `conv-coverage-toggle-<id>` / `conv-coverage-<id>` 跨 Task 3/4/5/6 命名一致。✓
+- **既有 fixture 不被新 required 欄打爆**：Task 4 Step 2 把 `conversion_job_id: string | null` 加為 `IfcReadyListItem` 的 required key（非 optional），既有 `ConversionSchedulingPage.test.tsx` 的 `okJob: IfcReadyListItem`（line 36-39，spread 自 `baseJob` line 31-35）原本無此欄會讓 Task 4 Step 4 `npm run build`（tsc）fail；Task 4 Step 2 已明列「在 `baseJob` 補 `conversion_job_id: null,`」的確切修法（required `string | null` 不改 optional，與 spec §2 目標 3 / §4.3「wire 已有」一致）。✓
 - **Placeholder 掃描**：Task 3 Step 1 route 段測試現為**完整可執行碼**（真實 HTTP stub server harness + 6 個 `it`，不依賴攔不到的 `vi.spyOn(streamingConversionClient,...)`；已揭露 closure 注入限制與可照抄 harness 來源 `host-native-conversion-ingest.test.ts:46-90`）；其餘步驟均含可執行碼與指令，無 TODO 殘留。
