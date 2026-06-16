@@ -350,6 +350,12 @@ describe("POST /api/external/ifc-ready", () => {
 
       // in-flight 的 first job 在列表端點同樣上 wire queue_position(0=派工中),
       // 與 queued(≥1)、dispatched(null)合成完整三段語意。
+      // NOTE(時序假設):此處 queue_position=0 依賴 runWorker 的同步 shift 語意
+      // (conversionDispatchQueue.ts:107-108 在第一個 await dispatcher 之前同步
+      // 完成 shift + inFlightJobId=jobId)。此非 race condition——blocking stub
+      // 確保 first job 永久卡在 in-flight,getQueuePosition 必回 0。若未來把
+      // runWorker 的 shift 移入 setImmediate/queueMicrotask 包裝,此斷言會先失效
+      // (store 寫成 1 而非 0),屆時請改的是 worker 時序假設而非此測試。
       const listed = await request(app.app).get("/api/external/ifc-ready");
       const firstItem = (listed.body.items as Array<Record<string, unknown>>).find(
         (entry) => entry.ifc_ready_job_id === first.body.ifc_ready_job_id,
