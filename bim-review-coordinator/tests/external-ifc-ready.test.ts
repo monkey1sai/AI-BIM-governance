@@ -334,10 +334,13 @@ describe("POST /api/external/ifc-ready", () => {
       .set(authHeaders({ "X-Correlation-Id": "corr_queue_002", "X-Idempotency-Key": "idem_queue_002" }))
       .send(payload({ external_model_version_id: "ext_mv_queue_002" }));
 
-    expect(first.status).toBe(202);
-    expect(second.status).toBe(202);
-
     try {
+      // POST 斷言移入 try：blocking stub 已持有 hang 的 in-flight socket,任一斷言
+      // (含這兩個 202)失敗都必須走 finally 的 blocking.release(),否則 afterEach 的
+      // server.close() 會等不到 keep-alive socket 銷毀而 hang 到 runner timeout。
+      expect(first.status).toBe(202);
+      expect(second.status).toBe(202);
+
       // first job 卡在 in-flight(blocking stub 永不回應);second job 排在其後 → 列表端點
       // 必須對 second 回 queue_position=1(in-flight 之後第一個 queued slot)。
       const queuedItem = await waitForListedQueueStatus(

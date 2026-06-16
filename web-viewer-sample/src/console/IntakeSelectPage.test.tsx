@@ -76,6 +76,7 @@ describe("IntakeSelectPage R3：不安全 viewer_url → 停用 + 拒導航", ()
     created_at: "2026-06-03T00:00:00Z",
     conversion_job_id: null, // m2a-coverage-report:新 required key（值 null）；補齊既有 fixture
     queue_position: null, // conv-prioritize-retry:non-optional required key；ready fixture 預設 null
+    updated_at: "2026-06-03T00:00:00Z", // conv-prioritize-retry §2.4:新 required key；補齊既有 fixture
   };
   const jobs: IfcReadyListItem[] = [
     { ...baseJob, ifc_ready_job_id: "job_unsafe", viewer_url: "javascript:alert(1)", dispatch_error: null },

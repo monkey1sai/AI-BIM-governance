@@ -116,6 +116,9 @@ export interface IfcReadyListItem {
   expected_stage_url: string | null;
   expected_mapping_url: string | null;
   created_at: string;
+  // conv-prioritize-retry §2.4：summarizeIfcReadyJob 永遠輸出 updated_at(app.ts:2133)；
+  // job 變更後此欄前進是前端可見證據（task#4 prioritize/retry 成功後 load() 重抓據以確認狀態前進）。
+  updated_at: string;
 }
 
 // minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
