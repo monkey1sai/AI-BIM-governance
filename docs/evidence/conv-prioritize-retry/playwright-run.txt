@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  -  1 [chromium] › e2e\conv-prioritize-retry.spec.ts:89:3 › M2-b #conv 轉檔佇列插隊／重試控制動作 › #conv Refresh → 對可控制 job 點控制鈕 → IntentDialog confirm → 真 POST → 列依後端真狀態刷新
+
+  1 skipped
