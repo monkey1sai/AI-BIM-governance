@@ -407,11 +407,16 @@ function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | {
   if ("error" in state) return <p className="ec-warn-note">{state.error}</p>;
   const s = state.quality_metrics_summary;
   if (!s) return <p className="ec-note">未取得品質遙測（後端未提供 quality_metrics）。</p>;
+  // 誠實鐵律：materialization_strategy=usd_stage_enumeration 下 coverage_ratio 為自我參照——
+  // source_ifc_entity_count 與 mapped_count 同源於同一次 USD stage prim 枚舉（adapter 端
+  // source_count = len(mapping_items) = mapped_count），數學上結構性恆等於 1.0，意義是「枚舉到的
+  // 都對映上」，並非對 IFC 原始 entity 全量的 lossless 覆蓋率。標出此語意，避免 100% 被誤讀成零遺漏。
+  const usdEnumSelfRef = s.materialization_strategy === "usd_stage_enumeration";
   return (
     <>
       <Field k="coverage" v={`${pct(s.coverage_ratio)}${s.coverage_status ? ` · ${s.coverage_status}` : ""}`} prov="artifact" />
       <Field k="mapped / unmapped" v={`${s.mapped_count ?? "未取得"} / ${s.unmapped_count ?? "未取得"}`} prov="artifact" />
-      <Field k="source IFC entity" v={String(s.source_ifc_entity_count ?? "未取得")} prov="artifact" />
+      <Field k={usdEnumSelfRef ? "source（USD 枚舉 prim 數）" : "source IFC entity"} v={String(s.source_ifc_entity_count ?? "未取得")} prov="artifact" />
       <Field k="materialization" v={s.materialization_strategy ?? "未取得"} prov="artifact" />
       {/* spec §4.4 line 76 明列必顯欄：轉檔耗時秒數（後端 quality_metrics 既有，review.ts:19 / types.ts:79
           已型別化、buildQualityMetricsSummary 已萃取）。缺值誠實顯「未取得」，不捏值。 */}
@@ -419,6 +424,12 @@ function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | {
       <Field k="usdc 輸出" v={state.usdc_url ?? "未取得"} prov="artifact" />
       <Field k="mapping_url" v={state.mapping_url ?? "未取得"} prov="artifact" />
       <Field k="property / relationship / attribute 三項" v="後端未提供（以 coverage_ratio 為準；三項拆分為 follow-up）" prov="p1" />
+      {usdEnumSelfRef && (
+        <p className="ec-warn-note" data-testid="conv-coverage-selfref-note">
+          ⚠ coverage 基準為 USD stage 枚舉：source 為枚舉 prim 數、與 mapped 同源，此 % 是「枚舉到的都對映上」的自我比對，
+          非對 IFC 原始 entity 全量的 lossless 覆蓋率。真 IFC 分母為 follow-up（M2-b）。
+        </p>
+      )}
     </>
   );
 }

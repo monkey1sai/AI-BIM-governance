@@ -181,6 +181,37 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
     expect(drawer.textContent).toContain("73.5");   // conversion_duration_seconds（spec §4.4 必顯欄）
     expect(drawer.textContent).toContain("model.usdc");
     expect(drawer.textContent).toContain("未提供");  // 三項拆分誠實標
+    // sidecar 策略非自我參照 → 不得顯 usd_stage_enumeration 的自我比對 caveat
+    expect(container.querySelector('[data-testid="conv-coverage-selfref-note"]')).toBeNull();
+  });
+
+  // 誠實鐵律「coverage 語意不得被誤讀」：materialization=usd_stage_enumeration 下 coverage_ratio
+  // 為自我參照（source=mapped 同源 USD 枚舉，結構性恆=1.0），必須顯誠實 caveat，避免 100% 被讀成 IFC lossless。
+  it("materialization=usd_stage_enumeration → 顯自我參照誠實 caveat（source 標 USD 枚舉 prim 數）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockResolvedValue({
+      conversion_job_id: "stream_conv_20260616_cov",
+      quality_metrics_summary: {
+        coverage_ratio: 1, coverage_status: "pass", mapped_count: 543, unmapped_count: 0,
+        source_ifc_entity_count: 543, materialization_strategy: "usd_stage_enumeration",
+        conversion_duration_seconds: null,
+      },
+      usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    const drawer = container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!;
+    expect(drawer.textContent).toContain("100.00"); // coverage_ratio=1 → 真顯 100%（值為真）
+    const note = container.querySelector('[data-testid="conv-coverage-selfref-note"]');
+    expect(note).not.toBeNull();                    // 自我參照 caveat 必顯
+    expect(note!.textContent).toContain("自我比對");
+    expect(note!.textContent).toContain("lossless");
+    expect(drawer.textContent).toContain("USD 枚舉 prim 數"); // source 欄標籤改寫
   });
 
   // spec §6 line 104 測試邊界「無 quality_metrics → summary:null」：CoverageDrawer 的 null 守門
