@@ -23,9 +23,11 @@ param(
     [string] $EnvFile = '',
     [switch] $SkipKit,
     [switch] $SkipConversion,
+    [switch] $SkipGovernance,
     [switch] $SkipDocker,
     [string] $PublicHost = '',
     [string] $ConversionBindHost = '',
+    [int]    $GovernancePort = 49102,
     [int]    $KitSignalPort = 49100,
     [int]    $KitMediaPort  = 47998,
     [int]    $SpectatorCount = 5,
@@ -70,6 +72,7 @@ $script:volume = $null
 $script:coordinatorPublicUrl = ''
 $script:viewerPublicUrl = ''
 $script:conversionRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-conversion-service.params.json'
+$script:governanceRuntimeSignaturePath = Join-Path $RunDir 'governance-service.params.json'
 $script:kitRuntimeSignaturePath = Join-Path $RunDir 'bim-streaming-server.params.json'
 
 # ============================================================
@@ -363,7 +366,8 @@ function Test-WebPlaneRefreshRequired {
         'WEB_VIEWER_COORDINATOR_API_BASE',
         'WEB_VIEWER_COORDINATOR_SOCKET_URL',
         'VIEWER_PUBLIC_BASE_URL',
-        'COORDINATOR_PUBLIC_BASE_URL'
+        'COORDINATOR_PUBLIC_BASE_URL',
+        'HOST_GOVERNANCE_API_BASE'
     )
     foreach ($name in $topologyEnvNames) {
         if (Test-DeployValueConfigured -Name $name -EnvFile $EnvFile) { return $true }
@@ -402,6 +406,20 @@ function New-ConversionRuntimeSignature {
         port               = $Port
         healthHost         = $HealthHost
         publicArtifactsUrl = $PublicArtifactsUrl
+    } | ConvertTo-Json -Compress)
+}
+
+function New-GovernanceRuntimeSignature {
+    param(
+        [Parameter(Mandatory = $true)][int] $Port,
+        [Parameter(Mandatory = $true)][string] $DbPath,
+        [Parameter(Mandatory = $true)][string] $FileLibraryRoot
+    )
+    return ([pscustomobject]@{
+        host            = '127.0.0.1'
+        port            = $Port
+        dbPath          = $DbPath
+        fileLibraryRoot = $FileLibraryRoot
     } | ConvertTo-Json -Compress)
 }
 
@@ -582,9 +600,36 @@ $conversionRuntimeSignature = New-ConversionRuntimeSignature `
     -HealthHost $resolvedConversionHealthHost `
     -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl
 
-$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
 $script:volume = $volume
+$resolvedGovernancePort = Resolve-DeployIntValue `
+    -Name 'GOV_PORT' `
+    -EnvFile $resolvedEnvFile `
+    -Default 49102 `
+    -ExplicitValue $GovernancePort `
+    -HasExplicitValue:($PSBoundParameters.ContainsKey('GovernancePort')) `
+    -Min 1 `
+    -Max 65535
+$resolvedGovernanceDbPath = Join-Path $RepoRoot 'storage\governance.db'
+$resolvedGovernanceFileLibraryRoot = if ($volume -and $volume.runtimeStorageRoot) {
+    $volume.runtimeStorageRoot
+} else {
+    Join-Path $RepoRoot 'storage'
+}
+$governanceRuntimeSignature = New-GovernanceRuntimeSignature `
+    -Port $resolvedGovernancePort `
+    -DbPath $resolvedGovernanceDbPath `
+    -FileLibraryRoot $resolvedGovernanceFileLibraryRoot
+$resolvedGovernanceApiBaseForDocker = if ($SkipGovernance) { '' } else { "http://host.docker.internal:$resolvedGovernancePort" }
+if (-not $SkipGovernance) {
+    [Environment]::SetEnvironmentVariable('HOST_GOVERNANCE_API_BASE', $resolvedGovernanceApiBaseForDocker, 'Process')
+    if ($PSBoundParameters.ContainsKey('GovernancePort') -or $resolvedGovernancePort -ne 49102) {
+        $shouldRefreshWebPlane = $true
+    }
+}
+$extraHostNativePorts = @($resolvedSpectatorSignalPorts)
+if (-not $SkipGovernance) { $extraHostNativePorts += $resolvedGovernancePort }
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 
 # Audit summary 印出
 function Report-Audit {
@@ -668,6 +713,11 @@ $auditObj = [pscustomobject]@{
         conversionBindHost  = $resolvedConversionBindHost
         conversionHealthHost = $resolvedConversionHealthHost
         conversionPublicArtifactsUrl = $resolvedConversionPublicArtifactsUrl
+        governanceSkipped    = [bool]$SkipGovernance
+        governancePort       = $resolvedGovernancePort
+        governanceApiBaseForDocker = $resolvedGovernanceApiBaseForDocker
+        governanceDbPath     = $resolvedGovernanceDbPath
+        governanceFileLibraryRoot = $resolvedGovernanceFileLibraryRoot
         corsOrigins         = $resolvedCorsOrigins
         allowedStageHosts   = $resolvedAllowedStageHosts
         kitSignalPort       = $resolvedKitSignalPort
@@ -934,7 +984,9 @@ Write-DeployHeader -Title 'Phase 3: Interactive guard (dangerous actions)'
 
 # Phase 2 跑了 docker compose rm / build,docker container 與 wslrelay 等 port forwarder
 # 狀態可能變動。Re-audit ports 避免用 Phase 1 的 stale 資料問互動。
-$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $resolvedSpectatorSignalPorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
+$extraHostNativePorts = @($resolvedSpectatorSignalPorts)
+if (-not $SkipGovernance) { $extraHostNativePorts += $resolvedGovernancePort }
+$ports = Test-PortAvailability -RepoRoot $RepoRoot -KitSignalPort $resolvedKitSignalPort -KitMediaPort $resolvedKitMediaPort -ExtraHostNativePorts $extraHostNativePorts -ExtraHostNativeUdpPorts $resolvedSpectatorMediaPorts
 
 # Docker Desktop 在 Windows 用以下 process 做 container port forward,不是「陌生 PID」:
 $dockerForwarderNames = @('wslrelay.exe','com.docker.backend.exe','docker.exe','vpnkit.exe','vpnkit-bridge.exe')
@@ -1012,40 +1064,79 @@ if ($hostNative.venv -eq 'WRONG_VERSION') {
 }
 
 # ============================================================
-# Phase 4: Start (依賴順序 4a → 4b → 4c)
+# Phase 4: Start (依賴順序 4a → 4b → 4c → 4d)
 # ============================================================
 Write-DeployHeader -Title 'Phase 4: Start services'
 
-# 4a: host-native conversion-service
+# 4a: host-native governance-service
+if ($SkipGovernance) {
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native governance (--SkipGovernance)' -LogPath $LogPath | Out-Null
+} else {
+    $governanceHealthUrl = "http://127.0.0.1:$resolvedGovernancePort/health"
+    $governanceAlreadyRunning = Test-AlreadyRunning -Name 'governance-service' -RunDir $RunDir
+    if ($governanceAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:governanceRuntimeSignaturePath -Expected $governanceRuntimeSignature)) {
+        Write-DeployTag -Tag 'fix' -Message 'Phase 4a restarting host-native governance because runtime parameters changed' -LogPath $LogPath | Out-Null
+        Stop-HostNativeService -Name 'governance-service' -RunDir $RunDir | Out-Null
+        $governanceAlreadyRunning = $false
+    }
+    if ($governanceAlreadyRunning) {
+        if (Wait-HostNativeHealth -Name 'governance-service' -Url $governanceHealthUrl -TimeoutSec 5) {
+            Write-DeployTag -Tag 'skip' -Message "Phase 4a host-native governance already running ($governanceHealthUrl 200)" -LogPath $LogPath | Out-Null
+        } else {
+            Write-DeployTag -Tag 'fix' -Message "Phase 4a restarting host-native governance because wrapper is alive but $governanceHealthUrl is unhealthy" -LogPath $LogPath | Out-Null
+            Stop-HostNativeService -Name 'governance-service' -RunDir $RunDir | Out-Null
+            $governanceAlreadyRunning = $false
+        }
+    }
+    if (-not $governanceAlreadyRunning) {
+        Write-DeployTag -Tag 'ok' -Message 'Phase 4a starting host-native governance-service' -LogPath $LogPath | Out-Null
+        $startInfo = Start-HostNativeGovernance `
+            -RepoRoot $RepoRoot `
+            -Port $resolvedGovernancePort `
+            -DbPath $resolvedGovernanceDbPath `
+            -FileLibraryRoot $resolvedGovernanceFileLibraryRoot
+        Write-DeployTag -Tag 'ok' -Message "governance PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
+        $ok = Wait-HostNativeHealth -Name 'governance-service' -Url $governanceHealthUrl -TimeoutSec 30
+        if (-not $ok) {
+            Write-DeployTag -Tag 'fail' -Message "stage=4a Phase 4a governance-service $governanceHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (governance)'
+            exit 4
+        }
+        Set-KitRuntimeSignature -Path $script:governanceRuntimeSignaturePath -Value $governanceRuntimeSignature
+        Write-DeployTag -Tag 'ok' -Message "Phase 4a governance-service ready ($governanceHealthUrl 200)" -LogPath $LogPath | Out-Null
+    }
+}
+
+# 4b: host-native conversion-service
 if ($SkipConversion) {
-    Write-DeployTag -Tag 'skip' -Message 'Phase 4a host-native conversion (--SkipConversion)' -LogPath $LogPath | Out-Null
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native conversion (--SkipConversion)' -LogPath $LogPath | Out-Null
 } else {
     $conversionHealthUrl = "http://${resolvedConversionHealthHost}:49101/health"
     $conversionPublicHealthUrl = "http://${resolvedPublicHost}:49101/health"
     $conversionPublicHealthRequired = -not (Test-LoopbackHost -HostName $resolvedPublicHost)
     $conversionAlreadyRunning = Test-AlreadyRunning -Name 'bim-streaming-conversion-service' -RunDir $RunDir
     if ($conversionAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:conversionRuntimeSignaturePath -Expected $conversionRuntimeSignature)) {
-        Write-DeployTag -Tag 'fix' -Message 'Phase 4a restarting host-native conversion because runtime parameters changed' -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'fix' -Message 'Phase 4b restarting host-native conversion because runtime parameters changed' -LogPath $LogPath | Out-Null
         Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
         $conversionAlreadyRunning = $false
     }
     if ($conversionAlreadyRunning) {
         if (Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 5) {
             if ($conversionPublicHealthRequired -and -not (Wait-HostNativeHealth -Name 'conversion-service-public' -Url $conversionPublicHealthUrl -TimeoutSec 5)) {
-                Write-DeployTag -Tag 'fix' -Message "Phase 4a restarting host-native conversion because public health is unreachable at $conversionPublicHealthUrl" -LogPath $LogPath | Out-Null
+                Write-DeployTag -Tag 'fix' -Message "Phase 4b restarting host-native conversion because public health is unreachable at $conversionPublicHealthUrl" -LogPath $LogPath | Out-Null
                 Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
                 $conversionAlreadyRunning = $false
             } else {
-                Write-DeployTag -Tag 'skip' -Message "Phase 4a host-native conversion already running ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
+                Write-DeployTag -Tag 'skip' -Message "Phase 4b host-native conversion already running ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
             }
         } else {
-            Write-DeployTag -Tag 'fix' -Message "Phase 4a restarting host-native conversion because wrapper is alive but $conversionHealthUrl is unhealthy" -LogPath $LogPath | Out-Null
+            Write-DeployTag -Tag 'fix' -Message "Phase 4b restarting host-native conversion because wrapper is alive but $conversionHealthUrl is unhealthy" -LogPath $LogPath | Out-Null
             Stop-HostNativeService -Name 'bim-streaming-conversion-service' -RunDir $RunDir | Out-Null
             $conversionAlreadyRunning = $false
         }
     }
     if (-not $conversionAlreadyRunning) {
-        Write-DeployTag -Tag 'ok' -Message 'Phase 4a starting host-native conversion-service' -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'ok' -Message 'Phase 4b starting host-native conversion-service' -LogPath $LogPath | Out-Null
         $startInfo = Start-HostNativeConversion `
             -RepoRoot $RepoRoot `
             -RuntimeStorageRoot $volume.runtimeStorageRoot `
@@ -1054,37 +1145,37 @@ if ($SkipConversion) {
         Write-DeployTag -Tag 'ok' -Message "conversion PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
         $ok = Wait-HostNativeHealth -Name 'conversion-service' -Url $conversionHealthUrl -TimeoutSec 30
         if (-not $ok) {
-            Write-DeployTag -Tag 'fail' -Message "stage=4a Phase 4a conversion-service $conversionHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
-            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (conversion)'
+            Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b conversion-service $conversionHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (conversion)'
             exit 4
         }
         if ($conversionPublicHealthRequired) {
             $publicOk = Wait-HostNativeHealth -Name 'conversion-service-public' -Url $conversionPublicHealthUrl -TimeoutSec 30
             if (-not $publicOk) {
-                Write-DeployTag -Tag 'fail' -Message "stage=4a Phase 4a conversion-service public URL $conversionPublicHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
-                Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4a (conversion public reachability)'
+                Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b conversion-service public URL $conversionPublicHealthUrl did not return 200 within 30s" -LogPath $LogPath | Out-Null
+                Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (conversion public reachability)'
                 exit 4
             }
         }
         Set-KitRuntimeSignature -Path $script:conversionRuntimeSignaturePath -Value $conversionRuntimeSignature
-        Write-DeployTag -Tag 'ok' -Message "Phase 4a conversion-service ready ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'ok' -Message "Phase 4b conversion-service ready ($conversionHealthUrl 200)" -LogPath $LogPath | Out-Null
     }
 }
 
-# 4b: host-native Kit
+# 4c: host-native Kit
 if ($SkipKit) {
-    Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native Kit (--SkipKit)' -LogPath $LogPath | Out-Null
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4c host-native Kit (--SkipKit)' -LogPath $LogPath | Out-Null
 } else {
     $kitAlreadyRunning = Test-AlreadyRunning -Name 'bim-streaming-server' -RunDir $RunDir
     if ($kitAlreadyRunning -and -not (Test-KitRuntimeSignatureMatches -Path $script:kitRuntimeSignaturePath -Expected $kitRuntimeSignature)) {
-        Write-DeployTag -Tag 'fix' -Message 'Phase 4b restarting host-native Kit because runtime parameters changed' -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'fix' -Message 'Phase 4c restarting host-native Kit because runtime parameters changed' -LogPath $LogPath | Out-Null
         Stop-HostNativeService -Name 'bim-streaming-server' -RunDir $RunDir | Out-Null
         $kitAlreadyRunning = $false
     }
     if ($kitAlreadyRunning) {
-        Write-DeployTag -Tag 'skip' -Message 'Phase 4b host-native Kit already running with matching runtime parameters' -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'skip' -Message 'Phase 4c host-native Kit already running with matching runtime parameters' -LogPath $LogPath | Out-Null
     } else {
-        Write-DeployTag -Tag 'ok' -Message 'Phase 4b starting host-native Kit streaming' -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'ok' -Message 'Phase 4c starting host-native Kit streaming' -LogPath $LogPath | Out-Null
         $startInfo = Start-HostNativeKit `
             -RepoRoot $RepoRoot `
             -SignalPort $resolvedKitSignalPort `
@@ -1095,22 +1186,25 @@ if ($SkipKit) {
         Write-DeployTag -Tag 'ok' -Message "Kit PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
         $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -TimeoutSec 90
         if (-not $kitRes.ready) {
-            Write-DeployTag -Tag 'fail' -Message "stage=4b Phase 4b Kit not ready in 90s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword))" -LogPath $LogPath | Out-Null
-            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4b (Kit)'
+            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in 90s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword))" -LogPath $LogPath | Out-Null
+            Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (Kit)'
             exit 4
         }
         Set-KitRuntimeSignature -Path $script:kitRuntimeSignaturePath -Value $kitRuntimeSignature
-        Write-DeployTag -Tag 'ok' -Message "Phase 4b Kit ready (:$resolvedKitSignalPort LISTEN + '$($kitRes.matchedKeyword)')" -LogPath $LogPath | Out-Null
+        Write-DeployTag -Tag 'ok' -Message "Phase 4c Kit ready (:$resolvedKitSignalPort LISTEN + '$($kitRes.matchedKeyword)')" -LogPath $LogPath | Out-Null
     }
 }
 
-# 4c: docker compose
+# 4d: docker compose
 if ($SkipDocker) {
-    Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose (--SkipDocker)' -LogPath $LogPath | Out-Null
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4d docker compose (--SkipDocker)' -LogPath $LogPath | Out-Null
 } elseif ($webPlaneRunning -and -not $shouldRefreshWebPlane) {
-    Write-DeployTag -Tag 'skip' -Message 'Phase 4c docker compose: coordinator + viewer already running' -LogPath $LogPath | Out-Null
+    Write-DeployTag -Tag 'skip' -Message 'Phase 4d docker compose: coordinator + viewer already running' -LogPath $LogPath | Out-Null
 } else {
-    Write-DeployTag -Tag 'ok' -Message 'Phase 4c running scripts\start-web-plane-docker.ps1' -LogPath $LogPath | Out-Null
+    Write-DeployTag -Tag 'ok' -Message 'Phase 4d running scripts\start-web-plane-docker.ps1' -LogPath $LogPath | Out-Null
+    if (-not $SkipGovernance) {
+        [Environment]::SetEnvironmentVariable('HOST_GOVERNANCE_API_BASE', $resolvedGovernanceApiBaseForDocker, 'Process')
+    }
     # 用 Start-Process 隔離子 script:start-web-plane-docker.ps1 內 $ErrorActionPreference='Stop',
     # 而 docker compose up 的進度訊息('Container ... Creating')會被 PowerShell 5.1 promote
     # 成 NativeCommandError。隔離成 new process 把它的 stderr 寫進 .err.log,不污染父流程。
@@ -1132,11 +1226,11 @@ if ($SkipDocker) {
         -Wait -PassThru -WindowStyle Hidden
     $dockerExit = $proc.ExitCode
     if ($dockerExit -ne 0) {
-        Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log + .err.log)" -LogPath $LogPath | Out-Null
-        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (docker)'
+        Write-DeployTag -Tag 'fail' -Message "stage=4d Phase 4d docker compose up failed (exit=$dockerExit; see scripts\.run\docker-compose-up.log + .err.log)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4d (docker)'
         exit 4
     }
-    Write-DeployTag -Tag 'ok' -Message 'Phase 4c docker compose up complete' -LogPath $LogPath | Out-Null
+    Write-DeployTag -Tag 'ok' -Message 'Phase 4d docker compose up complete' -LogPath $LogPath | Out-Null
 }
 
 # ============================================================
@@ -1203,6 +1297,12 @@ if (-not $SkipDocker) {
     } elseif (-not (Probe-UiAsset -Name 'coordinator-ui-edge-console-asset' -UiUrl $coordinatorUiUrl -Html $uiProbe.Content)) {
         $verifyFails += 'coordinator-ui-edge-console-asset'
     }
+    if (-not $SkipGovernance) {
+        if (-not (Probe-Url -Name 'coordinator-governance-files-tree' -Url 'http://127.0.0.1:8004/api/governance/files/tree')) { $verifyFails += 'coordinator-governance-files-tree' }
+    }
+}
+if (-not $SkipGovernance) {
+    if (-not (Probe-Url -Name 'governance' -Url "http://127.0.0.1:$resolvedGovernancePort/health")) { $verifyFails += 'governance' }
 }
 if (-not $SkipConversion) {
     if (-not (Probe-Url -Name 'conversion'  -Url 'http://127.0.0.1:49101/health')) { $verifyFails += 'conversion' }

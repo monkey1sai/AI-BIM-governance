@@ -29,10 +29,27 @@ Write-TestPass 'DRY-RUN marker'
 $auditJson = Join-Path $repoRoot 'scripts\.run\deploy-audit.json'
 Assert-True (Test-Path $auditJson) 'deploy-audit.json written'
 Write-TestPass 'deploy-audit.json present'
+$audit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
+Assert-Equal 49102 $audit.runtime.governancePort 'default governance port is 49102'
+Assert-Equal $false $audit.runtime.governanceSkipped 'default governance is not skipped'
+Assert-Equal 'http://host.docker.internal:49102' $audit.runtime.governanceApiBaseForDocker 'default Docker governance base URL'
+Write-TestPass 'governance dry-run audit defaults'
 
 # Test 6: Phase 4 / 5 應不出現
 Assert-True (-not ($output -match 'Phase 4:')) 'Phase 4 not entered under -DryRun'
 Write-TestPass 'Phase 4 skipped'
+$skipGovernanceOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $deploy -DryRun -SkipGovernance *>&1 | Out-String
+Assert-True (-not ($skipGovernanceOutput -match 'Phase 4:')) 'Phase 4 not entered under -DryRun -SkipGovernance'
+$skipGovernanceAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
+Assert-Equal $true $skipGovernanceAudit.runtime.governanceSkipped 'governance skip state recorded in dry-run audit'
+Assert-Equal '' $skipGovernanceAudit.runtime.governanceApiBaseForDocker 'skipped governance has no Docker base URL'
+Write-TestPass 'governance skip dry-run audit'
+$customGovernanceOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $deploy -DryRun -GovernancePort 49103 *>&1 | Out-String
+Assert-True (-not ($customGovernanceOutput -match 'Phase 4:')) 'Phase 4 not entered under -DryRun -GovernancePort'
+$customGovernanceAudit = Get-Content -LiteralPath $auditJson -Raw | ConvertFrom-Json
+Assert-Equal 49103 $customGovernanceAudit.runtime.governancePort 'custom governance port recorded in dry-run audit'
+Assert-Equal 'http://host.docker.internal:49103' $customGovernanceAudit.runtime.governanceApiBaseForDocker 'custom Docker governance base URL'
+Write-TestPass 'custom governance port dry-run audit'
 
 # Test 7: spectator ports must not collide with primary Kit ports
 $collisionOut = Join-Path $repoRoot 'scripts\.run\deploy-collision-test.out.log'
