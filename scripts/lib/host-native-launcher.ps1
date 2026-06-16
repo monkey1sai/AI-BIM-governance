@@ -198,6 +198,52 @@ function Start-HostNativeConversion {
         -RunDir $runDir)
 }
 
+function Start-HostNativeGovernance {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [int] $Port = 49102,
+        [string] $DbPath = '',
+        [string] $FileLibraryRoot = ''
+    )
+    $runDir = Join-Path $RepoRoot 'scripts\.run'
+    if (-not (Test-Path -LiteralPath $runDir)) {
+        New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    }
+
+    $serviceRoot = Join-Path $RepoRoot 'governance-service'
+    $python312 = 'C:\Program Files\Python312\python.exe'
+    $repoVenvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
+    $pythonExe = if (Test-Path -LiteralPath $python312 -PathType Leaf) {
+        $python312
+    } elseif (Test-Path -LiteralPath $repoVenvPython -PathType Leaf) {
+        $repoVenvPython
+    } else {
+        'python'
+    }
+
+    Remove-Item Env:PYTHONNOUSERSITE -ErrorAction SilentlyContinue
+    & $pythonExe -c "import ifcopenshell, fastapi, uvicorn" *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "governance-service Python cannot import ifcopenshell, fastapi, and uvicorn: $pythonExe"
+    }
+
+    $env:GOV_PORT = "$Port"
+    if (-not [string]::IsNullOrWhiteSpace($DbPath)) {
+        $env:GOV_DB_PATH = $DbPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($FileLibraryRoot)) {
+        $env:BIM_FILE_LIBRARY_ROOT = $FileLibraryRoot
+    }
+
+    return (Start-HostNativeService `
+        -Name 'governance-service' `
+        -WorkingDirectory $serviceRoot `
+        -FilePath $pythonExe `
+        -ArgumentList @('-m','uvicorn','app:app','--host','127.0.0.1','--port',"$Port") `
+        -RunDir $runDir)
+}
+
 function Start-HostNativeKit {
     [CmdletBinding()]
     param(
