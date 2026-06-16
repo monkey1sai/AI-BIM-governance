@@ -73,16 +73,24 @@ export class ConversionDispatchQueue {
   /**
    * 重新 enqueue（retry 用）並回 1-based queue position。
    *
-   * Idempotent：若 `jobId` 已在 queue 或正 in-flight，視為 no-op 直接回現有
+   * Idempotent：若 `jobId` 已在 queue（queued[]），視為 no-op 直接回現有 1-based
    * position（不重複 append）。這道去重防線在此 method 內自足，不依賴上游 route
    * 的 state guard——避免 retry 被重複觸發（雙擊／競態的兩個 HTTP 請求）時把同一
    * jobId append 兩次，導致 worker 對 downstream streaming server 重複 dispatch。
+   *
+   * 若 `jobId` 正 in-flight，回 `null`：in-flight job 重新 enqueue 無意義（worker
+   * 正在派工），且 `getQueuePosition` 對 in-flight 回的 0 是 in-flight 專用哨兵
+   * （見 {@link getQueuePosition}）。requeue **不可**把這個 0 當 position 洩漏出去
+   * ——否則 retry route 的 `markQueuedForConversion(id, 0)` 會讓下游讀者（前端／
+   * 監控）誤判該 job 為 in-flight 而非排隊中。呼叫端（retry route）的狀態守門已
+   * 排除 in-flight，故正常路徑不會走到此分支；此 null 是合約自足的安全網。
    */
-  requeue(jobId: string): number {
+  requeue(jobId: string): number | null {
+    if (this.inFlightJobId === jobId) return null;
     const existing = this.getQueuePosition(jobId);
     if (existing !== null) return existing;
     this.enqueue(jobId);
-    return this.getQueuePosition(jobId) ?? 0;
+    return this.getQueuePosition(jobId) ?? null;
   }
 
   private async runWorker(): Promise<void> {

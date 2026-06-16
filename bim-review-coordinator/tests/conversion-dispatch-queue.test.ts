@@ -234,6 +234,34 @@ describe("ConversionDispatchQueue (unit)", () => {
     expect(queue.getQueuedJobIds()).toEqual(["A"]);
   });
 
+  it("prioritize 對 in-flight job 回 false 且不動隊列（in-flight 不可被搶下）", async () => {
+    // 用 gate dispatcher 讓 A 真的卡在 in-flight（被 shift 出 queued[]），
+    // 才能 falsify「in-flight 也走同一條 indexOf===-1 路」這個 spec §6.1 行為意圖；
+    // 只用未進 queue 的 ID（如 "Z"）覆蓋不到此路。
+    const queue = new ConversionDispatchQueue();
+    let releaseA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    queue.setDispatcher(async (jobId) => {
+      if (jobId === "A") await aGate;
+    });
+    queue.enqueue("A");
+    queue.enqueue("B");
+    // 等 A in-flight、B 留在 queued[]
+    await waitFor(() => queue.getInFlight() === "A");
+    expect(queue.getQueuedJobIds()).toEqual(["B"]);
+
+    // prioritize in-flight A → false，且 queued[] 不變（A 不被塞回隊首）
+    expect(queue.prioritize("A")).toBe(false);
+    expect(queue.getInFlight()).toBe("A");
+    expect(queue.getQueuedJobIds()).toEqual(["B"]);
+
+    // teardown：release A 讓 worker 收尾，避免 dangling promise
+    releaseA();
+    await waitFor(() => queue.getInFlight() === null);
+  });
+
   it("requeue 重新 enqueue 並回新的 1-based position", () => {
     const queue = new ConversionDispatchQueue();
     queue.enqueue("A"); queue.enqueue("B");
@@ -250,6 +278,33 @@ describe("ConversionDispatchQueue (unit)", () => {
     const pos = queue.requeue("B");
     expect(pos).toBe(2);
     expect(queue.getQueuedJobIds()).toEqual(["A", "B", "C"]);
+  });
+
+  it("requeue 對 in-flight job 回 null（不洩漏 in-flight 哨兵 0）且不重複 append", async () => {
+    // in-flight job 的 getQueuePosition 回 0（queue.ts:37 的 in-flight 專用值）。
+    // requeue 不可把這個 0 當 position 回傳——spec §4.2 明禁，否則 retry route
+    // 的 markQueuedForConversion(id, 0) 會讓下游讀者誤判 in-flight。
+    const queue = new ConversionDispatchQueue();
+    let releaseA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    queue.setDispatcher(async (jobId) => {
+      if (jobId === "A") await aGate;
+    });
+    queue.enqueue("A");
+    queue.enqueue("B");
+    await waitFor(() => queue.getInFlight() === "A");
+    expect(queue.getQueuePosition("A")).toBe(0);
+
+    // requeue in-flight A：no-op，回 null（不是 0）；不把 A append 進 queued[]
+    expect(queue.requeue("A")).toBeNull();
+    expect(queue.getInFlight()).toBe("A");
+    expect(queue.getQueuedJobIds()).toEqual(["B"]);
+
+    // teardown
+    releaseA();
+    await waitFor(() => queue.getInFlight() === null);
   });
 });
 
