@@ -204,6 +204,30 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
     expect(drawer.textContent).not.toMatch(/\d+\.\d+\s*%/); // 無任何百分比
   });
 
+  // 誠實鐵律「不得承諾 100% lossless」：ratio<1（有 unmapped）卻四捨五入到 100.00 時，
+  // 必須下修顯 99.99%，不得謊報 100%（真值另由相鄰 mapped/unmapped 揭露）。
+  it("coverage_ratio<1 但近似 100 → 顯 99.99% 不謊報 100.00%", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockResolvedValue({
+      conversion_job_id: "stream_conv_20260616_cov",
+      quality_metrics_summary: {
+        coverage_ratio: 0.99996, coverage_status: "warn", mapped_count: 24999, unmapped_count: 1,
+        source_ifc_entity_count: 25000, materialization_strategy: "sidecar",
+      },
+      usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    const drawer = container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!;
+    expect(drawer.textContent).toContain("99.99%");
+    expect(drawer.textContent).not.toContain("100.00%");
+  });
+
   it("無 conversion_job_id 的 job → 不可展開、顯尚未派工", async () => {
     const noConv: IfcReadyListItem = { ...job, ifc_ready_job_id: "ifcready_noconv", conversion_job_id: null, conversion_status: "pending" };
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [noConv] });

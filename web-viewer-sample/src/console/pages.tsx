@@ -395,7 +395,12 @@ export function ViewerPresentationPage() {
 }
 
 function pct(r?: number | null): string {
-  return typeof r === "number" && Number.isFinite(r) ? `${(r * 100).toFixed(2)}%` : "未取得";
+  if (typeof r !== "number" || !Number.isFinite(r)) return "未取得";
+  const p = r * 100;
+  // 誠實鐵律「不得承諾 100% lossless」：ratio<1 卻四捨五入到 100.00 時下修顯 99.99%，
+  // 不讓非滿覆蓋謊報成 100%（真實 ratio 仍由相鄰 mapped/unmapped 數與 coverage_status 揭露）。
+  if (r < 1 && p.toFixed(2) === "100.00") return "99.99%";
+  return `${p.toFixed(2)}%`;
 }
 function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | { error: string } | "loading" | undefined }) {
   if (state === "loading" || state === undefined) return <p className="ec-note">讀取 coverage…</p>;
