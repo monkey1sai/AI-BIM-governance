@@ -380,3 +380,40 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
     expect(container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!.textContent).toContain("98.86");
   });
 });
+
+describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement; let prev: unknown;
+  beforeEach(() => { prev = (globalThis as Record<string, unknown>)[actEnvKey]; (globalThis as Record<string, unknown>)[actEnvKey] = true; container = document.createElement("div"); document.body.appendChild(container); });
+  afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); (globalThis as Record<string, unknown>)[actEnvKey] = prev; });
+
+  const failedJob: IfcReadyListItem = {
+    ifc_ready_job_id: "ifcready_failed", status: "dispatch_failed", project_id: "271",
+    external_model_version_id: "ext_f", download_status: "downloaded", conversion_status: "dispatch_failed",
+    conversion_authority: null, conversion_job_id: null, dispatch_error: "stub failure",
+    queue_position: null, review_session_id: null, viewer_url: null,
+    expected_stage_url: null, expected_mapping_url: null, created_at: "2026-06-16T00:00:00Z",
+    updated_at: "2026-06-16T00:00:00Z", // conv-prioritize-retry §2.4:non-optional required key
+  };
+
+  it("dispatch_failed job 顯重試鈕 → 確認 → conversionRetry 被呼叫且 load 重抓", async () => {
+    const listSpy = vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [failedJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({ ifc_ready_job_id: "ifcready_failed", status: "queued_for_conversion", queue_position: 1 });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const retryBtn = container.querySelector('[data-testid="conv-retry-ifcready_failed"]') as HTMLButtonElement;
+    expect(retryBtn).toBeTruthy();
+    await act(async () => { retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(retrySpy).toHaveBeenCalledWith("ifcready_failed", "");
+    expect(listSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // 初次 load + 成功後 load
+  });
+});
