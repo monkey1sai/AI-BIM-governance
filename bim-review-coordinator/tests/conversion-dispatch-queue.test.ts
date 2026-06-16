@@ -348,12 +348,24 @@ describe("Concurrent IFC-ready POST → serial dispatch (integration)", () => {
       return r.body.status === "dispatch_failed";
     });
 
-    // pending 保留證據：worker 已 shift，保留 pending 不會自動重派 → callCount 維持 1、狀態續為 dispatch_failed。
-    // （delete-on-success 失敗路徑保留 pending；自動重派不發生，retry 重派的 round-trip 由 Task 2 route 測試驗。）
+    // pending 保留證據（直接斷言）：透過 test-only accessor 確認 dispatch_failed job
+    // 的 pending 仍在 map。這是 falsifiable 的核心斷言——若 app.ts 回到「失敗就刪
+    // pending」的舊行為，這行會直接 fail（callCount/status 那兩個間接斷言無法區分
+    // 「pending 保留」與「pending 被刪但沒人再 enqueue」）。
     await new Promise<void>((r) => setTimeout(r, 100));
+    expect(app.pendingDispatchEvents.has(jobId)).toBe(true);
+    // 輔助斷言：worker 已 shift，保留 pending 不會自動重派 → callCount 維持 1、狀態續為
+    // dispatch_failed。retry 重派的 round-trip 由 Task 2 route 測試驗。
     expect(callCount).toBe(1);
     const after = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
     expect(after.body.status).toBe("dispatch_failed");
+
+    // dispose 必須清掉 dispatch_failed job 殘留的 pending(drain 只回收 queued,
+    // dispatch_failed 的 pending 不在 drain 範圍;Task 2 retry route 尚未實作前無人
+    // 清,dispose 全清杜絕 process lifecycle 結束時的 map 累積)。
+    await app.dispose();
+    expect(app.pendingDispatchEvents.has(jobId)).toBe(false);
+    expect(app.pendingDispatchEvents.size).toBe(0);
   });
 });
 

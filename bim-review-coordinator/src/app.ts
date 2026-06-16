@@ -276,6 +276,10 @@ export interface CoordinatorApp {
   // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
   // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
   dispose: () => Promise<void>;
+  // test-only accessor：jobId → enqueue 階段暫存的 dispatch args。production 不應
+  // 依賴此欄位;測試用它直接斷言 dispatch_failed job 的 pending 是否保留(delete-on-
+  // success 失敗路徑保留 pending 的行為需可被 falsify)。
+  pendingDispatchEvents: Map<string, unknown>;
 }
 
 export interface CreateCoordinatorAppOptions {
@@ -1826,9 +1830,25 @@ export function createCoordinatorApp(
       externalIfcReadyStore.markDroppedOnRestart(jobId);
       pendingDispatchEvents.delete(jobId);
     }
+    // dispose 語義是 process lifecycle 結束 → 全清最安全。drain 只回收 queued
+    // (還沒 shift) 的 job;dispatch_failed job 的 pending 留在 map 不在 drain 範圍
+    // (Task 2 retry route 尚未實作前無人清),這裡一律 clear 杜絕殘留累積。
+    pendingDispatchEvents.clear();
   };
 
-  return { app, server, io, config, store, eventLog, structLog, dispose };
+  return {
+    app,
+    server,
+    io,
+    config,
+    store,
+    eventLog,
+    structLog,
+    dispose,
+    // test-only：讓測試直接斷言 dispatch_failed job 的 pending 是否保留在 map,
+    // 不必靠 callCount 間接推論(否則 delete-on-success 失敗路徑的保留無法被 falsify)。
+    pendingDispatchEvents,
+  };
 }
 
 interface RuntimeStatusInput {
