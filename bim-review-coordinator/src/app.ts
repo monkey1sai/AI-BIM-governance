@@ -2103,9 +2103,6 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
   return {
     ifc_ready_job_id: job.ifc_ready_job_id,
     status: job.status,
-    // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
-    // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive。
-    queue_position: job.queue_position ?? null,
     tenant_id: job.tenant_id,
     project_id: job.project_id,
     external_model_version_id: job.external_model_version_id,
@@ -2120,6 +2117,10 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
     conversion_authority: job.conversion_authority,
+    // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
+    // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive,
+    // 依規格置於 conversion_authority 之後。
+    queue_position: job.queue_position ?? null,
     dispatch_error: job.dispatch_error ?? null,
     callback_outbox_id: job.callback_outbox_id ?? null,
     artifact_manifest_ref: job.artifact_manifest_ref ?? null,
