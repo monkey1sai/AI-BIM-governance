@@ -276,10 +276,13 @@ export interface CoordinatorApp {
   // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
   // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
   dispose: () => Promise<void>;
-  // test-only accessor：jobId → enqueue 階段暫存的 dispatch args。production 不應
-  // 依賴此欄位;測試用它直接斷言 dispatch_failed job 的 pending 是否保留(delete-on-
+  // test-only read-only accessor：jobId → enqueue 階段暫存的 dispatch args。production
+  // 不應依賴此欄位;測試用它直接斷言 dispatch_failed job 的 pending 是否保留(delete-on-
   // success 失敗路徑保留 pending 的行為需可被 falsify)。
-  pendingDispatchEvents: Map<string, unknown>;
+  // @internal：刻意宣告為 ReadonlyMap，對外只承諾讀(.has/.size/.get)。所有 mutation
+  // (set/delete/clear)只能從本檔內部 dispatcher closure 與 dispose 走，繞過 dispatcher
+  // 不變量(見 app.ts INVARIANT 與 delete-on-success 註解)的外部寫入在型別層即被擋下。
+  pendingDispatchEvents: ReadonlyMap<string, unknown>;
 }
 
 export interface CreateCoordinatorAppOptions {
@@ -1833,6 +1836,16 @@ export function createCoordinatorApp(
     // dispose 語義是 process lifecycle 結束 → 全清最安全。drain 只回收 queued
     // (還沒 shift) 的 job;dispatch_failed job 的 pending 留在 map 不在 drain 範圍
     // (Task 2 retry route 尚未實作前無人清),這裡一律 clear 杜絕殘留累積。
+    //
+    // KNOWN RISK(in-flight-during-dispose race):drain() 不等待已被 shift、dispatcher
+    // closure 仍在 await createConversionJob 的 in-flight job;dispose() 本身也沒有像
+    // minioWatcher 那樣 await in-flight closure settle。若 SIGTERM graceful shutdown
+    // 在 closure 執行中觸發 dispose,clear() 會先刪掉 in-flight pending,而 closure 的
+    // try/catch 仍會跑完並呼叫 markDispatched / markDispatchFailed——對已 clear 的 map
+    // 後續 .delete() 是無害 no-op,但 store 狀態更新仍會執行(「dispose 後 store 還有寫
+    // 入」的非預期副作用)。現有測試只覆蓋 dispatch_failed settle 後才 dispose,不覆蓋此
+    // 競態。要徹底消除需在 Task 2 給 dispatcher closure 加 in-flight tracking 並讓
+    // dispose await 其 settle(同 minioWatcher 模式);Task 0 範圍僅揭露,不引入新機制。
     pendingDispatchEvents.clear();
   };
 
@@ -1847,6 +1860,9 @@ export function createCoordinatorApp(
     dispose,
     // test-only：讓測試直接斷言 dispatch_failed job 的 pending 是否保留在 map,
     // 不必靠 callCount 間接推論(否則 delete-on-success 失敗路徑的保留無法被 falsify)。
+    // 對外型別收斂為 ReadonlyMap(見 interface @internal 註解):回傳的仍是同一個內部
+    // Map 實例,但 import CoordinatorApp 的消費端(retry route / plugin)在型別層只能讀,
+    // 不能 .delete()/.clear() 繞過 dispatcher closure 的清理一致性保護。
     pendingDispatchEvents,
   };
 }
