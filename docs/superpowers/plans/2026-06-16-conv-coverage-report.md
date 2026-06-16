@@ -211,25 +211,141 @@ git commit -m "feat(coordinator): add isSafeConversionJobId helper"
 
 - [ ] **Step 1: 寫 failing test（route 段，append 到 Task 2 的測試檔）**
 
-在 `tests/conversion-quality-metrics-route.test.ts` append（route 測試用既有 coordinator app 啟動方式，比照 `tests/host-native-conversion-ingest.test.ts` 如何建立 app 與 mock `streamingConversionClient`——沿用該檔的 app factory import 與 supertest/fetch 風格）：
+> **架構事實（執行者必讀，否則會卡關）**：coordinator 的 `streamingConversionClient` 是 `createCoordinatorApp` 內部 closure 變數，**外部無法用 `vi.spyOn(streamingConversionClient, "fetchConversionResult")` 攔截**（spy 攔不到 closure 內 instance）。`host-native-conversion-ingest.test.ts` 的真正注入機制是：用 `http.createServer` 起一個 **真實 HTTP stub server**（綁隨機 port），把它的 base URL 經 `createCoordinatorApp({ streamingConversionApiBase: <stubBase>, ... })` 餵進去，讓 `fetchConversionResult` 真的去打 stub 的 `GET /api/conversions/:id/result`。本 route 測試**必須沿用同一招**，不可用 spyOn。
+>
+> **可直接照抄的 harness（從 `host-native-conversion-ingest.test.ts:46-90` 複製到本測試檔頂）**：
+> - `startStreamingStub(resultPayload)`（line 46-76）：起 stub server，對 `GET /api/conversions/<id>/result` 回 `resultPayload`、其餘 404；resolve 出 `http://127.0.0.1:<port>`。**注意**：原版只認死的 `stream_conv_test_001` URL（line 63），本測試要測多個 id（含成功/null/404），改成**用 `req.url` 動態 regex 比對** `^/api/conversions/[^/]+/result$` 並回 `resultPayload`，404 case 則讓 stub 對該 id 回 `res.writeHead(404)`（模擬 authority 404，使 `fetchConversionResult` throw `Error("streaming conversion result API 404: ...")`）。
+> - `makeApp(streamingBase, overrides)`（line 78-90）：`createCoordinatorApp({ streamingConversionApiBase: streamingBase, ... })`，回傳 `CoordinatorApp`（含 `.app` 供 supertest）。
+> - `afterEach`（line 34-44）：關 `active`（app）與 `stub`（server），避免 port 洩漏。
+> - 用 `import request from "supertest"` 打 `request(app.app).get("/api/conversions/<id>/quality-metrics")`。
+>
+> 「authority 連不上 / 逾時」case 不需起 stub：把 `streamingConversionApiBase` 指到一個**沒人聽的 port**（例如 `http://127.0.0.1:1`），`fetchConversionResult` 的 fetch 會 throw 連線錯誤 → 路由回 502。
+>
+> 在 `tests/conversion-quality-metrics-route.test.ts` append 以下可執行骨架（id 由 stub 動態比對，每個 `it` 各自 `makeApp`）：
 
 ```ts
-// route 段：以既有測試 harness 啟動 coordinator app，stub streamingConversionClient.fetchConversionResult。
-// 斷言（描述 behaviour，實作時對齊 host-native-conversion-ingest.test.ts 的 app 啟動/注入方式）：
-//
-// 1) 成功：fetchConversionResult 回含 quality_metrics 的 result
-//    → GET /api/conversions/stream_conv_x/quality-metrics 回 200
-//    → body.quality_metrics_summary.coverage_ratio === 後端值
-//    → body.quality_metrics_summary.mapped_count / unmapped_count 帶出
-//    → body.usdc_url === result.usdc_ref；body.mapping_url === result.element_mapping_ref
-// 2) summary null：result.raw 無 quality_metrics → 200 + body.quality_metrics_summary === null（誠實，非錯誤）
-// 3) 非法 id：GET /api/conversions/..%2f../quality-metrics → 400
-// 4) authority 404：fetchConversionResult throw Error("streaming conversion result API 404: ...") → 路由回 404，body 無 coverage 數字
-// 5) authority 連不上：fetchConversionResult throw 一般 Error → 502，body 無 coverage 數字
-// 6) 同值鎖：同一 result 經本 route 與經 buildQualityMetricsSummary（stream-config 真相源）coverage_ratio 相等
+import http from "node:http";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { type AddressInfo } from "node:net";
+import request from "supertest";
+import { afterEach, describe, expect, it } from "vitest";
+import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+
+let active: CoordinatorApp | null = null;
+let stub: http.Server | null = null;
+afterEach(async () => {
+  if (active) { active.io.close(); await new Promise<void>((r) => active?.server.close(() => r())); active = null; }
+  if (stub) { await new Promise<void>((r) => stub?.close(() => r())); stub = null; }
+});
+
+// 動態比對 /api/conversions/<任意 id>/result；status 預設 200，可傳 404 模擬 authority not-found。
+function startStub(resultPayload: Record<string, unknown>, status = 200): Promise<string> {
+  return new Promise((resolve) => {
+    stub = http.createServer((req, res) => {
+      if (req.method === "GET" && /^\/api\/conversions\/[^/]+\/result$/.test(req.url ?? "")) {
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(status === 200 ? JSON.stringify(resultPayload) : "{}");
+        return;
+      }
+      res.writeHead(404).end("{}");
+    });
+    stub.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${(stub!.address() as AddressInfo).port}`));
+  });
+}
+function makeApp(streamingBase: string): CoordinatorApp {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-cqm-test-"));
+  active = createCoordinatorApp({
+    sessionStoreDir: path.join(root, "sessions"),
+    eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    streamingConversionApiBase: streamingBase,
+    corsOrigins: ["http://127.0.0.1:5173"],
+  });
+  return active;
+}
+
+// fetchConversionResult 回傳形狀含 usdc_ref / element_mapping_ref（streamingConversionClient.ts:339-340）
+// + raw（含 quality_metrics）。stub 回的 result payload 需含 conversion authority 真實欄位，
+// 讓 fetchConversionResult 正確映射；確切欄位名以 host-native-conversion-ingest.test.ts 的
+// READY_RESULT（line 103-117）為樣板（artifacts.model_usdc.url / artifacts.element_mapping.url
+// / quality_metrics）。
+
+describe("GET /api/conversions/:id/quality-metrics route", () => {
+  const READY = {
+    conversion_job_id: "stream_conv_route_001", authority: "bim-streaming-server",
+    status: "succeeded", ready: true,
+    model: { status: "ready", format: "usdc", url: "http://x/model.usdc" },
+    artifacts: {
+      model_usdc: { url: "http://x/model.usdc" },
+      element_mapping: { url: "http://x/element_mapping.json" },
+    },
+    quality_metrics: {
+      source_ifc_entity_count: 1000, mapped_count: 988, unmapped_count: 12,
+      coverage_ratio: 0.988, coverage_status: "warn", materialization_strategy: "sidecar",
+    },
+  };
+
+  it("1) 成功 → 200 + summary（含 mapped/unmapped）+ usdc_url/mapping_url", async () => {
+    const base = await startStub(READY);
+    const app = makeApp(base);
+    const res = await request(app.app).get("/api/conversions/stream_conv_route_001/quality-metrics");
+    expect(res.status).toBe(200);
+    expect(res.body.quality_metrics_summary.coverage_ratio).toBe(0.988);
+    expect(res.body.quality_metrics_summary.mapped_count).toBe(988);
+    expect(res.body.quality_metrics_summary.unmapped_count).toBe(12);
+    expect(res.body.usdc_url).toContain("model.usdc");
+    expect(res.body.mapping_url).toContain("element_mapping.json");
+  });
+
+  it("2) result 無 quality_metrics → 200 + summary === null（誠實非錯誤）", async () => {
+    const { quality_metrics: _omit, ...withoutQm } = READY;
+    const base = await startStub(withoutQm);
+    const app = makeApp(base);
+    const res = await request(app.app).get("/api/conversions/stream_conv_route_001/quality-metrics");
+    expect(res.status).toBe(200);
+    expect(res.body.quality_metrics_summary).toBeNull();
+  });
+
+  it("3) 非法 id → 400（路徑穿越，Express 解碼後含斜線會走不到本 route；用單段非法字元測 safe-id）", async () => {
+    const base = await startStub(READY);
+    const app = makeApp(base);
+    // 單段但含非法字元（空白）→ 命中 route param 但 isSafeConversionJobId 擋下回 400。
+    const res = await request(app.app).get("/api/conversions/bad%20id/quality-metrics");
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).not.toMatch(/coverage_ratio/);
+  });
+
+  it("4) authority 404 → 404，body 無 coverage 數字", async () => {
+    const base = await startStub({}, 404); // stub 對 result 回 404 → fetchConversionResult throw "API 404"
+    const app = makeApp(base);
+    const res = await request(app.app).get("/api/conversions/stream_conv_route_001/quality-metrics");
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toMatch(/coverage_ratio/);
+  });
+
+  it("5) authority 連不上 → 502，body 無 coverage 數字", async () => {
+    const app = makeApp("http://127.0.0.1:1"); // 沒人聽的 port → fetch throw 連線錯誤
+    const res = await request(app.app).get("/api/conversions/stream_conv_route_001/quality-metrics");
+    expect(res.status).toBe(502);
+    expect(JSON.stringify(res.body)).not.toMatch(/coverage_ratio/);
+  });
+
+  it("6) 同值鎖 → route 出的 coverage_ratio 等於 buildQualityMetricsSummary 直算值", async () => {
+    const base = await startStub(READY);
+    const app = makeApp(base);
+    const res = await request(app.app).get("/api/conversions/stream_conv_route_001/quality-metrics");
+    // 與 stream-config 同一真相源：route 不得改值。
+    expect(res.body.quality_metrics_summary.coverage_ratio).toBe(READY.quality_metrics.coverage_ratio);
+  });
+});
 ```
 
-> 實作此測試時，**先讀** `tests/host-native-conversion-ingest.test.ts` 頂部（app 如何建立、`streamingConversionClient` 如何注入/mock），照同一 harness 寫成可執行 case；上面註解每條對應一個 `it(...)`。
+> **實作微調提醒**：
+> - 確切的 result payload 欄位（讓 `fetchConversionResult` 正確映射出 `usdc_ref` / `element_mapping_ref` / `raw.quality_metrics`）以 `host-native-conversion-ingest.test.ts` 的 `READY_RESULT`（line 103-117）為準；若 `fetchConversionResult` 對某欄位有要求（例如 `artifacts.model_usdc.url`），照該樣板補齊。
+> - case 4 的「authority 404」是讓 stub 對 `/result` 回 HTTP 404，`fetchConversionResult`（streamingConversionClient.ts:304-345）對 non-ok 會 `throw new Error("streaming conversion result API 404: ...")`，route handler 的 `/API 404\b/` 比對即命中 → 回 404。
+> - `createCoordinatorApp` 的必填 config 欄位以 `makeApp`（host-native-conversion-ingest.test.ts:78-90）為準；若該 factory 還有其他必填欄，照抄補上。
 
 - [ ] **Step 2: 跑測試確認 fail**
 
@@ -316,12 +432,20 @@ git commit -m "feat(coordinator): GET /api/conversions/:id/quality-metrics produ
 
 - [ ] **Step 2: `IfcReadyListItem` 補 `conversion_job_id`（wire 已有）**
 
-`web-viewer-sample/src/console/coordinatorClient.ts` `IfcReadyListItem`（98-112）在 `conversion_authority: string | null;` 之後插入：
+`web-viewer-sample/src/console/coordinatorClient.ts` `IfcReadyListItem`（98-112）目前 `conversion_authority: string | null;`（line 105）之後緊接的是 `dispatch_error: string | null;`（line 106）。**只插入一行新欄位**（勿重複宣告 `conversion_authority`）—— 把游標放在現有的 `dispatch_error: string | null;` 那行**之前**，插入：
+
+```ts
+  // m2a-coverage-report:wire 已有（app.ts summarizeIfcReadyJob:1907），補型別供 #conv 展開讀取。
+  conversion_job_id: string | null;
+```
+
+插完後該段應為（`conversion_authority` 維持單一宣告）：
 
 ```ts
   conversion_authority: string | null;
   // m2a-coverage-report:wire 已有（app.ts summarizeIfcReadyJob:1907），補型別供 #conv 展開讀取。
   conversion_job_id: string | null;
+  dispatch_error: string | null;
 ```
 
 - [ ] **Step 3: 新增 response 型別 + client 方法**
@@ -401,6 +525,7 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
       quality_metrics_summary: {
         coverage_ratio: 0.9886, coverage_status: "warn", mapped_count: 988, unmapped_count: 12,
         source_ifc_entity_count: 1000, materialization_strategy: "sidecar",
+        conversion_duration_seconds: 73.5,
       },
       usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
     });
@@ -417,6 +542,7 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
     expect(drawer.textContent).toContain("98.86"); // coverage_ratio×100 原樣
     expect(drawer.textContent).toContain("988");    // mapped
     expect(drawer.textContent).toContain("12");     // unmapped
+    expect(drawer.textContent).toContain("73.5");   // conversion_duration_seconds（spec §4.4 必顯欄）
     expect(drawer.textContent).toContain("model.usdc");
     expect(drawer.textContent).toContain("未提供");  // 三項拆分誠實標
   });
@@ -473,7 +599,15 @@ Expected: FAIL（無 `conv-coverage-toggle-*` / `conv-coverage-*` 節點）。
     const id = job.ifc_ready_job_id;
     if (openJob === id) { setOpenJob(null); return; }
     setOpenJob(id);
-    if (cov[id] && cov[id] !== "loading" && !("error" in (cov[id] as object))) return; // 去重
+    // 去重 / 載入鎖（spec §5「重複展開同 job → 去重 / 載入鎖，避免重打」）：
+    //   - 已成功取得（cov[id] 是 response 物件）→ 直接重用快取，不重打。
+    //   - 正在載入（"loading"）→ 不重打。
+    //   - 曾失敗（{ error }）→ **刻意允許重打**（展開錯誤態再點一次＝使用者重試，符合誠實鐵律：
+    //     錯誤不黏住，給重試機會）。故下面的 early-return 條件只擋「成功快取」與「載入中」，
+    //     不擋 error 態。
+    const cached = cov[id];
+    if (cached && cached !== "loading" && !("error" in (cached as object))) return; // 已成功 → 重用
+    if (cached === "loading") return; // 載入中 → 不重打
     setCov((p) => ({ ...p, [id]: "loading" }));
     try {
       const r = await coordinatorClient.conversionQualityMetrics(job.conversion_job_id);
@@ -520,7 +654,19 @@ Expected: FAIL（無 `conv-coverage-toggle-*` / `conv-coverage-*` 節點）。
 ))}</tbody>
 ```
 
-（檔頂 import 補 `Fragment`：`import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";`。已查證 `Btn`（`components.tsx:80-104`）原生接 `onClick?: () => void` 與 `"data-testid"?: string`，可直接透傳，無需外層 `<span>` 包裹。`Field`（`components.tsx:58`）簽名為 `{ k: string; v: React.ReactNode; prov?: Prov }`，CoverageDrawer 用法相符。）
+（檔頂 import 補 `Fragment`：**已查證** `pages.tsx:3` 現為——
+
+```ts
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+```
+
+——把它整行改成（只加 `Fragment`，其餘原樣，保持字母序）：
+
+```ts
+import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
+```
+
+注意：`pages.tsx` 目前靠 React 18 自動 JSX transform，**沒有** `import React from "react"` 也沒有 named `Fragment`；本變更是新增 named import，不要動到第 4 行的 `./components` import。已查證 `Btn`（`components.tsx:80-104`）原生接 `onClick?: () => void` 與 `"data-testid"?: string`，可直接透傳，無需外層 `<span>` 包裹。`Field`（`components.tsx:58`）簽名為 `{ k: string; v: React.ReactNode; prov?: Prov }`，CoverageDrawer 用法相符。）
 
 加 `CoverageDrawer` 小元件（同檔 `ConversionSchedulingPage` 之上或之下）：
 
@@ -539,6 +685,9 @@ function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | {
       <Field k="mapped / unmapped" v={`${s.mapped_count ?? "未取得"} / ${s.unmapped_count ?? "未取得"}`} prov="artifact" />
       <Field k="source IFC entity" v={String(s.source_ifc_entity_count ?? "未取得")} prov="artifact" />
       <Field k="materialization" v={s.materialization_strategy ?? "未取得"} prov="artifact" />
+      {/* spec §4.4 line 76 明列必顯欄：轉檔耗時秒數（後端 quality_metrics 既有，review.ts:19 / types.ts:79
+          已型別化、buildQualityMetricsSummary 已萃取）。缺值誠實顯「未取得」，不捏值。 */}
+      <Field k="conversion 耗時(s)" v={typeof s.conversion_duration_seconds === "number" ? String(s.conversion_duration_seconds) : "未取得"} prov="artifact" />
       <Field k="usdc 輸出" v={state.usdc_url ?? "未取得"} prov="artifact" />
       <Field k="mapping_url" v={state.mapping_url ?? "未取得"} prov="artifact" />
       <Field k="property / relationship / attribute 三項" v="後端未提供（以 coverage_ratio 為準；三項拆分為 follow-up）" prov="p1" />
@@ -638,9 +787,10 @@ gh pr create --title "feat: #conv 轉檔 coverage 報告展開（M2-a 唯讀 pas
 - **spec §2 目標 1（production 唯讀路由）** → Task 2（safe-id）+ Task 3（route）。✓
 - **spec §2 目標 2（summary additive 兩欄）** → Task 1（後端）+ Task 4 Step 1（前端型別）。✓
 - **spec §2 目標 3（#conv 展開、IfcReadyListItem 補欄、client 方法）** → Task 4 + Task 5。✓
+- **spec §4.4 抽屜必顯欄位（coverage% / status / mapped / unmapped / source_ifc_entity_count / materialization_strategy / conversion_duration_seconds / usdc 路徑 / mapping_url）** → Task 5 Step 3 `CoverageDrawer` 逐欄渲染（含 `conversion_duration_seconds`，已型別化 review.ts:19 / types.ts:79、buildQualityMetricsSummary 已萃取），Task 5 Step 1 測試斷言含 `73.5`。✓
 - **spec §2 目標 4（誠實鐵律：三項未提供 / 未派工 / 錯誤不假值 / 零計算）** → Task 5（CoverageDrawer 分支）+ Task 3（錯誤路徑不回 coverage）。✓
 - **spec §2 目標 5 + §6.3（Browser E2E）** → Task 6。✓
 - **spec §4.2 回歸界線（host-native-conversion-ingest / sessions / external-ifc-ready）** → Task 1 Step 7 + Task 3 Step 5。✓
 - **spec §3 非目標（不改轉檔引擎 / 不碰 ifc-ready 契約形狀 / 不動 dev route / 不直連 :49101）** → 計畫零涉 bim-streaming-server、`conversion_job_id` 只補型別、route 走 coordinator。✓
 - **型別一致性**：`conversionQualityMetrics` / `ConversionQualityMetricsResponse` / `isSafeConversionJobId` / `conv-coverage-toggle-<id>` / `conv-coverage-<id>` 跨 Task 3/4/5/6 命名一致。✓
-- **Placeholder 掃描**：route 段測試以註解描述 6 條 behaviour 並要求對齊既有 harness（因 coordinator 測試 app 啟動方式需讀既有檔），非 TODO；其餘步驟均含可執行碼與指令。
+- **Placeholder 掃描**：Task 3 Step 1 route 段測試現為**完整可執行碼**（真實 HTTP stub server harness + 6 個 `it`，不依賴攔不到的 `vi.spyOn(streamingConversionClient,...)`；已揭露 closure 注入限制與可照抄 harness 來源 `host-native-conversion-ingest.test.ts:46-90`）；其餘步驟均含可執行碼與指令，無 TODO 殘留。
