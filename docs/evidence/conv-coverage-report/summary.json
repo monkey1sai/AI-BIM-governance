@@ -1,0 +1,37 @@
+{
+  "feature": "M2-a #conv 轉檔 coverage 報告展開 UI（production 唯讀 passthrough）",
+  "spec": "docs/superpowers/specs/2026-06-16-conv-coverage-report-design.md",
+  "engine": "playwright",
+  "date": "2026-06-16",
+  "verticalSliceOk": true,
+  "e2e_spec": "web-viewer-sample/e2e/conv-coverage-report.spec.ts（1 passed）",
+  "route": "GET /api/conversions/:conversionJobId/quality-metrics（coordinator production 唯讀 → real conversion authority /result → buildQualityMetricsSummary 原樣）",
+  "stack": "branch-isolated：fresh dev viewer :5180（VITE_COORDINATOR_API_BASE→:8005）+ branch coordinator :8005 + REAL conversion authority FastAPI :49101（GPU-free，服務 2026-06-02 真轉檔 result 的 idempotent-replay）",
+  "fixture": "REAL persisted IFC→USDC result stream_conv_20260602080050_a0cc1bdc（mock=false, guid_exact）；非 mock。使用者只需在 #conv 按 Refresh queue + coverage 展開鈕。",
+  "runtime_ids": {
+    "conversion_job_id": "stream_conv_20260602080050_a0cc1bdc",
+    "ifc_ready_job_id": "ifcready_1781590085298_904c631e",
+    "ifc_guid_sample": "3tk8X2hAzDbP6Dh8yarqTc"
+  },
+  "observed_coverage": {
+    "coverage": "100.00% · pass",
+    "mapped_count": 1,
+    "unmapped_count": 0,
+    "source_ifc_entity_count": 1,
+    "materialization_strategy": "ifcopenshell_openusd_identity",
+    "conversion_duration_seconds": "未取得（後端未提供，誠實顯示）",
+    "usdc_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/model.usdc",
+    "mapping_url": "http://testserver/artifacts/stream_conv_20260602080050_a0cc1bdc/element_mapping.json",
+    "three_way_split": "後端未提供（property/relationship/attribute 三項為 follow-up，以 coverage_ratio 為準）"
+  },
+  "honesty": [
+    "coverage 全程後端原樣、前端零計算。",
+    "conversion_duration / 三項拆分後端未提供 → 抽屜誠實標『未取得』/『後端未提供』，未捏值。",
+    "純 CPU coverage 報告（spec §4.4 3D/GPU 無涉）；無 stage truth 裁決面。"
+  ],
+  "not_observed_in_browser": [
+    "failure/retry 抽屜分支（route 502 / 重試）—— 本次 happy-path run 未觸發；對應單元測試在 web-viewer-sample/src/console/ConversionSchedulingPage.test.tsx 覆蓋。"
+  ],
+  "screenshot_sample": "conv-coverage-drawer-detail.png",
+  "full_artifacts": "主工作區 artifacts/e2e/conv-coverage-report-*（含 trace.zip）"
+}
