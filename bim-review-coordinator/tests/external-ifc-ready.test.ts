@@ -258,6 +258,7 @@ describe("POST /api/external/ifc-ready", () => {
       conversion_job_id: "stream_conv_test_001",
       conversion_status: "queued",
       conversion_authority: "bim-streaming-server",
+      queue_position: null,   // conv-prioritize-retry:additive 上 wire（已派工 → null）
       web_view_session_id: null,
       viewer_url: null,
     });

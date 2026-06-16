@@ -104,6 +104,8 @@ export interface IfcReadyListItem {
   download_status: string | null;
   conversion_status: string | null;
   conversion_authority: string | null;
+  // conv-prioritize-retry:in-flight→0、queued→1-based、其餘→null。供插隊鈕 disabled 判斷。
+  queue_position?: number | null;
   // m2a-coverage-report:wire 已有（app.ts summarizeIfcReadyJob:1907），補型別供 #conv 展開讀取。
   conversion_job_id: string | null;
   dispatch_error: string | null;
