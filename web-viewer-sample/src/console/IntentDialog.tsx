@@ -24,8 +24,8 @@ export function IntentDialog({
   if (!open) return null;
   return (
     <div className="ec-modal-backdrop" data-testid="intent-dialog">
-      <div className="ec-modal" role="dialog" aria-modal="true">
-        <h3>{title}</h3>
+      <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="intent-dialog-title">
+        <h3 id="intent-dialog-title">{title}</h3>
         <p className="ec-warn-note">{cost}</p>
         <label className="ec-field-k" htmlFor="intent-reason">原因（可空）</label>
         <textarea

@@ -26,6 +26,32 @@ describe("IntentDialog", () => {
     expect(onConfirm).toHaveBeenCalledWith("趕工");
   });
 
+  it("dialog 有 accessible name（aria-labelledby 指向 title）", async () => {
+    root = createRoot(container);
+    await act(async () => { root!.render(<IntentDialog open title="插隊" cost="此 job 將排到佇列最前" onConfirm={async () => {}} onCancel={() => {}} />); });
+    const dialog = container.querySelector('[role="dialog"]')!;
+    const labelledby = dialog.getAttribute("aria-labelledby");
+    expect(labelledby).toBeTruthy();
+    const titleEl = container.querySelector(`#${labelledby}`);
+    expect(titleEl?.textContent).toBe("插隊");
+  });
+
+  it("busy=true 鎖住確認/取消/textarea 並切換按鈕文字", async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    root = createRoot(container);
+    await act(async () => { root!.render(<IntentDialog open busy title="插隊" cost="此 job 將排到佇列最前" onConfirm={onConfirm} onCancel={() => {}} />); });
+    const confirmBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("執行中"))!;
+    expect(confirmBtn).toBeTruthy();
+    expect((confirmBtn as HTMLButtonElement).disabled).toBe(true);
+    const cancelBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("取消"))!;
+    expect((cancelBtn as HTMLButtonElement).disabled).toBe(true);
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(true);
+    // busy 鎖定下點擊不得觸發 onConfirm（防重打）。
+    await act(async () => { confirmBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   // onConfirm reject 時，component 不得讓 rejection 逸散成 unhandledrejection。
   // 失敗顯示誠實錯誤、不關 dialog 的責任在 caller（caller 須自行 catch+setErr），
   // 但 component 本身要有安全網：click handler await 並吞掉 rejection，避免使用者只看到 console
