@@ -56,10 +56,10 @@
 
   以及 spec §7 點名的目標符號：`markDispatched` / `markDispatchFailed` / `markQueuedForConversion` / `ConversionDispatchQueue`。預期：`pendingDispatchEvents` 的讀者僅 dispatcher closure 與 dispose drain（`app.ts:1824`），無第三方依賴「取件即刪」。若 impact 報出 closure 以外的 `pendingDispatchEvents` 讀者，停止並回報（spec 假設被推翻）。
 
-- [ ] 先在 `tests/conversion-dispatch-queue.test.ts` 的 `describe("Concurrent IFC-ready POST → serial dispatch (integration)")` 內新增一個失敗測試，鎖「派工失敗後 pending 保留可被重派」。沿用既有 `startControllableStreamingStub` 不適用（它只回 202），改用一個「第一次回 500、第二次回 202」的 stub。在檔案內既有 import 下方加測試：
+- [ ] 先在 `tests/conversion-dispatch-queue.test.ts` 的 `describe("Concurrent IFC-ready POST → serial dispatch (integration)")` 內新增一個失敗測試，**只鎖 Task 0 本身交付的半段**：「派工失敗 → `dispatch_failed` 且 pending 脈絡保留（不會自動再派工）」。**此測試不得引用 Task 2 的 `POST .../retry` 路由**——retry 重派的完整 round-trip 由 Task 2 的 `tests/conversion-control-routes.test.ts`（本 plan Task 2「retry」describe）兜底；如此 Task 0 commit 後測試集即全綠，可獨立 commit、不留跨 task 紅燈。沿用既有 `startControllableStreamingStub` 不適用（它只回 202），改用一個「永遠回 500」的 stub 觸發 `dispatch_failed`。在檔案內既有 import 下方加測試：
 
   ```ts
-  it("派工失敗後 pending 脈絡保留，可由 requeue 重派成功（delete-on-success）", async () => {
+  it("派工失敗後狀態為 dispatch_failed，且 pending 保留不自動再派工（delete-on-success 半段）", async () => {
     let callCount = 0;
     activeStub = http.createServer((req, res) => {
       if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
@@ -67,13 +67,9 @@
         req.on("data", (c) => { body += c.toString("utf8"); });
         req.on("end", () => {
           callCount += 1;
-          if (callCount === 1) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ detail: "first attempt fails" }));
-          } else {
-            res.writeHead(202, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ conversion_job_id: "stream_conv_retry_ok", status: "queued", authority: "bim-streaming-server" }));
-          }
+          // 永遠失敗：Task 0 只驗「失敗後保留 pending、不自動重派」；retry 重派由 Task 2 route 測試兜底。
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: "dispatch always fails" }));
         });
       } else {
         res.writeHead(404).end();
@@ -90,30 +86,28 @@
       .send(payload());
     const jobId = res.body.ifc_ready_job_id as string;
 
-    // 第一次派工失敗 → dispatch_failed
+    // 派工失敗 → dispatch_failed（delete-on-success：失敗路徑不刪 pending）。
     await waitFor(async () => {
       const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
       return r.body.status === "dispatch_failed";
     });
 
-    // delete-on-success：失敗後 pending 保留 → retry 路由（Task 2）可重派。
-    // 本測試在 Task 2 路由就緒前先用 internal 重新 enqueue 驗 pending 仍在：
-    const retry = await request(app.app).post(`/api/conversion/jobs/${jobId}/retry`).send({});
-    expect(retry.status).toBe(200);
-    await waitFor(async () => {
-      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
-      return r.body.status === "dispatched" && r.body.conversion_job_id === "stream_conv_retry_ok";
-    });
+    // pending 保留證據：worker 已 shift，保留 pending 不會自動重派 → callCount 維持 1、狀態續為 dispatch_failed。
+    // （delete-on-success 失敗路徑保留 pending；自動重派不發生，retry 重派的 round-trip 由 Task 2 route 測試驗。）
+    await new Promise<void>((r) => setTimeout(r, 100));
+    expect(callCount).toBe(1);
+    const after = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(after.body.status).toBe("dispatch_failed");
   });
   ```
 
-  注意：此測試橫跨 Task 0/2，故先寫但允許在 Task 2 完成前紅。先只跑「第一次派工失敗 → dispatch_failed 且 pending 保留」這半，用一個臨時斷言（直接讀 `dispatch_failed`）確認 Task 0 行為；retry route 那半留待 Task 2。執行：
+  此測試**不橫跨 task**：Task 0 改完 dispatcher 後即可轉綠，commit 後測試集全綠。執行：
 
   ```
-  cd bim-review-coordinator && npx vitest run tests/conversion-dispatch-queue.test.ts -t "delete-on-success"
+  cd bim-review-coordinator && npx vitest run tests/conversion-dispatch-queue.test.ts -t "delete-on-success 半段"
   ```
 
-  預期此刻：`dispatch_failed` 達成，但 `POST .../retry` 回 404（route 未建）→ 測試紅。記下此為跨 task 預期紅。
+  預期：dispatcher 未改前紅（現行「取件即刪」下 `markDispatchFailed` 行為已成立但本測試斷言點以 delete-on-success 後的語意為準，先 RED 後 GREEN 走 TDD）；改完 dispatcher（下一步）後綠。**無 404、無跨 task 紅燈**。
 
 - [ ] 改 `app.ts` dispatcher closure（398-429）為 delete-on-success。把現行：
 
@@ -173,7 +167,7 @@
   cd bim-review-coordinator && npx vitest run tests/conversion-dispatch-queue.test.ts
   ```
 
-  預期：既有 5 個既存斷言（FIFO 順序、exception 不卡、getQueuePosition、drain、dispose dropped_on_restart）全綠；新加「派工失敗第二個仍 dispatch」（272-314）仍綠（worker 已 shift，保留 pending 不會自動重派）；新跨 task 測試的 retry 那半維持紅（待 Task 2）。
+  預期：既有 5 個既存斷言（FIFO 順序、exception 不卡、getQueuePosition、drain、dispose dropped_on_restart）全綠；新加「派工失敗第二個仍 dispatch」（272-314）仍綠（worker 已 shift，保留 pending 不會自動重派）；本 task 新增的「delete-on-success 半段」測試轉綠。**整檔測試集全綠，無跨 task 紅燈**——retry 重派的完整 round-trip 由 Task 2 `conversion-control-routes.test.ts` 兜底，本檔不依賴尚未存在的 retry 路由。
 
 - [ ] commit（task 邊界）：
 
@@ -496,13 +490,13 @@
 
   注意：`structLog.withTraceId(id)` 需 trace_id 符合 `TRACE_ID_PATTERN`（`structLog.ts:352` `^(ifcready_|rev_|stream_conv_|script_|external_)...`）；`ifc_ready_job_id` 形狀 `ifcready_...` 命中 `ifcready_` 前綴，合法。
 
-- [ ] 跑 route 測試確認全綠 + Task 0 跨 task 測試現在轉綠：
+- [ ] 跑 route 測試確認全綠 + Task 0 dispatch_failed 半段回歸不壞：
 
   ```
   cd bim-review-coordinator && npx vitest run tests/conversion-control-routes.test.ts tests/conversion-dispatch-queue.test.ts
   ```
 
-  預期：prioritize 4 案 + retry 2 案全綠；Task 0 「delete-on-success」測試的 retry 那半轉綠。
+  預期：prioritize 4 案 + retry 2 案全綠；Task 0 「delete-on-success 半段」測試維持綠（Task 2 新增 retry 路由不影響其斷言）。本 task 的 `conversion-control-routes.test.ts`「retry」describe（500-stub→`dispatch_failed`→`POST .../retry`→`queued_for_conversion`→再被 worker 取件成功）是 retry 重派完整 round-trip 的唯一驗證點，補上 Task 0 半段未涵蓋的那半。
 
 - [ ] commit：
 
