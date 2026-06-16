@@ -1,271 +1,214 @@
 ---
 name: spec-to-done
-description: "Use when an approved implementation spec exists under docs/superpowers/specs and the user asks to run spec-to-done, continue spec-to-done, drive a spec to PR, or run an autonomous spec-to-done workflow in Codex."
+description: Use when a brainstormed spec already exists under docs/superpowers/specs/ and the user asks to autonomously drive it to a merged PR (e.g. 「跑 spec-to-done」「用 spec-to-done 跑 <spec 路徑>」), or when resuming a previously held spec-to-done run.
 ---
 
-# spec-to-done for Codex
+# spec-to-done — 指揮官手冊(主對話 SOP)
 
-Drive an already approved implementation spec from `docs/superpowers/specs/` toward a verified PR using Codex-native orchestration.
+把一份**已經使用者核准的 spec**(brainstorming 產物)自主推進到 **merged PR + browser evidence + 四項回報**。
+主對話 = 指揮官:只做 (a) phase 之間讀 StructuredOutput 比 gate 規則、(b) 配 args、(c) 命中強制停下點就輸出 hold block。苦工全在 named workflows 的 subagent(獨立 context)。
 
-This is a Codex port of the local Claude `spec-to-done` commander workflow. It is a skill, not a hidden runtime. Do not call Claude `Workflow({name: ...})`, do not shell-launch fake agents, and do not claim this is an official Codex feature. The parent Codex session owns orchestration, gates, integration, and final reporting.
+**Source of truth 聲明**:本檔是 spec-to-done 的 Codex copy;phase / gate / HELD / resume / evidence / ship 語義必須精準對齊 `.claude/skills/spec-to-done/SKILL.md`。`std-*.js` 與 `ship-item` 的 canonical runtime 仍在 `.claude/workflows/`(compose,不重造);Codex 只能做 executor / model / path 配接,不得改寫成較弱的 parent-only 流程。
 
-## Contract
+## Codex 對齊補充(只配接,不改 gate)
 
-- Treat the spec as the product source of truth. If the spec has placeholders, contradictions, or ambiguous scope, stop with `HELD`.
-- Follow the current host and repo rules first. User instructions, repo `AGENTS.md`, and Codex system rules override this skill.
-- Do not commit, push, create PRs, merge, deploy, or publish unless the user's current request explicitly includes that action or explicitly asks to run spec-to-done through that stage.
-- Use Codex-native tools only: parent-session work, workflow artifacts, `spawn_agent` when explicitly permitted and useful, GitNexus MCP/CLI when the repo requires impact checks, and Browser/Playwright/GStack only when available and appropriate.
-- Preserve the original hard gates: spec contradiction, unacknowledged critical impact, missing browser evidence for user-facing work, non-closing P1/P2 issues, shipping consent carve-outs, repeated tool failure.
-- Preserve durable resume: every phase completion or hold appends a state line under `artifacts/spec-to-done/`.
-- Use the smallest workflow that can prove the result. Do not create ceremony for trivial docs-only or inspection-only asks.
+- `Workflow({name:'std-plan' | 'std-implement' | 'std-evidence' | 'fu-adversarial-verify-generic' | 'ship-item', args:{...}})` 在 Codex copy 仍代表**同一個 phase contract**:相同 args、相同 StructuredOutput 欄位、相同 retry / HELD / resumeFromRunId 語義;不得用「Codex-native phase mapping」替代或省略 P4/P5/P6。
+- 若當前 Codex host 沒有 Claude workflow runtime,指揮官必須用可用 native subagents / workflow artifacts 產生等價 StructuredOutput;若無法產生等價 StructuredOutput,必須 HELD,不得 parent-only 手跑後視為通過。缺欄位、null reviewer、verdict 數量不符、無 browser evidence 一律依本檔 gate 重呼或 HELD,不得視為通過。
+- P0→P1→P3→P4→P5→P6→P7 的跳號排序不可整理成 P0-P7 連號;文中的 production P1/P2 / 真 P1/P2 是 quality / production blocker 等級,不是主對話新增 phase。
+- spec-to-done 的請求本身即授權本流程推進到 merged PR;不要加入「commit / push / PR / merge 必須另行明確要求」的 Codex-only 限制。只有本檔列出的 consent carve-out / destructive / production-data / credentials / billing / user-account 類 gate 需要再停下。
 
-## Host Mapping
+## 四套工具的唯一切入點(AGENTS.md anti-patterns 防線)
 
-The Claude source used named workflows:
+| 工具 | 切入點 | 防線 |
+|---|---|---|
+| Superpowers | P1 writing-plans 規格產 plan;P3 subagent-driven(TDD + 兩階段 review);done 宣稱前 verification-before-completion 精神 | plan 作者只能是 writing-plans 規格 |
+| GitNexus | P1 尾段 impact 預掃(CRITICAL 早停);P3 每 task 改前 impact、每 commit 前 detect_changes;rename 一律 gitnexus_rename | 只做 code intelligence,從不參與「要做什麼」的設計決策 |
+| gstack(browser evidence) | P4 fallback 鏈:gstack browse → **Playwright(現行 default)** → claude-in-chrome | userFacing 時 P4 是硬 gate;P3 完成 ≠ done |
+| Matt Pocock | **不進主線**。僅兩個 optional 支流:流程尾把 non-blocking findings 用 `to-issues` 開 backlog;發現多時 `triage` 分類 | `to-prd`/`grill-me`/`design-an-interface`/`prototype`/`tdd`/`review` 在本流程**無呼叫點**;缺 setup 時退回 `gh issue create` 或跳過 |
 
-- `std-plan`
-- `std-implement`
-- `std-evidence`
-- `fu-adversarial-verify-generic`
-- `ship-item`
+## 觸發與 args(主對話填;workflow 不自取)
 
-In Codex, map them to explicit parent-owned phases instead of calling a workflow runtime:
+使用者句型:「用 spec-to-done 跑 `docs/superpowers/specs/<檔>.md`,user-facing」。主對話補齊:
 
-| Claude workflow | Codex-native replacement |
-| --- | --- |
-| `std-plan` | Parent creates a phase plan under `artifacts/spec-to-done/<slug>/plan.md`; use planning/review subagents only as bounded read-only reviewers. |
-| `std-implement` | Parent executes tasks sequentially. Use worker agents only for disjoint file ownership and only when delegation is explicitly allowed. |
-| `std-evidence` | Parent runs Browser/Playwright/GStack evidence collection and records screenshots, traces, route, buttons, fixture, runtime IDs, and limitations. |
-| `fu-adversarial-verify-generic` | Parent runs an independent verification pass. Prefer explorer agents for read-only adversarial review when allowed. |
-| `ship-item` | Parent performs GitHub/PR/merge work only when explicitly requested; otherwise stop with a clear next action. |
-
-Never replace the table above with a shell wrapper or generated runner. Dynamic workflow resilience comes from persisted artifacts, bounded packets, explicit gates, and restartable state.
-
-## Trigger And Args
-
-Typical user input:
-
-```text
-用 spec-to-done 跑 docs/superpowers/specs/<file>.md, user-facing
-繼續 spec-to-done
+```
+specPath     spec 絕對路徑(必填;不存在 → 停,要路徑)
+slug         spec 檔名去掉日期前綴與 -design 後綴(例 2026-06-15-demo-feature-design.md → demo-feature)
+dateStamp    今天 YYYY-MM-DD(主對話算;workflow 內禁時鐘/亂數 API)
+branch       feat/<slug>(或 fix/ chore/;絕不在 main 開發)
+userFacing   spec 是否含使用者可操作介面(看 spec;不確定當 true)
+worktreeRoot worktree 的「絕對路徑」(P0 建立後填;std-*.js 都用它串路徑,不可相對)
 ```
 
-The parent session must derive and record:
+## P0 指揮官開場(主對話親自做)
 
-```text
-specPath      absolute spec path; required
-slug          spec filename without date prefix and design suffix
-dateStamp     YYYY-MM-DD from the parent session
-branch        feat/<slug>, fix/<slug>, or chore/<slug>
-userFacing    true when the spec touches user-operable UI or if unsure
-worktreeRoot  absolute repo or linked-worktree root
-statePath     artifacts/spec-to-done/<slug>-state.md
-runDir        artifacts/spec-to-done/<slug>/
+1. 讀 spec 全文;自檢 placeholder / 內部矛盾 / scope 歧義 → **spec 矛盾 = HELD**(spec 是唯一忠實源,agent 不得擅自補)。
+2. 偵測隔離:`git rev-parse --git-dir` ≠ `--git-common-dir` → 已在 linked worktree,直接用(絕不疊加)。在主 checkout 時:
+   - `.worktrees/<slug>/` 已存在(前次 held 殘留)→ **沿用**,worktreeRoot 指向它,確認 branch 正確即可。
+   - 否則:`git fetch origin +refs/heads/main:refs/remotes/origin/main` → `git worktree add .worktrees/<slug> -b <branch> origin/main`。
+   - worktree 不帶 ignored/local artifact(storage/ 真 IFC、node_modules、.venv)— 讀主工作區絕對路徑或 worktree 內 `npm install`。
+3. TodoWrite 建 P1–P7。**每次 Workflow 呼叫的工具回應都有「Run ID: wf_...」,把它記進 TodoWrite 與 state 檔**(見 Resume)。
+
+## 編排(可複製;gate 讀 StructuredOutput 布林/枚舉)
+
+> ⚠ Workflow 的 `args` 必須是 JSON object,**不可序列化成字串**(字串會讓腳本取欄位全 undefined;
+> 腳本雖有 parse 防護與 `bad_args` fail-fast,仍應正確傳 object)。收到 `held='bad_args'` = args 傳壞,修 args 重呼。
+
+```
+P1 = Workflow({name:'std-plan', args:{specPath, slug, dateStamp, branch, worktreeRoot, userFacing,
+               acknowledgedCriticalSymbols:[]}})
+     gate: P1.ok === true 才前進;P1.held → 查「held 對照表」
+     P1.impact.overallRisk==='HIGH' 或 P1.impact.blockers 非空 → 本訊息中明確回報 blast radius
+       (direct callers / processes / risk)後繼續;補強策略之後寫進 PR body
+P3 = Workflow({name:'std-implement', args:{planPath:P1.planPath, worktreeRoot, branch, specPath,
+               userFacing, startTaskIndex:0, maxFixRounds:2, acknowledgedCriticalSymbols:[],
+               mode:'tasks', fixFindings:[]}})
+     gate: P3.held → 查「held 對照表」;P3.ok===true(全 task 完成)才前進
+     P3.highRiskNotes 非空 → 對話中轉述(臨時 HIGH 的事後回報)並列入 PR body 補強段
+     P3.finalReviewOk===false → 不是死路:findings 照樣進 P5 對抗複驗定真假
+P4 = userFacing ? Workflow({name:'std-evidence', args:{worktreeRoot, slug, specPath, planPath}})
+                : {ok:true, skipped:true}
+     gate: P4.ok
+       held='no_browser_engine' → interactive session:主對話以 claude-in-chrome 親自取證(第 3 層;
+         按本檔「Vertical slice 七項」逐項驗、產物落同樣 artifacts/e2e/ 慣例、自組 gaps:[{id,q}]、
+         engine 誠實記 chrome)後重新裁決;headless/cron 無此層 → HELD
+       held='no_browser_evidence' 且 detail 顯示 backend stack 沒起 → 指揮官依 golden path 啟動：
+         **先跑「啟動/重建 backend stack 前置」(見專節)清掉殘留 kit/conversion port,再跑** `.\scripts\deploy.ps1`
+         (勿在 workflow 內自啟)後重跑 P4;否則 HELD(not observed 不得宣告 done)
+P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
+        root: worktreeRoot, label: slug,
+        findings: [...P3.finalReview.findings, ...((P4.evidence && P4.evidence.gaps) || [])],
+        criticFocus: '通讀全 diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。'}})
+     infra 分支(與內容性不過分開):P5===null 或 P5.critic===null 或 P5.verdicts.length !== 送入
+       findings 數(verifier 回 null 被 filter 掉 = 有 finding 沒驗到,不可視為通過)
+       → 重呼 P5 一次(resumeFromRunId);仍 infra 失敗 → HELD(視同 reviewer_agent_failed)
+     gate(內容性): P5.not_closed.length===0 && P5.new_issues.length===0 && P5.critic.overall_safe
+     不過 → 修復迴圈(有真實通道):
+       Workflow({name:'std-implement', args:{...同 P3, mode:'fix',
+                 fixFindings:[...P5.not_closed, ...P5.new_issues, ...P5.critic.issues 轉成 {id,q}]}})
+       → 重跑 P5(同樣檢查);≥2 輪仍不閉合 → HELD
+P6 前置(指揮官親自做,解決 PR body 資料通道):
+     a. openspec gate:diff 觸及 scripts/ bim-review-coordinator/ web-viewer-sample/
+        bim-streaming-server/ tests/ .github/workflows 時,pr-review-agent 會因無 active
+        openspec change 掛 missing_openspec blocker → 在 worktree 建最小 openspec/changes/<slug>/
+        (proposal.md + tasks.md,對應本 spec)並 commit
+     b. push:git push -u origin <branch>
+     c. gh pr create --base main(繁中):body 含 ──
+        - user-facing:product-operability §4 的 10 列 Frontend 驗收表(資料來自 P4.evidence 的
+          screenshots/runtimeIds/engine + **Read 其 summaryJson 檔**補齊 route/buttons/fixture/
+          backend API/E2E command/manual steps)
+        - P1.impact HIGH 的補強策略、P3.highRiskNotes
+        - P3.detectFallbackTasks / detectFailTasks / fixDetectVerdicts(非 pass 項)的 GitNexus fallback 揭露
+        - 動 runtime/deploy 時附 Deploy Path 表;純 tooling/docs 註明不適用
+        記下 prNumber
+P6 = Workflow({name:'ship-item', args:{branch, prNumber:<前置 c 的號碼>, userFacing}})
+     consume:
+       P6===null → 對話回報 ship agent 失敗,重呼一次;仍 null → HELD
+       P6.merged===true → P7
+       P6.heldReason 屬 production P1/P2 → fix 迴圈(同 P5 的 mode:'fix',fixFindings=該 P1/P2)
+         → 重呼 ship-item 帶同一 prNumber(沿用 PR 重跑 buffer cycle)
+       P6.heldReason 屬 consent carve-out(revert-*/release/hotfix/破壞性對外)→ HELD(須使用者明確同意)
+       其他(CI 持續紅、merge conflict、report generation failed 類工具故障)→ 對話回報 +
+         依 ship-item.md 判斷層次處置;不可只看 check 狀態 merge
+P7 = 主對話回報四項:改了哪些 tracked files / 跑了哪些最小驗證 / 哪些測試沒跑及原因 / 已知風險
+     + mergeCommit + evidence 路徑 + AGENTS.md 7 欄 Frontend 表(回報用;PR body 已用 10 列表)
 ```
 
-If any required arg cannot be derived safely, stop with `HELD@P0`.
+P1 內含 plan 四軸 review(Completeness/Spec Alignment/Task Decomposition/Buildability);P3 內含每 task 兩階段 review(spec 先 quality 後)— 都在 workflow 內自動修迴圈,不回主對話。
 
-## P0 Commander Opening
+## held 對照表(workflow 回傳的全部 held 值與處置)
 
-1. Read the repo `AGENTS.md`, relevant lazy-loaded agent docs, the spec, and current git status.
-2. Check the spec for placeholders, contradictions, missing acceptance criteria, and scope ambiguity.
-3. Decide whether a linked worktree is needed. Do not create nested worktrees. If an existing `.worktrees/<slug>/` exists, inspect it before reusing it.
-4. Create or update:
+| held | 來源 | 指揮官處置 |
+|---|---|---|
+| `bad_args` | 任一 std-* / fu-generic(必填 args 缺或被字串化) | 修正 args 為正確 object 後重呼(非流程問題) |
+| `plan_author_failed` / `plan_parse_failed` / `reviewer_agent_failed` | P1/P3 infra(agent 回 null) | 重呼該 workflow 一次(resumeFromRunId);再失敗 → HELD |
+| `plan_not_aligned` | P1 修 2 輪仍不過 | **一律 HELD**(附 spec 矛盾診斷 specConflict;不自動重跑 P1 — 強制停下點,不可自動繞) |
+| `critical_impact` | P1 預掃 / P3 per-task | HELD(CRITICAL 阻擋)。使用者選:(a) 拆 change → 修 spec/plan 後重跑;(b) reviewer sign-off → resume 時把該 symbols 放進 `acknowledgedCriticalSymbols`,gate 對已 ack 的 symbol 放行(這是唯一解鎖通道) |
+| `impact_unavailable` | P1/P3 GitNexus 整體故障(含 overallRisk=UNKNOWN) | HELD;按 memory 復原 LadybugDB(`gitnexus status`+meta.json 為準)後 resume |
+| `plan_error_at_task` | P3 implementer 判 plan 錯 | HELD(附 blockedDetail);使用者核可後修 plan 檔 → resume P3 帶 startTaskIndex=該 task(P3 會重新 Parse 修過的 plan) |
+| `spec_review_not_closing` / `quality_review_not_closing` | P3 修 N 輪仍不過 | HELD(附 gaps/qualityDetail)— 真 P1/P2 修不閉合,不可繞 |
+| `detect_changes_repeatedly_failing` | P3 同 run 內 detectVerdict=fail 達 3 次 | HELD;指揮官 `gh issue create`(標題含 branch + 失敗摘要),等修復或 reviewer sign-off |
+| `no_browser_engine` / `no_browser_evidence` | P4 | 見編排 P4 gate(第 3 層 / stack 啟動 / HELD) |
+| `ship_blocked` 類(由 heldReason 文字) | P6 | 見編排 P6 consume |
 
-```text
-artifacts/spec-to-done/<slug>/
-  plan.md
-  tasks.md
-  evidence/
-  reviews/
-artifacts/spec-to-done/<slug>-state.md
+## 強制停下點(repo 規範明文,不可自動繞)
+
+spec 矛盾(P0/P1)、GitNexus CRITICAL(未 ack)、browser evidence not observed、真 P1/P2 修不閉合、ship consent carve-out、工具反覆故障(detect 3 次 / GitNexus 不可復原)。
+HIGH 不是停下點:在對話中明確回報 blast radius 後繼續,PR body 必寫補強策略(P6 前置 c 是執行通道)。
+
+**Hold block 固定格式**(輸出後停;同時 append 到 state 檔):
+
+```
+HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool> | dateStamp=<..>
+| branch=<..> | worktree=<絕對路徑> | planPath=<..> | taskIndex=<..> | prNumber=<..>
+| runIds=<P1:wf_.. P3:wf_.. ...> | 診斷=<specConflict/gaps/blockedDetail 摘要> | 需要使用者決定:<具體選項>
 ```
 
-5. Record P0 state before delegating or editing.
+## Resume(使用者一句話重入;支援跨 session)
 
-## Phase Gates
+- **State 檔(durable,跨 session 唯一座標)**:每個 phase 完成或 HELD 時,把上方 hold block 格式的一行 append 到主工作區 `artifacts/spec-to-done/<slug>-state.md`(TodoWrite 與 transcript 不跨 session,不可依賴)。
+- 「繼續 spec-to-done」→ 讀 state 檔最後一行還原全部 args → 只重跑該 phase:`Workflow({name:<phase>, args:{...還原}, resumeFromRunId:<該 phase runId>})`(resumeFromRunId 讓已完成的 agent 呼叫吃 cache,只重跑未完成段)。
+- 前序產物(plan 檔、commits、evidence)都在 git/磁碟,不重做;P3 錨點 = startTaskIndex(per-task commit 訊息規定前綴 `task#N:`,崩潰時可從 git log 重建);P6 帶同一 prNumber(ship-item 沿用既有 PR,不重複 create)。
+- 時間戳一律由主對話經 args 注入(dateStamp);workflow 內禁時鐘/亂數 API。
 
-### P1 Plan
+## 啟動 / 重建 backend stack 前置:host-native port 乾淨化(防 deploy Read-Host 卡死)
 
-Goal: turn the approved spec into a task plan that can be implemented and verified.
+**鐵則**:跑 `.\scripts\deploy.ps1` 或 `.\scripts\dev\rebuild-test-deploy.ps1 -Build` **之前**,指揮官(主對話)
+MUST 先從主工作區 root 跑本技能 helper 清掉佔住必要 host-native port 的殘留:
 
-Required checks:
-
-- Completeness: tasks cover the spec.
-- Spec alignment: no invented requirements.
-- Task decomposition: tasks are sequential and reviewable.
-- Buildability: commands, services, fixtures, and evidence paths are plausible.
-- Impact pre-scan: if the repo requires GitNexus impact, run it before edits to important symbols.
-
-Gate:
-
-- `P1.ok === true` before implementation.
-- `HIGH` impact is not a hard stop, but report blast radius and write mitigation into the PR body or final report.
-- `CRITICAL` impact is `HELD` unless the user explicitly acknowledges the named symbols/processes.
-
-### P3 Implement
-
-Goal: implement one task at a time with focused verification.
-
-Rules:
-
-- Do not parallelize implementation tasks that touch overlapping files.
-- Before editing a function, class, method, route, or shared contract in a GitNexus-indexed repo, run the required impact analysis.
-- Add or update focused tests when behavior changes.
-- Keep commits only when the user explicitly asked for a commit/PR/merge flow.
-- Before any commit or PR handoff in a GitNexus-indexed repo, run `detect_changes` or the repo's documented fallback and record the result.
-
-Review loop:
-
-- First pass: spec alignment.
-- Second pass: quality and regression risk.
-- If a real P1/P2 issue does not close after reasonable fix rounds, stop with `HELD`.
-
-### P4 Evidence
-
-Goal: prove user-facing behavior through observable UI evidence.
-
-For user-facing work, do not declare done from backend/API/tests alone. Evidence must include:
-
-- route or URL
-- exact buttons or controls tested
-- default fixture or test data used
-- real backend/API/runtime connection, or explicit `DEMO DATA` / `NOT BUILT` / `not observed`
-- loading, success, failure, and retry states when applicable
-- runtime ID or session ID when the system exposes one
-- screenshot and trace or an equivalent browser evidence artifact
-
-Browser engine order:
-
-1. Use the repo-required browser QA tool when installed and working.
-2. Use Codex Browser or Playwright when that is the available real browser path.
-3. If no browser engine is available, stop with `HELD@P4`; do not fake evidence.
-
-### P4 Backend Stack Preflight
-
-Before running `.\scripts\deploy.ps1`, `.\scripts\dev\rebuild-test-deploy.ps1 -Build`, or an equivalent backend-stack rebuild in `AI-BIM-governance`, clear host-native runtime port blockers.
-
-Default to a non-mutating detection pass first:
+優先順序固定如下;從 repo root 執行第一個存在的 helper(不加 `-DetectOnly`,因本 repo 已授權停止 blocking Kit / conversion runtime PID)。三份 helper 若同時存在,內容必須維持一致:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\ensure-host-native-ports-free.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\IOT\.codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
 ```
 
-Fallback to the global Codex skill helper when the repo-local copy is missing:
+- **為什麼**:Kit 無 live reload / migration(docs/plans 鐵則 #4、D9——換 stage 只能 terminate+recreate)。殘留的
+  `kit.exe`(49100 + spectator 49110…)/ conversion `python.exe`(49101)還佔著 port 時,`deploy.ps1` Phase 3 會把
+  它們當『非 docker-forwarder stranger』丟給 `Read-Host 'y/N'`(`deploy.ps1:961`);spec-to-done 無人值守 + stdin
+  非互動 → **無限阻塞、卡數小時**。`rebuild-test-deploy` 的 `git clean -fdx` 清掉 `scripts\.run\*.pid`,讓 deploy
+  連自己上一輪起的 process 都認不得 → 必觸發。
+- **helper 做什麼**:by-port(不依賴 `.pid` / workspace 路徑,跨主工作區 / worktree / 部署區 D:\ 通殺)tree-kill
+  `kit/python/nvstreamer` owner → **釋放 Kit 對 storage/*.usd(c) 的檔案鎖**(根治殘留導致 viewer 切不動 / 轉檔覆寫失敗),
+  輪詢等到全 FREE。對齊 CLAUDE.md 授權(停 blocking PID,不用 `-Force`/`-DryRun`);只動 host-native,docker plane 交給
+  deploy.ps1 idempotent 處理。
+- **退出碼處置**:`0` = port 全 FREE → 接著跑 deploy / rebuild。`1` = 逾時仍有殘留(helper 已列 PID,多為非 kit/python
+  程序、helper 不擅殺)→ 對話回報該 PID + port 並 **HELD**,不可硬跑 deploy(會撞 Read-Host)。`-DetectOnly` 只偵測不停
+  (啟動前先看一眼)。
+- **範圍限制(誠實)**:只解 host-native port 這條 Read-Host;`deploy.ps1:989` 的 `.venv WRONG_VERSION` Read-Host 不在
+  範圍(需重建 .venv 或 `-Force`,CLAUDE.md 禁),撞到 HELD 回報。spectator count 非預設 5 時須同步調整 helper 內 port 陣列。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\IOT\.codex\skills\spec-to-done\ensure-host-native-ports-free.ps1 -DetectOnly
-```
+## 模型預算(Codex gpt-5.x 對齊 Claude 三級 tier;gates 不動)
 
-Exit code `0` means the required host-native ports are free. Exit code `1` means report the blocking PID/port. Only run the helper without `-DetectOnly` when current repo instructions or the current user request explicitly authorize stopping host-native runtime blockers such as Kit, conversion Python, or spectator processes. If authorization is absent or the owner process is not clearly an allowed runtime blocker, stop with `HELD`; do not proceed into a known `Read-Host` hang.
+Claude 版的 haiku / sonnet / opus 是**任務難度 tier**。Codex copy 必須保留同一個 gate 結構,只把 tier 映射到可用的 GPT 模型與 reasoning effort;不得因模型降級而刪減 P4/P5/P6 或放寬 HELD 條件。
 
-### P5 Adversarial Verification
+| 位置 | Codex 模型 / effort | 對齊的 Claude tier | 品質守恆(誰兜底) |
+|---|---|---|---|
+| 指揮官(主對話) | session default;跑完整 spec-to-done 時優先 `gpt-5.5` high/xhigh | runtime default / opus | 指揮官只裁 gate、配 args、輸出 HELD;不接手弱化 workflow |
+| plan 解析(P3 Parse)、引擎偵測(P4 Probe)、單純檔案盤點/hash/path 檢查 | `gpt-5.3-codex-spark` medium | haiku | 機械抽取/探測,錯誤顯性:抽壞 → implementer 立刻 BLOCKED;探錯 → E2E 起不來即 held |
+| GitNexus impact 預掃 + per-task impact、機械性 task implementer(1-2 檔、步驟完整、非 user-facing)、非 gate 的初步檢查 | `gpt-5.4-mini` medium/high | sonnet-low | impact 只是風險輸入(CRITICAL gate 在指揮官);機械 impl 有雙 review;輸出被正式 reviewer / P5 critic 兜底 |
+| P1 四軸 reviewer、P3 spec/quality reviewer(首審)、中等複雜度 implementer、測試/fixture 修復 | `gpt-5.4` high | sonnet / opus boundary | 四軸/雙 review 有 plan-fix + final-review + P5 critic 三層兜底 |
+| plan 作者、非機械 implementer、NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復)、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | `gpt-5.5` high/xhigh | opus | 創造/修復/兜底層,**不降** |
+| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | `gpt-5.5` xhigh 或 session default 若 session 已是更強設定 | runtime default / opus | P5=抓雷主力;P6=端到端代理操作(git/gh/merge 判斷),兩者不降級成 mini/spark |
 
-Goal: independently challenge the diff, the evidence, and the claim of completion.
+升級通道(自動,腳本內建或指揮官調度):`gpt-5.4-mini` / `gpt-5.4` implementer 回 BLOCKED 或 NEEDS_CONTEXT → 換 `gpt-5.5` high/xhigh 重派。
+平行:P1 四軸 review、P5 per-finding verifier 可平行;**P3 implementer 嚴禁平行**(實作衝突)。
+**降本原則**:hard gates(四軸 approved 條件/兩階段 review 閉合條件/P4 vertical slice 七項/P5 refute-by-default + critic/P6 buffered merge)一個不動;降級只發生在「產出被 ≥2 層更強 gate 複核」或「錯誤顯性必爆」的位置。等效性靠 gate 結構保證,非靠單點模型強度。
 
-When the user requested multi-agent or the host policy permits it:
+## 誠實鐵律(本流程的落實)
 
-- Spawn explorer agents for read-only adversarial review.
-- Give each agent a bounded question and expected evidence.
-- Do not let agents edit the same files unless ownership is explicit and disjoint.
-- Parent integrates findings and rejects unsupported claims.
+- evidence **綁產物不綁工具品牌**:browser 真實操作截圖 + trace + summary JSON 落主工作區 `artifacts/e2e/<slug>-*`(trace 也要 copy 出 worktree,closeout 會清掉);3D/真實 IFC 類另放一份 summary+抽樣截圖到 worktree `docs/evidence/<slug>/`(tracked,隨 PR 可審,product-operability §5)。engine 記真實值,**不得謊報引擎**。
+- 現狀:gstack NEEDS_SETUP(缺 bun;啟用 = 裝 bun + `cd ~/.claude/skills/gstack && ./setup`)→ **default 引擎 = Playwright**。gstack SKILL 的「NEVER use claude-in-chrome」是 gstack 可用時的內規,不可用時第 3 層合法。
+- `web-viewer-sample/scripts/verify-*.mjs` 是 source-level check,**不可充當 browser evidence**。
+- Vertical slice 七項(P4 與 chrome 手動路徑共用同一把尺):UI route 可達 → 明確按鈕 → default fixture → 真實 backend API(mock 處已標 DEMO DATA)→ runtime ID 可見 → loading/success/failure/retry 可見 → 截圖/trace 已落檔。3D 加驗:GPU-backed review session + stage truth matched=true;不得宣稱零 GPU 完成 3D。
+- 無 backend 處 UI 標 `DEMO DATA` / `NOT BUILT` / `not observed`;不偽裝 CI 綠;不 merge 真 P1/P2。
 
-If native subagents are unavailable, run the adversarial pass locally and record that delegation was unavailable.
+## 已知限制與衝突(誠實註記)
 
-Gate:
-
-- All real blockers are closed or explicitly held.
-- Reviewer failures, null results, or missing evidence are not passes.
-
-### P6 PR / Ship
-
-Only run this phase when the user explicitly asked for PR/merge/shipping.
-
-Before PR creation:
-
-- Ensure branch state is understood.
-- Ensure required tests, lint, build, and evidence checks are run or explicitly skipped with reason.
-- Include user-facing evidence in the PR body when relevant.
-- Include impact and fallback disclosures when relevant.
-
-During shipping:
-
-- Do not force push unless the user explicitly confirms.
-- Do not merge around true P1/P2 findings.
-- Do not merge when a consent carve-out applies: destructive external change, production data, release/hotfix policy, credentials, billing, or user-account changes.
-
-If PR/merge is not explicitly authorized, stop after verification and report the next safe action.
-
-### P7 Final Report
-
-Report:
-
-- tracked files changed
-- untracked artifacts created
-- validation run
-- skipped checks and why
-- evidence paths
-- remaining risks
-- any `HELD` state and exact resume command/context
-
-## HELD Format
-
-When stopped by a hard gate, append this line to `statePath` and show it to the user:
-
-```text
-HELD@P<n> | reason=<held value> | spec=<specPath> | slug=<slug> | userFacing=<bool> | dateStamp=<YYYY-MM-DD> | branch=<branch> | worktree=<absolute path> | planPath=<path> | taskIndex=<n/a or index> | prNumber=<n/a or number> | runIds=<agent ids or n/a> | diagnosis=<short evidence> | need=<specific user decision>
-```
-
-Common held reasons:
-
-| held | Meaning | Parent action |
-| --- | --- | --- |
-| `bad_args` | required args cannot be derived | fix args or ask user for missing value |
-| `spec_conflict` | spec contradicts itself or has placeholders | stop and ask for spec decision |
-| `critical_impact` | GitNexus/repo impact is critical | ask user to split scope or acknowledge named risk |
-| `impact_unavailable` | required code-intelligence check cannot run | restore tool/index or ask for sign-off |
-| `plan_not_aligned` | plan cannot satisfy spec | stop with concrete mismatch |
-| `implementation_not_closing` | real P1/P2 issue persists | stop with findings and attempted fixes |
-| `no_browser_engine` | no real browser/evidence path exists | stop; do not fake evidence |
-| `no_browser_evidence` | UI behavior was not observed | start stack safely or stop |
-| `ship_blocked` | PR/CI/merge gate blocks shipping | stop with exact blocker |
-
-## Resume
-
-When the user says `繼續 spec-to-done`:
-
-1. Find the latest `artifacts/spec-to-done/<slug>-state.md`, or ask for the slug/spec path if multiple candidates exist.
-2. Read the last `HELD` or phase-complete line.
-3. Restore `specPath`, `slug`, `dateStamp`, `branch`, `userFacing`, `worktreeRoot`, `planPath`, and any PR number.
-4. Re-run only the blocked or next phase.
-5. Do not redo completed plan, implementation, commits, or evidence unless source files changed or the previous artifact is missing.
-
-Transcript memory is not durable. The state file is the durable coordinate.
-
-## Dynamic Workflow Rules For Codex
-
-- Parent session keeps the critical path local.
-- Use `spawn_agent` only when the user explicitly asked for subagents, multi-agent work, delegation, or this spec-to-done run clearly benefits from independent verification under current host policy.
-- Use explorer agents for source discovery, impact review, test discovery, and adversarial verification.
-- Use worker agents only for disjoint implementation slices with explicit file ownership.
-- Every worker prompt must say: `You are not alone in the codebase. Do not revert edits made by others. Adapt to nearby changes.`
-- If `spawn_agent` is unavailable or not permitted, continue in parent workflow mode and record the fallback.
-- Do not wait on agents unless their result blocks the next parent decision.
-- Integrate all agent outputs before final verification.
-
-## AI-BIM-governance Specific Notes
-
-When running inside `C:\Repos\active\iot\AI-BIM-governance`:
-
-- Read repo `AGENTS.md` first.
-- User-facing done requires browser evidence, not only API/test completion.
-- Real IFC semantic viewer E2E uses local `storage/` artifacts; do not commit IFC or large `model.usdc` files.
-- If deployment/rebuild can hit host-native Kit/conversion port blockers, run the helper before starting the stack.
-- Preserve the repo's GitNexus impact and detect-changes requirements.
-
-## What Not To Port
-
-- Do not call Claude named workflows from Codex.
-- Do not depend on Claude model names, Claude-only memory, or Claude-specific `Run ID: wf_...` semantics.
-- Do not copy `.claude/workflows/*.js` as if Codex will execute them.
-- Do not lower gates to compensate for missing runtime. Missing runtime means local parent execution or `HELD`, not fake success.
+1. AGENTS.md 寫 gstack 是「唯一驗收證據來源」,現實是 Playwright(歷史 evidence 全為 Playwright/Chrome 產)。本流程採「綁產物不綁品牌」;改字面需另開 docs PR。github-workflow.md 7 欄表的「gstack E2E command」欄同理 — 填實際引擎指令並括註引擎名。
+2. PR body 用 product-operability §4 的 10 列表;P7 回報用 AGENTS.md 7 欄表 — 兩版並存是權威檔既有張力,本流程兩處各用各的。
+3. commit trailer:std-*.js 內若仍有 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` 是 **harness attribution 文字、非 Codex 模型調用**。Codex agent 實際模型分配以本檔「模型預算」表為準;是否改 trailer 屬另一個獨立決策(須與 harness commit 規則同步,否則 repo 出現雙 trailer)。squash 後實質影響極小。
+4. GitNexus detect-changes 在 linked worktree 看不到 staged(已知坑)→ implementer fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`,PR body 揭露;完全失敗記 `fail`,同 run 3 次 → held。
+5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
+6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。純動 `.claude/**` / `.codex/**` 的 PR 可能被 pr-review-agent paths-ignore 跳過 review(#202);main 無 branch protection 故此 check 非 required。
+7. P1 四軸 review 第二輪起只重審上輪未過的軸(fixer 改 plan 可能影響已過軸)— 由 P3 per-task spec review 與 P5 critic 兜底,屬已知取捨。
