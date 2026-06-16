@@ -33,6 +33,7 @@ describe("ConversionSchedulingPage：minio-watch 與 ifc-ready 錯誤獨立", ()
     review_session_id: null, viewer_url: null, expected_stage_url: null,
     expected_mapping_url: null, created_at: "2026-06-11T00:00:00Z",
     conversion_job_id: null, // m2a-coverage-report:新 required key（值 null）；補齊既有 fixture
+    queue_position: null, // conv-prioritize-retry:non-optional required key；dispatched fixture 預設 null
   };
   const okJob: IfcReadyListItem = {
     ...baseJob, ifc_ready_job_id: "ifcready_ok", external_model_version_id: "ext_ok",
@@ -142,6 +143,7 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
     created_at: "2026-06-16T00:00:00Z", ifc_ready_job_id: "ifcready_cov", external_model_version_id: "ext_cov",
     status: "dispatched", conversion_status: "succeeded", dispatch_error: null,
     conversion_job_id: "stream_conv_20260616_cov",
+    queue_position: null, // conv-prioritize-retry:non-optional required key；dispatched fixture 預設 null
   };
   beforeEach(() => {
     prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];

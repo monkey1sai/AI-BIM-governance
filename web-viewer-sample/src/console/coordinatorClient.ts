@@ -105,7 +105,9 @@ export interface IfcReadyListItem {
   conversion_status: string | null;
   conversion_authority: string | null;
   // conv-prioritize-retry:in-flight→0、queued→1-based、其餘→null。供插隊鈕 disabled 判斷。
-  queue_position?: number | null;
+  // summarizeIfcReadyJob 永遠輸出此欄（job.queue_position ?? null），故 non-optional——
+  // 強制消費方只處理 number | null（不含 undefined），與 spec §4.3 的 null 守門語意對齊。
+  queue_position: number | null;
   // m2a-coverage-report:wire 已有（app.ts summarizeIfcReadyJob:1907），補型別供 #conv 展開讀取。
   conversion_job_id: string | null;
   dispatch_error: string | null;

@@ -120,6 +120,53 @@ async function startStreamingConversionStub(): Promise<{ baseUrl: string; bodies
   return { baseUrl: `http://127.0.0.1:${address.port}`, bodies };
 }
 
+// conv-prioritize-retry (cr1 BLOCKER 2 回歸鎖):serial dispatch worker 只有單一
+// in-flight slot。此 stub 對第一個 POST /api/conversions/ifc-to-usdc **永不回應**
+// (hang),讓 in-flight job 卡住 → 後續 job 停在 queued_for_conversion + 正值
+// queue_position,供列表端點驗證 wire 的完整三段語意(null / 0 / ≥1)。
+// release() 在 afterEach 之前釋放 hang 的 socket,避免 server.close 卡住。
+async function startBlockingStreamingConversionStub(): Promise<{ baseUrl: string; release: () => void }> {
+  const heldSockets: import("node:net").Socket[] = [];
+  activeStreamingServer = http.createServer((req) => {
+    if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+      // 故意不寫 response:in-flight dispatch 永久卡在 await fetch。
+      heldSockets.push(req.socket);
+    }
+  });
+  await new Promise<void>((resolve) => {
+    activeStreamingServer?.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = activeStreamingServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected blocking streaming conversion stub to listen on a TCP port.");
+  }
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    release: () => {
+      for (const socket of heldSockets) socket.destroy();
+    },
+  };
+}
+
+// conv-prioritize-retry (cr1 BLOCKER 2 回歸鎖):輪詢列表端點直到指定 job 進入
+// queued_for_conversion 狀態(被 blocking stub 卡在 in-flight 之後的 queued slot)。
+async function waitForListedQueueStatus(
+  appHandle: CoordinatorApp,
+  jobId: string,
+  status: string,
+  timeoutMs = 3000,
+): Promise<Record<string, unknown>> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const listed = await request(appHandle.app).get("/api/external/ifc-ready");
+    const items = (listed.body?.items ?? []) as Array<Record<string, unknown>>;
+    const item = items.find((entry) => entry.ifc_ready_job_id === jobId);
+    if (item && item.status === status) return item;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Job ${jobId} did not reach listed status '${status}' within ${timeoutMs}ms`);
+}
+
 // mv1/mv2/mv2b/st1（指揮官審計 + 對抗複驗）：對齊真 conversion_authority.py
 // StreamingConversionStore.create_conversion_job 的完整 _safe_id 驗證面——
 // required：event_id(:238)、idempotency_key(:239，缺省 fallback 到 event_id)、
@@ -268,6 +315,52 @@ describe("POST /api/external/ifc-ready", () => {
     // queue_position(dispatched 後為 null);否則 #conv 經列表取件時插隊鈕 disabled 條件失效。
     expect(listed.body.items[0]).toHaveProperty("queue_position");
     expect(listed.body.items[0].queue_position).toBeNull();
+  });
+
+  it("列表端點對 queued_for_conversion job 回傳正值 queue_position（鎖住 wire 完整三段語意）", async () => {
+    // conv-prioritize-retry (cr1 BLOCKER 2 回歸鎖 / spec §4.3):serial worker 單一 in-flight
+    // slot。第一個 job 被 blocking stub 卡在 in-flight,第二個 job 停在 queued_for_conversion
+    // 且 queue_position=1。鎖住「summarizeIfcReadyJob 不可把 queued job 的正值 queue_position
+    // 截掉」——若未來誤改成只在 dispatched 才上 wire,此測試會抓到。
+    const blocking = await startBlockingStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: blocking.baseUrl });
+
+    const first = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_queue_001", "X-Idempotency-Key": "idem_queue_001" }))
+      .send(payload());
+    const second = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_queue_002", "X-Idempotency-Key": "idem_queue_002" }))
+      .send(payload({ external_model_version_id: "ext_mv_queue_002" }));
+
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+
+    try {
+      // first job 卡在 in-flight(blocking stub 永不回應);second job 排在其後 → 列表端點
+      // 必須對 second 回 queue_position=1(in-flight 之後第一個 queued slot)。
+      const queuedItem = await waitForListedQueueStatus(
+        app,
+        second.body.ifc_ready_job_id as string,
+        "queued_for_conversion",
+      );
+      expect(queuedItem).toHaveProperty("queue_position");
+      expect(queuedItem.queue_position).toBe(1);
+
+      // in-flight 的 first job 在列表端點同樣上 wire queue_position(0=派工中),
+      // 與 queued(≥1)、dispatched(null)合成完整三段語意。
+      const listed = await request(app.app).get("/api/external/ifc-ready");
+      const firstItem = (listed.body.items as Array<Record<string, unknown>>).find(
+        (entry) => entry.ifc_ready_job_id === first.body.ifc_ready_job_id,
+      );
+      expect(firstItem).toBeDefined();
+      expect(firstItem).toHaveProperty("queue_position");
+      expect(firstItem?.queue_position).toBe(0);
+    } finally {
+      // 釋放 hang 的 socket,讓 afterEach 的 server.close 不卡。
+      blocking.release();
+    }
   });
 
   it("對相同 X-Idempotency-Key 為 idempotent（回相同 job、replay 標記）", async () => {
