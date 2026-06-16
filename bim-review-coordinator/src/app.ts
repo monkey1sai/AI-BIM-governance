@@ -640,7 +640,9 @@ export function createCoordinatorApp(
   // 模式 3 ③ audit：成功寫一筆結構化 audit log（actor best-effort）。body optional { reason?: string }。
   function resolveActor(request: express.Request): string {
     const header = request.header("X-Operator") ?? request.header("X-Actor");
-    return typeof header === "string" && header.trim().length > 0 ? header.trim() : "local-operator";
+    // 與 parseReason 的 .slice(0, 500) 對稱:actor 也宣告 budget 上限(200),避免超大
+    // header 讓每筆 audit record 的 actor 欄位膨脹、長期撐爆 audit JSONL。
+    return typeof header === "string" && header.trim().length > 0 ? header.trim().slice(0, 200) : "local-operator";
   }
   function parseReason(request: express.Request): string {
     const body = request.body as { reason?: unknown } | undefined;
@@ -652,7 +654,12 @@ export function createCoordinatorApp(
   // 故 LAN/CORS 任意 origin 不得匿名寫入。回 true 表示已寫 403 並終止。
   function rejectIfIpNotAllowed(request: express.Request, response: express.Response): boolean {
     const clientIp = request.ip || request.socket.remoteAddress || "";
-    if (!isIpAllowed(clientIp, config.externalIntakeIpAllowlist)) {
+    // 與 IntranetDevAuthProvider.authenticate 的 `length > 0 && !isIpAllowed(...)` 語意對稱:
+    // 空 allowlist 代表「未啟用 IP 守門」→ bypass 全部放行,而非 `![].some()` = true 造成全 403。
+    if (
+      config.externalIntakeIpAllowlist.length > 0 &&
+      !isIpAllowed(clientIp, config.externalIntakeIpAllowlist)
+    ) {
       response.status(403).json({ detail: "caller ip not in allowlist" });
       return true;
     }

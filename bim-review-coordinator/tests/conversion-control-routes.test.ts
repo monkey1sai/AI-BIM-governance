@@ -325,4 +325,49 @@ describe("conversion control routes — IP 守門（IMPORTANT 1）", () => {
     expect(res.status).not.toBe(403);
     expect(res.status).toBe(404);
   });
+  it("prioritize：空 allowlist → bypass 全部放行（與 IntranetDevAuthProvider length>0 守門一致）", async () => {
+    // IMPORTANT 2：rejectIfIpNotAllowed 對「空 allowlist」必須與 authProvider.ts 的
+    // `length > 0 && !isIpAllowed(...)` 語意一致 — 空清單代表「未啟用 IP 守門」→ bypass，
+    // 而非 `![].some()` = true 造成全部 403。傳空 allowlist → 預期非 403（落到 404）。
+    const app = makeApp({ streamingConversionApiBase: "http://127.0.0.1:1", externalIntakeIpAllowlist: [] });
+    const res = await request(app.app).post(`/api/conversion/jobs/ifcready_nope/prioritize`).send({});
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(404);
+  });
+  it("retry：空 allowlist → bypass 全部放行（與 IntranetDevAuthProvider length>0 守門一致）", async () => {
+    const app = makeApp({ streamingConversionApiBase: "http://127.0.0.1:1", externalIntakeIpAllowlist: [] });
+    const res = await request(app.app).post(`/api/conversion/jobs/ifcready_nope/retry`).send({});
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("conversion control routes — actor 標頭長度上限（IMPORTANT 1）", () => {
+  // resolveActor 對 X-Operator / X-Actor 只 .trim() 無上限,與 parseReason 的 .slice(0,500)
+  // 不對稱;超大 header 會讓每筆 audit record 膨脹。預期截斷到 200 字元寫入 audit。
+  it("超長 X-Operator 標頭 → audit actor 截斷到 200 字元", async () => {
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-control-actor-cap-"));
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260616_130000_actor1", skipEnvSnapshot: true });
+    const stub = await startControllableStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: stub.baseUrl }, logger);
+    // A in-flight(hold)→ B/C queued,prioritize C 帶超長 X-Operator。
+    await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_cap_A", "idem_cap_A")).send(payload());
+    await waitFor(() => stub.bodies.length >= 1);
+    await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_cap_B", "idem_cap_B")).send(payload({ external_model_version_id: "ext_cap_B" }));
+    const c = await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_cap_C", "idem_cap_C")).send(payload({ external_model_version_id: "ext_cap_C" }));
+    const jobC = c.body.ifc_ready_job_id as string;
+    await waitFor(async () => (await request(app.app).get(`/api/external/ifc-ready/${jobC}`)).body.status === "queued_for_conversion");
+
+    const hugeActor = "x".repeat(8000);
+    const res = await request(app.app).post(`/api/conversion/jobs/${jobC}/prioritize`).set("X-Operator", hugeActor).send({ reason: "cap test" });
+    expect(res.status).toBe(200);
+
+    const audits = readAuditRecords(logger);
+    const prioritizeAudit = audits.find((rec) => (rec.data as Record<string, unknown>)?.action === "conversion.prioritize");
+    expect(prioritizeAudit).toBeDefined();
+    const actor = (prioritizeAudit!.data as Record<string, unknown>).actor as string;
+    expect(actor.length).toBe(200);
+    expect(actor).toBe("x".repeat(200));
+    stub.releaseNext(); // teardown
+  });
 });
