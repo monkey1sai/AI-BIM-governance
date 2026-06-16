@@ -58,6 +58,12 @@ export function isSafeConversionJobId(value: string): boolean {
   return typeof value === "string" && value.length > 0 && conversionJobIdPattern.test(value);
 }
 
+// conv-prioritize-retry:ifc_ready_job_id 形狀 ifcready_<ts>_<hex>，落在同一通用字元集。
+// 為語意清楚另命名；實作共用 isSafeConversionJobId 的 regex。
+export function isSafeIfcReadyJobId(value: string): boolean {
+  return isSafeConversionJobId(value);
+}
+
 const createSessionSchema = z.object({
   review_request_id: z.string().min(1).optional(),
   tenant_id: z.string().min(1).default("tenant_demo_001"),
@@ -627,6 +633,91 @@ export function createCoordinatorApp(
       console.error(`[quality-metrics] conversion authority error ${code} for ${jobId}: ${msg}`);
       response.status(code).json({ detail: "Conversion authority unreachable." });
     }
+  });
+
+  // conv-prioritize-retry (IX-CV-03):協調器自有 dispatch 佇列的 controlled action。
+  // :id = ifc_ready_job_id。只動協調器 in-memory FIFO，不碰 bim-streaming-server。
+  // 模式 3 ③ audit：成功寫一筆結構化 audit log（actor best-effort）。body optional { reason?: string }。
+  function resolveActor(request: express.Request): string {
+    const header = request.header("X-Operator") ?? request.header("X-Actor");
+    return typeof header === "string" && header.trim().length > 0 ? header.trim() : "local-operator";
+  }
+  function parseReason(request: express.Request): string {
+    const body = request.body as { reason?: unknown } | undefined;
+    return typeof body?.reason === "string" ? body.reason.slice(0, 500) : "";
+  }
+
+  app.post("/api/conversion/jobs/:id/prioritize", (request, response) => {
+    const id = request.params.id;
+    if (!isSafeIfcReadyJobId(id)) {
+      response.status(400).json({ detail: "Invalid ifc-ready job id." });
+      return;
+    }
+    const job = externalIfcReadyStore.get(id);
+    if (!job) {
+      response.status(404).json({ detail: "Ifc-ready job not found." });
+      return;
+    }
+    if (job.status !== "queued_for_conversion") {
+      response.status(409).json({ detail: `Job not prioritizable in status '${job.status}'.` });
+      return;
+    }
+    if (!conversionDispatchQueue.prioritize(id)) {
+      response.status(409).json({ detail: "Job is in-flight or not in the queue." });
+      return;
+    }
+    // 重算受影響 queued position（順手收斂既有 position 快照漂移；in-flight 不在 getQueuedJobIds）。
+    const queuedOrder = conversionDispatchQueue.getQueuedJobIds();
+    queuedOrder.forEach((qid, idx) => externalIfcReadyStore.markQueuedForConversion(qid, idx + 1));
+    const reason = parseReason(request);
+    const actor = resolveActor(request);
+    structLog.withTraceId(id).audit("conversion-control", "conversion.prioritize", {
+      action: "conversion.prioritize", actor, target: id,
+    }, "info");
+    const updated = externalIfcReadyStore.get(id);
+    response.json({
+      ifc_ready_job_id: id,
+      status: updated?.status ?? "queued_for_conversion",
+      queue_position: updated?.queue_position ?? null,
+      queued_order: queuedOrder,
+      reason,
+    });
+  });
+
+  app.post("/api/conversion/jobs/:id/retry", (request, response) => {
+    const id = request.params.id;
+    if (!isSafeIfcReadyJobId(id)) {
+      response.status(400).json({ detail: "Invalid ifc-ready job id." });
+      return;
+    }
+    const job = externalIfcReadyStore.get(id);
+    if (!job) {
+      response.status(404).json({ detail: "Ifc-ready job not found." });
+      return;
+    }
+    if (!["dispatch_failed", "dropped_on_restart"].includes(job.status)) {
+      response.status(409).json({ detail: `Job not retryable in status '${job.status}'.` });
+      return;
+    }
+    if (!pendingDispatchEvents.has(id)) {
+      // 脈絡確實不存在（restart / drain 後）— 誠實要求重新進件，不假裝可重試。
+      response.status(422).json({ detail: "Dispatch context lost (coordinator restart/drain); please re-POST the ifc-ready job." });
+      return;
+    }
+    // 直接用 requeue 回傳 position（不用 0 哨兵 — 0 是 getQueuePosition 的 in-flight 專用值）。
+    const pos = conversionDispatchQueue.requeue(id);
+    externalIfcReadyStore.markQueuedForConversion(id, pos ?? 1);
+    const reason = parseReason(request);
+    const actor = resolveActor(request);
+    structLog.withTraceId(id).audit("conversion-control", "conversion.retry", {
+      action: "conversion.retry", actor, target: id,
+    }, "info");
+    response.json({
+      ifc_ready_job_id: id,
+      status: "queued_for_conversion",
+      queue_position: pos,
+      reason,
+    });
   });
 
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
