@@ -57,6 +57,25 @@ export class ConversionDispatchQueue {
     return dropped;
   }
 
+  /**
+   * 把 queued job 移到隊首（插隊）。in-flight 不可被搶下；不碰 worker。
+   * 回 true：已在隊首（no-op）或成功移到隊首；回 false：in-flight 或不在 queue。
+   */
+  prioritize(jobId: string): boolean {
+    const index = this.queued.indexOf(jobId);
+    if (index === -1) return false;
+    if (index === 0) return true;
+    this.queued.splice(index, 1);
+    this.queued.unshift(jobId);
+    return true;
+  }
+
+  /** 重新 enqueue（retry 用）並回新的 1-based queue position。 */
+  requeue(jobId: string): number {
+    this.enqueue(jobId);
+    return this.getQueuePosition(jobId) ?? 0;
+  }
+
   private async runWorker(): Promise<void> {
     if (this.workerActive) return;
     this.workerActive = true;

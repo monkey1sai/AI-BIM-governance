@@ -211,6 +211,36 @@ describe("ConversionDispatchQueue (unit)", () => {
     expect(dropped).toEqual(["A", "B", "C"]);
     expect(queue.getQueuedJobIds()).toEqual([]);
   });
+
+  it("prioritize 把非首位 queued job 移到隊首回 true", () => {
+    const queue = new ConversionDispatchQueue();
+    // 不 setDispatcher → worker run 但 dispatcher==null，job 推回 queue（既有慣例 195-203）
+    queue.enqueue("A"); queue.enqueue("B"); queue.enqueue("C");
+    expect(queue.prioritize("C")).toBe(true);
+    expect(queue.getQueuedJobIds()).toEqual(["C", "A", "B"]);
+  });
+
+  it("prioritize 對已在隊首 job 回 true 且不動順序（成功 no-op）", () => {
+    const queue = new ConversionDispatchQueue();
+    queue.enqueue("A"); queue.enqueue("B");
+    expect(queue.prioritize("A")).toBe(true);
+    expect(queue.getQueuedJobIds()).toEqual(["A", "B"]);
+  });
+
+  it("prioritize 對不在 queue 的 job 回 false", () => {
+    const queue = new ConversionDispatchQueue();
+    queue.enqueue("A");
+    expect(queue.prioritize("Z")).toBe(false);
+    expect(queue.getQueuedJobIds()).toEqual(["A"]);
+  });
+
+  it("requeue 重新 enqueue 並回新的 1-based position", () => {
+    const queue = new ConversionDispatchQueue();
+    queue.enqueue("A"); queue.enqueue("B");
+    const pos = queue.requeue("R");
+    expect(pos).toBe(3);
+    expect(queue.getQueuePosition("R")).toBe(3);
+  });
 });
 
 describe("Concurrent IFC-ready POST → serial dispatch (integration)", () => {
