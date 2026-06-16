@@ -402,6 +402,8 @@ export function buildQualityMetricsSummary(
     materialization_strategy: str("materialization_strategy"),
     coverage_ratio: num("coverage_ratio"),
     coverage_status: str("coverage_status"),
+    mapped_count: num("mapped_count"),
+    unmapped_count: num("unmapped_count"),
     conversion_duration_seconds: conversionDuration,
     semantic_mapping_fidelity: str("semantic_mapping_fidelity"),
     mapping_has_ifc_type: bool("mapping_has_ifc_type"),
