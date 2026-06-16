@@ -447,6 +447,13 @@ export function ConversionSchedulingPage() {
   // actionBusy 鎖住 confirm/cancel 期間的重複觸發。非樂觀：POST 成功後 load() 重抓真佇列狀態。
   const [pendingAction, setPendingAction] = useState<{ jobId: string; kind: "prioritize" | "retry" } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
+  // finding #1：同步 busy guard。setActionBusy(true) 是非同步 state，confirm 鈕的 disabled={busy}
+  // 要等下一次 render 才生效；同一事件循環連點兩次會送出兩個 POST。ref 在 React state 更新前
+  // 同步攔截第二次呼叫。
+  const actionBusyRef = useRef(false);
+  // finding #2：action 錯誤獨立 state，顯示在 dialog 內、與 dialog 綁定，不與 load 錯誤（err）共用。
+  // load() 開頭的 setErr(null) 因此不會把「控制動作失敗」清掉。
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const load = useCallback(async () => {
     setBusy(true); setErr(null); setMwErr(null);
     // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
@@ -492,15 +499,19 @@ export function ConversionSchedulingPage() {
   }, [openJob, cov]);
   const runAction = useCallback(async (reason: string) => {
     if (!pendingAction) return;
+    if (actionBusyRef.current) return; // finding #1：同步攔截重入（React state 尚未更新前）
+    actionBusyRef.current = true;
     setActionBusy(true);
+    setActionErr(null);             // 開新一輪動作：清掉上一次的誠實錯誤
     try {
       if (pendingAction.kind === "prioritize") await coordinatorClient.conversionPrioritize(pendingAction.jobId, reason);
       else await coordinatorClient.conversionRetry(pendingAction.jobId, reason);
       await load();                 // 證據型更新：重抓真佇列狀態（非樂觀）
       setPendingAction(null);       // 成功才關 dialog
     } catch (e) {
-      setErr(`控制動作失敗：${String(e)}`); // 失敗誠實，不關 dialog、不改狀態
+      setActionErr(`控制動作失敗：${String(e)}`); // finding #2：寫獨立 actionErr（顯示在 dialog 內），不關 dialog、不改狀態
     } finally {
+      actionBusyRef.current = false;
       setActionBusy(false);
     }
   }, [pendingAction, load]);
@@ -587,13 +598,13 @@ export function ConversionSchedulingPage() {
                       <Btn
                         data-testid={`conv-prioritize-${j.ifc_ready_job_id}`}
                         disabled={j.queue_position == null || j.queue_position <= 1}
-                        onClick={() => setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" })}
+                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
                       >插隊</Btn>
                     )}
                     {(j.status === "dispatch_failed" || j.status === "dropped_on_restart") && (
                       <Btn
                         data-testid={`conv-retry-${j.ifc_ready_job_id}`}
-                        onClick={() => setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" })}
+                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" }); }}
                       >重試</Btn>
                     )}
                   </td>
@@ -616,8 +627,9 @@ export function ConversionSchedulingPage() {
           ? "此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。"
           : "將重新派工此 job 至轉檔 authority；可能再次失敗。"}
         busy={actionBusy}
+        actionErr={actionErr}
         onConfirm={runAction}
-        onCancel={() => { if (!actionBusy) setPendingAction(null); }}
+        onCancel={() => { if (!actionBusy) { setActionErr(null); setPendingAction(null); } }}
       />
     </>
   );

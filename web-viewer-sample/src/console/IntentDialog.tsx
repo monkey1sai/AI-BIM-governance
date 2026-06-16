@@ -5,20 +5,25 @@ import { useRef } from "react";
 // 使用 uncontrolled textarea（ref）而非 controlled（value+onChange），以確保測試環境
 // 直接 DOM 設值後 ref.current.value 仍可讀到最新內容。
 export function IntentDialog({
-  open, title, cost, onConfirm, onCancel, busy,
+  open, title, cost, onConfirm, onCancel, busy, actionErr,
 }: {
   open: boolean;
   title: string;
   cost: string;
   /**
    * 確認時呼叫，帶使用者填的 reason。caller 負責 UI 反饋：失敗時須自行 catch 並
-   * setErr + 解除 busy（規格 §5/§4.6：失敗顯誠實錯誤、不改狀態、不關 dialog）。
+   * setActionErr + 解除 busy（規格 §5/§4.6：失敗顯誠實錯誤、不改狀態、不關 dialog）。
    * 本 component 不顯示錯誤、不關 dialog；只在 click handler 內 await 並吞掉 rejection，
    * 作為防 unhandledrejection 的安全網，避免 caller 漏 catch 時錯誤無聲逸散。
    */
   onConfirm: (reason: string) => void | Promise<void>;
   onCancel: () => void;
   busy?: boolean;
+  /**
+   * 動作錯誤訊息。caller 透過獨立 state（actionErr）傳入，顯示在 dialog 內、與 dialog 綁定，
+   * 不與頁面 load 錯誤（err）共用，故 load() 的 setErr(null) 不會把它清掉（finding #2）。
+   */
+  actionErr?: string | null;
 }) {
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   if (!open) return null;
@@ -51,6 +56,9 @@ export function IntentDialog({
             {busy ? "執行中…" : "確認執行"}
           </button>
         </div>
+        {actionErr && (
+          <p className="ec-warn-note" data-testid="intent-action-error">{actionErr}</p>
+        )}
       </div>
     </div>
   );

@@ -477,9 +477,73 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
 
     // 失敗不關 dialog（pendingAction 仍非 null）
     expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
-    // 誠實錯誤訊息（runAction catch 的 setErr）
+    // 誠實錯誤訊息（runAction catch 的 setActionErr）
     const warn = container.querySelector(".ec-warn-note");
     expect(warn).not.toBeNull();
     expect(container.textContent).toContain("控制動作失敗");
+  });
+
+  // finding #1：runAction 缺同步 busy guard，confirm 鈕 disabled={busy} 要等下一次 render 才生效。
+  // 同一事件循環連按兩次 confirm → 應只送出一個 POST（同步 ref guard 在 React state 更新前攔截第二次）。
+  it("同一事件循環連點兩次確認 → 只送出一個 POST（同步 busy guard）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [queuedJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    // POST 不立即 settle（deferred），維持 busy 視窗讓第二次 click 有機會穿透 stale disabled。
+    let resolvePost: (v: unknown) => void = () => {};
+    const prioritizeSpy = vi.spyOn(coordinatorClient, "conversionPrioritize")
+      .mockImplementation(() => new Promise((res) => { resolvePost = res; }));
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const prioBtn = container.querySelector('[data-testid="conv-prioritize-ifcready_queued"]') as HTMLButtonElement;
+    await act(async () => { prioBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    // 同一個 act（同步、單一事件循環）內連點兩次：第二次須被同步 guard 攔下。
+    await act(async () => {
+      confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // 只送出一次 POST
+    expect(prioritizeSpy).toHaveBeenCalledTimes(1);
+    // 收尾：放行 POST，避免懸掛 promise
+    await act(async () => { resolvePost({ ifc_ready_job_id: "ifcready_queued", status: "queued_for_conversion", queue_position: 1 }); await Promise.resolve(); });
+  });
+
+  // finding #2：action 錯誤應為獨立 state（actionErr）顯示在 dialog 內，不與 load 的 err 共用。
+  // POST 失敗後不關 dialog；接著按 "Refresh queue"（load() → setErr(null)）不得清掉 dialog 內的 action 錯誤。
+  it("POST 失敗後按 Refresh queue → dialog 內 action 錯誤不被 load 的 setErr(null) 清掉", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [failedJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionRetry").mockRejectedValue(new Error("/api/conversion/jobs/ifcready_failed/retry -> 422"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const retryBtn = container.querySelector('[data-testid="conv-retry-ifcready_failed"]') as HTMLButtonElement;
+    await act(async () => { retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // action 錯誤顯示在 dialog 內部
+    const dialog = container.querySelector('[data-testid="intent-dialog"]')!;
+    expect(dialog).not.toBeNull();
+    const actionErrNode = dialog.querySelector('[data-testid="intent-action-error"]');
+    expect(actionErrNode).not.toBeNull();
+    expect(actionErrNode!.textContent).toContain("控制動作失敗");
+
+    // 按 Refresh queue → 觸發 load()（其第一行 setErr(null)）
+    const refreshBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("Refresh queue") || b.textContent?.includes("讀取中"))! as HTMLButtonElement;
+    expect(refreshBtn).toBeTruthy();
+    await act(async () => { refreshBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // dialog 仍開、action 錯誤仍在（load 的 setErr(null) 不影響獨立的 actionErr）
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    const stillThere = container.querySelector('[data-testid="intent-action-error"]');
+    expect(stillThere).not.toBeNull();
+    expect(stillThere!.textContent).toContain("控制動作失敗");
   });
 });
