@@ -40,7 +40,7 @@ M2 轉檔的「派工佇列」**已實質 as-built，但只有讀、沒有控制
    - `POST /api/conversion/jobs/:id/prioritize`（`:id`=`ifc_ready_job_id`）：safe-id 不合法→400；不存在→404；狀態非 `queued_for_conversion`→409；in-flight（queue 回 false）→409；成功 → `queue.prioritize` ＋**重算受影響 queued position**（§4.2）→ 回 `{ ifc_ready_job_id, status, queue_position, queued_order }`。
    - `POST /api/conversion/jobs/:id/retry`：safe-id；不存在→404；狀態非 `dispatch_failed`/`dropped_on_restart`→409；pending 脈絡**確實不存在**（重啟/drain 後，§4.0 修正後此為少數路徑）→422 誠實「請重新進件」；成功 → `requeue`＋`markQueuedForConversion`（用 requeue 回傳 position，**不用 0 哨兵**）→ 回 `{ ifc_ready_job_id, status: "queued_for_conversion", queue_position }`。
    - 兩路由永遠開啟（非 dev-gated）、只動協調器自有 dispatch 佇列、不外溢內部欄位；body 接受 optional `{ reason?: string }`。
-3. **（cr1 BLOCKER 2）`queue_position` 上 wire**：`summarizeIfcReadyJob`（`app.ts:1938-1967`）回傳物件 additive 加 `queue_position: job.queue_position ?? null`；`IfcReadyListItem`（`coordinatorClient.ts:99-115`）加 `queue_position?: number | null`。其餘 wire 形狀零退化（`external-ifc-ready.test.ts` 回歸鎖）。
+3. **（cr1 BLOCKER 2）`queue_position` 上 wire**：`summarizeIfcReadyJob`（`app.ts:1938-1967`）回傳物件 additive 加 `queue_position: job.queue_position ?? null`；`IfcReadyListItem`（`coordinatorClient.ts:99-115`）加 `queue_position: number | null`（**non-optional**——`summarizeIfcReadyJob` 永遠 emit 此欄，建模為 required 讓消費端只處理 `number | null`、不含 `undefined`，避免 `disabled` 判斷遇 `undefined` falsy 誤判）。其餘 wire 形狀零退化（`external-ifc-ready.test.ts` 回歸鎖）。
 4. **協調器 audit（模式 3 ③）**：每次 prioritize/retry 成功寫一筆結構化 audit log（`{ action: "conversion.prioritize"|"conversion.retry", ifc_ready_job_id, reason, actor, at }`，`actor`=caller header best-effort 或 `local-operator`），沿用既有結構化 log 路徑（`structLog`，不新增基礎設施）；job `updated_at` 反映變更作為前端可見證據。
 5. **前端最小 `IntentDialog`（模式 3 ① ②，首個 controlled-action 共用件）**：新增 `web-viewer-sample/src/console/IntentDialog.tsx` —— modal 顯示 `cost`（成本/後果白話）＋ optional `reason` ＋「確認執行/取消」；**非樂觀**：confirm 後 POST，成功才關閉並觸發證據型刷新。
 6. **前端 `#conv` job 列真控制按鈕**：`coordinatorClient` 補 `jsonPost` ＋ `conversionPrioritize(id, reason?)` / `conversionRetry(id, reason?)`。ifc-ready job 表每列依狀態渲染：
@@ -99,7 +99,7 @@ try {
 ### 4.3 `queue_position` 上 wire（cr1 BLOCKER 2）
 
 - `summarizeIfcReadyJob`（`app.ts:1938-1967`）回傳物件加 `queue_position: job.queue_position ?? null`（additive）。
-- `IfcReadyListItem`（`coordinatorClient.ts:99-115`）加 `queue_position?: number | null`。
+- `IfcReadyListItem`（`coordinatorClient.ts:99-115`）加 `queue_position: number | null`（**non-optional**：`summarizeIfcReadyJob` always-emit，建模 required 讓消費端只處理 `number | null`、不含 `undefined`，避免 `queue_position==null` 的 `disabled` 判斷遇 `undefined` falsy 誤判）。
 - `external-ifc-ready.test.ts` 形狀回歸鎖（只新增一欄）。
 
 ### 4.4 前端 client（`coordinatorClient.ts`）
