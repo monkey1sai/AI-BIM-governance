@@ -4,6 +4,7 @@
 > 配套檔案：`ai-bim-governance-prototype.html`（v2 原型）、`ai-bim-governance-設計規格.md`（v2 規格）
 > 對齊：https://bim-docs.jackshappybot.com/ （系統總覽）· repo `C:\Repos\active\iot\AI-BIM-governance`（branch `feat/edge-console-product-shell`）
 > 執行前提：**你 + Claude 協作**（工作量以「輪次」計，一輪 ≈ 一次對話可完成並驗收的小目標）
+> **實作紀律 / 技術債防線**：本計畫的里程碑/DoD 如何「不欠技術債、精準落地與驗收」，另見 `ai-bim-governance-實作紀律與技術債防線.md`（HOW 補充層，每輪交付前用其 §8 總檢查表逐條核對；它不改本計畫需求，與本計畫衝突時以本計畫為準）。
 
 ---
 

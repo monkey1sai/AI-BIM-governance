@@ -9,6 +9,8 @@
 > **主系統架構**：以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準，採雲端與客戶落地端分離：外部公司雲端負責 control-plane，客戶落地端負責 IFC / Kit / MCP runtime data-plane。
 >
 > **對齊 `feat/edge-console-product-shell`**：正式產品殼層入口是 coordinator `/ui` 掛載的 EdgeConsole。核心 route contract：`/ui`（今天要做什麼）、`#a1`、`#viewer`、`#conv`、`#sessions`、`#instances`、`#minio`；並保留 operator-tool route `#kit`、`#demo-control`。驗收以 product shell E2E 能看到 home、A1 五步、3D Viewer、轉檔排程、Session、Kit/GPU 機隊、MinIO 頁為準。
+>
+> **實作紀律 / 技術債防線**：本規格的介面如何「不欠技術債、精準落地與驗收」，另見 `ai-bim-governance-實作紀律與技術債防線.md`（HOW 補充層，每輪交付前逐條核對；它不改本規格需求，與本規格衝突時以本規格為準）。
 
 ---
 
