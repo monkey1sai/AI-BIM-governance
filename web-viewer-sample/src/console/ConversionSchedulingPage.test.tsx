@@ -32,6 +32,7 @@ describe("ConversionSchedulingPage：minio-watch 與 ifc-ready 錯誤獨立", ()
     project_id: "271", download_status: "downloaded", conversion_authority: null,
     review_session_id: null, viewer_url: null, expected_stage_url: null,
     expected_mapping_url: null, created_at: "2026-06-11T00:00:00Z",
+    conversion_job_id: null, // m2a-coverage-report:新 required key（值 null）；補齊既有 fixture
   };
   const okJob: IfcReadyListItem = {
     ...baseJob, ifc_ready_job_id: "ifcready_ok", external_model_version_id: "ext_ok",

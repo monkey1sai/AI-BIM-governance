@@ -17,6 +17,7 @@
 //   不在此 client 提供；outbox 摘要改由 ifc_ready job 的 callback_outbox_id 觀察（誠實標 demo/未取得）。
 
 import { defaultCoordinatorBase } from "./coordinatorBase";
+import type { ConversionQualityMetricsSummary } from "../types/review";
 
 const env = (import.meta as { env?: Record<string, string> }).env;
 
@@ -103,6 +104,8 @@ export interface IfcReadyListItem {
   download_status: string | null;
   conversion_status: string | null;
   conversion_authority: string | null;
+  // m2a-coverage-report:wire 已有（app.ts summarizeIfcReadyJob:1907），補型別供 #conv 展開讀取。
+  conversion_job_id: string | null;
   dispatch_error: string | null;
   review_session_id: string | null;
   viewer_url: string | null;
@@ -139,6 +142,14 @@ export interface StreamConfigResponse {
   [k: string]: unknown;
 }
 
+// m2a-coverage-report：GET /api/conversions/:id/quality-metrics 回應形狀。
+export interface ConversionQualityMetricsResponse {
+  conversion_job_id: string;
+  quality_metrics_summary: ConversionQualityMetricsSummary | null;
+  usdc_url?: string | null;
+  mapping_url?: string | null;
+}
+
 export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
@@ -146,6 +157,8 @@ export const coordinatorClient = {
   listIfcReady: (limit = 20) => jsonGet<{ count: number; items: IfcReadyListItem[] }>(`/api/external/ifc-ready?limit=${limit}`),
   minioWatchStatus: () => jsonGet<MinioWatchStatus>("/api/external/minio-watch/status"),
   streamConfig: (sessionId: string) => jsonGet<StreamConfigResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/stream-config`),
+  conversionQualityMetrics: (conversionJobId: string) =>
+    jsonGet<ConversionQualityMetricsResponse>(`/api/conversions/${encodeURIComponent(conversionJobId)}/quality-metrics`),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,

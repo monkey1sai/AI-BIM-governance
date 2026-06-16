@@ -74,6 +74,7 @@ describe("IntakeSelectPage R3：不安全 viewer_url → 停用 + 拒導航", ()
     expected_stage_url: "omniverse://stage/x.usdc",
     expected_mapping_url: null,
     created_at: "2026-06-03T00:00:00Z",
+    conversion_job_id: null, // m2a-coverage-report:新 required key（值 null）；補齊既有 fixture
   };
   const jobs: IfcReadyListItem[] = [
     { ...baseJob, ifc_ready_job_id: "job_unsafe", viewer_url: "javascript:alert(1)", dispatch_error: null },
