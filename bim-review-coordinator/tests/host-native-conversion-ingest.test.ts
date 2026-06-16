@@ -251,6 +251,8 @@ describe("host-native conversion result ingest (pull)", () => {
     expect(summary.mapping_has_ifc_name).toBeNull();
     expect(summary.source_ifc_entity_count).toBeNull();
     expect(summary.conversion_duration_seconds).toBeNull();
+    expect(summary.mapped_count).toBeNull();
+    expect(summary.unmapped_count).toBeNull();
   });
 
   it("ingest with no quality_metrics keeps stream-config quality_metrics_summary null (backward compat)", async () => {
