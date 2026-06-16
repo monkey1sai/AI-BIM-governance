@@ -447,7 +447,9 @@ describe("Concurrent IFC-ready POST → serial dispatch (integration)", () => {
     // 的 pending 仍在 map。這是 falsifiable 的核心斷言——若 app.ts 回到「失敗就刪
     // pending」的舊行為，這行會直接 fail（callCount/status 那兩個間接斷言無法區分
     // 「pending 保留」與「pending 被刪但沒人再 enqueue」）。
-    await new Promise<void>((r) => setTimeout(r, 100));
+    // 無需額外 setTimeout：上方 waitFor 已輪詢到 store=dispatch_failed，而 dispatcher
+    // closure 的 catch（markDispatchFailed + 不刪 pending）與該 store 寫入同一 microtask，
+    // store 已是 dispatch_failed ⇒ pending 必然仍在。
     expect(app.hasPendingDispatch(jobId)).toBe(true);
     // 輔助斷言：worker 已 shift，保留 pending 不會自動重派 → callCount 維持 1、狀態續為
     // dispatch_failed。retry 重派的 round-trip 由 Task 2 route 測試驗。

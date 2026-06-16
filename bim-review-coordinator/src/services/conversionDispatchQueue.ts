@@ -86,11 +86,13 @@ export class ConversionDispatchQueue {
    * 排除 in-flight，故正常路徑不會走到此分支；此 null 是合約自足的安全網。
    */
   requeue(jobId: string): number | null {
-    if (this.inFlightJobId === jobId) return null;
-    const existing = this.getQueuePosition(jobId);
-    if (existing !== null) return existing;
-    this.enqueue(jobId);
-    return this.getQueuePosition(jobId) ?? null;
+    // 單一守門:直接讀 getQueuePosition 一次,依其三態裁決,不疊第二道 inFlightJobId 檢查
+    // (避免 fragile dual-guard——若日後有人移除其中一道,0 哨兵可能洩漏)。
+    const pos = this.getQueuePosition(jobId);
+    if (pos === 0) return null; // in-flight:0 是 in-flight 專用哨兵,requeue 無意義且不可洩漏
+    if (pos !== null) return pos; // 已排隊(1-based):冪等,回現有 position
+    this.enqueue(jobId); // 不在 queue:重新入列
+    return this.getQueuePosition(jobId);
   }
 
   private async runWorker(): Promise<void> {
