@@ -118,7 +118,7 @@ function Stop-ProcessTree {
 if (-not (Test-Path $RunDir)) {
     Write-Host "[stop ] 沒有 scripts/.run/ 目錄，改用 port/process fallback 檢查" -ForegroundColor DarkGray
 } else {
-    $pidFiles = Get-ChildItem -Path $RunDir -Filter "*.pid" -ErrorAction SilentlyContinue
+    $pidFiles = @(Get-ChildItem -Path $RunDir -Filter "*.pid" -ErrorAction SilentlyContinue)
 
     if (-not $pidFiles -or $pidFiles.Count -eq 0) {
         Write-Host "[stop ] 找不到任何 PID 檔，改用 port/process fallback 檢查" -ForegroundColor DarkGray
