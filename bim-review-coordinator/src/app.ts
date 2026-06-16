@@ -51,6 +51,13 @@ import type {
   StreamConfigResponse,
 } from "./types.js";
 
+// m2a-coverage-report:conversion job id safe-id（比照後端 _safe_id 的 ^[A-Za-z0-9_.-]+$）。
+// 不可複用 isSafeSessionId —— 其 pattern 只認 ^review_session_,擋掉 stream_conv_*。
+const conversionJobIdPattern = /^[A-Za-z0-9_.-]+$/;
+export function isSafeConversionJobId(value: string): boolean {
+  return typeof value === "string" && value.length > 0 && conversionJobIdPattern.test(value);
+}
+
 const createSessionSchema = z.object({
   review_request_id: z.string().min(1).optional(),
   tenant_id: z.string().min(1).default("tenant_demo_001"),
