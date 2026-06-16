@@ -58,6 +58,12 @@ export function isSafeConversionJobId(value: string): boolean {
   return typeof value === "string" && value.length > 0 && conversionJobIdPattern.test(value);
 }
 
+// conv-prioritize-retry:ifc_ready_job_id 形狀 ifcready_<ts>_<hex>，落在同一通用字元集。
+// 為語意清楚另命名；實作共用 isSafeConversionJobId 的 regex。
+export function isSafeIfcReadyJobId(value: string): boolean {
+  return isSafeConversionJobId(value);
+}
+
 const createSessionSchema = z.object({
   review_request_id: z.string().min(1).optional(),
   tenant_id: z.string().min(1).default("tenant_demo_001"),
@@ -276,6 +282,17 @@ export interface CoordinatorApp {
   // 銷毀 S3 client（避免 unhandled rejection）;shutdown.ts 已 await，fire-and-forget 的
   // 測試 teardown 仍因 watcher 內部 promise 鏈得到保護。
   dispose: () => Promise<void>;
+  /**
+   * @internal test-only read accessor：回報某 jobId 是否仍持有 enqueue 階段暫存的
+   * dispatch 脈絡。**不是 production 介面**——production route(retry 422 守門)直接讀
+   * closure 內 pendingDispatchEvents,不得經此 getter；此 getter 只為測試斷言
+   * delete-on-success 失敗路徑「保留 pending」的行為可被 falsify。
+   *
+   * `@internal` tag 讓 API extractor / consumer 在型別層看見 test-only 合約；只暴露
+   * boolean —— map 本體(含 unknown payload 型別)不外洩到公開介面,消費端拿不到
+   * .delete()/.clear() 也拿不到 unknown payload,維護者不會誤把它當 production 依賴。
+   */
+  hasPendingDispatch: (jobId: string) => boolean;
 }
 
 export interface CreateCoordinatorAppOptions {
@@ -397,8 +414,8 @@ export function createCoordinatorApp(
   // 在 setDispatcher 之後才能正確處理 worker。
   conversionDispatchQueue.setDispatcher(async (jobId) => {
     const pending = pendingDispatchEvents.get(jobId);
-    pendingDispatchEvents.delete(jobId);
     if (!pending) {
+      // 脈絡確實不存在（restart / drain 後）— 立即標失敗，retry 將回 422「請重新進件」。
       externalIfcReadyStore.markDispatchFailed(
         jobId,
         "pending dispatch event lost before worker pickup",
@@ -417,10 +434,13 @@ export function createCoordinatorApp(
         dispatch.conversion_job_id,
         dispatch.status,
       );
+      // delete-on-success：僅派工成功才刪 pending，使 dispatch_failed job 可被 retry 重派。
+      pendingDispatchEvents.delete(jobId);
       if (config.conversionPollEnabled && !pollerRegistry.has(dispatch.conversion_job_id)) {
         schedulePollerForConversion(dispatch.conversion_job_id);
       }
     } catch (dispatchError) {
+      // 失敗保留 pending 脈絡供 retry requeue（dispose drain 仍會 delete，見 app.ts:1824）。
       externalIfcReadyStore.markDispatchFailed(
         jobId,
         dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
@@ -613,6 +633,116 @@ export function createCoordinatorApp(
       console.error(`[quality-metrics] conversion authority error ${code} for ${jobId}: ${msg}`);
       response.status(code).json({ detail: "Conversion authority unreachable." });
     }
+  });
+
+  // conv-prioritize-retry (IX-CV-03):協調器自有 dispatch 佇列的 controlled action。
+  // :id = ifc_ready_job_id。只動協調器 in-memory FIFO，不碰 bim-streaming-server。
+  // 模式 3 ③ audit：成功寫一筆結構化 audit log（actor best-effort）。body optional { reason?: string }。
+  function resolveActor(request: express.Request): string {
+    const header = request.header("X-Operator") ?? request.header("X-Actor");
+    // 與 parseReason 的 .slice(0, 500) 對稱:actor 也宣告 budget 上限(200),避免超大
+    // header 讓每筆 audit record 的 actor 欄位膨脹、長期撐爆 audit JSONL。
+    return typeof header === "string" && header.trim().length > 0 ? header.trim().slice(0, 200) : "local-operator";
+  }
+  function parseReason(request: express.Request): string {
+    const body = request.body as { reason?: unknown } | undefined;
+    return typeof body?.reason === "string" ? body.reason.slice(0, 500) : "";
+  }
+  // 控制路由的最小守門：沿用 /api/external/ifc-ready 的 IP allowlist（isIpAllowed +
+  // externalIntakeIpAllowlist）阻擋非本地請求。這兩條路由是協調器 control-plane 的
+  // mutation surface；AGENTS.md MUST NOT 禁止「外部公司雲端 control-plane 取代」，
+  // 故 LAN/CORS 任意 origin 不得匿名寫入。回 true 表示已寫 403 並終止。
+  function rejectIfIpNotAllowed(request: express.Request, response: express.Response): boolean {
+    const clientIp = request.ip || request.socket.remoteAddress || "";
+    // 與 IntranetDevAuthProvider.authenticate 的 `length > 0 && !isIpAllowed(...)` 語意對稱:
+    // 空 allowlist 代表「未啟用 IP 守門」→ bypass 全部放行,而非 `![].some()` = true 造成全 403。
+    if (
+      config.externalIntakeIpAllowlist.length > 0 &&
+      !isIpAllowed(clientIp, config.externalIntakeIpAllowlist)
+    ) {
+      response.status(403).json({ detail: "caller ip not in allowlist" });
+      return true;
+    }
+    return false;
+  }
+
+  app.post("/api/conversion/jobs/:id/prioritize", (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;
+    const id = request.params.id;
+    if (!isSafeIfcReadyJobId(id)) {
+      response.status(400).json({ detail: "Invalid ifc-ready job id." });
+      return;
+    }
+    const job = externalIfcReadyStore.get(id);
+    if (!job) {
+      response.status(404).json({ detail: "Ifc-ready job not found." });
+      return;
+    }
+    if (job.status !== "queued_for_conversion") {
+      response.status(409).json({ detail: `Job not prioritizable in status '${job.status}'.` });
+      return;
+    }
+    if (!conversionDispatchQueue.prioritize(id)) {
+      response.status(409).json({ detail: "Job is in-flight or not in the queue." });
+      return;
+    }
+    // 重算受影響 queued position（順手收斂既有 position 快照漂移；in-flight 不在 getQueuedJobIds）。
+    const queuedOrder = conversionDispatchQueue.getQueuedJobIds();
+    queuedOrder.forEach((qid, idx) => externalIfcReadyStore.markQueuedForConversion(qid, idx + 1));
+    const reason = parseReason(request);
+    const actor = resolveActor(request);
+    structLog.withTraceId(id).audit("conversion-control", "conversion.prioritize", {
+      action: "conversion.prioritize", actor, target: id, reason,
+    }, "info");
+    const updated = externalIfcReadyStore.get(id);
+    response.json({
+      ifc_ready_job_id: id,
+      status: updated?.status ?? "queued_for_conversion",
+      queue_position: updated?.queue_position ?? null,
+      queued_order: queuedOrder,
+      reason,
+    });
+  });
+
+  app.post("/api/conversion/jobs/:id/retry", (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;
+    const id = request.params.id;
+    if (!isSafeIfcReadyJobId(id)) {
+      response.status(400).json({ detail: "Invalid ifc-ready job id." });
+      return;
+    }
+    const job = externalIfcReadyStore.get(id);
+    if (!job) {
+      response.status(404).json({ detail: "Ifc-ready job not found." });
+      return;
+    }
+    if (!["dispatch_failed", "dropped_on_restart"].includes(job.status)) {
+      response.status(409).json({ detail: `Job not retryable in status '${job.status}'.` });
+      return;
+    }
+    if (!pendingDispatchEvents.has(id)) {
+      // 脈絡確實不存在（restart / drain 後）— 誠實要求重新進件，不假裝可重試。
+      response.status(422).json({ detail: "Dispatch context lost (coordinator restart/drain); please re-POST the ifc-ready job." });
+      return;
+    }
+    // requeue 回 getQueuePosition 語義的 position:0=enqueue 後 worker 閒置同步取為 in-flight
+    // (派工中)、≥1=排隊中。比照 intake(app.ts markQueuedForConversion(jobId, getQueuePosition ?? 0))
+    // 直接寫 store —— position 0 + queued_for_conversion 是既有合法「派工中」狀態,非矛盾;
+    // 前端插隊鈕在 queue_position<=1 disabled,對立即 in-flight 的重派 job 正確。worker 閒置時
+    // retry 立即重派是成功(非 409):job 確實重新進入派工流程,store/response 一致反映。
+    const pos = conversionDispatchQueue.requeue(id);
+    externalIfcReadyStore.markQueuedForConversion(id, pos);
+    const reason = parseReason(request);
+    const actor = resolveActor(request);
+    structLog.withTraceId(id).audit("conversion-control", "conversion.retry", {
+      action: "conversion.retry", actor, target: id, reason,
+    }, "info");
+    response.json({
+      ifc_ready_job_id: id,
+      status: "queued_for_conversion",
+      queue_position: pos,
+      reason,
+    });
   });
 
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
@@ -1807,7 +1937,12 @@ export function createCoordinatorApp(
   // queue,把 jobs 標記 dropped_on_restart(in-memory queue 非 disk-persistent;
   // restart 後 operator 必須重新 POST,跟 spec scenario「Coordinator restart
   // drops queued jobs」對齊)。
+  let disposed = false;
   const dispose = async (): Promise<void> => {
+    // 冪等守門:測試的 explicit dispose() 之後 afterEach 會再 dispose() 一次;重跑 drain/
+    // markDroppedOnRestart/clear 會造成重複 store 寫入,二次起一律 no-op。
+    if (disposed) return;
+    disposed = true;
     for (const handle of pollerRegistry.values()) {
       handle.cancel();
     }
@@ -1823,9 +1958,37 @@ export function createCoordinatorApp(
       externalIfcReadyStore.markDroppedOnRestart(jobId);
       pendingDispatchEvents.delete(jobId);
     }
+    // dispose 語義是 process lifecycle 結束 → 全清最安全。drain 只回收 queued
+    // (還沒 shift) 的 job;dispatch_failed job 的 pending 留在 map 不在 drain 範圍
+    // (Task 2 retry route 尚未實作前無人清),這裡一律 clear 杜絕殘留累積。
+    //
+    // KNOWN RISK(in-flight-during-dispose race):drain() 不等待已被 shift、dispatcher
+    // closure 仍在 await createConversionJob 的 in-flight job;dispose() 本身也沒有像
+    // minioWatcher 那樣 await in-flight closure settle。若 SIGTERM graceful shutdown
+    // 在 closure 執行中觸發 dispose,clear() 會先刪掉 in-flight pending,而 closure 的
+    // try/catch 仍會跑完並呼叫 markDispatched / markDispatchFailed——對已 clear 的 map
+    // 後續 .delete() 是無害 no-op,但 store 狀態更新仍會執行(「dispose 後 store 還有寫
+    // 入」的非預期副作用)。現有測試只覆蓋 dispatch_failed settle 後才 dispose,不覆蓋此
+    // 競態。要徹底消除需在 Task 2 給 dispatcher closure 加 in-flight tracking 並讓
+    // dispose await 其 settle(同 minioWatcher 模式);Task 0 範圍僅揭露,不引入新機制。
+    pendingDispatchEvents.clear();
   };
 
-  return { app, server, io, config, store, eventLog, structLog, dispose };
+  return {
+    app,
+    server,
+    io,
+    config,
+    store,
+    eventLog,
+    structLog,
+    dispose,
+    // test-only boolean getter：讓測試直接斷言 dispatch_failed job 的 pending 是否保留,
+    // 不必靠 callCount 間接推論(否則 delete-on-success 失敗路徑的保留無法被 falsify)。
+    // 只回 boolean —— 內部 Map 實例(含 unknown payload)不外洩;retry route 在同一 closure
+    // 內直接讀 pendingDispatchEvents,不經此 getter。
+    hasPendingDispatch: (jobId: string): boolean => pendingDispatchEvents.has(jobId),
+  };
 }
 
 interface RuntimeStatusInput {
@@ -1954,6 +2117,10 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
     conversion_authority: job.conversion_authority,
+    // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
+    // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive,
+    // 依規格置於 conversion_authority 之後。
+    queue_position: job.queue_position ?? null,
     dispatch_error: job.dispatch_error ?? null,
     callback_outbox_id: job.callback_outbox_id ?? null,
     artifact_manifest_ref: job.artifact_manifest_ref ?? null,

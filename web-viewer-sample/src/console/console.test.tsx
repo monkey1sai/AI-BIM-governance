@@ -1575,6 +1575,8 @@ describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 
     review_session_id: null, viewer_url: null, expected_stage_url: null,
     expected_mapping_url: null, created_at: "2026-06-11T00:00:00Z",
     conversion_job_id: null, // m2a-coverage-report:新 required key（值 null）；補齊既有 fixture
+    queue_position: null, // conv-prioritize-retry:non-optional required key；dispatched fixture 預設 null
+    updated_at: "2026-06-11T00:00:00Z", // conv-prioritize-retry §2.4:新 required key；補齊既有 fixture
   };
   beforeEach(() => {
     prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];

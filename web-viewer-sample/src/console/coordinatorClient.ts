@@ -32,6 +32,18 @@ async function jsonGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function jsonPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${COORD_BASE}${path}`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // /health 真實回應形狀（app.ts:388）。
 export interface CoordinatorHealth {
   status: string;
@@ -104,6 +116,10 @@ export interface IfcReadyListItem {
   download_status: string | null;
   conversion_status: string | null;
   conversion_authority: string | null;
+  // conv-prioritize-retry:in-flight→0、queued→1-based、其餘→null。供插隊鈕 disabled 判斷。
+  // summarizeIfcReadyJob 永遠輸出此欄（job.queue_position ?? null），故 non-optional——
+  // 強制消費方只處理 number | null（不含 undefined），與 spec §4.3 的 null 守門語意對齊。
+  queue_position: number | null;
   // m2a-coverage-report:wire 已有（app.ts summarizeIfcReadyJob:1907），補型別供 #conv 展開讀取。
   conversion_job_id: string | null;
   dispatch_error: string | null;
@@ -112,6 +128,9 @@ export interface IfcReadyListItem {
   expected_stage_url: string | null;
   expected_mapping_url: string | null;
   created_at: string;
+  // conv-prioritize-retry §2.4：summarizeIfcReadyJob 永遠輸出 updated_at(app.ts:2133)；
+  // job 變更後此欄前進是前端可見證據（task#4 prioritize/retry 成功後 load() 重抓據以確認狀態前進）。
+  updated_at: string;
 }
 
 // minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
@@ -150,6 +169,14 @@ export interface ConversionQualityMetricsResponse {
   mapping_url?: string | null;
 }
 
+// conv-prioritize-retry:POST /api/conversion/jobs/:id/{prioritize,retry} 回應形狀。
+export interface ConversionControlResponse {
+  ifc_ready_job_id: string;
+  status: string;
+  queue_position?: number | null;
+  queued_order?: string[];
+}
+
 export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
@@ -159,6 +186,10 @@ export const coordinatorClient = {
   streamConfig: (sessionId: string) => jsonGet<StreamConfigResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/stream-config`),
   conversionQualityMetrics: (conversionJobId: string) =>
     jsonGet<ConversionQualityMetricsResponse>(`/api/conversions/${encodeURIComponent(conversionJobId)}/quality-metrics`),
+  conversionPrioritize: (id: string, reason?: string) =>
+    jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/prioritize`, { reason }),
+  conversionRetry: (id: string, reason?: string) =>
+    jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/retry`, { reason }),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,

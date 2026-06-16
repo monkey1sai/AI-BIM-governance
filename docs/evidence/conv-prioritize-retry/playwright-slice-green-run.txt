@@ -1,0 +1,8 @@
+
+Running 2 tests using 1 worker
+
+[conv-prioritize-retry] notObserved: ["插隊（prioritize）browser 切片：本輪 live 佇列無 queued_for_conversion+queue_position>=2 job，未觀察；深度因果由 conversion-control-routes.test.ts 兜底。"]
+  ✓  1 [chromium] › e2e\conv-prioritize-retry.spec.ts:95:3 › IX-CV-03 #conv 插隊／重試 controlled action › 控制鈕 → IntentDialog → 真 POST → 列依真狀態刷新 (1.2s)
+  ✓  2 [chromium] › e2e\conv-prioritize-retry.spec.ts:200:3 › conv-prioritize-retry render-surface 證據（非 controlled-action 觀察） › 渲染 #conv 真頁面 → Refresh queue → 截圖 render surface（evidence） (765ms)
+
+  2 passed (4.3s)

@@ -211,6 +211,103 @@ describe("ConversionDispatchQueue (unit)", () => {
     expect(dropped).toEqual(["A", "B", "C"]);
     expect(queue.getQueuedJobIds()).toEqual([]);
   });
+
+  it("prioritize 把非首位 queued job 移到隊首回 true", () => {
+    const queue = new ConversionDispatchQueue();
+    // 不 setDispatcher → worker run 但 dispatcher==null，job 推回 queue（既有慣例 195-203）
+    queue.enqueue("A"); queue.enqueue("B"); queue.enqueue("C");
+    expect(queue.prioritize("C")).toBe(true);
+    expect(queue.getQueuedJobIds()).toEqual(["C", "A", "B"]);
+  });
+
+  it("prioritize 對已在隊首 job 回 true 且不動順序（成功 no-op）", () => {
+    const queue = new ConversionDispatchQueue();
+    queue.enqueue("A"); queue.enqueue("B");
+    expect(queue.prioritize("A")).toBe(true);
+    expect(queue.getQueuedJobIds()).toEqual(["A", "B"]);
+  });
+
+  it("prioritize 對不在 queue 的 job 回 false", () => {
+    const queue = new ConversionDispatchQueue();
+    queue.enqueue("A");
+    expect(queue.prioritize("Z")).toBe(false);
+    expect(queue.getQueuedJobIds()).toEqual(["A"]);
+  });
+
+  it("prioritize 對 in-flight job 回 false 且不動隊列（in-flight 不可被搶下）", async () => {
+    // 用 gate dispatcher 讓 A 真的卡在 in-flight（被 shift 出 queued[]），
+    // 才能 falsify「in-flight 也走同一條 indexOf===-1 路」這個 spec §6.1 行為意圖；
+    // 只用未進 queue 的 ID（如 "Z"）覆蓋不到此路。
+    const queue = new ConversionDispatchQueue();
+    let releaseA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    queue.setDispatcher(async (jobId) => {
+      if (jobId === "A") await aGate;
+    });
+    queue.enqueue("A");
+    queue.enqueue("B");
+    // 等 A in-flight、B 留在 queued[]
+    await waitFor(() => queue.getInFlight() === "A");
+    expect(queue.getQueuedJobIds()).toEqual(["B"]);
+
+    // prioritize in-flight A → false，且 queued[] 不變（A 不被塞回隊首）
+    expect(queue.prioritize("A")).toBe(false);
+    expect(queue.getInFlight()).toBe("A");
+    expect(queue.getQueuedJobIds()).toEqual(["B"]);
+
+    // teardown：release A 讓 worker 收尾，避免 dangling promise
+    releaseA();
+    await waitFor(() => queue.getInFlight() === null);
+  });
+
+  it("requeue 重新 enqueue 並回新的 1-based position", () => {
+    const queue = new ConversionDispatchQueue();
+    queue.enqueue("A"); queue.enqueue("B");
+    const pos = queue.requeue("R");
+    expect(pos).toBe(3);
+    expect(queue.getQueuePosition("R")).toBe(3);
+  });
+
+  it("requeue 對已在 queue 中的 jobId 不重複 append（idempotent no-op，回現有 position）", () => {
+    const queue = new ConversionDispatchQueue();
+    // 不 setDispatcher → worker run 但 dispatcher==null，job 推回 queue（既有慣例 195-203）
+    queue.enqueue("A"); queue.enqueue("B"); queue.enqueue("C");
+    // B 已在 position 2；重複 requeue 不可再 append 一個 "B"
+    const pos = queue.requeue("B");
+    expect(pos).toBe(2);
+    expect(queue.getQueuedJobIds()).toEqual(["A", "B", "C"]);
+  });
+
+  it("requeue 對 in-flight job 回 0（in-flight 哨兵，與 intake 一致）且不重複 append", async () => {
+    // in-flight job 的 getQueuePosition 回 0（queue.ts:37 的 in-flight 專用值）。requeue 對
+    // 已 in-flight job 冪等回 0、不重複 append：position 0 + queued_for_conversion 是既有
+    // 「派工中」合法狀態（與 intake app.ts:846-854 同一表示法），非矛盾；前端插隊鈕在
+    // queue_position<=1 disabled，對 in-flight 正確。requeue 不重複 enqueue 避免重複 dispatch。
+    const queue = new ConversionDispatchQueue();
+    let releaseA!: () => void;
+    const aGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    queue.setDispatcher(async (jobId) => {
+      if (jobId === "A") await aGate;
+    });
+    queue.enqueue("A");
+    queue.enqueue("B");
+    await waitFor(() => queue.getInFlight() === "A");
+    expect(queue.getQueuePosition("A")).toBe(0);
+
+    // requeue in-flight A：冪等 no-op，回 0（in-flight 哨兵，誠實表「派工中」）；不把 A
+    // append 進 queued[]（避免重複 dispatch）。
+    expect(queue.requeue("A")).toBe(0);
+    expect(queue.getInFlight()).toBe("A");
+    expect(queue.getQueuedJobIds()).toEqual(["B"]);
+
+    // teardown
+    releaseA();
+    await waitFor(() => queue.getInFlight() === null);
+  });
 });
 
 describe("Concurrent IFC-ready POST → serial dispatch (integration)", () => {
@@ -311,6 +408,62 @@ describe("Concurrent IFC-ready POST → serial dispatch (integration)", () => {
 
     // 兩個都被 worker 處理過(stub 收到 2 個 POST)→ A 失敗不卡 B
     expect(bodies.length).toBe(2);
+  });
+
+  it("派工失敗後狀態為 dispatch_failed，且 pending 保留不自動再派工（delete-on-success 半段）", async () => {
+    let callCount = 0;
+    activeStub = http.createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+        let body = "";
+        req.on("data", (c) => {
+          body += c.toString("utf8");
+        });
+        req.on("end", () => {
+          callCount += 1;
+          // 永遠失敗：Task 0 只驗「失敗後保留 pending、不自動重派」；retry 重派由 Task 2 route 測試兜底。
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: "dispatch always fails" }));
+        });
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    await new Promise<void>((r) => activeStub?.listen(0, "127.0.0.1", () => r()));
+    const addr = activeStub.address();
+    if (!addr || typeof addr === "string") throw new Error("bind failed");
+    const app = makeApp({ streamingConversionApiBase: `http://127.0.0.1:${addr.port}` });
+
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_retry_ok", "idem_retry_ok"))
+      .send(payload());
+    const jobId = res.body.ifc_ready_job_id as string;
+
+    // 派工失敗 → dispatch_failed（delete-on-success：失敗路徑不刪 pending）。
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.status === "dispatch_failed";
+    });
+
+    // pending 保留證據（直接斷言）：透過 test-only accessor 確認 dispatch_failed job
+    // 的 pending 仍在 map。這是 falsifiable 的核心斷言——若 app.ts 回到「失敗就刪
+    // pending」的舊行為，這行會直接 fail（callCount/status 那兩個間接斷言無法區分
+    // 「pending 保留」與「pending 被刪但沒人再 enqueue」）。
+    // 無需額外 setTimeout：上方 waitFor 已輪詢到 store=dispatch_failed，而 dispatcher
+    // closure 的 catch（markDispatchFailed + 不刪 pending）與該 store 寫入同一 microtask，
+    // store 已是 dispatch_failed ⇒ pending 必然仍在。
+    expect(app.hasPendingDispatch(jobId)).toBe(true);
+    // 輔助斷言：worker 已 shift，保留 pending 不會自動重派 → callCount 維持 1、狀態續為
+    // dispatch_failed。retry 重派的 round-trip 由 Task 2 route 測試驗。
+    expect(callCount).toBe(1);
+    const after = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(after.body.status).toBe("dispatch_failed");
+
+    // dispose 必須清掉 dispatch_failed job 殘留的 pending(drain 只回收 queued,
+    // dispatch_failed 的 pending 不在 drain 範圍;Task 2 retry route 尚未實作前無人
+    // 清,dispose 全清杜絕 process lifecycle 結束時的 map 累積)。
+    await app.dispose();
+    expect(app.hasPendingDispatch(jobId)).toBe(false);
   });
 });
 

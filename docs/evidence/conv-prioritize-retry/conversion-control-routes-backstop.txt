@@ -1,0 +1,13 @@
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mC:/Repos/active/iot/AI-BIM-governance/.worktrees/conv-prioritize-retry/bim-review-coordinator[39m
+
+{"ts":"2026-06-16T17:03:34.653Z","level":"info","event_type":"audit","service":"coordinator","component":"conversion-control","run_id":"run_20260616_170334_404409","trace_id":"ifcready_1781629414646_016f8085","msg":"conversion.prioritize","data":{"action":"conversion.prioritize","actor":"local-operator","target":"ifcready_1781629414646_016f8085","reason":"urgent"},"seq":1}
+{"ts":"2026-06-16T17:03:34.738Z","level":"info","event_type":"audit","service":"coordinator","component":"conversion-control","run_id":"run_20260616_170334_f0b1cb","trace_id":"ifcready_1781629414713_f542db97","msg":"conversion.retry","data":{"action":"conversion.retry","actor":"local-operator","target":"ifcready_1781629414713_f542db97","reason":"manual retry"},"seq":1}
+{"ts":"2026-06-16T17:03:34.865Z","level":"info","event_type":"audit","service":"coordinator","component":"conversion-control","run_id":"run_20260616_120000_abc123","trace_id":"ifcready_1781629414861_ee8dff02","msg":"conversion.prioritize","data":{"action":"conversion.prioritize","actor":"local-operator","target":"ifcready_1781629414861_ee8dff02","reason":"very urgent client demo"},"seq":1}
+{"ts":"2026-06-16T17:03:34.944Z","level":"info","event_type":"audit","service":"coordinator","component":"conversion-control","run_id":"run_20260616_130000_actor1","trace_id":"ifcready_1781629414939_f33acb33","msg":"conversion.prioritize","data":{"action":"conversion.prioritize","actor":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","target":"ifcready_1781629414939_f33acb33","reason":"cap test"},"seq":1}
+ [32m✓[39m tests/conversion-control-routes.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 381[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m14 passed[39m[22m[90m (14)[39m
+[2m   Start at [22m 01:03:33
+[2m   Duration [22m 1.36s[2m (transform 234ms, setup 0ms, collect 593ms, tests 381ms, environment 0ms, prepare 98ms)[22m

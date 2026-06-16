@@ -62,6 +62,11 @@ export interface AuditData {
   action: string;
   actor: string;
   target: string;
+  /**
+   * conv-prioritize-retry (模式 3 ③):controlled action 操作者在 confirm 對話框填入的
+   * 自由理由。可空字串。寫入 audit trail 供事後追溯「為何插隊/重試」。
+   */
+  reason?: string;
 }
 
 export type LifecycleSubjectKind =

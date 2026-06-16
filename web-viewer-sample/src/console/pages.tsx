@@ -7,6 +7,7 @@ import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOIN
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
+import { IntentDialog } from "./IntentDialog";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
@@ -442,7 +443,21 @@ export function ConversionSchedulingPage() {
   const [busy, setBusy] = useState(false);
   const [openJob, setOpenJob] = useState<string | null>(null);
   const [cov, setCov] = useState<Record<string, ConversionQualityMetricsResponse | { error: string } | "loading">>({});
-  const load = useCallback(async () => {
+  // conv-prioritize-retry:列控制（插隊／重試）intent→confirm 狀態。pendingAction 非 null 時開 IntentDialog；
+  // actionBusy 鎖住 confirm/cancel 期間的重複觸發。非樂觀：POST 成功後 load() 重抓真佇列狀態。
+  const [pendingAction, setPendingAction] = useState<{ jobId: string; kind: "prioritize" | "retry" } | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  // finding #1：同步 busy guard。setActionBusy(true) 是非同步 state，confirm 鈕的 disabled={busy}
+  // 要等下一次 render 才生效；同一事件循環連點兩次會送出兩個 POST。ref 在 React state 更新前
+  // 同步攔截第二次呼叫。
+  const actionBusyRef = useRef(false);
+  // finding #2：action 錯誤獨立 state，顯示在 dialog 內、與 dialog 綁定，不與 load 錯誤（err）共用。
+  // load() 開頭的 setErr(null) 因此不會把「控制動作失敗」清掉。
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  // 回傳「ifc-ready 佇列是否抓取成功」：runAction 用它判斷控制動作後的證據型刷新是否
+  // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
+  // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
+  const load = useCallback(async (): Promise<boolean> => {
     setBusy(true); setErr(null); setMwErr(null);
     // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
     // 端點尚未部署）不得污染 ifc-ready 的錯誤訊息，也不得讓 watcher Panel 靜默停在
@@ -451,11 +466,13 @@ export function ConversionSchedulingPage() {
       coordinatorClient.listIfcReady(50),
       coordinatorClient.minioWatchStatus(),
     ]);
+    const jobsOk = jobsRes.status === "fulfilled";
     if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
     else setErr(`未連線 coordinator /api/external/ifc-ready：${String(jobsRes.reason)}`);
     if (mwRes.status === "fulfilled") setMw(mwRes.value);
     else setMwErr(`未連線 coordinator /api/external/minio-watch/status：${String(mwRes.reason)}`);
     setBusy(false);
+    return jobsOk;
   }, []);
   useEffect(() => { void load(); }, [load]);
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
@@ -485,6 +502,31 @@ export function ConversionSchedulingPage() {
       setCov((p) => ({ ...p, [id]: { error: `未取得 coverage：${String(e)}` } }));
     }
   }, [openJob, cov]);
+  const runAction = useCallback(async (reason: string) => {
+    if (!pendingAction) return;
+    if (actionBusyRef.current) return; // finding #1：同步攔截重入（React state 尚未更新前）
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setActionErr(null);             // 開新一輪動作：清掉上一次的誠實錯誤
+    try {
+      if (pendingAction.kind === "prioritize") await coordinatorClient.conversionPrioritize(pendingAction.jobId, reason);
+      else await coordinatorClient.conversionRetry(pendingAction.jobId, reason);
+      // 證據型更新：重抓真佇列狀態（非樂觀）。load() 自吞錯不 throw，故以回傳值辨識
+      // 「POST 成功但重抓佇列失敗」——此時不可靜默關 dialog（佇列仍顯舊狀態、背景 err
+      // 操作者不易察覺），改保持 dialog 開啟並在 dialog 內顯誠實錯誤。
+      const refreshed = await load();
+      if (!refreshed) {
+        setActionErr("動作已送出，但重新抓取佇列失敗；佇列可能仍顯示舊狀態，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。");
+        return;                     // 不關 dialog、不視為完成
+      }
+      setPendingAction(null);       // 動作成功且佇列已刷新才關 dialog
+    } catch (e) {
+      setActionErr(`控制動作失敗：${String(e)}`); // finding #2：寫獨立 actionErr（顯示在 dialog 內），不關 dialog、不改狀態
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
+  }, [pendingAction, load]);
   return (
     <>
       <h1>IFC→USD 轉檔排程</h1>
@@ -493,7 +535,8 @@ export function ConversionSchedulingPage() {
         <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
         {err && <p className="ec-warn-note">{err}</p>}
         <Field k="conversion authority" v="bim-streaming-server owns heavy conversion" prov="asbuilt" />
-        <Field k="插隊 / 重試 / concurrency" v="UI rule 已定義，controlled action endpoint 待建" prov="p1" />
+        <Field k="插隊 / 重試" v="可於下方 ifc-ready job 列依狀態操作（intent→confirm→audited）" prov="asbuilt" />
+        <Field k="concurrency 控制" v="NOT BUILT：獨立 follow-up 卡" prov="p1" />
       </Panel>
       <Panel
         title="MinIO 自動偵測（O4）"
@@ -539,7 +582,7 @@ export function ConversionSchedulingPage() {
       </Panel>
       <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
         {jobs.length ? (
-          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th></tr></thead>
+          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th><th>控制</th></tr></thead>
             <tbody>{jobs.slice(0, 20).map((j) => (
               <Fragment key={j.ifc_ready_job_id}>
                 <tr>
@@ -562,9 +605,30 @@ export function ConversionSchedulingPage() {
                   <td>{j.conversion_job_id
                     ? <Btn data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? "收合" : "coverage"}</Btn>
                     : <span className="ec-note">尚未派工</span>}</td>
+                  <td>
+                    {j.status === "queued_for_conversion" && (
+                      <Btn
+                        data-testid={`conv-prioritize-${j.ifc_ready_job_id}`}
+                        disabled={j.queue_position == null || j.queue_position <= 1}
+                        title={
+                          j.queue_position == null ? "佇列位置未知，暫不可插隊"
+                          : j.queue_position === 0 ? "正在派工中（in-flight），不可插隊"
+                          : j.queue_position <= 1 ? "已在隊首（position 1），無需插隊"
+                          : undefined
+                        }
+                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
+                      >插隊</Btn>
+                    )}
+                    {(j.status === "dispatch_failed" || j.status === "dropped_on_restart") && (
+                      <Btn
+                        data-testid={`conv-retry-${j.ifc_ready_job_id}`}
+                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" }); }}
+                      >重試</Btn>
+                    )}
+                  </td>
                 </tr>
                 {openJob === j.ifc_ready_job_id && (
-                  <tr><td colSpan={7}>
+                  <tr><td colSpan={8}>
                     <div data-testid={`conv-coverage-${j.ifc_ready_job_id}`}>
                       <CoverageDrawer state={cov[j.ifc_ready_job_id]} />
                     </div>
@@ -574,6 +638,17 @@ export function ConversionSchedulingPage() {
             ))}</tbody></table>
         ) : <p className="ec-note">尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。</p>}
       </Panel>
+      <IntentDialog
+        open={pendingAction != null}
+        title={pendingAction?.kind === "prioritize" ? "插隊到佇列最前" : "重新派工此 job"}
+        cost={pendingAction?.kind === "prioritize"
+          ? "此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。"
+          : "將重新派工此 job 至轉檔 authority；可能再次失敗。"}
+        busy={actionBusy}
+        actionErr={actionErr}
+        onConfirm={runAction}
+        onCancel={() => { if (!actionBusy) { setActionErr(null); setPendingAction(null); } }}
+      />
     </>
   );
 }
