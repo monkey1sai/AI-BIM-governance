@@ -546,6 +546,36 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     expect(container.textContent).toContain("控制動作失敗");
   });
 
+  // cr2 quality review #1：「POST 成功但重抓佇列失敗」分支。load() 自吞錯不 throw，runAction 以
+  // 回傳值辨識重抓失敗 → 不可靜默關 dialog（佇列顯舊狀態、背景 err 不易察覺），須保持 dialog 開啟
+  // 並顯誠實錯誤。此測試攔截「重抓失敗卻關 dialog」的靜默 regression。
+  it("POST 成功但成功後重抓佇列失敗（listIfcReady 第二次 reject）→ dialog 維持開啟、顯重抓失敗誠實錯誤", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady")
+      .mockResolvedValueOnce({ count: 1, items: [failedJob] }) // mount 初次 load 成功
+      .mockRejectedValueOnce(new Error("coordinator /api/external/ifc-ready -> 503")); // 動作後重抓失敗
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({ ifc_ready_job_id: "ifcready_failed", status: "queued_for_conversion", queue_position: 1 });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const retryBtn = container.querySelector('[data-testid="conv-retry-ifcready_failed"]') as HTMLButtonElement;
+    expect(retryBtn).toBeTruthy();
+    await act(async () => { retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // POST 確實送出成功
+    expect(retrySpy).toHaveBeenCalledWith("ifcready_failed", "");
+    // 重抓失敗 → dialog 仍開啟（不靜默關閉）
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    // dialog 內顯「重新抓取佇列失敗」誠實錯誤
+    expect(container.textContent).toContain("重新抓取佇列失敗");
+  });
+
   // finding #1：runAction 缺同步 busy guard，confirm 鈕 disabled={busy} 要等下一次 render 才生效。
   // 同一事件循環連按兩次 confirm → 應只送出一個 POST（同步 ref guard 在 React state 更新前攔截第二次）。
   it("同一事件循環連點兩次確認 → 只送出一個 POST（同步 busy guard）", async () => {
