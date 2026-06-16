@@ -484,7 +484,13 @@ Expected: FAIL（無 `conv-coverage-toggle-*` / `conv-coverage-*` 節點）。
   }, [openJob, cov]);
 ```
 
-把 job 表（472-496）的 `<tbody>` 每列改為「主列 + 條件展開列」。主列尾欄加展開鈕；無 `conversion_job_id` 顯「尚未派工」：
+先把 job 表 `<thead>` 那行（pages.tsx:474，現為 6 欄 `job/project/conversion/dispatch/session/stage`）補第 7 欄表頭 `coverage`，整行改為：
+
+```tsx
+<table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th></tr></thead>
+```
+
+再把 job 表（現 475-494）的 `<tbody>` 每列改為「主列 + 條件展開列」。主列尾欄（第 7 欄）加展開鈕；無 `conversion_job_id` 顯「尚未派工」（注意：現有主列只有 6 個 `<td>`，下方改寫已含第 7 個 coverage `<td>`，展開列 `colSpan={7}` 與 7 欄對齊）：
 
 ```tsx
 <tbody>{jobs.slice(0, 20).map((j) => (
@@ -500,7 +506,7 @@ Expected: FAIL（無 `conv-coverage-toggle-*` / `conv-coverage-*` 節點）。
       <td>{j.review_session_id ?? "—"}</td>
       <td>{j.expected_stage_url ?? "—"}</td>
       <td>{j.conversion_job_id
-        ? <Btn caption="coverage" data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? "收合" : "coverage"}</Btn>
+        ? <Btn data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? "收合" : "coverage"}</Btn>
         : <span className="ec-note">尚未派工</span>}</td>
     </tr>
     {openJob === j.ifc_ready_job_id && (
@@ -514,7 +520,7 @@ Expected: FAIL（無 `conv-coverage-toggle-*` / `conv-coverage-*` 節點）。
 ))}</tbody>
 ```
 
-（檔頂 import 補 `Fragment`：`import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";`。`Btn` 若不支援 `data-testid` 透傳，改在外層 `<span data-testid=…>` 包住。）
+（檔頂 import 補 `Fragment`：`import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";`。已查證 `Btn`（`components.tsx:80-104`）原生接 `onClick?: () => void` 與 `"data-testid"?: string`，可直接透傳，無需外層 `<span>` 包裹。`Field`（`components.tsx:58`）簽名為 `{ k: string; v: React.ReactNode; prov?: Prov }`，CoverageDrawer 用法相符。）
 
 加 `CoverageDrawer` 小元件（同檔 `ConversionSchedulingPage` 之上或之下）：
 
@@ -573,19 +579,24 @@ git commit -m "feat(web-viewer): #conv coverage 展開抽屜（真資料 passthr
 - Create: `web-viewer-sample/e2e/conv-coverage-report.spec.ts`
 - Evidence: `artifacts/e2e/conv-coverage-report-*`（截圖/summary）+ tracked `docs/evidence/conv-coverage-report/`
 
-> 守門/skip 限制揭露**先讀並比照** `web-viewer-sample/e2e/a2-version-diff-selector.spec.ts` 與 `web-viewer-sample/e2e/minio-fileserver-source.spec.ts`（同一 gating 慣例：缺 stack / 缺真 job 時 honest skip 並在檔頭揭露限制，不假綠）。
+> 守門/skip 限制揭露**先讀並比照** `web-viewer-sample/e2e/a2-version-diff-selector.spec.ts`（檔頭 1-30 行的服務前置 + 兩道 `test.skip` 守門範本）與 `web-viewer-sample/e2e/minio-fileserver-source.spec.ts`（同一 gating 慣例：缺 stack / 缺真 job 時 honest skip 並在檔頭揭露限制，不假綠）。
+>
+> **服務前置（查證自 a2 spec 檔頭，乾淨環境必做）**：本頁由 **coordinator 已 build 的 `dist-ui`** 服務（非 playwright.config.ts 的 fresh viewer）。所以改了 `pages.tsx` 後若不重 build，E2E 會打到陳舊 dist-ui（「改了沒效」假象）：
+> 1. `cd web-viewer-sample && npm run build:ui`（用本 branch 的碼重 build `dist-ui`）。
+> 2. 重啟 coordinator(:8004) 服務新 `dist-ui`；docker 佔 :8004 時 build:ui 不會換容器內陳舊 dist-ui，須重建/重啟該服務。
+> 3. coordinator 跑別的 port 用 `E2E_COORDINATOR_BASE_URL` 覆寫（spec 內 `const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";`）。
 
 - [ ] **Step 1: 寫 E2E spec**
 
-Create `web-viewer-sample/e2e/conv-coverage-report.spec.ts`，比照上述兩個既有 spec 的 import / baseURL / gating，內容：
-- 前置：coordinator `/api/external/ifc-ready` 至少一筆**已派工（有 `conversion_job_id`、`conversion_status=succeeded`）**的真 job；無則 honest skip 並揭露「需先有已轉檔 job」。
-- 步驟：開 `#conv` → 按 `Refresh queue` → 點該 job 的 `conv-coverage-toggle-<id>` → 等 `conv-coverage-<id>` 抽屜出現 → 斷言抽屜內含真 `coverage`（×100 數字）+ `coverage_status` + mapped/unmapped + `model.usdc` 路徑。
-- 截圖落 `artifacts/e2e/conv-coverage-report-<timestamp>.png` + 寫一份 summary。
+Create `web-viewer-sample/e2e/conv-coverage-report.spec.ts`。檔頭 import `import { test, expect } from "@playwright/test";` + `const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";`（比照 a2 spec line 19）。檔頭以註解揭露：服務前置（build:ui + 重啟 coordinator）+ skip-gate 效力限制（conditional skip 計 pass、本 repo `.github/workflows` 無 Playwright job 故不 false-green）。內容：
+- 守門（`test.beforeEach`，比照 a2 spec line 24-40 的 `request.get` 守門）：`GET ${COORDINATOR}/api/external/ifc-ready?limit=50` → 必須有至少一筆**已派工（`conversion_job_id` 非 null、`conversion_status=succeeded`）**的真 job；無則 `test.skip(true, "需先有已轉檔 job（conversion_job_id + conversion_status=succeeded）")`，不假綠。把該 job 的 `ifc_ready_job_id` / `conversion_job_id` 存起來給步驟用。
+- 步驟：`page.goto(\`${COORDINATOR}/ui/#conv\`)` → 按 `Refresh queue`（`getByRole("button", { name: /Refresh queue|讀取中/ })`）→ 點該 job 的 `[data-testid="conv-coverage-toggle-<ifc_ready_job_id>"]` → `await expect(page.locator('[data-testid="conv-coverage-<id>"]')).toBeVisible()` → 斷言抽屜文字含真 `coverage`（`/\d+\.\d+%/` ×100 數字）+ `coverage_status` 字串 + mapped/unmapped 數 + `model.usdc` 路徑。
+- 截圖 `await page.screenshot({ path: \`../artifacts/e2e/conv-coverage-report-${Date.now()}.png\`, fullPage: true })` + 寫一份 summary（job id / conversion job id / 觀測到的 coverage 值）。
 
 - [ ] **Step 2: 跑 E2E**
 
 Run: `cd web-viewer-sample && npx playwright test e2e/conv-coverage-report.spec.ts`
-Expected: PASS（有真 stack + 已轉檔 job 時）；否則 honest SKIP 並在輸出揭露限制——**不可假綠**。
+Expected: PASS（有真 stack + 已轉檔 job 時）；否則 honest SKIP 並在輸出揭露限制——**不可假綠**。若打到陳舊 dist-ui（看不到 `conv-coverage-toggle-*`）→ 回 Step 0 前置重跑 `npm run build:ui` + 重啟 coordinator。
 
 - [ ] **Step 3: 落 tracked 證據 + commit**
 
