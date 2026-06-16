@@ -445,14 +445,16 @@ export function ConversionSchedulingPage() {
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
     if (!job.conversion_job_id) return;
     const id = job.ifc_ready_job_id;
+    // 開關語意：同一 job 已展開 → 收合（不重打）。重試 / 重用都走「收合後重新展開」這條兩步路徑。
     if (openJob === id) { setOpenJob(null); return; }
     setOpenJob(id);
-    // 去重 / 載入鎖（spec §5「重複展開同 job → 去重 / 載入鎖，避免重打」）：
+    // 去重 / 載入鎖（spec §5「重複展開同 job → 去重 / 載入鎖，避免重打」）。
+    // 注意：上面的 openJob===id early-return 會先收合，所以下列守門只在「目前未展開、現在要展開」時生效，
+    // 亦即收合後重新展開的第二步（並非展開狀態下原地點一次）：
     //   - 已成功取得（cov[id] 是 response 物件）→ 直接重用快取，不重打。
     //   - 正在載入（"loading"）→ 不重打。
-    //   - 曾失敗（{ error }）→ **刻意允許重打**（展開錯誤態再點一次＝使用者重試，符合誠實鐵律：
-    //     錯誤不黏住，給重試機會）。故下面的 early-return 條件只擋「成功快取」與「載入中」，
-    //     不擋 error 態。
+    //   - 曾失敗（{ error }）→ **刻意不擋，落到下方重新 fetch**（收合後再展開錯誤態 job＝使用者重試，
+    //     符合誠實鐵律：錯誤不黏住，給重試機會）。故守門只擋「成功快取」與「載入中」，不擋 error 態。
     const cached = cov[id];
     if (cached && cached !== "loading" && !("error" in (cached as object))) return; // 已成功 → 重用
     if (cached === "loading") return; // 載入中 → 不重打

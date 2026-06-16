@@ -208,4 +208,95 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
     expect(drawer.textContent).toContain("/api/conversions");
     expect(drawer.textContent).not.toMatch(/\d+\.\d+\s*%/); // 無假百分比
   });
+
+  // spec §5「重複展開同 job → 去重 / 載入鎖，避免重打」/ §6.2「去重 / 載入鎖（重打）邏輯驗證」。
+  // pages.tsx toggleCoverage 的快取去重：成功取得後收合再展開，重用快取不再打 API。
+  it("成功展開後收合再展開同一 job → 重用快取，不再呼叫 conversionQualityMetrics", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockResolvedValue({
+      conversion_job_id: "stream_conv_20260616_cov",
+      quality_metrics_summary: {
+        coverage_ratio: 0.9886, coverage_status: "warn", mapped_count: 988, unmapped_count: 12,
+        source_ifc_entity_count: 1000, materialization_strategy: "sidecar",
+        conversion_duration_seconds: 73.5,
+      },
+      usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    // 1) 展開 → 觸發 fetch（一次）
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledTimes(1);
+    // 2) 收合（openJob === id 的 early-return）
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    // 3) 再展開 → 命中成功快取，不重打
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledTimes(1);
+    // 快取仍渲染真 coverage
+    expect(container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!.textContent).toContain("98.86");
+  });
+
+  // 載入鎖：fetch 尚未 settle（deferred promise）時，收合再展開不得觸發第二次 API call
+  //（toggleCoverage 的 cached === "loading" 守門）。
+  it("載入中收合再展開 → 載入鎖擋下第二次 conversionQualityMetrics", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    // 永不 resolve → 卡在 loading 狀態
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockReturnValue(new Promise(() => {}));
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    // 展開 → 進 loading（fetch 不 settle）
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledTimes(1);
+    // 收合
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    // 再展開 → cov[id] 仍是 "loading"，載入鎖擋下不重打
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  // 錯誤重試：error 態收合再展開 → 重新打 API（錯誤不黏住，符合誠實鐵律的重試機會）。
+  it("展開遇錯誤後收合再展開 → 重新呼叫 conversionQualityMetrics（重試）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics")
+      .mockRejectedValueOnce(new Error("/api/conversions/... -> 502"))
+      .mockResolvedValueOnce({
+        conversion_job_id: "stream_conv_20260616_cov",
+        quality_metrics_summary: {
+          coverage_ratio: 0.9886, coverage_status: "warn", mapped_count: 988, unmapped_count: 12,
+          source_ifc_entity_count: 1000, materialization_strategy: "sidecar",
+          conversion_duration_seconds: 73.5,
+        },
+        usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
+      });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    // 1) 展開 → 第一次失敗
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!.textContent).toContain("/api/conversions");
+    // 2) 收合
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    // 3) 再展開 → error 態不黏快取，重新打 API（第二次成功）
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!.textContent).toContain("98.86");
+  });
 });
