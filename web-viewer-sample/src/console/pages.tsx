@@ -456,8 +456,11 @@ export function ConversionSchedulingPage() {
     //   - 曾失敗（{ error }）→ **刻意不擋，落到下方重新 fetch**（收合後再展開錯誤態 job＝使用者重試，
     //     符合誠實鐵律：錯誤不黏住，給重試機會）。故守門只擋「成功快取」與「載入中」，不擋 error 態。
     const cached = cov[id];
-    if (cached && cached !== "loading" && !("error" in (cached as object))) return; // 已成功 → 重用
+    // 先把 string 態（"loading"）擋掉，讓 TS narrowing 接管：之後 cached 已縮窄為
+    // ConversionQualityMetricsResponse | { error: string } | undefined，"error" in cached 不再需要 cast，
+    // 後續守門順序的正確性由型別系統保護（消除「依賴守門順序」的可維護性風險）。
     if (cached === "loading") return; // 載入中 → 不重打
+    if (cached && !("error" in cached)) return; // 已成功（response 物件，無 error 鍵）→ 重用
     setCov((p) => ({ ...p, [id]: "loading" }));
     try {
       const r = await coordinatorClient.conversionQualityMetrics(job.conversion_job_id);
