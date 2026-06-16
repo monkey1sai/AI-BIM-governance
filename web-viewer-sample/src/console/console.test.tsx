@@ -369,7 +369,9 @@ describe("edge console honesty smoke", () => {
 
     const conv = renderToString(<ConversionSchedulingPage />);
     expect(conv).toContain("IFC→USD 轉檔排程");
-    expect(conv).toContain("mapping coverage");
+    // m2a-coverage-report：原 "mapping coverage" 佔位 Field 已移除，coverage 改由 #conv job 表的
+    // 展開抽屜（conv-coverage-toggle-*）呈現真資料；smoke 改驗保留的 conversion authority Field。
+    expect(conv).toContain("conversion authority");
     expect(conv).toContain("/api/external/ifc-ready");
 
     const sessions = renderToString(<SessionManagementPage />);

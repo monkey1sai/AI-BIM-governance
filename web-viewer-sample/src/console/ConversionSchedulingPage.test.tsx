@@ -131,3 +131,81 @@ describe("ConversionSchedulingPage：minio-watch 與 ifc-ready 錯誤獨立", ()
     expect(panel!.textContent).toContain("watcher enabled but not yet started");
   });
 });
+
+describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+  const job: IfcReadyListItem = {
+    project_id: "270", download_status: "downloaded", conversion_authority: "bim-streaming-server",
+    review_session_id: null, viewer_url: null, expected_stage_url: null, expected_mapping_url: null,
+    created_at: "2026-06-16T00:00:00Z", ifc_ready_job_id: "ifcready_cov", external_model_version_id: "ext_cov",
+    status: "dispatched", conversion_status: "succeeded", dispatch_error: null,
+    conversion_job_id: "stream_conv_20260616_cov",
+  };
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div"); document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container); vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  it("展開有 conversion_job_id 的 job → 呼叫 conversionQualityMetrics、顯示 coverage%(×100)+mapped/unmapped", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockResolvedValue({
+      conversion_job_id: "stream_conv_20260616_cov",
+      quality_metrics_summary: {
+        coverage_ratio: 0.9886, coverage_status: "warn", mapped_count: 988, unmapped_count: 12,
+        source_ifc_entity_count: 1000, materialization_strategy: "sidecar",
+        conversion_duration_seconds: 73.5,
+      },
+      usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    // 點展開鈕（穩定 testid）
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    expect(toggle).not.toBeNull();
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(spy).toHaveBeenCalledWith("stream_conv_20260616_cov");
+    const drawer = container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!;
+    expect(drawer.textContent).toContain("98.86"); // coverage_ratio×100 原樣
+    expect(drawer.textContent).toContain("988");    // mapped
+    expect(drawer.textContent).toContain("12");     // unmapped
+    expect(drawer.textContent).toContain("73.5");   // conversion_duration_seconds（spec §4.4 必顯欄）
+    expect(drawer.textContent).toContain("model.usdc");
+    expect(drawer.textContent).toContain("未提供");  // 三項拆分誠實標
+  });
+
+  it("無 conversion_job_id 的 job → 不可展開、顯尚未派工", async () => {
+    const noConv: IfcReadyListItem = { ...job, ifc_ready_job_id: "ifcready_noconv", conversion_job_id: null, conversion_status: "pending" };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [noConv] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="conv-coverage-toggle-ifcready_noconv"]')).toBeNull();
+    expect(container.textContent).toContain("尚未派工");
+  });
+
+  it("展開遇 route 錯誤 → 顯誠實錯誤、不顯任何 coverage 數字", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockRejectedValue(new Error("/api/conversions/... -> 502"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    const drawer = container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!;
+    expect(drawer.textContent).toContain("/api/conversions");
+    expect(drawer.textContent).not.toMatch(/\d+\.\d+\s*%/); // 無假百分比
+  });
+});
