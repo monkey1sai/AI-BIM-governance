@@ -582,6 +582,36 @@ export function createCoordinatorApp(
     response.json(buildStreamConfig(session, [], config));
   });
 
+  // m2a-coverage-report:production 唯讀 passthrough。以 conversion_job_id 取後端品質摘要,
+  // 不綁 review session。coordinator 零計算 —— 值全來自 buildQualityMetricsSummary（與
+  // stream-config 同一真相源）。錯誤路徑一律不回捏造 coverage。
+  app.get("/api/conversions/:conversionJobId/quality-metrics", async (request, response) => {
+    const jobId = request.params.conversionJobId;
+    if (!isSafeConversionJobId(jobId)) {
+      response.status(400).json({ detail: "Invalid conversion job id." });
+      return;
+    }
+    try {
+      const result = await streamingConversionClient.fetchConversionResult(jobId);
+      const summary = buildQualityMetricsSummary(result);
+      response.json({
+        conversion_job_id: result.conversion_job_id,
+        quality_metrics_summary: summary, // 可能為 null（result 無 quality_metrics）—— 誠實「未取得」
+        usdc_url: result.usdc_ref,
+        mapping_url: result.element_mapping_ref,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/API 404\b/.test(msg)) {
+        response.status(404).json({ detail: "Conversion job result not found." });
+        return;
+      }
+      const name = err instanceof Error ? err.name : "";
+      const code = name === "TimeoutError" || /timeout|aborted/i.test(msg) ? 503 : 502;
+      response.status(code).json({ detail: `Conversion authority unreachable: ${msg}` });
+    }
+  });
+
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
