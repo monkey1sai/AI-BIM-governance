@@ -303,3 +303,26 @@ describe("conversion control routes — retry", () => {
     stub.releaseNext(); // teardown
   });
 });
+
+describe("conversion control routes — IP 守門（IMPORTANT 1）", () => {
+  // 兩條控制路由是協調器 control-plane 的 mutation surface;AGENTS.md MUST NOT 禁止
+  // 「外部公司雲端 control-plane 取代」。沿用 /api/external/ifc-ready 的 IP allowlist
+  // 模式(isIpAllowed + externalIntakeIpAllowlist)阻擋非本地請求。supertest 走 loopback,
+  // 故把 allowlist 設成排除 loopback 的網段 → 預期 403(在 id 驗證之前先擋)。
+  it("prioritize：caller IP 不在 allowlist → 403（在 id/state 檢查之前）", async () => {
+    const app = makeApp({ externalIntakeIpAllowlist: ["10.0.0.0/8"] });
+    const res = await request(app.app).post(`/api/conversion/jobs/ifcready_anything/prioritize`).send({});
+    expect(res.status).toBe(403);
+  });
+  it("retry：caller IP 不在 allowlist → 403（在 id/state 檢查之前）", async () => {
+    const app = makeApp({ externalIntakeIpAllowlist: ["10.0.0.0/8"] });
+    const res = await request(app.app).post(`/api/conversion/jobs/ifcready_anything/retry`).send({});
+    expect(res.status).toBe(403);
+  });
+  it("prioritize：loopback 在預設 allowlist → 非 403（落到 404 找不到 job）", async () => {
+    const app = makeApp({ streamingConversionApiBase: "http://127.0.0.1:1" });
+    const res = await request(app.app).post(`/api/conversion/jobs/ifcready_nope/prioritize`).send({});
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(404);
+  });
+});

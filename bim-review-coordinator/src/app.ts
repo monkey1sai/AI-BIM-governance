@@ -646,8 +646,21 @@ export function createCoordinatorApp(
     const body = request.body as { reason?: unknown } | undefined;
     return typeof body?.reason === "string" ? body.reason.slice(0, 500) : "";
   }
+  // 控制路由的最小守門：沿用 /api/external/ifc-ready 的 IP allowlist（isIpAllowed +
+  // externalIntakeIpAllowlist）阻擋非本地請求。這兩條路由是協調器 control-plane 的
+  // mutation surface；AGENTS.md MUST NOT 禁止「外部公司雲端 control-plane 取代」，
+  // 故 LAN/CORS 任意 origin 不得匿名寫入。回 true 表示已寫 403 並終止。
+  function rejectIfIpNotAllowed(request: express.Request, response: express.Response): boolean {
+    const clientIp = request.ip || request.socket.remoteAddress || "";
+    if (!isIpAllowed(clientIp, config.externalIntakeIpAllowlist)) {
+      response.status(403).json({ detail: "caller ip not in allowlist" });
+      return true;
+    }
+    return false;
+  }
 
   app.post("/api/conversion/jobs/:id/prioritize", (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;
     const id = request.params.id;
     if (!isSafeIfcReadyJobId(id)) {
       response.status(400).json({ detail: "Invalid ifc-ready job id." });
@@ -685,6 +698,7 @@ export function createCoordinatorApp(
   });
 
   app.post("/api/conversion/jobs/:id/retry", (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;
     const id = request.params.id;
     if (!isSafeIfcReadyJobId(id)) {
       response.status(400).json({ detail: "Invalid ifc-ready job id." });
@@ -706,7 +720,14 @@ export function createCoordinatorApp(
     }
     // 直接用 requeue 回傳 position（不用 0 哨兵 — 0 是 getQueuePosition 的 in-flight 專用值）。
     const pos = conversionDispatchQueue.requeue(id);
-    externalIfcReadyStore.markQueuedForConversion(id, pos ?? 1);
+    if (pos === null) {
+      // requeue 回 null 唯一語意：jobId 正 in-flight（worker 兩個 event-loop tick 間推進的
+      // 競態）。上游狀態守門在單執行緒下已排除絕大多數，但此處不靜默 fallback 成 position=1
+      // 造成 store／response 不一致；改回明確 409，讓前端「插隊鈕 disabled」判定不誤判。
+      response.status(409).json({ detail: "Job became in-flight; retry not applicable." });
+      return;
+    }
+    externalIfcReadyStore.markQueuedForConversion(id, pos);
     const reason = parseReason(request);
     const actor = resolveActor(request);
     structLog.withTraceId(id).audit("conversion-control", "conversion.retry", {
