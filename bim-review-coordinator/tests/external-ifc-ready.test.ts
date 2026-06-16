@@ -263,6 +263,10 @@ describe("POST /api/external/ifc-ready", () => {
     });
     expect(listed.body.items[0]).not.toHaveProperty("idempotency_key");
     expect(listed.body.items[0]).not.toHaveProperty("callback_url");
+    // conv-prioritize-retry (cr1 BLOCKER 2 回歸鎖):列表端點 summarizeIfcReadyJob 必須上 wire
+    // queue_position(dispatched 後為 null);否則 #conv 經列表取件時插隊鈕 disabled 條件失效。
+    expect(listed.body.items[0]).toHaveProperty("queue_position");
+    expect(listed.body.items[0].queue_position).toBeNull();
   });
 
   it("對相同 X-Idempotency-Key 為 idempotent（回相同 job、replay 標記）", async () => {

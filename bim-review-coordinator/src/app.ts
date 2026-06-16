@@ -672,7 +672,7 @@ export function createCoordinatorApp(
     const reason = parseReason(request);
     const actor = resolveActor(request);
     structLog.withTraceId(id).audit("conversion-control", "conversion.prioritize", {
-      action: "conversion.prioritize", actor, target: id,
+      action: "conversion.prioritize", actor, target: id, reason,
     }, "info");
     const updated = externalIfcReadyStore.get(id);
     response.json({
@@ -710,7 +710,7 @@ export function createCoordinatorApp(
     const reason = parseReason(request);
     const actor = resolveActor(request);
     structLog.withTraceId(id).audit("conversion-control", "conversion.retry", {
-      action: "conversion.retry", actor, target: id,
+      action: "conversion.retry", actor, target: id, reason,
     }, "info");
     response.json({
       ifc_ready_job_id: id,
@@ -2078,6 +2078,9 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
   return {
     ifc_ready_job_id: job.ifc_ready_job_id,
     status: job.status,
+    // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
+    // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive。
+    queue_position: job.queue_position ?? null,
     tenant_id: job.tenant_id,
     project_id: job.project_id,
     external_model_version_id: job.external_model_version_id,

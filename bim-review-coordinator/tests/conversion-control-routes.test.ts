@@ -7,6 +7,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
+import { createLogger, type StructLogger } from "../src/lib/structLog.js";
 
 // conv-prioritize-retry §6.3:協調器自有 dispatch 佇列的 controlled action route 測試。
 // harness 逐字沿用 conversion-dispatch-queue.test.ts（CONTRACT / makeApp / authHeaders /
@@ -36,18 +37,31 @@ afterEach(async () => {
   }
 });
 
-function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
+function makeApp(overrides: Partial<CoordinatorConfig> = {}, structLog?: StructLogger): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-control-test-"));
-  active = createCoordinatorApp({
-    sessionStoreDir: path.join(root, "sessions"),
-    eventLogDir: path.join(root, "events"),
-    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    streamingConversionApiBase: "http://127.0.0.1:1",
-    corsOrigins: ["http://127.0.0.1:5173"],
-    conversionPollEnabled: false,
-    ...overrides,
-  });
+  active = createCoordinatorApp(
+    {
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      streamingConversionApiBase: "http://127.0.0.1:1",
+      corsOrigins: ["http://127.0.0.1:5173"],
+      conversionPollEnabled: false,
+      ...overrides,
+    },
+    structLog ? { structLog } : {},
+  );
   return active;
+}
+
+/** 讀 audit-capable logger 寫出的 jsonl,回 event_type=audit 的 record 陣列。 */
+function readAuditRecords(logger: StructLogger): Array<Record<string, unknown>> {
+  const text = fs.readFileSync(logger.currentFile(), "utf-8").trim();
+  if (!text) return [];
+  return text
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((rec) => rec.event_type === "audit");
 }
 
 function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -234,5 +248,58 @@ describe("conversion control routes — retry", () => {
     await waitFor(async () => (await request(app.app).get(`/api/external/ifc-ready/${jobA}`)).body.status === "dispatched");
     const res = await request(app.app).post(`/api/conversion/jobs/${jobA}/retry`).send({});
     expect(res.status).toBe(409);
+  });
+
+  it("dropped_on_restart（dispose 後 pending 脈絡確失）→ retry → 422「請重新進件」", async () => {
+    // §4.2 / §6.3「retry：脈絡失效→422」。dispose() 把 queued job 標 dropped_on_restart
+    // 並刪除其 pendingDispatchEvents 脈絡;此後 retry 雖然 status 合法(dropped_on_restart
+    // ∈ 可重試)但 pending 確不存在 → 422,不假裝可重試。
+    const stub = await startControllableStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: stub.baseUrl });
+    // A in-flight(hold)→ B queued。
+    await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_drop_A", "idem_drop_A")).send(payload());
+    await waitFor(() => stub.bodies.length >= 1);
+    const b = await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_drop_B", "idem_drop_B")).send(payload({ external_model_version_id: "ext_drop_B" }));
+    const jobB = b.body.ifc_ready_job_id as string;
+    await waitFor(async () => (await request(app.app).get(`/api/external/ifc-ready/${jobB}`)).body.status === "queued_for_conversion");
+    // dispose:drain queued → B 變 dropped_on_restart 且 pending 被刪。
+    await app.dispose();
+    const bAfter = await request(app.app).get(`/api/external/ifc-ready/${jobB}`);
+    expect(bAfter.body.status).toBe("dropped_on_restart");
+    // 狀態本身合法(否則會 409),但脈絡確失 → 422。
+    const retry = await request(app.app).post(`/api/conversion/jobs/${jobB}/retry`).send({ reason: "after restart" });
+    expect(retry.status).toBe(422);
+    expect(retry.body.detail).toMatch(/re-POST|re-post|重新進件|context lost/i);
+    stub.releaseNext(); // teardown：放行 in-flight A
+  });
+
+  it("prioritize / retry 成功時 reason 寫入 audit log（模式 3 ③）", async () => {
+    // §2 第 4 點 + §6.3「reason 進 audit」:操作者 confirm 對話框填入的 reason 必須出現在
+    // audit trail,而非僅 HTTP response。注入 tmp-dir logger 讀回 jsonl 驗 audit record。
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-control-audit-"));
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260616_120000_abc123", skipEnvSnapshot: true });
+    const stub = await startControllableStreamingStub();
+    const app = makeApp({ streamingConversionApiBase: stub.baseUrl }, logger);
+    // A in-flight(hold)→ B/C queued,prioritize C(reason)。
+    await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_aud_A", "idem_aud_A")).send(payload());
+    await waitFor(() => stub.bodies.length >= 1);
+    await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_aud_B", "idem_aud_B")).send(payload({ external_model_version_id: "ext_aud_B" }));
+    const c = await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_aud_C", "idem_aud_C")).send(payload({ external_model_version_id: "ext_aud_C" }));
+    const jobC = c.body.ifc_ready_job_id as string;
+    await waitFor(async () => (await request(app.app).get(`/api/external/ifc-ready/${jobC}`)).body.status === "queued_for_conversion");
+
+    const res = await request(app.app).post(`/api/conversion/jobs/${jobC}/prioritize`).send({ reason: "very urgent client demo" });
+    expect(res.status).toBe(200);
+    expect(res.body.reason).toBe("very urgent client demo");
+
+    const audits = readAuditRecords(logger);
+    const prioritizeAudit = audits.find((rec) => (rec.data as Record<string, unknown>)?.action === "conversion.prioritize");
+    expect(prioritizeAudit).toBeDefined();
+    const auditData = prioritizeAudit!.data as Record<string, unknown>;
+    expect(auditData.action).toBe("conversion.prioritize");
+    expect(auditData.target).toBe(jobC);
+    expect(auditData.reason).toBe("very urgent client demo");
+    expect(auditData.actor).toBe("local-operator");
+    stub.releaseNext(); // teardown
   });
 });
