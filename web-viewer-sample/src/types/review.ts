@@ -16,6 +16,10 @@ export interface ConversionQualityMetricsSummary {
     materialization_strategy?: string | null;
     coverage_ratio?: number | null;
     coverage_status?: string | null;
+    // m2a-coverage-report:additive 對應/未對應構件數,供 #conv coverage 展開顯示。
+    // strictly additive + optional,既有 caller 不需提供。
+    mapped_count?: number | null;
+    unmapped_count?: number | null;
     conversion_duration_seconds?: number | null;
     // streaming-server-fallback-semantic-mapping(C1):fallback 提供的 IFC 語意
     // mapping fidelity 訊號。viewer 依 mapping_has_ifc_type / mapping_has_ifc_name
