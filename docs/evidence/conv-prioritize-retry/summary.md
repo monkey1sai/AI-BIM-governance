@@ -13,6 +13,34 @@ E2E spec 檔：`web-viewer-sample/e2e/conv-prioritize-retry.spec.ts`（守門 + 
 `POST /api/conversion/jobs/:id/{retry,prioritize}` → 觀察一次真後端 2xx 回應 → 列依回傳真狀態刷新
 （非樂觀：POST 成功後 `load()` 重抓真佇列）。
 
+## ✅ P4 指揮官取證（2026-06-17）：controlled-action slice **真綠**（retry 路徑）
+
+前述 task#7 subagent 各輪皆 honest-skip（前置佇列無可控制 job；subagent 邊界不重啟外部行程 / 不改 `.env`、
+不為取證偽造佇列狀態）。**P4 階段由指揮官（主對話）親自編排可控 seeded stack，slice 已實際綠**：
+
+- **seed 方法（誠實揭露，非偽造資料）**：起一個可控 streaming stub（`/tmp/streaming-stub.cjs`）——
+  第 1 次 `POST /api/conversions/ifc-to-usdc` 回 `500`（→ 種出 `dispatch_failed`）、第 2 次起 hang
+  （→ retry 重派停在 in-flight/`queued_for_conversion`，斷言可觀察）。起 fresh branch coordinator
+  `:8005`（`STREAMING_CONVERSION_API_BASE=http://127.0.0.1:59998` 指向 stub、`CONVERSION_POLL_ENABLED=false`、
+  `CORS_ORIGINS` 含 `:5180`、webhook secret `dev-webhook-secret`）。`POST /api/external/ifc-ready`
+  種一筆真 job（download 非 strict → fallback → 派工 → stub 500 → `dispatch_failed`）。佇列狀態為**真後端產生**，非 mock。
+- **指令**：`E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 npx playwright test e2e/conv-prioritize-retry.spec.ts --project=chromium`
+- **結果**：**2 passed（EXIT=0）**，見 `playwright-slice-green-run.txt`：
+  - `控制鈕 → IntentDialog → 真 POST → 列依真狀態刷新`（**1.2s, PASS**）——找到 seeded `dispatch_failed` job
+    `ifcready_1781634672335_b713e666` → 點 `conv-retry-<id>` → 開 `IntentDialog` → confirm → 真
+    `POST /api/conversion/jobs/<id>/retry` 回 **2xx**、`postBody.status==="queued_for_conversion"` →
+    `load()` 重抓、dialog 關閉 → 二次 GET 確認該 job `status==="queued_for_conversion"`（真因果，retry 重派停在 in-flight）。
+  - render-surface 證據（0.77s, PASS）。
+  - `notObserved`：本輪 seed 的是 `dispatch_failed` → 走 **retry** 路徑；**prioritize** 路徑本輪未觀察
+    （需多筆 `queued_for_conversion`+`queue_position>=2`，由 `conversion-control-routes.test.ts` 兜底），afterAll 已誠實印出。
+- **截圖**：`conv-prioritize-retry-retry-slice.png`（tracked，本 dir）——`#conv` 真頁面含 seeded job 列與插隊/重試控制鈕；
+  另落 `artifacts/e2e/conv-prioritize-retry-retry.png`（本機）。
+- **engine**：Playwright（chromium）；**mock=false**（真 coordinator + 真 POST + 真佇列狀態轉移，stub 僅模擬下游 streaming server 行為以製造可控可達的 `dispatch_failed`，非偽造佇列資料）。
+
+> 誠實鐵律：stub 模擬的是**下游 conversion authority（:49101）的回應行為**（500 then hang），用以製造
+> 可重現的 `dispatch_failed` → retry 因果；coordinator 佇列狀態、控制路由、前端互動全為真實 branch 碼。
+> 這不是「假佇列」——是把真實會發生的「authority 派工失敗 → operator 重試」情境以可控方式重現。
+
 ## 本輪執行（2026-06-16，branch feat/conv-prioritize-retry）
 
 - 指令：`cd web-viewer-sample && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 npx playwright test e2e/conv-prioritize-retry.spec.ts`
