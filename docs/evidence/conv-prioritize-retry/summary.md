@@ -23,6 +23,15 @@ E2E spec 檔：`web-viewer-sample/e2e/conv-prioritize-retry.spec.ts`（守門 + 
   - viewer 由 `playwright.config.ts` webServer 在 `:5180` 起 fresh build。
 - 結果：**1 skipped（計 pass，EXIT=0）**，見 `playwright-run.txt`、`conv-prioritize-retry-trace.zip`。
 
+> task#7 spec-compliance fix 補記（2026-06-17）：對齊規格範本，`test.describe` 改為
+> `IX-CV-03 #conv 插隊／重試 controlled action`、單一測試名改為
+> `控制鈕 → IntentDialog → 真 POST → 列依真狀態刷新`，並把 `notObserved` 揭露由 test body
+> 的 `test.info().annotations` 改回 `test.afterAll` console 輸出（skip 下 test body 不執行，
+> 唯 afterAll 仍跑，才不漏記揭露）。重跑驗證仍為 **1 skipped, EXIT=0**，且 afterAll 確實印出
+> `[conv-prioritize-retry] notObserved: [...]`（見更新後 `playwright-run.txt`）；`playwright-run.txt`
+> 已替換為與新名一致的真實 run 記錄。重跑當下未重新確認 `:8005`/`:49101` 前置實況（直接命中
+> `beforeEach` skip），上方前置實況段為原 2026-06-16 觀察，保留不竄改。
+
 ### 為何本輪是 honest skip（not observed，非 fail、非偽綠）
 
 `beforeEach` 守門查 `:8005` ifc-ready 佇列，本輪僅 1 筆 job：

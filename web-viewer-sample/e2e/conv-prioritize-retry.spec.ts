@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-// M2-b #conv 轉檔佇列「插隊／重試」控制動作 端到端（IX-CV-03，產品首個 controlled action）：
+// IX-CV-03 #conv 轉檔佇列「插隊／重試」控制動作 端到端（M2-b，產品首個 controlled action）：
 // #conv「Refresh queue」→ 對 live 測試區實際存在的佇列狀態，驗端到端控制切片
 //   列出現對應控制鈕 → 點按開 IntentDialog → 確認 → 觀察到一次真後端狀態回應
 //   （POST 2xx + 列依回傳真狀態刷新）。誠實鐵律：無樂觀更新（POST 成功後 load() 重抓真狀態）、
@@ -57,7 +57,7 @@ function pickControllableJob(items: IfcReadyJob[]):
   return null;
 }
 
-test.describe("M2-b #conv 轉檔佇列插隊／重試控制動作", () => {
+test.describe("IX-CV-03 #conv 插隊／重試 controlled action", () => {
   test.setTimeout(120_000);
 
   let pick:
@@ -79,14 +79,20 @@ test.describe("M2-b #conv 轉檔佇列插隊／重試控制動作", () => {
     } catch {
       found = null;
     }
+    if (!found) {
+      // 前置缺失：守門即將 skip，於此 push notObserved，afterAll 才能在 test body 未執行下仍揭露。
+      notObserved.push(
+        "no dispatch_failed/dropped_on_restart 或 queued(非隊首) job 可驗；按鈕 → IntentDialog → 真 POST → 列刷新 這條 browser 切片本輪 not observed，深度因果由 conversion-control-routes.test.ts 兜底。",
+      );
+    }
     test.skip(
       !found,
-      "需 branch coordinator :8005 佇列有一筆 dispatch_failed/dropped_on_restart（走重試）或 queued_for_conversion+queue_position>=2（走插隊）的 job；見檔頭前置。",
+      "需 branch coordinator :8005 佇列有一筆 dispatch_failed/dropped_on_restart（走重試）或 queued_for_conversion+queue_position>=2（走插隊）的 job；見檔頭前置。深度因果由 route 測試兜底。",
     );
     pick = found;
   });
 
-  test("#conv Refresh → 對可控制 job 點控制鈕 → IntentDialog confirm → 真 POST → 列依後端真狀態刷新", async ({
+  test("控制鈕 → IntentDialog → 真 POST → 列依真狀態刷新", async ({
     page,
   }) => {
     const { kind, job } = pick!;
@@ -171,11 +177,12 @@ test.describe("M2-b #conv 轉檔佇列插隊／重試控制動作", () => {
       path: `../artifacts/e2e/conv-prioritize-retry-${kind}.png`,
       fullPage: true,
     });
+  });
 
-    // 誠實揭露：本輪未觀察到的另一條轉移（route 測試兜底深度因果）。
-    test.info().annotations.push({
-      type: "notObserved",
-      description: notObserved.join(" | "),
-    });
+  // 誠實揭露：在 afterAll 統一輸出本輪未觀察到的轉移；即使 beforeEach 守門 skip 致 test body
+  // 未執行（前置缺失情境），afterAll 仍會跑，故 notObserved 揭露在 skip 下不會漏記
+  // （深度因果由 conversion-control-routes.test.ts 兜底）。
+  test.afterAll(() => {
+    if (notObserved.length) console.log("[conv-prioritize-retry] notObserved:", JSON.stringify(notObserved));
   });
 });
