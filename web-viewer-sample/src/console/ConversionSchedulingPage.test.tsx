@@ -406,6 +406,16 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     updated_at: "2026-06-16T00:00:00Z",
   };
 
+  // spec §2.2/§4.6：retry 的另一合法觸發狀態（重啟/drain 後 job 被丟棄）。
+  const droppedJob: IfcReadyListItem = {
+    ifc_ready_job_id: "ifcready_dropped", status: "dropped_on_restart", project_id: "271",
+    external_model_version_id: "ext_d", download_status: "downloaded", conversion_status: "dropped_on_restart",
+    conversion_authority: null, conversion_job_id: null, dispatch_error: null,
+    queue_position: null, review_session_id: null, viewer_url: null,
+    expected_stage_url: null, expected_mapping_url: null, created_at: "2026-06-16T00:00:00Z",
+    updated_at: "2026-06-16T00:00:00Z",
+  };
+
   it("dispatch_failed job 顯重試鈕 → 確認 → conversionRetry 被呼叫且 load 重抓", async () => {
     const listSpy = vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [failedJob] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
@@ -454,6 +464,59 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     expect(listSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // 初次 load + 成功後 load
     // 成功後關 dialog（非樂觀，後端真狀態刷新）
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
+  });
+
+  // spec §4.6：queue_position<=1（已隊首）→ 插隊鈕 disabled 且帶 tooltip 說明原因（不可只給灰鈕無解釋）。
+  it("queue_position=1（已隊首）→ 插隊鈕 disabled 且 title 說明已在隊首", async () => {
+    const headJob: IfcReadyListItem = { ...queuedJob, ifc_ready_job_id: "ifcready_head", queue_position: 1 };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [headJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const prioBtn = container.querySelector('[data-testid="conv-prioritize-ifcready_head"]') as HTMLButtonElement;
+    expect(prioBtn).toBeTruthy();
+    expect(prioBtn.disabled).toBe(true);
+    expect(prioBtn.title).toContain("隊首"); // 操作者看得到「為何不可插隊」
+  });
+
+  // spec §4.6：queue_position==null（in-flight，getQueuePosition 對 queued 回 1-based、in-flight 回 0）→
+  // queued_for_conversion 狀態下 position 缺失視為不可插隊（in-flight），disabled 並帶 tooltip。
+  it("queue_position=0（in-flight）→ 插隊鈕 disabled 且 title 說明派工中", async () => {
+    const inflightJob: IfcReadyListItem = { ...queuedJob, ifc_ready_job_id: "ifcready_inflight", queue_position: 0 };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [inflightJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const prioBtn = container.querySelector('[data-testid="conv-prioritize-ifcready_inflight"]') as HTMLButtonElement;
+    expect(prioBtn).toBeTruthy();
+    expect(prioBtn.disabled).toBe(true);
+    expect(prioBtn.title).toContain("派工中"); // in-flight 不可插隊的誠實說明
+  });
+
+  // spec §2.2/§4.6：dropped_on_restart 也是 retry 的合法觸發狀態（與 dispatch_failed 同分支）。
+  // 此前「控制動作」測試只用 dispatch_failed fixture，dropped_on_restart 顯重試鈕這條 branch 無單元保護。
+  it("dropped_on_restart job 顯重試鈕 → 確認 → conversionRetry 被呼叫", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [droppedJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const retrySpy = vi.spyOn(coordinatorClient, "conversionRetry").mockResolvedValue({ ifc_ready_job_id: "ifcready_dropped", status: "queued_for_conversion", queue_position: 1 });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const retryBtn = container.querySelector('[data-testid="conv-retry-ifcready_dropped"]') as HTMLButtonElement;
+    expect(retryBtn).toBeTruthy();
+    await act(async () => { retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(retrySpy).toHaveBeenCalledWith("ifcready_dropped", "");
   });
 
   // spec §5/§4.6「失敗顯誠實錯誤、不關 dialog、不改狀態」：runAction catch 分支（setErr + pendingAction 保留）。

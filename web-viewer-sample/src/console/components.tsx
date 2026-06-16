@@ -77,6 +77,7 @@ export function Metric({ value, label, tone }: { value: React.ReactNode; label: 
 
 // 按鈕強制 caption（說明來源 / 行為），呼應原型誠實契約。
 // data-testid 為選用、僅在提供時轉發到 <button>（供 E2E 穩定選取），對既有呼叫者零行為變更。
+// title 為選用 tooltip（如 disabled 鈕說明為何不可操作），未提供時 title={undefined} 不渲染屬性，對既有呼叫者零行為變更。
 export function Btn({
   children,
   caption,
@@ -84,6 +85,7 @@ export function Btn({
   primary,
   disabled,
   onClick,
+  title,
   "data-testid": testId,
 }: {
   children: React.ReactNode;
@@ -92,10 +94,11 @@ export function Btn({
   primary?: boolean;
   disabled?: boolean;
   onClick?: () => void;
+  title?: string;
   "data-testid"?: string;
 }) {
   return (
-    <button className={`ec-btn ${primary ? "primary" : ""}`} disabled={disabled} onClick={onClick} data-testid={testId}>
+    <button className={`ec-btn ${primary ? "primary" : ""}`} disabled={disabled} onClick={onClick} title={title} data-testid={testId}>
       {children}
       {prov && <ProvTag prov={prov} />}
       {caption && <span className="ec-cap">{caption}</span>}

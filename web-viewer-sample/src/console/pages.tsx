@@ -598,6 +598,12 @@ export function ConversionSchedulingPage() {
                       <Btn
                         data-testid={`conv-prioritize-${j.ifc_ready_job_id}`}
                         disabled={j.queue_position == null || j.queue_position <= 1}
+                        title={
+                          j.queue_position == null ? "佇列位置未知，暫不可插隊"
+                          : j.queue_position === 0 ? "正在派工中（in-flight），不可插隊"
+                          : j.queue_position <= 1 ? "已在隊首（position 1），無需插隊"
+                          : undefined
+                        }
                         onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
                       >插隊</Btn>
                     )}
