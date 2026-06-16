@@ -71,15 +71,34 @@ setup step（起 coordinator + 種可控制 job），不能只靠這裡的 condi
   （控制鈕 → IntentDialog → 真 POST mock → 列刷新；插隊鈕在隊首/in-flight disabled；
   POST 失敗不關 dialog）。
 
+## render-surface 截圖證據（2026-06-17，spec-compliance fix：補 tracked .png）
+
+task#7 requirement 要求「把截圖 + summary 複製到 tracked `docs/evidence/conv-prioritize-retry/`」，
+但前兩輪 controlled-action slice 皆 honest skip（前置佇列無可控制 job、test body 未執行），故無 slice
+截圖、evidence dir 缺 `.png`（與 conv-coverage-report / a1-m1-closeout / a2 等 peer evidence dir 不一致）。
+
+本輪在 spec 內新增**獨立**的 render-surface 證據 test（`test.describe("…render-surface 證據…")`，不受
+slice 的 `beforeEach` 守門），無條件渲染 `#conv` 真頁面 → 按 `Refresh queue` 載入 branch coordinator
+`:8005` 的真佇列 → 截圖 `conv-render-surface.png`（PASS, 891ms）。截圖內容為 IFC→USD 轉檔排程頁
+（插隊／重試控制鈕所在的真實 render surface，含 :8005 真佇列那筆 `dispatched` job）。
+
+**誠實鐵律邊界**：此 `.png` **只**證明 `#conv` 真頁面渲染 + 截圖路徑機制可落點，**不**等於觀察到
+controlled action（按鈕 → IntentDialog → 真 POST → 列刷新）。controlled-action slice 仍 honest skip、
+不被本截圖偽綠；深度控制因果由 `conversion-control-routes.test.ts`（14 passed）與
+`ConversionSchedulingPage.test.tsx` 單元切片兜底。亦同步落 `artifacts/e2e/conv-prioritize-retry-render-surface.png`
+供本機檢視（非 tracked）。
+
 ## notObserved（誠實揭露）
 
 - 本輪 browser 端未實際點到 `conv-retry`/`conv-prioritize`（前置佇列無可控制 job）；
-  按鈕 → IntentDialog → 真 POST → 列刷新 這條 browser 切片本輪 not observed。
-- 未截到 `#conv` 畫面截圖（skip 發生在 `beforeEach`，test body 未執行）；trace.zip 為 Playwright
-  框架層 trace 抽樣（含 webServer 啟動與守門 GET），非 slice 截圖。
+  按鈕 → IntentDialog → 真 POST → 列刷新 這條 controlled-action browser 切片本輪 not observed。
+- 故 controlled-action **slice 截圖**（`conv-prioritize-retry-retry.png`/`…-prioritize.png`）本輪未產生；
+  上方 render-surface `.png` 是 `#conv` 頁面渲染證據，非 slice 觀察截圖（兩者語意不同，不可混為已驗控制動作）。
+- trace.zip 為 Playwright 框架層 trace 抽樣（含 webServer 啟動與守門 GET）。
 
 ## 檔案
 
-- `playwright-run.txt` — 本輪 Playwright 執行輸出（1 skipped, EXIT=0）。
+- `playwright-run.txt` — Playwright 執行輸出（1 skipped + 1 passed render-surface, EXIT=0）。
+- `conv-render-surface.png` — `#conv` 真頁面 render surface 截圖（render 證據，非 controlled-action slice 截圖）。
 - `conv-prioritize-retry-trace.zip` — Playwright trace 抽樣。
 - `conversion-control-routes-backstop.txt` — 深度因果 route 測試 14 passed 輸出。

@@ -186,3 +186,36 @@ test.describe("IX-CV-03 #conv 插隊／重試 controlled action", () => {
     if (notObserved.length) console.log("[conv-prioritize-retry] notObserved:", JSON.stringify(notObserved));
   });
 });
+
+// render-surface 證據（與上方 controlled-action slice 分離、不受其 beforeEach 守門）：
+// 無條件渲染 `#conv` 真頁面、按 Refresh queue 載入 branch coordinator :8005 的真佇列，截圖落
+// tracked evidence dir，作為「插隊／重試控制鈕所在的真實 render surface」抽樣。
+// 誠實鐵律：此截圖**只證明 `#conv` 真頁面渲染 + 截圖路徑機制可落點**，**不**等於觀察到 controlled
+// action（按鈕 → IntentDialog → 真 POST → 列刷新）；該深度切片由上方 slice test（前置齊全才跑）與
+// conversion-control-routes.test.ts（14 passed）兜底。佇列無可控制 job 時上方 slice 仍 honest skip，
+// 本截圖不偽綠該 slice，也不宣稱已驗控制動作。
+test.describe("conv-prioritize-retry render-surface 證據（非 controlled-action 觀察）", () => {
+  test.setTimeout(60_000);
+
+  test("渲染 #conv 真頁面 → Refresh queue → 截圖 render surface（evidence）", async ({
+    page,
+  }) => {
+    await page.goto(`/#conv`);
+    const refresh = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+    await refresh.waitFor({ state: "visible", timeout: 30_000 });
+    await refresh.click();
+    // 等佇列表渲染（IFC→USD 轉檔排程頁標題即代表 #conv 真頁面已掛載）。
+    await expect(
+      page.getByText("IFC→USD 轉檔排程", { exact: false }),
+    ).toBeVisible({ timeout: 30_000 });
+    // 落 tracked evidence dir（render surface 抽樣，非 slice 截圖）；同時落 artifacts/e2e 供本機檢視。
+    await page.screenshot({
+      path: "../docs/evidence/conv-prioritize-retry/conv-render-surface.png",
+      fullPage: true,
+    });
+    await page.screenshot({
+      path: "../artifacts/e2e/conv-prioritize-retry-render-surface.png",
+      fullPage: true,
+    });
+  });
+});

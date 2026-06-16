@@ -1,13 +1,25 @@
 
-Running 1 test using 1 worker
+Running 2 tests using 1 worker
 
 [conv-prioritize-retry] notObserved: ["no dispatch_failed/dropped_on_restart 或 queued(非隊首) job 可驗；按鈕 → IntentDialog → 真 POST → 列刷新 這條 browser 切片本輪 not observed，深度因果由 conversion-control-routes.test.ts 兜底。"]
   -  1 [chromium] › e2e\conv-prioritize-retry.spec.ts:95:3 › IX-CV-03 #conv 插隊／重試 controlled action › 控制鈕 → IntentDialog → 真 POST → 列依真狀態刷新
+  ✓  2 [chromium] › e2e\conv-prioritize-retry.spec.ts:200:3 › conv-prioritize-retry render-surface 證據（非 controlled-action 觀察） › 渲染 #conv 真頁面 → Refresh queue → 截圖 render surface（evidence） (891ms)
 
   1 skipped
+  1 passed (3.5s)
 
-# 2026-06-17 第二輪：playwright.config.ts webServer 補注 VITE_COORDINATOR_API_BASE（由
-# E2E_COORDINATOR_BASE_URL 帶入，缺省 http://127.0.0.1:8005）後重跑，EXIT=0。webServer 正常起在
-# :5180、守門 GET :8005 ifc-ready 佇列無可控制 job → conditional skip（計 pass）。config fix 只移除
-# 「即使前置齊全也命中不到 :8005」的結構性阻礙，不改變本輪 honest skip 結果（佇列無 dispatch_failed/
-# queued 非隊首 job 可驗）；非偽綠。
+# 2026-06-17 第三輪（spec-compliance fix：補 tracked render-surface 截圖證據）：
+# 指令 cd web-viewer-sample && E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 \
+#   npx playwright test e2e/conv-prioritize-retry.spec.ts，EXIT=0。
+# - controlled-action slice（test #1）：beforeEach 守門查 :8005 ifc-ready 佇列，本輪僅 1 筆 job
+#   ifcready_1781590085298_904c631e | status=dispatched | queue_position=None（已派工成功），
+#   無 dispatch_failed/dropped_on_restart（重試路徑）、無 queued_for_conversion+queue_position>=2
+#   （插隊路徑）→ honest conditional skip（計 pass），afterAll 印出 notObserved（見上）。本輪仍未
+#   偽造佇列狀態（種可控制 job 需重啟 :8005 + 改其 .env 指向 500-stub authority，屬 secrets/外部行程
+#   邊界，本 subagent 不為取證偽造）。
+# - render-surface 證據（test #2，新增、非 controlled-action 觀察）：無條件渲染 #conv 真頁面 → 按
+#   Refresh queue 載入 :8005 真佇列 → 截圖落 docs/evidence/conv-prioritize-retry/conv-render-surface.png
+#   與 artifacts/e2e/conv-prioritize-retry-render-surface.png。PASS（891ms）。此截圖只證明 #conv 真頁面
+#   渲染 + 截圖路徑機制可落點，**不**等於觀察到控制動作；故補足 task#7 evidence dir 缺 .png 的 gap，
+#   不偽綠上方 slice、不宣稱已驗 prioritize/retry 控制因果（該因果由 conversion-control-routes.test.ts
+#   14 passed 與 ConversionSchedulingPage.test.tsx 單元切片兜底）。
