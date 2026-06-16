@@ -23,4 +23,4 @@
 - [x] 3.3 `scripts/deploy.ps1 -Build -SkipKit -SkipConversion -StrictPostVerify`.
 - [x] 3.4 A1/M1 Playwright E2E: `npm run test:e2e -- --project=chromium e2e/a1-m1-closeout.spec.ts`.
 - [x] 3.5 `npx openspec validate governance-service-deploy --strict`.
-- [ ] 3.6 PR review agent check passes.
+- [x] 3.6 PR review agent check passes.
