@@ -32,6 +32,18 @@ async function jsonGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function jsonPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${COORD_BASE}${path}`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // /health 真實回應形狀（app.ts:388）。
 export interface CoordinatorHealth {
   status: string;
@@ -157,6 +169,14 @@ export interface ConversionQualityMetricsResponse {
   mapping_url?: string | null;
 }
 
+// conv-prioritize-retry:POST /api/conversion/jobs/:id/{prioritize,retry} 回應形狀。
+export interface ConversionControlResponse {
+  ifc_ready_job_id: string;
+  status: string;
+  queue_position?: number | null;
+  queued_order?: string[];
+}
+
 export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
@@ -166,6 +186,10 @@ export const coordinatorClient = {
   streamConfig: (sessionId: string) => jsonGet<StreamConfigResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/stream-config`),
   conversionQualityMetrics: (conversionJobId: string) =>
     jsonGet<ConversionQualityMetricsResponse>(`/api/conversions/${encodeURIComponent(conversionJobId)}/quality-metrics`),
+  conversionPrioritize: (id: string, reason?: string) =>
+    jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/prioritize`, { reason }),
+  conversionRetry: (id: string, reason?: string) =>
+    jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/retry`, { reason }),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,
