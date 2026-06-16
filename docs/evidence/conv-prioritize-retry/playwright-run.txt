@@ -5,3 +5,9 @@ Running 1 test using 1 worker
   -  1 [chromium] › e2e\conv-prioritize-retry.spec.ts:95:3 › IX-CV-03 #conv 插隊／重試 controlled action › 控制鈕 → IntentDialog → 真 POST → 列依真狀態刷新
 
   1 skipped
+
+# 2026-06-17 第二輪：playwright.config.ts webServer 補注 VITE_COORDINATOR_API_BASE（由
+# E2E_COORDINATOR_BASE_URL 帶入，缺省 http://127.0.0.1:8005）後重跑，EXIT=0。webServer 正常起在
+# :5180、守門 GET :8005 ifc-ready 佇列無可控制 job → conditional skip（計 pass）。config fix 只移除
+# 「即使前置齊全也命中不到 :8005」的結構性阻礙，不改變本輪 honest skip 結果（佇列無 dispatch_failed/
+# queued 非隊首 job 可驗）；非偽綠。

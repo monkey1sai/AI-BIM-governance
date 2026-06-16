@@ -27,12 +27,21 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   // 專用 E2E port 5180（strictPort + reuseExistingServer:false）：Playwright 每次起一台全新、確定是本 repo
   // 最新碼的 viewer dev server，避開被 docker 容器佔用的 5173/5174，杜絕「打到陳舊 server」的假象。
+  // env：把 viewer 的 coordinator client base（build-time VITE_COORDINATOR_API_BASE，見
+  // src/console/coordinatorClient.ts / src/config/env.ts）綁到 E2E_COORDINATOR_BASE_URL（缺省
+  // http://127.0.0.1:8005 branch coordinator）。Vite 只把 VITE_* 從 dev server 進程 env 注入
+  // import.meta.env，故必須在此 webServer 進程顯式注入，否則 env.ts 會 fallback :8004，browser POST
+  // 打不到 :8005，conv-coverage-report / conv-prioritize-retry 兩支 spec 的真切片無法命中 branch coordinator。
   webServer: [
     {
       command: "npm run dev -- --host 127.0.0.1 --port 5180 --strictPort",
       url: "http://127.0.0.1:5180",
       reuseExistingServer: false,
       timeout: 120_000,
+      env: {
+        VITE_COORDINATOR_API_BASE:
+          process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
+      },
     },
   ],
 });

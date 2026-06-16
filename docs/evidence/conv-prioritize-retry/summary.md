@@ -23,6 +23,18 @@ E2E spec 檔：`web-viewer-sample/e2e/conv-prioritize-retry.spec.ts`（守門 + 
   - viewer 由 `playwright.config.ts` webServer 在 `:5180` 起 fresh build。
 - 結果：**1 skipped（計 pass，EXIT=0）**，見 `playwright-run.txt`、`conv-prioritize-retry-trace.zip`。
 
+> task#7 spec-compliance fix 補記（2026-06-17，第二輪）：修掉 spec 檔頭聲稱「coordinator base 由
+> VITE_COORDINATOR_API_BASE 注入（預設 :8005）」但 `playwright.config.ts` webServer 實際未注入該 env
+> 的結構性 gap。原本 webServer command 無 `env:` 欄位，Vite 不會把 `VITE_COORDINATOR_API_BASE`
+> 帶進 dev server 進程 → `src/config/env.ts` 第 64 行 fallback `http://127.0.0.1:8004`，browser 端
+> `coordinatorClient` 的 POST 會打 :8004 而非 branch coordinator :8005，導致前置齊全時 `page.waitForResponse`
+> 攔不到真 POST、vertical slice 無法正確命中。修法：webServer 加 `env: { VITE_COORDINATOR_API_BASE:
+> E2E_COORDINATOR_BASE_URL || ":8005" }`，使 viewer build-time coordinator base 與 test 端 `COORDINATOR`
+> 常數同源。此 fix 同時修好共用同一 config 的 `conv-coverage-report.spec.ts`。註：本輪仍是 honest skip
+> （前置佇列無可控制 job，種 dispatch_failed job 需重啟 :8005 並改其 `.env` 指向 500-stub authority，
+> 屬 secrets/外部行程邊界，本 subagent 不為取證偽造佇列狀態）；config fix 移除的是「即使前置齊全也命中不到
+> :8005」的結構性阻礙，不偽綠任何 gate。
+>
 > task#7 spec-compliance fix 補記（2026-06-17）：對齊規格範本，`test.describe` 改為
 > `IX-CV-03 #conv 插隊／重試 controlled action`、單一測試名改為
 > `控制鈕 → IntentDialog → 真 POST → 列依真狀態刷新`，並把 `notObserved` 揭露由 test body
