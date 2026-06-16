@@ -280,10 +280,11 @@ describe("ConversionDispatchQueue (unit)", () => {
     expect(queue.getQueuedJobIds()).toEqual(["A", "B", "C"]);
   });
 
-  it("requeue 對 in-flight job 回 null（不洩漏 in-flight 哨兵 0）且不重複 append", async () => {
-    // in-flight job 的 getQueuePosition 回 0（queue.ts:37 的 in-flight 專用值）。
-    // requeue 不可把這個 0 當 position 回傳——spec §4.2 明禁，否則 retry route
-    // 的 markQueuedForConversion(id, 0) 會讓下游讀者誤判 in-flight。
+  it("requeue 對 in-flight job 回 0（in-flight 哨兵，與 intake 一致）且不重複 append", async () => {
+    // in-flight job 的 getQueuePosition 回 0（queue.ts:37 的 in-flight 專用值）。requeue 對
+    // 已 in-flight job 冪等回 0、不重複 append：position 0 + queued_for_conversion 是既有
+    // 「派工中」合法狀態（與 intake app.ts:846-854 同一表示法），非矛盾；前端插隊鈕在
+    // queue_position<=1 disabled，對 in-flight 正確。requeue 不重複 enqueue 避免重複 dispatch。
     const queue = new ConversionDispatchQueue();
     let releaseA!: () => void;
     const aGate = new Promise<void>((resolve) => {
@@ -297,8 +298,9 @@ describe("ConversionDispatchQueue (unit)", () => {
     await waitFor(() => queue.getInFlight() === "A");
     expect(queue.getQueuePosition("A")).toBe(0);
 
-    // requeue in-flight A：no-op，回 null（不是 0）；不把 A append 進 queued[]
-    expect(queue.requeue("A")).toBeNull();
+    // requeue in-flight A：冪等 no-op，回 0（in-flight 哨兵，誠實表「派工中」）；不把 A
+    // append 進 queued[]（避免重複 dispatch）。
+    expect(queue.requeue("A")).toBe(0);
     expect(queue.getInFlight()).toBe("A");
     expect(queue.getQueuedJobIds()).toEqual(["B"]);
 

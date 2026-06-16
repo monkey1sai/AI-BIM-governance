@@ -725,15 +725,12 @@ export function createCoordinatorApp(
       response.status(422).json({ detail: "Dispatch context lost (coordinator restart/drain); please re-POST the ifc-ready job." });
       return;
     }
-    // 直接用 requeue 回傳 position（不用 0 哨兵 — 0 是 getQueuePosition 的 in-flight 專用值）。
+    // requeue 回 getQueuePosition 語義的 position:0=enqueue 後 worker 閒置同步取為 in-flight
+    // (派工中)、≥1=排隊中。比照 intake(app.ts markQueuedForConversion(jobId, getQueuePosition ?? 0))
+    // 直接寫 store —— position 0 + queued_for_conversion 是既有合法「派工中」狀態,非矛盾;
+    // 前端插隊鈕在 queue_position<=1 disabled,對立即 in-flight 的重派 job 正確。worker 閒置時
+    // retry 立即重派是成功(非 409):job 確實重新進入派工流程,store/response 一致反映。
     const pos = conversionDispatchQueue.requeue(id);
-    if (pos === null) {
-      // requeue 回 null 唯一語意：jobId 正 in-flight（worker 兩個 event-loop tick 間推進的
-      // 競態）。上游狀態守門在單執行緒下已排除絕大多數，但此處不靜默 fallback 成 position=1
-      // 造成 store／response 不一致；改回明確 409，讓前端「插隊鈕 disabled」判定不誤判。
-      response.status(409).json({ detail: "Job became in-flight; retry not applicable." });
-      return;
-    }
     externalIfcReadyStore.markQueuedForConversion(id, pos);
     const reason = parseReason(request);
     const actor = resolveActor(request);

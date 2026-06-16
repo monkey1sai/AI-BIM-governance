@@ -71,28 +71,32 @@ export class ConversionDispatchQueue {
   }
 
   /**
-   * 重新 enqueue（retry 用）並回 1-based queue position。
+   * 重新 enqueue（retry 用）並回 {@link getQueuePosition} 語義的 position。
    *
-   * Idempotent：若 `jobId` 已在 queue（queued[]），視為 no-op 直接回現有 1-based
-   * position（不重複 append）。這道去重防線在此 method 內自足，不依賴上游 route
-   * 的 state guard——避免 retry 被重複觸發（雙擊／競態的兩個 HTTP 請求）時把同一
+   * 回傳值三態（與 getQueuePosition 同一表示法，呼叫端可直接餵 markQueuedForConversion）：
+   *   - **1-based 正整數**：job 排在 queued[]（worker 忙碌，等派工 slot）。
+   *   - **0**：job enqueue 後被 runWorker **同步** shift 成 in-flight（worker 閒置時的
+   *     常見路徑——`enqueue` 內 `void runWorker()` 在第一個 `await dispatcher` 前同步跑完）。
+   *     0 是「派工中」的誠實表示，**與 intake 流程完全一致**（見 app.ts:846-854：intake 也是
+   *     enqueue 後讀 getQueuePosition、`markQueuedForConversion(jobId, queuePosition ?? 0)`，
+   *     立即 in-flight 時同樣寫 0）。`status=queued_for_conversion` + `queue_position=0` 是
+   *     既有合法狀態（非矛盾）；前端插隊鈕在 `queue_position<=1` 時 disabled，對 in-flight 正確。
+   *
+   * Idempotent：若 `jobId` 已在 queue（1-based）或已 in-flight（0），視為 no-op 直接回現有
+   * position，**不重複 append**——避免 retry 被重複觸發（雙擊／競態兩個 HTTP 請求）時把同一
    * jobId append 兩次，導致 worker 對 downstream streaming server 重複 dispatch。
    *
-   * 若 `jobId` 正 in-flight，回 `null`：in-flight job 重新 enqueue 無意義（worker
-   * 正在派工），且 `getQueuePosition` 對 in-flight 回的 0 是 in-flight 專用哨兵
-   * （見 {@link getQueuePosition}）。requeue **不可**把這個 0 當 position 洩漏出去
-   * ——否則 retry route 的 `markQueuedForConversion(id, 0)` 會讓下游讀者（前端／
-   * 監控）誤判該 job 為 in-flight 而非排隊中。呼叫端（retry route）的狀態守門已
-   * 排除 in-flight，故正常路徑不會走到此分支；此 null 是合約自足的安全網。
+   * 註：呼叫端（retry route）的狀態守門已排除「呼叫前就 in-flight/queued」，正常路徑只會走
+   * 「不在 queue → enqueue」分支；其餘分支是合約自足的 idempotent 安全網。
    */
-  requeue(jobId: string): number | null {
-    // 單一守門:直接讀 getQueuePosition 一次,依其三態裁決,不疊第二道 inFlightJobId 檢查
-    // (避免 fragile dual-guard——若日後有人移除其中一道,0 哨兵可能洩漏)。
-    const pos = this.getQueuePosition(jobId);
-    if (pos === 0) return null; // in-flight:0 是 in-flight 專用哨兵,requeue 無意義且不可洩漏
-    if (pos !== null) return pos; // 已排隊(1-based):冪等,回現有 position
-    this.enqueue(jobId); // 不在 queue:重新入列
-    return this.getQueuePosition(jobId);
+  requeue(jobId: string): number {
+    // 單一守門:讀 getQueuePosition 一次。非 null(已 in-flight=0 或已排隊≥1) → 冪等回現值、
+    // 不重複 enqueue;null(不在 queue) → enqueue 後回新 position(0=立即 in-flight、≥1=queued)。
+    const existing = this.getQueuePosition(jobId);
+    if (existing !== null) return existing;
+    this.enqueue(jobId);
+    // enqueue 後 job 必在 queue(≥1)或被同步 shift 成 in-flight(0);理論上不會是 null,`?? 0` 兜底。
+    return this.getQueuePosition(jobId) ?? 0;
   }
 
   private async runWorker(): Promise<void> {
