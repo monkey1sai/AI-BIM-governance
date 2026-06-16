@@ -10,6 +10,12 @@ export function IntentDialog({
   open: boolean;
   title: string;
   cost: string;
+  /**
+   * 確認時呼叫，帶使用者填的 reason。caller 負責 UI 反饋：失敗時須自行 catch 並
+   * setErr + 解除 busy（規格 §5/§4.6：失敗顯誠實錯誤、不改狀態、不關 dialog）。
+   * 本 component 不顯示錯誤、不關 dialog；只在 click handler 內 await 並吞掉 rejection，
+   * 作為防 unhandledrejection 的安全網，避免 caller 漏 catch 時錯誤無聲逸散。
+   */
   onConfirm: (reason: string) => void | Promise<void>;
   onCancel: () => void;
   busy?: boolean;
@@ -35,7 +41,11 @@ export function IntentDialog({
           <button
             className="ec-btn primary"
             disabled={busy}
-            onClick={() => void onConfirm(reasonRef.current?.value ?? "")}
+            onClick={async () => {
+              // 安全網：await 並吞掉 rejection，防 unhandledrejection。
+              // UI 反饋（顯示錯誤、解除 busy）由 caller 在 onConfirm 內自行處理。
+              try { await onConfirm(reasonRef.current?.value ?? ""); } catch { /* caller 負責反饋 */ }
+            }}
             data-testid="intent-confirm"
           >
             {busy ? "執行中…" : "確認執行"}
