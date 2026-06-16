@@ -312,6 +312,49 @@ describe("Concurrent IFC-ready POST → serial dispatch (integration)", () => {
     // 兩個都被 worker 處理過(stub 收到 2 個 POST)→ A 失敗不卡 B
     expect(bodies.length).toBe(2);
   });
+
+  it("派工失敗後狀態為 dispatch_failed，且 pending 保留不自動再派工（delete-on-success 半段）", async () => {
+    let callCount = 0;
+    activeStub = http.createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+        let body = "";
+        req.on("data", (c) => {
+          body += c.toString("utf8");
+        });
+        req.on("end", () => {
+          callCount += 1;
+          // 永遠失敗：Task 0 只驗「失敗後保留 pending、不自動重派」；retry 重派由 Task 2 route 測試兜底。
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: "dispatch always fails" }));
+        });
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    await new Promise<void>((r) => activeStub?.listen(0, "127.0.0.1", () => r()));
+    const addr = activeStub.address();
+    if (!addr || typeof addr === "string") throw new Error("bind failed");
+    const app = makeApp({ streamingConversionApiBase: `http://127.0.0.1:${addr.port}` });
+
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_retry_ok", "idem_retry_ok"))
+      .send(payload());
+    const jobId = res.body.ifc_ready_job_id as string;
+
+    // 派工失敗 → dispatch_failed（delete-on-success：失敗路徑不刪 pending）。
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.status === "dispatch_failed";
+    });
+
+    // pending 保留證據：worker 已 shift，保留 pending 不會自動重派 → callCount 維持 1、狀態續為 dispatch_failed。
+    // （delete-on-success 失敗路徑保留 pending；自動重派不發生，retry 重派的 round-trip 由 Task 2 route 測試驗。）
+    await new Promise<void>((r) => setTimeout(r, 100));
+    expect(callCount).toBe(1);
+    const after = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(after.body.status).toBe("dispatch_failed");
+  });
 });
 
 describe("Restart drop semantics", () => {

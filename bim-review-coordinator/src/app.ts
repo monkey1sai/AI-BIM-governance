@@ -397,8 +397,8 @@ export function createCoordinatorApp(
   // 在 setDispatcher 之後才能正確處理 worker。
   conversionDispatchQueue.setDispatcher(async (jobId) => {
     const pending = pendingDispatchEvents.get(jobId);
-    pendingDispatchEvents.delete(jobId);
     if (!pending) {
+      // 脈絡確實不存在（restart / drain 後）— 立即標失敗，retry 將回 422「請重新進件」。
       externalIfcReadyStore.markDispatchFailed(
         jobId,
         "pending dispatch event lost before worker pickup",
@@ -417,10 +417,13 @@ export function createCoordinatorApp(
         dispatch.conversion_job_id,
         dispatch.status,
       );
+      // delete-on-success：僅派工成功才刪 pending，使 dispatch_failed job 可被 retry 重派。
+      pendingDispatchEvents.delete(jobId);
       if (config.conversionPollEnabled && !pollerRegistry.has(dispatch.conversion_job_id)) {
         schedulePollerForConversion(dispatch.conversion_job_id);
       }
     } catch (dispatchError) {
+      // 失敗保留 pending 脈絡供 retry requeue（dispose drain 仍會 delete，見 app.ts:1824）。
       externalIfcReadyStore.markDispatchFailed(
         jobId,
         dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
