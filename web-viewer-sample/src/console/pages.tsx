@@ -1,11 +1,11 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
@@ -394,12 +394,43 @@ export function ViewerPresentationPage() {
   );
 }
 
+function pct(r?: number | null): string {
+  if (typeof r !== "number" || !Number.isFinite(r)) return "未取得";
+  const p = r * 100;
+  // 誠實鐵律「不得承諾 100% lossless」：ratio<1 卻四捨五入到 100.00 時下修顯 99.99%，
+  // 不讓非滿覆蓋謊報成 100%（真實 ratio 仍由相鄰 mapped/unmapped 數與 coverage_status 揭露）。
+  if (r < 1 && p.toFixed(2) === "100.00") return "99.99%";
+  return `${p.toFixed(2)}%`;
+}
+function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | { error: string } | "loading" | undefined }) {
+  if (state === "loading" || state === undefined) return <p className="ec-note">讀取 coverage…</p>;
+  if ("error" in state) return <p className="ec-warn-note">{state.error}</p>;
+  const s = state.quality_metrics_summary;
+  if (!s) return <p className="ec-note">未取得品質遙測（後端未提供 quality_metrics）。</p>;
+  return (
+    <>
+      <Field k="coverage" v={`${pct(s.coverage_ratio)}${s.coverage_status ? ` · ${s.coverage_status}` : ""}`} prov="artifact" />
+      <Field k="mapped / unmapped" v={`${s.mapped_count ?? "未取得"} / ${s.unmapped_count ?? "未取得"}`} prov="artifact" />
+      <Field k="source IFC entity" v={String(s.source_ifc_entity_count ?? "未取得")} prov="artifact" />
+      <Field k="materialization" v={s.materialization_strategy ?? "未取得"} prov="artifact" />
+      {/* spec §4.4 line 76 明列必顯欄：轉檔耗時秒數（後端 quality_metrics 既有，review.ts:19 / types.ts:79
+          已型別化、buildQualityMetricsSummary 已萃取）。缺值誠實顯「未取得」，不捏值。 */}
+      <Field k="conversion 耗時(s)" v={typeof s.conversion_duration_seconds === "number" ? String(s.conversion_duration_seconds) : "未取得"} prov="artifact" />
+      <Field k="usdc 輸出" v={state.usdc_url ?? "未取得"} prov="artifact" />
+      <Field k="mapping_url" v={state.mapping_url ?? "未取得"} prov="artifact" />
+      <Field k="property / relationship / attribute 三項" v="後端未提供（以 coverage_ratio 為準；三項拆分為 follow-up）" prov="p1" />
+    </>
+  );
+}
+
 export function ConversionSchedulingPage() {
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
   const [mw, setMw] = useState<MinioWatchStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [mwErr, setMwErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [openJob, setOpenJob] = useState<string | null>(null);
+  const [cov, setCov] = useState<Record<string, ConversionQualityMetricsResponse | { error: string } | "loading">>({});
   const load = useCallback(async () => {
     setBusy(true); setErr(null); setMwErr(null);
     // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
@@ -416,6 +447,33 @@ export function ConversionSchedulingPage() {
     setBusy(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
+  const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
+    if (!job.conversion_job_id) return;
+    const id = job.ifc_ready_job_id;
+    // 開關語意：同一 job 已展開 → 收合（不重打）。重試 / 重用都走「收合後重新展開」這條兩步路徑。
+    if (openJob === id) { setOpenJob(null); return; }
+    setOpenJob(id);
+    // 去重 / 載入鎖（spec §5「重複展開同 job → 去重 / 載入鎖，避免重打」）。
+    // 注意：上面的 openJob===id early-return 會先收合，所以下列守門只在「目前未展開、現在要展開」時生效，
+    // 亦即收合後重新展開的第二步（並非展開狀態下原地點一次）：
+    //   - 已成功取得（cov[id] 是 response 物件）→ 直接重用快取，不重打。
+    //   - 正在載入（"loading"）→ 不重打。
+    //   - 曾失敗（{ error }）→ **刻意不擋，落到下方重新 fetch**（收合後再展開錯誤態 job＝使用者重試，
+    //     符合誠實鐵律：錯誤不黏住，給重試機會）。故守門只擋「成功快取」與「載入中」，不擋 error 態。
+    const cached = cov[id];
+    // 先把 string 態（"loading"）擋掉，讓 TS narrowing 接管：之後 cached 已縮窄為
+    // ConversionQualityMetricsResponse | { error: string } | undefined，"error" in cached 不再需要 cast，
+    // 後續守門順序的正確性由型別系統保護（消除「依賴守門順序」的可維護性風險）。
+    if (cached === "loading") return; // 載入中 → 不重打
+    if (cached && !("error" in cached)) return; // 已成功（response 物件，無 error 鍵）→ 重用
+    setCov((p) => ({ ...p, [id]: "loading" }));
+    try {
+      const r = await coordinatorClient.conversionQualityMetrics(job.conversion_job_id);
+      setCov((p) => ({ ...p, [id]: r }));
+    } catch (e) {
+      setCov((p) => ({ ...p, [id]: { error: `未取得 coverage：${String(e)}` } }));
+    }
+  }, [openJob, cov]);
   return (
     <>
       <h1>IFC→USD 轉檔排程</h1>
@@ -424,7 +482,6 @@ export function ConversionSchedulingPage() {
         <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
         {err && <p className="ec-warn-note">{err}</p>}
         <Field k="conversion authority" v="bim-streaming-server owns heavy conversion" prov="asbuilt" />
-        <Field k="mapping coverage" v="property / relationship / attribute coverage 必須顯示；不得承諾 100% lossless" prov="p1" />
         <Field k="插隊 / 重試 / concurrency" v="UI rule 已定義，controlled action endpoint 待建" prov="p1" />
       </Panel>
       <Panel
@@ -471,26 +528,38 @@ export function ConversionSchedulingPage() {
       </Panel>
       <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
         {jobs.length ? (
-          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th></tr></thead>
+          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th></tr></thead>
             <tbody>{jobs.slice(0, 20).map((j) => (
-              <tr key={j.ifc_ready_job_id}>
-                <td>{j.ifc_ready_job_id}</td>
-                <td>{j.project_id}</td>
-                <td>{j.conversion_status ?? "—"}</td>
-                <td>
-                  {j.dispatch_error ? (
-                    <span
-                      className="ec-warn-note"
-                      data-testid={`conv-dispatch-error-${j.ifc_ready_job_id}`}
-                      title={j.dispatch_error}
-                    >
-                      {j.dispatch_error.length > 80 ? `${j.dispatch_error.slice(0, 80)}…` : j.dispatch_error}
-                    </span>
-                  ) : "—"}
-                </td>
-                <td>{j.review_session_id ?? "—"}</td>
-                <td>{j.expected_stage_url ?? "—"}</td>
-              </tr>
+              <Fragment key={j.ifc_ready_job_id}>
+                <tr>
+                  <td>{j.ifc_ready_job_id}</td>
+                  <td>{j.project_id}</td>
+                  <td>{j.conversion_status ?? "—"}</td>
+                  <td>
+                    {j.dispatch_error ? (
+                      <span
+                        className="ec-warn-note"
+                        data-testid={`conv-dispatch-error-${j.ifc_ready_job_id}`}
+                        title={j.dispatch_error}
+                      >
+                        {j.dispatch_error.length > 80 ? `${j.dispatch_error.slice(0, 80)}…` : j.dispatch_error}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td>{j.review_session_id ?? "—"}</td>
+                  <td>{j.expected_stage_url ?? "—"}</td>
+                  <td>{j.conversion_job_id
+                    ? <Btn data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? "收合" : "coverage"}</Btn>
+                    : <span className="ec-note">尚未派工</span>}</td>
+                </tr>
+                {openJob === j.ifc_ready_job_id && (
+                  <tr><td colSpan={7}>
+                    <div data-testid={`conv-coverage-${j.ifc_ready_job_id}`}>
+                      <CoverageDrawer state={cov[j.ifc_ready_job_id]} />
+                    </div>
+                  </td></tr>
+                )}
+              </Fragment>
             ))}</tbody></table>
         ) : <p className="ec-note">尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。</p>}
       </Panel>

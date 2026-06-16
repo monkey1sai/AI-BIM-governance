@@ -51,6 +51,13 @@ import type {
   StreamConfigResponse,
 } from "./types.js";
 
+// m2a-coverage-report:conversion job id safe-id（比照後端 _safe_id 的 ^[A-Za-z0-9_.-]+$）。
+// 不可複用 isSafeSessionId —— 其 pattern 只認 ^review_session_,擋掉 stream_conv_*。
+const conversionJobIdPattern = /^[A-Za-z0-9_.-]+$/;
+export function isSafeConversionJobId(value: string): boolean {
+  return typeof value === "string" && value.length > 0 && conversionJobIdPattern.test(value);
+}
+
 const createSessionSchema = z.object({
   review_request_id: z.string().min(1).optional(),
   tenant_id: z.string().min(1).default("tenant_demo_001"),
@@ -573,6 +580,39 @@ export function createCoordinatorApp(
       return;
     }
     response.json(buildStreamConfig(session, [], config));
+  });
+
+  // m2a-coverage-report:production 唯讀 passthrough。以 conversion_job_id 取後端品質摘要,
+  // 不綁 review session。coordinator 零計算 —— 值全來自 buildQualityMetricsSummary（與
+  // stream-config 同一真相源）。錯誤路徑一律不回捏造 coverage。
+  app.get("/api/conversions/:conversionJobId/quality-metrics", async (request, response) => {
+    const jobId = request.params.conversionJobId;
+    if (!isSafeConversionJobId(jobId)) {
+      response.status(400).json({ detail: "Invalid conversion job id." });
+      return;
+    }
+    try {
+      const result = await streamingConversionClient.fetchConversionResult(jobId);
+      const summary = buildQualityMetricsSummary(result);
+      response.json({
+        conversion_job_id: result.conversion_job_id,
+        quality_metrics_summary: summary, // 可能為 null（result 無 quality_metrics）—— 誠實「未取得」
+        usdc_url: result.usdc_ref,
+        mapping_url: result.element_mapping_ref,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/API 404\b/.test(msg)) {
+        response.status(404).json({ detail: "Conversion job result not found." });
+        return;
+      }
+      const name = err instanceof Error ? err.name : "";
+      const code = name === "TimeoutError" || /timeout|aborted/i.test(msg) ? 503 : 502;
+      // 不把內部 authority URL / upstream body 外溢給 client（spec §2/§7：錯誤不外溢內部欄位）；
+      // 真實錯誤只記 server log 供診斷。
+      console.error(`[quality-metrics] conversion authority error ${code} for ${jobId}: ${msg}`);
+      response.status(code).json({ detail: "Conversion authority unreachable." });
+    }
   });
 
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
@@ -1261,6 +1301,13 @@ export function createCoordinatorApp(
   app.post("/api/internal/conversions/:conversionJobId/ingest", async (request, response, next) => {
     try {
       const conversionJobId = request.params.conversionJobId;
+      // m2a-coverage-report:即便 `/api/internal/*` 已過 internal-token，仍須跑
+      // isSafeConversionJobId 守門，避免未驗證字串流入 pollerRegistry / ingest，
+      // 與既有新路由維持一致的安全面（helper 存在即應在此 internal route 共用）。
+      if (!isSafeConversionJobId(conversionJobId)) {
+        response.status(400).json({ detail: "Invalid conversion job id." });
+        return;
+      }
       // coordinator-auto-poll-streaming-conversion §4.4:manual endpoint 觸發前 cancel
       // 對應 auto-poller,避免後續 onTerminal 觸發第二次 ingest(double callback)。
       const existing = pollerRegistry.get(conversionJobId);
