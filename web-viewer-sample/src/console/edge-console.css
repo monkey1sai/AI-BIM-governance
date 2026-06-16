@@ -108,6 +108,20 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-appcard.clickable:hover { border-color:var(--ec-vio); }
 .ec-note { color:var(--ec-fg-3); font-size:11px; margin:8px 0; }
 .ec-warn-note { color:var(--ec-amb); font-size:11px; }
+
+/* IntentDialog（模式 3 controlled-action 共用 modal）。backdrop 用 fixed+高 z-index 蓋過 .ec-root 固定 grid，
+ * 否則只是行內 div、無遮罩、不置中（browser E2E 視覺驗收會失敗）。 */
+.ec-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.55);
+  display:flex; align-items:center; justify-content:center; z-index:1000; }
+.ec-modal { background:var(--ec-bg-2); border:1px solid var(--ec-line-2); border-radius:6px;
+  padding:20px 24px; min-width:320px; max-width:480px; box-shadow:0 12px 40px rgba(0,0,0,.5); color:var(--ec-fg); }
+.ec-modal h3 { margin:0 0 8px; }
+.ec-modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; }
+.ec-field-k { display:block; font-size:11px; color:var(--ec-fg-3); margin:10px 0 4px; }
+.ec-input { width:100%; box-sizing:border-box; background:var(--ec-bg); border:1px solid var(--ec-line);
+  color:var(--ec-fg); padding:6px 8px; border-radius:4px; font:inherit; resize:vertical; }
+.ec-input:disabled { opacity:.45; cursor:not-allowed; }
+
 .ec-mini-card { background:var(--ec-bg-3); border:1px solid var(--ec-line); border-radius:6px; padding:10px 12px; min-width:0; }
 .ec-mini-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
 .ec-mini-title { color:var(--ec-fg); font-weight:600; }
