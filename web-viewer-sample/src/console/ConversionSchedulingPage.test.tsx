@@ -183,6 +183,27 @@ describe("ConversionSchedulingPage coverage 展開（M2-a）", () => {
     expect(drawer.textContent).toContain("未提供");  // 三項拆分誠實標
   });
 
+  // spec §6 line 104 測試邊界「無 quality_metrics → summary:null」：CoverageDrawer 的 null 守門
+  //（pages.tsx:404）必須誠實顯「未取得品質遙測」且不顯任何百分比。鎖住此分支防靜默回歸。
+  it("summary 為 null（後端無 quality_metrics）→ 顯「未取得品質遙測」、不顯任何 %", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [job] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockResolvedValue({
+      conversion_job_id: "stream_conv_20260616_cov",
+      quality_metrics_summary: null,
+      usdc_url: null, mapping_url: null,
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]') as HTMLElement;
+    await act(async () => { toggle.click(); });
+    await act(async () => { await Promise.resolve(); });
+    const drawer = container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!;
+    expect(drawer.textContent).toContain("未取得品質遙測");
+    expect(drawer.textContent).not.toMatch(/\d+\.\d+\s*%/); // 無任何百分比
+  });
+
   it("無 conversion_job_id 的 job → 不可展開、顯尚未派工", async () => {
     const noConv: IfcReadyListItem = { ...job, ifc_ready_job_id: "ifcready_noconv", conversion_job_id: null, conversion_status: "pending" };
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [noConv] });
