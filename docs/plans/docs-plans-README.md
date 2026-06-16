@@ -5,6 +5,7 @@
 > 它**不是程式碼範本**：兩份 .html 是單檔 vanilla JS 示意原型，正式產品另有技術棧（見下）。
 >
 > **效力順序**：互動實作規格（行為/標準）＞ v3 計畫（順序/DoD）＞ v2 規格（介面）＞ 兩份 .html（視覺示意）。
+> **實作紀律（HOW 補充層）**：用 AI 寫程式時的「不欠技術債 + 照規格精準執行」紀律，另見 `ai-bim-governance-實作紀律與技術債防線.md`——每輪交付前用其 §8 總檢查表逐條核對；它**不改需求/規格**，與規格衝突時以規格為準。
 
 ## 檔案角色
 
@@ -15,6 +16,7 @@
 | `ai-bim-geo-viewer-prototype.html` | 3D viewer「執行計畫完成後」的驗收示意（對應 `#viewer`、M4 成果） | 七區塊資訊架構（點選→IFC 語意→Pset/Qto→Spatial→GUID⇔USD 對應表→A1 疊加→反向跳轉）、驗證結果清單 | **自寫 canvas 3D 引擎（純示意）**。正式版 3D 畫面來自落地端 Kit 的 **WebRTC 串流**，前端只收 frame、指令走 DataChannel（`highlightPrimsRequest`） |
 | `ai-bim-governance-設計規格.md` | v2 設計規格 | Design tokens、A1–A10 介面分析、MinIO 三層結構、兩次 NVIDIA 官方核實 | — |
 | `ai-bim-governance-開發軌跡與執行計畫.md` | v3 軌跡 + 工程規格 + 執行計畫 | **實作順序照這份**：里程碑 M0–M8、各 App API 草案與 DoD、決策 D1–D9、未決事項 O1–O6 | — |
+| `ai-bim-governance-實作紀律與技術債防線.md` | **實作紀律 + 技術債防線**（HOW 補充層，不改需求/規格） | §1 一頁速查、§2 八原則、§3 技術債陷阱 D-01~D-23、§4 DoD 硬化、§8 交付前總檢查表 | — |
 
 ## 實作鐵律（違反 = 做錯）
 
