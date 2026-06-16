@@ -396,6 +396,16 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     updated_at: "2026-06-16T00:00:00Z", // conv-prioritize-retry §2.4:non-optional required key
   };
 
+  // spec §4.6/§4.5：queued_for_conversion 且非隊首（queue_position>=2）→ 顯插隊鈕、不 disabled。
+  const queuedJob: IfcReadyListItem = {
+    ifc_ready_job_id: "ifcready_queued", status: "queued_for_conversion", project_id: "271",
+    external_model_version_id: "ext_q", download_status: "downloaded", conversion_status: "queued_for_conversion",
+    conversion_authority: null, conversion_job_id: null, dispatch_error: null,
+    queue_position: 2, review_session_id: null, viewer_url: null,
+    expected_stage_url: null, expected_mapping_url: null, created_at: "2026-06-16T00:00:00Z",
+    updated_at: "2026-06-16T00:00:00Z",
+  };
+
   it("dispatch_failed job 顯重試鈕 → 確認 → conversionRetry 被呼叫且 load 重抓", async () => {
     const listSpy = vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [failedJob] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
@@ -415,5 +425,61 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
 
     expect(retrySpy).toHaveBeenCalledWith("ifcready_failed", "");
     expect(listSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // 初次 load + 成功後 load
+  });
+
+  // spec §4.5/§4.6/§6.1「prioritize 移 queued job 到前端」：queued_for_conversion + queue_position>=2
+  // → 插隊鈕出現且不 disabled → 點按開 IntentDialog → confirm → conversionPrioritize 被呼叫且 load 重抓。
+  // 此前 task#6 測試只覆蓋 retry 路徑，插隊整條互動流（dialog→confirm→prioritize→load）無單元保護。
+  it("queued_for_conversion + queue_position>=2 顯插隊鈕（不 disabled）→ 確認 → conversionPrioritize 被呼叫且 load 重抓", async () => {
+    const listSpy = vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [queuedJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const prioritizeSpy = vi.spyOn(coordinatorClient, "conversionPrioritize").mockResolvedValue({ ifc_ready_job_id: "ifcready_queued", status: "queued_for_conversion", queue_position: 1 });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const prioBtn = container.querySelector('[data-testid="conv-prioritize-ifcready_queued"]') as HTMLButtonElement;
+    expect(prioBtn).toBeTruthy();
+    expect(prioBtn.disabled).toBe(false); // queue_position=2 → 可插隊（非隊首/非 in-flight）
+    await act(async () => { prioBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    // 點按開 IntentDialog
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(prioritizeSpy).toHaveBeenCalledWith("ifcready_queued", "");
+    expect(listSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // 初次 load + 成功後 load
+    // 成功後關 dialog（非樂觀，後端真狀態刷新）
+    expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
+  });
+
+  // spec §5/§4.6「失敗顯誠實錯誤、不關 dialog、不改狀態」：runAction catch 分支（setErr + pendingAction 保留）。
+  // 若未來有人在 catch 加 setPendingAction(null)（誤關 dialog），此測試會攔截，防靜默 regression。
+  it("POST 失敗（conversionRetry reject）→ dialog 維持開啟、顯誠實錯誤、不靜默關閉", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [failedJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionRetry").mockRejectedValue(new Error("/api/conversion/jobs/ifcready_failed/retry -> 422"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const retryBtn = container.querySelector('[data-testid="conv-retry-ifcready_failed"]') as HTMLButtonElement;
+    expect(retryBtn).toBeTruthy();
+    await act(async () => { retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 失敗不關 dialog（pendingAction 仍非 null）
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    // 誠實錯誤訊息（runAction catch 的 setErr）
+    const warn = container.querySelector(".ec-warn-note");
+    expect(warn).not.toBeNull();
+    expect(container.textContent).toContain("控制動作失敗");
   });
 });
