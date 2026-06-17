@@ -875,6 +875,13 @@ export function createCoordinatorApp(
   });
 
   app.post("/api/review-sessions/:sessionId/close", (request, response) => {
+    // IX-SS-04（使用者裁定 A，ref commit ce61993）：此路由【刻意不加 rejectIfIpNotAllowed IP allowlist 守門】，
+    // 與 sibling controlled-action 路由（prioritize app.ts:684 / retry app.ts:722 / watch app.ts:767）不同。
+    // 原因：close 同一端點同時服務兩種語意——(1) browser-originated cooperative close（帶 final_events）與
+    // (2) operator terminate（帶 reason）。兩者沒有 header/body 欄位可在進入 handler 前可靠區分，故無法只對
+    // operator 路徑加門控而不波及 cooperative 路徑：加 gate 會讓 IP 不在 allowlist 的 browser 協作式 close 吃 403，
+    // 違反 spec §3 non-goal「不改既有 cooperative close 行為」。⇒ 此處 IP allowlist 的缺席是經設計裁定的取捨，
+    // 非遺漏；維護者請勿補回 gate（會破壞 cooperative close），安全審查亦不應將此判為守門漏洞。
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
       return;

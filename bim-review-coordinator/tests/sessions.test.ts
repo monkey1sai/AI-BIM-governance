@@ -930,6 +930,55 @@ describe("bim-review-coordinator", () => {
     expect(closedEvt.payload.actor).toBe("alice@lan");
   });
 
+  it("close resolves actor from X-Actor header when X-Operator absent (resolveActor fallback)", async () => {
+    // spec §4.1「caller header best-effort」：resolveActor 優先序為 X-Operator ?? X-Actor。
+    // 此 case 鎖住 fallback 分支——只帶 X-Actor（不帶 X-Operator）+ reason → actor 應為 X-Actor 值。
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_actor_fallback", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .set("X-Actor", "bob@lan")
+      .send({ reason: "operator terminate via X-Actor" });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.actor).toBe("bob@lan");
+    expect(closedEvt.payload.actor).toBe("bob@lan");
+    expect(closing.payload.reason).toBe("operator terminate via X-Actor");
+    expect(closedEvt.payload.reason).toBe("operator terminate via X-Actor");
+  });
+
+  it("close defaults actor to local-operator when reason present but no actor header (resolveActor default)", async () => {
+    // spec §4.1「caller header best-effort，無身分記 local-operator」：帶 reason 但兩個 header 都不帶 →
+    // resolveActor 缺省 "local-operator"。鎖住 default 分支（B 方案 LAN 無 RBAC user 模型）。
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_actor_default", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ reason: "operator terminate without actor header" });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.actor).toBe("local-operator");
+    expect(closedEvt.payload.actor).toBe("local-operator");
+    expect(closing.payload.reason).toBe("operator terminate without actor header");
+    expect(closedEvt.payload.reason).toBe("operator terminate without actor header");
+  });
+
   it("close without reason leaves cooperative behavior unchanged (reason absent, release intact)", async () => {
     const app = makeApp();
     const created = await request(app.app)
