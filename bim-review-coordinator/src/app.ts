@@ -343,13 +343,27 @@ export function createCoordinatorApp(
   // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
   // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
   let minioWatcher: MinioWatcherHandle | null = null;
+  // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
+  let minioWatchRuntimeEnabled = config.minioWatchEnabled;
+  // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
+  let minioWatchToggleBusy = false;
+  // 連線參數齊全判斷（CR-C）：未配置時 PUT{enabled:true} 誠實 422，不空轉/不 throw。
+  function minioWatchConfigured(): boolean {
+    return Boolean(
+      config.minioWatchEndpoint && config.minioWatchBucket &&
+      config.minioWatchAccessKey && config.minioWatchSecretKey,
+    );
+  }
+  void minioWatchToggleBusy; // suppress unused-var lint until PUT route uses it
+  void minioWatchConfigured; // suppress unused-var lint until PUT route uses it
   function startMinioWatcherIfEnabled(): void {
     // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
     // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
     // ——minioWatchEnabled=true && selfBaseUrl 已設 && 呼叫端又 listen()——也安全：
     // 立即路徑會先把 minioWatcher 設好，listen callback 是非同步（Node 事件迴圈），
     // "listening" 事件到達時 minioWatcher != null，此 guard 直接 return，不會啟第二個。
-    if (!config.minioWatchEnabled || minioWatcher) return;
+    // 舊：if (!config.minioWatchEnabled || minioWatcher) return;
+    if (!minioWatchRuntimeEnabled || minioWatcher) return;
     // minio-watch review P2 修復：watcher 的 loopback self-POST 同樣經過
     // /api/external/ifc-ready 的 IP allowlist（authProvider 在 secret 之前先檢查 IP）。
     // 硬化部署把 EXTERNAL_INTAKE_IP_ALLOWLIST 鎖成 edge CIDR 而漏掉 loopback 時，
@@ -387,7 +401,8 @@ export function createCoordinatorApp(
   // 已在 listen 上的 server（生產 index.ts / E2E）：listening 後啟動以取得實際 port。
   server.on("listening", () => startMinioWatcherIfEnabled());
   // supertest 整合測試不呼叫 listen；用 selfBaseUrl override 時可立即啟動。
-  if (config.minioWatchEnabled && config.minioWatchSelfBaseUrl) {
+  // 舊：if (config.minioWatchEnabled && config.minioWatchSelfBaseUrl) {
+  if (minioWatchRuntimeEnabled && config.minioWatchSelfBaseUrl) {
     startMinioWatcherIfEnabled();
   }
   // coordinator-auto-poll-streaming-conversion §6:in-process auto-poll registry
