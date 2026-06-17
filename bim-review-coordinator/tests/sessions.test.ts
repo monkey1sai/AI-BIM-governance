@@ -871,6 +871,52 @@ describe("bim-review-coordinator", () => {
     expect(events.body.items.some((item: { type: string }) => item.type === "kitInstanceReleased")).toBe(true);
   });
 
+  it("close threads reason/actor into sessionClosing and sessionClosed audit payloads", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_terminate_audit", artifact_bindings: [] });
+    expect(created.status).toBe(200);
+    const sessionId = created.body.session_id;
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .set("X-Operator", "alice@lan")
+      .send({ reason: "operator terminate via #sessions" });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    // reason 不外溢回傳 body（形狀不退化）
+    expect(closed.body.reason).toBeUndefined();
+
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.reason).toBe("operator terminate via #sessions");
+    expect(closing.payload.actor).toBe("alice@lan");
+    expect(closedEvt.payload.reason).toBe("operator terminate via #sessions");
+    expect(closedEvt.payload.actor).toBe("alice@lan");
+  });
+
+  it("close without reason leaves cooperative behavior unchanged (reason absent, release intact)", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_no_reason", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ final_events: [{ type: "annotationSnapshot", count: 1 }] });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    expect(closed.body.kit_instance_bindings.every((b: { status: string }) => b.status === "released")).toBe(true);
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closedEvt.payload.actor).toBe("local-operator");   // 無 header → 預設
+    expect(closedEvt.payload.reason).toBe("");                // 無 reason → 空字串（parseReason 缺省）
+    const finalReview = events.body.items.find((e: { type: string }) => e.type === "finalReviewEvent");
+    expect(finalReview).toBeTruthy();                          // final_events 路徑零退化
+  });
+
   it("returns lifecycle audit events with stable sequence and excludes generic events", async () => {
     const app = makeApp();
     const created = await request(app.app)

@@ -890,11 +890,13 @@ export function createCoordinatorApp(
     }
 
     const finalEvents = Array.isArray(request.body?.final_events) ? request.body.final_events : [];
+    const reason = parseReason(request);
+    const actor = resolveActor(request);
     const closing = store.update(session.session_id, {
       status: "closing",
       kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
     });
-    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length });
+    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length, reason, actor });
     for (const event of finalEvents) {
       eventLog.append(session.session_id, "finalReviewEvent", event);
     }
@@ -903,7 +905,7 @@ export function createCoordinatorApp(
       participants: [],
       kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
     });
-    eventLog.append(session.session_id, "sessionClosed", {});
+    eventLog.append(session.session_id, "sessionClosed", { reason, actor });
     eventLog.append(session.session_id, "kitInstanceReleased", {
       kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
     });
