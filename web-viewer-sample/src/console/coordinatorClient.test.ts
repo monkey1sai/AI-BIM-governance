@@ -20,4 +20,20 @@ describe("coordinatorClient conversion control", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ detail: "nope" }), { status: 409, statusText: "Conflict" }));
     await expect(coordinatorClient.conversionRetry("ifcready_x")).rejects.toThrow();
   });
+
+  it("conversionWatchToggle 發 PUT /api/conversion/watch，body 含 enabled/reason", async () => {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), method: (init as RequestInit)?.method, body: (init as RequestInit)?.body as string });
+      return new Response(JSON.stringify({ enabled: false, note: "ok" }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    });
+    const res = await coordinatorClient.conversionWatchToggle(false, "smoke");
+    expect(res.enabled).toBe(false);
+    expect(calls[0].method).toBe("PUT");
+    expect(calls[0].url).toContain("/api/conversion/watch");
+    expect(JSON.parse(calls[0].body!)).toEqual({ enabled: false, reason: "smoke" });
+    spy.mockRestore();
+  });
 });

@@ -44,6 +44,18 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function jsonPut<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${COORD_BASE}${path}`, {
+    method: "PUT",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // /health 真實回應形狀（app.ts:388）。
 export interface CoordinatorHealth {
   status: string;
@@ -190,6 +202,8 @@ export const coordinatorClient = {
     jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/prioritize`, { reason }),
   conversionRetry: (id: string, reason?: string) =>
     jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/retry`, { reason }),
+  conversionWatchToggle: (enabled: boolean, reason?: string) =>
+    jsonPut<MinioWatchStatus>("/api/conversion/watch", { enabled, reason }),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,
