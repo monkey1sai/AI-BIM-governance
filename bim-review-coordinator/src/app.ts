@@ -345,10 +345,16 @@ export function createCoordinatorApp(
   let minioWatcher: MinioWatcherHandle | null = null;
   // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
   let minioWatchRuntimeEnabled = config.minioWatchEnabled;
-  // 註：toggle 同步鎖（minioWatchToggleBusy）與連線參數齊全判斷（minioWatchConfigured）
-  // 屬 Task 2（PUT /api/conversion/watch）才會用到的 scaffolding，已隨 PUT route 一併移除，
-  // 待 Task 2 PR 與其唯一消費者（PUT handler）一起引入，避免 Task 1 預放死碼讓讀者
-  // 無法分辨「有意預留」vs「merge 漏掉」。
+  // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
+  let minioWatchToggleBusy = false;
+  // 連線參數齊全判斷（CR-C）：未配置時 PUT{enabled:true} 誠實 422，不空轉/不 throw。
+  // endpoint/bucket/accessKey/secretKey 為硬連線必要；keySuffix 有 assert、interval 有預設。
+  function minioWatchConfigured(): boolean {
+    return Boolean(
+      config.minioWatchEndpoint && config.minioWatchBucket &&
+      config.minioWatchAccessKey && config.minioWatchSecretKey,
+    );
+  }
   function startMinioWatcherIfEnabled(): void {
     // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
     // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
@@ -753,6 +759,57 @@ export function createCoordinatorApp(
     });
   });
 
+  // conv-watch-toggle (IX-CV-04)：協調器自有 MinIO watcher 生命週期的 controlled action。
+  // 只動協調器 in-process watcher handle（start/dispose），不碰 MinIO server / bim-streaming-server。
+  // 模式 3 危險動作：① IP allowlist 守門（CR-A）② busy 鎖防競態（CR-B）③ 未配置誠實 422（CR-C）
+  // ④ audit 一筆。body { enabled: boolean; reason?: string }。
+  app.put("/api/conversion/watch", async (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;                 // CR-A：沿用 IP allowlist 守門
+    const body = request.body as { enabled?: unknown } | undefined;
+    if (typeof body?.enabled !== "boolean") {
+      response.status(400).json({ detail: "Body must include boolean 'enabled'." });
+      return;
+    }
+    if (minioWatchToggleBusy) {                                          // CR-B：toggle 進行中
+      response.status(409).json({ detail: "Watcher toggle in progress; retry shortly." });
+      return;
+    }
+    const reason = parseReason(request);
+    const actor = resolveActor(request);
+    minioWatchToggleBusy = true;
+    try {
+      if (body.enabled) {
+        if (!minioWatchConfigured()) {                                  // CR-C：未配置誠實拒絕
+          response.status(422).json({ detail: "MinIO watch not configured (endpoint/bucket/credentials missing); cannot enable." });
+          return;
+        }
+        minioWatchRuntimeEnabled = true;
+        try {
+          startMinioWatcherIfEnabled();                                 // 重建 handle（含 allowlist fail-fast）
+        } catch (e) {
+          minioWatchRuntimeEnabled = false;                            // 回滾 flag，誠實 500
+          response.status(500).json({ detail: `Failed to start watcher: ${e instanceof Error ? e.message : String(e)}` });
+          return;
+        }
+      } else {
+        minioWatchRuntimeEnabled = false;
+        if (minioWatcher) {                                            // 沿用 shutdown 安全模式
+          const w = minioWatcher;
+          minioWatcher = null;
+          await w.dispose();
+        }
+      }
+      // AuditData 為固定形狀（action/actor/target/reason，無 index signature），把 toggle
+      // 方向編進 target（與 prioritize/retry 用 target:id 同欄位），不擴 shared 型別。
+      structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
+        action: "conversion.watch.toggle", actor, target: body.enabled ? "watch:enable" : "watch:disable", reason,
+      }, "info");
+      response.json(currentMinioWatchStatusPayload());                  // 與 GET status 同邏輯的共用 helper
+    } finally {
+      minioWatchToggleBusy = false;
+    }
+  });
+
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
@@ -1019,11 +1076,15 @@ export function createCoordinatorApp(
   // minio-watch-auto-intake：watcher 唯讀狀態（無 credentials 洩漏）。關閉時誠實
   // 回 enabled=false（env opt-in）。last_triggered 只含 key，不含 presigned URL。
   // 置於 /:jobId param route 之前，確保此靜態路徑優先匹配。
-  app.get("/api/external/minio-watch/status", (_request, response) => {
-    // IX-CV-04：讀 runtime flag（初值=env，可被 PUT /api/conversion/watch 覆寫），
-    // 不讀 config.minioWatchEnabled 靜態值，否則 toggle 後 status 會回過時狀態。
+  // IX-CV-04：把 status 計算抽成共用 helper，GET status 與 PUT /api/conversion/watch
+  // 共用同一邏輯（避免 GET 與 toggle 回應分歧）。讀 runtime flag（初值=env，可被
+  // PUT /api/conversion/watch 覆寫），不讀 config.minioWatchEnabled 靜態值，否則 toggle
+  // 後 status 會回過時狀態。
+  function currentMinioWatchStatusPayload():
+    | MinioWatcherStatus
+    | { enabled: boolean; note: string; bucket?: string | null; prefix?: string | null; interval_seconds?: number } {
     if (!minioWatchRuntimeEnabled) {
-      response.json({
+      return {
         enabled: false,
         bucket: config.minioWatchBucket || null,
         prefix: config.minioWatchPrefix || null,
@@ -1034,13 +1095,14 @@ export function createCoordinatorApp(
         note: config.minioWatchEnabled
           ? "已由操作者於 console 關閉（runtime override；coordinator 重啟後回 env 預設）"
           : "未啟用（env MINIO_WATCH_ENABLED opt-in）",
-      });
-      return;
+      };
     }
-    const status: MinioWatcherStatus | { enabled: true; note: string } = minioWatcher
+    return minioWatcher
       ? minioWatcher.getStatus()
       : { enabled: true, note: "watcher enabled but not yet started (server not listening)" };
-    response.json(status);
+  }
+  app.get("/api/external/minio-watch/status", (_request, response) => {
+    response.json(currentMinioWatchStatusPayload());
   });
 
   app.get("/api/external/ifc-ready/:jobId", (request, response) => {
