@@ -66,7 +66,20 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(html).toContain("Controlled actions");
   });
 
-  // spec §6.2：結束鈕僅 status==="active" 顯示；closing / closed 不顯。
+  // spec test 1（rtWith("active")）：active session 顯示結束鈕；對齊規格範例的
+  // session-terminate-review_session_t1 斷言（單列、單一 status 的最小契約）。
+  it("active session 顯示結束鈕（session-terminate-review_session_t1）", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtWith("active"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.querySelector('[data-testid="session-terminate-review_session_t1"]')).not.toBeNull();
+    // active 列不灰
+    expect(container.querySelector('[data-testid="session-row-review_session_t1"]')?.className ?? "").not.toContain("ec-row-muted");
+  });
+
+  // spec §6.2 延伸：結束鈕僅 status==="active" 顯示；closing / closed 不顯且灰列（多列對照覆蓋）。
   it("結束鈕僅在 active session 顯示，closing / closed session 不顯", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([
       makeSession({ session_id: "sess_active", status: "active" }),
@@ -100,16 +113,16 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.querySelector('[data-testid="session-row-review_session_t1"]')?.className).toContain("ec-row-muted");
   });
 
-  // spec §6.2：點按開 IntentDialog；confirm 呼叫 sessionClose；成功後 load() 重抓。
-  it("點結束鈕開 IntentDialog → confirm → sessionClose 被呼叫且 load 重抓", async () => {
-    const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(
-      makeStatus([makeSession({ session_id: "sess_close" })]));
-    const closeSpy = vi.spyOn(coordinatorClient, "sessionClose").mockResolvedValue({ session_id: "sess_close", status: "closing" } as never);
+  // spec test 3（呼叫序）：點按開 IntentDialog；confirm 呼叫 sessionClose("review_session_t1", "")；
+  // 成功後 load() 重抓（非樂觀，rtSpy 至少被呼叫兩次：初載 + 重抓）。對齊規格範例的 session ID。
+  it("confirm 呼叫 sessionClose(review_session_t1, \"\") 後 load() 重抓（非樂觀，呼叫序）", async () => {
+    const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtWith("active"));
+    const closeSpy = vi.spyOn(coordinatorClient, "sessionClose").mockResolvedValue({ session_id: "review_session_t1", status: "closing" } as never);
     const root = createRoot(container);
     await act(async () => { root.render(<SessionManagementPage />); });
     await act(async () => { await Promise.resolve(); });
 
-    const btn = container.querySelector('[data-testid="session-terminate-sess_close"]') as HTMLButtonElement;
+    const btn = container.querySelector('[data-testid="session-terminate-review_session_t1"]') as HTMLButtonElement;
     expect(btn).toBeTruthy();
     await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 
@@ -124,7 +137,7 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
 
     // 空 textarea（未輸入）→ reason 傳 ""（對照下一個「填入原因」測試，凸顯此處空字串
     // 是 DOM 預設值 defaultValue="" 而非 undefined；後端以 trim()||undefined 收斂為乾淨 payload）。
-    expect(closeSpy).toHaveBeenCalledWith("sess_close", "");
+    expect(closeSpy).toHaveBeenCalledWith("review_session_t1", "");
     expect(statusSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // 初次 load + 成功後 load
     // 成功後關 dialog（非樂觀，重抓真狀態）
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
