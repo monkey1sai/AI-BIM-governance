@@ -770,9 +770,20 @@ describe("ConversionSchedulingPage 自動偵測開關（watch-toggle）", () => 
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
 
-    // 失敗不關 dialog、顯誠實錯誤（含後端 422 訊息）
+    // 失敗不關 dialog
     expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
-    expect(container.textContent).toContain("控制動作失敗");
-    expect(container.textContent).toContain("422");
+    // 誠實錯誤直接顯示在 dialog 內的 intent-action-error 節點（runAction catch 寫獨立 actionErr），
+    // 含「控制動作失敗」與後端 422 訊息——直接斷言 testid 節點而非整頁 textContent。
+    const actionErrNode = container.querySelector('[data-testid="intent-action-error"]');
+    expect(actionErrNode).not.toBeNull();
+    expect(actionErrNode!.textContent).toContain("控制動作失敗");
+    expect(actionErrNode!.textContent).toContain("422");
+    // mw 狀態不被樂觀改寫：toggle reject 後 runAction catch 不呼叫 setMw，mw 仍停在 { enabled:false }，
+    // 故開啟鈕與頁頂琥珀條都應仍在（UI 沒假裝已開啟）。
+    expect(container.querySelector('[data-testid="conv-watch-enable"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="conv-watch-disable"]')).toBeNull();
+    const offBanner = container.querySelector('[data-testid="conv-watch-off-banner"]');
+    expect(offBanner).not.toBeNull();
+    expect(offBanner!.textContent).toContain("自動偵測已關閉");
   });
 });
