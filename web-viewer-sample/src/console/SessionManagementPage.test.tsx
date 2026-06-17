@@ -227,6 +227,9 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     const rowAfter = container.querySelector('[data-testid="session-row-sess_grey"]')!;
     expect(rowAfter.getAttribute("data-terminating")).toBeNull();
     expect(rowAfter.textContent).not.toContain("結束中…");
+    // 解灰列後 className 不應再含 ec-row-muted（greyed=false：terminating 已清、mock status 仍 active）。
+    // 補上此斷言鎖住 greyed 條件，避免日後誤改 greyed 邏輯時此回歸無法被測試抓到。
+    expect(rowAfter.className ?? "").not.toContain("ec-row-muted");
   });
 
   // spec §7：unmount 清除所有 60s timer，避免 setState-after-unmount / leak。
