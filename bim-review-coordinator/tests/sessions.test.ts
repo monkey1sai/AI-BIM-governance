@@ -721,6 +721,39 @@ describe("bim-review-coordinator", () => {
     expect(secondClose.body.status).toBe("closed");
   });
 
+  // IMPORTANT-1：close 在 status==="closing" 也須冪等。若一個 session 仍停在 closing
+  // （例如併發第二個 POST 在第一次 store.update(closing) 與 store.update(closed) 之間
+  // 重入），handler 不可重複 append sessionClosing / sessionClosed / kitInstanceReleased
+  // 進 append-only audit ledger，也不可對已 draining 的 binding 再 markKitBindingsDraining。
+  it("close is idempotent for sessions already in closing state (no duplicate audit events)", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+
+    // 模擬 session 停在 closing（併發重入的觀察窗口）。
+    app.store.update(created.body.session_id, { status: "closing" });
+
+    const lifecycleTypes = () =>
+      app.eventLog
+        .listLifecycle(created.body.session_id)
+        .map((event) => event.type);
+
+    const before = lifecycleTypes();
+
+    const reClose = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/close`)
+      .send({});
+
+    expect(reClose.status).toBe(200);
+    // closing-state POST 不得新增任何 lifecycle event（沿用 closed-idempotent 語意）。
+    expect(lifecycleTypes()).toEqual(before);
+  });
+
   it("logs sessionCreated event with review_request_id when provided", async () => {
     const app = makeApp();
     const created = await request(app.app)
@@ -869,6 +902,132 @@ describe("bim-review-coordinator", () => {
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosing")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "sessionClosed")).toBe(true);
     expect(events.body.items.some((item: { type: string }) => item.type === "kitInstanceReleased")).toBe(true);
+  });
+
+  it("close threads reason/actor into sessionClosing and sessionClosed audit payloads", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_terminate_audit", artifact_bindings: [] });
+    expect(created.status).toBe(200);
+    const sessionId = created.body.session_id;
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .set("X-Operator", "alice@lan")
+      .send({ reason: "operator terminate via #sessions" });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    // reason 不外溢回傳 body（形狀不退化）
+    expect(closed.body.reason).toBeUndefined();
+
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.reason).toBe("operator terminate via #sessions");
+    expect(closing.payload.actor).toBe("alice@lan");
+    expect(closedEvt.payload.reason).toBe("operator terminate via #sessions");
+    expect(closedEvt.payload.actor).toBe("alice@lan");
+  });
+
+  it("close resolves actor from X-Actor header when X-Operator absent (resolveActor fallback)", async () => {
+    // spec §4.1「caller header best-effort」：resolveActor 優先序為 X-Operator ?? X-Actor。
+    // 此 case 鎖住 fallback 分支——只帶 X-Actor（不帶 X-Operator）+ reason → actor 應為 X-Actor 值。
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_actor_fallback", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .set("X-Actor", "bob@lan")
+      .send({ reason: "operator terminate via X-Actor" });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.actor).toBe("bob@lan");
+    expect(closedEvt.payload.actor).toBe("bob@lan");
+    expect(closing.payload.reason).toBe("operator terminate via X-Actor");
+    expect(closedEvt.payload.reason).toBe("operator terminate via X-Actor");
+  });
+
+  it("close defaults actor to local-operator when reason present but no actor header (resolveActor default)", async () => {
+    // spec §4.1「caller header best-effort，無身分記 local-operator」：帶 reason 但兩個 header 都不帶 →
+    // resolveActor 缺省 "local-operator"。鎖住 default 分支（B 方案 LAN 無 RBAC user 模型）。
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_actor_default", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ reason: "operator terminate without actor header" });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.actor).toBe("local-operator");
+    expect(closedEvt.payload.actor).toBe("local-operator");
+    expect(closing.payload.reason).toBe("operator terminate without actor header");
+    expect(closedEvt.payload.reason).toBe("operator terminate without actor header");
+  });
+
+  it("close without reason leaves cooperative behavior unchanged (reason absent, release intact)", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_no_reason", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .send({ final_events: [{ type: "annotationSnapshot", count: 1 }] });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    expect(closed.body.kit_instance_bindings.every((b: { status: string }) => b.status === "released")).toBe(true);
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    // 回歸鎖（spec §2.1/§3/§6.1）：無 reason 的 cooperative close payload 形狀零退化——
+    // sessionClosing 維持 { final_events }、sessionClosed 維持 {}；reason/actor 缺省 undefined（非 ""），
+    // additive 欄不污染既有 cooperative 呼叫端。
+    expect(closing.payload.final_events).toBe(1);             // final_events 計數照常
+    expect(closing.payload.reason).toBeUndefined();           // 無 reason → 不寫該欄
+    expect(closing.payload.actor).toBeUndefined();            // 無 reason → 不寫 actor（不退化形狀）
+    expect(closedEvt.payload.reason).toBeUndefined();         // 無 reason → 不寫該欄
+    expect(closedEvt.payload.actor).toBeUndefined();          // 無 reason → 不寫 actor
+    const finalReview = events.body.items.find((e: { type: string }) => e.type === "finalReviewEvent");
+    expect(finalReview).toBeTruthy();                          // final_events 路徑零退化
+  });
+
+  it("close with whitespace-only reason does not pollute cooperative close payload (no actor leak)", async () => {
+    // IMPORTANT-1 回歸鎖：caller 送 { reason: "   " } 時，whitespace-only reason 經 .trim() 後為空字串、
+    // 視同無 reason；若缺 .trim() 則空白 reason 為 truthy → auditFields 帶入 actor，違反 §2.1/§3
+    //「cooperative close payload 形狀零退化」。空白 reason 視同無 reason → sessionClosing/sessionClosed 不得帶 actor。
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_blank_reason", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .set("X-Operator", "alice@lan")
+      .send({ reason: "   " });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.reason).toBeUndefined();           // 空白 reason → 不寫該欄
+    expect(closing.payload.actor).toBeUndefined();            // 空白 reason → 不得洩漏 actor
+    expect(closedEvt.payload.reason).toBeUndefined();
+    expect(closedEvt.payload.actor).toBeUndefined();
   });
 
   it("returns lifecycle audit events with stable sequence and excludes generic events", async () => {

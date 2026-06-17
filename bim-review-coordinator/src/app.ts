@@ -875,6 +875,13 @@ export function createCoordinatorApp(
   });
 
   app.post("/api/review-sessions/:sessionId/close", (request, response) => {
+    // IX-SS-04（使用者裁定 A，ref commit ce61993）：此路由【刻意不加 rejectIfIpNotAllowed IP allowlist 守門】，
+    // 與 sibling controlled-action 路由（prioritize app.ts:684 / retry app.ts:722 / watch app.ts:767）不同。
+    // 原因：close 同一端點同時服務兩種語意——(1) browser-originated cooperative close（帶 final_events）與
+    // (2) operator terminate（帶 reason）。兩者沒有 header/body 欄位可在進入 handler 前可靠區分，故無法只對
+    // operator 路徑加門控而不波及 cooperative 路徑：加 gate 會讓 IP 不在 allowlist 的 browser 協作式 close 吃 403，
+    // 違反 spec §3 non-goal「不改既有 cooperative close 行為」。⇒ 此處 IP allowlist 的缺席是經設計裁定的取捨，
+    // 非遺漏；維護者請勿補回 gate（會破壞 cooperative close），安全審查亦不應將此判為守門漏洞。
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
       return;
@@ -884,17 +891,30 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
-    if (session.status === "closed") {
+    // IMPORTANT-1：冪等守衛涵蓋 closing 與 closed。append-only audit ledger 不能事後清理，
+    // 故任何已進入 close 流程（closing / closed）的 session 再次 POST /close 一律 no-op 直接回傳
+    // 現狀，避免併發/重入重複 append sessionClosing / sessionClosed / kitInstanceReleased，
+    // 或對已 draining 的 binding 再次 markKitBindingsDraining。
+    if (session.status === "closed" || session.status === "closing") {
       response.json(session);
       return;
     }
 
     const finalEvents = Array.isArray(request.body?.final_events) ? request.body.final_events : [];
+    // IX-SS-04 spec §2.1/§4.1：reason 缺省為 undefined（不沿用共用 parseReason 的 "" 缺省，
+    // 那會讓 cooperative close payload 退化）。只有 operator terminate 真帶 reason 時才把
+    // reason/actor additive 寫進事件流；無 reason 的既有 cooperative close 維持原 payload 形狀
+    // （sessionClosing:{final_events}、sessionClosed:{}），符合 §3「不改既有 cooperative close 行為」。
+    const rawReason = (request.body as { reason?: unknown } | undefined)?.reason;
+    const reason = typeof rawReason === "string" ? (rawReason.trim().slice(0, 500) || undefined) : undefined;
+    // truthy 檢查（與 resolveActor 的 `header.trim().length > 0` 對稱）：空白 reason 視同無 reason，
+    // 否則 { reason: "   " } 會讓 auditFields 帶入 actor，污染既有 cooperative close payload 形狀（IMPORTANT-1）。
+    const auditFields = reason ? { reason, actor: resolveActor(request) } : {};
     const closing = store.update(session.session_id, {
       status: "closing",
       kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
     });
-    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length });
+    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length, ...auditFields });
     for (const event of finalEvents) {
       eventLog.append(session.session_id, "finalReviewEvent", event);
     }
@@ -903,7 +923,7 @@ export function createCoordinatorApp(
       participants: [],
       kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
     });
-    eventLog.append(session.session_id, "sessionClosed", {});
+    eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
     eventLog.append(session.session_id, "kitInstanceReleased", {
       kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
     });

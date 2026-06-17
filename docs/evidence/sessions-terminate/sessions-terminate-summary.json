@@ -1,0 +1,39 @@
+{
+  "feature": "IX-SS-04 #sessions 結束 session controlled action (reuse close route, mode-3 audit)",
+  "spec": "docs/superpowers/specs/2026-06-17-sessions-terminate-design.md",
+  "engine": "playwright",
+  "playwright_version": "1.61.0",
+  "run_date": "2026-06-17",
+  "verticalSliceOk": true,
+  "spec_file": "web-viewer-sample/e2e/sessions-terminate.spec.ts",
+  "result": { "passed": 2, "failed": 0, "skipped": 0 },
+  "route": "#sessions (SessionManagementPage, vite dev :5180)",
+  "buttons": [
+    "[data-testid=sessions-refresh]",
+    "[data-testid=session-terminate-<id>] (per-row 結束 session)",
+    "[data-testid=intent-confirm] (IntentDialog 確認)"
+  ],
+  "fixture": "default seeded by test beforeEach via POST /api/review-sessions (no manual curl); afterEach idempotent close teardown",
+  "backend": {
+    "real": true,
+    "mock": false,
+    "coordinator_base_url": "http://127.0.0.1:8006 (branch coordinator)"
+  },
+  "observed_network": [
+    "GET /api/runtime/status -> 200 (initial + refresh)",
+    "POST /api/review-sessions/review_session_3da56fd05039/close -> 200 (browser-driven, real backend)",
+    "GET /api/runtime/status -> 200 (non-optimistic re-fetch after close)"
+  ],
+  "runtimeIds": ["review_session_3da56fd05039"],
+  "row_outcome": "path (b): row stayed in DOM and gained ec-row-muted (greyed) — hard assertion passed; runtime/status re-fetch found session status in [closing,closed]",
+  "audit_proof": "close-audit verified independently via urllib: sessionClosing & sessionClosed event payloads carry reason+actor (X-Operator header), reason NOT leaked into response body. Mode-3 audit slice is real.",
+  "notObserved": [
+    "前端 loading/failure/retry 狀態未在此 browser run 走到（success path 已觀察）；覆蓋由 SessionManagementPage.test.tsx + sessions.test.ts 兜底。",
+    "首次 run（coordinator :8005）browser runtime/status GET 被 CORS 擋（:8005 instance 未把 :5180 加進 CORS_ORIGINS）→ 30s timeout；test-harness 配置缺口非 feature 缺陷，:8006（含 :5180 CORS）重跑全綠 0 console errors。"
+  ],
+  "samples": [
+    "sessions-render-surface.png (#sessions 真頁面渲染)",
+    "sessions-terminate-slice.png (controlled-action 切片終態截圖)"
+  ],
+  "full_trace_location": "artifacts/e2e/sessions-terminate-trace/ (main worktree; not tracked — worktree-local on closeout)"
+}

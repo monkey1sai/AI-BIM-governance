@@ -39,7 +39,10 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+    // 與 jsonPut 一致：萃取 coordinator `{ detail }`（誠實鐵律）。sessionClose 等 controlled
+    // action 的 400「sessionId 不合法」/ 404「session 不存在」須在 dialog 顯出可操作提示，
+    // 只 throw status/statusText 會把後端訊息吞掉（errorDetail 說明見下）。
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -212,6 +215,12 @@ export interface ConversionControlResponse {
   queued_order?: string[];
 }
 
+// IX-SS-04：POST /api/review-sessions/:id/close 回傳（重用 close 路由；只取消費端用到的欄位）。
+export interface SessionCloseResponse {
+  session_id: string;
+  status: string;
+}
+
 export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
@@ -227,6 +236,10 @@ export const coordinatorClient = {
     jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/retry`, { reason }),
   conversionWatchToggle: (enabled: boolean, reason?: string) =>
     jsonPut<MinioWatchStatus>("/api/conversion/watch", { enabled, reason }),
+  // IX-SS-04：operator「結束 session」＝協作式 close 的觸發。重用既有 jsonPost；body 只帶 reason，
+  // 不帶 final_events（operator 強制結束無協作終結事件，spec §4.2）。
+  sessionClose: (sessionId: string, reason?: string) =>
+    jsonPost<SessionCloseResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/close`, { reason }),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,
