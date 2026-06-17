@@ -445,7 +445,11 @@ export function ConversionSchedulingPage() {
   const [cov, setCov] = useState<Record<string, ConversionQualityMetricsResponse | { error: string } | "loading">>({});
   // conv-prioritize-retry:列控制（插隊／重試）intent→confirm 狀態。pendingAction 非 null 時開 IntentDialog；
   // actionBusy 鎖住 confirm/cancel 期間的重複觸發。非樂觀：POST 成功後 load() 重抓真佇列狀態。
-  const [pendingAction, setPendingAction] = useState<{ jobId: string; kind: "prioritize" | "retry" } | null>(null);
+  const [pendingAction, setPendingAction] = useState<
+    | { jobId: string; kind: "prioritize" | "retry" }
+    | { kind: "watch-toggle"; enabled: boolean }
+    | null
+  >(null);
   const [actionBusy, setActionBusy] = useState(false);
   // finding #1：同步 busy guard。setActionBusy(true) 是非同步 state，confirm 鈕的 disabled={busy}
   // 要等下一次 render 才生效；同一事件循環連點兩次會送出兩個 POST。ref 在 React state 更新前
@@ -510,7 +514,8 @@ export function ConversionSchedulingPage() {
     setActionErr(null);             // 開新一輪動作：清掉上一次的誠實錯誤
     try {
       if (pendingAction.kind === "prioritize") await coordinatorClient.conversionPrioritize(pendingAction.jobId, reason);
-      else await coordinatorClient.conversionRetry(pendingAction.jobId, reason);
+      else if (pendingAction.kind === "retry") await coordinatorClient.conversionRetry(pendingAction.jobId, reason);
+      else await coordinatorClient.conversionWatchToggle(pendingAction.enabled, reason);
       // 證據型更新：重抓真佇列狀態（非樂觀）。load() 自吞錯不 throw，故以回傳值辨識
       // 「POST 成功但重抓佇列失敗」——此時不可靜默關 dialog（佇列仍顯舊狀態、背景 err
       // 操作者不易察覺），改保持 dialog 開啟並在 dialog 內顯誠實錯誤。
@@ -531,6 +536,11 @@ export function ConversionSchedulingPage() {
     <>
       <h1>IFC→USD 轉檔排程</h1>
       <p className="ec-lead">從 MinIO / storage 發現 source IFC，排進 conversion authority，由 `bim-streaming-server` 產出 `model.usdc`、mapping summary，再通知 Kit / Review Session。</p>
+      {mw?.enabled === false && (
+        <p className="ec-warn-note" data-testid="conv-watch-off-banner">
+          ⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件
+        </p>
+      )}
       <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={load}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
         <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
         {err && <p className="ec-warn-note">{err}</p>}
@@ -552,6 +562,10 @@ export function ConversionSchedulingPage() {
             <>
               <Field k="狀態" v="未啟用 — 需設定 env MINIO_WATCH_ENABLED opt-in" prov="asbuilt" />
               <p className="ec-note">{mw.note ?? "watcher 預設關閉；狀態 API 為真，未偽稱功能在跑。"}</p>
+              <Btn
+                data-testid="conv-watch-enable"
+                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: true }); }}
+              >開啟自動偵測</Btn>
             </>
           ) : (
             <>
@@ -576,6 +590,10 @@ export function ConversionSchedulingPage() {
                   ))}</tbody>
                 </table>
               )}
+              <Btn
+                data-testid="conv-watch-disable"
+                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: false }); }}
+              >關閉自動偵測</Btn>
             </>
           )}
         </div>
@@ -640,10 +658,20 @@ export function ConversionSchedulingPage() {
       </Panel>
       <IntentDialog
         open={pendingAction != null}
-        title={pendingAction?.kind === "prioritize" ? "插隊到佇列最前" : "重新派工此 job"}
-        cost={pendingAction?.kind === "prioritize"
-          ? "此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。"
-          : "將重新派工此 job 至轉檔 authority；可能再次失敗。"}
+        title={
+          pendingAction?.kind === "watch-toggle"
+            ? (pendingAction.enabled ? "開啟 MinIO 自動偵測" : "關閉 MinIO 自動偵測")
+            : pendingAction?.kind === "prioritize" ? "插隊到佇列最前" : "重新派工此 job"
+        }
+        cost={
+          pendingAction?.kind === "watch-toggle"
+            ? (pendingAction.enabled
+                ? "恢復輪詢 MinIO；偵測到新 model.ifc 會自動進件並派工。"
+                : "停止輪詢 MinIO；新上傳的 model.ifc 將不再自動進件，需手動觸發。")
+            : pendingAction?.kind === "prioritize"
+                ? "此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。"
+                : "將重新派工此 job 至轉檔 authority；可能再次失敗。"
+        }
         busy={actionBusy}
         actionErr={actionErr}
         onConfirm={runAction}

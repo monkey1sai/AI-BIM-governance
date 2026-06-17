@@ -640,3 +640,94 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     expect(stillThere!.textContent).toContain("控制動作失敗");
   });
 });
+
+// IX-CV-04 Task5：#conv 自動偵測開關 UI + 關閉態琥珀條。spec line 157「關閉時佇列頁頂顯示琥珀條」、
+// §4.4「未配置時前端保守：鈕一律可點，後端 422 兜底 → actionErr 顯誠實『未配置』訊息，UI 不假成功」。
+describe("ConversionSchedulingPage 自動偵測開關（watch-toggle）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement; let prev: unknown;
+  beforeEach(() => { prev = (globalThis as Record<string, unknown>)[actEnvKey]; (globalThis as Record<string, unknown>)[actEnvKey] = true; container = document.createElement("div"); document.body.appendChild(container); });
+  afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); (globalThis as Record<string, unknown>)[actEnvKey] = prev; });
+
+  // enabled=false：頁頂琥珀條出現 + Panel 內「開啟自動偵測」鈕 → 確認 → conversionWatchToggle(true, "") 被呼叫且 load 重抓。
+  it("enabled=false → 頁頂琥珀條 + 開啟鈕 → 確認 → conversionWatchToggle(true) 被呼叫且 load 重抓", async () => {
+    const listSpy = vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false, note: "watcher 預設關閉" });
+    const toggleSpy = vi.spyOn(coordinatorClient, "conversionWatchToggle").mockResolvedValue({ enabled: true });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 頁頂琥珀條（關閉態警示）
+    const banner = container.querySelector('[data-testid="conv-watch-off-banner"]');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toContain("自動偵測已關閉");
+
+    // 開啟鈕
+    const enableBtn = container.querySelector('[data-testid="conv-watch-enable"]') as HTMLButtonElement;
+    expect(enableBtn).toBeTruthy();
+    await act(async () => { enableBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    // 開 IntentDialog，title 為「開啟 MinIO 自動偵測」
+    const dialog = container.querySelector('[data-testid="intent-dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog!.textContent).toContain("開啟 MinIO 自動偵測");
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(toggleSpy).toHaveBeenCalledWith(true, "");
+    expect(listSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // 初次 load + 成功後 load
+    expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull(); // 成功關 dialog
+  });
+
+  // enabled=true：無頁頂琥珀條 + Panel 內「關閉自動偵測」鈕 → 確認 → conversionWatchToggle(false, "") 被呼叫。
+  it("enabled=true → 無琥珀條 + 關閉鈕 → 確認 → conversionWatchToggle(false) 被呼叫", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: true, bucket: "bim", prefix: "", poll_count: 3 });
+    const toggleSpy = vi.spyOn(coordinatorClient, "conversionWatchToggle").mockResolvedValue({ enabled: false });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 啟用態：不顯示頁頂琥珀條
+    expect(container.querySelector('[data-testid="conv-watch-off-banner"]')).toBeNull();
+
+    const disableBtn = container.querySelector('[data-testid="conv-watch-disable"]') as HTMLButtonElement;
+    expect(disableBtn).toBeTruthy();
+    await act(async () => { disableBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const dialog = container.querySelector('[data-testid="intent-dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog!.textContent).toContain("關閉 MinIO 自動偵測");
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(toggleSpy).toHaveBeenCalledWith(false, "");
+  });
+
+  // §4.4：未配置 → 後端 422 兜底 → dialog 維持開啟、顯誠實錯誤，UI 不假成功（沿用 runAction catch 分支）。
+  it("toggle POST 失敗（422 未配置）→ dialog 維持開啟、顯誠實錯誤、不靜默關閉", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionWatchToggle").mockRejectedValue(new Error("/api/conversion/watch -> 422 watcher 未配置"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const enableBtn = container.querySelector('[data-testid="conv-watch-enable"]') as HTMLButtonElement;
+    expect(enableBtn).toBeTruthy();
+    await act(async () => { enableBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 失敗不關 dialog、顯誠實錯誤（含後端 422 訊息）
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    expect(container.textContent).toContain("控制動作失敗");
+    expect(container.textContent).toContain("422");
+  });
+});
