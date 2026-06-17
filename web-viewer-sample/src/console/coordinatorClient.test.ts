@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { coordinatorClient } from "./coordinatorClient";
 
 describe("coordinatorClient conversion control", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("conversionPrioritize 打 POST .../prioritize 帶 reason，回 JSON", async () => {
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
