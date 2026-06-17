@@ -83,6 +83,24 @@ describe("coordinatorClient conversion control", () => {
     );
   });
 
+  it("sessionClose 404 失敗把後端 detail 帶進錯誤訊息（誠實鐵律：不吞 session-not-found 提示）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "session not found" }), { status: 404, statusText: "Not Found" }),
+    );
+    await expect(coordinatorClient.sessionClose("review_session_missing", "operator terminate")).rejects.toThrow(
+      /session not found/,
+    );
+  });
+
+  it("sessionClose 400 失敗把後端 detail 帶進錯誤訊息（sessionId 不合法）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "invalid session id" }), { status: 400, statusText: "Bad Request" }),
+    );
+    await expect(coordinatorClient.sessionClose("../bad", "operator terminate")).rejects.toThrow(
+      /invalid session id/,
+    );
+  });
+
   it("sessionClose POSTs to /close with reason body and encodes session id", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {

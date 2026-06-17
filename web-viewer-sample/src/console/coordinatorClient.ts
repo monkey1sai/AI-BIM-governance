@@ -39,7 +39,10 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+    // 與 jsonPut 一致：萃取 coordinator `{ detail }`（誠實鐵律）。sessionClose 等 controlled
+    // action 的 400「sessionId 不合法」/ 404「session 不存在」須在 dialog 顯出可操作提示，
+    // 只 throw status/statusText 會把後端訊息吞掉（errorDetail 說明見下）。
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
 }
