@@ -78,6 +78,7 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
     await page.screenshot({ path: "../docs/evidence/conv-watch-toggle/watch-off.png", fullPage: true });
     // 開啟自動偵測 → confirm → 琥珀條消失
     await page.locator('[data-testid="conv-watch-enable"]').click();
+    await expect(page.locator('[data-testid="intent-dialog"]')).toBeVisible();
     const [onRes] = await Promise.all([
       page.waitForResponse((r) => r.url().includes("/api/conversion/watch") && r.request().method() === "PUT", { timeout: 30_000 }),
       page.locator('[data-testid="intent-confirm"]').click(),
@@ -124,7 +125,9 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
 
 test("渲染 #conv 真頁面 → Refresh queue → 截圖 render surface（evidence，非 controlled-action 觀察）", async ({ page }) => {
   await page.goto(`/#conv`);
-  await page.getByRole("button", { name: /Refresh queue|讀取中/ }).click();
+  const refreshRender = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+  await refreshRender.waitFor({ state: "visible", timeout: 30_000 });
+  await refreshRender.click();
   await expect(page.getByText("IFC→USD 轉檔排程", { exact: false })).toBeVisible({ timeout: 30_000 });
   await page.screenshot({ path: "../docs/evidence/conv-watch-toggle/conv-render-surface.png", fullPage: true });
   await page.screenshot({ path: "../artifacts/e2e/conv-watch-toggle-render-surface.png", fullPage: true });
