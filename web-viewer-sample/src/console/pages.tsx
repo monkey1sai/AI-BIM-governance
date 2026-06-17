@@ -742,7 +742,7 @@ export function SessionManagementPage() {
     <>
       <h1>Session 管理 · Primary / Spectator ATC</h1>
       <p className="ec-lead">每個 endpoint 像 runway，每個 primary / spectator viewer 像飛機。Open URL 不等於 occupied；occupied 必須有 browser first frame / heartbeat / stage match evidence。</p>
-      <Panel title="Endpoint readiness rules" sub="port listening != has frame" prov="asbuilt" actions={<Btn caption="GET /api/runtime/status" onClick={load}>重新整理</Btn>}>
+      <Panel title="Endpoint readiness rules" sub="port listening != has frame" prov="asbuilt" actions={<Btn data-testid="sessions-refresh" caption="GET /api/runtime/status" onClick={load}>重新整理</Btn>}>
         {err && <p className="ec-warn-note">{err}</p>}
         <div className="ec-grid">
           <Field k="Open primary URL" v="只代表 browser 被導向，不代表 endpoint occupied" prov="asbuilt" />

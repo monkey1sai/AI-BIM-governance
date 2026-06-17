@@ -66,6 +66,18 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(html).toContain("Controlled actions");
   });
 
+  // E2E selector 穩定性（quality finding #1）：「重新整理」鈕須帶明確 data-testid="sessions-refresh"，
+  // 讓 sessions-terminate.spec.ts 以唯一 testid 選取，消除 getByRole(name:/.../).first() 的模糊性
+  // （此頁刷新鈕無 loading 態，原本正則的「讀取中」半邊永不匹配且 .first() 易誤點他列同文字鈕）。
+  it("刷新鈕帶 data-testid=\"sessions-refresh\"（E2E 唯一選取）", () => {
+    const root = createRoot(container);
+    act(() => { root.render(<SessionManagementPage />); });
+    const refresh = container.querySelector('[data-testid="sessions-refresh"]');
+    expect(refresh).not.toBeNull();
+    expect(refresh?.tagName).toBe("BUTTON");
+    expect(refresh?.textContent).toContain("重新整理");
+  });
+
   // spec test 1（rtWith("active")）：active session 顯示結束鈕；對齊規格範例的
   // session-terminate-review_session_t1 斷言（單列、單一 status 的最小契約）。
   it("active session 顯示結束鈕（session-terminate-review_session_t1）", async () => {

@@ -24,12 +24,25 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
   test.beforeEach(async ({ request }) => {
     seededId = null;
     coordinatorUp = false;
+    // 區分兩種失敗：網路層不可達（fetch throw / 非 2xx）→ 留 coordinatorUp=false → 下方 conditional skip；
+    //   但「回 2xx 卻缺 string session_id」是回應契約破壞，必須 fail（而非被 catch 吞成 skip 掩蓋 regression）。
+    //   故把契約違規記在 contractError，跳出 try/catch 後再 throw，避免被「不可達→skip」的 catch 吃掉。
+    let contractError: Error | null = null;
     try {
       const created = await request.post(`${COORDINATOR}/api/review-sessions`, {
         data: { project_id: "271", model_version_id: "mv_e2e_terminate", artifact_bindings: [] },
       });
-      if (created.ok()) { seededId = (await created.json()).session_id; coordinatorUp = true; }
+      if (created.ok()) {
+        coordinatorUp = true;
+        const parsed = (await created.json()) as { session_id?: unknown };
+        if (typeof parsed.session_id !== "string" || parsed.session_id.length === 0) {
+          contractError = new Error(`POST /api/review-sessions 回 2xx 但缺 string session_id（回應契約破壞）：${JSON.stringify(parsed)}`);
+        } else {
+          seededId = parsed.session_id;
+        }
+      }
     } catch { coordinatorUp = false; }
+    if (contractError) throw contractError;
     if (!coordinatorUp || !seededId) {
       notObserved.push("coordinator :8005 不可達或種 session 失敗；按鈕 -> IntentDialog -> 真 POST .../close -> 列轉灰 這條 browser 切片本輪 not observed，深度因果由 sessions.test.ts 兜底。");
     }
@@ -39,7 +52,10 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
   test("結束鈕 -> IntentDialog -> 真 POST .../close -> runtime/status active->closed + 列轉灰", async ({ page }) => {
     const id = seededId!;
     await page.goto(`/#sessions`);
-    await page.getByRole("button", { name: /重新整理|讀取中/ }).first().click();
+    // 明確 data-testid 選取刷新鈕（pages.tsx「重新整理」Btn 帶 data-testid="sessions-refresh"）：
+    //   此頁刷新鈕為靜態文字、無 loading 態，原 getByRole(name:/重新整理|讀取中/).first() 的「讀取中」
+    //   半邊永不匹配，且 .first() 在日後新增同文字鈕時會靜默點錯列；testid 唯一選取消除模糊性。
+    await page.locator('[data-testid="sessions-refresh"]').click();
     const btn = page.locator(`[data-testid="session-terminate-${id}"]`);
     await btn.waitFor({ state: "visible", timeout: 30_000 });
     await btn.click();
@@ -64,6 +80,10 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
       notObserved.push(`#sessions 列轉灰 className 未觀察到（toHaveClass /ec-row-muted/ 逾時）：可能後端釋放後該列已被 load() 從 DOM 移除（runtime/status 不再 emit ${id}）；列轉灰切片本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
     });
     const after = await page.request.get(`${COORDINATOR}/api/runtime/status`);
+    // 顯式驗 2xx 再解析：若 coordinator 在 POST close 後短暫過載 / 回 5xx，after.json() 可能 throw
+    //   或回 error body，afterBody.sessions?.items 變 undefined → refreshed undefined → 靜默落
+    //   notObserved，掩蓋真後端問題並讓「active->closed 狀態遷移」核心斷言失效。改為硬斷言，讓失敗顯式。
+    expect(after.ok(), `runtime/status 應可達（got ${after.status()}）`).toBeTruthy();
     const afterBody = await after.json();
     const refreshed = (afterBody.sessions?.items ?? []).find((s: { session_id: string }) => s.session_id === id);
     // 後端釋放後該 session 可能 status=closed 仍在列、或已移出 items（兩者皆真，誠實揭露）。
