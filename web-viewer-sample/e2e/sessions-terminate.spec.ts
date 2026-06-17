@@ -68,17 +68,32 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
     expect(postResponse.status()).toBeLessThan(300);
     // 證據型更新：dialog 關閉 + 該列轉灰（ec-row-muted）+ runtime/status 真值該 session active->closed。
     await expect(page.locator('[data-testid="intent-dialog"]')).toBeHidden({ timeout: 30_000 });
-    // 列轉灰 browser 切片（task 觀察目標）：confirm 後 markTerminating 立即加灰、或 load() 重抓
-    //   runtime/status 後該列 status=closing/closed 而 greyed=true（pages.tsx：greyed = terminating || ended）。
-    //   後端釋放後若該 session 已移出 runtime/status items，列會被 load() 從 DOM 移除（誠實揭露，不偽造）。
-    // markTerminating(id) 在 load() 前同步觸發（pages.tsx:729），故該列應已帶 ec-row-muted。
-    //   直接斷言（短 timeout）讓退化「可見」：真有列就硬驗 className；若後端釋放後該列已被
-    //   load() 從 DOM 移除（toHaveClass 抓不到 -> 逾時 throw），才 catch 落 notObserved，
-    //   不再用 count() 靜默吞掉核心斷言（誠實揭露，不偽造）。
+    // 列轉灰 browser 切片（task 觀察目標 / 本 PR「Browser E2E = user-facing 唯一接受證據」核心守門）：
+    //   confirm 後 markTerminating 立即加灰、或 load() 重抓 runtime/status 後該列 status=closing/closed
+    //   而 greyed=true（pages.tsx：greyed = terminating || ended）；markTerminating(id) 在 load() 前
+    //   同步觸發（pages.tsx:729）。spec §6.4 接受兩種合法終局：列轉灰，或後端釋放後該列被 load() 從
+    //   DOM 移除（runtime/status 不再 emit 該 id）。
+    // 真 gate（不再用舊版 toHaveClass(...).catch() 把任何失敗吞進 notObserved，避免 markTerminating
+    //   灰列邏輯退化 / ec-row-muted 根本沒加也被吞掉，喪失守門力）：confirm 後等一下，先用 count()
+    //   判斷該列是否仍在 DOM —— 區分兩條路徑：
+    //   (a) 列已不在 DOM（count()==0，後端移除/過濾，spec §6.4 接受的「移除」結局）→ 合法，push
+    //       notObserved 並註明 row removed from DOM (backend-driven removal)，不視為失敗。
+    //   (b) 列【仍在 DOM 但缺 ec-row-muted class】→ 這是 markTerminating 真退化，硬斷言 FAIL
+    //       （expect(rowAfter).toHaveClass(/ec-row-muted/) 不加 .catch，不准吞進 notObserved）。
     const rowAfter = page.locator(`[data-testid="session-row-${id}"]`);
-    await expect(rowAfter).toHaveClass(/ec-row-muted/, { timeout: 5_000 }).catch(() => {
-      notObserved.push(`#sessions 列轉灰 className 未觀察到（toHaveClass /ec-row-muted/ 逾時）：可能後端釋放後該列已被 load() 從 DOM 移除（runtime/status 不再 emit ${id}）；列轉灰切片本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
-    });
+    // 等一下讓 markTerminating + load() 重抓完成（任一條件穩定後 count() 才有意義）；用條件等待而非裸 sleep：
+    //   要嘛列已轉灰（仍在 DOM），要嘛列已從 DOM 移除（count()==0），兩者皆是 spec §6.4 合法終局之一。
+    await expect
+      .poll(async () => (await rowAfter.count()) === 0 || (await rowAfter.getAttribute("class") ?? "").includes("ec-row-muted"), { timeout: 5_000 })
+      .toBe(true)
+      .catch(() => { /* 逾時不在此判定：交給下方 count() 分流，列在但非灰會走 (b) 硬失敗 */ });
+    if ((await rowAfter.count()) === 0) {
+      // (a) 後端釋放後該列已被 load() 從 DOM 移除（runtime/status 不再 emit ${id}），spec §6.4 接受的「移除」結局。
+      notObserved.push(`#sessions 列轉灰切片本輪以「移除」結局收尾：row removed from DOM (backend-driven removal)；後端釋放後 runtime/status 不再 emit ${id}，故 load() 後該列離開 DOM（spec §6.4 接受），列轉灰 className 本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
+    } else {
+      // (b) 列仍在 DOM —— 必須是灰列；缺 ec-row-muted 即 markTerminating 退化，硬失敗（不吞 notObserved）。
+      await expect(rowAfter).toHaveClass(/ec-row-muted/);
+    }
     const after = await page.request.get(`${COORDINATOR}/api/runtime/status`);
     // 顯式驗 2xx 再解析：若 coordinator 在 POST close 後短暫過載 / 回 5xx，after.json() 可能 throw
     //   或回 error body，afterBody.sessions?.items 變 undefined → refreshed undefined → 靜默落

@@ -121,17 +121,42 @@ describe("coordinatorClient conversion control", () => {
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ reason: "operator terminate" });
   });
 
-  it("sessionClose 不帶 reason 時 POST body 為 {} 且不含 final_events（spec §4.2 optional reason / 強制結束無協作終結事件）", async () => {
+  it("sessionClose 省略 reason 參數時 POST body 為 {} 且不含 final_events（spec §4.2 optional reason / 強制結束無協作終結事件）", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
       calls.push({ url: String(url), init: init as RequestInit });
       return new Response(JSON.stringify({ session_id: "review_session_abc", status: "closed" }), { status: 200, headers: { "content-type": "application/json" } });
     });
+    // 注意：此條走「省略 reason 參數」（sessionClose("id")）→ jsonPost 收 { reason: undefined }
+    //   → JSON.stringify 丟棄 undefined 屬性 → wire body 為 {}。
+    //   真實 UI 路徑（pages.tsx runTerminate）走 sessionClose(id, reason)，reason 來自 IntentDialog
+    //   reasonRef.current?.value ?? ""，使用者未填時為空字串 "" → wire body 為 {"reason":""}，見下一條。
     const res = await coordinatorClient.sessionClose("review_session_abc");
     expect(res.status).toBe("closed");
     expect(calls[0].init?.method).toBe("POST");
     const body = JSON.parse(String(calls[0].init?.body));
     expect(body).toEqual({});
+    expect("final_events" in body).toBe(false);
+  });
+
+  it("sessionClose 帶空字串 reason（使用者未填）時 POST body 為 {\"reason\":\"\"}（真實 UI 路徑 wire 契約）", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), init: init as RequestInit });
+      return new Response(JSON.stringify({ session_id: "review_session_abc", status: "closed" }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    // 真實 UI 路徑：pages.tsx runTerminate 走 sessionClose(sessionId, reason)，reason 來自
+    //   IntentDialog reasonRef.current?.value ?? ""；使用者未填時 reason === ""。
+    //   sessionClose("id", "") → jsonPost 收 { reason: "" }（"" 非 undefined，JSON.stringify 保留）
+    //   → wire body 為 {"reason":""}（不是上一條的 {}）。
+    const res = await coordinatorClient.sessionClose("review_session_abc", "");
+    expect(res.status).toBe("closed");
+    expect(calls[0].init?.method).toBe("POST");
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body).toEqual({ reason: "" });
+    // 後端 app.ts:909 rawReason.trim().slice(0,500) || undefined 會把 "" 轉成 undefined →
+    //   auditFields = {}（app.ts:912），cooperative close payload 不退化（runtime 正確，
+    //   wire 帶 {"reason":""} 與後端把它視同無 reason 兩者並存無衝突）。
     expect("final_events" in body).toBe(false);
   });
 });
