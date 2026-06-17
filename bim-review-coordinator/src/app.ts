@@ -890,13 +890,18 @@ export function createCoordinatorApp(
     }
 
     const finalEvents = Array.isArray(request.body?.final_events) ? request.body.final_events : [];
-    const reason = parseReason(request);
-    const actor = resolveActor(request);
+    // IX-SS-04 spec §2.1/§4.1：reason 缺省為 undefined（不沿用共用 parseReason 的 "" 缺省，
+    // 那會讓 cooperative close payload 退化）。只有 operator terminate 真帶 reason 時才把
+    // reason/actor additive 寫進事件流；無 reason 的既有 cooperative close 維持原 payload 形狀
+    // （sessionClosing:{final_events}、sessionClosed:{}），符合 §3「不改既有 cooperative close 行為」。
+    const rawReason = (request.body as { reason?: unknown } | undefined)?.reason;
+    const reason = typeof rawReason === "string" ? rawReason.slice(0, 500) : undefined;
+    const auditFields = reason !== undefined ? { reason, actor: resolveActor(request) } : {};
     const closing = store.update(session.session_id, {
       status: "closing",
       kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
     });
-    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length, reason, actor });
+    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length, ...auditFields });
     for (const event of finalEvents) {
       eventLog.append(session.session_id, "finalReviewEvent", event);
     }
@@ -905,7 +910,7 @@ export function createCoordinatorApp(
       participants: [],
       kit_instance_bindings: releaseKitBindings(closing?.kit_instance_bindings || session.kit_instance_bindings),
     });
-    eventLog.append(session.session_id, "sessionClosed", { reason, actor });
+    eventLog.append(session.session_id, "sessionClosed", { ...auditFields });
     eventLog.append(session.session_id, "kitInstanceReleased", {
       kit_instance_bindings: closed?.kit_instance_bindings.map((binding) => binding.kit_instance_id) || [],
     });

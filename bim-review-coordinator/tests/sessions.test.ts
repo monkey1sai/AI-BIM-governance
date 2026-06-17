@@ -910,9 +910,16 @@ describe("bim-review-coordinator", () => {
     expect(closed.body.status).toBe("closed");
     expect(closed.body.kit_instance_bindings.every((b: { status: string }) => b.status === "released")).toBe(true);
     const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
     const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
-    expect(closedEvt.payload.actor).toBe("local-operator");   // 無 header → 預設
-    expect(closedEvt.payload.reason).toBe("");                // 無 reason → 空字串（parseReason 缺省）
+    // 回歸鎖（spec §2.1/§3/§6.1）：無 reason 的 cooperative close payload 形狀零退化——
+    // sessionClosing 維持 { final_events }、sessionClosed 維持 {}；reason/actor 缺省 undefined（非 ""），
+    // additive 欄不污染既有 cooperative 呼叫端。
+    expect(closing.payload.final_events).toBe(1);             // final_events 計數照常
+    expect(closing.payload.reason).toBeUndefined();           // 無 reason → 不寫該欄
+    expect(closing.payload.actor).toBeUndefined();            // 無 reason → 不寫 actor（不退化形狀）
+    expect(closedEvt.payload.reason).toBeUndefined();         // 無 reason → 不寫該欄
+    expect(closedEvt.payload.actor).toBeUndefined();          // 無 reason → 不寫 actor
     const finalReview = events.body.items.find((e: { type: string }) => e.type === "finalReviewEvent");
     expect(finalReview).toBeTruthy();                          // final_events 路徑零退化
   });
