@@ -47,8 +47,17 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
     ]);
     expect(postResponse.status(), "POST .../close 應回 2xx").toBeGreaterThanOrEqual(200);
     expect(postResponse.status()).toBeLessThan(300);
-    // 證據型更新：dialog 關閉 + runtime/status 真值該 session active->closed。
+    // 證據型更新：dialog 關閉 + 該列轉灰（ec-row-muted）+ runtime/status 真值該 session active->closed。
     await expect(page.locator('[data-testid="intent-dialog"]')).toBeHidden({ timeout: 30_000 });
+    // 列轉灰 browser 切片（task 觀察目標）：confirm 後 markTerminating 立即加灰、或 load() 重抓
+    //   runtime/status 後該列 status=closing/closed 而 greyed=true（pages.tsx：greyed = terminating || ended）。
+    //   後端釋放後若該 session 已移出 runtime/status items，列會被 load() 從 DOM 移除（誠實揭露，不偽造）。
+    const rowAfter = page.locator(`[data-testid="session-row-${id}"]`);
+    if (await rowAfter.count()) {
+      await expect(rowAfter).toHaveClass(/ec-row-muted/, { timeout: 30_000 });
+    } else {
+      notObserved.push(`#sessions 列已從 DOM 移除（後端釋放後 runtime/status 不再 emit ${id}）；列轉灰 className 切片本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
+    }
     const after = await page.request.get(`${COORDINATOR}/api/runtime/status`);
     const afterBody = await after.json();
     const refreshed = (afterBody.sessions?.items ?? []).find((s: { session_id: string }) => s.session_id === id);
