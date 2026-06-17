@@ -754,7 +754,11 @@ export function SessionManagementPage() {
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
         {sessions.length ? (
           <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th><th>動作</th></tr></thead>
-            <tbody>{sessions.filter((s) => !(terminatingIds.has(s.session_id) === false && false)).map((s) => {
+            {/* terminating 中的列「不過濾」：spec §4.3 的 60s 移除靠 markTerminating 的 timer
+                從 terminatingIds 移除 id（解灰列），最終離開可見列則靠 load() 重抓 runtime/status。
+                故此處直接 .map() 全列渲染；terminating 列只轉灰並顯「結束中…」，不可在這裡 filter 掉，
+                否則灰列會立刻消失、60s UX 失效。 */}
+            <tbody>{sessions.map((s) => {
               const terminating = terminatingIds.has(s.session_id);
               const ended = s.status === "closing" || s.status === "closed";
               const greyed = terminating || ended;
