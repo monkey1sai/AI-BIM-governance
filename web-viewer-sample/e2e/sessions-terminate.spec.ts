@@ -114,6 +114,11 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
       page.waitForSelector(`${rowSelector}.ec-row-muted`, { state: "attached", timeout: 5_000 }),
       page.waitForSelector(rowSelector, { state: "detached", timeout: 5_000 }),
     ]).catch(() => { /* 兩種終局皆未在 5s 內達成：不在此判定，交下方 count() 分流——列仍在 DOM 但非灰會走 (b) 硬失敗，而非被吸收為「移除」結局 */ });
+    // DOM-settle buffer（Important #2）：上方 Promise.race 兩個 waitForSelector 皆逾時被 .catch 吞掉時，
+    //   React 可能尚未 flush markTerminating 的 setState，緊接著讀 count()/toHaveClass 會在 flush 前
+    //   取快照 → CI 慢機假紅。補一個短 settle 點讓 React commit 完成後再做 count() 分流；不改 gate 語義
+    //   （path(b) 列在 DOM 但缺 ec-row-muted 仍硬失敗，不吞 notObserved）。
+    await page.waitForTimeout(200);
     if ((await rowAfter.count()) === 0) {
       // (a) 後端釋放後該列已被 load() 從 DOM 移除（runtime/status 不再 emit ${id}），spec §6.4 接受的「移除」結局。
       notObserved.push(`#sessions 列轉灰切片本輪以「移除」結局收尾：row removed from DOM (backend-driven removal)；後端釋放後 runtime/status 不再 emit ${id}，故 load() 後該列離開 DOM（spec §6.4 接受），列轉灰 className 本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
