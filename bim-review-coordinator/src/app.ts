@@ -780,6 +780,11 @@ export function createCoordinatorApp(
     try {
       if (body.enabled) {
         if (!minioWatchConfigured()) {                                  // CR-C：未配置誠實拒絕
+          // 失敗嘗試也須留 audit trail（review Important #1）：未配置仍嘗試啟動是 security-sensitive
+          // 操作面的誤操作/探測訊號，level 降 warn 以與成功 info 區分；outcome 編進 target。
+          structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
+            action: "conversion.watch.toggle", actor, target: "watch:enable:rejected-not-configured", reason,
+          }, "warn");
           response.status(422).json({ detail: "MinIO watch not configured (endpoint/bucket/credentials missing); cannot enable." });
           return;
         }
@@ -788,6 +793,11 @@ export function createCoordinatorApp(
           startMinioWatcherIfEnabled();                                 // 重建 handle（含 allowlist fail-fast）
         } catch (e) {
           minioWatchRuntimeEnabled = false;                            // 回滾 flag，誠實 500
+          // watcher 啟動失敗同樣留 audit（review Important #1），保留失敗訊息至 reason 供事後追查。
+          structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
+            action: "conversion.watch.toggle", actor, target: "watch:enable:failed-start",
+            reason: `${reason ? `${reason} | ` : ""}error: ${e instanceof Error ? e.message : String(e)}`,
+          }, "warn");
           response.status(500).json({ detail: `Failed to start watcher: ${e instanceof Error ? e.message : String(e)}` });
           return;
         }

@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinioWatcherStatus } from "../src/services/minioWatcher.js";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+import { createLogger, type StructLogger } from "../src/lib/structLog.js";
 
 // IX-CV-04 Task 2.3b：spec §6.1 三條具名必要測試需在「無真 MinIO」下觀察 watcher 啟停。
 // 直接 startMinioWatcher 會去輪詢不存在的 :9000、洩漏 timer。故用 vi.mock 把
@@ -51,17 +52,30 @@ afterEach(async () => {
     active = null;
   }
 });
-function makeApp(overrides = {}): CoordinatorApp {
+function makeApp(overrides = {}, structLog?: StructLogger): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "conv-watch-toggle-test-"));
-  active = createCoordinatorApp({
-    sessionStoreDir: path.join(root, "sessions"),
-    eventLogDir: path.join(root, "events"),
-    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    corsOrigins: ["http://127.0.0.1:5173"],
-    conversionPollEnabled: false,
-    ...overrides,
-  });
+  active = createCoordinatorApp(
+    {
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      corsOrigins: ["http://127.0.0.1:5173"],
+      conversionPollEnabled: false,
+      ...overrides,
+    },
+    structLog ? { structLog } : {},
+  );
   return active;
+}
+
+/** 讀 audit-capable logger 寫出的 jsonl,回 event_type=audit 的 record 陣列（沿用 conversion-control-routes.test.ts）。 */
+function readAuditRecords(logger: StructLogger): Array<Record<string, unknown>> {
+  const text = fs.readFileSync(logger.currentFile(), "utf-8").trim();
+  if (!text) return [];
+  return text
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((rec) => rec.event_type === "audit");
 }
 
 // IX-CV-04：GET status 改讀 minioWatchRuntimeEnabled（初值 = env opt-in，
@@ -144,15 +158,30 @@ describe("PUT /api/conversion/watch — toggle 行為", () => {
     expect(status.body.enabled).toBe(false);
   });
 
-  it("並發 toggle：busy 鎖期間第二筆 → 409（dispose 延遲時可觀察）", async () => {
-    const app = makeApp(configuredOverrides());
+  // CR-B busy 鎖回歸鎖：spec §6.1（design line 285）「mock dispose 延遲時並發 PUT 第二筆 409」。
+  // 舊版對「無 watcher 的 enabled:false no-op」並發，dispose 路徑幾乎瞬時釋放鎖→兩筆皆 200，
+  // 409 永不出現，鎖核心行為零覆蓋（review Important #2）。改用 configuredStartOverrides()
+  // 的 fake watcher：先 enable 建一個真 handle，再把 disposeSpy 換成「延遲 50ms 才 resolve」，
+  // 並發送兩筆 enabled:false。第一筆進入 dispose await 期間 minioWatchToggleBusy 仍為 true，
+  // 第二筆撞 CR-B → 409。鎖窗口由 dispose 延遲撐開，可穩定觀察。
+  it("並發 toggle：busy 鎖期間第二筆 → 409（dispose 延遲撐開鎖窗口）", async () => {
+    watcherMock.reset();
+    // 非空 selfBaseUrl：讓 enabled:true 走完整 startMinioWatcherIfEnabled，建立 fake handle
+    const app = makeApp({ ...configuredOverrides(), minioWatchSelfBaseUrl: "http://127.0.0.1:8004" });
+    // 先啟動 watcher（建立可被 dispose 的真 handle）
+    expect((await request(app.app).put("/api/conversion/watch").send({ enabled: true })).status).toBe(200);
+    // dispose 延遲 50ms：撐開 busy 鎖窗口，讓並發第二筆必撞鎖
+    watcherMock.disposeSpy.mockImplementationOnce(
+      () => new Promise<void>((r) => setTimeout(r, 50)),
+    );
     const [a, b] = await Promise.all([
       request(app.app).put("/api/conversion/watch").send({ enabled: false }),
       request(app.app).put("/api/conversion/watch").send({ enabled: false }),
     ]);
     const codes = [a.status, b.status];
-    // 至少一筆 200；若觀察到 409 代表鎖生效。no-op dispose 過快時兩筆皆 200（誠實，深度由程式碼審查兜底）。
+    // 一筆 200（拿到鎖、跑 dispose）、一筆 409（鎖期間被拒）——精確證偽 CR-B 鎖回歸
     expect(codes).toContain(200);
+    expect(codes).toContain(409);
   });
 });
 
@@ -239,5 +268,61 @@ describe("PUT /api/conversion/watch — watcher 啟停可觀察行為（spec §6
     expect(status.body.enabled).toBe(false);
     // 未殘留 watcher handle：dispose 不應被呼叫（從未成功建立）
     expect(watcherMock.disposeSpy).not.toHaveBeenCalled();
+  });
+});
+
+// review Important #1：spec §4.1 要求 toggle 寫 audit {action,enabled,actor,reason,at}，未限定僅
+// 成功。watch toggle 是 security-sensitive runtime 生命週期控制面，失敗嘗試（422 未配置仍啟動／
+// 500 啟動失敗）也須留 audit trail 供事後追查。沿用 conversion-control-routes.test.ts 注入 tmp-dir
+// logger 讀回 jsonl 的 pattern。失敗 audit level=warn（與成功 info 區分），outcome 編進 target。
+describe("PUT /api/conversion/watch — 失敗路徑也寫 audit（review Important #1）", () => {
+  function configuredStartOverrides() {
+    return {
+      minioWatchEndpoint: "http://127.0.0.1:9000",
+      minioWatchBucket: "bim-control",
+      minioWatchAccessKey: "ak",
+      minioWatchSecretKey: "sk",
+      minioWatchSelfBaseUrl: "http://127.0.0.1:8004",
+    };
+  }
+  beforeEach(() => watcherMock.reset());
+
+  it("422 未配置仍嘗試啟動 → 寫一筆 warn audit（target 標 rejected-not-configured，reason 保留）", async () => {
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-watch-audit-422-"));
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260617_120000_w422aa", skipEnvSnapshot: true });
+    const app = makeApp({}, logger); // 無連線參數 → minioWatchConfigured() 為 false
+    const res = await request(app.app).put("/api/conversion/watch").send({ enabled: true, reason: "operator probe" });
+    expect(res.status).toBe(422);
+
+    const audits = readAuditRecords(logger);
+    const rec = audits.find((r) => (r.data as Record<string, unknown>)?.target === "watch:enable:rejected-not-configured");
+    expect(rec).toBeDefined();
+    expect(rec!.level).toBe("warn");
+    const data = rec!.data as Record<string, unknown>;
+    expect(data.action).toBe("conversion.watch.toggle");
+    expect(data.actor).toBe("local-operator");
+    expect(data.reason).toBe("operator probe");
+  });
+
+  it("500 watcher 啟動失敗 → 寫一筆 warn audit（target 標 failed-start，reason 含錯誤訊息）", async () => {
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-watch-audit-500-"));
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260617_120000_w500bb", skipEnvSnapshot: true });
+    const app = makeApp(configuredStartOverrides(), logger);
+    watcherMock.startSpy.mockImplementationOnce(() => {
+      throw new Error("simulated watcher boot failure");
+    });
+    const res = await request(app.app).put("/api/conversion/watch").send({ enabled: true, reason: "retry boot" });
+    expect(res.status).toBe(500);
+
+    const audits = readAuditRecords(logger);
+    const rec = audits.find((r) => (r.data as Record<string, unknown>)?.target === "watch:enable:failed-start");
+    expect(rec).toBeDefined();
+    expect(rec!.level).toBe("warn");
+    const data = rec!.data as Record<string, unknown>;
+    expect(data.action).toBe("conversion.watch.toggle");
+    expect(data.actor).toBe("local-operator");
+    // reason 同時保留操作者理由與失敗訊息,供事後追查
+    expect(String(data.reason)).toContain("retry boot");
+    expect(String(data.reason)).toContain("simulated watcher boot failure");
   });
 });
