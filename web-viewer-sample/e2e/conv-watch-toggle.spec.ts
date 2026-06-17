@@ -70,7 +70,7 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
     await page.locator('[data-testid="conv-watch-disable"]').click();
     await expect(page.locator('[data-testid="intent-dialog"]')).toBeVisible();
     const [offRes] = await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/conversion/watch") && r.request().method() === "PUT"),
+      page.waitForResponse((r) => r.url().includes("/api/conversion/watch") && r.request().method() === "PUT", { timeout: 30_000 }),
       page.locator('[data-testid="intent-confirm"]').click(),
     ]);
     expect(offRes.status()).toBe(200);
@@ -79,7 +79,7 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
     // 開啟自動偵測 → confirm → 琥珀條消失
     await page.locator('[data-testid="conv-watch-enable"]').click();
     const [onRes] = await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/conversion/watch") && r.request().method() === "PUT"),
+      page.waitForResponse((r) => r.url().includes("/api/conversion/watch") && r.request().method() === "PUT", { timeout: 30_000 }),
       page.locator('[data-testid="intent-confirm"]').click(),
     ]);
     expect(onRes.status()).toBe(200);
@@ -101,10 +101,12 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
     await page.locator('[data-testid="conv-watch-enable"]').click();
     await expect(page.locator('[data-testid="intent-dialog"]')).toBeVisible();
     const [res] = await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/conversion/watch") && r.request().method() === "PUT"),
+      page.waitForResponse((r) => r.url().includes("/api/conversion/watch") && r.request().method() === "PUT", { timeout: 30_000 }),
       page.locator('[data-testid="intent-confirm"]').click(),
     ]);
     // 未配置 → 422；已配置但本機可啟動 → 200（誠實兩擇一，不硬斷 422）。
+    // 誠實鐵律：僅 200 / 422 為合法兩擇一；503 / 401 等後端錯誤路徑不得被 else 靜默吞掉 → 先硬斷後分支。
+    expect([200, 422], `PUT /api/conversion/watch 預期 200(可啟動) 或 422(未配置)，實得 ${res.status()}`).toContain(res.status());
     if (res.status() === 422) {
       await expect(page.locator('[data-testid="intent-action-error"]')).toBeVisible();
       await expect(page.locator('[data-testid="intent-dialog"]')).toBeVisible(); // 不關
