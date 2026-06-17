@@ -83,10 +83,11 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
     const rowAfter = page.locator(`[data-testid="session-row-${id}"]`);
     // 等一下讓 markTerminating + load() 重抓完成（任一條件穩定後 count() 才有意義）；用條件等待而非裸 sleep：
     //   要嘛列已轉灰（仍在 DOM），要嘛列已從 DOM 移除（count()==0），兩者皆是 spec §6.4 合法終局之一。
-    await expect
-      .poll(async () => (await rowAfter.count()) === 0 || (await rowAfter.getAttribute("class") ?? "").includes("ec-row-muted"), { timeout: 5_000 })
-      .toBe(true)
-      .catch(() => { /* 逾時不在此判定：交給下方 count() 分流，列在但非灰會走 (b) 硬失敗 */ });
+    try {
+      await expect
+        .poll(async () => (await rowAfter.count()) === 0 || (await rowAfter.getAttribute("class") ?? "").includes("ec-row-muted"), { timeout: 5_000 })
+        .toBe(true);
+    } catch { /* 逾時不在此判定：交給下方 count() 分流，列在但非灰會走 (b) 硬失敗。明確 try/catch，不依賴 Playwright 內部 .catch() shim */ }
     if ((await rowAfter.count()) === 0) {
       // (a) 後端釋放後該列已被 load() 從 DOM 移除（runtime/status 不再 emit ${id}），spec §6.4 接受的「移除」結局。
       notObserved.push(`#sessions 列轉灰切片本輪以「移除」結局收尾：row removed from DOM (backend-driven removal)；後端釋放後 runtime/status 不再 emit ${id}，故 load() 後該列離開 DOM（spec §6.4 接受），列轉灰 className 本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
