@@ -61,31 +61,9 @@ describe("GET /api/external/minio-watch/status — runtime flag 初值（IX-CV-0
     expect(res.body.access_key).toBeUndefined();
   });
 
-  // 風險補強（review Important #1）：status note 的雙分支裡，「已由操作者於 console
-  // 關閉」這條只有在 config.minioWatchEnabled=true 而 runtime flag 被覆寫為 false 時才
-  // 走得到。Task 1 沒有 production write path（PUT /api/conversion/watch 屬 Task 2），
-  // 此分支在無 seam 下永遠不可達 → branch coverage 缺口。用 @internal test-only setter
-  // 把 runtime flag 翻成 false，鎖住「env=true + runtime=false → note 含操作者字串」這
-  // 條回歸基線，避免 runtime override 分支長期未被測試。
-  it("env opt-in 但 runtime flag 被覆寫=false → status enabled=false 且 note 為操作者關閉", async () => {
-    const app = makeApp({
-      minioWatchEnabled: true,
-      minioWatchEndpoint: "http://127.0.0.1:1",
-      minioWatchBucket: "bim-control",
-      minioWatchAccessKey: "ak",
-      minioWatchSecretKey: "sk",
-      minioWatchIntervalSeconds: 10,
-      minioWatchSelfBaseUrl: "http://127.0.0.1:1",
-      externalIntakeIpAllowlist: ["10.0.0.0/8", "127.0.0.1"],
-    });
-    // runtime override：模擬 operator 於 console 關閉（Task 2 PUT handler 的等效效果）
-    app.setMinioWatchRuntimeEnabledForTest(false);
-    const res = await request(app.app).get("/api/external/minio-watch/status");
-    expect(res.status).toBe(200);
-    expect(res.body.enabled).toBe(false);
-    // 此分支必須回「操作者關閉」而非「未啟用」（config.minioWatchEnabled 仍為 true）
-    expect(res.body.note).toContain("操作者");
-    expect(res.body.note).not.toContain("未啟用");
-    expect(res.body.bucket).toBe("bim-control");
-  });
+  // 註（IX-CV-04）：env=true 但 runtime flag 被覆寫=false → note「操作者關閉」分支，
+  // 需 PUT /api/conversion/watch（Task 2）才能在無 test seam 下達成。該分支覆蓋移至
+  // Task 3 的 toggle 測試以真正的 PUT route 驗證（plan Task 3.1），此處不以 test-only
+  // setter 假寫 flag——避免 production public interface（CoordinatorApp）出現 write seam
+  // 讓 consumer 繞過 PUT route 假寫狀態（review Important #1）。
 });

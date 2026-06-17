@@ -293,14 +293,6 @@ export interface CoordinatorApp {
    * .delete()/.clear() 也拿不到 unknown payload,維護者不會誤把它當 production 依賴。
    */
   hasPendingDispatch: (jobId: string) => boolean;
-  /**
-   * @internal test-only write seam：覆寫 minioWatchRuntimeEnabled runtime flag。
-   * **不是 production 介面**——production 的 runtime override（PUT /api/conversion/watch）
-   * 屬 Task 2，會直接寫 closure 內的 flag，不得經此 setter。此 seam 只為 Task 1 補
-   * status note 雙分支裡「config.minioWatchEnabled=true 但 runtime=false → 操作者關閉」
-   * 那條在無 PUT route 時否則不可達的回歸覆蓋。
-   */
-  setMinioWatchRuntimeEnabledForTest: (enabled: boolean) => void;
 }
 
 export interface CreateCoordinatorAppOptions {
@@ -2011,12 +2003,6 @@ export function createCoordinatorApp(
     // 只回 boolean —— 內部 Map 實例(含 unknown payload)不外洩;retry route 在同一 closure
     // 內直接讀 pendingDispatchEvents,不經此 getter。
     hasPendingDispatch: (jobId: string): boolean => pendingDispatchEvents.has(jobId),
-    // test-only write seam：見 interface 上的 @internal 註解。Task 1 用它把 runtime
-    // flag 翻成 false，falsify status note 的「操作者關閉」分支；Task 2 引入 PUT route
-    // 後仍以同一 closure flag 為單一真相，此 seam 不變為 production 依賴。
-    setMinioWatchRuntimeEnabledForTest: (enabled: boolean): void => {
-      minioWatchRuntimeEnabled = enabled;
-    },
   };
 }
 
