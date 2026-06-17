@@ -777,6 +777,9 @@ export function createCoordinatorApp(
     const reason = parseReason(request);
     const actor = resolveActor(request);
     minioWatchToggleBusy = true;
+    // double-enable 誠實化（P5 對抗複驗 task1-important2）：對已在跑的 watcher 再 enable 是 no-op
+    //（guard 早返、不起第二個 watcher）；audit 須與真冷啟區分，否則稽核者無法分辨「真啟動」vs「冗餘 no-op」。
+    let enableWasNoop = false;
     try {
       if (body.enabled) {
         if (!minioWatchConfigured()) {                                  // CR-C：未配置誠實拒絕
@@ -788,6 +791,7 @@ export function createCoordinatorApp(
           response.status(422).json({ detail: "MinIO watch not configured (endpoint/bucket/credentials missing); cannot enable." });
           return;
         }
+        enableWasNoop = minioWatcher != null;                           // 已在跑 → 本次 enable 為冗餘 no-op
         minioWatchRuntimeEnabled = true;
         try {
           startMinioWatcherIfEnabled();                                 // 重建 handle（含 allowlist fail-fast）
@@ -814,7 +818,8 @@ export function createCoordinatorApp(
       // 慣例一致，既有以 target 為鍵的查詢不破壞）。`enabled` 已加入 AuditData(optional)。
       structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
         action: "conversion.watch.toggle", actor,
-        target: body.enabled ? "watch:enable" : "watch:disable", enabled: body.enabled, reason,
+        target: body.enabled ? (enableWasNoop ? "watch:enable:noop" : "watch:enable") : "watch:disable",
+        enabled: body.enabled, reason,
       }, "info");
       response.json(currentMinioWatchStatusPayload());                  // 與 GET status 同邏輯的共用 helper
     } finally {

@@ -394,6 +394,36 @@ describe("PUT /api/conversion/watch — 失敗路徑也寫 audit（review Import
     expect(data.enabled).toBe(true);
   });
 
+  // P5 對抗複驗 task1-important2：對「已啟用」watcher 再 enable 是 no-op（guard app.ts 早返、
+  // 不起第二個 watcher）。產品行為安全，但成功 audit 須與真冷啟區分 → target=watch:enable:noop，
+  // 否則稽核者讀 log 無法分辨冗餘 double-enable 與真啟動。同時鎖 idempotency（startSpy 仍 1）。
+  it("double-enable（對已啟用 watcher 再 enable）→ 無第二 watcher（startSpy 仍 1）+ audit target=watch:enable:noop", async () => {
+    watcherMock.reset();
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-watch-audit-noop-"));
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260617_120000_wnoop", skipEnvSnapshot: true });
+    const app = makeApp(configuredStartOverrides(), logger);
+    // 第一筆 enable：真冷啟（target=watch:enable）
+    expect((await request(app.app).put("/api/conversion/watch").send({ enabled: true, reason: "first enable" })).status).toBe(200);
+    expect(watcherMock.startSpy).toHaveBeenCalledTimes(1);
+    // 第二筆 enable：watcher 已在跑 → guard 早返、不起第二個 handle
+    const second = await request(app.app).put("/api/conversion/watch").send({ enabled: true, reason: "redundant enable" });
+    expect(second.status).toBe(200);
+    expect(watcherMock.startSpy).toHaveBeenCalledTimes(1); // 仍 1：idempotent，無雙 watcher
+    const status = await request(app.app).get("/api/external/minio-watch/status");
+    expect(status.body.enabled).toBe(true); // 狀態冪等仍 enabled
+
+    const audits = readAuditRecords(logger);
+    // 第二筆（no-op）須標 watch:enable:noop，稽核可辨非真啟動
+    const noopRec = audits.find((r) => (r.data as Record<string, unknown>)?.target === "watch:enable:noop");
+    expect(noopRec).toBeDefined();
+    expect(noopRec!.level).toBe("info");
+    const noopData = noopRec!.data as Record<string, unknown>;
+    expect(noopData.enabled).toBe(true);
+    expect(noopData.reason).toBe("redundant enable");
+    // 第一筆仍是真 watch:enable（非 noop）→ 兩者可區分
+    expect(audits.find((r) => (r.data as Record<string, unknown>)?.target === "watch:enable")).toBeDefined();
+  });
+
   it("成功 disable（200）→ 寫一筆 info audit（target=watch:disable + enabled=false，spec §4.1）", async () => {
     watcherMock.reset();
     const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-watch-audit-ok-off-"));
