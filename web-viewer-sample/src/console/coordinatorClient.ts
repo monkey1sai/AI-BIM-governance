@@ -212,6 +212,12 @@ export interface ConversionControlResponse {
   queued_order?: string[];
 }
 
+// IX-SS-04：POST /api/review-sessions/:id/close 回傳（重用 close 路由；只取消費端用到的欄位）。
+export interface SessionCloseResponse {
+  session_id: string;
+  status: string;
+}
+
 export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
@@ -227,6 +233,10 @@ export const coordinatorClient = {
     jsonPost<ConversionControlResponse>(`/api/conversion/jobs/${encodeURIComponent(id)}/retry`, { reason }),
   conversionWatchToggle: (enabled: boolean, reason?: string) =>
     jsonPut<MinioWatchStatus>("/api/conversion/watch", { enabled, reason }),
+  // IX-SS-04：operator「結束 session」＝協作式 close 的觸發。重用既有 jsonPost；body 只帶 reason，
+  // 不帶 final_events（operator 強制結束無協作終結事件，spec §4.2）。
+  sessionClose: (sessionId: string, reason?: string) =>
+    jsonPost<SessionCloseResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/close`, { reason }),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,

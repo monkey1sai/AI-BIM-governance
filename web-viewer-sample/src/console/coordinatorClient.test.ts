@@ -82,4 +82,17 @@ describe("coordinatorClient conversion control", () => {
       /upstream 502 plain text/,
     );
   });
+
+  it("sessionClose POSTs to /close with reason body and encodes session id", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ session_id: "review_session_abc", status: "closed" }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const res = await coordinatorClient.sessionClose("review_session_abc", "operator terminate");
+    expect(res.status).toBe("closed");
+    expect(calls[0].url).toContain("/api/review-sessions/review_session_abc/close");
+    expect(calls[0].init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ reason: "operator terminate" });
+  });
 });
