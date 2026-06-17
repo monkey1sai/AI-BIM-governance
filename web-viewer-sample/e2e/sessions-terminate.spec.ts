@@ -49,9 +49,31 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
     test.skip(!coordinatorUp || !seededId, "需 branch coordinator :8005 可達且能 POST /api/review-sessions 種 session；見檔頭前置。深度因果由 sessions.test.ts 兜底。");
   });
 
+  // 清理本輪 beforeEach 種下的 session（比照 conv-watch-toggle.spec.ts afterEach 還原態）：
+  //   若測試中途失敗（btn.waitFor 逾時等）、或正常跑完但走了 path (a) row-removed 而 coordinator 實際
+  //   未自動 close 掉 seeded session，該 session 會以 active 殘留在 store；累積多輪後測試區會有多筆
+  //   殘留 active session，污染後續 run 的「目前 runtime status 無 active session」預期（IMPORTANT-1）。
+  //   POST .../close 冪等：若該 session 已 closed/移除，後端回非 2xx，這裡 failure-tolerant 吞掉，不影響測試判定。
+  test.afterEach(async ({ request }) => {
+    if (!seededId) return;
+    try {
+      await request.post(`${COORDINATOR}/api/review-sessions/${seededId}/close`, { data: { reason: "e2e-teardown" } });
+    } catch {
+      /* teardown 盡力而為；coordinator 不可達 / session 已釋放時不阻斷測試判定 */
+    }
+  });
+
   test("結束鈕 -> IntentDialog -> 真 POST .../close -> runtime/status active->closed + 列轉灰", async ({ page }) => {
     const id = seededId!;
+    // 先攔截 SessionManagementPage 掛載時 useEffect→load() 的首次 runtime/status 回應，再 goto，
+    //   避免「goto 僅等 page load event、首次 load() XHR 尚未回來時就點刷新鈕」觸發兩個並發 load()
+    //   的 race（IMPORTANT-3）：首次 load 完成後才點刷新，消除不必要的並發與不穩定。
+    const initialStatus = page.waitForResponse(
+      (r) => r.url().includes("/api/runtime/status") && r.request().method() === "GET",
+      { timeout: 30_000 },
+    );
     await page.goto(`/#sessions`);
+    await initialStatus;
     // 明確 data-testid 選取刷新鈕（pages.tsx「重新整理」Btn 帶 data-testid="sessions-refresh"）：
     //   此頁刷新鈕為靜態文字、無 loading 態，原 getByRole(name:/重新整理|讀取中/).first() 的「讀取中」
     //   半邊永不匹配，且 .first() 在日後新增同文字鈕時會靜默點錯列；testid 唯一選取消除模糊性。
@@ -80,14 +102,18 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
     //       notObserved 並註明 row removed from DOM (backend-driven removal)，不視為失敗。
     //   (b) 列【仍在 DOM 但缺 ec-row-muted class】→ 這是 markTerminating 真退化，硬斷言 FAIL
     //       （expect(rowAfter).toHaveClass(/ec-row-muted/) 不加 .catch，不准吞進 notObserved）。
-    const rowAfter = page.locator(`[data-testid="session-row-${id}"]`);
-    // 等一下讓 markTerminating + load() 重抓完成（任一條件穩定後 count() 才有意義）；用條件等待而非裸 sleep：
-    //   要嘛列已轉灰（仍在 DOM），要嘛列已從 DOM 移除（count()==0），兩者皆是 spec §6.4 合法終局之一。
-    try {
-      await expect
-        .poll(async () => (await rowAfter.count()) === 0 || (await rowAfter.getAttribute("class") ?? "").includes("ec-row-muted"), { timeout: 5_000 })
-        .toBe(true);
-    } catch { /* 逾時不在此判定：交給下方 count() 分流，列在但非灰會走 (b) 硬失敗。明確 try/catch，不依賴 Playwright 內部 .catch() shim */ }
+    const rowSelector = `[data-testid="session-row-${id}"]`;
+    const rowAfter = page.locator(rowSelector);
+    // 等 DOM 穩定後再判 count()，不再用「被 try/catch 吞掉的 expect.poll 超時邊界」當守門（IMPORTANT-2）：
+    //   舊寫法吞掉 poll 逾時後，count() 是「5s 超時後」而非「穩定後」的快照——若 markTerminating 在
+    //   5s~5s+ε 才加灰，或逾時根因是 DOM detach（locator fails 後 count() 回 0），會讓真正的灰列失敗
+    //   被吸收成「移除」結局。改為明確等兩種合法終局其一達到穩定態，再做 count() 分流：
+    //   要嘛列轉灰（仍在 DOM、帶 ec-row-muted），要嘛列從 DOM 移除（detached）。
+    // 兩個等待擇一先達成即放行；任一達成代表 DOM 已穩定，count() 快照才有意義。
+    await Promise.race([
+      page.waitForSelector(`${rowSelector}.ec-row-muted`, { state: "attached", timeout: 5_000 }),
+      page.waitForSelector(rowSelector, { state: "detached", timeout: 5_000 }),
+    ]).catch(() => { /* 兩種終局皆未在 5s 內達成：不在此判定，交下方 count() 分流——列仍在 DOM 但非灰會走 (b) 硬失敗，而非被吸收為「移除」結局 */ });
     if ((await rowAfter.count()) === 0) {
       // (a) 後端釋放後該列已被 load() 從 DOM 移除（runtime/status 不再 emit ${id}），spec §6.4 接受的「移除」結局。
       notObserved.push(`#sessions 列轉灰切片本輪以「移除」結局收尾：row removed from DOM (backend-driven removal)；後端釋放後 runtime/status 不再 emit ${id}，故 load() 後該列離開 DOM（spec §6.4 接受），列轉灰 className 本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
