@@ -1,4 +1,5 @@
 import { act } from "react";
+import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManagementPage } from "./pages";
@@ -8,7 +9,7 @@ import { coordinatorClient, type RuntimeStatus, type RuntimeSessionSummary } fro
 // ConversionSchedulingPage 的控制動作（prioritize/retry）已有完整 vitest；本檔對
 // SessionManagementPage 補上同 pattern 覆蓋：結束鈕僅 active 顯示、IntentDialog→confirm→
 // sessionClose→load 重抓、失敗顯誠實錯誤不關 dialog、terminatingIds 灰列 + 60s 後移除（fake timer）。
-describe("SessionManagementPage per-row 結束 session 控制動作（IX-SS-04）", () => {
+describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
   let container: HTMLDivElement;
   let prevActEnv: unknown;
@@ -38,6 +39,11 @@ describe("SessionManagementPage per-row 結束 session 控制動作（IX-SS-04�
     },
   });
 
+  // 規格指定的呼叫介面 rtWith(status)：單一 status 字串 → 單列 review_session_t1 的 RuntimeStatus。
+  // 內部複用 makeSession / makeStatus，保留兩層 helper 的靈活度，同時對齊規格範例的 rtWith("active") 形式。
+  const rtWith = (status: string): RuntimeStatus =>
+    makeStatus([makeSession({ session_id: "review_session_t1", status, project_id: "271", model_version_id: "mv1", participant_count: 0 })]);
+
   beforeEach(() => {
     prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
@@ -49,6 +55,15 @@ describe("SessionManagementPage per-row 結束 session 控制動作（IX-SS-04�
     vi.restoreAllMocks();
     vi.useRealTimers();
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  // 照抄 ConversionSchedulingPage.test.tsx 的 SSR + client render 雙模式：先以 renderToString
+  // 做 server-side smoke（無 mock、無 useEffect），確認頁面骨架可在 SSR 安全渲染、含治理標題與
+  // Controlled actions 區塊，不依賴 coordinator 連線；其餘 it 走 client render 跑 useEffect → load()。
+  it("SSR renderToString smoke：頁面骨架可在 server 安全渲染（不需 coordinator）", () => {
+    const html = renderToString(<SessionManagementPage />);
+    expect(html).toContain("Session 管理");
+    expect(html).toContain("Controlled actions");
   });
 
   // spec §6.2：結束鈕僅 status==="active" 顯示；closing / closed 不顯。
@@ -68,6 +83,21 @@ describe("SessionManagementPage per-row 結束 session 控制動作（IX-SS-04�
     // closing / closed 列仍渲染（被灰列，不被過濾掉）
     expect(container.querySelector('[data-testid="session-row-sess_closing"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="session-row-sess_closed"]')).not.toBeNull();
+    // spec §6.2：closed / closing 列為灰列（ec-row-muted），active 列不灰。
+    expect(container.querySelector('[data-testid="session-row-sess_closed"]')?.className).toContain("ec-row-muted");
+    expect(container.querySelector('[data-testid="session-row-sess_closing"]')?.className).toContain("ec-row-muted");
+    expect(container.querySelector('[data-testid="session-row-sess_active"]')?.className ?? "").not.toContain("ec-row-muted");
+  });
+
+  // spec test 2（rtWith("closed")）：單一 closed session → 灰列、無假按鈕。
+  it("closed session 不給結束鈕（灰列、無假按鈕）", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtWith("closed"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.querySelector('[data-testid="session-terminate-review_session_t1"]')).toBeNull();
+    expect(container.querySelector('[data-testid="session-row-review_session_t1"]')?.className).toContain("ec-row-muted");
   });
 
   // spec §6.2：點按開 IntentDialog；confirm 呼叫 sessionClose；成功後 load() 重抓。
