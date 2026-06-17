@@ -97,6 +97,7 @@ table.ec-table { width:100%; border-collapse:collapse; font-size:12px; }
 table.ec-table th { text-align:left; color:var(--ec-fg-3); font-weight:500; padding:6px 8px; border-bottom:1px solid var(--ec-line-2); }
 table.ec-table td { padding:6px 8px; border-bottom:1px solid var(--ec-line); color:var(--ec-fg-2); }
 table.ec-table tr:hover td { background:var(--ec-bg-3); }
+.ec-row-muted { opacity: 0.5; }
 
 .ec-appcard { background:var(--ec-panel); border:1px solid var(--ec-line); border-radius:6px; padding:12px;
   cursor:pointer; display:flex; flex-direction:column; gap:6px; }

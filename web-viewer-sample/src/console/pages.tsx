@@ -693,11 +693,49 @@ export function ConversionSchedulingPage() {
 export function SessionManagementPage() {
   const [rt, setRt] = useState<RuntimeStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // IX-SS-04 per-row「結束 session」controlled-action（模式 3 intent→confirm）。照抄
+  // ConversionSchedulingPage 的 actionBusyRef 同步防重入 pattern；terminate 專屬狀態：
+  // pendingTerminate（開 IntentDialog）、terminatingIds（灰列）、timersRef（60s timer 收集）。
+  const [pendingTerminate, setPendingTerminate] = useState<{ sessionId: string } | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const actionBusyRef = useRef(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [terminatingIds, setTerminatingIds] = useState<Set<string>>(new Set());
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const load = useCallback(async () => {
     setErr(null);
     try { setRt(await coordinatorClient.runtimeStatus()); }
     catch (e) { setErr(`未連線 coordinator /api/runtime/status：${String(e)}`); }
   }, []);
+  const markTerminating = useCallback((id: string) => {
+    setTerminatingIds((prev) => new Set(prev).add(id));
+    const t = setTimeout(() => {
+      setTerminatingIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+      timersRef.current.delete(id);
+    }, 60_000);
+    timersRef.current.set(id, t);
+  }, []);
+  // unmount 清除所有 60s timer，避免 setState-after-unmount / leak（spec §7）。
+  useEffect(() => () => { for (const t of timersRef.current.values()) clearTimeout(t); timersRef.current.clear(); }, []);
+  const runTerminate = useCallback(async (reason: string) => {
+    if (!pendingTerminate) return;
+    if (actionBusyRef.current) return;            // 同步防重入（state 尚未更新前）
+    actionBusyRef.current = true;
+    setActionBusy(true);
+    setActionErr(null);
+    const sessionId = pendingTerminate.sessionId;
+    try {
+      await coordinatorClient.sessionClose(sessionId, reason);   // 真 POST，body 只帶 reason
+      markTerminating(sessionId);                                // 該列轉灰，60s 後移除（看見因果）
+      setPendingTerminate(null);
+      await load();                                              // 非樂觀：重抓 runtime/status 真狀態
+    } catch (e) {
+      setActionErr(`結束 session 失敗：${String(e)}`);          // 誠實錯誤、不關 dialog、不改狀態
+    } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
+    }
+  }, [pendingTerminate, load, markTerminating]);
   useEffect(() => { void load(); }, [load]);
   const sessions = rt?.sessions.items ?? [];
   return (
@@ -715,18 +753,37 @@ export function SessionManagementPage() {
       </Panel>
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
         {sessions.length ? (
-          <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th></tr></thead>
-            <tbody>{sessions.map((s) => (
-              <tr key={s.session_id}><td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td></tr>
-            ))}</tbody></table>
+          <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th><th>動作</th></tr></thead>
+            <tbody>{sessions.filter((s) => !(terminatingIds.has(s.session_id) === false && false)).map((s) => {
+              const terminating = terminatingIds.has(s.session_id);
+              const ended = s.status === "closing" || s.status === "closed";
+              const greyed = terminating || ended;
+              return (
+                <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
+                  <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
+                  <td>{s.status === "active" && !terminating ? (
+                    <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>結束 session</Btn>
+                  ) : <span className="ec-note">{terminating ? "結束中…" : "—"}</span>}</td>
+                </tr>
+              );
+            })}</tbody></table>
         ) : <p className="ec-note">目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。</p>}
       </Panel>
-      <Panel title="Controlled actions" sub="Phase 1 read-only；會改狀態的動作須 reason + audit log，控制端點尚未接（不提供假按鈕）" prov="p1">
+      <Panel title="Controlled actions" sub="per-row「結束 session」已落地（IX-SS-04，見上表）；Reclaim stale spectator / Force release 待 IX-SS-02 心跳遙測，維持 disabled（不提供假按鈕）" prov="p1">
         <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open primary URL</Btn>{" "}
         <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open spectator URL</Btn>{" "}
         <Btn disabled caption="Phase 1 read-only：stale spectator reclaim 待接" prov="p1">Reclaim stale spectator</Btn>{" "}
         <Btn disabled caption="requires explicit reason + audited intent to Kit Manager" prov="p1">Force release / restart primary</Btn>
       </Panel>
+      <IntentDialog
+        open={pendingTerminate != null}
+        title="結束 session"
+        cost="將結束此 session 並釋放其 Kit 座位，座位可被新 viewer 取用。這不會強制關閉 GPU 上的 Kit 行程（Kit 行程 lifecycle 屬 kit-manager-api）。結束＝協作式 close 的 operator 觸發。"
+        busy={actionBusy}
+        actionErr={actionErr}
+        onConfirm={runTerminate}
+        onCancel={() => { if (!actionBusy) { setActionErr(null); setPendingTerminate(null); } }}
+      />
     </>
   );
 }
