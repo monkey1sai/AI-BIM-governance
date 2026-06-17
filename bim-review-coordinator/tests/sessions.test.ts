@@ -924,6 +924,52 @@ describe("bim-review-coordinator", () => {
     expect(finalReview).toBeTruthy();                          // final_events 路徑零退化
   });
 
+  it("close with empty-string reason does not pollute cooperative close payload (no actor leak)", async () => {
+    // IMPORTANT-1 回歸鎖：caller 送 { reason: "" } 時，空字串為 falsy 但 typeof === "string"，
+    // 若用 `reason !== undefined` 判斷會讓 auditFields 帶入 actor，違反 §2.1/§3「cooperative close
+    // payload 形狀零退化」。空 reason 視同無 reason → sessionClosing/sessionClosed 不得帶 actor。
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({ project_id: "271", model_version_id: "mv_empty_reason", artifact_bindings: [] });
+    const sessionId = created.body.session_id;
+    const closed = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/close`)
+      .set("X-Operator", "alice@lan")
+      .send({ reason: "" });
+    expect(closed.status).toBe(200);
+    expect(closed.body.status).toBe("closed");
+    const events = await request(app.app).get(`/api/review-sessions/${sessionId}/events`);
+    const closing = events.body.items.find((e: { type: string }) => e.type === "sessionClosing");
+    const closedEvt = events.body.items.find((e: { type: string }) => e.type === "sessionClosed");
+    expect(closing.payload.reason).toBeUndefined();           // 空 reason → 不寫該欄
+    expect(closing.payload.actor).toBeUndefined();            // 空 reason → 不得洩漏 actor
+    expect(closedEvt.payload.reason).toBeUndefined();
+    expect(closedEvt.payload.actor).toBeUndefined();
+  });
+
+  it("close rejects caller IP not in allowlist with 403 (before id/state checks)", async () => {
+    // IMPORTANT-2 回歸鎖：close 改造為「模式 3 operator terminate」後，control-plane mutation
+    // surface 不得匿名寫入，須與 prioritize/retry/watch 三條路由一致補 rejectIfIpNotAllowed 守門。
+    // supertest 走 loopback，故把 allowlist 設成排除 loopback 的網段 → 預期 403（在 id 驗證之前先擋）。
+    const app = makeApp({ externalIntakeIpAllowlist: ["10.0.0.0/8"] });
+    const res = await request(app.app)
+      .post("/api/review-sessions/review_session_anything/close")
+      .send({ reason: "operator terminate" });
+    expect(res.status).toBe(403);
+  });
+
+  it("close with empty allowlist bypasses IP guard (consistent with IntranetDevAuthProvider length>0)", async () => {
+    // 空 allowlist 代表「未啟用 IP 守門」→ bypass，而非全 403。傳空 allowlist + 不存在 session →
+    // 預期非 403（落到 404 找不到 session），與 prioritize/retry 的空 allowlist 行為對稱。
+    const app = makeApp({ externalIntakeIpAllowlist: [] });
+    const res = await request(app.app)
+      .post("/api/review-sessions/review_session_nope/close")
+      .send({ reason: "operator terminate" });
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(404);
+  });
+
   it("returns lifecycle audit events with stable sequence and excludes generic events", async () => {
     const app = makeApp();
     const created = await request(app.app)

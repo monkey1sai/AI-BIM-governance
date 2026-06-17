@@ -875,6 +875,10 @@ export function createCoordinatorApp(
   });
 
   app.post("/api/review-sessions/:sessionId/close", (request, response) => {
+    // IX-SS-04 模式 3 守門：close 改造為 operator terminate（reason/actor 上事件流）後，
+    // 與 prioritize/retry/watch 三條 controlled-action 路由一致補 IP allowlist 守門
+    // （spec §4.1 / L665-668：control-plane mutation surface 不得匿名寫入）。空 allowlist → bypass。
+    if (rejectIfIpNotAllowed(request, response)) return;
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
       return;
@@ -896,7 +900,9 @@ export function createCoordinatorApp(
     // （sessionClosing:{final_events}、sessionClosed:{}），符合 §3「不改既有 cooperative close 行為」。
     const rawReason = (request.body as { reason?: unknown } | undefined)?.reason;
     const reason = typeof rawReason === "string" ? rawReason.slice(0, 500) : undefined;
-    const auditFields = reason !== undefined ? { reason, actor: resolveActor(request) } : {};
+    // truthy 檢查（與 resolveActor 的 `header.trim().length > 0` 對稱）：空字串 reason 視同無 reason，
+    // 否則 { reason: "" } 會讓 auditFields 帶入 actor，污染既有 cooperative close payload 形狀（IMPORTANT-1）。
+    const auditFields = reason ? { reason, actor: resolveActor(request) } : {};
     const closing = store.update(session.session_id, {
       status: "closing",
       kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
