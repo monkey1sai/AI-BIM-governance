@@ -22,6 +22,10 @@ const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:80
 test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
   test.setTimeout(120_000);
   let initialEnabled: boolean | null = null;
+  // 原始 watcher 態快照（首次成功 GET 時鎖定，後續測試不覆寫），供 afterEach 還原。
+  // 防 cross-test 汙染：啟用態往返測試（test 1）若在「關→開」中途失敗會把 watcher 留在關閉態，
+  // 導致 test 2 的 beforeEach 重抓誤判 enabled:false 而走 enable-attempt 路徑、PUT 回 200 靜默誤過。
+  let originalEnabled: boolean | null = null;
   const notObserved: string[] = [];
 
   test.beforeEach(async ({ request }) => {
@@ -29,10 +33,27 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
       const res = await request.get(`${COORDINATOR}/api/external/minio-watch/status`);
       if (res.ok()) initialEnabled = Boolean((await res.json()).enabled);
     } catch { initialEnabled = null; }
+    if (originalEnabled === null && initialEnabled !== null) originalEnabled = initialEnabled;
     if (initialEnabled === null) {
       notObserved.push("coordinator :8005 不可達；開關 browser 切片本輪 not observed，深度因果由 conversion-watch-toggle.test.ts 兜底。");
     }
     test.skip(initialEnabled === null, "需 branch coordinator :8005 可達且 GET minio-watch/status 回應；見檔頭前置。");
+  });
+
+  // 還原 watcher 至原始態：若任一測試（尤其 test 1 往返中途失敗）把 runtime flag 留在非原始態，
+  // 透過真 PUT /api/conversion/watch 復原，避免後測讀到被汙染的態。failure-tolerant，不影響測試判定。
+  test.afterEach(async ({ request }) => {
+    if (originalEnabled === null) return;
+    try {
+      const res = await request.get(`${COORDINATOR}/api/external/minio-watch/status`);
+      if (!res.ok()) return;
+      const current = Boolean((await res.json()).enabled);
+      if (current !== originalEnabled) {
+        await request.put(`${COORDINATOR}/api/conversion/watch`, { data: { enabled: originalEnabled } });
+      }
+    } catch {
+      /* 還原盡力而為；coordinator 不可達時不阻斷測試判定 */
+    }
   });
 
   test("啟用態 → 關閉往返：關 → 琥珀條出現 → 開 → 琥珀條消失", async ({ page }) => {
@@ -42,7 +63,9 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
       return;
     }
     await page.goto(`/#conv`);
-    await page.getByRole("button", { name: /Refresh queue|讀取中/ }).click();
+    const refreshOff = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+    await refreshOff.waitFor({ state: "visible", timeout: 30_000 });
+    await refreshOff.click();
     // 關閉自動偵測 → IntentDialog → confirm → 攔 PUT 200
     await page.locator('[data-testid="conv-watch-disable"]').click();
     await expect(page.locator('[data-testid="intent-dialog"]')).toBeVisible();
@@ -71,7 +94,9 @@ test.describe("IX-CV-04 #conv 自動偵測開關 controlled action", () => {
       return;
     }
     await page.goto(`/#conv`);
-    await page.getByRole("button", { name: /Refresh queue|讀取中/ }).click();
+    const refreshEnable = page.getByRole("button", { name: /Refresh queue|讀取中/ });
+    await refreshEnable.waitFor({ state: "visible", timeout: 30_000 });
+    await refreshEnable.click();
     await expect(page.locator('[data-testid="conv-watch-off-banner"]')).toBeVisible();
     await page.locator('[data-testid="conv-watch-enable"]').click();
     await expect(page.locator('[data-testid="intent-dialog"]')).toBeVisible();
