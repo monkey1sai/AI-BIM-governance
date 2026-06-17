@@ -8,7 +8,7 @@ description: Use when a brainstormed spec already exists under docs/superpowers/
 把一份**已經使用者核准的 spec**(brainstorming 產物)自主推進到 **merged PR + browser evidence + 四項回報**。
 主對話 = 指揮官:只做 (a) phase 之間讀 StructuredOutput 比 gate 規則、(b) 配 args、(c) 命中強制停下點就輸出 hold block。苦工全在 named workflows 的 subagent(獨立 context)。
 
-**Source of truth 聲明**:本檔是 spec-to-done 的唯一編排權威;`std-*.js` 檔頭指回本檔。merge 段權威是 `.claude/workflows/ship-item.md`(compose,不重造)。
+**Source of truth 聲明**:本檔是 spec-to-done 的唯一編排權威;`std-*.js` 檔頭指回本檔。merge 段權威是 `.claude/workflows/ship-item.md`(compose,不重造)。**本檔為 canonical**;`.codex/skills/spec-to-done/SKILL.md` 是 Codex 的 model-adapter copy(只把 haiku/sonnet/opus tier 映射到 GPT 模型與調整 helper 路徑、不改 gate)——修改本檔 phase / gate / HELD / resume / evidence / ship 語義時 MUST 同步該 copy,否則兩邊對同一 spec 的執行會分歧。
 
 ## 四套工具的唯一切入點(AGENTS.md anti-patterns 防線)
 
