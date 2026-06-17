@@ -61,4 +61,25 @@ describe("coordinatorClient conversion control", () => {
     );
     await expect(coordinatorClient.conversionWatchToggle(true, "operator-enable")).rejects.toThrow();
   });
+
+  it("conversionWatchToggle 422 失敗把後端 detail 帶進錯誤訊息（誠實鐵律：不吞 not-configured 提示）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ detail: "MinIO watch not configured (endpoint/bucket/credentials missing); cannot enable." }),
+        { status: 422, statusText: "Unprocessable Entity" },
+      ),
+    );
+    await expect(coordinatorClient.conversionWatchToggle(true, "operator-enable")).rejects.toThrow(
+      /MinIO watch not configured/,
+    );
+  });
+
+  it("conversionWatchToggle 失敗 body 非 JSON 時退回原始 text，仍不丟 statusText 萃取錯誤", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("upstream 502 plain text", { status: 502, statusText: "Bad Gateway" }),
+    );
+    await expect(coordinatorClient.conversionWatchToggle(true, "operator-enable")).rejects.toThrow(
+      /upstream 502 plain text/,
+    );
+  });
 });

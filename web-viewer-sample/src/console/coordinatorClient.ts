@@ -47,6 +47,26 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
 // PUT mutation：body 收斂為 Record<string, unknown>，呼叫方必須明確傳物件。
 // 不再 `?? {}` fallback（對 mutation 語意危險：null body 靜默變空物件 → 後端誤判
 // enabled 缺漏 → 400）；型別層即阻擋 null/undefined body 的呼叫。
+// 失敗回應 detail 萃取（誠實鐵律）：coordinator 對 400/403/409/422/500 一律回 `{ detail }`，
+// 若只 throw status/statusText 會把後端「未配置/不在 allowlist」等可操作提示吞掉，dialog 顯
+// 不出承諾的誠實失敗。best-effort 讀 body：先試 JSON 取 detail，退而求 text，皆失敗才退回
+// statusText（不讓萃取本身丟錯遮蔽真正的 HTTP 失敗）。
+async function errorDetail(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return res.statusText;
+    try {
+      const parsed = JSON.parse(text) as { detail?: unknown };
+      if (typeof parsed.detail === "string" && parsed.detail) return parsed.detail;
+    } catch {
+      /* 非 JSON：用原始 text */
+    }
+    return text;
+  } catch {
+    return res.statusText;
+  }
+}
+
 async function jsonPut<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
     method: "PUT",
@@ -54,7 +74,7 @@ async function jsonPut<T>(path: string, body: Record<string, unknown>): Promise<
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
 }
