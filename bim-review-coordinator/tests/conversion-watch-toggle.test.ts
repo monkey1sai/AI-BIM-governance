@@ -119,6 +119,38 @@ describe("GET /api/external/minio-watch/status — runtime flag 初值（IX-CV-0
   // 讓 consumer 繞過 PUT route 假寫狀態（review Important #1）。
 });
 
+// IX-CV-04 Task 3：GET status note 誠實區分「runtime 被關」vs「env 未開」。
+// 以 PUT /api/conversion/watch（Task 2 已實作）真實覆寫 runtime flag，不用 test seam。
+describe("GET /api/external/minio-watch/status — note 誠實區分（IX-CV-04 Task 3）", () => {
+  function configuredOverrides() {
+    return {
+      minioWatchEndpoint: "http://127.0.0.1:9000",
+      minioWatchBucket: "bim-control",
+      minioWatchAccessKey: "ak",
+      minioWatchSecretKey: "sk",
+      minioWatchSelfBaseUrl: "", // 不觸發 config-immediate 真啟動
+    };
+  }
+
+  it("env=true 但 runtime 關閉 → GET status note 區分『operator 關閉』", async () => {
+    const app = makeApp({ ...configuredOverrides(), minioWatchEnabled: true });
+    await request(app.app).put("/api/conversion/watch").send({ enabled: false });
+    const res = await request(app.app).get("/api/external/minio-watch/status");
+    expect(res.body.enabled).toBe(false);
+    expect(String(res.body.note)).toContain("console 關閉");
+  });
+
+  it("關閉態 payload 形狀回歸：含 bucket/prefix/interval_seconds/note（不洩漏 credentials）", async () => {
+    const app = makeApp();
+    const res = await request(app.app).get("/api/external/minio-watch/status");
+    expect(res.body).toHaveProperty("bucket");
+    expect(res.body).toHaveProperty("prefix");
+    expect(res.body).toHaveProperty("interval_seconds");
+    expect(res.body).toHaveProperty("note");
+    expect(JSON.stringify(res.body)).not.toContain("secret");
+  });
+});
+
 describe("PUT /api/conversion/watch — toggle 行為", () => {
   function configuredOverrides() {
     return {
