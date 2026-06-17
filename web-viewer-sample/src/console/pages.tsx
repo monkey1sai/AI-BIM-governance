@@ -518,7 +518,7 @@ export function ConversionSchedulingPage() {
     try {
       if (pendingAction.kind === "prioritize") await coordinatorClient.conversionPrioritize(pendingAction.jobId, reason);
       else if (pendingAction.kind === "retry") await coordinatorClient.conversionRetry(pendingAction.jobId, reason);
-      else await coordinatorClient.conversionWatchToggle(pendingAction.enabled, reason);
+      else if (pendingAction.kind === "watch-toggle") await coordinatorClient.conversionWatchToggle(pendingAction.enabled, reason);
       // 證據型更新：重抓真佇列狀態（非樂觀）。load() 自吞錯不 throw，故以回傳值辨識
       // 「POST 成功但重抓佇列失敗」——此時不可靜默關 dialog（佇列仍顯舊狀態、背景 err
       // 操作者不易察覺），改保持 dialog 開啟並在 dialog 內顯誠實錯誤。

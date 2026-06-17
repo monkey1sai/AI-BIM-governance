@@ -584,7 +584,7 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     // POST 不立即 settle（deferred），維持 busy 視窗讓第二次 click 有機會穿透 stale disabled。
     let resolvePost: (v: unknown) => void = () => {};
     const prioritizeSpy = vi.spyOn(coordinatorClient, "conversionPrioritize")
-      .mockImplementation(() => new Promise((res) => { resolvePost = res; }));
+      .mockImplementation(() => new Promise((res) => { resolvePost = res as (v: unknown) => void; }));
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
     await act(async () => { await Promise.resolve(); });
