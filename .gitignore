@@ -19,20 +19,15 @@ Thumbs.db
 
 # Local runtime-manager env (real values; .env.runtime-manager.docker.example stays tracked)
 .env.runtime-manager.docker
+# Real secret env files (untracked 2026-06-17; *.example variants stay tracked)
+/.env
+/bim-review-coordinator/.env
 .agents/
 .claude/*
 !.claude/skills/
 .claude/skills/*
-# Tracked closed-loop automation skills (2026-05-13)
-!.claude/skills/closed-loop-orchestrator/
-!.claude/skills/change-id-resolve/
-!.claude/skills/openspec-explore-twice/
+# Tracked GitNexus impact skill (closed-loop/opsx skills retired PR #189, whitelist cleaned 2026-06-17)
 !.claude/skills/gitnexus-blast-radius/
-!.claude/skills/apply-and-verify/
-!.claude/skills/pr-review-gate/
-!.claude/skills/archive-and-closeout/
-!.claude/skills/opsx-worktree-provision/
-!.claude/skills/opsx-worktree-guard/
 # Tracked project-authored skills (2026-06-10)
 !.claude/skills/spec-to-done/
 !.claude/skills/omniverse-cad-to-simready/
