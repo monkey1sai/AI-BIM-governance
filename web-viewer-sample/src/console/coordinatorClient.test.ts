@@ -23,6 +23,13 @@ describe("coordinatorClient conversion control", () => {
     await expect(coordinatorClient.conversionRetry("ifcready_x")).rejects.toThrow();
   });
 
+  it("conversionRetry 409 失敗把後端 detail 帶進錯誤訊息（鎖住 jsonPost errorDetail；與 conversionWatchToggle/sessionClose 對稱）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "nope" }), { status: 409, statusText: "Conflict" }),
+    );
+    await expect(coordinatorClient.conversionRetry("ifcready_x")).rejects.toThrow(/nope/);
+  });
+
   it("conversionWatchToggle 發 PUT /api/conversion/watch，body 含 enabled/reason", async () => {
     const calls: { url: string; method?: string; body?: string }[] = [];
     const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
