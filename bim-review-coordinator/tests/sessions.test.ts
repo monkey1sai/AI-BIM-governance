@@ -721,6 +721,39 @@ describe("bim-review-coordinator", () => {
     expect(secondClose.body.status).toBe("closed");
   });
 
+  // IMPORTANT-1：close 在 status==="closing" 也須冪等。若一個 session 仍停在 closing
+  // （例如併發第二個 POST 在第一次 store.update(closing) 與 store.update(closed) 之間
+  // 重入），handler 不可重複 append sessionClosing / sessionClosed / kitInstanceReleased
+  // 進 append-only audit ledger，也不可對已 draining 的 binding 再 markKitBindingsDraining。
+  it("close is idempotent for sessions already in closing state (no duplicate audit events)", async () => {
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+      });
+
+    // 模擬 session 停在 closing（併發重入的觀察窗口）。
+    app.store.update(created.body.session_id, { status: "closing" });
+
+    const lifecycleTypes = () =>
+      app.eventLog
+        .listLifecycle(created.body.session_id)
+        .map((event) => event.type);
+
+    const before = lifecycleTypes();
+
+    const reClose = await request(app.app)
+      .post(`/api/review-sessions/${created.body.session_id}/close`)
+      .send({});
+
+    expect(reClose.status).toBe(200);
+    // closing-state POST 不得新增任何 lifecycle event（沿用 closed-idempotent 語意）。
+    expect(lifecycleTypes()).toEqual(before);
+  });
+
   it("logs sessionCreated event with review_request_id when provided", async () => {
     const app = makeApp();
     const created = await request(app.app)

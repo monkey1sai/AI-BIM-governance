@@ -92,10 +92,38 @@ describe("SessionManagementPage per-row 結束 session 控制動作（IX-SS-04�
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
 
+    // 空 textarea（未輸入）→ reason 傳 ""（對照下一個「填入原因」測試，凸顯此處空字串
+    // 是 DOM 預設值 defaultValue="" 而非 undefined；後端以 trim()||undefined 收斂為乾淨 payload）。
     expect(closeSpy).toHaveBeenCalledWith("sess_close", "");
     expect(statusSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // 初次 load + 成功後 load
     // 成功後關 dialog（非樂觀，重抓真狀態）
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
+  });
+
+  // IMPORTANT-2：鎖定 reason pass-through。textarea 填入非空原因 → confirm →
+  // sessionClose(id, reason) 必須收到該原文字串（textarea → onConfirm → sessionClose）。
+  // 此測試與上一個空字串案例互為對照，明確說明空 case 是「未輸入」而非「刻意傳 undefined」。
+  it("textarea 填入原因 → confirm → sessionClose 收到該 reason 字串（pass-through）", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(
+      makeStatus([makeSession({ session_id: "sess_reason" })]));
+    const closeSpy = vi.spyOn(coordinatorClient, "sessionClose").mockResolvedValue({ session_id: "sess_reason", status: "closing" } as never);
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const btn = container.querySelector('[data-testid="session-terminate-sess_reason"]') as HTMLButtonElement;
+    await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    // IntentDialog 用 uncontrolled textarea（ref）；直接設 DOM value 即可被 ref.current.value 讀到。
+    const reason = container.querySelector('#intent-reason') as HTMLTextAreaElement;
+    expect(reason).not.toBeNull();
+    await act(async () => { reason.value = "operator forced close"; });
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(closeSpy).toHaveBeenCalledWith("sess_reason", "operator forced close");
   });
 
   // spec §6.2：失敗 → actionErr 顯示、dialog 不關、狀態不變。

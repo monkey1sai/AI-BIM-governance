@@ -884,7 +884,11 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
-    if (session.status === "closed") {
+    // IMPORTANT-1：冪等守衛涵蓋 closing 與 closed。append-only audit ledger 不能事後清理，
+    // 故任何已進入 close 流程（closing / closed）的 session 再次 POST /close 一律 no-op 直接回傳
+    // 現狀，避免併發/重入重複 append sessionClosing / sessionClosed / kitInstanceReleased，
+    // 或對已 draining 的 binding 再次 markKitBindingsDraining。
+    if (session.status === "closed" || session.status === "closing") {
       response.json(session);
       return;
     }
