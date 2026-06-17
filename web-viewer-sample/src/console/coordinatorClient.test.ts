@@ -36,4 +36,27 @@ describe("coordinatorClient conversion control", () => {
     expect(JSON.parse(calls[0].body!)).toEqual({ enabled: false, reason: "smoke" });
     spy.mockRestore();
   });
+
+  it("conversionWatchToggle enabled:true 路徑回 200，body 含 enabled:true/reason", async () => {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), method: (init as RequestInit)?.method, body: (init as RequestInit)?.body as string });
+      return new Response(JSON.stringify({ enabled: true, bucket: "ifc-ready", note: "watch on" }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    });
+    const res = await coordinatorClient.conversionWatchToggle(true, "operator-enable");
+    expect(res.enabled).toBe(true);
+    expect(calls[0].method).toBe("PUT");
+    expect(calls[0].url).toContain("/api/conversion/watch");
+    expect(JSON.parse(calls[0].body!)).toEqual({ enabled: true, reason: "operator-enable" });
+    spy.mockRestore();
+  });
+
+  it("conversionWatchToggle 非 2xx 時 throw（對齊 conversionRetry 錯誤路徑）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "loopback not in allowlist" }), { status: 422, statusText: "Unprocessable Entity" }),
+    );
+    await expect(coordinatorClient.conversionWatchToggle(true, "operator-enable")).rejects.toThrow();
+  });
 });

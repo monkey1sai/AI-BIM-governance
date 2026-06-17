@@ -44,11 +44,14 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function jsonPut<T>(path: string, body: unknown): Promise<T> {
+// PUT mutation：body 收斂為 Record<string, unknown>，呼叫方必須明確傳物件。
+// 不再 `?? {}` fallback（對 mutation 語意危險：null body 靜默變空物件 → 後端誤判
+// enabled 缺漏 → 400）；型別層即阻擋 null/undefined body 的呼叫。
+async function jsonPut<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
     method: "PUT",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
