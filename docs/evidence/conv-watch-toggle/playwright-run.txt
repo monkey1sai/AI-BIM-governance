@@ -1,0 +1,14 @@
+
+> @nvidia/web-viewer-sample@1.5.2 test:e2e
+> playwright test conv-watch-toggle.spec.ts
+
+
+Running 3 tests using 1 worker
+
+  ok 1 [chromium] › e2e\conv-watch-toggle.spec.ts:59:3 › IX-CV-04 #conv 自動偵測開關 controlled action › 啟用態 → 關閉往返：關 → 琥珀條出現 → 開 → 琥珀條消失 (1.6s)
+[conv-watch-toggle] notObserved: ["誠實負向（未配置 422）：本輪測試區非關閉態，未觀察。"]
+  -  2 [chromium] › e2e\conv-watch-toggle.spec.ts:91:3 › IX-CV-04 #conv 自動偵測開關 controlled action › 未配置 → 開啟自動偵測 → PUT 422 → 誠實錯誤、維持關閉態
+  ok 3 [chromium] › e2e\conv-watch-toggle.spec.ts:126:1 › 渲染 #conv 真頁面 → Refresh queue → 截圖 render surface（evidence，非 controlled-action 觀察） (983ms)
+
+  1 skipped
+  2 passed (6.7s)

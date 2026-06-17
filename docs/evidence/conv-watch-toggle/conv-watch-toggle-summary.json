@@ -1,0 +1,58 @@
+{
+  "spec": "IX-CV-04 #conv 自動偵測開關 controlled action (PUT /api/conversion/watch)",
+  "milestone": "M2-c",
+  "date": "2026-06-17",
+  "engine": "playwright",
+  "verticalSliceOk": true,
+  "routes": {
+    "uiRoute": "http://127.0.0.1:5180/#conv (ConversionSchedulingPage)",
+    "backendApi": "PUT http://127.0.0.1:8005/api/conversion/watch",
+    "statusApi": "GET http://127.0.0.1:8005/api/external/minio-watch/status"
+  },
+  "buttons": [
+    "data-testid=conv-watch-disable (關閉自動偵測)",
+    "data-testid=conv-watch-enable (開啟自動偵測)",
+    "data-testid=intent-confirm (IntentDialog 確認)"
+  ],
+  "banner": "data-testid=conv-watch-off-banner (⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件)",
+  "fixture": {
+    "type": "default-no-manual-curl",
+    "coordinator": "branch coordinator on :8005 (dist/src/index.js), CORS allows :5180",
+    "watcherConfig": "MINIO_WATCH_ENABLED=true, endpoint=http://127.0.0.1:9000 (no real MinIO), bucket=bim-control, ak/sk set, interval=600s",
+    "initialState": "enabled:true (positive round-trip path E)",
+    "note": "MinIO endpoint intentionally unreachable (ECONNREFUSED) — toggle lifecycle is independent of watcher poll connectivity; the slice tests watcher handle start/dispose orchestration, not real MinIO intake."
+  },
+  "engineReal": "playwright (@playwright/test, chromium) via npm run test:e2e; webServer auto-started fresh viewer dev server on :5180 (strictPort, reuseExistingServer:false), VITE_COORDINATOR_API_BASE=http://127.0.0.1:8005",
+  "isMock": false,
+  "realBackendProof": "Live :8005 coordinator audit log recorded both browser-driven toggles during the round-trip: {target:watch:disable, enabled:false, seq:1} then {target:watch:enable, enabled:true, seq:2}, run_id=run_20260617_090431_ce2931. GET status payload reflected runtime flag flip (enabled:false with operator-disabled note → enabled:true).",
+  "results": {
+    "test_1_positive_roundtrip": "PASSED — #conv → 關閉自動偵測 → IntentDialog confirm → PUT 200 → 頁頂琥珀條出現 (watch-off.png) → 開啟自動偵測 → confirm → PUT 200 → 琥珀條消失 (watch-on.png). 端到端開關往返一輪.",
+    "test_2_negative_422_unconfigured": "SKIPPED (二選一 by design) — 測試區 watcher 處啟用態 (enabled:true)，非 422-未配置態，故走正向 (E) 而非負向 (U)。誠實記入 notObserved；422 因果由 route 測試 conversion-watch-toggle.test.ts 兜底.",
+    "test_3_render_surface": "PASSED — #conv render surface 截圖 (conv-render-surface.png)."
+  },
+  "routeLevelTests": {
+    "file": "bim-review-coordinator/tests/conversion-watch-toggle.test.ts",
+    "result": "18 passed",
+    "coverage": "toggle round-trip (off->on, no double watcher), 422 unconfigured, 403 IP allowlist, 400 non-boolean, 409 busy-lock, 500 + runtime-flag rollback on start failure, GET status note differentiation (env-off vs operator-disabled), credential non-leak."
+  },
+  "runtimeIds": [
+    "run_20260617_090431_ce2931",
+    "watch:disable",
+    "watch:enable"
+  ],
+  "screenshots": [
+    "docs/evidence/conv-watch-toggle/watch-off.png",
+    "docs/evidence/conv-watch-toggle/watch-on.png",
+    "docs/evidence/conv-watch-toggle/conv-render-surface.png"
+  ],
+  "trace": "artifacts/e2e/conv-watch-toggle-trace/ (3 trace.zip bundles + playwright-run.txt, copied to main worktree C:/Repos/active/iot/AI-BIM-governance)",
+  "notObserved": [
+    "誠實負向（未配置 422）browser 切片：本輪測試區 watcher 處啟用態，走正向往返 (E)，422 負向未在 browser 觀察；深度由 conversion-watch-toggle.test.ts route 測試兜底（該檔有 422 未配置斷言）。"
+  ],
+  "honestyNotes": [
+    "無樂觀更新：toggle 後前端 load() 重抓真 status；watch-off.png 的 note『已由操作者於 console 關閉』來自 live backend currentMinioWatchStatusPayload()，非前端臆造。",
+    "runtime flag in-memory：coordinator 重啟回 env 初值，status note 誠實標示。",
+    "audit who = local-operator (best-effort，B 方案 LAN 無 RBAC)。",
+    "本 repo CI 無 Playwright job；E2E skip-gate 不偽綠任何自動化 gate。"
+  ]
+}

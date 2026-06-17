@@ -445,7 +445,11 @@ export function ConversionSchedulingPage() {
   const [cov, setCov] = useState<Record<string, ConversionQualityMetricsResponse | { error: string } | "loading">>({});
   // conv-prioritize-retry:列控制（插隊／重試）intent→confirm 狀態。pendingAction 非 null 時開 IntentDialog；
   // actionBusy 鎖住 confirm/cancel 期間的重複觸發。非樂觀：POST 成功後 load() 重抓真佇列狀態。
-  const [pendingAction, setPendingAction] = useState<{ jobId: string; kind: "prioritize" | "retry" } | null>(null);
+  const [pendingAction, setPendingAction] = useState<
+    | { jobId: string; kind: "prioritize" | "retry" }
+    | { kind: "watch-toggle"; enabled: boolean }
+    | null
+  >(null);
   const [actionBusy, setActionBusy] = useState(false);
   // finding #1：同步 busy guard。setActionBusy(true) 是非同步 state，confirm 鈕的 disabled={busy}
   // 要等下一次 render 才生效；同一事件循環連點兩次會送出兩個 POST。ref 在 React state 更新前
@@ -454,10 +458,12 @@ export function ConversionSchedulingPage() {
   // finding #2：action 錯誤獨立 state，顯示在 dialog 內、與 dialog 綁定，不與 load 錯誤（err）共用。
   // load() 開頭的 setErr(null) 因此不會把「控制動作失敗」清掉。
   const [actionErr, setActionErr] = useState<string | null>(null);
-  // 回傳「ifc-ready 佇列是否抓取成功」：runAction 用它判斷控制動作後的證據型刷新是否
+  // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
   // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
-  const load = useCallback(async (): Promise<boolean> => {
+  // important #1：watch-toggle 成功後若 minioWatchStatus 此輪失敗，jobsOk 仍 true 會誤導 runAction
+  // 靜默關 dialog（mw 未更新、琥珀條與 Panel 停舊值、操作者看不到錯誤）。故回傳 mwOk 讓呼叫端可辨此分支。
+  const load = useCallback(async (): Promise<{ jobsOk: boolean; mwOk: boolean }> => {
     setBusy(true); setErr(null); setMwErr(null);
     // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
     // 端點尚未部署）不得污染 ifc-ready 的錯誤訊息，也不得讓 watcher Panel 靜默停在
@@ -467,12 +473,13 @@ export function ConversionSchedulingPage() {
       coordinatorClient.minioWatchStatus(),
     ]);
     const jobsOk = jobsRes.status === "fulfilled";
+    const mwOk = mwRes.status === "fulfilled";
     if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
     else setErr(`未連線 coordinator /api/external/ifc-ready：${String(jobsRes.reason)}`);
     if (mwRes.status === "fulfilled") setMw(mwRes.value);
     else setMwErr(`未連線 coordinator /api/external/minio-watch/status：${String(mwRes.reason)}`);
     setBusy(false);
-    return jobsOk;
+    return { jobsOk, mwOk };
   }, []);
   useEffect(() => { void load(); }, [load]);
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
@@ -510,16 +517,23 @@ export function ConversionSchedulingPage() {
     setActionErr(null);             // 開新一輪動作：清掉上一次的誠實錯誤
     try {
       if (pendingAction.kind === "prioritize") await coordinatorClient.conversionPrioritize(pendingAction.jobId, reason);
-      else await coordinatorClient.conversionRetry(pendingAction.jobId, reason);
+      else if (pendingAction.kind === "retry") await coordinatorClient.conversionRetry(pendingAction.jobId, reason);
+      else if (pendingAction.kind === "watch-toggle") await coordinatorClient.conversionWatchToggle(pendingAction.enabled, reason);
       // 證據型更新：重抓真佇列狀態（非樂觀）。load() 自吞錯不 throw，故以回傳值辨識
       // 「POST 成功但重抓佇列失敗」——此時不可靜默關 dialog（佇列仍顯舊狀態、背景 err
       // 操作者不易察覺），改保持 dialog 開啟並在 dialog 內顯誠實錯誤。
-      const refreshed = await load();
-      if (!refreshed) {
+      const { jobsOk, mwOk } = await load();
+      if (!jobsOk) {
         setActionErr("動作已送出，但重新抓取佇列失敗；佇列可能仍顯示舊狀態，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。");
         return;                     // 不關 dialog、不視為完成
       }
-      setPendingAction(null);       // 動作成功且佇列已刷新才關 dialog
+      // important #1：watch-toggle 成功但 watcher 狀態重抓失敗時，jobsOk 仍 true，但 mw 未更新，
+      // 琥珀條與 Panel 停在舊值。不可靜默關 dialog（操作者會誤以為開關已生效），改顯誠實錯誤要求重按 Refresh。
+      if (pendingAction.kind === "watch-toggle" && !mwOk) {
+        setActionErr("動作已送出，但重新抓取 watcher 狀態失敗；自動偵測狀態與頁頂提示可能仍顯示舊值，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。");
+        return;                     // 不關 dialog、不視為完成
+      }
+      setPendingAction(null);       // 動作成功且狀態已刷新才關 dialog
     } catch (e) {
       setActionErr(`控制動作失敗：${String(e)}`); // finding #2：寫獨立 actionErr（顯示在 dialog 內），不關 dialog、不改狀態
     } finally {
@@ -531,6 +545,11 @@ export function ConversionSchedulingPage() {
     <>
       <h1>IFC→USD 轉檔排程</h1>
       <p className="ec-lead">從 MinIO / storage 發現 source IFC，排進 conversion authority，由 `bim-streaming-server` 產出 `model.usdc`、mapping summary，再通知 Kit / Review Session。</p>
+      {mw?.enabled === false && (
+        <p className="ec-warn-note" data-testid="conv-watch-off-banner">
+          ⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件
+        </p>
+      )}
       <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={load}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
         <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
         {err && <p className="ec-warn-note">{err}</p>}
@@ -552,6 +571,10 @@ export function ConversionSchedulingPage() {
             <>
               <Field k="狀態" v="未啟用 — 需設定 env MINIO_WATCH_ENABLED opt-in" prov="asbuilt" />
               <p className="ec-note">{mw.note ?? "watcher 預設關閉；狀態 API 為真，未偽稱功能在跑。"}</p>
+              <Btn
+                data-testid="conv-watch-enable"
+                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: true }); }}
+              >開啟自動偵測</Btn>
             </>
           ) : (
             <>
@@ -576,6 +599,10 @@ export function ConversionSchedulingPage() {
                   ))}</tbody>
                 </table>
               )}
+              <Btn
+                data-testid="conv-watch-disable"
+                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: false }); }}
+              >關閉自動偵測</Btn>
             </>
           )}
         </div>
@@ -640,10 +667,20 @@ export function ConversionSchedulingPage() {
       </Panel>
       <IntentDialog
         open={pendingAction != null}
-        title={pendingAction?.kind === "prioritize" ? "插隊到佇列最前" : "重新派工此 job"}
-        cost={pendingAction?.kind === "prioritize"
-          ? "此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。"
-          : "將重新派工此 job 至轉檔 authority；可能再次失敗。"}
+        title={
+          pendingAction?.kind === "watch-toggle"
+            ? (pendingAction.enabled ? "開啟 MinIO 自動偵測" : "關閉 MinIO 自動偵測")
+            : pendingAction?.kind === "prioritize" ? "插隊到佇列最前" : "重新派工此 job"
+        }
+        cost={
+          pendingAction?.kind === "watch-toggle"
+            ? (pendingAction.enabled
+                ? "恢復輪詢 MinIO；偵測到新 model.ifc 會自動進件並派工。"
+                : "停止輪詢 MinIO；新上傳的 model.ifc 將不再自動進件，需手動觸發。")
+            : pendingAction?.kind === "prioritize"
+                ? "此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。"
+                : "將重新派工此 job 至轉檔 authority；可能再次失敗。"
+        }
         busy={actionBusy}
         actionErr={actionErr}
         onConfirm={runAction}
