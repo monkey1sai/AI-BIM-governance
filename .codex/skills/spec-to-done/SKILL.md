@@ -16,6 +16,7 @@ description: Use when a brainstormed spec already exists under docs/superpowers/
 - 若當前 Codex host 沒有 Claude workflow runtime,指揮官必須用可用 native subagents / workflow artifacts 產生等價 StructuredOutput;若無法產生等價 StructuredOutput,必須 HELD,不得 parent-only 手跑後視為通過。缺欄位、null reviewer、verdict 數量不符、無 browser evidence 一律依本檔 gate 重呼或 HELD,不得視為通過。
 - P0→P1→P3→P4→P5→P6→P7 的跳號排序不可整理成 P0-P7 連號;文中的 production P1/P2 / 真 P1/P2 是 quality / production blocker 等級,不是主對話新增 phase。
 - spec-to-done 的請求本身即授權本流程推進到 merged PR;不要加入「commit / push / PR / merge 必須另行明確要求」的 Codex-only 限制。只有本檔列出的 consent carve-out / destructive / production-data / credentials / billing / user-account 類 gate 需要再停下。
+- **commit-guard / gstack gate 是 Claude-only hook,Codex 不自動觸發**:`.claude/settings.json` 的 PreToolUse hook(`scripts/claude-commit-guard.ps1` = commit 前提醒、`scripts/hooks/require-gstack-evidence.ps1` = merge 前 gstack 證據閘)只在 Claude Code session 生效;Codex CLI 無 hook 機制。P6 必須由指揮官**手動**履行等價把關:(a) `git commit` 前確認已跑 verify、檢查 diff 範圍、commit message scope 對應改動 repo;(b) `gh pr merge` 前,若 diff(vs `origin/main`)動到 `web-viewer-sample/**` 的 `.tsx/.ts/.jsx/.css`,MUST 先有近 24h 的 `artifacts/e2e/*.png` gstack 證據才可 merge,否則 HELD。
 
 ## 四套工具的唯一切入點(AGENTS.md anti-patterns 防線)
 
