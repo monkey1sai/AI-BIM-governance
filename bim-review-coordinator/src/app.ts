@@ -875,10 +875,6 @@ export function createCoordinatorApp(
   });
 
   app.post("/api/review-sessions/:sessionId/close", (request, response) => {
-    // IX-SS-04 模式 3 守門：close 改造為 operator terminate（reason/actor 上事件流）後，
-    // 與 prioritize/retry/watch 三條 controlled-action 路由一致補 IP allowlist 守門
-    // （spec §4.1 / L665-668：control-plane mutation surface 不得匿名寫入）。空 allowlist → bypass。
-    if (rejectIfIpNotAllowed(request, response)) return;
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
       return;
@@ -899,9 +895,9 @@ export function createCoordinatorApp(
     // reason/actor additive 寫進事件流；無 reason 的既有 cooperative close 維持原 payload 形狀
     // （sessionClosing:{final_events}、sessionClosed:{}），符合 §3「不改既有 cooperative close 行為」。
     const rawReason = (request.body as { reason?: unknown } | undefined)?.reason;
-    const reason = typeof rawReason === "string" ? rawReason.slice(0, 500) : undefined;
-    // truthy 檢查（與 resolveActor 的 `header.trim().length > 0` 對稱）：空字串 reason 視同無 reason，
-    // 否則 { reason: "" } 會讓 auditFields 帶入 actor，污染既有 cooperative close payload 形狀（IMPORTANT-1）。
+    const reason = typeof rawReason === "string" ? (rawReason.trim().slice(0, 500) || undefined) : undefined;
+    // truthy 檢查（與 resolveActor 的 `header.trim().length > 0` 對稱）：空白 reason 視同無 reason，
+    // 否則 { reason: "   " } 會讓 auditFields 帶入 actor，污染既有 cooperative close payload 形狀（IMPORTANT-1）。
     const auditFields = reason ? { reason, actor: resolveActor(request) } : {};
     const closing = store.update(session.session_id, {
       status: "closing",
