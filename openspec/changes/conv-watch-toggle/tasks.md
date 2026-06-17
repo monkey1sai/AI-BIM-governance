@@ -1,6 +1,6 @@
 # Tasks — conv-watch-toggle（IX-CV-04）
 
-對應 plan `docs/superpowers/plans/2026-06-17-conv-watch-toggle.md`（7 tasks）。狀態於 PR 收尾時依實際實作勾選。
+對應 plan `docs/superpowers/plans/2026-06-17-conv-watch-toggle.md`（plan 為 7 tasks；本 tasks.md 細分為 8 項，多出 Task 8 全量回歸）。狀態於 PR 收尾時依實際實作勾選。
 
 - [ ] 1. coordinator runtime enabled 狀態機改造（非 additive）：`minioWatchRuntimeEnabled`/`minioWatchToggleBusy`/`minioWatchConfigured()`；`startMinioWatcherIfEnabled` guard + config-immediate 改讀 runtime flag。回歸鎖 `config-minio-watch`/`minio-watch-status-route`/`minio-watcher-loop`（env on/off 啟動語意零退化）。
 - [ ] 2. `PUT /api/conversion/watch {enabled}`：`rejectIfIpNotAllowed` 守門 + `resolveActor`/`parseReason` + audit（`conversion.watch.toggle`）；`enabled:true` 未配置→422、allowlist throw→500+flag 回滾；`enabled:false` 沿用 shutdown 安全 dispose；toggle 同步鎖防並發。spec §6.1 三條具名測試（啟用中 dispose / enabled:true 重建 / off→on 往返無雙 watcher，vi.mock fake watcher）+ 邊界（400/422/403/no-op/並發 409）。
