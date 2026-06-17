@@ -140,7 +140,7 @@
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9 && git add -- bim-review-coordinator/src/app.ts bim-review-coordinator/tests/conversion-watch-toggle.test.ts && git diff --cached --check && git commit -m "feat(coordinator): #conv watcher 啟停改讀 runtime flag（IX-CV-04 Task1）
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   ```
   預期：commit 成功、`git diff --cached --check` 無 trailing whitespace 報錯。
 
@@ -155,6 +155,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 > 註：本 task 引用 `currentMinioWatchStatusPayload()`，它在 Task 3 抽出。為讓本 task 可獨立 RED→GREEN，**先在本 task 內把 GET status 的計算抽成 `currentMinioWatchStatusPayload()` helper**（Task 3 只剩把 GET handler 改成呼叫它 + note 文字分支，與此一致無衝突）。若 Task 3 先做亦可——兩者皆收斂在同檔，subagent-driven-development 串行執行即可。
 
 步驟：
+
+- [ ] 2.0 **先抽 helper（解 Task 2↔3 順序依賴，reviewer major #2：照 task 序直貼 2.2 會 TS build fail）**。本 task 的 PUT route（2.2）引用 `currentMinioWatchStatusPayload()`，它在 Task 3.2 才完整抽出。**先執行 Task 3.2 的 helper 抽取步驟**（把 `GET status` 計算抽成 `currentMinioWatchStatusPayload()` helper、GET handler 改呼叫它），跑：
+  ```bash
+  cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9/bim-review-coordinator && npm run build
+  ```
+  預期：0 TS error。helper 就緒後再進 2.1，2.2 的 PUT route 即可直接呼叫它不會編譯失敗。（Task 3 屆時只剩補 note 文字分支的測試，與此無衝突。）
 
 - [ ] 2.1 寫 RED：在 `conversion-watch-toggle.test.ts` 加 toggle 往返與邊界斷言（`makeApp` 用 override 注入已配置但 selfBaseUrl 空以避免真連 MinIO；驗 flag 翻轉 + IP allowlist + 422/400/409）：
   ```ts
@@ -259,6 +265,16 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```
   預期：2.1 的 4 條 + Task 1 條目全綠。
 
+- [ ] 2.3b **補 spec §6.1 三條具名必要測試（reviewer major #1：2.1 只驗邊界，未涵蓋 watcher 啟停可觀察行為；這三條是 spec §6.1 點名必要、非 nice-to-have）**。難點：測試環境無真 MinIO（直接 `startMinioWatcher` 會去輪詢不存在的 :9000、洩漏 timer）。**方案：用 vitest mock 把 `startMinioWatcher` 換成回傳 fake handle**（`dispose` = spy、`getStatus` 回可控 `poll_count`），檔頂 hoisted（變數提升用 `vi.hoisted`，對齊 `tests/minio-watcher-loop.test.ts` 既有 mock 風格；fake 不碰網路）。注入 fake 後加三條（`configuredOverrides()` 並把 `minioWatchSelfBaseUrl` 給非空值讓啟動路徑可達——因 fake 不連網路而安全）：
+  - (a) **enabled:false 對「啟用中 watcher」→ dispose 被呼叫 + status enabled→false**：先 `PUT {enabled:true}`（fake start 被呼叫、`minioWatcher`=fake）→ `PUT {enabled:false}` → 斷言 dispose spy 被呼叫一次 + `GET status` enabled=false。
+  - (b) **enabled:true 對「已配置關閉態」→ start 被呼叫 + GET status 回 fake getStatus（enabled:true、poll_count 反映 fake 推進）**：`PUT {enabled:true}` → 斷言 start spy 被呼叫一次 + `GET status` enabled=true。
+  - (c) **off→on 往返一輪 → 狀態一致、無雙 watcher**：`PUT true → false → true`；斷言 start spy 共 2 次、dispose spy 共 1 次（每次關閉各一次 dispose、無殘留雙 handle）、最終 `GET status` enabled=true。
+  跑確認綠：
+  ```bash
+  cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9/bim-review-coordinator && npx vitest run tests/conversion-watch-toggle.test.ts
+  ```
+  預期：(a)(b)(c) 三條綠；既有 2.1 邊界測試（其不呼叫真 start）邏輯不變仍綠；Task 1.3 env=false 測試不受 mock 影響。**誠實註**：watcher 內部真實輪詢/IFC intake 的端到端因果由 Task 7 gstack E2E（真 coordinator + 真 watcher 切換）兜底；route 層測試僅驗 coordinator 對 watcher handle 的啟停編排，不偽稱驗了真 MinIO 連線。
+
 - [ ] 2.4 加 toggle 鎖競態 RED→GREEN（CR-B）。在測試檔加：用 override 注入一個延遲 dispose 的 watcher handle 不可行（watcher 由內部建），改以「先設 busy 旗標」不可直接觸及 → 改驗「並發兩筆 PUT 第二筆回 409」需可控 dispose 延遲。**本條以 route 層 busy 鎖的同步可觀察點驗證**：連發兩筆 `enabled:false`（第二筆在第一筆 `await dispose` 未 settle 前到達），斷言至少一筆非 200 為 409。若本機 dispose 太快難穩定觀察，標記此條 `it.skip` 並在註解寫明「鎖正確性由 §4.0 程式碼審查 + 單筆 busy 斷言兜底」，不偽造：
   ```ts
   it("並發 toggle：busy 鎖期間第二筆 → 409（dispose 延遲時可觀察）", async () => {
@@ -282,7 +298,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9 && git add -- bim-review-coordinator/src/app.ts bim-review-coordinator/tests/conversion-watch-toggle.test.ts && git diff --cached --check && git commit -m "feat(coordinator): #conv PUT /api/conversion/watch toggle route（IX-CV-04 Task2）
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   ```
   預期：commit 成功。
 
@@ -367,7 +383,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9 && git add -- bim-review-coordinator/src/app.ts bim-review-coordinator/tests/conversion-watch-toggle.test.ts && git diff --cached --check && git commit -m "feat(coordinator): #conv GET minio-watch status 改讀 runtime flag 並抽共用 payload（IX-CV-04 Task3）
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   ```
   預期：commit 成功。
 
@@ -436,7 +452,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9 && git add -- web-viewer-sample/src/console/coordinatorClient.ts web-viewer-sample/src/console/coordinatorClient.test.ts && git diff --cached --check && git commit -m "feat(viewer): #conv coordinatorClient jsonPut + conversionWatchToggle（IX-CV-04 Task4）
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   ```
   預期：commit 成功。
 
@@ -519,7 +535,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9 && git add -- web-viewer-sample/src/console/pages.tsx && git diff --cached --check && git commit -m "feat(viewer): #conv 自動偵測開關 UI + 關閉態琥珀條（IX-CV-04 Task5）
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   ```
   預期：commit 成功。
 
@@ -569,7 +585,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9 && git add -- web-viewer-sample/src/console/ && git diff --cached --check && git commit -m "test(viewer): #conv 自動偵測開關 component 測試（IX-CV-04 Task6）
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   ```
   預期：commit 成功。
 
@@ -712,7 +728,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/peaceful-payne-6785a9 && git add -- web-viewer-sample/e2e/conv-watch-toggle.spec.ts docs/evidence/conv-watch-toggle/ && git diff --cached --check && git commit -m "test(viewer): #conv 自動偵測開關 gstack E2E + evidence（IX-CV-04 Task7）
 
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
   ```
   預期：commit 成功（artifacts/ 若 gitignored 不入 tracked，僅 docs/evidence/ 截圖入庫）。
 
