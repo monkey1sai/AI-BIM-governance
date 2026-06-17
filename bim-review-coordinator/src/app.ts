@@ -345,15 +345,10 @@ export function createCoordinatorApp(
   let minioWatcher: MinioWatcherHandle | null = null;
   // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
   let minioWatchRuntimeEnabled = config.minioWatchEnabled;
-  // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
-  let minioWatchToggleBusy = false;
-  // 連線參數齊全判斷（CR-C）：未配置時 PUT{enabled:true} 誠實 422，不空轉/不 throw。
-  function minioWatchConfigured(): boolean {
-    return Boolean(
-      config.minioWatchEndpoint && config.minioWatchBucket &&
-      config.minioWatchAccessKey && config.minioWatchSecretKey,
-    );
-  }
+  // 註：toggle 同步鎖（minioWatchToggleBusy）與連線參數齊全判斷（minioWatchConfigured）
+  // 屬 Task 2（PUT /api/conversion/watch）才會用到的 scaffolding，已隨 PUT route 一併移除，
+  // 待 Task 2 PR 與其唯一消費者（PUT handler）一起引入，避免 Task 1 預放死碼讓讀者
+  // 無法分辨「有意預留」vs「merge 漏掉」。
   function startMinioWatcherIfEnabled(): void {
     // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
     // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
@@ -1033,7 +1028,12 @@ export function createCoordinatorApp(
         bucket: config.minioWatchBucket || null,
         prefix: config.minioWatchPrefix || null,
         interval_seconds: config.minioWatchIntervalSeconds,
-        note: "未啟用（env MINIO_WATCH_ENABLED opt-in）",
+        // spec §4.2：誠實區分兩種關閉原因。env 從未 opt-in（config.minioWatchEnabled
+        // = false）vs operator 於 console 用 PUT /api/conversion/watch runtime 關閉
+        // （config.minioWatchEnabled = true，但 runtime flag 被覆寫為 false）。
+        note: config.minioWatchEnabled
+          ? "已由操作者於 console 關閉（runtime override；coordinator 重啟後回 env 預設）"
+          : "未啟用（env MINIO_WATCH_ENABLED opt-in）",
       });
       return;
     }

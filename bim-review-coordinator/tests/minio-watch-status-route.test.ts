@@ -66,6 +66,18 @@ describe("GET /api/external/minio-watch/status", () => {
     expect(res.body.secret_key).toBeUndefined();
   });
 
+  // spec §4.2 誠實 note 回歸鎖：env 從未 opt-in（config.minioWatchEnabled=false）時，
+  // note 必須是「env opt-in」字串、不得誤報為「operator runtime 關閉」。此鎖確保
+  // Task 2 的 runtime toggle-off 分支（config.minioWatchEnabled=true → 另一句 note）
+  // 引入後，env=false 這條基線不被回歸破壞。
+  it("env 從未 opt-in（預設）→ note 為 env opt-in 字串，非 runtime override", async () => {
+    const app = makeApp();
+    const res = await request(app.app).get("/api/external/minio-watch/status");
+    expect(res.status).toBe(200);
+    expect(res.body.note).toBe("未啟用（env MINIO_WATCH_ENABLED opt-in）");
+    expect(String(res.body.note)).not.toContain("操作者");
+  });
+
   it("watcher 啟用但 endpoint 不可達 → enabled=true 且 status 形狀完整（含 last_error 欄位）", async () => {
     const app = makeApp({
       minioWatchEnabled: true,
