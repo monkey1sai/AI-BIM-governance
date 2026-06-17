@@ -212,4 +212,32 @@ describe("PUT /api/conversion/watch — watcher 啟停可觀察行為（spec §6
     const status = await request(app.app).get("/api/external/minio-watch/status");
     expect(status.body.enabled).toBe(true);
   });
+
+  // IX-CV-04 spec §6.1（design 第 273/286 行）：allowlist 缺 loopback 時 enabled:true →
+  // startMinioWatcherIfEnabled() throw → route try/catch → 500 誠實訊息 + 回滾 runtime
+  // flag（不留半開狀態）。誠實面（為什麼用 mock-throw 而非真 allowlist 缺 loopback）：
+  // production 的 watcher-loopback 守衛與 route 入口的 rejectIfIpNotAllowed 用「同一份
+  // allowlist」對「同一個 loopback caller」判定——loopback caller 要通過 route gate（進到
+  // start 路徑）就必含 loopback，含 loopback 後 watcher 守衛的 throw 條件
+  // (!isIpAllowed("127.0.0.1") && !isIpAllowed("::1")) 即不成立。故經由 supertest loopback
+  // caller，allowlist-缺-loopback 的 500 在路由層結構性不可達（兩道門對 loopback 是對稱的）。
+  // 此測試以 mock 讓 startMinioWatcher 直接 throw（等價於 watcher 啟動失敗的任一原因，含
+  // 該 allowlist 守衛 throw），精確命中 app.ts 第 787–793 行 try/catch：catch → 回滾
+  // minioWatchRuntimeEnabled=false → 500。回滾以「500 後 GET status enabled=false」可觀察
+  // 斷言（不留半開狀態）。誠實註：本條驗的是 route 對「watcher start 失敗」的編排（500 +
+  // flag 回滾），不偽稱觸發了真實 allowlist 守衛的 throw 路徑（後者經路由層不可達）。
+  it("(d) watcher start throw → 500 誠實訊息 + runtime flag 回滾（GET status enabled=false，不留半開狀態）", async () => {
+    const app = makeApp(configuredStartOverrides());
+    watcherMock.startSpy.mockImplementationOnce(() => {
+      throw new Error("EXTERNAL_INTAKE_IP_ALLOWLIST 不含 loopback（127.0.0.1/::1）");
+    });
+    const res = await request(app.app).put("/api/conversion/watch").send({ enabled: true });
+    expect(res.status).toBe(500);
+    expect(String(res.body.detail)).toContain("Failed to start watcher");
+    // 回滾驗證：runtime flag 被設回 false → GET status enabled=false（無半開狀態）
+    const status = await request(app.app).get("/api/external/minio-watch/status");
+    expect(status.body.enabled).toBe(false);
+    // 未殘留 watcher handle：dispose 不應被呼叫（從未成功建立）
+    expect(watcherMock.disposeSpy).not.toHaveBeenCalled();
+  });
 });
