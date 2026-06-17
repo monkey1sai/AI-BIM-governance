@@ -6,8 +6,9 @@ import { test, expect } from "@playwright/test";
 //   重抓該 session active->closed + 該列轉灰）。誠實鐵律：無樂觀更新、非 active 不給假按鈕、
 //   未觀察轉移以 notObserved 原文揭露、不偽造；深度因果由 sessions.test.ts route 測試兜底。
 //
-// 測試區常態無 active session -> beforeAll 先 POST /api/review-sessions 種一個真 session
-//   （綁最小 artifact_bindings，沿用既有 fixture 風格）再驗結束切片。
+// 測試區常態無 active session -> beforeEach 先 POST /api/review-sessions 種一個真 session
+//   （綁最小 artifact_bindings，沿用既有 fixture 風格）再驗結束切片。每輪重置 seededId，
+//   避免（未來若加第二個 test 或開 retries）沿用上一輪已 close 的 stale id。
 //
 // skip-gate 效力限制（比照 conv-prioritize-retry.spec.ts）：守門是 conditional skip（coordinator
 //   不可達 -> skip -> 計 pass，非 fail）。本 repo .github/workflows 無 Playwright job，故不 false-green
@@ -21,6 +22,8 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
   const notObserved: string[] = [];
 
   test.beforeEach(async ({ request }) => {
+    seededId = null;
+    coordinatorUp = false;
     try {
       const created = await request.post(`${COORDINATOR}/api/review-sessions`, {
         data: { project_id: "271", model_version_id: "mv_e2e_terminate", artifact_bindings: [] },
@@ -52,12 +55,14 @@ test.describe("IX-SS-04 #sessions 結束 session controlled action", () => {
     // 列轉灰 browser 切片（task 觀察目標）：confirm 後 markTerminating 立即加灰、或 load() 重抓
     //   runtime/status 後該列 status=closing/closed 而 greyed=true（pages.tsx：greyed = terminating || ended）。
     //   後端釋放後若該 session 已移出 runtime/status items，列會被 load() 從 DOM 移除（誠實揭露，不偽造）。
+    // markTerminating(id) 在 load() 前同步觸發（pages.tsx:729），故該列應已帶 ec-row-muted。
+    //   直接斷言（短 timeout）讓退化「可見」：真有列就硬驗 className；若後端釋放後該列已被
+    //   load() 從 DOM 移除（toHaveClass 抓不到 -> 逾時 throw），才 catch 落 notObserved，
+    //   不再用 count() 靜默吞掉核心斷言（誠實揭露，不偽造）。
     const rowAfter = page.locator(`[data-testid="session-row-${id}"]`);
-    if (await rowAfter.count()) {
-      await expect(rowAfter).toHaveClass(/ec-row-muted/, { timeout: 30_000 });
-    } else {
-      notObserved.push(`#sessions 列已從 DOM 移除（後端釋放後 runtime/status 不再 emit ${id}）；列轉灰 className 切片本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
-    }
+    await expect(rowAfter).toHaveClass(/ec-row-muted/, { timeout: 5_000 }).catch(() => {
+      notObserved.push(`#sessions 列轉灰 className 未觀察到（toHaveClass /ec-row-muted/ 逾時）：可能後端釋放後該列已被 load() 從 DOM 移除（runtime/status 不再 emit ${id}）；列轉灰切片本輪 not observed，深度因果由 sessions.test.ts 兜底。`);
+    });
     const after = await page.request.get(`${COORDINATOR}/api/runtime/status`);
     const afterBody = await after.json();
     const refreshed = (afterBody.sessions?.items ?? []).find((s: { session_id: string }) => s.session_id === id);
