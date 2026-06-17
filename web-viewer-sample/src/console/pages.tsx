@@ -458,10 +458,12 @@ export function ConversionSchedulingPage() {
   // finding #2：action 錯誤獨立 state，顯示在 dialog 內、與 dialog 綁定，不與 load 錯誤（err）共用。
   // load() 開頭的 setErr(null) 因此不會把「控制動作失敗」清掉。
   const [actionErr, setActionErr] = useState<string | null>(null);
-  // 回傳「ifc-ready 佇列是否抓取成功」：runAction 用它判斷控制動作後的證據型刷新是否
+  // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
   // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
-  const load = useCallback(async (): Promise<boolean> => {
+  // important #1：watch-toggle 成功後若 minioWatchStatus 此輪失敗，jobsOk 仍 true 會誤導 runAction
+  // 靜默關 dialog（mw 未更新、琥珀條與 Panel 停舊值、操作者看不到錯誤）。故回傳 mwOk 讓呼叫端可辨此分支。
+  const load = useCallback(async (): Promise<{ jobsOk: boolean; mwOk: boolean }> => {
     setBusy(true); setErr(null); setMwErr(null);
     // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
     // 端點尚未部署）不得污染 ifc-ready 的錯誤訊息，也不得讓 watcher Panel 靜默停在
@@ -471,12 +473,13 @@ export function ConversionSchedulingPage() {
       coordinatorClient.minioWatchStatus(),
     ]);
     const jobsOk = jobsRes.status === "fulfilled";
+    const mwOk = mwRes.status === "fulfilled";
     if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
     else setErr(`未連線 coordinator /api/external/ifc-ready：${String(jobsRes.reason)}`);
     if (mwRes.status === "fulfilled") setMw(mwRes.value);
     else setMwErr(`未連線 coordinator /api/external/minio-watch/status：${String(mwRes.reason)}`);
     setBusy(false);
-    return jobsOk;
+    return { jobsOk, mwOk };
   }, []);
   useEffect(() => { void load(); }, [load]);
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
@@ -519,12 +522,18 @@ export function ConversionSchedulingPage() {
       // 證據型更新：重抓真佇列狀態（非樂觀）。load() 自吞錯不 throw，故以回傳值辨識
       // 「POST 成功但重抓佇列失敗」——此時不可靜默關 dialog（佇列仍顯舊狀態、背景 err
       // 操作者不易察覺），改保持 dialog 開啟並在 dialog 內顯誠實錯誤。
-      const refreshed = await load();
-      if (!refreshed) {
+      const { jobsOk, mwOk } = await load();
+      if (!jobsOk) {
         setActionErr("動作已送出，但重新抓取佇列失敗；佇列可能仍顯示舊狀態，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。");
         return;                     // 不關 dialog、不視為完成
       }
-      setPendingAction(null);       // 動作成功且佇列已刷新才關 dialog
+      // important #1：watch-toggle 成功但 watcher 狀態重抓失敗時，jobsOk 仍 true，但 mw 未更新，
+      // 琥珀條與 Panel 停在舊值。不可靜默關 dialog（操作者會誤以為開關已生效），改顯誠實錯誤要求重按 Refresh。
+      if (pendingAction.kind === "watch-toggle" && !mwOk) {
+        setActionErr("動作已送出，但重新抓取 watcher 狀態失敗；自動偵測狀態與頁頂提示可能仍顯示舊值，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。");
+        return;                     // 不關 dialog、不視為完成
+      }
+      setPendingAction(null);       // 動作成功且狀態已刷新才關 dialog
     } catch (e) {
       setActionErr(`控制動作失敗：${String(e)}`); // finding #2：寫獨立 actionErr（顯示在 dialog 內），不關 dialog、不改狀態
     } finally {
