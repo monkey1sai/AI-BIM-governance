@@ -354,8 +354,6 @@ export function createCoordinatorApp(
       config.minioWatchAccessKey && config.minioWatchSecretKey,
     );
   }
-  void minioWatchToggleBusy; // suppress unused-var lint until PUT route uses it
-  void minioWatchConfigured; // suppress unused-var lint until PUT route uses it
   function startMinioWatcherIfEnabled(): void {
     // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
     // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
@@ -1027,7 +1025,9 @@ export function createCoordinatorApp(
   // 回 enabled=false（env opt-in）。last_triggered 只含 key，不含 presigned URL。
   // 置於 /:jobId param route 之前，確保此靜態路徑優先匹配。
   app.get("/api/external/minio-watch/status", (_request, response) => {
-    if (!config.minioWatchEnabled) {
+    // IX-CV-04：讀 runtime flag（初值=env，可被 PUT /api/conversion/watch 覆寫），
+    // 不讀 config.minioWatchEnabled 靜態值，否則 toggle 後 status 會回過時狀態。
+    if (!minioWatchRuntimeEnabled) {
       response.json({
         enabled: false,
         bucket: config.minioWatchBucket || null,
