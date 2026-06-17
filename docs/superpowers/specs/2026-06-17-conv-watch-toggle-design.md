@@ -197,8 +197,11 @@ app.put("/api/conversion/watch", async (request, response) => {
         await w.dispose();
       }
     }
+    // 成功 audit 同時帶 enabled（spec 要求的方向布林，供以 enabled 查 audit）與 target 方向編碼
+    // （與失敗路徑 outcome-in-target、prioritize/retry target:id 慣例一致）。enabled 已加入 AuditData(optional)。
     structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
-      action: "conversion.watch.toggle", enabled: body.enabled, actor, reason,
+      action: "conversion.watch.toggle", actor,
+      target: body.enabled ? "watch:enable" : "watch:disable", enabled: body.enabled, reason,
     }, "info");
     // 回 toggle 後真 status（與 GET status 同邏輯：runtime flag 關 → enabled:false）
     response.json(currentMinioWatchStatusPayload());                  // §4.2 抽出的共用 helper

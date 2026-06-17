@@ -67,6 +67,12 @@ export interface AuditData {
    * 自由理由。可空字串。寫入 audit trail 供事後追溯「為何插隊/重試」。
    */
   reason?: string;
+  /**
+   * conv-watch-toggle (spec §4.1):toggle 類 controlled action 的方向布林。watcher 啟停
+   * 成功 audit 須提供獨立 `enabled` 欄位（不僅靠 target 字串編碼），供日後以 enabled 查
+   * audit 的工具命中。其他 action 不設此欄即可(optional,backward-compatible)。
+   */
+  enabled?: boolean;
 }
 
 export type LifecycleSubjectKind =

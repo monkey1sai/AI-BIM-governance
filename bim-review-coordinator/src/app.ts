@@ -809,10 +809,12 @@ export function createCoordinatorApp(
           await w.dispose();
         }
       }
-      // AuditData 為固定形狀（action/actor/target/reason，無 index signature），把 toggle
-      // 方向編進 target（與 prioritize/retry 用 target:id 同欄位），不擴 shared 型別。
+      // spec §4.1：成功 toggle audit 須含獨立 `enabled` 布林（供以 enabled 查 audit 的工具命中）；
+      // 同時保留 target 方向編碼（與 prioritize/retry 用 target:id、以及失敗路徑的 outcome-in-target
+      // 慣例一致，既有以 target 為鍵的查詢不破壞）。`enabled` 已加入 AuditData(optional)。
       structLog.withTraceId("minio-watch").audit("conversion-control", "conversion.watch.toggle", {
-        action: "conversion.watch.toggle", actor, target: body.enabled ? "watch:enable" : "watch:disable", reason,
+        action: "conversion.watch.toggle", actor,
+        target: body.enabled ? "watch:enable" : "watch:disable", enabled: body.enabled, reason,
       }, "info");
       response.json(currentMinioWatchStatusPayload());                  // 與 GET status 同邏輯的共用 helper
     } finally {

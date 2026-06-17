@@ -143,6 +143,19 @@ describe("PUT /api/conversion/watch — toggle 行為", () => {
     expect(String(res.body.detail)).toContain("not configured");
   });
 
+  // review Important #2：422 早返在 minioWatchToggleBusy=true 之後發生，需鎖死「422 不留殘留 busy 鎖」
+  // 的不變式。只斷言 422 本身無法偵測「若有人把 422 分支移出 try block 致 finally 不釋放鎖」的退化；
+  // 故 422 後立刻再打一筆 PUT，斷言它不是 409（busy 鎖確實已由 finally 釋放）。
+  it("422 後 busy 鎖必釋放：下一筆 PUT 不得 409", async () => {
+    const app = makeApp(); // 無連線參數 → enabled:true 走 422
+    const first = await request(app.app).put("/api/conversion/watch").send({ enabled: true });
+    expect(first.status).toBe(422);
+    // 422 路徑若未釋放 busy 鎖，這筆會撞 CR-B 回 409。斷言「非 409」鎖死釋放保證。
+    const second = await request(app.app).put("/api/conversion/watch").send({ enabled: true });
+    expect(second.status).not.toBe(409);
+    expect(second.status).toBe(422); // 仍未配置 → 再次誠實 422，證明鎖已釋放、請求被正常處理
+  });
+
   it("caller ip 不在 allowlist → 403", async () => {
     const app = makeApp({ ...configuredOverrides(), externalIntakeIpAllowlist: ["10.0.0.1"] });
     const res = await request(app.app).put("/api/conversion/watch").send({ enabled: false });
@@ -324,5 +337,48 @@ describe("PUT /api/conversion/watch — 失敗路徑也寫 audit（review Import
     // reason 同時保留操作者理由與失敗訊息,供事後追查
     expect(String(data.reason)).toContain("retry boot");
     expect(String(data.reason)).toContain("simulated watcher boot failure");
+  });
+
+  // review Important #1（成功路徑 audit 此前零斷言，app.ts:814 是測試死碼）：成功 toggle（200 OK）
+  // 必須寫一筆 info audit。spec §4.1（design 第 201 行）要求 record 含獨立 `enabled: boolean` 欄位
+  // 供日後靠 enabled 查 audit 的工具命中；同時保留 target 方向編碼（與失敗路徑 / prioritize-retry 一致）。
+  it("成功 enable（200）→ 寫一筆 info audit（target=watch:enable + enabled=true，spec §4.1）", async () => {
+    watcherMock.reset();
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-watch-audit-ok-on-"));
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260617_120000_wokon", skipEnvSnapshot: true });
+    const app = makeApp(configuredStartOverrides(), logger);
+    const res = await request(app.app).put("/api/conversion/watch").send({ enabled: true, reason: "operator enable" });
+    expect(res.status).toBe(200);
+
+    const audits = readAuditRecords(logger);
+    const rec = audits.find((r) => (r.data as Record<string, unknown>)?.target === "watch:enable");
+    expect(rec).toBeDefined();
+    expect(rec!.level).toBe("info");
+    const data = rec!.data as Record<string, unknown>;
+    expect(data.action).toBe("conversion.watch.toggle");
+    expect(data.actor).toBe("local-operator");
+    expect(data.reason).toBe("operator enable");
+    // spec §4.1：獨立 enabled 欄位（不僅靠 target 字串編碼方向）
+    expect(data.enabled).toBe(true);
+  });
+
+  it("成功 disable（200）→ 寫一筆 info audit（target=watch:disable + enabled=false，spec §4.1）", async () => {
+    watcherMock.reset();
+    const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), "conv-watch-audit-ok-off-"));
+    const logger = createLogger("coordinator", { logRoot, runId: "run_20260617_120000_wokoff", skipEnvSnapshot: true });
+    const app = makeApp(configuredStartOverrides(), logger);
+    // 先 enable 建 handle，再 disable 取成功 disable audit（含 dispose 路徑）
+    expect((await request(app.app).put("/api/conversion/watch").send({ enabled: true })).status).toBe(200);
+    const res = await request(app.app).put("/api/conversion/watch").send({ enabled: false, reason: "operator disable" });
+    expect(res.status).toBe(200);
+
+    const audits = readAuditRecords(logger);
+    const rec = audits.find((r) => (r.data as Record<string, unknown>)?.target === "watch:disable");
+    expect(rec).toBeDefined();
+    expect(rec!.level).toBe("info");
+    const data = rec!.data as Record<string, unknown>;
+    expect(data.action).toBe("conversion.watch.toggle");
+    expect(data.reason).toBe("operator disable");
+    expect(data.enabled).toBe(false);
   });
 });
