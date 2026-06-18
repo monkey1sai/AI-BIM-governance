@@ -10,6 +10,16 @@ export const meta = {
   ],
 }
 
+// <routing:gen>
+const ROUTING = {
+  extract: { model: 'haiku' },
+  standard: { model: 'sonnet', effort: 'max' },
+  reason: { model: 'opus', effort: 'xhigh' },
+  judge: { model: 'opus', effort: 'max' },
+  planAuthor: { model: 'opus', effort: 'max' },
+}
+// </routing:gen>
+
 // args 防護:harness 可能把 args 序列化成 JSON 字串,字串就 parse;必填缺直接 fail-fast
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const SPEC_PATH = A.specPath
@@ -101,7 +111,7 @@ log(`std-plan:spec=${SPEC_PATH} → plan=${PLAN_PATH}(branch=${BRANCH})`)
 
 const plan = await agent(`你是 AI-BIM-governance 的 plan 作者,嚴格遵循 superpowers writing-plans 規格。工作目錄(已 checkout ${BRANCH} 的 worktree):${ROOT}
 
-任務:讀 spec 全文 ${SPEC_PATH},寫出實作 plan 到 ${ROOT}/${PLAN_PATH},然後 git add + commit(繁中 message,第一行前綴「plan: 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」)。
+任務:讀 spec 全文 ${SPEC_PATH},寫出實作 plan 到 ${ROOT}/${PLAN_PATH},然後 git add + commit(繁中 message,第一行前綴「plan: 」,結尾附「Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>」)。
 冪等:若 ${ROOT}/${PLAN_PATH} 已存在(前次 run 產物),先讀現有 plan,只做增修(保留已合理的 tasks 與 git 歷史),不要整本重寫。
 
 plan 規格(writing-plans,逐條遵守):
@@ -116,7 +126,7 @@ plan 規格(writing-plans,逐條遵守):
 - planPath:相對 repo 的 plan 路徑(${PLAN_PATH})
 - taskCount、committed(是否已 commit)
 - tasks[]:每 task 的 index(從 0)、title、files(會動到的路徑)、symbols(會**修改**的既有 function/class/method 名,新建的不算;沒有就空陣列)、mechanical(1-2 檔且步驟完整可機械執行=true)、userFacingTouch(是否動到使用者可見 UI)`,
-  { label: 'plan:author', phase: 'Plan', model: 'opus', effort: 'max', schema: PLAN_SCHEMA })
+  { label: 'plan:author', phase: 'Plan', ...ROUTING.planAuthor, schema: PLAN_SCHEMA })
 
 if (!plan) return { ok: false, held: 'plan_author_failed', planPath: PLAN_PATH }
 log(`plan 完成:${plan.taskCount} tasks,committed=${plan.committed}`)
@@ -144,7 +154,7 @@ let axisResults = {}
 let axisNullStreak = 0
 for (let round = 0; round <= MAX_FIX; round++) {
   const results = await parallel(pendingAxes.map((a) => () =>
-    agent(axisPrompt(a), { label: `plan-review:${a.key}`, phase: 'PlanReview', model: 'sonnet', effort: 'max', schema: AXIS_SCHEMA })
+    agent(axisPrompt(a), { label: `plan-review:${a.key}`, phase: 'PlanReview', ...ROUTING.standard, schema: AXIS_SCHEMA })
   ))
   pendingAxes.forEach((a, i) => { if (results[i]) axisResults[a.key] = results[i] })
   // infra null(reviewer 掛掉)不可與「該軸未過」混為一談:連兩輪有 null → held reviewer_agent_failed
@@ -169,13 +179,13 @@ for (let round = 0; round <= MAX_FIX; round++) {
   const failIssues = failed.map((a) => `【${a.key}】\n` + ((axisResults[a.key] && axisResults[a.key].issues) || []).filter((i) => i.severity !== 'minor').map((i) => `- [${i.severity}] ${i.detail}`).join('\n')).join('\n\n')
   log(`plan review 第 ${round + 1} 輪:${failed.length} 軸未過,派 fixer 修 plan`)
   const fixR = await agent(`你是 plan 修復者。plan:${ROOT}/${PLAN_PATH},spec:${SPEC_PATH},工作目錄:${ROOT}。
-以下 reviewer 發現(blocker/major)必須逐項修進 plan 檔(直接 Edit 該檔;修完 git add+commit,繁中 message,第一行前綴「plan: fix 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」):
+以下 reviewer 發現(blocker/major)必須逐項修進 plan 檔(直接 Edit 該檔;修完 git add+commit,繁中 message,第一行前綴「plan: fix 」,結尾附「Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>」):
 
 ${failIssues}
 
 紀律:只修 plan 文件,不動其他檔;不可為了過審而刪需求——若 reviewer 發現源自 spec 本身矛盾,回傳 fixed=false 並在 summary 寫明矛盾為何(這段會原文呈給使用者裁決)。
 回傳 StructuredOutput:fixed、summary。`,
-    { label: `plan-fix:r${round + 1}`, phase: 'PlanReview', model: 'opus', effort: 'max', schema: FIX_SCHEMA })
+    { label: `plan-fix:r${round + 1}`, phase: 'PlanReview', ...ROUTING.judge, schema: FIX_SCHEMA })
   if (!fixR) {
     // fixer infra 失敗不可靜默吞掉續輪(會被誤分類成 plan_not_aligned 硬停)
     return { ok: false, held: 'reviewer_agent_failed', planPath: plan.planPath, taskCount: plan.taskCount, planReview: axisResults, note: 'plan-fixer 回 null' }
@@ -206,7 +216,7 @@ if (allSymbols.length) {
 ${allSymbols.map((s) => `   - ${s}`).join('\n')}
 4. 風險分級(repo 基準):<5 affected symbols 且少 processes=LOW;5-15 symbols / 2-5 processes=MEDIUM;>15 symbols 或多 processes=HIGH;觸及 critical path(auth/conversion authority/session 核心)=CRITICAL。個別 symbol 在圖中找不到(可能是新名或拼錯)→ 該 symbol risk=UNKNOWN 並在 note 說明,其餘照算(overallRisk 取其餘最大,blockers 記「N symbols not in graph」)。**GitNexus 工具整體故障**(crash / 連不上 / re-analyze 後仍全失敗,LadybugDB crash 是已知坑)→ overallRisk=UNKNOWN 並在 blockers 寫明故障細節。
 回傳 StructuredOutput:overallRisk、perSymbol[](symbol/risk/note:直接 callers 數與關鍵 processes)、blockers[](CRITICAL 理由或工具故障描述)、staleHandled。`,
-      { label: 'impact:prescan', phase: 'Impact', model: 'sonnet', effort: 'max', schema: IMPACT_SCHEMA })
+      { label: 'impact:prescan', phase: 'Impact', ...ROUTING.standard, schema: IMPACT_SCHEMA })
     if (r) { impact = r; break }
     if (attempt === 1) impact = null
   }
