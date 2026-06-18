@@ -13,7 +13,8 @@ def test_codegen_no_drift():
 EXPECTED = {
     "std-plan.js":      {"plan:author":"planAuthor","plan-review:":"standard","plan-fix:":"judge","impact:prescan":"standard"},
     "std-implement.js": {"parse:plan":"extract","impact:${T}":"standard","spec-review:":"standard",
-                          "spec-fix:":"judge","quality-review:":"standard","quality-fix:":"judge","final-review":"judge"},
+                          "spec-fix:":"judge","quality-review:":"standard","quality-fix:":"judge","final-review":"judge",
+                          "fix:cycle":"judge","fix:verify":"judge"},
     "std-evidence.js":  {"probe:engine":"extract","evidence:":"judge"},
 }
 def test_callsites_reference_expected_tier():

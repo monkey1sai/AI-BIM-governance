@@ -189,7 +189,7 @@ ${fixList}
 ${disciplineFor('fix:')}
 若某項 finding 你判斷是誤報(code 實際正確),不要硬改——在 summary 說明理由,留給 verify reviewer 判。
 回傳 StructuredOutput:fixed(至少修了一項或確認全為誤報)、commitSha、summary(逐項:修了什麼/為何誤報)、detectVerdict(依紀律第 6 條;無 commit 時 skipped)。`,
-    { label: 'fix:cycle', phase: 'Fix', model: 'opus', effort: 'max', schema: FIX_SCHEMA })
+    { label: 'fix:cycle', phase: 'Fix', ...ROUTING.judge, schema: FIX_SCHEMA })
 
   if (!fix) return { ok: false, mode: 'fix', held: 'reviewer_agent_failed', notClosed: FIX_FINDINGS, note: 'fixer 回 null' }
   trackFixDetect('fix:cycle', fix)
@@ -200,7 +200,7 @@ ${disciplineFor('fix:')}
 ${fixList}
 誤報判定:fixer 主張誤報的項,你要在 code 找到「原 finding 不成立」的確鑿證據才算 closed。
 回傳 StructuredOutput:closed[](已閉合的 id)、notClosed[](id + why)。`,
-    { label: 'fix:verify', phase: 'Fix', model: 'opus', effort: 'max', schema: FIX_VERIFY_SCHEMA })
+    { label: 'fix:verify', phase: 'Fix', ...ROUTING.judge, schema: FIX_VERIFY_SCHEMA })
 
   if (!verify) return { ok: false, mode: 'fix', held: 'reviewer_agent_failed', notClosed: FIX_FINDINGS, note: 'fix verify reviewer 回 null' }
   log(`fix-cycle:closed=${verify.closed.length} notClosed=${verify.notClosed.length}`)
