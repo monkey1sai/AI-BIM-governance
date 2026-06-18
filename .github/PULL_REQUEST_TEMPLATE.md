@@ -2,6 +2,18 @@
 
 - _Describe the PR scope._
 
+## AI Coding Governance
+
+| Item | Result |
+|---|---|
+| Linked issue |  |
+| Requirement source | `docs/plans/...` / `docs/superpowers/...` / not needed |
+| CODEOWNERS / owner review | requested / not needed |
+| GitNexus evidence | impact / detect_changes / not needed |
+| gstack evidence | screenshot / trace / not user-facing |
+| Agent workflow changed? | no / yes, describe rollback |
+| Required checks expected | CI / Agent Governance / PR Review Agent |
+
 ## Frontend Verification
 
 User-facing changes must be operable from the frontend. Backend/API-only completion is not accepted.

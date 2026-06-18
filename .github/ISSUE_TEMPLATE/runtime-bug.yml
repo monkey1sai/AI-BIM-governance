@@ -1,0 +1,46 @@
+name: Runtime or workflow bug
+description: Error-card intake for runtime, deployment, test, CI, MCP, or agent workflow failures.
+title: "[Bug] "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: What the user or CI saw.
+      placeholder: "deploy.ps1 -DryRun exits nonzero at Phase 1 preflight."
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: cwd, branch, OS, profile, runtime, ports, and relevant files.
+      placeholder: "cwd=C:\\Repos\\active\\iot\\AI-BIM-governance; branch=..."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Commands, logs, screenshots, trace path, or failing test name. Do not paste secrets.
+      placeholder: "Command: ...\nExit code: ...\nArtifact/log path: ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: regression_guard
+    attributes:
+      label: Regression guard
+      description: The test, lint, health check, or CI gate that should catch this next time.
+      placeholder: "Add or update scripts/tests/test-*.ps1, pytest, Vitest, or Playwright evidence."
+    validations:
+      required: true

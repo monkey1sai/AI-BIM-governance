@@ -1,0 +1,181 @@
+{
+  "title": "AI Coding Maturity Full Score",
+  "slug": "ai-coding-maturity-full-score",
+  "created_at": "2026-06-18T00:00:00+08:00",
+  "updated_at": "2026-06-18T14:27:51+08:00",
+  "status": "completed_local",
+  "mode": "delegated",
+  "approval": {
+    "required": false,
+    "granted": null,
+    "notes": "Local governance artifacts and static checks only. No commit, push, deployment, or remote GitHub setting changes."
+  },
+  "delegation": {
+    "native_agent_available": true,
+    "native_agent_used": true,
+    "agents": [
+      {
+        "id": "019ed955-5a03-7460-a539-9694797f70f8",
+        "name": "Lagrange",
+        "packet": "01-checklist-rescore",
+        "status": "completed"
+      },
+      {
+        "id": "019ed955-a8c3-7a32-87af-d80e9421a3ab",
+        "name": "Turing",
+        "packet": "02-docs-plans-requirements",
+        "status": "completed"
+      },
+      {
+        "id": "019ed955-ab85-7811-9aa8-4d15b770f77f",
+        "name": "Tesla",
+        "packet": "03-level4-ci-gap",
+        "status": "completed"
+      },
+      {
+        "id": "019ed955-adb7-7a93-b85a-5515deb8edbc",
+        "name": "Locke",
+        "packet": "04-level5-agent-governance-gap",
+        "status": "completed"
+      },
+      {
+        "id": "019ed95f-3853-7ff2-8ace-a339bd42319a",
+        "name": "Zeno",
+        "packet": "05-implementation-review",
+        "status": "completed"
+      }
+    ]
+  },
+  "score": {
+    "before": "3.2/5",
+    "after_local_fixes": "4.3/5",
+    "repo_local_readiness": "Level 4 prepared; Level 5 governance ready for remote enforcement",
+    "full_score_blocker": "GitHub remote branch protection/rulesets and hosted Actions have not been verified; runtime/product evidence gaps remain."
+  },
+  "packets": [
+    {
+      "id": "01-checklist-rescore",
+      "status": "completed",
+      "owner": "Lagrange",
+      "write_scope": [],
+      "result_path": "results/01-checklist-rescore.md"
+    },
+    {
+      "id": "02-docs-plans-requirements",
+      "status": "completed",
+      "owner": "Turing",
+      "write_scope": [],
+      "result_path": "results/02-docs-plans-requirements.md"
+    },
+    {
+      "id": "03-level4-ci-gap",
+      "status": "completed",
+      "owner": "Tesla",
+      "write_scope": [],
+      "result_path": "results/03-level4-ci-gap.md"
+    },
+    {
+      "id": "04-level5-agent-governance-gap",
+      "status": "completed",
+      "owner": "Locke",
+      "write_scope": [],
+      "result_path": "results/04-level5-agent-governance-gap.md"
+    },
+    {
+      "id": "05-implementation-review",
+      "status": "completed",
+      "owner": "Zeno",
+      "write_scope": [],
+      "result_path": "results/05-implementation-review.md"
+    }
+  ],
+  "verification": {
+    "status": "passed_with_skips",
+    "checks": [
+      {
+        "name": "external checklist read",
+        "command": "Get-Content \"C:\\Users\\IOT\\Downloads\\AI-BIM-governance 深度檢視 Checklist.md\"",
+        "required": true,
+        "status": "passed",
+        "evidence": "Checklist was readable in the current session."
+      },
+      {
+        "name": "docs plans inventory",
+        "command": "git ls-files docs/plans; rg --files -u docs/plans",
+        "required": true,
+        "status": "passed",
+        "evidence": "Eight docs/plans files were considered, including ignored HTML prototypes."
+      },
+      {
+        "name": "static governance check",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\tests\\test-agent-governance-check.ps1",
+        "required": true,
+        "status": "passed",
+        "evidence": "[test-agent-governance-check] all assertions passed"
+      },
+      {
+        "name": "PR body evidence tests",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\tests\\test-pr-body-evidence.ps1",
+        "required": true,
+        "status": "passed",
+        "evidence": "[test-pr-body-evidence] all assertions passed"
+      },
+      {
+        "name": "PowerShell syntax parse",
+        "command": "[scriptblock]::Create(...) for new scripts",
+        "required": true,
+        "status": "passed",
+        "evidence": "PowerShell syntax OK"
+      },
+      {
+        "name": "root contracts",
+        "command": "python -m pytest tests -q -p no:cacheprovider",
+        "required": true,
+        "status": "passed",
+        "evidence": "66 passed"
+      },
+      {
+        "name": "governance-service tests",
+        "command": "python -m pytest governance-service\\tests -q",
+        "required": true,
+        "status": "passed",
+        "evidence": "103 passed, 1 warning"
+      },
+      {
+        "name": "kit-manager-api tests",
+        "command": "python -m pytest services\\kit-manager-api\\tests -q",
+        "required": true,
+        "status": "passed",
+        "evidence": "11 passed"
+      },
+      {
+        "name": "diff whitespace check",
+        "command": "git diff --check -- <edited files>",
+        "required": true,
+        "status": "passed",
+        "evidence": "Exit code 0; CRLF warnings only."
+      },
+      {
+        "name": "pytest temp ignore rule",
+        "command": "git check-ignore -v pytest-of-jacks",
+        "required": true,
+        "status": "passed",
+        "evidence": ".gitignore:70:pytest-of-*/ pytest-of-jacks"
+      },
+      {
+        "name": "node subproject local verifies",
+        "command": "npm run verify / npm run build in subprojects",
+        "required": false,
+        "status": "blocked_local_environment",
+        "evidence": "Coordinator blocked by local EPERM/dist writes and missing local AWS SDK packages; viewer Vitest blocked by local Temp EPERM; kit-manager-web node_modules absent. CI installs dependencies in clean runners."
+      },
+      {
+        "name": "remote enforcement",
+        "command": "GitHub repository settings / branch protection / rulesets",
+        "required": true,
+        "status": "not_run_remote_only",
+        "evidence": "No remote GitHub settings were read or mutated."
+      }
+    ]
+  }
+}

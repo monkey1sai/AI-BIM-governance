@@ -1,0 +1,21 @@
+# Default owner. Branch protection must require CODEOWNERS review for this file to enforce ownership.
+* @monkey1sai
+
+# Agent and repo-governance source of truth.
+/AGENTS.md @monkey1sai
+/CLAUDE.md @monkey1sai
+/README.md @monkey1sai
+/docs/agents/ @monkey1sai
+/docs/plans/ @monkey1sai
+/docs/PR_REVIEW_AGENT.md @monkey1sai
+
+# GitHub automation and PR governance.
+/.github/ @monkey1sai
+
+# Local agent workflow/tooling assets that affect how code is changed.
+/.claude/workflows/ @monkey1sai
+/.claude/settings.json @monkey1sai
+/.codex/skills/ @monkey1sai
+
+# Script contract and deploy/verification tooling.
+/scripts/ @monkey1sai

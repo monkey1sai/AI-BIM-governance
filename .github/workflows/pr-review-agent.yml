@@ -3,20 +3,6 @@ name: PR Review Agent
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    # 純文件 / agent 工具資產 / tracking 變更本地檢查即可，不觸發 CI review agent；
-    # 只要 PR 還動到其他路徑（code / scripts / workflow 等）就照常完整 review。
-    paths-ignore:
-      - '**/*.md'
-      - '.gitignore'
-      - '**/.gitignore'
-      - '.codex/**'
-      - '.claude/**'
-      - '.agent/**'
-      - '.windsurf/**'
-      - '.cursor/**'
-      - '.superpowers/**'
-      - 'artifacts/**'
-      - 'docs/**'
 
 permissions:
   contents: read
@@ -77,6 +63,18 @@ jobs:
           }
           exit 0
 
+      - name: Check PR body evidence
+        shell: pwsh
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          New-Item -ItemType Directory -Path artifacts/pr-review-agent -Force | Out-Null
+          $env:PR_BODY | Set-Content -LiteralPath artifacts/pr-review-agent/pr-body.md -Encoding utf8
+          git diff --name-only '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' | Set-Content -LiteralPath artifacts/pr-review-agent/changed-paths.txt -Encoding utf8
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/check-pr-body-evidence.ps1 `
+            -BodyPath artifacts/pr-review-agent/pr-body.md `
+            -ChangedPathsPath artifacts/pr-review-agent/changed-paths.txt
+
       - name: Run PR review agent
         id: review
         shell: pwsh
@@ -95,8 +93,7 @@ jobs:
             '-HeadSha', '${{ github.event.pull_request.head.sha }}',
             '-PrNumber', '${{ github.event.pull_request.number }}',
             '-RunId', '${{ github.run_id }}',
-            '-OutputDir', 'artifacts/pr-review-agent',
-            '-AllowGitNexusUnavailable'
+            '-OutputDir', 'artifacts/pr-review-agent'
           )
           if ($env:PR_DRAFT -eq 'true') {
             $args += '-ReportOnly'
