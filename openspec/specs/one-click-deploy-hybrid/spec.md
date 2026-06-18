@@ -13,7 +13,7 @@ TBD - created by archiving change add-one-click-deploy-hybrid. Update Purpose af
 
 - **WHEN** 使用者在 cold tree(.venv / node_modules / .env.web-plane.host-kit / docker image 任一缺)上跑 `.\scripts\deploy.ps1`
 - **THEN** deploy.ps1 MUST 依 Phase 1 → 2 → 3 → 4 → 5 順序執行
-- **AND** Phase 4 MUST 嚴格按 4a(host-native conversion-service)→ 4b(host-native Kit)→ 4c(docker compose up coordinator + viewer)順序啟動
+- **AND** Phase 4 MUST 嚴格按 4a(host-native governance-service)→ 4b(host-native conversion-service)→ 4c(host-native Kit)→ 4d(docker compose up coordinator + viewer)順序啟動
 - **AND** 全部 ready 後印 Final Summary 與 Next 區塊(viewer 入口 URL)並退 0
 
 #### Scenario: deploy.ps1 不替換既有 startup 入口
@@ -102,31 +102,54 @@ deploy.ps1 SHALL 在 Phase 3 互動前 re-audit ports,並把 Docker Desktop 自�
 
 ### Requirement: Phase 4 嚴格依賴順序
 
-deploy.ps1 SHALL 在 Phase 4 嚴格按 4a → 4b → 4c 順序啟動,因為 coordinator container 啟動時會立刻嘗試 `host.docker.internal:49101/health`,host-native conversion-service 必須先 LISTEN。
+deploy.ps1 SHALL 在 Phase 4 嚴格按 host-native governance-service（4a）→ host-native conversion-service（4b）→ host-native Kit（4c）→ Docker web plane（4d）順序啟動。Coordinator container 啟動時會代理 governance 與 conversion endpoints 並立刻嘗試 `host.docker.internal:49101/health`,因此 governance-service 與 conversion-service MUST 先於 Docker coordinator ready。
 
-#### Scenario: Phase 4a 啟動 host-native conversion-service
+#### Scenario: Phase 4a 啟動 host-native governance-service
 
-- **WHEN** Phase 4a 啟動 conversion-service
+- **WHEN** deploy.ps1 未帶 `-SkipGovernance`
+- **THEN** deploy.ps1 MUST 啟動 host-native `governance-service`，並以 `uvicorn app:app` 綁定 `127.0.0.1:<GovernancePort>`
+- **AND** default `GovernancePort` MUST be `49102`
+- **AND** deploy.ps1 MUST 等 `http://127.0.0.1:<GovernancePort>/health` 回 200；timeout 視為 stage=4a fail，退 4
+- **AND** deploy.ps1 MUST set `HOST_GOVERNANCE_API_BASE=http://host.docker.internal:<GovernancePort>` for the Docker coordinator unless governance is skipped
+- **AND** browser access MUST still go through coordinator `/api/governance/*`, not directly to `governance-service`
+
+#### Scenario: -SkipGovernance explicitly opts out
+
+- **WHEN** deploy.ps1 帶 `-SkipGovernance`
+- **THEN** Phase 4a governance startup MUST be skipped
+- **AND** deploy audit MUST record `governanceSkipped=true`
+- **AND** deploy.ps1 MUST NOT set a Docker governance API base
+
+#### Scenario: custom governance port refreshes Docker coordinator configuration
+
+- **WHEN** deploy.ps1 receives `-GovernancePort <port>` or resolves a non-default governance port
+- **THEN** dry-run audit MUST record the resolved governance port
+- **AND** `HOST_GOVERNANCE_API_BASE` MUST use that port
+- **AND** an already-running Docker web plane MUST be refreshed before post-verify so coordinator cannot keep stale governance proxy configuration
+
+#### Scenario: Phase 4b 啟動 host-native conversion-service
+
+- **WHEN** Phase 4b 啟動 conversion-service
 - **THEN** deploy.ps1 MUST 在 spawn 子 process 前 export `$env:STORAGE_ROOT = $RuntimeStorageRoot`(對齊 docker bind mount source);MUST export `$env:STREAMING_CONVERSION_WORK_DIR = Split-Path -Parent $RuntimeStorageRoot`
-- **AND** MUST 等 `http://127.0.0.1:49101/health` 回 200(timeout 30s);timeout 視為 stage=4a fail,退 4
+- **AND** MUST 等 `http://127.0.0.1:49101/health` 回 200(timeout 30s);timeout 視為 stage=4b fail,退 4
 
-#### Scenario: Phase 4b 啟動 host-native Kit streaming
+#### Scenario: Phase 4c 啟動 host-native Kit streaming
 
-- **WHEN** Phase 4b 啟動 Kit
+- **WHEN** Phase 4c 啟動 Kit
 - **THEN** deploy.ps1 MUST 跑 `start-streaming-server.ps1 -ResetUser -SkipAutoLoad`(對齊 memory `webrtc-no-video-reset-user-recovery`)
 - **AND** MUST 等 `:49100` LISTEN + log 內出現 `app ready` / `Application started` / `launching Linux Kit` / `Streaming started` 任一 keyword(timeout 90s)
-- **AND** timeout 視為 stage=4b fail,退 4
+- **AND** timeout 視為 stage=4c fail,退 4
 
-#### Scenario: Phase 4c 啟動 docker web plane
+#### Scenario: Phase 4d 啟動 docker web plane
 
-- **WHEN** Phase 4c 啟動 docker compose
+- **WHEN** Phase 4d 啟動 docker compose
 - **THEN** deploy.ps1 MUST 透過 `Start-Process powershell.exe -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',<start-web-plane-docker.ps1>,'-EnvFile',<resolvedEnvFile>) -RedirectStandardOutput <up.log> -RedirectStandardError <up.err.log> -Wait` 隔離子 script
-- **AND** 子 process exit code 非 0 視為 stage=4c fail,退 4
+- **AND** 子 process exit code 非 0 視為 stage=4d fail,退 4
 
 #### Scenario: 任一 Phase 4 stage fail 後不自動 rollback
 
 - **WHEN** Phase 4 任一 stage 退非 0
-- **THEN** deploy.ps1 MUST NOT 自動 stop 已啟的 host-native conversion-service / Kit / docker container
+- **THEN** deploy.ps1 MUST NOT 自動 stop 已啟的 host-native governance-service / conversion-service / Kit / docker container
 - **AND** Final Summary MUST 列出 `What might be running` 與每個 PID-file 的 PID,並印手動 stop 指令(`stop-all.ps1` + `docker compose ... down`)
 
 ### Requirement: Volume 對齊方案 A
@@ -174,7 +197,7 @@ deploy.ps1 SHALL 用結構化退出碼讓 CI / 自動化系統能解析失敗階
 
 - **WHEN** deploy.ps1 結束
 - **THEN** 退出碼 MUST 符合:`0` = 全 OK 或 `-DryRun` 完成;`1` = Phase 1 unfixable;`2` = Phase 2 auto-fix 失敗(venv / pip / .env merge / docker build);`3` = Phase 3 互動 guard 被使用者拒絕;`4` = Phase 4 任一 stage 失敗;`5` = Phase 5 strict verify 失敗(僅 `-StrictPostVerify`)
-- **AND** Phase 4 內部 stage 失敗時 log MUST 標 `stage=4a` / `stage=4b` / `stage=4c`
+- **AND** Phase 4 內部 stage 失敗時 log MUST 標 `stage=4a` / `stage=4b` / `stage=4c` / `stage=4d`
 
 ### Requirement: 三層 safety 紅線
 
@@ -198,6 +221,8 @@ deploy.ps1 SHALL 嚴格遵守 `AGENTS.md §0.1` 與 `CLAUDE.md` 規範的三層 
 deploy.ps1 SHALL 印結構化 Final Summary,成功 / 失敗兩種情況都有對應的「下一步」指令給使用者。失敗時 deploy.ps1 SHALL 走到 Print-FinalSummary 才退出,MUST NOT 因 strict-mode（`Set-StrictMode -Version Latest`）下 build / probe 失敗路徑的未初始化變數觸發 `VariableNotDefined` terminating error 而繞過 Final Summary。
 
 Final Summary 與 idempotent re-run 路徑 SHALL 對空 / 缺失的 `scripts\.run\*.pid` 與 runtime signature 檔（如 `bim-streaming-server.params.json` / `bim-streaming-conversion-service.params.json`）做 null-safe 讀取:對「空檔 / 不存在檔」`Get-Content` 回 `$null` 時 MUST NOT 直接呼叫 `.Trim()`（strict-mode 下對 `$null` 的方法呼叫為 terminating error;`-ErrorAction SilentlyContinue` 只壓 `Get-Content` cmdlet 自身錯誤,壓不住後續對 `$null` 的方法呼叫）。失敗診斷的「What might be running」清單對空 / 缺 `.pid` SHALL 顯示佔位字串（如 `(empty)`）而非 crash;runtime signature 比對對「存在但空」的 signature 檔 SHALL 視為不相符（回 `$false`,走重寫 signature 路徑）而非在印出診斷前 throw。
+
+deploy 與 closeout / shutdown scripts（含 `scripts\stop-all.ps1`）SHALL 在 strict mode 下維持失敗 / 復原輸出可診斷:shutdown cleanup 列舉 `scripts\.run\` 內 `.pid` 檔時 MUST NOT 在目錄含 0 個、剛好 1 個或多個 `.pid` 檔時觸發 strict-mode collection-shape error（如 `The property 'Count' cannot be found on this object`）——單一檔的列舉結果 MUST 一律當 collection 處理。
 
 #### Scenario: 成功完成
 
@@ -224,6 +249,13 @@ Final Summary 與 idempotent re-run 路徑 SHALL 對空 / 缺失的 `scripts\.ru
 - **THEN** deploy.ps1 SHALL 對 `Get-Content` 回傳值做 null/empty guard（空 / 缺值落到佔位字串或空字串）後才呼叫 `.Trim()`,MUST NOT 對 `$null` 直接呼叫 `.Trim()` 觸發 strict-mode terminating error
 - **AND** Print-FinalSummary 對空 / 缺 `.pid` MUST 仍印出該行 summary（PID 顯示為 `(empty)` 等佔位字串）而非在印出失敗診斷前 crash
 - **AND** runtime signature 比對對「存在但空」的 signature 檔 MUST 回 `$false`（視為不相符,走重寫 signature 路徑）而非 throw
+
+#### Scenario: stop-all handles exactly one pid file
+
+- **WHEN** `scripts\.run\` contains exactly one expected service `.pid` file
+- **THEN** `scripts\stop-all.ps1` MUST treat the pid-file enumeration as a collection
+- **AND** it MUST NOT emit a strict-mode error such as `The property 'Count' cannot be found on this object`
+- **AND** it MUST continue to remove stale pid files and stop matching workspace processes according to the existing service ownership rules
 
 ### Requirement: Stage allowed-hosts SHALL be configurable with an explicit empty-value warning
 
