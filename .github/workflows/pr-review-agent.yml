@@ -35,7 +35,8 @@ jobs:
       - name: Install Python review dependencies
         shell: pwsh
         run: |
-          npm install -g @fission-ai/openspec gitnexus
+          npm install -g @fission-ai/openspec gitnexus@1.6.5
+          gitnexus --version
           python -m pip install --upgrade pip
           # jsonschema is required by tests/contracts/structured-log/test_validate.py
           # and test_python_adapter.py per cross-service-structured-log-baseline §6.

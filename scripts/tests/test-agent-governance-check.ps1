@@ -88,6 +88,7 @@ try {
     Assert-True (-not ($prReviewWorkflow -match "'-AllowGitNexusUnavailable'")) 'normal PR review workflow does not pass -AllowGitNexusUnavailable'
     Assert-True ($prReviewWorkflow -match "'-ReportOnly'") 'draft PR report-only behavior remains available'
     Assert-True ($prReviewWorkflow -match 'check-pr-body-evidence\.ps1') 'PR review workflow enforces PR body evidence'
+    Assert-True ($prReviewWorkflow -match 'gitnexus@1\.6\.5') 'PR review workflow pins GitNexus CLI to the version that supports CI bootstrap flags'
     Assert-True ($prReviewWorkflow -match 'gitnexus analyze --index-only --max-file-size 128 --name AI-BIM-governance \.') 'PR review workflow builds a CI-safe GitNexus index'
 
     $gitnexusIgnore = Get-Content -LiteralPath '.gitnexusignore' -Raw
