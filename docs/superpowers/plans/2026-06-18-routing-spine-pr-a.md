@@ -486,13 +486,15 @@ EXPECTED = {
     "std-evidence.js":  {"probe:engine":"extract","evidence:":"judge"},
 }
 def test_callsites_reference_expected_tier():
+    # 每個 agent() option 物件為單行；逐行比對（label 含 ${...} 的 } 不會誤斷）
     for fn, mapping in EXPECTED.items():
-        text = _read(fn)
+        lines = _read(fn).splitlines()
         for label_prefix, tier in mapping.items():
-            # 找含此 label 前綴的 agent() 物件，斷言同物件內有 ...ROUTING.<tier>
-            m = re.search(r"label:\s*[`'\"]" + re.escape(label_prefix) + r"[^}]*?\.\.\.ROUTING\.(\w+)", text, re.DOTALL)
-            assert m, f"{fn}: label {label_prefix} 找不到 ...ROUTING.* spread"
-            assert m.group(1) == tier, f"{fn}: {label_prefix} 期望 ROUTING.{tier} 實得 ROUTING.{m.group(1)}"
+            hits = [ln for ln in lines if ("label:" in ln) and (label_prefix in ln) and ("...ROUTING." in ln)]
+            assert hits, f"{fn}: label {label_prefix} 找不到含 ...ROUTING.* 的 wired 行"
+            for ln in hits:
+                got = re.search(r"\.\.\.ROUTING\.(\w+)", ln).group(1)
+                assert got == tier, f"{fn}: {label_prefix} 期望 ROUTING.{tier} 實得 ROUTING.{got}"
 
 def test_judge_block_is_opus_max_literal():
     # 獨立於 routing.json：直接斷言生成後檔案內 judge 區塊字面
