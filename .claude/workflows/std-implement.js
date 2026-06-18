@@ -12,6 +12,16 @@ export const meta = {
   ],
 }
 
+// <routing:gen>
+const ROUTING = {
+  extract: { model: 'haiku' },
+  standard: { model: 'sonnet', effort: 'max' },
+  reason: { model: 'opus', effort: 'xhigh' },
+  judge: { model: 'opus', effort: 'max' },
+  planAuthor: { model: 'opus', effort: 'max' },
+}
+// </routing:gen>
+
 // args 防護:harness 可能把 args 序列化成 JSON 字串,字串就 parse;必填缺直接 fail-fast
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const PLAN_PATH = A.planPath
@@ -162,7 +172,7 @@ const disciplineFor = (commitPrefix) => `紀律(逐條遵守):
 - 跑測試前讀 docs/agents/sub-repo-verify-commands.md 選對指令;root contracts pytest 必走主工作區 .venv/Scripts/python.exe(worktree 不帶 .venv;主工作區路徑 = git rev-parse --git-common-dir 的上一層)。
 - 若需修改 task/finding 清單外的既有 function/class/method:先 ToolSearch 載入 mcp__gitnexus__impact 跑 impact({target, direction:"upstream"});CRITICAL → 不要動,回報 BLOCKED 並在 concerns 說明;HIGH → 記入 concerns(指揮官會轉述+寫 PR 補強)。改名一律 gitnexus_rename,禁 find-and-replace。
 - commit 前 scope 驗證(不可省):(1) ToolSearch 載入 mcp__gitnexus__detect_changes 跑 detect_changes({scope:"staged"}),scope 只含預期 symbols → detectVerdict=pass;(2) 工具看不到 staged(linked worktree 已知坑)或回錯 → MUST 改跑 git diff --name-only --cached 自查 scope,乾淨 → detectVerdict=fallback;(3) 連 git diff 自查都做不到才記 fail(此值會被計數,3 次 held)。skipped 僅限本次 commit 純 docs/plan 無 code 改動。(4) git diff --cached --check,trailing whitespace 先修。
-- commit message 繁中、第一行前綴「${commitPrefix}」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」。
+- commit message 繁中、第一行前綴「${commitPrefix}」,結尾附「Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>」。
 - YAGNI:只做要求的;不順手重構、不動無關檔案。`
 
 // ---------- mode='fix':P5/P6 修復迴圈的真實通道 ----------
@@ -206,7 +216,7 @@ fullText 必須含該 task 的完整原文(含 Files 清單、全部 checkbox �
 symbols = 該 task 會**修改**的既有 function/class/method 名(新建的不算;沒有就空陣列)。
 mechanical = 該 task 只動 1-2 個檔、步驟完整可機械執行、且**不動使用者可見 UI**(動 UI 一律 false)。
 回傳 StructuredOutput:tasks[](index 從 0、title、fullText、files、symbols、mechanical)。`,
-  { label: 'parse:plan', phase: 'Parse', model: 'haiku', schema: TASKS_SCHEMA })
+  { label: 'parse:plan', phase: 'Parse', ...ROUTING.extract, schema: TASKS_SCHEMA })
 
 if (!parsed || !parsed.tasks.length) return { ok: false, held: 'plan_parse_failed', resumeHint: { startTaskIndex: START } }
 const tasks = parsed.tasks
@@ -239,7 +249,7 @@ ${symbolsToCheck.map((s) => `- ${s}`).join('\n')}
 「圖中找不到」分兩種,不可一律 UNKNOWN:(a) symbol 是**尚未實作的新 symbol**(本 task 或 plan 中任一 task 要新建;plan 標題編號與 index 可能差一,以「codebase 現在不存在且 plan 有規劃」為準)→ greenfield,回 LOW 並在 note 註明 new-symbol(blast radius=0,不存在是預期,**絕不回 UNKNOWN**);(b) 既有 symbol(曾在 codebase 出現過)找不到 → 先 analyze 重試,仍找不到才 UNKNOWN。
 若 tool 報 index stale → bash 跑「npx gitnexus analyze --skip-agents-md」+「npx gitnexus status」確認(banner 不算成功)後重試;工具整體故障(crash/連不上)→ overallRisk=UNKNOWN 並在 note 寫明故障。UNKNOWN 只保留給真正的工具故障/既有 symbol 消失。
 回傳 StructuredOutput:overallRisk、note(直接 callers / 關鍵 processes / 故障說明)。`,
-      { label: `impact:${T}`, phase: 'Implement', model: 'sonnet', effort: 'max', schema: TASK_IMPACT_SCHEMA })
+      { label: `impact:${T}`, phase: 'Implement', ...ROUTING.standard, schema: TASK_IMPACT_SCHEMA })
     if (imp && imp.overallRisk === 'CRITICAL') {
       return {
         ok: false, held: 'critical_impact', taskIndex: task.index, impactNote: imp.note,
@@ -273,16 +283,19 @@ ${disciplineFor(`task#${task.index}: `)}
 NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本身錯誤的證據)。不確定就誠實回報,不要硬做。`
 
   const implModel = task.mechanical ? 'sonnet' : 'opus'
+  // do-not-codegen: model 為 computed(task.mechanical ? sonnet : opus)
   let impl = await agent(implPrompt(''), { label: `impl:${T}`, phase: 'Implement', model: implModel, schema: IMPL_SCHEMA })
 
   if (impl && impl.status === 'NEEDS_CONTEXT') {
     log(`${T} NEEDS_CONTEXT:${impl.summary} → 補脈絡重派`)
     const neighbor = tasks.filter((t) => Math.abs(t.index - task.index) === 1).map((t) => `### 鄰近 Task ${t.index}:${t.title}\n${t.fullText}`).join('\n\n')
+    // do-not-codegen: 失敗補救升級，刻意保留 opus/max
     impl = await agent(implPrompt(`\n## 補充脈絡(前次回報缺:${impl.summary})\n請先 Read spec 全文 ${SPEC_PATH} 取得需求脈絡。\n${neighbor}`),
       { label: `impl:${T}:retry`, phase: 'Implement', model: 'opus', effort: 'max', schema: IMPL_SCHEMA })
   }
   if (impl && impl.status === 'BLOCKED' && implModel === 'sonnet') {
     log(`${T} BLOCKED(sonnet)→ 換 opus 重派`)
+    // do-not-codegen: BLOCKED 升級，刻意保留 opus/max
     impl = await agent(implPrompt(`\n## 前次嘗試 BLOCKED:${impl.summary}(concerns:${(impl.concerns || []).join(';')})`),
       { label: `impl:${T}:opus`, phase: 'Implement', model: 'opus', effort: 'max', schema: IMPL_SCHEMA })
   }
@@ -321,7 +334,7 @@ NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本
 ${task.fullText}
 檢查:漏做(需求沒實作)、多做(超出 task 的 scope creep)、做錯方向(實作偏離需求意圖)、測試是否真驗行為(非空測試)、誠實標註(無 backend 的 UI 是否標 DEMO DATA / NOT BUILT)。
 回傳 StructuredOutput:specOk、gaps[](每項 detail 引用具體檔案+行號)。`,
-    { label: `spec-review:${T}`, phase: 'Implement', model: 'sonnet', effort: 'max', schema: SPEC_REVIEW_SCHEMA })
+    { label: `spec-review:${T}`, phase: 'Implement', ...ROUTING.standard, schema: SPEC_REVIEW_SCHEMA })
 
   let sr = await withRetry(reviewSpec, `${T} spec-review`)
   if (!sr) {
@@ -336,7 +349,7 @@ ${task.fullText}
 ${sr.gaps.map((g, i) => `${i + 1}. ${g.detail}`).join('\n')}
 ${disciplineFor(`task#${task.index}: fix `)}
 回傳 StructuredOutput:fixed、commitSha、summary(若 gap 源自 plan/spec 本身矛盾,fixed=false 並在 summary 說明)、detectVerdict(依紀律第 6 條;無 commit 時 skipped)。`,
-      { label: `spec-fix:${T}:r${round}`, phase: 'Implement', model: 'opus', effort: 'max', schema: FIX_SCHEMA })
+      { label: `spec-fix:${T}:r${round}`, phase: 'Implement', ...ROUTING.judge, schema: FIX_SCHEMA })
     if (!fixR) {
       // fixer infra null 不可靜默吞掉續輪(會被誤分類成 not_closing 硬停;同構於 std-plan plan-fixer 守門)
       return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, note: `spec-fix r${round} 回 null`, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
@@ -361,7 +374,7 @@ ${disciplineFor(`task#${task.index}: fix `)}
 ${task.title}(spec:${SPEC_PATH})
 評估:正確性 bug、錯誤處理、安全(secrets/injection)、測試品質(是否真驗行為)、可讀性。分級:critical(會壞/安全)、important(該修才能 merge)、minor(nit)。
 回傳 StructuredOutput:criticalCount、importantCount、minorNotes[]、detail(每個 critical/important 的檔案+行號+理由)。`,
-    { label: `quality-review:${T}`, phase: 'Implement', model: 'sonnet', effort: 'max', schema: QUALITY_SCHEMA })
+    { label: `quality-review:${T}`, phase: 'Implement', ...ROUTING.standard, schema: QUALITY_SCHEMA })
 
   let qr = await withRetry(reviewQuality, `${T} quality-review`)
   if (!qr) return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index }, note: 'quality reviewer 連兩次回 null' }
@@ -374,7 +387,7 @@ ${qr.detail}
 Task ${task.index}:${task.title}
 ${disciplineFor(`task#${task.index}: fix `)}
 回傳 StructuredOutput:fixed、commitSha、summary、detectVerdict。`,
-      { label: `quality-fix:${T}:r${round}`, phase: 'Implement', model: 'opus', effort: 'max', schema: FIX_SCHEMA })
+      { label: `quality-fix:${T}:r${round}`, phase: 'Implement', ...ROUTING.judge, schema: FIX_SCHEMA })
     if (!qFix) {
       return { ok: false, held: 'reviewer_agent_failed', taskIndex: task.index, note: `quality-fix r${round} 回 null`, perTask, highRiskNotes, resumeHint: { startTaskIndex: task.index } }
     }
@@ -415,7 +428,7 @@ const final = await agent(`你是最終總 reviewer。整體檢視本 feature br
 spec:${SPEC_PATH};plan:${ROOT}/${PLAN_PATH}
 檢查:(1) spec 每條需求都有對應實作與測試;(2) 無 plan 外的意外改動;(3) 跨 task 整合點(task 各自綠但合起來壞);(4) 誠實標註完整(DEMO DATA / NOT BUILT / not observed);(5) **scope 覆核**:detect_changes 非 pass 的 commits(tasks:${scopeRecheckTasks.map((t) => `task#${t.index}=${t.detectVerdict}`).join(', ') || '無'};fix commits:${scopeRecheckFixes.map((f) => `${f.label}=${f.verdict}`).join(', ') || '無'})逐一用 git show 驗 commit 只含預期檔案。
 回傳 StructuredOutput:ok(無重大疑慮)、findings[](每項 id 用 f1/f2/...,q = 待對抗驗證的具體疑慮:檔案+行號+宣稱的失效模式;沒有就空陣列)。ok=true 仍可帶低信心 findings 供後續對抗複驗;ok=false 時 findings 必須涵蓋你的全部疑慮(這是它們進入修復迴圈的唯一通道)。`,
-  { label: 'final-review', phase: 'FinalReview', model: 'opus', effort: 'max', schema: FINAL_SCHEMA })
+  { label: 'final-review', phase: 'FinalReview', ...ROUTING.judge, schema: FINAL_SCHEMA })
 
 const completedThrough = perTask.length ? perTask[perTask.length - 1].index : (START - 1)
 log(`std-implement 完成:${perTask.length} tasks,finalReviewOk=${final ? final.ok : 'null'}`)
