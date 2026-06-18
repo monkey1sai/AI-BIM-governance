@@ -78,7 +78,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r governance-service/requirements.txt ifcopenshell pytest httpx
+          python -m pip install -r governance-service/requirements.txt ifcopenshell usd-core pytest httpx
 
       - name: Run tests
         shell: pwsh
@@ -97,13 +97,11 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web-viewer-sample/package-lock.json
 
       - name: Install dependencies
         shell: pwsh
         working-directory: web-viewer-sample
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Run verify
         shell: pwsh

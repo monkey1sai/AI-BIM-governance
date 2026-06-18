@@ -64,6 +64,9 @@ try {
     foreach ($command in @(
         'python -m pytest tests -q -p no:cacheprovider',
         'python -m pytest governance-service/tests -q',
+        'usd-core',
+        'web-viewer-sample',
+        'npm install --no-audit --no-fund',
         'npm run verify',
         'python -m pytest services/kit-manager-api/tests -q',
         'npm run test:session-first',
@@ -73,6 +76,7 @@ try {
     )) {
         Assert-True ($ci -match [regex]::Escape($command)) "ci.yml contains command $command"
     }
+    Assert-True (-not ($ci -match [regex]::Escape('web-viewer-sample/package-lock.json'))) 'ci.yml does not depend on ignored viewer package-lock'
 
     $governanceWorkflow = Get-Content -LiteralPath '.github/workflows/agent-governance.yml' -Raw
     Assert-True (-not ($governanceWorkflow -match '(?m)^\s+paths:\s*$')) 'agent-governance workflow does not use path filters because it is a required-check candidate'

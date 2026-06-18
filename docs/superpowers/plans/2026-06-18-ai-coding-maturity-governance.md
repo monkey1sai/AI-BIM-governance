@@ -94,11 +94,11 @@ python -m pytest tests -q -p no:cacheprovider
 
 - [x] **Step 2: Add Node jobs**
 
-Run coordinator and viewer through lockfile-based installs:
+Run coordinator through the tracked lockfile. Run viewer through `npm install` because `web-viewer-sample/package-lock.json` is ignored by that sub-repo and is not available in CI checkout:
 
 ```powershell
 cd bim-review-coordinator; npm ci; npm run verify
-cd web-viewer-sample; npm ci; npm run verify
+cd web-viewer-sample; npm install --no-audit --no-fund; npm run verify
 ```
 
 For `apps/kit-manager-web`, use `npm install --no-audit --no-fund` because the package has no lockfile.
@@ -119,7 +119,7 @@ Run A1/A2/A3 CPU governance backend tests:
 python -m pytest governance-service/tests -q
 ```
 
-The CI job installs `ifcopenshell` as a test/runtime dependency for hosted runners. If the runner cannot resolve a compatible wheel, that is a visible environment blocker rather than a silent coverage gap.
+The CI job installs `ifcopenshell`, `usd-core`, and test dependencies for hosted runners. If the runner cannot resolve a compatible wheel, that is a visible environment blocker rather than a silent coverage gap.
 
 - [x] **Step 5: Add compose config validation**
 
