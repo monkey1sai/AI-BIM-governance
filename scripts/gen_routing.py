@@ -56,6 +56,10 @@ def main():
     for fn in TARGETS:
         p = WF / fn
         text = p.read_text(encoding="utf-8")
+        if BEGIN not in text:
+            # 增量 wiring：尚未加 marker 的 target 先跳過
+            print(f"SKIP (no routing:gen marker yet): {fn}")
+            continue
         new = apply_to_text(text, block)
         if new != text:
             if check:
