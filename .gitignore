@@ -176,3 +176,6 @@ artifacts/*.txt
 artifacts/preff-backup/
 artifacts/e2e/_product_console_output/
 artifacts/e2e/product-console-report/
+# spec-to-done 執行期 state/log/pr-body 與設計期 readings/designs/verdicts(本機 scratch,可重生,不入庫)
+artifacts/spec-to-done/
+artifacts/spec-to-done-design/
