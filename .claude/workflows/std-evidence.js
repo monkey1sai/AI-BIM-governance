@@ -10,6 +10,16 @@ export const meta = {
   ],
 }
 
+// <routing:gen>
+const ROUTING = {
+  extract: { model: 'haiku' },
+  standard: { model: 'sonnet', effort: 'max' },
+  reason: { model: 'opus', effort: 'xhigh' },
+  judge: { model: 'opus', effort: 'max' },
+  planAuthor: { model: 'opus', effort: 'max' },
+}
+// </routing:gen>
+
 // args 防護:harness 可能把 args 序列化成 JSON 字串,字串就 parse;必填缺直接 fail-fast
 const A = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const ROOT = A.worktreeRoot
@@ -70,7 +80,7 @@ const probe = await agent(`你是 browser 引擎可用性偵測員。依序檢�
    (Playwright webServer strictPort 不 reuse,:5180 被殘留 vite 占用會起不來;占用時在 detail 標 PID)
 兩層引擎都不可用 → engine=none。
 回傳 StructuredOutput:engine(gstack/playwright/none,取第一個 READY 的)、detail(各層實測結果、stack_down/port 占用註記)。`,
-  { label: 'probe:engine', phase: 'Probe', model: 'haiku', schema: PROBE_SCHEMA })
+  { label: 'probe:engine', phase: 'Probe', ...ROUTING.extract, schema: PROBE_SCHEMA })
 
 if (!probe || probe.engine === 'none') {
   return {
@@ -100,7 +110,7 @@ UI route 可達 → 明確按鈕可點 → default fixture(不要求使用者手
 
 誠實鐵律:跑不到/看不到的項目列進 notObserved(原文標 not observed),不准畫成 fail 也不准略過;engine 填真實用的引擎;測試失敗就如實回報 verticalSliceOk=false。
 回傳 StructuredOutput:verticalSliceOk、engine、screenshots[](絕對路徑)、summaryJson(路徑)、runtimeIds[]、notObserved[]、gaps[](id 用 e1/e2/...,q = 待對抗驗證的疑慮:哪個環節證據薄弱+宣稱的失效模式;沒有就空陣列)。`,
-  { label: `evidence:${SLUG}`, phase: 'Evidence', model: 'opus', effort: 'max', schema: EVIDENCE_SCHEMA })
+  { label: `evidence:${SLUG}`, phase: 'Evidence', ...ROUTING.judge, schema: EVIDENCE_SCHEMA })
 
 if (!ev) return { ok: false, held: 'no_browser_evidence', detail: `evidence agent 失敗(回 null);probe:${probe.detail}` }
 
