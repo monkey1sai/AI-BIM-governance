@@ -319,7 +319,7 @@ const APPS={
  a1:{code:"A1",title:"治理與模型檢核",en:"Governance & Rule Checker",cls:"mix",pri:"p0",phase:"PHASE 1",
    one:"上傳模型 → 一鍵自動檢核 → 看哪裡沒過 → 點一下開 Issue → 匯出 BCF 給設計端。",
    why:"客戶願意付錢的不是看 3D，而是減少審查時間、錯誤、返工。這是最該先做穩的核心閉環。",
-   deps:["IfcOpenShell","ifctester (IDS)","BCF 3.0","Postgres"],prov:["built","art","todo"]},
+   deps:["IfcOpenShell","ifctester (IDS)","BCF 2.1","Postgres"],prov:["built","art","todo"]},
  a2:{code:"A2",title:"版本差異與責任追蹤",en:"Model Version Diff",cls:"core",pri:"p1",phase:"PHASE 2",
    one:"比對兩個版本（v06 / v07），自動列出哪些牆、梁、管線被改、被加、被刪，還有是誰改的。",
    why:"管理層真正關心的：這版改了什麼？為什麼成本變了？之前的 issue 修掉了嗎？",
@@ -406,7 +406,7 @@ const COPILOT={
      concl:"主要成本相關變更：B1 機房新增 12 支消防管（+成本）、4F 帷幕牆規格調整。其餘多為命名修正。要我做成一頁摘要嗎？"}},
  a4:{prompts:["三樓所有沒填防火時效的防火門","體積最大的 10 個房間","屬於 L2 但分類碼空白的構件"],demo:null},
  a5:{prompts:["現在哪個區域溫度異常？","列出逾期未處理的維保工單","B1 機房本月用電趨勢"],demo:null},
- conv:{prompts:["哪些轉檔任務卡住或失敗了？","把 988 的模型插隊優先轉","列出 coverage < 95% 的任務"],demo:null},
+ conv:{prompts:["哪些轉檔任務卡住或失敗了？","把 990 的模型插隊優先轉","列出 coverage < 95% 的任務"],demo:null},
  sessions:{prompts:["哪個 session 有 viewer 收不到 frame？","把閒置超過 15 分鐘的 session 回收","S-270 現在幾個人在看？"],demo:null},
  instances:{prompts:["哪台 GPU 還能接新 session？","把新審查排到最閒的節點","edge-gpu-02 的 VRAM 還夠嗎？"],demo:null},
  minio:{prompts:["270 專案有幾個模型？","哪些模型還沒轉成 USD？","model.ifc 最大的是哪一個？"],demo:null}
@@ -579,24 +579,24 @@ const A1STAGES=[
    '<div class="rule"><span class="ic" style="background:var(--amber-soft);color:var(--amber)">22</span><span><span class="nm">構件缺 Uniclass 分類碼</span><div class="id">指派 → BIM 協調 · 嚴重度 Warning</div></span><span class="sevt warn" style="margin-left:auto">Warning</span></div>'+
    '<div class="note">每筆 Issue 會自動帶上構件 GUID、樓層、所屬專業與截圖，設計端打開就知道改哪裡。</div>'+
    '<div style="margin-top:14px"><span class="btn primary lg" id="mkIssue">建立 34 筆 Issue 並指派</span> <span class="btn ghost" id="askAI">改用 AI 幫我篩</span></div></div>',
-  ()=>'<div style="text-align:center;padding:10px 0"><div style="width:60px;height:60px;border-radius:16px;background:var(--green-soft);color:var(--green);display:grid;place-items:center;font-size:28px;margin:0 auto 12px">✓</div><div style="font-size:18px;font-weight:700">這一輪治理檢核完成</div><div class="note" style="margin-bottom:16px">已建立 34 筆 Issue，並打包成 BCF 3.0 + Excel 報告</div>'+
-   '<div class="kv" style="justify-content:center"><div class="item"><span class="k">交付格式</span><span class="v">BCF 3.0</span></div><div class="item"><span class="k">Issue</span><span class="v">34 筆</span></div><div class="item"><span class="k">通過率</span><span class="v">92%</span></div><div class="item"><span class="k">來源</span><span class="v">v07</span></div></div>'+
+  ()=>'<div style="text-align:center;padding:10px 0"><div style="width:60px;height:60px;border-radius:16px;background:var(--green-soft);color:var(--green);display:grid;place-items:center;font-size:28px;margin:0 auto 12px">✓</div><div style="font-size:18px;font-weight:700">這一輪治理檢核完成</div><div class="note" style="margin-bottom:16px">已建立 34 筆 Issue，並打包成 BCF 2.1 + Excel 報告</div>'+
+   '<div class="kv" style="justify-content:center"><div class="item"><span class="k">交付格式</span><span class="v">BCF 2.1</span></div><div class="item"><span class="k">Issue</span><span class="v">34 筆</span></div><div class="item"><span class="k">通過率</span><span class="v">92%</span></div><div class="item"><span class="k">來源</span><span class="v">v07</span></div></div>'+
    '<div style="margin-top:18px;display:flex;gap:10px;justify-content:center"><span class="btn primary lg" id="dlBcf">下載 BCF / Excel</span><span class="btn" id="again">重跑一次</span></div>'+
    '<div class="note" style="margin-top:14px">USD 不是 source of truth：BCF 回到設計端的 Revit / CDE 修，改完再上傳重跑，全程可追蹤。</div></div>'
 ];
 
 function renderViewer3D(){
   const V=[
-   {id:'a3',code:'A3',t:'跨專業疊合',role:'核心舞台',show:'各專業半透明圖層疊在同一場景。',act:'點碰撞球飛到衝突、高亮兩個打架構件、剖面看管線穿樑。',tech:'USD layer stack · clash engine'},
-   {id:'a5',code:'A5',t:'IoT / FM 數位分身',role:'核心舞台',show:'感測圖釘掛在構件（綠正常 / 黃警示 / 紅異常）+ 樓層熱力圖。',act:'點設備看即時值與歷史曲線、時間軸回放當天狀況。',tech:'MQTT · 即時資料貼 USD prim'},
-   {id:'a6',code:'A6',t:'4D / 5D 施工模擬',role:'核心舞台',show:'構件依施工排程「長出來」：未建半透明、當期高亮、已建實體。',act:'拖時間軸看一週週進度、衝突時段標紅、吊裝路徑動畫。',tech:'USD timeSamples · visibility'},
-   {id:'a7',code:'A7',t:'Reality Capture 比對',role:'核心舞台',show:'設計模型＋現場點雲 / NeRF 疊圖，表面塗偏差熱力色。',act:'切「只看掃描 / 只看設計 / 疊加」、剖面看內部偏差。',tech:'point cloud · USD Mesh compare'},
-   {id:'a10',code:'A10',t:'機器人 / 巡檢模擬',role:'核心舞台',show:'場景中畫巡檢路徑，機器人沿線移動、相機視錐標拍照點。',act:'切機器人第一人稱視角、遇障繞行、結果回放。',tech:'Isaac Sim · 物理模擬'},
-   {id:'a8',code:'A8',t:'Synthetic Data',role:'算圖取景台',show:'viewer 變相機取景：場景＋相機視錐＋光照材質隨機化預覽。',act:'設好就送算圖，輸出 RGB / 深度 / 分割 / 標註框四種。',tech:'omni.replicator · BasicWriter'},
-   {id:'a9',code:'A9',t:'設計 / 審查 Copilot',role:'AI 動作預覽',show:'AI 產生 USD code 後即時套用，被改動的 prim 高亮顯示。',act:'一鍵還原（切 session layer 可見性），不碰 source。',tech:'usd-code · session layer only'},
-   {id:'a1',code:'A1',t:'治理與模型檢核',role:'選用疊加',show:'失敗構件紅色高亮（需 GPU viewport；無 viewport 時只交付表格、Issue、BCF）。',act:'點規則列飛到構件、截圖存進 BCF（待 viewer DataChannel evidence）。',tech:'WebRTC highlightPrimsRequest'},
-   {id:'a2',code:'A2',t:'版本差異',role:'選用疊加',show:'onion-skin 疊圖：新增綠、刪除以紅幽靈留原位、修改黃。',act:'單窗疊加或左右雙窗同步環繞。',tech:'UsdDiff · ghost overlay'},
-   {id:'a4',code:'A4',t:'語意搜尋',role:'選用疊加',show:'搜尋一句話 → 符合構件高亮、其餘變暗（isolate）。',act:'清單與 3D 雙向連動、直接框選轉 Issue。',tech:'search microservice · prim 高亮'}
+   {id:'a3',code:'A3',t:'跨專業疊合',role:'核心舞台',show:'各專業半透明圖層疊在同一場景。',act:'點碰撞球飛到衝突、高亮兩個打架構件、剖面看管線穿樑。',tech:'USD layer stack · clash engine',official:'omni.kit.window.section(useSessionLayer)·ifcclash·USD sublayer ｜邊界：需GPU、碰撞不可用IDS驗'},
+   {id:'a5',code:'A5',t:'IoT / FM 數位分身',role:'核心舞台',show:'感測圖釘掛在構件（綠正常 / 黃警示 / 紅異常）+ 樓層熱力圖。',act:'點設備看即時值與歷史曲線、時間軸回放當天狀況。',tech:'MQTT · 即時資料貼 USD prim',official:'customData/timeSample 貼 prim·MQTT→TimescaleDB ｜邊界：F1–F3 純後端可先做'},
+   {id:'a6',code:'A6',t:'4D / 5D 施工模擬',role:'核心舞台',show:'構件依施工排程「長出來」：未建半透明、當期高亮、已建實體。',act:'拖時間軸看一週週進度、衝突時段標紅、吊裝路徑動畫。',tech:'USD timeSamples · visibility',official:'visibility timeSamples·SetStart/EndTimeCode ｜邊界：token=held 不內插（構件「啪」地出現）'},
+   {id:'a7',code:'A7',t:'Reality Capture 比對',role:'核心舞台',show:'設計模型＋現場點雲 / NeRF 疊圖，表面塗偏差熱力色。',act:'切「只看掃描 / 只看設計 / 疊加」、剖面看內部偏差。',tech:'point cloud · USD Mesh compare',official:'UsdGeomPoints·ICP 對齊·displayColor 熱力 ｜邊界：需GPU、客戶供點雲'},
+   {id:'a10',code:'A10',t:'機器人 / 巡檢模擬',role:'核心舞台',show:'場景中畫巡檢路徑，機器人沿線移動、相機視錐標拍照點。',act:'切機器人第一人稱視角、遇障繞行、結果回放。',tech:'Isaac Sim · 物理模擬',official:'Isaac Sim·isaacsim.sensors.physx·RangeSensorCreateLidar ｜邊界：PhysX Lidar 穿透透明物→RTX Lidar'},
+   {id:'a8',code:'A8',t:'Synthetic Data',role:'算圖取景台',show:'viewer 變相機取景：場景＋相機視錐＋光照材質隨機化預覽。',act:'設好就送算圖，輸出 RGB / 深度 / 分割 / 標註框四種。',tech:'omni.replicator · BasicWriter',official:'omni.replicator.core·BasicWriter/KittiWriter/CosmosWriter→Cosmos Transfer(NIM) ｜邊界：Cosmos 3 已換版，鎖版前確認'},
+   {id:'a9',code:'A9',t:'設計 / 審查 Copilot',role:'AI 動作預覽',show:'AI 產生 USD code 後即時套用，被改動的 prim 高亮顯示。',act:'一鍵還原（切 session layer 可見性），不碰 source。',tech:'usd-code · session layer only',official:'usd-code-mcp:9903·只寫 session layer ｜邊界：source 檔雜湊前後不變'},
+   {id:'a1',code:'A1',t:'治理與模型檢核',role:'選用疊加',show:'失敗構件紅色高亮（需 GPU viewport；無 viewport 時只交付表格、Issue、BCF）。',act:'點規則列飛到構件、截圖存進 BCF（待 viewer DataChannel evidence）。',tech:'WebRTC highlightPrimsRequest',official:'ifctester(IDS)+BCF 2.1 bcf庫·omni.usd selection group ｜邊界：IDS 不驗幾何、3D 高亮需 GPU'},
+   {id:'a2',code:'A2',t:'版本差異',role:'選用疊加',show:'onion-skin 疊圖：新增綠、刪除以紅幽靈留原位、修改黃。',act:'單窗疊加或左右雙窗同步環繞。',tech:'UsdDiff · ghost overlay',official:'ifcdiff（GlobalId 鍵，禁自寫）·USD sublayer onion-skin ｜邊界：GUID 穩定性需比對鍵策略'},
+   {id:'a4',code:'A4',t:'語意搜尋',role:'選用疊加',show:'搜尋一句話 → 符合構件高亮、其餘變暗（isolate）。',act:'清單與 3D 雙向連動、直接框選轉 Issue。',tech:'search microservice · prim 高亮',official:'omni.usd selection group·isolate=visibility ｜邊界：結構化過濾先做、向量語意後做'}
   ];
   const rc={'核心舞台':'var(--green)','算圖取景台':'var(--amber)','AI 動作預覽':'var(--violet)','選用疊加':'var(--cyan)'};
   const roles=[['核心舞台','var(--green)'],['選用疊加','var(--cyan)'],['算圖取景台','var(--amber)'],['AI 動作預覽','var(--violet)']];
@@ -606,12 +606,13 @@ function renderViewer3D(){
       '<div style="display:flex;gap:10px;padding:6px 0 2px"><span class="lbl" style="flex:0 0 42px;color:var(--tx-2)">呈現</span><span style="font-size:13px;color:var(--tx-1)">'+v.show+'</span></div>'+
       '<div style="display:flex;gap:10px;padding:4px 0"><span class="lbl" style="flex:0 0 42px;color:var(--tx-2)">互動</span><span style="font-size:13px;color:var(--tx-1)">'+v.act+'</span></div>'+
       '<div style="display:flex;gap:10px;padding:4px 0"><span class="lbl" style="flex:0 0 42px;color:var(--tx-2)">技術</span><span class="mono" style="font-size:12px;color:var(--cyan)">'+v.tech+'</span></div>'+
+      '<div style="display:flex;gap:10px;padding:4px 0"><span class="lbl" style="flex:0 0 42px;color:var(--tx-2)">官方</span><span class="mono" style="font-size:11px;color:var(--green);line-height:1.45">'+(v.official||'')+'</span></div>'+
       '<div style="margin-top:8px"><span class="btn ghost" data-jump="'+v.id+'" style="height:30px;font-size:12.5px">開啟 '+v.code+' →</span></div>'+
     '</div></div>').join('');
   return '<div class="wrap">'+
    '<div class="crumbs"><span>OMNIVERSE RUNTIME</span> / <b>3D Viewer 呈現</b></div>'+
    '<div class="phead"><div><div class="big">一個 3D Viewer，十種用法</div><div class="sub">同一個落地端 GPU 串出來的 RTX viewport（USD 場景、60fps WebRTC，客戶端不下載模型），A1–A10 各自「灌」不同東西進去、控制不同。重點：核心治理（A1 / A2 / A4）的 API / 表格 / BCF 可先交付；一旦進入 3D 高亮、first frame、stage truth，就必須有 GPU-backed review session。</div></div></div>'+
-   '<div class="callout"><div class="ic">◉</div><div><div class="tt">共用 viewer 框架</div><div class="dd">所有應用共用同一套控制：環繞 / 縮放、isolate 隔離、section 剖面、measure 量測、screenshot 存證、prim 級高亮（走 WebRTC DataChannel <span class="mono">highlightPrimsRequest</span>）。每個應用只是換「看什麼、標什麼、怎麼互動」。</div></div></div>'+
+   '<div class="callout"><div class="ic">◉</div><div><div class="tt">共用 viewer 框架</div><div class="dd">所有應用共用同一套控制：環繞 / 縮放、isolate 隔離、section 剖面、measure 量測、screenshot 存證、prim 級高亮（走 WebRTC DataChannel <span class="mono">highlightPrimsRequest</span>，傳輸＝<span class="mono">AppStreamer.sendMessage</span> ⇄ Kit <span class="mono">omni.kit.livestream.messaging</span>，對齊官方 web-viewer-sample <span class="mono">*Request/*Result</span> 往返）。每個應用只是換「看什麼、標什麼、怎麼互動」。官方件：measure=<span class="mono">omni.kit.tool.measure</span>、markup=<span class="mono">omni.kit.tool.markup</span>、section=<span class="mono">omni.kit.window.section</span>、書籤=<span class="mono">omni.kit.waypoint.core</span>、場景樹=<span class="mono">omni.kit.widget.stage</span>、屬性=<span class="mono">omni.kit.window.property</span>；web 端不重做，自製僅 BCF 橋接。</div></div></div>'+
    '<div class="legend"><span class="lh">3D 角色</span>'+roles.map(r=>'<span style="font-family:var(--mono);font-size:11px;color:'+r[1]+';border:1px solid '+r[1]+';padding:3px 8px;border-radius:6px">'+r[0]+'</span>').join('')+'<span class="note" style="margin:0">核心＝3D 是主角 · 選用＝API/表格可先交付，3D 需 GPU viewport · 取景台＝拿來生訓練資料 · 動作預覽＝看 AI 改了什麼</span></div>'+
    '<div class="grid g2">'+cards+'</div>'+
   '</div>';
@@ -625,7 +626,7 @@ function renderIssues(){
    '<div class="mock"><div class="mt"><span class="lbl">Issue 清單 · 來源自動標記</span><div class="dots"><i></i><i></i><i></i></div></div><div class="mb" style="padding:10px">'+
    rows.map(r=>'<div class="rule '+(r[3]==='Critical'?'bad':'')+'" style="margin-bottom:6px"><span class="id" style="width:48px">'+r[0]+'</span><span class="nm" style="flex:1">'+r[1]+'</span><span class="src" style="background:var(--bg-3);padding:3px 7px;border-radius:6px;font-family:var(--mono);font-size:10px">'+r[2]+'</span><span class="sevt '+(r[3]==='Critical'?'crit':'warn')+'">'+r[3]+'</span><span class="id" style="width:80px;text-align:right">'+r[4]+'</span></div>').join('')+
    '</div></div>'+
-   '<div style="margin-top:16px;display:flex;gap:10px"><span class="btn primary">打包本批為 BCF 3.0</span><span class="btn">匯出 Excel</span></div>'+
+   '<div style="margin-top:16px;display:flex;gap:10px"><span class="btn primary">打包本批為 BCF 2.1</span><span class="btn">匯出 Excel</span></div>'+
    '<div class="note">這頁是 A1 / A2 / A3 / A5 的共同出海口 — 設計這個介面時，每個應用都只要把問題丟進同一個 Issue schema，不必各做各的。</div></div>';
 }
 
@@ -682,10 +683,10 @@ function renderConv(){
   const C={a:'var(--amber)',c:'var(--cyan)',q:'var(--tx-2)',g:'var(--green)',r:'var(--red)'};
   const jobs=[
    {id:'J-204',src:'270 / 機電',f:'model.ifc · 65.7 MB',st:'轉檔中',k:'a',w:'edge-gpu-01',pg:'62%',cov:'94%'},
-   {id:'J-205',src:'899 / 管線',f:'model.ifc · 88 MB',st:'解析中',k:'c',w:'edge-gpu-02',pg:'—',cov:'—'},
-   {id:'J-206',src:'988 / 消防',f:'model.ifc · 41 MB',st:'排隊',k:'q',w:'待指派',pg:'—',cov:'—'},
+   {id:'J-205',src:'889 / 管線',f:'model.ifc · 88 MB',st:'解析中',k:'c',w:'edge-gpu-02',pg:'—',cov:'—'},
+   {id:'J-206',src:'990 / 消防',f:'model.ifc · 41 MB',st:'排隊',k:'q',w:'待指派',pg:'—',cov:'—'},
    {id:'J-201',src:'270 / 牆面',f:'→ model.usdc · 28 MB',st:'完成',k:'g',w:'edge-gpu-01',pg:'100%',cov:'91%'},
-   {id:'J-199',src:'899 / 施工',f:'model.ifc · 120 MB',st:'失敗',k:'r',w:'edge-gpu-02',pg:'PMI 限制',cov:'—'}
+   {id:'J-199',src:'889 / 施工',f:'model.ifc · 120 MB',st:'失敗',k:'r',w:'edge-gpu-02',pg:'PMI 限制',cov:'—'}
   ];
   return '<div class="wrap">'+
    '<div class="crumbs"><span>落地端控制台</span> / <b>IFC→USD 轉檔排程</b></div>'+
@@ -702,8 +703,8 @@ function renderSessions(){
   const H={OK:'var(--green)',WARNING:'var(--amber)',IDLE:'var(--tx-2)'};
   const sess=[
    {id:'S-270',proj:'270 / 123a909a · v07',gpu:'edge-gpu-01',op:'陳建辰',spc:'3 / 4',vw:'4（3 串流 · 1 連線中）',frame:'33ms',up:'01:12:44',h:'WARNING'},
-   {id:'S-899',proj:'899 / 6f732339 · DD',gpu:'edge-gpu-02',op:'Alice',spc:'1 / 4',vw:'2 串流',frame:'28ms',up:'00:24:10',h:'OK'},
-   {id:'S-988',proj:'988 / 7eeaaa75 · 閒置',gpu:'edge-gpu-03',op:'—',spc:'0 / 4',vw:'0',frame:'—',up:'18m idle',h:'IDLE'}
+   {id:'S-889',proj:'889 / 6f732339 · DD',gpu:'edge-gpu-02',op:'Alice',spc:'1 / 4',vw:'2 串流',frame:'28ms',up:'00:24:10',h:'OK'},
+   {id:'S-990',proj:'990 / 7eeaaa75 · 閒置',gpu:'edge-gpu-03',op:'—',spc:'0 / 4',vw:'0',frame:'—',up:'18m idle',h:'IDLE'}
   ];
   const P={g:'var(--green)',a:'var(--amber)',q:'var(--tx-2)'};
   const pool=[['PRI','',':49200','occupied','operator-1 · 陳建辰','2s','33ms','g'],['SPC0','',':49210','occupied','viewer-002','1s','35ms','g'],['SPC1','',':49220','occupied','viewer-003','1s','40ms','g'],['SPC2','',':49230','reserved','viewer-004','12s','waiting','a'],['SPC3','',':49240','free','—','—','—','q']];
@@ -719,7 +720,7 @@ function renderInstances(){
   const H={running:'var(--green)',idle:'var(--tx-2)',warning:'var(--amber)'};
   const nodes=[
    {n:'edge-gpu-01',gpu:'L40 · 48GB',util:38,vram:'18 / 48 GB',kit:'PID 42204 · up 01:12 · :49200',stage:'270 / 123a909a · v07',sess:'S-270',pool:'PRI + 3 SPC',h:'running'},
-   {n:'edge-gpu-02',gpu:'L40 · 48GB',util:55,vram:'24 / 48 GB',kit:'PID 41880 · up 00:24 · :49200',stage:'899 / 6f732339 · DD',sess:'S-899',pool:'PRI + 1 SPC',h:'running'},
+   {n:'edge-gpu-02',gpu:'L40 · 48GB',util:55,vram:'24 / 48 GB',kit:'PID 41880 · up 00:24 · :49200',stage:'889 / 6f732339 · DD',sess:'S-889',pool:'PRI + 1 SPC',h:'running'},
    {n:'edge-gpu-03',gpu:'RTX 6000 · 48GB',util:6,vram:'2 / 48 GB',kit:'idle · 待命',stage:'—',sess:'—',pool:'0',h:'idle'}
   ];
   return '<div class="wrap">'+
@@ -739,20 +740,20 @@ function renderMinio(){
    '<div class="crumbs"><span>落地端控制台</span> / <b>MinIO 資料</b></div>'+
    '<div class="phead"><div><div class="big">MinIO 資料結構</div><div class="sub">你的模型實際怎麼存：專案 → OpenBIM 類別（機電 / 消防 / 管線…）→ 版本 → 檔案。轉檔排程讀 model.ifc、把 USD 以 projectId 為索引寫回同一資料夾給 Kit 載入。</div></div></div>'+
    '<div class="chips"><span class="chip">bucket：bim-control</span><span class="chip">PRIVATE</span><span class="chip">12.6 GiB</span><span class="chip">867 objects</span></div>'+
-   '<div class="grid g2" style="margin-top:16px"><div class="card"><div class="lbl" style="margin-bottom:10px">路徑結構</div><div class="mono" style="font-size:12.5px;line-height:2;color:var(--tx-1)">bim-control/<br>&nbsp;├─ <span style="color:var(--amber)">270 · 899 · 988</span> &nbsp;<span style="color:var(--tx-3)">← 專案 projectId</span><br>&nbsp;│&nbsp;&nbsp;├─ <span style="color:var(--violet)">機電 · 消防 · 管線 · 施工 · 牆面</span> &nbsp;<span style="color:var(--tx-3)">← OpenBIM 類別</span><br>&nbsp;│&nbsp;&nbsp;│&nbsp;&nbsp;├─ <span style="color:var(--cyan)">v01 · v02 …</span> &nbsp;<span style="color:var(--tx-3)">← 類別版本（尚未實作）</span><br>&nbsp;│&nbsp;&nbsp;│&nbsp;&nbsp;│&nbsp;&nbsp;└─ model.ifc / model.usdc / *.json</div><div class="note">規劃路徑：bim-control / <b>270</b> / <b>機電</b> / <b>v01</b> / model.ifc　·　現況：270 / {UUID} / model.ifc（類別與版本目錄待補）</div></div>'+
+   '<div class="grid g2" style="margin-top:16px"><div class="card"><div class="lbl" style="margin-bottom:10px">路徑結構</div><div class="mono" style="font-size:12.5px;line-height:2;color:var(--tx-1)">bim-control/<br>&nbsp;├─ <span style="color:var(--amber)">270 · 889 · 990 · 271</span> &nbsp;<span style="color:var(--tx-3)">← 專案 projectId</span><br>&nbsp;│&nbsp;&nbsp;├─ <span style="color:var(--violet)">機電 · 消防 · 管線 · 施工 · 牆面</span> &nbsp;<span style="color:var(--tx-3)">← OpenBIM 類別</span><br>&nbsp;│&nbsp;&nbsp;│&nbsp;&nbsp;├─ <span style="color:var(--cyan)">v01 · v02 …</span> &nbsp;<span style="color:var(--tx-3)">← 類別版本（尚未實作）</span><br>&nbsp;│&nbsp;&nbsp;│&nbsp;&nbsp;│&nbsp;&nbsp;└─ model.ifc / model.usdc / *.json</div><div class="note">規劃路徑：bim-control / <b>270</b> / <b>機電</b> / <b>v01</b> / model.ifc　·　現況：270 / {UUID} / model.ifc（類別與版本目錄待補）</div></div>'+
    '<div class="card"><div class="lbl" style="margin-bottom:10px">一個模型資料夾裡有什麼</div>'+files.map(f=>'<div class="rule" style="margin-bottom:5px;padding:9px 12px"><span class="mono" style="flex:1;min-width:0;font-size:12.5px;color:'+(f[3]==='todo'?'var(--tx-2)':'var(--tx-0)')+'">'+f[0]+'</span><span class="id" style="width:150px">'+f[1]+'</span><span class="mono" style="width:62px;text-align:right;color:var(--tx-2)">'+f[2]+'</span>'+pillTag(TL[f[3]],T[f[3]])+'</div>').join('')+'</div></div>'+
-   '<div class="callout" style="margin-top:16px"><div class="ic">i</div><div><div class="tt">這結構怎麼接到其他頁</div><div class="dd">轉檔排程的每筆任務 = 一個類別 / 版本的模型；轉好的 USD 以 projectId 為索引寫回同一資料夾（model.usdc）。同一專案下的多個<b>類別</b>（機電 / 消防 / 管線…）正是 <b>A3 跨專業疊合</b>要疊的；<b>版本</b>層（v01 / v02）對應 <b>A2 版本差異</b>。專案 270 / 899 / 988 對應頂部專案切換。</div></div></div>'+
+   '<div class="callout" style="margin-top:16px"><div class="ic">i</div><div><div class="tt">這結構怎麼接到其他頁</div><div class="dd">轉檔排程的每筆任務 = 一個類別 / 版本的模型；轉好的 USD 以 projectId 為索引寫回同一資料夾（model.usdc）。同一專案下的多個<b>類別</b>（機電 / 消防 / 管線…）正是 <b>A3 跨專業疊合</b>要疊的；<b>版本</b>層（v01 / v02）對應 <b>A2 版本差異</b>。專案 270 / 889 / 990 / 271 對應頂部專案切換。</div></div></div>'+
   '</div>';
 }
 
 /* ===== 互動：轉檔排程 + Session 端點池 ===== */
 const CONV={auto:true,sel:null,nextId:208,jobs:[
   {id:'J-204',proj:'270',disc:'機電',size:'65.7 MB',state:'running',worker:'edge-gpu-01',pg:62,cov:null},
-  {id:'J-205',proj:'899',disc:'管線',size:'88 MB',state:'running',worker:'edge-gpu-02',pg:24,cov:null},
-  {id:'J-206',proj:'988',disc:'消防',size:'41 MB',state:'queued',worker:null,pg:0,cov:null},
+  {id:'J-205',proj:'889',disc:'管線',size:'88 MB',state:'running',worker:'edge-gpu-02',pg:24,cov:null},
+  {id:'J-206',proj:'990',disc:'消防',size:'41 MB',state:'queued',worker:null,pg:0,cov:null},
   {id:'J-207',proj:'270',disc:'施工',size:'53 MB',state:'queued',worker:null,pg:0,cov:null},
   {id:'J-201',proj:'270',disc:'牆面',size:'28 MB',state:'done',worker:'edge-gpu-01',pg:100,cov:91},
-  {id:'J-199',proj:'899',disc:'施工',size:'120 MB',state:'failed',worker:'edge-gpu-02',pg:0,cov:null,err:'PMI 屬性 mapping 失敗'}
+  {id:'J-199',proj:'889',disc:'施工',size:'120 MB',state:'failed',worker:'edge-gpu-02',pg:0,cov:null,err:'PMI 屬性 mapping 失敗'}
 ]};
 let CONV_TIMER=null,CONV_DRAG=null;
 function cbtn(act,jid,label,color){return '<span class="cbtn" data-act="'+act+'" data-jid="'+jid+'" style="font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:6px;border:1px solid '+(color||'var(--line-2)')+';color:'+(color||'var(--tx-1)')+';cursor:pointer;margin-left:6px">'+label+'</span>';}
@@ -808,7 +809,7 @@ function bindConv(){
   const ad=document.getElementById('convAdd'); if(ad) ad.onclick=()=>{convAdd();paintConv();};
 }
 function convDrop(dstId){const j=CONV.jobs,s=j.findIndex(x=>x.id===CONV_DRAG),d=j.findIndex(x=>x.id===dstId);CONV_DRAG=null;if(s<0||d<0||s===d)return;if(j[s].state!=='queued'||j[d].state!=='queued')return;const[m]=j.splice(s,1);const d2=j.findIndex(x=>x.id===dstId);j.splice(d2,0,m);paintConv();}
-function convAdd(){const D=['機電','消防','管線','施工','牆面'],P=['270','899','988'];CONV.jobs.push({id:'J-'+(CONV.nextId++),proj:P[Math.floor(Math.random()*3)],disc:D[Math.floor(Math.random()*5)],size:(20+Math.floor(Math.random()*100))+' MB',state:'queued',worker:null,pg:0,cov:null});}
+function convAdd(){const D=['機電','消防','管線','施工','牆面'],P=['270','889','990','271'];CONV.jobs.push({id:'J-'+(CONV.nextId++),proj:P[Math.floor(Math.random()*3)],disc:D[Math.floor(Math.random()*5)],size:(20+Math.floor(Math.random()*100))+' MB',state:'queued',worker:null,pg:0,cov:null});}
 function convTick(){
   if(!document.getElementById('convDyn')){if(CONV_TIMER)clearInterval(CONV_TIMER);CONV_TIMER=null;return;}
   CONV.jobs.filter(x=>x.state==='running').forEach(r=>{r.pg=Math.min(100,r.pg+6);if(r.pg>=100){r.state='done';r.cov=r.cov||(90+Math.floor(Math.random()*8));}});
@@ -827,14 +828,14 @@ const SESS={sel:'S-270',vid:5,toast:'',sessions:[
     {t:'SPC2',port:':49230',st:'reserved',viewer:'viewer-004',hb:12,frame:null},
     {t:'SPC3',port:':49240',st:'free',viewer:null,hb:null,frame:null}
   ]},
-  {id:'S-899',proj:'899 / 管線 · DD',gpu:'edge-gpu-02',op:'Alice',state:'live',pool:[
+  {id:'S-889',proj:'889 / 管線 · DD',gpu:'edge-gpu-02',op:'Alice',state:'live',pool:[
     {t:'PRI',port:':49200',st:'occupied',viewer:'operator-1 · Alice',hb:1,frame:28},
     {t:'SPC0',port:':49210',st:'occupied',viewer:'viewer-006',hb:2,frame:31},
     {t:'SPC1',port:':49220',st:'free',viewer:null,hb:null,frame:null},
     {t:'SPC2',port:':49230',st:'free',viewer:null,hb:null,frame:null},
     {t:'SPC3',port:':49240',st:'free',viewer:null,hb:null,frame:null}
   ]},
-  {id:'S-988',proj:'988 / 消防 · 閒置',gpu:'edge-gpu-03',op:'—',state:'idle',pool:[
+  {id:'S-990',proj:'990 / 消防 · 閒置',gpu:'edge-gpu-03',op:'—',state:'idle',pool:[
     {t:'PRI',port:':49200',st:'free',viewer:null,hb:null,frame:null},
     {t:'SPC0',port:':49210',st:'free',viewer:null,hb:null,frame:null},
     {t:'SPC1',port:':49220',st:'free',viewer:null,hb:null,frame:null},
@@ -885,10 +886,10 @@ function initSessions(){if(SESS_TIMER)clearInterval(SESS_TIMER);paintSess();SESS
 const INST={drag:null,moving:null,confirm:null,toast:'',
   nodes:[
     {id:'edge-gpu-01',gpu:'L40 · 48GB',drained:false,session:{sid:'S-270',label:'270 / 機電 · v07',op:'陳建辰',spc:3}},
-    {id:'edge-gpu-02',gpu:'L40 · 48GB',drained:false,session:{sid:'S-899',label:'899 / 管線 · DD',op:'Alice',spc:1}},
+    {id:'edge-gpu-02',gpu:'L40 · 48GB',drained:false,session:{sid:'S-889',label:'889 / 管線 · DD',op:'Alice',spc:1}},
     {id:'edge-gpu-03',gpu:'RTX 6000 · 48GB',drained:false,session:null}
   ],
-  pending:[{pid:'P-12',label:'988 / 消防 · v01'}]
+  pending:[{pid:'P-12',label:'990 / 消防 · v01'}]
 };
 let INST_TIMER=null;
 function paintInst(){
