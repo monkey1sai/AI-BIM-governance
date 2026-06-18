@@ -58,9 +58,9 @@
 
 ---
 
-## 3. 資訊架構（左側導覽三群）
+## 3. 資訊架構（左側導覽四群）
 
-導覽分三群，**直接對應系統架構的部署邊界**——資料量大者落地吃 GPU、邏輯薄者用一般後端：
+導覽分**四群**（工作台 / 核心治理 / OMNIVERSE RUNTIME / SYSTEM），**直接對應系統架構的部署邊界**——資料量大者落地吃 GPU、邏輯薄者用一般後端。完整路由清單以《互動實作規格》A.1.1 正典路由表為準，本節只描述分群語意：
 
 ### 群組一：工作台（Workspace）
 - **今天要做什麼** — 進來的第一頁，彙整跨應用待辦 + 常用動作入口。
@@ -92,6 +92,8 @@
 
 ### 群組四：SYSTEM
 - Runtime 監控、系統管理、設計規格說明。
+
+> 對照原型實際導航：`#viewer` / `#gpu`（＝Review Room，`#review` 為別名）/ `#issues`(BC) / `#reports`(RP) 在原型歸「核心治理」群；`#runtime`(RT) 另立「落地端控制台」小群（對應 kit-manager-api 遙測）；`#admin`(SY，**待建**) / `#spec` 歸 SYSTEM。分群為視覺呈現，route 以正典表為準。
 
 **設計重點**：左側用顏色暗示分群——CORE 配青色、OMNIVERSE 配 NVIDIA 綠。使用者一眼就知道「哪一部分是 API / CPU 可交付，哪一部分需要 GPU viewport」，也呼應架構文件「不要把 Kit 包裝成 governance 賣點」的邊界。
 
@@ -229,7 +231,7 @@
 落地端 GPU 跑 Omniverse Kit，USD 場景以 RTX 算圖、60fps WebRTC 串到瀏覽器（客戶端不下載模型）。**同一個 viewport，A1–A10 各自灌不同東西、控制不同。**
 
 ### 共用 viewer 框架（所有應用共用）
-環繞／縮放、isolate 隔離、section 剖面、measure 量測、screenshot 存證、prim 級高亮（走 WebRTC DataChannel `highlightPrimsRequest`）。每個應用只是換「看什麼、標什麼、怎麼互動」。
+環繞／縮放、isolate 隔離（`UsdGeom.Imageable.GetVisibilityAttr`）、section 剖面（`omni.kit.window.section`，`useSessionLayer`）、measure 量測（`omni.kit.tool.measure`）、markup 批註（`omni.kit.tool.markup`）、waypoint 書籤（`omni.kit.waypoint.core`）、場景樹（`omni.kit.widget.stage`）、屬性面板（`omni.kit.window.property`）、screenshot 存證、prim 級高亮（`omni.usd` selection group + outline color，走 WebRTC DataChannel `highlightPrimsRequest`）。每個應用只是換「看什麼、標什麼、怎麼互動」。**官方件清單與能力邊界見《開發軌跡》§2.0.5、《互動規格》C.3/C.5/C.6——web 端不重做，自製僅 BCF 橋接層。**
 
 ### 三種角色（重要邊界）
 - **核心舞台**：3D 是主角，少了它功能就不完整 — A3、A5、A6、A7、A10。
@@ -253,6 +255,8 @@
 | A10 機器人巡檢 | 核心舞台 | 巡檢路徑線、機器人沿線移動、相機視錐標拍照點 | 切機器人第一人稱、遇障繞行、回放 | Isaac Sim · 物理 |
 
 > 原型新增「3D Viewer 呈現」一頁（左側 OMNIVERSE RUNTIME 群第一個），把上表做成可點的卡片＋迷你 viewport 示意，每張卡可直接跳到該應用。
+>
+> 另：3D Viewer「完成後」的驗收長相以獨立檔 **`ai-bim-geo-viewer-prototype.html`** 為示意（七區塊：點選→IFC 語意→Pset/Qto〔幾何計算非寫死〕→Spatial 樹→GUID⇔USD 對應表→A1 紅高亮→反向跳轉；prim 命名 `G_<sanitized_guid>`）。此檔為 canvas 自畫示意、非真 WebRTC；正式 3D 走落地端 Kit 串流。
 
 ---
 
@@ -368,5 +372,8 @@ bim-control/
 | Kit instance / WebRTC 實機串流 | ⚪ 開發中（原型為示意）|
 | 真實後端串接 | ⚪ 待建（本原型為前端示意，資料為示範用）|
 | 3D / WebRTC 實機串流 | ⚪ 待建（原型用線框示意 viewport）|
+
+| 3D 驗收示意原型 `ai-bim-geo-viewer-prototype.html`（7 區塊語意驗證）| 🟢 已交付（canvas 示意；對應 #viewer / M4）|
+| governance-service（規則/Issue/BCF 2.1/diff）後端 | 🟢 程式碼已存在（BCF 2.1 自寫、diff 用 GlobalId 鍵；經 coordinator proxy）|
 
 > 與系統總覽一致的態度：**畫面上沒有任何「假裝已完成」的東西**——能用的標已實作，示範的標示範，沒做的標待建。

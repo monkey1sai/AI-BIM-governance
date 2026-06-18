@@ -169,6 +169,10 @@
 
 ---
 
+- **路由禁止各自維護**：任何頁的 route 一律引用《互動規格》A.1.1 正典路由表；新增頁先進表再實作。違反＝路由漂移技術債。`#gpu` 為正典（`#review` 別名）、`#admin` 待建。
+- **服務埠以單一表為準**：埠號一律引用《開發軌跡》§2.0.2（現況 6 服務）；`#instances`/`#runtime` 後端是 kit-manager-api（:8010 `/instances` `/runtime`），不得在前端寫死遙測或誤接他服務。
+- **官方件禁自造輪子**：A1–A10 用到的官方件/能力邊界一律引用《開發軌跡》§2.0.5 與《互動規格》C.3/C.5/C.6（IDS 不驗幾何、IfcConvert 無 USD、ifcdiff 不自寫、1 GPU=1 stream、Cosmos 3 版本風險…）。
+
 ## 7. AI 動作邊界與防擅改
 
 **7.1 危險動作三段式（intent → confirm → audited）**
@@ -262,6 +266,7 @@ route contract、Issue/BCF schema 欄位與值域、`elementGuid`/`usdPath` 格�
 - **衝突規則**：本檔任何條目與規格字句衝突時，**以規格為準**，並回報以更新本檔。
 - **掛鉤**：README 與三份 .md 已各加一行指向本檔（純新增、未動原文）。每輪用 AI 開工時，把本檔與規格一起載入。
 - **維護**：每次審批/實測發現新的技術債來源或落差，回來補一條 D-xx 與一條檢查表項目，讓防線隨專案成長。
+- **2026-06-17 對齊 origin/main #224**：服務數更新為 6（補 streaming-server / web-viewer / kit-manager-api / kit-manager-web）；路由收斂為單一正典表 A.1.1（`#gpu` 正典、`#admin` 待建）；第二原型 geo-viewer 納入資產盤點；A1–A10 補官方件/API/能力邊界與 spec-to-done DoD。後續服務或路由再變動，先改 §2.0.2 與 A.1.1，本檔只加掛鉤。
 
 ---
 

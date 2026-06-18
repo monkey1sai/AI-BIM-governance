@@ -19,6 +19,8 @@
 
 差距主要在三類：**(a)** 原型會動的互動（拖曳、即時跳動、點擊展開）實作多為唯讀陳列；**(b)** 控制動作（插隊/重試/釋放/drain/move）後端 intent endpoint 未建；**(c)** 我們的文件有幾處已過時，反而會誤導 AI（見 A.3 勘誤）。
 
+> 補：本案有**兩份**原型——殼層原型 `ai-bim-governance-prototype.html`（本 PART A 逐頁比對對象）與 **3D 驗收示意原型 `ai-bim-geo-viewer-prototype.html`**（對應 `#viewer`、M4 完成後的 IFC→USD 語意驗證：七區塊、`G_<sanitized_guid>` 命名、自寫 canvas 非真 WebRTC）。後者驗收語意見 §B.5 IX-3D。
+
 ## A.1 路由對照（原型 ↔ 實際）
 
 | 原型頁 | 文件寫的 route | **實際 hash** | 實測狀態 |
@@ -34,6 +36,39 @@
 | —（實作新增）| — | Model Intake / Coordinator Console / Overview / Applications 等 | 原型沒有的頁，方向合理 |
 
 **規則：文件一律改用 `#a1` 式 hash（無斜線）。**
+
+### A.1.1 正典路由表（唯一事實來源 · 22 條 · 對齊上傳原型導航）
+
+> 全 repo 路由的唯一事實來源；README / 設計 / 開發三份文件一律「指向本表」，不再各自維護。hash 一律無斜線。狀態以 origin/main #224（2026-06-17）實測為準。
+> **命名收斂裁定**：GPU 審查室正典 route ＝ **`#gpu`**，**`#review` 為別名**（既有連結不破）。`#admin` 維持 **待建**。
+
+| 碼 | route | UI 頁名 | 群組 | 後端 / 服務 | 狀態 |
+|---|---|---|---|---|---|
+| ⌂ | `#home` | 今天要做什麼 | 工作台 | coordinator（彙整） | 🟢 版型+入口；跨應用待辦待接真來源 |
+| A1 | `#a1` | 治理與模型檢核（P0） | 核心治理 | governance-service rule_engine（經 proxy） | 🟢 真規則/Issue/Excel/BCF2.1；五步串接、點規則展開、3D 高亮 P1.5 待建 |
+| A2 | `#a2` | 版本差異與責任 | 核心治理 | governance-service diff_engine（GlobalId 鍵） | 🟡 示範頁；對齊官方 ifcdiff |
+| A3 | `#a3` | 跨專業疊合 | 核心治理 | Kit clash（GPU） | 🟡 示範頁；核心舞台需 GPU |
+| A4 | `#a4` | 語意搜尋問答 | 核心治理 | search microservice | 🟡 示範頁；選用疊加 |
+| A5 | `#a5` | IoT / FM 數位分身 | 核心治理 | MQTT（規劃） | 🟡 示範頁；核心舞台需 GPU |
+| BC | `#issues` | Issue / BCF 中心 | 核心治理 | governance-service issues + bcf | 🟢 Issue DB + BCF 2.1 真匯出 |
+| RP | `#reports` | 報表中心 | 核心治理 | governance-service excel_export | 🟡 報表骨架 |
+| 3D | `#viewer` | 3D Viewer 呈現 | 核心治理 | 證據面板（不內嵌 3D）；3D 來自 streaming-server WebRTC | 🟡 證據矩陣版；openStage/focusPrim/selectPrims 真，highlightPrimsRequest P1.5 |
+| 01 | `#gpu`（別名 `#review`） | GPU 審查室 / Review Room（MVP） | 核心治理 | coordinator `/ui/open` redirect → web-viewer + streaming-server | 🟡 v1＝導引既有 viewer + Tool Rail |
+| A6 | `#a6` | 4D / 5D 施工模擬 | 核心治理 | USD timeSamples（GPU） | 🟡 示範頁；核心舞台需 GPU |
+| A7 | `#a7` | Reality Capture 比對 | 核心治理 | point cloud（GPU） | 🟡 示範頁；核心舞台需 GPU |
+| A8 | `#a8` | Synthetic Data | 核心治理 | Replicator + Cosmos Transfer | 🟡 示範頁；取景台 |
+| A9 | `#a9` | 設計 / 審查 Copilot | 核心治理 | usd-code-mcp :9903 | 🟡 示範頁；AI 動作預覽 |
+| A10 | `#a10` | 機器人 / 巡檢模擬 | 核心治理 | Isaac Sim + Cosmos | 🟡 示範頁；核心舞台需 GPU |
+| CV | `#conv` | IFC→USD 轉檔排程（P1） | OMNIVERSE RUNTIME | coordinator `/api/conversions` + streaming-server 轉檔 | 🟡 讀真 ifc-ready jobs；插隊/重試/coverage P1 |
+| SS | `#sessions` | Session 管理 | OMNIVERSE RUNTIME | coordinator `/api/sessions` | 🟡 Phase1 read-only；結束 session IX-SS-04 已設計(#224)；occupied 證據鏈 P1 |
+| KG | `#instances` | Kit / GPU 機隊 | OMNIVERSE RUNTIME | kit-manager-api `/instances` | 🟡 fleet 模型正確；真遙測接 kit-manager-api；restart/release intent 待建 |
+| M | `#minio` | MinIO 資料 | OMNIVERSE RUNTIME | coordinator → local_fs storage（真 MinIO 待接） | 🟢 真三層樹 270/類別/版本 |
+| RT | `#runtime` | Runtime 監控 | 落地端控制台 / SYSTEM | kit-manager-api `/runtime` + `/health` | 🟡 端點真有；UI 監控面板待建 |
+| SY | `#admin` | 系統管理 | SYSTEM | coordinator（auth/config） | ⚪ **待建**（本期僅佔位） |
+| ▦ | `#spec` | 設計規格說明 | SYSTEM | 靜態 | 🟢 文件入口 |
+| — | `#kit` / `#demo-control` | operator 工具（保留） | — | kit-manager-web（apps/kit-manager-web） | operator-only，不砍 |
+
+> 註：`#runtime`/`#admin` 對應真實 kit-manager-api 端點（`/runtime`/`/health`），IX-SS-01、IX-KG-01 已引用 `GET /api/runtime/status`。
 
 ## A.2 逐頁重點差距
 
@@ -173,8 +208,10 @@ states: idle → picked → running → scored → issued → delivered
 
 ## B.5 3D Viewer / Review Room（IX-3D）
 
+> 本卡「完成後長相」以 `ai-bim-geo-viewer-prototype.html` 為驗收示意（七區塊資訊架構＋GUID⇔USD 對應表）。**誠實驗收規則**：該檔為 canvas 示意，正式 3D 一律來自落地端 Kit 的 WebRTC 串流；示意畫面須帶可見浮水印「CANVAS 示意 · 非真 WebRTC 串流」，避免驗收場合誤認。
+
 **IX-3D-01 開啟 viewer**：輸入或選 `review_session_id` → 開 `coordinator /ui/open?session=`（server redirect；不在 console 內嵌 WebRTC）。
-**IX-3D-02 DataChannel 指令（as-built）**：openStage（成功證據=loaded stage URL 回報）/ focusPrim / selectPrims / clearHighlight。每次指令在 UI 留一行 trace（時間、指令、參數摘要、ack/timeout）——對齊「AI 透明可追」原則。
+**IX-3D-02 DataChannel 指令（as-built）**：openStage（成功證據=loaded stage URL 回報）/ focusPrim / selectPrims / clearHighlight。每次指令在 UI 留一行 trace（時間、指令、參數摘要、ack/timeout）——對齊「AI 透明可追」原則。 **傳輸機制（官方）**：瀏覽器端 `AppStreamer.sendMessage(JSON.stringify({event_type, payload}))` 經 WebRTC DataChannel 送出；Kit 端由 `omni.kit.livestream.messaging`(v1.2.1) 收下→解析 JSON→重發到內部 message bus 交給對應 handler；Kit→瀏覽器回 ack 用 `messaging.register_event_type_to_send(event_type)`。命名對齊 NVIDIA `web-viewer-sample` 的 `openStageRequest`→`openedStageResult` 往返——本案 openStage / highlightPrimsRequest / isolatePrimsRequest 一律沿用同一 `*Request`/`*Result` ack 慣例。
 **IX-3D-03 mapping table ↔ 3D 連動**：點 mapping 列 → 若 viewer 開著 → 發 focusPrim；無 usd_prim_path（mapping 缺）→ 該列標 ⚠ name_fallback 並 disabled 連動，tooltip「此構件未對應，無法定位」。
 **IX-3D-04 first frame / stage truth 證據（P1）**：viewer 端回報 `first_frame_at`；console 只顯示，不推定。
 **IX-3D-05 高亮（P1.5）**：見 IX-A1-06；A2 diff 三色與 A4 搜尋 isolate 共用同一指令族（highlight/isolate payload 帶 source: a1|a2|a4）。
@@ -188,6 +225,8 @@ states: idle → picked → running → scored → issued → delivered
 # PART C · 官方標準對齊（鐵律升級版）
 
 > 三個領域一律「**官方有就用官方，自製只做橋接**」。出處皆為官方文件（已逐頁查證）。
+>
+> **一頁式總表見《開發軌跡》§2.0.5「官方技術棧對齊總表」**——那張表是「每個能力用哪個官方件＋能力邊界」的單一速查；本 PART C 是其展開細節（C.1 BCF/diff、C.2 轉檔、C.3 viewer extensions、C.5 Cosmos/Replicator/Isaac、C.6 USD schema）。
 
 ## C.1 BCF 與 IFC diff —— 對齊 IfcOpenShell
 
@@ -236,6 +275,33 @@ v3（Kit 加值）：Kit app 啟用官方 measure/markup/section/waypoint，cons
 v4（差異化）：markup/waypoint ↔ BCF 雙向橋接；A2 三色 onion-skin、A4 isolate 共用高亮指令族
 ```
 **長期維運理由**：官方 extension 隨 Kit 升版由 NVIDIA 維護；我們的維運面只剩「橋接層 + console」，升級 Kit 107→108 時不必重寫 viewer 功能。
+
+## C.5 A8 / A10 加值 —— 對齊 NVIDIA Replicator / Cosmos / Isaac Sim
+
+> A8 Synthetic Data、A10 機器人巡檢是「OMNIVERSE 加值線」，一律對齊官方件，**禁自造資料管線/物理引擎**。
+
+**A8 合成資料（Replicator → Cosmos）**
+- 標註資料管線：**Omniverse Replicator**（`import omni.replicator.core as rep`；流程 Scene → Randomizer → Annotator → Writer → `rep.orchestrator.run()` / `await rep.orchestrator.step_async()`）。
+- Annotator：`rep.AnnotatorRegistry.get_annotator(...)` —— `rgb` / `semantic_segmentation` / `instance_segmentation` / `bounding_box_2d_tight` / `bounding_box_3d` / `distance_to_camera`。Writer：`rep.WriterRegistry.get("BasicWriter")` + `writer.initialize(output_dir=, rgb=True, semantic_segmentation=True, bounding_box_2d_tight=True, image_output_format="png")` + `writer.attach([rep.create.render_product(cam,(W,H))])`；另有 **KittiWriter**、Isaac 的 **CosmosWriter**（輸出 RGB/depth/seg/edge 當 Cosmos control 輸入）。
+- 擬真擴增：**NVIDIA Cosmos Transfer**（world-to-world、structure-conditioned；以 segmentation/depth/edge 為 spatial control 生成照片級變體）。存取＝**NIM 微服務**（`POST /v1/infer`）/ build.nvidia.com / HF `nvidia/` / GitHub `nvidia-cosmos`。關鍵參數：每分支 `control_weight ∈ [0,1]`（合計建議 ≤2.0，NIM 對 >1.0 自動歸一）、`sigma_max`（對條件輸入加噪上限，SDG 建議 80–90）。
+- **能力邊界 / 版本風險**：Replicator 出 ground-truth 標註，Cosmos 只「擬真」不標註，兩者分工。模型授權 NVIDIA Open Model License（程式碼 Apache 2.0）。**Cosmos 3 已於 2026-06 統一為 Mixture-of-Transformers「雙塔」（Nano 16B / Super 64B、改 OpenMDW-1.1、repo 移至 `github.com/nvidia/cosmos`）→ 鎖 API/模型版本前務必確認，勿假設 Predict1/Transfer1 介面不變。**
+  https://developer.nvidia.com/blog/how-to-build-a-generative-ai-enabled-synthetic-data-pipeline-for-perception-ai/
+
+**A10 機器人 / 巡檢模擬（Isaac Sim → Cosmos）**
+- 模擬：**Isaac Sim**（建於 Omniverse、USD-native、PhysX）；匯入 URDF/MJCF/USD。感測擴充 `isaacsim.sensors.physx`；PhysX Lidar 用 `omni.kit.commands.execute("RangeSensorCreateLidar", path="/Lidar", min_range=0.4, max_range=100.0, horizontal_fov=360.0, vertical_fov=30.0, ...)`，Python 綁定 `from isaacsim.sensors.physx import _range_sensor`。第一人稱＝camera prim 掛在機器人 chassis link 下。
+- **能力邊界（重要）**：**PhysX Lidar 只偵測「有碰撞體」的物件、會穿透透明物、量到的是 ground-truth 深度（非真雜訊）**；要擬真感測模型（Ouster/HESAI…）改用 **RTX Lidar**。`rotationRate=0` 表同幀打完所有 ray。
+- sim-to-real：用 **CosmosWriter** 擷取機器人相機 clip → **Cosmos Transfer** 光真化。**3D 角色：核心舞台**；Isaac Sim 比 Kit 重，**建議最後做**；真機 ROS bridge 本期 Won't。
+  https://docs.isaacsim.omniverse.nvidia.com/latest/replicator_tutorials/tutorial_replicator_cosmos.html
+
+## C.6 OpenUSD schema 機制 —— 轉檔 / 4D / 疊合 / session layer（給轉檔器與 viewer）
+
+- **prim 命名（IFC GlobalId → USD）**：USD 識別碼須以 `[A-Za-z_]` 起頭、續 `[A-Za-z0-9_]`；不可含 `/ {} [] @`、空白、運算子；不可數字開頭；同層名稱需唯一。IFC GlobalId 22 字元且可能含 `$` → 用 `G_<sanitized_guid>`（`$`→`_`），**但 `$`→`_` 有碰撞風險**（`foo$bar` 與 `foo#bar` 都變 `foo_bar`）→ **務必把原始 GUID 另存 customData**（`prim.SetCustomDataByKey("ifc:GlobalId", guid)`）或用 NVIDIA Exchange/Connect SDK 的可逆轉碼（`getValidChildNames()`）。
+- **承載 IFC 語意**：`prim.SetCustomDataByKey("ifc:Pset:FireRating", v)` 或建 typed attribute（`prim.CreateAttribute("ifc:FireRating", Sdf.ValueTypeNames.String, False).Set(v)`）——對應 geo-viewer 七區塊的 Pset/Qto 顯示。
+- **4D 生長（A6）**：`UsdGeom.Imageable(prim).GetVisibilityAttr().Set("invisible"|"inherited", Usd.TimeCode(t))`；stage `SetStartTimeCode/EndTimeCode/TimeCodesPerSecond`。**visibility 是 token → held 不內插**（構件在某幀「啪」地出現，正合施工語意）；平滑移動才用 `xformOp:*`（linear）。
+- **疊合 / 沙箱（A3/A9）**：用 **sublayer / layer stack**（上強下弱）、**payload**（大模型延遲載入）、**variant set**；clash/markup/section/AI 改動一律寫進 **session layer** 或專用 sublayer，**source IFC 衍生層保持乾淨**（剖面工具用 `useSessionLayer=true`）。
+- **prim 高亮 API**：Kit `omni.usd` selection group —— `ctx.register_selection_group()` → `set_selection_group_outline_color(gid, carb.Float4)` → 指派 prims；web 端只發 `highlightPrimsRequest`，不重渲染。**完整指令路徑**：web `AppStreamer.sendMessage({event_type:'highlightPrimsRequest', payload:{prim_paths:[…], color}})` → Kit `omni.kit.livestream.messaging` bus → handler 把 GlobalId→prim path→selection group + `carb.Float4` outline color；完成回 `highlightPrimsResult` ack（mapping 缺 usd_prim_path 的構件回報於 ack 的 `unmapped[]`）。isolate 同理走 `isolatePrimsRequest`（改 `visibility`）。
+- **串流硬限制（再次強調）**：`omni.kit.livestream.webrtc/.app`，**1 GPU = 1 Kit = 1 primary stream、無 live migration**；換模型/GPU = terminate+recreate；冷啟動 shader cache 空可達 ~15 分；spectator 共看同一 render 不另吃 GPU。
+  https://openusd.org/release/glossary.html ／ https://docs.omniverse.nvidia.com/ovas/latest/deployments/infra/limitations_etc.html
 
 ## C.4 README 鐵律增補（複製貼進 docs/plans/README.md 第 9–11 條）
 

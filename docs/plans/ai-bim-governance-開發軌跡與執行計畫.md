@@ -42,6 +42,7 @@
 | 資產 | 內容 | 狀態 |
 |---|---|---|
 | `ai-bim-governance-prototype.html` | 單檔可點原型：13 個實頁（home / a1 / issues / reports / viewer / gpu / conv / sessions / instances / minio / runtime / admin / spec）+ A2–A10 示範頁 + 右側 Chat USD Agent（A1、A2 有腳本化工具呼叫示範）。其中轉檔排程、Session 端點池、Kit·GPU 機隊三頁**可拖可點、會即時動** | 🟢 前端示意完成；資料為示範用 |
+| **`ai-bim-geo-viewer-prototype.html`** | **3D 驗收示意原型：對應 `#viewer` / M4 完成後長相。七區塊（點選→IFC 語意→Pset/Qto〔幾何計算非寫死〕→Spatial 樹→GUID⇔USD 對應表→A1 紅高亮→反向跳轉）、prim 命名 `G_<sanitized_guid>`、自寫 canvas（非真 WebRTC）** | **🟢 前端示意完成；驗收語意見《互動規格》IX-3D** |
 | `ai-bim-governance-設計規格.md` | v2 規格：設計原則、Design Tokens、A1–A10 介面分析、3D Viewer 角色表、落地端控制台四頁、MinIO 真實結構、NVIDIA 核實紀錄 | 🟢 已交付，為 repo 功能需求**主來源** |
 | 系統總覽網站 | bim-docs.jackshappybot.com，六分頁 | 🟢 在線 |
 | 本文件 v3 | 軌跡 + 工程規格 + 執行計畫 | 🟢 你正在看 |
@@ -50,7 +51,7 @@
 
 | 資產 | 內容 | 狀態 |
 |---|---|---|
-| Repo `C:\Repos\active\iot\AI-BIM-governance` | 目標落點；branch `feat/edge-console-product-shell` 定義產品殼層：coordinator `/ui` 掛 EdgeConsole（React 18 + TypeScript），route contract：`/ui`、`#a1`、`#viewer`、`#conv`、`#sessions`、`#instances`、`#minio` + operator 工具 `#kit`、`#demo-control` | 🟢 殼層已上線（2026-06-11 實測 coordinator `/ui`，hash 無斜線；另多出 Review Room／Model Intake／五步管線等頁）；差距清單見《互動實作規格》PART A |
+| Repo `C:\Repos\active\iot\AI-BIM-governance` | 目標落點；branch `feat/edge-console-product-shell` 定義產品殼層：coordinator `/ui` 掛 EdgeConsole（React 18 + TypeScript），route contract：**以《互動實作規格》A.1.1 正典路由表（22 條）為準**（hash 無斜線；含 `#gpu`〔正典，舊稱 `#review` 為別名〕、`#runtime`、`#admin`〔待建〕；operator `#kit`/`#demo-control`） | 🟢 殼層已上線（2026-06-11 實測 coordinator `/ui`，hash 無斜線；另多出 Review Room／Model Intake／五步管線等頁）；差距清單見《互動實作規格》PART A |
 | MinIO（內網 LAN） | bucket `bim-control`，PRIVATE，12.6 GiB / 867 objects；專案編號現況 270/889/990＋271（**2026-06-11 確認：皆為暫時測試 IFC 檔**，非正式專案） | 🟢 早期實測（見 1.5）；**短期真相源已改 local_fs storage**（D:\Users\deploy\AI-bim-geo\storage） |
 | 落地端 runtime 規劃 | Omniverse Kit 107、USD/RTX、WebRTC 串流、Coordinator :8004、MCP sidecars（omni-ui-mcp :9901 / kit-mcp :9902 / usd-code-mcp :9903）、governance-service :49102 | ⚪ 規劃確立，實機串流待建 |
 | 雲端 | Nuxt 3 + MySQL（control-plane：帳號、專案、權限） | 🟢 主平台既有 |
@@ -126,16 +127,21 @@ bim-control/
 
 ### 2.0.2 服務與埠（誰負責什麼）
 
-| 服務 | 埠 | 負責 |
-|---|---|---|
-| coordinator | :8004 | 控制塔：session/instance 排程、EdgeConsole `/ui` 殼層 |
-| governance-service | :49102 | A1 規則引擎、Issue/BCF、報表（CPU 即可）；**browser 不直連，經 coordinator `/api/governance/*` proxy** |
-| conversion worker | (隨 coordinator 管理) | IFC→USD 轉檔（CPU 吃重） |
+| 服務 | 埠 | 負責 | 部署 |
+|---|---|---|---|
+| coordinator | :8004 | 控制塔：session/instance 排程、EdgeConsole `/ui` 殼層、`/api/governance/*` proxy、`/api/conversions`、`/api/external/ifc-ready` | container/host |
+| governance-service | :49102 | A1 規則引擎、Issue/BCF（**BCF 2.1 自寫**）、diff（GlobalId 鍵）、報表（CPU 即可）；**永遠 host-native，不入任何 compose；browser 不直連，一律經 coordinator proxy** | host-native |
+| bim-streaming-server（Kit 本體） | 信令 :49100 · 串流 :47998 · 轉檔/控制 API :49101 · spectator 起始 :49110 | Omniverse Kit 串流（WebRTC）、IFC→USD 轉檔授權方、USD stage 組裝 | host-kit（compose.host-kit.yml） |
+| web-viewer-sample | :5173 | 前端收 WebRTC frame、指令走 DataChannel（`highlightPrimsRequest`） | container |
+| kit-manager-api | :8010 | `#instances`/`#runtime` 的真遙測後端：`/health` `/instances` `/runtime`；restart/release 走 audited intent | runtime-manager compose |
+| kit-manager-web | （vite） | operator 工具（`#kit` / `#demo-control`） | operator UI |
 | kit-mcp | :9902 | 對 Kit 場景下指令／查詢 prims |
 | usd-code-mcp | :9903 | 產生／執行 Python-USD 程式碼（A9） |
 | omni-ui-mcp | :9901 | Kit UI 自動化 |
-| MinIO | 內網 | 物件儲存（模型、轉檔產物、BCF 包） |
+| MinIO | 內網 | 物件儲存（短期真相源改 local_fs storage，真 MinIO 待接） |
 | Postgres | 內網 | 治理帳本（規則結果、Issue、稽核軌跡） |
+
+> 埠號實證：`compose.host-kit.yml`（KIT_SIGNALING_PORT=49100、KIT_MEDIA_PORT=47998、轉檔 API …:49101、GOVERNANCE_API_BASE …:49102、VIEWER_PORT=5173）、`compose.runtime-manager.yml`（8004、8010、49100/49101）。
 
 **通用約定**：REST 走 `/api/v1/...`；所有會「改東西」的 API 要帶操作者身分（稽核）；每個功能的可信度標記（已實作/實測/示範/待建）由後端設定檔 `provenance.json` 驅動，前端不寫死。
 
@@ -165,6 +171,35 @@ bim-control/
 - **核心舞台**（沒 3D 就不成立）：A3、A5、A6、A7、A10 → 一定要 GPU session。
 - **選用疊加**（API/表格/BCF 就能交付，3D 是加分）：A1、A2、A4 → 沒 GPU 也能用，但不得宣稱已完成 3D 高亮。
 - **取景台 / AI 預覽**：A8（算訓練資料）、A9（看 AI 改了什麼）。
+
+---
+
+### 2.0.5 官方技術棧對齊總表（A1–A10 共用 · 鎖定官方件，禁自造輪子）
+
+> 這張表是「每個能力該用哪個官方件、能與不能」的單一事實來源。A1–A10 各段的『官方件/API/能力邊界』都引用本表；web 端只做 BCF 橋接與 UI，不重做官方件。
+
+| 能力 | 官方件 / API（鎖定版本概念） | 能力邊界（不可逾越） | 用於 |
+|---|---|---|---|
+| IFC 解析 / Pset·Qto / 空間樹 | IfcOpenShell 0.8.x（`open` / `util.element.get_psets` / `get_container`） | — | A1 A2 A4 |
+| 規則驗證 | buildingSMART **IDS 1.0** + **ifctester** | **只驗英數（屬性/分類/材質/關係），不驗幾何、不驗計算值、假設已 schema-valid** | A1 |
+| 版本差異 | IfcOpenShell **ifcdiff**（GlobalId-keyed JSON） | 假設「穩定 GlobalId = 同構件」；GUID 不穩需比對鍵策略；**禁自寫 diff** | A2 |
+| 碰撞偵測 | IfcOpenShell **ifcclash** / trimesh / BVH | 幾何運算，**不可用 IDS 驗** | A3 |
+| BCF 交換 | IfcOpenShell **`bcf`** 庫（2.1/3.0；現行 2.1） | component 必帶 **IfcGuid**（22 字元 IFC base64，用 `ifcopenshell.guid`）；選取/上色 >~1000 構件要提示 | A1 A2 A3 A5 |
+| IFC→USD 轉檔 | **自製**（IfcOpenShell 讀幾何＋語意 → usd-core 寫 USD）；備援 Bonsai | **IfcConvert 無 USD 輸出**（shipped 版不含 `WITH_USD`）；prim 命名 `G_<sanitized_guid>` 並把原始 GUID 存 customData（可逆，避免碰撞）；出 coverage 報告 | conv / A3 A6 |
+| prim 高亮 / 選取 | Kit `omni.usd` selection group（`register_selection_group` + `set_selection_group_outline_color`） | 走 DataChannel `highlightPrimsRequest`，web 端不重渲染 | A1 A2 A4 A9 |
+| isolate / 可見性 | `UsdGeom.Imageable(prim).GetVisibilityAttr().Set("invisible"/"inherited")` | visibility 是 token → **held 不內插** | A4 A6 |
+| 量測 / 批註 / 剖面 / 書籤 | `omni.kit.tool.measure`(v200.0.4) · `omni.kit.tool.markup`(v1.2.79) · `omni.kit.window.section`(v107.1.3, `useSessionLayer`) · `omni.kit.waypoint.core`(v1.6.3, `create_waypoint_async`) | 一律用官方件；剖面/批註記進 **session layer** 不污染 source | viewer / A3 |
+| 場景樹 / 屬性面板 | `omni.kit.widget.stage`(v3.2.0) · `omni.kit.window.property`(v1.14.4) | — | viewer |
+| WebRTC 串流 | `omni.kit.livestream.webrtc` / `.app`（信令 49100 / 串流 47998 / 60fps） | **1 GPU = 1 Kit = 1 primary stream；無 live migration**；換模型/GPU = terminate+recreate（冷啟動 shader cache 空可達 ~15 分）；spectator 共看不另吃 GPU | viewer / 所有核心舞台 |
+| 瀏覽器↔Kit 指令通道 | 瀏覽器 `AppStreamer.sendMessage(JSON {event_type,payload})` 走 WebRTC DataChannel ⇄ Kit `omni.kit.livestream.messaging`(v1.2.1) 訊息匯流排；對齊 NVIDIA `web-viewer-sample` 的 `*Request`/`*Result` 往返 | 全指令統一 `{event_type,payload}` JSON；Kit→瀏覽器回 ack 用 `messaging.register_event_type_to_send`；web 端只發訊息、不重渲染 | A1 A2 A4 viewer |
+| 多人臨場 | `omni.kit.collaboration.presence_layer`(v1.2.1)（`.live` layer） | 僅 Live Session 內有效 | viewer |
+| 4D timeSamples | USD visibility timeSamples + `SetStartTimeCode/EndTimeCode` | held 不內插（構件「啪」地出現符合施工語意） | A6 |
+| 合成資料 | **Omniverse Replicator**（`omni.replicator.core`；BasicWriter/KittiWriter/CosmosWriter） | ground-truth 標註；取景台非審查 | A8 |
+| 擬真擴增 | **NVIDIA Cosmos Transfer**（structure-conditioned；NIM `POST /v1/infer`；`control_weight`/`sigma_max`） | 只擬真不標註；**Cosmos 3（2026-06）已換架構/授權，鎖版前先確認** | A8 A10 |
+| 機器人模擬 | **Isaac Sim**（PhysX；`isaacsim.sensors.physx`；RangeSensorCreateLidar） | PhysX Lidar 只偵測有碰撞體物件、穿透透明物；擬真感測用 RTX Lidar | A10 |
+| AI 改場景 | **usd-code-mcp :9903** | 只寫 **session layer**，不碰 source（檔雜湊不變） | A9 |
+
+> 版本號為查證當下的對齊基準（依《技術規格參考》查得），鎖版前以你**實際 Kit build** 內各 extension 的版本為準；spectator/雙程序的信令·串流埠以 repo 既有設定（49110 / 48008）為準，本表只列 primary（49100 / 47998）作示意。
 
 ---
 
@@ -233,6 +268,19 @@ bim-control/
 
 ---
 
+**官方件 / API / 能力邊界（給實作 AI 直接照做）**
+- 解析＋規則：IfcOpenShell 0.8.x（`ifcopenshell.open(path)`；`model.by_type("IfcDoor")` 含子類；Pset/Qto 用 `ifcopenshell.util.element.get_psets(el)` / `get_pset(el, name)` / `get_psets(el, qtos_only=True)`；空間樹 `get_container(el)` / `get_decomposition(storey)`）。
+- IDS 規則：對齊 buildingSMART **IDS 1.0**（`.ids` XML；facets 僅 **Entity / Attribute / Property / Classification / Material / PartOf**；IFC 類別大寫精確比對）；執行用 **ifctester**（`ifctester specs.ids model.ifc -r Json|Html|Bcf`）。
+- **能力邊界（重要）**：IDS **只驗英數資訊（屬性/數量/分類/材質/關係），不驗幾何、不驗計算值、且假設 IFC 已 schema-valid**。幾何類（碰撞穿樑）一律走 A3 的 clash 引擎，**不要硬塞進 IDS**。
+- BCF 匯出：用 IfcOpenShell **`bcf`** 庫（`from bcf.bcfxml import load`，支援 2.1/3.0；現行交付 2.1）。`.bcfzip` 結構＝每 topic 一資料夾（GUID 命名）含 `markup.bcf` + `viewpoint.bcfv` + `snapshot.png`；component 參照必須帶 **IfcGuid**（22 字元 IFC base64，字母表 `0-9A-Za-z_$`，用 `ifcopenshell.guid.compress()/expand()`，**勿用一般 base64 庫**）。viewpoint 選取或上色超過約 **1000 構件**要提示使用者（官方效能門檻）。
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 65.7MB 真 `model.ifc`，When 發起檢核，Then 5 分鐘內出記分板且不爆記憶體（峰值記錄於日誌）。
+- [ ] Given 一份 `.ids`（≥10 條真規則），When 跑 ifctester，Then 每條有 pass/fail 與命中構件清單（含 `ifc_guid` + name + storey）。
+- [ ] Given 勾選的失敗規則，When 批次轉 Issue，Then Issue 冪等（重跑不重複建，鍵＝rule_run_id+guid）。
+- [ ] Given 一批 Issue，When 匯出 BCF，Then 產出的 `.bcfzip` 能被 BIMcollab/第三方 BCF 檢視器開啟、component 為合法 22 字元 IfcGuid。
+- [ ] Given EdgeConsole `#a1`，Then 走真 API（非示範資料），provenance 翻成「已實作」。
+
 ## A2 · 版本差異與責任追蹤（P1 · CORE · Phase 2）
 
 **一句白話**：v06 跟 v07 到底改了什麼？誰改的？列成加（綠）/改（黃）/刪（紅）清單。
@@ -250,6 +298,17 @@ bim-control/
 
 ---
 
+**官方件 / API / 能力邊界**
+- diff 引擎：對齊 IfcOpenShell **`ifcdiff`**（CLI `python -m ifcdiff old.ifc new.ifc -o diff.json`；庫 `from ifcdiff import IfcDiff; d=IfcDiff(old,new,out); d.diff(); d.export()`）。輸出 JSON 以 **GlobalId 為鍵**，三集合 **Added / Deleted / Changed**；relationships 可選 `geometry`(預設) / `property` / `type` / `container` / `aggregate` / `classification`；預設幾何精度 1e-4。**鐵律：不要自寫 diff。**
+- **能力邊界**：ifcdiff 假設「**穩定 GlobalId = 同一構件**」。Revit 重新匯出常換 GUID → 必須先定比對鍵策略（fallback：`name+type+空間位置 hash`），否則 diff 會把「沒改的構件」誤判成刪+增。
+- USD onion-skin（M4 後）：新/舊版各放一個 **sublayer**；刪除構件以紅色半透明材質保留原位（ghost overlay），不真的移除幾何。
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 同 modelId 的 v06/v07 真檔，When 跑 ifcdiff，Then 輸出 GlobalId-keyed JSON（added/deleted/changed 三集合）。
+- [ ] Given 一筆 changed，When 點開，Then 顯示變更的屬性欄位（前後值）。
+- [ ] Given GUID 不穩定的測試對（同構件換 GUID），When 套用比對鍵策略，Then 不被誤判為刪+增（抽查 5 筆屬實）。
+- [ ] Given 任一差異筆，When 轉 Issue，Then 進共同出海口、可指派。
+
 ## A3 · 跨專業疊合（P1 · Phase 2）
 
 **一句白話**：把同一專案的機電、消防、管線…模型疊在同一個 3D 畫面，自動找「打架」的地方。
@@ -262,6 +321,18 @@ bim-control/
 **依賴**：M2 轉檔（要有 .usdc 才有 layer 可疊）+ M3 GPU session。**3D 角色：核心舞台**。
 
 ---
+
+**官方件 / API / 能力邊界**
+- 疊合：USD **sublayer / layer stack**（合成強度「上強下弱」）。同 projectId 下各專業一個 sublayer（呼應 D7 三層），圖層開關＝載入/卸載 sublayer 或切 visibility。大模型用 **payload**（延遲載入）避免一次吃滿記憶體。
+- 碰撞偵測：用 IfcOpenShell **ifcclash**（或 trimesh / 自建 BVH）。**能力邊界**：碰撞是幾何運算，**不可用 IDS 驗**（IDS 不碰幾何）。
+- 剖面看穿樑：Kit **`omni.kit.window.section`**（v107.1.3，`SectionToolExtension.show_window()`；設定 `useSessionLayer=true` 把剖面記進 **USD session layer**，不污染 source 模型）。
+- **3D 角色：核心舞台 → 必須 GPU session（1 GPU = 1 stream）。**
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 270 專案兩個類別的 .usdc，When 載入，Then 疊在同一 viewport、圖層可獨立開關。
+- [ ] Given 一組真碰撞，When 跑 clash 引擎，Then 碰撞清單可按嚴重度排序、抽查 10 筆屬實。
+- [ ] Given 點任一碰撞，When 觸發，Then 視角飛到衝突點並高亮兩個構件（DataChannel `highlightPrimsRequest`）。
+- [ ] Given 啟用剖面，Then 剖面僅寫入 session layer，source `.usdc` 雜湊不變。
 
 ## A4 · 語意搜尋與模型問答（P1 · CORE · Phase 4）
 
@@ -278,6 +349,16 @@ bim-control/
 
 ---
 
+**官方件 / API / 能力邊界**
+- isolate 高亮：對齊 Kit `omni.usd` selection group + `UsdGeom.Imageable(prim).GetVisibilityAttr().Set("invisible")`（隱藏其餘）；高亮走 DataChannel `highlightPrimsRequest`（payload 帶 `source:"a4"`，與 A1/A2 共用同一 highlight/isolate 指令族）。
+- NL→條件：LLM function calling 解析成結構化條件（樓層/類別/屬性），**回傳解析出的條件給使用者確認**（透明原則，避免 AI 理解錯）。
+- **能力邊界**：先做「結構化過濾」（查 elements 索引，解 8 成需求）；向量語意（embedding）後做，不在第一階段。
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 10 句典型中文問句，When 解析，Then 正確率 ≥ 8 句，且每句回傳可見的解析條件。
+- [ ] Given 一筆查詢結果，When viewer 開著，Then 符合構件 isolate 高亮、其餘變暗。
+- [ ] Given 結果清單，When 框選，Then 可一鍵轉 Issue/報表。
+
 ## A5 · IoT / BMS / FM 數位分身（P1 · MIX · Phase 3）
 
 **一句白話**：溫濕度、電表、門禁的即時數據掛到 3D 構件上，異常變黃變紅，點下去看歷史和工單。
@@ -291,6 +372,16 @@ bim-control/
 
 ---
 
+**官方件 / API / 能力邊界**
+- 即時值貼構件：USD `prim.SetCustomDataByKey("iot:value", v)`（或 timeSampled attribute 做歷史回放）；感測圖釘＝掛在構件下的子 prim；樓層熱力用 `primvars:displayColor`。
+- 資料鏈：MQTT bridge 收數據 → TimescaleDB 存歷史 → 即時狀態 API + 門檻告警（綠/黃/紅）。
+- **能力邊界 / 3D 角色：核心舞台需 GPU，但 F1–F3（綁定表/MQTT/告警）純後端可先做、不卡 GPU。** 接線本身 ⚪ 待建，先用模擬 MQTT 數據跑通。
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 模擬 MQTT 數據流，When 進系統，Then TimescaleDB 有歷史、即時 API 回最新值。
+- [ ] Given 門檻設定，When 數值越界，Then 狀態轉黃/紅並可開 Issue。
+- [ ] Given viewer 開著，When 點設備圖釘，Then 顯示即時值與歷史曲線。
+
 ## A6 · 4D / 5D 施工模擬（P2 · OMNI · Phase 2）
 
 **一句白話**：把施工排程綁到構件上，拉時間軸看建築物一週週「長出來」，排程衝突亮紅燈；掛上成本就是 5D。
@@ -301,6 +392,17 @@ bim-control/
 **依賴**：M2 轉檔 + M3 session。**3D 角色：核心舞台**。
 
 ---
+
+**官方件 / API / 能力邊界**
+- 4D 生長：用 USD **visibility timeSamples** —— `UsdGeom.Imageable(prim).GetVisibilityAttr().Set("invisible"|"inherited", Usd.TimeCode(t))`；stage 設 `SetStartTimeCode/SetEndTimeCode/SetTimeCodesPerSecond`。
+- **能力邊界（關鍵）**：**visibility 是 token → 採 held 不內插**（構件在某幀「啪」地出現/消失，正好符合施工「當天建好」語意）；需要平滑移動（吊裝路徑）才用 `xformOp:*`（linear 內插）。可 `stage.SetInterpolationType(Usd.InterpolationTypeHeld)` 全域強制 held。
+- 排程匯入：CSV / MS Project XML（任務、起迄、綁構件群）→ 構件↔工項對映（按樓層/類別批次綁 + 手動微調）。5D＝工項單價 × 進度 = S-curve。
+- **3D 角色：核心舞台 → 需 GPU session。**
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 一份真排程 + 構件對映，When 播放，Then viewport 依時間軸出現生長動畫（未建半透明/當期高亮/已建實體）。
+- [ ] Given 同空間同時段兩工項，When 偵測，Then 衝突清單至少抓一筆、人工驗證屬實。
+- [ ] Given 工項單價，When 拉時間軸，Then 顯示對應 S-curve 成本。
 
 ## A7 · Reality Capture 比對（P2 · OMNI · Phase 4）
 
@@ -313,6 +415,15 @@ bim-control/
 
 ---
 
+**官方件 / API / 能力邊界**
+- 點雲：E57/LAS → USD **`UsdGeomPoints`**；對齊先三點手動對位、後 ICP 自動精配；偏差＝點到設計面距離 → 熱力色（`primvars:displayColor`）。
+- **能力邊界**：NeRF/3DGS 為 Could（後期）；本期以點雲為主。**3D 角色：核心舞台 → 需 GPU；需客戶提供點雲檔。**
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 一份真實掃描點雲，When 對齊，Then 與設計模型疊合（可切只看掃描/設計/疊加）。
+- [ ] Given 對齊後，When 計算偏差，Then 熱力圖與人工抽測 3 處吻合（誤差容許值另定）。
+- [ ] Given 超標部位，When 出報告，Then 含清單 + 截圖。
+
 ## A8 · Synthetic Data Studio（P1 · OMNI · Phase 4）
 
 **一句白話**：用 BIM 模型自動「拍」出成千上萬張帶標註的訓練圖片（RGB/深度/分割/框），給工安、設備辨識 AI 用。
@@ -323,6 +434,18 @@ bim-control/
 **依賴**：M2+M3。**3D 角色：取景台**（不是審查工具）。
 
 ---
+
+**官方件 / API / 能力邊界（Replicator + Cosmos）**
+- 合成資料管線：NVIDIA **Omniverse Replicator**（`import omni.replicator.core as rep`；Scene → Randomizer → Annotator → Writer → `rep.orchestrator.run()`）。
+- 標註輸出：`rep.AnnotatorRegistry.get_annotator(...)` —— `rgb` / `semantic_segmentation` / `instance_segmentation` / `bounding_box_2d_tight` / `bounding_box_3d` / `distance_to_camera`。
+- Writer：`rep.WriterRegistry.get("BasicWriter")` + `writer.initialize(output_dir=, rgb=True, bounding_box_2d_tight=True, image_output_format="png", colorize_semantic_segmentation=True)` + `writer.attach([render_product])`；另有 **KittiWriter**、**CosmosWriter**（輸出 RGB/depth/seg/edge 給 Cosmos 當 control 輸入）。
+- 光真化（domain 擴增）：NVIDIA **Cosmos Transfer**（structure-conditioned：以 segmentation/depth/edge 為條件生成照片級變體；NIM 微服務 `POST /v1/infer`）。參數 `control_weight ∈ [0,1]`（多分支合計建議 ≤2.0）、`sigma_max`（SDG 建議 80–90）。
+- **能力邊界 / 版本風險**：Replicator 標註資料是**幾何級 ground truth**；Cosmos Transfer 負責「擬真化」不負責標註。模型授權為 NVIDIA Open Model License（原始碼 Apache 2.0）。**Cosmos 3 已於 2026-06 統一架構（Nano 16B / Super 64B、改 OpenMDW-1.1 授權、repo 移至 `github.com/nvidia/cosmos`）→ 鎖 API/模型版本前務必先確認，勿假設 Predict1/Transfer1 介面不變。** 取景台不是審查工具；算圖吃 GPU。
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 270 模型 + 相機路徑 + 隨機化參數，When 跑 Replicator，Then 產出 100 張帶標註圖（RGB+分割+2D框）。
+- [ ] Given 輸出，When 轉 COCO/YOLO，Then 直接餵訓練腳本不報錯。
+- [ ] Given Replicator 產的 seg/depth/edge，When 過 Cosmos Transfer，Then 得到照片級擬真變體（抽查 5 張標註仍對齊）。
 
 ## A9 · 設計 / 審查 Copilot（P2 · OMNI · Phase 4）
 
@@ -337,6 +460,16 @@ bim-control/
 
 ---
 
+**官方件 / API / 能力邊界**
+- 代碼產生：**usd-code-mcp :9903**（NL → Python-USD code）。
+- **安全沙箱（D5 鐵律）**：所有改動只寫 **session layer**（`stage.GetSessionLayer()`）；一鍵還原＝關 session layer 可見性 / 清掉 session 編輯；**永不碰 source model**（用 source `.usdc` 檔雜湊前後不變證明）。被改 prim 高亮＝selection group outline color。
+- 代碼與場景並排、工具呼叫軌跡全顯示（透明原則）。
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 5 個改場景指令，When 執行，Then 成功率與可還原性 100%。
+- [ ] Given 任一指令執行後，Then source model 檔案雜湊不變（證明沒碰原檔）。
+- [ ] Given 一次 AI 動作，Then UI 留下完整工具呼叫軌跡（時間/指令/參數/結果）。
+
 ## A10 · 機器人 / 自動巡檢模擬（P2 · OMNI · Phase 4）
 
 **一句白話**：在 3D 模型裡先讓虛擬機器狗/無人機走一遍巡檢路線，確認路線可行、拍照點對，再去現場部署。
@@ -347,6 +480,17 @@ bim-control/
 **依賴**：M3 + Isaac Sim 環境（比 Kit 重，**建議最後做**）。
 
 ---
+
+**官方件 / API / 能力邊界（Isaac Sim + Cosmos）**
+- 模擬環境：NVIDIA **Isaac Sim**（建於 Omniverse、USD-native、PhysX 物理）。匯入 URDF/MJCF/USD 機器人。
+- 感測：擴充 `isaacsim.sensors.physx`；PhysX Lidar 用 `omni.kit.commands.execute("RangeSensorCreateLidar", path="/Lidar", min_range=0.4, max_range=100.0, horizontal_fov=360.0, vertical_fov=30.0, ...)`。第一人稱視角＝camera prim 掛在機器人 chassis link 下；導航走 wheel-joint 目標速度 / 導航圖。
+- **能力邊界（重要）**：**PhysX Lidar 只偵測「有碰撞體」的物件、且會穿透透明物**（量到的是 ground-truth 深度，不是真感測雜訊）。要擬真感測模型（Ouster/HESAI 等）改用 **RTX Lidar**。`rotationRate=0` 表示同幀打完所有 ray。
+- sim-to-real：用 **CosmosWriter** 擷取機器人相機 clip → **Cosmos Transfer** 光真化；機器人策略訓練可用 Cosmos world model。**3D 角色：核心舞台**；Isaac Sim 比 Kit 重，**建議最後做**。真機介接（ROS bridge）本期 Won't。
+
+**DoD（spec-to-done 可勾選）**
+- [ ] Given 270 模型，When 畫一條跨樓層巡檢路徑，Then 虛擬機器人沿線走完、避障繞行。
+- [ ] Given 每個拍照點，When 模擬，Then 輸出該點相機截圖。
+- [ ] Given 模擬結果，Then 出可行性報告（路線是否可走、拍照點是否到位）。
 
 ## 2.99 A1–A10 總覽表（優先序 × 依賴 × 狀態）
 
@@ -364,6 +508,17 @@ bim-control/
 | A10 機器人巡檢 | P2 | 4 | 核心舞台 | M3+Isaac Sim | 介面🟡 ⚪ |
 
 > 🟢 已實作 · 🟡 示範資料（介面通了）· ⚪ 待建。「介面🟡」= 原型有該頁與互動示意。
+
+### 2.99.1 平台級頁（非 A1–A10，但屬正式 IA · route 見 A.1.1）
+
+| 頁 | route | 後端 | 狀態 |
+|---|---|---|---|
+| Issue / BCF 中心 | `#issues` | governance-service issues+bcf | 🟢 真 Issue DB + BCF 2.1 |
+| 報表中心 | `#reports` | governance-service excel_export | 🟡 骨架 |
+| GPU 審查室 / Review Room | `#gpu`（正典；`#review` 為別名） | coordinator `/ui/open` redirect + streaming-server | 🟡 v1 導引既有 viewer + Tool Rail |
+| Runtime 監控 | `#runtime` | kit-manager-api `/runtime` `/health` | 🟡 端點真有，UI 面板待建 |
+| 系統管理 | `#admin` | coordinator auth/config | ⚪ **待建**（本期僅佔位） |
+| 設計規格說明 | `#spec` | 靜態 | 🟢 |
 
 ---
 
