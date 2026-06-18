@@ -3,20 +3,6 @@ name: PR Review Agent
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    # 純文件 / agent 工具資產 / tracking 變更本地檢查即可，不觸發 CI review agent；
-    # 只要 PR 還動到其他路徑（code / scripts / workflow 等）就照常完整 review。
-    paths-ignore:
-      - '**/*.md'
-      - '.gitignore'
-      - '**/.gitignore'
-      - '.codex/**'
-      - '.claude/**'
-      - '.agent/**'
-      - '.windsurf/**'
-      - '.cursor/**'
-      - '.superpowers/**'
-      - 'artifacts/**'
-      - 'docs/**'
 
 permissions:
   contents: read
@@ -39,9 +25,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: |
-            bim-review-coordinator/package-lock.json
-            web-viewer-sample/package-lock.json
+          cache-dependency-path: bim-review-coordinator/package-lock.json
 
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -51,7 +35,8 @@ jobs:
       - name: Install Python review dependencies
         shell: pwsh
         run: |
-          npm install -g @fission-ai/openspec gitnexus
+          npm install -g @fission-ai/openspec gitnexus@1.6.5
+          gitnexus --version
           python -m pip install --upgrade pip
           # jsonschema is required by tests/contracts/structured-log/test_validate.py
           # and test_python_adapter.py per cross-service-structured-log-baseline §6.
@@ -70,12 +55,24 @@ jobs:
       - name: Prepare GitNexus index
         shell: pwsh
         run: |
-          gitnexus analyze --skip-agents-md --name AI-BIM-governance .
+          gitnexus analyze --index-only --max-file-size 128 --name AI-BIM-governance .
           $gitnexusAnalyzeExitCode = $LASTEXITCODE
           if ($gitnexusAnalyzeExitCode -ne 0) {
             Write-Warning "GitNexus analyze failed with exit code $gitnexusAnalyzeExitCode; the review agent will report GitNexus availability separately."
           }
           exit 0
+
+      - name: Check PR body evidence
+        shell: pwsh
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          New-Item -ItemType Directory -Path artifacts/pr-review-agent -Force | Out-Null
+          $env:PR_BODY | Set-Content -LiteralPath artifacts/pr-review-agent/pr-body.md -Encoding utf8
+          git diff --name-only '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' | Set-Content -LiteralPath artifacts/pr-review-agent/changed-paths.txt -Encoding utf8
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/check-pr-body-evidence.ps1 `
+            -BodyPath artifacts/pr-review-agent/pr-body.md `
+            -ChangedPathsPath artifacts/pr-review-agent/changed-paths.txt
 
       - name: Run PR review agent
         id: review
@@ -95,8 +92,7 @@ jobs:
             '-HeadSha', '${{ github.event.pull_request.head.sha }}',
             '-PrNumber', '${{ github.event.pull_request.number }}',
             '-RunId', '${{ github.run_id }}',
-            '-OutputDir', 'artifacts/pr-review-agent',
-            '-AllowGitNexusUnavailable'
+            '-OutputDir', 'artifacts/pr-review-agent'
           )
           if ($env:PR_DRAFT -eq 'true') {
             $args += '-ReportOnly'

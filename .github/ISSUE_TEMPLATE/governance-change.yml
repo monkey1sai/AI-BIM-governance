@@ -1,0 +1,42 @@
+name: Governance or agent workflow change
+description: Changes to AGENTS.md, docs/agents, docs/plans, GitHub workflows, skills, hooks, or PR governance.
+title: "[Governance] "
+labels:
+  - governance
+  - agent-workflow
+body:
+  - type: textarea
+    id: change_reason
+    attributes:
+      label: Change reason
+      description: Explain the repeated failure, policy gap, or maturity gap this change addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: affected_files
+    attributes:
+      label: Affected governance files
+      description: List exact files or directories.
+      placeholder: |
+        AGENTS.md
+        docs/agents/github-workflow.md
+        .github/workflows/ci.yml
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and rollback
+      description: State whether this changes agent behavior, CI enforcement, branch protection, or local-only tooling.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Exact commands or GitHub checks needed before merge.
+      placeholder: |
+        powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-agent-governance-check.ps1
+        GitHub Actions: CI, Agent Governance, PR Review Agent
+    validations:
+      required: true

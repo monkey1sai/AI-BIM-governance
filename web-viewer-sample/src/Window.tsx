@@ -1460,7 +1460,8 @@ export default class App extends React.Component<AppProps, AppState> {
             return;
         }
 
-        this._sendStreamMessage({ event_type: "selectPrimsRequest", payload: { paths } });
+        const message: AppStreamMessageType = { event_type: "selectPrimsRequest", payload: { paths } };
+        this._sendStreamMessage(message);
         // CH-B：點語意樹節點 → 相機以該元件聚焦（spec：點 prim path → 相機聚焦）。
         if (paths[0]) {
             this._sendStreamMessage(buildFocusPrimRequest(paths[0]));

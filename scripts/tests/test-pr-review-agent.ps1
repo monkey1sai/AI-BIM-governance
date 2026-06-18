@@ -209,6 +209,10 @@ Remove-Item -LiteralPath $out6b -Recurse -Force
 Assert-True (Test-PrReviewGitNexusUnavailableMessage -Summary 'node.exe : GitNexus: No indexed repositories found. Run: gitnexus analyze') 'GitNexus missing registry is unavailable'
 Assert-True (-not (Test-PrReviewGitNexusUnavailableMessage -Summary 'TypeError: Cannot read properties of undefined')) 'unexpected GitNexus errors are not downgraded'
 
+# Test 6d: Runtime PR review must use the indexed GitNexus repo name, not the runner checkout path.
+$libSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lib\pr-review-agent.ps1') -Raw
+Assert-True ($libSource -match "Invoke-PrReviewGitNexus[\s\S]*-RepoName 'AI-BIM-governance'") 'GitNexus command uses indexed repo name'
+
 # Test 7: Retired runtime guard definitions are allowed, but runtime wiring is blocked.
 $out7 = New-TestOutputDir
 $result7 = Invoke-PrReviewAgent -RepoRoot $repoRoot `

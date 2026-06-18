@@ -94,8 +94,36 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 
 1. 先讓 workflow 在 PR 上產生 report 與 comment，觀察 false positive / false negative。
 2. 確認審查訊號穩定後，再把 `pr-review-agent` status check 加到 branch protection required checks。
-3. 第一版 GitHub-hosted runner 會先 provision OpenSpec、GitNexus、pytest 與 coordinator npm dependencies；必要 validator 若仍 unavailable 會 blocking。GitNexus CLI 真正缺失可在 rollout 期間記為 warning，但 GitNexus execution failed 不可降級。
+3. 第一版 GitHub-hosted runner 會先 provision OpenSpec、GitNexus、pytest 與 coordinator npm dependencies；必要 validator 若仍 unavailable 會 blocking。正常 PR 不應使用 `-AllowGitNexusUnavailable`；GitNexus CLI 真正缺失只可在 draft/report-only 或明確 rollout exception 中降級，GitNexus execution failed 不可降級。
 4. 若 workflow 造成阻塞，可停用 `.github/workflows/pr-review-agent.yml` 或讓 job 只跑 report-only；不影響 product runtime。
+
+## Required checks
+
+本 repo 要宣稱 Level 5 AI coding governance 時，`main` 的 branch protection / ruleset 應把下列 checks 設為 required：
+
+| Check | Purpose |
+|---|---|
+| `pr-review-agent` | PR risk, OpenSpec/GitNexus/path guard, validation plan, report artifact |
+| `agent-governance` | Agent-readable issue template, CODEOWNERS, workflow, PR template, and governance-doc drift check |
+| `root contracts and fakes` | External platform contracts plus test-only fakes |
+| `coordinator build and tests` | TypeScript build and Vitest for coordinator control plane |
+| `governance-service tests` | A1/A2/A3 CPU governance backend tests |
+| `viewer build and tests` | Viewer build, Vitest, and structured-log check |
+| `kit-manager-api tests` | Kit Manager API Python unit tests |
+| `kit-manager-web build` | Operator UI TypeScript/Vite build |
+| `docker compose config` | Hybrid compose YAML/env-file config validation |
+| `powershell static analysis` | PSScriptAnalyzer `Error` severity gate for scripts |
+| `secret pattern scan` | High-signal private key/token pattern smoke |
+
+PR body evidence is enforced inside the `pr-review-agent` workflow before the review agent runs. The checker reads changed paths and requires the relevant PR template table to be filled:
+
+- governance paths require the `AI Coding Governance` rows;
+- user-facing/frontend paths require the `Frontend Verification` rows;
+- runtime/deploy paths require the `Deploy Path Verification` rows.
+
+Workflows that are intended to become required checks must run on every PR and produce a check result. Do not add `paths` / `paths-ignore` filters to `pr-review-agent` or `agent-governance`; if cost control becomes necessary, perform path detection inside the job and emit an explicit no-op success.
+
+Remote-only step：本文件與 `.github/CODEOWNERS` 只能準備 enforcement；真正 required checks、CODEOWNERS review、dismiss stale approvals、禁止 bypass 等規則，仍必須在 GitHub repository settings / rulesets 中啟用並驗證。
 
 ## 人工審查邊界
 

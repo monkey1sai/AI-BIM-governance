@@ -67,6 +67,7 @@ scripts/.run/
 pytest-bim-worker-tmp/
 pytest-python-manual/
 pytest-manual-check/
+pytest-of-*/
 pytest-bim-control-*.tmp/
 
 # ----------------------------

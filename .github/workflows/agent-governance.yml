@@ -1,0 +1,26 @@
+name: Agent Governance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-governance:
+    name: agent-governance
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Run governance static check
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-agent-governance-check.ps1
+
+      - name: Run PR body evidence tests
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tests/test-pr-body-evidence.ps1

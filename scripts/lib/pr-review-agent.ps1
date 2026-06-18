@@ -660,7 +660,7 @@ function Invoke-PrReviewAgent {
     }
 
     $needsGitNexus = Test-PrReviewNeedsGitNexus -ChangedPaths $ChangedPaths
-    $gitnexus = Invoke-PrReviewGitNexus -NeedsGitNexus:$needsGitNexus -SkipGitNexus:$SkipGitNexus -AllowUnavailable:$AllowGitNexusUnavailable -SimulateUnavailable:$SimulateGitNexusUnavailable -SimulateFailure:$SimulateGitNexusFailure -RepoName $RepoRoot
+    $gitnexus = Invoke-PrReviewGitNexus -NeedsGitNexus:$needsGitNexus -SkipGitNexus:$SkipGitNexus -AllowUnavailable:$AllowGitNexusUnavailable -SimulateUnavailable:$SimulateGitNexusUnavailable -SimulateFailure:$SimulateGitNexusFailure -RepoName 'AI-BIM-governance'
     if ($needsGitNexus -and $AllowGitNexusUnavailable -and $gitnexus.status -eq 'unavailable') {
         $gitnexus.status = 'warning'
     }
