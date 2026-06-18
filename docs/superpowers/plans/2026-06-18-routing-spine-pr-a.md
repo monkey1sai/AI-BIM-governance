@@ -501,12 +501,6 @@ def test_do_not_codegen_sites_unchanged():
     assert "label: `impl:${T}:retry`, phase: 'Implement', model: 'opus', effort: 'max'" in impl, ":282 補救升級被改"
     assert "label: `impl:${T}:opus`, phase: 'Implement', model: 'opus', effort: 'max'" in impl, ":287 升級被改"
 
-def test_no_workflow_newer_than_routing_unregenerated():
-    rjson = (WF / "routing.json").stat().st_mtime
-    # 任一 target 比 routing.json 新時，--check 必仍綠（已涵蓋於 test_codegen_no_drift；此處明示語義）
-    for fn in EXPECTED:
-        _ = (WF / fn).stat().st_mtime  # 存在性即可；漂移由 codegen --check 把關
-
 def test_no_conflicting_routing_invariant_in_tracked_workflows():
     # D3：禁 tracked workflow 再出現「Haiku ... NOT used in the routing」這類與 routing.json 衝突的不變量字串
     tracked = subprocess.run(["git","-C",str(ROOT),"ls-files",".claude/workflows/"],
@@ -523,7 +517,7 @@ def test_no_conflicting_routing_invariant_in_tracked_workflows():
 - [ ] **Step 2: 跑測試確認 pass**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_routing_consistency.py -v`
-Expected: PASS（6 passed）。若 `test_callsites_reference_expected_tier` 失敗，回 Task 4–6 修對應 site。
+Expected: PASS（5 passed）。若 `test_callsites_reference_expected_tier` 失敗，回 Task 4–6 修對應 site。
 
 - [ ] **Step 3: Commit**
 
