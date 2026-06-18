@@ -100,7 +100,7 @@ UI route 可達 → 明確按鈕可點 → default fixture(不要求使用者手
 
 誠實鐵律:跑不到/看不到的項目列進 notObserved(原文標 not observed),不准畫成 fail 也不准略過;engine 填真實用的引擎;測試失敗就如實回報 verticalSliceOk=false。
 回傳 StructuredOutput:verticalSliceOk、engine、screenshots[](絕對路徑)、summaryJson(路徑)、runtimeIds[]、notObserved[]、gaps[](id 用 e1/e2/...,q = 待對抗驗證的疑慮:哪個環節證據薄弱+宣稱的失效模式;沒有就空陣列)。`,
-  { label: `evidence:${SLUG}`, phase: 'Evidence', model: 'opus', schema: EVIDENCE_SCHEMA })
+  { label: `evidence:${SLUG}`, phase: 'Evidence', model: 'opus', effort: 'max', schema: EVIDENCE_SCHEMA })
 
 if (!ev) return { ok: false, held: 'no_browser_evidence', detail: `evidence agent 失敗(回 null);probe:${probe.detail}` }
 
