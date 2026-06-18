@@ -88,6 +88,17 @@ try {
     Assert-True (-not ($prReviewWorkflow -match "'-AllowGitNexusUnavailable'")) 'normal PR review workflow does not pass -AllowGitNexusUnavailable'
     Assert-True ($prReviewWorkflow -match "'-ReportOnly'") 'draft PR report-only behavior remains available'
     Assert-True ($prReviewWorkflow -match 'check-pr-body-evidence\.ps1') 'PR review workflow enforces PR body evidence'
+    Assert-True ($prReviewWorkflow -match 'gitnexus analyze --index-only --max-file-size 128 --name AI-BIM-governance \.') 'PR review workflow builds a CI-safe GitNexus index'
+
+    $gitnexusIgnore = Get-Content -LiteralPath '.gitnexusignore' -Raw
+    foreach ($ignoredPath in @(
+        '/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/stage_loading.py',
+        '/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py',
+        '/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py',
+        '/bim-streaming-server/tests/test_host_native_conversion_service.py'
+    )) {
+        Assert-True ($gitnexusIgnore -match [regex]::Escape($ignoredPath)) ".gitnexusignore excludes analyzer crash path $ignoredPath"
+    }
 
     $prBodyEvidenceChecker = Get-Content -LiteralPath 'scripts/tests/check-pr-body-evidence.ps1' -Raw
     foreach ($marker in @('GitNexus evidence', 'gstack evidence', 'Agent workflow changed?')) {

@@ -33,3 +33,10 @@
 **/*.tar
 **/*.7z
 **/*.gz
+
+# GitHub Actions Windows runner workaround: GitNexus analyzer currently crashes
+# on these Python files during scope extraction, preventing PR review indexing.
+/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/stage_loading.py
+/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/ifc2usdc_powershell_adapter.py
+/bim-streaming-server/source/extensions/ezplus.bim_review_stream.messaging/ezplus/bim_review_stream/messaging/conversion_authority.py
+/bim-streaming-server/tests/test_host_native_conversion_service.py

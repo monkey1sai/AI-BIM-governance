@@ -54,7 +54,7 @@ jobs:
       - name: Prepare GitNexus index
         shell: pwsh
         run: |
-          gitnexus analyze --skip-agents-md --name AI-BIM-governance .
+          gitnexus analyze --index-only --max-file-size 128 --name AI-BIM-governance .
           $gitnexusAnalyzeExitCode = $LASTEXITCODE
           if ($gitnexusAnalyzeExitCode -ne 0) {
             Write-Warning "GitNexus analyze failed with exit code $gitnexusAnalyzeExitCode; the review agent will report GitNexus availability separately."
