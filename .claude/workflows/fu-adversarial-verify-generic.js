@@ -14,10 +14,19 @@ if (!ROOT) return { label: LABEL, held: 'bad_args', missing: ['root'], verdicts:
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['finding_id', 'truly_closed', 'introduced_new_issue', 'reason'],
+  required: ['finding_id', 'truly_closed', 'introduced_new_issue', 'reason'], // evidence 刻意 optional：避免漏填被 verdicts filter(Boolean) drop → SKILL.md P5 length-mismatch infra-HELD 分支
   properties: {
     finding_id: { type: 'string' }, truly_closed: { type: 'boolean' },
     introduced_new_issue: { type: 'boolean' }, reason: { type: 'string' },
+    evidence: {
+      type: 'object', additionalProperties: false,
+      required: ['file', 'line', 'quote'],
+      properties: {
+        file: { type: 'string' },
+        line: { type: ['integer', 'null'] },
+        quote: { type: 'string' },
+      },
+    },
   },
 }
 const CRITIC_SCHEMA = {
@@ -33,6 +42,10 @@ const CRITIC_SCHEMA = {
   },
 }
 
+const MAX_Q = 800 // ≈200 token；超長即非 registry summary，違反 DACS
+const badF = FINDINGS.filter((f) => !f || typeof f.id !== 'string' || typeof f.q !== 'string' || f.q.length > MAX_Q || (f.suspectFile != null && typeof f.suspectFile !== 'string'))
+if (badF.length) return { label: LABEL, held: 'bad_findings', badCount: badF.length, verdicts: [], not_closed: [], new_issues: [], critic: null }
+
 const PRE = `你是 AI-BIM-governance governance-service 的對抗式驗證者。worktree(已套用修復)：${ROOT}。
 誠實鐵律：無假數字、未取得不得偽裝成 pass、輸出標真實 provenance。USD 相關以 pxr 26.5 本體為 ground truth（可用 host py312 「/c/Program Files/Python312/python.exe」跑真 pxr probe 算世界座標）。
 用 Read/Grep 打開真實 code 驗。預設立場：修復未真正閉合，除非在 code 找到確鑿證據。「測試綠」不代表閉合——對著 finding 宣稱的失效模式驗。`
@@ -46,8 +59,8 @@ const verdicts = await parallel([
 
 待驗 finding ${f.id}：
 ${f.q}
-
-回傳 StructuredOutput：finding_id=${f.id}、truly_closed（僅當 code 親見真閉合）、introduced_new_issue、reason（引用真實 code 片段+行號，可附 probe 結果）。`,
+${f.suspectFile ? `\n最可疑檔：${f.suspectFile}（先 Read 它再判，細節自取、不靠全文廣播）` : ''}
+回傳 StructuredOutput：finding_id=${f.id}、truly_closed（僅當 code 親見真閉合）、introduced_new_issue、reason（引用真實 code 片段+行號，可附 probe 結果）。**強烈建議**附 evidence \`{file,line,quote}\`＝你判斷所依據的真實 code 位置；找不到確切行就填 \`line:null\` 並在 quote/reason 說明，**嚴禁猜行號**。`,
       { label: `verify:${f.id}`, phase: 'Verify', schema: VERDICT_SCHEMA })
   ),
   () => agent(`${PRE}
