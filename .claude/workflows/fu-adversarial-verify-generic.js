@@ -14,10 +14,19 @@ if (!ROOT) return { label: LABEL, held: 'bad_args', missing: ['root'], verdicts:
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['finding_id', 'truly_closed', 'introduced_new_issue', 'reason'],
+  required: ['finding_id', 'truly_closed', 'introduced_new_issue', 'reason'], // evidence 刻意 optional：避免漏填被 :60 filter drop → SKILL.md:74 length-mismatch infra-HELD
   properties: {
     finding_id: { type: 'string' }, truly_closed: { type: 'boolean' },
     introduced_new_issue: { type: 'boolean' }, reason: { type: 'string' },
+    evidence: {
+      type: 'object', additionalProperties: false,
+      required: ['file', 'line', 'quote'],
+      properties: {
+        file: { type: 'string' },
+        line: { type: ['integer', 'null'] },
+        quote: { type: 'string' },
+      },
+    },
   },
 }
 const CRITIC_SCHEMA = {
@@ -47,7 +56,7 @@ const verdicts = await parallel([
 待驗 finding ${f.id}：
 ${f.q}
 
-回傳 StructuredOutput：finding_id=${f.id}、truly_closed（僅當 code 親見真閉合）、introduced_new_issue、reason（引用真實 code 片段+行號，可附 probe 結果）。`,
+回傳 StructuredOutput：finding_id=${f.id}、truly_closed（僅當 code 親見真閉合）、introduced_new_issue、reason（引用真實 code 片段+行號，可附 probe 結果）。**強烈建議**附 evidence \`{file,line,quote}\`＝你判斷所依據的真實 code 位置；找不到確切行就填 \`line:null\` 並在 quote/reason 說明，**嚴禁猜行號**。`,
       { label: `verify:${f.id}`, phase: 'Verify', schema: VERDICT_SCHEMA })
   ),
   () => agent(`${PRE}
