@@ -14,7 +14,7 @@ if (!ROOT) return { label: LABEL, held: 'bad_args', missing: ['root'], verdicts:
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['finding_id', 'truly_closed', 'introduced_new_issue', 'reason'], // evidence 刻意 optional：避免漏填被 :60 filter drop → SKILL.md:74 length-mismatch infra-HELD
+  required: ['finding_id', 'truly_closed', 'introduced_new_issue', 'reason'], // evidence 刻意 optional：避免漏填被 verdicts filter(Boolean) drop → SKILL.md P5 length-mismatch infra-HELD 分支
   properties: {
     finding_id: { type: 'string' }, truly_closed: { type: 'boolean' },
     introduced_new_issue: { type: 'boolean' }, reason: { type: 'string' },
