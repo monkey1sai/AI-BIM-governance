@@ -79,9 +79,6 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         root: worktreeRoot, label: slug,
         findings: [...P3.finalReview.findings, ...((P4.evidence && P4.evidence.gaps) || [])],
         criticFocus: '通讀全 diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。'}})
-     // DACS（arXiv:2604.07911）：P5 findings 一律壓成 registry {id, q:<一句話 claim ≤800 char>, suspectFile}，
-     //   不灌 P3 finalReview 全文；fu-...js 對超長 q / 缺 id / 非字串 suspectFile 會 held:'bad_findings' fail-fast。
-     //   （指揮官真截斷 q 為 doc 紀律；機械只驗入參合規。）
      infra 分支(與內容性不過分開):P5===null 或 P5.critic===null 或 P5.verdicts.length !== 送入
        findings 數(verifier 回 null 被 filter 掉 = 有 finding 沒驗到,不可視為通過)
        → 重呼 P5 一次(resumeFromRunId);仍 infra 失敗 → HELD(視同 reviewer_agent_failed)
