@@ -13,7 +13,7 @@
   ```
   東勢區許良宇紀念圖書館/root/main/<UUID>/model.ifc
   ```
-  → 現行邏輯一律判 malformed、永不觸發。即使觸發，中文專案名會被下游 `_safe_id`（`sanitizeArtifactIdPart`：`[^A-Za-z0-9_.-]`→刪）清成空字串，dispatch 端 400（程式註解 [streamingConversionClient.ts:110-112](../../../bim-review-coordinator/src/services/streamingConversionClient.ts) 已記此風險）。
+  → 現行邏輯一律判 malformed、永不觸發。且即使觸發，中文專案名雖經下游 `sanitizeSafeIdField`→`sanitizeArtifactIdPart` 後**已可派工**（全非安全→`mv_<hash8>`，**不會 400**），卻被降級為**不可讀**代號。本變更目的＝(a) 修正解析使多層結構能觸發、(b) 提供**穩定可讀 + 保留原名顯示**的 project_id（[streamingConversionClient.ts:96-106](../../../bim-review-coordinator/src/services/streamingConversionClient.ts) 為既定 sanitize 契約）。
 
 ## 2. 目標
 
@@ -25,7 +25,7 @@
 - **R2**：湊不齊三部分（去 prefix/suffix 後 < 3 段，或含空段）→ 視為 malformed、誠實跳過（沿用既有 `skip_permanent` 語意，只計一次）。
 - **R3**：中文專案名 **如實顯示** 給人看；同時提供下游可用的英數安全 `project_id`。
 - **R4**：UI **完整顯示** MinIO 原始結構（整串 key，所有層、中文皆可見）。
-- **R5**：內部儲存**不必**照抄完整 MinIO 路徑，只需保有三部分（專案／種類／版本）+ 供顯示的原始 key。
+- **R5**：內部儲存**不必**照抄完整 MinIO 路徑。種類／專案原名**只隨進件 payload 傳遞**（供下游/UI 取用），**不寫入** coordinator 本地 shadow store（YAGNI，§8）；供顯示的完整原始 key 由既有 watcher status `last_triggered[].key` 保留。版本（`external_model_version_id`）維持既有持久化。
 - **R6**：未啟用（`MINIO_WATCH_ENABLED` 未設）時行為與現況完全一致；不碰機密。
 
 ## 4. 設計
@@ -50,17 +50,16 @@
   sourceEtagFrom: (etag: string) => string; }
 ```
 
-### 4.2 安全 project_id 導出
+### 4.2 安全 project_id 導出（直接重用 sanitizeArtifactIdPart，不自造方案）
 
-```
-safeProjectId(raw):
-  if sanitizeArtifactIdPart(raw) === raw  → raw                 // 已是英數安全（如 899）原樣不動
-  else                                    → "p_" + sha256(raw).hex.slice(0, 12)
-```
+`project_id = sanitizeArtifactIdPart(projectRaw)`——重用下游既有函式為**單一安全真相**：
+- 純英數安全（如 `899`）→ 原樣。
+- 含非安全（中文）→ `${safe}_${sha256[:8]}`；全非安全（純中文）→ `mv_${sha256[:8]}`（[streamingConversionClient.ts:96-106](../../../bim-review-coordinator/src/services/streamingConversionClient.ts) 既定契約）。
 
-- 確定性：同一中文名永遠同代號 → 同專案不同版本歸在同一 `project_id` 下。
-- `sanitizeArtifactIdPart` 為「安全」唯一真相來源（單一定義，不另寫一份規則）。
-- sha256 用 `node:crypto`（watcher 為 Node runtime，無新增 production 依賴）。
+- **跨路徑一致**：dispatch 端 `toInternalIfcReadyEvent` 對 project_id 再跑一次 `sanitizeArtifactIdPart`（streamingConversionClient.ts:145），對已安全值**冪等**；故 watcher 自動路徑與手動 intake 路徑對同一中文名得到**同一 project_id**（不再分裂成兩套代號）。
+- **確定性**：同名→同代號（sha256 確定性）。
+- **已知限制（NFC/NFD）**：對 raw bytes 直接 hash、不做 Unicode 正規化（與下游同函式一致、不單方正規化）；純漢字 NFC==NFD 穩定，但帶重音拉丁/韓文等 NFC≠NFD 來源的同一視覺名稱可能分裂。實務上傳端以純漢字為主，列為已知限制。
+- **路徑安全**：`deriveIntakeFromKey` 對 segment 除「空段」外，額外拒收純點段 `.` / `..`（dots 在 `SAFE_ID_RE` 內、sanitize 不會擋），防 `..` 原樣成為 project_id 的路徑穿越形狀。
 
 ### 4.3 intake payload（minioWatcher → `POST /api/external/ifc-ready`）
 
@@ -83,6 +82,8 @@ safeProjectId(raw):
 - 舊「2 層」key（如 `899/v1/model.ifc`）在新規則下未湊滿三段 → 變 malformed。屬**刻意契約變更**（真實資料皆 ≥3 層）。既有測試 / fixtures 同步升級為符合新規則的多層案例。
 - `openspec/specs/minio-watch-auto-intake/spec.md` 的 key 規約段（「恰兩層 projectId/modelId」「{projectId}/{modelId}/model.ifc」）改寫為「≥3 段：專案/…(可變動)…/種類/版本」。
 - flag-off（未啟用）行為不變；不碰機密；無新增 production 依賴。
+- **跨 spec 調和**：`minio-fileserver-source` / `a2-version-diff-selector` 描述 bim-control 為兩層（`{projectId}/{modelId}`），那是 **governance-service 掃本機 `storage/`（dev fixture：270/889/990）** 的 surface；本 spec 改的是 **watcher 讀的真實雲端 bim-control bucket（≥3 段、含動態中間層）** 的 surface——兩者不同來源、不矛盾。spec delta 內須加一句明示區分，避免兩條 live spec 對同名 bucket 各說各話。
+- **OpenSpec provenance**：本變更含 production code 行為變更，MUST 走 active change（`openspec/changes/minio-watch-key-structure/` 寫 `## MODIFIED Requirements` delta），不直接手改 live `specs/`；否則 pull-request-review-agent 判 blocked（見 plan Task 0）。
 
 ## 6. 受影響檔案
 

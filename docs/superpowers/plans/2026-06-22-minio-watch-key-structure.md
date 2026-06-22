@@ -410,3 +410,32 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 **2. Placeholder scan：** Task 2 Step 1 與 Task 3 Step 3 對「既有 harness 變數名／是否含 2 層 key」留有實作時對齊空間，已標明沿用既有命名、非待填邏輯；其餘步驟均含完整程式碼與指令。
 
 **3. Type consistency：** `DeriveOk`（Task 1）的 `projectId/projectDisplayName/category/externalModelVersionId` 與 Task 2 payload 欄位、app.ts schema、types.ts 欄位名一致（`project_display_name`/`model_category`）。
+
+---
+
+## 審查修訂（ultracode wf_6a8d956e-e07，2026-06-22）
+
+5 視角對抗審查裁決 **issues**。以下修訂**覆寫上方對應任務**（衝突時以本節為準）。
+
+**＋Task 0（OpenSpec change provenance，mustFix）**：本變更含 production code 行為變更，先建 active change `openspec/changes/minio-watch-key-structure/`（`proposal.md` + `tasks.md` + `specs/minio-watch-auto-intake/spec.md` 的 `## MODIFIED Requirements` delta）。理由：pr-review-agent 對「無 active change 的 code 行為變更」判 **blocked**（memory `pr-review-agent-needs-active-change-id` 已記）。PR merge 後 `npx openspec archive` 落地。
+
+**Task 1 修正**：
+- Step 1 為「**整檔覆寫** `minio-watcher-derive.test.ts`」（刪除原「保留三個既有 test 不動」誤導語；提供的 ts 即完整檔，新 reason「未湊齊三段」取代舊「兩層」斷言）。
+- safe project_id **不自造 `p_<hash>`**：直接 `project_id = sanitizeArtifactIdPart(projectRaw)`（單一真相、跨路徑冪等一致）。純中文→`mv_<hash8>`、部分安全→`${safe}_<hash8>`、英數→原樣。**移除** `deriveSafeProjectId` helper。測試斷言：中文案例改斷言 `/^mv_[0-9a-f]{8}$/`（非 `p_…`）、`899`→`899`、同名確定性仍成立。
+- **segment 驗證加拒收 `.`/`..`**（與空段並列判 malformed）：`segments.some((s) => s === "" || s === "." || s === "..")`。補測試 `key="../main/v1/model.ifc" → ok=false`。
+- NFC/NFD：不正規化、列已知限制（design §4.2）；不改 code。
+
+**Task 2 修正（落地深度 + 既有測試）**：
+- 種類/專案原名**只隨 POST body 傳遞、不進 store**（R5 已改）。新欄位斷言**改放 `minio-watcher-loop.test.ts` 的 `startIntakeStub` received[].body**（真攔 raw body），**不放** integration（它讀 store-list、不含這兩欄→結構不可達）。
+- 仍加 app.ts schema / types.ts 的兩個 optional 欄位（typed、passthrough 相容）。**不**改 `ExternalIfcReadyStore` / `summarizeIfcReadyJob`（維持 YAGNI）。
+
+**Task 3 修正（測試遷移升為必改、窮舉）**：
+- `minio-watcher-loop.test.ts`：**所有** 2 段 key 補中段——`899/xxx`→`899/main/xxx`、`900/yyy`→`900/main/yyy`、`988/zzz`→`988/main/zzz`、分頁 inline-XML `899/p1`→`899/main/p1`、`900/p2`→`900/main/p2`；同步更新所有 `last_triggered[].key` 斷言；project/version 維持（`988`/`zzz`），新增 `model_category==='main'`（在 received body 上）。
+- **翻轉 malformed fixture**（現 L254-265 用 4 段當壞例，新規則下變合法）→ 改用真正 <3 段（如去 suffix 後僅 1 段的 `bad/model.ifc`）當 malformed，保留 `skipped_malformed_total>=1`、`received.length===0`。
+- `minio-watch-intake-integration.test.ts` 既有 it（77-172）：baseline `899/xxx`→`899/main/xxx`、注入 `988/zzz`→`988/main/zzz`，ref/key 子字串斷言同步含 `988/main/zzz/model.ifc`。
+- e2e spec：L34/146 baseline、L230 注入升級多層；順手更新 L266 註解舊 key。
+- 收口閘 `npm run verify`（全測試）為窮舉正確性的**最終強制**（漏改必紅）。
+
+**Task 4 修正**：改為在 Task 0 的 active change 內寫 `minio-watch-auto-intake` 的 `## MODIFIED Requirements` delta（含「≥3 段：專案/種類/版本」「中文→`sanitizeArtifactIdPart` 安全 id」「種類/原名只隨 payload 傳遞不入 store」「與 `minio-fileserver-source` 不同 surface 之調和句」），**不**直接改 live `specs/`。
+
+**已知/可接受（不改 code）**：跨路徑 NFC/NFD 限制（design §4.2）；`sanitizeArtifactIdPart` 對純中文輸出 `mv_<hash8>`（不可讀但穩定，可讀性由 `project_display_name` + 完整 key 補足）。
