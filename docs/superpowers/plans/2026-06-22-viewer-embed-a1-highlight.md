@@ -29,7 +29,7 @@
 
 **Files:**
 - Modify: `bim-review-coordinator/src/types.ts`（`ReviewSession` interface，line 92-110，加 `first_frame_at`）
-- Modify: `bim-review-coordinator/src/app.ts`（新 route，插在 `events` POST 後 line 875 與 `close` 前 line 877 之間；`summarizeSessionForRuntime` emit，line 2192-2213）
+- Modify: `bim-review-coordinator/src/app.ts`（**頂部 import 區加 `import { nowIso } from "./utils/time.js";`**——已查證目前無此 import；新 route 插在 `events` POST 後 line 875 與 `close` 前 line 877 之間；`summarizeSessionForRuntime` emit，line 2192-2213）
 - Test: `bim-review-coordinator/tests/session-first-frame.test.ts`（新檔）
 - Modify: `bim-review-coordinator/tests/sessions.test.ts`（回歸鎖：既有 `runtime/status` 形狀斷言若需補 `first_frame_at: null` 預期值）
 
@@ -52,54 +52,64 @@ gitnexus_impact({ target: "buildRuntimeStatus", direction: "upstream" })
   }
   ```
 
-- [ ] 寫失敗測試（先紅）：新建 `bim-review-coordinator/tests/session-first-frame.test.ts`，比照既有 `tests/sessions.test.ts` 的 app 建構慣例（`grep -n "createApp\|buildApp\|import" tests/sessions.test.ts | head` 找出建 app 的 helper 與 import 路徑，照抄）。內容涵蓋：
+- [ ] 寫失敗測試（先紅）：新建 `bim-review-coordinator/tests/session-first-frame.test.ts`，比照既有 `tests/sessions.test.ts` 的 app 建構慣例（`grep -n "createApp\|buildApp\|makeApp\|import" tests/sessions.test.ts | head` 找出建 app 的 helper 與 import 路徑，照抄）。**已查證（2026-06-22）：`sessions.test.ts` 用 `import request from "supertest"` + `import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js"`；建 app 的 helper 是 `function makeApp(overrides = {}): CoordinatorApp`，回傳 `CoordinatorApp`；`store` 不是裸露變數，而是 `CoordinatorApp` 的 export field（app.ts:276 `store: SessionStore`），故須透過 `const app = makeApp(); app.store.get(sid)` 存取（裸寫 `store.get(...)` 會 `store is not defined` compile error）。`request(...)` 的對象是 `app.app`（Express instance；照抄 sessions.test.ts 怎麼傳給 supertest）。建真 session 用 `POST /api/review-sessions`（照抄 sessions.test.ts 的 session 建立 payload）。** 內容涵蓋（下列骨架已對齊 `app.store` 存取慣例與 `makeApp()` setup）：
   ```ts
-  import { describe, it, expect, beforeEach } from "vitest";
-  // 比照 sessions.test.ts 取得 app / store / 建 session 的 helper（照抄該檔的 setup）
-  // 下列為斷言骨架，建 app/session 的樣板用 sessions.test.ts 的既有寫法：
+  import request from "supertest";
+  import { describe, it, expect } from "vitest";
+  import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
+  // 比照 sessions.test.ts：makeApp() 用 mkdtempSync 配置 sessionStoreDir/eventLogDir/...，
+  // afterEach 關掉 app.io / app.server。照抄該檔的 makeApp 與 afterEach（含 createSession helper）。
+  // 注意：supertest 對象 = app.app（Express），session 狀態查詢 = app.store.get(sid)（非裸 store）。
 
   describe("POST /api/review-sessions/:sessionId/first-frame", () => {
     it("safe-id 不合法回 400", async () => {
-      const res = await request(app).post("/api/review-sessions/not%20safe/first-frame").send({});
+      const app = makeApp();
+      const res = await request(app.app).post("/api/review-sessions/not%20safe/first-frame").send({});
       expect(res.status).toBe(400);
     });
     it("session 不存在回 404", async () => {
-      const res = await request(app).post("/api/review-sessions/review_session_doesnotexist/first-frame").send({});
+      const app = makeApp();
+      const res = await request(app.app).post("/api/review-sessions/review_session_doesnotexist/first-frame").send({});
       expect(res.status).toBe(404);
     });
     it("首次回報寫入 first_frame_at + 記 firstFrameObserved event", async () => {
-      const sid = createdSession.session_id; // 用 setup 建好的真 session
-      const res = await request(app).post(`/api/review-sessions/${sid}/first-frame`).send({ endpoint_id: "kit_local_001" });
+      const app = makeApp();
+      const sid = (await createSession(app)).session_id; // createSession = 照抄 sessions.test.ts 建真 session 的 helper
+      const res = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({ endpoint_id: "kit_local_001" });
       expect(res.status).toBe(200);
       expect(typeof res.body.first_frame_at).toBe("string");
-      const events = await request(app).get(`/api/review-sessions/${sid}/events`);
+      const events = await request(app.app).get(`/api/review-sessions/${sid}/events`);
       expect(events.body.items.some((e: any) => e.type === "firstFrameObserved")).toBe(true);
-      const stored = store.get(sid);
+      const stored = app.store.get(sid); // 已查證：store 是 CoordinatorApp field（app.ts:276），非裸變數
       expect(stored?.first_frame_at).toBe(res.body.first_frame_at);
     });
     it("冪等：第二次回報不覆寫時戳、不重複 append", async () => {
-      const sid = createdSession.session_id;
-      const first = await request(app).post(`/api/review-sessions/${sid}/first-frame`).send({});
-      const second = await request(app).post(`/api/review-sessions/${sid}/first-frame`).send({});
+      const app = makeApp();
+      const sid = (await createSession(app)).session_id;
+      const first = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({});
+      const second = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({});
       expect(second.body.first_frame_at).toBe(first.body.first_frame_at);
-      const events = await request(app).get(`/api/review-sessions/${sid}/events`);
+      const events = await request(app.app).get(`/api/review-sessions/${sid}/events`);
       expect(events.body.items.filter((e: any) => e.type === "firstFrameObserved").length).toBe(1);
     });
     it("忽略 body.observed_at，用 coordinator 時戳（N3）", async () => {
-      const sid = createdSession.session_id;
-      const res = await request(app).post(`/api/review-sessions/${sid}/first-frame`).send({ observed_at: "1999-01-01T00:00:00.000Z" });
+      const app = makeApp();
+      const sid = (await createSession(app)).session_id;
+      const res = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({ observed_at: "1999-01-01T00:00:00.000Z" });
       expect(res.body.first_frame_at).not.toBe("1999-01-01T00:00:00.000Z");
     });
     it("runtime/status.sessions[].items[] emit first_frame_at（型別鏈 M3）", async () => {
-      const sid = createdSession.session_id;
-      await request(app).post(`/api/review-sessions/${sid}/first-frame`).send({});
-      const rt = await request(app).get("/api/runtime/status");
+      const app = makeApp();
+      const sid = (await createSession(app)).session_id;
+      await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({});
+      const rt = await request(app.app).get("/api/runtime/status");
       const item = rt.body.sessions.items.find((s: any) => s.session_id === sid);
       expect(item).toBeTruthy();
       expect(item.first_frame_at).toBeTruthy();
     });
   });
   ```
+  註：上方 `app.app` / `app.store` / `createSession(app)` 三者**以 sessions.test.ts 的實際慣例為最終依據**（該檔 supertest 傳的物件、建 session 的 helper 名稱以 grep 結果照抄）；此處骨架已校正 reviewer 指出的「裸 `store` not defined」問題（改 `app.store`），執行者照抄前仍 grep 對齊 helper 名。
 
 - [ ] 跑確認失敗：
   ```
@@ -136,7 +146,12 @@ gitnexus_impact({ target: "buildRuntimeStatus", direction: "upstream" })
     }
   });
   ```
-  確認 `nowIso` 已 import（`grep -n "nowIso" bim-review-coordinator/src/app.ts` 應見既有 import；若無，從 `./utils/time.js` 補 import，比照其他 import 的 `.js` 後綴慣例）。
+- [ ] **（必做 checklist step）補 `nowIso` import**：上面 route 用了 `nowIso()`，但**已查證（2026-06-22 grep）：`bim-review-coordinator/src/app.ts` 目前完全未 import `nowIso`（零命中）**——app.ts 既有時戳全用裸 `new Date().toISOString()`（如 line 1724/2123）。`nowIso` 定義在 `bim-review-coordinator/src/utils/time.ts:1`（`export function nowIso()`），其他檔案（`eventLog.ts:4`、`kitPool.ts:3`）以 `import { nowIso } from "../utils/time.js"` 取用。**故 app.ts 須在頂部 import 區加入這一行**（app.ts 在 `src/`，故相對路徑為 `./utils/time.js`，比照其他 import 的 `.js` 後綴慣例）：
+  ```ts
+  import { nowIso } from "./utils/time.js";
+  ```
+  插入位置：app.ts 頂部既有 import 群中（與其他 `import ... from "./..."` 同區）。**未補此 import → 上面 route 的 `nowIso()` 會 `Cannot find name 'nowIso'` TypeScript error，`npm run verify` 的 `tsc` 直接紅。** 補完用 `grep -n "import { nowIso }" bim-review-coordinator/src/app.ts` 確認存在。
+  > （替代等價作法：若不想新增 import，可比照 app.ts 既有慣例直接用 `new Date().toISOString()` 取代 route 內 `nowIso()`；二擇一，但**不可兩者皆不做**而留 `nowIso()` 裸引用。）
 
 - [ ] 最小實作（型別鏈 (1)：emit）：在 `summarizeSessionForRuntime`（app.ts:2192-2213）的 return 物件，於 `updated_at: session.updated_at,`（line 2211）後加：
   ```ts
@@ -270,7 +285,10 @@ gitnexus_impact({ target: "buildRuntimeStatus", direction: "upstream" })
 
   export interface EmbeddedViewerProps {
     sessionId: string;
-    viewerOrigin: string; // 由呼叫端傳入（reviewEnv.coordinatorApiBase 或 viewer base 推導），接收端白名單複用 VITE_ALLOWED_COORDINATOR_ORIGINS
+    viewerOrigin: string; // 必須是「viewer 入口 origin」（:5173 baked viewer），非 coordinator :8004。
+                          // 真源 = coordinatorClient.runtimeStatus().configured_endpoints.viewer.browser_url_base（Task 3 提供）。
+                          // ⚠️ 傳成 coordinator base 會讓 iframe 載 coordinator HTML、postMessage 橋永遠收不到 viewer 訊息。
+                          // 接收端白名單仍複用 VITE_ALLOWED_COORDINATOR_ORIGINS（viewer 端驗 parent=console origin）。
     onViewerReady?: () => void;
     onFirstFrame?: (m: FirstFrameMessage) => void;
     onStageLoaded?: (stageUrl: string | null) => void;
@@ -342,6 +360,8 @@ gitnexus_impact({ target: "buildRuntimeStatus", direction: "upstream" })
 
 **Files:**
 - Modify: `web-viewer-sample/src/Window.tsx`（`componentDidMount` line 335 / `componentWillUnmount` line 345 / `_completeStageLoad` line 527 / `_overlayHighlight` line 603 / `_reverseLookupGuid` line 707；新增 `_onParentMessage`、`_firstFramePosted`、`_postToParent`）
+- Modify: `web-viewer-sample/src/config/env.ts`（**line 8 `function allowedCoordinatorOrigins` → `export function`**，已查證目前非 export；Window.tsx 要 import 它必須先 export）
+- Create: `web-viewer-sample/src/parentMessageGuard.ts`（純函式守衛）
 - Test: `web-viewer-sample/src/console/windowParentMessage.test.ts`（新檔，純函式 + 行為單元測；放 console 旁因協定常數共用）
 
 **GitNexus impact（編輯前）：**
@@ -354,6 +374,9 @@ gitnexus_impact({ target: "_completeStageLoad", direction: "upstream" })
 
 **M2 守衛抉擇（spec §2.2 二選一，本 plan 採「listener 內先判」以保 `_overlayHighlight` 既有呼叫面零改動）：**
 listener 在呼叫前用既有 `deriveOverlayInputs`（`web-viewer-sample/src/console/governance/windowOverlayGlue.ts`，與 Window.tsx:2253 render 同一套）算出 `panelState.canOperate`，false 則靜默丟棄、不觸發 `_overlayHighlight`。
+
+**前置已查證事實（2026-06-22 grep，影響下方 Step 必做）：**
+- `web-viewer-sample/src/config/env.ts:8` 目前宣告為 `function allowedCoordinatorOrigins(): Set<string> {`（**非 `export`**）；Window.tsx 要 import 它必須先把它 export，否則 `import { allowedCoordinatorOrigins } from "./config/env"` 會 `has no exported member` compile error。→ 見下方 Step「Window.tsx import 前必做：export env helper」。
 
 **Steps:**
 
@@ -417,6 +440,16 @@ listener 在呼叫前用既有 `deriveOverlayInputs`（`web-viewer-sample/src/co
   ```
   預期：6 個 `it` 全綠。
 
+- [ ] **（必做 checklist step）Window.tsx import 前必做：export env helper**：把 `web-viewer-sample/src/config/env.ts:8` 的
+  ```ts
+  function allowedCoordinatorOrigins(): Set<string> {
+  ```
+  改成
+  ```ts
+  export function allowedCoordinatorOrigins(): Set<string> {
+  ```
+  **已查證（2026-06-22 grep）：env.ts:8 目前是 `function`（非 export），且同檔 line 52 內部有自用呼叫，加 `export` 為純 additive、不影響既有呼叫。** 未加 export → 下方 `_postToParent` / `_handleParentMessage` 的 `import { allowedCoordinatorOrigins } from "./config/env"` 會 `Module '"./config/env"' has no exported member 'allowedCoordinatorOrigins'`，`npm run build` 直接紅。改完用 `grep -n "export function allowedCoordinatorOrigins" src/config/env.ts` 確認。（此檔已列入 Task 2 Files 與下方 commit 的 `git add`。）
+
 - [ ] 最小實作（Window.tsx 接線 — listener 掛載）：grep 定位 `componentDidMount`（`grep -n "componentDidMount\|componentWillUnmount" src/Window.tsx`，目前 335 / 345）。在 class 體新增欄位與方法，並在 mount/unmount 掛卸：
   - 在 class 欄位區（`private pendingStageUrl: string | null = null;` 那行附近，line 277）加：
     ```ts
@@ -432,7 +465,7 @@ listener 在呼叫前用既有 `deriveOverlayInputs`（`web-viewer-sample/src/co
         window.removeEventListener("message", this._onParentMessage);
     ```
 
-- [ ] 最小實作（Window.tsx — `_handleParentMessage` + `_postToParent`）：在 `_overlayHighlight`（603）附近新增方法。`allowedOrigins` 複用 `env.ts` 的白名單來源（`grep -n "VITE_ALLOWED_COORDINATOR_ORIGINS\|allowedCoordinatorOrigins" src/config/env.ts`；若 `allowedCoordinatorOrigins` 非 export，export 它或在 Window 內以同一 `import.meta.env.VITE_ALLOWED_COORDINATOR_ORIGINS` parse，沿用 env.ts:8-18 寫法）。`isEmbedded` = `window.parent !== window`：
+- [ ] 最小實作（Window.tsx — `_handleParentMessage` + `_postToParent`）：在 `_overlayHighlight`（603）附近新增方法。`allowedOrigins` 複用 `env.ts` 的白名單來源 `allowedCoordinatorOrigins()`（**上一個 Step 已將其 export，此處直接 `import { allowedCoordinatorOrigins } from "./config/env"`**）。`isEmbedded` = `window.parent !== window`：
   ```ts
   private _consoleParentOrigin(): string | null {
     // M5：parent origin 由 document.referrer parse（交叉驗），須在 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單內。
@@ -489,7 +522,7 @@ listener 在呼叫前用既有 `deriveOverlayInputs`（`web-viewer-sample/src/co
     }
   }
   ```
-  確認 import：`shouldAcceptParentMessage` / `canHandleHighlight`（`./parentMessageGuard`）、`deriveOverlayInputs`（已 import，line 42）、`isSpectatorStreamMode`/`harnessEnabled`（已在檔內，line 217/33）、`buildFocusPrimRequest`/`buildClearHighlightRequest`（`./clients/streamMessages`，`grep -n "buildClearHighlightRequest\|buildFocusPrimRequest" src/Window.tsx` 確認是否已 import，否則補）、`allowedCoordinatorOrigins`（從 `./config/env` import；若未 export 則 export 之）。
+  確認 import：`shouldAcceptParentMessage` / `canHandleHighlight`（`./parentMessageGuard`）、`deriveOverlayInputs`（已 import，line 42）、`isSpectatorStreamMode`/`harnessEnabled`（已在檔內，line 217/33）、`buildFocusPrimRequest`/`buildClearHighlightRequest`（`./clients/streamMessages`，`grep -n "buildClearHighlightRequest\|buildFocusPrimRequest" src/Window.tsx` 確認是否已 import，否則補）、`allowedCoordinatorOrigins`（從 `./config/env` import；**其 export 已由上方「export env helper」Step 完成**）。
 
 - [ ] 最小實作（Window.tsx — first_frame 觸發 M1）：在 `_completeStageLoad`（527）body **末尾**（`this._maybeAutoLoadMapping();` 之後，line 545）加：
   ```ts
@@ -513,6 +546,21 @@ listener 在呼叫前用既有 `deriveOverlayInputs`（`web-viewer-sample/src/co
       if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
   ```
   注意：此時 `document.referrer` 應已可用（iframe 由 console 載入）。
+
+- [ ] **（必做 checklist step）S3：嵌入模式下收合 iframe 內 GovernanceOverlay 失敗清單**（spec §2.3 / §4.2 明確要求；缺此項＝雙清單矛盾 UX「console 25 筆 / iframe 另列一份」，等同產品功能不正確）。**已查證物理事實**：viewer 內 `GovernanceOverlay`（Window.tsx:2269 render）的失敗清單表（GovernanceOverlay.tsx:222-256）只由 `failedElements.length` 驅動顯示；GovernanceOverlay **既無 collapse 旗標 prop，本格也不可改其 props 形狀（Task 2 嚴格 additive 約束）**。最小且不改 props 形狀的作法：**嵌入模式（`window.parent !== window`）時把傳給 overlay 的 `failedElements` 餵成空陣列**，使其落入既有「目前無治理失敗構件」分支（清單自然收合），overlay 仍掛載、仍是高亮引擎（postMessage `highlight` 經 `_overlayHighlight` 走 HighlightBridge），但**不再另顯第二份失敗清單**——console 左側 `state.failed` 成為唯一權威清單。
+  - grep 定位 render 處 `failedElements={this.state.govFailedElements ?? []}`（Window.tsx:2273）。改為：
+    ```tsx
+                            failedElements={window.parent !== window ? [] : (this.state.govFailedElements ?? [])}
+    ```
+    - 誠實補強：在 overlay 上方（或 panel 標題附近）additive 一行說明，讓嵌入時的「空清單」不被誤讀為「真的無失敗」。可在 `GovernanceOverlay` 外層、Window.tsx render 該區塊內加（不改 overlay props 形狀）：
+      ```tsx
+      {window.parent !== window && (
+        <p className="ec-note" data-testid="viewer-embedded-list-collapsed">失敗清單由治理工作台（parent）顯示，此 3D 視窗僅作高亮引擎。</p>
+      )}
+      ```
+  - **不改 `_overlayHighlight` / HighlightBridge / postMessage 路徑**：highlight 指令來自 console postMessage、對 `items` 直接走 bridge，與 overlay 是否顯示清單無關（清單空不影響高亮接線）。
+  - 對應單元測（加進 `windowParentMessage.test.ts` 或既有 overlay 測）：嵌入時 `failedElements` 收斂為空、`viewer-embedded-list-collapsed` 提示出現；非嵌入時清單照舊（既有 `GovernanceOverlay.test.tsx` 不壞）。
+  > 註：此為 S3 的 viewer 端落地；Task 3 console 端 JSX 已加對應註解（console 左側為唯一權威清單）。兩端合起來才完整解決 spec §2.3 的雙清單矛盾。
 
 - [ ] 跑確認通過（單元 + 既有不壞）：
   ```
@@ -538,7 +586,7 @@ listener 在呼叫前用既有 `deriveOverlayInputs`（`web-viewer-sample/src/co
 
 ## Task 3: console A1 頁整合（`A1GovernanceWorkbenchPage`，把 disabled 高亮翻真）
 
-> spec §2.3 / §4.2。把 `pages.tsx:347` 永久 disabled「在 3D 高亮」翻成真按鈕：嵌 `<EmbeddedViewer>`（左失敗清單 / 右 3D，對齊 A1 §163-170 五步 stepper 與 IX-A1-06）；加 active session 下拉（`GET /api/review-sessions` 列 active，無則誠實 disable，S2）；失敗清單每筆「在 3D 高亮」依 **IX-A1-06 四條件** enable。**此格交付 (B) 段，依賴 Task 1+2。**
+> spec §2.3 / §4.2。把 `pages.tsx:347` 永久 disabled「在 3D 高亮」翻成真按鈕：嵌 `<EmbeddedViewer>`（左失敗清單 / 右 3D，對齊 A1 §163-170 五步 stepper 與 IX-A1-06）；加 active session 下拉（**已查證無 bare `GET /api/review-sessions`，改走 `runtimeStatus().sessions.items`**，無則誠實 disable，S2）；失敗清單每筆「在 3D 高亮」依 **IX-A1-06 四條件**（first_frame[含 DataChannel ready] ∧ stage matched ∧ 有選 session ∧ 構件有 `usd_prim_path`）enable；**viewerOrigin 取自 `runtimeStatus().configured_endpoints.viewer.browser_url_base`（viewer :5173，非 coordinator :8004）**；**S3：console 左側 `state.failed` 為唯一權威失敗清單，iframe 內 overlay 清單收合（viewer 端落地見 Task 2 S3 step），解雙清單矛盾**。**此格交付 (B) 段，依賴 Task 1+2。**
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/pages.tsx`（`A1GovernanceWorkbenchPage` line 207-356；取代 line 347 disabled Btn）
@@ -553,11 +601,19 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
 
 **Steps:**
 
-- [ ] 最小實作（coordinatorClient 兩個 method，先讓 page 有 API 可呼叫）：在 `web-viewer-sample/src/console/coordinatorClient.ts` 的 `coordinatorClient` object（224-247）內，於 `sessionClose` 後加：
+- [ ] 最小實作（coordinatorClient 兩個 method，先讓 page 有 API 可呼叫）：
+
+  **已查證關鍵事實（2026-06-22 grep，spec §1.3 在此點誤判，本 plan 以實際 code 為準）：`bim-review-coordinator/src/app.ts` 沒有 bare `GET /api/review-sessions`（無 sessionId 的 list route）。** 既有的只有 `POST /api/review-sessions`（app.ts:501）、`GET /api/review-sessions/:sessionId`（app.ts:552）、以及 `/:sessionId/...` 子路由。**因此「列 active session」唯一可用的真資料源 = `GET /api/runtime/status` 的 `sessions.items`**（`RuntimeStatus.sessions.items: RuntimeSessionSummary[]`，coordinatorClient.ts:137；`RuntimeSessionSummary` 已含 `session_id` / `status` / `expected_stage_url`，coordinatorClient.ts:94-105，加上 Task 0 後再含 `first_frame_at`）。spec §1.3 寫「`GET /api/review-sessions` 可列 active」與 code 不符，**本 plan 不新增該 route，改走 `runtimeStatus()`**（PR body 須註明此一偏離）。
+
+  在 `web-viewer-sample/src/console/coordinatorClient.ts` 的 `coordinatorClient` object（224-246）內，於 `sessionClose` 後加：
   ```ts
-    // VG-01：列 active review session（A1 頁 session 下拉，S2）。沿用既有 jsonGet。
-    listReviewSessions: () =>
-      jsonGet<{ items: RuntimeSessionSummary[] }>("/api/review-sessions"),
+    // VG-01：列 active review session（A1 頁 session 下拉，S2）。
+    // 已查證：無 bare GET /api/review-sessions（spec §1.3 誤判）→ 用 runtime/status.sessions.items 為唯一真源。
+    // 回傳統一成 { items: RuntimeSessionSummary[] }，讓 A1 page 端 mapping 不變。
+    listReviewSessions: async (): Promise<{ items: RuntimeSessionSummary[] }> => {
+      const rt = await jsonGet<RuntimeStatus>("/api/runtime/status");
+      return { items: rt.sessions.items };
+    },
     // VG-01：viewer 首幀回報轉發（viewer postMessage first_frame → console → coordinator）。viewer 不直連 coordinator。
     reportFirstFrame: (sessionId: string, endpointId?: string) =>
       jsonPost<{ session_id: string; first_frame_at: string }>(
@@ -565,7 +621,8 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
         { endpoint_id: endpointId },
       ),
   ```
-  確認 `GET /api/review-sessions`（無 sessionId）回傳形狀：`grep -n "app.get(\"/api/review-sessions\"" bim-review-coordinator/src/app.ts`。若該 route 不存在或形狀非 `{items:[...]}`，改用既有 `runtimeStatus().sessions.items`（line 137 已含 `RuntimeSessionSummary[]`，spec §1.3 言「`GET /api/review-sessions` 可列 active」——以實際存在者為準，二選一並在 PR body 註明）。
+  - 型別：`RuntimeStatus` 與 `RuntimeSessionSummary` 皆已在本檔 export（coordinatorClient.ts:94 / 129），`listReviewSessions` 回傳 `{ items: RuntimeSessionSummary[] }`，故 A1 page 端讀 `r.items[].session_id/status/expected_stage_url/first_frame_at` 全部型別吻合，無需另立 state type。
+  - 確認 `jsonGet` / `jsonPost` 已在本檔頂部 import（既有 method 都在用，照既有慣例）。
 
 - [ ] 寫失敗測試（先紅）：新建 `web-viewer-sample/src/console/A1ViewerEmbed.test.tsx`，mock `coordinatorClient`（`vi.mock`）與 `EmbeddedViewer`（mock 成可觸發 callback 的 stub）。比照 `console.test.tsx` 的 render/mock 慣例：
   ```tsx
@@ -577,8 +634,16 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
   vi.mock("./EmbeddedViewer", () => ({
     EmbeddedViewer: (props: any) => { lastProps = props; return <div data-testid="embedded-viewer-stub" />; },
   }));
+  // 注意：A1 頁的 mount effect 用 coordinatorClient.runtimeStatus()（一次拿 sessions.items + viewer.browser_url_base），
+  // 不是 listReviewSessions（已查證無 bare GET /api/review-sessions）。mock 須提供 runtimeStatus，
+  // 且回傳 configured_endpoints.viewer.browser_url_base（否則 viewerOrigin=null → 顯 a1-viewer-origin-missing，session-select 仍會出）。
   vi.mock("./coordinatorClient", () => ({
     coordinatorClient: {
+      runtimeStatus: vi.fn().mockResolvedValue({
+        configured_endpoints: { viewer: { browser_url_base: "http://127.0.0.1:5173", handoff_path: "/" } },
+        sessions: { items: [{ session_id: "review_session_x", status: "active", expected_stage_url: "stage://x", first_frame_at: null }] },
+      }),
+      // listReviewSessions 仍保留（若 A1 頁改走它，二擇一）；此處與 runtimeStatus 回相同 session 集合。
       listReviewSessions: vi.fn().mockResolvedValue({ items: [{ session_id: "review_session_x", status: "active", expected_stage_url: "stage://x", first_frame_at: null }] }),
       reportFirstFrame: vi.fn().mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" }),
     },
@@ -626,26 +691,39 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
   預期：testid 找不到（UI 尚未加）→ 紅。
 
 - [ ] 最小實作（A1 頁 — session 下拉 + 嵌 viewer + 證據 + 高亮鈕）：在 `A1GovernanceWorkbenchPage`（207）內：
+
+  > **本步修掉的 4 個對抗發現（執行者務必照新版，舊草稿三處有 bug）：**
+  > 1. **viewerOrigin 來源錯（blocker）**：舊草稿傳 `reviewEnv.coordinatorApiBase`＝coordinator `:8004`，但 iframe 要載的是 **viewer（`:5173` baked source）**。已查證唯一正確真源 = `runtimeStatus().configured_endpoints.viewer.browser_url_base`（coordinatorClient.ts:133；coordinator 端 = `viewerPublicBaseUrl`，app.ts:2133）。**不新增 env var**（守 spec §3 / M5），改在 mount effect 一併讀回。傳 `:8004` 會讓 iframe 載 coordinator HTML、postMessage 橋永遠收不到 viewer 訊息、E2E 必 fail。
+  > 2. **`reviewEnv` 根本沒 import（major）**：已查證 `pages.tsx` 全檔無 `reviewEnv`（grep 零命中）。改用 `viewerOrigin` state（下方），**不再依賴 `reviewEnv`**，故也不需補該 import。
+  > 3. **失敗構件欄位 `f.label` 不存在（major）**：`state.failed` 元素型別 = `RuleResultRow`（governanceClient.ts:37-44），欄位只有 `ifc_guid:string|null` / `usd_prim_path:string|null` / `rule_code:string` / `severity:string` / `status` / `message:string`——**無 `label`**。highlight item 的 label 改用 `f.message`（fallback `f.ifc_guid ?? ""`）。
+
   - 加 state（在既有 `useState`/`useReducer` 群附近，line 208-213）：
     ```tsx
     const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; first_frame_at?: string | null }[]>([]);
     const [selectedSession, setSelectedSession] = useState<string>("");
+    const [viewerOrigin, setViewerOrigin] = useState<string | null>(null); // 真源 = runtime/status.configured_endpoints.viewer.browser_url_base（非 coordinator :8004）
     const [firstFrame, setFirstFrame] = useState(false);
     const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
     const [hl, setHl] = useState<{ ok: boolean; reason?: string } | null>(null);
     const viewerRef = useRef<import("./EmbeddedViewer").EmbeddedViewerHandle>(null);
     ```
-  - 加 effect 載 active session（mount 時，誠實：失敗不偽造）：
+  - 加 effect 載 active session **與 viewer origin**（mount 時，誠實：失敗不偽造）。**已查證：無 bare `GET /api/review-sessions`（見上一 Step），故 session 與 viewerOrigin 同走一次 `runtimeStatus()`，`listReviewSessions()` 內部也是讀 runtime/status，可二擇一；下例用 `runtimeStatus()` 一次拿齊兩者**：
     ```tsx
     useEffect(() => {
       let alive = true;
-      coordinatorClient.listReviewSessions()
-        .then((r) => { if (alive) { const act = r.items.filter((s) => s.status === "active" || s.status === "created"); setSessions(act); if (act[0]) setSelectedSession(act[0].session_id); } })
-        .catch(() => { if (alive) setSessions([]); }); // 誠實：連不上就空，不假資料
+      coordinatorClient.runtimeStatus()
+        .then((rt) => {
+          if (!alive) return;
+          const act = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
+          setSessions(act);
+          if (act[0]) setSelectedSession(act[0].session_id);
+          setViewerOrigin(rt.configured_endpoints.viewer.browser_url_base || null); // 真 viewer 入口（:5173 baked），非 :8004
+        })
+        .catch(() => { if (alive) { setSessions([]); setViewerOrigin(null); } }); // 誠實：連不上就空，不假資料
       return () => { alive = false; };
     }, []);
     ```
-  - 在 return 的 JSX，於「交付」Panel（339）之前插入新 Panel（session 下拉 + 嵌 viewer + 證據）：
+  - 在 return 的 JSX，於「交付」Panel（339）之前插入新 Panel（session 下拉 + 嵌 viewer + 證據）。**注意 `viewerOrigin={viewerOrigin}`（state，真 viewer 入口），不是 `reviewEnv.coordinatorApiBase`；viewerOrigin 還沒載到（null）時誠實顯「viewer 入口未取得」而非掛空 iframe**：
     ```tsx
         <Panel title="3D 即時檢視（嵌入 live viewer）" sub="重用既有 viewer 串流；first frame / stage truth 為真證據，非樂觀更新" prov="asbuilt">
           {sessions.length === 0 ? (
@@ -654,7 +732,7 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
             <>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
                 <label>review session</label>
-                <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => { setSelectedSession(e.target.value); setFirstFrame(false); setLoadedStageUrl(null); }}>
+                <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => { setSelectedSession(e.target.value); setFirstFrame(false); setLoadedStageUrl(null); setHl(null); }}>
                   {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
                 </select>
               </div>
@@ -662,33 +740,74 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
                 <div data-testid="a1-first-frame-evidence"><Field k="first frame" v={firstFrame ? "已收到真畫面（綠）" : "not_observed（等待 3D 第一幀）"} prov={firstFrame ? "asbuilt" : "p1"} /></div>
                 <Field k="stage matched" v={stageMatchedText(sessions, selectedSession, loadedStageUrl)} prov="asbuilt" />
               </div>
-              <div style={{ height: 480 }}>
-                <EmbeddedViewer
-                  ref={viewerRef}
-                  sessionId={selectedSession}
-                  viewerOrigin={reviewEnv.coordinatorApiBase}
-                  onFirstFrame={() => { setFirstFrame(true); void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {}); }}
-                  onStageLoaded={(u) => setLoadedStageUrl(u)}
-                  onHighlightResult={(m) => setHl({ ok: m.ok, reason: m.reason })}
-                />
-              </div>
+              {/* S3：iframe 內 viewer 自帶 GovernanceOverlay 失敗清單（會與 console 左側清單重複，造成「console 25 筆 / iframe 說無失敗」矛盾 UX）。
+                  解法分兩端：(a) viewer 端在嵌入模式把 overlay 的 failedElements 餵空使清單收合（Task 2「S3 收合」step）；
+                  (b) console 端此處只把 iframe 當高亮引擎，**唯一權威失敗清單 = 左側 state.failed 記分板**，iframe 不另顯第二份清單。 */}
+              {viewerOrigin === null ? (
+                <p className="ec-warn-note" data-testid="a1-viewer-origin-missing">viewer 入口未取得（runtime/status 無 configured_endpoints.viewer.browser_url_base 或 coordinator 連不上），3D 暫不可用</p>
+              ) : (
+                <div style={{ height: 480 }}>
+                  <EmbeddedViewer
+                    ref={viewerRef}
+                    sessionId={selectedSession}
+                    viewerOrigin={viewerOrigin}
+                    onFirstFrame={() => { setFirstFrame(true); void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {}); }}
+                    onStageLoaded={(u) => setLoadedStageUrl(u)}
+                    onHighlightResult={(m) => setHl({ ok: m.ok, reason: m.reason })}
+                  />
+                </div>
+              )}
             </>
           )}
         </Panel>
     ```
-  - 取代 line 347 disabled Btn（`<Btn prov="p1" disabled caption="需 viewer DataChannel...">在 3D 高亮</Btn>`），改成依 IX-A1-06 四條件 enable 的真按鈕（針對失敗清單第一筆做示範；多筆由 FailureScoreboard 內逐列接，見下一步）：
+  - 取代 line 347 disabled Btn（`<Btn prov="p1" disabled caption="需 viewer DataChannel...">在 3D 高亮</Btn>`），改成依 **IX-A1-06 四條件**完整 enable 的真按鈕（針對失敗清單第一筆做示範；多筆由 FailureScoreboard 內逐列接，見下一步）。
+
+    > **IX-A1-06 四條件落地（修對抗發現：舊草稿只落 1 條，違誠實鐵律）**：spec §2.3 enable = **DataChannel ready ∧ first_frame ∧ stage matched ∧ 構件有 `usd_prim_path`**。本格 console 端對映如下（每條都有來源，非裝飾）：
+    > 1. **DataChannel ready + first_frame**：已查證 viewer 端 `dataChannelReady() = this.state.showStream && this._hasRemoteVideoFrame()`（Window.tsx:610），與 first_frame 觸發點同一信號（`_completeStageLoad` 後、`_hasRemoteVideoFrame()` 為真才送 first_frame，M1）。**故 console 可觀測的 `firstFrame===true` 即代表「DataChannel ready ∧ first_frame」兩條同時成立**（viewer 是唯一真源；萬一送 highlight 當下 DataChannel 仍未就緒，viewer 會回 `highlight_result{reason:"datachannel_not_ready"}`，console 顯誠實原因——見 `highlightResultText`）。協定不另造 `datachannel_ready` 事件（避免假信號；YAGNI）。
+    > 2. **stage matched**：`isStageMatched(sessions, selectedSession, loadedStageUrl)` 純函式（下方新增）＝ `expected_stage_url === loadedStageUrl`，沿用 `stageMatchedText` 同一比對。
+    > 3. **構件有 `usd_prim_path`**：`state.failed` 元素型別 `RuleResultRow` 已含 `usd_prim_path: string | null`（governanceClient.ts:39）；逐筆檢查非 null/空。**無 prim_path 的構件鈕 disabled + 誠實原因**（不送、viewer 也會回 unmapped）。
+    >
+    > 多筆（FailureScoreboard 逐列）以同一 `canHighlightRow(f)` 判斷逐列 enable；此處示範第一筆。
     ```tsx
-        <Btn data-testid="a1-highlight-3d"
-          disabled={!firstFrame || !selectedSession || state.failed.length === 0}
-          caption="postMessage highlight → viewer HighlightBridge（IX-A1-06 四條件）"
-          onClick={() => { const f = state.failed[0]; if (f) viewerRef.current?.sendHighlight([{ ifc_guid: f.ifc_guid, severity: f.severity, label: f.label ?? f.ifc_guid, rule_code: f.rule_code }]); }}>
-          在 3D 高亮（第一筆失敗）
-        </Btn>
+        {(() => {
+          const f0 = state.failed[0];
+          const stageMatched = isStageMatched(sessions, selectedSession, loadedStageUrl);
+          // IX-A1-06 四條件：first_frame(含 DataChannel ready) ∧ 有選 session ∧ stage matched ∧ 該構件有 usd_prim_path ∧ guid 非 null。
+          const rowHighlightable = Boolean(f0 && f0.ifc_guid && f0.usd_prim_path);
+          const canHighlight = firstFrame && Boolean(selectedSession) && stageMatched && rowHighlightable;
+          const disabledReason = !firstFrame ? "等待 3D 第一幀（first frame / DataChannel 未就緒）"
+            : !stageMatched ? "stage 未對齊（expected ≠ loaded）"
+            : !f0 ? "尚無失敗構件"
+            : !f0.ifc_guid ? "此構件無 ifc_guid，無法高亮"
+            : !f0.usd_prim_path ? "此構件未對映 USD（無 usd_prim_path），無法高亮"
+            : "";
+          return (
+            <Btn data-testid="a1-highlight-3d"
+              disabled={!canHighlight}
+              caption={canHighlight ? "postMessage highlight → viewer HighlightBridge（IX-A1-06 四條件）" : disabledReason}
+              onClick={() => {
+                if (!f0 || !f0.ifc_guid) return;
+                viewerRef.current?.sendHighlight([{
+                  ifc_guid: f0.ifc_guid,               // 已查證 RuleResultRow.ifc_guid: string|null → 此處已 guard 非 null
+                  severity: f0.severity,
+                  label: f0.message ?? f0.ifc_guid,    // RuleResultRow 無 label 欄；改用 message（fallback ifc_guid）
+                  rule_code: f0.rule_code,
+                }]);
+              }}>
+              在 3D 高亮（第一筆失敗）
+            </Btn>
+          );
+        })()}
         {hl && <span className="ec-note" data-testid="a1-highlight-status" style={{ marginLeft: 6 }}>{highlightResultText(hl)}</span>}
     ```
-    註：`state.failed` 的元素欄位名以實際 reducer 型別為準（`grep -n "failed:" src/console/a1Machine.ts` 與 FailureScoreboard props 確認 `ifc_guid`/`severity`/`label`/`rule_code` 對應；不一致時照實際欄位映射）。
-  - 加兩個純函式 helper（檔案模組層，A1 page 外）：
+    註：`state.failed` 元素型別已查證 = `RuleResultRow`（a1Machine.ts:11 `failed: RuleResultRow[]`；型別在 governanceClient.ts:37-44），欄位為 `ifc_guid:string|null` / `usd_prim_path:string|null` / `rule_code:string` / `severity:string` / `status` / `message:string`，**無 `label`**。上方 mapping 已對齊（label→message、guid 先 guard）。`EmbeddedViewer` 的 `HighlightItem.ifc_guid` 與 viewer `FailedElement.ifc_guid` 皆為 `string`（非 null，highlightBridge.ts:11），故 onClick 內必先 `f0.ifc_guid` guard。
+  - 加三個純函式 helper（檔案模組層，A1 page 外）：
     ```tsx
+    function isStageMatched(sessions: { session_id: string; expected_stage_url: string | null }[], selected: string, loaded: string | null): boolean {
+      const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
+      return Boolean(loaded && exp && loaded === exp);
+    }
     function stageMatchedText(sessions: { session_id: string; expected_stage_url: string | null }[], selected: string, loaded: string | null): string {
       const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
       if (!loaded) return "not_observed（尚未載入）";
@@ -702,7 +821,7 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
       return "高亮未成功";
     }
     ```
-  - 確認 import：`EmbeddedViewer`/`EmbeddedViewerHandle`（`./EmbeddedViewer`）、`reviewEnv`（`grep -n "reviewEnv" src/console/pages.tsx` 確認是否已 import，否則從 `../config/env` 補）、`useEffect`/`useRef`/`useState`（react，多半已 import）。
+  - 確認 import：`EmbeddedViewer`/`EmbeddedViewerHandle`（`./EmbeddedViewer`）、`useEffect`/`useRef`/`useState`（react，多半已 import）。**已查證：`pages.tsx` 無 `reviewEnv`（grep 零命中），本步改用 `viewerOrigin` state（讀 runtime/status），故不需也不要補 `reviewEnv` import。**
 
 - [ ] 跑確認通過：
   ```
