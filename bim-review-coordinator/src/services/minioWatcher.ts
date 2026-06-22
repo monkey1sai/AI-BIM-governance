@@ -314,6 +314,9 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       event: "ifc_ready",
       tenant_id: opts.tenantId,
       project_id: derived.projectId,
+      // 種類(倒數二層)與專案原名(中文如實顯示)隨進件傳遞；種類/原名只傳遞、不入本地 store（R5）。
+      project_display_name: derived.projectDisplayName,
+      model_category: derived.category,
       external_model_version_id: derived.externalModelVersionId,
       external_conversion_task_id: `${derived.externalModelVersionId}_mw_${etagShort}`,
       source_ifc: {

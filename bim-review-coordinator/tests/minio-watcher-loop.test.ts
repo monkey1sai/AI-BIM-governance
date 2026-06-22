@@ -175,9 +175,9 @@ describe("minioWatcher loop", () => {
       tokenRequests.push(token ?? "(first)");
       res.writeHead(200, { "Content-Type": "application/xml" });
       if (!token) {
-        res.end('<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>true</IsTruncated><NextContinuationToken>tok2</NextContinuationToken><Contents><Key>899/p1/model.ifc</Key><ETag>&quot;pe1&quot;</ETag><Size>10</Size></Contents></ListBucketResult>');
+        res.end('<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>true</IsTruncated><NextContinuationToken>tok2</NextContinuationToken><Contents><Key>899/main/p1/model.ifc</Key><ETag>&quot;pe1&quot;</ETag><Size>10</Size></Contents></ListBucketResult>');
       } else {
-        res.end('<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>false</IsTruncated><Contents><Key>900/p2/model.ifc</Key><ETag>&quot;pe2&quot;</ETag><Size>10</Size></Contents></ListBucketResult>');
+        res.end('<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>false</IsTruncated><Contents><Key>900/main/p2/model.ifc</Key><ETag>&quot;pe2&quot;</ETag><Size>10</Size></Contents></ListBucketResult>');
       }
     });
     await new Promise<void>((r) => s3Stub!.listen(0, "127.0.0.1", () => r()));
@@ -195,7 +195,7 @@ describe("minioWatcher loop", () => {
   });
 
   it("首輪 baseline 不觸發（seen=N、triggered=0）", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }, { key: "900/yyy/model.ifc", etag: "e2" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }, { key: "900/main/yyy/model.ifc", etag: "e2" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
@@ -212,7 +212,7 @@ describe("minioWatcher loop", () => {
   });
 
   it("第二輪新增物件 → 觸發一筆 intake，payload 與 header 正確", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
@@ -220,15 +220,17 @@ describe("minioWatcher loop", () => {
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     // 新增物件 → 下一輪應觸發
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     await waitFor(() => received.length === 1);
 
     const { body, headers } = received[0];
     expect(body.event).toBe("ifc_ready");
     expect(body.tenant_id).toBe("tenant_demo_001"); // 來自 options.tenantId（makeWatcher 預設）
     expect(body.project_id).toBe("988");
+    expect(body.project_display_name).toBe("988"); // 專案原名（英數→原樣；中文則保留中文，見 derive 單元測試）
+    expect(body.model_category).toBe("main"); // 種類＝倒數第二層
     expect(body.external_model_version_id).toBe("zzz");
-    expect((body.source_ifc as Record<string, unknown>).ref).toContain("988/zzz/model.ifc"); // presigned GET URL
+    expect((body.source_ifc as Record<string, unknown>).ref).toContain("988/main/zzz/model.ifc"); // presigned GET URL
     expect((body.source_ifc as Record<string, unknown>).ref).toMatch(/X-Amz-Signature=/); // 含簽章參數
     expect((body.source_ifc as Record<string, unknown>).etag).toBe("e9");
     expect(headers["x-webhook-secret"]).toBe("dev-webhook-secret");
@@ -238,13 +240,13 @@ describe("minioWatcher loop", () => {
   });
 
   it("同物件後續輪不再觸發（seen 命中，triggered 維持 1）", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
     watcher = makeWatcher(s3Base, selfBase, state);
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     await waitFor(() => received.length === 1);
     await new Promise((r) => setTimeout(r, 300)); // 多跑幾輪
     expect(received.length).toBe(1);
@@ -252,20 +254,21 @@ describe("minioWatcher loop", () => {
   });
 
   it("層級不符 key → skipped_malformed 計數，不觸發", async () => {
-    const state = { objs: [{ key: "deep/899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/seed/model.ifc", etag: "e1" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
     watcher = makeWatcher(s3Base, selfBase, state);
     // 首輪即 baseline，但 malformed 不入 baseline 觸發域；改在新增 malformed 後驗 skip
     await waitFor(() => (watcher!.getStatus().last_poll_at as string | null) !== null);
-    state.objs.push({ key: "also/deep/path/model.ifc", etag: "e2" });
+    // 新規則：去 suffix 後僅 1 段 → 未湊齊三段 → malformed（不可再用 4 段，4 段在新規則為合法）。
+    state.objs.push({ key: "also-bad/model.ifc", etag: "e2" });
     await waitFor(() => (watcher!.getStatus().skipped_malformed_total as number) >= 1);
     expect(received.length).toBe(0);
   });
 
   it("[t1] body.tenant_id 來自 options.tenantId（非硬編碼）", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
@@ -273,13 +276,13 @@ describe("minioWatcher loop", () => {
     watcher = makeWatcher(s3Base, selfBase, state, { tenantId: "tenant_acme_042" });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     await waitFor(() => received.length === 1);
     expect(received[0].body.tenant_id).toBe("tenant_acme_042");
   });
 
   it("[t4] status.poll_count 每輪 tick 完成後單調遞增（取代時間戳比較）", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
@@ -352,14 +355,14 @@ describe("minioWatcher loop", () => {
   });
 
   it("intake 回 2xx 但非 JSON body → triggered_total 不 +1，last_triggered 記錯誤（計數與狀態一致）", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startNonJsonIntakeStub(received);
     const s3Base = await startS3Stub(state);
     watcher = makeWatcher(s3Base, selfBase, state);
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     // intake 確實收到 POST（202），但回 HTML；watcher 不得把它計為成功觸發。
     // 自癒語意下失敗物件每輪重試 → received 會持續累積，不可斷言恰好 1 筆（exact 會 flaky）。
     await waitFor(() => received.length >= 1);
@@ -367,14 +370,14 @@ describe("minioWatcher loop", () => {
 
     const st = watcher!.getStatus();
     expect(st.triggered_total).toBe(0); // 非 JSON → 不算成功觸發
-    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.key).toBe("988/main/zzz/model.ifc");
     expect(st.last_triggered[0]?.job_id).toBeNull();
     expect(st.last_triggered[0]?.error).toBeTruthy(); // 記錯誤，與計數一致（非「成功但帶錯誤」）
     expect(st.last_error).toBeNull(); // 單一物件失敗不污染整輪 last_error
   });
 
   it("intake 長時間不回應 → fetch 逾時不凍結 loop，記 last_triggered.error 後續輪續跑", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ at: number }> = [];
     const selfBase = await startHangingIntakeStub(received);
     const s3Base = await startS3Stub(state);
@@ -384,7 +387,7 @@ describe("minioWatcher loop", () => {
     watcher = makeWatcher(s3Base, selfBase, state, { intakeTimeoutMs: 600 });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
 
     // intake 確實收到請求（但永不回） → 逾時後須記入 last_triggered.error
     await waitFor(() => received.length >= 1);
@@ -392,7 +395,7 @@ describe("minioWatcher loop", () => {
 
     const st = watcher!.getStatus();
     expect(st.triggered_total).toBe(0); // 逾時 → 不算成功觸發
-    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.key).toBe("988/main/zzz/model.ifc");
     expect(st.last_triggered[0]?.job_id).toBeNull();
     expect(st.last_triggered[0]?.error).toBeTruthy(); // AbortError 入 error，與其他網路失敗對等
     expect(st.last_error).toBeNull(); // 單一物件逾時不污染整輪 last_error
@@ -406,7 +409,7 @@ describe("minioWatcher loop", () => {
   it("intake 暫時性失敗（5xx）→ 物件不標 seen、下輪重試，成功後鎖定不再重送（自癒）", async () => {
     // Codex review P1 修復鎖定：舊行為在 triggerIntake 前就 seen.set，一次 5xx/網路失敗會讓
     // 該物件之後每輪都命中 prev===etag 永不重試（與「漏抓自癒」宣稱矛盾）。
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ status: number }> = [];
     let failRemaining = 1; // 第一筆回 500，之後回 202 成功
     intakeStub = http.createServer((req, res) => {
@@ -433,7 +436,7 @@ describe("minioWatcher loop", () => {
     watcher = makeWatcher(s3Base, selfBase, state);
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
 
     // 第一輪觸發吃到 500 → 不標 seen；下一輪重試吃到 202 → triggered_total=1。
     await waitFor(() => watcher!.getStatus().triggered_total === 1, 5000);
@@ -441,7 +444,7 @@ describe("minioWatcher loop", () => {
     expect(received[0].status).toBe(500);
     expect(received[received.length - 1].status).toBe(202);
     const st = watcher!.getStatus();
-    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.key).toBe("988/main/zzz/model.ifc");
     expect(st.last_triggered[0]?.job_id).toBe("ifcready_retry_ok");
     expect(st.last_triggered[0]?.error).toBeNull();
 
@@ -456,7 +459,7 @@ describe("minioWatcher loop", () => {
     // Codex review P1（failed-replay）鎖定：首次 POST 建了 job 但同步下載失敗（502，job 留存），
     // 重試命中同 idempotency key 拿到 200 replay（不重下載）。watcher 不得把它計成成功觸發
     // 後靜默結束，也不得無限重試（replay 永遠不會自癒）；須記入 last_triggered 帶 job_id+error。
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ status: number }> = [];
     let posts = 0;
     intakeStub = http.createServer((req, res) => {
@@ -485,7 +488,7 @@ describe("minioWatcher loop", () => {
     watcher = makeWatcher(s3Base, selfBase, state);
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
 
     // 第一輪 502（fail_transient 重試）→ 第二輪 200 replay failed（skip_permanent 停止）。
     await waitFor(() => received.length >= 2, 5000);
@@ -496,7 +499,7 @@ describe("minioWatcher loop", () => {
 
     const st = watcher!.getStatus();
     expect(st.triggered_total).toBe(0); // failed-job replay 不得計成功觸發
-    expect(st.last_triggered[0]?.key).toBe("988/zzz/model.ifc");
+    expect(st.last_triggered[0]?.key).toBe("988/main/zzz/model.ifc");
     expect(st.last_triggered[0]?.job_id).toBe("ifcready_dlfail"); // 失敗綁 job_id（#/conv 可追）
     expect(String(st.last_triggered[0]?.error)).toContain("download_status=failed");
 
@@ -519,7 +522,7 @@ describe("minioWatcher loop", () => {
 
   it("重啟（新 watcher 實例、同 store）重掃同 key 同 etag → idempotent_replay 仍計觸發且 job_id 相同", async () => {
     // 起手只有既有 baseline 物件 899（保證新 watcher baseline 非空、語意明確）。
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ idemKey: string }> = [];
     const selfBase = await startIdempotentReplayIntakeStub(received);
     const s3Base = await startS3Stub(state);
@@ -527,7 +530,7 @@ describe("minioWatcher loop", () => {
     // 第一個 watcher：baseline 後新增 988 → 觸發一次（store 首見此 idempotency key → 建 job）。
     watcher = makeWatcher(s3Base, selfBase, state);
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     await waitFor(() => received.length === 1);
     const firstStatus = watcher!.getStatus();
     expect(firstStatus.triggered_total).toBe(1);
@@ -541,10 +544,10 @@ describe("minioWatcher loop", () => {
     // 並建新 watcher，舊 watcher 50ms 輪詢的 in-flight tick 可能在 state 變更後才打到
     // stub，多發一筆 intake 讓 received 累積到第 3 筆，打亂下方「恰好 2 筆」斷言而 flaky。
     await watcher.dispose();
-    state.objs = [{ key: "899/xxx/model.ifc", etag: "e1" }];
+    state.objs = [{ key: "899/main/xxx/model.ifc", etag: "e1" }];
     watcher = makeWatcher(s3Base, selfBase, state);
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     await waitFor(() => received.length === 2);
     await waitFor(() => watcher!.getStatus().triggered_total >= 1);
 
