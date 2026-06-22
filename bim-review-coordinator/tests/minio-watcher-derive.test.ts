@@ -1,94 +1,122 @@
 import { describe, expect, it } from "vitest";
 import { deriveIntakeFromKey, idempotencyKeyFor, correlationIdFor } from "../src/services/minioWatcher.js";
 
-describe("minioWatcher 純函式導出", () => {
-  it("恰兩層 key（去 prefix 後 projectId/modelId/model.ifc）導出正確 intake 欄位", () => {
+describe("minioWatcher 純函式導出（≥3 段：專案/種類/版本）", () => {
+  it("真實 4 層（含中文專案名）→ 安全 project_id、種類=倒數二、版本=末、保留中文顯示名", () => {
     const r = deriveIntakeFromKey({
-      key: "899/xxx/model.ifc",
+      key: "東勢區許良宇紀念圖書館/root/main/181b3686-2263-4c53-93d9-ba95a010fc85/model.ifc",
       prefix: "",
       keySuffix: "/model.ifc",
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.projectId).toBe("899");
-    expect(r.externalModelVersionId).toBe("xxx");
+    // 純中文 → sanitizeArtifactIdPart 全非安全 → mv_<sha256[:8]>
+    expect(r.projectId).toMatch(/^mv_[0-9a-f]{8}$/);
+    expect(r.projectDisplayName).toBe("東勢區許良宇紀念圖書館"); // 原名如實保留
+    expect(r.category).toBe("main"); // 倒數第二層
+    expect(r.externalModelVersionId).toBe("181b3686-2263-4c53-93d9-ba95a010fc85"); // 末層
   });
 
-  it("帶 prefix 時先去 prefix 再解析層級", () => {
-    const r = deriveIntakeFromKey({
-      key: "tenant_a/899/xxx/model.ifc",
-      prefix: "tenant_a/",
-      keySuffix: "/model.ifc",
-    });
+  it("中文專案名導出確定性：同名 → 同 project_id（同專案不同版本歸一起）", () => {
+    const a = deriveIntakeFromKey({ key: "中文專案/main/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    const b = deriveIntakeFromKey({ key: "中文專案/other/v2/model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.projectId).toBe(b.projectId);
+    expect(a.projectId).toMatch(/^mv_[0-9a-f]{8}$/);
+  });
+
+  it("英數安全專案名（899）→ project_id 原樣不動", () => {
+    const r = deriveIntakeFromKey({ key: "899/main/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.projectId).toBe("899");
-    expect(r.externalModelVersionId).toBe("xxx");
+    expect(r.category).toBe("main");
+    expect(r.externalModelVersionId).toBe("v1");
   });
 
-  it("層級不符（去 prefix/suffix 後非恰兩層）→ ok=false 帶 reason", () => {
-    const tooDeep = deriveIntakeFromKey({ key: "a/899/xxx/model.ifc", prefix: "", keySuffix: "/model.ifc" });
-    expect(tooDeep.ok).toBe(false);
-    const tooShallow = deriveIntakeFromKey({ key: "xxx/model.ifc", prefix: "", keySuffix: "/model.ifc" });
-    expect(tooShallow.ok).toBe(false);
+  it("恰 3 層（無動態中間層）合法：專案/種類/版本", () => {
+    const r = deriveIntakeFromKey({ key: "899/main/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.projectId).toBe("899");
+    expect(r.category).toBe("main");
+    expect(r.externalModelVersionId).toBe("v1");
+  });
+
+  it("帶 prefix 時先去 prefix 再以 ≥3 段解析", () => {
+    const r = deriveIntakeFromKey({ key: "tenant_a/899/main/v1/model.ifc", prefix: "tenant_a/", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.projectId).toBe("899");
+    expect(r.category).toBe("main");
+    expect(r.externalModelVersionId).toBe("v1");
+  });
+
+  it("少於三段（2 段 / 1 段）→ ok=false 帶 reason", () => {
+    const two = deriveIntakeFromKey({ key: "899/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    expect(two.ok).toBe(false);
+    if (!two.ok) expect(two.reason).toContain("三段");
+    expect(deriveIntakeFromKey({ key: "v1/model.ifc", prefix: "", keySuffix: "/model.ifc" }).ok).toBe(false);
+  });
+
+  it("純點段（路徑穿越形狀 ../.）→ ok=false（防 .. 原樣成為 project_id）", () => {
+    expect(deriveIntakeFromKey({ key: "../main/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" }).ok).toBe(false);
+    expect(deriveIntakeFromKey({ key: "proj/./v1/model.ifc", prefix: "", keySuffix: "/model.ifc" }).ok).toBe(false);
+    expect(deriveIntakeFromKey({ key: "proj/main/../model.ifc", prefix: "", keySuffix: "/model.ifc" }).ok).toBe(false);
   });
 
   it("prefix 非空且不以 '/' 結尾 → ok=false（避免靜默截斷 projectId）", () => {
-    // 防 IMPORTANT #2：prefix='89' 對上 key='899/xxx/model.ifc' 不可被當成命中後切出 projectId='9'
-    const r = deriveIntakeFromKey({ key: "899/xxx/model.ifc", prefix: "89", keySuffix: "/model.ifc" });
+    const r = deriveIntakeFromKey({ key: "899/main/v1/model.ifc", prefix: "89", keySuffix: "/model.ifc" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain("prefix");
   });
 
-  it("有效 prefix 但 key 不在 prefix 下（startsWith 失敗）→ ok=false 帶 reason", () => {
-    const r = deriveIntakeFromKey({ key: "tenant_b/899/xxx/model.ifc", prefix: "tenant_a/", keySuffix: "/model.ifc" });
+  it("有效 prefix 但 key 不在 prefix 下 → ok=false 帶 reason", () => {
+    const r = deriveIntakeFromKey({ key: "tenant_b/899/main/v1/model.ifc", prefix: "tenant_a/", keySuffix: "/model.ifc" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain("prefix");
   });
 
-  it("key 不以 keySuffix 結尾（過濾無關 object）→ ok=false 帶 reason", () => {
-    const r = deriveIntakeFromKey({ key: "899/xxx/model.usdc", prefix: "", keySuffix: "/model.ifc" });
+  it("key 不以 keySuffix 結尾 → ok=false 帶 reason", () => {
+    const r = deriveIntakeFromKey({ key: "899/main/v1/model.usdc", prefix: "", keySuffix: "/model.ifc" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toContain("suffix");
   });
 
-  it("雙斜線 key（899//xxx/model.ifc）不可被 filter(Boolean) 靜默正規化成合法兩層", () => {
-    // 防 IMPORTANT #1：S3/MinIO 允許 '899//xxx/model.ifc' 為獨立 key（與 '899/xxx/model.ifc' 不同），
-    // 空 segment 必須判定非恰兩層 → ok=false，不可被當成 projectId='899'/modelId='xxx' 重複觸發
-    const r = deriveIntakeFromKey({ key: "899//xxx/model.ifc", prefix: "", keySuffix: "/model.ifc" });
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toContain("兩層");
-  });
-
-  it("結尾雙斜線 key（899/xxx//model.ifc）含空 segment → ok=false", () => {
-    const r = deriveIntakeFromKey({ key: "899/xxx//model.ifc", prefix: "", keySuffix: "/model.ifc" });
+  it("含空段（雙斜線 899//main/v1/model.ifc）→ ok=false（不可被靜默正規化）", () => {
+    const r = deriveIntakeFromKey({ key: "899//main/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" });
     expect(r.ok).toBe(false);
   });
 
-  it("idempotency key 為 bucket|key|etag 的確定性 sha256 前 16 hex，帶 mw_ 前綴", () => {
-    const a = idempotencyKeyFor("bim-control", "899/xxx/model.ifc", '"abc123"');
-    const b = idempotencyKeyFor("bim-control", "899/xxx/model.ifc", '"abc123"');
-    const c = idempotencyKeyFor("bim-control", "899/xxx/model.ifc", '"DIFFERENT"');
-    expect(a).toMatch(/^mw_[0-9a-f]{16}$/);
-    expect(a).toBe(b); // 確定性
-    expect(a).not.toBe(c); // etag 變則 key 變
-  });
-
-  it("correlation id 為 minio-watch-<hash8>，hash 由 bucket|key|etag 導出", () => {
-    const a = correlationIdFor("bim-control", "899/xxx/model.ifc", '"abc123"');
-    expect(a).toMatch(/^minio-watch-[0-9a-f]{8}$/);
-    expect(correlationIdFor("bim-control", "899/xxx/model.ifc", '"abc123"')).toBe(a);
+  it("結尾空段（899/main/v1//model.ifc）→ ok=false", () => {
+    const r = deriveIntakeFromKey({ key: "899/main/v1//model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(false);
   });
 
   it("etag 去外層引號後納入 source_ifc.etag（不重複加引號）", () => {
-    const r = deriveIntakeFromKey({ key: "899/xxx/model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    const r = deriveIntakeFromKey({ key: "899/main/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.sourceEtagFrom('"abc123"')).toBe("abc123");
     expect(r.sourceEtagFrom("abc123")).toBe("abc123");
+  });
+
+  it("idempotency key 為 bucket|key|etag 的確定性 sha256 前 16 hex，帶 mw_ 前綴", () => {
+    const a = idempotencyKeyFor("bim-control", "899/main/v1/model.ifc", '"abc123"');
+    const b = idempotencyKeyFor("bim-control", "899/main/v1/model.ifc", '"abc123"');
+    const c = idempotencyKeyFor("bim-control", "899/main/v1/model.ifc", '"DIFFERENT"');
+    expect(a).toMatch(/^mw_[0-9a-f]{16}$/);
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+
+  it("correlation id 為 minio-watch-<hash8>，hash 由 bucket|key|etag 導出", () => {
+    const a = correlationIdFor("bim-control", "899/main/v1/model.ifc", '"abc123"');
+    expect(a).toMatch(/^minio-watch-[0-9a-f]{8}$/);
+    expect(correlationIdFor("bim-control", "899/main/v1/model.ifc", '"abc123"')).toBe(a);
   });
 });

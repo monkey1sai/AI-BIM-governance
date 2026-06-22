@@ -140,6 +140,9 @@ export interface ExternalIfcReadyEvent {
   tenant_id: string;
   project_id: string;
   external_model_version_id: string;
+  // minio-watch key 結構：種類(倒數二)與專案原名(中文如實顯示)；optional，只隨 payload 傳遞、不入 store。
+  project_display_name?: string | null;
+  model_category?: string | null;
   external_conversion_task_id?: string | null;
   source_ifc: {
     ref: string;

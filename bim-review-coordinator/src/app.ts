@@ -160,6 +160,10 @@ const ifcReadyPayloadSchema = z
     tenant_id: z.string().min(1),
     project_id: z.string().min(1),
     external_model_version_id: z.string().min(1),
+    // minio-watch key 結構：watcher 帶入種類(倒數二)與專案原名(中文如實顯示)；additive/optional，
+    // schema 已 .passthrough()、舊 consumer 不受影響（種類/原名只隨 payload 傳遞、不入 store）。
+    project_display_name: z.string().min(1).nullish(),
+    model_category: z.string().min(1).nullish(),
     external_conversion_task_id: z.string().min(1).nullish(),
     source_ifc: z.object({
       ref: z.string().min(1),

@@ -75,7 +75,7 @@ async function waitFor(check: () => Promise<boolean> | boolean, ms = 12000): Pro
 
 describe("minioWatcher → 真 coordinator intake 整合", () => {
   it("baseline 後新增物件 → watcher 自動建立 ifc-ready job（store 可見）", async () => {
-    const state = { objs: [{ key: "899/xxx/model.ifc", etag: "e1" }] };
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const s3Base = await startS3Stub(state);
 
     // 真 coordinator：listen(0) → 取得實際 port。app 自帶 watcher 關閉（minioWatchEnabled:false），
@@ -125,7 +125,7 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
     await waitFor(() => watcher!.getStatus().baseline_count === 1);
 
     // 新增物件 → watcher 下一輪觸發 intake（真 coordinator 真 store）
-    state.objs.push({ key: "988/zzz/model.ifc", etag: "e9" });
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
 
     interface IfcReadyListJob {
       project_id: string;
@@ -153,14 +153,14 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
     expect(job!.download_status).toBe("downloaded");
     // (2) presigned source URL 含 SigV4 簽章參數（watcher 真的簽了 GET URL，非裸 key 拼接）。
     expect(job!.source_ifc_ref).toMatch(/X-Amz-Signature=/);
-    expect(job!.source_ifc_ref).toContain("988/zzz/model.ifc");
+    expect(job!.source_ifc_ref).toContain("988/main/zzz/model.ifc");
     // (3) etag 由 watcher 自 ListObjectsV2 帶入並落到 store（端到端透傳，非預設值）。
     expect(job!.source_ifc_etag).toBe("e9");
 
     // (4) watcher 端 last_triggered 記錄此 key 成功（job_id 有值、error 為 null），確認
     //     intake 鏈未在 watcher 端報錯（與「job 進 store」互為兩端佐證）。
-    await waitFor(() => watcher!.getStatus().last_triggered.some((t) => t.key === "988/zzz/model.ifc"));
-    const triggered = watcher!.getStatus().last_triggered.find((t) => t.key === "988/zzz/model.ifc");
+    await waitFor(() => watcher!.getStatus().last_triggered.some((t) => t.key === "988/main/zzz/model.ifc"));
+    const triggered = watcher!.getStatus().last_triggered.find((t) => t.key === "988/main/zzz/model.ifc");
     expect(triggered).toBeTruthy();
     expect(triggered!.error).toBeNull();
     expect(triggered!.job_id).toBeTruthy();

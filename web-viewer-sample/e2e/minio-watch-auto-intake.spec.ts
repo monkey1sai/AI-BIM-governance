@@ -31,7 +31,7 @@ const CONSOLE_DIST_DIR = path.resolve(VIEWER_REPO_DIR, "dist-ui");
 const WEBHOOK_SECRET = "dev-webhook-secret";
 
 interface S3Obj { key: string; etag: string; }
-const s3State: { objs: S3Obj[] } = { objs: [{ key: "899/baseline/model.ifc", etag: "base1" }] };
+const s3State: { objs: S3Obj[] } = { objs: [{ key: "899/main/baseline/model.ifc", etag: "base1" }] };
 
 let coordinatorBase = "";
 let coordinatorProc: ChildProcess | null = null;
@@ -143,7 +143,7 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
     // 但為避免「未來 PW 版本改為重用模組」或「本 describe 日後新增第二個 test」時，殘留的 988 被下一輪
     // watcher 首掃當成 baseline（baseline_count≠1 且 triggered_total 卡 0 的靜默失敗），在守門之後顯式重置
     // 回單一 baseline 物件，讓每次執行都從乾淨狀態起跑（defense-in-depth，與 L34 初值一致）。
-    s3State.objs = [{ key: "899/baseline/model.ifc", etag: "base1" }];
+    s3State.objs = [{ key: "899/main/baseline/model.ifc", etag: "base1" }];
     const s3Port = await startS3Stub();
     const convPort = await startConvStub();
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "minio-watch-e2e-"));
@@ -227,7 +227,7 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
       }, { timeout: 30_000 }).toBe(1);
 
       // 2) 注入新物件（baseline 之後）→ 下一輪 watcher 自動觸發 intake。全程不碰任何按鈕。
-      s3State.objs.push({ key: "988/auto/model.ifc", etag: "auto9" });
+      s3State.objs.push({ key: "988/main/auto/model.ifc", etag: "auto9" });
 
       // 3) backend 真實狀態先確認（user-facing 之前）：job 進 store + watcher triggered≥1。
       await expect.poll(async () => {
@@ -262,7 +262,7 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
 
       // 6) Ifc-ready jobs 表：988 的 job 自動出現（watcher 建立，非手動註冊）。
       //    須 scope 到「Ifc-ready jobs」Panel——另有 MinIO 自動偵測 triggered 表的列文字含
-      //    `988/auto/model.ifc`（子字串也含 "988"），若不限定 Panel 會誤命中該表。
+      //    `988/main/auto/model.ifc`（子字串也含 "988"），若不限定 Panel 會誤命中該表。
       //    project 欄是「正好 988」（非 988/auto/...），故 cell 用 /^988$/ 精確匹配。
       const ifcReadyPanel = page.locator("section.ec-panel", { hasText: "Ifc-ready jobs" });
       const row988 = ifcReadyPanel
