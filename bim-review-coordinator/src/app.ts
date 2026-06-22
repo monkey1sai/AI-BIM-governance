@@ -39,6 +39,7 @@ import {
 } from "./services/kitPool.js";
 import { isSafeSessionId, isSessionMutable, SessionStore } from "./services/sessionStore.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
+import { nowIso } from "./utils/time.js";
 import type {
   Artifact,
   ArtifactBinding,
@@ -873,6 +874,33 @@ export function createCoordinatorApp(
       const input = appendEventSchema.parse(request.body);
       const event = eventLog.append(request.params.sessionId, input.type, input);
       response.json(event);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/review-sessions/:sessionId/first-frame", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      // 冪等：已記過 → 回原時戳，不重複 append（N2 最小一筆）。
+      if (session.first_frame_at) {
+        response.json({ session_id: session.session_id, first_frame_at: session.first_frame_at });
+        return;
+      }
+      const endpointId = typeof request.body?.endpoint_id === "string" ? request.body.endpoint_id : undefined;
+      const actor = resolveActor(request); // best-effort（LAN 無 RBAC，沿用既有）
+      const at = nowIso(); // N3：coordinator 權威時戳，忽略 body.observed_at（iframe/coordinator 時鐘無同步保障）
+      store.update(session.session_id, { first_frame_at: at });
+      eventLog.append(session.session_id, "firstFrameObserved", { endpoint_id: endpointId, actor });
+      response.json({ session_id: session.session_id, first_frame_at: at });
     } catch (error) {
       next(error);
     }
@@ -2213,6 +2241,7 @@ function summarizeSessionForRuntime(session: ReviewSession): Record<string, unkn
     kit_instance_ids: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
     created_at: session.created_at,
     updated_at: session.updated_at,
+    first_frame_at: session.first_frame_at ?? null, // VG-01 型別鏈：runtime/status 透出真首幀證據
   };
 }
 
