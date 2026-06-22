@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { AnomalyData } from "../lib/structLog.js";
+// 重用下游 conversion-artifact-id-sanitize 的 sanitizeArtifactIdPart 為「安全 id」唯一真相，
+// 不在 watcher 另造一套規則（streamingConversionClient 只 import types + node:crypto，無循環依賴）。
+import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
 
 /**
  * minio-watch-auto-intake（O4 B 案）純函式核心：MinIO object key → intake 欄位導出、
@@ -40,7 +43,13 @@ export function correlationIdFor(bucket: string, key: string, etag: string): str
 
 export interface DeriveOk {
   ok: true;
+  /** 安全代號：重用 sanitizeArtifactIdPart（純中文→mv_<hash8>、含非安全→${safe}_<hash8>、英數原樣）。 */
   projectId: string;
+  /** 專案原名（如中文），如實保留供顯示/對帳；不參與下游安全 id。 */
+  projectDisplayName: string;
+  /** 種類＝去 prefix/suffix 後的倒數第二段。 */
+  category: string;
+  /** 版本＝最後一段。 */
   externalModelVersionId: string;
   /** etag → source_ifc.etag（去外層引號，不重複加引號）。 */
   sourceEtagFrom: (etag: string) => string;
@@ -80,17 +89,25 @@ export function deriveIntakeFromKey(input: {
   // filter 會把空 segment 靜默吃掉，使雙斜線 key 被誤判為合法兩層而與正常 key 撞同一 projectId/modelId
   // 重複觸發。改保留空 segment，恰兩層且皆非空才合法。
   const segments = withoutSuffix.split("/");
-  if (segments.length !== 2 || segments.some((s) => s === "")) {
+  // ≥3 段、皆非空、且無純點段（. / ..）才合法：第一段=專案、倒數第二段=種類、最後一段=版本，
+  // 中間動態層（專案管理者動態管理）識別時忽略。保留空段檢查（防雙斜線靜默正規化）；
+  // 純點段拒收防 `..` 原樣成為 project_id 的路徑穿越形狀（dots 在 SAFE_ID_RE 內、sanitize 不擋）。
+  if (segments.length < 3 || segments.some((s) => s === "" || s === "." || s === "..")) {
     return {
       ok: false,
-      reason: `去 prefix/suffix 後非恰兩層（projectId/modelId）：${withoutSuffix}`,
+      reason: `去 prefix/suffix 後未湊齊三段（專案/種類/版本，不可含空段或 . / ..）：${withoutSuffix}`,
     };
   }
-  const [projectId, externalModelVersionId] = segments;
+  const projectRaw = segments[0];
+  const category = segments[segments.length - 2];
+  const version = segments[segments.length - 1];
   return {
     ok: true,
-    projectId,
-    externalModelVersionId,
+    // 重用下游 sanitizeArtifactIdPart 為唯一安全真相；dispatch 端再 sanitize 對已安全值冪等 → 跨路徑同代號。
+    projectId: sanitizeArtifactIdPart(projectRaw),
+    projectDisplayName: projectRaw,
+    category,
+    externalModelVersionId: version,
     sourceEtagFrom: stripEtagQuotes,
   };
 }
