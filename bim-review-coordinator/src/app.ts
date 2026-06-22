@@ -890,12 +890,22 @@ export function createCoordinatorApp(
         response.status(404).json({ detail: "Review session not found." });
         return;
       }
+      // 與 sibling mutation 路由（append-event app.ts:866 等）一致的可變性守門：closed/closing
+      // session 不可再 store.update + append firstFrameObserved 進 append-only audit ledger。
+      // race（browser close 與 viewer 首幀同時抵達）可產生不一致狀態，故在冪等檢查前先回 409。
+      if (!isSessionMutable(session)) {
+        response.status(409).json({ detail: "Review session is not active." });
+        return;
+      }
       // 冪等：已記過 → 回原時戳，不重複 append（N2 最小一筆）。
       if (session.first_frame_at) {
         response.json({ session_id: session.session_id, first_frame_at: session.first_frame_at });
         return;
       }
-      const endpointId = typeof request.body?.endpoint_id === "string" ? request.body.endpoint_id : undefined;
+      // endpoint_id 來自 iframe postMessage 的 client 回報（LAN 無 RBAC，任何頁面可偽造），與
+      // resolveActor(.slice(0, 200))/parseReason(.slice(0, 500)) 的 budget 截斷對齊（上限 100），
+      // 避免超長字串撐爆 / 污染 append-only audit JSONL（log injection 同根防護）。
+      const endpointId = typeof request.body?.endpoint_id === "string" ? request.body.endpoint_id.slice(0, 100) : undefined;
       const actor = resolveActor(request); // best-effort（LAN 無 RBAC，沿用既有）
       const at = nowIso(); // N3：coordinator 權威時戳，忽略 body.observed_at（iframe/coordinator 時鐘無同步保障）
       store.update(session.session_id, { first_frame_at: at });

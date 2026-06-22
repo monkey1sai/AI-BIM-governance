@@ -111,4 +111,43 @@ describe("POST /api/review-sessions/:sessionId/first-frame", () => {
     expect(item).toBeTruthy();
     expect(item.first_frame_at).toBeTruthy();
   });
+
+  // P5 對抗複驗 Important #1：first-frame 缺 isSessionMutable 守門。closed/closing session 不可
+  // 再 store.update + append firstFrameObserved 進 append-only audit ledger（與 append-event
+  // app.ts:866、stage-binding 等 sibling mutation 路由一致）。race（browser close 與 viewer 首幀
+  // 同時抵達）可產生不一致狀態，須回 409 拒絕。
+  it("closed session 回 409、不寫 first_frame_at、不 append（Important #1）", async () => {
+    const app = makeApp();
+    const sid = (await createSession(app)).session_id;
+    await request(app.app).post(`/api/review-sessions/${sid}/close`).send({});
+    const res = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({ endpoint_id: "kit_local_001" });
+    expect(res.status).toBe(409);
+    expect(app.store.get(sid)?.first_frame_at).toBeFalsy();
+    const events = await request(app.app).get(`/api/review-sessions/${sid}/events`);
+    expect(events.body.items.some((e: any) => e.type === "firstFrameObserved")).toBe(false);
+  });
+
+  it("closing session 回 409（Important #1）", async () => {
+    const app = makeApp();
+    const sid = (await createSession(app)).session_id;
+    app.store.update(sid, { status: "closing" });
+    const res = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({});
+    expect(res.status).toBe(409);
+  });
+
+  // P5 對抗複驗 Important #2/#3：endpoint_id 來自 iframe postMessage 的 client 回報（LAN 無 RBAC，
+  // 任何頁面可偽造），須與 resolveActor/parseReason 的 budget 截斷對齊，避免超長字串撐爆 / 污染
+  // append-only audit JSONL。
+  it("超長 endpoint_id 截斷後才寫入 event（Important #2/#3）", async () => {
+    const app = makeApp();
+    const sid = (await createSession(app)).session_id;
+    const huge = "x".repeat(5000);
+    const res = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({ endpoint_id: huge });
+    expect(res.status).toBe(200);
+    const events = await request(app.app).get(`/api/review-sessions/${sid}/events`);
+    const ff = events.body.items.find((e: any) => e.type === "firstFrameObserved");
+    expect(ff).toBeTruthy();
+    expect(typeof ff.payload.endpoint_id).toBe("string");
+    expect(ff.payload.endpoint_id.length).toBeLessThanOrEqual(100);
+  });
 });
