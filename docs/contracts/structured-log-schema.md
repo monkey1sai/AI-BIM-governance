@@ -267,6 +267,7 @@ Coordinator exposes `GET /api/internal/structLog/health`:
 | `sessionClosed` | `review_session` | `closed` | `sessionId` |
 | `kitInstanceReleased` | `kit_subprocess` | `closed` | from `payload.kit_instance_id` (string) |
 | `kitInstancesReleased` | `kit_subprocess` | `closed` | from `payload.kit_instance_ids[]` joined with `,` |
+| `firstFrameObserved` | `review_session` | `active` | `sessionId` — operational milestone (WebRTC first frame), NOT a state transition; downstream distinguishes via `data.eventlog_type`, not `phase` |
 | Any other type (future addition) | `review_session` | `active` | `sessionId` (until mapping is amended in this document) |
 
 The existing `/api/.../lifecycle-events` REST endpoint and its response shape are unchanged.

@@ -144,7 +144,6 @@ describe("POST /api/review-sessions/:sessionId/first-frame", () => {
     const app = makeApp();
     const sid = (await createSession(app)).session_id;
     // 模擬 get→update 之間 session 檔被外部刪除：update 回 null。
-    const realUpdate = app.store.update.bind(app.store);
     const spy = vi
       .spyOn(app.store, "update")
       .mockImplementationOnce(() => null);
@@ -154,8 +153,8 @@ describe("POST /api/review-sessions/:sessionId/first-frame", () => {
     } finally {
       spy.mockRestore();
     }
-    // 還原真實 update 供 events 查詢路徑使用（此處只讀 events，不再 mutate）。
-    void realUpdate;
+    // spy.mockRestore() 已在 finally 還原真實 store.update；以下 events 查詢走真實實作，
+    // 斷言 500 失敗路徑不會殘留孤兒 firstFrameObserved event。
     const events = await request(app.app).get(`/api/review-sessions/${sid}/events`);
     expect(events.body.items.some((e: any) => e.type === "firstFrameObserved")).toBe(false);
   });
