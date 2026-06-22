@@ -224,6 +224,24 @@ function highlightResultText(hl: { ok: boolean; reason?: string }): string {
   if (hl.reason === "datachannel_not_ready") return "3D 尚未就緒";
   return "高亮未成功";
 }
+function isElementMappingDocumentLike(value: unknown): value is ElementMappingDocument {
+  return Boolean(value && typeof value === "object" && Array.isArray((value as ElementMappingDocument).items));
+}
+function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): RuleResultRow[] {
+  if (!isElementMappingDocumentLike(value) || isFakeMappingDocument(value)) return rows;
+  const primByGuid = new Map<string, string>();
+  for (const item of value.items ?? []) {
+    if (item.ifc_guid && item.usd_prim_path && !isFakeMappingItem(item)) {
+      primByGuid.set(item.ifc_guid, item.usd_prim_path);
+    }
+  }
+  if (primByGuid.size === 0) return rows;
+  return rows.map((row) => {
+    if (row.usd_prim_path || !row.ifc_guid) return row;
+    const usdPrimPath = primByGuid.get(row.ifc_guid);
+    return usdPrimPath ? { ...row, usd_prim_path: usdPrimPath } : row;
+  });
+}
 
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
@@ -235,7 +253,7 @@ export function A1GovernanceWorkbenchPage() {
   // VG-01 Task 3：嵌入 live viewer + 3D 高亮接線。session 下拉走 runtime/status.sessions.items（S2，
   // 已查證無 bare GET /api/review-sessions）；viewerOrigin 真源 = configured_endpoints.viewer.browser_url_base
   // （viewer :5173 baked，非 coordinator :8004）。first_frame / stage matched 為真證據，禁樂觀更新。
-  const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; first_frame_at?: string | null }[]>([]);
+  const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; expected_mapping_url?: string | null; first_frame_at?: string | null }[]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
   const [firstFrame, setFirstFrame] = useState(false);
@@ -293,7 +311,16 @@ export function A1GovernanceWorkbenchPage() {
       }
       if (pollGenRef.current !== myGen) return;
       if (st && st.status === "succeeded") {
-        const failed = await governanceClient.getResults(rule_run_id, "failed");
+        let failed = await governanceClient.getResults(rule_run_id, "failed");
+        const mappingUrl = sessions.find((s) => s.session_id === selectedSession)?.expected_mapping_url ?? null;
+        if (selectedSession && mappingUrl && failed.some((row) => row.ifc_guid && !row.usd_prim_path)) {
+          try {
+            const mappingDoc = await governanceClient.elementMappingForSession(selectedSession, mappingUrl);
+            failed = enrichRuleResultsWithMapping(failed, mappingDoc);
+          } catch {
+            // Mapping enrichment is best-effort. The button remains honestly disabled if no usd_prim_path is observed.
+          }
+        }
         if (pollGenRef.current !== myGen) return;
         dispatch({ type: "RUN_DONE", run: st, failed });
       } else {
@@ -303,7 +330,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.ifcPath, state.step, state.runError, idsPath]);
+  }, [state.ifcPath, state.step, state.runError, idsPath, selectedSession, sessions]);
 
   const makeIssues = useCallback(async () => {
     if (!runId) return;
@@ -359,7 +386,7 @@ export function A1GovernanceWorkbenchPage() {
           <Btn data-testid="a1-step-pick" caption="鎖定此模型路徑（進入步驟2）" onClick={() => dispatch({ type: "PICK_FILE", ifcPath: pathInput })}>選取模型</Btn>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-          <input className="ec-btn" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
+          <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
@@ -420,7 +447,7 @@ export function A1GovernanceWorkbenchPage() {
                     if (m.stageUrl) setLoadedStageUrl(m.stageUrl);
                     void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {});
                   }}
-                  onStageLoaded={(u) => setLoadedStageUrl(u)}
+                  onStageLoaded={(u) => { if (u) setLoadedStageUrl(u); }}
                   onHighlightResult={(m) => setHl({ ok: m.ok, reason: m.reason })}
                 />
               </div>
@@ -483,11 +510,29 @@ export function A1GovernanceWorkbenchPage() {
 }
 
 export function ViewerPresentationPage() {
+  const [firstFrameEvidenceText, setFirstFrameEvidenceText] = useState("not_observed（尚無 active session 回報）");
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.runtimeStatus()
+      .then((rt) => {
+        if (!alive) return;
+        const seen = rt.sessions.items.some((s) => Boolean(s.first_frame_at));
+        setFirstFrameEvidenceText(seen ? "已觀察到 first frame（至少一 session）" : "not_observed（無 session 回報真畫面）");
+      })
+      .catch(() => {
+        if (alive) setFirstFrameEvidenceText("not_observed（coordinator 連不上）");
+      });
+    return () => { alive = false; };
+  }, []);
+
   const capabilities: [string, string, Prov][] = [
     ["openStage", "載入 selected USD / USDC stage；success 還需要 loaded stage URL 證據", "asbuilt"],
     ["focusPrim / selectPrims", "點清單或 mapping table 可聚焦 / 選取 USD prim", "asbuilt"],
     ["clearHighlight", "清除 viewer overlay / selection", "asbuilt"],
     ["highlightPrimsRequest", "A1/A2/A4 結果轉 3D highlight；需 browser DataChannel", "p15"],
+    // 對抗驗證 P1-2：ViewerPresentationPage capabilities 為說明性矩陣。first_frame_at 在本頁以 any-session boolean
+    // (rt.sessions.items.some) 呈現、非 scope-to-session 真值；stage matched 同為靜態描述。皆未到 asbuilt → p1
+    // （真 live 證據在 A1 頁 firstFrameEvidenceText / stageMatchedText 與 #sessions，本頁不重渲染）。
     ["first_frame_at", "viewer 是否真的看到畫面，不等於 port open", "p1"],
     ["stage matched", "expected_stage_url == loaded stage URL 才算 stage truth", "p1"],
   ];
@@ -499,7 +544,8 @@ export function ViewerPresentationPage() {
         <div className="ec-grid">
           <Field k="Stage URL" v="expected stage from review session / ifc-ready job" prov="asbuilt" />
           <Field k="DataChannel" v="ready 才能送 openStage / focusPrim / highlight" prov="asbuilt" />
-          <Field k="WebRTC first frame" v="尚需 browser 回報 first_frame_at" prov="p1" />
+          <Field k="WebRTC first frame" v={firstFrameEvidenceText} prov="asbuilt" />
+          {/* 對抗驗證 P1-1：v 為靜態字串、本頁無 live expected==loaded 比對（真比對在 A1 頁 stageMatchedText），asbuilt 過度宣告 → p1。 */}
           <Field k="Stage truth" v="expected == loaded 才能宣稱 matched" prov="p1" />
         </div>
       </Panel>

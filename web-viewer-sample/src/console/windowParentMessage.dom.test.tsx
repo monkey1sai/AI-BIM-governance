@@ -23,8 +23,11 @@ type AppInternals = {
   _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
   _completeStageLoad: (loadedUrl?: string) => void;
+  _completeStageLoadFromVisibleStream: () => boolean;
   _finishStageLoad: () => void;
+  _hasRemoteVideoFrame: () => boolean;
   _firstFramePosted: boolean;
+  pendingStageUrl: string | null;
   _mappingCache: { primPathForGuid: (g: string) => string | null; guidForPrimPathOrAncestor?: (p: string) => string | null } | null;
   _reverseLookupGuid: (path: string) => void;
   render: () => React.ReactElement;
@@ -259,6 +262,28 @@ describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切
     // 重置後第二個 stage 完成仍回報 first_frame（否則 IX-A1-06 無法重滿足，高亮鈕保持 disabled）。
     expect(postedTypes(parent).filter((t) => t === "first_frame")).toHaveLength(2);
     expect(postedTypes(parent).filter((t) => t === "stage_loaded")).toHaveLength(2);
+  });
+});
+
+describe("Important #4：visible stream 完成路徑須保留 pending stage URL", () => {
+  it("_completeStageLoadFromVisibleStream → first_frame / stage_loaded 帶 pendingStageUrl（stage-match 可閉合）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = new App({} as never);
+    const stageUrl = "stage://visible-stream.usdc";
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: stageUrl,
+      loadedStageUrl: null,
+    };
+    internals(app).pendingStageUrl = stageUrl;
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+
+    expect(internals(app)._completeStageLoadFromVisibleStream()).toBe(true);
+
+    const posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null });
+    expect(posted.find((m) => m.type === "first_frame")).toMatchObject({ stageUrl });
+    expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({ stageUrl });
   });
 });
 

@@ -549,7 +549,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _completeStageLoad(loadedUrl?: string): void {
-        const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl;
+        const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl || this.pendingStageUrl;
         const hasExpectedStage = Boolean(this.state.expectedStageUrl);
         const matched = finalLoadedUrl ? this._isLoadedStageExpected(finalLoadedUrl) : !hasExpectedStage;
         this._finishStageLoad();

@@ -154,6 +154,8 @@ export function buildEndpointRows(rt: RuntimeStatus | null): EndpointRow[] {
     const sessionId = binding?.session_id ?? "—";
     const mediaPort = endpoint.mediaPort ?? "—";
 
+    const firstFrame = readiness === "free" ? "missing" : session?.first_frame_at ? "ok" : "not_observed";
+
     return {
       code,
       endpointId: `${code} :${endpoint.signalingPort}`,
@@ -162,7 +164,7 @@ export function buildEndpointRows(rt: RuntimeStatus | null): EndpointRow[] {
       leaseState,
       sessionId,
       kitInstanceId: binding?.kit_instance_id ?? endpoint.id,
-      firstFrame: readiness === "free" ? "missing" : "not_observed",
+      firstFrame,
       heartbeat: heartbeatState(binding, readiness),
       stageTruth: session?.expected_stage_url ? "not_observed" : "missing",
       readiness,

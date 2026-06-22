@@ -49,6 +49,7 @@ function fakeRuntimeStatus(viewerBase: string | null) {
           model_version_id: "m1",
           participant_count: 0,
           expected_stage_url: "stage://x",
+          expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
           conversion_status: null,
           kit_instance_ids: [],
           created_at: "",
@@ -93,7 +94,6 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
   // resolve → setState → re-render → EmbeddedViewer 子樹再 render 並更新 box.current）。連續數 tick 沖乾淨。
   const flush = async () => {
     for (let i = 0; i < 5; i++) {
-      // eslint-disable-next-line no-await-in-loop
       await act(async () => { await Promise.resolve(); });
     }
   };
@@ -143,7 +143,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
 
     // 生產端呼叫 reportFirstFrame(selectedSession)（endpointId 省略）→ 只帶 1 個參數。
     expect(reportSpy).toHaveBeenCalledWith("review_session_x");
-    expect(q("a1-first-frame-evidence")!.textContent).toContain("first frame");
+    expect(q("a1-first-frame-evidence")!.textContent).toContain("已收到真畫面");
   });
 
   it("onFirstFrame 帶 stageUrl（== expected）→ stage matched 轉 matched（first_frame 即閉合 stage-match，不靠獨立 stage_loaded）", async () => {
@@ -166,6 +166,29 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     // expected_stage_url=stage://x（fakeRuntimeStatus）== onFirstFrame.stageUrl → matched。
     // 斷言 stageMatchedText 的 matched 分支「值」（含全形括號），非 Field 的 "stage matched" 標籤
     // （標籤恆含 "matched" 會造成偽通過）；matched（expected == loaded）只在閉合成功時出現。
+    expect(q("a1-stage-matched")!.textContent).toContain("matched（expected == loaded）");
+  });
+
+  it("onFirstFrame 已閉合 stage-match 後，晚到的 stage_loaded(null) 不得清空 loaded stage", async () => {
+    // Important #2 補強：viewer 事件順序可能 first_frame(stageUrl) → stage_loaded(null)。
+    // first_frame 是較強證據；null stage_loaded 只能代表未補充新證據，不可覆蓋已觀察到的 loaded stage。
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+    vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" });
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    await act(async () => {
+      (box.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+    expect(q("a1-stage-matched")!.textContent).toContain("matched（expected == loaded）");
+
+    await act(async () => {
+      (box.current!.onStageLoaded as (stageUrl: string | null) => void)(null);
+    });
+    await flush();
+
     expect(q("a1-stage-matched")!.textContent).toContain("matched（expected == loaded）");
   });
 
@@ -203,6 +226,39 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
 
     // first_frame 到 + stageUrl 閉合 stage-match + 構件有 usd_prim_path + 有選 session → 四條件全滿 → enable。
     expect(btn().disabled).toBe(false);
+  });
+
+  it("rule-run failed row 缺 usd_prim_path 時，使用 selected session 的真 mapping artifact 補齊後 enable", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+    vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" });
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
+      rule_run_id: "rr_x", status: "succeeded", score: 0, rule_set: "vg01", model_version_id: "m1",
+      summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "0G1", usd_prim_path: null, rule_code: "IDS#0", severity: "required", status: "fail", message: "IDS 要求未滿足" },
+    ]);
+    const mappingSpy = vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({
+      mock: false,
+      summary: { fake_mapping_count: 0 },
+      items: [{ ifc_guid: "0G1", usd_prim_path: "/World/Column/0G1", mapping_method: "guid_exact" }],
+    });
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
+    await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
+    await flush();
+
+    expect(mappingSpy).toHaveBeenCalledWith("review_session_x", "http://127.0.0.1:49101/artifacts/demo/element_mapping.json");
+    await act(async () => {
+      (box.current!.onFirstFrame as (m: unknown) => void)({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    });
+    await flush();
+
+    expect((q("a1-highlight-3d") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("highlight_result unmapped → 誠實文案『未對映 / 無法高亮』", async () => {

@@ -90,7 +90,7 @@ export interface CoordinatorHealth {
 }
 
 // /api/runtime/status 真實回應形狀（app.ts:buildRuntimeStatus）。只挑前端會用到的欄位；
-// 其餘以 passthrough 保留。GPU / 首幀 / conversion 秒數**不在**此回應內 → 前端不得捏造。
+// 其餘以 passthrough 保留。首幀只透過 first_frame_at 表示；GPU / conversion 秒數不在此回應內 → 前端不得捏造。
 export interface RuntimeSessionSummary {
   session_id: string;
   status: string;
@@ -98,6 +98,7 @@ export interface RuntimeSessionSummary {
   model_version_id: string;
   participant_count: number;
   expected_stage_url: string | null;
+  expected_mapping_url?: string | null;
   conversion_status: string | null;
   kit_instance_ids: string[];
   created_at: string;
