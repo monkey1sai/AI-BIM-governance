@@ -25,7 +25,12 @@
 
 - 對真 MinIO（192.168.20.234:9000，唯讀 credentials 由使用者提供入 env）開 `MINIO_WATCH_ENABLED=true`
   觀察 baseline 正常、`#/conv` Panel 顯示真 bucket/last_poll；真新檔觸發視使用者丟檔配合。
-- **狀態：not observed**（待 P7 由指揮官提供 credentials + 丟檔配合後補實測截圖）。
+
+### 2026-06-22 部分實測（指揮官提供唯讀 credentials）
+
+- **真 MinIO 連線：observed**。修復 compose 未透傳 `MINIO_WATCH_*`（dockerized coordinator 無管道收到配置 → `PUT /api/conversion/watch` 恆 422）後，`#/conv`「開啟自動偵測」由 422 變成功；watcher status 真實輪詢：`enabled:true`、`bucket:bim-control`、`poll_count≥1`、`baseline_count=5`、`last_error:null`（唯讀 key 有效、容器連得到 LAN MinIO、bucket 讀得到）。
+- **key 結構解析（≥3 段 + 中文安全 project_id）：code-verified**（change `minio-watch-key-structure`）。`bim-review-coordinator` 單元/整合測試 431/431 綠，含真實結構 `東勢區許良宇紀念圖書館/root/main/<UUID>/model.ifc` → `project_id=mv_<hash8>`、`model_category=main`、`external_model_version_id=<UUID>`、`project_display_name=中文原名`。
+- **live 多層新檔自動觸發：not observed**（待指揮官上傳一個多層 `{專案}/…/{種類}/{版本}/model.ifc` 至 bim-control，觀察 `#/conv` triggered 0→1 + ifc-ready job 出現 + UI 完整顯示原始 key）。
 
 ## 觀察到的真實狀態（誠實鐵律）
 
