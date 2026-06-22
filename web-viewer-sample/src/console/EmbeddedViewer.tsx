@@ -34,24 +34,31 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [, setViewerReady] = useState(false);
 
+  // stable ref：每 render 同步最新 props，listener 才不必每 render 重掛。
+  // 原 dep=[props]（每 render 新 object reference）會在每個 render cycle removeEventListener + addEventListener，
+  // 在高頻輪詢（A1 定時 poll rule-runs）的 detach/attach 微小時窗內，viewer 送出的 first_frame / highlight_result 會被靜默丟棄。
+  const propsRef = useRef(props);
+  propsRef.current = props;
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      if (e.origin !== props.viewerOrigin) return;                 // 安全：origin 比對（非 "*"）
+      const p = propsRef.current;
+      if (e.origin !== p.viewerOrigin) return;                     // 安全：origin 比對（非 "*"）
       if (e.source !== iframeRef.current?.contentWindow) return;   // 安全：來源 frame
       const m = e.data as { protocol?: string; type?: string } | null;
       if (!m || m.protocol !== "vg01") return;                     // 協定版本 / 前向相容（未知忽略）
       switch (m.type) {
-        case "viewer_ready":     setViewerReady(true); props.onViewerReady?.(); break;
-        case "first_frame":      props.onFirstFrame?.(m as unknown as FirstFrameMessage); break;
-        case "stage_loaded":     props.onStageLoaded?.((m as unknown as StageLoadedMessage).stageUrl); break;
-        case "highlight_result": props.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
-        case "selected_guid":    props.onSelectedGuid?.((m as unknown as SelectedGuidMessage).ifcGuid ?? null); break;
+        case "viewer_ready":     setViewerReady(true); p.onViewerReady?.(); break;
+        case "first_frame":      p.onFirstFrame?.(m as unknown as FirstFrameMessage); break;
+        case "stage_loaded":     p.onStageLoaded?.((m as unknown as StageLoadedMessage).stageUrl); break;
+        case "highlight_result": p.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
+        case "selected_guid":    p.onSelectedGuid?.((m as unknown as SelectedGuidMessage).ifcGuid ?? null); break;
         default: break; // 未知 type 忽略
       }
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [props]);
+  }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
 
   const post = (msg: Record<string, unknown>) =>
     iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, props.viewerOrigin); // targetOrigin 非 "*"
