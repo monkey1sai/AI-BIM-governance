@@ -1,7 +1,7 @@
 // EmbeddedViewer postMessage 橋測試（vg01 協定）
 // 用 createRoot + act 比照 IntentDialog.test.tsx 慣例（無 @testing-library/react）
 import { act, createRef } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
 

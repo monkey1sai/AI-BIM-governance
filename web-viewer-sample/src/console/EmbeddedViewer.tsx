@@ -60,14 +60,16 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     return () => window.removeEventListener("message", onMsg);
   }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
 
+  // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
+  // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
   const post = (msg: Record<string, unknown>) =>
-    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, props.viewerOrigin); // targetOrigin 非 "*"
+    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, propsRef.current.viewerOrigin); // targetOrigin 非 "*"
 
   useImperativeHandle(ref, () => ({
     sendHighlight: (items) => post({ type: "highlight", items }),
     sendFocus: (ifcGuid) => post({ type: "focus", ifc_guid: ifcGuid }),
     sendClear: () => post({ type: "clear" }),
-  }), [props.viewerOrigin]);
+  }), []);
 
   const src = `${props.viewerOrigin}/?session=${encodeURIComponent(props.sessionId)}`;
   // S1：跨 origin iframe 須 allow-scripts allow-same-origin（WebRTC + sessionStorage）+ allow=autoplay
