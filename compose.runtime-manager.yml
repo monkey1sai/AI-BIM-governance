@@ -41,6 +41,24 @@ services:
       # CH-E:React UnifiedConsole build(vite base=/ui/) 由 coordinator image 內建。
       # 不依賴 host ignored artifact `web-viewer-sample/dist-ui`;否則測試部署 git clean 後會回退 dev-console。
       CONSOLE_DIST_DIR: /workspace/console-dist
+      # minio-watch-auto-intake（O4）：dockerized coordinator 的 MinIO watcher 設定透傳。
+      # 缺此透傳則 dockerized coordinator 無管道收到 MINIO_WATCH_*（.env 不掛入容器、image 不烤 .env），
+      # PUT /api/conversion/watch 永遠走 minioWatchConfigured()=false → 422，功能在 docker 部署無法啟用。
+      # 未設時 `${VAR:-}` 解析為空字串，config.ts 視同未啟用（parseBooleanEnv→false、endpoint/bucket/creds 空
+      # → minioWatchConfigured()=false；interval/suffix/tenant 等空值回退既有預設），與無此功能完全一致（spec：env opt-in 預設關）。
+      # 真值由部署區 .env 提供：S3 credentials 唯讀且不入 tracked 檔（spec「S3 credentials SHALL 僅由 env 提供」；
+      # P7 部署驗證見 docs/evidence/minio-watch-auto-intake/README.md）。
+      MINIO_WATCH_ENABLED: ${MINIO_WATCH_ENABLED:-}
+      MINIO_WATCH_ENDPOINT: ${MINIO_WATCH_ENDPOINT:-}
+      MINIO_WATCH_BUCKET: ${MINIO_WATCH_BUCKET:-}
+      MINIO_WATCH_PREFIX: ${MINIO_WATCH_PREFIX:-}
+      MINIO_WATCH_ACCESS_KEY: ${MINIO_WATCH_ACCESS_KEY:-}
+      MINIO_WATCH_SECRET_KEY: ${MINIO_WATCH_SECRET_KEY:-}
+      MINIO_WATCH_INTERVAL_SECONDS: ${MINIO_WATCH_INTERVAL_SECONDS:-}
+      MINIO_WATCH_INTERVAL_FLOOR_SECONDS: ${MINIO_WATCH_INTERVAL_FLOOR_SECONDS:-}
+      MINIO_WATCH_KEY_SUFFIX: ${MINIO_WATCH_KEY_SUFFIX:-}
+      MINIO_WATCH_TENANT_ID: ${MINIO_WATCH_TENANT_ID:-}
+      MINIO_WATCH_SELF_BASE_URL: ${MINIO_WATCH_SELF_BASE_URL:-}
     ports:
       - "8004:8004"
     volumes:
