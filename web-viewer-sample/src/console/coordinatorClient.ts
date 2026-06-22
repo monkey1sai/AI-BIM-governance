@@ -102,6 +102,9 @@ export interface RuntimeSessionSummary {
   kit_instance_ids: string[];
   created_at: string;
   updated_at: string;
+  // VG-01（task#0 後端化）：runtime/status 透出真首幀證據（app.ts:2258 `first_frame_at ?? null`）。
+  // 後端可能尚未回此欄（舊版本）或無首幀 → optional + nullable，前端誠實顯 not_observed，不捏造。
+  first_frame_at?: string | null;
 }
 export interface RuntimeKitBinding {
   session_id: string;
@@ -240,6 +243,21 @@ export const coordinatorClient = {
   // 不帶 final_events（operator 強制結束無協作終結事件，spec §4.2）。
   sessionClose: (sessionId: string, reason?: string) =>
     jsonPost<SessionCloseResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/close`, { reason }),
+  // VG-01：列 active review session（A1 頁 session 下拉，S2）。
+  // 已查證（2026-06-22 grep app.ts）：無 bare GET /api/review-sessions（spec §1.3 誤判）→
+  // 用 /api/runtime/status.sessions.items 為唯一真源。回傳統一成 { items: RuntimeSessionSummary[] }，
+  // 讓 A1 page 端 mapping 不變。
+  listReviewSessions: async (): Promise<{ items: RuntimeSessionSummary[] }> => {
+    const rt = await jsonGet<RuntimeStatus>("/api/runtime/status");
+    return { items: rt.sessions.items };
+  },
+  // VG-01：viewer 首幀回報轉發（viewer postMessage first_frame → console → coordinator）。viewer 不直連 coordinator。
+  // 後端 route = POST /api/review-sessions/:sessionId/first-frame（app.ts:878，task#0 落地）。
+  reportFirstFrame: (sessionId: string, endpointId?: string) =>
+    jsonPost<{ session_id: string; first_frame_at: string }>(
+      `/api/review-sessions/${encodeURIComponent(sessionId)}/first-frame`,
+      { endpoint_id: endpointId },
+    ),
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,

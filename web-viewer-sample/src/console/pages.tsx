@@ -9,6 +9,8 @@ import { coordinatorClient, ConversionQualityMetricsResponse, IfcReadyListItem, 
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
+// VG-01 Task 3：A1 工作台嵌入 live viewer（iframe + vg01 postMessage 橋），跑檢核→3D 高亮一氣呵成。
+import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
@@ -204,6 +206,25 @@ export function OverviewPage() {
   );
 }
 
+// VG-01 Task 3 純函式 helper（A1 page 外、檔案模組層）：stage truth 比對 + 高亮結果誠實文案。
+type A1SessionLite = { session_id: string; expected_stage_url: string | null };
+function isStageMatched(sessions: A1SessionLite[], selected: string, loaded: string | null): boolean {
+  const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
+  return Boolean(loaded && exp && loaded === exp);
+}
+function stageMatchedText(sessions: A1SessionLite[], selected: string, loaded: string | null): string {
+  const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
+  if (!loaded) return "not_observed（尚未載入）";
+  if (!exp) return "loaded（無 expected 可比對）";
+  return loaded === exp ? "matched（expected == loaded）" : "mismatch（expected ≠ loaded，警示）";
+}
+function highlightResultText(hl: { ok: boolean; reason?: string }): string {
+  if (hl.ok) return "已在 3D 標示";
+  if (hl.reason === "unmapped") return "此構件未對映 USD，無法高亮";
+  if (hl.reason === "datachannel_not_ready") return "3D 尚未就緒";
+  return "高亮未成功";
+}
+
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
   const [pathInput, setPathInput] = useState(defaultA1IfcPath);
@@ -211,6 +232,16 @@ export function A1GovernanceWorkbenchPage() {
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
+  // VG-01 Task 3：嵌入 live viewer + 3D 高亮接線。session 下拉走 runtime/status.sessions.items（S2，
+  // 已查證無 bare GET /api/review-sessions）；viewerOrigin 真源 = configured_endpoints.viewer.browser_url_base
+  // （viewer :5173 baked，非 coordinator :8004）。first_frame / stage matched 為真證據，禁樂觀更新。
+  const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; first_frame_at?: string | null }[]>([]);
+  const [selectedSession, setSelectedSession] = useState<string>("");
+  const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
+  const [firstFrame, setFirstFrame] = useState(false);
+  const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
+  const [hl, setHl] = useState<{ ok: boolean; reason?: string } | null>(null);
+  const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
 
@@ -220,6 +251,23 @@ export function A1GovernanceWorkbenchPage() {
   const pollGenRef = useRef(0);
   useEffect(() => () => { pollGenRef.current += 1; }, []);
   useEffect(() => { if (state.step !== "running") pollGenRef.current += 1; }, [state.step]);
+
+  // VG-01 Task 3：mount 時一次 runtimeStatus() 取齊 active session 與 viewer origin（誠實：失敗就空，
+  // 不偽造）。session 與 viewerOrigin 同源（已查證無 bare GET /api/review-sessions，listReviewSessions
+  // 內部亦讀 runtime/status，故此處直接用 runtimeStatus 一次拿齊兩者，少一次往返）。
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.runtimeStatus()
+      .then((rt) => {
+        if (!alive) return;
+        const act = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
+        setSessions(act);
+        if (act[0]) setSelectedSession(act[0].session_id);
+        setViewerOrigin(rt.configured_endpoints.viewer.browser_url_base || null); // 真 viewer 入口（:5173 baked），非 :8004
+      })
+      .catch(() => { if (alive) { setSessions([]); setViewerOrigin(null); } }); // 連不上就空，不假資料
+    return () => { alive = false; };
+  }, []);
 
   const doRun = useCallback(async () => {
     if (!state.ifcPath) return;
@@ -292,7 +340,7 @@ export function A1GovernanceWorkbenchPage() {
   return (
     <>
       <h1>A1 · 治理與模型檢核</h1>
-      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue 與 Excel 匯出。規則檢核在 governance-service（CPU）完成；BCF 匯出請至 Issues 頁（本頁尚未接入）；3D 高亮需 GPU viewport（依 review session 派發，待建）。</p>
+      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue 與 Excel 匯出。規則檢核在 governance-service（CPU）完成；BCF 匯出請至 Issues 頁（本頁尚未接入）；3D 高亮重用既有 review session viewer（依 IX-A1-06 四條件 enable：first frame ∧ stage matched ∧ 有選 session ∧ 構件有 usd_prim_path），無 active session 時誠實停用。</p>
 
       <Panel title="A1 五步引導式流程" sub="整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）" prov="asbuilt">
         <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 Excel"]} statuses={ui} />
@@ -336,7 +384,44 @@ export function A1GovernanceWorkbenchPage() {
         </Panel>
       )}
 
-      <Panel title="交付" sub="開 Issue / 匯出 Excel 走真實後端；BCF 匯出在 Issues 頁；3D 高亮待建（不提供假按鈕）" prov="asbuilt">
+      <Panel title="3D 即時檢視（嵌入 live viewer）" sub="重用既有 viewer 串流；first frame / stage truth 為真證據，非樂觀更新" prov="asbuilt">
+        {sessions.length === 0 ? (
+          <p className="ec-warn-note" data-testid="a1-no-session">需先派發 review session（無 active session，3D 高亮停用）</p>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <label>review session</label>
+              <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => { setSelectedSession(e.target.value); setFirstFrame(false); setLoadedStageUrl(null); setHl(null); }}>
+                {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
+              </select>
+            </div>
+            <div className="ec-grid" style={{ marginBottom: 8 }}>
+              <div data-testid="a1-first-frame-evidence"><Field k="first frame" v={firstFrame ? "已收到真畫面（綠）" : "not_observed（等待 3D 第一幀）"} prov={firstFrame ? "asbuilt" : "p1"} /></div>
+              <Field k="stage matched" v={stageMatchedText(sessions, selectedSession, loadedStageUrl)} prov="asbuilt" />
+            </div>
+            {/* S3：iframe 內 viewer 自帶 GovernanceOverlay 失敗清單（會與 console 左側清單重複，造成「console 25 筆 / iframe 說無失敗」矛盾 UX）。
+                解法分兩端：(a) viewer 端在嵌入模式把 overlay 的 failedElements 餵空使清單收合（Task 2「S3 收合」step，已落地）；
+                (b) console 端此處只把 iframe 當高亮引擎，唯一權威失敗清單 = 左側 state.failed 記分板，iframe 不另顯第二份清單。 */}
+            {viewerOrigin === null ? (
+              <p className="ec-warn-note" data-testid="a1-viewer-origin-missing">viewer 入口未取得（runtime/status 無 configured_endpoints.viewer.browser_url_base 或 coordinator 連不上），3D 暫不可用</p>
+            ) : (
+              <div style={{ height: 480 }}>
+                <EmbeddedViewer
+                  ref={viewerRef}
+                  key={selectedSession}
+                  sessionId={selectedSession}
+                  viewerOrigin={viewerOrigin}
+                  onFirstFrame={() => { setFirstFrame(true); void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {}); }}
+                  onStageLoaded={(u) => setLoadedStageUrl(u)}
+                  onHighlightResult={(m) => setHl({ ok: m.ok, reason: m.reason })}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+
+      <Panel title="交付" sub="開 Issue / 匯出 Excel 走真實後端；BCF 匯出在 Issues 頁；3D 高亮接 review session viewer（IX-A1-06 四條件）" prov="asbuilt">
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>失敗構件建 Issue</Btn>{" "}
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
@@ -344,7 +429,41 @@ export function A1GovernanceWorkbenchPage() {
             舊式 disabled={!runId||run?.status!=="succeeded"} 會在該瞬間誤解除 disabled、允許 running 子態匯出。 */}
         <Btn data-testid="a1-step-export" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
-        <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合（M3/M4）">在 3D 高亮</Btn>
+        {/* VG-01 Task 3：取代永久 disabled 占位鈕，依 IX-A1-06 四條件 enable 的真按鈕（針對失敗清單第一筆示範；多筆由
+            FailureScoreboard 逐列接，本格交付第一筆）。四條件：first_frame(含 DataChannel ready) ∧ 有選 session ∧
+            stage matched ∧ 該構件有 usd_prim_path（且 ifc_guid 非 null）。firstFrame===true 即代表 viewer 端
+            DataChannel ready ∧ first_frame 兩條同時成立（viewer 為唯一真源；送出當下若 DataChannel 仍未就緒，
+            viewer 回 highlight_result{reason:"datachannel_not_ready"}，由 highlightResultText 顯誠實原因）。 */}
+        {(() => {
+          const f0 = state.failed[0];
+          const stageMatched = isStageMatched(sessions, selectedSession, loadedStageUrl);
+          const rowHighlightable = Boolean(f0 && f0.ifc_guid && f0.usd_prim_path);
+          const canHighlight = firstFrame && Boolean(selectedSession) && stageMatched && rowHighlightable;
+          const disabledReason = !firstFrame ? "等待 3D 第一幀（first frame / DataChannel 未就緒）"
+            : !selectedSession ? "尚未選取 review session"
+            : !stageMatched ? "stage 未對齊（expected ≠ loaded）"
+            : !f0 ? "尚無失敗構件"
+            : !f0.ifc_guid ? "此構件無 ifc_guid，無法高亮"
+            : !f0.usd_prim_path ? "此構件未對映 USD（無 usd_prim_path），無法高亮"
+            : "";
+          return (
+            <Btn data-testid="a1-highlight-3d"
+              disabled={!canHighlight}
+              caption={canHighlight ? "postMessage highlight → viewer HighlightBridge（IX-A1-06 四條件）" : disabledReason}
+              onClick={() => {
+                if (!f0 || !f0.ifc_guid) return; // 已查證 RuleResultRow.ifc_guid: string|null → 送出前 guard 非 null
+                viewerRef.current?.sendHighlight([{
+                  ifc_guid: f0.ifc_guid,
+                  severity: f0.severity,
+                  label: f0.message ?? f0.ifc_guid, // RuleResultRow 無 label 欄；用 message（fallback ifc_guid）
+                  rule_code: f0.rule_code,
+                }]);
+              }}>
+              在 3D 高亮（第一筆失敗）
+            </Btn>
+          );
+        })()}{" "}
+        {hl && <span className="ec-note" data-testid="a1-highlight-status" style={{ marginLeft: 6 }}>{highlightResultText(hl)}</span>}
         {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
 
