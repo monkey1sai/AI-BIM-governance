@@ -25,7 +25,8 @@ type AppInternals = {
   _completeStageLoad: (loadedUrl?: string) => void;
   _finishStageLoad: () => void;
   _firstFramePosted: boolean;
-  _mappingCache: { primPathForGuid: (g: string) => string | null } | null;
+  _mappingCache: { primPathForGuid: (g: string) => string | null; guidForPrimPathOrAncestor?: (p: string) => string | null } | null;
+  _reverseLookupGuid: (path: string) => void;
   render: () => React.ReactElement;
 };
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -357,5 +358,39 @@ describe("Q-Important #3：_postToParent 接受外部已建的 allowedOrigins Se
     // 複用快取後應僅 1 次（_handleParentMessage 開頭）。
     expect(originsSpy).toHaveBeenCalledTimes(1);
     originsSpy.mockRestore();
+  });
+});
+
+// ── quality review 補強（task#2 fix）：selected_guid 送出路徑（VG-01 七區塊第7「3D 點構件→清單反查」）無測試覆蓋 ──
+describe("Q-Important（task2）：selected_guid 送出（_reverseLookupGuid → _postToParent）", () => {
+  it("嵌入 + 反查到 guid → 送出 selected_guid（含 ifcGuid，targetOrigin 非 \"*\"），不崩潰", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    internals(app)._mappingCache = {
+      primPathForGuid: () => null,
+      guidForPrimPathOrAncestor: (p: string) => (p.includes("G_AAA") ? "GUID-AAA" : null),
+    };
+    expect(() => internals(app)._reverseLookupGuid("/World/G_AAA/mesh_0")).not.toThrow();
+    const sel = parent.postMessage.mock.calls
+      .map((c) => ({ payload: c[0] as { type?: string; ifcGuid?: string | null }, target: c[1] }))
+      .filter((c) => c.payload.type === "selected_guid");
+    expect(sel).toHaveLength(1);
+    expect(sel[0].payload.ifcGuid).toBe("GUID-AAA");
+    expect(sel[0].target).toBe(PARENT_ORIGIN); // 非 "*"
+  });
+
+  it("standalone（window.parent === window）→ _reverseLookupGuid 不送 selected_guid（早返，不對 self 廣播）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    Object.defineProperty(window, "parent", { value: window, configurable: true });
+    const winPost = vi.spyOn(window, "postMessage").mockImplementation(() => {});
+    const app = operableApp();
+    internals(app)._mappingCache = {
+      primPathForGuid: () => null,
+      guidForPrimPathOrAncestor: () => "GUID-AAA",
+    };
+    expect(() => internals(app)._reverseLookupGuid("/World/G_AAA")).not.toThrow();
+    expect(winPost.mock.calls.some((c) => (c[0] as { type?: string } | null)?.type === "selected_guid")).toBe(false);
+    winPost.mockRestore();
   });
 });

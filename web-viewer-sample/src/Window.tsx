@@ -661,8 +661,9 @@ export default class App extends React.Component<AppProps, AppState> {
     // Important #3：可選 allowedOriginsCache —— _handleParentMessage 的 highlight 迴圈每筆都呼一次本方法，
     // 不傳時每次都重 parse env / split / normalize / new Set。caller 已建白名單時傳入複用（行為不變，省重複工作）。
     private _postToParent(msg: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>): void {
+        if (window.parent === window) return; // 非嵌入（standalone viewer）：早返，免每次 3D 點選都無謂 parse document.referrer
         const origin = this._consoleParentOrigin();
-        if (!origin || window.parent === window) return;
+        if (!origin) return;
         const allowed = allowedOriginsCache ?? allowedCoordinatorOrigins();
         if (!allowed.has(origin)) {
             // Important #3：白名單為空（多半是 deploy 忘設 VITE_ALLOWED_COORDINATOR_ORIGINS）時，
@@ -723,7 +724,9 @@ export default class App extends React.Component<AppProps, AppState> {
             }
             case "focus":
                 if (!canOperate) return; // spectator / 未就緒靜默丟棄（不送 focusPrimRequest）
-                if (m.ifc_guid) {
+                // 對齊 highlight 的 isHighlightItem 嚴格守衛：postMessage 跨 origin 反序列化，TS cast 不做執行期
+                // 檢查；非字串 ifc_guid（如 {toString} 物件）須擋在 primPathForGuid 之前，避免與 highlight 守衛不對稱。
+                if (typeof m.ifc_guid === "string" && m.ifc_guid) {
                     // 既有反查 / focus 路徑：ifc_guid → primPath 後送 focusPrim（沿用 _overlayHighlight 內的 cache 解析慣例）。
                     const primPath = this._mappingCache?.primPathForGuid(m.ifc_guid) ?? null;
                     if (primPath) this._sendStreamMessage(buildFocusPrimRequest(primPath));
