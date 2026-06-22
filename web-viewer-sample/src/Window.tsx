@@ -549,7 +549,12 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _completeStageLoad(loadedUrl?: string): void {
-        const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl || this.pendingStageUrl;
+        // ⚠️ 誠實鐵律：finalLoadedUrl 只取「Kit 真回報過的 loaded URL」（呼叫參數或既有 state.loadedStageUrl），
+        // 不得 fallback 成 pendingStageUrl。pendingStageUrl 只是「我們請求載入的目標」，不是 Kit 證實已載入的事實。
+        // 當 _completeStageLoadFromVisibleStream 因「畫面可見但 Kit 尚未回 loaded URL」觸發時 loadedUrl 為空，
+        // 此時 finalLoadedUrl 留空 → matched=!hasExpectedStage（有 expected 即 unproven），first_frame 帶 stageUrl:null，
+        // A1 gate 的 stage matched 維持 false、3D 高亮鈕保持 disabled，直到 Kit 真回報相符 URL（防舊模型殘影誤判為已對齊）。
+        const finalLoadedUrl = loadedUrl || this.state.loadedStageUrl;
         const hasExpectedStage = Boolean(this.state.expectedStageUrl);
         const matched = finalLoadedUrl ? this._isLoadedStageExpected(finalLoadedUrl) : !hasExpectedStage;
         this._finishStageLoad();

@@ -208,15 +208,29 @@ export function OverviewPage() {
 
 // VG-01 Task 3 純函式 helper（A1 page 外、檔案模組層）：stage truth 比對 + 高亮結果誠實文案。
 type A1SessionLite = { session_id: string; expected_stage_url: string | null };
+// stage URL 等價判斷：先求精確相等；若不等，容忍「同一資源、僅 origin/host 不同」的情形
+// （Kit 常回報正規化/本機 loaded URL，session expected 則是 artifact URL，path+search 相同但 host 不同——
+//  此時 viewer 端 _isLoadedStageExpected 已判定 matched 並送 first_frame，A1 gate 不該因 host 差異而結構性卡死高亮鈕）。
+// 刻意只放寬到 origin 差異（pathname+search 仍須完全相同），不做任意 job-id 子字串比對（避免不同轉檔誤判為相符）。
+function stageUrlsEquivalent(loaded: string, expected: string): boolean {
+  if (loaded === expected) return true;
+  try {
+    const a = new URL(loaded);
+    const b = new URL(expected);
+    return a.pathname === b.pathname && a.search === b.search;
+  } catch {
+    return false; // 非絕對 URL（無法解析 origin）→ 僅接受精確相等，已於上方處理
+  }
+}
 function isStageMatched(sessions: A1SessionLite[], selected: string, loaded: string | null): boolean {
   const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
-  return Boolean(loaded && exp && loaded === exp);
+  return Boolean(loaded && exp && stageUrlsEquivalent(loaded, exp));
 }
 function stageMatchedText(sessions: A1SessionLite[], selected: string, loaded: string | null): string {
   const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
   if (!loaded) return "not_observed（尚未載入）";
   if (!exp) return "loaded（無 expected 可比對）";
-  return loaded === exp ? "matched（expected == loaded）" : "mismatch（expected ≠ loaded，警示）";
+  return stageUrlsEquivalent(loaded, exp) ? "matched（expected == loaded）" : "mismatch（expected ≠ loaded，警示）";
 }
 function highlightResultText(hl: { ok: boolean; reason?: string }): string {
   if (hl.ok) return "已在 3D 標示";
@@ -256,6 +270,8 @@ export function A1GovernanceWorkbenchPage() {
   const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; expected_mapping_url?: string | null; first_frame_at?: string | null }[]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
+  // coordinator handoff base：與 /ui/open 對齊，傳進嵌入 viewer 讓未 bake 同一 coordinator 的 image/E2E 仍打對 coordinator。
+  const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
   const [firstFrame, setFirstFrame] = useState(false);
   const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
   const [hl, setHl] = useState<{ ok: boolean; reason?: string } | null>(null);
@@ -282,8 +298,9 @@ export function A1GovernanceWorkbenchPage() {
         setSessions(act);
         if (act[0]) setSelectedSession(act[0].session_id);
         setViewerOrigin(rt.configured_endpoints.viewer.browser_url_base || null); // 真 viewer 入口（:5173 baked），非 :8004
+        setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null); // handoff base（對齊 /ui/open）
       })
-      .catch(() => { if (alive) { setSessions([]); setViewerOrigin(null); } }); // 連不上就空，不假資料
+      .catch(() => { if (alive) { setSessions([]); setViewerOrigin(null); setCoordinatorBase(null); } }); // 連不上就空，不假資料
     return () => { alive = false; };
   }, []);
 
@@ -418,7 +435,12 @@ export function A1GovernanceWorkbenchPage() {
           <>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
               <label>review session</label>
-              <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => { setSelectedSession(e.target.value); setFirstFrame(false); setLoadedStageUrl(null); setHl(null); }}>
+              {/* 切換 session 必須同時重置 rule-run 結果（RESET → initialA1State）：
+                  rule 結果是針對「特定 session 的 stage + element_mapping」enrich 過的，若只清 first-frame/stage/highlight UI、
+                  保留舊 state.failed 記分板與已 enrich 的 GUID，新 session 一旦 first frame + stage matched，高亮鈕會用
+                  上一個 session 的 GUID 送進新 session 的 viewer/模型（跨 session 殘留誤標）。重置後操作員需對新 session 重跑檢核，
+                  rule 結果才會重新對新 session 的 mapping enrich，符合「高亮只對它被 enrich 的那個 session 提供」。 */}
+              <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => { setSelectedSession(e.target.value); setFirstFrame(false); setLoadedStageUrl(null); setHl(null); dispatch({ type: "RESET" }); }}>
                 {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
               </select>
             </div>
@@ -438,6 +460,8 @@ export function A1GovernanceWorkbenchPage() {
                   key={selectedSession}
                   sessionId={selectedSession}
                   viewerOrigin={viewerOrigin}
+                  coordinatorApiBase={coordinatorBase}
+                  coordinatorSocketUrl={coordinatorBase}
                   onFirstFrame={(m) => {
                     setFirstFrame(true);
                     // viewer 的 _completeStageLoad 在同一流程「先送 first_frame（含當下已載 stageUrl）再送 stage_loaded」，

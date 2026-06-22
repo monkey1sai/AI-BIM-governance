@@ -66,20 +66,10 @@ test.describe("VG-01：A1 嵌入 viewer + 3D 高亮", () => {
     test.skip(!apiOk, "branch coordinator 未備妥：需啟動 :8005 或設定 E2E_COORDINATOR_BASE_URL");
 
     sessionId = "";
-    try {
-      const rt = await request.get(`${COORDINATOR}/api/runtime/status`, { timeout: 10_000 });
-      const body = await rt.json();
-      const items = Array.isArray(body?.sessions?.items)
-        ? body.sessions.items as Array<{ session_id?: string; status?: string }>
-        : [];
-      for (const s of items) {
-        if ((s.status === "active" || s.status === "created") && s.session_id) {
-          await request.post(`${COORDINATOR}/api/review-sessions/${s.session_id}/close`, { data: { reason: "e2e-reset" }, timeout: 10_000 }).catch(() => {});
-        }
-      }
-    } catch {
-      // 清理舊 active session 失敗不直接 fail；後續建立 session / UI gate 會給出可觀察結果。
-    }
+    // 注意：刻意「不」盲目關閉 runtime/status 上所有 active/created session。
+    // runtime/status 的 session summary 不帶 created_by（無法分辨哪些是本 spec 擁有的），盲關會在共享環境
+    // 誤殺其他套件/操作員的 session（跨套件干擾 / 資料遺失）。本 spec 只建立自己的 session（created_by:"playwright-e2e"）
+    // 並只操作該 sessionId，afterEach 也只關自己這筆，故此處不做任何破壞性清理。
     try {
       const conversions = await request.get(`${CONVERSION_API}/api/conversions`, { timeout: 10_000 });
       const body = await conversions.json();

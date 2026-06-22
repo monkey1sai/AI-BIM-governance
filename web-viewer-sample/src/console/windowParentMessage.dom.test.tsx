@@ -265,8 +265,12 @@ describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切
   });
 });
 
-describe("Important #4：visible stream 完成路徑須保留 pending stage URL", () => {
-  it("_completeStageLoadFromVisibleStream → first_frame / stage_loaded 帶 pendingStageUrl（stage-match 可閉合）", () => {
+describe("Important #4（修訂）：visible-stream 完成路徑不得把 pendingStageUrl 當作 Kit 已證實的 loaded 證據", () => {
+  // 誠實鐵律修正：原行為把 pendingStageUrl 灌進 first_frame/stage_loaded 並標 stage matched，
+  // 但「畫面可見」不等於「Kit 已回報該 stage 載入完成」——舊模型殘影 + 新 pendingStageUrl 會被誤判為已對齊，
+  // 使 A1 對「未證實的 stage」開放高亮。修正後：frame 可見仍誠實送 first_frame，但 stageUrl 為 null、
+  // 且 stageLoadStatus 維持 unproven（有 expected 卻無 Kit loaded URL），高亮鈕保持 disabled 直到 Kit 真回報相符 URL。
+  it("_completeStageLoadFromVisibleStream（Kit 未回 loaded URL）→ first_frame 帶 stageUrl:null、stage 不標 matched", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
     const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
     const app = new App({} as never);
@@ -281,6 +285,25 @@ describe("Important #4：visible stream 完成路徑須保留 pending stage URL"
 
     expect(internals(app)._completeStageLoadFromVisibleStream()).toBe(true);
 
+    const posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null });
+    // frame 可見 → 仍送 first_frame（誠實：有畫面），但不得攜帶未經 Kit 證實的 pendingStageUrl
+    // （此處為 P1 修正的核心觀測點：first_frame.stageUrl 必為 null，A1 端 onFirstFrame 不會 setLoadedStageUrl
+    //  → isStageMatched 維持 false → 高亮鈕保持 disabled，直到 Kit 真回報相符 URL）。
+    expect(posted.find((m) => m.type === "first_frame")).toMatchObject({ stageUrl: null });
+    expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({ stageUrl: null });
+  });
+
+  it("Kit 真回報相符 loaded URL（_completeStageLoad(url)）→ first_frame / stage_loaded 帶該真 url（非 null）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = new App({} as never);
+    const stageUrl = "stage://visible-stream.usdc";
+    internals(app).state = { ...internals(app).state, expectedStageUrl: stageUrl, loadedStageUrl: null };
+    internals(app).pendingStageUrl = stageUrl;
+
+    internals(app)._completeStageLoad(stageUrl); // Kit handler 路徑：帶真 loaded URL
+
+    // 對照組：有 Kit 證實的 loaded URL 時，first_frame/stage_loaded 才攜帶真 stageUrl（A1 端據此閉合 stage-match）。
     const posted = parent.postMessage.mock.calls.map((c) => c[0] as { type?: string; stageUrl?: string | null });
     expect(posted.find((m) => m.type === "first_frame")).toMatchObject({ stageUrl });
     expect(posted.find((m) => m.type === "stage_loaded")).toMatchObject({ stageUrl });

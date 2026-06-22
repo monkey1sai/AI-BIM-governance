@@ -50,8 +50,43 @@ describe("EmbeddedViewer postMessage 橋", () => {
     await act(async () => {
       root!.render(<EmbeddedViewer sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN} onFirstFrame={onFirstFrame} />);
     });
-    fireMessage({ protocol: "vg01", type: "first_frame", stageUrl: "u" }, "http://evil.example", window);
+    // source 用 iframe.contentWindow（即正確來源 frame），讓本測試「只」隔離 origin 守衛：
+    // 若改用 window 當 source，source 守衛會先擋下、即使 origin 守衛退化也會誤過。
+    const iframeWin = container.querySelector("iframe")!.contentWindow;
+    fireMessage({ protocol: "vg01", type: "first_frame", stageUrl: "u" }, "http://evil.example", iframeWin);
     expect(onFirstFrame).not.toHaveBeenCalled();
+  });
+
+  it("viewerOrigin 帶尾斜線/路徑前綴時：純 origin 的 message 仍被接受（normalize 守衛）", async () => {
+    const onFirstFrame = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      // 部署常見：viewer 入口 base 帶尾斜線甚至路徑前綴；e.origin 永遠是純 origin。
+      root!.render(<EmbeddedViewer sessionId="review_session_abc" viewerOrigin={`${VIEWER_ORIGIN}/bim-viewer/`} onFirstFrame={onFirstFrame} />);
+    });
+    const iframeWin = container.querySelector("iframe")!.contentWindow;
+    fireMessage({ protocol: "vg01", type: "first_frame", stageUrl: "u" }, VIEWER_ORIGIN, iframeWin);
+    expect(onFirstFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it("iframe src 帶尾斜線 viewerOrigin 不產生雙斜線、且帶 coordinator handoff query", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={`${VIEWER_ORIGIN}/`}
+          coordinatorApiBase="http://192.168.10.105:8004"
+          coordinatorSocketUrl="http://192.168.10.105:8004"
+        />,
+      );
+    });
+    const src = container.querySelector("iframe")!.getAttribute("src")!;
+    expect(src.startsWith(`${VIEWER_ORIGIN}/?`)).toBe(true); // 尾斜線被吸收，無 `//?`
+    expect(src).not.toContain("//?");
+    expect(src).toContain("session=review_session_abc");
+    expect(src).toContain("coordinatorApiBase=http%3A%2F%2F192.168.10.105%3A8004");
+    expect(src).toContain("coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A8004");
   });
 
   it("缺 protocol 的 message 丟棄", async () => {
