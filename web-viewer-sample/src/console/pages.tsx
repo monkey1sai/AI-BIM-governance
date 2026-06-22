@@ -397,7 +397,7 @@ export function A1GovernanceWorkbenchPage() {
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
               <div data-testid="a1-first-frame-evidence"><Field k="first frame" v={firstFrame ? "已收到真畫面（綠）" : "not_observed（等待 3D 第一幀）"} prov={firstFrame ? "asbuilt" : "p1"} /></div>
-              <Field k="stage matched" v={stageMatchedText(sessions, selectedSession, loadedStageUrl)} prov="asbuilt" />
+              <div data-testid="a1-stage-matched"><Field k="stage matched" v={stageMatchedText(sessions, selectedSession, loadedStageUrl)} prov="asbuilt" /></div>
             </div>
             {/* S3：iframe 內 viewer 自帶 GovernanceOverlay 失敗清單（會與 console 左側清單重複，造成「console 25 筆 / iframe 說無失敗」矛盾 UX）。
                 解法分兩端：(a) viewer 端在嵌入模式把 overlay 的 failedElements 餵空使清單收合（Task 2「S3 收合」step，已落地）；
@@ -411,7 +411,15 @@ export function A1GovernanceWorkbenchPage() {
                   key={selectedSession}
                   sessionId={selectedSession}
                   viewerOrigin={viewerOrigin}
-                  onFirstFrame={() => { setFirstFrame(true); void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {}); }}
+                  onFirstFrame={(m) => {
+                    setFirstFrame(true);
+                    // viewer 的 _completeStageLoad 在同一流程「先送 first_frame（含當下已載 stageUrl）再送 stage_loaded」，
+                    // first_frame 是 stage-match 最快的閉合點。若丟棄 m.stageUrl、僅靠獨立 onStageLoaded，當 first_frame
+                    // 先到或順序不同時 loadedStageUrl 恆 null → stageMatched 恆 false → IX-A1-06 第三條件結構性封鎖、高亮鈕無法 enable。
+                    // 與 onStageLoaded 並存（互補不互斥）：m.stageUrl 非 null 即同步閉合。
+                    if (m.stageUrl) setLoadedStageUrl(m.stageUrl);
+                    void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {});
+                  }}
                   onStageLoaded={(u) => setLoadedStageUrl(u)}
                   onHighlightResult={(m) => setHl({ ok: m.ok, reason: m.reason })}
                 />
