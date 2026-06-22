@@ -2,7 +2,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
 
@@ -133,6 +133,31 @@ describe("POST /api/review-sessions/:sessionId/first-frame", () => {
     app.store.update(sid, { status: "closing" });
     const res = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({});
     expect(res.status).toBe(409);
+  });
+
+  // 對抗複驗 Important #1（store.update 回傳值靜默丟棄）：session 在 store.get（守門通過）與
+  // store.update 之間被外部刪除時 update 回 null。當前忽略回傳值會 (1) 仍 append 一筆孤兒
+  // firstFrameObserved（對應不到任何 store 記錄，違反 append-only audit ledger 不變式），
+  // (2) 回 200 + 未實際持久化的時戳給呼叫端。預期：回 500、不 append firstFrameObserved。
+  // 比照 sibling /close 路由（app.ts:951-962）對 store.update 的 null 防禦。
+  it("store.update 回 null（session 被外部刪除）→ 回 500、不 append 孤兒 event（Important #1）", async () => {
+    const app = makeApp();
+    const sid = (await createSession(app)).session_id;
+    // 模擬 get→update 之間 session 檔被外部刪除：update 回 null。
+    const realUpdate = app.store.update.bind(app.store);
+    const spy = vi
+      .spyOn(app.store, "update")
+      .mockImplementationOnce(() => null);
+    try {
+      const res = await request(app.app).post(`/api/review-sessions/${sid}/first-frame`).send({ endpoint_id: "kit_local_001" });
+      expect(res.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    // 還原真實 update 供 events 查詢路徑使用（此處只讀 events，不再 mutate）。
+    void realUpdate;
+    const events = await request(app.app).get(`/api/review-sessions/${sid}/events`);
+    expect(events.body.items.some((e: any) => e.type === "firstFrameObserved")).toBe(false);
   });
 
   // P5 對抗複驗 Important #2/#3：endpoint_id 來自 iframe postMessage 的 client 回報（LAN 無 RBAC，

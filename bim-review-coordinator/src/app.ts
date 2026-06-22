@@ -908,7 +908,15 @@ export function createCoordinatorApp(
       const endpointId = typeof request.body?.endpoint_id === "string" ? request.body.endpoint_id.slice(0, 100) : undefined;
       const actor = resolveActor(request); // best-effort（LAN 無 RBAC，沿用既有）
       const at = nowIso(); // N3：coordinator 權威時戳，忽略 body.observed_at（iframe/coordinator 時鐘無同步保障）
-      store.update(session.session_id, { first_frame_at: at });
+      // store.update 在 store.get（上方守門）與此處之間 session 檔被外部刪除時回 null（與 sibling
+      // /close app.ts:951-962 對 store.update null 的防禦一致）。若忽略回傳值會 (1) 仍 append 一筆
+      // 孤兒 firstFrameObserved（對應不到任何 store 記錄，違反 append-only audit ledger 不變式），
+      // (2) 回 200 + 未實際持久化的時戳給呼叫端。故 update 失敗時回 500、不 append。
+      const updated = store.update(session.session_id, { first_frame_at: at });
+      if (!updated) {
+        response.status(500).json({ detail: "Session update failed." });
+        return;
+      }
       eventLog.append(session.session_id, "firstFrameObserved", { endpoint_id: endpointId, actor });
       response.json({ session_id: session.session_id, first_frame_at: at });
     } catch (error) {
