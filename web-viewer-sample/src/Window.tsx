@@ -278,6 +278,8 @@ export default class App extends React.Component<AppProps, AppState> {
     private pendingStageUrl: string | null = null;
     // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
     private _firstFramePosted = false;
+    // Important #3：白名單為空導致 _postToParent 全 reject 時，只 warn 一次（_postToParent 在 first_frame/heartbeat 高頻呼叫）。
+    private _postToParentEmptyAllowlistWarned = false;
     // VG-01：parent（console iframe 容器）postMessage listener 的穩定參考，供 add/removeEventListener 對稱掛卸。
     private _onParentMessage = (e: MessageEvent): void => this._handleParentMessage(e);
     private pendingMappingHighlightRequestId: string | null = null;
@@ -492,6 +494,11 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearStageLoadTimeout();
         this.pendingStageUrl = null;
         this.loadingStatePollCount = 0;
+        // Important #2：stage 重載清理點同時歸零 first_frame 閂。否則同一 session 內換載另一個
+        // stage（多模型切換）時第二次完成後 parent 收不到 first_frame / stage_loaded，
+        // IX-A1-06 無法重滿足、「在 3D 高亮」鈕保持 disabled。重置後由 _completeStageLoad 的
+        // 閂保證「每次真完成」各送一次（_failStageLoad 失敗路徑不送，誠實鐵律不變）。
+        this._firstFramePosted = false;
     }
 
     private _expectedStageAsset(): USDAssetType | null {
@@ -648,7 +655,20 @@ export default class App extends React.Component<AppProps, AppState> {
     private _postToParent(msg: Record<string, unknown>): void {
         const origin = this._consoleParentOrigin();
         if (!origin || window.parent === window) return;
-        if (!allowedCoordinatorOrigins().has(origin)) return; // 白名單守衛（複用 env.ts 來源）
+        const allowed = allowedCoordinatorOrigins();
+        if (!allowed.has(origin)) {
+            // Important #3：白名單為空（多半是 deploy 忘設 VITE_ALLOWED_COORDINATOR_ORIGINS）時，
+            // viewer 對任何 parent origin 都 reject → 永遠送不出 viewer_ready / first_frame，A1 高亮鈕永不 enable
+            // 卻無任何線索。此處留一次性 console.warn 作診斷（不改安全行為：仍不對未授權 origin 送）。
+            if (allowed.size === 0 && !this._postToParentEmptyAllowlistWarned) {
+                this._postToParentEmptyAllowlistWarned = true;
+                console.warn(
+                    "[VG-01] VITE_ALLOWED_COORDINATOR_ORIGINS 為空：viewer 無法對 console 送 viewer_ready/first_frame，" +
+                    `A1「在 3D 高亮」鈕將永不啟用（parent origin=${origin}）。請於 deploy 設定該 env var。`,
+                );
+            }
+            return; // 白名單守衛（複用 env.ts 來源）
+        }
         window.parent.postMessage({ protocol: "vg01", ...msg }, origin);
     }
 
@@ -656,21 +676,27 @@ export default class App extends React.Component<AppProps, AppState> {
     // clearHighlight）；不改 AppStream / GovernanceOverlay props 形狀 / spectator 既有路徑。
     private _handleParentMessage(e: MessageEvent): void {
         const isEmbedded = window.parent !== window;
-        if (!shouldAcceptParentMessage(e, allowedCoordinatorOrigins(), isEmbedded)) return;
+        // Important #3：一次 parse 白名單供守衛與後續 _postToParent 共用（同一 call stack 內 env 不變，避免重複 new Set）。
+        const allowedOrigins = allowedCoordinatorOrigins();
+        if (!shouldAcceptParentMessage(e, allowedOrigins, isEmbedded)) return;
         if (e.origin !== this._consoleParentOrigin()) return; // 再交叉驗：event.origin 須等於 referrer parent origin
+        // Important #1：canOperate / spectator 守衛是「全部 mutating handler」的共同要求（spec §2.2），非僅 highlight。
+        // 與 render / highlight 用同一 deriveOverlayInputs：spectator 或未就緒（無 issues 分頁 / 無串流 / lifecycle 非 active）
+        // 一律靜默丟棄，不送任何 mutating 指令（focus / clear 亦在 _sendStreamMessage 的 mutatingEvents 內，誠實鐵律：
+        // spectator 不送 mutating，見 _onSelectUSDPrims 的 CH-B gate）。
+        const lifecycle = this.state.reviewLifecycleStatus;
+        const lifecycleActive = lifecycle === "active" || lifecycle === "created";
+        const issuesTabReady = this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId);
+        const inputs = deriveOverlayInputs({
+            spectator: isSpectatorStreamMode(),
+            streamReady: harnessEnabled() || this._hasRemoteVideoFrame() || issuesTabReady,
+            lifecycleActive,
+        });
+        const canOperate = canHandleHighlight(inputs.panelState.canOperate);
         const m = e.data as { type?: string; items?: FailedElement[]; ifc_guid?: string };
         switch (m.type) {
             case "highlight": {
-                // M2：先算 canOperate（與 render 用同一 deriveOverlayInputs）；false 靜默丟棄、不觸發 _overlayHighlight。
-                const lifecycle = this.state.reviewLifecycleStatus;
-                const lifecycleActive = lifecycle === "active" || lifecycle === "created";
-                const issuesTabReady = this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId);
-                const inputs = deriveOverlayInputs({
-                    spectator: isSpectatorStreamMode(),
-                    streamReady: harnessEnabled() || this._hasRemoteVideoFrame() || issuesTabReady,
-                    lifecycleActive,
-                });
-                if (!canHandleHighlight(inputs.panelState.canOperate)) return; // spectator / 未就緒靜默丟棄
+                if (!canOperate) return; // spectator / 未就緒靜默丟棄
                 for (const item of m.items ?? []) {
                     const res = this._overlayHighlight(item);
                     this._postToParent({
@@ -683,6 +709,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 break;
             }
             case "focus":
+                if (!canOperate) return; // spectator / 未就緒靜默丟棄（不送 focusPrimRequest）
                 if (m.ifc_guid) {
                     // 既有反查 / focus 路徑：ifc_guid → primPath 後送 focusPrim（沿用 _overlayHighlight 內的 cache 解析慣例）。
                     const primPath = this._mappingCache?.primPathForGuid(m.ifc_guid) ?? null;
@@ -690,6 +717,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 }
                 break;
             case "clear":
+                if (!canOperate) return; // spectator / 未就緒靜默丟棄（不送 clearHighlightRequest）
                 this._sendStreamMessage(buildClearHighlightRequest());
                 break;
             default:

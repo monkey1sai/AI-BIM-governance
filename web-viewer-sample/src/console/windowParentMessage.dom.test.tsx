@@ -21,6 +21,11 @@ type AppInternals = {
   _handleParentMessage: (e: MessageEvent) => void;
   _overlayHighlight: (f: unknown) => unknown;
   _postToParent: (m: Record<string, unknown>) => void;
+  _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
+  _completeStageLoad: (loadedUrl?: string) => void;
+  _finishStageLoad: () => void;
+  _firstFramePosted: boolean;
+  _mappingCache: { primPathForGuid: (g: string) => string | null } | null;
   render: () => React.ReactElement;
 };
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -35,6 +40,25 @@ function setEmbedded(referrer: string): { postMessage: ReturnType<typeof vi.fn> 
 
 function highlightMessage(items: Array<Record<string, unknown>>): MessageEvent {
   return new MessageEvent("message", { data: { protocol: "vg01", type: "highlight", items }, origin: PARENT_ORIGIN });
+}
+
+function clearMessage(): MessageEvent {
+  return new MessageEvent("message", { data: { protocol: "vg01", type: "clear" }, origin: PARENT_ORIGIN });
+}
+
+function focusMessage(ifc_guid: string): MessageEvent {
+  return new MessageEvent("message", { data: { protocol: "vg01", type: "focus", ifc_guid }, origin: PARENT_ORIGIN });
+}
+
+function operableApp(): App {
+  const app = new App({} as never);
+  internals(app).state = {
+    ...internals(app).state,
+    viewerTab: "issues",
+    reviewSessionId: "review_session_x",
+    reviewLifecycleStatus: "active",
+  };
+  return app;
 }
 
 function postedTypes(parent: { postMessage: ReturnType<typeof vi.fn> }): string[] {
@@ -161,5 +185,91 @@ describe("M5 degraded：document.referrer 為空時 _postToParent 安全降級�
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
     expect(parent.postMessage.mock.calls[0][0]).toMatchObject({ protocol: "vg01", type: "viewer_ready" });
     expect(parent.postMessage.mock.calls[0][1]).toBe(PARENT_ORIGIN); // targetOrigin 非 "*"
+  });
+});
+
+describe("Important #1：_handleParentMessage 的 clear / focus 也受 canOperate / spectator 守衛（§2.2 共同要求，非僅 highlight）", () => {
+  it("canOperate=false（未就緒：無 issues 分頁 / 無串流）→ clear 靜默丟棄，不呼 _sendStreamMessage", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = new App({} as never); // 預設 state：未就緒 → canOperate=false
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage");
+    internals(app)._handleParentMessage(clearMessage());
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it("spectator（view-only）→ clear 靜默丟棄，不送 clearHighlightRequest（誠實鐵律：spectator 不送 mutating）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const stubGet = vi.spyOn(URLSearchParams.prototype, "get").mockImplementation((k: string) => (k === "streamRole" ? "spectator" : null));
+    const app = operableApp(); // issues + session + active，但 spectator 應壓過
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage");
+    internals(app)._handleParentMessage(clearMessage());
+    expect(sendSpy).not.toHaveBeenCalled();
+    stubGet.mockRestore();
+  });
+
+  it("spectator（view-only）→ focus 靜默丟棄，不送 focusPrimRequest", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const stubGet = vi.spyOn(URLSearchParams.prototype, "get").mockImplementation((k: string) => (k === "streamRole" ? "spectator" : null));
+    const app = operableApp();
+    internals(app)._mappingCache = { primPathForGuid: () => "/World/G_x" }; // 確保不是因為缺對映才不送
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage");
+    internals(app)._handleParentMessage(focusMessage("GUID-AAA"));
+    expect(sendSpy).not.toHaveBeenCalled();
+    stubGet.mockRestore();
+  });
+
+  it("canOperate=true（primary + issues + session + active）→ clear 走既有路徑送 clearHighlightRequest", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => {});
+    internals(app)._handleParentMessage(clearMessage());
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "clearHighlightRequest" });
+  });
+
+  it("canOperate=true → focus 解析到 primPath 後送 focusPrimRequest", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    internals(app)._mappingCache = { primPathForGuid: (g: string) => (g === "GUID-AAA" ? "/World/G_AAA" : null) };
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => {});
+    internals(app)._handleParentMessage(focusMessage("GUID-AAA"));
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][0]).toMatchObject({ event_type: "focusPrimRequest" });
+  });
+});
+
+describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切換時第二個 stage 完成仍回報 first_frame）", () => {
+  it("第二次 _completeStageLoad（換載 stage）→ 再次送 first_frame / stage_loaded", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = new App({} as never);
+    internals(app).state = { ...internals(app).state, expectedStageUrl: null };
+    // 第一次完成 → first_frame + stage_loaded
+    internals(app)._completeStageLoad("stage://first.usdc");
+    expect(postedTypes(parent).filter((t) => t === "first_frame")).toHaveLength(1);
+    // 模擬換載另一個 stage：_finishStageLoad（重載清理點）後第二次完成。
+    internals(app)._finishStageLoad();
+    internals(app)._completeStageLoad("stage://second.usdc");
+    // 重置後第二個 stage 完成仍回報 first_frame（否則 IX-A1-06 無法重滿足，高亮鈕保持 disabled）。
+    expect(postedTypes(parent).filter((t) => t === "first_frame")).toHaveLength(2);
+    expect(postedTypes(parent).filter((t) => t === "stage_loaded")).toHaveLength(2);
+  });
+});
+
+describe("Important #3：allowedCoordinatorOrigins 空白名單時 _postToParent 降級須留診斷（不再半靜默失敗）", () => {
+  it("白名單為空 → _postToParent 不送出但 console.warn 留下診斷（deploy 忘設 env 的線索）", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", ""); // 模擬忘記設定 env var
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const app = new App({} as never);
+    internals(app)._postToParent({ type: "viewer_ready" });
+    expect(parent.postMessage).not.toHaveBeenCalled(); // 安全：不對未授權 origin 送
+    expect(warnSpy).toHaveBeenCalled(); // 但要留診斷，不可半靜默
+    warnSpy.mockRestore();
   });
 });
