@@ -29,7 +29,8 @@ import { CoordinatorClient, isQueuedForInstanceError } from "./clients/coordinat
 import { connectReviewSocket, type ReviewSocketClient } from "./clients/reviewSocket";
 import { buildClearHighlightRequest, buildFocusPrimRequest, buildGetChildrenRequest, buildHighlightPrimsRequest, buildLoadingStateQuery, buildOpenStageRequest } from "./clients/streamMessages";
 import { demoPrimPath } from "./clients/demoDefaults";
-import { reviewEnv } from "./config/env";
+import { allowedCoordinatorOrigins, reviewEnv } from "./config/env";
+import { canHandleHighlight, failedElementsForEmbed, shouldAcceptParentMessage } from "./parentMessageGuard";
 import { harnessEnabled } from "./harness/harnessConfig";
 import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
 import type { DemoLogEntry } from "./types/demo";
@@ -275,6 +276,10 @@ export default class App extends React.Component<AppProps, AppState> {
     private _pollForKitReadyId: number | null = null;
     private loadingStatePollCount = 0;
     private pendingStageUrl: string | null = null;
+    // VG-01 M1：first_frame 只送一次的閂（防失敗/斷線/開檔路徑誤觸→偽證據）。
+    private _firstFramePosted = false;
+    // VG-01：parent（console iframe 容器）postMessage listener 的穩定參考，供 add/removeEventListener 對稱掛卸。
+    private _onParentMessage = (e: MessageEvent): void => this._handleParentMessage(e);
     private pendingMappingHighlightRequestId: string | null = null;
     private pendingMappingFocusRequestId: string | null = null;
     private pendingMappingPrimPath: string | null = null;
@@ -333,6 +338,11 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentDidMount(): void {
+        // VG-01：嵌入 console iframe 時掛上 parent postMessage 橋（unmount 對稱移除），並通知 parent listener 已就緒。
+        // 嚴格 additive：非嵌入（window.parent === window）時 listener 永遠 reject、不送任何訊息，既有單機/直連行為零變更。
+        window.addEventListener("message", this._onParentMessage);
+        if (window.parent !== window) this._postToParent({ type: "viewer_ready" });
+
         if (reviewEnv.hasExplicitEmptySessionId) {
             void this._bootstrapReview();
             return;
@@ -349,6 +359,7 @@ export default class App extends React.Component<AppProps, AppState> {
         this._clearDeferredOpenStage();
         this._clearPollForKitReady();
         this.reviewSocket?.disconnect();
+        window.removeEventListener("message", this._onParentMessage);
     }
 
     private _appendReviewEvent(event: string): void {
@@ -543,6 +554,14 @@ export default class App extends React.Component<AppProps, AppState> {
         // overlay 標示永遠 unmapped）。僅在「有 mapping_url 且該 url 尚未載入」時觸發；無 mapping_url 不做事
         // （overlay 誠實顯示 unmapped / coverage 未知）。不改既有 stage-load 流程與 debug onLoadMapping 路徑。
         this._maybeAutoLoadMapping();
+        // VG-01 M1：真畫面已到達且 stage 完成（此處為唯一真完成點，由 kit handler 1807/1826 與
+        // _completeStageLoadFromVisibleStream（含 _hasRemoteVideoFrame guard）抵達）→ 通知 parent。
+        // _firstFramePosted 閂保證只送一次；不接在 _failStageLoad（失敗）/ 斷線 / 開檔等路徑（防偽證據）。
+        if (!this._firstFramePosted && window.parent !== window) {
+            this._firstFramePosted = true;
+            this._postToParent({ type: "first_frame", stageUrl: finalLoadedUrl ?? null });
+            this._postToParent({ type: "stage_loaded", stageUrl: finalLoadedUrl ?? null });
+        }
     }
 
     // T3：自動載入 element_mapping 的守門。reuse _loadElementMapping（其內以 _mappingCacheUrl 守重建），
@@ -618,6 +637,64 @@ export default class App extends React.Component<AppProps, AppState> {
             this._pendingGovHighlights[res.requestId] = { ifc_guid: failed.ifc_guid, rowKey, primPath: res.primPath };
         }
         return res;
+    }
+
+    // VG-01（M5）：parent origin 由 document.referrer parse（交叉驗），須在 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單內。
+    private _consoleParentOrigin(): string | null {
+        try { return document.referrer ? new URL(document.referrer).origin : null; } catch { return null; }
+    }
+
+    // VG-01：對 parent（console iframe 容器）送訊息。非嵌入或無可信 parent origin → 不送（不對 "*" 廣播，守跨 origin 安全）。
+    private _postToParent(msg: Record<string, unknown>): void {
+        const origin = this._consoleParentOrigin();
+        if (!origin || window.parent === window) return;
+        if (!allowedCoordinatorOrigins().has(origin)) return; // 白名單守衛（複用 env.ts 來源）
+        window.parent.postMessage({ protocol: "vg01", ...msg }, origin);
+    }
+
+    // VG-01：viewer 端 parent postMessage listener。嚴格 additive：通過守衛後才走既有路徑（_overlayHighlight / focusPrim /
+    // clearHighlight）；不改 AppStream / GovernanceOverlay props 形狀 / spectator 既有路徑。
+    private _handleParentMessage(e: MessageEvent): void {
+        const isEmbedded = window.parent !== window;
+        if (!shouldAcceptParentMessage(e, allowedCoordinatorOrigins(), isEmbedded)) return;
+        if (e.origin !== this._consoleParentOrigin()) return; // 再交叉驗：event.origin 須等於 referrer parent origin
+        const m = e.data as { type?: string; items?: FailedElement[]; ifc_guid?: string };
+        switch (m.type) {
+            case "highlight": {
+                // M2：先算 canOperate（與 render 用同一 deriveOverlayInputs）；false 靜默丟棄、不觸發 _overlayHighlight。
+                const lifecycle = this.state.reviewLifecycleStatus;
+                const lifecycleActive = lifecycle === "active" || lifecycle === "created";
+                const issuesTabReady = this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId);
+                const inputs = deriveOverlayInputs({
+                    spectator: isSpectatorStreamMode(),
+                    streamReady: harnessEnabled() || this._hasRemoteVideoFrame() || issuesTabReady,
+                    lifecycleActive,
+                });
+                if (!canHandleHighlight(inputs.panelState.canOperate)) return; // spectator / 未就緒靜默丟棄
+                for (const item of m.items ?? []) {
+                    const res = this._overlayHighlight(item);
+                    this._postToParent({
+                        type: "highlight_result",
+                        requestId: res.ok ? res.requestId : "",
+                        ok: res.ok,
+                        ...(res.ok ? {} : { reason: res.reason }),
+                    });
+                }
+                break;
+            }
+            case "focus":
+                if (m.ifc_guid) {
+                    // 既有反查 / focus 路徑：ifc_guid → primPath 後送 focusPrim（沿用 _overlayHighlight 內的 cache 解析慣例）。
+                    const primPath = this._mappingCache?.primPathForGuid(m.ifc_guid) ?? null;
+                    if (primPath) this._sendStreamMessage(buildFocusPrimRequest(primPath));
+                }
+                break;
+            case "clear":
+                this._sendStreamMessage(buildClearHighlightRequest());
+                break;
+            default:
+                break; // 未知 type 忽略（協定前向相容）
+        }
     }
 
     // W1：A3 rule-run —— 由當前 review session 起跑（coordinator 端解析 server IFC 路徑），輪詢狀態，
@@ -710,6 +787,7 @@ export default class App extends React.Component<AppProps, AppState> {
         const guid = this._mappingCache?.guidForPrimPathOrAncestor(path) ?? null;
         this._appendReviewEvent(guid ? `點選 3D 構件 → ifc_guid=${guid}（帶進治理）` : `點選 3D 構件 ${path} → 無對映 ifc_guid`);
         this.setState({ govSelectedGuid: guid });
+        this._postToParent({ type: "selected_guid", ifcGuid: guid }); // VG-01 七區塊第7：3D 點構件 → 清單反查
     }
 
     private _canOpenSelectedAsset(): boolean {
@@ -2266,11 +2344,17 @@ export default class App extends React.Component<AppProps, AppState> {
                         (b) => b.ready_status === "ready" && b.artifact_role === "derived" && Boolean(b.url),
                     );
                     return (
+                        <>
+                        {/* S3：嵌入 console iframe 時，本 3D 視窗僅作高亮引擎；失敗清單由 parent 工作台顯示（唯一權威清單），
+                            避免「console 25 筆 / iframe 另列一份」雙清單矛盾。誠實標註空清單非「真的無失敗」。 */}
+                        {window.parent !== window && (
+                          <p className="ec-note" data-testid="viewer-embedded-list-collapsed">失敗清單由治理工作台（parent）顯示，此 3D 視窗僅作高亮引擎。</p>
+                        )}
                         <GovernanceOverlay
                             variant={this.state.viewerTab === "issues" ? "panel" : "overlay"}
                             panelState={inputs.panelState}
                             coverage={coverage}
-                            failedElements={this.state.govFailedElements ?? []}
+                            failedElements={failedElementsForEmbed(this.state.govFailedElements ?? [], window.parent !== window)}
                             onHighlight={(f) => this._overlayHighlight(f)}
                             onClearHighlight={() => {
                                 if (!inputs.panelState.canOperate) return;
@@ -2293,6 +2377,7 @@ export default class App extends React.Component<AppProps, AppState> {
                             bindingApplyState={this.state.govBindingApplyState}
                             onApplyBinding={(selection, revisionId) => this._applyBinding(selection, revisionId)}
                         />
+                        </>
                     );
                 })()}
             </div>
