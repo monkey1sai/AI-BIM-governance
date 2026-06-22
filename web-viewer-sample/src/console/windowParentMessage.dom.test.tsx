@@ -20,7 +20,7 @@ type AppInternals = {
   state: Record<string, unknown>;
   _handleParentMessage: (e: MessageEvent) => void;
   _overlayHighlight: (f: unknown) => unknown;
-  _postToParent: (m: Record<string, unknown>) => void;
+  _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
   _completeStageLoad: (loadedUrl?: string) => void;
   _finishStageLoad: () => void;
@@ -271,5 +271,91 @@ describe("Important #3：allowedCoordinatorOrigins 空白名單時 _postToParent
     expect(parent.postMessage).not.toHaveBeenCalled(); // 安全：不對未授權 origin 送
     expect(warnSpy).toHaveBeenCalled(); // 但要留診斷，不可半靜默
     warnSpy.mockRestore();
+  });
+});
+
+// ── quality review 補強（Task 2 fix）──────────────────────────────────────────
+// 補三項 Important 的測試缺口 / 守衛缺口（皆 §2 / §5 範圍內，嚴格 additive，不改既有 reject 行為）。
+
+describe("Q-Important #1：第二層 referrer 交叉驗（event.origin 通過白名單，但 referrer origin 不符）→ 整則丟棄且不崩潰", () => {
+  // §M5 已知 trade-off：shouldAcceptParentMessage（白名單）通過後，再以 document.referrer parse 出的
+  // parent origin 做交叉驗（Window.tsx:682）。既有 M5 測只鎖「空 referrer 安全降級」；此處補
+  // 「referrer 存在但 origin 不符」這條路徑——event.origin=PARENT_ORIGIN（在白名單）但 referrer=other.example。
+  it("referrer=http://other.example 而 event.origin=PARENT_ORIGIN（在白名單）→ 不呼 _overlayHighlight、不回 highlight_result、不崩潰", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    // referrer 指向另一 origin（非白名單）→ _consoleParentOrigin() 回 http://other.example，
+    // 與 event.origin（PARENT_ORIGIN）不符 → 第二層交叉驗應丟棄。
+    const parent = setEmbedded("http://other.example/whatever");
+    const app = operableApp(); // issues + session + active：排除是 canOperate=false 才不處理的可能
+    const overlaySpy = vi.spyOn(internals(app), "_overlayHighlight");
+    expect(() =>
+      internals(app)._handleParentMessage(highlightMessage([{ ifc_guid: "GUID-AAA", severity: "error" }])),
+    ).not.toThrow();
+    expect(overlaySpy).not.toHaveBeenCalled();
+    expect(postedTypes(parent)).not.toContain("highlight_result");
+  });
+});
+
+describe("Q-Important #2：highlight 分支須驗 payload 形狀（items 非陣列 / item 非物件 / ifc_guid 非字串一律丟棄）", () => {
+  // postMessage 跨 origin 反序列化，TS cast 不做執行期檢查。惡意 / 錯誤 sender 傳入 items:[null] / [42] /
+  // 缺 ifc_guid 時，_overlayHighlight 不該收到非法 FailedElement（守衛原則對齊：origin 驗白名單後，payload 也須驗）。
+  function rawHighlight(items: unknown): MessageEvent {
+    return new MessageEvent("message", { data: { protocol: "vg01", type: "highlight", items }, origin: PARENT_ORIGIN });
+  }
+
+  it("items 非陣列（items: 42）→ 不呼 _overlayHighlight、不崩潰", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    const overlaySpy = vi.spyOn(internals(app), "_overlayHighlight");
+    expect(() => internals(app)._handleParentMessage(rawHighlight(42))).not.toThrow();
+    expect(overlaySpy).not.toHaveBeenCalled();
+    expect(postedTypes(parent)).not.toContain("highlight_result");
+  });
+
+  it("items 含 null / 數字 / 缺 ifc_guid 的非法 item → 跳過非法者、僅對合法 item 呼 _overlayHighlight", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    const overlaySpy = vi
+      .spyOn(internals(app), "_overlayHighlight")
+      .mockReturnValue({ ok: false, reason: "unmapped" });
+    const items = [null, 42, { severity: "error" }, { ifc_guid: 99 }, { ifc_guid: "GUID-OK", severity: "error" }];
+    expect(() => internals(app)._handleParentMessage(rawHighlight(items))).not.toThrow();
+    // 只有最後一筆合法（ifc_guid 為字串）→ _overlayHighlight 恰呼 1 次，且只回 1 筆 highlight_result。
+    expect(overlaySpy).toHaveBeenCalledTimes(1);
+    expect(overlaySpy.mock.calls[0][0]).toMatchObject({ ifc_guid: "GUID-OK" });
+    const highlightResults = postedTypes(parent).filter((t) => t === "highlight_result");
+    expect(highlightResults).toHaveLength(1);
+  });
+});
+
+describe("Q-Important #3：_postToParent 接受外部已建的 allowedOrigins Set（避免 highlight 迴圈每筆重 parse env）", () => {
+  // _handleParentMessage 開頭已建 allowedOrigins；_postToParent 應可複用它，免得 highlight 迴圈內每筆
+  // highlight_result 都重新 split/map/normalize/new Set。行為不變：傳入的 Set 與內部自建結果等價時送出一致。
+  it("傳入快取 Set → 仍正常送出（行為與不傳一致），且未額外呼 allowedCoordinatorOrigins", () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    const parent = setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = new App({} as never);
+    const cache = new Set([PARENT_ORIGIN]);
+    internals(app)._postToParent({ type: "viewer_ready" }, cache);
+    expect(parent.postMessage).toHaveBeenCalledTimes(1);
+    expect(parent.postMessage.mock.calls[0][0]).toMatchObject({ protocol: "vg01", type: "viewer_ready" });
+    expect(parent.postMessage.mock.calls[0][1]).toBe(PARENT_ORIGIN);
+  });
+
+  it("highlight 迴圈多筆 → allowedCoordinatorOrigins 不隨筆數線性增加呼叫（複用同一 Set）", async () => {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp();
+    vi.spyOn(internals(app), "_overlayHighlight").mockReturnValue({ ok: false, reason: "unmapped" });
+    const envModule = await import("../config/env");
+    const originsSpy = vi.spyOn(envModule, "allowedCoordinatorOrigins");
+    const items = Array.from({ length: 5 }, (_, i) => ({ ifc_guid: `GUID-${i}`, severity: "error" }));
+    internals(app)._handleParentMessage(highlightMessage(items));
+    // 5 筆 highlight → 若 _postToParent 每筆都自建 Set，allowedCoordinatorOrigins 會被呼 ≥6 次（1 守衛 + 5 回報）。
+    // 複用快取後應僅 1 次（_handleParentMessage 開頭）。
+    expect(originsSpy).toHaveBeenCalledTimes(1);
+    originsSpy.mockRestore();
   });
 });

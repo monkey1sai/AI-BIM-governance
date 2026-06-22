@@ -140,6 +140,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
+// VG-01（Important #2）：parent postMessage 的 highlight item 執行期形狀守衛。
+// 跨 origin 反序列化的 payload 不可信，最低要求是物件且帶字串 ifc_guid，才當作合法 FailedElement。
+function isHighlightItem(value: unknown): value is FailedElement {
+    return isRecord(value) && typeof value.ifc_guid === "string";
+}
+
 function getPayloadString(payload: Record<string, unknown>, key: string): string {
     const value = payload[key];
     return typeof value === "string" ? value : "";
@@ -652,10 +658,12 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     // VG-01：對 parent（console iframe 容器）送訊息。非嵌入或無可信 parent origin → 不送（不對 "*" 廣播，守跨 origin 安全）。
-    private _postToParent(msg: Record<string, unknown>): void {
+    // Important #3：可選 allowedOriginsCache —— _handleParentMessage 的 highlight 迴圈每筆都呼一次本方法，
+    // 不傳時每次都重 parse env / split / normalize / new Set。caller 已建白名單時傳入複用（行為不變，省重複工作）。
+    private _postToParent(msg: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>): void {
         const origin = this._consoleParentOrigin();
         if (!origin || window.parent === window) return;
-        const allowed = allowedCoordinatorOrigins();
+        const allowed = allowedOriginsCache ?? allowedCoordinatorOrigins();
         if (!allowed.has(origin)) {
             // Important #3：白名單為空（多半是 deploy 忘設 VITE_ALLOWED_COORDINATOR_ORIGINS）時，
             // viewer 對任何 parent origin 都 reject → 永遠送不出 viewer_ready / first_frame，A1 高亮鈕永不 enable
@@ -693,18 +701,23 @@ export default class App extends React.Component<AppProps, AppState> {
             lifecycleActive,
         });
         const canOperate = canHandleHighlight(inputs.panelState.canOperate);
-        const m = e.data as { type?: string; items?: FailedElement[]; ifc_guid?: string };
+        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string };
         switch (m.type) {
             case "highlight": {
                 if (!canOperate) return; // spectator / 未就緒靜默丟棄
-                for (const item of m.items ?? []) {
-                    const res = this._overlayHighlight(item);
+                // Important #2：postMessage 跨 origin 反序列化，TS cast 不做執行期檢查。origin 已驗白名單，
+                // payload 也須驗：items 非陣列直接丟棄；每筆須是帶字串 ifc_guid 的物件，否則跳過該筆
+                // （不把非法 FailedElement 餵進 _overlayHighlight / HighlightBridge）。
+                if (!Array.isArray(m.items)) return;
+                for (const raw of m.items) {
+                    if (!isHighlightItem(raw)) continue; // 非法 item（null / 數字 / 缺 ifc_guid）跳過
+                    const res = this._overlayHighlight(raw);
                     this._postToParent({
                         type: "highlight_result",
                         requestId: res.ok ? res.requestId : "",
                         ok: res.ok,
                         ...(res.ok ? {} : { reason: res.reason }),
-                    });
+                    }, allowedOrigins); // Important #3：複用本 call stack 已建白名單，免迴圈內重 parse
                 }
                 break;
             }
