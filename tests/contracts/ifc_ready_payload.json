@@ -1,6 +1,6 @@
 {
   "contract": "ifc_ready_payload",
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "direction": "customer-edge IFC Worker -> bim-review-coordinator POST /api/external/ifc-ready",
   "caller": "customer-edge IFC Worker (edge intranet / intra-LAN; NOT the company cloud test/prod hosts)",
   "source_of_truth": [
@@ -38,6 +38,8 @@
     "event": "constant 'ifc_ready'",
     "external_model_version_id": "binds the local conversion job for later callback correlation (control-plane authority is the company cloud; this repo only shadows it)",
     "external_conversion_task_id": "optional; company-cloud-issued task id when present (OQ3)",
+    "project_display_name": "optional (contract v1.1.0); MinIO-watcher-derived original project label (e.g. Chinese name) from the first key segment, kept verbatim for display/reconciliation; NOT used as the safe id. Worker-compat payload omits it.",
+    "model_category": "optional (contract v1.1.0); MinIO-watcher-derived model category (種類) = second-to-last key segment under the >=3-segment key rule. Worker-compat payload omits it.",
     "source_ifc.ref": "artifact reference scheme TBD (OQ2: minio:// bucket naming / etag source); placeholder URL-style ref accepted in dev",
     "source_ifc.etag": "checksum of the produced .ifc for idempotency / integrity",
     "callback_url": "where coordinator should POST conversion_result_ready/conversion_failed to the company cloud (OQ1: real endpoint pending; dev placeholder frozen here)",
@@ -52,6 +54,8 @@
     "tenant_id": "tenant_demo_001",
     "project_id": "project_demo_001",
     "external_model_version_id": "ext_mv_demo_001",
+    "project_display_name": "project_demo_001",
+    "model_category": "main",
     "external_conversion_task_id": "ext_task_demo_001",
     "source_ifc": {
       "ref": "minio://edge-bucket/tenant_demo_001/project_demo_001/ext_mv_demo_001/demo-model.ifc",

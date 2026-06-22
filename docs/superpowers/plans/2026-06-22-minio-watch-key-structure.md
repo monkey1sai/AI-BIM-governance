@@ -35,6 +35,8 @@
 
 ### Task 1: 改寫 deriveIntakeFromKey（≥3 段 + 安全 project_id + category/displayName）
 
+> ⚠️ **本 Task 的程式/測試範例為初稿，已被文末「審查修訂」段覆寫**（`deriveSafeProjectId` 移除→直接重用 `sanitizeArtifactIdPart`；中文測試斷言由 `/^p_[0-9a-f]{12}$/` 改為 `/^mv_[0-9a-f]{8}$/`；segment 驗證加拒收純點段 `.`/`..`）。**實作以「審查修訂」段 + 已合併之程式碼為準**（vitest 431/431 驗證），本段保留為初稿記錄。
+
 **Files:**
 - Modify: `bim-review-coordinator/src/services/minioWatcher.ts`（`DeriveOk` 介面、新增 `deriveSafeProjectId`、改 `deriveIntakeFromKey`）
 - Test: `bim-review-coordinator/tests/minio-watcher-derive.test.ts`
