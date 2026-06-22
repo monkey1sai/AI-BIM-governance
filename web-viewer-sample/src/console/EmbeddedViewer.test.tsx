@@ -90,6 +90,24 @@ describe("EmbeddedViewer postMessage 橋", () => {
     expect(onSelectedGuid).toHaveBeenCalledWith("guid-123");
   });
 
+  // 對抗複驗 Important #1：viewer_ready / stage_loaded 也須有 dispatch 回歸鎖（Task 3 stage-truth 比對依賴 onStageLoaded）。
+  it("vg01 viewer_ready / stage_loaded 分派到對應 callback", async () => {
+    const onViewerReady = vi.fn();
+    const onStageLoaded = vi.fn();
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN}
+          onViewerReady={onViewerReady} onStageLoaded={onStageLoaded} />,
+      );
+    });
+    const iframeWin = container.querySelector("iframe")!.contentWindow;
+    fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, iframeWin);
+    fireMessage({ protocol: "vg01", type: "stage_loaded", stageUrl: "stage://loaded" }, VIEWER_ORIGIN, iframeWin);
+    expect(onViewerReady).toHaveBeenCalledTimes(1);
+    expect(onStageLoaded).toHaveBeenCalledWith("stage://loaded");
+  });
+
   it("message 來自非 iframe.contentWindow 的 source 丟棄", async () => {
     const onFirstFrame = vi.fn();
     root = createRoot(container);

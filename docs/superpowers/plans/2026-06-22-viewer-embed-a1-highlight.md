@@ -747,7 +747,9 @@ gitnexus_impact({ target: "A1GovernanceWorkbenchPage", direction: "upstream" })
                 <p className="ec-warn-note" data-testid="a1-viewer-origin-missing">viewer 入口未取得（runtime/status 無 configured_endpoints.viewer.browser_url_base 或 coordinator 連不上），3D 暫不可用</p>
               ) : (
                 <div style={{ height: 480 }}>
+                  {/* key=session：切換 session 乾淨 remount，不原地改 sessionId/viewerOrigin → 避免 iframe src 變 reload 破壞既有 WebRTC（EmbeddedViewerProps JSDoc 契約）。viewerOrigin 已由上方三元 gated（null 不 render，不會空→補值 reload）。 */}
                   <EmbeddedViewer
+                    key={selectedSession}
                     ref={viewerRef}
                     sessionId={selectedSession}
                     viewerOrigin={viewerOrigin}

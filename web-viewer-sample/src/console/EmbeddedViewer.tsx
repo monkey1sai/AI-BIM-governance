@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
+import { useEffect, useImperativeHandle, useRef, forwardRef } from "react";
 
 // VG-01 postMessage 協定（版本化）。viewer→console 與 console→viewer 皆帶 protocol:"vg01"。
 export interface FirstFrameMessage { protocol: "vg01"; type: "first_frame"; stageUrl: string | null }
@@ -23,6 +23,11 @@ export interface EmbeddedViewerProps {
                         // 真源 = coordinatorClient.runtimeStatus().configured_endpoints.viewer.browser_url_base（Task 3 提供）。
                         // ⚠️ 傳成 coordinator base 會讓 iframe 載 coordinator HTML、postMessage 橋永遠收不到 viewer 訊息。
                         // 接收端白名單仍複用 VITE_ALLOWED_COORDINATOR_ORIGINS（viewer 端驗 parent=console origin）。
+                        // ⚠️ viewerOrigin / sessionId 不支援 mount 後動態修改：src 隨 render 重算，prop 一變會
+                        //    重設 iframe.src → reload → 中斷既有 WebRTC 連線與 DataChannel，且 first_frame_at 不再
+                        //    對應真串流。父元件契約：(1) gated render —— viewerOrigin 從 runtime/status 拿到值才 mount
+                        //    本元件（null 時顯 missing，不先空 render）；(2) 切換 session 用 key={sessionId} 強制乾淨
+                        //    remount，而非原地改 prop。
   onViewerReady?: () => void;
   onFirstFrame?: (m: FirstFrameMessage) => void;
   onStageLoaded?: (stageUrl: string | null) => void;
@@ -32,7 +37,6 @@ export interface EmbeddedViewerProps {
 
 export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerProps>(function EmbeddedViewer(props, ref) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [, setViewerReady] = useState(false);
 
   // stable ref：每 render 同步最新 props，listener 才不必每 render 重掛。
   // 原 dep=[props]（每 render 新 object reference）會在每個 render cycle removeEventListener + addEventListener，
@@ -48,7 +52,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       const m = e.data as { protocol?: string; type?: string } | null;
       if (!m || m.protocol !== "vg01") return;                     // 協定版本 / 前向相容（未知忽略）
       switch (m.type) {
-        case "viewer_ready":     setViewerReady(true); p.onViewerReady?.(); break;
+        case "viewer_ready":     p.onViewerReady?.(); break; // 父元件以 onViewerReady callback 追蹤 ready（IX-A1-06）；元件不存內部死 state（避免無謂 re-render）
         case "first_frame":      p.onFirstFrame?.(m as unknown as FirstFrameMessage); break;
         case "stage_loaded":     p.onStageLoaded?.((m as unknown as StageLoadedMessage).stageUrl); break;
         case "highlight_result": p.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
