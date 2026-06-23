@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS model_diff_items(
   model_diff_id TEXT,
   change_type TEXT,
   ifc_guid TEXT,
+  ifc_type TEXT,
+  ifc_name TEXT,
   base_usd_prim_path TEXT,
   target_usd_prim_path TEXT,
   change_summary TEXT,
@@ -33,6 +35,13 @@ CREATE TABLE IF NOT EXISTS model_diff_items(
 );
 CREATE INDEX IF NOT EXISTS idx_diff_items_diff ON model_diff_items(model_diff_id);
 """
+
+# 冪等 migration：為已存在的舊 db（無 ifc_type / ifc_name 欄）自動補欄。
+# 使用 PRAGMA table_info + execute（不用 executescript，後者不支援參數化亦難動態判斷）。
+_MIGRATIONS = [
+    ("ifc_type", "ALTER TABLE model_diff_items ADD COLUMN ifc_type TEXT"),
+    ("ifc_name", "ALTER TABLE model_diff_items ADD COLUMN ifc_name TEXT"),
+]
 
 
 def _now() -> str:
@@ -51,6 +60,11 @@ class DiffStore:
             os.makedirs(parent, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            # 冪等 migration：補舊 db 缺的欄位（新 db 已由 _SCHEMA 建好，ALTER 會被 try/except 略過）。
+            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(model_diff_items)").fetchall()}
+            for col_name, alter_sql in _MIGRATIONS:
+                if col_name not in existing_cols:
+                    conn.execute(alter_sql)
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -78,14 +92,16 @@ class DiffStore:
                 (_now(), json.dumps(result.summary_dict(), ensure_ascii=False), diff_id),
             )
             conn.executemany(
-                "INSERT INTO model_diff_items(id, model_diff_id, change_type, ifc_guid, base_usd_prim_path, target_usd_prim_path, change_summary, evidence_json)"
-                " VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO model_diff_items(id, model_diff_id, change_type, ifc_guid, ifc_type, ifc_name, base_usd_prim_path, target_usd_prim_path, change_summary, evidence_json)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         _new_id("di"),
                         diff_id,
                         it.change_type,
                         it.ifc_guid,
+                        it.ifc_type,
+                        it.ifc_name,
                         it.base_usd_prim_path,
                         it.target_usd_prim_path,
                         it.change_summary,

@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import os
+import sqlite3
+import tempfile
 
 import ifcopenshell
 import ifcopenshell.guid
 import pytest
 
 from diff_engine import open_model, run_diff, run_diff_on_paths
+from diff_engine.store import DiffStore
+from diff_engine.models import DiffItem, DiffResult
 
 _GA = ifcopenshell.guid.new()
 _GB = ifcopenshell.guid.new()
@@ -284,3 +288,149 @@ def test_real_model_modified_classification():
     assert diff.counts.get("property_changed", 0) > 0, "真實模型應偵測到屬性變更"
     moved_item = diff.items_by_type("moved")[0]
     assert moved_item.ifc_guid and moved_item.evidence.get("target_xyz")
+
+
+# ── A2-W2：DiffStore ifc_type/ifc_name 落庫回歸測試 ──────────────────────────
+
+def _make_result_with_ifc_type() -> DiffResult:
+    """建立一筆含 ifc_type/ifc_name 的合成 DiffResult 供 store 測試用。"""
+    return DiffResult(
+        base_count=1,
+        target_count=2,
+        matched=1,
+        counts={"added": 1, "removed": 0, "moved": 1},
+        items=[
+            DiffItem(
+                change_type="added",
+                ifc_guid="guid-add-001",
+                ifc_type="IfcBeam",
+                ifc_name="B-1",
+                change_summary="新增構件",
+                evidence={"match": "none"},
+            ),
+            DiffItem(
+                change_type="moved",
+                ifc_guid="guid-mov-001",
+                ifc_type="IfcWall",
+                ifc_name="W-A",
+                change_summary="位移 10m",
+                evidence={"target_xyz": (0.0, 0.0, 10000.0)},
+            ),
+        ],
+    )
+
+
+def test_store_roundtrip_ifc_type_ifc_name():
+    """A2-W2：store.complete_diff 真的把 ifc_type/ifc_name 存入 DB，get_items 讀回不為空。"""
+    tmpdir = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmpdir, "test_diff.db")
+        store = DiffStore(db_path)
+        diff_id = store.create_diff("mv-base", "mv-target", "base.ifc", "target.ifc")
+        store.mark_running(diff_id)
+        result = _make_result_with_ifc_type()
+        store.complete_diff(diff_id, result)
+
+        rows = store.get_items(diff_id)
+        assert len(rows) == 2, f"應得 2 筆，實得 {len(rows)}"
+
+        added_row = next(r for r in rows if r["change_type"] == "added")
+        assert added_row["ifc_type"] == "IfcBeam", f"ifc_type 應落庫 IfcBeam，實得 {added_row['ifc_type']!r}"
+        assert added_row["ifc_name"] == "B-1", f"ifc_name 應落庫 B-1，實得 {added_row['ifc_name']!r}"
+
+        moved_row = next(r for r in rows if r["change_type"] == "moved")
+        assert moved_row["ifc_type"] == "IfcWall"
+        assert moved_row["ifc_name"] == "W-A"
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_store_idempotent_migration_old_db():
+    """A2-W2 冪等回歸：對一個無 ifc_type/ifc_name 欄的舊 DB，開 DiffStore 後自動補欄；
+    既有列讀回 ifc_type=None（不回填假值）。"""
+    import shutil
+    tmpdir = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmpdir, "legacy_diff.db")
+
+        # 1. 用低層 sqlite3 建一個「舊 schema」DB（無 ifc_type/ifc_name）並插一筆舊紀錄。
+        legacy_conn = sqlite3.connect(db_path)
+        try:
+            legacy_conn.executescript("""
+CREATE TABLE IF NOT EXISTS model_diffs(
+  id TEXT PRIMARY KEY,
+  base_model_version_id TEXT,
+  target_model_version_id TEXT,
+  base_ifc_path TEXT,
+  target_ifc_path TEXT,
+  status TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  summary_json TEXT
+);
+CREATE TABLE IF NOT EXISTS model_diff_items(
+  id TEXT PRIMARY KEY,
+  model_diff_id TEXT,
+  change_type TEXT,
+  ifc_guid TEXT,
+  base_usd_prim_path TEXT,
+  target_usd_prim_path TEXT,
+  change_summary TEXT,
+  evidence_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_diff_items_diff ON model_diff_items(model_diff_id);
+""")
+            legacy_conn.execute(
+                "INSERT INTO model_diffs(id, status) VALUES(?,?)",
+                ("legacy-diff-001", "succeeded"),
+            )
+            legacy_conn.execute(
+                "INSERT INTO model_diff_items(id, model_diff_id, change_type, ifc_guid, change_summary, evidence_json)"
+                " VALUES(?,?,?,?,?,?)",
+                ("legacy-item-001", "legacy-diff-001", "removed", "guid-legacy", "舊列", "{}"),
+            )
+            legacy_conn.commit()
+        finally:
+            legacy_conn.close()
+
+        # 2. 以 DiffStore 開同一個 DB → 應自動補欄而不崩潰。
+        store = DiffStore(db_path)
+
+        # 3. 驗證欄位已存在（PRAGMA table_info 應回報 ifc_type / ifc_name）。
+        check_conn = sqlite3.connect(db_path)
+        try:
+            cols = {row[1] for row in check_conn.execute("PRAGMA table_info(model_diff_items)").fetchall()}
+        finally:
+            check_conn.close()
+        assert "ifc_type" in cols, "migration 應補入 ifc_type 欄"
+        assert "ifc_name" in cols, "migration 應補入 ifc_name 欄"
+
+        # 4. 舊列讀回 ifc_type=None（不回填假值）。
+        rows = store.get_items("legacy-diff-001")
+        assert len(rows) == 1
+        assert rows[0]["ifc_type"] is None, f"舊列 ifc_type 應為 None，實得 {rows[0]['ifc_type']!r}"
+        assert rows[0]["ifc_name"] is None, f"舊列 ifc_name 應為 None，實得 {rows[0]['ifc_name']!r}"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_store_idempotent_migration_new_db():
+    """A2-W2 冪等回歸：對新建 DB（已有 ifc_type/ifc_name 欄），重複開 DiffStore 不崩潰。"""
+    import shutil
+    tmpdir = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmpdir, "new_diff.db")
+        # 第一次建立
+        store1 = DiffStore(db_path)
+        del store1  # 釋放連接
+        # 第二次開同一 DB（冪等：migration 對已存在欄位應被跳過而非拋 OperationalError）
+        store2 = DiffStore(db_path)
+        # 寫入再讀出確認正常
+        diff_id = store2.create_diff("a", "b", "a.ifc", "b.ifc")
+        result = _make_result_with_ifc_type()
+        store2.complete_diff(diff_id, result)
+        rows = store2.get_items(diff_id)
+        assert len(rows) == 2
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)

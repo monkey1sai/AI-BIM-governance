@@ -370,6 +370,11 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
   color:var(--ec-red);
 }
 
+/* ── A2 版本差異三色碼（A2-W1）── */
+.ec-diff-add { background:var(--ec-grn-2); }
+.ec-diff-del { background:var(--ec-red-2); }
+.ec-diff-mod { background:var(--ec-amb-2); }
+
 @media (max-width: 980px) {
   .ec-root { grid-template-columns:210px 1fr; grid-template-areas:"top top" "nav main" "foot foot"; }
   .ec-agent { display:none; }
