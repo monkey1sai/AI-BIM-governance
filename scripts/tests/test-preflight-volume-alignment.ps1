@@ -89,4 +89,34 @@ try {
 }
 finally { Remove-TestSandbox -Path $sb }
 
+# Test 8: Resolve-AbsoluteStorageRoot — 相對 ./storage → host 絕對路徑(正斜線),供 compose 插值
+$sb = New-TestSandbox -Prefix 'preflight-vol'
+try {
+    $abs = Resolve-AbsoluteStorageRoot -RepoRoot $sb -Raw './storage'
+    Assert-True ([System.IO.Path]::IsPathRooted($abs)) 'relative resolved to absolute'
+    Assert-True ($abs.EndsWith('/storage')) 'ends with /storage'
+    Assert-True (-not $abs.Contains('\')) 'no backslash (compose-safe forward slashes)'
+    Write-TestPass 'resolve-abs relative → absolute forward-slash'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 9: Resolve-AbsoluteStorageRoot — 已是絕對路徑 → 原樣保留(只轉正斜線),不疊 RepoRoot
+$sb = New-TestSandbox -Prefix 'preflight-vol'
+try {
+    $abs = Resolve-AbsoluteStorageRoot -RepoRoot $sb -Raw 'D:\Users\deploy\AI-bim-geo\storage'
+    Assert-Equal 'D:/Users/deploy/AI-bim-geo/storage' $abs 'absolute path preserved, backslashes normalized to forward'
+    Write-TestPass 'resolve-abs absolute preserved'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 10: Resolve-AbsoluteStorageRoot — 空白值 → throw(誠實拒絕,不靜默退化)
+try {
+    Resolve-AbsoluteStorageRoot -RepoRoot 'C:\repo' -Raw '   '
+    throw 'expected Resolve-AbsoluteStorageRoot to throw on blank input'
+}
+catch {
+    Assert-True ($_.Exception.Message -match 'must not be empty') 'blank input throws honest error'
+    Write-TestPass 'resolve-abs blank → throw'
+}
+
 Write-Host "`n=== test-preflight-volume-alignment.ps1: ALL PASSED ===" -ForegroundColor Green
