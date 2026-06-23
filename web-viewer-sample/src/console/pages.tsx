@@ -1826,23 +1826,43 @@ export function VersionDiffPage() {
         {diff && (
           <div className="ec-grid" style={{ marginTop: 12 }}>
             <Metric value={diff.summary?.matched ?? "—"} label="matched" />
-            <Metric value={counts.added ?? 0} label="added" />
+            <Metric value={counts.added ?? 0} label="added" tone="bad" />
             <Metric value={counts.removed ?? 0} label="removed" tone="bad" />
             <Metric value={counts.moved ?? 0} label="moved" tone="warn" />
-            <Metric value={counts.property_changed ?? 0} label="property changed" />
-            <Metric value={counts.geometry_changed ?? 0} label="geometry changed" />
+            <Metric value={counts.property_changed ?? 0} label="property changed" tone="warn" />
+            <Metric value={counts.geometry_changed ?? 0} label="geometry changed" tone="warn" />
           </div>
         )}
-        {items.length > 0 && (
-          <table className="ec-table" style={{ marginTop: 12 }}>
-            <thead><tr><th>change</th><th>ifc_type</th><th>ifc_guid</th><th>summary</th></tr></thead>
-            <tbody>
-              {items.slice(0, 40).map((it, i) => (
-                <tr key={i}><td>{it.change_type}</td><td>{it.ifc_type}</td><td>{it.ifc_guid}</td><td>{it.change_summary}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        {items.length > 0 && (() => {
+          // A2-W1：三色碼 map（集中單一定義，色盲可及 — 色點旁保留文字）
+          const CHANGE_TONE: Record<string, string> = {
+            added: "ec-diff-add",
+            removed: "ec-diff-del",
+            moved: "ec-diff-mod",
+            property_changed: "ec-diff-mod",
+            geometry_changed: "ec-diff-mod",
+          };
+          const shown = items.slice(0, 40);
+          return (
+            <>
+              {items.length > 40 && (
+                <p className="ec-s" style={{ marginTop: 8, color: "var(--ec-fg-3)" }}>
+                  顯示前 40 筆，共 {items.length} 筆
+                </p>
+              )}
+              <table className="ec-table" style={{ marginTop: 8 }}>
+                <thead><tr><th>change</th><th>ifc_type</th><th>ifc_guid</th><th>summary</th></tr></thead>
+                <tbody>
+                  {shown.map((it, i) => (
+                    <tr key={i} className={CHANGE_TONE[it.change_type] ?? ""}>
+                      <td>{it.change_type}</td><td>{it.ifc_type}</td><td>{it.ifc_guid}</td><td>{it.change_summary}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          );
+        })()}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
           <Btn caption="POST from-diff（綁 ifc_guid）" disabled={!diffId || items.length === 0} onClick={async () => { if (!diffId) return; try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>變更構件建 issue</Btn>
           {/* [套用 3D Overlay]：呼叫真實端點 POST …/apply-overlay。後端誠實回 501（p15）——

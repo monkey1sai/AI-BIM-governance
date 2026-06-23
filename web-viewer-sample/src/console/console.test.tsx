@@ -2114,4 +2114,102 @@ describe("FailureRuleRow 載入更多去重/鎖（spec §5：同 tick 雙擊不�
 
     await act(async () => { root.unmount(); });
   });
+
+  // A2-W1：三色碼驗收——diff 跑完有 items 時，表格列依 change_type 帶正確 CSS class。
+  // added→ec-diff-add（綠）、removed→ec-diff-del（紅）、moved/property_changed→ec-diff-mod（黃）。
+  // 色碼旁同時保留 change_type 文字（色盲可及）。
+  it("A2-W1 三色碼：diff 跑完 items 依 change_type 帶正確 CSS class（色盲可及）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue({ root: "", source_kind: "local_fs", projects: [] });
+    vi.spyOn(governanceClient, "createDiff").mockResolvedValue({ diff_id: "d-color", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-color",
+      status: "succeeded",
+      summary: { base_count: 3, target_count: 3, matched: 1, counts: { added: 1, removed: 1, moved: 1 }, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([
+      { change_type: "added",   ifc_guid: "guid-a", ifc_type: "IfcBeam",  change_summary: "新增" },
+      { change_type: "removed", ifc_guid: "guid-r", ifc_type: "IfcWall",  change_summary: "移除" },
+      { change_type: "moved",   ifc_guid: "guid-m", ifc_type: "IfcColumn", change_summary: "位移" },
+      { change_type: "property_changed", ifc_guid: "guid-p", ifc_type: "IfcDoor", change_summary: "屬性改" },
+    ]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 觸發 Run Diff。
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); }); // flush 第二次微任務（getDiffItems）
+
+    const html = container.innerHTML;
+
+    // 三色 class 必須存在於 HTML。
+    expect(html).toContain("ec-diff-add");
+    expect(html).toContain("ec-diff-del");
+    expect(html).toContain("ec-diff-mod");
+
+    // 色碼旁仍保留 change_type 文字（色盲可及，不靠顏色單一通道）。
+    expect(html).toContain("added");
+    expect(html).toContain("removed");
+    expect(html).toContain("moved");
+    expect(html).toContain("property_changed");
+
+    // 各列 class 與 change_type 一致（parsing DOM 精確查：查第一個 <td> 完整文字，避免子字串誤命中）。
+    const rows = Array.from(container.querySelectorAll<HTMLTableRowElement>("tbody tr"));
+    expect(rows.length).toBeGreaterThanOrEqual(4);
+    const byType = (ct: string) => rows.find((r) => r.querySelector("td")?.textContent === ct);
+    expect(byType("added")?.className).toContain("ec-diff-add");
+    expect(byType("removed")?.className).toContain("ec-diff-del");
+    expect(byType("moved")?.className).toContain("ec-diff-mod");
+    expect(byType("property_changed")?.className).toContain("ec-diff-mod");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // A2-W1：截斷提示——items.length>40 時顯示「顯示前 40 筆，共 N 筆」。
+  it("A2-W1 截斷提示：items>40 顯示「顯示前 40 筆，共 N 筆」", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue({ root: "", source_kind: "local_fs", projects: [] });
+    vi.spyOn(governanceClient, "createDiff").mockResolvedValue({ diff_id: "d-trunc", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-trunc",
+      status: "succeeded",
+      summary: { base_count: 50, target_count: 50, matched: 0, counts: { added: 50 }, warnings: [] },
+    });
+    // 51 筆 added（超過 40）。
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue(
+      Array.from({ length: 51 }, (_, i) => ({
+        change_type: "added",
+        ifc_guid: `guid-${i}`,
+        ifc_type: "IfcWall",
+        change_summary: `${i}`,
+      })),
+    );
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const html = container.innerHTML;
+    // 截斷提示存在。
+    expect(html).toContain("顯示前 40 筆");
+    expect(html).toContain("51");
+    // 表格只有 40 列（.slice(0,40)）。
+    const rows = container.querySelectorAll("tbody tr");
+    expect(rows.length).toBe(40);
+
+    await act(async () => { root.unmount(); });
+  });
 });
