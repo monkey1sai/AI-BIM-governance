@@ -1146,6 +1146,26 @@ export function createCoordinatorApp(
         queuePosition ?? 0,
       );
 
+      // minio-closed-loop-phase1 Task 2：watcher 偵測 → 持久 ledger（coordinator-local shadow）。
+      // 失敗不阻塞 intake（誠實降級，照 callbackOutbox 精神）。
+      try {
+        conversionLedger.upsert(
+          {
+            idempotency_key: (request.header("x-idempotency-key") ?? job.idempotency_key) as string,
+            correlation_id: request.header("x-correlation-id") ?? null,
+            project_id: event.project_id,
+            project_display_name: event.project_display_name ?? event.project_id,
+            category: event.model_category ?? "",
+            external_model_version_id: event.external_model_version_id ?? "",
+            conversion_job_id: job.conversion_job_id ?? null,
+            status: "queued",
+          },
+          new Date().toISOString(),
+        );
+      } catch {
+        /* ledger 失敗不卡 intake */
+      }
+
       // fast-ifc-link-demo-loop §2.3:同步下載完成 → 202 Accepted(下載完,
       // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
       // 觀察 queued_for_conversion → dispatched 變化)。
