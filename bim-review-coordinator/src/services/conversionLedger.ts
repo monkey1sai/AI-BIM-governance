@@ -98,6 +98,8 @@ export class ConversionLedger {
    * - 首次：建立完整紀錄，detected_at = now。
    * - 已存在（同 idempotency_key）：只更新 status / conversion_job_id / updated_at，
    *   保留 detected_at、coverage_report、usdc_key。
+   *   conversion_job_id 採 ?? 語意：input 為 null 時保留既有（null 不清除），
+   *   僅 undefined（未傳）時回落 existing，兩者皆無時才落 null。
    *
    * @param input   upsert 輸入（識別欄位 + 可選物件欄位）
    * @param now     ISO 時間字串（由呼叫端傳入，service 不取時鐘）
@@ -114,10 +116,8 @@ export class ConversionLedger {
       // object_key / bucket：優先取 input 顯式值，其次保留既有，否則 null
       object_key: input.object_key ?? existing?.object_key ?? null,
       bucket: input.bucket ?? existing?.bucket ?? null,
-      // conversion_job_id：input 給 null 時也允許更新（null = 清除）
-      conversion_job_id: input.conversion_job_id !== undefined
-        ? input.conversion_job_id
-        : (existing?.conversion_job_id ?? null),
+      // conversion_job_id：?? 語意 — input 為 null 時保留既有（null 不清除）
+      conversion_job_id: input.conversion_job_id ?? existing?.conversion_job_id ?? null,
       status: input.status,
       // Phase 2 回填欄位：保留既有，不覆蓋
       coverage_report: existing?.coverage_report ?? null,

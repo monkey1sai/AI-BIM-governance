@@ -42,4 +42,12 @@ describe("ConversionLedger", () => {
     expect(led.list()).toEqual([]);
     expect(() => led.upsert(base, "2026-06-23T01:00:00.000Z")).not.toThrow();
   });
+  it("upsert 傳 conversion_job_id: null 不清除既有 job_id（?? 語意）", () => {
+    const led = new ConversionLedger(storePath());
+    // 第一次 upsert：設定 conversion_job_id
+    led.upsert({ ...base, conversion_job_id: "ifcready_1_aa" }, "2026-06-23T02:00:00.000Z");
+    // 第二次 upsert：顯式傳 null — 應保留既有，不清除
+    const result = led.upsert({ ...base, conversion_job_id: null, status: "converting" }, "2026-06-23T02:05:00.000Z");
+    expect(result.conversion_job_id).toBe("ifcready_1_aa");
+  });
 });
