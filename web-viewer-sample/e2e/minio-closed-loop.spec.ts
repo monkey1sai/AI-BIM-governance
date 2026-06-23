@@ -243,7 +243,8 @@ test.describe("MinIO 閉環四段一致（STUB MINIO + STUB CONVERSION）", () =
       await expect(page.getByText("待產生", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
 
       // 確認無 parsed_usdc（.usdc 角色）——stub 只有 .ifc，不應偽稱已轉。
-      await expect(page.getByText("已轉 USDC", { exact: false })).not.toBeVisible();
+      // 用 not.toContainText 確保 DOM 文字層完全無該字樣（不受 CSS 隱藏影響）。
+      await expect(page.locator("body")).not.toContainText("已轉 USDC");
 
       await page.screenshot({ path: "../artifacts/e2e/minio-closed-loop-minio.png", fullPage: true });
 
@@ -261,7 +262,8 @@ test.describe("MinIO 閉環四段一致（STUB MINIO + STUB CONVERSION）", () =
       await expect(ledgerPanel.getByText("排隊", { exact: false })).toBeVisible({ timeout: 15_000 });
 
       // 誠實鐵律：ledger panel 不得含「完成」（ready Phase 2 才回填，Phase 1 禁假 ready）。
-      await expect(ledgerPanel.getByText("完成", { exact: false })).not.toBeVisible();
+      // 用 not.toContainText 確保 DOM 文字層完全無該字樣（不受 CSS 隱藏影響）。
+      await expect(ledgerPanel).not.toContainText("完成");
 
       // minio-watch-panel：watcher 啟用中（MINIO_WATCH_ENABLED=true）。
       const mwPanel = page.getByTestId("minio-watch-panel");
