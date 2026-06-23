@@ -88,7 +88,7 @@ function Get-ProcName {
 
 # DetectOnly：只偵測一輪、列出佔用，不 kill、不等。
 if ($DetectOnly) {
-    $busy = Get-BusyPorts
+    $busy = @(Get-BusyPorts)
     if ($busy.Count -eq 0) {
         Write-Host '[detect] all required host-native ports FREE'
         exit 0
@@ -105,7 +105,7 @@ if ($DetectOnly) {
 # 主迴圈：tree-kill host-native owner，輪詢等到全 FREE 或逾時。
 $deadline = (Get-Date).AddSeconds($TimeoutSec)
 while ($true) {
-    $busy = Get-BusyPorts
+    $busy = @(Get-BusyPorts)
     if ($busy.Count -eq 0) {
         Write-Host '[ports-free] all required host-native ports FREE'
         exit 0

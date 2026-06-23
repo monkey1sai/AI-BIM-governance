@@ -225,7 +225,7 @@ Claude 版的 haiku / sonnet / opus 是**任務難度 tier**。Codex copy 必須
 
 1. AGENTS.md 寫 gstack 是「唯一驗收證據來源」,現實是 Playwright(歷史 evidence 全為 Playwright/Chrome 產)。本流程採「綁產物不綁品牌」;改字面需另開 docs PR。github-workflow.md 7 欄表的「gstack E2E command」欄同理 — 填實際引擎指令並括註引擎名。
 2. PR body 用 product-operability §4 的 10 列表;P7 回報用 AGENTS.md 7 欄表 — 兩版並存是權威檔既有張力,本流程兩處各用各的。
-3. commit trailer:std-*.js 內若仍有 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` 是 **harness attribution 文字、非 Codex 模型調用**。Codex agent 實際模型分配以本檔「模型預算」表為準;是否改 trailer 屬另一個獨立決策(須與 harness commit 規則同步,否則 repo 出現雙 trailer)。squash 後實質影響極小。
+3. commit trailer:std-*.js 內的 `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` 是 **harness attribution 文字、非 Codex 模型調用**。Codex agent 實際模型分配以本檔「模型預算」表為準;是否改 trailer 屬另一個獨立決策(須與 harness commit 規則同步,否則 repo 出現雙 trailer)。squash 後實質影響極小。
 4. GitNexus detect-changes 在 linked worktree 看不到 staged(已知坑)→ implementer fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`,PR body 揭露;完全失敗記 `fail`,同 run 3 次 → held。
 5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
 6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。純動 `.claude/**` / `.codex/**` 的 PR 可能被 pr-review-agent paths-ignore 跳過 review(#202);main 無 branch protection 故此 check 非 required。
