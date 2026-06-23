@@ -39,6 +39,7 @@ import {
 } from "./services/kitPool.js";
 import { isSafeSessionId, isSessionMutable, SessionStore } from "./services/sessionStore.js";
 import { registerReviewNamespace } from "./socket/reviewNamespace.js";
+import { nowIso } from "./utils/time.js";
 import type {
   Artifact,
   ArtifactBinding,
@@ -873,6 +874,51 @@ export function createCoordinatorApp(
       const input = appendEventSchema.parse(request.body);
       const event = eventLog.append(request.params.sessionId, input.type, input);
       response.json(event);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/review-sessions/:sessionId/first-frame", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      // 與 sibling mutation 路由（append-event app.ts:866 等）一致的可變性守門：closed/closing
+      // session 不可再 store.update + append firstFrameObserved 進 append-only audit ledger。
+      // race（browser close 與 viewer 首幀同時抵達）可產生不一致狀態，故在冪等檢查前先回 409。
+      if (!isSessionMutable(session)) {
+        response.status(409).json({ detail: "Review session is not active." });
+        return;
+      }
+      // 冪等：已記過 → 回原時戳，不重複 append（N2 最小一筆）。
+      if (session.first_frame_at) {
+        response.json({ session_id: session.session_id, first_frame_at: session.first_frame_at });
+        return;
+      }
+      // endpoint_id 來自 iframe postMessage 的 client 回報（LAN 無 RBAC，任何頁面可偽造），與
+      // resolveActor(.slice(0, 200))/parseReason(.slice(0, 500)) 的 budget 截斷對齊（上限 100），
+      // 避免超長字串撐爆 / 污染 append-only audit JSONL（log injection 同根防護）。
+      const endpointId = typeof request.body?.endpoint_id === "string" ? request.body.endpoint_id.slice(0, 100) : undefined;
+      const actor = resolveActor(request); // best-effort（LAN 無 RBAC，沿用既有）
+      const at = nowIso(); // N3：coordinator 權威時戳，忽略 body.observed_at（iframe/coordinator 時鐘無同步保障）
+      // store.update 在 store.get（上方守門）與此處之間 session 檔被外部刪除時回 null（與 sibling
+      // /close app.ts:951-962 對 store.update null 的防禦一致）。若忽略回傳值會 (1) 仍 append 一筆
+      // 孤兒 firstFrameObserved（對應不到任何 store 記錄，違反 append-only audit ledger 不變式），
+      // (2) 回 200 + 未實際持久化的時戳給呼叫端。故 update 失敗時回 500、不 append。
+      const updated = store.update(session.session_id, { first_frame_at: at });
+      if (!updated) {
+        response.status(500).json({ detail: "Session update failed." });
+        return;
+      }
+      eventLog.append(session.session_id, "firstFrameObserved", { endpoint_id: endpointId, actor });
+      response.json({ session_id: session.session_id, first_frame_at: at });
     } catch (error) {
       next(error);
     }
@@ -2213,6 +2259,7 @@ function summarizeSessionForRuntime(session: ReviewSession): Record<string, unkn
     kit_instance_ids: session.kit_instance_bindings.map((binding) => binding.kit_instance_id),
     created_at: session.created_at,
     updated_at: session.updated_at,
+    first_frame_at: session.first_frame_at ?? null, // VG-01 型別鏈：runtime/status 透出真首幀證據
   };
 }
 

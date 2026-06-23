@@ -5,7 +5,7 @@ function queryParam(name: string): string | null {
     return new URLSearchParams(globalThis.location.search).get(name);
 }
 
-function allowedCoordinatorOrigins(): Set<string> {
+export function allowedCoordinatorOrigins(): Set<string> {
     const raw = import.meta.env.VITE_ALLOWED_COORDINATOR_ORIGINS || "";
     return new Set(
         raw

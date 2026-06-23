@@ -1,5 +1,22 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const webServer = process.env.E2E_DISABLE_WEBSERVER === "1"
+  ? []
+  : [
+      {
+        command: "npm run dev -- --host 127.0.0.1 --port 5180 --strictPort",
+        url: "http://127.0.0.1:5180",
+        reuseExistingServer: false,
+        timeout: 120_000,
+        env: {
+          VITE_COORDINATOR_API_BASE:
+            process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
+          VITE_ALLOWED_COORDINATOR_ORIGINS:
+            process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
+        },
+      },
+    ];
+
 // 前端 E2E 設定。
 // - viewer dev server（:5173）由 webServer 自動啟動（reuse 既有）。
 // - coordinator（:8004）視測試需要另行啟動（console / intake 類測試）；viewer harness 開機測試不需 coordinator。
@@ -32,16 +49,5 @@ export default defineConfig({
   // http://127.0.0.1:8005 branch coordinator）。Vite 只把 VITE_* 從 dev server 進程 env 注入
   // import.meta.env，故必須在此 webServer 進程顯式注入，否則 env.ts 會 fallback :8004，browser POST
   // 打不到 :8005，conv-coverage-report / conv-prioritize-retry 兩支 spec 的真切片無法命中 branch coordinator。
-  webServer: [
-    {
-      command: "npm run dev -- --host 127.0.0.1 --port 5180 --strictPort",
-      url: "http://127.0.0.1:5180",
-      reuseExistingServer: false,
-      timeout: 120_000,
-      env: {
-        VITE_COORDINATOR_API_BASE:
-          process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005",
-      },
-    },
-  ],
+  ...(webServer.length > 0 ? { webServer } : {}),
 });

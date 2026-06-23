@@ -107,6 +107,10 @@ export interface ReviewSession {
   kit_instance_bindings: KitInstanceBinding[];
   participants: ReviewParticipant[];
   quality_metrics_summary?: ConversionQualityMetricsSummary | null;
+  // VG-01：viewer 真畫面首幀（_hasRemoteVideoFrame 證明）由 console 經
+  // POST /api/review-sessions/:id/first-frame 回報後寫入；coordinator nowIso() 權威時戳。
+  // in-memory（檔案）store 重啟後可能不存在 → 讀回 undefined，summarize 時 ?? null。
+  first_frame_at?: string | null;
 }
 
 export interface Artifact {

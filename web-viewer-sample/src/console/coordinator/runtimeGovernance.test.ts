@@ -135,6 +135,52 @@ describe("runtime governance helper", () => {
     expect(rows[0].technicalDetail).toContain("session=review_session_ready");
   });
 
+  it("session 有 first_frame_at 時 endpoint firstFrame 讀真值為 ok（非 hardcoded not_observed）", () => {
+    const runtime = makeRuntime({
+      sessions: {
+        count: 1,
+        active_count: 1,
+        participant_count: 1,
+        items: [
+          {
+            session_id: "review_session_ready",
+            status: "active",
+            project_id: "project-1",
+            model_version_id: "model-v1",
+            participant_count: 1,
+            expected_stage_url: "omniverse://localhost/Projects/model.usdc",
+            conversion_status: "succeeded",
+            kit_instance_ids: ["kit-primary"],
+            created_at: "2026-06-08T00:00:00.000Z",
+            updated_at: "2026-06-08T00:00:10.000Z",
+            first_frame_at: "2026-06-08T00:00:11.000Z",
+          },
+        ],
+      },
+      kit_instance_bindings: [
+        {
+          session_id: "review_session_ready",
+          kit_instance_id: "kit-primary",
+          status: "ready",
+          assigned_artifact_ids: ["artifact-1"],
+          started_at: "2026-06-08T00:00:03.000Z",
+          last_heartbeat_at: "2026-06-08T00:00:09.000Z",
+          released_at: null,
+        },
+      ],
+    });
+
+    const rows = buildEndpointRows(runtime);
+
+    expect(rows[0]).toMatchObject({
+      leaseState: "connected",
+      sessionId: "review_session_ready",
+      firstFrame: "ok",
+      heartbeat: "ok",
+      stageTruth: "not_observed",
+    });
+  });
+
   it("active session without browser evidence produces yellow dashboard and honest missing evidence text", () => {
     const runtime = makeRuntime({
       sessions: {

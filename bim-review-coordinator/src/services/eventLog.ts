@@ -38,6 +38,11 @@ const STRUCTURED_LIFECYCLE_MAP: Record<string, LifecycleMapping> = {
   sessionClosed: { subject_kind: "review_session", phase: "closed" },
   kitInstanceReleased: { subject_kind: "kit_subprocess", phase: "closed" },
   kitInstancesReleased: { subject_kind: "kit_subprocess", phase: "closed" },
+  // firstFrameObserved 是 session active 期間的 operational milestone（WebRTC 首幀到達），非 session
+  // 狀態機 transition。依合約 §9「Any other type → active」顯式登記為 active（取代隱晦 fall-through，
+  // 明確化映射意圖）；下游若只想統計真 lifecycle transition，須用 data.eventlog_type（mirror 已帶於
+  // line ~98）排除此類 operational milestone，勿單憑 phase=active 計入活躍期。
+  firstFrameObserved: { subject_kind: "review_session", phase: "active" },
 };
 
 export interface EventLogOptions {

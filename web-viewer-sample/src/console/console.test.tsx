@@ -1638,6 +1638,14 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.useFakeTimers();
     container = document.createElement("div");
     document.body.appendChild(container);
+    // 對抗驗證 P0-1（回歸根因）：A1 頁 mount effect 無條件打真 runtimeStatus()，coordinator 存活時 resolve 出帶
+    // expected_mapping_url 的真 session → 觸發未 mock 的 elementMappingForSession 真 fetch，在 fake-timer act()
+    // 邊界內不 settle → RUN_DONE 永不 dispatch → 「建 Issue」鈕恆 disabled。mock 成空 runtime（無 session / 無
+    // viewerOrigin）隔離此真 fetch；afterEach 的 vi.restoreAllMocks() 會還原。production doRun 行為未改（test-only）。
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({
+      sessions: { count: 0, active_count: 0, participant_count: 0, items: [] },
+      configured_endpoints: { viewer: { browser_url_base: "" } },
+    } as never);
   });
   afterEach(() => {
     document.body.removeChild(container);
