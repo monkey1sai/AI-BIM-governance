@@ -166,12 +166,17 @@ export default function EdgeConsole() {
   // Tweaks（P3-3）：register=操作員/技術用語；scenario=clean/warn（UI 偏好；真實頁一律用 live API）。
   const [register, setRegister] = useState<"tech" | "biz">("tech");
   const [scenario, setScenario] = useState<"clean" | "warn">("clean");
+  // 亮/暗主題（DS .theme-docs；persist localStorage，預設暗色——操作員 console 暗色為主）。
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    try { return localStorage.getItem("aibim:ec-theme") === "light" ? "light" : "dark"; } catch { return "dark"; }
+  });
+  useEffect(() => { try { localStorage.setItem("aibim:ec-theme", theme); } catch { /* ignore */ } }, [theme]);
   const navText = (key: string, fallback: string) => (NAV_LABEL[key] ? NAV_LABEL[key][register] : fallback);
   const flowActive = page.startsWith("app/") ? "apps" : page;
   const prompts = COPILOT_PROMPTS[flowActive] ?? COPILOT_PROMPTS.home;
 
   return (
-    <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"}`}>
+    <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"} ${theme === "light" ? "theme-light" : ""}`}>
       <header className="ec-top">
         <span className="ec-brand">AI · BIM Governance</span>
         <span className="ec-sub">EDGE CONSOLE · COORDINATOR 8004</span>
@@ -181,6 +186,7 @@ export default function EdgeConsole() {
           <span className="ec-prov ec-asbuilt">GOV :49102</span>
           <span className="ec-prov ec-demo">GPU · 依 session 派發</span>
         </div>
+        <button className="ec-btn" onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))} title="切換亮 / 暗主題" aria-label="切換亮暗主題">{theme === "light" ? "☾ 暗" : "☀ 亮"}</button>
         <button className="ec-btn" onClick={() => setAgentOpen((v) => !v)}>{agentOpen ? "⟩ Agent" : "⟨ Agent"}</button>
       </header>
 
