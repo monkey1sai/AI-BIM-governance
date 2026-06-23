@@ -264,6 +264,9 @@ export function A1GovernanceWorkbenchPage() {
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
+  // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
+  const [excelBusy, setExcelBusy] = useState(false);
+  const [bcfBusy, setBcfBusy] = useState(false);
   // VG-01 Task 3：嵌入 live viewer + 3D 高亮接線。session 下拉走 runtime/status.sessions.items（S2，
   // 已查證無 bare GET /api/review-sessions）；viewerOrigin 真源 = configured_endpoints.viewer.browser_url_base
   // （viewer :5173 baked，非 coordinator :8004）。first_frame / stage matched 為真證據，禁樂觀更新。
@@ -364,6 +367,7 @@ export function A1GovernanceWorkbenchPage() {
   const doExport = useCallback(async () => {
     if (!runId) return;
     setActionErr(null); // 重試前清掉上次錯誤
+    setExcelBusy(true);
     try {
       const res = await fetch(governanceClient.exportUrl(runId));
       if (!res.ok) { setActionErr(`匯出失敗：HTTP ${res.status}`); return; }
@@ -378,6 +382,8 @@ export function A1GovernanceWorkbenchPage() {
       dispatch({ type: "EXPORT_OK" });
     } catch (e) {
       setActionErr(`匯出失敗：${String(e)}`); // 誠實顯示失敗，不靜默
+    } finally {
+      setExcelBusy(false);
     }
   }, [runId]);
 
@@ -498,41 +504,50 @@ export function A1GovernanceWorkbenchPage() {
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
             不看 state.run 快照欄位：重跑 running 子態 RUN_PROGRESS 可能短暫帶 succeeded 快照（step 仍 running），
             舊式 disabled={!runId||run?.status!=="succeeded"} 會在該瞬間誤解除 disabled、允許 running 子態匯出。 */}
-        <Btn data-testid="a1-step-export" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
+        <Btn data-testid="a1-step-export" disabled={state.step === "idle" || state.step === "picked" || state.step === "running" || excelBusy}
           caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
         {/* A1-W1 BCF 2.1 匯出鈕（#a1 canonical route；#issues 標 legacy）。
             gating：step ∈ {issued, delivered} 才 enable（需先建 Issue），scored/running/idle 時 disabled + caption 說明。
             重用 Issues 頁 bcfExportUrl() + 相同 fetch→blob→a.click→appendChild/removeChild→setTimeout revoke 下載慣例。
             後端 404（無正式 issue 或無 ifc_guid）走 actionErr 誠實顯示。prov=asbuilt。 */}
         {(() => {
-          const bcfEnabled = state.step === "issued" || state.step === "delivered";
+          // F1：bcfEnabled 同時檢查 issuesCreated（獨立追蹤「曾真正建過 Issue」）與 step。
+          // scored→EXPORT_OK→delivered 不經 CREATE_ISSUES_OK，issuesCreated 仍 false → BCF disabled。
+          const bcfEnabled = state.issuesCreated && (state.step === "issued" || state.step === "delivered");
           return (
-            <Btn
-              data-testid="a1-step-bcf"
-              prov="asbuilt"
-              disabled={!bcfEnabled}
-              caption={bcfEnabled ? "GET /api/governance/bcf/export（只含正式 issue）" : "需先建 Issue（step=issued/delivered）"}
-              onClick={async () => {
-                if (!bcfEnabled) return;
-                setActionErr(null);
-                try {
-                  const res = await fetch(governanceClient.bcfExportUrl());
-                  if (!res.ok) { setActionErr(`BCF 匯出 ${res.status}：需至少一個正式 issue（kind=issue 且有 ifc_guid）`); return; }
-                  const blob = await res.blob();
-                  const a = document.createElement("a");
-                  a.href = URL.createObjectURL(blob);
-                  a.download = "governance-issues.bcfzip";
-                  // 錨點須掛載於 document 才觸發下載：Gecko / 部分 Edge 對 detached <a> 下載不可靠。
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放（對齊 doExport 延後模式）。
-                  setTimeout(() => URL.revokeObjectURL(a.href), 0);
-                } catch (e) { setActionErr(`BCF 匯出失敗：${String(e)}`); }
-              }}
-            >
-              匯出 BCF 2.1
-            </Btn>
+            <>
+              <Btn
+                data-testid="a1-step-bcf"
+                prov="asbuilt"
+                disabled={!bcfEnabled || bcfBusy}
+                caption={bcfEnabled ? "GET /api/governance/bcf/export（只含正式 issue）" : "需先建 Issue（step=issued/delivered）"}
+                onClick={async () => {
+                  if (!bcfEnabled) return;
+                  setActionErr(null);
+                  setBcfBusy(true);
+                  try {
+                    const res = await fetch(governanceClient.bcfExportUrl());
+                    if (!res.ok) { setActionErr(`BCF 匯出 ${res.status}：需至少一個正式 issue（kind=issue 且有 ifc_guid）`); return; }
+                    const blob = await res.blob();
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = "governance-issues.bcfzip";
+                    // 錨點須掛載於 document 才觸發下載：Gecko / 部分 Edge 對 detached <a> 下載不可靠。
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放（對齊 doExport 延後模式）。
+                    setTimeout(() => URL.revokeObjectURL(a.href), 0);
+                    dispatch({ type: "BCF_EXPORT_OK" });
+                  } catch (e) { setActionErr(`BCF 匯出失敗：${String(e)}`); }
+                  finally { setBcfBusy(false); }
+                }}
+              >
+                匯出 BCF 2.1
+              </Btn>
+              {/* F4：BCF_EXPORT_OK 落地後才出現的可見信號（對齊 Excel EXPORT_OK → a1-exported-artifact）。 */}
+              {state.bcfExported && <div data-testid="a1-bcf-exported-artifact"><Field k="已匯出（artifact）" v="bcf" prov="asbuilt" /></div>}
+            </>
           );
         })()}{" "}
         {/* VG-01 Task 3：取代永久 disabled 占位鈕，依 IX-A1-06 四條件 enable 的真按鈕（針對失敗清單第一筆示範；多筆由
@@ -1902,7 +1917,7 @@ export function VersionDiffPage() {
                 <tbody>
                   {shown.map((it, i) => (
                     <tr key={i} className={CHANGE_TONE[it.change_type] ?? ""}>
-                      <td>{it.change_type}</td><td>{it.ifc_type}</td><td>{it.ifc_guid}</td><td>{it.change_summary}</td>
+                      <td>{it.change_type}</td><td>{it.ifc_type ?? "—"}</td><td>{it.ifc_guid}</td><td>{it.change_summary}</td>
                     </tr>
                   ))}
                 </tbody>

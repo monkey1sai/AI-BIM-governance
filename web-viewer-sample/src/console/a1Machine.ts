@@ -11,13 +11,18 @@ export interface A1State {
   failed: RuleResultRow[];
   issueCount: number | null;
   exported: boolean;
+  /** 獨立旗標：是否曾透過 CREATE_ISSUES_OK 真正建過 Issue（BCF gating 用；step 進 delivered 不清零）。 */
+  issuesCreated: boolean;
+  /** 獨立旗標：是否曾透過 BCF_EXPORT_OK 完成 BCF 匯出（可見成功 artifact）。 */
+  bcfExported: boolean;
   error: string | null;
   runError: boolean;
 }
 
 export const initialA1State: A1State = {
   step: "idle", ifcPath: "", run: null, failed: [],
-  issueCount: null, exported: false, error: null, runError: false,
+  issueCount: null, exported: false, issuesCreated: false, bcfExported: false,
+  error: null, runError: false,
 };
 
 export type A1Event =
@@ -29,6 +34,7 @@ export type A1Event =
   | { type: "RUN_FAIL"; error: string }
   | { type: "CREATE_ISSUES_OK"; issueCount: number }
   | { type: "EXPORT_OK" }
+  | { type: "BCF_EXPORT_OK" }
   | { type: "RESET" };
 
 export function a1Reducer(state: A1State, event: A1Event): A1State {
@@ -58,10 +64,13 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
       return { ...state, step: "running", runError: true, error: event.error };
     case "CREATE_ISSUES_OK":
       if (!["scored", "issued", "delivered"].includes(state.step)) return state;
-      return { ...state, step: state.step === "scored" ? "issued" : state.step, issueCount: event.issueCount };
+      return { ...state, step: state.step === "scored" ? "issued" : state.step, issueCount: event.issueCount, issuesCreated: true };
     case "EXPORT_OK":
       if (!["scored", "issued", "delivered"].includes(state.step)) return state;
       return { ...state, step: "delivered", exported: true };
+    case "BCF_EXPORT_OK":
+      // BCF 匯出成功：記錄可見成功旗標（不改 step 語意，step 應已在 issued/delivered）。
+      return { ...state, bcfExported: true };
     case "RESET":
       return initialA1State;
     default:

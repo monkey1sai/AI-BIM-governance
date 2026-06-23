@@ -2025,6 +2025,144 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     await act(async () => { root.unmount(); });
   });
+
+  // Fix-F1：未建 Issue 時 BCF 鈕應 disabled（issuesCreated=false）。
+  // scored→EXPORT_OK→delivered 不走 CREATE_ISSUES_OK → issuesCreated 仍 false → BCF disabled。
+  it("[F1] scored 未建 Issue 直接匯出 Excel → delivered 後 BCF 鈕仍 disabled（issuesCreated=false）", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(new Blob(["xlsx-bytes"]), { status: 200 }),
+    );
+    const urlCtor = globalThis.URL as unknown as { createObjectURL?: (b: Blob) => string; revokeObjectURL?: (u: string) => void };
+    urlCtor.createObjectURL = vi.fn(() => "blob:rr_a1");
+    urlCtor.revokeObjectURL = vi.fn(() => {});
+    // 攔截錨點 .click() 避免 jsdom 導航問題（沿用 Important-1 idiom）。
+    const realClick = HTMLElement.prototype.click;
+    vi.spyOn(HTMLElement.prototype, "click").mockImplementation(function (this: HTMLElement) {
+      if (this instanceof HTMLAnchorElement && this.getAttribute("download")) return;
+      realClick.call(this);
+    });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // scored：匯出 Excel（不建 Issue）→ EXPORT_OK → delivered。
+    await clickByTestId("a1-step-export");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // delivered 但 issuesCreated=false → BCF 鈕必須 disabled（誠實：無 Issue 不可匯 BCF）。
+    const bcfBtn = container.querySelector<HTMLButtonElement>('[data-testid="a1-step-bcf"]')!;
+    expect(bcfBtn, "BCF 鈕應存在").not.toBeNull();
+    expect(bcfBtn.disabled, "[F1] 未建 Issue 的 delivered 態 BCF 必須 disabled").toBe(true);
+    // caption 也應誠實說明原因。
+    expect(bcfBtn.title || bcfBtn.getAttribute("title") || container.innerHTML).toContain("需先建 Issue");
+
+    await act(async () => { root.unmount(); });
+  });
+
+  // Fix-F4：BCF click 成功路徑 dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact。
+  it("[F4] BCF click 成功 → dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
+    // BCF fetch 成功。
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(new Blob(["bcf-bytes"]), { status: 200 }),
+    );
+    const urlCtor = globalThis.URL as unknown as { createObjectURL?: (b: Blob) => string; revokeObjectURL?: (u: string) => void };
+    urlCtor.createObjectURL = vi.fn(() => "blob:bcf");
+    urlCtor.revokeObjectURL = vi.fn(() => {});
+    const realClick = HTMLElement.prototype.click;
+    vi.spyOn(HTMLElement.prototype, "click").mockImplementation(function (this: HTMLElement) {
+      if (this instanceof HTMLAnchorElement && this.getAttribute("download")) return;
+      realClick.call(this);
+    });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await clickByTestId("a1-step-pick");
+    await clickByTestId("a1-step-run");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // 建 Issue → issuesCreated=true → BCF enable。
+    await clickByTestId("a1-step-issues");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    const bcfBtn = container.querySelector<HTMLButtonElement>('[data-testid="a1-step-bcf"]')!;
+    expect(bcfBtn.disabled, "建 Issue 後 BCF 應 enable").toBe(false);
+
+    // 點 BCF → 成功 → bcfExported=true → 出現 a1-bcf-exported-artifact。
+    await act(async () => { bcfBtn.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    // 等 finally setBcfBusy(false) + dispatch BCF_EXPORT_OK 入 state。
+    await act(async () => { await Promise.resolve(); });
+
+    const artifact = container.querySelector('[data-testid="a1-bcf-exported-artifact"]');
+    expect(artifact, "[F4] BCF 成功後應出現 a1-bcf-exported-artifact").not.toBeNull();
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+// Fix-F5：VersionDiffPage ifc_type=null 列渲染「—」（誠實 marker）。
+describe("VersionDiffPage F5：ifc_type=null 渲染 '—' marker", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  it("[F5] ifc_type=null 的 diff 列渲染 '—'（不顯示空 cell）", async () => {
+    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("stub"));
+    vi.spyOn(governanceClient, "createDiff").mockResolvedValue({ diff_id: "d-f5", status: "queued" });
+    vi.spyOn(governanceClient, "getDiff").mockResolvedValue({
+      diff_id: "d-f5",
+      status: "succeeded",
+      summary: { base_count: 1, target_count: 0, matched: 0, counts: { removed: 1 }, warnings: [] },
+    });
+    // old row：ifc_type=null（migration 留 NULL），確認 UI 顯示「—」而非空 cell。
+    vi.spyOn(governanceClient, "getDiffItems").mockResolvedValue([
+      { change_type: "removed", ifc_guid: "g-null-type", ifc_type: null, change_summary: "元素已移除" },
+    ]);
+    vi.spyOn(governanceClient, "diffIssueImpact").mockRejectedValue(new Error("選配"));
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<VersionDiffPage />); });
+    await act(async () => { await Promise.resolve(); }); // fsTree reject
+
+    // Run Diff（用預設路徑，只看 ifc_type render 結果）。
+    const runBtn = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("Run Diff") || b.textContent?.includes("比對中"),
+    )!;
+    await act(async () => { runBtn.click(); });
+    // 等 getDiff（succeeded）+ getDiffItems settle。
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const html = container.innerHTML;
+    // ifc_type=null → 應顯示「—」（不留空 <td></td>）。
+    expect(html, "[F5] ifc_type=null 應渲染 '—'").toContain("—");
+    // 確認是那列的 ifc_guid 存在（只是驗正確列被 render 出來）。
+    expect(html).toContain("g-null-type");
+
+    await act(async () => { root.unmount(); });
+  });
 });
 
 // [Important-2] FailureRuleRow「載入更多」去重/鎖（spec §5）：React 中 setLoading(true) 在同一 event
