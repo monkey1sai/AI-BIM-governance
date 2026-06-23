@@ -202,6 +202,59 @@ try {
     Assert-True ($script:cleanEvents.Count -eq 1) 'mock clean removed env files before restore'
     Assert-Equal 3 $preserveResult.RestoredEnvFileCount 'rebuild restores current-version env files before deploy'
 
+    $cleanFailureRoot = Join-Path $sandbox 'clean-failure-root'
+    New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot 'scripts') -Force | Out-Null
+    'deploy' | Set-Content -LiteralPath (Join-Path $cleanFailureRoot 'scripts\deploy.ps1') -Encoding ascii
+    'MINIO_WATCH_ENABLED=true' | Set-Content -LiteralPath (Join-Path $cleanFailureRoot '.env.web-plane.host-kit.example') -Encoding ascii
+    @(
+        'MINIO_WATCH_ENABLED=true',
+        'MINIO_WATCH_ACCESS_KEY=keep-after-failed-clean',
+        'MINIO_WATCH_SECRET_KEY=keep-secret-after-failed-clean'
+    ) | Set-Content -LiteralPath (Join-Path $cleanFailureRoot '.env.web-plane.host-kit') -Encoding ascii
+
+    $cleanFailureCalls = New-Object 'System.Collections.Generic.List[string]'
+    $cleanFailureRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $script:cleanFailureCalls.Add("$Tool $($Arguments -join ' ') @ $WorkingDirectory")
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'clean -fdx') {
+            Remove-Item -LiteralPath (Join-Path $WorkingDirectory '.env.web-plane.host-kit') -Force -ErrorAction Stop
+            return [pscustomobject]@{ ExitCode = 42; Output = 'locked governance log' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+
+    $script:cleanFailureCalls = $cleanFailureCalls
+    $cleanFailureDeployWasCalled = $false
+    $cleanFailureDeployRunner = {
+        param([string] $DeployRoot)
+        $script:cleanFailureDeployWasCalled = $true
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+
+    $cleanFailureMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $cleanFailureRoot -AllowNonFixedPathForTests -CommandRunner $cleanFailureRunner -DeployRunner $cleanFailureDeployRunner | Out-Null
+    } catch {
+        $cleanFailureMessage = $_.Exception.Message
+    }
+    Assert-True (-not [string]::IsNullOrWhiteSpace($cleanFailureMessage)) 'clean failure is surfaced'
+    Assert-True ($cleanFailureMessage -match 'locked governance log') 'clean failure includes command output'
+    Assert-True (-not $cleanFailureDeployWasCalled) 'clean failure stops before deploy'
+    $restoredHostKitEnv = Get-Content -LiteralPath (Join-Path $cleanFailureRoot '.env.web-plane.host-kit') -Raw
+    Assert-True ($restoredHostKitEnv -match 'MINIO_WATCH_ACCESS_KEY=keep-after-failed-clean') 'MinIO access key restored after failed clean'
+    Assert-True ($restoredHostKitEnv -match 'MINIO_WATCH_SECRET_KEY=keep-secret-after-failed-clean') 'MinIO secret key restored after failed clean'
+
     $deployExitRoot = Join-Path $sandbox 'deploy-exit-root'
     New-Item -ItemType Directory -Path (Join-Path $deployExitRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $deployExitRoot 'scripts') -Force | Out-Null
