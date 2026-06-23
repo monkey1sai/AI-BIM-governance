@@ -1216,8 +1216,9 @@ export function createCoordinatorApp(
     }
     const rawPrefix =
       typeof request.query.prefix === "string" ? request.query.prefix : config.minioWatchPrefix;
+    let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
-      const client = createMinioS3Client({
+      client = createMinioS3Client({
         endpoint: config.minioWatchEndpoint,
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
@@ -1228,12 +1229,13 @@ export function createCoordinatorApp(
         rawPrefix,
         config.minioWatchKeySuffix,
       );
-      client.destroy();
       response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
     } catch (err) {
       response
         .status(502)
         .json({ error: "minio_list_failed", detail: err instanceof Error ? err.message : String(err) });
+    } finally {
+      client?.destroy();
     }
   });
 
