@@ -22,6 +22,7 @@ import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
+import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -1197,6 +1198,43 @@ export function createCoordinatorApp(
     const limit = parseListLimit(request.query.limit);
     const items = conversionLedger.list();
     response.json({ count: items.length, items: items.slice(0, limit) });
+  });
+
+  // minio-closed-loop-phase1 Task 4：唯讀 S3 list proxy。
+  // MinIO 未設定時誠實回 count=0（不 500）；list 失敗回 502；presigned URL 不入 log。
+  // 插在 /api/external/ifc-ready 後、/:jobId 之前（避免 param 吃掉）。
+  app.get("/api/minio/objects", async (request, response) => {
+    if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
+      response.json({
+        bucket: config.minioWatchBucket || null,
+        prefix: "",
+        count: 0,
+        objects: [],
+        note: "MinIO watch 未設定（未取得）",
+      });
+      return;
+    }
+    const rawPrefix =
+      typeof request.query.prefix === "string" ? request.query.prefix : config.minioWatchPrefix;
+    try {
+      const client = createMinioS3Client({
+        endpoint: config.minioWatchEndpoint,
+        accessKey: config.minioWatchAccessKey,
+        secretKey: config.minioWatchSecretKey,
+      });
+      const objects = await listMinioObjects(
+        client,
+        config.minioWatchBucket,
+        rawPrefix,
+        config.minioWatchKeySuffix,
+      );
+      client.destroy();
+      response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+    } catch (err) {
+      response
+        .status(502)
+        .json({ error: "minio_list_failed", detail: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // minio-watch-auto-intake：watcher 唯讀狀態（無 credentials 洩漏）。關閉時誠實
