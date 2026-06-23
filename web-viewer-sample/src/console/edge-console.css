@@ -13,6 +13,15 @@
   /* DS 對齊：UI sans（含系統 fallback；未載入 Plus Jakarta Sans 時 Windows 走 Segoe UI / 微軟正黑）。
    * 數值同 DS --font-sans token。mono 保留給 code / ID / 數值 / 標籤簽名紋理。 */
   --ec-sans:"Plus Jakarta Sans","Noto Sans TC",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
+  /* DS token tier（移植自 DS styles.css；以命名 token 取代散落字面值，全站套用）。 */
+  --ec-r-xs:6px; --ec-r-sm:10px; --ec-r:14px; --ec-r-pill:999px;
+  --ec-sp-1:4px; --ec-sp-2:8px; --ec-sp-3:12px; --ec-sp-4:16px; --ec-sp-5:20px; --ec-sp-6:24px; --ec-sp-8:32px;
+  --ec-shadow-1:0 1px 2px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.04);
+  --ec-shadow-2:0 10px 30px rgba(0,0,0,.35);
+  --ec-glow-grn:0 0 8px var(--ec-grn-3);
+  --ec-ease:cubic-bezier(.4,0,.2,1); --ec-dur-fast:.13s; --ec-dur:.2s; --ec-dur-slow:.3s;
+  --ec-track-label:.12em; --ec-track-tag:.06em; --ec-on-grn:#0b0d10;
+  --ec-fs-page:27px; --ec-fs-h2:21px; --ec-fs-h3:16px; --ec-fs-body:15px; --ec-fs-sm:13px; --ec-fs-xs:12px; --ec-fs-mono:11px;
 
   position:fixed; inset:0; display:grid;
   grid-template-rows:48px 1fr 26px;
@@ -395,4 +404,30 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 @media (max-width: 980px) {
   .ec-root { grid-template-columns:210px 1fr; grid-template-areas:"top top" "nav main" "foot foot"; }
   .ec-agent { display:none; }
+}
+
+/* ── DS 視覺對齊 polish（token tier 套用：圓角 / 頂光 header / hover-lift / LED glow / Stepper / focus-ring）── */
+/* 卡片圓角 14px（DS 正典 --radius；使用者選採用，原 6px）。小型控制維持原圓角不 churn。 */
+.ec-panel, .ec-appcard, .ec-mini-card, .ec-action-card { border-radius:var(--ec-r); }
+.ec-panel { box-shadow:var(--ec-shadow-1);
+  transition:border-color var(--ec-dur) var(--ec-ease), box-shadow var(--ec-dur) var(--ec-ease); }
+/* Panel header 頂光漸層（DS --c-panel-hi）。 */
+.ec-panel-h { background:linear-gradient(180deg, var(--ec-panel-hi), transparent); }
+.ec-main h1 { font-size:var(--ec-fs-page); letter-spacing:-0.01em; }
+/* clickable 卡片 hover-lift。 */
+.ec-appcard, .ec-action-card { transition:border-color var(--ec-dur) var(--ec-ease), box-shadow var(--ec-dur) var(--ec-ease); }
+.ec-appcard:hover, .ec-action-card:hover { box-shadow:var(--ec-shadow-1); }
+/* StatusLED / dot glow（live/ok 發光；idle「未取得」不發光，不偽綠）。 */
+.ec-status-dot.ok, .ec-status-dot[data-status="ok"],
+.ec-governance-status.ok .ec-status-dot, .ec-governance-status[data-status="ok"] .ec-status-dot,
+.ec-dot.g { box-shadow:var(--ec-glow-grn); }
+/* Stepper：FlowBar 數字 → 圓點（DS Stepper 視覺；state 仍由 a1Machine/flowActive 驅動）。 */
+.ec-flow-n { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
+  border-radius:var(--ec-r-pill); background:var(--ec-bg); border:1px solid var(--ec-line-2); font-size:10px; }
+.ec-flow-step.active .ec-flow-n { border-color:var(--ec-grn); color:var(--ec-grn); box-shadow:var(--ec-glow-grn); }
+.ec-flow-step.done .ec-flow-n { background:var(--ec-grn); color:var(--ec-on-grn); border-color:var(--ec-grn); }
+/* focus-visible ring（a11y；reduced-motion 關閉 hover transition）。 */
+.ec-root :focus-visible { outline:2px solid var(--ec-grn-3); outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) {
+  .ec-panel, .ec-appcard, .ec-action-card { transition:none !important; }
 }
