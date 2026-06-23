@@ -290,6 +290,49 @@ try {
     $forbiddenWrapperToken = 'Dry' + 'Run'
     Assert-True ($wrapperText -notmatch [regex]::Escape($forbiddenWrapperToken)) 'wrapper does not expose forbidden token'
 
+    # F2: restore 逐檔獨立、收集失敗、不中途 abort
+    $restoreRoot = Join-Path $sandbox 'restore-partial-failure'
+    New-Item -ItemType Directory -Path $restoreRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $restoreRoot 'sub') -Force | Out-Null
+    # 建立 .example 檔（Restore 需要此檔存在才會嘗試還原）
+    'FIRST=placeholder' | Set-Content -LiteralPath (Join-Path $restoreRoot '.env.first.example') -Encoding ascii
+    'SECOND=placeholder' | Set-Content -LiteralPath (Join-Path $restoreRoot '.env.second.example') -Encoding ascii
+    'THIRD=placeholder' | Set-Content -LiteralPath (Join-Path $restoreRoot 'sub\.env.third.example') -Encoding ascii
+
+    # 建立一個被鎖定（無法寫入）的目標路徑以模擬第一個 entry WriteAllBytes 失敗
+    $lockedPath = Join-Path $restoreRoot '.env.first'
+    'OLD=content' | Set-Content -LiteralPath $lockedPath -Encoding ascii
+    $lockedFile = [System.IO.File]::Open($lockedPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    try {
+        $firstBytes = [System.Text.Encoding]::UTF8.GetBytes('FIRST=restored')
+        $secondBytes = [System.Text.Encoding]::UTF8.GetBytes('SECOND=restored')
+        $thirdBytes = [System.Text.Encoding]::UTF8.GetBytes('THIRD=restored')
+
+        $partialSnapshot = @(
+            [pscustomobject]@{ RelativePath = '.env.first';     Bytes = $firstBytes  }
+            [pscustomobject]@{ RelativePath = '.env.second';    Bytes = $secondBytes }
+            [pscustomobject]@{ RelativePath = 'sub\.env.third'; Bytes = $thirdBytes  }
+        )
+
+        $restoreFailureMessage = $null
+        try {
+            Restore-TestDeployEnvSnapshot -DeploymentPath $restoreRoot -Snapshot $partialSnapshot | Out-Null
+        } catch {
+            $restoreFailureMessage = $_.Exception.Message
+        }
+
+        Assert-True (-not [string]::IsNullOrWhiteSpace($restoreFailureMessage)) 'partial restore: failure is surfaced as a throw'
+        Assert-True ($restoreFailureMessage -match '\.env\.first') 'partial restore: error message contains failing entry path'
+        Assert-True (Test-Path -LiteralPath (Join-Path $restoreRoot '.env.second')) 'partial restore: second entry is still written despite first failure'
+        $secondContent = Get-Content -LiteralPath (Join-Path $restoreRoot '.env.second') -Raw
+        Assert-True ($secondContent -match 'SECOND=restored') 'partial restore: second entry content is correct'
+        Assert-True (Test-Path -LiteralPath (Join-Path $restoreRoot 'sub\.env.third')) 'partial restore: third entry is still written despite first failure'
+        $thirdContent = Get-Content -LiteralPath (Join-Path $restoreRoot 'sub\.env.third') -Raw
+        Assert-True ($thirdContent -match 'THIRD=restored') 'partial restore: third entry content is correct'
+    } finally {
+        $lockedFile.Dispose()
+    }
+
     Write-TestPass $testName
 } catch {
     Write-TestFail $testName $_.Exception.Message

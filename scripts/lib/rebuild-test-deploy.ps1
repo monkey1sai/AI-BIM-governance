@@ -129,6 +129,7 @@ function Restore-TestDeployEnvSnapshot {
 
     $root = Normalize-TestDeployPath -Path $DeploymentPath
     $restored = New-Object 'System.Collections.Generic.List[string]'
+    $failures = New-Object 'System.Collections.Generic.List[string]'
     foreach ($entry in @($Snapshot)) {
         if ($null -eq $entry) { continue }
         $relativePath = [string]$entry.RelativePath
@@ -145,8 +146,17 @@ function Restore-TestDeployEnvSnapshot {
             New-Item -ItemType Directory -Path $parent -Force | Out-Null
         }
 
-        [System.IO.File]::WriteAllBytes($envPath, [byte[]]$entry.Bytes)
-        $restored.Add($relativePath) | Out-Null
+        try {
+            [System.IO.File]::WriteAllBytes($envPath, [byte[]]$entry.Bytes)
+            $restored.Add($relativePath) | Out-Null
+        } catch {
+            $failures.Add("$relativePath`: $_") | Out-Null
+        }
+    }
+
+    if ($failures.Count -gt 0) {
+        $summary = $failures -join '; '
+        throw "Restore-TestDeployEnvSnapshot: failed to restore $($failures.Count) env file(s): $summary"
     }
 
     return @($restored.ToArray())
