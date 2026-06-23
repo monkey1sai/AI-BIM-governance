@@ -166,4 +166,34 @@ describe("a1Reducer 六態轉移", () => {
     const runningEnable = running.step === "issued" || running.step === "delivered";
     expect(runningEnable).toBe(false);
   });
+
+  // Fix-F1：issuesCreated 獨立追蹤（BCF gating 誠實違規修復）。
+  it("F1：scored→EXPORT_OK→delivered 時 issuesCreated 仍 false（配合 UI bcfEnabled 應 false）", () => {
+    // scored→匯出 Excel 不走 CREATE_ISSUES_OK；issuesCreated 應保持 false，BCF 不得 enable。
+    let s: A1State = { ...initialA1State, step: "scored", ifcPath: "x.ifc", run: fakeRun("succeeded") };
+    s = a1Reducer(s, { type: "EXPORT_OK" });
+    expect(s.step).toBe("delivered");
+    expect(s.issuesCreated).toBe(false); // 沒建過 Issue → BCF 不得 enable
+    const bcfEnabled = s.issuesCreated && (s.step === "issued" || s.step === "delivered");
+    expect(bcfEnabled).toBe(false);
+  });
+  it("F1：CREATE_ISSUES_OK 後 issuesCreated true", () => {
+    let s: A1State = { ...initialA1State, step: "scored", ifcPath: "x.ifc", run: fakeRun("succeeded") };
+    s = a1Reducer(s, { type: "CREATE_ISSUES_OK", issueCount: 3 });
+    expect(s.step).toBe("issued");
+    expect(s.issuesCreated).toBe(true);
+    const bcfEnabled = s.issuesCreated && (s.step === "issued" || s.step === "delivered");
+    expect(bcfEnabled).toBe(true);
+  });
+  it("F1：RESET 清零 issuesCreated", () => {
+    let s: A1State = { ...initialA1State, step: "issued", issuesCreated: true, ifcPath: "x.ifc" };
+    s = a1Reducer(s, { type: "RESET" });
+    expect(s.issuesCreated).toBe(false);
+  });
+  it("F4：BCF_EXPORT_OK reducer 設 bcfExported=true", () => {
+    const s: A1State = { ...initialA1State, step: "issued", issuesCreated: true };
+    const after = a1Reducer(s, { type: "BCF_EXPORT_OK" });
+    expect(after.bcfExported).toBe(true);
+    expect(after.step).toBe("issued"); // step 不改
+  });
 });
