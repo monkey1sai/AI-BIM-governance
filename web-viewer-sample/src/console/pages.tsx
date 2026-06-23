@@ -1826,7 +1826,7 @@ export function VersionDiffPage() {
         {diff && (
           <div className="ec-grid" style={{ marginTop: 12 }}>
             <Metric value={diff.summary?.matched ?? "—"} label="matched" />
-            <Metric value={counts.added ?? 0} label="added" tone="bad" />
+            <Metric value={counts.added ?? 0} label="added" />
             <Metric value={counts.removed ?? 0} label="removed" tone="bad" />
             <Metric value={counts.moved ?? 0} label="moved" tone="warn" />
             <Metric value={counts.property_changed ?? 0} label="property changed" tone="warn" />
