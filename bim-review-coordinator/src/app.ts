@@ -21,6 +21,7 @@ import {
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
+import { ConversionLedger } from "./services/conversionLedger.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -479,6 +480,9 @@ export function createCoordinatorApp(
     undefined,
     config.callbackOutboxStorePath,
   );
+  // minio-closed-loop-phase1 Task 1/3：持久 ConversionLedger（coordinator-local shadow）。
+  // watcher 偵測即寫 queued（Task 2）；GET /api/conversion/records 讀取（Task 3）。
+  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
@@ -1165,6 +1169,14 @@ export function createCoordinatorApp(
       count: jobs.length,
       items: jobs.slice(0, limit).map((job) => summarizeIfcReadyJob(job, store.get(job.review_session_id || ""))),
     });
+  });
+
+  // minio-closed-loop-phase1 Task 3：讀持久 ConversionLedger；唯讀 GET，無 auth（照既有
+  // /api/external/ifc-ready 模式）。插在 /api/external/ifc-ready 之後、/:jobId 之前（避免 param 吃掉）。
+  app.get("/api/conversion/records", (request, response) => {
+    const limit = parseListLimit(request.query.limit);
+    const items = conversionLedger.list();
+    response.json({ count: items.length, items: items.slice(0, limit) });
   });
 
   // minio-watch-auto-intake：watcher 唯讀狀態（無 credentials 洩漏）。關閉時誠實
