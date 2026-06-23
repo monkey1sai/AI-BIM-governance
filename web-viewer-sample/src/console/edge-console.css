@@ -10,13 +10,25 @@
   --ec-red:#ef5350; --ec-red-2:rgba(239,83,80,.16);
   --ec-vio:#b388ff; --ec-vio-2:rgba(179,136,255,.16);
   --ec-mono:ui-monospace,"Cascadia Code","Consolas",monospace;
+  /* DS 對齊：UI sans（含系統 fallback；未載入 Plus Jakarta Sans 時 Windows 走 Segoe UI / 微軟正黑）。
+   * 數值同 DS --font-sans token。mono 保留給 code / ID / 數值 / 標籤簽名紋理。 */
+  --ec-sans:"Plus Jakarta Sans","Noto Sans TC",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
 
   position:fixed; inset:0; display:grid;
   grid-template-rows:48px 1fr 26px;
   grid-template-columns:236px 1fr 300px;
   grid-template-areas:"top top top" "nav main agent" "foot foot foot";
   background:var(--ec-bg); color:var(--ec-fg);
-  font:13px/1.5 var(--ec-mono); overflow:hidden;
+  font:13px/1.5 var(--ec-sans); overflow:hidden;
+}
+
+/* DS 對齊：UI 主體用 sans，code / ID / 數值 / mono 標籤保留 mono 簽名紋理。 */
+.ec-root .ec-sub,
+.ec-nav .ec-group, .ec-nav .ec-key, .ec-nav-badge,
+.ec-prov, .ec-metric, .ec-key,
+.ec-ep-m, .ec-ep-p, .ec-bd-port, .ec-bd-cap, .ec-risk,
+.ec-evidence-pill, .ec-tree {
+  font-family:var(--ec-mono);
 }
 .ec-root.ec-agent-collapsed { grid-template-columns:236px 1fr 0; }
 .ec-top { grid-area:top; display:flex; align-items:center; gap:16px; padding:0 14px;
@@ -33,8 +45,13 @@
 .ec-nav button { display:flex; gap:9px; align-items:center; width:100%; text-align:left;
   background:none; border:0; color:var(--ec-fg-2); padding:7px 14px; cursor:pointer; font:inherit; }
 .ec-nav button:hover { background:var(--ec-bg-3); color:var(--ec-fg); }
+/* DS 對齊：active left-bar 依 plane 上色（CORE/governance=cyan、OMNIVERSE=green，綠維持 #76b900）。 */
 .ec-nav button.active { background:var(--ec-grn-2); color:var(--ec-fg);
   box-shadow:inset 3px 0 0 var(--ec-grn); }
+.ec-nav button.active .ec-key { color:var(--ec-grn); }
+.ec-nav button.active[data-plane="governance"] { background:var(--ec-cyan-2);
+  box-shadow:inset 3px 0 0 var(--ec-cyan); }
+.ec-nav button.active[data-plane="governance"] .ec-key { color:var(--ec-cyan); }
 .ec-nav .ec-key { color:var(--ec-fg-4); width:14px; }
 .ec-nav-badge { margin-left:auto; color:var(--ec-grn); border:1px solid var(--ec-grn-3); background:var(--ec-grn-2); border-radius:3px; padding:0 5px; font-size:9px; }
 
