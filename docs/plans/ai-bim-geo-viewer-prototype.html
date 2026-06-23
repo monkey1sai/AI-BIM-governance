@@ -3,177 +3,252 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI-BIM-Geo Viewer — IFC→USD 語意驗證·執行計畫完成後示意｜BIM 站台 Demo</title>
+<title>AI-BIM-Geo Viewer — IFC→USD 語意驗證示意 · M4 完成後驗收 (DEMO)</title>
 <!--
-  AI-BIM-Governance 配套原型：模擬「執行計畫 M0–M8 完成後」的 3D 語意驗證畫面。
-  單一檔案、零相依、可直接雙擊開啟。簡易建築為程式生成之示範模型（78 件構件，資料皆為 DEMO）。
-  風格沿用 ai-bim-governance-prototype.html 之 design tokens（深色 + NVIDIA 綠 + 誠實標記）。
+  ═══════════════════════════════════════════════════════════════════════════
+  AI-BIM-Geo Viewer — 3D 語意驗證『驗收示意』原型
+  ───────────────────────────────────────────────────────────────────────────
+  定位：模擬「執行計畫到 M4（#viewer / 3D 連動）完成後」的 3D 語意驗證畫面。
+  本檔是 *自寫 canvas 純示意*，非程式碼範本。
+
+  ★ 誠實聲明（與 sharedSheet §5 誠實鐵律對齊）：
+    • 正式 3D ＝ 落地端 Kit WebRTC 串流；前端只收 frame、指令走 DataChannel
+      （highlightPrimsRequest）。此 canvas 只是「驗收後長相」的示意。
+    • 3D 串流尚未接 → 串流遙測 FPS 標「未取得」(n/a)，不偽造「60 FPS」。
+    • GUID⇔USD 對應表 / 幾何 / Pset 一律標「範例值 · 示意」(DEMO DATA)，
+      不當實測；正式版才由幾何計算 BBox/Volume/Pset。
+    • clash 場景標 NOT BUILT（卡 ifcopenshell 缺 OpenCASCADE has_occ=False），
+      不顯真實碰撞數。A6/A7/A8/A9/A10 場景全標願景 Phase。
+    • 測試專案編號 270/889/990 + 271 皆為 MinIO 暫時測試 IFC，已於 UI 標示。
+    • BCF 一律 2.1（現行匯出）；BCF 3.0 為升級目標（須先向 buildingSMART 確認）。
+
+  視覺基底＝design system review-room kit（暗 Edge Console 預設、品牌綠 #84c714、
+  mono label、provenance tag、status LED）。token 以 styles.css 為唯一真相；
+  此檔內嵌 fallback 以保「單檔可雙擊開啟」。
+  ═══════════════════════════════════════════════════════════════════════════
 -->
+<!-- 唯一 token 入口：design system styles.css（暗 Edge Console 預設）。
+     相對路徑指向 design-system repo；單檔開啟時 fallback :root 接手。 -->
+<link rel="stylesheet" href="../../../../../design/AI-BIM Governance Design System/styles.css" onerror="this.remove()">
 <style>
+/* ── design-system token fallback（單檔可開啟用；與 tokens/*.css 同值） ── */
 :root{
-  --bg-0:#0c0f11; --bg-1:#13181b; --bg-2:#1a2024; --bg-3:#222a2f;
+  --bg:#0c0f11; --c-bg-0:#0c0f11; --surface:#13181b; --c-bg-1:#13181b;
+  --surface-2:#1a2024; --c-bg-2:#1a2024; --raised:#222a2f; --c-bg-3:#222a2f;
   --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.14);
-  --tx-0:#eef3f4; --tx-1:#a9b6bb; --tx-2:#6f7d83; --tx-3:#56636a;
-  --green:#84c714; --green-d:#5f9410; --green-soft:rgba(132,199,20,.14);
-  --amber:#f2b43b; --amber-soft:rgba(242,180,59,.14);
-  --cyan:#46c7e6; --cyan-soft:rgba(70,199,230,.14);
-  --red:#f0635f; --red-soft:rgba(240,99,95,.13);
-  --violet:#9a8cff; --violet-soft:rgba(154,140,255,.14);
-  --yellow:#ffd84d;
-  --radius:14px; --radius-sm:10px;
-  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Noto Sans CJK TC","Microsoft JhengHei",sans-serif;
+  --text:#eef3f4; --text-2:#a9b6bb; --text-3:#6f7d83; --text-4:#56636a;
+  --accent:#84c714; --accent-deep:#5f9410; --accent-soft:rgba(132,199,20,.14);
+  --accent-ring:rgba(132,199,20,.32); --c-green-dim:rgba(132,199,20,.06);
+  --on-accent:#0b0f06; --c-green:#84c714; --c-green-soft:rgba(132,199,20,.14);
+  --info:#46c7e6; --info-soft:rgba(70,199,230,.14); --c-cyan:#46c7e6;
+  --warn:#f2b43b; --warn-soft:rgba(242,180,59,.14); --c-amber:#f2b43b;
+  --err:#f0635f; --err-soft:rgba(240,99,95,.13); --c-red:#f0635f;
+  --ai:#9a8cff; --ai-soft:rgba(154,140,255,.14); --c-violet:#9a8cff;
+  --idle:#56636a;
+  --prov-built:#84c714; --prov-built-bg:rgba(132,199,20,.14);
+  --prov-artifact:#46c7e6; --prov-artifact-bg:rgba(70,199,230,.14);
+  --prov-demo:#f2b43b; --prov-demo-bg:rgba(242,180,59,.14);
+  --prov-ai:#9a8cff; --prov-ai-bg:rgba(154,140,255,.14);
+  --prov-todo:#6f7d83; --prov-todo-bg:rgba(255,255,255,.04);
+  --radius:14px; --radius-sm:10px; --radius-xs:6px;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --font-sans:"Plus Jakarta Sans","Noto Sans TC",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
+  --ease:cubic-bezier(.4,0,.2,1); --dur:.2s; --dur-fast:.13s;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
-body{background:var(--bg-0);color:var(--tx-0);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow:hidden}
-.mono{font-family:var(--mono)}
-.lbl{font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--tx-2)}
+body{background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow:hidden}
+.mono{font-family:var(--font-mono)}
+.lbl{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3)}
 ::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-thumb{background:#2b343a;border-radius:8px;border:2px solid var(--bg-0)}
+::-webkit-scrollbar-thumb{background:#2b343a;border-radius:8px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:#36424a}
 
 #app{display:flex;flex-direction:column;height:100vh;min-height:0}
 
+/* ───── provenance tag（design-system ProvTag 語意） ───── */
+.prov{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:var(--radius-xs);white-space:nowrap}
+.prov.built{color:var(--prov-built);background:var(--prov-built-bg);border:1px solid rgba(132,199,20,.35)}
+.prov.artifact{color:var(--prov-artifact);background:var(--prov-artifact-bg);border:1px solid rgba(70,199,230,.35)}
+.prov.demo{color:var(--prov-demo);background:var(--prov-demo-bg);border:1px dashed rgba(242,180,59,.6)}
+.prov.ai{color:var(--prov-ai);background:var(--prov-ai-bg);border:1px solid rgba(154,140,255,.35)}
+.prov.todo{color:var(--prov-todo);background:var(--prov-todo-bg);border:1px dashed rgba(255,255,255,.18)}
+
 /* ───── 頂部列 ───── */
-.topbar{display:flex;align-items:center;gap:12px;height:52px;padding:0 14px;background:linear-gradient(180deg,#11161a,#0e1316);border-bottom:1px solid var(--line);flex:0 0 auto;z-index:30}
+.topbar{display:flex;align-items:center;gap:10px;height:54px;padding:0 14px;background:linear-gradient(180deg,#11161a,#0e1316);border-bottom:1px solid var(--line);flex:0 0 auto;z-index:30;flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:10px;white-space:nowrap}
-.brand .mark{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--green),var(--green-d));display:grid;place-items:center;color:#0b0f06;font-weight:800;font-size:12px;box-shadow:0 0 0 1px rgba(132,199,20,.4),0 4px 12px rgba(132,199,20,.25)}
+.brand .mark{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-deep));display:grid;place-items:center;color:var(--on-accent);font-weight:800;font-size:12px;box-shadow:0 0 0 1px rgba(132,199,20,.4),0 4px 12px rgba(132,199,20,.25)}
 .brand b{font-size:13.5px}
-.brand small{display:block;color:var(--tx-2);font-family:var(--mono);font-size:9px;letter-spacing:.12em}
-.pill{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--bg-2);font-size:12px;color:var(--tx-1);white-space:nowrap}
-.pill .k{font-family:var(--mono);font-size:9px;letter-spacing:.11em;color:var(--tx-3)}
-.pill .v{color:var(--tx-0);font-weight:600}
+.brand small{display:block;color:var(--text-3);font-family:var(--font-mono);font-size:9px;letter-spacing:.12em}
+.pill{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);font-size:12px;color:var(--text-2);white-space:nowrap}
+.pill .k{font-family:var(--font-mono);font-size:9px;letter-spacing:.11em;color:var(--text-4)}
+.pill .v{color:var(--text);font-weight:600}
+.pill.test{border-color:rgba(242,180,59,.4)}
+.pill.test .v{color:var(--warn)}
 .spacer{flex:1}
-.stat{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--tx-1);padding:0 6px;white-space:nowrap}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--tx-3)}
-.dot.g{background:var(--green);box-shadow:0 0 8px var(--green)}
-.badge-demo{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:9px;border:1px solid rgba(242,180,59,.45);background:var(--amber-soft);color:var(--amber);font-family:var(--mono);font-size:10px;letter-spacing:.1em;white-space:nowrap}
-.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:9px;border:1px solid var(--line-2);background:var(--bg-2);color:var(--tx-1);font-size:12px;cursor:pointer;transition:.15s;white-space:nowrap;font-family:var(--sans)}
-.btn:hover{background:var(--bg-3);color:var(--tx-0)}
-.btn.on{background:var(--green-soft);border-color:rgba(132,199,20,.5);color:var(--green)}
-.btn.red-on{background:var(--red-soft);border-color:rgba(240,99,95,.5);color:var(--red)}
+.stat{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-2);padding:0 6px;white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--idle)}
+.dot.g{background:var(--accent);box-shadow:0 0 8px var(--accent-ring)}
+.dot.idle{background:var(--idle)}
+.badge-demo{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:9px;border:1px dashed rgba(242,180,59,.55);background:var(--prov-demo-bg);color:var(--prov-demo);font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:9px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--text-2);font-size:12px;cursor:pointer;transition:var(--dur);white-space:nowrap;font-family:var(--font-sans)}
+.btn:hover{background:var(--raised);color:var(--text);filter:brightness(1.06)}
+.btn.on{background:var(--accent-soft);border-color:rgba(132,199,20,.5);color:var(--accent)}
+.btn.red-on{background:var(--err-soft);border-color:rgba(240,99,95,.5);color:var(--err)}
+.btn.dis{opacity:.45;cursor:not-allowed}
+.btn.dis:hover{background:var(--surface-2);color:var(--text-2);filter:none}
+
+/* scene picker */
+.sel{background:var(--surface-2);border:1px solid var(--line-2);color:var(--text-2);border-radius:8px;font-size:11.5px;padding:4px 8px;font-family:var(--font-sans);height:28px}
 
 /* ───── 三欄 ───── */
 .shell{display:flex;flex:1;min-height:0}
-.panel{background:var(--bg-1);overflow-y:auto;flex:0 0 auto;display:flex;flex-direction:column}
-.panel.left{width:268px;border-right:1px solid var(--line)}
-.panel.right{width:308px;border-left:1px solid var(--line)}
-.sec{margin:10px 10px 0;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg-2);overflow:hidden;flex:0 0 auto}
+.panel{background:var(--surface);overflow-y:auto;flex:0 0 auto;display:flex;flex-direction:column}
+.panel.left{width:272px;border-right:1px solid var(--line)}
+.panel.right{width:312px;border-left:1px solid var(--line)}
+.sec{margin:10px 10px 0;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-2);overflow:hidden;flex:0 0 auto}
 .sec:last-child{margin-bottom:14px}
-.sec>.hd{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--tx-0)}
+.sec>.hd{display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--text)}
 .sec>.bd{padding:9px 11px}
-.gnum{display:none;width:18px;height:18px;border-radius:6px;font-family:var(--mono);font-size:11px;font-weight:700;place-items:center;flex:0 0 auto}
+.gnum{display:none;width:18px;height:18px;border-radius:6px;font-family:var(--font-mono);font-size:11px;font-weight:700;place-items:center;flex:0 0 auto}
 .guide .gnum{display:grid}
-.guide .sec.g1{border-color:rgba(132,199,20,.55)}   .gnum.n1{background:var(--green-soft);color:var(--green);border:1px solid rgba(132,199,20,.5)}
-.guide .sec.g2{border-color:rgba(242,180,59,.55)}   .gnum.n2{background:var(--amber-soft);color:var(--amber);border:1px solid rgba(242,180,59,.5)}
-.guide .sec.g3{border-color:rgba(154,140,255,.55)}  .gnum.n3{background:var(--violet-soft);color:var(--violet);border:1px solid rgba(154,140,255,.5)}
-.guide .sec.g6{border-color:rgba(132,199,20,.45)}   .gnum.n6{background:var(--green-soft);color:var(--green);border:1px solid rgba(132,199,20,.5)}
-.guide .sec.g7{border-color:rgba(240,99,95,.5)}     .gnum.n7{background:var(--red-soft);color:var(--red);border:1px solid rgba(240,99,95,.5)}
+.guide .sec.g1{border-color:rgba(132,199,20,.55)}   .gnum.n1{background:var(--accent-soft);color:var(--accent);border:1px solid rgba(132,199,20,.5)}
+.guide .sec.g2{border-color:rgba(242,180,59,.55)}   .gnum.n2{background:var(--warn-soft);color:var(--warn);border:1px solid rgba(242,180,59,.5)}
+.guide .sec.g3{border-color:rgba(154,140,255,.55)}  .gnum.n3{background:var(--ai-soft);color:var(--ai);border:1px solid rgba(154,140,255,.5)}
+.guide .sec.g6{border-color:rgba(132,199,20,.45)}   .gnum.n6{background:var(--accent-soft);color:var(--accent);border:1px solid rgba(132,199,20,.5)}
+.guide .sec.g7{border-color:rgba(240,99,95,.5)}     .gnum.n7{background:var(--err-soft);color:var(--err);border:1px solid rgba(240,99,95,.5)}
 .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:12px}
-.kv .k{color:var(--tx-2);white-space:nowrap}
-.kv .v{color:var(--tx-0);text-align:right;font-family:var(--mono);font-size:11.5px;word-break:break-all}
-.kv .v.ok{color:var(--green)}
-.kv .v.warn{color:var(--amber)}
+.kv .k{color:var(--text-3);white-space:nowrap}
+.kv .v{color:var(--text);text-align:right;font-family:var(--font-mono);font-size:11.5px;word-break:break-all}
+.kv .v.ok{color:var(--accent)}
+.kv .v.warn{color:var(--warn)}
+.kv .v.na{color:var(--idle);font-style:italic}
 
 /* 結構樹 */
 .tree{font-size:12.5px}
-.tnode{padding:2px 0 2px 0;color:var(--tx-1);cursor:pointer;white-space:nowrap}
-.tnode:hover{color:var(--tx-0)}
-.tnode .tw{color:var(--tx-3);font-family:var(--mono);display:inline-block;width:14px}
-.tnode .cnt{color:var(--tx-3);font-family:var(--mono);font-size:10.5px;margin-left:5px}
-.tnode.cls.on{color:var(--green);font-weight:700}
-.tnode.story>.tlab{font-weight:700;color:var(--tx-0)}
+.tnode{padding:2px 0;color:var(--text-2);cursor:pointer;white-space:nowrap}
+.tnode:hover{color:var(--text)}
+.tnode .tw{color:var(--text-4);font-family:var(--font-mono);display:inline-block;width:14px}
+.tnode .cnt{color:var(--text-4);font-family:var(--font-mono);font-size:10.5px;margin-left:5px}
+.tnode.cls.on{color:var(--accent);font-weight:700}
+.tnode.story>.tlab{font-weight:700;color:var(--text)}
 .tkids{margin-left:16px;border-left:1px dashed var(--line-2);padding-left:10px}
-.treset{margin-top:7px;font-size:11px;color:var(--cyan);cursor:pointer;display:none}
+.treset{margin-top:7px;font-size:11px;color:var(--info);cursor:pointer;display:none}
 .treset.show{display:block}
 
 /* 計畫狀態 */
 .mrow{display:flex;flex-wrap:wrap;gap:5px}
-.mchip{font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:6px;background:var(--green-soft);color:var(--green);border:1px solid rgba(132,199,20,.35)}
+.mchip{font-family:var(--font-mono);font-size:10px;padding:2px 7px;border-radius:6px;background:var(--accent-soft);color:var(--accent);border:1px solid rgba(132,199,20,.35)}
+.mchip.todo{background:var(--prov-todo-bg);color:var(--text-3);border:1px dashed rgba(255,255,255,.18)}
 
 /* ───── 中央 viewer ───── */
-.center{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-0)}
+.center{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg)}
 .vtools{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);flex:0 0 auto;flex-wrap:wrap}
-.vhint{margin-left:auto;font-size:11px;color:var(--tx-3);white-space:nowrap}
+.vhint{margin-left:auto;font-size:11px;color:var(--text-4);white-space:nowrap}
 .seg{display:inline-flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden}
-.seg button{border:0;background:var(--bg-2);color:var(--tx-2);font-size:11.5px;padding:5px 11px;cursor:pointer;font-family:var(--sans)}
-.seg button.on{background:var(--bg-3);color:var(--green);font-weight:700}
-select.sel{background:var(--bg-2);border:1px solid var(--line-2);color:var(--tx-1);border-radius:8px;font-size:11.5px;padding:4px 8px;font-family:var(--sans)}
+.seg button{border:0;background:var(--surface-2);color:var(--text-3);font-size:11.5px;padding:5px 11px;cursor:pointer;font-family:var(--font-sans)}
+.seg button.on{background:var(--raised);color:var(--accent);font-weight:700}
 .vwrap{position:relative;flex:1;min-height:0}
 canvas#cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
 canvas#cv.drag{cursor:grabbing}
-.cv-banner{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;padding:6px 13px;border-radius:9px;background:rgba(12,15,17,.88);border:1.5px solid rgba(132,199,20,.6);font-size:12.5px;color:var(--tx-0);white-space:nowrap;z-index:5}
+
+/* 串流橋接四步（RR_BRIDGE 常駐頂條） */
+.bridge{position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:6;flex-wrap:wrap;justify-content:center}
+.bstep{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:9.5px;color:var(--ai);background:rgba(12,15,17,.86);border:1px solid var(--ai);padding:3px 8px;border-radius:var(--radius-xs)}
+.bstep b{width:13px;height:13px;border-radius:50%;background:var(--ai);color:var(--on-accent);display:grid;place-items:center;font-size:8px}
+.bstep.pending{color:var(--idle);border-color:var(--line-2)}
+.bstep.pending b{background:var(--idle)}
+
+.cv-banner{position:absolute;top:46px;left:50%;transform:translateX(-50%);display:none;align-items:center;gap:8px;padding:6px 13px;border-radius:9px;background:rgba(12,15,17,.88);border:1.5px solid rgba(132,199,20,.6);font-size:12.5px;color:var(--text);white-space:nowrap;z-index:5}
 .guide .cv-banner{display:inline-flex}
 .cv-banner .gnum{display:grid}
-.cv-tip{position:absolute;left:12px;top:10px;z-index:5;display:flex;flex-direction:column;gap:6px}
-.cv-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border-radius:8px;background:rgba(12,15,17,.82);border:1px solid var(--line-2);font-size:11px;color:var(--tx-1);white-space:nowrap;width:max-content}
-.cv-chip b{color:var(--green)}
-.cv-chip.warn{border-color:rgba(240,99,95,.5);color:var(--red)}
+.cv-tip{position:absolute;left:12px;top:10px;z-index:5;display:flex;flex-direction:column;gap:6px;max-width:62%}
+.cv-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border-radius:8px;background:rgba(12,15,17,.82);border:1px solid var(--line-2);font-size:11px;color:var(--text-2);white-space:nowrap;width:max-content}
+.cv-chip b{color:var(--accent)}
+.cv-chip.warn{border-color:rgba(240,99,95,.5);color:var(--err)}
+.cv-chip.dc{border-color:rgba(154,140,255,.45);color:var(--ai)}
+.cv-chip.dc b{color:var(--ai)}
+
+/* 串流遙測卡（誠實 telemetry，FPS=未取得） */
+.streamcard{position:absolute;left:12px;bottom:12px;z-index:5;background:rgba(17,20,24,.95);border:1px solid var(--line);border-radius:8px;padding:7px 11px;display:flex;flex-direction:column;gap:3px}
+.streamcard .srow{display:flex;gap:14px;font-family:var(--font-mono);font-size:9.5px}
+.streamcard .srow span{color:var(--text-4);letter-spacing:.06em}
+.streamcard .srow b{color:var(--accent);margin-left:auto}
+.streamcard .srow b.na{color:var(--idle);font-style:italic}
+/* per-scene NOT BUILT 佔位 overlay */
+.scene-todo{position:absolute;inset:0;z-index:7;display:none;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;background:rgba(8,11,13,.55);backdrop-filter:blur(1px)}
+.scene-todo.show{display:flex}
+.scene-todo .glyph{font-size:40px;color:var(--text-4)}
+.scene-todo .ttl{font-size:15px;color:var(--text);font-weight:700}
+.scene-todo .sub{font-size:11.5px;color:var(--text-3);max-width:340px;line-height:1.6}
 
 /* 幾何資訊條（5）＋ 對應表（4） */
-.bstrip{flex:0 0 auto;border-top:1px solid var(--line);background:var(--bg-1)}
-.geo{display:flex;align-items:center;gap:18px;padding:7px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--tx-1);flex-wrap:wrap}
+.bstrip{flex:0 0 auto;border-top:1px solid var(--line);background:var(--surface)}
+.geo{display:flex;align-items:center;gap:18px;padding:7px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--text-2);flex-wrap:wrap}
 .geo .gnum{flex:0 0 auto}
 .guide .geo{box-shadow:inset 0 0 0 1.5px rgba(242,180,59,.5)}
-.gnum.n5{background:var(--amber-soft);color:var(--amber);border:1px solid rgba(242,180,59,.5)}
-.gnum.n4{background:var(--cyan-soft);color:var(--cyan);border:1px solid rgba(70,199,230,.5)}
-.geo b{color:var(--tx-0);font-family:var(--mono);font-size:11.5px;font-weight:600}
-.geo .gt{color:var(--tx-3);font-family:var(--mono);font-size:10px;letter-spacing:.1em}
+.gnum.n5{background:var(--warn-soft);color:var(--warn);border:1px solid rgba(242,180,59,.5)}
+.gnum.n4{background:var(--info-soft);color:var(--info);border:1px solid rgba(70,199,230,.5)}
+.geo b{color:var(--text);font-family:var(--font-mono);font-size:11.5px;font-weight:600}
+.geo .gt{color:var(--text-4);font-family:var(--font-mono);font-size:10px;letter-spacing:.1em}
 
-.tabs{display:flex;align-items:center;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--line)}
-.tab{padding:6px 14px;font-size:12.5px;color:var(--tx-2);cursor:pointer;border:1px solid transparent;border-bottom:0;border-radius:9px 9px 0 0}
-.tab:hover{color:var(--tx-0)}
-.tab.on{background:var(--bg-2);border-color:var(--line);color:var(--tx-0);font-weight:700}
-.tab .n{font-family:var(--mono);font-size:10px;color:var(--red);margin-left:4px}
-.tab.dis{color:var(--tx-3);cursor:not-allowed}
-.tab .nb{font-family:var(--mono);font-size:9px;color:var(--tx-3);margin-left:4px}
-.tabnote{margin-left:auto;font-size:10.5px;color:var(--tx-3);font-family:var(--mono);letter-spacing:.06em;padding-right:4px}
-.tbwrap{height:168px;overflow:auto;position:relative}
+.tabs{display:flex;align-items:center;gap:2px;padding:6px 12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tab{padding:6px 14px;font-size:12.5px;color:var(--text-3);cursor:pointer;border:1px solid transparent;border-bottom:0;border-radius:9px 9px 0 0}
+.tab:hover{color:var(--text)}
+.tab.on{background:var(--surface-2);border-color:var(--line);color:var(--text);font-weight:700}
+.tab .n{font-family:var(--font-mono);font-size:10px;color:var(--err);margin-left:4px}
+.tab.dis{color:var(--text-4);cursor:not-allowed}
+.tab .nb{font-family:var(--font-mono);font-size:9px;color:var(--text-4);margin-left:4px}
+.tabnote{margin-left:auto;font-size:10.5px;color:var(--text-4);font-family:var(--font-mono);letter-spacing:.06em;padding-right:4px;display:flex;align-items:center;gap:6px}
+.tbwrap{height:170px;overflow:auto;position:relative}
 .guide .tbwrap{box-shadow:inset 0 0 0 1.5px rgba(70,199,230,.5)}
 table.map{width:100%;border-collapse:collapse;font-size:11.5px}
-table.map th{position:sticky;top:0;background:var(--bg-2);color:var(--tx-2);font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);z-index:2;white-space:nowrap}
-table.map td{padding:5px 10px;border-bottom:1px solid var(--line);color:var(--tx-1);white-space:nowrap;cursor:pointer;font-family:var(--mono);font-size:10.8px}
-table.map tr:hover td{background:var(--bg-2)}
-table.map tr.on td{background:rgba(70,199,230,.10);color:var(--tx-0)}
-table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
-.fb{display:inline-block;padding:1px 7px;border-radius:6px;font-size:9.5px;font-family:var(--mono)}
-.fb.ok{background:var(--green-soft);color:var(--green)}
-.fb.warn{background:var(--amber-soft);color:var(--amber)}
+table.map th{position:sticky;top:0;background:var(--surface-2);color:var(--text-3);font-family:var(--font-mono);font-size:9.5px;letter-spacing:.1em;text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);z-index:2;white-space:nowrap}
+table.map td{padding:5px 10px;border-bottom:1px solid var(--line);color:var(--text-2);white-space:nowrap;cursor:pointer;font-family:var(--font-mono);font-size:10.8px}
+table.map tr:hover td{background:var(--surface-2)}
+table.map tr.on td{background:rgba(70,199,230,.10);color:var(--text)}
+table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--info)}
+.fb{display:inline-block;padding:1px 7px;border-radius:6px;font-size:9.5px;font-family:var(--font-mono)}
+.fb.ok{background:var(--accent-soft);color:var(--accent)}
+.fb.warn{background:var(--warn-soft);color:var(--warn)}
 .sev{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-.sev.c{background:var(--red);box-shadow:0 0 6px var(--red)}
-.sev.m{background:var(--amber)}
-.sev.l{background:var(--cyan)}
-.locbtn{font-size:10.5px;color:var(--cyan);cursor:pointer;border:1px solid rgba(70,199,230,.4);border-radius:6px;padding:1px 8px;background:var(--cyan-soft)}
+.sev.c{background:var(--err);box-shadow:0 0 6px var(--err)}
+.sev.m{background:var(--warn)}
+.sev.l{background:var(--info)}
+.locbtn{font-size:10.5px;color:var(--info);cursor:pointer;border:1px solid rgba(70,199,230,.4);border-radius:6px;padding:1px 8px;background:var(--info-soft)}
 
 /* 右欄 pset 表 */
 .ptab{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:2px}
-.ptab th{text-align:left;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--tx-2);padding:4px 8px;background:var(--bg-3);border-bottom:1px solid var(--line)}
-.ptab td{padding:3.5px 8px;border-bottom:1px solid var(--line);color:var(--tx-1)}
-.ptab td:last-child{text-align:right;font-family:var(--mono);font-size:11px;color:var(--tx-0)}
-.ptab td.miss{color:var(--red);font-weight:700}
-.psname{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--cyan);margin:8px 0 3px}
-.a1box{margin-top:9px;border:1px solid rgba(240,99,95,.45);border-radius:8px;background:var(--red-soft);padding:7px 10px;font-size:11.5px;display:none}
+.ptab th{text-align:left;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.1em;color:var(--text-3);padding:4px 8px;background:var(--raised);border-bottom:1px solid var(--line)}
+.ptab td{padding:3.5px 8px;border-bottom:1px solid var(--line);color:var(--text-2)}
+.ptab td:last-child{text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text)}
+.ptab td.miss{color:var(--err);font-weight:700}
+.psname{font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;color:var(--info);margin:8px 0 3px;display:flex;align-items:center;gap:6px}
+.a1box{margin-top:9px;border:1px solid rgba(240,99,95,.45);border-radius:8px;background:var(--err-soft);padding:7px 10px;font-size:11.5px;display:none}
 .a1box.show{display:block}
-.a1box b{color:var(--red)}
+.a1box b{color:var(--err)}
 .vres{font-size:12px}
 .vres .row{display:flex;justify-content:space-between;padding:2.5px 0}
-.vres .ok{color:var(--green);font-weight:700}
-.vres .warn{color:var(--amber);font-weight:700}
+.vres .ok{color:var(--accent);font-weight:700}
+.vres .warn{color:var(--warn);font-weight:700}
 
 /* ───── 底部測試重點 ───── */
-.foot{flex:0 0 auto;display:flex;gap:16px;align-items:flex-start;padding:8px 14px;background:#0a0d0f;border-top:1px solid var(--line);font-size:11.5px;color:var(--tx-2);overflow-x:auto}
-.foot .ttl{color:var(--tx-0);font-weight:700;white-space:nowrap}
-.foot ol{margin:0;padding-left:18px;columns:2;column-gap:26px;min-width:540px}
+.foot{flex:0 0 auto;display:flex;gap:16px;align-items:flex-start;padding:8px 14px;background:#0a0d0f;border-top:1px solid var(--line);font-size:11.5px;color:var(--text-3);overflow-x:auto}
+.foot .ttl{color:var(--text);font-weight:700;white-space:nowrap}
+.foot ol{margin:0;padding-left:18px;columns:2;column-gap:26px;min-width:560px}
 .foot li{margin:1px 0;white-space:nowrap}
-.foot .vr{margin-left:auto;display:flex;gap:10px;align-items:center;white-space:nowrap;font-family:var(--mono);font-size:10.5px}
-.foot .vr .ok{color:var(--green)}
-.foot .vr .warn{color:var(--amber)}
-@media (max-width:1280px){.panel.right{width:280px}.panel.left{width:248px}.foot ol{columns:1;min-width:0}}
+.foot .vr{margin-left:auto;display:flex;gap:10px;align-items:center;white-space:nowrap;font-family:var(--font-mono);font-size:10.5px}
+.foot .vr .ok{color:var(--accent)}
+.foot .vr .warn{color:var(--warn)}
+
+/* 浮水印 */
+.watermark{position:fixed;right:10px;bottom:10px;z-index:9999;font:600 11px/1.3 var(--font-mono);color:#ffd27a;background:rgba(20,16,8,.82);border:1px dashed rgba(242,180,59,.6);padding:6px 10px;border-radius:8px;letter-spacing:.04em;pointer-events:none}
+
+@media (max-width:1280px){.panel.right{width:284px}.panel.left{width:250px}.foot ol{columns:1;min-width:0}}
 </style>
 </head>
 <body>
-<div style="position:fixed;right:10px;bottom:10px;z-index:9999;font:600 11px/1.3 ui-monospace,Menlo,Consolas,monospace;color:#ffd27a;background:rgba(20,16,8,.82);border:1px solid rgba(242,180,59,.5);padding:6px 10px;border-radius:8px;letter-spacing:.04em;pointer-events:none">⚠ CANVAS 示意 · 非真 WebRTC 串流</div>
+<div class="watermark">⚠ CANVAS 示意 · 非真 WebRTC 串流</div>
 <div id="app" class="guide">
 
   <!-- 頂部列 -->
@@ -183,14 +258,13 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
       <div><b>AI-BIM-Geo Viewer</b><small>IFC → USD SEMANTIC CHECK</small></div>
     </div>
     <a class="pill" href="https://bim-docs.jackshappybot.com/" title="回 BIM 站台" style="text-decoration:none;cursor:pointer">← BIM 站台</a>
-    <span class="pill"><span class="k">專案</span><span class="v">270 · 結構</span></span>
-    <span class="pill"><span class="k">來源</span><span class="v mono" style="font-size:10.5px">bim-control/270/123a909a-…/</span></span>
-    <span class="pill"><span class="k">版本</span><span class="v">v01</span></span>
+    <span class="pill test" title="MinIO 暫時測試 IFC（270/889/990/271）"><span class="k">測試專案</span><span class="v">270 · 結構</span></span>
+    <span class="pill"><span class="k">來源</span><span class="v mono" style="font-size:10px">bim-control/270/&lt;uuid&gt;/v01</span></span>
+    <span class="badge-demo">DEMO · 視覺/行為示意</span>
     <div class="spacer"></div>
-    <span class="badge-demo">DEMO · 模擬執行計畫完成後狀態</span>
-    <span class="stat"><span class="dot g"></span>KIT edge-gpu-01</span>
-    <span class="stat"><span class="dot g"></span>SESSION S-270</span>
-    <span class="stat mono" id="fps">60 FPS</span>
+    <label class="lbl" for="selScene" style="align-self:center">場景</label>
+    <select class="sel" id="selScene" title="?scene= — 每個 GPU 頁開自己的功能場景"></select>
+    <span class="stat" title="無 GPU/harness 時不偽造在線"><span class="dot idle" id="kitDot"></span><span id="kitLbl">KIT runtime=no</span></span>
     <button class="btn on" id="btnGuide">說明導覽 ON</button>
   </div>
 
@@ -199,7 +273,7 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
     <!-- 左欄 -->
     <div class="panel left">
       <div class="sec">
-        <div class="hd">模型資訊</div>
+        <div class="hd">模型資訊<span class="prov demo" style="margin-left:auto">DEMO DATA</span></div>
         <div class="bd" id="modelInfo"></div>
       </div>
       <div class="sec g3">
@@ -210,10 +284,10 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
         </div>
       </div>
       <div class="sec">
-        <div class="hd">執行計畫狀態<span class="lbl" style="margin-left:auto">模擬</span></div>
+        <div class="hd">執行計畫狀態<span class="lbl" style="margin-left:auto">示意</span></div>
         <div class="bd">
           <div class="mrow" id="mile"></div>
-          <div style="font-size:11px;color:var(--tx-3);margin-top:7px">本頁示意 M1（A1 檢核）、M2（IFC→USD 轉檔）、M4（3D 連動）完成後的整合畫面。</div>
+          <div style="font-size:11px;color:var(--text-4);margin-top:7px">本頁示意 M1（A1 檢核）、M2（IFC→USD 轉檔）、M4（3D 連動）<b style="color:var(--text-2)">完成後</b>的整合畫面。M5+ 為願景 Phase。</div>
         </div>
       </div>
     </div>
@@ -229,22 +303,29 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
       </div>
       <div class="vwrap">
         <canvas id="cv"></canvas>
+        <!-- RR_BRIDGE 四步串流橋接（首幀由 track event 驅動，非 timer；此處示意） -->
+        <div class="bridge" id="bridge"></div>
         <div class="cv-banner"><span class="gnum n1">1</span>點選 IFC 元件 → 高亮鎖定，對應到 USD Prim Path</div>
         <div class="cv-tip">
           <span class="cv-chip" id="chipSel">尚未選取構件</span>
           <span class="cv-chip warn" id="chipA1" style="display:none"></span>
+          <span class="cv-chip dc">正式高亮路徑：DataChannel <b>highlightPrimsRequest</b> → Kit（此 canvas 僅示意）</span>
         </div>
+        <!-- 誠實串流遙測卡：FPS=未取得 -->
+        <div class="streamcard" id="streamcard"></div>
+        <!-- per-scene NOT BUILT / 願景 Phase 佔位 -->
+        <div class="scene-todo" id="sceneTodo"></div>
       </div>
       <div class="bstrip">
-        <div class="geo" id="geo"><span class="gnum n5">5</span><span style="color:var(--tx-3)">點選構件後顯示幾何與定位資訊</span></div>
+        <div class="geo" id="geo"><span class="gnum n5">5</span><span style="color:var(--text-4)">點選構件後顯示幾何與定位資訊（範例值·示意）</span></div>
         <div class="tabs">
           <div class="tab on" data-t="map">模型對應</div>
-          <div class="tab" data-t="issue">問題<span class="n" id="issN"></span></div>
-          <div class="tab dis" title="執行計畫 M5+ 交付">批註<span class="nb">待建</span></div>
-          <div class="tab dis" title="執行計畫 M5+ 交付">測量<span class="nb">待建</span></div>
-          <div class="tab dis" title="執行計畫 M5+ 交付">剖切<span class="nb">待建</span></div>
-          <div class="tab dis" title="執行計畫 M5+ 交付">書籤<span class="nb">待建</span></div>
-          <span class="tabnote"><span class="gnum n4" style="display:inline-grid;vertical-align:-4px">4</span> 對應關係（IFC GUID ⇔ USD Prim Path）</span>
+          <div class="tab" data-t="issue">問題 / BCF 2.1<span class="n" id="issN"></span></div>
+          <div class="tab dis" title="正式件＝官方 omni.kit.tool.markup（M5+ 交付）">批註<span class="nb">待建</span></div>
+          <div class="tab dis" title="正式件＝官方 omni.kit.tool.measure（M5+ 交付）">測量<span class="nb">待建</span></div>
+          <div class="tab dis" title="正式件＝官方 omni.kit.window.section（M5+ 交付）">剖切<span class="nb">待建</span></div>
+          <div class="tab dis" title="正式件＝官方 omni.kit.waypoint.core（M5+ 交付）">書籤<span class="nb">待建</span></div>
+          <span class="tabnote"><span class="gnum n4" style="display:inline-grid;vertical-align:-4px">4</span> IFC GUID ⇔ USD Prim Path <span class="prov demo">DEMO</span></span>
         </div>
         <div class="tbwrap" id="tbwrap"></div>
       </div>
@@ -254,18 +335,18 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
     <div class="panel right">
       <div class="sec g2">
         <div class="hd"><span class="gnum n2">2</span>IFC 語意屬性</div>
-        <div class="bd" id="semantic"><div style="color:var(--tx-3);font-size:12px">點選 3D 構件、結構樹或下方表格列。</div></div>
+        <div class="bd" id="semantic"><div style="color:var(--text-4);font-size:12px">點選 3D 構件、結構樹或下方表格列。</div></div>
       </div>
       <div class="sec g6">
         <div class="hd"><span class="gnum n6">6</span>Pset / Quantity 檢視</div>
-        <div class="bd" id="psets"><div style="color:var(--tx-3);font-size:12px">－</div></div>
+        <div class="bd" id="psets"><div style="color:var(--text-4);font-size:12px">－</div></div>
       </div>
       <div class="sec g7">
         <div class="hd"><span class="gnum n7">7</span>空間關係（Spatial）</div>
-        <div class="bd" id="spatial"><div style="color:var(--tx-3);font-size:12px">－</div></div>
+        <div class="bd" id="spatial"><div style="color:var(--text-4);font-size:12px">－</div></div>
       </div>
       <div class="sec">
-        <div class="hd">驗證結果<span class="lbl" style="margin-left:auto">即時計算</span></div>
+        <div class="hd">驗證結果<span class="lbl" style="margin-left:auto">即時計算（示意模型）</span></div>
         <div class="bd vres" id="vres"></div>
       </div>
     </div>
@@ -277,7 +358,7 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
     <ol>
       <li>點選 3D 元件 → 右側看 IFC Type / Name / GlobalId</li>
       <li>檢視 Pset / Quantity 是否正確（尺寸、體積、材質）</li>
-      <li>下方表格 IFC GUID ⇔ USD Prim Path 應為 guid_exact</li>
+      <li>下方表格 IFC GUID ⇔ USD Prim Path 應為 guid_exact（命名 G_&lt;guid&gt;）</li>
       <li>空間關係正確（樓層 / 建築 / 場地）</li>
       <li>幾何定位與 Bounding Box 合理</li>
       <li>反向跳轉：從列表 / 結構樹選取 → 3D 自動高亮</li>
@@ -287,10 +368,11 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--cyan)}
   </div>
 </div>
 <script>
-/*CORE-BEGIN*/
+/*CORE-BEGIN — 示意模型 + 相機/拾取引擎（自寫 canvas，非正式 3D 路徑）*/
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const GA='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
 function makeGuid(rnd){let s='';for(let i=0;i<22;i++)s+=GA[Math.floor(rnd()*64)];return s}
+// 與官方對齊：USD prim 用 sanitized GlobalId 命名 G_<guid>（IFC→USD 自製規約 a）
 function sanitizeGuid(g){return g.replace(/[^A-Za-z0-9_]/g,'_')}
 function usdPath(el){return '/World/Elements/'+el.cls+'/G_'+sanitizeGuid(el.guid)}
 function fmt(n,d){return n.toFixed(d===undefined?2:d)}
@@ -327,17 +409,18 @@ function buildModel(){
   add('IfcWindow','WIN-180x140','N-1'+String(wn).padStart(2,'0'),'2F',[cx-900,-WT/2-20,4100,cx+900,WT/2+20,5500],{system:'建築',mat:'Aluminium / Glass'});}
  for(let j=0;j<YL.length-1;j++){wn++;const cy=(YL[j]+YL[j+1])/2;
   add('IfcWindow','WIN-180x140','N-1'+String(wn).padStart(2,'0'),'2F',[-WT/2-20,cy-900,4100,WT/2+20,cy+900,5500],{system:'建築',mat:'Aluminium / Glass'});}
- const wins=els.filter(e=>e.cls==='IfcWindow');wins[3].fidelity='name_fallback';wins[4].fidelity='name_fallback';
+ // 示意：兩扇窗的對應退化為 name_fallback（展示 fidelity 分級，非實測）
+ const wins=els.filter(e=>e.cls==='IfcWindow');if(wins[3])wins[3].fidelity='name_fallback';if(wins[4])wins[4].fidelity='name_fallback';
  const RULES=[
   {id:'ARC-DOOR-REQ-001',sev:'Critical',txt:'防火門必須填防火時效（FireRating）'},
   {id:'STR-COL-REQ-002',sev:'Major',txt:'結構柱必須填 Reference 編碼'},
   {id:'GEN-NAME-001',sev:'Minor',txt:'構件命名不得含暫定字樣（_TEMP）'}];
  for(const e of els){if(e.cls==='IfcDoor'&&!e.fr)e.a1.push('ARC-DOOR-REQ-001');}
  const cols2f=els.filter(e=>e.cls==='IfcColumn'&&e.storey==='2F');
- cols2f[5].noRef=true;cols2f[5].a1.push('STR-COL-REQ-002');
- cols2f[9].noRef=true;cols2f[9].a1.push('STR-COL-REQ-002');
- const bms=els.filter(e=>e.cls==='IfcBeam');bms[20].name='BEAM_TEMP';bms[20].a1.push('GEN-NAME-001');
- const star=cols2f[4];star.tag='C-234';
+ if(cols2f[5]){cols2f[5].noRef=true;cols2f[5].a1.push('STR-COL-REQ-002');}
+ if(cols2f[9]){cols2f[9].noRef=true;cols2f[9].a1.push('STR-COL-REQ-002');}
+ const bms=els.filter(e=>e.cls==='IfcBeam');if(bms[20]){bms[20].name='BEAM_TEMP';bms[20].a1.push('GEN-NAME-001');}
+ const star=cols2f[4]||els[1];star.tag='C-234';
  return {els,RULES,star,ST,XL,YL};
 }
 function qty(el){
@@ -392,6 +475,32 @@ function pickElement(els,visible,o,d){
 }
 /*CORE-END*/
 
+/* ───────── 場景系統 (?scene=)；除 viewer 外全標願景 Phase / NOT BUILT ───────── */
+const SCENES={
+ viewer:  {glyph:'◳',label:'GPU 審查室 · 語意驗證',accent:'var(--accent)',built:true,
+           note:'#viewer / M4：IFC→USD 語意驗證的驗收示意（hero built = A1+A2+A3-federation）。'},
+ clash:   {glyph:'◈',label:'A3 跨專業疊合 · Clash',accent:'var(--c-red)',built:false,phase:'NOT BUILT · clash 卡 OCC',
+           sub:'A3 federation 已建；clash 引擎卡 ifcopenshell 缺 OpenCASCADE（has_occ=False），出不了真實碰撞數，不顯任何碰撞計數。spike 未進主分支。'},
+ '4d':    {glyph:'▤',label:'A6 4D / 5D 施工模擬',accent:'var(--c-cyan)',built:false,phase:'NOT BUILT · 願景 Phase 4',
+           sub:'GPU-bound；時間軸/成本曲線為願景敘事，後端不存在。'},
+ reality: {glyph:'◫',label:'A7 Reality Capture 比對',accent:'var(--c-amber)',built:false,phase:'NOT BUILT · 願景 Phase 4',
+           sub:'GPU-bound；mesh 比對須先以 usd-code-mcp 驗證再宣稱，後端不存在。'},
+ synthetic:{glyph:'⊞',label:'A8 Synthetic Data',accent:'var(--c-violet)',built:false,phase:'NOT BUILT · 願景 Phase 4',
+           sub:'須對齊官方 Omniverse Replicator（先驗再寫），後端不存在。'},
+ copilot: {glyph:'✦',label:'A9 設計 / 審查 Copilot',accent:'var(--c-violet)',built:false,phase:'NOT BUILT · 願景 Phase 4',
+           sub:'復用 ChatToolCall，僅在 session layer（非 3D 場景）；後端不存在。'},
+ robotics:{glyph:'⊿',label:'A10 機器人 / 巡檢模擬',accent:'var(--c-cyan)',built:false,phase:'NOT BUILT · 願景 Phase 4',
+           sub:'Isaac-sim adjacent；能力宣稱前須對齊官方，後端不存在。'},
+};
+function curSceneId(){const id=new URLSearchParams(location.search).get('scene')||'viewer';return SCENES[id]?id:'viewer';}
+const SCENE_ID=curSceneId(), SCENE=SCENES[SCENE_ID];
+
+/* 持久化（per-scene key，refresh 不丟狀態；cache 非 source of truth） */
+const PKEY='aibim:geo-viewer:'+SCENE_ID;
+function loadState(){try{return JSON.parse(localStorage.getItem(PKEY))||{}}catch(_){return{}}}
+function saveState(p){try{localStorage.setItem(PKEY,JSON.stringify(p))}catch(_){}}
+const PERSIST=loadState();
+
 /* ───────── UI ───────── */
 const M=buildModel();
 const ELS=M.els, RULES=M.RULES, byId=new Map(ELS.map(e=>[e.id,e]));
@@ -414,7 +523,9 @@ const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
 let W=0,H=0,DPR=1;
 const CAM={yaw:4.06,pitch:0.46,dist:30000,tgt:[9000,5000,3000]};
 const HOME=Object.assign({},CAM);
-let SEL=null,FILT=null,VIEW='solid',HIMODE='dim',A1ON=false,TAB='map';
+let SEL=PERSIST.sel||null,FILT=null,VIEW=PERSIST.view||'solid',HIMODE=PERSIST.himode||'dim',A1ON=PERSIST.a1on||false,TAB=PERSIST.tab||'map';
+
+function persist(){saveState({sel:SEL,view:VIEW,himode:HIMODE,a1on:A1ON,tab:TAB});}
 
 function visible(e){
  if(!FILT)return true;
@@ -438,18 +549,23 @@ let PULSE=0;
 function render(){
  ctx.setTransform(DPR,0,0,DPR,0,0);
  ctx.clearRect(0,0,W,H);
+ // 首幀前＝暗 stage（誠實：未接真串流）。此 canvas 自畫示意建築替代「驗收後長相」。
  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#10161a');g.addColorStop(1,'#0a0e10');
  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ if(!SCENE.built){
+  // NOT BUILT 場景：只畫暗 stage + 斜線佔位，不畫任何資料
+  drawHatch();return;
+ }
  const B=camBasis(CAM),fpx=H*1.25;
  const P=p=>project(p,B,CAM,W,H,fpx);
  /* 地面網格 */
  ctx.lineWidth=1;ctx.strokeStyle='rgba(120,140,150,.10)';
  for(let x=-6000;x<=24000;x+=3000){const a=P([x,-6000,0]),b=P([x,16000,0]);if(a&&b){ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke()}}
  for(let y=-6000;y<=16000;y+=3000){const a=P([-6000,y,0]),b=P([24000,y,0]);if(a&&b){ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke()}}
- /* 座標軸 */
+ /* 座標軸（XYZ gizmo，與 design-system KitGizmo 同色） */
  const O=P([0,0,0]);
  if(O){const ax=[['#f0635f',[2600,0,0],'X'],['#84c714',[0,2600,0],'Y'],['#46c7e6',[0,0,2600],'Z']];
-  for(const [col,p,t] of ax){const q=P(p);if(!q)continue;ctx.strokeStyle=col;ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(O[0],O[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.fillStyle=col;ctx.font='10px ui-monospace';ctx.fillText(t,q[0]+3,q[1]-3)}}
+  for(const [col,p,t] of ax){const q=P(p);if(!q)continue;ctx.strokeStyle=col;ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(O[0],O[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.fillStyle=col;ctx.font='10px '+'ui-monospace';ctx.fillText(t,q[0]+3,q[1]-3)}}
  /* 收集面 */
  const quads=[];
  for(const e of ELS){
@@ -490,7 +606,6 @@ function render(){
   ctx.fillStyle=fill;ctx.fill();
   if(!q.gho){ctx.strokeStyle=q.isSel?'#ffd84d':(q.fail?'rgba(240,99,95,.9)':'rgba(8,12,14,.55)');ctx.lineWidth=q.isSel?2.2:(q.fail?1.4:1);ctx.stroke();}
  }
- /* 選取構件外框再強調一次 */
  if(SEL){
   const e=byId.get(SEL);
   if(e&&visible(e)){
@@ -505,6 +620,12 @@ function render(){
   }
  }
 }
+// 首幀前 / NOT BUILT 場景：可決定性斜線佔位（不偽造 matched 影像）
+function drawHatch(){
+ ctx.save();ctx.strokeStyle='rgba(110,125,131,.16)';ctx.lineWidth=1;
+ for(let x=-H;x<W;x+=22){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+H,H);ctx.stroke();}
+ ctx.restore();
+}
 
 /* ── 面板 ── */
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
@@ -512,19 +633,27 @@ function shortG(g){return g.slice(0,8)+'…'+g.slice(-4)}
 function pillFb(f){return f==='guid_exact'?'<span class="fb ok">guid_exact</span>':'<span class="fb warn">⚠ name_fallback</span>'}
 
 function renderModelInfo(){
+ // 誠實：無假數字。不寫 99.x% GUID / property 99.2% 之類捏造覆蓋率。
+ // fidelity 數字由本檔示意模型即時統計而得（範例·示意，非真 IFC 實測）。
  const rows=[
   ['IFC 檔案','model.ifc'],['IFC Schema','IFC4'],
-  ['轉換配置','ifcopenshell_openusd_identity'],['轉換時間','2026-11-24 14:32'],
+  ['轉換配置','ifcopenshell_openusd_identity'],
   ['USD Stage','model.usdc'],
-  ['Mapping Fidelity','<span class="ok">guid_exact '+fmt(FS.pct,1)+'%</span>'],
-  ['總元件數',String(FS.tot)],['已對應數','<span class="ok">'+FS.ok+'（'+fmt(FS.pct,2)+'%）</span>'],
-  ['未對應數','<span class="warn">'+FS.bad+'（'+fmt(100-FS.pct,2)+'%）</span>'],
-  ['Coverage','property 99.2% · rel 98.7%']];
+  ['命名規約','G_&lt;sanitized_guid&gt;'],
+  ['Mapping Fidelity','<span class="ok">guid_exact '+fmt(FS.pct,1)+'%</span> <span class="prov demo">示意統計</span>'],
+  ['總元件數',String(FS.tot)+'（示意模型）'],
+  ['已對應數','<span class="ok">'+FS.ok+'</span>'],
+  ['name_fallback','<span class="warn">'+FS.bad+'</span>'],
+  ['Coverage 報告','由轉檔輸出（不承諾 100% 無損）']];
  document.getElementById('modelInfo').innerHTML=rows.map(r=>'<div class="kv"><span class="k">'+r[0]+'</span><span class="v">'+r[1]+'</span></div>').join('');
 }
 function renderMile(){
- const ms=['M0 地基','M1 A1','M2 轉檔','M3 串流','M4 3D連動','M5 版本疊合','M6 IoT','M7 4D/SDG','M8 進階'];
- document.getElementById('mile').innerHTML=ms.map(m=>'<span class="mchip">'+m+' ✓</span>').join('');
+ // M0–M4 為本頁示意「完成後」的前置；M5+ 標願景待建（不假裝全綠）
+ const done=['M0 地基','M1 A1 檢核','M2 IFC→USD','M3 串流','M4 3D 連動'];
+ const todo=['M5 版本疊合','M6 IoT/FM','M7 4D/SDG','M8 進階'];
+ document.getElementById('mile').innerHTML=
+  done.map(m=>'<span class="mchip">'+m+' ✓</span>').join('')+
+  todo.map(m=>'<span class="mchip todo">'+m+' · 待建</span>').join('');
 }
 function renderTree(){
  const sts=['1F','2F','RF'];
@@ -550,12 +679,12 @@ document.getElementById('treset').addEventListener('click',()=>setFilter(null));
 
 function renderSemantic(e){
  const el=document.getElementById('semantic');
- if(!e){el.innerHTML='<div style="color:var(--tx-3);font-size:12px">點選 3D 構件、結構樹或下方表格列。</div>';return}
+ if(!e){el.innerHTML='<div style="color:var(--text-4);font-size:12px">點選 3D 構件、結構樹或下方表格列。</div>';return}
  const rows=[['IFC Type',e.cls],['IFC Name',e.name],['GlobalId',e.guid],['PredefinedType',e.cls==='IfcSlab'?e.pre:PRE[e.cls]],['ObjectType',OBJT[e.cls]],['Tag',e.tag],['Fidelity',pillFb(e.fidelity)]];
  let h=rows.map(r=>'<div class="kv"><span class="k">'+r[0]+'</span><span class="v">'+(r[0]==='Fidelity'?r[1]:esc(r[1]))+'</span></div>').join('');
  if(e.a1.length){
   h+='<div class="a1box show"><b>A1 檢核：未通過 '+e.a1.length+' 條規則</b>';
-  for(const rid of e.a1){const r=ruleById.get(rid);h+='<div style="margin-top:3px"><span class="mono" style="font-size:10px;color:var(--red)">'+rid+'</span> · '+r.txt+'（'+r.sev+'）</div>'}
+  for(const rid of e.a1){const r=ruleById.get(rid);h+='<div style="margin-top:3px"><span class="mono" style="font-size:10px;color:var(--err)">'+rid+'</span> · '+r.txt+'（'+r.sev+'）</div>'}
   h+='</div>';
  }
  el.innerHTML=h;
@@ -571,18 +700,19 @@ function psetRows(e){
 const QTONAME={IfcColumn:'Qto_ColumnBaseQuantities',IfcBeam:'Qto_BeamBaseQuantities',IfcWall:'Qto_WallBaseQuantities',IfcSlab:'Qto_SlabBaseQuantities',IfcDoor:'Qto_DoorBaseQuantities',IfcWindow:'Qto_WindowBaseQuantities'};
 function renderPsets(e){
  const el=document.getElementById('psets');
- if(!e){el.innerHTML='<div style="color:var(--tx-3);font-size:12px">－</div>';return}
+ if(!e){el.innerHTML='<div style="color:var(--text-4);font-size:12px">－</div>';return}
  const [pn,rows]=psetRows(e);
- let h='<div class="psname">'+pn+'</div><table class="ptab"><tr><th>Property</th><th style="text-align:right">Value</th></tr>';
+ // Pset 為範例值·示意；正式版才由 IFC 讀取。Qto 在正式版由幾何計算。
+ let h='<div class="psname">'+pn+' <span class="prov demo">範例值</span></div><table class="ptab"><tr><th>Property</th><th style="text-align:right">Value</th></tr>';
  for(const r of rows)h+='<tr><td>'+r[0]+'</td><td'+(r[1]===null?' class="miss">— 缺 —':'>'+esc(r[1]))+'</td></tr>';
- h+='</table><div class="psname">'+QTONAME[e.cls]+'（由幾何計算）</div><table class="ptab"><tr><th>Quantity</th><th style="text-align:right">Value</th></tr>';
+ h+='</table><div class="psname">'+QTONAME[e.cls]+' <span class="prov demo">示意 · 正式版由幾何計算</span></div><table class="ptab"><tr><th>Quantity</th><th style="text-align:right">Value</th></tr>';
  for(const r of qty(e))h+='<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>';
  h+='</table>';
  el.innerHTML=h;
 }
 function renderSpatial(e){
  const el=document.getElementById('spatial');
- if(!e){el.innerHTML='<div style="color:var(--tx-3);font-size:12px">－</div>';return}
+ if(!e){el.innerHTML='<div style="color:var(--text-4);font-size:12px">－</div>';return}
  let h='<div class="lbl" style="margin-bottom:4px">Contained In</div>';
  h+='<div class="kv"><span class="k">IfcBuildingStorey</span><span class="v">'+e.storey+'</span></div>';
  h+='<div class="kv"><span class="k">IfcBuilding</span><span class="v">Building A</span></div>';
@@ -593,8 +723,9 @@ function renderSpatial(e){
 }
 function renderGeo(e){
  const g=document.getElementById('geo');
- if(!e){g.innerHTML='<span class="gnum n5">5</span><span style="color:var(--tx-3)">點選構件後顯示幾何與定位資訊</span>';return}
+ if(!e){g.innerHTML='<span class="gnum n5">5</span><span style="color:var(--text-4)">點選構件後顯示幾何與定位資訊（範例值·示意）</span>';return}
  const b=e.box;
+ // 幾何為示意模型 BBox；正式版由幾何計算
  g.innerHTML='<span class="gnum n5">5</span>'+
   '<span><span class="gt">BBOX (WORLD·mm)</span> <b>['+b[0]+', '+b[1]+', '+b[2]+'] ~ ['+b[3]+', '+b[4]+', '+b[5]+']</b></span>'+
   '<span><span class="gt">體積</span> <b>'+fmt(vol(e),3)+' m³</b></span>'+
@@ -609,7 +740,7 @@ function renderTable(){
   let h='<table class="map"><tr><th>嚴重度</th><th>規則</th><th>說明</th><th>構件</th><th></th></tr>';
   for(const e of A1FAILS)for(const rid of e.a1){
    const r=ruleById.get(rid),sv=r.sev==='Critical'?'c':(r.sev==='Major'?'m':'l');
-   h+='<tr data-id="'+e.id+'"><td><span class="sev '+sv+'"></span>'+r.sev+'</td><td>'+rid+'</td><td style="font-family:var(--sans)">'+r.txt+'</td><td>'+e.tag+' · '+esc(e.name)+'</td><td><span class="locbtn" data-id="'+e.id+'">定位</span></td></tr>';
+   h+='<tr data-id="'+e.id+'"><td><span class="sev '+sv+'"></span>'+r.sev+'</td><td>'+rid+'</td><td style="font-family:var(--font-sans)">'+r.txt+'</td><td>'+e.tag+' · '+esc(e.name)+'</td><td><span class="locbtn" data-id="'+e.id+'">定位</span></td></tr>';
   }
   h+='</table>';
   w.innerHTML=h;
@@ -631,13 +762,29 @@ function renderVres(){
   ['Pset / Quantity','完整 ✓','ok'],
   ['Spatial 關係',spa?'正確 ✓':'錯誤 ✕',spa?'ok':'warn'],
   ['幾何定位',geo?'合理 ✓':'異常 ✕',geo?'ok':'warn']];
- document.getElementById('vres').innerHTML=rows.map(r=>'<div class="row"><span style="color:var(--tx-2)">'+r[0]+'</span><span class="'+r[2]+'">'+r[1]+'</span></div>').join('');
- document.getElementById('footRes').innerHTML='<span style="color:var(--tx-2)">驗證結果（即時）:</span>'+rows.map(r=>'<span class="'+r[2]+'">'+r[0].split(' ')[0]+' '+(r[2]==='ok'?'✓':'⚠')+'</span>').join('');
+ document.getElementById('vres').innerHTML=rows.map(r=>'<div class="row"><span style="color:var(--text-3)">'+r[0]+'</span><span class="'+r[2]+'">'+r[1]+'</span></div>').join('');
+ document.getElementById('footRes').innerHTML='<span style="color:var(--text-3)">驗證結果（示意模型）:</span>'+rows.map(r=>'<span class="'+r[2]+'">'+r[0].split(' ')[0]+' '+(r[2]==='ok'?'✓':'⚠')+'</span>').join('');
+}
+
+/* ── 串流橋接 + 遙測（誠實：FPS=未取得，無 GPU/harness 標 runtime=no） ── */
+function renderBridge(){
+ const steps=['建立 session','派發 endpoint','首幀 first frame','DataChannel 就緒'];
+ // 誠實：未接真串流 → 後三步 pending（不假裝 done）。首幀由 track event 驅動，非 timer。
+ document.getElementById('bridge').innerHTML=steps.map((s,i)=>
+  '<span class="bstep'+(i===0?'':' pending')+'"><b>'+(i+1)+'</b>'+s+'</span>').join('');
+}
+function renderStream(){
+ const sc=document.getElementById('streamcard');
+ // CAM/CODEC/LATENCY/FPS — 全部「未取得」(n/a)，因無真 WebRTC DataChannel。
+ sc.innerHTML=[
+  ['CODEC','—（未取得）'],['LATENCY','—（未取得）'],
+  ['CAM','—（未取得）'],['FPS','未取得']
+ ].map(r=>'<div class="srow"><span>'+r[0]+'</span><b class="na">'+r[1]+'</b></div>').join('');
 }
 
 /* ── 選取 ── */
 function select(id,fromIssue){
- SEL=id;
+ SEL=id;persist();
  const e=byId.get(id);
  renderSemantic(e);renderPsets(e);renderSpatial(e);renderGeo(e);
  document.getElementById('chipSel').innerHTML=e?('<b>'+e.tag+'</b> · '+e.cls+' · '+e.storey+' · '+shortG(e.guid)):'尚未選取構件';
@@ -658,7 +805,7 @@ function resize(){
 }
 window.addEventListener('resize',resize);
 let dragging=false,moved=0,lx=0,ly=0;
-cv.addEventListener('pointerdown',ev=>{dragging=true;moved=0;lx=ev.clientX;ly=ev.clientY;cv.classList.add('drag');cv.setPointerCapture(ev.pointerId)});
+cv.addEventListener('pointerdown',ev=>{if(!SCENE.built)return;dragging=true;moved=0;lx=ev.clientX;ly=ev.clientY;cv.classList.add('drag');cv.setPointerCapture(ev.pointerId)});
 cv.addEventListener('pointermove',ev=>{
  if(!dragging)return;
  const dx=ev.clientX-lx,dy=ev.clientY-ly;moved+=Math.abs(dx)+Math.abs(dy);lx=ev.clientX;ly=ev.clientY;
@@ -666,6 +813,7 @@ cv.addEventListener('pointermove',ev=>{
 });
 cv.addEventListener('pointerup',ev=>{
  dragging=false;cv.classList.remove('drag');
+ if(!SCENE.built)return;
  if(moved<6){
   const r=cv.getBoundingClientRect(),B=camBasis(CAM),fpx=H*1.25;
   const ray=rayFromScreen(ev.clientX-r.left,ev.clientY-r.top,B,W,H,fpx);
@@ -673,20 +821,21 @@ cv.addEventListener('pointerup',ev=>{
   if(hit)select(hit.id,false);
  }
 });
-cv.addEventListener('wheel',ev=>{ev.preventDefault();CAM.dist=Math.min(90000,Math.max(9000,CAM.dist*(ev.deltaY>0?1.1:0.9)))},{passive:false});
+cv.addEventListener('wheel',ev=>{if(!SCENE.built)return;ev.preventDefault();CAM.dist=Math.min(90000,Math.max(9000,CAM.dist*(ev.deltaY>0?1.1:0.9)))},{passive:false});
 document.getElementById('btnHome').addEventListener('click',()=>{Object.assign(CAM,HOME)});
 document.querySelectorAll('#segView button').forEach(b=>b.addEventListener('click',()=>{
- VIEW=b.dataset.v;document.querySelectorAll('#segView button').forEach(x=>x.classList.toggle('on',x===b));
+ VIEW=b.dataset.v;persist();document.querySelectorAll('#segView button').forEach(x=>x.classList.toggle('on',x===b));
 }));
-document.getElementById('selHi').addEventListener('change',ev=>{HIMODE=ev.target.value});
+document.getElementById('selHi').value=HIMODE;
+document.getElementById('selHi').addEventListener('change',ev=>{HIMODE=ev.target.value;persist()});
 function toggleA1(on){
- A1ON=on===undefined?!A1ON:on;
+ A1ON=on===undefined?!A1ON:on;persist();
  const b=document.getElementById('btnA1');
  b.textContent='A1 檢核疊加 '+(A1ON?'ON':'OFF');
  b.classList.toggle('red-on',A1ON);
  const chip=document.getElementById('chipA1');
  chip.style.display=A1ON?'inline-flex':'none';
- chip.textContent='A1 檢核（governance-service :49102 · 示範）：'+A1FAILS.length+' 件未過 / '+RULES.length+' 條規則';
+ chip.textContent='A1 檢核（governance-service :49102 · 經 coordinator proxy · 示意）：'+A1FAILS.length+' 件未過 / '+RULES.length+' 條規則';
  const e=SEL?byId.get(SEL):null;renderSemantic(e);
 }
 document.getElementById('btnA1').addEventListener('click',()=>toggleA1());
@@ -697,22 +846,56 @@ document.getElementById('btnGuide').addEventListener('click',()=>{
  b.textContent='說明導覽 '+(on?'ON':'OFF');b.classList.toggle('on',on);
 });
 document.querySelectorAll('.tab[data-t]').forEach(t=>t.addEventListener('click',()=>{
- TAB=t.dataset.t;
+ TAB=t.dataset.t;persist();
  document.querySelectorAll('.tab[data-t]').forEach(x=>x.classList.toggle('on',x===t));
  if(TAB==='issue'&&!A1ON)toggleA1(true);
  renderTable();
  if(SEL&&TAB==='map')select(SEL,false);
 }));
 
+/* ── 場景切換器 ── */
+function buildScenePicker(){
+ const sel=document.getElementById('selScene');
+ sel.innerHTML=Object.keys(SCENES).map(id=>{
+  const s=SCENES[id],tag=s.built?'':'  · '+(s.phase||'待建');
+  return '<option value="'+id+'"'+(id===SCENE_ID?' selected':'')+'>'+s.glyph+' '+s.label+tag+'</option>';
+ }).join('');
+ sel.addEventListener('change',ev=>{const u=new URL(location.href);u.searchParams.set('scene',ev.target.value);location.href=u.toString();});
+}
+function applyScene(){
+ // NOT BUILT 場景：顯示願景 Phase 佔位，停用 viewer 互動與右欄資料
+ const todo=document.getElementById('sceneTodo');
+ if(!SCENE.built){
+  todo.classList.add('show');
+  todo.innerHTML='<div class="glyph">'+SCENE.glyph+'</div>'+
+   '<div class="ttl">'+SCENE.label+'</div>'+
+   '<div><span class="prov todo">'+(SCENE.phase||'NOT BUILT · 待建')+'</span></div>'+
+   '<div class="sub">'+(SCENE.sub||'')+'</div>'+
+   '<div class="sub" style="color:var(--text-4)">此場景不顯示任何構件 / 碰撞 / 量測資料（誠實：後端尚未實作）。</div>';
+  // 右欄與底部標 NOT BUILT
+  document.getElementById('semantic').innerHTML='<div style="color:var(--text-4);font-size:12px">此場景待建，無語意資料。</div>';
+ }else{
+  todo.classList.remove('show');
+ }
+}
+
 /* ── 啟動 ── */
+buildScenePicker();applyScene();renderBridge();renderStream();
 renderModelInfo();renderMile();renderTree();renderVres();renderTable();
 document.getElementById('issN').textContent=A1FAILS.reduce((n,e)=>n+e.a1.length,0);
+// 還原持久化的 UI 狀態
+document.querySelectorAll('#segView button').forEach(x=>x.classList.toggle('on',x.dataset.v===VIEW));
+if(A1ON)toggleA1(true);
+document.querySelectorAll('.tab[data-t]').forEach(x=>x.classList.toggle('on',x.dataset.t===TAB));
+if(TAB!=='map')renderTable();
 resize();
-select(M.star.id,false);
-let frames=0,lastT=performance.now();
+if(SCENE.built){
+ const startId=(SEL&&byId.has(SEL))?SEL:M.star.id;
+ select(startId,false);
+}
+// 渲染迴圈：只跑 canvas 示意；FPS 不回寫頂條（誠實，未取得）
 (function loop(t){
- PULSE=t;frames++;
- if(t-lastT>600){document.getElementById('fps').textContent=Math.min(60,Math.round(frames*1000/(t-lastT)))+' FPS';frames=0;lastT=t}
+ PULSE=t;
  render();
  requestAnimationFrame(loop);
 })(performance.now());
