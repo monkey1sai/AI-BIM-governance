@@ -60,11 +60,18 @@ class DiffStore:
             os.makedirs(parent, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
-            # 冪等 migration：補舊 db 缺的欄位（新 db 已由 _SCHEMA 建好，ALTER 會被 try/except 略過）。
+            # 冪等 migration：補舊 db 缺的欄位（新 db 已由 _SCHEMA 建好）。
+            # 並發首次請求下（FastAPI threadpool、_get_store 無鎖）多個 thread 可能都讀到缺欄、
+            # 都跑同一條 ALTER，後到者會拿 "duplicate column name" OperationalError——此為良性 race，
+            # 視為「已被別的 thread 補好」吞掉；其餘 OperationalError re-raise。
             existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(model_diff_items)").fetchall()}
             for col_name, alter_sql in _MIGRATIONS:
                 if col_name not in existing_cols:
-                    conn.execute(alter_sql)
+                    try:
+                        conn.execute(alter_sql)
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            raise
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
