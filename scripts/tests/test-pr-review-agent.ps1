@@ -91,6 +91,24 @@ Assert-True ($null -eq $missingSpec1c) 'formal spec evidence covers archive clos
 Assert-True ($loaded1c.validation_commands -contains 'openspec validate --specs --strict') 'archive closeout script changes still validate strict specs'
 Remove-Item -LiteralPath $out1c -Recurse -Force
 
+# Test 1d: superpowers spec (docs/superpowers/specs/) covers behavior/code changes
+# (repo 自 #189 退役 OpenSpec 後的現行設計依據；視為等同 formal spec evidence)。
+$out1d = New-TestOutputDir
+$result1d = Invoke-PrReviewAgent -RepoRoot $repoRoot `
+    -ChangedPaths @(
+        'web-viewer-sample/src/console/pages.tsx',
+        'docs/superpowers/specs/2026-06-23-merge-risk-followup-fixes-design.md'
+    ) `
+    -OutputDir $out1d `
+    -SkipCommandExecution `
+    -SkipGitNexus `
+    -AllowGitNexusUnavailable
+$loaded1d = Get-Content -LiteralPath $result1d.json_path -Raw | ConvertFrom-Json
+$missingSpec1d = $loaded1d.blockers | Where-Object { $_.kind -eq 'missing_openspec' } | Select-Object -First 1
+Assert-True ($null -eq $missingSpec1d) 'superpowers spec (docs/superpowers/specs) covers behavior/code changes'
+Assert-True (-not ($loaded1d.validation_commands -contains 'openspec validate --specs --strict')) 'superpowers spec does not trigger openspec validate'
+Remove-Item -LiteralPath $out1d -Recurse -Force
+
 # Test 2: Service code change without OpenSpec blocks.
 $out2 = New-TestOutputDir
 $result2 = Invoke-PrReviewAgent -RepoRoot $repoRoot `

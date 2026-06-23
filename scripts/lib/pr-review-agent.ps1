@@ -222,6 +222,13 @@ function Test-PrReviewHasFormalOpenSpecEvidence {
         if ($normalized -match '^openspec/(specs|changes/archive)/') {
             return $true
         }
+        # repo 自 #189 退役 OpenSpec,改用 superpowers spec(docs/superpowers/specs/*.md)作為
+        # behavior/code/repo-boundary 變更的正式設計依據;視為等同 formal spec evidence(消 missing_openspec blocker)。
+        # 注意:superpowers spec 非 OpenSpec 格式,不觸發 openspec validate
+        # (Get-PrReviewValidationPlan 僅對 openspec/specs|changes/archive 路徑排 validate)。
+        if ($normalized -match '^docs/superpowers/specs/.+\.md$') {
+            return $true
+        }
     }
     return $false
 }
