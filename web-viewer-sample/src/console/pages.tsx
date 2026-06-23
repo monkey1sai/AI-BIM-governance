@@ -3,9 +3,9 @@
 import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
-import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
+import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
@@ -694,8 +694,19 @@ function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | {
   );
 }
 
+// 轉檔 Ledger status → 中文顯示（誠實鐵律：禁自造 Prov 值；用既有 prov 配色）
+const LEDGER_STATUS_LABEL: Record<string, string> = {
+  detected: "已偵測", queued: "排隊", converting: "轉檔中", ready: "完成", failed: "失敗",
+};
+const LEDGER_STATUS_PROV: Record<string, Prov> = {
+  detected: "artifact", queued: "artifact", converting: "artifact", ready: "built", failed: "p1",
+};
+
 export function ConversionSchedulingPage() {
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
+  // Task 6：持久 ConversionLedger 資料（getConversionRecords），獨立於 ifc-ready jobs。
+  const [records, setRecords] = useState<ConversionRecord[]>([]);
+  const [recErr, setRecErr] = useState<string | null>(null);
   const [mw, setMw] = useState<MinioWatchStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [mwErr, setMwErr] = useState<string | null>(null);
@@ -724,9 +735,7 @@ export function ConversionSchedulingPage() {
   // 靜默關 dialog（mw 未更新、琥珀條與 Panel 停舊值、操作者看不到錯誤）。故回傳 mwOk 讓呼叫端可辨此分支。
   const load = useCallback(async (): Promise<{ jobsOk: boolean; mwOk: boolean }> => {
     setBusy(true); setErr(null); setMwErr(null);
-    // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
-    // 端點尚未部署）不得污染 ifc-ready 的錯誤訊息，也不得讓 watcher Panel 靜默停在
-    // placeholder（誤導操作者以為「沒按 Refresh」）。各自有獨立錯誤 state。
+    // 兩個端點獨立 settle：minio-watch/status 失敗不污染 ifc-ready；各自有獨立錯誤 state。
     const [jobsRes, mwRes] = await Promise.allSettled([
       coordinatorClient.listIfcReady(50),
       coordinatorClient.minioWatchStatus(),
@@ -740,7 +749,19 @@ export function ConversionSchedulingPage() {
     setBusy(false);
     return { jobsOk, mwOk };
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  // Task 6：獨立抓取 ConversionLedger，不阻塞既有 load() 流程（避免影響現有測試計時）。
+  // setRecErr(null) 在本 callback 開頭清；不與 setErr（ifc-ready 錯誤）共用，誤差各自獨立。
+  const loadRecords = useCallback(async (): Promise<void> => {
+    setRecErr(null);
+    try {
+      const res = await coordinatorClient.getConversionRecords(50);
+      setRecords(res.items);
+    } catch (e) {
+      setRecErr(`未連線 coordinator /api/conversion/records：${String(e)}`);
+    }
+  }, []);
+  // Task 6：mount 時同時觸發 load()（ifc-ready + watcher）與 loadRecords()（ledger），獨立並行。
+  useEffect(() => { void load(); void loadRecords(); }, [load, loadRecords]);
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
     if (!job.conversion_job_id) return;
     const id = job.ifc_ready_job_id;
@@ -865,6 +886,58 @@ export function ConversionSchedulingPage() {
             </>
           )}
         </div>
+      </Panel>
+      {/* Task 6：持久 ConversionLedger 視圖（GET /api/conversion/records）——watcher 偵測即落帳，跨重啟不遺失。
+          欄：專案 / 種類 / 版本 / status / job_id / 偵測時間。誠實鐵律：
+          usdc_key==null 標 p1「待產生」；coverage_report==null 標「未取得」；
+          不顯假 ready / 假 coverage（Phase 2 回填後才會有真值）。 */}
+      <Panel title="轉檔 Ledger（持久紀錄）" sub="GET /api/conversion/records；watcher 偵測即落帳，跨重啟不遺失" prov="asbuilt">
+        {recErr && <p className="ec-warn-note">{recErr}</p>}
+        {!recErr && records.length === 0 && (
+          <p className="ec-note">尚無 ledger 紀錄；watcher 偵測到新 model.ifc 後自動落帳。</p>
+        )}
+        {records.length > 0 && (
+          <table className="ec-table">
+            <thead>
+              <tr>
+                <th>專案</th>
+                <th>種類</th>
+                <th>版本</th>
+                <th>status</th>
+                <th>job_id</th>
+                <th>usdc</th>
+                <th>coverage</th>
+                <th>偵測時間</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.slice(0, 50).map((r) => {
+                const statusLabel = LEDGER_STATUS_LABEL[r.status] ?? r.status;
+                const statusProv = LEDGER_STATUS_PROV[r.status] ?? "artifact";
+                return (
+                  <tr key={r.idempotency_key}>
+                    <td>{r.project_display_name || r.project_id}</td>
+                    <td>{r.category || "—"}</td>
+                    <td>{r.external_model_version_id}</td>
+                    <td><span className={`ec-prov ${PROV_CLASS[statusProv]}`}>{statusLabel}</span></td>
+                    <td><span className="ec-note">{r.conversion_job_id ?? "—"}</span></td>
+                    <td>
+                      {r.usdc_key != null
+                        ? <span>{r.usdc_key}</span>
+                        : <span className="ec-prov ec-p1">待產生</span>}
+                    </td>
+                    <td>
+                      {r.coverage_report != null
+                        ? <span>{String(r.coverage_report)}</span>
+                        : <span className="ec-note">未取得</span>}
+                    </td>
+                    <td><span className="ec-note">{r.detected_at}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </Panel>
       <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
         {jobs.length ? (

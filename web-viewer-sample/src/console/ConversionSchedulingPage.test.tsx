@@ -3,7 +3,7 @@ import { renderToString } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversionSchedulingPage } from "./pages";
-import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
+import { coordinatorClient, type ConversionRecord, type IfcReadyListItem } from "./coordinatorClient";
 
 describe("ConversionSchedulingPage MinIO 自動偵測 Panel（O4）", () => {
   it("初始渲染含 MinIO 自動偵測 Panel 與穩定選取子", () => {
@@ -785,5 +785,113 @@ describe("ConversionSchedulingPage 自動偵測開關（watch-toggle）", () => 
     const offBanner = container.querySelector('[data-testid="conv-watch-off-banner"]');
     expect(offBanner).not.toBeNull();
     expect(offBanner!.textContent).toContain("自動偵測已關閉");
+  });
+});
+
+// Task 6：#conv 升級讀持久 ConversionLedger（保留 watcher liveness）。
+// 誠實鐵律：converter 未落地 → queued / converting 兩筆，不顯 ready、不顯 coverage 數字。
+describe("ConversionSchedulingPage 讀 ConversionLedger（Task 6）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  const queuedRec: ConversionRecord = {
+    idempotency_key: "mw_abc123def4567890",
+    project_id: "mv_1a2b3c4d",
+    project_display_name: "松風庵",
+    category: "機電",
+    external_model_version_id: "000001",
+    conversion_job_id: null,
+    status: "queued",
+    usdc_key: null,
+    coverage_report: null,
+    detected_at: "2026-06-23T01:00:00.000Z",
+    updated_at: "2026-06-23T01:00:00.000Z",
+  };
+  const convertingRec: ConversionRecord = {
+    idempotency_key: "mw_def456abc7890123",
+    project_id: "mv_5e6f7a8b",
+    project_display_name: "許良宇圖書館",
+    category: "結構",
+    external_model_version_id: "000002",
+    conversion_job_id: "ifcready_1_bb",
+    status: "converting",
+    usdc_key: null,
+    coverage_report: null,
+    detected_at: "2026-06-23T01:10:00.000Z",
+    updated_at: "2026-06-23T01:15:00.000Z",
+  };
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  it("讀 getConversionRecords：render 機電/000001 + 中文 status + 無 ready / coverage 數字 + watcher panel 仍在", async () => {
+    // 同時 mock listIfcReady 確保 ifc-ready 面板不污染 ready/coverage 斷言
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({
+      count: 2,
+      items: [queuedRec, convertingRec],
+    });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false, note: "watcher 預設關閉" });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 機電 / 000001 渲染出來
+    expect(container.textContent).toContain("機電");
+    expect(container.textContent).toContain("000001");
+
+    // 中文 status 文案
+    expect(container.textContent).toContain("排隊");
+    expect(container.textContent).toContain("轉檔中");
+
+    // ledger panel 內無 ready / 完成 status 文案（converter 未落地）
+    const ledgerPanel = container.querySelector('[data-testid="conv-ledger-panel"]') ??
+      // fallback：找 Panel title 含「轉檔 Ledger」的區塊
+      Array.from(container.querySelectorAll("section")).find(s => s.textContent?.includes("轉檔 Ledger"));
+    // Ledger panel 不應含「完成」（ready 的中文標籤）
+    expect(container.textContent).not.toContain("完成");
+    // 沒有 Ledger 記錄的 status 是「完成」，直接確認兩筆 status 是正確的中文
+    // （「排隊」與「轉檔中」已在上方確認）
+
+    // usdc_key null → p1 標記
+    expect(container.textContent).toContain("待產生");
+
+    // coverage_report null → 未取得
+    expect(container.textContent).toContain("未取得");
+
+    // 無任何 coverage 百分比數字
+    expect(container.textContent).not.toMatch(/\d+\.\d+\s*%/);
+
+    // watcher liveness panel 仍在
+    const panel = container.querySelector('[data-testid="minio-watch-panel"]');
+    expect(panel).not.toBeNull();
+    expect(panel!.textContent).toContain("未啟用");
+  });
+
+  it("getConversionRecords reject → 顯誠實錯誤，不影響 watcher panel", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockRejectedValue(new Error("coordinator /api/conversion/records -> 500"));
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // watcher panel 仍在（錯誤獨立）
+    const panel = container.querySelector('[data-testid="minio-watch-panel"]');
+    expect(panel).not.toBeNull();
+    // 顯示錯誤訊息
+    expect(container.textContent).toContain("/api/conversion/records");
   });
 });
