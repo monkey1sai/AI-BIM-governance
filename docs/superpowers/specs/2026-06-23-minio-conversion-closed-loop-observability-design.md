@@ -145,4 +145,4 @@ MinIO bucket bim-control ──(唯讀 list / presign)──┐
 ## 10. 後續
 
 - 下一步：`writing-plans` 出 Phase 1 的逐任務實作計畫（bite-sized，含 ledger schema 定稿、`GET /api/minio/objects`、`GET /api/conversion/records`、watcher→ledger 寫入、`#minio`/`#conv` 前端、E2E）。
-- 對應 GitHub issue：本 spec 同步建一張 issue 作追蹤入口（標題＝「MinIO 轉檔閉環可觀測性」）。
+- 對應 GitHub issue：**[#250](https://github.com/monkey1sai/AI-BIM-governance/issues/250)**（追蹤入口，標題＝「MinIO 轉檔閉環可觀測性」）。

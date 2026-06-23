@@ -143,7 +143,7 @@
 |---|---|---|---|---|
 | R1 | ✅ **已解**：`互動實作規格與標準對齊.md` 收尾改採「還原原始全文 + design-system 對齊增補層」（非濃縮重建）；23 張 IX 卡 / A.1.1 22 條路由 / §8 6 埠逐項核對與原始正典 + repo 一致 | — | 否 | 見 §8 |
 | R2 | ✅ **已解**：已從被清掉的 ignored worktree 轉至真實 git worktree `AI-BIM-governance-wt-docsds`（branch `docs/plans-ds-alignment`，base `origin/main`），commit 路徑正常 | — | 否 | 見 §8 |
-| R3 | MinIO live 多層觸發 **not observed**（待真實 ≥3 段 key 上傳驗證）；追蹤入口＝設計 spec `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md`（GitHub issue 待使用者核可建立） | 中 | 是（issue 核可） | spec 檔 |
+| R3 | MinIO live 多層觸發 **not observed**（待真實 ≥3 段 key 上傳驗證）；追蹤入口＝設計 spec `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md` + GitHub issue **#250** | 中 | 否 | #250 + spec 檔 |
 | R4 | 2 份 .html 原型未逐字全讀殘留字樣（舊「真實三層 / hero built / BCF 3」）— 建議下一輪 `grep '三層\|127\|hero built\|BCF 3'` 掃兩份 html 收尾 | 低 | 否 | — |
 | R5 | 開發軌跡 use-story 範例數字（287 過/25 擋、65.7MB 等）未逐句標「情境示意」；DoD 已硬性要求走真 API；建議補一行「以下數字為情境示意·非實測」 | 低 | 否 | — |
 | R6 | A2 成本歸屬 taxonomy 已更正為「A6/A9 非 A2」；若後續以 A9 為單一成本頁，需回頭再對齊 A6/A9 邊界 | 低 | 否 | — |
@@ -159,7 +159,7 @@ workflow 完成後，指揮官在真實 worktree 對「被破壞的 repo-reality
 3. **資料庫事實更正（程式碼 > 文件）**：governance-service 規則 / Issue / diff / federation 帳本實際用 **SQLite**（`governance.db`），非 Postgres；雲端 metadata 權威 `bim-control` 用 **MySQL**；A5 TimescaleDB 為未建 roadmap。設計規格 §A1 persists、開發軌跡對齊層、MinIO spec 均已更正（原 design-system `persistence.md` 寫 Postgres 與 repo 不符）。
 4. **A1–A10 / prov 一致**：A1/A2/A3=`asbuilt`（A3 federation built / clash blocked-on-OCC）、A4=`NOT BUILT·p4`、A5=`p3`、A6–A10=`p4`，與 repo `web-viewer-sample/src/console/data.ts` 逐值對齊；誠實基準 #5「A4 hero built」確認為過度宣稱、已覆寫。
 5. **舊報告移除**：`審批報告-md與html一致性交叉驗證-2026-06-16.md`（審舊內容、已被本次全重建取代）刪除。
-6. **MinIO issue**：設計 spec 已寫入 `docs/superpowers/specs/`；GitHub issue body 已備妥，因屬對外發佈、待使用者明確核可後建立。
+6. **MinIO issue**：設計 spec 已寫入 `docs/superpowers/specs/`；GitHub issue **#250**（使用者核可後建立，作追蹤入口）。
 
 ---
 
