@@ -225,6 +225,34 @@ export interface SessionCloseResponse {
   status: string;
 }
 
+// Task 5 MinIO 閉環 Phase 1：GET /api/conversion/records 回應中的紀錄形狀。
+// 對齊後端 ConversionLedgerRecord（省略前端用不到的 object_key/bucket/correlation_id）。
+export interface ConversionRecord {
+  idempotency_key: string;
+  project_id: string;
+  project_display_name: string;
+  category: string;
+  external_model_version_id: string;
+  conversion_job_id: string | null;
+  status: "detected" | "queued" | "converting" | "ready" | "failed";
+  usdc_key: string | null;
+  coverage_report: unknown | null;
+  detected_at: string;
+  updated_at: string;
+}
+
+// Task 5 MinIO 閉環 Phase 1：GET /api/minio/objects 回應中的物件形狀。
+// 對齊後端 MinioObjectView（key/etag/role/project_id/project_display_name/category/version）。
+export interface MinioObject {
+  key: string;
+  etag: string;
+  role: "source_ifc" | "parsed_usdc" | "other";
+  project_id: string | null;
+  project_display_name: string | null;
+  category: string | null;
+  version: string | null;
+}
+
 export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
@@ -262,4 +290,14 @@ export const coordinatorClient = {
   // 既有 viewer attach 入口（coordinator server-side redirect 至 browser-visible viewer URL）。
   // P4 Review Room「在既有 viewer 開啟」用此組 URL（不動 App.tsx / Window.tsx）。
   openInViewerUrl: (sessionId: string) => `${COORD_BASE}/ui/open?session=${encodeURIComponent(sessionId)}`,
+  // Task 5 MinIO 閉環 Phase 1：讀持久 ConversionLedger（GET /api/conversion/records）。
+  // detected_at desc；limit 預設 50（符合 Task 3 route 行為）。
+  getConversionRecords: (limit = 50) =>
+    jsonGet<{ count: number; items: ConversionRecord[] }>(`/api/conversion/records?limit=${limit}`),
+  // Task 5 MinIO 閉環 Phase 1：唯讀 S3 list proxy（GET /api/minio/objects）。
+  // prefix 可省略（使用後端預設 config.minioWatchPrefix）；有值時 encodeURIComponent 防注入。
+  getMinioObjects: (prefix?: string) =>
+    jsonGet<{ bucket: string | null; count: number; objects: MinioObject[] }>(
+      `/api/minio/objects${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ""}`,
+    ),
 };
