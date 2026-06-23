@@ -384,7 +384,7 @@ export function A1GovernanceWorkbenchPage() {
   return (
     <>
       <h1>A1 · 治理與模型檢核</h1>
-      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue 與 Excel 匯出。規則檢核在 governance-service（CPU）完成；BCF 匯出請至 Issues 頁（本頁尚未接入）；3D 高亮重用既有 review session viewer（依 IX-A1-06 四條件 enable：first frame ∧ stage matched ∧ 有選 session ∧ 構件有 usd_prim_path），無 active session 時誠實停用。</p>
+      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 高亮重用既有 review session viewer（依 IX-A1-06 四條件 enable：first frame ∧ stage matched ∧ 有選 session ∧ 構件有 usd_prim_path），無 active session 時誠實停用。</p>
 
       <Panel title="A1 五步引導式流程" sub="整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）" prov="asbuilt">
         <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 Excel"]} statuses={ui} />
@@ -419,10 +419,22 @@ export function A1GovernanceWorkbenchPage() {
       {state.run && (
         <Panel title="結果記分板" sub="真實 rule-run summary；點規則列展開命中構件（GUID/名稱/樓層）" prov="asbuilt">
           <div className="ec-grid" data-testid="a1-rulerun-scoreboard">
+            {/* 記分板色碼：
+                - total / passed：不加 tone，沿用 ec-metric base class（預設綠），passed=全綠語意正確
+                - failed>0：tone="bad"（紅），提醒注意問題構件
+                - score：<100 用 tone="warn"（琥珀），==100 用預設綠；絕不寫 tone="good"（Prov 聯集無此值，TS2322） */}
             <Metric value={state.run.summary?.total ?? "—"} label="評估構件" />
             <Metric value={state.run.summary?.passed ?? "—"} label="passed" />
-            <Metric value={state.run.summary?.failed ?? "—"} label="failed" tone="warn" />
-            <Metric value={state.run.score ?? "—"} label="score" />
+            <Metric
+              value={state.run.summary?.failed ?? "—"}
+              label="failed"
+              tone={(state.run.summary?.failed ?? 0) > 0 ? "bad" : undefined}
+            />
+            <Metric
+              value={state.run.score ?? "—"}
+              label="score"
+              tone={typeof state.run.score === "number" && state.run.score < 100 ? "warn" : undefined}
+            />
           </div>
           {runId && state.failed.length > 0 && <FailureScoreboard runId={runId} failed={state.failed} />}
         </Panel>
@@ -480,7 +492,7 @@ export function A1GovernanceWorkbenchPage() {
         )}
       </Panel>
 
-      <Panel title="交付" sub="開 Issue / 匯出 Excel 走真實後端；BCF 匯出在 Issues 頁；3D 高亮接 review session viewer（IX-A1-06 四條件）" prov="asbuilt">
+      <Panel title="交付" sub="開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮接 review session viewer（IX-A1-06 四條件）" prov="asbuilt">
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>失敗構件建 Issue</Btn>{" "}
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
@@ -488,6 +500,41 @@ export function A1GovernanceWorkbenchPage() {
             舊式 disabled={!runId||run?.status!=="succeeded"} 會在該瞬間誤解除 disabled、允許 running 子態匯出。 */}
         <Btn data-testid="a1-step-export" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
+        {/* A1-W1 BCF 2.1 匯出鈕（#a1 canonical route；#issues 標 legacy）。
+            gating：step ∈ {issued, delivered} 才 enable（需先建 Issue），scored/running/idle 時 disabled + caption 說明。
+            重用 Issues 頁 bcfExportUrl() + 相同 fetch→blob→a.click→appendChild/removeChild→setTimeout revoke 下載慣例。
+            後端 404（無正式 issue 或無 ifc_guid）走 actionErr 誠實顯示。prov=asbuilt。 */}
+        {(() => {
+          const bcfEnabled = state.step === "issued" || state.step === "delivered";
+          return (
+            <Btn
+              data-testid="a1-step-bcf"
+              prov="asbuilt"
+              disabled={!bcfEnabled}
+              caption={bcfEnabled ? "GET /api/governance/bcf/export（只含正式 issue）" : "需先建 Issue（step=issued/delivered）"}
+              onClick={async () => {
+                if (!bcfEnabled) return;
+                setActionErr(null);
+                try {
+                  const res = await fetch(governanceClient.bcfExportUrl());
+                  if (!res.ok) { setActionErr(`BCF 匯出 ${res.status}：需至少一個正式 issue（kind=issue 且有 ifc_guid）`); return; }
+                  const blob = await res.blob();
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(blob);
+                  a.download = "governance-issues.bcfzip";
+                  // 錨點須掛載於 document 才觸發下載：Gecko / 部分 Edge 對 detached <a> 下載不可靠。
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放（對齊 doExport 延後模式）。
+                  setTimeout(() => URL.revokeObjectURL(a.href), 0);
+                } catch (e) { setActionErr(`BCF 匯出失敗：${String(e)}`); }
+              }}
+            >
+              匯出 BCF 2.1
+            </Btn>
+          );
+        })()}{" "}
         {/* VG-01 Task 3：取代永久 disabled 占位鈕，依 IX-A1-06 四條件 enable 的真按鈕（針對失敗清單第一筆示範；多筆由
             FailureScoreboard 逐列接，本格交付第一筆）。四條件：first_frame(含 DataChannel ready) ∧ 有選 session ∧
             stage matched ∧ 該構件有 usd_prim_path（且 ifc_guid 非 null）。firstFrame===true 即代表 viewer 端

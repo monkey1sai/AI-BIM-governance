@@ -298,4 +298,51 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     expect(q("a1-no-session")).not.toBeNull();
     expect(q("a1-session-select")).toBeNull();
   });
+
+  // A1-W1 BCF gating UI 層驗證：
+  // step=idle 時 BCF 鈕 disabled（反向斷言）；
+  // step=issued 後 BCF 鈕 enable（正向斷言）。
+  it("A1-W1 BCF：初始 step=idle → BCF 鈕 disabled + caption 含「需先建 Issue」", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    const bcfBtn = q("a1-step-bcf") as HTMLButtonElement | null;
+    expect(bcfBtn).not.toBeNull();
+    expect(bcfBtn!.disabled).toBe(true);
+    // caption 含「需先建 Issue」誠實說明 gating 條件
+    expect(bcfBtn!.textContent).toContain("需先建 Issue");
+  });
+
+  it("A1-W1 BCF：step=issued 後 BCF 鈕 enable", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
+      rule_run_id: "rr_x", status: "succeeded", score: 80, rule_set: "default", model_version_id: "m1",
+      summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "0G1", usd_prim_path: "/World/W1", rule_code: "R1", severity: "error", status: "fail", message: "失敗" },
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 1, issue_ids: ["iss_1"] });
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    // 鎖定模型 → 跑檢核 → RUN_DONE(step=scored)
+    await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
+    await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
+    await flush();
+
+    // BCF 在 scored 時仍 disabled（需先建 Issue）
+    const bcfBtn = () => q("a1-step-bcf") as HTMLButtonElement;
+    expect(bcfBtn().disabled).toBe(true);
+
+    // 建 Issue → step=issued → BCF enable
+    await act(async () => { (q("a1-step-issues") as HTMLButtonElement).click(); });
+    await flush();
+
+    expect(bcfBtn().disabled).toBe(false);
+  });
 });

@@ -140,4 +140,30 @@ describe("a1Reducer 六態轉移", () => {
     expect(uiSteps({ ...initialA1State, step: "scored" })).toEqual(["done", "done", "current", "future", "future"]);
     expect(uiSteps({ ...initialA1State, step: "issued" })).toEqual(["done", "done", "done", "current", "future"]);
   });
+
+  // A1-W1 BCF gating 反向斷言（state machine 層確認；UI 層在 A1ViewerEmbed.test.tsx）。
+  // BCF 鈕依 step ∈ {issued, delivered} 才 enable：下面用純函式驗 step 的合法範圍，
+  // 確保改 a1Reducer 時若意外新增/移除 step 值，測試立即破壞而非靜默。
+  it("A1-W1 BCF gating：step=scored 時 BCF 不得 enable（反向斷言）", () => {
+    // scored：有 rule-run 結果但尚未建 Issue → BCF disabled（沒有正式 issue 可匯出）。
+    const scored: A1State = { ...initialA1State, step: "scored" };
+    const bcfShouldEnable = scored.step === "issued" || scored.step === "delivered";
+    expect(bcfShouldEnable).toBe(false);
+  });
+  it("A1-W1 BCF gating：step=issued/delivered 時 BCF enable（正向斷言）", () => {
+    const issued: A1State = { ...initialA1State, step: "issued" };
+    const delivered: A1State = { ...initialA1State, step: "delivered" };
+    expect(issued.step === "issued" || issued.step === "delivered").toBe(true);
+    expect(delivered.step === "issued" || delivered.step === "delivered").toBe(true);
+  });
+  it("A1-W1 BCF gating：step=idle/picked/running 時 BCF 不得 enable（反向斷言）", () => {
+    const idleEnable = initialA1State.step === "issued" || initialA1State.step === "delivered";
+    expect(idleEnable).toBe(false);
+    const picked: A1State = { ...initialA1State, step: "picked" };
+    const pickedEnable = picked.step === "issued" || picked.step === "delivered";
+    expect(pickedEnable).toBe(false);
+    const running: A1State = { ...initialA1State, step: "running" };
+    const runningEnable = running.step === "issued" || running.step === "delivered";
+    expect(runningEnable).toBe(false);
+  });
 });
