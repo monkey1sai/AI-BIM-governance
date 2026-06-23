@@ -2,6 +2,7 @@
 // 由 vanilla dev-console 面板忠實移植：沿用相同 data-testid，改用「相對路徑」fetch（同源 :8004，無 CORS）。
 // 誠實鐵律：runtime 狀態原樣顯示（converting/ready/runtime_blocked/conversion_timeout/download_failed），不偽造成功。
 import { useEffect, useRef, useState } from "react";
+import { t } from "./i18n";
 
 interface IfcSource {
   source_id: string;
@@ -128,9 +129,9 @@ export function RealIfcConsolePage() {
 
   return (
     <section data-testid="real-ifc-demo-control" style={{ padding: 12 }}>
-      <h2 style={{ marginTop: 0 }}>真實 IFC Fixture 垂直切片（demo-control）</h2>
+      <h2 style={{ marginTop: 0 }}>{t("真實 IFC Fixture 垂直切片（demo-control）", "Real IFC Fixture Vertical Slice (demo-control)")}</h2>
       <p style={{ color: "#94a3b8", fontSize: 13 }}>
-        從 <code>./storage</code> 選真實 IFC → 真 coordinator <code>register</code>（內部 loopback）→ 真轉檔 → 審查 session → viewer。誠實顯示 runtime 狀態。
+        {t("從", "From")} <code>./storage</code> {t("選真實 IFC → 真 coordinator", "select a real IFC → real coordinator")} <code>register</code>{t("（內部 loopback）→ 真轉檔 → 審查 session → viewer。誠實顯示 runtime 狀態。", " (internal loopback) → real conversion → review session → viewer. Runtime state shown honestly.")}
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "10px 0" }}>
         <label htmlFor="ifcFixtureSelect">IFC fixture</label>
@@ -146,7 +147,7 @@ export function RealIfcConsolePage() {
           )}
         </select>
         <button data-testid="ifc-refresh-btn" onClick={() => void loadSources()}>Refresh ./storage IFC list</button>
-        <button data-testid="ifc-register-btn" onClick={() => void register()}>註冊並轉檔（真實）</button>
+        <button data-testid="ifc-register-btn" onClick={() => void register()}>{t("註冊並轉檔（真實）", "Register and convert (real)")}</button>
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, textAlign: "left" }}>
         <tbody>
@@ -161,7 +162,7 @@ export function RealIfcConsolePage() {
       <div style={{ marginTop: 8 }}>
         <span data-testid="ifc-runtime-state" style={{ fontWeight: 700, color: "#76b900" }}>{runtime}</span>
         {viewerUrl && (
-          <a data-testid="ifc-open-viewer" href={viewerUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 12 }}>開 viewer（/ui/open）→</a>
+          <a data-testid="ifc-open-viewer" href={viewerUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 12 }}>{t("開 viewer（/ui/open）→", "Open viewer (/ui/open) →")}</a>
         )}
       </div>
     </section>

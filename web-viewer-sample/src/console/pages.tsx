@@ -1,6 +1,7 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
 import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { t } from "./i18n";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
@@ -43,12 +44,12 @@ function BoundaryDiagram() {
   );
   return (
     <div className="ec-boundary">
-      {col("web", "WEB-PLANE · 瀏覽器可達", "web")}
-      <div className="ec-bd-link"><span className="ec-bd-arrow">→</span><span>僅此一條<br />HTTPS / WSS</span></div>
+      {col("web", t("WEB-PLANE · 瀏覽器可達", "WEB-PLANE · browser-reachable"), "web")}
+      <div className="ec-bd-link"><span className="ec-bd-arrow">→</span><span>{t("僅此一條", "the only path")}<br />HTTPS / WSS</span></div>
       {col("boundary", "CONTROL-PLANE BOUNDARY", "boundary")}
       <div className="ec-bd-link"><span className="ec-bd-arrow">→</span><span>internal<br />loopback</span></div>
       <div className="ec-bd-col internal">
-        <div className="ec-bd-cap">INTERNAL · 瀏覽器永不直連</div>
+        <div className="ec-bd-cap">{t("INTERNAL · 瀏覽器永不直連", "INTERNAL · never directly reached by the browser")}</div>
         {SERVICES.filter((s) => s.plane === "internal" || s.plane === "external").map((s) => (
           <div className="ec-bd-node" key={s.id}>
             <div className="ec-bd-name">{s.name}</div>
@@ -93,18 +94,18 @@ function LifecycleStrip({ steps, statuses }: { steps: string[]; statuses?: ("don
 
 export function HomePage({ onOpen }: { onOpen: (route: string) => void }) {
   const actions = [
-    ["A1", "跑一次治理檢核", "上傳或選取模型，自動檢查命名、分類、防火、LOD 是否合規。", "a1"],
-    ["A2", "比較兩個版本", "看 v06 / v07 新增、修改、刪除與 issue 影響。", "a2"],
-    ["A3", "打開跨專業疊合", "把建築、結構、機電模型組成 federation review room。", "a3"],
-    ["BC", "整理 Issue / BCF", "把 A1/A2/A3/A5 的問題輸出成 BCF / Excel / 報表。", "issues"],
-    ["CV", "查看轉檔排程", "確認 IFC-ready、conversion job、mapping coverage、stage writeback。", "conv"],
-    ["SS", "檢查 Session / Viewer", "看 primary/spectator 是否真的收到 first frame。", "sessions"],
+    ["A1", t("跑一次治理檢核", "Run a governance check"), t("上傳或選取模型，自動檢查命名、分類、防火、LOD 是否合規。", "Upload or select a model; automatically check naming, classification, fire-rating and LOD compliance."), "a1"],
+    ["A2", t("比較兩個版本", "Compare two versions"), t("看 v06 / v07 新增、修改、刪除與 issue 影響。", "See v06 / v07 added, modified, removed changes and issue impact."), "a2"],
+    ["A3", t("打開跨專業疊合", "Open cross-discipline federation"), t("把建築、結構、機電模型組成 federation review room。", "Combine architecture, structure and MEP models into a federation review room."), "a3"],
+    ["BC", t("整理 Issue / BCF", "Organize issues / BCF"), t("把 A1/A2/A3/A5 的問題輸出成 BCF / Excel / 報表。", "Export A1/A2/A3/A5 issues as BCF / Excel / reports."), "issues"],
+    ["CV", t("查看轉檔排程", "View conversion scheduling"), t("確認 IFC-ready、conversion job、mapping coverage、stage writeback。", "Confirm IFC-ready, conversion job, mapping coverage and stage writeback."), "conv"],
+    ["SS", t("檢查 Session / Viewer", "Inspect session / viewer"), t("看 primary/spectator 是否真的收到 first frame。", "Check whether primary/spectator actually received the first frame."), "sessions"],
   ] as const;
   return (
     <>
-      <h1>今天要做什麼 · AI-BIM Governance 工作台</h1>
-      <p className="ec-lead">這是 operator 的第一屏：先看哪件事能交付、哪件事卡住、哪個 runtime 只是宣稱 ready。所有能力都保留 provenance，不把 roadmap 說成已完成。</p>
-      <Panel title="Smart Todo" sub="從 prototype 收斂出的常用入口；按鈕只導向已存在頁面，不做隱藏副作用" prov="asbuilt">
+      <h1>{t("今天要做什麼 · AI-BIM Governance 工作台", "What to do today · AI-BIM Governance workbench")}</h1>
+      <p className="ec-lead">{t("這是 operator 的第一屏：先看哪件事能交付、哪件事卡住、哪個 runtime 只是宣稱 ready。所有能力都保留 provenance，不把 roadmap 說成已完成。", "This is the operator's first screen: see what can be delivered, what is blocked, and which runtime merely claims to be ready. Every capability keeps its provenance; the roadmap is never presented as done.")}</p>
+      <Panel title="Smart Todo" sub={t("從 prototype 收斂出的常用入口；按鈕只導向已存在頁面，不做隱藏副作用", "Common entry points distilled from the prototype; buttons only navigate to existing pages, with no hidden side effects")} prov="asbuilt">
         <div className="ec-grid">
           {actions.map(([code, title, desc, route]) => (
             <button key={route} className="ec-action-card" onClick={() => onOpen(route)}>
@@ -115,10 +116,10 @@ export function HomePage({ onOpen }: { onOpen: (route: string) => void }) {
           ))}
         </div>
       </Panel>
-      <Panel title="Recent Risk" sub="用業務語言呈現，不把技術 ID 放第一層" prov="demo">
-        <Field k="黃 · 有 viewer 等待第一幀" v="到 Session 管理看 first_frame_at / heartbeat" prov="demo" />
-        <Field k="黃 · 有 IFC 已轉檔但 mapping coverage 待確認" v="到 IFC→USD 轉檔排程看 coverage" prov="demo" />
-        <Field k="綠 · A1 rule-run 可用" v="governance-service :49102 經 coordinator proxy" prov="asbuilt" />
+      <Panel title="Recent Risk" sub={t("用業務語言呈現，不把技術 ID 放第一層", "Presented in business language; technical IDs are not surfaced first")} prov="demo">
+        <Field k={t("黃 · 有 viewer 等待第一幀", "Amber · a viewer is waiting for the first frame")} v={t("到 Session 管理看 first_frame_at / heartbeat", "Go to Session management to check first_frame_at / heartbeat")} prov="demo" />
+        <Field k={t("黃 · 有 IFC 已轉檔但 mapping coverage 待確認", "Amber · an IFC is converted but mapping coverage is unconfirmed")} v={t("到 IFC→USD 轉檔排程看 coverage", "Go to IFC→USD conversion scheduling to check coverage")} prov="demo" />
+        <Field k={t("綠 · A1 rule-run 可用", "Green · A1 rule-run is available")} v={t("governance-service :49102 經 coordinator proxy", "governance-service :49102 via coordinator proxy")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -137,33 +138,32 @@ export function OverviewPage() {
   const builtCount = ENDPOINTS.length;
   return (
     <>
-      <h1>系統總覽 · Edge Console Overview</h1>
+      <h1>{t("系統總覽 · Edge Console Overview", "System overview · Edge Console Overview")}</h1>
       <p className="ec-lead">
-        落地端重量伺服器（AI-BIM-governance）的操作頁。每塊資料都標來源：已實作 / 實測 artifact /
-        示範 / 後端待建。畫面無任何願景假數字。
+        {t("落地端重量伺服器（AI-BIM-governance）的操作頁。每塊資料都標來源：已實作 / 實測 artifact / 示範 / 後端待建。畫面無任何願景假數字。", "Operations page for the on-premise heavy server (AI-BIM-governance). Every piece of data is labeled with its provenance: implemented / measured artifact / demo / backend not built. No vision-only fake numbers appear on screen.")}
       </p>
-      <Panel title="落地端健康狀態 · Edge Health" sub="coordinator / kit 為 as-built；conversion / gpu 無遙測標未取得，不畫成 fail" prov="asbuilt">
+      <Panel title={t("落地端健康狀態 · Edge Health", "On-premise health status · Edge Health")} sub={t("coordinator / kit 為 as-built；conversion / gpu 無遙測標未取得，不畫成 fail", "coordinator / kit are as-built; conversion / gpu have no telemetry and are marked not available, not rendered as fail")} prov="asbuilt">
         <div className="ec-grid">
           {/* /health 探活結果（up / down / 探活中）皆為真實觀測 → 一律標 asbuilt（真實探活）；
               down 是「真的探到不可達」，不是示範資料。demo 只保留給完全沒有真實遙測來源的值。 */}
           <Field
             k="COORD Coordinator :8004"
-            v={health === "ok" ? "control plane · /health ok" : health === "down" ? "未連線（/health 不可達）" : "control plane（探活中…）"}
+            v={health === "ok" ? "control plane · /health ok" : health === "down" ? t("未連線（/health 不可達）", "not connected (/health unreachable)") : t("control plane（探活中…）", "control plane (probing…)")}
             prov="asbuilt"
           />
           <Field k="KIT Runtime 49100/47998" v="local_fixed" prov="asbuilt" />
-          <Field k="CONV Conversion :49101" v="未取得" prov="demo" />
-          <Field k="GPU" v="未取得" prov="demo" />
+          <Field k="CONV Conversion :49101" v={t("未取得", "not available")} prov="demo" />
+          <Field k="GPU" v={t("未取得", "not available")} prov="demo" />
           <Field k="GOV governance-service :49102" v="rule-run authority" prov="asbuilt" />
         </div>
-        <p className="ec-note">COORD /health 為真實探活；conversion / gpu 無統一遙測來源 → 標「未取得」（idle，非 fail），不捏造數值。</p>
+        <p className="ec-note">{t("COORD /health 為真實探活；conversion / gpu 無統一遙測來源 → 標「未取得」（idle，非 fail），不捏造數值。", "COORD /health is a real probe; conversion / gpu have no unified telemetry source → marked \"not available\" (idle, not fail), with no fabricated values.")}</p>
       </Panel>
 
-      <Panel title="服務邊界 · Web-plane → Coordinator → Internal" sub="瀏覽器只與 coordinator :8004 對話；49100/49101/49102 為內部，永不直連" prov="asbuilt">
+      <Panel title={t("服務邊界 · Web-plane → Coordinator → Internal", "Service boundary · Web-plane → Coordinator → Internal")} sub={t("瀏覽器只與 coordinator :8004 對話；49100/49101/49102 為內部，永不直連", "The browser only talks to coordinator :8004; 49100/49101/49102 are internal and never directly reached")} prov="asbuilt">
         <BoundaryDiagram />
       </Panel>
 
-      <Panel title={`已實作面 · Coordinator HTTP 介面（${builtCount} 個路由）`} sub="權威：bim-review-coordinator/src/app.ts（逐一查證）" prov="asbuilt">
+      <Panel title={t(`已實作面 · Coordinator HTTP 介面（${builtCount} 個路由）`, `Implemented surface · Coordinator HTTP interface (${builtCount} routes)`)} sub={t("權威：bim-review-coordinator/src/app.ts（逐一查證）", "Authority: bim-review-coordinator/src/app.ts (verified one by one)")} prov="asbuilt">
         <div>
           {ENDPOINTS.map((e) => (
             <div className="ec-ep" key={e.m + e.path}>
@@ -173,34 +173,34 @@ export function OverviewPage() {
             </div>
           ))}
         </div>
-        <p className="ec-note">另有 A1/A2/A3 governance proxy（<code>/api/governance/*</code>）由 governanceClient 走，透傳至 governance-service :49102。</p>
+        <p className="ec-note">{t("另有 A1/A2/A3 governance proxy（", "There is also an A1/A2/A3 governance proxy (")}<code>/api/governance/*</code>{t("）由 governanceClient 走，透傳至 governance-service :49102。", ") routed through governanceClient and forwarded to governance-service :49102.")}</p>
       </Panel>
 
       <Panel
-        title="相依與授權風險 · License posture"
-        sub="A1 core 的規則檢核在 governance-service（CPU）完成，仍依賴下列元件；LGPL / copyleft 商用前須法務確認（不得宣稱無授權風險）"
+        title={t("相依與授權風險 · License posture", "Dependency & license risk · License posture")}
+        sub={t("A1 core 的規則檢核在 governance-service（CPU）完成，仍依賴下列元件；LGPL / copyleft 商用前須法務確認（不得宣稱無授權風險）", "A1 core rule validation runs in the governance-service (CPU) but still depends on the components below; LGPL / copyleft must be cleared by legal before commercial use (do not claim zero license risk).")}
         prov="asbuilt"
       >
         <table className="ec-table">
-          <thead><tr><th>元件</th><th>授權</th><th>用途</th><th>風險</th></tr></thead>
+          <thead><tr><th>{t("元件", "Component")}</th><th>{t("授權", "License")}</th><th>{t("用途", "Use")}</th><th>{t("風險", "Risk")}</th></tr></thead>
           <tbody>
             {DEPENDENCIES.map((d) => (
               <tr key={d.name}>
                 <td>{d.name}</td>
                 <td>{d.license}</td>
                 <td>{d.use}{d.note ? ` · ${d.note}` : ""}</td>
-                <td><span className={`ec-risk ec-risk-${d.risk}`}>{d.risk === "copyleft" ? "copyleft（須法務）" : d.risk === "permissive" ? "permissive" : "待定"}</span></td>
+                <td><span className={`ec-risk ec-risk-${d.risk}`}>{d.risk === "copyleft" ? t("copyleft（須法務）", "copyleft (needs legal)") : d.risk === "permissive" ? "permissive" : t("待定", "TBD")}</span></td>
               </tr>
             ))}
           </tbody>
         </table>
       </Panel>
 
-      <Panel title="Phase Backlog" sub="近期重點 A1–A3；A4–A10 為 ROADMAP">
-        <Field k="A1 治理與模型檢核（rule-run authority）" v="backend 已實作" prov="asbuilt" />
-        <Field k="A2 版本差異 · A3 Federation" v="已實作（GlobalId diff + USD sublayer federation）" prov="asbuilt" />
-        <Field k="Issue 資料庫（lifecycle + audit + 來源綁定）· IDS 匯入" v="已實作" prov="asbuilt" />
-        <Field k="BCF 匯出（issue→.bcfzip）" v="已實作（純 stdlib，不依賴 GPLv3）" prov="asbuilt" />
+      <Panel title="Phase Backlog" sub={t("近期重點 A1–A3；A4–A10 為 ROADMAP", "Near-term focus A1–A3; A4–A10 are ROADMAP")}>
+        <Field k={t("A1 治理與模型檢核（rule-run authority）", "A1 Governance & model validation (rule-run authority)")} v={t("backend 已實作", "backend implemented")} prov="asbuilt" />
+        <Field k={t("A2 版本差異 · A3 Federation", "A2 Version diff · A3 Federation")} v={t("已實作（GlobalId diff + USD sublayer federation）", "Implemented (GlobalId diff + USD sublayer federation)")} prov="asbuilt" />
+        <Field k={t("Issue 資料庫（lifecycle + audit + 來源綁定）· IDS 匯入", "Issue database (lifecycle + audit + source binding) · IDS import")} v={t("已實作", "Implemented")} prov="asbuilt" />
+        <Field k={t("BCF 匯出（issue→.bcfzip）", "BCF export (issue→.bcfzip)")} v={t("已實作（純 stdlib，不依賴 GPLv3）", "Implemented (pure stdlib, no GPLv3 dependency)")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -228,15 +228,15 @@ function isStageMatched(sessions: A1SessionLite[], selected: string, loaded: str
 }
 function stageMatchedText(sessions: A1SessionLite[], selected: string, loaded: string | null): string {
   const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
-  if (!loaded) return "not_observed（尚未載入）";
-  if (!exp) return "loaded（無 expected 可比對）";
-  return stageUrlsEquivalent(loaded, exp) ? "matched（expected == loaded）" : "mismatch（expected ≠ loaded，警示）";
+  if (!loaded) return t("not_observed（尚未載入）", "not_observed (not yet loaded)");
+  if (!exp) return t("loaded（無 expected 可比對）", "loaded (no expected to compare)");
+  return stageUrlsEquivalent(loaded, exp) ? t("matched（expected == loaded）", "matched (expected == loaded)") : t("mismatch（expected ≠ loaded，警示）", "mismatch (expected ≠ loaded, warning)");
 }
 function highlightResultText(hl: { ok: boolean; reason?: string }): string {
-  if (hl.ok) return "已在 3D 標示";
-  if (hl.reason === "unmapped") return "此構件未對映 USD，無法高亮";
-  if (hl.reason === "datachannel_not_ready") return "3D 尚未就緒";
-  return "高亮未成功";
+  if (hl.ok) return t("已在 3D 標示", "Highlighted in 3D");
+  if (hl.reason === "unmapped") return t("此構件未對映 USD，無法高亮", "This element has no USD mapping; cannot highlight");
+  if (hl.reason === "datachannel_not_ready") return t("3D 尚未就緒", "3D not ready yet");
+  return t("高亮未成功", "Highlight failed");
 }
 function isElementMappingDocumentLike(value: unknown): value is ElementMappingDocument {
   return Boolean(value && typeof value === "object" && Array.isArray((value as ElementMappingDocument).items));
@@ -360,7 +360,7 @@ export function A1GovernanceWorkbenchPage() {
       dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
     } catch (e) {
       // 後端離線：誠實不前進（不偽造 issued），但顯示失敗讓操作員知道（誠實鐵律）。
-      setActionErr(`建 Issue 失敗：${String(e)}`);
+      setActionErr(`${t("建 Issue 失敗：", "Failed to create Issue: ")}${String(e)}`);
     }
   }, [runId]);
 
@@ -370,7 +370,7 @@ export function A1GovernanceWorkbenchPage() {
     setExcelBusy(true);
     try {
       const res = await fetch(governanceClient.exportUrl(runId));
-      if (!res.ok) { setActionErr(`匯出失敗：HTTP ${res.status}`); return; }
+      if (!res.ok) { setActionErr(`${t("匯出失敗：HTTP ", "Export failed: HTTP ")}${res.status}`); return; }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       // 錨點須掛載於 document 才觸發 .click()：Firefox（Gecko）與部分 Edge 對 detached <a> 下載不可靠，
@@ -381,7 +381,7 @@ export function A1GovernanceWorkbenchPage() {
       setTimeout(() => URL.revokeObjectURL(url), 0);
       dispatch({ type: "EXPORT_OK" });
     } catch (e) {
-      setActionErr(`匯出失敗：${String(e)}`); // 誠實顯示失敗，不靜默
+      setActionErr(`${t("匯出失敗：", "Export failed: ")}${String(e)}`); // 誠實顯示失敗，不靜默
     } finally {
       setExcelBusy(false);
     }
@@ -389,47 +389,47 @@ export function A1GovernanceWorkbenchPage() {
 
   return (
     <>
-      <h1>A1 · 治理與模型檢核</h1>
-      <p className="ec-lead">上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 高亮重用既有 review session viewer（依 IX-A1-06 四條件 enable：first frame ∧ stage matched ∧ 有選 session ∧ 構件有 usd_prim_path），無 active session 時誠實停用。</p>
+      <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
+      <p className="ec-lead">{t("上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 高亮重用既有 review session viewer（依 IX-A1-06 四條件 enable：first frame ∧ stage matched ∧ 有選 session ∧ 構件有 usd_prim_path），無 active session 時誠實停用。", "Upload/select an IFC, run automated rule validation, then generate Issues, Excel export and BCF 2.1 export (download enabled only after Issues are created). Rule validation runs in the governance-service (CPU); 3D highlighting reuses the existing review session viewer (enabled per the four IX-A1-06 conditions: first frame ∧ stage matched ∧ session selected ∧ element has usd_prim_path), and is honestly disabled when there is no active session.")}</p>
 
-      <Panel title="A1 五步引導式流程" sub="整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）" prov="asbuilt">
-        <LifecycleStrip steps={["上傳模型", "自動檢核", "結果記分板", "開 Issue", "匯出 Excel"]} statuses={ui} />
+      <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
+        <LifecycleStrip steps={[t("上傳模型", "Upload Model"), t("自動檢核", "Auto Validate"), t("結果記分板", "Result Scoreboard"), t("開 Issue", "Open Issue"), t("匯出 Excel", "Export Excel")]} statuses={ui} />
         <div className="ec-grid" style={{ marginBottom: 8 }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="step" v={state.step} prov="asbuilt" />
-          {state.issueCount !== null && <Field k="已開 issue（artifact）" v={String(state.issueCount)} prov="asbuilt" />}
+          {state.issueCount !== null && <Field k={t("已開 issue（artifact）", "issues opened (artifact)")} v={String(state.issueCount)} prov="asbuilt" />}
           {/* EXPORT_OK 落地後才出現的可見信號：供 E2E 直接驗「exported=true（artifact）」而非靠 RUN 清 run 的旁證 disabled。
               比照 issueCount Field，僅在 state.exported 為 true 顯示；重跑保留（a1Machine：RUN 不清 exported）。 */}
-          {state.exported && <div data-testid="a1-exported-artifact"><Field k="已匯出（artifact）" v="excel" prov="asbuilt" /></div>}
+          {state.exported && <div data-testid="a1-exported-artifact"><Field k={t("已匯出（artifact）", "exported (artifact)")} v="excel" prov="asbuilt" /></div>}
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" data-testid="a1-step-path" style={{ minWidth: 420 }} value={pathInput}
             onChange={(e) => setPathInput(e.target.value)} />
-          <Btn data-testid="a1-step-pick" caption="鎖定此模型路徑（進入步驟2）" onClick={() => dispatch({ type: "PICK_FILE", ifcPath: pathInput })}>選取模型</Btn>
+          <Btn data-testid="a1-step-pick" caption={t("鎖定此模型路徑（進入步驟2）", "Lock this model path (proceed to step 2)")} onClick={() => dispatch({ type: "PICK_FILE", ifcPath: pathInput })}>{t("選取模型", "Select Model")}</Btn>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-          <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
+          <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑", "(optional) buildingSMART IDS .ids path")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
               健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
           <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError)}
             caption="POST /api/governance/rule-runs" onClick={doRun}>
-            {state.runError ? "重試檢核" : state.step === "running" ? "檢核中…" : "執行規則檢核"}
+            {state.runError ? t("重試檢核", "Retry Validation") : state.step === "running" ? t("檢核中…", "Validating…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
-          {state.runError && <span className="ec-warn-note">檢核失敗（可重試）：{state.error}</span>}
+          {state.runError && <span className="ec-warn-note">{t("檢核失敗（可重試）：", "Validation failed (retryable): ")}{state.error}</span>}
         </div>
       </Panel>
 
       {state.run && (
-        <Panel title="結果記分板" sub="真實 rule-run summary；點規則列展開命中構件（GUID/名稱/樓層）" prov="asbuilt">
+        <Panel title={t("結果記分板", "Result Scoreboard")} sub={t("真實 rule-run summary；點規則列展開命中構件（GUID/名稱/樓層）", "Real rule-run summary; click a rule row to expand matched elements (GUID/name/storey)")} prov="asbuilt">
           <div className="ec-grid" data-testid="a1-rulerun-scoreboard">
             {/* 記分板色碼：
                 - total / passed：不加 tone，沿用 ec-metric base class（預設綠），passed=全綠語意正確
                 - failed>0：tone="bad"（紅），提醒注意問題構件
                 - score：<100 用 tone="warn"（琥珀），==100 用預設綠；絕不寫 tone="good"（Prov 聯集無此值，TS2322） */}
-            <Metric value={state.run.summary?.total ?? "—"} label="評估構件" />
+            <Metric value={state.run.summary?.total ?? "—"} label={t("評估構件", "Evaluated Elements")} />
             <Metric value={state.run.summary?.passed ?? "—"} label="passed" />
             <Metric
               value={state.run.summary?.failed ?? "—"}
@@ -446,9 +446,9 @@ export function A1GovernanceWorkbenchPage() {
         </Panel>
       )}
 
-      <Panel title="3D 即時檢視（嵌入 live viewer）" sub="重用既有 viewer 串流；first frame / stage truth 為真證據，非樂觀更新" prov="asbuilt">
+      <Panel title={t("3D 即時檢視（嵌入 live viewer）", "Live 3D View (embedded live viewer)")} sub={t("重用既有 viewer 串流；first frame / stage truth 為真證據，非樂觀更新", "Reuses the existing viewer stream; first frame / stage truth are real evidence, not optimistic updates")} prov="asbuilt">
         {sessions.length === 0 ? (
-          <p className="ec-warn-note" data-testid="a1-no-session">需先派發 review session（無 active session，3D 高亮停用）</p>
+          <p className="ec-warn-note" data-testid="a1-no-session">{t("需先派發 review session（無 active session，3D 高亮停用）", "A review session must be dispatched first (no active session; 3D highlighting disabled)")}</p>
         ) : (
           <>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
@@ -463,14 +463,14 @@ export function A1GovernanceWorkbenchPage() {
               </select>
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
-              <div data-testid="a1-first-frame-evidence"><Field k="first frame" v={firstFrame ? "已收到真畫面（綠）" : "not_observed（等待 3D 第一幀）"} prov={firstFrame ? "asbuilt" : "p1"} /></div>
+              <div data-testid="a1-first-frame-evidence"><Field k="first frame" v={firstFrame ? t("已收到真畫面（綠）", "real frame received (green)") : t("not_observed（等待 3D 第一幀）", "not_observed (waiting for first 3D frame)")} prov={firstFrame ? "asbuilt" : "p1"} /></div>
               <div data-testid="a1-stage-matched"><Field k="stage matched" v={stageMatchedText(sessions, selectedSession, loadedStageUrl)} prov="asbuilt" /></div>
             </div>
             {/* S3：iframe 內 viewer 自帶 GovernanceOverlay 失敗清單（會與 console 左側清單重複，造成「console 25 筆 / iframe 說無失敗」矛盾 UX）。
                 解法分兩端：(a) viewer 端在嵌入模式把 overlay 的 failedElements 餵空使清單收合（Task 2「S3 收合」step，已落地）；
                 (b) console 端此處只把 iframe 當高亮引擎，唯一權威失敗清單 = 左側 state.failed 記分板，iframe 不另顯第二份清單。 */}
             {viewerOrigin === null ? (
-              <p className="ec-warn-note" data-testid="a1-viewer-origin-missing">viewer 入口未取得（runtime/status 無 configured_endpoints.viewer.browser_url_base 或 coordinator 連不上），3D 暫不可用</p>
+              <p className="ec-warn-note" data-testid="a1-viewer-origin-missing">{t("viewer 入口未取得（runtime/status 無 configured_endpoints.viewer.browser_url_base 或 coordinator 連不上），3D 暫不可用", "viewer entry not available (runtime/status has no configured_endpoints.viewer.browser_url_base, or coordinator unreachable); 3D temporarily unavailable")}</p>
             ) : (
               <div style={{ height: 480 }}>
                 <EmbeddedViewer
@@ -498,14 +498,14 @@ export function A1GovernanceWorkbenchPage() {
         )}
       </Panel>
 
-      <Panel title="交付" sub="開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮接 review session viewer（IX-A1-06 四條件）" prov="asbuilt">
+      <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮接 review session viewer（IX-A1-06 四條件）", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlighting connects to the review session viewer (four IX-A1-06 conditions)")} prov="asbuilt">
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
-          caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>失敗構件建 Issue</Btn>{" "}
+          caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>{t("失敗構件建 Issue", "Create Issues for Failed Elements")}</Btn>{" "}
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
             不看 state.run 快照欄位：重跑 running 子態 RUN_PROGRESS 可能短暫帶 succeeded 快照（step 仍 running），
             舊式 disabled={!runId||run?.status!=="succeeded"} 會在該瞬間誤解除 disabled、允許 running 子態匯出。 */}
         <Btn data-testid="a1-step-export" disabled={state.step === "idle" || state.step === "picked" || state.step === "running" || excelBusy}
-          caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>匯出 Excel</Btn>{" "}
+          caption="GET /api/governance/rule-runs/:id/export?fmt=excel" onClick={doExport}>{t("匯出 Excel", "Export Excel")}</Btn>{" "}
         {/* A1-W1 BCF 2.1 匯出鈕（#a1 canonical route；#issues 標 legacy）。
             gating：step ∈ {issued, delivered} 才 enable（需先建 Issue），scored/running/idle 時 disabled + caption 說明。
             重用 Issues 頁 bcfExportUrl() + 相同 fetch→blob→a.click→appendChild/removeChild→setTimeout revoke 下載慣例。
@@ -520,14 +520,14 @@ export function A1GovernanceWorkbenchPage() {
                 data-testid="a1-step-bcf"
                 prov="asbuilt"
                 disabled={!bcfEnabled || bcfBusy}
-                caption={bcfEnabled ? "GET /api/governance/bcf/export（只含正式 issue）" : "需先建 Issue（step=issued/delivered）"}
+                caption={bcfEnabled ? t("GET /api/governance/bcf/export（只含正式 issue）", "GET /api/governance/bcf/export (formal issues only)") : t("需先建 Issue（step=issued/delivered）", "Create Issues first (step=issued/delivered)")}
                 onClick={async () => {
                   if (!bcfEnabled) return;
                   setActionErr(null);
                   setBcfBusy(true);
                   try {
                     const res = await fetch(governanceClient.bcfExportUrl());
-                    if (!res.ok) { setActionErr(`BCF 匯出 ${res.status}：需至少一個正式 issue（kind=issue 且有 ifc_guid）`); return; }
+                    if (!res.ok) { setActionErr(`${t("BCF 匯出 ", "BCF export ")}${res.status}${t("：需至少一個正式 issue（kind=issue 且有 ifc_guid）", ": at least one formal issue is required (kind=issue with ifc_guid)")}`); return; }
                     const blob = await res.blob();
                     const a = document.createElement("a");
                     a.href = URL.createObjectURL(blob);
@@ -539,14 +539,14 @@ export function A1GovernanceWorkbenchPage() {
                     // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放（對齊 doExport 延後模式）。
                     setTimeout(() => URL.revokeObjectURL(a.href), 0);
                     dispatch({ type: "BCF_EXPORT_OK" });
-                  } catch (e) { setActionErr(`BCF 匯出失敗：${String(e)}`); }
+                  } catch (e) { setActionErr(`${t("BCF 匯出失敗：", "BCF export failed: ")}${String(e)}`); }
                   finally { setBcfBusy(false); }
                 }}
               >
-                匯出 BCF 2.1
+                {t("匯出 BCF 2.1", "Export BCF 2.1")}
               </Btn>
               {/* F4：BCF_EXPORT_OK 落地後才出現的可見信號（對齊 Excel EXPORT_OK → a1-exported-artifact）。 */}
-              {state.bcfExported && <div data-testid="a1-bcf-exported-artifact"><Field k="已匯出（artifact）" v="bcf" prov="asbuilt" /></div>}
+              {state.bcfExported && <div data-testid="a1-bcf-exported-artifact"><Field k={t("已匯出（artifact）", "exported (artifact)")} v="bcf" prov="asbuilt" /></div>}
             </>
           );
         })()}{" "}
@@ -560,17 +560,17 @@ export function A1GovernanceWorkbenchPage() {
           const stageMatched = isStageMatched(sessions, selectedSession, loadedStageUrl);
           const rowHighlightable = Boolean(f0 && f0.ifc_guid && f0.usd_prim_path);
           const canHighlight = firstFrame && Boolean(selectedSession) && stageMatched && rowHighlightable;
-          const disabledReason = !firstFrame ? "等待 3D 第一幀（first frame / DataChannel 未就緒）"
-            : !selectedSession ? "尚未選取 review session"
-            : !stageMatched ? "stage 未對齊（expected ≠ loaded）"
-            : !f0 ? "尚無失敗構件"
-            : !f0.ifc_guid ? "此構件無 ifc_guid，無法高亮"
-            : !f0.usd_prim_path ? "此構件未對映 USD（無 usd_prim_path），無法高亮"
+          const disabledReason = !firstFrame ? t("等待 3D 第一幀（first frame / DataChannel 未就緒）", "Waiting for the first 3D frame (first frame / DataChannel not ready)")
+            : !selectedSession ? t("尚未選取 review session", "No review session selected yet")
+            : !stageMatched ? t("stage 未對齊（expected ≠ loaded）", "stage not aligned (expected ≠ loaded)")
+            : !f0 ? t("尚無失敗構件", "No failed elements yet")
+            : !f0.ifc_guid ? t("此構件無 ifc_guid，無法高亮", "This element has no ifc_guid; cannot highlight")
+            : !f0.usd_prim_path ? t("此構件未對映 USD（無 usd_prim_path），無法高亮", "This element is not mapped to USD (no usd_prim_path); cannot highlight")
             : "";
           return (
             <Btn data-testid="a1-highlight-3d"
               disabled={!canHighlight}
-              caption={canHighlight ? "postMessage highlight → viewer HighlightBridge（IX-A1-06 四條件）" : disabledReason}
+              caption={canHighlight ? t("postMessage highlight → viewer HighlightBridge（IX-A1-06 四條件）", "postMessage highlight → viewer HighlightBridge (four IX-A1-06 conditions)") : disabledReason}
               onClick={() => {
                 if (!f0 || !f0.ifc_guid) return; // 已查證 RuleResultRow.ifc_guid: string|null → 送出前 guard 非 null
                 viewerRef.current?.sendHighlight([{
@@ -580,7 +580,7 @@ export function A1GovernanceWorkbenchPage() {
                   rule_code: f0.rule_code,
                 }]);
               }}>
-              在 3D 高亮（第一筆失敗）
+              {t("在 3D 高亮（第一筆失敗）", "Highlight in 3D (first failure)")}
             </Btn>
           );
         })()}{" "}
@@ -596,58 +596,58 @@ export function A1GovernanceWorkbenchPage() {
 }
 
 export function ViewerPresentationPage() {
-  const [firstFrameEvidenceText, setFirstFrameEvidenceText] = useState("not_observed（尚無 active session 回報）");
+  const [firstFrameEvidenceText, setFirstFrameEvidenceText] = useState(t("not_observed（尚無 active session 回報）", "not_observed (no active session reporting yet)"));
   useEffect(() => {
     let alive = true;
     coordinatorClient.runtimeStatus()
       .then((rt) => {
         if (!alive) return;
         const seen = rt.sessions.items.some((s) => Boolean(s.first_frame_at));
-        setFirstFrameEvidenceText(seen ? "已觀察到 first frame（至少一 session）" : "not_observed（無 session 回報真畫面）");
+        setFirstFrameEvidenceText(seen ? t("已觀察到 first frame（至少一 session）", "first frame observed (at least one session)") : t("not_observed（無 session 回報真畫面）", "not_observed (no session reporting a real frame)"));
       })
       .catch(() => {
-        if (alive) setFirstFrameEvidenceText("not_observed（coordinator 連不上）");
+        if (alive) setFirstFrameEvidenceText(t("not_observed（coordinator 連不上）", "not_observed (coordinator unreachable)"));
       });
     return () => { alive = false; };
   }, []);
 
   const capabilities: [string, string, Prov][] = [
-    ["openStage", "載入 selected USD / USDC stage；success 還需要 loaded stage URL 證據", "asbuilt"],
-    ["focusPrim / selectPrims", "點清單或 mapping table 可聚焦 / 選取 USD prim", "asbuilt"],
-    ["clearHighlight", "清除 viewer overlay / selection", "asbuilt"],
-    ["highlightPrimsRequest", "A1/A2/A4 結果轉 3D highlight；需 browser DataChannel", "p15"],
+    ["openStage", t("載入 selected USD / USDC stage；success 還需要 loaded stage URL 證據", "Load the selected USD / USDC stage; success also requires loaded stage URL evidence"), "asbuilt"],
+    ["focusPrim / selectPrims", t("點清單或 mapping table 可聚焦 / 選取 USD prim", "Click the list or mapping table to focus / select a USD prim"), "asbuilt"],
+    ["clearHighlight", t("清除 viewer overlay / selection", "Clear viewer overlay / selection"), "asbuilt"],
+    ["highlightPrimsRequest", t("A1/A2/A4 結果轉 3D highlight；需 browser DataChannel", "Turn A1/A2/A4 results into 3D highlights; requires the browser DataChannel"), "p15"],
     // 對抗驗證 P1-2：ViewerPresentationPage capabilities 為說明性矩陣。first_frame_at 在本頁以 any-session boolean
     // (rt.sessions.items.some) 呈現、非 scope-to-session 真值；stage matched 同為靜態描述。皆未到 asbuilt → p1
     // （真 live 證據在 A1 頁 firstFrameEvidenceText / stageMatchedText 與 #sessions，本頁不重渲染）。
-    ["first_frame_at", "viewer 是否真的看到畫面，不等於 port open", "p1"],
-    ["stage matched", "expected_stage_url == loaded stage URL 才算 stage truth", "p1"],
+    ["first_frame_at", t("viewer 是否真的看到畫面，不等於 port open", "Whether the viewer actually sees a frame; not the same as the port being open"), "p1"],
+    ["stage matched", t("expected_stage_url == loaded stage URL 才算 stage truth", "stage truth requires expected_stage_url == loaded stage URL"), "p1"],
   ];
   return (
     <>
-      <h1>3D Viewer 呈現 · USD over WebRTC</h1>
-      <p className="ec-lead">此頁說明打開 3D viewer 時 operator 應看到什麼：模型畫面、語意表、mapping table、selected prim、DataChannel ready、first frame、stage truth。真正 viewport 仍在既有 viewer，不在 console 內重渲染 WebRTC。</p>
-      <Panel title="Viewport 狀態" sub="Kit-side evidence + Browser-side evidence 必須分開" prov="asbuilt">
+      <h1>{t("3D Viewer 呈現 · USD over WebRTC", "3D viewer presentation · USD over WebRTC")}</h1>
+      <p className="ec-lead">{t("此頁說明打開 3D viewer 時 operator 應看到什麼：模型畫面、語意表、mapping table、selected prim、DataChannel ready、first frame、stage truth。真正 viewport 仍在既有 viewer，不在 console 內重渲染 WebRTC。", "This page explains what the operator should see when opening the 3D viewer: the model frame, semantic table, mapping table, selected prim, DataChannel ready, first frame and stage truth. The real viewport still lives in the existing viewer; WebRTC is not re-rendered inside the console.")}</p>
+      <Panel title={t("Viewport 狀態", "Viewport status")} sub={t("Kit-side evidence + Browser-side evidence 必須分開", "Kit-side evidence and browser-side evidence must be kept separate")} prov="asbuilt">
         <div className="ec-grid">
           <Field k="Stage URL" v="expected stage from review session / ifc-ready job" prov="asbuilt" />
-          <Field k="DataChannel" v="ready 才能送 openStage / focusPrim / highlight" prov="asbuilt" />
+          <Field k="DataChannel" v={t("ready 才能送 openStage / focusPrim / highlight", "must be ready before sending openStage / focusPrim / highlight")} prov="asbuilt" />
           <Field k="WebRTC first frame" v={firstFrameEvidenceText} prov="asbuilt" />
           {/* 對抗驗證 P1-1：v 為靜態字串、本頁無 live expected==loaded 比對（真比對在 A1 頁 stageMatchedText），asbuilt 過度宣告 → p1。 */}
-          <Field k="Stage truth" v="expected == loaded 才能宣稱 matched" prov="p1" />
+          <Field k="Stage truth" v={t("expected == loaded 才能宣稱 matched", "matched can only be claimed when expected == loaded")} prov="p1" />
         </div>
       </Panel>
-      <Panel title="Viewer command matrix" sub="對齊 existing Window.tsx / DataChannel 邊界" prov="asbuilt">
+      <Panel title="Viewer command matrix" sub={t("對齊 existing Window.tsx / DataChannel 邊界", "Aligned with the existing Window.tsx / DataChannel boundary")} prov="asbuilt">
         <table className="ec-table">
-          <thead><tr><th>command / evidence</th><th>operator 看到的功能</th><th>status</th></tr></thead>
+          <thead><tr><th>command / evidence</th><th>{t("operator 看到的功能", "operator-visible capability")}</th><th>status</th></tr></thead>
           <tbody>{capabilities.map(([cmd, desc, prov]) => (
             <tr key={cmd}><td>{cmd}</td><td>{desc}</td><td><ProvTag prov={prov} /></td></tr>
           ))}</tbody>
         </table>
       </Panel>
-      <Panel title="A1-A10 在 3D Viewer 的呈現用途" prov="demo">
+      <Panel title={t("A1-A10 在 3D Viewer 的呈現用途", "How A1-A10 are presented in the 3D viewer")} prov="demo">
         <div className="ec-grid">
-          <MiniCard code="A1/A2/A4" title="可選 overlay" desc="規則失敗、版本差異、語意搜尋結果都可轉成 highlight，但需 mapping + first frame。" prov="p1" />
-          <MiniCard code="A3/A5/A6/A7/A10" title="核心 3D 場景" desc="federation、IoT/FM、4D/5D、scan compare、robot route 都以 3D 場景為主。" prov="p4" />
-          <MiniCard code="A8" title="render capture" desc="Synthetic Data 需要 Replicator / camera / output writer，屬後期 runtime pipeline。" prov="p4" />
+          <MiniCard code="A1/A2/A4" title={t("可選 overlay", "Optional overlay")} desc={t("規則失敗、版本差異、語意搜尋結果都可轉成 highlight，但需 mapping + first frame。", "Rule failures, version diffs and semantic search results can all become highlights, but require mapping + first frame.")} prov="p1" />
+          <MiniCard code="A3/A5/A6/A7/A10" title={t("核心 3D 場景", "Core 3D scene")} desc={t("federation、IoT/FM、4D/5D、scan compare、robot route 都以 3D 場景為主。", "federation, IoT/FM, 4D/5D, scan compare and robot route are all driven primarily by the 3D scene.")} prov="p4" />
+          <MiniCard code="A8" title="render capture" desc={t("Synthetic Data 需要 Replicator / camera / output writer，屬後期 runtime pipeline。", "Synthetic Data needs Replicator / camera / output writer; it belongs to a later runtime pipeline.")} prov="p4" />
         </div>
       </Panel>
     </>
@@ -655,7 +655,7 @@ export function ViewerPresentationPage() {
 }
 
 function pct(r?: number | null): string {
-  if (typeof r !== "number" || !Number.isFinite(r)) return "未取得";
+  if (typeof r !== "number" || !Number.isFinite(r)) return t("未取得", "not available");
   const p = r * 100;
   // 誠實鐵律「不得承諾 100% lossless」：ratio<1 卻四捨五入到 100.00 時下修顯 99.99%，
   // 不讓非滿覆蓋謊報成 100%（真實 ratio 仍由相鄰 mapped/unmapped 數與 coverage_status 揭露）。
@@ -663,10 +663,10 @@ function pct(r?: number | null): string {
   return `${p.toFixed(2)}%`;
 }
 function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | { error: string } | "loading" | undefined }) {
-  if (state === "loading" || state === undefined) return <p className="ec-note">讀取 coverage…</p>;
+  if (state === "loading" || state === undefined) return <p className="ec-note">{t("讀取 coverage…", "Loading coverage…")}</p>;
   if ("error" in state) return <p className="ec-warn-note">{state.error}</p>;
   const s = state.quality_metrics_summary;
-  if (!s) return <p className="ec-note">未取得品質遙測（後端未提供 quality_metrics）。</p>;
+  if (!s) return <p className="ec-note">{t("未取得品質遙測（後端未提供 quality_metrics）。", "Quality telemetry not available (backend did not provide quality_metrics).")}</p>;
   // 誠實鐵律：materialization_strategy=usd_stage_enumeration 下 coverage_ratio 為自我參照——
   // source_ifc_entity_count 與 mapped_count 同源於同一次 USD stage prim 枚舉（adapter 端
   // source_count = len(mapping_items) = mapped_count），數學上結構性恆等於 1.0，意義是「枚舉到的
@@ -675,19 +675,18 @@ function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | {
   return (
     <>
       <Field k="coverage" v={`${pct(s.coverage_ratio)}${s.coverage_status ? ` · ${s.coverage_status}` : ""}`} prov="artifact" />
-      <Field k="mapped / unmapped" v={`${s.mapped_count ?? "未取得"} / ${s.unmapped_count ?? "未取得"}`} prov="artifact" />
-      <Field k={usdEnumSelfRef ? "source（USD 枚舉 prim 數）" : "source IFC entity"} v={String(s.source_ifc_entity_count ?? "未取得")} prov="artifact" />
-      <Field k="materialization" v={s.materialization_strategy ?? "未取得"} prov="artifact" />
+      <Field k="mapped / unmapped" v={`${s.mapped_count ?? t("未取得", "not available")} / ${s.unmapped_count ?? t("未取得", "not available")}`} prov="artifact" />
+      <Field k={usdEnumSelfRef ? t("source（USD 枚舉 prim 數）", "source (count of enumerated USD prims)") : "source IFC entity"} v={String(s.source_ifc_entity_count ?? t("未取得", "not available"))} prov="artifact" />
+      <Field k="materialization" v={s.materialization_strategy ?? t("未取得", "not available")} prov="artifact" />
       {/* spec §4.4 line 76 明列必顯欄：轉檔耗時秒數（後端 quality_metrics 既有，review.ts:19 / types.ts:79
           已型別化、buildQualityMetricsSummary 已萃取）。缺值誠實顯「未取得」，不捏值。 */}
-      <Field k="conversion 耗時(s)" v={typeof s.conversion_duration_seconds === "number" ? String(s.conversion_duration_seconds) : "未取得"} prov="artifact" />
-      <Field k="usdc 輸出" v={state.usdc_url ?? "未取得"} prov="artifact" />
-      <Field k="mapping_url" v={state.mapping_url ?? "未取得"} prov="artifact" />
-      <Field k="property / relationship / attribute 三項" v="後端未提供（以 coverage_ratio 為準；三項拆分為 follow-up）" prov="p1" />
+      <Field k={t("conversion 耗時(s)", "conversion duration (s)")} v={typeof s.conversion_duration_seconds === "number" ? String(s.conversion_duration_seconds) : t("未取得", "not available")} prov="artifact" />
+      <Field k={t("usdc 輸出", "usdc output")} v={state.usdc_url ?? t("未取得", "not available")} prov="artifact" />
+      <Field k="mapping_url" v={state.mapping_url ?? t("未取得", "not available")} prov="artifact" />
+      <Field k={t("property / relationship / attribute 三項", "property / relationship / attribute (three breakdowns)")} v={t("後端未提供（以 coverage_ratio 為準；三項拆分為 follow-up）", "Not provided by the backend (coverage_ratio is authoritative; the three-way breakdown is a follow-up)")} prov="p1" />
       {usdEnumSelfRef && (
         <p className="ec-warn-note" data-testid="conv-coverage-selfref-note">
-          ⚠ coverage 基準為 USD stage 枚舉：source 為枚舉 prim 數、與 mapped 同源，此 % 是「枚舉到的都對映上」的自我比對，
-          非對 IFC 原始 entity 全量的 lossless 覆蓋率。真 IFC 分母為 follow-up（M2-b）。
+          {t("⚠ coverage 基準為 USD stage 枚舉：source 為枚舉 prim 數、與 mapped 同源，此 % 是「枚舉到的都對映上」的自我比對，非對 IFC 原始 entity 全量的 lossless 覆蓋率。真 IFC 分母為 follow-up（M2-b）。", "⚠ Coverage is based on USD stage enumeration: source is the count of enumerated prims and shares the same origin as mapped, so this % is a self-comparison of \"everything enumerated got mapped\", not lossless coverage over the full set of original IFC entities. A real IFC denominator is a follow-up (M2-b).")}
         </p>
       )}
     </>
@@ -734,9 +733,9 @@ export function ConversionSchedulingPage() {
     const jobsOk = jobsRes.status === "fulfilled";
     const mwOk = mwRes.status === "fulfilled";
     if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
-    else setErr(`未連線 coordinator /api/external/ifc-ready：${String(jobsRes.reason)}`);
+    else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
     if (mwRes.status === "fulfilled") setMw(mwRes.value);
-    else setMwErr(`未連線 coordinator /api/external/minio-watch/status：${String(mwRes.reason)}`);
+    else setMwErr(`${t("未連線 coordinator /api/external/minio-watch/status：", "Not connected to coordinator /api/external/minio-watch/status: ")}${String(mwRes.reason)}`);
     setBusy(false);
     return { jobsOk, mwOk };
   }, []);
@@ -765,7 +764,7 @@ export function ConversionSchedulingPage() {
       const r = await coordinatorClient.conversionQualityMetrics(job.conversion_job_id);
       setCov((p) => ({ ...p, [id]: r }));
     } catch (e) {
-      setCov((p) => ({ ...p, [id]: { error: `未取得 coverage：${String(e)}` } }));
+      setCov((p) => ({ ...p, [id]: { error: `${t("未取得 coverage：", "Coverage not available: ")}${String(e)}` } }));
     }
   }, [openJob, cov]);
   const runAction = useCallback(async (reason: string) => {
@@ -783,18 +782,18 @@ export function ConversionSchedulingPage() {
       // 操作者不易察覺），改保持 dialog 開啟並在 dialog 內顯誠實錯誤。
       const { jobsOk, mwOk } = await load();
       if (!jobsOk) {
-        setActionErr("動作已送出，但重新抓取佇列失敗；佇列可能仍顯示舊狀態，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。");
+        setActionErr(t("動作已送出，但重新抓取佇列失敗；佇列可能仍顯示舊狀態，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。", "The action was submitted, but re-fetching the queue failed; the queue may still show the old state. Please close this and click \"Refresh queue\" to confirm the latest state (the backend action is idempotent, so confirming again has no duplicate effect)."));
         return;                     // 不關 dialog、不視為完成
       }
       // important #1：watch-toggle 成功但 watcher 狀態重抓失敗時，jobsOk 仍 true，但 mw 未更新，
       // 琥珀條與 Panel 停在舊值。不可靜默關 dialog（操作者會誤以為開關已生效），改顯誠實錯誤要求重按 Refresh。
       if (pendingAction.kind === "watch-toggle" && !mwOk) {
-        setActionErr("動作已送出，但重新抓取 watcher 狀態失敗；自動偵測狀態與頁頂提示可能仍顯示舊值，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。");
+        setActionErr(t("動作已送出，但重新抓取 watcher 狀態失敗；自動偵測狀態與頁頂提示可能仍顯示舊值，請關閉後按「Refresh queue」確認最新狀態（後端動作為冪等，重按確認不會重複生效）。", "The action was submitted, but re-fetching the watcher status failed; the auto-detection status and the top-of-page banner may still show old values. Please close this and click \"Refresh queue\" to confirm the latest state (the backend action is idempotent, so confirming again has no duplicate effect)."));
         return;                     // 不關 dialog、不視為完成
       }
       setPendingAction(null);       // 動作成功且狀態已刷新才關 dialog
     } catch (e) {
-      setActionErr(`控制動作失敗：${String(e)}`); // finding #2：寫獨立 actionErr（顯示在 dialog 內），不關 dialog、不改狀態
+      setActionErr(`${t("控制動作失敗：", "Control action failed: ")}${String(e)}`); // finding #2：寫獨立 actionErr（顯示在 dialog 內），不關 dialog、不改狀態
     } finally {
       actionBusyRef.current = false;
       setActionBusy(false);
@@ -802,49 +801,49 @@ export function ConversionSchedulingPage() {
   }, [pendingAction, load]);
   return (
     <>
-      <h1>IFC→USD 轉檔排程</h1>
-      <p className="ec-lead">從 MinIO / storage 發現 source IFC，排進 conversion authority，由 `bim-streaming-server` 產出 `model.usdc`、mapping summary，再通知 Kit / Review Session。</p>
+      <h1>{t("IFC→USD 轉檔排程", "IFC→USD conversion scheduling")}</h1>
+      <p className="ec-lead">{t("從 MinIO / storage 發現 source IFC，排進 conversion authority，由 `bim-streaming-server` 產出 `model.usdc`、mapping summary，再通知 Kit / Review Session。", "Discover source IFC from MinIO / storage, queue it into the conversion authority, let `bim-streaming-server` produce `model.usdc` and a mapping summary, then notify Kit / Review Session.")}</p>
       {mw?.enabled === false && (
         <p className="ec-warn-note" data-testid="conv-watch-off-banner">
-          ⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件
+          {t("⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件", "⚠ Auto-detection is off — new model.ifc will not be intaken automatically; manual intake is required")}
         </p>
       )}
-      <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={load}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
-        <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
+      <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={load}>{busy ? t("讀取中…", "Loading…") : "Refresh queue"}</Btn>}>
+        <LifecycleStrip steps={[t("讀 MinIO / storage", "Read MinIO / storage"), t("排隊", "Queue"), "IFC→USD", t("寫回 model.usdc", "Write back model.usdc"), t("通知 Kit", "Notify Kit")]} />
         {err && <p className="ec-warn-note">{err}</p>}
         <Field k="conversion authority" v="bim-streaming-server owns heavy conversion" prov="asbuilt" />
-        <Field k="插隊 / 重試" v="可於下方 ifc-ready job 列依狀態操作（intent→confirm→audited）" prov="asbuilt" />
-        <Field k="concurrency 控制" v="NOT BUILT：獨立 follow-up 卡" prov="p1" />
+        <Field k={t("插隊 / 重試", "Prioritize / retry")} v={t("可於下方 ifc-ready job 列依狀態操作（intent→confirm→audited）", "Available on the ifc-ready job rows below, depending on status (intent→confirm→audited)")} prov="asbuilt" />
+        <Field k={t("concurrency 控制", "concurrency control")} v={t("NOT BUILT：獨立 follow-up 卡", "NOT BUILT: tracked as a separate follow-up card")} prov="p1" />
       </Panel>
       <Panel
-        title="MinIO 自動偵測（O4）"
-        sub="watcher 輪詢 ListObjectsV2 → 新 */model.ifc → 自動 intake；來源 /api/external/minio-watch/status"
+        title={t("MinIO 自動偵測（O4）", "MinIO auto-detection (O4)")}
+        sub={t("watcher 輪詢 ListObjectsV2 → 新 */model.ifc → 自動 intake；來源 /api/external/minio-watch/status", "watcher polls ListObjectsV2 → new */model.ifc → auto intake; source /api/external/minio-watch/status")}
         prov="asbuilt"
       >
         <div data-testid="minio-watch-panel">
           {mwErr ? (
             <p className="ec-warn-note" data-testid="minio-watch-error">{mwErr}</p>
           ) : mw == null ? (
-            <p className="ec-note">尚未取得 watcher 狀態；按上方 Refresh queue 後顯示。</p>
+            <p className="ec-note">{t("尚未取得 watcher 狀態；按上方 Refresh queue 後顯示。", "Watcher status not retrieved yet; click Refresh queue above to display it.")}</p>
           ) : mw.enabled === false ? (
             <>
-              <Field k="狀態" v="未啟用 — 需設定 env MINIO_WATCH_ENABLED opt-in" prov="asbuilt" />
-              <p className="ec-note">{mw.note ?? "watcher 預設關閉；狀態 API 為真，未偽稱功能在跑。"}</p>
+              <Field k={t("狀態", "Status")} v={t("未啟用 — 需設定 env MINIO_WATCH_ENABLED opt-in", "Not enabled — requires env MINIO_WATCH_ENABLED opt-in")} prov="asbuilt" />
+              <p className="ec-note">{mw.note ?? t("watcher 預設關閉；狀態 API 為真，未偽稱功能在跑。", "The watcher is off by default; the status API is real and does not falsely claim the feature is running.")}</p>
               <Btn
                 data-testid="conv-watch-enable"
                 onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: true }); }}
-              >開啟自動偵測</Btn>
+              >{t("開啟自動偵測", "Enable auto-detection")}</Btn>
             </>
           ) : (
             <>
               {mw.note && <p className="ec-note">{mw.note}</p>}
-              <Field k="狀態" v="啟用中（env opt-in）" prov="asbuilt" />
+              <Field k={t("狀態", "Status")} v={t("啟用中（env opt-in）", "Enabled (env opt-in)")} prov="asbuilt" />
               <Field k="bucket" v={mw.bucket ?? "—"} prov="asbuilt" />
-              <Field k="prefix" v={mw.prefix || "（無）"} prov="asbuilt" />
-              <Field k="最近一輪" v={mw.last_poll_at ?? "尚未完成首輪"} prov="asbuilt" />
-              <Field k="輪詢次數" v={String(mw.poll_count ?? "—")} prov="asbuilt" />
-              <Field k="baseline / seen / 觸發 / 跳過" v={`${mw.baseline_count ?? "—"} / ${mw.seen_count ?? 0} / ${mw.triggered_total ?? 0} / ${mw.skipped_malformed_total ?? 0}`} prov="asbuilt" />
-              {mw.last_error && <Field k="最近錯誤" v={mw.last_error} prov="asbuilt" />}
+              <Field k="prefix" v={mw.prefix || t("（無）", "(none)")} prov="asbuilt" />
+              <Field k={t("最近一輪", "Last poll")} v={mw.last_poll_at ?? t("尚未完成首輪", "first poll not completed yet")} prov="asbuilt" />
+              <Field k={t("輪詢次數", "Poll count")} v={String(mw.poll_count ?? "—")} prov="asbuilt" />
+              <Field k={t("baseline / seen / 觸發 / 跳過", "baseline / seen / triggered / skipped")} v={`${mw.baseline_count ?? "—"} / ${mw.seen_count ?? 0} / ${mw.triggered_total ?? 0} / ${mw.skipped_malformed_total ?? 0}`} prov="asbuilt" />
+              {mw.last_error && <Field k={t("最近錯誤", "Last error")} v={mw.last_error} prov="asbuilt" />}
               {mw.last_triggered && mw.last_triggered.length > 0 && (
                 <table className="ec-table" data-testid="minio-watch-triggered">
                   <thead><tr><th>key</th><th>job</th><th>error</th><th>at</th></tr></thead>
@@ -861,14 +860,14 @@ export function ConversionSchedulingPage() {
               <Btn
                 data-testid="conv-watch-disable"
                 onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: false }); }}
-              >關閉自動偵測</Btn>
+              >{t("關閉自動偵測", "Disable auto-detection")}</Btn>
             </>
           )}
         </div>
       </Panel>
-      <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
+      <Panel title="Ifc-ready jobs" sub={t("/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job", "/api/external/ifc-ready truth; shows empty when there is no data, with no fake jobs filled in")} prov="asbuilt">
         {jobs.length ? (
-          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th><th>控制</th></tr></thead>
+          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th><th>{t("控制", "Control")}</th></tr></thead>
             <tbody>{jobs.slice(0, 20).map((j) => (
               <Fragment key={j.ifc_ready_job_id}>
                 <tr>
@@ -889,27 +888,27 @@ export function ConversionSchedulingPage() {
                   <td>{j.review_session_id ?? "—"}</td>
                   <td>{j.expected_stage_url ?? "—"}</td>
                   <td>{j.conversion_job_id
-                    ? <Btn data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? "收合" : "coverage"}</Btn>
-                    : <span className="ec-note">尚未派工</span>}</td>
+                    ? <Btn data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? t("收合", "Collapse") : "coverage"}</Btn>
+                    : <span className="ec-note">{t("尚未派工", "Not dispatched yet")}</span>}</td>
                   <td>
                     {j.status === "queued_for_conversion" && (
                       <Btn
                         data-testid={`conv-prioritize-${j.ifc_ready_job_id}`}
                         disabled={j.queue_position == null || j.queue_position <= 1}
                         title={
-                          j.queue_position == null ? "佇列位置未知，暫不可插隊"
-                          : j.queue_position === 0 ? "正在派工中（in-flight），不可插隊"
-                          : j.queue_position <= 1 ? "已在隊首（position 1），無需插隊"
+                          j.queue_position == null ? t("佇列位置未知，暫不可插隊", "Queue position unknown; cannot prioritize for now")
+                          : j.queue_position === 0 ? t("正在派工中（in-flight），不可插隊", "Currently dispatching (in-flight); cannot prioritize")
+                          : j.queue_position <= 1 ? t("已在隊首（position 1），無需插隊", "Already at the head of the queue (position 1); no need to prioritize")
                           : undefined
                         }
                         onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
-                      >插隊</Btn>
+                      >{t("插隊", "Prioritize")}</Btn>
                     )}
                     {(j.status === "dispatch_failed" || j.status === "dropped_on_restart") && (
                       <Btn
                         data-testid={`conv-retry-${j.ifc_ready_job_id}`}
                         onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" }); }}
-                      >重試</Btn>
+                      >{t("重試", "Retry")}</Btn>
                     )}
                   </td>
                 </tr>
@@ -922,23 +921,23 @@ export function ConversionSchedulingPage() {
                 )}
               </Fragment>
             ))}</tbody></table>
-        ) : <p className="ec-note">尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。</p>}
+        ) : <p className="ec-note">{t("尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。", "No ifc-ready jobs retrieved yet; register a fixture from the real IFC intake page and come back to view the schedule.")}</p>}
       </Panel>
       <IntentDialog
         open={pendingAction != null}
         title={
           pendingAction?.kind === "watch-toggle"
-            ? (pendingAction.enabled ? "開啟 MinIO 自動偵測" : "關閉 MinIO 自動偵測")
-            : pendingAction?.kind === "prioritize" ? "插隊到佇列最前" : "重新派工此 job"
+            ? (pendingAction.enabled ? t("開啟 MinIO 自動偵測", "Enable MinIO auto-detection") : t("關閉 MinIO 自動偵測", "Disable MinIO auto-detection"))
+            : pendingAction?.kind === "prioritize" ? t("插隊到佇列最前", "Move to the front of the queue") : t("重新派工此 job", "Re-dispatch this job")
         }
         cost={
           pendingAction?.kind === "watch-toggle"
             ? (pendingAction.enabled
-                ? "恢復輪詢 MinIO；偵測到新 model.ifc 會自動進件並派工。"
-                : "停止輪詢 MinIO；新上傳的 model.ifc 將不再自動進件，需手動觸發。")
+                ? t("恢復輪詢 MinIO；偵測到新 model.ifc 會自動進件並派工。", "Resume polling MinIO; when a new model.ifc is detected it will be intaken and dispatched automatically.")
+                : t("停止輪詢 MinIO；新上傳的 model.ifc 將不再自動進件，需手動觸發。", "Stop polling MinIO; newly uploaded model.ifc will no longer be intaken automatically and must be triggered manually."))
             : pendingAction?.kind === "prioritize"
-                ? "此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。"
-                : "將重新派工此 job 至轉檔 authority；可能再次失敗。"
+                ? t("此 job 將排到佇列最前、較早派工；其他排隊中 job 順位後移。", "This job will move to the front of the queue and be dispatched sooner; other queued jobs shift back.")
+                : t("將重新派工此 job 至轉檔 authority；可能再次失敗。", "This job will be re-dispatched to the conversion authority; it may fail again.")
         }
         busy={actionBusy}
         actionErr={actionErr}
@@ -964,7 +963,7 @@ export function SessionManagementPage() {
   const load = useCallback(async () => {
     setErr(null);
     try { setRt(await coordinatorClient.runtimeStatus()); }
-    catch (e) { setErr(`未連線 coordinator /api/runtime/status：${String(e)}`); }
+    catch (e) { setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(e)}`); }
   }, []);
   const markTerminating = useCallback((id: string) => {
     setTerminatingIds((prev) => new Set(prev).add(id));
@@ -989,7 +988,7 @@ export function SessionManagementPage() {
       setPendingTerminate(null);
       await load();                                              // 非樂觀：重抓 runtime/status 真狀態
     } catch (e) {
-      setActionErr(`結束 session 失敗：${String(e)}`);          // 誠實錯誤、不關 dialog、不改狀態
+      setActionErr(`${t("結束 session 失敗：", "Failed to terminate session: ")}${String(e)}`);          // 誠實錯誤、不關 dialog、不改狀態
     } finally {
       actionBusyRef.current = false;
       setActionBusy(false);
@@ -999,14 +998,14 @@ export function SessionManagementPage() {
   const sessions = rt?.sessions.items ?? [];
   return (
     <>
-      <h1>Session 管理 · Primary / Spectator ATC</h1>
-      <p className="ec-lead">每個 endpoint 像 runway，每個 primary / spectator viewer 像飛機。Open URL 不等於 occupied；occupied 必須有 browser first frame / heartbeat / stage match evidence。</p>
-      <Panel title="Endpoint readiness rules" sub="port listening != has frame" prov="asbuilt" actions={<Btn data-testid="sessions-refresh" caption="GET /api/runtime/status" onClick={load}>重新整理</Btn>}>
+      <h1>{t("Session 管理 · Primary / Spectator ATC", "Session Management · Primary / Spectator ATC")}</h1>
+      <p className="ec-lead">{t("每個 endpoint 像 runway，每個 primary / spectator viewer 像飛機。Open URL 不等於 occupied；occupied 必須有 browser first frame / heartbeat / stage match evidence。", "Each endpoint is like a runway, each primary / spectator viewer like a plane. Open URL does not equal occupied; occupied requires browser first frame / heartbeat / stage match evidence.")}</p>
+      <Panel title="Endpoint readiness rules" sub="port listening != has frame" prov="asbuilt" actions={<Btn data-testid="sessions-refresh" caption="GET /api/runtime/status" onClick={load}>{t("重新整理", "Refresh")}</Btn>}>
         {err && <p className="ec-warn-note">{err}</p>}
         <div className="ec-grid">
-          <Field k="Open primary URL" v="只代表 browser 被導向，不代表 endpoint occupied" prov="asbuilt" />
-          <Field k="Open spectator URL" v="只代表 spectator link 已產生，不代表 first frame" prov="asbuilt" />
-          <Field k="occupied" v="必須等 browser first_frame_at + heartbeat" prov="p1" />
+          <Field k="Open primary URL" v={t("只代表 browser 被導向，不代表 endpoint occupied", "Only means the browser was redirected, not that the endpoint is occupied")} prov="asbuilt" />
+          <Field k="Open spectator URL" v={t("只代表 spectator link 已產生，不代表 first frame", "Only means a spectator link was generated, not that there is a first frame")} prov="asbuilt" />
+          <Field k="occupied" v={t("必須等 browser first_frame_at + heartbeat", "Requires browser first_frame_at + heartbeat")} prov="p1" />
           <Field k="stage matched" v="expected_stage_url == loaded stage URL" prov="p1" />
         </div>
       </Panel>
@@ -1025,23 +1024,23 @@ export function SessionManagementPage() {
                 <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
                   <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
                   <td>{s.status === "active" && !terminating ? (
-                    <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>結束 session</Btn>
-                  ) : <span className="ec-note">{terminating ? "結束中…" : "—"}</span>}</td>
+                    <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
+                  ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}</td>
                 </tr>
               );
             })}</tbody></table>
-        ) : <p className="ec-note">目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。</p>}
+        ) : <p className="ec-note">{t("目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。", "Runtime status currently has no active session; the endpoint pool below illustrates governance rules.")}</p>}
       </Panel>
-      <Panel title="Controlled actions" sub="per-row「結束 session」已落地（IX-SS-04，見上表）；Reclaim stale spectator / Force release 待 IX-SS-02 心跳遙測，維持 disabled（不提供假按鈕）" prov="p1">
+      <Panel title="Controlled actions" sub={t("per-row「結束 session」已落地（IX-SS-04，見上表）；Reclaim stale spectator / Force release 待 IX-SS-02 心跳遙測，維持 disabled（不提供假按鈕）", "Per-row \"Terminate session\" is implemented (IX-SS-04, see table above); Reclaim stale spectator / Force release await IX-SS-02 heartbeat telemetry and stay disabled (no fake buttons)")} prov="p1">
         <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open primary URL</Btn>{" "}
         <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open spectator URL</Btn>{" "}
-        <Btn disabled caption="Phase 1 read-only：stale spectator reclaim 待接" prov="p1">Reclaim stale spectator</Btn>{" "}
+        <Btn disabled caption={t("Phase 1 read-only：stale spectator reclaim 待接", "Phase 1 read-only: stale spectator reclaim not built")} prov="p1">Reclaim stale spectator</Btn>{" "}
         <Btn disabled caption="requires explicit reason + audited intent to Kit Manager" prov="p1">Force release / restart primary</Btn>
       </Panel>
       <IntentDialog
         open={pendingTerminate != null}
-        title="結束 session"
-        cost="將結束此 session 並釋放其 Kit 座位，座位可被新 viewer 取用。這不會強制關閉 GPU 上的 Kit 行程（Kit 行程 lifecycle 屬 kit-manager-api）。結束＝協作式 close 的 operator 觸發。"
+        title={t("結束 session", "Terminate session")}
+        cost={t("將結束此 session 並釋放其 Kit 座位，座位可被新 viewer 取用。這不會強制關閉 GPU 上的 Kit 行程（Kit 行程 lifecycle 屬 kit-manager-api）。結束＝協作式 close 的 operator 觸發。", "This will terminate the session and release its Kit seat, which can then be taken by a new viewer. It does not force-kill the Kit process on the GPU (Kit process lifecycle belongs to kit-manager-api). Terminate = operator-triggered cooperative close.")}
         busy={actionBusy}
         actionErr={actionErr}
         onConfirm={runTerminate}
@@ -1054,22 +1053,22 @@ export function SessionManagementPage() {
 export function KitGpuFleetPage() {
   return (
     <>
-      <h1>Kit / GPU 機隊</h1>
-      <p className="ec-lead">此頁是 runtime operator 的機隊視角：哪台 GPU 在服務哪個 Kit stream，哪台可接新 session，哪些節點 drain，哪些 restart/release 必須由 Kit Manager 執行。</p>
-      <Panel title="Fleet model" sub="Coordinator 顯示治理狀態，不直接管理 GPU process" prov="asbuilt">
+      <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>
+      <p className="ec-lead">{t("此頁是 runtime operator 的機隊視角：哪台 GPU 在服務哪個 Kit stream，哪台可接新 session，哪些節點 drain，哪些 restart/release 必須由 Kit Manager 執行。", "This page is the runtime operator's fleet view: which GPU serves which Kit stream, which can accept a new session, which nodes are draining, and which restart/release must be executed by the Kit Manager.")}</p>
+      <Panel title="Fleet model" sub={t("Coordinator 顯示治理狀態，不直接管理 GPU process", "Coordinator shows governance state and does not directly manage the GPU process")} prov="asbuilt">
         <div className="ec-grid">
-          <MiniCard code="1 GPU" title="1 GPU = 1 Kit stream" desc="primary 使用獨立 Kit stream；spectator 預設共享同一 stream，除非未來需求是獨立視角。" prov="asbuilt" />
-          <MiniCard code="drain" title="排空不接新 session" desc="drain 後 existing session 可跑完；新 session 不再派到該節點。" prov="p1" />
-          <MiniCard code="move" title="搬移不是無縫遷移" desc="拖 session 到另一台 GPU 表示 terminate + recreate，約 30-40s 並重載 stage。" prov="p1" />
+          <MiniCard code="1 GPU" title="1 GPU = 1 Kit stream" desc={t("primary 使用獨立 Kit stream；spectator 預設共享同一 stream，除非未來需求是獨立視角。", "Primary uses a dedicated Kit stream; spectators share the same stream by default unless a future requirement needs independent views.")} prov="asbuilt" />
+          <MiniCard code="drain" title={t("排空不接新 session", "Drain accepts no new session")} desc={t("drain 後 existing session 可跑完；新 session 不再派到該節點。", "After drain, existing sessions can finish; new sessions are no longer assigned to that node.")} prov="p1" />
+          <MiniCard code="move" title={t("搬移不是無縫遷移", "Move is not seamless migration")} desc={t("拖 session 到另一台 GPU 表示 terminate + recreate，約 30-40s 並重載 stage。", "Dragging a session to another GPU means terminate + recreate, about 30-40s and reloading the stage.")} prov="p1" />
         </div>
       </Panel>
-      <Panel title="Node snapshot" sub="實際 GPU/VRAM 遙測仍需 kit-manager-api / runtime manager 提供" prov="demo">
+      <Panel title="Node snapshot" sub={t("實際 GPU/VRAM 遙測仍需 kit-manager-api / runtime manager 提供", "Actual GPU/VRAM telemetry still needs to be provided by kit-manager-api / runtime manager")} prov="demo">
         <table className="ec-table"><thead><tr><th>node</th><th>GPU</th><th>state</th><th>operation</th></tr></thead><tbody>
           <tr><td>edge-gpu-01</td><td>L40 · 48GB</td><td>running · S-270</td><td>drain / restart intent</td></tr>
           <tr><td>edge-gpu-02</td><td>L40 · 48GB</td><td>running · S-899</td><td>drain / restart intent</td></tr>
           <tr><td>edge-gpu-03</td><td>RTX 6000 · 48GB</td><td>idle</td><td>assign pending session</td></tr>
         </tbody></table>
-        <p className="ec-note">此表為 prototype fleet model 的 UI evidence；真實 restart/release 必須送 audited intent 給 Kit Manager，不能由 coordinator/browser 直接做。</p>
+        <p className="ec-note">{t("此表為 prototype fleet model 的 UI evidence；真實 restart/release 必須送 audited intent 給 Kit Manager，不能由 coordinator/browser 直接做。", "This table is UI evidence of the prototype fleet model; real restart/release must send an audited intent to the Kit Manager and cannot be done directly by coordinator/browser.")}</p>
       </Panel>
     </>
   );
@@ -1103,28 +1102,27 @@ export function MinioDataPage() {
 
   return (
     <>
-      <h1>MinIO 資料</h1>
+      <h1>{t("MinIO 資料", "MinIO Data")}</h1>
       <p className="ec-lead">
-        資料頁讓 operator 看懂 project / model / version / files 關係；它不是完整 S3 browser。
-        目前為 local file-server 來源（比照 <code>bim-control/{"{projectId}"}/{"{modelId}"}</code> 規約）；真 S3/MinIO 待接。
+        {t("資料頁讓 operator 看懂 project / model / version / files 關係；它不是完整 S3 browser。 目前為 local file-server 來源（比照 ", "The data page lets the operator understand the project / model / version / files relationships; it is not a full S3 browser. Currently the source is a local file-server (following the ")}<code>bim-control/{"{projectId}"}/{"{modelId}"}</code>{t(" 規約）；真 S3/MinIO 待接。", " convention); real S3/MinIO not built.")}
       </p>
 
       <Panel
-        title="檔案庫 · file library（真實樹）"
-        sub={tree ? `source_kind=${tree.source_kind} · root=${tree.root}` : "local file-server 來源（比照 bim-control 規約）；真 S3/MinIO 待接"}
+        title={t("檔案庫 · file library（真實樹）", "File library · file library (real tree)")}
+        sub={tree ? `source_kind=${tree.source_kind} · root=${tree.root}` : t("local file-server 來源（比照 bim-control 規約）；真 S3/MinIO 待接", "local file-server source (following the bim-control convention); real S3/MinIO not built")}
         prov="asbuilt"
       >
-        {loading && <p className="ec-note">載入中…（GET /api/governance/files/tree）</p>}
+        {loading && <p className="ec-note">{t("載入中…（GET /api/governance/files/tree）", "Loading… (GET /api/governance/files/tree)")}</p>}
         {err && (
           <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span>未連線後端（coordinator / governance-service 需啟動）：{err}</span>
+            <span>{t("未連線後端（coordinator / governance-service 需啟動）：", "Backend not connected (coordinator / governance-service must be running): ")}{err}</span>
             <Btn data-testid="minio-tree-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadTree(); }}>
-              重試
+              {t("重試", "Retry")}
             </Btn>
           </div>
         )}
         {!loading && !err && projectCount === 0 && (
-          <p className="ec-note">檔案庫為空：未在 root 下找到 <code>{"{projectId}"}/{"{modelId}"}/*.ifc</code> 兩層結構（檢查 BIM_FILE_LIBRARY_ROOT）。</p>
+          <p className="ec-note">{t("檔案庫為空：未在 root 下找到 ", "File library is empty: no ")}<code>{"{projectId}"}/{"{modelId}"}/*.ifc</code>{t(" 兩層結構（檢查 BIM_FILE_LIBRARY_ROOT）。", " two-level structure found under root (check BIM_FILE_LIBRARY_ROOT).")}</p>
         )}
         {tree && projectCount > 0 && (
           <div className="ec-tree">
@@ -1148,21 +1146,21 @@ export function MinioDataPage() {
         )}
       </Panel>
 
-      <Panel title="Bucket layout（規約示意）" sub="bim-control private bucket · project/model/version/files（示意，非實況）" prov="demo">
+      <Panel title={t("Bucket layout（規約示意）", "Bucket layout (convention illustration)")} sub={t("bim-control private bucket · project/model/version/files（示意，非實況）", "bim-control private bucket · project/model/version/files (DEMO DATA, not live)")} prov="demo">
         <div className="ec-tree">
           <div>bim-control/</div>
           <div className="indent">{"{projectId}"}/</div>
           <div className="indent two">{"{modelId}"}/version/files/</div>
           <div className="indent three"><span className="ec-tree-file">model.usdc</span> <span className="ec-note">expected generated output after conversion</span> <ProvTag prov="p1" /></div>
         </div>
-        <p className="ec-note">此 Panel 為 MinIO bucket 規約示意（示範資料）；<code>model.usdc</code> 為轉檔產物，後端待建（p1），不因本頁翻綠。</p>
+        <p className="ec-note">{t("此 Panel 為 MinIO bucket 規約示意（示範資料）；", "This panel illustrates the MinIO bucket convention (DEMO DATA); ")}<code>model.usdc</code>{t(" 為轉檔產物，後端待建（p1），不因本頁翻綠。", " is a conversion output, backend not built (p1), and this page does not mark it green.")}</p>
       </Panel>
 
-      <Panel title="與功能頁的關係" prov="asbuilt">
-        <Field k="A1" v="rule-run 讀檔案庫選定的 IFC（version.path → ifc_source_path）" prov="asbuilt" />
-        <Field k="A2" v="versions / diff compare 需要版本路徑與 model_version_id" prov="asbuilt" />
-        <Field k="A3" v="federation 需要多專業 USD layer / stage paths" prov="asbuilt" />
-        <Field k="3D Viewer" v="openStage 使用 generated model.usdc / model.usd URL" prov="asbuilt" />
+      <Panel title={t("與功能頁的關係", "Relationship to feature pages")} prov="asbuilt">
+        <Field k="A1" v={t("rule-run 讀檔案庫選定的 IFC（version.path → ifc_source_path）", "rule-run reads the IFC selected from the file library (version.path → ifc_source_path)")} prov="asbuilt" />
+        <Field k="A2" v={t("versions / diff compare 需要版本路徑與 model_version_id", "versions / diff compare need the version path and model_version_id")} prov="asbuilt" />
+        <Field k="A3" v={t("federation 需要多專業 USD layer / stage paths", "federation needs multi-discipline USD layer / stage paths")} prov="asbuilt" />
+        <Field k="3D Viewer" v={t("openStage 使用 generated model.usdc / model.usd URL", "openStage uses the generated model.usdc / model.usd URL")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -1171,8 +1169,8 @@ export function MinioDataPage() {
 export function ReportsPage() {
   return (
     <StubPage
-      title="報表中心"
-      note="把治理檢核、版本差異、mapping coverage、FM / clash summary 收成可交付文件。"
+      title={t("報表中心", "Report Center")}
+      note={t("把治理檢核、版本差異、mapping coverage、FM / clash summary 收成可交付文件。", "Collect governance validation, version diff, mapping coverage and FM / clash summary into deliverable documents.")}
       items={[
         ["Governance report", "A1 rule-run / Issue / BCF / Excel", "asbuilt"],
         ["Version diff summary", "A2 diff impact report", "asbuilt"],
@@ -1186,12 +1184,12 @@ export function ReportsPage() {
 export function AdminPage() {
   return (
     <StubPage
-      title="系統管理"
-      note="RBAC、ruleset、runtime policy 的管理面。此頁不直接刪資料、不改機密、不直接 restart GPU process。"
+      title={t("系統管理", "System Administration")}
+      note={t("RBAC、ruleset、runtime policy 的管理面。此頁不直接刪資料、不改機密、不直接 restart GPU process。", "Management surface for RBAC, ruleset and runtime policy. This page does not directly delete data, change secrets, or restart the GPU process.")}
       items={[
-        ["RBAC / members", "待接 control-plane identity", "p1"],
-        ["Rulesets", "A1 IDS / YAML ruleset 管理", "p1"],
-        ["Runtime policy", "restart / release 必須 reason + audit", "p1"],
+        ["RBAC / members", t("待接 control-plane identity", "control-plane identity not built"), "p1"],
+        ["Rulesets", t("A1 IDS / YAML ruleset 管理", "A1 IDS / YAML ruleset management"), "p1"],
+        ["Runtime policy", t("restart / release 必須 reason + audit", "restart / release require reason + audit"), "p1"],
       ]}
     />
   );
@@ -1200,10 +1198,10 @@ export function AdminPage() {
 export function SpecPage() {
   return (
     <>
-      <h1>設計規格說明</h1>
-      <p className="ec-lead">此頁保留 prototype 到 repo 的落地對照：完整操作台是 frontend product shell；conversion / Kit / WebRTC / MinIO 權威仍在各自 repo 邊界。</p>
+      <h1>{t("設計規格說明", "Design Specification")}</h1>
+      <p className="ec-lead">{t("此頁保留 prototype 到 repo 的落地對照：完整操作台是 frontend product shell；conversion / Kit / WebRTC / MinIO 權威仍在各自 repo 邊界。", "This page keeps the prototype-to-repo mapping: the full console is the frontend product shell; conversion / Kit / WebRTC / MinIO authority still lives within their respective repo boundaries.")}</p>
       <Panel title="Repo boundary contract" prov="asbuilt">
-        <Field k="bim-review-coordinator" v="session / lifecycle / lease / audit / policy 權威；發 audited intent" prov="asbuilt" />
+        <Field k="bim-review-coordinator" v={t("session / lifecycle / lease / audit / policy 權威；發 audited intent", "session / lifecycle / lease / audit / policy authority; issues audited intent")} prov="asbuilt" />
         <Field k="bim-streaming-server" v="IFC→USDC conversion authority + Kit/WebRTC/USD runtime" prov="asbuilt" />
         <Field k="web-viewer-sample" v="browser client / primary + spectator evidence source" prov="asbuilt" />
         <Field k="kit-manager-api" v="Kit process / endpoint pool / restart / release executor" prov="p1" />
@@ -1216,9 +1214,9 @@ export function GpuReviewRoomPage() {
   return (
     <>
       <ReviewRoomPage />
-      <Panel title="GPU 審查室補充" sub="prototype 的 GPU review room 是 viewer + runtime evidence，不是另開一個 renderer" prov="asbuilt">
-        <Field k="Mock Viewport" v="沒有真實 WebRTC first frame 時顯示 deterministic no-GPU，不宣稱 live 3D" prov="asbuilt" />
-        <Field k="Primary / Spectator" v="viewer role 與 first frame evidence 由 browser 回報" prov="p1" />
+      <Panel title={t("GPU 審查室補充", "GPU Review Room Notes")} sub={t("prototype 的 GPU review room 是 viewer + runtime evidence，不是另開一個 renderer", "The prototype's GPU review room is viewer + runtime evidence, not a separate renderer")} prov="asbuilt">
+        <Field k="Mock Viewport" v={t("沒有真實 WebRTC first frame 時顯示 deterministic no-GPU，不宣稱 live 3D", "Shows deterministic no-GPU when there is no real WebRTC first frame, without claiming live 3D")} prov="asbuilt" />
+        <Field k="Primary / Spectator" v={t("viewer role 與 first frame evidence 由 browser 回報", "viewer role and first frame evidence are reported by the browser")} prov="p1" />
       </Panel>
     </>
   );
@@ -1235,7 +1233,7 @@ function CopyGuidBtn({ guid }: { guid: string }) {
       type="button"
       className="ec-btn"
       style={{ padding: "1px 6px", fontSize: 11 }}
-      title="複製 ifc_guid"
+      title={t("複製 ifc_guid", "Copy ifc_guid")}
       onClick={() => {
         // navigator.clipboard 在非安全內容（http LAN）可能不存在 → 誠實降級，不假裝已複製。
         const clip = (navigator as { clipboard?: { writeText: (t: string) => Promise<void> } }).clipboard;
@@ -1246,7 +1244,7 @@ function CopyGuidBtn({ guid }: { guid: string }) {
         });
       }}
     >
-      {copied ? "已複製" : "複製"}
+      {copied ? t("已複製", "Copied") : t("複製", "Copy")}
     </button>
   );
 }
@@ -1301,12 +1299,12 @@ export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; rule
         style={{ width: "100%", justifyContent: "space-between", display: "flex" }}
         onClick={toggle}
       >
-        <span><strong>{ruleCode}</strong> · {count} 筆失敗</span>
+        <span><strong>{ruleCode}</strong> · {count} {t("筆失敗", "failures")}</span>
         <span>{open ? "▾" : "▸"}</span>
       </button>
       {open && (
         <div style={{ marginTop: 8 }}>
-          {err && <p className="ec-warn-note">載入失敗構件失敗：{err}</p>}
+          {err && <p className="ec-warn-note">{t("載入失敗構件失敗：", "Failed to load failed elements: ")}{err}</p>}
           {rows.length > 0 && (
             <table className="ec-table">
               <thead><tr><th>ifc_guid</th><th>ifc_name</th><th>ifc_type</th><th>storey</th><th></th></tr></thead>
@@ -1323,10 +1321,10 @@ export function FailureRuleRow({ runId, ruleCode, count }: { runId: string; rule
               </tbody>
             </table>
           )}
-          {loading && <span className="ec-s">載入中…（GET /api/governance/rule-runs/:id/failures）</span>}
+          {loading && <span className="ec-s">{t("載入中…（GET /api/governance/rule-runs/:id/failures）", "Loading… (GET /api/governance/rule-runs/:id/failures)")}</span>}
           {!loading && canLoadMore && (
-            <Btn data-testid={`a1-fail-more-${ruleCode}`} caption={`已載 ${rows.length}/${total}`} onClick={() => { void loadPage(rows.length); }}>
-              載入更多
+            <Btn data-testid={`a1-fail-more-${ruleCode}`} caption={`${t("已載 ", "loaded ")}${rows.length}/${total}`} onClick={() => { void loadPage(rows.length); }}>
+              {t("載入更多", "Load more")}
             </Btn>
           )}
         </div>
@@ -1344,7 +1342,7 @@ function FailureScoreboard({ runId, failed }: { runId: string; failed: RuleResul
   return (
     <div data-testid="a1-failures-by-rule" style={{ marginTop: 12 }}>
       <p className="ec-note" style={{ marginBottom: 4 }}>
-        失敗規則（點擊展開命中構件，懶載入分頁，補樓層、GUID 可複製）：
+        {t("失敗規則（點擊展開命中構件，懶載入分頁，補樓層、GUID 可複製）：", "Failed rules (click to expand matched elements; lazy-loaded paging, storey backfill, copyable GUID):")}
       </p>
       {rules.map(([code, count]) => (
         // key 含 runId:重跑同一規則 code 但換 runId 時,React 須建新 instance,
@@ -1432,29 +1430,28 @@ export function IssuesRuleCenterPage() {
 
   return (
     <>
-      <h1>問題與語意驗收 · Issues & Rule Center（A1）</h1>
+      <h1>{t("問題與語意驗收 · Issues & Rule Center（A1）", "Issues & Semantic Validation · Issues & Rule Center (A1)")}</h1>
       <p className="ec-lead">
-        A1 治理與模型檢核：對真實 IFC 跑宣告式規則集，產出 governance score 與帶真實 ifc_guid 的失敗構件。
-        規則引擎為純 CPU host-native ifcopenshell；可選用 buildingSMART IDS（ifctester）規則。
+        {t("A1 治理與模型檢核：對真實 IFC 跑宣告式規則集，產出 governance score 與帶真實 ifc_guid 的失敗構件。規則引擎為純 CPU host-native ifcopenshell；可選用 buildingSMART IDS（ifctester）規則。", "A1 governance & model validation: run a declarative rule set against a real IFC to produce a governance score and failed elements carrying real ifc_guid. The rule engine is pure CPU host-native ifcopenshell; buildingSMART IDS (ifctester) rules are optional.")}
       </p>
 
-      <Panel title="A1 rule-run authority" sub="governance-service :49102（經 coordinator proxy）" prov="asbuilt">
-        <p className="ec-note">後端已實作並以真實 IFC 驗證（見下方 artifact）。本頁經 coordinator <code>/api/governance/*</code> proxy 觸發實時 rule-run。</p>
+      <Panel title="A1 rule-run authority" sub={t("governance-service :49102（經 coordinator proxy）", "governance-service :49102 (via coordinator proxy)")} prov="asbuilt">
+        <p className="ec-note">{t("後端已實作並以真實 IFC 驗證（見下方 artifact）。本頁經 coordinator ", "Backend is implemented and verified with a real IFC (see artifact below). This page triggers a live rule-run via the coordinator ")}<code>/api/governance/*</code>{t(" proxy 觸發實時 rule-run。", " proxy.")}</p>
         <div className="ec-grid" style={{ marginBottom: 10 }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="rule_run_status" v={busy ? "running" : run?.status ?? "idle"} prov="asbuilt" />
         </div>
         <div className="ec-field" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginBottom: 8 }}>
-          <span className="ec-k">從檔案庫選擇 <ProvTag prov="asbuilt" /></span>
+          <span className="ec-k">{t("從檔案庫選擇", "Select from file library")} <ProvTag prov="asbuilt" /></span>
           {fsErr && (
             <span className="ec-warn-note" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span>檔案庫不可用（{fsErr}）；可改用下方手動輸入路徑。</span>
+              <span>{t("檔案庫不可用（", "File library not available (")}{fsErr}{t("）；可改用下方手動輸入路徑。", "); you can manually enter a path below instead.")}</span>
               <Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>
-                重試載入檔案庫
+                {t("重試載入檔案庫", "Retry loading file library")}
               </Btn>
             </span>
           )}
-          {!fsErr && !fsTree && <span className="ec-s">載入檔案庫中…（GET /api/governance/files/tree）</span>}
+          {!fsErr && !fsTree && <span className="ec-s">{t("載入檔案庫中…（GET /api/governance/files/tree）", "Loading file library… (GET /api/governance/files/tree)")}</span>}
           {/* 三層 select 恆渲染（含 SSR 首幀）；未載入前 disabled 且只有 placeholder option —
               誠實標示「還沒有可選項」，手動輸入照常可用，檔案庫不可用時 graceful degrade。 */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1465,7 +1462,7 @@ export function IssuesRuleCenterPage() {
               disabled={!fsTree}
               onChange={(e) => { setSelProject(e.target.value); setSelModel(""); resetVersionPick(); }}
             >
-              <option value="">專案…</option>
+              <option value="">{t("專案…", "Project…")}</option>
               {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
             </select>
             <select
@@ -1475,7 +1472,7 @@ export function IssuesRuleCenterPage() {
               disabled={!selProject}
               onChange={(e) => { setSelModel(e.target.value); resetVersionPick(); }}
             >
-              <option value="">模型…</option>
+              <option value="">{t("模型…", "Model…")}</option>
               {fsModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
             </select>
             <select
@@ -1495,7 +1492,7 @@ export function IssuesRuleCenterPage() {
                 }
               }}
             >
-              <option value="">版本…（選定填入路徑）</option>
+              <option value="">{t("版本…（選定填入路徑）", "Version… (selecting fills in the path)")}</option>
               {fsVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
             </select>
           </div>
@@ -1503,17 +1500,17 @@ export function IssuesRuleCenterPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 420 }} value={ifcPath} onChange={(e) => setIfcPath(e.target.value)} />
           <Btn primary disabled={busy} caption="POST /api/governance/rule-runs" onClick={doRun}>
-            {busy ? "執行中…" : "執行規則檢核"}
+            {busy ? t("執行中…", "Running…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-          <input className="ec-btn" style={{ minWidth: 420 }} placeholder="（選填）buildingSMART IDS .ids 路徑 — 改用 ifctester 跑" value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
-          <span className="ec-s">填 IDS 則以 IDS 規則跑（否則用內建 YAML 規則集）</span>
+          <input className="ec-btn" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑 — 改用 ifctester 跑", "(optional) buildingSMART IDS .ids path — runs via ifctester instead")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
+          <span className="ec-s">{t("填 IDS 則以 IDS 規則跑（否則用內建 YAML 規則集）", "If an IDS is provided, IDS rules are used (otherwise the built-in YAML rule set)")}</span>
         </div>
-        {err && <p className="ec-warn-note">未連線後端（proxy / governance-service 需啟動）：{err}</p>}
+        {err && <p className="ec-warn-note">{t("未連線後端（proxy / governance-service 需啟動）：", "Backend not connected (proxy / governance-service must be running): ")}{err}</p>}
         {run && (
           <div className="ec-grid" data-testid="a1-rulerun-scoreboard" style={{ marginTop: 12 }}>
-            <Metric value={run.summary?.total ?? "—"} label="評估構件" />
+            <Metric value={run.summary?.total ?? "—"} label={t("評估構件", "Evaluated Elements")} />
             <Metric value={run.summary?.passed ?? "—"} label="passed" />
             <Metric value={run.summary?.failed ?? "—"} label="failed" tone="warn" />
             <Metric value={run.score ?? "—"} label="score" />
@@ -1527,7 +1524,7 @@ export function IssuesRuleCenterPage() {
             setErr(null);
             try {
               const res = await fetch(governanceClient.exportUrl(runId));
-              if (!res.ok) { setErr(`Excel 匯出 ${res.status}：${res.statusText}`); return; }
+              if (!res.ok) { setErr(`${t("Excel 匯出 ", "Excel export ")}${res.status}：${res.statusText}`); return; }
               const blob = await res.blob();
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
@@ -1540,55 +1537,53 @@ export function IssuesRuleCenterPage() {
               // 延後釋放 object URL：同步 revoke 會在瀏覽器開始讀取 blob 前就釋放，導致（尤其較大檔）下載被中止（CodeRabbit）。
               setTimeout(() => URL.revokeObjectURL(url), 0);
             } catch (e) { setErr(String(e)); }
-          }}>匯出 Excel</Btn>
+          }}>{t("匯出 Excel", "Export Excel")}</Btn>
           {/* [在 3D 中標示]：console 為 /console 獨立殼層，與 viewer <App/> 互斥掛載，無 WebRTC
               DataChannel；highlightPrimsRequest 需 viewer DataChannel（Window 內），此鏈未接 →
               誠實標 p1（後續整合），永遠 disabled，不做點了沒反應的假按鈕。 */}
-          <Btn prov="p1" disabled caption="需 viewer DataChannel（highlightPrimsRequest）— 後續整合">在 3D 中標示</Btn>
+          <Btn prov="p1" disabled caption={t("需 viewer DataChannel（highlightPrimsRequest）— 後續整合", "Requires the viewer DataChannel (highlightPrimsRequest) — later integration")}>{t("在 3D 中標示", "Highlight in 3D")}</Btn>
         </div>
         {/* A1 §4.2 失敗構件抽屜：取代舊扁平表（failed.slice(0,30)）。按規則分組、可展開、
             懶載入分頁 getFailures、補樓層、GUID 一鍵複製；全過規則不在此列。 */}
         {runId && failed.length > 0 && <FailureScoreboard runId={runId} failed={failed} />}
         <p className="ec-note" style={{ marginTop: 8 }}>
-          [匯出 Excel] 為真實下載（openpyxl，asbuilt）。[在 3D 中標示] 需 viewer 的 WebRTC DataChannel
-          （<code>highlightPrimsRequest</code>）；Edge Console 為 <code>/console</code> 獨立殼層，與 viewer 互斥掛載、
-          目前無 DataChannel，故誠實標 <code>p1</code>（後續整合），未對映 <code>usd_prim_path=null</code> 本就無法標示。
+          {t("[匯出 Excel] 為真實下載（openpyxl，asbuilt）。[在 3D 中標示] 需 viewer 的 WebRTC DataChannel（", "[Export Excel] is a real download (openpyxl, asbuilt). [Highlight in 3D] requires the viewer's WebRTC DataChannel (")}<code>highlightPrimsRequest</code>{t("）；Edge Console 為 ", "); the Edge Console is the ")}<code>/console</code>{t(" 獨立殼層，與 viewer 互斥掛載、目前無 DataChannel，故誠實標 ", " standalone shell, mutually exclusive with the viewer and currently without a DataChannel, so it is honestly marked ")}<code>p1</code>{t("（後續整合），未對映 ", " (later integration); elements not mapped to ")}<code>usd_prim_path=null</code>{t(" 本就無法標示。", " cannot be highlighted anyway.")}
         </p>
       </Panel>
 
-      <Panel title="語意驗收訊號 · 真實 IFC 實測" sub={`${A1_EVIDENCE.file} · ${A1_EVIDENCE.schema} · ${A1_EVIDENCE.date}`} prov="artifact">
+      <Panel title={t("語意驗收訊號 · 真實 IFC 實測", "Semantic validation signal · measured on a real IFC")} sub={`${A1_EVIDENCE.file} · ${A1_EVIDENCE.schema} · ${A1_EVIDENCE.date}`} prov="artifact">
         <div className="ec-grid">
-          <Metric value={A1_EVIDENCE.total} label="評估構件" />
+          <Metric value={A1_EVIDENCE.total} label={t("評估構件", "Evaluated Elements")} />
           <Metric value={A1_EVIDENCE.passed} label="passed" />
           <Metric value={A1_EVIDENCE.failed} label="failed" tone="warn" />
           <Metric value={A1_EVIDENCE.score} label="score" />
         </div>
-        <p className="ec-note">實測值來自 commit 進 repo 的 evidence（CPU ~6s，無 GPU）；非示範、非捏造。</p>
+        <p className="ec-note">{t("實測值來自 commit 進 repo 的 evidence（CPU ~6s，無 GPU）；非示範、非捏造。", "Measured values come from evidence committed into the repo (CPU ~6s, no GPU); not a demo, not fabricated.")}</p>
       </Panel>
 
-      <Panel title="規則集 · rule set" prov="asbuilt">
+      <Panel title={t("規則集 · rule set", "Rule set · rule set")} prov="asbuilt">
         <Field k="DOOR-FIRERATING-REQUIRED" v="IfcDoor · Pset_DoorCommon.FireRating" prov="asbuilt" />
         <Field k="ELEMENT-NAME-REQUIRED" v="IfcBuildingElement/IfcBuiltElement · Name" prov="asbuilt" />
-        <Field k="WALL-STOREY-ASSIGNED" v="IfcWall · 空間指派" prov="asbuilt" />
-        <Field k="IDS-XML 匯入（buildingSMART IDS）" v="已實作（ifctester 0.8.5；填 IDS 路徑即用 IDS 規則跑）" prov="asbuilt" />
-        <Field k="Excel 匯出" v="openpyxl" prov="asbuilt" />
-        <Field k="BCF 匯出（issue→.bcfzip）" v="已實作（純 stdlib zipfile/ElementTree，不依賴 GPLv3）" prov="asbuilt" />
-        <Field k="Issue 生命週期資料庫" v="open→assigned→resolved/rejected→reopened + audit" prov="asbuilt" />
+        <Field k="WALL-STOREY-ASSIGNED" v={t("IfcWall · 空間指派", "IfcWall · spatial assignment")} prov="asbuilt" />
+        <Field k={t("IDS-XML 匯入（buildingSMART IDS）", "IDS-XML import (buildingSMART IDS)")} v={t("已實作（ifctester 0.8.5；填 IDS 路徑即用 IDS 規則跑）", "Implemented (ifctester 0.8.5; provide an IDS path to run with IDS rules)")} prov="asbuilt" />
+        <Field k={t("Excel 匯出", "Excel export")} v="openpyxl" prov="asbuilt" />
+        <Field k={t("BCF 匯出（issue→.bcfzip）", "BCF export (issue→.bcfzip)")} v={t("已實作（純 stdlib zipfile/ElementTree，不依賴 GPLv3）", "Implemented (pure stdlib zipfile/ElementTree, no GPLv3 dependency)")} prov="asbuilt" />
+        <Field k={t("Issue 生命週期資料庫", "Issue lifecycle database")} v="open→assigned→resolved/rejected→reopened + audit" prov="asbuilt" />
       </Panel>
 
       <Panel
         title="Issue Center"
-        sub="rule-run 失敗構件 → issue（綁 ifc_guid，BCF rule 3/10：無 guid 僅視覺標註）"
+        sub={t("rule-run 失敗構件 → issue（綁 ifc_guid，BCF rule 3/10：無 guid 僅視覺標註）", "rule-run failed elements → issue (bound to ifc_guid; BCF rule 3/10: without a guid, only a visual annotation)")}
         prov="asbuilt"
-        actions={<Btn caption="POST from-rule-run" disabled={!runId} onClick={makeIssuesFromRun}>失敗構件建 issue</Btn>}
+        actions={<Btn caption="POST from-rule-run" disabled={!runId} onClick={makeIssuesFromRun}>{t("失敗構件建 issue", "Create issues for failed elements")}</Btn>}
       >
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn caption="GET /api/governance/issues" onClick={loadIssues}>載入 issues</Btn>
-          <Btn caption="GET /api/governance/bcf/export（只含正式 issue）" onClick={async () => {
+          <Btn caption="GET /api/governance/issues" onClick={loadIssues}>{t("載入 issues", "Load issues")}</Btn>
+          <Btn caption={t("GET /api/governance/bcf/export（只含正式 issue）", "GET /api/governance/bcf/export (formal issues only)")} onClick={async () => {
             setErr(null);
             try {
               const res = await fetch(governanceClient.bcfExportUrl());
-              if (!res.ok) { setErr(`BCF 匯出 ${res.status}：需至少一個正式 issue（kind=issue 且有 ifc_guid）`); return; }
+              if (!res.ok) { setErr(`${t("BCF 匯出 ", "BCF export ")}${res.status}${t("：需至少一個正式 issue（kind=issue 且有 ifc_guid）", ": at least one formal issue is required (kind=issue with ifc_guid)")}`); return; }
               const blob = await res.blob();
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
@@ -1600,7 +1595,7 @@ export function IssuesRuleCenterPage() {
               // 延後釋放 object URL:同步 revoke 會在瀏覽器開始讀取 blob 前就釋放,導致大 bcfzip 在慢機/Firefox 下載被中止(對齊 Excel/doExport 的延後模式)。
               setTimeout(() => URL.revokeObjectURL(a.href), 0);
             } catch (e) { setErr(String(e)); }
-          }}>匯出 BCF 2.1</Btn>
+          }}>{t("匯出 BCF 2.1", "Export BCF 2.1")}</Btn>
         </div>
         {issues.length > 0 && (
           <table className="ec-table" style={{ marginTop: 10 }}>
@@ -1641,15 +1636,14 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
   );
   return (
     <>
-      <h1>應用導引 · Applications A1–A10</h1>
+      <h1>{t("應用導引 · Applications A1–A10", "Application guide · Applications A1–A10")}</h1>
       <p className="ec-lead">
-        十個應用模組入口。近期重點 A1–A3 為聚焦項（後端已實作、可真實驗證）；A4–A10 為 ROADMAP，
-        標真實 Phase，點卡片開「願景詳頁」（schema/api/ui/mvp/risks），**後端未建、整段標願景**。
+        {t("十個應用模組入口。近期重點 A1–A3 為聚焦項（後端已實作、可真實驗證）；A4–A10 為 ROADMAP，標真實 Phase，點卡片開「願景詳頁」（schema/api/ui/mvp/risks），**後端未建、整段標願景**。", "Entry points to ten application modules. Near-term focus A1–A3 are focus items (backend implemented and really verifiable); A4–A10 are ROADMAP, marked with their real Phase; click a card to open the \"vision detail page\" (schema/api/ui/mvp/risks) — **backend not built, the whole section is marked vision**.")}
       </p>
-      <Panel title="近期重點 · Focus" sub="A1–A3（後端已實作）">
+      <Panel title={t("近期重點 · Focus", "Near-term focus · Focus")} sub={t("A1–A3（後端已實作）", "A1–A3 (backend implemented)")}>
         <div className="ec-grid">{focus.map(Card)}</div>
       </Panel>
-      <Panel title="後期願景 · Roadmap" sub="A4–A10 · Phase 3–4（後端未建，點卡看願景詳頁）">
+      <Panel title={t("後期願景 · Roadmap", "Later vision · Roadmap")} sub={t("A4–A10 · Phase 3–4（後端未建，點卡看願景詳頁）", "A4–A10 · Phase 3–4 (backend not built; click a card to see the vision detail page)")}>
         <div className="ec-grid">{roadmap.map(Card)}</div>
       </Panel>
     </>
@@ -1664,9 +1658,9 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
   if (!d) {
     return (
       <>
-        <h1>未知應用</h1>
-        <p className="ec-lead">找不到 slug=<code>{slug}</code> 的願景詳頁。</p>
-        <Btn caption="回 Applications" onClick={() => onOpen("apps")}>← 回應用導引</Btn>
+        <h1>{t("未知應用", "Unknown application")}</h1>
+        <p className="ec-lead">{t("找不到 slug=", "Could not find the vision detail page for slug=")}<code>{slug}</code>{t(" 的願景詳頁。", ".")}</p>
+        <Btn caption={t("回 Applications", "Back to Applications")} onClick={() => onOpen("apps")}>{t("← 回應用導引", "← Back to application guide")}</Btn>
       </>
     );
   }
@@ -1674,23 +1668,23 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
     <>
       <h1>{d.code} · {d.title}<span style={{ marginLeft: 10 }}><ProvTag prov={d.prov} /></span></h1>
       <p className="ec-lead">{d.en} · Phase {d.phase} · {d.pitch}</p>
-      <Btn caption="回 Applications" onClick={() => onOpen("apps")}>← 回應用導引</Btn>
+      <Btn caption={t("回 Applications", "Back to Applications")} onClick={() => onOpen("apps")}>{t("← 回應用導引", "← Back to application guide")}</Btn>
 
-      <Panel title="目標 · Goal" sub="此應用後端未建；以下為願景規格（roadmap）" prov={d.prov}>
+      <Panel title={t("目標 · Goal", "Goal · Goal")} sub={t("此應用後端未建；以下為願景規格（roadmap）", "This application's backend is not built; the following is a vision spec (roadmap)")} prov={d.prov}>
         <p className="ec-note" style={{ color: "var(--ec-fg-2)" }}>{d.goal}</p>
-        <p className="ec-warn-note">後端未建（vision）：本頁所有 schema / api / 數字皆為願景設計，非本系統真實實測。</p>
+        <p className="ec-warn-note">{t("後端未建（vision）：本頁所有 schema / api / 數字皆為願景設計，非本系統真實實測。", "Backend not built (vision): all schema / api / numbers on this page are vision designs, not real measurements of this system.")}</p>
       </Panel>
 
-      <Panel title="範例情境 · Example scenario" sub="願景敘事（非真實 run），具體數字為原型情境" prov={d.prov}>
-        <Field k="情境" v={d.scenarioHead} prov={d.prov} />
-        <Field k="範例輸出" v={d.scenarioResult} prov={d.prov} />
+      <Panel title={t("範例情境 · Example scenario", "Example scenario · Example scenario")} sub={t("願景敘事（非真實 run），具體數字為原型情境", "Vision narrative (not a real run); concrete numbers are prototype scenarios")} prov={d.prov}>
+        <Field k={t("情境", "Scenario")} v={d.scenarioHead} prov={d.prov} />
+        <Field k={t("範例輸出", "Example output")} v={d.scenarioResult} prov={d.prov} />
       </Panel>
 
-      <Panel title="DB schema（願景設計）" prov={d.prov}>
+      <Panel title={t("DB schema（願景設計）", "DB schema (vision design)")} prov={d.prov}>
         {d.schema.map((s) => <Field key={s.t} k={s.t} v={s.f} prov={d.prov} />)}
       </Panel>
 
-      <Panel title="REST API（願景設計，非已實作 route）" prov={d.prov}>
+      <Panel title={t("REST API（願景設計，非已實作 route）", "REST API (vision design, not implemented routes)")} prov={d.prov}>
         <div>
           {d.api.map((a) => (
             <div className="ec-ep" key={a.u}>
@@ -1700,22 +1694,22 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
             </div>
           ))}
         </div>
-        <p className="ec-warn-note">以上為 roadmap 願景 API 設計；後端尚未實作這些 route（不可當真實端點呼叫）。</p>
+        <p className="ec-warn-note">{t("以上為 roadmap 願景 API 設計；後端尚未實作這些 route（不可當真實端點呼叫）。", "The above is a roadmap vision API design; the backend has not implemented these routes (do not call them as real endpoints).")}</p>
       </Panel>
 
-      <Panel title="UI 面板（願景）" prov={d.prov}>
+      <Panel title={t("UI 面板（願景）", "UI panels (vision)")} prov={d.prov}>
         <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.ui.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
 
-      <Panel title="MVP 驗收條件（願景）" prov={d.prov}>
+      <Panel title={t("MVP 驗收條件（願景）", "MVP acceptance criteria (vision)")} prov={d.prov}>
         <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-fg-2)" }}>{d.mvp.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
 
-      <Panel title="Sprint steps（願景）" prov={d.prov}>
+      <Panel title={t("Sprint steps（願景）", "Sprint steps (vision)")} prov={d.prov}>
         {d.steps.map((s) => <Field key={s.sp} k={`${s.sp} · ${s.t}`} v={s.d} prov={d.prov} />)}
       </Panel>
 
-      <Panel title="風險 · Risks（願景）" prov={d.prov}>
+      <Panel title={t("風險 · Risks（願景）", "Risks · Risks (vision)")} prov={d.prov}>
         <ul style={{ margin: 0, paddingLeft: 18, color: "var(--ec-amb)" }}>{d.risks.map((x) => <li key={x}>{x}</li>)}</ul>
       </Panel>
     </>
@@ -1825,35 +1819,34 @@ export function VersionDiffPage() {
   const counts = diff?.summary?.counts ?? {};
   return (
     <>
-      <h1>模型版本差異與責任追蹤 · A2</h1>
+      <h1>{t("模型版本差異與責任追蹤 · A2", "Model version diff and responsibility tracking · A2")}</h1>
       <p className="ec-lead">
-        以 IFC GlobalId 多級對齊（GlobalId → Tag → type+name+location）比對兩個 model version，
-        標記 added / removed / moved / property changed；差異計算在 CPU 完成。
+        {t("以 IFC GlobalId 多級對齊（GlobalId → Tag → type+name+location）比對兩個 model version，標記 added / removed / moved / property changed；差異計算在 CPU 完成。", "Aligns two model versions with multi-level IFC GlobalId matching (GlobalId → Tag → type+name+location), marking added / removed / moved / property changed; the diff is computed on the CPU.")}
       </p>
-      <Panel title="Diff Builder" sub="POST /api/governance/diffs（經 coordinator proxy → governance-service）" prov="asbuilt">
+      <Panel title="Diff Builder" sub={t("POST /api/governance/diffs（經 coordinator proxy → governance-service）", "POST /api/governance/diffs (via coordinator proxy → governance-service)")} prov="asbuilt">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {fsErr && (
             <span className="ec-warn-note" data-testid="a2-fs-error" style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span>檔案庫不可用（{fsErr}）；可改用下方手動輸入路徑。</span>
-              <Btn data-testid="a2-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>重試載入檔案庫</Btn>
+              <span>{t("檔案庫不可用", "File library unavailable")}（{fsErr}）；{t("可改用下方手動輸入路徑。", "you can manually enter a path below instead.")}</span>
+              <Btn data-testid="a2-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadFsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn>
             </span>
           )}
-          {!fsErr && !fsTree && <span className="ec-s">載入檔案庫中…（GET /api/governance/files/tree）</span>}
+          {!fsErr && !fsTree && <span className="ec-s">{t("載入檔案庫中…（GET /api/governance/files/tree）", "Loading file library… (GET /api/governance/files/tree)")}</span>}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span className="ec-k" style={{ minWidth: 48 }}>base</span>
             <select data-testid="a2-base-project" className="ec-btn" value={baseSel.project} disabled={!fsTree}
               onChange={(e) => clearBaseSelection(e.target.value, "")}>
-              <option value="">專案…</option>
+              <option value="">{t("專案…", "Project…")}</option>
               {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
             </select>
             <select data-testid="a2-base-model" className="ec-btn" value={baseSel.model} disabled={!baseSel.project}
               onChange={(e) => clearBaseSelection(baseSel.project, e.target.value)}>
-              <option value="">模型…</option>
+              <option value="">{t("模型…", "Model…")}</option>
               {baseModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
             </select>
             <select data-testid="a2-base-version" className="ec-btn" value={baseSel.version} disabled={!baseSel.model}
               onChange={(e) => { const v = baseVersions.find((x) => x.path === e.target.value); if (v) pickBaseVersion(baseSel.project, baseSel.model, v); else clearBaseSelection(baseSel.project, baseSel.model); }}>
-              <option value="">版本…（選定填入路徑）</option>
+              <option value="">{t("版本…（選定填入路徑）", "Version… (selecting fills the path)")}</option>
               {baseVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
             </select>
           </div>
@@ -1861,30 +1854,30 @@ export function VersionDiffPage() {
             <span className="ec-k" style={{ minWidth: 48 }}>target</span>
             <select data-testid="a2-target-project" className="ec-btn" value={targetSel.project} disabled={!fsTree}
               onChange={(e) => clearTargetSelection(e.target.value, "")}>
-              <option value="">專案…</option>
+              <option value="">{t("專案…", "Project…")}</option>
               {(fsTree ?? []).map((p) => <option key={p.project_id} value={p.project_id}>{p.project_id}</option>)}
             </select>
             <select data-testid="a2-target-model" className="ec-btn" value={targetSel.model} disabled={!targetSel.project}
               onChange={(e) => clearTargetSelection(targetSel.project, e.target.value)}>
-              <option value="">模型…</option>
+              <option value="">{t("模型…", "Model…")}</option>
               {targetModels.map((m) => <option key={m.model_id} value={m.model_id}>{m.model_id}</option>)}
             </select>
             <select data-testid="a2-target-version" className="ec-btn" value={targetSel.version} disabled={!targetSel.model}
               onChange={(e) => { const v = targetVersions.find((x) => x.path === e.target.value); if (v) pickTargetVersion(targetSel.project, targetSel.model, v); else clearTargetSelection(targetSel.project, targetSel.model); }}>
-              <option value="">版本…（選定填入路徑）</option>
+              <option value="">{t("版本…（選定填入路徑）", "Version… (selecting fills the path)")}</option>
               {targetVersions.map((v) => <option key={v.name} value={v.path}>{v.name}</option>)}
             </select>
           </div>
           <input data-testid="a2-base-input" className="ec-btn" style={{ width: "100%" }} value={base} onChange={(e) => { setBase(e.target.value); setBaseVerId(""); setBaseSel((s) => ({ ...s, version: "" })); }} />
           <input data-testid="a2-target-input" className="ec-btn" style={{ width: "100%" }} value={target} onChange={(e) => { setTarget(e.target.value); setTargetVerId(""); setTargetSel((s) => ({ ...s, version: "" })); }} />
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <Btn primary disabled={busy} caption="GlobalId 多級對齊" onClick={run}>{busy ? "比對中…" : "Run Diff"}</Btn>
+            <Btn primary disabled={busy} caption={t("GlobalId 多級對齊", "GlobalId multi-level matching")} onClick={run}>{busy ? t("比對中…", "Comparing…") : "Run Diff"}</Btn>
             <label className="ec-s" style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <input type="checkbox" checked={includeGeo} onChange={(e) => setIncludeGeo(e.target.checked)} /> 含幾何比對（tessellation，較重）
+              <input type="checkbox" checked={includeGeo} onChange={(e) => setIncludeGeo(e.target.checked)} /> {t("含幾何比對（tessellation，較重）", "Include geometry comparison (tessellation, heavier)")}
             </label>
           </div>
         </div>
-        {err && <p className="ec-warn-note">未連線後端（proxy / governance-service 需啟動）：{err}</p>}
+        {err && <p className="ec-warn-note">{t("未連線後端（proxy / governance-service 需啟動）", "Backend not connected (proxy / governance-service must be running)")}：{err}</p>}
         {diff && (
           <div className="ec-grid" style={{ marginTop: 12 }}>
             <Metric value={diff.summary?.matched ?? "—"} label="matched" />
@@ -1909,7 +1902,7 @@ export function VersionDiffPage() {
             <>
               {items.length > 40 && (
                 <p className="ec-s" style={{ marginTop: 8, color: "var(--ec-fg-3)" }}>
-                  顯示前 40 筆，共 {items.length} 筆
+                  {t("顯示前 40 筆，共", "Showing first 40 of")} {items.length} {t("筆", "rows")}
                 </p>
               )}
               <table className="ec-table" style={{ marginTop: 8 }}>
@@ -1926,25 +1919,25 @@ export function VersionDiffPage() {
           );
         })()}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
-          <Btn caption="POST from-diff（綁 ifc_guid）" disabled={!diffId || items.length === 0} onClick={async () => { if (!diffId) return; try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>變更構件建 issue</Btn>
+          <Btn caption={t("POST from-diff（綁 ifc_guid）", "POST from-diff (bound to ifc_guid)")} disabled={!diffId || items.length === 0} onClick={async () => { if (!diffId) return; try { await governanceClient.issuesFromDiff(diffId); } catch (e) { setErr(String(e)); } }}>{t("變更構件建 issue", "Create issue from changed elements")}</Btn>
           {/* [套用 3D Overlay]：呼叫真實端點 POST …/apply-overlay。後端誠實回 501（p15）——
               3D 著色走 client highlightPrimsRequest（需 viewer DataChannel），非後端 server-push。
               此處顯示後端誠實訊息（含 501），SHALL NOT 假裝成功。
               真實 gating：須 diff 真的成功（status==="succeeded"）才 enable；失敗 / 無結果保持 disabled，
               不做點了無意義的假按鈕。applyDiffOverlay 對 HTTP 錯誤回 {ok,status,detail}，但 coordinator
               不可達時 fetch 會 reject → 此處 catch 後設 err（誠實顯示無法連線），不靜默無反應。 */}
-          <Btn prov="p15" disabled={busy || diff?.status !== "succeeded"} caption="POST /api/governance/diffs/:id/apply-overlay（後端誠實回 501）" onClick={async () => {
+          <Btn prov="p15" disabled={busy || diff?.status !== "succeeded"} caption={t("POST /api/governance/diffs/:id/apply-overlay（後端誠實回 501）", "POST /api/governance/diffs/:id/apply-overlay (backend honestly returns 501)")} onClick={async () => {
             if (!diffId) return;
             setBusy(true); setErr(null);
             try { setOverlay(await governanceClient.applyDiffOverlay(diffId)); }
-            catch (e) { setOverlay(null); setErr(`無法套用 3D Overlay（無法連線 coordinator / 套用失敗）：${String(e)}`); }
+            catch (e) { setOverlay(null); setErr(`${t("無法套用 3D Overlay（無法連線 coordinator / 套用失敗）", "Cannot apply 3D Overlay (cannot reach coordinator / apply failed)")}：${String(e)}`); }
             finally { setBusy(false); }
-          }}>套用 3D Overlay</Btn>
+          }}>{t("套用 3D Overlay", "Apply 3D Overlay")}</Btn>
         </div>
         {overlay && (
           <p className={overlay.ok ? "ec-note" : "ec-warn-note"} style={{ marginTop: 8 }}>
             apply-overlay → {overlay.status}：{overlay.detail}
-            {!overlay.ok && overlay.status === 501 && "（p15：3D 著色走 client highlightPrimsRequest，需 viewer DataChannel；後端不做 server-push）"}
+            {!overlay.ok && overlay.status === 501 && t("（p15：3D 著色走 client highlightPrimsRequest，需 viewer DataChannel；後端不做 server-push）", "(p15: 3D coloring uses client highlightPrimsRequest, requiring a viewer DataChannel; the backend does not server-push)")}
           </p>
         )}
         {impact && (
@@ -1956,10 +1949,10 @@ export function VersionDiffPage() {
         )}
         {impact && <p className="ec-note">{impact.note}</p>}
       </Panel>
-      <Panel title="範圍與誠實標示" prov="asbuilt">
-        <Field k="geometry_changed" v="opt-in 已實作（include_geometry：ifcopenshell.geom bbox/vertex/volume hash，較重）" prov="asbuilt" />
-        <Field k="3D overlay 顏色（綠/紅/橘/藍）" v="apply-overlay 端點誠實回 501；著色走 client highlightPrimsRequest（需 viewer DataChannel），非 server-push" prov="p15" />
-        <Field k="Issue impact" v="已實作（possibly_addressed 啟發式 / still_open / new，連動 Issue DB）" prov="asbuilt" />
+      <Panel title={t("範圍與誠實標示", "Scope and honest labeling")} prov="asbuilt">
+        <Field k="geometry_changed" v={t("opt-in 已實作（include_geometry：ifcopenshell.geom bbox/vertex/volume hash，較重）", "opt-in implemented (include_geometry: ifcopenshell.geom bbox/vertex/volume hash, heavier)")} prov="asbuilt" />
+        <Field k={t("3D overlay 顏色（綠/紅/橘/藍）", "3D overlay colors (green/red/orange/blue)")} v={t("apply-overlay 端點誠實回 501；著色走 client highlightPrimsRequest（需 viewer DataChannel），非 server-push", "the apply-overlay endpoint honestly returns 501; coloring uses client highlightPrimsRequest (requires a viewer DataChannel), not server-push")} prov="p15" />
+        <Field k="Issue impact" v={t("已實作（possibly_addressed 啟發式 / still_open / new，連動 Issue DB）", "implemented (possibly_addressed heuristic / still_open / new, linked to the Issue DB)")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -2034,54 +2027,53 @@ export function FederationPage() {
 
   return (
     <>
-      <h1>跨專業模型 Federation · A3</h1>
+      <h1>{t("跨專業模型 Federation · A3", "Cross-discipline model federation · A3")}</h1>
       <p className="ec-lead">
-        用 OpenUSD sublayer 把多個 discipline 模型疊在同一 stage，不破壞原始 model.usdc。
-        純 CPU pxr authoring（USD 26.5），對齊 NVIDIA Kit USD 指南。
+        {t("用 OpenUSD sublayer 把多個 discipline 模型疊在同一 stage，不破壞原始 model.usdc。純 CPU pxr authoring（USD 26.5），對齊 NVIDIA Kit USD 指南。", "Stacks multiple discipline models onto one stage with OpenUSD sublayers, without modifying the original model.usdc. Pure CPU pxr authoring (USD 26.5), aligned with the NVIDIA Kit USD guide.")}
       </p>
-      <Panel title="Federation Builder" sub="POST /api/governance/federated-sets（經 coordinator proxy → governance-service）" prov="asbuilt">
+      <Panel title="Federation Builder" sub={t("POST /api/governance/federated-sets（經 coordinator proxy → governance-service）", "POST /api/governance/federated-sets (via coordinator proxy → governance-service)")} prov="asbuilt">
         {members.map((m, i) => (
           <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
             <input className="ec-btn" style={{ width: 80 }} value={m.discipline} onChange={(e) => setMember(i, "discipline", e.target.value)} />
-            <input className="ec-btn" style={{ flex: 1 }} placeholder="member .usd / .usdc 路徑（conversion 產出）" value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
-            <input className="ec-btn" style={{ width: 52 }} type="number" title="layer_order（小=強）" value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
+            <input className="ec-btn" style={{ flex: 1 }} placeholder={t("member .usd / .usdc 路徑（conversion 產出）", "member .usd / .usdc path (conversion output)")} value={m.usd_path} onChange={(e) => setMember(i, "usd_path", e.target.value)} />
+            <input className="ec-btn" style={{ width: 52 }} type="number" title={t("layer_order（小=強）", "layer_order (smaller = stronger)")} value={m.layer_order} onChange={(e) => setMember(i, "layer_order", Number(e.target.value))} />
             {/* visibility：唯一真實後端能力是 build 時的 visibility_default（隱藏 member 寫成 invisible token）。
                 無「不重建即時切換」端點 → 誠實作法：勾選後須重新 Build 才生效（見下方標示），不捏造即時能力。 */}
-            <label className="ec-s" title="visible（build 時帶入 visibility_default；改動需重新 Build）" style={{ display: "flex", gap: 3, alignItems: "center" }}>
+            <label className="ec-s" title={t("visible（build 時帶入 visibility_default；改動需重新 Build）", "visible (build applies visibility_default; changes require a rebuild)")} style={{ display: "flex", gap: 3, alignItems: "center" }}>
               <input type="checkbox" checked={m.visible} onChange={(e) => setMember(i, "visible", e.target.checked)} /> visible
             </label>
-            <span className="ec-note" style={{ opacity: 0.7 }}>位移</span>
-            <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 X" value={m.tx} onChange={(e) => setMember(i, "tx", Number(e.target.value))} />
-            <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 Y" value={m.ty} onChange={(e) => setMember(i, "ty", Number(e.target.value))} />
-            <input className="ec-btn" style={{ width: 46 }} type="number" title="位移 Z" value={m.tz} onChange={(e) => setMember(i, "tz", Number(e.target.value))} />
+            <span className="ec-note" style={{ opacity: 0.7 }}>{t("位移", "Offset")}</span>
+            <input className="ec-btn" style={{ width: 46 }} type="number" title={t("位移 X", "Offset X")} value={m.tx} onChange={(e) => setMember(i, "tx", Number(e.target.value))} />
+            <input className="ec-btn" style={{ width: 46 }} type="number" title={t("位移 Y", "Offset Y")} value={m.ty} onChange={(e) => setMember(i, "ty", Number(e.target.value))} />
+            <input className="ec-btn" style={{ width: 46 }} type="number" title={t("位移 Z", "Offset Z")} value={m.tz} onChange={(e) => setMember(i, "tz", Number(e.target.value))} />
           </div>
         ))}
         <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-          <Btn disabled={busy} caption="create set + members + validate-coords" onClick={prepare}>準備 + 驗證坐標系</Btn>
+          <Btn disabled={busy} caption="create set + members + validate-coords" onClick={prepare}>{t("準備 + 驗證坐標系", "Prepare + validate coordinate system")}</Btn>
           <Btn primary disabled={busy || !setId} caption="POST …/build → federated_review.usda" onClick={doBuild}>Build Federated USD</Btn>
         </div>
         {dirty && !setId && (
           <p className="ec-warn-note" style={{ marginTop: 6 }}>
-            成員設定已變更，先前的「準備 + 驗證坐標系」結果已作廢；請重新準備後再 Build（避免畫面勾選與實際 build 結果不一致）。
+            {t("成員設定已變更，先前的「準備 + 驗證坐標系」結果已作廢；請重新準備後再 Build（避免畫面勾選與實際 build 結果不一致）。", "Member settings changed, so the previous \"Prepare + validate coordinate system\" result is voided; prepare again before Build (to avoid the on-screen selections diverging from the actual build result).")}
           </p>
         )}
-        {err && <p className="ec-warn-note">未連線後端 / member USD 不存在：{err}</p>}
-        {coord && <Field k="共享坐標系驗證" v={coord.consistent ? "一致 ✓" : `不一致：${coord.issues.join("; ")}`} prov="asbuilt" />}
+        {err && <p className="ec-warn-note">{t("未連線後端 / member USD 不存在", "Backend not connected / member USD does not exist")}：{err}</p>}
+        {coord && <Field k={t("共享坐標系驗證", "Shared coordinate system validation")} v={coord.consistent ? t("一致 ✓", "consistent ✓") : `${t("不一致", "inconsistent")}：${coord.issues.join("; ")}`} prov="asbuilt" />}
         {build && (
           <div style={{ marginTop: 8 }}>
             <Field k="federated_review.usda" v={build.usda_path} prov="asbuilt" />
-            <Field k="subLayer order（強→弱）" v={build.sublayer_order.join("  →  ")} prov="asbuilt" />
-            <Field k="member 數" v={build.member_count} prov="asbuilt" />
+            <Field k={t("subLayer order（強→弱）", "subLayer order (strong→weak)")} v={build.sublayer_order.join("  →  ")} prov="asbuilt" />
+            <Field k={t("member 數", "member count")} v={build.member_count} prov="asbuilt" />
             <Field
-              k="hidden members（visibility=false）"
-              v={build.hidden.length > 0 ? build.hidden.join("  ·  ") : "（無，全部 visible）"}
+              k={t("hidden members（visibility=false）", "hidden members (visibility=false)")}
+              v={build.hidden.length > 0 ? build.hidden.join("  ·  ") : t("（無，全部 visible）", "(none, all visible)")}
               prov="asbuilt"
             />
             {build.transformed && build.transformed.length > 0 && (
               <Field k="per-member transform" v={build.transformed.map((t) => `${t.root_prim}:[${t.ops.join("+")}]`).join("   ")} prov="asbuilt" />
             )}
             <div style={{ marginTop: 6 }}>
-              <Btn caption="GET …/review-room（stage_composition handoff）" onClick={openRoom}>Open in Review Room</Btn>
+              <Btn caption={t("GET …/review-room（stage_composition handoff）", "GET …/review-room (stage_composition handoff)")} onClick={openRoom}>Open in Review Room</Btn>
             </div>
           </div>
         )}
@@ -2090,7 +2082,7 @@ export function FederationPage() {
             {room.ready && room.stage_composition ? (
               <>
                 <Field k="stage_composition.primary" v={room.stage_composition.primary.url} prov="asbuilt" />
-                <Field k="交給 host-native Kit review session" v={room.note} prov="demo" />
+                <Field k={t("交給 host-native Kit review session", "Handed off to host-native Kit review session")} v={room.note} prov="demo" />
               </>
             ) : (
               <p className="ec-warn-note">{room.note}</p>
@@ -2098,13 +2090,13 @@ export function FederationPage() {
           </div>
         )}
       </Panel>
-      <Panel title="範圍與誠實標示" prov="asbuilt">
-        <Field k="疊合機制" v="sublayer 非破壞疊合；opinion 於 LIVERPS Local（最強）步驟解析，subLayerPaths[0] 最強；sessionLayer 僅暫態不作持久層" prov="asbuilt" />
-        <Field k="member model.usdc" v="immutable（federation 只寫具名 root layer）" prov="asbuilt" />
-        <Field k="member usd_path" v="指向 conversion authority 產出的 USD（本服務唯讀）" prov="asbuilt" />
-        <Field k="per-member transform" v="已實作：root layer over xformOp（member immutable）；順序 scale→rotateXYZ→translate，translate 最外層" prov="asbuilt" />
-        <Field k="member visibility" v="build 時帶入 visibility_default（隱藏 member 寫成 invisible，回傳 hidden[]）；無「不重建即時切換」端點，改 visible 須重新 Build 才生效（不捏造即時能力）" prov="asbuilt" />
-        <Field k="Open in Review Room" v="產出 viewer 消費的 stage_composition handoff；GPU 串流由 host-native Kit + coordinator session 負責，本服務 CPU loopback 不開串流" prov="asbuilt" />
+      <Panel title={t("範圍與誠實標示", "Scope and honest labeling")} prov="asbuilt">
+        <Field k={t("疊合機制", "Compositing mechanism")} v={t("sublayer 非破壞疊合；opinion 於 LIVERPS Local（最強）步驟解析，subLayerPaths[0] 最強；sessionLayer 僅暫態不作持久層", "non-destructive sublayer compositing; opinions resolve at the LIVERPS Local (strongest) step, subLayerPaths[0] is strongest; sessionLayer is transient only and not a persistent layer")} prov="asbuilt" />
+        <Field k="member model.usdc" v={t("immutable（federation 只寫具名 root layer）", "immutable (federation only writes a named root layer)")} prov="asbuilt" />
+        <Field k="member usd_path" v={t("指向 conversion authority 產出的 USD（本服務唯讀）", "points to the USD produced by the conversion authority (this service is read-only)")} prov="asbuilt" />
+        <Field k="per-member transform" v={t("已實作：root layer over xformOp（member immutable）；順序 scale→rotateXYZ→translate，translate 最外層", "implemented: root layer over xformOp (member immutable); order scale→rotateXYZ→translate, translate outermost")} prov="asbuilt" />
+        <Field k="member visibility" v={t("build 時帶入 visibility_default（隱藏 member 寫成 invisible，回傳 hidden[]）；無「不重建即時切換」端點，改 visible 須重新 Build 才生效（不捏造即時能力）", "build applies visibility_default (hidden members are written as invisible, returned in hidden[]); there is no \"toggle live without rebuild\" endpoint, so changing visible requires a rebuild to take effect (no faked live capability)")} prov="asbuilt" />
+        <Field k="Open in Review Room" v={t("產出 viewer 消費的 stage_composition handoff；GPU 串流由 host-native Kit + coordinator session 負責，本服務 CPU loopback 不開串流", "produces the stage_composition handoff consumed by the viewer; GPU streaming is handled by host-native Kit + coordinator session, this service runs CPU loopback only and does not open streaming")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -2133,10 +2125,10 @@ export function SemanticViewerPage() {
       const withMap = items.filter((j) => j.expected_mapping_url);
       setCandidates(withMap);
       if (withMap.length === 0) {
-        setErr("無帶 mapping 產出（expected_mapping_url）的 ifc-ready job（可直接貼 mapping URL 載入）");
+        setErr(t("無帶 mapping 產出（expected_mapping_url）的 ifc-ready job（可直接貼 mapping URL 載入）", "No ifc-ready job with mapping output (expected_mapping_url) (you can paste a mapping URL directly to load)"));
       }
     } catch (e) {
-      setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`);
+      setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(e)}`);
     }
   }, []);
 
@@ -2145,11 +2137,11 @@ export function SemanticViewerPage() {
     setBusy(true); setErr(null); setDoc(null);
     try {
       const res = await fetch(mapUrl.trim(), { headers: { Accept: "application/json" } });
-      if (!res.ok) { setErr(`載入 mapping ${res.status} ${res.statusText}`); return; }
+      if (!res.ok) { setErr(`${t("載入 mapping ", "Loading mapping ")}${res.status} ${res.statusText}`); return; }
       const json = (await res.json()) as ElementMappingDocument;
       setDoc(json);
     } catch (e) {
-      setErr(`無法載入 / 解析 mapping JSON：${String(e)}`);
+      setErr(`${t("無法載入 / 解析 mapping JSON：", "Cannot load / parse mapping JSON: ")}${String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -2161,22 +2153,21 @@ export function SemanticViewerPage() {
 
   return (
     <>
-      <h1>Semantic Viewer · IFC→USD 語意檢核（H）</h1>
+      <h1>{t("Semantic Viewer · IFC→USD 語意檢核（H）", "Semantic Viewer · IFC→USD semantic validation (H)")}</h1>
       <p className="ec-lead">
-        載入轉換產出的 <code>element_mapping.json</code>（IFC GUID ⇔ USD Prim Path），檢視語意對照。
-        嚴守 fake-vs-real 隔離：mock / fake mapping 一律標示為示範資料，不冒充真實對映。
+        {t("載入轉換產出的", "Load the converted")} <code>element_mapping.json</code>{t("（IFC GUID ⇔ USD Prim Path），檢視語意對照。 嚴守 fake-vs-real 隔離：mock / fake mapping 一律標示為示範資料，不冒充真實對映。", " (IFC GUID ⇔ USD Prim Path) and review the semantic correspondence. Strict fake-vs-real isolation: mock / fake mapping is always labeled as DEMO DATA and never impersonates a real mapping.")}
       </p>
 
-      <Panel title="載入 mapping artifact" sub="mapping URL（conversion artifact）；可從 ifc-ready job（帶轉換產出）定位，或直接貼入" prov="artifact">
+      <Panel title={t("載入 mapping artifact", "Load mapping artifact")} sub={t("mapping URL（conversion artifact）；可從 ifc-ready job（帶轉換產出）定位，或直接貼入", "mapping URL (conversion artifact); locate it from an ifc-ready job (with conversion output), or paste it directly")} prov="artifact">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input className="ec-btn" style={{ minWidth: 420 }} placeholder="element_mapping.json 的 URL（artifact 來源）" value={mapUrl} onChange={(e) => setMapUrl(e.target.value)} />
-          <Btn primary disabled={busy || !mapUrl.trim()} caption="fetch mapping JSON" onClick={loadMapping}>{busy ? "載入中…" : "載入 mapping"}</Btn>
-          <Btn caption="GET /api/external/ifc-ready（找帶 mapping 產出的 job）" onClick={loadCandidates}>列出真實 job</Btn>
+          <input className="ec-btn" style={{ minWidth: 420 }} placeholder={t("element_mapping.json 的 URL（artifact 來源）", "URL of element_mapping.json (artifact source)")} value={mapUrl} onChange={(e) => setMapUrl(e.target.value)} />
+          <Btn primary disabled={busy || !mapUrl.trim()} caption="fetch mapping JSON" onClick={loadMapping}>{busy ? t("載入中…", "Loading…") : t("載入 mapping", "Load mapping")}</Btn>
+          <Btn caption={t("GET /api/external/ifc-ready（找帶 mapping 產出的 job）", "GET /api/external/ifc-ready (find jobs with mapping output)")} onClick={loadCandidates}>{t("列出真實 job", "List real jobs")}</Btn>
         </div>
         {err && <p className="ec-warn-note">{err}</p>}
         {candidates.length > 0 && (
           <div className="ec-note" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <span>真實 job 候選（帶 mapping 產出，點選自動填入 mapping URL）：</span>
+            <span>{t("真實 job 候選（帶 mapping 產出，點選自動填入 mapping URL）：", "Real job candidates (with mapping output; click to auto-fill the mapping URL): ")}</span>
             {candidates.map((c) => (
               <button
                 key={c.ifc_ready_job_id}
@@ -2190,20 +2181,19 @@ export function SemanticViewerPage() {
             ))}
           </div>
         )}
-        <p className="ec-note">mapping 為 conversion artifact（權威在 streaming-server / artifact store）；本頁唯讀檢視，不寫回、不覆蓋真實 mapping。</p>
+        <p className="ec-note">{t("mapping 為 conversion artifact（權威在 streaming-server / artifact store）；本頁唯讀檢視，不寫回、不覆蓋真實 mapping。", "mapping is a conversion artifact (authority lives in streaming-server / artifact store); this page is read-only and never writes back or overwrites a real mapping.")}</p>
       </Panel>
 
       {doc && (
         <>
           {fake && (
             <div className="ec-fake-banner">
-              偵測到 fake / mock mapping（{blockReason}）。此資料<strong>僅可做 smoke test</strong>，已標示為示範資料，
-              不列入正式 mapping 驗證、不冒充真實對映。
+              {t("偵測到 fake / mock mapping（", "Detected fake / mock mapping (")}{blockReason}{t("）。此資料", "). This data is ")}<strong>{t("僅可做 smoke test", "for smoke test only")}</strong>{t("，已標示為示範資料， 不列入正式 mapping 驗證、不冒充真實對映。", ", labeled as DEMO DATA; it is excluded from formal mapping validation and does not impersonate a real mapping.")}
             </div>
           )}
           <Panel
-            title="mapping 摘要"
-            sub={fake ? "此 mapping 為示範資料（fake / mock）" : "真實 mapping artifact"}
+            title={t("mapping 摘要", "mapping summary")}
+            sub={fake ? t("此 mapping 為示範資料（fake / mock）", "This mapping is DEMO DATA (fake / mock)") : t("真實 mapping artifact", "real mapping artifact")}
             prov={fake ? "demo" : "artifact"}
           >
             <div className="ec-grid">
@@ -2217,7 +2207,7 @@ export function SemanticViewerPage() {
           </Panel>
 
           {items.length > 0 && (
-            <Panel title="元件對照 · IFC GUID ⇔ USD Prim Path" sub="逐筆標示是否為 fake item（不混淆真假）" prov={fake ? "demo" : "artifact"}>
+            <Panel title={t("元件對照 · IFC GUID ⇔ USD Prim Path", "Element correspondence · IFC GUID ⇔ USD Prim Path")} sub={t("逐筆標示是否為 fake item（不混淆真假）", "Each row is marked whether it is a fake item (no mixing of real and fake)")} prov={fake ? "demo" : "artifact"}>
               <table className="ec-table">
                 <thead><tr><th>ifc_class</th><th>name</th><th>ifc_guid</th><th>usd_prim_path</th><th>method</th><th /></tr></thead>
                 <tbody>
@@ -2228,10 +2218,10 @@ export function SemanticViewerPage() {
                         <td>{it.ifc_class ?? ""}</td>
                         <td>{it.name ?? ""}</td>
                         <td>{it.ifc_guid ?? <span className="ec-warn-note">null</span>}</td>
-                        <td>{it.usd_prim_path ?? <span className="ec-warn-note">null（未對映）</span>}</td>
+                        <td>{it.usd_prim_path ?? <span className="ec-warn-note">{t("null（未對映）", "null (unmapped)")}</span>}</td>
                         <td>{it.mapping_method ?? ""}{itemFake && <span className="ec-prov ec-demo" style={{ marginLeft: 6 }}>fake</span>}</td>
                         <td>
-                          <Btn prov="p1" disabled caption="需 viewer DataChannel（focusPrim / highlightPrims）">在 3D 標示</Btn>
+                          <Btn prov="p1" disabled caption={t("需 viewer DataChannel（focusPrim / highlightPrims）", "Requires viewer DataChannel (focusPrim / highlightPrims)")}>{t("在 3D 標示", "Mark in 3D")}</Btn>
                         </td>
                       </tr>
                     );
@@ -2243,10 +2233,10 @@ export function SemanticViewerPage() {
         </>
       )}
 
-      <Panel title="範圍與誠實標示" prov="asbuilt">
-        <Field k="mapping fake-vs-real 隔離" v="mock / allow_fake_mapping / fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake（重用既有 isFakeMappingDocument）" prov="asbuilt" />
-        <Field k="點構件 → 3D highlight" v="需 viewer 的 WebRTC DataChannel（focusPrim / highlightPrims）；console 殼層與 viewer 互斥掛載、無 DataChannel → 標 p1，不做假按鈕" prov="p1" />
-        <Field k="mapping 權威" v="conversion artifact（streaming-server / artifact store 唯讀）；本頁不覆蓋、不冒充" prov="asbuilt" />
+      <Panel title={t("範圍與誠實標示", "Scope & honesty labeling")} prov="asbuilt">
+        <Field k={t("mapping fake-vs-real 隔離", "mapping fake-vs-real isolation")} v={t("mock / allow_fake_mapping / fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake（重用既有 isFakeMappingDocument）", "mock / allow_fake_mapping / fake_mapping_count>0 / mapping_method=fake_for_smoke_test are always treated as fake (reusing the existing isFakeMappingDocument)")} prov="asbuilt" />
+        <Field k={t("點構件 → 3D highlight", "click element → 3D highlight")} v={t("需 viewer 的 WebRTC DataChannel（focusPrim / highlightPrims）；console 殼層與 viewer 互斥掛載、無 DataChannel → 標 p1，不做假按鈕", "Requires the viewer's WebRTC DataChannel (focusPrim / highlightPrims); the console shell and viewer mount mutually exclusively, with no DataChannel → marked p1, no fake button")} prov="p1" />
+        <Field k={t("mapping 權威", "mapping authority")} v={t("conversion artifact（streaming-server / artifact store 唯讀）；本頁不覆蓋、不冒充", "conversion artifact (streaming-server / artifact store, read-only); this page does not overwrite or impersonate")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -2264,7 +2254,7 @@ export function CoordinatorPage() {
   const load = useCallback(async () => {
     setBusy(true); setErr(null);
     try { setRt(await coordinatorClient.runtimeStatus()); }
-    catch (e) { setErr(`未連線 coordinator /api/runtime/status：${String(e)}`); }
+    catch (e) { setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(e)}`); }
     finally { setBusy(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -2273,9 +2263,7 @@ export function CoordinatorPage() {
     <>
       <h1>Coordinator Console · C / Hybrid Runtime Orchestrator</h1>
       <p className="ec-lead">
-        會議生命週期 / Kit 綁定 / IFC-ready 派工 / callback outbox，全經 coordinator :8004。
-        本頁讀 <code>/api/runtime/status</code>（coordinator-visible read-only summary）；瀏覽器不直連 49100/49101/49102。
-        誠實標示：Kit 首幀 / GPU 無統一遙測（port listening ≠ has frame）→ 不畫成 fail、不捏造秒數。
+        {t("會議生命週期 / Kit 綁定 / IFC-ready 派工 / callback outbox，全經 coordinator :8004。 本頁讀", "Session lifecycle / Kit binding / IFC-ready dispatch / callback outbox all go through coordinator :8004. This page reads")} <code>/api/runtime/status</code>{t("（coordinator-visible read-only summary）；瀏覽器不直連 49100/49101/49102。 誠實標示：Kit 首幀 / GPU 無統一遙測（port listening ≠ has frame）→ 不畫成 fail、不捏造秒數。", " (coordinator-visible read-only summary); the browser does not directly reach 49100/49101/49102. Honesty labeling: Kit first frame / GPU have no unified telemetry (port listening ≠ has frame) → not rendered as fail and no fabricated seconds.")}
       </p>
       <ProvLegend />
       <CoordinatorGovernanceTabs rt={rt} busy={busy} err={err} onRefresh={load} />
@@ -2294,23 +2282,22 @@ export function IntakePage() {
   const load = useCallback(async () => {
     setBusy(true); setErr(null);
     try { setJobs((await coordinatorClient.listIfcReady(50)).items); }
-    catch (e) { setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`); }
+    catch (e) { setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(e)}`); }
     finally { setBusy(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
   return (
     <>
-      <h1>Model Intake · 接收與轉換（C）</h1>
+      <h1>{t("Model Intake · 接收與轉換（C）", "Model Intake · Ingest & Conversion (C)")}</h1>
       <p className="ec-lead">
-        外部 IFC Worker → coordinator <code>/api/external/ifc-ready</code> → 內部轉換 authority（bim-streaming-server）。
-        本頁讀 intake 佇列；轉換品質 / mapping 可信度為 artifact，不承諾精準 GUID。
+        {t("外部 IFC Worker → coordinator", "External IFC Worker → coordinator")} <code>/api/external/ifc-ready</code> {t("→ 內部轉換 authority（bim-streaming-server）。 本頁讀 intake 佇列；轉換品質 / mapping 可信度為 artifact，不承諾精準 GUID。", "→ internal conversion authority (bim-streaming-server). This page reads the intake queue; conversion quality / mapping fidelity are artifacts, with no promise of exact GUIDs.")}
       </p>
       <Panel
-        title="IFC-ready intake 佇列"
-        sub="GET /api/external/ifc-ready?limit=1..100 · status / download_status 為 as-built"
+        title={t("IFC-ready intake 佇列", "IFC-ready intake queue")}
+        sub={t("GET /api/external/ifc-ready?limit=1..100 · status / download_status 為 as-built", "GET /api/external/ifc-ready?limit=1..100 · status / download_status are as-built")}
         prov="asbuilt"
-        actions={<Btn disabled={busy} caption="GET /api/external/ifc-ready" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
+        actions={<Btn disabled={busy} caption="GET /api/external/ifc-ready" onClick={load}>{busy ? t("讀取中…", "Loading…") : t("重新整理", "Refresh")}</Btn>}
       >
         {err && <p className="ec-warn-note">{err}</p>}
         {jobs.length > 0 ? (
@@ -2326,15 +2313,15 @@ export function IntakePage() {
               ))}
             </tbody>
           </table>
-        ) : <p className="ec-note">{err ? "" : "目前無 intake job（coordinator 已連線，佇列為空——非錯誤）。"}</p>}
+        ) : <p className="ec-note">{err ? "" : t("目前無 intake job（coordinator 已連線，佇列為空——非錯誤）。", "No intake job at the moment (coordinator connected, queue empty — not an error).")}</p>}
       </Panel>
 
-      <Panel title="轉換品質與 mapping 可信度 · 誠實標示" sub="coordinator 不計算，只轉發 conversion authority 值；無遙測欄位標未取得" prov="artifact">
-        <Field k="quality_metrics_summary" v="coverage_status / unmapped_count / coverage_ratio（pass-through artifact，隨 conversion result 提供）" prov="artifact" />
-        <Field k="semantic_mapping_fidelity" v="guid_exact / ifc_class_grouped_with_name（缺欄位時 fallback null）" prov="artifact" />
-        <Field k="精準 GUID 對映" v="MVP 不承諾精準 GUID；需 streaming adapter force IfcOpenShell USD 模式（PoC），允許人工校正" prov="demo" />
-        <Field k="conversion 秒數 / GPU" v="未取得（無統一遙測來源）" prov="demo" />
-        <Field k="manual mapping correction UI" v="待建" prov="p15" />
+      <Panel title={t("轉換品質與 mapping 可信度 · 誠實標示", "Conversion quality & mapping fidelity · honesty labeling")} sub={t("coordinator 不計算，只轉發 conversion authority 值；無遙測欄位標未取得", "coordinator does not compute, only forwards conversion authority values; fields without telemetry are marked not available")} prov="artifact">
+        <Field k="quality_metrics_summary" v={t("coverage_status / unmapped_count / coverage_ratio（pass-through artifact，隨 conversion result 提供）", "coverage_status / unmapped_count / coverage_ratio (pass-through artifact, provided with the conversion result)")} prov="artifact" />
+        <Field k="semantic_mapping_fidelity" v={t("guid_exact / ifc_class_grouped_with_name（缺欄位時 fallback null）", "guid_exact / ifc_class_grouped_with_name (falls back to null when the field is missing)")} prov="artifact" />
+        <Field k={t("精準 GUID 對映", "exact GUID mapping")} v={t("MVP 不承諾精準 GUID；需 streaming adapter force IfcOpenShell USD 模式（PoC），允許人工校正", "MVP does not promise exact GUIDs; requires the streaming adapter to force IfcOpenShell USD mode (PoC), with manual correction allowed")} prov="demo" />
+        <Field k={t("conversion 秒數 / GPU", "conversion seconds / GPU")} v={t("未取得（無統一遙測來源）", "not available (no unified telemetry source)")} prov="demo" />
+        <Field k="manual mapping correction UI" v={t("待建", "not built")} prov="p15" />
       </Panel>
     </>
   );
@@ -2354,7 +2341,7 @@ export function RuntimePage() {
   const load = useCallback(async () => {
     setBusy(true); setErr(null);
     try { setRt(await coordinatorClient.runtimeStatus()); }
-    catch (e) { setErr(`未連線 coordinator /api/runtime/status：${String(e)}`); }
+    catch (e) { setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(e)}`); }
     finally { setBusy(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -2363,21 +2350,20 @@ export function RuntimePage() {
     if (!scSession.trim()) return;
     setScErr(null); setSc(null);
     try { setSc(JSON.stringify(await coordinatorClient.streamConfig(scSession.trim()), null, 2)); }
-    catch (e) { setScErr(`stream-config 讀取失敗：${String(e)}`); }
+    catch (e) { setScErr(`${t("stream-config 讀取失敗：", "Failed to read stream-config: ")}${String(e)}`); }
   }, [scSession]);
 
   return (
     <>
-      <h1>Runtime Dashboard · 串流執行狀態（F）</h1>
+      <h1>{t("Runtime Dashboard · 串流執行狀態（F）", "Runtime Dashboard · Streaming runtime status (F)")}</h1>
       <p className="ec-lead">
-        Kit 實例綁定 / stream-config，由 coordinator <strong>read-only proxy</strong> 轉發；瀏覽器永不直連 49100/49101。
-        GPU / 轉換秒數無統一遙測 → 標未取得（idle，非 fail）。
+        {t("Kit 實例綁定 / stream-config，由 coordinator", "Kit instance binding / stream-config, forwarded by the coordinator")} <strong>read-only proxy</strong>{t("轉發；瀏覽器永不直連 49100/49101。 GPU / 轉換秒數無統一遙測 → 標未取得（idle，非 fail）。", "; the browser never directly reaches 49100/49101. GPU / conversion seconds have no unified telemetry → marked not available (idle, not fail).")}
       </p>
       <Panel
-        title="Host-native plane 觀測"
-        sub="GET /api/runtime/status · observations（read-only；Kit 內部 stage state 仍需 DataChannel / log 佐證）"
+        title={t("Host-native plane 觀測", "Host-native plane observation")}
+        sub={t("GET /api/runtime/status · observations（read-only；Kit 內部 stage state 仍需 DataChannel / log 佐證）", "GET /api/runtime/status · observations (read-only; Kit internal stage state still needs DataChannel / log evidence)")}
         prov="asbuilt"
-        actions={<Btn disabled={busy} caption="GET /api/runtime/status" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>}
+        actions={<Btn disabled={busy} caption="GET /api/runtime/status" onClick={load}>{busy ? t("讀取中…", "Loading…") : t("重新整理", "Refresh")}</Btn>}
       >
         {err && <p className="ec-warn-note">{err}</p>}
         {rt && (
@@ -2385,14 +2371,14 @@ export function RuntimePage() {
             <Field k="conversion authority" v={`${rt.configured_endpoints.conversion_authority.authority} · ${rt.configured_endpoints.conversion_authority.base_url}`} prov="asbuilt" />
             <Field k="Kit signal ports" v={rt.observations.host_native_plane.kit_signal_ports.join(", ") || "—"} prov="asbuilt" />
             <Field k="Kit media ports" v={rt.observations.host_native_plane.kit_media_ports.join(", ") || "—"} prov="asbuilt" />
-            <Field k="GPU / VRAM / util" v="未取得（streaming 未提供統一 GPU 遙測）" prov="demo" />
-            <Field k="觀測分類" v={rt.observations.note} prov="asbuilt" />
+            <Field k="GPU / VRAM / util" v={t("未取得（streaming 未提供統一 GPU 遙測）", "not available (streaming provides no unified GPU telemetry)")} prov="demo" />
+            <Field k={t("觀測分類", "observation category")} v={rt.observations.note} prov="asbuilt" />
           </>
         )}
       </Panel>
 
       {rt && (
-        <Panel title="Kit 實例綁定 · kit_instance_bindings" sub="provider local_fixed；state = KitInstance.status 權威 enum" prov="asbuilt">
+        <Panel title={t("Kit 實例綁定 · kit_instance_bindings", "Kit instance binding · kit_instance_bindings")} sub={t("provider local_fixed；state = KitInstance.status 權威 enum", "provider local_fixed; state = the authoritative KitInstance.status enum")} prov="asbuilt">
           {rt.kit_instance_bindings.length > 0 ? (
             <table className="ec-table">
               <thead><tr><th>kit_instance_id</th><th>session</th><th>state</th><th>started_at</th></tr></thead>
@@ -2402,22 +2388,22 @@ export function RuntimePage() {
                 ))}
               </tbody>
             </table>
-          ) : <p className="ec-note">無 Kit 綁定（無 active session 時為空；routing_policy=dedicated_instance 超出 endpoint 數會停在 queued_for_instance）。</p>}
+          ) : <p className="ec-note">{t("無 Kit 綁定（無 active session 時為空；routing_policy=dedicated_instance 超出 endpoint 數會停在 queued_for_instance）。", "No Kit binding (empty when there is no active session; with routing_policy=dedicated_instance exceeding the endpoint count, it stays at queued_for_instance).")}</p>}
         </Panel>
       )}
 
-      <Panel title="stream-config · 給 viewer 的連線資訊" sub="GET /api/review-sessions/:id/stream-config（coordinator owner）" prov="asbuilt">
+      <Panel title={t("stream-config · 給 viewer 的連線資訊", "stream-config · connection info for the viewer")} sub="GET /api/review-sessions/:id/stream-config（coordinator owner）" prov="asbuilt">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <input className="ec-btn" style={{ minWidth: 320 }} placeholder="review_session_id" value={scSession} onChange={(e) => setScSession(e.target.value)} />
-          <Btn disabled={!scSession.trim()} caption="GET …/stream-config" onClick={fetchStreamConfig}>讀取 stream-config</Btn>
+          <Btn disabled={!scSession.trim()} caption="GET …/stream-config" onClick={fetchStreamConfig}>{t("讀取 stream-config", "Read stream-config")}</Btn>
         </div>
         {scErr && <p className="ec-warn-note">{scErr}</p>}
         {sc && <pre className="ec-note" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{sc}</pre>}
-        <p className="ec-note">stream-config 為 coordinator owner 的真實端點；GPU 串流由 host-native Kit 負責，本面板僅唯讀轉發連線資訊，不開串流、不捏造遙測。</p>
+        <p className="ec-note">{t("stream-config 為 coordinator owner 的真實端點；GPU 串流由 host-native Kit 負責，本面板僅唯讀轉發連線資訊，不開串流、不捏造遙測。", "stream-config is a real endpoint owned by the coordinator; GPU streaming is handled by host-native Kit. This panel only forwards connection info read-only; it does not open streams or fabricate telemetry.")}</p>
       </Panel>
 
-      <Panel title="治理規則執行綁定（A1）" sub="governance-service :49102 為內部服務（經 coordinator proxy）" prov="asbuilt">
-        <Field k="rule-run authority" v="A1 後端已實作（見 Issues · Rule Center 頁可真實觸發）" prov="asbuilt" />
+      <Panel title={t("治理規則執行綁定（A1）", "Governance rule-run binding (A1)")} sub={t("governance-service :49102 為內部服務（經 coordinator proxy）", "governance-service :49102 is an internal service (via coordinator proxy)")} prov="asbuilt">
+        <Field k="rule-run authority" v={t("A1 後端已實作（見 Issues · Rule Center 頁可真實觸發）", "A1 backend implemented (see the Issues · Rule Center page to trigger it for real)")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -2442,58 +2428,56 @@ export function ReviewRoomPage() {
 
   return (
     <>
-      <h1>Review Room · 審查室（G）</h1>
+      <h1>{t("Review Room · 審查室（G）", "Review Room (G)")}</h1>
       <p className="ec-lead">
-        USD over WebRTC live viewport 在<strong>既有 viewer（web-viewer-sample &lt;App/&gt;）</strong>，非 console 殼層內。
-        本頁 v1：提供連到既有 viewer 入口的連結（不在 console 內嵌 3D）；highlight 走 Review-Room 主動拉 → client DataChannel，不復活 server-push。
+        {t("USD over WebRTC live viewport 在", "The USD over WebRTC live viewport lives in the")}<strong>{t("既有 viewer（web-viewer-sample ", "existing viewer (web-viewer-sample ")}&lt;App/&gt;{t("）", ")")}</strong>{t("，非 console 殼層內。 本頁 v1：提供連到既有 viewer 入口的連結（不在 console 內嵌 3D）；highlight 走 Review-Room 主動拉 → client DataChannel，不復活 server-push。", ", not inside the console shell. This page v1: provides links to the existing viewer entry (no 3D embedded in the console); highlight goes through Review-Room client-pull → client DataChannel, without reviving server-push.")}
       </p>
 
-      <Panel title="在既有 viewer 開啟 · Open in viewer" sub="輸入 review_session_id（lwv_ / review_session_ 前綴）；連到既有 viewer，不動 App.tsx / Window.tsx" prov="asbuilt">
+      <Panel title={t("在既有 viewer 開啟 · Open in viewer", "Open in the existing viewer · Open in viewer")} sub={t("輸入 review_session_id（lwv_ / review_session_ 前綴）；連到既有 viewer，不動 App.tsx / Window.tsx", "Enter a review_session_id (lwv_ / review_session_ prefix); links to the existing viewer, without touching App.tsx / Window.tsx")} prov="asbuilt">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input className="ec-btn" style={{ minWidth: 360 }} placeholder="review_session_xxx 或 lwv_xxx" value={sessionId} onChange={(e) => setSessionId(e.target.value)} />
+          <input className="ec-btn" style={{ minWidth: 360 }} placeholder={t("review_session_xxx 或 lwv_xxx", "review_session_xxx or lwv_xxx")} value={sessionId} onChange={(e) => setSessionId(e.target.value)} />
           {/* 真實 gating：session id 格式不合（viewer / coordinator 都會拒）則不渲染 href、不可聚焦
               （tabIndex=-1）、aria-disabled，鍵盤與螢幕閱讀器都無法啟用，不是只靠 pointerEvents 的假禁用。 */}
           <a className={`ec-btn ${valid ? "primary" : ""}`} {...(valid ? { href: viewerOpenUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
              style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
-            coordinator /ui/open（redirect）
+            {t("coordinator /ui/open（redirect）", "coordinator /ui/open (redirect)")}
           </a>
           <a className="ec-btn" {...(valid ? { href: viewerLocalUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
              style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
-            本地 viewer /?session=
+            {t("本地 viewer /?session=", "local viewer /?session=")}
           </a>
         </div>
-        {!valid && sessionId.length > 0 && <p className="ec-warn-note">此 session id 不符 viewer attach 格式（需 lwv_ 或 review_session_ 前綴 + 英數底線）；viewer 無法 attach、coordinator /ui/open 會回 400 → 連結停用，不產生壞連結。</p>}
+        {!valid && sessionId.length > 0 && <p className="ec-warn-note">{t("此 session id 不符 viewer attach 格式（需 lwv_ 或 review_session_ 前綴 + 英數底線）；viewer 無法 attach、coordinator /ui/open 會回 400 → 連結停用，不產生壞連結。", "This session id does not match the viewer attach format (needs lwv_ or review_session_ prefix + alphanumerics/underscores); the viewer cannot attach and coordinator /ui/open will return 400 → the link is disabled to avoid producing a broken link.")}</p>}
         <p className="ec-note">
-          coordinator <code>/ui/open?session=</code> 為 server-side redirect 至 browser-visible viewer（as-built，app.ts）；
-          本地 <code>/?session=</code> 由既有 main.tsx 解析 attach。本頁僅導引，不在 console 殼層內掛載 WebRTC。
+          {t("coordinator", "coordinator")} <code>/ui/open?session=</code> {t("為 server-side redirect 至 browser-visible viewer（as-built，app.ts）；本地", "is a server-side redirect to the browser-visible viewer (as-built, app.ts); local")} <code>/?session=</code> {t("由既有 main.tsx 解析 attach。本頁僅導引，不在 console 殼層內掛載 WebRTC。", "is parsed and attached by the existing main.tsx. This page only guides; it does not mount WebRTC inside the console shell.")}
         </p>
       </Panel>
 
-      <Panel title="工具列 · Tool Rail（既有 viewer 內）" sub="每顆工具標來源：viewer DataChannel as-built 指令 vs 待建" prov="asbuilt">
+      <Panel title={t("工具列 · Tool Rail（既有 viewer 內）", "Tool rail · Tool Rail (inside the existing viewer)")} sub={t("每顆工具標來源：viewer DataChannel as-built 指令 vs 待建", "Each tool labels its provenance: viewer DataChannel as-built command vs not built")} prov="asbuilt">
         <table className="ec-table">
-          <thead><tr><th>工具</th><th>command</th><th>provenance</th></tr></thead>
+          <thead><tr><th>{t("工具", "Tool")}</th><th>command</th><th>provenance</th></tr></thead>
           <tbody>
             {([
-              ["載入 USD", "openStage", "asbuilt"],
-              ["聚焦元件", "focusPrim", "asbuilt"],
-              ["選取元件", "selectPrims", "asbuilt"],
-              ["清除高亮", "clearHighlight", "asbuilt"],
-              ["高亮元件", "highlightPrims（client 主動拉，非 server-push）", "p15"],
-              ["剖面", "sectionRequest", "p15"],
-              ["截圖", "snapshot", "p15"],
+              [t("載入 USD", "Load USD"), "openStage", "asbuilt"],
+              [t("聚焦元件", "Focus element"), "focusPrim", "asbuilt"],
+              [t("選取元件", "Select element"), "selectPrims", "asbuilt"],
+              [t("清除高亮", "Clear highlight"), "clearHighlight", "asbuilt"],
+              [t("高亮元件", "Highlight element"), t("highlightPrims（client 主動拉，非 server-push）", "highlightPrims (client-pull, not server-push)"), "p15"],
+              [t("剖面", "Section"), "sectionRequest", "p15"],
+              [t("截圖", "Snapshot"), "snapshot", "p15"],
             ] as [string, string, Prov][]).map(([l, cmd, p]) => (
               <tr key={cmd}><td>{l}</td><td>{cmd}</td><td><ProvTag prov={p} /></td></tr>
             ))}
           </tbody>
         </table>
-        <p className="ec-note">Load / Focus / Select / Clear 為 viewer DataChannel as-built 指令；Highlight 走 Review Room 主動拉 prim_paths（不復活 server-push · P1.5）；Section / Snapshot 後端未實作。</p>
+        <p className="ec-note">{t("Load / Focus / Select / Clear 為 viewer DataChannel as-built 指令；Highlight 走 Review Room 主動拉 prim_paths（不復活 server-push · P1.5）；Section / Snapshot 後端未實作。", "Load / Focus / Select / Clear are viewer DataChannel as-built commands; Highlight uses Review Room client-pull prim_paths (without reviving server-push · P1.5); Section / Snapshot are not implemented on the backend.")}</p>
       </Panel>
 
-      <Panel title="範圍與誠實標示" prov="asbuilt">
-        <Field k="3D viewport" v="在既有 viewer（<App/>），非 console 殼層；本頁僅連結導引" prov="asbuilt" />
-        <Field k="server→viewer push highlight / 多人廣播" v="2026-05-21 已退役（remove-conflict-review-from-fast-mvp）；加回需另開 OpenSpec" prov="p15" />
-        <Field k="section / snapshot" v="待建" prov="p15" />
-        <Field k="不動 App.tsx / Window.tsx" v="本頁僅提供連結，不改 viewer 主體（守 console 邊界）" prov="asbuilt" />
+      <Panel title={t("範圍與誠實標示", "Scope & honesty labeling")} prov="asbuilt">
+        <Field k="3D viewport" v={t("在既有 viewer（<App/>），非 console 殼層；本頁僅連結導引", "In the existing viewer (<App/>), not the console shell; this page only provides link guidance")} prov="asbuilt" />
+        <Field k={t("server→viewer push highlight / 多人廣播", "server→viewer push highlight / multi-user broadcast")} v={t("2026-05-21 已退役（remove-conflict-review-from-fast-mvp）；加回需另開 OpenSpec", "retired on 2026-05-21 (remove-conflict-review-from-fast-mvp); re-adding requires a new OpenSpec")} prov="p15" />
+        <Field k="section / snapshot" v={t("待建", "not built")} prov="p15" />
+        <Field k={t("不動 App.tsx / Window.tsx", "do not touch App.tsx / Window.tsx")} v={t("本頁僅提供連結，不改 viewer 主體（守 console 邊界）", "This page only provides links and does not change the viewer body (respecting the console boundary)")} prov="asbuilt" />
       </Panel>
     </>
   );
@@ -2504,7 +2488,7 @@ export function StubPage({ title, note, items }: { title: string; note: string; 
     <>
       <h1>{title}</h1>
       <p className="ec-lead">{note}</p>
-      <Panel title="狀態">
+      <Panel title={t("狀態", "Status")}>
         {items.map(([k, v, p], i) => (
           <Field key={i} k={k} v={v} prov={p} />
         ))}
