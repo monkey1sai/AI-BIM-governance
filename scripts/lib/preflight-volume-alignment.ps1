@@ -78,3 +78,30 @@ function Test-VolumeAlignment {
         status             = $status
     }
 }
+
+# 把 RUNTIME_STORAGE_ROOT 正規化成 host 絕對路徑(正斜線),供 start-web-plane-docker.ps1
+# 在跑 docker compose 前注入 process env。
+#
+# 為何必要:此值經 compose 透傳成容器內 STORAGE_HOST_ROOT,coordinator 寫進 ifc-ready
+# dispatch payload 的 host_local_path,供 host-native streaming-server 從 host fs 直接讀。
+# 相對值(如 ./storage)會被 conversion adapter(_try_local_path)對其 storage_root 二次
+# 解析成 <storage_root>/storage/...(double-nest)→ 找不到檔 → fallback 到容器路徑 →
+# 逃出 storage_root → 轉檔回 invalid_ifc_input(所有 ifc-ready 轉檔全失敗)。
+# docker compose 變數插值「shell env 優先於 --env-file」,故注入此絕對值即覆蓋 .env 相對值。
+# 正斜線:避免 Windows 磁碟機冒號(D:\)干擾 compose volume 短語法的 host:container 分隔。
+function Resolve-AbsoluteStorageRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Raw
+    )
+    $value = $Raw.Trim()
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw 'RUNTIME_STORAGE_ROOT must not be empty.'
+    }
+    if (-not [System.IO.Path]::IsPathRooted($value)) {
+        $value = Join-Path $RepoRoot $value
+    }
+    $value = [System.IO.Path]::GetFullPath($value)
+    return ($value -replace '\\', '/')
+}

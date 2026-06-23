@@ -7,6 +7,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Resolve-AbsoluteStorageRoot:把 RUNTIME_STORAGE_ROOT 正規化為 host 絕對路徑(正斜線),
+# 供下方注入 process env(避免相對 ./storage 讓 host-native streaming-server 轉檔
+# invalid_ifc_input;根因註解見該函式)。
+. (Join-Path $PSScriptRoot 'lib\preflight-volume-alignment.ps1')
+
 function Resolve-HybridEnvFile {
     param([string] $Requested)
     if (-not [string]::IsNullOrWhiteSpace($Requested)) {
@@ -89,6 +94,18 @@ $publicHost = Value-OrDefault -Values $envValues -Name "PUBLIC_HOST" -Default "1
 $coordinatorPublicUrl = Value-OrDefault -Values $envValues -Name "COORDINATOR_PUBLIC_BASE_URL" -Default "http://${publicHost}:$coordinatorPort"
 $viewerPublicUrl = Value-OrDefault -Values $envValues -Name "VIEWER_PUBLIC_BASE_URL" -Default "http://${publicHost}:$viewerPort"
 $viewerBindHost = Value-OrDefault -Values $envValues -Name "VIEWER_BIND_HOST" -Default "127.0.0.1"
+
+# RUNTIME_STORAGE_ROOT 注入 process env 為 host 絕對路徑(正斜線)。compose 變數插值
+# 「shell env 優先於 --env-file」,故此處覆蓋 .env 內可能的相對值(如 ./storage)。
+# 相對值會經 STORAGE_HOST_ROOT → host_local_path 傳給 host-native streaming-server,
+# 被其 conversion adapter 對 storage_root 二次解析成 double-nest 找不到檔 → 轉檔
+# invalid_ifc_input(見 Resolve-AbsoluteStorageRoot 的根因註解)。
+$repoRootForStorage = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+$runtimeStorageRootRaw = Value-OrDefault -Values $envValues -Name "RUNTIME_STORAGE_ROOT" -Default "./storage"
+$runtimeStorageRootAbs = Resolve-AbsoluteStorageRoot -RepoRoot $repoRootForStorage -Raw $runtimeStorageRootRaw
+[Environment]::SetEnvironmentVariable("RUNTIME_STORAGE_ROOT", $runtimeStorageRootAbs, "Process")
+Write-Host "[hybrid] RUNTIME_STORAGE_ROOT (host abs) = $runtimeStorageRootAbs" -ForegroundColor Cyan
+
 $composeArgs = @(
     "compose",
     "-f", "compose.runtime-manager.yml",
