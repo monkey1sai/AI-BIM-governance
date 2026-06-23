@@ -434,3 +434,100 @@ def test_store_idempotent_migration_new_db():
         assert len(rows) == 2
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_store_concurrent_first_request_migration_race():
+    """A2-F3 並發回歸：對一個「已有 model_diff_items 但缺 ifc_type/ifc_name 欄」的舊 DB，
+    多個 thread 同時開 DiffStore（同 db_path）觸發 migration，斷言不拋例外、欄位最終存在、
+    舊列讀回 ifc_type=None。模擬 FastAPI threadpool 下 _get_store 無鎖、首次請求並發補欄的
+    良性 duplicate-column race。"""
+    import shutil
+    import threading
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        db_path = os.path.join(tmpdir, "legacy_concurrent_diff.db")
+
+        # 1. 用低層 sqlite3 建一個「舊 schema」DB（無 ifc_type/ifc_name）並插一筆舊紀錄。
+        legacy_conn = sqlite3.connect(db_path)
+        try:
+            legacy_conn.executescript("""
+CREATE TABLE IF NOT EXISTS model_diffs(
+  id TEXT PRIMARY KEY,
+  base_model_version_id TEXT,
+  target_model_version_id TEXT,
+  base_ifc_path TEXT,
+  target_ifc_path TEXT,
+  status TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  summary_json TEXT
+);
+CREATE TABLE IF NOT EXISTS model_diff_items(
+  id TEXT PRIMARY KEY,
+  model_diff_id TEXT,
+  change_type TEXT,
+  ifc_guid TEXT,
+  base_usd_prim_path TEXT,
+  target_usd_prim_path TEXT,
+  change_summary TEXT,
+  evidence_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_diff_items_diff ON model_diff_items(model_diff_id);
+""")
+            legacy_conn.execute(
+                "INSERT INTO model_diffs(id, status) VALUES(?,?)",
+                ("legacy-diff-conc", "succeeded"),
+            )
+            legacy_conn.execute(
+                "INSERT INTO model_diff_items(id, model_diff_id, change_type, ifc_guid, change_summary, evidence_json)"
+                " VALUES(?,?,?,?,?,?)",
+                ("legacy-item-conc", "legacy-diff-conc", "removed", "guid-legacy", "舊列", "{}"),
+            )
+            legacy_conn.commit()
+        finally:
+            legacy_conn.close()
+
+        # 2. 多個 thread 同時 DiffStore(db_path) 觸發 migration；用 barrier 盡量逼出 race。
+        n_threads = 8
+        barrier = threading.Barrier(n_threads)
+        errors: list[BaseException] = []
+        stores: list[DiffStore] = []
+        lock = threading.Lock()
+
+        def _open():
+            try:
+                barrier.wait()
+                s = DiffStore(db_path)
+                with lock:
+                    stores.append(s)
+            except BaseException as exc:  # noqa: BLE001 — 測試需捕捉所有 thread 例外
+                with lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=_open) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # 3. 斷言：沒有任何 thread 拋例外（duplicate-column race 應被良性吞掉）。
+        assert not errors, f"並發 migration 不應拋例外，實得：{errors!r}"
+        assert len(stores) == n_threads
+
+        # 4. 欄位最終存在。
+        check_conn = sqlite3.connect(db_path)
+        try:
+            cols = {row[1] for row in check_conn.execute("PRAGMA table_info(model_diff_items)").fetchall()}
+        finally:
+            check_conn.close()
+        assert "ifc_type" in cols, "並發 migration 後應有 ifc_type 欄"
+        assert "ifc_name" in cols, "並發 migration 後應有 ifc_name 欄"
+
+        # 5. 舊列讀回 ifc_type=None（不回填假值）。
+        rows = stores[0].get_items("legacy-diff-conc")
+        assert len(rows) == 1
+        assert rows[0]["ifc_type"] is None, f"舊列 ifc_type 應為 None，實得 {rows[0]['ifc_type']!r}"
+        assert rows[0]["ifc_name"] is None, f"舊列 ifc_name 應為 None，實得 {rows[0]['ifc_name']!r}"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
