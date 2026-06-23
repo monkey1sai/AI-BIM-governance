@@ -15,6 +15,11 @@ $script:TestDeployRootToolingDirNames = @(
     'openspec',
     'patches'
 )
+$script:TestDeployPreservedEnvFiles = @(
+    '.env',
+    'bim-review-coordinator\.env',
+    '.env.web-plane.host-kit'
+)
 
 function Normalize-TestDeployPath {
     [CmdletBinding()]
@@ -95,6 +100,58 @@ function Remove-TestDeployAgentTooling {
     return @($removed.ToArray())
 }
 
+function Save-TestDeployEnvSnapshot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $DeploymentPath
+    )
+
+    $root = Normalize-TestDeployPath -Path $DeploymentPath
+    $snapshot = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($relativePath in $script:TestDeployPreservedEnvFiles) {
+        $envPath = Join-Path $root $relativePath
+        if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) { continue }
+        $snapshot.Add([pscustomobject]@{
+            RelativePath = $relativePath
+            Bytes = [System.IO.File]::ReadAllBytes($envPath)
+        }) | Out-Null
+    }
+
+    return @($snapshot.ToArray())
+}
+
+function Restore-TestDeployEnvSnapshot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $DeploymentPath,
+        $Snapshot = @()
+    )
+
+    $root = Normalize-TestDeployPath -Path $DeploymentPath
+    $restored = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($entry in @($Snapshot)) {
+        if ($null -eq $entry) { continue }
+        $relativePath = [string]$entry.RelativePath
+        if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
+
+        $examplePath = Join-Path $root "$relativePath.example"
+        if (-not (Test-Path -LiteralPath $examplePath -PathType Leaf)) {
+            continue
+        }
+
+        $envPath = Join-Path $root $relativePath
+        $parent = Split-Path -Parent $envPath
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+
+        [System.IO.File]::WriteAllBytes($envPath, [byte[]]$entry.Bytes)
+        $restored.Add($relativePath) | Out-Null
+    }
+
+    return @($restored.ToArray())
+}
+
 function Invoke-TestDeployGitCommand {
     [CmdletBinding()]
     param(
@@ -172,6 +229,7 @@ function Invoke-TestDeployRebuild {
         New-Item -ItemType Directory -Path $deployRoot -Force | Out-Null
     }
 
+    $envSnapshot = Save-TestDeployEnvSnapshot -DeploymentPath $deployRoot
     $deployGitDir = Join-Path $deployRoot '.git'
     if (-not (Test-Path -LiteralPath $deployGitDir)) {
         $existing = @(Get-ChildItem -LiteralPath $deployRoot -Force -ErrorAction SilentlyContinue)
@@ -203,6 +261,10 @@ function Invoke-TestDeployRebuild {
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
     Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+    $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
+    if ($restoredEnvFiles.Count -gt 0) {
+        Write-Host "[rebuild-test-deploy] restored deployment env files count=$($restoredEnvFiles.Count): $($restoredEnvFiles -join ', ')"
+    }
 
     $removed = Remove-TestDeployAgentTooling -DeploymentPath $deployRoot -AllowNonFixedPathForTests:$AllowNonFixedPathForTests
     $deployScript = Join-Path $deployRoot 'scripts\deploy.ps1'
@@ -225,6 +287,7 @@ function Invoke-TestDeployRebuild {
         DeploymentPath = $deployRoot
         OriginMainCommit = $commit.Output.Trim()
         RemovedAgentToolingCount = @($removed).Count
+        RestoredEnvFileCount = @($restoredEnvFiles).Count
         DeployExitCode = [int]$deployResult.ExitCode
     }
 }

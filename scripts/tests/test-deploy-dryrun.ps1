@@ -3,6 +3,7 @@
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $deploy = Join-Path $repoRoot 'scripts\deploy.ps1'
+$hostKitExample = Join-Path $repoRoot '.env.web-plane.host-kit.example'
 
 # 跑 -DryRun 並抓所有 stream(Write-Host 走 Information stream,要 *>&1 才能 capture)
 $output = & $deploy -DryRun *>&1 | Out-String
@@ -142,5 +143,15 @@ Assert-True ($cleanStageAudit.runtime.allowedStageHosts -notmatch '8005') 'clean
 Assert-True ($cleanStageAudit.runtime.allowedStageHosts -match '127\.0\.0\.1:49101') 'clean env falls back to 127.0.0.1:49101 stage host'
 Remove-Item -LiteralPath $cleanStageEnv -ErrorAction SilentlyContinue
 Write-TestPass 'clean env stage allowlist drops :8005 and keeps 49101 default'
+
+# Test 11: host-kit test deployment profile opts into MinIO watch without committing credentials
+$hostKitExampleText = Get-Content -LiteralPath $hostKitExample -Raw
+Assert-True ($hostKitExampleText -match '(?m)^RUNTIME_STORAGE_ROOT=\./storage$') 'host-kit example has deployable runtime storage root'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENABLED=true$') 'host-kit example enables MinIO watch by default for test deployment'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ENDPOINT=http://192\.168\.20\.234:9000$') 'host-kit example points at test MinIO endpoint'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_BUCKET=bim-control$') 'host-kit example points at bim-control bucket'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_ACCESS_KEY=$') 'host-kit example keeps MinIO access key empty'
+Assert-True ($hostKitExampleText -match '(?m)^MINIO_WATCH_SECRET_KEY=$') 'host-kit example keeps MinIO secret key empty'
+Write-TestPass 'host-kit MinIO watch deployment defaults'
 
 Write-Host "`n=== test-deploy-dryrun.ps1: ALL PASSED ===" -ForegroundColor Green

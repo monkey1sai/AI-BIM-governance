@@ -75,4 +75,18 @@ try {
 }
 finally { Remove-TestSandbox -Path $sb }
 
+# Test 7: duplicate key with first blank → use the later filled value
+$sb = New-TestSandbox -Prefix 'preflight-vol'
+try {
+    Set-Content -LiteralPath (Join-Path $sb '.env.web-plane.host-kit') -Value @(
+        'RUNTIME_STORAGE_ROOT=',
+        'RUNTIME_STORAGE_ROOT=./storage'
+    )
+    $result = Test-VolumeAlignment -RepoRoot $sb -EnvFile '.env.web-plane.host-kit'
+    Assert-Equal 'ALIGNED' $result.status 'duplicate first blank uses later filled value'
+    Assert-Equal "$sb\storage" $result.runtimeStorageRoot 'later duplicate resolved to abs path'
+    Write-TestPass 'duplicate blank key skipped'
+}
+finally { Remove-TestSandbox -Path $sb }
+
 Write-Host "`n=== test-preflight-volume-alignment.ps1: ALL PASSED ===" -ForegroundColor Green

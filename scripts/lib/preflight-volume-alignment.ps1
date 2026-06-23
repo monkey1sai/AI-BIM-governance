@@ -32,7 +32,7 @@ function Get-EnvValue {
             if ($comment.Success) {
                 $value = $value.Substring(0, $comment.Index).TrimEnd()
             }
-            if ($value) { return $value } else { return $null }
+            if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
         }
     }
     return $null

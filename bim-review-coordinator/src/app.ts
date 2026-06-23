@@ -360,6 +360,13 @@ export function createCoordinatorApp(
       config.minioWatchAccessKey && config.minioWatchSecretKey,
     );
   }
+  const minioWatchStartupConfigError =
+    config.minioWatchEnabled && !minioWatchConfigured()
+      ? "MINIO_WATCH_ENABLED=true but endpoint/bucket/credentials are incomplete"
+      : "";
+  if (minioWatchStartupConfigError) {
+    minioWatchRuntimeEnabled = false;
+  }
   function startMinioWatcherIfEnabled(): void {
     // 不變式：本函式 idempotent。兩條啟動路徑（下方 "listening" 事件、以及 selfBaseUrl
     // 已設時的立即啟動）共用 `minioWatcher` 這一個 guard 防重複啟動。即使兩條同時成立
@@ -1179,9 +1186,11 @@ export function createCoordinatorApp(
         // spec §4.2：誠實區分兩種關閉原因。env 從未 opt-in（config.minioWatchEnabled
         // = false）vs operator 於 console 用 PUT /api/conversion/watch runtime 關閉
         // （config.minioWatchEnabled = true，但 runtime flag 被覆寫為 false）。
-        note: config.minioWatchEnabled
-          ? "已由操作者於 console 關閉（runtime override；coordinator 重啟後回 env 預設）"
-          : "未啟用（env MINIO_WATCH_ENABLED opt-in）",
+        note: minioWatchStartupConfigError
+          ? "未啟用（MINIO_WATCH_ENABLED=true 但 endpoint/bucket/credentials 未完整設定）"
+          : config.minioWatchEnabled
+            ? "已由操作者於 console 關閉（runtime override；coordinator 重啟後回 env 預設）"
+            : "未啟用（env MINIO_WATCH_ENABLED opt-in）",
       };
     }
     return minioWatcher

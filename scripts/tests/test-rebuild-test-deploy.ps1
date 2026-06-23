@@ -132,6 +132,76 @@ try {
     Assert-True (-not (($rebuildCalls -join "`n") -match 'git clean -fdx')) 'rebuild stops before clean'
     Assert-True (-not $deployWasCalled) 'rebuild stops before deploy'
 
+    $preserveRoot = Join-Path $sandbox 'preserve-root'
+    New-Item -ItemType Directory -Path (Join-Path $preserveRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'scripts') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $preserveRoot 'bim-review-coordinator') -Force | Out-Null
+    'deploy' | Set-Content -LiteralPath (Join-Path $preserveRoot 'scripts\deploy.ps1') -Encoding ascii
+    'ROOT_REQUIRED=from-current-version' | Set-Content -LiteralPath (Join-Path $preserveRoot '.env.example') -Encoding ascii
+    'COORD_REQUIRED=from-current-version' | Set-Content -LiteralPath (Join-Path $preserveRoot 'bim-review-coordinator\.env.example') -Encoding ascii
+    'MINIO_WATCH_ENABLED=true' | Set-Content -LiteralPath (Join-Path $preserveRoot '.env.web-plane.host-kit.example') -Encoding ascii
+    @(
+        'ROOT_REQUIRED=already-filled-root',
+        'ROOT_SECRET=keep-root'
+    ) | Set-Content -LiteralPath (Join-Path $preserveRoot '.env') -Encoding ascii
+    @(
+        'COORD_REQUIRED=already-filled-coordinator',
+        'INTERNAL_API_AUTH_TOKEN=keep-coordinator'
+    ) | Set-Content -LiteralPath (Join-Path $preserveRoot 'bim-review-coordinator\.env') -Encoding ascii
+    @(
+        'MINIO_WATCH_ENABLED=true',
+        'MINIO_WATCH_ENDPOINT=http://192.168.20.234:9000',
+        'MINIO_WATCH_BUCKET=bim-control',
+        'MINIO_WATCH_ACCESS_KEY=keep-access-key',
+        'MINIO_WATCH_SECRET_KEY=keep-secret-key'
+    ) | Set-Content -LiteralPath (Join-Path $preserveRoot '.env.web-plane.host-kit') -Encoding ascii
+
+    $preserveCalls = New-Object 'System.Collections.Generic.List[string]'
+    $cleanEvents = New-Object 'System.Collections.Generic.List[string]'
+    $preserveRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $script:preserveCalls.Add("$Tool $($Arguments -join ' ') @ $WorkingDirectory")
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'clean -fdx') {
+            foreach ($relativePath in @('.env', 'bim-review-coordinator\.env', '.env.web-plane.host-kit')) {
+                Remove-Item -LiteralPath (Join-Path $WorkingDirectory $relativePath) -Force -ErrorAction Stop
+            }
+            $script:cleanEvents.Add('removed env files') | Out-Null
+            return [pscustomobject]@{ ExitCode = 0; Output = 'removed env files' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abcdef123456' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+
+    $script:preserveCalls = $preserveCalls
+    $script:cleanEvents = $cleanEvents
+    $preserveDeployRunner = {
+        param([string] $DeployRoot)
+        $rootEnv = Get-Content -LiteralPath (Join-Path $DeployRoot '.env') -Raw
+        $coordEnv = Get-Content -LiteralPath (Join-Path $DeployRoot 'bim-review-coordinator\.env') -Raw
+        $hostKitEnv = Get-Content -LiteralPath (Join-Path $DeployRoot '.env.web-plane.host-kit') -Raw
+        Assert-True ($rootEnv -match 'ROOT_SECRET=keep-root') 'root .env value restored before deploy'
+        Assert-True ($coordEnv -match 'INTERNAL_API_AUTH_TOKEN=keep-coordinator') 'coordinator .env value restored before deploy'
+        Assert-True ($hostKitEnv -match 'MINIO_WATCH_ACCESS_KEY=keep-access-key') 'MinIO access key restored before deploy'
+        Assert-True ($hostKitEnv -match 'MINIO_WATCH_SECRET_KEY=keep-secret-key') 'MinIO secret key restored before deploy'
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+
+    $preserveResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $preserveRoot -AllowNonFixedPathForTests -CommandRunner $preserveRunner -DeployRunner $preserveDeployRunner
+    Assert-True ($script:cleanEvents.Count -eq 1) 'mock clean removed env files before restore'
+    Assert-Equal 3 $preserveResult.RestoredEnvFileCount 'rebuild restores current-version env files before deploy'
+
     $deployExitRoot = Join-Path $sandbox 'deploy-exit-root'
     New-Item -ItemType Directory -Path (Join-Path $deployExitRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $deployExitRoot 'scripts') -Force | Out-Null

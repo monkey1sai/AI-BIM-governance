@@ -78,6 +78,21 @@ describe("GET /api/external/minio-watch/status", () => {
     expect(String(res.body.note)).not.toContain("操作者");
   });
 
+  it("env opt-in 但 MinIO credentials 未完整設定 → 不啟 watcher，status 誠實回 not configured", async () => {
+    const app = makeApp({
+      minioWatchEnabled: true,
+      minioWatchEndpoint: "http://192.168.20.234:9000",
+      minioWatchBucket: "bim-control",
+      minioWatchAccessKey: "",
+      minioWatchSecretKey: "",
+    });
+    const res = await request(app.app).get("/api/external/minio-watch/status");
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(false);
+    expect(String(res.body.note)).toContain("endpoint/bucket/credentials");
+    expect(JSON.stringify(res.body)).not.toContain("secret");
+  });
+
   it("watcher 啟用但 endpoint 不可達 → enabled=true 且 status 形狀完整（含 last_error 欄位）", async () => {
     const app = makeApp({
       minioWatchEnabled: true,
