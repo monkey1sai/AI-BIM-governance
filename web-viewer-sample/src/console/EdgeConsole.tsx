@@ -189,7 +189,7 @@ export default function EdgeConsole() {
           <div key={group.key}>
             <div className="ec-group">{group.title}<span>{group.sub}</span></div>
             {PAGES.filter((p) => p.group === group.key).map((p) => (
-              <button key={p.key} className={page === p.key ? "active" : ""} title={p.label} onClick={() => go(p.key)}>
+              <button key={p.key} className={page === p.key ? "active" : ""} data-plane={p.plane} title={p.label} onClick={() => go(p.key)}>
                 <span className="ec-key">{p.no}</span>
                 <span>{navText(p.key, p.label)}</span>
                 {p.badge && <span className="ec-nav-badge">{p.badge}</span>}
