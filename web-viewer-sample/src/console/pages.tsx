@@ -699,7 +699,7 @@ const LEDGER_STATUS_LABEL: Record<string, string> = {
   detected: "已偵測", queued: "排隊", converting: "轉檔中", ready: "完成", failed: "失敗",
 };
 const LEDGER_STATUS_PROV: Record<string, Prov> = {
-  detected: "artifact", queued: "artifact", converting: "artifact", ready: "built", failed: "p1",
+  detected: "artifact", queued: "artifact", converting: "artifact", ready: "asbuilt", failed: "p1",
 };
 
 export function ConversionSchedulingPage() {
@@ -830,7 +830,7 @@ export function ConversionSchedulingPage() {
           ⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件
         </p>
       )}
-      <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={load}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
+      <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={() => { void load(); void loadRecords(); }}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
         <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
         {err && <p className="ec-warn-note">{err}</p>}
         <Field k="conversion authority" v="bim-streaming-server owns heavy conversion" prov="asbuilt" />
@@ -892,11 +892,12 @@ export function ConversionSchedulingPage() {
           usdc_key==null 標 p1「待產生」；coverage_report==null 標「未取得」；
           不顯假 ready / 假 coverage（Phase 2 回填後才會有真值）。 */}
       <Panel title="轉檔 Ledger（持久紀錄）" sub="GET /api/conversion/records；watcher 偵測即落帳，跨重啟不遺失" prov="asbuilt">
+        <div data-testid="conv-ledger-panel">
         {recErr && <p className="ec-warn-note">{recErr}</p>}
         {!recErr && records.length === 0 && (
           <p className="ec-note">尚無 ledger 紀錄；watcher 偵測到新 model.ifc 後自動落帳。</p>
         )}
-        {records.length > 0 && (
+        {!recErr && records.length > 0 && (
           <table className="ec-table">
             <thead>
               <tr>
@@ -928,7 +929,7 @@ export function ConversionSchedulingPage() {
                     </td>
                     <td>
                       {r.coverage_report != null
-                        ? <span>{String(r.coverage_report)}</span>
+                        ? <span>{typeof r.coverage_report === "object" ? JSON.stringify(r.coverage_report) : String(r.coverage_report)}</span>
                         : <span className="ec-note">未取得</span>}
                     </td>
                     <td><span className="ec-note">{r.detected_at}</span></td>
@@ -938,6 +939,7 @@ export function ConversionSchedulingPage() {
             </tbody>
           </table>
         )}
+        </div>
       </Panel>
       <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
         {jobs.length ? (

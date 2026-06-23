@@ -856,22 +856,21 @@ describe("ConversionSchedulingPage 讀 ConversionLedger（Task 6）", () => {
     expect(container.textContent).toContain("轉檔中");
 
     // ledger panel 內無 ready / 完成 status 文案（converter 未落地）
-    const ledgerPanel = container.querySelector('[data-testid="conv-ledger-panel"]') ??
-      // fallback：找 Panel title 含「轉檔 Ledger」的區塊
-      Array.from(container.querySelectorAll("section")).find(s => s.textContent?.includes("轉檔 Ledger"));
-    // Ledger panel 不應含「完成」（ready 的中文標籤）
-    expect(container.textContent).not.toContain("完成");
+    const ledgerPanel = container.querySelector('[data-testid="conv-ledger-panel"]');
+    expect(ledgerPanel).not.toBeNull();
+    // Ledger panel 不應含「完成」（ready 的中文標籤）——範圍限縮在 panel 內，不污染其他 Panel
+    expect(ledgerPanel!.textContent).not.toContain("完成");
     // 沒有 Ledger 記錄的 status 是「完成」，直接確認兩筆 status 是正確的中文
     // （「排隊」與「轉檔中」已在上方確認）
 
-    // usdc_key null → p1 標記
-    expect(container.textContent).toContain("待產生");
+    // usdc_key null → p1 標記（ledger panel 範圍內）
+    expect(ledgerPanel!.textContent).toContain("待產生");
 
-    // coverage_report null → 未取得
-    expect(container.textContent).toContain("未取得");
+    // coverage_report null → 未取得（ledger panel 範圍內）
+    expect(ledgerPanel!.textContent).toContain("未取得");
 
-    // 無任何 coverage 百分比數字
-    expect(container.textContent).not.toMatch(/\d+\.\d+\s*%/);
+    // 無任何 coverage 百分比數字（ledger panel 範圍內，converter 未落地）
+    expect(ledgerPanel!.textContent).not.toMatch(/\d+\.\d+\s*%/);
 
     // watcher liveness panel 仍在
     const panel = container.querySelector('[data-testid="minio-watch-panel"]');
