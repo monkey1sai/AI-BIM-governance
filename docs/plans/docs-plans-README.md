@@ -1,50 +1,162 @@
 # docs/plans/ — 給 Claude Code 的導讀（必讀）
 
-> v1.1 · 2026-06-11 勘誤更新（依 `ai-bim-governance-互動實作規格與標準對齊.md` PART A 實測）
-> 這個資料夾是「**要做成什麼樣子**」的事實來源（需求、互動語意、驗收條件）。
+> v1.2 · 2026-06-23 重建對齊更新
+> 一句話定位：這個資料夾是「**要做成什麼樣子**」的事實來源（需求、互動語意、驗收條件）。
 > 它**不是程式碼範本**：兩份 .html 是單檔 vanilla JS 示意原型，正式產品另有技術棧（見下）。
->
-> **效力順序**：互動實作規格（行為/標準）＞ v3 計畫（順序/DoD）＞ v2 規格（介面）＞ 兩份 .html（視覺示意）。
-> （注意：**效力不看版本號大小**——互動規格自稱 v1 但效力最高，v3.1/v2.1 版本號較大效力反而較低；一律以本行效力順序為準。）
-> **實作紀律（HOW 補充層）**：用 AI 寫程式時的「不欠技術債 + 照規格精準執行」紀律，另見 `ai-bim-governance-實作紀律與技術債防線.md`——每輪交付前用其 §8 總檢查表逐條核對；它**不改需求/規格**，與規格衝突時以規格為準。
+> **效力順序**：見 §1。**誠實第一：凡 NOT BUILT，任何文件不得寫成「已交付 / 已實作 / 顯示真實資料」。**
 
-## 檔案角色
+---
 
-| 檔案 | 角色 | 照著做的部分 | 不要照抄的部分 |
+## §1 效力順序（衝突裁決，不看版本號大小）
+
+```
+使用者最新明確指令
+  > 互動實作規格與標準對齊.md（行為合約 / 正典路由 / 官方對齊）—— 最高效力
+  > 開發軌跡與執行計畫.md（v3：順序 / 里程碑 / DoD）
+  > 設計規格.md（v2：介面 / token / A1–A10 介面分析）
+  > 兩份 .html 原型（視覺 / IA 示意，非程式碼範本）
+平行補充層（不改需求/規格）：實作紀律與技術債防線.md
+                              ai-bim-governance-design-system-對齊矩陣.md（repo 覆寫彙整索引）
+程式碼權威覆寫文件：repo 實作與 tests/ 為行為真相；docs 不得當行為權威
+```
+
+- 互動規格自稱 v1 但效力最高；v3.1/v2.1 版本號較大但效力較低——一律以本行順序為準。
+- **design-system 對齊矩陣**屬 docs 層的 reference 索引，**不具獨立效力**；與 repo 衝突時以 repo 為準，與互動規格衝突時以互動規格為準。矩陣 §3「最終覆寫源」一詞僅指「彙整 repo 覆寫結論的索引」，不自封凌駕 repo 或互動規格。
+- 設計系統（styles.css / 元件）對「視覺」有約束力；對「功能是否存在」無約束力——以 repo 現況為準。
+
+---
+
+## §2 檔案角色表（8 檔）
+
+> **缺檔警告（誠實基準）**：最高效力的 `ai-bim-governance-互動實作規格與標準對齊.md`（正典路由 22 條的唯一來源、PART B 互動卡、PART C 官方對齊）**目前不在本資料夾**。其餘所有檔案皆把它當 source of truth 引用，請務必先確認此檔已補回（或已改名/合併，需全檔同步更新引用名），否則路由表與行為合約頂端會斷鏈。
+
+| 檔案 | 角色 | 照著做 | 不要照抄 |
 |---|---|---|---|
-| `ai-bim-governance-互動實作規格與標準對齊.md` | **行為合約 + 實測差距 + 官方標準**（最高效力） | PART B 互動卡 IX-xx（狀態機/API/驗收）、六個通用互動模式、PART C 三領域官方對齊 | — |
-| `ai-bim-governance-prototype.html` | 產品殼層需求原型（A1–A10 + 落地端控制台四頁） | 頁面清單、版面結構、互動語意（轉檔排程/Session 端點池/機隊重啟搬移）、誠實標記呈現 | 單檔 vanilla JS 實作。正式殼層 = **React 18 + TypeScript EdgeConsole**，由 coordinator `/ui` 提供 |
-| `ai-bim-geo-viewer-prototype.html` | 3D viewer「執行計畫完成後」的驗收示意（對應 `#viewer`、M4 成果） | 七區塊資訊架構（點選→IFC 語意→Pset/Qto→Spatial→GUID⇔USD 對應表→A1 疊加→反向跳轉）、驗證結果清單 | **自寫 canvas 3D 引擎（純示意）**。正式版 3D 畫面來自落地端 Kit 的 **WebRTC 串流**，前端只收 frame、指令走 DataChannel（`highlightPrimsRequest`） |
-| `ai-bim-governance-設計規格.md` | v2 設計規格 | Design tokens、A1–A10 介面分析、MinIO 三層結構、兩次 NVIDIA 官方核實 | — |
+| `ai-bim-governance-互動實作規格與標準對齊.md` | **行為合約 + 實測差距 + 官方標準**（最高效力；**目前缺檔，須補回**） | PART B 互動卡 IX-xx（狀態機 / API / 驗收）、六個通用互動模式、PART C 三領域官方對齊；**A.1.1 正典路由表 22 條（唯一來源）** | — |
+| `ai-bim-governance-prototype.html` | 產品殼層需求原型（A1–A10 + 落地端控制台四頁） | 頁面清單、版面結構、互動語意（轉檔排程 / Session 端點池 / 機隊重啟搬移）、誠實標記呈現、NOT BUILT 全 disabled + 待建標記 | 單檔 vanilla JS 實作。正式殼層 = **React 18 + TypeScript EdgeConsole**，由 coordinator `/ui` 提供 |
+| `ai-bim-geo-viewer-prototype.html` | 3D viewer「M4 完成後」的驗收示意（對應 `#viewer`） | 七區塊 IA（點選 → IFC 語意 → Pset/Qto → Spatial → GUID⇔USD 對應表 → A1 疊加 → 反向跳轉）；IA 保留、重生不動；示意原型內一律標「範例值·示意」 | **自寫 canvas 3D 引擎（純示意）**。正式版來自 Kit WebRTC 串流，前端只收 frame、指令走 DataChannel（`highlightPrimsRequest`）。「由幾何計算非寫死」為正式版要求，示意頁標「範例值·示意」 |
+| `ai-bim-governance-設計規格.md` | v2 介面 + token + A1–A10 介面分析 | Design tokens（**以 styles.css 為唯一真相，文件數值示意**）、A1–A10 介面分析、MinIO 資料章（§4.3/§5 誠實版：local_fs 兩層已交付、真 MinIO 三層待接） | 舊版「🟢 MinIO 介面已交付 / 顯示真實三層結構」**已作廢**（見 §3 鐵律 #7）；A4 狀態以對齊矩陣裁決為準 |
 | `ai-bim-governance-開發軌跡與執行計畫.md` | v3 軌跡 + 工程規格 + 執行計畫 | **實作順序照這份**：里程碑 M0–M8、各 App API 草案與 DoD、決策 D1–D9、未決事項 O1–O6 | — |
 | `ai-bim-governance-實作紀律與技術債防線.md` | **實作紀律 + 技術債防線**（HOW 補充層，不改需求/規格） | §1 一頁速查、§2 八原則、§3 技術債陷阱 D-01~D-23、§4 DoD 硬化、§8 交付前總檢查表 | — |
+| `ai-bim-governance-design-system-對齊矩陣.md` | **DS × repo 三方對照**（新增；A4 狀態唯一裁決源） | repo 覆寫結論索引（DS 宣稱 vs 互動規格 vs repo 現況）；A4=NOT BUILT·p4 裁決在此 | 自封「功能最終覆寫源」（效力見 §1）；不得獨立改需求 |
 
-> 補述：`docs/plans/` 下共有**兩份**原型 .html——`ai-bim-governance-prototype.html`（殼層，22 頁導航）與 `ai-bim-geo-viewer-prototype.html`（3D 語意驗證示意，對應 `#viewer`／M4）。兩份皆為行為/視覺示意，非程式碼範本。
+> `docs/plans/` 共有**兩份**原型 .html——`ai-bim-governance-prototype.html`（殼層，22 頁導航）與 `ai-bim-geo-viewer-prototype.html`（3D 語意驗收示意，M4）。兩份皆為行為/視覺示意，非程式碼範本。
 
-## 實作鐵律（違反 = 做錯）
+---
 
-1. **順序照 v3**：M0 地基 → M1 A1 核心閉環（P0，純 CPU，不碰 3D）→ M2 轉檔 → M3 串流 → M4 3D 連動 → M5+。不要先做 3D。
-2. **Route contract（唯一正典）**：完整路由以《互動實作規格》PART A「**A.1.1 正典路由表（22 條）**」為準，各文件不再各自維護。要點：hash 無斜線（`#a1` 非 `#/a1`）；**`#gpu` 為 GPU 審查室正典 route，`#review` 為別名**（UI 顯示「GPU 審查室 / Review Room」）；`#runtime` 正式、`#admin` **待建**；operator `#kit`、`#demo-control` 保留不砍。
-3. **誠實標記**（已實作/實測/示範/待建）由後端 provenance 驅動，不寫死前端；沒做的功能一律標「待建」，**不提供假按鈕**。
-4. **官方支援才做**：1 GPU = 1 Kit instance = 1 stream（同時 session ≤ GPU 數）；session 換 GPU = terminate + recreate（約 30–40 秒），**沒有 live migration**；spectator 共看同一 stream 不另吃 GPU。
-5. **Issue 共同出海口**：A1/A2/A3/A5 共用同一 Issue/BCF schema（見 v3 §2.0.3），不要各做各的。
-6. **AI 僅寫 session layer**，不碰 source model；建 Issue、批次修改、送 BCF 等動作要真人確認（intent → confirm → audited result）。
-7. **資料路徑**：短期真相源為 local_fs storage（比照 `bim-control/{projectId}/{類別}/{版本檔}` 三層規約；2026-06-11 已落地 `270/機電|水電|消防/000001~000003+竣工.ifc`），真 S3/MinIO 待接；轉檔輸出 `model.usdc` 寫回對應位置並出 coverage 報告（不承諾 100% 無損）。專案編號現況＝**270/889/990＋271，皆為 MinIO 暫時測試 IFC 檔**（非正式專案；正式資料匯入後替換，測試資料須在 UI 標示）。
-8. **服務邊界（現況 6 服務，埠以《開發軌跡》§2.0.2 為準）**：coordinator :8004（session/instance、`/ui`、`/api/governance/*` proxy）；governance-service :49102（規則/Issue/BCF，CPU，**永遠 host-native、browser 不直連，一律經 proxy**）；bim-streaming-server（Kit 本體：信令 49100 / 串流 47998 / 轉檔 API 49101 / spectator 49110）；web-viewer-sample :5173；kit-manager-api :8010（`#instances`/`#runtime` 真遙測）；kit-manager-web（operator `#kit`/`#demo-control`）；MCP sidecars 9901/9902/9903。CORE 功能不依賴 GPU 即可交付。
-9. **BCF / IFC diff 對齊 IfcOpenShell 官方**：版本比對一律用 `ifcdiff`（JSON、GlobalId 鍵），不自寫 diff；BCF 用官方 bcf 庫語意（**現行 2.1 匯出保留**，3.0 為升級目標）。https://docs.ifcopenshell.org/
-10. **IFC 轉檔對齊 IfcConvert 官方能力邊界**：IfcConvert 無 USD 輸出；自製 IFC→USD 必須 (a) 以 GlobalId 命名 prim（`G_<sanitized_guid>`）、(b) 出 mapping coverage 報告；備援路線 `IfcConvert --use-element-guids` → glb。https://docs.ifcopenshell.org/ifcconvert.html
-11. **3D viewer 功能對齊 Omniverse 官方 extensions**：量測/批註/剖切/書籤/場景樹/屬性/串流一律用官方件（`omni.kit.tool.measure`、`omni.kit.tool.markup`、`omni.kit.window.section`、`omni.kit.waypoint.core`、`omni.kit.widget.stage`、`omni.kit.window.property`、`omni.kit.livestream.webrtc`），web 端不重做；自製僅限 **BCF 橋接層**。https://docs.omniverse.nvidia.com/extensions
+## §3 實作鐵律（11 條，違反 = 做錯）
 
-## 驗收方式
+### 1. 順序照 v3
+M0 地基 → M1 A1 核心閉環（P0，純 CPU，不碰 3D）→ M2 轉檔 → M3 串流 → M4 3D 連動 → M5+。不要先做 3D。
 
-每個里程碑以 v3 文件的 **DoD** 為準；互動行為以互動實作規格 **PART B 互動卡** 為準（含「禁止樂觀更新、一律證據型更新」）；介面長相以兩份原型的對應頁面為準。
+### 2. Route contract（唯一正典）
+完整路由以《互動實作規格》PART A「**A.1.1 正典路由表（22 條）**」為唯一來源。各文件不得各自維護路由表，只引用。
 
-## 給 repo root CLAUDE.md 的建議段落（複製貼上）
+要點：
+
+- hash 無斜線（`#a1` 非 `#/a1`）
+- **`#gpu` 為 GPU 審查室正典 route，`#review` 為別名**；但 repo `EdgeConsole.tsx` 同時存在獨立的 `case "review"` = ReviewRoomPage，**兩者語意不同，勿混淆**；保留別名清單須含 `review`，勿斷現有 ReviewRoomPage 連結
+- **路由表「hash」欄（如 `#a1`）對應 `EdgeConsole.tsx` switch key 與 `PAGES[].key`**；`RM_APPS[].route`（如 A1→`"issues"`）是 App 卡內部跳轉目標，語意不同，勿當等式
+- `#runtime` 正式（已建）、`#admin` **待建**；operator `#kit`、`#demo-control` 保留不砍
+- `/ui/open?session=:id` 為凍結 handoff path，禁 `/ui/*` 萬用 redirect 吃掉
+- deep-link aliases（`overview/coordinator/intake/semantic/apps/review`）保留，不砍
+
+### 3. 誠實標記
+由後端 provenance 驅動，不寫死前端。未做的功能一律標「待建」，**不提供假按鈕**。無遙測標「未取得」不畫 fail。設計系統五類 ProvTag 對映 repo `Prov` 型別（**僅 7 值，無 `todo`**）：
+
+| 設計系統類別 | repo Prov 值 | 標籤 |
+|---|---|---|
+| built | `asbuilt` | 已實作 |
+| artifact | `artifact` | 實測 artifact |
+| demo | `demo` | 示範資料 |
+| ai | `p15` | 後端待建 · P1.5 |
+| todo | `p1` / `p3` / `p4` | 後端待建 · P1 / 願景 Phase 3 / 願景 Phase 4 |
+
+`prov="todo"` 會 TS2322，禁用。
+
+### 4. 官方支援才做
+1 GPU = 1 Kit instance = 1 stream（同時 session ≤ GPU 數）；session 換 GPU = terminate + recreate（約 30–40 秒），**無 live migration**；spectator 共看同一 stream 不另吃 GPU。GPU 受限的是**容器 plane**（缺 Vulkan ICD）；host 有 RTX 4060 Ti + host-native Kit。
+
+### 5. host-native vs container plane 分離（雲地分離鐵律）
+governance-service / Kit / 轉檔引擎為 **host-native**，browser 不直連，一律經 coordinator proxy；容器 plane 只跑 web 面且缺 Vulkan ICD，GPU 受限的是容器而非 host。prototype.html 的「依賴列表」每頁標 host-native / container 歸屬。
+
+### 6. Issue 共同出海口
+A1/A2/A3/A5 共用同一 Issue/BCF schema（見 v3 §2.0.3），不要各做各的。BCF 現行 2.1 匯出保留；3.0 為升級目標（須先向 buildingSMART 確認）——此句只在互動規格 PART C 落一次，其餘引用。
+
+### 7. 資料路徑（MinIO 誠實框架，四釘子逐字）
+
+**1 — watcher 已實作**：`bim-review-coordinator/src/services/minioWatcher.ts` `deriveIntakeFromKey` 解析 ≥3 段 key；種類=倒數第二段、版本=末段；中文資料夾→`mv_<hash8>`。env opt-in 預設關；真實 MinIO endpoint（`192.168.20.234:9000` / bucket `bim-control`）由部署區 .env 注入，不硬編碼。live 多層觸發 not observed。
+
+**2 — 轉檔紀錄**：轉檔權威 `bim-streaming-server`（`GET /api/conversions` list / `/{id}` / `/{id}/result`）已存在；coordinator 已有 `/api/dev/conversions` proxy 轉發 streaming list。**但前端 console 未渲染成「轉檔歷史紀錄頁」**——精確說法：後端 list + proxy 皆在，缺的是 UI 呈現層。禁寫「完全無持久化」或「完全沒接線」。
+
+**3 — `#minio` 頁現況**：頁面**已建且有真接線**，但接的是 `GET /api/governance/files/tree` 的**本地 local_fs 兩層樹**（`source_kind="local_fs"`），**非真 MinIO 三層 key 結構**。頁面自標「真 S3/MinIO 待接」、bucket layout panel 標 `prov="demo"`。**設計規格舊版「🟢 介面已交付 / 顯示真實三層結構」必須更正為**：`#minio` 頁已交付，但只顯示本地 file-server 的兩層 IFC 樹（local_fs）；真 S3/MinIO 三層結構瀏覽待接。watcher 三層解析（釘子 #1）與 `#minio` 頁（local_fs 樹）是兩條獨立資料路徑，watcher 結果未餵進此頁。
+
+**4 — 觸發**：自動觸發**僅靠 watcher 偵測到新/變更的 key**。**無已接線的手動佇列/插隊 UI 觸發新轉檔**——`#conv` 的 prioritize/retry 只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期。
+
+短期真相源 = local_fs storage（三層規約已落地 270/機電|水電|消防/000001~000003+竣工.ifc）。**270/889/990+271 皆為 MinIO 暫時測試 IFC 檔，須在 UI 標示測試資料。** 轉檔輸出 `model.usdc` 寫回對應位置 + coverage 報告（不承諾 100% 無損；conv-coverage=1 在 usd_stage_enumeration 下為結構性自我參照，須加 `conv-coverage-selfref-note`）。
+
+### 8. 服務邊界（6 服務，埠以《互動規格》§8 / 《開發軌跡》§2.0.2 為準）
+
+| 服務 | 埠 | 能做 | 不能做 |
+|---|---|---|---|
+| coordinator | `127.0.0.1:8004` | session/instance、`/ui`、`/api/governance/*` proxy、ifc-ready intake、`/ui/open?session=` redirect | 不渲染 / 不開 USD stage / 不奪 Kit 控制權威 |
+| governance-service | `127.0.0.1:49102` | A1 rule-run / A2 diff / A3 federation / Issue / BCF / `/api/files/tree`（CPU） | **永遠 host-native、browser 不直連，一律經 coordinator proxy** |
+| bim-streaming-server | 信令 49100 / 串流 47998 / 轉檔 API 49101 / spectator 49110 起（KIT_SPECTATOR_COUNT 決定範圍） | IFC→USDC 轉檔 / Kit runtime / viewport / WebRTC + DataChannel | 不處理登入 / 不當 project 資料權威 / 不當長期 Issue DB |
+| web-viewer-sample（viewer） | `127.0.0.1:5173` | 顯示串流 / DataChannel 互動 / 前端 spectator gate | 不啟 Kit / 不分配 GPU / 前端 `disabled` 不是授權邊界 |
+| kit-manager-api | `127.0.0.1:8010` | `#instances`/`#runtime` 真遙測、Kit 啟停 / GPU pool 控制權威 | — |
+| MCP sidecars | `9901/9902/9903` | kit-mcp / usd-code-mcp / omni-ui-mcp 官方驗證 | — |
+
+### 9. BCF / IFC diff 對齊 IfcOpenShell 官方
+版本比對一律用 `ifcdiff`（JSON、GlobalId 鍵），不自寫 diff；BCF 用官方 bcf 庫語意（現行 2.1 保留，3.0 為升級目標）。
+
+### 10. IFC→USD 對齊 IfcConvert 官方能力邊界
+IfcConvert 無 USD 輸出；自製 IFC→USD 必須：(a) 以 GlobalId 命名 prim（`G_<sanitized_guid>`）、(b) 出 mapping coverage 報告（不承諾 100% 無損）；備援路線 `IfcConvert --use-element-guids` → glb。
+
+### 11. 3D viewer 功能對齊 Omniverse 官方 extensions
+量測/批註/剖切/書籤/場景樹/屬性/串流一律用官方件（`omni.kit.tool.measure`、`omni.kit.tool.markup`、`omni.kit.window.section`、`omni.kit.waypoint.core`、`omni.kit.widget.stage`、`omni.kit.window.property`、`omni.kit.livestream.webrtc`），web 端不重做；自製僅限 BCF 橋接層。Replicator / Cosmos / Isaac（A8/A10）版本風險高，先用 kit-mcp/usd-code-mcp/omni-ui-mcp + nvidia.com/omniverse 驗證再寫；無法確認標 `Phase X · 待驗證`。
+
+---
+
+## §4 A1–A10 狀態一覽（以 repo data.ts + 官方對齊為準）
+
+**A4 狀態唯一裁決源 = design-system 對齊矩陣 §4.4**，其他文件一律寫「A4=NOT BUILT·p4，裁決見對齊矩陣 §4.4」，禁各自展開論證。**A2 頁不得出現成本影響塊；成本屬 A6（5D 成本/S-curve）/ A9 範疇，非 A2，A2 不呈現。**
+
+| App | 狀態 | 真相要點 |
+|---|---|---|
+| A1 治理檢核 | **built** | rule_engine + ifctester(IDS) + BCF 2.1 + 記分板色碼；3D 高亮 todo（需 viewer DataChannel） |
+| A2 版本差異 | **built** | diff_engine（GlobalId 多級）；ifc_type/ifc_name 落庫 bug 已修（PR #242）；**無成本影響塊（成本屬 A6/A9，非 A2）** |
+| A3 跨專業疊合 | **拆分** | **federation built**（USD sublayer + review-room handoff）；**clash NOT BUILT**（卡 ifcopenshell 缺 OpenCASCADE，`has_occ=False`，spike 未 push）；clash 頁標 `spec·blocked-on-OCC` |
+| A4 語意搜尋 | **NOT BUILT · p4** | 願景 Phase 4；無任何後端程式碼；**禁寫成 hero built**；裁決見對齊矩陣 §4.4 |
+| A5 IoT/FM | **NOT BUILT · p3** | 願景 Phase 3；須等 MQTT+TimescaleDB |
+| A6 4D/5D | **NOT BUILT · p4** | 願景 Phase 4；GPU-bound；RM_APPS phase=2 但 prov=p4，狀態以 prov 為準 |
+| A7 Reality Capture | **NOT BUILT · p4** | 願景 Phase 4；需 usd-code-mcp 驗 mesh-compare |
+| A8 Synthetic Data | **NOT BUILT · p4** | 願景 Phase 4；需對齊 Omniverse Replicator（先驗再寫） |
+| A9 審查 Copilot | **NOT BUILT · p4** | 願景 Phase 4；僅 session layer（intent→confirm→audited result）；不在 3D 場景 |
+| A10 機器人巡檢 | **NOT BUILT · p4** | 願景 Phase 4；Isaac-sim adjacent；先驗再宣稱 |
+
+A1–A10 具體數字（「312 扇門」「17000 frames」等）為**願景敘事**，禁當實測。Hero built（Edge Console）= **A1 + A2 + A3-federation**。
+
+---
+
+## §5 驗收方式
+
+- **里程碑**：以 v3 DoD 為準
+- **互動行為**：以互動規格 PART B 互動卡（IX-xx）為準（禁樂觀更新、一律證據型更新）；既有 e2e trace（`artifacts/e2e/conv-watch-toggle-trace/` 等）可當驗收錨
+- **介面長相**：以兩份原型對應頁面為準（styles.css 為 token 唯一真相，文件數值示意）
+- **user-facing 功能**：須附 gstack/Playwright evidence（`artifacts/e2e/*.png` + trace）；backend-only done 不接受
+
+---
+
+## §6 給 repo root CLAUDE.md 的建議段落（5 份文件 + 對齊矩陣）
 
 ```
 ## 需求事實來源
 A1–A10 功能需求、UI 驗收語意與實作順序，一律以 docs/plans/ 為準：
-先讀 docs/plans/docs-plans-README.md，再讀 ai-bim-governance-互動實作規格與標準對齊.md（行為與標準）、
-ai-bim-governance-開發軌跡與執行計畫.md（順序）與 ai-bim-governance-設計規格.md（介面）。
+先讀 docs/plans/docs-plans-README.md，再依任務讀：
+  互動實作規格與標準對齊.md（行為合約 / 正典路由 22 條 / 官方對齊）
+  開發軌跡與執行計畫.md（里程碑 M0–M8 / DoD / 順序）
+  設計規格.md（介面 / A1–A10 介面分析；MinIO 資料章為誠實版：local_fs 兩層已交付、真 MinIO 三層待接，見 README §3.7）
+  ai-bim-governance-design-system-對齊矩陣.md（DS × repo 三方對照；A4 狀態唯一裁決源）
+  實作紀律與技術債防線.md（HOW 補充層，不改需求）
 兩份 .html 是行為示意，不是程式碼範本。
 ```

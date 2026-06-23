@@ -8,6 +8,32 @@
 
 ---
 
+## 對齊 AI · BIM Governance Design System（2026-06-23 增補層）
+
+> 本檔本體（PART 1 開發軌跡、PART 2 A1–A10 工程規格含 M0–M8 里程碑 / D1–D9 決策 / O1–O6 未決、PART 3 執行計畫）為已 merge 的權威工程計畫，**逐字保留**。
+> 本節是 design-system 對齊增補：把需求與前端方向對齊 **AI · BIM Governance Design System**（設計來源）。
+> 完整三方對照見 `ai-bim-governance-design-system-對齊矩陣.md`。**效力**：程式碼 > 本計畫（順序 / DoD）> 本對齊增補層。
+
+- **前端方向**：所有 user-facing 里程碑以暗色 **Edge Console**（design system 預設識別，NVIDIA-green `#84c714`）為長相；plane 色碼 CORE=cyan / OMNIVERSE=green / AI=violet；provenance 誠實系統為硬需求（repo 七值 `asbuilt/artifact/demo/p1/p15/p3/p4` ↔ DS 五類 `built/artifact/demo/ai/todo` 映射見對齊矩陣）。
+- **方法對齊**：需求情境對齊 `guides/a1-a10-customer-scenarios.md`（persona → trigger → journey → persists → provenance）；持久化對齊 `guides/persistence.md`（前端 localStorage demo 層 + 後端 metadata / MinIO / coordinator 權威層，restore-on-load）；驗收完成閘採 **ultracode 交叉對抗驗證**（implementer / adversary / reconciler 三角色 + 四軸 verifier，見 `ai-bim-governance-實作紀律與技術債防線.md`）。
+
+**A1–A10 現況狀態（2026-06-23，以 repo `web-viewer-sample/src/console/data.ts` 為準；本表優先於正文 2026-06-10/11 快照）**
+
+| 代碼 | 應用 | repo prov | 現況（誠實） |
+|---|---|---|---|
+| A1 | 治理與模型檢核 | `asbuilt` | 已建（規則引擎 + BCF 2.1 + 記分板色碼） |
+| A2 | 版本差異與責任 | `asbuilt` | 已建（變更清單三色碼） |
+| A3 | 跨專業 Federation | `asbuilt` | federation / 疊層已建；clash 偵測卡 ifcopenshell 缺 OpenCASCADE（`has_occ=False`）→ 不顯真實 clash 數，標 demo / 待驗證 |
+| A4 | 語意搜尋問答 | `p4` | NOT BUILT · p4 |
+| A5 | IoT / FM 數位分身 | `p3` | NOT BUILT · p3 |
+| A6–A10 | 4D·5D / Reality Capture / Synthetic Data / Copilot / Robot Sim | `p4` | NOT BUILT · p4（GPU · Omniverse-gated） |
+
+**資料存放現況（誠實，對齊使用者指正）**：MinIO watch 偵測**已實作**；**無持久轉檔紀錄**、`#minio` 結構顯示頁**未接真實 list**、轉檔**僅靠新增 `model.ifc` 觸發排程**、IFC→USDC 轉檔權威**待建**。閉環改善另立 issue spec：`docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md`。
+
+**資料庫現況更正（程式碼 > 文件）**：governance-service 的規則 / Issue / diff / federation 帳本實際用 **SQLite**（`governance-service/db.py` · `governance.db`，host-native），**非**正文 2026-06-10 計畫所寫 Postgres；雲端 metadata 權威 `bim-control` 用 **MySQL**；A5 感測時序的 TimescaleDB 為**未建 roadmap**。正文（PART 2 工程規格 / 資料流）凡出現 Postgres，一律以本段為準。
+
+---
+
 ## 0. 這份文件怎麼用（給不懂工程的你）
 
 全文分三大部分：

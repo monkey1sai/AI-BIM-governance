@@ -11,6 +11,33 @@
 
 ---
 
+## 對齊 AI · BIM Governance Design System（2026-06-23 增補層）
+
+> 本檔本體（PART A/B/C 與 23 張 IX 互動卡）為已 merge 的權威行為合約，**逐字保留**。
+> 本節是 design-system 對齊增補：把前端視覺與誠實語言對齊 **AI · BIM Governance Design System**
+> （設計來源，暗色 Edge Console + provenance 誠實系統）。完整三方對照見
+> `ai-bim-governance-design-system-對齊矩陣.md`。**效力**：程式碼 > 本檔行為合約（PART B/C）> 本對齊增補層。
+
+- **視覺 / 識別**：預設＝暗色 **Edge Console**（NVIDIA-green `#84c714`、mono label 簽名紋理、1px hairline、status LED）；`class="theme-docs"` 切淺色 docs 面。畫面組合 design system 已發佈元件（`Button` / `ProvTag` / `StatusLED` / `Pill` / `Badge` / `Card` / `Panel` / `MetricCard` / `Stepper` / `NavItem` / `ChatToolCall` / `HealthChip` / `LangToggle`），不在畫面內重造 primitive。
+- **plane 色碼**：CORE=cyan（CPU/API）、OMNIVERSE=green（GPU）、AI=violet——nav / badge / 邊界一律照此，使用者一眼知道何處需 GPU。
+- **provenance 誠實系統（硬需求，非裝飾）**：repo 七值 ↔ design system 五類映射——`asbuilt↔built`、`artifact↔artifact`、`demo↔demo`、`p1/p15↔ai`（phase-1.5）、`p3/p4↔todo/phase`。缺遙測標 `未取得` + idle LED；未建標 `NOT BUILT · Phase X`；enum（`SessionStatus` / `KitInstance.status`）後端逐字；禁假數字（127 rules / 治理分數 / 99.x% GUID）。本檔各 IX 卡「禁止樂觀更新、一律證據型更新」與此同源。
+- **互動方法對齊**（design system `guides/frontend-interaction-and-design.md`，本檔 IX 卡已體現）：引導式 `Stepper`（A1 上傳→檢核→結果→開 Issue→交付）、Primary / Spectator 同步唯讀鏡像、AI 透明（`ChatToolCall` 顯示每個 MCP 工具呼叫 +「只在 session layer 操作 · 不改 source model」）。
+
+**A1–A10 現況狀態（2026-06-23，以 repo `web-viewer-sample/src/console/data.ts` 為準；本表優先於正文 2026-06-11 快照）**
+
+| 代碼 | 應用 | repo prov | 現況（誠實） |
+|---|---|---|---|
+| A1 | 治理與模型檢核 | `asbuilt` | 已建（規則引擎 + BCF 2.1 + 記分板色碼） |
+| A2 | 版本差異與責任 | `asbuilt` | 已建（變更清單三色碼） |
+| A3 | 跨專業 Federation | `asbuilt` | federation / 疊層**已建**；**clash 偵測卡 ifcopenshell 缺 OpenCASCADE（`has_occ=False`）→ 不顯真實 clash 數，標 demo / 待驗證** |
+| A4 | 語意搜尋問答 | `p4` | **NOT BUILT · p4**（roadmap；3D 高亮 todo） |
+| A5 | IoT / FM 數位分身 | `p3` | **NOT BUILT · p3** |
+| A6–A10 | 4D·5D / Reality Capture / Synthetic Data / Copilot / Robot Sim | `p4` | **NOT BUILT · p4**（GPU · Omniverse-gated） |
+
+**資料存放現況（誠實，對齊使用者指正）**：MinIO watch 偵測**已實作**（`bim-review-coordinator/src/services/minioWatcher.ts`）；**無持久轉檔紀錄**（watcher status 僅記憶體留 5 筆）；`#minio` 資料結構顯示頁**未接真實 list**；轉檔**僅靠新增 `model.ifc` 觸發排程**；IFC→USDC 轉檔權威**待建**。閉環改善設計見 `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md`。metadata 權威 DB = `bim-control · MySQL`（非 Postgres）。
+
+---
+
 # PART A · 實測差距報告（2026-06-11 逐頁比對）
 
 ## A.0 總評（先說好消息）
