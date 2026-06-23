@@ -351,8 +351,16 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain("上傳模型");
     expect(a1).toContain("自動檢核");
     expect(a1).toContain("開 Issue");
-    // 末步標 Excel(本頁實際只 ?fmt=excel 匯出 .xlsx);BCF 匯出在 #/issues,不在此頁誇大標示（誠實鐵律）。
+    // Excel 匯出鈕（fmt=excel .xlsx）。
     expect(a1).toContain("匯出 Excel");
+    // A1-W1：#a1 canonical route 自有 BCF 2.1 匯出鈕（data-testid=a1-step-bcf）；
+    // 不再導引去 #issues（移除「BCF 匯出請至 Issues 頁」字樣）。
+    expect(a1).toContain('data-testid="a1-step-bcf"');
+    expect(a1).toContain("匯出 BCF 2.1");
+    // BCF 鈕初始態（step=idle）需先建 Issue，故 disabled + 誠實 caption。
+    expect(a1).toContain("需先建 Issue");
+    // 舊導引字樣已移除（#a1 為 canonical，不再導引去 Issues 頁）。
+    expect(a1).not.toContain("BCF 匯出請至 Issues 頁");
     expect(a1).toContain("rule_run_id");
     expect(a1).toContain('data-testid="a1-real-ifc-slice"');
     expect(a1).toContain('data-testid="real-ifc-demo-control"');
