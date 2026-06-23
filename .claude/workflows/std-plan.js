@@ -116,7 +116,7 @@ const plan = await agent(`你是 AI-BIM-governance 的 plan 作者,嚴格遵循 
 
 plan 規格(writing-plans,逐條遵守):
 1. 檔頭固定:「# <Feature> Implementation Plan」+ 引言「**For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development」+ Goal(一句話)/ Architecture(2-3 句)/ Tech Stack。
-2. 假設執行者對 codebase 零脈絡:先用 GitNexus 導航(ToolSearch 載入 mcp__gitnexus__query / mcp__gitnexus__context 後呼叫)+ Read 確認既有模式與精確檔案路徑,不要憑空猜路徑。
+2. 假設執行者對 codebase 零脈絡:先用 GitNexus 導航(ToolSearch 載入 mcp__gitnexus__query / mcp__gitnexus__context 後呼叫)+ Read 確認既有模式與精確檔案路徑,不要憑空猜路徑。並列載入 mcp__codebase-memory-mcp__search_graph 交叉確認 symbol 清單、需單一 symbol 原始碼時優先 mcp__codebase-memory-mcp__get_code_snippet(qualified_name) 取代整檔 Read(省 token);兩圖譜不一致僅供導航參考,不寫入 plan 的 symbols/taskCount。
 3. 每個 task 一節「### Task N: <元件名>」:Files 清單(Create/Modify/Test 帶精確路徑)+ checkbox 步驟(- [ ]),每步 2-5 分鐘一個動作(寫失敗測試→跑確認失敗→最小實作→跑確認通過→commit),每步附完整 code block 與精確指令+預期輸出。
 4. No Placeholders 鐵則:TBD/TODO/「加上適當錯誤處理」/「同 Task N」都算 plan failure。
 5. ${USER_FACING ? 'spec 是 user-facing:plan 必須包含 browser E2E task(Playwright spec 落該 spec 對應前端 sub-repo 的 e2e 慣例位置——web-viewer-sample/e2e/ 為預設;operator UI 類 spec 落 apps/kit-manager-web 的對應慣例——驗 vertical slice:UI route→按鈕→default fixture→真 backend API→runtime ID→loading/success/failure/retry),且 UI 無 backend 處明標 DEMO DATA / NOT BUILT。' : '此 spec 非 user-facing,不需 browser E2E task,但行為變更仍需測試。'}
@@ -214,7 +214,9 @@ if (allSymbols.length) {
 2. 先讀 resource gitnexus://repo/AI-BIM-governance/context 看 staleness;若 stale → bash 跑「npx gitnexus analyze --skip-agents-md」後「npx gitnexus status」確認(banner 不算成功,以 status 與 .gitnexus/meta.json 為準),staleHandled=true。
 3. 對下列每個 symbol 跑 gitnexus impact({target:"<symbol>", direction:"upstream"}):
 ${allSymbols.map((s) => `   - ${s}`).join('\n')}
+3.5 (best-effort,失敗略過,不阻擋):ToolSearch 載入 mcp__codebase-memory-mcp__trace_path,對同批 symbol 各跑 trace_path({function_name:"<symbol>", direction:"inbound", depth:3, risk_labels:true}) 取第二圖譜 callers,與 GitNexus upstream 以「symbol 名 + 檔路徑」比對(codebase-memory 回 qualified_name 非行號,勿用 file:line)。差異寫對應 perSymbol.note 前綴「[xref]」。**硬約束:overallRisk 與每個 perSymbol.risk 一律只由 GitNexus 結果決定;codebase-memory 差異即使更大,不得升降 risk、不得寫入 blockers。建模差異(節點數 / inbound≡upstream 術語 / process 概念)一律不報;兩套 caller 數結構性相等時 note 標「可能同源枚舉、非獨立佐證」。特例:GitNexus 回 0/LOW 但 codebase-memory 找到 caller(實測 deriveIntakeFromKey 即此型)→ note 醒目標「GitNexus 疑漏 caller、指揮官手動覆核」,但仍不自動翻 gate。**
 4. 風險分級(repo 基準):<5 affected symbols 且少 processes=LOW;5-15 symbols / 2-5 processes=MEDIUM;>15 symbols 或多 processes=HIGH;觸及 critical path(auth/conversion authority/session 核心)=CRITICAL。個別 symbol 在圖中找不到(可能是新名或拼錯)→ 該 symbol risk=UNKNOWN 並在 note 說明,其餘照算(overallRisk 取其餘最大,blockers 記「N symbols not in graph」)。**GitNexus 工具整體故障**(crash / 連不上 / re-analyze 後仍全失敗,LadybugDB crash 是已知坑)→ overallRisk=UNKNOWN 並在 blockers 寫明故障細節。
+4.5 fallback(僅在 GitNexus 對某 symbol 工具錯誤、或 staleness 自癒後仍取不到 upstream 時啟用;GitNexus 正常則不啟用此 fallback):改用 codebase-memory trace_path 取第二意見寫 note 標「source=codebase-memory-fallback」供指揮官 resume 判斷;**兩套皆失敗 → overallRisk 維持 UNKNOWN,gate 照常 held,不得因 fallback 結論放行。**
 回傳 StructuredOutput:overallRisk、perSymbol[](symbol/risk/note:直接 callers 數與關鍵 processes)、blockers[](CRITICAL 理由或工具故障描述)、staleHandled。`,
       { label: 'impact:prescan', phase: 'Impact', ...ROUTING.standard, schema: IMPACT_SCHEMA })
     if (r) { impact = r; break }
