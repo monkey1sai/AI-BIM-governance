@@ -13,6 +13,15 @@
   /* DS 對齊：UI sans（含系統 fallback；未載入 Plus Jakarta Sans 時 Windows 走 Segoe UI / 微軟正黑）。
    * 數值同 DS --font-sans token。mono 保留給 code / ID / 數值 / 標籤簽名紋理。 */
   --ec-sans:"Plus Jakarta Sans","Noto Sans TC",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
+  /* DS token tier（移植自 DS styles.css；以命名 token 取代散落字面值，全站套用）。 */
+  --ec-r-xs:6px; --ec-r-sm:10px; --ec-r:14px; --ec-r-pill:999px;
+  --ec-sp-1:4px; --ec-sp-2:8px; --ec-sp-3:12px; --ec-sp-4:16px; --ec-sp-5:20px; --ec-sp-6:24px; --ec-sp-8:32px;
+  --ec-shadow-1:0 1px 2px rgba(0,0,0,.4), 0 0 0 1px rgba(255,255,255,.04);
+  --ec-shadow-2:0 10px 30px rgba(0,0,0,.35);
+  --ec-glow-grn:0 0 8px var(--ec-grn-3);
+  --ec-ease:cubic-bezier(.4,0,.2,1); --ec-dur-fast:.13s; --ec-dur:.2s; --ec-dur-slow:.3s;
+  --ec-track-label:.12em; --ec-track-tag:.06em; --ec-on-grn:#0b0d10;
+  --ec-fs-page:27px; --ec-fs-h2:21px; --ec-fs-h3:16px; --ec-fs-body:15px; --ec-fs-sm:13px; --ec-fs-xs:12px; --ec-fs-mono:11px;
 
   position:fixed; inset:0; display:grid;
   grid-template-rows:48px 1fr 26px;
@@ -102,7 +111,7 @@
   color:var(--ec-fg); border:1px solid var(--ec-line-2); border-radius:5px; padding:6px 12px;
   cursor:pointer; font:inherit; }
 .ec-btn:hover:not(:disabled) { border-color:var(--ec-grn); color:var(--ec-grn); }
-.ec-btn.primary { background:var(--ec-grn); color:#0b0d10; border-color:var(--ec-grn); font-weight:600; }
+.ec-btn.primary { background:var(--ec-grn); color:var(--ec-on-grn); border-color:var(--ec-grn); font-weight:600; }
 .ec-btn:disabled { opacity:.45; cursor:not-allowed; }
 .ec-btn .ec-cap { color:var(--ec-fg-4); font-size:10px; }
 
@@ -259,7 +268,7 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-tab.active {
   background:var(--ec-grn);
   border-color:var(--ec-grn);
-  color:#0b0d10;
+  color:var(--ec-on-grn);
   font-weight:600;
 }
 .ec-actions[role="tablist"] .ec-btn[aria-selected="false"],
@@ -396,3 +405,80 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
   .ec-root { grid-template-columns:210px 1fr; grid-template-areas:"top top" "nav main" "foot foot"; }
   .ec-agent { display:none; }
 }
+
+/* ── DS 視覺對齊 polish（token tier 套用：圓角 / 頂光 header / hover-lift / LED glow / Stepper / focus-ring）── */
+/* 卡片圓角 14px（DS 正典 --radius；使用者選採用，原 6px）。小型控制維持原圓角不 churn。 */
+.ec-panel, .ec-appcard, .ec-mini-card, .ec-action-card { border-radius:var(--ec-r); }
+.ec-panel { box-shadow:var(--ec-shadow-1);
+  transition:border-color var(--ec-dur) var(--ec-ease), box-shadow var(--ec-dur) var(--ec-ease); }
+/* Panel header 頂光漸層（DS --c-panel-hi）。 */
+.ec-panel-h { background:linear-gradient(180deg, var(--ec-panel-hi), transparent); }
+.ec-main h1 { font-size:var(--ec-fs-page); letter-spacing:-0.01em; }
+/* clickable 卡片 hover-lift。 */
+.ec-appcard, .ec-action-card { transition:border-color var(--ec-dur) var(--ec-ease), box-shadow var(--ec-dur) var(--ec-ease); }
+.ec-appcard:hover, .ec-action-card:hover { box-shadow:var(--ec-shadow-1); }
+/* StatusLED / dot glow（live/ok 發光；idle「未取得」不發光，不偽綠）。 */
+.ec-status-dot.ok, .ec-status-dot[data-status="ok"],
+.ec-governance-status.ok .ec-status-dot, .ec-governance-status[data-status="ok"] .ec-status-dot,
+.ec-dot.g { box-shadow:var(--ec-glow-grn); }
+/* Stepper：FlowBar 數字 → 圓點（DS Stepper 視覺；state 仍由 a1Machine/flowActive 驅動）。 */
+.ec-flow-n { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
+  border-radius:var(--ec-r-pill); background:var(--ec-bg); border:1px solid var(--ec-line-2); font-size:10px; }
+.ec-flow-step.active .ec-flow-n { border-color:var(--ec-grn); color:var(--ec-grn); box-shadow:var(--ec-glow-grn); }
+.ec-flow-step.done .ec-flow-n { background:var(--ec-grn); color:var(--ec-on-grn); border-color:var(--ec-grn); }
+/* focus-visible ring（a11y；reduced-motion 關閉 hover transition）。 */
+.ec-root :focus-visible { outline:2px solid var(--ec-grn-3); outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) {
+  .ec-panel, .ec-appcard, .ec-action-card { transition:none !important; }
+}
+
+/* ── 淺色主題 .theme-light（DS .theme-docs：Stripe/Linear 暖石中性；全 token 驅動，一處覆寫全站變色）。
+ * accent 維持品牌綠系（深綠 #4d7c0f，於白底可讀），不採 DS 藍——延續「NVIDIA 綠為核心品牌」決策。 */
+.ec-root.theme-light {
+  --ec-bg:#ffffff; --ec-bg-2:#fafaf9; --ec-bg-3:#f5f5f4; --ec-panel:#ffffff; --ec-panel-hi:#f5f5f4;
+  --ec-line:#e7e5e4; --ec-line-2:#d6d3d1;
+  --ec-fg:#0c0a09; --ec-fg-2:#44403c; --ec-fg-3:#78716c; --ec-fg-4:#a8a29e;
+  --ec-grn:#4d7c0f; --ec-grn-2:rgba(77,124,15,.10); --ec-grn-3:rgba(77,124,15,.28);
+  --ec-cyan:#0e7490; --ec-cyan-2:rgba(14,116,144,.10);
+  --ec-amb:#b45309; --ec-amb-2:rgba(180,83,9,.10);
+  --ec-red:#b91c1c; --ec-red-2:rgba(185,28,28,.08);
+  --ec-vio:#7c3aed; --ec-vio-2:rgba(124,58,237,.10);
+  --ec-on-grn:#ffffff;
+  --ec-shadow-1:0 1px 2px rgba(12,10,9,.04), 0 0 0 1px rgba(12,10,9,.05);
+  --ec-shadow-2:0 4px 16px rgba(12,10,9,.06), 0 0 0 1px rgba(12,10,9,.04);
+  --ec-glow-grn:0 0 8px var(--ec-grn-3);
+}
+
+/* ── 左欄對齊設計原型:品牌 logo 框 / 語言 toggle / 群組指示燈 / badge 色碼 / 雲地邊界卡片 / OMNIVERSE 漸層 ── */
+.ec-top .ec-brand { display:inline-flex; align-items:center; gap:8px; }
+.ec-brand-mark { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+  border-radius:6px; background:linear-gradient(135deg, var(--ec-grn), #4d7c0f);
+  color:var(--ec-on-grn); font-weight:800; font-size:10px; letter-spacing:.02em; font-family:var(--ec-mono); }
+
+/* 語言雙態 toggle（中 | EN），對齊設計原型頂列 */
+.ec-langtoggle { display:inline-flex; border:1px solid var(--ec-line-2); border-radius:var(--ec-r-sm); overflow:hidden; }
+.ec-langtoggle button { background:none; border:0; color:var(--ec-fg-3); padding:5px 10px; cursor:pointer; font:inherit; font-size:12px; }
+.ec-langtoggle button.on { background:var(--ec-grn-2); color:var(--ec-grn); font-weight:600; }
+.ec-langtoggle button:hover:not(.on) { background:var(--ec-bg-3); color:var(--ec-fg); }
+
+/* 群組標題指示燈（ok 綠+glow / idle 灰）*/
+.ec-group .ec-group-t { display:inline-flex; align-items:center; gap:6px; }
+.ec-gdot { width:6px; height:6px; border-radius:50%; flex:0 0 6px; }
+.ec-gdot.ok { background:var(--ec-grn); box-shadow:0 0 6px var(--ec-grn-3); }
+.ec-gdot.idle { background:var(--ec-fg-4); }
+
+/* nav badge 色碼分級（warn 紅 / ai 紫 / accent 綠 / info 青 / neutral 灰；對齊設計原型）*/
+.ec-nav-badge.warn { color:var(--ec-red); border-color:var(--ec-red); background:var(--ec-red-2); }
+.ec-nav-badge.ai { color:var(--ec-vio); border-color:var(--ec-vio); background:var(--ec-vio-2); }
+.ec-nav-badge.accent { color:var(--ec-grn); border-color:var(--ec-grn-3); background:var(--ec-grn-2); }
+.ec-nav-badge.info { color:var(--ec-cyan); border-color:var(--ec-cyan); background:var(--ec-cyan-2); }
+.ec-nav-badge.neutral { color:var(--ec-fg-3); border-color:var(--ec-line-2); background:var(--ec-bg-3); }
+
+/* OMNIVERSE 群組綠漸層背景（區隔 GPU plane vs CPU plane）*/
+.ec-nav-group[data-group="omniverse"] { background:linear-gradient(180deg, var(--ec-grn-2), transparent 60%);
+  border-left:2px solid var(--ec-grn-3); }
+
+/* 底部雲地邊界卡片（對齊設計原型 nav 底部綠色圓角卡）*/
+.ec-nav-boundary { margin:10px 12px 4px; padding:8px 10px; border:1px solid var(--ec-grn-3);
+  border-radius:var(--ec-r-sm); background:var(--ec-grn-2); color:var(--ec-grn);
+  font-family:var(--ec-mono); font-size:10px; line-height:1.5; }

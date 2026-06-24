@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { t } from "./i18n";
 
 // conv-prioritize-retry:模式 3（intent→confirm）首個 controlled-action 共用 modal。
 // 非樂觀：confirm 後 await onConfirm；成功與否由呼叫端決定關閉（POST 成功才關）。
@@ -32,7 +33,7 @@ export function IntentDialog({
       <div className="ec-modal" role="dialog" aria-modal="true" aria-labelledby="intent-dialog-title">
         <h3 id="intent-dialog-title">{title}</h3>
         <p className="ec-warn-note">{cost}</p>
-        <label className="ec-field-k" htmlFor="intent-reason">原因（可空）</label>
+        <label className="ec-field-k" htmlFor="intent-reason">{t("原因（可空）", "Reason (optional)")}</label>
         <textarea
           id="intent-reason"
           className="ec-input"
@@ -42,7 +43,7 @@ export function IntentDialog({
           rows={2}
         />
         <div className="ec-modal-actions">
-          <button className="ec-btn" disabled={busy} onClick={onCancel} data-testid="intent-cancel">取消</button>
+          <button className="ec-btn" disabled={busy} onClick={onCancel} data-testid="intent-cancel">{t("取消", "Cancel")}</button>
           <button
             className="ec-btn primary"
             disabled={busy}
@@ -53,7 +54,7 @@ export function IntentDialog({
             }}
             data-testid="intent-confirm"
           >
-            {busy ? "執行中…" : "確認執行"}
+            {busy ? t("執行中…", "Running…") : t("確認執行", "Confirm and run")}
           </button>
         </div>
         {actionErr && (

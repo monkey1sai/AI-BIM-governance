@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Btn, Panel } from "./components";
 import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
+import { t } from "./i18n";
 
 // R3（安全）：viewer_url 即使由 coordinator 提供仍需驗證，否則 open-redirect / javascript: / data: 風險。
 // 僅允許 http(s) 絕對 URL 或同源相對路徑（以 window.location.origin 為 base 解析後 protocol 必為 http/https）；
@@ -35,7 +36,7 @@ export function IntakeSelectPage() {
       const { items } = await coordinatorClient.listIfcReady(50);
       setJobs(items.filter((j) => j.expected_stage_url));
     } catch (e) {
-      setErr(`未連線 coordinator /api/external/ifc-ready：${String(e)}`); // 後端離線誠實顯示
+      setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(e)}`); // 後端離線誠實顯示
     } finally {
       setBusy(false);
     }
@@ -57,36 +58,35 @@ export function IntakeSelectPage() {
 
   return (
     <>
-      <h1>模型進件 · A1（選取現成模型）</h1>
+      <h1>{t("模型進件 · A1（選取現成模型）", "Model Intake · A1 (Select Existing Model)")}</h1>
       <p className="ec-lead">
-        從 coordinator <code>/api/external/ifc-ready</code> 列出已轉換、可審查的現成模型，
-        直接<strong>選取</strong>進件 —— 不需手動輸入模型檔案路徑。
+        {t("從 coordinator ", "Lists converted, reviewable existing models from coordinator ")}<code>/api/external/ifc-ready</code>{t(" 列出已轉換、可審查的現成模型，直接", "; ")}<strong>{t("選取", "select")}</strong>{t("進件 —— 不需手動輸入模型檔案路徑。", " to intake — no manual model file path entry required.")}
       </p>
       <Panel
-        title="選取現成模型 · IFC-ready（已轉換）"
-        sub="GET /api/external/ifc-ready?limit=1..100 · 只列有 expected_stage_url 的 job"
+        title={t("選取現成模型 · IFC-ready（已轉換）", "Select Existing Model · IFC-ready (Converted)")}
+        sub={t("GET /api/external/ifc-ready?limit=1..100 · 只列有 expected_stage_url 的 job", "GET /api/external/ifc-ready?limit=1..100 · only lists jobs with expected_stage_url")}
         prov="asbuilt"
         actions={
           <>
-            <Btn disabled={busy} data-testid="intake-refresh" caption="GET /api/external/ifc-ready" onClick={load}>{busy ? "讀取中…" : "重新整理"}</Btn>
+            <Btn disabled={busy} data-testid="intake-refresh" caption="GET /api/external/ifc-ready" onClick={load}>{busy ? t("讀取中…", "Loading…") : t("重新整理", "Refresh")}</Btn>
             <Btn
               primary
               data-testid="intake-open"
-              caption="window.location.assign(job.viewer_url)（coordinator 提供）"
+              caption={t("window.location.assign(job.viewer_url)（coordinator 提供）", "window.location.assign(job.viewer_url) (provided by coordinator)")}
               disabled={!canOpen}
               onClick={openViewer}
             >
-              開啟審查 viewer
+              {t("開啟審查 viewer", "Open review viewer")}
             </Btn>
           </>
         }
       >
         {err && <p className="ec-warn-note" data-testid="intake-error">{err}</p>}
         {jobs.length === 0 && !err ? (
-          <p className="ec-note" data-testid="intake-empty">目前無可選現成模型（coordinator 已連線，佇列為空——非錯誤）。</p>
+          <p className="ec-note" data-testid="intake-empty">{t("目前無可選現成模型（coordinator 已連線，佇列為空——非錯誤）。", "No existing models available to select (coordinator connected, queue empty — not an error).")}</p>
         ) : (
           <table className="ec-table" data-testid="intake-table">
-            <thead><tr><th>選取</th><th>ifc_ready_job_id</th><th>conversion</th><th>session</th></tr></thead>
+            <thead><tr><th>{t("選取", "Select")}</th><th>ifc_ready_job_id</th><th>conversion</th><th>session</th></tr></thead>
             <tbody>
               {jobs.slice(0, 50).map((j) => (
                 <tr key={j.ifc_ready_job_id}>
@@ -95,7 +95,7 @@ export function IntakeSelectPage() {
                       type="radio"
                       name="intake-model"
                       data-testid="intake-radio"
-                      aria-label={`選取 ${j.ifc_ready_job_id}`}
+                      aria-label={`${t("選取 ", "Select ")}${j.ifc_ready_job_id}`}
                       checked={selected === j.ifc_ready_job_id}
                       onChange={() => setSelected(j.ifc_ready_job_id)}
                     />
@@ -111,11 +111,11 @@ export function IntakeSelectPage() {
         {selectedJob && !canOpen && (
           <p className="ec-warn-note" data-testid="intake-open-blocked">
             {hasViewerUrl
-              ? "viewer_url 非安全 http(s)/同源路徑，拒絕導航"
-              : "此 job 尚無 viewer_url（coordinator 未提供可開啟的 viewer 入口）→「開啟審查 viewer」停用，不做假導航。"}
+              ? t("viewer_url 非安全 http(s)/同源路徑，拒絕導航", "viewer_url is not a safe http(s)/same-origin path; navigation refused")
+              : t("此 job 尚無 viewer_url（coordinator 未提供可開啟的 viewer 入口）→「開啟審查 viewer」停用，不做假導航。", "This job has no viewer_url yet (coordinator has not provided an openable viewer entry) → \"Open review viewer\" disabled, no fake navigation.")}
           </p>
         )}
-        <p className="ec-note">進件來源為現成清單選取；模型路徑由 coordinator / conversion authority 持有，前端不手填、不直連內部埠。</p>
+        <p className="ec-note">{t("進件來源為現成清單選取；模型路徑由 coordinator / conversion authority 持有，前端不手填、不直連內部埠。", "Intake source is selection from the existing list; model paths are held by the coordinator / conversion authority — the frontend does not enter them manually nor connect directly to internal ports.")}</p>
       </Panel>
     </>
   );

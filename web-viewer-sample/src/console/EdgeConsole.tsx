@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import "./edge-console.css";
 import { NAV_GROUPS, PAGES, Prov } from "./data";
+import { t, useLang, setLang } from "./i18n";
 import {
   A1GovernanceWorkbenchPage,
   AdminPage,
@@ -163,17 +164,26 @@ function FlowBar({ active, register, go }: { active: string; register: "tech" | 
 export default function EdgeConsole() {
   const [page, go] = usePageHash();
   const [agentOpen, setAgentOpen] = useState(true);
-  // Tweaks（P3-3）：register=操作員/技術用語；scenario=clean/warn（UI 偏好；真實頁一律用 live API）。
-  const [register, setRegister] = useState<"tech" | "biz">("tech");
+  // Tweaks（P3-3）：scenario=clean/warn（UI 偏好；真實頁一律用 live API）。語言由頂列 LangToggle 控制（中=biz 中文 / EN=tech 英文）。
   const [scenario, setScenario] = useState<"clean" | "warn">("clean");
-  const navText = (key: string, fallback: string) => (NAV_LABEL[key] ? NAV_LABEL[key][register] : fallback);
+  // 亮/暗主題（DS .theme-docs；persist localStorage，預設暗色——操作員 console 暗色為主）。
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    try { return localStorage.getItem("aibim:ec-theme") === "light" ? "light" : "dark"; } catch { return "dark"; }
+  });
+  useEffect(() => { try { localStorage.setItem("aibim:ec-theme", theme); } catch { /* ignore */ } }, [theme]);
+  const lang = useLang();
+  // 語言完全決定 nav / FlowBar 標籤：中=biz 中文、EN=tech 英文（已移除與 register 的耦合）。
+  const navText = (key: string, fallback: string) => {
+    const reg = lang === "en" ? "tech" : "biz";
+    return NAV_LABEL[key] ? NAV_LABEL[key][reg] : fallback;
+  };
   const flowActive = page.startsWith("app/") ? "apps" : page;
   const prompts = COPILOT_PROMPTS[flowActive] ?? COPILOT_PROMPTS.home;
 
   return (
-    <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"}`}>
+    <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"} ${theme === "light" ? "theme-light" : ""}`}>
       <header className="ec-top">
-        <span className="ec-brand">AI · BIM Governance</span>
+        <span className="ec-brand"><span className="ec-brand-mark">BG</span>AI · BIM Governance</span>
         <span className="ec-sub">EDGE CONSOLE · COORDINATOR 8004</span>
         <span className="ec-spacer" />
         <div className="ec-chips">
@@ -181,37 +191,41 @@ export default function EdgeConsole() {
           <span className="ec-prov ec-asbuilt">GOV :49102</span>
           <span className="ec-prov ec-demo">GPU · 依 session 派發</span>
         </div>
+        <span className="ec-langtoggle" role="group" aria-label="切換語言 / Language">
+          <button className={lang === "zh" ? "on" : ""} aria-pressed={lang === "zh"} onClick={() => setLang("zh")}>中</button>
+          <button className={lang === "en" ? "on" : ""} aria-pressed={lang === "en"} onClick={() => setLang("en")}>EN</button>
+        </span>
+        <button className="ec-btn" onClick={() => setTheme((th) => (th === "light" ? "dark" : "light"))} title="切換亮 / 暗主題 / Theme" aria-label="切換亮暗主題">{theme === "light" ? "☾ 暗" : "☀ 亮"}</button>
         <button className="ec-btn" onClick={() => setAgentOpen((v) => !v)}>{agentOpen ? "⟩ Agent" : "⟨ Agent"}</button>
       </header>
 
       <nav className="ec-nav">
         {NAV_GROUPS.map((group) => (
-          <div key={group.key}>
-            <div className="ec-group">{group.title}<span>{group.sub}</span></div>
+          <div key={group.key} className="ec-nav-group" data-group={group.key}>
+            <div className="ec-group">
+              <span className="ec-group-t"><span className={`ec-gdot ${group.dot}`} />{group.title}</span>
+              <span>{group.sub}</span>
+            </div>
             {PAGES.filter((p) => p.group === group.key).map((p) => (
               <button key={p.key} className={page === p.key ? "active" : ""} data-plane={p.plane} title={p.label} onClick={() => go(p.key)}>
                 <span className="ec-key">{p.no}</span>
                 <span>{navText(p.key, p.label)}</span>
-                {p.badge && <span className="ec-nav-badge">{p.badge}</span>}
+                {p.badge && <span className={`ec-nav-badge ${p.badgeTone ?? ""}`}>{p.badge}</span>}
               </button>
             ))}
           </div>
         ))}
+        <div className="ec-nav-boundary">{t("雲地邊界 · Governance host-native (0 GPU) ↔ Omniverse Runtime (GPU)", "Cloud–edge boundary · Governance host-native (0 GPU) ↔ Omniverse Runtime (GPU)")}</div>
       </nav>
 
       <main className="ec-main">
         <div className="ec-mainhead">
-          <FlowBar active={flowActive} register={register} go={go} />
+          <FlowBar active={flowActive} register={lang === "en" ? "tech" : "biz"} go={go} />
           <span className="ec-spacer" />
-          {/* Tweaks（P3-3）：操作員/技術用語切換、scenario clean/warn（UI 偏好，不改真實資料）。 */}
+          {/* Tweaks（P3-3）：scenario clean/warn（UI 偏好，不改真實資料）。語言切換移至頂列 LangToggle（中/EN）。 */}
           <div className="ec-tweaks">
             <span className="ec-tw-group">
-              <span className="ec-tw-lab">用語</span>
-              <button className={register === "biz" ? "on" : ""} onClick={() => setRegister("biz")}>操作員</button>
-              <button className={register === "tech" ? "on" : ""} onClick={() => setRegister("tech")}>技術</button>
-            </span>
-            <span className="ec-tw-group">
-              <span className="ec-tw-lab">情境</span>
+              <span className="ec-tw-lab">{t("情境", "Scenario")}</span>
               <button className={scenario === "clean" ? "on" : ""} onClick={() => setScenario("clean")} title="UI 偏好；真實頁一律以 live API 為準">clean</button>
               <button className={scenario === "warn" ? "on" : ""} onClick={() => setScenario("warn")} title="UI 偏好；真實頁一律以 live API 為準">warn</button>
             </span>
@@ -225,26 +239,26 @@ export default function EdgeConsole() {
           <strong>Chat USD Agent</strong>
           <span className="ec-prov ec-p4">ROADMAP · A9</span>
         </div>
-        <p className="ec-note">A9 USD Code / ChatUSD Copilot 為 Phase 4 願景；本欄先顯示 page-aware prompts 與 tool trace 版型，狀態改動需人工確認與 audit。</p>
+        <p className="ec-note">{t("A9 USD Code / ChatUSD Copilot 為 Phase 4 願景；本欄先顯示 page-aware prompts 與 tool trace 版型，狀態改動需人工確認與 audit。", "A9 USD Code / ChatUSD Copilot is a Phase 4 vision; this rail previews page-aware prompts and tool-trace layout. State changes require human confirmation and audit.")}</p>
         <div className="ec-prompts">
-          <b>SUGGESTED · USD-AWARE（PREVIEW · 後端未建）</b>
+          <b>{t("SUGGESTED · USD-AWARE（PREVIEW · 後端未建）", "SUGGESTED · USD-AWARE (PREVIEW · backend not built)")}</b>
           {prompts.map((prompt) => <div className="ec-prompt" key={prompt}>{prompt}</div>)}
         </div>
         <div className="ec-toolcall">
           <div><span className="ec-dot g" /> kit_mcp.search_prims <span className="ec-s">preview</span></div>
-          <p className="ec-note">tool trace 僅作透明化版型；真正 MCP/NeMo 執行尚未接入。</p>
+          <p className="ec-note">{t("tool trace 僅作透明化版型；真正 MCP/NeMo 執行尚未接入。", "Tool trace is a transparency layout only; real MCP/NeMo execution is not yet wired.")}</p>
         </div>
-        <p className="ec-warn-note">寫入限制（規格）：AI 僅能改 review / session layer，不寫回 source model。</p>
+        <p className="ec-warn-note">{t("寫入限制（規格）：AI 僅能改 review / session layer，不寫回 source model。", "Write constraint (spec): AI may only modify the review / session layer, never the source model.")}</p>
         <div className="ec-agent-input">
           <span>›</span>
-          <input placeholder="ChatUSD 助理 · 後端待建（A9 · Phase 4）" disabled />
+          <input placeholder={t("ChatUSD 助理 · 後端待建（A9 · Phase 4）", "ChatUSD assistant · backend not built (A9 · Phase 4)")} disabled />
         </div>
       </aside>
 
       <footer className="ec-foot">
         <span>governance-service :49102 · coordinator proxy</span>
         <span style={{ flex: 1 }} />
-        <span>as-built MVP · 無假數字</span>
+        <span>{t("as-built MVP · 無假數字", "as-built MVP · no fake data")}</span>
       </footer>
     </div>
   );

@@ -33,40 +33,43 @@ export interface PageDef {
   group: "workspace" | "core" | "omniverse" | "coordinator" | "system";
   sub?: string;
   badge?: string;
+  // 對齊設計系統 badge 色碼（warn 紅 / ai 紫 / accent 綠 / info 青 / neutral 灰）。
+  badgeTone?: "warn" | "ai" | "accent" | "neutral" | "info";
 }
 
-export const NAV_GROUPS: { key: PageDef["group"]; title: string; sub: string }[] = [
-  { key: "workspace", title: "工作台", sub: "WORKSPACE" },
-  { key: "core", title: "核心治理", sub: "CORE · 語意 / 規則 / 問題" },
-  { key: "omniverse", title: "OMNIVERSE RUNTIME", sub: "KIT · USD · GPU" },
-  { key: "coordinator", title: "落地端控制台", sub: "COORDINATOR · 1..N GPU" },
-  { key: "system", title: "SYSTEM", sub: "Runtime · Admin · Spec" },
+// dot：群組指示燈（ok=綠+glow / idle=灰）。對齊設計原型左欄群組標題。
+export const NAV_GROUPS: { key: PageDef["group"]; title: string; sub: string; dot: "ok" | "idle" }[] = [
+  { key: "workspace", title: "工作台", sub: "WORKSPACE", dot: "ok" },
+  { key: "core", title: "核心治理", sub: "CORE · 語意 / 規則 / 問題", dot: "ok" },
+  { key: "omniverse", title: "OMNIVERSE RUNTIME", sub: "KIT · USD · GPU", dot: "ok" },
+  { key: "coordinator", title: "落地端控制台", sub: "COORDINATOR · 1..N GPU", dot: "ok" },
+  { key: "system", title: "SYSTEM", sub: "Runtime · Admin · Spec", dot: "idle" },
 ];
 
 // prototype product console 導覽。保留既有 route aliases（overview/coordinator/intake/review/semantic）
 // 以免舊測試與 deep links 斷掉。
 export const PAGES: PageDef[] = [
   { key: "home", no: "⌂", label: "今天要做什麼", plane: "governance", group: "workspace" },
-  { key: "a1", no: "A1", label: "治理與模型檢核", plane: "governance", group: "core", badge: "P0" },
+  { key: "a1", no: "A1", label: "治理與模型檢核", plane: "governance", group: "core", badge: "P0", badgeTone: "warn" },
   { key: "a2", no: "A2", label: "版本差異與責任", plane: "governance", group: "core" },
   { key: "a3", no: "A3", label: "跨專業疊合", plane: "governance", group: "core" },
-  { key: "a4", no: "A4", label: "語意搜尋問答", plane: "governance", group: "core" },
-  { key: "a5", no: "A5", label: "IoT / FM 數位分身", plane: "governance", group: "core" },
-  { key: "issues", no: "BC", label: "Issue / BCF", plane: "governance", group: "core", badge: "A1" },
+  { key: "a4", no: "A4", label: "語意搜尋問答", plane: "governance", group: "core", badge: "P4", badgeTone: "ai" },
+  { key: "a5", no: "A5", label: "IoT / FM 數位分身", plane: "governance", group: "core", badge: "P3", badgeTone: "ai" },
+  { key: "issues", no: "BC", label: "Issue / BCF", plane: "governance", group: "core", badge: "A1", badgeTone: "info" },
   { key: "reports", no: "RP", label: "報表中心", plane: "governance", group: "core" },
   { key: "viewer", no: "3D", label: "3D Viewer 呈現", plane: "omniverse", group: "omniverse" },
-  { key: "gpu", no: "01", label: "GPU 審查室", plane: "omniverse", group: "omniverse", badge: "MVP" },
-  { key: "a6", no: "A6", label: "4D / 5D 施工模擬", plane: "omniverse", group: "omniverse" },
-  { key: "a7", no: "A7", label: "Reality Capture 比對", plane: "omniverse", group: "omniverse" },
-  { key: "a8", no: "A8", label: "Synthetic Data", plane: "omniverse", group: "omniverse" },
-  { key: "a9", no: "A9", label: "設計 / 審查 Copilot", plane: "omniverse", group: "omniverse" },
-  { key: "a10", no: "A10", label: "機器人 / 巡檢模擬", plane: "omniverse", group: "omniverse" },
-  { key: "conv", no: "CV", label: "IFC→USD 轉檔排程", plane: "governance", group: "coordinator", badge: "P1" },
+  { key: "gpu", no: "01", label: "GPU 審查室", plane: "omniverse", group: "omniverse", badge: "MVP", badgeTone: "accent" },
+  { key: "a6", no: "A6", label: "4D / 5D 施工模擬", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
+  { key: "a7", no: "A7", label: "Reality Capture 比對", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
+  { key: "a8", no: "A8", label: "Synthetic Data", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
+  { key: "a9", no: "A9", label: "設計 / 審查 Copilot", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
+  { key: "a10", no: "A10", label: "機器人 / 巡檢模擬", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
+  { key: "conv", no: "CV", label: "IFC→USD 轉檔排程", plane: "governance", group: "coordinator", badge: "P1", badgeTone: "warn" },
   { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "coordinator" },
   { key: "instances", no: "KG", label: "Kit / GPU 機隊", plane: "omniverse", group: "coordinator" },
   { key: "minio", no: "M", label: "MinIO 資料", plane: "governance", group: "coordinator" },
   { key: "runtime", no: "RT", label: "Runtime 監控", plane: "omniverse", group: "system" },
-  { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system" },
+  { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system", badge: "待建", badgeTone: "neutral" },
   { key: "spec", no: "▦", label: "設計規格說明", plane: "governance", group: "system" },
   { key: "overview", no: "OV", label: "Overview", plane: "governance", group: "system" },
   { key: "coordinator", no: "CO", label: "Coordinator Console", plane: "governance", group: "coordinator" },
