@@ -151,8 +151,12 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
     expect(port).toBeGreaterThan(0);
     expect(job!.download_status).not.toBe("failed");
     expect(job!.download_status).toBe("downloaded");
-    // (2) presigned source URL 含 SigV4 簽章參數（watcher 真的簽了 GET URL，非裸 key 拼接）。
-    expect(job!.source_ifc_ref).toMatch(/X-Amz-Signature=/);
+    // (2) 對外 API（summarizeIfcReadyJob）已套 maskPresignedRef（P0 誠實守衛）：
+    //     瀏覽器可見出口不得外洩 SigV4 簽章，故 source_ifc_ref 須剝除 X-Amz-* query。
+    //     仍須含物件位址，證 watcher 正確自 key 推導出物件 ref 並端到端透傳到 store。
+    //     （watcher 真的簽 GET URL 的行為由 minio-watcher-loop.test.ts 覆蓋；此整合測試
+    //     在 P0 後改驗「對外不洩簽章 + 路徑正確透傳」這組契約。）
+    expect(job!.source_ifc_ref).not.toMatch(/X-Amz-Signature=/);
     expect(job!.source_ifc_ref).toContain("988/main/zzz/model.ifc");
     // (3) etag 由 watcher 自 ListObjectsV2 帶入並落到 store（端到端透傳，非預設值）。
     expect(job!.source_ifc_etag).toBe("e9");

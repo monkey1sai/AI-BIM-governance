@@ -23,6 +23,7 @@ import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } f
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
+import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -1845,7 +1846,7 @@ export function createCoordinatorApp(
         external_model_version_id: job.external_model_version_id,
         ifc_ready_job_id: job.ifc_ready_job_id,
         artifact_resolution: {
-          source_ifc_ref: job.source_ifc_ref,
+          source_ifc_ref: maskPresignedRef(job.source_ifc_ref),
           artifact_manifest_ref: job.artifact_manifest_ref ?? null,
           conversion_job_id: job.conversion_job_id,
           conversion_status: job.conversion_status,
@@ -2354,7 +2355,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     external_model_version_id: job.external_model_version_id,
     external_conversion_task_id: job.external_conversion_task_id ?? null,
     correlation_id: job.correlation_id,
-    source_ifc_ref: job.source_ifc_ref,
+    source_ifc_ref: maskPresignedRef(job.source_ifc_ref),
     source_ifc_etag: job.source_ifc_etag,
     download_status: job.download_status ?? null,
     download_failure: job.download_failure ?? null,
