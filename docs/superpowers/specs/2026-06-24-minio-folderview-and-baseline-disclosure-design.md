@@ -100,7 +100,7 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 1. 把現況擠在單一 Field（`pages.tsx:866`）的 baseline/seen/triggered/skipped **拆成獨立 Field + 解釋文案**：`baseline_count`＝「既有 `model.ifc` 在首輪被當基準吸收、**by-design 刻意不自動轉檔**」；`triggered_total`＝「自 baseline 後真正新觸發的上傳數」。避免把 `triggered_total=0` 誤讀成故障。
 2. 對 baseline 既有 `model.ifc` 標註原因（首輪被當基準吸收）。
 3. 列 spec 認可的兩條補救：(i) **重新上傳改 etag** → watcher 下一輪自動觸發；(ii) **手動 webhook intake** 直打 `POST /api/external/ifc-ready`（帶 webhook secret + presigned GET URL）。
-4. 誠實註記（**已被本案 §3.3 取代，`#conv` 文案不再標 NOT BUILT**）：原現狀為「repo 內無一鍵觸發 UI」，本案 §3.3 拍板新增一鍵觸發鈕，故 UI **不**保留「NOT BUILT」字樣；惟須保留「**重啟也救不了既存自動轉檔**」的誠實提醒（`seen` in-memory 不持久化、watcher 重啟首輪重建 baseline，仍需手動一鍵觸發或重新上傳）。
+4. 誠實註記（**已被本案 §3.3/§3.4 取代，`#conv` 文案不再標 NOT BUILT**）：原現狀為「repo 內無一鍵觸發 UI」，本案 §3.3 新增一鍵觸發鈕、§3.4 改 watcher 為 ledger 去重自動補轉，故 UI **不**保留「NOT BUILT」字樣。**⚠ spec 矛盾修正（P1 plan reviewer 抓到）：原「重啟也救不了既存自動轉檔」警語在 §3.4 全自動 auto-enroll 下已 FALSE**（watcher 改查持久 ledger、既有未轉檔下一輪自動補轉、重啟命中 ledger 不重觸發），故 `#conv` UI **不得**保留該過時警語——保留＝與 §3.4 自相矛盾的誠實違規。
 5. **三視圖一致性基準明示**（避免違反閉環 spec `:95-97`）：`baseline_count=3` **只算 `*/model.ifc` 規約檔、非 bucket 全量 527**；「`#minio` 527 物件 vs watcher 只認 3 個 vs ledger=0」的一致性基準 = **「可解析 IFC 數」非「物件總數」**，文案須講清楚，否則使用者誤以為 watcher 漏看 524 物件。
 6. 與 Q1 零交集：Q1 只動 `listMinioObjects`/`buildMinioTree`/`#minio`，與 watcher 觸發語意零交集（AC7）。
 
@@ -181,6 +181,13 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 - **前端須重寫斷言（非加測試）**：`MinioDataPage.test.tsx`（8 it；含原「不呼叫 `getConversionRecords`」斷言改為**會呼叫**以掛狀態 chip）、`console.test.tsx`（`:394-396 / :538-568 / :801-840` 綁三層樹語意）、`e2e/minio-closed-loop.spec.ts:234-247` → 改為 `folders[]` 逐層導覽 + 狀態 chip + 觸發鈕斷言。
 - web-viewer `npm run build`＝vite **不跑 tsc**，須另跑 `npx tsc --noEmit`。
 - coordinator 提交前跑 `npm run verify`（`build && test`）。
+
+### 6.1 既有符號真實簽名（plan/實作作者**必對齊**，逐字稿勿臆造）
+
+P1 plan reviewer 抓到兩處逐字稿與真實 codebase 不符，列實證簽名供對齊：
+
+- **`ConversionLedger`**：**constructor-based** — `new ConversionLedger(persistencePath)`（`conversionLedger.ts:50,56`）。**無 `createConversionLedger` 工廠 export**；測試/route 一律 `new ConversionLedger(...)`。
+- **`IntentDialog` props**（`IntentDialog.tsx:9-21`）：`open` / `title` / `cost` / `onConfirm(reason)` / `onCancel` / `busy` / `actionErr`。**無 `body` / `confirmLabel`**；觸發鈕的「成本說明」放 `cost`、標題放 `title`、確認文字由元件內建。
 
 ---
 
