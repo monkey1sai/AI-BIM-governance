@@ -183,6 +183,8 @@ export interface IfcReadyIntakeJob {
   idempotency_key: string;
   tenant_id: string;
   project_id: string;
+  project_display_name?: string | null;
+  category?: string | null;
   external_model_version_id: string;
   external_conversion_task_id?: string | null;
   source_ifc_ref: string;

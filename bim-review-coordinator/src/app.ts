@@ -2356,6 +2356,8 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     status: job.status,
     tenant_id: job.tenant_id,
     project_id: job.project_id,
+    project_display_name: job.project_display_name ?? null,
+    category: job.category ?? null,
     external_model_version_id: job.external_model_version_id,
     external_conversion_task_id: job.external_conversion_task_id ?? null,
     correlation_id: job.correlation_id,

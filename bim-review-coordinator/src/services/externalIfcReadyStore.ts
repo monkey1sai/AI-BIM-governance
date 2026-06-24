@@ -54,6 +54,8 @@ export class ExternalIfcReadyStore {
       idempotency_key: binding.idempotencyKey,
       tenant_id: binding.tenantId,
       project_id: binding.projectId,
+      project_display_name: event.project_display_name ?? null,
+      category: event.model_category ?? null,
       external_model_version_id: binding.externalModelVersionId,
       external_conversion_task_id: event.external_conversion_task_id ?? null,
       source_ifc_ref: event.source_ifc.ref,

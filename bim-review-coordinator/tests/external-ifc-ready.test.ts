@@ -855,3 +855,30 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
     expect(sent.event_id as string).toMatch(/^[A-Za-z0-9_.-]+$/);
   });
 });
+
+describe("OQ1：project_display_name / category 對外曝光", () => {
+  it("intake 帶 project_display_name + model_category → GET 列表可見 category/project_display_name", async () => {
+    // 複用既有 makeApp（預設已帶 streamingConversionApiBase 不可達 → dispatch graceful）。
+    // 預設 config 的 webhook secret 即 WEBHOOK_SECRET（該檔既有測試已依賴），故沿用 authHeaders()。
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_oq1", "X-Idempotency-Key": "idem_oq1" }))
+      .send({
+        ...payload(),
+        project_id: "p_safe",
+        project_display_name: "許良宇圖書館",
+        model_category: "main",
+        external_model_version_id: "v2026",
+      });
+    // download/dispatch 不可達為 graceful（job 仍建、欄位已存）；只取 job id，不假設特定 status。
+    const jobId = res.body.ifc_ready_job_id as string;
+    expect(jobId).toBeTruthy();
+    const list = await request(app.app).get("/api/external/ifc-ready");
+    const item = (list.body.items as Array<Record<string, unknown>>).find(
+      (j) => j.ifc_ready_job_id === jobId,
+    );
+    expect(item?.project_display_name).toBe("許良宇圖書館");
+    expect(item?.category).toBe("main");
+  });
+});
