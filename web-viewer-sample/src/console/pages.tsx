@@ -15,6 +15,10 @@ import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
+// StreamConfigReader 已抽成獨立葉子檔（破解 pages ↔ coordinator/RuntimeGovernanceTabs 循環依賴）。
+// 此處 re-export 保留 `import { StreamConfigReader } from "./pages"` 既有路徑；RuntimePage 亦由此復用同一元件。
+import { StreamConfigReader } from "./StreamConfigReader";
+export { StreamConfigReader } from "./StreamConfigReader";
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
@@ -2454,34 +2458,6 @@ export function IntakePage() {
         <Field k="manual mapping correction UI" v={t("待建", "not built")} prov="p15" />
       </Panel>
     </>
-  );
-}
-
-// ── stream-config 讀取器（D2-A′ 抽出共用）：RuntimePage 與 CoordinatorGovernanceTabs 的 ──
-// Terminal/Debug 分頁共用同一元件，使 stream-config 入口在 #runtime（承接 CoordinatorPage）後不孤兒。
-// 自取資料（coordinatorClient.streamConfig）、零 props、誠實 read-only：不開串流、不捏造遙測。
-export function StreamConfigReader() {
-  const [scSession, setScSession] = useState("");
-  const [sc, setSc] = useState<string | null>(null);
-  const [scErr, setScErr] = useState<string | null>(null);
-
-  const fetchStreamConfig = useCallback(async () => {
-    if (!scSession.trim()) return;
-    setScErr(null); setSc(null);
-    try { setSc(JSON.stringify(await coordinatorClient.streamConfig(scSession.trim()), null, 2)); }
-    catch (e) { setScErr(`${t("stream-config 讀取失敗：", "Failed to read stream-config: ")}${String(e)}`); }
-  }, [scSession]);
-
-  return (
-    <Panel title={t("stream-config · 給 viewer 的連線資訊", "stream-config · connection info for the viewer")} sub="GET /api/review-sessions/:id/stream-config（coordinator owner）" prov="asbuilt">
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <input className="ec-btn" style={{ minWidth: 320 }} placeholder="review_session_id" value={scSession} onChange={(e) => setScSession(e.target.value)} />
-        <Btn disabled={!scSession.trim()} caption="GET …/stream-config" onClick={fetchStreamConfig}>{t("讀取 stream-config", "Read stream-config")}</Btn>
-      </div>
-      {scErr && <p className="ec-warn-note">{scErr}</p>}
-      {sc && <pre className="ec-note" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{sc}</pre>}
-      <p className="ec-note">{t("stream-config 為 coordinator owner 的真實端點；GPU 串流由 host-native Kit 負責，本面板僅唯讀轉發連線資訊，不開串流、不捏造遙測。", "stream-config is a real endpoint owned by the coordinator; GPU streaming is handled by host-native Kit. This panel only forwards connection info read-only; it does not open streams or fabricate telemetry.")}</p>
-    </Panel>
   );
 }
 

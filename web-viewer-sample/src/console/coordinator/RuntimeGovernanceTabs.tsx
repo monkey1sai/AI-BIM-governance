@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Btn, Field, Metric, Panel } from "../components";
 import type { RuntimeStatus } from "../coordinatorClient";
-import { StreamConfigReader } from "../pages";
+import { StreamConfigReader } from "../StreamConfigReader";
 import { buildEndpointRows, deriveClassicDashboard, type EndpointRow, type HealthTone } from "./runtimeGovernance";
 
 type CoordinatorTab = "classic" | "atc" | "lifecycle" | "debug";
@@ -206,7 +206,7 @@ function DebugTab({ rt }: { rt: RuntimeStatus | null }) {
         <Field k="raw JSON" v="僅在工程排障視角檢視；Classic Dashboard 不直接展開 payload" prov="asbuilt" />
       </Panel>
       {/* D2-A′：stream-config 讀取器在此分頁 render，使 #runtime 承接 CoordinatorPage 後（Task 3）入口不孤兒；
-          與 RuntimePage 共用同一 StreamConfigReader 元件（pages.tsx），誠實 read-only、不開串流、不捏造遙測。 */}
+          與 RuntimePage 共用同一 StreamConfigReader 元件（StreamConfigReader.tsx 葉子檔），誠實 read-only、不開串流、不捏造遙測。 */}
       <StreamConfigReader />
     </>
   );
