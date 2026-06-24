@@ -183,10 +183,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   // esbuild/vite + tsc 可正確解析（Task 5 的 tsc --noEmit + vitest 守住）。
   import { StreamConfigReader } from "../pages";
   ```
-- [ ] 修改 `DebugTab`（L191–207）：在既有 `<Panel title="Terminal / Debug" ...>` 之後、`DebugTab` return 的 fragment 內，加上 `<StreamConfigReader />`。把 `DebugTab` 的 return 從單一 `<Panel>` 包成 fragment：
+- [ ] 修改 `DebugTab`（L191–207）：在既有 `<Panel title="Terminal / Debug" ...>` 之後、`DebugTab` return 的 fragment 內，加上 `<StreamConfigReader />`。把 `DebugTab` 的 return 從單一 `<Panel>` 包成 fragment，**並把 `DebugTab` 改為 `export`**（Task 4 第二條守門 it 需直 render `<DebugTab rt={null} />` 來真正驗證取代路徑落地——見 Task 4；非 export 則無法直測，守門會退化成空守門）：
 
   ```tsx
-  function DebugTab({ rt }: { rt: RuntimeStatus | null }) {
+  // ★ export：供 console.test.tsx 直測 debug 分頁本體真的 render StreamConfigReader（取代路徑零孤兒守門）。
+  export function DebugTab({ rt }: { rt: RuntimeStatus | null }) {
     return (
       <>
         <Panel title="Terminal / Debug" sub="工程證據頁；保留 raw JSON 入口但 Phase 1 不在總覽展開" prov="asbuilt">
@@ -254,6 +255,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
   > 注意：`RuntimePage` 在 `pages.tsx` 內仍 render `StreamConfigReader`，且本檔的 `RuntimePage` import（L25）此後在 EdgeConsole 內 0 引用 → 見下一步處理 import。
 - [ ] 處理 `RuntimePage` import（L25）：改 `runtime` case 後 `RuntimePage` 在 `EdgeConsole.tsx` 已無任何 render 點（`coordinator` 與 `runtime` 都渲染 `CoordinatorPage`，無其他 case 用 `RuntimePage`）。Vite build 不跑 tsc 不會報，但 `npx tsc --noEmit` 會報 **TS6133 unused import** → **移除 `RuntimePage,` 這一行 import**（L25）。`RuntimePage` 元件本身在 `pages.tsx` 仍被 `console.test.tsx` 直接 import 測試，不受影響。
+
+  > **與 spec 取捨對齊（執行者務必記入 commit / PR 說明，避免 code review 質疑）**：spec §3.5 改動點表 #5 與 §3.2 的**預設假設**是「`EdgeConsole` 仍至少有一處 render `<RuntimePage />`（其專屬 deep-link case），故 import 保留」。但本 plan 依 §3.2 動作二把 `runtime` case 改向 `CoordinatorPage`、依 D1 把 `coordinator` case 也保留為 `CoordinatorPage`，**兩個 case 都不再 render `RuntimePage`，且 spec 並未指定任何其他仍 render `RuntimePage` 的 case** → `RuntimePage` 在 `EdgeConsole` 內**確認 0 引用**。此時觸發 spec §3.5 #5 明文的條件分支「**唯若實作期使其 0 引用才移除**」（§3.2 亦明載「若實作期最終讓 `RuntimePage` 在 EdgeConsole 0 引用，必須同步移除該 import」、§5.3 同此）。因此本步**依 spec #5 條件觸發移除**，非偏離 spec：spec 預設假設（保留 import）與其自身 §3.2+D1 的 case 改法內部不一致，而 spec 早已預備此條件出口，本 plan 取該出口並在此明確標注取捨理由。`RuntimePage` 元件本體（`pages.tsx`）與其 deep-link 可達性語義不受影響——本步只移除 EdgeConsole 內這條 unused import。
 
   ```
   從 import { ... } from "./pages"; 區塊移除：    RuntimePage,
@@ -329,6 +332,15 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   改前（L27）：import EdgeConsole from "./EdgeConsole";
   改後（L27）：import EdgeConsole, { NAV_LABEL } from "./EdgeConsole";
   ```
+
+  並把 `DebugTab` 併入既有 `RuntimeGovernanceTabs` import（L31，第二條守門 it 直 render `<DebugTab />` 需要；Task 2 已 export 之）：
+
+  ```
+  改前（L31）：import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
+  改後（L31）：import { CoordinatorGovernanceTabs, DebugTab, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
+  ```
+
+  （`RuntimePage` 已在既有 L21 `from "./pages"` import，第二條 it 的 `renderToString(<RuntimePage />)` anchor 直接可用，無需再加。）
 - [ ] 寫新斷言：在 `console.test.tsx` 的 `describe("edge console honesty smoke", ...)` 內（既有最後一條 it 之後）新增一條完整守門測試（**逐字使用，無 placeholder**）：
 
   ```tsx
@@ -363,16 +375,24 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   });
 
   // stream-config 不孤兒（D2-A′）：抽出的 StreamConfigReader 由 CoordinatorGovernanceTabs 的 debug 分頁 render。
-  it("StreamConfigReader 由 CoordinatorGovernanceTabs debug 分頁提供（stream-config 入口零孤兒）", () => {
-    const debugHtml = renderToString(<CoordinatorGovernanceTabs rt={null} busy={false} err={null} onRefresh={() => {}} />);
-    // CoordinatorGovernanceTabs 初始 active=classic；切到 debug 才出 stream-config。改為直測 DebugTab 渲染結果：
-    // 用 renderToString(<RuntimePage />) 仍含 stream-config（Task 1 後 RuntimePage 仍 render StreamConfigReader）作 anchor，
-    // 並斷言 debug 分頁標籤存在（四分頁含 D Terminal / Debug）作為入口可達佐證。
-    expect(debugHtml).toContain("D Terminal / Debug");
+  // ★ 真守門（修 reviewer major）：CoordinatorGovernanceTabs 初始 active=classic，renderToString 只渲染 classic，
+  //   故「直 render CoordinatorGovernanceTabs 斷言含 stream-config」與「斷言含分頁標籤 D Terminal / Debug」都守不住——
+  //   後者在 D2-A 落地前（TABS 標籤本就存在）即恆真，等於空守門。改採 spec §5.1 #4 的「直測 debug 分頁含該入口」路徑：
+  //   export DebugTab（見 Task 2）後直 render，斷言含 StreamConfigReader 專屬字串 review_session_id。
+  //   若 Task 2 未把 <StreamConfigReader /> 接進 DebugTab，此斷言必 FAIL（review_session_id 只在 StreamConfigReader 內出現）。
+  it("StreamConfigReader 由 DebugTab（#runtime Terminal/Debug 分頁）實際 render（stream-config 入口零孤兒）", () => {
+    // (a) 取代路徑落地：debug 分頁本體真的 render StreamConfigReader（非僅標籤存在）。
+    const debugHtml = renderToString(<DebugTab rt={null} />);
+    expect(debugHtml).toContain("review_session_id"); // StreamConfigReader 專屬入口；DebugTab 未接則 FAIL
+    expect(debugHtml).toContain("stream-config");
+    // (b) 共用 anchor：抽出後 RuntimePage 仍 render 同一 StreamConfigReader（Task 1），證明是「共用」非「複製」。
+    const runtimeHtml = renderToString(<RuntimePage />);
+    expect(runtimeHtml).toContain("review_session_id");
+    expect(runtimeHtml).toContain("stream-config");
   });
   ```
 
-  > 設計說明（給執行者）：`CoordinatorGovernanceTabs` 初始 active 分頁為 `classic`，`renderToString` 只渲染初始 active 內容，故無法在預設渲染中直接看到 `debug` 分頁的 `stream-config`。上面第二條 it 以「四分頁標籤 `D Terminal / Debug` 存在」+「`RuntimePage` 仍含 `stream-config`」雙重 anchor 守住「StreamConfigReader 仍有可達入口」，不依賴非 export 的 `DebugTab` 直接渲染。若執行者希望更強的直接驗證，可順手把 `DebugTab` export 後 `renderToString(<DebugTab rt={null} />)` 斷言含 `stream-config`——屬可選補強，非必需。
+  > 設計說明（給執行者）：`CoordinatorGovernanceTabs` 初始 active 分頁為 `classic`，`renderToString` 只渲染初始 active 內容，故無法在預設渲染中直接看到 `debug` 分頁的 `stream-config`；而「斷言四分頁標籤 `D Terminal / Debug` 存在」在本變更落地前（`TABS` L15–20 標籤本就存在）即恆真，是**空守門**——reviewer major 即指此點。修法：把 `DebugTab` export（在 Task 2 一併處理，見該 Task 的「export DebugTab」步），第二條 it 改為**直 render `<DebugTab rt={null} />`** 並斷言含 `StreamConfigReader` 專屬字串 `review_session_id`（兼 `stream-config`）。此斷言只有在 `DebugTab` 真的 render `<StreamConfigReader />`（D2-A′ 取代路徑落地）時才綠；若 Task 2 漏接，`review_session_id` 不會出現 → FAIL，守門生效。`RuntimePage` 那一支斷言證明同一元件被共用（非複製貼上）。此即 spec §5.1 #4 列的「直測 ... debug 分頁含該入口」可選路徑之具體落實。
 - [ ] 跑新增測試確認 GREEN：
 
   ```bash
