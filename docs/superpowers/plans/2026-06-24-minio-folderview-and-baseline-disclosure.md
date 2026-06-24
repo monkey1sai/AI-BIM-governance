@@ -53,10 +53,10 @@ mcp__gitnexus__context({ name: "listMinioObjects" })    # 確認 additive listMi
 
 ## Task 1: 後端 `listMinioFolder`（S3 Delimiter 逐層 list，additive）
 
-對應 spec §2.1、§2.3、AC-D2。在 `minioClient.ts` 新增資料夾語意 list 函式，回 `folders[]`（CommonPrefixes）＋當層直屬 `objects`，並對每個 `.ifc` 物件附 `idempotency_key`（給前端 chip lookup，spec §3.3 路徑 A）。`listMinioObjects` 簽名與回應**完全不動**。
+對應 spec §2.1、§2.3、§2.5 第 5 點、AC-D2、AC-badge。在 `minioClient.ts` 新增資料夾語意 list 函式，回 `folders[]`（每筆 `{ prefix, has_source_ifc }`，CommonPrefixes + 「該前綴遞迴下是否含 .ifc」供前端『含 source IFC』badge）＋當層直屬 `objects`，並對每個 `.ifc` 物件附 `idempotency_key`（給前端 chip lookup，spec §3.3 路徑 A）。`listMinioObjects` 簽名與回應**完全不動**。
 
 **Files:**
-- Modify: `bim-review-coordinator/src/services/minioClient.ts`（加 `listMinioFolder` + `MinioObjectView` 加 `idempotency_key` 欄）
+- Modify: `bim-review-coordinator/src/services/minioClient.ts`（加 `listMinioFolder` + `MinioFolderNode`/`MinioFolderListing` 型別 + `prefixHasSourceIfc` helper + `MinioObjectView` 加 `idempotency_key` 欄）
 - Test: `bim-review-coordinator/tests/minio-folder-route.test.ts`（Create）
 
 **Steps:**
@@ -72,6 +72,9 @@ import { listMinioFolder, createMinioS3Client } from "../src/services/minioClien
 let stub: http.Server | null = null; let stubUrl = "";
 // S3 ListObjectsV2 with Delimiter='/'：回 CommonPrefixes（資料夾）+ Contents（當層直屬檔）。
 // 支援分頁：第一頁 IsTruncated=true + NextContinuationToken，第二頁 false。
+// 重要：本 stub 依「呼叫順序」回 pages（call N → pages[N]），超出則重複最後一頁。
+//   listMinioFolder 會先做頂層 Delimiter list（call 1），再對每個 CommonPrefix 依序 probe has_source_ifc
+//   （call 2,3,...）。故 pages 順序＝[頂層 list, probe folder#1, probe folder#2, ...]，須與 prefixSet 順序對齊。
 function startS3Stub(pages: Array<{ prefixes: string[]; keys: string[]; next?: string }>): Promise<void> {
   let call = 0;
   stub = http.createServer((_req, res) => {
@@ -89,24 +92,42 @@ function startS3Stub(pages: Array<{ prefixes: string[]; keys: string[]; next?: s
 afterEach(() => new Promise<void>((r) => stub ? stub.close(() => { stub = null; r(); }) : r()));
 
 describe("listMinioFolder", () => {
-  it("回 folders=CommonPrefixes、objects=當層直屬檔，folders 不含被 roll-up 的子物件", async () => {
+  it("回 folders=CommonPrefixes（{prefix,has_source_ifc}）、objects=當層直屬檔，folders 不含被 roll-up 的子物件", async () => {
     await startS3Stub([{ prefixes: ["洲際好宅/", "東勢區許良宇紀念圖書館/"], keys: ["annotations/a.json"] }]);
     const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });
     const res = await listMinioFolder(client, "bim-control", "", "/");
-    expect(res.folders).toEqual(["洲際好宅/", "東勢區許良宇紀念圖書館/"]);
+    expect(res.folders.map((f) => f.prefix)).toEqual(["洲際好宅/", "東勢區許良宇紀念圖書館/"]);
     expect(res.objects).toHaveLength(1);
     expect(res.objects[0].key).toBe("annotations/a.json");
     expect(res.objects[0].role).toBe("other");
+  });
+
+  it("資料夾 has_source_ifc：對每個 CommonPrefix 再 probe 一次，子層有 .ifc → true、無 → false（spec §2.5 第 5 點）", async () => {
+    // 第一頁＝頂層 list（2 個 folder，無直屬檔）；後兩頁＝對各 folder 的 probe list（has_source_ifc）。
+    // stub 依呼叫順序回頁：probe「proj-with-ifc/」回含 model.ifc、probe「proj-empty/」回無 .ifc。
+    await startS3Stub([
+      { prefixes: ["proj-with-ifc/", "proj-empty/"], keys: [] }, // 頂層 Delimiter list
+      { prefixes: [], keys: ["proj-with-ifc/root/main/000001/model.ifc"] }, // probe proj-with-ifc/
+      { prefixes: [], keys: ["proj-empty/annotations/a.json"] },             // probe proj-empty/
+    ]);
+    const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });
+    const res = await listMinioFolder(client, "bim-control", "", "/");
+    const byPrefix = Object.fromEntries(res.folders.map((f) => [f.prefix, f.has_source_ifc]));
+    expect(byPrefix["proj-with-ifc/"]).toBe(true);
+    expect(byPrefix["proj-empty/"]).toBe(false);
   });
 
   it("超 1000 子前綴/物件不截斷：IsTruncated=true → 帶 continuation 取次頁，兩頁 folders 合併", async () => {
     await startS3Stub([
       { prefixes: ["A/"], keys: [], next: "tok2" },
       { prefixes: ["B/"], keys: [] },
+      // 後續為 A/、B/ 的 has_source_ifc probe（回無 .ifc 即可，本測試只驗合併）。
+      { prefixes: [], keys: [] },
+      { prefixes: [], keys: [] },
     ]);
     const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });
     const res = await listMinioFolder(client, "bim-control", "", "/");
-    expect(res.folders).toEqual(["A/", "B/"]);
+    expect(res.folders.map((f) => f.prefix)).toEqual(["A/", "B/"]);
   });
 
   it(".ifc 物件附 idempotency_key（給前端 chip lookup）＋ 葉層三段 badge", async () => {
@@ -133,18 +154,41 @@ npx vitest run tests/minio-folder-route.test.ts 2>&1 | tail -20
 - [ ] 最小實作：在 `bim-review-coordinator/src/services/minioClient.ts` 的 `MinioObjectView`（`:18-26`）interface 末尾加 `idempotency_key: string;` 欄，並把現有 `listMinioObjects` 內 `out.push({...})` 補上 `idempotency_key: idempotencyKeyFor(bucket, key, obj.ETag ?? "")`。更新 import 行 `:5` 為 `import { deriveIntakeFromKey, idempotencyKeyFor } from "./minioWatcher.js";`。`ListObjectsV2Command` 的 import 行 `:4` 已含。然後在檔末新增：
 
 ```ts
+export interface MinioFolderNode {
+  prefix: string;          // CommonPrefix（資料夾節點絕對 prefix）
+  has_source_ifc: boolean; // 該 prefix（遞迴）下是否有 .ifc 葉物件（spec §2.5 第 5 點 badge）
+}
+
 export interface MinioFolderListing {
   bucket: string;
   prefix: string;
-  folders: string[];          // CommonPrefixes（資料夾節點）
+  folders: MinioFolderNode[]; // CommonPrefixes（資料夾節點 + has_source_ifc）
   objects: MinioObjectView[]; // 當層直屬檔（被 roll-up 的子物件不在此）
   count: number;              // objects.length（誠實：非遞迴總數）
+}
+
+/**
+ * 該 prefix（遞迴，不帶 Delimiter）下是否含 .ifc 葉物件（spec §2.5 第 5 點 folder badge）。
+ * CommonPrefix 只回 prefix 字串、不含內容，故須對該 prefix 各發一次 list 才能誠實判定（不臆測）。
+ * MaxKeys 不設上限但一旦命中 .ifc 即可早停（while-loop 找到就回 true）。
+ */
+async function prefixHasSourceIfc(client: S3Client, bucket: string, prefix: string): Promise<boolean> {
+  let token: string | undefined;
+  do {
+    const resp = await client.send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token }),
+    );
+    if ((resp.Contents ?? []).some((o) => o.Key?.endsWith(".ifc"))) return true;
+    token = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+  } while (token);
+  return false;
 }
 
 /**
  * 資料夾語意 list（spec §2.1）：帶 Delimiter='/' → CommonPrefixes 為資料夾、Contents 為當層直屬檔。
  * 單層仍處理 IsTruncated（while-loop 全拉，超 1000 子前綴/物件不截斷，AC-D2）。
  * 對每個 .ifc 物件附 idempotency_key 供前端 chip 對 ledger lookup（spec §3.3 路徑 A）。
+ * 對每個 CommonPrefix 再 probe 一次取 has_source_ifc（spec §2.5 第 5 點 folder badge）。
  * 永不回 presigned URL（MinioObjectView 無 url 欄）。
  */
 export async function listMinioFolder(
@@ -153,7 +197,7 @@ export async function listMinioFolder(
   prefix: string,
   delimiter: string,
 ): Promise<MinioFolderListing> {
-  const folders: string[] = [];
+  const prefixSet: string[] = [];
   const objects: MinioObjectView[] = [];
   let token: string | undefined;
   do {
@@ -166,7 +210,7 @@ export async function listMinioFolder(
       }),
     );
     for (const cp of resp.CommonPrefixes ?? []) {
-      if (cp.Prefix) folders.push(cp.Prefix);
+      if (cp.Prefix) prefixSet.push(cp.Prefix);
     }
     for (const obj of resp.Contents ?? []) {
       if (!obj.Key) continue;
@@ -191,9 +235,16 @@ export async function listMinioFolder(
     }
     token = resp.IsTruncated ? resp.NextContinuationToken : undefined;
   } while (token);
+  // 對每個 CommonPrefix probe has_source_ifc（spec §2.5 第 5 點）。序列執行確保測試 stub 依呼叫順序回頁可預測。
+  const folders: MinioFolderNode[] = [];
+  for (const p of prefixSet) {
+    folders.push({ prefix: p, has_source_ifc: await prefixHasSourceIfc(client, bucket, p) });
+  }
   return { bucket, prefix, folders, objects, count: objects.length };
 }
 ```
+
+> **效能誠實註記（spec §2.4）：** `has_source_ifc` 對每個 CommonPrefix 各發一次遞迴 list（命中 .ifc 即早停），頂層 7 個 folder＝最多 7 次額外 round-trip。這是 spec §2.5 第 5 點 folder badge 的等效成本、**僅對 folder badge 付出**；不誇大為效能優化。若維護者評估成本不可接受，唯一可接受替代＝把 badge 標 `NOT BUILT`（不可臆測），但 spec 已升為硬 AC，預設做出來。
 
 - [ ] 跑測試確認通過 ＋ 既有 minio-objects 測試零退化：
 
@@ -243,9 +294,17 @@ import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 let active: CoordinatorApp | null = null; let root: string | null = null;
 let s3Stub: http.Server | null = null; let s3Url = "";
 function startS3Stub(): Promise<void> {
+  // 第一次呼叫＝頂層 Delimiter list（回 CommonPrefix「洲際好宅/」+ 當層 annotations/a.json）；
+  // 後續呼叫＝listMinioFolder 對「洲際好宅/」的 has_source_ifc probe（回含 model.ifc → true）。
+  let call = 0;
   s3Stub = http.createServer((_req, res) => {
+    call += 1;
     res.writeHead(200, { "content-type": "application/xml" });
-    res.end(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>洲際好宅/</Prefix></CommonPrefixes><Contents><Key>annotations/a.json</Key><ETag>"e"</ETag></Contents></ListBucketResult>`);
+    if (call === 1) {
+      res.end(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>洲際好宅/</Prefix></CommonPrefixes><Contents><Key>annotations/a.json</Key><ETag>"e"</ETag></Contents></ListBucketResult>`);
+      return;
+    }
+    res.end(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>洲際好宅/root/main/000001/model.ifc</Key><ETag>"e"</ETag></Contents></ListBucketResult>`);
   });
   return new Promise((r) => s3Stub!.listen(0, "127.0.0.1", () => {
     s3Url = `http://127.0.0.1:${(s3Stub!.address() as { port: number }).port}`; r();
@@ -271,11 +330,12 @@ afterEach(async () => {
 });
 
 describe("GET /api/minio/objects?delimiter=/", () => {
-  it("帶 delimiter → 回 folders[]（CommonPrefixes）+ 當層 objects，不含 url", async () => {
+  it("帶 delimiter → 回 folders[]（{prefix,has_source_ifc}）+ 當層 objects，不含 url", async () => {
     await startS3Stub();
     const res = await request(makeApp().app).get("/api/minio/objects?delimiter=/");
     expect(res.status).toBe(200);
-    expect(res.body.folders).toEqual(["洲際好宅/"]);
+    expect(res.body.folders.map((f: { prefix: string }) => f.prefix)).toEqual(["洲際好宅/"]);
+    expect(res.body.folders[0].has_source_ifc).toBe(true); // probe 命中 model.ifc
     expect(res.body.objects).toHaveLength(1);
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
   });
@@ -439,13 +499,20 @@ describe("POST /api/conversion/trigger", () => {
     expect(res.status).toBe(400);
   });
 
-  it("合法 key + 有 token → 回 { status, idempotency_key }，不外洩 presigned URL", async () => {
-    await startS3Stub(["東勢區許良宇紀念圖書館/root/main/000001/model.ifc"]);
+  it("合法 key + 有 token → 回 { status, idempotency_key }（由非空 etag 衍生），不外洩 presigned URL", async () => {
+    const key = "東勢區許良宇紀念圖書館/root/main/000001/model.ifc";
+    await startS3Stub([key]);
+    // 後端對該 key list 取 etag（stub 回 "e1"）→ idempotency_key 應 === idempotencyKeyFor(bucket,key,'"e1"')。
+    // 驗 idempotency_key 不是 mw_hash('')（空 etag 的退化值），確保 etag 真的被帶入。
+    const { idempotencyKeyFor } = await import("../src/services/minioWatcher.js");
+    const expected = idempotencyKeyFor("bim-control", key, '"e1"');
+    const emptyEtagKey = idempotencyKeyFor("bim-control", key, "");
     const res = await request(makeApp().app).post("/api/conversion/trigger")
-      .set("x-dev-token", "test-dev-token")
-      .send({ key: "東勢區許良宇紀念圖書館/root/main/000001/model.ifc" });
+      .set("x-dev-token", "test-dev-token").send({ key });
     expect(res.status).toBe(200);
     expect(res.body.idempotency_key).toMatch(/^mw_[0-9a-f]{16}$/);
+    expect(res.body.idempotency_key).toBe(expected);          // etag 確實參與 hash
+    expect(res.body.idempotency_key).not.toBe(emptyEtagKey);  // 非空 etag 退化值
     expect(res.body.status).toBeTruthy();
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
   });
@@ -569,11 +636,13 @@ export async function triggerManualIntake(
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
       });
-      // 取該 key 的 etag（idempotency_key 需 etag；list 當層找該 key）。
-      const objs = await listMinioObjects(client, config.minioWatchBucket, "", config.minioWatchKeySuffix);
+      // 取該 key 的 etag（idempotency_key 需 etag）。用 Prefix=key 精準 list（避免 527 物件全量掃；
+      // buildability：大 bucket 下全量 list 取單一 etag 效率極差、與 listMinioFolder 精準 prefix 語意衝突）。
+      // Prefix=key 回該 key（及恰好以其為前綴者），再 find 取完全相等的 key。
+      const objs = await listMinioObjects(client, config.minioWatchBucket, key, config.minioWatchKeySuffix);
       const match = objs.find((o) => o.key === key);
-      if (!match) {
-        response.status(404).json({ detail: "object not found in bucket" });
+      if (!match || !match.etag) {
+        response.status(404).json({ detail: "object not found in bucket (or missing etag)" });
         return;
       }
       const result = await triggerManualIntake(
@@ -605,7 +674,7 @@ export async function triggerManualIntake(
   });
 ```
 
-注意：`resolveActor` / `parseReason` 已存在（`app.ts` 內，prioritize/retry route 用）；`isKitMutationAuthorized` 已存在（`:2580`）；`listMinioObjects` / `createMinioS3Client` 已在 minioClient import。
+注意：`resolveActor` / `parseReason` 已存在（`app.ts` 內，prioritize/retry route 用）；`isKitMutationAuthorized` 已存在（`:2580`）；`listMinioObjects` / `createMinioS3Client` 已在 minioClient import。**`listMinioObjects(client, bucket, key, suffix)` 以 `key` 當 prefix 時，回傳物件的 `project_id`/`category`/`version` 衍生欄會因 relative path 為空而為 null——但 route 只取 `match.etag`，這些衍生欄不參與，正確性不受影響；真正的三段解析在前面的 `deriveIntakeFromKey({ key, prefix: "" })` 與 `triggerManualIntake` 內各做一次（吃完整 key）。**
 
 - [ ] 跑測試確認通過：
 
@@ -734,15 +803,19 @@ mcp__gitnexus__impact({ target: "startMinioWatcher", direction: "upstream" })
 # 回報：direct callers（app.ts startMinioWatcherIfEnabled）、affected processes、risk level
 ```
 
-- [ ] 改既有失敗斷言（先讓測試表達新行為）：在 `bim-review-coordinator/tests/minio-watcher-loop.test.ts`，把 `makeWatcher` helper（`:146-166`）加一個可注入的 `isLedgered`（預設「全無紀錄」＝既有未轉都觸發）。在 helper 的 `startMinioWatcher({...})` 物件內、`structLog` 之後加一行：
+> **本「改既有失敗斷言」拆成 5a → 5b → 5c 三個小步（task-decomposition 修正）。** 原本一步同時改三個相互依賴的 it（首輪語意 + 第二輪新增 + 後續輪不再觸發）無法個別驗證。依序做、每步只改 1~2 個 it、各跑一次確認 FAIL 後才進實作：
+>
+> **`isLedgered` 的正確型別契約（buildability 修正，務必照此寫測試）：** `isLedgered` 收到的參數是 **`idempotencyKeyFor(bucket,key,etag)` 算出的 `mw_<hash16>`**，**不是 key 字串**。因此 `isLedgered: (k) => k.includes("xxx")` 是**錯的**（idkey 是 hash、永不含 "xxx" → 恆 false、既存物件仍被觸發、`received.length===1` 失敗）。要表達「某物件已落帳」必須**計算該物件的真實 idkey** 再比對：`import { idempotencyKeyFor } from "../src/services/minioWatcher.js";` 後用 `{ isLedgered: (idk) => idk === idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1") }`（bucket 名須與 `makeWatcher` 注入的 `bucket` 一致——已查證 helper 用 `bucket: "bim-control"`，`minio-watcher-loop.test.ts:154`）。「全部已落帳」用 `() => true`、「全部未落帳」用 `() => false`。
+
+- [ ] **5a — helper 加可注入 `isLedgered`（預設全未落帳）：** 在 `bim-review-coordinator/tests/minio-watcher-loop.test.ts`，`makeWatcher` helper（`:146-166`）的 `startMinioWatcher({...})` 物件內、`structLog` 之後加一行：
 
 ```ts
     isLedgered: extra.isLedgered ?? (() => false),
 ```
 
-並把 helper 型別 `extra: Partial<Parameters<typeof startMinioWatcher>[0]>` 保持不變（`isLedgered` 進 options 後自動納入）。
+helper 型別 `extra: Partial<Parameters<typeof startMinioWatcher>[0]>` 保持不變（`isLedgered` 進 options 後自動納入）。並在檔頭 import：`import { idempotencyKeyFor } from "../src/services/minioWatcher.js";`（後續 it 計算真實 idkey 用）。此步只改 helper，不單獨跑（隨 5b 一起 FAIL）。
 
-- [ ] 改「首輪 baseline 不觸發」測試（`:197-212`）為新語意「首輪即觸發既有無紀錄物件」：
+- [ ] **5b — 改「首輪 baseline 不觸發」為「首輪即觸發無紀錄物件」+ 加「已落帳不觸發」（改/加 2 個 it）：** 把原 `:197-212` 的 it 改為下列兩個：
 
 ```ts
   it("首輪：ledger 無紀錄的既有物件即觸發（auto-enroll，§3.4）", async () => {
@@ -769,14 +842,42 @@ mcp__gitnexus__impact({ target: "startMinioWatcher", direction: "upstream" })
   });
 ```
 
-同時更新「第二輪新增物件 → 觸發」（`:214-240`）等仍依賴 baseline 語意的測試：把首輪後「新增物件才觸發」的前提改為「首輪即觸發 baseline，新增物件也觸發」——對 `:214` 測試，把首輪物件改為 `isLedgered` 命中（傳 `{ isLedgered: (k) => k.includes("xxx") }`），讓 `899/main/xxx` 視為已落帳、僅新增的 `988/main/zzz` 觸發，斷言維持 `received.length === 1`、payload 不變。對「同物件後續輪不再觸發」（`:242-254`）同樣調整。
-
-- [ ] 跑測試確認失敗（watcher 尚未支援 `isLedgered`，仍走 baseline → 新斷言失敗）：
+跑確認 FAIL（watcher 尚未支援 `isLedgered`、仍走 baseline → 首輪 `triggered_total` 仍 0）：
 
 ```bash
 cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec/bim-review-coordinator
-npx vitest run tests/minio-watcher-loop.test.ts 2>&1 | tail -25
-# 預期：新增/改寫的 auto-enroll 斷言 FAIL（首輪 triggered_total 仍 0）
+npx vitest run tests/minio-watcher-loop.test.ts -t "首輪|已有紀錄" 2>&1 | tail -20
+# 預期：兩個新 it FAIL
+```
+
+- [ ] **5c — 改仍依賴 baseline 語意的後續輪 it（`:214-240` 第二輪新增、`:242-254` 後續輪不再觸發）：** 用**真實 idkey** 表達「首輪物件已落帳、僅新增物件觸發」：
+
+```ts
+  // 「第二輪新增物件 → 觸發」改寫：首輪物件以真實 idkey 標為已落帳（不觸發），新增的才觸發。
+  it("既有已落帳、僅新增無紀錄物件觸發（§3.4 取代原 baseline delta 語意）", async () => {
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    // 首輪物件 899/main/xxx 的真實 idkey 命中 → 視為已落帳；其餘（新增）未落帳。
+    const ledgeredIdk = idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1");
+    watcher = makeWatcher(s3Base, selfBase, state, { isLedgered: (idk) => idk === ledgeredIdk });
+    await waitFor(() => (watcher!.getStatus().poll_count as number) >= 1, 5000);
+    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e3" }); // 新增無紀錄
+    await waitFor(() => watcher!.getStatus().triggered_total === 1, 5000);
+    expect(received.length).toBe(1);
+    expect(received[0].body.external_model_version_id).toBe("zzz"); // 只觸發新增者（payload 不變）
+  });
+```
+
+對「同物件後續輪不再觸發」（`:242-254`）：原語意（同 key 同 etag 後續輪 `prev===etag` continue）**不依賴 baseline，照舊可保留**；僅須確認其 `makeWatcher` 不傳 `isLedgered`（走預設全未落帳），首輪觸發後 `seen` 命中、後續輪不再觸發——若該 it 原本斷言「首輪不觸發、第二輪才觸發」才需改成「首輪即觸發、後續輪不再觸發」。**執行者先 Read 該 it 確認它斷言什麼再決定改不改**（若它只驗 `prev===etag` 去重、與 baseline 無關則零改）。
+
+跑確認 FAIL：
+
+```bash
+cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec/bim-review-coordinator
+npx vitest run tests/minio-watcher-loop.test.ts -t "僅新增無紀錄" 2>&1 | tail -20
+# 預期：新 it FAIL（watcher 尚未支援 isLedgered）
 ```
 
 - [ ] 最小實作（watcher）：在 `bim-review-coordinator/src/services/minioWatcher.ts`：
@@ -872,11 +973,11 @@ EOF
 ```ts
   it("getMinioFolder 打 ?delimiter=/ 並回 folders/objects", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ bucket: "bim-control", prefix: "洲際好宅/", folders: ["root/"], objects: [], count: 0 }), { status: 200 }),
+      new Response(JSON.stringify({ bucket: "bim-control", prefix: "洲際好宅/", folders: [{ prefix: "root/", has_source_ifc: false }], objects: [], count: 0 }), { status: 200 }),
     );
     const res = await coordinatorClient.getMinioFolder("洲際好宅/");
     expect(fetchSpy).toHaveBeenCalledWith(expect.stringContaining("delimiter=%2F"), expect.anything());
-    expect(res.folders).toEqual(["root/"]);
+    expect(res.folders.map((f) => f.prefix)).toEqual(["root/"]);
     fetchSpy.mockRestore();
   });
 
@@ -923,10 +1024,15 @@ async function jsonPostAuthed<T>(path: string, body: unknown): Promise<T> {
   3. 加 `MinioFolderListing` 型別（在 `MinioObject` 之後）與兩個 client 方法（在 `coordinatorClient` 物件內、`getMinioObjects` 之後）：
 
 ```ts
+export interface MinioFolderNode {
+  prefix: string;
+  has_source_ifc: boolean; // spec §2.5 第 5 點 folder badge（後端 probe 計算，前端不臆測）
+}
+
 export interface MinioFolderListing {
   bucket: string | null;
   prefix: string;
-  folders: string[];
+  folders: MinioFolderNode[];
   objects: MinioObject[];
   count: number;
   note?: string;
@@ -973,13 +1079,29 @@ EOF
 
 對應 spec §2.5、§3.3、AC1/AC2/AC3/AC-D2/AC-badge/AC-honesty/AC-chip/AC-trigger。把 `MinioDataPage` 從 `buildMinioTree` 攤平樹改為 `useState(currentPrefix)` 逐層導覽（點資料夾換 prefix 重打 `getMinioFolder`）；`.ifc` 旁顯示 ledger chip（讀 `getConversionRecords`）＋「觸發轉檔」鈕（intent→confirm→`conversionTrigger`，成功 patch chip）。`buildMinioTree` 退役。
 
+> **本 task 拆成三個可獨立驗證的子階段（task-decomposition blocker 修正）。** 整個 `MinioDataPage` 重寫過大、無法在單一 2-5 分鐘步驟完成且中間態不可驗證。執行者**依序**做 7a → 7b → 7c，**每階段各跑對應 `it`、各自 commit**（共三個 commit，commit message 見各階段末），確保任何階段失敗都可獨立 revert：
+>
+> - **7a＝逐層資料夾殼**（loading / error / empty 兩態 / 上一層鈕 / `sortedFolders` 資料夾鈕 / `folder.objects` 列含 role label + 三段 badge；**含『含 source IFC』資料夾 badge**，見下方 spec-alignment 補強）。**不含 chip、不含觸發鈕。** 對應 test `it`：「頂層顯示 folders…」「getMinioFolder reject → 顯誠實錯誤…」「MinIO 未設定…empty 態 (a)」「已設定但當前 prefix 空…empty 態 (b)」「頁首保留…誠實字樣」「**資料夾（遞迴）含 .ifc → 顯『含 source IFC』badge**」。
+> - **7b＝ledger chip 整合**（加 `getConversionRecords` 讀取 + 內聯 `ledgerChipStatus` + `.ifc` 列掛 chip）。對應 test `it`：「葉層 .ifc：…ledger chip…」「無 ledger 紀錄的 .ifc → chip 顯『未轉』…」「會呼叫 getConversionRecords…」。
+> - **7c＝觸發鈕 intent→confirm**（`pendingKey` state + 觸發鈕 + `IntentDialog` + `confirmTrigger` patch chip + `triggerErr` inline）。對應 test `it`：「葉層 .ifc：…觸發鈕…」（斷言 `minio-trigger-*` testid 存在）。
+>
+> 三階段共用同一份測試檔（下方步驟一次寫全），但**先寫全測試 → 跑一次確認多數 FAIL → 再分三階段實作**：每完成一階段重跑該階段對應 `it` 應由 FAIL 轉 PASS，其餘階段 `it` 仍 FAIL 屬正常。三階段全做完後整檔應全 PASS。
+
+> **spec-alignment 補強（§2.5 point 5 / §8 line 211：『含 source IFC』資料夾 badge）：** spec §2.5 第 5 點為**獨立硬 AC（AC-badge 之外另立）**——「資料夾（遞迴）直屬有 `.ifc` 葉物件 → 標一枚輕量 badge『含 source IFC』；不在資料夾層宣稱『已轉/可轉』」。本 task 必須涵蓋。**判定資料來源（誠實限制）：** Delimiter list 的 `CommonPrefixes` **只回 prefix 字串、不含其下是否有 `.ifc`**，前端**不可臆測**。實作方式＝後端在 `listMinioFolder` 回應的每個 folder 附 `has_source_ifc: boolean`（對該 prefix 以 `Prefix=<folder>` 不帶 Delimiter 各發一次 list、`some(k => k.endsWith(".ifc"))`；此為 §2.3「要顯示子樹資訊須再發 list」的等效成本，**僅對 folder badge 這一項付出**）。**注意：此 badge 需求連帶要 Task 1 `listMinioFolder` 回 `folders` 改為 `Array<{ prefix: string; has_source_ifc: boolean }>`、Task 2 route 透傳、Task 6 前端 `MinioFolderListing.folders` 型別同步改。** 執行者做 7a 前先回頭把這三處型別補上（見下方「7a 前置：folders 帶 has_source_ifc」）。若維護者評估「對每個 folder 再發一次 list」成本不可接受，**唯一可接受的替代**是把此 badge 標為 `NOT BUILT`（誠實鐵律：不可臆測），但 spec 已升為硬 AC，預設**做出來**。
+>
+> **7a 前置：folders 帶 has_source_ifc（回補 Task 1/2/6 型別）**
+> - Task 1 `MinioFolderListing.folders` 由 `string[]` 改 `Array<{ prefix: string; has_source_ifc: boolean }>`；`listMinioFolder` 對每個 `cp.Prefix` 呼 `prefixHasSourceIfc`（Task 1 已定義：對該 prefix 不帶 Delimiter list、命中 `.ifc` 即早停回 true）回 `{ prefix, has_source_ifc }`。Task 1 測試對應斷言由 `res.folders` 字串陣列改為物件陣列（`res.folders.map(f => f.prefix)` 比對、並加 `has_source_ifc` 斷言）。**此三處（Task 1/2/6）的型別改動已在各 task 的程式碼片段內就緒，本段僅提醒 7a 依賴它們先完成。**
+> - Task 2 route 測試 `res.body.folders` 同步改為物件陣列斷言。
+> - Task 6 `MinioFolderListing.folders` 型別與測試 fixture 同步改為物件陣列。
+> - 本階段前端 `sortedFolders` 改對 `f.prefix` 做 `localeCompare`，資料夾鈕內容 `f.prefix` + 條件 badge（`f.has_source_ifc && <span className="ec-prov artifact">{t("含 source IFC", "has source IFC")}</span>`）。
+
 **Files:**
-- Modify: `web-viewer-sample/src/console/pages.tsx`（`MinioDataPage` `:1185-1297`、刪 `buildMinioTree` `:1157-1171`、empty 態文案 `:1232-1235`、頁首字樣 `:1214-1216` 改「逐層」）
-- Modify: `web-viewer-sample/src/console/MinioDataPage.test.tsx`（重寫斷言：folders 逐層 + chip + 觸發鈕；「不呼叫 getConversionRecords」→ 改為「會呼叫」）
+- Modify: `web-viewer-sample/src/console/pages.tsx`（`MinioDataPage` `:1185-1297`、刪 `buildMinioTree` `:1157-1171`、empty 態文案 `:1232-1235`、頁首字樣 `:1214-1216` 改「逐層」；資料夾鈕加『含 source IFC』badge）
+- Modify: `web-viewer-sample/src/console/MinioDataPage.test.tsx`（重寫斷言：folders 逐層 + 資料夾『含 source IFC』badge + chip + 觸發鈕；「不呼叫 getConversionRecords」→ 改為「會呼叫」）
 
 **Steps:**
 
-- [ ] 重寫前端測試斷言（先表達新行為）。把 `web-viewer-sample/src/console/MinioDataPage.test.tsx` 整檔改為以 `getMinioFolder` 為主、含 chip 與觸發鈕、含「會呼叫 getConversionRecords」：
+- [ ] 重寫前端測試斷言（先表達新行為，三階段共用一份）。把 `web-viewer-sample/src/console/MinioDataPage.test.tsx` 整檔改為以 `getMinioFolder` 為主、含資料夾 badge、chip 與觸發鈕、含「會呼叫 getConversionRecords」（注意：`folders` fixture 為物件陣列 `[{ prefix, has_source_ifc }]`）：
 
 ```tsx
 // MinioDataPage：逐層資料夾導覽（spec §2.5）+ ledger chip + 一鍵觸發。
@@ -1008,9 +1130,11 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
   });
 
-  it("頂層顯示 folders（資料夾節點），不再用 buildMinioTree 攤平", async () => {
+  it("[7a] 頂層顯示 folders（資料夾節點），不再用 buildMinioTree 攤平", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
-      bucket: "bim-control", prefix: "", folders: ["洲際好宅/", "東勢區許良宇紀念圖書館/"], objects: [], count: 0,
+      bucket: "bim-control", prefix: "",
+      folders: [{ prefix: "洲際好宅/", has_source_ifc: false }, { prefix: "東勢區許良宇紀念圖書館/", has_source_ifc: true }],
+      objects: [], count: 0,
     });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
@@ -1020,7 +1144,23 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.textContent).toContain("東勢區許良宇紀念圖書館");
   });
 
-  it("葉層 .ifc：顯示來源 IFC role + 三段 badge + ledger chip + 觸發鈕", async () => {
+  it("[7a] 資料夾（遞迴）含 .ifc → 顯『含 source IFC』badge；不含則不顯（spec §2.5 第 5 點，獨立 AC）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "",
+      folders: [{ prefix: "東勢區許良宇紀念圖書館/", has_source_ifc: true }, { prefix: "annotations/", has_source_ifc: false }],
+      objects: [], count: 0,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    // 含 .ifc 的資料夾旁有 badge；不含的資料夾旁無 badge（用 testid 精準定位避免誤判）。
+    expect(container.querySelector('[data-testid="minio-folder-badge-東勢區許良宇紀念圖書館/"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="minio-folder-badge-annotations/"]')).toBeNull();
+    expect(container.textContent).toContain("含 source IFC");
+  });
+
+  it("[7b][7c] 葉層 .ifc：顯示來源 IFC role + 三段 badge + ledger chip + 觸發鈕", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
     });
@@ -1037,7 +1177,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]')).toBeTruthy(); // 觸發鈕
   });
 
-  it("無 ledger 紀錄的 .ifc → chip 顯『未轉』、觸發鈕在", async () => {
+  it("[7b][7c] 無 ledger 紀錄的 .ifc → chip 顯『未轉』、觸發鈕在", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
     });
@@ -1049,7 +1189,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.textContent).toMatch(/未轉/);
   });
 
-  it("MinIO 未設定（count=0 + note）→ empty 態 (a)：顯『MinIO 未設定』文案", async () => {
+  it("[7a] MinIO 未設定（count=0 + note）→ empty 態 (a)：顯『MinIO 未設定』文案", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: null, prefix: "", folders: [], objects: [], count: 0, note: "MinIO watch 未設定（未取得）",
     });
@@ -1060,7 +1200,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.textContent).toMatch(/未設定|未取得/);
   });
 
-  it("已設定但當前 prefix 空（folders=[] objects=[] 無 note）→ empty 態 (b)：顯『此層無物件』非『未設定』", async () => {
+  it("[7a] 已設定但當前 prefix 空（folders=[] objects=[] 無 note）→ empty 態 (b)：顯『此層無物件』非『未設定』", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "洲際好宅/empty/", folders: [], objects: [], count: 0,
     });
@@ -1072,7 +1212,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.textContent).not.toMatch(/MinIO watch 未設定/);
   });
 
-  it("getMinioFolder reject → 顯誠實錯誤 + 重試鈕，不假裝有資料", async () => {
+  it("[7a] getMinioFolder reject → 顯誠實錯誤 + 重試鈕，不假裝有資料", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
@@ -1081,7 +1221,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.textContent).toContain("/api/minio/objects");
   });
 
-  it("頁首保留『唯讀 intake 來源視圖，非 metadata 權威』誠實字樣", async () => {
+  it("[7a] 頁首保留『唯讀 intake 來源視圖，非 metadata 權威』誠實字樣", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({ bucket: "bim-control", prefix: "", folders: [], objects: [], count: 0 });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
@@ -1090,7 +1230,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.textContent).toMatch(/唯讀.*intake.*來源|唯讀.*來源視圖/);
   });
 
-  it("會呼叫 getConversionRecords（chip 需 ledger，§2.5 第 6 點）", async () => {
+  it("[7b] 會呼叫 getConversionRecords（chip 需 ledger，§2.5 第 6 點）", async () => {
     const spy = vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({ bucket: "bim-control", prefix: "", folders: [], objects: [], count: 0 });
     const root = createRoot(container);
@@ -1111,9 +1251,19 @@ npx vitest run src/console/MinioDataPage.test.tsx 2>&1 | tail -25
 
 - [ ] 最小實作：在 `web-viewer-sample/src/console/pages.tsx` 改寫 `MinioDataPage`（`:1185-1297`）。刪除 `buildMinioTree`（`:1157-1171`）與 `MinioTree` type alias（`:1155`）。新 `MinioDataPage` 邏輯：
 
+> **跨 monorepo import 已知會失敗（buildability，務必照下面寫）：** `web-viewer-sample/tsconfig.json` 的 `include` 只含 `["src", "src/assets"]`、`moduleResolution: "bundler"`，跨 package 路徑 import `../../../bim-review-coordinator/src/services/ledgerChipStatus` 在 `tsc --noEmit` **必報 TS2307/TS6059**。**最小實作直接用下方內聯的 `ledgerChipStatus` 同義函式（與 Task 4 後端純函式邏輯逐字相同），不要走跨 package import。** Task 4 的後端函式僅供後端單元測試與後端共用，前端**刻意複製 3 行**（避免跨 tsconfig project boundary）。
+
 ```tsx
-import { ledgerChipStatus } from "../../../bim-review-coordinator/src/services/ledgerChipStatus";
-// 註：若 monorepo 路徑不可跨 import，改在前端內聯同義函式（3 行：find by idempotency_key，無則 'untracked'）。
+// ledger chip 狀態映射（與後端 ledgerChipStatus.ts 同義；前端內聯避免跨 monorepo tsconfig boundary）。
+// records 來自 getConversionRecords()；無紀錄 → 'untracked'（顯「未轉（含 baseline）」），不臆測。
+function ledgerChipStatus(
+  idempotencyKey: string,
+  records: ReadonlyArray<{ idempotency_key: string; status: string }>,
+): string {
+  const hit = records.find((r) => r.idempotency_key === idempotencyKey);
+  return hit ? hit.status : "untracked";
+}
+
 const CHIP_LABEL: Record<string, string> = {
   detected: t("已偵測", "detected"), queued: t("排隊", "queued"), converting: t("轉檔中", "converting"),
   ready: t("完成", "ready"), failed: t("失敗", "failed"), untracked: t("未轉（含 baseline 既有檔）", "not converted (incl. baseline)"),
@@ -1149,7 +1299,8 @@ export function MinioDataPage() {
     const idx = trimmed.lastIndexOf("/");
     setPrefix(idx >= 0 ? trimmed.slice(0, idx + 1) : "");
   };
-  const sortedFolders = folder ? [...folder.folders].sort((a, b) => a.localeCompare(b, "zh-TW")) : [];
+  // folders 為 Array<{ prefix; has_source_ifc }>（7a 前置已把型別由 string[] 改物件陣列）。
+  const sortedFolders = folder ? [...folder.folders].sort((a, b) => a.prefix.localeCompare(b.prefix, "zh-TW")) : [];
 
   const confirmTrigger = async () => {
     if (!pendingKey) return;
@@ -1160,26 +1311,83 @@ export function MinioDataPage() {
       setPendingKey(null);
     } catch (e) { setTriggerErr(String(e)); }                    // 失敗顯 inline error、chip 不變
   };
-  // ...JSX：頁首誠實字樣改「逐層資料夾導覽」；
-  //  loading / err(+重試鈕 data-testid="minio-tree-retry") / empty 兩態（note 有→未設定；無→此層無物件）/ populated；
-  //  populated：上一層鈕（prefix 非空時）+ sortedFolders 各一個資料夾鈕(onClick=enterFolder)
-  //   + folder.objects 各一列（role label + 三段 badge(project_display_name/category/version 有才顯) +
-  //     若 role===source_ifc：chip(data-testid={`minio-chip-${obj.idempotency_key}`}, 文字=CHIP_LABEL[chipOverride[idk] ?? ledgerChipStatus(idk, records)])
-  //       + 觸發鈕(data-testid={`minio-trigger-${obj.idempotency_key}`}, onClick=()=>setPendingKey(obj.key)，
-  //         僅當 chip 狀態 ∈ {untracked, failed} 時 enable))
-  //  pendingKey 非 null → IntentDialog(confirm=confirmTrigger, triggerErr 顯 inline)；
-  //  保留底部「Bucket layout（規約說明 — 示意，非實況）」DEMO panel（:1276-1287，標 DEMO 不變）。
+  // ===== JSX（依 7a/7b/7c 分階段填，下面註解逐段標階段，可分三次 commit 漸進完成）=====
+  // 頁首誠實字樣改「逐層資料夾導覽」（保留「唯讀 intake 來源視圖」字樣）。
+  //
+  // [7a] loading / err(+重試鈕 data-testid="minio-tree-retry") / empty 兩態（note 有→未設定；無→此層無物件）/ populated。
+  // [7a] populated：上一層鈕（prefix 非空時 onClick=goUp）
+  //   + sortedFolders 各一個資料夾鈕：<Btn onClick={() => enterFolder(f.prefix)}>{f.prefix}</Btn>
+  //       後接條件 badge：{f.has_source_ifc && (
+  //         <span data-testid={`minio-folder-badge-${f.prefix}`} className="ec-prov artifact">{t("含 source IFC","has source IFC")}</span>)}
+  //   + folder.objects 各一列：role label + 三段 badge(project_display_name/category/version 有才顯)。
+  //
+  // [7b] 在 source_ifc 物件列加 chip（先做，與 7c 觸發鈕分開 commit）：
+  //   const idk = obj.idempotency_key; const st = chipOverride[idk] ?? ledgerChipStatus(idk, records);
+  //   <span data-testid={`minio-chip-${idk}`} className="ec-prov">{CHIP_LABEL[st] ?? st}</span>
+  //
+  // [7c] 在 source_ifc 物件列再加觸發鈕 + IntentDialog：
+  //   觸發鈕 <Btn data-testid={`minio-trigger-${idk}`} onClick={() => setPendingKey(obj.key)}
+  //     disabled={!(["untracked","failed"].includes(st))}>{t("觸發轉檔","Trigger")}</Btn>
+  //   pendingKey 非 null → IntentDialog(confirm=confirmTrigger; triggerErr 顯 inline error)。
+  //
+  // [7a] 保留底部「Bucket layout（規約說明 — 示意，非實況）」DEMO panel（:1276-1287，標 DEMO 不變）。
 }
 ```
 
-實作 JSX 時：(a) 頁首 `:1215` 文案把「呈現 bucket 三層結構（專案 → 種類 → 版本）」改為「逐層資料夾導覽（像 MinIO 網頁），point-and-list」；(b) empty 態分兩種（`folder?.note` 有→顯 note/「MinIO 未設定」；無 note 且 `folders=[] objects=[]`→「此層無物件」）；(c) 資料夾節點用 `<Btn onClick={() => enterFolder(f)}>{f}</Btn>` 明示可點；(d) chip 用既有 `ec-prov` class（沿用 `roleClass` 配色慣例）。
+實作 JSX 時：(a) 頁首 `:1215` 文案把「呈現 bucket 三層結構（專案 → 種類 → 版本）」改為「逐層資料夾導覽（像 MinIO 網頁），point-and-list」；(b) empty 態分兩種（`folder?.note` 有→顯 note/「MinIO 未設定」；無 note 且 `folders=[] objects=[]`→「此層無物件」）；(c) 資料夾節點用 `<Btn onClick={() => enterFolder(f.prefix)}>{f.prefix}</Btn>` 明示可點，後接 `f.has_source_ifc` 條件 badge；(d) chip 用既有 `ec-prov` class（沿用 `roleClass` 配色慣例）。
 
-- [ ] 跑確認通過：
+- [ ] 7a 跑確認（資料夾殼 + badge + 四態 PASS；chip/trigger 相關 it 仍 FAIL 屬正常）：
+
+```bash
+cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec/web-viewer-sample
+npx vitest run src/console/MinioDataPage.test.tsx -t "7a" 2>&1 | tail -20
+# 預期：所有 [7a] it PASS
+```
+
+- [ ] 7a commit（資料夾殼 + 含 source IFC badge）：
+
+```bash
+cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec
+git add web-viewer-sample/src/console/pages.tsx web-viewer-sample/src/console/MinioDataPage.test.tsx
+git commit -m "$(cat <<'EOF'
+plan: MinioDataPage 7a 逐層資料夾殼 + 含 source IFC badge（無 chip/trigger）
+
+buildMinioTree 退役；folders 逐層（localeCompare zh-TW）+ 上一層鈕 + 四態 + 資料夾『含 source IFC』badge。
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+- [ ] 7b 跑確認（chip 整合 PASS；trigger it 仍 FAIL 屬正常）：
+
+```bash
+cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec/web-viewer-sample
+npx vitest run src/console/MinioDataPage.test.tsx -t "7b" 2>&1 | tail -20
+# 預期：所有 [7b] it PASS
+```
+
+- [ ] 7b commit（ledger chip 整合）：
+
+```bash
+cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec
+git add web-viewer-sample/src/console/pages.tsx web-viewer-sample/src/console/MinioDataPage.test.tsx
+git commit -m "$(cat <<'EOF'
+plan: MinioDataPage 7b .ifc 列掛 ledger chip（讀 getConversionRecords + 內聯 ledgerChipStatus）
+
+無紀錄顯『未轉（含 baseline）』，不臆測。
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+- [ ] 7c 跑確認 + 全檔回歸（觸發鈕 intent→confirm；整檔全 PASS）：
 
 ```bash
 cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec/web-viewer-sample
 npx vitest run src/console/MinioDataPage.test.tsx 2>&1 | tail -20
-# 預期：8 it 全 PASS
+# 預期：整檔 9 it 全 PASS（7a 6 個 + 7b 含 chip + 7c 觸發鈕；標籤交集 it 兩階段共用）
 ```
 
 - [ ] 跑型別檢查（vite build 不跑 tsc，務必另跑）：
@@ -1187,18 +1395,18 @@ npx vitest run src/console/MinioDataPage.test.tsx 2>&1 | tail -20
 ```bash
 cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec/web-viewer-sample
 npx tsc --noEmit 2>&1 | tail -20
-# 預期：無 error（若跨 monorepo import ledgerChipStatus 報錯，改用內聯 3 行同義函式並重跑）
+# 預期：無 error（已用內聯 ledgerChipStatus，無跨 monorepo import；若仍見 TS2307 ledgerChipStatus，表示誤加了跨 package import，刪掉改用內聯函式）
 ```
 
-- [ ] commit：
+- [ ] 7c commit（觸發鈕 intent→confirm + tsc 綠；本 task 第三個也是最後一個 commit）：
 
 ```bash
 cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec
 git add web-viewer-sample/src/console/pages.tsx web-viewer-sample/src/console/MinioDataPage.test.tsx
 git commit -m "$(cat <<'EOF'
-plan: MinioDataPage 改逐層資料夾導覽 + 狀態 chip + 觸發鈕
+plan: MinioDataPage 7c .ifc 觸發鈕 intent→confirm + patch chip
 
-buildMinioTree 退役；folders 逐層（localeCompare zh-TW）；.ifc chip 讀 ledger、觸發鈕 intent→confirm。
+conversionTrigger 帶 x-dev-token；成功 patch chip 為 detected/queued、失敗 inline error 不變 chip。
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 EOF
@@ -1209,7 +1417,9 @@ EOF
 
 ## Task 8: 前端 `ConversionSchedulingPage` baseline 揭露 + 一鍵觸發列
 
-對應 spec §3.2、AC5、AC6。把擠在單一 Field（`pages.tsx:866`）的 baseline/seen/triggered/skipped 拆成獨立 Field + 解釋文案（`baseline_count` 標「首輪基準、by-design 不自動轉檔已被 §3.4 取代→改標『首輪 list 到的規約檔數』」；明示一致性基準＝可解析 IFC 數非物件總數）；ledger 列對「未轉/failed」加觸發鈕。
+對應 spec §3.2、AC5、AC6（含 AC6(a) 說明文案 + AC6(b) 一鍵鈕）。把擠在單一 Field（`pages.tsx:866`）的 baseline/seen/triggered/skipped 拆成獨立 Field + 解釋文案（`baseline_count` 標「首輪基準、by-design 不自動轉檔已被 §3.4 取代→改標『首輪 list 到的規約檔數』」；明示一致性基準＝可解析 IFC 數非物件總數）；ledger 列對「未轉/failed」加觸發鈕。
+
+> **AC6(a) vs AC6(b) 界線（spec-alignment 修正，兩者不重複實作）：** spec AC6 拆兩半——**(a) 保留說明文案**列兩條 spec 認可補救：(i) **重新上傳改 etag** → watcher 下一輪自動觸發、(ii) **手動 webhook `POST /api/external/ifc-ready`**（**僅文字說明、不實作 UI 觸發**）；**(b) 實際可點擊入口＝一鍵觸發鈕**（走 `POST /api/conversion/trigger`，**非** `/api/external/ifc-ready`）。本 task 必須**同時**做出 (a) 的說明文案與 (b) 的鈕，且不可把 (a) 的 webhook 路徑做成按鈕（會與 (b) 重複、違反 spec 界線）。下方測試含一個專驗 (a) 文案存在的 it。
 
 **Files:**
 - Modify: `web-viewer-sample/src/console/pages.tsx`（`ConversionSchedulingPage` watcher 面板 `:858-887`、ledger 面板 `:893-942`）
@@ -1239,6 +1449,25 @@ EOF
     expect(container.textContent).toMatch(/可解析 IFC|非物件總數/);
   });
 
+  it("AC6(a)：保留兩條 spec 認可補救說明文案（重新上傳改 etag / 手動 webhook ifc-ready，僅文字不做成鈕）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({
+      enabled: true, bucket: "bim-control", prefix: "", interval_seconds: 60,
+      last_poll_at: "2026-06-24T00:00:00Z", poll_count: 23, last_error: null,
+      baseline_count: 3, seen_count: 3, triggered_total: 0, skipped_malformed_total: 0, last_triggered: [],
+    } as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    // (i) 重新上傳改 etag 的說明；(ii) 手動 webhook POST /api/external/ifc-ready 的說明（純文字）。
+    expect(container.textContent).toMatch(/重新上傳|改.*etag/);
+    expect(container.textContent).toContain("/api/external/ifc-ready");
+    // 誠實界線：webhook 補救僅文字、不得是可點擊觸發鈕（避免與 AC6(b) /api/conversion/trigger 重複）。
+    expect(container.querySelector('[data-testid="conv-webhook-ifc-ready-trigger"]')).toBeNull();
+  });
+
   it("ledger 列對未轉/failed 紀錄顯一鍵觸發鈕（object_key 存在時）", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: true, bucket: "bim-control", prefix: "", interval_seconds: 60, last_poll_at: null, poll_count: 0, last_error: null, baseline_count: 0, seen_count: 0, triggered_total: 0, skipped_malformed_total: 0, last_triggered: [] } as never);
@@ -1253,14 +1482,14 @@ EOF
   });
 ```
 
-注意：第二個 it 的觸發鈕需 `object_key`，故 `ConversionRecord` 前端型別（`coordinatorClient.ts:230-242`）須補 `object_key: string | null;` 欄（後端 record 本就有，前端原省略）；fixture 補 `object_key: "x/main/v1/model.ifc"`。把該欄加進 fixture 與型別。
+注意：「ledger 列…顯一鍵觸發鈕」這個 it 的觸發鈕需 `object_key`，故 `ConversionRecord` 前端型別（`coordinatorClient.ts:230-242`）須補 `object_key: string | null;` 欄（後端 record 本就有，前端原省略）；該 it 的 `mw_f` failed fixture 須補 `object_key: "x/main/v1/model.ifc"`。把該欄加進 fixture 與型別。
 
 - [ ] 跑確認失敗：
 
 ```bash
 cd C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/minio-folderview-baseline-spec/web-viewer-sample
 npx vitest run src/console/ConversionSchedulingPage.test.tsx 2>&1 | tail -20
-# 預期：新增兩 it FAIL（無 conv-baseline-count testid、無一致性文案、無 retry 鈕）
+# 預期：新增三 it FAIL（無 conv-baseline-count testid / 無一致性文案 / 無 AC6(a) 補救文案 / 無 retry 鈕）
 ```
 
 - [ ] 最小實作：
@@ -1293,6 +1522,19 @@ npx vitest run src/console/ConversionSchedulingPage.test.tsx 2>&1 | tail -20
 ```
 
   並在 `ConversionSchedulingPage` 加 `const [pendingTriggerKey, setPendingTriggerKey] = useState<string | null>(null);` 與成功後 `void loadRecords()` 重抓（證據型更新）。
+
+  4. **AC6(a) 說明文案（純文字，不做成鈕）：** 在 watcher 面板（或 baseline 區附近）加一段 `ec-note` 列兩條 spec 認可補救（與 AC6(b) 一鍵鈕並存、不重複）：
+
+```tsx
+              <p className="ec-note">
+                {t("既有 baseline 檔的兩條補救：", "Two remediations for existing baseline files: ")}
+                {t("(i) 重新上傳改變 etag → watcher 下一輪自動觸發；", "(i) re-upload to change the etag → the watcher auto-triggers on the next poll; ")}
+                {t("(ii) 手動 webhook 直打 ", "(ii) manual webhook to ")}<code>POST /api/external/ifc-ready</code>
+                {t("（帶 webhook secret + presigned GET URL，僅此說明、不提供 UI 觸發）。 §3.4 後既有未轉檔多半已由 watcher 自動補轉；下方『重新觸發』鈕用於 retry failed。", " (with webhook secret + presigned GET URL; description only, no UI trigger). After §3.4 most existing unconverted files are auto-enrolled by the watcher; the 'Re-trigger' button below is for retrying failed jobs.")}
+              </p>
+```
+
+  注意：此段是**純文字**，**不可**把 `/api/external/ifc-ready` 包成可點擊鈕（那會與 AC6(b) 的 `/api/conversion/trigger` 重複、違反 spec 界線；測試 `conv-webhook-ifc-ready-trigger` testid 必須查無）。
 
 - [ ] 跑確認通過 ＋ 既有 ConversionSchedulingPage 測試零退化：
 
@@ -1336,12 +1578,89 @@ npx vitest run src/console/console.test.tsx 2>&1 | tail -30
 # 預期：MinioDataPage 三層樹相關 it FAIL（SSR 首幀無攤平節點 / 無 buildMinioTree）
 ```
 
-- [ ] 改斷言：把 `console.test.tsx` 中所有 `MinioDataPage` 的「三層樹」斷言改為與逐層導覽相容的斷言。具體：
-  - SSR 首幀測試（`:394` 等 `renderToString(<MinioDataPage />)`）：改斷言頁首誠實字樣 `expect(minio).toMatch(/唯讀.*來源視圖|逐層/)`，刪「松風庵 / 三層」斷言。
-  - client-render populated 測試（`:538-573`）：把 `getMinioObjects` mock 改為 `getMinioFolder` mock 回 `{ folders: ["松風庵/"], objects: [], ... }`，斷言 `container.textContent` 含資料夾名「松風庵」（非三段節點）；同時 mock `getConversionRecords` 回空（避免 chip effect 報錯）。
-  - error 態（`:575`）、empty 態（`:594`）、重試（`:801`）：把 spy 目標由 `getMinioObjects` 改 `getMinioFolder`，斷言文字改逐層相容版（error 仍含 `/api/minio/objects`；empty 顯「此層無物件」或「未設定」；重試成功顯資料夾名）。
+- [ ] 改斷言：`console.test.tsx` 有 6 個受影響的 `MinioDataPage` `it`，逐一給 before/after（**只換 mock 目標與斷言文字，保持 describe 結構**；executor 用下方 old/new 片段精準替換）。注意：所有 client-render（`createRoot`）的 `it` 都要**加一行 `vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });`**，否則 7b 的 chip effect 會打真 fetch 報錯。
 
-  逐一改寫對應 it（保持 describe 結構，只換 mock 目標與斷言文字）。
+  **(1) SSR 首幀（`:394-398`，`KitGpuFleetPage` 那個 it 結尾的 MinioDataPage 片段）：**
+  ```ts
+  // OLD
+    const minio = renderToString(<MinioDataPage />);
+    expect(minio).toContain("MinIO 資料");
+    expect(minio).toContain("bim-control");
+    expect(minio).toContain("model.usdc");
+  // NEW（SSR 首幀＝loading 殼，無 ledger/folder 結果；只斷言誠實字樣 + 逐層用語，刪 bim-control/model.usdc 三層斷言）
+    const minio = renderToString(<MinioDataPage />);
+    expect(minio).toContain("MinIO 資料");
+    expect(minio).toMatch(/唯讀.*來源視圖|逐層/);
+  ```
+
+  **(2) SSR 首幀 loading 態（`:451-462`，「接真 MinIO list proxy」it）：** 此 it 斷言 loading 文案 + DEMO panel 規約示意。逐層後 loading 文案仍在、底部 DEMO panel（`bim-control` 規約示意 / `model.usdc` / 「示範資料」）**保留不變**（Task 7 7a 保留該 DEMO panel）。**唯一要改**：刪掉對「三層」語意的隱含依賴——本 it 實際只斷言 `載入` / `/api/minio/objects` / `bim-control` / `示範資料` / `model.usdc`，這些都來自 loading 文案與底部 DEMO panel，**逐層後仍成立、可零改**。executor 先跑此 it，若 PASS 就不動；若因頁首文案改字而 FAIL，只調整 `expect(html).toContain("/api/minio/objects")` 之外的字樣。
+
+  **(3) client-render populated（`:538-571`）：** mock 由 `getMinioObjects` 改 `getMinioFolder`，斷言由「三段節點」改「資料夾名」。
+  ```ts
+  // OLD
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/000001/model.ifc", etag: "abc", role: "source_ifc",
+        project_id: "mv_1a2b3c4d", project_display_name: "松風庵", category: "main", version: "000001" }],
+    });
+    // ...
+    expect(html).toContain("松風庵"); expect(html).toContain("main"); expect(html).toContain("000001");
+    expect(html).toContain("來源 IFC"); expect(html).toContain("bucket=bim-control");
+    expect(html).not.toContain("載入中…（GET /api/minio/objects）");
+  // NEW（首幀 prefix="" → 回 folders；斷言資料夾名「松風庵」，非三段葉節點）
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "",
+      folders: [{ prefix: "松風庵/", has_source_ifc: true }], objects: [], count: 0,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    // ...
+    expect(html).toContain("松風庵");                 // 資料夾節點名
+    expect(html).not.toContain("載入中…（GET /api/minio/objects）");
+  ```
+  （標題若含「三層樹」字樣也一併改為「逐層資料夾」。）
+
+  **(4) error 態（`:575-589`）：** 只換 spy 目標，斷言文字（含 `/api/minio/objects` / `502 Bad Gateway` / `not 松風庵`）相容、保留。
+  ```ts
+  // OLD
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
+  // NEW
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+  ```
+
+  **(5) empty 態（`:594-608`）：** 換 spy 目標；空態文案由「未取得 MinIO 物件（count=0）」改為逐層相容版。
+  ```ts
+  // OLD
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ bucket: null, count: 0, objects: [] });
+    // ...
+    expect(html).toContain("未取得 MinIO 物件（count=0）");
+  // NEW（bucket=null + 無 note → empty 態 (b)「此層無物件」；或補 note 測 (a)。此 it 取 (b)）
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({ bucket: "bim-control", prefix: "", folders: [], objects: [], count: 0 });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    // ...
+    expect(html).toMatch(/此層|無物件|空/);
+  ```
+  （`not.toContain("松風庵")` / `not.toContain("載入中…")` 保留。）
+
+  **(6) 重試（`:801-839`）：** 換 spy 目標（`mockRejectedValueOnce` + `mockResolvedValueOnce`），成功回 folders；斷言由三段改資料夾名。
+  ```ts
+  // OLD
+    const spy = vi.spyOn(coordinatorClient, "getMinioObjects")
+      .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
+      .mockResolvedValueOnce({ bucket: "bim-control", count: 1, objects: [{ key: "松風庵/root/main/000001/model.ifc", etag: "abc", role: "source_ifc", project_id: "mv_1a2b3c4d", project_display_name: "松風庵", category: "main", version: "000001" }] });
+    // ...
+    expect(html).toContain("松風庵"); expect(html).toContain("來源 IFC");
+  // NEW
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const spy = vi.spyOn(coordinatorClient, "getMinioFolder")
+      .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
+      .mockResolvedValueOnce({ bucket: "bim-control", prefix: "", folders: [{ prefix: "松風庵/", has_source_ifc: true }], objects: [], count: 0 });
+    // ...
+    expect(html).toContain("松風庵");                 // 重試成功 → 資料夾節點
+    expect(html).not.toContain("502 Bad Gateway");
+    expect(spy).toHaveBeenCalledTimes(2);
+  ```
+  （重試鈕 `data-testid="minio-tree-retry"` Task 7 7a 保留，故 `retry!.click()` 不變。）
 
 - [ ] 跑確認通過：
 
@@ -1420,15 +1739,132 @@ EOF
 
 **Steps:**
 
-- [ ] 改 S3 stub 支援 Delimiter（`e2e/minio-closed-loop.spec.ts` 的 `startS3Stub`，`:56-68`）：偵測 `req.url` 含 `delimiter` 時回含 `CommonPrefixes` 的 XML（依當前 `prefix` query roll-up），否則維持現有遞迴 XML（供 watcher tick 用）。沿用既有 `listObjectsXml` 並加 `listFolderXml(prefix)` 變體。
+> **E2E 改動以 before/after 片段給出（completeness 修正）。** 現有 `minio-closed-loop.spec.ts` 的 stub/beforeAll/body 都要改，散文無法照做，下面逐處給 old/new。**Delimiter 分支須依 `prefix` query 動態 roll-up**：把所有以 `prefix` 為前綴、再切一層後仍有後續 `/` 的 key 收斂成 `CommonPrefixes`，其餘（當層直屬）放 `Contents`。
 
-- [ ] 改 `beforeAll` 的 baseline 注入語意（`:127-129`）：§3.4 後 watcher 無 baseline 特例（既有即觸發），故起始 S3 state 直接放真實多層 fixture（`東勢區許良宇紀念圖書館/root/main/000001/model.ifc` + `洲際好宅/root/main/<uuid>/geometries_chunks/chunk_0.json`）；驗 auto-enroll＝既有檔下一輪自動 triggered（不需再「步驟 2 注入新物件」）。
+- [ ] 改 S3 stub 支援 Delimiter（`startS3Stub`，`:56-68`）。在 `listObjectsXml` 之後加 `listFolderXml(prefix)`，並在 server handler 偵測 `delimiter`：
 
-- [ ] 改測試主體（`:205-277`）斷言：
-  - `#/minio`：`await page.goto(.../ui#/minio)`；斷言頂層資料夾鈕「東勢區許良宇紀念圖書館」「洲際好宅」可見（`getByText(..).first()`）；點「洲際好宅」資料夾 → 逐層到 `geometries_chunks/` 顯示為單一資料夾節點、chunk 不攤開（`await expect(page.getByText("chunk_0.json")).toHaveCount(0)`）；點到含 `model.ifc` 的版本層 → 顯「來源 IFC」+ 三段 badge + chip + 觸發鈕（`data-testid="minio-trigger-*"`）。
-  - 觸發鈕 vertical slice：點觸發鈕 → IntentDialog confirm → 真打 `POST /api/conversion/trigger`（帶 x-dev-token，coordinator devAuthToken default `dev-token`）→ chip patch 為 `已偵測/排隊`（success）；驗 runtime ID（`mw_<hash16>` chip testid）。
-  - `#/conv`：`conv-baseline-count` / `conv-triggered-total` 各自可見；auto-enroll 後 `conv-ledger-panel` 出現 `000001` 紀錄、不含「完成」（無假 ready，沿用 `:266` not.toContainText("完成")）。
-  - 截圖落 `../artifacts/e2e/minio-folderview-*.png`（`#minio` 逐層展開 + geometries_chunks 摺疊 + `#conv` baseline/triggered）。
+```ts
+// 加在 listObjectsXml 之後：Delimiter='/' 語意——依 prefix roll-up 子前綴為 CommonPrefixes。
+function listFolderXml(objs: S3Obj[], prefix: string): string {
+  const folderSet = new Set<string>();
+  const direct: S3Obj[] = [];
+  for (const o of objs) {
+    if (prefix && !o.key.startsWith(prefix)) continue;
+    const rest = o.key.slice(prefix.length);
+    const slash = rest.indexOf("/");
+    if (slash >= 0) folderSet.add(prefix + rest.slice(0, slash + 1)); // 子資料夾（roll-up）
+    else direct.push(o);                                              // 當層直屬檔
+  }
+  const cps = [...folderSet].map((p) => `<CommonPrefixes><Prefix>${p}</Prefix></CommonPrefixes>`).join("");
+  const contents = direct
+    .map((o) => `<Contents><Key>${o.key}</Key><ETag>&quot;${o.etag}&quot;</ETag><Size>10</Size></Contents>`)
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>false</IsTruncated>${cps}${contents}</ListBucketResult>`;
+}
+```
+
+```ts
+// OLD（startS3Stub handler 的最後兩行 fallback）
+    res.writeHead(200, { "Content-Type": "application/xml" });
+    res.end(listObjectsXml(s3State.objs));
+// NEW（偵測 delimiter → 走 folder XML；解析 prefix query；否則維持遞迴 XML 供 watcher tick / has_source_ifc probe）
+    const u = new URL(req.url ?? "/", "http://x");
+    res.writeHead(200, { "Content-Type": "application/xml" });
+    if (u.searchParams.get("delimiter")) {
+      res.end(listFolderXml(s3State.objs, u.searchParams.get("prefix") ?? ""));
+    } else {
+      // 無 delimiter：listMinioObjects（watcher tick + trigger 取 etag + has_source_ifc probe）走遞迴攤平，
+      // 但須尊重 prefix（has_source_ifc / trigger 用 Prefix=key 精準查）。
+      const prefix = u.searchParams.get("prefix") ?? "";
+      const subset = prefix ? s3State.objs.filter((o) => o.key.startsWith(prefix)) : s3State.objs;
+      res.end(listObjectsXml(subset));
+    }
+```
+
+注意：物件 GET（presigned `/bim-control/.../model.ifc`）的既有分支（`:59-62`）**保留不動**（在上面 fallback 之前）。
+
+- [ ] 改 `beforeAll` 的 baseline 注入語意（`:127-129`）：§3.4 後 watcher 無 baseline 特例（既有即觸發），起始 state 直接放真實多層 fixture。
+
+```ts
+// OLD
+    // 重置 S3 state：以一個 baseline 物件起始（watcher 首輪登記為 seen，不觸發 intake）。
+    // 新物件（松風庵）於步驟 2 注入，確保 watcher 以 delta 偵測觸發 intake。
+    s3State.objs = [{ key: "baseline/root/init/000000/model.ifc", etag: "base0" }];
+// NEW（§3.4：既有無紀錄即自動觸發；放真實多層 fixture——一個版本層 model.ifc + 一個 chunk 海量子樹）
+    s3State.objs = [
+      { key: "東勢區許良宇紀念圖書館/root/main/000001/model.ifc", etag: "lib1" },
+      { key: "洲際好宅/root/main/uuid-aaa/geometries_chunks/chunk_0.json", etag: "c0" },
+      { key: "洲際好宅/root/main/uuid-aaa/geometries_chunks/chunk_1.json", etag: "c1" },
+    ];
+```
+
+- [ ] 改測試主體（`:205-277`）。auto-enroll 後既有 model.ifc 自動 triggered，故**刪除原步驟 2「注入新物件」**（`:214-216`），其餘 poll 斷言保留。前端斷言由三層樹改逐層 + chip + 觸發。
+
+```ts
+// OLD（步驟 2，§3.4 後不需要，刪除整段）
+      // 2) 注入新物件（≥3段 key，符合 watcher 規約）。baseline 已鎖，下一輪 watcher delta 偵測。
+      //    松風庵/root/main/000001/model.ifc：4段，category=main（倒數二），version=000001（末段）。
+      s3State.objs.push({ key: "松風庵/root/main/000001/model.ifc", etag: "shofuan1" });
+// NEW：無（auto-enroll，既有檔即觸發；步驟 1 的 baseline poll 仍保留，步驟 3 的 triggered/records poll 改等 000001）
+```
+
+```ts
+// OLD（步驟 4 起，#/minio 三層樹斷言 :234-247）
+      await page.goto(`${coordinatorBase}/ui#/minio`);
+      await expect(page.getByText("松風庵/", { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText("來源 IFC", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText("待產生", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator("body")).not.toContainText("已轉 USDC");
+// NEW（逐層導覽：頂層資料夾鈕 → 點入洲際好宅逐層到 geometries_chunks 摺疊 → 點入圖書館版本層見 .ifc + chip + 觸發鈕）
+      await page.goto(`${coordinatorBase}/ui#/minio`);
+      // 頂層 7 個專案資料夾鈕（這裡注入 2 個專案；斷言兩個資料夾節點皆可見）。
+      await expect(page.getByText("東勢區許良宇紀念圖書館/", { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText("洲際好宅/", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+      // 點「洲際好宅/」逐層下行至 geometries_chunks（資料夾鈕點擊換 prefix；每層點一次）。
+      await page.getByText("洲際好宅/", { exact: false }).first().click();
+      await page.getByText("root/", { exact: false }).first().click();
+      await page.getByText("main/", { exact: false }).first().click();
+      await page.getByText("uuid-aaa/", { exact: false }).first().click();
+      // geometries_chunks/ 摺成單一資料夾節點、chunk 不攤開（AC-D2）。
+      await expect(page.getByText("geometries_chunks/", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText("chunk_0.json", { exact: false })).toHaveCount(0);
+      // 回頂層 → 進圖書館版本層見 model.ifc + 來源 IFC + chip + 觸發鈕。
+      await page.goto(`${coordinatorBase}/ui#/minio`);
+      await page.getByText("東勢區許良宇紀念圖書館/", { exact: false }).first().click();
+      await page.getByText("root/", { exact: false }).first().click();
+      await page.getByText("main/", { exact: false }).first().click();
+      await page.getByText("000001/", { exact: false }).first().click();
+      await expect(page.getByText("來源 IFC", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+      // chip + 觸發鈕（runtime idempotency_key=mw_<hash16>，用 data-testid 前綴定位）。
+      await expect(page.locator('[data-testid^="minio-chip-mw_"]').first()).toBeVisible({ timeout: 15_000 });
+      const triggerBtn = page.locator('[data-testid^="minio-trigger-mw_"]').first();
+      await expect(triggerBtn).toBeVisible({ timeout: 15_000 });
+      // 觸發 vertical slice：點鈕 → IntentDialog confirm → 真打 POST /api/conversion/trigger（x-dev-token=dev-token）。
+      await triggerBtn.click();
+      await page.getByRole("button", { name: /確認|confirm/i }).first().click();
+      // 成功 → chip patch 為 已偵測/排隊（auto-enroll 可能已是 排隊；二者其一可見即可）。
+      await expect(page.locator('[data-testid^="minio-chip-mw_"]').first()).toContainText(/已偵測|排隊/, { timeout: 15_000 });
+      // 誠實鐵律：不得出現假 parsed USDC（stub 無 .usdc）。
+      await expect(page.locator("body")).not.toContainText("已轉 USDC");
+```
+
+```ts
+// OLD（步驟 5，#/conv :253-266 保留 ledger panel/啟用中斷言，補 baseline/triggered 拆分）
+      await page.goto(`${coordinatorBase}/ui#/conv`);
+      const ledgerPanel = page.getByTestId("conv-ledger-panel");
+      await expect(ledgerPanel).toBeVisible({ timeout: 15_000 });
+      await expect(ledgerPanel.getByText("000001", { exact: false })).toBeVisible({ timeout: 15_000 });
+// NEW（補：baseline/triggered 各自可見 + 一致性文案；保留 ledger panel 000001 與 not「完成」）
+      await page.goto(`${coordinatorBase}/ui#/conv`);
+      await expect(page.locator('[data-testid="conv-baseline-count"]')).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator('[data-testid="conv-triggered-total"]')).toBeVisible({ timeout: 15_000 });
+      const ledgerPanel = page.getByTestId("conv-ledger-panel");
+      await expect(ledgerPanel).toBeVisible({ timeout: 15_000 });
+      await expect(ledgerPanel.getByText("000001", { exact: false })).toBeVisible({ timeout: 15_000 });
+      await expect(ledgerPanel).not.toContainText("完成"); // 無假 ready（沿用既有不變量）
+```
+
+  - 截圖路徑由 `minio-closed-loop-*.png` 改 `minio-folderview-*.png`：把 `:249` 與 `:273` 的 `path:` 改為 `"../artifacts/e2e/minio-folderview-minio.png"` / `"../artifacts/e2e/minio-folderview-conv.png"`。
 
 - [ ] 跑 E2E（需先 build dist-ui；本 repo 無自動 Playwright CI gate，conditional-skip 設計已在 `:122-126`）：
 
@@ -1486,14 +1922,72 @@ mkdir -p openspec/changes/minio-folderview-and-baseline-disclosure/specs/minio-w
 #   MODIFIED「watcher SHALL 對 ledger 無紀錄之 */model.ifc 觸發（取代首輪 baseline 不觸發）」。
 ```
 
-- [ ] 改 prototype HTML（`docs/plans/ai-bim-governance-prototype.html`）：
-  - `:534` 從 NOT BUILT 清單移除「真 MinIO 瀏覽」。
-  - `:1118` header「真 S3/MinIO 三層結構瀏覽待接 — 不是真 MinIO」、`:1122-1125` 浮水印「真 S3/MinIO 三層待接」、`:1126-1144` local_fs 兩層樹渲染 → 改寫成 raw-folder 逐層導覽說明（point-and-list）。
-  - `:1147-1157` prov=demo 規約面板改標純語意參照；`:1158-1162` deps 改 coordinator `/api/minio/objects` + 真 MinIO，移除把 `/api/files/tree` 當 `#minio` 來源的 dep。
+- [ ] 改 prototype HTML（`docs/plans/ai-bim-governance-prototype.html`）。給出確切替換內容（completeness 修正）：
 
-- [ ] 改 closed-loop design（`docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md`）：
-  - `:84-88` 整段重寫：主樹 = raw-folder 逐層（S3 Delimiter，**無三層語意骨架**）；三層語意降為葉層 badge。**不得只改 `:86` 留 `:85`「三層（專案→類別→版本）」舊語意**（否則自相矛盾）。
-  - `:25, 42` 非目標「不新增手動插隊/優先序佇列 UI」加註：本案使用者拍板新增「一鍵觸發轉檔」鈕 + `POST /api/conversion/trigger`（明示是「手動 intake 觸發」非「佇列插隊」），以新 change supersede。
+  **(a) `:534` 從 NOT BUILT 清單移除「真 MinIO 瀏覽」：** 先 `grep -n "真 MinIO 瀏覽\|真 S3/MinIO" docs/plans/ai-bim-governance-prototype.html` 定位該清單項，刪掉「真 MinIO 瀏覽」那一筆陣列元素（連同其逗號），不動同陣列其他項。
+
+  **(b) `MinioPage`（`:1108-1165`）整段替換。** 此版本是 prototype（非真程式碼，無 import coordinatorClient），僅作設計門面說明，故改寫成「raw-folder 逐層導覽 point-and-list」說明 + 已建 provenance、**移除 `tree` 兩層假樹、移除浮水印、移除 local_fs header**：
+
+```jsx
+/* ── #minio MinIO 資料(真 MinIO raw-folder 逐層導覽,已建) ──────── */
+function MinioPage({ lang }) {
+  return (
+    <div>
+      <PageHead crumb={tt({ zh:"M MinIO 資料", en:"M MinIO data" }, lang)} title={tt({ zh:"MinIO 資料", en:"MinIO data" }, lang)}
+        sub={tt({ zh:"真 MinIO bim-control bucket 唯讀逐層資料夾導覽(像 MinIO 網頁一樣 point-and-list,S3 Delimiter)。非 metadata 權威——權威在 bim-control·MySQL。", en:"Read-only level-by-level folder browsing of the real MinIO bim-control bucket (point-and-list like the MinIO web UI, S3 Delimiter). Not the metadata authority — that lives in bim-control·MySQL." }, lang)}
+        prov={<D.ProvTag level="built" note="接 coordinator /api/minio/objects · 真 MinIO" />} host={<HostTag kind="host" />} />
+      <D.Panel title={tt({ zh:"逐層資料夾導覽 · 真 MinIO", en:"Level-by-level folder browsing · real MinIO" }, lang)} right={<D.ProvTag level="built" />}>
+        <div style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)", marginBottom:10 }}>
+          GET /api/minio/objects?prefix=&lt;層&gt;&amp;delimiter=/ · 回 folders[](CommonPrefixes)+ 當層直屬 objects
+        </div>
+        <div style={{ fontSize:12.5, color:"var(--text-3)", lineHeight:1.7 }}>
+          {tt({ zh:"頂層列出全部專案資料夾(中文原名);點一層、問一層(換 prefix 重打 list)。含大量 chunk 的子樹(如 geometries_chunks/)摺成單一可點資料夾、不攤開、不寫死物件數。導到含 model.ifc 的版本層時,該物件旁掛「專案/種類/版本」語意 badge + 轉檔狀態 chip(ledger 衍生) + 一鍵觸發鈕。資料夾(遞迴)含 .ifc 標輕量「含 source IFC」badge。", en:"Top level lists all project folders (original Chinese names); click a level, query a level (re-list with the new prefix). Subtrees with many chunks (e.g. geometries_chunks/) collapse into a single clickable folder — not expanded, no hard-coded object count. At a version level containing model.ifc, the object carries a project/category/version semantic badge + a ledger-derived conversion-status chip + a one-click trigger button. Folders that (recursively) contain a .ifc get a lightweight 'has source IFC' badge." }, lang)}
+        </div>
+      </D.Panel>
+      {/* 真 MinIO bucket layout — prov=demo,純語意參照(watcher deriveIntakeFromKey 解析語意),非逐層結果 */}
+      <SectionTitle hint="watcher 解析語意 · 純語意參照">{tt({ zh:"真 MinIO bucket 規約(語意參照)", en:"Real MinIO bucket layout (semantic reference)" }, lang)}</SectionTitle>
+      <D.Panel title={tt({ zh:"bim-control key 結構", en:"bim-control key structure" }, lang)} phase right={<D.ProvTag level="demo" note="語意參照 · demo" />}>
+        <div style={{ fontFamily:"var(--font-mono)", fontSize:12, color:"var(--text-2)", lineHeight:1.8, background:"#070a0d", border:"1px solid var(--line)", borderRadius:8, padding:"12px 14px" }}>
+          192.168.20.234:9000 / bucket <b style={{ color:"var(--accent)" }}>bim-control</b><br />
+          專案中文 / …動態層 / 種類(倒數二) / 版本(末) / model.ifc<br />
+          <span style={{ color:"var(--text-4)" }}>watcher: segments.length &lt; 3 擋 · 中文資料夾 → mv_&lt;hash8&gt;</span>
+        </div>
+        <div style={{ marginTop:12, fontSize:12.5, color:"var(--text-3)", lineHeight:1.65 }}>
+          {tt({ zh:"此三層規約是 watcher 偵測的解析語意(deriveIntakeFromKey),作為葉層 badge 的依據;#minio 主樹本身是 raw-folder 逐層、忠實鏡射 bucket 巢狀結構,非此三層骨架。真實 endpoint 由部署區 .env 注入,不在程式碼硬編碼。", en:"This 3-level layout is the watcher's parse semantics (deriveIntakeFromKey), used as the basis for leaf-level badges; the #minio main tree itself is raw-folder level-by-level, faithfully mirroring the bucket's nesting — not this 3-level skeleton. The real endpoint is injected via deploy .env, never hard-coded." }, lang)}
+        </div>
+      </D.Panel>
+      <DepsList deps={[
+        { name:"coordinator · /api/minio/objects(真 MinIO list proxy)", port:":8004", host:"host", tone:"ok" },
+        { name:"minioWatcher · deriveIntakeFromKey(≥3 段 · 葉層 badge)", port:"watcher", host:"container", tone:"ok" },
+        { name:"真 MinIO bim-control(外連依賴,非 bind)", port:"192.168.20.234:9000", host:"host", tone:"idle" },
+      ]} />
+    </div>
+  );
+}
+```
+
+  注意：上面已**移除** `/api/files/tree`(local_fs)dep（改成 coordinator `/api/minio/objects`）、**移除浮水印與「待接」字樣**；DEMO panel 改標「語意參照」並明說主樹是 raw-folder 逐層、非三層骨架。
+
+- [ ] 改 closed-loop design（`docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md`）。給出確切替換內容（completeness 修正）：
+
+  **(a) `### 4.2 #minio 唯讀結構頁（新）` 整段（`:84-88`）替換**（4 個 bullet 全改；**不得只改「做什麼」一行而留「三層」舊語意**）：
+
+```md
+### 4.2 `#minio` 唯讀結構頁（新）
+- **做什麼**：把真實 bucket 做成只讀**逐層資料夾導覽**（raw-folder，S3 `Delimiter='/'`，像 MinIO 網頁一樣 point-and-list，**無三層語意骨架**）。頂層列出全部專案資料夾；含大量 chunk 的子樹（如 `geometries_chunks/`）摺成單一可點資料夾、不攤開、不寫死物件數。三層「專案→類別→版本」語意**降為葉層 badge**——導到含 `model.ifc` 的版本層時才掛在該物件旁（`deriveIntakeFromKey`，≥3 段，不改）。每葉物件標角色：`source IFC` / `parsed USDC` / `pending(待產生)`；資料夾（遞迴）含 `.ifc` 標輕量「含 source IFC」badge。`.ifc` 旁另掛 ledger 衍生狀態 chip + 一鍵觸發鈕。
+- **介面**：`GET /api/minio/objects?prefix=…&delimiter=/`（唯讀 folder list proxy，回 `{ folders[], objects(當層直屬), prefix, count }`，單層處理 `IsTruncated` 全拉）；`.ifc` 物件附 `idempotency_key` 供 chip 對 `/api/conversion/records` lookup；一鍵觸發 `POST /api/conversion/trigger`（`x-dev-token` 守門）。
+- **誠實**：頁面明示「唯讀 intake 來源視圖，非 metadata 權威」；`model.usdc` 在 converter 落地前一律標 `pending · 待產生`，不假裝已轉；CommonPrefix 不寫死其下物件數（要顯示須再 list，與 lazy 互斥）。
+- **安全**：擋路徑穿越（沿用 watcher key 規約：拒空段 / `.` / `..`）；list 回應**不夾帶 presigned URL**；presigned 下載連結（如提供）短效、不入 log。
+```
+
+  **(b) 非目標 `:42`（「❌ 不新增手動插隊/優先序佇列 UI」）加註 supersede：** 在該行後追加：
+
+```md
+- ❌ 不新增手動插隊/優先序佇列 UI（除非後續需求）。
+  > **2026-06-24 supersede（change `minio-folderview-and-baseline-disclosure`）：** 本案使用者拍板新增「一鍵觸發轉檔」鈕 + `POST /api/conversion/trigger`。明示這是「手動 intake **觸發**」（走 spec 已認可的手動 webhook intake 等效路徑、包成按鈕），**非佇列插隊/優先序 UI**；佇列插隊仍為非目標。
+```
+
+  （`:25` 現況表「轉檔觸發」列也可同步加一行註記「2026-06-24 已新增一鍵觸發鈕，見 §4.x supersede」，非必要但建議。）
 
 - [ ] 改 auto-intake spec/design 註記 §3.4（`openspec/specs/minio-watch-auto-intake/spec.md:18-22` 指向新 change supersede；`docs/superpowers/specs/2026-06-12-minio-watch-auto-intake-design.md:28,53-54,101` 加註「§3.4 改持久 ledger 去重、重啟不風暴靠持久 ledger 非新建 watermark」）。
 
@@ -1538,4 +2032,4 @@ ls C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/ | grep minio-folderview
 ## 已知 gate / blocker（執行者須留意，非 plan 缺陷）
 
 - **OQ4 archive gate（spec §7-B、§8.5）：** `openspec/changes/minio-watch-key-structure/` 仍 active（未 archive），`openspec/specs/minio-watch-auto-intake/spec.md:14` 仍寫舊「兩層 `{projectId}/{modelId}`」。不阻擋主樹（raw-folder 不依賴三段），但**阻擋葉層 badge（AC-badge）驗收正確性**。維護者動作：進實作前 archive 該 change，或明訂 ≥3 段 delta 為 live 權威。Task 12 的 supersede delta 應與此 archive 協調，避免兩個 change 對同一 spec 矛盾。
-- **跨 monorepo import（Task 7）：** plan 預設前端可 import 後端 `ledgerChipStatus`；若 web-viewer tsconfig 不允許跨 package 路徑，fallback＝在前端內聯 3 行同義函式（find by `idempotency_key`，無則 `'untracked'`），不阻擋實作。
+- **跨 monorepo import（Task 7，已在 plan 內定案）：** web-viewer `tsconfig.json` `include` 只含 `src`、`moduleResolution: bundler`，跨 package import 後端 `ledgerChipStatus` 會 TS2307 fail。**plan 已決定前端內聯 3 行同義函式**（Task 7 最小實作即內聯版），不走跨 package import。Task 4 後端純函式僅供後端單元測試與後端共用。這是刻意的小幅重複（避免動 tsconfig project boundary），非缺陷。
