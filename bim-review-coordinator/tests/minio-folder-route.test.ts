@@ -9,10 +9,16 @@ let stub: http.Server | null = null; let stubUrl = "";
 // 重要：本 stub 依「呼叫順序」回 pages（call N → pages[N]），超出則重複最後一頁。
 //   listMinioFolder 會先做頂層 Delimiter list（call 1），再對每個 CommonPrefix 依序 probe has_source_ifc
 //   （call 2,3,...）。故 pages 順序＝[頂層 list, probe folder#1, probe folder#2, ...]，須與 prefixSet 順序對齊。
-function startS3Stub(pages: Array<{ prefixes: string[]; keys: string[]; next?: string }>): Promise<void> {
+// status?：模擬該頁回 5xx（MinIO 暫時故障 / 憑證錯）；預設 200。AWS SDK 對 5xx 會 throw → propagate。
+function startS3Stub(pages: Array<{ prefixes: string[]; keys: string[]; next?: string; status?: number }>): Promise<void> {
   let call = 0;
   stub = http.createServer((_req, res) => {
     const page = pages[Math.min(call, pages.length - 1)]; call += 1;
+    if (page.status && page.status >= 400) {
+      res.writeHead(page.status, { "content-type": "application/xml" });
+      res.end(`<?xml version="1.0"?><Error><Code>InternalError</Code><Message>stub ${page.status}</Message></Error>`);
+      return;
+    }
     const cps = page.prefixes.map((p) => `<CommonPrefixes><Prefix>${p}</Prefix></CommonPrefixes>`).join("");
     const contents = page.keys.map((k) => `<Contents><Key>${k}</Key><ETag>"e1"</ETag></Contents>`).join("");
     const trunc = page.next ? `<IsTruncated>true</IsTruncated><NextContinuationToken>${page.next}</NextContinuationToken>` : "<IsTruncated>false</IsTruncated>";
@@ -49,6 +55,18 @@ describe("listMinioFolder", () => {
     const byPrefix = Object.fromEntries(res.folders.map((f) => [f.prefix, f.has_source_ifc]));
     expect(byPrefix["proj-with-ifc/"]).toBe(true);
     expect(byPrefix["proj-empty/"]).toBe(false);
+  });
+
+  it("probe 失敗（MinIO 5xx）→ listMinioFolder 整體拋出，不靜默把 has_source_ifc 偽報為 false（誠實鐵律：不臆測）", async () => {
+    // 頂層 list 成功（2 個 folder），但對第 1 個 folder 的 has_source_ifc probe 回 503。
+    // 契約：probe 例外 propagate（呼叫端 /api/minio/objects route 接住回 502），
+    // 而非吞掉錯誤把該 folder 標 has_source_ifc=false（那會謊報「無 source IFC」）。
+    await startS3Stub([
+      { prefixes: ["proj-a/", "proj-b/"], keys: [] }, // 頂層 Delimiter list（成功）
+      { prefixes: [], keys: [], status: 503 },        // probe proj-a/ → MinIO 暫時故障
+    ]);
+    const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });
+    await expect(listMinioFolder(client, "bim-control", "", "/")).rejects.toThrow();
   });
 
   it("超 1000 子前綴/物件不截斷：IsTruncated=true → 帶 continuation 取次頁，兩頁 folders 合併", async () => {

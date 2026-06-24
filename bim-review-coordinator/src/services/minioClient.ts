@@ -43,6 +43,12 @@ export interface MinioFolderListing {
  * 該 prefix（遞迴，不帶 Delimiter）下是否含 .ifc 葉物件（spec §2.5 第 5 點 folder badge）。
  * CommonPrefix 只回 prefix 字串、不含內容，故須對該 prefix 各發一次 list 才能誠實判定（不臆測）。
  * MaxKeys 不設上限但一旦命中 .ifc 即可早停（while-loop 找到就回 true）。
+ *
+ * 失敗契約（誠實鐵律，勿改）：probe 的 S3 send() 若拋例外（憑證錯 / 網路斷 / MinIO 5xx）
+ * 必須**向上 propagate**，由呼叫端 listMinioFolder → /api/minio/objects route 接住回 502
+ * （route 既有 try/catch，app.ts ~1206-1240）。**絕不可在此 try/catch 後回 false**——
+ * 那等於把「查不到」謊報成「無 source IFC」，違反「不臆測」。寧可整頁誠實失敗 + 前端重試，
+ * 也不部分降級捏造 badge。對應 regression：minio-folder-route.test.ts「probe 失敗（MinIO 5xx）」。
  */
 async function prefixHasSourceIfc(client: S3Client, bucket: string, prefix: string): Promise<boolean> {
   let token: string | undefined;
@@ -108,7 +114,12 @@ export async function listMinioFolder(
     }
     token = resp.IsTruncated ? resp.NextContinuationToken : undefined;
   } while (token);
-  // 對每個 CommonPrefix probe has_source_ifc（spec §2.5 第 5 點）。序列執行確保測試 stub 依呼叫順序回頁可預測。
+  // 對每個 CommonPrefix probe has_source_ifc（spec §2.5 第 5 點）。
+  // 設計決定＝序列：(1) 測試 stub 依呼叫順序回頁可預測；(2) 真實生產頂層資料夾數量小且穩定
+  // ——spec §1.1 實測 bim-control 頂層僅 7 個（洲際好宅 / 測試建案0329 / 東勢區許良宇紀念圖書館 /
+  // IOTTEST / Demo展示社區-1 / 測試建案0321 / annotations），≤7 次序列 probe（命中即早停）延遲可接受
+  // （spec §2.4 已誠實量化，未承諾 probe 延遲上限）。可接受上限約 10-15 個；**頂層資料夾數若可能 >10-15
+  // 才改 Promise.all**（屆時測試 stub 須由「依呼叫序號分頁」改為「以 prefix 為 key dispatch」，因 parallel 後順序不定）。
   const folders: MinioFolderNode[] = [];
   for (const p of prefixSet) {
     folders.push({ prefix: p, has_source_ifc: await prefixHasSourceIfc(client, bucket, p) });
