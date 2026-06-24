@@ -877,6 +877,12 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "key 不合法：不得含 `|`（與 idempotency hash 分隔符衝突）" });
       return;
     }
+    // S3/MinIO object key 上限 1024 bytes（AWS S3 規範）；超長 key 只會無謂往返 MinIO + 灌大 hash 輸入，
+    // 與 deriveIntakeFromKey 的其他輸入驗證（防穿越/空段）同精神，提前擋下。
+    if (key.length > 1024) {
+      response.status(400).json({ detail: "key 過長（S3 object key 上限 1024 bytes）" });
+      return;
+    }
     const derived = deriveIntakeFromKey({
       key,
       prefix: config.minioWatchPrefix,
@@ -931,6 +937,9 @@ export function createCoordinatorApp(
           source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
           requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
         }),
+        // app 死鎖/過載長時不回時逾時中斷，避免前端 A1 按鈕無限等待（對齊 minioWatcher.ts:341 self-POST 保護）。
+        // 上游 intake 含同步 IFC 下載，故逾時 = 下載逾時 + 5s 緩衝。
+        signal: AbortSignal.timeout(config.ifcDownloadTimeoutSeconds * 1000 + 5_000),
       });
       const text = await upstream.text();
       const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};

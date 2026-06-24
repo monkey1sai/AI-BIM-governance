@@ -136,6 +136,16 @@ describe("POST /api/conversion/trigger", () => {
     expect(res.body.ifc_ready_job_id).toBeUndefined();
   });
 
+  // S3/MinIO object key 上限 1024 bytes：超長 key 在 presign / hash 前先擋（quality review important）。
+  it("key 過長（>1024 bytes）→ 400（S3 key 上限守衛）", async () => {
+    const app = await makeApp();
+    const res = await request(app.app)
+      .post("/api/conversion/trigger")
+      .send({ key: "a".repeat(1025) });
+    expect(res.status).toBe(400);
+    expect(res.body.ifc_ready_job_id).toBeUndefined();
+  });
+
   // 冪等：同 key 重觸發回既有 job（spec §5）。完整走 self-POST → /api/external/ifc-ready，
   // 同 key 派生同 idempotencyKey → findExisting 命中 → 回相同 ifc_ready_job_id。
   it("同 key 觸發兩次 → 回相同 ifc_ready_job_id（冪等）", async () => {
