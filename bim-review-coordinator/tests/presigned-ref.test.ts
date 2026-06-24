@@ -134,4 +134,45 @@ describe("誠實守衛：對外 ifc-ready response 不含 presigned 簽章", () 
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
     expect(res.body.artifact_resolution.source_ifc_ref).toBe(OBJECT_PATH);
   });
+
+  // POST /api/external/ifc-ready 自身兩條 response path 也 spread 整個 job（quality review critical）：
+  // 202 正常進件（finalJob）與 200 idempotent replay（existing）。GET 守衛測試守不住這兩條，補回歸守衛。
+  it("POST /api/external/ifc-ready 202 進件 response 的 source_ifc_ref 被遮蔽", async () => {
+    const app = startPresignApp();
+    const body = {
+      ...structuredClone(CONTRACT_EXAMPLE),
+      source_ifc: { ...(CONTRACT_EXAMPLE.source_ifc as Record<string, unknown>), ref: PRESIGNED_REF },
+    };
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({
+        "X-Webhook-Secret": "dev-webhook-secret",
+        "X-Correlation-Id": "corr_presign_202",
+        "X-Idempotency-Key": "idem_presign_202",
+      })
+      .send(body);
+    expect(res.status).toBe(202);
+    expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+    expect(res.body.source_ifc_ref).toBe(OBJECT_PATH);
+  });
+
+  it("POST /api/external/ifc-ready 同 idempotency key 二次 → 200 idempotent replay 不含簽章", async () => {
+    const app = startPresignApp();
+    const body = {
+      ...structuredClone(CONTRACT_EXAMPLE),
+      source_ifc: { ...(CONTRACT_EXAMPLE.source_ifc as Record<string, unknown>), ref: PRESIGNED_REF },
+    };
+    const headers = {
+      "X-Webhook-Secret": "dev-webhook-secret",
+      "X-Correlation-Id": "corr_presign_replay",
+      "X-Idempotency-Key": "idem_presign_replay",
+    };
+    const first = await request(app.app).post("/api/external/ifc-ready").set(headers).send(body);
+    expect(first.status).toBe(202);
+    const replay = await request(app.app).post("/api/external/ifc-ready").set(headers).send(body);
+    expect(replay.status).toBe(200);
+    expect(replay.body.idempotent_replay).toBe(true);
+    expect(JSON.stringify(replay.body)).not.toContain("X-Amz-Signature");
+    expect(replay.body.source_ifc_ref).toBe(OBJECT_PATH);
+  });
 });

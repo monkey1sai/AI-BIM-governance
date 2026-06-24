@@ -1091,7 +1091,8 @@ export function createCoordinatorApp(
       const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
       if (existing) {
         // fast-ifc-link-demo-loop §2.6:idempotent replay 直接 200 reuse,不重下載也不重派工
-        response.status(200).json({ ...existing, idempotent_replay: true });
+        // 誠實鐵律：existing 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
+        response.status(200).json({ ...sanitizeJobForExternal(existing), idempotent_replay: true });
         return;
       }
 
@@ -1172,8 +1173,9 @@ export function createCoordinatorApp(
       // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
       // 觀察 queued_for_conversion → dispatched 變化)。
       const finalJob = externalIfcReadyStore.get(job.ifc_ready_job_id);
+      // 誠實鐵律：finalJob.source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐（finalJob 理論恆存在，缺則 {} 不外洩）。
       response.status(202).json({
-        ...finalJob,
+        ...(finalJob ? sanitizeJobForExternal(finalJob) : {}),
         message: "IFC 已下載至本地共享卷,轉檔已進入派工佇列",
       });
     } catch (error) {
@@ -2386,6 +2388,12 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
 // （GET /api/external/ifc-ready/:jobId）必須剝除 source_ifc_ref 的 presigned 簽章。
 // 以 spread + 遮蔽單一欄位的方式收斂，避免日後 job 新增欄位時又漏遮某個敏感值
 // 而必須逐一比對；目前唯一含簽章的欄位是 source_ifc_ref。
+/**
+ * @security 對外輸出 IfcReadyIntakeJob 前必經此函式：遮蔽 source_ifc_ref 的 presigned 簽章。
+ * 任何「把整個 job spread 進對外 response」的出口（GET list/:jobId/shadow、POST intake 200/202、
+ * local-web-view session）都 MUST 先過此函式。日後若 IfcReadyIntakeJob 新增帶簽章/secret 的欄位，
+ * MUST 在此一併遮蔽並補對應守衛測試（tests/presigned-ref.test.ts）。
+ */
 function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
 }
