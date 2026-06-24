@@ -82,6 +82,23 @@ describe("listMinioFolder", () => {
     expect(res.folders.map((f) => f.prefix)).toEqual(["A/", "B/"]);
   });
 
+  it("role='other' 物件不解析 badge（三路分流：非 .ifc/.usdc 直接 ok:false，欄位全 null）", async () => {
+    // 防 regression：probeSuffix 改三路分流後，`other` 物件不可再被 /model.ifc suffix 強行解析。
+    // 用一個含 'model.ifc' 子字串但實際結尾 .bak 的 key（role=other），確認 badge 欄位全 null，
+    // 不因 suffix 邏輯誤判而拿到 project/category/version。
+    await startS3Stub([{ prefixes: [], keys: ["proj/root/main/model.ifc.bak"] }]);
+    const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });
+    const res = await listMinioFolder(client, "bim-control", "", "/");
+    const other = res.objects.find((o) => o.key === "proj/root/main/model.ifc.bak");
+    expect(other?.role).toBe("other");
+    expect(other?.project_id).toBeNull();
+    expect(other?.project_display_name).toBeNull();
+    expect(other?.category).toBeNull();
+    expect(other?.version).toBeNull();
+    // idempotency_key 仍計算（供前端對帳），不受 badge 解析影響。
+    expect(other?.idempotency_key).toMatch(/^mw_[0-9a-f]{16}$/);
+  });
+
   it(".ifc 物件附 idempotency_key（給前端 chip lookup）＋ 葉層三段 badge", async () => {
     await startS3Stub([{ prefixes: [], keys: ["東勢區許良宇紀念圖書館/root/main/000001/model.ifc"] }]);
     const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });

@@ -98,14 +98,22 @@ export async function listMinioFolder(
         : key.endsWith(".usdc")
           ? "parsed_usdc"
           : "other";
-      const probeSuffix = key.endsWith(".usdc") ? "/model.usdc" : "/model.ifc";
-      // badge 解析用完整 key（prefix="" 不剝前綴），spec §2.2：導到 model.ifc 才附帶語意 badge。
-      const d = deriveIntakeFromKey({ key, prefix: "", keySuffix: probeSuffix });
+      // etag 統一去引號一次，同一值同時供 etag 欄位與 idempotency_key（idempotencyKeyFor 內部
+      // 的 stripEtagQuotes 對已去引號值冪等，hash 不變；避免 line 之間「去/未去引號」雙狀態陷後人）。
+      const etag = (obj.ETag ?? "").replace(/^"+|"+$/g, "");
+      // badge 解析三路分流（spec §2.2：只對 .ifc / .usdc 導到 model.* 才附語意 badge）：
+      // role='other' 直接 ok:false 跳過 deriveIntakeFromKey，不用 /model.ifc 強行解析（意圖明確、
+      // 防未來改 probeSuffix 邏輯時 other 物件意外拿到 badge）。prefix="" → 用完整 key 解析。
+      const d = role === "source_ifc"
+        ? deriveIntakeFromKey({ key, prefix: "", keySuffix: "/model.ifc" })
+        : role === "parsed_usdc"
+          ? deriveIntakeFromKey({ key, prefix: "", keySuffix: "/model.usdc" })
+          : { ok: false as const };
       objects.push({
         key,
-        etag: (obj.ETag ?? "").replace(/^"+|"+$/g, ""),
+        etag,
         role,
-        idempotency_key: idempotencyKeyFor(bucket, key, obj.ETag ?? ""),
+        idempotency_key: idempotencyKeyFor(bucket, key, etag),
         project_id: d.ok ? d.projectId : null,
         project_display_name: d.ok ? d.projectDisplayName : null,
         category: d.ok ? d.category : null,
@@ -147,15 +155,22 @@ export async function listMinioObjects(
         : key.endsWith(".usdc")
           ? "parsed_usdc"
           : "other";
-      // 用 .ifc 規約解析三段（同 watcher）；擋路徑穿越（deriveIntakeFromKey 拒空段 / . / ..）
-      // .usdc 用 probeSuffix="/model.usdc"；.ifc 用傳入 keySuffix（照 plan Task 4 Step 3）
-      const probeSuffix = key.endsWith(".usdc") ? "/model.usdc" : keySuffix;
-      const d = deriveIntakeFromKey({ key, prefix, keySuffix: probeSuffix });
+      // etag 統一去引號一次，同一值同時供 etag 欄位與 idempotency_key（idempotencyKeyFor 內部
+      // 的 stripEtagQuotes 對已去引號值冪等，hash 不變；避免「去/未去引號」雙狀態陷後人）。
+      const etag = (obj.ETag ?? "").replace(/^"+|"+$/g, "");
+      // 解析三段（同 watcher）；擋路徑穿越（deriveIntakeFromKey 拒空段 / . / ..）。
+      // 三路分流：.ifc 用傳入 keySuffix（照 plan Task 4 Step 3）、.usdc 用 /model.usdc、
+      // role='other' 直接 ok:false 跳過 deriveIntakeFromKey（不用 keySuffix 強行解析）。
+      const d = role === "source_ifc"
+        ? deriveIntakeFromKey({ key, prefix, keySuffix })
+        : role === "parsed_usdc"
+          ? deriveIntakeFromKey({ key, prefix, keySuffix: "/model.usdc" })
+          : { ok: false as const };
       out.push({
         key,
-        etag: (obj.ETag ?? "").replace(/^"+|"+$/g, ""),
+        etag,
         role,
-        idempotency_key: idempotencyKeyFor(bucket, key, obj.ETag ?? ""),
+        idempotency_key: idempotencyKeyFor(bucket, key, etag),
         project_id: d.ok ? d.projectId : null,
         project_display_name: d.ok ? d.projectDisplayName : null,
         category: d.ok ? d.category : null,

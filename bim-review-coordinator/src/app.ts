@@ -1227,6 +1227,14 @@ export function createCoordinatorApp(
       response.status(400).json({ error: "invalid_delimiter", detail: "只支援 delimiter=/" });
       return;
     }
+    // rawPrefix 直接取自 HTTP query，未驗證即傳 listMinioFolder/listMinioObjects → S3 SDK。
+    // S3 路徑模型中 `..` 為字面字元（非 filesystem 穿越），無 bucket escape 風險；但嵌入
+    // CR/LF 的 prefix 可能在 SDK 的 HTTP 請求中造成 header injection（AWS SDK 未必全濾）。
+    // 守門擋在轉送前：偵測到 CR/LF 直接 400，根本不建 S3 client（帶不帶 delimiter 都套用）。
+    if (rawPrefix.includes("\r") || rawPrefix.includes("\n")) {
+      response.status(400).json({ error: "invalid_prefix", detail: "prefix 不可含換行字元（CR/LF）" });
+      return;
+    }
     let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
       client = createMinioS3Client({

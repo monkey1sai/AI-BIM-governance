@@ -147,6 +147,24 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     expect(res.body.error).toBe("invalid_delimiter");
   });
 
+  it("prefix 含 CR/LF → 回 400 invalid_prefix（擋 header injection，不轉送 S3 SDK）", async () => {
+    // rawPrefix 直接取自 HTTP query，未驗證即傳 listMinioFolder/listMinioObjects → S3 SDK。
+    // 嵌入 \r\n 的 prefix 可能在 SDK HTTP 請求中造成 header injection（AWS SDK 未必全濾）。
+    // 守門擋在轉送前：偵測到 CR/LF 直接 400，根本不建 S3 client。帶不帶 delimiter 都要擋。
+    await startS3Stub([{ prefixes: [], keys: [] }]);
+    const app = makeApp().app;
+    const withDelim = await request(app).get(
+      `/api/minio/objects?delimiter=/&prefix=${encodeURIComponent("a/\r\nx")}`,
+    );
+    expect(withDelim.status).toBe(400);
+    expect(withDelim.body.error).toBe("invalid_prefix");
+    const noDelim = await request(app).get(
+      `/api/minio/objects?prefix=${encodeURIComponent("a/\nx")}`,
+    );
+    expect(noDelim.status).toBe(400);
+    expect(noDelim.body.error).toBe("invalid_prefix");
+  });
+
   it("分頁（route 整合層）：頂層 list IsTruncated=true → 合併兩頁 folders 共 2 個", async () => {
     // unit 層（minio-folder-route.test.ts:72）已驗 listMinioFolder 本身能處理 IsTruncated；
     // 此 route 整合層補一個分頁 stub，防 regression 把 while-loop 收尾截斷而 route 不報錯。
