@@ -881,4 +881,33 @@ describe("OQ1：project_display_name / category 對外曝光", () => {
     expect(item?.project_display_name).toBe("許良宇圖書館");
     expect(item?.category).toBe("main");
   });
+
+  it("非 MinIO 來源（worker compat payload，無此二欄）→ GET 列表誠實 null，不塞假值", async () => {
+    // spec §4 驗收條件第 2 項「非 MinIO 來源（無此二欄）→ 誠實 null，不塞假值」的反向回歸守衛。
+    // 用 worker compatibility payload（不帶 project_display_name / model_category）POST，
+    // 列表端點對該 job 的 project_display_name 與 category 必須是 null。
+    // 這條鎖住 externalIfcReadyStore.create 的 `event.project_display_name ?? null`
+    // 不被改成 conversionLedger 那種 fallback（`?? event.project_id`，app.ts:1161）。
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": WEBHOOK_SECRET }) // worker compat：correlation/idempotency 由 task_id 派生
+      .send({
+        status: "ifc_ready",
+        ifc_path: "http://edge-internal.example/storage/demo-model.ifc",
+        project_id: "project_worker_oq1",
+        version: "ver_worker_oq1",
+        task_id: "task_worker_oq1",
+      });
+    const jobId = res.body.ifc_ready_job_id as string;
+    expect(jobId).toBeTruthy();
+    const list = await request(app.app).get("/api/external/ifc-ready");
+    const item = (list.body.items as Array<Record<string, unknown>>).find(
+      (j) => j.ifc_ready_job_id === jobId,
+    );
+    expect(item).toBeDefined();
+    // 誠實 null：不可 fallback 成 project_id（"project_worker_oq1"）或空字串。
+    expect(item?.project_display_name).toBeNull();
+    expect(item?.category).toBeNull();
+  });
 });
