@@ -164,8 +164,7 @@ function FlowBar({ active, register, go }: { active: string; register: "tech" | 
 export default function EdgeConsole() {
   const [page, go] = usePageHash();
   const [agentOpen, setAgentOpen] = useState(true);
-  // Tweaks（P3-3）：register=操作員/技術用語；scenario=clean/warn（UI 偏好；真實頁一律用 live API）。
-  const [register, setRegister] = useState<"tech" | "biz">("tech");
+  // Tweaks（P3-3）：scenario=clean/warn（UI 偏好；真實頁一律用 live API）。語言由頂列 LangToggle 控制（中=biz 中文 / EN=tech 英文）。
   const [scenario, setScenario] = useState<"clean" | "warn">("clean");
   // 亮/暗主題（DS .theme-docs；persist localStorage，預設暗色——操作員 console 暗色為主）。
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -173,9 +172,9 @@ export default function EdgeConsole() {
   });
   useEffect(() => { try { localStorage.setItem("aibim:ec-theme", theme); } catch { /* ignore */ } }, [theme]);
   const lang = useLang();
-  // EN 時 nav / FlowBar 複用既有「技術」英文標籤（register/lang 雙軸不打架）。
+  // 語言完全決定 nav / FlowBar 標籤：中=biz 中文、EN=tech 英文（已移除與 register 的耦合）。
   const navText = (key: string, fallback: string) => {
-    const reg = lang === "en" ? "tech" : register;
+    const reg = lang === "en" ? "tech" : "biz";
     return NAV_LABEL[key] ? NAV_LABEL[key][reg] : fallback;
   };
   const flowActive = page.startsWith("app/") ? "apps" : page;
@@ -184,7 +183,7 @@ export default function EdgeConsole() {
   return (
     <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"} ${theme === "light" ? "theme-light" : ""}`}>
       <header className="ec-top">
-        <span className="ec-brand">AI · BIM Governance</span>
+        <span className="ec-brand"><span className="ec-brand-mark">BG</span>AI · BIM Governance</span>
         <span className="ec-sub">EDGE CONSOLE · COORDINATOR 8004</span>
         <span className="ec-spacer" />
         <div className="ec-chips">
@@ -192,37 +191,39 @@ export default function EdgeConsole() {
           <span className="ec-prov ec-asbuilt">GOV :49102</span>
           <span className="ec-prov ec-demo">GPU · 依 session 派發</span>
         </div>
-        <button className="ec-btn" onClick={() => setLang(lang === "en" ? "zh" : "en")} title="切換語言 / Language" aria-label="切換語言 Language">{lang === "en" ? "中" : "EN"}</button>
+        <span className="ec-langtoggle" role="group" aria-label="切換語言 / Language">
+          <button className={lang === "zh" ? "on" : ""} aria-pressed={lang === "zh"} onClick={() => setLang("zh")}>中</button>
+          <button className={lang === "en" ? "on" : ""} aria-pressed={lang === "en"} onClick={() => setLang("en")}>EN</button>
+        </span>
         <button className="ec-btn" onClick={() => setTheme((th) => (th === "light" ? "dark" : "light"))} title="切換亮 / 暗主題 / Theme" aria-label="切換亮暗主題">{theme === "light" ? "☾ 暗" : "☀ 亮"}</button>
         <button className="ec-btn" onClick={() => setAgentOpen((v) => !v)}>{agentOpen ? "⟩ Agent" : "⟨ Agent"}</button>
       </header>
 
       <nav className="ec-nav">
         {NAV_GROUPS.map((group) => (
-          <div key={group.key}>
-            <div className="ec-group">{group.title}<span>{group.sub}</span></div>
+          <div key={group.key} className="ec-nav-group" data-group={group.key}>
+            <div className="ec-group">
+              <span className="ec-group-t"><span className={`ec-gdot ${group.dot}`} />{group.title}</span>
+              <span>{group.sub}</span>
+            </div>
             {PAGES.filter((p) => p.group === group.key).map((p) => (
               <button key={p.key} className={page === p.key ? "active" : ""} data-plane={p.plane} title={p.label} onClick={() => go(p.key)}>
                 <span className="ec-key">{p.no}</span>
                 <span>{navText(p.key, p.label)}</span>
-                {p.badge && <span className="ec-nav-badge">{p.badge}</span>}
+                {p.badge && <span className={`ec-nav-badge ${p.badgeTone ?? ""}`}>{p.badge}</span>}
               </button>
             ))}
           </div>
         ))}
+        <div className="ec-nav-boundary">{t("雲地邊界 · Governance host-native (0 GPU) ↔ Omniverse Runtime (GPU)", "Cloud–edge boundary · Governance host-native (0 GPU) ↔ Omniverse Runtime (GPU)")}</div>
       </nav>
 
       <main className="ec-main">
         <div className="ec-mainhead">
-          <FlowBar active={flowActive} register={lang === "en" ? "tech" : register} go={go} />
+          <FlowBar active={flowActive} register={lang === "en" ? "tech" : "biz"} go={go} />
           <span className="ec-spacer" />
-          {/* Tweaks（P3-3）：操作員/技術用語切換、scenario clean/warn（UI 偏好，不改真實資料）。 */}
+          {/* Tweaks（P3-3）：scenario clean/warn（UI 偏好，不改真實資料）。語言切換移至頂列 LangToggle（中/EN）。 */}
           <div className="ec-tweaks">
-            <span className="ec-tw-group">
-              <span className="ec-tw-lab">{t("用語", "Register")}</span>
-              <button className={register === "biz" ? "on" : ""} onClick={() => setRegister("biz")}>{t("操作員", "Operator")}</button>
-              <button className={register === "tech" ? "on" : ""} onClick={() => setRegister("tech")}>{t("技術", "Tech")}</button>
-            </span>
             <span className="ec-tw-group">
               <span className="ec-tw-lab">{t("情境", "Scenario")}</span>
               <button className={scenario === "clean" ? "on" : ""} onClick={() => setScenario("clean")} title="UI 偏好；真實頁一律以 live API 為準">clean</button>

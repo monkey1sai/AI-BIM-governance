@@ -448,3 +448,37 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
   --ec-shadow-2:0 4px 16px rgba(12,10,9,.06), 0 0 0 1px rgba(12,10,9,.04);
   --ec-glow-grn:0 0 8px var(--ec-grn-3);
 }
+
+/* ── 左欄對齊設計原型:品牌 logo 框 / 語言 toggle / 群組指示燈 / badge 色碼 / 雲地邊界卡片 / OMNIVERSE 漸層 ── */
+.ec-top .ec-brand { display:inline-flex; align-items:center; gap:8px; }
+.ec-brand-mark { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+  border-radius:6px; background:linear-gradient(135deg, var(--ec-grn), #4d7c0f);
+  color:var(--ec-on-grn); font-weight:800; font-size:10px; letter-spacing:.02em; font-family:var(--ec-mono); }
+
+/* 語言雙態 toggle（中 | EN），對齊設計原型頂列 */
+.ec-langtoggle { display:inline-flex; border:1px solid var(--ec-line-2); border-radius:var(--ec-r-sm); overflow:hidden; }
+.ec-langtoggle button { background:none; border:0; color:var(--ec-fg-3); padding:5px 10px; cursor:pointer; font:inherit; font-size:12px; }
+.ec-langtoggle button.on { background:var(--ec-grn-2); color:var(--ec-grn); font-weight:600; }
+.ec-langtoggle button:hover:not(.on) { background:var(--ec-bg-3); color:var(--ec-fg); }
+
+/* 群組標題指示燈（ok 綠+glow / idle 灰）*/
+.ec-group .ec-group-t { display:inline-flex; align-items:center; gap:6px; }
+.ec-gdot { width:6px; height:6px; border-radius:50%; flex:0 0 6px; }
+.ec-gdot.ok { background:var(--ec-grn); box-shadow:0 0 6px var(--ec-grn-3); }
+.ec-gdot.idle { background:var(--ec-fg-4); }
+
+/* nav badge 色碼分級（warn 紅 / ai 紫 / accent 綠 / info 青 / neutral 灰；對齊設計原型）*/
+.ec-nav-badge.warn { color:var(--ec-red); border-color:var(--ec-red); background:var(--ec-red-2); }
+.ec-nav-badge.ai { color:var(--ec-vio); border-color:var(--ec-vio); background:var(--ec-vio-2); }
+.ec-nav-badge.accent { color:var(--ec-grn); border-color:var(--ec-grn-3); background:var(--ec-grn-2); }
+.ec-nav-badge.info { color:var(--ec-cyan); border-color:var(--ec-cyan); background:var(--ec-cyan-2); }
+.ec-nav-badge.neutral { color:var(--ec-fg-3); border-color:var(--ec-line-2); background:var(--ec-bg-3); }
+
+/* OMNIVERSE 群組綠漸層背景（區隔 GPU plane vs CPU plane）*/
+.ec-nav-group[data-group="omniverse"] { background:linear-gradient(180deg, var(--ec-grn-2), transparent 60%);
+  border-left:2px solid var(--ec-grn-3); }
+
+/* 底部雲地邊界卡片（對齊設計原型 nav 底部綠色圓角卡）*/
+.ec-nav-boundary { margin:10px 12px 4px; padding:8px 10px; border:1px solid var(--ec-grn-3);
+  border-radius:var(--ec-r-sm); background:var(--ec-grn-2); color:var(--ec-grn);
+  font-family:var(--ec-mono); font-size:10px; line-height:1.5; }

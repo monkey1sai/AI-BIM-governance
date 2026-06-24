@@ -324,12 +324,11 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("SUGGESTED");
     expect(html).toContain("AI 僅能改 review / session layer");
     expect(html).toMatch(/<input[^>]*disabled/);
-    // P3-3：FlowBar 5 步（預設 tech 標籤）+ Tweaks（操作員/技術用語、scenario clean/warn）。
+    // P3-3：FlowBar 5 步（預設語言=中 → 中文 biz 步驟標籤）+ 頂列 LangToggle（中/EN）+ Tweaks（scenario clean/warn）。
     expect(html).toContain("①"); // FlowBar step 1 標號
-    expect(html).toContain("Intake"); // 預設 register=tech 的步驟標籤
-    expect(html).toContain("Record"); // FlowBar 末步
-    expect(html).toContain("操作員"); // Tweaks register 按鈕
-    expect(html).toContain("技術");
+    expect(html).toContain("接收建模來源"); // 預設中文（biz）的步驟標籤（Intake）
+    expect(html).toContain("紀錄回寫雲端"); // FlowBar 末步（Record 中文）
+    expect(html).toContain("ec-langtoggle"); // 語言切換移至頂列（中/EN），取代舊「用語」操作員/技術鈕
     expect(html).toContain("clean"); // Tweaks scenario 按鈕
     expect(html).toContain("warn");
   });
