@@ -53,6 +53,7 @@ const defaultConfig: CoordinatorConfig = {
   cloudCallbackBaseUrl: "",
   callbackOutboxMaxAttempts: 5,
   callbackOutboxStorePath: "/tmp/callback-outbox.json",
+  conversionLedgerStorePath: "/tmp/conversion-ledger.json",
   userAuthProvider: "local-dev",
   // fast-ifc-link-demo-loop §2.5
   ifcDownloadTimeoutSeconds: 600,

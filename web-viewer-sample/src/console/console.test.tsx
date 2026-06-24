@@ -448,21 +448,26 @@ describe("edge console honesty smoke", () => {
     expect(html).not.toContain("列出真實 session");
   });
 
-  // ── minio-fileserver-source spec：MinioData 接真檔案庫樹 + A1 三層檔案庫選擇器 ──
-  it("MinioData 接真檔案庫 API（loading 態 + 誠實 local_fs 文案 + usdc 仍 p1）", () => {
+  // ── MinioData Task 7：接真 MinIO list proxy（GET /api/minio/objects）──
+  it("MinioData 接真 MinIO list proxy（loading 態 + /api/minio/objects 文案 + usdc 仍 p1）", () => {
     const html = renderToString(<MinioDataPage />);
-    // 載入態可見（renderToString 首幀無 fetch 結果 → loading）。
+    // 載入態可見（renderToString 首幀無 fetch 結果 → loading=true）。
     expect(html).toContain("載入");
-    // 誠實標記：local file-server 來源（比照 bim-control 規約）；真 S3/MinIO 待接。
-    expect(html).toContain("local file-server");
+    // 誠實標記：真 S3 proxy 端點文案出現於 Panel sub / loading 文字。
+    expect(html).toContain("/api/minio/objects");
+    // Demo Panel 仍顯示 bucket 規約示意（bim-control 規約示意，非假資料）。
     expect(html).toContain("bim-control");
     // bucket layout 規約示意仍標 demo（規約示意非實況）。
     expect(html).toContain("示範資料"); // PROV_LABEL.demo
-    // model.usdc 轉檔產物仍 p1，不因本 spec 翻綠。
+    // model.usdc 轉檔產物規約示意仍在 Demo Panel，p1 標記仍存在。
     expect(html).toContain("model.usdc");
-    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1
+    expect(html).toContain("後端待建 · P1"); // PROV_LABEL.p1（待產生 pending）
+    // 唯讀 intake 來源視圖誠實字樣。
+    expect(html).toContain("唯讀 intake 來源視圖");
     // 無願景假數字。
     expect(html).not.toContain("99.1%");
+    // 舊 local file-server 文案已移除（Task 7 取代）。
+    expect(html).not.toContain("local file-server");
   });
 
   it("A1 Rule Center 新增『從檔案庫選擇』三層選擇器（手動輸入保留）", () => {
@@ -529,63 +534,79 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
   });
 
-  // MinioData populated 態：filesTree() 回真樹後，render 出 project/model/version（feature 賣點，
-  // SSR 永遠到不了，因首幀 tree=null 走 loading 分支）。並驗 source_kind / root 出現在 Panel sub。
-  it("MinioData filesTree() 回真樹 → render project/model/version（asbuilt 真樹，非 loading 殼）", async () => {
-    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
+  // MinioData populated 態（Task 7）：getMinioObjects() 回真物件後，render 出三層樹（專案/種類/版本）。
+  // SSR 永遠到不了，因首幀 loading=true 走 loading 分支。
+  it("MinioData getMinioObjects() 回真物件 → render 三層樹（專案→種類→版本，非 loading 殼）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control",
+      count: 1,
+      objects: [
+        {
+          key: "松風庵/root/main/000001/model.ifc",
+          etag: "abc",
+          role: "source_ifc",
+          project_id: "mv_1a2b3c4d",
+          project_display_name: "松風庵",
+          category: "main",
+          version: "000001",
+        },
+      ],
+    });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); }); // 等 filesTree microtask 入 state
+    await act(async () => { await Promise.resolve(); }); // 等 getMinioObjects microtask 入 state
 
     const html = container.innerHTML;
-    // populated 真樹節點：project / model / version 檔名（loading 態不可能出現這些）。
-    expect(html).toContain("270/");
-    expect(html).toContain("機電/");
-    expect(html).toContain("ver 竣工.ifc");
-    // Panel sub 顯示真實 source_kind / root（誠實標記，非 demo）。
-    expect(html).toContain("source_kind=local_fs");
-    expect(html).toContain("C:/Repos/active/iot/AI-BIM-governance/storage");
-    // 已離開 loading 態（不再顯示「載入中…」）。
-    expect(html).not.toContain("載入中…（GET /api/governance/files/tree）");
+    // 三層樹節點：project_display_name / category / version（loading 態不可能出現這些）。
+    expect(html).toContain("松風庵");
+    expect(html).toContain("main");
+    expect(html).toContain("000001");
+    // 角色標籤（roleLabel）
+    expect(html).toContain("來源 IFC");
+    // Panel sub 顯示真實 bucket（誠實標記）。
+    expect(html).toContain("bucket=bim-control");
+    // 已離開 loading 態。
+    expect(html).not.toContain("載入中…（GET /api/minio/objects）");
 
     await act(async () => { root.unmount(); });
   });
 
-  // MinioData error 態：filesTree() reject → 顯示誠實「未連線後端」文案（pages.tsx:421），
-  // 不吞錯、不假裝有樹。SSR 首幀走 loading，永遠到不了此分支。
-  it("MinioData filesTree() reject → error 態誠實標「未連線後端」（不吞錯、不偽裝有樹）", async () => {
-    vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
+  // MinioData error 態（Task 7）：getMinioObjects() reject → 顯示誠實錯誤文案，
+  // 不吞錯、不假裝有物件。SSR 首幀走 loading，永遠到不了此分支。
+  it("MinioData getMinioObjects() reject → error 態誠實顯示錯誤（不吞錯、不偽裝有物件）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
 
     const html = container.innerHTML;
-    expect(html).toContain("未連線後端（coordinator / governance-service 需啟動）");
-    expect(html).toContain("proxy 502"); // 誠實顯示錯誤原因，不吞
-    expect(html).not.toContain("載入中…（GET /api/governance/files/tree）"); // 已離開 loading
-    expect(html).not.toContain("ver 竣工.ifc"); // error 態不得渲染假樹
+    // 誠實顯示錯誤原因（String(e)），不吞
+    expect(html).toContain("/api/minio/objects");
+    expect(html).toContain("502 Bad Gateway");
+    expect(html).not.toContain("載入中…（GET /api/minio/objects）"); // 已離開 loading
+    expect(html).not.toContain("松風庵"); // error 態不得渲染假物件
 
     await act(async () => { root.unmount(); });
   });
 
-  // MinioData empty 態：filesTree() 成功但 projects=[]（root 下無兩層結構 / 全為保留目錄）→
-  // 顯示誠實「檔案庫為空」文案（pages.tsx:423），不假裝有樹。SSR 首幀走 loading，
-  // 此分支需 !loading && !err && projectCount===0，唯有 client-render 微任務跑完才到得了。
-  it("MinioData filesTree() 回空 projects → empty 態顯示「檔案庫為空」（非 loading、非假樹）", async () => {
-    vi.spyOn(governanceClient, "filesTree").mockResolvedValue({
-      root: "C:/Repos/active/iot/AI-BIM-governance/storage",
-      source_kind: "local_fs",
-      projects: [],
+  // MinioData empty 態（Task 7）：getMinioObjects() 成功但 objects=[]（count=0）→
+  // 顯示誠實「未取得 MinIO 物件」文案，不假裝有物件。SSR 首幀走 loading，
+  // 此分支需 !loading && !err && objects.length===0，唯有 client-render 微任務跑完才到得了。
+  it("MinioData getMinioObjects() 回空 objects → empty 態顯示「未取得 MinIO 物件」（非 loading、非假物件）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: null,
+      count: 0,
+      objects: [],
     });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
 
     const html = container.innerHTML;
-    expect(html).toContain("檔案庫為空：未在 root 下找到"); // pages.tsx:423 空狀態文案
-    expect(html).not.toContain("載入中…（GET /api/governance/files/tree）"); // 已離開 loading
-    expect(html).not.toContain("未連線後端"); // 成功回應，非 error 態
-    expect(html).not.toContain("ver 竣工.ifc"); // 空樹不得渲染假版本節點
+    expect(html).toContain("未取得 MinIO 物件（count=0）"); // 空狀態文案
+    expect(html).not.toContain("載入中…（GET /api/minio/objects）"); // 已離開 loading
+    expect(html).not.toContain("coordinator /api/minio/objects"); // 成功回應，非 error 態
+    expect(html).not.toContain("松風庵"); // 空樹不得渲染假物件節點
 
     await act(async () => { root.unmount(); });
   });
@@ -776,17 +797,33 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { root.unmount(); });
   });
 
-  // reviewer Major（CodeRabbit）：error 態須有使用者可觸發的重試（不必整頁 reload）。
-  // 第一次 filesTree() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染真樹。
-  it("MinioData error 態點「重試」→ 重打 filesTree() → 成功渲染真樹（不必整頁 reload）", async () => {
+  // reviewer Major：error 態須有使用者可觸發的重試（不必整頁 reload）。
+  // Task 7：第一次 getMinioObjects() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染三層樹。
+  it("MinioData error 態點「重試」→ 重打 getMinioObjects() → 成功渲染真物件（不必整頁 reload）", async () => {
     const spy = vi
-      .spyOn(governanceClient, "filesTree")
-      .mockRejectedValueOnce(new Error("proxy 502"))
-      .mockResolvedValueOnce(tree);
+      .spyOn(coordinatorClient, "getMinioObjects")
+      .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
+      .mockResolvedValueOnce({
+        bucket: "bim-control",
+        count: 1,
+        objects: [
+          {
+            key: "松風庵/root/main/000001/model.ifc",
+            etag: "abc",
+            role: "source_ifc",
+            project_id: "mv_1a2b3c4d",
+            project_display_name: "松風庵",
+            category: "main",
+            version: "000001",
+          },
+        ],
+      });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
-    expect(container.innerHTML).toContain("未連線後端");
+    // error 態顯示錯誤資訊
+    expect(container.innerHTML).toContain("/api/minio/objects");
+    expect(container.innerHTML).toContain("502 Bad Gateway");
 
     const retry = container.querySelector<HTMLButtonElement>('[data-testid="minio-tree-retry"]');
     expect(retry).not.toBeNull();
@@ -794,8 +831,9 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { await Promise.resolve(); });
 
     const html = container.innerHTML;
-    expect(html).toContain("ver 竣工.ifc"); // 重試成功 → 真樹渲染
-    expect(html).not.toContain("未連線後端"); // error 態已清除
+    expect(html).toContain("松風庵"); // 重試成功 → 真物件三層樹渲染
+    expect(html).toContain("來源 IFC"); // 角色標籤
+    expect(html).not.toContain("502 Bad Gateway"); // error 態已清除
     expect(spy).toHaveBeenCalledTimes(2); // 真的重打了一次
 
     await act(async () => { root.unmount(); });

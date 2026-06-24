@@ -21,6 +21,8 @@ import {
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
+import { ConversionLedger } from "./services/conversionLedger.js";
+import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -479,6 +481,9 @@ export function createCoordinatorApp(
     undefined,
     config.callbackOutboxStorePath,
   );
+  // minio-closed-loop-phase1 Task 1/3：持久 ConversionLedger（coordinator-local shadow）。
+  // watcher 偵測即寫 queued（Task 2）；GET /api/conversion/records 讀取（Task 3）。
+  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
@@ -1142,6 +1147,26 @@ export function createCoordinatorApp(
         queuePosition ?? 0,
       );
 
+      // minio-closed-loop-phase1 Task 2：watcher 偵測 → 持久 ledger（coordinator-local shadow）。
+      // 失敗不阻塞 intake（誠實降級，照 callbackOutbox 精神）。
+      try {
+        conversionLedger.upsert(
+          {
+            idempotency_key: (request.header("x-idempotency-key") ?? job.idempotency_key) as string,
+            correlation_id: request.header("x-correlation-id") ?? null,
+            project_id: event.project_id,
+            project_display_name: event.project_display_name ?? event.project_id,
+            category: event.model_category ?? "",
+            external_model_version_id: event.external_model_version_id ?? "",
+            conversion_job_id: job.conversion_job_id ?? null,
+            status: "queued",
+          },
+          new Date().toISOString(),
+        );
+      } catch {
+        /* ledger 失敗不卡 intake */
+      }
+
       // fast-ifc-link-demo-loop §2.3:同步下載完成 → 202 Accepted(下載完,
       // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
       // 觀察 queued_for_conversion → dispatched 變化)。
@@ -1165,6 +1190,53 @@ export function createCoordinatorApp(
       count: jobs.length,
       items: jobs.slice(0, limit).map((job) => summarizeIfcReadyJob(job, store.get(job.review_session_id || ""))),
     });
+  });
+
+  // minio-closed-loop-phase1 Task 3：讀持久 ConversionLedger；唯讀 GET，無 auth（照既有
+  // /api/external/ifc-ready 模式）。插在 /api/external/ifc-ready 之後、/:jobId 之前（避免 param 吃掉）。
+  app.get("/api/conversion/records", (request, response) => {
+    const limit = parseListLimit(request.query.limit);
+    const items = conversionLedger.list();
+    response.json({ count: items.length, items: items.slice(0, limit) });
+  });
+
+  // minio-closed-loop-phase1 Task 4：唯讀 S3 list proxy。
+  // MinIO 未設定時誠實回 count=0（不 500）；list 失敗回 502；presigned URL 不入 log。
+  // 插在 /api/external/ifc-ready 後、/:jobId 之前（避免 param 吃掉）。
+  app.get("/api/minio/objects", async (request, response) => {
+    if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
+      response.json({
+        bucket: config.minioWatchBucket || null,
+        prefix: "",
+        count: 0,
+        objects: [],
+        note: "MinIO watch 未設定（未取得）",
+      });
+      return;
+    }
+    const rawPrefix =
+      typeof request.query.prefix === "string" ? request.query.prefix : config.minioWatchPrefix;
+    let client: ReturnType<typeof createMinioS3Client> | null = null;
+    try {
+      client = createMinioS3Client({
+        endpoint: config.minioWatchEndpoint,
+        accessKey: config.minioWatchAccessKey,
+        secretKey: config.minioWatchSecretKey,
+      });
+      const objects = await listMinioObjects(
+        client,
+        config.minioWatchBucket,
+        rawPrefix,
+        config.minioWatchKeySuffix,
+      );
+      response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+    } catch (err) {
+      response
+        .status(502)
+        .json({ error: "minio_list_failed", detail: err instanceof Error ? err.message : String(err) });
+    } finally {
+      client?.destroy();
+    }
   });
 
   // minio-watch-auto-intake：watcher 唯讀狀態（無 credentials 洩漏）。關閉時誠實

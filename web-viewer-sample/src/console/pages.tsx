@@ -3,9 +3,9 @@
 import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
-import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
-import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FilesTreeResponse, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
+import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
+import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
@@ -694,8 +694,19 @@ function CoverageDrawer({ state }: { state: ConversionQualityMetricsResponse | {
   );
 }
 
+// 轉檔 Ledger status → 中文顯示（誠實鐵律：禁自造 Prov 值；用既有 prov 配色）
+const LEDGER_STATUS_LABEL: Record<string, string> = {
+  detected: "已偵測", queued: "排隊", converting: "轉檔中", ready: "完成", failed: "失敗",
+};
+const LEDGER_STATUS_PROV: Record<string, Prov> = {
+  detected: "artifact", queued: "artifact", converting: "artifact", ready: "asbuilt", failed: "p1",
+};
+
 export function ConversionSchedulingPage() {
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
+  // Task 6：持久 ConversionLedger 資料（getConversionRecords），獨立於 ifc-ready jobs。
+  const [records, setRecords] = useState<ConversionRecord[]>([]);
+  const [recErr, setRecErr] = useState<string | null>(null);
   const [mw, setMw] = useState<MinioWatchStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [mwErr, setMwErr] = useState<string | null>(null);
@@ -724,9 +735,7 @@ export function ConversionSchedulingPage() {
   // 靜默關 dialog（mw 未更新、琥珀條與 Panel 停舊值、操作者看不到錯誤）。故回傳 mwOk 讓呼叫端可辨此分支。
   const load = useCallback(async (): Promise<{ jobsOk: boolean; mwOk: boolean }> => {
     setBusy(true); setErr(null); setMwErr(null);
-    // 兩個端點獨立 settle：minio-watch/status 失敗（route 不存在、coordinator 局部故障、
-    // 端點尚未部署）不得污染 ifc-ready 的錯誤訊息，也不得讓 watcher Panel 靜默停在
-    // placeholder（誤導操作者以為「沒按 Refresh」）。各自有獨立錯誤 state。
+    // 兩個端點獨立 settle：minio-watch/status 失敗不污染 ifc-ready；各自有獨立錯誤 state。
     const [jobsRes, mwRes] = await Promise.allSettled([
       coordinatorClient.listIfcReady(50),
       coordinatorClient.minioWatchStatus(),
@@ -740,7 +749,19 @@ export function ConversionSchedulingPage() {
     setBusy(false);
     return { jobsOk, mwOk };
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  // Task 6：獨立抓取 ConversionLedger，不阻塞既有 load() 流程（避免影響現有測試計時）。
+  // setRecErr(null) 在本 callback 開頭清；不與 setErr（ifc-ready 錯誤）共用，誤差各自獨立。
+  const loadRecords = useCallback(async (): Promise<void> => {
+    setRecErr(null);
+    try {
+      const res = await coordinatorClient.getConversionRecords(50);
+      setRecords(res.items);
+    } catch (e) {
+      setRecErr(`未連線 coordinator /api/conversion/records：${String(e)}`);
+    }
+  }, []);
+  // Task 6：mount 時同時觸發 load()（ifc-ready + watcher）與 loadRecords()（ledger），獨立並行。
+  useEffect(() => { void load(); void loadRecords(); }, [load, loadRecords]);
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
     if (!job.conversion_job_id) return;
     const id = job.ifc_ready_job_id;
@@ -809,7 +830,7 @@ export function ConversionSchedulingPage() {
           ⚠ 自動偵測已關閉——新 model.ifc 不會自動進件，需手動進件
         </p>
       )}
-      <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={load}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
+      <Panel title="Pipeline" sub="MinIO source → queue → IFC→USD → writeback → notify Kit" prov="asbuilt" actions={<Btn caption="GET /api/external/ifc-ready" disabled={busy} onClick={() => { void load(); void loadRecords(); }}>{busy ? "讀取中…" : "Refresh queue"}</Btn>}>
         <LifecycleStrip steps={["讀 MinIO / storage", "排隊", "IFC→USD", "寫回 model.usdc", "通知 Kit"]} />
         {err && <p className="ec-warn-note">{err}</p>}
         <Field k="conversion authority" v="bim-streaming-server owns heavy conversion" prov="asbuilt" />
@@ -864,6 +885,60 @@ export function ConversionSchedulingPage() {
               >關閉自動偵測</Btn>
             </>
           )}
+        </div>
+      </Panel>
+      {/* Task 6：持久 ConversionLedger 視圖（GET /api/conversion/records）——watcher 偵測即落帳，跨重啟不遺失。
+          欄：專案 / 種類 / 版本 / status / job_id / 偵測時間。誠實鐵律：
+          usdc_key==null 標 p1「待產生」；coverage_report==null 標「未取得」；
+          不顯假 ready / 假 coverage（Phase 2 回填後才會有真值）。 */}
+      <Panel title="轉檔 Ledger（持久紀錄）" sub="GET /api/conversion/records；watcher 偵測即落帳，跨重啟不遺失" prov="asbuilt">
+        <div data-testid="conv-ledger-panel">
+        {recErr && <p className="ec-warn-note">{recErr}</p>}
+        {!recErr && records.length === 0 && (
+          <p className="ec-note">尚無 ledger 紀錄；watcher 偵測到新 model.ifc 後自動落帳。</p>
+        )}
+        {!recErr && records.length > 0 && (
+          <table className="ec-table">
+            <thead>
+              <tr>
+                <th>專案</th>
+                <th>種類</th>
+                <th>版本</th>
+                <th>status</th>
+                <th>job_id</th>
+                <th>usdc</th>
+                <th>coverage</th>
+                <th>偵測時間</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.slice(0, 50).map((r) => {
+                const statusLabel = LEDGER_STATUS_LABEL[r.status] ?? r.status;
+                const statusProv = LEDGER_STATUS_PROV[r.status] ?? "artifact";
+                return (
+                  <tr key={r.idempotency_key}>
+                    <td>{r.project_display_name || r.project_id}</td>
+                    <td>{r.category || "—"}</td>
+                    <td>{r.external_model_version_id}</td>
+                    <td><span className={`ec-prov ${PROV_CLASS[statusProv]}`}>{statusLabel}</span></td>
+                    <td><span className="ec-note">{r.conversion_job_id ?? "—"}</span></td>
+                    <td>
+                      {r.usdc_key != null
+                        ? <span>{r.usdc_key}</span>
+                        : <span className="ec-prov ec-p1">待產生</span>}
+                    </td>
+                    <td>
+                      {r.coverage_report != null
+                        ? <span>{typeof r.coverage_report === "object" ? JSON.stringify(r.coverage_report) : String(r.coverage_report)}</span>
+                        : <span className="ec-note">未取得</span>}
+                    </td>
+                    <td><span className="ec-note">{r.detected_at}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
         </div>
       </Panel>
       <Panel title="Ifc-ready jobs" sub="/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job" prov="asbuilt">
@@ -1075,19 +1150,52 @@ export function KitGpuFleetPage() {
   );
 }
 
+// Task 7：#minio 升級讀真實 GET /api/minio/objects（三層 + 角色，移除寫死 demo）。
+// 依 project_display_name → category → version 分組成三層樹。
+// 誠實鐵律：有 .ifc 無對應 .usdc → 標 pending·待產生（prov p1），禁假裝已轉。
+type MinioTree = Map<string, Map<string, Map<string, import("./coordinatorClient").MinioObject[]>>>;
+
+function buildMinioTree(objects: import("./coordinatorClient").MinioObject[]): MinioTree {
+  const tree: MinioTree = new Map();
+  for (const obj of objects) {
+    const proj = obj.project_display_name ?? "(未知專案)";
+    const cat = obj.category ?? "(未知種類)";
+    const ver = obj.version ?? "(未知版本)";
+    if (!tree.has(proj)) tree.set(proj, new Map());
+    const catMap = tree.get(proj)!;
+    if (!catMap.has(cat)) catMap.set(cat, new Map());
+    const verMap = catMap.get(cat)!;
+    if (!verMap.has(ver)) verMap.set(ver, []);
+    verMap.get(ver)!.push(obj);
+  }
+  return tree;
+}
+
+function roleLabel(role: import("./coordinatorClient").MinioObject["role"]): string {
+  if (role === "source_ifc") return "來源 IFC";
+  if (role === "parsed_usdc") return "已轉 USDC";
+  return "其他";
+}
+
+function roleClass(role: import("./coordinatorClient").MinioObject["role"]): string {
+  if (role === "source_ifc") return "ec-prov artifact"; // cyan/artifact
+  if (role === "parsed_usdc") return "ec-prov asbuilt"; // built
+  return "ec-prov";
+}
+
 export function MinioDataPage() {
-  const [tree, setTree] = useState<FilesTreeResponse | null>(null);
+  const [objects, setObjects] = useState<import("./coordinatorClient").MinioObject[] | null>(null);
+  const [bucket, setBucket] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // 抽成可重跑的 loader：初載與 error 態「重試」共用同一條真實 fetch 路徑
-  //（coordinator/governance 暫時離線時不必整頁 reload）。React 18 unmount 後
-  // setState 為 no-op，毋須 alive flag。
-  const loadTree = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      setTree(await governanceClient.filesTree());
+      const res = await coordinatorClient.getMinioObjects();
+      setBucket(res.bucket);
+      setObjects(res.objects);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -1096,50 +1204,72 @@ export function MinioDataPage() {
   }, []);
 
   useEffect(() => {
-    void loadTree();
-  }, [loadTree]);
+    void load();
+  }, [load]);
 
-  const projectCount = tree?.projects.length ?? 0;
+  const tree = objects ? buildMinioTree(objects) : null;
 
   return (
     <>
       <h1>MinIO 資料</h1>
       <p className="ec-lead">
-        資料頁讓 operator 看懂 project / model / version / files 關係；它不是完整 S3 browser。
-        目前為 local file-server 來源（比照 <code>bim-control/{"{projectId}"}/{"{modelId}"}</code> 規約）；真 S3/MinIO 待接。
+        唯讀 intake 來源視圖，非 metadata 權威。
+        此頁讀 <code>GET /api/minio/objects</code>（真實 S3 list proxy）；
+        呈現 bucket 三層結構（專案 → 種類 → 版本）與每物件角色。
+        metadata 權威在外部 <code>bim-control · MySQL</code>，不由本頁決定。
       </p>
 
       <Panel
-        title="檔案庫 · file library（真實樹）"
-        sub={tree ? `source_kind=${tree.source_kind} · root=${tree.root}` : "local file-server 來源（比照 bim-control 規約）；真 S3/MinIO 待接"}
+        title="MinIO Bucket 物件（真實 list）"
+        sub={bucket ? `bucket=${bucket} · GET /api/minio/objects` : "GET /api/minio/objects（MinIO watch 未設定時回 count=0）"}
         prov="asbuilt"
       >
-        {loading && <p className="ec-note">載入中…（GET /api/governance/files/tree）</p>}
+        {loading && <p className="ec-note">載入中…（GET /api/minio/objects）</p>}
         {err && (
           <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span>未連線後端（coordinator / governance-service 需啟動）：{err}</span>
-            <Btn data-testid="minio-tree-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadTree(); }}>
+            <span>{err}</span>
+            <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => { void load(); }}>
               重試
             </Btn>
           </div>
         )}
-        {!loading && !err && projectCount === 0 && (
-          <p className="ec-note">檔案庫為空：未在 root 下找到 <code>{"{projectId}"}/{"{modelId}"}/*.ifc</code> 兩層結構（檢查 BIM_FILE_LIBRARY_ROOT）。</p>
+        {!loading && !err && (!objects || objects.length === 0) && (
+          <p className="ec-note">
+            未取得 MinIO 物件（count=0）。可能原因：MinIO watch 未設定（<code>MINIO_WATCH_*</code> env 未填）、
+            bucket 為空、或 coordinator proxy 無法連線 MinIO。
+          </p>
         )}
-        {tree && projectCount > 0 && (
+        {tree && objects && objects.length > 0 && (
           <div className="ec-tree">
-            {tree.projects.map((p) => (
-              <div key={p.project_id}>
-                <div><span className="ec-tree-file">{p.project_id}/</span> <ProvTag prov="asbuilt" /></div>
-                {p.models.map((m) => (
-                  <div className="indent" key={m.model_id}>
-                    <div>{m.model_id}/</div>
-                    {m.versions.map((v) => (
-                      <div className="indent two" key={v.name}>
-                        <span className="ec-tree-file">{v.name}</span>{" "}
-                        <span className="ec-note">{(v.size_bytes / 1024).toFixed(1)} KB · {v.mtime}</span>
-                      </div>
-                    ))}
+            {[...tree.entries()].map(([proj, catMap]) => (
+              <div key={proj}>
+                <div><span className="ec-tree-file">{proj}/</span></div>
+                {[...catMap.entries()].map(([cat, verMap]) => (
+                  <div className="indent" key={cat}>
+                    <div>{cat}/</div>
+                    {[...verMap.entries()].map(([ver, objs]) => {
+                      const hasIfc = objs.some((o) => o.role === "source_ifc");
+                      const hasUsdc = objs.some((o) => o.role === "parsed_usdc");
+                      return (
+                        <div className="indent two" key={ver}>
+                          <div>{ver}/</div>
+                          {objs.map((obj) => (
+                            <div className="indent three" key={obj.key}>
+                              <span className="ec-tree-file">{obj.key.split("/").pop()}</span>{" "}
+                              <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
+                            </div>
+                          ))}
+                          {/* 誠實鐵律：有 .ifc 但無 .usdc → 標 pending，禁假裝已轉 */}
+                          {hasIfc && !hasUsdc && (
+                            <div className="indent three">
+                              <span className="ec-tree-file">model.usdc</span>{" "}
+                              <span className="ec-note">pending · 待產生</span>{" "}
+                              <ProvTag prov="p1" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ))}
               </div>
@@ -1148,14 +1278,18 @@ export function MinioDataPage() {
         )}
       </Panel>
 
-      <Panel title="Bucket layout（規約示意）" sub="bim-control private bucket · project/model/version/files（示意，非實況）" prov="demo">
+      <Panel title="Bucket layout（規約說明 — 示意，非實況）" sub="bim-control private bucket · 三層 key 規約示意（DEMO，非真實資料）" prov="demo">
+        <p className="ec-note">
+          <strong>[DEMO]</strong> 此 Panel 為 MinIO bucket key 規約示意，非真實 list 資料。
+          真實物件由上方 Panel 顯示。
+        </p>
         <div className="ec-tree">
           <div>bim-control/</div>
-          <div className="indent">{"{projectId}"}/</div>
-          <div className="indent two">{"{modelId}"}/version/files/</div>
-          <div className="indent three"><span className="ec-tree-file">model.usdc</span> <span className="ec-note">expected generated output after conversion</span> <ProvTag prov="p1" /></div>
+          <div className="indent">{"{project_display_name}"}/</div>
+          <div className="indent two">{"{root}"}/{"{category}"}/{"{version}"}/</div>
+          <div className="indent three"><span className="ec-tree-file">model.ifc</span> <span className="ec-prov artifact">來源 IFC</span></div>
+          <div className="indent three"><span className="ec-tree-file">model.usdc</span> <span className="ec-note">轉檔產物（Phase 2 回填）</span> <ProvTag prov="p1" /></div>
         </div>
-        <p className="ec-note">此 Panel 為 MinIO bucket 規約示意（示範資料）；<code>model.usdc</code> 為轉檔產物，後端待建（p1），不因本頁翻綠。</p>
       </Panel>
 
       <Panel title="與功能頁的關係" prov="asbuilt">
