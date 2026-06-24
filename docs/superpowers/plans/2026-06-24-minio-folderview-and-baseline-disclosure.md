@@ -1729,20 +1729,70 @@ npx vitest run src/console/ConversionSchedulingPage.test.tsx 2>&1 | tail -20
               <p className="ec-note">{t("一致性基準＝可解析 IFC 數（*/model.ifc），非 bucket 物件總數；§3.4 後既有未轉檔由 watcher 自動補轉。", "Consistency basis = parsable IFC count (*/model.ifc), not total bucket objects; after §3.4 the watcher auto-enrolls previously unconverted files.")}</p>
 ```
 
-  3. ledger 面板（`:914-937` 的 `records.map`）對 `r.status === "failed"` 或 `untracked`（此頁 records 都有紀錄，故僅 `failed`）且 `r.object_key` 存在時，在列末加觸發鈕 + intent→confirm（重用既有 `IntentDialog` / `pendingAction` 機制，或新增本地 `pendingTriggerKey` state 走 `coordinatorClient.conversionTrigger`）：
+  3. ledger 面板（`:893-942`、`:914-937` 的 `records.map`）對 `r.status === "failed"`（此頁 records 都有紀錄、無 `untracked`，故僅 `failed`）且 `r.object_key` 存在時，在列末加觸發鈕 + intent→confirm。本 task 採**新增本地 `pendingTriggerKey` state 走 `coordinatorClient.conversionTrigger`** 的路徑（與 Task 7 `MinioDataPage.confirmTrigger`／spec §6.1 `IntentDialog` 契約 `open/title/cost/onConfirm(reason)/onCancel/busy/actionErr` 完全一致；**不**改用 `pendingAction`，避免與既有機制交纏）。下方 (3a)~(3d) 為**可直接複製貼上的完整實作**，零脈絡執行者照填即可、無需推斷：
+
+  **(3a) 在 `ConversionSchedulingPage` function body 頂部（與既有 `useState` 同區）加三個本地 state：**
 
 ```tsx
+  const [pendingTriggerKey, setPendingTriggerKey] = useState<string | null>(null); // intent→confirm 目標 object_key
+  const [triggerBusy, setTriggerBusy] = useState(false);                            // confirm 進行中（IntentDialog busy）
+  const [triggerErr, setTriggerErr] = useState<string | null>(null);               // 失敗 inline error（IntentDialog actionErr）
+```
+
+  **(3b) 在 hooks 區（既有 `loadRecords` callback 之後、`return(...)` 之前）加 `confirmTrigger` handler。** 成功才關 dialog 並 `void loadRecords()` 重抓（證據型更新、把 chip/status 從 `failed` 推進到 `detected/queued`）；失敗顯 inline error、dialog 不關、status 不變（與 spec §6.1「失敗顯誠實錯誤、不改狀態、不關 dialog」一致）：
+
+```tsx
+  // IntentDialog onConfirm 帶使用者填的 reason（uncontrolled textarea）；caller 負責 UI 反饋：
+  // 成功 → setPendingTriggerKey(null) 關 dialog + void loadRecords() 重抓；失敗 → setTriggerErr 經 actionErr 顯示、dialog 不關。
+  const confirmTrigger = async (reason: string) => {
+    if (!pendingTriggerKey) return;
+    setTriggerErr(null); setTriggerBusy(true);
+    try {
+      await coordinatorClient.conversionTrigger(pendingTriggerKey, reason || "re-trigger failed job from #conv");
+      setPendingTriggerKey(null);   // 成功才關 dialog
+      void loadRecords();           // 重抓 ledger：failed → detected/queued（證據型更新，非樂觀 patch）
+    } catch (e) { setTriggerErr(String(e)); }   // 失敗顯 inline error（actionErr）、status 不變、dialog 不關
+    finally { setTriggerBusy(false); }
+  };
+```
+
+  **(3c) ledger 表格：在 `<thead>` 末尾補一個 `<th>`（保持欄數對齊，現有 8 欄 → 9 欄），並在 `records.map` 的 `<tr>` 末尾加觸發鈕 `<td>`。** `onClick` 僅開 dialog、不直接打 API（confirm 才打）：
+
+```tsx
+                {/* <thead><tr> 末尾補這個 th（與下方 td 對齊，避免欄數錯位） */}
+                <th>{t("控制", "Control")}</th>
+```
+
+```tsx
+                    {/* records.map 的 <tr> 末尾加這個 td（接在偵測時間 td 之後） */}
                     <td>
                       {r.status === "failed" && r.object_key && (
                         <Btn data-testid={`conv-ledger-retry-${r.idempotency_key}`}
-                          onClick={() => setPendingTriggerKey(r.object_key)}>
+                          onClick={() => { setTriggerErr(null); setPendingTriggerKey(r.object_key); }}>
                           {t("重新觸發", "Re-trigger")}
                         </Btn>
                       )}
                     </td>
 ```
 
-  並在 `ConversionSchedulingPage` 加 `const [pendingTriggerKey, setPendingTriggerKey] = useState<string | null>(null);` 與成功後 `void loadRecords()` 重抓（證據型更新）。
+  **(3d) 在 ledger `<table>` 之後、`conv-ledger-panel` 收尾 `</div>` 之前（即 `:939` `</table>` 與 `:941` `</div>` 之間）放 `<IntentDialog>`。** 切勿放進 `<tbody>`／`<tr>`（dialog 嵌入表格列為非法 HTML）。props 逐字對齊 spec §6.1（`open/title/cost/onConfirm(reason)/onCancel/busy/actionErr`，**無 `body`/`confirmLabel`**；確認鈕文字由元件內建、`reason` 來自元件內 uncontrolled textarea、dialog 不自動關）：
+
+```tsx
+            {/* intent→confirm：重新觸發 failed 轉檔。props 逐字對齊 IntentDialog.tsx:8-27 / spec §6.1。 */}
+            <IntentDialog
+              open={!!pendingTriggerKey}
+              title={t("確認重新觸發轉檔", "Confirm re-trigger conversion")}
+              cost={t("對此失敗紀錄重新觸發轉檔 intake：", "Re-trigger conversion intake for this failed record: ") + (pendingTriggerKey ?? "")}
+              busy={triggerBusy}
+              actionErr={triggerErr}
+              onConfirm={(reason) => void confirmTrigger(reason)}
+              onCancel={() => { setPendingTriggerKey(null); setTriggerErr(null); }}
+            />
+```
+
+  注意：`IntentDialog` 已是 `pages.tsx` 既有 import（沿用、勿新造）；`coordinatorClient.conversionTrigger`（`(key, reason)` → `{ status, idempotency_key }`，spec §3.3）為 Task 6 已新增的前端 client 方法，本 task 直接呼用。
+
+  **與既有 `pendingAction` IntentDialog 並存（執行者必讀，避免誤判衝突）：** `ConversionSchedulingPage` 既有一個由 `pendingAction` 驅動的 `IntentDialog`（real `pages.tsx:1001`，watch-toggle / prioritize / re-dispatch 用）。本 task 新增的是**第二個獨立 `IntentDialog`**（由 `pendingTriggerKey` 驅動）。兩者**不可共用 `pendingAction`**（語意不同、會交纏）。`IntentDialog` 在 `open=false` 時 `return null`（`IntentDialog.tsx:30`），故同一時間至多一個 dialog 在 DOM；`data-testid="intent-dialog"`/`intent-confirm`/`intent-cancel` 雖為 component 內建固定值，但因關閉者不渲染，**測試 `querySelector('[data-testid="intent-dialog"]')` 不會撞到兩個**。本 task 的測試以 `conv-ledger-retry-${idempotency_key}` testid 開啟本 dialog（見上方 it），與既有 `pendingAction` 路徑互不干擾。
 
   4. **AC6(a) 說明文案（純文字，不做成鈕）：** 在 watcher 面板（或 baseline 區附近）加一段 `ec-note` 列兩條 spec 認可補救（與 AC6(b) 一鍵鈕並存、不重複）：
 
