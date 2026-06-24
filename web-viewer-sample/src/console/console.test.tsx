@@ -29,7 +29,7 @@ import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
-import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
+import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
 
 describe("edge console honesty smoke", () => {
@@ -343,6 +343,20 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("Kit / GPU 機隊");
     expect(html).toContain("MinIO 資料");
     expect(html).toContain("Chat USD Agent");
+  });
+
+  // ── co-console-runtime-merge §5.1 守門一（負向，打資料模型）：CO 獨立導覽項已從 PAGES 移除 ──
+  // PAGES 是左欄渲染的唯一資料源（EdgeConsole.tsx:209 `PAGES.filter(...).map(...)`）；直接斷言
+  // 資料模型零渲染歧義、零字串撞 page h1（不可用 `not.toContain("Coordinator Console")`——該字串
+  // 同時在 CoordinatorPage h1）。此守門讓 Task 0 的「移除 CO nav」有機器可執行的迴歸防護：未來
+  // 任何 PR 若把 coordinator 項加回 PAGES，本斷言會立即報錯。
+  it("co-console-merge：CO 獨立導覽項已從 PAGES 移除（負向守門 · 資料模型 + 渲染 nav）", () => {
+    // 資料模型守門：PAGES 不得再含 coordinator 項（落地端控制台群組只剩 conv/sessions/instances/minio）。
+    expect(PAGES.some((p) => p.key === "coordinator")).toBe(false);
+    // 渲染 nav 補強：預設 #home 渲染的左欄按鈕（`<span class="ec-key">{p.no}</span>` L211）不得出現
+    // CO 編號（被移除 page 的 no="CO"）。NAV_GROUPS 的 coordinator 群組仍在故群組標題照常存活。
+    const navHtml = renderToString(<EdgeConsole />);
+    expect(navHtml).not.toContain('class="ec-key">CO<');
   });
 
   it("prototype 核心頁面可 render：A1 stepper、3D viewer、conversion、session、Kit/GPU、MinIO", () => {
