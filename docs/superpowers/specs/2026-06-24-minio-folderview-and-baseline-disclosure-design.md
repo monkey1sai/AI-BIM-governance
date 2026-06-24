@@ -10,7 +10,7 @@
 >
 > **證據鏈：** 所有 spec/程式碼引述附 `file:line`（§9）；live 由 coordinator `:8004` 實測；prototype 設計來源 `docs/plans/ai-bim-governance-prototype.html`。
 
-**一句話：** `#minio` 拍板做「**真 MinIO 唯讀資料夾導覽**」＝ S3 `Delimiter='/'` raw-folder 逐層 lazy（**像 MinIO 網頁一樣聰明**，使用者 D1）＋ `geometries_chunks` 等末層**摺成單一資料夾節點不攤開**（使用者 D2）；三層「專案/種類/版本」語意從「樹骨架」**降為導到 `model.ifc` 葉層才掛的語意 badge**，`watcher` / `deriveIntakeFromKey` **零改、zero blast radius**。此案正式把 prototype「真 S3/MinIO 三層待接 NOT BUILT」**升為已建**，須同步移除浮水印並改寫三方文件（§8）。
+**一句話：** `#minio` 拍板做「**真 MinIO 唯讀資料夾導覽**」＝ S3 `Delimiter='/'` raw-folder 逐層 lazy（**像 MinIO 網頁一樣聰明**，使用者 D1）＋ `geometries_chunks` 等末層**摺成單一資料夾節點不攤開**（使用者 D2）；三層「專案/種類/版本」語意從「樹骨架」**降為導到 `model.ifc` 葉層才掛的語意 badge**（`deriveIntakeFromKey` **不改**）。Q2 另含 §7-B' 全自動 auto-enroll：watcher tick dedup 由 baseline **刻意改為持久 ledger 去重**（非零 blast radius，見 §3.4/AC7）。此案正式把 prototype「真 S3/MinIO 三層待接 NOT BUILT」**升為已建**，須同步移除浮水印並改寫三方文件（§8）。
 
 ---
 
@@ -85,7 +85,7 @@
 6. **轉檔狀態 chip（使用者拍板：做）**：`.ifc` 葉物件旁顯示狀態 chip，顯示 `detected/queued/converting/ready/failed` 或『未轉(baseline 既有檔)』；查不到誠實標『未進偵測佇列』。`#minio` 因此新增對 ledger `/api/conversion/records` 的**唯讀**依賴（`MinioDataPage.test.tsx` 原斷言「不呼叫 `getConversionRecords`」須改）。
    - **對應機制（blocker/major 修正，採路徑 A）：** Phase 1 `ledger.object_key` 恆 `null`（`conversionLedger.ts:21`）、前端不能算 Node `crypto` sha256，故**不**靠前端比對。改由**後端在 `listMinioFolder`/`listMinioObjects` 回應對每個 `.ifc` 物件附帶預計算的 `idempotency_key`**（後端呼 `idempotencyKeyFor(bucket,key,etag)`，`minioWatcher.ts:29` exported），前端 chip 以該 `idempotency_key` 對 records map lookup。需同步加欄位：`MinioObjectView`（`minioClient.ts`）/ `MinioObject`（`coordinatorClient.ts`）/ `ConversionRecord`。詳見 §3.3。
 7. **守門全保留**：(a) list 回應**永不夾帶 presigned URL**（已驗證 route 內 0 個 `getSignedUrl`、`MinioObjectView` 無 url 欄；要下載才另引 presign，沿用 watcher 不入 log 規約）；(b) 把 CommonPrefix 當 id/path 前沿用 `deriveIntakeFromKey` 拒空段/`.`/`..` 防穿越；(c) 頁首『唯讀 intake 來源視圖，非 metadata 權威…權威在 `bim-control·MySQL`』保留（`pages.tsx:1214-1215`）；(d) `prov=demo` bucket-layout 規約面板留作純語意參照，不與真實逐層結果混淆。
-8. **誠實升級宣告**：本案把 prototype『真 S3/MinIO 三層待接 NOT BUILT』升為已建，**必須同步移除浮水印與「待接」字樣**（§8）——把已建功能還掛 NOT BUILT 才是說謊，移除是誠實鐵律的**要求**。watcher/`deriveIntakeFromKey` 完全不動（zero blast radius）。
+8. **誠實升級宣告**：本案把 prototype『真 S3/MinIO 三層待接 NOT BUILT』升為已建，**必須同步移除浮水印與「待接」字樣**（§8）——把已建功能還掛 NOT BUILT 才是說謊，移除是誠實鐵律的**要求**。`#minio` Q1（資料夾導覽）本身 `deriveIntakeFromKey` 不動；watcher tick dedup 的改動屬 Q2 §3.4（§7-B' 全自動），非零 blast radius、見 AC7。
 
 ---
 
@@ -208,7 +208,7 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 4. `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md:84-88` — **整段（`:84-88`）重寫**：主樹 = raw-folder 逐層（S3 `Delimiter`，**無三層語意骨架**）；三層語意降為葉層 badge（`model.ifc` 旁附帶）。**不得只改 `:86` 單行而留 `:85`「三層（專案→類別→版本）」舊語意**（否則 `:85`/`:86` 上下文自相矛盾）。
 4b. `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md:25, 42` — 非目標「不新增手動插隊/優先序佇列 UI」須以新 change **supersede**（本案使用者拍板新增「一鍵觸發轉檔」鈕 + `POST /api/conversion/trigger`；明示這是「手動 intake 觸發」非「佇列插隊」）。
 5. `openspec/specs/minio-watch-auto-intake/spec.md:18-22`（「首輪 baseline SHALL NOT 觸發」）＋ `docs/superpowers/specs/2026-06-12-minio-watch-auto-intake-design.md:28, 53-54, 101` — §7-B' 全自動 auto-enroll（§3.4）把 watcher dedup 由 baseline 改為持久 ledger 去重，**須以新 change supersede**「首輪 baseline 不觸發」語意（改為「ledger 無紀錄才觸發」）；明示重啟不風暴靠持久 ledger（非新建 watermark）。
-5. 本檔 §2.5 第 5 點（「含 source IFC」badge）已從 optional 升為輕量硬 AC（AC-badge 之外另立）；§7 已標 OQ1/OQ2/OQ5 拍板、OQ4 為 archive gate。
+6. 本檔 §2.5 第 5 點（「含 source IFC」badge）已從 optional 升為輕量硬 AC（AC-badge 之外另立）；§7 已標 OQ1/OQ2/OQ5 拍板、OQ4 為 archive gate。
 
 ---
 
@@ -234,7 +234,7 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 
 ## 10. 下一步
 
-1. **使用者拍板 §7-A（手動觸發入口）、§7-C（狀態 chip 耦合）**；維護者處理 §7-B（archive gate）。
+1. §7 全部拍板（OQ1/2/3/5＋狀態 chip＋§7-B' 全自動）；維護者處理 §7-B（archive gate）。
 2. 拍板後用 `superpowers:writing-plans` 產 `docs/superpowers/plans/2026-06-24-minio-folderview-and-baseline-disclosure.md` 逐 task 實作 plan（TDD、先量 baseline、後端 additive 零改、前端重寫斷言）。
 3. 依 `superpowers:subagent-driven-development` 執行；改 symbol 前跑 GitNexus `impact`、commit 前 `detect_changes`（§3.4 刻意改 watcher tick dedup，驗 blast radius 限於預期、未波及 intake/dispatch 下游）；user-facing 跑 gstack browser E2E 取證。
 4. 文件三方同步（§8）與實作同 PR，避免再次背離。
