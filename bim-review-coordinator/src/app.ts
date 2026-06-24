@@ -1216,8 +1216,10 @@ export function createCoordinatorApp(
     }
     const rawPrefix =
       typeof request.query.prefix === "string" ? request.query.prefix : config.minioWatchPrefix;
-    const delimiter =
-      typeof request.query.delimiter === "string" ? request.query.delimiter : undefined;
+    // 空字串 delimiter（?delimiter=）回落舊路徑（truthy check，照 plan §Task2）：
+    // 只有真正帶非空 delimiter（如 /）才走資料夾語意 list，避免前端收到空 folders[] 而非舊格式。
+    const rawDelimiter =
+      typeof request.query.delimiter === "string" ? request.query.delimiter : "";
     let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
       client = createMinioS3Client({
@@ -1225,9 +1227,9 @@ export function createCoordinatorApp(
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
       });
-      if (delimiter !== undefined) {
+      if (rawDelimiter) {
         // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list，回 folders[]（CommonPrefixes）。
-        const listing = await listMinioFolder(client, config.minioWatchBucket, rawPrefix, delimiter);
+        const listing = await listMinioFolder(client, config.minioWatchBucket, rawPrefix, rawDelimiter);
         response.json(listing);
       } else {
         const objects = await listMinioObjects(

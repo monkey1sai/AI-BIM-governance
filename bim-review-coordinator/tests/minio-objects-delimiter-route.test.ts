@@ -84,12 +84,13 @@ afterEach(async () => {
 });
 
 describe("GET /api/minio/objects?delimiter=/", () => {
-  it("帶 delimiter=/ 時回 folders[]（CommonPrefixes）+ objects（當層直屬檔）+ count（spec §2.1, AC-D2）", async () => {
+  it("帶 delimiter=/ 時回 folders[]（CommonPrefixes，含 has_source_ifc）+ objects（當層直屬檔）+ count（spec §2.1, AC-D2）", async () => {
     await startS3Stub([
       { prefixes: ["洲際好宅/", "東勢區許良宇紀念圖書館/"], keys: ["annotations/a.json"] },
-      // probe has_source_ifc for each folder (回無 .ifc)
-      { prefixes: [], keys: [] },
-      { prefixes: [], keys: [] },
+      // probe has_source_ifc：洲際好宅/ 子層含 model.ifc → true；東勢區…/ 無 .ifc → false。
+      // route 整合層須斷言 has_source_ifc 真實值（plan §Task2 line 346），不只 map prefix 字串。
+      { prefixes: [], keys: ["洲際好宅/root/main/000001/model.ifc"] },
+      { prefixes: [], keys: ["東勢區許良宇紀念圖書館/annotations/a.json"] },
     ]);
     const res = await request(makeApp().app).get("/api/minio/objects?delimiter=/");
     expect(res.status).toBe(200);
@@ -99,10 +100,21 @@ describe("GET /api/minio/objects?delimiter=/", () => {
       "洲際好宅/",
       "東勢區許良宇紀念圖書館/",
     ]);
+    // has_source_ifc 真實值（probe 結果），不可只看 prefix 字串。
+    const byPrefix = Object.fromEntries(
+      res.body.folders.map((f: { prefix: string; has_source_ifc: boolean }) => [
+        f.prefix,
+        f.has_source_ifc,
+      ]),
+    );
+    expect(byPrefix["洲際好宅/"]).toBe(true); // probe 命中 model.ifc
+    expect(byPrefix["東勢區許良宇紀念圖書館/"]).toBe(false); // probe 無 .ifc，誠實回 false
     expect(res.body.objects).toHaveLength(1);
     expect(res.body.objects[0].key).toBe("annotations/a.json");
     expect(res.body.count).toBe(1); // objects.length（誠實：非遞迴總數）
     expect(res.body.bucket).toBe("bim-control");
+    // 誠實鐵律：永不回 presigned URL（folders/objects 皆無 url 欄）。
+    expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
   });
 
   it("帶 delimiter=/ 且 probe 回 5xx → 回 502（probe 失敗不靜默捏造 has_source_ifc=false）", async () => {
@@ -123,5 +135,25 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     // 舊路徑不含 folders 欄位
     expect(res.body).not.toHaveProperty("folders");
     expect(Array.isArray(res.body.objects)).toBe(true);
+  });
+
+  it("未設定 MinIO → 帶 delimiter 仍誠實回 count=0 + note（不 500，plan §Task2 line 351）", async () => {
+    // 不設 minioWatchEndpoint/Bucket → handler 開頭 early-return（app.ts:1207-1215），
+    // 帶不帶 delimiter 都走同一段誠實回 count:0 + note，絕不 500/捏造 folders。
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-delim-unset-"));
+    active = createCoordinatorApp({
+      sessionStoreDir: path.join(root, "sessions"),
+      eventLogDir: path.join(root, "events"),
+      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+      conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
+      corsOrigins: ["http://127.0.0.1:5173"],
+      conversionPollEnabled: false,
+      // 刻意不帶 minioWatchEndpoint / minioWatchBucket（未設定 MinIO）
+    });
+    const res = await request(active.app).get("/api/minio/objects?delimiter=/");
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(0);
+    expect(res.body.note).toBeTruthy();
+    expect(res.body).not.toHaveProperty("folders"); // 未設定不臆測 folders
   });
 });
