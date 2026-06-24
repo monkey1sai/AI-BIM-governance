@@ -20,10 +20,11 @@ import {
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
+import { deriveIntakeFromKey, idempotencyKeyFor, correlationIdFor } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
-import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
+import { createMinioS3Client, listMinioObjects, presignMinioObject } from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
@@ -843,6 +844,84 @@ export function createCoordinatorApp(
       response.json(currentMinioWatchStatusPayload());                  // 與 GET status 同邏輯的共用 helper
     } finally {
       minioWatchToggleBusy = false;
+    }
+  });
+
+  // A1 手動觸發：前端只送 MinIO object key，coordinator server-side presign + 重用 watcher
+  // intake 邏輯 self-POST /api/external/ifc-ready。冪等鍵 mw_<hash16>，同 key 回既有 job。
+  // 守門比照其他 /api/conversion/* 控制路由（rejectIfIpNotAllowed）。
+  app.post("/api/conversion/trigger", async (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;
+    if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
+      response.status(503).json({ detail: "MinIO 未設定（endpoint/bucket 缺）" });
+      return;
+    }
+    const key = typeof request.body?.key === "string" ? request.body.key : "";
+    if (!key) {
+      response.status(400).json({ detail: "缺 key" });
+      return;
+    }
+    const derived = deriveIntakeFromKey({
+      key,
+      prefix: config.minioWatchPrefix,
+      keySuffix: config.minioWatchKeySuffix,
+    });
+    if (!derived.ok) {
+      response.status(400).json({ detail: `key 不合法：${derived.reason}` });
+      return;
+    }
+    let presignedRef: string;
+    try {
+      presignedRef = await presignMinioObject(
+        {
+          endpoint: config.minioWatchEndpoint,
+          accessKey: config.minioWatchAccessKey,
+          secretKey: config.minioWatchSecretKey,
+        },
+        config.minioWatchBucket,
+        key,
+      );
+    } catch (err) {
+      response.status(502).json({ detail: `presign 失敗：${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    // etag 在手動觸發無法事先取得，用 key 當穩定 idempotency 來源（同 key 重觸發回既有 job）。
+    const idemKey = idempotencyKeyFor(config.minioWatchBucket, key, key);
+    const corrId = correlationIdFor(config.minioWatchBucket, key, key);
+    // self-POST loopback：複用既有 watcher seam config.minioWatchSelfBaseUrl（config.ts:101、
+    // app.ts:399 同一條），有值時優先（測試以 listen(0) 的真實 port 注入）；fallback 才用
+    // config.port（production 預設 8004，process 已 listen 該 port）。
+    // ⚠ reviewer blocker：supertest 整合測試 request(app.app) 不呼叫 server.listen()，
+    // 若硬編 http://127.0.0.1:${config.port}（預設 8004，無人 listen）→ fetch ECONNREFUSED → 502，
+    // 合法 key 永遠拿不到 202。故端點必須讀 selfBaseUrl seam，測試端 makeApp 須 listen(0)+注入。
+    const selfBase = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${config.port}`;
+    try {
+      const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Webhook-Secret": config.externalIntakeWebhookSecret,
+          "X-Correlation-Id": corrId,
+          "X-Idempotency-Key": idemKey,
+        },
+        body: JSON.stringify({
+          event: "ifc_ready",
+          tenant_id: config.minioWatchTenantId,
+          project_id: derived.projectId,
+          project_display_name: derived.projectDisplayName,
+          model_category: derived.category,
+          external_model_version_id: derived.externalModelVersionId,
+          external_conversion_task_id: `${derived.externalModelVersionId}_manual`,
+          source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
+          requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
+        }),
+      });
+      const text = await upstream.text();
+      const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      // 誠實：回應不夾帶 presigned ref（即使上游回了也遮蔽；source_ifc_ref 由上游 summarize 已遮蔽）
+      response.status(upstream.status).json({ ...parsed, trigger_source: "manual" });
+    } catch (err) {
+      response.status(502).json({ detail: `trigger 失敗：${err instanceof Error ? err.message : String(err)}` });
     }
   });
 

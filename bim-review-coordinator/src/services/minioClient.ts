@@ -1,7 +1,8 @@
 // bim-review-coordinator/src/services/minioClient.ts
 // minio-closed-loop-phase1 Task 4：共用 S3Client 工廠 + list/role 純函式。
 // 不改 minioWatcher.ts；複用 deriveIntakeFromKey 判角色 + 擋路徑穿越。
-import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { deriveIntakeFromKey } from "./minioWatcher.js";
 
 export function createMinioS3Client(cfg: { endpoint: string; accessKey: string; secretKey: string }): S3Client {
@@ -62,4 +63,20 @@ export async function listMinioObjects(
     token = resp.IsTruncated ? resp.NextContinuationToken : undefined;
   } while (token);
   return out;
+}
+
+// server-side 生成 presigned GET URL（簽章只活在後端，不外洩瀏覽器）。
+export async function presignMinioObject(
+  cfg: { endpoint: string; accessKey: string; secretKey: string },
+  bucket: string,
+  key: string,
+): Promise<string> {
+  const client = createMinioS3Client(cfg);
+  try {
+    return await getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
+      expiresIn: 3600,
+    });
+  } finally {
+    client.destroy();
+  }
 }
