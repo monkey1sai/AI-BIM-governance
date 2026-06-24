@@ -501,6 +501,56 @@ describe("edge console honesty smoke", () => {
   });
 });
 
+// ── co-console-runtime-merge §5.1 守門四（D2-A′ 核心合約）：stream-config 不孤兒 ──
+// spec §3.4 D2-A′ 要求 StreamConfigReader 由 (a) RuntimePage 復用、(b) CoordinatorGovernanceTabs
+// 的 debug（Terminal / Debug）分頁直接 render。Task 3 一旦把 #runtime 改渲染 CoordinatorPage，
+// RuntimePage 內的 stream-config 入口就不再可達——唯有 debug 分頁也掛 StreamConfigReader 才不孤兒。
+// renderToString 預設只渲 classic 分頁（useState("classic")），到不了 debug；故用 createRoot + 點
+// 「D Terminal / Debug」分頁鈕（本檔既有互動 pattern），實測 CoordinatorGovernanceTabs→debug→
+// StreamConfigReader 這條真路徑含 stream-config 入口（非直測未 export 的 DebugTab，不擴大公開面）。
+describe("co-console-merge §5.1#4：CoordinatorGovernanceTabs debug 分頁含 stream-config（不孤兒）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  it("點開 debug 分頁 → 渲染 StreamConfigReader（stream-config 入口，D2-A′ 不孤兒）", async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<CoordinatorGovernanceTabs rt={null} busy={false} err={null} onRefresh={() => {}} />);
+    });
+
+    // 預設 classic 分頁尚未含 stream-config 入口（StreamConfigReader 只在 debug 分頁）。
+    expect(container.innerHTML).not.toContain("stream-config");
+
+    // 點「D Terminal / Debug」分頁鈕切到 debug。
+    const debugTabBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="tab"]')).find(
+      (b) => b.textContent === "D Terminal / Debug",
+    );
+    expect(debugTabBtn, "應有 D Terminal / Debug 分頁鈕").not.toBeUndefined();
+    await act(async () => { debugTabBtn!.click(); });
+
+    // debug 分頁含 StreamConfigReader 提供的 stream-config 入口（GET …/stream-config）。
+    const html = container.innerHTML;
+    expect(html).toContain("stream-config");
+    expect(html).toContain("/api/review-sessions/:id/stream-config");
+    expect(html).toContain("review_session_id"); // StreamConfigReader 的輸入框 placeholder
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
 // ── minio-fileserver-source spec §7.3：client-render（真樹 + 互動）驗收 ──
 // renderToString 只能驗 SSR 首幀（loading/空殼，run=null、tree=null），永遠到不了
 // populated/error 態與 onChange data-binding。此處用 createRoot + act + vi.spyOn 補上

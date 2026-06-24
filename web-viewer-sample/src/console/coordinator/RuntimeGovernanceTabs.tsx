@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Btn, Field, Metric, Panel } from "../components";
 import type { RuntimeStatus } from "../coordinatorClient";
+import { StreamConfigReader } from "../pages";
 import { buildEndpointRows, deriveClassicDashboard, type EndpointRow, type HealthTone } from "./runtimeGovernance";
 
 type CoordinatorTab = "classic" | "atc" | "lifecycle" | "debug";
@@ -190,19 +191,24 @@ export function LifecycleTab() {
 
 function DebugTab({ rt }: { rt: RuntimeStatus | null }) {
   return (
-    <Panel title="Terminal / Debug" sub="工程證據頁；保留 raw JSON 入口但 Phase 1 不在總覽展開" prov="asbuilt">
-      <p className="ec-note">Terminal / Debug 是工程證據頁.</p>
-      <p className="ec-note">
-        Debug categories：service health、coordinator endpoint、conversion authority、Kit binding、browser evidence、exception details。
-      </p>
-      <Field k="service" v={rt ? `${rt.service.name} · ${rt.service.status}` : "未取得 /api/runtime/status"} prov="asbuilt" />
-      <Field
-        k="runtime endpoint"
-        v={rt ? `${rt.configured_endpoints.coordinator.public_base_url}/api/runtime/status` : "/api/runtime/status"}
-        prov="asbuilt"
-      />
-      <Field k="raw JSON" v="僅在工程排障視角檢視；Classic Dashboard 不直接展開 payload" prov="asbuilt" />
-    </Panel>
+    <>
+      <Panel title="Terminal / Debug" sub="工程證據頁；保留 raw JSON 入口但 Phase 1 不在總覽展開" prov="asbuilt">
+        <p className="ec-note">Terminal / Debug 是工程證據頁.</p>
+        <p className="ec-note">
+          Debug categories：service health、coordinator endpoint、conversion authority、Kit binding、browser evidence、exception details。
+        </p>
+        <Field k="service" v={rt ? `${rt.service.name} · ${rt.service.status}` : "未取得 /api/runtime/status"} prov="asbuilt" />
+        <Field
+          k="runtime endpoint"
+          v={rt ? `${rt.configured_endpoints.coordinator.public_base_url}/api/runtime/status` : "/api/runtime/status"}
+          prov="asbuilt"
+        />
+        <Field k="raw JSON" v="僅在工程排障視角檢視；Classic Dashboard 不直接展開 payload" prov="asbuilt" />
+      </Panel>
+      {/* D2-A′：stream-config 讀取器在此分頁 render，使 #runtime 承接 CoordinatorPage 後（Task 3）入口不孤兒；
+          與 RuntimePage 共用同一 StreamConfigReader 元件（pages.tsx），誠實 read-only、不開串流、不捏造遙測。 */}
+      <StreamConfigReader />
+    </>
   );
 }
 
