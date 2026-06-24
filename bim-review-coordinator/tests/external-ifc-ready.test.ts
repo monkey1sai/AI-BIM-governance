@@ -272,6 +272,16 @@ describe("POST /api/external/ifc-ready", () => {
     const final = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatch_failed"]);
     expect(final.status).toBe("dispatch_failed");
     expect(final.conversion_authority).toBeNull();
+    // minio-trigger-lifecycle:鎖住單一權威 conversion_lifecycle_status 上 wire（dashboard 出口）。
+    // 此欄由 summarizeIfcReadyJob（list / status 投影）計算，detail 端點回原始 job 不含此欄，
+    // 故改打列表端點驗證。dispatch_failed → deriveLifecycleStatus 短路回 "failed"；
+    // 若 summarizeIfcReadyJob 誤刪/改名此欄，既有斷言全綠卻漏此回歸，於此明確鎖住。
+    const listedFailed = await request(app.app).get("/api/external/ifc-ready");
+    const failedItem = (listedFailed.body.items as Array<Record<string, unknown>>).find(
+      (entry) => entry.ifc_ready_job_id === res.body.ifc_ready_job_id,
+    );
+    expect(failedItem).toBeDefined();
+    expect(failedItem?.conversion_lifecycle_status).toBe("failed");
   });
 
   it("lists recent IFC-ready jobs with dashboard-safe progress fields", async () => {
@@ -304,6 +314,9 @@ describe("POST /api/external/ifc-ready", () => {
       download_status: "downloaded",
       conversion_job_id: "stream_conv_test_001",
       conversion_status: "queued",
+      // minio-trigger-lifecycle:單一權威生命週期狀態上 wire。dispatched + conversion_status
+      // 非 ready → deriveLifecycleStatus 回 "converting"。鎖住列表端點不可漏此欄。
+      conversion_lifecycle_status: "converting",
       conversion_authority: "bim-streaming-server",
       queue_position: null,   // conv-prioritize-retry:additive 上 wire（已派工 → null）
       web_view_session_id: null,
