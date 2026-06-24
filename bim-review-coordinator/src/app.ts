@@ -22,7 +22,7 @@ import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
-import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
+import { createMinioS3Client, listMinioFolder, listMinioObjects } from "./services/minioClient.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -1216,6 +1216,8 @@ export function createCoordinatorApp(
     }
     const rawPrefix =
       typeof request.query.prefix === "string" ? request.query.prefix : config.minioWatchPrefix;
+    const delimiter =
+      typeof request.query.delimiter === "string" ? request.query.delimiter : undefined;
     let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
       client = createMinioS3Client({
@@ -1223,13 +1225,19 @@ export function createCoordinatorApp(
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
       });
-      const objects = await listMinioObjects(
-        client,
-        config.minioWatchBucket,
-        rawPrefix,
-        config.minioWatchKeySuffix,
-      );
-      response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+      if (delimiter !== undefined) {
+        // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list，回 folders[]（CommonPrefixes）。
+        const listing = await listMinioFolder(client, config.minioWatchBucket, rawPrefix, delimiter);
+        response.json(listing);
+      } else {
+        const objects = await listMinioObjects(
+          client,
+          config.minioWatchBucket,
+          rawPrefix,
+          config.minioWatchKeySuffix,
+        );
+        response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+      }
     } catch (err) {
       response
         .status(502)
