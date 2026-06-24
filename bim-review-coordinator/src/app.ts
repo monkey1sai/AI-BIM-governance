@@ -2497,10 +2497,12 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
 // 以 spread + 遮蔽單一欄位的方式收斂，避免日後 job 新增欄位時又漏遮某個敏感值
 // 而必須逐一比對；目前唯一含簽章的欄位是 source_ifc_ref。
 /**
- * @security 對外輸出 IfcReadyIntakeJob 前必經此函式：遮蔽 source_ifc_ref 的 presigned 簽章。
- * 任何「把整個 job spread 進對外 response」的出口（GET list/:jobId/shadow、POST intake 200/202、
- * local-web-view session）都 MUST 先過此函式。日後若 IfcReadyIntakeJob 新增帶簽章/secret 的欄位，
- * MUST 在此一併遮蔽並補對應守衛測試（tests/presigned-ref.test.ts）。
+ * @security 瀏覽器可見 / 對外（browser-visible / external）輸出 IfcReadyIntakeJob 前必經此函式：
+ * 遮蔽 source_ifc_ref 的 presigned 簽章。已涵蓋出口：GET list/:jobId/shadow、POST intake 200/202、
+ * POST local-web-view session。日後新增「瀏覽器可見/對外」且 spread 整個 job 的出口，MUST 先過此函式並補守衛測試。
+ * 範圍外（刻意）：POST /api/internal/conversion-result、/api/internal/conversions/:id/ingest 等 internal-token
+ * 路徑仍回原始 job（內部 consumer 可能需 presigned 下載；比照 callback outbox carve-out，pre-existing 非本次新增）。
+ * 若要對 internal 路徑做 defense-in-depth 遮蔽，須先確認下游 consumer 不依賴 presigned ref。
  */
 function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
