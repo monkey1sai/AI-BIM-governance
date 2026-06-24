@@ -125,11 +125,14 @@ Expected: PASS（4 passed）
 
 - [ ] **Step 5: 套用於 summarize 出口（app.ts:2357）**
 
-先在 `src/app.ts` 既有 import 區加入（與其他 `./services/*.js` import 並列）：
+先在 `src/app.ts` 既有 `./services/*.js` import 群組加入此行（reviewer major：給精確錨點以免 ESLint import-order 報錯）。錨點：緊接在既有
+`import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";`（app.ts:25）**之後**新增一行。`presignedRef` 與 `minioClient` 同屬 `./services/` 群組，置於其後不破壞 import 群組順序：
 
 ```typescript
 import { maskPresignedRef } from "./services/presignedRef.js";
 ```
+
+> 註：若 repo 啟用了 import 排序 lint 規則，依其字母序自動修正 import 群組內次序即可（`maskPresignedRef`/`presignedRef.js` 與群組內既有 `minioClient.js`/`minioWatcher.js` 同層級）；本步只要求落在 `./services/*.js` 群組內、非散在他處。
 
 把 `summarizeIfcReadyJob` 內（約行 2357）：
 
@@ -159,9 +162,17 @@ import { maskPresignedRef } from "./services/presignedRef.js";
 
 - [ ] **Step 7: 加誠實守衛整合測試（GET 回應不含簽章）**
 
-在 `tests/presigned-ref.test.ts` 末尾追加：
+在 `tests/presigned-ref.test.ts` 末尾追加。
+
+> **teardown 與既有測試對齊（reviewer blocker / major 修正）**：
+> 既有整合測試（`tests/external-ifc-ready.test.ts:30-43`、`tests/minio-watch-status-route.test.ts:10-17`、`tests/conversion-ledger-intake-integration.test.ts:32-36`）的 `afterEach` 一律走三步
+> `await active.dispose(); active.io.close(); await new Promise(r => active?.server.close(() => r()))`。
+> 缺 `io.close()` 會讓 Socket.IO keep-alive 連線阻止 `server.close` callback 觸發 → vitest 報 open handles / 逾時。
+> `CoordinatorApp.dispose` 在介面（app.ts:291）是 `() => Promise<void>` **必要方法（非 optional）**，故**不可**用 `active.dispose?.()` 的可選鏈（多餘且在 strict 下無意義）；一律 `await active.dispose()`。
+> import 次序：本檔上半段是純單元測試（只 import `vitest` + `maskPresignedRef`），此 Step 把整合測試所需的 `request`/`fs`/`os`/`path`/`createCoordinatorApp`/`afterEach` import **補到檔首既有 import 區**（與上半段 import 並列），不要在檔案中段重複 import。本檔不使用 `vi.mock`，無 forwardRef hoisting 限制。
 
 ```typescript
+// ↓ 補到 tests/presigned-ref.test.ts 檔首既有 import 區（與 vitest / maskPresignedRef import 並列）
 import request from "supertest";
 import fs from "node:fs";
 import os from "node:os";
@@ -171,10 +182,12 @@ import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 
 let active: CoordinatorApp | null = null;
 afterEach(async () => {
-  if (active) {
-    await active.dispose?.();
-    active = null;
-  }
+  if (!active) return;
+  // 三步 teardown，與既有整合測試一致：dispose 先收斂 watcher/timer，再 io.close，最後 server.close。
+  await active.dispose();
+  active.io.close();
+  await new Promise<void>((resolve) => active?.server.close(() => resolve()));
+  active = null;
 });
 
 describe("誠實守衛：對外 ifc-ready response 不含 presigned 簽章", () => {
@@ -194,7 +207,7 @@ describe("誠實守衛：對外 ifc-ready response 不含 presigned 簽章", () 
 });
 ```
 
-> 註：此測試在空 store 下即驗「列表端點不外洩簽章」的結構保證；後續 Task 4 的 trigger 整合測試會在有真 job 時再覆蓋一次。
+> 註：此測試在空 store 下即驗「列表端點不外洩簽章」的結構保證；後續 Task 4 的 trigger 整合測試會在有真 job 時再覆蓋一次。此測試本身不啟 watcher（無 `minioWatch*` config）、不 `server.listen()`，`request(active.app)` 走 in-process 路由即可，故 GET 路徑無 self-POST 依賴。
 
 - [ ] **Step 8: 跑全測試確認通過**
 
@@ -244,6 +257,8 @@ EOF
 | 其餘（accepted / downloading / downloaded 未派工） | `detected` |
 
 - [ ] **Step 1: 寫 deriveLifecycleStatus 失敗測試**
+
+> **任務間 types.ts 互依（reviewer major 釐清）**：本 helper 以 `... } as IfcReadyIntakeJob` **斷言**建構，故 base object 不必列齊 `IfcReadyIntakeJob` 全部欄位——缺的（含 Task 3 才加的 `project_display_name`/`category`、以及既有 optional `download_status?`）在 `as` 斷言下不會 TS 報錯。`download_status` 在 types.ts:210 本就是 optional（`download_status?: ... | null`），故各測試以 `overrides` 帶 `download_status: "failed"` 合法。**任務執行順序 Task 2 → Task 3** 對本 helper 無影響：Task 3 對 `IfcReadyIntakeJob` 的新增欄位皆為 optional nullable（`?: string | null`），不會讓既有 `as` 斷言失效。**若**未來把欄位改成 required（本 plan 不做），才需回頭補 base object。
 
 建立 `tests/lifecycle-status.test.ts`：
 
@@ -389,30 +404,29 @@ EOF
 
 - [ ] **Step 1: 寫整合失敗測試（intake 帶兩欄 → GET 可見）**
 
-在 `tests/external-ifc-ready.test.ts` 末尾新增（沿用該檔既有 `makeApp` 與 webhook 標頭慣例；若該檔的 intake POST helper 名稱不同，比照既有測試呼叫）：
+在 `tests/external-ifc-ready.test.ts` **末尾新增一個 `describe`**（reviewer major：明確「複用該檔既有設施、不另立」）。該檔已具備：
+- module-level `let active` + `afterEach`（lines 30-43，三步 `dispose → io.close → server.close`）→ **此測試不要再宣告 `active`/`afterEach`**，呼叫既有 `makeApp(...)` 即由既有 `afterEach` 收尾；
+- `makeApp(overrides: Partial<CoordinatorConfig> = {})`（line 46，spread overrides，可吃 `externalIntakeWebhookSecret`/`externalIntakeIpAllowlist`）；
+- `WEBHOOK_SECRET` 常數 + `authHeaders()`（line 65）+ `payload()`（line 60，由 `CONTRACT.example` 衍生）。
+  沿用 `authHeaders()`/`WEBHOOK_SECRET`，避免硬寫 `"test-secret"` 與該檔常數漂移：
 
 ```typescript
 describe("OQ1：project_display_name / category 對外曝光", () => {
   it("intake 帶 project_display_name + model_category → GET 列表可見 category/project_display_name", async () => {
-    const app = makeApp({
-      externalIntakeWebhookSecret: "test-secret",
-      externalIntakeIpAllowlist: [],
-    });
+    // 複用既有 makeApp（預設已帶 streamingConversionApiBase 不可達 → dispatch graceful）。
+    // 預設 config 的 webhook secret 即 WEBHOOK_SECRET（該檔既有測試已依賴），故沿用 authHeaders()。
+    const app = makeApp();
     const res = await request(app.app)
       .post("/api/external/ifc-ready")
-      .set("X-Webhook-Secret", "test-secret")
-      .set("X-Correlation-Id", "corr_oq1")
-      .set("X-Idempotency-Key", "idem_oq1")
+      .set(authHeaders({ "X-Correlation-Id": "corr_oq1", "X-Idempotency-Key": "idem_oq1" }))
       .send({
-        event: "ifc_ready",
-        tenant_id: "tenant_demo_001",
+        ...payload(),
         project_id: "p_safe",
         project_display_name: "許良宇圖書館",
         model_category: "main",
         external_model_version_id: "v2026",
-        source_ifc: { ref: "http://127.0.0.1:1/x.ifc", etag: "e1", filename: "model.ifc" },
       });
-    // download 對 127.0.0.1:1 會失敗 → 502，但 job 已建、欄位已存
+    // download/dispatch 不可達為 graceful（job 仍建、欄位已存）；只取 job id，不假設特定 status。
     const jobId = res.body.ifc_ready_job_id as string;
     expect(jobId).toBeTruthy();
     const list = await request(app.app).get("/api/external/ifc-ready");
@@ -424,6 +438,8 @@ describe("OQ1：project_display_name / category 對外曝光", () => {
   });
 });
 ```
+
+> 註：`payload()` 由契約 `CONTRACT.example` 衍生，已含合法 `source_ifc`/`tenant_id` 等必填欄位；此處只 override 要驗的四欄（`project_id`/`project_display_name`/`model_category`/`external_model_version_id`）。`source_ifc.ref` 沿用契約範例值即可（OQ1 驗的是兩欄落庫，不依賴 ref 可下載）。若契約範例未含 `model_category`/`project_display_name`，spread override 會補上。GET 列表回傳鍵名（`items` vs 其他）以該檔既有列表測試（約 line 283）實際斷言為準。
 
 - [ ] **Step 2: 跑測試確認失敗**
 
@@ -501,10 +517,22 @@ EOF
 
 - [ ] **Step 1: 寫 presignMinioObject 不動測試骨架 + trigger 驗證失敗測試**
 
-建立 `tests/conversion-trigger.test.ts`（presign 以 `vi.mock` 假打，避免依賴真 MinIO）：
+建立 `tests/conversion-trigger.test.ts`（presign 以 `vi.mock` 假打，避免依賴真 MinIO）。
+
+> **reviewer blocker / major：self-POST 必須打得通，否則「合法 key → 202」永遠失敗。**
+> 端點 self-POST `/api/external/ifc-ready`（見 Step 4，走 `config.minioWatchSelfBaseUrl || http://127.0.0.1:${config.port}`）。
+> supertest `request(app.app)` 只在 process 內路由、**不啟 HTTP listener**；若不 `server.listen()`，self-POST 的 `fetch` 會 ECONNREFUSED → 端點回 502，合法 key 拿不到 202。
+> 因此 `makeApp` 必須照既有 `tests/minio-watch-intake-integration.test.ts:58-119` 的權威模式：
+> 1. `await server.listen(0, "127.0.0.1")` 取得真實 bound port；
+> 2. 把該 port 以 `config.minioWatchSelfBaseUrl = http://127.0.0.1:<port>` 注入（端點 self-POST 即打到自己這支真 listener）；
+> 3. 因為要先建 app 再 listen 再注入 selfBaseUrl，`makeApp` 改為 **async**，呼叫處 `await makeApp()`。
+> 並用三步 teardown（`dispose → io.close → server.close`，對齊既有測試）；`dispose` 非 optional，不用 `?.`。
+>
+> 注意 `minioWatchSelfBaseUrl` 有值會觸發 app.ts:418「立即啟動 watcher」路徑；為避免測試窗內 watcher 自動 tick 干擾，`makeApp` 同時設 `minioWatchEnabled: false`（watcher runtime 關閉，但 selfBaseUrl seam 仍供 trigger 端點 self-POST 使用——seam 是讀值，不依賴 watcher 是否啟動）。
 
 ```typescript
 import request from "supertest";
+import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -525,13 +553,24 @@ import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 
 let active: CoordinatorApp | null = null;
 afterEach(async () => {
-  if (active) {
-    await active.dispose?.();
-    active = null;
-  }
+  if (!active) return;
+  // 三步 teardown，與既有整合測試一致（dispose 非 optional）。
+  await active.dispose();
+  active.io.close();
+  await new Promise<void>((resolve) => active?.server.close(() => resolve()));
+  active = null;
 });
 
-function makeApp(): CoordinatorApp {
+async function listenOnRandomPort(server: http.Server): Promise<number> {
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const a = server.address();
+  if (!a || typeof a === "string") throw new Error("server bind failed");
+  return a.port;
+}
+
+// async：先建 app → listen(0) 取真實 port → 以 minioWatchSelfBaseUrl 注入該 port，
+// 讓 trigger 端點 self-POST /api/external/ifc-ready 打到自己這支真 listener（否則 502）。
+async function makeApp(): Promise<CoordinatorApp> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-trigger-test-"));
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
@@ -541,6 +580,7 @@ function makeApp(): CoordinatorApp {
     corsOrigins: ["http://127.0.0.1:5173"],
     externalIntakeWebhookSecret: "test-secret",
     externalIntakeIpAllowlist: [],
+    minioWatchEnabled: false, // watcher runtime 關閉，避免自動 tick；selfBaseUrl seam 仍可被 trigger 端點讀用。
     minioWatchEndpoint: "http://minio.test:9000",
     minioWatchBucket: "bim-control",
     minioWatchAccessKey: "ak",
@@ -549,24 +589,27 @@ function makeApp(): CoordinatorApp {
     minioWatchKeySuffix: "/model.ifc",
     minioWatchTenantId: "tenant_demo_001",
   });
+  const port = await listenOnRandomPort(active.server);
+  // 注入真實 port 給 self-POST loopback（端點讀 config.minioWatchSelfBaseUrl）。
+  active.config.minioWatchSelfBaseUrl = `http://127.0.0.1:${port}`;
   return active;
 }
 
 describe("POST /api/conversion/trigger", () => {
   it("malformed key（少於三段）→ 400", async () => {
-    const app = makeApp();
+    const app = await makeApp();
     const res = await request(app.app).post("/api/conversion/trigger").send({ key: "a/model.ifc" });
     expect(res.status).toBe(400);
   });
 
   it("缺 key → 400", async () => {
-    const app = makeApp();
+    const app = await makeApp();
     const res = await request(app.app).post("/api/conversion/trigger").send({});
     expect(res.status).toBe(400);
   });
 
   it("合法 key → 202 + ifc_ready_job_id，且 response 不含 presigned 簽章", async () => {
-    const app = makeApp();
+    const app = await makeApp();
     const res = await request(app.app)
       .post("/api/conversion/trigger")
       .send({ key: "proj/main/uuid/model.ifc" });
@@ -577,6 +620,8 @@ describe("POST /api/conversion/trigger", () => {
 });
 ```
 
+> **selfBaseUrl 注入時機說明**：`config.minioWatchSelfBaseUrl` 是 `CoordinatorConfig` 欄位（config.ts:101）、`createCoordinatorApp` 回傳的 `active.config` 是同一個 config 物件。trigger 端點在**請求時**才讀 `config.minioWatchSelfBaseUrl`，故在 `listen` 之後、發請求之前 mutate `active.config.minioWatchSelfBaseUrl` 即可生效（不需在 createCoordinatorApp 當下就帶 selfBaseUrl，反而可避開 app.ts:418 立即啟 watcher 的路徑）。若實作者偏好 immutable config，可改為在 createCoordinatorApp 傳入 `minioWatchSelfBaseUrl: "http://127.0.0.1:0"` 佔位後仍 listen(0) 再 mutate；二擇一即可，重點是端點 self-POST 的 base 指向實際 listen 的 port。
+
 - [ ] **Step 2: 跑測試確認失敗**
 
 Run: `cd bim-review-coordinator && npx vitest run tests/conversion-trigger.test.ts`
@@ -584,12 +629,22 @@ Expected: FAIL（`presignMinioObject` 不存在於 mock 的 importOriginal，或
 
 - [ ] **Step 3: 實作 presignMinioObject**
 
-在 `src/services/minioClient.ts` 末尾加（import 區補 `getSignedUrl`、`GetObjectCommand`）：
+此步分兩處改動（reviewer major：原文「在末尾加（import 區補…）」把「檔末加函式」與「檔首補 import」兩個不同位置混在一句，拆清楚）。
+
+**(3a) 檔首 import 區**：`minioClient.ts` 現有 import 只有
+`import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";`（line 4）與
+`import { deriveIntakeFromKey } from "./minioWatcher.js";`（line 5）。
+把 `GetObjectCommand` **併入既有 `@aws-sdk/client-s3` 那一行**（改成 `import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";`），並在其下**新增**一行 presigner import：
 
 ```typescript
-import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+```
 
+> `@aws-sdk/s3-request-presigner` 已在 plan Tech Stack 列為相依；若 `package.json` 尚未列入須先 `npm i`（與 plan §Tech Stack 一致，非新增非預期依賴）。
+
+**(3b) 檔案末尾**：在 `minioClient.ts` 既有 export 函式**之後**追加 `presignMinioObject`（複用同檔 `createMinioS3Client`）：
+
+```typescript
 // server-side 生成 presigned GET URL（簽章只活在後端，不外洩瀏覽器）。
 export async function presignMinioObject(
   cfg: { endpoint: string; accessKey: string; secretKey: string },
@@ -662,7 +717,13 @@ import { deriveIntakeFromKey, idempotencyKeyFor, correlationIdFor } from "./serv
     // etag 在手動觸發無法事先取得，用 key 當穩定 idempotency 來源（同 key 重觸發回既有 job）。
     const idemKey = idempotencyKeyFor(config.minioWatchBucket, key, key);
     const corrId = correlationIdFor(config.minioWatchBucket, key, key);
-    const selfBase = `http://127.0.0.1:${config.port}`;
+    // self-POST loopback：複用既有 watcher seam config.minioWatchSelfBaseUrl（config.ts:101、
+    // app.ts:399 同一條），有值時優先（測試以 listen(0) 的真實 port 注入）；fallback 才用
+    // config.port（production 預設 8004，process 已 listen 該 port）。
+    // ⚠ reviewer blocker：supertest 整合測試 request(app.app) 不呼叫 server.listen()，
+    // 若硬編 http://127.0.0.1:${config.port}（預設 8004，無人 listen）→ fetch ECONNREFUSED → 502，
+    // 合法 key 永遠拿不到 202。故端點必須讀 selfBaseUrl seam，測試端 makeApp 須 listen(0)+注入。
+    const selfBase = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${config.port}`;
     try {
       const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
         method: "POST",
@@ -694,7 +755,7 @@ import { deriveIntakeFromKey, idempotencyKeyFor, correlationIdFor } from "./serv
   });
 ```
 
-> 註：`rejectIfIpNotAllowed`、`config.minioWatch*`、`config.externalIntakeWebhookSecret`、`config.port` 均為既有；若 `request.body` 未經 json middleware，確認 app 已掛 `express.json()`（既有 intake 路由已依賴，故已掛）。
+> 註：`rejectIfIpNotAllowed`、`config.minioWatch*`（含 `config.minioWatchSelfBaseUrl`，config.ts:101）、`config.externalIntakeWebhookSecret`、`config.port` 均為既有 config 欄位；若 `request.body` 未經 json middleware，確認 app 已掛 `express.json()`（既有 intake 路由已依賴，故已掛）。既有 dev `register` 端點（app.ts:1989）同樣 self-POST，但它硬編 `config.port` 且**無 supertest 覆蓋**故從未在 in-process 測試被驗；本端點因有測試覆蓋，必須走 `minioWatchSelfBaseUrl` seam。
 
 - [ ] **Step 5: 跑 trigger 測試確認通過**
 
