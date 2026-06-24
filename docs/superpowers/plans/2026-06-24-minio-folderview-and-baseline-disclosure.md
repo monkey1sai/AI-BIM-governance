@@ -455,7 +455,7 @@ EOF
 > import http from "node:http";
 > import fs from "node:fs"; import os from "node:os"; import path from "node:path";
 > import { triggerManualIntake } from "../src/services/manualIntake.js";
-> import { createConversionLedger } from "../src/services/conversionLedger.js";
+> import { ConversionLedger } from "../src/services/conversionLedger.js";
 > import { idempotencyKeyFor } from "../src/services/minioWatcher.js";
 >
 > let stub: http.Server | null = null; let stubUrl = ""; let root: string | null = null;
@@ -476,7 +476,8 @@ EOF
 > const cfg = () => ({ endpoint: stubUrl, bucket: "bim-control", accessKey: "ak", secretKey: "sk", keySuffix: "/model.ifc" });
 > function makeLedger() {
 >   root = fs.mkdtempSync(path.join(os.tmpdir(), "manual-intake-"));
->   return createConversionLedger(path.join(root, "ledger.json")); // ← 若工廠名/簽名不同，執行者先 grep conversionLedger.ts export 對齊
+>   // ConversionLedger 是 constructor-based（spec §6.1 已驗證；無 createConversionLedger 工廠）。
+>   return new ConversionLedger(path.join(root, "ledger.json"));
 > }
 >
 > describe("triggerManualIntake", () => {
@@ -1368,6 +1369,7 @@ export function MinioDataPage() {
   const [chipOverride, setChipOverride] = useState<Record<string, string>>({}); // 觸發成功後 patch chip（零額外 round-trip）
   const [pendingKey, setPendingKey] = useState<string | null>(null);            // intent→confirm
   const [triggerErr, setTriggerErr] = useState<string | null>(null);
+  const [triggerBusy, setTriggerBusy] = useState(false);                         // confirm 進行中（IntentDialog busy）
 
   const load = useCallback(async (p: string) => {
     setLoading(true); setErr(null);
@@ -1392,14 +1394,18 @@ export function MinioDataPage() {
   // folders 為 Array<{ prefix; has_source_ifc }>（7a 前置已把型別由 string[] 改物件陣列）。
   const sortedFolders = folder ? [...folder.folders].sort((a, b) => a.prefix.localeCompare(b.prefix, "zh-TW")) : [];
 
-  const confirmTrigger = async () => {
+  // IntentDialog onConfirm 帶使用者填的 reason（uncontrolled textarea）；dialog 本身不關、不顯錯誤，
+  // 由本 caller 負責：成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy（與既有
+  // ConversionSchedulingPage 用法、spec §6.1 IntentDialog 契約一致）。
+  const confirmTrigger = async (reason: string) => {
     if (!pendingKey) return;
-    setTriggerErr(null);
+    setTriggerErr(null); setTriggerBusy(true);
     try {
-      const res = await coordinatorClient.conversionTrigger(pendingKey, "manual trigger from #minio");
+      const res = await coordinatorClient.conversionTrigger(pendingKey, reason || "manual trigger from #minio");
       setChipOverride((p) => ({ ...p, [res.idempotency_key]: res.status })); // patch chip 為 detected/queued
-      setPendingKey(null);
-    } catch (e) { setTriggerErr(String(e)); }                    // 失敗顯 inline error、chip 不變
+      setPendingKey(null);                                       // 成功才關 dialog
+    } catch (e) { setTriggerErr(String(e)); }                    // 失敗顯 inline error（actionErr）、chip 不變、dialog 不關
+    finally { setTriggerBusy(false); }
   };
   // ===== JSX 骨架（可直接複製）=====
   // 三階段共用同一份 return。執行者依 7a→7b→7c 漸進填：
@@ -1507,21 +1513,18 @@ export function MinioDataPage() {
         </div>
       )}
 
-      {/* 7c：intent→confirm 對話框（pendingKey 非 null 才掛） */}
-      {pendingKey ? (
-        <IntentDialog
-          title={t("確認觸發轉檔", "Confirm trigger conversion")}
-          body={
-            <div>
-              <p>{t("對此物件觸發轉檔 intake：", "Trigger conversion intake for this object: ")}{pendingKey}</p>
-              {triggerErr ? <p className="ec-error">{triggerErr}</p> : null}
-            </div>
-          }
-          confirmLabel={t("確認", "Confirm")}
-          onConfirm={() => void confirmTrigger()}
-          onCancel={() => { setPendingKey(null); setTriggerErr(null); }}
-        />
-      ) : null}
+      {/* 7c：intent→confirm 對話框。IntentDialog 真實 props（spec §6.1 / IntentDialog.tsx:9-21）＝
+          open / title / cost / onConfirm(reason) / onCancel / busy / actionErr——無 body / confirmLabel；
+          確認文字由元件內建、reason 來自元件內 uncontrolled textarea。物件 key 與失敗提示分別走 cost / actionErr。 */}
+      <IntentDialog
+        open={!!pendingKey}
+        title={t("確認觸發轉檔", "Confirm trigger conversion")}
+        cost={t("對此物件觸發轉檔 intake：", "Trigger conversion intake for this object: ") + (pendingKey ?? "")}
+        busy={triggerBusy}
+        actionErr={triggerErr}
+        onConfirm={(reason) => void confirmTrigger(reason)}
+        onCancel={() => { setPendingKey(null); setTriggerErr(null); }}
+      />
 
       {/* [7a] 保留底部「Bucket layout（規約說明 — 示意，非實況）」DEMO panel（沿用 :1276-1287，標 DEMO 不變）。 */}
       <SectionTitle hint={t("規約說明 — 示意，非實況", "convention reference — illustrative, not live")}>
@@ -1535,7 +1538,7 @@ export function MinioDataPage() {
 
 > **JSX 骨架說明（執行者照做要點）：**
 > - 上方 `return(...)` 是**可直接複製貼上的完整骨架**，已含 7a（殼＋資料夾鈕＋`has_source_ifc` badge＋role＋三段 badge＋四態）、7b（`minio-chip-${idk}`）、7c（`minio-trigger-${idk}`＋`IntentDialog`）。分階段 commit 時，7a 可先把 `<>...chip...trigger...</>` 那段用 `{false && (...)}` 包住或註解掉，7b 解開 chip、7c 解開 trigger；或一次放齊靠各階段 `it` 驗證遞進（兩種皆可，見前面拆階段說明）。
-> - `IntentDialog` / `PageHead` / `SectionTitle` / `Btn` / `t` 皆為 `pages.tsx` 既有元件/helper（沿用既有 import，勿新造）；若 `IntentDialog` 的 props 名稱與本檔既有用法不同（執行者先 grep 既有 `<IntentDialog` 用例對齊 props），以既有簽名為準、語意不變。
+> - `IntentDialog` / `PageHead` / `SectionTitle` / `Btn` / `t` 皆為 `pages.tsx` 既有元件/helper（沿用既有 import，勿新造）。`IntentDialog` 的真實簽名已對齊（`IntentDialog.tsx:9-21` / spec §6.1）＝`open: boolean` / `title: string` / `cost: string` / `onConfirm: (reason: string) => void | Promise<void>` / `onCancel: () => void` / `busy?: boolean` / `actionErr?: string | null`——**無 `body` / `confirmLabel`**；確認鈕文字由元件內建、`reason` 來自元件內 uncontrolled textarea、dialog 不自動關（成功才由 caller `setPendingKey(null)`）、錯誤由 caller 經 `actionErr` 傳入顯示。上方骨架已照此寫，**executor 直接複製即可、無需再對齊**。
 > - chip 顏色沿用既有 `ec-prov` class（與 `roleClass` 配色慣例一致）；資料夾 badge 用 `ec-prov artifact`。
 > - 頁首 sub 文案已把舊「呈現 bucket 三層結構（專案 → 種類 → 版本）」改為「逐層資料夾導覽（像 MinIO 網頁，point-and-list）」並保留「唯讀 intake 來源視圖，非 metadata 權威」誠實字樣（對應 [7a]「頁首保留誠實字樣」it）。
 > - empty 態嚴格分兩種：`folder?.note` 有 → (a)「MinIO 未設定」；無 note 且 `folders=[] && objects=[]`（`showFolderEmpty`）→ (b)「此層無物件」，**不可混用**（對應 AC-honesty 與 [7a] 兩個 empty it）。
