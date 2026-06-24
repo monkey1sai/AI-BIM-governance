@@ -2457,6 +2457,34 @@ export function IntakePage() {
   );
 }
 
+// ── stream-config 讀取器（D2-A′ 抽出共用）：RuntimePage 與 CoordinatorGovernanceTabs 的 ──
+// Terminal/Debug 分頁共用同一元件，使 stream-config 入口在 #runtime（承接 CoordinatorPage）後不孤兒。
+// 自取資料（coordinatorClient.streamConfig）、零 props、誠實 read-only：不開串流、不捏造遙測。
+export function StreamConfigReader() {
+  const [scSession, setScSession] = useState("");
+  const [sc, setSc] = useState<string | null>(null);
+  const [scErr, setScErr] = useState<string | null>(null);
+
+  const fetchStreamConfig = useCallback(async () => {
+    if (!scSession.trim()) return;
+    setScErr(null); setSc(null);
+    try { setSc(JSON.stringify(await coordinatorClient.streamConfig(scSession.trim()), null, 2)); }
+    catch (e) { setScErr(`${t("stream-config 讀取失敗：", "Failed to read stream-config: ")}${String(e)}`); }
+  }, [scSession]);
+
+  return (
+    <Panel title={t("stream-config · 給 viewer 的連線資訊", "stream-config · connection info for the viewer")} sub="GET /api/review-sessions/:id/stream-config（coordinator owner）" prov="asbuilt">
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input className="ec-btn" style={{ minWidth: 320 }} placeholder="review_session_id" value={scSession} onChange={(e) => setScSession(e.target.value)} />
+        <Btn disabled={!scSession.trim()} caption="GET …/stream-config" onClick={fetchStreamConfig}>{t("讀取 stream-config", "Read stream-config")}</Btn>
+      </div>
+      {scErr && <p className="ec-warn-note">{scErr}</p>}
+      {sc && <pre className="ec-note" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{sc}</pre>}
+      <p className="ec-note">{t("stream-config 為 coordinator owner 的真實端點；GPU 串流由 host-native Kit 負責，本面板僅唯讀轉發連線資訊，不開串流、不捏造遙測。", "stream-config is a real endpoint owned by the coordinator; GPU streaming is handled by host-native Kit. This panel only forwards connection info read-only; it does not open streams or fabricate telemetry.")}</p>
+    </Panel>
+  );
+}
+
 // ── P2-3 Runtime Dashboard（F）：Kit 綁定 / stream-config（coordinator read-only）──
 // 真實端點：GET /api/runtime/status（host_native_plane / kit bindings）+
 // GET /api/review-sessions/:id/stream-config。GPU / conversion 無遙測 → 標未取得，禁畫 fail。
@@ -2464,9 +2492,6 @@ export function RuntimePage() {
   const [rt, setRt] = useState<RuntimeStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [scSession, setScSession] = useState("");
-  const [sc, setSc] = useState<string | null>(null);
-  const [scErr, setScErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setErr(null);
@@ -2475,13 +2500,6 @@ export function RuntimePage() {
     finally { setBusy(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
-
-  const fetchStreamConfig = useCallback(async () => {
-    if (!scSession.trim()) return;
-    setScErr(null); setSc(null);
-    try { setSc(JSON.stringify(await coordinatorClient.streamConfig(scSession.trim()), null, 2)); }
-    catch (e) { setScErr(`${t("stream-config 讀取失敗：", "Failed to read stream-config: ")}${String(e)}`); }
-  }, [scSession]);
 
   return (
     <>
@@ -2522,15 +2540,7 @@ export function RuntimePage() {
         </Panel>
       )}
 
-      <Panel title={t("stream-config · 給 viewer 的連線資訊", "stream-config · connection info for the viewer")} sub="GET /api/review-sessions/:id/stream-config（coordinator owner）" prov="asbuilt">
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input className="ec-btn" style={{ minWidth: 320 }} placeholder="review_session_id" value={scSession} onChange={(e) => setScSession(e.target.value)} />
-          <Btn disabled={!scSession.trim()} caption="GET …/stream-config" onClick={fetchStreamConfig}>{t("讀取 stream-config", "Read stream-config")}</Btn>
-        </div>
-        {scErr && <p className="ec-warn-note">{scErr}</p>}
-        {sc && <pre className="ec-note" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{sc}</pre>}
-        <p className="ec-note">{t("stream-config 為 coordinator owner 的真實端點；GPU 串流由 host-native Kit 負責，本面板僅唯讀轉發連線資訊，不開串流、不捏造遙測。", "stream-config is a real endpoint owned by the coordinator; GPU streaming is handled by host-native Kit. This panel only forwards connection info read-only; it does not open streams or fabricate telemetry.")}</p>
-      </Panel>
+      <StreamConfigReader />
 
       <Panel title={t("治理規則執行綁定（A1）", "Governance rule-run binding (A1)")} sub={t("governance-service :49102 為內部服務（經 coordinator proxy）", "governance-service :49102 is an internal service (via coordinator proxy)")} prov="asbuilt">
         <Field k="rule-run authority" v={t("A1 後端已實作（見 Issues · Rule Center 頁可真實觸發）", "A1 backend implemented (see the Issues · Rule Center page to trigger it for real)")} prov="asbuilt" />
