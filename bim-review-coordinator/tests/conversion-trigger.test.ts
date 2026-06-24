@@ -122,4 +122,34 @@ describe("POST /api/conversion/trigger", () => {
     expect(res.status).toBe(503);
     expect(res.body.ifc_ready_job_id).toBeUndefined();
   });
+
+  // key 含 `|` → 400（不放行）。idempotencyKeyFor / correlationIdFor 文件化前置條件：
+  // hash input 以 `|` 分隔 bucket|key|etag，key 含 `|` 會多切欄位，違反不變式、理論上可造成
+  // 不同 (bucket, key, etag) 撞同一 hash。deriveIntakeFromKey 只擋空段/`.`/`..`，故端點須在
+  // 計算冪等鍵前先擋 `|`。
+  it("key 含 `|` → 400（違反 idempotency hash 不變式，不放行）", async () => {
+    const app = await makeApp();
+    const res = await request(app.app)
+      .post("/api/conversion/trigger")
+      .send({ key: "proj/ma|in/uuid/model.ifc" });
+    expect(res.status).toBe(400);
+    expect(res.body.ifc_ready_job_id).toBeUndefined();
+  });
+
+  // 冪等：同 key 重觸發回既有 job（spec §5）。完整走 self-POST → /api/external/ifc-ready，
+  // 同 key 派生同 idempotencyKey → findExisting 命中 → 回相同 ifc_ready_job_id。
+  it("同 key 觸發兩次 → 回相同 ifc_ready_job_id（冪等）", async () => {
+    const app = await makeApp();
+    const first = await request(app.app)
+      .post("/api/conversion/trigger")
+      .send({ key: "proj/main/uuid/model.ifc" });
+    expect([200, 202]).toContain(first.status);
+    expect(first.body.ifc_ready_job_id).toBeTruthy();
+
+    const second = await request(app.app)
+      .post("/api/conversion/trigger")
+      .send({ key: "proj/main/uuid/model.ifc" });
+    expect([200, 202]).toContain(second.status);
+    expect(second.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
+  });
 });

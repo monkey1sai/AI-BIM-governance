@@ -870,6 +870,13 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "缺 key" });
       return;
     }
+    // idempotencyKeyFor/correlationIdFor（minioWatcher.ts:29/39）文件化前置條件：key 不得含 `|`，
+    // 因為 hash input 以 `|` 分隔 bucket|key|etag。deriveIntakeFromKey 只擋空段/`.`/`..`，不擋 `|`，
+    // 故在計算冪等鍵前先擋下，避免不同 (bucket, key, etag) 撞同一 hash（違反不變式）。
+    if (key.includes("|")) {
+      response.status(400).json({ detail: "key 不合法：不得含 `|`（與 idempotency hash 分隔符衝突）" });
+      return;
+    }
     const derived = deriveIntakeFromKey({
       key,
       prefix: config.minioWatchPrefix,
