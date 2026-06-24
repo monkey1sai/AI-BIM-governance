@@ -26,19 +26,20 @@
 
 ---
 
-## §2 檔案角色表（8 檔）
+## §2 檔案角色表（9 檔）
 
-> **缺檔警告（誠實基準）**：最高效力的 `ai-bim-governance-互動實作規格與標準對齊.md`（正典路由 22 條的唯一來源、PART B 互動卡、PART C 官方對齊）**目前不在本資料夾**。其餘所有檔案皆把它當 source of truth 引用，請務必先確認此檔已補回（或已改名/合併，需全檔同步更新引用名），否則路由表與行為合約頂端會斷鏈。
+> **缺檔警告已解除（2026-06-23 更正）**：最高效力的 `ai-bim-governance-互動實作規格與標準對齊.md`（正典路由 22 條的唯一來源、PART B 互動卡、PART C 官方對齊）**已在本資料夾**（舊版本檔此處誤標「缺檔」會誤導 AI 去「重建」一個現存的最高效力檔，**禁止重建/覆寫此檔**）。各檔仍把它當 source of truth 引用，引用名以現檔名為準。
 
 | 檔案 | 角色 | 照著做 | 不要照抄 |
 |---|---|---|---|
-| `ai-bim-governance-互動實作規格與標準對齊.md` | **行為合約 + 實測差距 + 官方標準**（最高效力；**目前缺檔，須補回**） | PART B 互動卡 IX-xx（狀態機 / API / 驗收）、六個通用互動模式、PART C 三領域官方對齊；**A.1.1 正典路由表 22 條（唯一來源）** | — |
+| `ai-bim-governance-互動實作規格與標準對齊.md` | **行為合約 + 實測差距 + 官方標準**（最高效力；**已在本資料夾，禁重建/覆寫**） | PART B 互動卡 IX-xx（狀態機 / API / 驗收）、六個通用互動模式、PART C 三領域官方對齊；**A.1.1 正典路由表 22 條（唯一來源）** | — |
 | `ai-bim-governance-prototype.html` | 產品殼層需求原型（A1–A10 + 落地端控制台四頁） | 頁面清單、版面結構、互動語意（轉檔排程 / Session 端點池 / 機隊重啟搬移）、誠實標記呈現、NOT BUILT 全 disabled + 待建標記 | 單檔 vanilla JS 實作。正式殼層 = **React 18 + TypeScript EdgeConsole**，由 coordinator `/ui` 提供 |
 | `ai-bim-geo-viewer-prototype.html` | 3D viewer「M4 完成後」的驗收示意（對應 `#viewer`） | 七區塊 IA（點選 → IFC 語意 → Pset/Qto → Spatial → GUID⇔USD 對應表 → A1 疊加 → 反向跳轉）；IA 保留、重生不動；示意原型內一律標「範例值·示意」 | **自寫 canvas 3D 引擎（純示意）**。正式版來自 Kit WebRTC 串流，前端只收 frame、指令走 DataChannel（`highlightPrimsRequest`）。「由幾何計算非寫死」為正式版要求，示意頁標「範例值·示意」 |
 | `ai-bim-governance-設計規格.md` | v2 介面 + token + A1–A10 介面分析 | Design tokens（**以 styles.css 為唯一真相，文件數值示意**）、A1–A10 介面分析、MinIO 資料章（§4.3/§5 誠實版：local_fs 兩層已交付、真 MinIO 三層待接） | 舊版「🟢 MinIO 介面已交付 / 顯示真實三層結構」**已作廢**（見 §3 鐵律 #7）；A4 狀態以對齊矩陣裁決為準 |
 | `ai-bim-governance-開發軌跡與執行計畫.md` | v3 軌跡 + 工程規格 + 執行計畫 | **實作順序照這份**：里程碑 M0–M8、各 App API 草案與 DoD、決策 D1–D9、未決事項 O1–O6 | — |
 | `ai-bim-governance-實作紀律與技術債防線.md` | **實作紀律 + 技術債防線**（HOW 補充層，不改需求/規格） | §1 一頁速查、§2 八原則、§3 技術債陷阱 D-01~D-23、§4 DoD 硬化、§8 交付前總檢查表 | — |
 | `ai-bim-governance-design-system-對齊矩陣.md` | **DS × repo 三方對照**（新增；A4 狀態唯一裁決源） | repo 覆寫結論索引（DS 宣稱 vs 互動規格 vs repo 現況）；A4=NOT BUILT·p4 裁決在此 | 自封「功能最終覆寫源」（效力見 §1）；不得獨立改需求 |
+| `ai-bim-governance-前端對齊DS-保留後端-實作手冊.md` | **前端對齊 DS 的唯一可執行計畫（HOW 層）**（新增 2026-06-23） | §1 後端凍結面契約（DO-NOT-TOUCH）、§2 token 對照、§3 13 元件對應、§5 逐路由可執行規格（DS 視覺 / 保留後端 API / AI-coding 任務 / 改檔 / Playwright 驗收 / Prov）、§6 執行順序、§8 待人類決策 | 不取代互動規格/設計規格/對齊矩陣（效力見 §1）；路由表/A1–A10 裁決只引用不重維護 |
 
 > `docs/plans/` 共有**兩份**原型 .html——`ai-bim-governance-prototype.html`（殼層，22 頁導航）與 `ai-bim-geo-viewer-prototype.html`（3D 語意驗收示意，M4）。兩份皆為行為/視覺示意，非程式碼範本。
 
@@ -147,7 +148,7 @@ A1–A10 具體數字（「312 扇門」「17000 frames」等）為**願景敘�
 
 ---
 
-## §6 給 repo root CLAUDE.md 的建議段落（5 份文件 + 對齊矩陣）
+## §6 給 repo root CLAUDE.md 的建議段落（5 份文件 + 對齊矩陣 + 前端對齊實作手冊）
 
 ```
 ## 需求事實來源
@@ -157,6 +158,7 @@ A1–A10 功能需求、UI 驗收語意與實作順序，一律以 docs/plans/ �
   開發軌跡與執行計畫.md（里程碑 M0–M8 / DoD / 順序）
   設計規格.md（介面 / A1–A10 介面分析；MinIO 資料章為誠實版：local_fs 兩層已交付、真 MinIO 三層待接，見 README §3.7）
   ai-bim-governance-design-system-對齊矩陣.md（DS × repo 三方對照；A4 狀態唯一裁決源）
+  前端對齊DS-保留後端-實作手冊.md（前端對齊 DS 的可執行任務層；§1 後端凍結面契約 = DO-NOT-TOUCH，做前端對齊前必讀）
   實作紀律與技術債防線.md（HOW 補充層，不改需求）
 兩份 .html 是行為示意，不是程式碼範本。
 ```

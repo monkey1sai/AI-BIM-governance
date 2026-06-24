@@ -159,4 +159,101 @@ describe("coordinatorClient conversion control", () => {
     //   wire 帶 {"reason":""} 與後端把它視同無 reason 兩者並存無衝突）。
     expect("final_events" in body).toBe(false);
   });
+
+  // Task 5：getConversionRecords / getMinioObjects 基本 wire 契約測試
+  it("getConversionRecords 打 GET /api/conversion/records?limit=50（預設 limit）並回 { count, items }", async () => {
+    const mockItems = [
+      {
+        idempotency_key: "mw_abc123def4567890",
+        project_id: "mv_1a2b3c4d",
+        project_display_name: "松風庵",
+        category: "機電",
+        external_model_version_id: "000001",
+        conversion_job_id: null,
+        status: "queued",
+        usdc_key: null,
+        coverage_report: null,
+        detected_at: "2026-06-23T01:00:00.000Z",
+        updated_at: "2026-06-23T01:00:00.000Z",
+      },
+    ];
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ count: 1, items: mockItems }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const r = await coordinatorClient.getConversionRecords();
+    expect(r.count).toBe(1);
+    expect(r.items[0].status).toBe("queued");
+    expect(r.items[0].project_display_name).toBe("松風庵");
+    const call = spy.mock.calls[0];
+    expect(String(call[0])).toContain("/api/conversion/records?limit=50");
+    expect((call[1] as RequestInit).method).toBeUndefined(); // GET 不帶 method（fetch 預設 GET）
+  });
+
+  it("getConversionRecords 帶自訂 limit 時 URL 含 limit=N", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ count: 0, items: [] }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    await coordinatorClient.getConversionRecords(10);
+    const calls = (vi.mocked(globalThis.fetch)).mock.calls;
+    expect(String(calls[0][0])).toContain("/api/conversion/records?limit=10");
+  });
+
+  it("getMinioObjects 不帶 prefix 時打 /api/minio/objects（無 ?prefix= query string）", async () => {
+    const mockObjects = [
+      {
+        key: "松風庵/root/main/000001/model.ifc",
+        etag: "abc123",
+        role: "source_ifc",
+        project_id: "mv_1a2b3c4d",
+        project_display_name: "松風庵",
+        category: "main",
+        version: "000001",
+      },
+    ];
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ bucket: "bim-control", count: 1, objects: mockObjects }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const r = await coordinatorClient.getMinioObjects();
+    expect(r.bucket).toBe("bim-control");
+    expect(r.count).toBe(1);
+    expect(r.objects[0].role).toBe("source_ifc");
+    const call = spy.mock.calls[0];
+    expect(String(call[0])).toContain("/api/minio/objects");
+    expect(String(call[0])).not.toContain("?prefix=");
+  });
+
+  it("getMinioObjects 帶 prefix 時 URL 含 encodeURIComponent(prefix)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ bucket: "bim-control", count: 0, objects: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    await coordinatorClient.getMinioObjects("松風庵/root/");
+    const calls = (vi.mocked(globalThis.fetch)).mock.calls;
+    expect(String(calls[0][0])).toContain(`?prefix=${encodeURIComponent("松風庵/root/")}`);
+  });
+
+  it("getConversionRecords 非 2xx 時 throw（與 listIfcReady 錯誤路徑對稱）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "server error" }), { status: 500, statusText: "Internal Server Error" }),
+    );
+    await expect(coordinatorClient.getConversionRecords()).rejects.toThrow();
+  });
+
+  it("getMinioObjects 502 時 throw（MinIO 無法連線情境）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "minio_list_failed", detail: "ECONNREFUSED" }), {
+        status: 502,
+        statusText: "Bad Gateway",
+      }),
+    );
+    await expect(coordinatorClient.getMinioObjects()).rejects.toThrow();
+  });
 });

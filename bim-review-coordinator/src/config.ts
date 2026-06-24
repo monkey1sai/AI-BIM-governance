@@ -52,6 +52,9 @@ export interface CoordinatorConfig {
   cloudCallbackBaseUrl: string;
   callbackOutboxMaxAttempts: number;
   callbackOutboxStorePath: string;
+  // minio-closed-loop-phase1 Task 1：持久 ConversionLedger（coordinator-local shadow）
+  // env CONVERSION_LEDGER_STORE_PATH；default data/conversion-ledger.json
+  conversionLedgerStorePath: string;
   // T7：使用者（local web view）auth provider，可替換；不做死 EZPLUS SSO，
   // local web view ↔ 公司 SSO 真實銜接待 OQ5。
   userAuthProvider: string;
@@ -386,6 +389,9 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     callbackOutboxStorePath:
       process.env.CALLBACK_OUTBOX_STORE_PATH ||
       path.join(cwd, "data", "callback-outbox.json"),
+    conversionLedgerStorePath:
+      process.env.CONVERSION_LEDGER_STORE_PATH ||
+      path.join(cwd, "data", "conversion-ledger.json"),
     userAuthProvider: process.env.USER_AUTH_PROVIDER || "local-dev",
     // fast-ifc-link-demo-loop §2.5:
     ifcDownloadTimeoutSeconds: numberFromEnv("IFC_DOWNLOAD_TIMEOUT_SECONDS", 600),
