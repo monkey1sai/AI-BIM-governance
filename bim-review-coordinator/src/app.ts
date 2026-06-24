@@ -22,6 +22,7 @@ import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
+import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
@@ -2366,6 +2367,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     host_local_path: job.host_local_path ?? null,
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
+    conversion_lifecycle_status: deriveLifecycleStatus(job),
     conversion_authority: job.conversion_authority,
     // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
     // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive,
