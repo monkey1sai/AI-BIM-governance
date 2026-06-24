@@ -62,6 +62,32 @@ async function makeApp(): Promise<CoordinatorApp> {
   return active;
 }
 
+// endpoint/bucket 有設、但 access/secret 為空字串（env 未設時的預設）。模擬「連線參數不齊全」。
+// 與 makeApp 唯一差異：credentials 留空 → minioWatchConfigured() 應為 false → trigger 須誠實 503。
+async function makeAppNoCreds(): Promise<CoordinatorApp> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-trigger-nocreds-"));
+  active = createCoordinatorApp({
+    sessionStoreDir: path.join(root, "sessions"),
+    eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    streamingConversionApiBase: "http://127.0.0.1:1",
+    corsOrigins: ["http://127.0.0.1:5173"],
+    externalIntakeWebhookSecret: "test-secret",
+    externalIntakeIpAllowlist: [],
+    minioWatchEnabled: false,
+    minioWatchEndpoint: "http://minio.test:9000",
+    minioWatchBucket: "bim-control",
+    minioWatchAccessKey: "", // 空字串：未設 credentials
+    minioWatchSecretKey: "", // 空字串：未設 credentials
+    minioWatchPrefix: "",
+    minioWatchKeySuffix: "/model.ifc",
+    minioWatchTenantId: "tenant_demo_001",
+  });
+  const port = await listenOnRandomPort(active.server);
+  active.config.minioWatchSelfBaseUrl = `http://127.0.0.1:${port}`;
+  return active;
+}
+
 describe("POST /api/conversion/trigger", () => {
   it("malformed key（少於三段）→ 400", async () => {
     const app = await makeApp();
@@ -83,5 +109,17 @@ describe("POST /api/conversion/trigger", () => {
     expect([200, 202]).toContain(res.status);
     expect(res.body.ifc_ready_job_id).toBeTruthy();
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+  });
+
+  // 誠實守門：credentials 不齊全時（access/secret 空字串）即使 endpoint/bucket 有設，
+  // 也不可放行 self-POST（presign 會以空憑證簽出 URL → 下游 MinIO 認證必失敗、job 靜默 failed）。
+  // 必須在 presign 之前以 503 誠實回絕，而非 202。
+  it("endpoint/bucket 有設但 credentials 缺 → 503（不放行 self-POST）", async () => {
+    const app = await makeAppNoCreds();
+    const res = await request(app.app)
+      .post("/api/conversion/trigger")
+      .send({ key: "proj/main/uuid/model.ifc" });
+    expect(res.status).toBe(503);
+    expect(res.body.ifc_ready_job_id).toBeUndefined();
   });
 });

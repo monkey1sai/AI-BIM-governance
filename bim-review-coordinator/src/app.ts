@@ -19,8 +19,14 @@ import {
   type StructLogger,
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
-import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
-import { deriveIntakeFromKey, idempotencyKeyFor, correlationIdFor } from "./services/minioWatcher.js";
+import {
+  correlationIdFor,
+  deriveIntakeFromKey,
+  idempotencyKeyFor,
+  startMinioWatcher,
+  type MinioWatcherHandle,
+  type MinioWatcherStatus,
+} from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
@@ -852,8 +858,11 @@ export function createCoordinatorApp(
   // 守門比照其他 /api/conversion/* 控制路由（rejectIfIpNotAllowed）。
   app.post("/api/conversion/trigger", async (request, response) => {
     if (rejectIfIpNotAllowed(request, response)) return;
-    if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
-      response.status(503).json({ detail: "MinIO 未設定（endpoint/bucket 缺）" });
+    // 連線參數須齊全（endpoint/bucket/accessKey/secretKey）。僅檢 endpoint/bucket 會放行空憑證，
+    // presign 仍以空憑證簽出 URL、self-POST 過關，IFC 下載卻在 MinIO 認證靜默失敗（job failed）。
+    // 複用既有 minioWatchConfigured()（四欄全檢，與 PUT /api/conversion/watch 422 判斷同一把尺）。
+    if (!minioWatchConfigured()) {
+      response.status(503).json({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" });
       return;
     }
     const key = typeof request.body?.key === "string" ? request.body.key : "";
