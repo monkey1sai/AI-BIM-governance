@@ -118,4 +118,20 @@ describe("誠實守衛：對外 ifc-ready response 不含 presigned 簽章", () 
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
     expect(res.body.shadow_metadata.source_ifc_ref).toBe(OBJECT_PATH);
   });
+
+  // POST /api/local-web-view/sessions 是 spec §2 列出的第四個瀏覽器可見出口
+  // （app.ts artifact_resolution.source_ifc_ref）。fixture 預設 ref 不含簽章，
+  // GET 路徑的測試無法守住此 POST：用真實 presigned job 直接打 POST，
+  // 確保拔掉 maskPresignedRef 會被偵測到（regression guard）。
+  it("POST /api/local-web-view/sessions 的 artifact_resolution.source_ifc_ref 被遮蔽", async () => {
+    const app = startPresignApp();
+    const jobId = await seedPresignedJob(app);
+    const res = await request(app.app)
+      .post("/api/local-web-view/sessions")
+      .set({ Authorization: "Bearer dev_user_presign" })
+      .send({ ifc_ready_job_id: jobId });
+    expect(res.status).toBe(201);
+    expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+    expect(res.body.artifact_resolution.source_ifc_ref).toBe(OBJECT_PATH);
+  });
 });
