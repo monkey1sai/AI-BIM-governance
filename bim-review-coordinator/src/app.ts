@@ -1220,6 +1220,13 @@ export function createCoordinatorApp(
     // 只有真正帶非空 delimiter（如 /）才走資料夾語意 list，避免前端收到空 folders[] 而非舊格式。
     const rawDelimiter =
       typeof request.query.delimiter === "string" ? request.query.delimiter : "";
+    // spec §2.1 只定義 delimiter='/' 為有效值。白名單擋在轉送 S3 SDK 前：拒絕多字元、
+    // 控制字元、XML 特殊字元等任意 delimiter（否則部分值會讓 SDK 拋非預期錯誤並在 502
+    // detail 洩漏內部訊息，且讓前端控制 delimiter 語意超出 spec 設計意圖）。
+    if (rawDelimiter && rawDelimiter !== "/") {
+      response.status(400).json({ error: "invalid_delimiter", detail: "只支援 delimiter=/" });
+      return;
+    }
     let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
       client = createMinioS3Client({

@@ -137,6 +137,31 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     expect(Array.isArray(res.body.objects)).toBe(true);
   });
 
+  it("delimiter 非 / → 回 400 invalid_delimiter（白名單：spec §2.1 只定義 delimiter=/）", async () => {
+    // 任意非空 delimiter（多字元、Windows 風格 %5c、控制字元）不可被轉送到 S3 SDK，
+    // 否則部分值會讓 SDK 拋出非預期錯誤、在 502 detail 洩漏內部訊息，且讓前端控制
+    // delimiter 語意超出 spec。白名單擋在轉送前，根本不建 S3 client。
+    await startS3Stub([{ prefixes: [], keys: [] }]);
+    const res = await request(makeApp().app).get("/api/minio/objects?delimiter=%5c");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_delimiter");
+  });
+
+  it("分頁（route 整合層）：頂層 list IsTruncated=true → 合併兩頁 folders 共 2 個", async () => {
+    // unit 層（minio-folder-route.test.ts:72）已驗 listMinioFolder 本身能處理 IsTruncated；
+    // 此 route 整合層補一個分頁 stub，防 regression 把 while-loop 收尾截斷而 route 不報錯。
+    // 頁序：1=頂層 list(IsTruncated, +A/) → 2=次頁(A 收尾, +B/) → 3=probe A/ → 4=probe B/。
+    await startS3Stub([
+      { prefixes: ["A/"], keys: [], next: "tok2" },
+      { prefixes: ["B/"], keys: [] },
+      { prefixes: [], keys: [] }, // probe A/（無 .ifc）
+      { prefixes: [], keys: [] }, // probe B/（無 .ifc）
+    ]);
+    const res = await request(makeApp().app).get("/api/minio/objects?delimiter=/");
+    expect(res.status).toBe(200);
+    expect(res.body.folders.map((f: { prefix: string }) => f.prefix)).toEqual(["A/", "B/"]);
+  });
+
   it("未設定 MinIO → 帶 delimiter 仍誠實回 count=0 + note（不 500，plan §Task2 line 351）", async () => {
     // 不設 minioWatchEndpoint/Bucket → handler 開頭 early-return（app.ts:1207-1215），
     // 帶不帶 delimiter 都走同一段誠實回 count:0 + note，絕不 500/捏造 folders。
