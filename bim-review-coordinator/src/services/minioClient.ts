@@ -2,7 +2,7 @@
 // minio-closed-loop-phase1 Task 4：共用 S3Client 工廠 + list/role 純函式。
 // 不改 minioWatcher.ts；複用 deriveIntakeFromKey 判角色 + 擋路徑穿越。
 import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
-import { deriveIntakeFromKey } from "./minioWatcher.js";
+import { deriveIntakeFromKey, idempotencyKeyFor } from "./minioWatcher.js";
 
 export function createMinioS3Client(cfg: { endpoint: string; accessKey: string; secretKey: string }): S3Client {
   return new S3Client({
@@ -23,6 +23,7 @@ export interface MinioObjectView {
   project_display_name: string | null;
   category: string | null;
   version: string | null;
+  idempotency_key: string;
 }
 
 export async function listMinioObjects(
@@ -53,6 +54,7 @@ export async function listMinioObjects(
         key,
         etag: (obj.ETag ?? "").replace(/^"+|"+$/g, ""),
         role,
+        idempotency_key: idempotencyKeyFor(bucket, key, obj.ETag ?? ""),
         project_id: d.ok ? d.projectId : null,
         project_display_name: d.ok ? d.projectDisplayName : null,
         category: d.ok ? d.category : null,
