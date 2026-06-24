@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { sanitizeArtifactIdPart } from "./streamingConversionClient.js";
+import { maskPresignedRef } from "./presignedRef.js";
 import type { ExternalIfcReadyEvent, IfcReadyIntakeJob, ShadowMetadata } from "../types.js";
 
 /**
@@ -253,6 +254,10 @@ export class ExternalIfcReadyStore {
    * T6 §7.1：投影為最小 shadow metadata 欄位集（**不 mirror 公司 MySQL**）。
    * callback_status / last_callback_attempt_at 來自連結的 outbox entry（傳入），
    * control-plane 權威欄位（user/RBAC/license/version 歷史）一律不納入。
+   *
+   * 誠實鐵律（presigned 簽章遮蔽）：source_ifc_ref 在此 DTO 出口即剝除 presigned
+   * 簽章（maskPresignedRef），shadow_metadata 對外永遠不含 X-Amz-* 簽章，與 list /
+   * local-web-view session 出口一致。
    */
   toShadowMetadata(
     job: IfcReadyIntakeJob,
@@ -264,7 +269,7 @@ export class ExternalIfcReadyStore {
       external_model_version_id: job.external_model_version_id,
       external_conversion_task_id: job.external_conversion_task_id ?? null,
       correlation_id: job.correlation_id,
-      source_ifc_ref: job.source_ifc_ref,
+      source_ifc_ref: maskPresignedRef(job.source_ifc_ref),
       source_ifc_etag: job.source_ifc_etag,
       conversion_job_id: job.conversion_job_id,
       artifact_manifest_ref: job.artifact_manifest_ref ?? null,

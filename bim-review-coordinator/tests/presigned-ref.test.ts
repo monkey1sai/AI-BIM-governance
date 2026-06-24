@@ -2,6 +2,7 @@ import request from "supertest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { maskPresignedRef } from "../src/services/presignedRef.js";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
@@ -42,18 +43,79 @@ afterEach(async () => {
   active = null;
 });
 
+// 一筆帶 presigned 簽章的 source_ifc.ref：物件位址 + X-Amz-* query。
+// 對外任何出口都必須剝掉簽章、只留 OBJECT_PATH。
+const OBJECT_PATH = "http://192.168.20.234:9000/bim-control/proj/main/uuid/model.ifc";
+const PRESIGNED_REF =
+  OBJECT_PATH +
+  "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=abc&X-Amz-Date=20260624T000000Z" +
+  "&X-Amz-Expires=3600&X-Amz-Signature=deadbeef&X-Amz-SignedHeaders=host";
+
+// 凍結契約 example（root tests/contracts/ifc_ready_payload.json）為 intake payload 基底，
+// 只覆寫 source_ifc.ref 為 presigned，模擬真實 MinIO presigned URL 進 store。
+const CONTRACT_EXAMPLE = JSON.parse(
+  fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "tests", "contracts", "ifc_ready_payload.json"),
+    "utf-8",
+  ),
+).example as Record<string, unknown>;
+
+function startPresignApp(): CoordinatorApp {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-presign-test-"));
+  active = createCoordinatorApp({
+    sessionStoreDir: path.join(root, "sessions"),
+    eventLogDir: path.join(root, "events"),
+    callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    streamingConversionApiBase: "http://127.0.0.1:1",
+    corsOrigins: ["http://127.0.0.1:5173"],
+  });
+  return active;
+}
+
+// 透過真實 POST /api/external/ifc-ready 落地一筆 job（download 走 dev fallback，
+// ifcDownloadStrict 預設 false），回傳 jobId。source_ifc.ref 帶 presigned 簽章。
+async function seedPresignedJob(app: CoordinatorApp): Promise<string> {
+  const body = {
+    ...structuredClone(CONTRACT_EXAMPLE),
+    source_ifc: { ...(CONTRACT_EXAMPLE.source_ifc as Record<string, unknown>), ref: PRESIGNED_REF },
+  };
+  const created = await request(app.app)
+    .post("/api/external/ifc-ready")
+    .set({
+      "X-Webhook-Secret": "dev-webhook-secret",
+      "X-Correlation-Id": "corr_presign_001",
+      "X-Idempotency-Key": "idem_presign_001",
+    })
+    .send(body);
+  expect(created.status).toBe(202);
+  return created.body.ifc_ready_job_id as string;
+}
+
 describe("誠實守衛：對外 ifc-ready response 不含 presigned 簽章", () => {
-  it("GET /api/external/ifc-ready 列表 body 不含 X-Amz-Signature", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-coord-presign-test-"));
-    active = createCoordinatorApp({
-      sessionStoreDir: path.join(root, "sessions"),
-      eventLogDir: path.join(root, "events"),
-      callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-      streamingConversionApiBase: "http://127.0.0.1:1",
-      corsOrigins: ["http://127.0.0.1:5173"],
-    });
-    const res = await request(active.app).get("/api/external/ifc-ready");
+  it("GET /api/external/ifc-ready 列表（含真實 presigned job）body 不含 X-Amz-Signature、含物件位址", async () => {
+    const app = startPresignApp();
+    await seedPresignedJob(app);
+    const res = await request(app.app).get("/api/external/ifc-ready");
     expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+    expect(res.body.items[0].source_ifc_ref).toBe(OBJECT_PATH);
+  });
+
+  it("GET /api/external/ifc-ready/:jobId（單筆）source_ifc_ref 被遮蔽", async () => {
+    const app = startPresignApp();
+    const jobId = await seedPresignedJob(app);
+    const res = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+    expect(res.body.source_ifc_ref).toBe(OBJECT_PATH);
+  });
+
+  it("GET /api/external/ifc-ready/:jobId/shadow 的 shadow_metadata.source_ifc_ref 被遮蔽", async () => {
+    const app = startPresignApp();
+    const jobId = await seedPresignedJob(app);
+    const res = await request(app.app).get(`/api/external/ifc-ready/${jobId}/shadow`);
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+    expect(res.body.shadow_metadata.source_ifc_ref).toBe(OBJECT_PATH);
   });
 });

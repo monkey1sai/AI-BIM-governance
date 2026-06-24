@@ -1280,7 +1280,8 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "IFC-ready job not found." });
       return;
     }
-    response.json(job);
+    // 誠實鐵律：對外 response 不得含 presigned 簽章（與 list / shadow / session 出口一致）。
+    response.json(sanitizeJobForExternal(job));
   });
 
   // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
@@ -2379,6 +2380,14 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     created_at: job.created_at,
     updated_at: job.updated_at,
   };
+}
+
+// 誠實鐵律（presigned 簽章遮蔽）：對外直接序列化完整 job 物件的端點
+// （GET /api/external/ifc-ready/:jobId）必須剝除 source_ifc_ref 的 presigned 簽章。
+// 以 spread + 遮蔽單一欄位的方式收斂，避免日後 job 新增欄位時又漏遮某個敏感值
+// 而必須逐一比對；目前唯一含簽章的欄位是 source_ifc_ref。
+function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
+  return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
 }
 
 function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {
