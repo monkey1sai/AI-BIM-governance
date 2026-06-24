@@ -1,7 +1,9 @@
 # 審批報告：docs/plans Design System 對齊重建
 
+> **路徑註記（2026-06-23 補）**：本報告為過程記錄；文末附錄列的絕對路徑指向當時的 gitignored worktree（`.claude/worktrees/docs-ds-alignment\...`，**該 worktree 已刪除**）。**最終交付檔一律位於主 checkout 的 `docs/plans/`**，附錄路徑僅供歷史參照，勿據以尋檔。
+
 - **日期**：2026-06-23
-- **分支 / worktree**：`docs-ds-alignment`（`.claude/worktrees/docs-ds-alignment`）
+- **分支 / worktree**：`docs-ds-alignment`（`.claude/worktrees/docs-ds-alignment`，已刪除；最終檔在 `docs/plans/`）
 - **審查模式**：四軸對抗驗證（refute-by-default）→ 跨檔一致性審查 → reconciler 裁決 → 逐檔修正
 - **裁決**：**有條件通過（ship-with-followup）**。8 份交付物已逐檔修正並對齊誠實基準與共用契約表；剩餘 1 項需人工確認（最高效力檔的 worktree 同步落差）。
 
