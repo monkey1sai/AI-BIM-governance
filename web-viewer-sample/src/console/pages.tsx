@@ -16,6 +16,13 @@ import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
 
+type NativeFilePickerWindow = Window & {
+  showOpenFilePicker?: (options?: {
+    multiple?: boolean;
+    types?: Array<{ description?: string; accept: Record<string, string[]> }>;
+  }) => Promise<Array<{ name: string }>>;
+};
+
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, uniqueElements: 6715, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
 
@@ -25,6 +32,21 @@ const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, 
 function defaultA1IfcPath(): string {
   const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
   return meta?.VITE_A1_DEFAULT_IFC_PATH || "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc";
+}
+
+function defaultA1IdsPath(): string {
+  const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  return meta?.VITE_A1_DEFAULT_IDS_PATH || "C:\\Repos\\active\\iot\\AI-BIM-governance\\governance-service\\rules\\sample-fire-rating.ids";
+}
+
+function fileInSameDirectory(currentPath: string, fileName: string): string {
+  const cleanName = fileName.replace(/[\\/]/g, "");
+  const trimmed = currentPath.trim();
+  const slash = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  if (slash < 0) return cleanName;
+  const dir = trimmed.slice(0, slash);
+  const sep = trimmed.includes("\\") ? "\\" : "/";
+  return `${dir}${sep}${cleanName}`;
 }
 
 // 三欄服務邊界圖（移植自原型 BoundaryDiagram）：WEB-PLANE → CONTROL-PLANE BOUNDARY → INTERNAL。
@@ -260,7 +282,7 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
   const [pathInput, setPathInput] = useState(defaultA1IfcPath);
-  const [idsPath, setIdsPath] = useState("");
+  const [idsPath, setIdsPath] = useState(defaultA1IdsPath);
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -279,6 +301,7 @@ export function A1GovernanceWorkbenchPage() {
   const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
   const [hl, setHl] = useState<{ ok: boolean; reason?: string } | null>(null);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
+  const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
 
@@ -352,6 +375,27 @@ export function A1GovernanceWorkbenchPage() {
     }
   }, [state.ifcPath, state.step, state.runError, idsPath, selectedSession, sessions]);
 
+  const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
+    setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
+  }, []);
+
+  const openIdsFilePicker = useCallback(async () => {
+    const picker = (window as NativeFilePickerWindow).showOpenFilePicker;
+    if (picker) {
+      try {
+        const [handle] = await picker({
+          multiple: false,
+          types: [{ description: "buildingSMART IDS", accept: { "application/xml": [".ids"], "text/xml": [".ids"] } }],
+        });
+        if (handle?.name) setIdsFileNameInCurrentDirectory(handle.name);
+        return;
+      } catch (e) {
+        if ((e as { name?: string })?.name === "AbortError") return;
+      }
+    }
+    idsFileInputRef.current?.click();
+  }, [setIdsFileNameInCurrentDirectory]);
+
   const makeIssues = useCallback(async () => {
     if (!runId) return;
     setActionErr(null); // 重試前清掉上次錯誤
@@ -410,6 +454,22 @@ export function A1GovernanceWorkbenchPage() {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
           <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑", "(optional) buildingSMART IDS .ids path")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
+          <input
+            ref={idsFileInputRef}
+            data-testid="a1-ids-file-input"
+            type="file"
+            accept=".ids,application/xml,text/xml"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.currentTarget.files?.[0];
+              if (file) setIdsFileNameInCurrentDirectory(file.name);
+              e.currentTarget.value = "";
+            }}
+          />
+          <Btn data-testid="a1-ids-open-folder" caption={t("選取 .ids 後沿用目前欄位資料夾組成 server-local path", "Selecting an .ids keeps the current field folder and composes a server-local path")} onClick={() => { void openIdsFilePicker(); }}>
+            {t("開啟資料夾", "Open Folder")}
+          </Btn>
+          <span className="ec-s">{t("預設為 repo 內 sample IDS；清空欄位則改用內建 YAML 規則集。", "Defaults to the repo sample IDS; clear the field to use the built-in YAML rule set.")}</span>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
