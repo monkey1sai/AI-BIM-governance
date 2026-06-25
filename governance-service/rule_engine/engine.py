@@ -125,6 +125,7 @@ def run_rules(model: Any, rule_set: dict) -> RuleRunResult:
     failed = sum(1 for r in results if r.status == "fail")
     errored = sum(1 for r in results if r.status == "error")
     total = len(results)
+    unique_elements = len({r.ifc_guid for r in results if r.ifc_guid})
     # 誠實計分（A1-RE-01）：errored（評估失敗 / 未取得）計入分母、視同未通過，
     # 全構件 error 時 score 為 0 而非假性滿分。errored == 0 時與舊式等價（真實
     # 模型 99.0 不受影響）；total == 0（無適用構件）時 vacuously 100.0。
@@ -139,6 +140,7 @@ def run_rules(model: Any, rule_set: dict) -> RuleRunResult:
         failed=failed,
         errored=errored,
         score=score,
+        unique_elements=unique_elements,
         results=results,
         warnings=warnings,
     )
