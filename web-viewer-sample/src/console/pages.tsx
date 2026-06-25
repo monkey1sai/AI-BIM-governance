@@ -24,7 +24,7 @@ type NativeFilePickerWindow = Window & {
 };
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
-const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
+const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, uniqueElements: 6715, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
 
 // A1 規則檢核的預設 IFC 路徑：部署可用 VITE_A1_DEFAULT_IFC_PATH 覆寫成該機 storage 的真實路徑。
 // 開發機 fallback 指向 repo 內 storage/fixture-bytes.ifc（dev/E2E 用）;部署區未設此 env 時操作員仍可手動改輸入框。
@@ -489,7 +489,8 @@ export function A1GovernanceWorkbenchPage() {
                 - total / passed：不加 tone，沿用 ec-metric base class（預設綠），passed=全綠語意正確
                 - failed>0：tone="bad"（紅），提醒注意問題構件
                 - score：<100 用 tone="warn"（琥珀），==100 用預設綠；絕不寫 tone="good"（Prov 聯集無此值，TS2322） */}
-            <Metric value={state.run.summary?.total ?? "—"} label={t("評估構件", "Evaluated Elements")} />
+            <Metric value={state.run.summary?.total ?? "—"} label={t("規則評估次數", "Rule Evaluations")} />
+            <Metric value={state.run.summary?.unique_elements ?? "—"} label={t("唯一構件", "Unique Elements")} />
             <Metric value={state.run.summary?.passed ?? "—"} label="passed" />
             <Metric
               value={state.run.summary?.failed ?? "—"}
@@ -1700,7 +1701,8 @@ export function IssuesRuleCenterPage() {
         {err && <p className="ec-warn-note">{t("未連線後端（proxy / governance-service 需啟動）：", "Backend not connected (proxy / governance-service must be running): ")}{err}</p>}
         {run && (
           <div className="ec-grid" data-testid="a1-rulerun-scoreboard" style={{ marginTop: 12 }}>
-            <Metric value={run.summary?.total ?? "—"} label={t("評估構件", "Evaluated Elements")} />
+            <Metric value={run.summary?.total ?? "—"} label={t("規則評估次數", "Rule Evaluations")} />
+            <Metric value={run.summary?.unique_elements ?? "—"} label={t("唯一構件", "Unique Elements")} />
             <Metric value={run.summary?.passed ?? "—"} label="passed" />
             <Metric value={run.summary?.failed ?? "—"} label="failed" tone="warn" />
             <Metric value={run.score ?? "—"} label="score" />
@@ -1743,7 +1745,8 @@ export function IssuesRuleCenterPage() {
 
       <Panel title={t("語意驗收訊號 · 真實 IFC 實測", "Semantic validation signal · measured on a real IFC")} sub={`${A1_EVIDENCE.file} · ${A1_EVIDENCE.schema} · ${A1_EVIDENCE.date}`} prov="artifact">
         <div className="ec-grid">
-          <Metric value={A1_EVIDENCE.total} label={t("評估構件", "Evaluated Elements")} />
+          <Metric value={A1_EVIDENCE.total} label={t("規則評估次數", "Rule Evaluations")} />
+          <Metric value={A1_EVIDENCE.uniqueElements} label={t("唯一構件", "Unique Elements")} />
           <Metric value={A1_EVIDENCE.passed} label="passed" />
           <Metric value={A1_EVIDENCE.failed} label="failed" tone="warn" />
           <Metric value={A1_EVIDENCE.score} label="score" />

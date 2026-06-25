@@ -43,7 +43,10 @@ describe("edge console honesty smoke", () => {
 
   it("A1 Rule Center 顯示真實 IFC 實測 artifact（非捏造）", () => {
     const html = renderToString(<IssuesRuleCenterPage />);
-    expect(html).toContain("7126"); // 真實評估構件數
+    expect(html).toContain("規則評估次數");
+    expect(html).toContain("7126"); // 真實規則評估次數
+    expect(html).toContain("唯一構件");
+    expect(html).toContain("6715"); // 去重後 ifc_guid 數
     expect(html).toContain("實測 artifact");
     expect(html).toContain("執行規則檢核");
     expect(html).toContain("IDS-XML"); // IDS 匯入後端已實作（ifctester）
