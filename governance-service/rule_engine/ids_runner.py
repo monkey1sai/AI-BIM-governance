@@ -151,6 +151,7 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
     # ids-003：errored 由結果推導（語意正確、與 YAML 引擎一致），不結構性寫死。
     errored = sum(1 for r in results if r.status == "error")
     total = len(results)
+    unique_elements = len({r.ifc_guid for r in results if r.ifc_guid})
     denom = passed + failed + errored
     score = round(100.0 * passed / denom, 1) if denom else 100.0
     return RuleRunResult(
@@ -162,6 +163,7 @@ def run_ids(model: Any, specs: Any, label: str = "ids") -> RuleRunResult:
         failed=failed,
         errored=errored,
         score=score,
+        unique_elements=unique_elements,
         results=results,
         warnings=["規則來源：buildingSMART IDS（ifctester）"],
     )

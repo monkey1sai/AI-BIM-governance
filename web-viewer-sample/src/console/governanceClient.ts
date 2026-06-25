@@ -29,6 +29,7 @@ export interface RuleRunStatus {
     passed: number;
     failed: number;
     errored: number;
+    unique_elements?: number;
     target_summary: Record<string, number>;
     warnings: string[];
   } | null;
