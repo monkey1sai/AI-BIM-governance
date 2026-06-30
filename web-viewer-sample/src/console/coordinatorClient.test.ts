@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorClient, CONVERSION_LIFECYCLE_STATUS_VALUES, type TriggerConversionResponse } from "./coordinatorClient";
 
 describe("coordinatorClient conversion control", () => {
   afterEach(() => {
@@ -256,4 +256,71 @@ describe("coordinatorClient conversion control", () => {
     );
     await expect(coordinatorClient.getMinioObjects()).rejects.toThrow();
   });
+
+  it("triggerConversion 打 POST /api/conversion/trigger 帶 key，202 回 ifc_ready_job_id", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_abc", status: "queued_for_conversion", trigger_source: "manual" }), { status: 202 }),
+    );
+    const r = await coordinatorClient.triggerConversion("專案A/root/main/uuid/model.ifc");
+    expect(r.ifc_ready_job_id).toBe("ifcready_mw_abc");
+    const call = spy.mock.calls[0];
+    expect(String(call[0])).toContain("/api/conversion/trigger");
+    expect((call[1] as RequestInit).method).toBe("POST");
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ key: "專案A/root/main/uuid/model.ifc" });
+  });
+
+  it("triggerConversion 503（MinIO 未設定）throw 帶後端 detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" }), { status: 503, statusText: "Service Unavailable" }),
+    );
+    await expect(coordinatorClient.triggerConversion("k")).rejects.toThrow(/MinIO 未設定/);
+  });
+
+  it("getIfcReadyJob 打 GET /api/external/ifc-ready/:jobId，回 conversion_lifecycle_status", async () => {
+    // quality finding #2：此 mock 的 conversion_lifecycle_status 對應真實後端 detail 端點——
+    // app.ts GET /api/external/ifc-ready/:jobId 已上 wire deriveLifecycleStatus(job)，
+    // 後端回歸鎖在 bim-review-coordinator/tests/external-ifc-ready.test.ts「單筆 detail」測試。非虛構欄位。
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_abc", status: "queued_for_conversion", conversion_lifecycle_status: "queued", download_status: "downloaded", conversion_status: null, review_session_id: null }), { status: 200 }),
+    );
+    const r = await coordinatorClient.getIfcReadyJob("ifcready_mw_abc");
+    expect(r.conversion_lifecycle_status).toBe("queued");
+    expect(String(spy.mock.calls[0][0])).toContain("/api/external/ifc-ready/ifcready_mw_abc");
+  });
+
+  it("getIfcReadyJob 404（job 不存在）throw 帶後端 detail（jsonGet errorDetail，與 jsonPost/jsonPut 對稱；A1 輪詢誠實顯示可操作提示）", async () => {
+    // 修前 jsonGet 只 throw statusText → 操作員看到無意義「404 Not Found」；修後萃取後端 detail（誠實鐵律）。
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "ifc-ready job 不存在" }), { status: 404, statusText: "Not Found" }),
+    );
+    await expect(coordinatorClient.getIfcReadyJob("ifcready_missing")).rejects.toThrow(/ifc-ready job 不存在/);
+  });
+
+  it("getIfcReadyJob 失敗 body 非 JSON 時退回原始 text（errorDetail best-effort，不讓萃取錯誤遮蔽 HTTP 失敗）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("upstream 502 plain", { status: 502, statusText: "Bad Gateway" }),
+    );
+    await expect(coordinatorClient.getIfcReadyJob("ifcready_x")).rejects.toThrow(/upstream 502 plain/);
+  });
+
+  it("ConversionLifecycleStatus 值集鎖定（鏡像後端 ConversionLedgerStatus；前端被悄改時 CI 攔，後端增值須人工同步此處）", () => {
+    // 前後端無 shared schema；此測試鎖住前端值集，使任何前端遺漏/誤改在 CI 顯性失敗。
+    expect([...CONVERSION_LIFECYCLE_STATUS_VALUES]).toEqual(["detected", "queued", "converting", "ready", "failed"]);
+  });
 });
+
+// ── TriggerConversionResponse 型別契約斷言（compile-time only；由 `npx tsc --noEmit` 守門，
+//    vitest 執行期為無副作用 no-op）。鎖住兩條契約避免日後被悄悄放寬（quality finding #1 / #2）──
+//   #1 ifc_ready_job_id 必為 string（非 optional）：B1 後端（PR #259）202 永遠帶此欄；optional 會逼
+//      Task 3 消費端做 undefined 守門（`!.` 砍掉型別安全網，或 `?? ""` 打 bogus URL → 404）。
+//   #2 不得有 detail 欄位：jsonPost 在 !res.ok 時已 throw（後端 detail 經 errorDetail 注入 Error
+//      message），success-path 的 detail 恆 undefined；留此欄會給「可讀回傳物件 detail」的錯誤合約
+//      暗示。轉檔已排入 vs 冪等回傳既有的語意差異改由既有 trigger_source 表達。
+{
+  const probe: TriggerConversionResponse = { ifc_ready_job_id: "ifcready_x" };
+  // #1：非 optional 才能把 ifc_ready_job_id 直接賦值給 string（optional 時為 string | undefined 不可賦值）。
+  const jobId: string = probe.ifc_ready_job_id;
+  void jobId;
+  // @ts-expect-error #2：detail 欄位已移除，讀取應為型別錯誤（TS2339）。
+  void probe.detail;
+}

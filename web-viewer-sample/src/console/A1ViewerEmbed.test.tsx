@@ -81,6 +81,12 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     document.body.appendChild(container);
     root = null;
     box.current = null;
+    // A1 mount 打 getMinioObjects()（step① 下拉源）；預設回單一 source_ifc 物件保持 hermetic（不打真網路），
+    // 並讓驅動 pick→run 流程的 it 能用 selectMinioModel 選到該 option。個別 it 需要時可再 spyOn 覆寫。
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
   });
   afterEach(async () => {
     if (root) await act(async () => { root!.unmount(); });
@@ -96,6 +102,12 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     for (let i = 0; i < 5; i++) {
       await act(async () => { await Promise.resolve(); });
     }
+  };
+
+  // step① 改 MinIO 下拉後，a1-step-pick 需先選 source_ifc 物件才 enable；render+flush 後該 option 已存在。
+  const selectMinioModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-minio-select"]')!;
+    await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
   };
 
   it("有 active session → 顯示 session 下拉；viewerOrigin 取自 runtime/status", async () => {
@@ -198,7 +210,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     // first_frame 與 stage-match 兩條件，驗按鈕由 disabled 翻 enable（搭配 Important #1 修正才會通過）。
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" });
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
       rule_run_id: "rr_x", status: "succeeded", score: 80, rule_set: "default", model_version_id: "m1",
       summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
@@ -211,6 +223,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await flush();
 
     // 跑檢核：先 PICK_FILE（離開 idle 才能按 RUN），再按 a1-step-run；doRun 首輪 getRuleRun 即 succeeded → 立即 RUN_DONE。
+    await selectMinioModel();
     await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
     await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
     await flush();
@@ -231,7 +244,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
   it("rule-run failed row 缺 usd_prim_path 時，使用 selected session 的真 mapping artifact 補齊後 enable", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" });
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
       rule_run_id: "rr_x", status: "succeeded", score: 0, rule_set: "vg01", model_version_id: "m1",
       summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
@@ -248,6 +261,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
     await flush();
 
+    await selectMinioModel();
     await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
     await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
     await flush();
@@ -287,7 +301,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     expect(box.current).toBeNull(); // EmbeddedViewer 未 render
   });
 
-  it("無 active session → 顯示『需先派發 review session』，不出下拉", async () => {
+  it("無 active session：顯示排入轉檔 UI（a1-no-session wrapper），不出 session 下拉", async () => {
     const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
     empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
@@ -297,6 +311,197 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
 
     expect(q("a1-no-session")).not.toBeNull();
     expect(q("a1-session-select")).toBeNull();
+  });
+
+  it("無 session：排入轉檔鈕 觸發 triggerConversion，狀態行原樣顯示 lifecycle（queued，不顯示假 ready）", async () => {
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
+    const trigger = vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
+    vi.spyOn(coordinatorClient, "getIfcReadyJob").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", conversion_lifecycle_status: "queued", download_status: "downloaded", conversion_status: null, review_session_id: null });
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+    const sel = q("a1-minio-select") as HTMLSelectElement;
+    await act(async () => { sel.value = "松風庵/root/main/u1/model.ifc"; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    const btn = q("a1-trigger-convert") as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.disabled).toBe(false);
+    await act(async () => { btn.click(); });
+    await flush();
+    expect(trigger).toHaveBeenCalledWith("松風庵/root/main/u1/model.ifc");
+    const status = q("a1-convert-status");
+    expect(status).not.toBeNull();
+    expect(status!.textContent).toContain("queued");
+    expect(status!.textContent).not.toContain("ready");
+  });
+
+  it("無 session：#conv 連結初始即顯示且 href=#/conv（導覽用，不依賴轉檔觸發）", async () => {
+    // 守門 #2：a1-conv-link 為導覽連結，於無 session 區塊「初始渲染」即在場（不受 convJobId / 觸發動作控制）。
+    // 在「未觸發轉檔」狀態斷言可同時擋兩種回歸：連結被誤移到 sessions>0 分支、或誤加 {convJobId && ...} 條件。
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    // 尚未觸發任何轉檔（convJobId 為 null → job span 不在）→ 連結仍必須在場，證明其非觸發產物。
+    expect(q("a1-convert-job")).toBeNull();
+    const link = q("a1-conv-link") as HTMLAnchorElement | null;
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute("href")).toBe("#/conv");
+  });
+
+  it("無 session：新一輪轉檔在第一個 await 前即清舊輪詢 interval，舊 job 狀態不覆寫新狀態（race 防護）", async () => {
+    // 守門 #1：舊 job 的 2s interval 在新一輪 queueConversion 的 await 期間 fire，會以舊 job lifecycle
+    // 覆寫 convStatus（閃爍至舊值）。修法＝queueConversion 頭部（setConvBusy 後）立即清 convPollRef，
+    // 而非等第一次 pollOnce(newJobId) resolve 後。本測試以 deferred trigger 暫停新一輪於第一個 await，
+    // 在該 race 視窗推進 2s：未修時舊 interval fire → convStatus 被覆寫為舊 job 的 "converting"。
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 2,
+      objects: [
+        { key: "projA/root/main/u1/a.ifc", etag: "ea", role: "source_ifc", project_id: "p1", project_display_name: "A", category: "建築", version: "v1" },
+        { key: "projB/root/main/u2/b.ifc", etag: "eb", role: "source_ifc", project_id: "p1", project_display_name: "B", category: "建築", version: "v1" },
+      ],
+    });
+    // job1 持續非終態（converting → 掛 interval 並持續輪詢）；job2 非終態（queued）。
+    vi.spyOn(coordinatorClient, "getIfcReadyJob").mockImplementation(((id: string) => Promise.resolve({
+      ifc_ready_job_id: id, status: "x",
+      conversion_lifecycle_status: id === "job1" ? "converting" : "queued",
+      download_status: "downloaded", conversion_status: null, review_session_id: null,
+    })) as never);
+    // job1 trigger 立即 resolve；job2 trigger 回 deferred，讓新一輪暫停在第一個 await，營造 race 視窗。
+    let resolveJob2Trigger: (() => void) | null = null;
+    vi.spyOn(coordinatorClient, "triggerConversion").mockImplementation(((key: string) => {
+      if (key === "projA/root/main/u1/a.ifc") return Promise.resolve({ ifc_ready_job_id: "job1", status: "queued_for_conversion", trigger_source: "manual" });
+      return new Promise((res) => { resolveJob2Trigger = () => res({ ifc_ready_job_id: "job2", status: "queued_for_conversion", trigger_source: "manual" }); });
+    }) as never);
+
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush(); // mount 在 real timers 下沖乾淨（runtimeStatus / getMinioObjects then-chain）
+
+    vi.useFakeTimers(); // 由此 setInterval 受控；只影響 conv 輪詢 interval（此元件路徑無其他 setTimeout）
+    try {
+      // 第一輪：選 job1 模型 → 排入 → pollOnce 回 converting（非終態）→ 掛 interval1，convBusy 還原 false。
+      await selectMinioModel("projA/root/main/u1/a.ifc");
+      await act(async () => { (q("a1-trigger-convert") as HTMLButtonElement).click(); });
+      await flush();
+
+      // 第二輪：改選 job2 模型 → 排入。triggerConversion 回 deferred → queueConversion 暫停在第一個 await。
+      await selectMinioModel("projB/root/main/u2/b.ifc");
+      await act(async () => { (q("a1-trigger-convert") as HTMLButtonElement).click(); });
+      await flush();
+
+      // race 視窗內推進 2s：舊 interval1 若殘活會 fire pollOnce(job1) → setConvStatus("converting")。
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+      });
+
+      // 修好後 interval1 在第二輪頭部已清，convStatus 停在「觸發中…」不被舊 job 的 "converting" 覆寫。
+      const status = q("a1-convert-status");
+      expect(status).not.toBeNull();
+      expect(status!.textContent).not.toContain("converting");
+
+      if (resolveJob2Trigger) (resolveJob2Trigger as () => void)();
+      await flush();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("無 session：interval 輪詢命中 ready 後 runtimeStatus 失敗 → 清狀態並顯示錯誤（不卡在誤導的 ready）", async () => {
+    // 守門 #3：interval pollOnce 命中 ready 分支後 runtimeStatus 拋（coordinator 短暫 503 / 重啟），錯誤落到
+    // interval 的 .catch。修法＝.catch 比照首輪 poll 的外層 catch 也 setConvStatus(null)，否則 convStatus 卡在
+    // "ready" + 同時顯示 error + sessions 仍空，操作員看到「轉好了」卻無任何動作、無重試路徑（誠實鐵律：誤導狀態）。
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    // mount 一次 runtimeStatus → 空 session（渲染 no-session 區塊）；轉檔 ready 分支再打 runtimeStatus → 拋（503）。
+    vi.spyOn(coordinatorClient, "runtimeStatus")
+      .mockResolvedValueOnce(empty as never)
+      .mockRejectedValue(new Error("coordinator /api/runtime/status -> 503 Service Unavailable"));
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
+    vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
+    // 首輪 poll 回 converting（非終態）→ 掛 interval；下一個 tick 回 ready → 進入 ready 分支打 runtimeStatus（拋）。
+    vi.spyOn(coordinatorClient, "getIfcReadyJob")
+      .mockResolvedValueOnce({ ifc_ready_job_id: "ifcready_mw_x", status: "x", conversion_lifecycle_status: "converting", download_status: "downloaded", conversion_status: null, review_session_id: null })
+      .mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "x", conversion_lifecycle_status: "ready", download_status: "downloaded", conversion_status: null, review_session_id: null });
+
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    vi.useFakeTimers();
+    try {
+      await selectMinioModel("松風庵/root/main/u1/model.ifc");
+      await act(async () => { (q("a1-trigger-convert") as HTMLButtonElement).click(); });
+      await flush(); // 首輪 poll（converting）→ 掛 interval，convBusy 還原
+
+      // 推進 2s：interval fire pollOnce → ready → setConvStatus("ready") → runtimeStatus 拋 → .catch
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve(); });
+      await flush();
+
+      expect(q("a1-convert-error")).not.toBeNull(); // runtimeStatus 失敗誠實顯示
+      expect(q("a1-convert-status")).toBeNull();     // 狀態已清，不卡在誤導的 ready（修前：仍顯示 "轉檔狀態：ready" → 失敗）
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("f2：轉檔 ready 後用 job.review_session_id 反查對應 session（多 session 共享環境不盲取 act2[0]）", async () => {
+    // mount 無 session（顯示排入鈕）；ready 分支 runtimeStatus 回兩筆 session，act2[0] 是別人的 OTHER（active），
+    // 本次 job 的是 OWN（created）。修前盲取 act2[0]=OTHER（錯，A1 對錯誤 session 跑檢核）；
+    // 修後用 job.review_session_id="review_session_OWN" 反查 → 選中 OWN。
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    const twoSessions = {
+      ...fakeRuntimeStatus(VIEWER_ORIGIN),
+      sessions: { count: 2, active_count: 2, participant_count: 0, items: [
+        { session_id: "review_session_OTHER", status: "active" },
+        { session_id: "review_session_OWN", status: "created" },
+      ] },
+    };
+    vi.spyOn(coordinatorClient, "runtimeStatus")
+      .mockResolvedValueOnce(empty as never)
+      .mockResolvedValue(twoSessions as never);
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
+    vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
+    vi.spyOn(coordinatorClient, "getIfcReadyJob")
+      .mockResolvedValueOnce({ ifc_ready_job_id: "ifcready_mw_x", status: "x", conversion_lifecycle_status: "converting", download_status: "downloaded", conversion_status: null, review_session_id: null })
+      .mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "x", conversion_lifecycle_status: "ready", download_status: "downloaded", conversion_status: null, review_session_id: "review_session_OWN" });
+
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    vi.useFakeTimers();
+    try {
+      await selectMinioModel("松風庵/root/main/u1/model.ifc");
+      await act(async () => { (q("a1-trigger-convert") as HTMLButtonElement).click(); });
+      await flush(); // 首輪 converting → 掛 interval
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve(); });
+      await flush(); // ready 分支 → runtimeStatus 兩筆 → 反查選 session
+      const sel = q("a1-session-select") as HTMLSelectElement | null;
+      expect(sel).not.toBeNull();
+      expect(sel!.value).toBe("review_session_OWN"); // 反查中 OWN，非盲取 act2[0]=OTHER（修前會是 OTHER）
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // A1-W1 BCF gating UI 層驗證：
@@ -317,7 +522,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
 
   it("A1-W1 BCF：step=issued 後 BCF 鈕 enable", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
       rule_run_id: "rr_x", status: "succeeded", score: 80, rule_set: "default", model_version_id: "m1",
       summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
@@ -331,6 +536,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await flush();
 
     // 鎖定模型 → 跑檢核 → RUN_DONE(step=scored)
+    await selectMinioModel();
     await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
     await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
     await flush();
@@ -344,5 +550,36 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await flush();
 
     expect(bcfBtn().disabled).toBe(false);
+  });
+
+  it("有 session：run 鈕 enable 且 doRun 打 createRuleRunForSession（非 ifc_source_path 直接路徑）", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+    const forSession = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
+      rule_run_id: "rr_1", status: "succeeded", score: 100, rule_set: "default", model_version_id: "m1",
+      summary: { total: 0, passed: 0, failed: 0, errored: 0, unique_elements: 0, target_summary: {}, warnings: [] },
+    });
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush(); // runtimeStatus → session 自動選 → auto-PICK 推進 step
+    const run = q("a1-step-run") as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+    await act(async () => { run.click(); });
+    await flush();
+    expect(forSession).toHaveBeenCalledWith("review_session_x", { ids_path: expect.stringContaining("sample-fire-rating.ids") });
+  });
+
+  it("無 session：run 鈕 disabled + caption 指向 for-session 前提", async () => {
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ bucket: null, count: 0, objects: [] });
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+    const run = q("a1-step-run") as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(run.getAttribute("title") ?? run.textContent).toContain("review session");
   });
 });

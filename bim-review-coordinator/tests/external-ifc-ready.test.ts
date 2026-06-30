@@ -273,8 +273,9 @@ describe("POST /api/external/ifc-ready", () => {
     expect(final.status).toBe("dispatch_failed");
     expect(final.conversion_authority).toBeNull();
     // minio-trigger-lifecycle:鎖住單一權威 conversion_lifecycle_status 上 wire（dashboard 出口）。
-    // 此欄由 summarizeIfcReadyJob（list / status 投影）計算，detail 端點回原始 job 不含此欄，
-    // 故改打列表端點驗證。dispatch_failed → deriveLifecycleStatus 短路回 "failed"；
+    // 此欄由 summarizeIfcReadyJob（list / status 投影）計算；detail 端點亦上 wire 此欄
+    // （見上方「單筆 detail」測試與 quality finding #1 修復）。此處鎖住「列表端點」此欄投影。
+    // dispatch_failed → deriveLifecycleStatus 短路回 "failed"；
     // 若 summarizeIfcReadyJob 誤刪/改名此欄，既有斷言全綠卻漏此回歸，於此明確鎖住。
     const listedFailed = await request(app.app).get("/api/external/ifc-ready");
     const failedItem = (listedFailed.body.items as Array<Record<string, unknown>>).find(
@@ -282,6 +283,23 @@ describe("POST /api/external/ifc-ready", () => {
     );
     expect(failedItem).toBeDefined();
     expect(failedItem?.conversion_lifecycle_status).toBe("failed");
+  });
+
+  it("GET /api/external/ifc-ready/:jobId（單筆 detail）回應含 conversion_lifecycle_status（前端 getIfcReadyJob 輪詢主讀此欄）", async () => {
+    // quality finding #1：detail 端點原本只回 sanitizeJobForExternal(job)（原始 IfcReadyIntakeJob），
+    // 該型別無 conversion_lifecycle_status 欄；此欄只由 summarizeIfcReadyJob 計算、僅列表端點上 wire。
+    // 前端 IfcReadyJobDetail.conversion_lifecycle_status 卻宣告 detail 端點回傳此欄 → 真實後端恆 undefined。
+    // 修復後 detail 端點與列表端點對齊上 wire 此欄（deriveLifecycleStatus(job)），維持前端型別契約。
+    const app = makeApp();
+    const created = await request(app.app).post("/api/external/ifc-ready").set(authHeaders()).send(payload());
+    expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
+    // streaming 不可達（makeApp 預設）→ worker 標 dispatch_failed → deriveLifecycleStatus 短路回 "failed"（確定值）。
+    await waitForDispatchEnd(app, jobId, ["dispatch_failed"]);
+    const res = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("conversion_lifecycle_status");
+    expect(res.body.conversion_lifecycle_status).toBe("failed");
   });
 
   it("lists recent IFC-ready jobs with dashboard-safe progress fields", async () => {

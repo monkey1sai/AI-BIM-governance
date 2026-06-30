@@ -9,7 +9,6 @@ import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatu
 import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
-import { RealIfcConsolePage } from "./RealIfcConsolePage";
 // VG-01 Task 3：A1 工作台嵌入 live viewer（iframe + vg01 postMessage 橋），跑檢核→3D 高亮一氣呵成。
 import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
@@ -284,8 +283,19 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
 
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
-  const [pathInput, setPathInput] = useState(defaultA1IfcPath);
   const [idsPath, setIdsPath] = useState(defaultA1IdsPath);
+  // A1（B2）step①：MinIO source_ifc 物件清單（下拉資料源）。null=載入中、[]=空/錯誤；selectedKey 供 step② PICK 與排隊轉檔共用。
+  const [minioObjects, setMinioObjects] = useState<import("./coordinatorClient").MinioObject[] | null>(null);
+  const [minioErr, setMinioErr] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string>("");
+  // A1（B2）task3：無 session 分支手動排入 IFC→USD 轉檔的排隊狀態 + 輪詢 ref。
+  // 誠實鐵律：convStatus 原樣顯示 lifecycle（detected/queued/converting/ready/failed）或降級 fallback，轉檔未完成不偽造 ready。
+  const [convJobId, setConvJobId] = useState<string | null>(null);
+  const [convStatus, setConvStatus] = useState<string | null>(null); // 原樣顯示 lifecycle / fallback；誠實不偽造 ready
+  const [convErr, setConvErr] = useState<string | null>(null);
+  const [convBusy, setConvBusy] = useState(false);
+  const convPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (convPollRef.current) clearInterval(convPollRef.current); }, []);
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -333,8 +343,26 @@ export function A1GovernanceWorkbenchPage() {
     return () => { alive = false; };
   }, []);
 
+  // A1（B2）step①：列 MinIO source_ifc 物件供下拉選模型。誠實：失敗顯錯、空就空，不偽造。
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getMinioObjects()
+      .then((res) => { if (alive) { setMinioObjects(res.objects.filter((o) => o.role === "source_ifc")); setMinioErr(null); } })
+      .catch((e) => { if (alive) { setMinioObjects([]); setMinioErr(String(e)); } });
+    return () => { alive = false; };
+  }, []);
+
+  // for-session 模式：治理檢核只需 session。選定 session 後若狀態機仍在 idle（操作員直接對既有 session 檢核，
+  // 未經 MinIO 選模型），用 PICK_SESSION 推進五步條解鎖 run 鈕。刻意不寫 session id 進 ifcPath
+  // （ifcPath 語意=選定的 IFC 模型路徑，session id 借位會汙染狀態快照），for-session 改以 selectedSession 送伺服器。
+  useEffect(() => {
+    if (selectedSession && state.step === "idle") dispatch({ type: "PICK_SESSION" });
+  }, [selectedSession, state.step]);
+
   const doRun = useCallback(async () => {
-    if (!state.ifcPath) return;
+    // gating：須已離開 idle（PICK_FILE 或 PICK_SESSION 推進過）且有選定 session（for-session 必要）。
+    // 不再看 state.ifcPath——session-pick 後 ifcPath 為空，舊式 !state.ifcPath 會誤擋。
+    if (state.step === "idle" || !selectedSession) return;
     // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
     // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
     dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
@@ -342,7 +370,7 @@ export function A1GovernanceWorkbenchPage() {
     // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
     const myGen = pollGenRef.current;
     try {
-      const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: state.ifcPath, ids_path: idsPath || undefined });
+      const { rule_run_id } = await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined });
       if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -376,7 +404,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.ifcPath, state.step, state.runError, idsPath, selectedSession, sessions]);
+  }, [state.step, state.runError, idsPath, selectedSession, sessions]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -434,6 +462,70 @@ export function A1GovernanceWorkbenchPage() {
     }
   }, [runId]);
 
+  // A1（B2）task3：無 session 時手動排入 IFC→USD 轉檔。立即輪詢一次讓 UI/測試不必等 interval；非終態才掛 2s interval。
+  const queueConversion = useCallback(async () => {
+    if (!selectedKey || convBusy) return;
+    setConvErr(null);
+    setConvBusy(true);
+    // #1 race 防護：立即清除上一輪殘留的輪詢 interval，避免其在本輪 await（trigger / pollOnce）期間 fire，
+    // 以舊 job 的 lifecycle 覆寫 convStatus（閃爍至舊值）。必須在第一個 await 之前清，不可等第一次 pollOnce(newJobId) resolve 後。
+    if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
+    setConvStatus(t("觸發中…", "triggering…"));
+    const pollOnce = async (jobId: string): Promise<string | null> => {
+      const job = await coordinatorClient.getIfcReadyJob(jobId);
+      // 主讀 conversion_lifecycle_status；缺失才誠實降級到 conversion_status / download_status / status。
+      const lifecycle = job.conversion_lifecycle_status ?? job.conversion_status ?? job.download_status ?? job.status;
+      setConvStatus(lifecycle);
+      if (job.conversion_lifecycle_status === "ready") {
+        // 轉好 → coordinator 已自動建立 review session；重抓 runtime/status 讓 A1 撈到該 session（for-session 檢核）。
+        const rt = await coordinatorClient.runtimeStatus();
+        const act2 = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
+        setSessions(act2);
+        // f2 fix：用「本次轉檔 job」的 review_session_id 反查對應 session，而非盲取 act2[0]。
+        // rt.sessions.items 是 coordinator 全域清單；共享環境在 ready 當下可能含多筆 active/created session，
+        // act2[0] 不保證等於本次 ifc-ready job 產生的那個 → 盲取會讓 A1 對錯誤 session 跑治理檢核。
+        // job.review_session_id（coordinator 為此 job 建的 session id）反查；不中（null / 尚未在清單）才退 act2[0]。
+        const ownSession = job.review_session_id
+          ? act2.find((s) => s.session_id === job.review_session_id)
+          : undefined;
+        const picked = ownSession ?? act2[0];
+        if (picked) setSelectedSession(picked.session_id);
+      }
+      return job.conversion_lifecycle_status;
+    };
+    try {
+      const res = await coordinatorClient.triggerConversion(selectedKey);
+      const jobId = res.ifc_ready_job_id ?? null;
+      setConvJobId(jobId);
+      if (!jobId) { setConvErr(t("trigger 未回 job id", "trigger returned no job id")); setConvStatus(null); return; } // 註：TriggerConversionResponse 已無 detail 欄（task#0 收緊型別），失敗 detail 由 jsonPost throw 經 catch 顯示
+      const first = await pollOnce(jobId);
+      if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
+      if (first !== "ready" && first !== "failed") {
+        // 捕獲本輪 interval id，清除前比對 convPollRef.current === intervalId：避免「round1 的 in-flight
+        // pollOnce 其 .then/.catch 在 round2 已換上新 interval 後，誤清掉 round2 的 interval」的識別競態
+        // （pollOnce in-flight 期間 convBusy 已在 finally 清掉、按鈕重啟用 → 使用者再次排入即可觸發）。
+        const intervalId = setInterval(() => {
+          void pollOnce(jobId)
+            .then((s) => { if ((s === "ready" || s === "failed") && convPollRef.current === intervalId) { clearInterval(intervalId); convPollRef.current = null; } })
+            // ready 分支若先 setConvStatus("ready") 再 await runtimeStatus()，runtimeStatus 拋（coordinator 短暫
+            // 503 / 重啟）會落到此 .catch：須比照首輪 poll 的外層 catch 也 setConvStatus(null)，否則 convStatus
+            // 卡在 "ready" 又顯示 error 且 sessions 仍空，誤導操作員「轉好了」卻無動作、無重試路徑（誠實鐵律）。
+            .catch((e) => { if (convPollRef.current === intervalId) { clearInterval(intervalId); convPollRef.current = null; } setConvErr(String(e)); setConvStatus(null); });
+        }, 2000);
+        convPollRef.current = intervalId;
+      }
+    } catch (e) {
+      setConvErr(String(e)); // 503 MinIO 未設定 / 400 key 不合法 → 誠實顯示，按鈕可重試
+      setConvStatus(null);
+    } finally {
+      setConvBusy(false);
+    }
+  }, [selectedKey, convBusy]);
+
+  // A1（B2）下拉項 label：專案·種類·版本·檔名（缺值以「?」誠實標示，不臆造）。
+  const minioLabel = (o: import("./coordinatorClient").MinioObject) =>
+    `${o.project_display_name ?? o.project_id ?? "?"} · ${o.category ?? "?"} · ${o.version ?? "?"} · ${o.key.split("/").pop() ?? o.key}`;
+
   return (
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
@@ -451,10 +543,16 @@ export function A1GovernanceWorkbenchPage() {
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input className="ec-btn" data-testid="a1-step-path" style={{ minWidth: 420 }} value={pathInput}
-            onChange={(e) => setPathInput(e.target.value)} />
-          <Btn data-testid="a1-step-pick" caption={t("鎖定此模型路徑（進入步驟2）", "Lock this model path (proceed to step 2)")} onClick={() => dispatch({ type: "PICK_FILE", ifcPath: pathInput })}>{t("選取模型", "Select Model")}</Btn>
+          <select data-testid="a1-minio-select" className="ec-btn" style={{ minWidth: 420 }}
+            value={selectedKey} onChange={(e) => setSelectedKey(e.target.value)}>
+            <option value="">{minioErr ? t("（MinIO 物件不可用）", "(MinIO objects unavailable)") : minioObjects === null ? t("載入中…", "Loading…") : minioObjects.length === 0 ? t("（無 source_ifc 物件）", "(no source_ifc objects)") : t("— 選擇 MinIO 模型 —", "— select a MinIO model —")}</option>
+            {(minioObjects ?? []).map((o) => <option key={o.key} value={o.key}>{minioLabel(o)}</option>)}
+          </select>
+          <Btn data-testid="a1-step-pick" disabled={!selectedKey}
+            caption={t("鎖定此模型（進入步驟2；同時作為排入轉檔的 key）", "Lock this model (proceed to step 2; also the key to queue conversion)")}
+            onClick={() => dispatch({ type: "PICK_FILE", ifcPath: selectedKey })}>{t("選取模型", "Select Model")}</Btn>
         </div>
+        {minioErr && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
           <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑", "(optional) buildingSMART IDS .ids path")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
           <input
@@ -477,8 +575,8 @@ export function A1GovernanceWorkbenchPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
               健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
-          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError)}
-            caption="POST /api/governance/rule-runs" onClick={doRun}>
+          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError) || !selectedSession}
+            caption={!selectedSession ? t("需先完成轉檔產生 review session（治理檢核走 for-session）", "Conversion must finish to create a review session first (governance runs via for-session)") : "POST /api/governance/rule-runs/for-session/:sessionId"} onClick={doRun}>
             {state.runError ? t("重試檢核", "Retry Validation") : state.step === "running" ? t("檢核中…", "Validating…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
           {state.runError && <span className="ec-warn-note">{t("檢核失敗（可重試）：", "Validation failed (retryable): ")}{state.error}</span>}
@@ -512,7 +610,20 @@ export function A1GovernanceWorkbenchPage() {
 
       <Panel title={t("3D 即時檢視（嵌入 live viewer）", "Live 3D View (embedded live viewer)")} sub={t("重用既有 viewer 串流；first frame / stage truth 為真證據，非樂觀更新", "Reuses the existing viewer stream; first frame / stage truth are real evidence, not optimistic updates")} prov="asbuilt">
         {sessions.length === 0 ? (
-          <p className="ec-warn-note" data-testid="a1-no-session">{t("需先派發 review session（無 active session，3D 高亮停用）", "A review session must be dispatched first (no active session; 3D highlighting disabled)")}</p>
+          <div data-testid="a1-no-session">
+            <p className="ec-note">{t("無 active session。選定上方 MinIO 模型後，按下方按鈕手動排入 IFC→USD 轉檔；轉檔完成會自動建立 review session，本頁即可進行治理檢核與 3D 高亮。", "No active session. After selecting a MinIO model above, click below to manually queue IFC to USD conversion; when conversion completes a review session is created automatically, and this page can then run governance validation and 3D highlighting.")}</p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Btn primary data-testid="a1-trigger-convert" disabled={!selectedKey || convBusy}
+                caption={selectedKey ? "POST /api/conversion/trigger {key}" : t("先選 MinIO 模型", "select a MinIO model first")}
+                onClick={() => { void queueConversion(); }}>
+                {convBusy ? t("排入中…", "queuing…") : t("排入 IFC→USD 轉檔排程", "Queue IFC to USD Conversion")}
+              </Btn>
+              {convJobId && <span className="ec-s" data-testid="a1-convert-job">job: {convJobId}</span>}
+              <a className="ec-s" data-testid="a1-conv-link" href="#/conv">{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+            </div>
+            {convStatus !== null && <p className="ec-note" data-testid="a1-convert-status">{t("轉檔狀態：", "conversion status: ")}{convStatus}</p>}
+            {convErr && <p className="ec-warn-note" data-testid="a1-convert-error">{convErr}</p>}
+          </div>
         ) : (
           <>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
@@ -651,10 +762,6 @@ export function A1GovernanceWorkbenchPage() {
         {hl && <span className="ec-note" data-testid="a1-highlight-status" style={{ marginLeft: 6 }}>{highlightResultText(hl)}</span>}
         {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
-
-      <section data-testid="a1-real-ifc-slice" className="ec-a1-inline-slice">
-        <RealIfcConsolePage />
-      </section>
     </>
   );
 }

@@ -27,7 +27,10 @@ const COORD_BASE: string =
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+    // 與 jsonPost/jsonPut 一致萃取 coordinator `{ detail }`（誠實鐵律）：getIfcReadyJob 等輪詢 GET
+    // 失敗時，A1 狀態行直接把 .message 顯給操作員；只 throw statusText 會把後端「job 不存在 /
+    // 未配置」等可操作提示吞成無意義的 "404 Not Found"。errorDetail best-effort，無 body 才退 statusText。
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -175,6 +178,33 @@ export interface IfcReadyListItem {
   updated_at: string;
 }
 
+// B1（PR #259）落地的單一權威轉檔生命週期狀態（services/lifecycleStatus.ts deriveLifecycleStatus）。
+// ⚠ 手動同步點：此值集鏡像後端 ConversionLedgerStatus（bim-review-coordinator/src/services/conversionLedger.ts）。
+// 前後端無 shared schema / codegen；後端增刪狀態值時 MUST 同步此處。coordinatorClient.test.ts 的
+// 「值集鎖定」測試鎖住此陣列，使任何前端漏改在 CI 被攔（後端增值仍需人工同步，測試僅守前端不被悄改）。
+export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed"] as const;
+export type ConversionLifecycleStatus = (typeof CONVERSION_LIFECYCLE_STATUS_VALUES)[number];
+
+// A1（B2）排隊轉檔回應：POST /api/conversion/trigger。成功 202 帶 ifc_ready_job_id；
+// MinIO 未設定 503 由 jsonPost throw（帶後端 detail），不會走到這裡。
+export interface TriggerConversionResponse {
+  ifc_ready_job_id: string;
+  status?: string;
+  trigger_source?: string;
+}
+
+// A1（B2）轉檔狀態輪詢：GET /api/external/ifc-ready/:jobId（summarizeIfcReadyJob 子集）。
+// 主讀 conversion_lifecycle_status；該欄缺失時誠實降級用 conversion_status / download_status。
+export interface IfcReadyJobDetail {
+  ifc_ready_job_id: string;
+  status: string;
+  conversion_lifecycle_status: ConversionLifecycleStatus | null;
+  download_status: string | null;
+  conversion_status: string | null;
+  review_session_id: string | null;
+}
+
+
 // minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
 // 關閉時只有 enabled=false + note；啟用時帶完整計數。credentials 永不在此回應。
 export interface MinioWatchStatus {
@@ -300,4 +330,11 @@ export const coordinatorClient = {
     jsonGet<{ bucket: string | null; count: number; objects: MinioObject[] }>(
       `/api/minio/objects${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ""}`,
     ),
+  // A1（B2）：操作員手動把 MinIO 物件排入 IFC→USD 轉檔（POST /api/conversion/trigger {key}）。
+  // 前端只送 key；presign 與 webhook secret 一律 coordinator server-side（誠實／簽章不出瀏覽器）。
+  triggerConversion: (key: string) =>
+    jsonPost<TriggerConversionResponse>("/api/conversion/trigger", { key }),
+  // A1（B2）：單一 ifc-ready job 輪詢（讀 conversion_lifecycle_status）。
+  getIfcReadyJob: (jobId: string) =>
+    jsonGet<IfcReadyJobDetail>(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`),
 };
