@@ -511,7 +511,10 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
   it("有 session：run 鈕 enable 且 doRun 打 createRuleRunForSession（非 ifc_source_path 直接路徑）", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
     const forSession = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_1", status: "queued" });
-    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({ rule_run_id: "rr_1", status: "succeeded", summary: { total: 0, passed: 0, failed: 0, unique_elements: 0 }, score: 100 } as never);
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
+      rule_run_id: "rr_1", status: "succeeded", score: 100, rule_set: "default", model_version_id: "m1",
+      summary: { total: 0, passed: 0, failed: 0, errored: 0, unique_elements: 0, target_summary: {}, warnings: [] },
+    });
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     root = createRoot(container);
     await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
@@ -520,7 +523,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     expect(run.disabled).toBe(false);
     await act(async () => { run.click(); });
     await flush();
-    expect(forSession).toHaveBeenCalledWith("review_session_x", { ids_path: expect.any(String) });
+    expect(forSession).toHaveBeenCalledWith("review_session_x", { ids_path: expect.stringContaining("sample-fire-rating.ids") });
   });
 
   it("無 session：run 鈕 disabled + caption 指向 for-session 前提", async () => {
