@@ -485,14 +485,18 @@ export function A1GovernanceWorkbenchPage() {
       const first = await pollOnce(jobId);
       if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
       if (first !== "ready" && first !== "failed") {
-        convPollRef.current = setInterval(() => {
+        // 捕獲本輪 interval id，清除前比對 convPollRef.current === intervalId：避免「round1 的 in-flight
+        // pollOnce 其 .then/.catch 在 round2 已換上新 interval 後，誤清掉 round2 的 interval」的識別競態
+        // （pollOnce in-flight 期間 convBusy 已在 finally 清掉、按鈕重啟用 → 使用者再次排入即可觸發）。
+        const intervalId = setInterval(() => {
           void pollOnce(jobId)
-            .then((s) => { if ((s === "ready" || s === "failed") && convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; } })
+            .then((s) => { if ((s === "ready" || s === "failed") && convPollRef.current === intervalId) { clearInterval(intervalId); convPollRef.current = null; } })
             // ready 分支若先 setConvStatus("ready") 再 await runtimeStatus()，runtimeStatus 拋（coordinator 短暫
             // 503 / 重啟）會落到此 .catch：須比照首輪 poll 的外層 catch 也 setConvStatus(null)，否則 convStatus
             // 卡在 "ready" 又顯示 error 且 sessions 仍空，誤導操作員「轉好了」卻無動作、無重試路徑（誠實鐵律）。
-            .catch((e) => { if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; } setConvErr(String(e)); setConvStatus(null); });
+            .catch((e) => { if (convPollRef.current === intervalId) { clearInterval(intervalId); convPollRef.current = null; } setConvErr(String(e)); setConvStatus(null); });
         }, 2000);
+        convPollRef.current = intervalId;
       }
     } catch (e) {
       setConvErr(String(e)); // 503 MinIO 未設定 / 400 key 不合法 → 誠實顯示，按鈕可重試
