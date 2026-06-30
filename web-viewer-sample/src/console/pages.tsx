@@ -284,8 +284,11 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
 
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
-  const [pathInput, setPathInput] = useState(defaultA1IfcPath);
   const [idsPath, setIdsPath] = useState(defaultA1IdsPath);
+  // A1（B2）step①：MinIO source_ifc 物件清單（下拉資料源）。null=載入中、[]=空/錯誤；selectedKey 供 step② PICK 與排隊轉檔共用。
+  const [minioObjects, setMinioObjects] = useState<import("./coordinatorClient").MinioObject[] | null>(null);
+  const [minioErr, setMinioErr] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string>("");
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -330,6 +333,15 @@ export function A1GovernanceWorkbenchPage() {
         setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null); // handoff base（對齊 /ui/open）
       })
       .catch(() => { if (alive) { setSessions([]); setViewerOrigin(null); setCoordinatorBase(null); } }); // 連不上就空，不假資料
+    return () => { alive = false; };
+  }, []);
+
+  // A1（B2）step①：列 MinIO source_ifc 物件供下拉選模型。誠實：失敗顯錯、空就空，不偽造。
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getMinioObjects()
+      .then((res) => { if (alive) { setMinioObjects(res.objects.filter((o) => o.role === "source_ifc")); setMinioErr(null); } })
+      .catch((e) => { if (alive) { setMinioObjects([]); setMinioErr(String(e)); } });
     return () => { alive = false; };
   }, []);
 
@@ -434,6 +446,10 @@ export function A1GovernanceWorkbenchPage() {
     }
   }, [runId]);
 
+  // A1（B2）下拉項 label：專案·種類·版本·檔名（缺值以「?」誠實標示，不臆造）。
+  const minioLabel = (o: import("./coordinatorClient").MinioObject) =>
+    `${o.project_display_name ?? o.project_id ?? "?"} · ${o.category ?? "?"} · ${o.version ?? "?"} · ${o.key.split("/").pop() ?? o.key}`;
+
   return (
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
@@ -451,10 +467,16 @@ export function A1GovernanceWorkbenchPage() {
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input className="ec-btn" data-testid="a1-step-path" style={{ minWidth: 420 }} value={pathInput}
-            onChange={(e) => setPathInput(e.target.value)} />
-          <Btn data-testid="a1-step-pick" caption={t("鎖定此模型路徑（進入步驟2）", "Lock this model path (proceed to step 2)")} onClick={() => dispatch({ type: "PICK_FILE", ifcPath: pathInput })}>{t("選取模型", "Select Model")}</Btn>
+          <select data-testid="a1-minio-select" className="ec-btn" style={{ minWidth: 420 }}
+            value={selectedKey} onChange={(e) => setSelectedKey(e.target.value)}>
+            <option value="">{minioErr ? t("（MinIO 物件不可用）", "(MinIO objects unavailable)") : minioObjects === null ? t("載入中…", "Loading…") : minioObjects.length === 0 ? t("（無 source_ifc 物件）", "(no source_ifc objects)") : t("— 選擇 MinIO 模型 —", "— select a MinIO model —")}</option>
+            {(minioObjects ?? []).map((o) => <option key={o.key} value={o.key}>{minioLabel(o)}</option>)}
+          </select>
+          <Btn data-testid="a1-step-pick" disabled={!selectedKey}
+            caption={t("鎖定此模型（進入步驟2；同時作為排入轉檔的 key）", "Lock this model (proceed to step 2; also the key to queue conversion)")}
+            onClick={() => dispatch({ type: "PICK_FILE", ifcPath: selectedKey })}>{t("選取模型", "Select Model")}</Btn>
         </div>
+        {minioErr && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
           <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑", "(optional) buildingSMART IDS .ids path")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
           <input

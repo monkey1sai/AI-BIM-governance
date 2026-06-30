@@ -1520,6 +1520,36 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 });
 
+describe("A1 step① MinIO 下拉（B2）", () => {
+  it("getMinioObjects 回 source_ifc + parsed_usdc → A1 只列 source_ifc，文字框 a1-step-path 不再渲染", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockRejectedValue(new Error("offline"));
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 2,
+      objects: [
+        { key: "松風庵/root/main/uuid1/model.ifc", etag: "e1", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
+        { key: "松風庵/root/main/uuid1/model.usdc", etag: "e2", role: "parsed_usdc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
+      ],
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+    const select = container.querySelector('[data-testid="a1-minio-select"]') as HTMLSelectElement | null;
+    expect(select).not.toBeNull();
+    // 只列 source_ifc（1 個真選項 + 1 個 placeholder option）。
+    expect(select!.querySelectorAll("option").length).toBe(2);
+    expect(select!.textContent).toContain("松風庵");
+    expect(select!.textContent).toContain("建築");
+    expect(select!.textContent).not.toContain("model.usdc"); // parsed_usdc 不入下拉
+    // 文字框 a1-step-path 已被下拉取代。
+    expect(container.querySelector('[data-testid="a1-step-path"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+    document.body.removeChild(container);
+  });
+});
+
 // A2 VersionDiff 多專案 / 三層版本選擇器 client-render（spec §4.2/§6.2）。
 // 上方 A2 既有測試的 fixture 只有單一 project（270）/單一 model（機電），無法證明
 //   (1) project 下拉真的把「多個」project 都列出來（多專案可選）、
@@ -1871,6 +1901,11 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
       sessions: { count: 0, active_count: 0, participant_count: 0, items: [] },
       configured_endpoints: { viewer: { browser_url_base: "" } },
     } as never);
+    // A1 step① 改 MinIO 下拉後，mount 會打 getMinioObjects()；回單一 source_ifc 物件讓 pickModel 能選到該 option。
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -1882,6 +1917,16 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   const clickByTestId = async (tid: string) => {
     const el = container.querySelector<HTMLButtonElement>(`[data-testid="${tid}"]`)!;
     await act(async () => { el.click(); });
+  };
+
+  // A1 step① 改 MinIO 下拉後，a1-step-pick 在未選 key 時 disabled。pickModel 先在下拉選到 source_ifc
+  // 物件（設 selectedKey）再點 pick，讓既有 doRun 測試能照常推進 step。fake timers 下先沖一拍 microtask，
+  // 確保 getMinioObjects().then 已渲染 option，sel.value 才選得到。
+  const pickModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-minio-select"]')!;
+    await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    await clickByTestId("a1-step-pick");
   };
 
   it("[IDS picker] A1 IDS 欄位預設顯示 sample IDS path，開啟資料夾後沿用目前目錄填入檔名", async () => {
@@ -1918,7 +1963,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
 
     // 鎖定模型路徑（idle→picked）後執行規則檢核（picked→running，啟動輪詢）。
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 跑完 createRuleRun microtask + 第一次 getRuleRun（iteration 0）。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -1943,7 +1988,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const callsBeforeReset = getSpy.mock.calls.length;
@@ -1971,7 +2016,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 輪詢一次即 succeeded → 結束 loop 並進 scored。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -2007,7 +2052,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -2046,7 +2091,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 第一輪輪詢即 failed → 結束 loop → dispatch RUN_FAIL → running-error 子態。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -2099,7 +2144,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
 
     // idle→picked→running（doRun 啟動，卡在 await createRuleRun，輪詢尚未開始）。
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     expect(getSpy.mock.calls.length).toBe(0); // createRuleRun 未解析前不該有 getRuleRun
 
@@ -2128,7 +2173,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 第一輪即 errored → 白名單條件 break；不得 setTimeout 等下一輪。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -2171,7 +2216,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -2225,7 +2270,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -2286,7 +2331,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -2325,7 +2370,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 

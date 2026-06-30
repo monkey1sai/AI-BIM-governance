@@ -81,6 +81,12 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     document.body.appendChild(container);
     root = null;
     box.current = null;
+    // A1 mount 打 getMinioObjects()（step① 下拉源）；預設回單一 source_ifc 物件保持 hermetic（不打真網路），
+    // 並讓驅動 pick→run 流程的 it 能用 selectMinioModel 選到該 option。個別 it 需要時可再 spyOn 覆寫。
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
   });
   afterEach(async () => {
     if (root) await act(async () => { root!.unmount(); });
@@ -96,6 +102,12 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     for (let i = 0; i < 5; i++) {
       await act(async () => { await Promise.resolve(); });
     }
+  };
+
+  // step① 改 MinIO 下拉後，a1-step-pick 需先選 source_ifc 物件才 enable；render+flush 後該 option 已存在。
+  const selectMinioModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-minio-select"]')!;
+    await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
   };
 
   it("有 active session → 顯示 session 下拉；viewerOrigin 取自 runtime/status", async () => {
@@ -211,6 +223,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await flush();
 
     // 跑檢核：先 PICK_FILE（離開 idle 才能按 RUN），再按 a1-step-run；doRun 首輪 getRuleRun 即 succeeded → 立即 RUN_DONE。
+    await selectMinioModel();
     await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
     await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
     await flush();
@@ -248,6 +261,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
     await flush();
 
+    await selectMinioModel();
     await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
     await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
     await flush();
@@ -331,6 +345,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await flush();
 
     // 鎖定模型 → 跑檢核 → RUN_DONE(step=scored)
+    await selectMinioModel();
     await act(async () => { (q("a1-step-pick") as HTMLButtonElement).click(); });
     await act(async () => { (q("a1-step-run") as HTMLButtonElement).click(); });
     await flush();
