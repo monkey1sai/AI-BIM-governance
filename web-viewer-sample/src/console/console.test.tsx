@@ -33,8 +33,17 @@ import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type Rule
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
+import { getLang, setLang } from "./i18n";
 
 describe("edge console honesty smoke", () => {
+  // i18n._lang 是 module singleton（i18n.ts）。本 describe 多個 SSR 測試（含下方 nav tooltip
+  // i18n 測試）斷言預設 zh 字串；若任何測試（現在或未來新增）在此區塊內把語言切到 en 而不還原，
+  // 殘留狀態會 silently 污染後續測試（positive 斷言假性轉紅、not-contains 仍綠）。pin zh before each
+  // + restore after each → 永久 intra-file 隔離（其餘 describe 的 beforeEach/afterEach 不涵蓋本區塊）。
+  let _prevLang: ReturnType<typeof getLang>;
+  beforeEach(() => { _prevLang = getLang(); setLang("zh"); });
+  afterEach(() => { setLang(_prevLang); });
+
   it("SpecPage lead 誠實標 MinIO 為 coordinator 外連 S3、非獨立 repo", () => {
     const html = renderToString(<SpecPage />);
     // 修正後 lead 必須含新措辭（MinIO = coordinator 外連 S3 來源）。
