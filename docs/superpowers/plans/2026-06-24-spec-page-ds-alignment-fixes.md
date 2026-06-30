@@ -26,6 +26,40 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ---
 
+## Task P1: GitNexus upstream impact 前置安全門（改 SpecPage / EdgeConsole symbol 前 MUST 跑 · HIGH/CRITICAL 停手回報）
+
+**目的（spec §4 line 119 + CLAUDE.md §4 鐵律）**：「改 `pages.tsx`/`EdgeConsole.tsx` symbol **前**跑 `impact(upstream)`」是 **before-edit 安全門**——若回 HIGH/CRITICAL，**先回報、停手、不進入任何編輯**，而非事後補驗。本批會改的 code symbol 為 `SpecPage`（pages.tsx，Task 1）與 `EdgeConsole`（EdgeConsole.tsx nav render，Task 2，未動 `navText`）。Task 0（純 CSS）、Task 3（純 `.md`）不含 code symbol、本身不需 impact，但本前置門仍須在**任何**編輯（含 Task 0）落地前先跑完並確認 LOW，才開始 Task 0。
+
+**為什麼前置而非排在後段**：原 plan 曾把 impact 排在 Tasks 0–2 全 commit 之後的 Task 4（標題即「commit 後驗 blast」），與 spec §4「改 symbol **前**跑 impact」語意相反；那種排法下若回 HIGH/CRITICAL，得回退三個已落地 commit 才能「先回報再繼續」，risk gate 的預防性作用被逆轉。故本版把 impact 安全門前移到此 Task P1（編輯前），`detect_changes`（scope 外溢確認）留在 PR 前的 Task 4（符合 spec「commit 前 detect_changes」原意）。
+
+### Files
+
+- 無檔案改動（純前置驗證；本門判 LOW 才開始 Task 0 的編輯）。
+
+### Steps
+
+- [ ] 在動任何檔案前，對本批會改的兩個 code symbol 跑 upstream impact：
+
+  ```text
+  ToolSearch query "select:mcp__gitnexus__impact"
+  mcp__gitnexus__impact({ target: "SpecPage", direction: "upstream", repo: "AI-BIM-governance" })
+  mcp__gitnexus__impact({ target: "EdgeConsole", direction: "upstream", repo: "AI-BIM-governance" })
+  ```
+
+  預期：兩者 risk_level=LOW（純字串 / token / tooltip 取值，無簽名變更、無新 caller）；`SpecPage` 僅被 `renderBody`/route switch 引用，`EdgeConsole` 為 shell 入口、無上游 caller 受字串/tooltip 影響。
+
+- [ ] **安全門判定**：任一回 **HIGH/CRITICAL** → **立即停手、回報使用者、不進入 Task 0–3 的任何編輯與 commit**（spec §4「HIGH/CRITICAL 先回報」、CLAUDE.md §4「HIGH/CRITICAL 先回報再繼續」）。唯有兩者皆 LOW（或 MEDIUM 且評估在預期內、已記錄理由）才往下做 Task 0。
+
+- [ ] （導航交叉確認，非 gate）codebase-memory 對同兩 symbol 查 graph，佐證 impact 不漏報（雙圖譜；memory `spec-to-done-dual-graph-advisory` 實證 GitNexus 對前端 symbol 偶有假陰漏報，故並列 codebase-memory）：
+
+  ```text
+  mcp__codebase-memory-mcp__search_graph({ project: "C-Repos-active-iot-AI-BIM-governance", query: "SpecPage EdgeConsole navText", limit: 10 })
+  ```
+
+  預期：回 `SpecPage`/`EdgeConsole`/`navText` 三 symbol、file_path 與本 plan 一致；僅佐證，不翻 gate。
+
+---
+
 ## Task 0: F2 — `.ec-lead` margin token 化（CSS · 零視覺改動 · 先做最低風險）
 
 **已核對錨點**：`edge-console.css:69` 逐字為 `.ec-main .ec-lead { color:var(--ec-fg-3); margin:0 0 16px; max-width:70ch; }`；同檔 `line 18` 已定義 `--ec-sp-4:16px`（在 `.ec-root` scope，`.ec-lead` 恆為其後代）。`.ec-lead` 全檔僅此一處有 `margin`，無覆蓋。`16px === var(--ec-sp-4)` → 零視覺改動。
@@ -360,9 +394,9 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ---
 
-## Task 4: GitNexus / codebase-memory impact + detect_changes（commit 後驗 blast）
+## Task 4: GitNexus detect_changes — PR 前 scope 外溢門（impact 安全門已前移 Task P1）
 
-**目的**：CLAUDE.md §4 鐵律——改 code symbol 後驗證 blast 限於預期。本批改了 `SpecPage`（pages.tsx）、`EdgeConsole`（nav render，未動 `navText`）兩個前端 symbol，預期 risk=LOW（純字串 / token / tooltip 取值，無簽名變更、無新 caller）。
+**目的（spec §4 line 119「commit 前 `detect_changes(compare base_ref=main)`」）**：本批兩個 code symbol（Task 1 `SpecPage`、Task 2 `EdgeConsole`）的 upstream impact **before-edit 安全門已在 Task P1 於編輯前跑完並判 LOW**；本 Task 只做 `detect_changes` 的 **scope 外溢確認**，排在 E2E（Task 5）/ PR（Task 6）之前，作為進入不可回退 merge 前最後一道 scope gate（對齊 spec「commit 前 detect_changes」原意）。**本 Task 不再重跑 impact**——避免原 plan「Tasks 0–2 commit 後才驗 before-edit 門」的倒序（那時才回 HIGH/CRITICAL 須回退已落地 commit、安全門形同虛設）。
 
 ### Files
 
@@ -370,31 +404,16 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ### Steps
 
-- [ ] 對改到的 symbol 跑 upstream impact（確認 blast radius，HIGH/CRITICAL 才需回報）：
+- [ ] PR 前跑 detect_changes 對 main 比較，確認 scope 未外溢：
 
   ```text
-  ToolSearch query "select:mcp__gitnexus__impact,mcp__gitnexus__detect_changes"
-  mcp__gitnexus__impact({ target: "SpecPage", direction: "upstream", repo: "AI-BIM-governance" })
-  mcp__gitnexus__impact({ target: "EdgeConsole", direction: "upstream", repo: "AI-BIM-governance" })
-  ```
-
-  預期：兩者 risk_level=LOW；`SpecPage` 僅被 `renderBody`/route switch 引用，`EdgeConsole` 為 shell 入口、無上游 caller 受字串/tooltip 影響。若回 HIGH/CRITICAL，停下回報，不續 PR。
-
-- [ ] commit 前/PR 前跑 detect_changes 對 main 比較，確認 scope 未外溢：
-
-  ```text
+  ToolSearch query "select:mcp__gitnexus__detect_changes"
   mcp__gitnexus__detect_changes({ scope: "compare", base_ref: "main", repo: "AI-BIM-governance" })
   ```
 
-  預期：affected symbols 限於 `SpecPage`、`EdgeConsole`（nav render）、新測試與 docs；未波及其他頁面或後端。
+  預期：affected symbols 限於 `SpecPage`、`EdgeConsole`（nav render）、新測試與 docs；未波及其他頁面或後端。若 affected set 超出此範圍（scope 外溢），停下回報，不續 PR。
 
-- [ ] （導航交叉確認，非 gate）codebase-memory 對同兩 symbol 查 graph，比對 impact 不漏報：
-
-  ```text
-  mcp__codebase-memory-mcp__search_graph({ project: "C-Repos-active-iot-AI-BIM-governance", query: "SpecPage EdgeConsole navText", limit: 10 })
-  ```
-
-  預期：回 `SpecPage`/`EdgeConsole`/`navText` 三 symbol，file_path 與本 plan 一致；僅作雙圖譜佐證，不翻 gate。
+- [ ] （回顧確認，非重跑）Task P1 的 upstream impact 已在編輯前判 `SpecPage` / `EdgeConsole` 皆 LOW（若當時回 HIGH/CRITICAL，已在 Task 0 編輯前停手、不會走到此處）；此處僅複述前置門結論，不重跑 impact。codebase-memory 雙圖譜佐證亦已在 Task P1 完成。
 
 ---
 
