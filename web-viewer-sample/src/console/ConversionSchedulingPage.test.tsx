@@ -876,6 +876,14 @@ describe("ConversionSchedulingPage 讀 ConversionLedger（Task 6）", () => {
     // 無任何 coverage 百分比數字（ledger panel 範圍內，converter 未落地）
     expect(ledgerPanel!.textContent).not.toMatch(/\d+\.\d+\s*%/);
 
+    // quality finding Important #1：鎖死「非 failed 列無觸發鈕」的邊界。觸發鈕僅在
+    // status==='failed' && object_key 時掛（pages.tsx:1005，spec §3.3 retry failed / 強制重轉）。
+    // queued / converting（皆有 object_key）屬「進行中」，不得掛鈕——否則若日後條件被放寬成
+    // r.status !== 'ready'（對 detected/queued/converting 也顯鈕）此處須 fail。以 idempotency_key
+    // 為 testid 精準定位，確認這兩列各自「沒有」觸發鈕。
+    expect(container.querySelector('[data-testid="conv-ledger-trigger-mw_abc123def4567890"]')).toBeNull(); // queued
+    expect(container.querySelector('[data-testid="conv-ledger-trigger-mw_def456abc7890123"]')).toBeNull(); // converting
+
     // watcher liveness panel 仍在
     const panel = container.querySelector('[data-testid="minio-watch-panel"]');
     expect(panel).not.toBeNull();
