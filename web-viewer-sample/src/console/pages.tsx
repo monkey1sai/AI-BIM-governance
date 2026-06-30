@@ -891,7 +891,7 @@ export function ConversionSchedulingPage() {
               {/* Task 8（AC5）：把原擠在單一 Field 的 baseline/seen/觸發/跳過拆成獨立 Field，
                   並對 baseline 標 by-design 說明 + 一致性基準文案，避免 triggered_total=0 被誤讀成故障。 */}
               <Field
-                k={t("baseline（首輪基準）", "baseline (first-round)")}
+                k={t("baseline（首輪 list 到的規約檔數）", "baseline (convention files seen on first poll)")}
                 v={<span data-testid="conv-baseline-count">{mw.baseline_count ?? "—"}</span>}
                 prov="asbuilt"
               />

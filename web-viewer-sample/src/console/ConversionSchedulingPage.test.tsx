@@ -968,6 +968,12 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     expect(baselineNode!.textContent).toContain("3");
     expect(triggeredNode!.textContent).toContain("0");
 
+    // baseline Field 的 key label 必須照 spec §3.2 line 100 / plan line 1721 改寫為
+    //「首輪 list 到的規約檔數」（原「首輪基準」的 by-design 不自動轉檔語意已被 §3.4 ledger 去重取代）。
+    // 鎖住 label 文字，否則 label 可停在過時的「首輪基準」而無任何 failing 測試（finding #1/#2）。
+    expect(panel!.textContent).toContain("首輪 list 到的規約檔數");
+    expect(panel!.textContent).not.toContain("首輪基準");
+
     // baseline by-design 說明（首輪被當基準吸收、刻意不自動轉檔）
     const explain = panel!.querySelector('[data-testid="conv-baseline-explain"]');
     expect(explain).not.toBeNull();
