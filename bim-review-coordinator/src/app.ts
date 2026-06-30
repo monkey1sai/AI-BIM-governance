@@ -19,7 +19,7 @@ import {
   type StructLogger,
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
-import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
+import { startMinioWatcher, deriveIntakeFromKey, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { createMinioS3Client, listMinioFolder, listMinioObjects } from "./services/minioClient.js";
@@ -1220,42 +1220,58 @@ export function createCoordinatorApp(
       response.status(400).json({ error: "invalid_key", detail: "key 為必填字串" });
       return;
     }
-    // 取 etag：用 listMinioObjects 找到 key 的 etag（已有 S3 client 工廠，不另啟連線）。
-    // 若 key 不在 bucket → etag 為空字串 → idempotencyKeyFor 仍運作（退化值），不 500。
-    let etag = "";
-    {
-      const s3 = createMinioS3Client({
+    // 先驗 key 規約（≥3 段、拒空段/. / ..），不合法不去打 S3 → 400（client input error）。
+    const derived = deriveIntakeFromKey({ key, prefix: "", keySuffix: config.minioWatchKeySuffix });
+    if (!derived.ok) {
+      response.status(400).json({ error: "invalid_key", detail: `invalid key: ${derived.reason}` });
+      return;
+    }
+    // 取該 key 的 etag（idempotency_key 需 etag）。用 Prefix=key 精準 list（避免大 bucket 全量掃）。
+    // S3 list / 上游連線失敗 → try/catch 收斂成 502（非 client error 400、非 unhandled 500）。
+    let client: ReturnType<typeof createMinioS3Client> | null = null;
+    try {
+      client = createMinioS3Client({
         endpoint: config.minioWatchEndpoint,
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
       });
-      try {
-        const objs = await listMinioObjects(s3, config.minioWatchBucket, key, config.minioWatchKeySuffix);
-        const found = objs.find((o) => o.key === key);
-        etag = found?.etag ?? "";
-      } finally {
-        s3.destroy();
+      const objs = await listMinioObjects(client, config.minioWatchBucket, key, config.minioWatchKeySuffix);
+      const match = objs.find((o) => o.key === key);
+      if (!match || !match.etag) {
+        // 物件不在 bucket（或無 etag）→ 404；不退化成空 etag 偷偷落帳（誠實鐵律：不留半截紀錄）。
+        response.status(404).json({ error: "object_not_found", detail: "object not found in bucket (or missing etag)" });
+        return;
       }
+      const result = await triggerManualIntake(
+        key,
+        match.etag,
+        {
+          endpoint: config.minioWatchEndpoint,
+          bucket: config.minioWatchBucket,
+          accessKey: config.minioWatchAccessKey,
+          secretKey: config.minioWatchSecretKey,
+          keySuffix: config.minioWatchKeySuffix,
+        },
+        conversionLedger,
+        nowIso(),
+      );
+      if (!result.ok) {
+        // key 規約已於上方驗過 → 此處剩餘失敗面為 presign/上游錯誤，非 client input error → 502。
+        response.status(502).json({ error: "trigger_failed", detail: result.reason });
+        return;
+      }
+      // 與其他 mutation route（prioritize/retry/watch.toggle）對稱：成功後寫結構化 audit log。
+      structLog.withTraceId(result.idempotency_key).audit("conversion-control", "conversion.trigger", {
+        action: "conversion.trigger", actor: resolveActor(request), target: key, reason: parseReason(request),
+      }, "info");
+      response.json({ status: result.status, idempotency_key: result.idempotency_key });
+    } catch (err) {
+      // S3 list / 上游失敗 → 502；err.message 只進 structLog（避免 infra 細節洩漏給瀏覽器）。
+      structLog.error("conversionTrigger", "minio list failed", err, { bucket: config.minioWatchBucket });
+      response.status(502).json({ error: "trigger_failed", detail: "minio list failed" });
+    } finally {
+      client?.destroy();
     }
-    const result = await triggerManualIntake(
-      key,
-      etag,
-      {
-        endpoint: config.minioWatchEndpoint,
-        bucket: config.minioWatchBucket,
-        accessKey: config.minioWatchAccessKey,
-        secretKey: config.minioWatchSecretKey,
-        keySuffix: config.minioWatchKeySuffix,
-      },
-      conversionLedger,
-      nowIso(),
-    );
-    if (!result.ok) {
-      // 拒絕：key 規約失敗（含路徑穿越）→ 400
-      response.status(400).json({ error: "invalid_key", detail: result.reason });
-      return;
-    }
-    response.json({ status: result.status, idempotency_key: result.idempotency_key });
   });
 
   // minio-closed-loop-phase1 Task 4：唯讀 S3 list proxy。

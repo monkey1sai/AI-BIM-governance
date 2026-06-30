@@ -83,4 +83,38 @@ describe("POST /api/conversion/trigger", () => {
     const recs = await request(app).get("/api/conversion/records");
     expect(recs.body.items.some((r: { idempotency_key: string }) => r.idempotency_key === trig.body.idempotency_key)).toBe(true);
   });
+
+  it("合法 key 但 bucket 內找不到該物件 → 404（不退化成空 etag 偷偷落帳）", async () => {
+    // stub 只回別的 key；請求的 key 規約合法（過 deriveIntakeFromKey）但 bucket 內無此物件。
+    // plan §3.3 route 模板要求 !match || !match.etag → 404，而非退化 etag='' 後寫 ledger。
+    const presentKey = "甲案/root/main/000001/model.ifc";
+    const missingKey = "東勢區許良宇紀念圖書館/root/main/999999/model.ifc";
+    await startS3Stub([presentKey]);
+    const app = makeApp().app;
+    const res = await request(app).post("/api/conversion/trigger")
+      .set("x-dev-token", "test-dev-token").send({ key: missingKey });
+    expect(res.status).toBe(404);
+    // 誠實鐵律：404 不可留半截 ledger record（空 etag 退化值不得入帳）。
+    const { idempotencyKeyFor } = await import("../src/services/minioWatcher.js");
+    const recs = await request(app).get("/api/conversion/records");
+    const degraded = idempotencyKeyFor("bim-control", missingKey, "");
+    expect(recs.body.items.some((r: { idempotency_key: string }) => r.idempotency_key === degraded)).toBe(false);
+  });
+
+  it("S3 list / 上游失敗 → 502（非 client error 400、非 unhandled 500）", async () => {
+    // 合法 key（過 deriveIntakeFromKey）+ 有 token，但 S3 list 回 HTTP 500 → route 須以 try/catch
+    // 收斂成 502（上游/連線錯誤）。plan §3.3 route 模板用 502 表達上游失敗；現況缺 catch 會讓
+    // async reject 變成 Express 預設 500（或 400 混淆）。此測試鎖 502，與 400(client) 清楚區分。
+    s3Stub = http.createServer((_req, res) => {
+      res.writeHead(500, { "content-type": "application/xml" });
+      res.end(`<?xml version="1.0"?><Error><Code>InternalError</Code></Error>`);
+    });
+    await new Promise<void>((r) => s3Stub!.listen(0, "127.0.0.1", () => {
+      s3Url = `http://127.0.0.1:${(s3Stub!.address() as { port: number }).port}`; r();
+    }));
+    const key = "東勢區許良宇紀念圖書館/root/main/000001/model.ifc";
+    const res = await request(makeApp().app).post("/api/conversion/trigger")
+      .set("x-dev-token", "test-dev-token").send({ key });
+    expect(res.status).toBe(502);
+  });
 });
