@@ -488,7 +488,10 @@ export function A1GovernanceWorkbenchPage() {
         convPollRef.current = setInterval(() => {
           void pollOnce(jobId)
             .then((s) => { if ((s === "ready" || s === "failed") && convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; } })
-            .catch((e) => { if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; } setConvErr(String(e)); });
+            // ready 分支若先 setConvStatus("ready") 再 await runtimeStatus()，runtimeStatus 拋（coordinator 短暫
+            // 503 / 重啟）會落到此 .catch：須比照首輪 poll 的外層 catch 也 setConvStatus(null)，否則 convStatus
+            // 卡在 "ready" 又顯示 error 且 sessions 仍空，誤導操作員「轉好了」卻無動作、無重試路徑（誠實鐵律）。
+            .catch((e) => { if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; } setConvErr(String(e)); setConvStatus(null); });
         }, 2000);
       }
     } catch (e) {

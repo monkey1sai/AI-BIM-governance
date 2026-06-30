@@ -419,6 +419,47 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     }
   });
 
+  it("無 session：interval 輪詢命中 ready 後 runtimeStatus 失敗 → 清狀態並顯示錯誤（不卡在誤導的 ready）", async () => {
+    // 守門 #3：interval pollOnce 命中 ready 分支後 runtimeStatus 拋（coordinator 短暫 503 / 重啟），錯誤落到
+    // interval 的 .catch。修法＝.catch 比照首輪 poll 的外層 catch 也 setConvStatus(null)，否則 convStatus 卡在
+    // "ready" + 同時顯示 error + sessions 仍空，操作員看到「轉好了」卻無任何動作、無重試路徑（誠實鐵律：誤導狀態）。
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    // mount 一次 runtimeStatus → 空 session（渲染 no-session 區塊）；轉檔 ready 分支再打 runtimeStatus → 拋（503）。
+    vi.spyOn(coordinatorClient, "runtimeStatus")
+      .mockResolvedValueOnce(empty as never)
+      .mockRejectedValue(new Error("coordinator /api/runtime/status -> 503 Service Unavailable"));
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
+    vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
+    // 首輪 poll 回 converting（非終態）→ 掛 interval；下一個 tick 回 ready → 進入 ready 分支打 runtimeStatus（拋）。
+    vi.spyOn(coordinatorClient, "getIfcReadyJob")
+      .mockResolvedValueOnce({ ifc_ready_job_id: "ifcready_mw_x", status: "x", conversion_lifecycle_status: "converting", download_status: "downloaded", conversion_status: null, review_session_id: null })
+      .mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "x", conversion_lifecycle_status: "ready", download_status: "downloaded", conversion_status: null, review_session_id: null });
+
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    vi.useFakeTimers();
+    try {
+      await selectMinioModel("松風庵/root/main/u1/model.ifc");
+      await act(async () => { (q("a1-trigger-convert") as HTMLButtonElement).click(); });
+      await flush(); // 首輪 poll（converting）→ 掛 interval，convBusy 還原
+
+      // 推進 2s：interval fire pollOnce → ready → setConvStatus("ready") → runtimeStatus 拋 → .catch
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve(); });
+      await flush();
+
+      expect(q("a1-convert-error")).not.toBeNull(); // runtimeStatus 失敗誠實顯示
+      expect(q("a1-convert-status")).toBeNull();     // 狀態已清，不卡在誤導的 ready（修前：仍顯示 "轉檔狀態：ready" → 失敗）
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // A1-W1 BCF gating UI 層驗證：
   // step=idle 時 BCF 鈕 disabled（反向斷言）；
   // step=issued 後 BCF 鈕 enable（正向斷言）。
