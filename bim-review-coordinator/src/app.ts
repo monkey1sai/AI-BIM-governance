@@ -1294,9 +1294,14 @@ export function createCoordinatorApp(
   // 插在 /api/external/ifc-ready 後、/:jobId 之前（避免 param 吃掉）。
   app.get("/api/minio/objects", async (request, response) => {
     if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
+      // 此 early-return 同時服務 flat list（getMinioObjects）與 delimiter=/ 資料夾視圖
+      // （getMinioFolder）。前端 MinioFolderListing 型別 folders 為必填陣列，故未設定分支也須補
+      // folders: []（與已設定分支 listMinioFolder 回傳 shape 對齊），否則 getMinioFolder 消費端
+      // r.folders.map(...) 會 TypeError crash UI。空陣列比缺欄位更誠實。
       response.json({
         bucket: config.minioWatchBucket || null,
         prefix: "",
+        folders: [],
         count: 0,
         objects: [],
         note: "MinIO watch 未設定（未取得）",

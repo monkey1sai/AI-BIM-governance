@@ -216,9 +216,12 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     }
   });
 
-  it("未設定 MinIO → 帶 delimiter 仍誠實回 count=0 + note（不 500，plan §Task2 line 351）", async () => {
-    // 不設 minioWatchEndpoint/Bucket → handler 開頭 early-return（app.ts:1207-1215），
-    // 帶不帶 delimiter 都走同一段誠實回 count:0 + note，絕不 500/捏造 folders。
+  it("未設定 MinIO → 帶 delimiter 仍誠實回 count=0 + note + folders:[]（不 500；前端 getMinioFolder 消費端 folders 必為陣列，task#5 finding #1）", async () => {
+    // 不設 minioWatchEndpoint/Bucket → handler 開頭 early-return（app.ts /api/minio/objects），
+    // 帶不帶 delimiter 都走同一段誠實回 count:0 + note，絕不 500。
+    // folders:[] 補欄（非捏造而是空陣列）：getMinioFolder 走 ?delimiter=/ 打此 route，前端
+    // MinioFolderListing 型別 folders 為必填陣列；未設定分支若缺 folders 則消費端 r.folders.map() crash。
+    // 空陣列與已設定分支 listMinioFolder shape 對齊，比缺欄位更誠實（取代舊「未設定不臆測 folders」設計）。
     root = fs.mkdtempSync(path.join(os.tmpdir(), "minio-delim-unset-"));
     active = createCoordinatorApp({
       sessionStoreDir: path.join(root, "sessions"),
@@ -233,6 +236,6 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(0);
     expect(res.body.note).toBeTruthy();
-    expect(res.body).not.toHaveProperty("folders"); // 未設定不臆測 folders
+    expect(res.body.folders).toEqual([]); // 未設定也回 folders:[]（消費端 .map 安全，task#5 finding #1）
   });
 });

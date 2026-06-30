@@ -330,6 +330,24 @@ describe("coordinatorClient conversion control", () => {
     await expect(coordinatorClient.getMinioFolder()).rejects.toThrow();
   });
 
+  it("getMinioFolder MinIO 未設定時 folders 為 []（後端 early-return 補 folders，消費端 r.folders.map 不 crash）", async () => {
+    // 後端 /api/minio/objects 未設定分支（app.ts）現補 folders: [] 與已設定分支 listMinioFolder shape 對齊。
+    // 鎖此契約：getMinioFolder 收到未設定回應時 folders 為陣列（非 undefined），UI 可安全 .map()，
+    // 防 finding「未設定 + delimiter=/ 缺 folders → 消費端 TypeError crash」regression。
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ bucket: null, prefix: "", folders: [], count: 0, objects: [], note: "MinIO watch 未設定（未取得）" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const r = await coordinatorClient.getMinioFolder();
+    expect(r.bucket).toBeNull();
+    expect(Array.isArray(r.folders)).toBe(true);
+    expect(r.folders).toEqual([]);
+    // 直接驗 UI 端 .map() 不 throw（finding：消費端對 folders crash 風險）。
+    expect(() => r.folders.map((f) => f.prefix)).not.toThrow();
+  });
+
   it("conversionTrigger POST 帶 x-dev-token header，回 { status, idempotency_key }", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
