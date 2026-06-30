@@ -1233,7 +1233,15 @@ export function createCoordinatorApp(
     // 先驗 key 規約（≥3 段、拒空段/. / ..），不合法不去打 S3 → 400（client input error）。
     const derived = deriveIntakeFromKey({ key, prefix: "", keySuffix: config.minioWatchKeySuffix });
     if (!derived.ok) {
-      response.status(400).json({ error: "invalid_key", detail: `invalid key: ${derived.reason}` });
+      // finding #1：derived.reason 內含原始 key（deriveIntakeFromKey 失敗訊息把 user-controlled
+      // 的 request.body.key 帶進字串，如 `key 不以 suffix 結尾：../../etc/passwd/model.ifc`）。
+      // 不得直接 echo 進 response（資訊洩漏 / audit log 明文回顯，與下方 502 catch 的 sanitized
+      // 固定 detail 不一致）。改回固定規約說明；完整 reason 只進 structLog（與兄弟 route 對稱）。
+      structLog.error("conversionTrigger", "invalid key rejected", new Error(derived.reason), { target: key });
+      response.status(400).json({
+        error: "invalid_key",
+        detail: "key 格式不符規約（≥3 段、不含空段/. / ..，結尾須為 /model.ifc）",
+      });
       return;
     }
     // 取該 key 的 etag（idempotency_key 需 etag）。單一已知完整 key 用 HeadObject 精準取，

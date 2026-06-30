@@ -70,6 +70,22 @@ describe("POST /api/conversion/trigger", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400 invalid_key 的 detail 不回顯用戶輸入 key（finding #1：避免 user-controlled echo / 資訊洩漏）", async () => {
+    // derived.reason 內含原始 key（deriveIntakeFromKey 失敗訊息把 key 帶進字串）。
+    // 此 key 屬 request.body 用戶控制輸入，不得直接 echo 進 response（與 502 catch 的 sanitized
+    // 固定 detail 對稱）。改回固定規約說明，完整 reason 只進 structLog。
+    const traversalKey = "../../etc/passwd/model.ifc";
+    const res = await request(makeApp().app).post("/api/conversion/trigger")
+      .set("x-dev-token", "test-dev-token")
+      .send({ key: traversalKey });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_key");
+    // 整個 response body（含 detail）不得含原始 key 任一可辨識片段。
+    expect(JSON.stringify(res.body)).not.toContain("passwd");
+    expect(JSON.stringify(res.body)).not.toContain("../");
+    expect(res.body.detail).toBeTruthy(); // 仍給固定的規約提示，不是空字串
+  });
+
   it("合法 key + 有 token → 回 { status, idempotency_key }（由非空 etag 衍生），不外洩 presigned URL", async () => {
     const key = "東勢區許良宇紀念圖書館/root/main/000001/model.ifc";
     await startS3Stub([key]);
@@ -86,6 +102,28 @@ describe("POST /api/conversion/trigger", () => {
     expect(res.body.idempotency_key).not.toBe(emptyEtagKey);  // 非空 etag 退化值
     expect(res.body.status).toBeTruthy();
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+  });
+
+  it("同 key 二次觸發 → 皆回 200 同 idempotency_key 且 ledger 僅一筆（finding #3：idempotent re-trigger，spec §3.3 AC7）", async () => {
+    // upsert 對已存在 idempotency_key 一律以 input.status 覆蓋（非條件更新）。manualIntake 固定送
+    // status="detected"，故同 key 重觸發應冪等：回應一致、ledger 不增筆、status 不回退。
+    // 此測試鎖住「二次觸發後 records 僅一筆」防未來改 upsert 邏輯（如自動轉 ready/failed）後靜默回退。
+    const key = "東勢區許良宇紀念圖書館/root/main/000001/model.ifc";
+    await startS3Stub([key]);
+    const app = makeApp().app;
+    const first = await request(app).post("/api/conversion/trigger")
+      .set("x-dev-token", "test-dev-token").send({ key });
+    const second = await request(app).post("/api/conversion/trigger")
+      .set("x-dev-token", "test-dev-token").send({ key });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body.idempotency_key).toBe(first.body.idempotency_key); // 同鍵
+    expect(second.body.status).toBe(first.body.status);                   // status 不回退
+    const recs = await request(app).get("/api/conversion/records");
+    const matching = recs.body.items.filter(
+      (r: { idempotency_key: string }) => r.idempotency_key === first.body.idempotency_key,
+    );
+    expect(matching).toHaveLength(1); // 二次觸發不增筆（同鍵 upsert 命中既有）
   });
 
   it("觸發後 ledger 有對應紀錄（GET /api/conversion/records 可見同 idempotency_key）", async () => {
