@@ -351,11 +351,13 @@ export function createCoordinatorApp(
   // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
   // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
   let minioWatcher: MinioWatcherHandle | null = null;
-  // 上移宣告（TDZ 防守）：startMinioWatcherIfEnabled 的 isLedgered closure 捕捉 conversionLedger；
-  // selfBaseUrl 立即啟動路徑（下方）在 conversionLedger 真正賦值（原行 493）之前同步呼叫本函式。
-  // 首輪 tick 走 setTimeout(macrotask) 故 runtime 仍安全，但若日後有人在「呼叫 startMinioWatcherIfEnabled」
-  // 與「賦值 conversionLedger」之間插入 await，const 版會在 runtime 爆 TDZ ReferenceError 且 TS 查不到。
-  // 改用「let 宣告上移 + 下方賦值」：TS 仍可捕捉 used-before-assigned，並排除 TDZ 隱患（賦值見原宣告處）。
+  // conversionLedger：watcher 的 isLedgered closure（startMinioWatcherIfEnabled 內）捕捉本變數。
+  // 賦值（下方 `conversionLedger = new ConversionLedger(...)`）刻意排在「兩條 watcher 啟動路徑」
+  // （server.on("listening") 註冊、以及 selfBaseUrl 立即啟動）之前——root-cause 掉時序依賴，使
+  // closure 無論何時被求值都看得到已建好的 ledger。改 import 順序或在啟動路徑前插入 await 都不會
+  // 重新引入 TDZ 風險（賦值恆早於任一 start 呼叫）。型別宣告為非空 ConversionLedger：賦值在任何
+  // 使用點（含 closure 的 macrotask tick、route handlers）之前已執行，消費端不需 `?.` 防護。
+  // 註：此處只「宣告」；真正賦值見下方緊鄰 watcher 啟動路徑之前的那行。
   let conversionLedger: ConversionLedger;
   // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
   let minioWatchRuntimeEnabled = config.minioWatchEnabled;
@@ -417,14 +419,20 @@ export function createCoordinatorApp(
       tenantId: config.minioWatchTenantId,
       // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
       // 既有未轉檔（含原 baseline 3 檔，ledger=0）下一輪 tick 自動補轉；coordinator 重啟後
-      // 持久 ledger 命中 mw_<hash16> 故不重觸發（重啟不風暴）。closure 為惰性求值：watcher
-      // 首輪 tick 走 setTimeout（macrotask），執行時 conversionLedger 已賦值；其宣告已上移至
-      // 本函式之前（`let conversionLedger`）作 TDZ 防守，賦值在原宣告處。watcher tick 對 ledger
-      // 唯讀（落帳由 intake route 端負責）。
+      // 持久 ledger 命中 mw_<hash16> 故不重觸發（重啟不風暴）。closure 捕捉 conversionLedger
+      // 變數；其賦值排在所有 watcher 啟動路徑之前（見上方宣告處註解），故 closure 任何時刻被
+      // 求值都看得到已建好的 ledger（無時序依賴）。watcher tick 對 ledger 唯讀（落帳由 intake
+      // route 端負責）。
       isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
       structLog,
     });
   }
+  // minio-closed-loop-phase1 Task 1/3：持久 ConversionLedger（coordinator-local shadow）。
+  // watcher 偵測即寫 queued（Task 2）；GET /api/conversion/records 讀取（Task 3）。
+  // 賦值刻意排在下方兩條 watcher 啟動路徑（server.on("listening") 與 selfBaseUrl 立即啟動）之前：
+  // startMinioWatcherIfEnabled 的 isLedgered closure 捕捉 conversionLedger，先賦值即根除時序依賴，
+  // 不論 closure 何時被求值都看得到已建好的 ledger（取代舊「靠 macrotask 時序撐安全」的脆弱假設）。
+  conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // 已在 listen 上的 server（生產 index.ts / E2E）：listening 後啟動以取得實際 port。
   server.on("listening", () => startMinioWatcherIfEnabled());
   // supertest 整合測試不呼叫 listen；用 selfBaseUrl override 時可立即啟動。
@@ -495,10 +503,6 @@ export function createCoordinatorApp(
     undefined,
     config.callbackOutboxStorePath,
   );
-  // minio-closed-loop-phase1 Task 1/3：持久 ConversionLedger（coordinator-local shadow）。
-  // watcher 偵測即寫 queued（Task 2）；GET /api/conversion/records 讀取（Task 3）。
-  // 賦值（宣告已上移至 startMinioWatcherIfEnabled 之前作 TDZ 防守，見上方 `let conversionLedger`）。
-  conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
