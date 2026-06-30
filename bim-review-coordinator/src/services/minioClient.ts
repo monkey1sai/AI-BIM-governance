@@ -15,6 +15,12 @@ export function createMinioS3Client(cfg: { endpoint: string; accessKey: string; 
 
 export type MinioObjectRole = "source_ifc" | "parsed_usdc" | "other";
 
+// 最小 logger 介面（avoid 循環 import app；只用 warn）。optional 注入：
+// route（app.ts）傳入真 structLog；unit 測試可傳 spy 或省略（warn 變 no-op）。
+export interface MinioClientLogger {
+  warn: (component: string, msg: string, data?: Record<string, unknown>) => void;
+}
+
 export interface MinioObjectView {
   key: string;
   etag: string;
@@ -74,6 +80,7 @@ export async function listMinioFolder(
   bucket: string,
   prefix: string,
   delimiter: string,
+  logger?: MinioClientLogger,
 ): Promise<MinioFolderListing> {
   const prefixSet: string[] = [];
   const objects: MinioObjectView[] = [];
@@ -93,6 +100,16 @@ export async function listMinioFolder(
     for (const obj of resp.Contents ?? []) {
       if (!obj.Key) continue;
       const key = obj.Key;
+      // q3-pipe-guard：key 含 '|' 與 idempotencyKeyFor 的 bucket|key|etag 分隔符衝突
+      // （minioWatcher.ts:22-28 precondition），可能撞 hash → idempotent_replay 靜默丟棄。
+      // 對齊 watcher precondition：跳過該物件 + warn，不讓壞 key 進回應誤導前端 chip 對帳。
+      if (key.includes("|")) {
+        logger?.warn("minioClient", "skip object key containing '|' (idempotency key collision risk)", {
+          bucket,
+          key,
+        });
+        continue;
+      }
       const role: MinioObjectRole = key.endsWith(".ifc")
         ? "source_ifc"
         : key.endsWith(".usdc")
@@ -140,6 +157,7 @@ export async function listMinioObjects(
   bucket: string,
   prefix: string,
   keySuffix: string,
+  logger?: MinioClientLogger,
 ): Promise<MinioObjectView[]> {
   const out: MinioObjectView[] = [];
   let token: string | undefined;
@@ -150,6 +168,16 @@ export async function listMinioObjects(
     for (const obj of resp.Contents ?? []) {
       if (!obj.Key) continue;
       const key = obj.Key;
+      // q3-pipe-guard：key 含 '|' 與 idempotencyKeyFor 的 bucket|key|etag 分隔符衝突
+      // （minioWatcher.ts:22-28 precondition），可能撞 hash → idempotent_replay 靜默丟棄。
+      // 對齊 watcher precondition：跳過該物件 + warn。
+      if (key.includes("|")) {
+        logger?.warn("minioClient", "skip object key containing '|' (idempotency key collision risk)", {
+          bucket,
+          key,
+        });
+        continue;
+      }
       const role: MinioObjectRole = key.endsWith(".ifc")
         ? "source_ifc"
         : key.endsWith(".usdc")

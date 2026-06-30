@@ -1,7 +1,7 @@
 // bim-review-coordinator/tests/minio-folder-route.test.ts
 import { describe, it, expect, afterEach } from "vitest";
 import http from "node:http";
-import { listMinioFolder, createMinioS3Client } from "../src/services/minioClient.js";
+import { listMinioFolder, listMinioObjects, createMinioS3Client } from "../src/services/minioClient.js";
 
 let stub: http.Server | null = null; let stubUrl = "";
 // S3 ListObjectsV2 with Delimiter='/'：回 CommonPrefixes（資料夾）+ Contents（當層直屬檔）。
@@ -108,5 +108,46 @@ describe("listMinioFolder", () => {
     expect(ifc?.idempotency_key).toMatch(/^mw_[0-9a-f]{16}$/);
     expect(ifc?.category).toBe("main");
     expect(ifc?.version).toBe("000001");
+  });
+
+  it("key 含 '|' → 跳過該物件 + structLog warning（對齊 watcher idempotencyKeyFor precondition，q3-pipe-guard）", async () => {
+    // idempotencyKeyFor 以 '|' 分隔 bucket|key|etag（minioWatcher.ts:22-28 precondition）：
+    // key 含 '|' 可能與另一組 (bucket,key,etag) 撞同一 hash → idempotent_replay 靜默丟棄。
+    // listMinioFolder/listMinioObjects 須在 key 處理段守此前置條件：含 '|' 直接 continue 跳過 + warn。
+    await startS3Stub([
+      {
+        prefixes: [],
+        keys: ["proj|evil/root/main/000001/model.ifc", "proj-ok/root/main/000001/model.ifc"],
+      },
+    ]);
+    const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });
+    const warns: Array<{ msg: string; key: unknown }> = [];
+    const logger = {
+      warn: (_op: string, msg: string, data?: Record<string, unknown>) =>
+        warns.push({ msg, key: data?.key }),
+    };
+    const res = await listMinioFolder(client, "bim-control", "", "/", logger);
+    // 含 '|' 的 key 不入回應；乾淨的 key 正常保留。
+    expect(res.objects.map((o) => o.key)).toEqual(["proj-ok/root/main/000001/model.ifc"]);
+    // warn 被呼叫且帶被跳過的 key（供運維追查）。
+    expect(warns.some((w) => w.key === "proj|evil/root/main/000001/model.ifc")).toBe(true);
+  });
+
+  it("listMinioObjects：key 含 '|' → 跳過 + warn（同 q3-pipe-guard 對齊 watcher precondition）", async () => {
+    await startS3Stub([
+      {
+        prefixes: [],
+        keys: ["a|b/root/main/000001/model.ifc", "clean/root/main/000001/model.ifc"],
+      },
+    ]);
+    const client = createMinioS3Client({ endpoint: stubUrl, accessKey: "x", secretKey: "y" });
+    const warns: string[] = [];
+    const logger = {
+      warn: (_op: string, _msg: string, data?: Record<string, unknown>) =>
+        warns.push(String(data?.key)),
+    };
+    const objs = await listMinioObjects(client, "bim-control", "", "/model.ifc", logger);
+    expect(objs.map((o) => o.key)).toEqual(["clean/root/main/000001/model.ifc"]);
+    expect(warns).toContain("a|b/root/main/000001/model.ifc");
   });
 });

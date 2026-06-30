@@ -1244,7 +1244,14 @@ export function createCoordinatorApp(
       });
       if (rawDelimiter) {
         // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list，回 folders[]（CommonPrefixes）。
-        const listing = await listMinioFolder(client, config.minioWatchBucket, rawPrefix, rawDelimiter);
+        // 傳入 structLog 供 q3-pipe-guard 跳過含 '|' key 時 warn（對齊 watcher precondition）。
+        const listing = await listMinioFolder(
+          client,
+          config.minioWatchBucket,
+          rawPrefix,
+          rawDelimiter,
+          structLog,
+        );
         response.json(listing);
       } else {
         const objects = await listMinioObjects(
@@ -1252,13 +1259,19 @@ export function createCoordinatorApp(
           config.minioWatchBucket,
           rawPrefix,
           config.minioWatchKeySuffix,
+          structLog,
         );
         response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
       }
     } catch (err) {
-      response
-        .status(502)
-        .json({ error: "minio_list_failed", detail: err instanceof Error ? err.message : String(err) });
+      // q1-502-leak：AWS SDK 的 err.message 常含 endpoint host:port / bucket / 內部錯誤碼，
+      // 直接回 detail 會把 infra 細節洩漏給瀏覽器。改回固定 sanitized 字串；完整 err.message
+      // 只進 structLog 供運維追查。此 catch 同時服務 listMinioObjects 與 listMinioFolder 路徑。
+      structLog.error("minioObjects", "minio list failed", err, {
+        bucket: config.minioWatchBucket,
+        delimiter: rawDelimiter || null,
+      });
+      response.status(502).json({ error: "minio_list_failed", detail: "minio list failed" });
     } finally {
       client?.destroy();
     }

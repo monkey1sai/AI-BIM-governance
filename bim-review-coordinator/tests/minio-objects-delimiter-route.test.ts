@@ -126,6 +126,26 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     expect(res.status).toBe(502);
   });
 
+  it("502 detail 不洩漏 endpoint/bucket/infra（AWS SDK 原文）：固定 sanitized 字串（q1-502-leak）", async () => {
+    // 502 catch 同時服務 listMinioObjects（無 delimiter）與 listMinioFolder（有 delimiter）。
+    // AWS SDK 拋出的 err.message 常含 endpoint host:port、bucket、內部錯誤碼，直接回 detail
+    // 會把 infra 細節洩漏給瀏覽器。設計：detail 改固定 sanitized 字串，完整 err.message 只進 structLog。
+    await startS3Stub([{ prefixes: [], keys: [], status: 503 }]);
+    const app = makeApp().app;
+    // 從 s3Url 取出 host:port 當「洩漏指紋」——sanitized detail 絕不可含此 endpoint 字串。
+    const endpointHost = s3Url.replace(/^https?:\/\//, "");
+    const withDelim = await request(app).get("/api/minio/objects?delimiter=/");
+    expect(withDelim.status).toBe(502);
+    expect(withDelim.body.detail).toBe("minio list failed");
+    expect(JSON.stringify(withDelim.body)).not.toContain(endpointHost);
+
+    // 不帶 delimiter（舊 listMinioObjects 路徑）同樣不得洩漏。
+    const noDelim = await request(app).get("/api/minio/objects");
+    expect(noDelim.status).toBe(502);
+    expect(noDelim.body.detail).toBe("minio list failed");
+    expect(JSON.stringify(noDelim.body)).not.toContain(endpointHost);
+  });
+
   it("不帶 delimiter → 舊路徑，不回 folders 欄位（byte-identical 回應不受影響）", async () => {
     await startS3Stub([
       { prefixes: [], keys: ["東勢區許良宇紀念圖書館/root/main/000001/model.ifc"] },
@@ -178,6 +198,22 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     const res = await request(makeApp().app).get("/api/minio/objects?delimiter=/");
     expect(res.status).toBe(200);
     expect(res.body.folders.map((f: { prefix: string }) => f.prefix)).toEqual(["A/", "B/"]);
+  });
+
+  it("已設定但當層 prefix 無物件 → folders=[] objects=[] count=0，note 非『未設定』誤導文案（empty-but-configured，spec AC-honesty / q2-empty-configured-test）", async () => {
+    // MinIO 已設定（makeApp 帶 minioWatchEndpoint/Bucket），但當層 list 回空（無 CommonPrefixes、無 Contents）。
+    // spec §5 AC-honesty：empty-but-configured 態與「未設定」empty 態形狀/文案必須分開——
+    // 此態回 folders=[] objects=[] count=0，且不可帶「MinIO watch 未設定」那種誤導文案。
+    await startS3Stub([{ prefixes: [], keys: [] }]);
+    const res = await request(makeApp().app).get("/api/minio/objects?delimiter=/");
+    expect(res.status).toBe(200);
+    expect(res.body.folders).toEqual([]);
+    expect(res.body.objects).toEqual([]);
+    expect(res.body.count).toBe(0);
+    // 已設定態若帶 note，絕不可是「未設定」文案（否則使用者誤判 MinIO 沒接好）。
+    if (res.body.note != null) {
+      expect(res.body.note).not.toContain("未設定");
+    }
   });
 
   it("未設定 MinIO → 帶 delimiter 仍誠實回 count=0 + note（不 500，plan §Task2 line 351）", async () => {
