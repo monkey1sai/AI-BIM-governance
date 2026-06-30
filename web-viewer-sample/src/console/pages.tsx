@@ -289,6 +289,14 @@ export function A1GovernanceWorkbenchPage() {
   const [minioObjects, setMinioObjects] = useState<import("./coordinatorClient").MinioObject[] | null>(null);
   const [minioErr, setMinioErr] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string>("");
+  // A1（B2）task3：無 session 分支手動排入 IFC→USD 轉檔的排隊狀態 + 輪詢 ref。
+  // 誠實鐵律：convStatus 原樣顯示 lifecycle（detected/queued/converting/ready/failed）或降級 fallback，轉檔未完成不偽造 ready。
+  const [convJobId, setConvJobId] = useState<string | null>(null);
+  const [convStatus, setConvStatus] = useState<string | null>(null); // 原樣顯示 lifecycle / fallback；誠實不偽造 ready
+  const [convErr, setConvErr] = useState<string | null>(null);
+  const [convBusy, setConvBusy] = useState(false);
+  const convPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => () => { if (convPollRef.current) clearInterval(convPollRef.current); }, []);
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -446,6 +454,48 @@ export function A1GovernanceWorkbenchPage() {
     }
   }, [runId]);
 
+  // A1（B2）task3：無 session 時手動排入 IFC→USD 轉檔。立即輪詢一次讓 UI/測試不必等 interval；非終態才掛 2s interval。
+  const queueConversion = useCallback(async () => {
+    if (!selectedKey || convBusy) return;
+    setConvErr(null);
+    setConvBusy(true);
+    setConvStatus(t("觸發中…", "triggering…"));
+    const pollOnce = async (jobId: string): Promise<string | null> => {
+      const job = await coordinatorClient.getIfcReadyJob(jobId);
+      // 主讀 conversion_lifecycle_status；缺失才誠實降級到 conversion_status / download_status / status。
+      const lifecycle = job.conversion_lifecycle_status ?? job.conversion_status ?? job.download_status ?? job.status;
+      setConvStatus(lifecycle);
+      if (job.conversion_lifecycle_status === "ready") {
+        // 轉好 → coordinator 已自動建立 review session；重抓 runtime/status 讓 A1 撈到該 session（for-session 檢核）。
+        const rt = await coordinatorClient.runtimeStatus();
+        const act2 = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
+        setSessions(act2);
+        if (act2[0]) setSelectedSession(act2[0].session_id);
+      }
+      return job.conversion_lifecycle_status;
+    };
+    try {
+      const res = await coordinatorClient.triggerConversion(selectedKey);
+      const jobId = res.ifc_ready_job_id ?? null;
+      setConvJobId(jobId);
+      if (!jobId) { setConvErr(t("trigger 未回 job id", "trigger returned no job id")); setConvStatus(null); return; } // 註：TriggerConversionResponse 已無 detail 欄（task#0 收緊型別），失敗 detail 由 jsonPost throw 經 catch 顯示
+      const first = await pollOnce(jobId);
+      if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
+      if (first !== "ready" && first !== "failed") {
+        convPollRef.current = setInterval(() => {
+          void pollOnce(jobId)
+            .then((s) => { if ((s === "ready" || s === "failed") && convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; } })
+            .catch((e) => { if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; } setConvErr(String(e)); });
+        }, 2000);
+      }
+    } catch (e) {
+      setConvErr(String(e)); // 503 MinIO 未設定 / 400 key 不合法 → 誠實顯示，按鈕可重試
+      setConvStatus(null);
+    } finally {
+      setConvBusy(false);
+    }
+  }, [selectedKey, convBusy]);
+
   // A1（B2）下拉項 label：專案·種類·版本·檔名（缺值以「?」誠實標示，不臆造）。
   const minioLabel = (o: import("./coordinatorClient").MinioObject) =>
     `${o.project_display_name ?? o.project_id ?? "?"} · ${o.category ?? "?"} · ${o.version ?? "?"} · ${o.key.split("/").pop() ?? o.key}`;
@@ -534,7 +584,20 @@ export function A1GovernanceWorkbenchPage() {
 
       <Panel title={t("3D 即時檢視（嵌入 live viewer）", "Live 3D View (embedded live viewer)")} sub={t("重用既有 viewer 串流；first frame / stage truth 為真證據，非樂觀更新", "Reuses the existing viewer stream; first frame / stage truth are real evidence, not optimistic updates")} prov="asbuilt">
         {sessions.length === 0 ? (
-          <p className="ec-warn-note" data-testid="a1-no-session">{t("需先派發 review session（無 active session，3D 高亮停用）", "A review session must be dispatched first (no active session; 3D highlighting disabled)")}</p>
+          <div data-testid="a1-no-session">
+            <p className="ec-note">{t("無 active session。選定上方 MinIO 模型後，按下方按鈕手動排入 IFC→USD 轉檔；轉檔完成會自動建立 review session，本頁即可進行治理檢核與 3D 高亮。", "No active session. After selecting a MinIO model above, click below to manually queue IFC to USD conversion; when conversion completes a review session is created automatically, and this page can then run governance validation and 3D highlighting.")}</p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Btn primary data-testid="a1-trigger-convert" disabled={!selectedKey || convBusy}
+                caption={selectedKey ? "POST /api/conversion/trigger {key}" : t("先選 MinIO 模型", "select a MinIO model first")}
+                onClick={() => { void queueConversion(); }}>
+                {convBusy ? t("排入中…", "queuing…") : t("排入 IFC→USD 轉檔排程", "Queue IFC to USD Conversion")}
+              </Btn>
+              {convJobId && <span className="ec-s" data-testid="a1-convert-job">job: {convJobId}</span>}
+              <a className="ec-s" data-testid="a1-conv-link" href="#/conv">{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+            </div>
+            {convStatus !== null && <p className="ec-note" data-testid="a1-convert-status">{t("轉檔狀態：", "conversion status: ")}{convStatus}</p>}
+            {convErr && <p className="ec-warn-note" data-testid="a1-convert-error">{convErr}</p>}
+          </div>
         ) : (
           <>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>

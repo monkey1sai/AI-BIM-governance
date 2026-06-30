@@ -313,6 +313,34 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     expect(q("a1-session-select")).toBeNull();
   });
 
+  it("無 session：排入轉檔鈕 觸發 triggerConversion，狀態行原樣顯示 lifecycle（queued，不顯示假 ready）", async () => {
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
+    const trigger = vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
+    vi.spyOn(coordinatorClient, "getIfcReadyJob").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", conversion_lifecycle_status: "queued", download_status: "downloaded", conversion_status: null, review_session_id: null });
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+    const sel = q("a1-minio-select") as HTMLSelectElement;
+    await act(async () => { sel.value = "松風庵/root/main/u1/model.ifc"; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    const btn = q("a1-trigger-convert") as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.disabled).toBe(false);
+    await act(async () => { btn.click(); });
+    await flush();
+    expect(trigger).toHaveBeenCalledWith("松風庵/root/main/u1/model.ifc");
+    const status = q("a1-convert-status");
+    expect(status).not.toBeNull();
+    expect(status!.textContent).toContain("queued");
+    expect(status!.textContent).not.toContain("ready");
+    expect(q("a1-conv-link")).not.toBeNull();
+  });
+
   // A1-W1 BCF gating UI 層驗證：
   // step=idle 時 BCF 鈕 disabled（反向斷言）；
   // step=issued 後 BCF 鈕 enable（正向斷言）。
