@@ -256,4 +256,85 @@ describe("coordinatorClient conversion control", () => {
     );
     await expect(coordinatorClient.getMinioObjects()).rejects.toThrow();
   });
+
+  // Task 6：getMinioFolder / conversionTrigger 測試
+  it("getMinioFolder 打 GET /api/minio/objects?delimiter=/ 並回 { folders, objects, prefix, bucket, count }", async () => {
+    const mockFolders = ["松風庵/root/", "洲際好宅/"];
+    const mockObjects = [
+      {
+        key: "annotations/readme.txt",
+        etag: "xyz789",
+        role: "other",
+        project_id: null,
+        project_display_name: null,
+        category: null,
+        version: null,
+        idempotency_key: null,
+      },
+    ];
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ bucket: "bim-control", prefix: "", count: 2, folders: mockFolders, objects: mockObjects }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const r = await coordinatorClient.getMinioFolder();
+    expect(r.bucket).toBe("bim-control");
+    expect(r.folders).toEqual(["松風庵/root/", "洲際好宅/"]);
+    expect(r.objects[0].role).toBe("other");
+    const call = spy.mock.calls[0];
+    const url = String(call[0]);
+    expect(url).toContain("/api/minio/objects");
+    expect(url).toContain("delimiter=%2F");
+    // 不帶 prefix 時不帶 prefix= query
+    expect(url).not.toContain("prefix=");
+  });
+
+  it("getMinioFolder 帶 prefix 時 URL 同時含 prefix= 和 delimiter=/", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ bucket: "bim-control", prefix: "松風庵/", count: 0, folders: [], objects: [] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await coordinatorClient.getMinioFolder("松風庵/");
+    const calls = (vi.mocked(globalThis.fetch)).mock.calls;
+    const url = String(calls[0][0]);
+    expect(url).toContain(`prefix=${encodeURIComponent("松風庵/")}`);
+    expect(url).toContain("delimiter=%2F");
+  });
+
+  it("conversionTrigger POST 帶 x-dev-token header，回 { status, idempotency_key }", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), init: init as RequestInit });
+      return new Response(
+        JSON.stringify({ status: "queued", idempotency_key: "mw_abc123def4567890" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const r = await coordinatorClient.conversionTrigger("松風庵/root/main/000001/model.ifc", "manual-retry");
+    expect(r.status).toBe("queued");
+    expect(r.idempotency_key).toBe("mw_abc123def4567890");
+    expect(calls[0].url).toContain("/api/conversion/trigger");
+    expect(calls[0].init?.method).toBe("POST");
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body.key).toBe("松風庵/root/main/000001/model.ifc");
+    expect(body.reason).toBe("manual-retry");
+    // 必須帶 x-dev-token header
+    const headers = calls[0].init?.headers as Record<string, string>;
+    expect(headers["x-dev-token"]).toBeTruthy();
+  });
+
+  it("conversionTrigger 非 2xx 時 throw 並帶後端 detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "key not valid or insufficient segments" }), {
+        status: 422,
+        statusText: "Unprocessable Entity",
+      }),
+    );
+    await expect(
+      coordinatorClient.conversionTrigger("bad/key"),
+    ).rejects.toThrow(/key not valid/);
+  });
 });

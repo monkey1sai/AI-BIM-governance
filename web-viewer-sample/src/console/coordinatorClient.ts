@@ -24,6 +24,10 @@ const env = (import.meta as { env?: Record<string, string> }).env;
 const COORD_BASE: string =
   env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();
 
+// dev-auth-token：沿用 console mutation 既有慣例（與 Kit mutation 路由對齊）。
+// 瀏覽器端從 VITE_DEV_AUTH_TOKEN env 取，缺漏時退回 "dev-token"（dev 環境預設值）。
+const DEV_AUTH_TOKEN: string = env?.VITE_DEV_AUTH_TOKEN ?? "dev-token";
+
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) {
@@ -42,6 +46,24 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
     // 與 jsonPut 一致：萃取 coordinator `{ detail }`（誠實鐵律）。sessionClose 等 controlled
     // action 的 400「sessionId 不合法」/ 404「session 不存在」須在 dialog 顯出可操作提示，
     // 只 throw status/statusText 會把後端訊息吞掉（errorDetail 說明見下）。
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// POST with x-dev-token header：用於需要 auth 的 coordinator 寫入動作（AC-trigger）。
+// 沿用 jsonPost 的 errorDetail 萃取邏輯（誠實鐵律）。
+async function jsonPostAuthed<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${COORD_BASE}${path}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "x-dev-token": DEV_AUTH_TOKEN,
+    },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
     throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
@@ -243,6 +265,7 @@ export interface ConversionRecord {
 
 // Task 5 MinIO 閉環 Phase 1：GET /api/minio/objects 回應中的物件形狀。
 // 對齊後端 MinioObjectView（key/etag/role/project_id/project_display_name/category/version）。
+// Task 6：加 idempotency_key（後端預計算 mw_<hash16>，前端 chip 用以查 ConversionRecord map）。
 export interface MinioObject {
   key: string;
   etag: string;
@@ -251,6 +274,26 @@ export interface MinioObject {
   project_display_name: string | null;
   category: string | null;
   version: string | null;
+  // Task 6（路徑 A）：後端在 listMinioObjects/listMinioFolder 回應對每個 .ifc 物件預計算。
+  // 非 .ifc 物件後端不計算此欄位 → null；前端 chip 以此 key 對 ConversionRecord map lookup。
+  idempotency_key: string | null;
+}
+
+// Task 6 MinIO 資料夾導覽：GET /api/minio/objects?delimiter=/ 回應形狀（additive）。
+// folders = CommonPrefixes（各層子資料夾前綴字串），objects = 當層直屬非前綴物件。
+export interface MinioFolderListing {
+  bucket: string | null;
+  prefix: string;
+  folders: string[];
+  objects: MinioObject[];
+  count: number;
+}
+
+// Task 6：POST /api/conversion/trigger 回應形狀。
+// 成功回 {status, idempotency_key}，前端直接 patch chip（零額外 round-trip）。
+export interface ConversionTriggerResponse {
+  status: string;
+  idempotency_key: string;
 }
 
 export const coordinatorClient = {
@@ -300,4 +343,18 @@ export const coordinatorClient = {
     jsonGet<{ bucket: string | null; count: number; objects: MinioObject[] }>(
       `/api/minio/objects${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ""}`,
     ),
+  // Task 6 MinIO 資料夾導覽：帶 delimiter=/ 的 S3 list proxy（GET /api/minio/objects?delimiter=/）。
+  // 回 MinioFolderListing（folders = CommonPrefixes，objects = 當層直屬物件）。
+  // prefix 可省略（頂層 list）；有值時 encodeURIComponent 防注入。
+  // 注意：delimiter=/ 必須 encodeURIComponent → %2F，否則部分 proxy/framework 解析異常。
+  getMinioFolder: (prefix?: string): Promise<MinioFolderListing> => {
+    const params = new URLSearchParams({ delimiter: "/" });
+    if (prefix) params.set("prefix", prefix);
+    return jsonGet<MinioFolderListing>(`/api/minio/objects?${params.toString()}`);
+  },
+  // Task 6 一鍵觸發轉檔：POST /api/conversion/trigger {key, reason?}。
+  // auth：帶 x-dev-token header（沿用 console mutation 慣例，§3.3 auth 模型）。
+  // 成功回 {status, idempotency_key}，前端直接 patch chip；失敗 throw 帶後端 detail（誠實鐵律）。
+  conversionTrigger: (key: string, reason?: string): Promise<ConversionTriggerResponse> =>
+    jsonPostAuthed<ConversionTriggerResponse>("/api/conversion/trigger", { key, reason }),
 };
