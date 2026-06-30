@@ -1388,7 +1388,10 @@ export function createCoordinatorApp(
       return;
     }
     // 誠實鐵律：對外 response 不得含 presigned 簽章（與 list / shadow / session 出口一致）。
-    response.json(sanitizeJobForExternal(job));
+    // quality finding #1：detail 端點與列表端點（summarizeIfcReadyJob）對齊上 wire 單一權威
+    // conversion_lifecycle_status，使前端 IfcReadyJobDetail.conversion_lifecycle_status 型別契約成立
+    // （前端 getIfcReadyJob 輪詢主讀此欄）。additive：sanitizeJobForExternal 仍回原始 job 形狀。
+    response.json({ ...sanitizeJobForExternal(job), conversion_lifecycle_status: deriveLifecycleStatus(job) });
   });
 
   // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。

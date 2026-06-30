@@ -277,6 +277,9 @@ describe("coordinatorClient conversion control", () => {
   });
 
   it("getIfcReadyJob 打 GET /api/external/ifc-ready/:jobId，回 conversion_lifecycle_status", async () => {
+    // quality finding #2：此 mock 的 conversion_lifecycle_status 對應真實後端 detail 端點——
+    // app.ts GET /api/external/ifc-ready/:jobId 已上 wire deriveLifecycleStatus(job)，
+    // 後端回歸鎖在 bim-review-coordinator/tests/external-ifc-ready.test.ts「單筆 detail」測試。非虛構欄位。
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_abc", status: "queued_for_conversion", conversion_lifecycle_status: "queued", download_status: "downloaded", conversion_status: null, review_session_id: null }), { status: 200 }),
     );
