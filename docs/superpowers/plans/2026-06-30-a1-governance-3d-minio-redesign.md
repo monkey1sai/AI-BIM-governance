@@ -345,7 +345,7 @@ A1（`web-viewer-sample/src/console/pages.tsx` 的 `A1GovernanceWorkbenchPage`�
       const res = await coordinatorClient.triggerConversion(selectedKey);
       const jobId = res.ifc_ready_job_id ?? null;
       setConvJobId(jobId);
-      if (!jobId) { setConvErr(res.detail ?? t("trigger 未回 job id", "trigger returned no job id")); setConvStatus(null); return; }
+      if (!jobId) { setConvErr(t("trigger 未回 job id", "trigger returned no job id")); setConvStatus(null); return; } // 註：TriggerConversionResponse 已無 detail 欄（task#0 收緊型別），失敗 detail 由 jsonPost throw 經 catch 顯示
       const first = await pollOnce(jobId);
       if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
       if (first !== "ready" && first !== "failed") {
