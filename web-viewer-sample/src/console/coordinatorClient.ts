@@ -274,17 +274,28 @@ export interface MinioObject {
   project_display_name: string | null;
   category: string | null;
   version: string | null;
-  // Task 6（路徑 A）：後端在 listMinioObjects/listMinioFolder 回應對每個 .ifc 物件預計算。
-  // 非 .ifc 物件後端不計算此欄位 → null；前端 chip 以此 key 對 ConversionRecord map lookup。
-  idempotency_key: string | null;
+  // Task 6：後端在 listMinioObjects/listMinioFolder 對**所有**物件（含 role='other'）無條件呼
+  // idempotencyKeyFor(bucket,key,etag) 並寫入（minioClient.ts:133,230），故 wire 恆為 string（非 null）。
+  // MinioObjectView.idempotency_key 後端型別亦為非 nullable string。前端 chip 以此 key 對
+  // ConversionRecord map lookup；.ifc/非 .ifc 一律有值，差別只在 role 與是否掛語意 badge。
+  idempotency_key: string;
+}
+
+// Task 6 MinIO 資料夾導覽：GET /api/minio/objects?delimiter=/ 回應中的資料夾節點形狀。
+// 對齊後端 MinioFolderNode（minioClient.ts:35-38）：CommonPrefix 字串 + 該 prefix（遞迴）是否含
+// .ifc 葉物件（spec §2.5 第 5 點『含 source IFC』folder badge）。後端對每個 CommonPrefix 各 probe
+// 一次 has_source_ifc，故 wire 是物件陣列而非純字串陣列；前端消費端可安全做 folder.prefix 字串操作。
+export interface MinioFolderNode {
+  prefix: string;
+  has_source_ifc: boolean;
 }
 
 // Task 6 MinIO 資料夾導覽：GET /api/minio/objects?delimiter=/ 回應形狀（additive）。
-// folders = CommonPrefixes（各層子資料夾前綴字串），objects = 當層直屬非前綴物件。
+// folders = CommonPrefixes（各層子資料夾節點 + has_source_ifc），objects = 當層直屬非前綴物件。
 export interface MinioFolderListing {
   bucket: string | null;
   prefix: string;
-  folders: string[];
+  folders: MinioFolderNode[];
   objects: MinioObject[];
   count: number;
 }

@@ -259,7 +259,13 @@ describe("coordinatorClient conversion control", () => {
 
   // Task 6：getMinioFolder / conversionTrigger 測試
   it("getMinioFolder 打 GET /api/minio/objects?delimiter=/ 並回 { folders, objects, prefix, bucket, count }", async () => {
-    const mockFolders = ["松風庵/root/", "洲際好宅/"];
+    // 真實 wire shape（後端 MinioFolderNode[]，spec §2.5 第 5 點 has_source_ifc badge）：
+    // folders 每個元素 = { prefix, has_source_ifc }，非純字串陣列。
+    const mockFolders = [
+      { prefix: "松風庵/root/", has_source_ifc: true },
+      { prefix: "洲際好宅/", has_source_ifc: false },
+    ];
+    // role='other' 物件後端仍無條件計算 idempotency_key（minioClient.ts:133），故為 string 非 null。
     const mockObjects = [
       {
         key: "annotations/readme.txt",
@@ -269,7 +275,7 @@ describe("coordinatorClient conversion control", () => {
         project_display_name: null,
         category: null,
         version: null,
-        idempotency_key: null,
+        idempotency_key: "mw_0011223344556677",
       },
     ];
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -280,8 +286,18 @@ describe("coordinatorClient conversion control", () => {
     );
     const r = await coordinatorClient.getMinioFolder();
     expect(r.bucket).toBe("bim-control");
-    expect(r.folders).toEqual(["松風庵/root/", "洲際好宅/"]);
+    // prefix 傳遞契約錨點（無 prefix 參數呼叫時後端回 rawPrefix，預設 config.minioWatchPrefix=""）。
+    expect(r.prefix).toBe("");
+    expect(r.folders).toEqual([
+      { prefix: "松風庵/root/", has_source_ifc: true },
+      { prefix: "洲際好宅/", has_source_ifc: false },
+    ]);
+    // 對齊真實後端：folders 元素是物件、可安全做字串操作（folder.prefix.endsWith('/')）。
+    expect(r.folders[0].prefix.endsWith("/")).toBe(true);
+    expect(r.folders[0].has_source_ifc).toBe(true);
     expect(r.objects[0].role).toBe("other");
+    // role='other' 後端仍回 string idempotency_key（非 null）。
+    expect(r.objects[0].idempotency_key).toBe("mw_0011223344556677");
     const call = spy.mock.calls[0];
     const url = String(call[0]);
     expect(url).toContain("/api/minio/objects");
@@ -321,9 +337,11 @@ describe("coordinatorClient conversion control", () => {
     const body = JSON.parse(String(calls[0].init?.body));
     expect(body.key).toBe("松風庵/root/main/000001/model.ifc");
     expect(body.reason).toBe("manual-retry");
-    // 必須帶 x-dev-token header
+    // 必須帶 x-dev-token header，且值須等於 dev 預設 token（後端 isKitMutationAuthorized 做嚴格
+    // 相等 token === devToken，devToken 預設 "dev-token"，前端 DEV_AUTH_TOKEN fallback 亦為 "dev-token"）。
+    // 用值相等而非 toBeTruthy：token 被改壞成 " "/"undefined" 等字面串時 toBeTruthy 仍通過、無法守 auth 合約。
     const headers = calls[0].init?.headers as Record<string, string>;
-    expect(headers["x-dev-token"]).toBeTruthy();
+    expect(headers["x-dev-token"]).toBe("dev-token");
   });
 
   it("conversionTrigger 非 2xx 時 throw 並帶後端 detail", async () => {
