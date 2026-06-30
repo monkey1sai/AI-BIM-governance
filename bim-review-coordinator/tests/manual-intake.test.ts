@@ -44,4 +44,16 @@ describe("triggerManualIntake", () => {
     const r = await triggerManualIntake("../../etc/model.ifc", '"e1"', cfg(), makeLedger(), "2026-06-24T00:00:00Z");
     expect(r.ok).toBe(false);
   });
+  it("presign 失敗 → ok:false（合法 key 過 derive，但 getSignedUrl 拋 → catch 回 ok:false，ledger 不落帳）", async () => {
+    // 合法 key 先過 deriveIntakeFromKey（不被穿越守門擋），令 endpoint 非法 URL → getSignedUrl 於建 URL 階段拋
+    // TypeError，命中 manualIntake.ts:40-43 catch（驗 presign 失敗路徑，非 derive 失敗路徑）。endpoint 非法即不需 S3 stub。
+    const ledger = makeLedger();
+    const key = "東勢區許良宇紀念圖書館/root/main/000001/model.ifc";
+    const badCfg = { endpoint: "not a url", bucket: "bim-control", accessKey: "ak", secretKey: "sk", keySuffix: "/model.ifc" };
+    const r = await triggerManualIntake(key, '"e1"', badCfg, ledger, "2026-06-24T00:00:00Z");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain("presign failed");
+    // presign 失敗須在 upsert 之前 return → ledger 完全沒這筆（誠實鐵律：失敗不留半截紀錄）
+    expect(ledger.get(idempotencyKeyFor("bim-control", key, '"e1"'))).toBeNull();
+  });
 });
