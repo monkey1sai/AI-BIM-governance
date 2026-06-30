@@ -256,4 +256,32 @@ describe("coordinatorClient conversion control", () => {
     );
     await expect(coordinatorClient.getMinioObjects()).rejects.toThrow();
   });
+
+  it("triggerConversion 打 POST /api/conversion/trigger 帶 key，202 回 ifc_ready_job_id", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_abc", status: "queued_for_conversion", trigger_source: "manual" }), { status: 202 }),
+    );
+    const r = await coordinatorClient.triggerConversion("專案A/root/main/uuid/model.ifc");
+    expect(r.ifc_ready_job_id).toBe("ifcready_mw_abc");
+    const call = spy.mock.calls[0];
+    expect(String(call[0])).toContain("/api/conversion/trigger");
+    expect((call[1] as RequestInit).method).toBe("POST");
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ key: "專案A/root/main/uuid/model.ifc" });
+  });
+
+  it("triggerConversion 503（MinIO 未設定）throw 帶後端 detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" }), { status: 503, statusText: "Service Unavailable" }),
+    );
+    await expect(coordinatorClient.triggerConversion("k")).rejects.toThrow(/MinIO 未設定/);
+  });
+
+  it("getIfcReadyJob 打 GET /api/external/ifc-ready/:jobId，回 conversion_lifecycle_status", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_abc", status: "queued_for_conversion", conversion_lifecycle_status: "queued", download_status: "downloaded", conversion_status: null, review_session_id: null }), { status: 200 }),
+    );
+    const r = await coordinatorClient.getIfcReadyJob("ifcready_mw_abc");
+    expect(r.conversion_lifecycle_status).toBe("queued");
+    expect(String(spy.mock.calls[0][0])).toContain("/api/external/ifc-ready/ifcready_mw_abc");
+  });
 });
