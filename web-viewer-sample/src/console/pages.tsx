@@ -6,7 +6,7 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
@@ -1149,26 +1149,31 @@ export function KitGpuFleetPage() {
   );
 }
 
-// Task 7：#minio 升級讀真實 GET /api/minio/objects（三層 + 角色，移除寫死 demo）。
-// 依 project_display_name → category → version 分組成三層樹。
-// 誠實鐵律：有 .ifc 無對應 .usdc → 標 pending·待產生（prov p1），禁假裝已轉。
-type MinioTree = Map<string, Map<string, Map<string, import("./coordinatorClient").MinioObject[]>>>;
+// Task 7（minio-folderview）：#minio 改真 MinIO 逐層資料夾導覽（S3 Delimiter）。
+// buildMinioTree 三層攤平樹已退役；改 useState(prefix) 點資料夾換 prefix 重打 getMinioFolder。
+// .ifc 旁掛 ledger 衍生狀態 chip（讀 getConversionRecords）＋ 一鍵觸發鈕（intent→confirm）。
+// 誠實鐵律：folders/objects 皆真實 list；無 ledger 紀錄誠實顯『未轉』不臆測；不洩漏 presigned URL。
 
-function buildMinioTree(objects: import("./coordinatorClient").MinioObject[]): MinioTree {
-  const tree: MinioTree = new Map();
-  for (const obj of objects) {
-    const proj = obj.project_display_name ?? "(未知專案)";
-    const cat = obj.category ?? "(未知種類)";
-    const ver = obj.version ?? "(未知版本)";
-    if (!tree.has(proj)) tree.set(proj, new Map());
-    const catMap = tree.get(proj)!;
-    if (!catMap.has(cat)) catMap.set(cat, new Map());
-    const verMap = catMap.get(cat)!;
-    if (!verMap.has(ver)) verMap.set(ver, []);
-    verMap.get(ver)!.push(obj);
-  }
-  return tree;
+// ledger chip 狀態映射（與後端 ledgerChipStatus.ts 同義；前端內聯避免跨 monorepo tsconfig boundary）。
+// records 來自 getConversionRecords()；無紀錄 → 'untracked'（顯「未轉（含 baseline）」），不臆測。
+function ledgerChipStatus(
+  idempotencyKey: string,
+  records: ReadonlyArray<{ idempotency_key: string; status: string }>,
+): string {
+  const hit = records.find((r) => r.idempotency_key === idempotencyKey);
+  return hit ? hit.status : "untracked";
 }
+
+// chip 狀態本地化標籤（無紀錄＝untracked → 未轉；其餘對應 ledger status enum）。
+const MINIO_CHIP_LABEL: Record<string, string> = {
+  detected: t("已偵測", "detected"),
+  queued: t("排隊", "queued"),
+  converting: t("轉檔中", "converting"),
+  ready: t("完成", "ready"),
+  failed: t("失敗", "failed"),
+  untracked: t("未轉（含 baseline 既有檔）", "not converted (incl. baseline)"),
+  unknown: t("未知狀態", "unknown"), // narrowConversionStatus 退回值：後端送非預期 status 時誠實顯未知
+};
 
 function roleLabel(role: import("./coordinatorClient").MinioObject["role"]): string {
   if (role === "source_ifc") return t("來源 IFC", "Source IFC");
@@ -1183,95 +1188,184 @@ function roleClass(role: import("./coordinatorClient").MinioObject["role"]): str
 }
 
 export function MinioDataPage() {
-  const [objects, setObjects] = useState<import("./coordinatorClient").MinioObject[] | null>(null);
-  const [bucket, setBucket] = useState<string | null>(null);
+  const [folder, setFolder] = useState<import("./coordinatorClient").MinioFolderListing | null>(null);
+  const [records, setRecords] = useState<ConversionRecord[]>([]);
+  const [prefix, setPrefix] = useState(""); // 當前層 prefix（spec §2.5：點資料夾換 prefix）
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [chipOverride, setChipOverride] = useState<Record<string, string>>({}); // 觸發成功後 patch chip（零額外 round-trip）
+  const [pendingKey, setPendingKey] = useState<string | null>(null); // intent→confirm
+  const [triggerErr, setTriggerErr] = useState<string | null>(null);
+  const [triggerBusy, setTriggerBusy] = useState(false); // confirm 進行中（IntentDialog busy）
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (p: string) => {
     setLoading(true);
     setErr(null);
     try {
-      const res = await coordinatorClient.getMinioObjects();
-      setBucket(res.bucket);
-      setObjects(res.objects);
+      const res = await coordinatorClient.getMinioFolder(p);
+      setFolder(res);
     } catch (e) {
       setErr(String(e));
     } finally {
       setLoading(false);
     }
   }, []);
-
+  const loadRecords = useCallback(async () => {
+    try {
+      const r = await coordinatorClient.getConversionRecords(50);
+      setRecords(r.items);
+    } catch {
+      /* chip 缺資料時誠實顯未轉 */
+    }
+  }, []);
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(prefix);
+  }, [load, prefix]);
+  useEffect(() => {
+    void loadRecords();
+  }, [loadRecords]);
 
-  const tree = objects ? buildMinioTree(objects) : null;
+  const enterFolder = (f: string) => setPrefix(f); // CommonPrefix 為絕對 prefix
+  const goUp = () => {
+    if (!prefix) return;
+    const trimmed = prefix.replace(/\/$/, "");
+    const idx = trimmed.lastIndexOf("/");
+    setPrefix(idx >= 0 ? trimmed.slice(0, idx + 1) : "");
+  };
+  // folders 為 Array<{ prefix; has_source_ifc }>；對中文使用者以 localeCompare('zh-TW') 重排（spec §2.1 中文排序）。
+  const sortedFolders = folder ? [...folder.folders].sort((a, b) => a.prefix.localeCompare(b.prefix, "zh-TW")) : [];
+  // empty 態 (b)：已設定但當前層無物件（無 note）。empty 態 (a)＝後端回 note（未設定）。
+  const showFolderEmpty = !!folder && folder.folders.length === 0 && folder.objects.length === 0;
+  // folder 回應的 note（後端未設定時回 200 + note）。MinioFolderListing 型別未含 note，故防禦性讀取。
+  const folderNote = folder ? (folder as { note?: string }).note : undefined;
+
+  // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
+  // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy
+  //（與既有 ConversionSchedulingPage 用法、spec §6.1 IntentDialog 契約一致）。
+  const confirmTrigger = async (reason: string) => {
+    if (!pendingKey) return;
+    setTriggerErr(null);
+    setTriggerBusy(true);
+    try {
+      const res = await coordinatorClient.conversionTrigger(pendingKey, reason || "manual trigger from #minio");
+      // coordinatorClient.ts:315 MUST：wire status 是寬 string，patch 前先 runtime narrow；
+      // 非法值（後端送非預期字串）退 'unknown' 顯未知，不靜默把 chip 設成壞狀態（誠實鐵律）。
+      const narrowed = narrowConversionStatus(res.status) ?? "unknown";
+      setChipOverride((p) => ({ ...p, [res.idempotency_key]: narrowed })); // patch chip 為 detected/queued（非法值顯未知）
+      setPendingKey(null); // 成功才關 dialog
+    } catch (e) {
+      setTriggerErr(String(e)); // 失敗顯 inline error（actionErr）、chip 不變、dialog 不關
+    } finally {
+      setTriggerBusy(false);
+    }
+  };
 
   return (
     <>
       <h1>{t("MinIO 資料", "MinIO Data")}</h1>
       <p className="ec-lead">
-        {t("唯讀 intake 來源視圖，非 metadata 權威。 此頁讀 ", "Read-only intake source view, not the metadata authority. This page reads ")}<code>GET /api/minio/objects</code>{t("（真實 S3 list proxy）； 呈現 bucket 三層結構（專案 → 種類 → 版本）與每物件角色。 metadata 權威在外部 ", " (real S3 list proxy); shows the bucket's three-level structure (project → category → version) and each object's role. The metadata authority is the external ")}<code>bim-control · MySQL</code>{t("，不由本頁決定。", "; this page does not decide it.")}
+        {t("唯讀 intake 來源視圖，非 metadata 權威。 此頁讀 ", "Read-only intake source view, not the metadata authority. This page reads ")}<code>GET /api/minio/objects</code>{t("（真實 S3 list proxy，帶 Delimiter='/'）； 像 MinIO 網頁一樣逐層資料夾導覽（point-and-list），導到 model.ifc 才掛專案 / 種類 / 版本語意 badge。 metadata 權威在外部 ", " (real S3 list proxy with Delimiter='/'); browses the bucket level-by-level like the MinIO web UI (point-and-list); project / category / version semantic badges are attached only when reaching model.ifc. The metadata authority is the external ")}<code>bim-control · MySQL</code>{t("，不由本頁決定。", "; this page does not decide it.")}
       </p>
 
       <Panel
-        title={t("MinIO Bucket 物件（真實 list）", "MinIO bucket objects (real list)")}
-        sub={bucket ? `bucket=${bucket} · GET /api/minio/objects` : t("GET /api/minio/objects（MinIO watch 未設定時回 count=0）", "GET /api/minio/objects (returns count=0 when MinIO watch is not configured)")}
+        title={t("MinIO Bucket 逐層資料夾（真實 list）", "MinIO bucket folder navigation (real list)")}
+        sub={folder?.bucket ? `bucket=${folder.bucket} · GET /api/minio/objects?delimiter=/` : t("GET /api/minio/objects?delimiter=/（MinIO watch 未設定時回 count=0）", "GET /api/minio/objects?delimiter=/ (returns count=0 when MinIO watch is not configured)")}
         prov="asbuilt"
       >
-        {loading && <p className="ec-note">{t("載入中…（GET /api/minio/objects）", "Loading… (GET /api/minio/objects)")}</p>}
-        {err && (
+        {/* 麵包屑：目前層 prefix（空＝bucket 根）＋ 上一層鈕（prefix 非空才顯） */}
+        <div className="ec-row" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+          {prefix ? (
+            <Btn data-testid="minio-go-up" caption="prefix --" onClick={() => goUp()}>{t("⬑ 上一層", "⬑ Up")}</Btn>
+          ) : null}
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, opacity: 0.7 }}>{prefix || "/"}</span>
+        </div>
+
+        {loading ? (
+          <p className="ec-note">{t("載入中…（GET /api/minio/objects）", "Loading… (GET /api/minio/objects)")}</p>
+        ) : err ? (
+          // error 態：誠實顯原因 + 可重試（不假裝有資料）。
           <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span>{err}</span>
-            <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => { void load(); }}>
+            <span>{t("讀取 MinIO 失敗：", "Failed to read MinIO: ")}{err}</span>
+            <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => { void load(prefix); }}>
               {t("重試", "Retry")}
             </Btn>
           </div>
-        )}
-        {!loading && !err && (!objects || objects.length === 0) && (
-          <p className="ec-note">
-            {t("未取得 MinIO 物件（count=0）。可能原因：MinIO watch 未設定（", "No MinIO objects (count=0). Possible causes: MinIO watch not configured (")}<code>MINIO_WATCH_*</code>{t(" env 未填）、 bucket 為空、或 coordinator proxy 無法連線 MinIO。", " env not set), the bucket is empty, or the coordinator proxy cannot reach MinIO.")}
-          </p>
-        )}
-        {tree && objects && objects.length > 0 && (
-          <div className="ec-tree">
-            {[...tree.entries()].map(([proj, catMap]) => (
-              <div key={proj}>
-                <div><span className="ec-tree-file">{proj}/</span></div>
-                {[...catMap.entries()].map(([cat, verMap]) => (
-                  <div className="indent" key={cat}>
-                    <div>{cat}/</div>
-                    {[...verMap.entries()].map(([ver, objs]) => {
-                      const hasIfc = objs.some((o) => o.role === "source_ifc");
-                      const hasUsdc = objs.some((o) => o.role === "parsed_usdc");
-                      return (
-                        <div className="indent two" key={ver}>
-                          <div>{ver}/</div>
-                          {objs.map((obj) => (
-                            <div className="indent three" key={obj.key}>
-                              <span className="ec-tree-file">{obj.key.split("/").pop()}</span>{" "}
-                              <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
-                            </div>
-                          ))}
-                          {/* 誠實鐵律：有 .ifc 但無 .usdc → 標 pending，禁假裝已轉 */}
-                          {hasIfc && !hasUsdc && (
-                            <div className="indent three">
-                              <span className="ec-tree-file">model.usdc</span>{" "}
-                              <span className="ec-note">{t("pending · 待產生", "pending · to be generated")}</span>{" "}
-                              <ProvTag prov="p1" />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+        ) : folderNote ? (
+          // empty 態 (a)：MinIO 未設定（後端回 note，200）。
+          <p className="ec-note">{t("MinIO 未設定（", "MinIO not configured (")}{folderNote}{")"}</p>
+        ) : showFolderEmpty ? (
+          // empty 態 (b)：已設定但當前 prefix 無物件——不可誤用「未設定」文案。
+          <p className="ec-note">{t("此層無物件（資料夾為空）。", "This level has no objects (empty folder).")}</p>
+        ) : (
+          // populated：資料夾鈕（含 source IFC badge）＋ 當層直屬物件列。
+          <div>
+            {sortedFolders.length > 0 ? (
+              <div className="ec-tree">
+                {sortedFolders.map((f) => (
+                  <div key={f.prefix} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <Btn caption={t("點入此資料夾", "open folder")} onClick={() => enterFolder(f.prefix)}>{f.prefix}</Btn>
+                    {f.has_source_ifc ? (
+                      <span data-testid={`minio-folder-badge-${f.prefix}`} className="ec-prov artifact">
+                        {t("含 source IFC", "has source IFC")}
+                      </span>
+                    ) : null}
                   </div>
                 ))}
               </div>
-            ))}
+            ) : null}
+
+            {folder && folder.objects.length > 0 ? (
+              <ul className="ec-tree" style={{ listStyle: "none", paddingLeft: 0 }}>
+                {folder.objects.map((obj) => {
+                  const idk = obj.idempotency_key;
+                  const st = chipOverride[idk] ?? ledgerChipStatus(idk, records);
+                  return (
+                    <li key={obj.key} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      {/* role label（與 intake 三段脫鉤，純副檔名） */}
+                      <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
+                      <span className="ec-tree-file" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{obj.key}</span>
+                      {/* 三段語意 badge：有才顯（≥3 段才有，malformed 不掛） */}
+                      {obj.project_display_name ? <span className="ec-prov">{obj.project_display_name}</span> : null}
+                      {obj.category ? <span className="ec-prov">{obj.category}</span> : null}
+                      {obj.version ? <span className="ec-prov">{obj.version}</span> : null}
+                      {/* 7b/7c 待解開：chip 與觸發鈕用 {false && (...)} 暫關（locals 仍被引用→tsc 不報 unused）。
+                          7b 解開 chip、7c 解開 trigger + 底部 IntentDialog。 */}
+                      {obj.role === "source_ifc" && false ? (
+                        <>
+                          {/* 7b：ledger 衍生狀態 chip（無紀錄＝未轉，不臆測） */}
+                          <span data-testid={`minio-chip-${idk}`} className="ec-prov">
+                            {MINIO_CHIP_LABEL[st] ?? st}
+                          </span>
+                          {/* 7c：一鍵觸發鈕（僅未轉/failed 可按；ready/進行中 disabled） */}
+                          <Btn
+                            data-testid={`minio-trigger-${idk}`}
+                            caption="POST /api/conversion/trigger"
+                            disabled={!["untracked", "failed"].includes(st)}
+                            onClick={() => { setTriggerErr(null); setPendingKey(obj.key); }}
+                          >
+                            {t("觸發轉檔", "Trigger")}
+                          </Btn>
+                        </>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
           </div>
         )}
       </Panel>
+
+      {/* 7c：intent→confirm 對話框（IntentDialog 真實 props：open/title/cost/onConfirm(reason)/onCancel/busy/actionErr）。 */}
+      <IntentDialog
+        open={!!pendingKey}
+        title={t("確認觸發轉檔", "Confirm trigger conversion")}
+        cost={t("對此物件觸發轉檔 intake：", "Trigger conversion intake for this object: ") + (pendingKey ?? "")}
+        busy={triggerBusy}
+        actionErr={triggerErr}
+        onConfirm={(reason) => void confirmTrigger(reason)}
+        onCancel={() => { setPendingKey(null); setTriggerErr(null); }}
+      />
 
       <Panel title={t("Bucket layout（規約說明 — 示意，非實況）", "Bucket layout (convention — illustration, not live)")} sub={t("bim-control private bucket · 三層 key 規約示意（DEMO，非真實資料）", "bim-control private bucket · three-level key convention illustration (DEMO, not real data)")} prov="demo">
         <p className="ec-note">
