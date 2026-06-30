@@ -9,7 +9,7 @@ import type { ConversionLedgerRecord, ConversionLedgerStatus } from "./conversio
 /**
  * chip 狀態型別：
  * - ConversionLedgerStatus 五值（ready / detected / queued / converting / failed）
- * - 'untracked'：ledger 無紀錄（前端顯「未轉（含 baseline 既有檔）」，不臆測）
+ * - 'untracked'：ledger 無紀錄（前端顯「未轉（無 ledger 紀錄）」，不臆測）
  */
 export type ChipStatus = ConversionLedgerStatus | "untracked";
 

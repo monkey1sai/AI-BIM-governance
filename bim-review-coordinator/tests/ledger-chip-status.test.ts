@@ -4,7 +4,7 @@
 // 根據 idempotency_key 查詢 ledger 紀錄 → chip 狀態。
 // spec §2.5 第 6 點 / §3.3 第 1 點 / AC-chip：
 //   ready / detected / queued / converting / failed → 對應 ledger.status
-//   無紀錄 → 'untracked'（前端顯「未轉（含 baseline 既有檔）」，不臆測）
+//   無紀錄 → 'untracked'（前端顯「未轉（無 ledger 紀錄）」，不臆測）
 import { describe, it, expect } from "vitest";
 import { ledgerChipStatus } from "../src/services/ledgerChipStatus.js";
 import type { ConversionLedgerRecord } from "../src/services/conversionLedger.js";

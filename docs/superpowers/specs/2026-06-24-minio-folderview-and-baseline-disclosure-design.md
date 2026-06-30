@@ -108,7 +108,7 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 
 **設計原則（使用者觀點）：** 「是否要轉檔」不只看 watcher 的 in-memory baseline/etag，要看**持久的轉檔紀錄（ledger）**——bucket 內的 `model.ifc` 若 ledger 無成功(`ready`)紀錄，就視為「未轉、可觸發」。
 
-1. **ledger = 轉檔狀態真相來源**：交叉比對「bucket 內 `*/model.ifc`（來自 `#minio` list）」與「ledger 紀錄（`/api/conversion/records`，鍵 `mw_<hash16>`）」。狀態分類：`ready`（已轉）／`detected/queued/converting`（進行中）／`failed`（失敗可重試）／**無紀錄 =「未轉（含 baseline 既有檔）」**。
+1. **ledger = 轉檔狀態真相來源**：交叉比對「bucket 內 `*/model.ifc`（來自 `#minio` list）」與「ledger 紀錄（`/api/conversion/records`，鍵 `mw_<hash16>`）」。狀態分類：`ready`（已轉）／`detected/queued/converting`（進行中）／`failed`（失敗可重試）／**無紀錄 =「未轉（無 ledger 紀錄）」**（§3.4 auto-enroll 後既有檔多已自動補轉落 queued，untracked 僅剩首輪前/watcher 關閉時真正無紀錄者）。
 
 2. **一鍵觸發轉檔按鈕（in-scope，intent→confirm→audited）**：對「未轉/failed」的 `model.ifc`，於 `#minio` 該物件旁（與/或 `#conv` 列）提供「觸發轉檔」鈕。
    - **機制：** 新增 additive coordinator endpoint `POST /api/conversion/trigger {key}`：(a) 驗 key 為 bucket 下 `*/model.ifc`、過 `deriveIntakeFromKey`（≥3 段、拒空段/`.`/`..` 防穿越）；(b) coordinator **server-side 生 presigned GET URL**（瀏覽器不碰 webhook secret／MinIO 憑證）；(c) **新增獨立函式 `triggerManualIntake(key, bucket, config)`** 寫 ledger——**注意 `triggerIntake` 是 `startMinioWatcher` 內私有 closure、不可 import**（`minioWatcher.ts:290`），故為**獨立實作但重用既有 exported 零件**：`deriveIntakeFromKey`/`idempotencyKeyFor`（`minioWatcher.ts:71,29`）、`createMinioS3Client`（`minioClient.ts:7`）、`getSignedUrl`（`@aws-sdk/s3-request-presigner` 已裝）、loopback `POST /api/external/ifc-ready` 或直呼 `conversionLedger.upsert`（約 50 行，**非 import 重用**）。
