@@ -136,6 +136,13 @@ A1 的「排入轉檔」按鈕**依賴 B1 的 trigger 端點先落地**。
 
 ## 10. 開放問題
 
+> **2026-06-30 相依進度更新（指揮官 · spec-to-done P0）**：B1 後端地基（`POST /api/conversion/trigger` + `conversion_lifecycle_status` 單一 helper + presigned 全出口遮蔽 + `project_display_name`/`category` 落 store）已於 **PR #259（mergeCommit `b660b1f`）merge 進 `main`**。本 spec 三項開放問題因此定案：
+> - **OQ-A1-1 解除**：B1 已落地，**排序 B 成立**，A1（B2）為純前端改動，不退排序 C。
+> - **OQ-A1-2 解除**：`conversion_lifecycle_status` 已落地，A1 狀態行**主讀** `conversion_lifecycle_status`；既有 `download_status`/`conversion_status` 僅作該欄缺失時的 falls-back（誠實降級保留，不移除）。
+> - **OQ-A1-3 定案**：依 §9 YAGNI 用 `GET /api/minio/objects` 平面清單，A1 端**先不做**分頁/搜尋；物件多時的 baseline 揭露走 folderview（不在本 change）。
+>
+> 以下為設計當時原始開放問題，保留為歷史紀錄：
+
 - **OQ-A1-1**：B1 落地時程未定；A1（B2）卡在 trigger 端點。若 B1 延遲，是否退回排序 C（A1 先做下拉+移除 demo-control，按鈕後補）須再確認。
 - **OQ-A1-2**：`conversion_lifecycle_status` 未落地前，A1 狀態行先用既有 `download_status`/`conversion_status` 顯示（誠實降級），lifecycle 欄落地後切換 —— 此過渡策略需在 plan 標明。
 - **OQ-A1-3**：MinIO 下拉若物件多（baseline 揭露），是否要在 A1 端分頁/搜尋，或只列「未轉/failed」可觸發者，待 plan 依 folderview baseline 揭露語意定。
