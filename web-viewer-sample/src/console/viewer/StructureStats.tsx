@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 // CH-H2/③：IFC 結構（範本面板③）。優先顯真實「空間巢狀樹」（IfcProject>Site>Building>Storey + 每節點類別計數，
 // 經 coordinator spatial-tree for-session proxy）；無 session（harness）時退回由 element_mapping 派生的「依類別計數」。
 // 資料一律經 coordinator :8004（守邊界）。誠實：缺資料顯誠實空狀態、不捏造巢狀。

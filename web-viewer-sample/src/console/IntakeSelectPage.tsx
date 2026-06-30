@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 // web-viewer-sample/src/console/IntakeSelectPage.tsx
 // /console/intake A1 進件：從 coordinator 既有 /api/external/ifc-ready 列現成模型 job 供「選取」，
 // 不要求操作員手填模型檔案路徑（誠實鐵律 + spec：A1 進件於現成清單選取）。只打 coordinator :8004。

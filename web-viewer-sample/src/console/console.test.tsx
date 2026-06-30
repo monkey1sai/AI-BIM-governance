@@ -24,6 +24,7 @@ import {
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
+import { StreamConfigReader } from "./StreamConfigReader";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
@@ -359,6 +360,26 @@ describe("edge console honesty smoke", () => {
     expect(navHtml).not.toContain('class="ec-key">CO<');
   });
 
+  it("co-console-merge：#runtime route 承接 Coordinator runtime console，且 nav label 改為 Runtime 觀測值班台", () => {
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#runtime";
+      const html = renderToString(<EdgeConsole />);
+
+      expect(html).toContain("Runtime 觀測值班台");
+      expect(html).not.toContain("串流執行狀態");
+      expect(html).toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
+      expect(html).toContain("/api/runtime/status");
+      expect(html).toContain("A Classic Dashboard");
+      expect(html).toContain("D Terminal / Debug");
+      expect(html).toContain("Classic Dashboard 是 operator 第一眼總覽");
+      expect(html).toContain("Open primary URL 不等於 occupied");
+      expect(html).not.toContain("Runtime Dashboard · 串流執行狀態");
+    } finally {
+      window.location.hash = prevHash;
+    }
+  });
+
   it("prototype 核心頁面可 render：A1 stepper、3D viewer、conversion、session、Kit/GPU、MinIO", () => {
     const a1 = renderToString(<A1GovernanceWorkbenchPage />);
     expect(a1).toContain("上傳模型");
@@ -546,6 +567,69 @@ describe("co-console-merge §5.1#4：CoordinatorGovernanceTabs debug 分頁含 s
     expect(html).toContain("stream-config");
     expect(html).toContain("/api/review-sessions/:id/stream-config");
     expect(html).toContain("review_session_id"); // StreamConfigReader 的輸入框 placeholder
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+// ── co-console-runtime-merge review fix：stream-config session id guard ──
+// StreamConfigReader 對齊 ReviewRoomPage / coordinator /ui/open 的 session-id 格式：
+// 只允許 lwv_ / review_session_ 前綴 + 英數底線。invalid input 應停用按鈕且不發 request。
+describe("co-console-merge review fix：StreamConfigReader session-id 格式守門", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  const setInputNative = (el: HTMLInputElement, value: string) => {
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    nativeValueSetter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it("invalid id 停用讀取、不呼叫 streamConfig；valid review_session id 啟用並呼叫一次", async () => {
+    const streamSpy = vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({
+      session_id: "review_session_x",
+      status: "ready",
+    });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<StreamConfigReader />);
+    });
+
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="review_session_id"]')!;
+    const readButton = () => Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+      button.textContent?.includes("讀取 stream-config") || button.textContent?.includes("Read stream-config"),
+    )!;
+
+    await act(async () => { setInputNative(input, "abc"); });
+    expect(readButton().disabled).toBe(true);
+    expect(container.innerHTML).toContain("session id 不符格式");
+    await act(async () => { readButton().click(); });
+    expect(streamSpy).not.toHaveBeenCalled();
+
+    await act(async () => { setInputNative(input, "review_session_x"); });
+    expect(readButton().disabled).toBe(false);
+    await act(async () => {
+      readButton().click();
+      await Promise.resolve();
+    });
+    expect(streamSpy).toHaveBeenCalledTimes(1);
+    expect(streamSpy).toHaveBeenCalledWith("review_session_x");
 
     await act(async () => { root.unmount(); });
   });

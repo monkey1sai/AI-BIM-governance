@@ -10,7 +10,7 @@
  * its affiliates is strictly prohibited.
  */
 
-import { Component } from 'react';
+import { Component, type ChangeEvent } from 'react';
 import { getApplications, getApplicationVersions, getApplicationVersionProfiles } from './Endpoints';
 // viewer-edge-bim-server-console:repo map / Architecture overview UI 已從 fast
 // MVP 主流程移除(spec session-first-review-viewer REMOVED multi-artifact controls)。
@@ -32,7 +32,7 @@ export interface Application {
 }
 
 interface AppOnlyProps {
-    onNext: (state: any) => void;
+    onNext: (state: AppOnlyState) => void;
 }
 
 interface AppOnlyState {
@@ -159,8 +159,8 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
     }
 
     private _onBack(): void {
-        let appServer = (document.getElementById("app-server") as HTMLInputElement).value;
-        let streamServer = (document.getElementById("stream-server") as HTMLInputElement).value;
+        const appServer = (document.getElementById("app-server") as HTMLInputElement).value;
+        const streamServer = (document.getElementById("stream-server") as HTMLInputElement).value;
         this.setState({ appServer: appServer, streamServer: streamServer })
         this.props.onBack(appServer, streamServer)
     }
@@ -197,7 +197,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
      * Executes when the 'next' button is clicked.
      */
     async _onNext() {
-        let appServer = (document.getElementById("app-server") as HTMLInputElement).value;
+        const appServer = (document.getElementById("app-server") as HTMLInputElement).value;
         
         // validate app server URL value is entered
         if (appServer.length === 0) {
@@ -217,7 +217,7 @@ export class ServerURLsForm extends Component <ServerURLsProps, ServerURLsState>
         // validate connection can be made to app server
         if  (!await this._validateEndpoint(`${appServer}/cfg/apps`)) return
         
-        let streamServer = (document.getElementById("stream-server") as HTMLInputElement).value;
+        const streamServer = (document.getElementById("stream-server") as HTMLInputElement).value;
         if (streamServer.length === 0) {
             alert("請輸入 Stream Server。")
             return
@@ -344,7 +344,7 @@ export class ApplicationsForm extends Component <ApplicationsProps, Applications
     /**
      * Executes when a user selects an application item from the dropdown
      */
-    handleSelectChange = (event: any) => {
+    handleSelectChange = (event: ChangeEvent<HTMLSelectElement>) => {
         const selectedAppId = event.target.value;
         const selectedApplication = this.props.applications.find((app) => app.id === selectedAppId);
 
@@ -430,7 +430,7 @@ export class VersionsForm extends Component <VersionsProps, VersionsState> {
     /**
      * Executes when a user selects a version item from the dropdown
      */
-    handleSelectChange = (event: any) => {
+    handleSelectChange = (event: ChangeEvent<HTMLSelectElement>) => {
         const selectedVersion = event.target.value;
         this.setState({ selectedVersion: selectedVersion });
     };
@@ -486,7 +486,7 @@ export class ProfilesForm extends Component <ProfilesProps, ProfilesState> {
     /**
      * Executes when a user selects a profile item from the dropdown
      */
-    handleSelectChange = (event: any) => {
+    handleSelectChange = (event: ChangeEvent<HTMLSelectElement>) => {
         const selectedProfile = event.target.value;
         this.setState({ selectedProfile: selectedProfile });
         
