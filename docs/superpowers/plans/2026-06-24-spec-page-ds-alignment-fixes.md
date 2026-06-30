@@ -2,9 +2,9 @@
 
 **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 
-**Goal:** 把 2026-06-24 對「設計規格說明（`#spec`）」頁的稽核剩餘 5 項 low/info（F1 lead MinIO 措辭、F2 `.ec-lead` margin token、F3 nav tooltip i18n、F4/F5 兩份過時 docs）一次 surgical 修掉，全部逐字 current→proposed、不碰後端凍結面。
+**Goal:** 把 2026-06-24 對「設計規格說明（`#spec`）」頁稽核剩餘 5 項 low/info 中的 **4 項**一次 surgical 修掉（F1 lead MinIO 措辭、F2 `.ec-lead` margin token、F3 nav tooltip i18n、F4 手冊 §8 Q3 `theme-docs` 句尾**附加**現況補記/append-only 不替人類拍板），全部逐字 current→proposed、不碰後端凍結面；**F5（設計規格.md §2.2 plane 命名）經查證後判定 won't-fix、不改檔**（誠實結算：5 findings → 4 fixed + 1 documented won't-fix，見下方「F5 — won't-fix」節）。
 
-**Architecture:** 前端是 `web-viewer-sample/` 的 React + Vite「Edge Console」product shell；`#spec` 路由由 `pages.tsx` 的 `SpecPage`（純靜態、零後端）渲染，左側 nav 由 `EdgeConsole.tsx` 用 `PAGES` + `NAV_LABEL` + `navText()` 渲染，視覺 token 集中在 `edge-console.css` 的 `--ec-*`。本批改動限於 `SpecPage` lead 一行字串、nav `<button>` 一個 `title` 取值、CSS 一處 margin 字面值改 token，以及兩份 `docs/plans/*.md` 的逐字段落，不新增元件、不改 `navText`/`NAV_LABEL`/`data.ts`、不動任何後端檔。
+**Architecture:** 前端是 `web-viewer-sample/` 的 React + Vite「Edge Console」product shell；`#spec` 路由由 `pages.tsx` 的 `SpecPage`（純靜態、零後端）渲染，左側 nav 由 `EdgeConsole.tsx` 用 `PAGES` + `NAV_LABEL` + `navText()` 渲染，視覺 token 集中在 `edge-console.css` 的 `--ec-*`。本批改動限於 `SpecPage` lead 一行字串、nav `<button>` 一個 `title` 取值、CSS 一處 margin 字面值改 token，以及一份 `docs/plans/*.md`（F4 手冊 §8 Q3）句尾**附加**現況補記（append-only、不替人類拍板），不新增元件、不改 `navText`/`NAV_LABEL`/`data.ts`、不動任何後端檔（F5 won't-fix，不改 `設計規格.md`）。
 
 **Tech Stack:** TypeScript / React 18（`react-dom/server` `renderToString` 為既有 console 測試慣例）、Vite（`npm run build`，型別須另跑 `npx tsc --noEmit`）、Vitest（`vitest run`）、Playwright（`web-viewer-sample/e2e/`，baseURL `http://127.0.0.1:5180` fresh dev server、coordinator base 由 `VITE_COORDINATOR_API_BASE` 注入 `:8005` branch coordinator）。
 
@@ -294,96 +294,73 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ---
 
-## Task 3: F4 — 前端對齊手冊 §8 Q3 `theme-docs` 結案（純文件）
+## Task 3: F4 — 前端對齊手冊 §8 Q3 `theme-docs` 句尾附現況補記（純文件 · append-only · 不替人類拍板）
 
-**已核對錨點**：`docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md:379` 逐字為下方 current_text（§8 open questions 第 3 項），該段全檔唯一。純 `.md`，不碰 code。
+**已核對錨點**：`docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md:379` 逐字為下方 current_text（§8 open questions 第 3 項），該段全檔唯一。純 `.md`，不碰 code。**§8 約束（line 375，已 Read 確認）**：「下列是會改變可見外觀或行為的決策，AI coding 不得自行拍板，須先問人類」→ 故 F4 **只在句尾 append 非拘束現況補記**（proposed ⊃ current，原 open question 整句**保留不動**），**嚴禁**把 Q3 標成「已結案 / 刻意決策 / 無待決」等替人類拍板字眼（此為 spec §2 F4 硬性 acceptance；前一版 plan 誤寫「已結案」已於本版修正）。
 
 ### Files
 
-- Modify: `docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md`（line 379，整段 find/replace）
+- Modify: `docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md`（line 379，整段 find/replace；new_string 前半與 old_string **逐字相同**、僅句尾附加一句現況補記）
 
 ### Steps
 
-- [ ] 用 Edit 對該檔做整段替換：
+- [ ] 用 Edit 對該檔做整段替換（append-only：old_string = 現有整句，new_string = 原句 + 句尾現況補記，前半不得改一字）：
 
-  - old_string（逐字）：
+  - old_string（逐字，handbook line 379 現有整句）：
 
     ```md
     3. **Light `.theme-docs`**：DS 出一整套淺色 token（藍 `#2563eb`）；repo console 純暗、無 docs surface。本輪做不做任何淺色/docs surface，或整個 skip？
     ```
 
-  - new_string（逐字，spec §F4 proposed）：
+  - new_string（逐字，spec §F4 proposed；前半與 old_string 完全相同、僅句尾附加）：
 
     ```md
-    3. **Light `.theme-docs`**（**已結案**）：DS `.theme-docs` 淺色 token（藍 `#2563eb`）→ repo 採**全站 `theme-light` toggle 取代 per-page `theme-docs`**，為刻意架構決策（非遺漏）。`edge-console.css` 約 line 435 註解已映射 `.theme-light = DS .theme-docs`；命名歧義消除，無待決項目。
+    3. **Light `.theme-docs`**：DS 出一整套淺色 token（藍 `#2563eb`）；repo console 純暗、無 docs surface。本輪做不做任何淺色/docs surface，或整個 skip？**（現況補記 2026-06，非拍板）** repo 已落地全站 `theme-light` toggle（`edge-console.css:435` 註解映射 `.theme-light = DS .theme-docs`、一處覆寫全站變色，PR #255），可作此題現有實作參考；惟「是否正式採此為最終形 / 是否做 per-page docs surface」仍依本節開頭規則**保留人類決策、未拍板**。
     ```
 
-- [ ] 確認該段不再含問號、且全檔唯一替換成功：
+- [ ] 誠實守門驗證：原 open question 原句**保留**、現況補記**已附加**、且**未出現替人類拍板字眼**（spec §2 F4 acceptance）：
 
   ```bash
-  grep -n "theme-docs" "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes/docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md" | head
+  cd "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes"
+  # (1) 原 open question 整句仍在（append-only 證據；應 1 命中）
+  grep -n "或整個 skip？" "docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md"
+  # (2) 現況補記與「保留人類決策」字樣已附加（各應 1 命中、同在 line 379）
+  grep -n "現況補記 2026-06，非拍板" "docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md"
+  grep -n "保留人類決策、未拍板" "docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md"
+  # (3) 誠實守門（必須 0 命中）：不得替人類拍板
+  grep -nE "已結案|刻意決策|無待決" "docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md" && echo "FAIL: 出現替人類拍板字眼，違反 spec §2 F4" || echo "OK: 無拍板字眼"
   ```
 
-  預期：line 379 顯示「**已結案**」段、不再以「或整個 skip？」結尾；無其他 §8 Q3 殘留。
+  預期：(1) 與 (2) 各 1 命中且同在 line 379；(3) 印 `OK: 無拍板字眼`（grep 回非零、`||` 分支執行）。若 (3) 印 `FAIL`，回退 new_string 重做，不得 commit。
 
 - [ ] commit：
 
   ```bash
   git -C "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes" add docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md
   git -C "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes" diff --cached --check
-  git -C "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes" commit -m "docs(plans): F4 前端對齊手冊 §8 Q3 theme-docs 結案（全站 theme-light 取代 per-page）"
+  git -C "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes" commit -m "docs(plans): F4 前端對齊手冊 §8 Q3 theme-docs 句尾附現況補記（非拍板、保留人類決策）"
   ```
 
-  預期：`diff --cached --check` 無輸出；commit 成功，diff 僅此段。
+  預期：`diff --cached --check` 無輸出；commit 成功，diff 僅此段（原句保留、句尾附加一句現況補記）。
 
 ---
 
-## Task 4: F5 — 設計規格.md §2.2 plane stale 修正（純文件）
+## F5 — won't-fix（documented · 不改檔 · 非 task）
 
-**已核對錨點**：`docs/plans/ai-bim-governance-設計規格.md:170` 逐字為下方 current_text；該檔 `CORE` 在 §2.2 表共 4 列（166 workspace、167 core、168 omniverse 為 `CORE/OMNIVERSE 混`、169 coordinator、170 system），但 `| system | CORE |` 字串全檔唯一，整列替換不誤傷其他列。repo `data.ts:73` 該頁 plane 為 `governance`（色碼同 cyan、無行為差異），依效力順序 repo 為行為真相 → 文件對齊。
+> 依 spec §2 F5 + §3.2 + §5：F5 經 2026-06-30 重新查證後判定 **won't-fix**，**不修改** `docs/plans/ai-bim-governance-設計規格.md`。本節為誠實記錄，**不是可執行 task**（無 step、不 commit、subagent-driven-development 不取用此節）。實作者：**跳過、不要動 `設計規格.md:170`**。
 
-### Files
+**原 finding**：`設計規格.md:170` §2.2 把 `#spec` 所在 system 列 plane 記為 `CORE`；repo `data.ts:73` 是 `governance`。
 
-- Modify: `docs/plans/ai-bim-governance-設計規格.md`（line 170，整列 find/replace；`replace_all=false`）
+**不改的理由（逐條，spec §2 F5）**：
+1. §2.2 開頭（line 162）明示「完整 22 條路由以 §A.1.1 正典表為準，**本節只描述分群語意**」→ §2.2 對 per-route plane **非權威**；`#spec` 的 plane 真相在 §A.1.1 / `data.ts`，不在此表。
+2. `CORE`/`OMNIVERSE` 是該 doc **自身的巨觀平面命名**，定義在其 legend（line 55 `CORE → governance-service / coordinator`）與 NavItem 規則（line 96）；§2.2 五列一致沿用。**doc 內 `CORE` ≡ repo `governance`**，line 55 已自帶映射，非「錯誤」而是命名層差異（色碼同為 cyan、無行為差異）。
+3. 只改 line 170 一列 → 半 `CORE` 半 `governance`、與 166/167/169 及 legend line 55/96 互相矛盾。要對齊得連 legend line 55、規則 line 96、全 §2.2 一起改 = 跨全文詞彙遷移，遠超「surgical stale 修正」、且推翻 doc 既有 `CORE/OMNIVERSE` 慣例，風險與範圍不成比例。
 
-### Steps
-
-- [ ] 用 Edit 對該檔做整列替換：
-
-  - old_string（逐字）：
-
-    ```md
-    | system | CORE | `#runtime`(RT)、`#admin`(SY 待建)、`#spec`(▦) |
-    ```
-
-  - new_string（逐字，spec §F5 proposed）：
-
-    ```md
-    | system | governance | `#runtime`(RT)、`#admin`(SY 待建)、`#spec`(▦) |
-    ```
-
-- [ ] 確認 system 列改為 `governance`、其他 3 列 `CORE` 不變：
-
-  ```bash
-  grep -n "| system |" "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes/docs/plans/ai-bim-governance-設計規格.md"
-  grep -n "| workspace |\|| core |\|| omniverse |" "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes/docs/plans/ai-bim-governance-設計規格.md"
-  ```
-
-  預期：system 列顯示 `| system | governance |`；workspace/core 列仍含 `CORE`，omniverse 列仍 `CORE / OMNIVERSE 混`。
-
-- [ ] commit：
-
-  ```bash
-  git -C "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes" add docs/plans/ai-bim-governance-設計規格.md
-  git -C "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes" diff --cached --check
-  git -C "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes" commit -m "docs(plans): F5 設計規格 §2.2 system 列 plane CORE→governance（對齊 data.ts 行為真相）"
-  ```
-
-  預期：`diff --cached --check` 無輸出；commit 成功，diff 僅此列。
+**誠實結算**：5 findings → **4 實際修復（F1–F4）+ 1 documented won't-fix（F5）**。F5「治本」版（doc 全文 `CORE/OMNIVERSE → governance/omniverse` 詞彙遷移，含 legend line 55、規則 line 96、§2.2 全表）若日後要做，**另開獨立 docs PR**（spec §5 follow-up），不在本格。
 
 ---
 
-## Task 5: GitNexus / codebase-memory impact + detect_changes（commit 後驗 blast）
+## Task 4: GitNexus / codebase-memory impact + detect_changes（commit 後驗 blast）
 
 **目的**：CLAUDE.md §4 鐵律——改 code symbol 後驗證 blast 限於預期。本批改了 `SpecPage`（pages.tsx）、`EdgeConsole`（nav render，未動 `navText`）兩個前端 symbol，預期 risk=LOW（純字串 / token / tooltip 取值，無簽名變更、無新 caller）。
 
@@ -421,7 +398,7 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ---
 
-## Task 6: Browser E2E — `#spec` 頁 user-facing 驗收（F1 lead + F3 tooltip）
+## Task 5: Browser E2E — `#spec` 頁 user-facing 驗收（F1 lead + F3 tooltip）
 
 **目的**：spec userFacing=true，F1/F3 是可見改動，須從 `#spec` route 操作 + browser evidence。`#spec` 本身零後端（靜態頁），但本 spec 因 F1/F3 為 user-facing 而要求 P4 自然產出 `#spec` 截圖（spec §2 末 user-facing 驗收 + §1.1 已釐清：不把「補 E2E」當獨立修復項，但 F1/F3 截圖自然涵蓋 `#spec`）。
 
@@ -512,7 +489,7 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ---
 
-## Task 7: 收尾 — PR body evidence 與共通紀律
+## Task 6: 收尾 — PR body evidence 與共通紀律
 
 **目的**：對齊 spec §4 共通紀律，避免 pr-review-agent / DoD 失敗。此為 PR 階段檢查清單，非 code 改動。
 
@@ -542,7 +519,7 @@ npx tsc --noEmit 2>&1 | tail -20
   - trace：`artifacts/e2e/report/`（trace=on）
   - Known gaps：`#spec` 為靜態文件頁，**無 backend API / runtime ID / loading-success-failure-retry 狀態機**（DEMO DATA / NOT BUILT，結構性、非未完成）；F2 為零視覺改動 CSS token 化（截圖與基準一致）
 
-- [ ] PR body 對 F4/F5（純 `docs/plans/`）註明「純文件，不 match deployPattern，不適用 Deploy Path 表」；全 PR「無後端 / runtime 改動 → Deploy Path 不適用」。
+- [ ] PR body 對 F4（純 `docs/plans/` 手冊句尾 append 現況補記）註明「純文件、append-only、不 match deployPattern、不適用 Deploy Path 表」；**F5 won't-fix（documented，不改檔）**，PR body 註明「5 findings → 4 fixed（F1–F4）+ 1 documented won't-fix（F5）」；全 PR「無後端 / runtime 改動 → Deploy Path 不適用」。
 
 - [ ] 誠實鐵律自檢：F1 是誠實措辭修（讓 lead 與《實作紀律》§6 架構一致）；全頁仍無 live data claim、Prov chip 不變（`kit-manager-api=p1` 紅、其餘綠）、未新增任何假宣稱。
 
