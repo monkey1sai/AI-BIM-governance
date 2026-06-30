@@ -34,7 +34,7 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ### Files
 
-- 無檔案改動（純前置驗證；本門判 LOW 才開始 Task 0 的編輯）。
+- Create: `docs/evidence/spec-page-ds-alignment-fixes/impact-prescan.md`（記錄 before-edit impact 安全門結論為 tracked evidence，隨 PR 可審；本門判 LOW 才開始下一 task 的編輯）。
 
 ### Steps
 
@@ -57,6 +57,19 @@ npx tsc --noEmit 2>&1 | tail -20
   ```
 
   預期：回 `SpecPage`/`EdgeConsole`/`navText` 三 symbol、file_path 與本 plan 一致；僅佐證，不翻 gate。
+
+- [ ] **本 task 產出（per-task commit 錨點）**：將安全門結論用 Write 寫入 `docs/evidence/spec-page-ds-alignment-fixes/impact-prescan.md`（SpecPage risk + 直接 callers、EdgeConsole risk + callers、雙圖譜 `[xref]` 差異、最終判定 LOW 放行）並 commit：
+
+  ```bash
+  cd "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes"
+  mkdir -p docs/evidence/spec-page-ds-alignment-fixes
+  # 先用 Write 工具寫 impact-prescan.md，再：
+  git add docs/evidence/spec-page-ds-alignment-fixes/impact-prescan.md
+  git diff --cached --check
+  git commit -m "docs(evidence): F0 impact 前置安全門結論（SpecPage/EdgeConsole 皆 LOW、放行）"
+  ```
+
+  預期：commit 成功，本 task 有 per-task commit 錨點；安全門 LOW 通過才進入下一 task（任一 HIGH/CRITICAL 則停手回報、不進編輯）。
 
 ---
 
@@ -400,7 +413,7 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ### Files
 
-- 無檔案改動（純驗證）。
+- Create: `docs/evidence/spec-page-ds-alignment-fixes/detect-changes.md`（記錄 PR 前 detect_changes scope 門結論為 tracked evidence）。
 
 ### Steps
 
@@ -413,7 +426,20 @@ npx tsc --noEmit 2>&1 | tail -20
 
   預期：affected symbols 限於 `SpecPage`、`EdgeConsole`（nav render）、新測試與 docs；未波及其他頁面或後端。若 affected set 超出此範圍（scope 外溢），停下回報，不續 PR。
 
-- [ ] （回顧確認，非重跑）Task P1 的 upstream impact 已在編輯前判 `SpecPage` / `EdgeConsole` 皆 LOW（若當時回 HIGH/CRITICAL，已在 Task 0 編輯前停手、不會走到此處）；此處僅複述前置門結論，不重跑 impact。codebase-memory 雙圖譜佐證亦已在 Task P1 完成。
+- [ ] （回顧確認，非重跑）impact 前置安全門已於前面 task 在編輯前判 `SpecPage` / `EdgeConsole` 皆 LOW；此處僅複述結論，不重跑 impact。
+
+- [ ] **本 task 產出（per-task commit 錨點）**：將 detect_changes scope 門結論用 Write 寫入 `docs/evidence/spec-page-ds-alignment-fixes/detect-changes.md`（affected symbols 清單 + 是否限於 SpecPage/EdgeConsole/新測試/docs + 判定）並 commit：
+
+  ```bash
+  cd "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes"
+  mkdir -p docs/evidence/spec-page-ds-alignment-fixes
+  # 先用 Write 工具寫 detect-changes.md，再：
+  git add docs/evidence/spec-page-ds-alignment-fixes/detect-changes.md
+  git diff --cached --check
+  git commit -m "docs(evidence): PR 前 detect_changes scope 門（未外溢、限本批 symbol/測試/docs）"
+  ```
+
+  預期：commit 成功；若 affected set 超出範圍（scope 外溢），停下回報、不續 PR。
 
 ---
 
@@ -514,7 +540,7 @@ npx tsc --noEmit 2>&1 | tail -20
 
 ### Files
 
-- 無檔案改動（PR 描述撰寫）。
+- Create: `docs/evidence/spec-page-ds-alignment-fixes/pr-body-and-regression.md`（PR body Frontend Verification 表草稿 + 最終回歸結果，tracked，供指揮官 P6 組裝 PR body）。
 
 ### Steps
 
@@ -543,3 +569,16 @@ npx tsc --noEmit 2>&1 | tail -20
 - [ ] 誠實鐵律自檢：F1 是誠實措辭修（讓 lead 與《實作紀律》§6 架構一致）；全頁仍無 live data claim、Prov chip 不變（`kit-manager-api=p1` 紅、其餘綠）、未新增任何假宣稱。
 
 - [ ] 流程：不在 `main` 開發（已在 worktree branch）；branch → PR → Actions → merge（auto-merge 依 memory `default-enable-automerge-on-pr` 既有授權，main 只需 CI 綠、不需 review）。
+
+- [ ] **本 task 產出（per-task commit 錨點）**：將最終回歸結果（vitest/tsc/build vs baseline）+ 上述 PR body Frontend Verification 表草稿用 Write 寫入 `docs/evidence/spec-page-ds-alignment-fixes/pr-body-and-regression.md` 並 commit（供指揮官 P6 組裝實際 PR body）：
+
+  ```bash
+  cd "C:/Repos/active/iot/AI-BIM-governance/.claude/worktrees/spec-page-ds-alignment-fixes"
+  mkdir -p docs/evidence/spec-page-ds-alignment-fixes
+  # 先用 Write 工具寫 pr-body-and-regression.md，再：
+  git add docs/evidence/spec-page-ds-alignment-fixes/pr-body-and-regression.md
+  git diff --cached --check
+  git commit -m "docs(evidence): 最終回歸 + PR body 草稿（供指揮官 P6 組裝）"
+  ```
+
+  預期：commit 成功，本 task 有 per-task commit 錨點。
