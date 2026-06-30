@@ -19,10 +19,19 @@ import {
   type StructLogger,
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
-import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
+import {
+  correlationIdFor,
+  deriveIntakeFromKey,
+  idempotencyKeyFor,
+  startMinioWatcher,
+  type MinioWatcherHandle,
+  type MinioWatcherStatus,
+} from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
-import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
+import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
+import { createMinioS3Client, listMinioObjects, presignMinioObject } from "./services/minioClient.js";
+import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -844,6 +853,103 @@ export function createCoordinatorApp(
     }
   });
 
+  // A1 手動觸發：前端只送 MinIO object key，coordinator server-side presign + 重用 watcher
+  // intake 邏輯 self-POST /api/external/ifc-ready。冪等鍵 mw_<hash16>，同 key 回既有 job。
+  // 守門比照其他 /api/conversion/* 控制路由（rejectIfIpNotAllowed）。
+  app.post("/api/conversion/trigger", async (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;
+    // 連線參數須齊全（endpoint/bucket/accessKey/secretKey）。僅檢 endpoint/bucket 會放行空憑證，
+    // presign 仍以空憑證簽出 URL、self-POST 過關，IFC 下載卻在 MinIO 認證靜默失敗（job failed）。
+    // 複用既有 minioWatchConfigured()（四欄全檢，與 PUT /api/conversion/watch 422 判斷同一把尺）。
+    if (!minioWatchConfigured()) {
+      response.status(503).json({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" });
+      return;
+    }
+    const key = typeof request.body?.key === "string" ? request.body.key : "";
+    if (!key) {
+      response.status(400).json({ detail: "缺 key" });
+      return;
+    }
+    // idempotencyKeyFor/correlationIdFor（minioWatcher.ts:29/39）文件化前置條件：key 不得含 `|`，
+    // 因為 hash input 以 `|` 分隔 bucket|key|etag。deriveIntakeFromKey 只擋空段/`.`/`..`，不擋 `|`，
+    // 故在計算冪等鍵前先擋下，避免不同 (bucket, key, etag) 撞同一 hash（違反不變式）。
+    if (key.includes("|")) {
+      response.status(400).json({ detail: "key 不合法：不得含 `|`（與 idempotency hash 分隔符衝突）" });
+      return;
+    }
+    // S3/MinIO object key 上限 1024 bytes（AWS S3 規範）；超長 key 只會無謂往返 MinIO + 灌大 hash 輸入，
+    // 與 deriveIntakeFromKey 的其他輸入驗證（防穿越/空段）同精神，提前擋下。
+    if (key.length > 1024) {
+      response.status(400).json({ detail: "key 過長（S3 object key 上限 1024 bytes）" });
+      return;
+    }
+    const derived = deriveIntakeFromKey({
+      key,
+      prefix: config.minioWatchPrefix,
+      keySuffix: config.minioWatchKeySuffix,
+    });
+    if (!derived.ok) {
+      response.status(400).json({ detail: `key 不合法：${derived.reason}` });
+      return;
+    }
+    let presignedRef: string;
+    try {
+      presignedRef = await presignMinioObject(
+        {
+          endpoint: config.minioWatchEndpoint,
+          accessKey: config.minioWatchAccessKey,
+          secretKey: config.minioWatchSecretKey,
+        },
+        config.minioWatchBucket,
+        key,
+      );
+    } catch (err) {
+      response.status(502).json({ detail: `presign 失敗：${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    // etag 在手動觸發無法事先取得，用 key 當穩定 idempotency 來源（同 key 重觸發回既有 job）。
+    const idemKey = idempotencyKeyFor(config.minioWatchBucket, key, key);
+    const corrId = correlationIdFor(config.minioWatchBucket, key, key);
+    // self-POST loopback：複用既有 watcher seam config.minioWatchSelfBaseUrl（config.ts:101、
+    // app.ts:399 同一條），有值時優先（測試以 listen(0) 的真實 port 注入）；fallback 才用
+    // config.port（production 預設 8004，process 已 listen 該 port）。
+    // ⚠ reviewer blocker：supertest 整合測試 request(app.app) 不呼叫 server.listen()，
+    // 若硬編 http://127.0.0.1:${config.port}（預設 8004，無人 listen）→ fetch ECONNREFUSED → 502，
+    // 合法 key 永遠拿不到 202。故端點必須讀 selfBaseUrl seam，測試端 makeApp 須 listen(0)+注入。
+    const selfBase = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${config.port}`;
+    try {
+      const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Webhook-Secret": config.externalIntakeWebhookSecret,
+          "X-Correlation-Id": corrId,
+          "X-Idempotency-Key": idemKey,
+        },
+        body: JSON.stringify({
+          event: "ifc_ready",
+          tenant_id: config.minioWatchTenantId,
+          project_id: derived.projectId,
+          project_display_name: derived.projectDisplayName,
+          model_category: derived.category,
+          external_model_version_id: derived.externalModelVersionId,
+          external_conversion_task_id: `${derived.externalModelVersionId}_manual`,
+          source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
+          requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
+        }),
+        // app 死鎖/過載長時不回時逾時中斷，避免前端 A1 按鈕無限等待（對齊 minioWatcher.ts:341 self-POST 保護）。
+        // 上游 intake 含同步 IFC 下載，故逾時 = 下載逾時 + 5s 緩衝。
+        signal: AbortSignal.timeout(config.ifcDownloadTimeoutSeconds * 1000 + 5_000),
+      });
+      const text = await upstream.text();
+      const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      // 誠實：回應不夾帶 presigned ref（即使上游回了也遮蔽；source_ifc_ref 由上游 summarize 已遮蔽）
+      response.status(upstream.status).json({ ...parsed, trigger_source: "manual" });
+    } catch (err) {
+      response.status(502).json({ detail: `trigger 失敗：${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
@@ -1090,7 +1196,8 @@ export function createCoordinatorApp(
       const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
       if (existing) {
         // fast-ifc-link-demo-loop §2.6:idempotent replay 直接 200 reuse,不重下載也不重派工
-        response.status(200).json({ ...existing, idempotent_replay: true });
+        // 誠實鐵律：existing 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
+        response.status(200).json({ ...sanitizeJobForExternal(existing), idempotent_replay: true });
         return;
       }
 
@@ -1171,8 +1278,9 @@ export function createCoordinatorApp(
       // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
       // 觀察 queued_for_conversion → dispatched 變化)。
       const finalJob = externalIfcReadyStore.get(job.ifc_ready_job_id);
+      // 誠實鐵律：finalJob.source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐（finalJob 理論恆存在，缺則 {} 不外洩）。
       response.status(202).json({
-        ...finalJob,
+        ...(finalJob ? sanitizeJobForExternal(finalJob) : {}),
         message: "IFC 已下載至本地共享卷,轉檔已進入派工佇列",
       });
     } catch (error) {
@@ -1279,7 +1387,8 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "IFC-ready job not found." });
       return;
     }
-    response.json(job);
+    // 誠實鐵律：對外 response 不得含 presigned 簽章（與 list / shadow / session 出口一致）。
+    response.json(sanitizeJobForExternal(job));
   });
 
   // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
@@ -1845,7 +1954,7 @@ export function createCoordinatorApp(
         external_model_version_id: job.external_model_version_id,
         ifc_ready_job_id: job.ifc_ready_job_id,
         artifact_resolution: {
-          source_ifc_ref: job.source_ifc_ref,
+          source_ifc_ref: maskPresignedRef(job.source_ifc_ref),
           artifact_manifest_ref: job.artifact_manifest_ref ?? null,
           conversion_job_id: job.conversion_job_id,
           conversion_status: job.conversion_status,
@@ -2351,10 +2460,12 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     status: job.status,
     tenant_id: job.tenant_id,
     project_id: job.project_id,
+    project_display_name: job.project_display_name ?? null,
+    category: job.category ?? null,
     external_model_version_id: job.external_model_version_id,
     external_conversion_task_id: job.external_conversion_task_id ?? null,
     correlation_id: job.correlation_id,
-    source_ifc_ref: job.source_ifc_ref,
+    source_ifc_ref: maskPresignedRef(job.source_ifc_ref),
     source_ifc_etag: job.source_ifc_etag,
     download_status: job.download_status ?? null,
     download_failure: job.download_failure ?? null,
@@ -2362,6 +2473,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     host_local_path: job.host_local_path ?? null,
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
+    conversion_lifecycle_status: deriveLifecycleStatus(job),
     conversion_authority: job.conversion_authority,
     // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
     // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive,
@@ -2378,6 +2490,22 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     created_at: job.created_at,
     updated_at: job.updated_at,
   };
+}
+
+// 誠實鐵律（presigned 簽章遮蔽）：對外直接序列化完整 job 物件的端點
+// （GET /api/external/ifc-ready/:jobId）必須剝除 source_ifc_ref 的 presigned 簽章。
+// 以 spread + 遮蔽單一欄位的方式收斂，避免日後 job 新增欄位時又漏遮某個敏感值
+// 而必須逐一比對；目前唯一含簽章的欄位是 source_ifc_ref。
+/**
+ * @security 瀏覽器可見 / 對外（browser-visible / external）輸出 IfcReadyIntakeJob 前必經此函式：
+ * 遮蔽 source_ifc_ref 的 presigned 簽章。已涵蓋出口：GET list/:jobId/shadow、POST intake 200/202、
+ * POST local-web-view session。日後新增「瀏覽器可見/對外」且 spread 整個 job 的出口，MUST 先過此函式並補守衛測試。
+ * 範圍外（刻意）：POST /api/internal/conversion-result、/api/internal/conversions/:id/ingest 等 internal-token
+ * 路徑仍回原始 job（內部 consumer 可能需 presigned 下載；比照 callback outbox carve-out，pre-existing 非本次新增）。
+ * 若要對 internal 路徑做 defense-in-depth 遮蔽，須先確認下游 consumer 不依賴 presigned ref。
+ */
+function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
+  return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
 }
 
 function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {
