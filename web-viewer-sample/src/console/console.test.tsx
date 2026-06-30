@@ -433,7 +433,10 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain('data-testid="a1-step-run"');
     expect(a1).toContain('data-testid="a1-step-issues"');
     expect(a1).toContain('data-testid="a1-step-export"');
-    expect(a1).toContain("POST /api/governance/rule-runs");
+    // B2 task4：A1 step② run 鈕改走 for-session。SSR 首幀無 session（effect 不跑）→ run 鈕誠實 gating
+    // 顯示「需先完成轉檔產生 review session（治理檢核走 for-session）」；有 session 時 caption 才轉
+    // POST /api/governance/rule-runs/for-session/:sessionId。故此處改斷言 for-session 走向（非舊的直接 rule-runs 端點）。
+    expect(a1).toContain("for-session");
 
     const viewer = renderToString(<ViewerPresentationPage />);
     expect(viewer).toContain("3D Viewer 呈現");
@@ -1893,14 +1896,19 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.useFakeTimers();
     container = document.createElement("div");
     document.body.appendChild(container);
-    // 對抗驗證 P0-1（回歸根因）：A1 頁 mount effect 無條件打真 runtimeStatus()，coordinator 存活時 resolve 出帶
-    // expected_mapping_url 的真 session → 觸發未 mock 的 elementMappingForSession 真 fetch，在 fake-timer act()
-    // 邊界內不 settle → RUN_DONE 永不 dispatch → 「建 Issue」鈕恆 disabled。mock 成空 runtime（無 session / 無
-    // viewerOrigin）隔離此真 fetch；afterEach 的 vi.restoreAllMocks() 會還原。production doRun 行為未改（test-only）。
+    // B2 task4：A1 step② 治理檢核改走 for-session（run 鈕以 selectedSession gating、doRun 改打 createRuleRunForSession）。
+    // 提供 1 個 active session 讓 selectedSession 有值 → auto-PICK 推進 step + run 鈕 !selectedSession gating 通過 → for-session doRun。
+    // 同步 mock elementMappingForSession：避免有 usd_prim_path:null 列的測試在 fake-timer 邊界內觸發真 mapping fetch 而 hang。
+    // viewerOrigin 留空（browser_url_base:""）→ 不掛 EmbeddedViewer，斷言面不變；afterEach 的 vi.restoreAllMocks() 會還原。
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({
-      sessions: { count: 0, active_count: 0, participant_count: 0, items: [] },
-      configured_endpoints: { viewer: { browser_url_base: "" } },
+      sessions: { count: 1, active_count: 1, participant_count: 0, items: [
+        { session_id: "review_session_x", status: "active", project_id: "p1", model_version_id: "m1",
+          participant_count: 0, expected_stage_url: "", expected_mapping_url: "", conversion_status: null,
+          kit_instance_ids: [], created_at: "", updated_at: "", first_frame_at: null },
+      ] },
+      configured_endpoints: { viewer: { browser_url_base: "" } }, // viewerOrigin 留空 → 不掛 EmbeddedViewer，斷言面不變
     } as never);
+    vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({ mock: false, summary: { fake_mapping_count: 0 }, items: [] });
     // A1 step① 改 MinIO 下拉後，mount 會打 getMinioObjects()；回單一 source_ifc 物件讓 pickModel 能選到該 option。
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
@@ -1955,7 +1963,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 故 loop 卡在 setTimeout(1000)。unmount 後再推進假時鐘，loop 必須因 alive 守門中斷、
   // 不再發出任何 getRuleRun 請求（資源洩漏修復的可觀測證據）。
   it("[finding#1] doRun 輪詢中 unmount → 迴圈停止，不再發 getRuleRun（unmount 守門）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -1982,7 +1990,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 輪詢中使用者按「選取模型」重置 step（running→picked）：reducer 守門已防髒資料寫入，
   // 但 loop 仍會繼續發 getRuleRun。step 離開 running 後 loop 必須中斷、不再發請求。
   it("[finding#1] doRun 輪詢中 PICK_FILE 重置 step → 迴圈停止，不再發 getRuleRun（step 守門）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -2007,7 +2015,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // makeIssues（建 Issue）失敗時誠實顯示錯誤：後端離線/丟例外 → 頁面出現 ec-warn-note 提示
   // （含錯誤原因），按鈕恢復可用。對齊 doRun 失敗的 runError 同款 UI 回饋（誠實鐵律）。
   it("[finding#2] makeIssues 失敗 → 顯示 ec-warn-note 錯誤提示（不再靜默）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -2041,7 +2049,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // doExport（匯出 Excel）失敗時同樣誠實顯示錯誤：fetch 丟例外 → ec-warn-note 提示。
   // 補：成功的 makeIssues 之後動作須清掉上次的錯誤提示（不殘留陳舊紅錯）。
   it("[finding#2] doExport 失敗 → 顯示 ec-warn-note；下次成功動作清除舊錯誤", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -2081,7 +2089,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 且 plain RUN 在 running 是 no-op，導致使用者點不到/點了沒反應。修法是 running-error 子態
   // 把 run 鈕 enable，點擊走 RUN_RETRY 真重試。此測試走完整路徑：失敗 → 鈕仍可點 → 重試成功 → scored。
   it("[Critical] doRun 失敗 → run 鈕在 running-error 子態仍可點 → 重試成功 → scored 記分板出現", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 第一輪輪詢回 failed（→ RUN_FAIL），重試後第二輪回 succeeded（→ RUN_DONE → scored）。
     const getSpy = vi
       .spyOn(governanceClient, "getRuleRun")
@@ -2136,7 +2144,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     // 受控 deferred：createRuleRun 在我們手動 resolve 前保持 pending，模擬「await 視窗」。
     let resolveCreate!: (v: { rule_run_id: string; status: "queued" }) => void;
     const createPending = new Promise<{ rule_run_id: string; status: "queued" }>((res) => { resolveCreate = res; });
-    vi.spyOn(governanceClient, "createRuleRun").mockReturnValue(createPending);
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockReturnValue(createPending);
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -2165,7 +2173,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 修復前 break 條件只認 succeeded/failed，遇 errored 會空轉 60 次（60s 假時鐘）才結束。
   // 改成 in-progress 白名單（!queued && !running）後，任何 terminal status 即時中斷 → RUN_FAIL。
   it("[qr-t2-terminal-status-whitelist] getRuleRun 回 errored（union 外 terminal）→ 立即中斷一次即 RUN_FAIL，不空轉", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 強制回傳型別 union 外的 terminal status。cast 繞過 TS 因為這正是「後端回了型別沒涵蓋的值」情境。
     const erroredStatus = { ...fakeRunStatus("running"), status: "errored" } as unknown as RuleRunStatus;
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(erroredStatus);
@@ -2203,7 +2211,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // disabled，允許在 running 子態觸發匯出。此測試把元件凍結在該窗口（getResults 永不 resolve，
   // 卡在 RUN_PROGRESS-succeeded 與 RUN_DONE 之間），斷言 export 仍 disabled、issues 同步 disabled。
   it("[Important-2] 重跑 running 子態存在 succeeded 快照時，匯出鈕仍 disabled（與建 Issue 對齊 step 語意）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 第一輪輪詢回 succeeded → 進 scored（export enable）。重跑後第二輪也回 succeeded，
     // 但 getResults 第二次永不 resolve → 元件凍結在 running 子態且 state.run.status=succeeded。
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -2250,7 +2258,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // UI 卡 scored 且無錯誤回饋（違誠實鐵律）。此測試攔截 HTMLAnchorElement.prototype.click，在點擊當下記錄
   // document.body.contains(該錨點)：修復前錨點 detached → contains=false（RED）；修復後 appendChild 已掛載 → true。
   it("[Important-1] doExport 下載錨點在 .click() 當下已掛載於 document（跨瀏覽器安全，避免 Gecko 靜默失敗）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -2313,7 +2321,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // Fix-F1：未建 Issue 時 BCF 鈕應 disabled（issuesCreated=false）。
   // scored→EXPORT_OK→delivered 不走 CREATE_ISSUES_OK → issuesCreated 仍 false → BCF disabled。
   it("[F1] scored 未建 Issue 直接匯出 Excel → delivered 後 BCF 鈕仍 disabled（issuesCreated=false）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
@@ -2351,7 +2359,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
   // Fix-F4：BCF click 成功路徑 dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact。
   it("[F4] BCF click 成功 → dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });

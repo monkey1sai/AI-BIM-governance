@@ -210,7 +210,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     // first_frame 與 stage-match 兩條件，驗按鈕由 disabled 翻 enable（搭配 Important #1 修正才會通過）。
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" });
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
       rule_run_id: "rr_x", status: "succeeded", score: 80, rule_set: "default", model_version_id: "m1",
       summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
@@ -244,7 +244,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
   it("rule-run failed row 缺 usd_prim_path 時，使用 selected session 的真 mapping artifact 補齊後 enable", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" });
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
       rule_run_id: "rr_x", status: "succeeded", score: 0, rule_set: "vg01", model_version_id: "m1",
       summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
@@ -478,7 +478,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
 
   it("A1-W1 BCF：step=issued 後 BCF 鈕 enable", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({
       rule_run_id: "rr_x", status: "succeeded", score: 80, rule_set: "default", model_version_id: "m1",
       summary: { total: 1, passed: 0, failed: 1, errored: 0, target_summary: {}, warnings: [] },
@@ -506,5 +506,33 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     await flush();
 
     expect(bcfBtn().disabled).toBe(false);
+  });
+
+  it("有 session：run 鈕 enable 且 doRun 打 createRuleRunForSession（非 ifc_source_path 直接路徑）", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+    const forSession = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue({ rule_run_id: "rr_1", status: "succeeded", summary: { total: 0, passed: 0, failed: 0, unique_elements: 0 }, score: 100 } as never);
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush(); // runtimeStatus → session 自動選 → auto-PICK 推進 step
+    const run = q("a1-step-run") as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+    await act(async () => { run.click(); });
+    await flush();
+    expect(forSession).toHaveBeenCalledWith("review_session_x", { ids_path: expect.any(String) });
+  });
+
+  it("無 session：run 鈕 disabled + caption 指向 for-session 前提", async () => {
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ bucket: null, count: 0, objects: [] });
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+    const run = q("a1-step-run") as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(run.getAttribute("title") ?? run.textContent).toContain("review session");
   });
 });

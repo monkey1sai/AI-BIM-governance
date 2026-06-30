@@ -353,8 +353,14 @@ export function A1GovernanceWorkbenchPage() {
     return () => { alive = false; };
   }, []);
 
+  // for-session 模式：治理檢核只需 session。選定 session 後若狀態機仍在 idle（操作員直接對既有 session 檢核，
+  // 未經 MinIO 選模型），以 sessionId 當 PICK marker 推進五步條（ifcPath 僅作 gating/顯示，for-session 不送伺服器）。
+  useEffect(() => {
+    if (selectedSession && state.step === "idle") dispatch({ type: "PICK_FILE", ifcPath: selectedSession });
+  }, [selectedSession, state.step]);
+
   const doRun = useCallback(async () => {
-    if (!state.ifcPath) return;
+    if (!state.ifcPath || !selectedSession) return;
     // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
     // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
     dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
@@ -362,7 +368,7 @@ export function A1GovernanceWorkbenchPage() {
     // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
     const myGen = pollGenRef.current;
     try {
-      const { rule_run_id } = await governanceClient.createRuleRun({ ifc_source_path: state.ifcPath, ids_path: idsPath || undefined });
+      const { rule_run_id } = await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined });
       if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -559,8 +565,8 @@ export function A1GovernanceWorkbenchPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
               健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
-          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError)}
-            caption="POST /api/governance/rule-runs" onClick={doRun}>
+          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError) || !selectedSession}
+            caption={!selectedSession ? t("需先完成轉檔產生 review session（治理檢核走 for-session）", "Conversion must finish to create a review session first (governance runs via for-session)") : "POST /api/governance/rule-runs/for-session/:sessionId"} onClick={doRun}>
             {state.runError ? t("重試檢核", "Retry Validation") : state.step === "running" ? t("檢核中…", "Validating…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
           {state.runError && <span className="ec-warn-note">{t("檢核失敗（可重試）：", "Validation failed (retryable): ")}{state.error}</span>}
