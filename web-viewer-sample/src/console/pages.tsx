@@ -892,7 +892,7 @@ export function ConversionSchedulingPage() {
               <p className="ec-note">{mw.note ?? t("watcher 預設關閉；狀態 API 為真，未偽稱功能在跑。", "The watcher is off by default; the status API is real and does not falsely claim the feature is running.")}</p>
               <Btn
                 data-testid="conv-watch-enable"
-                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: true }); }}
+                onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: true }); }}
               >{t("開啟自動偵測", "Enable auto-detection")}</Btn>
             </>
           ) : (
@@ -960,7 +960,7 @@ export function ConversionSchedulingPage() {
               )}
               <Btn
                 data-testid="conv-watch-disable"
-                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: false }); }}
+                onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: false }); }}
               >{t("關閉自動偵測", "Disable auto-detection")}</Btn>
             </>
           )}
@@ -1021,7 +1021,7 @@ export function ConversionSchedulingPage() {
                         <Btn
                           data-testid={`conv-ledger-trigger-${r.idempotency_key}`}
                           caption="POST /api/conversion/trigger"
-                          onClick={() => { setTriggerErr(null); setPendingTriggerKey(r.object_key); }}
+                          onClick={() => { setActionErr(null); setPendingAction(null); setTriggerErr(null); setPendingTriggerKey(r.object_key); }}
                         >{t("觸發轉檔", "Trigger")}</Btn>
                       ) : <span className="ec-note">—</span>}
                     </td>
@@ -1069,13 +1069,13 @@ export function ConversionSchedulingPage() {
                           : j.queue_position <= 1 ? t("已在隊首（position 1），無需插隊", "Already at the head of the queue (position 1); no need to prioritize")
                           : undefined
                         }
-                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
+                        onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
                       >{t("插隊", "Prioritize")}</Btn>
                     )}
                     {(j.status === "dispatch_failed" || j.status === "dropped_on_restart") && (
                       <Btn
                         data-testid={`conv-retry-${j.ifc_ready_job_id}`}
-                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" }); }}
+                        onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" }); }}
                       >{t("重試", "Retry")}</Btn>
                     )}
                   </td>
@@ -1115,7 +1115,7 @@ export function ConversionSchedulingPage() {
       {/* Task 8（AC6(b)）：ledger 列「觸發轉檔」專屬 intent→confirm（與上方 pendingAction dialog 互斥開啟）。
           走 POST /api/conversion/trigger（非 ifc-ready）；IntentDialog 真實 props：open/title/cost/onConfirm/onCancel/busy/actionErr。 */}
       <IntentDialog
-        open={pendingTriggerKey != null}
+        open={pendingTriggerKey != null && pendingAction == null}
         title={t("確認觸發轉檔", "Confirm trigger conversion")}
         cost={t("對此 model.ifc 觸發轉檔 intake（POST /api/conversion/trigger，帶 x-dev-token；同 key 重觸發冪等）：", "Trigger conversion intake for this model.ifc (POST /api/conversion/trigger with x-dev-token; same-key re-trigger is idempotent): ") + (pendingTriggerKey ?? "")}
         busy={triggerBusy}

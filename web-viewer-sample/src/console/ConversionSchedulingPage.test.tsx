@@ -468,6 +468,35 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
   });
 
+  // finding #1（task#7 quality）：兩個 IntentDialog（pendingAction watch-toggle/prioritize/retry vs
+  // pendingTriggerKey ledger 觸發）無互斥守門時可同開 → DOM 出現兩個 intent-dialog、querySelector 只抓
+  // 第一個 → confirm 走錯 handler。修法：開一個前先關另一個（5 處 setter）+ trigger dialog render guard。
+  it("[finding#1] 雙 IntentDialog 互斥：watch-toggle dialog 開啟時點 ledger 觸發鈕 → 仍只 1 個 intent-dialog", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    // failed + object_key 的 ledger 列 → 掛「觸發轉檔」鈕（pages.tsx:1020 條件 status==='failed' && object_key）。
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({
+      count: 1,
+      items: [{ idempotency_key: "mw_ff00ff00ff00ff00", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "000001", conversion_job_id: null, status: "failed", usdc_key: null, coverage_report: null, object_key: "proj/root/main/000001/model.ifc", detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    // 1) 開 watch-toggle 動作 dialog（pendingAction）→ 1 個 dialog。
+    const enableBtn = container.querySelector('[data-testid="conv-watch-enable"]') as HTMLButtonElement;
+    expect(enableBtn).toBeTruthy();
+    await act(async () => { enableBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(container.querySelectorAll('[data-testid="intent-dialog"]').length).toBe(1);
+    // 2) 此時點 ledger 觸發鈕：互斥 → 清 pendingAction、改開 trigger dialog；DOM 仍只 1 個（修前會是 2）。
+    const trigBtn = container.querySelector('[data-testid="conv-ledger-trigger-mw_ff00ff00ff00ff00"]') as HTMLButtonElement;
+    expect(trigBtn).toBeTruthy();
+    await act(async () => { trigBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const dialogs = container.querySelectorAll('[data-testid="intent-dialog"]');
+    expect(dialogs.length).toBe(1); // 互斥守門：絕不同時開兩個
+    expect(dialogs[0].textContent).toContain("確認觸發轉檔"); // 顯示的是 trigger dialog（pendingAction 已清）
+  });
+
   // spec §4.6：queue_position<=1（已隊首）→ 插隊鈕 disabled 且帶 tooltip 說明原因（不可只給灰鈕無解釋）。
   it("queue_position=1（已隊首）→ 插隊鈕 disabled 且 title 說明已在隊首", async () => {
     const headJob: IfcReadyListItem = { ...queuedJob, ifc_ready_job_id: "ifcready_head", queue_position: 1 };
