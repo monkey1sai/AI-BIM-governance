@@ -376,7 +376,7 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 
 1. **NVIDIA 綠值**：DS 提亮成 `--accent #84c714`（比正統 NVIDIA `#76b900` 亮一階）；repo `--ec-grn` 是正統 `#76b900` 且 CLAUDE.md 記憶把「GPU/NVIDIA-green」當核心品牌前提。採 DS `#84c714` 還是保留 `#76b900`？（**可見品牌改動，須人類簽核才大規模套用**；預設保留 `#76b900`。）
 2. **字體**：DS body/label 用 UI sans（Plus Jakarta Sans + Noto Sans TC）、mono 只留給 code/ID；repo 目前 mono-only（`--ec-mono` 全域 13px）。本輪導入 `--ec-sans` 重塑 body/nav/heading，還是維持 mono-only？（**最大可見重塑**。）
-3. **Light `.theme-docs`**：DS 出一整套淺色 token（藍 `#2563eb`）；repo console 純暗、無 docs surface。本輪做不做任何淺色/docs surface，或整個 skip？
+3. **Light `.theme-docs`**：DS 出一整套淺色 token（藍 `#2563eb`）；repo console 純暗、無 docs surface。本輪做不做任何淺色/docs surface，或整個 skip？**（現況補記 2026-06，非拍板）** repo 已落地全站 `theme-light` toggle（`edge-console.css:435` 註解映射 `.theme-light = DS .theme-docs`、一處覆寫全站變色，PR #255），可作此題現有實作參考；惟「是否正式採此為最終形 / 是否做 per-page docs surface」仍依本節開頭規則**保留人類決策、未拍板**。
 4. **雙語 i18n**：DS 要求 `AIBIM.tt {zh,en}` + LangToggle + persistence；repo 字串 zh 為主、無 i18n runtime，Tweaks toggle 是 用語/情境 非 zh/EN。本輪加真 i18n + LangToggle，還是延後（**不要做沒功能的 EN toggle**）？
 5. **卡片圓角**：DS 正典卡片 14px（`--radius`）；repo 卡片約 6px。採 14px（全 Panel/Card 可見變圓）還是維持現狀？
 6. **`#semantic` 資料路徑**：現況 raw fetch 操作員貼上的 mapping URL。是否要**遷移**到 whitelisted proxy（`elementMappingForSession`）？這是**行為變更**（非純 DS 對齊），須單獨立項。

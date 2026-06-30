@@ -11,7 +11,36 @@ function ConvertTo-PrReviewPath {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string] $Path)
 
-    return ($Path -replace '\\', '/').TrimStart('/')
+    $p = $Path
+    # git core.quotepath (default on) wraps paths containing non-ASCII bytes in double quotes and
+    # octal-escapes each byte, e.g. "docs/plans/...\345\211\215...md". Decode back to literal UTF-8 so
+    # CJK-named files are classified correctly and never throw "Illegal characters in path" in path APIs.
+    if ($p.Length -ge 2 -and $p[0] -eq '"' -and $p[$p.Length - 1] -eq '"') {
+        $inner = $p.Substring(1, $p.Length - 2)
+        $bytes = New-Object System.Collections.Generic.List[byte]
+        $escapes = @{ 'a' = 7; 'b' = 8; 't' = 9; 'n' = 10; 'v' = 11; 'f' = 12; 'r' = 13; '"' = 34; '\' = 92 }
+        $i = 0
+        while ($i -lt $inner.Length) {
+            if ($inner[$i] -eq '\' -and ($i + 1) -lt $inner.Length) {
+                $next = [string]$inner[$i + 1]
+                if (($i + 4) -le $inner.Length -and $inner.Substring($i + 1, 3) -match '^[0-7]{3}$') {
+                    $bytes.Add([Convert]::ToByte($inner.Substring($i + 1, 3), 8))
+                    $i += 4
+                } elseif ($escapes.ContainsKey($next)) {
+                    $bytes.Add([byte]$escapes[$next])
+                    $i += 2
+                } else {
+                    $bytes.Add([byte][char]'\')
+                    $i += 1
+                }
+            } else {
+                $bytes.Add([byte][char]$inner[$i])
+                $i += 1
+            }
+        }
+        $p = [System.Text.Encoding]::UTF8.GetString($bytes.ToArray())
+    }
+    return ($p -replace '\\', '/').TrimStart('/')
 }
 
 function New-PrReviewIssue {
