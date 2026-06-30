@@ -1328,24 +1328,22 @@ export function MinioDataPage() {
                       {obj.project_display_name ? <span className="ec-prov">{obj.project_display_name}</span> : null}
                       {obj.category ? <span className="ec-prov">{obj.category}</span> : null}
                       {obj.version ? <span className="ec-prov">{obj.version}</span> : null}
-                      {/* 7b：ledger 衍生狀態 chip（無紀錄＝未轉，不臆測）。7c 觸發鈕仍以 {false &&} 暫關。 */}
+                      {/* 僅 source_ifc 物件掛 ledger 狀態 chip（7b）＋ 一鍵觸發鈕（7c） */}
                       {obj.role === "source_ifc" ? (
                         <>
                           {/* 7b：ledger 衍生狀態 chip（無紀錄＝未轉，不臆測） */}
                           <span data-testid={`minio-chip-${idk}`} className="ec-prov">
                             {MINIO_CHIP_LABEL[st] ?? st}
                           </span>
-                          {/* 7c：一鍵觸發鈕（僅未轉/failed 可按；ready/進行中 disabled）——7c 解開 */}
-                          {false ? (
-                            <Btn
-                              data-testid={`minio-trigger-${idk}`}
-                              caption="POST /api/conversion/trigger"
-                              disabled={!["untracked", "failed"].includes(st)}
-                              onClick={() => { setTriggerErr(null); setPendingKey(obj.key); }}
-                            >
-                              {t("觸發轉檔", "Trigger")}
-                            </Btn>
-                          ) : null}
+                          {/* 7c：一鍵觸發鈕（僅未轉/failed 可按；ready/進行中 disabled） */}
+                          <Btn
+                            data-testid={`minio-trigger-${idk}`}
+                            caption="POST /api/conversion/trigger"
+                            disabled={!["untracked", "failed"].includes(st)}
+                            onClick={() => { setTriggerErr(null); setPendingKey(obj.key); }}
+                          >
+                            {t("觸發轉檔", "Trigger")}
+                          </Btn>
                         </>
                       ) : null}
                     </li>

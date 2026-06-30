@@ -82,6 +82,59 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toMatch(/未轉/);
+    // 觸發鈕在（test 名承諾「觸發鈕在」；未轉/failed 狀態下鈕須存在且可按）。
+    const triggerBtn = container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]') as HTMLButtonElement | null;
+    expect(triggerBtn).toBeTruthy();
+    expect(triggerBtn?.disabled).toBe(false);
+  });
+
+  it("[7c] 觸發鈕 click → IntentDialog → confirm → conversionTrigger 被呼叫 + chip patch 成功狀態", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
+      status: "queued", idempotency_key: "mw_aaaa0000bbbb0001",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    // 1) 點觸發鈕 → IntentDialog 開（intent→confirm，非樂觀直發）。
+    const triggerBtn = container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]') as HTMLButtonElement;
+    expect(triggerBtn).toBeTruthy();
+    await act(async () => { triggerBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(container.querySelector('[data-testid="intent-dialog"]')).toBeTruthy();
+    // 2) 點 confirm → conversionTrigger 以該物件 key 被呼叫（觀察得到的真實行為，AC-trigger）。
+    const confirmBtn = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirmBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000001/model.ifc", expect.any(String));
+    // 3) 成功 → dialog 關 + chip patch 為 queued（patch 後不再顯『未轉』）。
+    expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
+    expect(container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]')?.textContent).toContain("排隊");
+  });
+
+  it("[7c] 後端回非預期 status → chip patch 經 narrowConversionStatus 退『未知』，不顯原始 wire 字串", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
+      status: "totally_bogus_status", idempotency_key: "mw_aaaa0000bbbb0001",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    const triggerBtn = container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]') as HTMLButtonElement;
+    await act(async () => { triggerBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const confirmBtn = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirmBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    const chip = container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]');
+    expect(chip?.textContent).not.toContain("totally_bogus_status"); // 不洩漏非法 wire 字串（誠實鐵律）
+    expect(chip?.textContent).toMatch(/未知/);
   });
 
   it("[7a] MinIO 未設定（count=0 + note）→ empty 態 (a)：顯『MinIO 未設定』文案", async () => {
