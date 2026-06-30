@@ -38,9 +38,25 @@ test.describe("A1 MinIO 排隊 → 誠實轉檔狀態（B2）", () => {
     // 誠實 lifecycle：原樣顯示 detected/queued/converting…（轉檔未完成不顯示假 ready）。失敗終態 failed 同屬誠實狀態
     // （顯示 failed 而非偽造 ready），須一併納入接受集合：環境配置不全（MinIO 未設定 / converter 未運行 / IFC 不合法）
     // 時轉檔會立即 failed，若 regex 不含 failed 會被當成 30s timeout，誤報為測試設計問題而掩蓋真正的「轉檔已失敗」。
+    // 競態防護（important fix）：轉檔可能在第一次輪詢即回 ready。ready 時 queueConversion 立即 setConvStatus("ready")
+    // 並（若 runtime 撈到 active session）setSessions/setSelectedSession → UI 由 no-session view 切到 session view，
+    // a1-convert-status 與 #conv 連結（皆位於 sessions.length===0 區塊內）一起消失。對已消失/已 ready 的狀態行盲等
+    // 中間態正則會吃滿 30s timeout。故先 race：誠實中間態/failed/ready 狀態行 vs a1-session-select 出現。
     const statusLine = page.getByTestId("a1-convert-status");
-    await expect(statusLine).toContainText(/detected|queued|converting|downloaded|queued_for_conversion|failed/, { timeout: 30_000 });
-    const statusText = (await statusLine.textContent()) ?? "";
+    const sessionSelect = page.getByTestId("a1-session-select");
+    const statusReached = statusLine.filter({ hasText: /detected|queued|converting|downloaded|queued_for_conversion|failed|ready/ });
+    await expect(statusReached.or(sessionSelect)).toBeVisible({ timeout: 30_000 });
+
+    const sessionsPopulated = await sessionSelect.isVisible();
+    const statusText = sessionsPopulated ? "ready" : ((await statusLine.textContent()) ?? "");
+    if (sessionsPopulated || /ready/.test(statusText)) {
+      // 立即 ready：lifecycle 已進 ready（convStatus 設為 ready；sessions 於 pollOnce 的 ready 分支被填）。無中間態可斷言，
+      // a1-convert-status / #conv 連結已（或即將）被 session view 取代。ready 後續段（for-session 檢核 → 3D 高亮）
+      // 由下方 test.fixme 涵蓋。誠實標註：此為「轉檔成功」訊號而非測試逾時。
+      test.info().annotations.push({ type: "conversion-ready-immediate", description: sessionsPopulated ? "session view replaced the intermediate status line and #conv link" : "a1-convert-status reached ready before a review session was populated" });
+      await page.screenshot({ path: "../docs/evidence/a1-minio-governance-3d/queue-status.png", fullPage: true });
+      return;
+    }
     if (/failed/.test(statusText)) {
       // 失敗終態：誠實狀態行顯示 failed（非偽造 ready）。明確標註並斷言此誠實失敗路徑，讓 CI/操作員一眼分辨
       // 「環境/轉檔失敗」而非「測試逾時」。註：lifecycle=failed 走成功輪詢、convErr 為 null，a1-convert-error 僅在
