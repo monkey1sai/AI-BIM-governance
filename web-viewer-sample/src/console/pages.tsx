@@ -481,7 +481,15 @@ export function A1GovernanceWorkbenchPage() {
         const rt = await coordinatorClient.runtimeStatus();
         const act2 = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
         setSessions(act2);
-        if (act2[0]) setSelectedSession(act2[0].session_id);
+        // f2 fix：用「本次轉檔 job」的 review_session_id 反查對應 session，而非盲取 act2[0]。
+        // rt.sessions.items 是 coordinator 全域清單；共享環境在 ready 當下可能含多筆 active/created session，
+        // act2[0] 不保證等於本次 ifc-ready job 產生的那個 → 盲取會讓 A1 對錯誤 session 跑治理檢核。
+        // job.review_session_id（coordinator 為此 job 建的 session id）反查；不中（null / 尚未在清單）才退 act2[0]。
+        const ownSession = job.review_session_id
+          ? act2.find((s) => s.session_id === job.review_session_id)
+          : undefined;
+        const picked = ownSession ?? act2[0];
+        if (picked) setSelectedSession(picked.session_id);
       }
       return job.conversion_lifecycle_status;
     };
