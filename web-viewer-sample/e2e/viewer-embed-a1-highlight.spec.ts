@@ -17,10 +17,6 @@ import path from "node:path";
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8005";
 const CONVERSION_API = process.env.E2E_CONVERSION_API_BASE || "http://127.0.0.1:49101";
 const VG01_IDS_PATH = process.env.E2E_A1_IDS_PATH || path.resolve("..", "governance-service", "rules", "vg01-highlight-column.ids");
-// rule-run 的 IFC source path：非開發機 / CI 須設 E2E_A1_IFC_PATH 指向 server-side、含 IFCCOLUMN 的 IFC，
-// 否則 A1 頁 fallback 到硬碼 defaultA1IfcPath（僅本開發機 storage 存在）→ rule-run ifc_source_path not found
-// → a1-highlight-3d 永不 enable → 紅高亮 test 30s timeout 假失敗（對抗驗證 §4 high 缺口）。
-const VG01_IFC_PATH = process.env.E2E_A1_IFC_PATH || "";
 
 type ConversionItem = {
   conversion_job_id?: string;
@@ -50,10 +46,6 @@ test.describe("VG-01：A1 嵌入 viewer + 3D 高亮", () => {
   test.setTimeout(360_000);
 
   let sessionId = "";
-  // conversion 的 source IFC server-side 路徑（rule-run 須對到此 IFC，failed column guid 才會在 element_mapping
-  // 找得到 → 可高亮）；beforeEach 從 conversion detail 取得，test 2 fill 進 a1-step-path。比 E2E_A1_IFC_PATH env
-  // 更穩健（自動對應當前 conversion，CI 通用）。
-  let ifcSourcePath = "";
 
   test.beforeEach(async ({ request, page }) => {
     let apiOk = false;
@@ -80,15 +72,6 @@ test.describe("VG-01：A1 嵌入 viewer + 3D 高亮", () => {
       const modelUrl = conv ? loopbackArtifactUrl(conv.usdc_url || conv.model?.url || conv.artifacts?.model_usdc?.url || "") : "";
       const mappingUrl = conv ? loopbackArtifactUrl(conv.mapping_url || conv.artifacts?.element_mapping?.url || "") : "";
       if (conv && modelUrl && mappingUrl) {
-        // 取 conversion 的 source IFC server-side 路徑（rule-run 對應；host-native governance 讀 host_local_path）。
-        ifcSourcePath = "";
-        try {
-          const detailRes = await request.get(`${CONVERSION_API}/api/conversions/${conv.conversion_job_id}`, { timeout: 10_000 });
-          const detail = await detailRes.json();
-          ifcSourcePath = (detail?.ifc_artifact?.host_local_path as string) || (detail?.ifc_artifact?.local_path as string) || "";
-        } catch {
-          ifcSourcePath = "";
-        }
         const created = await request.post(`${COORDINATOR}/api/review-sessions`, {
           data: {
             project_id: conv.project_id || "project_demo_001",
@@ -148,13 +131,9 @@ test.describe("VG-01：A1 嵌入 viewer + 3D 高亮", () => {
     await expect(page.getByTestId("a1-first-frame-evidence")).toContainText("已收到真畫面", { timeout: 180_000 });
     await expect(page.getByTestId("a1-stage-matched")).toContainText("matched（expected == loaded）", { timeout: 30_000 });
 
-    // model-path（對抗驗證 §4 high）：rule-run 須對 conversion 的 source IFC（ifcSourcePath，beforeEach 從
-    // conversion detail 取得），failed column guid 才在 session element_mapping 找得到 → 可高亮。
-    // E2E_A1_IFC_PATH 為手動 override（優先）；兩者皆無才沿用 A1 頁 defaultA1IfcPath（fixture-bytes 無 IFCCOLUMN）。
-    const ifcPath = VG01_IFC_PATH || ifcSourcePath;
-    if (ifcPath) await page.getByTestId("a1-step-path").fill(ifcPath);
+    // for-session 模式（B2）：rule-run 由 session 反解 IFC，瀏覽器不再 fill server-side 路徑。
+    // 選定 session 後 auto-PICK 已推進五步條，run 鈕即 enable。IDS 仍以選填欄帶入 for-session。
     await page.getByTestId("a1-ids-path").fill(VG01_IDS_PATH);
-    await page.getByTestId("a1-step-pick").click();
     await expect(page.getByTestId("a1-step-run")).toBeEnabled({ timeout: 5_000 });
     await page.getByTestId("a1-step-run").click();
     await expect(page.getByTestId("a1-rulerun-scoreboard")).toBeVisible({ timeout: 180_000 });
