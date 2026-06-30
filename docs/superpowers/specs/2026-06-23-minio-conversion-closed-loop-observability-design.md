@@ -22,7 +22,7 @@ MinIO **偵測已實作但閉環缺三塊**：無持久轉檔紀錄、無資料�
 | watcher 狀態 | ⚠️ 僅**記憶體內、易失**：`triggered_total` / `skipped_malformed_total` / `last_triggered`（只留最後 5 筆） | `MinioWatcherStatus`（`minioWatcher.ts`）；`tests/minio-watch-status-route.test.ts` |
 | 轉檔紀錄（ledger） | ❌ 無持久化「轉檔歷史紀錄」（重啟即失，無法稽核「偵測→轉檔→可載入」） | 無對應 table / 持久 store；status 為 in-memory |
 | MinIO 資料結構顯示頁 | ❌ `#minio` 未接真實 bucket list（現有 `docs/plans` 設計規格把它標「已交付」屬過度宣稱） | repo 無 `GET /api/minio/objects` 之類唯讀 list proxy |
-| 轉檔觸發 | ⚠️ 僅靠 watcher 偵測到新 `model.ifc` → 觸發排程；無已接線的手動佇列/插隊 UI | watcher `triggerIntake` 為唯一觸發路徑 |
+| 轉檔觸發 | ⚠️ 僅靠 watcher 偵測到新 `model.ifc` → 觸發排程；無已接線的手動佇列/插隊 UI（**minio-folderview-and-baseline-disclosure 後**：新增 `POST /api/conversion/trigger` 一鍵手動觸發鈕 + watcher tick 改持久 ledger 去重自動補轉） | watcher `triggerIntake` 為唯一觸發路徑（自動）；一鍵手動觸發走獨立 `triggerManualIntake` |
 | 轉檔 completion | ❌ IFC→USDC **轉檔權威待建**（Phase 5 紅星）；coverage/usdc 無真實證據 | `bim-streaming-server` conversion authority 品質 gate 未落地 |
 
 真實 MinIO：`192.168.20.234:9000` bucket `bim-control`（唯讀帳號由部署區頂層 `.env` 提供，不落 tracked 檔）。
@@ -39,7 +39,7 @@ key 規約：`{prefix}{project}/…/{category}/{version}/model.ifc`，≥3 段�
 **非目標（YAGNI / 邊界）**
 - ❌ 不實作 IFC→USDC 轉檔本體（轉檔權威在 `bim-streaming-server`，另案、Phase 5）。
 - ❌ 不把 coordinator 升格為 metadata 權威（它只持 minimal shadow metadata；專案/artifact metadata 權威在外部雲端 control-plane / `_bim-control`）。
-- ❌ 不新增手動插隊/優先序佇列 UI（除非後續需求）。
+- ❌ 不新增手動插隊/優先序佇列 UI（除非後續需求）。**【已被 minio-folderview-and-baseline-disclosure supersede（使用者 2026-06-24 拍板）】**：新增「一鍵觸發轉檔」鈕（`POST /api/conversion/trigger`，server-side presigned、`x-dev-token` 守門、寫持久 ledger）——明示為「手動 intake **觸發**」（走 spec 已認可的手動 webhook intake 等效路徑、包成按鈕）而非「佇列插隊/優先序」；插隊/優先序佇列仍非目標。
 - ❌ 不新增微服務（複用既有 coordinator S3Client + callback outbox）。
 
 ## 3. 架構與邊界對齊（雲地分離，不越界）
@@ -81,11 +81,12 @@ MinIO bucket bim-control ──(唯讀 list / presign)──┐
 - **依賴**：metadata 平面持久層（bim-control · MySQL / `_bim-control` shadow）。
 - **冪等**：以 `idempotency_key` upsert，replay 不重建（對齊 watcher `idempotent_replay` 既有不變量）。
 
-### 4.2 `#minio` 唯讀結構頁（新）
-- **做什麼**：把真實 bucket 三層（專案 → 類別 → 版本）做成只讀瀏覽頁，每物件標角色：`source IFC` / `parsed USDC` / `pending(待產生)`。
-- **介面**：`GET /api/minio/objects?prefix=…`（唯讀 list proxy，分頁/continuation）。回傳結構化樹 + 每物件 `role`。
-- **誠實**：頁面明示「唯讀 intake 來源視圖，非 metadata 權威」；`model.usdc` 在 converter 落地前一律標 `pending · 待產生`，不假裝已轉。
-- **安全**：擋路徑穿越（沿用 watcher key 規約：拒空段 / `.` / `..`）；presigned 下載連結（如提供）短效、不入 log。
+### 4.2 `#minio` 唯讀結構頁（新；display_model 經 minio-folderview-and-baseline-disclosure 改 raw-folder 逐層）
+> **supersede 註記**：原設計把 `#minio` display_model 定為「真實 bucket 三層（專案 → 類別 → 版本）樹骨架」。`openspec/changes/minio-folderview-and-baseline-disclosure/`（使用者 2026-06-24 拍板）把 display_model 改為 **raw-folder 逐層**（S3 `Delimiter='/'`，**無三層語意骨架**）；三層「專案/種類/版本」語意降為導到 `model.ifc` 葉層才掛的 badge。下列項目以新 change 為準。
+- **做什麼**：把真實 bucket 做成 raw-folder 逐層唯讀瀏覽頁（S3 `Delimiter='/'`：CommonPrefixes=資料夾節點、當層 Contents=直屬檔），忠實鏡射 bucket 巢狀結構、頂層所有專案資料夾全出現；末層（如 `geometries_chunks`）由 `Delimiter` 天然 roll-up 成單一可點擊資料夾、chunk 不入回應、不寫死物件數。三層「專案/種類/版本」**降為葉層 badge**：導到含 `model.ifc` 的版本層才對該物件呼 `deriveIntakeFromKey`（≥3 段）掛「專案(中文)/種類/版本」badge。每物件標角色：`source IFC` / `parsed USDC` / `pending(待產生)`（role 由副檔名計算、與 intake 三段脫鉤）；資料夾遞迴含 `.ifc` 者標『含 source IFC』輕量 badge。
+- **介面**：`GET /api/minio/objects?prefix=…&delimiter=/`（唯讀 list proxy，單層 while-loop 處理 `IsTruncated`、超 1000 不截斷）。回傳 `{ folders[]({prefix,has_source_ifc}), objects(當層直屬，每 `.ifc` 附 `idempotency_key`), prefix, count }`；點資料夾換 prefix 重打（逐層 lazy）。`.ifc` 旁掛 ledger 衍生狀態 chip（值取自 `/api/conversion/records`、以 `idempotency_key` map lookup）＋一鍵觸發鈕（`POST /api/conversion/trigger`）。
+- **誠實**：頁面明示「唯讀 intake 來源視圖，非 metadata 權威」；`model.usdc` 在 converter 落地前一律標 `pending · 待產生`，不假裝已轉；無 ledger 紀錄誠實標『未轉(含 baseline)』不臆測；empty 態區分「MinIO 未設定」與「已設定但當前 prefix 無物件」兩文案。
+- **安全**：擋路徑穿越（沿用 watcher key 規約：拒空段 / `.` / `..`）；list 回應永不夾帶 presigned URL；presigned 下載連結（如提供）短效、不入 log。
 
 ### 4.3 `#conv` 紀錄視圖（升級）
 - **做什麼**：從易失 watcher status 升級為讀 ledger：偵測事件 + job 生命週期 + coverage（Phase 2）；失敗 job 可見（對齊 watcher 既有「下載失敗→操作者從 `#/conv` 看到失敗 job」語意）。

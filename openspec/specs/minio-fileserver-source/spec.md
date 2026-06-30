@@ -53,6 +53,8 @@ coordinator `governanceProxy` SHALL 提供白名單一條 `GET /api/governance/f
 
 ### Requirement: `#/minio` SHALL 顯示真實檔案庫樹（四態 + 可重試）
 
+> 被 supersede（pending archive）：`openspec/changes/minio-folderview-and-baseline-disclosure/`（使用者 2026-06-24 拍板）把本 requirement 的 `#/minio` 顯示來源由「`governanceClient.filesTree()` 的 local_fs 兩層樹」改為「coordinator `GET /api/minio/objects?prefix=…&delimiter=/` 的真 MinIO raw-folder 逐層 list」（三層語意降為葉層 badge、加 ledger 狀態 chip 與一鍵觸發鈕）。權威以該 change spec delta `specs/minio-fileserver-source/spec.md` 為準；本段於該 change archive 後由 `npx openspec archive` 落地覆寫。本檔 `governance SHALL 提供唯讀 file-library tree API`（local_fs `GET /api/files/tree`）與 `#/a1` A1/A2 binding requirement **不受影響、保留不動**（local_fs 不再當 `#/minio` 顯示來源，原地降格為 A1/A2 頁內檔案選擇器）。
+
 `#/minio`（MinioDataPage）SHALL 經 `governanceClient.filesTree()` 取真樹並渲染 project/model/version（含 `source_kind` / `root` 誠實標示），SHALL 呈現 loading / error / empty / populated 四態：error 態 SHALL 誠實顯示「未連線後端」與錯誤原因並提供使用者可觸發的「重試」動作（重打同一條真實 fetch，SHALL NOT 要求整頁 reload）；empty 態 SHALL 誠實顯示「檔案庫為空」。SHALL NOT 以寫死示意樹偽裝真資料；`model.usdc` 轉檔產物仍標 p1 待建。
 
 #### Scenario: 真樹渲染（populated）
