@@ -1447,7 +1447,7 @@ export function MinioDataPage() {
               <div className="ec-tree">
                 {sortedFolders.map((f) => (
                   <div key={f.prefix} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <Btn caption={t("點入此資料夾", "open folder")} onClick={() => enterFolder(f.prefix)}>{f.prefix}</Btn>
+                    <Btn data-testid={`minio-folder-open-${f.prefix}`} caption={t("點入此資料夾", "open folder")} onClick={() => enterFolder(f.prefix)}>{f.prefix}</Btn>
                     {f.has_source_ifc ? (
                       <span data-testid={`minio-folder-badge-${f.prefix}`} className="ec-prov artifact">
                         {t("含 source IFC", "has source IFC")}
