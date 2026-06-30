@@ -27,7 +27,10 @@ const COORD_BASE: string =
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+    // 與 jsonPost/jsonPut 一致萃取 coordinator `{ detail }`（誠實鐵律）：getIfcReadyJob 等輪詢 GET
+    // 失敗時，A1 狀態行直接把 .message 顯給操作員；只 throw statusText 會把後端「job 不存在 /
+    // 未配置」等可操作提示吞成無意義的 "404 Not Found"。errorDetail best-effort，無 body 才退 statusText。
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -176,7 +179,11 @@ export interface IfcReadyListItem {
 }
 
 // B1（PR #259）落地的單一權威轉檔生命週期狀態（services/lifecycleStatus.ts deriveLifecycleStatus）。
-export type ConversionLifecycleStatus = "detected" | "queued" | "converting" | "ready" | "failed";
+// ⚠ 手動同步點：此值集鏡像後端 ConversionLedgerStatus（bim-review-coordinator/src/services/conversionLedger.ts）。
+// 前後端無 shared schema / codegen；後端增刪狀態值時 MUST 同步此處。coordinatorClient.test.ts 的
+// 「值集鎖定」測試鎖住此陣列，使任何前端漏改在 CI 被攔（後端增值仍需人工同步，測試僅守前端不被悄改）。
+export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed"] as const;
+export type ConversionLifecycleStatus = (typeof CONVERSION_LIFECYCLE_STATUS_VALUES)[number];
 
 // A1（B2）排隊轉檔回應：POST /api/conversion/trigger。成功 202 帶 ifc_ready_job_id；
 // MinIO 未設定 503 由 jsonPost throw（帶後端 detail），不會走到這裡。
