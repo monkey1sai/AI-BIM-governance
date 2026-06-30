@@ -1061,4 +1061,40 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     expect(ledgerPanel!.textContent).toContain("000003");
     expect(container.querySelector('[data-testid="conv-ledger-trigger-mw_failednokey01234"]')).toBeNull();
   });
+
+  // AC6(b) 失敗路徑（必修 gap）：conversionTrigger reject 時，confirmTrigger catch 寫獨立 triggerErr、
+  // 不呼叫 setPendingTriggerKey(null) → 觸發 dialog 維持開啟、誠實錯誤經 IntentDialog 的 actionErr 顯示在
+  // [data-testid='intent-action-error']；ledger 不變（loadRecords 不重抓，recSpy 仍只在 mount 跑一次）。
+  // 與 retry/prioritize/watch-toggle 失敗路徑對齊（line 526/760）；此前 trigger catch 分支無單元保護。
+  it("AC6(b) 失敗：conversionTrigger reject → dialog 維持開啟、顯觸發失敗誠實錯誤、ledger 不重抓", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    const recSpy = vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedRec] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockRejectedValue(new Error("/api/conversion/trigger -> 502 conversion authority unreachable"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const triggerBtn = container.querySelector('[data-testid="conv-ledger-trigger-mw_failed0123456789"]') as HTMLButtonElement;
+    expect(triggerBtn).toBeTruthy();
+    await act(async () => { triggerBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // POST 確實送出（以該 object_key）
+    expect(triggerSpy).toHaveBeenCalled();
+    expect(triggerSpy.mock.calls[0][0]).toBe("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // 失敗不關 dialog（pendingTriggerKey 仍非 null）
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    // 誠實錯誤顯示在 dialog 內 intent-action-error 節點（triggerErr 經 actionErr prop 渲染）
+    const actionErrNode = container.querySelector('[data-testid="intent-action-error"]');
+    expect(actionErrNode).not.toBeNull();
+    expect(actionErrNode!.textContent).toContain("觸發轉檔失敗");
+    expect(actionErrNode!.textContent).toContain("502");
+    // ledger 不變：失敗不重抓 records（recSpy 仍只在 mount 跑過一次，confirmTrigger catch 不呼 loadRecords）
+    expect(recSpy).toHaveBeenCalledTimes(1);
+  });
 });
