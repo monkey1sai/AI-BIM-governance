@@ -43,7 +43,10 @@ describe("edge console honesty smoke", () => {
 
   it("A1 Rule Center 顯示真實 IFC 實測 artifact（非捏造）", () => {
     const html = renderToString(<IssuesRuleCenterPage />);
-    expect(html).toContain("7126"); // 真實評估構件數
+    expect(html).toContain("規則評估次數");
+    expect(html).toContain("7126"); // 真實規則評估次數
+    expect(html).toContain("唯一構件");
+    expect(html).toContain("6715"); // 去重後 ifc_guid 數
     expect(html).toContain("實測 artifact");
     expect(html).toContain("執行規則檢核");
     expect(html).toContain("IDS-XML"); // IDS 匯入後端已實作（ifctester）
@@ -1703,6 +1706,28 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     const el = container.querySelector<HTMLButtonElement>(`[data-testid="${tid}"]`)!;
     await act(async () => { el.click(); });
   };
+
+  it("[IDS picker] A1 IDS 欄位預設顯示 sample IDS path，開啟資料夾後沿用目前目錄填入檔名", async () => {
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+
+    const idsInput = container.querySelector<HTMLInputElement>('[data-testid="a1-ids-path"]')!;
+    expect(idsInput.value).toContain("governance-service\\rules\\sample-fire-rating.ids");
+
+    const inputClickSpy = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    await clickByTestId("a1-ids-open-folder");
+    expect(inputClickSpy).toHaveBeenCalledTimes(1);
+
+    const fileInput = container.querySelector<HTMLInputElement>('[data-testid="a1-ids-file-input"]')!;
+    Object.defineProperty(fileInput, "files", {
+      value: [new File(["<ids />"], "custom-check.ids", { type: "application/xml" })],
+      configurable: true,
+    });
+    await act(async () => { fileInput.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(idsInput.value).toContain("governance-service\\rules\\custom-check.ids");
+
+    await act(async () => { root.unmount(); });
+  });
 
   // 取「選取模型」→「執行規則檢核」後進入輪詢；getRuleRun 永遠回 running（loop 不自然結束），
   // 故 loop 卡在 setTimeout(1000)。unmount 後再推進假時鐘，loop 必須因 alive 守門中斷、
