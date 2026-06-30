@@ -1262,6 +1262,12 @@ export function createCoordinatorApp(
         response.status(404).json({ error: "object_not_found", detail: "object not found in bucket (or missing etag)" });
         return;
       }
+      // selfBaseUrl：與 watcher 同源——優先 config override，否則由實際 listen port 算出 loopback。
+      // 手動觸發走「webhook intake 等效路徑」(design §3.3:120)：POST 此 base 的 /api/external/ifc-ready，
+      // ledger 由 intake 端落 queued（manualIntake 不自寫 detected）。
+      const trigAddress = server.address();
+      const trigBoundPort = trigAddress && typeof trigAddress !== "string" ? trigAddress.port : config.port;
+      const trigSelfBaseUrl = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${trigBoundPort}`;
       const result = await triggerManualIntake(
         key,
         etag,
@@ -1271,16 +1277,18 @@ export function createCoordinatorApp(
           accessKey: config.minioWatchAccessKey,
           secretKey: config.minioWatchSecretKey,
           keySuffix: config.minioWatchKeySuffix,
+          selfBaseUrl: trigSelfBaseUrl,
+          webhookSecret: config.externalIntakeWebhookSecret,
+          tenantId: config.minioWatchTenantId,
         },
-        conversionLedger,
         nowIso(),
       );
       if (!result.ok) {
-        // key 規約已於上方驗過 → 此處剩餘失敗面為 presign/上游錯誤，非 client input error → 502。
-        // 最小資訊原則（對稱下方 catch 的 "minio list failed"）：完整 reason 只進 structLog，
-        // 回應僅給固定 detail，避免 SDK endpoint 解析訊息等基建細節洩漏給瀏覽器。
+        // key 規約已於上方驗過 → 此處剩餘失敗面為 presign / intake POST / 下載失敗（download_status=failed），
+        // 非 client input error → 502。最小資訊原則（對稱下方 catch 的 "minio list failed"）：完整 reason
+        // 只進 structLog，回應僅給固定 detail，避免 SDK / intake 內部訊息洩漏給瀏覽器。
         structLog.error("conversionTrigger", "manual intake failed", new Error(result.reason), { target: key });
-        response.status(502).json({ error: "trigger_failed", detail: "minio presign failed" });
+        response.status(502).json({ error: "trigger_failed", detail: "minio intake dispatch failed" });
         return;
       }
       // 與其他 mutation route（prioritize/retry/watch.toggle）對稱：成功後寫結構化 audit log。
