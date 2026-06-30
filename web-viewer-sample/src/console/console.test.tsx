@@ -434,9 +434,11 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain('data-testid="a1-step-issues"');
     expect(a1).toContain('data-testid="a1-step-export"');
     // B2 task4：A1 step② run 鈕改走 for-session。SSR 首幀無 session（effect 不跑）→ run 鈕誠實 gating
-    // 顯示「需先完成轉檔產生 review session（治理檢核走 for-session）」；有 session 時 caption 才轉
-    // POST /api/governance/rule-runs/for-session/:sessionId。故此處改斷言 for-session 走向（非舊的直接 rule-runs 端點）。
-    expect(a1).toContain("for-session");
+    // 只渲染 disabled caption「需先完成轉檔產生 review session（治理檢核走 for-session）」；端點字串
+    // POST /api/governance/rule-runs/for-session/:sessionId 屬 enabled caption，SSR 不渲染（故此處驗不到端點 path）。
+    // 鎖定整段 gating 片語「治理檢核走 for-session」而非裸 "for-session"：避免任意含 for-session 的字串造成偽通過；
+    // 真正的端點 path 與 createRuleRunForSession 呼叫驗收在 A1ViewerEmbed.test.tsx「有 session：run 鈕 enable」enabled-state 測試。
+    expect(a1).toContain("治理檢核走 for-session");
 
     const viewer = renderToString(<ViewerPresentationPage />);
     expect(viewer).toContain("3D Viewer 呈現");

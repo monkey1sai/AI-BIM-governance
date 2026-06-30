@@ -354,13 +354,16 @@ export function A1GovernanceWorkbenchPage() {
   }, []);
 
   // for-session 模式：治理檢核只需 session。選定 session 後若狀態機仍在 idle（操作員直接對既有 session 檢核，
-  // 未經 MinIO 選模型），以 sessionId 當 PICK marker 推進五步條（ifcPath 僅作 gating/顯示，for-session 不送伺服器）。
+  // 未經 MinIO 選模型），用 PICK_SESSION 推進五步條解鎖 run 鈕。刻意不寫 session id 進 ifcPath
+  // （ifcPath 語意=選定的 IFC 模型路徑，session id 借位會汙染狀態快照），for-session 改以 selectedSession 送伺服器。
   useEffect(() => {
-    if (selectedSession && state.step === "idle") dispatch({ type: "PICK_FILE", ifcPath: selectedSession });
+    if (selectedSession && state.step === "idle") dispatch({ type: "PICK_SESSION" });
   }, [selectedSession, state.step]);
 
   const doRun = useCallback(async () => {
-    if (!state.ifcPath || !selectedSession) return;
+    // gating：須已離開 idle（PICK_FILE 或 PICK_SESSION 推進過）且有選定 session（for-session 必要）。
+    // 不再看 state.ifcPath——session-pick 後 ifcPath 為空，舊式 !state.ifcPath 會誤擋。
+    if (state.step === "idle" || !selectedSession) return;
     // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
     // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
     dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
@@ -402,7 +405,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.ifcPath, state.step, state.runError, idsPath, selectedSession, sessions]);
+  }, [state.step, state.runError, idsPath, selectedSession, sessions]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
