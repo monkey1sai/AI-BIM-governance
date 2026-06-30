@@ -1,7 +1,7 @@
 // bim-review-coordinator/src/services/minioClient.ts
 // minio-closed-loop-phase1 Task 4：共用 S3Client 工廠 + list/role 純函式。
 // 不改 minioWatcher.ts；複用 deriveIntakeFromKey 判角色 + 擋路徑穿越。
-import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, ListObjectsV2Command, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { deriveIntakeFromKey, idempotencyKeyFor } from "./minioWatcher.js";
 
 export function createMinioS3Client(cfg: { endpoint: string; accessKey: string; secretKey: string }): S3Client {
@@ -150,6 +150,35 @@ export async function listMinioFolder(
     folders.push({ prefix: p, has_source_ifc: await prefixHasSourceIfc(client, bucket, p) });
   }
   return { bucket, prefix, folders, objects, count: objects.length };
+}
+
+/**
+ * 取單一物件的 etag（去引號）。針對「已知完整 object key」的精準查詢（spec §3.3 一鍵觸發取 etag）。
+ *
+ * 為何不用 listMinioObjects(prefix=key)：listMinioObjects 的 prefix 參數是「資料夾前綴」語意，
+ * 會原樣轉給 ListObjectsV2 的 Prefix 並餵給 deriveIntakeFromKey（後者對「非 / 結尾的完整 key」恆回
+ * ok:false，等於白算一輪 MinioObjectView 的 badge 欄位）。對單一已知 key 改用 HeadObject 才符合契約、
+ * 也避免大 bucket 全量掃描的退化風險。
+ *
+ * 回傳：命中 → 去引號 etag 字串（可能為空字串，呼叫端須視「空 etag」為不可落帳，比照既有 !match.etag 守門）；
+ * 物件不存在（404 / NotFound / NoSuchKey）→ null。其他上游錯誤（憑證 / 連線 / 5xx）一律 **向上 propagate**，
+ * 由呼叫端 try/catch 收斂成 502（誠實鐵律：不把上游失敗謊報成「物件不存在」）。
+ */
+export async function headMinioObjectEtag(
+  client: S3Client,
+  bucket: string,
+  key: string,
+): Promise<string | null> {
+  try {
+    const resp = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    return (resp.ETag ?? "").replace(/^"+|"+$/g, "");
+  } catch (err) {
+    // 只把「物件不存在」收斂成 null；其餘錯誤 rethrow 讓 route 回 502（不誤判為 not_found）。
+    const name = (err as { name?: string })?.name ?? "";
+    const status = (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    if (name === "NotFound" || name === "NoSuchKey" || status === 404) return null;
+    throw err;
+  }
 }
 
 export async function listMinioObjects(

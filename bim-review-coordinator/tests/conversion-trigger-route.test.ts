@@ -8,9 +8,23 @@ import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 let active: CoordinatorApp | null = null; let root: string | null = null;
 let s3Stub: http.Server | null = null; let s3Url = "";
 let intakeReceived: Array<{ headers: http.IncomingHttpHeaders; body: Record<string, unknown> }> = [];
-// S3 stub：ListObjectsV2 回含 model.ifc；presign GET 不真打（presigner 只簽 URL）。
+// S3 stub：HeadObject（route 取單一 key etag）→ 命中回 ETag header、缺則 404；
+// ListObjectsV2（watcher / 其他 list 路徑）→ 回 XML。presign GET 不真打（presigner 只簽 URL）。
 function startS3Stub(keys: string[]): Promise<void> {
-  s3Stub = http.createServer((_req, res) => {
+  s3Stub = http.createServer((req, res) => {
+    if (req.method === "HEAD") {
+      // forcePathStyle：HEAD /{bucket}/{key}；key 內 '/' 為路徑分隔保留，中文段 URL 編碼。
+      const reqPath = decodeURIComponent((req.url ?? "").split("?")[0]);
+      const objKey = reqPath.replace(/^\/[^/]+\//, ""); // 去掉 /{bucket}/ 前綴
+      if (keys.includes(objKey)) {
+        res.writeHead(200, { etag: '"e1"' });
+        res.end();
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+      return;
+    }
     const contents = keys.map((k) => `<Contents><Key>${k}</Key><ETag>"e1"</ETag></Contents>`).join("");
     res.writeHead(200, { "content-type": "application/xml" });
     res.end(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`);
@@ -116,5 +130,8 @@ describe("POST /api/conversion/trigger", () => {
     const res = await request(makeApp().app).post("/api/conversion/trigger")
       .set("x-dev-token", "test-dev-token").send({ key });
     expect(res.status).toBe(502);
+    // finding #1 sibling：502 回應只給 sanitized 固定 detail，不洩漏上游 SDK 錯誤原文。
+    expect(res.body.detail).toBe("minio list failed");
+    expect(JSON.stringify(res.body)).not.toMatch(/InternalError|<Error>|stack/i);
   });
 });

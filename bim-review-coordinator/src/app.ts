@@ -22,7 +22,7 @@ import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
 import { startMinioWatcher, deriveIntakeFromKey, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
-import { createMinioS3Client, listMinioFolder, listMinioObjects } from "./services/minioClient.js";
+import { createMinioS3Client, listMinioFolder, listMinioObjects, headMinioObjectEtag } from "./services/minioClient.js";
 import { triggerManualIntake } from "./services/manualIntake.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
@@ -1226,8 +1226,10 @@ export function createCoordinatorApp(
       response.status(400).json({ error: "invalid_key", detail: `invalid key: ${derived.reason}` });
       return;
     }
-    // 取該 key 的 etag（idempotency_key 需 etag）。用 Prefix=key 精準 list（避免大 bucket 全量掃）。
-    // S3 list / 上游連線失敗 → try/catch 收斂成 502（非 client error 400、非 unhandled 500）。
+    // 取該 key 的 etag（idempotency_key 需 etag）。單一已知完整 key 用 HeadObject 精準取，
+    // 不走 listMinioObjects（其 prefix 為「資料夾前綴」語意，餵 full key 會令 deriveIntakeFromKey
+    // 恆 ok:false、白算 MinioObjectView badge，違反契約）。
+    // S3 / 上游連線失敗 → try/catch 收斂成 502（非 client error 400、非 unhandled 500）。
     let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
       client = createMinioS3Client({
@@ -1235,16 +1237,16 @@ export function createCoordinatorApp(
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
       });
-      const objs = await listMinioObjects(client, config.minioWatchBucket, key, config.minioWatchKeySuffix);
-      const match = objs.find((o) => o.key === key);
-      if (!match || !match.etag) {
-        // 物件不在 bucket（或無 etag）→ 404；不退化成空 etag 偷偷落帳（誠實鐵律：不留半截紀錄）。
+      const etag = await headMinioObjectEtag(client, config.minioWatchBucket, key);
+      if (!etag) {
+        // 物件不在 bucket（404/NoSuchKey→null）或無 etag（空字串）→ 404；不退化成空 etag 偷偷落帳
+        //（誠實鐵律：不留半截紀錄）。
         response.status(404).json({ error: "object_not_found", detail: "object not found in bucket (or missing etag)" });
         return;
       }
       const result = await triggerManualIntake(
         key,
-        match.etag,
+        etag,
         {
           endpoint: config.minioWatchEndpoint,
           bucket: config.minioWatchBucket,
@@ -1257,7 +1259,10 @@ export function createCoordinatorApp(
       );
       if (!result.ok) {
         // key 規約已於上方驗過 → 此處剩餘失敗面為 presign/上游錯誤，非 client input error → 502。
-        response.status(502).json({ error: "trigger_failed", detail: result.reason });
+        // 最小資訊原則（對稱下方 catch 的 "minio list failed"）：完整 reason 只進 structLog，
+        // 回應僅給固定 detail，避免 SDK endpoint 解析訊息等基建細節洩漏給瀏覽器。
+        structLog.error("conversionTrigger", "manual intake failed", new Error(result.reason), { target: key });
+        response.status(502).json({ error: "trigger_failed", detail: "minio presign failed" });
         return;
       }
       // 與其他 mutation route（prioritize/retry/watch.toggle）對稱：成功後寫結構化 audit log。
