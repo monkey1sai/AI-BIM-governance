@@ -23,6 +23,7 @@ import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } f
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { createMinioS3Client, listMinioFolder, listMinioObjects } from "./services/minioClient.js";
+import { triggerManualIntake } from "./services/manualIntake.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -1198,6 +1199,63 @@ export function createCoordinatorApp(
     const limit = parseListLimit(request.query.limit);
     const items = conversionLedger.list();
     response.json({ count: items.length, items: items.slice(0, limit) });
+  });
+
+  // minio-folderview：一鍵手動觸發轉檔（spec §3.3）。寫入動作 → x-dev-token 守門（拒匿名）。
+  // server-side presigned + 獨立 triggerManualIntake 寫 ledger；回 { status, idempotency_key }。
+  // 插在 /api/conversion/records 之後、/api/minio/objects 之前。
+  app.post("/api/conversion/trigger", async (request, response) => {
+    // auth guard（同 kit mutation route 樣板，app.ts:2618）
+    if (!isKitMutationAuthorized(request, config.devAuthToken)) {
+      response.status(403).json({ error: "forbidden", detail: "x-dev-token 必填（拒匿名寫入）" });
+      return;
+    }
+    if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
+      response.status(422).json({ error: "minio_not_configured", detail: "MinIO watch 未設定" });
+      return;
+    }
+    const body = request.body as Record<string, unknown>;
+    const key = typeof body?.key === "string" ? body.key : "";
+    if (!key) {
+      response.status(400).json({ error: "invalid_key", detail: "key 為必填字串" });
+      return;
+    }
+    // 取 etag：用 listMinioObjects 找到 key 的 etag（已有 S3 client 工廠，不另啟連線）。
+    // 若 key 不在 bucket → etag 為空字串 → idempotencyKeyFor 仍運作（退化值），不 500。
+    let etag = "";
+    {
+      const s3 = createMinioS3Client({
+        endpoint: config.minioWatchEndpoint,
+        accessKey: config.minioWatchAccessKey,
+        secretKey: config.minioWatchSecretKey,
+      });
+      try {
+        const objs = await listMinioObjects(s3, config.minioWatchBucket, key, config.minioWatchKeySuffix);
+        const found = objs.find((o) => o.key === key);
+        etag = found?.etag ?? "";
+      } finally {
+        s3.destroy();
+      }
+    }
+    const result = await triggerManualIntake(
+      key,
+      etag,
+      {
+        endpoint: config.minioWatchEndpoint,
+        bucket: config.minioWatchBucket,
+        accessKey: config.minioWatchAccessKey,
+        secretKey: config.minioWatchSecretKey,
+        keySuffix: config.minioWatchKeySuffix,
+      },
+      conversionLedger,
+      nowIso(),
+    );
+    if (!result.ok) {
+      // 拒絕：key 規約失敗（含路徑穿越）→ 400
+      response.status(400).json({ error: "invalid_key", detail: result.reason });
+      return;
+    }
+    response.json({ status: result.status, idempotency_key: result.idempotency_key });
   });
 
   // minio-closed-loop-phase1 Task 4：唯讀 S3 list proxy。
