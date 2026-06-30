@@ -39,6 +39,33 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.textContent).toContain("東勢區許良宇紀念圖書館");
   });
 
+  it("[7a][AC1] folders 依 localeCompare('zh-TW') 排序顯示（逆序輸入 → DOM 按 zh-TW 重排）", async () => {
+    // 後端 S3 回 CommonPrefixes 為 UTF-8 byte order（非中文 collation）；前端對中文使用者以
+    // localeCompare('zh-TW') 重排（spec §2.1 中文排序 / plan line 56『AC1 補排序斷言』）。
+    // 三個資料夾刻意以「非 zh-TW 排序」的順序輸入，斷言 DOM 出現順序＝zh-TW 排序後順序。
+    const inputPrefixes = ["洲際好宅/", "東勢區許良宇紀念圖書館/", "annotations/"];
+    const expectedOrder = [...inputPrefixes].sort((a, b) => a.localeCompare(b, "zh-TW"));
+    // 前提：輸入順序與 zh-TW 排序順序不同（否則此測試證不到排序行為）。
+    expect(inputPrefixes).not.toEqual(expectedOrder);
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "",
+      folders: inputPrefixes.map((p) => ({ prefix: p, has_source_ifc: false })),
+      objects: [], count: 0,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    // 資料夾鈕內容即 f.prefix；以 textContent 中各 prefix 首次出現位置驗證相對順序。
+    const text = container.textContent ?? "";
+    const positions = expectedOrder.map((p) => text.indexOf(p));
+    expect(positions.every((pos) => pos >= 0)).toBe(true);
+    // 嚴格遞增 → DOM 順序與 zh-TW 排序一致。
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i]).toBeGreaterThan(positions[i - 1]);
+    }
+  });
+
   it("[7a] 資料夾（遞迴）含 .ifc → 顯『含 source IFC』badge；不含則不顯（spec §2.5 第 5 點，獨立 AC）", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "",
@@ -67,7 +94,11 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("來源 IFC");
-    expect(container.textContent).toContain("main");           // 三段 badge
+    // 三段 badge：用 data-testid 精準定位 category badge（AC-badge），避免 'main' 子字串撞 prefix 路徑誤判。
+    const catBadge = container.querySelector('[data-testid="minio-badge-category-mw_aaaa0000bbbb0001"]');
+    expect(catBadge?.textContent).toBe("main");
+    expect(container.querySelector('[data-testid="minio-badge-project-mw_aaaa0000bbbb0001"]')?.textContent).toBe("東勢區許良宇紀念圖書館");
+    expect(container.querySelector('[data-testid="minio-badge-version-mw_aaaa0000bbbb0001"]')?.textContent).toBe("000001");
     expect(container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]')).toBeTruthy(); // chip
     expect(container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]')).toBeTruthy(); // 觸發鈕
   });

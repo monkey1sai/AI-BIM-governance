@@ -1165,6 +1165,8 @@ function ledgerChipStatus(
 }
 
 // chip 狀態本地化標籤（無紀錄＝untracked → 未轉；其餘對應 ledger status enum）。
+// 鍵集合對齊 spec AC-chip（design line 168）列舉的 7 個 chip 狀態，確保後端送任一列舉值都有本地化
+// 標籤、不會 fallback 顯原始 wire 字串（誠實鐵律）。not_queued＝AC-chip『未進佇列』對應 key。
 const MINIO_CHIP_LABEL: Record<string, string> = {
   detected: t("已偵測", "detected"),
   queued: t("排隊", "queued"),
@@ -1172,6 +1174,7 @@ const MINIO_CHIP_LABEL: Record<string, string> = {
   ready: t("完成", "ready"),
   failed: t("失敗", "failed"),
   untracked: t("未轉（含 baseline 既有檔）", "not converted (incl. baseline)"),
+  not_queued: t("未進佇列", "not queued"), // AC-chip 列舉狀態：偵測到但尚未進轉檔佇列
   unknown: t("未知狀態", "unknown"), // narrowConversionStatus 退回值：後端送非預期 status 時誠實顯未知
 };
 
@@ -1236,8 +1239,8 @@ export function MinioDataPage() {
   const sortedFolders = folder ? [...folder.folders].sort((a, b) => a.prefix.localeCompare(b.prefix, "zh-TW")) : [];
   // empty 態 (b)：已設定但當前層無物件（無 note）。empty 態 (a)＝後端回 note（未設定）。
   const showFolderEmpty = !!folder && folder.folders.length === 0 && folder.objects.length === 0;
-  // folder 回應的 note（後端未設定時回 200 + note）。MinioFolderListing 型別未含 note，故防禦性讀取。
-  const folderNote = folder ? (folder as { note?: string }).note : undefined;
+  // folder 回應的 note（後端未設定時回 200 + note；MinioFolderListing.note? 已對齊 wire shape）。
+  const folderNote = folder?.note;
 
   // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
   // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy
@@ -1324,10 +1327,11 @@ export function MinioDataPage() {
                       {/* role label（與 intake 三段脫鉤，純副檔名） */}
                       <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
                       <span className="ec-tree-file" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{obj.key}</span>
-                      {/* 三段語意 badge：有才顯（≥3 段才有，malformed 不掛） */}
-                      {obj.project_display_name ? <span className="ec-prov">{obj.project_display_name}</span> : null}
-                      {obj.category ? <span className="ec-prov">{obj.category}</span> : null}
-                      {obj.version ? <span className="ec-prov">{obj.version}</span> : null}
+                      {/* 三段語意 badge：有才顯（≥3 段才有，malformed 不掛）。各掛 data-testid 供 AC-badge
+                          精準定位（避免 textContent 子字串誤判：如 category=main 撞 prefix 路徑字串）。 */}
+                      {obj.project_display_name ? <span data-testid={`minio-badge-project-${idk}`} className="ec-prov">{obj.project_display_name}</span> : null}
+                      {obj.category ? <span data-testid={`minio-badge-category-${idk}`} className="ec-prov">{obj.category}</span> : null}
+                      {obj.version ? <span data-testid={`minio-badge-version-${idk}`} className="ec-prov">{obj.version}</span> : null}
                       {/* 僅 source_ifc 物件掛 ledger 狀態 chip（7b）＋ 一鍵觸發鈕（7c） */}
                       {obj.role === "source_ifc" ? (
                         <>

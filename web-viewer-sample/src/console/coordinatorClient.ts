@@ -306,6 +306,9 @@ export interface MinioFolderListing {
   folders: MinioFolderNode[];
   objects: MinioObject[];
   count: number;
+  // MinIO 未設定分支（app.ts:1296-1309）回 200 + note；已設定分支不帶此欄。前端據以區分 empty 態
+  // (a) 未設定 vs (b) 已設定但當前 prefix 無物件。optional 對齊 wire shape，免消費端防禦性 cast。
+  note?: string;
 }
 
 // Task 6：POST /api/conversion/trigger 回應形狀。
