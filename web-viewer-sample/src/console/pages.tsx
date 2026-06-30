@@ -1161,23 +1161,24 @@ export function KitGpuFleetPage() {
 // 標籤），不讓原始 wire 字串經 chip render 的 `?? st` fallback 外洩（誠實鐵律：不洩漏 wire 字串）。
 //
 // quality finding Important #1：getConversionRecords 有 limit（後端 parseListLimit 上限 100）。當 ledger
-// 紀錄數超出回傳窗（recordsTruncated＝count > items.length）時，超窗的舊物件在 records 中查無 key——
-// 這是「有紀錄但前端看不到」，不可靜默當『未轉』（違反 AC-chip『無紀錄才標未轉、不臆測』）。
-// 故 miss 且 recordsTruncated 時退 'indeterminate'（顯『狀態未明』），誠實揭露查詢上限造成的不確定。
+// 紀錄數超出回傳窗（count > items.length，截斷）或 records 載入失敗（coordinator 離線/502/timeout）時，
+// 超窗/未載入的物件在 records 中查無 key——這是「可能有紀錄但前端看不到」，不可靜默當『未轉』（違反
+// AC-chip『無紀錄才標未轉、不臆測』；誠實鐵律：records 載入失敗不得誤顯未轉）。故 miss 且 recordsIncomplete
+// 時退 'indeterminate'（顯『狀態未明』），誠實揭露不確定來源。
 function ledgerChipStatus(
   idempotencyKey: string,
   records: ReadonlyArray<{ idempotency_key: string; status: string }>,
-  recordsTruncated: boolean,
+  recordsIncomplete: boolean, // 截斷（超查詢上限）或載入失敗——兩者皆「可能有紀錄但看不到」
 ): string {
   const hit = records.find((r) => r.idempotency_key === idempotencyKey);
   if (hit) return narrowConversionStatus(hit.status) ?? "unknown";
-  // 查無紀錄：records 截斷時誠實顯『狀態未明』（可能只是超出查詢上限），未截斷才是真『未轉』。
-  return recordsTruncated ? "indeterminate" : "untracked";
+  // 查無紀錄：records 不完整（截斷／載入失敗）時誠實顯『狀態未明』；完整載入且查無才是真『未轉』。
+  return recordsIncomplete ? "indeterminate" : "untracked";
 }
 
 // chip 狀態本地化標籤（無紀錄＝untracked → 未轉；其餘對應 ledger status enum）。
 // 鍵集合對齊 spec AC-chip（design line 168）列舉的 7 個 chip 狀態，確保後端送任一列舉值都有本地化
-// 標籤、不會 fallback 顯原始 wire 字串（誠實鐵律）。not_queued＝AC-chip『未進佇列』對應 key。
+// 標籤、不會 fallback 顯原始 wire 字串（誠實鐵律）。
 const MINIO_CHIP_LABEL: Record<string, string> = {
   detected: t("已偵測", "detected"),
   queued: t("排隊", "queued"),
@@ -1185,10 +1186,15 @@ const MINIO_CHIP_LABEL: Record<string, string> = {
   ready: t("完成", "ready"),
   failed: t("失敗", "failed"),
   untracked: t("未轉（含 baseline 既有檔）", "not converted (incl. baseline)"),
-  not_queued: t("未進佇列", "not queued"), // AC-chip 列舉狀態：偵測到但尚未進轉檔佇列
+  // not_queued＝spec AC-chip『未進佇列』。誠實註記：現行後端 ConversionLedgerStatus 只 5 值
+  // （detected/queued/converting/ready/failed，conversionLedger.ts:11），不產生 not_queued——
+  // 「偵測到未進佇列」目前由 detected 涵蓋；此 key 為 spec AC-chip 完整性保留。若後端日後細分出
+  // not_queued，narrowConversionStatus 的 CONVERSION_LEDGER_STATUSES 須同步加入；未加入時 ledgerChipStatus
+  // 的 `?? "unknown"` 仍誠實退 unknown（顯下方『未知狀態』、不洩漏 wire 字串）。
+  not_queued: t("未進佇列", "not queued"),
   unknown: t("未知狀態", "unknown"), // narrowConversionStatus 退回值：後端送非預期 status 時誠實顯未知
-  // quality finding Important #1：records 截斷且查無 key 時的誠實退路（≠『未轉』，避免靜默誤報）。
-  indeterminate: t("狀態未明（紀錄超出查詢上限）", "indeterminate (records exceed query limit)"),
+  // records 不完整（截斷超查詢上限／載入失敗）且查無 key 時的誠實退路（≠『未轉』，避免靜默誤報）。
+  indeterminate: t("狀態未明（紀錄不完整或載入失敗）", "indeterminate (records incomplete or unavailable)"),
 };
 
 function roleLabel(role: import("./coordinatorClient").MinioObject["role"]): string {
@@ -1209,6 +1215,9 @@ export function MinioDataPage() {
   // quality finding Important #1：records 是否被回傳上限截斷（count > items.length）。截斷時查無 key
   // 的物件不可當『未轉』，須顯『狀態未明』（chip 經 ledgerChipStatus 退 'indeterminate'）。
   const [recordsTruncated, setRecordsTruncated] = useState(false);
+  // honesty：records 載入失敗（coordinator 離線/502/timeout）也是「可能有紀錄但看不到」，與截斷同樣
+  // 須退 'indeterminate' 而非靜默誤顯『未轉』。catch 設 true、成功設 false（避免暫態失敗永久鎖死）。
+  const [loadRecordsErr, setLoadRecordsErr] = useState(false);
   const [prefix, setPrefix] = useState(""); // 當前層 prefix（spec §2.5：點資料夾換 prefix）
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -1236,8 +1245,11 @@ export function MinioDataPage() {
       const r = await coordinatorClient.getConversionRecords(100);
       setRecords(r.items);
       setRecordsTruncated(r.count > r.items.length);
+      setLoadRecordsErr(false); // 成功載入 → 清除前次失敗旗標
     } catch {
-      /* chip 缺資料時誠實顯未轉 */
+      // honesty fix：records 載入失敗不可靜默讓 chip 顯『未轉』（誤把「看不到」當「沒轉」）。
+      // 標 loadRecordsErr → ledgerChipStatus 退 'indeterminate'（狀態未明）。
+      setLoadRecordsErr(true);
     }
   }, []);
   useEffect(() => {
@@ -1346,7 +1358,7 @@ export function MinioDataPage() {
               <ul className="ec-tree" style={{ listStyle: "none", paddingLeft: 0 }}>
                 {folder.objects.map((obj) => {
                   const idk = obj.idempotency_key;
-                  const st = chipOverride[idk] ?? ledgerChipStatus(idk, records, recordsTruncated);
+                  const st = chipOverride[idk] ?? ledgerChipStatus(idk, records, recordsTruncated || loadRecordsErr);
                   return (
                     <li key={obj.key} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                       {/* role label（與 intake 三段脫鉤，純副檔名） */}

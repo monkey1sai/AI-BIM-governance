@@ -119,6 +119,22 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(triggerBtn?.disabled).toBe(false);
   });
 
+  it("[7b][honesty] getConversionRecords 載入失敗 → chip 顯『狀態未明』而非靜默誤顯『未轉』(finding #1)", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
+    });
+    // records 載入失敗（coordinator 離線/502/timeout）：loadRecords catch 不再靜默吞。誠實鐵律：失敗是
+    // 「可能有紀錄但看不到」，chip 須退 indeterminate（狀態未明），不可誤顯『未轉』(untracked)。
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockRejectedValue(new Error("502 Bad Gateway"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    const chip = container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]');
+    expect(chip?.textContent).toContain("狀態未明");
+    expect(chip?.textContent).not.toContain("未轉"); // 不得把載入失敗誤報成『未轉』
+  });
+
   it("[7c] 觸發鈕 click → IntentDialog → confirm → conversionTrigger 被呼叫 + chip patch 成功狀態", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
