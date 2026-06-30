@@ -409,6 +409,12 @@ export function createCoordinatorApp(
       selfBaseUrl,
       webhookSecret: config.externalIntakeWebhookSecret,
       tenantId: config.minioWatchTenantId,
+      // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
+      // 既有未轉檔（含原 baseline 3 檔，ledger=0）下一輪 tick 自動補轉；coordinator 重啟後
+      // 持久 ledger 命中 mw_<hash16> 故不重觸發（重啟不風暴）。closure 為惰性求值：watcher
+      // 首輪 tick 走 setTimeout（macrotask），此時 conversionLedger（下方宣告）已初始化，
+      // 無 TDZ 風險；watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
+      isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
       structLog,
     });
   }

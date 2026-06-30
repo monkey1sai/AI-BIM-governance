@@ -142,6 +142,17 @@ export interface MinioWatcherOptions {
   // 同等對待（recordTriggered + return，不上浮）。比照 streamingConversionClient
   // 的 AbortSignal.timeout(requestTimeoutMs) 模式。
   intakeTimeoutMs?: number;
+  // §3.4 全自動 auto-enroll：持久 ledger 去重水印（注入）。對每個 `*/model.ifc` 算
+  // idkey = idempotencyKeyFor(bucket,key,etag)，查 isLedgered(idkey)：無紀錄→觸發 intake、
+  // 有紀錄→skip。in-memory `seen` 僅作單輪快取，權威去重以持久 ledger 為準。
+  //
+  // 注入 vs 省略（向後相容）：
+  // - 注入時（app.ts 真實 ledger / 測試 stub）：移除「首輪 baseline 不觸發」特例，
+  //   首輪即對 ledger 無紀錄物件觸發（既有未轉檔自動補轉、重啟命中 ledger 不重觸發）。
+  // - 省略時（既有整合測試直接構造 watcher、不關心 dedup 政策）：回落舊 baseline 行為
+  //   （首輪吸收為基準、不觸發；後續輪才觸發新增物件），避免波及未注入的呼叫端。
+  // baseline_count 兩種模式皆照舊填（首輪 `*/model.ifc` 數，純診斷，不再 gate 觸發）。
+  isLedgered?: (idkey: string) => boolean;
   structLog: WatcherLogger;
 }
 
@@ -229,7 +240,14 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
     credentials: { accessKeyId: opts.accessKey, secretAccessKey: opts.secretKey },
   });
 
-  const seen = new Map<string, string>(); // key → etag
+  const seen = new Map<string, string>(); // key → etag（單輪/跨輪快取；§3.4 權威去重以持久 ledger 為準）
+  // §3.4 auto-enroll dedup 模式判定：
+  // - 注入 isLedgered → ledger 去重模式：移除「首輪 baseline 不觸發」特例，每個物件（含首輪）
+  //   依 !isLedgered(idkey) 決定觸發；既有未轉檔自動補轉、重啟命中 ledger 不重觸發。
+  // - 未注入 → legacy 模式：保留舊 baseline 行為（首輪吸收不觸發、後續輪觸發新增物件），
+  //   只波及顯式關心 dedup 政策的呼叫端（app.ts / loop 測試），不動既有整合測試。
+  const isLedgered = opts.isLedgered;
+  const ledgerDedup = typeof isLedgered === "function";
   const status: MinioWatcherStatus = {
     enabled: true,
     bucket: opts.bucket,
@@ -381,18 +399,40 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       status.last_poll_at = new Date().toISOString();
       status.poll_count += 1; // 單調遞增：list 成功即計一輪（供 loop liveness 判斷，免時鐘解析度依賴）
       status.last_error = null;
-      if (isFirstRound) {
-        for (const o of objects) seen.set(o.key, o.etag);
-        status.baseline_count = seen.size;
+      // baseline_count（純診斷）：首輪 `*/model.ifc` 數，兩種模式皆照舊填。
+      // ledger 模式下它**不再 gate 觸發**（不再代表「被吸收、不轉檔」），只供 #conv 顯示
+      // 「首輪可解析 IFC 數」。
+      const firstRound = isFirstRound;
+      if (firstRound) {
+        status.baseline_count = objects.length;
         isFirstRound = false;
+      }
+      if (ledgerDedup) {
+        // §3.4：移除首輪 baseline 特例。對每個 `*/model.ifc` 算 idkey 查持久 ledger 水印——
+        // 無紀錄→觸發 intake（並由 intake 端落帳）；有紀錄→skip。in-memory `seen` 留作
+        // 單輪/跨輪快取（同 key 同 etag 已觸發過 → 本實例不重查 ledger、不重送）。
+        for (const o of objects) {
+          if (seen.get(o.key) === o.etag) continue; // 本實例已處理過此 (key,etag)
+          const idkey = idempotencyKeyFor(opts.bucket, o.key, o.etag);
+          if (isLedgered!(idkey)) {
+            // 持久 ledger 已有紀錄（含重啟前已落帳、或他途已觸發）→ skip 並入快取，避免每輪重查。
+            seen.set(o.key, o.etag);
+            continue;
+          }
+          const outcome = await triggerIntake(o.key, o.etag);
+          // 自癒語意（Codex review P1 修復）：只有成功觸發或永久性 skip（malformed）才標 seen。
+          // 暫時性失敗不標 → 下輪重試。
+          if (outcome !== "fail_transient") seen.set(o.key, o.etag);
+        }
+      } else if (firstRound) {
+        // legacy 模式（未注入 isLedgered）首輪：吸收為基準、不觸發（保留既有呼叫端行為）。
+        for (const o of objects) seen.set(o.key, o.etag);
       } else {
+        // legacy 模式後續輪：只觸發新增 / 變更 etag 的物件。
         for (const o of objects) {
           const prev = seen.get(o.key);
           if (prev === o.etag) continue; // 同 key 同 etag → 不觸發
           const outcome = await triggerIntake(o.key, o.etag);
-          // 自癒語意（Codex review P1 修復）：只有成功觸發或永久性 skip（malformed）才標 seen。
-          // 暫時性失敗不標 → 下輪重試。舊行為（先標 seen 再觸發）會讓一次 presign/網路/5xx
-          // 失敗永久吞掉該物件，與「每輪全量對帳漏抓自癒」的設計宣稱矛盾。
           if (outcome !== "fail_transient") seen.set(o.key, o.etag);
         }
       }
