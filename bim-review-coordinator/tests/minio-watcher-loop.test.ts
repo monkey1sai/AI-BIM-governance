@@ -609,6 +609,11 @@ describe("minioWatcher loop", () => {
     await watcher.dispose();
     watcher = makeWatcher(s3Base, selfBase, state, { isLedgered: ledgered });
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 2);
+    // loop liveness 守衛：先確認新 watcher 實例「確實跑過至少 2 輪 tick」（poll_count>=2）再判 received
+    // 穩定。否則若新 watcher 重啟後因某 bug 卡住不再 poll（e.g. stopped=true 被誤設），下方靠 wall-time
+    // 的 300ms 靜默同樣會通過——分不出「正確 skip」與「loop 凍結」。此為舊測試 triggered_total>=1 移除後
+    // 另一條 loop 活性的替代保護（poll_count 單調遞增，免時鐘解析度依賴）。
+    await waitFor(() => (watcher!.getStatus().poll_count as number) >= 2);
     // 重啟後 899 與 988 皆已落帳 → 新 watcher 全部 skip，不再 POST（重啟不風暴）。
     // 再等幾輪確認 received 穩定為 1（無第二筆 POST）。
     await new Promise((r) => setTimeout(r, 300));

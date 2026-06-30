@@ -351,6 +351,12 @@ export function createCoordinatorApp(
   // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
   // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
   let minioWatcher: MinioWatcherHandle | null = null;
+  // 上移宣告（TDZ 防守）：startMinioWatcherIfEnabled 的 isLedgered closure 捕捉 conversionLedger；
+  // selfBaseUrl 立即啟動路徑（下方）在 conversionLedger 真正賦值（原行 493）之前同步呼叫本函式。
+  // 首輪 tick 走 setTimeout(macrotask) 故 runtime 仍安全，但若日後有人在「呼叫 startMinioWatcherIfEnabled」
+  // 與「賦值 conversionLedger」之間插入 await，const 版會在 runtime 爆 TDZ ReferenceError 且 TS 查不到。
+  // 改用「let 宣告上移 + 下方賦值」：TS 仍可捕捉 used-before-assigned，並排除 TDZ 隱患（賦值見原宣告處）。
+  let conversionLedger: ConversionLedger;
   // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
   let minioWatchRuntimeEnabled = config.minioWatchEnabled;
   // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
@@ -412,8 +418,9 @@ export function createCoordinatorApp(
       // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
       // 既有未轉檔（含原 baseline 3 檔，ledger=0）下一輪 tick 自動補轉；coordinator 重啟後
       // 持久 ledger 命中 mw_<hash16> 故不重觸發（重啟不風暴）。closure 為惰性求值：watcher
-      // 首輪 tick 走 setTimeout（macrotask），此時 conversionLedger（下方宣告）已初始化，
-      // 無 TDZ 風險；watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
+      // 首輪 tick 走 setTimeout（macrotask），執行時 conversionLedger 已賦值；其宣告已上移至
+      // 本函式之前（`let conversionLedger`）作 TDZ 防守，賦值在原宣告處。watcher tick 對 ledger
+      // 唯讀（落帳由 intake route 端負責）。
       isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
       structLog,
     });
@@ -490,7 +497,8 @@ export function createCoordinatorApp(
   );
   // minio-closed-loop-phase1 Task 1/3：持久 ConversionLedger（coordinator-local shadow）。
   // watcher 偵測即寫 queued（Task 2）；GET /api/conversion/records 讀取（Task 3）。
-  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
+  // 賦值（宣告已上移至 startMinioWatcherIfEnabled 之前作 TDZ 防守，見上方 `let conversionLedger`）。
+  conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
