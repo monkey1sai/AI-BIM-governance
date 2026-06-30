@@ -29,6 +29,12 @@ A1（`web-viewer-sample/src/console/pages.tsx` 的 `A1GovernanceWorkbenchPage`�
 - 建 `/ui` console bundle（E2E 前）：`npm run build:ui`
 - E2E：`npx playwright test e2e/<spec>`
 
+> **⚠ lint / tsc baseline 與測試 mock 修正（2026-06-30 指揮官，解除 P3 `plan_error_at_task` @task#1；證據：f246401 受改 3 檔 79 測試全綠、零新增 lint/tsc error）**
+>
+> **(A) lint / tsc 採 baseline-aware，非絕對 exit 0**：`web-viewer-sample` 全專案 `npm run lint` 有 **44 個既有 errors + 4 warnings**（全落在本 plan 未碰檔：`App.tsx`/`AppStream.tsx`/`Forms.tsx`/`OperatorConsole.tsx` 等）、`npx tsc --noEmit` 有 **7 個既有 errors**（`indexHtml.test.ts`/`IntentDialog.css.test.ts` 缺 `@types/node` 共 6 個 + `console.test.tsx` 的 governanceClient `ifc_type:null` typing 1 個）。這些是 origin/main 既有 baseline（見 `docs/agents/sub-repo-verify-commands.md`），**非本 plan 引入**。各 task 驗收凡寫「`npm run lint` / `tsc --noEmit` exit 0」**一律解讀為 baseline-aware**：**受改檔本身 lint/tsc 乾淨 + 全專案 error 數零新增（≤ baseline）即過**；**禁止**為達絕對 exit 0 去修 44/7 個無關既有 error（CLAUDE.md：不動無關檔案、YAGNI）。
+>
+> **(B) A1ViewerEmbed.test.tsx 的 `beforeEach` 預設 `getMinioObjects` mock 必須含「至少一個 `source_ifc` 物件」**（非空 `objects: []`）：否則下拉只有 placeholder、`selectedKey` 恆 `""`、`a1-step-pick` 恆 disabled，Task 3/4 的 pick→run 測試（`selectMinioModel()` helper 依賴可選 option）會因 click 變 no-op 而失敗。f246401 已如此實作（單一預設 source_ifc + `selectMinioModel` helper，正是本 plan 對 `console.test.tsx` doRun 開的同一處方）；後續 task **沿用、勿回退成空 `objects: []`**。
+
 ## 共用前置（每個改 `A1GovernanceWorkbenchPage` 的 task 開工前）
 
 - [ ] 依 CLAUDE.md §4 對唯一受改既有 symbol 跑一次 impact，確認 blast radius：
