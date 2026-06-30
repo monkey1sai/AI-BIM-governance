@@ -224,6 +224,24 @@ A1（`web-viewer-sample/src/console/pages.tsx` 的 `A1GovernanceWorkbenchPage`�
         </div>
         {minioErr && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
   ```
+- [ ] **遷移既有 doRun 測試以對齊「`a1-step-pick` 現 `disabled={!selectedKey}`」**：`console.test.tsx` 既有 `describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作失敗 UI 回饋）")` 區塊有 11 支測試靠點 `a1-step-pick` 推進 step。本步把 step① 文字框換成下拉後，A1 mount 會打 `getMinioObjects()`（該 describe 的 `beforeEach` 未 mock → jsdom 真 fetch 失敗、`.catch()` 設空清單）且下拉預設 placeholder `value=""` → `selectedKey` 恆 `''` → `a1-step-pick` disabled → `clickByTestId("a1-step-pick")` 點到 disabled 鈕為 no-op → doRun 不啟動 → `expect(getSpy.mock.calls.length).toBeGreaterThanOrEqual(1)`（現第 1749 行）等斷言全 fail。修法（此步只解 selectedKey gating，屬 Task 2 範圍）：
+  - 在該 describe 的 `beforeEach`（現第 1693 行 `runtimeStatus` mock 之後）補一筆 `getMinioObjects` mock，回**單一 source_ifc 物件**（option 必須真的渲染，下一步 `sel.value=` 才選得到）：
+    ```ts
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
+    ```
+  - 在該 describe 的 `clickByTestId` helper 之後新增 `pickModel` helper（選下拉設 `selectedKey` → 再點 pick；若 option 尚未渲染，先補一拍 `await act(async () => { await vi.advanceTimersByTimeAsync(0); })`）：
+    ```ts
+    const pickModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+      const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-minio-select"]')!;
+      await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+      await clickByTestId("a1-step-pick");
+    };
+    ```
+  - 把這 11 支測試各自的「**第一個**」`await clickByTestId("a1-step-pick")` 換成 `await pickModel();`（現第 1744 / 1769 / 1797 / 1833 / 1872 / 1925 / 1954 / 1997 / 2051 / 2112 / 2151 行）。`[finding#1] step 守門`（現第 1776 行）與 `[qr-t2-pollgen-race]`（現第 1931 行）的「**重置用第二次**」pick re-click 維持 `clickByTestId("a1-step-pick")` 不動（`selectedKey` 已設、pick 已 enable）。
+  > 此步刻意只動 selectedKey gating：doRun 在 Task 2 仍打 `createRuleRun`、尚無 session gating，故這 11 支在 Task 2 結束時即可回綠。`createRuleRunForSession` 改名與 session 注入留待 **Task 4**（doRun 改 for-session 時）一併處理，避免在 Task 2 提前改動造成 RED 不可解。
 - [ ] 跑 lint 確認沒有殘留未用變數（`pathInput`/`setPathInput` 已移除；`defaultA1IfcPath` 仍被 `MinioDataPage`/A2 用，不可刪 import）：
   ```bash
   cd web-viewer-sample && npm run lint
@@ -438,14 +456,30 @@ A1（`web-viewer-sample/src/console/pages.tsx` 的 `A1GovernanceWorkbenchPage`�
           <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError) || !selectedSession}
             caption={!selectedSession ? t("需先完成轉檔產生 review session（治理檢核走 for-session）", "Conversion must finish to create a review session first (governance runs via for-session)") : "POST /api/governance/rule-runs/for-session/:sessionId"} onClick={doRun}>
   ```
-- [ ] 跑測試 + 型別檢查確認綠：
+- [ ] **遷移既有 doRun 測試以對齊「for-session doRun（需 selectedSession）+ 改打 createRuleRunForSession」**：本 task 後 doRun `if (!state.ifcPath || !selectedSession) return;` 且改打 `createRuleRunForSession`。既有測試仍 mock `createRuleRun`、且 `console.test.tsx` 那批 mock 空 runtime（無 session）→ doRun 不是 early-return 就是打到未 mock 的真 `createRuleRunForSession`（jsdom fetch reject）→ 斷言全 fail。逐項修：
+  - `A1ViewerEmbed.test.tsx` 三支（現第 201 / 234 / 320 行）：把 `vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" })` 改成 `vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_x", status: "queued" })`。這三支用 `fakeRuntimeStatus`（含 active session）→ 本 task 的 auto-PICK effect 已把 step 推到 picked，原本顯式 `(q("a1-step-pick")).click()` 因 `selectedKey===''` 變 no-op 但無害（step 已 picked），doRun 照跑、改走 for-session。
+  - `console.test.tsx` 的 client-render describe `beforeEach`：把現第 1693-1696 行的「空 runtime」mock 改成帶**一個 active session**（讓 `selectedSession` 有值 → auto-PICK + run 鈕 `!selectedSession` gating 通過），並補 `elementMappingForSession` mock（避免有 `usd_prim_path: null` 列的測試觸發真 mapping fetch 在 fake-timer 下 hang）；同步把該 beforeEach 上方「為何 mock 空 runtime 隔離真 fetch」的註解改寫成「提供 1 個 active session 跑 for-session doRun + mock elementMappingForSession 防 hang」：
+    ```ts
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({
+      sessions: { count: 1, active_count: 1, participant_count: 0, items: [
+        { session_id: "review_session_x", status: "active", project_id: "p1", model_version_id: "m1",
+          participant_count: 0, expected_stage_url: "", expected_mapping_url: "", conversion_status: null,
+          kit_instance_ids: [], created_at: "", updated_at: "", first_frame_at: null },
+      ] },
+      configured_endpoints: { viewer: { browser_url_base: "" } }, // viewerOrigin 留空 → 不掛 EmbeddedViewer，斷言面不變
+    } as never);
+    vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({ mock: false, summary: { fake_mapping_count: 0 }, items: [] });
+    ```
+  - `console.test.tsx` 的 11 支：把各自的 `vi.spyOn(governanceClient, "createRuleRun")...`（現第 1736 / 1763 / 1788 / 1822 / 1862 / 1917 / 1946 / 1984 / 2031 / 2094 / 2132 行）一律改名為 `createRuleRunForSession`（`[qr-t2-pollgen-race]` 第 1917 行的 `mockReturnValue(createPending)` deferred 也一併改名，回傳型別相同無須 cast）。Task 2 已加的 `getMinioObjects` mock 與 `pickModel` helper 保留沿用（`pickModel` 設的 `selectedKey` 仍供 reset 測試 re-click pick 用）。
+  > viewerOrigin 留空 → 這批 doRun 測試不掛 EmbeddedViewer、無須在 `console.test.tsx` vi.mock viewer；斷言面（scoreboard / issues / export / bcf）不變。
+- [ ] 跑測試 + 型別檢查確認綠（**含 `console.test.tsx` 回歸**：本 task 改了 doRun，那批 11 支 doRun 測試必須一起綠）：
   ```bash
-  cd web-viewer-sample && npx vitest run src/console/A1ViewerEmbed.test.tsx && npx tsc --noEmit
+  cd web-viewer-sample && npx vitest run src/console/A1ViewerEmbed.test.tsx src/console/console.test.tsx && npx tsc --noEmit
   ```
-  預期：全 passed；tsc exit 0。
+  預期：兩檔全 passed（含遷移後的 3 支 A1ViewerEmbed + 11 支 console doRun 測試改打 `createRuleRunForSession`）；tsc exit 0。
 - [ ] commit：
   ```bash
-  git add web-viewer-sample/src/console/pages.tsx web-viewer-sample/src/console/A1ViewerEmbed.test.tsx
+  git add web-viewer-sample/src/console/pages.tsx web-viewer-sample/src/console/A1ViewerEmbed.test.tsx web-viewer-sample/src/console/console.test.tsx
   git commit -m "feat(console): A1 step② 治理檢核改 for-session + session gating（B2 task4）"
   ```
 
