@@ -45,6 +45,15 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("kit-manager-api");
   });
 
+  it("nav tooltip 走 i18n：zh 下 overview 的 title 為「總覽」而非 data.ts fallback「Overview」", () => {
+    // 預設 _lang=zh（i18n.ts；jsdom 無 localStorage → fallback zh），navText(overview) → NAV_LABEL.overview.biz = 總覽。
+    const html = renderToString(<EdgeConsole />);
+    // 修正後 nav 按鈕 title 取 navText（i18n）而非原始 data.ts label。
+    expect(html).toContain('title="總覽"');
+    // 誠實守門（not-contains）：overview 不應再以英文 fallback 當 tooltip。
+    expect(html).not.toContain('title="Overview"');
+  });
+
   it("Applications 啟動器列出 A1–A10 並帶 provenance", () => {
     const html = renderToString(<AppsPage onOpen={() => {}} />);
     expect(html).toContain("A1");
