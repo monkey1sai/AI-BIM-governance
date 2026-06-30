@@ -301,7 +301,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     expect(box.current).toBeNull(); // EmbeddedViewer 未 render
   });
 
-  it("無 active session → 顯示『需先派發 review session』，不出下拉", async () => {
+  it("無 active session：顯示排入轉檔 UI（a1-no-session wrapper），不出 session 下拉", async () => {
     const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
     empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);

@@ -9,7 +9,6 @@ import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatu
 import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
-import { RealIfcConsolePage } from "./RealIfcConsolePage";
 // VG-01 Task 3：A1 工作台嵌入 live viewer（iframe + vg01 postMessage 橋），跑檢核→3D 高亮一氣呵成。
 import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
@@ -755,10 +754,6 @@ export function A1GovernanceWorkbenchPage() {
         {hl && <span className="ec-note" data-testid="a1-highlight-status" style={{ marginLeft: 6 }}>{highlightResultText(hl)}</span>}
         {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
-
-      <section data-testid="a1-real-ifc-slice" className="ec-a1-inline-slice">
-        <RealIfcConsolePage />
-      </section>
     </>
   );
 }

@@ -428,8 +428,10 @@ describe("edge console honesty smoke", () => {
     // 舊導引字樣已移除（#a1 為 canonical，不再導引去 Issues 頁）。
     expect(a1).not.toContain("BCF 匯出請至 Issues 頁");
     expect(a1).toContain("rule_run_id");
-    expect(a1).toContain('data-testid="a1-real-ifc-slice"');
-    expect(a1).toContain('data-testid="real-ifc-demo-control"');
+    expect(a1).not.toContain('data-testid="a1-real-ifc-slice"');
+    expect(a1).not.toContain('data-testid="real-ifc-demo-control"');
+    expect(a1).toContain('data-testid="a1-minio-select"'); // step① 已改下拉
+    expect(a1).not.toContain('data-testid="a1-step-path"'); // 手打路徑文字框已移除
     expect(a1).toContain('data-testid="a1-step-run"');
     expect(a1).toContain('data-testid="a1-step-issues"');
     expect(a1).toContain('data-testid="a1-step-export"');
