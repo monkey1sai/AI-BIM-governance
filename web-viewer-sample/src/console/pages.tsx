@@ -1393,7 +1393,7 @@ export function SpecPage() {
   return (
     <>
       <h1>{t("設計規格說明", "Design Specification")}</h1>
-      <p className="ec-lead">{t("此頁保留 prototype 到 repo 的落地對照：完整操作台是 frontend product shell；conversion / Kit / WebRTC / MinIO 權威仍在各自 repo 邊界。", "This page keeps the prototype-to-repo mapping: the full console is the frontend product shell; conversion / Kit / WebRTC / MinIO authority still lives within their respective repo boundaries.")}</p>
+      <p className="ec-lead">{t("此頁保留 prototype 到 repo 的落地對照：完整操作台是 frontend product shell；conversion / Kit / WebRTC 權威仍在各自 sub-repo 邊界；MinIO 為 coordinator 外連 S3 來源，非獨立 repo。", "This page keeps the prototype-to-repo mapping: the full console is the frontend product shell; conversion / Kit / WebRTC authority still lives within their respective sub-repo boundaries; MinIO is an outbound S3 source for coordinator, not a separate repo.")}</p>
       <Panel title="Repo boundary contract" prov="asbuilt">
         <Field k="bim-review-coordinator" v={t("session / lifecycle / lease / audit / policy 權威；發 audited intent", "session / lifecycle / lease / audit / policy authority; issues audited intent")} prov="asbuilt" />
         <Field k="bim-streaming-server" v="IFC→USDC conversion authority + Kit/WebRTC/USD runtime" prov="asbuilt" />

@@ -21,6 +21,7 @@ import {
   RuntimePage,
   SemanticViewerPage,
   SessionManagementPage,
+  SpecPage,
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
@@ -34,6 +35,16 @@ import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
 
 describe("edge console honesty smoke", () => {
+  it("SpecPage lead 誠實標 MinIO 為 coordinator 外連 S3、非獨立 repo", () => {
+    const html = renderToString(<SpecPage />);
+    // 修正後 lead 必須含新措辭（MinIO = coordinator 外連 S3 來源）。
+    expect(html).toContain("MinIO 為 coordinator 外連 S3");
+    // 誠實守門（not-contains）：不得再把 MinIO 與有 sub-repo 的服務並列、隱含其有 repo boundary。
+    expect(html).not.toContain("MinIO 權威仍在各自 repo 邊界");
+    // Panel 本體 4 個 repo 不動（回歸：kit-manager-api 仍在）。
+    expect(html).toContain("kit-manager-api");
+  });
+
   it("Applications 啟動器列出 A1–A10 並帶 provenance", () => {
     const html = renderToString(<AppsPage onOpen={() => {}} />);
     expect(html).toContain("A1");
