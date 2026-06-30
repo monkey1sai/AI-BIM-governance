@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorClient, narrowConversionStatus } from "./coordinatorClient";
 
 describe("coordinatorClient conversion control", () => {
   afterEach(() => {
@@ -320,6 +320,16 @@ describe("coordinatorClient conversion control", () => {
     expect(url).toContain("delimiter=%2F");
   });
 
+  it("getMinioFolder 502 時 throw（MinIO 無法連線情境；AC-honesty：error 顯原因可重試，與 getMinioObjects 502 對稱）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "minio_list_failed", detail: "ECONNREFUSED" }), {
+        status: 502,
+        statusText: "Bad Gateway",
+      }),
+    );
+    await expect(coordinatorClient.getMinioFolder()).rejects.toThrow();
+  });
+
   it("conversionTrigger POST 帶 x-dev-token header，回 { status, idempotency_key }", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
@@ -354,5 +364,22 @@ describe("coordinatorClient conversion control", () => {
     await expect(
       coordinatorClient.conversionTrigger("bad/key"),
     ).rejects.toThrow(/key not valid/);
+  });
+});
+
+// Task 6 chip-patch runtime guard：narrowConversionStatus 把 wire 寬 string 收斂成
+// ConversionLedgerStatus；非法值回 null（誠實鐵律：chip-patch 不靜默設成壞狀態）。
+describe("narrowConversionStatus", () => {
+  it("合法 ConversionLedgerStatus 原樣回傳", () => {
+    for (const s of ["detected", "queued", "converting", "ready", "failed"] as const) {
+      expect(narrowConversionStatus(s)).toBe(s);
+    }
+  });
+
+  it("非法 wire status（後端送非預期字串）回 null，呼叫端據以顯 unknown / 不 patch", () => {
+    expect(narrowConversionStatus("dispatched")).toBeNull();
+    expect(narrowConversionStatus("")).toBeNull();
+    expect(narrowConversionStatus("QUEUED")).toBeNull(); // 大小寫敏感：非合法集合成員
+    expect(narrowConversionStatus("undefined")).toBeNull();
   });
 });

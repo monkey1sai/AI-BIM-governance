@@ -53,7 +53,10 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
 
 // POST with x-dev-token header：用於需要 auth 的 coordinator 寫入動作（AC-trigger）。
 // 沿用 jsonPost 的 errorDetail 萃取邏輯（誠實鐵律）。
-async function jsonPostAuthed<T>(path: string, body: unknown): Promise<T> {
+// body 比照 jsonPut 收斂為 Record<string, unknown>（不再 `?? {}` fallback）：對 mutation 而言
+// null body 靜默變空物件很危險（後端誤判欄位缺漏回 400）；型別層即阻擋 null/undefined body 的呼叫，
+// 強制每個寫入動作的呼叫端明確傳物件。
+async function jsonPostAuthed<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
     method: "POST",
     headers: {
@@ -61,7 +64,7 @@ async function jsonPostAuthed<T>(path: string, body: unknown): Promise<T> {
       "Content-Type": "application/json",
       "x-dev-token": DEV_AUTH_TOKEN,
     },
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
@@ -247,6 +250,11 @@ export interface SessionCloseResponse {
   status: string;
 }
 
+// Task 5 MinIO 閉環 Phase 1：ConversionLedger 的 status 值域（後端 ConversionLedgerRecord.status
+// 權威 enum）。單一來源供 ConversionRecord 與 ConversionTriggerResponse 共用，避免兩處各寫 union
+// 而漂移；UI chip-patch 對 wire 的寬型別 status 做 runtime narrow 時以此為合法集合。
+export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";
+
 // Task 5 MinIO 閉環 Phase 1：GET /api/conversion/records 回應中的紀錄形狀。
 // 對齊後端 ConversionLedgerRecord（省略前端用不到的 object_key/bucket/correlation_id）。
 export interface ConversionRecord {
@@ -256,7 +264,7 @@ export interface ConversionRecord {
   category: string;
   external_model_version_id: string;
   conversion_job_id: string | null;
-  status: "detected" | "queued" | "converting" | "ready" | "failed";
+  status: ConversionLedgerStatus;
   usdc_key: string | null;
   coverage_report: unknown | null;
   detected_at: string;
@@ -302,9 +310,29 @@ export interface MinioFolderListing {
 
 // Task 6：POST /api/conversion/trigger 回應形狀。
 // 成功回 {status, idempotency_key}，前端直接 patch chip（零額外 round-trip）。
+// status 的 wire 型別是寬 string（後端 ManualIntakeResult.status:string / triggerManualIntake
+// 回 ledger.status）；ledger 實際只會是 ConversionLedgerStatus 之一，但 wire 無法在 compile time
+// 擋住非法值。故 chip-patch 消費端 MUST 先用 narrowConversionStatus() 做 runtime narrow，
+// 不可直接把 wire status 當合法 chip 狀態寫入（誠實鐵律：非法值顯 unknown，不靜默設成壞狀態）。
 export interface ConversionTriggerResponse {
   status: string;
   idempotency_key: string;
+}
+
+// Task 6 chip-patch runtime guard：把 wire 的寬 string status narrow 成 ConversionLedgerStatus。
+// 非合法值（後端送非預期字串、或 enum 演進尚未對齊前端）回 null，呼叫端據以顯 unknown / 不 patch，
+// 而非靜默把 chip 設成非法狀態。供 Task 6 UI 消費 ConversionTriggerResponse / ConversionRecord 用。
+const CONVERSION_LEDGER_STATUSES: readonly ConversionLedgerStatus[] = [
+  "detected",
+  "queued",
+  "converting",
+  "ready",
+  "failed",
+];
+export function narrowConversionStatus(status: string): ConversionLedgerStatus | null {
+  return (CONVERSION_LEDGER_STATUSES as readonly string[]).includes(status)
+    ? (status as ConversionLedgerStatus)
+    : null;
 }
 
 export const coordinatorClient = {
