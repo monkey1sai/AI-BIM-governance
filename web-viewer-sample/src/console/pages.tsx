@@ -1156,12 +1156,23 @@ export function KitGpuFleetPage() {
 
 // ledger chip 狀態映射（與後端 ledgerChipStatus.ts 同義；前端內聯避免跨 monorepo tsconfig boundary）。
 // records 來自 getConversionRecords()；無紀錄 → 'untracked'（顯「未轉（含 baseline）」），不臆測。
+// 命中 → 後端 ConversionRecord.status 是寬 wire string（enum 演進 / 資料遷移殘留可能送非預期值），
+// 故與 confirmTrigger 同樣先過 narrowConversionStatus()：非法值退 'unknown'（MINIO_CHIP_LABEL 有對應
+// 標籤），不讓原始 wire 字串經 chip render 的 `?? st` fallback 外洩（誠實鐵律：不洩漏 wire 字串）。
+//
+// quality finding Important #1：getConversionRecords 有 limit（後端 parseListLimit 上限 100）。當 ledger
+// 紀錄數超出回傳窗（recordsTruncated＝count > items.length）時，超窗的舊物件在 records 中查無 key——
+// 這是「有紀錄但前端看不到」，不可靜默當『未轉』（違反 AC-chip『無紀錄才標未轉、不臆測』）。
+// 故 miss 且 recordsTruncated 時退 'indeterminate'（顯『狀態未明』），誠實揭露查詢上限造成的不確定。
 function ledgerChipStatus(
   idempotencyKey: string,
   records: ReadonlyArray<{ idempotency_key: string; status: string }>,
+  recordsTruncated: boolean,
 ): string {
   const hit = records.find((r) => r.idempotency_key === idempotencyKey);
-  return hit ? hit.status : "untracked";
+  if (hit) return narrowConversionStatus(hit.status) ?? "unknown";
+  // 查無紀錄：records 截斷時誠實顯『狀態未明』（可能只是超出查詢上限），未截斷才是真『未轉』。
+  return recordsTruncated ? "indeterminate" : "untracked";
 }
 
 // chip 狀態本地化標籤（無紀錄＝untracked → 未轉；其餘對應 ledger status enum）。
@@ -1176,6 +1187,8 @@ const MINIO_CHIP_LABEL: Record<string, string> = {
   untracked: t("未轉（含 baseline 既有檔）", "not converted (incl. baseline)"),
   not_queued: t("未進佇列", "not queued"), // AC-chip 列舉狀態：偵測到但尚未進轉檔佇列
   unknown: t("未知狀態", "unknown"), // narrowConversionStatus 退回值：後端送非預期 status 時誠實顯未知
+  // quality finding Important #1：records 截斷且查無 key 時的誠實退路（≠『未轉』，避免靜默誤報）。
+  indeterminate: t("狀態未明（紀錄超出查詢上限）", "indeterminate (records exceed query limit)"),
 };
 
 function roleLabel(role: import("./coordinatorClient").MinioObject["role"]): string {
@@ -1193,6 +1206,9 @@ function roleClass(role: import("./coordinatorClient").MinioObject["role"]): str
 export function MinioDataPage() {
   const [folder, setFolder] = useState<import("./coordinatorClient").MinioFolderListing | null>(null);
   const [records, setRecords] = useState<ConversionRecord[]>([]);
+  // quality finding Important #1：records 是否被回傳上限截斷（count > items.length）。截斷時查無 key
+  // 的物件不可當『未轉』，須顯『狀態未明』（chip 經 ledgerChipStatus 退 'indeterminate'）。
+  const [recordsTruncated, setRecordsTruncated] = useState(false);
   const [prefix, setPrefix] = useState(""); // 當前層 prefix（spec §2.5：點資料夾換 prefix）
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -1215,8 +1231,11 @@ export function MinioDataPage() {
   }, []);
   const loadRecords = useCallback(async () => {
     try {
-      const r = await coordinatorClient.getConversionRecords(50);
+      // quality finding Important #1：取後端 parseListLimit 允許的上限（100；請求更大值會被夾到 100）。
+      // r.count 是 slice 前的總筆數，r.items.length 是回傳窗大小；count > items.length 即被截斷。
+      const r = await coordinatorClient.getConversionRecords(100);
       setRecords(r.items);
+      setRecordsTruncated(r.count > r.items.length);
     } catch {
       /* chip 缺資料時誠實顯未轉 */
     }
@@ -1251,11 +1270,17 @@ export function MinioDataPage() {
     setTriggerBusy(true);
     try {
       const res = await coordinatorClient.conversionTrigger(pendingKey, reason || "manual trigger from #minio");
-      // coordinatorClient.ts:315 MUST：wire status 是寬 string，patch 前先 runtime narrow；
-      // 非法值（後端送非預期字串）退 'unknown' 顯未知，不靜默把 chip 設成壞狀態（誠實鐵律）。
-      const narrowed = narrowConversionStatus(res.status) ?? "unknown";
-      setChipOverride((p) => ({ ...p, [res.idempotency_key]: narrowed })); // patch chip 為 detected/queued（非法值顯未知）
-      setPendingKey(null); // 成功才關 dialog
+      // coordinatorClient.ts:315 MUST：wire status 是寬 string，patch 前先 runtime narrow。
+      const narrowed = narrowConversionStatus(res.status);
+      if (narrowed === null) {
+        // quality finding Important #2：後端回非預期 status 時，不可把 chipOverride 鎖成 'unknown'——
+        // 'unknown' 不在觸發鈕白名單，且 chipOverride 無清除路徑 → 鈕被永久 disable，使用者只能 reload。
+        // 改：不寫 chipOverride（chip 續讀 ledgerChipStatus、觸發鈕維持可按）+ 顯 inline 警告、dialog 不關。
+        setTriggerErr(t("後端回傳未知狀態，未更新狀態標籤；請 reload 後再試。", "Backend returned an unknown status; the status chip was not updated. Please reload and retry."));
+        return; // 不關 dialog、不 patch chip（finally 仍解除 busy）
+      }
+      setChipOverride((p) => ({ ...p, [res.idempotency_key]: narrowed })); // patch chip 為 detected/queued 等合法值
+      setPendingKey(null); // 成功且合法狀態才關 dialog
     } catch (e) {
       setTriggerErr(String(e)); // 失敗顯 inline error（actionErr）、chip 不變、dialog 不關
     } finally {
@@ -1321,7 +1346,7 @@ export function MinioDataPage() {
               <ul className="ec-tree" style={{ listStyle: "none", paddingLeft: 0 }}>
                 {folder.objects.map((obj) => {
                   const idk = obj.idempotency_key;
-                  const st = chipOverride[idk] ?? ledgerChipStatus(idk, records);
+                  const st = chipOverride[idk] ?? ledgerChipStatus(idk, records, recordsTruncated);
                   return (
                     <li key={obj.key} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                       {/* role label（與 intake 三段脫鉤，純副檔名） */}
@@ -1339,11 +1364,13 @@ export function MinioDataPage() {
                           <span data-testid={`minio-chip-${idk}`} className="ec-prov">
                             {MINIO_CHIP_LABEL[st] ?? st}
                           </span>
-                          {/* 7c：一鍵觸發鈕（僅未轉/failed 可按；ready/進行中 disabled） */}
+                          {/* 7c：一鍵觸發鈕（未轉/failed 可按；ready/進行中 disabled）。
+                              finding #1：'indeterminate'（records 截斷查無 key）也可按——觸發冪等（後端
+                              mw_<hash16> 去重），讓使用者在狀態未明時仍能主動觸發/重轉，不被靜默鎖死。 */}
                           <Btn
                             data-testid={`minio-trigger-${idk}`}
                             caption="POST /api/conversion/trigger"
-                            disabled={!["untracked", "failed"].includes(st)}
+                            disabled={!["untracked", "failed", "indeterminate"].includes(st)}
                             onClick={() => { setTriggerErr(null); setPendingKey(obj.key); }}
                           >
                             {t("觸發轉檔", "Trigger")}

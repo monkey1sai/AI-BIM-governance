@@ -146,7 +146,11 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]')?.textContent).toContain("排隊");
   });
 
-  it("[7c] 後端回非預期 status → chip patch 經 narrowConversionStatus 退『未知』，不顯原始 wire 字串", async () => {
+  // quality finding Important #2：後端回非預期 status（narrowConversionStatus → null）時，
+  // 不可把 chipOverride 永久寫成 'unknown'——否則觸發鈕被永久 disable（'unknown' 不在白名單），
+  // 而 chipOverride 在元件生命週期內無清除路徑，使用者只能 reload。修法：narrowed===null 時
+  // 不寫 chipOverride（chip 續讀 ledgerChipStatus、觸發鈕維持可按）+ 顯 inline 警告。
+  it("[7c][finding-#2] 後端回非預期 status → 不鎖 chipOverride，chip 續顯 ledger 衍生值、觸發鈕仍可按、顯 inline 警告", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
     });
@@ -163,9 +167,62 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     const confirmBtn = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
     await act(async () => { confirmBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
+    // 1) inline 警告顯示（dialog 內 actionErr），不洩漏原始 wire 字串。
+    const actionErr = container.querySelector('[data-testid="intent-action-error"]');
+    expect(actionErr).toBeTruthy();
+    expect(actionErr?.textContent).not.toContain("totally_bogus_status");
+    // 2) chip 未被鎖成 'unknown'：續讀 ledgerChipStatus（無紀錄＝未轉），不顯『未知』。
     const chip = container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]');
-    expect(chip?.textContent).not.toContain("totally_bogus_status"); // 不洩漏非法 wire 字串（誠實鐵律）
-    expect(chip?.textContent).toMatch(/未知/);
+    expect(chip?.textContent).not.toContain("totally_bogus_status");
+    expect(chip?.textContent).toMatch(/未轉/);
+    expect(chip?.textContent).not.toMatch(/未知/);
+    // 3) 觸發鈕未被永久 disable（使用者仍可 retry，不必 reload 整頁）。
+    const triggerAfter = container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]') as HTMLButtonElement;
+    expect(triggerAfter?.disabled).toBe(false);
+  });
+
+  // quality finding Important #1：loadRecords 僅取最新 N 筆；ledger 超出上限時，超窗的舊 .ifc
+  // 物件在 records 中查無 idempotency_key → 被靜默當『未轉』（違反 AC-chip『無紀錄才標未轉、不臆測』，
+  // 因為實際是「有紀錄但前端看不到」）。修法：records 截斷（count > items.length）且該物件不在窗內時，
+  // chip 顯誠實『狀態未明』而非『未轉』，且觸發鈕維持可按（觸發冪等、安全）。
+  it("[7b][finding-#1] records 截斷（count>items 且物件不在窗內）→ chip 顯『狀態未明』非『未轉』，觸發鈕可按", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
+    });
+    // ledger 實際有 200 筆（count），但 route slice 後只回 100 筆（items），且此物件的 key 不在回傳窗內。
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({
+      count: 200,
+      items: [{ idempotency_key: "mw_some_other_key_99", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "999", conversion_job_id: null, status: "ready", usdc_key: null, coverage_report: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    const chip = container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]');
+    // 截斷下查無紀錄≠『未轉』：誠實顯『狀態未明』，不臆測（AC-chip）。
+    expect(chip?.textContent).toMatch(/狀態未明|未明/);
+    expect(chip?.textContent).not.toMatch(/未轉/);
+    // 觸發鈕維持可按（觸發冪等；使用者仍可主動觸發/重轉）。
+    const triggerBtn = container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]') as HTMLButtonElement;
+    expect(triggerBtn?.disabled).toBe(false);
+  });
+
+  // finding #1 對照組：records 未截斷（count===items.length）時，查無紀錄仍誠實標『未轉』（原行為不變）。
+  it("[7b][finding-#1] records 未截斷且物件不在窗內 → chip 維持『未轉』（不誤報狀態未明）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({
+      count: 1,
+      items: [{ idempotency_key: "mw_some_other_key_99", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "999", conversion_job_id: null, status: "ready", usdc_key: null, coverage_report: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    const chip = container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]');
+    expect(chip?.textContent).toMatch(/未轉/);
+    expect(chip?.textContent).not.toMatch(/狀態未明/);
   });
 
   it("[7a] MinIO 未設定（count=0 + note）→ empty 態 (a)：顯『MinIO 未設定』文案", async () => {
@@ -198,6 +255,35 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("/api/minio/objects");
+  });
+
+  // reviewer Major（自 console.test.tsx 遷入）：error 態須有使用者可觸發的重試（不必整頁 reload）。
+  // 第一次 getMinioFolder() 失敗 → 顯誠實 error + 重試鈕；點重試 → 重打 → 成功渲染資料夾（error 態清除）。
+  it("[7a] error 態點「重試」→ 重打 getMinioFolder() → 成功渲染資料夾（不必整頁 reload）", async () => {
+    const spy = vi
+      .spyOn(coordinatorClient, "getMinioFolder")
+      .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
+      .mockResolvedValueOnce({
+        bucket: "bim-control", prefix: "",
+        folders: [{ prefix: "東勢區許良宇紀念圖書館/", has_source_ifc: true }],
+        objects: [], count: 0,
+      });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); });
+    // error 態顯示錯誤資訊
+    expect(container.textContent).toContain("/api/minio/objects");
+    expect(container.textContent).toContain("502 Bad Gateway");
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="minio-tree-retry"]');
+    expect(retry).not.toBeNull();
+    await act(async () => { retry!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.textContent).toContain("東勢區許良宇紀念圖書館"); // 重試成功 → 真資料夾渲染
+    expect(container.textContent).not.toContain("502 Bad Gateway"); // error 態已清除
+    expect(spy).toHaveBeenCalledTimes(2); // 真的重打了一次
   });
 
   it("[7a] 頁首保留『唯讀 intake 來源視圖，非 metadata 權威』誠實字樣", async () => {
