@@ -97,8 +97,8 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 
 ### 3.2 `#conv` 揭露設計（逐點）
 
-1. 把現況擠在單一 Field（`pages.tsx:866`）的 baseline/seen/triggered/skipped **拆成獨立 Field + 解釋文案**：`baseline_count`＝「既有 `model.ifc` 在首輪被當基準吸收、**by-design 刻意不自動轉檔**」；`triggered_total`＝「自 baseline 後真正新觸發的上傳數」。避免把 `triggered_total=0` 誤讀成故障。
-2. 對 baseline 既有 `model.ifc` 標註原因（首輪被當基準吸收）。
+1. 把現況擠在單一 Field（`pages.tsx:866`）的 baseline/seen/triggered/skipped **拆成獨立 Field + 解釋文案**：`baseline_count`＝「watcher 首輪 list 到的規約檔（可解析 `model.ifc`）數，**純診斷**」（⚠ 原「被當基準吸收、by-design 刻意不自動轉檔」語意**已被本案 §3.4 auto-enroll 取代**：首輪即對 ledger 無紀錄者自動觸發轉檔，見 line 103）；`triggered_total`＝「watcher 累計真正觸發 intake 的數」。避免把 `triggered_total=0` 誤讀成故障。
+2. 對 baseline 既有 `model.ifc` 標註 §3.4 auto-enroll 語意（首輪即自動觸發、ledger 無紀錄者自動補轉；**非**「不自動轉檔」）。
 3. 列 spec 認可的兩條補救：(i) **重新上傳改 etag** → watcher 下一輪自動觸發；(ii) **手動 webhook intake** 直打 `POST /api/external/ifc-ready`（帶 webhook secret + presigned GET URL）。
 4. 誠實註記（**已被本案 §3.3/§3.4 取代，`#conv` 文案不再標 NOT BUILT**）：原現狀為「repo 內無一鍵觸發 UI」，本案 §3.3 新增一鍵觸發鈕、§3.4 改 watcher 為 ledger 去重自動補轉，故 UI **不**保留「NOT BUILT」字樣。**⚠ spec 矛盾修正（P1 plan reviewer 抓到）：原「重啟也救不了既存自動轉檔」警語在 §3.4 全自動 auto-enroll 下已 FALSE**（watcher 改查持久 ledger、既有未轉檔下一輪自動補轉、重啟命中 ledger 不重觸發），故 `#conv` UI **不得**保留該過時警語——保留＝與 §3.4 自相矛盾的誠實違規。
 5. **三視圖一致性基準明示**（避免違反閉環 spec `:95-97`）：`baseline_count=3` **只算 `*/model.ifc` 規約檔、非 bucket 全量 527**；「`#minio` 527 物件 vs watcher 只認 3 個 vs ledger=0」的一致性基準 = **「可解析 IFC 數」非「物件總數」**，文案須講清楚，否則使用者誤以為 watcher 漏看 524 物件。
@@ -163,9 +163,9 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 - [ ] **AC-D2：** 點到含大量 chunk 的子樹（如 `…/geometries_chunks/`）時，該層以**單一可點擊資料夾節點**呈現，API 回應 `objects` **不含** chunk 葉物件、`folders[]` 含該 prefix；資料夾節點旁**不顯示寫死的物件數**。**超 1000 子前綴/物件的層不截斷**（`listMinioFolder` while-loop 全拉、處理 `IsTruncated`）。
 - [ ] **AC-badge：** 導到含 `model.ifc` 的版本層，該物件旁顯示『專案(中文)/種類/版本』語意 badge（`deriveIntakeFromKey`，≥3 段才掛）；非 `model.ifc` 不掛。raw 樹逐層顯示完整中文 key。
 - [ ] **AC-honesty：** `#minio` 維持 loading/error/empty/populated 四態，error 顯原因+可重試，無寫死/示意樹偽裝真資料；list 回應不含 presigned URL；頁首誠實字樣保留；pending 標記只掛同層可見 `.ifc` 且無 `.usdc` 的版本層。**empty 態分兩種文案**：(a) MinIO 未設定（後端回 `note`，200）；(b) 已設定但當前 prefix 無物件（`folders=[] objects=[]`）——不可混用「MinIO watch 未設定」誤導文案（修現況 `pages.tsx:1234` 兩因混寫）。
-- [ ] **AC5：** `#conv` 分別呈現 `baseline_count` 與 `triggered_total`，標註 baseline 既有 `model.ifc` 原因（by-design 不自動轉檔），並明示一致性基準=可解析 IFC 數(3)非物件總數(527)。
+- [ ] **AC5：** `#conv` 分別呈現 `baseline_count` 與 `triggered_total`，`baseline_count` 標註為**純診斷** ＋ §3.4 auto-enroll 語意（首輪即對 ledger 無紀錄之既有 `model.ifc` 自動觸發轉檔，**非** by-design 不轉檔；舊「不自動轉檔」語意已被 §3.4 取代，見 line 103），並明示一致性基準=可解析 IFC 數(3)非物件總數(527)。
 - [ ] **AC6：** `#conv` (a) 保留**說明文案**列兩條 spec 認可補救（重新上傳改 etag／手動 webhook `POST /api/external/ifc-ready`，**僅文字說明**）；(b) 實際可點擊入口＝AC-trigger 的一鍵觸發鈕（走 `POST /api/conversion/trigger`）。兩者**不重複實作**：`/api/external/ifc-ready` 僅文字、UI 觸發走 `/api/conversion/trigger`。
-- [ ] **AC-chip：** `#minio` `.ifc` 物件旁顯示 ledger 衍生狀態 chip（`ready`/`detected`/`queued`/`converting`/`failed`/`未轉(含 baseline)`/`未進佇列`），值取自 `/api/conversion/records`，無紀錄誠實標『未轉』不臆測。
+- [ ] **AC-chip：** `#minio` `.ifc` 物件旁顯示 ledger 衍生狀態 chip（`ready`/`detected`/`queued`/`converting`/`failed`/`未轉(無 ledger 紀錄)`/`未進佇列`），值取自 `/api/conversion/records`，無紀錄誠實標『未轉』不臆測。
 - [ ] **AC-trigger：** 對「未轉/failed」`model.ifc`，`#minio`（與/或 `#conv`）有「觸發轉檔」鈕，走 intent→confirm→audited；按下打 `POST /api/conversion/trigger`（**帶 `x-dev-token`，拒無 auth → 401/403**），coordinator server-side 生 presigned + 獨立 `triggerManualIntake` 寫 ledger；**成功 response 帶回 `{status, idempotency_key}`**、前端直接 patch chip 為 `detected/queued`；**失敗顯 inline error、chip 不變**；同 key 重觸發冪等不重複建 job；按鈕/回應**不洩漏 presigned URL**。
 - [ ] **AC7（改）：** watcher dedup 由 in-memory baseline **刻意改為持久 ledger 去重**（§3.4）——`deriveIntakeFromKey`/`idempotencyKeyFor`/ledger schema **不改**，改的是 tick「要不要觸發」的判定來源。實作前跑 GitNexus `impact`、commit 前 `detect_changes`，確認 blast radius 限於 watcher tick dedup、未波及 intake/dispatch 下游。
 - [ ] **AC-autoenroll：** 既有 ledger 無紀錄的 `*/model.ifc`（含原 baseline 3 檔）在 watcher 下一輪 tick **自動觸發 intake**、ledger 落帳；**coordinator 重啟後不重觸發**已落帳者（持久 ledger 命中 `mw_<hash16>`）；只有**新 key/新 etag** 才觸發。可由「重啟 coordinator → ledger count 不暴增、無重複 job」驗證。

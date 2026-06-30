@@ -1011,11 +1011,14 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     expect(panel!.textContent).toContain("首輪 list 到的規約檔數");
     expect(panel!.textContent).not.toContain("首輪基準");
 
-    // baseline by-design 說明（首輪被當基準吸收、刻意不自動轉檔）
+    // baseline 說明（§3.4 auto-enroll，supersede 舊「首輪基準吸收、刻意不自動轉檔」）：須驗 auto-enroll
+    // 語意，不得鎖死過時的「不自動轉檔」假文案（P5 critic：UI prose 對 live backend 客觀不得為假）。
     const explain = panel!.querySelector('[data-testid="conv-baseline-explain"]');
     expect(explain).not.toBeNull();
     expect(explain!.textContent).toContain("首輪");
-    expect(explain!.textContent).toContain("基準");
+    expect(explain!.textContent).toContain("自動觸發"); // §3.4：首輪即對 ledger 無紀錄物件自動觸發（auto-enroll）
+    expect(explain!.textContent).toContain("純診斷"); // baseline_count 純診斷，不再代表「不轉檔」
+    expect(explain!.textContent).not.toContain("不自動轉檔"); // 反鎖：禁過時假文案回歸
 
     // 一致性基準=可解析 IFC 數非物件總數（明示 527 vs 3 不是 watcher 漏看）
     const basis = panel!.querySelector('[data-testid="conv-consistency-basis"]');

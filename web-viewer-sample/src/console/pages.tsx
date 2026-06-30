@@ -920,12 +920,14 @@ export function ConversionSchedulingPage() {
                 v={`${mw.seen_count ?? 0} / ${mw.skipped_malformed_total ?? 0}`}
                 prov="asbuilt"
               />
-              {/* baseline by-design 說明：首輪 list 到的既有 model.ifc 被當基準吸收、刻意不自動轉檔
-                  （spec §3.1）；此處的 baseline 數＝首輪 list 到的規約檔數（可解析 model.ifc），非物件總數。 */}
+              {/* baseline 說明（spec §3.4 auto-enroll，supersede 舊 §3.1 baseline 吸收）：baseline_count＝
+                  watcher 首輪 list 到的規約檔（可解析 model.ifc）數，**純診斷**——§3.4 已移除「首輪 baseline
+                  不觸發」特例，首輪即對 ledger 無紀錄的既有 model.ifc 自動觸發轉檔（auto-enroll 補轉），
+                  baseline_count 不再代表「不轉檔」。 */}
               <p className="ec-note" data-testid="conv-baseline-explain">
                 {t(
-                  "baseline＝watcher 首輪 list 到的規約檔（可解析 model.ifc）數；首輪被當基準吸收、by-design 刻意不自動轉檔（防對既有大 bucket 爆量誤觸發）。triggered 才是自 baseline 後真正新上傳/改 etag 觸發的數量——triggered=0 不代表故障。",
-                  "baseline = number of convention files (parseable model.ifc) the watcher listed in its first round; the first round is absorbed as a baseline and by-design does NOT auto-convert (to avoid mass mis-triggering on an existing large bucket). triggered counts genuinely new uploads / etag changes since the baseline — triggered=0 does not mean a fault.",
+                  "baseline＝watcher 首輪 list 到的規約檔（可解析 model.ifc）數，純診斷。§3.4 全自動 auto-enroll：首輪即對 ledger 無紀錄的既有 model.ifc 自動觸發轉檔（既有未轉檔自動補轉；重啟命中持久 ledger 不重觸發，不風暴）。triggered＝累計真正觸發數（含首輪 auto-enroll）——triggered=0 僅代表尚無 ledger 無紀錄的可解析檔，非故障。",
+                  "baseline = number of convention files (parseable model.ifc) the watcher listed in its first round; diagnostic only. §3.4 full auto-enroll: the first round auto-triggers conversion for existing model.ifc with no ledger record (back-fills existing un-converted files; a restart hits the persistent ledger and does not re-trigger, no storm). triggered = cumulative genuinely-triggered count (including first-round auto-enroll) — triggered=0 only means there is no parseable file lacking a ledger record yet, not a fault.",
                 )}
               </p>
               {/* 三視圖一致性基準（spec AC5）：明示「可解析 IFC 數」非「物件總數」，避免使用者把
@@ -1259,7 +1261,8 @@ export function KitGpuFleetPage() {
 // 誠實鐵律：folders/objects 皆真實 list；無 ledger 紀錄誠實顯『未轉』不臆測；不洩漏 presigned URL。
 
 // ledger chip 狀態映射（與後端 ledgerChipStatus.ts 同義；前端內聯避免跨 monorepo tsconfig boundary）。
-// records 來自 getConversionRecords()；無紀錄 → 'untracked'（顯「未轉（含 baseline）」），不臆測。
+// records 來自 getConversionRecords()；無紀錄 → 'untracked'（顯「未轉（無 ledger 紀錄）」），不臆測。
+// §3.4 auto-enroll 後既有檔多已自動觸發落 ledger queued，untracked 僅剩真正無紀錄者（首輪前/watcher 關）。
 // 命中 → 後端 ConversionRecord.status 是寬 wire string（enum 演進 / 資料遷移殘留可能送非預期值），
 // 故與 confirmTrigger 同樣先過 narrowConversionStatus()：非法值退 'unknown'（MINIO_CHIP_LABEL 有對應
 // 標籤），不讓原始 wire 字串經 chip render 的 `?? st` fallback 外洩（誠實鐵律：不洩漏 wire 字串）。
@@ -1289,7 +1292,7 @@ const MINIO_CHIP_LABEL: Record<string, string> = {
   converting: t("轉檔中", "converting"),
   ready: t("完成", "ready"),
   failed: t("失敗", "failed"),
-  untracked: t("未轉（含 baseline 既有檔）", "not converted (incl. baseline)"),
+  untracked: t("未轉（無 ledger 紀錄）", "not converted (no ledger record)"),
   // not_queued＝spec AC-chip『未進佇列』。誠實註記：現行後端 ConversionLedgerStatus 只 5 值
   // （detected/queued/converting/ready/failed，conversionLedger.ts:11），不產生 not_queued——
   // 「偵測到未進佇列」目前由 detected 涵蓋；此 key 為 spec AC-chip 完整性保留。若後端日後細分出
