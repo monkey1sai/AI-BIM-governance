@@ -734,6 +734,11 @@ export function ConversionSchedulingPage() {
   const [pendingTriggerKey, setPendingTriggerKey] = useState<string | null>(null);
   const [triggerBusy, setTriggerBusy] = useState(false);
   const [triggerErr, setTriggerErr] = useState<string | null>(null);
+  // quality finding Important #1：與 runAction 的 actionBusyRef 同步防重入 pattern 對齊。
+  // setTriggerBusy(true) 是非同步 state，confirm 鈕 disabled={triggerBusy} 要等下一次 render 才生效；
+  // 同一事件循環雙擊 confirm 會送出兩個 POST /api/conversion/trigger（失敗路徑下第二次 catch 會覆蓋
+  // 第一次 triggerErr、loadRecords 也可能被競爭觸發兩次）。ref 在 React state 更新前同步攔截第二次呼叫。
+  const triggerBusyRef = useRef(false);
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
   // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
@@ -828,20 +833,30 @@ export function ConversionSchedulingPage() {
     }
   }, [pendingAction, load]);
   // Task 8（AC6(b)）：ledger 列「觸發轉檔」鈕的 confirm handler。走 POST /api/conversion/trigger
-  // （帶 x-dev-token），非 /api/external/ifc-ready。非樂觀：成功後重抓 ledger 取真狀態（不靠樂觀
-  // patch chip，#conv ledger 列直接重抓 records 即可反映 detected/queued）；失敗顯 inline error、
+  // （帶 x-dev-token），非 /api/external/ifc-ready。成功 → trigger response 帶回 {status, idempotency_key}，
+  // 先樂觀 patch 對應 ledger 列為 detected/queued（spec §3.3 line 118「零額外 round-trip，不靠 polling」，
+  // 避免重抓造成 ledger 表閃爍/消失），再非同步 loadRecords() 做最終對齊；失敗顯 inline error、
   // 不關 dialog、ledger 不變。IntentDialog 契約：成功才 setPendingTriggerKey(null) 關 dialog。
   const confirmTrigger = useCallback(async (reason: string) => {
     if (!pendingTriggerKey) return;
+    if (triggerBusyRef.current) return; // finding #1：同步攔截重入（React state 尚未更新前）
+    triggerBusyRef.current = true;
     setTriggerErr(null);
     setTriggerBusy(true);
     try {
-      await coordinatorClient.conversionTrigger(pendingTriggerKey, reason || "manual trigger from #conv ledger");
-      await loadRecords();          // 證據型刷新：重抓 ledger 真狀態（detected/queued 反映於列）
+      const res = await coordinatorClient.conversionTrigger(pendingTriggerKey, reason || "manual trigger from #conv ledger");
+      // finding #2：成功先樂觀 patch（spec §3.3）。wire status 是寬 string，patch 前先 runtime narrow——
+      // 非法值（後端送非預期 status / enum 演進未對齊）不靜默改壞列狀態，續走 loadRecords() 由真值對齊。
+      const narrowed = narrowConversionStatus(res.status);
+      if (narrowed !== null) {
+        setRecords((prev) => prev.map((r) => (r.idempotency_key === res.idempotency_key ? { ...r, status: narrowed } : r)));
+      }
+      void loadRecords();           // 最終對齊：非同步重抓 ledger 真狀態（不阻塞樂觀 patch 的即時反饋）
       setPendingTriggerKey(null);   // 成功才關 dialog
     } catch (e) {
       setTriggerErr(`${t("觸發轉檔失敗：", "Trigger conversion failed: ")}${String(e)}`); // 失敗顯 inline error、ledger 不變、不關 dialog
     } finally {
+      triggerBusyRef.current = false;
       setTriggerBusy(false);
     }
   }, [pendingTriggerKey, loadRecords]);

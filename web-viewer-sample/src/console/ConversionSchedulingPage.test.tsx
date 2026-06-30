@@ -1054,6 +1054,86 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
   });
 
+  // quality finding Important #2：成功 → trigger response 帶回 {status, idempotency_key}，
+  // 前端先樂觀 patch 對應 ledger 列為 detected/queued（零額外 round-trip，不靠 polling；spec §3.3 line 118），
+  // 再非同步 loadRecords() 做最終對齊。鎖住「樂觀 patch」：把 mount 後的 reconciliation 重抓設成 pending
+  // （永不 resolve），讓「失敗→已偵測」的唯一可能來源是同步 setRecords 樂觀 patch，而非重抓回填。
+  it("AC6(b) 成功：trigger 回 {status,idempotency_key} → 先樂觀 patch ledger 列為 detected（不靠重抓）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    // 第一次（mount）回 failedRec；第二次（成功後 reconciliation）回 pending，永不 resolve，
+    // 以證明列上的 detected 來自樂觀 patch 而非重抓回填。
+    let recCall = 0;
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockImplementation(() => {
+      recCall += 1;
+      if (recCall === 1) return Promise.resolve({ count: 1, items: [failedRec] });
+      return new Promise(() => {}); // reconciliation 掛住：列若顯 detected 只能來自樂觀 patch
+    });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
+      status: "detected", idempotency_key: "mw_failed0123456789",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 觸發前該列顯「失敗」（failed label）
+    const ledgerPanel = container.querySelector('[data-testid="conv-ledger-panel"]');
+    expect(ledgerPanel).not.toBeNull();
+    expect(ledgerPanel!.textContent).toContain("失敗");
+
+    const triggerBtn = container.querySelector('[data-testid="conv-ledger-trigger-mw_failed0123456789"]') as HTMLButtonElement;
+    expect(triggerBtn).toBeTruthy();
+    await act(async () => { triggerBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 樂觀 patch：對應 idempotency_key 命中的列 status 立即更新為 detected（label「已偵測」），
+    // 即使 reconciliation 重抓仍 pending（未回填）。原 failed label 不再出現於該列。
+    const patchedPanel = container.querySelector('[data-testid="conv-ledger-panel"]');
+    expect(patchedPanel!.textContent).toContain("已偵測");
+    expect(patchedPanel!.textContent).not.toContain("失敗");
+    // 成功仍關 dialog（不因 reconciliation pending 而卡住）
+    expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
+  });
+
+  // quality finding Important #1：confirmTrigger 需與 runAction 的 actionBusyRef 同步防重入 pattern 對齊。
+  // setTriggerBusy(true) 是非同步 state，confirm 鈕 disabled={triggerBusy} 要等下一次 render 才生效；
+  // 同一事件循環雙擊 confirm 會送出兩個 POST /api/conversion/trigger。鎖住：同步連點兩次 confirm，
+  // conversionTrigger 只應被呼叫一次（triggerBusyRef 在 React state 更新前同步攔截第二次）。
+  it("AC6(b) 防重入：同步雙擊 confirm 只送出一個 conversionTrigger（triggerBusyRef 同步守門）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedRec] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    // conversionTrigger 回一個延遲 resolve 的 promise，模擬 in-flight：第一個呼叫尚未完成前，
+    // triggerBusy state 也尚未經 re-render 生效，唯一能擋第二次的是同步 ref guard。
+    let resolveTrigger: (v: { status: string; idempotency_key: string }) => void = () => {};
+    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockImplementation(
+      () => new Promise((res) => { resolveTrigger = res; }),
+    );
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const triggerBtn = container.querySelector('[data-testid="conv-ledger-trigger-mw_failed0123456789"]') as HTMLButtonElement;
+    expect(triggerBtn).toBeTruthy();
+    await act(async () => { triggerBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    // 同步連點兩次（同一 act，state 尚未 re-render，disabled 尚未生效）
+    await act(async () => {
+      confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    // 同步 ref guard：只送出一個 POST（第二次同步呼叫被攔截）
+    expect(triggerSpy).toHaveBeenCalledTimes(1);
+
+    // 收尾：resolve in-flight trigger，避免懸掛
+    await act(async () => { resolveTrigger({ status: "detected", idempotency_key: "mw_failed0123456789" }); await Promise.resolve(); });
+  });
+
   // AC6(b) 邊界：failed 但 object_key 為 null（Phase 1 ledger 可為 null）→ 無從觸發，不掛鈕。
   it("AC6(b) 邊界：failed 但 object_key 為 null → 不顯觸發鈕（無 key 無從觸發）", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
