@@ -459,6 +459,9 @@ export function A1GovernanceWorkbenchPage() {
     if (!selectedKey || convBusy) return;
     setConvErr(null);
     setConvBusy(true);
+    // #1 race 防護：立即清除上一輪殘留的輪詢 interval，避免其在本輪 await（trigger / pollOnce）期間 fire，
+    // 以舊 job 的 lifecycle 覆寫 convStatus（閃爍至舊值）。必須在第一個 await 之前清，不可等第一次 pollOnce(newJobId) resolve 後。
+    if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
     setConvStatus(t("觸發中…", "triggering…"));
     const pollOnce = async (jobId: string): Promise<string | null> => {
       const job = await coordinatorClient.getIfcReadyJob(jobId);

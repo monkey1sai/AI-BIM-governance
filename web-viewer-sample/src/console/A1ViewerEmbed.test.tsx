@@ -338,7 +338,85 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     expect(status).not.toBeNull();
     expect(status!.textContent).toContain("queued");
     expect(status!.textContent).not.toContain("ready");
-    expect(q("a1-conv-link")).not.toBeNull();
+  });
+
+  it("無 session：#conv 連結初始即顯示且 href=#/conv（導覽用，不依賴轉檔觸發）", async () => {
+    // 守門 #2：a1-conv-link 為導覽連結，於無 session 區塊「初始渲染」即在場（不受 convJobId / 觸發動作控制）。
+    // 在「未觸發轉檔」狀態斷言可同時擋兩種回歸：連結被誤移到 sessions>0 分支、或誤加 {convJobId && ...} 條件。
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    // 尚未觸發任何轉檔（convJobId 為 null → job span 不在）→ 連結仍必須在場，證明其非觸發產物。
+    expect(q("a1-convert-job")).toBeNull();
+    const link = q("a1-conv-link") as HTMLAnchorElement | null;
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute("href")).toBe("#/conv");
+  });
+
+  it("無 session：新一輪轉檔在第一個 await 前即清舊輪詢 interval，舊 job 狀態不覆寫新狀態（race 防護）", async () => {
+    // 守門 #1：舊 job 的 2s interval 在新一輪 queueConversion 的 await 期間 fire，會以舊 job lifecycle
+    // 覆寫 convStatus（閃爍至舊值）。修法＝queueConversion 頭部（setConvBusy 後）立即清 convPollRef，
+    // 而非等第一次 pollOnce(newJobId) resolve 後。本測試以 deferred trigger 暫停新一輪於第一個 await，
+    // 在該 race 視窗推進 2s：未修時舊 interval fire → convStatus 被覆寫為舊 job 的 "converting"。
+    const empty = fakeRuntimeStatus(VIEWER_ORIGIN);
+    empty.sessions = { count: 0, active_count: 0, participant_count: 0, items: [] };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 2,
+      objects: [
+        { key: "projA/root/main/u1/a.ifc", etag: "ea", role: "source_ifc", project_id: "p1", project_display_name: "A", category: "建築", version: "v1" },
+        { key: "projB/root/main/u2/b.ifc", etag: "eb", role: "source_ifc", project_id: "p1", project_display_name: "B", category: "建築", version: "v1" },
+      ],
+    });
+    // job1 持續非終態（converting → 掛 interval 並持續輪詢）；job2 非終態（queued）。
+    vi.spyOn(coordinatorClient, "getIfcReadyJob").mockImplementation(((id: string) => Promise.resolve({
+      ifc_ready_job_id: id, status: "x",
+      conversion_lifecycle_status: id === "job1" ? "converting" : "queued",
+      download_status: "downloaded", conversion_status: null, review_session_id: null,
+    })) as never);
+    // job1 trigger 立即 resolve；job2 trigger 回 deferred，讓新一輪暫停在第一個 await，營造 race 視窗。
+    let resolveJob2Trigger: (() => void) | null = null;
+    vi.spyOn(coordinatorClient, "triggerConversion").mockImplementation(((key: string) => {
+      if (key === "projA/root/main/u1/a.ifc") return Promise.resolve({ ifc_ready_job_id: "job1", status: "queued_for_conversion", trigger_source: "manual" });
+      return new Promise((res) => { resolveJob2Trigger = () => res({ ifc_ready_job_id: "job2", status: "queued_for_conversion", trigger_source: "manual" }); });
+    }) as never);
+
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush(); // mount 在 real timers 下沖乾淨（runtimeStatus / getMinioObjects then-chain）
+
+    vi.useFakeTimers(); // 由此 setInterval 受控；只影響 conv 輪詢 interval（此元件路徑無其他 setTimeout）
+    try {
+      // 第一輪：選 job1 模型 → 排入 → pollOnce 回 converting（非終態）→ 掛 interval1，convBusy 還原 false。
+      await selectMinioModel("projA/root/main/u1/a.ifc");
+      await act(async () => { (q("a1-trigger-convert") as HTMLButtonElement).click(); });
+      await flush();
+
+      // 第二輪：改選 job2 模型 → 排入。triggerConversion 回 deferred → queueConversion 暫停在第一個 await。
+      await selectMinioModel("projB/root/main/u2/b.ifc");
+      await act(async () => { (q("a1-trigger-convert") as HTMLButtonElement).click(); });
+      await flush();
+
+      // race 視窗內推進 2s：舊 interval1 若殘活會 fire pollOnce(job1) → setConvStatus("converting")。
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+      });
+
+      // 修好後 interval1 在第二輪頭部已清，convStatus 停在「觸發中…」不被舊 job 的 "converting" 覆寫。
+      const status = q("a1-convert-status");
+      expect(status).not.toBeNull();
+      expect(status!.textContent).not.toContain("converting");
+
+      if (resolveJob2Trigger) (resolveJob2Trigger as () => void)();
+      await flush();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // A1-W1 BCF gating UI 層驗證：
