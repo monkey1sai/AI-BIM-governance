@@ -373,6 +373,7 @@ describe("minioWatcher loop", () => {
       bucket: "bim-control", prefix: "", accessKey: "ak", secretKey: "sk",
       keySuffix: "/model.ifc", intervalSeconds: 0.05, selfBaseUrl: selfBase,
       webhookSecret: "dev-webhook-secret", tenantId: "tenant_demo_001",
+      isLedgered: () => false, // list 失敗前不會被呼叫到，補必填型別（isLedgered 改必填、移除 legacy 分支）
       structLog: { anomaly: () => {}, withTraceId: () => ({ anomaly: () => {} }) } as never,
     });
     await waitFor(() => (watcher!.getStatus().last_error as string | null) !== null);
