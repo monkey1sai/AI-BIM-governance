@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorClient, type TriggerConversionResponse } from "./coordinatorClient";
 
 describe("coordinatorClient conversion control", () => {
   afterEach(() => {
@@ -285,3 +285,19 @@ describe("coordinatorClient conversion control", () => {
     expect(String(spy.mock.calls[0][0])).toContain("/api/external/ifc-ready/ifcready_mw_abc");
   });
 });
+
+// ── TriggerConversionResponse 型別契約斷言（compile-time only；由 `npx tsc --noEmit` 守門，
+//    vitest 執行期為無副作用 no-op）。鎖住兩條契約避免日後被悄悄放寬（quality finding #1 / #2）──
+//   #1 ifc_ready_job_id 必為 string（非 optional）：B1 後端（PR #259）202 永遠帶此欄；optional 會逼
+//      Task 3 消費端做 undefined 守門（`!.` 砍掉型別安全網，或 `?? ""` 打 bogus URL → 404）。
+//   #2 不得有 detail 欄位：jsonPost 在 !res.ok 時已 throw（後端 detail 經 errorDetail 注入 Error
+//      message），success-path 的 detail 恆 undefined；留此欄會給「可讀回傳物件 detail」的錯誤合約
+//      暗示。轉檔已排入 vs 冪等回傳既有的語意差異改由既有 trigger_source 表達。
+{
+  const probe: TriggerConversionResponse = { ifc_ready_job_id: "ifcready_x" };
+  // #1：非 optional 才能把 ifc_ready_job_id 直接賦值給 string（optional 時為 string | undefined 不可賦值）。
+  const jobId: string = probe.ifc_ready_job_id;
+  void jobId;
+  // @ts-expect-error #2：detail 欄位已移除，讀取應為型別錯誤（TS2339）。
+  void probe.detail;
+}

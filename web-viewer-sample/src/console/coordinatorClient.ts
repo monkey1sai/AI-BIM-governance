@@ -181,10 +181,9 @@ export type ConversionLifecycleStatus = "detected" | "queued" | "converting" | "
 // A1（B2）排隊轉檔回應：POST /api/conversion/trigger。成功 202 帶 ifc_ready_job_id；
 // MinIO 未設定 503 由 jsonPost throw（帶後端 detail），不會走到這裡。
 export interface TriggerConversionResponse {
-  ifc_ready_job_id?: string;
+  ifc_ready_job_id: string;
   status?: string;
   trigger_source?: string;
-  detail?: string;
 }
 
 // A1（B2）轉檔狀態輪詢：GET /api/external/ifc-ready/:jobId（summarizeIfcReadyJob 子集）。
