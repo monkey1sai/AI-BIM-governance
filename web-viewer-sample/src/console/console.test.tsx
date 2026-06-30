@@ -24,12 +24,13 @@ import {
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
+import { StreamConfigReader } from "./StreamConfigReader";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
-import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
+import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
 
 describe("edge console honesty smoke", () => {
@@ -348,6 +349,40 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("Chat USD Agent");
   });
 
+  // ── co-console-runtime-merge §5.1 守門一（負向，打資料模型）：CO 獨立導覽項已從 PAGES 移除 ──
+  // PAGES 是左欄渲染的唯一資料源（EdgeConsole.tsx:209 `PAGES.filter(...).map(...)`）；直接斷言
+  // 資料模型零渲染歧義、零字串撞 page h1（不可用 `not.toContain("Coordinator Console")`——該字串
+  // 同時在 CoordinatorPage h1）。此守門讓 Task 0 的「移除 CO nav」有機器可執行的迴歸防護：未來
+  // 任何 PR 若把 coordinator 項加回 PAGES，本斷言會立即報錯。
+  it("co-console-merge：CO 獨立導覽項已從 PAGES 移除（負向守門 · 資料模型 + 渲染 nav）", () => {
+    // 資料模型守門：PAGES 不得再含 coordinator 項（落地端控制台群組只剩 conv/sessions/instances/minio）。
+    expect(PAGES.some((p) => p.key === "coordinator")).toBe(false);
+    // 渲染 nav 補強：預設 #home 渲染的左欄按鈕（`<span class="ec-key">{p.no}</span>` L211）不得出現
+    // CO 編號（被移除 page 的 no="CO"）。NAV_GROUPS 的 coordinator 群組仍在故群組標題照常存活。
+    const navHtml = renderToString(<EdgeConsole />);
+    expect(navHtml).not.toContain('class="ec-key">CO<');
+  });
+
+  it("co-console-merge：#runtime route 承接 Coordinator runtime console，且 nav label 改為 Runtime 觀測值班台", () => {
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#runtime";
+      const html = renderToString(<EdgeConsole />);
+
+      expect(html).toContain("Runtime 觀測值班台");
+      expect(html).not.toContain("串流執行狀態");
+      expect(html).toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
+      expect(html).toContain("/api/runtime/status");
+      expect(html).toContain("A Classic Dashboard");
+      expect(html).toContain("D Terminal / Debug");
+      expect(html).toContain("Classic Dashboard 是 operator 第一眼總覽");
+      expect(html).toContain("Open primary URL 不等於 occupied");
+      expect(html).not.toContain("Runtime Dashboard · 串流執行狀態");
+    } finally {
+      window.location.hash = prevHash;
+    }
+  });
+
   it("prototype 核心頁面可 render：A1 stepper、3D viewer、conversion、session、Kit/GPU、MinIO", () => {
     const a1 = renderToString(<A1GovernanceWorkbenchPage />);
     expect(a1).toContain("上傳模型");
@@ -487,6 +522,119 @@ describe("edge console honesty smoke", () => {
     // 不被恆顯的 artifact-baseline / A1 workbench 記分板誤判通過）。renderToString 首幀
     // run=null → 此區塊不渲染，故 smoke 斷言「不存在」即可確認 gating 正確。
     expect(html).not.toContain("data-testid=\"a1-rulerun-scoreboard\"");
+  });
+});
+
+// ── co-console-runtime-merge §5.1 守門四（D2-A′ 核心合約）：stream-config 不孤兒 ──
+// spec §3.4 D2-A′ 要求 StreamConfigReader 由 (a) RuntimePage 復用、(b) CoordinatorGovernanceTabs
+// 的 debug（Terminal / Debug）分頁直接 render。Task 3 一旦把 #runtime 改渲染 CoordinatorPage，
+// RuntimePage 內的 stream-config 入口就不再可達——唯有 debug 分頁也掛 StreamConfigReader 才不孤兒。
+// renderToString 預設只渲 classic 分頁（useState("classic")），到不了 debug；故用 createRoot + 點
+// 「D Terminal / Debug」分頁鈕（本檔既有互動 pattern），實測 CoordinatorGovernanceTabs→debug→
+// StreamConfigReader 這條真路徑含 stream-config 入口（非直測未 export 的 DebugTab，不擴大公開面）。
+describe("co-console-merge §5.1#4：CoordinatorGovernanceTabs debug 分頁含 stream-config（不孤兒）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  it("點開 debug 分頁 → 渲染 StreamConfigReader（stream-config 入口，D2-A′ 不孤兒）", async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<CoordinatorGovernanceTabs rt={null} busy={false} err={null} onRefresh={() => {}} />);
+    });
+
+    // 預設 classic 分頁尚未含 stream-config 入口（StreamConfigReader 只在 debug 分頁）。
+    expect(container.innerHTML).not.toContain("stream-config");
+
+    // 點「D Terminal / Debug」分頁鈕切到 debug。
+    const debugTabBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="tab"]')).find(
+      (b) => b.textContent === "D Terminal / Debug",
+    );
+    expect(debugTabBtn, "應有 D Terminal / Debug 分頁鈕").not.toBeUndefined();
+    await act(async () => { debugTabBtn!.click(); });
+
+    // debug 分頁含 StreamConfigReader 提供的 stream-config 入口（GET …/stream-config）。
+    const html = container.innerHTML;
+    expect(html).toContain("stream-config");
+    expect(html).toContain("/api/review-sessions/:id/stream-config");
+    expect(html).toContain("review_session_id"); // StreamConfigReader 的輸入框 placeholder
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+// ── co-console-runtime-merge review fix：stream-config session id guard ──
+// StreamConfigReader 對齊 ReviewRoomPage / coordinator /ui/open 的 session-id 格式：
+// 只允許 lwv_ / review_session_ 前綴 + 英數底線。invalid input 應停用按鈕且不發 request。
+describe("co-console-merge review fix：StreamConfigReader session-id 格式守門", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  const setInputNative = (el: HTMLInputElement, value: string) => {
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    nativeValueSetter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it("invalid id 停用讀取、不呼叫 streamConfig；valid review_session id 啟用並呼叫一次", async () => {
+    const streamSpy = vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({
+      session_id: "review_session_x",
+      status: "ready",
+    });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<StreamConfigReader />);
+    });
+
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="review_session_id"]')!;
+    const readButton = () => Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+      button.textContent?.includes("讀取 stream-config") || button.textContent?.includes("Read stream-config"),
+    )!;
+
+    await act(async () => { setInputNative(input, "abc"); });
+    expect(readButton().disabled).toBe(true);
+    expect(container.innerHTML).toContain("session id 不符格式");
+    await act(async () => { readButton().click(); });
+    expect(streamSpy).not.toHaveBeenCalled();
+
+    await act(async () => { setInputNative(input, "review_session_x"); });
+    expect(readButton().disabled).toBe(false);
+    await act(async () => {
+      readButton().click();
+      await Promise.resolve();
+    });
+    expect(streamSpy).toHaveBeenCalledTimes(1);
+    expect(streamSpy).toHaveBeenCalledWith("review_session_x");
+
+    await act(async () => { root.unmount(); });
   });
 });
 

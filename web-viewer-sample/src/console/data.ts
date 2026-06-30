@@ -72,7 +72,6 @@ export const PAGES: PageDef[] = [
   { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system", badge: "待建", badgeTone: "neutral" },
   { key: "spec", no: "▦", label: "設計規格說明", plane: "governance", group: "system" },
   { key: "overview", no: "OV", label: "Overview", plane: "governance", group: "system" },
-  { key: "coordinator", no: "CO", label: "Coordinator Console", plane: "governance", group: "coordinator" },
   { key: "intake", no: "IN", label: "Model Intake", plane: "governance", group: "coordinator" },
   { key: "review", no: "G", label: "Review Room", plane: "omniverse", group: "omniverse" },
   { key: "semantic", no: "SE", label: "Semantic Viewer", plane: "omniverse", group: "omniverse" },

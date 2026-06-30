@@ -24,9 +24,13 @@ test.describe("B 操作台：:8004/ui EdgeConsole 路由 + 保留 operator-tool 
     await page.goto(`${COORDINATOR}/ui#/review`);
     await expect(page.getByRole("heading", { name: /審查室/ })).toBeVisible({ timeout: 15_000 });
 
-    // #/runtime → Runtime 監控。
+    // #/runtime → Runtime 觀測值班台；body 承接 Coordinator runtime console（非舊 RuntimePage）。
     await page.goto(`${COORDINATOR}/ui#/runtime`);
-    await expect(page.getByRole("heading", { name: /Runtime/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Runtime 觀測值班台")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("heading", { name: /Coordinator Console/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("A Classic Dashboard")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("D Terminal / Debug")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("串流執行狀態")).not.toBeVisible();
 
     await page.screenshot({ path: "../artifacts/e2e/unified-console-routes.png", fullPage: true });
   });
