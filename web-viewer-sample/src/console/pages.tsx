@@ -727,6 +727,13 @@ export function ConversionSchedulingPage() {
   // finding #2：action 錯誤獨立 state，顯示在 dialog 內、與 dialog 綁定，不與 load 錯誤（err）共用。
   // load() 開頭的 setErr(null) 因此不會把「控制動作失敗」清掉。
   const [actionErr, setActionErr] = useState<string | null>(null);
+  // Task 8（AC6(b)）：ledger 列「未轉/failed」一鍵觸發鈕的 intent→confirm 狀態。與 pendingAction
+  // （插隊/重試/watch-toggle）獨立——觸發走 POST /api/conversion/trigger（非 ifc-ready），帶原始
+  // object_key；pendingTriggerKey 非 null 時開觸發專屬 IntentDialog。沿用 MinioDataPage 的 confirmTrigger
+  // pattern（成功 patch + 重抓、失敗顯 inline error 不關 dialog）。
+  const [pendingTriggerKey, setPendingTriggerKey] = useState<string | null>(null);
+  const [triggerBusy, setTriggerBusy] = useState(false);
+  const [triggerErr, setTriggerErr] = useState<string | null>(null);
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
   // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
@@ -820,6 +827,24 @@ export function ConversionSchedulingPage() {
       setActionBusy(false);
     }
   }, [pendingAction, load]);
+  // Task 8（AC6(b)）：ledger 列「觸發轉檔」鈕的 confirm handler。走 POST /api/conversion/trigger
+  // （帶 x-dev-token），非 /api/external/ifc-ready。非樂觀：成功後重抓 ledger 取真狀態（不靠樂觀
+  // patch chip，#conv ledger 列直接重抓 records 即可反映 detected/queued）；失敗顯 inline error、
+  // 不關 dialog、ledger 不變。IntentDialog 契約：成功才 setPendingTriggerKey(null) 關 dialog。
+  const confirmTrigger = useCallback(async (reason: string) => {
+    if (!pendingTriggerKey) return;
+    setTriggerErr(null);
+    setTriggerBusy(true);
+    try {
+      await coordinatorClient.conversionTrigger(pendingTriggerKey, reason || "manual trigger from #conv ledger");
+      await loadRecords();          // 證據型刷新：重抓 ledger 真狀態（detected/queued 反映於列）
+      setPendingTriggerKey(null);   // 成功才關 dialog
+    } catch (e) {
+      setTriggerErr(`${t("觸發轉檔失敗：", "Trigger conversion failed: ")}${String(e)}`); // 失敗顯 inline error、ledger 不變、不關 dialog
+    } finally {
+      setTriggerBusy(false);
+    }
+  }, [pendingTriggerKey, loadRecords]);
   return (
     <>
       <h1>{t("IFC→USD 轉檔排程", "IFC→USD conversion scheduling")}</h1>
@@ -863,7 +888,47 @@ export function ConversionSchedulingPage() {
               <Field k="prefix" v={mw.prefix || t("（無）", "(none)")} prov="asbuilt" />
               <Field k={t("最近一輪", "Last poll")} v={mw.last_poll_at ?? t("尚未完成首輪", "first poll not completed yet")} prov="asbuilt" />
               <Field k={t("輪詢次數", "Poll count")} v={String(mw.poll_count ?? "—")} prov="asbuilt" />
-              <Field k={t("baseline / seen / 觸發 / 跳過", "baseline / seen / triggered / skipped")} v={`${mw.baseline_count ?? "—"} / ${mw.seen_count ?? 0} / ${mw.triggered_total ?? 0} / ${mw.skipped_malformed_total ?? 0}`} prov="asbuilt" />
+              {/* Task 8（AC5）：把原擠在單一 Field 的 baseline/seen/觸發/跳過拆成獨立 Field，
+                  並對 baseline 標 by-design 說明 + 一致性基準文案，避免 triggered_total=0 被誤讀成故障。 */}
+              <Field
+                k={t("baseline（首輪基準）", "baseline (first-round)")}
+                v={<span data-testid="conv-baseline-count">{mw.baseline_count ?? "—"}</span>}
+                prov="asbuilt"
+              />
+              <Field
+                k={t("triggered（baseline 後真正新觸發）", "triggered (new since baseline)")}
+                v={<span data-testid="conv-triggered-total">{mw.triggered_total ?? 0}</span>}
+                prov="asbuilt"
+              />
+              <Field
+                k={t("seen / 跳過", "seen / skipped")}
+                v={`${mw.seen_count ?? 0} / ${mw.skipped_malformed_total ?? 0}`}
+                prov="asbuilt"
+              />
+              {/* baseline by-design 說明：首輪 list 到的既有 model.ifc 被當基準吸收、刻意不自動轉檔
+                  （spec §3.1）；此處的 baseline 數＝首輪 list 到的規約檔數（可解析 model.ifc），非物件總數。 */}
+              <p className="ec-note" data-testid="conv-baseline-explain">
+                {t(
+                  "baseline＝watcher 首輪 list 到的規約檔（可解析 model.ifc）數；首輪被當基準吸收、by-design 刻意不自動轉檔（防對既有大 bucket 爆量誤觸發）。triggered 才是自 baseline 後真正新上傳/改 etag 觸發的數量——triggered=0 不代表故障。",
+                  "baseline = number of convention files (parseable model.ifc) the watcher listed in its first round; the first round is absorbed as a baseline and by-design does NOT auto-convert (to avoid mass mis-triggering on an existing large bucket). triggered counts genuinely new uploads / etag changes since the baseline — triggered=0 does not mean a fault.",
+                )}
+              </p>
+              {/* 三視圖一致性基準（spec AC5）：明示「可解析 IFC 數」非「物件總數」，避免使用者把
+                  「#minio 527 物件 vs watcher 只認 3 個 vs ledger=0」誤讀成 watcher 漏看 524 物件。 */}
+              <p className="ec-note" data-testid="conv-consistency-basis">
+                {t(
+                  "一致性基準＝可解析 IFC 數（*/model.ifc），非 bucket 物件總數：#minio 全量物件（含幾何 .json）與 watcher 只認的 model.ifc 數本就不同口徑，watcher 並未漏看其餘物件。",
+                  "Consistency basis = count of parseable IFC (*/model.ifc), NOT total bucket object count: the full #minio object set (incl. geometry .json) and the model.ifc count the watcher recognizes are different denominators by design; the watcher is not missing the other objects.",
+                )}
+              </p>
+              {/* AC6(a)：保留說明文案列兩條 spec 認可補救（純文字，不做成 UI 觸發鈕——UI 觸發走
+                  下方 ledger 列的「觸發轉檔」鈕＝POST /api/conversion/trigger，非此處 webhook）。 */}
+              <p className="ec-note" data-testid="conv-remediation-note">
+                {t(
+                  "補救既有未轉檔的兩條 spec 認可路徑：(i) 重新上傳該 model.ifc（改變 etag）→ watcher 下一輪自動觸發；(ii) 手動 webhook intake，直打 POST /api/external/ifc-ready（帶 webhook secret + presigned GET URL）。此兩條為文字說明；若要直接於本頁觸發，請用下方 Ledger 列的「觸發轉檔」鈕（走 POST /api/conversion/trigger）。",
+                  "Two spec-approved remediations for existing un-converted files: (i) re-upload the model.ifc (changes its etag) → the watcher auto-triggers on the next round; (ii) manual webhook intake by calling POST /api/external/ifc-ready directly (with webhook secret + presigned GET URL). These two are textual guidance; to trigger directly from this page, use the \"Trigger\" button on the Ledger rows below (which calls POST /api/conversion/trigger).",
+                )}
+              </p>
               {mw.last_error && <Field k={t("最近錯誤", "Last error")} v={mw.last_error} prov="asbuilt" />}
               {mw.last_triggered && mw.last_triggered.length > 0 && (
                 <table className="ec-table" data-testid="minio-watch-triggered">
@@ -908,6 +973,7 @@ export function ConversionSchedulingPage() {
                 <th>usdc</th>
                 <th>coverage</th>
                 <th>{t("偵測時間", "Detected at")}</th>
+                <th>{t("控制", "Control")}</th>
               </tr>
             </thead>
             <tbody>
@@ -932,6 +998,18 @@ export function ConversionSchedulingPage() {
                         : <span className="ec-note">{t("未取得", "not available")}</span>}
                     </td>
                     <td><span className="ec-note">{r.detected_at}</span></td>
+                    {/* Task 8（AC6(b)）：對「未轉/failed」列掛一鍵觸發鈕（走 POST /api/conversion/trigger）。
+                        ledger 列必有紀錄，故「未轉」在此即 status==='failed'（converter 失敗、可重試/強制重轉）；
+                        object_key 為 null（Phase 1 watcher 落帳可能無 key）時無從觸發 → 不掛鈕。 */}
+                    <td>
+                      {r.status === "failed" && r.object_key ? (
+                        <Btn
+                          data-testid={`conv-ledger-trigger-${r.idempotency_key}`}
+                          caption="POST /api/conversion/trigger"
+                          onClick={() => { setTriggerErr(null); setPendingTriggerKey(r.object_key); }}
+                        >{t("觸發轉檔", "Trigger")}</Btn>
+                      ) : <span className="ec-note">—</span>}
+                    </td>
                   </tr>
                 );
               })}
@@ -1018,6 +1096,17 @@ export function ConversionSchedulingPage() {
         actionErr={actionErr}
         onConfirm={runAction}
         onCancel={() => { if (!actionBusy) { setActionErr(null); setPendingAction(null); } }}
+      />
+      {/* Task 8（AC6(b)）：ledger 列「觸發轉檔」專屬 intent→confirm（與上方 pendingAction dialog 互斥開啟）。
+          走 POST /api/conversion/trigger（非 ifc-ready）；IntentDialog 真實 props：open/title/cost/onConfirm/onCancel/busy/actionErr。 */}
+      <IntentDialog
+        open={pendingTriggerKey != null}
+        title={t("確認觸發轉檔", "Confirm trigger conversion")}
+        cost={t("對此 model.ifc 觸發轉檔 intake（POST /api/conversion/trigger，帶 x-dev-token；同 key 重觸發冪等）：", "Trigger conversion intake for this model.ifc (POST /api/conversion/trigger with x-dev-token; same-key re-trigger is idempotent): ") + (pendingTriggerKey ?? "")}
+        busy={triggerBusy}
+        actionErr={triggerErr}
+        onConfirm={(reason) => void confirmTrigger(reason)}
+        onCancel={() => { if (!triggerBusy) { setTriggerErr(null); setPendingTriggerKey(null); } }}
       />
     </>
   );

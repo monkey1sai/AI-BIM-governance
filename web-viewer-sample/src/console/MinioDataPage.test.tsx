@@ -87,7 +87,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
       bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
     });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({
-      count: 1, items: [{ idempotency_key: "mw_aaaa0000bbbb0001", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "000001", conversion_job_id: null, status: "queued", usdc_key: null, coverage_report: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
+      count: 1, items: [{ idempotency_key: "mw_aaaa0000bbbb0001", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "000001", conversion_job_id: null, status: "queued", usdc_key: null, coverage_report: null, object_key: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
     });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
@@ -208,7 +208,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     // ledger 實際有 200 筆（count），但 route slice 後只回 100 筆（items），且此物件的 key 不在回傳窗內。
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({
       count: 200,
-      items: [{ idempotency_key: "mw_some_other_key_99", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "999", conversion_job_id: null, status: "ready", usdc_key: null, coverage_report: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
+      items: [{ idempotency_key: "mw_some_other_key_99", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "999", conversion_job_id: null, status: "ready", usdc_key: null, coverage_report: null, object_key: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
     });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
@@ -230,7 +230,7 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({
       count: 1,
-      items: [{ idempotency_key: "mw_some_other_key_99", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "999", conversion_job_id: null, status: "ready", usdc_key: null, coverage_report: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
+      items: [{ idempotency_key: "mw_some_other_key_99", project_id: "p", project_display_name: "x", category: "main", external_model_version_id: "999", conversion_job_id: null, status: "ready", usdc_key: null, coverage_report: null, object_key: null, detected_at: "2026-06-24T00:00:00Z", updated_at: "2026-06-24T00:00:00Z" }],
     });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });

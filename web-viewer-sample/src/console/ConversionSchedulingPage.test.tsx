@@ -101,8 +101,10 @@ describe("ConversionSchedulingPage：minio-watch 與 ifc-ready 錯誤獨立", ()
     const panel = container.querySelector('[data-testid="minio-watch-panel"]');
     expect(panel!.textContent).toContain("啟用中");
     expect(panel!.textContent).toContain("bim-control");
-    // 計數字串 baseline / seen / 觸發 / 跳過
-    expect(panel!.textContent).toContain("10 / 11 / 1 / 0");
+    // Task 8（AC5）：baseline/triggered 已拆成獨立可定位 Field；seen/skipped 仍合併。
+    expect(panel!.querySelector('[data-testid="conv-baseline-count"]')!.textContent).toContain("10"); // baseline
+    expect(panel!.querySelector('[data-testid="conv-triggered-total"]')!.textContent).toContain("1"); // triggered
+    expect(panel!.textContent).toContain("11 / 0"); // seen / skipped 合併字串
     // poll_count 渲染為「輪詢次數」（loop liveness 對操作者可見，非 dead field）。
     expect(panel!.textContent).toContain("輪詢次數");
     expect(panel!.textContent).toContain("3");
@@ -805,6 +807,7 @@ describe("ConversionSchedulingPage 讀 ConversionLedger（Task 6）", () => {
     status: "queued",
     usdc_key: null,
     coverage_report: null,
+    object_key: "松風庵/root/main/000001/model.ifc", // Task 8：ledger 列觸發鈕需 object_key
     detected_at: "2026-06-23T01:00:00.000Z",
     updated_at: "2026-06-23T01:00:00.000Z",
   };
@@ -818,6 +821,7 @@ describe("ConversionSchedulingPage 讀 ConversionLedger（Task 6）", () => {
     status: "converting",
     usdc_key: null,
     coverage_report: null,
+    object_key: "許良宇圖書館/root/main/000002/model.ifc",
     detected_at: "2026-06-23T01:10:00.000Z",
     updated_at: "2026-06-23T01:15:00.000Z",
   };
@@ -892,5 +896,163 @@ describe("ConversionSchedulingPage 讀 ConversionLedger（Task 6）", () => {
     expect(panel).not.toBeNull();
     // 顯示錯誤訊息
     expect(container.textContent).toContain("/api/conversion/records");
+  });
+});
+
+// Task 8（baseline 揭露 + 一鍵觸發列）：spec §3.2 / AC5 / AC6。
+// (1) watcher 面板把擠在單一 Field（pages.tsx:866）的 baseline/seen/觸發/跳過拆成獨立 Field +
+//     baseline by-design 說明 + 一致性基準=可解析 IFC 數非物件總數（AC5）；
+// (2) AC6(a) 兩條 spec 認可補救說明文案（重新上傳改 etag／手動 webhook POST /api/external/ifc-ready，
+//     僅文字、不做成鈕）；
+// (3) AC6(b) ledger 列對「未轉/failed」掛一鍵觸發鈕（走 POST /api/conversion/trigger，非 ifc-ready），
+//     object_key 為 null 時無鈕（無 key 無從觸發）。
+describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  const failedRec: ConversionRecord = {
+    idempotency_key: "mw_failed0123456789",
+    project_id: "mv_failed01",
+    project_display_name: "東勢區許良宇紀念圖書館",
+    category: "建築",
+    external_model_version_id: "000003",
+    conversion_job_id: "ifcready_failed_cc",
+    status: "failed",
+    usdc_key: null,
+    coverage_report: null,
+    object_key: "東勢區許良宇紀念圖書館/root/main/000003/model.ifc",
+    detected_at: "2026-06-23T02:00:00.000Z",
+    updated_at: "2026-06-23T02:05:00.000Z",
+  };
+  // failed 但 object_key 為 null（Phase 1 ledger.object_key 可為 null）→ 無從觸發，不掛鈕。
+  const failedNoKeyRec: ConversionRecord = {
+    ...failedRec,
+    idempotency_key: "mw_failednokey01234",
+    object_key: null,
+  };
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  // AC5：watcher 面板 baseline 與 triggered 拆成獨立可定位欄位 + baseline by-design 說明 +
+  // 一致性基準=可解析 IFC 數非物件總數。鎖住「拆分 + 文案」防回歸成單一 Field。
+  it("AC5：watcher 面板 baseline / triggered 拆獨立欄位 + by-design 說明 + 一致性基準文案", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({
+      enabled: true, bucket: "bim-control", prefix: "", last_poll_at: "2026-06-24T06:00:00Z",
+      poll_count: 23, baseline_count: 3, seen_count: 3, triggered_total: 0, skipped_malformed_total: 0,
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const panel = container.querySelector('[data-testid="minio-watch-panel"]');
+    expect(panel).not.toBeNull();
+
+    // baseline 與 triggered 各有獨立可定位節點（拆分；非擠在單一 Field）
+    const baselineNode = panel!.querySelector('[data-testid="conv-baseline-count"]');
+    const triggeredNode = panel!.querySelector('[data-testid="conv-triggered-total"]');
+    expect(baselineNode).not.toBeNull();
+    expect(triggeredNode).not.toBeNull();
+    expect(baselineNode!.textContent).toContain("3");
+    expect(triggeredNode!.textContent).toContain("0");
+
+    // baseline by-design 說明（首輪被當基準吸收、刻意不自動轉檔）
+    const explain = panel!.querySelector('[data-testid="conv-baseline-explain"]');
+    expect(explain).not.toBeNull();
+    expect(explain!.textContent).toContain("首輪");
+    expect(explain!.textContent).toContain("基準");
+
+    // 一致性基準=可解析 IFC 數非物件總數（明示 527 vs 3 不是 watcher 漏看）
+    const basis = panel!.querySelector('[data-testid="conv-consistency-basis"]');
+    expect(basis).not.toBeNull();
+    expect(basis!.textContent).toContain("可解析 IFC");
+    expect(basis!.textContent).toContain("物件總數");
+  });
+
+  // AC6(a)：保留說明文案列兩條 spec 認可補救——(i) 重新上傳改 etag → watcher 下一輪自動觸發、
+  // (ii) 手動 webhook POST /api/external/ifc-ready（僅文字說明，不做成 UI 觸發鈕）。
+  it("AC6(a)：補救說明文案存在（重新上傳改 etag + 手動 webhook /api/external/ifc-ready，純文字非鈕）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({
+      enabled: true, bucket: "bim-control", prefix: "", poll_count: 23,
+      baseline_count: 3, seen_count: 3, triggered_total: 0, skipped_malformed_total: 0,
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const remediation = container.querySelector('[data-testid="conv-remediation-note"]');
+    expect(remediation).not.toBeNull();
+    // (i) 重新上傳改 etag → watcher 自動觸發
+    expect(remediation!.textContent).toContain("etag");
+    // (ii) 手動 webhook 路徑（僅文字說明）
+    expect(remediation!.textContent).toContain("/api/external/ifc-ready");
+
+    // 誠實界線：AC6(a) 的 webhook 路徑必須是純文字，不得做成可點擊按鈕（AC6 拆分：UI 觸發走
+    // /api/conversion/trigger，非 ifc-ready）。確認 remediation 區塊內沒有任何 <button>。
+    expect(remediation!.querySelector("button")).toBeNull();
+  });
+
+  // AC6(b)：ledger 列對「未轉/failed」掛一鍵觸發鈕（object_key 存在時）。鈕走 POST /api/conversion/trigger
+  // （非 /api/external/ifc-ready）；intent→confirm→confirmTrigger → 成功重抓 ledger。
+  it("AC6(b)：failed 列（object_key 存在）顯觸發鈕 → confirm → conversionTrigger(key) 被呼叫且重抓 ledger", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    const recSpy = vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedRec] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
+      status: "detected", idempotency_key: "mw_failed0123456789",
+    });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // failed 列觸發鈕（穩定 testid 帶 idempotency_key）
+    const triggerBtn = container.querySelector('[data-testid="conv-ledger-trigger-mw_failed0123456789"]') as HTMLButtonElement;
+    expect(triggerBtn).toBeTruthy();
+    await act(async () => { triggerBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    // 開 IntentDialog → confirm
+    expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
+    const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
+    expect(confirm).toBeTruthy();
+    await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 走 /api/conversion/trigger（以該 object_key 觸發）
+    expect(triggerSpy).toHaveBeenCalled();
+    expect(triggerSpy.mock.calls[0][0]).toBe("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // 成功後重抓 ledger（初次 mount 1 次 + 成功後 1 次）
+    expect(recSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // 成功關 dialog
+    expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
+  });
+
+  // AC6(b) 邊界：failed 但 object_key 為 null（Phase 1 ledger 可為 null）→ 無從觸發，不掛鈕。
+  it("AC6(b) 邊界：failed 但 object_key 為 null → 不顯觸發鈕（無 key 無從觸發）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedNoKeyRec] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 該列仍渲染（failed status），但無觸發鈕（object_key=null）
+    const ledgerPanel = container.querySelector('[data-testid="conv-ledger-panel"]');
+    expect(ledgerPanel).not.toBeNull();
+    expect(ledgerPanel!.textContent).toContain("000003");
+    expect(container.querySelector('[data-testid="conv-ledger-trigger-mw_failednokey01234"]')).toBeNull();
   });
 });

@@ -256,7 +256,7 @@ export interface SessionCloseResponse {
 export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";
 
 // Task 5 MinIO 閉環 Phase 1：GET /api/conversion/records 回應中的紀錄形狀。
-// 對齊後端 ConversionLedgerRecord（省略前端用不到的 object_key/bucket/correlation_id）。
+// 對齊後端 ConversionLedgerRecord（省略前端用不到的 bucket/correlation_id）。
 export interface ConversionRecord {
   idempotency_key: string;
   project_id: string;
@@ -267,6 +267,10 @@ export interface ConversionRecord {
   status: ConversionLedgerStatus;
   usdc_key: string | null;
   coverage_report: unknown | null;
+  // Task 8：ledger 列「未轉/failed」一鍵觸發鈕需要原始 object_key 才能呼 conversionTrigger(key)。
+  // 對齊後端 ConversionLedgerRecord.object_key（conversionLedger.ts:21，Phase 1 可為 null——
+  // watcher 自動落帳的舊紀錄可能無 key；manualIntake 觸發者會帶 key）。null 時前端不掛觸發鈕。
+  object_key: string | null;
   detected_at: string;
   updated_at: string;
 }
