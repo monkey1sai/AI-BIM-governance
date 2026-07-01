@@ -27,7 +27,10 @@ const COORD_BASE: string =
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+    // 與 jsonPost/jsonPut 一致萃取 coordinator `{ detail }`（誠實鐵律）：getIfcReadyJob 等輪詢 GET
+    // 失敗時，A1 狀態行直接把 .message 顯給操作員；只 throw statusText 會把後端「job 不存在 /
+    // 未配置」等可操作提示吞成無意義的 "404 Not Found"。errorDetail best-effort，無 body 才退 statusText。
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -175,6 +178,33 @@ export interface IfcReadyListItem {
   updated_at: string;
 }
 
+// B1（PR #259）落地的單一權威轉檔生命週期狀態（services/lifecycleStatus.ts deriveLifecycleStatus）。
+// ⚠ 手動同步點：此值集鏡像後端 ConversionLedgerStatus（bim-review-coordinator/src/services/conversionLedger.ts）。
+// 前後端無 shared schema / codegen；後端增刪狀態值時 MUST 同步此處。coordinatorClient.test.ts 的
+// 「值集鎖定」測試鎖住此陣列，使任何前端漏改在 CI 被攔（後端增值仍需人工同步，測試僅守前端不被悄改）。
+export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed"] as const;
+export type ConversionLifecycleStatus = (typeof CONVERSION_LIFECYCLE_STATUS_VALUES)[number];
+
+// A1（B2）排隊轉檔回應：POST /api/conversion/trigger。成功 202 帶 ifc_ready_job_id；
+// MinIO 未設定 503 由 jsonPost throw（帶後端 detail），不會走到這裡。
+export interface TriggerConversionResponse {
+  ifc_ready_job_id: string;
+  status?: string;
+  trigger_source?: string;
+}
+
+// A1（B2）轉檔狀態輪詢：GET /api/external/ifc-ready/:jobId（summarizeIfcReadyJob 子集）。
+// 主讀 conversion_lifecycle_status；該欄缺失時誠實降級用 conversion_status / download_status。
+export interface IfcReadyJobDetail {
+  ifc_ready_job_id: string;
+  status: string;
+  conversion_lifecycle_status: ConversionLifecycleStatus | null;
+  download_status: string | null;
+  conversion_status: string | null;
+  review_session_id: string | null;
+}
+
+
 // minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
 // 關閉時只有 enabled=false + note；啟用時帶完整計數。credentials 永不在此回應。
 export interface MinioWatchStatus {
@@ -225,8 +255,13 @@ export interface SessionCloseResponse {
   status: string;
 }
 
+// Task 5 MinIO 閉環 Phase 1：ConversionLedger 的 status 值域（後端 ConversionLedgerRecord.status
+// 權威 enum）。單一來源供 ConversionRecord 與 ConversionTriggerResponse 共用，避免兩處各寫 union
+// 而漂移；UI chip-patch 對 wire 的寬型別 status 做 runtime narrow 時以此為合法集合。
+export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";
+
 // Task 5 MinIO 閉環 Phase 1：GET /api/conversion/records 回應中的紀錄形狀。
-// 對齊後端 ConversionLedgerRecord（省略前端用不到的 object_key/bucket/correlation_id）。
+// 對齊後端 ConversionLedgerRecord（省略前端用不到的 bucket/correlation_id）。
 export interface ConversionRecord {
   idempotency_key: string;
   project_id: string;
@@ -234,15 +269,20 @@ export interface ConversionRecord {
   category: string;
   external_model_version_id: string;
   conversion_job_id: string | null;
-  status: "detected" | "queued" | "converting" | "ready" | "failed";
+  status: ConversionLedgerStatus;
   usdc_key: string | null;
   coverage_report: unknown | null;
+  // Task 8：ledger 列「未轉/failed」一鍵觸發鈕需要原始 object_key 才能呼 triggerConversion(key)（方向1：走 main #259 端點）。
+  // 對齊後端 ConversionLedgerRecord.object_key（conversionLedger.ts:21，Phase 1 可為 null——
+  // watcher 自動落帳的舊紀錄可能無 key；手動觸發者會帶 key）。null 時前端不掛觸發鈕。
+  object_key: string | null;
   detected_at: string;
   updated_at: string;
 }
 
 // Task 5 MinIO 閉環 Phase 1：GET /api/minio/objects 回應中的物件形狀。
 // 對齊後端 MinioObjectView（key/etag/role/project_id/project_display_name/category/version）。
+// Task 6：加 idempotency_key（後端預計算 mw_<hash16>，前端 chip 用以查 ConversionRecord map）。
 export interface MinioObject {
   key: string;
   etag: string;
@@ -251,6 +291,65 @@ export interface MinioObject {
   project_display_name: string | null;
   category: string | null;
   version: string | null;
+  // Task 6：後端在 listMinioObjects/listMinioFolder 對**所有**物件（含 role='other'）無條件呼
+  // idempotencyKeyFor(bucket,key,etag) 並寫入（minioClient.ts:133,230），故 wire 恆為 string（非 null）。
+  // MinioObjectView.idempotency_key 後端型別亦為非 nullable string。前端 chip 以此 key 對
+  // ConversionRecord map lookup；.ifc/非 .ifc 一律有值，差別只在 role 與是否掛語意 badge。
+  idempotency_key: string;
+}
+
+// Task 6 MinIO 資料夾導覽：GET /api/minio/objects?delimiter=/ 回應中的資料夾節點形狀。
+// 對齊後端 MinioFolderNode（minioClient.ts:35-38）：CommonPrefix 字串 + 該 prefix（遞迴）是否含
+// .ifc 葉物件（spec §2.5 第 5 點『含 source IFC』folder badge）。後端對每個 CommonPrefix 各 probe
+// 一次 has_source_ifc，故 wire 是物件陣列而非純字串陣列；前端消費端可安全做 folder.prefix 字串操作。
+export interface MinioFolderNode {
+  prefix: string;
+  has_source_ifc: boolean;
+}
+
+// Task 6 MinIO 資料夾導覽：GET /api/minio/objects?delimiter=/ 回應形狀（additive）。
+// folders = CommonPrefixes（各層子資料夾節點 + has_source_ifc），objects = 當層直屬非前綴物件。
+export interface MinioFolderListing {
+  bucket: string | null;
+  prefix: string;
+  folders: MinioFolderNode[];
+  objects: MinioObject[];
+  count: number;
+  cache?: {
+    hit: boolean;
+    stale: boolean;
+    fetched_at: string;
+  };
+  // MinIO 未設定分支（app.ts:1296-1309）回 200 + note；已設定分支不帶此欄。前端據以區分 empty 態
+  // (a) 未設定 vs (b) 已設定但當前 prefix 無物件。optional 對齊 wire shape，免消費端防禦性 cast。
+  note?: string;
+}
+
+export interface MinioChangeEvent {
+  type: "minio.changed";
+  prefixes: string[];
+  reason?: string;
+  at: string;
+}
+
+// Task 6：POST /api/conversion/trigger 回應形狀。
+// 成功回 {status, idempotency_key}，前端直接 patch chip（零額外 round-trip）。
+// Task 6 chip-patch runtime guard：把 wire 的寬 string status narrow 成 ConversionLedgerStatus。
+// ConversionRecord.status 的 wire 型別是寬 string（後端 ledger.status）；ledger 實際只會是
+// ConversionLedgerStatus 之一，但 wire 無法在 compile time 擋住非法值。故 chip 衍生（ledgerChipStatus）
+// 消費端 MUST 先用 narrowConversionStatus() 做 runtime narrow，非合法值回 null 顯 unknown / 不 patch，
+// 而非靜默把 chip 設成非法狀態（誠實鐵律）。供 Task 6 UI 消費 ConversionRecord 用。
+const CONVERSION_LEDGER_STATUSES: readonly ConversionLedgerStatus[] = [
+  "detected",
+  "queued",
+  "converting",
+  "ready",
+  "failed",
+];
+export function narrowConversionStatus(status: string): ConversionLedgerStatus | null {
+  return (CONVERSION_LEDGER_STATUSES as readonly string[]).includes(status)
+    ? (status as ConversionLedgerStatus)
+    : null;
 }
 
 export const coordinatorClient = {
@@ -300,4 +399,23 @@ export const coordinatorClient = {
     jsonGet<{ bucket: string | null; count: number; objects: MinioObject[] }>(
       `/api/minio/objects${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ""}`,
     ),
+  // Task 6 MinIO 資料夾導覽：帶 delimiter=/ 的 S3 list proxy（GET /api/minio/objects?delimiter=/）。
+  // 回 MinioFolderListing（folders = CommonPrefixes，objects = 當層直屬物件）。
+  // prefix 可省略（頂層 list）；有值時 encodeURIComponent 防注入。
+  // 注意：delimiter=/ 必須 encodeURIComponent → %2F，否則部分 proxy/framework 解析異常。
+  minioEventsUrl: () => `${COORD_BASE}/api/minio/events`,
+  getMinioFolder: (prefix?: string, options?: { refresh?: boolean }): Promise<MinioFolderListing> => {
+    const params = new URLSearchParams({ delimiter: "/" });
+    if (prefix) params.set("prefix", prefix);
+    if (options?.refresh) params.set("refresh", "1");
+    return jsonGet<MinioFolderListing>(`/api/minio/objects?${params.toString()}`);
+  },
+  // A1（B2）：操作員手動把 MinIO 物件排入 IFC→USD 轉檔（POST /api/conversion/trigger {key}）。
+  // 前端只送 key；presign 與 webhook secret 一律 coordinator server-side（誠實／簽章不出瀏覽器）。
+  // §3.4 對齊：minio-folderview 的一鍵觸發鈕改採此 main 端點（IP allowlist 守門），不再自帶 x-dev-token 版。
+  triggerConversion: (key: string) =>
+    jsonPost<TriggerConversionResponse>("/api/conversion/trigger", { key }),
+  // A1（B2）：單一 ifc-ready job 輪詢（讀 conversion_lifecycle_status）。
+  getIfcReadyJob: (jobId: string) =>
+    jsonGet<IfcReadyJobDetail>(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`),
 };

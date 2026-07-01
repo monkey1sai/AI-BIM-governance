@@ -6,3 +6,11 @@ report/
 vg01-branch-coordinator/
 *.png
 *.json
+
+# Playwright trace 二進位(large, regenerable):補齊 _output/ 與 report/ 未涵蓋的 trace 檔型別
+*.zip
+*.trace
+*.network
+*.stacks
+*.jpeg
+_trace_extract/

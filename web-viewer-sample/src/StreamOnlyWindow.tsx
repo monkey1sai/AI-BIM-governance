@@ -34,7 +34,7 @@ export default class StreamOnly extends React.Component<AppProps> {
     *
     * Handle message from stream.
     */
-    private _handleCustomEvent (event: any): void {
+    private _handleCustomEvent (event: unknown): void {
         console.log(event);
     }
 

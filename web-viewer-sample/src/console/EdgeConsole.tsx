@@ -22,7 +22,6 @@ import {
   OverviewPage,
   ReportsPage,
   ReviewRoomPage,
-  RuntimePage,
   SemanticViewerPage,
   SessionManagementPage,
   SpecPage,
@@ -79,7 +78,7 @@ function renderBody(page: string, go: (k: string) => void) {
     case "federation": return <FederationPage />;
     case "coordinator": return <CoordinatorPage />;
     case "intake": return <IntakePage />;
-    case "runtime": return <RuntimePage />;
+    case "runtime": return <CoordinatorPage />;
     case "review": return <ReviewRoomPage />;
     case "semantic": return <SemanticViewerPage />;
     case "kit": return <KitConsolePage />;
@@ -115,7 +114,7 @@ const NAV_LABEL: Record<string, { tech: string; biz: string }> = {
   intake: { tech: "Model Intake", biz: "建模接收與轉換" },
   issues: { tech: "Issues · Rule Center", biz: "問題與語意驗收" },
   apps: { tech: "Applications · A1–A10", biz: "應用導引 · A1–A10" },
-  runtime: { tech: "Runtime Dashboard", biz: "串流執行狀態" },
+  runtime: { tech: "Runtime Console", biz: "Runtime 觀測值班台" },
   review: { tech: "Review Room", biz: "審查室" },
   semantic: { tech: "Semantic Viewer", biz: "語意檢核" },
 };
@@ -137,9 +136,9 @@ const COPILOT_PROMPTS: Record<string, string[]> = {
 const FLOW: { n: string; tech: string; biz: string; state: Prov; page: string }[] = [
   { n: "①", tech: "Intake", biz: "接收建模來源", state: "asbuilt", page: "intake" },
   { n: "②", tech: "Convert", biz: "自動轉換 3D", state: "asbuilt", page: "intake" },
-  { n: "③", tech: "Meeting", biz: "建立審查會議", state: "asbuilt", page: "coordinator" },
+  { n: "③", tech: "Meeting", biz: "建立審查會議", state: "asbuilt", page: "runtime" },
   { n: "④", tech: "Mark", biz: "標記問題位置", state: "p15", page: "review" },
-  { n: "⑤", tech: "Record", biz: "紀錄回寫雲端", state: "asbuilt", page: "coordinator" },
+  { n: "⑤", tech: "Record", biz: "紀錄回寫雲端", state: "asbuilt", page: "runtime" },
 ];
 
 function FlowBar({ active, register, go }: { active: string; register: "tech" | "biz"; go: (k: string) => void }) {
@@ -207,7 +206,7 @@ export default function EdgeConsole() {
               <span>{group.sub}</span>
             </div>
             {PAGES.filter((p) => p.group === group.key).map((p) => (
-              <button key={p.key} className={page === p.key ? "active" : ""} data-plane={p.plane} title={p.label} onClick={() => go(p.key)}>
+              <button key={p.key} className={page === p.key ? "active" : ""} data-plane={p.plane} title={navText(p.key, p.label)} onClick={() => go(p.key)}>
                 <span className="ec-key">{p.no}</span>
                 <span>{navText(p.key, p.label)}</span>
                 {p.badge && <span className={`ec-nav-badge ${p.badgeTone ?? ""}`}>{p.badge}</span>}

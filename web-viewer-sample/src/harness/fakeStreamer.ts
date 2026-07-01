@@ -65,12 +65,12 @@ export const FakeAppStreamer = {
     return Promise.resolve(result);
   },
 
-  terminate(_flag?: boolean): void {
+  terminate(): void {
     connected = false;
     captured = {};
   },
 
-  resize(_width: number, _height: number): Promise<void> {
+  resize(): Promise<void> {
     return Promise.resolve();
   },
 };

@@ -205,7 +205,6 @@ describe("EmbeddedViewer postMessage 橋", () => {
     let onFirstFrameLatest = vi.fn();
     for (let i = 0; i < 3; i++) {
       onFirstFrameLatest = vi.fn();
-      // eslint-disable-next-line no-await-in-loop
       await act(async () => {
         root!.render(<EmbeddedViewer sessionId="review_session_abc" viewerOrigin={VIEWER_ORIGIN} onFirstFrame={onFirstFrameLatest} />);
       });

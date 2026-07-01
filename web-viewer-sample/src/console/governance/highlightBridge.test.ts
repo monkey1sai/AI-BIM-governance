@@ -3,6 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { HighlightBridge, normalizeSeverity } from "./highlightBridge";
 import { MappingCache } from "./mappingCache";
 import type { ElementMappingDocument } from "../../types/mapping";
+import type { StreamMessage } from "../../types/streamMessages";
+
+type HighlightPrimsPayload = {
+  items: Array<{ prim_path: string; ifc_guid?: string; color?: number[] }>;
+};
+
+type HighlightPrimsMessage = StreamMessage & {
+  payload: HighlightPrimsPayload;
+};
 
 // summary 的 source_ifc_entity_count 是 conversion summary 的真實 runtime 欄位，
 // 共用型別 ElementMappingSummary 未宣告它，故以 intersection 明確帶入（誠實對映真實資料）。
@@ -18,8 +27,8 @@ const DOC: ElementMappingDocument & {
 describe("HighlightBridge（client 主動拉 → DataChannel，不 server-push）", () => {
   it("有 usd_prim_path 的 failed 構件 → 送出 highlightPrimsRequest（含 prim_path + 顏色 + ifc_guid）", () => {
     const cache = MappingCache.fromDocument(DOC, "mv_1");
-    const sent: { event_type: string; payload: any }[] = [];
-    const bridge = new HighlightBridge({ cache, sendMessage: (m) => sent.push(m as any), dataChannelReady: () => true });
+    const sent: HighlightPrimsMessage[] = [];
+    const bridge = new HighlightBridge({ cache, sendMessage: (m) => sent.push(m as HighlightPrimsMessage), dataChannelReady: () => true });
     const res = bridge.highlightFailed({ ifc_guid: "GUID_A", severity: "error" });
     expect(res.ok).toBe(true);
     expect(sent).toHaveLength(1);
@@ -60,8 +69,8 @@ describe("HighlightBridge（client 主動拉 → DataChannel，不 server-push�
   // 經 normalizeSeverity 正規化後，"high" 應映到 error 紅 [1,0,0,1]（否則落到預設藍，視覺上誤導）。
   it("severity=high（rule engine 標籤）→ normalizeSeverity → error 紅 [1,0,0,1]", () => {
     const cache = MappingCache.fromDocument(DOC, "mv_1");
-    const sent: { event_type: string; payload: any }[] = [];
-    const bridge = new HighlightBridge({ cache, sendMessage: (m) => sent.push(m as any), dataChannelReady: () => true });
+    const sent: HighlightPrimsMessage[] = [];
+    const bridge = new HighlightBridge({ cache, sendMessage: (m) => sent.push(m as HighlightPrimsMessage), dataChannelReady: () => true });
     const res = bridge.highlightFailed({ ifc_guid: "GUID_A", severity: "high" });
     expect(res.ok).toBe(true);
     expect(sent[0].payload.items[0].color).toEqual([1, 0, 0, 1]); // critical/high/error → 紅

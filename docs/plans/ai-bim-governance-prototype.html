@@ -16,10 +16,11 @@
   本檔內嵌 design system 的 token 與視覺語言以求「單檔可開啟」,不外連 styles.css。
 
   誠實第一(sharedSheet §5 誠實鐵律):
-    - 任何 NOT BUILT 功能都不渲染成可操作:A4–A10 / A3-clash / 真 MinIO 瀏覽 /
+    - 任何 NOT BUILT 功能都不渲染成可操作:A4–A10 / A3-clash /
       轉檔歷史 / #admin 一律 disabled + 待建標記。
-    - #minio 明標 local_fs(本地兩層 IFC 樹)非真 MinIO 三層結構。
-    - #conv 明標「轉檔歷史頁待建」、觸發僅靠 watcher 自動偵測。
+    - #minio 為真 MinIO raw-folder 逐層瀏覽(coordinator GET /api/minio/objects
+      ?delimiter=/;三層語意降為導到 model.ifc 葉層才掛的 badge)。
+    - #conv 明標「轉檔歷史頁待建」、轉檔狀態以 ledger 為真相 + 一鍵觸發鈕。
     - 缺遙測標「未取得」+ idle LED,絕不偽綠。
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -531,7 +532,7 @@ window.EC_TODOS = [
 
 <!-- ════════════════════════════════════════════════════════════════════
      PAGES — EC_PAGES(id, ctx) → 各頁節點。每頁誠實 provenance。
-     NOT BUILT(A4–A10 / A3-clash / 真 MinIO 瀏覽 / 轉檔歷史 / #admin)
+     NOT BUILT(A4–A10 / A3-clash / 轉檔歷史 / #admin)
      一律 disabled + 待建標記,不渲染為可操作。
      ════════════════════════════════════════════════════════════════════ -->
 <script type="text/babel">
@@ -1104,47 +1105,43 @@ function InstancesPage({ lang }) {
   );
 }
 
-/* ── #minio MinIO 資料(顯 local_fs 兩層樹 / 真 MinIO 三層待接) ──────── */
+/* ── #minio MinIO 資料(真 MinIO raw-folder 逐層瀏覽 + 葉層 badge + 狀態 chip) ──────── */
 function MinioPage({ lang }) {
-  const tree = [
-    { p:"270/", kids:["model.ifc(竣工)","000001.ifc","000002.ifc"] },
-    { p:"889/", kids:["model.ifc","000001.ifc"] },
-    { p:"990/", kids:["model.ifc"] },
-    { p:"271/", kids:["model.ifc"] },
+  // raw-folder 逐層:CommonPrefixes=資料夾節點 / 當層 Contents=直屬檔。
+  // 示意「點到頂層」的一層回應:7 個專案資料夾(依 localeCompare('zh-TW') 排序)。
+  // 真實頁由 coordinator GET /api/minio/objects?prefix=<層>&delimiter=/ 逐層 lazy 取,
+  // 點資料夾換 prefix 重打。此處只示意「一層長相」,非寫死全樹。
+  const folders = [
+    { p:"Demo展示社區-1/", srcIfc:false },
+    { p:"IOTTEST/", srcIfc:false },
+    { p:"洲際好宅/", srcIfc:false },
+    { p:"測試建案0321/", srcIfc:false },
+    { p:"測試建案0329/", srcIfc:false },
+    { p:"東勢區許良宇紀念圖書館/", srcIfc:true },
+    { p:"annotations/", srcIfc:false },
   ];
   return (
     <div>
       <PageHead crumb={tt({ zh:"M MinIO 資料", en:"M MinIO data" }, lang)} title={tt({ zh:"MinIO 資料", en:"MinIO data" }, lang)}
-        sub={tt({ zh:"此頁已交付,但只顯示本地 file-server 的兩層 IFC 樹(local_fs:{projectId}/{modelId}/*.ifc)。真 S3/MinIO 三層結構瀏覽待接 —— 不是真 MinIO。", en:"This page is delivered, but only shows the local file-server's two-level IFC tree (local_fs: {projectId}/{modelId}/*.ifc). True S3/MinIO three-level browsing is pending — not real MinIO." }, lang)}
-        prov={<D.ProvTag level="built" note="頁已建 · 接 local_fs" />} host={<HostTag kind="host" />} />
-      <div style={{ position:"relative" }}>
-        {/* 真 MinIO 浮水印 — 提醒此處非真 S3/MinIO */}
-        <div style={{ position:"absolute", top:8, right:8, zIndex:1, fontFamily:"var(--font-mono)", fontSize:9.5, color:"var(--c-amber)",
-          background:"var(--c-amber-soft)", border:"1px dashed var(--c-amber)", padding:"3px 8px", borderRadius:4 }}>
-          真 S3/MinIO 三層待接
+        sub={tt({ zh:"真 MinIO bim-control bucket 的唯讀 raw-folder 逐層瀏覽(S3 Delimiter='/',像 MinIO 網頁一樣逐層點開)。三層「專案/種類/版本」語意降為導到 model.ifc 葉層才掛的 badge;末層(如 geometries_chunks)摺成單一資料夾不攤開。唯讀 intake 來源視圖,非 metadata 權威(權威在 bim-control·MySQL)。", en:"Read-only raw-folder, level-by-level browsing of the real MinIO bim-control bucket (S3 Delimiter='/', click to drill down like the MinIO web UI). The project/category/version semantics are demoted to a badge attached only at the model.ifc leaf; deep folders (e.g. geometries_chunks) collapse into a single folder node. Read-only intake source view, not the metadata authority (authority is bim-control·MySQL)." }, lang)}
+        prov={<D.ProvTag level="built" note="頁已建 · 真 MinIO 逐層" />} host={<HostTag kind="host" />} />
+      <D.Panel title={tt({ zh:"真 MinIO 逐層 · bim-control(頂層示意)", en:"Real MinIO folder view · bim-control (top level)" }, lang)} right={<D.ProvTag level="built" />}>
+        <div style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)", marginBottom:10 }}>
+          GET /api/minio/objects?prefix=&delimiter=/ · folders[]=CommonPrefixes · objects[]=當層直屬檔
         </div>
-        <D.Panel title={tt({ zh:"本地 IFC 樹 · local_fs(兩層)", en:"Local IFC tree · local_fs (2-level)" }, lang)} right={<D.ProvTag level="built" />}>
-          <div style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)", marginBottom:10 }}>
-            GET /api/governance/files/tree · source_kind = "local_fs"
+        {folders.map((t, i) => (
+          <div key={i} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+            <span style={{ color:"var(--accent)" }}>📁</span>
+            <span style={{ fontFamily:"var(--font-mono)", fontSize:12.5, color:"var(--text)" }}>{t.p}</span>
+            {t.srcIfc && <D.Badge tone="ok">{tt({ zh:"含 source IFC", en:"has source IFC" }, lang)}</D.Badge>}
           </div>
-          {tree.map((t, i) => (
-            <div key={i} style={{ marginBottom:8 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <D.StatusLED tone="ok" />
-                <span style={{ fontFamily:"var(--font-mono)", fontSize:12.5, color:"var(--text)" }}>{t.p}</span>
-                <D.Badge tone="warn">{tt({ zh:"暫時測試 IFC", en:"temp test IFC" }, lang)}</D.Badge>
-              </div>
-              <div style={{ paddingLeft:24, marginTop:4, display:"flex", flexWrap:"wrap", gap:6 }}>
-                {t.kids.map((k, j) => (
-                  <span key={j} style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-3)", background:"var(--surface-2)", border:"1px solid var(--line)", padding:"2px 7px", borderRadius:4 }}>{k}</span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </D.Panel>
-      </div>
-      {/* 真 MinIO bucket layout — prov=demo,僅語意參照非已交付內容 */}
-      <SectionTitle hint="watcher 解析語意 · 非此頁已呈現">{tt({ zh:"真 MinIO bucket 規約(待接)", en:"Real MinIO bucket layout (pending)" }, lang)}</SectionTitle>
+        ))}
+        <div style={{ marginTop:10, fontSize:11.5, color:"var(--text-4)", lineHeight:1.6 }}>
+          {tt({ zh:"點資料夾以該 prefix 重打 list 進下一層;導到含 model.ifc 的版本層時,該物件旁掛「專案(中文)/種類/版本」語意 badge(deriveIntakeFromKey,≥3 段)+ ledger 衍生狀態 chip(ready/detected/queued/converting/failed/未轉),無 ledger 紀錄誠實標「未轉(含 baseline)」+ 提供一鍵觸發轉檔鈕。資料夾節點不顯示寫死物件數(CommonPrefix 不含其下數量)。", en:"Click a folder to re-list at that prefix and drill in; at a version level containing model.ifc, that object carries a project/category/version badge (deriveIntakeFromKey, ≥3 segments) plus a ledger-derived status chip (ready/detected/queued/converting/failed/not-converted); no ledger record honestly shows 'not converted (incl. baseline)' with a one-click trigger button. Folder nodes never show a hard-coded object count." }, lang)}
+        </div>
+      </D.Panel>
+      {/* 真 MinIO bucket layout — prov=demo,純語意參照(watcher 解析規約) */}
+      <SectionTitle hint="watcher 解析語意 · 純語意參照">{tt({ zh:"真 MinIO bucket 規約(watcher 解析語意)", en:"Real MinIO bucket layout (watcher parse semantics)" }, lang)}</SectionTitle>
       <D.Panel title={tt({ zh:"bim-control 三層 key 結構", en:"bim-control 3-level key" }, lang)} phase right={<D.ProvTag level="demo" note="語意參照 · demo" />}>
         <div style={{ fontFamily:"var(--font-mono)", fontSize:12, color:"var(--text-2)", lineHeight:1.8, background:"#070a0d", border:"1px solid var(--line)", borderRadius:8, padding:"12px 14px" }}>
           192.168.20.234:9000 / bucket <b style={{ color:"var(--accent)" }}>bim-control</b><br />
@@ -1152,12 +1149,13 @@ function MinioPage({ lang }) {
           <span style={{ color:"var(--text-4)" }}>watcher: segments.length &lt; 3 擋 · 中文資料夾 → mv_&lt;hash8&gt;</span>
         </div>
         <div style={{ marginTop:12, fontSize:12.5, color:"var(--text-3)", lineHeight:1.65 }}>
-          {tt({ zh:"此三層規約是 watcher 偵測的解析語意(deriveIntakeFromKey),不是 #minio 頁已呈現的內容 —— watcher 與此頁(local_fs 樹)是兩條獨立資料路徑,watcher 結果未餵進此頁。真實 endpoint 由部署區 .env 注入,不在程式碼硬編碼。", en:"This 3-level layout is the watcher's parse semantics (deriveIntakeFromKey), not what this page renders — watcher and this page (local_fs tree) are two independent data paths. The real endpoint is injected via deploy .env, never hard-coded." }, lang)}
+          {tt({ zh:"此三層規約是 watcher 偵測的解析語意(deriveIntakeFromKey),供對照葉層 badge 用,非樹骨架——主樹是上方 raw-folder 逐層,忠實鏡射 bucket 巢狀結構。真實 endpoint 由部署區 .env 注入,不在程式碼硬編碼。", en:"This 3-level layout is the watcher's parse semantics (deriveIntakeFromKey), shown for cross-referencing the leaf badge — not the tree skeleton. The main tree is the raw-folder view above, faithfully mirroring the bucket's nesting. The real endpoint is injected via deploy .env, never hard-coded." }, lang)}
         </div>
       </D.Panel>
       <DepsList deps={[
-        { name:"governance-service · /api/files/tree(local_fs)", port:":49102", host:"host", tone:"ok" },
-        { name:"minioWatcher · deriveIntakeFromKey(≥3 段)", port:"watcher", host:"container", tone:"idle" },
+        { name:"coordinator · /api/minio/objects?delimiter=/(真 MinIO 逐層 list)", port:":8004", host:"host", tone:"ok" },
+        { name:"coordinator · /api/conversion/records(ledger 狀態 chip)", port:":8004", host:"host", tone:"ok" },
+        { name:"coordinator · POST /api/conversion/trigger(一鍵觸發 · x-dev-token)", port:":8004", host:"host", tone:"ok" },
         { name:"真 MinIO bim-control(外連依賴,非 bind)", port:"192.168.20.234:9000", host:"host", tone:"idle" },
       ]} />
     </div>

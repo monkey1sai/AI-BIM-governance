@@ -6,22 +6,25 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect, request as pwRequest } from "@playwright/test";
 
-// minio-closed-loop（Task 8，2026-06-23）：端到端四段一致。
+// minio-closed-loop（minio-folderview-and-baseline-disclosure，2026-06-24 改寫）：端到端四段一致。
 // 流程：spawn coordinator（MINIO_WATCH_ENABLED + S3 stub + CONVERSION_LEDGER_STORE_PATH=tmp）
-//   → S3 stub 回一個 松風庵/root/main/000001/model.ifc（≥3段，符合 watcher 規約）
-//   → watcher 自動 intake → ledger 落 queued
-//   → #/minio 出現物件（來源 IFC）+ model.usdc 標「待產生」
+//   → S3 stub 從一開始就有 松風庵/root/main/000001/model.ifc（≥3段，符合 watcher 規約）
+//   → §3.4 全自動 auto-enroll：watcher 首輪即對 ledger 無紀錄的既有物件觸發 intake（取代舊「注入新物件才觸發」
+//     的 delta 模型——app.ts 無條件注入 isLedgered，production 走 ledger 去重水印）
+//   → ledger 落 queued
+//   → #/minio 逐層資料夾導覽（S3 Delimiter='/'）：頂層見 松風庵/ 資料夾 → 點入 root/→main/→000001/
+//     → 葉層見 model.ifc（來源 IFC role）+ ledger chip「排隊」（stub 無 .usdc → 不偽稱已轉 USDC）
 //   → #/conv 出現 ledger 紀錄（000001 版本，status=排隊）+ watcher 啟用中
 //   → **全程無假 ready、無捏造 coverage**
 //
 // *** 誠實標記：STUB MINIO + STUB CONVERSION API ***
-//   S3 stub 只回 .ifc，無 .usdc → MinioDataPage 正確標 pending·待產生（誠實鐵律）。
-//   Conv stub 回 202 queued（watcher dispatch 完成，非真轉檔）。
-//   ledger status=queued，不得出現 ready（Phase 2 才回填）。
-//   截圖落 artifacts/e2e/minio-closed-loop-*。
+//   S3 stub 模擬真實 S3 ListObjectsV2 的 Delimiter='/' 分組（回 CommonPrefixes 資料夾節點 + 當層直屬
+//   Contents），讓 coordinator 的 listMinioFolder 逐層 list 如同真 MinIO。stub 只回 .ifc、無 .usdc →
+//   MinioDataPage chip 顯 ledger 狀態（排隊），不偽稱已轉。Conv stub 回 202 queued（watcher dispatch
+//   完成，非真轉檔）。ledger status=queued，不得出現 ready（Phase 2 才回填）。
+//   截圖落 artifacts/e2e/minio-folderview-*。
 //
-// *** conditional-skip 適用（見 minio-watch-auto-intake.spec.ts 說明）***
-//   dist-ui 未 build → test.skip；本 repo 無自動化 Playwright CI gate，此設計不 false-green。
+// *** conditional-skip 適用 ***：dist-ui 未 build → test.skip；本 repo 無自動化 Playwright CI gate。
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const VIEWER_REPO_DIR = path.resolve(TEST_DIR, "..");
@@ -39,11 +42,32 @@ let s3Stub: http.Server | null = null;
 let convStub: http.Server | null = null;
 let tmpRoot = "";
 
-function listObjectsXml(objs: S3Obj[]): string {
-  const contents = objs
+// 模擬真實 S3 ListObjectsV2：依 query 的 prefix + delimiter 分組。
+// - delimiter='/'（getMinioFolder 逐層 list）：回當層直屬 <Contents> + <CommonPrefixes>（下一段資料夾）。
+// - 無 delimiter（watcher listAllKeys / prefixHasSourceIfc 遞迴 probe）：回 prefix 下全部 <Contents>。
+function s3ListXml(reqUrl: string): string {
+  const u = new URL(reqUrl, "http://stub");
+  const prefix = u.searchParams.get("prefix") ? decodeURIComponent(u.searchParams.get("prefix")!) : "";
+  const delimiter = u.searchParams.get("delimiter") || "";
+  const matching = s3State.objs.filter((o) => o.key.startsWith(prefix));
+  let contents = matching;
+  let cpsXml = "";
+  if (delimiter === "/") {
+    const cps = new Set<string>();
+    const direct: S3Obj[] = [];
+    for (const o of matching) {
+      const rest = o.key.slice(prefix.length);
+      const i = rest.indexOf("/");
+      if (i === -1) direct.push(o); // 當層直屬檔
+      else cps.add(prefix + rest.slice(0, i + 1)); // 下一段資料夾（絕對 prefix）
+    }
+    contents = direct;
+    cpsXml = [...cps].map((p) => `<CommonPrefixes><Prefix>${p}</Prefix></CommonPrefixes>`).join("");
+  }
+  const contentsXml = contents
     .map((o) => `<Contents><Key>${o.key}</Key><ETag>&quot;${o.etag}&quot;</ETag><Size>10</Size></Contents>`)
     .join("");
-  return `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>bim-control</Name><IsTruncated>false</IsTruncated>${cpsXml}${contentsXml}</ListBucketResult>`;
 }
 
 async function listenOnRandomPort(server: http.Server): Promise<number> {
@@ -55,14 +79,15 @@ async function listenOnRandomPort(server: http.Server): Promise<number> {
 
 async function startS3Stub(): Promise<number> {
   s3Stub = http.createServer((req, res) => {
-    // ListObjectsV2（list-type=2）→ 回 XML；物件 GET（presigned URL，/bim-control/.../model.ifc）→ 回最小 IFC stub body。
+    // 物件 GET（presigned URL，/bim-control/.../model.ifc，非 list-type=2）→ 回最小 IFC stub body。
     if (req.url && /\/bim-control\/.+\/model\.ifc/.test(req.url) && req.method === "GET" && !req.url.includes("list-type=2")) {
       res.writeHead(200, { "Content-Type": "application/octet-stream" });
       res.end("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n");
       return;
     }
+    // ListObjectsV2 → 依 prefix/delimiter 模擬真 S3 分組。
     res.writeHead(200, { "Content-Type": "application/xml" });
-    res.end(listObjectsXml(s3State.objs));
+    res.end(s3ListXml(req.url || ""));
   });
   return listenOnRandomPort(s3Stub);
 }
@@ -80,7 +105,7 @@ async function startConvStub(): Promise<number> {
   return listenOnRandomPort(convStub);
 }
 
-// Windows taskkill 對 spawn 出的 cmd.exe wrapper 的子樹整體殺（照 minio-watch-auto-intake 模式）。
+// Windows taskkill 對 spawn 出的 cmd.exe wrapper 的子樹整體殺。
 async function stopCoordinator(proc: ChildProcess): Promise<void> {
   const pid = proc.pid;
   if (pid && process.platform === "win32") {
@@ -116,7 +141,7 @@ async function waitForHealth(
   } finally { await api.dispose(); }
 }
 
-test.describe("MinIO 閉環四段一致（STUB MINIO + STUB CONVERSION）", () => {
+test.describe("MinIO 閉環四段一致 + 逐層資料夾導覽（STUB MINIO + STUB CONVERSION）", () => {
   test.setTimeout(180_000);
 
   test.beforeAll(async () => {
@@ -124,9 +149,9 @@ test.describe("MinIO 閉環四段一致（STUB MINIO + STUB CONVERSION）", () =
       !fs.existsSync(path.join(CONSOLE_DIST_DIR, "index.html")),
       "dist-ui 未 build；先跑 `cd web-viewer-sample && npm run build:ui` 再執行本 spec。",
     );
-    // 重置 S3 state：以一個 baseline 物件起始（watcher 首輪登記為 seen，不觸發 intake）。
-    // 新物件（松風庵）於步驟 2 注入，確保 watcher 以 delta 偵測觸發 intake。
-    s3State.objs = [{ key: "baseline/root/init/000000/model.ifc", etag: "base0" }];
+    // §3.4 auto-enroll：物件從一開始就在 bucket。ledger 空 → watcher 首輪即觸發 intake（既有未轉檔自動補轉）。
+    // 松風庵/root/main/000001/model.ifc：4段，category=main（倒數二），version=000001（末段）。
+    s3State.objs = [{ key: "松風庵/root/main/000001/model.ifc", etag: "shofuan1" }];
 
     const s3Port = await startS3Stub();
     const convPort = await startConvStub();
@@ -157,7 +182,6 @@ test.describe("MinIO 閉環四段一致（STUB MINIO + STUB CONVERSION）", () =
       SESSION_STORE_DIR: path.join(tmpRoot, "sessions"),
       EVENT_LOG_DIR: path.join(tmpRoot, "events"),
       CALLBACK_OUTBOX_STORE_PATH: path.join(tmpRoot, "callback-outbox.json"),
-      // Task 8 要求：CONVERSION_LEDGER_STORE_PATH 指向 tmp 檔，確保 ledger 持久且測試隔離。
       CONVERSION_LEDGER_STORE_PATH: ledgerPath,
       STORAGE_ROOT: path.join(tmpRoot, "storage"),
       LOG_ROOT: path.join(tmpRoot, "logs"),
@@ -202,67 +226,58 @@ test.describe("MinIO 閉環四段一致（STUB MINIO + STUB CONVERSION）", () =
     if (tmpRoot && fs.existsSync(tmpRoot)) fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("四段一致：watcher 偵測 → ledger queued → #/minio 來源IFC + 待產生 → #/conv 紀錄 + 啟用中 + 無假 ready", async ({ page }) => {
+  test("四段一致：auto-enroll 觸發 → ledger queued → #/minio 逐層導覽到 model.ifc（來源IFC+排隊chip）→ #/conv 紀錄+啟用中+無假 ready", async ({ page }) => {
     const api = await pwRequest.newContext();
     try {
-      // 1) 等 watcher baseline 完成（baseline_count≥1）。
-      await expect.poll(async () => {
-        const r = await api.get(`${coordinatorBase}/api/external/minio-watch/status`);
-        return (await r.json() as { baseline_count: number }).baseline_count;
-      }, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
-
-      // 2) 注入新物件（≥3段 key，符合 watcher 規約）。baseline 已鎖，下一輪 watcher delta 偵測。
-      //    松風庵/root/main/000001/model.ifc：4段，category=main（倒數二），version=000001（末段）。
-      s3State.objs.push({ key: "松風庵/root/main/000001/model.ifc", etag: "shofuan1" });
-
-      // 3) 等後端真實狀態確認：watcher triggered≥1 且 /api/conversion/records 出現 queued 紀錄。
+      // 1) §3.4 auto-enroll：watcher 首輪即對 ledger 無紀錄的既有物件觸發（triggered_total≥1）。
       await expect.poll(async () => {
         const r = await api.get(`${coordinatorBase}/api/external/minio-watch/status`);
         return (await r.json() as { triggered_total: number }).triggered_total;
       }, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
 
+      // 2) 後端真實狀態確認：/api/conversion/records 出現 000001 版本的 queued 紀錄。
       await expect.poll(async () => {
         const r = await api.get(`${coordinatorBase}/api/conversion/records`);
         const body = await r.json() as { items: Array<{ external_model_version_id: string; status: string }> };
         return body.items.some((rec) => rec.external_model_version_id === "000001");
       }, { timeout: 30_000 }).toBe(true);
 
-      // 4) 斷言一：#/minio 頁 → GET /api/minio/objects → 出現 松風庵 物件、role 來源 IFC、
-      //    且 model.usdc 標「待產生」（stub 無 .usdc → 誠實鐵律）。
-      // 注意：SPA hash 路由不重新整頁，MinioDataPage useEffect 掛載後才打 API。
-      // 用 expect(...).toBeVisible 的內建自動重試等待 React 完成渲染（照 minio-fileserver-source 慣例）。
+      // 3) 斷言一：#/minio 逐層資料夾導覽（S3 Delimiter='/'）。
+      //    首幀 prefix=''：只見資料夾節點 松風庵/（非攤平樹）；逐層點入才到 model.ifc。
       await page.goto(`${coordinatorBase}/ui#/minio`);
 
-      // 樹節點：松風庵 專案可見（MinioDataPage 讀 /api/minio/objects 完成後渲染）。
-      await expect(page.getByText("松風庵/", { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+      // 頂層：松風庵/ 資料夾鈕可見（含 source IFC badge，prefixHasSourceIfc 遞迴 probe 命中 .ifc）。
+      await expect(page.getByTestId("minio-folder-open-松風庵/")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId("minio-folder-badge-松風庵/")).toBeVisible({ timeout: 10_000 });
+      // 逐層導覽（非攤平）：頂層只有資料夾節點，無物件級 chip（物件要逐層下行才出現）。
+      // 註：body 文字層含 DEMO「Bucket layout 示意」Panel（規約說明，含 來源 IFC/model.ifc 模板字樣），
+      // 故不以 body 文字斷言物件不存在；改用物件專屬 testid（minio-chip-*）計數＝0 精準驗（不受 DEMO 干擾）。
+      await expect(page.locator('[data-testid^="minio-chip-"]')).toHaveCount(0);
+      await page.screenshot({ path: "../artifacts/e2e/minio-folderview-toplevel.png", fullPage: true });
 
-      // 物件角色 label：「來源 IFC」（roleLabel("source_ifc") = "來源 IFC"）。
-      await expect(page.getByText("來源 IFC", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+      // 逐層下行：松風庵/ → root/ → main/ → 000001/（每層點資料夾鈕換 prefix 重打 getMinioFolder）。
+      await page.getByTestId("minio-folder-open-松風庵/").click();
+      await page.getByTestId("minio-folder-open-松風庵/root/").click();
+      await page.getByTestId("minio-folder-open-松風庵/root/main/").click();
+      await page.getByTestId("minio-folder-open-松風庵/root/main/000001/").click();
 
-      // 誠實鐵律：stub 無 .usdc → 頁面標 "pending · 待產生"（pages.tsx:1266）。
-      await expect(page.getByText("待產生", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
-
-      // 確認無 parsed_usdc（.usdc 角色）——stub 只有 .ifc，不應偽稱已轉。
-      // 用 not.toContainText 確保 DOM 文字層完全無該字樣（不受 CSS 隱藏影響）。
+      // 葉層：物件 chip 出現＝drill-down 已到 model.ifc 物件層（物件專屬 testid，不受 DEMO Panel 干擾）。
+      const leafChip = page.locator('[data-testid^="minio-chip-"]').first();
+      await expect(leafChip).toBeVisible({ timeout: 15_000 });
+      // chip = 排隊：auto-enroll 已落 ledger queued，ledgerChipStatus 以 idempotency_key 命中該紀錄。
+      await expect(leafChip).toContainText("排隊", { timeout: 15_000 });
+      // 誠實鐵律：stub 無 .usdc → 不偽稱已轉 USDC（roleLabel parsed_usdc 字樣不應出現於物件列）。
       await expect(page.locator("body")).not.toContainText("已轉 USDC");
+      await page.screenshot({ path: "../artifacts/e2e/minio-folderview-leaf.png", fullPage: true });
 
-      await page.screenshot({ path: "../artifacts/e2e/minio-closed-loop-minio.png", fullPage: true });
-
-      // 5) 斷言二：#/conv 頁 → ledger panel 出現 000001 紀錄、status=排隊、
-      //    minio-watch-panel 啟用中、且 ledger panel 不含「完成」（無假 ready）。
+      // 4) 斷言二：#/conv → ledger panel 出現 000001 紀錄、status=排隊、watcher 啟用中、不含假 ready。
       await page.goto(`${coordinatorBase}/ui#/conv`);
 
       const ledgerPanel = page.getByTestId("conv-ledger-panel");
       await expect(ledgerPanel).toBeVisible({ timeout: 15_000 });
-
-      // ledger 版本 000001 可見。
       await expect(ledgerPanel.getByText("000001", { exact: false })).toBeVisible({ timeout: 15_000 });
-
-      // status = 排隊（LEDGER_STATUS_LABEL["queued"]="排隊"）。
       await expect(ledgerPanel.getByText("排隊", { exact: false })).toBeVisible({ timeout: 15_000 });
-
       // 誠實鐵律：ledger panel 不得含「完成」（ready Phase 2 才回填，Phase 1 禁假 ready）。
-      // 用 not.toContainText 確保 DOM 文字層完全無該字樣（不受 CSS 隱藏影響）。
       await expect(ledgerPanel).not.toContainText("完成");
 
       // minio-watch-panel：watcher 啟用中（MINIO_WATCH_ENABLED=true）。
@@ -270,7 +285,7 @@ test.describe("MinIO 閉環四段一致（STUB MINIO + STUB CONVERSION）", () =
       await expect(mwPanel).toBeVisible({ timeout: 15_000 });
       await expect(mwPanel).toContainText("啟用中", { timeout: 15_000 });
 
-      await page.screenshot({ path: "../artifacts/e2e/minio-closed-loop-conv.png", fullPage: true });
+      await page.screenshot({ path: "../artifacts/e2e/minio-folderview-conv.png", fullPage: true });
     } finally {
       await api.dispose();
     }

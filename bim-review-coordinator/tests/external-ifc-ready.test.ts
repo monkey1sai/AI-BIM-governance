@@ -272,6 +272,34 @@ describe("POST /api/external/ifc-ready", () => {
     const final = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatch_failed"]);
     expect(final.status).toBe("dispatch_failed");
     expect(final.conversion_authority).toBeNull();
+    // minio-trigger-lifecycle:鎖住單一權威 conversion_lifecycle_status 上 wire（dashboard 出口）。
+    // 此欄由 summarizeIfcReadyJob（list / status 投影）計算；detail 端點亦上 wire 此欄
+    // （見上方「單筆 detail」測試與 quality finding #1 修復）。此處鎖住「列表端點」此欄投影。
+    // dispatch_failed → deriveLifecycleStatus 短路回 "failed"；
+    // 若 summarizeIfcReadyJob 誤刪/改名此欄，既有斷言全綠卻漏此回歸，於此明確鎖住。
+    const listedFailed = await request(app.app).get("/api/external/ifc-ready");
+    const failedItem = (listedFailed.body.items as Array<Record<string, unknown>>).find(
+      (entry) => entry.ifc_ready_job_id === res.body.ifc_ready_job_id,
+    );
+    expect(failedItem).toBeDefined();
+    expect(failedItem?.conversion_lifecycle_status).toBe("failed");
+  });
+
+  it("GET /api/external/ifc-ready/:jobId（單筆 detail）回應含 conversion_lifecycle_status（前端 getIfcReadyJob 輪詢主讀此欄）", async () => {
+    // quality finding #1：detail 端點原本只回 sanitizeJobForExternal(job)（原始 IfcReadyIntakeJob），
+    // 該型別無 conversion_lifecycle_status 欄；此欄只由 summarizeIfcReadyJob 計算、僅列表端點上 wire。
+    // 前端 IfcReadyJobDetail.conversion_lifecycle_status 卻宣告 detail 端點回傳此欄 → 真實後端恆 undefined。
+    // 修復後 detail 端點與列表端點對齊上 wire 此欄（deriveLifecycleStatus(job)），維持前端型別契約。
+    const app = makeApp();
+    const created = await request(app.app).post("/api/external/ifc-ready").set(authHeaders()).send(payload());
+    expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
+    // streaming 不可達（makeApp 預設）→ worker 標 dispatch_failed → deriveLifecycleStatus 短路回 "failed"（確定值）。
+    await waitForDispatchEnd(app, jobId, ["dispatch_failed"]);
+    const res = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("conversion_lifecycle_status");
+    expect(res.body.conversion_lifecycle_status).toBe("failed");
   });
 
   it("lists recent IFC-ready jobs with dashboard-safe progress fields", async () => {
@@ -304,6 +332,9 @@ describe("POST /api/external/ifc-ready", () => {
       download_status: "downloaded",
       conversion_job_id: "stream_conv_test_001",
       conversion_status: "queued",
+      // minio-trigger-lifecycle:單一權威生命週期狀態上 wire。dispatched + conversion_status
+      // 非 ready → deriveLifecycleStatus 回 "converting"。鎖住列表端點不可漏此欄。
+      conversion_lifecycle_status: "converting",
       conversion_authority: "bim-streaming-server",
       queue_position: null,   // conv-prioritize-retry:additive 上 wire（已派工 → null）
       web_view_session_id: null,
@@ -840,5 +871,61 @@ describe("POST /api/external/ifc-ready (worker compatibility payload)", () => {
     const sent = streaming.bodies[0] as Record<string, unknown>;
     expect(typeof sent.event_id).toBe("string");
     expect(sent.event_id as string).toMatch(/^[A-Za-z0-9_.-]+$/);
+  });
+});
+
+describe("OQ1：project_display_name / category 對外曝光", () => {
+  it("intake 帶 project_display_name + model_category → GET 列表可見 category/project_display_name", async () => {
+    // 複用既有 makeApp（預設已帶 streamingConversionApiBase 不可達 → dispatch graceful）。
+    // 預設 config 的 webhook secret 即 WEBHOOK_SECRET（該檔既有測試已依賴），故沿用 authHeaders()。
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_oq1", "X-Idempotency-Key": "idem_oq1" }))
+      .send({
+        ...payload(),
+        project_id: "p_safe",
+        project_display_name: "許良宇圖書館",
+        model_category: "main",
+        external_model_version_id: "v2026",
+      });
+    // download/dispatch 不可達為 graceful（job 仍建、欄位已存）；只取 job id，不假設特定 status。
+    const jobId = res.body.ifc_ready_job_id as string;
+    expect(jobId).toBeTruthy();
+    const list = await request(app.app).get("/api/external/ifc-ready");
+    const item = (list.body.items as Array<Record<string, unknown>>).find(
+      (j) => j.ifc_ready_job_id === jobId,
+    );
+    expect(item?.project_display_name).toBe("許良宇圖書館");
+    expect(item?.category).toBe("main");
+  });
+
+  it("非 MinIO 來源（worker compat payload，無此二欄）→ GET 列表誠實 null，不塞假值", async () => {
+    // spec §4 驗收條件第 2 項「非 MinIO 來源（無此二欄）→ 誠實 null，不塞假值」的反向回歸守衛。
+    // 用 worker compatibility payload（不帶 project_display_name / model_category）POST，
+    // 列表端點對該 job 的 project_display_name 與 category 必須是 null。
+    // 這條鎖住 externalIfcReadyStore.create 的 `event.project_display_name ?? null`
+    // 不被改成 conversionLedger 那種 fallback（`?? event.project_id`，app.ts:1161）。
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set({ "X-Webhook-Secret": WEBHOOK_SECRET }) // worker compat：correlation/idempotency 由 task_id 派生
+      .send({
+        status: "ifc_ready",
+        ifc_path: "http://edge-internal.example/storage/demo-model.ifc",
+        project_id: "project_worker_oq1",
+        version: "ver_worker_oq1",
+        task_id: "task_worker_oq1",
+      });
+    const jobId = res.body.ifc_ready_job_id as string;
+    expect(jobId).toBeTruthy();
+    const list = await request(app.app).get("/api/external/ifc-ready");
+    const item = (list.body.items as Array<Record<string, unknown>>).find(
+      (j) => j.ifc_ready_job_id === jobId,
+    );
+    expect(item).toBeDefined();
+    // 誠實 null：不可 fallback 成 project_id（"project_worker_oq1"）或空字串。
+    expect(item?.project_display_name).toBeNull();
+    expect(item?.category).toBeNull();
   });
 });

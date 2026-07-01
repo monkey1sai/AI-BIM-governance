@@ -29,6 +29,7 @@ export interface RuleRunStatus {
     passed: number;
     failed: number;
     errored: number;
+    unique_elements?: number;
     target_summary: Record<string, number>;
     warnings: string[];
   } | null;
@@ -239,7 +240,7 @@ export interface DiffStatus {
 export interface DiffItemRow {
   change_type: string;
   ifc_guid: string | null;
-  ifc_type?: string;
+  ifc_type?: string | null;
   ifc_name?: string | null;
   change_summary: string;
 }

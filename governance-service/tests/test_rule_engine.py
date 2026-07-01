@@ -47,6 +47,7 @@ def test_predicates_on_synthetic_model(synthetic_model):
 
     assert 0.0 <= run.score <= 100.0
     assert run.total == run.passed + run.failed + run.errored
+    assert run.unique_elements == len({r.ifc_guid for r in run.results if r.ifc_guid})
 
 
 def test_unknown_ifc_type_warns_not_crashes(synthetic_model):
@@ -75,6 +76,7 @@ def test_engine_on_real_ifc():
     run = run_rules(model, rs)
 
     assert run.total > 0, "real model should yield evaluated elements"
+    assert run.summary_dict()["unique_elements"] == len({r.ifc_guid for r in run.results if r.ifc_guid})
 
     # 證明引擎真的對真實模型枚舉並萃取（非僅 parse）
     name_results = [r for r in run.results if r.rule_code == "ELEMENT-NAME-REQUIRED"]

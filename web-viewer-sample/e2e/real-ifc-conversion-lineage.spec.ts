@@ -4,13 +4,24 @@ import { test, expect } from "@playwright/test";
 // model.usdc + element_mapping.json + artifact_id（非 mock），並在 viewer UI 可見該 USDC stage URL。
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
+type IfcReadySummary = {
+  ifc_ready_job_id: string;
+};
+
+type IfcReadyDetail = {
+  web_view_session_id?: string;
+  conversion_status?: string;
+  external_model_version_id?: string;
+  conversion_job_id?: string;
+};
+
 test.describe("real-ifc-conversion-lineage：真實 IFC→USDC 轉檔產物 metadata", () => {
   test.setTimeout(90_000);
 
   test("ready 的真實 IFC 轉檔 → model.usdc + element_mapping + artifact_id，UI 可見 USDC", async ({ page, request }) => {
     const list = await (await request.get(`${COORDINATOR}/api/external/ifc-ready?limit=30`)).json();
-    let ready: any = null;
-    for (const it of (list.items || []).slice(0, 16)) {
+    let ready: IfcReadyDetail | null = null;
+    for (const it of ((list.items || []) as IfcReadySummary[]).slice(0, 16)) {
       const j = await (await request.get(`${COORDINATOR}/api/external/ifc-ready/${encodeURIComponent(it.ifc_ready_job_id)}`)).json();
       if (j.web_view_session_id && /ready/i.test(j.conversion_status || "") && /mv_realifc/.test(j.external_model_version_id || "")) {
         ready = j;

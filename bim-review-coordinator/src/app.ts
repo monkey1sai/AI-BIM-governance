@@ -19,10 +19,25 @@ import {
   type StructLogger,
 } from "./lib/structLog.js";
 import { ExternalIfcReadyStore } from "./services/externalIfcReadyStore.js";
-import { startMinioWatcher, type MinioWatcherHandle, type MinioWatcherStatus } from "./services/minioWatcher.js";
+import {
+  correlationIdFor,
+  deriveIntakeFromKey,
+  idempotencyKeyFor,
+  startMinioWatcher,
+  type MinioWatcherHandle,
+  type MinioWatcherStatus,
+} from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
-import { createMinioS3Client, listMinioObjects } from "./services/minioClient.js";
+import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
+import {
+  createMinioS3Client,
+  listMinioFolder,
+  listMinioObjects,
+  presignMinioObject,
+  type MinioFolderListing,
+} from "./services/minioClient.js";
+import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
 import {
@@ -350,6 +365,12 @@ export function createCoordinatorApp(
   // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
   // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
   let minioWatcher: MinioWatcherHandle | null = null;
+  // conversionLedger（minio-closed-loop-phase1 Task 1/3：coordinator-local shadow 持久 ledger）：
+  // 宣告即建構（const），讓 watcher 的 isLedgered closure（startMinioWatcherIfEnabled 內、下方 ~426 行）
+  // 在型別系統層面就靜態保證捕捉到已初始化的 ledger——不靠「賦值早於啟動路徑」的隱性順序假設，故日後
+  // 在啟動路徑前插入新程式碼也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion
+  // /records 讀取（Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
+  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
   let minioWatchRuntimeEnabled = config.minioWatchEnabled;
   // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
@@ -361,6 +382,58 @@ export function createCoordinatorApp(
       config.minioWatchEndpoint && config.minioWatchBucket &&
       config.minioWatchAccessKey && config.minioWatchSecretKey,
     );
+  }
+  type MinioFolderCacheEntry = {
+    listing: MinioFolderListing;
+    fetchedAt: string;
+    stale: boolean;
+  };
+  type MinioEventClient = {
+    write: (chunk: string) => boolean;
+    end: () => void;
+  };
+  const minioFolderCache = new Map<string, MinioFolderCacheEntry>();
+  const minioEventClients = new Set<MinioEventClient>();
+
+  function minioFolderCacheKey(prefix: string, delimiter: string): string {
+    return `${delimiter}\u0000${prefix}`;
+  }
+
+  function folderPrefixesForObjectKey(key: string): string[] {
+    const out = new Set<string>([""]);
+    const parts = key.split("/");
+    let current = "";
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      current += `${parts[i]}/`;
+      out.add(current);
+    }
+    return [...out];
+  }
+
+  function emitMinioEvent(event: string, data: Record<string, unknown>): void {
+    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of [...minioEventClients]) {
+      try {
+        client.write(frame);
+      } catch {
+        minioEventClients.delete(client);
+        client.end();
+      }
+    }
+  }
+
+  function markMinioFolderCacheDirtyForObject(key: string, reason: string): void {
+    const prefixes = folderPrefixesForObjectKey(key);
+    for (const p of prefixes) {
+      const entry = minioFolderCache.get(minioFolderCacheKey(p, "/"));
+      if (entry) entry.stale = true;
+    }
+    emitMinioEvent("minio.changed", {
+      type: "minio.changed",
+      prefixes,
+      reason,
+      at: nowIso(),
+    });
   }
   const minioWatchStartupConfigError =
     config.minioWatchEnabled && !minioWatchConfigured()
@@ -408,10 +481,18 @@ export function createCoordinatorApp(
       selfBaseUrl,
       webhookSecret: config.externalIntakeWebhookSecret,
       tenantId: config.minioWatchTenantId,
+      // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
+      // 既有未轉檔（含原 baseline 3 檔，ledger=0）下一輪 tick 自動補轉；coordinator 重啟後
+      // 持久 ledger 命中 mw_<hash16> 故不重觸發（重啟不風暴）。closure 捕捉的 conversionLedger
+      // 是上方宣告即建構的 const，型別系統靜態保證已初始化，closure 任何時刻被求值都看得到
+      // 已建好的 ledger。watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
+      isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
+      onObjectObserved: (event) => markMinioFolderCacheDirtyForObject(event.key, "minio-watcher-observed-object"),
       structLog,
     });
   }
   // 已在 listen 上的 server（生產 index.ts / E2E）：listening 後啟動以取得實際 port。
+  // （conversionLedger 已於上方宣告即建構，const 保證 isLedgered closure 一定看到已初始化 ledger。）
   server.on("listening", () => startMinioWatcherIfEnabled());
   // supertest 整合測試不呼叫 listen；用 selfBaseUrl override 時可立即啟動。
   // 舊：if (config.minioWatchEnabled && config.minioWatchSelfBaseUrl) {
@@ -481,9 +562,6 @@ export function createCoordinatorApp(
     undefined,
     config.callbackOutboxStorePath,
   );
-  // minio-closed-loop-phase1 Task 1/3：持久 ConversionLedger（coordinator-local shadow）。
-  // watcher 偵測即寫 queued（Task 2）；GET /api/conversion/records 讀取（Task 3）。
-  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
@@ -844,6 +922,103 @@ export function createCoordinatorApp(
     }
   });
 
+  // A1 手動觸發：前端只送 MinIO object key，coordinator server-side presign + 重用 watcher
+  // intake 邏輯 self-POST /api/external/ifc-ready。冪等鍵 mw_<hash16>，同 key 回既有 job。
+  // 守門比照其他 /api/conversion/* 控制路由（rejectIfIpNotAllowed）。
+  app.post("/api/conversion/trigger", async (request, response) => {
+    if (rejectIfIpNotAllowed(request, response)) return;
+    // 連線參數須齊全（endpoint/bucket/accessKey/secretKey）。僅檢 endpoint/bucket 會放行空憑證，
+    // presign 仍以空憑證簽出 URL、self-POST 過關，IFC 下載卻在 MinIO 認證靜默失敗（job failed）。
+    // 複用既有 minioWatchConfigured()（四欄全檢，與 PUT /api/conversion/watch 422 判斷同一把尺）。
+    if (!minioWatchConfigured()) {
+      response.status(503).json({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" });
+      return;
+    }
+    const key = typeof request.body?.key === "string" ? request.body.key : "";
+    if (!key) {
+      response.status(400).json({ detail: "缺 key" });
+      return;
+    }
+    // idempotencyKeyFor/correlationIdFor（minioWatcher.ts:29/39）文件化前置條件：key 不得含 `|`，
+    // 因為 hash input 以 `|` 分隔 bucket|key|etag。deriveIntakeFromKey 只擋空段/`.`/`..`，不擋 `|`，
+    // 故在計算冪等鍵前先擋下，避免不同 (bucket, key, etag) 撞同一 hash（違反不變式）。
+    if (key.includes("|")) {
+      response.status(400).json({ detail: "key 不合法：不得含 `|`（與 idempotency hash 分隔符衝突）" });
+      return;
+    }
+    // S3/MinIO object key 上限 1024 bytes（AWS S3 規範）；超長 key 只會無謂往返 MinIO + 灌大 hash 輸入，
+    // 與 deriveIntakeFromKey 的其他輸入驗證（防穿越/空段）同精神，提前擋下。
+    if (key.length > 1024) {
+      response.status(400).json({ detail: "key 過長（S3 object key 上限 1024 bytes）" });
+      return;
+    }
+    const derived = deriveIntakeFromKey({
+      key,
+      prefix: config.minioWatchPrefix,
+      keySuffix: config.minioWatchKeySuffix,
+    });
+    if (!derived.ok) {
+      response.status(400).json({ detail: `key 不合法：${derived.reason}` });
+      return;
+    }
+    let presignedRef: string;
+    try {
+      presignedRef = await presignMinioObject(
+        {
+          endpoint: config.minioWatchEndpoint,
+          accessKey: config.minioWatchAccessKey,
+          secretKey: config.minioWatchSecretKey,
+        },
+        config.minioWatchBucket,
+        key,
+      );
+    } catch (err) {
+      response.status(502).json({ detail: `presign 失敗：${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    // etag 在手動觸發無法事先取得，用 key 當穩定 idempotency 來源（同 key 重觸發回既有 job）。
+    const idemKey = idempotencyKeyFor(config.minioWatchBucket, key, key);
+    const corrId = correlationIdFor(config.minioWatchBucket, key, key);
+    // self-POST loopback：複用既有 watcher seam config.minioWatchSelfBaseUrl（config.ts:101、
+    // app.ts:399 同一條），有值時優先（測試以 listen(0) 的真實 port 注入）；fallback 才用
+    // config.port（production 預設 8004，process 已 listen 該 port）。
+    // ⚠ reviewer blocker：supertest 整合測試 request(app.app) 不呼叫 server.listen()，
+    // 若硬編 http://127.0.0.1:${config.port}（預設 8004，無人 listen）→ fetch ECONNREFUSED → 502，
+    // 合法 key 永遠拿不到 202。故端點必須讀 selfBaseUrl seam，測試端 makeApp 須 listen(0)+注入。
+    const selfBase = config.minioWatchSelfBaseUrl || `http://127.0.0.1:${config.port}`;
+    try {
+      const upstream = await fetch(`${selfBase}/api/external/ifc-ready`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Webhook-Secret": config.externalIntakeWebhookSecret,
+          "X-Correlation-Id": corrId,
+          "X-Idempotency-Key": idemKey,
+        },
+        body: JSON.stringify({
+          event: "ifc_ready",
+          tenant_id: config.minioWatchTenantId,
+          project_id: derived.projectId,
+          project_display_name: derived.projectDisplayName,
+          model_category: derived.category,
+          external_model_version_id: derived.externalModelVersionId,
+          external_conversion_task_id: `${derived.externalModelVersionId}_manual`,
+          source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
+          requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
+        }),
+        // app 死鎖/過載長時不回時逾時中斷，避免前端 A1 按鈕無限等待（對齊 minioWatcher.ts:341 self-POST 保護）。
+        // 上游 intake 含同步 IFC 下載，故逾時 = 下載逾時 + 5s 緩衝。
+        signal: AbortSignal.timeout(config.ifcDownloadTimeoutSeconds * 1000 + 5_000),
+      });
+      const text = await upstream.text();
+      const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      // 誠實：回應不夾帶 presigned ref（即使上游回了也遮蔽；source_ifc_ref 由上游 summarize 已遮蔽）
+      response.status(upstream.status).json({ ...parsed, trigger_source: "manual" });
+    } catch (err) {
+      response.status(502).json({ detail: `trigger 失敗：${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
   app.get("/api/review-sessions/:sessionId/events", (request, response) => {
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
@@ -1090,7 +1265,8 @@ export function createCoordinatorApp(
       const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
       if (existing) {
         // fast-ifc-link-demo-loop §2.6:idempotent replay 直接 200 reuse,不重下載也不重派工
-        response.status(200).json({ ...existing, idempotent_replay: true });
+        // 誠實鐵律：existing 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
+        response.status(200).json({ ...sanitizeJobForExternal(existing), idempotent_replay: true });
         return;
       }
 
@@ -1171,8 +1347,9 @@ export function createCoordinatorApp(
       // dispatch 改為 in-memory queue 序列化,viewer / dashboard 可 poll status
       // 觀察 queued_for_conversion → dispatched 變化)。
       const finalJob = externalIfcReadyStore.get(job.ifc_ready_job_id);
+      // 誠實鐵律：finalJob.source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐（finalJob 理論恆存在，缺則 {} 不外洩）。
       response.status(202).json({
-        ...finalJob,
+        ...(finalJob ? sanitizeJobForExternal(finalJob) : {}),
         message: "IFC 已下載至本地共享卷,轉檔已進入派工佇列",
       });
     } catch (error) {
@@ -1200,14 +1377,36 @@ export function createCoordinatorApp(
     response.json({ count: items.length, items: items.slice(0, limit) });
   });
 
+  // MinIO folder cache dirty stream：watcher 觀察到新/變更 object 時，通知前端把對應 prefix
+  // 視為 stale。只送 prefix metadata，不送物件內容、presigned URL 或 credentials。
+  app.get("/api/minio/events", (request, response) => {
+    response.status(200);
+    response.set({
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    response.write(`event: minio.ready\ndata: ${JSON.stringify({ type: "minio.ready", at: nowIso() })}\n\n`);
+    minioEventClients.add(response);
+    request.on("close", () => {
+      minioEventClients.delete(response);
+    });
+  });
+
   // minio-closed-loop-phase1 Task 4：唯讀 S3 list proxy。
   // MinIO 未設定時誠實回 count=0（不 500）；list 失敗回 502；presigned URL 不入 log。
   // 插在 /api/external/ifc-ready 後、/:jobId 之前（避免 param 吃掉）。
   app.get("/api/minio/objects", async (request, response) => {
     if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
+      // 此 early-return 同時服務 flat list（getMinioObjects）與 delimiter=/ 資料夾視圖
+      // （getMinioFolder）。前端 MinioFolderListing 型別 folders 為必填陣列，故未設定分支也須補
+      // folders: []（與已設定分支 listMinioFolder 回傳 shape 對齊），否則 getMinioFolder 消費端
+      // r.folders.map(...) 會 TypeError crash UI。空陣列比缺欄位更誠實。
       response.json({
         bucket: config.minioWatchBucket || null,
         prefix: "",
+        folders: [],
         count: 0,
         objects: [],
         note: "MinIO watch 未設定（未取得）",
@@ -1216,6 +1415,26 @@ export function createCoordinatorApp(
     }
     const rawPrefix =
       typeof request.query.prefix === "string" ? request.query.prefix : config.minioWatchPrefix;
+    // 空字串 delimiter（?delimiter=）回落舊路徑（truthy check，照 plan §Task2）：
+    // 只有真正帶非空 delimiter（如 /）才走資料夾語意 list，避免前端收到空 folders[] 而非舊格式。
+    const rawDelimiter =
+      typeof request.query.delimiter === "string" ? request.query.delimiter : "";
+    const forceRefresh = request.query.refresh === "1" || request.query.force === "1";
+    // spec §2.1 只定義 delimiter='/' 為有效值。白名單擋在轉送 S3 SDK 前：拒絕多字元、
+    // 控制字元、XML 特殊字元等任意 delimiter（否則部分值會讓 SDK 拋非預期錯誤並在 502
+    // detail 洩漏內部訊息，且讓前端控制 delimiter 語意超出 spec 設計意圖）。
+    if (rawDelimiter && rawDelimiter !== "/") {
+      response.status(400).json({ error: "invalid_delimiter", detail: "只支援 delimiter=/" });
+      return;
+    }
+    // rawPrefix 直接取自 HTTP query，未驗證即傳 listMinioFolder/listMinioObjects → S3 SDK。
+    // S3 路徑模型中 `..` 為字面字元（非 filesystem 穿越），無 bucket escape 風險；但嵌入
+    // CR/LF 的 prefix 可能在 SDK 的 HTTP 請求中造成 header injection（AWS SDK 未必全濾）。
+    // 守門擋在轉送前：偵測到 CR/LF 直接 400，根本不建 S3 client（帶不帶 delimiter 都套用）。
+    if (rawPrefix.includes("\r") || rawPrefix.includes("\n")) {
+      response.status(400).json({ error: "invalid_prefix", detail: "prefix 不可含換行字元（CR/LF）" });
+      return;
+    }
     let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
       client = createMinioS3Client({
@@ -1223,17 +1442,50 @@ export function createCoordinatorApp(
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
       });
-      const objects = await listMinioObjects(
-        client,
-        config.minioWatchBucket,
-        rawPrefix,
-        config.minioWatchKeySuffix,
-      );
-      response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+      if (rawDelimiter) {
+        const cacheKey = minioFolderCacheKey(rawPrefix, rawDelimiter);
+        const cached = minioFolderCache.get(cacheKey);
+        if (cached && !cached.stale && !forceRefresh) {
+          response.json({
+            ...cached.listing,
+            cache: { hit: true, stale: false, fetched_at: cached.fetchedAt },
+          });
+          return;
+        }
+        // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list，回 folders[]（CommonPrefixes）。
+        // 傳入 structLog 供 q3-pipe-guard 跳過含 '|' key 時 warn（對齊 watcher precondition）。
+        const listing = await listMinioFolder(
+          client,
+          config.minioWatchBucket,
+          rawPrefix,
+          rawDelimiter,
+          structLog,
+        );
+        const fetchedAt = nowIso();
+        minioFolderCache.set(cacheKey, { listing, fetchedAt, stale: false });
+        response.json({
+          ...listing,
+          cache: { hit: false, stale: false, fetched_at: fetchedAt },
+        });
+      } else {
+        const objects = await listMinioObjects(
+          client,
+          config.minioWatchBucket,
+          rawPrefix,
+          config.minioWatchKeySuffix,
+          structLog,
+        );
+        response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+      }
     } catch (err) {
-      response
-        .status(502)
-        .json({ error: "minio_list_failed", detail: err instanceof Error ? err.message : String(err) });
+      // q1-502-leak：AWS SDK 的 err.message 常含 endpoint host:port / bucket / 內部錯誤碼，
+      // 直接回 detail 會把 infra 細節洩漏給瀏覽器。改回固定 sanitized 字串；完整 err.message
+      // 只進 structLog 供運維追查。此 catch 同時服務 listMinioObjects 與 listMinioFolder 路徑。
+      structLog.error("minioObjects", "minio list failed", err, {
+        bucket: config.minioWatchBucket,
+        delimiter: rawDelimiter || null,
+      });
+      response.status(502).json({ error: "minio_list_failed", detail: "minio list failed" });
     } finally {
       client?.destroy();
     }
@@ -1279,7 +1531,11 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "IFC-ready job not found." });
       return;
     }
-    response.json(job);
+    // 誠實鐵律：對外 response 不得含 presigned 簽章（與 list / shadow / session 出口一致）。
+    // quality finding #1：detail 端點與列表端點（summarizeIfcReadyJob）對齊上 wire 單一權威
+    // conversion_lifecycle_status，使前端 IfcReadyJobDetail.conversion_lifecycle_status 型別契約成立
+    // （前端 getIfcReadyJob 輪詢主讀此欄）。additive：sanitizeJobForExternal 仍回原始 job 形狀。
+    response.json({ ...sanitizeJobForExternal(job), conversion_lifecycle_status: deriveLifecycleStatus(job) });
   });
 
   // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
@@ -1845,7 +2101,7 @@ export function createCoordinatorApp(
         external_model_version_id: job.external_model_version_id,
         ifc_ready_job_id: job.ifc_ready_job_id,
         artifact_resolution: {
-          source_ifc_ref: job.source_ifc_ref,
+          source_ifc_ref: maskPresignedRef(job.source_ifc_ref),
           artifact_manifest_ref: job.artifact_manifest_ref ?? null,
           conversion_job_id: job.conversion_job_id,
           conversion_status: job.conversion_status,
@@ -2188,6 +2444,10 @@ export function createCoordinatorApp(
     // markDroppedOnRestart/clear 會造成重複 store 寫入,二次起一律 no-op。
     if (disposed) return;
     disposed = true;
+    for (const client of [...minioEventClients]) {
+      client.end();
+    }
+    minioEventClients.clear();
     for (const handle of pollerRegistry.values()) {
       handle.cancel();
     }
@@ -2351,10 +2611,12 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     status: job.status,
     tenant_id: job.tenant_id,
     project_id: job.project_id,
+    project_display_name: job.project_display_name ?? null,
+    category: job.category ?? null,
     external_model_version_id: job.external_model_version_id,
     external_conversion_task_id: job.external_conversion_task_id ?? null,
     correlation_id: job.correlation_id,
-    source_ifc_ref: job.source_ifc_ref,
+    source_ifc_ref: maskPresignedRef(job.source_ifc_ref),
     source_ifc_etag: job.source_ifc_etag,
     download_status: job.download_status ?? null,
     download_failure: job.download_failure ?? null,
@@ -2362,6 +2624,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     host_local_path: job.host_local_path ?? null,
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
+    conversion_lifecycle_status: deriveLifecycleStatus(job),
     conversion_authority: job.conversion_authority,
     // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
     // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive,
@@ -2378,6 +2641,22 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     created_at: job.created_at,
     updated_at: job.updated_at,
   };
+}
+
+// 誠實鐵律（presigned 簽章遮蔽）：對外直接序列化完整 job 物件的端點
+// （GET /api/external/ifc-ready/:jobId）必須剝除 source_ifc_ref 的 presigned 簽章。
+// 以 spread + 遮蔽單一欄位的方式收斂，避免日後 job 新增欄位時又漏遮某個敏感值
+// 而必須逐一比對；目前唯一含簽章的欄位是 source_ifc_ref。
+/**
+ * @security 瀏覽器可見 / 對外（browser-visible / external）輸出 IfcReadyIntakeJob 前必經此函式：
+ * 遮蔽 source_ifc_ref 的 presigned 簽章。已涵蓋出口：GET list/:jobId/shadow、POST intake 200/202、
+ * POST local-web-view session。日後新增「瀏覽器可見/對外」且 spread 整個 job 的出口，MUST 先過此函式並補守衛測試。
+ * 範圍外（刻意）：POST /api/internal/conversion-result、/api/internal/conversions/:id/ingest 等 internal-token
+ * 路徑仍回原始 job（內部 consumer 可能需 presigned 下載；比照 callback outbox carve-out，pre-existing 非本次新增）。
+ * 若要對 internal 路徑做 defense-in-depth 遮蔽，須先確認下游 consumer 不依賴 presigned ref。
+ */
+function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
+  return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
 }
 
 function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {

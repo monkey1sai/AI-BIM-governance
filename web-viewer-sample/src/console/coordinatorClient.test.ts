@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorClient, narrowConversionStatus, CONVERSION_LIFECYCLE_STATUS_VALUES, type TriggerConversionResponse } from "./coordinatorClient";
 
 describe("coordinatorClient conversion control", () => {
   afterEach(() => {
@@ -256,4 +256,182 @@ describe("coordinatorClient conversion control", () => {
     );
     await expect(coordinatorClient.getMinioObjects()).rejects.toThrow();
   });
+
+  // Task 6：getMinioFolder 測試（mine，KEEP）；conversionTrigger 測試已移除（方向1：觸發交給 main triggerConversion）
+  it("getMinioFolder 打 GET /api/minio/objects?delimiter=/ 並回 { folders, objects, prefix, bucket, count }", async () => {
+    // 真實 wire shape（後端 MinioFolderNode[]，spec §2.5 第 5 點 has_source_ifc badge）：
+    // folders 每個元素 = { prefix, has_source_ifc }，非純字串陣列。
+    const mockFolders = [
+      { prefix: "松風庵/root/", has_source_ifc: true },
+      { prefix: "洲際好宅/", has_source_ifc: false },
+    ];
+    // role='other' 物件後端仍無條件計算 idempotency_key（minioClient.ts:133），故為 string 非 null。
+    const mockObjects = [
+      {
+        key: "annotations/readme.txt",
+        etag: "xyz789",
+        role: "other",
+        project_id: null,
+        project_display_name: null,
+        category: null,
+        version: null,
+        idempotency_key: "mw_0011223344556677",
+      },
+    ];
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ bucket: "bim-control", prefix: "", count: 2, folders: mockFolders, objects: mockObjects }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const r = await coordinatorClient.getMinioFolder();
+    expect(r.bucket).toBe("bim-control");
+    // prefix 傳遞契約錨點（無 prefix 參數呼叫時後端回 rawPrefix，預設 config.minioWatchPrefix=""）。
+    expect(r.prefix).toBe("");
+    expect(r.folders).toEqual([
+      { prefix: "松風庵/root/", has_source_ifc: true },
+      { prefix: "洲際好宅/", has_source_ifc: false },
+    ]);
+    // 對齊真實後端：folders 元素是物件、可安全做字串操作（folder.prefix.endsWith('/')）。
+    expect(r.folders[0].prefix.endsWith("/")).toBe(true);
+    expect(r.folders[0].has_source_ifc).toBe(true);
+    expect(r.objects[0].role).toBe("other");
+    // role='other' 後端仍回 string idempotency_key（非 null）。
+    expect(r.objects[0].idempotency_key).toBe("mw_0011223344556677");
+    const call = spy.mock.calls[0];
+    const url = String(call[0]);
+    expect(url).toContain("/api/minio/objects");
+    expect(url).toContain("delimiter=%2F");
+    // 不帶 prefix 時不帶 prefix= query
+    expect(url).not.toContain("prefix=");
+  });
+
+  it("getMinioFolder 帶 prefix 時 URL 同時含 prefix= 和 delimiter=/", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ bucket: "bim-control", prefix: "松風庵/", count: 0, folders: [], objects: [] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await coordinatorClient.getMinioFolder("松風庵/");
+    const calls = (vi.mocked(globalThis.fetch)).mock.calls;
+    const url = String(calls[0][0]);
+    expect(url).toContain(`prefix=${encodeURIComponent("松風庵/")}`);
+    expect(url).toContain("delimiter=%2F");
+  });
+
+  it("getMinioFolder 502 時 throw（MinIO 無法連線情境；AC-honesty：error 顯原因可重試，與 getMinioObjects 502 對稱）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "minio_list_failed", detail: "ECONNREFUSED" }), {
+        status: 502,
+        statusText: "Bad Gateway",
+      }),
+    );
+    await expect(coordinatorClient.getMinioFolder()).rejects.toThrow();
+  });
+
+  it("getMinioFolder MinIO 未設定時 folders 為 []（後端 early-return 補 folders，消費端 r.folders.map 不 crash）", async () => {
+    // 後端 /api/minio/objects 未設定分支（app.ts）現補 folders: [] 與已設定分支 listMinioFolder shape 對齊。
+    // 鎖此契約：getMinioFolder 收到未設定回應時 folders 為陣列（非 undefined），UI 可安全 .map()，
+    // 防 finding「未設定 + delimiter=/ 缺 folders → 消費端 TypeError crash」regression。
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ bucket: null, prefix: "", folders: [], count: 0, objects: [], note: "MinIO watch 未設定（未取得）" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const r = await coordinatorClient.getMinioFolder();
+    expect(r.bucket).toBeNull();
+    expect(Array.isArray(r.folders)).toBe(true);
+    expect(r.folders).toEqual([]);
+    // 直接驗 UI 端 .map() 不 throw（finding：消費端對 folders crash 風險）。
+    expect(() => r.folders.map((f) => f.prefix)).not.toThrow();
+  });
+
 });
+
+// Task 6 chip-patch runtime guard：narrowConversionStatus 把 wire 寬 string 收斂成
+// ConversionLedgerStatus；非法值回 null（誠實鐵律：chip-patch 不靜默設成壞狀態）。
+describe("narrowConversionStatus", () => {
+  it("合法 ConversionLedgerStatus 原樣回傳", () => {
+    for (const s of ["detected", "queued", "converting", "ready", "failed"] as const) {
+      expect(narrowConversionStatus(s)).toBe(s);
+    }
+  });
+
+  it("非法 wire status（後端送非預期字串）回 null，呼叫端據以顯 unknown / 不 patch", () => {
+    expect(narrowConversionStatus("dispatched")).toBeNull();
+    expect(narrowConversionStatus("")).toBeNull();
+    expect(narrowConversionStatus("QUEUED")).toBeNull(); // 大小寫敏感：非合法集合成員
+    expect(narrowConversionStatus("undefined")).toBeNull();
+  });
+});
+
+describe("coordinatorClient triggerConversion / getIfcReadyJob（PR#259，方向1 觸發交給 main）", () => {
+  it("triggerConversion 打 POST /api/conversion/trigger 帶 key，202 回 ifc_ready_job_id", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_abc", status: "queued_for_conversion", trigger_source: "manual" }), { status: 202 }),
+    );
+    const r = await coordinatorClient.triggerConversion("專案A/root/main/uuid/model.ifc");
+    expect(r.ifc_ready_job_id).toBe("ifcready_mw_abc");
+    const call = spy.mock.calls[0];
+    expect(String(call[0])).toContain("/api/conversion/trigger");
+    expect((call[1] as RequestInit).method).toBe("POST");
+    expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ key: "專案A/root/main/uuid/model.ifc" });
+  });
+
+  it("triggerConversion 503（MinIO 未設定）throw 帶後端 detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" }), { status: 503, statusText: "Service Unavailable" }),
+    );
+    await expect(coordinatorClient.triggerConversion("k")).rejects.toThrow(/MinIO 未設定/);
+  });
+
+  it("getIfcReadyJob 打 GET /api/external/ifc-ready/:jobId，回 conversion_lifecycle_status", async () => {
+    // quality finding #2：此 mock 的 conversion_lifecycle_status 對應真實後端 detail 端點——
+    // app.ts GET /api/external/ifc-ready/:jobId 已上 wire deriveLifecycleStatus(job)，
+    // 後端回歸鎖在 bim-review-coordinator/tests/external-ifc-ready.test.ts「單筆 detail」測試。非虛構欄位。
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_abc", status: "queued_for_conversion", conversion_lifecycle_status: "queued", download_status: "downloaded", conversion_status: null, review_session_id: null }), { status: 200 }),
+    );
+    const r = await coordinatorClient.getIfcReadyJob("ifcready_mw_abc");
+    expect(r.conversion_lifecycle_status).toBe("queued");
+    expect(String(spy.mock.calls[0][0])).toContain("/api/external/ifc-ready/ifcready_mw_abc");
+  });
+
+  it("getIfcReadyJob 404（job 不存在）throw 帶後端 detail（jsonGet errorDetail，與 jsonPost/jsonPut 對稱；A1 輪詢誠實顯示可操作提示）", async () => {
+    // 修前 jsonGet 只 throw statusText → 操作員看到無意義「404 Not Found」；修後萃取後端 detail（誠實鐵律）。
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "ifc-ready job 不存在" }), { status: 404, statusText: "Not Found" }),
+    );
+    await expect(coordinatorClient.getIfcReadyJob("ifcready_missing")).rejects.toThrow(/ifc-ready job 不存在/);
+  });
+
+  it("getIfcReadyJob 失敗 body 非 JSON 時退回原始 text（errorDetail best-effort，不讓萃取錯誤遮蔽 HTTP 失敗）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("upstream 502 plain", { status: 502, statusText: "Bad Gateway" }),
+    );
+    await expect(coordinatorClient.getIfcReadyJob("ifcready_x")).rejects.toThrow(/upstream 502 plain/);
+  });
+
+  it("ConversionLifecycleStatus 值集鎖定（鏡像後端 ConversionLedgerStatus；前端被悄改時 CI 攔，後端增值須人工同步此處）", () => {
+    // 前後端無 shared schema；此測試鎖住前端值集，使任何前端遺漏/誤改在 CI 顯性失敗。
+    expect([...CONVERSION_LIFECYCLE_STATUS_VALUES]).toEqual(["detected", "queued", "converting", "ready", "failed"]);
+  });
+});
+
+// ── TriggerConversionResponse 型別契約斷言（compile-time only；由 `npx tsc --noEmit` 守門，
+//    vitest 執行期為無副作用 no-op）。鎖住兩條契約避免日後被悄悄放寬（quality finding #1 / #2）──
+//   #1 ifc_ready_job_id 必為 string（非 optional）：B1 後端（PR #259）202 永遠帶此欄；optional 會逼
+//      Task 3 消費端做 undefined 守門（`!.` 砍掉型別安全網，或 `?? ""` 打 bogus URL → 404）。
+//   #2 不得有 detail 欄位：jsonPost 在 !res.ok 時已 throw（後端 detail 經 errorDetail 注入 Error
+//      message），success-path 的 detail 恆 undefined；留此欄會給「可讀回傳物件 detail」的錯誤合約
+//      暗示。轉檔已排入 vs 冪等回傳既有的語意差異改由既有 trigger_source 表達。
+{
+  const probe: TriggerConversionResponse = { ifc_ready_job_id: "ifcready_x" };
+  // #1：非 optional 才能把 ifc_ready_job_id 直接賦值給 string（optional 時為 string | undefined 不可賦值）。
+  const jobId: string = probe.ifc_ready_job_id;
+  void jobId;
+  // @ts-expect-error #2：detail 欄位已移除，讀取應為型別錯誤（TS2339）。
+  void probe.detail;
+}

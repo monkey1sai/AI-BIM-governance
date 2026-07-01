@@ -1,6 +1,6 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { startMinioWatcher, type MinioWatcherStatus } from "../src/services/minioWatcher.js";
+import { startMinioWatcher, idempotencyKeyFor, type MinioWatcherStatus } from "../src/services/minioWatcher.js";
 
 let s3Stub: http.Server | null = null;
 let intakeStub: http.Server | null = null;
@@ -77,35 +77,6 @@ async function startNonJsonIntakeStub(received: Array<{ headers: http.IncomingHt
   return `http://127.0.0.1:${a.port}`;
 }
 
-// intake 對同一 idempotency key 永遠回同一 ifc_ready_job_id 且 idempotent_replay=true
-// （等價真 coordinator store 的去重）。用以驗「重啟新 watcher 實例重掃同 key 同 etag →
-// 仍 triggered（202 idempotent_replay 計觸發）且 job_id 與首次相同（同一筆 job）」。
-async function startIdempotentReplayIntakeStub(
-  received: Array<{ idemKey: string }>,
-): Promise<string> {
-  const jobByIdem = new Map<string, string>();
-  intakeStub = http.createServer((req, res) => {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      const idemKey = String(req.headers["x-idempotency-key"] ?? "");
-      received.push({ idemKey });
-      let jobId = jobByIdem.get(idemKey);
-      const replay = jobId !== undefined;
-      if (jobId === undefined) {
-        jobId = `ifcready_replaystub_${jobByIdem.size + 1}`;
-        jobByIdem.set(idemKey, jobId);
-      }
-      res.writeHead(202, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ifc_ready_job_id: jobId, idempotent_replay: replay }));
-    });
-  });
-  await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
-  const a = intakeStub!.address();
-  if (!a || typeof a === "string") throw new Error("intake stub bind");
-  return `http://127.0.0.1:${a.port}`;
-}
-
 // intake 收到請求但**永不回應**（socket 掛住），模擬 app 因負載/死鎖長時間不回
 // /api/external/ifc-ready。用以驗 triggerIntake 的 fetch 有 AbortSignal.timeout 保護：
 // 逾時後須記入 last_triggered.error 並讓 tick() 完成、下一輪照常排程（loop 不凍結）。
@@ -143,6 +114,18 @@ async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
   throw new Error("waitFor timeout");
 }
 
+// §3.4/5c：把「既有已落帳」表達為持久 ledger 命中。對給定 (bucket,key,etag) 算真實
+// idkey（=mw_<hash16>，與 watcher 內部 idempotencyKeyFor 同源），回一個 isLedgered
+// 述詞：只有這些 (key,etag) 的 idkey 回 true、其餘（如新上傳物件）回 false。用於
+// 「既有 baseline 已 auto-enroll 落帳、僅新增無紀錄物件才觸發」的後續輪情境。
+function ledgeredFor(
+  bucket: string,
+  entries: Array<{ key: string; etag: string }>,
+): (idkey: string) => boolean {
+  const set = new Set(entries.map((e) => idempotencyKeyFor(bucket, e.key, e.etag)));
+  return (idkey: string) => set.has(idkey);
+}
+
 function makeWatcher(
   s3Base: string,
   selfBase: string,
@@ -160,6 +143,10 @@ function makeWatcher(
     selfBaseUrl: selfBase,
     webhookSecret: "dev-webhook-secret",
     tenantId: "tenant_demo_001",
+    // §3.4 auto-enroll：loop 測試一律走 ledger 去重模式（注入 isLedgered）。預設「全未落帳」
+    // → 首輪即觸發 ledger 無紀錄物件（移除舊「首輪 baseline 不觸發」特例）。個別測試以
+    // extra.isLedgered 覆寫表達「已落帳→skip」。
+    isLedgered: extra.isLedgered ?? (() => false),
     structLog: { anomaly: () => {}, withTraceId: () => ({ anomaly: () => {} }) } as never,
     ...extra,
   });
@@ -194,21 +181,75 @@ describe("minioWatcher loop", () => {
     expect(tokenRequests).toContain("tok2");
   });
 
-  it("首輪 baseline 不觸發（seen=N、triggered=0）", async () => {
+  it("[autoenroll] 首輪即觸發 ledger 無紀錄物件（移除 baseline 不觸發特例）", async () => {
+    // §3.4：移除舊「首輪 baseline 全寫 seen 不觸發」特例。改以持久 ledger 去重——
+    // isLedgered=()=>false（全未落帳）下，首輪既有 model.ifc 即被當「無紀錄」自動觸發
+    // （既有未轉檔 auto-enroll）。baseline_count 仍照舊填（首輪 model.ifc 數，純診斷）。
     const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }, { key: "900/main/yyy/model.ifc", etag: "e2" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
-    watcher = makeWatcher(s3Base, selfBase, state);
+    watcher = makeWatcher(s3Base, selfBase, state, { isLedgered: () => false });
+
+    // 兩筆既有物件首輪即觸發（不再被 baseline 吸收）。
+    await waitFor(() => watcher!.getStatus().triggered_total === 2);
+    const st = watcher!.getStatus();
+    expect(st.baseline_count).toBe(2); // 診斷欄位仍填（首輪 model.ifc 數），不再 gate 觸發
+    expect(st.triggered_total).toBe(2);
+    expect(received.length).toBe(2);
+    // 觸發後 seen 鎖定：再跑幾輪不重送（received 穩定）。
+    const lenAfter = received.length;
+    await new Promise((r) => setTimeout(r, 200));
+    expect(received.length).toBe(lenAfter);
+    expect(watcher!.getStatus().triggered_total).toBe(2);
+  });
+
+  it("[autoenroll] 首輪已落帳物件 → 不觸發（ledger 命中 skip）", async () => {
+    // §3.4：已在持久 ledger 落帳者（isLedgered=()=>true）即使首輪掃到也 skip——
+    // 等價「coordinator 重啟後不重觸發已落帳者」。baseline_count 仍照舊填。
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }, { key: "900/main/yyy/model.ifc", etag: "e2" }] };
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const selfBase = await startIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    watcher = makeWatcher(s3Base, selfBase, state, { isLedgered: () => true });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 2);
-    // baseline 後再等幾輪，確認不觸發
+    // ledger 全命中 → 再等幾輪確認皆 skip、零觸發。
     await new Promise((r) => setTimeout(r, 300));
     const st = watcher!.getStatus();
     expect(st.baseline_count).toBe(2);
-    expect(st.seen_count).toBe(2);
     expect(st.triggered_total).toBe(0);
     expect(received.length).toBe(0);
+  });
+
+  it("onObjectObserved 對每個新 (key, etag) 只通知一次，供 folder cache dirty invalidation 使用", async () => {
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const observed: Array<{ key: string; etag: string; idempotency_key: string; at: string }> = [];
+    const selfBase = await startIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: () => true,
+      onObjectObserved: (event) => observed.push(event),
+    });
+
+    await waitFor(() => observed.length === 1);
+    expect(observed[0]).toEqual(expect.objectContaining({
+      key: "899/main/xxx/model.ifc",
+      etag: "e1",
+      idempotency_key: idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1"),
+    }));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(observed).toHaveLength(1);
+
+    state.objs[0] = { ...state.objs[0], etag: "e2" };
+    await waitFor(() => observed.length === 2);
+    expect(observed[1]).toEqual(expect.objectContaining({
+      key: "899/main/xxx/model.ifc",
+      etag: "e2",
+      idempotency_key: idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e2"),
+    }));
+    expect(received).toHaveLength(0);
   });
 
   it("第二輪新增物件 → 觸發一筆 intake，payload 與 header 正確", async () => {
@@ -216,7 +257,11 @@ describe("minioWatcher loop", () => {
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
-    watcher = makeWatcher(s3Base, selfBase, state);
+    // §3.4：既有 baseline 物件 899 視為「已 auto-enroll 落帳」（ledger 命中），故首輪不重觸發；
+    // 只有新上傳的 988（ledger 無紀錄）才觸發 → received[0] 確定是 988。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/xxx/model.ifc", etag: "e1" }]),
+    });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     // 新增物件 → 下一輪應觸發
@@ -244,7 +289,10 @@ describe("minioWatcher loop", () => {
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
-    watcher = makeWatcher(s3Base, selfBase, state);
+    // 既有 899 已落帳（ledger 命中）→ 不重觸發；僅新增 988 觸發一次。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/xxx/model.ifc", etag: "e1" }]),
+    });
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     await waitFor(() => received.length === 1);
@@ -258,7 +306,11 @@ describe("minioWatcher loop", () => {
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
-    watcher = makeWatcher(s3Base, selfBase, state);
+    // seed 899/main/seed 是合法三段；視為已落帳避免 auto-enroll 觸發它，讓本測試聚焦
+    // 「新增 malformed key 被 skip、零 intake」。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/seed/model.ifc", etag: "e1" }]),
+    });
     // 首輪即 baseline，但 malformed 不入 baseline 觸發域；改在新增 malformed 後驗 skip
     await waitFor(() => (watcher!.getStatus().last_poll_at as string | null) !== null);
     // 新規則：去 suffix 後僅 1 段 → 未湊齊三段 → malformed（不可再用 4 段，4 段在新規則為合法）。
@@ -273,7 +325,11 @@ describe("minioWatcher loop", () => {
     const selfBase = await startIntakeStub(received);
     const s3Base = await startS3Stub(state);
     // 部署切 tenant：watcher intake 必須帶入此 tenant，而非寫死 tenant_demo_001。
-    watcher = makeWatcher(s3Base, selfBase, state, { tenantId: "tenant_acme_042" });
+    // 既有 899 已落帳 → 不觸發；received[0] 確定為新增 988。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      tenantId: "tenant_acme_042",
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/xxx/model.ifc", etag: "e1" }]),
+    });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
@@ -347,6 +403,7 @@ describe("minioWatcher loop", () => {
       bucket: "bim-control", prefix: "", accessKey: "ak", secretKey: "sk",
       keySuffix: "/model.ifc", intervalSeconds: 0.05, selfBaseUrl: selfBase,
       webhookSecret: "dev-webhook-secret", tenantId: "tenant_demo_001",
+      isLedgered: () => false, // list 失敗前不會被呼叫到，補必填型別（isLedgered 改必填、移除 legacy 分支）
       structLog: { anomaly: () => {}, withTraceId: () => ({ anomaly: () => {} }) } as never,
     });
     await waitFor(() => (watcher!.getStatus().last_error as string | null) !== null);
@@ -359,7 +416,10 @@ describe("minioWatcher loop", () => {
     const received: Array<{ headers: http.IncomingHttpHeaders }> = [];
     const selfBase = await startNonJsonIntakeStub(received);
     const s3Base = await startS3Stub(state);
-    watcher = makeWatcher(s3Base, selfBase, state);
+    // 既有 899 已落帳 → 不觸發；本測試聚焦新增 988 的非 JSON 回應處理。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/xxx/model.ifc", etag: "e1" }]),
+    });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
@@ -384,7 +444,11 @@ describe("minioWatcher loop", () => {
     // intakeTimeoutMs 放寬至 600ms（原 150ms 在 CI 高負載下 flaky：fetch 建立/排程的
     // 抖動可能逼近逾時窗）。若無 AbortSignal 保護則 fetch 永不 resolve、tick 卡死、
     // 後續輪不再排程 → 下方 poll_count 推進的斷言會 timeout。
-    watcher = makeWatcher(s3Base, selfBase, state, { intakeTimeoutMs: 600 });
+    // 既有 899 已落帳 → 不觸發；本測試聚焦新增 988 的 fetch 逾時處理。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      intakeTimeoutMs: 600,
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/xxx/model.ifc", etag: "e1" }]),
+    });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
@@ -433,7 +497,10 @@ describe("minioWatcher loop", () => {
     if (!a || typeof a === "string") throw new Error("intake stub bind");
     const selfBase = `http://127.0.0.1:${a.port}`;
     const s3Base = await startS3Stub(state);
-    watcher = makeWatcher(s3Base, selfBase, state);
+    // 既有 899 已落帳 → 不觸發；確保第一筆 intake（吃 500）是新增的 988、非 baseline 899。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/xxx/model.ifc", etag: "e1" }]),
+    });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
@@ -485,7 +552,11 @@ describe("minioWatcher loop", () => {
     if (!a || typeof a === "string") throw new Error("intake stub bind");
     const selfBase = `http://127.0.0.1:${a.port}`;
     const s3Base = await startS3Stub(state);
-    watcher = makeWatcher(s3Base, selfBase, state);
+    // 既有 899 已落帳 → 不觸發；確保 posts===1 的 502 落在新增的 988（非 baseline 899），
+    // 維持「同一物件 502→200-replay-failed」序列的確定性。
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: ledgeredFor("bim-control", [{ key: "899/main/xxx/model.ifc", etag: "e1" }]),
+    });
 
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
@@ -520,44 +591,67 @@ describe("minioWatcher loop", () => {
     ).toThrow(/keySuffix/);
   });
 
-  it("重啟（新 watcher 實例、同 store）重掃同 key 同 etag → idempotent_replay 仍計觸發且 job_id 相同", async () => {
-    // 起手只有既有 baseline 物件 899（保證新 watcher baseline 非空、語意明確）。
+  it("[autoenroll] 重啟（新 watcher 實例）重掃同 key 同 etag：持久 ledger 命中 → 不重觸發（重啟不風暴）", async () => {
+    // §3.4/AC-autoenroll 語意變更：dedup 權威從「store 對 re-POST 去重」改為「watcher 在
+    // POST 前先查持久 ledger 水印」。已落帳者（mw_<hash16> 命中）重啟後**不再 re-POST**，
+    // 故不依賴 store-level idempotent_replay 兜底。以共享 ledger Set 模擬持久 ledger：intake
+    // stub 每收一筆 POST 即把 idemKey 寫入 set（＝intake 落帳），isLedgered 讀此 set。
+    const sharedLedger = new Set<string>();
+    // 起手 baseline 物件 899 預先落帳（保證新 watcher baseline 非空、且 899 不被 auto-enroll
+    // 觸發，聚焦於 988 的重啟去重行為）。
+    sharedLedger.add(idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1"));
+    const ledgered = (idkey: string): boolean => sharedLedger.has(idkey);
+
     const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ idemKey: string }> = [];
-    const selfBase = await startIdempotentReplayIntakeStub(received);
+    // intake stub：記錄每筆 POST 的 idemKey 並寫入共享 ledger（模擬 intake 端落帳）。
+    intakeStub = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const idemKey = String(req.headers["x-idempotency-key"] ?? "");
+        received.push({ idemKey });
+        sharedLedger.add(idemKey); // intake 成功即落帳，下一個 watcher 實例查得到
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ifc_ready_job_id: `ifcready_${received.length}`, idempotent_replay: false }));
+      });
+    });
+    await new Promise<void>((r) => intakeStub!.listen(0, "127.0.0.1", () => r()));
+    const a = intakeStub!.address();
+    if (!a || typeof a === "string") throw new Error("intake stub bind");
+    const selfBase = `http://127.0.0.1:${a.port}`;
     const s3Base = await startS3Stub(state);
 
-    // 第一個 watcher：baseline 後新增 988 → 觸發一次（store 首見此 idempotency key → 建 job）。
-    watcher = makeWatcher(s3Base, selfBase, state);
+    // 第一個 watcher：baseline(899 已落帳) 後新增 988（ledger 無紀錄）→ 觸發一次並落帳。
+    watcher = makeWatcher(s3Base, selfBase, state, { isLedgered: ledgered });
     await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
     state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
     await waitFor(() => received.length === 1);
     const firstStatus = watcher!.getStatus();
     expect(firstStatus.triggered_total).toBe(1);
-    const firstJobId = firstStatus.last_triggered[0]?.job_id;
-    expect(firstJobId).toBeTruthy();
+    const expectedIdem = received[0].idemKey;
+    expect(expectedIdem).toMatch(/^mw_[0-9a-f]{16}$/);
+    // 988 此刻已在共享 ledger（intake stub 已寫入）。
+    expect(sharedLedger.has(idempotencyKeyFor("bim-control", "988/main/zzz/model.ifc", "e9"))).toBe(true);
 
-    // 模擬重啟：dispose 舊 watcher（清掉 in-memory seen）。為讓新實例「重新看見」988 為
-    // 增量（而非吞進新 baseline 永不觸發），先移除 988 → 新 watcher baseline 不含它，再加回
-    // 同 key 同 etag。新 watcher 對它發 intake，store 以確定性 idempotency key 去重回 replay。
-    // 必須 await：dispose 為 async（await in-flight tick settle）。若不等就改 state.objs
-    // 並建新 watcher，舊 watcher 50ms 輪詢的 in-flight tick 可能在 state 變更後才打到
-    // stub，多發一筆 intake 讓 received 累積到第 3 筆，打亂下方「恰好 2 筆」斷言而 flaky。
+    // 模擬重啟：dispose 舊 watcher（清 in-memory seen），新 watcher 用「同一份持久 ledger」。
+    // 必須 await dispose（async：await in-flight tick settle），否則舊 watcher 殘留 tick 會多送。
+    // bucket 內容不變（899 + 988 皆仍在）＝真實重啟情境，故新 watcher baseline_count=2。
     await watcher.dispose();
-    state.objs = [{ key: "899/main/xxx/model.ifc", etag: "e1" }];
-    watcher = makeWatcher(s3Base, selfBase, state);
-    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 1);
-    state.objs.push({ key: "988/main/zzz/model.ifc", etag: "e9" });
-    await waitFor(() => received.length === 2);
-    await waitFor(() => watcher!.getStatus().triggered_total >= 1);
-
+    watcher = makeWatcher(s3Base, selfBase, state, { isLedgered: ledgered });
+    await waitFor(() => (watcher!.getStatus().baseline_count as number) === 2);
+    // loop liveness 守衛：先確認新 watcher 實例「確實跑過至少 2 輪 tick」（poll_count>=2）再判 received
+    // 穩定。否則若新 watcher 重啟後因某 bug 卡住不再 poll（e.g. stopped=true 被誤設），下方靠 wall-time
+    // 的 300ms 靜默同樣會通過——分不出「正確 skip」與「loop 凍結」。此為舊測試 triggered_total>=1 移除後
+    // 另一條 loop 活性的替代保護（poll_count 單調遞增，免時鐘解析度依賴）。
+    await waitFor(() => (watcher!.getStatus().poll_count as number) >= 2);
+    // 重啟後 899 與 988 皆已落帳 → 新 watcher 全部 skip，不再 POST（重啟不風暴）。
+    // 再等幾輪確認 received 穩定為 1（無第二筆 POST）。
+    await new Promise((r) => setTimeout(r, 300));
     const secondStatus = watcher!.getStatus();
-    // 兩次同一 idempotency key（重啟後 bucket/key/etag 不變 → idempotencyKeyFor 確定性）。
-    expect(received[1].idemKey).toBe(received[0].idemKey);
-    expect(received[1].idemKey).toMatch(/^mw_[0-9a-f]{16}$/);
-    // 202 idempotent_replay 仍計觸發（誠實統計，與既有 comment 一致）。
-    expect(secondStatus.triggered_total).toBe(1);
-    // 同一筆 job：store 回相同 ifc_ready_job_id，未建第二筆 job。
-    expect(secondStatus.last_triggered[0]?.job_id).toBe(firstJobId);
+    expect(received.length).toBe(1); // 重啟未產生第二筆 intake
+    expect(received[0].idemKey).toBe(expectedIdem);
+    // 已落帳者重啟全 skip → 本實例 triggered_total 維持 0（無新觸發）。
+    expect(secondStatus.triggered_total).toBe(0);
   });
 });

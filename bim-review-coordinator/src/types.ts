@@ -144,7 +144,8 @@ export interface ExternalIfcReadyEvent {
   tenant_id: string;
   project_id: string;
   external_model_version_id: string;
-  // minio-watch key 結構：種類(倒數二)與專案原名(中文如實顯示)；optional，只隨 payload 傳遞、不入 store。
+  // minio-watch key 結構：種類(倒數二)與專案原名(中文如實顯示)；optional。OQ1 起落 store
+  // （ExternalIfcReadyStore.create）並對外曝光（summarizeIfcReadyJob: project_display_name/category，honest-null fallback）。
   project_display_name?: string | null;
   model_category?: string | null;
   external_conversion_task_id?: string | null;
@@ -183,6 +184,8 @@ export interface IfcReadyIntakeJob {
   idempotency_key: string;
   tenant_id: string;
   project_id: string;
+  project_display_name?: string | null;
+  category?: string | null;
   external_model_version_id: string;
   external_conversion_task_id?: string | null;
   source_ifc_ref: string;
