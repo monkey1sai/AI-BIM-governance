@@ -1872,6 +1872,9 @@ export function createCoordinatorApp(
       normalizedStatus,
       entry.outbox_id,
       report.artifacts?.manifest_ref ?? null,
+      // ifc-ready-api-field-redesign(quality Important #1):與上方 conversion_failed callback payload 同源,
+      // 把 report.reason 存回 job,供 deriveFailure 投影 failure_stage="conversion" 的 failure_reason(非漏報 null/null)。
+      normalizedStatus === "failed" ? (report.reason || "conversion_failed") : null,
     );
 
     // backfill §2：terminal `ready` 才觸發本地 session handoff；`failed` 不建

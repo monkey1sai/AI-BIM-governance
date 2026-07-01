@@ -268,6 +268,46 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(final.body.viewer_url).toBeNull();
   });
 
+  it("conversion 權威回報 failed → 兩出口誠實投影 failure_stage='conversion'(quality Important #1;非漏報 null/null)", async () => {
+    // Important #1 修復回歸鎖:recordConversionOutcome 設 conversion_status='failed' 時,
+    // 舊 deriveFailure 只看 download/dispatch → 對已終局失敗的 job 回 null/null(讀起來像「無失敗」),
+    // 且 conversion_lifecycle_status 同時仍算 converting,兩者疊加對一個終局失敗 job 說「還在轉檔、無失敗」。
+    // 修復後 deriveFailure 新增 conversion 分支,且 report.reason 存回 job.conversion_failure,兩出口誠實投影。
+    const stub = await startStreamingStub({
+      resultSequence: [
+        queuedResultPayload("corr_ap_conv_fail_001"),
+        failedResultPayload("corr_ap_conv_fail_001"),
+      ],
+    });
+    const app = makeApp(stub.baseUrl);
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_conv_fail_001", "idem_ap_conv_fail_001"))
+      .send(dispatchPayload());
+    expect(submit.status).toBe(202);
+    const jobId = submit.body.ifc_ready_job_id as string;
+
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.conversion_status === "failed";
+    });
+
+    // detail 端點:conversion 失敗 → failure_stage='conversion'、failure_reason 有值(非 null)。
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(detail.body.conversion_status).toBe("failed");
+    expect(detail.body.failure_stage).toBe("conversion");
+    expect(detail.body.failure_reason).toBeTruthy();
+    // 列表端點(summarizeIfcReadyJob 出口)鏡射同一投影(list/detail 對稱)。
+    const listed = await request(app.app).get("/api/external/ifc-ready");
+    const item = (listed.body.items as Array<Record<string, unknown>>).find(
+      (j) => j.ifc_ready_job_id === jobId,
+    );
+    expect(item).toBeDefined();
+    expect(item?.failure_stage).toBe("conversion");
+    expect(item?.failure_reason).toBeTruthy();
+  });
+
   it("重複 idempotent dispatch 不雙起 poller(stub /result 不被雙倍呼叫)", async () => {
     const stub = await startStreamingStub({
       resultSequence: [

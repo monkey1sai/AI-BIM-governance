@@ -272,6 +272,10 @@ describe("POST /api/external/ifc-ready", () => {
     const final = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatch_failed"]);
     expect(final.status).toBe("dispatch_failed");
     expect(final.conversion_authority).toBeNull();
+    // quality Important #2:鎖「真失敗 → failure_* 有值」正向路徑(detail 端點)。既有測試只鎖
+    // 「無失敗 → null」半邊;若 deriveFailure 被改成恆 null(條件寫反),null 半邊仍綠、抓不到此回歸。
+    expect(final.failure_reason).toBeTruthy();
+    expect(final.failure_stage).toBe("dispatch");
     // minio-trigger-lifecycle:鎖住單一權威 conversion_lifecycle_status 上 wire（dashboard 出口）。
     // 此欄由 summarizeIfcReadyJob（list / status 投影）計算；detail 端點亦上 wire 此欄
     // （見上方「單筆 detail」測試與 quality finding #1 修復）。此處鎖住「列表端點」此欄投影。
@@ -283,6 +287,9 @@ describe("POST /api/external/ifc-ready", () => {
     );
     expect(failedItem).toBeDefined();
     expect(failedItem?.conversion_lifecycle_status).toBe("failed");
+    // quality Important #2:列表端點同樣鎖正向失敗投影(list/detail 對稱),補齊「真的有值」半邊。
+    expect(failedItem?.failure_reason).toBeTruthy();
+    expect(failedItem?.failure_stage).toBe("dispatch");
   });
 
   it("GET /api/external/ifc-ready/:jobId（單筆 detail）回應含 conversion_lifecycle_status（前端 getIfcReadyJob 輪詢主讀此欄）", async () => {

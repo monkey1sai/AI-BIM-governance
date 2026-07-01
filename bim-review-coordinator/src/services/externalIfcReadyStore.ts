@@ -240,6 +240,7 @@ export class ExternalIfcReadyStore {
     conversionStatus: "ready" | "failed",
     callbackOutboxId: string,
     artifactManifestRef?: string | null,
+    conversionFailure?: string | null,
   ): IfcReadyIntakeJob | undefined {
     const job = this.jobsById.get(jobId);
     if (!job) return undefined;
@@ -248,6 +249,9 @@ export class ExternalIfcReadyStore {
     if (artifactManifestRef !== undefined) {
       job.artifact_manifest_ref = artifactManifestRef;
     }
+    // ifc-ready-api-field-redesign(quality Important #1):失敗時記錄轉檔權威回報的原因文字
+    //（供 deriveFailure 投影 failure_stage="conversion"）；ready 時清空,誠實不留舊失敗殘留。
+    job.conversion_failure = conversionStatus === "failed" ? (conversionFailure ?? "conversion_failed") : null;
     job.updated_at = new Date().toISOString();
     return job;
   }
