@@ -340,7 +340,8 @@ describe("POST /api/external/ifc-ready", () => {
       web_view_session_id: null,
       viewer_url: null,
     });
-    expect(listed.body.items[0]).not.toHaveProperty("idempotency_key");
+    // ifc-ready-api-field-redesign：must_fix #4 對帳鍵已投影到列表出口,翻轉過時「不得有」guard 為正向鎖。
+    expect(listed.body.items[0]).toHaveProperty("idempotency_key", "idem_list_002");
     expect(listed.body.items[0]).not.toHaveProperty("callback_url");
     // conv-prioritize-retry (cr1 BLOCKER 2 回歸鎖):列表端點 summarizeIfcReadyJob 必須上 wire
     // queue_position(dispatched 後為 null);否則 #conv 經列表取件時插隊鈕 disabled 條件失效。
@@ -927,5 +928,35 @@ describe("OQ1：project_display_name / category 對外曝光", () => {
     // 誠實 null：不可 fallback 成 project_id（"project_worker_oq1"）或空字串。
     expect(item?.project_display_name).toBeNull();
     expect(item?.category).toBeNull();
+  });
+});
+
+describe("ifc-ready-api-field-redesign：對帳鍵 + 誠實觀測投影", () => {
+  it("列表投影 idempotency_key + 誠實欄位（對帳鍵可 join、無假 ready）", async () => {
+    // 註（plan 修正）：makeApp() 預設 streamingConversionApiBase 不可達 → async dispatch 會
+    // fail，deriveFailure 會誠實回 failure_stage="dispatch"/failure_reason="fetch failed"（非
+    // null）。本 test 要鎖「未失敗 → 誠實 null」，故沿用既有 startStreamingConversionStub（見
+    // L305 sibling test）讓 job 真的 dispatch 成功、無 failure，再驗 failure_* 為 null。
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+    const created = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_reconcile", "X-Idempotency-Key": "idem_proj_reconcile" })) // 既有 helper L64
+      .send(payload()); // 既有 helper L60（= CONTRACT.example）
+    expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
+    // 等 async dispatch worker 把 job 推進到 dispatched（無 failure），再讀列表。
+    await waitForDispatchEnd(app, jobId, ["dispatched"]);
+    const res = await request(app.app).get("/api/external/ifc-ready");
+    expect(res.status).toBe(200);
+    // 用 jobId find（對齊既有 OQ1 test L896-898）,不假設 items[0] 順序。
+    const item = (res.body.items as Array<Record<string, unknown>>).find((j) => j.ifc_ready_job_id === jobId)!;
+    expect(item.idempotency_key).toBe("idem_proj_reconcile"); // must_fix #4：list 端可 join
+    expect(item).toHaveProperty("idempotent_replay");
+    expect(item).toHaveProperty("conversion_lifecycle_status");
+    expect(item).toHaveProperty("failure_reason", null); // 未失敗 → null（誠實）
+    expect(item).toHaveProperty("failure_stage", null);
+    expect(item.usdc_role).toBe("pending"); // converter 未落地 → 恆 pending
+    expect(item.data_volatility).toBe("in_memory_volatile");
   });
 });

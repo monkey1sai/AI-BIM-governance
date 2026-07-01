@@ -30,6 +30,7 @@ import {
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
+import { deriveFailure } from "./services/failureReason.js";
 import {
   createMinioS3Client,
   listMinioFolder,
@@ -1535,7 +1536,14 @@ export function createCoordinatorApp(
     // quality finding #1：detail 端點與列表端點（summarizeIfcReadyJob）對齊上 wire 單一權威
     // conversion_lifecycle_status，使前端 IfcReadyJobDetail.conversion_lifecycle_status 型別契約成立
     // （前端 getIfcReadyJob 輪詢主讀此欄）。additive：sanitizeJobForExternal 仍回原始 job 形狀。
-    response.json({ ...sanitizeJobForExternal(job), conversion_lifecycle_status: deriveLifecycleStatus(job) });
+    const lifecycle = deriveLifecycleStatus(job);
+    response.json({
+      ...sanitizeJobForExternal(job),
+      conversion_lifecycle_status: lifecycle,
+      ...deriveFailure(job),
+      usdc_role: "pending" as const, // 同 summarizeIfcReadyJob：job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending（禁 lifecycle 假報 parsed）
+      data_volatility: "in_memory_volatile" as const,
+    });
   });
 
   // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
@@ -2606,6 +2614,7 @@ function summarizeSessionForRuntime(session: ReviewSession): Record<string, unkn
 
 function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | null): Record<string, unknown> {
   const expectedStage = session ? expectedStageBinding(session) : null;
+  const lifecycle = deriveLifecycleStatus(job);
   return {
     ifc_ready_job_id: job.ifc_ready_job_id,
     status: job.status,
@@ -2624,7 +2633,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     host_local_path: job.host_local_path ?? null,
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
-    conversion_lifecycle_status: deriveLifecycleStatus(job),
+    conversion_lifecycle_status: lifecycle,
     conversion_authority: job.conversion_authority,
     // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
     // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive,
@@ -2638,6 +2647,17 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     viewer_url: job.viewer_url ?? null,
     expected_stage_url: expectedStage?.url ?? null,
     expected_mapping_url: expectedStage?.mapping_url ?? null,
+    // === ifc-ready-api-field-redesign：對帳鍵 + 誠實觀測投影（additive/nullable;既有 26 欄不動）===
+    idempotency_key: job.idempotency_key,
+    idempotent_replay: job.idempotent_replay,
+    ...deriveFailure(job),
+    // 誠實（spec §4.6：usdc_role 以 usdc_key 為閂門）：job 端不投影 usdc_key（IfcReadyIntakeJob 無此欄、見「明確排除」;
+    // Phase 1 恆缺），Phase 2 由 callback outbox 回填 ledger 後前端由 ledger 讀 parsed → job_output 端恆 pending。
+    // 禁用 lifecycle==="ready" 假報 parsed_usdc：真實轉檔完成時 conversion_status→ready 會令 lifecycle→ready,
+    // 但 job 端仍無 usdc_key,依 spec §6.3/AC8「禁假 parsed USDC」必須維持 pending（這正是 must_fix 要防的假 ready、且與 ledger 端 r.usdc_key!=null 才顯 parsed 對齊）。
+    usdc_role: "pending" as const,
+    // 誠實：job 端為 in-memory store（重啟即清）;對帳真相以持久 ledger 為準。
+    data_volatility: "in_memory_volatile" as const,
     created_at: job.created_at,
     updated_at: job.updated_at,
   };
