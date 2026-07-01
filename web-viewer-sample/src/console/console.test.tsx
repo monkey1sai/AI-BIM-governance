@@ -1887,12 +1887,14 @@ describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 
     await act(async () => { root.render(<ConversionSchedulingPage />); });
     await act(async () => { await Promise.resolve(); });
 
-    const errNode = container.querySelector('[data-testid="conv-dispatch-error-ifcready_fail"]');
+    // ifc-ready-api-field-redesign Task3：dispatch 錯誤格 testid 統一改為 conv-job-failure-*
+    //（failure_reason 優先、無則回退 dispatch_error）；此 fixture 僅有 dispatch_error → 走回退分支。
+    const errNode = container.querySelector('[data-testid="conv-job-failure-ifcready_fail"]');
     expect(errNode).not.toBeNull();
     expect(errNode!.textContent).toContain("Invalid ifc_artifact_id");
     expect(errNode!.getAttribute("title")).toContain("streaming conversion API 400");
     // 無 dispatch_error 的 job 不得渲染錯誤節點
-    expect(container.querySelector('[data-testid="conv-dispatch-error-ifcready_ok"]')).toBeNull();
+    expect(container.querySelector('[data-testid="conv-job-failure-ifcready_ok"]')).toBeNull();
   });
 });
 

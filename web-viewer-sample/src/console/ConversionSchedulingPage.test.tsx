@@ -670,6 +670,43 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     expect(stillThere).not.toBeNull();
     expect(stillThere!.textContent).toContain("控制動作失敗");
   });
+
+  // ifc-ready-api-field-redesign Task3：jobs 表投影三視圖對帳鍵 idempotency_key + lifecycle chip +
+  // 誠實 usdc/replay/volatility 標籤，使 job↔ledger↔minio 可視覺 + 程式對齊。
+  it("Ifc-ready jobs 表投影 idempotency_key(對帳鍵)+ lifecycle chip + 誠實 usdc 標籤", async () => {
+    const reconcileJob: IfcReadyListItem = {
+      ...queuedJob, // 本檔既有 fixture(L402)
+      ifc_ready_job_id: "ifcready_reconcile",
+      idempotency_key: "mw_abc123def4567890",
+      idempotent_replay: false,
+      conversion_lifecycle_status: "queued",
+      project_display_name: "松風庵",
+      category: "機電",
+      usdc_role: "pending",
+      data_volatility: "in_memory_volatile",
+      failure_reason: null,
+      failure_stage: null,
+    };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [reconcileJob] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false, note: "未設定" });
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const idemCell = container.querySelector('[data-testid="conv-job-idem-ifcready_reconcile"]');
+    expect(idemCell?.textContent).toContain("mw_abc123def4567890");
+    const chip = container.querySelector('[data-testid="conv-job-lifecycle-ifcready_reconcile"]');
+    expect(chip?.textContent).toContain("排隊"); // queued 的中文 chip
+    const usdc = container.querySelector('[data-testid="conv-job-usdc-ifcready_reconcile"]');
+    expect(usdc?.textContent).toContain("待產生"); // pending 誠實標籤,禁顯 parsed
+    // idempotent_replay 綁定落地(fixture false → 顯「新建」)。
+    const replay = container.querySelector('[data-testid="conv-job-replay-ifcready_reconcile"]');
+    expect(replay?.textContent).toContain("新建");
+    // data_volatility 綁定落地(fixture in_memory_volatile → 顯「易失」)。
+    const volatility = container.querySelector('[data-testid="conv-job-volatility-ifcready_reconcile"]');
+    expect(volatility?.textContent).toContain("易失");
+    await act(async () => { root.unmount(); });
+  });
 });
 
 // IX-CV-04 Task5：#conv 自動偵測開關 UI + 關閉態琥珀條。spec line 157「關閉時佇列頁頂顯示琥珀條」、

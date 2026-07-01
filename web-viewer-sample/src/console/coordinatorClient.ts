@@ -173,6 +173,20 @@ export interface IfcReadyListItem {
   expected_stage_url: string | null;
   expected_mapping_url: string | null;
   created_at: string;
+  // ifc-ready-api-field-redesign:三視圖對帳主鍵(job↔ledger↔minio 皆以此 join;summarizeIfcReadyJob 投影)。
+  idempotency_key?: string;
+  idempotent_replay?: boolean;
+  project_display_name?: string | null;
+  category?: string | null;
+  // 主讀 lifecycle chip(list 端投影,與 IfcReadyJobDetail 對齊)。
+  conversion_lifecycle_status?: ConversionLifecycleStatus | null;
+  // 誠實:無失敗恆 null;有值時 stage 定位六段的可觀測子集。
+  failure_reason?: string | null;
+  failure_stage?: "download" | "dispatch" | "conversion" | "callback" | "key_malformed" | null;
+  // 誠實:converter 未落地恆 pending,不顯假 parsed USDC。
+  usdc_role?: "source_ifc" | "parsed_usdc" | "pending" | null;
+  // 誠實:job 端 in-memory(重啟即清);前端據以區分「真的沒 job」vs「剛重啟」。
+  data_volatility?: "in_memory_volatile" | "persisted" | null;
   // conv-prioritize-retry §2.4：summarizeIfcReadyJob 永遠輸出 updated_at(app.ts:2133)；
   // job 變更後此欄前進是前端可見證據（task#4 prioritize/retry 成功後 load() 重抓據以確認狀態前進）。
   updated_at: string;
