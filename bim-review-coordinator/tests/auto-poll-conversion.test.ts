@@ -199,6 +199,51 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(final.body.web_view_session_id).toMatch(/^review_session_/);
   });
 
+  it("lifecycle 到 ready 時 usdc_role 仍為 pending（spec §6.3/AC8 禁假 parsed USDC 誠實守衛）", async () => {
+    // spec §6.3/AC8 + app.ts:2656-2657：真實轉檔完成時 conversion_status→ready 會令
+    // conversion_lifecycle_status→ready,但 job 端無 usdc_key,usdc_role MUST 維持 pending
+    //（禁 lifecycle 假報 parsed USDC）。這是 spec「誠實守衛測試 MUST 斷言此不變量」點名的核心
+    // 情境——external-ifc-ready.test.ts 的「無假 ready」測試只等到 dispatched（lifecycle=converting）
+    // 結構上到不了 ready,故此紅線於本檔（唯一能真正 poll 到 ready 的 stub）鎖住。Phase 1 usdc_role
+    // 為硬編常數,此測試在 Phase 2（usdc_role 改依 usdc_key 動態判斷）落地前先守住 ready 態不報 parsed。
+    const stub = await startStreamingStub({
+      resultSequence: [
+        queuedResultPayload("corr_ap_honest_ready"),
+        readyResultPayload("corr_ap_honest_ready"),
+      ],
+    });
+    const app = makeApp(stub.baseUrl);
+
+    const submit = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders("corr_ap_honest_ready", "idem_ap_honest_ready"))
+      .send(dispatchPayload());
+    expect(submit.status).toBe(202);
+    const jobId = submit.body.ifc_ready_job_id as string;
+
+    // 等 poller 自動 ingest 到 conversion_status=ready（deriveLifecycleStatus → ready）。
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.conversion_status === "ready";
+    });
+
+    // detail 端點：lifecycle=ready,但 usdc_role 仍 pending（禁假 parsed USDC）。
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(detail.body.conversion_status).toBe("ready");
+    expect(detail.body.conversion_lifecycle_status).toBe("ready");
+    expect(detail.body.usdc_role).toBe("pending"); // 核心不變量：ready 態禁報 parsed_usdc
+    expect(detail.body.data_volatility).toBe("in_memory_volatile");
+
+    // 列表端點（summarizeIfcReadyJob 出口）同樣鎖此不變量。
+    const listed = await request(app.app).get("/api/external/ifc-ready");
+    const item = (listed.body.items as Array<Record<string, unknown>>).find(
+      (j) => j.ifc_ready_job_id === jobId,
+    );
+    expect(item).toBeDefined();
+    expect(item?.conversion_lifecycle_status).toBe("ready");
+    expect(item?.usdc_role).toBe("pending");
+  });
+
   it("dispatch 後 poller 拿到 failed → 自動 ingest 為 failed,不產 viewer_url", async () => {
     const stub = await startStreamingStub({
       resultSequence: [

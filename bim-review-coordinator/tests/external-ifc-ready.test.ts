@@ -959,4 +959,30 @@ describe("ifc-ready-api-field-redesign：對帳鍵 + 誠實觀測投影", () => 
     expect(item.usdc_role).toBe("pending"); // converter 未落地 → 恆 pending
     expect(item.data_volatility).toBe("in_memory_volatile");
   });
+
+  it("detail 端點（GET :jobId）投影誠實欄位（鏡射列表端點,鎖 list/detail 欄位對稱）", async () => {
+    // quality finding：detail 端點（app.ts:1540-1546）與列表端點同樣新增 failure_reason/
+    // failure_stage/usdc_role/data_volatility 4 欄,但原本僅列表端點（上一個 it）有測試。detail
+    // 唯一既有測試（L288）只鎖 conversion_lifecycle_status,對這 4 欄零斷言 → 往後 detail handler
+    // 若漏 ...deriveFailure(job) 或打錯 usdc_role 字面值不會被抓到（app.ts:1536-1538 的同類
+    // list/detail 欄位漂移正是前例）。此測試鏡射列表端點的 4 欄檢查,鎖住 list/detail 對稱。
+    // 沿用 startStreamingConversionStub 讓 job dispatch 成功、無 failure（誠實 null 案例）。
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+    const created = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_detail_reconcile", "X-Idempotency-Key": "idem_detail_reconcile" }))
+      .send(payload());
+    expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
+    await waitForDispatchEnd(app, jobId, ["dispatched"]);
+    const res = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(res.status).toBe(200);
+    // dispatched + conversion_status 非 ready → deriveLifecycleStatus 回 "converting"。
+    expect(res.body).toHaveProperty("conversion_lifecycle_status", "converting");
+    expect(res.body).toHaveProperty("failure_reason", null); // 未失敗 → null（誠實）
+    expect(res.body).toHaveProperty("failure_stage", null);
+    expect(res.body.usdc_role).toBe("pending"); // converter 未落地 → 恆 pending
+    expect(res.body.data_volatility).toBe("in_memory_volatile");
+  });
 });
