@@ -13,16 +13,62 @@ const ifcObj: MinioObject = {
   project_id: "mv_1a2b3c4d", project_display_name: "東勢區許良宇紀念圖書館", category: "main", version: "000001",
 };
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  readonly url: string;
+  closed = false;
+  private listeners = new Map<string, Array<(event: Event) => void>>();
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: Event) => void) {
+    const list = this.listeners.get(type) ?? [];
+    list.push(listener);
+    this.listeners.set(type, list);
+  }
+
+  removeEventListener(type: string, listener: (event: Event) => void) {
+    this.listeners.set(type, (this.listeners.get(type) ?? []).filter((l) => l !== listener));
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  emit(type: string, data: unknown) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener({ data: JSON.stringify(data) } as MessageEvent);
+    }
+  }
+}
+
+async function flushPromises(times = 1): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await act(async () => { await Promise.resolve(); });
+  }
+}
+
 describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
-  let container: HTMLDivElement; let prevActEnv: unknown;
+  let container: HTMLDivElement; let prevActEnv: unknown; let prevEventSource: unknown;
   beforeEach(() => {
     prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
     (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    prevEventSource = (globalThis as Record<string, unknown>).EventSource;
+    (globalThis as Record<string, unknown>).EventSource = undefined;
+    MockEventSource.instances = [];
     container = document.createElement("div"); document.body.appendChild(container);
   });
   afterEach(() => {
     document.body.removeChild(container); vi.restoreAllMocks();
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+    if (prevEventSource === undefined) {
+      delete (globalThis as Record<string, unknown>).EventSource;
+    } else {
+      (globalThis as Record<string, unknown>).EventSource = prevEventSource;
+    }
   });
 
   it("[7a] 頂層顯示 folders（資料夾節點），不再用 buildMinioTree 攤平", async () => {
@@ -37,6 +83,90 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     await act(async () => { await Promise.resolve(); });
     expect(container.textContent).toContain("洲際好宅");
     expect(container.textContent).toContain("東勢區許良宇紀念圖書館");
+  });
+
+  it("[cache] 已載入 prefix 進/退資料夾命中本頁 cache，不重打 getMinioFolder", async () => {
+    const spy = vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => {
+      if (p === "洲際好宅/") {
+        return { bucket: "bim-control", prefix: "洲際好宅/", folders: [], objects: [], count: 0 };
+      }
+      return {
+        bucket: "bim-control",
+        prefix: "",
+        folders: [{ prefix: "洲際好宅/", has_source_ifc: false }],
+        objects: [],
+        count: 0,
+      };
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await flushPromises(2);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenNthCalledWith(1, "");
+
+    const folderBtn = container.querySelector('[data-testid="minio-folder-open-洲際好宅/"]') as HTMLButtonElement;
+    await act(async () => { folderBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flushPromises(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenNthCalledWith(2, "洲際好宅/");
+
+    const upBtn = container.querySelector('[data-testid="minio-go-up"]') as HTMLButtonElement;
+    await act(async () => { upBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flushPromises(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    const cachedFolderBtn = container.querySelector('[data-testid="minio-folder-open-洲際好宅/"]') as HTMLButtonElement;
+    await act(async () => { cachedFolderBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flushPromises(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("[cache] 手動重新整理會 bypass 本頁 cache 並帶 refresh=1", async () => {
+    const spy = vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "",
+      folders: [{ prefix: "洲際好宅/", has_source_ifc: false }],
+      objects: [], count: 0,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await flushPromises(2);
+    const refresh = container.querySelector('[data-testid="minio-refresh"]') as HTMLButtonElement;
+    await act(async () => { refresh.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flushPromises(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenLastCalledWith("", { refresh: true });
+  });
+
+  it("[sse] MinIO dirty event 標示目前 prefix stale；點重新整理後重打 API", async () => {
+    (globalThis as Record<string, unknown>).EventSource = MockEventSource;
+    const spy = vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control", prefix: "",
+      folders: [{ prefix: "洲際好宅/", has_source_ifc: false }],
+      objects: [], count: 0,
+    });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await flushPromises(2);
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockEventSource.instances[0].url).toContain("/api/minio/events");
+
+    await act(async () => {
+      MockEventSource.instances[0].emit("minio.changed", {
+        type: "minio.changed",
+        prefixes: [""],
+        reason: "minio-watcher-observed-object",
+        at: "2026-07-01T00:00:00.000Z",
+      });
+    });
+    expect(container.querySelector('[data-testid="minio-stale-note"]')?.textContent).toContain("MinIO");
+
+    const refresh = container.querySelector('[data-testid="minio-stale-refresh"]') as HTMLButtonElement;
+    await act(async () => { refresh.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flushPromises(2);
+    expect(spy).toHaveBeenLastCalledWith("", { refresh: true });
   });
 
   it("[7a][AC1] folders 依 localeCompare('zh-TW') 排序顯示（逆序輸入 → DOM 按 zh-TW 重排）", async () => {

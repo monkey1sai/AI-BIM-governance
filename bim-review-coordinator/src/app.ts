@@ -30,7 +30,13 @@ import {
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
-import { createMinioS3Client, listMinioFolder, listMinioObjects, presignMinioObject } from "./services/minioClient.js";
+import {
+  createMinioS3Client,
+  listMinioFolder,
+  listMinioObjects,
+  presignMinioObject,
+  type MinioFolderListing,
+} from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
@@ -377,6 +383,58 @@ export function createCoordinatorApp(
       config.minioWatchAccessKey && config.minioWatchSecretKey,
     );
   }
+  type MinioFolderCacheEntry = {
+    listing: MinioFolderListing;
+    fetchedAt: string;
+    stale: boolean;
+  };
+  type MinioEventClient = {
+    write: (chunk: string) => boolean;
+    end: () => void;
+  };
+  const minioFolderCache = new Map<string, MinioFolderCacheEntry>();
+  const minioEventClients = new Set<MinioEventClient>();
+
+  function minioFolderCacheKey(prefix: string, delimiter: string): string {
+    return `${delimiter}\u0000${prefix}`;
+  }
+
+  function folderPrefixesForObjectKey(key: string): string[] {
+    const out = new Set<string>([""]);
+    const parts = key.split("/");
+    let current = "";
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      current += `${parts[i]}/`;
+      out.add(current);
+    }
+    return [...out];
+  }
+
+  function emitMinioEvent(event: string, data: Record<string, unknown>): void {
+    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of [...minioEventClients]) {
+      try {
+        client.write(frame);
+      } catch {
+        minioEventClients.delete(client);
+        client.end();
+      }
+    }
+  }
+
+  function markMinioFolderCacheDirtyForObject(key: string, reason: string): void {
+    const prefixes = folderPrefixesForObjectKey(key);
+    for (const p of prefixes) {
+      const entry = minioFolderCache.get(minioFolderCacheKey(p, "/"));
+      if (entry) entry.stale = true;
+    }
+    emitMinioEvent("minio.changed", {
+      type: "minio.changed",
+      prefixes,
+      reason,
+      at: nowIso(),
+    });
+  }
   const minioWatchStartupConfigError =
     config.minioWatchEnabled && !minioWatchConfigured()
       ? "MINIO_WATCH_ENABLED=true but endpoint/bucket/credentials are incomplete"
@@ -429,6 +487,7 @@ export function createCoordinatorApp(
       // 是上方宣告即建構的 const，型別系統靜態保證已初始化，closure 任何時刻被求值都看得到
       // 已建好的 ledger。watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
       isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
+      onObjectObserved: (event) => markMinioFolderCacheDirtyForObject(event.key, "minio-watcher-observed-object"),
       structLog,
     });
   }
@@ -1318,6 +1377,23 @@ export function createCoordinatorApp(
     response.json({ count: items.length, items: items.slice(0, limit) });
   });
 
+  // MinIO folder cache dirty stream：watcher 觀察到新/變更 object 時，通知前端把對應 prefix
+  // 視為 stale。只送 prefix metadata，不送物件內容、presigned URL 或 credentials。
+  app.get("/api/minio/events", (request, response) => {
+    response.status(200);
+    response.set({
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    response.write(`event: minio.ready\ndata: ${JSON.stringify({ type: "minio.ready", at: nowIso() })}\n\n`);
+    minioEventClients.add(response);
+    request.on("close", () => {
+      minioEventClients.delete(response);
+    });
+  });
+
   // minio-closed-loop-phase1 Task 4：唯讀 S3 list proxy。
   // MinIO 未設定時誠實回 count=0（不 500）；list 失敗回 502；presigned URL 不入 log。
   // 插在 /api/external/ifc-ready 後、/:jobId 之前（避免 param 吃掉）。
@@ -1343,6 +1419,7 @@ export function createCoordinatorApp(
     // 只有真正帶非空 delimiter（如 /）才走資料夾語意 list，避免前端收到空 folders[] 而非舊格式。
     const rawDelimiter =
       typeof request.query.delimiter === "string" ? request.query.delimiter : "";
+    const forceRefresh = request.query.refresh === "1" || request.query.force === "1";
     // spec §2.1 只定義 delimiter='/' 為有效值。白名單擋在轉送 S3 SDK 前：拒絕多字元、
     // 控制字元、XML 特殊字元等任意 delimiter（否則部分值會讓 SDK 拋非預期錯誤並在 502
     // detail 洩漏內部訊息，且讓前端控制 delimiter 語意超出 spec 設計意圖）。
@@ -1366,6 +1443,15 @@ export function createCoordinatorApp(
         secretKey: config.minioWatchSecretKey,
       });
       if (rawDelimiter) {
+        const cacheKey = minioFolderCacheKey(rawPrefix, rawDelimiter);
+        const cached = minioFolderCache.get(cacheKey);
+        if (cached && !cached.stale && !forceRefresh) {
+          response.json({
+            ...cached.listing,
+            cache: { hit: true, stale: false, fetched_at: cached.fetchedAt },
+          });
+          return;
+        }
         // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list，回 folders[]（CommonPrefixes）。
         // 傳入 structLog 供 q3-pipe-guard 跳過含 '|' key 時 warn（對齊 watcher precondition）。
         const listing = await listMinioFolder(
@@ -1375,7 +1461,12 @@ export function createCoordinatorApp(
           rawDelimiter,
           structLog,
         );
-        response.json(listing);
+        const fetchedAt = nowIso();
+        minioFolderCache.set(cacheKey, { listing, fetchedAt, stale: false });
+        response.json({
+          ...listing,
+          cache: { hit: false, stale: false, fetched_at: fetchedAt },
+        });
       } else {
         const objects = await listMinioObjects(
           client,
@@ -2353,6 +2444,10 @@ export function createCoordinatorApp(
     // markDroppedOnRestart/clear 會造成重複 store 寫入,二次起一律 no-op。
     if (disposed) return;
     disposed = true;
+    for (const client of [...minioEventClients]) {
+      client.end();
+    }
+    minioEventClients.clear();
     for (const handle of pollerRegistry.values()) {
       handle.cancel();
     }

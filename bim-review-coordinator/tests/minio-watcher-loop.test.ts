@@ -222,6 +222,36 @@ describe("minioWatcher loop", () => {
     expect(received.length).toBe(0);
   });
 
+  it("onObjectObserved 對每個新 (key, etag) 只通知一次，供 folder cache dirty invalidation 使用", async () => {
+    const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
+    const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
+    const observed: Array<{ key: string; etag: string; idempotency_key: string; at: string }> = [];
+    const selfBase = await startIntakeStub(received);
+    const s3Base = await startS3Stub(state);
+    watcher = makeWatcher(s3Base, selfBase, state, {
+      isLedgered: () => true,
+      onObjectObserved: (event) => observed.push(event),
+    });
+
+    await waitFor(() => observed.length === 1);
+    expect(observed[0]).toEqual(expect.objectContaining({
+      key: "899/main/xxx/model.ifc",
+      etag: "e1",
+      idempotency_key: idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1"),
+    }));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(observed).toHaveLength(1);
+
+    state.objs[0] = { ...state.objs[0], etag: "e2" };
+    await waitFor(() => observed.length === 2);
+    expect(observed[1]).toEqual(expect.objectContaining({
+      key: "899/main/xxx/model.ifc",
+      etag: "e2",
+      idempotency_key: idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e2"),
+    }));
+    expect(received).toHaveLength(0);
+  });
+
   it("第二輪新增物件 → 觸發一筆 intake，payload 與 header 正確", async () => {
     const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const received: Array<{ body: Record<string, unknown>; headers: http.IncomingHttpHeaders }> = [];
