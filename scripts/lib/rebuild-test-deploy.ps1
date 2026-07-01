@@ -212,6 +212,7 @@ function Invoke-TestDeployRebuild {
         [string] $DeploymentPath = $script:TestDeployFixedPath,
         [scriptblock] $CommandRunner = $null,
         [scriptblock] $DeployRunner = $null,
+        [scriptblock] $ServiceStopper = $null,
         [switch] $AllowNonFixedPathForTests
     )
 
@@ -272,7 +273,48 @@ function Invoke-TestDeployRebuild {
     try {
         Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
         Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
-        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+
+        # Pre-clean stop: kit.exe / conversion / governance from rebuild N still hold
+        # locked handles under _build (gitignored, targeted by -x). Stop the deploy-zone
+        # services (identified ONLY by this deploy zone's scripts\.run pidfiles) so their
+        # file handles release before `git clean -fdx`. BEST-EFFORT by design: a stop
+        # failure must not abort — the clean-retry below is the real safety net, and the
+        # guardrail (pidfile-scoped Stop-HostNativeService) never touches out-of-zone
+        # processes such as hub.exe under C:\Users\...\ov\pkg.
+        $effectiveServiceStopper = $ServiceStopper
+        if ($null -eq $effectiveServiceStopper) {
+            $launcherLibPath = Join-Path $PSScriptRoot 'host-native-launcher.ps1'
+            $effectiveServiceStopper = {
+                param([string] $ServiceName, [string] $ServiceRunDir)
+                . $launcherLibPath
+                Stop-HostNativeService -Name $ServiceName -RunDir $ServiceRunDir | Out-Null
+            }.GetNewClosure()
+        }
+        $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
+        foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+            try {
+                & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
+            } catch {
+                Write-Host "[rebuild-test-deploy] WARNING best-effort stop of '$serviceName' failed (continuing to clean-retry): $($_.Exception.Message)"
+            }
+        }
+
+        # Retry ONLY the clean: a just-released handle can still throw a transient EINVAL
+        # ("Invalid argument") on the first unlink. Re-throw after the final attempt so a
+        # genuine lock still surfaces AND still reaches the env-restore catch below.
+        $cleanMaxAttempts = 3
+        $cleanAttempt = 0
+        while ($true) {
+            $cleanAttempt++
+            try {
+                Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+                break
+            } catch {
+                if ($cleanAttempt -ge $cleanMaxAttempts) { throw }
+                Write-Host "[rebuild-test-deploy] git clean -fdx attempt $cleanAttempt failed, retrying in 1s: $($_.Exception.Message)"
+                Start-Sleep -Seconds 1
+            }
+        }
         $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $deployRoot -Snapshot $envSnapshot)
     } catch {
         $cleanupError = $_
