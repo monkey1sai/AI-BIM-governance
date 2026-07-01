@@ -275,7 +275,7 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 
 **Files:**
 - Modify `web-viewer-sample/src/console/coordinatorClient.ts`(`IfcReadyListItem` L156-179)
-- Modify `web-viewer-sample/src/console/pages.tsx`(`ConversionSchedulingPage` jobs 表 L1205-1258)
+- Modify `web-viewer-sample/src/console/pages.tsx`(`ConversionSchedulingPage` jobs 表 L1205-1258 **與 ledger records 表 L1149-1199**:ledger 表補對帳鍵 `idempotency_key` 可見格 + testid,供 E2E 跨表 join;`r.idempotency_key` 既有於 L1166 React key)
 - Modify `web-viewer-sample/src/console/ConversionSchedulingPage.test.tsx`(新增 render 斷言)
 
 **Symbols modified:** `IfcReadyListItem`、`ConversionSchedulingPage`
@@ -317,7 +317,7 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
     };
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [reconcileJob] });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    vi.spyOn(coordinatorClient, "getMinioWatchStatus").mockResolvedValue({ enabled: false, note: "未設定" });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false, note: "未設定" }); // 真實方法名 coordinatorClient.ts:360(無 get 前綴;本檔既有 it 皆用此名);寫 getMinioWatchStatus 會在 render 前丟 "does not exist"
     // 其餘 load* 依本檔既有慣例 mock 空(getMinioObjects 等),避免未 mock 造成 unhandled rejection。
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
@@ -328,6 +328,12 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
     expect(chip?.textContent).toContain("排隊"); // queued 的中文 chip
     const usdc = container.querySelector('[data-testid="conv-job-usdc-ifcready_reconcile"]');
     expect(usdc?.textContent).toContain("待產生"); // pending 誠實標籤,禁顯 parsed
+    // idempotent_replay 綁定落地(delta 表第49行「#conv 誠實標記」;fixture false → 顯「新建」)。
+    const replay = container.querySelector('[data-testid="conv-job-replay-ifcready_reconcile"]');
+    expect(replay?.textContent).toContain("新建");
+    // data_volatility 綁定落地(delta 表第54行「#conv 易失性標記」;fixture in_memory_volatile → 顯「易失」)。
+    const volatility = container.querySelector('[data-testid="conv-job-volatility-ifcready_reconcile"]');
+    expect(volatility?.textContent).toContain("易失");
     await act(async () => { root.unmount(); });
   });
   ```
@@ -344,7 +350,13 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 - [ ] 改 jobs 表 row(L1208-1211 區),在 `<td>{j.ifc_ready_job_id}</td>` 之後插入三格,並把既有 `<td>{j.project_id}</td>` 換成含原名/種類:
   ```tsx
                   <td>{j.ifc_ready_job_id}</td>
-                  <td><code data-testid={`conv-job-idem-${j.ifc_ready_job_id}`}>{j.idempotency_key ?? "—"}</code></td>
+                  <td>
+                    <code data-testid={`conv-job-idem-${j.ifc_ready_job_id}`}>{j.idempotency_key ?? "—"}</code>
+                    {/* idempotent_replay 誠實標記(delta 第49行綁定點):false=新建、true=命中既有去重 */}
+                    <span data-testid={`conv-job-replay-${j.ifc_ready_job_id}`} className="ec-note">{j.idempotent_replay ? t("命中既有", "replay") : t("新建", "new")}</span>
+                    {/* data_volatility 易失性標記(delta 第54行綁定點):job 端 in-memory,重啟即清 */}
+                    <span data-testid={`conv-job-volatility-${j.ifc_ready_job_id}`} className="ec-note">{j.data_volatility === "persisted" ? t("持久", "persisted") : t("易失·重啟即清", "volatile")}</span>
+                  </td>
                   <td>
                     <span
                       data-testid={`conv-job-lifecycle-${j.ifc_ready_job_id}`}
@@ -376,6 +388,11 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
                   </td>
   ```
   並把最底 coverage 展開列的 `colSpan={8}`(L1251)改為 `colSpan={11}`(表頭欄數已由 8 增為 11)。
+- [ ] 【對帳鍵跨表可見(修 E2E ledger 錨點缺口)】在 ledger records 表(`pages.tsx` L1149-1199)補一格顯示 `idempotency_key`,讓 jobs 表與 ledger 表以同一把鍵可視覺 + 程式對齊(現況 ledger 只把 `r.idempotency_key` 用作 React key、不 render,`conv-ledger-trigger-*` 又僅在 `status==="failed" && object_key` 才出現,queued 場景無任何選擇器可定位 ledger 列)。表頭(L1150 `<th>{t("專案","Project")}</th>` 之前)新增第一欄 `<th>key</th>`;列 render(L1167 `<td>{r.project_display_name || r.project_id}</td>` 之前)新增第一格:
+  ```tsx
+                    <td><code data-testid={`conv-ledger-idem-${r.idempotency_key}`}>{r.idempotency_key}</code></td>
+  ```
+  > ledger 表無 colSpan 展開列,新增欄不需改 colSpan。此步僅使既有 `r.idempotency_key` 可見 + 可定位,不改 ledger 資料來源。
 - [ ] 在 `ConversionSchedulingPage` 函式內(或本檔模組層,靠近既有 `lifecycleBadge`/chip helper)新增 `lifecycleLabel`(若本檔已有等義 helper 則重用、不重複宣告):
   ```tsx
   function lifecycleLabel(s: ConversionLifecycleStatus | null | undefined): string {
@@ -412,28 +429,31 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 `deriveIntakeFromKey` code 已 ≥3 段正確(`minioWatcher.ts:71`),但檔頭/舊 spec 仍寫「兩層 `{projectId}/{modelId}`」。降級為純文件清理,**不動任何 code 邏輯**。
 
 **Files:**
-- Modify `bim-review-coordinator/src/services/minioWatcher.ts`(檔頭 docstring,約 L12)
-- Modify `docs/superpowers/specs/2026-06-22-minio-watch-key-structure.md`(若仍載舊「兩層」live 描述:加 archive 註記指向 ≥3 段 active 規約)
+- Modify `bim-review-coordinator/src/services/minioWatcher.ts`(檔頭 docstring:L12-13「恰兩層(projectId / modelId)」、L27、L64 等把 key 規約描述為兩層的句子;**只改註解,不動 L71+ 函式邏輯**)
+- 【只讀核對,不編輯】`docs/superpowers/specs/2026-06-22-minio-watch-key-structure-design.md`(正確檔名多一段 `-design`;其「兩層」命中 L9=P7 浮現的「兩個 layer 問題」非 key 結構、L83=描述「應改寫 openspec live spec」的敘述、L85=跨 spec 調和——**皆已是歷史/調和敘述,不需加 archive 註記**)
+- 【只讀核對,不手改】`openspec/specs/minio-watch-auto-intake/spec.md`(**真正 stale 的兩層 live-spec 殘留在此**:L16 仍寫 `{projectId}/{modelId}/model.ifc`。但依 `openspec/CLAUDE.md` 與本 plan 來源 spec §L86「不直接手改 live `specs/`,否則 pr-review-agent 判 blocked」,**禁在本 plan 手改此檔**——處置見 Steps 的 governance 段)
 
 **Steps:**
 
-- [ ] grep 定位殘留「兩層 / two-layer / `{projectId}/{modelId}`」字樣:
+- [ ] grep 定位殘留「兩層 / two-layer / `{projectId}/{modelId}`」字樣(注意:design 檔名多 `-design`;真正 stale live-spec 在 openspec):
   ```bash
-  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign && grep -rn "兩層\|two-layer\|projectId}/{modelId\|{projectId}/{modelId}" bim-review-coordinator/src/services/minioWatcher.ts docs/superpowers/specs/2026-06-22-minio-watch-key-structure.md
+  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign && grep -rn "兩層\|two-layer\|projectId}/{modelId\|{projectId}/{modelId}" bim-review-coordinator/src/services/minioWatcher.ts openspec/specs/minio-watch-auto-intake/spec.md docs/superpowers/specs/2026-06-22-minio-watch-key-structure-design.md
   ```
-- [ ] 修 `minioWatcher.ts` 檔頭 docstring:把描述 key 為「兩層 `{projectId}/{modelId}`」的句子改為與 code 一致的「≥3 段:`{專案原名}/…/{種類}/{版本}/model.ifc`;`category=倒數第二段`、`version=末段`、`project_raw=首段`,`segments.length<3` 判 malformed 略過」。**只改註解字串,不改函式簽章/邏輯**。
-- [ ] 若 `2026-06-22-minio-watch-key-structure.md` 仍有 live「兩層」描述,於該段上方加一行 archive 註記:
-  ```md
-  > [ARCHIVE 2026-07-01] 舊「兩層 {projectId}/{modelId}」描述已停用;active 規約為 ≥3 段(見 minioWatcher.ts:71 deriveIntakeFromKey 與 2026-06-24 folderview spec R-TRIGGER-KEY-VALIDATION)。
-  ```
+  預期:`minioWatcher.ts`(L12-13/L27/L64)與 `openspec/specs/minio-watch-auto-intake/spec.md`(L16)有命中;design 檔命中為歷史/調和敘述(不需改)。
+- [ ] 修 `minioWatcher.ts` 檔頭 docstring:把描述 key 為「恰兩層 `{projectId}/{modelId}`」的句子(L12-13、L27、L64)改為與 code 一致的「≥3 段:`{專案原名}/…(動態中間層)…/{種類}/{版本}/model.ifc`;`project_raw=首段`、`category=倒數第二段`、`version=末段`,`segments.length<3` 或含空段/純點段判 malformed 略過」。**只改註解字串,不改函式簽章/L71+ 邏輯**(deriveIntakeFromKey code 已正確 ≥3 段,見「現況盤點」)。
+- [ ] design 檔(`...-design.md`)只讀核對、**不編輯**:其 L9「兩層」指 P7 部署浮現的兩個 layer 問題(非 key 結構)、L83 是「應改寫 openspec live spec」的敘述、L85 是跨 spec 調和說明——皆已是正確歷史敘述,機械套 `[ARCHIVE]` 註記反而失真(reviewer 明確指出)。故本步不加任何註記。
+- [ ] openspec live-spec 兩層殘留(`openspec/specs/minio-watch-auto-intake/spec.md:16`)的 governance 處置——**本 plan 不手改此檔**:
+  - 該 ≥3 段更正**已存在**為 active change 的 `## MODIFIED Requirements` delta:`openspec/changes/minio-watch-key-structure/specs/minio-watch-auto-intake/spec.md`(L7 key 規約已寫「由『恰兩層』修訂為多層…≥3 段」、L13-20 scenario 已 ≥3 段)。live spec 之所以仍 stale,只是該 change 尚未 `archive`。
+  - 依 `openspec/CLAUDE.md` 與本 plan 來源 spec §L86:含行為變更的 spec MUST 走 active change + `npx openspec archive`,**禁直接手改 live `specs/`**(否則 pr-review-agent 判 blocked)。故 must_fix #5 的「archive stale 兩層 live-spec」正解=透過 OpenSpec archive 生命週期落地,而非在本 plan 手動編輯 live spec。
+  - 本 plan 動作:(a) 於本 Task commit message 與 P7 回報中記錄此殘留位置與其歸屬的 active change;(b) 因該 live-spec 亦被 `minio-folderview-and-baseline-disclosure`(見 openspec spec L8 supersede 註)pending-archive 覆寫,實際 `npx openspec archive` 由該 OpenSpec change 生命週期收斂——**執行前須向維護者確認由本 plan 或由 folderview change 負責**(standing reconfirm,勿機械執行;本機 openspec CLI 可能壞,以 CI validate 為準)。此非本欄位重設計的 code 範圍,誠實列為交接項。
 - [ ] 跑 coordinator 測試確認純註解改動不影響行為:
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign/bim-review-coordinator && npx vitest run tests/minio-watcher-derive.test.ts 2>&1 | tail -10
   ```
   預期:全 passed(行為未變)。
-- [ ] commit:
+- [ ] commit(只 stage 真正編輯的 `minioWatcher.ts`;**不 add 不存在或不手改的路徑**,避免 `git add` 對缺檔回 `fatal: pathspec ... did not match` + exit 128 而 `&&` 鏈整段中止、連 minioWatcher.ts 都提交不出去):
   ```bash
-  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign && git add bim-review-coordinator/src/services/minioWatcher.ts docs/superpowers/specs/2026-06-22-minio-watch-key-structure.md && git diff --cached --check && git commit -m "docs(coordinator): 修 minioWatcher docstring 兩層殘留 → ≥3 段(對齊 code 與 folderview spec)"
+  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign && git add bim-review-coordinator/src/services/minioWatcher.ts && git diff --cached --check && git commit -m "docs(coordinator): 修 minioWatcher docstring 兩層殘留 → ≥3 段(對齊 code;openspec live-spec 殘留交 OpenSpec archive 生命週期,見 Task 4)"
   ```
 
 ---
@@ -450,12 +470,15 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 - [ ] 以 `web-viewer-sample/e2e/minio-closed-loop.spec.ts` 為藍本(spawn coordinator + S3 stub + conv stub、`conditional-skip` if `dist-ui` 未 build、`coordinatorBase`/`WEBHOOK_SECRET` 慣例、截圖落 `artifacts/e2e/`),新增 `e2e/ifc-ready-field-redesign.spec.ts`。核心斷言:
   ```ts
   test("#/conv:Ifc-ready jobs 表投影 idempotency_key 對帳鍵 + lifecycle chip + 誠實 usdc(STUB MINIO+CONV)", async ({ page }) => {
-    // 前置:S3 stub 放一顆 松風庵/root/main/000001/model.ifc;watcher 首輪 auto-enroll → ledger queued。
-    //       或改走手動:POST /api/conversion/trigger { key } 建立 job(server-side presign)。
+    // 前置(用確定性手動觸發,不靠 watcher 首輪——minio-watch-auto-intake spec:首輪 SHALL 只登記 baseline 不觸發):
+    //   S3 stub 放一顆 松風庵/root/main/000001/model.ifc → POST /api/conversion/trigger { key }
+    //   coordinator server-side presign 建立 job + 落 ledger(status=queued,mw_<hash16>);jobs 表與 ledger 表遂共享同一把 idempotency_key。
     await page.goto(`${coordinatorBase}/ui#/conv`);
-    // 1) ledger records 表出現該 idempotency_key(mw_<hash16>)。
-    const ledgerRow = page.locator('[data-testid^="conv-ledger-trigger-"]').first();
-    await expect(ledgerRow).toBeVisible();
+    // 1) ledger records 表出現該對帳鍵。用 Task 3 新增的 ledger 錨點(queued 亦可見);
+    //    不可用 conv-ledger-trigger-*——它僅在 status==="failed" && object_key 才 render,queued 場景不進 DOM,.first() 會命中 0 元素而逾時。
+    const ledgerIdem = page.locator('[data-testid^="conv-ledger-idem-"]').first();
+    await expect(ledgerIdem).toBeVisible();
+    await expect(ledgerIdem).toContainText("mw_");
     // 2) Ifc-ready jobs 表同一 job 的對帳鍵格出現(可與 ledger 對齊)。
     const idemCell = page.locator('[data-testid^="conv-job-idem-"]').first();
     await expect(idemCell).toContainText("mw_");
@@ -465,9 +488,11 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
     await expect(page.locator('[data-testid^="conv-job-lifecycle-"]')).not.toContainText("完成");
     // 4) usdc 誠實標籤 = 待產生(禁 parsed)。
     await expect(page.locator('[data-testid^="conv-job-usdc-"]').first()).toContainText("待產生");
-    // 5) 對帳一致:jobs 表與 ledger 表出現同一把 idempotency_key 字串。
-    const idemText = (await idemCell.textContent())?.trim() ?? "";
-    expect(idemText).toMatch(/^mw_/);
+    // 5) 真正跨表對帳一致:抓 ledger 錨點與 jobs 格兩個字串,斷言「相等」(非只驗 jobs 自身格式)。
+    const jobKey = (await idemCell.textContent())?.trim() ?? "";
+    const ledgerKey = (await ledgerIdem.textContent())?.trim() ?? "";
+    expect(jobKey).toMatch(/^mw_/);
+    expect(jobKey).toBe(ledgerKey); // 同一把 idempotency_key 同時出現在 jobs 表與 ledger 表 → 三視圖可 join(才是 Done 要的「對帳鍵一致」)
     await page.screenshot({ path: `artifacts/e2e/ifc-ready-field-redesign-conv-${Date.now()}.png`, fullPage: true });
   });
   ```
@@ -493,5 +518,6 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 
 - [ ] Task 1-5 全 commit;`bim-review-coordinator` `npm run verify` 綠、`web-viewer-sample` `npx tsc --noEmit` 綠、目標 vitest 綠。
 - [ ] `summarizeIfcReadyJob` 列表出口投影 `idempotency_key`(must_fix #4:三視圖可 join),既有 26 欄逐字保留、presigned 遮蔽守衛測試不回退(must_fix #1)。
-- [ ] `#/conv` Ifc-ready jobs 表 render 對帳鍵 + lifecycle chip + 誠實 usdc/failure;E2E 截圖佐證 jobs 表與 ledger 表對帳鍵一致、無假 ready(誠實鐵律)。
-- [ ] 回報:改了哪些 tracked files、跑了哪些驗證、哪些沒跑及原因、已知風險(見「明確排除」的 OQ3/OQ4/OQ7 與 Group-B wiring 未做)。
+- [ ] `#/conv` Ifc-ready jobs 表 render 對帳鍵 + lifecycle chip + 誠實 usdc/failure,且 delta 表承諾的 `idempotent_replay`(誠實標記)與 `data_volatility`(易失性標記)皆有實際 render + 單元斷言(不得只擴型別/fixture 卻無 UI 消費——重演「吐了但前端看不到」)。
+- [ ] ledger records 表補 `idempotency_key` 可見錨點(testid `conv-ledger-idem-*`);E2E 以此錨點(非 failed-only 的 `conv-ledger-trigger-*`)定位 ledger 列,並斷言 jobs 格與 ledger 格字串**相等**佐證跨表對帳一致、無假 ready(誠實鐵律)。
+- [ ] 回報:改了哪些 tracked files、跑了哪些驗證、哪些沒跑及原因、已知風險(見「明確排除」的 OQ3/OQ4/OQ7 與 Group-B wiring 未做;openspec live-spec 兩層殘留交 OpenSpec archive 生命週期,見 Task 4 governance 段)。
