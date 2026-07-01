@@ -228,7 +228,7 @@ try {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
         if ($commandText -eq 'clean -fdx') {
-            Remove-Item -LiteralPath (Join-Path $WorkingDirectory '.env.web-plane.host-kit') -Force -ErrorAction Stop
+            Remove-Item -LiteralPath (Join-Path $WorkingDirectory '.env.web-plane.host-kit') -Force -ErrorAction SilentlyContinue
             return [pscustomobject]@{ ExitCode = 42; Output = 'locked governance log' }
         }
         return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
@@ -282,6 +282,109 @@ try {
 
     $deployExitResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $deployExitRoot -AllowNonFixedPathForTests -CommandRunner $deployExitRunner
     Assert-Equal 7 $deployExitResult.DeployExitCode 'deploy.ps1 exit code is returned without terminating caller'
+
+    # Batch 1 (a)+(b): pre-clean stop of all three deploy-zone services, each recorded
+    # BEFORE the clean event in one shared ordered log (ServiceStopper + CommandRunner
+    # write to the same list).
+    $stopOrderRoot = Join-Path $sandbox 'stop-order-root'
+    New-Item -ItemType Directory -Path (Join-Path $stopOrderRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $stopOrderRoot 'scripts') -Force | Out-Null
+    'deploy' | Set-Content -LiteralPath (Join-Path $stopOrderRoot 'scripts\deploy.ps1') -Encoding ascii
+
+    $stopOrderLog = New-Object 'System.Collections.Generic.List[string]'
+    $script:stopOrderLog = $stopOrderLog
+    $stopOrderRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'clean -fdx') { $script:stopOrderLog.Add('clean') | Out-Null }
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abcdef123456' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+
+    $stoppedServices = New-Object 'System.Collections.Generic.List[string]'
+    $script:stoppedServices = $stoppedServices
+    $stopOrderStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:stopOrderLog.Add("stop:$ServiceName") | Out-Null
+        $script:stoppedServices.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $stopOrderDeployRunner = {
+        param([string] $DeployRoot)
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+
+    Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $stopOrderRoot -AllowNonFixedPathForTests -CommandRunner $stopOrderRunner -DeployRunner $stopOrderDeployRunner -ServiceStopper $stopOrderStopper | Out-Null
+
+    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+        Assert-True ($stoppedServices -contains $svc) "pre-clean stop invoked for $svc"
+    }
+    $cleanIndex = $stopOrderLog.IndexOf('clean')
+    Assert-True ($cleanIndex -ge 0) 'clean event recorded in shared ordered log'
+    foreach ($svc in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+        $stopIndex = $stopOrderLog.IndexOf("stop:$svc")
+        Assert-True (($stopIndex -ge 0) -and ($stopIndex -lt $cleanIndex)) "stop of $svc precedes clean in shared ordered log"
+    }
+
+    # Batch 1 (c): first `git clean -fdx` throws a transient EINVAL, second succeeds ->
+    # Invoke-TestDeployRebuild retries, reaches deploy, returns DeployExitCode (no throw).
+    $retryRoot = Join-Path $sandbox 'clean-retry-root'
+    New-Item -ItemType Directory -Path (Join-Path $retryRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $retryRoot 'scripts') -Force | Out-Null
+    'deploy' | Set-Content -LiteralPath (Join-Path $retryRoot 'scripts\deploy.ps1') -Encoding ascii
+
+    $retryCleanCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:retryCleanCalls = $retryCleanCalls
+    $retryRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'clean -fdx') {
+            $script:retryCleanCalls.Add('clean') | Out-Null
+            if ($script:retryCleanCalls.Count -eq 1) {
+                return [pscustomobject]@{ ExitCode = 1; Output = "warning: failed to remove 'bim-streaming-server/_build/.../logs/Kit/kit.log': Invalid argument" }
+            }
+            return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = 'abcdef123456' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+
+    $retryDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:retryDeployCalls = $retryDeployCalls
+    $retryDeployRunner = {
+        param([string] $DeployRoot)
+        $script:retryDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $noopStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+    }.GetNewClosure()
+
+    $retryResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $retryRoot -AllowNonFixedPathForTests -CommandRunner $retryRunner -DeployRunner $retryDeployRunner -ServiceStopper $noopStopper
+    Assert-Equal 2 $retryCleanCalls.Count 'git clean -fdx retried after transient Invalid argument failure'
+    Assert-True ($retryDeployCalls.Count -eq 1) 'rebuild reaches deploy after clean retry succeeds'
+    Assert-Equal 0 $retryResult.DeployExitCode 'rebuild returns deploy exit code after clean retry'
 
     $wrapper = Join-Path $repoRoot 'scripts\dev\rebuild-test-deploy.ps1'
     Assert-True (Test-Path -LiteralPath $wrapper) 'wrapper exists'

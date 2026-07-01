@@ -13,13 +13,16 @@ let active: CoordinatorApp | null = null;
 let root: string | null = null;
 let s3Stub: http.Server | null = null;
 let s3Url = "";
+let s3CallCount = 0;
 
 // S3 stub 依呼叫順序回 pages（同 minio-folder-route.test.ts 模式）。
 function startS3Stub(
   pages: Array<{ prefixes: string[]; keys: string[]; next?: string; status?: number }>,
 ): Promise<void> {
   let call = 0;
+  s3CallCount = 0;
   s3Stub = http.createServer((_req, res) => {
+    s3CallCount += 1;
     const page = pages[Math.min(call, pages.length - 1)];
     call += 1;
     if (page.status && page.status >= 400) {
@@ -115,6 +118,31 @@ describe("GET /api/minio/objects?delimiter=/", () => {
     expect(res.body.bucket).toBe("bim-control");
     // 誠實鐵律：永不回 presigned URL（folders/objects 皆無 url 欄）。
     expect(JSON.stringify(res.body)).not.toContain("X-Amz-Signature");
+  });
+
+  it("相同 prefix 第二次命中 coordinator cache，不重打 S3；refresh=1 會 bypass cache", async () => {
+    await startS3Stub([
+      { prefixes: [], keys: ["annotations/a.json"] },
+      { prefixes: [], keys: ["annotations/b.json"] },
+    ]);
+    const app = makeApp().app;
+    const first = await request(app).get("/api/minio/objects?delimiter=/");
+    expect(first.status).toBe(200);
+    expect(first.body.objects.map((o: { key: string }) => o.key)).toEqual(["annotations/a.json"]);
+    expect(first.body.cache).toEqual(expect.objectContaining({ hit: false, stale: false }));
+    expect(s3CallCount).toBe(1);
+
+    const second = await request(app).get("/api/minio/objects?delimiter=/");
+    expect(second.status).toBe(200);
+    expect(second.body.objects.map((o: { key: string }) => o.key)).toEqual(["annotations/a.json"]);
+    expect(second.body.cache).toEqual(expect.objectContaining({ hit: true, stale: false }));
+    expect(s3CallCount).toBe(1);
+
+    const refreshed = await request(app).get("/api/minio/objects?delimiter=/&refresh=1");
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.objects.map((o: { key: string }) => o.key)).toEqual(["annotations/b.json"]);
+    expect(refreshed.body.cache).toEqual(expect.objectContaining({ hit: false, stale: false }));
+    expect(s3CallCount).toBe(2);
   });
 
   it("帶 delimiter=/ 且 probe 回 5xx → 回 502（probe 失敗不靜默捏造 has_source_ifc=false）", async () => {
