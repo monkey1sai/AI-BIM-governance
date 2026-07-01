@@ -30,7 +30,7 @@ import {
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
-import { createMinioS3Client, listMinioObjects, presignMinioObject } from "./services/minioClient.js";
+import { createMinioS3Client, listMinioFolder, listMinioObjects, presignMinioObject } from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
@@ -359,6 +359,12 @@ export function createCoordinatorApp(
   // POST /api/external/ifc-ready，既有 intake/去重/dispatch 鏈零變動。selfBase 預設
   // http://127.0.0.1:${實際 listen port}；測試以 config.minioWatchSelfBaseUrl 注入。
   let minioWatcher: MinioWatcherHandle | null = null;
+  // conversionLedger（minio-closed-loop-phase1 Task 1/3：coordinator-local shadow 持久 ledger）：
+  // 宣告即建構（const），讓 watcher 的 isLedgered closure（startMinioWatcherIfEnabled 內、下方 ~426 行）
+  // 在型別系統層面就靜態保證捕捉到已初始化的 ledger——不靠「賦值早於啟動路徑」的隱性順序假設，故日後
+  // 在啟動路徑前插入新程式碼也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion
+  // /records 讀取（Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
+  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
   let minioWatchRuntimeEnabled = config.minioWatchEnabled;
   // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
@@ -417,10 +423,17 @@ export function createCoordinatorApp(
       selfBaseUrl,
       webhookSecret: config.externalIntakeWebhookSecret,
       tenantId: config.minioWatchTenantId,
+      // §3.4 全自動 auto-enroll：以持久 ledger 當去重水印。無紀錄→觸發 intake、有紀錄→skip。
+      // 既有未轉檔（含原 baseline 3 檔，ledger=0）下一輪 tick 自動補轉；coordinator 重啟後
+      // 持久 ledger 命中 mw_<hash16> 故不重觸發（重啟不風暴）。closure 捕捉的 conversionLedger
+      // 是上方宣告即建構的 const，型別系統靜態保證已初始化，closure 任何時刻被求值都看得到
+      // 已建好的 ledger。watcher tick 對 ledger 唯讀（落帳由 intake route 端負責）。
+      isLedgered: (idkey) => conversionLedger.get(idkey) !== null,
       structLog,
     });
   }
   // 已在 listen 上的 server（生產 index.ts / E2E）：listening 後啟動以取得實際 port。
+  // （conversionLedger 已於上方宣告即建構，const 保證 isLedgered closure 一定看到已初始化 ledger。）
   server.on("listening", () => startMinioWatcherIfEnabled());
   // supertest 整合測試不呼叫 listen；用 selfBaseUrl override 時可立即啟動。
   // 舊：if (config.minioWatchEnabled && config.minioWatchSelfBaseUrl) {
@@ -490,9 +503,6 @@ export function createCoordinatorApp(
     undefined,
     config.callbackOutboxStorePath,
   );
-  // minio-closed-loop-phase1 Task 1/3：持久 ConversionLedger（coordinator-local shadow）。
-  // watcher 偵測即寫 queued（Task 2）；GET /api/conversion/records 讀取（Task 3）。
-  const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
@@ -1313,9 +1323,14 @@ export function createCoordinatorApp(
   // 插在 /api/external/ifc-ready 後、/:jobId 之前（避免 param 吃掉）。
   app.get("/api/minio/objects", async (request, response) => {
     if (!config.minioWatchEndpoint || !config.minioWatchBucket) {
+      // 此 early-return 同時服務 flat list（getMinioObjects）與 delimiter=/ 資料夾視圖
+      // （getMinioFolder）。前端 MinioFolderListing 型別 folders 為必填陣列，故未設定分支也須補
+      // folders: []（與已設定分支 listMinioFolder 回傳 shape 對齊），否則 getMinioFolder 消費端
+      // r.folders.map(...) 會 TypeError crash UI。空陣列比缺欄位更誠實。
       response.json({
         bucket: config.minioWatchBucket || null,
         prefix: "",
+        folders: [],
         count: 0,
         objects: [],
         note: "MinIO watch 未設定（未取得）",
@@ -1324,6 +1339,25 @@ export function createCoordinatorApp(
     }
     const rawPrefix =
       typeof request.query.prefix === "string" ? request.query.prefix : config.minioWatchPrefix;
+    // 空字串 delimiter（?delimiter=）回落舊路徑（truthy check，照 plan §Task2）：
+    // 只有真正帶非空 delimiter（如 /）才走資料夾語意 list，避免前端收到空 folders[] 而非舊格式。
+    const rawDelimiter =
+      typeof request.query.delimiter === "string" ? request.query.delimiter : "";
+    // spec §2.1 只定義 delimiter='/' 為有效值。白名單擋在轉送 S3 SDK 前：拒絕多字元、
+    // 控制字元、XML 特殊字元等任意 delimiter（否則部分值會讓 SDK 拋非預期錯誤並在 502
+    // detail 洩漏內部訊息，且讓前端控制 delimiter 語意超出 spec 設計意圖）。
+    if (rawDelimiter && rawDelimiter !== "/") {
+      response.status(400).json({ error: "invalid_delimiter", detail: "只支援 delimiter=/" });
+      return;
+    }
+    // rawPrefix 直接取自 HTTP query，未驗證即傳 listMinioFolder/listMinioObjects → S3 SDK。
+    // S3 路徑模型中 `..` 為字面字元（非 filesystem 穿越），無 bucket escape 風險；但嵌入
+    // CR/LF 的 prefix 可能在 SDK 的 HTTP 請求中造成 header injection（AWS SDK 未必全濾）。
+    // 守門擋在轉送前：偵測到 CR/LF 直接 400，根本不建 S3 client（帶不帶 delimiter 都套用）。
+    if (rawPrefix.includes("\r") || rawPrefix.includes("\n")) {
+      response.status(400).json({ error: "invalid_prefix", detail: "prefix 不可含換行字元（CR/LF）" });
+      return;
+    }
     let client: ReturnType<typeof createMinioS3Client> | null = null;
     try {
       client = createMinioS3Client({
@@ -1331,17 +1365,36 @@ export function createCoordinatorApp(
         accessKey: config.minioWatchAccessKey,
         secretKey: config.minioWatchSecretKey,
       });
-      const objects = await listMinioObjects(
-        client,
-        config.minioWatchBucket,
-        rawPrefix,
-        config.minioWatchKeySuffix,
-      );
-      response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+      if (rawDelimiter) {
+        // spec §2.1, AC-D2：帶 delimiter 走資料夾語意 list，回 folders[]（CommonPrefixes）。
+        // 傳入 structLog 供 q3-pipe-guard 跳過含 '|' key 時 warn（對齊 watcher precondition）。
+        const listing = await listMinioFolder(
+          client,
+          config.minioWatchBucket,
+          rawPrefix,
+          rawDelimiter,
+          structLog,
+        );
+        response.json(listing);
+      } else {
+        const objects = await listMinioObjects(
+          client,
+          config.minioWatchBucket,
+          rawPrefix,
+          config.minioWatchKeySuffix,
+          structLog,
+        );
+        response.json({ bucket: config.minioWatchBucket, prefix: rawPrefix, count: objects.length, objects });
+      }
     } catch (err) {
-      response
-        .status(502)
-        .json({ error: "minio_list_failed", detail: err instanceof Error ? err.message : String(err) });
+      // q1-502-leak：AWS SDK 的 err.message 常含 endpoint host:port / bucket / 內部錯誤碼，
+      // 直接回 detail 會把 infra 細節洩漏給瀏覽器。改回固定 sanitized 字串；完整 err.message
+      // 只進 structLog 供運維追查。此 catch 同時服務 listMinioObjects 與 listMinioFolder 路徑。
+      structLog.error("minioObjects", "minio list failed", err, {
+        bucket: config.minioWatchBucket,
+        delimiter: rawDelimiter || null,
+      });
+      response.status(502).json({ error: "minio_list_failed", detail: "minio list failed" });
     } finally {
       client?.destroy();
     }

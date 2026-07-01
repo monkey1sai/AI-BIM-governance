@@ -85,7 +85,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     // 並讓驅動 pick→run 流程的 it 能用 selectMinioModel 選到該 option。個別 it 需要時可再 spyOn 覆寫。
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
-      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000001", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
   });
   afterEach(async () => {
@@ -319,7 +319,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(empty as never);
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
-      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000002", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
     const trigger = vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
     vi.spyOn(coordinatorClient, "getIfcReadyJob").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", conversion_lifecycle_status: "queued", download_status: "downloaded", conversion_status: null, review_session_id: null });
@@ -368,8 +368,8 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 2,
       objects: [
-        { key: "projA/root/main/u1/a.ifc", etag: "ea", role: "source_ifc", project_id: "p1", project_display_name: "A", category: "建築", version: "v1" },
-        { key: "projB/root/main/u2/b.ifc", etag: "eb", role: "source_ifc", project_id: "p1", project_display_name: "B", category: "建築", version: "v1" },
+        { key: "projA/root/main/u1/a.ifc", etag: "ea", role: "source_ifc", idempotency_key: "mw_0000000000000003", project_id: "p1", project_display_name: "A", category: "建築", version: "v1" },
+        { key: "projB/root/main/u2/b.ifc", etag: "eb", role: "source_ifc", idempotency_key: "mw_0000000000000004", project_id: "p1", project_display_name: "B", category: "建築", version: "v1" },
       ],
     });
     // job1 持續非終態（converting → 掛 interval 並持續輪詢）；job2 非終態（queued）。
@@ -431,7 +431,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
       .mockRejectedValue(new Error("coordinator /api/runtime/status -> 503 Service Unavailable"));
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
-      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000005", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
     vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
     // 首輪 poll 回 converting（非終態）→ 掛 interval；下一個 tick 回 ready → 進入 ready 分支打 runtimeStatus（拋）。
@@ -478,7 +478,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
       .mockResolvedValue(twoSessions as never);
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
-      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000006", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
     vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion", trigger_source: "manual" });
     vi.spyOn(coordinatorClient, "getIfcReadyJob")

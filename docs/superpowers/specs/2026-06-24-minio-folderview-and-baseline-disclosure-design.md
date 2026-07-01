@@ -10,7 +10,7 @@
 >
 > **證據鏈：** 所有 spec/程式碼引述附 `file:line`（§9）；live 由 coordinator `:8004` 實測；prototype 設計來源 `docs/plans/ai-bim-governance-prototype.html`。
 
-**一句話：** `#minio` 拍板做「**真 MinIO 唯讀資料夾導覽**」＝ S3 `Delimiter='/'` raw-folder 逐層 lazy（**像 MinIO 網頁一樣聰明**，使用者 D1）＋ `geometries_chunks` 等末層**摺成單一資料夾節點不攤開**（使用者 D2）；三層「專案/種類/版本」語意從「樹骨架」**降為導到 `model.ifc` 葉層才掛的語意 badge**，`watcher` / `deriveIntakeFromKey` **零改、zero blast radius**。此案正式把 prototype「真 S3/MinIO 三層待接 NOT BUILT」**升為已建**，須同步移除浮水印並改寫三方文件（§8）。
+**一句話：** `#minio` 拍板做「**真 MinIO 唯讀資料夾導覽**」＝ S3 `Delimiter='/'` raw-folder 逐層 lazy（**像 MinIO 網頁一樣聰明**，使用者 D1）＋ `geometries_chunks` 等末層**摺成單一資料夾節點不攤開**（使用者 D2）；三層「專案/種類/版本」語意從「樹骨架」**降為導到 `model.ifc` 葉層才掛的語意 badge**（`deriveIntakeFromKey` **不改**）。Q2 另含 §7-B' 全自動 auto-enroll：watcher tick dedup 由 baseline **刻意改為持久 ledger 去重**（非零 blast radius，見 §3.4/AC7）。此案正式把 prototype「真 S3/MinIO 三層待接 NOT BUILT」**升為已建**，須同步移除浮水印並改寫三方文件（§8）。
 
 ---
 
@@ -85,7 +85,7 @@
 6. **轉檔狀態 chip（使用者拍板：做）**：`.ifc` 葉物件旁顯示狀態 chip，顯示 `detected/queued/converting/ready/failed` 或『未轉(baseline 既有檔)』；查不到誠實標『未進偵測佇列』。`#minio` 因此新增對 ledger `/api/conversion/records` 的**唯讀**依賴（`MinioDataPage.test.tsx` 原斷言「不呼叫 `getConversionRecords`」須改）。
    - **對應機制（blocker/major 修正，採路徑 A）：** Phase 1 `ledger.object_key` 恆 `null`（`conversionLedger.ts:21`）、前端不能算 Node `crypto` sha256，故**不**靠前端比對。改由**後端在 `listMinioFolder`/`listMinioObjects` 回應對每個 `.ifc` 物件附帶預計算的 `idempotency_key`**（後端呼 `idempotencyKeyFor(bucket,key,etag)`，`minioWatcher.ts:29` exported），前端 chip 以該 `idempotency_key` 對 records map lookup。需同步加欄位：`MinioObjectView`（`minioClient.ts`）/ `MinioObject`（`coordinatorClient.ts`）/ `ConversionRecord`。詳見 §3.3。
 7. **守門全保留**：(a) list 回應**永不夾帶 presigned URL**（已驗證 route 內 0 個 `getSignedUrl`、`MinioObjectView` 無 url 欄；要下載才另引 presign，沿用 watcher 不入 log 規約）；(b) 把 CommonPrefix 當 id/path 前沿用 `deriveIntakeFromKey` 拒空段/`.`/`..` 防穿越；(c) 頁首『唯讀 intake 來源視圖，非 metadata 權威…權威在 `bim-control·MySQL`』保留（`pages.tsx:1214-1215`）；(d) `prov=demo` bucket-layout 規約面板留作純語意參照，不與真實逐層結果混淆。
-8. **誠實升級宣告**：本案把 prototype『真 S3/MinIO 三層待接 NOT BUILT』升為已建，**必須同步移除浮水印與「待接」字樣**（§8）——把已建功能還掛 NOT BUILT 才是說謊，移除是誠實鐵律的**要求**。watcher/`deriveIntakeFromKey` 完全不動（zero blast radius）。
+8. **誠實升級宣告**：本案把 prototype『真 S3/MinIO 三層待接 NOT BUILT』升為已建，**必須同步移除浮水印與「待接」字樣**（§8）——把已建功能還掛 NOT BUILT 才是說謊，移除是誠實鐵律的**要求**。`#minio` Q1（資料夾導覽）本身 `deriveIntakeFromKey` 不動；watcher tick dedup 的改動屬 Q2 §3.4（§7-B' 全自動），非零 blast radius、見 AC7。
 
 ---
 
@@ -97,18 +97,20 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 
 ### 3.2 `#conv` 揭露設計（逐點）
 
-1. 把現況擠在單一 Field（`pages.tsx:866`）的 baseline/seen/triggered/skipped **拆成獨立 Field + 解釋文案**：`baseline_count`＝「既有 `model.ifc` 在首輪被當基準吸收、**by-design 刻意不自動轉檔**」；`triggered_total`＝「自 baseline 後真正新觸發的上傳數」。避免把 `triggered_total=0` 誤讀成故障。
-2. 對 baseline 既有 `model.ifc` 標註原因（首輪被當基準吸收）。
+1. 把現況擠在單一 Field（`pages.tsx:866`）的 baseline/seen/triggered/skipped **拆成獨立 Field + 解釋文案**：`baseline_count`＝「watcher 首輪 list 到的規約檔（可解析 `model.ifc`）數，**純診斷**」（⚠ 原「被當基準吸收、by-design 刻意不自動轉檔」語意**已被本案 §3.4 auto-enroll 取代**：首輪即對 ledger 無紀錄者自動觸發轉檔，見 line 103）；`triggered_total`＝「watcher 累計真正觸發 intake 的數」。避免把 `triggered_total=0` 誤讀成故障。
+2. 對 baseline 既有 `model.ifc` 標註 §3.4 auto-enroll 語意（首輪即自動觸發、ledger 無紀錄者自動補轉；**非**「不自動轉檔」）。
 3. 列 spec 認可的兩條補救：(i) **重新上傳改 etag** → watcher 下一輪自動觸發；(ii) **手動 webhook intake** 直打 `POST /api/external/ifc-ready`（帶 webhook secret + presigned GET URL）。
-4. 誠實註記（**已被本案 §3.3 取代，`#conv` 文案不再標 NOT BUILT**）：原現狀為「repo 內無一鍵觸發 UI」，本案 §3.3 拍板新增一鍵觸發鈕，故 UI **不**保留「NOT BUILT」字樣；惟須保留「**重啟也救不了既存自動轉檔**」的誠實提醒（`seen` in-memory 不持久化、watcher 重啟首輪重建 baseline，仍需手動一鍵觸發或重新上傳）。
+4. 誠實註記（**已被本案 §3.3/§3.4 取代，`#conv` 文案不再標 NOT BUILT**）：原現狀為「repo 內無一鍵觸發 UI」，本案 §3.3 新增一鍵觸發鈕、§3.4 改 watcher 為 ledger 去重自動補轉，故 UI **不**保留「NOT BUILT」字樣。**⚠ spec 矛盾修正（P1 plan reviewer 抓到）：原「重啟也救不了既存自動轉檔」警語在 §3.4 全自動 auto-enroll 下已 FALSE**（watcher 改查持久 ledger、既有未轉檔下一輪自動補轉、重啟命中 ledger 不重觸發），故 `#conv` UI **不得**保留該過時警語——保留＝與 §3.4 自相矛盾的誠實違規。
 5. **三視圖一致性基準明示**（避免違反閉環 spec `:95-97`）：`baseline_count=3` **只算 `*/model.ifc` 規約檔、非 bucket 全量 527**；「`#minio` 527 物件 vs watcher 只認 3 個 vs ledger=0」的一致性基準 = **「可解析 IFC 數」非「物件總數」**，文案須講清楚，否則使用者誤以為 watcher 漏看 524 物件。
 6. 與 Q1 零交集：Q1 只動 `listMinioObjects`/`buildMinioTree`/`#minio`，與 watcher 觸發語意零交集（AC7）。
 
 ### 3.3 轉檔狀態以 ledger 為真相 ＋ 一鍵觸發（使用者拍板新增）
 
+> **⚠ 方向1 整合調和（2026-07-01，PR 前）**：本 §3.3 原設計「一鍵觸發」自帶獨立後端（`manualIntake.ts` + `x-dev-token` 守門 + 回 `{status, idempotency_key}` + 前端樂觀 patch chip）。開發期間 main 已並行合併 `minio-trigger-lifecycle-backend`（PR #259），提供等效後端 `POST /api/conversion/trigger`（**IP allowlist** 守門、server-side presigned、inline 派工、回 `{ifc_ready_job_id}`）。使用者拍板方向1：**觸發鈕改用 main 端點、移除本案自帶後端**（`manualIntake.ts` 及其測試已刪）；前端 `triggerConversion(key)` 呼叫 main 端點、成功後 `loadRecords()` 由 ledger 對齊 chip（不做樂觀 patch）。故下述 AC-trigger 的 `x-dev-token` / `{status, idempotency_key}` / 樂觀 patch 條款**以此註記為準**（描述原設計，實作已交由 main #259）。`ledger = 轉檔狀態真相來源`、chip 衍生、baseline 揭露、§3.4 auto-enroll 等其餘設計不受影響。
+
 **設計原則（使用者觀點）：** 「是否要轉檔」不只看 watcher 的 in-memory baseline/etag，要看**持久的轉檔紀錄（ledger）**——bucket 內的 `model.ifc` 若 ledger 無成功(`ready`)紀錄，就視為「未轉、可觸發」。
 
-1. **ledger = 轉檔狀態真相來源**：交叉比對「bucket 內 `*/model.ifc`（來自 `#minio` list）」與「ledger 紀錄（`/api/conversion/records`，鍵 `mw_<hash16>`）」。狀態分類：`ready`（已轉）／`detected/queued/converting`（進行中）／`failed`（失敗可重試）／**無紀錄 =「未轉（含 baseline 既有檔）」**。
+1. **ledger = 轉檔狀態真相來源**：交叉比對「bucket 內 `*/model.ifc`（來自 `#minio` list）」與「ledger 紀錄（`/api/conversion/records`，鍵 `mw_<hash16>`）」。狀態分類：`ready`（已轉）／`detected/queued/converting`（進行中）／`failed`（失敗可重試）／**無紀錄 =「未轉（無 ledger 紀錄）」**（§3.4 auto-enroll 後既有檔多已自動補轉落 queued，untracked 僅剩首輪前/watcher 關閉時真正無紀錄者）。
 
 2. **一鍵觸發轉檔按鈕（in-scope，intent→confirm→audited）**：對「未轉/failed」的 `model.ifc`，於 `#minio` 該物件旁（與/或 `#conv` 列）提供「觸發轉檔」鈕。
    - **機制：** 新增 additive coordinator endpoint `POST /api/conversion/trigger {key}`：(a) 驗 key 為 bucket 下 `*/model.ifc`、過 `deriveIntakeFromKey`（≥3 段、拒空段/`.`/`..` 防穿越）；(b) coordinator **server-side 生 presigned GET URL**（瀏覽器不碰 webhook secret／MinIO 憑證）；(c) **新增獨立函式 `triggerManualIntake(key, bucket, config)`** 寫 ledger——**注意 `triggerIntake` 是 `startMinioWatcher` 內私有 closure、不可 import**（`minioWatcher.ts:290`），故為**獨立實作但重用既有 exported 零件**：`deriveIntakeFromKey`/`idempotencyKeyFor`（`minioWatcher.ts:71,29`）、`createMinioS3Client`（`minioClient.ts:7`）、`getSignedUrl`（`@aws-sdk/s3-request-presigner` 已裝）、loopback `POST /api/external/ifc-ready` 或直呼 `conversionLedger.upsert`（約 50 行，**非 import 重用**）。
@@ -163,9 +165,9 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 - [ ] **AC-D2：** 點到含大量 chunk 的子樹（如 `…/geometries_chunks/`）時，該層以**單一可點擊資料夾節點**呈現，API 回應 `objects` **不含** chunk 葉物件、`folders[]` 含該 prefix；資料夾節點旁**不顯示寫死的物件數**。**超 1000 子前綴/物件的層不截斷**（`listMinioFolder` while-loop 全拉、處理 `IsTruncated`）。
 - [ ] **AC-badge：** 導到含 `model.ifc` 的版本層，該物件旁顯示『專案(中文)/種類/版本』語意 badge（`deriveIntakeFromKey`，≥3 段才掛）；非 `model.ifc` 不掛。raw 樹逐層顯示完整中文 key。
 - [ ] **AC-honesty：** `#minio` 維持 loading/error/empty/populated 四態，error 顯原因+可重試，無寫死/示意樹偽裝真資料；list 回應不含 presigned URL；頁首誠實字樣保留；pending 標記只掛同層可見 `.ifc` 且無 `.usdc` 的版本層。**empty 態分兩種文案**：(a) MinIO 未設定（後端回 `note`，200）；(b) 已設定但當前 prefix 無物件（`folders=[] objects=[]`）——不可混用「MinIO watch 未設定」誤導文案（修現況 `pages.tsx:1234` 兩因混寫）。
-- [ ] **AC5：** `#conv` 分別呈現 `baseline_count` 與 `triggered_total`，標註 baseline 既有 `model.ifc` 原因（by-design 不自動轉檔），並明示一致性基準=可解析 IFC 數(3)非物件總數(527)。
+- [ ] **AC5：** `#conv` 分別呈現 `baseline_count` 與 `triggered_total`，`baseline_count` 標註為**純診斷** ＋ §3.4 auto-enroll 語意（首輪即對 ledger 無紀錄之既有 `model.ifc` 自動觸發轉檔，**非** by-design 不轉檔；舊「不自動轉檔」語意已被 §3.4 取代，見 line 103），並明示一致性基準=可解析 IFC 數(3)非物件總數(527)。
 - [ ] **AC6：** `#conv` (a) 保留**說明文案**列兩條 spec 認可補救（重新上傳改 etag／手動 webhook `POST /api/external/ifc-ready`，**僅文字說明**）；(b) 實際可點擊入口＝AC-trigger 的一鍵觸發鈕（走 `POST /api/conversion/trigger`）。兩者**不重複實作**：`/api/external/ifc-ready` 僅文字、UI 觸發走 `/api/conversion/trigger`。
-- [ ] **AC-chip：** `#minio` `.ifc` 物件旁顯示 ledger 衍生狀態 chip（`ready`/`detected`/`queued`/`converting`/`failed`/`未轉(含 baseline)`/`未進佇列`），值取自 `/api/conversion/records`，無紀錄誠實標『未轉』不臆測。
+- [ ] **AC-chip：** `#minio` `.ifc` 物件旁顯示 ledger 衍生狀態 chip（`ready`/`detected`/`queued`/`converting`/`failed`/`未轉(無 ledger 紀錄)`/`未進佇列`），值取自 `/api/conversion/records`，無紀錄誠實標『未轉』不臆測。
 - [ ] **AC-trigger：** 對「未轉/failed」`model.ifc`，`#minio`（與/或 `#conv`）有「觸發轉檔」鈕，走 intent→confirm→audited；按下打 `POST /api/conversion/trigger`（**帶 `x-dev-token`，拒無 auth → 401/403**），coordinator server-side 生 presigned + 獨立 `triggerManualIntake` 寫 ledger；**成功 response 帶回 `{status, idempotency_key}`**、前端直接 patch chip 為 `detected/queued`；**失敗顯 inline error、chip 不變**；同 key 重觸發冪等不重複建 job；按鈕/回應**不洩漏 presigned URL**。
 - [ ] **AC7（改）：** watcher dedup 由 in-memory baseline **刻意改為持久 ledger 去重**（§3.4）——`deriveIntakeFromKey`/`idempotencyKeyFor`/ledger schema **不改**，改的是 tick「要不要觸發」的判定來源。實作前跑 GitNexus `impact`、commit 前 `detect_changes`，確認 blast radius 限於 watcher tick dedup、未波及 intake/dispatch 下游。
 - [ ] **AC-autoenroll：** 既有 ledger 無紀錄的 `*/model.ifc`（含原 baseline 3 檔）在 watcher 下一輪 tick **自動觸發 intake**、ledger 落帳；**coordinator 重啟後不重觸發**已落帳者（持久 ledger 命中 `mw_<hash16>`）；只有**新 key/新 etag** 才觸發。可由「重啟 coordinator → ledger count 不暴增、無重複 job」驗證。
@@ -181,6 +183,13 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 - **前端須重寫斷言（非加測試）**：`MinioDataPage.test.tsx`（8 it；含原「不呼叫 `getConversionRecords`」斷言改為**會呼叫**以掛狀態 chip）、`console.test.tsx`（`:394-396 / :538-568 / :801-840` 綁三層樹語意）、`e2e/minio-closed-loop.spec.ts:234-247` → 改為 `folders[]` 逐層導覽 + 狀態 chip + 觸發鈕斷言。
 - web-viewer `npm run build`＝vite **不跑 tsc**，須另跑 `npx tsc --noEmit`。
 - coordinator 提交前跑 `npm run verify`（`build && test`）。
+
+### 6.1 既有符號真實簽名（plan/實作作者**必對齊**，逐字稿勿臆造）
+
+P1 plan reviewer 抓到兩處逐字稿與真實 codebase 不符，列實證簽名供對齊：
+
+- **`ConversionLedger`**：**constructor-based** — `new ConversionLedger(persistencePath)`（`conversionLedger.ts:50,56`）。**無 `createConversionLedger` 工廠 export**；測試/route 一律 `new ConversionLedger(...)`。
+- **`IntentDialog` props**（`IntentDialog.tsx:9-21`）：`open` / `title` / `cost` / `onConfirm(reason)` / `onCancel` / `busy` / `actionErr`。**無 `body` / `confirmLabel`**；觸發鈕的「成本說明」放 `cost`、標題放 `title`、確認文字由元件內建。
 
 ---
 
@@ -208,7 +217,7 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 4. `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md:84-88` — **整段（`:84-88`）重寫**：主樹 = raw-folder 逐層（S3 `Delimiter`，**無三層語意骨架**）；三層語意降為葉層 badge（`model.ifc` 旁附帶）。**不得只改 `:86` 單行而留 `:85`「三層（專案→類別→版本）」舊語意**（否則 `:85`/`:86` 上下文自相矛盾）。
 4b. `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md:25, 42` — 非目標「不新增手動插隊/優先序佇列 UI」須以新 change **supersede**（本案使用者拍板新增「一鍵觸發轉檔」鈕 + `POST /api/conversion/trigger`；明示這是「手動 intake 觸發」非「佇列插隊」）。
 5. `openspec/specs/minio-watch-auto-intake/spec.md:18-22`（「首輪 baseline SHALL NOT 觸發」）＋ `docs/superpowers/specs/2026-06-12-minio-watch-auto-intake-design.md:28, 53-54, 101` — §7-B' 全自動 auto-enroll（§3.4）把 watcher dedup 由 baseline 改為持久 ledger 去重，**須以新 change supersede**「首輪 baseline 不觸發」語意（改為「ledger 無紀錄才觸發」）；明示重啟不風暴靠持久 ledger（非新建 watermark）。
-5. 本檔 §2.5 第 5 點（「含 source IFC」badge）已從 optional 升為輕量硬 AC（AC-badge 之外另立）；§7 已標 OQ1/OQ2/OQ5 拍板、OQ4 為 archive gate。
+6. 本檔 §2.5 第 5 點（「含 source IFC」badge）已從 optional 升為輕量硬 AC（AC-badge 之外另立）；§7 已標 OQ1/OQ2/OQ5 拍板、OQ4 為 archive gate。
 
 ---
 
@@ -234,7 +243,7 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 
 ## 10. 下一步
 
-1. **使用者拍板 §7-A（手動觸發入口）、§7-C（狀態 chip 耦合）**；維護者處理 §7-B（archive gate）。
+1. §7 全部拍板（OQ1/2/3/5＋狀態 chip＋§7-B' 全自動）；維護者處理 §7-B（archive gate）。
 2. 拍板後用 `superpowers:writing-plans` 產 `docs/superpowers/plans/2026-06-24-minio-folderview-and-baseline-disclosure.md` 逐 task 實作 plan（TDD、先量 baseline、後端 additive 零改、前端重寫斷言）。
 3. 依 `superpowers:subagent-driven-development` 執行；改 symbol 前跑 GitNexus `impact`、commit 前 `detect_changes`（§3.4 刻意改 watcher tick dedup，驗 blast radius 限於預期、未波及 intake/dispatch 下游）；user-facing 跑 gstack browser E2E 取證。
 4. 文件三方同步（§8）與實作同 PR，避免再次背離。

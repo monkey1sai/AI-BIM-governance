@@ -6,7 +6,7 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 // VG-01 Task 3：A1 工作台嵌入 live viewer（iframe + vg01 postMessage 橋），跑檢核→3D 高亮一氣呵成。
@@ -898,6 +898,18 @@ export function ConversionSchedulingPage() {
   // finding #2：action 錯誤獨立 state，顯示在 dialog 內、與 dialog 綁定，不與 load 錯誤（err）共用。
   // load() 開頭的 setErr(null) 因此不會把「控制動作失敗」清掉。
   const [actionErr, setActionErr] = useState<string | null>(null);
+  // Task 8（AC6(b)）：ledger 列「未轉/failed」一鍵觸發鈕的 intent→confirm 狀態。與 pendingAction
+  // （插隊/重試/watch-toggle）獨立——觸發走 POST /api/conversion/trigger（非 ifc-ready），帶原始
+  // object_key；pendingTriggerKey 非 null 時開觸發專屬 IntentDialog。沿用 MinioDataPage 的 confirmTrigger
+  // pattern（成功 patch + 重抓、失敗顯 inline error 不關 dialog）。
+  const [pendingTriggerKey, setPendingTriggerKey] = useState<string | null>(null);
+  const [triggerBusy, setTriggerBusy] = useState(false);
+  const [triggerErr, setTriggerErr] = useState<string | null>(null);
+  // quality finding Important #1：與 runAction 的 actionBusyRef 同步防重入 pattern 對齊。
+  // setTriggerBusy(true) 是非同步 state，confirm 鈕 disabled={triggerBusy} 要等下一次 render 才生效；
+  // 同一事件循環雙擊 confirm 會送出兩個 POST /api/conversion/trigger（失敗路徑下第二次 catch 會覆蓋
+  // 第一次 triggerErr、loadRecords 也可能被競爭觸發兩次）。ref 在 React state 更新前同步攔截第二次呼叫。
+  const triggerBusyRef = useRef(false);
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
   // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
@@ -991,6 +1003,28 @@ export function ConversionSchedulingPage() {
       setActionBusy(false);
     }
   }, [pendingAction, load]);
+  // Task 8（AC6(b)）：ledger 列「觸發轉檔」鈕的 confirm handler。方向1：改走 main 已合併的
+  // triggerConversion（POST /api/conversion/trigger，IP allowlist 守門、server-side presigned）。main 回
+  // {ifc_ready_job_id, status?, trigger_source?}（無 idempotency_key、status 為 lifecycle 值非
+  // ConversionLedgerStatus），故不做「按 idempotency_key 樂觀 patch」；觸發成功後 loadRecords() 由 ledger
+  // 真值對齊 chip（ledger 為狀態真相來源，誠實鐵律）。失敗顯 inline error、不關 dialog、ledger 不變。
+  const confirmTrigger = useCallback(async (_reason: string) => {
+    if (!pendingTriggerKey) return;
+    if (triggerBusyRef.current) return; // finding #1：同步攔截重入（React state 尚未更新前）
+    triggerBusyRef.current = true;
+    setTriggerErr(null);
+    setTriggerBusy(true);
+    try {
+      await coordinatorClient.triggerConversion(pendingTriggerKey);
+      void loadRecords();           // ledger 真值對齊：重抓 ledger（main trigger 已 server-side 落帳）
+      setPendingTriggerKey(null);   // 成功才關 dialog
+    } catch (e) {
+      setTriggerErr(`${t("觸發轉檔失敗：", "Trigger conversion failed: ")}${String(e)}`); // 失敗顯 inline error、ledger 不變、不關 dialog
+    } finally {
+      triggerBusyRef.current = false;
+      setTriggerBusy(false);
+    }
+  }, [pendingTriggerKey, loadRecords]);
   return (
     <>
       <h1>{t("IFC→USD 轉檔排程", "IFC→USD conversion scheduling")}</h1>
@@ -1023,7 +1057,7 @@ export function ConversionSchedulingPage() {
               <p className="ec-note">{mw.note ?? t("watcher 預設關閉；狀態 API 為真，未偽稱功能在跑。", "The watcher is off by default; the status API is real and does not falsely claim the feature is running.")}</p>
               <Btn
                 data-testid="conv-watch-enable"
-                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: true }); }}
+                onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: true }); }}
               >{t("開啟自動偵測", "Enable auto-detection")}</Btn>
             </>
           ) : (
@@ -1034,7 +1068,49 @@ export function ConversionSchedulingPage() {
               <Field k="prefix" v={mw.prefix || t("（無）", "(none)")} prov="asbuilt" />
               <Field k={t("最近一輪", "Last poll")} v={mw.last_poll_at ?? t("尚未完成首輪", "first poll not completed yet")} prov="asbuilt" />
               <Field k={t("輪詢次數", "Poll count")} v={String(mw.poll_count ?? "—")} prov="asbuilt" />
-              <Field k={t("baseline / seen / 觸發 / 跳過", "baseline / seen / triggered / skipped")} v={`${mw.baseline_count ?? "—"} / ${mw.seen_count ?? 0} / ${mw.triggered_total ?? 0} / ${mw.skipped_malformed_total ?? 0}`} prov="asbuilt" />
+              {/* Task 8（AC5）：把原擠在單一 Field 的 baseline/seen/觸發/跳過拆成獨立 Field，
+                  並對 baseline 標 by-design 說明 + 一致性基準文案，避免 triggered_total=0 被誤讀成故障。 */}
+              <Field
+                k={t("baseline（首輪 list 到的規約檔數）", "baseline (convention files seen on first poll)")}
+                v={<span data-testid="conv-baseline-count">{mw.baseline_count ?? "—"}</span>}
+                prov="asbuilt"
+              />
+              <Field
+                k={t("triggered（baseline 後真正新觸發）", "triggered (new since baseline)")}
+                v={<span data-testid="conv-triggered-total">{mw.triggered_total ?? 0}</span>}
+                prov="asbuilt"
+              />
+              <Field
+                k={t("seen / 跳過", "seen / skipped")}
+                v={`${mw.seen_count ?? 0} / ${mw.skipped_malformed_total ?? 0}`}
+                prov="asbuilt"
+              />
+              {/* baseline 說明（spec §3.4 auto-enroll，supersede 舊 §3.1 baseline 吸收）：baseline_count＝
+                  watcher 首輪 list 到的規約檔（可解析 model.ifc）數，**純診斷**——§3.4 已移除「首輪 baseline
+                  不觸發」特例，首輪即對 ledger 無紀錄的既有 model.ifc 自動觸發轉檔（auto-enroll 補轉），
+                  baseline_count 不再代表「不轉檔」。 */}
+              <p className="ec-note" data-testid="conv-baseline-explain">
+                {t(
+                  "baseline＝watcher 首輪 list 到的規約檔（可解析 model.ifc）數，純診斷。§3.4 全自動 auto-enroll：首輪即對 ledger 無紀錄的既有 model.ifc 自動觸發轉檔（既有未轉檔自動補轉；重啟命中持久 ledger 不重觸發，不風暴）。triggered＝累計真正觸發數（含首輪 auto-enroll）——triggered=0 僅代表尚無 ledger 無紀錄的可解析檔，非故障。",
+                  "baseline = number of convention files (parseable model.ifc) the watcher listed in its first round; diagnostic only. §3.4 full auto-enroll: the first round auto-triggers conversion for existing model.ifc with no ledger record (back-fills existing un-converted files; a restart hits the persistent ledger and does not re-trigger, no storm). triggered = cumulative genuinely-triggered count (including first-round auto-enroll) — triggered=0 only means there is no parseable file lacking a ledger record yet, not a fault.",
+                )}
+              </p>
+              {/* 三視圖一致性基準（spec AC5）：明示「可解析 IFC 數」非「物件總數」，避免使用者把
+                  「#minio 527 物件 vs watcher 只認 3 個 vs ledger=0」誤讀成 watcher 漏看 524 物件。 */}
+              <p className="ec-note" data-testid="conv-consistency-basis">
+                {t(
+                  "一致性基準＝可解析 IFC 數（*/model.ifc），非 bucket 物件總數：#minio 全量物件（含幾何 .json）與 watcher 只認的 model.ifc 數本就不同口徑，watcher 並未漏看其餘物件。",
+                  "Consistency basis = count of parseable IFC (*/model.ifc), NOT total bucket object count: the full #minio object set (incl. geometry .json) and the model.ifc count the watcher recognizes are different denominators by design; the watcher is not missing the other objects.",
+                )}
+              </p>
+              {/* AC6(a)：保留說明文案列兩條 spec 認可補救（純文字，不做成 UI 觸發鈕——UI 觸發走
+                  下方 ledger 列的「觸發轉檔」鈕＝POST /api/conversion/trigger，非此處 webhook）。 */}
+              <p className="ec-note" data-testid="conv-remediation-note">
+                {t(
+                  "補救既有未轉檔的兩條 spec 認可路徑：(i) 重新上傳該 model.ifc（改變 etag）→ watcher 下一輪自動觸發；(ii) 手動 webhook intake，直打 POST /api/external/ifc-ready（帶 webhook secret + presigned GET URL）。此兩條為文字說明；若要直接於本頁觸發，請用下方 Ledger 列的「觸發轉檔」鈕（走 POST /api/conversion/trigger）。",
+                  "Two spec-approved remediations for existing un-converted files: (i) re-upload the model.ifc (changes its etag) → the watcher auto-triggers on the next round; (ii) manual webhook intake by calling POST /api/external/ifc-ready directly (with webhook secret + presigned GET URL). These two are textual guidance; to trigger directly from this page, use the \"Trigger\" button on the Ledger rows below (which calls POST /api/conversion/trigger).",
+                )}
+              </p>
               {mw.last_error && <Field k={t("最近錯誤", "Last error")} v={mw.last_error} prov="asbuilt" />}
               {mw.last_triggered && mw.last_triggered.length > 0 && (
                 <table className="ec-table" data-testid="minio-watch-triggered">
@@ -1051,7 +1127,7 @@ export function ConversionSchedulingPage() {
               )}
               <Btn
                 data-testid="conv-watch-disable"
-                onClick={() => { setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: false }); }}
+                onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ kind: "watch-toggle", enabled: false }); }}
               >{t("關閉自動偵測", "Disable auto-detection")}</Btn>
             </>
           )}
@@ -1079,6 +1155,7 @@ export function ConversionSchedulingPage() {
                 <th>usdc</th>
                 <th>coverage</th>
                 <th>{t("偵測時間", "Detected at")}</th>
+                <th>{t("控制", "Control")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1103,6 +1180,18 @@ export function ConversionSchedulingPage() {
                         : <span className="ec-note">{t("未取得", "not available")}</span>}
                     </td>
                     <td><span className="ec-note">{r.detected_at}</span></td>
+                    {/* Task 8（AC6(b)）：對「未轉/failed」列掛一鍵觸發鈕（走 POST /api/conversion/trigger）。
+                        ledger 列必有紀錄，故「未轉」在此即 status==='failed'（converter 失敗、可重試/強制重轉）；
+                        object_key 為 null（Phase 1 watcher 落帳可能無 key）時無從觸發 → 不掛鈕。 */}
+                    <td>
+                      {r.status === "failed" && r.object_key ? (
+                        <Btn
+                          data-testid={`conv-ledger-trigger-${r.idempotency_key}`}
+                          caption="POST /api/conversion/trigger"
+                          onClick={() => { setActionErr(null); setPendingAction(null); setTriggerErr(null); setPendingTriggerKey(r.object_key); }}
+                        >{t("觸發轉檔", "Trigger")}</Btn>
+                      ) : <span className="ec-note">—</span>}
+                    </td>
                   </tr>
                 );
               })}
@@ -1147,13 +1236,13 @@ export function ConversionSchedulingPage() {
                           : j.queue_position <= 1 ? t("已在隊首（position 1），無需插隊", "Already at the head of the queue (position 1); no need to prioritize")
                           : undefined
                         }
-                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
+                        onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "prioritize" }); }}
                       >{t("插隊", "Prioritize")}</Btn>
                     )}
                     {(j.status === "dispatch_failed" || j.status === "dropped_on_restart") && (
                       <Btn
                         data-testid={`conv-retry-${j.ifc_ready_job_id}`}
-                        onClick={() => { setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" }); }}
+                        onClick={() => { setTriggerErr(null); setPendingTriggerKey(null); setActionErr(null); setPendingAction({ jobId: j.ifc_ready_job_id, kind: "retry" }); }}
                       >{t("重試", "Retry")}</Btn>
                     )}
                   </td>
@@ -1189,6 +1278,17 @@ export function ConversionSchedulingPage() {
         actionErr={actionErr}
         onConfirm={runAction}
         onCancel={() => { if (!actionBusy) { setActionErr(null); setPendingAction(null); } }}
+      />
+      {/* Task 8（AC6(b)）：ledger 列「觸發轉檔」專屬 intent→confirm（與上方 pendingAction dialog 互斥開啟）。
+          走 POST /api/conversion/trigger（非 ifc-ready）；IntentDialog 真實 props：open/title/cost/onConfirm/onCancel/busy/actionErr。 */}
+      <IntentDialog
+        open={pendingTriggerKey != null && pendingAction == null}
+        title={t("確認觸發轉檔", "Confirm trigger conversion")}
+        cost={t("對此 model.ifc 觸發轉檔 intake（POST /api/conversion/trigger，帶 x-dev-token；同 key 重觸發冪等）：", "Trigger conversion intake for this model.ifc (POST /api/conversion/trigger with x-dev-token; same-key re-trigger is idempotent): ") + (pendingTriggerKey ?? "")}
+        busy={triggerBusy}
+        actionErr={triggerErr}
+        onConfirm={(reason) => void confirmTrigger(reason)}
+        onCancel={() => { if (!triggerBusy) { setTriggerErr(null); setPendingTriggerKey(null); } }}
       />
     </>
   );
@@ -1320,26 +1420,54 @@ export function KitGpuFleetPage() {
   );
 }
 
-// Task 7：#minio 升級讀真實 GET /api/minio/objects（三層 + 角色，移除寫死 demo）。
-// 依 project_display_name → category → version 分組成三層樹。
-// 誠實鐵律：有 .ifc 無對應 .usdc → 標 pending·待產生（prov p1），禁假裝已轉。
-type MinioTree = Map<string, Map<string, Map<string, import("./coordinatorClient").MinioObject[]>>>;
+// Task 7（minio-folderview）：#minio 改真 MinIO 逐層資料夾導覽（S3 Delimiter）。
+// buildMinioTree 三層攤平樹已退役；改 useState(prefix) 點資料夾換 prefix 重打 getMinioFolder。
+// .ifc 旁掛 ledger 衍生狀態 chip（讀 getConversionRecords）＋ 一鍵觸發鈕（intent→confirm）。
+// 誠實鐵律：folders/objects 皆真實 list；無 ledger 紀錄誠實顯『未轉』不臆測；不洩漏 presigned URL。
 
-function buildMinioTree(objects: import("./coordinatorClient").MinioObject[]): MinioTree {
-  const tree: MinioTree = new Map();
-  for (const obj of objects) {
-    const proj = obj.project_display_name ?? "(未知專案)";
-    const cat = obj.category ?? "(未知種類)";
-    const ver = obj.version ?? "(未知版本)";
-    if (!tree.has(proj)) tree.set(proj, new Map());
-    const catMap = tree.get(proj)!;
-    if (!catMap.has(cat)) catMap.set(cat, new Map());
-    const verMap = catMap.get(cat)!;
-    if (!verMap.has(ver)) verMap.set(ver, []);
-    verMap.get(ver)!.push(obj);
-  }
-  return tree;
+// ledger chip 狀態映射（與後端 ledgerChipStatus.ts 同義；前端內聯避免跨 monorepo tsconfig boundary）。
+// records 來自 getConversionRecords()；無紀錄 → 'untracked'（顯「未轉（無 ledger 紀錄）」），不臆測。
+// §3.4 auto-enroll 後既有檔多已自動觸發落 ledger queued，untracked 僅剩真正無紀錄者（首輪前/watcher 關）。
+// 命中 → 後端 ConversionRecord.status 是寬 wire string（enum 演進 / 資料遷移殘留可能送非預期值），
+// 故與 confirmTrigger 同樣先過 narrowConversionStatus()：非法值退 'unknown'（MINIO_CHIP_LABEL 有對應
+// 標籤），不讓原始 wire 字串經 chip render 的 `?? st` fallback 外洩（誠實鐵律：不洩漏 wire 字串）。
+//
+// quality finding Important #1：getConversionRecords 有 limit（後端 parseListLimit 上限 100）。當 ledger
+// 紀錄數超出回傳窗（count > items.length，截斷）或 records 載入失敗（coordinator 離線/502/timeout）時，
+// 超窗/未載入的物件在 records 中查無 key——這是「可能有紀錄但前端看不到」，不可靜默當『未轉』（違反
+// AC-chip『無紀錄才標未轉、不臆測』；誠實鐵律：records 載入失敗不得誤顯未轉）。故 miss 且 recordsIncomplete
+// 時退 'indeterminate'（顯『狀態未明』），誠實揭露不確定來源。
+function ledgerChipStatus(
+  idempotencyKey: string,
+  records: ReadonlyArray<{ idempotency_key: string; status: string }>,
+  recordsIncomplete: boolean, // 截斷（超查詢上限）或載入失敗——兩者皆「可能有紀錄但看不到」
+): string {
+  const hit = records.find((r) => r.idempotency_key === idempotencyKey);
+  if (hit) return narrowConversionStatus(hit.status) ?? "unknown";
+  // 查無紀錄：records 不完整（截斷／載入失敗）時誠實顯『狀態未明』；完整載入且查無才是真『未轉』。
+  return recordsIncomplete ? "indeterminate" : "untracked";
 }
+
+// chip 狀態本地化標籤（無紀錄＝untracked → 未轉；其餘對應 ledger status enum）。
+// 鍵集合對齊 spec AC-chip（design line 168）列舉的 7 個 chip 狀態，確保後端送任一列舉值都有本地化
+// 標籤、不會 fallback 顯原始 wire 字串（誠實鐵律）。
+const MINIO_CHIP_LABEL: Record<string, string> = {
+  detected: t("已偵測", "detected"),
+  queued: t("排隊", "queued"),
+  converting: t("轉檔中", "converting"),
+  ready: t("完成", "ready"),
+  failed: t("失敗", "failed"),
+  untracked: t("未轉（無 ledger 紀錄）", "not converted (no ledger record)"),
+  // not_queued＝spec AC-chip『未進佇列』。誠實註記：現行後端 ConversionLedgerStatus 只 5 值
+  // （detected/queued/converting/ready/failed，conversionLedger.ts:11），不產生 not_queued——
+  // 「偵測到未進佇列」目前由 detected 涵蓋；此 key 為 spec AC-chip 完整性保留。若後端日後細分出
+  // not_queued，narrowConversionStatus 的 CONVERSION_LEDGER_STATUSES 須同步加入；未加入時 ledgerChipStatus
+  // 的 `?? "unknown"` 仍誠實退 unknown（顯下方『未知狀態』、不洩漏 wire 字串）。
+  not_queued: t("未進佇列", "not queued"),
+  unknown: t("未知狀態", "unknown"), // narrowConversionStatus 退回值：後端送非預期 status 時誠實顯未知
+  // records 不完整（截斷超查詢上限／載入失敗）且查無 key 時的誠實退路（≠『未轉』，避免靜默誤報）。
+  indeterminate: t("狀態未明（紀錄不完整或載入失敗）", "indeterminate (records incomplete or unavailable)"),
+};
 
 function roleLabel(role: import("./coordinatorClient").MinioObject["role"]): string {
   if (role === "source_ifc") return t("來源 IFC", "Source IFC");
@@ -1354,95 +1482,198 @@ function roleClass(role: import("./coordinatorClient").MinioObject["role"]): str
 }
 
 export function MinioDataPage() {
-  const [objects, setObjects] = useState<import("./coordinatorClient").MinioObject[] | null>(null);
-  const [bucket, setBucket] = useState<string | null>(null);
+  const [folder, setFolder] = useState<import("./coordinatorClient").MinioFolderListing | null>(null);
+  const [records, setRecords] = useState<ConversionRecord[]>([]);
+  // quality finding Important #1：records 是否被回傳上限截斷（count > items.length）。截斷時查無 key
+  // 的物件不可當『未轉』，須顯『狀態未明』（chip 經 ledgerChipStatus 退 'indeterminate'）。
+  const [recordsTruncated, setRecordsTruncated] = useState(false);
+  // honesty：records 載入失敗（coordinator 離線/502/timeout）也是「可能有紀錄但看不到」，與截斷同樣
+  // 須退 'indeterminate' 而非靜默誤顯『未轉』。catch 設 true、成功設 false（避免暫態失敗永久鎖死）。
+  const [loadRecordsErr, setLoadRecordsErr] = useState(false);
+  const [prefix, setPrefix] = useState(""); // 當前層 prefix（spec §2.5：點資料夾換 prefix）
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(null); // intent→confirm
+  const [triggerErr, setTriggerErr] = useState<string | null>(null);
+  const [triggerBusy, setTriggerBusy] = useState(false); // confirm 進行中（IntentDialog busy）
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (p: string) => {
     setLoading(true);
     setErr(null);
     try {
-      const res = await coordinatorClient.getMinioObjects();
-      setBucket(res.bucket);
-      setObjects(res.objects);
+      const res = await coordinatorClient.getMinioFolder(p);
+      setFolder(res);
     } catch (e) {
       setErr(String(e));
     } finally {
       setLoading(false);
     }
   }, []);
-
+  const loadRecords = useCallback(async () => {
+    try {
+      // quality finding Important #1：取後端 parseListLimit 允許的上限（100；請求更大值會被夾到 100）。
+      // r.count 是 slice 前的總筆數，r.items.length 是回傳窗大小；count > items.length 即被截斷。
+      const r = await coordinatorClient.getConversionRecords(100);
+      setRecords(r.items);
+      setRecordsTruncated(r.count > r.items.length);
+      setLoadRecordsErr(false); // 成功載入 → 清除前次失敗旗標
+    } catch {
+      // honesty fix：records 載入失敗不可靜默讓 chip 顯『未轉』（誤把「看不到」當「沒轉」）。
+      // 標 loadRecordsErr → ledgerChipStatus 退 'indeterminate'（狀態未明）。
+      setLoadRecordsErr(true);
+    }
+  }, []);
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(prefix);
+  }, [load, prefix]);
+  useEffect(() => {
+    void loadRecords();
+  }, [loadRecords]);
 
-  const tree = objects ? buildMinioTree(objects) : null;
+  const enterFolder = (f: string) => setPrefix(f); // CommonPrefix 為絕對 prefix
+  const goUp = () => {
+    if (!prefix) return;
+    const trimmed = prefix.replace(/\/$/, "");
+    const idx = trimmed.lastIndexOf("/");
+    setPrefix(idx >= 0 ? trimmed.slice(0, idx + 1) : "");
+  };
+  // folders 為 Array<{ prefix; has_source_ifc }>；對中文使用者以 localeCompare('zh-TW') 重排（spec §2.1 中文排序）。
+  const sortedFolders = folder ? [...folder.folders].sort((a, b) => a.prefix.localeCompare(b.prefix, "zh-TW")) : [];
+  // empty 態 (b)：已設定但當前層無物件（無 note）。empty 態 (a)＝後端回 note（未設定）。
+  const showFolderEmpty = !!folder && folder.folders.length === 0 && folder.objects.length === 0;
+  // folder 回應的 note（後端未設定時回 200 + note；MinioFolderListing.note? 已對齊 wire shape）。
+  const folderNote = folder?.note;
+
+  // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
+  // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy
+  //（與既有 ConversionSchedulingPage 用法、spec §6.1 IntentDialog 契約一致）。
+  const confirmTrigger = async (_reason: string) => {
+    if (!pendingKey) return;
+    setTriggerErr(null);
+    setTriggerBusy(true);
+    try {
+      // 方向1：改走 main 已合併的 triggerConversion（POST /api/conversion/trigger，IP allowlist 守門、
+      // server-side presigned）。main 回 {ifc_ready_job_id, status?}（無 idempotency_key），故不做樂觀
+      // chip patch；觸發成功後 loadRecords() 重抓 ledger，chip 由 ledgerChipStatus(idk, records) 依真值
+      // 更新（誠實鐵律：狀態真相來源＝ledger，不靠前端臆測）。
+      await coordinatorClient.triggerConversion(pendingKey);
+      void loadRecords();
+      setPendingKey(null); // 成功才關 dialog
+    } catch (e) {
+      setTriggerErr(String(e)); // 失敗顯 inline error（actionErr）、chip 不變、dialog 不關
+    } finally {
+      setTriggerBusy(false);
+    }
+  };
 
   return (
     <>
       <h1>{t("MinIO 資料", "MinIO Data")}</h1>
       <p className="ec-lead">
-        {t("唯讀 intake 來源視圖，非 metadata 權威。 此頁讀 ", "Read-only intake source view, not the metadata authority. This page reads ")}<code>GET /api/minio/objects</code>{t("（真實 S3 list proxy）； 呈現 bucket 三層結構（專案 → 種類 → 版本）與每物件角色。 metadata 權威在外部 ", " (real S3 list proxy); shows the bucket's three-level structure (project → category → version) and each object's role. The metadata authority is the external ")}<code>bim-control · MySQL</code>{t("，不由本頁決定。", "; this page does not decide it.")}
+        {t("唯讀 intake 來源視圖，非 metadata 權威。 此頁讀 ", "Read-only intake source view, not the metadata authority. This page reads ")}<code>GET /api/minio/objects</code>{t("（真實 S3 list proxy，帶 Delimiter='/'）； 像 MinIO 網頁一樣逐層資料夾導覽（point-and-list），導到 model.ifc 才掛專案 / 種類 / 版本語意 badge。 metadata 權威在外部 ", " (real S3 list proxy with Delimiter='/'); browses the bucket level-by-level like the MinIO web UI (point-and-list); project / category / version semantic badges are attached only when reaching model.ifc. The metadata authority is the external ")}<code>bim-control · MySQL</code>{t("，不由本頁決定。", "; this page does not decide it.")}
       </p>
 
       <Panel
-        title={t("MinIO Bucket 物件（真實 list）", "MinIO bucket objects (real list)")}
-        sub={bucket ? `bucket=${bucket} · GET /api/minio/objects` : t("GET /api/minio/objects（MinIO watch 未設定時回 count=0）", "GET /api/minio/objects (returns count=0 when MinIO watch is not configured)")}
+        title={t("MinIO Bucket 逐層資料夾（真實 list）", "MinIO bucket folder navigation (real list)")}
+        sub={folder?.bucket ? `bucket=${folder.bucket} · GET /api/minio/objects?delimiter=/` : t("GET /api/minio/objects?delimiter=/（MinIO watch 未設定時回 count=0）", "GET /api/minio/objects?delimiter=/ (returns count=0 when MinIO watch is not configured)")}
         prov="asbuilt"
       >
-        {loading && <p className="ec-note">{t("載入中…（GET /api/minio/objects）", "Loading… (GET /api/minio/objects)")}</p>}
-        {err && (
+        {/* 麵包屑：目前層 prefix（空＝bucket 根）＋ 上一層鈕（prefix 非空才顯） */}
+        <div className="ec-row" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+          {prefix ? (
+            <Btn data-testid="minio-go-up" caption="prefix --" onClick={() => goUp()}>{t("⬑ 上一層", "⬑ Up")}</Btn>
+          ) : null}
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, opacity: 0.7 }}>{prefix || "/"}</span>
+        </div>
+
+        {loading ? (
+          <p className="ec-note">{t("載入中…（GET /api/minio/objects）", "Loading… (GET /api/minio/objects)")}</p>
+        ) : err ? (
+          // error 態：誠實顯原因 + 可重試（不假裝有資料）。
           <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span>{err}</span>
-            <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => { void load(); }}>
+            <span>{t("讀取 MinIO 失敗：", "Failed to read MinIO: ")}{err}</span>
+            <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => { void load(prefix); }}>
               {t("重試", "Retry")}
             </Btn>
           </div>
-        )}
-        {!loading && !err && (!objects || objects.length === 0) && (
-          <p className="ec-note">
-            {t("未取得 MinIO 物件（count=0）。可能原因：MinIO watch 未設定（", "No MinIO objects (count=0). Possible causes: MinIO watch not configured (")}<code>MINIO_WATCH_*</code>{t(" env 未填）、 bucket 為空、或 coordinator proxy 無法連線 MinIO。", " env not set), the bucket is empty, or the coordinator proxy cannot reach MinIO.")}
-          </p>
-        )}
-        {tree && objects && objects.length > 0 && (
-          <div className="ec-tree">
-            {[...tree.entries()].map(([proj, catMap]) => (
-              <div key={proj}>
-                <div><span className="ec-tree-file">{proj}/</span></div>
-                {[...catMap.entries()].map(([cat, verMap]) => (
-                  <div className="indent" key={cat}>
-                    <div>{cat}/</div>
-                    {[...verMap.entries()].map(([ver, objs]) => {
-                      const hasIfc = objs.some((o) => o.role === "source_ifc");
-                      const hasUsdc = objs.some((o) => o.role === "parsed_usdc");
-                      return (
-                        <div className="indent two" key={ver}>
-                          <div>{ver}/</div>
-                          {objs.map((obj) => (
-                            <div className="indent three" key={obj.key}>
-                              <span className="ec-tree-file">{obj.key.split("/").pop()}</span>{" "}
-                              <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
-                            </div>
-                          ))}
-                          {/* 誠實鐵律：有 .ifc 但無 .usdc → 標 pending，禁假裝已轉 */}
-                          {hasIfc && !hasUsdc && (
-                            <div className="indent three">
-                              <span className="ec-tree-file">model.usdc</span>{" "}
-                              <span className="ec-note">{t("pending · 待產生", "pending · to be generated")}</span>{" "}
-                              <ProvTag prov="p1" />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+        ) : folderNote ? (
+          // empty 態 (a)：MinIO 未設定（後端回 note，200）。
+          <p className="ec-note">{t("MinIO 未設定（", "MinIO not configured (")}{folderNote}{")"}</p>
+        ) : showFolderEmpty ? (
+          // empty 態 (b)：已設定但當前 prefix 無物件——不可誤用「未設定」文案。
+          <p className="ec-note">{t("此層無物件（資料夾為空）。", "This level has no objects (empty folder).")}</p>
+        ) : (
+          // populated：資料夾鈕（含 source IFC badge）＋ 當層直屬物件列。
+          <div>
+            {sortedFolders.length > 0 ? (
+              <div className="ec-tree">
+                {sortedFolders.map((f) => (
+                  <div key={f.prefix} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <Btn data-testid={`minio-folder-open-${f.prefix}`} caption={t("點入此資料夾", "open folder")} onClick={() => enterFolder(f.prefix)}>{f.prefix}</Btn>
+                    {f.has_source_ifc ? (
+                      <span data-testid={`minio-folder-badge-${f.prefix}`} className="ec-prov artifact">
+                        {t("含 source IFC", "has source IFC")}
+                      </span>
+                    ) : null}
                   </div>
                 ))}
               </div>
-            ))}
+            ) : null}
+
+            {folder && folder.objects.length > 0 ? (
+              <ul className="ec-tree" style={{ listStyle: "none", paddingLeft: 0 }}>
+                {folder.objects.map((obj) => {
+                  const idk = obj.idempotency_key;
+                  const st = ledgerChipStatus(idk, records, recordsTruncated || loadRecordsErr);
+                  return (
+                    <li key={obj.key} className="ec-row" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      {/* role label（與 intake 三段脫鉤，純副檔名） */}
+                      <span className={roleClass(obj.role)}>{roleLabel(obj.role)}</span>
+                      <span className="ec-tree-file" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{obj.key}</span>
+                      {/* 三段語意 badge：有才顯（≥3 段才有，malformed 不掛）。各掛 data-testid 供 AC-badge
+                          精準定位（避免 textContent 子字串誤判：如 category=main 撞 prefix 路徑字串）。 */}
+                      {obj.project_display_name ? <span data-testid={`minio-badge-project-${idk}`} className="ec-prov">{obj.project_display_name}</span> : null}
+                      {obj.category ? <span data-testid={`minio-badge-category-${idk}`} className="ec-prov">{obj.category}</span> : null}
+                      {obj.version ? <span data-testid={`minio-badge-version-${idk}`} className="ec-prov">{obj.version}</span> : null}
+                      {/* 僅 source_ifc 物件掛 ledger 狀態 chip（7b）＋ 一鍵觸發鈕（7c） */}
+                      {obj.role === "source_ifc" ? (
+                        <>
+                          {/* 7b：ledger 衍生狀態 chip（無紀錄＝未轉，不臆測） */}
+                          <span data-testid={`minio-chip-${idk}`} className="ec-prov">
+                            {MINIO_CHIP_LABEL[st] ?? st}
+                          </span>
+                          {/* 7c：一鍵觸發鈕（未轉/failed 可按；ready/進行中 disabled）。
+                              finding #1：'indeterminate'（records 截斷查無 key）也可按——觸發冪等（後端
+                              mw_<hash16> 去重），讓使用者在狀態未明時仍能主動觸發/重轉，不被靜默鎖死。 */}
+                          <Btn
+                            data-testid={`minio-trigger-${idk}`}
+                            caption="POST /api/conversion/trigger"
+                            disabled={!["untracked", "failed", "indeterminate"].includes(st)}
+                            onClick={() => { setTriggerErr(null); setPendingKey(obj.key); }}
+                          >
+                            {t("觸發轉檔", "Trigger")}
+                          </Btn>
+                        </>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
           </div>
         )}
       </Panel>
+
+      {/* 7c：intent→confirm 對話框（IntentDialog 真實 props：open/title/cost/onConfirm(reason)/onCancel/busy/actionErr）。 */}
+      <IntentDialog
+        open={!!pendingKey}
+        title={t("確認觸發轉檔", "Confirm trigger conversion")}
+        cost={t("對此物件觸發轉檔 intake：", "Trigger conversion intake for this object: ") + (pendingKey ?? "")}
+        busy={triggerBusy}
+        actionErr={triggerErr}
+        onConfirm={(reason) => void confirmTrigger(reason)}
+        onCancel={() => { setPendingKey(null); setTriggerErr(null); }}
+      />
 
       <Panel title={t("Bucket layout（規約說明 — 示意，非實況）", "Bucket layout (convention — illustration, not live)")} sub={t("bim-control private bucket · 三層 key 規約示意（DEMO，非真實資料）", "bim-control private bucket · three-level key convention illustration (DEMO, not real data)")} prov="demo">
         <p className="ec-note">

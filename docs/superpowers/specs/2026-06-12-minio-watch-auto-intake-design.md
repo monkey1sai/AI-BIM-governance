@@ -26,6 +26,7 @@
 
 1. coordinator 新增 **minioWatcher**（env opt-in，**預設關**）：定時 `ListObjectsV2` 指定 bucket/prefix，偵測新的 `*/model.ifc` 物件 → 自動組 B-scheme payload 對 loopback `POST /api/external/ifc-ready`（帶既有 webhook secret）→ 既有下載/sanitize/dispatch/poll/callback 鏈全自動走完。
 2. **首掃 baseline 不觸發**：watcher 啟動後第一輪 list 只登記 seen（baseline），之後輪次的新物件（新 key 或同 key 新 etag）才觸發 intake — 防止對既有 bucket（867 objects）爆量誤觸發。
+   > **【已被 minio-folderview-and-baseline-disclosure §3.4 supersede（使用者 2026-06-24 拍板：全自動 auto-enroll）】**：watcher tick 去重由 in-memory baseline 改為**持久 ledger 去重**——對每個 `*/model.ifc` 算 `idempotencyKeyFor(bucket,key,etag)`、查持久 ledger（`data/conversion-ledger.json`）：**無紀錄才觸發、有紀錄 skip**（即「ledger 無紀錄才觸發」取代「首掃 baseline 不觸發」）。既有未轉檔（ledger=0）下一輪自動補轉；防爆量改由「ledger 已有紀錄即 skip」達成、非靠首輪無條件吸收。詳見新 change spec delta `specs/minio-watch-auto-intake/spec.md`。
 3. **重啟冪等**：intake 的 `X-Idempotency-Key` 採物件確定性導出（`minio-watch` 前綴 + bucket/key/etag hash），重啟後重掃同物件命中既有 `idempotencyIndex` 去重（202 idempotent_replay），不重複建 job。
 4. `#/conv` 可見 watcher 真實狀態（enabled/bucket/最近一輪時間/seen 數/最近錯誤/觸發數），來自新 `GET /api/external/minio-watch/status`；watcher 關閉時誠實顯示「未啟用（env opt-in）」。
 5. Browser E2E：以 fake S3 stub（回 ListObjectsV2 XML 的本機 http server）驗證「stub 出現新物件 → watcher 自動 intake → job 進入 dispatched（stub conversion）→ `#/conv` 列表可見該 job 與 watcher 狀態」— 全程不碰任何按鈕（M2 DoD 前半語意）。
@@ -52,6 +53,7 @@
   - 每輪 `ListObjectsV2`（分頁全量）→ 過濾 key 以 `KEY_SUFFIX` 結尾 → 與 in-memory `seen: Map<key, etag>` 比對。
   - 首輪：全部寫入 seen，**不觸發**（baseline；log 記 baseline 數）。
   - 後續輪：新 key 或 etag 變更 → 觸發 intake → 更新 seen。
+  > **【已被 minio-folderview-and-baseline-disclosure §3.4 supersede】**：上述「首輪寫 seen 不觸發、後續輪靠 in-memory `seen` 比對」之 dedup 改為**持久 ledger 去重**——每輪對命中物件算 `idempotencyKeyFor` 查持久 ledger，無紀錄即觸發並落帳、有紀錄 skip；`seen` 降為單輪快取，權威去重以持久 ledger 為準。既有未轉檔下一輪自動補轉。
   - 觸發 = 對 `http://127.0.0.1:{port}/api/external/ifc-ready` POST B-scheme payload（loopback 自打，帶 `X-Webhook-Secret` = 既有 `externalIntakeWebhookSecret`、`X-Correlation-Id` = `minio-watch-<hash8>`、`X-Idempotency-Key` = `mw_<sha256(bucket|key|etag)[:16]>`）。
   - payload 導出：key `{prefix}{projectId}/{modelId}/model.ifc` → `project_id={projectId}`、`external_model_version_id={modelId}`、`external_conversion_task_id={modelId}_mw_<etag前8>`、`source_ifc.ref` = **presigned GET URL**（expiry 1h，SDK presigner）、`source_ifc.etag` = `sha256:<etag 去引號>` 形或原樣（對齊既有 intake schema 的 etag 欄位格式，以 schema 實際驗證規則為準）、`requested_outputs` 與 `callback_url` 比照契約 example。
   - 層級不符（key 去 prefix 後非恰兩層）→ 跳過並記 `skipped_malformed` 計數（誠實統計）。
@@ -99,6 +101,7 @@ watcher（每 60s）`ListObjectsV2` → 新 `*/model.ifc` → presigned URL + �
 
 - **新 production dependency（@aws-sdk/client-s3）**：理由如 §4.1；鎖唯讀兩 API 面，PR body 揭露。
 - **in-memory seen 與重啟語意**：bucket 867 objects 量級記憶體無虞；不做持久化。idempotency 鏈保證的是「重掃**已觸發過**的物件不重複建 job」；**已知限制（Codex review 揭露）**：coordinator 停機期間上傳的物件會在重啟後被首輪 baseline 吸收而不自動觸發（補救：既有手動 webhook intake，或重新上傳使 etag 改變）。持久化 watermark 須與 intake 去重索引（同為 in-memory）一併設計，否則重啟後逕行全量觸發會對既有物件重複建 job — 屬後續 change。
+  > **【已被 minio-folderview-and-baseline-disclosure §3.4 解除（使用者 2026-06-24 拍板）】**：此已知限制由 watcher tick 改查**持久 ledger** 解除——停機期間上傳的物件在重啟後因 ledger 無紀錄仍會自動觸發；「持久化 watermark」即既有持久 ledger（`data/conversion-ledger.json`，atomic swap），**無需另案新建**；重啟重掃命中既有 ledger 紀錄即 skip、不重複建 job（重啟不風暴）。
 - **presigned URL 含簽章（敏感）**：不寫入 watcher status/log（last_triggered 只記 key 不記 URL）。
 - **與外部 IFC worker 並存**：同物件若 worker 也 POST（不同 idempotency key）會建第二筆 job — 屬部署拓樸決策（要嘛 worker 退役要嘛 watcher 不開），spec 揭露不在 code 層擋。
 - **credentials 安全**：env only；`.env.example` 加空欄位；deny 規則禁讀 .env 實值（agent 不碰）。

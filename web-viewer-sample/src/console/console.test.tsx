@@ -720,17 +720,23 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
   });
 
-  // MinioData populated 態（Task 7）：getMinioObjects() 回真物件後，render 出三層樹（專案/種類/版本）。
-  // SSR 永遠到不了，因首幀 loading=true 走 loading 分支。
-  it("MinioData getMinioObjects() 回真物件 → render 三層樹（專案→種類→版本，非 loading 殼）", async () => {
-    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+  // MinioData populated 態（Task 6 起 #minio 改逐層資料夾導覽）：頁面改打 getMinioFolder()
+  //（回 folders[] + objects[]），不再呼 getMinioObjects()。葉層物件回真 .ifc → render 出
+  // role label + 三段語意 badge。SSR 永遠到不了，因首幀 loading=true 走 loading 分支。
+  // quality finding Important #2：spy 從退役的 getMinioObjects 改為 getMinioFolder，否則 mock
+  // 不被觸發、頁面卡 loading（await 無解）。
+  it("MinioData getMinioFolder() 回真物件 → render 葉層 .ifc（role + 三段語意 badge，非 loading 殼）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control",
+      prefix: "松風庵/root/main/000001/",
+      folders: [],
       count: 1,
       objects: [
         {
           key: "松風庵/root/main/000001/model.ifc",
           etag: "abc",
           role: "source_ifc",
+          idempotency_key: "mw_console0000aaaa1",
           project_id: "mv_1a2b3c4d",
           project_display_name: "松風庵",
           category: "main",
@@ -738,12 +744,14 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
         },
       ],
     });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); }); // 等 getMinioObjects microtask 入 state
+    await act(async () => { await Promise.resolve(); }); // 等 getMinioFolder microtask 入 state
+    await act(async () => { await Promise.resolve(); }); // 等 getConversionRecords microtask 入 state
 
     const html = container.innerHTML;
-    // 三層樹節點：project_display_name / category / version（loading 態不可能出現這些）。
+    // 三段語意 badge：project_display_name / category / version（loading 態不可能出現這些）。
     expect(html).toContain("松風庵");
     expect(html).toContain("main");
     expect(html).toContain("000001");
@@ -757,10 +765,11 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { root.unmount(); });
   });
 
-  // MinioData error 態（Task 7）：getMinioObjects() reject → 顯示誠實錯誤文案，
+  // MinioData error 態：getMinioFolder() reject → 顯示誠實錯誤文案，
   // 不吞錯、不假裝有物件。SSR 首幀走 loading，永遠到不了此分支。
-  it("MinioData getMinioObjects() reject → error 態誠實顯示錯誤（不吞錯、不偽裝有物件）", async () => {
-    vi.spyOn(coordinatorClient, "getMinioObjects").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
+  it("MinioData getMinioFolder() reject → error 態誠實顯示錯誤（不吞錯、不偽裝有物件）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
@@ -775,21 +784,25 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { root.unmount(); });
   });
 
-  // MinioData empty 態（Task 7）：getMinioObjects() 成功但 objects=[]（count=0）→
-  // 顯示誠實「未取得 MinIO 物件」文案，不假裝有物件。SSR 首幀走 loading，
-  // 此分支需 !loading && !err && objects.length===0，唯有 client-render 微任務跑完才到得了。
-  it("MinioData getMinioObjects() 回空 objects → empty 態顯示「未取得 MinIO 物件」（非 loading、非假物件）", async () => {
-    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
-      bucket: null,
-      count: 0,
+  // MinioData empty 態：getMinioFolder() 成功但 folders=[] 且 objects=[]（count=0）→
+  // 顯示誠實「此層無物件（資料夾為空）」文案，不假裝有物件。SSR 首幀走 loading，
+  // 此分支需 !loading && !err && folders.length===0 && objects.length===0，唯有 client-render
+  // 微任務跑完才到得了。
+  it("MinioData getMinioFolder() 回空層 → empty 態顯示「此層無物件」（非 loading、非假物件）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
+      bucket: "bim-control",
+      prefix: "",
+      folders: [],
       objects: [],
+      count: 0,
     });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
 
     const html = container.innerHTML;
-    expect(html).toContain("未取得 MinIO 物件（count=0）"); // 空狀態文案
+    expect(html).toContain("此層無物件（資料夾為空）"); // 空狀態文案（spec §2.5 empty 態 (b)）
     expect(html).not.toContain("載入中…（GET /api/minio/objects）"); // 已離開 loading
     expect(html).not.toContain("coordinator /api/minio/objects"); // 成功回應，非 error 態
     expect(html).not.toContain("松風庵"); // 空樹不得渲染假物件節點
@@ -984,19 +997,23 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 
   // reviewer Major：error 態須有使用者可觸發的重試（不必整頁 reload）。
-  // Task 7：第一次 getMinioObjects() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染三層樹。
-  it("MinioData error 態點「重試」→ 重打 getMinioObjects() → 成功渲染真物件（不必整頁 reload）", async () => {
+  // 第一次 getMinioFolder() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染葉層物件。
+  // quality finding Important #2：spy 從退役的 getMinioObjects 改為 getMinioFolder。
+  it("MinioData error 態點「重試」→ 重打 getMinioFolder() → 成功渲染真物件（不必整頁 reload）", async () => {
     const spy = vi
-      .spyOn(coordinatorClient, "getMinioObjects")
+      .spyOn(coordinatorClient, "getMinioFolder")
       .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
       .mockResolvedValueOnce({
         bucket: "bim-control",
+        prefix: "松風庵/root/main/000001/",
+        folders: [],
         count: 1,
         objects: [
           {
             key: "松風庵/root/main/000001/model.ifc",
             etag: "abc",
             role: "source_ifc",
+            idempotency_key: "mw_console0000aaaa2",
             project_id: "mv_1a2b3c4d",
             project_display_name: "松風庵",
             category: "main",
@@ -1004,6 +1021,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
           },
         ],
       });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
@@ -1015,9 +1033,10 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     expect(retry).not.toBeNull();
     await act(async () => { retry!.click(); });
     await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); }); // 等 getConversionRecords microtask 入 state
 
     const html = container.innerHTML;
-    expect(html).toContain("松風庵"); // 重試成功 → 真物件三層樹渲染
+    expect(html).toContain("松風庵"); // 重試成功 → 真物件葉層渲染
     expect(html).toContain("來源 IFC"); // 角色標籤
     expect(html).not.toContain("502 Bad Gateway"); // error 態已清除
     expect(spy).toHaveBeenCalledTimes(2); // 真的重打了一次
@@ -1533,8 +1552,8 @@ describe("A1 step① MinIO 下拉（B2）", () => {
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 2,
       objects: [
-        { key: "松風庵/root/main/uuid1/model.ifc", etag: "e1", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
-        { key: "松風庵/root/main/uuid1/model.usdc", etag: "e2", role: "parsed_usdc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
+        { key: "松風庵/root/main/uuid1/model.ifc", etag: "e1", role: "source_ifc", idempotency_key: "mw_0000000000000011", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
+        { key: "松風庵/root/main/uuid1/model.usdc", etag: "e2", role: "parsed_usdc", idempotency_key: "mw_0000000000000012", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
       ],
     });
     const container = document.createElement("div");
@@ -1916,7 +1935,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     // A1 step① 改 MinIO 下拉後，mount 會打 getMinioObjects()；回單一 source_ifc 物件讓 pickModel 能選到該 option。
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
-      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000013", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
   });
   afterEach(() => {

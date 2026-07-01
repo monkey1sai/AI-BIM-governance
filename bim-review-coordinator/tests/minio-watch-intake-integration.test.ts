@@ -74,7 +74,7 @@ async function waitFor(check: () => Promise<boolean> | boolean, ms = 12000): Pro
 }
 
 describe("minioWatcher → 真 coordinator intake 整合", () => {
-  it("baseline 後新增物件 → watcher 自動建立 ifc-ready job（store 可見）", async () => {
+  it("ledger 去重模式：新增（未入帳）物件 → watcher 自動建立 ifc-ready job（store 可見）", async () => {
     const state = { objs: [{ key: "899/main/xxx/model.ifc", etag: "e1" }] };
     const s3Base = await startS3Stub(state);
 
@@ -104,6 +104,13 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
     });
     const port = await listenOnRandomPort(active.server);
 
+    // §3.4 production ledger-dedup 路徑（取代 legacy baseline-then-new，對齊 createCoordinatorApp 真實
+    // 注入持久 ledger 的語意）：注入 isLedgered 模擬「初始 899 先前已轉檔入帳、新增的 988 為未入帳新上傳」。
+    // 首輪 899 命中 ledger→skip（不靠 legacy baseline 特例）；後續輪新增 988→觸發。idempotencyKeyFor
+    // 內部 stripEtagQuotes，故傳 "e1" 與 watcher 自 XML 帶引號 etag 算出的 idkey 一致。
+    const { idempotencyKeyFor } = await import("../src/services/minioWatcher.js");
+    const ledgered899 = idempotencyKeyFor("bim-control", "899/main/xxx/model.ifc", "e1");
+
     watcher = startMinioWatcher({
       endpoint: s3Base,
       bucket: "bim-control",
@@ -118,10 +125,12 @@ describe("minioWatcher → 真 coordinator intake 整合", () => {
       selfBaseUrl: `http://127.0.0.1:${port}`, // 指向真 coordinator loopback intake
       webhookSecret: "dev-webhook-secret",
       tenantId: "tenant_demo_001",
+      // 899 已入帳→首輪 skip；988（下方 push）未入帳→觸發。走真實 ledger 去重而非 legacy baseline。
+      isLedgered: (idkey) => idkey === ledgered899,
       structLog: { anomaly: () => {}, withTraceId: () => ({ anomaly: () => {} }) } as never,
     });
 
-    // 等 baseline 完成（首輪只登 baseline 不觸發）
+    // 等首輪 tick 完成（baseline_count 兩模式皆於首輪填；ledger 模式下 899 命中 ledger→skip 不觸發）
     await waitFor(() => watcher!.getStatus().baseline_count === 1);
 
     // 新增物件 → watcher 下一輪觸發 intake（真 coordinator 真 store）
