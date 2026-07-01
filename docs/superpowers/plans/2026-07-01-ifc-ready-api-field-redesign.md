@@ -4,7 +4,7 @@
 
 **Goal:** 讓 `summarizeIfcReadyJob`(GET /api/external/ifc-ready 列表)投影三視圖對帳主鍵 `idempotency_key` 與誠實觀測欄位(`failure_reason`/`failure_stage`/`usdc_role`/`data_volatility`/`idempotent_replay`/`conversion_lifecycle_status`/`project_display_name`/`category`),前端 `#/conv` 的「Ifc-ready jobs」表據以與 ledger / minio 視圖對齊,並以 browser E2E 佐證。
 
-**Architecture:** coordinator(`bim-review-coordinator`,Express + TS,in-memory `ExternalIfcReadyStore` + 持久 `ConversionLedger`)在 `summarizeIfcReadyJob` 做 additive/nullable 投影;前端 `web-viewer-sample`(React + Vite,`EdgeConsole` `#/conv` → `ConversionSchedulingPage`)擴充 `IfcReadyListItem` 型別與 jobs 表 render。誠實鐵律:presigned 簽章已由既有 `maskPresignedRef`/`sanitizeJobForExternal` 遮蔽**瀏覽器可見出口**(勿回退;惟 callback outbox 出口 `app.ts:1831` 尚未遮蔽,見「現況盤點」⚠️ 與「明確排除」OQ3),converter 未落地前 `usdc_role` 恆 `pending`、無假 ready。
+**Architecture:** coordinator(`bim-review-coordinator`,Express + TS,in-memory `ExternalIfcReadyStore` + 持久 `ConversionLedger`)在 `summarizeIfcReadyJob` 做 additive/nullable 投影;前端 `web-viewer-sample`(React + Vite,`EdgeConsole` `#/conv` → `ConversionSchedulingPage`)擴充 `IfcReadyListItem` 型別與 jobs 表 render。誠實鐵律:presigned 簽章由既有 `maskPresignedRef`/`sanitizeJobForExternal` 遮蔽瀏覽器可見出口,並由 Task 1B 補遮 callback outbox 出口(`app.ts:1831`,使用者 2026-07-01 已裁決遮蔽)→ P0 must_fix #1「全出口遮蔽」閉環(勿回退);converter 未落地前 `usdc_role` 恆 `pending`(job 端無 usdc_key)、無假 ready。
 
 **Tech Stack:** TypeScript(coordinator Node ESM + viewer React)、vitest(+ supertest 整合)、Playwright(e2e)、zod(intake schema)。
 
@@ -31,7 +31,7 @@ cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign
 
 | spec 要求 | 現況(檔案:行) | 結論 |
 |---|---|---|
-| P0 全出口遮蔽 presigned(must_fix #1) | `maskPresignedRef`(`src/services/presignedRef.ts`)+ `sanitizeJobForExternal`(`app.ts:2658`);守衛測試 `tests/presigned-ref.test.ts` 已覆蓋 list/`:jobId`/shadow/POST session/POST intake 202/200 replay 六**瀏覽器可見出口**斷言不含 `X-Amz-Signature`。**未竟**:callback outbox → 外部雲端 payload(`app.ts:1831` `source_ifc:{ ref: job.source_ifc_ref }`)仍夾帶原始 presigned ref、未套 `maskPresignedRef`(對照 `app.ts:2104` artifact_resolution 已遮蔽);spec §0 / §8.3 明列此 callback context 為必遮出口(「只修 2357 不算修好」) | ⚠️ 瀏覽器出口已完成;**callback outbox 出口(app.ts:1831)未遮蔽,須裁決**(見「明確排除」OQ3 + 完成標準) |
+| P0 全出口遮蔽 presigned(must_fix #1) | 瀏覽器可見出口:`maskPresignedRef`(`src/services/presignedRef.ts`)+ `sanitizeJobForExternal`(`app.ts:2658`);守衛測試 `tests/presigned-ref.test.ts` 已覆蓋 list/`:jobId`/shadow/POST session/POST intake 202/200 replay 六出口斷言不含 `X-Amz-Signature`。callback outbox → 外部雲端 payload(`app.ts:1831`)由 **Task 1B 補遮**(使用者 2026-07-01 裁決遮蔽:conversion_result_ready 送出時雲端已取得 usdc 成品、不需 presigned 下載原 IFC → 遮蔽不影響功能;對照 `app.ts:2104`/`2619` 已遮蔽) | ✅ 瀏覽器出口已完成;callback outbox 出口由 Task 1B 遮蔽 → must_fix #1 全出口閉環 |
 | 凍結 lifecycle 映射 + 單一 helper(must_fix #2 / OQ5) | `deriveLifecycleStatus`(`src/services/lifecycleStatus.ts`,重用 `ConversionLedgerStatus`);已 wire 進 `summarizeIfcReadyJob`(`app.ts:2627`)與 `:jobId`(`app.ts:1538`);測試 `tests/lifecycle-status.test.ts` | ✅ 已完成 |
 | `project_display_name`/`category` 落 store + 投影(OQ1 / must_fix #3) | `ExternalIfcReadyStore.create` 已寫入(`src/services/externalIfcReadyStore.ts:57-58`);`summarizeIfcReadyJob` 已投影(`app.ts:2614-2615`)。OQ1 裁決(spec §0)= 放寬 R5 直接落 store,**已生效** | ✅ 已完成 |
 | `POST /api/conversion/trigger`(folderview R-TRIGGER-*) | `app.ts:928`,只收 `key`、server-side presign、`deriveIntakeFromKey` ≥3 段驗證、self-POST loopback | ✅ 已完成 |
@@ -64,7 +64,7 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 - `source_object_key` / `source_bucket` / `source_ifc_ref_expires_at` / `key_segments` / `provenance_source` / `is_baseline`:需改 `IfcReadyIntakeJob` type + `ExternalIfcReadyStore.create` + intake handler + **`minioWatcher.ts` self-POST payload**(觸碰 §6.7「watcher 自動語意凍結」,須 `detect_changes` 佐證未改觸發語意,風險高);且 `{bucket,key,etag}` 對帳三元組**已可由 ledger(`ConversionRecord.object_key`)+ `/api/minio/objects` 觀測**,job_output 重複投影無新前端綁定點(YAGNI)。
 - 階段時戳 `detected_at`/`queued_at`/`dispatched_at`/`converted_at`:需在 store `mark*` 各寫入點補時戳(wiring),目前**無前端 render 綁定**(YAGNI);`converted_at` 屬 Phase 2。
 - `usdc_key` / `coverage_report`(job_output):Phase 2 回填(OQ7,callback outbox wiring 未接通),job 端恆 null;既有 ledger 已載此二欄,前端由 ledger 讀。本 plan 只在 job_output 投影 `usdc_role=pending` 誠實標記,不重複 null 欄位。
-- OQ3(既有 consumer):`app.ts:1831` 的 internal callback payload 仍帶原始 presigned `source_ifc.ref`(送外部雲端 callback,`sanitizeJobForExternal` docstring `app.ts:2654-2656` 明列此 internal 出口為刻意 carve-out)。是否遮蔽此出口須先確認雲端 consumer 是否依賴 presigned 下載——屬開放問題,本 plan 不動 internal 出口;Task 2 守衛測試只斷言**瀏覽器可見出口**不洩漏。**⚠️ 誠實標註**:此殘留即代表 spec §0 / §8.3 的 must_fix #1「全出口遮蔽」**尚未真正完成**(spec 明列 callback context 為必遮出口),故「現況盤點」表該列標 ⚠️ 非 ✅,且收尾前 MUST 依「完成標準」向使用者/維護者上呈裁決,不得靜默結案或僅當已知風險一句帶過。
+- ~~OQ3(既有 consumer):`app.ts:1831` callback outbox 出口遮蔽~~ **已裁決(2026-07-01)並移入 Task 1B**:使用者核准遮蔽此 callback outbox 出口(理由:conversion_result_ready 送出時轉檔已完成、外部雲端已取得 usdc 成品,不需 presigned 下載原 IFC,遮蔽不影響功能)。Task 1B 對 `app.ts:1831` 套 `maskPresignedRef` + 守衛測試 + 更新 `sanitizeJobForExternal` docstring 與 callback contract。must_fix #1 全出口遮蔽於本 plan 閉環,不再是待裁決開放問題。
 
 ---
 
@@ -174,6 +174,85 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 
 ---
 
+## Task 1B: P0 收尾 — 遮蔽 callback outbox 出口(app.ts:1831,must_fix #1 全出口閉環)
+
+`ingestConversionReport` 組 `conversion_result_ready` callback payload(送外部雲端 control-plane)時,`source_ifc.ref` 仍是原始 presigned URL(含 `X-Amz-*` 簽章),為 spec §0 / §8.3 明列的 P0 必遮出口。使用者 2026-07-01 裁決遮蔽(轉檔完成時雲端已取得 usdc 成品,不需 presigned 下載原 IFC → 遮蔽不影響功能)。對 `app.ts:1831` 套既有 `maskPresignedRef`(與 `app.ts:2104`/`2619` 一致),加守衛測試,更新 docstring 與 contract。**不動 conversion_failed 分支**(其 payload 不含 source_ifc)。
+
+**Files:**
+- Modify `bim-review-coordinator/src/app.ts`(`ingestConversionReport` 的 `conversion_result_ready` payload `source_ifc.ref` ~L1831;`sanitizeJobForExternal` docstring ~L2650-2656 更新 carve-out 敘述)
+- Modify `bim-review-coordinator/tests/cloud-callback-outbox.test.ts`(新增遮蔽守衛斷言)
+- Modify `docs/contracts/conversion-api.md`(callback 段註明 source_ifc.ref 已遮蔽簽章)
+
+**Symbols modified:** `ingestConversionReport`(先跑 impact)
+
+**Steps:**
+
+- [ ] 改動前跑 GitNexus impact(規範 MUST):
+  ```
+  mcp__gitnexus__impact({ target: "ingestConversionReport", direction: "upstream", repo: "AI-BIM-governance" })
+  ```
+  預期:呼叫點為 POST /api/internal/conversion-result、auto-poll ingest 等;risk 非 HIGH/CRITICAL 才續(是則先回報)。
+- [ ] 寫失敗守衛測試,加進 `bim-review-coordinator/tests/cloud-callback-outbox.test.ts`(用既有 `makeApp`/`authHeaders`/`internalHeaders`/`IFC_CONTRACT`;seed 一個 source_ifc.ref 帶簽章的 job,不依賴 fixture 預設值):
+  ```ts
+  it("誠實鐵律:conversion_result_ready callback payload 的 source_ifc.ref 遮蔽 presigned 簽章(P0 全出口)", async () => {
+    const app = makeApp();
+    // seed 一個 source_ifc.ref 帶 X-Amz 簽章的 job(覆寫 fixture,確定性驗遮蔽生效)
+    const signedRef = "https://minio.example.com/bim-control/proj/cat/v1/model.ifc?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Credential=AKIA%2F20260701&X-Amz-Expires=3600";
+    const example = structuredClone(IFC_CONTRACT.example) as Record<string, unknown>;
+    const seeded = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_mask_001", "X-Idempotency-Key": "idem_mask_001" }))
+      .send({ ...example, source_ifc: { ...(example.source_ifc as Record<string, unknown>), ref: signedRef } });
+    expect(seeded.status).toBe(202);
+    const res = await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
+      correlation_id: "corr_mask_001",
+      conversion_job_id: "cj_mask_001",
+      status: "ready",
+      artifacts: { usdc_ref: "edge-local://t/mv/cj/model.usdc" },
+      artifact_summary: { usdc_openable: true },
+    });
+    expect(res.status).toBe(202);
+    const payload = res.body.callback.payload;
+    // source_ifc.ref 仍在(metadata 標示來源),但簽章已剝除
+    expect(payload.source_ifc.ref).not.toMatch(/X-Amz-Signature|X-Amz-Credential|X-Amz-Expires/i);
+    expect(payload.source_ifc.ref).toBe("https://minio.example.com/bim-control/proj/cat/v1/model.ifc");
+    // 整包 payload 不含任何簽章殘留
+    expect(JSON.stringify(payload)).not.toMatch(/X-Amz-Signature|X-Amz-Credential/i);
+  });
+  ```
+  > 註:`request`/`makeApp`/`authHeaders`/`internalHeaders`/`IFC_CONTRACT` 皆本檔既有(L1-70);本 it 不需新增 import。若 `IFC_CONTRACT.example.source_ifc` 結構與上不符,以實際 fixture 欄位為準(核心是 override `ref` 為含 `X-Amz-*` 的 URL)。
+- [ ] 跑,確認**失敗**(遮蔽未套,ref 仍含簽章):
+  ```bash
+  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign/bim-review-coordinator && npx vitest run tests/cloud-callback-outbox.test.ts 2>&1 | tail -15
+  ```
+  預期:新 it 紅(`payload.source_ifc.ref` 含 `X-Amz-Signature`)。
+- [ ] 遮蔽 `app.ts:1831` — 把 conversion_result_ready payload 的:
+  ```ts
+        source_ifc: { ref: job.source_ifc_ref, etag: job.source_ifc_etag },
+  ```
+  改為(重用既有 `maskPresignedRef`,已 import 於 `app.ts:40`):
+  ```ts
+        source_ifc: { ref: maskPresignedRef(job.source_ifc_ref), etag: job.source_ifc_etag },
+  ```
+- [ ] 更新 `sanitizeJobForExternal` docstring(~L2650-2656):把「範圍外(刻意)…比照 callback outbox carve-out」段改為誠實反映現況——callback outbox 的 `conversion_result_ready` payload 已遮蔽 `source_ifc.ref`;僅 `POST /api/internal/conversion-result`、`/ingest` 等回原始 job 給 internal-token consumer 的路徑仍為 carve-out(defense-in-depth 待確認)。措辭與 code 一致,不留假 carve-out 敘述。
+- [ ] 更新 `docs/contracts/conversion-api.md` callback 段:註明 `conversion_result_ready` 的 `source_ifc.ref` 對外一律遮蔽 presigned 簽章(只留 bucket/key 物件位址),完整 presigned 只活在 server-side dispatch。
+- [ ] 跑,確認新 it **通過**且 `cloud-callback-outbox` 既有測試(metadata-only 鐵律等)+ `presigned-ref` 全綠(遮蔽不回退):
+  ```bash
+  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign/bim-review-coordinator && npx vitest run tests/cloud-callback-outbox.test.ts tests/presigned-ref.test.ts 2>&1 | tail -20
+  ```
+  預期:兩檔全 passed。
+- [ ] commit 前跑 detect_changes(規範 MUST):
+  ```
+  mcp__gitnexus__detect_changes({ scope: "compare", base_ref: "main" })
+  ```
+  預期:僅 `ingestConversionReport`(+docstring)受影響,無 watcher/store/其他 callback 分支意外變更。
+- [ ] commit:
+  ```bash
+  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign && git add bim-review-coordinator/src/app.ts bim-review-coordinator/tests/cloud-callback-outbox.test.ts docs/contracts/conversion-api.md && git diff --cached --check && git commit -m "fix(coordinator): 遮蔽 callback outbox 出口 source_ifc.ref presigned 簽章(P0 must_fix #1 全出口閉環)"
+  ```
+
+---
+
 ## Task 2: `summarizeIfcReadyJob` 投影對帳鍵 + 誠實欄位
 
 在列表與 `:jobId` 兩出口 additive 投影 `idempotency_key`/`idempotent_replay`/`failure_reason`/`failure_stage`/`usdc_role`/`data_volatility`(`conversion_lifecycle_status`/`project_display_name`/`category` 已在列表,補進 detail 一致性)。既有 26 欄逐字保留(closed-loop R11)。
@@ -234,8 +313,11 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
     idempotency_key: job.idempotency_key,
     idempotent_replay: job.idempotent_replay,
     ...deriveFailure(job),
-    // 誠實:converter 落地前恆 pending;ready 後(Phase 2)才 parsed_usdc。禁前端寫死假 parsed。
-    usdc_role: lifecycle === "ready" ? "parsed_usdc" : "pending",
+    // 誠實(spec §4.6:usdc_role 以 usdc_key 為閂門):job 端不投影 usdc_key(IfcReadyIntakeJob 無此欄、見「明確排除」;
+    // Phase 1 恆缺),Phase 2 由 callback outbox 回填 ledger 後前端由 ledger 讀 parsed → job_output 端恆 pending。
+    // 禁用 lifecycle==="ready" 假報 parsed_usdc:真實轉檔完成時 conversion_status→ready 會令 lifecycle→ready,
+    // 但 job 端仍無 usdc_key,依 spec §6.3/AC8「禁假 parsed USDC」必須維持 pending(這正是 must_fix 要防的假 ready、且與 ledger 端 r.usdc_key!=null 才顯 parsed 對齊)。
+    usdc_role: "pending" as const,
     // 誠實:job 端為 in-memory store(重啟即清);對帳真相以持久 ledger 為準。
     data_volatility: "in_memory_volatile" as const,
   ```
@@ -250,7 +332,7 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
       ...sanitizeJobForExternal(job),
       conversion_lifecycle_status: lifecycle,
       ...deriveFailure(job),
-      usdc_role: lifecycle === "ready" ? "parsed_usdc" : "pending",
+      usdc_role: "pending" as const, // 同 summarizeIfcReadyJob:job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending(禁 lifecycle 假報 parsed)
       data_volatility: "in_memory_volatile" as const,
     });
   ```
@@ -533,5 +615,5 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 - [ ] `summarizeIfcReadyJob` 列表出口投影 `idempotency_key`(must_fix #4:三視圖可 join),既有 26 欄逐字保留、presigned 遮蔽守衛測試不回退(must_fix #1)。
 - [ ] `#/conv` Ifc-ready jobs 表 render 對帳鍵 + lifecycle chip + 誠實 usdc/failure,且 delta 表承諾的 `idempotent_replay`(誠實標記)與 `data_volatility`(易失性標記)皆有實際 render + 單元斷言(不得只擴型別/fixture 卻無 UI 消費——重演「吐了但前端看不到」)。
 - [ ] ledger records 表補 `idempotency_key` 可見錨點(testid `conv-ledger-idem-*`);E2E 以此錨點(非 failed-only 的 `conv-ledger-trigger-*`)定位 ledger 列,並斷言 jobs 格與 ledger 格字串**相等**佐證跨表對帳一致、無假 ready(誠實鐵律)。
-- [ ] **P0 must_fix #1 未竟出口裁決(比照 OQ1「上呈裁決後再結案」,非僅回報風險)**:callback outbox → 外部雲端 payload(`app.ts:1831` `source_ifc:{ ref: job.source_ifc_ref }`)仍夾帶原始 presigned ref、未套 `maskPresignedRef`;spec §0 / §8.3 明列此 callback context 為 P0 必遮出口。本 plan 不動此 internal 出口(見「明確排除」OQ3),但**收尾前 MUST 取得使用者/維護者對「遮蔽此出口 vs 保留 carve-out(外部雲端 consumer 是否依賴 presigned 直接 GET 下載)」的裁決**;取得裁決前,must_fix #1『全出口遮蔽』**不得宣稱完成**(「現況盤點」表已標 ⚠️)。不可僅在最終報告一句帶過當已知風險。
-- [ ] 回報:改了哪些 tracked files、跑了哪些驗證、哪些沒跑及原因、已知風險(見「明確排除」的 OQ3/OQ4/OQ7 與 Group-B wiring 未做;openspec live-spec 兩層殘留交 OpenSpec archive 生命週期,見 Task 4 governance 段;P0 callback outbox 出口 app.ts:1831 未遮蔽須裁決,見上一條)。
+- [ ] **P0 must_fix #1 全出口遮蔽閉環(Task 1B)**:callback outbox → 外部雲端 `conversion_result_ready` payload(`app.ts:1831`)的 `source_ifc.ref` 已套 `maskPresignedRef`(使用者 2026-07-01 裁決遮蔽);守衛測試斷言該 callback payload 不含 `X-Amz-Signature`/`X-Amz-Credential`,且既有六個瀏覽器可見出口守衛不回退。spec §0 / §8.3 的「全出口遮蔽」於本 plan 完成,不再是待裁決開放問題。
+- [ ] 回報:改了哪些 tracked files、跑了哪些驗證、哪些沒跑及原因、已知風險(見「明確排除」的 OQ4/OQ7 與 Group-B wiring 未做;openspec live-spec 兩層殘留交 OpenSpec archive 生命週期,見 Task 4 governance 段。P0 callback outbox 出口 app.ts:1831 已於 Task 1B 遮蔽,不再是未竟項)。
