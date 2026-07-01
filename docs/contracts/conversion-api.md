@@ -85,3 +85,15 @@ POST /api/internal/conversions/{conversion_job_id}/ingest
      enqueues the metadata-only conversion_result_ready / conversion_failed
      callback outbox entry (no .usdc / .ifc / .rvt bodies).
 ```
+
+Callback outbox `source_ifc.ref` masking (honesty rule — presigned signatures):
+
+The `conversion_result_ready` callback payload sent to the company cloud always
+masks the presigned signature on `source_ifc.ref` — only the bucket/key object
+address (origin + pathname) is emitted, never the `X-Amz-*` signature /
+credential / expiry. Conversion completion means the cloud already holds the
+`usdc` artifact, so it does not need a presigned download of the original IFC;
+masking is functionally lossless. The full presigned ref lives only in the
+server-side dispatch path (coordinator → `bim-streaming-server`). This closes the
+callback-outbox egress so every browser-visible / external / cloud exit is
+signature-free (coordinator `maskPresignedRef`).

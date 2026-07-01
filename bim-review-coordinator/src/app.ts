@@ -1828,7 +1828,7 @@ export function createCoordinatorApp(
         conversion_job_id: conversionJobId,
         correlation_id: job.correlation_id,
         status: "ready",
-        source_ifc: { ref: job.source_ifc_ref, etag: job.source_ifc_etag },
+        source_ifc: { ref: maskPresignedRef(job.source_ifc_ref), etag: job.source_ifc_etag },
         artifacts: {
           usdc_ref: report.artifacts?.usdc_ref ?? null,
           element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
@@ -2651,9 +2651,11 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
  * @security 瀏覽器可見 / 對外（browser-visible / external）輸出 IfcReadyIntakeJob 前必經此函式：
  * 遮蔽 source_ifc_ref 的 presigned 簽章。已涵蓋出口：GET list/:jobId/shadow、POST intake 200/202、
  * POST local-web-view session。日後新增「瀏覽器可見/對外」且 spread 整個 job 的出口，MUST 先過此函式並補守衛測試。
+ * 對外雲端出口：callback outbox 的 conversion_result_ready payload 之 source_ifc.ref 亦已直接以
+ * maskPresignedRef 遮蔽（ingestConversionReport，非經本函式），與此處鐵律一致——全出口閉環。
  * 範圍外（刻意）：POST /api/internal/conversion-result、/api/internal/conversions/:id/ingest 等 internal-token
- * 路徑仍回原始 job（內部 consumer 可能需 presigned 下載；比照 callback outbox carve-out，pre-existing 非本次新增）。
- * 若要對 internal 路徑做 defense-in-depth 遮蔽，須先確認下游 consumer 不依賴 presigned ref。
+ * 路徑仍回原始 job（內部 consumer 可能需 presigned 下載）。此為 internal-token consumer 專屬 carve-out
+ * （defense-in-depth 待確認下游是否依賴 presigned ref），與已閉環的對外/瀏覽器/callback 出口無關。
  */
 function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
