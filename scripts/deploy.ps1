@@ -818,13 +818,13 @@ if ($hostNative.venv -eq 'MISSING' -or ($hostNative.venv -eq 'OK' -and $hostNati
 if (-not $SkipKit -and $hostNative.kitBuildRequired) {
     $kitBuildLog = Join-Path $RunDir 'kit-repo-build.log'
     Write-DeployTag -Tag 'fix' -Message "running bim-streaming-server repo.bat build ($($hostNative.kitBuildReason)) — may take several minutes" -LogPath $LogPath | Out-Null
-    Push-Location (Join-Path $RepoRoot 'bim-streaming-server')
-    $kitBuildExit = -1  # strict-mode fail-safe:確保失敗路徑仍走到 Final Summary
-    try {
-        & .\repo.bat build *> $kitBuildLog
-        $kitBuildExit = $LASTEXITCODE
-    } finally { Pop-Location }
-    if ($kitBuildExit -ne 0) {
+    $kitBuildResult = Invoke-KitRepoBuild -WorkingDirectory (Join-Path $RepoRoot 'bim-streaming-server') -LogPath $kitBuildLog -RunDir $RunDir
+    if ($kitBuildResult.TimedOut) {
+        Write-DeployTag -Tag 'fail' -Message "Kit repo.bat build timed out and was force-stopped (see scripts\.run\kit-repo-build.log)" -LogPath $LogPath | Out-Null
+        Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (kit build timeout)'
+        exit 2
+    }
+    if ($kitBuildResult.ExitCode -ne 0) {
         Write-DeployTag -Tag 'fail' -Message "Kit repo.bat build failed (see scripts\.run\kit-repo-build.log)" -LogPath $LogPath | Out-Null
         Print-FinalSummary -ExitCode 2 -FailedPhase 'Phase 2 (kit build)'
         exit 2
