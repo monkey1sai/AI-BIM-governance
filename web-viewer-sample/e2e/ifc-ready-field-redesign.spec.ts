@@ -234,7 +234,16 @@ test.describe("#/conv 三視圖對帳 vertical slice（STUB MINIO + STUB CONVERS
       expect(jobKey).toMatch(/^mw_/);
       expect(jobKey).toBe(ledgerKey); // 同一把 idempotency_key 同時出現在 jobs 表與 ledger 表 → 三視圖可 join（才是 Done 要的「對帳鍵一致」）
 
-      await page.screenshot({ path: `../artifacts/e2e/ifc-ready-field-redesign-conv-${Date.now()}.png`, fullPage: true });
+      // 截圖證據交付物：fullPage 對本 app-shell 失效——.ec-root position:fixed（edge-console.css:26）
+      // 包住整個 app、真正內容在 .ec-main{overflow-y:auto}（css:67）內部獨立捲動，body/html scrollHeight
+      // 不隨 .ec-main 內容增高，fullPage 只截到外層固定 viewport（頂 nav／Hero／Pipeline／MinIO 面板），
+      // 抓不到捲動出去的下半頁（實測兩次不同資料的 fullPage 截圖位元組全同＝從未截到任何資料表）。
+      // 修法：ledger 表（pages.tsx:1146）與其後緊接的 jobs 表（pages.tsx:1211）為 .ec-main 最末兩塊內容，
+      // 先把 .ec-main 內捲到底、再對 .ec-main 元素截圖（元素框≈一個 viewport 高，最末兩表同框），
+      // 確保 PNG 內肉眼可見 ledger↔jobs 兩把 idempotency_key 對帳鍵一致、且無假「完成」ready。
+      const ecMain = page.locator(".ec-main");
+      await ecMain.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      await ecMain.screenshot({ path: `../artifacts/e2e/ifc-ready-field-redesign-conv-${Date.now()}.png` });
     } finally {
       await api.dispose();
     }
