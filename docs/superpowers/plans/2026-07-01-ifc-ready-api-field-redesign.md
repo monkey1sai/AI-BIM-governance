@@ -68,17 +68,6 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 
 ---
 
-## Task 0(前置):確認起點乾淨
-
-- [ ] 確認 worktree 在對的 branch 與 commit:
-  ```bash
-  cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign && git status --short && git branch --show-current
-  ```
-  預期:branch = `feat/ifc-ready-api-field-redesign`,工作樹乾淨(或僅 plan 檔)。
-- [ ] 跑基線(見上「基線紀律」),記下綠燈數。
-
----
-
 ## Task 1: `deriveFailure` helper — 收斂 failure_reason / failure_stage
 
 把分散的 `download_failure` / `dispatch_error` 收斂成單一 `{failure_reason, failure_stage}`(spec §4.3、must_fix,禁塞假值)。純新增檔,不動既有 symbol。
