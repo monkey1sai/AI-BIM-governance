@@ -1216,9 +1216,12 @@ export function ConversionSchedulingPage() {
                 <tr>
                   <td>{j.ifc_ready_job_id}</td>
                   <td>
-                    <code data-testid={`conv-job-idem-${j.ifc_ready_job_id}`}>{j.idempotency_key ?? "—"}</code>
+                    {/* key 欄三段訊號間顯式補空白分隔：JSX 多行排列經編譯會去除元素間空白，
+                        .ec-note 又無水平 margin（edge-console.css:136 margin:8px 0），不補則三段黏成
+                        「mw_...新建易失·重啟即清」，操作員無法辨識 idem／replay／volatility 三個獨立訊號。 */}
+                    <code data-testid={`conv-job-idem-${j.ifc_ready_job_id}`}>{j.idempotency_key ?? "—"}</code>{" "}
                     {/* idempotent_replay 誠實標記：false=新建、true=命中既有去重 */}
-                    <span data-testid={`conv-job-replay-${j.ifc_ready_job_id}`} className="ec-note">{j.idempotent_replay ? t("命中既有", "replay") : t("新建", "new")}</span>
+                    <span data-testid={`conv-job-replay-${j.ifc_ready_job_id}`} className="ec-note">{j.idempotent_replay ? t("命中既有", "replay") : t("新建", "new")}</span>{" "}
                     {/* data_volatility 易失性標記：job 端 in-memory，重啟即清 */}
                     <span data-testid={`conv-job-volatility-${j.ifc_ready_job_id}`} className="ec-note">{j.data_volatility === "persisted" ? t("持久", "persisted") : t("易失·重啟即清", "volatile")}</span>
                   </td>
@@ -1249,7 +1252,11 @@ export function ConversionSchedulingPage() {
                         title={`${j.failure_stage ? `[${j.failure_stage}] ` : ""}${j.failure_reason ?? j.dispatch_error}`}
                       >
                         {j.failure_stage ? `[${j.failure_stage}] ` : ""}
-                        {((j.failure_reason ?? j.dispatch_error) as string).slice(0, 80)}
+                        {(() => {
+                          // 誠實鐵律：超過 80 字才截斷並補「…」提示，不可靜默硬切誤導操作員（完整訊息見 title tooltip）。
+                          const msg = (j.failure_reason ?? j.dispatch_error) as string;
+                          return msg.length > 80 ? `${msg.slice(0, 80)}…` : msg;
+                        })()}
                       </span>
                     ) : "—"}
                   </td>

@@ -711,6 +711,13 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     // data_volatility 綁定落地(fixture in_memory_volatile → 顯「易失」)。
     const volatility = container.querySelector('[data-testid="conv-job-volatility-ifcready_reconcile"]');
     expect(volatility?.textContent).toContain("易失");
+    // quality Important #2 迴歸守衛：key 欄三段訊號(idempotency_key / replay / volatility)之間必須有分隔。
+    // JSX 多行排列經 React 編譯會去除元素間空白,若不顯式補分隔會渲成
+    // 「mw_abc123def4567890新建易失·重啟即清」黏在一起,操作員無法辨識三個獨立訊號的邊界
+    //(違反 task「三視圖可視覺對齊」目的)。子字串比對(如 replay?.textContent.toContain)攔不到黏字。
+    const keyCell = idemCell!.closest("td")!;
+    expect(keyCell.textContent).not.toContain("mw_abc123def4567890新建"); // key ↔ replay 不得相黏
+    expect(keyCell.textContent).not.toContain("新建易失"); // replay ↔ volatility 不得相黏
     await act(async () => { root.unmount(); });
   });
 });

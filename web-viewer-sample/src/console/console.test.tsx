@@ -1893,6 +1893,12 @@ describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 
     expect(errNode).not.toBeNull();
     expect(errNode!.textContent).toContain("Invalid ifc_artifact_id");
     expect(errNode!.getAttribute("title")).toContain("streaming conversion API 400");
+    // quality Important #1 迴歸守衛：可見文字超過 80 字須截斷並補「…」提示,不得靜默硬切誤導操作員。
+    // 此 fixture dispatch_error 長 85 字 > 80,slice(0,80) 會在 "ifc_271_pieple" 處切掉尾端 _管線"},
+    // 若不補省略號,畫面看不出訊息被截斷(違反誠實鐵律:不可靜默丟資訊)。
+    expect(errNode!.textContent!.endsWith("…")).toBe(true);
+    expect(errNode!.textContent).not.toContain("_管線"); // 尾端已被截斷,不在可見文字
+    expect(errNode!.getAttribute("title")).toContain("_管線"); // 但完整訊息仍保留於 title tooltip
     // 無 dispatch_error 的 job 不得渲染錯誤節點
     expect(container.querySelector('[data-testid="conv-job-failure-ifcready_ok"]')).toBeNull();
   });
