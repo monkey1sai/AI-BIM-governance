@@ -5,6 +5,17 @@ import { test, expect } from "@playwright/test";
 // 誠實：無 GPU 時 Runtime/WebRTC 不會 matched，但 lineage 與 expected USDC 仍真實可見（不偽造 stage matched）。
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
+type IfcReadySummary = {
+  ifc_ready_job_id: string;
+};
+
+type IfcReadyDetail = {
+  web_view_session_id?: string;
+  viewer_url?: string;
+  conversion_status?: string;
+  external_model_version_id?: string;
+};
+
 test.describe("真實 IFC → viewer lineage（/ui/open handoff）", () => {
   test.setTimeout(120_000);
 
@@ -13,8 +24,8 @@ test.describe("真實 IFC → viewer lineage（/ui/open handoff）", () => {
     const listRes = await request.get(`${COORDINATOR}/api/external/ifc-ready?limit=50`);
     expect(listRes.ok()).toBeTruthy();
     const list = await listRes.json();
-    let ready: any = null;
-    for (const item of (list.items || []).slice(0, 14)) {
+    let ready: IfcReadyDetail | null = null;
+    for (const item of ((list.items || []) as IfcReadySummary[]).slice(0, 14)) {
       const jr = await request.get(`${COORDINATOR}/api/external/ifc-ready/${encodeURIComponent(item.ifc_ready_job_id)}`);
       if (!jr.ok()) continue;
       const j = await jr.json();

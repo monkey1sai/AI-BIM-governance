@@ -135,13 +135,16 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(chip?.textContent).not.toContain("未轉"); // 不得把載入失敗誤報成『未轉』
   });
 
-  it("[7c] 觸發鈕 click → IntentDialog → confirm → conversionTrigger 被呼叫 + chip patch 成功狀態", async () => {
+  it("[7c] 觸發鈕 click → IntentDialog → confirm → triggerConversion(key) 被呼叫（方向1）→ dialog 關", async () => {
+    // 方向1：改走 main 已合併的 triggerConversion(key)（POST /api/conversion/trigger，無 idempotency_key、
+    // 只送 key）；觸發成功後不做樂觀 chip patch，chip 一律由 loadRecords() 重抓 ledger 對齊（已由 [7b] chip
+    // 測試覆蓋）。此測試聚焦「按鈕→dialog→confirm→triggerConversion 被呼叫→dialog 關」的 observable 行為。
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
     });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
-      status: "queued", idempotency_key: "mw_aaaa0000bbbb0001",
+    const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({
+      ifc_ready_job_id: "ifcready_mw_aaaa0000bbbb0001",
     });
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
@@ -152,28 +155,27 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     expect(triggerBtn).toBeTruthy();
     await act(async () => { triggerBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeTruthy();
-    // 2) 點 confirm → conversionTrigger 以該物件 key 被呼叫（觀察得到的真實行為，AC-trigger）。
+    // 2) 點 confirm → triggerConversion 只帶 key 被呼叫（觀察得到的真實行為，AC-trigger；無第二參數 reason）。
     const confirmBtn = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
     await act(async () => { confirmBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
-    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000001/model.ifc", expect.any(String));
-    // 3) 成功 → dialog 關 + chip patch 為 queued（patch 後不再顯『未轉』）。
+    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000001/model.ifc");
+    // 3) 成功 → dialog 關（chip 由 ledger 對齊，非樂觀 patch；chip 狀態驗證在 [7b] 測試）。
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
-    expect(container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]')?.textContent).toContain("排隊");
   });
 
-  // quality finding Important #2：後端回非預期 status（narrowConversionStatus → null）時，
-  // 不可把 chipOverride 永久寫成 'unknown'——否則觸發鈕被永久 disable（'unknown' 不在白名單），
-  // 而 chipOverride 在元件生命週期內無清除路徑，使用者只能 reload。修法：narrowed===null 時
-  // 不寫 chipOverride（chip 續讀 ledgerChipStatus、觸發鈕維持可按）+ 顯 inline 警告。
-  it("[7c][finding-#2] 後端回非預期 status → 不鎖 chipOverride，chip 續顯 ledger 衍生值、觸發鈕仍可按、顯 inline 警告", async () => {
+  // 方向1：舊「樂觀 patch + narrowConversionStatus(trigger 回應) → 不鎖 chipOverride」的邊角案例已整段
+  // 移除（triggerConversion 回應無 status/idempotency_key，chip 一律由 ledger 對齊）。改寫成失敗路徑：
+  // triggerConversion throw → confirmTrigger catch 設 triggerErr、經 IntentDialog actionErr 顯 inline error，
+  // dialog 仍在（失敗不關 dialog）、chip 不變、觸發鈕仍可按。
+  it("[7c][失敗] triggerConversion throw → 顯 inline error、dialog 不關、chip 不變、觸發鈕仍可按", async () => {
     vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
       bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1,
     });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
-      status: "totally_bogus_status", idempotency_key: "mw_aaaa0000bbbb0001",
-    });
+    vi.spyOn(coordinatorClient, "triggerConversion").mockRejectedValue(
+      new Error("coordinator /api/conversion/trigger -> 503 conversion authority unreachable"),
+    );
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); });
@@ -183,16 +185,15 @@ describe("MinioDataPage — 逐層資料夾導覽 + chip + 觸發", () => {
     const confirmBtn = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
     await act(async () => { confirmBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
-    // 1) inline 警告顯示（dialog 內 actionErr），不洩漏原始 wire 字串。
+    // 1) inline error 顯示（dialog 內 actionErr）。MinioDataPage 用 String(e)，故帶端點/狀態碼。
     const actionErr = container.querySelector('[data-testid="intent-action-error"]');
     expect(actionErr).toBeTruthy();
-    expect(actionErr?.textContent).not.toContain("totally_bogus_status");
-    // 2) chip 未被鎖成 'unknown'：續讀 ledgerChipStatus（無紀錄＝未轉），不顯『未知』。
+    expect(actionErr?.textContent).toContain("/api/conversion/trigger");
+    // 2) dialog 仍在（失敗不關）。
+    expect(container.querySelector('[data-testid="intent-dialog"]')).toBeTruthy();
+    // 3) chip 不變（無紀錄＝未轉）、觸發鈕仍可按（可 retry，不必 reload 整頁）。
     const chip = container.querySelector('[data-testid="minio-chip-mw_aaaa0000bbbb0001"]');
-    expect(chip?.textContent).not.toContain("totally_bogus_status");
     expect(chip?.textContent).toMatch(/未轉/);
-    expect(chip?.textContent).not.toMatch(/未知/);
-    // 3) 觸發鈕未被永久 disable（使用者仍可 retry，不必 reload 整頁）。
     const triggerAfter = container.querySelector('[data-testid="minio-trigger-mw_aaaa0000bbbb0001"]') as HTMLButtonElement;
     expect(triggerAfter?.disabled).toBe(false);
   });

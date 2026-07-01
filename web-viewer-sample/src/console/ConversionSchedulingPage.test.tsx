@@ -1054,12 +1054,13 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
 
   // AC6(b)：ledger 列對「未轉/failed」掛一鍵觸發鈕（object_key 存在時）。鈕走 POST /api/conversion/trigger
   // （非 /api/external/ifc-ready）；intent→confirm→confirmTrigger → 成功重抓 ledger。
-  it("AC6(b)：failed 列（object_key 存在）顯觸發鈕 → confirm → conversionTrigger(key) 被呼叫且重抓 ledger", async () => {
+  // 方向1：改走 main 已合併的 triggerConversion(key)（只送 key、回 {ifc_ready_job_id}、無 idempotency_key）。
+  it("AC6(b)：failed 列（object_key 存在）顯觸發鈕 → confirm → triggerConversion(key) 被呼叫且重抓 ledger", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     const recSpy = vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedRec] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
-    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
-      status: "detected", idempotency_key: "mw_failed0123456789",
+    const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({
+      ifc_ready_job_id: "ifcready_failed_retry",
     });
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
@@ -1077,32 +1078,31 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
 
-    // 走 /api/conversion/trigger（以該 object_key 觸發）
-    expect(triggerSpy).toHaveBeenCalled();
-    expect(triggerSpy.mock.calls[0][0]).toBe("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
-    // 成功後重抓 ledger（初次 mount 1 次 + 成功後 1 次）
+    // 走 /api/conversion/trigger（只以該 object_key 觸發，無第二參數）
+    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // 成功後重抓 ledger（初次 mount 1 次 + 成功後 loadRecords 1 次）
     expect(recSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
     // 成功關 dialog
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
   });
 
-  // quality finding Important #2：成功 → trigger response 帶回 {status, idempotency_key}，
-  // 前端先樂觀 patch 對應 ledger 列為 detected/queued（零額外 round-trip，不靠 polling；spec §3.3 line 118），
-  // 再非同步 loadRecords() 做最終對齊。鎖住「樂觀 patch」：把 mount 後的 reconciliation 重抓設成 pending
-  // （永不 resolve），讓「失敗→已偵測」的唯一可能來源是同步 setRecords 樂觀 patch，而非重抓回填。
-  it("AC6(b) 成功：trigger 回 {status,idempotency_key} → 先樂觀 patch ledger 列為 detected（不靠重抓）", async () => {
+  // 方向1：舊「trigger 回 {status,idempotency_key} → 先樂觀 patch ledger 列」的語意已整段移除
+  // （triggerConversion 回應無 status/idempotency_key，前端不做樂觀 patch）。改寫成驗新行為：ledger 列狀態
+  // 由 loadRecords() 重抓對齊——成功後第二次 getConversionRecords 回帶更新後 status（detected）的紀錄，
+  // 列從「失敗」轉為「已偵測」。鎖住「狀態來自重抓」：mount 回 failedRec，成功後重抓才回 detected。
+  it("AC6(b) 成功：triggerConversion(key) → loadRecords 重抓 ledger 對齊列狀態為 detected（非樂觀 patch）", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
-    // 第一次（mount）回 failedRec；第二次（成功後 reconciliation）回 pending，永不 resolve，
-    // 以證明列上的 detected 來自樂觀 patch 而非重抓回填。
+    // 第一次（mount）回 failedRec（列顯「失敗」）；第二次（成功後 loadRecords）回同鍵但 status=detected 的
+    // 紀錄，證明列上的「已偵測」來自 ledger 重抓對齊，而非前端樂觀 patch。
+    const detectedRec: ConversionRecord = { ...failedRec, status: "detected" };
     let recCall = 0;
     vi.spyOn(coordinatorClient, "getConversionRecords").mockImplementation(() => {
       recCall += 1;
-      if (recCall === 1) return Promise.resolve({ count: 1, items: [failedRec] });
-      return new Promise(() => {}); // reconciliation 掛住：列若顯 detected 只能來自樂觀 patch
+      return Promise.resolve(recCall === 1 ? { count: 1, items: [failedRec] } : { count: 1, items: [detectedRec] });
     });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
-    vi.spyOn(coordinatorClient, "conversionTrigger").mockResolvedValue({
-      status: "detected", idempotency_key: "mw_failed0123456789",
+    const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({
+      ifc_ready_job_id: "ifcready_failed_retry",
     });
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
@@ -1119,28 +1119,30 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     const confirm = container.querySelector('[data-testid="intent-confirm"]') as HTMLButtonElement;
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); }); // loadRecords 重抓 settle
 
-    // 樂觀 patch：對應 idempotency_key 命中的列 status 立即更新為 detected（label「已偵測」），
-    // 即使 reconciliation 重抓仍 pending（未回填）。原 failed label 不再出現於該列。
+    // triggerConversion 只帶 key（無第二參數）。
+    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // ledger 重抓對齊：命中列 status 更新為 detected（label「已偵測」），原 failed label 不再出現。
     const patchedPanel = container.querySelector('[data-testid="conv-ledger-panel"]');
     expect(patchedPanel!.textContent).toContain("已偵測");
     expect(patchedPanel!.textContent).not.toContain("失敗");
-    // 成功仍關 dialog（不因 reconciliation pending 而卡住）
+    // 成功關 dialog
     expect(container.querySelector('[data-testid="intent-dialog"]')).toBeNull();
   });
 
   // quality finding Important #1：confirmTrigger 需與 runAction 的 actionBusyRef 同步防重入 pattern 對齊。
   // setTriggerBusy(true) 是非同步 state，confirm 鈕 disabled={triggerBusy} 要等下一次 render 才生效；
   // 同一事件循環雙擊 confirm 會送出兩個 POST /api/conversion/trigger。鎖住：同步連點兩次 confirm，
-  // conversionTrigger 只應被呼叫一次（triggerBusyRef 在 React state 更新前同步攔截第二次）。
-  it("AC6(b) 防重入：同步雙擊 confirm 只送出一個 conversionTrigger（triggerBusyRef 同步守門）", async () => {
+  // triggerConversion 只應被呼叫一次（triggerBusyRef 在 React state 更新前同步攔截第二次）。
+  it("AC6(b) 防重入：同步雙擊 confirm 只送出一個 triggerConversion（triggerBusyRef 同步守門）", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedRec] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
-    // conversionTrigger 回一個延遲 resolve 的 promise，模擬 in-flight：第一個呼叫尚未完成前，
+    // triggerConversion 回一個延遲 resolve 的 promise，模擬 in-flight：第一個呼叫尚未完成前，
     // triggerBusy state 也尚未經 re-render 生效，唯一能擋第二次的是同步 ref guard。
-    let resolveTrigger: (v: { status: string; idempotency_key: string }) => void = () => {};
-    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockImplementation(
+    let resolveTrigger: (v: { ifc_ready_job_id: string }) => void = () => {};
+    const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockImplementation(
       () => new Promise((res) => { resolveTrigger = res; }),
     );
     const root = createRoot(container);
@@ -1163,7 +1165,7 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     expect(triggerSpy).toHaveBeenCalledTimes(1);
 
     // 收尾：resolve in-flight trigger，避免懸掛
-    await act(async () => { resolveTrigger({ status: "detected", idempotency_key: "mw_failed0123456789" }); await Promise.resolve(); });
+    await act(async () => { resolveTrigger({ ifc_ready_job_id: "ifcready_failed_retry" }); await Promise.resolve(); });
   });
 
   // AC6(b) 邊界：failed 但 object_key 為 null（Phase 1 ledger 可為 null）→ 無從觸發，不掛鈕。
@@ -1182,15 +1184,15 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     expect(container.querySelector('[data-testid="conv-ledger-trigger-mw_failednokey01234"]')).toBeNull();
   });
 
-  // AC6(b) 失敗路徑（必修 gap）：conversionTrigger reject 時，confirmTrigger catch 寫獨立 triggerErr、
+  // AC6(b) 失敗路徑（必修 gap）：triggerConversion reject 時，confirmTrigger catch 寫獨立 triggerErr、
   // 不呼叫 setPendingTriggerKey(null) → 觸發 dialog 維持開啟、誠實錯誤經 IntentDialog 的 actionErr 顯示在
   // [data-testid='intent-action-error']；ledger 不變（loadRecords 不重抓，recSpy 仍只在 mount 跑一次）。
   // 與 retry/prioritize/watch-toggle 失敗路徑對齊（line 526/760）；此前 trigger catch 分支無單元保護。
-  it("AC6(b) 失敗：conversionTrigger reject → dialog 維持開啟、顯觸發失敗誠實錯誤、ledger 不重抓", async () => {
+  it("AC6(b) 失敗：triggerConversion reject → dialog 維持開啟、顯觸發失敗誠實錯誤、ledger 不重抓", async () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     const recSpy = vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedRec] });
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
-    const triggerSpy = vi.spyOn(coordinatorClient, "conversionTrigger").mockRejectedValue(new Error("/api/conversion/trigger -> 502 conversion authority unreachable"));
+    const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockRejectedValue(new Error("/api/conversion/trigger -> 502 conversion authority unreachable"));
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
     await act(async () => { await Promise.resolve(); });
@@ -1204,9 +1206,8 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
 
-    // POST 確實送出（以該 object_key）
-    expect(triggerSpy).toHaveBeenCalled();
-    expect(triggerSpy.mock.calls[0][0]).toBe("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // POST 確實送出（只以該 object_key，無第二參數）
+    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
     // 失敗不關 dialog（pendingTriggerKey 仍非 null）
     expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
     // 誠實錯誤顯示在 dialog 內 intent-action-error 節點（triggerErr 經 actionErr prop 渲染）

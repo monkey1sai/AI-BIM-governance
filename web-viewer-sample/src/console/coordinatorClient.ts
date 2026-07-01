@@ -24,14 +24,13 @@ const env = (import.meta as { env?: Record<string, string> }).env;
 const COORD_BASE: string =
   env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();
 
-// dev-auth-token：沿用 console mutation 既有慣例（與 Kit mutation 路由對齊）。
-// 瀏覽器端從 VITE_DEV_AUTH_TOKEN env 取，缺漏時退回 "dev-token"（dev 環境預設值）。
-const DEV_AUTH_TOKEN: string = env?.VITE_DEV_AUTH_TOKEN ?? "dev-token";
-
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) {
-    throw new Error(`coordinator ${path} -> ${res.status} ${res.statusText}`);
+    // 與 jsonPost/jsonPut 一致萃取 coordinator `{ detail }`（誠實鐵律）：getIfcReadyJob 等輪詢 GET
+    // 失敗時，A1 狀態行直接把 .message 顯給操作員；只 throw statusText 會把後端「job 不存在 /
+    // 未配置」等可操作提示吞成無意義的 "404 Not Found"。errorDetail best-effort，無 body 才退 statusText。
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -46,27 +45,6 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
     // 與 jsonPut 一致：萃取 coordinator `{ detail }`（誠實鐵律）。sessionClose 等 controlled
     // action 的 400「sessionId 不合法」/ 404「session 不存在」須在 dialog 顯出可操作提示，
     // 只 throw status/statusText 會把後端訊息吞掉（errorDetail 說明見下）。
-    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-// POST with x-dev-token header：用於需要 auth 的 coordinator 寫入動作（AC-trigger）。
-// 沿用 jsonPost 的 errorDetail 萃取邏輯（誠實鐵律）。
-// body 比照 jsonPut 收斂為 Record<string, unknown>（不再 `?? {}` fallback）：對 mutation 而言
-// null body 靜默變空物件很危險（後端誤判欄位缺漏回 400）；型別層即阻擋 null/undefined body 的呼叫，
-// 強制每個寫入動作的呼叫端明確傳物件。
-async function jsonPostAuthed<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${COORD_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "x-dev-token": DEV_AUTH_TOKEN,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
     throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
   }
   return res.json() as Promise<T>;
@@ -200,6 +178,33 @@ export interface IfcReadyListItem {
   updated_at: string;
 }
 
+// B1（PR #259）落地的單一權威轉檔生命週期狀態（services/lifecycleStatus.ts deriveLifecycleStatus）。
+// ⚠ 手動同步點：此值集鏡像後端 ConversionLedgerStatus（bim-review-coordinator/src/services/conversionLedger.ts）。
+// 前後端無 shared schema / codegen；後端增刪狀態值時 MUST 同步此處。coordinatorClient.test.ts 的
+// 「值集鎖定」測試鎖住此陣列，使任何前端漏改在 CI 被攔（後端增值仍需人工同步，測試僅守前端不被悄改）。
+export const CONVERSION_LIFECYCLE_STATUS_VALUES = ["detected", "queued", "converting", "ready", "failed"] as const;
+export type ConversionLifecycleStatus = (typeof CONVERSION_LIFECYCLE_STATUS_VALUES)[number];
+
+// A1（B2）排隊轉檔回應：POST /api/conversion/trigger。成功 202 帶 ifc_ready_job_id；
+// MinIO 未設定 503 由 jsonPost throw（帶後端 detail），不會走到這裡。
+export interface TriggerConversionResponse {
+  ifc_ready_job_id: string;
+  status?: string;
+  trigger_source?: string;
+}
+
+// A1（B2）轉檔狀態輪詢：GET /api/external/ifc-ready/:jobId（summarizeIfcReadyJob 子集）。
+// 主讀 conversion_lifecycle_status；該欄缺失時誠實降級用 conversion_status / download_status。
+export interface IfcReadyJobDetail {
+  ifc_ready_job_id: string;
+  status: string;
+  conversion_lifecycle_status: ConversionLifecycleStatus | null;
+  download_status: string | null;
+  conversion_status: string | null;
+  review_session_id: string | null;
+}
+
+
 // minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
 // 關閉時只有 enabled=false + note；啟用時帶完整計數。credentials 永不在此回應。
 export interface MinioWatchStatus {
@@ -267,9 +272,9 @@ export interface ConversionRecord {
   status: ConversionLedgerStatus;
   usdc_key: string | null;
   coverage_report: unknown | null;
-  // Task 8：ledger 列「未轉/failed」一鍵觸發鈕需要原始 object_key 才能呼 conversionTrigger(key)。
+  // Task 8：ledger 列「未轉/failed」一鍵觸發鈕需要原始 object_key 才能呼 triggerConversion(key)（方向1：走 main #259 端點）。
   // 對齊後端 ConversionLedgerRecord.object_key（conversionLedger.ts:21，Phase 1 可為 null——
-  // watcher 自動落帳的舊紀錄可能無 key；manualIntake 觸發者會帶 key）。null 時前端不掛觸發鈕。
+  // watcher 自動落帳的舊紀錄可能無 key；手動觸發者會帶 key）。null 時前端不掛觸發鈕。
   object_key: string | null;
   detected_at: string;
   updated_at: string;
@@ -317,18 +322,11 @@ export interface MinioFolderListing {
 
 // Task 6：POST /api/conversion/trigger 回應形狀。
 // 成功回 {status, idempotency_key}，前端直接 patch chip（零額外 round-trip）。
-// status 的 wire 型別是寬 string（後端 ManualIntakeResult.status:string / triggerManualIntake
-// 回 ledger.status）；ledger 實際只會是 ConversionLedgerStatus 之一，但 wire 無法在 compile time
-// 擋住非法值。故 chip-patch 消費端 MUST 先用 narrowConversionStatus() 做 runtime narrow，
-// 不可直接把 wire status 當合法 chip 狀態寫入（誠實鐵律：非法值顯 unknown，不靜默設成壞狀態）。
-export interface ConversionTriggerResponse {
-  status: string;
-  idempotency_key: string;
-}
-
 // Task 6 chip-patch runtime guard：把 wire 的寬 string status narrow 成 ConversionLedgerStatus。
-// 非合法值（後端送非預期字串、或 enum 演進尚未對齊前端）回 null，呼叫端據以顯 unknown / 不 patch，
-// 而非靜默把 chip 設成非法狀態。供 Task 6 UI 消費 ConversionTriggerResponse / ConversionRecord 用。
+// ConversionRecord.status 的 wire 型別是寬 string（後端 ledger.status）；ledger 實際只會是
+// ConversionLedgerStatus 之一，但 wire 無法在 compile time 擋住非法值。故 chip 衍生（ledgerChipStatus）
+// 消費端 MUST 先用 narrowConversionStatus() 做 runtime narrow，非合法值回 null 顯 unknown / 不 patch，
+// 而非靜默把 chip 設成非法狀態（誠實鐵律）。供 Task 6 UI 消費 ConversionRecord 用。
 const CONVERSION_LEDGER_STATUSES: readonly ConversionLedgerStatus[] = [
   "detected",
   "queued",
@@ -398,9 +396,12 @@ export const coordinatorClient = {
     if (prefix) params.set("prefix", prefix);
     return jsonGet<MinioFolderListing>(`/api/minio/objects?${params.toString()}`);
   },
-  // Task 6 一鍵觸發轉檔：POST /api/conversion/trigger {key, reason?}。
-  // auth：帶 x-dev-token header（沿用 console mutation 慣例，§3.3 auth 模型）。
-  // 成功回 {status, idempotency_key}，前端直接 patch chip；失敗 throw 帶後端 detail（誠實鐵律）。
-  conversionTrigger: (key: string, reason?: string): Promise<ConversionTriggerResponse> =>
-    jsonPostAuthed<ConversionTriggerResponse>("/api/conversion/trigger", { key, reason }),
+  // A1（B2）：操作員手動把 MinIO 物件排入 IFC→USD 轉檔（POST /api/conversion/trigger {key}）。
+  // 前端只送 key；presign 與 webhook secret 一律 coordinator server-side（誠實／簽章不出瀏覽器）。
+  // §3.4 對齊：minio-folderview 的一鍵觸發鈕改採此 main 端點（IP allowlist 守門），不再自帶 x-dev-token 版。
+  triggerConversion: (key: string) =>
+    jsonPost<TriggerConversionResponse>("/api/conversion/trigger", { key }),
+  // A1（B2）：單一 ifc-ready job 輪詢（讀 conversion_lifecycle_status）。
+  getIfcReadyJob: (jobId: string) =>
+    jsonGet<IfcReadyJobDetail>(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`),
 };

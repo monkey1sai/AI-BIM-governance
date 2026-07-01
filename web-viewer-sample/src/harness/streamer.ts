@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // 串流引擎選擇器：harness 開啟用 FakeAppStreamer，否則用真實 AppStreamer。
 // AppStream.tsx 一律經 getStreamer() 取用，harness 關閉時行為與原本逐一對等（prod 零變更）。
 import { AppStreamer } from "@nvidia/omniverse-webrtc-streaming-library";

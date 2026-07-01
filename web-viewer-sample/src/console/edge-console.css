@@ -66,7 +66,7 @@
 
 .ec-main { grid-area:main; overflow-y:auto; padding:18px 22px; }
 .ec-main h1 { font-size:19px; margin:0 0 4px; color:var(--ec-fg); }
-.ec-main .ec-lead { color:var(--ec-fg-3); margin:0 0 16px; max-width:70ch; }
+.ec-main .ec-lead { color:var(--ec-fg-3); margin:0 0 var(--ec-sp-4); max-width:70ch; }
 
 .ec-agent { grid-area:agent; background:var(--ec-bg-2); border-left:1px solid var(--ec-line);
   overflow-y:auto; padding:14px; }

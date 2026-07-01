@@ -8,7 +8,7 @@ watcher SHALL 為 env opt-in（`MINIO_WATCH_ENABLED` 預設 false，未啟用時
 
 輪詢間隔 SHALL 受下限保護且下限 SHALL 在 config overrides 合併後仍生效。單一物件的 intake 觸發失敗（presign / 網路 / 逾時 / HTTP error / 2xx 非 JSON）SHALL NOT 將該物件標記為已處理（亦即 SHALL NOT 落 ledger 成功紀錄），watcher SHALL 於後續輪重試（漏抓自癒）；key 層級不符（malformed）為確定性結果，SHALL 計數一次後跳過、不重試。惟重試若收到「已存在且 download 已失敗之 job」的 idempotent replay（replay 依既有 intake 規約不重下載、不重派工），watcher SHALL 將失敗連同 job id 誠實記入 status、SHALL NOT 計為成功觸發、並 SHALL 停止對該物件的無效重試（失敗 job 於 `#/conv` 可見；補救走手動 webhook intake、`POST /api/conversion/trigger` 一鍵觸發、或重新上傳使 etag 改變）。非空 `MINIO_WATCH_PREFIX` SHALL 於 config 層 normalize 為以 `/` 結尾（含 overrides 合併後），避免 boundary-misaligned prefix 造成整批靜默 skip。
 
-> 推翻記錄（本 change supersede）：closed-loop observability design 非目標「不新增手動插隊/優先序佇列 UI」由本 change 推翻——新增「一鍵觸發轉檔」鈕（`POST /api/conversion/trigger`，server-side presigned、`x-dev-token` 守門、寫持久 ledger），明示此為「手動 intake **觸發**」（走 spec 已認可的手動 webhook intake 等效路徑、只是包成按鈕）而非「佇列插隊」。auto-enroll 處理常態；一鍵鈕用於 retry `failed` / 強制重轉，兩者都經 idempotency key 冪等、不重複建 job。
+> 推翻記錄（本 change supersede）：closed-loop observability design 非目標「不新增手動插隊/優先序佇列 UI」由本 change 推翻——新增「一鍵觸發轉檔」鈕，按下打 **main（`minio-trigger-lifecycle-backend` change，PR #259）已合併的** `POST /api/conversion/trigger`（IP allowlist 守門、server-side presigned、寫持久 ledger；trigger 後端契約以該 change 為準，本 change 只加前端按鈕、不重複規範後端 auth/回應），明示此為「手動 intake **觸發**」而非「佇列插隊」。auto-enroll 處理常態；一鍵鈕用於 retry `failed` / 強制重轉，兩者都經 idempotency key 冪等、不重複建 job。
 
 > 取代記錄（本 change supersede）：原「seen 狀態為 in-memory、不持久化；coordinator 重啟後首輪重建 baseline，停機期間新上傳的物件會被 baseline 吸收而不自動觸發」之已知限制由本 change 解除——去重改查持久 ledger，停機期間上傳的物件在重啟後因 ledger 無紀錄仍會自動觸發；持久化 watermark 即既有 ledger，無需另案新建。
 

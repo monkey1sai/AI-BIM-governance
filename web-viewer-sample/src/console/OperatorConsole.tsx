@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 // web-viewer-sample/src/console/OperatorConsole.tsx
 // 統一治理控制台 operator 殼層（非 viewer overlay）。CH-E：六個獨立 operator 頁
 //   #/coordinator · #/intake · #/runtime · #/review · #/kit · #/demo-control

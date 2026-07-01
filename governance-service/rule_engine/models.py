@@ -43,6 +43,7 @@ class RuleRunResult:
     failed: int
     errored: int
     score: float  # 0-100，pass / (pass+fail+errored)（errored 視同未通過，誠實計分）
+    unique_elements: int = 0  # distinct ifc_guid count across all rule results
     results: list[RuleResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -58,6 +59,7 @@ class RuleRunResult:
             "failed": self.failed,
             "errored": self.errored,
             "score": self.score,
+            "unique_elements": self.unique_elements,
             "target_summary": self.target_summary,
             "warnings": self.warnings,
         }

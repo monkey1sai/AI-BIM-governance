@@ -50,7 +50,6 @@ describe("isSafeViewerUrl（R3 安全驗證，純函式）", () => {
     expect(isSafeViewerUrl("https://example.test/viewer")).toBe(false);
     // 不安全 scheme 一律拒。
     expect(isSafeViewerUrl("javascript:alert(1)")).toBe(false);
-    // eslint-disable-next-line no-script-url
     expect(isSafeViewerUrl("JavaScript:alert(1)")).toBe(false);
     expect(isSafeViewerUrl("data:text/html,<script>alert(1)</script>")).toBe(false);
     expect(isSafeViewerUrl("ftp://host/x")).toBe(false);

@@ -34,6 +34,17 @@ function New-TestOutputDir {
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $env:PR_REVIEW_AGENT_REQUIRE_AI = $null
 
+# Test 0: ConvertTo-PrReviewPath decodes git core.quotepath octal-escaped CJK paths so CJK-named files
+# are classified correctly and never throw "Illegal characters in path" (regression: CJK doc/plan edits).
+$quotedCjk = '"docs/plans/ai-bim-governance-\345\211\215\347\253\257\345\260\215\351\275\212DS-\344\277\235\347\225\231\345\276\214\347\253\257-\345\257\246\344\275\234\346\211\213\345\206\212.md"'
+$decodedCjk = ConvertTo-PrReviewPath $quotedCjk
+Assert-True (-not $decodedCjk.StartsWith('"')) 'quotepath decode strips wrapping quotes'
+Assert-True ($decodedCjk -match '^docs/plans/') 'decoded CJK path is classified under docs/plans/'
+Assert-True ($decodedCjk.EndsWith('.md')) 'decoded CJK path keeps the .md extension'
+Assert-True (-not $decodedCjk.Contains('\')) 'decoded CJK path has no leftover backslash escape sequences'
+Assert-True (([System.IO.Path]::GetFileName($decodedCjk)).EndsWith('.md')) 'GetFileName on the decoded CJK path returns a leaf without throwing'
+Assert-True ((ConvertTo-PrReviewPath 'web-viewer-sample/src/console/pages.tsx') -eq 'web-viewer-sample/src/console/pages.tsx') 'ASCII paths are unchanged by the quotepath decoder'
+
 # Test 1: OpenSpec-only PR produces schema-valid report and detects change id.
 $out1 = New-TestOutputDir
 $result1 = Invoke-PrReviewAgent -RepoRoot $repoRoot `

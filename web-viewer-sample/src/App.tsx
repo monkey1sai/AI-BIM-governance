@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
@@ -75,8 +76,8 @@ interface AppState {
     sessionId: string;
 }
 
-class App extends Component<{}, AppState>{
-    constructor(props: {}) {
+class App extends Component<Record<string, never>, AppState>{
+    constructor(props: Record<string, never>) {
         super(props);
         const initialForm = StreamConfig.source === "local" ? Forms.Stream : Forms.AppOnly;
         this.state = {
@@ -206,8 +207,8 @@ class App extends Component<{}, AppState>{
         const serverIP = Object.keys(createdStream.routes)[0];
         const routeData = createdStream.routes[serverIP].routes;
 
-        const signalingData = routeData.find((item: any) => item.description === 'signaling');
-        const mediaData = routeData.find((item: any) => item.description === 'media');
+        const signalingData = routeData.find((item: StreamItem["routes"][string]["routes"][number]) => item.description === 'signaling');
+        const mediaData = routeData.find((item: StreamItem["routes"][string]["routes"][number]) => item.description === 'media');
     
         if (!signalingData || !mediaData) {
             console.error('Signaling or media data is missing');

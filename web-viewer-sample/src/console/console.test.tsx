@@ -21,18 +21,48 @@ import {
   RuntimePage,
   SemanticViewerPage,
   SessionManagementPage,
+  SpecPage,
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
+import { StreamConfigReader } from "./StreamConfigReader";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
-import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS } from "./data";
+import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
+import { getLang, setLang } from "./i18n";
 
 describe("edge console honesty smoke", () => {
+  // i18n._lang 是 module singleton（i18n.ts）。本 describe 多個 SSR 測試（含下方 nav tooltip
+  // i18n 測試）斷言預設 zh 字串；若任何測試（現在或未來新增）在此區塊內把語言切到 en 而不還原，
+  // 殘留狀態會 silently 污染後續測試（positive 斷言假性轉紅、not-contains 仍綠）。pin zh before each
+  // + restore after each → 永久 intra-file 隔離（其餘 describe 的 beforeEach/afterEach 不涵蓋本區塊）。
+  let _prevLang: ReturnType<typeof getLang>;
+  beforeEach(() => { _prevLang = getLang(); setLang("zh"); });
+  afterEach(() => { setLang(_prevLang); });
+
+  it("SpecPage lead 誠實標 MinIO 為 coordinator 外連 S3、非獨立 repo", () => {
+    const html = renderToString(<SpecPage />);
+    // 修正後 lead 必須含新措辭（MinIO = coordinator 外連 S3 來源）。
+    expect(html).toContain("MinIO 為 coordinator 外連 S3");
+    // 誠實守門（not-contains）：不得再把 MinIO 與有 sub-repo 的服務並列、隱含其有 repo boundary。
+    expect(html).not.toContain("MinIO 權威仍在各自 repo 邊界");
+    // Panel 本體 4 個 repo 不動（回歸：kit-manager-api 仍在）。
+    expect(html).toContain("kit-manager-api");
+  });
+
+  it("nav tooltip 走 i18n：zh 下 overview 的 title 為「總覽」而非 data.ts fallback「Overview」", () => {
+    // 預設 _lang=zh（i18n.ts；jsdom 無 localStorage → fallback zh），navText(overview) → NAV_LABEL.overview.biz = 總覽。
+    const html = renderToString(<EdgeConsole />);
+    // 修正後 nav 按鈕 title 取 navText（i18n）而非原始 data.ts label。
+    expect(html).toContain('title="總覽"');
+    // 誠實守門（not-contains）：overview 不應再以英文 fallback 當 tooltip。
+    expect(html).not.toContain('title="Overview"');
+  });
+
   it("Applications 啟動器列出 A1–A10 並帶 provenance", () => {
     const html = renderToString(<AppsPage onOpen={() => {}} />);
     expect(html).toContain("A1");
@@ -43,7 +73,10 @@ describe("edge console honesty smoke", () => {
 
   it("A1 Rule Center 顯示真實 IFC 實測 artifact（非捏造）", () => {
     const html = renderToString(<IssuesRuleCenterPage />);
-    expect(html).toContain("7126"); // 真實評估構件數
+    expect(html).toContain("規則評估次數");
+    expect(html).toContain("7126"); // 真實規則評估次數
+    expect(html).toContain("唯一構件");
+    expect(html).toContain("6715"); // 去重後 ifc_guid 數
     expect(html).toContain("實測 artifact");
     expect(html).toContain("執行規則檢核");
     expect(html).toContain("IDS-XML"); // IDS 匯入後端已實作（ifctester）
@@ -345,6 +378,40 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("Chat USD Agent");
   });
 
+  // ── co-console-runtime-merge §5.1 守門一（負向，打資料模型）：CO 獨立導覽項已從 PAGES 移除 ──
+  // PAGES 是左欄渲染的唯一資料源（EdgeConsole.tsx:209 `PAGES.filter(...).map(...)`）；直接斷言
+  // 資料模型零渲染歧義、零字串撞 page h1（不可用 `not.toContain("Coordinator Console")`——該字串
+  // 同時在 CoordinatorPage h1）。此守門讓 Task 0 的「移除 CO nav」有機器可執行的迴歸防護：未來
+  // 任何 PR 若把 coordinator 項加回 PAGES，本斷言會立即報錯。
+  it("co-console-merge：CO 獨立導覽項已從 PAGES 移除（負向守門 · 資料模型 + 渲染 nav）", () => {
+    // 資料模型守門：PAGES 不得再含 coordinator 項（落地端控制台群組只剩 conv/sessions/instances/minio）。
+    expect(PAGES.some((p) => p.key === "coordinator")).toBe(false);
+    // 渲染 nav 補強：預設 #home 渲染的左欄按鈕（`<span class="ec-key">{p.no}</span>` L211）不得出現
+    // CO 編號（被移除 page 的 no="CO"）。NAV_GROUPS 的 coordinator 群組仍在故群組標題照常存活。
+    const navHtml = renderToString(<EdgeConsole />);
+    expect(navHtml).not.toContain('class="ec-key">CO<');
+  });
+
+  it("co-console-merge：#runtime route 承接 Coordinator runtime console，且 nav label 改為 Runtime 觀測值班台", () => {
+    const prevHash = window.location.hash;
+    try {
+      window.location.hash = "#runtime";
+      const html = renderToString(<EdgeConsole />);
+
+      expect(html).toContain("Runtime 觀測值班台");
+      expect(html).not.toContain("串流執行狀態");
+      expect(html).toContain("Coordinator Console · C / Hybrid Runtime Orchestrator");
+      expect(html).toContain("/api/runtime/status");
+      expect(html).toContain("A Classic Dashboard");
+      expect(html).toContain("D Terminal / Debug");
+      expect(html).toContain("Classic Dashboard 是 operator 第一眼總覽");
+      expect(html).toContain("Open primary URL 不等於 occupied");
+      expect(html).not.toContain("Runtime Dashboard · 串流執行狀態");
+    } finally {
+      window.location.hash = prevHash;
+    }
+  });
+
   it("prototype 核心頁面可 render：A1 stepper、3D viewer、conversion、session、Kit/GPU、MinIO", () => {
     const a1 = renderToString(<A1GovernanceWorkbenchPage />);
     expect(a1).toContain("上傳模型");
@@ -361,12 +428,19 @@ describe("edge console honesty smoke", () => {
     // 舊導引字樣已移除（#a1 為 canonical，不再導引去 Issues 頁）。
     expect(a1).not.toContain("BCF 匯出請至 Issues 頁");
     expect(a1).toContain("rule_run_id");
-    expect(a1).toContain('data-testid="a1-real-ifc-slice"');
-    expect(a1).toContain('data-testid="real-ifc-demo-control"');
+    expect(a1).not.toContain('data-testid="a1-real-ifc-slice"');
+    expect(a1).not.toContain('data-testid="real-ifc-demo-control"');
+    expect(a1).toContain('data-testid="a1-minio-select"'); // step① 已改下拉
+    expect(a1).not.toContain('data-testid="a1-step-path"'); // 手打路徑文字框已移除
     expect(a1).toContain('data-testid="a1-step-run"');
     expect(a1).toContain('data-testid="a1-step-issues"');
     expect(a1).toContain('data-testid="a1-step-export"');
-    expect(a1).toContain("POST /api/governance/rule-runs");
+    // B2 task4：A1 step② run 鈕改走 for-session。SSR 首幀無 session（effect 不跑）→ run 鈕誠實 gating
+    // 只渲染 disabled caption「需先完成轉檔產生 review session（治理檢核走 for-session）」；端點字串
+    // POST /api/governance/rule-runs/for-session/:sessionId 屬 enabled caption，SSR 不渲染（故此處驗不到端點 path）。
+    // 鎖定整段 gating 片語「治理檢核走 for-session」而非裸 "for-session"：避免任意含 for-session 的字串造成偽通過；
+    // 真正的端點 path 與 createRuleRunForSession 呼叫驗收在 A1ViewerEmbed.test.tsx「有 session：run 鈕 enable」enabled-state 測試。
+    expect(a1).toContain("治理檢核走 for-session");
 
     const viewer = renderToString(<ViewerPresentationPage />);
     expect(viewer).toContain("3D Viewer 呈現");
@@ -484,6 +558,119 @@ describe("edge console honesty smoke", () => {
     // 不被恆顯的 artifact-baseline / A1 workbench 記分板誤判通過）。renderToString 首幀
     // run=null → 此區塊不渲染，故 smoke 斷言「不存在」即可確認 gating 正確。
     expect(html).not.toContain("data-testid=\"a1-rulerun-scoreboard\"");
+  });
+});
+
+// ── co-console-runtime-merge §5.1 守門四（D2-A′ 核心合約）：stream-config 不孤兒 ──
+// spec §3.4 D2-A′ 要求 StreamConfigReader 由 (a) RuntimePage 復用、(b) CoordinatorGovernanceTabs
+// 的 debug（Terminal / Debug）分頁直接 render。Task 3 一旦把 #runtime 改渲染 CoordinatorPage，
+// RuntimePage 內的 stream-config 入口就不再可達——唯有 debug 分頁也掛 StreamConfigReader 才不孤兒。
+// renderToString 預設只渲 classic 分頁（useState("classic")），到不了 debug；故用 createRoot + 點
+// 「D Terminal / Debug」分頁鈕（本檔既有互動 pattern），實測 CoordinatorGovernanceTabs→debug→
+// StreamConfigReader 這條真路徑含 stream-config 入口（非直測未 export 的 DebugTab，不擴大公開面）。
+describe("co-console-merge §5.1#4：CoordinatorGovernanceTabs debug 分頁含 stream-config（不孤兒）", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  it("點開 debug 分頁 → 渲染 StreamConfigReader（stream-config 入口，D2-A′ 不孤兒）", async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<CoordinatorGovernanceTabs rt={null} busy={false} err={null} onRefresh={() => {}} />);
+    });
+
+    // 預設 classic 分頁尚未含 stream-config 入口（StreamConfigReader 只在 debug 分頁）。
+    expect(container.innerHTML).not.toContain("stream-config");
+
+    // 點「D Terminal / Debug」分頁鈕切到 debug。
+    const debugTabBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="tab"]')).find(
+      (b) => b.textContent === "D Terminal / Debug",
+    );
+    expect(debugTabBtn, "應有 D Terminal / Debug 分頁鈕").not.toBeUndefined();
+    await act(async () => { debugTabBtn!.click(); });
+
+    // debug 分頁含 StreamConfigReader 提供的 stream-config 入口（GET …/stream-config）。
+    const html = container.innerHTML;
+    expect(html).toContain("stream-config");
+    expect(html).toContain("/api/review-sessions/:id/stream-config");
+    expect(html).toContain("review_session_id"); // StreamConfigReader 的輸入框 placeholder
+
+    await act(async () => { root.unmount(); });
+  });
+});
+
+// ── co-console-runtime-merge review fix：stream-config session id guard ──
+// StreamConfigReader 對齊 ReviewRoomPage / coordinator /ui/open 的 session-id 格式：
+// 只允許 lwv_ / review_session_ 前綴 + 英數底線。invalid input 應停用按鈕且不發 request。
+describe("co-console-merge review fix：StreamConfigReader session-id 格式守門", () => {
+  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  let container: HTMLDivElement;
+  let prevActEnv: unknown;
+
+  beforeEach(() => {
+    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
+    (globalThis as Record<string, unknown>)[actEnvKey] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+  afterEach(() => {
+    document.body.removeChild(container);
+    vi.restoreAllMocks();
+    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
+  });
+
+  const setInputNative = (el: HTMLInputElement, value: string) => {
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    nativeValueSetter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it("invalid id 停用讀取、不呼叫 streamConfig；valid review_session id 啟用並呼叫一次", async () => {
+    const streamSpy = vi.spyOn(coordinatorClient, "streamConfig").mockResolvedValue({
+      session_id: "review_session_x",
+      status: "ready",
+    });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<StreamConfigReader />);
+    });
+
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="review_session_id"]')!;
+    const readButton = () => Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+      button.textContent?.includes("讀取 stream-config") || button.textContent?.includes("Read stream-config"),
+    )!;
+
+    await act(async () => { setInputNative(input, "abc"); });
+    expect(readButton().disabled).toBe(true);
+    expect(container.innerHTML).toContain("session id 不符格式");
+    await act(async () => { readButton().click(); });
+    expect(streamSpy).not.toHaveBeenCalled();
+
+    await act(async () => { setInputNative(input, "review_session_x"); });
+    expect(readButton().disabled).toBe(false);
+    await act(async () => {
+      readButton().click();
+      await Promise.resolve();
+    });
+    expect(streamSpy).toHaveBeenCalledTimes(1);
+    expect(streamSpy).toHaveBeenCalledWith("review_session_x");
+
+    await act(async () => { root.unmount(); });
   });
 });
 
@@ -1359,6 +1546,36 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 });
 
+describe("A1 step① MinIO 下拉（B2）", () => {
+  it("getMinioObjects 回 source_ifc + parsed_usdc → A1 只列 source_ifc，文字框 a1-step-path 不再渲染", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockRejectedValue(new Error("offline"));
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 2,
+      objects: [
+        { key: "松風庵/root/main/uuid1/model.ifc", etag: "e1", role: "source_ifc", idempotency_key: "mw_0000000000000011", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
+        { key: "松風庵/root/main/uuid1/model.usdc", etag: "e2", role: "parsed_usdc", idempotency_key: "mw_0000000000000012", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
+      ],
+    });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+    const select = container.querySelector('[data-testid="a1-minio-select"]') as HTMLSelectElement | null;
+    expect(select).not.toBeNull();
+    // 只列 source_ifc（1 個真選項 + 1 個 placeholder option）。
+    expect(select!.querySelectorAll("option").length).toBe(2);
+    expect(select!.textContent).toContain("松風庵");
+    expect(select!.textContent).toContain("建築");
+    expect(select!.textContent).not.toContain("model.usdc"); // parsed_usdc 不入下拉
+    // 文字框 a1-step-path 已被下拉取代。
+    expect(container.querySelector('[data-testid="a1-step-path"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+    document.body.removeChild(container);
+  });
+});
+
 // A2 VersionDiff 多專案 / 三層版本選擇器 client-render（spec §4.2/§6.2）。
 // 上方 A2 既有測試的 fixture 只有單一 project（270）/單一 model（機電），無法證明
 //   (1) project 下拉真的把「多個」project 都列出來（多專案可選）、
@@ -1702,14 +1919,24 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.useFakeTimers();
     container = document.createElement("div");
     document.body.appendChild(container);
-    // 對抗驗證 P0-1（回歸根因）：A1 頁 mount effect 無條件打真 runtimeStatus()，coordinator 存活時 resolve 出帶
-    // expected_mapping_url 的真 session → 觸發未 mock 的 elementMappingForSession 真 fetch，在 fake-timer act()
-    // 邊界內不 settle → RUN_DONE 永不 dispatch → 「建 Issue」鈕恆 disabled。mock 成空 runtime（無 session / 無
-    // viewerOrigin）隔離此真 fetch；afterEach 的 vi.restoreAllMocks() 會還原。production doRun 行為未改（test-only）。
+    // B2 task4：A1 step② 治理檢核改走 for-session（run 鈕以 selectedSession gating、doRun 改打 createRuleRunForSession）。
+    // 提供 1 個 active session 讓 selectedSession 有值 → auto-PICK 推進 step + run 鈕 !selectedSession gating 通過 → for-session doRun。
+    // 同步 mock elementMappingForSession：避免有 usd_prim_path:null 列的測試在 fake-timer 邊界內觸發真 mapping fetch 而 hang。
+    // viewerOrigin 留空（browser_url_base:""）→ 不掛 EmbeddedViewer，斷言面不變；afterEach 的 vi.restoreAllMocks() 會還原。
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({
-      sessions: { count: 0, active_count: 0, participant_count: 0, items: [] },
-      configured_endpoints: { viewer: { browser_url_base: "" } },
+      sessions: { count: 1, active_count: 1, participant_count: 0, items: [
+        { session_id: "review_session_x", status: "active", project_id: "p1", model_version_id: "m1",
+          participant_count: 0, expected_stage_url: "", expected_mapping_url: "", conversion_status: null,
+          kit_instance_ids: [], created_at: "", updated_at: "", first_frame_at: null },
+      ] },
+      configured_endpoints: { viewer: { browser_url_base: "" } }, // viewerOrigin 留空 → 不掛 EmbeddedViewer，斷言面不變
     } as never);
+    vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({ mock: false, summary: { fake_mapping_count: 0 }, items: [] });
+    // A1 step① 改 MinIO 下拉後，mount 會打 getMinioObjects()；回單一 source_ifc 物件讓 pickModel 能選到該 option。
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
+      bucket: "bim-control", count: 1,
+      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000013", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+    });
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -1723,11 +1950,43 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { el.click(); });
   };
 
+  // A1 step① 改 MinIO 下拉後，a1-step-pick 在未選 key 時 disabled。pickModel 先在下拉選到 source_ifc
+  // 物件（設 selectedKey）再點 pick，讓既有 doRun 測試能照常推進 step。fake timers 下先沖一拍 microtask，
+  // 確保 getMinioObjects().then 已渲染 option，sel.value 才選得到。
+  const pickModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-minio-select"]')!;
+    await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    await clickByTestId("a1-step-pick");
+  };
+
+  it("[IDS picker] A1 IDS 欄位預設顯示 sample IDS path，開啟資料夾後沿用目前目錄填入檔名", async () => {
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+
+    const idsInput = container.querySelector<HTMLInputElement>('[data-testid="a1-ids-path"]')!;
+    expect(idsInput.value).toContain("governance-service\\rules\\sample-fire-rating.ids");
+
+    const inputClickSpy = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    await clickByTestId("a1-ids-open-folder");
+    expect(inputClickSpy).toHaveBeenCalledTimes(1);
+
+    const fileInput = container.querySelector<HTMLInputElement>('[data-testid="a1-ids-file-input"]')!;
+    Object.defineProperty(fileInput, "files", {
+      value: [new File(["<ids />"], "custom-check.ids", { type: "application/xml" })],
+      configurable: true,
+    });
+    await act(async () => { fileInput.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(idsInput.value).toContain("governance-service\\rules\\custom-check.ids");
+
+    await act(async () => { root.unmount(); });
+  });
+
   // 取「選取模型」→「執行規則檢核」後進入輪詢；getRuleRun 永遠回 running（loop 不自然結束），
   // 故 loop 卡在 setTimeout(1000)。unmount 後再推進假時鐘，loop 必須因 alive 守門中斷、
   // 不再發出任何 getRuleRun 請求（資源洩漏修復的可觀測證據）。
   it("[finding#1] doRun 輪詢中 unmount → 迴圈停止，不再發 getRuleRun（unmount 守門）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -1735,7 +1994,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
 
     // 鎖定模型路徑（idle→picked）後執行規則檢核（picked→running，啟動輪詢）。
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 跑完 createRuleRun microtask + 第一次 getRuleRun（iteration 0）。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -1754,13 +2013,13 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 輪詢中使用者按「選取模型」重置 step（running→picked）：reducer 守門已防髒資料寫入，
   // 但 loop 仍會繼續發 getRuleRun。step 離開 running 後 loop 必須中斷、不再發請求。
   it("[finding#1] doRun 輪詢中 PICK_FILE 重置 step → 迴圈停止，不再發 getRuleRun（step 守門）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const callsBeforeReset = getSpy.mock.calls.length;
@@ -1779,7 +2038,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // makeIssues（建 Issue）失敗時誠實顯示錯誤：後端離線/丟例外 → 頁面出現 ec-warn-note 提示
   // （含錯誤原因），按鈕恢復可用。對齊 doRun 失敗的 runError 同款 UI 回饋（誠實鐵律）。
   it("[finding#2] makeIssues 失敗 → 顯示 ec-warn-note 錯誤提示（不再靜默）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -1788,7 +2047,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 輪詢一次即 succeeded → 結束 loop 並進 scored。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -1813,7 +2072,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // doExport（匯出 Excel）失敗時同樣誠實顯示錯誤：fetch 丟例外 → ec-warn-note 提示。
   // 補：成功的 makeIssues 之後動作須清掉上次的錯誤提示（不殘留陳舊紅錯）。
   it("[finding#2] doExport 失敗 → 顯示 ec-warn-note；下次成功動作清除舊錯誤", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -1824,7 +2083,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -1853,7 +2112,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 且 plain RUN 在 running 是 no-op，導致使用者點不到/點了沒反應。修法是 running-error 子態
   // 把 run 鈕 enable，點擊走 RUN_RETRY 真重試。此測試走完整路徑：失敗 → 鈕仍可點 → 重試成功 → scored。
   it("[Critical] doRun 失敗 → run 鈕在 running-error 子態仍可點 → 重試成功 → scored 記分板出現", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 第一輪輪詢回 failed（→ RUN_FAIL），重試後第二輪回 succeeded（→ RUN_DONE → scored）。
     const getSpy = vi
       .spyOn(governanceClient, "getRuleRun")
@@ -1863,7 +2122,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 第一輪輪詢即 failed → 結束 loop → dispatch RUN_FAIL → running-error 子態。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -1908,7 +2167,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     // 受控 deferred：createRuleRun 在我們手動 resolve 前保持 pending，模擬「await 視窗」。
     let resolveCreate!: (v: { rule_run_id: string; status: "queued" }) => void;
     const createPending = new Promise<{ rule_run_id: string; status: "queued" }>((res) => { resolveCreate = res; });
-    vi.spyOn(governanceClient, "createRuleRun").mockReturnValue(createPending);
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockReturnValue(createPending);
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("running"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
@@ -1916,7 +2175,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
 
     // idle→picked→running（doRun 啟動，卡在 await createRuleRun，輪詢尚未開始）。
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     expect(getSpy.mock.calls.length).toBe(0); // createRuleRun 未解析前不該有 getRuleRun
 
@@ -1937,7 +2196,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // 修復前 break 條件只認 succeeded/failed，遇 errored 會空轉 60 次（60s 假時鐘）才結束。
   // 改成 in-progress 白名單（!queued && !running）後，任何 terminal status 即時中斷 → RUN_FAIL。
   it("[qr-t2-terminal-status-whitelist] getRuleRun 回 errored（union 外 terminal）→ 立即中斷一次即 RUN_FAIL，不空轉", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 強制回傳型別 union 外的 terminal status。cast 繞過 TS 因為這正是「後端回了型別沒涵蓋的值」情境。
     const erroredStatus = { ...fakeRunStatus("running"), status: "errored" } as unknown as RuleRunStatus;
     const getSpy = vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(erroredStatus);
@@ -1945,7 +2204,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     // 第一輪即 errored → 白名單條件 break；不得 setTimeout 等下一輪。
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -1975,7 +2234,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // disabled，允許在 running 子態觸發匯出。此測試把元件凍結在該窗口（getResults 永不 resolve，
   // 卡在 RUN_PROGRESS-succeeded 與 RUN_DONE 之間），斷言 export 仍 disabled、issues 同步 disabled。
   it("[Important-2] 重跑 running 子態存在 succeeded 快照時，匯出鈕仍 disabled（與建 Issue 對齊 step 語意）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     // 第一輪輪詢回 succeeded → 進 scored（export enable）。重跑後第二輪也回 succeeded，
     // 但 getResults 第二次永不 resolve → 元件凍結在 running 子態且 state.run.status=succeeded。
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -1988,7 +2247,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -2022,7 +2281,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // UI 卡 scored 且無錯誤回饋（違誠實鐵律）。此測試攔截 HTMLAnchorElement.prototype.click，在點擊當下記錄
   // document.body.contains(該錨點)：修復前錨點 detached → contains=false（RED）；修復後 appendChild 已掛載 → true。
   it("[Important-1] doExport 下載錨點在 .click() 當下已掛載於 document（跨瀏覽器安全，避免 Gecko 靜默失敗）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "error", status: "fail", message: "naming rule failed" },
@@ -2042,7 +2301,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -2085,7 +2344,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
   // Fix-F1：未建 Issue 時 BCF 鈕應 disabled（issuesCreated=false）。
   // scored→EXPORT_OK→delivered 不走 CREATE_ISSUES_OK → issuesCreated 仍 false → BCF disabled。
   it("[F1] scored 未建 Issue 直接匯出 Excel → delivered 後 BCF 鈕仍 disabled（issuesCreated=false）", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
@@ -2103,7 +2362,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
@@ -2123,7 +2382,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
   // Fix-F4：BCF click 成功路徑 dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact。
   it("[F4] BCF click 成功 → dispatch BCF_EXPORT_OK → 顯示 a1-bcf-exported-artifact", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
@@ -2142,7 +2401,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
-    await clickByTestId("a1-step-pick");
+    await pickModel();
     await clickByTestId("a1-step-run");
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 

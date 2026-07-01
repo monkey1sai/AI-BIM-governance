@@ -106,6 +106,8 @@ watcher「**首輪 SHALL 只登記 baseline 不觸發；之後才出現的新 ke
 
 ### 3.3 轉檔狀態以 ledger 為真相 ＋ 一鍵觸發（使用者拍板新增）
 
+> **⚠ 方向1 整合調和（2026-07-01，PR 前）**：本 §3.3 原設計「一鍵觸發」自帶獨立後端（`manualIntake.ts` + `x-dev-token` 守門 + 回 `{status, idempotency_key}` + 前端樂觀 patch chip）。開發期間 main 已並行合併 `minio-trigger-lifecycle-backend`（PR #259），提供等效後端 `POST /api/conversion/trigger`（**IP allowlist** 守門、server-side presigned、inline 派工、回 `{ifc_ready_job_id}`）。使用者拍板方向1：**觸發鈕改用 main 端點、移除本案自帶後端**（`manualIntake.ts` 及其測試已刪）；前端 `triggerConversion(key)` 呼叫 main 端點、成功後 `loadRecords()` 由 ledger 對齊 chip（不做樂觀 patch）。故下述 AC-trigger 的 `x-dev-token` / `{status, idempotency_key}` / 樂觀 patch 條款**以此註記為準**（描述原設計，實作已交由 main #259）。`ledger = 轉檔狀態真相來源`、chip 衍生、baseline 揭露、§3.4 auto-enroll 等其餘設計不受影響。
+
 **設計原則（使用者觀點）：** 「是否要轉檔」不只看 watcher 的 in-memory baseline/etag，要看**持久的轉檔紀錄（ledger）**——bucket 內的 `model.ifc` 若 ledger 無成功(`ready`)紀錄，就視為「未轉、可觸發」。
 
 1. **ledger = 轉檔狀態真相來源**：交叉比對「bucket 內 `*/model.ifc`（來自 `#minio` list）」與「ledger 紀錄（`/api/conversion/records`，鍵 `mw_<hash16>`）」。狀態分類：`ready`（已轉）／`detected/queued/converting`（進行中）／`failed`（失敗可重試）／**無紀錄 =「未轉（無 ledger 紀錄）」**（§3.4 auto-enroll 後既有檔多已自動補轉落 queued，untracked 僅剩首輪前/watcher 關閉時真正無紀錄者）。

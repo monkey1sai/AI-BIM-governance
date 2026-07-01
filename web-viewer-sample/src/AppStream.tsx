@@ -18,6 +18,19 @@ import StreamConfig from '../stream.config.json';
 import { getStreamer } from './harness/streamer';
 import { harnessEnabled } from './harness/harnessConfig';
 
+type StreamPayload = StreamEvent & {
+    action?: string;
+    status?: string;
+    info?: string | TypeError;
+    stats?: StreamStats;
+};
+
+type AppStreamCustomEvent = {
+    event_type?: string;
+    messageRecipient?: string;
+    data?: string;
+    payload?: unknown;
+} | null;
 
 interface AppStreamProps {
     sessionId: string
@@ -31,7 +44,7 @@ interface AppStreamProps {
     onStarted: () => void;
     onStreamFailed: () => void;
     onLoggedIn: (userId: string) => void;
-    handleCustomEvent: (event: any) => void;
+    handleCustomEvent: (event: AppStreamCustomEvent) => void;
     onFocus: () => void;
     onBlur: () => void;
     onStopped?: (event: StreamEvent) => void;
@@ -78,7 +91,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 if (existing) {
                     // script 標籤已存在但全域 GFN 可能仍在下載中(remount 命中既有 script);
                     // ready 才直接 init,否則補掛 load/error 等就緒,避免 GFN 未定義就 _initStream 觸 ReferenceError。
-                    //@ts-ignore GFN global is provided by the lazily-loaded SDK script
+                    // @ts-expect-error GFN global is provided by the lazily-loaded SDK script
                     if (typeof GFN !== 'undefined') {
                         this._initStream();
                     } else {
@@ -113,7 +126,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         if (StreamConfig.source === 'gfn') {
             // #32:用 globalThis 讀取 GFN(缺失時為 undefined 而非裸變數 ReferenceError),
             // 未就緒就走可控失敗回饋,確保 CSP / 離線 / 載入失敗不炸整頁。
-            //@ts-ignore GFN global is provided by the lazily-loaded SDK script
+            // @ts-expect-error GFN global is provided by the lazily-loaded SDK script
             const gfnGlobal = globalThis.GFN;
             if (gfnGlobal === undefined) {
                 console.error('GFN client SDK global is not available');
@@ -128,7 +141,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 cmsId           : StreamConfig.gfn.cmsId,
                 onUpdate        : (message: StreamEvent) => this._onUpdate(message),
                 onStart         : (message: StreamEvent) => this._onStart(message),
-                onCustomEvent   : (message: any) => this._onCustomEvent(message)
+                onCustomEvent   : (message) => this._onCustomEvent(message as AppStreamCustomEvent)
             }
         }
 
@@ -162,7 +175,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 onUpdate: (message: StreamEvent) => this._onUpdate(message),
                 onStart: (message: StreamEvent) => this._onStart(message),
                 onStreamStats: (message: StreamEvent) => this._onStreamStats(message),
-                onCustomEvent: (message: any) => this._onCustomEvent(message),
+                onCustomEvent: (message) => this._onCustomEvent(message as AppStreamCustomEvent),
                 onStop: (message: StreamEvent) => this._onStop(message),
                 onTerminate: (message: StreamEvent) => this._onTerminate(message)
             };
@@ -195,7 +208,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
                 fps: 60,
                 onUpdate: (message: StreamEvent) => this._onUpdate(message),
                 onStart: (message: StreamEvent) => this._onStart(message),
-                onCustomEvent: (message: any) => this._onCustomEvent(message),
+                onCustomEvent: (message) => this._onCustomEvent(message as AppStreamCustomEvent),
                 onStop: (message: StreamEvent) => this._onStop(message),
                 onTerminate: (message: StreamEvent) => this._onTerminate(message),
             };
@@ -225,7 +238,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         getStreamer().terminate(false);
     }
 
-    componentDidUpdate(_prevProps: AppStreamProps, prevState: AppStreamState, _snapshot: any) {
+    componentDidUpdate(_prevProps: AppStreamProps, prevState: AppStreamState) {
         if (prevState.streamReady === false && this.state.streamReady === true) {
             const player = document.getElementById("gfn-stream-player-video") as HTMLVideoElement;
             if (player) {
@@ -237,7 +250,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         }
     }
 
-    static sendMessage(message: any): Promise<any> {
+    static sendMessage(message: unknown): Promise<unknown> {
         return getStreamer().sendMessage(message);
     }
 
@@ -245,7 +258,7 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         getStreamer().terminate(false);
     }
 
-    _onStart(message: any) {
+    _onStart(message: StreamPayload) {
         if (message.action === 'start' && message.status === 'success' && !this.state.streamReady) {
             console.info('streamReady');
             this.setState({ streamReady: true });
@@ -261,21 +274,23 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         }
     }
 
-    _onUpdate(message: any) {
+    _onUpdate(message: StreamPayload) {
         try {
             if (message.action === 'authUser' && message.status === 'success') {
-                this.props.onLoggedIn(message.info);
+                if (typeof message.info === "string") {
+                    this.props.onLoggedIn(message.info);
+                }
             }
         } catch (error) {
             console.error(message);
         }
     }
 
-    _onCustomEvent(message: any) {
+    _onCustomEvent(message: AppStreamCustomEvent) {
         this.props.handleCustomEvent(message);
     }
 
-    _onStreamStats(message: any) {
+    _onStreamStats(message: StreamPayload) {
         const stats: StreamStats | undefined = message?.stats;
         if (!stats) return;
         const w = stats.streamingResolutionWidth;
@@ -286,13 +301,13 @@ export default class AppStream extends Component<AppStreamProps, AppStreamState>
         getStreamer().resize(w, h).catch((err: unknown) => console.warn('AppStreamer.resize failed', err));
     }
 
-    _onStop(message: any) {
+    _onStop(message: StreamEvent) {
         console.info('Stream stopped', message);
         this.setState({ streamReady: false });
         this.props.onStopped?.(message);
     }
 
-    _onTerminate(message: any) {
+    _onTerminate(message: StreamEvent) {
         console.info('Stream terminated', message);
         this.setState({ streamReady: false });
         this.props.onTerminated?.(message);
