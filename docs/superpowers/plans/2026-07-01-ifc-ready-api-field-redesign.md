@@ -4,7 +4,7 @@
 
 **Goal:** 讓 `summarizeIfcReadyJob`(GET /api/external/ifc-ready 列表)投影三視圖對帳主鍵 `idempotency_key` 與誠實觀測欄位(`failure_reason`/`failure_stage`/`usdc_role`/`data_volatility`/`idempotent_replay`/`conversion_lifecycle_status`/`project_display_name`/`category`),前端 `#/conv` 的「Ifc-ready jobs」表據以與 ledger / minio 視圖對齊,並以 browser E2E 佐證。
 
-**Architecture:** coordinator(`bim-review-coordinator`,Express + TS,in-memory `ExternalIfcReadyStore` + 持久 `ConversionLedger`)在 `summarizeIfcReadyJob` 做 additive/nullable 投影;前端 `web-viewer-sample`(React + Vite,`EdgeConsole` `#/conv` → `ConversionSchedulingPage`)擴充 `IfcReadyListItem` 型別與 jobs 表 render。誠實鐵律:presigned 簽章已由既有 `maskPresignedRef`/`sanitizeJobForExternal` 遮蔽(勿回退),converter 未落地前 `usdc_role` 恆 `pending`、無假 ready。
+**Architecture:** coordinator(`bim-review-coordinator`,Express + TS,in-memory `ExternalIfcReadyStore` + 持久 `ConversionLedger`)在 `summarizeIfcReadyJob` 做 additive/nullable 投影;前端 `web-viewer-sample`(React + Vite,`EdgeConsole` `#/conv` → `ConversionSchedulingPage`)擴充 `IfcReadyListItem` 型別與 jobs 表 render。誠實鐵律:presigned 簽章已由既有 `maskPresignedRef`/`sanitizeJobForExternal` 遮蔽**瀏覽器可見出口**(勿回退;惟 callback outbox 出口 `app.ts:1831` 尚未遮蔽,見「現況盤點」⚠️ 與「明確排除」OQ3),converter 未落地前 `usdc_role` 恆 `pending`、無假 ready。
 
 **Tech Stack:** TypeScript(coordinator Node ESM + viewer React)、vitest(+ supertest 整合)、Playwright(e2e)、zod(intake schema)。
 
@@ -21,6 +21,8 @@ cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign
 ```
 每個 Task 改完用同一把尺比較;沒比 baseline 好(紅→綠以外的既有測試轉紅)就 revert。
 
+> **例外(唯一預期的既有測試轉紅,非 regression、禁 revert)**:Task 2 投影 `idempotency_key` 後,`tests/external-ifc-ready.test.ts:343` 既有斷言 `expect(listed.body.items[0]).not.toHaveProperty("idempotency_key")` 必然翻紅——該斷言正是 must_fix #4 要移除的「過時 guard」(它斷言列表**不得**出現 must_fix #4 要求投影的欄位)。Task 2 Steps 已含「翻轉此斷言」步驟;執行者遇此紅**必須依 Task 2 更新該斷言,不得當 regression 把功能 revert 掉**。除此唯一一行外,其餘既有測試轉紅仍一律 revert。
+
 ---
 
 ## 現況盤點:已落地,禁止重做(先量再改)
@@ -29,7 +31,7 @@ cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign
 
 | spec 要求 | 現況(檔案:行) | 結論 |
 |---|---|---|
-| P0 全出口遮蔽 presigned(must_fix #1) | `maskPresignedRef`(`src/services/presignedRef.ts`)+ `sanitizeJobForExternal`(`app.ts:2658`);守衛測試 `tests/presigned-ref.test.ts` 已覆蓋 list/`:jobId`/shadow/POST session/POST intake 202/200 replay 六出口斷言不含 `X-Amz-Signature` | ✅ 已完成 |
+| P0 全出口遮蔽 presigned(must_fix #1) | `maskPresignedRef`(`src/services/presignedRef.ts`)+ `sanitizeJobForExternal`(`app.ts:2658`);守衛測試 `tests/presigned-ref.test.ts` 已覆蓋 list/`:jobId`/shadow/POST session/POST intake 202/200 replay 六**瀏覽器可見出口**斷言不含 `X-Amz-Signature`。**未竟**:callback outbox → 外部雲端 payload(`app.ts:1831` `source_ifc:{ ref: job.source_ifc_ref }`)仍夾帶原始 presigned ref、未套 `maskPresignedRef`(對照 `app.ts:2104` artifact_resolution 已遮蔽);spec §0 / §8.3 明列此 callback context 為必遮出口(「只修 2357 不算修好」) | ⚠️ 瀏覽器出口已完成;**callback outbox 出口(app.ts:1831)未遮蔽,須裁決**(見「明確排除」OQ3 + 完成標準) |
 | 凍結 lifecycle 映射 + 單一 helper(must_fix #2 / OQ5) | `deriveLifecycleStatus`(`src/services/lifecycleStatus.ts`,重用 `ConversionLedgerStatus`);已 wire 進 `summarizeIfcReadyJob`(`app.ts:2627`)與 `:jobId`(`app.ts:1538`);測試 `tests/lifecycle-status.test.ts` | ✅ 已完成 |
 | `project_display_name`/`category` 落 store + 投影(OQ1 / must_fix #3) | `ExternalIfcReadyStore.create` 已寫入(`src/services/externalIfcReadyStore.ts:57-58`);`summarizeIfcReadyJob` 已投影(`app.ts:2614-2615`)。OQ1 裁決(spec §0)= 放寬 R5 直接落 store,**已生效** | ✅ 已完成 |
 | `POST /api/conversion/trigger`(folderview R-TRIGGER-*) | `app.ts:928`,只收 `key`、server-side presign、`deriveIntakeFromKey` ≥3 段驗證、self-POST loopback | ✅ 已完成 |
@@ -62,7 +64,7 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 - `source_object_key` / `source_bucket` / `source_ifc_ref_expires_at` / `key_segments` / `provenance_source` / `is_baseline`:需改 `IfcReadyIntakeJob` type + `ExternalIfcReadyStore.create` + intake handler + **`minioWatcher.ts` self-POST payload**(觸碰 §6.7「watcher 自動語意凍結」,須 `detect_changes` 佐證未改觸發語意,風險高);且 `{bucket,key,etag}` 對帳三元組**已可由 ledger(`ConversionRecord.object_key`)+ `/api/minio/objects` 觀測**,job_output 重複投影無新前端綁定點(YAGNI)。
 - 階段時戳 `detected_at`/`queued_at`/`dispatched_at`/`converted_at`:需在 store `mark*` 各寫入點補時戳(wiring),目前**無前端 render 綁定**(YAGNI);`converted_at` 屬 Phase 2。
 - `usdc_key` / `coverage_report`(job_output):Phase 2 回填(OQ7,callback outbox wiring 未接通),job 端恆 null;既有 ledger 已載此二欄,前端由 ledger 讀。本 plan 只在 job_output 投影 `usdc_role=pending` 誠實標記,不重複 null 欄位。
-- OQ3(既有 consumer):`app.ts:1831` 的 internal callback payload 仍帶原始 presigned `source_ifc.ref`(送外部雲端 callback,`sanitizeJobForExternal` docstring `app.ts:2654-2656` 明列此 internal 出口為刻意 carve-out)。是否遮蔽此出口須先確認雲端 consumer 是否依賴 presigned 下載——屬開放問題,本 plan 不動 internal 出口;Task 2 守衛測試只斷言**瀏覽器可見出口**不洩漏。
+- OQ3(既有 consumer):`app.ts:1831` 的 internal callback payload 仍帶原始 presigned `source_ifc.ref`(送外部雲端 callback,`sanitizeJobForExternal` docstring `app.ts:2654-2656` 明列此 internal 出口為刻意 carve-out)。是否遮蔽此出口須先確認雲端 consumer 是否依賴 presigned 下載——屬開放問題,本 plan 不動 internal 出口;Task 2 守衛測試只斷言**瀏覽器可見出口**不洩漏。**⚠️ 誠實標註**:此殘留即代表 spec §0 / §8.3 的 must_fix #1「全出口遮蔽」**尚未真正完成**(spec 明列 callback context 為必遮出口),故「現況盤點」表該列標 ⚠️ 非 ✅,且收尾前 MUST 依「完成標準」向使用者/維護者上呈裁決,不得靜默結案或僅當已知風險一句帶過。
 
 ---
 
@@ -178,7 +180,7 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 
 **Files:**
 - Modify `bim-review-coordinator/src/app.ts`(import 區 ~L32-40、`summarizeIfcReadyJob` L2607-2644、`:jobId` handler L1528-1539)
-- Modify `bim-review-coordinator/tests/external-ifc-ready.test.ts`(新增投影斷言)
+- Modify `bim-review-coordinator/tests/external-ifc-ready.test.ts`(新增投影斷言 **+ 翻轉既有 stale guard `L343`**:既有測試 "lists recent IFC-ready jobs with dashboard-safe progress fields" 於 L343 有 `expect(listed.body.items[0]).not.toHaveProperty("idempotency_key")`,本 Task 投影 `idempotency_key` 後此斷言必翻紅,MUST 一併翻轉為正向投影斷言,見下 Steps 專步。**只碰 L343,勿動 L344 `callback_url` 斷言**——本 Task 不投影 callback_url)
 
 **Symbols modified:** `summarizeIfcReadyJob`(先跑 impact,見下)
 
@@ -189,15 +191,20 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
   mcp__gitnexus__impact({ target: "summarizeIfcReadyJob", direction: "upstream", repo: "AI-BIM-governance" })
   ```
   預期:呼叫點為 GET list(`app.ts:1368`)、runtime status(`app.ts:2565`);risk 非 HIGH/CRITICAL 才續(是則先回報)。
-- [ ] 寫失敗測試,加進 `bim-review-coordinator/tests/external-ifc-ready.test.ts`(沿用該檔既有 `POST /api/external/ifc-ready` 落 job 再 `GET` 的整合寫法;若該檔無 helper,沿用 `tests/presigned-ref.test.ts` 的 `startPresignApp`/`seedPresignedJob` 同構寫法建立一筆 job):
+- [ ] 寫失敗測試,加進 `bim-review-coordinator/tests/external-ifc-ready.test.ts`。**該檔已有現成 helper(勿自造、勿引其他檔)**:`makeApp()`(L46,建 app、預設 `streamingConversionApiBase` 不可達 → dispatch graceful 仍回 202)、`payload()`(L60,`{ ...structuredClone(CONTRACT.example), ...overrides }`)、`authHeaders()`(L64,帶 `X-Webhook-Secret`/`X-Correlation-Id`/`X-Idempotency-Key`)。**每個 it 各自 `const app = makeApp()`**(見既有 L305-307、L881),`job.idempotency_key` 由 `X-Idempotency-Key` header 決定(見 L311)。直接照抄既有 OQ1 test(L877-901)的形狀:
   ```ts
   it("列表投影 idempotency_key + 誠實欄位(對帳鍵可 join、無假 ready)", async () => {
-    // 落一筆 job(沿用本檔既有進件 helper;header X-Idempotency-Key 決定 job.idempotency_key)
-    const created = await postIfcReady({ idempotencyKey: "idem_proj_reconcile" }); // 本檔既有 helper
+    const app = makeApp(); // 本檔既有 helper(L46);dispatch 不可達為 graceful,job 仍建、仍 202
+    const created = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_reconcile", "X-Idempotency-Key": "idem_proj_reconcile" })) // 既有 helper L64
+      .send(payload()); // 既有 helper L60(= CONTRACT.example)
     expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
     const res = await request(app.app).get("/api/external/ifc-ready");
     expect(res.status).toBe(200);
-    const item = res.body.items[0];
+    // 用 jobId find(對齊既有 OQ1 test L896-898),不假設 items[0] 順序。
+    const item = (res.body.items as Array<Record<string, unknown>>).find((j) => j.ifc_ready_job_id === jobId)!;
     expect(item.idempotency_key).toBe("idem_proj_reconcile");   // must_fix #4:list 端可 join
     expect(item).toHaveProperty("idempotent_replay");
     expect(item).toHaveProperty("conversion_lifecycle_status");
@@ -207,7 +214,7 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
     expect(item.data_volatility).toBe("in_memory_volatile");
   });
   ```
-  > 註:若 `external-ifc-ready.test.ts` 無現成進件 helper,直接在本 it 內用 `request(app.app).post("/api/external/ifc-ready").set({ "X-Webhook-Secret": "dev-webhook-secret", "X-Correlation-Id": "corr_reconcile", "X-Idempotency-Key": "idem_proj_reconcile" }).send(CONTRACT_EXAMPLE)`(CONTRACT_EXAMPLE 讀法見 `tests/presigned-ref.test.ts:56`)。
+  > 註:`request`/`makeApp`/`payload`/`authHeaders`/`CONTRACT` 皆本檔既有 import/宣告(L7-9、L46-70),本 it 不需新增任何 import。**勿**用 `postIfcReady`(此名不存在於本檔;唯一同名者在別 repo 的 `web-viewer-sample/e2e/conversion-artifact-id-sanitize.spec.ts:225`,簽章 `postIfcReady(api, {...})` 為 Playwright 風格、不相容)或 `CONTRACT_EXAMPLE`(本檔固定 fixture 名為 `CONTRACT.example`,由 `payload()` 消費,見 L18-21、L60-62);亦**勿**引用 `app.app` 而不先 `const app = makeApp()`。
 - [ ] 跑,確認**失敗**(欄位未投影):
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign/bim-review-coordinator && npx vitest run tests/external-ifc-ready.test.ts 2>&1 | tail -20
@@ -247,11 +254,17 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
       data_volatility: "in_memory_volatile" as const,
     });
   ```
-- [ ] 跑,確認新 it **通過**且既有 `external-ifc-ready` / `presigned-ref` / `lifecycle-status` 全綠(遮蔽不回退):
+- [ ] **翻轉既有 stale guard(findings #2/#4:必然且正確的紅,非 regression)**:`tests/external-ifc-ready.test.ts` 測試 "lists recent IFC-ready jobs with dashboard-safe progress fields" 的 L343 現為 `expect(listed.body.items[0]).not.toHaveProperty("idempotency_key");`——上兩步投影後此欄必然出現、該斷言由綠翻紅。這正是 must_fix #4 要移除的過時 guard,MUST 翻轉為正向投影鎖(該測試 `items[0]` = 第二筆 job,其 header `X-Idempotency-Key: "idem_list_002"`,見 L315)。把該行改為:
+  ```ts
+    // ifc-ready-api-field-redesign:must_fix #4 對帳鍵已投影到列表出口,翻轉過時「不得有」guard 為正向鎖。
+    expect(listed.body.items[0]).toHaveProperty("idempotency_key", "idem_list_002");
+  ```
+  > **只改 L343 這一行**;**保留** L344 `expect(listed.body.items[0]).not.toHaveProperty("callback_url");`(本 Task 不投影 callback_url,該 guard 仍有效,勿動)。
+- [ ] 跑,確認新 it **通過**且既有 `external-ifc-ready`(**含上一步已翻轉的 L343 斷言**)/ `presigned-ref` / `lifecycle-status` 全綠(遮蔽不回退):
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign/bim-review-coordinator && npx vitest run tests/external-ifc-ready.test.ts tests/presigned-ref.test.ts tests/lifecycle-status.test.ts 2>&1 | tail -20
   ```
-  預期:三檔全 passed。
+  預期:三檔全 passed(L343 因上一步翻轉為正向斷言而綠;若忘了翻轉此檔會紅——那是預期的過時 guard,依上一步修正,**非 regression、勿 revert 功能**)。
 - [ ] tsc + 全測試(確認無型別破壞):
   ```bash
   cd C:/Repos/active/iot/AI-BIM-governance/.worktrees/ifc-ready-api-field-redesign/bim-review-coordinator && npm run build 2>&1 | tail -5 && npm test 2>&1 | tail -15
@@ -520,4 +533,5 @@ spec §5 明訂「無綁定點的欄位不加(YAGNI,避免重演 tenant_id 吐�
 - [ ] `summarizeIfcReadyJob` 列表出口投影 `idempotency_key`(must_fix #4:三視圖可 join),既有 26 欄逐字保留、presigned 遮蔽守衛測試不回退(must_fix #1)。
 - [ ] `#/conv` Ifc-ready jobs 表 render 對帳鍵 + lifecycle chip + 誠實 usdc/failure,且 delta 表承諾的 `idempotent_replay`(誠實標記)與 `data_volatility`(易失性標記)皆有實際 render + 單元斷言(不得只擴型別/fixture 卻無 UI 消費——重演「吐了但前端看不到」)。
 - [ ] ledger records 表補 `idempotency_key` 可見錨點(testid `conv-ledger-idem-*`);E2E 以此錨點(非 failed-only 的 `conv-ledger-trigger-*`)定位 ledger 列,並斷言 jobs 格與 ledger 格字串**相等**佐證跨表對帳一致、無假 ready(誠實鐵律)。
-- [ ] 回報:改了哪些 tracked files、跑了哪些驗證、哪些沒跑及原因、已知風險(見「明確排除」的 OQ3/OQ4/OQ7 與 Group-B wiring 未做;openspec live-spec 兩層殘留交 OpenSpec archive 生命週期,見 Task 4 governance 段)。
+- [ ] **P0 must_fix #1 未竟出口裁決(比照 OQ1「上呈裁決後再結案」,非僅回報風險)**:callback outbox → 外部雲端 payload(`app.ts:1831` `source_ifc:{ ref: job.source_ifc_ref }`)仍夾帶原始 presigned ref、未套 `maskPresignedRef`;spec §0 / §8.3 明列此 callback context 為 P0 必遮出口。本 plan 不動此 internal 出口(見「明確排除」OQ3),但**收尾前 MUST 取得使用者/維護者對「遮蔽此出口 vs 保留 carve-out(外部雲端 consumer 是否依賴 presigned 直接 GET 下載)」的裁決**;取得裁決前,must_fix #1『全出口遮蔽』**不得宣稱完成**(「現況盤點」表已標 ⚠️)。不可僅在最終報告一句帶過當已知風險。
+- [ ] 回報:改了哪些 tracked files、跑了哪些驗證、哪些沒跑及原因、已知風險(見「明確排除」的 OQ3/OQ4/OQ7 與 Group-B wiring 未做;openspec live-spec 兩層殘留交 OpenSpec archive 生命週期,見 Task 4 governance 段;P0 callback outbox 出口 app.ts:1831 未遮蔽須裁決,見上一條)。
