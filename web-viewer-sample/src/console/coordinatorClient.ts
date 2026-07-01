@@ -315,9 +315,21 @@ export interface MinioFolderListing {
   folders: MinioFolderNode[];
   objects: MinioObject[];
   count: number;
+  cache?: {
+    hit: boolean;
+    stale: boolean;
+    fetched_at: string;
+  };
   // MinIO 未設定分支（app.ts:1296-1309）回 200 + note；已設定分支不帶此欄。前端據以區分 empty 態
   // (a) 未設定 vs (b) 已設定但當前 prefix 無物件。optional 對齊 wire shape，免消費端防禦性 cast。
   note?: string;
+}
+
+export interface MinioChangeEvent {
+  type: "minio.changed";
+  prefixes: string[];
+  reason?: string;
+  at: string;
 }
 
 // Task 6：POST /api/conversion/trigger 回應形狀。
@@ -391,9 +403,11 @@ export const coordinatorClient = {
   // 回 MinioFolderListing（folders = CommonPrefixes，objects = 當層直屬物件）。
   // prefix 可省略（頂層 list）；有值時 encodeURIComponent 防注入。
   // 注意：delimiter=/ 必須 encodeURIComponent → %2F，否則部分 proxy/framework 解析異常。
-  getMinioFolder: (prefix?: string): Promise<MinioFolderListing> => {
+  minioEventsUrl: () => `${COORD_BASE}/api/minio/events`,
+  getMinioFolder: (prefix?: string, options?: { refresh?: boolean }): Promise<MinioFolderListing> => {
     const params = new URLSearchParams({ delimiter: "/" });
     if (prefix) params.set("prefix", prefix);
+    if (options?.refresh) params.set("refresh", "1");
     return jsonGet<MinioFolderListing>(`/api/minio/objects?${params.toString()}`);
   },
   // A1（B2）：操作員手動把 MinIO 物件排入 IFC→USD 轉檔（POST /api/conversion/trigger {key}）。

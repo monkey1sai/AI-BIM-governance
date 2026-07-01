@@ -150,6 +150,15 @@ export interface MinioWatcherOptions {
   // 必填（非 optional）：production app.ts 恆注入；已移除舊「省略時回落 baseline」legacy fallback
   // 分支（P5 f2：該分支 production 不走、零測試、與 spec『移除首輪 baseline 特例』字面矛盾）。
   isLedgered: (idkey: string) => boolean;
+  // 可選 dirty signal：watcher 第一次看到某個 (key, etag) 時通知上層，供 MinIO folder cache
+  // 做 prefix invalidation / SSE；不承載 presigned URL 或 credentials。
+  onObjectObserved?: (event: {
+    bucket: string;
+    key: string;
+    etag: string;
+    idempotency_key: string;
+    at: string;
+  }) => void;
   structLog: WatcherLogger;
 }
 
@@ -238,6 +247,7 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
   });
 
   const seen = new Map<string, string>(); // key → etag（單輪/跨輪快取；§3.4 權威去重以持久 ledger 為準）
+  const observed = new Map<string, string>(); // key → etag（dirty signal 去重；不影響 intake 重試語意）
   // §3.4 auto-enroll：ledger 去重（isLedgered 必填）。移除「首輪 baseline 不觸發」特例，每個物件
   // （含首輪）依 !isLedgered(idkey) 決定觸發；既有未轉檔自動補轉、重啟命中 ledger 不重觸發。
   const isLedgered = opts.isLedgered;
@@ -406,6 +416,16 @@ export function startMinioWatcher(opts: MinioWatcherOptions): MinioWatcherHandle
       for (const o of objects) {
         if (seen.get(o.key) === o.etag) continue; // 本實例已處理過此 (key,etag)
         const idkey = idempotencyKeyFor(opts.bucket, o.key, o.etag);
+        if (observed.get(o.key) !== o.etag) {
+          observed.set(o.key, o.etag);
+          opts.onObjectObserved?.({
+            bucket: opts.bucket,
+            key: o.key,
+            etag: stripEtagQuotes(o.etag),
+            idempotency_key: idkey,
+            at: new Date().toISOString(),
+          });
+        }
         if (isLedgered(idkey)) {
           // 持久 ledger 已有紀錄（含重啟前已落帳、或他途已觸發）→ skip 並入快取，避免每輪重查。
           seen.set(o.key, o.etag);

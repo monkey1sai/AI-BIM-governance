@@ -1496,19 +1496,66 @@ export function MinioDataPage() {
   const [pendingKey, setPendingKey] = useState<string | null>(null); // intent→confirm
   const [triggerErr, setTriggerErr] = useState<string | null>(null);
   const [triggerBusy, setTriggerBusy] = useState(false); // confirm 進行中（IntentDialog busy）
+  const folderCacheRef = useRef(new Map<string, import("./coordinatorClient").MinioFolderListing>());
+  const [stalePrefixes, setStalePrefixes] = useState<Set<string>>(() => new Set());
 
-  const load = useCallback(async (p: string) => {
+  const load = useCallback(async (p: string, options?: { refresh?: boolean }) => {
+    if (!options?.refresh) {
+      const cached = folderCacheRef.current.get(p);
+      if (cached) {
+        setFolder(cached);
+        setErr(null);
+        setLoading(false);
+        return;
+      }
+    }
     setLoading(true);
     setErr(null);
     try {
-      const res = await coordinatorClient.getMinioFolder(p);
+      const res = options?.refresh
+        ? await coordinatorClient.getMinioFolder(p, { refresh: true })
+        : await coordinatorClient.getMinioFolder(p);
+      folderCacheRef.current.set(p, res);
       setFolder(res);
+      setStalePrefixes((prev) => {
+        if (!prev.has(p)) return prev;
+        const next = new Set(prev);
+        next.delete(p);
+        return next;
+      });
     } catch (e) {
       setErr(String(e));
     } finally {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return undefined;
+    const source = new EventSource(coordinatorClient.minioEventsUrl());
+    const onChanged = (event: Event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data) as import("./coordinatorClient").MinioChangeEvent;
+        if (!Array.isArray(payload.prefixes)) return;
+        const prefixes = payload.prefixes.filter((p): p is string => typeof p === "string");
+        for (const p of prefixes) folderCacheRef.current.delete(p);
+        if (prefixes.length === 0) return;
+        setStalePrefixes((prev) => {
+          const next = new Set(prev);
+          for (const p of prefixes) next.add(p);
+          return next;
+        });
+      } catch {
+        // SSE dirty signal 是 best-effort；payload 壞掉時保留現有畫面，手動 refresh 仍可取真實 list。
+      }
+    };
+    source.addEventListener("minio.changed", onChanged);
+    return () => {
+      source.removeEventListener("minio.changed", onChanged);
+      source.close();
+    };
+  }, []);
+
   const loadRecords = useCallback(async () => {
     try {
       // quality finding Important #1：取後端 parseListLimit 允許的上限（100；請求更大值會被夾到 100）。
@@ -1537,12 +1584,17 @@ export function MinioDataPage() {
     const idx = trimmed.lastIndexOf("/");
     setPrefix(idx >= 0 ? trimmed.slice(0, idx + 1) : "");
   };
+  const refreshCurrent = () => {
+    folderCacheRef.current.delete(prefix);
+    void load(prefix, { refresh: true });
+  };
   // folders 為 Array<{ prefix; has_source_ifc }>；對中文使用者以 localeCompare('zh-TW') 重排（spec §2.1 中文排序）。
   const sortedFolders = folder ? [...folder.folders].sort((a, b) => a.prefix.localeCompare(b.prefix, "zh-TW")) : [];
   // empty 態 (b)：已設定但當前層無物件（無 note）。empty 態 (a)＝後端回 note（未設定）。
   const showFolderEmpty = !!folder && folder.folders.length === 0 && folder.objects.length === 0;
   // folder 回應的 note（後端未設定時回 200 + note；MinioFolderListing.note? 已對齊 wire shape）。
   const folderNote = folder?.note;
+  const currentPrefixStale = stalePrefixes.has(prefix);
 
   // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
   // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy
@@ -1584,7 +1636,28 @@ export function MinioDataPage() {
             <Btn data-testid="minio-go-up" caption="prefix --" onClick={() => goUp()}>{t("⬑ 上一層", "⬑ Up")}</Btn>
           ) : null}
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, opacity: 0.7 }}>{prefix || "/"}</span>
+          <Btn data-testid="minio-refresh" caption="GET /api/minio/objects?refresh=1" onClick={refreshCurrent}>
+            {t("重新整理", "Refresh")}
+          </Btn>
+          {folder?.cache ? (
+            <span data-testid="minio-cache-state" className="ec-note">
+              {folder.cache.hit ? t("cache hit", "cache hit") : t("live list", "live list")}
+            </span>
+          ) : null}
         </div>
+
+        {currentPrefixStale ? (
+          <div
+            data-testid="minio-stale-note"
+            className="ec-warn-note"
+            style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}
+          >
+            <span>{t("MinIO 監控偵測到此層可能有新變更。", "MinIO watcher detected possible changes in this level.")}</span>
+            <Btn data-testid="minio-stale-refresh" caption="GET /api/minio/objects?refresh=1" onClick={refreshCurrent}>
+              {t("重新整理", "Refresh")}
+            </Btn>
+          </div>
+        ) : null}
 
         {loading ? (
           <p className="ec-note">{t("載入中…（GET /api/minio/objects）", "Loading… (GET /api/minio/objects)")}</p>
@@ -1592,7 +1665,7 @@ export function MinioDataPage() {
           // error 態：誠實顯原因 + 可重試（不假裝有資料）。
           <div className="ec-warn-note" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <span>{t("讀取 MinIO 失敗：", "Failed to read MinIO: ")}{err}</span>
-            <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => { void load(prefix); }}>
+            <Btn data-testid="minio-tree-retry" caption="GET /api/minio/objects" onClick={() => { void load(prefix, { refresh: true }); }}>
               {t("重試", "Retry")}
             </Btn>
           </div>
