@@ -8,7 +8,11 @@ export function deriveLifecycleStatus(job: IfcReadyIntakeJob): ConversionLedgerS
     job.status === "failed" ||
     job.status === "dispatch_failed" ||
     job.status === "dropped_on_restart" ||
-    job.download_status === "failed"
+    job.download_status === "failed" ||
+    // lifecycle-conversion-failed:轉檔權威回報失敗時 recordConversionOutcome 只改 conversion_status,
+    // job.status 仍為 markDispatched 設的 "dispatched"。若不在此最高優先 failed 判斷收斂,會短路回
+    // "converting" 與同 job 的 failure_stage="conversion" 自相矛盾,前端輪詢永遠卡等看不到失敗。
+    job.conversion_status === "failed"
   ) {
     return "failed";
   }
