@@ -697,6 +697,12 @@ describe("ConversionSchedulingPage 控制動作（插隊／重試）", () => {
     expect(idemCell?.textContent).toContain("mw_abc123def4567890");
     const chip = container.querySelector('[data-testid="conv-job-lifecycle-ifcready_reconcile"]');
     expect(chip?.textContent).toContain("排隊"); // queued 的中文 chip
+    // gap#2 迴歸守衛：lifecycle chip 必須重用「有實際 CSS 規則」的 provenance chip 樣式
+    //（.ec-prov + PROV_CLASS，見 edge-console.css:77-90，與 ledger 表 L1178 同一套），
+    // 不得用全 CSS 檔皆無對應規則的 .ec-chip（瀏覽器會渲成無樣式純文字、與周圍表格文字無視覺
+    // 區別，違反 task「lifecycle chip」與「三視圖可視覺對齊」的 user-facing 目的）。
+    expect(chip?.className).toContain("ec-prov");
+    expect(chip?.className).not.toContain("ec-chip");
     const usdc = container.querySelector('[data-testid="conv-job-usdc-ifcready_reconcile"]');
     expect(usdc?.textContent).toContain("待產生"); // pending 誠實標籤,禁顯 parsed
     // idempotent_replay 綁定落地(fixture false → 顯「新建」)。

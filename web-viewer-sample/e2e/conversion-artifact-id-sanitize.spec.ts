@@ -305,15 +305,18 @@ test.describe("中文 model_version_id 派工修復 + dispatch_error 可見（ST
       const table = page.locator("table.ec-table");
       await expect(table).toBeVisible({ timeout: 20_000 });
 
-      // 4) 中文 id 的 job：dispatch 欄（td.nth(3)）不得是 dispatch_failed 的 error；conversion 欄（td.nth(2)）為 queued。
+      // 4) 中文 id 的 job：失敗欄（testid conv-job-failure-*）不得有 dispatch_failed 的 error；conversion 欄（td.nth(5)）為 queued。
+      //    task#3 後表頭欄序：job / key / lifecycle / project / usdc / conversion / dispatch / session / stage / coverage / control，
+      //    故 conversion 欄由 nth(2) 位移到 nth(5)；失敗訊息 testid 亦由 conv-dispatch-error-* 更名為 conv-job-failure-*（統一 failure 投影）。
       const cjkRow = rowOf(page, cjkJobId);
       await expect(cjkRow).toBeVisible({ timeout: 20_000 });
-      // 中文 id job 不應有 dispatch-error 節點（沒被 conversion 端 400 擋下）。
-      await expect(page.getByTestId(`conv-dispatch-error-${cjkJobId}`)).toHaveCount(0);
-      await expect(cjkRow.locator("td").nth(2)).toHaveText("queued");
+      // 中文 id job 不應有 failure 節點（沒被 conversion 端 400 擋下；成功時該格渲 "—"、不掛 testid）。
+      await expect(page.getByTestId(`conv-job-failure-${cjkJobId}`)).toHaveCount(0);
+      await expect(cjkRow.locator("td").nth(5)).toHaveText("queued");
 
-      // 5) 必失敗 job：dispatch_error 節點可見，title 含完整錯誤字串（明細可見）。
-      const failError = page.getByTestId(`conv-dispatch-error-${failJobId}`);
+      // 5) 必失敗 job：failure 節點可見，title 含完整錯誤字串（明細可見）。
+      //    deriveFailure 把 status=dispatch_failed 投影成 failure_reason=dispatch_error（含 "400"）、failure_stage="dispatch"。
+      const failError = page.getByTestId(`conv-job-failure-${failJobId}`);
       await expect(failError).toBeVisible({ timeout: 20_000 });
       await expect(failError).toHaveAttribute("title", /400/);
 

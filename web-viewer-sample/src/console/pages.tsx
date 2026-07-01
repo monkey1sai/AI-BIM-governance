@@ -1223,9 +1223,13 @@ export function ConversionSchedulingPage() {
                     <span data-testid={`conv-job-volatility-${j.ifc_ready_job_id}`} className="ec-note">{j.data_volatility === "persisted" ? t("持久", "persisted") : t("易失·重啟即清", "volatile")}</span>
                   </td>
                   <td>
+                    {/* lifecycle chip 重用 ledger 表（L1178）同一套 provenance chip 樣式：
+                        .ec-prov（padding/border/圓點，edge-console.css:77-90）+ PROV_CLASS
+                        以 LEDGER_STATUS_PROV 上色（queued/detected/converting→cyan、ready→green、
+                        failed→red），使 job↔ledger↔minio 三視圖狀態徽章視覺對齊。 */}
                     <span
                       data-testid={`conv-job-lifecycle-${j.ifc_ready_job_id}`}
-                      className={`ec-chip ec-chip-${j.conversion_lifecycle_status ?? "unknown"}`}
+                      className={`ec-prov ${PROV_CLASS[LEDGER_STATUS_PROV[j.conversion_lifecycle_status ?? ""] ?? "artifact"]}`}
                     >{lifecycleLabel(j.conversion_lifecycle_status)}</span>
                   </td>
                   <td data-testid={`conv-job-project-${j.ifc_ready_job_id}`}>
