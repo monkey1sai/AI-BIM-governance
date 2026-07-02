@@ -4,6 +4,8 @@
 
 # Repo Boundary Detail
 
+> wiki / Source of Truth 規範見 root `AGENTS.md` §3；本檔不再重複維護。
+
 `AI-BIM-governance/` workspace 的完整 repo 邊界、資料流動、互動方式與禁止跨界規則。AGENTS.md 主檔只保留一句話摘要與 mermaid 入口；本檔承擔完整細節。
 
 ---
@@ -90,22 +92,7 @@ tests/fakes/
 
 ### 落地方式與衝突管理（重點）
 
-```txt
-- 程式碼層（退役/收斂 _worker、_bim-control；改寫 §10 閉環；
-  收斂啟動腳本；把 webhook 來源改為外部客戶落地端 IFC Worker；
-  調整相關 specs）已由 OpenSpec change
-  `local-coordinator-ifc-ready-intake-boundary` / PR #63 落地。
-- [2026-05-18 更新] predecessor change introduce-ai-bim-runtime-manager-docker-kit-mvp
-  已 merged（PR #59 / mergeCommit 55a9703）並 archived
-  （openspec/changes/archive/2026-05-18-introduce-ai-bim-runtime-manager-docker-kit-mvp/，
-   新 capability runtime-manager-docker-kit-mvp 已 sync 進 openspec/specs/）。
-  NoSuccessorWhilePredecessorOpen gate 已清除：
-  Phase B 程式碼層 change 可從 synced main 開
-  codex/openspec/external-platform-webhook-intake-boundary 升格實作
-  （草稿已升格並 archived，見 openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/）。
-- 歷史 `_worker` / `_bim-control` 文件若尚未完全移除，僅保留作 archive context；
-  `tests/fakes` 與 `tests/contracts` 才是外部平台模擬入口，非 runtime profile。
-```
+完整 OpenSpec change 執行紀錄（PR #63 / PR #59 / mergeCommit 55a9703 / archive 路徑）已遷至 `docs/agents/history-and-archive.md` §3.7。
 
 > **[2026-05-18 修訂｜依 `planB.txt`]** 本決策已細化（取代上方「降級為 fake / offline profile」字面）：(1) `_worker` / `_bim-control` **自 repo 刪除**（非降級保留），測試改 `tests/fakes` + contract fixtures；(2) 對外 intake 收斂於 **`bim-review-coordinator`**（`POST /api/external/ifc-ready`），`bim-streaming-server` 僅 internal conversion engine；(3) webhook caller = 客戶落地端 IFC Worker（落地端內網，非公司測試機直連）；(4) 新增**雲端 callback outbox**（metadata-only，禁傳 `.usdc` 大檔）；(5) 公司雲端=control-plane / 本 repo=客戶落地端 data-plane 權威切分；(6) change-id `local-coordinator-ifc-ready-intake-boundary` 已於 PR #63 apply。完整方案見 archived OpenSpec change `openspec/changes/archive/2026-05-18-local-coordinator-ifc-ready-intake-boundary/`。**§10/§11 為現行閉環；其他歷史段落若與本決策衝突，以本節與 §10/§11 為準。**
 
@@ -386,30 +373,7 @@ Operator-facing Kit 機隊管理：`kit-manager-api`（FastAPI `:8010`）掌 Kit
 
 ## 5.1 Artifact Discovery Flow
 
-```mermaid
-sequenceDiagram
-    participant WV as web-viewer-sample
-    participant CO as bim-review-coordinator
-    participant BC as _bim-control
-    participant WK as _worker
-    participant KIT as bim-streaming-server
-
-    WV->>CO: Request review session / model version
-    CO->>BC: Query project / model version / artifact metadata
-    CO->>BC: Query conversion authority / readiness metadata
-    BC-->>CO: Return artifact metadata + streaming-owned conversion status
-    CO-->>WV: Return session info + stream config + artifact bindings
-```
-
-### 邊界說明
-
-```txt
-web-viewer-sample 不直接決定模型資料權威。
-bim-review-coordinator 負責協調查詢。
-_bim-control 決定哪個 artifact 屬於哪個 model version。
-_worker 是 RVT→IFC handoff 邊界。
-bim-streaming-server 是 IFC→USDC conversion job 與 derived artifact readiness 邊界。
-```
+> **退役狀態**：本節描述的『web-viewer-sample 請求 session → bim-review-coordinator 同步查詢 _bim-control 取得 artifact / conversion 狀態』流程已被 B 方案（_bim-control 已刪除、對外 intake 收斂於 coordinator webhook + 雲端 metadata-only callback outbox，見 §1.A / §10）取代。完整歷史 mermaid 與邊界說明遷至 `docs/agents/history-and-archive.md` §3.4。現行等效資訊見 §10 Workspace 最重要閉環。
 
 ---
 
@@ -473,27 +437,7 @@ Scene interaction 是 browser client 與 Kit runtime 之間的 DataChannel JSON 
 > 收斂為「全螢幕 stream + 邊框 HUD」,不含多人協作 UI。若未來重新引入,以新
 > spec 變更新增 requirement 與 viewer slot。
 
-```mermaid
-sequenceDiagram
-    participant WV1 as web-viewer-sample User A
-    participant CO as bim-review-coordinator
-    participant WV2 as web-viewer-sample User B
-    participant BC as _bim-control
-
-    WV1->>CO: selection:update / issue:focus / annotation:add
-    CO->>WV2: broadcast collaboration event
-    CO->>BC: persist fake annotation or review event if needed
-    BC-->>CO: saved metadata
-```
-
-### 邊界說明
-
-```txt
-多人協作事件由 bim-review-coordinator 作為中心。
-web-viewer-sample 發出使用者互動事件。
-_bim-control 只保存需要成為審查資料的 metadata。
-bim-streaming-server 不作為多人協作事件中心。
-```
+完整歷史 mermaid 與邊界說明遷至 `docs/agents/history-and-archive.md` §3.4。
 
 ---
 
@@ -506,28 +450,7 @@ bim-streaming-server 不作為多人協作事件中心。
 > 本身保留作 mapping highlight 工具(Window.tsx `_onMappingItemClick`),Change 2
 > 重做 viewer 時再評估。若 issue 流要重新引入,以新 spec 變更新增。
 
-```mermaid
-sequenceDiagram
-    participant BC as _bim-control
-    participant CO as bim-review-coordinator
-    participant WV as web-viewer-sample
-    participant KIT as bim-streaming-server
-
-    CO->>BC: Query review issues / results
-    BC-->>CO: Return issues with usd_prim_path
-    CO-->>WV: Return review issue list
-    WV->>KIT: DataChannel highlightPrimsRequest { usd_prim_path }
-    KIT-->>WV: highlightPrimsResult
-```
-
-### 邊界說明
-
-```txt
-Review issue metadata 由 _bim-control 提供。
-Issue 的 3D 視覺化由 bim-streaming-server 處理。
-web-viewer-sample 只是把使用者操作轉成 DataChannel command。
-bim-review-coordinator 負責把 session 與 review metadata 串起來。
-```
+完整歷史 mermaid 與邊界說明遷至 `docs/agents/history-and-archive.md` §3.4。
 
 ---
 
@@ -536,13 +459,12 @@ bim-review-coordinator 負責把 session 與 review metadata 串起來。
 | 通訊方式 | 起點 | 終點 | 用途 |
 |---|---|---|---|
 | REST | `web-viewer-sample` | `bim-review-coordinator` | 建立 session、查詢 session、取得 stream config |
-| REST | `bim-review-coordinator` | `_bim-control` | 查詢 project / version / artifact / issue / annotation metadata |
-| REST | `web-viewer-sample` / `bim-review-coordinator` | `_worker` | 建立 source artifact、conversion job、查詢 artifact group readiness |
-| REST / Static file | `_bim-control` 或 `bim-streaming-server` | `_worker` | 取得 current flow object URL |
 | WebRTC video | `bim-streaming-server` | `web-viewer-sample` | 串流 Omniverse viewport 畫面 |
 | WebRTC DataChannel JSON | `web-viewer-sample` | `bim-streaming-server` | open stage、selection、highlight、scene query |
 | WebSocket / Socket.IO | `web-viewer-sample` | `bim-review-coordinator` | presence、selection、annotation、issue focus 等多人事件 |
 | Optional WebSocket | `bim-streaming-server` | `bim-review-coordinator` | Kit runtime 接收多人狀態 overlay，不作為主要資料權威 |
+
+歷史內部通訊列（涉及已刪除 `_bim-control` / `_worker`）遷至 `docs/agents/history-and-archive.md` §3.5。
 
 ---
 
@@ -554,17 +476,7 @@ bim-review-coordinator 負責把 session 與 review metadata 串起來。
 IFC / RVT / DWG = 原始模型資料
 ```
 
-RVT source / signed reference 的版本與專案關聯屬於：
-
-```txt
-_bim-control
-```
-
-RVT→IFC bridge 的檔案與 handoff lineage 屬於：
-
-```txt
-_worker
-```
+原始模型資料的權威屬外部既有平台（公司雲端 SSO/MySQL 控制面 + 客戶落地端 IFC Worker/Revit），不在本 repo 開發範圍內（見 §1.A）。歷史上曾由 repo 內部 `_bim-control`（RVT source / signed reference 版本關聯）與 `_worker`（RVT→IFC bridge / handoff lineage）分工，兩者已刪除；完整歷史敘述見 `docs/agents/history-and-archive.md` §3.6。
 
 ---
 
@@ -598,7 +510,7 @@ IFC GUID ↔ USD Prim Path
 
 ```txt
 mapping file body      → bim-streaming-server
-mapping metadata       → _bim-control
+mapping metadata       → 外部公司雲端 bim-control（經 coordinator metadata-only callback outbox，非本 repo 內部服務）
 mapping runtime usage  → web-viewer-sample / bim-streaming-server
 ```
 
@@ -613,33 +525,7 @@ mapping runtime usage  → web-viewer-sample / bim-streaming-server
 > 劃分。若 review 流要重新引入,以新 spec 變更新增 requirement 與
 > coordinator / viewer 端配套。
 
-```txt
-issue / annotation / review result
-```
-
-其資料權威是：
-
-```txt
-_bim-control
-```
-
-其多人事件流由：
-
-```txt
-bim-review-coordinator
-```
-
-其 3D runtime 顯示由：
-
-```txt
-bim-streaming-server
-```
-
-其使用者操作入口由：
-
-```txt
-web-viewer-sample
-```
+完整歷史 ownership 拆解遷至 `docs/agents/history-and-archive.md` §3.4。
 
 ---
 
@@ -679,24 +565,11 @@ web-viewer-sample
 
 ## 8.4 `_bim-control` 不應做的事
 
-```txt
-- 不做 Omniverse rendering
-- 不做 WebRTC streaming
-- 不做 GPU runtime 管理
-- 不直接操作 USD stage
-- 不保存大型 binary file body
-```
+已刪除服務，語意等同規則已在 `docs/agents/history-and-archive.md` §3.1「它不負責」清單中逐項涵蓋，不重複維護。
 
 ## 8.5 `_worker` 不應做的事
 
-```txt
-- 不保存 project / issue / annotation 的資料權威
-- 不管理 review session lifecycle
-- 不分配 GPU 或管理 Kit runtime
-- 不直接操作 USD stage
-- 不作為多人協作事件中心
-- 不取代 web-viewer-sample 成為 UI
-```
+已刪除服務；規則清單（含 §3.3 未涵蓋的 GPU 分配 / USD stage 操作 / 多人協作事件中心 3 條）已遷至 `docs/agents/history-and-archive.md` §3.6。
 
 ---
 
@@ -792,26 +665,3 @@ session / collaboration 歸 coordinator
 使用者操作歸 web viewer
 外部平台模擬只在 tests/，不得進 runtime
 ```
-
----
-
-## 12. AI Agent Wiki 使用規範
-
-這些文件提供 AI agent 在陌生模組探索時的快速上下文，目的是縮短定位時間，不取代程式碼與 API contract。
-
-Generated wiki（跨文件知識圖）
-
-入口：README.md
-用途：快速理解跨 repo 概念關聯、名詞對照、文件連結關係。
-適用時機：需求探索、架構導覽、影響面初步盤點。
-限制：不得作為行為正確性的唯一依據，最終以程式碼與 contracts 為準。
-Source of Truth 優先順序
-
-程式碼實作
-contracts 文件
-AGENTS 邊界定義
-generated wiki
-維護規範
-
-若發現 wiki 與實作不一致，先以實作為準，並補更新 wiki。
-重大流程變更（API、事件、資料流）合併前應同步更新對應 wiki 入口頁。
