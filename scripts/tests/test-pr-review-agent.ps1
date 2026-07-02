@@ -181,6 +181,40 @@ try {
     Remove-Item -LiteralPath $tempCleanupGit -Recurse -Force
 }
 
+# Test 3c: Tracked tooling-mirror modifications downgrade to warning; new additions still block.
+$tempMirrorGit = Join-Path ([System.IO.Path]::GetTempPath()) "pr-review-agent-mirror-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $tempMirrorGit -Force | Out-Null
+Push-Location $tempMirrorGit
+try {
+    git init -q
+    git config user.email 'pr-review-agent@example.invalid'
+    git config user.name 'PR Review Agent Test'
+    New-Item -ItemType Directory -Path '.codex/skills/spec-to-done' -Force | Out-Null
+    Set-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Value 'adapter v1' -Encoding UTF8
+    git add -f '.codex/skills/spec-to-done/SKILL.md'
+    git commit -q -m 'base: tracked adapter mirror'
+    $mirrorBaseSha = (git rev-parse HEAD).Trim()
+    Set-Content -LiteralPath '.codex/skills/spec-to-done/SKILL.md' -Value 'adapter v2' -Encoding UTF8
+    New-Item -ItemType Directory -Path '.codex/skills/brand-new' -Force | Out-Null
+    Set-Content -LiteralPath '.codex/skills/brand-new/SKILL.md' -Value 'new generated dump' -Encoding UTF8
+    git add -f -A
+    git commit -q -m 'modify tracked adapter + add new skill'
+    $mirrorHeadSha = (git rev-parse HEAD).Trim()
+    $mirrorPaths = @('.codex/skills/spec-to-done/SKILL.md', '.codex/skills/brand-new/SKILL.md')
+    $mirrorGuards = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit -BaseSha $mirrorBaseSha -HeadSha $mirrorHeadSha
+    $mirrorModified = @($mirrorGuards.warnings | Where-Object { $_.kind -eq 'generated_tooling_path_modified' })
+    $mirrorBlocked = @($mirrorGuards.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })
+    Assert-True ($mirrorModified.Count -eq 1 -and $mirrorModified[0].path -eq '.codex/skills/spec-to-done/SKILL.md') 'tracked mirror modification downgrades to warning'
+    Assert-True ($mirrorBlocked.Count -eq 1 -and $mirrorBlocked[0].path -eq '.codex/skills/brand-new/SKILL.md') 'newly added tooling path still blocks'
+    # 無 Base/Head（本機模式）→ 無法判定 tracked 與否，兩條路徑都須保守維持 blocker。
+    $mirrorNoBase = Get-PrReviewPathGuardFindings -ChangedPaths $mirrorPaths -RepoRoot $tempMirrorGit
+    $mirrorNoBaseBlocked = @($mirrorNoBase.blockers | Where-Object { $_.kind -eq 'generated_tooling_path' })
+    Assert-True ($mirrorNoBaseBlocked.Count -eq 2) 'without base/head shas tooling paths fail closed as blockers'
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $tempMirrorGit -Recurse -Force
+}
+
 # Test 4: Retired runtime reintroduction is blocked.
 $out4 = New-TestOutputDir
 $result4 = Invoke-PrReviewAgent -RepoRoot $repoRoot `
