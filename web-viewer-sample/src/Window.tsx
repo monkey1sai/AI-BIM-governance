@@ -707,7 +707,11 @@ export default class App extends React.Component<AppProps, AppState> {
             lifecycleActive,
         });
         const canOperate = canHandleHighlight(inputs.panelState.canOperate);
-        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string };
+        const m = e.data as { type?: string; items?: unknown; ifc_guid?: string; token?: unknown };
+        if (m.type === "viewer_lease_token") {
+            reviewEnv.viewerLeaseToken = typeof m.token === "string" ? m.token : "";
+            return;
+        }
         switch (m.type) {
             case "highlight": {
                 if (!canOperate) return; // spectator / 未就緒靜默丟棄
@@ -976,8 +980,11 @@ export default class App extends React.Component<AppProps, AppState> {
         if (!harnessEnabled() && this.state.reviewSessionId) {
             void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(this.state.reviewSessionId)}/stage-binding`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ source_client_id: reviewEnv.defaultUserId, role: "primary", binding_revision_id: revisionId, primary_artifact_id: primary.artifact_id }),
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(reviewEnv.viewerLeaseToken ? { "X-Viewer-Lease-Token": reviewEnv.viewerLeaseToken } : {}),
+                },
+                body: JSON.stringify({ source_client_id: reviewEnv.sourceClientId, role: "primary", binding_revision_id: revisionId, primary_artifact_id: primary.artifact_id }),
             })
                 .then((r) => {
                     if (!r.ok) {

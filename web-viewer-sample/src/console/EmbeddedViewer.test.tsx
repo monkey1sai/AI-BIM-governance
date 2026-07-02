@@ -89,6 +89,55 @@ describe("EmbeddedViewer postMessage 橋", () => {
     expect(src).toContain("coordinatorSocketUrl=http%3A%2F%2F192.168.10.105%3A8004");
   });
 
+  it("iframe src 只帶 primary viewer lease identity，不把 token 放進 URL", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          streamRole="primary"
+          kitInstanceId="kit_local_001"
+          userId="a1_auto_primary"
+          displayName="A1 auto primary viewer"
+          sourceClientId="viewer_lease_primary"
+          viewerLeaseToken="lease_token_primary"
+        />,
+      );
+    });
+    const src = container.querySelector("iframe")!.getAttribute("src")!;
+    expect(src).toContain("session=review_session_abc");
+    expect(src).toContain("streamRole=primary");
+    expect(src).toContain("kitInstanceId=kit_local_001");
+    expect(src).toContain("userId=a1_auto_primary");
+    expect(src).toContain("displayName=A1+auto+primary+viewer");
+    expect(src).toContain("sourceClientId=viewer_lease_primary");
+    expect(src).not.toContain("viewerLeaseToken");
+    expect(src).not.toContain("lease_token_primary");
+  });
+
+  it("viewer_ready 後用 postMessage 傳 viewer lease token（targetOrigin 非 \"*\"）", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <EmbeddedViewer
+          sessionId="review_session_abc"
+          viewerOrigin={VIEWER_ORIGIN}
+          viewerLeaseToken="lease_token_primary"
+        />,
+      );
+    });
+    const iframeWin = container.querySelector("iframe")!.contentWindow!;
+    const postSpy = vi.spyOn(iframeWin, "postMessage");
+
+    fireMessage({ protocol: "vg01", type: "viewer_ready" }, VIEWER_ORIGIN, iframeWin);
+
+    expect(postSpy).toHaveBeenCalledWith(
+      { protocol: "vg01", type: "viewer_lease_token", token: "lease_token_primary" },
+      VIEWER_ORIGIN,
+    );
+  });
+
   it("缺 protocol 的 message 丟棄", async () => {
     const onSelectedGuid = vi.fn();
     root = createRoot(container);

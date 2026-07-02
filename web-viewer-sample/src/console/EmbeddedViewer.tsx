@@ -46,6 +46,12 @@ export interface EmbeddedViewerProps {
   // 真源 = coordinatorClient.runtimeStatus().configured_endpoints.coordinator.public_base_url。空值則省略該 query（沿用 viewer 既有 fallback）。
   coordinatorApiBase?: string | null;
   coordinatorSocketUrl?: string | null;
+  streamRole?: "primary" | "spectator";
+  kitInstanceId?: string | null;
+  userId?: string | null;
+  displayName?: string | null;
+  sourceClientId?: string | null;
+  viewerLeaseToken?: string | null;
   onViewerReady?: () => void;
   onFirstFrame?: (m: FirstFrameMessage) => void;
   onStageLoaded?: (stageUrl: string | null) => void;
@@ -62,6 +68,17 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   const propsRef = useRef(props);
   propsRef.current = props;
 
+  // viewer lease token 是 bearer secret：不得放 iframe URL query（history/referrer/log 皆會看見）。
+  // 只在受限 targetOrigin 的 postMessage 通道交給 iframe viewer；viewer 端仍以 parent origin 白名單驗證。
+  const post = (msg: Record<string, unknown>) =>
+    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, normalizeOrigin(propsRef.current.viewerOrigin)); // targetOrigin 非 "*"（normalize 同 listener）
+
+  const sendViewerLeaseToken = () => {
+    const p = propsRef.current;
+    if (!p.viewerLeaseToken) return;
+    post({ type: "viewer_lease_token", token: p.viewerLeaseToken });
+  };
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const p = propsRef.current;
@@ -70,7 +87,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
       const m = e.data as { protocol?: string; type?: string } | null;
       if (!m || m.protocol !== "vg01") return;                     // 協定版本 / 前向相容（未知忽略）
       switch (m.type) {
-        case "viewer_ready":     p.onViewerReady?.(); break; // 父元件以 onViewerReady callback 追蹤 ready（IX-A1-06）；元件不存內部死 state（避免無謂 re-render）
+        case "viewer_ready":     sendViewerLeaseToken(); p.onViewerReady?.(); break; // 父元件以 onViewerReady callback 追蹤 ready（IX-A1-06）；元件不存內部死 state（避免無謂 re-render）
         case "first_frame":      p.onFirstFrame?.(m as unknown as FirstFrameMessage); break;
         case "stage_loaded":     p.onStageLoaded?.((m as unknown as StageLoadedMessage).stageUrl); break;
         case "highlight_result": p.onHighlightResult?.(m as unknown as HighlightResultMessage); break;
@@ -82,11 +99,12 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     return () => window.removeEventListener("message", onMsg);
   }, []); // listener 只掛一次；最新 callback / origin 經 propsRef 讀取
 
+  useEffect(() => {
+    sendViewerLeaseToken();
+  }, [props.viewerLeaseToken, props.viewerOrigin]);
+
   // 送出側比照接收側：經 propsRef.current 讀最新 viewerOrigin，與 listener 同模式（避免兩側不對稱）。
   // handle 內 closure 不直接 close over render-scope props → useImperativeHandle dep 可為 []（zero re-create）。
-  const post = (msg: Record<string, unknown>) =>
-    iframeRef.current?.contentWindow?.postMessage({ protocol: "vg01", ...msg }, normalizeOrigin(propsRef.current.viewerOrigin)); // targetOrigin 非 "*"（normalize 同 listener）
-
   useImperativeHandle(ref, () => ({
     sendHighlight: (items) => post({ type: "highlight", items }),
     sendFocus: (ifcGuid) => post({ type: "focus", ifc_guid: ifcGuid }),
@@ -98,6 +116,11 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
     const params = new URLSearchParams({ session: props.sessionId });
     if (props.coordinatorApiBase) params.set("coordinatorApiBase", props.coordinatorApiBase);
     if (props.coordinatorSocketUrl) params.set("coordinatorSocketUrl", props.coordinatorSocketUrl);
+    if (props.streamRole) params.set("streamRole", props.streamRole);
+    if (props.kitInstanceId) params.set("kitInstanceId", props.kitInstanceId);
+    if (props.userId) params.set("userId", props.userId);
+    if (props.displayName) params.set("displayName", props.displayName);
+    if (props.sourceClientId) params.set("sourceClientId", props.sourceClientId);
     const base = props.viewerOrigin.replace(/\/+$/, "");
     return `${base}/?${params.toString()}`;
   };
@@ -106,6 +129,7 @@ export const EmbeddedViewer = forwardRef<EmbeddedViewerHandle, EmbeddedViewerPro
   //     （跨 origin <video> 自動播放，否則白頁）。viewer receive-only（AppStream mic:false）→ 不需 camera/microphone。
   return (
     <iframe ref={iframeRef} src={src} title="live-3d-viewer"
+      onLoad={sendViewerLeaseToken}
       sandbox="allow-scripts allow-same-origin" allow="autoplay"
       style={{ width: "100%", height: "100%", minHeight: 480, border: "1px solid #2a2f3a", background: "#000" }} />
   );
