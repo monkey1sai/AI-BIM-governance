@@ -1,6 +1,6 @@
 # AI-BIM-Governance — 開發軌跡 · A1–A10 工程規格 · 執行計畫
 
-> 版本：v3.1 · 2026-06-10 初版 · **2026-06-11 勘誤**（route hash 無斜線、BCF 現行 2.1、版本層已落地、governance 經 proxy——實測依據見《ai-bim-governance-互動實作規格與標準對齊.md》PART A）
+> 版本：v3.2 · 2026-06-10 初版 · **2026-07-02 A1 v2 對齊**（D10：選檔雙來源／BCF 審查面板／A1 連動橋；只改 A1、M1、D、O 相關節）· **2026-06-11 勘誤**（route hash 無斜線、BCF 現行 2.1、版本層已落地、governance 經 proxy——實測依據見《ai-bim-governance-互動實作規格與標準對齊.md》PART A）
 > 配套檔案：`ai-bim-governance-prototype.html`（v2 原型）、`ai-bim-governance-設計規格.md`（v2 規格）
 > 對齊：https://bim-docs.jackshappybot.com/ （系統總覽）· repo `C:\Repos\active\iot\AI-BIM-governance`（branch `feat/edge-console-product-shell`）
 > 執行前提：**你 + Claude 協作**（工作量以「輪次」計，一輪 ≈ 一次對話可完成並驗收的小目標）
@@ -95,6 +95,7 @@
 | D7 | MinIO 採**三層規劃**：projectId → OpenBIM 類別（機電/消防/管線/施工/牆面…）→ 版本 v01/v02；USD 以 projectId 為索引寫回同 modelId 資料夾 | 你的補充說明；第二層目前以 UUID 儲存（邏輯上＝類別）、第三層版本原「尚未實作」→ **2026-06-11 已以 local_fs 落地**：`270/機電|水電|消防/000001~000003＋竣工.ifc`（真 S3/MinIO 待接、版本命名規約待定案） |
 | D8 | 原型先不碰 repo（你選了 B） | repo 尚未實作，先把介面語意做對 |
 | D9 | **不做無縫 GPU 遷移**，拖放 = 重啟搬移（terminate + recreate）/ 排程偏好 / drain | 你的原則「官方支援才做」→ NVIDIA 官方無 migrate API，重啟約 30–40 秒、shader cache 冷可達 15 分鐘以上 |
+| D10 | **A1 v2（2026-07-02 使用者指令）**：① 第一步改「選檔雙來源」（local_fs `files/tree` + 真 MinIO `minio/objects`，不再拖檔上傳）；② 新增 BCF 審查面板（issues API；指派欄待建 P1）；③ 3D 連動留在 A1，改證據 rail（A1 連動橋），證據單一來源＝`#sessions`／Runtime（IX-SS-05） | 使用者指令（效力第一）；偵測到的檔直選免重複上傳；評審閉環落在同頁；不在 A1 內嵌 3D 視窗 |
 
 ## 1.5 已核實的硬事實（可直接引用，不必再查）
 
@@ -130,6 +131,7 @@ bim-control/
 | O4 | MinIO 新檔自動偵測機制（bucket event 通知 vs 輪詢） | 轉檔排程的觸發方式 | M2-R1 |
 | O5 | 落地端實際 GPU 台數與型號 | session 容量、A8 算圖排程 | M3 前確認即可 |
 | O6 | clash 碰撞引擎選型（A3）：自研幾何相交 vs 既有函式庫 | A3 從示範變真 | M5-R3 |
+| O7 | **issues schema 增 assignee 欄**（BCF 審查面板指派）+ topic↔issue 對映欄位定案；定案前指派一律 dashed 待建標 | A1 v2 審查面板的指派功能 | M1 尾輪 |
 
 ---
 
@@ -244,14 +246,15 @@ bim-control/
 
 | # | 功能 | 級別 |
 |---|---|---|
-| F1 | 上傳/選擇 MinIO 既有 model.ifc 觸發檢核 | Must |
+| F1 | 從「偵測到的 IFC」選檔觸發檢核（**v2 雙來源**：local_fs `GET /api/governance/files/tree` + 真 MinIO `GET /api/minio/objects`；選檔元件三樣式擇一；不再拖檔上傳；選檔不觸發轉檔） | Must |
 | F2 | 規則引擎：IfcOpenShell 解析 + ifctester 跑 IDS 規則 → pass/fail + 命中構件 | Must |
 | F3 | 結果記分板（通過/擋下/通過率/構件數）+ 規則清單（可展開看構件） | Must |
 | F4 | 失敗規則 → 批次建 Issue（進共同出海口） | Must |
+| F4b | **BCF 審查面板（v2）**：topic 列表（對選定檔）+ 狀態流轉 open→in-progress→resolved（`POST /api/issues/:id/transition`）；指派 assignee 待建 P1（不提供假控制） | Must |
 | F5 | 匯出 BCF (.bcfzip · 現行 2.1，3.0 為目標) + Excel 清單 | Must |
 | F6 | 規則庫管理：IDS/YAML 檔可增改、分專案啟用、設嚴重度 | Should |
 | F7 | 檢核歷史與趨勢（每版通過率） | Should |
-| F8 | 3D 高亮失敗構件（需 M4 的 review session + DataChannel） | Could（後期） |
+| F8 | 3D 高亮失敗構件（需 M4 的 review session + DataChannel；**v2：A1 頁內以「A1 連動橋」證據 rail 呈現，證據讀 `#sessions`，不內嵌 3D 視窗**） | Could（後期） |
 | F9 | Revit 直讀（.rvt 不經 IFC） | Won't（暫不做，IFC 為主） |
 
 **資料流**：MinIO `{projectId}/{modelId}/model.ifc` → governance-service 下載 → IfcOpenShell 載入 → ifctester 跑規則庫 → RuleResult 寫 Postgres → 介面顯示 → 使用者勾選 → Issue 寫 Postgres → BCF 打包上傳 MinIO `{projectId}/{modelId}/deliveries/`。
@@ -278,7 +281,7 @@ bim-control/
   負責方: Architect
 ```
 
-**UI 對應**：route `#a1`，五步 stepper（上傳→檢核→結果→Issue→BCF），原型已可走完整流程（示範資料）；右側 Copilot 三條建議指令 + 工具呼叫示範已腳本化。
+**UI 對應**：route `#a1`，五步 stepper（**v2：選檔→檢核→結果→審查(Issue·BCF)→交付**），原型已可走完整流程（示範資料）；右側 Copilot 三條建議指令 + 工具呼叫示範已腳本化。
 
 **驗收清單（A1 Core MVP 完成的定義）**
 - [ ] 用真實 `model.ifc`（65.7MB 那支）跑完檢核不爆記憶體、5 分鐘內出結果
@@ -306,6 +309,9 @@ bim-control/
 - [ ] Given 勾選的失敗規則，When 批次轉 Issue，Then Issue 冪等（重跑不重複建，鍵＝rule_run_id+guid）。
 - [ ] Given 一批 Issue，When 匯出 BCF，Then 產出的 `.bcfzip` 能被 BIMcollab/第三方 BCF 檢視器開啟、component 為合法 22 字元 IfcGuid。
 - [ ] Given EdgeConsole `#a1`，Then 走真 API（非示範資料），provenance 翻成「已實作」。
+- [ ] **（v2）Given 雙來源選檔**，When 切換 local_fs／MinIO，Then 兩邊列出真檔（皮皆標「測試資料」）；任一邊 list 失敗只影響該邊（模式 6），不推定、不假綠。
+- [ ] **（v2）Given BCF 審查面板**，When 狀態流轉，Then 證據型更新（後端回讀）；指派欄 render 為 dashed 待建標，無假控制。
+- [ ] **（v2）Given A1 連動橋**，Then 四格證據與 `#sessions` 同輪詢周期一致；證據未齊高亮鍵 disabled + 原因可讀。
 
 ## A2 · 版本差異與責任追蹤（P1 · CORE · Phase 2）
 
@@ -596,6 +602,8 @@ M0 地基盤點 ──→ M1 A1 核心閉環（P0，最快見效）──→ M5 
 - **DoD**：你在瀏覽器打開 `/ui` 能點到七頁；差距清單你看得懂。
 
 ### M1 · A1 核心閉環（6–8 輪）★建議最先衝
+
+> **v2 增補（2026-07-02，D10）**：M1 範圍含 **A1 選檔雙來源接線**（`files/tree` + `minio/objects`，選檔元件三樣式擇一）與 **BCF 審查面板**（issues list + transition；assignee 待 O7）。3D 高亮仍屬 M4：M1 只出「A1 連動橋」證據 rail（讀 `#sessions`，證據未齊一律 disabled），不內嵌 3D。
 - **R1 規則引擎 PoC**：IfcOpenShell + ifctester 在本機吃真檔 `model.ifc`（65.7MB）跑 2–3 條示範規則 → 出 JSON 結果。先證明這條路通。
 - **R2 規則工作坊（要你出席）**：跟你一起定第一批 10 條檢核規則（白話描述→Claude 翻成 IDS/YAML）。解 O2。
 - **R3 governance-service 落地**：:49102 起服務、Postgres schema（RuleResult/Issue）、檢核 API 三支。
