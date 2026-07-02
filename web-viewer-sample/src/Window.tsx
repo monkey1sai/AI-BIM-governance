@@ -124,6 +124,12 @@ interface AppState {
     streamMountKey: number;
 }
 
+interface StandaloneViewerLease {
+    lease_id: string;
+    lease_token: string;
+    role: "primary" | "spectator";
+}
+
 interface AppStreamMessageType {
     event_type: string;
     payload: unknown;
@@ -300,6 +306,8 @@ export default class App extends React.Component<AppProps, AppState> {
     // F1：一併記 rowKey（rule_code::ifc_guid），確認回來時以 rowKey 寫 govHighlightConfirm，
     // 避免同一 ifc_guid 多筆不同 rule_code 的列共用 / 互相覆蓋確認狀態。
     private _pendingGovHighlights: Record<string, { ifc_guid: string; rowKey: string; primPath: string }> = {};
+    private standaloneViewerLease: StandaloneViewerLease | null = null;
+    private standaloneViewerLeaseClaim: Promise<StandaloneViewerLease | null> | null = null;
     // private _streamConfig: StreamConfigType = getConfig();
     
     constructor(props: AppProps) {
@@ -361,6 +369,7 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     componentWillUnmount(): void {
+        this._releaseStandaloneViewerLease();
         this._clearStreamStartTimeout();
         this._clearLoadingStateRetry();
         this._clearStageLoadTimeout();
@@ -849,6 +858,75 @@ export default class App extends React.Component<AppProps, AppState> {
         return !isBlockedLifecycle(this.state.reviewLifecycleStatus);
     }
 
+    private async _ensurePrimaryViewerLease(): Promise<string | null> {
+        if (reviewEnv.viewerLeaseToken) return reviewEnv.viewerLeaseToken;
+        if (this.standaloneViewerLease?.lease_token) return this.standaloneViewerLease.lease_token;
+
+        const sessionId = this.state.reviewSessionId;
+        if (!sessionId || window.parent !== window) return null;
+
+        if (!this.standaloneViewerLeaseClaim) {
+            this.standaloneViewerLeaseClaim = fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/claim`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    viewer_id: reviewEnv.sourceClientId,
+                    user_id: reviewEnv.defaultUserId,
+                    display_name: reviewEnv.defaultDisplayName,
+                    requested_role: "primary",
+                    client_nonce: `standalone:${reviewEnv.sourceClientId}:${sessionId}`,
+                    preferred_kit_instance_id: this.state.activeStreamEndpoint.kitInstanceId,
+                }),
+            })
+                .then(async (response) => {
+                    if (!response.ok) {
+                        this._appendReviewEvent(`primary viewer lease 取得失敗（${response.status}）`);
+                        return null;
+                    }
+                    const lease = await response.json() as StandaloneViewerLease;
+                    if (lease.role !== "primary" || !lease.lease_id || !lease.lease_token) {
+                        this._appendReviewEvent(`primary viewer lease 不是 primary（role=${lease.role}）`);
+                        return null;
+                    }
+                    this.standaloneViewerLease = lease;
+                    reviewEnv.viewerLeaseToken = lease.lease_token;
+                    reviewEnv.sourceClientId = lease.lease_id;
+                    this._appendReviewEvent(`已取得 primary viewer lease：${lease.lease_id}`);
+                    return lease;
+                })
+                .catch((error) => {
+                    this._appendReviewEvent(`primary viewer lease 取得失敗：${error instanceof Error ? error.message : String(error)}`);
+                    return null;
+                })
+                .finally(() => {
+                    this.standaloneViewerLeaseClaim = null;
+                });
+        }
+
+        const lease = await this.standaloneViewerLeaseClaim;
+        return lease?.lease_token ?? null;
+    }
+
+    private _releaseStandaloneViewerLease(): void {
+        const lease = this.standaloneViewerLease;
+        const sessionId = this.state.reviewSessionId;
+        if (!lease || !sessionId) return;
+
+        this.standaloneViewerLease = null;
+        if (reviewEnv.viewerLeaseToken === lease.lease_token) {
+            reviewEnv.viewerLeaseToken = "";
+        }
+        void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(lease.lease_id)}/release`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Viewer-Lease-Token": lease.lease_token,
+            },
+            body: "{}",
+            keepalive: true,
+        }).catch(() => {});
+    }
+
     private _handleStreamStartTimeout(): void {
         this.streamStartTimeoutId = null;
         if (this._hasRemoteVideoFrame()) return;
@@ -978,21 +1056,28 @@ export default class App extends React.Component<AppProps, AppState> {
         // CH-C：真實模式先過 coordinator 後端角色權威（source_client_id / primary），通過才送 DataChannel 重組 stage；
         // 後端拒絕（403）→ honest failed，不偽宣告。harness 模式無 coordinator → 直接走假 Kit（authority 由 coordinator 單元測試驗證）。
         if (!harnessEnabled() && this.state.reviewSessionId) {
-            void fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(this.state.reviewSessionId)}/stage-binding`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    ...(reviewEnv.viewerLeaseToken ? { "X-Viewer-Lease-Token": reviewEnv.viewerLeaseToken } : {}),
-                },
-                body: JSON.stringify({ source_client_id: reviewEnv.sourceClientId, role: "primary", binding_revision_id: revisionId, primary_artifact_id: primary.artifact_id }),
-            })
-                .then((r) => {
-                    if (!r.ok) {
-                        this.setState({ govBindingApplyState: { status: "failed", reason: `coordinator 後端權威拒絕（${r.status}）` } });
-                        return;
-                    }
-                    compose();
-                })
+            const applyThroughCoordinator = async () => {
+                const leaseToken = await this._ensurePrimaryViewerLease();
+                if (!leaseToken) {
+                    this.setState({ govBindingApplyState: { status: "failed", reason: "尚未取得 primary viewer lease" } });
+                    return;
+                }
+
+                const response = await fetch(`${reviewEnv.coordinatorApiBase}/api/review-sessions/${encodeURIComponent(this.state.reviewSessionId!)}/stage-binding`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Viewer-Lease-Token": leaseToken,
+                    },
+                    body: JSON.stringify({ source_client_id: reviewEnv.sourceClientId, role: "primary", binding_revision_id: revisionId, primary_artifact_id: primary.artifact_id }),
+                });
+                if (!response.ok) {
+                    this.setState({ govBindingApplyState: { status: "failed", reason: `coordinator 後端權威拒絕（${response.status}）` } });
+                    return;
+                }
+                compose();
+            };
+            void applyThroughCoordinator()
                 .catch((error) => this.setState({ govBindingApplyState: { status: "failed", reason: error instanceof Error ? error.message : String(error) } }));
             return;
         }

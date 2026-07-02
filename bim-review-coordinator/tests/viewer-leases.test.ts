@@ -45,7 +45,10 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   return active;
 }
 
-async function createSession(app: CoordinatorApp): Promise<string> {
+async function createSession(
+  app: CoordinatorApp,
+  artifactUrl = "http://127.0.0.1:49101/artifacts/stream_conv_status_001/model.usdc",
+): Promise<string> {
   const created = await request(app.app)
     .post("/api/review-sessions")
     .send({
@@ -57,7 +60,7 @@ async function createSession(app: CoordinatorApp): Promise<string> {
           artifact_group_id: "ag_version_demo_001",
           artifact_id: "auto_usdc_stream_conv_status_001",
           artifact_role: "derived",
-          url: "http://127.0.0.1:49101/artifacts/stream_conv_status_001/model.usdc",
+          url: artifactUrl,
           mapping_url: "http://127.0.0.1:49101/artifacts/stream_conv_status_001/element_mapping.json",
           load_order: 0,
           ready_status: "ready",
@@ -171,6 +174,28 @@ describe("review session viewer leases", () => {
       });
     expect(binding.status).toBe(200);
     expect(binding.body.primary_client_id).toBe(lease.lease_id);
+  });
+
+  it("keeps full loaded stage URLs up to the route schema limit for stage matching", async () => {
+    const app = makeApp();
+    const longStageUrl = `http://127.0.0.1:49101/artifacts/${"nested/".repeat(90)}model.usdc?etag=${"a".repeat(80)}`;
+    expect(longStageUrl.length).toBeGreaterThan(500);
+    expect(longStageUrl.length).toBeLessThan(2048);
+    const sessionId = await createSession(app, longStageUrl);
+    const lease = await claimPrimary(app, sessionId);
+
+    const heartbeat = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/viewer-leases/${lease.lease_id}/heartbeat`)
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({
+        first_frame: true,
+        loaded_stage_url: longStageUrl,
+        datachannel_ready: true,
+      });
+
+    expect(heartbeat.status).toBe(200);
+    expect(heartbeat.body.loaded_stage_url).toBe(longStageUrl);
+    expect(heartbeat.body.stage_match).toBe(true);
   });
 
   it("rejects stage-binding when a lease token is present but not authorized", async () => {

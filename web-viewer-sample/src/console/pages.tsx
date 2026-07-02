@@ -792,7 +792,7 @@ export function A1GovernanceWorkbenchPage() {
                       loaded_stage_url: m.stageUrl,
                       datachannel_ready: true,
                     }).catch(() => {});
-                    void coordinatorClient.reportFirstFrame(selectedSession, activePrimaryLease.lease_id).catch(() => {});
+                    void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {});
                   }}
                   onStageLoaded={(u) => {
                     if (u) setLoadedStageUrl(u);

@@ -281,7 +281,7 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
       loaded_stage_url: "stage://x",
       datachannel_ready: true,
     });
-    expect(reportSpy).toHaveBeenCalledWith("review_session_x", "viewer_lease_primary");
+    expect(reportSpy).toHaveBeenCalledWith("review_session_x");
     expect(q("a1-first-frame-evidence")!.textContent).toContain("已收到真畫面");
   });
 

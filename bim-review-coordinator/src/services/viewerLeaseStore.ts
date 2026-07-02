@@ -156,7 +156,7 @@ export class ViewerLeaseStore {
       lease.first_frame_at = now;
     }
     if (typeof input.loaded_stage_url === "string" || input.loaded_stage_url === null) {
-      lease.loaded_stage_url = cleanOptionalString(input.loaded_stage_url);
+      lease.loaded_stage_url = cleanOptionalString(input.loaded_stage_url, 2048);
     }
     if (typeof input.datachannel_ready === "boolean") {
       lease.datachannel_ready = input.datachannel_ready;
@@ -296,10 +296,10 @@ function chooseBindingForLease(
   return bindings[1] ?? bindings[0] ?? null;
 }
 
-function cleanOptionalString(value: unknown): string | null {
+function cleanOptionalString(value: unknown, maxLength = 500): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed.slice(0, 500) : null;
+  return trimmed.length > 0 ? trimmed.slice(0, maxLength) : null;
 }
 
 function stageUrlsEquivalent(loaded: string, expected: string): boolean {
