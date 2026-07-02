@@ -191,8 +191,10 @@ function Test-PrReviewPathExistsAtBase {
     $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
     if ([string]::IsNullOrWhiteSpace($mergeBase)) { return $false }
 
-    git -C $RepoRoot -c "safe.directory=$safeRoot" cat-file -e "${mergeBase}:${Path}" 2>$null | Out-Null
-    return ($LASTEXITCODE -eq 0)
+    # 用 ls-tree 而非 cat-file -e：路徑不存在時 ls-tree 靜默回空（exit 0、無 stderr），
+    # cat-file -e 會寫 stderr，在 Windows PowerShell 5.1 + EAP=Stop 下被包成 NativeCommandError 拋出。
+    $entry = (git -C $RepoRoot -c "safe.directory=$safeRoot" ls-tree --name-only $mergeBase -- $Path 2>$null | Select-Object -First 1)
+    return (-not [string]::IsNullOrWhiteSpace($entry))
 }
 
 function Get-PrReviewChangedPathsFromGit {

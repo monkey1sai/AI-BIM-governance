@@ -8,7 +8,7 @@
 
 `scripts/lib/pr-review-agent.ps1`：
 
-1. 新增 helper `Test-PrReviewPathExistsAtBase`（鏡射既有 `Test-PrReviewDeletedPath` 結構）：以 `git cat-file -e <merge-base>:<path>` 判定路徑在 base 是否已被追蹤；Base/Head 缺失或 merge-base 解析失敗一律回 `false`。
+1. 新增 helper `Test-PrReviewPathExistsAtBase`（鏡射既有 `Test-PrReviewDeletedPath` 結構）：以 `git ls-tree --name-only <merge-base> -- <path>` 判定路徑在 base 是否已被追蹤；Base/Head 缺失或 merge-base 解析失敗一律回 `false`。不用 `cat-file -e`：路徑不存在時它寫 stderr，CI 的 Windows PowerShell 5.1（EAP=Stop）會包成 NativeCommandError 拋出（首輪 CI 已實撞）；ls-tree 對不存在路徑靜默回空、無 stderr。
 2. `Get-PrReviewPathGuardFindings` 的 generated-tooling 分支加一層判定：
    - 刪除 → 維持既有 `generated_tooling_path_deleted` warning（不變）。
    - **修改 merge-base 已追蹤的檔** → 降級為 `generated_tooling_path_modified` warning（medium，人工複核 adapter-sync 範圍）。
