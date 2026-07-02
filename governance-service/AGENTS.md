@@ -31,7 +31,7 @@ A1「BIM 治理與模型檢核」與目前 A2/A3 core governance backend authori
 - MUST 唯讀消費既有 `element_mapping.json`；MUST NOT 自行轉檔或改寫 USDC。
 - MUST 以 `ifc_guid` 為主鍵；`usd_prim_path` 未對映時為 `null`，不捏造。
 - MUST NOT 把 fake/smoke mapping（`mock` / `allow_fake_mapping` / `fake_mapping_count>0` / `mapping_method=fake_for_smoke_test`）當真實覆蓋率。
-- MUST 在 `/health` 誠實回報 `ifctester=false`（未安裝）；IDS-XML 匯入未實作前不得宣稱可用。
+- MUST 在 `/health` 誠實回報 ifctester 實際安裝狀態（`app.py` 以 `find_spec` 動態偵測；目前已安裝 ≥0.8.5、支援 buildingSMART IDS）；未實作的能力不得宣稱可用。
 - MUST NOT 新增「非 host 既有」生產依賴（host Python312 已具 ifcopenshell/openpyxl/fastapi/uvicorn/pyyaml）。
 - MUST NOT 把真實 IFC、大型 artifact commit 進 repo。
 - A1/A2/A3 backend tests passed 只能代表 backend slice；user-facing done 還需要 Edge Console route / button / default fixture / browser E2E evidence。

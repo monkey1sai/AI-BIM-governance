@@ -60,7 +60,7 @@
    - 只有清單中**每一項都確實修復**，且步驟 8 三處來源都無新增 substantive 發現，gate 才算這一軸通過。
    - 「當前 head 無新 comment」**不等於**「舊發現已解決」——comment 因 commit_id 移出當前 head 而被篩掉，**不可**據此放行。
 10. **GATE（merge 授權）**：兩條件 **同時** 成立才放行 merge——
-   - 官方 checks 全綠：`pr-review-agent` **且** `CodeRabbit`；
+   - 官方 checks 全綠：main branch protection 的 **全部 required checks**（現含 `pr-review-agent`、`agent-governance` 與各 build/test 共 11 項；以 GitHub 設定為準。CodeRabbit **非** required check，其發現走步驟 8 三處來源交叉查看）；
    - 步驟 8 三處來源**無新增** substantive P1/P2 / Blocker，**且**步驟 9 的 carry-forward 清單**已全數解除**。
    - 滿足 → `gh pr merge <n> --squash --delete-branch` → 接 **closeout**（見下方「closeout worktree 守衛」）：`git fetch origin --prune`、本地 `main` 用 `--ff-only` 對齊 `origin/main`（依 `github-workflow.md` 的 closeout 盤點規則）。
 11. **有新發現就修 → 重跑 buffer cycle**：當前 head 出現新的 substantive 發現（或 carry-forward 清單仍有未解項）時 → 修 → push → **每一次 push 都各自重跑一次 step 6–10 的 buffer cycle**（不是只跑第一輪）。新 push 會產生新 head，舊 inline comment 不再綁當前 head，但其代表的 substantive 發現**未修復前仍留在 carry-forward 清單**。
@@ -92,7 +92,7 @@ fi
 
 - **production code 的 P1/P2**：一律 hold，修到好才 merge，不放水。
 - **非 production 產物**（evidence artifact、docs scaffolding 腳本等）上的 advisory robustness nit：在官方 gate 全綠時可做 judgment-merge，不為了一個非阻斷性的 nit 無限迴圈。
-- merge 授權 = 官方 gate（pr-review-agent + CodeRabbit 全綠 + head 無新 substantive P1/P2）；但 Codex / Copilot 的 inline comment 常抓到真 bug，**不可只看 check 狀態就 merge**，必須交叉看 inline 發現。
+- merge 授權 = 官方 gate（required checks 全綠 + head 無新 substantive P1/P2）；但 CodeRabbit / Codex / Copilot 這類非 required reviewer 的 inline comment 常抓到真 bug，**不可只看 check 狀態就 merge**，必須交叉看 inline 發現。
 
 ## 與既有 consent gate 的調和
 

@@ -18,13 +18,16 @@ Repo-local 產品功能需求主來源：
 - 分頁「06 操作介面總覽」：使用者操作介面、按鈕功能、進度與可驗收流程參考。
 - 設計站原始碼可依個人環境 clone / 定位；本 PR 使用使用者提供的本機 clone 作為一次性查證來源，該本機路徑不納入 repo contract。
 
-程式碼與 contracts 仍是行為 source of truth；repo-local 設計規格 / prototype 負責功能需求與操作語意；外部設計站負責主系統架構、產品定位與驗收期待。
+程式碼與 contracts 仍是行為 source of truth；repo-local plans 依 `docs/plans/docs-plans-README.md` §1 效力順序取用（互動實作規格 > 開發軌跡 > 設計規格 > prototype）；外部設計站負責主系統架構、產品定位與驗收期待。
+
+- 前端相關改動（web-viewer-sample / console）動工前必讀 `docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
+- A1–A10 建成狀態以 `docs/plans/ai-bim-governance-design-system-對齊矩陣.md` §4.4 為唯一裁決源，其他文件只引用、不各自展開論證。
 
 EdgeConsole product shell contract（對齊 `feat/edge-console-product-shell`）：
 
 - 正式產品殼層入口是 coordinator `/ui`；home 必須顯示「今天要做什麼」與 Smart Todo。
-- 核心 route：`#/a1`、`#/viewer`、`#/conv`、`#/sessions`、`#/instances`、`#/minio`。
-- Operator-tool route `#/kit`、`#/demo-control` 必須保留，不得 silently 移除。
+- 完整 22 條正典路由（hash 一律**無斜線**，如 `#a1`、`#viewer`、`#conv`；2026-06-11 勘誤後 `#/a1` 寫法已廢棄）以 `docs/plans/ai-bim-governance-互動實作規格與標準對齊.md` PART A §A.1.1 為唯一來源，本檔不另行維護清單。
+- Operator-tool route `#kit`、`#demo-control` 必須保留，不得 silently 移除。
 - A1 rule-run / Issue / BCF 可由 API / 表格完成；3D highlight、first frame、stage truth 必須有 GPU-backed review session，不得宣稱零 GPU 完成 3D。
 
 ## 2. A1–A10 開發項目
@@ -80,12 +83,12 @@ UI route
 
 ## 4. PR Frontend Verification Table
 
-PR 描述中 user-facing change 必須包含：
+PR 描述中 user-facing change 必須包含（label 由 `scripts/tests/check-pr-body-evidence.ps1` **逐字比對**，錯字即 CI fail）：
 
 | Item | Result |
 |---|---|
 | Frontend route |  |
-| Main button(s) |  |
+| Main button(s) tested |  |
 | Fixture used |  |
 | Backend API called |  |
 | Runtime action |  |

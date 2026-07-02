@@ -22,7 +22,8 @@
 
 ### 產品定位與完成標準
 
-- Repo 功能需求的主來源為 `docs/plans/ai-bim-governance-設計規格.md` 與可點擊原型 `docs/plans/ai-bim-governance-prototype.html`；舊 `docs/plans/AI-BIM-governance-saas-roadmap-2026-05.md` 不再作為需求權威。
+- Repo 功能需求以 `docs/plans/docs-plans-README.md` §1 效力順序為準：`互動實作規格與標準對齊.md`（行為合約、22 條正典路由 A.1.1，最高效力）> `開發軌跡與執行計畫.md` > `設計規格.md` + 可點擊原型 `prototype.html`；A1–A10 建成狀態以 `design-system-對齊矩陣.md` §4.4 為唯一裁決源。
+- 前端相關改動動工前必讀 `docs/plans/ai-bim-governance-前端對齊DS-保留後端-實作手冊.md` §1 後端凍結面契約（前端只打 coordinator `:8004`、proxy 路徑 byte-identical、禁改 governance `app.py`、coordinator `governanceProxy.ts`、streaming `conversion_authority.py` 等清單）。
 - 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；分頁「06 操作介面總覽」是使用者操作介面、按鈕、進度與可驗收流程的 UX 參考。
 - 凡是 user-facing capability，不得以「後端 / API / 測試完成」宣告 done。完成標準必須是：使用者可從前端 route 操作，點明確按鈕，使用預設 fixture，看到 loading / success / failure / retry 與關鍵 runtime ID，並有 Playwright / Chrome E2E 截圖或 trace 證據。
@@ -101,13 +102,17 @@ flowchart LR
     CLOUD["[外部] 公司雲端 bim-control"]
     CO[bim-review-coordinator]
     KIT[bim-streaming-server]
+    GOV["governance-service（:49102 loopback）"]
     WV[web-viewer-sample]
+    KM["kit-manager web + api（:8010）"]
 
     EDGE -->|POST /api/external/ifc-ready| CO
     CO -->|internal conversion request| KIT
+    CO -->|/api/governance/* proxy| GOV
     CO -->|metadata-only callback outbox| CLOUD
     WV -->|REST + Socket.IO| CO
     WV -->|WebRTC + DataChannel| KIT
+    KM -->|Kit fleet ops / telemetry| KIT
 ```
 
 一句話定位：
@@ -141,16 +146,13 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 | 跑 sub-repo 驗證（pytest / npm test / build / Cloud VM 啟動） | `docs/agents/sub-repo-verify-commands.md` |
 | 非平凡 / 高風險任務分級、worker dispatch、evidence labels、reviewer perspectives | `docs/agents/advanced-agent-reasoning-contract.md` |
 | 看舊 PR、了解退役服務與歷史 spec 脈絡 | `docs/agents/history-and-archive.md` |
+| 查需求效力序、正典路由 A.1.1、A1–A10 建成裁決（§4.4）、後端凍結契約（§1） | `docs/plans/docs-plans-README.md`（跳板）→ 各 plans 檔 |
 
 新增 sub-file 時：先在 `docs/agents/` 建檔，再同步更新本表與 `CLAUDE.md` index（兩份主檔的 sub-file 集合必須一致）。本文件行數預算 ≤ 250 行（目標 ≤ 200）；CLAUDE.md ≤ 130 行（目標 ≤ 100）。預算規範見 spec `agent-doc-context-budget`。
 
 ---
 
-## 3. AI Agent Wiki 使用規範
-
-這些文件提供 AI agent 在陌生模組探索時的快速上下文，目的是縮短定位時間，不取代程式碼與 API contract。
-
-Generated wiki（跨文件知識圖）用於需求探索、架構導覽、影響面初步盤點；不得作為行為正確性的唯一依據，最終以程式碼與 contracts 為準。
+## 3. 探索輔助與 Source of Truth
 
 Source of Truth 優先順序：
 
@@ -158,18 +160,18 @@ Source of Truth 優先順序：
 1. 程式碼實作
 2. contracts 文件
 3. AGENTS 邊界定義（本文件 + docs/agents/*.md sub-files）
-4. generated wiki
+4. generated wiki / generated skills（若存在）
 ```
 
-若發現 wiki 與實作不一致，先以實作為準，並補更新 wiki。重大流程變更（API、事件、資料流）合併前應同步更新對應 wiki 入口頁。
+目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。陌生模組探索改用 GitNexus MCP（`query` / `context`，永遠查活圖譜）；不得在 README、PR 或驗收報告把不存在的 wiki 寫成現有入口。任何導覽產物與實作不一致時，一律以實作為準。
 
 ---
 
 ## 4. GitNexus 入口
 
-本 repo 由 GitNexus 索引。修改 code symbol 前 MUST 跑 `gitnexus_impact`；commit 前 MUST 跑 `gitnexus_detect_changes`；HIGH / CRITICAL risk 先回報再繼續。
+本 repo 由 GitNexus 索引。修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL risk 先回報再繼續。
 
-完整 GitNexus 使用規範（Always Do / Never Do / Resources / CLI skill 對應表）見 `docs/agents/gitnexus-usage.md`。
+規範本文（Always Do / Never Do / Resources / CLI 表）以下方 `<!-- gitnexus:start -->` 自動維護區塊為準（`analyze` 時自動更新）；stale 重建與 LadybugDB crash 復原程序見 `docs/agents/gitnexus-usage.md`。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
