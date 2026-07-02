@@ -6,7 +6,7 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus, type ViewerLeaseClaimResponse } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 // VG-01 Task 3：A1 工作台嵌入 live viewer（iframe + vg01 postMessage 橋），跑檢核→3D 高亮一氣呵成。
@@ -27,6 +27,7 @@ type NativeFilePickerWindow = Window & {
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, uniqueElements: 6715, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
+const A1_EMBEDDED_VIEWER_RECOVERY_MS = 30_000;
 
 // A1 規則檢核的預設 IFC 路徑：部署可用 VITE_A1_DEFAULT_IFC_PATH 覆寫成該機 storage 的真實路徑。
 // 開發機 fallback 指向 repo 內 storage/fixture-bytes.ifc（dev/E2E 用）;部署區未設此 env 時操作員仍可手動改輸入框。
@@ -281,6 +282,17 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
   });
 }
 
+function createA1ViewerIdentity(): { viewer_id: string; user_id: string; display_name: string } {
+  const random = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return {
+    viewer_id: `a1_viewer_${random}`,
+    user_id: `a1_auto_primary_${random}`,
+    display_name: "A1 auto primary viewer",
+  };
+}
+
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
   const [idsPath, setIdsPath] = useState(defaultA1IdsPath);
@@ -310,13 +322,24 @@ export function A1GovernanceWorkbenchPage() {
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
   // coordinator handoff base：與 /ui/open 對齊，傳進嵌入 viewer 讓未 bake 同一 coordinator 的 image/E2E 仍打對 coordinator。
   const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
+  const viewerIdentityRef = useRef<{ viewer_id: string; user_id: string; display_name: string } | null>(null);
+  if (viewerIdentityRef.current === null) viewerIdentityRef.current = createA1ViewerIdentity();
+  const [viewerLease, setViewerLease] = useState<ViewerLeaseClaimResponse | null>(null);
+  const [viewerLeaseBusy, setViewerLeaseBusy] = useState(false);
+  const [viewerLeaseErr, setViewerLeaseErr] = useState<string | null>(null);
   const [firstFrame, setFirstFrame] = useState(false);
   const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
   const [hl, setHl] = useState<{ ok: boolean; reason?: string } | null>(null);
+  const [viewerMountAttempt, setViewerMountAttempt] = useState(0);
+  const viewerRecoveryRef = useRef<{ leaseId: string; attempts: number } | null>(null);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
+  const activePrimaryLease =
+    viewerLease && viewerLease.session_id === selectedSession && viewerLease.role === "primary" && viewerLease.status === "active"
+      ? viewerLease
+      : null;
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -358,6 +381,88 @@ export function A1GovernanceWorkbenchPage() {
   useEffect(() => {
     if (selectedSession && state.step === "idle") dispatch({ type: "PICK_SESSION" });
   }, [selectedSession, state.step]);
+
+  useEffect(() => {
+    if (!selectedSession || !viewerOrigin) {
+      setViewerLease(null);
+      setViewerLeaseErr(null);
+      setViewerLeaseBusy(false);
+      return;
+    }
+    let alive = true;
+    const identity = viewerIdentityRef.current ?? createA1ViewerIdentity();
+    viewerIdentityRef.current = identity;
+    setViewerLease(null);
+    setViewerLeaseErr(null);
+    setViewerLeaseBusy(true);
+    coordinatorClient.claimViewerLease(selectedSession, {
+      viewer_id: identity.viewer_id,
+      user_id: identity.user_id,
+      display_name: identity.display_name,
+      requested_role: "primary",
+      client_nonce: `${identity.viewer_id}:${selectedSession}:primary`,
+    })
+      .then((lease) => {
+        if (alive) setViewerLease(lease);
+      })
+      .catch((e) => {
+        if (alive) setViewerLeaseErr(String(e));
+      })
+      .finally(() => {
+        if (alive) setViewerLeaseBusy(false);
+      });
+    return () => { alive = false; };
+  }, [selectedSession, viewerOrigin]);
+
+  useEffect(() => {
+    if (!selectedSession || !activePrimaryLease) return;
+    return () => {
+      void coordinatorClient.releaseViewerLease(activePrimaryLease.session_id, activePrimaryLease.lease_id, activePrimaryLease.lease_token).catch(() => {});
+    };
+  }, [
+    activePrimaryLease?.session_id,
+    activePrimaryLease?.lease_id,
+    activePrimaryLease?.lease_token,
+  ]);
+
+  useEffect(() => {
+    if (!selectedSession || !activePrimaryLease) return;
+    const heartbeatMs = Math.max(5000, activePrimaryLease.heartbeat_after_ms || 15000);
+    const timer = window.setInterval(() => {
+      void coordinatorClient.viewerLeaseHeartbeat(selectedSession, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
+        ...(loadedStageUrl ? { loaded_stage_url: loadedStageUrl } : {}),
+        datachannel_ready: firstFrame,
+      }).catch(() => {});
+    }, heartbeatMs);
+    return () => window.clearInterval(timer);
+  }, [
+    selectedSession,
+    activePrimaryLease?.lease_id,
+    activePrimaryLease?.lease_token,
+    activePrimaryLease?.heartbeat_after_ms,
+    firstFrame,
+    loadedStageUrl,
+  ]);
+
+  useEffect(() => {
+    if (!selectedSession || !activePrimaryLease || firstFrame) return;
+    const leaseId = activePrimaryLease.lease_id;
+    if (viewerRecoveryRef.current?.leaseId !== leaseId) {
+      viewerRecoveryRef.current = { leaseId, attempts: 0 };
+    }
+    if ((viewerRecoveryRef.current?.attempts ?? 0) >= 1) return;
+    const timer = window.setTimeout(() => {
+      const recovery = viewerRecoveryRef.current;
+      if (!recovery || recovery.leaseId !== leaseId || recovery.attempts >= 1) return;
+      recovery.attempts += 1;
+      setViewerMountAttempt((attempt) => attempt + 1);
+    }, A1_EMBEDDED_VIEWER_RECOVERY_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    selectedSession,
+    activePrimaryLease?.lease_id,
+    firstFrame,
+  ]);
 
   const doRun = useCallback(async () => {
     // gating：須已離開 idle（PICK_FILE 或 PICK_SESSION 推進過）且有選定 session（for-session 必要）。
@@ -633,28 +738,48 @@ export function A1GovernanceWorkbenchPage() {
                   保留舊 state.failed 記分板與已 enrich 的 GUID，新 session 一旦 first frame + stage matched，高亮鈕會用
                   上一個 session 的 GUID 送進新 session 的 viewer/模型（跨 session 殘留誤標）。重置後操作員需對新 session 重跑檢核，
                   rule 結果才會重新對新 session 的 mapping enrich，符合「高亮只對它被 enrich 的那個 session 提供」。 */}
-              <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => { setSelectedSession(e.target.value); setFirstFrame(false); setLoadedStageUrl(null); setHl(null); dispatch({ type: "RESET" }); }}>
+              <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => {
+                const nextSession = e.target.value;
+                if (nextSession === selectedSession) return;
+                setSelectedSession(nextSession);
+                setViewerLease(null);
+                setViewerLeaseErr(null);
+                setFirstFrame(false);
+                setLoadedStageUrl(null);
+                setHl(null);
+                dispatch({ type: "RESET" });
+              }}>
                 {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
               </select>
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
               <div data-testid="a1-first-frame-evidence"><Field k="first frame" v={firstFrame ? t("已收到真畫面（綠）", "real frame received (green)") : t("not_observed（等待 3D 第一幀）", "not_observed (waiting for first 3D frame)")} prov={firstFrame ? "asbuilt" : "p1"} /></div>
               <div data-testid="a1-stage-matched"><Field k="stage matched" v={stageMatchedText(sessions, selectedSession, loadedStageUrl)} prov="asbuilt" /></div>
+              <div data-testid="a1-primary-lease"><Field k="primary lease" v={activePrimaryLease ? activePrimaryLease.lease_id : viewerLeaseBusy ? t("claiming…", "claiming…") : t("not_observed（尚未取得 primary）", "not_observed (primary not claimed yet)")} prov={activePrimaryLease ? "asbuilt" : "p1"} /></div>
             </div>
+            {viewerLeaseErr && <p className="ec-warn-note" data-testid="a1-viewer-lease-error">{t("primary viewer lease 取得失敗：", "Failed to claim primary viewer lease: ")}{viewerLeaseErr}</p>}
             {/* S3：iframe 內 viewer 自帶 GovernanceOverlay 失敗清單（會與 console 左側清單重複，造成「console 25 筆 / iframe 說無失敗」矛盾 UX）。
                 解法分兩端：(a) viewer 端在嵌入模式把 overlay 的 failedElements 餵空使清單收合（Task 2「S3 收合」step，已落地）；
                 (b) console 端此處只把 iframe 當高亮引擎，唯一權威失敗清單 = 左側 state.failed 記分板，iframe 不另顯第二份清單。 */}
             {viewerOrigin === null ? (
               <p className="ec-warn-note" data-testid="a1-viewer-origin-missing">{t("viewer 入口未取得（runtime/status 無 configured_endpoints.viewer.browser_url_base 或 coordinator 連不上），3D 暫不可用", "viewer entry not available (runtime/status has no configured_endpoints.viewer.browser_url_base, or coordinator unreachable); 3D temporarily unavailable")}</p>
+            ) : !activePrimaryLease ? (
+              <p className="ec-warn-note" data-testid="a1-viewer-primary-missing">{viewerLeaseBusy ? t("正在向 coordinator 取得 primary viewer lease…", "Claiming primary viewer lease from coordinator…") : t("尚未取得 primary viewer lease，3D viewer 暫不載入", "Primary viewer lease not available yet; 3D viewer is not mounted")}</p>
             ) : (
               <div style={{ height: 480 }}>
                 <EmbeddedViewer
                   ref={viewerRef}
-                  key={selectedSession}
+                  key={`${selectedSession}:${activePrimaryLease.lease_id}:${viewerMountAttempt}`}
                   sessionId={selectedSession}
                   viewerOrigin={viewerOrigin}
                   coordinatorApiBase={coordinatorBase}
                   coordinatorSocketUrl={coordinatorBase}
+                  streamRole="primary"
+                  kitInstanceId={activePrimaryLease.kit_instance_id}
+                  userId={activePrimaryLease.user_id}
+                  displayName={activePrimaryLease.display_name}
+                  sourceClientId={activePrimaryLease.lease_id}
+                  viewerLeaseToken={activePrimaryLease.lease_token}
                   onFirstFrame={(m) => {
                     setFirstFrame(true);
                     // viewer 的 _completeStageLoad 在同一流程「先送 first_frame（含當下已載 stageUrl）再送 stage_loaded」，
@@ -662,9 +787,20 @@ export function A1GovernanceWorkbenchPage() {
                     // 先到或順序不同時 loadedStageUrl 恆 null → stageMatched 恆 false → IX-A1-06 第三條件結構性封鎖、高亮鈕無法 enable。
                     // 與 onStageLoaded 並存（互補不互斥）：m.stageUrl 非 null 即同步閉合。
                     if (m.stageUrl) setLoadedStageUrl(m.stageUrl);
+                    void coordinatorClient.viewerLeaseHeartbeat(selectedSession, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
+                      first_frame: true,
+                      loaded_stage_url: m.stageUrl,
+                      datachannel_ready: true,
+                    }).catch(() => {});
                     void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {});
                   }}
-                  onStageLoaded={(u) => { if (u) setLoadedStageUrl(u); }}
+                  onStageLoaded={(u) => {
+                    if (u) setLoadedStageUrl(u);
+                    void coordinatorClient.viewerLeaseHeartbeat(selectedSession, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
+                      ...(u ? { loaded_stage_url: u } : {}),
+                      datachannel_ready: true,
+                    }).catch(() => {});
+                  }}
                   onHighlightResult={(m) => setHl({ ok: m.ok, reason: m.reason })}
                 />
               </div>
@@ -734,8 +870,9 @@ export function A1GovernanceWorkbenchPage() {
           const f0 = state.failed[0];
           const stageMatched = isStageMatched(sessions, selectedSession, loadedStageUrl);
           const rowHighlightable = Boolean(f0 && f0.ifc_guid && f0.usd_prim_path);
-          const canHighlight = firstFrame && Boolean(selectedSession) && stageMatched && rowHighlightable;
-          const disabledReason = !firstFrame ? t("等待 3D 第一幀（first frame / DataChannel 未就緒）", "Waiting for the first 3D frame (first frame / DataChannel not ready)")
+          const canHighlight = Boolean(activePrimaryLease) && firstFrame && Boolean(selectedSession) && stageMatched && rowHighlightable;
+          const disabledReason = !activePrimaryLease ? t("等待 primary viewer lease", "Waiting for primary viewer lease")
+            : !firstFrame ? t("等待 3D 第一幀（first frame / DataChannel 未就緒）", "Waiting for the first 3D frame (first frame / DataChannel not ready)")
             : !selectedSession ? t("尚未選取 review session", "No review session selected yet")
             : !stageMatched ? t("stage 未對齊（expected ≠ loaded）", "stage not aligned (expected ≠ loaded)")
             : !f0 ? t("尚無失敗構件", "No failed elements yet")

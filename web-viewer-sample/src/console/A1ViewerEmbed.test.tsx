@@ -12,9 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // 與測試體共用同一個 box.current。
 // stub 必須是 forwardRef：A1 page 以 ref={viewerRef} 掛載 EmbeddedViewer，純 function 元件收 ref
 // 會觸發「Function components cannot be given refs」警告且 props 捕捉不到 → 用 forwardRef 對齊真元件簽名。
-const box = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
+const box = vi.hoisted(() => ({ current: null as Record<string, unknown> | null, renderCount: 0 }));
 vi.mock("./EmbeddedViewer", () => ({
-  EmbeddedViewer: forwardRef((props: Record<string, unknown>) => {
+  EmbeddedViewer: forwardRef((props: Record<string, unknown>, _ref) => {
+    box.renderCount += 1;
     box.current = props;
     return null; // 不渲染真 iframe；只記錄 props 供測試驅動 callback
   }),
@@ -69,6 +70,38 @@ function fakeRuntimeStatus(viewerBase: string | null) {
   };
 }
 
+function fakePrimaryLease(sessionId = "review_session_x") {
+  return {
+    lease_id: "viewer_lease_primary",
+    lease_token: "lease_token_primary",
+    session_id: sessionId,
+    viewer_id: "a1_viewer_test",
+    user_id: "a1_auto_primary_test",
+    display_name: "A1 auto primary viewer",
+    role: "primary" as const,
+    status: "active" as const,
+    kit_instance_id: "kit_local_001",
+    stream_config: {
+      signalingServer: "127.0.0.1",
+      signalingPort: 49100,
+      mediaServer: "127.0.0.1",
+      mediaPort: 47998,
+    },
+    client_nonce: "nonce",
+    claimed_at: "2026-07-01T00:00:00.000Z",
+    expires_at: "2026-07-01T00:00:45.000Z",
+    last_heartbeat_at: null,
+    released_at: null,
+    first_frame_at: null,
+    loaded_stage_url: null,
+    datachannel_ready: false,
+    stage_match: null,
+    primary: true,
+    heartbeat_after_ms: 15000,
+    idempotent_replay: false,
+  };
+}
+
 describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", () => {
   let container: HTMLDivElement;
   let prevActEnv: unknown;
@@ -81,12 +114,16 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     document.body.appendChild(container);
     root = null;
     box.current = null;
+    box.renderCount = 0;
     // A1 mount 打 getMinioObjects()（step① 下拉源）；預設回單一 source_ifc 物件保持 hermetic（不打真網路），
     // 並讓驅動 pick→run 流程的 it 能用 selectMinioModel 選到該 option。個別 it 需要時可再 spyOn 覆寫。
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
       objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000001", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
+    vi.spyOn(coordinatorClient, "claimViewerLease").mockImplementation(((sessionId: string) => Promise.resolve(fakePrimaryLease(sessionId))) as never);
+    vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockResolvedValue(fakePrimaryLease());
+    vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(fakePrimaryLease());
   });
   afterEach(async () => {
     if (root) await act(async () => { root!.unmount(); });
@@ -121,6 +158,61 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     // EmbeddedViewer 收到的 viewerOrigin 必須是 viewer :5173（非 coordinator :8004）
     expect(box.current?.viewerOrigin).toBe(VIEWER_ORIGIN);
     expect(box.current?.sessionId).toBe("review_session_x");
+    expect(box.current?.sourceClientId).toBe("viewer_lease_primary");
+    expect(box.current?.viewerLeaseToken).toBe("lease_token_primary");
+    expect(box.current?.streamRole).toBe("primary");
+  });
+
+  it("切換 session 會 release 舊 primary lease 並 claim 新 session", async () => {
+    const runtime = fakeRuntimeStatus(VIEWER_ORIGIN);
+    runtime.sessions.items = [
+      runtime.sessions.items[0],
+      {
+        ...runtime.sessions.items[0],
+        session_id: "review_session_y",
+        expected_stage_url: "stage://y",
+      },
+    ];
+    runtime.sessions.count = 2;
+    runtime.sessions.active_count = 2;
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(runtime as never);
+    const releaseSpy = vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(fakePrimaryLease("review_session_x"));
+    const claimSpy = vi.spyOn(coordinatorClient, "claimViewerLease").mockImplementation(((sessionId: string) => Promise.resolve(fakePrimaryLease(sessionId))) as never);
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    expect(claimSpy).toHaveBeenCalledWith("review_session_x", expect.objectContaining({ requested_role: "primary" }));
+    const select = q("a1-session-select") as HTMLSelectElement;
+    await act(async () => {
+      select.value = "review_session_y";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+
+    expect(releaseSpy).toHaveBeenCalledWith("review_session_x", "viewer_lease_primary", "lease_token_primary");
+    expect(claimSpy).toHaveBeenCalledWith("review_session_y", expect.objectContaining({ requested_role: "primary" }));
+  });
+
+  it("重新選同一個 session 不會 release primary lease", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+    const releaseSpy = vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(fakePrimaryLease("review_session_x"));
+    const claimSpy = vi.spyOn(coordinatorClient, "claimViewerLease").mockImplementation(((sessionId: string) => Promise.resolve(fakePrimaryLease(sessionId))) as never);
+    root = createRoot(container);
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    expect(claimSpy).toHaveBeenCalledTimes(1);
+    const select = q("a1-session-select") as HTMLSelectElement;
+    await act(async () => {
+      select.value = "review_session_x";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+
+    expect(releaseSpy).not.toHaveBeenCalled();
+    expect(claimSpy).toHaveBeenCalledTimes(1);
+    expect(box.current?.viewerLeaseToken).toBe("lease_token_primary");
   });
 
   it("first frame 未到 → 『在 3D 高亮』鈕 disabled + 誠實原因", async () => {
@@ -139,11 +231,42 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     expect(q("a1-stage-matched")!.textContent).toContain("not_observed（尚未載入）");
   });
 
+  it("primary lease 已取得但 first frame 長時間未到 → remount viewer 一次，不重 claim/release", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
+      const claimSpy = vi.spyOn(coordinatorClient, "claimViewerLease").mockImplementation(((sessionId: string) => Promise.resolve(fakePrimaryLease(sessionId))) as never);
+      const releaseSpy = vi.spyOn(coordinatorClient, "releaseViewerLease").mockResolvedValue(fakePrimaryLease("review_session_x"));
+      root = createRoot(container);
+      await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+      await flush();
+
+      expect(box.renderCount).toBe(1);
+      expect(claimSpy).toHaveBeenCalledTimes(1);
+
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      await flush();
+
+      expect(box.renderCount).toBe(2);
+      expect(claimSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy).not.toHaveBeenCalled();
+
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      await flush();
+
+      expect(box.renderCount).toBe(2);
+      expect(claimSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("EmbeddedViewer onFirstFrame → 呼叫 reportFirstFrame + first frame 證據轉綠", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus(VIEWER_ORIGIN) as never);
     const reportSpy = vi
       .spyOn(coordinatorClient, "reportFirstFrame")
       .mockResolvedValue({ session_id: "review_session_x", first_frame_at: "2026-06-22T00:00:00.000Z" });
+    const heartbeatSpy = vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockResolvedValue(fakePrimaryLease());
     root = createRoot(container);
     await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
     await flush();
@@ -153,7 +276,11 @@ describe("A1 頁嵌入 viewer + 3D 高亮接線（VG-01 Task 3 / IX-A1-06）", (
     });
     await flush();
 
-    // 生產端呼叫 reportFirstFrame(selectedSession)（endpointId 省略）→ 只帶 1 個參數。
+    expect(heartbeatSpy).toHaveBeenCalledWith("review_session_x", "viewer_lease_primary", "lease_token_primary", {
+      first_frame: true,
+      loaded_stage_url: "stage://x",
+      datachannel_ready: true,
+    });
     expect(reportSpy).toHaveBeenCalledWith("review_session_x");
     expect(q("a1-first-frame-evidence")!.textContent).toContain("已收到真畫面");
   });

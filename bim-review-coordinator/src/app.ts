@@ -41,6 +41,7 @@ import {
 import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
 import { registerGovernanceProxy } from "./routes/governanceProxy.js";
+import { ViewerLeaseStore, publicLease, type PublicViewerLease } from "./services/viewerLeaseStore.js";
 import {
   StreamingConversionClient,
   buildQualityMetricsSummary,
@@ -151,6 +152,25 @@ const createSessionSchema = z.object({
 const participantSchema = z.object({
   user_id: z.string().min(1),
   display_name: z.string().optional(),
+});
+
+const claimViewerLeaseSchema = z.object({
+  viewer_id: z.string().trim().min(1).max(200),
+  user_id: z.string().trim().min(1).max(200),
+  display_name: z.string().trim().max(200).nullish(),
+  requested_role: z.enum(["auto", "primary", "spectator"]).default("auto"),
+  client_nonce: z.string().trim().max(200).nullish(),
+  preferred_kit_instance_id: z.string().trim().max(200).nullish(),
+});
+
+const heartbeatViewerLeaseSchema = z.object({
+  first_frame: z.boolean().optional(),
+  loaded_stage_url: z.string().trim().max(2048).nullable().optional(),
+  datachannel_ready: z.boolean().optional(),
+});
+
+const releaseViewerLeaseSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
 });
 
 // `type` is an open string (no enum) and the body is `.passthrough()` on
@@ -353,6 +373,7 @@ export function createCoordinatorApp(
     });
   const store = new SessionStore(config.sessionStoreDir);
   const eventLog = new EventLog(config.eventLogDir, { structLog });
+  const viewerLeaseStore = new ViewerLeaseStore();
   // B-scheme（local-coordinator-ifc-ready-intake-boundary T3）：對外 IFC-ready intake。
   const authProvider = createAuthProvider(config);
   const externalIfcReadyStore = new ExternalIfcReadyStore();
@@ -591,6 +612,7 @@ export function createCoordinatorApp(
       startedAt,
       sessions: store.list(),
       ifcReadyJobs: externalIfcReadyStore.list(),
+      viewerLeasesBySession: (sessionId) => viewerLeaseStore.list(sessionId).map((lease) => publicLease(lease)),
     }));
   });
 
@@ -1112,6 +1134,161 @@ export function createCoordinatorApp(
     }
   });
 
+  app.post("/api/review-sessions/:sessionId/viewer-leases/claim", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      if (!isSessionMutable(session)) {
+        response.status(409).json({ detail: "Review session is not active." });
+        return;
+      }
+
+      const input = claimViewerLeaseSchema.parse(request.body);
+      const result = viewerLeaseStore.claim({
+        session_id: session.session_id,
+        viewer_id: input.viewer_id,
+        user_id: input.user_id,
+        display_name: input.display_name ?? null,
+        requested_role: input.requested_role,
+        client_nonce: input.client_nonce ?? null,
+        preferred_kit_instance_id: input.preferred_kit_instance_id ?? null,
+        bindings: runtimeKitInstanceBindings(session, config),
+      });
+      if (!result.ok || !result.lease) {
+        if (result.detail === "primary_already_claimed" && result.conflict) {
+          response.status(409).json({
+            detail: "primary_already_claimed",
+            primary_lease: publicLease(result.conflict),
+          });
+          return;
+        }
+        response.status(409).json({ detail: result.detail ?? "viewer lease unavailable" });
+        return;
+      }
+      if (!result.idempotent_replay) {
+        eventLog.append(session.session_id, "viewerLeaseClaimed", {
+          lease_id: result.lease.lease_id,
+          viewer_id: result.lease.viewer_id,
+          user_id: result.lease.user_id,
+          role: result.lease.role,
+          kit_instance_id: result.lease.kit_instance_id,
+        });
+      }
+      response.json({
+        ...publicLease(result.lease, { includeToken: true }),
+        primary: result.lease.role === "primary",
+        heartbeat_after_ms: viewerLeaseStore.heartbeatAfterMs,
+        idempotent_replay: Boolean(result.idempotent_replay),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/review-sessions/:sessionId/viewer-leases/:leaseId/heartbeat", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      if (!isSessionMutable(session)) {
+        response.status(409).json({ detail: "Review session is not active." });
+        return;
+      }
+      const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
+      const input = heartbeatViewerLeaseSchema.parse(request.body);
+      const lease = viewerLeaseStore.heartbeat(session.session_id, request.params.leaseId, leaseToken, {
+        ...input,
+        expected_stage_url: expectedStageBinding(session)?.url ?? null,
+      });
+      if (!lease) {
+        response.status(404).json({ detail: "Viewer lease not found or token invalid." });
+        return;
+      }
+      eventLog.append(session.session_id, "viewerLeaseHeartbeat", {
+        lease_id: lease.lease_id,
+        role: lease.role,
+        first_frame: Boolean(input.first_frame),
+        loaded_stage_url: input.loaded_stage_url ?? null,
+        datachannel_ready: input.datachannel_ready ?? null,
+        stage_match: lease.stage_match,
+      });
+      response.json({
+        ...publicLease(lease),
+        heartbeat_after_ms: viewerLeaseStore.heartbeatAfterMs,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/review-sessions/:sessionId/viewer-leases/:leaseId/release", (request, response, next) => {
+    try {
+      if (!isSafeSessionId(request.params.sessionId)) {
+        response.status(400).json({ detail: "Invalid review session id." });
+        return;
+      }
+      const session = store.get(request.params.sessionId);
+      if (!session) {
+        response.status(404).json({ detail: "Review session not found." });
+        return;
+      }
+      releaseViewerLeaseSchema.parse(request.body);
+      const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
+      const lease = viewerLeaseStore.release(session.session_id, request.params.leaseId, leaseToken);
+      if (!lease) {
+        response.status(404).json({ detail: "Viewer lease not found or token invalid." });
+        return;
+      }
+      eventLog.append(session.session_id, "viewerLeaseReleased", {
+        lease_id: lease.lease_id,
+        role: lease.role,
+      });
+      response.json(publicLease(lease));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/review-sessions/:sessionId/viewer-leases/status", (request, response) => {
+    if (!isSafeSessionId(request.params.sessionId)) {
+      response.status(400).json({ detail: "Invalid review session id." });
+      return;
+    }
+    const session = store.get(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ detail: "Review session not found." });
+      return;
+    }
+    const leases = viewerLeaseStore.list(session.session_id);
+    const primaryLease = leases.find((lease) => lease.status === "active" && lease.role === "primary") ?? null;
+    response.json({
+      session_id: session.session_id,
+      primary_lease_id: primaryLease?.lease_id ?? null,
+      leases: leases.map((lease) => publicLease(lease)),
+      endpoints: runtimeKitInstanceBindings(session, config).map((binding, index) => ({
+        kit_instance_id: binding.kit_instance_id,
+        role_hint: index === 0 ? "primary" : "spectator",
+        stream_config: binding.stream_config,
+        active_lease_ids: leases
+          .filter((lease) => lease.status === "active" && lease.kit_instance_id === binding.kit_instance_id)
+          .map((lease) => lease.lease_id),
+      })),
+    });
+  });
+
   app.post("/api/review-sessions/:sessionId/close", (request, response) => {
     // IX-SS-04（使用者裁定 A，ref commit ce61993）：此路由【刻意不加 rejectIfIpNotAllowed IP allowlist 守門】，
     // 與 sibling controlled-action 路由（prioritize app.ts:684 / retry app.ts:722 / watch app.ts:767）不同。
@@ -1148,11 +1325,16 @@ export function createCoordinatorApp(
     // truthy 檢查（與 resolveActor 的 `header.trim().length > 0` 對稱）：空白 reason 視同無 reason，
     // 否則 { reason: "   " } 會讓 auditFields 帶入 actor，污染既有 cooperative close payload 形狀（IMPORTANT-1）。
     const auditFields = reason ? { reason, actor: resolveActor(request) } : {};
+    const releasedViewerLeases = viewerLeaseStore.releaseSession(session.session_id);
     const closing = store.update(session.session_id, {
       status: "closing",
       kit_instance_bindings: markKitBindingsDraining(session.kit_instance_bindings),
     });
-    eventLog.append(session.session_id, "sessionClosing", { final_events: finalEvents.length, ...auditFields });
+    eventLog.append(session.session_id, "sessionClosing", {
+      final_events: finalEvents.length,
+      released_viewer_leases: releasedViewerLeases.map((lease) => lease.lease_id),
+      ...auditFields,
+    });
     for (const event of finalEvents) {
       eventLog.append(session.session_id, "finalReviewEvent", event);
     }
@@ -1170,7 +1352,7 @@ export function createCoordinatorApp(
 
   // CH-C：Stage / Artifact Binding 後端角色權威（source_client_id / primary）。非 UI-only gate：
   // 變更型 binding 交易必須由 session 的 primary client 發起，否則 403（spectator / 非 primary / 非持有者一律拒絕）。
-  // 每 session 僅一個 primary（first-wins，以 source_client_id 綁定）；記錄 active / last-good binding revision（交易）。
+  // 每 session 僅一個 primary viewer lease（以 source_client_id=lease_id + token 授權）；記錄 active / last-good binding revision（交易）。
   // 邊界：Kit DataChannel select/focus/compose 的 source_client_id 強制屬 bim-streaming-server（host GPU runtime），
   // 此 coordinator 端權威為 binding 交易的後端授權邊界；Kit 端 per-message 強制標 GPU-pending（見 docs §11）。
   const stageBindingAuthority = new Map<string, { primaryClientId: string; revisions: string[] }>();
@@ -1193,9 +1375,19 @@ export function createCoordinatorApp(
       response.status(400).json({ detail: "source_client_id required" });
       return;
     }
+    const leaseToken = request.header("X-Viewer-Lease-Token") ?? "";
+    if (!leaseToken) {
+      response.status(403).json({ detail: "stage binding requires an active primary viewer lease" });
+      return;
+    }
     if (role !== "primary") {
       // 後端拒絕（非 UI-only）：spectator / 非 primary 不得套用 binding。
       response.status(403).json({ detail: "stage binding requires primary role authority", role: role || null });
+      return;
+    }
+    const authorizedLease = viewerLeaseStore.authorizePrimary(session.session_id, sourceClientId, leaseToken);
+    if (!authorizedLease) {
+      response.status(403).json({ detail: "stage binding requires an active primary viewer lease" });
       return;
     }
     const reg = stageBindingAuthority.get(session.session_id);
@@ -2516,6 +2708,7 @@ interface RuntimeStatusInput {
   startedAt: number;
   sessions: ReviewSession[];
   ifcReadyJobs: IfcReadyIntakeJob[];
+  viewerLeasesBySession?: (sessionId: string) => PublicViewerLease[];
 }
 
 function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> {
@@ -2557,7 +2750,9 @@ function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> 
       count: input.sessions.length,
       active_count: activeSessions.length,
       participant_count: participantCount,
-      items: input.sessions.map(summarizeSessionForRuntime),
+      items: input.sessions.map((session) =>
+        summarizeSessionForRuntime(session, input.viewerLeasesBySession?.(session.session_id) ?? []),
+      ),
     },
     kit_instance_bindings: input.sessions.flatMap((session) =>
       session.kit_instance_bindings.map((binding) => ({
@@ -2595,8 +2790,9 @@ function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> 
   };
 }
 
-function summarizeSessionForRuntime(session: ReviewSession): Record<string, unknown> {
+function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: PublicViewerLease[] = []): Record<string, unknown> {
   const expectedStage = expectedStageBinding(session);
+  const primaryLease = viewerLeases.find((lease) => lease.status === "active" && lease.role === "primary") ?? null;
   return {
     session_id: session.session_id,
     status: session.status,
@@ -2616,6 +2812,9 @@ function summarizeSessionForRuntime(session: ReviewSession): Record<string, unkn
     created_at: session.created_at,
     updated_at: session.updated_at,
     first_frame_at: session.first_frame_at ?? null, // VG-01 型別鏈：runtime/status 透出真首幀證據
+    primary_viewer_lease_id: primaryLease?.lease_id ?? null,
+    primary_viewer_user_id: primaryLease?.user_id ?? null,
+    viewer_leases: viewerLeases,
   };
 }
 

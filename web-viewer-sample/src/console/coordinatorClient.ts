@@ -50,6 +50,18 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function jsonPostWithHeaders<T>(path: string, body: unknown, headers: Record<string, string>): Promise<T> {
+  const res = await fetch(`${COORD_BASE}${path}`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // PUT mutation：body 收斂為 Record<string, unknown>，呼叫方必須明確傳物件。
 // 不再 `?? {}` fallback（對 mutation 語意危險：null body 靜默變空物件 → 後端誤判
 // enabled 缺漏 → 400）；型別層即阻擋 null/undefined body 的呼叫。
@@ -109,6 +121,43 @@ export interface RuntimeSessionSummary {
   // VG-01（task#0 後端化）：runtime/status 透出真首幀證據（app.ts:2258 `first_frame_at ?? null`）。
   // 後端可能尚未回此欄（舊版本）或無首幀 → optional + nullable，前端誠實顯 not_observed，不捏造。
   first_frame_at?: string | null;
+  primary_viewer_lease_id?: string | null;
+  primary_viewer_user_id?: string | null;
+  viewer_leases?: ViewerLeaseSummary[];
+}
+
+export type ViewerLeaseRole = "primary" | "spectator";
+export type ViewerLeaseStatus = "active" | "released" | "expired";
+export interface ViewerLeaseSummary {
+  lease_id: string;
+  session_id: string;
+  viewer_id: string;
+  user_id: string;
+  display_name: string | null;
+  role: ViewerLeaseRole;
+  status: ViewerLeaseStatus;
+  kit_instance_id: string | null;
+  stream_config: {
+    signalingServer: string;
+    signalingPort: number;
+    mediaServer: string;
+    mediaPort?: number | null;
+  } | null;
+  client_nonce: string | null;
+  claimed_at: string;
+  expires_at: string;
+  last_heartbeat_at: string | null;
+  released_at: string | null;
+  first_frame_at: string | null;
+  loaded_stage_url: string | null;
+  datachannel_ready: boolean;
+  stage_match: boolean | null;
+}
+export interface ViewerLeaseClaimResponse extends ViewerLeaseSummary {
+  lease_token: string;
+  primary: boolean;
+  heartbeat_after_ms: number;
+  idempotent_replay: boolean;
 }
 export interface RuntimeKitBinding {
   session_id: string;
@@ -385,6 +434,35 @@ export const coordinatorClient = {
   // 不帶 final_events（operator 強制結束無協作終結事件，spec §4.2）。
   sessionClose: (sessionId: string, reason?: string) =>
     jsonPost<SessionCloseResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/close`, { reason }),
+  claimViewerLease: (sessionId: string, body: {
+    viewer_id: string;
+    user_id: string;
+    display_name?: string | null;
+    requested_role?: "auto" | "primary" | "spectator";
+    client_nonce?: string | null;
+    preferred_kit_instance_id?: string | null;
+  }) =>
+    jsonPost<ViewerLeaseClaimResponse>(
+      `/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/claim`,
+      body,
+    ),
+  viewerLeaseHeartbeat: (
+    sessionId: string,
+    leaseId: string,
+    leaseToken: string,
+    body: { first_frame?: boolean; loaded_stage_url?: string | null; datachannel_ready?: boolean },
+  ) =>
+    jsonPostWithHeaders<ViewerLeaseSummary>(
+      `/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(leaseId)}/heartbeat`,
+      body,
+      { "X-Viewer-Lease-Token": leaseToken },
+    ),
+  releaseViewerLease: (sessionId: string, leaseId: string, leaseToken: string) =>
+    jsonPostWithHeaders<ViewerLeaseSummary>(
+      `/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(leaseId)}/release`,
+      {},
+      { "X-Viewer-Lease-Token": leaseToken },
+    ),
   // VG-01：列 active review session（A1 頁 session 下拉，S2）。
   // 已查證（2026-06-22 grep app.ts）：無 bare GET /api/review-sessions（spec §1.3 誤判）→
   // 用 /api/runtime/status.sessions.items 為唯一真源。回傳統一成 { items: RuntimeSessionSummary[] }，

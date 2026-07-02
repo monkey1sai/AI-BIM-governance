@@ -13,6 +13,7 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../Window";
+import { reviewEnv } from "../config/env";
 
 const PARENT_ORIGIN = "http://127.0.0.1:8004"; // console（coordinator）origin；複用 VITE_ALLOWED_COORDINATOR_ORIGINS 白名單。
 
@@ -26,6 +27,14 @@ type AppInternals = {
   _completeStageLoadFromVisibleStream: () => boolean;
   _finishStageLoad: () => void;
   _hasRemoteVideoFrame: () => boolean;
+  _applyBinding: (selection: Array<{
+    artifact_id: string;
+    model_version_id: string;
+    usdc_url?: string;
+    role: "primary" | "secondary";
+    load_order: number;
+    ready: boolean;
+  }>, revisionId: string) => void;
   _firstFramePosted: boolean;
   pendingStageUrl: string | null;
   _mappingCache: { primPathForGuid: (g: string) => string | null; guidForPrimPathOrAncestor?: (p: string) => string | null } | null;
@@ -69,9 +78,18 @@ function postedTypes(parent: { postMessage: ReturnType<typeof vi.fn> }): string[
   return parent.postMessage.mock.calls.map((c) => (c[0] as { type?: string }).type ?? "");
 }
 
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  reviewEnv.viewerLeaseToken = "";
+  reviewEnv.sourceClientId = "dev_user_001";
 });
 
 describe("S3 render：嵌入時失敗清單收合於 console（viewer 僅作高亮引擎）", () => {
@@ -262,6 +280,71 @@ describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切
     // 重置後第二個 stage 完成仍回報 first_frame（否則 IX-A1-06 無法重滿足，高亮鈕保持 disabled）。
     expect(postedTypes(parent).filter((t) => t === "first_frame")).toHaveLength(2);
     expect(postedTypes(parent).filter((t) => t === "stage_loaded")).toHaveLength(2);
+  });
+});
+
+describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 claim primary lease", () => {
+  it("先 claim primary viewer lease，再帶 token 呼叫 stage-binding，通過後才送 composeStageRequest", async () => {
+    Object.defineProperty(window, "parent", { value: window, configurable: true });
+    reviewEnv.viewerLeaseToken = "";
+    reviewEnv.sourceClientId = "dev_user_001";
+    const app = operableApp();
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/viewer-leases/claim")) {
+        return new Response(JSON.stringify({ lease_id: "viewer_lease_primary", lease_token: "lease_token_primary", role: "primary" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/stage-binding")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const sendSpy = vi.spyOn(internals(app), "_sendStreamMessage").mockImplementation(() => {});
+
+    internals(app)._applyBinding([
+      {
+        artifact_id: "artifact_primary",
+        model_version_id: "version_demo_001",
+        usdc_url: "stage://primary.usdc",
+        role: "primary",
+        load_order: 0,
+        ready: true,
+      },
+    ], "rev_binding_001");
+    await flushMicrotasks();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("/api/review-sessions/review_session_x/viewer-leases/claim");
+    expect(fetchSpy.mock.calls[0][1]).toMatchObject({ method: "POST" });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({
+      viewer_id: "dev_user_001",
+      requested_role: "primary",
+    });
+    expect(String(fetchSpy.mock.calls[1][0])).toContain("/api/review-sessions/review_session_x/stage-binding");
+    expect(fetchSpy.mock.calls[1][1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({ "X-Viewer-Lease-Token": "lease_token_primary" }),
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toMatchObject({
+      source_client_id: "viewer_lease_primary",
+      role: "primary",
+      binding_revision_id: "rev_binding_001",
+      primary_artifact_id: "artifact_primary",
+    });
+    expect(sendSpy).toHaveBeenCalledWith({
+      event_type: "composeStageRequest",
+      payload: {
+        binding_revision_id: "rev_binding_001",
+        artifacts: expect.arrayContaining([expect.objectContaining({ artifact_id: "artifact_primary", role: "primary" })]),
+      },
+    });
   });
 });
 
