@@ -171,7 +171,7 @@ Session Control Plane / Collaboration Coordinator
 - WebRTC video encoding
 - IFC / USD 檔案內容轉換
 - 直接保存大型檔案
-- 取代 _bim-control 成為資料權威
+- 取代外部公司雲端 control-plane 成為資料權威
 - 取代 web-viewer-sample 成為 UI
 ```
 
@@ -225,13 +225,13 @@ IFC→USDC Conversion Authority / Omniverse Kit Runtime / GPU Streaming Server
 它負責處理：
 
 ```txt
-- 接收 _worker 的 ifc_ready handoff
+- 接收 coordinator 的 internal conversion request（上游為外部客戶落地端 IFC Worker 的 ifc-ready webhook，經 coordinator 收斂）
 - 建立 conversion_job_id 並管理 queued / running / succeeded / failed / cancelled 狀態
 - 對外提供 IFC→USDC conversion status / result API
 - 透過 headless converter app / subprocess / worker lane 執行 heavy conversion
 - 產出 model.usdc、element_mapping.json、entity_index.json、metadata.json 或等價 result payload
 - 保留 mapping quality metrics、sidecar carrier 與 no-placeholder-ready 語意
-- callback _bim-control conversion_result_ready / conversion_failed
+- callback coordinator conversion_result_ready / conversion_failed（coordinator 再經 metadata-only callback outbox 回拋外部公司雲端）
 - USD / USDC stage runtime
 - Omniverse Kit viewport
 - GPU rendering
@@ -266,7 +266,7 @@ IFC→USDC Conversion Authority / Omniverse Kit Runtime / GPU Streaming Server
 目前套用哪些 visual overlay
 ```
 
-但這些狀態若要成為正式審查資料，必須回寫到 `_bim-control` 或正式資料權威。
+但這些狀態若要成為正式審查資料，必須經 `bim-review-coordinator` 回寫至正式資料權威（外部公司雲端 control-plane）。
 
 ---
 
@@ -325,8 +325,8 @@ leave session
 ```txt
 3D runtime 操作 → bim-streaming-server
 session / collaboration → bim-review-coordinator
-metadata / review data → _bim-control
-file / conversion access → _worker
+metadata / review data → bim-review-coordinator（上游權威＝外部公司雲端 bim-control）
+file / conversion access → bim-review-coordinator（conversion 權威＝bim-streaming-server）
 ```
 
 ---
@@ -421,7 +421,7 @@ sequenceDiagram
 ```txt
 Scene interaction 是 browser client 與 Kit runtime 之間的 DataChannel JSON 流程。
 這些 runtime interaction 不等於正式資料保存。
-若要保存成審查紀錄，必須經 coordinator / _bim-control 回寫。
+若要保存成審查紀錄，必須經 coordinator 回寫（上游正式權威＝外部公司雲端 control-plane）。
 ```
 
 ---
@@ -548,8 +548,8 @@ mapping runtime usage  → web-viewer-sample / bim-streaming-server
 - 不管理 project / model version
 - 不作為 annotation / issue 長期資料庫
 - 不作為多人協作事件中心
-- 不取代 _bim-control
-- 不取代 _worker
+- 不取代外部公司雲端 bim-control control-plane
+- 不取代外部客戶落地端 IFC Worker（不自產 IFC）
 ```
 
 ## 8.3 `bim-review-coordinator` 不應做的事
@@ -559,7 +559,7 @@ mapping runtime usage  → web-viewer-sample / bim-streaming-server
 - 不開啟 USD stage
 - 不處理 Omniverse renderer internal state
 - 不保存大型模型檔案
-- 不取代 _bim-control 成為資料權威
+- 不取代外部公司雲端 control-plane 成為資料權威
 - 不取代 web-viewer-sample 成為 UI
 ```
 
@@ -589,7 +589,7 @@ _mock-sensor-service/
 
 ```txt
 - 它們只提供假資料、假結果或本地測試用資料處理。
-- 它們不應越過 _bim-control 成為正式資料權威。
+- 它們不應越過外部公司雲端 control-plane（歷史上為 `_bim-control`）成為正式資料權威。
 - 它們不應越過 bim-streaming-server 直接控制 Omniverse viewport。
 - 它們不應越過 bim-review-coordinator 管理 session / collaboration。
 - 它們不應越過 web-viewer-sample 成為 browser UI。
