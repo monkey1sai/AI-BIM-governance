@@ -148,6 +148,51 @@ function Wait-HostNativeHealth {
     return $false
 }
 
+function Invoke-KitRepoBuild {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $WorkingDirectory,
+        [Parameter(Mandatory = $true)][string] $LogPath,
+        [Parameter(Mandatory = $true)][string] $RunDir,
+        # repo.bat 底下的 Kit precache 工具鏈偶爾會留下未釋放 stdout/stderr handle
+        # 的背景分支程序,讓 native process 的 stream redirect 卡住等 EOF 而非只等
+        # repo.bat 本身結束(2026-07-01 實測:build 早已成功,但外層卡死 20+ 分鐘)。
+        # 20 分鐘是官方「may take several minutes」訊息的保守上限,足夠涵蓋 cold
+        # build,又能在真的卡住時及時失敗而非無限期掛住整條 deploy pipeline。
+        [int] $TimeoutSec = 1200,
+        [scriptblock] $StartProcessFn = {
+            param($workingDirectory, $logPath)
+            # cmd.exe 自己做 `>` 檔案重導向(真實 Win32 file handle,不是
+            # pipe),deploy.ps1 只用 WaitForExit(timeout) 等「process 本身」
+            # 結束,不受孫行程持有的 handle 影響。
+            $cmdLine = "repo.bat build > `"$logPath`" 2>&1"
+            Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) `
+                -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
+        },
+        [scriptblock] $WaitForExitFn = {
+            param($proc, $timeoutMs)
+            $proc.WaitForExit($timeoutMs)
+        },
+        [scriptblock] $StopTreeFn = {
+            param($name, $runDir)
+            Stop-HostNativeService -Name $name -RunDir $runDir | Out-Null
+        }
+    )
+
+    $pidFile = Join-Path $RunDir 'kit-repo-build.pid'
+    $proc = & $StartProcessFn $WorkingDirectory $LogPath
+    $proc.Id | Set-Content -LiteralPath $pidFile -Encoding ascii
+
+    $exited = & $WaitForExitFn $proc ($TimeoutSec * 1000)
+    if ($exited) {
+        Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+        return [pscustomobject]@{ TimedOut = $false; ExitCode = [int]$proc.ExitCode; ProcessId = [int]$proc.Id }
+    }
+
+    & $StopTreeFn 'kit-repo-build' $RunDir
+    return [pscustomobject]@{ TimedOut = $true; ExitCode = -1; ProcessId = [int]$proc.Id }
+}
+
 function Resolve-ConversionParentRoot {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string] $RuntimeStorageRoot)
