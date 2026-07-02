@@ -119,3 +119,42 @@ A task is not done until the agent reports:
 - whether worker dispatch was used or skipped
 
 User-facing work still must satisfy the stricter frontend evidence contract in `docs/agents/product-operability-and-script-contract.md`.
+
+### Codex loop workflow routing
+
+When the user asks Codex to develop requirements from `docs/plans/`,
+the agent MUST first load `docs/plans/docs-plans-README.md`, then load the
+specific plan file required by the task.
+
+When the user explicitly asks for `use agents`, `subagents`, `swarm`,
+`parallel agents`, a named workflow mode, architecture review, PR review,
+E2E readiness, or high-risk runtime work, load
+`docs/agents/codex-loop-workflows.md` and select one workflow mode before
+editing:
+
+- `classify-and-act`
+- `fan-out-and-synthesize`
+- `adversarial verification`
+- `generate-and-filter`
+- `tournament`
+- `loop-until-done`
+
+Actual Codex subagents are used only when explicitly requested or when the
+current Codex surface supports explicit subagent spawning for the task.
+Otherwise, the coordinator applies the same reviewer perspectives internally
+and states that subagents were skipped.
+
+The main agent is always the coordinator. Subagents are bounded workers and
+default to read-only unless the coordinator explicitly assigns a non-conflicting
+write scope.
+
+Final reports for such tasks MUST include:
+- mode used
+- agents used or skipped
+- source-of-truth files read
+- decision
+- changes made
+- verification
+- evidence path
+- risks / remaining unknowns
+- recommended next step
