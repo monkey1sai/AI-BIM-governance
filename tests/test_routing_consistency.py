@@ -13,9 +13,9 @@ def test_codegen_no_drift():
 EXPECTED = {
     "std-plan.js":      {"plan:author":"planAuthor","plan-review:":"standard","plan-fix:":"judge","impact:prescan":"standard"},
     "std-implement.js": {"parse:plan":"extract","impact:${T}":"standard","spec-review:":"standard",
-                          "spec-fix:":"judge","quality-review:":"standard","quality-fix:":"judge","final-review":"judge",
+                          "spec-fix:":"judge","quality-review:":"standard","quality-fix:":"judge","final-review":"arbiter",
                           "fix:cycle":"judge","fix:verify":"judge"},
-    "std-evidence.js":  {"probe:engine":"extract","evidence:":"judge"},
+    "std-evidence.js":  {"probe:engine":"extract","evidence:":"arbiter"},
 }
 def test_callsites_reference_expected_tier():
     # 每個 agent() option 物件為單行；逐行比對（label 含 ${...} 的 } 不會誤斷）
@@ -33,11 +33,19 @@ def test_judge_block_is_opus_max_literal():
     for fn in EXPECTED:
         assert "judge: { model: 'opus', effort: 'max' }" in _read(fn), f"{fn}: judge 區塊非 opus/max"
 
+def test_arbiter_and_planauthor_blocks_are_fable_max_literal():
+    # gate 只增不減：arbiter/planAuthor 逐字釘 fable/max，防被靜默降回
+    for fn in EXPECTED:
+        content = _read(fn)
+        assert "arbiter: { model: 'fable', effort: 'max' }" in content, f"{fn}: arbiter 區塊非 fable/max"
+        assert "planAuthor: { model: 'fable', effort: 'max' }" in content, f"{fn}: planAuthor 區塊非 fable/max"
+
 def test_do_not_codegen_sites_unchanged():
     impl = _read("std-implement.js")
-    assert "model: implModel" in impl, ":276 computed model 條件分支被破壞"
-    assert "label: `impl:${T}:retry`, phase: 'Implement', model: 'opus', effort: 'max'" in impl, ":282 補救升級被改"
-    assert "label: `impl:${T}:opus`, phase: 'Implement', model: 'opus', effort: 'max'" in impl, ":287 升級被改"
+    assert "const implModel = 'sonnet'" in impl, ":288 全類 task 首發 sonnet 基線被改"
+    assert "model: implModel" in impl, ":288 implModel call-site 被 codegen 覆寫"
+    assert "label: `impl:${T}:retry`, phase: 'Implement', model: 'opus', effort: 'max'" in impl, ":294 補救升級被改"
+    assert "label: `impl:${T}:opus`, phase: 'Implement', model: 'opus', effort: 'max'" in impl, ":300 升級被改"
 
 def test_no_conflicting_routing_invariant_in_tracked_workflows():
     # D3：禁 tracked workflow 再出現「Haiku ... NOT used in the routing」這類與 routing.json 衝突的不變量字串

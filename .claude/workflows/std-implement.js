@@ -8,7 +8,7 @@ export const meta = {
     { title: 'Parse', detail: 'haiku 讀 plan 抽出每 task 全文(機械抽取,錯誤顯性;implementer 不自讀 plan)', model: 'haiku' },
     { title: 'Implement', detail: '序列:per-task impact→implementer→spec review→quality review→commit 錨點' },
     { title: 'Fix', detail: 'mode=fix:fixer 修 findings + verify reviewer 驗閉合', model: 'opus' },
-    { title: 'FinalReview', detail: 'opus 整體 diff vs plan+spec,產出 adversarial findings', model: 'opus' },
+    { title: 'FinalReview', detail: 'fable(arbiter) 整體 diff vs plan+spec,產出 adversarial findings', model: 'fable' },
   ],
 }
 
@@ -18,7 +18,8 @@ const ROUTING = {
   standard: { model: 'sonnet', effort: 'max' },
   reason: { model: 'opus', effort: 'xhigh' },
   judge: { model: 'opus', effort: 'max' },
-  planAuthor: { model: 'opus', effort: 'max' },
+  arbiter: { model: 'fable', effort: 'max' },
+  planAuthor: { model: 'fable', effort: 'max' },
 }
 // </routing:gen>
 
@@ -172,7 +173,7 @@ const disciplineFor = (commitPrefix) => `紀律(逐條遵守):
 - 跑測試前讀 docs/agents/sub-repo-verify-commands.md 選對指令;root contracts pytest 必走主工作區 .venv/Scripts/python.exe(worktree 不帶 .venv;主工作區路徑 = git rev-parse --git-common-dir 的上一層)。
 - 若需修改 task/finding 清單外的既有 function/class/method:先 ToolSearch 載入 mcp__gitnexus__impact 跑 impact({target, direction:"upstream"});CRITICAL → 不要動,回報 BLOCKED 並在 concerns 說明;HIGH → 記入 concerns(指揮官會轉述+寫 PR 補強)。改名一律 gitnexus_rename,禁 find-and-replace。可並列 mcp__codebase-memory-mcp__search_code 查該 symbol 引用作交叉驗證;若發現 GitNexus 未涵蓋的 caller(test / 動態 import)記入 concerns(**advisory:不改 detectVerdict、不改 impact 判定**)。
 - commit 前 scope 驗證(不可省):(1) ToolSearch 載入 mcp__gitnexus__detect_changes 跑 detect_changes({scope:"staged"}),scope 只含預期 symbols → detectVerdict=pass;(2) 工具看不到 staged(linked worktree 已知坑)或回錯 → MUST 改跑 git diff --name-only --cached 自查 scope,乾淨 → detectVerdict=fallback;(3) 連 git diff 自查都做不到才記 fail(此值會被計數,3 次 held)。skipped 僅限本次 commit 純 docs/plan 無 code 改動。(4) git diff --cached --check,trailing whitespace 先修。
-- commit message 繁中、第一行前綴「${commitPrefix}」,結尾附「Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>」。
+- commit message 繁中、第一行前綴「${commitPrefix}」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」。
 - YAGNI:只做要求的;不順手重構、不動無關檔案。`
 
 // ---------- mode='fix':P5/P6 修復迴圈的真實通道 ----------
@@ -283,8 +284,8 @@ ${disciplineFor(`task#${task.index}: `)}
 回傳 StructuredOutput:status(DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED)、commitSha(本 task 最後一個 commit 的 sha;**沒有任何 commit 不得回 DONE**)、summary、concerns[]、detectVerdict(pass/fallback/fail/skipped,依紀律第 6 條)。
 NEEDS_CONTEXT:說清楚缺什麼脈絡。BLOCKED:說清楚卡在哪(含 plan 本身錯誤的證據)。不確定就誠實回報,不要硬做。`
 
-  const implModel = task.mechanical ? 'sonnet' : 'opus'
-  // do-not-codegen: model 為 computed(task.mechanical ? sonnet : opus)
+  const implModel = 'sonnet'
+  // do-not-codegen: Sonnet 5 起全類 task 首發 sonnet;BLOCKED/NEEDS_CONTEXT → opus/max 升級通道不變
   let impl = await agent(implPrompt(''), { label: `impl:${T}`, phase: 'Implement', model: implModel, schema: IMPL_SCHEMA })
 
   if (impl && impl.status === 'NEEDS_CONTEXT') {
@@ -429,7 +430,7 @@ const final = await agent(`你是最終總 reviewer。整體檢視本 feature br
 spec:${SPEC_PATH};plan:${ROOT}/${PLAN_PATH}
 檢查:(1) spec 每條需求都有對應實作與測試;(2) 無 plan 外的意外改動;(3) 跨 task 整合點(task 各自綠但合起來壞);(4) 誠實標註完整(DEMO DATA / NOT BUILT / not observed);(5) **scope 覆核**:detect_changes 非 pass 的 commits(tasks:${scopeRecheckTasks.map((t) => `task#${t.index}=${t.detectVerdict}`).join(', ') || '無'};fix commits:${scopeRecheckFixes.map((f) => `${f.label}=${f.verdict}`).join(', ') || '無'})逐一用 git show 驗 commit 只含預期檔案。
 回傳 StructuredOutput:ok(無重大疑慮)、findings[](每項 id 用 f1/f2/...,q = 待對抗驗證的具體疑慮:檔案+行號+宣稱的失效模式;沒有就空陣列)。ok=true 仍可帶低信心 findings 供後續對抗複驗;ok=false 時 findings 必須涵蓋你的全部疑慮(這是它們進入修復迴圈的唯一通道)。`,
-  { label: 'final-review', phase: 'FinalReview', ...ROUTING.judge, schema: FINAL_SCHEMA })
+  { label: 'final-review', phase: 'FinalReview', ...ROUTING.arbiter, schema: FINAL_SCHEMA })
 
 const completedThrough = perTask.length ? perTask[perTask.length - 1].index : (START - 1)
 log(`std-implement 完成:${perTask.length} tasks,finalReviewOk=${final ? final.ok : 'null'}`)

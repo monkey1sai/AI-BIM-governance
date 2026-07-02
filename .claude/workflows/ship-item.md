@@ -1,6 +1,6 @@
 # ship-item — Per-item ship-cycle（buffered auto-merge）權威程序
 
-> 本檔是 repo 級 agent 自動化 ship-cycle 的 source of truth。完整 PR / merge / closeout 規則見 `docs/agents/github-workflow.md`；本檔聚焦「每完成一個 work item 就自動 ship」的步驟與閘門。
+> 本檔是 repo 級 agent 自動化 ship-cycle 的 source of truth。完整 PR / merge / closeout 規則見 `docs/agents/github-workflow.md`；本檔聚焦「每完成一個 work item 就自動 ship」的步驟與閘門。本檔與 ship-item.js 內嵌 prompt 為雙份維護：修改任一側 MUST 同步另一側。
 
 ## 觸發
 
@@ -8,11 +8,12 @@
 
 ## 步驟
 
+0. **checkout 防呆**：若指定 branch 且當前不在該 branch（`git rev-parse --abbrev-ref HEAD` 比對），先 `git checkout <branch>` 再動作，避免 commit/push 推錯 branch。
 1. **commit 前 check**：`git diff --cached --check`，擋掉 trailing whitespace 與 EOF blank line；有就先修乾淨再 commit。
 2. **commit（條件式）**：若無新 staged 改動（work item 已 commit 在 branch）則**跳過**此步；否則訊息用繁體中文，結尾附：
 
    ```txt
-   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+   Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
    ```
 
 3. **push**：`git push -u origin <branch>`。遇 deny rule（如 force-push）改等價路徑——用新 commit 取代 `--amend`，不要硬推。

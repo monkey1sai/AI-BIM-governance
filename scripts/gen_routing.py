@@ -33,9 +33,9 @@ def _entry(model, effort):
 def render_block(data):
     tiers = data["tiers"]
     flags = data.get("flags", {})
-    plan = tiers["reason"] if flags.get("plan_author_xhigh") else {"model": "opus", "effort": "max"}
+    plan = tiers["reason"] if flags.get("plan_author_xhigh") else tiers["arbiter"]
     lines = [BEGIN, "const ROUTING = {"]
-    for key in ("extract", "standard", "reason", "judge"):
+    for key in ("extract", "standard", "reason", "judge", "arbiter"):
         if key in tiers:
             lines.append(f"  {key}: {_entry(tiers[key]['model'], tiers[key].get('effort'))},")
     lines.append(f"  planAuthor: {_entry(plan['model'], plan.get('effort'))},")

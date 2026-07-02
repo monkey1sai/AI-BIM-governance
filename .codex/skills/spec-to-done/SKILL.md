@@ -94,6 +94,9 @@ P5 = Workflow({name:'fu-adversarial-verify-generic', args:{
         root: worktreeRoot, label: slug,
         findings: [...P3.finalReview.findings, ...((P4.evidence && P4.evidence.gaps) || [])],
         criticFocus: '通讀全 diff 找新誠實違規 / 行為 regression / spec-drift / 空測試 / DEMO DATA 漏標。'}})
+     // DACS（arXiv:2604.07911）：P5 findings 一律壓成 registry {id, q:<一句話 claim ≤800 char>, suspectFile}，
+     //   不灌 P3 finalReview 全文；fu-...js 對超長 q / 缺 id / 非字串 suspectFile 會 held:'bad_findings' fail-fast。
+     //   （指揮官真截斷 q 為 doc 紀律；機械只驗入參合規。）
      infra 分支(與內容性不過分開):P5===null 或 P5.critic===null 或 P5.verdicts.length !== 送入
        findings 數(verifier 回 null 被 filter 掉 = 有 finding 沒驗到,不可視為通過)
        → 重呼 P5 一次(resumeFromRunId);仍 infra 失敗 → HELD(視同 reviewer_agent_failed)
@@ -172,12 +175,11 @@ HELD@P<n> | reason=<held 值> | spec=<specPath> | slug=<slug> | userFacing=<bool
 **鐵則**:跑 `.\scripts\deploy.ps1` 或 `.\scripts\dev\rebuild-test-deploy.ps1 -Build` **之前**,指揮官(主對話)
 MUST 先從主工作區 root 跑本技能 helper 清掉佔住必要 host-native port 的殘留:
 
-優先順序固定如下;從 repo root 執行第一個存在的 helper(不加 `-DetectOnly`,因本 repo 已授權停止 blocking Kit / conversion runtime PID)。三份 helper 若同時存在,內容必須維持一致:
+優先順序固定如下;從 repo root 執行第一個存在的 helper(不加 `-DetectOnly`,因本 repo 已授權停止 blocking Kit / conversion runtime PID)。兩份 helper 內容必須維持一致(user 級路徑經 2026-07-02 磁碟盤點確認不存在,勿引用):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\ensure-host-native-ports-free.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\IOT\.codex\skills\spec-to-done\ensure-host-native-ports-free.ps1
 ```
 
 - **為什麼**:Kit 無 live reload / migration(docs/plans 鐵則 #4、D9——換 stage 只能 terminate+recreate)。殘留的
@@ -195,20 +197,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\IOT\.codex\skills\s
 - **範圍限制(誠實)**:只解 host-native port 這條 Read-Host;`deploy.ps1:989` 的 `.venv WRONG_VERSION` Read-Host 不在
   範圍(需重建 .venv 或 `-Force`,CLAUDE.md 禁),撞到 HELD 回報。spectator count 非預設 5 時須同步調整 helper 內 port 陣列。
 
-## 模型預算(Codex gpt-5.x 對齊 Claude 三級 tier;gates 不動)
+## 模型預算(Codex gpt-5.x 對齊 Claude 四級 tier;gates 不動)
 
-Claude 版的 haiku / sonnet / opus 是**任務難度 tier**。Codex copy 必須保留同一個 gate 結構,只把 tier 映射到可用的 GPT 模型與 reasoning effort;不得因模型降級而刪減 P4/P5/P6 或放寬 HELD 條件。
+Claude 版的 haiku / sonnet / opus / fable 是**任務難度 tier**。Codex copy 必須保留同一個 gate 結構,只把 tier 映射到可用的 GPT 模型與 reasoning effort;不得因模型降級而刪減 P4/P5/P6 或放寬 HELD 條件。
 
 | 位置 | Codex 模型 / effort | 對齊的 Claude tier | 品質守恆(誰兜底) |
 |---|---|---|---|
-| 指揮官(主對話) | session default;跑完整 spec-to-done 時優先 `gpt-5.5` high/xhigh | runtime default / opus | 指揮官只裁 gate、配 args、輸出 HELD;不接手弱化 workflow |
+| 指揮官(主對話) | session default;跑完整 spec-to-done 時優先 `gpt-5.5` high/xhigh | runtime default / fable(Claude 側 session=Fable 5 max) | 指揮官只裁 gate、配 args、輸出 HELD;不接手弱化 workflow |
 | plan 解析(P3 Parse)、引擎偵測(P4 Probe)、單純檔案盤點/hash/path 檢查 | `gpt-5.3-codex-spark` medium | haiku | 機械抽取/探測,錯誤顯性:抽壞 → implementer 立刻 BLOCKED;探錯 → E2E 起不來即 held |
-| GitNexus impact 預掃 + per-task impact、機械性 task implementer(1-2 檔、步驟完整、非 user-facing)、非 gate 的初步檢查 | `gpt-5.4-mini` medium/high | sonnet-low | impact 只是風險輸入(CRITICAL gate 在指揮官);機械 impl 有雙 review;輸出被正式 reviewer / P5 critic 兜底 |
-| P1 四軸 reviewer、P3 spec/quality reviewer(首審)、中等複雜度 implementer、測試/fixture 修復 | `gpt-5.4` high | sonnet / opus boundary | 四軸/雙 review 有 plan-fix + final-review + P5 critic 三層兜底 |
-| plan 作者、非機械 implementer、NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復)、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | `gpt-5.5` high/xhigh | opus | 創造/修復/兜底層,**不降** |
-| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | `gpt-5.5` xhigh 或 session default 若 session 已是更強設定 | runtime default / opus | P5=抓雷主力;P6=端到端代理操作(git/gh/merge 判斷),兩者不降級成 mini/spark |
+| GitNexus impact 預掃 + per-task impact、非 gate 的初步檢查 | `gpt-5.4-mini` medium/high | sonnet(輕量面) | impact 只是風險輸入(CRITICAL gate 在指揮官);輸出被正式 reviewer / P5 critic 兜底 |
+| P1 四軸 reviewer、P3 spec/quality reviewer(首審)、**全類 task implementer 首發(機械/非機械皆是)**、測試/fixture 修復 | `gpt-5.4` high | sonnet | 四軸/雙 review 有 plan-fix + final-review + P5 critic 三層兜底;BLOCKED/NEEDS_CONTEXT → gpt-5.5 升級 |
+| NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復) | `gpt-5.5` high/xhigh | opus(judge) | 修復/迭代兜底層,**不降** |
+| plan 作者、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | `gpt-5.5` xhigh(GPT 側無 Mythos 級對等品,取最高檔並在此註明) | fable(arbiter) | 單點失誤代價最高,**只可升不可降** |
+| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | `gpt-5.5` xhigh 或 session default 若 session 已是更強設定 | runtime default / fable(Claude 側現為 Fable 5 max) | P5=抓雷主力;P6=端到端代理操作(git/gh/merge 判斷),兩者不降級成 mini/spark |
 
-升級通道(自動,腳本內建或指揮官調度):`gpt-5.4-mini` / `gpt-5.4` implementer 回 BLOCKED 或 NEEDS_CONTEXT → 換 `gpt-5.5` high/xhigh 重派。
+升級通道(自動,腳本內建或指揮官調度):`gpt-5.4` implementer 回 BLOCKED 或 NEEDS_CONTEXT → 換 `gpt-5.5` high/xhigh 重派。
 平行:P1 四軸 review、P5 per-finding verifier 可平行;**P3 implementer 嚴禁平行**(實作衝突)。
 **降本原則**:hard gates(四軸 approved 條件/兩階段 review 閉合條件/P4 vertical slice 七項/P5 refute-by-default + critic/P6 buffered merge)一個不動;降級只發生在「產出被 ≥2 層更強 gate 複核」或「錯誤顯性必爆」的位置。等效性靠 gate 結構保證,非靠單點模型強度。
 
@@ -225,8 +228,8 @@ Claude 版的 haiku / sonnet / opus 是**任務難度 tier**。Codex copy 必須
 
 1. AGENTS.md 寫 gstack 是「唯一驗收證據來源」,現實是 Playwright(歷史 evidence 全為 Playwright/Chrome 產)。本流程採「綁產物不綁品牌」;改字面需另開 docs PR。github-workflow.md 7 欄表的「gstack E2E command」欄同理 — 填實際引擎指令並括註引擎名。
 2. PR body 用 product-operability §4 的 10 列表;P7 回報用 AGENTS.md 7 欄表 — 兩版並存是權威檔既有張力,本流程兩處各用各的。
-3. commit trailer:std-*.js 內的 `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` 是 **harness attribution 文字、非 Codex 模型調用**。Codex agent 實際模型分配以本檔「模型預算」表為準;是否改 trailer 屬另一個獨立決策(須與 harness commit 規則同步,否則 repo 出現雙 trailer)。squash 後實質影響極小。
+3. commit trailer:std-*.js 與 ship-item 內的 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` 是 **harness attribution 文字、非 Codex 模型調用**。Codex agent 實際模型分配以本檔「模型預算」表為準;trailer 已於 2026-07-02 與 Claude 側 harness commit 規則同步為單一 trailer,Codex 側 commit 沿用同一字面。
 4. GitNexus detect-changes 在 linked worktree 看不到 staged(已知坑)→ implementer fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`,PR body 揭露;完全失敗記 `fail`,同 run 3 次 → held。
 5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
-6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。純動 `.claude/**` / `.codex/**` 的 PR 可能被 pr-review-agent paths-ignore 跳過 review(#202);main 無 branch protection 故此 check 非 required。
+6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。pr-review-agent 對所有 PR 都會跑(#202 的 paths-ignore 已移除,`pr-review-agent.yml` 現無 paths 過濾),且是 main branch protection 的 required check(11 項之一;2026-07-02 以 gh api 親查)——`.claude/**` / `.codex/**` 變更同樣受 review 與 AI Coding Governance body-evidence 表約束。
 7. P1 四軸 review 第二輪起只重審上輪未過的軸(fixer 改 plan 可能影響已過軸)— 由 P3 per-task spec review 與 P5 critic 兜底,屬已知取捨。

@@ -4,10 +4,12 @@ spec = importlib.util.spec_from_file_location("gen_routing", ROOT / "scripts/gen
 gen = importlib.util.module_from_spec(spec); spec.loader.exec_module(gen)
 
 def test_render_block_includes_planauthor_off():
-    data = {"tiers": {"reason": {"model":"opus","effort":"xhigh"}, "judge":{"model":"opus","effort":"max"}},
-            "allowed_efforts": {"opus":["xhigh","max"]}, "flags": {"plan_author_xhigh": False}}
+    data = {"tiers": {"reason": {"model":"opus","effort":"xhigh"}, "judge":{"model":"opus","effort":"max"},
+                      "arbiter": {"model":"fable","effort":"max"}},
+            "allowed_efforts": {"opus":["xhigh","max"], "fable":["max"]}, "flags": {"plan_author_xhigh": False}}
     block = gen.render_block(data)
-    assert "planAuthor: { model: 'opus', effort: 'max' }" in block
+    assert "planAuthor: { model: 'fable', effort: 'max' }" in block
+    assert "arbiter: { model: 'fable', effort: 'max' }" in block
     assert block.startswith("// <routing:gen>") and block.rstrip().endswith("// </routing:gen>")
 
 def test_render_block_planauthor_on():
