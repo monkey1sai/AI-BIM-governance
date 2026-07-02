@@ -30,7 +30,7 @@ yalc.lock
 
 # Local agent artifacts
 /.claude/
-/CLAUDE.md
+# /CLAUDE.md un-ignored 2026-07-02（治理審計：薄鏡像入版控，PR review 可見）
 
 # Stray dir created when %SystemDrive% env var failed to expand under bash/MSYS
 /%SystemDrive%/

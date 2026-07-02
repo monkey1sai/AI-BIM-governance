@@ -1,56 +1,11 @@
-# bim-review-coordinator — Local Boundary Rules
+# bim-review-coordinator — Claude Mirror Entry
 
-本檔是 sibling [`AGENTS.md`](AGENTS.md) 的 Claude 鏡像入口；七段 schema（Role / Owns / Does Not Own / Required Boundaries / Before Editing / Verify / Done Criteria）以 sibling `AGENTS.md` 為準，本檔只列在此 repo 工作時必須遵守的最小規則。
+本檔是 sibling [`AGENTS.md`](AGENTS.md) 的 Claude 鏡像入口。完整規則（七段 schema、collaboration handler 退役狀態、ifc-cache carve-out、權威歸屬表）以 sibling `AGENTS.md` 為準；衝突時依根目錄 `CLAUDE.md` §1 優先序解析。
 
-> 完整跨 repo 邊界見根目錄 [`AGENTS.md`](../AGENTS.md) §1 與 [`docs/agents/repo-boundary-detail.md`](../docs/agents/repo-boundary-detail.md)。
-> 衝突時依根目錄 [`CLAUDE.md`](../CLAUDE.md) §1 優先序解析。
+重點：唯一對外 IFC-ready intake（`POST /api/external/ifc-ready`，Service auth + idempotency）+ Session Control Plane + metadata-only callback outbox（`localhost:8004` 含 Socket.IO）。不渲染 3D、不存大型模型 byte（`storage/ifc-cache/` 臨時通道除外）、不當 metadata 權威；governance 一律經 `/api/governance/*` proxy。完整跨 repo 邊界見根目錄 [`docs/agents/repo-boundary-detail.md`](../docs/agents/repo-boundary-detail.md) §3.4。
 
-## Role
-
-IFC-ready Intake / Callback Outbox / Session Control Plane — 唯一外部 IFC-ready intake；協調 browser client 與 Kit streaming server 的連線資訊；廣播 presence(`joinSession` / `leaveSession` / `presenceUpdated`)等基本 session 事件；將 streaming conversion 結果放入 metadata-only callback outbox。
-
-> **退役狀態(2026-05-21,change `remove-conflict-review-from-fast-mvp`)**:
-> `highlightRequest` / `selectionUpdate` / `annotationCreate` 等 collaboration
-> Socket.IO event handlers 已從本 service 移除(`src/socket/reviewNamespace.ts`);
-> `getReviewIssues` / `createAnnotation` / `/api/model-versions/:id/review-bootstrap`
-> 也已刪。`/api/review-sessions/:id/events` 與 `/lifecycle-events` 仍保留;
-> lifecycle endpoint 排除 collaboration event 的語意 wording 保留作 archive
-> compatibility(舊 event log 仍可能含這些 type)。
-
-埠口：`localhost:8004`（含 Socket.IO）
-
-## MUST
-
-- 外部 IFC-ready 只進 `POST /api/external/ifc-ready`；internal conversion result / callback outbox 端點必須使用 internal token。
-- Session lifecycle 事件（create / join / leave / dispose）必須由本服務集中管理。
-- API / Socket.IO event schema 變更必同步 `docs/contracts/` 下對應 contract，並更新 `tests/` fixture。
-- 提交前跑 `npm run verify`（= `npm run build && npm test`）。
-
-## MUST NOT
-
-- ❌ 渲染 3D / 開啟 USD stage / 處理 GPU。
-- ❌ 直接保存大型模型檔案 byte（屬於 streaming/data-plane artifact storage）。
-  > **例外 carve-out(2026-05-21,change `fast-ifc-link-demo-loop`)**:`POST /api/external/ifc-ready` 同步階段允許 coordinator 把外部 IFC 下載到本地 shared volume(`storage/ifc-cache/<ifc_ready_job_id>/source.ifc`)作 dispatch 前臨時通道。coordinator 不視為該 IFC bytes 資料權威;`bim-streaming-server` 為 conversion authority,外部公司雲端為 control-plane 權威。實作:`src/services/ifcDownloader.ts` + `POST /api/external/ifc-ready` 內同步呼叫。production 應設 `IFC_DOWNLOAD_STRICT=true`/`fallbackOnFetchError=false` 強制真實下載。
-- ❌ 取代外部公司雲端 control-plane 成為 metadata 權威（本服務只保存最小 shadow metadata）。
-- ❌ 取代 `web-viewer-sample` 成為 UI（本服務不渲染畫面、不送 view-layer 樣式）。
-- ❌ 引入 Omniverse / `pxr` / `omni.*` 套件。
-- ❌ 直接控制 Kit 進程的 viewport / camera / material（runtime 操作必須透過 DataChannel 由 `web-viewer-sample` 發出，或由 streaming server 自治）。
-
-## Verify 入口
+Verify：
 
 ```bash
-npm run verify
+npm run verify   # = npm run build && npm test
 ```
-
-## 權威歸屬
-
-| 行為 | 此 repo 角色 |
-|---|---|
-| review session state | **owner** |
-| presence / selection broadcast | **owner** |
-| stream config 給 viewer | **owner** |
-| external IFC-ready intake | **owner** |
-| cloud callback outbox | **owner** |
-| project / artifact metadata | **reference only**（owner 在外部公司雲端 control-plane） |
-| file / conversion body | **不擁有**（owner 在 `bim-streaming-server` / 外部 artifact store） |
-| 3D runtime state | 不參與（owner 在 `bim-streaming-server`） |

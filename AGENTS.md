@@ -55,19 +55,7 @@
   → branch → PR → Actions → merge
 ```
 
-| 工具 | 唯一職責（單線，不可越界） |
-|---|---|
-| **Superpowers** | 主線 plan / execution governance：`writing-plans` 拆分期 plan → `subagent-driven-development` 執行 → `verification-before-completion` done-gate |
-| **GitNexus** | code intelligence：改 symbol 前 `impact`（HIGH / CRITICAL 先回報）、commit 前 `detect_changes` 驗 scope |
-| **gstack** | browser QA / screenshot / E2E evidence：user-facing 完成的**唯一驗收證據來源** |
-| **Matt Pocock skills** | 僅 optional 輔助：issue / triage / domain-doc；**不得當主線** |
-
-禁止（anti-patterns）：
-
-- ❌ 用 Matt Pocock skills 取代 Superpowers plan。
-- ❌ 用 Superpowers 宣告 UI 完成而不跑 gstack。
-- ❌ 用 GitNexus 當產品設計依據（設計來自 spec / prototype，非 call graph）。
-- ❌ 用 gstack 改 backend symbol 而跳過 GitNexus impact。
+四工具職責表與 anti-patterns 的完整定義見 `docs/agents/github-workflow.md`（單一權威版，避免雙表漂移）；一句話分工：**Superpowers**＝plan / execution 主線、**GitNexus**＝impact / detect_changes、**gstack**＝user-facing 驗收唯一證據、**Matt Pocock skills**＝僅 issue / triage 輔助不得當主線。
 
 誠實鐵律（repo contract：前端要真的能操作，不能只接 mock）：某部分還沒 backend 時，UI 須誠實標 `DEMO DATA`／`NOT BUILT`／`not observed`，不得假裝 ready。完成標準與 frontend-operable rule 見上方「產品定位與完成標準」。
 

@@ -168,6 +168,7 @@ MUST 先從主工作區 root 跑本技能 helper 清掉佔住必要 host-native 
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\ensure-host-native-ports-free.ps1
+# 若 .codex 側或 user 級亦存在同名 helper，三份內容必須一致（.codex copy 定義了跨 host 優先序）
 ```
 
 - **為什麼**:Kit 無 live reload / migration(docs/plans 鐵則 #4、D9——換 stage 只能 terminate+recreate)。殘留的

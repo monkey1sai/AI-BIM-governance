@@ -52,7 +52,7 @@ npm run verify
 目前 `npm run verify` 等同：
 
 ```powershell
-npm run build
+npm run build && npm test && npm run test:struct-log
 ```
 
 `npm run lint` 可手動使用，但既有 lint baseline 尚未清零，不能當作目前跨 repo hard gate。

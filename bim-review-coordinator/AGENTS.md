@@ -4,9 +4,11 @@
 
 ## Role
 
-`bim-review-coordinator` 是外部 IFC-ready intake、metadata-only callback outbox 與 Session / Collaboration Control Plane。它負責建立 review session、協調 viewer 與 streaming server 的連線資訊、廣播多人協作事件，並保存最小 local shadow metadata。
+`bim-review-coordinator` 是外部 IFC-ready intake、metadata-only callback outbox 與 Session / Collaboration Control Plane。它負責建立 review session、協調 viewer 與 streaming server 的連線資訊、廣播 presence 等基本 session 事件，並保存最小 local shadow metadata。
 
-服務埠口：`127.0.0.1:8004`
+服務埠口：`127.0.0.1:8004`（含 Socket.IO）
+
+> **退役狀態（2026-05-21，change `remove-conflict-review-from-fast-mvp`）**：`highlightRequest` / `selectionUpdate` / `annotationCreate` 等 collaboration Socket.IO event handlers 已自本 service 移除（`src/socket/reviewNamespace.ts`）；`getReviewIssues` / `createAnnotation` / `/api/model-versions/:id/review-bootstrap` 也已刪。`/api/review-sessions/:id/events` 與 `/lifecycle-events` 仍保留；lifecycle endpoint 排除 collaboration event 的 wording 保留作 archive compatibility（舊 event log 仍可能含這些 type）——不要把這些已刪 handler 當 regression 加回來。
 
 ## Owns
 
@@ -32,7 +34,17 @@
 - 本服務只協調 session、collaboration、intake 與 callback outbox，不取代外部公司雲端 control-plane 成為長期 metadata authority。
 - 不得引入 Omniverse / `pxr` / `omni.*` dependency。
 - 不得直接控制 Kit viewport、camera、material；runtime operation 屬於 `bim-streaming-server`。
+- 不直接保存大型模型檔案 byte。**例外 carve-out（2026-05-21，change `fast-ifc-link-demo-loop`）**：`POST /api/external/ifc-ready` 同步階段允許把外部 IFC 下載到本地 shared volume（`storage/ifc-cache/<ifc_ready_job_id>/source.ifc`）作 dispatch 前臨時通道（實作 `src/services/ifcDownloader.ts`）；coordinator 不因此成為 IFC bytes 權威。production 應設 `IFC_DOWNLOAD_STRICT=true` / `fallbackOnFetchError=false` 強制真實下載。
 - User-facing flow 需要本服務參與時，API done 不等於 feature done；必須同步確認 `web-viewer-sample` 有可操作 route / button / E2E evidence。
+
+權威歸屬速查：
+
+| 行為 | 此 repo 角色 |
+|---|---|
+| review session state / presence broadcast / stream config / external IFC-ready intake / cloud callback outbox | **owner** |
+| project / artifact metadata | reference only（owner 在外部公司雲端 control-plane） |
+| file / conversion body | 不擁有（owner 在 `bim-streaming-server` / 外部 artifact store） |
+| 3D runtime state | 不參與（owner 在 `bim-streaming-server`） |
 
 ## Before Editing
 

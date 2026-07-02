@@ -87,6 +87,16 @@ python -m pytest tests/test_conversion_authority_api.py -q
 
 Kit 渲染需要 Windows host-native（NVIDIA driver）；WSL2 / Docker 無 GPU graphics 通道，不可在容器跑 Kit runtime（見 agent memory `kit-gpu-render-needs-windows-native.md`）。
 
+## governance-service (Python host-native, port 49102)
+
+```powershell
+cd governance-service
+& "C:\Program Files\Python312\python.exe" -m pytest tests/ -v
+& "C:\Program Files\Python312\python.exe" scripts/run_governance_evidence.py
+```
+
+須走 host-native `C:\Program Files\Python312\python.exe`（具 ifcopenshell 0.8.5 + ifctester）；勿用 WSL / Docker（本服務 CPU-only，無 GPU 需求）。真實 IFC evidence 落 `docs/evidence/governance-rule-run-pass/`。
+
 ## web-viewer-sample (Vite, port 5173)
 
 ```powershell

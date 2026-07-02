@@ -33,6 +33,9 @@ Thumbs.db
 !.claude/skills/omniverse-cad-to-simready/
 !.claude/skills/omniverse-realtime-viewer/
 !.claude/skills/omniverse-usd-performance-tuning/
+# Tracked GitNexus CLI skills + repo-health（2026-07-02 治理審計：CLAUDE.md MUST 規則引用的檔案必須入版控）
+!.claude/skills/gitnexus/
+!.claude/skills/repo-health/
 # Tracked agent assets: workflows/commands/agents/settings (2026-06-10)
 !.claude/workflows/
 !.claude/commands/
@@ -51,6 +54,8 @@ Thumbs.db
 !/.codex/skills/omniverse-cad-to-simready/
 !/.codex/skills/omniverse-realtime-viewer/
 !/.codex/skills/omniverse-usd-performance-tuning/
+!/.codex/skills/gitnexus/
+!/.codex/skills/repo-health/
 # generated/（cluster-* 等生成知識圖）為可重生生成物，不入庫
 /.codex/skills/generated/
 .superpowers/
