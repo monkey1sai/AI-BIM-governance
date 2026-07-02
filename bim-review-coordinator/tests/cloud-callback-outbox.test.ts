@@ -101,6 +101,32 @@ describe("T5 cloud callback outbox（metadata-only / retry / dead-letter）", ()
     expect(res.body.callback.payload.artifacts.usdc_ref).toBe("edge-local://t/mv/cj/model.usdc");
   });
 
+  it("誠實鐵律:conversion_result_ready callback payload 的 source_ifc.ref 遮蔽 presigned 簽章(P0 全出口)", async () => {
+    const app = makeApp();
+    // seed 一個 source_ifc.ref 帶 X-Amz 簽章的 job(覆寫 fixture,確定性驗遮蔽生效)
+    const signedRef = "https://minio.example.com/bim-control/proj/cat/v1/model.ifc?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Credential=AKIA%2F20260701&X-Amz-Expires=3600";
+    const example = structuredClone(IFC_CONTRACT.example) as Record<string, unknown>;
+    const seeded = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_mask_001", "X-Idempotency-Key": "idem_mask_001" }))
+      .send({ ...example, source_ifc: { ...(example.source_ifc as Record<string, unknown>), ref: signedRef } });
+    expect(seeded.status).toBe(202);
+    const res = await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
+      correlation_id: "corr_mask_001",
+      conversion_job_id: "cj_mask_001",
+      status: "ready",
+      artifacts: { usdc_ref: "edge-local://t/mv/cj/model.usdc" },
+      artifact_summary: { usdc_openable: true },
+    });
+    expect(res.status).toBe(202);
+    const payload = res.body.callback.payload;
+    // source_ifc.ref 仍在(metadata 標示來源),但簽章已剝除
+    expect(payload.source_ifc.ref).not.toMatch(/X-Amz-Signature|X-Amz-Credential|X-Amz-Expires/i);
+    expect(payload.source_ifc.ref).toBe("https://minio.example.com/bim-control/proj/cat/v1/model.ifc");
+    // 整包 payload 不含任何簽章殘留
+    expect(JSON.stringify(payload)).not.toMatch(/X-Amz-Signature|X-Amz-Credential/i);
+  });
+
   it("cloud 不可達 → outbox 保留重試，retry 耗盡 → dead_letter（不靜默丟棄）", async () => {
     const app = makeApp();
     const correlationId = await seedIfcReadyJob(app);

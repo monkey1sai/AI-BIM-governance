@@ -44,6 +44,16 @@ describe("minioWatcher 純函式導出（≥3 段：專案/種類/版本）", ()
     expect(r.externalModelVersionId).toBe("v1");
   });
 
+  it("key 含 '|' → ok:false（q3-pipe-guard：與 idempotencyKeyFor 的 bucket|key|etag 分隔符衝突，watcher 路徑一致拒收）", () => {
+    // 回歸鎖（CodeRabbit Major）：自動 watcher（triggerIntake）經 deriveIntakeFromKey 進 intake,
+    // 原缺 '|' 守衛 → 含 '|' 的壞 key 可能撞 idempotency hash 破壞 ledger 契約。listMinioObjects
+    // /手動觸發端各自已擋,此處於共用 derivation 補上使三路一致。
+    const r = deriveIntakeFromKey({ key: "proj|inject/main/v1/model.ifc", prefix: "", keySuffix: "/model.ifc" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain("|");
+  });
+
   it("帶 prefix 時先去 prefix 再以 ≥3 段解析", () => {
     const r = deriveIntakeFromKey({ key: "tenant_a/899/main/v1/model.ifc", prefix: "tenant_a/", keySuffix: "/model.ifc" });
     expect(r.ok).toBe(true);

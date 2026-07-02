@@ -102,6 +102,20 @@ export class ExternalIfcReadyStore {
     }
   }
 
+  /**
+   * ifc-ready-api-field-redesign（replay 可見性）：idempotent replay 命中既有 job 時，將
+   * idempotent_replay 持久寫回 job record，使列表/詳情端點（summarizeIfcReadyJob）能誠實呈現
+   * 「命中既有 job（去重生效可見）」（spec §111/§140）。原本僅在 200 replay 回應物件上覆寫
+   * idempotent_replay:true、未寫回 store，導致列表投影 job.idempotent_replay 恆為 false。
+   */
+  markIdempotentReplay(jobId: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.idempotent_replay = true;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
   markDispatched(jobId: string, conversionJobId: string, conversionStatus: string): IfcReadyIntakeJob | undefined {
     const job = this.jobsById.get(jobId);
     if (!job) return undefined;
@@ -240,6 +254,7 @@ export class ExternalIfcReadyStore {
     conversionStatus: "ready" | "failed",
     callbackOutboxId: string,
     artifactManifestRef?: string | null,
+    conversionFailure?: string | null,
   ): IfcReadyIntakeJob | undefined {
     const job = this.jobsById.get(jobId);
     if (!job) return undefined;
@@ -248,6 +263,9 @@ export class ExternalIfcReadyStore {
     if (artifactManifestRef !== undefined) {
       job.artifact_manifest_ref = artifactManifestRef;
     }
+    // ifc-ready-api-field-redesign(quality Important #1):失敗時記錄轉檔權威回報的原因文字
+    //（供 deriveFailure 投影 failure_stage="conversion"）；ready 時清空,誠實不留舊失敗殘留。
+    job.conversion_failure = conversionStatus === "failed" ? (conversionFailure ?? "conversion_failed") : null;
     job.updated_at = new Date().toISOString();
     return job;
   }

@@ -262,19 +262,21 @@ test.describe("MinIO watcher 自動 intake（STUB MINIO + STUB CONVERSION）", (
 
       // 6) Ifc-ready jobs 表：988 的 job 自動出現（watcher 建立，非手動註冊）。
       //    須 scope 到「Ifc-ready jobs」Panel——另有 MinIO 自動偵測 triggered 表的列文字含
-      //    `988/main/auto/model.ifc`（子字串也含 "988"），若不限定 Panel 會誤命中該表。
-      //    project 欄是「正好 988」（非 988/auto/...），故 cell 用 /^988$/ 精確匹配。
+      //    `988/main/auto/model.ifc`（子字串也含 "988"），已限定 Panel 排除該表。
+      //    task#3 後 project 欄改渲「project_display_name · category」＝「988 · main」
+      //    （key 988/main/auto/model.ifc 推導 projectDisplayName="988"、category="main"），
+      //    故 row-id 由 /^988$/ 改為錨定開頭的 /^988\b/（避開分隔符字元編碼；Panel 內僅 project 欄以 988 起頭）。
       const ifcReadyPanel = page.locator("section.ec-panel", { hasText: "Ifc-ready jobs" });
       const row988 = ifcReadyPanel
         .locator("table.ec-table tbody tr")
-        .filter({ has: page.locator("td", { hasText: /^988$/ }) });
+        .filter({ has: page.locator("td", { hasText: /^988\b/ }) });
       await expect(row988.first()).toBeVisible({ timeout: 20_000 });
-      // job 狀態須達 dispatched/queued 級：pages.tsx:357 表頭欄序為
-      //   job / project / conversion / dispatch / session / stage，conversion 欄（第 3 td，nth(2)）
-      //   渲染 j.conversion_status。watcher 自動派工後 markDispatched 把 conv stub 回的 status="queued"
-      //   存進 conversion_status，故此欄顯示 "queued"。直接斷言該欄=queued，確認 job 進 dispatched/queued 級
-      //   而非僅「有一列含 988」。
-      await expect(row988.first().locator("td").nth(2)).toContainText("queued", { timeout: 20_000 });
+      // job 狀態須達 dispatched/queued 級：task#3 後表頭欄序為
+      //   job / key / lifecycle / project / usdc / conversion / dispatch / session / stage / coverage / control，
+      //   conversion 欄（j.conversion_status）由 nth(2) 位移到 nth(5)。watcher 自動派工後 markDispatched
+      //   把 conv stub 回的 status="queued" 存進 conversion_status，故此欄顯示 "queued"。直接斷言該欄含 queued，
+      //   確認 job 進 dispatched/queued 級而非僅「有一列含 988」。
+      await expect(row988.first().locator("td").nth(5)).toContainText("queued", { timeout: 20_000 });
 
       await page.screenshot({ path: "../artifacts/e2e/minio-watch-auto-intake-conv.png", fullPage: true });
     } finally {

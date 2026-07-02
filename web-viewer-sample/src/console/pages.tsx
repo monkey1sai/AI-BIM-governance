@@ -6,7 +6,7 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 // VG-01 Task 3：A1 工作台嵌入 live viewer（iframe + vg01 postMessage 橋），跑檢核→3D 高亮一氣呵成。
@@ -872,6 +872,12 @@ const LEDGER_STATUS_PROV: Record<string, Prov> = {
   detected: "artifact", queued: "artifact", converting: "artifact", ready: "asbuilt", failed: "p1",
 };
 
+// ifc-ready-api-field-redesign：jobs 表 lifecycle chip 中文標籤。重用既有 LEDGER_STATUS_LABEL
+// （同一 lifecycle→中文 字典，避免第二份漂移）；null/undefined/未知值誠實退 "—"。
+function lifecycleLabel(s: ConversionLifecycleStatus | null | undefined): string {
+  return s ? (LEDGER_STATUS_LABEL[s] ?? "—") : "—";
+}
+
 export function ConversionSchedulingPage() {
   const [jobs, setJobs] = useState<IfcReadyListItem[]>([]);
   // Task 6：持久 ConversionLedger 資料（getConversionRecords），獨立於 ifc-ready jobs。
@@ -1147,6 +1153,7 @@ export function ConversionSchedulingPage() {
           <table className="ec-table">
             <thead>
               <tr>
+                <th>key</th>
                 <th>{t("專案", "Project")}</th>
                 <th>{t("種類", "Category")}</th>
                 <th>{t("版本", "Version")}</th>
@@ -1164,6 +1171,7 @@ export function ConversionSchedulingPage() {
                 const statusProv = LEDGER_STATUS_PROV[r.status] ?? "artifact";
                 return (
                   <tr key={r.idempotency_key}>
+                    <td><code data-testid={`conv-ledger-idem-${r.idempotency_key}`}>{r.idempotency_key}</code></td>
                     <td>{r.project_display_name || r.project_id}</td>
                     <td>{r.category || "—"}</td>
                     <td>{r.external_model_version_id}</td>
@@ -1202,21 +1210,53 @@ export function ConversionSchedulingPage() {
       </Panel>
       <Panel title="Ifc-ready jobs" sub={t("/api/external/ifc-ready truth；沒有資料時顯示空，不補假 job", "/api/external/ifc-ready truth; shows empty when there is no data, with no fake jobs filled in")} prov="asbuilt">
         {jobs.length ? (
-          <table className="ec-table"><thead><tr><th>job</th><th>project</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th><th>{t("控制", "Control")}</th></tr></thead>
+          <table className="ec-table"><thead><tr><th>job</th><th>key</th><th>lifecycle</th><th>project</th><th>usdc</th><th>conversion</th><th>dispatch</th><th>session</th><th>stage</th><th>coverage</th><th>{t("控制", "Control")}</th></tr></thead>
             <tbody>{jobs.slice(0, 20).map((j) => (
               <Fragment key={j.ifc_ready_job_id}>
                 <tr>
                   <td>{j.ifc_ready_job_id}</td>
-                  <td>{j.project_id}</td>
+                  <td>
+                    {/* key 欄三段訊號間顯式補空白分隔：JSX 多行排列經編譯會去除元素間空白，
+                        .ec-note 又無水平 margin（edge-console.css:136 margin:8px 0），不補則三段黏成
+                        「mw_...新建易失·重啟即清」，操作員無法辨識 idem／replay／volatility 三個獨立訊號。 */}
+                    <code data-testid={`conv-job-idem-${j.ifc_ready_job_id}`}>{j.idempotency_key ?? "—"}</code>{" "}
+                    {/* idempotent_replay 誠實標記：false=新建、true=命中既有去重 */}
+                    <span data-testid={`conv-job-replay-${j.ifc_ready_job_id}`} className="ec-note">{j.idempotent_replay ? t("命中既有", "replay") : t("新建", "new")}</span>{" "}
+                    {/* data_volatility 易失性標記：job 端 in-memory，重啟即清 */}
+                    <span data-testid={`conv-job-volatility-${j.ifc_ready_job_id}`} className="ec-note">{j.data_volatility === "persisted" ? t("持久", "persisted") : t("易失·重啟即清", "volatile")}</span>
+                  </td>
+                  <td>
+                    {/* lifecycle chip 重用 ledger 表（L1178）同一套 provenance chip 樣式：
+                        .ec-prov（padding/border/圓點，edge-console.css:77-90）+ PROV_CLASS
+                        以 LEDGER_STATUS_PROV 上色（queued/detected/converting→cyan、ready→green、
+                        failed→red），使 job↔ledger↔minio 三視圖狀態徽章視覺對齊。 */}
+                    <span
+                      data-testid={`conv-job-lifecycle-${j.ifc_ready_job_id}`}
+                      className={`ec-prov ${PROV_CLASS[LEDGER_STATUS_PROV[j.conversion_lifecycle_status ?? ""] ?? "artifact"]}`}
+                    >{lifecycleLabel(j.conversion_lifecycle_status)}</span>
+                  </td>
+                  <td data-testid={`conv-job-project-${j.ifc_ready_job_id}`}>
+                    {j.project_display_name || j.project_id}{j.category ? ` · ${j.category}` : ""}
+                  </td>
+                  <td>
+                    <span data-testid={`conv-job-usdc-${j.ifc_ready_job_id}`} className="ec-note">
+                      {j.usdc_role === "parsed_usdc" ? t("已產生 USDC", "USDC ready") : t("待產生", "pending")}
+                    </span>
+                  </td>
                   <td>{j.conversion_status ?? "—"}</td>
                   <td>
-                    {j.dispatch_error ? (
+                    {(j.failure_reason ?? j.dispatch_error) ? (
                       <span
                         className="ec-warn-note"
-                        data-testid={`conv-dispatch-error-${j.ifc_ready_job_id}`}
-                        title={j.dispatch_error}
+                        data-testid={`conv-job-failure-${j.ifc_ready_job_id}`}
+                        title={`${j.failure_stage ? `[${j.failure_stage}] ` : ""}${j.failure_reason ?? j.dispatch_error}`}
                       >
-                        {j.dispatch_error.length > 80 ? `${j.dispatch_error.slice(0, 80)}…` : j.dispatch_error}
+                        {j.failure_stage ? `[${j.failure_stage}] ` : ""}
+                        {(() => {
+                          // 誠實鐵律：超過 80 字才截斷並補「…」提示，不可靜默硬切誤導操作員（完整訊息見 title tooltip）。
+                          const msg = (j.failure_reason ?? j.dispatch_error) as string;
+                          return msg.length > 80 ? `${msg.slice(0, 80)}…` : msg;
+                        })()}
                       </span>
                     ) : "—"}
                   </td>
@@ -1248,7 +1288,7 @@ export function ConversionSchedulingPage() {
                   </td>
                 </tr>
                 {openJob === j.ifc_ready_job_id && (
-                  <tr><td colSpan={8}>
+                  <tr><td colSpan={11}>
                     <div data-testid={`conv-coverage-${j.ifc_ready_job_id}`}>
                       <CoverageDrawer state={cov[j.ifc_ready_job_id]} />
                     </div>

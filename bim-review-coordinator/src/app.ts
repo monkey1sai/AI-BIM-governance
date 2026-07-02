@@ -30,6 +30,7 @@ import {
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
+import { deriveFailure } from "./services/failureReason.js";
 import {
   createMinioS3Client,
   listMinioFolder,
@@ -1265,8 +1266,12 @@ export function createCoordinatorApp(
       const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
       if (existing) {
         // fast-ifc-link-demo-loop §2.6:idempotent replay 直接 200 reuse,不重下載也不重派工
-        // 誠實鐵律：existing 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
-        response.status(200).json({ ...sanitizeJobForExternal(existing), idempotent_replay: true });
+        // ifc-ready-api-field-redesign（replay 可見性）：持久標記 idempotent_replay 到 job record,
+        // 使列表/詳情端點（summarizeIfcReadyJob）誠實呈現「命中既有 job（去重生效可見）」（spec §111/§140：
+        // 操作員需從列表分辨新建 vs 命中既有）。原僅覆寫 200 回應物件、未寫回 store → 列表投影恆 false。
+        const replayed = externalIfcReadyStore.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
+        // 誠實鐵律：replayed 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
+        response.status(200).json({ ...sanitizeJobForExternal(replayed), idempotent_replay: true });
         return;
       }
 
@@ -1535,7 +1540,14 @@ export function createCoordinatorApp(
     // quality finding #1：detail 端點與列表端點（summarizeIfcReadyJob）對齊上 wire 單一權威
     // conversion_lifecycle_status，使前端 IfcReadyJobDetail.conversion_lifecycle_status 型別契約成立
     // （前端 getIfcReadyJob 輪詢主讀此欄）。additive：sanitizeJobForExternal 仍回原始 job 形狀。
-    response.json({ ...sanitizeJobForExternal(job), conversion_lifecycle_status: deriveLifecycleStatus(job) });
+    const lifecycle = deriveLifecycleStatus(job);
+    response.json({
+      ...sanitizeJobForExternal(job),
+      conversion_lifecycle_status: lifecycle,
+      ...deriveFailure(job),
+      usdc_role: "pending" as const, // 同 summarizeIfcReadyJob：job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending（禁 lifecycle 假報 parsed）
+      data_volatility: "in_memory_volatile" as const,
+    });
   });
 
   // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
@@ -1828,7 +1840,7 @@ export function createCoordinatorApp(
         conversion_job_id: conversionJobId,
         correlation_id: job.correlation_id,
         status: "ready",
-        source_ifc: { ref: job.source_ifc_ref, etag: job.source_ifc_etag },
+        source_ifc: { ref: maskPresignedRef(job.source_ifc_ref), etag: job.source_ifc_etag },
         artifacts: {
           usdc_ref: report.artifacts?.usdc_ref ?? null,
           element_mapping_ref: report.artifacts?.element_mapping_ref ?? null,
@@ -1864,6 +1876,9 @@ export function createCoordinatorApp(
       normalizedStatus,
       entry.outbox_id,
       report.artifacts?.manifest_ref ?? null,
+      // ifc-ready-api-field-redesign(quality Important #1):與上方 conversion_failed callback payload 同源,
+      // 把 report.reason 存回 job,供 deriveFailure 投影 failure_stage="conversion" 的 failure_reason(非漏報 null/null)。
+      normalizedStatus === "failed" ? (report.reason || "conversion_failed") : null,
     );
 
     // backfill §2：terminal `ready` 才觸發本地 session handoff；`failed` 不建
@@ -2606,6 +2621,7 @@ function summarizeSessionForRuntime(session: ReviewSession): Record<string, unkn
 
 function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | null): Record<string, unknown> {
   const expectedStage = session ? expectedStageBinding(session) : null;
+  const lifecycle = deriveLifecycleStatus(job);
   return {
     ifc_ready_job_id: job.ifc_ready_job_id,
     status: job.status,
@@ -2624,7 +2640,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     host_local_path: job.host_local_path ?? null,
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
-    conversion_lifecycle_status: deriveLifecycleStatus(job),
+    conversion_lifecycle_status: lifecycle,
     conversion_authority: job.conversion_authority,
     // conv-prioritize-retry (cr1 BLOCKER 2):列表端點上 wire queue_position,否則 #conv
     // 透過列表取件時 position 永遠 undefined,插隊鈕 disabled 條件失效。additive,
@@ -2638,6 +2654,17 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     viewer_url: job.viewer_url ?? null,
     expected_stage_url: expectedStage?.url ?? null,
     expected_mapping_url: expectedStage?.mapping_url ?? null,
+    // === ifc-ready-api-field-redesign：對帳鍵 + 誠實觀測投影（additive/nullable;既有 26 欄不動）===
+    idempotency_key: job.idempotency_key,
+    idempotent_replay: job.idempotent_replay,
+    ...deriveFailure(job),
+    // 誠實（spec §4.6：usdc_role 以 usdc_key 為閂門）：job 端不投影 usdc_key（IfcReadyIntakeJob 無此欄、見「明確排除」;
+    // Phase 1 恆缺），Phase 2 由 callback outbox 回填 ledger 後前端由 ledger 讀 parsed → job_output 端恆 pending。
+    // 禁用 lifecycle==="ready" 假報 parsed_usdc：真實轉檔完成時 conversion_status→ready 會令 lifecycle→ready,
+    // 但 job 端仍無 usdc_key,依 spec §6.3/AC8「禁假 parsed USDC」必須維持 pending（這正是 must_fix 要防的假 ready、且與 ledger 端 r.usdc_key!=null 才顯 parsed 對齊）。
+    usdc_role: "pending" as const,
+    // 誠實：job 端為 in-memory store（重啟即清）;對帳真相以持久 ledger 為準。
+    data_volatility: "in_memory_volatile" as const,
     created_at: job.created_at,
     updated_at: job.updated_at,
   };
@@ -2651,12 +2678,20 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
  * @security 瀏覽器可見 / 對外（browser-visible / external）輸出 IfcReadyIntakeJob 前必經此函式：
  * 遮蔽 source_ifc_ref 的 presigned 簽章。已涵蓋出口：GET list/:jobId/shadow、POST intake 200/202、
  * POST local-web-view session。日後新增「瀏覽器可見/對外」且 spread 整個 job 的出口，MUST 先過此函式並補守衛測試。
+ * 對外雲端出口：callback outbox 的 conversion_result_ready payload 之 source_ifc.ref 亦已直接以
+ * maskPresignedRef 遮蔽（ingestConversionReport，非經本函式），與此處鐵律一致——全出口閉環。
  * 範圍外（刻意）：POST /api/internal/conversion-result、/api/internal/conversions/:id/ingest 等 internal-token
- * 路徑仍回原始 job（內部 consumer 可能需 presigned 下載；比照 callback outbox carve-out，pre-existing 非本次新增）。
- * 若要對 internal 路徑做 defense-in-depth 遮蔽，須先確認下游 consumer 不依賴 presigned ref。
+ * 路徑仍回原始 job（內部 consumer 可能需 presigned 下載）。此為 internal-token consumer 專屬 carve-out
+ * （defense-in-depth 待確認下游是否依賴 presigned ref），與已閉環的對外/瀏覽器/callback 出口無關。
  */
 function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
-  return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
+  // ifc-ready-api-field-redesign（list/detail 對稱）：conversion_failure 為 internal-only 欄位,
+  // 對外一律由 deriveFailure(job) 投影 humanized failure_reason/failure_stage,不直接外吐 raw 欄位。
+  // 否則本函式（detail / intake 202 / replay 200）full-spread 會外吐 conversion_failure,而列表端
+  // summarizeIfcReadyJob 是 whitelist 不含此欄 → list/detail 形狀分歧（未文件化的非對稱曝露）。
+  const rest = { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
+  delete (rest as { conversion_failure?: string | null }).conversion_failure;
+  return rest;
 }
 
 function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {

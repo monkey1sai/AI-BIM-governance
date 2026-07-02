@@ -48,4 +48,15 @@ describe("deriveLifecycleStatus 凍結映射", () => {
   it("download_status=failed 壓過 accepted → failed", () => {
     expect(deriveLifecycleStatus(job({ status: "accepted", download_status: "failed" }))).toBe("failed");
   });
+  // lifecycle-conversion-failed:轉檔權威回報 conversion_status=failed 時,job.status 仍為
+  // markDispatched 設的 "dispatched"(recordConversionOutcome 只改 conversion_status)。若不在最高優先
+  // failed 判斷收斂,會回 "converting" 與同 job 的 failure_stage="conversion" 自相矛盾,前端輪詢永遠卡等。
+  it("dispatched + conversion_status=failed → failed", () => {
+    expect(deriveLifecycleStatus(job({ status: "dispatched", conversion_status: "failed" }))).toBe("failed");
+  });
+  it("download 正常(downloaded)但 conversion_status=failed 壓過 dispatched → failed", () => {
+    expect(
+      deriveLifecycleStatus(job({ status: "dispatched", download_status: "downloaded", conversion_status: "failed" })),
+    ).toBe("failed");
+  });
 });
