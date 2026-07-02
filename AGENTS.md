@@ -63,8 +63,8 @@
 
 - 不在 `main` 上開發；plan / 設計文件預設繁體中文，API 路徑 / schema 欄位 / CLI flags / status enum / log / error / 外部產品名稱保留原文。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 是本機 agent/tooling 產物，預設維持 ignored（含以 `skills` CLI 裝進 `.claude/skills/` 的技能）。
-- Repo-local `.codex/skills` SHALL 對齊 `.claude/skills` 作為本機 skill inventory；OpenSpec / opsx closed-loop skills 已退役，需求拆解與執行治理改由 Superpowers skills 負責。
-- 不提交 `.claude/skills/generated/`、`.codex/skills/` 或 GitNexus generated skill 檔，除非使用者明確要求改變 repo policy。
+- Repo-local `.codex/skills` SHALL 對齊 `.claude/skills` 作為本機 skill inventory（本機同步，非版控同步）；OpenSpec / opsx closed-loop skills 已退役，需求拆解與執行治理改由 Superpowers skills 負責。
+- `.claude/` 版控白名單以 root `.gitignore` 的 `!.claude/...` 例外清單為準（2026-07-02 治理審計起含 `skills/gitnexus/`、`skills/repo-health/`——CLAUDE.md MUST 規則引用的檔案必須入版控）；`.claude/skills/generated/` 與其餘未白名單技能不提交。`.codex/skills` 除既有 tracked 檔（`spec-to-done` adapter 等）外維持本機鏡像不入版控：`pr-review-agent` 對 `.codex/skills` 路徑的新增/修改一律 high blocker（`scripts/lib/pr-review-agent.ps1:343` hard-coded；連既有 tracked 的 `.codex/skills/spec-to-done/SKILL.md` 修改也會擋，屬已知張力，放寬須使用者拍板）。
 
 完整 GitHub PR workflow 見 `docs/agents/github-workflow.md`。
 

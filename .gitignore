@@ -54,8 +54,6 @@ Thumbs.db
 !/.codex/skills/omniverse-cad-to-simready/
 !/.codex/skills/omniverse-realtime-viewer/
 !/.codex/skills/omniverse-usd-performance-tuning/
-!/.codex/skills/gitnexus/
-!/.codex/skills/repo-health/
 # generated/（cluster-* 等生成知識圖）為可重生生成物，不入庫
 /.codex/skills/generated/
 .superpowers/

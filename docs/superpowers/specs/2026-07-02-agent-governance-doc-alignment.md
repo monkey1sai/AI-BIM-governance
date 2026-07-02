@@ -37,4 +37,12 @@
 ## 驗收
 - 本地 `check-pr-body-evidence.ps1` 預跑通過；GitNexus `detect_changes` 無 code symbol 變更、risk low。
 - CI 11 項 required checks 全綠。
-- P1 完成後 root CLAUDE.md ≤100 行、AGENTS.md ≤200 行；`diff -rq .claude/skills .codex/skills` 僅剩刻意設計的 adapter copy 差異。
+- P1 完成後 root CLAUDE.md 與 AGENTS.md 均低於硬預算（≤130 / ≤250）並向目標（≤100 / ≤200）收斂；「目標行數」的剩餘缺口為 GitNexus embedded block（工具自動維護、不可手動刪）與刻意的鏡像設計（CLAUDE.md 高頻規則本文化，避免每 session 追讀 AGENTS.md 反而多耗 token），屬已審酌的取捨。`diff -rq .claude/skills .codex/skills` 僅剩刻意設計的 adapter copy 差異。
+
+## 執行紀錄
+
+- P0：PR #274 merged（2026-07-02）；首輪撞 missing_openspec，補本 spec 檔後綠。
+- CARC §2 補登：PR #276 merged（2026-07-02）。
+- P1：PR #275——首輪 pr-review-agent 抓出 `.codex/skills` 8 檔撞 `generated_tooling_path` hard blocker（`scripts/lib/pr-review-agent.ps1:343`）。依「不由 agent 自行放寬 review gate」原則縮範圍：`.codex` 側退出版控、維持本機鏡像（`git rm --cached` + 還原 `.gitignore` codex 白名單），`.claude` 側 7 檔納管照舊；AGENTS.md「本機 agent 產物」政策句同步明文化。`.codex/skills/spec-to-done` 的 stale 同步 diff 暫存本機，待使用者拍板規則調整後再入。
+- P1b（進行中）：repo-boundary-detail 歷史敘事遷移 → history-and-archive（sonnet 起草 + 守恆/現行性雙 judge + 主對話審批，ultracode workflow）。
+- P2：worktree 殘骸與 generated 快照已由使用者手動清除（2026-07-02）；`.codex` drift 7 檔本機同步完成；agent memory 整併完成；global Hermes 五件套與 23 個無關 skills 留使用者決定。

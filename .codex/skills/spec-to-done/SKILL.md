@@ -228,9 +228,5 @@ Claude 版的 haiku / sonnet / opus 是**任務難度 tier**。Codex copy 必須
 3. commit trailer:std-*.js 內的 `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` 是 **harness attribution 文字、非 Codex 模型調用**。Codex agent 實際模型分配以本檔「模型預算」表為準;是否改 trailer 屬另一個獨立決策(須與 harness commit 規則同步,否則 repo 出現雙 trailer)。squash 後實質影響極小。
 4. GitNexus detect-changes 在 linked worktree 看不到 staged(已知坑)→ implementer fallback `git diff --name-only --cached` 並記 `detectVerdict='fallback'`,PR body 揭露;完全失敗記 `fail`,同 run 3 次 → held。
 5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
-6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。pr-review-agent 對所有 PR 都會跑(#202 的 paths-ignore 已移除,`pr-review-agent.yml` 現無 paths 過濾),且是 main branch protection 的 required check(11 項之一;2026-07-02 以 gh api 親查)——`.claude/**` / `.codex/**` 變更同樣受 review 與 AI Coding Governance body-evidence 表約束。
+6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。純動 `.claude/**` / `.codex/**` 的 PR 可能被 pr-review-agent paths-ignore 跳過 review(#202);main 無 branch protection 故此 check 非 required。
 7. P1 四軸 review 第二輪起只重審上輪未過的軸(fixer 改 plan 可能影響已過軸)— 由 P3 per-task spec review 與 P5 critic 兜底,屬已知取捨。
-
-## 維運注意事項
-
-1. routing.json 改動後須跑 `.venv\Scripts\python.exe scripts/gen_routing.py` 重生各 std-*.js 的 ROUTING 區塊，並 re-save 受影響 workflow 讓 harness reload；禁止 workflow run 中途執行 codegen。（與 canonical `.claude/skills/spec-to-done/SKILL.md` 同步；Codex host 無 Claude harness 時此段僅作維運知識。）
