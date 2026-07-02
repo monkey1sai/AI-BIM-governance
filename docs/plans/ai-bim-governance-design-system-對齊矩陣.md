@@ -87,6 +87,12 @@
 | `review` | G | **Review Room（ReviewRoomPage，獨立頁，非 `#gpu` 別名）** |
 | `semantic` | SE | Semantic Viewer |
 | `apps` | AP | Applications · A1–A10 |
+| `version-diff` | A2 | A2 deep-link 別名（`data.ts` `RM_APPS` A2.route，與 `#a2` 同 VersionDiffPage、同後端；2026-07-02 census 補登） |
+| `federation` | A3 | A3 deep-link 別名（`data.ts` `RM_APPS` A3.route，與 `#a3` 同 FederationPage；2026-07-02 census 補登） |
+| `kit` | — | operator 工具（保留，互動規格 A.1.1 operator 行；kit-manager-web；2026-07-02 census 補登） |
+| `demo-control` | — | operator 工具（保留；掛 `RealIfcConsolePage`，實打 coordinator `/api/dev/*` + `/api/external/ifc-ready`；2026-07-02 census 補登） |
+
+> 補登依據（2026-06-24 census，4/4 對抗驗證 holds）：§2 原僅列 6 項，系統性漏掉兩種別名來源——`RM_APPS` 的 A1–A10 `route` 欄衍生 deep-link、與互動規格 A.1.1 的 operator 保留行。以上 4 列為登錄既有現實，非新增路由；升格第 23 條主表需走升格決策樹（專屬後端 or 專屬 IX 卡＋無法被現有頁吸收＋使用者核可）。
 
 > **M2 更正（`#review` 雙義釐清）**：`#gpu` 為 GPU 審查室正典、`#review` 在互動規格語意上是「GPU 審查室別名」，但 repo `data.ts:74`（`key:"review"`, no:"G", label:"Review Room"）是**獨立 ReviewRoomPage**，與 `#gpu`（key:"gpu"）是兩個不同頁。
 > HTML 重生時不得把 `key:"review"` 的 ReviewRoomPage 連結砍掉或重定向到 `#gpu`。

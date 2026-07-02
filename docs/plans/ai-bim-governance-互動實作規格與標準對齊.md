@@ -93,7 +93,7 @@
 | RT | `#runtime` | Runtime 監控 | 落地端控制台 / SYSTEM | kit-manager-api `/runtime` + `/health` | 🟡 端點真有；UI 監控面板待建 |
 | SY | `#admin` | 系統管理 | SYSTEM | coordinator（auth/config） | ⚪ **待建**（本期僅佔位） |
 | ▦ | `#spec` | 設計規格說明 | SYSTEM | 靜態 | 🟢 文件入口 |
-| — | `#kit` / `#demo-control` | operator 工具（保留） | — | kit-manager-web（apps/kit-manager-web） | operator-only，不砍 |
+| — | `#kit` / `#demo-control` | operator 工具（保留） | — | `#kit`：kit-manager-web（apps/kit-manager-web）；`#demo-control`：coordinator `/api/dev/*` + `/api/external/ifc-ready`（RealIfcConsolePage；2026-07-02 修正原 stale 後端欄） | operator-only，不砍 |
 
 > 註：`#runtime`/`#admin` 對應真實 kit-manager-api 端點（`/runtime`/`/health`），IX-SS-01、IX-KG-01 已引用 `GET /api/runtime/status`。
 
