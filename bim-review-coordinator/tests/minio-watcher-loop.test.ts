@@ -281,7 +281,9 @@ describe("minioWatcher loop", () => {
     expect(headers["x-webhook-secret"]).toBe("dev-webhook-secret");
     expect(String(headers["x-idempotency-key"])).toMatch(/^mw_[0-9a-f]{16}$/);
     expect(String(headers["x-correlation-id"])).toMatch(/^minio-watch-[0-9a-f]{8}$/);
-    expect(watcher!.getStatus().triggered_total).toBe(1);
+    // received.push 發生在 stub 收到請求當下，但 triggered_total 要等 watcher 收到回應
+    // 並解析成功後才 +1（triggerIntake）——同步斷言會撞競態間歇紅，須輪詢等收斂。
+    await waitFor(() => watcher!.getStatus().triggered_total === 1);
   });
 
   it("同物件後續輪不再觸發（seen 命中，triggered 維持 1）", async () => {
