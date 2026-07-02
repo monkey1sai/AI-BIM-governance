@@ -173,6 +173,28 @@ function Test-PrReviewDeletedPath {
     return ($statusCode -eq 'D')
 }
 
+function Test-PrReviewPathExistsAtBase {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $Path,
+        [string] $BaseSha = '',
+        [string] $HeadSha = ''
+    )
+
+    # 無法取得 base（本機模式/淺 clone）時回 false，讓呼叫端落回保守分支（維持 blocker）。
+    if ([string]::IsNullOrWhiteSpace($BaseSha) -or [string]::IsNullOrWhiteSpace($HeadSha)) {
+        return $false
+    }
+
+    $safeRoot = $RepoRoot -replace '\\', '/'
+    $mergeBase = (git -C $RepoRoot -c "safe.directory=$safeRoot" merge-base $BaseSha $HeadSha 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($mergeBase)) { return $false }
+
+    git -C $RepoRoot -c "safe.directory=$safeRoot" cat-file -e "${mergeBase}:${Path}" 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Get-PrReviewChangedPathsFromGit {
     [CmdletBinding()]
     param(
@@ -343,6 +365,10 @@ function Get-PrReviewPathGuardFindings {
         if ($p -match '^(\.codex/skills|\.claude/skills/generated|\.gitnexus)(/|$)') {
             if ($isDeletedPath) {
                 [void]$warnings.Add((New-PrReviewIssue -Kind 'generated_tooling_path_deleted' -Severity 'medium' -Path $p -Message 'PR deletes generated local tooling state; verify cleanup scope.'))
+            } elseif (Test-PrReviewPathExistsAtBase -RepoRoot $RepoRoot -Path $p -BaseSha $BaseSha -HeadSha $HeadSha) {
+                # merge-base 已追蹤＝#212 授權納管的鏡像檔（如 .codex/skills adapter）：修改降為
+                # 人工複核 warning。新增路徑（或無 base 可判定）仍走 blocker，防塞入新生成物。
+                [void]$warnings.Add((New-PrReviewIssue -Kind 'generated_tooling_path_modified' -Severity 'medium' -Path $p -Message 'PR modifies already-tracked tooling mirror state; human reviewer should verify adapter-sync scope.'))
             } else {
                 [void]$blockers.Add((New-PrReviewIssue -Kind 'generated_tooling_path' -Severity 'high' -Path $p -Message 'Generated local tooling state must not be committed as product source.'))
             }
