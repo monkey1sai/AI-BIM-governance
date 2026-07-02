@@ -15,6 +15,14 @@
 - **P0 全出口遮蔽（必做）**：presigned 簽章外洩出口不只 `summarizeIfcReadyJob`(app.ts:2357)，至少還有 app.ts:1575、1848。遮蔽須涵蓋**所有讀 `job.source_ifc_ref` 並對外回應**的出口 + 誠實守衛測試。詳見 §8.1。
 - 其餘必修項見 **§8.1**。
 
+### 實作決議紀錄（2026-07-02，spec-to-done 執行 feat/ifc-ready-api-field-redesign）
+
+本 spec 的實作階段（P3）落實下列裁決，補記於此以維持設計↔實作一致（僅記決議，不改上方設計本體）：
+
+- **usdc_role 恆 `pending`（依 §4.6 + §6.3/AC8）**：`IfcReadyIntakeJob` 無 `usdc_key` 欄位、job 端 Phase 1 恆缺；故 `summarizeIfcReadyJob`/`:jobId` 投影 `usdc_role` 一律 `pending`（不用 `lifecycle==="ready"` 推導，避免真實轉檔完成時假報 `parsed_usdc`）。Phase 2 由 callback outbox 回填 ledger 後，前端由 ledger 讀 parsed。
+- **lifecycle 收斂 conversion 失敗（§4.2 單一權威狀態）**：`deriveLifecycleStatus` 補 `conversion_status==="failed" → "failed"`，解與新增 `failure_stage="conversion"` 的自相矛盾（原掉進 `dispatched→converting`）。僅在最高優先 failed 分支加 OR、不改短路順序與值域；對抗驗證確認 `conversion_status="failed"` 僅在終局失敗出現（`isTerminalConversionResult` 守門），可重試態走 `dispatch_failed` 不誤捕。
+- **P0 全出口遮蔽落實至 callback outbox（§0「必做」+ §8.1 #1）**：`conversion_result_ready` callback payload（`app.ts` `ingestConversionReport`）的 `source_ifc.ref` 套 `maskPresignedRef` 遮蔽 presigned 簽章（與既有瀏覽器可見出口一致），達成全出口閉環；轉檔完成時外部雲端已取得 usdc 成品、不需 presigned 下載原 IFC。
+
 ---
 
 ## 1. 設計目標與範圍
