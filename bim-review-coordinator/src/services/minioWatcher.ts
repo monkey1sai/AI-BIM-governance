@@ -80,6 +80,13 @@ export function deriveIntakeFromKey(input: {
   if (prefix && !key.startsWith(prefix)) {
     return { ok: false, reason: `key 不在 prefix 下：${key}` };
   }
+  // q3-pipe-guard：key 含 '|' 與 idempotencyKeyFor 的 bucket|key|etag 分隔符衝突（見本檔上方
+  // idempotencyKeyFor precondition），會撞 hash → 第二個 intake 被當 idempotent_replay 靜默丟棄。
+  // listMinioObjects / 手動觸發端各自已擋，但自動 watcher（triggerIntake）經本共用函式進 intake
+  // 未擋 → 於 derivation 補上，三路一致拒收，避免壞 key 進 intake 破壞 ledger hash 契約。
+  if (key.includes("|")) {
+    return { ok: false, reason: `key 不合法：不得含 '|'（與 idempotency hash 分隔符衝突）：${key}` };
+  }
   const afterPrefix = prefix ? key.slice(prefix.length) : key;
   if (!afterPrefix.endsWith(keySuffix)) {
     return { ok: false, reason: `key 不以 suffix 結尾：${key}` };

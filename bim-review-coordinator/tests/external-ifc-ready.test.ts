@@ -428,6 +428,31 @@ describe("POST /api/external/ifc-ready", () => {
     expect(second.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
   });
 
+  it("idempotent replay 持久寫回 job record → 列表/詳情端點皆呈現 idempotent_replay=true（P2：去重生效可見）", async () => {
+    // 回歸鎖（Codex P2）：replay 分支原僅在 200 回應物件覆寫 idempotent_replay:true、未寫回 store,
+    // 列表投影 job.idempotent_replay 恆 false → #/conv 把命中去重的 job 誤標為「新建」。
+    // 修復後 markIdempotentReplay 寫回 record,列表 + 詳情兩出口皆誠實 true（spec §111/§140）。
+    const app = makeApp();
+    const first = await request(app.app).post("/api/external/ifc-ready").set(authHeaders()).send(payload());
+    expect(first.status).toBe(202);
+    expect(first.body.idempotent_replay).toBe(false); // 首建 → false
+    const jobId = first.body.ifc_ready_job_id as string;
+
+    const second = await request(app.app).post("/api/external/ifc-ready").set(authHeaders()).send(payload());
+    expect(second.status).toBe(200);
+    expect(second.body.idempotent_replay).toBe(true);
+
+    // 詳情端點：replay 後持久呈現 true（非僅回應瞬時值）。
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.idempotent_replay).toBe(true);
+    // 列表端點（summarizeIfcReadyJob 投影）：同樣呈現 true。
+    const listed = await request(app.app).get("/api/external/ifc-ready");
+    const item = (listed.body.items as Array<Record<string, unknown>>).find((j) => j.ifc_ready_job_id === jobId);
+    expect(item).toBeDefined();
+    expect(item?.idempotent_replay).toBe(true);
+  });
+
   it("缺少 X-Webhook-Secret → 401，且不建立 job", async () => {
     const app = makeApp();
     const res = await request(app.app)

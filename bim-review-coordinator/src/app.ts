@@ -1266,8 +1266,12 @@ export function createCoordinatorApp(
       const existing = externalIfcReadyStore.findExisting(auth.idempotencyKey, auth.correlationId);
       if (existing) {
         // fast-ifc-link-demo-loop §2.6:idempotent replay 直接 200 reuse,不重下載也不重派工
-        // 誠實鐵律：existing 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
-        response.status(200).json({ ...sanitizeJobForExternal(existing), idempotent_replay: true });
+        // ifc-ready-api-field-redesign（replay 可見性）：持久標記 idempotent_replay 到 job record,
+        // 使列表/詳情端點（summarizeIfcReadyJob）誠實呈現「命中既有 job（去重生效可見）」（spec §111/§140：
+        // 操作員需從列表分辨新建 vs 命中既有）。原僅覆寫 200 回應物件、未寫回 store → 列表投影恆 false。
+        const replayed = externalIfcReadyStore.markIdempotentReplay(existing.ifc_ready_job_id) ?? existing;
+        // 誠實鐵律：replayed 是 IfcReadyIntakeJob，其 source_ifc_ref 含 presigned 簽章 → 經 sanitizeJobForExternal 遮蔽再外吐。
+        response.status(200).json({ ...sanitizeJobForExternal(replayed), idempotent_replay: true });
         return;
       }
 
@@ -2681,7 +2685,13 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
  * （defense-in-depth 待確認下游是否依賴 presigned ref），與已閉環的對外/瀏覽器/callback 出口無關。
  */
 function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
-  return { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
+  // ifc-ready-api-field-redesign（list/detail 對稱）：conversion_failure 為 internal-only 欄位,
+  // 對外一律由 deriveFailure(job) 投影 humanized failure_reason/failure_stage,不直接外吐 raw 欄位。
+  // 否則本函式（detail / intake 202 / replay 200）full-spread 會外吐 conversion_failure,而列表端
+  // summarizeIfcReadyJob 是 whitelist 不含此欄 → list/detail 形狀分歧（未文件化的非對稱曝露）。
+  const rest = { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
+  delete (rest as { conversion_failure?: string | null }).conversion_failure;
+  return rest;
 }
 
 function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {

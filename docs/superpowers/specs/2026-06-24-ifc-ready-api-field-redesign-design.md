@@ -22,6 +22,8 @@
 - **usdc_role 恆 `pending`（依 §4.6 + §6.3/AC8）**：`IfcReadyIntakeJob` 無 `usdc_key` 欄位、job 端 Phase 1 恆缺；故 `summarizeIfcReadyJob`/`:jobId` 投影 `usdc_role` 一律 `pending`（不用 `lifecycle==="ready"` 推導，避免真實轉檔完成時假報 `parsed_usdc`）。Phase 2 由 callback outbox 回填 ledger 後，前端由 ledger 讀 parsed。
 - **lifecycle 收斂 conversion 失敗（§4.2 單一權威狀態）**：`deriveLifecycleStatus` 補 `conversion_status==="failed" → "failed"`，解與新增 `failure_stage="conversion"` 的自相矛盾（原掉進 `dispatched→converting`）。僅在最高優先 failed 分支加 OR、不改短路順序與值域；對抗驗證確認 `conversion_status="failed"` 僅在終局失敗出現（`isTerminalConversionResult` 守門），可重試態走 `dispatch_failed` 不誤捕。
 - **P0 全出口遮蔽落實至 callback outbox（§0「必做」+ §8.1 #1）**：`conversion_result_ready` callback payload（`app.ts` `ingestConversionReport`）的 `source_ifc.ref` 套 `maskPresignedRef` 遮蔽 presigned 簽章（與既有瀏覽器可見出口一致），達成全出口閉環；轉檔完成時外部雲端已取得 usdc 成品、不需 presigned 下載原 IFC。
+- **`idempotent_replay` 需寫回 record，非「僅投影既有值」（修正 §3.2/§4.1 假設；ship-cycle Codex P2）**：原設計標注 `idempotent_replay`「值已在 job record」只需投影，但實作查核發現 store 初始化恆 `false`、replay 分支僅覆寫 200 回應物件未寫回 record → `summarizeIfcReadyJob` 列表投影恆 `false`，使 `#/conv` 把命中去重的 job 誤標「新建」。裁決：replay 命中時以 `ExternalIfcReadyStore.markIdempotentReplay` 持久寫回 `idempotent_replay=true`，列表/詳情兩出口皆誠實呈現「去重生效可見」（§4.1 原意）。
+- **`conversion_failure` 為 internal-only，不對外吐（list/detail 對稱；ship-cycle CodeRabbit Major）**：`recordConversionOutcome` 於失敗時寫入 `job.conversion_failure`（供 `deriveFailure` 產生 humanized `failure_reason`/`failure_stage`），但 `sanitizeJobForExternal` 原 full-spread 會把此 raw 內部欄位外吐於 detail/intake/replay，而列表 whitelist 不含 → 形狀分歧。裁決：`sanitizeJobForExternal` 剝除 `conversion_failure`，對外一律以 `deriveFailure` 投影，兩出口一致。
 
 ---
 

@@ -102,6 +102,20 @@ export class ExternalIfcReadyStore {
     }
   }
 
+  /**
+   * ifc-ready-api-field-redesign（replay 可見性）：idempotent replay 命中既有 job 時，將
+   * idempotent_replay 持久寫回 job record，使列表/詳情端點（summarizeIfcReadyJob）能誠實呈現
+   * 「命中既有 job（去重生效可見）」（spec §111/§140）。原本僅在 200 replay 回應物件上覆寫
+   * idempotent_replay:true、未寫回 store，導致列表投影 job.idempotent_replay 恆為 false。
+   */
+  markIdempotentReplay(jobId: string): IfcReadyIntakeJob | undefined {
+    const job = this.jobsById.get(jobId);
+    if (!job) return undefined;
+    job.idempotent_replay = true;
+    job.updated_at = new Date().toISOString();
+    return job;
+  }
+
   markDispatched(jobId: string, conversionJobId: string, conversionStatus: string): IfcReadyIntakeJob | undefined {
     const job = this.jobsById.get(jobId);
     if (!job) return undefined;

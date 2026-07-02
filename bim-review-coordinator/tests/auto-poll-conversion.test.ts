@@ -298,6 +298,10 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(detail.body.conversion_status).toBe("failed");
     expect(detail.body.failure_stage).toBe("conversion");
     expect(detail.body.failure_reason).toBeTruthy();
+    // F5（list/detail 對稱）：conversion_failure 為 internal-only,對外一律經 deriveFailure 投影
+    // humanized failure_reason/failure_stage,不直接外吐 raw 欄位。sanitizeJobForExternal（detail/
+    // intake/replay）已剝除,列表 whitelist 本就不含 → 兩出口形狀一致,不得洩漏 conversion_failure。
+    expect(detail.body).not.toHaveProperty("conversion_failure");
     // 列表端點(summarizeIfcReadyJob 出口)鏡射同一投影(list/detail 對稱)。
     const listed = await request(app.app).get("/api/external/ifc-ready");
     const item = (listed.body.items as Array<Record<string, unknown>>).find(
@@ -306,6 +310,7 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(item).toBeDefined();
     expect(item?.failure_stage).toBe("conversion");
     expect(item?.failure_reason).toBeTruthy();
+    expect(item).not.toHaveProperty("conversion_failure");
   });
 
   it("重複 idempotent dispatch 不雙起 poller(stub /result 不被雙倍呼叫)", async () => {
