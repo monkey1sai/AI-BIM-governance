@@ -417,3 +417,9 @@ def test_routing_json_schema():
 1. AI Coding Governance body-evidence 表（pr-review-agent required check，缺項 exit 1；誠實值，不填 -/tbd/n-a）。
 2. 「考慮後拒絕」清單（§K 否決列）與 implementer 下放的失效觀測條款：監看 `impl:*:opus` / `impl:*:retry` 頻率，超基準即回退 `std-implement.js:286` 單行 + 刪 implModel pin。
 3. 雙圖譜/detect fallback 依既有規則揭露；本 PR 為純 tooling/docs（無 runtime deploy 面），Frontend/Deploy 兩表註明不適用。
+
+## (M) 維運紀錄（post-merge）
+
+- 2026-07-02 本設計以 PR #284（squash `8adcb1f`）merge 進 main；兩輪 CI 全綠（期間 main 並行推進 2 commits，與 #282 對兩份 SKILL.md 的改動語義正交，merge 調和後重驗 79 passed）。
+- merge 後依 CLAUDE.md §4 重建 GitNexus 索引：`.gitnexus/meta.json lastCommit=8adcb1f`，計數 15954→16063 symbols、26201→26312 relationships、flows 300 不變；AGENTS.md / CLAUDE.md 自動維護區塊計數行隨之同步（該同步 PR 以本節為正式依據，設計語義零變更）。
+- 待辦（§K 延後項之外）：以一次真實 spec-to-done run 量測 token/wall-clock，把 §f 估計值轉實測；監看 `impl:*:opus` 升級頻率（§L.2 觀測條款）。
