@@ -1,5 +1,7 @@
 # AI-BIM Governance — 前端對齊 Design System · 保留既有後端 · 實作手冊
 
+> **v1.1 · 2026-07-02**：`#a1` 規格改版（D10：選檔雙來源／BcfReviewPanel／A1BridgeRail）、`#sessions` 新增 A1BridgeSupplyPanel、`#minio` 更新為真 MinIO raw-folder；其餘逐字保留。
+
 > **一句話定位**：這是「把 repo 前端對齊 `AI-BIM Governance Design System`、同時**完全不動既有後端**」的**唯一可執行計畫**。每條路由都給：要採用的 DS 視覺 → 必須保留的真實後端 API → 有序 AI-coding 任務 → 改哪幾個檔 → Playwright 驗收 → Prov 誠實規則。
 >
 > **本手冊是「怎麼做（HOW / 可執行）」層**，不是需求/行為權威。需求看互動規格、狀態裁決看對齊矩陣、紀律看技術債防線。
@@ -144,13 +146,13 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 
 ### 5.A Hero Built（A1 + A2 + A3-federation；最高優先，先對齊這三條）
 
-#### `#a1`（A1GovernanceWorkbenchPage）— HERO BUILT
-- **DS 視覺**：5-step Stepper（上傳→檢核→結果→開Issue→交付）；記分板 MetricCard（pass/block/score/elements 來自真實 run）；可點 rule 清單；「一鍵轉 Issue」+「匯出 BCF 2.1」Button；in-3D 高亮用誠實 phase Panel。
-- **保留後端 API**：`governanceClient` → `POST /api/governance/rule-runs`、`GET .../rule-runs/:id`、`/results`、`/failures`、`/export?fmt=excel`、`POST /api/governance/issues/from-rule-run/:runId`、`GET /api/governance/bcf/export`；`coordinatorClient.runtimeStatus` + `POST /api/review-sessions/:id/first-frame`；EmbeddedViewer postMessage highlight。
-- **任務**：1) FlowBar→DS Stepper，綁 `a1Machine.ts`（非 timer）。2) 記分板 Metric→MetricCard，值來自真實 `RuleRunResult.summary`（passed/failed/score），**禁 hardcode**。3) export Button 用 refactored Btn；BCF 兩步誠實（先 `from-rule-run` 建 issue 才可匯出）。4) in-3D 高亮維持 IX-A1-06 四條件 gating；未建部分留 phase Panel。5) tokenize inline layout。
-- **改檔**：`pages.tsx`、`a1Machine.ts`、`components.tsx`、`EmbeddedViewer.tsx`、`governanceClient.ts`。
-- **驗收**：branch-isolated stack 跑真 IFC rule-run，截圖記分板顯示 live 數（如 7126/7055/71/99.0）、Stepper 推進、BCF 按鈕在無 issue 時 disabled；network 只打 `/api/governance/*`。
-- **Prov 誠實**：真 run = `artifact`/`asbuilt`；in-3D 高亮未建 = phase Panel + disabled（`p15`）；`ifc_guid` 永遠顯示，`usd_prim_path` 為 null 時留空。
+#### `#a1`（A1GovernanceWorkbenchPage）— HERO BUILT（**v2 改版 2026-07-02 · D10**）
+- **DS 視覺**：頁首「① 選檔 · 偵測到的 IFC」Panel：來源切換 pills（local_fs 檔案庫／MinIO bucket 偵測）+ 選檔元件（三樣式擇一：下拉 optgroup／級聯 pills／樹狀；原型供挑）+ 選定檔列（key·大小·mtime·「測試資料」Badge）；5-step Stepper（**選檔→檢核→結果→審查(Issue·BCF)→交付**）；記分板 MetricCard（來自真實 run）；可點 rule 清單；**BCF 審查面板**（topic 列：ID·標題·規則碼·severity·狀態 chip 可流轉·指派 dashed 待建標；footer 匯出 BCF 2.1/Excel）；**A1 連動橋**：四格證據 rail + GUID 佇列 + 高亮鍵（**不用 hatched phase Panel 視窗佔位，不內嵌 3D**）。
+- **保留後端 API**：`governanceClient` → `GET /api/governance/files/tree`、`POST /api/governance/rule-runs`、`GET .../rule-runs/:id`、`/results`、`/failures`、`/export?fmt=excel`、`GET /api/governance/issues?rule_run=`、`POST /api/governance/issues/:id/transition`、`POST /api/governance/issues/from-rule-run/:runId`、`GET /api/governance/bcf/export`；`coordinatorClient` → `GET /api/minio/objects?prefix=&delimiter=/`、`runtimeStatus` + `POST /api/review-sessions/:id/first-frame`；EmbeddedViewer postMessage highlight（P1.5）。**全部既存，零後端改動；assignee 欄不存在（O7）——前端不得自建。**
+- **任務**：1) 新增 SourcePicker：雙來源切換 + 選檔元件（切來源回 idle、下游清空；任一邊 list 失敗只降該邊，D-31）。2) FlowBar→DS Stepper 綁 `a1Machine.ts`（新增 picked 前置；非 timer）。3) 記分板 Metric→MetricCard，值來自真實 `RuleRunResult.summary`，**禁 hardcode**。4) 新增 BcfReviewPanel：issues list + transition（IntentDialog 模式 3）；指派 dashed 待建標（D-32）。5) 新增 A1BridgeRail：證據單一來源＝`#sessions`／runtime 同輪詢值（IX-SS-05，D-33）；IX-A1-06 四條件 gating 不變。6) tokenize inline layout。
+- **改檔**：`pages.tsx`、`a1Machine.ts`、`components.tsx`（SourcePicker/BcfReviewPanel/A1BridgeRail）、`EmbeddedViewer.tsx`、`governanceClient.ts`、`coordinatorClient.ts`。
+- **驗收**：branch-isolated stack：① 雙來源各自列出真檔（MinIO 邊斷線時只該邊降破）；② 選檔→真 IFC rule-run 截圖 live 數（如 7126/7055/71/99.0）、Stepper 推進；③ topic 狀態流轉後重整不回退；④ 連動橋與 `#sessions` 證據一致、高亮鍵 disabled；network 只打 `/api/governance/*` + `/api/minio/objects` + `/api/runtime/status`。
+- **Prov 誠實**：真 run = `artifact`/`asbuilt`；選檔兩來源 `asbuilt`（檔案標「測試資料」）；topic 列/流轉 `asbuilt`、指派 `p1` dashed；3D 高亮 `p15` disabled（A1 連動橋 rail，非 phase Panel 視窗）；`ifc_guid` 永遠顯示，`usd_prim_path` 為 null 時留空。
 
 #### `#a2` / `#version-diff`（VersionDiffPage）— HERO BUILT
 - **DS 視覺**：v06↔v07 add/mod/del MetricCard；三色變更清單（加/改/刪）用 Badge tone；Accountability who/when/why Panel；diff selector Pill。
@@ -186,17 +188,17 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 - **驗收**：載 `#conv`，截圖 job 表 + coverage note；toggle watch 斷言 `PUT /api/conversion/watch` payload 回 status；無直連 `:49101`。
 - **Prov 誠實**：coverage 反映來源（artifact）；coverage_ratio 重標（值不變）；watch 狀態 observable，**不預設為開**。
 
-#### `#sessions`（SessionManagementPage）— BUILT
-- **DS 視覺**：Panel + session 表；terminate Button（IntentDialog 確認）；Reclaim/Force-release disabled `p1`。
-- **保留後端 API**：`coordinatorClient` → `GET /api/runtime/status`、`POST /api/review-sessions/:id/close`（terminate；**故意不 IP-gate**，cooperative/operator 雙語意，IX-SS-04）。
-- **任務**：1) session 列→表 + status Badge（queued/active/closing/closed 逐字）。2) terminate 走 IntentDialog → `/close` 帶 reason。3) Reclaim/Force-release 維持 disabled `p1`。
-- **改檔**：`SessionManagementPage.tsx`、`IntentDialog.tsx`、`coordinatorClient.ts`。
-- **驗收**：載 `#sessions`，經 IntentDialog terminate；斷言 `POST .../:id/close` 帶 reason；Reclaim/Force-release 維持 disabled。
-- **Prov 誠實**：terminate `asbuilt`；Reclaim/Force-release `p1` disabled；session enum 逐字。
+#### `#sessions`（SessionManagementPage）— BUILT（**v2：新增 A1 連動橋供應端**）
+- **DS 視覺**：Panel + session 表（含 occupied 證據三欄：first_frame_at／last_heartbeat／stage matched，IX-SS-02）；terminate Button（IntentDialog 確認，成功後列轉灰 60s）；Reclaim/Force-release disabled `p1`；**「A1 連動橋 · 供應端」Panel**：繫結鏈 `A1 rule_run ⇢ session ⇢ DataChannel ⇢ highlight ack`（IX-SS-05）。
+- **保留後端 API**：`coordinatorClient` → `GET /api/runtime/status`、`POST /api/review-sessions/:id/close`（terminate；**故意不 IP-gate**，cooperative/operator 雙語意，IX-SS-04）。**連動橋無新 endpoint：同 `runtime/status` 資料鏡射，零後端改動。**
+- **任務**：1) session 列→表 + status Badge（queued/active/closing/closed 逐字）+ occupied 證據三欄。2) terminate 走 IntentDialog → `/close` 帶 reason。3) Reclaim/Force-release 維持 disabled `p1`。4) 新增 A1BridgeSupplyPanel：A1 頁四格證據的單一來源（D-33）。
+- **改檔**：`SessionManagementPage.tsx`、`IntentDialog.tsx`、`coordinatorClient.ts`、`components.tsx`（A1BridgeSupplyPanel）。
+- **驗收**：載 `#sessions`，經 IntentDialog terminate；斷言 `POST .../:id/close` 帶 reason；Reclaim/Force-release 維持 disabled；連動橋證據與 `#a1` rail 同輪詢一致；關 session 後 A1 rail 同步回 idle。
+- **Prov 誠實**：terminate `asbuilt`；Reclaim/Force-release `p1` disabled；session enum 逐字；證據缺值標「未取得」+ idle LED，不推定。
 
-#### `#minio`（MinioDataPage）— BUILT（樹真實；bucket-layout 為 demo）
+#### `#minio`（MinioDataPage）— BUILT（真 MinIO raw-folder 逐層；bucket-layout 語意參照為 demo）
 - **DS 視覺**：DS Tree（project/model/version）+ Panel；source 標記 copy 由後端 `source_kind` 驅動。
-- **保留後端 API**：`governanceClient.filesTree`（`GET /api/governance/files/tree`）。
+- **保留後端 API**：`coordinatorClient` → `GET /api/minio/objects?prefix=&delimiter=/`（真 MinIO raw-folder 逐層，唯讀）；`governanceClient.filesTree`（`GET /api/governance/files/tree`，local_fs）保留——兩者亦供 `#a1` SourcePicker 共用。
 - **任務**：1) file-library 樹維持真實，套 `ec-tree` 於 Panel。2) UI copy **必須由 `source_kind` 驅動**（`local_fs` 顯本地，後端報 `s3` 才翻 's3' 標記——**禁 hardcode 's3'**）。3) 真 S3/MinIO 瀏覽器 + `model.usdc` layout panel 維持 `demo`/`p1`。
 - **改檔**：`pages.tsx`、`governanceClient.ts`、`components.tsx`。
 - **驗收**：載 `#minio`，斷言樹來自 `/api/governance/files/tree`；source 標記反映 `source_kind`；demo bucket-layout panel 標 `p1`/`demo`。

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI · BIM Governance — 殼層需求原型 · Edge Console</title>
+<!-- v2 · 2026-07-02:#a1 改版(選檔雙來源 local_fs/MinIO + BCF 審查面板 + A1 連動橋),#sessions 證據鏈深化;詳《審批報告-docs-plans-A1v2-2026-07-02》 -->
 <!--
   ai-bim-governance-prototype.html
   ─────────────────────────────────────────────────────────────────────────
@@ -638,61 +639,342 @@ function HomePage({ lang }) {
   );
 }
 
-/* ── #a1 治理與模型檢核(built · hero) ──────────────────────────────── */
+/* ── #a1 治理與模型檢核(built · hero) — v2 2026-07-02 ─────────────────
+   變更:① 上傳 → 「選檔(雙來源:local_fs 檔案庫 / MinIO bucket 偵測)」;
+   ② 新增 BCF 審查面板(topic 列表/狀態流轉/指派,對選定檔);
+   ③ 3D 連動留在 A1,改為「A1 連動橋」證據 rail(不沿用 viewer 視窗風格);
+   證據四格以 #sessions 為單一來源,A1 只讀不推定。 ── */
+
+/* A1 v2 選檔雙來源(示意樹;皆為 MinIO 暫時測試 IFC 檔 → 一律標「測試資料」) */
+const A1_SOURCES = {
+  local: {
+    label:{ zh:"local_fs 檔案庫", en:"local_fs library" }, prov:"built",
+    api:"GET /api/governance/files/tree · 經 coordinator proxy",
+    note:{ zh:"本地 file-server 樹(source_kind=local_fs) · 比照三層規約", en:"local file-server tree (source_kind=local_fs), 3-level layout" },
+    lv:{ zh:["專案","種類","版本檔"], en:["Project","Kind","Version file"] },
+    tree:[
+      { p:"270", kinds:[
+        { k:"機電", files:[ {n:"000001.ifc",s:"18.2 MB",t:"06-18 09:12"}, {n:"000002.ifc",s:"18.4 MB",t:"06-19 14:03"}, {n:"000003.ifc",s:"18.9 MB",t:"06-20 11:41"}, {n:"竣工.ifc",s:"19.1 MB",t:"06-21 17:55"} ] },
+        { k:"水電", files:[ {n:"000001.ifc",s:"9.6 MB",t:"06-18 09:14"}, {n:"000002.ifc",s:"9.8 MB",t:"06-19 14:06"} ] },
+        { k:"消防", files:[ {n:"000001.ifc",s:"7.2 MB",t:"06-18 09:15"}, {n:"竣工.ifc",s:"7.5 MB",t:"06-21 17:58"} ] },
+      ]},
+      { p:"889", kinds:[ { k:"機電", files:[ {n:"000001.ifc",s:"22.0 MB",t:"06-22 10:02"} ] } ]},
+      { p:"990", kinds:[ { k:"建築", files:[ {n:"000001.ifc",s:"31.4 MB",t:"06-22 10:05"} ] } ]},
+    ],
+  },
+  minio: {
+    label:{ zh:"MinIO bucket 偵測", en:"MinIO bucket scan" }, prov:"built",
+    api:"GET /api/minio/objects?prefix=&delimiter=/ · coordinator",
+    note:{ zh:"真 MinIO bim-control 唯讀逐層;只列偵測到的 .ifc;watcher 自動轉檔 opt-in 預設關", en:"read-only raw-folder walk of bim-control; lists detected .ifc only; watcher intake opt-in (default off)" },
+    lv:{ zh:["資料夾","子層","偵測到的 .ifc"], en:["Folder","Subfolder","Detected .ifc"] },
+    tree:[
+      { p:"東勢區許良宇紀念圖書館", kinds:[
+        { k:"建築", files:[ {n:"轉檔測試10.ifc",s:"48.1 MB",t:"07-01 08:20"}, {n:"轉檔測試13.ifc",s:"48.6 MB",t:"07-02 07:44"} ] },
+      ]},
+      { p:"洲際好宅", kinds:[ { k:"結構", files:[ {n:"000001.ifc",s:"26.3 MB",t:"06-30 16:12"} ] } ]},
+      { p:"測試建案0329", kinds:[ { k:"機電", files:[ {n:"000001.ifc",s:"12.8 MB",t:"06-29 09:33"} ] } ]},
+    ],
+  },
+};
+
+/* A1 連動橋證據(單一來源=#sessions;此處唯讀鏡射,不推定) */
+const A1_BRIDGE = [
+  { k:{ zh:"session 派發", en:"session" },      v:"sess_8f21 · ACTIVE", tone:"ok" },
+  { k:{ zh:"WebRTC 首幀", en:"first frame" },   v:{ zh:"未取得", en:"not seen" }, tone:"idle" },
+  { k:{ zh:"DataChannel", en:"DataChannel" },   v:{ zh:"未取得", en:"not ready" }, tone:"idle" },
+  { k:{ zh:"stage matched", en:"stage match" }, v:{ zh:"未取得", en:"unverified" }, tone:"idle" },
+];
+
 function A1Page({ lang }) {
-  const [step, setStep] = useState(2);
+  const [src, setSrc] = useState("local");          // 雙來源切換
+  const [pick, setPick] = useState("dd");           // 原型審查:選檔樣式 dd|cascade|tree
+  const [selP, setSelP] = useState(null);           // 專案
+  const [selK, setSelK] = useState(null);           // 種類
+  const [selF, setSelF] = useState(null);           // 版本檔
+  const [stage, setStage] = useState("idle");       // idle→picked→running→scored→issued→delivered
+  const [prog, setProg] = useState(0);
+  const [confirming, setConfirming] = useState(false);
+  const [topics, setTopics] = useState([]);
+
+  const S = A1_SOURCES[src];
+  const proj = S.tree.find(x => x.p === selP) || null;
+  const kind = proj ? (proj.kinds.find(x => x.k === selK) || null) : null;
+  const file = kind ? (kind.files.find(x => x.n === selF) || null) : null;
+  const path = file ? `${selP}/${selK}/${selF}` : null;
+
+  const resetTo = (st) => { setStage(st); setConfirming(false); if (st === "idle") { setSelP(null); setSelK(null); setSelF(null); setTopics([]); setProg(0); } };
+  const switchSrc = (k) => { setSrc(k); resetTo("idle"); };
+  const choose = (p, k, f) => { setSelP(p); setSelK(k); setSelF(f); setStage(f ? "picked" : "idle"); setTopics([]); setProg(0); };
+
+  const runCheck = () => {
+    setStage("running"); setProg(0);
+    const t = setInterval(() => setProg(p => {
+      if (p >= 100) { clearInterval(t); setStage("scored"); return 100; }
+      return p + 20;
+    }), 300);
+  };
+  const createIssues = () => {
+    setConfirming(false); setStage("issued");
+    setTopics([
+      { id:"TP-01", rule:"IDS-FR-02", t:{ zh:"防火時效未填 × 12 構件", en:"Fire rating missing × 12" }, sev:"HIGH", st:"open",        who:null },
+      { id:"TP-02", rule:"IDS-ST-01", t:{ zh:"樓層歸屬缺漏 × 9 構件", en:"Storey missing × 9" },        sev:"MED",  st:"open",        who:null },
+      { id:"TP-03", rule:"IDS-LOD-04", t:{ zh:"LOD/LOI 不足 × 4 構件", en:"LOD/LOI below spec × 4" },   sev:"MED",  st:"in-progress", who:null },
+    ]);
+  };
+  const cycleSt = (i) => setTopics(ts => ts.map((tp, j) => j !== i ? tp : ({ ...tp, st: tp.st === "open" ? "in-progress" : tp.st === "in-progress" ? "resolved" : "open" })));
+
   const rules = [
-    { name:{ zh:"命名規範 · Naming", en:"Naming · Naming" }, code:"IDS-NM-01", tone:"ok", sev:"—" },
+    { name:{ zh:"命名規範 · Naming", en:"Naming" }, code:"IDS-NM-01", tone:"ok", sev:"—" },
     { name:{ zh:"分類碼 · Classification", en:"Classification" }, code:"IDS-CL-03", tone:"ok", sev:"—" },
     { name:{ zh:"防火時效未填 · Fire rating", en:"Fire rating missing" }, code:"IDS-FR-02", tone:"err", sev:"HIGH" },
     { name:{ zh:"樓層歸屬 · Storey", en:"Storey assignment" }, code:"IDS-ST-01", tone:"warn", sev:"MED" },
     { name:{ zh:"LOD / LOI", en:"LOD / LOI" }, code:"IDS-LOD-04", tone:"warn", sev:"MED" },
   ];
   const toneDot = { ok:"var(--ok)", warn:"var(--warn)", err:"var(--err)" };
-  return (
-    <div>
-      <PageHead crumb="A1 · 治理與模型檢核 [P0]" title={tt({ zh:"治理與模型檢核", en:"Governance & model check" }, lang)}
-        sub={tt({ zh:"rule_engine + ifctester(IDS)自動檢查命名/分類/樓層/LOD;產 Issue 與 BCF 2.1。記分板為示意數,非實測。", en:"rule_engine + ifctester(IDS) auto-checks; emits Issues + BCF 2.1. Scoreboard values are demo, not measured." }, lang)}
-        prov={<D.ProvTag level="built" />} host={<HostTag kind="host" />} />
-      <D.Panel title={tt({ zh:"檢核流程", en:"Check flow" }, lang)} sub="上傳 → 檢核 → 結果 → 開 Issue → 交付"
-        right={<D.Button variant="ghost" size="sm" onClick={()=>setStep(s=>(s+1)%5)}>下一步 →</D.Button>}>
-        <D.Stepper steps={["上傳","檢核","結果","開 Issue","交付"]} current={step} />
-      </D.Panel>
-      <SectionTitle hint="ifctester · IDS/YAML · 示意數">{tt({ zh:"記分板 · Scoreboard(pass/fail 色碼)", en:"Scoreboard" }, lang)}</SectionTitle>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
-        <D.MetricCard label="PASSED" value="287" unit="rules" tone="accent" note="DEMO" />
-        <D.MetricCard label="BLOCKED" value="25" tone="err" note="DEMO · 需修正" />
-        <D.MetricCard label="PASS RATE" value="92" unit="%" tone="info" note="DEMO" />
-        <D.MetricCard label="構件 · ELEMENTS" value="4,182" tone="text" note="DEMO" />
-      </div>
-      <SectionTitle hint="點紅燈可開 Issue">{tt({ zh:"規則清單 · Rules", en:"Rules" }, lang)}</SectionTitle>
-      <D.Panel title={tt({ zh:"檢核規則", en:"Check rules" }, lang)} right={<D.ProvTag level="built" />}>
-        <div style={{ display:"flex", flexDirection:"column" }}>
-          {rules.map((r, i) => (
-            <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom: i < rules.length-1 ? "1px solid var(--line)" : "none" }}>
-              <span style={{ width:8, height:8, borderRadius:"50%", background:toneDot[r.tone], boxShadow: r.tone !== "ok" ? `0 0 6px ${toneDot[r.tone]}` : "none", flex:"0 0 auto" }} />
-              <span style={{ flex:1, fontSize:13.5, color:"var(--text)" }}>{tt(r.name, lang)}</span>
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-3)" }}>{r.code}</span>
-              {r.sev !== "—" ? <D.Badge tone={r.tone === "err" ? "err" : "warn"}>{r.sev}</D.Badge> : <span style={{ width:46 }} />}
+  const stepIdx = { idle:0, picked:1, running:1, scored:2, issued:3, delivered:4 }[stage];
+  const scored = (stage === "scored" || stage === "issued" || stage === "delivered");
+  const stMap = {
+    open:          { l:"OPEN",        c:"var(--err)" },
+    "in-progress": { l:"IN-PROGRESS", c:"var(--warn)" },
+    resolved:      { l:"RESOLVED",    c:"var(--ok)" },
+  };
+  const selBtn = (on) => ({ all:"unset", cursor:"pointer", fontFamily:"var(--font-mono)", fontSize:11, padding:"5px 10px", borderRadius:6,
+    color: on ? "var(--text)" : "var(--text-3)", background: on ? "var(--accent-soft)" : "var(--surface-2)",
+    border: `1px solid ${on ? "var(--c-green-ring)" : "var(--line)"}` });
+
+  /* ── 選檔區:三種樣式(原型審查用切換;正式版擇一) ── */
+  const pickerDD = (
+    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+      <select value={path || ""} onChange={(e) => { const [p,k,f] = e.target.value.split("/"); choose(p, k, f); }}
+        style={{ background:"var(--surface-2)", color:"var(--text)", border:"1px solid var(--line-2)", borderRadius:"var(--radius-sm)", padding:"10px 12px", fontFamily:"var(--font-mono)", fontSize:13, outline:"none", width:"100%", boxSizing:"border-box" }}>
+        <option value="" disabled>{tt({ zh:"— 選擇偵測到的 IFC —", en:"— pick a detected IFC —" }, lang)}</option>
+        {S.tree.map(P => P.kinds.map(K => (
+          <optgroup key={P.p + K.k} label={`${P.p} / ${K.k}`}>
+            {K.files.map(F => <option key={F.n} value={`${P.p}/${K.k}/${F.n}`}>{`${P.p} / ${K.k} / ${F.n} · ${F.s}`}</option>)}
+          </optgroup>
+        )))}
+      </select>
+    </div>
+  );
+  const pickerCascade = (
+    <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+      {[
+        { lab:S.lv[lang][0], items:S.tree.map(P => P.p), val:selP, on:(v) => { setSelP(v); setSelK(null); setSelF(null); setStage("idle"); } },
+        { lab:S.lv[lang][1], items:proj ? proj.kinds.map(K => K.k) : [], val:selK, on:(v) => { setSelK(v); setSelF(null); setStage("idle"); } },
+        { lab:S.lv[lang][2], items:kind ? kind.files.map(F => F.n) : [], val:selF, on:(v) => choose(selP, selK, v) },
+      ].map((row, ri) => (
+        <div key={ri} style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-4)", letterSpacing:".06em", minWidth:64 }}>{row.lab}</span>
+          {row.items.length === 0
+            ? <span style={{ fontSize:11.5, color:"var(--text-4)" }}>{tt({ zh:"← 先選上一層", en:"← pick the level above" }, lang)}</span>
+            : row.items.map(it => <button key={it} onClick={() => row.on(it)} style={selBtn(row.val === it)}>{it}</button>)}
+        </div>
+      ))}
+    </div>
+  );
+  const pickerTree = (
+    <div style={{ display:"flex", flexDirection:"column", gap:2, fontFamily:"var(--font-mono)", fontSize:12 }}>
+      {S.tree.map(P => (
+        <div key={P.p}>
+          <div style={{ color:"var(--text-2)", padding:"4px 0" }}>▾ {P.p}</div>
+          {P.kinds.map(K => (
+            <div key={K.k} style={{ paddingLeft:16 }}>
+              <div style={{ color:"var(--text-3)", padding:"3px 0" }}>▾ {K.k}</div>
+              {K.files.map(F => {
+                const on = path === `${P.p}/${K.k}/${F.n}`;
+                return (
+                  <button key={F.n} onClick={() => choose(P.p, K.k, F.n)}
+                    style={{ all:"unset", cursor:"pointer", display:"flex", alignItems:"center", gap:8, padding:"4px 8px", marginLeft:16, borderRadius:6,
+                      background: on ? "var(--accent-soft)" : "transparent", border:`1px solid ${on ? "var(--c-green-ring)" : "transparent"}` }}>
+                    <span style={{ width:6, height:6, borderRadius:"50%", background: on ? "var(--accent)" : "var(--text-4)" }} />
+                    <span style={{ color: on ? "var(--text)" : "var(--text-2)" }}>{F.n}</span>
+                    <span style={{ color:"var(--text-4)", fontSize:10.5 }}>{F.s} · {F.t}</span>
+                  </button>
+                );
+              })}
             </div>
           ))}
         </div>
-        <div style={{ display:"flex", gap:10, marginTop:14 }}>
-          <D.Button variant="primary">一鍵轉 Issue →</D.Button>
-          <D.Button variant="ghost">匯出 BCF 2.1</D.Button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div>
+      <PageHead crumb="A1 · 治理與模型檢核 [P0]" title={tt({ zh:"治理與模型檢核", en:"Governance & model check" }, lang)}
+        sub={tt({ zh:"v2:從偵測到的 IFC 選檔(local_fs / MinIO 雙來源)→ rule_engine + ifctester(IDS)檢核 → BCF 審查 → 交付。記分板為示意數,非實測。", en:"v2: pick a detected IFC (local_fs / MinIO), run rule_engine + ifctester(IDS), review BCF topics, deliver. Scoreboard values are demo." }, lang)}
+        prov={<D.ProvTag level="built" />} host={<HostTag kind="host" />} />
+
+      {/* ① 選檔 · 模型來源(取代舊「上傳」) */}
+      <D.Panel title={tt({ zh:"① 選檔 · 偵測到的 IFC", en:"① Pick file · detected IFC" }, lang)}
+        sub={S.api}
+        right={<div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {Object.keys(A1_SOURCES).map(k => (
+            <button key={k} onClick={() => switchSrc(k)} style={selBtn(src === k)}>{tt(A1_SOURCES[k].label, lang)}</button>
+          ))}
+          <D.ProvTag level={S.prov} note={src === "minio" ? "真 MinIO 逐層 · 唯讀" : "local_fs · 真接線"} />
+        </div>}>
+        {/* 原型審查:選檔樣式切換(非產品 UI) */}
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, paddingBottom:10, borderBottom:"1px dashed var(--line-2)" }}>
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:9.5, letterSpacing:".08em", color:"var(--ai)", background:"var(--ai-soft)", border:"1px solid var(--ai)", padding:"2px 7px", borderRadius:5 }}>PROTO</span>
+          <span style={{ fontSize:11.5, color:"var(--text-3)" }}>{tt({ zh:"選檔樣式(供挑,正式版擇一):", en:"Picker style (pick one for prod):" }, lang)}</span>
+          {[["dd", { zh:"下拉", en:"Dropdown" }], ["cascade", { zh:"級聯 pills", en:"Cascade pills" }], ["tree", { zh:"樹狀", en:"Tree" }]].map(([k, l]) => (
+            <button key={k} onClick={() => setPick(k)} style={selBtn(pick === k)}>{tt(l, lang)}</button>
+          ))}
+        </div>
+        {pick === "dd" ? pickerDD : pick === "cascade" ? pickerCascade : pickerTree}
+        {/* 選定檔案列 */}
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:12, padding:"10px 12px", borderRadius:8, background:"#070a0d", border:`1px solid ${file ? "var(--c-green-ring)" : "var(--line)"}` }}>
+          <D.StatusLED tone={file ? "ok" : "idle"} />
+          {file ? (
+            <>
+              <span style={{ flex:1, fontFamily:"var(--font-mono)", fontSize:12.5, color:"var(--text)" }}>{src === "minio" ? "bim-control/" : "storage/"}{path}</span>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-3)" }}>{file.s} · {file.t}</span>
+              <D.Badge tone="warn">{tt({ zh:"測試資料", en:"TEST DATA" }, lang)}</D.Badge>
+            </>
+          ) : (
+            <span style={{ flex:1, fontSize:12.5, color:"var(--text-3)" }}>{tt({ zh:"目前未選檔 —— 從上方偵測結果選一個 .ifc(模式 6:不補假列)", en:"No file picked — choose a detected .ifc above (pattern 6: no fake rows)" }, lang)}</span>
+          )}
+          <D.Button variant="primary" size="sm" disabled={!file || stage === "running"} onClick={runCheck}>
+            {stage === "running" ? tt({ zh:"檢核中…", en:"Running…" }, lang) : tt({ zh:"執行規則檢核", en:"Run rule check" }, lang)}
+          </D.Button>
+        </div>
+        {stage === "running" ? (
+          <div style={{ marginTop:10 }}>
+            <div style={{ height:6, borderRadius:4, background:"var(--surface-2)", border:"1px solid var(--line)", overflow:"hidden" }}>
+              <div style={{ width:prog + "%", height:"100%", background:"var(--accent)", transition:"width .25s linear" }} />
+            </div>
+            <div style={{ marginTop:6, fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-3)" }}>POST /api/governance/rule-runs → GET /api/governance/rule-runs/:id · {prog}%(1500ms 輪詢 · 示意)</div>
+          </div>
+        ) : null}
+      </D.Panel>
+
+      {/* 檢核流程 stepper */}
+      <D.Panel title={tt({ zh:"檢核流程", en:"Check flow" }, lang)} sub="選檔 → 檢核 → 結果 → 審查(Issue·BCF) → 交付"
+        right={<D.Button variant="ghost" size="sm" onClick={() => resetTo("idle")}>{tt({ zh:"重跑 · 回到選檔", en:"Restart" }, lang)}</D.Button>}>
+        <D.Stepper steps={[tt({ zh:"選檔", en:"Pick" }, lang), tt({ zh:"檢核", en:"Check" }, lang), tt({ zh:"結果", en:"Score" }, lang), tt({ zh:"審查", en:"Review" }, lang), tt({ zh:"交付", en:"Deliver" }, lang)]} current={stepIdx} />
+      </D.Panel>
+
+      {/* ③ 記分板 + 規則清單(未跑完=模式 6 空狀態,不補假列) */}
+      <SectionTitle hint="ifctester · IDS/YAML · 示意數">{tt({ zh:"記分板 · Scoreboard(pass/fail 色碼)", en:"Scoreboard" }, lang)}</SectionTitle>
+      {scored ? (
+        <>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+            <D.MetricCard label="PASSED" value="287" unit="rules" tone="accent" note="DEMO" />
+            <D.MetricCard label="BLOCKED" value="25" tone="err" note="DEMO · 需修正" />
+            <D.MetricCard label="PASS RATE" value="92" unit="%" tone="info" note="DEMO" />
+            <D.MetricCard label="構件 · ELEMENTS" value="4,182" tone="text" note="DEMO" />
+          </div>
+          <SectionTitle hint="點紅燈可開 Issue">{tt({ zh:"規則清單 · Rules", en:"Rules" }, lang)}</SectionTitle>
+          <D.Panel title={tt({ zh:"檢核規則 · 對選定檔", en:"Check rules · for picked file" }, lang)} right={<D.ProvTag level="built" />}>
+            <div style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)", marginBottom:8 }}>{src === "minio" ? "bim-control/" : "storage/"}{path}</div>
+            <div style={{ display:"flex", flexDirection:"column" }}>
+              {rules.map((r, i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom: i < rules.length - 1 ? "1px solid var(--line)" : "none" }}>
+                  <span style={{ width:8, height:8, borderRadius:"50%", background:toneDot[r.tone], boxShadow: r.tone !== "ok" ? `0 0 6px ${toneDot[r.tone]}` : "none", flex:"0 0 auto" }} />
+                  <span style={{ flex:1, fontSize:13.5, color:"var(--text)" }}>{tt(r.name, lang)}</span>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-3)" }}>{r.code}</span>
+                  {r.sev !== "—" ? <D.Badge tone={r.tone === "err" ? "err" : "warn"}>{r.sev}</D.Badge> : <span style={{ width:46 }} />}
+                </div>
+              ))}
+            </div>
+            {confirming ? (
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:14, padding:"10px 12px", borderRadius:8, background:"var(--warn-soft)", border:"1px solid var(--warn)" }}>
+                <span style={{ flex:1, fontSize:12.5, color:"var(--text)" }}>{tt({ zh:"將對 25 個失敗構件建 3 筆 issue(冪等鍵 rule_run_id+guid,已建過會跳過)。", en:"Creates 3 issues for 25 failing elements (idempotent by rule_run_id+guid)." }, lang)}</span>
+                <D.Button variant="primary" size="sm" onClick={createIssues}>{tt({ zh:"確認執行", en:"Confirm" }, lang)}</D.Button>
+                <D.Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>{tt({ zh:"取消", en:"Cancel" }, lang)}</D.Button>
+              </div>
+            ) : (
+              <div style={{ display:"flex", gap:10, marginTop:14 }}>
+                <D.Button variant="primary" disabled={stage !== "scored"} onClick={() => setConfirming(true)}>{tt({ zh:"失敗構件轉 Issue(模式 3)→", en:"Failures → Issues (pattern 3) →" }, lang)}</D.Button>
+              </div>
+            )}
+          </D.Panel>
+        </>
+      ) : (
+        <D.Panel title={tt({ zh:"尚無檢核結果", en:"No results yet" }, lang)}>
+          <div style={{ color:"var(--text-3)", fontSize:13, lineHeight:1.65 }}>
+            {tt({ zh:"目前沒有這個檔的 rule-run 結果。先在上方選檔並執行規則檢核(模式 6:空狀態給下一步,不補假數)。", en:"No rule-run for this file yet. Pick a file above and run the check (pattern 6: empty state with next step, no fake numbers)." }, lang)}
+          </div>
+        </D.Panel>
+      )}
+
+      {/* ④ BCF 審查面板(新) */}
+      <SectionTitle hint="issues API · BCF 2.1 匯出">{tt({ zh:"BCF 審查 · Topics(對選定檔)", en:"BCF review · Topics (picked file)" }, lang)}</SectionTitle>
+      <D.Panel title={tt({ zh:"BCF Topic 審查面板", en:"BCF topic review" }, lang)}
+        right={<D.ProvTag level={topics.length ? "built" : "demo"} note={tt({ zh:"列表/狀態=issues API;指派=待建", en:"list/status = issues API; assign pending" }, lang)} />}>
+        {topics.length === 0 ? (
+          <div style={{ color:"var(--text-3)", fontSize:13, lineHeight:1.65 }}>
+            {tt({ zh:"目前沒有 topic。檢核出結果後,由「失敗構件轉 Issue」產生(Issue 共同出海口:A1/A2/A3/A5 共用 schema)。", en:"No topics yet. They are created from failing rules via Failures → Issues (shared Issue/BCF schema)." }, lang)}
+          </div>
+        ) : (
+          <>
+            <div style={{ display:"flex", flexDirection:"column" }}>
+              {topics.map((tp, i) => (
+                <div key={tp.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom: i < topics.length - 1 ? "1px solid var(--line)" : "none" }}>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-3)", minWidth:44 }}>{tp.id}</span>
+                  <span style={{ flex:1, fontSize:13, color:"var(--text)" }}>{tt(tp.t, lang)}</span>
+                  <span style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)" }}>{tp.rule}</span>
+                  <D.Badge tone={tp.sev === "HIGH" ? "err" : "warn"}>{tp.sev}</D.Badge>
+                  <button onClick={() => cycleSt(i)} title="POST /api/governance/issues/:id/transition(模式 3)"
+                    style={{ all:"unset", cursor:"pointer", fontFamily:"var(--font-mono)", fontSize:10, fontWeight:700, letterSpacing:".05em", color:stMap[tp.st].c, border:`1px solid ${stMap[tp.st].c}`, padding:"3px 9px", borderRadius:6, minWidth:86, textAlign:"center" }}>
+                    {stMap[tp.st].l}
+                  </button>
+                  <span title={tt({ zh:"指派 assignee:issues schema 無此欄,待建 P1 — 不提供假按鈕", en:"Assignee: not in issues schema yet (P1) — no fake control" }, lang)}
+                    style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--prov-todo)", border:"1px dashed var(--prov-todo)", padding:"3px 9px", borderRadius:6 }}>
+                    {tt({ zh:"指派 · 待建", en:"assign · pending" }, lang)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:14, flexWrap:"wrap" }}>
+              <D.Button variant="primary" onClick={() => setStage("delivered")}>{tt({ zh:"匯出 BCF 2.1(.bcfzip)", en:"Export BCF 2.1 (.bcfzip)" }, lang)}</D.Button>
+              <D.Button variant="ghost">{tt({ zh:"匯出 Excel", en:"Export Excel" }, lang)}</D.Button>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)" }}>{tt({ zh:"無 viewpoint 時 BCF 內誠實缺省;BCF 3.0 為升級目標(見互動規格 PART C)", en:"Missing viewpoints stay honestly absent; BCF 3.0 is the upgrade target (PART C)" }, lang)}</span>
+              {stage === "delivered" ? <D.Badge tone="accent">{tt({ zh:"已交付", en:"DELIVERED" }, lang)}</D.Badge> : null}
+            </div>
+          </>
+        )}
+      </D.Panel>
+
+      {/* ⑤ 3D 連動 — A1 連動橋(留在 A1;證據 rail 風格,非 viewer 視窗) */}
+      <SectionTitle hint={tt({ zh:"證據由 #sessions 供應 · 只顯示不推定", en:"evidence fed by #sessions · display, never infer" }, lang)}>{tt({ zh:"3D 連動 · A1 連動橋", en:"3D link · A1 bridge" }, lang)}</SectionTitle>
+      <D.Panel title={tt({ zh:"連動橋 · 高亮前置證據", en:"Bridge · highlight preconditions" }, lang)} right={<D.ProvTag level="ai" note="highlightPrimsRequest · P1.5" />}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+          {A1_BRIDGE.map((b, i) => (
+            <div key={i} style={{ display:"flex", flexDirection:"column", gap:6, padding:"10px 12px", borderRadius:8, background:"var(--surface-2)", border:"1px solid var(--line)" }}>
+              <span style={{ fontFamily:"var(--font-mono)", fontSize:9.5, letterSpacing:".07em", color:"var(--text-4)" }}>{String(i + 1).padStart(2, "0")} · {tt(b.k, lang)}</span>
+              <span style={{ display:"flex", alignItems:"center", gap:7 }}>
+                <D.StatusLED tone={b.tone} />
+                <b style={{ fontFamily:"var(--font-mono)", fontSize:11.5, color: b.tone === "ok" ? "var(--text)" : "var(--text-3)" }}>{typeof b.v === "string" ? b.v : tt(b.v, lang)}</b>
+              </span>
+            </div>
+          ))}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:12, flexWrap:"wrap" }}>
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-4)", letterSpacing:".06em" }}>{tt({ zh:"高亮佇列(失敗構件 GUID)", en:"Highlight queue (failing GUIDs)" }, lang)}</span>
+          {["2O2Fr$t4X7Zf8NOew3FLKQ", "1hqIFTRjbB8xVvGXWpUL0a", "0jR9wKm2T5yeBQ3sN8dHcC"].map(g => (
+            <span key={g} style={{ display:"inline-flex", alignItems:"center", gap:6, fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-2)", background:"#070a0d", border:"1px solid var(--line)", padding:"3px 8px", borderRadius:5 }}>
+              <i style={{ width:6, height:6, borderRadius:"50%", background:"var(--err)" }} />{g}
+            </span>
+          ))}
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)" }}>+22</span>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:14 }}>
+          <D.Button disabled prov="ai" title={tt({ zh:"啟用條件缺一不可:DataChannel ready ∧ first_frame_at ∧ stage matched ∧ usd_prim_path", en:"Requires DataChannel ∧ first frame ∧ stage match ∧ usd_prim_path" }, lang)}>
+            {tt({ zh:"在 3D 高亮(P1.5 · 證據未齊)", en:"Highlight in 3D (P1.5 · evidence incomplete)" }, lang)}
+          </D.Button>
+          <a href="#sessions" style={{ fontFamily:"var(--font-mono)", fontSize:11.5, color:"var(--accent)", textDecoration:"none" }}>{tt({ zh:"開 Session 管理(證據來源)→", en:"Open Sessions (evidence source) →" }, lang)}</a>
+        </div>
+        <div style={{ marginTop:10, fontSize:11.5, color:"var(--text-4)", lineHeight:1.6 }}>
+          {tt({ zh:"此區不內嵌 3D 視窗:A1 用證據 rail 呈現連動狀態,四格證據以 #sessions / Runtime 監控為單一來源,滿足才亮起高亮鍵;viewer 回 ack 才標成功。", en:"No embedded 3D here: A1 renders the link as an evidence rail; all four cells are fed by #sessions / runtime and the button only arms when every one is green; success only on viewer ack." }, lang)}
         </div>
       </D.Panel>
-      <SectionTitle>{tt({ zh:"3D 連動", en:"3D link" }, lang)}</SectionTitle>
-      <D.Panel title={tt({ zh:"在 3D 高亮失敗構件", en:"Highlight failing prims in 3D" }, lang)} phase right={<D.ProvTag level="todo" note="3D 高亮待建 · todo" />}>
-        <div style={{ color:"var(--text-3)", fontSize:13, lineHeight:1.6 }}>
-          {tt({ zh:"3D 高亮需要 viewer DataChannel(待建)。沒有 GPU viewport 時仍可交付規則結果、Issue 與 BCF —— 但不宣稱已完成 3D 高亮。", en:"3D highlight needs viewer DataChannel (not built). Rules/Issue/BCF still ship without a GPU viewport — but 3D highlight is not claimed done." }, lang)}
-        </div>
-        <div style={{ marginTop:12 }}><D.Button disabled prov="todo">在 3D 高亮(待 viewer DataChannel)</D.Button></div>
-      </D.Panel>
+
       <DepsList deps={[
-        { name:"governance-service · rule_engine + ifctester + BCF", port:":49102", host:"host", tone:"ok" },
-        { name:"coordinator · /api/governance/* proxy", port:":8004", host:"container", tone:"ok" },
-        { name:"viewer DataChannel(3D 高亮)", port:":5173", host:"host", tone:"idle" },
+        { name:"governance-service · rule_engine + ifctester + issues + BCF", port:":49102", host:"host", tone:"ok" },
+        { name:"coordinator · /api/governance/* proxy + /api/minio/objects", port:":8004", host:"container", tone:"ok" },
+        { name:"viewer DataChannel(3D 高亮 · P1.5)", port:":5173", host:"host", tone:"idle" },
       ]} />
     </div>
   );
@@ -1038,36 +1320,99 @@ function ConvPage({ lang }) {
   );
 }
 
-/* ── #sessions Session 管理(built) ────────────────────────────────── */
+/* ── #sessions Session 管理(built · v2 2026-07-02 深化) ───────────────
+   變更:① occupied 證據鏈三欄(IX-SS-02)入列;② 結束 session(IX-SS-04,
+   已實作 PR#226)+ 強制釋放(IX-SS-03 待建);③ 新增「A1 連動橋 · 供應端」
+   面板 —— A1 頁 3D 連動的四格證據以本頁為單一來源。 ── */
 function SessionsPage({ lang }) {
+  const [closing, setClosing] = useState(null);   // 模式 3 confirm 中的 session id
+  const [closed, setClosed] = useState([]);       // 已結束(轉灰 60s 示意)
   const rows = [
-    { id:"sess_8f21", status:"ACTIVE", gpu:"kit_local_001", who:{ zh:"陳(Primary)", en:"Chen (Primary)" } },
-    { id:"sess_8f22", status:"PENDING", gpu:"—", who:{ zh:"待派發", en:"unassigned" } },
+    { id:"sess_8f21", status:"ACTIVE",  gpu:"kit_local_001", who:{ zh:"陳(Primary)+2 旁觀", en:"Chen (Primary) + 2 spectators" },
+      stage:"bim-control/270/機電/model.usdc", ff:null, hb:"3s", match:null },
+    { id:"sess_8f22", status:"PENDING", gpu:"—", who:{ zh:"待派發", en:"unassigned" }, stage:"—", ff:null, hb:null, match:null },
   ];
-  const sc = { ACTIVE:"var(--ok)", PENDING:"var(--warn)", TERMINATED:"var(--idle)" };
+  const isClosed = (id) => closed.indexOf(id) !== -1;
+  const evCell = (val, okLabel, missLabel, tone) => (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:6, fontFamily:"var(--font-mono)", fontSize:10.5 }}>
+      <D.StatusLED tone={tone} />
+      <span style={{ color: tone === "ok" ? "var(--text-2)" : tone === "warn" ? "var(--warn)" : "var(--text-4)" }}>{val || missLabel}</span>
+    </span>
+  );
   return (
     <div>
       <PageHead crumb={tt({ zh:"SS Session 管理", en:"SS Sessions" }, lang)} title={tt({ zh:"Session 管理", en:"Session management" }, lang)}
-        sub={tt({ zh:"review session 生命週期。status enum(SessionStatus)由後端逐字 echo,前端不自創。", en:"Review-session lifecycle. SessionStatus enum is echoed verbatim from the backend." }, lang)}
+        sub={tt({ zh:"review session 生命週期 + occupied 證據鏈。status enum 由後端逐字 echo;Open URL ≠ occupied;A1 的 3D 連動證據由本頁供應。", en:"Review-session lifecycle + occupied evidence chain. Status echoed verbatim; Open URL ≠ occupied; A1's 3D-link evidence is fed from here." }, lang)}
         prov={<D.ProvTag level="built" />} host={<HostTag kind="container" />} />
-      <D.Panel title={tt({ zh:"Session 列表", en:"Sessions" }, lang)} right={<D.ProvTag level="built" />}>
+
+      <D.Panel title={tt({ zh:"Session 列表 · GET /api/runtime/status(5s 輪詢)", en:"Sessions · GET /api/runtime/status (5s poll)" }, lang)} right={<D.ProvTag level="built" />}>
         <div style={{ display:"flex", flexDirection:"column" }}>
           {rows.map((r, i) => (
-            <div key={r.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom: i < rows.length-1 ? "1px solid var(--line)" : "none" }}>
-              <D.StatusLED tone={r.status === "ACTIVE" ? "ok" : r.status === "PENDING" ? "warn" : "idle"} />
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:12.5, color:"var(--text)", minWidth:90 }}>{r.id}</span>
-              <D.Badge tone={r.status === "ACTIVE" ? "accent" : "neutral"}>{r.status}</D.Badge>
-              <span style={{ flex:1, fontSize:12.5, color:"var(--text-2)" }}>{tt(r.who, lang)}</span>
-              <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-3)" }}>{r.gpu}</span>
+            <div key={r.id} style={{ opacity: isClosed(r.id) ? .45 : 1, transition:"opacity .3s", padding:"11px 0", borderBottom: i < rows.length - 1 ? "1px solid var(--line)" : "none" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <D.StatusLED tone={isClosed(r.id) ? "idle" : r.status === "ACTIVE" ? "ok" : r.status === "PENDING" ? "warn" : "idle"} />
+                <span style={{ fontFamily:"var(--font-mono)", fontSize:12.5, color:"var(--text)", minWidth:90 }}>{r.id}</span>
+                <D.Badge tone={isClosed(r.id) ? "neutral" : r.status === "ACTIVE" ? "accent" : "neutral"}>{isClosed(r.id) ? "CLOSED" : r.status}</D.Badge>
+                <span style={{ flex:1, fontSize:12.5, color:"var(--text-2)" }}>{tt(r.who, lang)}</span>
+                <span style={{ fontFamily:"var(--font-mono)", fontSize:11, color:"var(--text-3)" }}>{r.gpu}</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:7, paddingLeft:26, flexWrap:"wrap" }}>
+                <span style={{ fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)" }}>{r.stage}</span>
+                {evCell(r.ff, "", tt({ zh:"first_frame 未見畫面", en:"first_frame not seen" }, lang), r.ff ? "ok" : "warn")}
+                {evCell(r.hb ? `heartbeat ${r.hb}` : null, "", tt({ zh:"heartbeat 未取得", en:"no heartbeat" }, lang), r.hb ? "ok" : "idle")}
+                {evCell(r.match, "", tt({ zh:"stage match 未取得", en:"stage match unverified" }, lang), r.match ? "ok" : "idle")}
+                <span style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
+                  <D.Button variant="ghost" size="sm" title={tt({ zh:"只開新分頁,不改任何狀態欄(Open URL ≠ occupied)", en:"Opens a tab only; changes no state (Open URL ≠ occupied)" }, lang)}>Primary ↗</D.Button>
+                  <D.Button variant="ghost" size="sm">Spectator ↗</D.Button>
+                  {r.status === "ACTIVE" && !isClosed(r.id) ? (
+                    <D.Button variant="ghost" size="sm" onClick={() => setClosing(r.id)}>{tt({ zh:"結束 session", en:"Close session" }, lang)}</D.Button>
+                  ) : null}
+                  <D.Button disabled prov="todo" size="sm" title={tt({ zh:"強制釋放 stale:heartbeat stale ∧ 無 first frame 才可;endpoint 待建", en:"Force-release stale: needs stale heartbeat ∧ no first frame; endpoint pending" }, lang)}>
+                    {tt({ zh:"強制釋放(待建)", en:"Force release (pending)" }, lang)}
+                  </D.Button>
+                </span>
+              </div>
+              {closing === r.id ? (
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:10, marginLeft:26, padding:"10px 12px", borderRadius:8, background:"var(--warn-soft)", border:"1px solid var(--warn)" }}>
+                  <span style={{ flex:1, fontSize:12.5, color:"var(--text)" }}>
+                    {tt({ zh:"POST /api/review-sessions/:id/close(重用 cooperative close,PR#226):釋放 coordinator 端 session/binding,非殺 GPU 上 Kit 行程。", en:"POST /api/review-sessions/:id/close (cooperative close, PR#226): releases the coordinator-side binding; does not kill the Kit process." }, lang)}
+                  </span>
+                  <D.Button variant="primary" size="sm" onClick={() => { setClosed(c => c.concat(r.id)); setClosing(null); }}>{tt({ zh:"確認執行", en:"Confirm" }, lang)}</D.Button>
+                  <D.Button variant="ghost" size="sm" onClick={() => setClosing(null)}>{tt({ zh:"取消", en:"Cancel" }, lang)}</D.Button>
+                </div>
+              ) : null}
+              {isClosed(r.id) ? (
+                <div style={{ marginTop:8, marginLeft:26, fontFamily:"var(--font-mono)", fontSize:10.5, color:"var(--text-4)" }}>
+                  {tt({ zh:"已結束 —— 列轉灰 60 秒後移除(讓 operator 看見因果,IX-SS-04)", en:"Closed — row greys for 60s before removal (visible causality, IX-SS-04)" }, lang)}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
-        <div style={{ marginTop:12, display:"flex", gap:10 }}>
-          <D.Button variant="primary" size="sm">{tt({ zh:"建立 session", en:"Create session" }, lang)}</D.Button>
-          <D.Button variant="ghost" size="sm">{tt({ zh:"終止 terminate", en:"Terminate" }, lang)}</D.Button>
+      </D.Panel>
+
+      {/* A1 連動橋 · 供應端(新):A1 頁四格證據的單一來源 */}
+      <SectionTitle hint={tt({ zh:"A1 只讀鏡射本表 · 不推定", en:"A1 mirrors this table read-only" }, lang)}>{tt({ zh:"A1 連動橋 · 供應端", en:"A1 bridge · supply side" }, lang)}</SectionTitle>
+      <D.Panel title={tt({ zh:"高亮前置證據 × 繫結", en:"Highlight preconditions × binding" }, lang)} right={<D.ProvTag level="ai" note="highlightPrimsRequest · P1.5" />}>
+        <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", fontFamily:"var(--font-mono)", fontSize:11.5 }}>
+          <span style={{ color:"var(--text-2)", background:"var(--surface-2)", border:"1px solid var(--line)", padding:"5px 10px", borderRadius:6 }}>A1 rule_run <b style={{ color:"var(--accent)" }}>rr_0702_01</b></span>
+          <span style={{ color:"var(--text-4)" }}>⇢</span>
+          <span style={{ color:"var(--text-2)", background:"var(--surface-2)", border:"1px solid var(--line)", padding:"5px 10px", borderRadius:6 }}>session <b style={{ color:"var(--accent)" }}>sess_8f21</b> · ACTIVE</span>
+          <span style={{ color:"var(--text-4)" }}>⇢</span>
+          <span style={{ color:"var(--text-3)", background:"var(--surface-2)", border:"1px dashed var(--line-2)", padding:"5px 10px", borderRadius:6 }}>DataChannel {tt({ zh:"未取得", en:"not ready" }, lang)}</span>
+          <span style={{ color:"var(--text-4)" }}>⇢</span>
+          <span style={{ color:"var(--text-3)", background:"var(--surface-2)", border:"1px dashed var(--line-2)", padding:"5px 10px", borderRadius:6 }}>highlight ack {tt({ zh:"未發送", en:"not sent" }, lang)}</span>
+        </div>
+        <div style={{ marginTop:10, fontSize:11.5, color:"var(--text-4)", lineHeight:1.6 }}>
+          {tt({ zh:"A1 頁「3D 連動 · A1 連動橋」的四格證據(session 派發/首幀/DataChannel/stage match)一律讀本頁與 Runtime 監控的權威值;證據未齊,A1 的高亮鍵保持 disabled,不畫假綠燈。", en:"A1's four bridge cells (session / first frame / DataChannel / stage match) read this page and runtime telemetry as the single source; until all are green, A1's highlight button stays disabled — no fake green." }, lang)}
         </div>
       </D.Panel>
-      <DepsList deps={[ { name:"coordinator :8004 · session/instance", port:":8004", host:"container", tone:"ok" } ]} />
+
+      <DepsList deps={[
+        { name:"coordinator :8004 · /api/runtime/status + review-sessions close", port:":8004", host:"container", tone:"ok" },
+        { name:"強制釋放 · /api/sessions/:id/endpoints/:ep/release(待建)", port:":8004", host:"container", tone:"idle" },
+        { name:"kit-manager-api · Kit 啟停 / GPU pool(lifecycle 權威)", port:":8010", host:"host", tone:"ok" },
+      ]} />
     </div>
   );
 }
