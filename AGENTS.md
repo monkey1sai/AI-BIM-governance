@@ -152,7 +152,7 @@ Source of Truth 優先順序：
 4. generated wiki / generated skills（若存在）
 ```
 
-目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。陌生模組探索改用 GitNexus MCP（`query` / `context`，永遠查活圖譜）；不得在 README、PR 或驗收報告把不存在的 wiki 寫成現有入口。任何導覽產物與實作不一致時，一律以實作為準。
+目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。陌生模組探索首選 GitNexus MCP（`query` / `context`，永遠查活圖譜）；日常探索（非改 symbol、非 commit 前）也可並用 `codebase-memory-mcp`（`search_graph` / `get_code_snippet` / `trace_path`）加速定位，兩者查無結果或有疑義時以 GitNexus 為準——**修改 code symbol 前的 `impact` 與 commit 前的 `detect_changes` 仍只由 GitNexus 判定**（見下方 §4）。不得在 README、PR 或驗收報告把不存在的 wiki 寫成現有入口。任何導覽產物與實作不一致時，一律以實作為準。
 
 ---
 
