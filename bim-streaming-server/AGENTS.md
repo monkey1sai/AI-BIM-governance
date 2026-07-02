@@ -29,7 +29,7 @@
 
 ## Required Boundaries
 
-- 載入 USD / USDC 應透過 streaming-owned conversion result、`_worker` IFC handoff URL、coordinator artifact binding，或本機測試 file path，不把大型檔案納入 source。
+- 載入 USD / USDC 應透過 streaming-owned conversion result、coordinator artifact binding，或本機測試 file path，不把大型檔案納入 source。
 - heavy IFC→USDC conversion 必須走 headless converter app、subprocess 或 worker lane，不得阻塞 live WebRTC viewport runtime。
 - runtime state 只代表目前 stream session；若要成為正式審查資料，必須透過 `bim-review-coordinator` 或外部公司雲端 control-plane 形成 metadata / issue / artifact record。
 - DataChannel payload schema 變更必須同步檢查 `web-viewer-sample` 與 `docs/contracts/streaming-datachannel.md`。
