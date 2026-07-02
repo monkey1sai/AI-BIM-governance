@@ -171,7 +171,7 @@ try {
         if ($commandText -eq 'status --short') {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
-        if ($commandText -eq 'clean -fdx') {
+        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') {
             foreach ($relativePath in @('.env', 'bim-review-coordinator\.env', '.env.web-plane.host-kit')) {
                 Remove-Item -LiteralPath (Join-Path $WorkingDirectory $relativePath) -Force -ErrorAction Stop
             }
@@ -201,6 +201,7 @@ try {
     $preserveResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $preserveRoot -AllowNonFixedPathForTests -CommandRunner $preserveRunner -DeployRunner $preserveDeployRunner
     Assert-True ($script:cleanEvents.Count -eq 1) 'mock clean removed env files before restore'
     Assert-Equal 3 $preserveResult.RestoredEnvFileCount 'rebuild restores current-version env files before deploy'
+    Assert-True (@($preserveCalls | Where-Object { $_ -match [regex]::Escape('clean -fdx -e bim-streaming-server/_build/**/logs/**') }).Count -ge 1) 'git clean excludes chronic Kit runtime-log lock path'
 
     $cleanFailureRoot = Join-Path $sandbox 'clean-failure-root'
     New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot '.git') -Force | Out-Null
@@ -227,7 +228,7 @@ try {
         if ($commandText -eq 'status --short') {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
-        if ($commandText -eq 'clean -fdx') {
+        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') {
             Remove-Item -LiteralPath (Join-Path $WorkingDirectory '.env.web-plane.host-kit') -Force -ErrorAction SilentlyContinue
             return [pscustomobject]@{ ExitCode = 42; Output = 'locked governance log' }
         }
@@ -296,7 +297,7 @@ try {
     $stopOrderRunner = {
         param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
         $commandText = $Arguments -join ' '
-        if ($commandText -eq 'clean -fdx') { $script:stopOrderLog.Add('clean') | Out-Null }
+        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') { $script:stopOrderLog.Add('clean') | Out-Null }
         if ($commandText -eq 'remote get-url origin') {
             return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
         }
@@ -357,7 +358,7 @@ try {
         if ($commandText -eq 'status --short') {
             return [pscustomobject]@{ ExitCode = 0; Output = '' }
         }
-        if ($commandText -eq 'clean -fdx') {
+        if ($commandText -eq 'clean -fdx -e bim-streaming-server/_build/**/logs/**') {
             $script:retryCleanCalls.Add('clean') | Out-Null
             if ($script:retryCleanCalls.Count -eq 1) {
                 return [pscustomobject]@{ ExitCode = 1; Output = "warning: failed to remove 'bim-streaming-server/_build/.../logs/Kit/kit.log': Invalid argument" }
