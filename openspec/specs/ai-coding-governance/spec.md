@@ -53,7 +53,7 @@ Repo files SHALL prepare the checks, templates, and owner mappings. GitHub branc
 
 ### Requirement: spec-to-done agent routing SHALL have a single source of truth with a deterministic drift gate
 
-The spec-to-done harness SHALL define every workflow `agent()` call-site's model+effort tier in a single canonical `routing.json`, generate those tiers into each `std-*.js` via a codegen tool (`scripts/gen_routing.py`) rather than runtime import, and enforce non-divergence with a deterministic test gate. Effort downgrades SHALL be opt-in via a flag that defaults off (zero behavior change), the judgment layer (`judge` tier) SHALL remain at the highest effort and be immutable to codegen, and intentionally pinned call-sites SHALL be excluded from codegen and protected by literal assertions.
+The spec-to-done harness SHALL define every workflow `agent()` call-site's model+effort tier in a single canonical `routing.json`, generate those tiers into each `std-*.js` via a codegen tool (`scripts/gen_routing.py`) rather than runtime import, and enforce non-divergence with a deterministic test gate. Effort downgrades SHALL be opt-in via a flag that defaults off (zero behavior change), the judgment layer (`judge` tier) SHALL remain at the highest effort and be immutable to codegen, the adjudication layer (`arbiter` tier, `fable`/`max`) SHALL likewise be immutable and only ever strengthened, and intentionally pinned call-sites SHALL be excluded from codegen and protected by literal assertions.
 
 #### Scenario: Routing drift is rejected by the deterministic gate
 
@@ -61,11 +61,11 @@ The spec-to-done harness SHALL define every workflow `agent()` call-site's model
 - **WHEN** any generated `ROUTING` block diverges from `routing.json`, or a wired call-site references the wrong tier
 - **THEN** `scripts/gen_routing.py --check` SHALL exit non-zero and `tests/test_routing_consistency.py` SHALL fail.
 
-#### Scenario: Effort downgrade flag defaults off (zero behavior change)
+#### Scenario: Plan-author resolves to the arbiter tier when the effort downgrade flag is off
 
 - **GIVEN** `flags.plan_author_xhigh` is `false` in `routing.json`
 - **WHEN** the spec-to-done plan-author agent call-site is resolved
-- **THEN** it SHALL resolve to the same model and effort as before the routing refactor (`opus` / `max`), and no spec-to-done agent's effective model+effort SHALL change.
+- **THEN** it SHALL resolve to the `arbiter` tier (`fable` / `max`); flipping the flag to `true` is a deliberate downgrade decision that requires updating the pinned tests in the same commit.
 
 #### Scenario: Judge tier and do-not-codegen sites are protected
 

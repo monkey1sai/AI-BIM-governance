@@ -1,11 +1,12 @@
 {
   "tiers": {
     "extract":  { "model": "haiku",  "effort": null,    "note": "純抽取/格式化，零判斷，下游必複核" },
-    "standard": { "model": "sonnet", "effort": "max",   "note": "讀/探索/標準實作/首審" },
+    "standard": { "model": "sonnet", "effort": "max",   "note": "讀/探索/標準實作(全類 task 首發)/首審；sonnet=Sonnet 5" },
     "reason":   { "model": "opus",   "effort": "xhigh", "note": "創造/長程；唯一 max->xhigh 降階點" },
-    "judge":    { "model": "opus",   "effort": "max",   "immutable": true, "note": "驗證/fix；不可降，codegen 只驗不覆寫" }
+    "judge":    { "model": "opus",   "effort": "max",   "immutable": true, "note": "驗證/fix；不可降，codegen 只驗不覆寫" },
+    "arbiter":  { "model": "fable",  "effort": "max",   "immutable": true, "note": "單點裁決層(plan 作者/final-review/P4 evidence)；Fable 5，只可升不可降" }
   },
-  "allowed_efforts": { "haiku": [null, "max"], "sonnet": ["high", "max"], "opus": ["xhigh", "max"] },
+  "allowed_efforts": { "haiku": [null, "max"], "sonnet": ["high", "max"], "opus": ["xhigh", "max"], "fable": ["max"] },
   "flags": { "plan_author_xhigh": false },
-  "do_not_codegen": ["std-implement.js:276", "std-implement.js:282", "std-implement.js:287"]
+  "do_not_codegen": ["std-implement.js:288", "std-implement.js:294", "std-implement.js:300"]
 }
