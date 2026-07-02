@@ -302,12 +302,17 @@ function Invoke-TestDeployRebuild {
         # Retry ONLY the clean: a just-released handle can still throw a transient EINVAL
         # ("Invalid argument") on the first unlink. Re-throw after the final attempt so a
         # genuine lock still surfaces AND still reaches the env-restore catch below.
+        # Kit's own runtime log files under _build/**/logs can be left with an orphaned
+        # OS-level handle (observed: no owning process, Defender idle, lock outlives the
+        # 3-attempt retry) that no amount of retrying releases. These logs are pure
+        # diagnostic output, not build state, so skip them instead of blocking the rebuild.
+        $cleanExcludePattern = 'bim-streaming-server/_build/**/logs/**'
         $cleanMaxAttempts = 3
         $cleanAttempt = 0
         while ($true) {
             $cleanAttempt++
             try {
-                Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
+                Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx', '-e', $cleanExcludePattern) -WorkingDirectory $deployRoot -CommandRunner $CommandRunner | Out-Null
                 break
             } catch {
                 if ($cleanAttempt -ge $cleanMaxAttempts) { throw }
