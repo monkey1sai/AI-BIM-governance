@@ -61,7 +61,7 @@ logs/
 # Local agent / browser automation artifacts
 /.claude/
 /.playwright-mcp/
-/CLAUDE.md
+# /CLAUDE.md un-ignored 2026-07-02（治理審計：薄鏡像入版控，PR review 可見）
 /current-stream-*.png
 /stream-validation-*.png
 /.codex

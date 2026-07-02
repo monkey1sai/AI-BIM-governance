@@ -16,6 +16,22 @@ GitHub Actions   = 自動驗證
 Merge            = 正式接受變更
 ```
 
+四工具職責表（單一權威版；`AGENTS.md` §0.1 指向本表）：
+
+| 工具 | 唯一職責（單線，不可越界） |
+|---|---|
+| **Superpowers** | 主線 plan / execution governance：`writing-plans` 拆分期 plan → `subagent-driven-development` 執行 → `verification-before-completion` done-gate |
+| **GitNexus** | code intelligence：改 symbol 前 `impact`（HIGH / CRITICAL 先回報）、commit 前 `detect_changes` 驗 scope |
+| **gstack** | browser QA / screenshot / E2E evidence：user-facing 完成的**唯一驗收證據來源** |
+| **Matt Pocock skills** | 僅 optional 輔助：issue / triage / domain-doc；**不得當主線** |
+
+禁止（anti-patterns）：
+
+- ❌ 用 Matt Pocock skills 取代 Superpowers plan。
+- ❌ 用 Superpowers 宣告 UI 完成而不跑 gstack。
+- ❌ 用 GitNexus 當產品設計依據（設計來自 spec / prototype，非 call graph）。
+- ❌ 用 gstack 改 backend symbol 而跳過 GitNexus impact。
+
 ## 開分支前
 
 - 從最新 `main` 建立並切換到功能 branch（例：`feat/<slug>`、`fix/<slug>`、`chore/<slug>`）。

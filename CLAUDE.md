@@ -24,12 +24,10 @@ installed skills / generated wiki / generated skills
 - 非平凡變更先列出假設、成功標準、最小改動面，再做最小可回復 diff。
 - 非平凡 / 高風險任務先做 task tier 判斷、worker dispatch 或說明不派 worker 的理由，最終回覆區分 verified facts / inferences / unverified risks；完整規則見 `docs/agents/advanced-agent-reasoning-contract.md`。
 - 不修改 secrets / private keys / `.env` 實際機密值；不新增 production dependency 不解釋。
-- 修改 function / class / method 前依 GitNexus 規範做 impact analysis；HIGH / CRITICAL 先回報。
 - 非平凡功能用 superpowers `writing-plans` → `subagent-driven-development` → `verification-before-completion`；不在 `main` 上開發，走 branch → PR → Actions → merge。
-- A1–A10 是本 repo 主要產品項；user-facing feature 必須可從前端 route 操作並有 browser E2E evidence，backend-only done 不接受。
+- 需求效力序與 A1–A10 建成裁決依 `AGENTS.md` §0.1（docs-plans-README §1 > 互動實作規格 A.1.1 > 對齊矩陣 §4.4）；前端改動前必讀後端凍結契約（前端對齊DS手冊 §1）。user-facing feature 必須可從前端 route 操作並有 browser E2E evidence，backend-only done 不接受。
 - deploy / runtime / demo 行為必須回到 `scripts/deploy.ps1` golden path；新增 root-level start / smoke / check script 預設視為邊界風險。
-- 測試部署區重建口令固定執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；helper 必須從 freshly fetched `origin/main` 重建 `D:\Users\deploy\AI-bim-geo`，排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/` 後由部署區執行 `.\scripts\deploy.ps1 -Build`。禁止 `-DryRun`。
-- 已授權：若 `deploy.ps1 -Build` 被外部 `kit.exe` / conversion `python.exe` 等 host-native runtime blocker 佔用必要 ports 擋住，可停止該 blocking PID 並重跑同一條 `-Build`；不得改用 `-Force` / `-DryRun`。
+- 測試部署區重建口令固定執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`（禁 `-DryRun`；helper 詳規、排除清單與 blocking PID 授權見 `docs/agents/product-operability-and-script-contract.md` §6 與 `AGENTS.md` §0.1）。
 
 開發管線（四套工具不平權，固定「主流程 + 輔助」；完整版見 `AGENTS.md` §0.1）：
 
@@ -61,6 +59,7 @@ installed skills / generated wiki / generated skills
 | 跑 sub-repo 驗證（pytest / npm test / build / Cloud VM 啟動） | `docs/agents/sub-repo-verify-commands.md` |
 | 非平凡 / 高風險任務分級、worker dispatch、evidence labels、reviewer perspectives | `docs/agents/advanced-agent-reasoning-contract.md` |
 | 看舊 PR、了解退役服務與歷史 spec 脈絡 | `docs/agents/history-and-archive.md` |
+| 查需求效力序、正典路由 A.1.1、A1–A10 建成裁決（§4.4）、後端凍結契約（§1） | `docs/plans/docs-plans-README.md`（跳板）→ 各 plans 檔 |
 
 行數預算：本檔 ≤ 130 行（目標 ≤ 100）；AGENTS.md ≤ 250 行（目標 ≤ 200）。預算規範見 spec `agent-doc-context-budget`。
 
@@ -76,7 +75,7 @@ python -m pytest tests -p no:cacheprovider
 
 ## 4. GitNexus 入口
 
-修改 code symbol 前 MUST 跑 `gitnexus_impact`；commit 前 MUST 跑 `gitnexus_detect_changes`；HIGH / CRITICAL risk 先回報再繼續。完整規範與 CLI skill 對應表見 `docs/agents/gitnexus-usage.md`。
+修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL risk 先回報再繼續。規範本文以下方自動維護區塊為準；stale 重建與 crash 復原見 `docs/agents/gitnexus-usage.md`。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

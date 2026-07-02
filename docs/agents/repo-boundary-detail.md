@@ -22,7 +22,10 @@ AI-BIM-governance/
 AI-BIM-governance/
 ├── bim-review-coordinator/      # 控制中心，localhost:8004
 ├── bim-streaming-server/        # Kit streaming + IFC→USDC authority，WebRTC 49100
+├── governance-service/          # A1/A2/A3 governance authority，127.0.0.1:49102 loopback
 ├── web-viewer-sample/           # browser client，localhost:5173
+├── apps/kit-manager-web/        # Kit Manager operator UI
+├── services/kit-manager-api/    # Kit Manager API，:8010
 └── tests/                       # external platform contracts + test-only fakes
 ```
 
@@ -30,15 +33,19 @@ AI-BIM-governance/
 flowchart TD
   CO[bim-review-coordinator<br/>Control Plane]
   KIT[bim-streaming-server<br/>IFC→USDC Authority + Kit Runtime]
+  GOV[governance-service<br/>A1/A2/A3 Governance Authority :49102]
   CLOUD[[external company-cloud bim-control<br/>Control Plane]]
   EDGE[[external customer-edge IFC Worker]]
   WV[web-viewer-sample<br/>Browser Client]
+  KM[kit-manager web + api :8010]
 
   EDGE -->|POST /api/external/ifc-ready| CO
   CO -->|start / check / reference process| KIT
+  CO -->|/api/governance/* proxy| GOV
   CO -->|metadata-only callback outbox| CLOUD
   WV -->|REST: create/join session| CO
   WV -->|WebRTC + DataChannel| KIT
+  KM -->|Kit fleet ops / telemetry| KIT
 ```
 
 其中：
@@ -112,16 +119,20 @@ flowchart LR
     CLOUD["[外部] 公司雲端 bim-control"]
     CO["bim-review-coordinator\nExternal IFC-ready intake + Session / Control Plane"]
     KIT["bim-streaming-server\nIFC→USDC Authority\n+ Omniverse Kit Runtime"]
+    GOV["governance-service\nA1/A2/A3 Governance Authority\n127.0.0.1:49102 loopback"]
     WV["web-viewer-sample\nBrowser Client"]
+    KM["kit-manager web + api\n:8010"]
 
     EDGE -->|POST /api/external/ifc-ready| CO
     CO -->|internal conversion request| KIT
+    CO -->|/api/governance/* proxy| GOV
     CO -->|metadata-only callback outbox| CLOUD
     WV -->|REST: create / join session| CO
     WV -->|WebRTC video + DataChannel JSON| KIT
     WV -->|Socket.IO / WebSocket state events| CO
     CO -->|optional collaboration state| KIT
     WV -->|annotation / issue interaction| CO
+    KM -->|Kit fleet ops / telemetry| KIT
 ```
 
 一句話定位：
@@ -131,7 +142,9 @@ flowchart LR
 [外部] IFC Worker     = 客戶落地端 IFC 產出者（本 repo 不啟動）
 bim-review-coordinator = 唯一對外 IFC-ready intake + Session / 協作控制中心
 bim-streaming-server   = IFC→USDC conversion authority + Omniverse GPU / USD / WebRTC Runtime
+governance-service     = A1 rule-run / A2 diff / A3 federation / issue / BCF loopback authority（僅 coordinator proxy 可達）
 web-viewer-sample      = Browser 操作端與串流觀看端
+kit-manager web + api  = operator-facing Kit 機隊 UI / API（:8010）
 tests/fakes/contracts  = 外部平台 test-only doubles，非 runtime profile
 ```
 
@@ -330,6 +343,24 @@ file / conversion access → _worker
 ```
 
 ---
+
+## 3.7 `governance-service/`
+
+### 角色
+
+A1「BIM 治理與模型檢核」與 A2 diff / A3 federation 的 core governance backend authority。落地端內部 Python/FastAPI 服務（`127.0.0.1:49102` loopback），對真實 IFC 跑宣告式規則集（`rules/*.yaml` DSL + `rule_engine/`），產出 governance score、failed elements、issue / BCF / diff / federation 等 CPU governance results。純 CPU host-native ifcopenshell，無 GPU / Kit 依賴。
+
+### 邊界
+
+- MUST 綁 `127.0.0.1`；瀏覽器 MUST NOT 直連，一律經 coordinator `/api/governance/*` proxy（缺席時 coordinator 誠實回 502）。
+- MUST 唯讀消費既有 `element_mapping.json`；不自行轉檔、不改寫 USDC（conversion 屬 `bim-streaming-server` :49101）。
+- 以 `ifc_guid` 為主鍵；`usd_prim_path` 未對映時為 `null`，不捏造；fake/smoke mapping 不得當真實覆蓋率。
+- 不擁有：對外控制面 / session / callback outbox（coordinator）、瀏覽器 UI（web-viewer-sample）、Kit runtime（streaming）。
+- 詳細規則見 `governance-service/AGENTS.md`（七段 schema）。
+
+## 3.8 `apps/kit-manager-web/` 與 `services/kit-manager-api/`
+
+Operator-facing Kit 機隊管理：`kit-manager-api`（FastAPI `:8010`）掌 Kit instance 啟停 / 遙測；`kit-manager-web`（Vite）是 operator UI。不參與 IFC 轉檔、governance 判定與 review session lifecycle；詳細規則見各自 `AGENTS.md`。
 
 ## 4. 資料類型與歸屬
 
