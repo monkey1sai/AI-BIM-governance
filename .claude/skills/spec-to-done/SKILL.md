@@ -25,7 +25,7 @@ description: Use when a brainstormed spec already exists under docs/superpowers/
 
 - **(a) 並列佐證**:P1 impact 預掃 / P3 per-task impact 跑 GitNexus 同時,並列查 codebase-memory(`trace_path` inbound / `search_code`),差異寫 advisory note。
 - **(b) UNKNOWN/crash fallback**:GitNexus 回 UNKNOWN 或 LadybugDB crash 時,用 codebase-memory 取第二意見寫 note 供指揮官 resume 判斷;**held 照常觸發、不自動解除**。
-- **(c) 提速導航**:plan / 實作探索優先 `search_graph(name_pattern)` / `get_code_snippet(qualified_name)` / `trace_path` 取代整檔 Read 與 `grep -r`(graph 查詢 ~500 token vs grep ~80K);雙查同一 message 並列發出,不增 round-trip。
+- **(c) 提速導航**:不限 spec-to-done——plan / 實作階段與一般互動對話的日常探索皆可優先 `search_graph(name_pattern)` / `get_code_snippet(qualified_name)` / `trace_path` 取代整檔 Read 與 `grep -r`(graph 查詢 ~500 token vs grep ~80K,見 `AGENTS.md` 陌生模組探索段);查無結果或有疑義時回退 GitNexus `query`/`context`。雙查同一 message 並列發出,不增 round-trip。
 
 四不變式(寫進每個 impact prompt 的硬約束):
 1. `overallRisk` / `perSymbol.risk` / `taskImpact.overallRisk` 只由 GitNexus 決定;codebase-memory 差異即使更大也不得升降 risk、不得寫 blockers。
