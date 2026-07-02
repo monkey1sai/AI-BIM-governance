@@ -1,6 +1,10 @@
 # AI-BIM-Governance — 前端互動實作規格 · 實測差距報告 · 官方標準對齊
 
-> 版本：v1 · 2026-06-11 · 放置位置：`docs/plans/`（與 README、v2 規格、v3 計畫並列）
+> 版本：v2 · 2026-07-02 · 放置位置：`docs/plans/`（與 README、v2 規格、v3 計畫並列）
+> **v2 變更紀錄（2026-07-02，依使用者最新明確指令修訂，效力順序第一行）**：
+> ① IX-A1-01 由「上傳/檔案庫下拉」改為**選檔雙來源**（local_fs `GET /api/governance/files/tree` + 真 MinIO `GET /api/minio/objects`）；
+> ② 新增 **IX-A1-07 BCF 審查面板**（topic 列表／狀態流轉／指派-待建，對選定檔）與 **IX-A1-08 A1 連動橋**（3D 連動留在 A1，證據 rail 呈現，不沿用 viewer 視窗風格）；
+> ③ 新增 **IX-SS-05**：`#sessions` 為 A1 連動橋證據的**供應端（單一來源）**；④ 勘誤表新增 E7/E8。舊 v1（2026-06-11）其餘內容逐字保留。
 > 本檔解決三個問題：
 > **(1)** AI 看 HTML 原型學不會「互動怎麼做」→ PART B 把每個互動寫成可照做的「行為合約」
 > **(2)** 實作與 demo 差距 → PART A 是 2026-06-11 對 `http://localhost:8004/ui` 的逐頁實測比對
@@ -21,7 +25,7 @@
 - **視覺 / 識別**：預設＝暗色 **Edge Console**（NVIDIA-green `#84c714`、mono label 簽名紋理、1px hairline、status LED）；`class="theme-docs"` 切淺色 docs 面。畫面組合 design system 已發佈元件（`Button` / `ProvTag` / `StatusLED` / `Pill` / `Badge` / `Card` / `Panel` / `MetricCard` / `Stepper` / `NavItem` / `ChatToolCall` / `HealthChip` / `LangToggle`），不在畫面內重造 primitive。
 - **plane 色碼**：CORE=cyan（CPU/API）、OMNIVERSE=green（GPU）、AI=violet——nav / badge / 邊界一律照此，使用者一眼知道何處需 GPU。
 - **provenance 誠實系統（硬需求，非裝飾）**：repo 七值 ↔ design system 五類映射——`asbuilt↔built`、`artifact↔artifact`、`demo↔demo`、`p1/p15↔ai`（phase-1.5）、`p3/p4↔todo/phase`。缺遙測標 `未取得` + idle LED；未建標 `NOT BUILT · Phase X`；enum（`SessionStatus` / `KitInstance.status`）後端逐字；禁假數字（127 rules / 治理分數 / 99.x% GUID）。本檔各 IX 卡「禁止樂觀更新、一律證據型更新」與此同源。
-- **互動方法對齊**（design system `guides/frontend-interaction-and-design.md`，本檔 IX 卡已體現）：引導式 `Stepper`（A1 上傳→檢核→結果→開 Issue→交付）、Primary / Spectator 同步唯讀鏡像、AI 透明（`ChatToolCall` 顯示每個 MCP 工具呼叫 +「只在 session layer 操作 · 不改 source model」）。
+- **互動方法對齊**（design system `guides/frontend-interaction-and-design.md`，本檔 IX 卡已體現）：引導式 `Stepper`（A1 上傳→檢核→結果→開 Issue→交付）、Primary / Spectator 同步唯讀鏡像、AI 透明（`ChatToolCall` 顯示每個 MCP 工具呼叫 +「只在 session layer 操作 · 不改 source model」）。**2026-07-02 更新**：A1 Stepper 改為「選檔→檢核→結果→審查(Issue·BCF)→交付」（見 B.1）。
 
 **A1–A10 現況狀態（2026-06-23，以 repo `web-viewer-sample/src/console/data.ts` 為準；本表優先於正文 2026-06-11 快照）**
 
@@ -72,7 +76,7 @@
 | 碼 | route | UI 頁名 | 群組 | 後端 / 服務 | 狀態 |
 |---|---|---|---|---|---|
 | ⌂ | `#home` | 今天要做什麼 | 工作台 | coordinator（彙整） | 🟢 版型+入口；跨應用待辦待接真來源 |
-| A1 | `#a1` | 治理與模型檢核（P0） | 核心治理 | governance-service rule_engine（經 proxy） | 🟢 真規則/Issue/Excel/BCF2.1；五步串接、點規則展開、3D 高亮 P1.5 待建 |
+| A1 | `#a1` | 治理與模型檢核（P0） | 核心治理 | governance-service rule_engine（經 proxy） | 🟢 真規則/Issue/Excel/BCF2.1；**v2：選檔雙來源（files/tree + minio/objects）→檢核→結果→審查(Issue·BCF)→交付**；點規則展開、3D 高亮 P1.5 待建（A1 連動橋，證據自 #sessions） |
 | A2 | `#a2` | 版本差異與責任 | 核心治理 | governance-service diff_engine（GlobalId 鍵） | 🟡 示範頁；對齊官方 ifcdiff |
 | A3 | `#a3` | 跨專業疊合 | 核心治理 | Kit clash（GPU） | 🟡 示範頁；核心舞台需 GPU |
 | A4 | `#a4` | 語意搜尋問答 | 核心治理 | search microservice | 🟡 示範頁；選用疊加 |
@@ -87,7 +91,7 @@
 | A9 | `#a9` | 設計 / 審查 Copilot | 核心治理 | usd-code-mcp :9903 | 🟡 示範頁；AI 動作預覽 |
 | A10 | `#a10` | 機器人 / 巡檢模擬 | 核心治理 | Isaac Sim + Cosmos | 🟡 示範頁；核心舞台需 GPU |
 | CV | `#conv` | IFC→USD 轉檔排程（P1） | OMNIVERSE RUNTIME | coordinator `/api/conversions` + streaming-server 轉檔 | 🟡 讀真 ifc-ready jobs；插隊/重試/coverage P1 |
-| SS | `#sessions` | Session 管理 | OMNIVERSE RUNTIME | coordinator `/api/sessions` | 🟡 Phase1 read-only；結束 session IX-SS-04 已設計(#224)；occupied 證據鏈 P1 |
+| SS | `#sessions` | Session 管理 | OMNIVERSE RUNTIME | coordinator `/api/sessions` | 🟡 Phase1 read-only；結束 session IX-SS-04 已設計(#224)；occupied 證據鏈 P1；**A1 連動橋供應端 IX-SS-05（v2）** |
 | KG | `#instances` | Kit / GPU 機隊 | OMNIVERSE RUNTIME | kit-manager-api `/instances` | 🟡 fleet 模型正確；真遙測接 kit-manager-api；restart/release intent 待建 |
 | M | `#minio` | MinIO 資料 | OMNIVERSE RUNTIME | coordinator → local_fs storage（真 MinIO 待接） | 🟢 真三層樹 270/類別/版本 |
 | RT | `#runtime` | Runtime 監控 | 落地端控制台 / SYSTEM | kit-manager-api `/runtime` + `/health` | 🟡 端點真有；UI 監控面板待建 |
@@ -101,7 +105,7 @@
 
 **#home**：實作已有版型與入口卡。差距：Recent Risk 是示範資料（已誠實標示）；原型的「跨應用待辦彙整」（從 A1 失敗/coverage 低/逾期工單聚合）尚未接真來源。
 
-**#a1**（最接近完成）：五步版型、規則引擎（host-native ifcopenshell + 可選 ifctester IDS）、真實 artifact（fixture-bytes.ifc · IFC4X3 · 7126 構件 · 99 score）、Issue 生命週期 DB、Excel（openpyxl）、**BCF 2.1 匯出**全部真。差距：(1) 五步 stepper 是「版型」，步驟間沒有狀態機串接（上傳完成不會自動點亮步驟 2）；(2) 記分板與規則清單未做「點規則展開命中構件清單」互動；(3) 3D 高亮 P1.5 待建（誠實已標）；(4) fixture 清單顯示 `./storage` 為空時的 refresh 流程，但與 #minio 的真實樹未打通選取。
+**#a1**（最接近完成；v2 2026-07-02：第①步＝選檔雙來源，新增 BCF 審查面板與 A1 連動橋）：五步版型、規則引擎（host-native ifcopenshell + 可選 ifctester IDS）、真實 artifact（fixture-bytes.ifc · IFC4X3 · 7126 構件 · 99 score）、Issue 生命週期 DB、Excel（openpyxl）、**BCF 2.1 匯出**全部真。差距：(1) 五步 stepper 是「版型」，步驟間沒有狀態機串接（上傳完成不會自動點亮步驟 2）；(2) 記分板與規則清單未做「點規則展開命中構件清單」互動；(3) 3D 高亮 P1.5 待建（誠實已標）；(4) fixture 清單顯示 `./storage` 為空時的 refresh 流程，但與 #minio 的真實樹未打通選取。
 
 **#viewer**：做成「證據矩陣」頁——openStage / focusPrim / selectPrims / clearHighlight 已實作（走既有 viewer 的 DataChannel），highlightPrimsRequest P1.5、first_frame_at P1、stage truth P1。這頁設計**比原型更成熟**（viewport 留在既有 viewer，不在 console 重渲染 WebRTC），應回寫進文件成為正式架構。
 
@@ -125,6 +129,8 @@
 | E4 | 「governance-service :49102」直述 | browser **不直連**，一律經 coordinator `/api/governance/*` proxy | 文件補「經 proxy」字樣 |
 | E5 | 專案編號 270/899/988 | UI 檔案庫列 270/**889/990**，conv job 出現 **271** | ✅ **2026-06-11 已確認**：現況為 270/889/990＋271，**皆為 MinIO 暫時測試 IFC 檔**（非正式專案編號；正式專案資料之後才匯入） |
 | E6 | （無此概念） | 實作有五步管線、用語切換、Review Room、Intake 等新頁 | 文件承認其為正式 IA 的一部分 |
+| E7 | IX-A1-01 舊寫「資料來自 `GET /api/storage/tree`」 | repo 實際為 governance-service `GET /api/files/tree`（經 proxy = `/api/governance/files/tree`）；另有 coordinator `GET /api/minio/objects`（真 MinIO raw-folder，已建） | ✅ 2026-07-02 已改：IX-A1-01 統一寫雙來源兩條真 API，`/api/storage/tree` 一律更正 |
+| E8 | 「`#minio` 接 local_fs 兩層樹，真 MinIO 待接」（README 釘子 #3 舊版） | coordinator `/api/minio/objects` raw-folder 逐層瀏覽已建（唯讀），`#minio` 頁已接 | ✅ 2026-07-02 已改：README 釘子 #3 更新；三層「專案/種類/版本」仍只是 watcher 解析語意，非 bucket 結構宣稱 |
 
 ## A.4 待你確認（兩題）
 
@@ -199,7 +205,7 @@ states: idle → picked → running → scored → issued → delivered
       任何步可「重跑」：回到該步 state，下游步驟清空（資料保留在歷史，不覆蓋 artifact）
 ```
 
-**IX-A1-01 選取模型**：檔案庫下拉（專案→類別→版本，資料來自 #minio 同一 API `GET /api/storage/tree`）；選定 → state=picked、顯示完整路徑與檔案大小。前置：無。失敗：樹載入失敗→模式 6。
+**IX-A1-01 選檔（v2 · 雙來源）**：頁首「① 選檔 · 偵測到的 IFC」區，來源切換兩顆 pill：**local_fs 檔案庫**（`GET /api/governance/files/tree`，經 coordinator proxy，`source_kind=local_fs`）／**MinIO bucket 偵測**（coordinator `GET /api/minio/objects?prefix=&delimiter=/`，真 MinIO 唯讀逐層，只列 `.ifc`）。選檔元件三樣式（下拉 optgroup／級聯 pills／樹狀）原型供挑，**正式版擇一**；選定 → state=picked、顯示完整 key、大小、mtime，並一律標「**測試資料**」（270/889/990/271 皆 MinIO 暫時測試檔）。切來源 = 回 idle（下游清空）。**選檔不觸發轉檔**：只對選定檔跑 rule-run（CPU）。前置：無。失敗：任一來源 list 失敗→模式 6（保留另一來源可用，MinIO 502 顯錯誤條不推定）。
 
 **IX-A1-02 執行檢核**：按「執行規則檢核」→ `POST /api/governance/rule-runs {source_path, ids_path?}` → 回 `rule_run_id` → 進度輪詢 `GET /api/governance/rule-runs/:id`（1500ms）→ status=running 顯示進度條+逐條 log（若 API 提供）；done → RUN_DONE。**驗收**：跑 fixture 真檔出真分數；中途離頁再回來，輪詢自動恢復（rule_run_id 存頁面 state）。
 
@@ -207,9 +213,13 @@ states: idle → picked → running → scored → issued → delivered
 
 **IX-A1-04 失敗轉 Issue**：勾選規則或構件 → 「失敗構件建 issue」→ 模式 3（confirm 顯示將建幾筆、指派誰）→ `POST /api/governance/issues/from-rule-run` → 成功後顯示 issue 連結。**驗收**：重複執行不產生重複 issue（後端冪等鍵 = rule_run_id+guid，前端顯示「已建過 n 筆，跳過」）。
 
-**IX-A1-05 匯出交付**：Excel `GET .../export?fmt=excel` 直接下載；BCF `GET /api/governance/bcf/export` 下載 .bcfzip（**BCF 2.1**，無 viewpoint 時 BCF 內誠實缺省）。**驗收**：BIMcollab/BCF 檢視器可開。
+**IX-A1-05 匯出交付**：Excel `GET .../export?fmt=excel` 直接下載；BCF `GET /api/governance/bcf/export` 下載 .bcfzip（**BCF 2.1**，無 viewpoint 時 BCF 內誠實缺省）。**v2：匯出入口移至 BCF 審查面板（IX-A1-07）footer**，API 不變。**驗收**：BIMcollab/BCF 檢視器可開。
 
-**IX-A1-06 在 3D 高亮（P1.5，待建——render disabled）**：啟用條件（缺一不可）：viewer DataChannel ready ∧ first_frame_at 存在 ∧ stage matched ∧ 構件有 usd_prim_path。滿足後：按下 → Review-Room 主動拉模式發 `highlightPrimsRequest {prim_paths[], color:'red'}` → viewer 回 ack 才標成功。
+**IX-A1-06 在 3D 高亮（P1.5，待建——render disabled）**：啟用條件（缺一不可）：viewer DataChannel ready ∧ first_frame_at 存在 ∧ stage matched ∧ 構件有 usd_prim_path。滿足後：按下 → Review-Room 主動拉模式發 `highlightPrimsRequest {prim_paths[], color:'red'}` → viewer 回 ack 才標成功。**v2 呈現方式改為 IX-A1-08 的 A1 連動橋 rail**，啟用條件與 ack 語意不變。
+
+**IX-A1-07 BCF 審查面板（v2 新增，對選定檔）**：位於規則清單之下。資料源 = issues API（Issue 共同出海口，A1/A2/A3/A5 共用 schema）：`GET /api/governance/issues?rule_run=:id` 列 topic（規則×命中構件數、severity）；狀態流轉 open→in-progress→resolved = `POST /api/governance/issues/:id/transition`（模式 3 + 證據型更新）；**指派 assignee：issues schema 現無此欄 → 待建 P1，render 為 dashed 待建標，不提供假控制**；無 viewpoint 時誠實缺省（不假截圖）。footer：匯出 BCF 2.1（IX-A1-05）+ Excel；BCF 3.0 升級目標只引用 PART C，不重述。**驗收**：topic 數=失敗規則數；狀態流轉後重整頁面狀態不回退（後端回讀）；空 topic 時顯示模式 6 空狀態（「由失敗構件轉 Issue 產生」）。
+
+**IX-A1-08 A1 連動橋（v2 新增；3D 連動留在 A1，禁用 viewer 視窗風格）**：A1 頁底部以**證據 rail** 呈現 3D 連動：四格證據（session 派發／WebRTC 首幀／DataChannel／stage matched）+ 高亮佇列（失敗構件 GUID chips）+ 高亮鍵。**不內嵌 3D 視窗、不畫斜線佔位圖**。四格證據以 `#sessions`／Runtime 監控為**單一來源**（IX-SS-05），A1 只讀鏡射、只顯示不推定；任一格未綠，高亮鍵保持 disabled（title 說明缺哪格），附「開 Session 管理 →」連結。**驗收**：證據未齊時按鍵 disabled + 原因可讀；證據全綠後才發 IX-A1-06 指令；ack 前不標成功。
 
 ## B.2 Conversion Queue（IX-CV）
 
@@ -224,6 +234,8 @@ states: idle → picked → running → scored → issued → delivered
 **IX-SS-02 occupied 證據鏈**：每 endpoint 列三欄證據：`first_frame_at`（無→「未見畫面」琥珀）/ `last_heartbeat`（>15s→stale 紅）/ `stage matched`（expected==loaded 綠勾）。**Open URL ≠ occupied**——open 按鈕按下只開新分頁，不改任何狀態欄。
 **IX-SS-03 強制釋放 stale（待建）**：條件：heartbeat stale ∧ 無 first frame；模式 3，confirm 文案「viewer-XXX 已 N 分鐘無心跳，釋放後該座位可被新 viewer 使用」→ `POST /api/sessions/:id/endpoints/:ep/release`。
 **IX-SS-04 結束 session（已實作，PR #226）**：模式 3 → **重用 `POST /api/review-sessions/:sessionId/close`**（使用者裁定 2026-06-17：不開 spec 原文 `POST /api/sessions/:id/terminate`，因 cooperative close 為 operator terminate 之超集；additive 補 optional `reason`+`actor` 寫進 `sessionClosing`/`sessionClosed` 事件流作模式 3 audit，cooperative close 呼叫端零退化、`reason` 不外溢回傳 body）；前端 `#sessions` per-row 結束鈕僅 `active` 列顯示，成功後該列轉灰（`ec-row-muted`）60 秒再移除（讓 operator 看見因果）。**刻意不加 IP allowlist 守門**（裁定 A：同端點同時服務 browser cooperative close 與 operator terminate，無欄位可區分、無法分離門控）。terminate＝釋放 coordinator 端 session/binding，非殺 GPU 上 Kit 行程（lifecycle 屬 kit-manager-api）。
+
+**IX-SS-05 A1 連動橋 · 供應端（v2 新增 2026-07-02）**：`#sessions` 新增「A1 連動橋 · 供應端」面板：顯示繫結鏈 `A1 rule_run ⇢ session ⇢ DataChannel ⇢ highlight ack`。A1 頁（IX-A1-08）的四格證據**一律讀本頁與 Runtime 監控的權威值**（first_frame_at／heartbeat／stage matched 同 IX-SS-02 語意）；本頁是單一來源，A1 不得自行推定或快取過期值。證據未齊→A1 高亮鍵 disabled，不畫假綠燈。**驗收**：同一證據在 `#sessions` 與 `#a1` 兩頁顯示一致（同一輪詢周期內）；關 session 後 A1 連動橋同步回 idle。
 
 ## B.4 Kit/GPU Fleet（IX-KG）
 

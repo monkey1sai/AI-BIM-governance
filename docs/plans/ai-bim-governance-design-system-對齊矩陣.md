@@ -1,5 +1,7 @@
 # AI-BIM Governance Design System ↔ docs/plans ↔ repo 對齊矩陣
 
+> **v1.1 · 2026-07-02 A1 v2 對齊**：A1 選檔雙來源／BCF 審查面板／A1 連動橋（見 §4.4 A1 列、§4.5、路由表 #17/#19）。
+
 > **定位**：本檔是「設計系統需求 / docs 規格 / repo 現況」三方對照的單一索引。
 > **效力**：docs 層的 reference 索引，不具獨立效力；與 repo 衝突時以 repo 為準；與互動規格衝突時以互動規格為準。
 > **誠實第一**：標 NOT BUILT 的功能，本文件不得寫成「已交付 / 已實作 / 顯示真實資料」。
@@ -68,9 +70,9 @@
 | 14 | `#a9` | A9 | 設計 / 審查 Copilot | omniverse | 後端不存在（A9 實作在 session layer） | NOT BUILT · p4 | ✓ |
 | 15 | `#a10` | A10 | 機器人 / 巡檢模擬 | omniverse | 後端不存在 | NOT BUILT · p4 | ✓ |
 | 16 | `#conv` | CV | IFC→USD 轉檔排程 [P1] | governance / coordinator | coordinator intake + streaming :49101 | built（intake 佇列 + coverage）；轉檔歷史頁待建 | ✓ |
-| 17 | `#sessions` | SS | Session 管理 | governance / coordinator | coordinator :8004 | built | ✓ |
+| 17 | `#sessions` | SS | Session 管理 | governance / coordinator | coordinator :8004 | built；**v2：新增 A1 連動橋供應端面板（IX-SS-05，前端待實作）** | ✓ |
 | 18 | `#instances` | KG | Kit / GPU 機隊 | omniverse / coordinator | kit-manager-api :8010 | partial（真遙測接 :8010；部分待建） | ✓ |
-| 19 | `#minio` | M | MinIO 資料 | governance / coordinator | governance-service `/api/files/tree`（local_fs） | **頁已建，但僅顯示本地 local_fs 兩層樹；真 MinIO 三層結構瀏覽 NOT BUILT** | ✓ |
+| 19 | `#minio` | M | MinIO 資料 | governance / coordinator | coordinator `/api/minio/objects`（真 MinIO raw-folder）+ governance-service `/api/files/tree`（local_fs） | **真 MinIO raw-folder 逐層瀏覽已建（唯讀）；三層「專案/種類/版本」僅 watcher 解析語意；兩條 API 供 A1 v2 雙來源** | ✓ |
 | 20 | `#runtime` | RT | Runtime 監控 | omniverse / system | coordinator + kit-manager-api | built | ✓ |
 | 21 | `#admin` | SY | 系統管理 | governance / system | stub | NOT BUILT · 待建 | ✓ |
 | 22 | `#spec` | ▦ | 設計規格說明 | governance / system | 靜態文件頁 | built | ✓ |
@@ -159,7 +161,7 @@ governance-service / Kit / 轉檔 = **host-native**；容器只跑 web plane，�
 
 | App | DS / MAP 宣稱 | docs 規格 | repo 現況（程式碼覆寫） | 裁決 | 分類 |
 |---|---|---|---|---|---|
-| A1 治理檢核 | built | built | `prov:"asbuilt"`；rule_engine + ifctester(IDS) + BCF 2.1 純 stdlib + issues；BCF 2.1 匯出已在 PR #241；3D 高亮 todo（需 viewer DataChannel） | **built** | binding |
+| A1 治理檢核 | built | built（**v2 2026-07-02**：選檔雙來源→檢核→結果→審查→交付） | `prov:"asbuilt"`；rule_engine + ifctester(IDS) + BCF 2.1 純 stdlib + issues；BCF 2.1 匯出已在 PR #241；選檔兩條 API 已在（`files/tree`、`minio/objects`）但 **A1 頁接線待實作**；BCF 審查面板：issues list/transition 已在、**assignee 欄無（O7）**；3D 高亮 P1.5（需 viewer DataChannel） | **built（核心閉環）；v2 新增面：前端待實作，不得先標已交付** | binding |
 | A2 版本差異 | built | built | `prov:"asbuilt"`；diff_engine（GlobalId 多級 + geometry_changed opt-in + issue-impact）；ifc_type/ifc_name 落庫 bug 已修（PR #242）；**A2 頁不得出現成本影響塊（成本非 A2 範疇；5D 成本/S-curve 屬 A6，審查 Copilot 屬 A9）** | **built** | binding |
 | A3 跨專業疊合 | built | 拆分 | `prov:"asbuilt"`（federation）；clash NOT BUILT：卡 ifcopenshell 缺 OpenCASCADE（`has_occ=False`），出不了真實 clash 數，spike 未 push 主分支 | **federation built / clash NOT BUILT · blocked-on-OCC** | binding |
 | A4 語意搜尋 | （MAP/DS 部分版本標 artifact 或 hero built） | **NOT BUILT · p4** | `prov:"p4"`；無 pgvector / element_search_index / `/api/search/model` 任何程式碼（AppVisionPage=願景頁） | **NOT BUILT · p4**（repo 覆寫 DS/MAP 宣稱） | **binding·落差：DS/MAP「A4 built」必須被本裁決覆寫** |
@@ -175,11 +177,11 @@ governance-service / Kit / 轉檔 = **host-native**；容器只跑 web plane，�
 | 主題 | repo 現況 | 裁決 | 分類 |
 |---|---|---|---|
 | MinIO watcher 偵測 | `minioWatcher.ts` 實作 `deriveIntakeFromKey`（≥3 段 key，種類=倒數第二，版本=末段，中文→`mv_<hash8>`）；S3Client 外連 LAN MinIO `192.168.20.234:9000` bucket `bim-control`（外連依賴非 bind） | **已實作；live 多層觸發 not observed** | binding |
-| `#minio` 頁 | `pages.tsx:1063` MinioDataPage 接 `GET /api/governance/files/tree`（`source_kind="local_fs"` 本地兩層樹）；bucket panel 標「示範資料」「真 S3/MinIO 待接」 | **頁已建，但僅顯示本地 local_fs 兩層 IFC 樹；真 MinIO 三層結構瀏覽 NOT BUILT**（舊版「介面已交付/顯示真實三層結構」為過度宣稱，本裁決更正） | **binding·落差** |
+| `#minio` 頁 | **2026-07-02 更新**：頁面接 coordinator `GET /api/minio/objects?prefix=&delimiter=/`（真 MinIO raw-folder 逐層，唯讀；`app.ts:1597`）；local_fs 樹 API（`files/tree`）保留 | **真 MinIO raw-folder 逐層瀏覽已建（唯讀）；三層「專案/種類/版本」僅 watcher 解析語意，非 bucket 結構宣稱；兩條 API 供 A1 v2 雙來源** | **binding** |
 | 轉檔歷史頁 | coordinator 有 `/api/dev/conversions` proxy（`app.ts:1795`）轉發 streaming `/api/conversions` list；`conversion_authority.py:126` `GET /api/conversions` 存在；但**前端 console 未渲染成歷史頁** | 後端 list + proxy 皆在；缺的是 UI 呈現層。精確說法：「job 在 streaming-server 有 JSON 持久化與 list API，但前端無轉檔歷史紀錄頁」 | **binding·落差：不得寫「完全沒接線」** |
 | 手動觸發 UI | `#conv` prioritize/retry 只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期 | **無已接線的手動佇列/插隊 UI 觸發新轉檔** | binding |
 | conv-coverage 自我參照 | `usd_stage_enumeration` 下 source_count 結構性恆等 mapped_count | coverage_ratio=1 是結構性自我參照；標 `conv-coverage-selfref-note`，不宣稱 lossless | binding |
-| watcher vs `#minio` 資料路徑 | watcher 解析三層 key；`#minio` 接 local_fs 兩層樹 | 兩條獨立資料路徑，watcher 結果未餵進 `#minio` 頁 | binding |
+| watcher vs `#minio`／A1 選檔資料路徑 | watcher 解析三層 key（自動 intake，opt-in 預設關）；UI 列表走 `minio/objects`／`files/tree` | 獨立路徑：watcher 不餵 UI 列表；UI 選檔不觸發轉檔（A1 v2 只跑 rule-run） | binding |
 
 ### 4.6 Persistence 雙層
 

@@ -1,6 +1,6 @@
 # AI-BIM Governance 實作紀律與技術債防線（HOW 補充層 · 不改需求/規格）
 
-> 版本：v2 · 2026-06-23 · 位置：`docs/plans/`
+> 版本：v2.1 · 2026-07-02（新增 D-31~D-33：A1 v2 雙來源／BCF 審查／連動橋防線）· 位置：`docs/plans/`
 > **本檔為 HOW 補充層**，說明「AI 寫程式不欠技術債 + 照規格精準執行」的紀律。不改任何功能需求或規格。
 > 需求、互動語意、驗收條件，一律以既有規格文件為準（效力順序見下節）。
 > **當本檔任何條目與上述規格字句衝突，以規格為準，並回報以更新本檔。**
@@ -100,6 +100,9 @@
 | **D-28** | **`prov="todo"` 會 TS2322** | `data.ts` Prov 型別僅 7 值（`asbuilt\|artifact\|demo\|p1\|p15\|p3\|p4`），無 `todo` 值 | 文件層「待建」對映 repo 的 `p1/p3/p4`；程式碼禁用 `prov="todo"` |
 | **D-29** | **`#minio` 誤稱已顯示真 MinIO 三層結構** | `MinioDataPage` 實際接 `GET /api/governance/files/tree`（local_fs 兩層樹），非真 MinIO S3 三層 key | `#minio` 頁已建，但只顯示本地 local_fs 兩層樹；真 S3/MinIO 三層結構瀏覽 NOT BUILT；頁面自標「真 S3/MinIO 待接」 |
 | **D-30** | **`vi.mock` 給有 ref 的元件須用 `forwardRef`** | createRoot 測試裡 `vi.mock` 把被 ref 掛載的子元件換純 function stub → `box.current` 永遠 undefined + 印 ref 警告 | 改 `forwardRef((_props, _ref) => ...)`；配 `vi.hoisted` 共享 box；flush 跑 5 tick microtask |
+| **D-31** | **A1 雙來源選檔一邊壞拖垮整區**（2026-07-02 新增） | MinIO `GET /api/minio/objects` 502 時若整個選檔區降破或 fallback 到 local_fs 不告知，使用者誤以為看的是 MinIO | 雙來源各自模式 6：失敗邊顯錯誤條 + 保留另一邊；**禁默默換來源**；來源切換後下游狀態清空（回 idle） |
+| **D-32** | **BCF 審查面板假指派控制**（2026-07-02 新增） | issues schema 現無 assignee 欄（O7）；前端若 render 可選人員下拉（寫入無處去）＝假按鈕 | 指派一律 dashed 待建標 + title 說明；狀態流轉只走 `POST /api/issues/:id/transition` 證據型更新，禁前端自存 |
+| **D-33** | **A1 連動橋自行推定證據**（2026-07-02 新增） | A1 若自己快取／推定 session 證據（或沿用 D-24 式偽 matched），與 `#sessions` 顯示不一致 | 四格證據單一來源＝`#sessions`／Runtime（IX-SS-05）；A1 只讀鏡射同輪詢值；證據未齊高亮鍵 disabled，成功只認 viewer ack |
 
 ---
 
