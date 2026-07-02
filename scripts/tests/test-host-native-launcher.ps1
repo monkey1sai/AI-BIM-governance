@@ -107,4 +107,80 @@ $streamingContent = Get-Content -LiteralPath $streamingScript -Raw
 Assert-True ($streamingContent -match 'spectatorStream/\$\(\$endpoint\.Index\)/publicIp') 'spectator publicIp setting exists'
 Write-TestPass 'spectator publicIp setting forwarded'
 
+# Test 13: Invoke-KitRepoBuild returns success + removes pid file when process exits in time
+$sb = New-TestSandbox -Prefix 'kit-repo-build'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4242; ExitCode = 0 } } `
+        -WaitForExitFn { param($proc, $timeoutMs) $true } `
+        -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run on success' }
+    Assert-True ($result.TimedOut -eq $false) 'success path is not TimedOut'
+    Assert-Equal 0 $result.ExitCode 'success path forwards process ExitCode'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $runDir 'kit-repo-build.pid'))) 'pid file removed on success'
+    Write-TestPass 'Invoke-KitRepoBuild success path'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 14: Invoke-KitRepoBuild forwards a non-zero exit code without treating it as a timeout
+$sb = New-TestSandbox -Prefix 'kit-repo-build'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4243; ExitCode = 1 } } `
+        -WaitForExitFn { param($proc, $timeoutMs) $true } `
+        -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run when process merely fails' }
+    Assert-True ($result.TimedOut -eq $false) 'failed-but-exited path is not TimedOut'
+    Assert-Equal 1 $result.ExitCode 'failed path forwards non-zero ExitCode'
+    Write-TestPass 'Invoke-KitRepoBuild non-zero exit path'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 15: Invoke-KitRepoBuild kills the process tree and reports TimedOut when WaitForExit never returns true
+# (regression guard for 2026-07-01 repo.bat build 卡死:build 早已成功但外層永久
+# 等 stream EOF — 這裡驗證逾時會呼叫 StopTreeFn 砍程序,而不是無限期掛住)
+$sb = New-TestSandbox -Prefix 'kit-repo-build'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $stoppedArgs = $null
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir -TimeoutSec 1 `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4244; ExitCode = 0 } } `
+        -WaitForExitFn { param($proc, $timeoutMs) $false } `
+        -StopTreeFn { param($name, $runDir) $script:stoppedArgs = @($name, $runDir) }
+    Assert-True ($result.TimedOut -eq $true) 'hung process is reported as TimedOut'
+    Assert-Equal (-1) $result.ExitCode 'timeout path reports sentinel ExitCode -1'
+    Assert-Equal 'kit-repo-build' $stoppedArgs[0] 'StopTreeFn invoked with kit-repo-build service name'
+    Assert-Equal $runDir $stoppedArgs[1] 'StopTreeFn invoked with the same RunDir'
+    Write-TestPass 'Invoke-KitRepoBuild timeout kills process tree'
+}
+finally { Remove-TestSandbox -Path $sb }
+
+# Test 16: Invoke-KitRepoBuild writes the started process id to a pid file before waiting,
+# so an external killer can target it even ahead of the timeout deadline
+$sb = New-TestSandbox -Prefix 'kit-repo-build'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $logPath = Join-Path $runDir 'kit-repo-build.log'
+    $pidFile = Join-Path $runDir 'kit-repo-build.pid'
+    $observedDuringWait = $null
+    Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir `
+        -StartProcessFn { param($workingDirectory, $logPath) [pscustomobject]@{ Id = 4245; ExitCode = 0 } } `
+        -WaitForExitFn {
+            param($proc, $timeoutMs)
+            $script:observedDuringWait = Get-Content -LiteralPath $pidFile -ErrorAction SilentlyContinue
+            $true
+        } `
+        -StopTreeFn { param($name, $runDir) throw 'StopTreeFn must not run on success' } | Out-Null
+    Assert-Equal '4245' $observedDuringWait 'pid file already contains the child PID while waiting'
+    Write-TestPass 'Invoke-KitRepoBuild writes pid file before waiting'
+}
+finally { Remove-TestSandbox -Path $sb }
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green
