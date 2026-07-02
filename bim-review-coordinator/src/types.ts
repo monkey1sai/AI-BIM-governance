@@ -194,6 +194,10 @@ export interface IfcReadyIntakeJob {
   conversion_job_id: string | null;
   conversion_status: string | null;
   conversion_authority: "bim-streaming-server" | null;
+  // ifc-ready-api-field-redesign(quality Important #1):轉檔權威回報失敗時的原因文字。
+  // recordConversionOutcome 在 conversion_status="failed" 時寫入(與 callback outbox payload 同源 report.reason),
+  // 供 deriveFailure 投影 failure_stage="conversion" 的 failure_reason;非失敗恆 null(誠實,不留舊失敗)。
+  conversion_failure?: string | null;
   dispatch_error?: string | null;
   // T5：雲端 callback outbox 連結。callback 投遞狀態與 conversion 成功分離，
   // 故為獨立欄位（outbox 各自追蹤 delivered/dead_letter）。

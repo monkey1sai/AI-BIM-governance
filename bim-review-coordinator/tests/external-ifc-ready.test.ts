@@ -272,6 +272,10 @@ describe("POST /api/external/ifc-ready", () => {
     const final = await waitForDispatchEnd(app, res.body.ifc_ready_job_id as string, ["dispatch_failed"]);
     expect(final.status).toBe("dispatch_failed");
     expect(final.conversion_authority).toBeNull();
+    // quality Important #2:鎖「真失敗 → failure_* 有值」正向路徑(detail 端點)。既有測試只鎖
+    // 「無失敗 → null」半邊;若 deriveFailure 被改成恆 null(條件寫反),null 半邊仍綠、抓不到此回歸。
+    expect(final.failure_reason).toBeTruthy();
+    expect(final.failure_stage).toBe("dispatch");
     // minio-trigger-lifecycle:鎖住單一權威 conversion_lifecycle_status 上 wire（dashboard 出口）。
     // 此欄由 summarizeIfcReadyJob（list / status 投影）計算；detail 端點亦上 wire 此欄
     // （見上方「單筆 detail」測試與 quality finding #1 修復）。此處鎖住「列表端點」此欄投影。
@@ -283,6 +287,9 @@ describe("POST /api/external/ifc-ready", () => {
     );
     expect(failedItem).toBeDefined();
     expect(failedItem?.conversion_lifecycle_status).toBe("failed");
+    // quality Important #2:列表端點同樣鎖正向失敗投影(list/detail 對稱),補齊「真的有值」半邊。
+    expect(failedItem?.failure_reason).toBeTruthy();
+    expect(failedItem?.failure_stage).toBe("dispatch");
   });
 
   it("GET /api/external/ifc-ready/:jobId（單筆 detail）回應含 conversion_lifecycle_status（前端 getIfcReadyJob 輪詢主讀此欄）", async () => {
@@ -340,7 +347,8 @@ describe("POST /api/external/ifc-ready", () => {
       web_view_session_id: null,
       viewer_url: null,
     });
-    expect(listed.body.items[0]).not.toHaveProperty("idempotency_key");
+    // ifc-ready-api-field-redesign：must_fix #4 對帳鍵已投影到列表出口,翻轉過時「不得有」guard 為正向鎖。
+    expect(listed.body.items[0]).toHaveProperty("idempotency_key", "idem_list_002");
     expect(listed.body.items[0]).not.toHaveProperty("callback_url");
     // conv-prioritize-retry (cr1 BLOCKER 2 回歸鎖):列表端點 summarizeIfcReadyJob 必須上 wire
     // queue_position(dispatched 後為 null);否則 #conv 經列表取件時插隊鈕 disabled 條件失效。
@@ -418,6 +426,31 @@ describe("POST /api/external/ifc-ready", () => {
     expect(second.status).toBe(200);
     expect(second.body.idempotent_replay).toBe(true);
     expect(second.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
+  });
+
+  it("idempotent replay 持久寫回 job record → 列表/詳情端點皆呈現 idempotent_replay=true（P2：去重生效可見）", async () => {
+    // 回歸鎖（Codex P2）：replay 分支原僅在 200 回應物件覆寫 idempotent_replay:true、未寫回 store,
+    // 列表投影 job.idempotent_replay 恆 false → #/conv 把命中去重的 job 誤標為「新建」。
+    // 修復後 markIdempotentReplay 寫回 record,列表 + 詳情兩出口皆誠實 true（spec §111/§140）。
+    const app = makeApp();
+    const first = await request(app.app).post("/api/external/ifc-ready").set(authHeaders()).send(payload());
+    expect(first.status).toBe(202);
+    expect(first.body.idempotent_replay).toBe(false); // 首建 → false
+    const jobId = first.body.ifc_ready_job_id as string;
+
+    const second = await request(app.app).post("/api/external/ifc-ready").set(authHeaders()).send(payload());
+    expect(second.status).toBe(200);
+    expect(second.body.idempotent_replay).toBe(true);
+
+    // 詳情端點：replay 後持久呈現 true（非僅回應瞬時值）。
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.idempotent_replay).toBe(true);
+    // 列表端點（summarizeIfcReadyJob 投影）：同樣呈現 true。
+    const listed = await request(app.app).get("/api/external/ifc-ready");
+    const item = (listed.body.items as Array<Record<string, unknown>>).find((j) => j.ifc_ready_job_id === jobId);
+    expect(item).toBeDefined();
+    expect(item?.idempotent_replay).toBe(true);
   });
 
   it("缺少 X-Webhook-Secret → 401，且不建立 job", async () => {
@@ -927,5 +960,61 @@ describe("OQ1：project_display_name / category 對外曝光", () => {
     // 誠實 null：不可 fallback 成 project_id（"project_worker_oq1"）或空字串。
     expect(item?.project_display_name).toBeNull();
     expect(item?.category).toBeNull();
+  });
+});
+
+describe("ifc-ready-api-field-redesign：對帳鍵 + 誠實觀測投影", () => {
+  it("列表投影 idempotency_key + 誠實欄位（對帳鍵可 join、無假 ready）", async () => {
+    // 註（plan 修正）：makeApp() 預設 streamingConversionApiBase 不可達 → async dispatch 會
+    // fail，deriveFailure 會誠實回 failure_stage="dispatch"/failure_reason="fetch failed"（非
+    // null）。本 test 要鎖「未失敗 → 誠實 null」，故沿用既有 startStreamingConversionStub（見
+    // L305 sibling test）讓 job 真的 dispatch 成功、無 failure，再驗 failure_* 為 null。
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+    const created = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_reconcile", "X-Idempotency-Key": "idem_proj_reconcile" })) // 既有 helper L64
+      .send(payload()); // 既有 helper L60（= CONTRACT.example）
+    expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
+    // 等 async dispatch worker 把 job 推進到 dispatched（無 failure），再讀列表。
+    await waitForDispatchEnd(app, jobId, ["dispatched"]);
+    const res = await request(app.app).get("/api/external/ifc-ready");
+    expect(res.status).toBe(200);
+    // 用 jobId find（對齊既有 OQ1 test L896-898）,不假設 items[0] 順序。
+    const item = (res.body.items as Array<Record<string, unknown>>).find((j) => j.ifc_ready_job_id === jobId)!;
+    expect(item.idempotency_key).toBe("idem_proj_reconcile"); // must_fix #4：list 端可 join
+    expect(item).toHaveProperty("idempotent_replay");
+    expect(item).toHaveProperty("conversion_lifecycle_status");
+    expect(item).toHaveProperty("failure_reason", null); // 未失敗 → null（誠實）
+    expect(item).toHaveProperty("failure_stage", null);
+    expect(item.usdc_role).toBe("pending"); // converter 未落地 → 恆 pending
+    expect(item.data_volatility).toBe("in_memory_volatile");
+  });
+
+  it("detail 端點（GET :jobId）投影誠實欄位（鏡射列表端點,鎖 list/detail 欄位對稱）", async () => {
+    // quality finding：detail 端點（app.ts:1540-1546）與列表端點同樣新增 failure_reason/
+    // failure_stage/usdc_role/data_volatility 4 欄,但原本僅列表端點（上一個 it）有測試。detail
+    // 唯一既有測試（L288）只鎖 conversion_lifecycle_status,對這 4 欄零斷言 → 往後 detail handler
+    // 若漏 ...deriveFailure(job) 或打錯 usdc_role 字面值不會被抓到（app.ts:1536-1538 的同類
+    // list/detail 欄位漂移正是前例）。此測試鏡射列表端點的 4 欄檢查,鎖住 list/detail 對稱。
+    // 沿用 startStreamingConversionStub 讓 job dispatch 成功、無 failure（誠實 null 案例）。
+    const streaming = await startStreamingConversionStub();
+    const app = makeApp({ streamingConversionApiBase: streaming.baseUrl });
+    const created = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_detail_reconcile", "X-Idempotency-Key": "idem_detail_reconcile" }))
+      .send(payload());
+    expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
+    await waitForDispatchEnd(app, jobId, ["dispatched"]);
+    const res = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(res.status).toBe(200);
+    // dispatched + conversion_status 非 ready → deriveLifecycleStatus 回 "converting"。
+    expect(res.body).toHaveProperty("conversion_lifecycle_status", "converting");
+    expect(res.body).toHaveProperty("failure_reason", null); // 未失敗 → null（誠實）
+    expect(res.body).toHaveProperty("failure_stage", null);
+    expect(res.body.usdc_role).toBe("pending"); // converter 未落地 → 恆 pending
+    expect(res.body.data_volatility).toBe("in_memory_volatile");
   });
 });
