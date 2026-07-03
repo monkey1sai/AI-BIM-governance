@@ -3017,19 +3017,30 @@ export function CoordinatorPage() {
             <p className="ec-note">{t("目前 runtime status 無 session。", "Runtime status currently has no session.")}</p>
           ) : (
             <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>{t("跨頁", "Links")}</th></tr></thead>
-              <tbody>{(rt?.sessions.items ?? []).map((s) => (
+              <tbody>{(rt?.sessions.items ?? []).map((s) => {
+                // N5 誠實鐵律：coordinator 從不刪除 session（只 active→closing→closed，永遠保留），此全量表隨時間無界成長。
+                // 「在 Review Room 開此 session」「Kit / GPU 機隊」是即時可操作語意，只有 status==='active' 成立；對 closed/closing
+                // 的過期 session 給滿血按鈕＝把過期 session 假裝成真實可操作（比照同分支 0860a54）。「Session 管理」是 lifecycle 全量
+                // 治理視圖，對已結束 session 給連結語意合理，保留 enabled。
+                const live = s.status === "active";
+                return (
                 <tr key={s.session_id}>
                   <td>{s.session_id}</td><td>{s.status}</td>
                   <td>
                     <Btn data-testid={`rt-link-sessions-${s.session_id}`} caption={t("Session 管理", "Session Management")}
                       onClick={() => { window.location.hash = buildHandoff("sessions", { source: "runtime", session: s.session_id }); }}>SS →</Btn>{" "}
-                    <Btn data-testid={`rt-link-review-${s.session_id}`} caption={t("在 Review Room 開此 session", "Open in Review Room")}
+                    <Btn data-testid={`rt-link-review-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，Review Room 僅即時 active session 可開", "Session ended; Review Room only opens live active sessions")}
+                      caption={live ? t("在 Review Room 開此 session", "Open in Review Room") : t("session 已結束", "session ended")}
                       onClick={() => { window.location.hash = buildHandoff("review", { source: "runtime", session: s.session_id }); }}>Review →</Btn>{" "}
-                    <Btn data-testid={`rt-link-instances-${s.session_id}`} caption={t("Kit / GPU 機隊", "Kit / GPU Fleet")}
+                    <Btn data-testid={`rt-link-instances-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，Kit / GPU 機隊僅即時 active session 可導覽", "Session ended; Kit / GPU Fleet only navigates live active sessions")}
+                      caption={live ? t("Kit / GPU 機隊", "Kit / GPU Fleet") : t("session 已結束", "session ended")}
                       onClick={() => { window.location.hash = buildHandoff("instances", { source: "runtime", session: s.session_id }); }}>KG →</Btn>
                   </td>
                 </tr>
-              ))}</tbody>
+                );
+              })}</tbody>
             </table>
           )}
         </div>
