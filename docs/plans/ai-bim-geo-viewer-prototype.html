@@ -20,6 +20,9 @@
     • clash 場景標 NOT BUILT（卡 ifcopenshell 缺 OpenCASCADE has_occ=False），
       不顯真實碰撞數。A6/A7/A8/A9/A10 場景全標願景 Phase。
     • 測試專案編號 270/889/990 + 271 皆為 MinIO 暫時測試 IFC，已於 UI 標示。
+    • v2 2026-07-02：對齊 A1 v2（選檔雙來源→檢核→審查(Issue·BCF)→交付）——本頁「A1 檢核疊加」
+      即 IX-A1-08 A1 連動橋證據全綠後的 M4 成果（highlightPrimsRequest，viewer 回 ack）；
+      疊加範圍＝A1 選定檔的 rule-run 失敗構件；七區塊 IA 保留不動。
     • BCF 一律 2.1（現行匯出）；BCF 3.0 為升級目標（須先向 buildingSMART 確認）。
 
   視覺基底＝design system review-room kit（暗 Edge Console 預設、品牌綠 #84c714、
@@ -835,7 +838,7 @@ function toggleA1(on){
  b.classList.toggle('red-on',A1ON);
  const chip=document.getElementById('chipA1');
  chip.style.display=A1ON?'inline-flex':'none';
- chip.textContent='A1 檢核（governance-service :49102 · 經 coordinator proxy · 示意）：'+A1FAILS.length+' 件未過 / '+RULES.length+' 條規則';
+ chip.textContent='A1 檢核（governance-service :49102 · 經 coordinator proxy · 示意）：'+A1FAILS.length+' 件未過 / '+RULES.length+' 條規則 · 範圍＝A1 選定檔 rule-run（v2）';
  const e=SEL?byId.get(SEL):null;renderSemantic(e);
 }
 document.getElementById('btnA1').addEventListener('click',()=>toggleA1());

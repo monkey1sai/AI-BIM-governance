@@ -4,7 +4,7 @@ export const meta = {
   name: 'std-plan',
   description: 'spec-to-done P1:依 superpowers writing-plans 規格產 plan → 四軸 plan review(自動修 ≤2 輪)→ GitNexus impact 預掃(CRITICAL 早停)。',
   phases: [
-    { title: 'Plan', detail: 'opus 作者照 writing-plans 規格寫 plan 檔並 commit', model: 'opus' },
+    { title: 'Plan', detail: 'fable(arbiter) 作者照 writing-plans 規格寫 plan 檔並 commit', model: 'fable' },
     { title: 'PlanReview', detail: '四軸平行 review(sonnet;plan-fix 仍 opus,P3/P5 兜底):Completeness / Spec Alignment / Task Decomposition / Buildability', model: 'sonnet' },
     { title: 'Impact', detail: 'sonnet 跑 GitNexus impact 預掃全部 plan symbols', model: 'sonnet' },
   ],
@@ -16,7 +16,8 @@ const ROUTING = {
   standard: { model: 'sonnet', effort: 'max' },
   reason: { model: 'opus', effort: 'xhigh' },
   judge: { model: 'opus', effort: 'max' },
-  planAuthor: { model: 'opus', effort: 'max' },
+  arbiter: { model: 'fable', effort: 'max' },
+  planAuthor: { model: 'fable', effort: 'max' },
 }
 // </routing:gen>
 
@@ -111,7 +112,7 @@ log(`std-plan:spec=${SPEC_PATH} → plan=${PLAN_PATH}(branch=${BRANCH})`)
 
 const plan = await agent(`你是 AI-BIM-governance 的 plan 作者,嚴格遵循 superpowers writing-plans 規格。工作目錄(已 checkout ${BRANCH} 的 worktree):${ROOT}
 
-任務:讀 spec 全文 ${SPEC_PATH},寫出實作 plan 到 ${ROOT}/${PLAN_PATH},然後 git add + commit(繁中 message,第一行前綴「plan: 」,結尾附「Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>」)。
+任務:讀 spec 全文 ${SPEC_PATH},寫出實作 plan 到 ${ROOT}/${PLAN_PATH},然後 git add + commit(繁中 message,第一行前綴「plan: 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」)。
 冪等:若 ${ROOT}/${PLAN_PATH} 已存在(前次 run 產物),先讀現有 plan,只做增修(保留已合理的 tasks 與 git 歷史),不要整本重寫。
 
 plan 規格(writing-plans,逐條遵守):
@@ -179,7 +180,7 @@ for (let round = 0; round <= MAX_FIX; round++) {
   const failIssues = failed.map((a) => `【${a.key}】\n` + ((axisResults[a.key] && axisResults[a.key].issues) || []).filter((i) => i.severity !== 'minor').map((i) => `- [${i.severity}] ${i.detail}`).join('\n')).join('\n\n')
   log(`plan review 第 ${round + 1} 輪:${failed.length} 軸未過,派 fixer 修 plan`)
   const fixR = await agent(`你是 plan 修復者。plan:${ROOT}/${PLAN_PATH},spec:${SPEC_PATH},工作目錄:${ROOT}。
-以下 reviewer 發現(blocker/major)必須逐項修進 plan 檔(直接 Edit 該檔;修完 git add+commit,繁中 message,第一行前綴「plan: fix 」,結尾附「Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>」):
+以下 reviewer 發現(blocker/major)必須逐項修進 plan 檔(直接 Edit 該檔;修完 git add+commit,繁中 message,第一行前綴「plan: fix 」,結尾附「Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>」):
 
 ${failIssues}
 

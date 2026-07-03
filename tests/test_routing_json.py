@@ -10,8 +10,11 @@ def test_routing_json_schema():
     assert tiers["reason"]["model"]   == "opus"   and tiers["reason"]["effort"]   == "xhigh"
     assert tiers["judge"]["model"]    == "opus"   and tiers["judge"]["effort"]    == "max"
     assert tiers["judge"].get("immutable") is True
+    assert tiers["arbiter"]["model"]  == "fable"  and tiers["arbiter"]["effort"]  == "max"
+    assert tiers["arbiter"].get("immutable") is True
     allowed = data["allowed_efforts"]
+    assert allowed["fable"] == ["max"]
     for name, t in tiers.items():
         assert t["effort"] in allowed[t["model"]], f"{name}: {t['effort']} not allowed for {t['model']}"
     assert data["flags"]["plan_author_xhigh"] is False
-    assert "std-implement.js:276" in data["do_not_codegen"]
+    assert data["do_not_codegen"] == ["std-implement.js:288", "std-implement.js:294", "std-implement.js:300"]

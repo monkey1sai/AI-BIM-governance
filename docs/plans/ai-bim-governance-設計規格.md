@@ -1,4 +1,6 @@
-# AI · BIM Governance — 設計規格（v2 · 介面與 design-system 基礎）
+# AI · BIM Governance — 設計規格（v2.1 · 2026-07-02 · 介面與 design-system 基礎）
+
+> **v2.1 變更（2026-07-02，依使用者指令）**：§3 A1 改版（選檔雙來源取代上傳、新增 BCF 審查面板、3D 連動改 A1 連動橋證據 rail）；§4.2 `#sessions` 新增 A1 連動橋供應端；§4.3 `#minio` 更新為真 MinIO raw-folder 逐層已建。
 
 > **本檔角色（效力＝設計規格層）**：本檔只負責「**長什麼樣 + 每頁介面分析**」。
 > - **行為合約**（路由是否成立、功能是否存在、官方對齊）以《ai-bim-governance-互動實作規格與標準對齊.md》為準（最高效力）。
@@ -189,15 +191,16 @@ rows  50 / 1fr / 32      cols  240 / 1fr / 380
 
 > 本節是驗收核心。**功能是否已建以 sharedSheet §3 / repo 為準；本節寫「介面長相」不得反向把待建寫成已建。**
 
-### A1 · 治理與模型檢核 [P0]（`#a1` · governance / core · **built**）
+### A1 · 治理與模型檢核 [P0]（`#a1` · governance / core · **built**）—— **v2 改版 2026-07-02**
 
 - **persona**：品管 / BIM 經理，要在交付前把 IFC 的命名、分類、樓層、空間、設備編碼、LOD/LOI、交付規範一次檢核。
-- **trigger**：拖檔上傳 IFC / 啟動 rule-run。
-- **journey**：5-step **Stepper**（① 上傳 → ② 檢核（進度 + 逐條 log）→ ③ 結果 → ④ 一鍵轉 Issue → ⑤ 打包 BCF 2.1 + Excel 交付）。
-- **元件組合**：Stepper + 4 格記分板 **MetricCard**（通過 / 擋下 / 通過率 / 構件數，`tabular-nums`）+ 規則清單 **Panel**（紅燈可點開）+「一鍵轉 Issue」**Button** + 3D 高亮 **Panel(phase=hatched)**（disabled）。
+- **trigger**：從「偵測到的 IFC」選檔（**不再是拖檔上傳**）→ 啟動 rule-run。
+- **journey**：5-step **Stepper**（① 選檔（雙來源）→ ② 檢核（進度 + 逐條 log）→ ③ 結果 → ④ 審查（失敗轉 Issue + BCF topic 狀態流轉）→ ⑤ 交付（BCF 2.1 + Excel））。
+- **① 選檔區（新）**：來源切換兩顆 pill——**local_fs 檔案庫**（`GET /api/governance/files/tree`，built）／**MinIO bucket 偵測**（`GET /api/minio/objects?prefix=&delimiter=/`，built·唯讀，只列 .ifc）；選檔元件三樣式原型供挑（**下拉 optgroup／級聯 pills／樹狀**，正式版擇一）；選定後顯示完整 key、大小、mtime，一律標「**測試資料**」徽章；未選檔＝模式 6 空狀態，不補假列；**選檔不觸發轉檔**。
+- **元件組合**：來源切換 pills + 選檔元件（三樣式之一）+ Stepper + 4 格記分板 **MetricCard**（通過 / 擋下 / 通過率 / 構件數，`tabular-nums`）+ 規則清單 **Panel**（紅燈可點開）+ **BCF 審查面板**（topic 列：ID·標題·規則碼·severity·狀態 chip 可流轉·指派 dashed 待建標）+ **A1 連動橋**（四格證據 rail + GUID 佇列 + 高亮鍵）。**3D 連動不用 Panel(phase=hatched) 視窗佔位、不畫斜線底圖**，改用 A1 自己的證據 rail 風格（IX-A1-08）。
 - **persists**：rule-run 結果 / Issue / diff / federation 入 **governance-service 本地 SQLite**（`governance-service/db.py` · `governance.db`，host-native · CPU）；專案 / 版本 / artifact metadata 權威在雲端 `bim-control · MySQL`；BCF 打包輸出寫 MinIO。（**非 Postgres**——design-system `persistence.md` 的 Postgres 與 repo 不符，以 repo 為準。）
-- **provenance 邊界**：規則引擎 `built`（`asbuilt`；rule_engine + ifctester(IDS) + BCF 2.1 純 stdlib + issues）；**3D 高亮 = todo**（需 viewer DataChannel + first frame）。
-- **誠實警示**：**記分板數字一律標示為「實 run 輸出」或「範例」，禁寫死假數**（禁 127 rules / 治理分數 / 99.x% GUID）。3D 高亮 Panel 標 NOT BUILT，不得宣稱已完成。
+- **provenance 邊界**：規則引擎 `built`（`asbuilt`；rule_engine + ifctester(IDS) + BCF 2.1 純 stdlib + issues）；選檔雙來源兩條 API 皆 `built`；BCF 審查面板：列表／狀態流轉 `built`（issues API）、**指派 assignee 待建 P1**；**3D 高亮 = P1.5 待建**（需 viewer DataChannel + first frame；證據以 `#sessions` 為單一來源，IX-SS-05）。
+- **誠實警示**：**記分板數字一律標示為「實 run 輸出」或「範例」，禁寫死假數**（禁 127 rules / 治理分數 / 99.x% GUID）。連動橋證據未齊時高亮鍵 disabled + 原因可讀，不得宣稱已完成 3D 高亮；MinIO 來源檔案皆測試資料，UI 必標。
 
 ### A2 · 版本差異與責任（`#a2` · governance / core · **built**）
 
@@ -256,16 +259,16 @@ rows  50 / 1fr / 32      cols  240 / 1fr / 380
 
 ### §4.2 `#sessions` Session 管理（built） / `#instances` Kit·GPU 機隊（partial）
 
-- **`#sessions`（built · coordinator :8004）**：在線 session 清單（session↔Kit↔GPU）+ 端點池表（TYPE · PORT · STATE · VIEWER · LAST HB · LAST FRAME）+ 動作（加 spectator / 凍結快照 / 強制釋放 / 結束）。健康判定看「viewer 真的收到 frame」，不是看埠 listen（`port has listen ≠ viewer sees frame`）。`SessionStatus` enum 後端逐字 echo。
+- **`#sessions`（built · coordinator :8004）**：在線 session 清單（session↔Kit↔GPU）+ 端點池表（TYPE · PORT · STATE · VIEWER · LAST HB · LAST FRAME）+ 動作（加 spectator / 凍結快照 / 強制釋放 / 結束）。健康判定看「viewer 真的收到 frame」，不是看埠 listen（`port has listen ≠ viewer sees frame`）。`SessionStatus` enum 後端逐字 echo。**v2 新增（2026-07-02）「A1 連動橋 · 供應端」面板**：繫結鏈 `A1 rule_run ⇢ session ⇢ DataChannel ⇢ highlight ack`；A1 頁四格證據（session 派發／首幀／DataChannel／stage matched）以本頁為單一來源（IX-SS-05），A1 只讀鏡射、不推定。
 - **`#instances`（partial · 真遙測接 kit-manager-api :8010）**：GPU 節點卡（型號 · util · VRAM · Kit PID/埠 · 載入 stage · 服務 session · 端點池 · 健康）。**無遙測標「未取得」+ idle LED，不畫 fail**；部分卡片待建。`KitInstance.status` enum 後端逐字。
 - **GPU 鐵律**：1 GPU = 1 Kit instance = 1 stream（同時 session ≤ GPU 數）；換 GPU = terminate + recreate（約 30–40 秒），**無 live migration**；spectator 共看同一 stream 不另吃 GPU。primary 信令 `49100`、spectator `49110` 起（`KIT_SPECTATOR_COUNT` 決定範圍，非只有 1 個）。
 
-### §4.3 `#minio` MinIO 資料（**本檔最重要更正**）
+### §4.3 `#minio` MinIO 資料（2026-07-02 更新：真 MinIO raw-folder 逐層已建）
 
-- **現況（已交付部分）**：頁面**已建且有真接線**，但接的是 `GET /api/governance/files/tree` 的 **本地 local_fs 兩層樹**（`{projectId}/{modelId}/*.ifc`，`source_kind="local_fs"`）。
-- **未交付部分**：頁面接的**不是**真 MinIO 三層 key 結構。bucket layout panel 另以 `prov="demo"` 標「示範資料 / 真 S3·MinIO 待接」。
-- **逐字更正**：舊版「🟢 `#minio` 介面已交付 / 顯示真實三層結構」**必須更正為**：「`#minio` 頁已交付，但**僅顯示本地 file-server 的兩層 IFC 樹（local_fs）**，非真實 MinIO 三層 key 結構；真 S3/MinIO 與 watcher 偵測到的『種類 / 版本』結構瀏覽**待接**」。
-- **兩條獨立資料路徑**：watcher 的三層 key 解析（見 §5）與 `#minio` 頁（local_fs 樹）是**兩條獨立路徑**，watcher 結果**未餵進此頁**。
+- **現況（已交付）**：頁面接 **真 MinIO raw-folder 逐層瀏覽**（coordinator `GET /api/minio/objects?prefix=&delimiter=/`，唯讀；folders[]=CommonPrefixes、objects[]=當層直屬檔），中文資料夾原樣顯示；另一路徑 `GET /api/governance/files/tree`（local_fs 兩層樹）繼續存在。**兩條路徑同時供 A1 v2 選檔雙來源使用（見 §3 A1），不得互冒。**
+- **往下一層的語意（更正後）**：bucket layout panel（三層「專案/種類/版本」規約）仍以 `prov="demo"` 標「**watcher 解析語意 · 純語意參照**」——不得當成 bucket 實際結構宣稱。
+- **逐字更正（2026-07-02）**：舊版「`#minio` 只顯示 local_fs 兩層樹，真 S3/MinIO 待接」已過時，更正為：「`#minio` 頁已接真 MinIO raw-folder 逐層瀏覽（唯讀）；三層『專案/種類/版本』語意仍僅為 watcher 解析語意，非 bucket 結構宣稱」。
+- **兩條獨立資料路徑**：watcher 的三層 key 解析（見 §5）與 `#minio`／A1 選檔的兩條 list API 是**獨立路徑**：watcher 只管自動 intake（env opt-in 預設關），不餵 UI 列表；UI 列表也不觸發轉檔。
 
 ---
 
@@ -279,14 +282,14 @@ rows  50 / 1fr / 32      cols  240 / 1fr / 380
 |---|---|---|
 | **(a) MinIO watch 偵測** | **已實作**（`bim-review-coordinator/src/services/minioWatcher.ts` `deriveIntakeFromKey`）：解析 **≥3 段** key（`segments.length < 3` 擋）；`projectRaw=segments[0]`、**種類 = 倒數第二段**、**版本 = 末段**，中間動態層忽略；中文資料夾經 `sanitizeArtifactIdPart` → `mv_<hash8>`。env opt-in **預設關**；真實 MinIO endpoint（`192.168.20.234:9000` / bucket `bim-control`）由部署區 `.env` 注入（**outbound S3Client 外連依賴，非本 repo bind 的 loopback 埠**），不在程式碼硬編碼。**live 多層觸發證據 not observed。** | 「偵測未做」 |
 | **(b) 轉檔紀錄** | job **有 JSON 持久化**（`stream_conv_*.json`）+ `GET /api/conversions` list API + coordinator `/api/dev/conversions` proxy 皆**存在**；**但前端無轉檔歷史紀錄頁**。真 GPU 轉檔須 `adapter_from_env`，預設 `HeadlessConverterNotConfigured`。 | 「完全無持久化」/「轉檔歷史頁已交付」 |
-| **(c) 結構顯示頁 `#minio`** | **local_fs 兩層樹已交付**；**真 MinIO 三層瀏覽待建**（見 §4.3 逐字更正）。 | 「顯示真實三層結構」 |
+| **(c) 結構顯示頁 `#minio`** | **真 MinIO raw-folder 逐層瀏覽已交付**（`/api/minio/objects`，唯讀）；local_fs 樹 API 保留；兩者供 A1 v2 雙來源（見 §4.3）。三層「專案/種類/版本」仍僅為 watcher 解析語意。 | 「三層語意瀏覽器已建」／「仍只有 local_fs、真 MinIO 待接」（兩種都錯） |
 
 ### §5.2 觸發（無手動佇列觸發新轉檔）
 
 - 自動觸發**僅靠 watcher 偵測到新 / 變更的 `*/model.ifc`**（同 key 同 etag 跳過 → `triggerIntake`）。
 - **無已接線的手動佇列 / 插隊 UI 觸發新轉檔**：`#conv` 的 prioritize/retry 只對既有 ifc-ready job 排序 / 重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期。
 
-### §5.3 真 MinIO 三層結構＝語意參照（非已交付頁）
+### §5.3 真 MinIO 三層結構＝語意參照（watcher 解析語意，非 bucket 結構宣稱）
 
 - 真 MinIO 三層 key 規約（`bim-control/{projectId}/{類別}/{版本檔}`，種類 / 版本）僅作為「**待接的目標語意**」記錄於文件與 watcher 解析邏輯，**不得當成 `#minio` 已呈現的內容**。
 - 短期真相源＝**local_fs storage**（比照三層規約；已落地 `270/機電|水電|消防/000001~000003＋竣工.ifc`）。

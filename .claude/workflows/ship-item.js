@@ -27,7 +27,7 @@ const RESULT_SCHEMA = {
 phase('Ship')
 log(`ship-item：branch=${BRANCH || '(未指定)'} pr=${PR_NUMBER || '(待開)'} userFacing=${USER_FACING}`)
 
-const result = await agent(`你是 AI-BIM-governance 的 ship-cycle 執行 agent。請對一個已完成的 work item 走 .claude/workflows/ship-item.md 定義的完整 buffered ship-cycle。
+const result = await agent(`你是 AI-BIM-governance 的 ship-cycle 執行 agent。請對一個已完成的 work item 走 .claude/workflows/ship-item.md 定義的完整 buffered ship-cycle。（本 prompt 步驟 0-11 與 ship-item.md 為雙份維護：修改任一側 MUST 同步另一側。）
 
 context：
 - repo：${REPO}
@@ -38,7 +38,7 @@ context：
 你 MUST 親手用 git / gh 跑（本腳本只是包裝，不替你等 CI、不替你 merge）：
 0. 先確保 checkout 到目標 branch：若上面給定 branch 且當前不在該 branch（git rev-parse --abbrev-ref HEAD 比對），先 git checkout <branch> 再動作，避免 commit/push 推錯 branch。
 1. commit 條件式——**僅在有新 staged 改動時才 commit**：先 git diff --cached --check 擋 trailing whitespace / EOF blank（有就先修乾淨）；若 work item 已 commit 在 branch 上、git diff --cached 為空（無新 staged 改動），**SHALL 跳過 commit**，不要產生空 commit。
-2. （承上，有 staged 改動時）commit，訊息繁中，結尾附 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>。
+2. （承上，有 staged 改動時）commit，訊息繁中，結尾附 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>。
 3. git push -u origin <branch>（遇 force-push deny 改用新 commit 取代 amend）。
 4. 回報這次 ship 的改動面：git diff --stat origin/main...HEAD（已 commit 的 diff）與 git log。
 5. 開 PR：branch 尚無 PR 才 gh pr create --base main；已有 PR（上面給定 PR 號）則**沿用、不重複建立**（重複 create 會失敗中斷）。繁中，依上面 user-facing 規則附對應驗收表或註明不適用。

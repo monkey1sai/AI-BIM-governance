@@ -34,7 +34,7 @@ const ISSUES_SCHEMA = {
 const PRE = `你是 spec-to-done 工作流落地檔的對抗驗證者。預設立場:檔案有問題,除非親讀證明沒有。逐字讀這四個剛落地的檔案:
 ${FILES.map((f) => '- ' + f).join('\n')}
 
-背景:這組檔案實作「spec → merged PR」的可重複工作流。主對話(指揮官)載入 SKILL.md,依編排呼叫 named workflows:std-plan(plan+四軸review+impact預掃)→ std-implement(per-task TDD+兩階段review+commit錨點)→ std-evidence(browser evidence,僅 user-facing)→ 既有 fu-adversarial-verify-generic(對抗複驗)→ 既有 ship-item(merge)。模型:fable=讀/導航/機械,opus=設計/裁決/實作。
+背景:這組檔案實作「spec → merged PR」的可重複工作流。主對話(指揮官)載入 SKILL.md,依編排呼叫 named workflows:std-plan(plan+四軸review+impact預掃)→ std-implement(per-task TDD+兩階段review+commit錨點)→ std-evidence(browser evidence,僅 user-facing)→ 既有 fu-adversarial-verify-generic(對抗複驗)→ 既有 ship-item(merge)。模型:haiku=抽取/探測,sonnet(=Sonnet 5)=impact/標準實作(全類 task 首發)/首審,opus=judge(fix 系列/BLOCKED/NEEDS_CONTEXT 升級重派),fable=arbiter(plan 作者/final-review/evidence 裁決)+指揮官與 P5/P6 runtime-default(=session)。
 回傳 StructuredOutput:lens、issues[](severity:blocker=會導致流程做錯事或違反 repo 規範 / major=會卡住或誤導 / minor=nit;file;detail 引用具體行文)。沒有問題就空陣列——但你應該努力找。`
 
 phase('Verify')

@@ -1,6 +1,7 @@
 # docs/plans/ — 給 Claude Code 的導讀（必讀）
 
-> v1.2 · 2026-06-23 重建對齊更新
+> v1.3 · 2026-07-02 A1 v2 改版對齊（使用者指令）
+> 本輪變更：**A1 第①步由「上傳」改為「選檔 · 偵測到的 IFC」（雙來源：local_fs 檔案庫 / MinIO bucket 偵測）**；A1 新增 **BCF 審查面板**（topic 列表／狀態流轉／指派-待建）；**3D 連動留在 A1**，改為「A1 連動橋」證據 rail（不沿用 viewer 視窗風格），四格證據以 `#sessions`／Runtime 監控為單一來源。詳《審批報告-docs-plans-A1v2-2026-07-02.md》。
 > 一句話定位：這個資料夾是「**要做成什麼樣子**」的事實來源（需求、互動語意、驗收條件）。
 > 它**不是程式碼範本**：兩份 .html 是單檔 vanilla JS 示意原型，正式產品另有技術棧（見下）。
 > **效力順序**：見 §1。**誠實第一：凡 NOT BUILT，任何文件不得寫成「已交付 / 已實作 / 顯示真實資料」。**
@@ -28,7 +29,7 @@
 
 ## §2 檔案角色表（9 檔）
 
-> **缺檔警告已解除（2026-06-23 更正）**：最高效力的 `ai-bim-governance-互動實作規格與標準對齊.md`（正典路由 22 條的唯一來源、PART B 互動卡、PART C 官方對齊）**已在本資料夾**（舊版本檔此處誤標「缺檔」會誤導 AI 去「重建」一個現存的最高效力檔，**禁止重建/覆寫此檔**）。各檔仍把它當 source of truth 引用，引用名以現檔名為準。
+> **缺檔警告已解除（2026-06-23 更正）**：最高效力的 `ai-bim-governance-互動實作規格與標準對齊.md`（正典路由 22 條的唯一來源、PART B 互動卡、PART C 官方對齊）**已在本資料夾**。**2026-07-02 使用者明確指令**：本輪 A1 v2 改版**授權修訂此檔**（效力順序 §1 第一行）；v2 修訂附變更紀錄於檔頭，此後回復「非使用者指令不得重建/覆寫」。各檔仍把它當 source of truth 引用，引用名以現檔名為準。
 
 | 檔案 | 角色 | 照著做 | 不要照抄 |
 |---|---|---|---|
@@ -90,9 +91,9 @@ A1/A2/A3/A5 共用同一 Issue/BCF schema（見 v3 §2.0.3），不要各做各�
 
 **2 — 轉檔紀錄**：轉檔權威 `bim-streaming-server`（`GET /api/conversions` list / `/{id}` / `/{id}/result`）已存在；coordinator 已有 `/api/dev/conversions` proxy 轉發 streaming list。**但前端 console 未渲染成「轉檔歷史紀錄頁」**——精確說法：後端 list + proxy 皆在，缺的是 UI 呈現層。禁寫「完全無持久化」或「完全沒接線」。
 
-**3 — `#minio` 頁現況**：頁面**已建且有真接線**，但接的是 `GET /api/governance/files/tree` 的**本地 local_fs 兩層樹**（`source_kind="local_fs"`），**非真 MinIO 三層 key 結構**。頁面自標「真 S3/MinIO 待接」、bucket layout panel 標 `prov="demo"`。**設計規格舊版「🟢 介面已交付 / 顯示真實三層結構」必須更正為**：`#minio` 頁已交付，但只顯示本地 file-server 的兩層 IFC 樹（local_fs）；真 S3/MinIO 三層結構瀏覽待接。watcher 三層解析（釘子 #1）與 `#minio` 頁（local_fs 樹）是兩條獨立資料路徑，watcher 結果未餵進此頁。
+**3 — `#minio` 頁現況（2026-07-02 更新）**：頁面已升級為**真 MinIO raw-folder 逐層瀏覽**（coordinator `GET /api/minio/objects?prefix=&delimiter=/`，唯讀；folders[]=CommonPrefixes、objects[]=當層直屬檔），中文資料夾原樣顯示；舊版「local_fs 兩層樹、真 MinIO 待接」已過時。「專案/種類/版本」三層語意仍只是 watcher 解析語意（釘子 #1），不得當成 bucket 實際結構宣稱；bucket layout panel 仍標 `prov="demo"`（語意參照）。`GET /api/governance/files/tree`（local_fs）繼續存在，是 **A1 v2 選檔的另一來源**：雙來源切換（local_fs / MinIO），兩條路徑不得互冒。
 
-**4 — 觸發**：自動觸發**僅靠 watcher 偵測到新/變更的 key**。**無已接線的手動佇列/插隊 UI 觸發新轉檔**——`#conv` 的 prioritize/retry 只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期。
+**4 — 觸發**：自動觸發**僅靠 watcher 偵測到新/變更的 key**。**無已接線的手動佇列/插隊 UI 觸發新轉檔**——`#conv` 的 prioritize/retry 只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期。**A1 v2 選檔不是觸發器**：從下拉選到 MinIO 檔只對該檔跑 rule-run（CPU，governance-service），不觸發 IFC→USD 轉檔、不寫 bucket。
 
 短期真相源 = local_fs storage（三層規約已落地 270/機電|水電|消防/000001~000003+竣工.ifc）。**270/889/990+271 皆為 MinIO 暫時測試 IFC 檔，須在 UI 標示測試資料。** 轉檔輸出 `model.usdc` 寫回對應位置 + coverage 報告（不承諾 100% 無損；conv-coverage=1 在 usd_stage_enumeration 下為結構性自我參照，須加 `conv-coverage-selfref-note`）。
 
@@ -124,7 +125,7 @@ IfcConvert 無 USD 輸出；自製 IFC→USD 必須：(a) 以 GlobalId 命名 pr
 
 | App | 狀態 | 真相要點 |
 |---|---|---|
-| A1 治理檢核 | **built** | rule_engine + ifctester(IDS) + BCF 2.1 + 記分板色碼；3D 高亮 todo（需 viewer DataChannel） |
+| A1 治理檢核 | **built** | **v2 流程：選檔（雙來源）→ 檢核 → 結果 → 審查（Issue·BCF）→ 交付**。rule_engine + ifctester(IDS) + issues + BCF 2.1；選檔=`GET /api/governance/files/tree`（local_fs·built）+`GET /api/minio/objects`（真 MinIO 逐層·built，唯讀），檔案一律標「測試資料」；BCF 審查面板=issues API（列表/狀態流轉 built；**指派欄待建 P1**）；3D 高亮 P1.5——A1 連動橋只讀 `#sessions` 證據，證據未齊鍵保持 disabled |
 | A2 版本差異 | **built** | diff_engine（GlobalId 多級）；ifc_type/ifc_name 落庫 bug 已修（PR #242）；**無成本影響塊（成本屬 A6/A9，非 A2）** |
 | A3 跨專業疊合 | **拆分** | **federation built**（USD sublayer + review-room handoff）；**clash NOT BUILT**（卡 ifcopenshell 缺 OpenCASCADE，`has_occ=False`，spike 未 push）；clash 頁標 `spec·blocked-on-OCC` |
 | A4 語意搜尋 | **NOT BUILT · p4** | 願景 Phase 4；無任何後端程式碼；**禁寫成 hero built**；裁決見對齊矩陣 §4.4 |
@@ -141,6 +142,7 @@ A1–A10 具體數字（「312 扇門」「17000 frames」等）為**願景敘�
 
 ## §5 驗收方式
 
+- **A1 v2 / #sessions 改版**：以本輪更新後的 `ai-bim-governance-prototype.html`（`#a1`、`#sessions` 兩頁）+《互動規格》IX-A1-01/07/08、IX-SS-05 為驗收基準；選檔區三樣式（下拉／級聯 pills／樹狀）為原型供挑設計，正式版擇一實作
 - **里程碑**：以 v3 DoD 為準
 - **互動行為**：以互動規格 PART B 互動卡（IX-xx）為準（禁樂觀更新、一律證據型更新）；既有 e2e trace（`artifacts/e2e/conv-watch-toggle-trace/` 等）可當驗收錨
 - **介面長相**：以兩份原型對應頁面為準（styles.css 為 token 唯一真相，文件數值示意）

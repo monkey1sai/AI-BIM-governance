@@ -6,7 +6,7 @@ export const meta = {
   description: 'spec-to-done P4:偵測 browser 引擎(gstack→Playwright)→ 跑 E2E 收 evidence(截圖/trace 落 artifacts/e2e/)→ vertical slice 裁決。not observed 即 held。',
   phases: [
     { title: 'Probe', detail: 'haiku 偵測引擎可用性(gstack browse binary / Playwright deps)', model: 'haiku' },
-    { title: 'Evidence', detail: 'opus 跑 E2E、收 evidence、逐項裁決 vertical slice', model: 'opus' },
+    { title: 'Evidence', detail: 'fable(arbiter) 跑 E2E、收 evidence、逐項裁決 vertical slice', model: 'fable' },
   ],
 }
 
@@ -16,7 +16,8 @@ const ROUTING = {
   standard: { model: 'sonnet', effort: 'max' },
   reason: { model: 'opus', effort: 'xhigh' },
   judge: { model: 'opus', effort: 'max' },
-  planAuthor: { model: 'opus', effort: 'max' },
+  arbiter: { model: 'fable', effort: 'max' },
+  planAuthor: { model: 'fable', effort: 'max' },
 }
 // </routing:gen>
 
@@ -110,7 +111,7 @@ UI route 可達 → 明確按鈕可點 → default fixture(不要求使用者手
 
 誠實鐵律:跑不到/看不到的項目列進 notObserved(原文標 not observed),不准畫成 fail 也不准略過;engine 填真實用的引擎;測試失敗就如實回報 verticalSliceOk=false。
 回傳 StructuredOutput:verticalSliceOk、engine、screenshots[](絕對路徑)、summaryJson(路徑)、runtimeIds[]、notObserved[]、gaps[](id 用 e1/e2/...,q = 待對抗驗證的疑慮:哪個環節證據薄弱+宣稱的失效模式;沒有就空陣列)。`,
-  { label: `evidence:${SLUG}`, phase: 'Evidence', ...ROUTING.judge, schema: EVIDENCE_SCHEMA })
+  { label: `evidence:${SLUG}`, phase: 'Evidence', ...ROUTING.arbiter, schema: EVIDENCE_SCHEMA })
 
 if (!ev) return { ok: false, held: 'no_browser_evidence', detail: `evidence agent 失敗(回 null);probe:${probe.detail}` }
 
