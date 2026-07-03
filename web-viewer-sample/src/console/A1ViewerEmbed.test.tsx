@@ -117,6 +117,15 @@ describe("A1 3D review decoupling", () => {
     });
     await flush();
   };
+  const pickModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+    const model = q<HTMLSelectElement>("a1-minio-select")!;
+    await act(async () => {
+      model.value = key;
+      model.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+  };
 
   it("active session mount does not render EmbeddedViewer, auto-select, or claim viewer lease", async () => {
     await renderA1();
@@ -132,31 +141,37 @@ describe("A1 3D review decoupling", () => {
     expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
   });
 
-  it("explicit session selection enables governance run and calls createRuleRunForSession with the selected session", async () => {
-    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+  it("picked IFC enables governance run without review session and calls createRuleRun", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("for-session must not be required"));
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
     await renderA1();
-    await selectSession("review_session_x");
+    await pickModel();
     const run = q<HTMLButtonElement>("a1-step-run")!;
     expect(run.disabled).toBe(false);
 
     await act(async () => { run.click(); });
     await flush();
 
-    expect(governanceClient.createRuleRunForSession).toHaveBeenCalledWith("review_session_x", { ids_path: expect.stringContaining("sample-fire-rating.ids") });
+    expect(governanceClient.createRuleRun).toHaveBeenCalledWith({
+      ifc_source_path: "松風庵/root/main/u1/model.ifc",
+      ids_path: expect.stringContaining("sample-fire-rating.ids"),
+    });
+    expect(forSessionSpy).not.toHaveBeenCalled();
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 
   it("rule-run result opens Review Room handoff with non-secret context instead of sending in-place highlight", async () => {
-    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "2O2Fr$t4X7Zf8NOew3FLOH", usd_prim_path: "/World/Door_001", rule_code: "FIRE-RATING", severity: "error", status: "fail", message: "Fire rating missing" },
     ]);
 
     await renderA1();
+    await pickModel();
     await selectSession("review_session_x");
     await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();
@@ -176,7 +191,7 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("missing usd_prim_path opens Review Room with an honest mapping diagnostic", async () => {
-    vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "guid_without_mapping", usd_prim_path: null, rule_code: "MAPPING", severity: "error", status: "fail", message: "missing mapping" },
@@ -194,6 +209,7 @@ describe("A1 3D review decoupling", () => {
     });
 
     await renderA1();
+    await pickModel();
     await selectSession("review_session_x");
     await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();

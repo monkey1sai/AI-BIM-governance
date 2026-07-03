@@ -314,8 +314,8 @@ export function A1GovernanceWorkbenchPage() {
   // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
   const [excelBusy, setExcelBusy] = useState(false);
   const [bcfBusy, setBcfBusy] = useState(false);
-  // A1 只使用 review session 作為 governance rule-run 的 for-session target。
-  // 3D/WebRTC/lease/highlight 已解耦到 Review Room；A1 mount 不得自動選第一個 session 或 claim viewer lease。
+  // Review session 只作為 3D/Review Room handoff 與 mapping enrichment 的 optional target。
+  // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
   const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; expected_mapping_url?: string | null; first_frame_at?: string | null }[]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
   const idsFileInputRef = useRef<HTMLInputElement>(null);
@@ -352,17 +352,9 @@ export function A1GovernanceWorkbenchPage() {
     return () => { alive = false; };
   }, []);
 
-  // for-session 模式：治理檢核只需 session。選定 session 後若狀態機仍在 idle（操作員直接對既有 session 檢核，
-  // 未經 MinIO 選模型），用 PICK_SESSION 推進五步條解鎖 run 鈕。刻意不寫 session id 進 ifcPath
-  // （ifcPath 語意=選定的 IFC 模型路徑，session id 借位會汙染狀態快照），for-session 改以 selectedSession 送伺服器。
-  useEffect(() => {
-    if (selectedSession && state.step === "idle") dispatch({ type: "PICK_SESSION" });
-  }, [selectedSession, state.step]);
-
   const doRun = useCallback(async () => {
-    // gating：須已離開 idle（PICK_FILE 或 PICK_SESSION 推進過）且有選定 session（for-session 必要）。
-    // 不再看 state.ifcPath——session-pick 後 ifcPath 為空，舊式 !state.ifcPath 會誤擋。
-    if (state.step === "idle" || !selectedSession) return;
+    // A1 v2 gating：須先選定 IFC 檔案；review session 只影響後續 3D handoff / mapping enrichment。
+    if (state.step === "idle" || !state.ifcPath) return;
     // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
     // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
     dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
@@ -370,7 +362,10 @@ export function A1GovernanceWorkbenchPage() {
     // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
     const myGen = pollGenRef.current;
     try {
-      const { rule_run_id } = await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined });
+      const { rule_run_id } = await governanceClient.createRuleRun({
+        ifc_source_path: state.ifcPath,
+        ids_path: idsPath || undefined,
+      });
       if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -404,7 +399,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.step, state.runError, idsPath, selectedSession, sessions]);
+  }, [state.step, state.runError, state.ifcPath, idsPath, selectedSession, sessions]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -477,7 +472,7 @@ export function A1GovernanceWorkbenchPage() {
       const lifecycle = job.conversion_lifecycle_status ?? job.conversion_status ?? job.download_status ?? job.status;
       setConvStatus(lifecycle);
       if (job.conversion_lifecycle_status === "ready") {
-        // 轉好 → coordinator 已自動建立 review session；重抓 runtime/status 讓 A1 撈到該 session（for-session 檢核）。
+        // 轉好 → coordinator 已自動建立 review session；重抓 runtime/status 讓 A1 的 Review Room handoff 能使用該 session。
         const rt = await coordinatorClient.runtimeStatus();
         const act2 = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
         setSessions(act2);
@@ -535,7 +530,7 @@ export function A1GovernanceWorkbenchPage() {
       <p className="ec-lead">{t("上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 檢視與高亮改由 Review Room 手動啟動 Kit/session，不在 A1 自動嵌入 viewer 或 claim lease。", "Upload/select an IFC, run automated rule validation, then generate Issues, Excel export and BCF 2.1 export (download enabled only after Issues are created). Rule validation runs in the governance-service (CPU); 3D review and highlighting are manually started in Review Room, not auto-embedded or auto-claimed by A1.")}</p>
 
       <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
-        <LifecycleStrip steps={[t("上傳模型", "Upload Model"), t("自動檢核", "Auto Validate"), t("結果記分板", "Result Scoreboard"), t("開 Issue", "Open Issue"), t("匯出 Excel", "Export Excel")]} statuses={ui} />
+        <LifecycleStrip steps={[t("選檔", "Select File"), t("自動檢核", "Auto Validate"), t("結果記分板", "Result Scoreboard"), t("開 Issue", "Open Issue"), t("匯出 Excel", "Export Excel")]} statuses={ui} />
         <div className="ec-grid" style={{ marginBottom: 8 }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="step" v={state.step} prov="asbuilt" />
@@ -552,7 +547,7 @@ export function A1GovernanceWorkbenchPage() {
             {(minioObjects ?? []).map((o) => <option key={o.key} value={o.key}>{minioLabel(o)}</option>)}
           </select>
           <Btn data-testid="a1-step-pick" disabled={!selectedKey}
-            caption={t("鎖定此模型（進入步驟2；同時作為排入轉檔的 key）", "Lock this model (proceed to step 2; also the key to queue conversion)")}
+            caption={t("鎖定此模型（進入步驟2；只對選定檔跑 CPU rule-run，不觸發轉檔）", "Lock this model (proceed to step 2; run CPU rule-run on the selected file without triggering conversion)")}
             onClick={() => dispatch({ type: "PICK_FILE", ifcPath: selectedKey })}>{t("選取模型", "Select Model")}</Btn>
         </div>
         {minioErr && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
@@ -578,8 +573,8 @@ export function A1GovernanceWorkbenchPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
               健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
-          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || (state.step === "running" && !state.runError) || !selectedSession}
-            caption={!selectedSession ? t("需先完成轉檔產生 review session（治理檢核走 for-session）", "Conversion must finish to create a review session first (governance runs via for-session)") : "POST /api/governance/rule-runs/for-session/:sessionId"} onClick={doRun}>
+          <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || !state.ifcPath || (state.step === "running" && !state.runError)}
+            caption={state.ifcPath ? "POST /api/governance/rule-runs" : t("先選定 IFC 模型；不需要 review session 即可檢核", "Select an IFC model first; review session is not required for validation")} onClick={doRun}>
             {state.runError ? t("重試檢核", "Retry Validation") : state.step === "running" ? t("檢核中…", "Validating…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
           {state.runError && <span className="ec-warn-note">{t("檢核失敗（可重試）：", "Validation failed (retryable): ")}{state.error}</span>}
@@ -611,10 +606,10 @@ export function A1GovernanceWorkbenchPage() {
         </Panel>
       )}
 
-      <Panel title={t("review session（治理檢核目標）", "review session (governance target)")} sub={t("A1 只選取 for-session 檢核目標；3D viewer / WebRTC / lease 由 Review Room 手動啟動", "A1 only selects the for-session validation target; 3D viewer / WebRTC / lease are started manually in Review Room")} prov="asbuilt">
+      <Panel title={t("review session（3D 連動目標）", "review session (3D handoff target)")} sub={t("A1 rule-run 直接對已選 IFC 檔案執行；review session 只供 Review Room 手動 attach / highlight trace", "A1 rule-run runs directly on the selected IFC file; review session is only for manual Review Room attach / highlight trace")} prov="asbuilt">
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
-            <p className="ec-note">{t("無 active session。選定上方 MinIO 模型後，按下方按鈕手動排入 IFC→USD 轉檔；轉檔完成會建立 review session，本頁可進行治理檢核，3D 檢視需到 Review Room 手動 attach。", "No active session. After selecting a MinIO model above, click below to manually queue IFC to USD conversion; when conversion completes a review session is created. This page can then run governance validation, while 3D review is manually attached in Review Room.")}</p>
+            <p className="ec-note">{t("無 active session。治理檢核仍可對已選 IFC 檔案執行；只有 3D Review Room / highlight 需要先建立 review session。", "No active session. Governance validation can still run on the selected IFC file; only 3D Review Room / highlight requires a review session.")}</p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Btn primary data-testid="a1-trigger-convert" disabled={!selectedKey || convBusy}
                 caption={selectedKey ? "POST /api/conversion/trigger {key}" : t("先選 MinIO 模型", "select a MinIO model first")}
@@ -637,14 +632,13 @@ export function A1GovernanceWorkbenchPage() {
                 const nextSession = e.target.value;
                 if (nextSession === selectedSession) return;
                 setSelectedSession(nextSession);
-                dispatch({ type: "RESET" });
               }}>
                 <option value="">{t("— 手動選擇 review session —", "— manually select a review session —")}</option>
                 {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
               </select>
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
-              <Field k="selected session" v={selectedSession || t("not_selected（需人工選擇）", "not_selected (manual selection required)")} prov={selectedSession ? "asbuilt" : "p1"} />
+              <Field k="selected session" v={selectedSession || t("not_selected（不阻擋治理檢核）", "not_selected (does not block governance validation)")} prov={selectedSession ? "asbuilt" : "p1"} />
               <Field k="3D handoff" v={t("Review Room owns viewer lease / first frame / stage match / highlight trace", "Review Room owns viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
               <Field k="A1 auto attach" v={t("disabled by design", "disabled by design")} prov="asbuilt" />
             </div>

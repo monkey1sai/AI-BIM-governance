@@ -15,19 +15,16 @@ describe("a1Reducer 六態轉移", () => {
   it("沒選檔 RUN 不前進(守門)", () => {
     expect(a1Reducer(initialA1State, { type: "RUN" }).step).toBe("idle");
   });
-  it("PICK_SESSION 進 picked 但不以 session id 汙染 ifcPath(for-session 檢核標記)", () => {
-    // for-session 模式:操作員直接對既有 review session 檢核,未選實體 IFC。
-    // step 應推進到 picked 讓五步條/run 鈕解鎖,但 ifcPath 必須保持空字串
-    // (ifcPath 語意=選定的 IFC 模型路徑,不可被 session id 借位充當 gating marker)。
-    const s = a1Reducer(initialA1State, { type: "PICK_SESSION" });
-    expect(s.step).toBe("picked");
-    expect(s.ifcPath).toBe("");
-  });
-  it("PICK_SESSION 後 RUN 可前進 running(守門改看 step,不再依賴 ifcPath 當 marker)", () => {
-    // session-pick 後 ifcPath 為空,RUN 仍須能前進(守門條件=非 idle,非 ifcPath 非空)。
-    let s: A1State = a1Reducer(initialA1State, { type: "PICK_SESSION" });
+  it("A1 v2 只允許選定 IFC 後 RUN 前進 running", () => {
+    // review session 只供 3D handoff/mapping enrichment；CPU rule-run 必須以選定 IFC 為目標。
+    let s: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "" });
+    s = a1Reducer(s, { type: "RUN" });
+    expect(s.step).toBe("idle");
+
+    s = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
     s = a1Reducer(s, { type: "RUN" });
     expect(s.step).toBe("running");
+    expect(s.ifcPath).toBe("x.ifc");
   });
   it("picked→running→scored 全鏈", () => {
     let s: A1State = a1Reducer(initialA1State, { type: "PICK_FILE", ifcPath: "x.ifc" });
