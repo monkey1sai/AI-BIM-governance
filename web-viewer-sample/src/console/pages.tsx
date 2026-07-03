@@ -6,7 +6,7 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, DevConversionRecord, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
@@ -932,6 +932,18 @@ export function ConversionSchedulingPage() {
   }, []);
   // Task 6：mount 時同時觸發 load()（ifc-ready + watcher）與 loadRecords()（ledger），獨立並行。
   useEffect(() => { void load(); void loadRecords(); }, [load, loadRecords]);
+  // Task 7（七軸和諧 §11 OQ2）：轉檔歷史 panel 資料源，獨立於 ledger/ifc-ready，讀既有
+  // GET /api/dev/conversions（conversion service 側 job 歷史 pass-through，非 coordinator ledger）。
+  // historyErr 與 recErr/err 各自獨立：失敗只影響本 panel 誠實顯示「未取得」，不污染其他 Panel。
+  const [history, setHistory] = useState<DevConversionRecord[] | null>(null);
+  const [historyErr, setHistoryErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getConversionsHistory()
+      .then((r) => { if (alive) { setHistory(r.items); setHistoryErr(false); } })
+      .catch(() => { if (alive) { setHistory(null); setHistoryErr(true); } });
+    return () => { alive = false; };
+  }, []);
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
     if (!job.conversion_job_id) return;
     const id = job.ifc_ready_job_id;
@@ -1181,6 +1193,15 @@ export function ConversionSchedulingPage() {
                           onClick={() => { setActionErr(null); setPendingAction(null); setTriggerErr(null); setPendingTriggerKey(r.object_key); }}
                         >{t("觸發轉檔", "Trigger")}</Btn>
                       ) : <span className="ec-note">—</span>}
+                      {/* Task 7（§4.3 CV → M）：evidence-typed cross-link chip——只有 object_key 存在才掛，
+                          不因列狀態（failed/ready/…）而隱藏；與上方「觸發轉檔」鈕互不排斥、可同列並存。 */}
+                      {r.object_key ? (
+                        <Btn
+                          data-testid={`conv-ledger-minio-${r.idempotency_key}`}
+                          caption={t("回看 MinIO 來源物件", "View source object in MinIO")}
+                          onClick={() => { window.location.hash = buildHandoff("minio", { source: "conv", minio_key: r.object_key as string, conversion_id: r.conversion_job_id ?? undefined }); }}
+                        >{t("來源 →", "Source →")}</Btn>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -1242,7 +1263,21 @@ export function ConversionSchedulingPage() {
                       </span>
                     ) : "—"}
                   </td>
-                  <td>{j.review_session_id ?? "—"}</td>
+                  <td>
+                    {/* Task 7（§4.3 CV → SS / Review Room）：evidence-typed cross-link chips——只有
+                        review_session_id 存在才掛，接收端（SS/Review Room）依 §4.2 重驗 session id。 */}
+                    {j.review_session_id ?? "—"}
+                    {j.review_session_id ? (
+                      <>
+                        {" "}
+                        <Btn data-testid={`conv-job-session-${j.ifc_ready_job_id}`} caption={t("在 Session 管理檢視", "View in Session Management")}
+                          onClick={() => { window.location.hash = buildHandoff("sessions", { source: "conv", session: j.review_session_id as string }); }}>SS →</Btn>
+                        {" "}
+                        <Btn data-testid={`conv-job-review-${j.ifc_ready_job_id}`} caption={t("在 Review Room 開此 session", "Open this session in Review Room")}
+                          onClick={() => { window.location.hash = buildHandoff("review", { source: "conv", session: j.review_session_id as string }); }}>Review →</Btn>
+                      </>
+                    ) : null}
+                  </td>
                   <td>{j.expected_stage_url ?? "—"}</td>
                   <td>{j.conversion_job_id
                     ? <Btn data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? t("收合", "Collapse") : "coverage"}</Btn>
@@ -1279,6 +1314,35 @@ export function ConversionSchedulingPage() {
               </Fragment>
             ))}</tbody></table>
         ) : <p className="ec-note">{t("尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。", "No ifc-ready jobs retrieved yet; register a fixture from the real IFC intake page and come back to view the schedule.")}</p>}
+      </Panel>
+      {/* Task 7（七軸和諧整合 §11 OQ2）：轉檔歷史 panel——純前端補洞，讀既有 GET /api/dev/conversions
+          （conversion service 側 job 歷史 pass-through，與上方 coordinator ledger 不同源）。誠實鐵律：
+          回應形狀非本專案定義（DevConversionRecord 為寬鬆 pass-through 型別），故 prov="artifact"；
+          載入失敗顯「未取得」而非假空表；不改後端（N2/N4）。OQ2 預設：落在 #conv 頁內的一個 Panel，
+          不新增 hash route。 */}
+      <Panel title={t("轉檔歷史（conversion service pass-through）", "Conversion history (conversion-service pass-through)")} sub="GET /api/dev/conversions" prov="artifact">
+        <div data-testid="conv-history-panel">
+          {historyErr ? (
+            <p className="ec-note">{t("未取得（GET /api/dev/conversions 無法讀取或此環境未啟用）", "not available (GET /api/dev/conversions is unavailable or disabled in this environment)")}</p>
+          ) : history == null ? (
+            <p className="ec-note">{t("載入中…", "Loading…")}</p>
+          ) : history.length === 0 ? (
+            <p className="ec-note">{t("目前無轉檔歷史紀錄（非錯誤）。", "No conversion history at the moment (not an error).")}</p>
+          ) : (
+            <table className="ec-table">
+              <thead><tr><th>conversion_job_id</th><th>status</th><th>created_at</th></tr></thead>
+              <tbody>
+                {history.slice(0, 50).map((h, i) => (
+                  <tr key={h.conversion_job_id ?? `h-${i}`} data-testid={`conv-history-row-${h.conversion_job_id ?? i}`}>
+                    <td>{h.conversion_job_id ?? "—"}</td>
+                    <td>{h.status ?? "—"}</td>
+                    <td>{h.created_at ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </Panel>
       <IntentDialog
         open={pendingAction != null}
