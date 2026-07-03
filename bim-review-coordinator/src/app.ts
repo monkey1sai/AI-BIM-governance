@@ -2072,6 +2072,36 @@ export function createCoordinatorApp(
       // 把 report.reason 存回 job,供 deriveFailure 投影 failure_stage="conversion" 的 failure_reason(非漏報 null/null)。
       normalizedStatus === "failed" ? (report.reason || "conversion_failed") : null,
     );
+    // conversion ledger 是 #conv/#minio 的持久觀測面；conversion authority 回報終局後
+    // best-effort 回填，避免 watcher/intake 當下落帳的 queued 狀態長期誤導操作員。
+    try {
+      const ledgerStatus = normalizedStatus === "ready" ? "ready" : "failed";
+      const ledgerNow = new Date().toISOString();
+      conversionLedger.upsert(
+        {
+          idempotency_key: job.idempotency_key,
+          correlation_id: job.correlation_id,
+          project_id: job.project_id,
+          project_display_name: job.project_display_name ?? job.project_id,
+          category: job.category ?? "",
+          external_model_version_id: job.external_model_version_id ?? "",
+          conversion_job_id: conversionJobId,
+          status: ledgerStatus,
+        },
+        ledgerNow,
+      );
+      conversionLedger.recordCallbackOutcome(
+        job.idempotency_key,
+        {
+          status: ledgerStatus,
+          ...(normalizedStatus === "ready" ? { usdc_key: report.artifacts?.usdc_ref ?? null } : {}),
+          coverage_report: qualitySummary ?? report.artifact_summary ?? null,
+        },
+        ledgerNow,
+      );
+    } catch {
+      /* ledger 回填失敗不卡 conversion result ingest / callback outbox */
+    }
 
     // backfill §2：terminal `ready` 才觸發本地 session handoff；`failed` 不建
     // 可串流 session。auto-session 與 callback outbox **狀態獨立**——任一狀態
