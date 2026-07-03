@@ -17,14 +17,22 @@ test.describe("seven-axis cross-page harmony", () => {
     await page.goto(`${COORDINATOR}/ui#minio`);
     // If real MinIO objects are listed, click the first source_ifc conv chip; else honestly skip.
     const convChip = page.locator('[data-testid^="minio-link-conv-"]').first();
-    const hasObjects = await convChip.count();
-    test.skip(hasObjects === 0, "no MinIO source_ifc objects in this environment (not observed)");
+    // Decide skip only AFTER the chip has had a chance to paint. page.goto (waitUntil:'load') does not await
+    // the on-mount getMinioFolder fetch + re-render, and locator.count() does not auto-retry — an immediate
+    // count() can read 0 before a real source_ifc chip renders and false-skip a runnable env. waitFor retries
+    // until visible (or times out), mirroring a1-minio-governance-3d.spec.ts:28, so we skip only when truly absent.
+    const hasObjects = await convChip.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    test.skip(!hasObjects, "no MinIO source_ifc objects in this environment (not observed)");
     // Arm the CV ledger-fetch wait BEFORE the click so the response can't fire before we listen. CV
     // re-verifies minio_key against `records`, which is [] until GET /api/conversion/records lands — and
     // unlike A1/SS/KG/M, CV still shows the known truncation→not_found load flash (parent 47f9975 left CV
     // as-is). Reading data-handoff-status before records settle could latch onto that transient not_found;
-    // gate the assertion on the response so it reads CV's terminal verdict, not a pre-load flash.
-    const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records"), { timeout: 15_000 });
+    // gate the assertion on the response so it reads CV's terminal verdict, not a pre-load flash. Match
+    // `?limit=50` specifically — that is CV's OWN loadRecords() (pages.tsx:952). The always-mounted
+    // SharedStatusProvider polls the SAME endpoint every 5s and the M page fetches it on mount, both with
+    // `?limit=100`; a bare `/api/conversion/records` predicate could resolve on one of those unrelated hits
+    // and race past CV's own load, re-exposing the very not_found flash this guard exists to avoid.
+    const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
     await convChip.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
     // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found
@@ -58,8 +66,10 @@ test.describe("seven-axis cross-page harmony", () => {
   test("SS → Review chip navigates with the session id (re-verified, not silently defaulted)", async ({ page }) => {
     await page.goto(`${COORDINATOR}/ui#sessions`);
     const reviewChip = page.locator('[data-testid^="session-link-review-"]').first();
-    const hasSession = await reviewChip.count();
-    test.skip(hasSession === 0, "no active session in this environment (not observed)");
+    // Same race as M→CV: the sessions table renders from an on-mount /api/runtime/status fetch that goto does
+    // not await, and count() does not retry. waitFor lets a live session actually paint before we decide to skip.
+    const hasSession = await reviewChip.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    test.skip(!hasSession, "no active session in this environment (not observed)");
     await reviewChip.click();
     await expect(page).toHaveURL(/#review\?source=sessions&.*session=/, { timeout: 15_000 });
     // Review Room does not auto-claim: the manual start control is present and the not-started note shows.
@@ -90,10 +100,14 @@ test.describe("seven-axis cross-page harmony", () => {
     // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
     await page.goto(`${COORDINATOR}/ui#minio`);
     const mConv = page.locator('[data-testid^="minio-link-conv-"]').first();
-    test.skip(await mConv.count() === 0, "no MinIO source_ifc object in this environment (not observed)");
-    // Same CV load-race guard as the isolated M→CV test above: arm the ledger-fetch wait before the click so
-    // the banner assertion reads CV's terminal verdict, not the transient pre-load not_found flash.
-    const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records"), { timeout: 15_000 });
+    // Retry-wait for the chip to paint before skipping (goto doesn't await the on-mount folder fetch; count()
+    // doesn't retry) — otherwise a fixture-backed env could still false-skip, contradicting the §8 note above.
+    const mHasConv = await mConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    test.skip(!mHasConv, "no MinIO source_ifc object in this environment (not observed)");
+    // Same CV load-race guard as the isolated M→CV test above — match ?limit=50 (CV's own loadRecords), NOT the
+    // SharedStatusProvider 5s poll / M page ?limit=100: arm the ledger-fetch wait before the click so the
+    // banner assertion reads CV's terminal verdict, not the transient pre-load not_found flash.
+    const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
     await mConv.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
     const convBanner = page.getByTestId("conv-incoming-handoff");
@@ -107,9 +121,12 @@ test.describe("seven-axis cross-page harmony", () => {
     // the CV receiver was already covered via M above.
     await page.goto(`${COORDINATOR}/ui#intake`);
     const inConv = page.locator('[data-testid^="intake-link-conv-"]').first();
-    if (await inConv.count() > 0) {
-      // Same CV load-race guard: gate the receiver verdict on the ledger fetch settling.
-      const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records"), { timeout: 15_000 });
+    // Soft leg: retry-wait so a real ifc-ready job isn't missed by an early count() (goto doesn't await the
+    // on-mount jobs fetch; count() doesn't retry) — genuinely-absent jobs still fall through in ~10s.
+    const inHasConv = await inConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    if (inHasConv) {
+      // Same CV load-race guard: gate the receiver verdict on the ledger fetch settling (?limit=50 = CV's own fetch).
+      const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
       await inConv.click();
       await expect(page).toHaveURL(/#conv\?source=intake/, { timeout: 15_000 });
       const inBanner = page.getByTestId("conv-incoming-handoff");
