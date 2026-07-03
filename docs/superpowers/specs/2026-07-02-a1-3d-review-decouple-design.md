@@ -1,8 +1,8 @@
 # A1 3D Review Decoupling Design
 
-> 日期：2026-07-02  
-> 類型：A1 3D highlight architecture bug fix spec  
-> Scope：`web-viewer-sample` A1 console / dedicated 3D review screen / coordinator handoff  
+> 日期：2026-07-02
+> 類型：A1 3D highlight architecture bug fix spec
+> Scope：`web-viewer-sample` A1 console / dedicated 3D review screen / coordinator handoff
 > 狀態：approved implementation spec for `spec-to-done`
 
 ## 1. Problem
