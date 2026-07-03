@@ -91,9 +91,15 @@ for (const token of [
     assert.ok(viewerContractSource.includes(token), `viewer contract source is missing ${token}`);
 }
 assert.ok(!windowSource.includes("stage-truth-panel"), "Window.tsx must not render removed stage-truth-panel floating UI");
+const showUsdStageDockDefinition = /const showUsdStageDock = this\.state\.showUI[\s\S]*?&& this\.state\.viewerTab === "model"[\s\S]*?&& \(isDebugQueryEnabled\(\) \|\| this\.state\.usdPrims\.length > 0\);/;
 assert.match(
     windowSource,
-    /const showUsdStageDock = this\.state\.showUI && \(isDebugQueryEnabled\(\) \|\| this\.state\.usdPrims\.length > 0\);[\s\S]*?\{showUsdStageDock && \([\s\S]*?data-testid="usd-stage-left-dock"[\s\S]*?reservedLeft=\{showUsdStageDock \? sidebarWidth : 0\}/,
+    showUsdStageDockDefinition,
+    "USD stage dock must be scoped to the model tab and require debug mode or USD prims",
+);
+assert.match(
+    windowSource,
+    /\{showUsdStageDock && \([\s\S]*?data-testid="usd-stage-left-dock"[\s\S]*?reservedLeft=\{showUsdStageDock \? sidebarWidth : 0\}/,
     "model viewport must reserve left width only when the USD stage dock is rendered",
 );
 // 額外確認 review-bootstrap path 已從 Window.tsx 移除
