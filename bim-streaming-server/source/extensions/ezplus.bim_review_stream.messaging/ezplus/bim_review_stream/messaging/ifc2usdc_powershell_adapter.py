@@ -955,10 +955,16 @@ class Ifc2UsdcPowershellConverterAdapter:
         # supplement。對齊策略 v1:enumeration mesh prim 順序 vs sidecar entries
         # 順序 best-effort 1:1。CustomData 已抽到時不 shadow。
         mapping_source = "prim_custom_data" if mapping_items else "none"
+        sidecar_entry_count = 0
+        mesh_prim_count = 0
         if not mapping_items:
             sidecar_doc = self._load_ifc_semantic_sidecar(mapping_path.parent)
             if isinstance(sidecar_doc, dict):
+                sidecar_entries = sidecar_doc.get("entries")
+                if isinstance(sidecar_entries, list):
+                    sidecar_entry_count = len(sidecar_entries)
                 mesh_prims = [p for p in prims if UsdGeom.Mesh(p)]
+                mesh_prim_count = len(mesh_prims)
                 supplemented = False
                 for mesh_index, prim in enumerate(mesh_prims):
                     entry = self._sidecar_entry_for_mesh_index(sidecar_doc, mesh_index)
@@ -995,6 +1001,27 @@ class Ifc2UsdcPowershellConverterAdapter:
 
         source_count = len(mapping_items) or len(prims)
         mapped_count = len(mapping_items)
+        mapping_issues: list[dict[str, Any]] = []
+        if sidecar_entry_count > 0 and mapped_count == 0:
+            mapping_issues.append(
+                {
+                    "code": "ifc_usdc_mapping_information_incomplete",
+                    "severity": "warning",
+                    "message": (
+                        "IFC semantic sidecar exists, but the USD stage has no IFC "
+                        "customData mapping and no joinable UsdGeom.Mesh sidecar carriers."
+                    ),
+                    "sidecar_entry_count": sidecar_entry_count,
+                    "usd_prim_count": len(prims),
+                    "usd_mesh_prim_count": mesh_prim_count,
+                    "mapped_count": mapped_count,
+                    "required_join_keys": [
+                        "USD prim IFC customData",
+                        "UsdGeom.Mesh ordinal sidecar carrier",
+                    ],
+                }
+            )
+        mapping_information_status = "incomplete" if mapping_issues else "complete"
 
         has_type = any(item.get("ifc_type") for item in mapping_items)
         has_name = any(item.get("ifc_name") for item in mapping_items)
@@ -1017,7 +1044,10 @@ class Ifc2UsdcPowershellConverterAdapter:
             "summary": {
                 "mapped_count": mapped_count,
                 "fake_mapping_count": 0,
+                "mapping_information_status": mapping_information_status,
+                "mapping_issue_count": len(mapping_issues),
             },
+            "issues": mapping_issues,
             "items": mapping_items,
         }
         # entity_index 全 prim 仍保留(供 debug / 統計),其中 IFC 對應 entry
@@ -1056,6 +1086,11 @@ class Ifc2UsdcPowershellConverterAdapter:
             "semantic_mapping_fidelity": semantic_fidelity,
             "mapping_has_ifc_type": has_type,
             "mapping_has_ifc_name": has_name,
+            "mapping_information_status": mapping_information_status,
+            "mapping_issue_count": len(mapping_issues),
+            "mapping_issues": mapping_issues,
+            "sidecar_entry_count": sidecar_entry_count,
+            "usd_mesh_prim_count": mesh_prim_count,
             "hard_quality_gates": {
                 "usdc_openable": True,
                 "has_renderable_prims": len(imageable) > 0,

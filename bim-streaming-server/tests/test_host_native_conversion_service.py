@@ -1719,6 +1719,18 @@ def _write_usd_stage_with_ifc_prims(usdc_path: Path, prims_spec: list[dict[str, 
     stage.GetRootLayer().Save()
 
 
+def _write_usd_stage_with_xform_prims(usdc_path: Path, paths: list[str]) -> None:
+    from pxr import Usd, UsdGeom
+
+    usdc_path.parent.mkdir(parents=True, exist_ok=True)
+    stage = Usd.Stage.CreateNew(str(usdc_path))
+    world = UsdGeom.Xform.Define(stage, "/World")
+    stage.SetDefaultPrim(world.GetPrim())
+    for path in paths:
+        UsdGeom.Xform.Define(stage, path)
+    stage.GetRootLayer().Save()
+
+
 def test_enumeration_path_writes_semantic_fields(tmp_path: Path, monkeypatch):
     _clear_pxr_test_stubs(monkeypatch)
     adapter = _make_enumeration_adapter(tmp_path)
@@ -2079,6 +2091,53 @@ def test_enumeration_reads_sidecar_when_prim_custom_data_empty(tmp_path: Path, m
     entities = index_doc["entities"]
     assert isinstance(entities, list) and len(entities) == 2
     assert {ent["entity_id"] for ent in entities} == {item["entity_id"] for item in items}
+
+
+def test_enumeration_reports_incomplete_mapping_when_sidecar_has_entries_but_stage_has_no_joinable_prims(
+    tmp_path: Path, monkeypatch
+):
+    _clear_pxr_test_stubs(monkeypatch)
+    adapter = _make_enumeration_adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    usdc = out_dir / "model.usdc"
+    _write_usd_stage_with_xform_prims(
+        usdc,
+        [
+            "/World/IFCDOOR_25312",
+            "/World/IFCDOOR_25341",
+        ],
+    )
+    _write_sidecar_doc(
+        out_dir,
+        [
+            {"ifc_guid": "GUID_DOOR_A", "ifc_type": "IfcDoor", "ifc_name": "Door:25312", "shape_index": 0},
+            {"ifc_guid": "GUID_DOOR_B", "ifc_type": "IfcDoor", "ifc_name": "Door:25341", "shape_index": 1},
+        ],
+    )
+    ifc_source = tmp_path / "source.ifc"
+    ifc_source.write_text("ISO-10303-21;", encoding="utf-8")
+
+    quality = adapter._enumerate_usd_stage(
+        model_path=usdc,
+        ifc_path=ifc_source,
+        mapping_path=out_dir / "element_mapping.json",
+        entity_index_path=out_dir / "entity_index.json",
+        metadata_path=out_dir / "metadata.json",
+    )
+
+    assert quality["mapping_information_status"] == "incomplete"
+    assert quality["mapping_issue_count"] == 1
+    assert quality["sidecar_entry_count"] == 2
+    assert quality["usd_mesh_prim_count"] == 0
+    issue = quality["mapping_issues"][0]
+    assert issue["code"] == "ifc_usdc_mapping_information_incomplete"
+    assert issue["sidecar_entry_count"] == 2
+
+    mapping_doc = json.loads((out_dir / "element_mapping.json").read_text(encoding="utf-8"))
+    assert mapping_doc["items"] == []
+    assert mapping_doc["summary"]["mapping_information_status"] == "incomplete"
+    assert mapping_doc["issues"][0]["code"] == "ifc_usdc_mapping_information_incomplete"
 
 
 def test_enumeration_prefers_prim_custom_data_over_sidecar(tmp_path: Path, monkeypatch):
