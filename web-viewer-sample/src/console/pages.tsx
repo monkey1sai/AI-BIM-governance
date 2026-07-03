@@ -1745,12 +1745,22 @@ export function MinioDataPage() {
   // folder 回應的 note（後端未設定時回 200 + note；MinioFolderListing.note? 已對齊 wire shape）。
   const folderNote = folder?.note;
   const currentPrefixStale = stalePrefixes.has(prefix);
-  // Task 14（A1/CV→M 接收端重驗）：向已抓取的 folder.objects 重驗 incoming minio_key；prefix-only
-  // handoff 視為有效意圖（folder load 本身就是重驗其內容），不需額外查表。查無 → 誠實 not_found。
+  // Task 14（A1/CV→M 接收端重驗，spec §4.2 接收端重驗鐵律）：向已抓取的權威資料重驗 incoming id，
+  // 查無 → 誠實 not_found，絕不因『持有 id/prefix』就靜默視為有效。
+  // - minio_key → 查當層 folder.objects 是否含該 key。
+  // - prefix（A1 → M「回看選檔來源」，§4.3）→ 導覽到該層後（見下方 effect），向載入的 folder 重驗：
+  //   folder.prefix 必等於請求 prefix（後端 minioClient.ts 回填該欄）且該層真的有 folders/objects 才算
+  //   verified；空層／未設定／尚未載入一律 not_found。不導覽＝沒重驗，banner『已重驗』會是假的。
   const incoming = useIncomingHandoff("minio", (h) => {
-    if (h.prefix) return true;
+    if (h.prefix) return !!folder && folder.prefix === h.prefix && (folder.folders.length > 0 || folder.objects.length > 0);
     return !!h.minio_key && (folder?.objects ?? []).some((o) => o.key === h.minio_key);
   });
+  // incoming prefix handoff → 導覽到來源資料夾一次（讓 folder 真的載入該層再重驗）。依 prefix 值為 dep，
+  // hash 不變則只跑一次；之後交還使用者手動導覽（不與 goUp/enterFolder 打架、不反覆挾持）。
+  const incomingPrefix = incoming.handoff?.prefix;
+  useEffect(() => {
+    if (incomingPrefix) setPrefix(incomingPrefix);
+  }, [incomingPrefix]);
 
   // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
   // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy

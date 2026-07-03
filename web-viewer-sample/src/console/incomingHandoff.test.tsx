@@ -47,6 +47,11 @@ const CN_KEY = "270專案/建築/v07/模型.ifc";
 const folder: MinioFolderListing = { bucket: "bim-control", prefix: "", folders: [], count: 1, objects: [
   { key: CN_KEY, etag: "e1", role: "source_ifc", project_id: "270", project_display_name: "270", category: "建築", version: "v07", idempotency_key: "mw_abc" },
 ] };
+// Task 14 prefix 分支（A1 → M「回看選檔來源」，spec §4.3）：接收端須真的導覽到來源資料夾，並向該層
+// 已載入的 folder 重驗；不得因『持有 prefix』就無條件 verified。SRC_PREFIX 即 CN_KEY 的來源資料夾。
+const SRC_PREFIX = "270專案/建築/v07/";
+const srcFolder: MinioFolderListing = { bucket: "bim-control", prefix: SRC_PREFIX, folders: [], count: 1, objects: folder.objects };
+const rootFolder: MinioFolderListing = { bucket: "bim-control", prefix: "", folders: [{ prefix: "270專案/", has_source_ifc: true }], count: 0, objects: [] };
 const mkSession = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => ({ session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1", participant_count: 1, expected_stage_url: null, conversion_status: null, kit_instance_ids: [], created_at: "", updated_at: "", ...over });
 const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({ service: { status: "ok", name: "c", uptime_seconds: 1, generated_at: "" }, configured_endpoints: { coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" }, viewer: { browser_url_base: "", handoff_path: "/" }, conversion_authority: { base_url: "", authority: "" }, kit: [] }, sessions: { count: items.length, active_count: items.length, participant_count: 0, items }, kit_instance_bindings: [], ifc_ready_jobs: { count: 0, recent: [] }, observations: { classification: "demo", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } } });
 
@@ -73,6 +78,35 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     await act(async () => { root.render(<MinioDataPage />); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+  });
+
+  it("M navigates to an incoming prefix (回看選檔來源) and verifies it against the freshly loaded folder (verified)", async () => {
+    // A1 → M prefix handoff（spec §4.3）：接收端必須真的導覽到來源資料夾、向該層 folder 重驗，
+    // 不能只因『持有 prefix』就 verified。mock 依 prefix 回不同層：根層（無此檔）vs 來源層（含 CN_KEY）。
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    window.location.hash = `#minio?source=a1&prefix=${encodeURIComponent(SRC_PREFIX)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("verified");
+    expect(b?.getAttribute("data-handoff-source")).toBe("a1");
+    expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(SRC_PREFIX); // 真的導覽到來源層，非停在根
+  });
+
+  it("M flags an incoming prefix that resolves to an empty/absent folder as not_found (no silent fallback)", async () => {
+    // 導覽到來源層後該層無 folders/objects（查無 / 已刪 / 未設定）→ 誠實 not_found，不靜默 fallback。
+    const gonePrefix = "999查無專案/";
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => ({ bucket: "bim-control", prefix: p ?? "", folders: [], count: 0, objects: [] }));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    window.location.hash = `#minio?source=a1&prefix=${encodeURIComponent(gonePrefix)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("not_found");
+    expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(gonePrefix); // 導覽到該層後才判定 not_found
   });
 
   it("SS flags an incoming session that is not in runtime status as not_found (no silent fallback to act[0])", async () => {
