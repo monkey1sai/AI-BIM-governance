@@ -18,12 +18,16 @@ describe("CV conversion history panel + cross-links", () => {
 
   it("renders the history panel with pass-through items (artifact)", async () => {
     stubBase();
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [{ conversion_job_id: "cj_9", status: "succeeded" }], count: 1 });
+    // source_ifc_filename (not created_at, which GET /api/dev/conversions structurally never
+    // serializes — see docs/superpowers/plans/2026-07-03-seven-axis-cross-page-harmony.md Task 7
+    // 2026-07-03 correction) is the third column; assert it actually renders, not just conversion_job_id.
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [{ conversion_job_id: "cj_9", status: "succeeded", source_ifc_filename: "model_A.ifc" }], count: 1 });
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(container.querySelector('[data-testid="conv-history-panel"]')).not.toBeNull();
     expect(container.textContent).toContain("cj_9");
+    expect(container.textContent).toContain("model_A.ifc");
   });
 
   it("history panel degrades honestly when the endpoint fails (no fake rows)", async () => {

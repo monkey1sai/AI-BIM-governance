@@ -326,10 +326,14 @@ export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "rea
 // Conversion-service job history pass-through (GET /api/dev/conversions → proxied to conversion service
 // /api/conversions, bim-review-coordinator/src/app.ts:2330). Shape is a pass-through artifact from an
 // external service; type it loosely and render honestly. Backend is NOT modified (N2/N4).
+// source_ifc_filename (not created_at): backend _conversion_result_list_item() (bim-streaming-server
+// conversion_authority.py:661-679) setdefault-guarantees source_ifc_filename on every list item;
+// created_at only exists on the internal job dict for sorting and is structurally never serialized
+// into this response, so it would always render as undefined (see plan 2026-07-03 Task 7 correction).
 export interface DevConversionRecord {
   conversion_job_id?: string;
   status?: string;
-  created_at?: string;
+  source_ifc_filename?: string;
   [k: string]: unknown;
 }
 

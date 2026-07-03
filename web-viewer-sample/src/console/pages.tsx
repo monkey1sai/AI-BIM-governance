@@ -1330,13 +1330,13 @@ export function ConversionSchedulingPage() {
             <p className="ec-note">{t("目前無轉檔歷史紀錄（非錯誤）。", "No conversion history at the moment (not an error).")}</p>
           ) : (
             <table className="ec-table">
-              <thead><tr><th>conversion_job_id</th><th>status</th><th>created_at</th></tr></thead>
+              <thead><tr><th>conversion_job_id</th><th>status</th><th>source_ifc_filename</th></tr></thead>
               <tbody>
                 {history.slice(0, 50).map((h, i) => (
                   <tr key={h.conversion_job_id ?? `h-${i}`} data-testid={`conv-history-row-${h.conversion_job_id ?? i}`}>
                     <td>{h.conversion_job_id ?? "—"}</td>
                     <td>{h.status ?? "—"}</td>
-                    <td>{h.created_at ?? "—"}</td>
+                    <td>{h.source_ifc_filename ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
