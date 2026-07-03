@@ -3046,13 +3046,24 @@ export function IntakePage() {
         {err && <p className="ec-warn-note">{err}</p>}
         {jobs.length > 0 ? (
           <table className="ec-table">
-            <thead><tr><th>ifc_ready_job_id</th><th>status</th><th>download</th><th>conversion</th><th>authority</th><th>session</th></tr></thead>
+            <thead><tr><th>ifc_ready_job_id</th><th>status</th><th>download</th><th>conversion</th><th>authority</th><th>session</th><th>{t("跨頁", "Links")}</th></tr></thead>
             <tbody>
               {jobs.slice(0, 40).map((j) => (
                 <tr key={j.ifc_ready_job_id}>
                   <td>{j.ifc_ready_job_id}</td><td>{j.status}</td>
                   <td>{j.download_status ?? "—"}</td><td>{j.conversion_status ?? "—"}</td>
                   <td>{j.conversion_authority ?? "—"}</td><td>{j.review_session_id ?? "—"}</td>
+                  <td>
+                    <Btn data-testid={`intake-link-conv-${j.ifc_ready_job_id}`} caption={t("到轉檔排程排此 job", "Schedule this job in Conversion")}
+                      onClick={() => { window.location.hash = buildHandoff("conv", { source: "intake", job_id: j.ifc_ready_job_id }); }}>CV →</Btn>
+                    {j.review_session_id ? (
+                      <>
+                        {" "}
+                        <Btn data-testid={`intake-link-review-${j.ifc_ready_job_id}`} caption={t("在 Review Room 開此 job 的 session", "Open this job's session in Review Room")}
+                          onClick={() => { window.location.hash = buildHandoff("review", { source: "intake", session: j.review_session_id as string }); }}>Review →</Btn>
+                      </>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
