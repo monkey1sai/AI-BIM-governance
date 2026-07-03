@@ -21,6 +21,8 @@ import { buildHandoff } from "./handoff";
 // 七軸和諧整合 §5：共享狀態列同一份 Context 快照（GET /api/runtime/status 單一輪詢）。
 // KG 頁用它讀「真 session 聚合」，與下方 demo Node snapshot 表分開標記，不假裝 demo 表變真（N5）。
 import { useSharedStatus } from "./useSharedStatus";
+// Task 14（§4.2 接收端重驗鐵律）：接收端向已抓取的權威資料重驗 incoming handoff，誠實 verified/not_found。
+import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 
 type NativeFilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
@@ -326,6 +328,9 @@ export function A1GovernanceWorkbenchPage() {
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
+  // Task 14（M→A1 接收端重驗）：向已抓取的 minioObjects 重驗 incoming minio_key；查無 → 誠實 not_found。
+  const incoming = useIncomingHandoff("a1", (h) =>
+    !!h.minio_key && (minioObjects ?? []).some((o) => o.key === h.minio_key));
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -532,6 +537,7 @@ export function A1GovernanceWorkbenchPage() {
   return (
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
+      <IncomingHandoffBanner testId="a1-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 檢視與高亮改由 Review Room 手動啟動 Kit/session，不在 A1 自動嵌入 viewer 或 claim lease。", "Upload/select an IFC, run automated rule validation, then generate Issues, Excel export and BCF 2.1 export (download enabled only after Issues are created). Rule validation runs in the governance-service (CPU); 3D review and highlighting are manually started in Review Room, not auto-embedded or auto-claimed by A1.")}</p>
 
       <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
@@ -901,6 +907,14 @@ export function ConversionSchedulingPage() {
   // 同一事件循環雙擊 confirm 會送出兩個 POST /api/conversion/trigger（失敗路徑下第二次 catch 會覆蓋
   // 第一次 triggerErr、loadRecords 也可能被競爭觸發兩次）。ref 在 React state 更新前同步攔截第二次呼叫。
   const triggerBusyRef = useRef(false);
+  // Task 14（A1/M/IN→CV 接收端重驗）：job_id 向 jobs（ifc-ready）重驗；conversion_id/minio_key 向
+  // records（ledger）重驗。查無 → 誠實 not_found，不靜默 fallback 到別的紀錄。
+  const incoming = useIncomingHandoff("conv", (h) => {
+    if (h.job_id) return jobs.some((j) => j.ifc_ready_job_id === h.job_id || j.conversion_job_id === h.job_id);
+    if (h.conversion_id) return records.some((r) => r.conversion_job_id === h.conversion_id);
+    if (h.minio_key) return records.some((r) => r.object_key === h.minio_key);
+    return false;
+  });
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
   // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
@@ -1031,6 +1045,7 @@ export function ConversionSchedulingPage() {
   return (
     <>
       <h1>{t("IFC→USD 轉檔排程", "IFC→USD conversion scheduling")}</h1>
+      <IncomingHandoffBanner testId="conv-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("從 MinIO / storage 發現 source IFC，排進 conversion authority，由 `bim-streaming-server` 產出 `model.usdc`、mapping summary，再通知 Kit / Review Session。", "Discover source IFC from MinIO / storage, queue it into the conversion authority, let `bim-streaming-server` produce `model.usdc` and a mapping summary, then notify Kit / Review Session.")}</p>
       {mw?.enabled === false && (
         <p className="ec-warn-note" data-testid="conv-watch-off-banner">
@@ -1431,9 +1446,14 @@ export function SessionManagementPage() {
   }, [pendingTerminate, load, markTerminating]);
   useEffect(() => { void load(); }, [load]);
   const sessions = rt?.sessions.items ?? [];
+  // Task 14（A1/CV/RT→SS 接收端重驗）：向已抓取的 rt.sessions.items 重驗 incoming session；
+  // 查無 → 誠實 not_found，不靜默改選其他 active session。
+  const incoming = useIncomingHandoff("sessions", (h) =>
+    !!h.session && sessions.some((s) => s.session_id === h.session));
   return (
     <>
       <h1>{t("Session 管理 · Primary / Spectator ATC", "Session Management · Primary / Spectator ATC")}</h1>
+      <IncomingHandoffBanner testId="sessions-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("每個 endpoint 像 runway，每個 primary / spectator viewer 像飛機。Open URL 不等於 occupied；occupied 必須有 browser first frame / heartbeat / stage match evidence。", "Each endpoint is like a runway, each primary / spectator viewer like a plane. Open URL does not equal occupied; occupied requires browser first frame / heartbeat / stage match evidence.")}</p>
       <Panel title="Endpoint readiness rules" sub="port listening != has frame" prov="asbuilt" actions={<Btn data-testid="sessions-refresh" caption="GET /api/runtime/status" onClick={load}>{t("重新整理", "Refresh")}</Btn>}>
         {err && <p className="ec-warn-note">{err}</p>}
@@ -1506,9 +1526,14 @@ export function KitGpuFleetPage() {
   // 才與相鄰的「使用中 session 數」（activeSessions，亦只算 active）一致；否則會把 closed/closing 的過期
   // session 假裝成真實可操作（違反 N5 誠實鐵律）。
   const liveIds = Object.values(shared.sessionsById).filter((s) => s.status === "active").map((s) => s.session_id);
+  // Task 14（SS/RT→KG 接收端重驗）：向已讀的 shared.sessionsById 全量表重驗 incoming session；
+  // 查無 → 誠實 not_found，不靜默假裝該 session 存在。
+  const incoming = useIncomingHandoff("instances", (h) =>
+    !!h.session && Boolean(shared.sessionsById[h.session]));
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>
+      <IncomingHandoffBanner testId="kg-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("此頁是 runtime operator 的機隊視角：哪台 GPU 在服務哪個 Kit stream，哪台可接新 session，哪些節點 drain，哪些 restart/release 必須由 Kit Manager 執行。", "This page is the runtime operator's fleet view: which GPU serves which Kit stream, which can accept a new session, which nodes are draining, and which restart/release must be executed by the Kit Manager.")}</p>
       <Panel title={t("即時 session 聚合（真實）", "Live session aggregate (real)")} sub={t("讀共享狀態列（GET /api/runtime/status）；GPU per-node 遙測未取得，故只呈現 session 聚合，不假裝映射到節點", "Reads the shared status rail (GET /api/runtime/status); GPU per-node telemetry is not available, so only the session aggregate is shown, not a fake node mapping")} prov="asbuilt">
         <div className="ec-grid" data-testid="kg-live-aggregate">
@@ -1720,6 +1745,12 @@ export function MinioDataPage() {
   // folder 回應的 note（後端未設定時回 200 + note；MinioFolderListing.note? 已對齊 wire shape）。
   const folderNote = folder?.note;
   const currentPrefixStale = stalePrefixes.has(prefix);
+  // Task 14（A1/CV→M 接收端重驗）：向已抓取的 folder.objects 重驗 incoming minio_key；prefix-only
+  // handoff 視為有效意圖（folder load 本身就是重驗其內容），不需額外查表。查無 → 誠實 not_found。
+  const incoming = useIncomingHandoff("minio", (h) => {
+    if (h.prefix) return true;
+    return !!h.minio_key && (folder?.objects ?? []).some((o) => o.key === h.minio_key);
+  });
 
   // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
   // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy
@@ -1746,6 +1777,7 @@ export function MinioDataPage() {
   return (
     <>
       <h1>{t("MinIO 資料", "MinIO Data")}</h1>
+      <IncomingHandoffBanner testId="minio-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">
         {t("唯讀 intake 來源視圖，非 metadata 權威。 此頁讀 ", "Read-only intake source view, not the metadata authority. This page reads ")}<code>GET /api/minio/objects</code>{t("（真實 S3 list proxy，帶 Delimiter='/'）； 像 MinIO 網頁一樣逐層資料夾導覽（point-and-list），導到 model.ifc 才掛專案 / 種類 / 版本語意 badge。 metadata 權威在外部 ", " (real S3 list proxy with Delimiter='/'); browses the bucket level-by-level like the MinIO web UI (point-and-list); project / category / version semantic badges are attached only when reaching model.ifc. The metadata authority is the external ")}<code>bim-control · MySQL</code>{t("，不由本頁決定。", "; this page does not decide it.")}
       </p>
