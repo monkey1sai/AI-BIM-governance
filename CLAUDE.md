@@ -36,6 +36,7 @@ installed skills / generated wiki / generated skills
 ```
 
 - **Superpowers**＝plan / execution governance（主線）；**GitNexus**＝impact / detect_changes；**gstack**＝browser QA / screenshot / E2E（user-facing 驗收唯一證據）；**Matt Pocock skills**＝僅 issue / triage / domain-doc 輔助，不得當主線。
+- 分析 code / 陌生模組探索預設先用 GitNexus `query` / `context`；codebase-memory 只能作為並列第二意見或 GitNexus UNKNOWN / crash / unavailable 時的 advisory fallback，不得取代 GitNexus-first discovery。
 - 禁止：Matt Pocock 取代 Superpowers plan／Superpowers 宣告 UI 完成卻不跑 gstack／GitNexus 當產品設計依據／gstack 改 backend symbol 跳過 GitNexus impact。
 - 誠實鐵律：前端要真能操作、不可只接 mock；無 backend 處 UI 須標 `DEMO DATA`／`NOT BUILT`／`not observed`。
 
