@@ -3014,12 +3014,14 @@ export function CoordinatorPage() {
       <Panel title={t("跨頁 session 連結", "Cross-page session links")} sub={t("值班視圖：把 runtime session 帶到 Session 管理 / Review Room / Kit 機隊（同一份 runtime 真相）", "Duty view: take a runtime session to Session Management / Review Room / Kit Fleet (one runtime truth)")} prov="asbuilt">
         <div data-testid="rt-crosslinks">
           {/* N5 誠實鐵律：err（載入/Refresh 失敗）先浮出，且與「確實無 session」分流——rt===null 代表尚未取得
-              runtime 真相（載入中或初載失敗），不得渲染成 confirmed-empty；只有 rt 已回、items 為空才是真的無 session。 */}
+              runtime 真相（載入中或初載失敗），不得渲染成 confirmed-empty。Refresh 失敗時 load() 只 setErr、
+              不重置 rt，rt 會停在 0-session 舊真相，故 confirmed-empty 文案亦需 err 守門（比照同檔 IntakePage），
+              有 err 時讓位給上方紅字，避免「連不上」與「確實無 session（非錯誤）」自相矛盾並存。 */}
           {err && <p className="ec-warn-note">{err}</p>}
           {rt === null ? (
             err ? null : <p className="ec-note">{t("讀取 runtime status 中…", "Loading runtime status…")}</p>
           ) : rt.sessions.items.length === 0 ? (
-            <p className="ec-note">{t("目前 runtime status 無 session（coordinator 已連線，非錯誤）。", "No session in runtime status (coordinator connected — not an error).")}</p>
+            <p className="ec-note">{err ? "" : t("目前 runtime status 無 session（coordinator 已連線，非錯誤）。", "No session in runtime status (coordinator connected — not an error).")}</p>
           ) : (
             <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>{t("跨頁", "Links")}</th></tr></thead>
               <tbody>{rt.sessions.items.map((s) => {

@@ -91,4 +91,37 @@ describe("RT cross-link session panel", () => {
     expect(region.querySelector(".ec-warn-note")).not.toBeNull();
     expect(region.textContent ?? "").toContain("未連線 coordinator");
   });
+
+  // N5 誠實鐵律（Refresh 版）：初載成功且 0 session（confirmed-empty）後按 Refresh，第二次 fetch 失敗時
+  // load() 只 setErr、不重置 rt（rt 仍停在 0-session 舊真相，非 null）。此時 confirmed-empty 分支必須讓位給
+  // 錯誤訊息，不得與紅字錯誤同時出現「已連線、非錯誤」文案（否則等於把「連不上」講成「確實無 session」）。
+  it("hides the confirmed-empty note and surfaces only the error when a Refresh fails after a 0-session load", async () => {
+    const rtEmpty: RuntimeStatus = { ...rt, sessions: { ...rt.sessions, count: 0, active_count: 0, items: [] } };
+    vi.spyOn(coordinatorClient, "runtimeStatus")
+      .mockResolvedValueOnce(rtEmpty)
+      .mockRejectedValueOnce(new Error("boom"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<CoordinatorPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const region = container.querySelector('[data-testid="rt-crosslinks"]') as HTMLElement;
+    expect(region).not.toBeNull();
+    // 初載成功、0 session：confirmed-empty 文案應先正常出現（此時無 err）。
+    expect(region.textContent ?? "").toContain("無 session");
+
+    // 按真實 Refresh 鈕（ClassicTab 的 GET /api/runtime/status），第二次 fetch 失敗。
+    const refresh = Array.from(container.querySelectorAll("button")).find(
+      (b) => (b.textContent ?? "").includes("GET /api/runtime/status"),
+    ) as HTMLButtonElement | undefined;
+    expect(refresh).toBeTruthy();
+    await act(async () => { refresh!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    // 只顯示錯誤訊息；confirmed-empty 的「已連線、非錯誤」文案不得與紅字錯誤並存。
+    expect(region.querySelector(".ec-warn-note")).not.toBeNull();
+    expect(region.textContent ?? "").toContain("未連線 coordinator");
+    expect(region.textContent ?? "").not.toContain("無 session");
+    expect(region.textContent ?? "").not.toContain("非錯誤");
+  });
 });
