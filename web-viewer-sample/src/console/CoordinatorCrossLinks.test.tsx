@@ -15,8 +15,8 @@ const rtActiveAndClosed: RuntimeStatus = { ...rt, sessions: { ...rt.sessions, co
 
 describe("RT cross-link session panel", () => {
   let container: HTMLDivElement;
-  beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); });
-  afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); });
+  beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); window.location.hash = ""; });
+  afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = ""; });
 
   it("lists sessions with #sessions/#review/#instances chips carrying source=runtime", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rt);
@@ -29,6 +29,22 @@ describe("RT cross-link session panel", () => {
     expect(inst).not.toBeNull();
     await act(async () => { inst.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(window.location.hash).toContain("#instances?source=runtime");
+
+    // Each click overwrites window.location.hash, so assert each chip's destination right after its own click
+    // (mirrors IntakeCrossLinks / SessionCrossLinks). Guards the SS + Review onClick handoffs so a wrong target
+    // or param name (e.g. "review"→"sessions", or a mis-typed session key) can't silently regress — the
+    // disabled-only checks below never exercise these two handoff strings.
+    const ss = container.querySelector('[data-testid="rt-link-sessions-review_session_a"]') as HTMLButtonElement;
+    expect(ss).not.toBeNull();
+    await act(async () => { ss.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(window.location.hash).toContain("#sessions?source=runtime");
+    expect(window.location.hash).toContain("session=review_session_a");
+
+    const review = container.querySelector('[data-testid="rt-link-review-review_session_a"]') as HTMLButtonElement;
+    expect(review).not.toBeNull();
+    await act(async () => { review.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(window.location.hash).toContain("#review?source=runtime");
+    expect(window.location.hash).toContain("session=review_session_a");
   });
 
   // N5 誠實鐵律：closed session 的「Review Room 開此 session」「Kit / GPU 機隊」為即時可操作語意，
@@ -58,5 +74,21 @@ describe("RT cross-link session panel", () => {
     expect((container.querySelector('[data-testid="rt-link-instances-review_session_a"]') as HTMLButtonElement).disabled).toBe(false);
     expect((container.querySelector('[data-testid="rt-link-review-review_session_old"]') as HTMLButtonElement).disabled).toBe(true);
     expect((container.querySelector('[data-testid="rt-link-instances-review_session_old"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  // N5 誠實鐵律：初載失敗時 rt 停在 null，此 Panel 不得把「連不上 coordinator」渲染成「確實無 session」
+  // （false-empty）。錯誤要在 Panel 內浮出，且不得出現 confirmed-empty 文案（否則等於把不確定講成事實）。
+  it("surfaces the fetch error instead of a false 'no session' when runtime status load fails", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockRejectedValue(new Error("boom"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<CoordinatorPage />); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const region = container.querySelector('[data-testid="rt-crosslinks"]') as HTMLElement;
+    expect(region).not.toBeNull();
+    expect(region.textContent ?? "").not.toContain("無 session");
+    expect(region.querySelector(".ec-warn-note")).not.toBeNull();
+    expect(region.textContent ?? "").toContain("未連線 coordinator");
   });
 });

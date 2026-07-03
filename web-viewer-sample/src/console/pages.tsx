@@ -3013,11 +3013,16 @@ export function CoordinatorPage() {
       <CoordinatorGovernanceTabs rt={rt} busy={busy} err={err} onRefresh={load} />
       <Panel title={t("跨頁 session 連結", "Cross-page session links")} sub={t("值班視圖：把 runtime session 帶到 Session 管理 / Review Room / Kit 機隊（同一份 runtime 真相）", "Duty view: take a runtime session to Session Management / Review Room / Kit Fleet (one runtime truth)")} prov="asbuilt">
         <div data-testid="rt-crosslinks">
-          {(rt?.sessions.items ?? []).length === 0 ? (
-            <p className="ec-note">{t("目前 runtime status 無 session。", "Runtime status currently has no session.")}</p>
+          {/* N5 誠實鐵律：err（載入/Refresh 失敗）先浮出，且與「確實無 session」分流——rt===null 代表尚未取得
+              runtime 真相（載入中或初載失敗），不得渲染成 confirmed-empty；只有 rt 已回、items 為空才是真的無 session。 */}
+          {err && <p className="ec-warn-note">{err}</p>}
+          {rt === null ? (
+            err ? null : <p className="ec-note">{t("讀取 runtime status 中…", "Loading runtime status…")}</p>
+          ) : rt.sessions.items.length === 0 ? (
+            <p className="ec-note">{t("目前 runtime status 無 session（coordinator 已連線，非錯誤）。", "No session in runtime status (coordinator connected — not an error).")}</p>
           ) : (
             <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>{t("跨頁", "Links")}</th></tr></thead>
-              <tbody>{(rt?.sessions.items ?? []).map((s) => {
+              <tbody>{rt.sessions.items.map((s) => {
                 // N5 誠實鐵律：coordinator 從不刪除 session（只 active→closing→closed，永遠保留），此全量表隨時間無界成長。
                 // 「在 Review Room 開此 session」「Kit / GPU 機隊」是即時可操作語意，只有 status==='active' 成立；對 closed/closing
                 // 的過期 session 給滿血按鈕＝把過期 session 假裝成真實可操作（比照同分支 0860a54）。「Session 管理」是 lifecycle 全量
