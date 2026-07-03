@@ -14,10 +14,43 @@ description: Use when a brainstormed spec already exists under docs/superpowers/
 
 - `Workflow({name:'std-plan' | 'std-implement' | 'std-evidence' | 'fu-adversarial-verify-generic' | 'ship-item', args:{...}})` 在 Codex copy 仍代表**同一個 phase contract**:相同 args、相同 StructuredOutput 欄位、相同 retry / HELD / resumeFromRunId 語義;不得用「Codex-native phase mapping」替代或省略 P4/P5/P6。
 - 若當前 Codex host 沒有 Claude workflow runtime,指揮官必須用可用 native subagents / workflow artifacts 產生等價 StructuredOutput;若無法產生等價 StructuredOutput,必須 HELD,不得 parent-only 手跑後視為通過。缺欄位、null reviewer、verdict 數量不符、無 browser evidence 一律依本檔 gate 重呼或 HELD,不得視為通過。
+- 在 Codex host 中,`Workflow(...)` 的 host-side 等價操作是 `ultracode`-style workflow discipline:主 agent 編排、必要時 native subagents、artifact、StructuredOutput、gate、驗證與 HELD。這不是 Claude Code dynamic workflow runtime、不是 `/workflows` UI、也不代表 `.claude/workflows/*.js` 可在 Codex 直接執行。
 - P0→P1→P3→P4→P5→P6→P7 的跳號排序不可整理成 P0-P7 連號;文中的 production P1/P2 / 真 P1/P2 是 quality / production blocker 等級,不是主對話新增 phase。
 - spec-to-done 的請求本身即授權本流程推進到 merged PR;不要加入「commit / push / PR / merge 必須另行明確要求」的 Codex-only 限制。只有本檔列出的 consent carve-out / destructive / production-data / credentials / billing / user-account 類 gate 需要再停下。
 - **commit-guard / gstack gate 是 Claude-only hook,Codex 不自動觸發**:`.claude/settings.json` 的 PreToolUse hook(`scripts/claude-commit-guard.ps1` = commit 前提醒、`scripts/hooks/require-gstack-evidence.ps1` = merge 前 gstack 證據閘)只在 Claude Code session 生效;Codex CLI 無 hook 機制。P6 必須由指揮官**手動**履行等價把關:(a) `git commit` 前確認已跑 verify、檢查 diff 範圍、commit message scope 對應改動 repo;(b) `gh pr merge` 前,若 diff(vs `origin/main`)動到 `web-viewer-sample/**` 的 `.tsx/.ts/.jsx/.css`,MUST 先有近 24h 的 `artifacts/e2e/*.png` gstack 證據才可 merge,否則 HELD。
 - **知識圖譜雙源(見下節)在 Codex 與 Claude 同義**:GitNexus = 合規主源、codebase-memory = advisory 第二意見。若當前 Codex host 未掛載某套 MCP server → 缺的那套降為「第二意見不可用」並在 note 註明,**不得因第二圖譜缺席或分歧翻轉任何 gate**;GitNexus 仍為唯一 risk/scope 判定來源。
+
+## Claude/Codex 對齊契約(防 drift)
+
+`.claude/skills/spec-to-done/SKILL.md` 是 phase / gate / HELD / resume / evidence / ship 語義 canonical;`.codex/skills/spec-to-done/SKILL.md` 只能作為 Codex adapter copy。兩份檔案可有差異,但差異必須落在下列白名單。
+
+允許差異:
+
+- Source-of-truth 文字可說明 Codex copy 仍以 Claude canonical 為準。
+- Codex 可補充「無 Claude Workflow runtime 時如何產生等價 StructuredOutput / 何時 HELD」。
+- Codex 可把 `Workflow(...)` 的 host-side 執行方式映射為 `ultracode`-style workflow discipline,但不得宣稱與 Claude Code dynamic workflow runtime 等價。
+- Codex 可把 Claude haiku / sonnet / opus / fable routing tier 映射到可用 GPT model / reasoning effort。
+- Codex 可補充 CLI 無 Claude hook 時的手動 commit / gstack gate 等價把關。
+- Codex 可列出 `.codex/skills/spec-to-done/ensure-host-native-ports-free.ps1` 作為 helper fallback,但 helper 內容必須與 `.claude` copy 一致。
+- Codex 可補充 `.codex/**` tracked whitelist 與 PR review 約束。
+
+禁止差異:
+
+- 不得改 P0/P1/P3/P4/P5/P6/P7 的 phase 順序、gate 條件、HELD 值語義或 resume contract。
+- 不得把 `userFacing=true` 的 browser evidence gate 降級成 source inspection / unit test。
+- 不得讓 codebase-memory 取代 GitNexus 的正式 risk/scope 判定。
+- 不得把 `ultracode` skill 說成 Claude Code `/effort ultracode`、dynamic workflow runtime、`/workflows` UI 或背景 workflow manager。
+- 不得加入「需要另行授權 commit / push / PR / merge」來覆蓋本檔既有 spec-to-done ship 語義;只有 consent carve-out 類別可再停。
+- 不得移除 P5 adversarial review、P6 ship-item、OpenSpec / pr-review-agent / GitNexus fallback 揭露等 gate。
+- 不得在 Codex copy 自行創造與 `.claude/workflows/*.js` 不相容的欄位或 StructuredOutput 名稱。
+
+改任何一份 spec-to-done skill 時,同一 PR 必須跑 drift check:
+
+```powershell
+git diff --no-index -- .claude\skills\spec-to-done\SKILL.md .codex\skills\spec-to-done\SKILL.md
+```
+
+審查時只接受上方白名單差異;其餘 phase / gate / evidence / ship 語義差異一律視為 blocker。
 
 ## 四套工具的唯一切入點(AGENTS.md anti-patterns 防線)
 
@@ -233,3 +266,9 @@ Claude 版的 haiku / sonnet / opus / fable 是**任務難度 tier**。Codex cop
 5. pr-review-agent 兩種非內容故障:`missing_openspec`(P6 前置 a 預防)與`report generation failed`(工具整體故障,非 required check,由 ship-item 判斷層次處置)。
 6. 本組檔案已 whitelist tracked(`.gitignore:37` `!.claude/skills/spec-to-done/`、`:42` `!.claude/workflows/`、`:55` `!.codex/skills/spec-to-done/`;含 SKILL.md、std-*.js、ship-item、本目錄 `ensure-host-native-ports-free.ps1`),隨 PR 進 git/CI。pr-review-agent 對所有 PR 都會跑(#202 的 paths-ignore 已移除,`pr-review-agent.yml` 現無 paths 過濾),且是 main branch protection 的 required check(11 項之一;2026-07-02 以 gh api 親查)——`.claude/**` / `.codex/**` 變更同樣受 review 與 AI Coding Governance body-evidence 表約束。
 7. P1 四軸 review 第二輪起只重審上輪未過的軸(fixer 改 plan 可能影響已過軸)— 由 P3 per-task spec review 與 P5 critic 兜底,屬已知取捨。
+
+## 維運注意事項
+
+1. `routing.json` 改動後須跑 `.venv\Scripts\python.exe scripts/gen_routing.py` 重生各 `std-*.js` 的 ROUTING 區塊,並 re-save 受影響 workflow 讓 harness reload;禁止 workflow run 中途執行 codegen。
+2. `.codex/skills/spec-to-done/SKILL.md` 不擁有獨立 workflow runtime;Codex 端只能用 `ultracode`-style discipline / native subagents / artifacts 近似 `.claude/workflows/` 的 canonical runtime contract。若未來新增 `.codex/workflows/`,必須先證明輸出欄位與 HELD / resume semantics 與 `.claude/workflows/` 等價。
+3. 更新 `.claude/skills/spec-to-done/SKILL.md` 時必須同步檢查 `.codex/skills/spec-to-done/SKILL.md`;更新 `.codex` adapter 時也必須確認未改變 `.claude` canonical gate。
