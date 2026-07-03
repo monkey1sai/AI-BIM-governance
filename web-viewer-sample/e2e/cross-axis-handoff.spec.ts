@@ -24,27 +24,35 @@ test.describe("seven-axis cross-page harmony", () => {
     const hasObjects = await convChip.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
     test.skip(!hasObjects, "no MinIO source_ifc objects in this environment (not observed)");
     // Arm the CV ledger-fetch wait BEFORE the click so the response can't fire before we listen. CV
-    // re-verifies minio_key against `records`, which is [] until GET /api/conversion/records lands — and
-    // unlike A1/SS/KG/M, CV still shows the known truncation→not_found load flash (parent 47f9975 left CV
-    // as-is). Reading data-handoff-status before records settle could latch onto that transient not_found;
-    // gate the assertion on the response so it reads CV's terminal verdict, not a pre-load flash. Match
-    // `?limit=50` specifically — that is CV's OWN loadRecords() (pages.tsx:952). The always-mounted
-    // SharedStatusProvider polls the SAME endpoint every 5s and the M page fetches it on mount, both with
-    // `?limit=100`; a bare `/api/conversion/records` predicate could resolve on one of those unrelated hits
-    // and race past CV's own load, re-exposing the very not_found flash this guard exists to avoid.
+    // re-verifies minio_key against `records`, which is [] until GET /api/conversion/records lands, so the
+    // banner paints a transient `not_found` first (records=[] & recordsTruncated=false → verify returns false
+    // → not_found; pages.tsx:865,904,908-922 + incomingHandoff.tsx:29-30). Unlike A1/SS/KG/M, CV keeps this
+    // load flash on purpose (parent 47f9975). Awaiting this response lets the banner reach its terminal verdict
+    // before the screenshot below captures it. HONEST SCOPE (quality Important #1): awaiting does NOT tighten
+    // the toHaveAttribute assertion — it accepts `not_found`, which is ALSO the transient value, so the
+    // assertion's pass/fail is identical with or without this wait; the wait buys a stable screenshot frame,
+    // not a stricter check. Match `?limit=50` specifically — that is CV's OWN loadRecords() (pages.tsx:952).
+    // The always-mounted SharedStatusProvider polls the SAME endpoint every 5s and the M page fetches it on
+    // mount, both with `?limit=100`; a bare `/api/conversion/records` predicate could resolve on one of those
+    // unrelated hits and race past CV's own load, so the screenshot could still catch the pre-load flash.
     const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
     await convChip.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
-    // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found
-    // banner (Task 14) — never silently ignore the id. Assert the banner surfaces one of the honest states.
-    // Accept `indeterminate` too (誠實鐵律): CV re-verifies against getConversionRecords(50); once the
-    // coordinator ledger holds >50 records and the incoming key falls outside that query window, the CV
-    // predicate (pages.tsx:908-922, recordsTruncated) honestly returns indeterminate instead of a false
-    // not_found — a correct third state (incomingHandoff.tsx:9,49), not an anomaly. Omitting it would turn
-    // this assertion into intermittent flake once the long-lived ledger crosses 50 rows.
+    // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found banner
+    // (Task 14) — never silently ignore the id. WHAT THIS ASSERTS (quality Important #1 — do not oversell): a
+    // WIRING smoke test — the banner mounts and CV re-verifies the id into one of the honest non-none states,
+    // NOT that a given input maps to a specific state. The accepted set is all three honest terminal verdicts
+    // because a fixture-less env does not control whether the clicked object has a ledger record: `verified`
+    // needs records.some() to hit (pages.tsx:918), `not_found` is the honest miss, `indeterminate` is the
+    // honest truncation case (getConversionRecords(50); once the ledger holds >50 rows and the key falls
+    // outside that window, pages.tsx:908-922/recordsTruncated returns it — incomingHandoff.tsx:9,29-30).
+    // Narrowing to one value would flake or lie about live backend state. LIMIT: this assertion cannot catch a
+    // broken-predicate regression that collapses every input to not_found (not_found is a legitimate terminal
+    // state here); that per-input discrimination — incl. truncation→indeterminate — is owned by the unit tests
+    // in incomingHandoff.test.tsx (its CV truncation cases), not by this E2E.
     const banner = page.getByTestId("conv-incoming-handoff");
     await expect(banner).toBeVisible({ timeout: 15_000 });
-    await recordsSettled;
+    await recordsSettled; // settle CV's own ledger fetch → the screenshot below shows the terminal banner, not the pre-load not_found flash (does NOT change the assertion — see the arm-site HONEST SCOPE note above)
     await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-conv.png", fullPage: true });
   });
@@ -119,16 +127,19 @@ test.describe("seven-axis cross-page harmony", () => {
     const mHasConv = await mConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
     test.skip(!mHasConv, "no MinIO source_ifc object in this environment (not observed)");
     // Same CV load-race guard as the isolated M→CV test above — match ?limit=50 (CV's own loadRecords), NOT the
-    // SharedStatusProvider 5s poll / M page ?limit=100: arm the ledger-fetch wait before the click so the
-    // banner assertion reads CV's terminal verdict, not the transient pre-load not_found flash.
+    // SharedStatusProvider 5s poll / M page ?limit=100: arm the ledger-fetch wait before the click so the s8-01
+    // screenshot below captures CV's terminal banner, not the transient pre-load not_found flash. Same honest
+    // scope (quality Important #1): this does NOT tighten the toHaveAttribute below — not_found is accepted and
+    // is also the transient value; the wait is for the screenshot frame, not a stricter check.
     const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
     await mConv.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
     const convBanner = page.getByTestId("conv-incoming-handoff");
     await expect(convBanner).toBeVisible({ timeout: 15_000 });
     await convRecordsSettled;
-    // indeterminate is an honest third state too (see the isolated M→CV note above): pages.tsx:908-922 returns
-    // it via recordsTruncated once the ledger exceeds the 50-record window — accept it so this can't flake.
+    // Wiring smoke test (see the isolated M→CV note above): accept all three honest terminal states — verified
+    // (records.some hit), not_found (honest miss), indeterminate (recordsTruncated once the ledger exceeds the
+    // 50-record window, pages.tsx:908-922). Per-input discrimination is owned by incomingHandoff.test.tsx.
     await expect(convBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-conv.png", fullPage: true });
 
@@ -141,14 +152,19 @@ test.describe("seven-axis cross-page harmony", () => {
     // on-mount jobs fetch; count() doesn't retry) — genuinely-absent jobs still fall through in ~10s.
     const inHasConv = await inConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
     if (inHasConv) {
-      // Same CV load-race guard: gate the receiver verdict on the ledger fetch settling (?limit=50 = CV's own fetch).
+      // Same CV load-race guard (?limit=50 = CV's own fetch): await CV's ledger fetch so the banner is read at
+      // its settled state, consistent with the M→CV leg. Honest scope (quality Important #1): this leg takes no
+      // screenshot right after and the assertion accepts not_found (transient AND terminal), so the wait changes
+      // neither a screenshot (none) nor the assertion's pass/fail — it stays a wiring smoke test (banner mounts +
+      // CV re-verifies into an honest non-none state); per-input discrimination is owned by incomingHandoff.test.tsx.
       const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
       await inConv.click();
       await expect(page).toHaveURL(/#conv\?source=intake/, { timeout: 15_000 });
       const inBanner = page.getByTestId("conv-incoming-handoff");
       await expect(inBanner).toBeVisible({ timeout: 15_000 });
       await inRecordsSettled;
-      // indeterminate accepted here too (same honest third state; ledger >50 → recordsTruncated, pages.tsx:908-922).
+      // Accept all three honest terminal states; indeterminate is the honest truncation case (ledger >50 →
+      // recordsTruncated, pages.tsx:908-922).
       await expect(inBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     }
 
