@@ -907,12 +907,27 @@ export function ConversionSchedulingPage() {
   // 同一事件循環雙擊 confirm 會送出兩個 POST /api/conversion/trigger（失敗路徑下第二次 catch 會覆蓋
   // 第一次 triggerErr、loadRecords 也可能被競爭觸發兩次）。ref 在 React state 更新前同步攔截第二次呼叫。
   const triggerBusyRef = useRef(false);
+  // quality Important #4：jobs（listIfcReady 50）與 records（getConversionRecords 50）都有回傳窗上限。
+  // 當 incoming id 在回傳窗內查無、但該窗被截斷（count > items.length）時，對應紀錄可能落在窗外——這是
+  // 「可能有但看不到」，不可誤報 not_found（比照本頁 ledgerChipStatus 的 recordsIncomplete → indeterminate；§5.4）。
+  const [jobsTruncated, setJobsTruncated] = useState(false);
+  const [recordsTruncated, setRecordsTruncated] = useState(false);
   // Task 14（A1/M/IN→CV 接收端重驗）：job_id 向 jobs（ifc-ready）重驗；conversion_id/minio_key 向
-  // records（ledger）重驗。查無 → 誠實 not_found，不靜默 fallback 到別的紀錄。
+  // records（ledger）重驗。查無且該來源窗被截斷 → 誠實 indeterminate（未明）；查無且未截斷 → 誠實 not_found，
+  // 不靜默 fallback 到別的紀錄。
   const incoming = useIncomingHandoff("conv", (h) => {
-    if (h.job_id) return jobs.some((j) => j.ifc_ready_job_id === h.job_id || j.conversion_job_id === h.job_id);
-    if (h.conversion_id) return records.some((r) => r.conversion_job_id === h.conversion_id);
-    if (h.minio_key) return records.some((r) => r.object_key === h.minio_key);
+    if (h.job_id) {
+      if (jobs.some((j) => j.ifc_ready_job_id === h.job_id || j.conversion_job_id === h.job_id)) return true;
+      return jobsTruncated ? "indeterminate" : false;
+    }
+    if (h.conversion_id) {
+      if (records.some((r) => r.conversion_job_id === h.conversion_id)) return true;
+      return recordsTruncated ? "indeterminate" : false;
+    }
+    if (h.minio_key) {
+      if (records.some((r) => r.object_key === h.minio_key)) return true;
+      return recordsTruncated ? "indeterminate" : false;
+    }
     return false;
   });
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
@@ -929,8 +944,11 @@ export function ConversionSchedulingPage() {
     ]);
     const jobsOk = jobsRes.status === "fulfilled";
     const mwOk = mwRes.status === "fulfilled";
-    if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
-    else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
+    if (jobsRes.status === "fulfilled") {
+      setJobs(jobsRes.value.items);
+      // quality Important #4：count（slice 前總數）> items.length 即被回傳窗上限截斷 → 供接收端重驗誠實退 indeterminate。
+      setJobsTruncated(jobsRes.value.count > jobsRes.value.items.length);
+    } else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
     if (mwRes.status === "fulfilled") setMw(mwRes.value);
     else setMwErr(`${t("未連線 coordinator /api/external/minio-watch/status：", "Not connected to coordinator /api/external/minio-watch/status: ")}${String(mwRes.reason)}`);
     setBusy(false);
@@ -943,6 +961,8 @@ export function ConversionSchedulingPage() {
     try {
       const res = await coordinatorClient.getConversionRecords(50);
       setRecords(res.items);
+      // quality Important #4：records 被回傳窗上限截斷（count > items.length）→ 查無 key 時退 indeterminate 而非 not_found。
+      setRecordsTruncated(res.count > res.items.length);
     } catch (e) {
       setRecErr(`未連線 coordinator /api/conversion/records：${String(e)}`);
     }
@@ -1528,8 +1548,11 @@ export function KitGpuFleetPage() {
   const liveIds = Object.values(shared.sessionsById).filter((s) => s.status === "active").map((s) => s.session_id);
   // Task 14（SS/RT→KG 接收端重驗）：向已讀的 shared.sessionsById 全量表重驗 incoming session；
   // 查無 → 誠實 not_found，不靜默假裝該 session 存在。
+  // quality CRITICAL #1（物件注入防護）：sessionsById 是 plain {} 字面量，直接 bracket 存在性判斷會讓
+  // 繼承自 Object.prototype 的名字（constructor/toString/__proto__/hasOwnProperty…）查到真實成員而恆真，
+  // 對從未存在的 session 假報 verified（違反 §4.2「持有 ID ≠ 已授權」）。改用 own-property 檢查只認真正的 key。
   const incoming = useIncomingHandoff("instances", (h) =>
-    !!h.session && Boolean(shared.sessionsById[h.session]));
+    !!h.session && Object.prototype.hasOwnProperty.call(shared.sessionsById, h.session));
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>

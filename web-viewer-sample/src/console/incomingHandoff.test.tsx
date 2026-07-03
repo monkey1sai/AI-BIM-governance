@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IncomingHandoffBanner, useIncomingHandoff } from "./incomingHandoff";
 import { A1GovernanceWorkbenchPage, ConversionSchedulingPage, KitGpuFleetPage, MinioDataPage, SessionManagementPage } from "./pages";
 import { SharedStatusProvider } from "./SharedStatusProvider";
-import { coordinatorClient, type MinioFolderListing, type RuntimeStatus, type RuntimeSessionSummary } from "./coordinatorClient";
+import { coordinatorClient, type ConversionRecord, type MinioFolderListing, type RuntimeStatus, type RuntimeSessionSummary } from "./coordinatorClient";
 import { type SharedStatusSnapshot } from "./useSharedStatus";
 
 // ---- shared primitive: re-verify + honest render, no silent fallback (this fully covers the logic) ----
@@ -40,6 +40,30 @@ describe("useIncomingHandoff re-verifies the carried id (spec §4.2)", () => {
     expect(b?.getAttribute("data-handoff-status")).toBe("not_found");
     expect(b?.textContent).toContain("未"); // honest 未找到 / 未靜默 fallback wording
   });
+  it("latches verified: once a handoff verifies, later re-renders of the SAME handoff stay verified even if verify() turns false (spec §4.2 re-verify is an arrival gate, not a per-render re-check)", () => {
+    const root = createRoot(container);
+    const hash = "#minio?source=a1&minio_key=270/x.ifc";
+    act(() => { root.render(<Probe hash={hash} ok={true} />); });
+    expect(container.querySelector('[data-testid="probe-banner"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    // same handoff, verify now false (e.g. the M-page user browsed the folder tree away from the source) → must NOT downgrade
+    act(() => { root.render(<Probe hash={hash} ok={false} />); });
+    expect(container.querySelector('[data-testid="probe-banner"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    // a DIFFERENT handoff must not inherit the latch → honest not_found (latch is per-handoff, not global)
+    act(() => { root.render(<Probe hash="#minio?source=a1&minio_key=other.ifc" ok={false} />); });
+    expect(container.querySelector('[data-testid="probe-banner"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+  });
+  it("renders an honest indeterminate banner (neutral, not the alarming not_found) when verify() is inconclusive", () => {
+    function IndetProbe() {
+      const inc = useIncomingHandoff("minio", () => "indeterminate", "#minio?source=a1&minio_key=270/x.ifc");
+      return <IncomingHandoffBanner testId="probe-banner" handoff={inc.handoff} status={inc.status} />;
+    }
+    const root = createRoot(container);
+    act(() => { root.render(<IndetProbe />); });
+    const b = container.querySelector('[data-testid="probe-banner"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("indeterminate");
+    expect(b?.className ?? "").not.toContain("ec-warn-note"); // indeterminate is neutral, not a warning
+    expect(b?.textContent ?? "").toContain("重新整理"); // honest actionable hint, distinct from not_found's 手動重選
+  });
 });
 
 // ---- page wiring: each receiving page re-verifies against data it already fetched ----
@@ -54,6 +78,8 @@ const srcFolder: MinioFolderListing = { bucket: "bim-control", prefix: SRC_PREFI
 const rootFolder: MinioFolderListing = { bucket: "bim-control", prefix: "", folders: [{ prefix: "270專案/", has_source_ifc: true }], count: 0, objects: [] };
 const mkSession = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => ({ session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1", participant_count: 1, expected_stage_url: null, conversion_status: null, kit_instance_ids: [], created_at: "", updated_at: "", ...over });
 const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({ service: { status: "ok", name: "c", uptime_seconds: 1, generated_at: "" }, configured_endpoints: { coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" }, viewer: { browser_url_base: "", handoff_path: "/" }, conversion_authority: { base_url: "", authority: "" }, kit: [] }, sessions: { count: items.length, active_count: items.length, participant_count: 0, items }, kit_instance_bindings: [], ifc_ready_jobs: { count: 0, recent: [] }, observations: { classification: "demo", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } } });
+
+const mkRecord = (over: Partial<ConversionRecord>): ConversionRecord => ({ idempotency_key: "mw_r", project_id: "270", project_display_name: "270", category: "建築", external_model_version_id: "v1", conversion_job_id: "cj_x", status: "queued", usdc_key: null, coverage_report: null, object_key: "270/x.ifc", detected_at: "", updated_at: "", ...over });
 
 describe("receiving pages re-verify the incoming handoff id", () => {
   let container: HTMLDivElement;
@@ -226,5 +252,56 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     const root = createRoot(container);
     act(() => { root.render(<SharedStatusProvider value={snap}><KitGpuFleetPage /></SharedStatusProvider>); });
     expect(container.querySelector('[data-testid="kg-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+  });
+
+  it("KG does not treat an incoming session that only matches an Object.prototype key (constructor) as verified — object-injection guard, spec §4.2 持有 ID ≠ 已授權", () => {
+    // shared.sessionsById is a plain {} literal (SharedStatusProvider), so a bracket lookup of an inherited
+    // prototype name (constructor/toString/__proto__/hasOwnProperty…) resolves to a truthy Object.prototype
+    // member and would fake a verified banner for a session that never existed. Guard with an own-property check.
+    const snap: SharedStatusSnapshot = { activeSessions: 1, sessionsById: { review_session_a: { session_id: "review_session_a", status: "active" } }, gpuNodesTotal: null, gpuNodesBusy: null, health: "ok", conversionQueue: null, updatedAt: "", stale: false };
+    window.location.hash = "#instances?source=sessions&session=constructor";
+    const root = createRoot(container);
+    act(() => { root.render(<SharedStatusProvider value={snap}><KitGpuFleetPage /></SharedStatusProvider>); });
+    expect(container.querySelector('[data-testid="kg-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+  });
+
+  it("M keeps a verified incoming minio_key verified after the user manually navigates away (go-up) — arrival re-verify is not undone by later browsing (spec §4.2)", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    // user clicks 「⬑ 上一層」 → a folder that does NOT contain CN_KEY; banner must not retroactively become not_found
+    const up = container.querySelector('[data-testid="minio-go-up"]') as HTMLButtonElement;
+    await act(async () => { up.click(); for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+  });
+
+  it("CV marks an incoming job_id absent from a TRUNCATED ifc-ready window as indeterminate, not a false not_found (§5.4, mirrors ledgerChipStatus recordsIncomplete)", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 99, items: [
+      { ifc_ready_job_id: "job_other", status: "ready", project_id: "270", external_model_version_id: "v1", download_status: "done", conversion_status: "ready", conversion_authority: "bim-streaming-server", queue_position: null, conversion_job_id: "cj_other", dispatch_error: null, review_session_id: null, viewer_url: null, expected_stage_url: null, expected_mapping_url: null, created_at: "", updated_at: "" },
+    ] } as never); // count 99 ≫ 1 returned item → window truncated; job_ZZZ may live beyond the window
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
+    window.location.hash = "#conv?source=intake&job_id=job_ZZZ";
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
+
+  it("CV marks an incoming conversion_id absent from a TRUNCATED records window as indeterminate, not a false not_found", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 88, items: [mkRecord({ conversion_job_id: "cj_other", object_key: "270/other.ifc" })] });
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
+    window.location.hash = "#conv?source=intake&conversion_id=cj_ZZZ";
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
   });
 });
