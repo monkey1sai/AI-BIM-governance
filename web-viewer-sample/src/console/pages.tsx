@@ -1649,7 +1649,13 @@ export function MinioDataPage() {
   const folderCacheRef = useRef(new Map<string, import("./coordinatorClient").MinioFolderListing>());
   const [stalePrefixes, setStalePrefixes] = useState<Set<string>>(() => new Set());
 
+  // 世代守門（quality Important）：掛載時「導覽 effect 的 setPrefix」會與「prefix 變更即重載 effect」併發兩個
+  // getMinioFolder（根層＋導覽目標層）。真實 S3 根層需逐一序列 probe 子資料夾 has_source_ifc、通常比葉層慢，
+  // 無守門則其晚到的回應會蓋掉已導覽的正確 folder → folder.prefix 退回 ""、verify 假 not_found。每次 load
+  // 認領一個遞增世代；回應落地時若已被更新的 load 取代（世代不符）即丟棄，不覆蓋畫面/錯誤/loading。
+  const loadGenRef = useRef(0);
   const load = useCallback(async (p: string, options?: { refresh?: boolean }) => {
+    const myGen = ++loadGenRef.current;
     if (!options?.refresh) {
       const cached = folderCacheRef.current.get(p);
       if (cached) {
@@ -1665,7 +1671,8 @@ export function MinioDataPage() {
       const res = options?.refresh
         ? await coordinatorClient.getMinioFolder(p, { refresh: true })
         : await coordinatorClient.getMinioFolder(p);
-      folderCacheRef.current.set(p, res);
+      folderCacheRef.current.set(p, res); // 回應對 prefix p 恆為有效資料，無論世代皆可入快取
+      if (loadGenRef.current !== myGen) return; // 已被更新的 load 取代 → 不覆蓋當前畫面（防競態誤蓋）
       setFolder(res);
       setStalePrefixes((prev) => {
         if (!prev.has(p)) return prev;
@@ -1674,9 +1681,10 @@ export function MinioDataPage() {
         return next;
       });
     } catch (e) {
+      if (loadGenRef.current !== myGen) return; // 過期錯誤不覆蓋較新 load 的成功結果
       setErr(String(e));
     } finally {
-      setLoading(false);
+      if (loadGenRef.current === myGen) setLoading(false); // 僅最新 load 解除 loading，避免過期 load 提早關閉
     }
   }, []);
 
@@ -1747,7 +1755,9 @@ export function MinioDataPage() {
   const currentPrefixStale = stalePrefixes.has(prefix);
   // Task 14（A1/CV→M 接收端重驗，spec §4.2 接收端重驗鐵律）：向已抓取的權威資料重驗 incoming id，
   // 查無 → 誠實 not_found，絕不因『持有 id/prefix』就靜默視為有效。
-  // - minio_key → 查當層 folder.objects 是否含該 key。
+  // - minio_key（A1/CV → M）→ 先導覽到 key 所在資料夾（見下方 effect），向該層載入的 folder.objects 重驗是否
+  //   含該 key。真實 S3 帶 Delimiter='/'：巢狀 key 只落在其所在資料夾的 objects，根層 objects 不含它，故不
+  //   導覽＝對真實巢狀 key 恆誤報 not_found（quality CRITICAL；A1→M / CV→M chip 只帶 minio_key、不帶 prefix）。
   // - prefix（A1 → M「回看選檔來源」，§4.3）→ 導覽到該層後（見下方 effect），向載入的 folder 重驗：
   //   folder.prefix 必等於請求 prefix（後端 minioClient.ts 回填該欄）且該層真的有 folders/objects 才算
   //   verified；空層／未設定／尚未載入一律 not_found。不導覽＝沒重驗，banner『已重驗』會是假的。
@@ -1755,12 +1765,19 @@ export function MinioDataPage() {
     if (h.prefix) return !!folder && folder.prefix === h.prefix && (folder.folders.length > 0 || folder.objects.length > 0);
     return !!h.minio_key && (folder?.objects ?? []).some((o) => o.key === h.minio_key);
   });
-  // incoming prefix handoff → 導覽到來源資料夾一次（讓 folder 真的載入該層再重驗）。依 prefix 值為 dep，
-  // hash 不變則只跑一次；之後交還使用者手動導覽（不與 goUp/enterFolder 打架、不反覆挾持）。
-  const incomingPrefix = incoming.handoff?.prefix;
+  // incoming handoff → 導覽到「來源資料夾」一次（讓 folder 真的載入該層再由上方 predicate 重驗）：
+  // - prefix：直接導覽到該 prefix。
+  // - minio_key：導覽到 key 所在資料夾（末個 '/' 前的路徑）；無 '/' 的根層 key → dir="" 即根層（no-op）。
+  // 依「導覽目標值」為 dep：hash 不變則只跑一次；之後交還使用者手動導覽（不與 goUp/enterFolder 打架、不反覆挾持）。
+  const incomingTargetPrefix = incoming.handoff
+    ? incoming.handoff.prefix ??
+      (incoming.handoff.minio_key
+        ? incoming.handoff.minio_key.slice(0, incoming.handoff.minio_key.lastIndexOf("/") + 1)
+        : undefined)
+    : undefined;
   useEffect(() => {
-    if (incomingPrefix) setPrefix(incomingPrefix);
-  }, [incomingPrefix]);
+    if (incomingTargetPrefix !== undefined) setPrefix(incomingTargetPrefix);
+  }, [incomingTargetPrefix]);
 
   // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
   // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy

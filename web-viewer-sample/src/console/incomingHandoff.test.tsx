@@ -60,24 +60,53 @@ describe("receiving pages re-verify the incoming handoff id", () => {
   beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); });
   afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = ""; });
 
-  it("M verifies a real incoming minio_key (found in the loaded folder listing)", async () => {
-    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue(folder);
+  it("M navigates to a real incoming minio_key's folder and verifies it there (root list never holds the deep key)", async () => {
+    // 真實 S3 帶 Delimiter='/'：3 層深的 CN_KEY 在根層只會以 CommonPrefix(270專案/) 落在 folders，
+    // 絕不出現在根層 objects。接收端必須先導覽到 CN_KEY 所在資料夾(270專案/建築/v07/)、向該層 folder 重驗，
+    // 才能誠實 verified；停在根層 = 對真實巢狀 key 恆誤報 not_found(§4.2 誠實 verified)。fixture 依 prefix 分流
+    // (root vs 來源層)以尊重 delimiter 語意——舊 fixture 把深層 key 直接塞進根層 objects 會掩蓋此 gap。
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("verified");
+    expect(b?.getAttribute("data-handoff-source")).toBe("a1");
+    expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(SRC_PREFIX); // 真的導覽到 key 所在層，非停在根
   });
 
-  it("M flags an incoming minio_key that is not in the loaded folder listing as not_found (no silent fallback)", async () => {
-    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue(folder);
+  it("M flags an incoming minio_key absent from its navigated folder as not_found (no silent fallback)", async () => {
+    // 導覽到 key 所在資料夾後，該層 objects 真的沒有這支 key(已刪/改名)→ 誠實 not_found，非靜默 fallback。
+    const GONE_KEY = "270專案/建築/v07/已刪除.ifc"; // 同資料夾(SRC_PREFIX)，但 srcFolder.objects 只有 CN_KEY
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    window.location.hash = "#minio?source=a1&minio_key=missing.ifc";
+    window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(GONE_KEY)}`;
     const root = createRoot(container);
     await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("not_found");
+    expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(SRC_PREFIX); // 導覽到該層後才判定 not_found
+  });
+
+  it("M keeps the navigated folder verified even when a slow root refetch lands late (generation guard, no clobber)", async () => {
+    // 掛載時併發兩個 getMinioFolder：根層(prefix="")＋導覽目標層。真實 S3 根層需逐一 probe 子資料夾
+    // has_source_ifc(序列)，通常比葉層慢；無世代守門則根層晚到的回應會蓋掉已導覽的葉層 folder，
+    // folder.prefix 退回 ""→verify 對 minio_key 失敗→假 not_found(§4.2 想避免的假訊息)。此處刻意讓
+    // 根層 pending、葉層先落地，再放行根層，斷言不得被覆蓋。
+    let resolveRoot: (v: MinioFolderListing) => void = () => {};
+    const rootPending = new Promise<MinioFolderListing>((r) => { resolveRoot = r; });
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation((p?: string) => (p === SRC_PREFIX ? Promise.resolve(srcFolder) : rootPending));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); }); // 葉層(正確)先落地→verified
+    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    await act(async () => { resolveRoot(rootFolder); for (let i = 0; i < 6; i++) await Promise.resolve(); }); // 根層姍姍來遲
+    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified"); // 不得被根層覆蓋成 not_found
   });
 
   it("M navigates to an incoming prefix (回看選檔來源) and verifies it against the freshly loaded folder (verified)", async () => {
