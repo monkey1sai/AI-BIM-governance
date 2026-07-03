@@ -1455,9 +1455,20 @@ export function SessionManagementPage() {
               return (
                 <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
                   <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
-                  <td>{s.status === "active" && !terminating ? (
-                    <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
-                  ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}</td>
+                  <td>
+                    {s.status === "active" && !terminating ? (
+                      <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
+                    ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}
+                    {" "}
+                    <Btn data-testid={`session-link-instances-${s.session_id}`} caption={t("此 session 落在哪個 GPU node（KG 遙測未取得）", "Which GPU node hosts this session (KG telemetry not available)")}
+                      onClick={() => { window.location.hash = buildHandoff("instances", { source: "sessions", session: s.session_id }); }}>KG →</Btn>
+                    {" "}
+                    <Btn data-testid={`session-link-review-${s.session_id}`} caption={t("在 Review Room 開此 session", "Open this session in Review Room")}
+                      onClick={() => { window.location.hash = buildHandoff("review", { source: "sessions", session: s.session_id }); }}>Review →</Btn>
+                    {" "}
+                    <Btn data-testid={`session-link-a1-${s.session_id}`} caption={t("回 A1 治理檢核", "Back to A1 governance")}
+                      onClick={() => { window.location.hash = buildHandoff("a1", { source: "sessions", session: s.session_id }); }}>A1 →</Btn>
+                  </td>
                 </tr>
               );
             })}</tbody></table>
