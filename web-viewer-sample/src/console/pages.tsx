@@ -1851,6 +1851,18 @@ export function MinioDataPage() {
                           >
                             {t("觸發轉檔", "Trigger")}
                           </Btn>
+                          {/* Task 10（§4.3 M → CV / M → A1）：evidence-typed cross-link chips——帶編碼後的
+                              obj.key（可能含中文）當 minio_key，接收端（CV/A1）依 §4.2 重驗。 */}
+                          <Btn
+                            data-testid={`minio-link-conv-${idk}`}
+                            caption={t("查看此物件的轉檔", "View this object's conversion")}
+                            onClick={() => { window.location.hash = buildHandoff("conv", { source: "minio", minio_key: obj.key }); }}
+                          >{t("轉檔 →", "Conversion →")}</Btn>
+                          <Btn
+                            data-testid={`minio-link-a1-${idk}`}
+                            caption={t("拿此檔到 A1 治理檢核", "Take this file to A1 governance")}
+                            onClick={() => { window.location.hash = buildHandoff("a1", { source: "minio", minio_key: obj.key }); }}
+                          >{t("A1 檢核 →", "A1 governance →")}</Btn>
                         </>
                       ) : null}
                     </li>
