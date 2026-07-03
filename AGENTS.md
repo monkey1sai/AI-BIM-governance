@@ -152,7 +152,7 @@ Source of Truth 優先順序：
 4. generated wiki / generated skills（若存在）
 ```
 
-目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。陌生模組探索首選 GitNexus MCP（`query` / `context`，永遠查活圖譜）；日常探索（非改 symbol、非 commit 前）也可並用 `codebase-memory-mcp`（`search_graph` / `get_code_snippet` / `trace_path`）加速定位，兩者查無結果或有疑義時以 GitNexus 為準——**修改 code symbol 前的 `impact` 與 commit 前的 `detect_changes` 仍只由 GitNexus 判定**（見下方 §4）。**此「衝突時以 GitNexus 為準」不限 spec-to-done 內部流程，任何 session（含一般互動對話）都適用**：兩圖譜對同一 symbol 給出不同答案時，MUST 用 grep/Read 核對原始碼再下結論，不得逕自採信單邊「exact」標籤（2026-07-03 實測：GitNexus 曾對 `deriveIntakeFromKey` 假陰漏報全部 caller，已修；codebase-memory 對 `tick`/`run`/`init` 這類常見命名，曾把不同檔案的區域閉包誤併成同一節點、生出不存在的 CALLS 邊——兩者皆非 100% 準）。不得在 README、PR 或驗收報告把不存在的 wiki 寫成現有入口。任何導覽產物與實作不一致時，一律以實作為準。
+目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。分析 code / 陌生模組探索預設先用 GitNexus MCP（`query` / `context`，永遠查活圖譜）；`codebase-memory-mcp`（`search_graph` / `get_code_snippet` / `trace_path`）只能作為並列第二意見、加速定位後的 GitNexus 交叉確認，或 GitNexus UNKNOWN / crash / unavailable 時的 advisory fallback，不得取代 GitNexus-first discovery。兩者查無結果或有疑義時仍以 GitNexus 為準——**修改 code symbol 前的 `impact` 與 commit 前的 `detect_changes` 仍只由 GitNexus 判定**（見下方 §4）。**此「衝突時以 GitNexus 為準」不限 spec-to-done 內部流程，任何 session（含一般互動對話）都適用**：兩圖譜對同一 symbol 給出不同答案時，MUST 用 grep/Read 核對原始碼再下結論，不得逕自採信單邊「exact」標籤（2026-07-03 實測：GitNexus 曾對 `deriveIntakeFromKey` 假陰漏報全部 caller，已修；codebase-memory 對 `tick`/`run`/`init` 這類常見命名，曾把不同檔案的區域閉包誤併成同一節點、生出不存在的 CALLS 邊——兩者皆非 100% 準）。不得在 README、PR 或驗收報告把不存在的 wiki 寫成現有入口。任何導覽產物與實作不一致時，一律以實作為準。
 
 ---
 
