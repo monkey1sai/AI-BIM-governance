@@ -198,6 +198,25 @@ describe("review session viewer leases", () => {
     expect(heartbeat.body.stage_match).toBe(true);
   });
 
+  it("does not treat different custom stage URLs as equivalent", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app, "stage://expected-model");
+    const lease = await claimPrimary(app, sessionId);
+
+    const heartbeat = await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/viewer-leases/${lease.lease_id}/heartbeat`)
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({
+        first_frame: true,
+        loaded_stage_url: "stage://wrong-model",
+        datachannel_ready: true,
+      });
+
+    expect(heartbeat.status).toBe(200);
+    expect(heartbeat.body.loaded_stage_url).toBe("stage://wrong-model");
+    expect(heartbeat.body.stage_match).toBe(false);
+  });
+
   it("rejects stage-binding when a lease token is present but not authorized", async () => {
     const app = makeApp();
     const sessionId = await createSession(app);

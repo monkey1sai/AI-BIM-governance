@@ -471,16 +471,16 @@ describe("edge console honesty smoke", () => {
     expect(minio).toContain("model.usdc");
   });
 
-  // ── P4 Review Room（G）v1：連到既有 viewer，不在 console 內嵌 3D，不動 App/Window ──
-  it("P4 Review Room 提供「在既有 viewer 開啟」連結且誠實標 3D 在既有 viewer", () => {
+  // ── P4 Review Room（G）：A1 handoff 的專用 3D session attach 畫面 ──
+  it("P4 Review Room 提供手動 attach 入口且誠實標 A1 不 claim viewer lease", () => {
     const html = renderToString(<ReviewRoomPage />);
-    expect(html).toContain("在既有 viewer 開啟");
-    // 真實 viewer 入口：coordinator /ui/open（server-side redirect，as-built）+ 本地 /?session=。
+    expect(html).toContain("Review Room 3D session attach");
+    expect(html).toContain("手動啟動 / attach Kit session");
+    // 真實 viewer 入口仍保留 coordinator /ui/open 旁路，但不代表自動 attach。
     expect(html).toContain("/ui/open");
-    expect(html).toContain("?session=");
-    // 誠實標示：3D viewport 在既有 viewer（非 console 殼層）；不動 App.tsx / Window.tsx。
-    expect(html).toContain("既有 viewer");
-    expect(html).toContain("不動 App.tsx / Window.tsx");
+    // 誠實標示：A1 不掛 viewer、不 claim lease；Review Room 才手動 attach。
+    expect(html).toContain("A1 不掛 viewer");
+    expect(html).toContain("not_started");
     // 工具列誠實 provenance：section / snapshot 待建（p15），不假裝已實作。
     expect(html).toContain("後端待建 · P1.5");
     expect(html).not.toContain("99.1%");
@@ -494,10 +494,10 @@ describe("edge console honesty smoke", () => {
     // invalid 連結須 aria-disabled 且移出 tab 序（tabindex=-1），不是只靠 pointerEvents 的假禁用。
     expect(html).toContain('aria-disabled="true"');
     expect(html).toContain('tabindex="-1"');
-    // finding 6：明確說明不符 viewer attach 格式 → coordinator /ui/open 會回 400（不發明 attach 預檢端點）。
-    // （初始空字串不顯示警示，僅在使用者輸入過才提示——這裡驗證頁面具備此誠實 wording 常量。）
+    // 初始空字串不自動 claim viewer lease，也不渲染 viewer host。
     const typed = renderToString(<ReviewRoomPage />);
-    expect(typed).toContain("不動 App.tsx / Window.tsx");
+    expect(typed).toContain("not_started");
+    expect(typed).not.toContain("review-room-viewer-host");
   });
 
   // ── PR #179 finding 2：COORD /health 探活結果（含 down）為真實觀測 → 標 asbuilt，非 demo ──
@@ -1928,7 +1928,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     container = document.createElement("div");
     document.body.appendChild(container);
     // B2 task4：A1 step② 治理檢核改走 for-session（run 鈕以 selectedSession gating、doRun 改打 createRuleRunForSession）。
-    // 提供 1 個 active session 讓 selectedSession 有值 → auto-PICK 推進 step + run 鈕 !selectedSession gating 通過 → for-session doRun。
+    // A1 3D 解耦後不再 auto-select 第一個 active session；互動測試必須透過 selectReviewSession() 明確選取。
     // 同步 mock elementMappingForSession：避免有 usd_prim_path:null 列的測試在 fake-timer 邊界內觸發真 mapping fetch 而 hang。
     // viewerOrigin 留空（browser_url_base:""）→ 不掛 EmbeddedViewer，斷言面不變；afterEach 的 vi.restoreAllMocks() 會還原。
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({
@@ -1958,10 +1958,22 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { el.click(); });
   };
 
+  const selectReviewSession = async (sessionId = "review_session_x") => {
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-session-select"]');
+    if (!sel || sel.value === sessionId) return;
+    await act(async () => {
+      sel.value = sessionId;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  };
+
   // A1 step① 改 MinIO 下拉後，a1-step-pick 在未選 key 時 disabled。pickModel 先在下拉選到 source_ifc
   // 物件（設 selectedKey）再點 pick，讓既有 doRun 測試能照常推進 step。fake timers 下先沖一拍 microtask，
   // 確保 getMinioObjects().then 已渲染 option，sel.value 才選得到。
   const pickModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+    await selectReviewSession();
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-minio-select"]')!;
     await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });

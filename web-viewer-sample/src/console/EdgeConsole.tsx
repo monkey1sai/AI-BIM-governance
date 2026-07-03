@@ -33,7 +33,7 @@ import { KitConsolePage } from "./KitConsolePage";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
 
 function usePageHash(): [string, (k: string) => void] {
-  const read = () => window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "") || "home";
+  const read = () => window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "").split("?")[0] || "home";
   const [page, setPage] = useState(read);
   useEffect(() => {
     const on = () => setPage(read());
