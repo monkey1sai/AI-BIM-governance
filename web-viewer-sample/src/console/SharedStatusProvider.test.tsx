@@ -165,4 +165,26 @@ describe("SharedStatusProvider", () => {
 
     expect(vi.getTimerCount()).toBe(timersBefore); // no orphan timer spawned → still a single poll loop
   });
+
+  it("revives the poll loop after a request wedges without ever settling — one hung poll must not kill polling forever (Important #1, §5.1)", async () => {
+    // jsonGet has no AbortController/timeout, so a wedged socket (connection accepted, no response, not
+    // refused) leaves `await coordinatorClient.runtimeStatus()` suspended forever. poll()'s finally — the
+    // ONLY place that schedules the next tick — then never runs, so the whole 5000ms auto-poll dies until a
+    // manual page reload, even after the backend fully recovers. The watchdog must detect the wedged poll,
+    // disown it, and start a fresh one so the loop self-heals instead of freezing on the first hang.
+    vi.useFakeTimers();
+    const hang = new Promise<RuntimeStatus>(() => {}); // never resolves, never rejects
+    const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValueOnce(rt(1)).mockReturnValue(hang);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+
+    root = createRoot(container);
+    await act(async () => { root!.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(statusSpy).toHaveBeenCalledTimes(1); // first poll succeeded; the next tick is scheduled
+
+    // Every poll from the 2nd on hangs forever. Advancing many intervals: a dead loop would freeze the spy
+    // at 2 calls (the success + the single wedged request); a self-healing loop keeps issuing fresh requests.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000 * 12); });
+    expect(statusSpy.mock.calls.length).toBeGreaterThan(2);
+  });
 });

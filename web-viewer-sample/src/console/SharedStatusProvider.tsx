@@ -18,8 +18,18 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
     // (spec §12: SharedStatusProvider builds a single poll loop — no duplicate /api/runtime/status calls).
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Liveness / self-heal: jsonGet has no AbortController/timeout, so a wedged socket (accepted, never
+    // answers, not refused) suspends the await below forever — poll()'s finally, the ONLY next-tick
+    // scheduler, then never runs and the whole loop dies until a manual reload, even after the backend
+    // recovers. The watchdog revives it. `pollGen` tags each poll so a revived-then-late-settling stale poll
+    // is disowned (gen mismatch → drop, no duplicate loop per §12); `inFlightSince` is when the current
+    // owner began its request (0 = between polls) so the watchdog tells a genuinely wedged poll from a
+    // healthy idle gap.
+    let pollGen = 0;
+    let inFlightSince = 0;
 
-    const poll = async () => {
+    const poll = async (gen: number) => {
+      inFlightSince = Date.now();
       try {
         const rt = await coordinatorClient.runtimeStatus();
         let conversionQueue: number | null = null;
@@ -35,7 +45,7 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
         } catch {
           conversionQueue = null; // records unavailable → 未取得, do not guess
         }
-        if (cancelled) return;
+        if (cancelled || gen !== pollGen) return; // cancelled OR disowned by a watchdog restart → drop
         const sessionsById: Record<string, SharedSessionEntry> = {};
         for (const s of rt.sessions.items) {
           sessionsById[s.session_id] = {
@@ -57,10 +67,15 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
           stale: false,
         });
       } catch {
-        if (cancelled) return;
+        if (cancelled || gen !== pollGen) return;
         setSnapshot((prev) => ({ ...prev, health: "unknown", stale: true }));
       } finally {
-        if (!cancelled) timer = setTimeout(() => { void poll(); }, pollMs);
+        // Only the current owner clears the in-flight marker and schedules the next tick. A disowned stale
+        // poll must touch neither — else it would clobber the live poll's marker or spawn an orphan loop.
+        if (gen === pollGen) {
+          inFlightSince = 0;
+          if (!cancelled) timer = setTimeout(() => { void poll(gen); }, pollMs);
+        }
       }
     };
 
@@ -82,9 +97,19 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
         if (!Number.isFinite(lastOk)) return prev; // no successful poll yet → nothing to age out
         return Date.now() - lastOk > 2 * pollMs ? { ...prev, health: "unknown", stale: true } : prev;
       });
+      // Liveness backstop: if the owning poll has been awaiting its request for longer than 2× the interval
+      // it is wedged (a healthy coordinator answers in ms, not seconds). Disown it (bump pollGen so its
+      // eventual late settle is dropped) and start a fresh poll, so one hung request can no longer
+      // permanently kill the loop — polling self-heals the moment the backend recovers.
+      if (inFlightSince !== 0 && Date.now() - inFlightSince > 2 * pollMs) {
+        pollGen += 1;
+        inFlightSince = 0;
+        void poll(pollGen);
+      }
     }, pollMs);
 
-    void poll();
+    pollGen = 1;
+    void poll(pollGen);
     return () => { cancelled = true; if (timer) clearTimeout(timer); clearInterval(watchdog); };
   }, [pollMs, value]);
 

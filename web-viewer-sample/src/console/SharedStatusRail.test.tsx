@@ -44,6 +44,15 @@ describe("SharedStatusRail honesty rendering", () => {
     expect(h?.textContent).not.toContain("ok");
   });
 
+  it("shows degraded verbatim (not routed through t(), not merged into unknown) when health is degraded", () => {
+    // The middle branch of healthLabel (§5.3/§5.4): degraded is a real, distinct backend state — it must
+    // render its own literal + health-degraded class, never the translated unknown label nor an ok light.
+    renderRail(container, { ...base, health: "degraded" });
+    const h = container.querySelector('[data-testid="rail-health-value"]');
+    expect(h?.className).toContain("health-degraded");
+    expect(h?.textContent).toBe("degraded");
+  });
+
   it("GPU metric navigates to #instances via handoff", () => {
     renderRail(container, base);
     const btn = container.querySelector('[data-testid="rail-gpu"]') as HTMLButtonElement;
