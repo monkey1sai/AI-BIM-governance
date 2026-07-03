@@ -35,6 +35,7 @@ Copied verbatim from the spec's Non-Negotiables (§3) and Implementation Scope (
 - `useSharedStatus.ts` — `SharedSessionEntry`, `SharedStatusSnapshot`, `EMPTY_SHARED_STATUS`, `SharedStatusContext`, `useSharedStatus()`.
 - `SharedStatusProvider.tsx` — top-level single 5000ms poll of `runtimeStatus()` (+ `getConversionRecords()` for queue depth); provides the snapshot via Context. Accepts an optional `value` prop for test injection (skips polling).
 - `SharedStatusRail.tsx` — the visible rail; reads `useSharedStatus()`; renders Active sessions / GPU / Health / Conversion queue / Updated; `null`→"未取得", `stale`→dim.
+- `incomingHandoff.tsx` — receiver half of the handoff contract (spec §4.2): `useIncomingHandoff(selfAxis, verify, hash?)` + `IncomingHandoffBanner`. Each receiving page (M/A1/CV/SS/KG) re-verifies the incoming id against data it already fetched and renders an honest verified / not-found banner (no silent fallback). See Task 14.
 
 **Modified (frontend only):**
 - `coordinatorClient.ts` — add `getConversionsHistory()` thin wrapper on existing `GET /api/dev/conversions` (`app.ts:2330`, unchanged backend). No other method changed.
@@ -56,7 +57,7 @@ Copied verbatim from the spec's Non-Negotiables (§3) and Implementation Scope (
 - Test: `web-viewer-sample/src/console/handoff.test.ts`
 
 **Interfaces:**
-- Produces (relied on by Tasks 4–14):
+- Produces (relied on by Tasks 4–15):
   - `type AxisKey = "a1" | "conv" | "sessions" | "instances" | "minio" | "intake" | "runtime"`
   - `interface CrossAxisHandoff { source: AxisKey; session?: string; rule_run_id?: string; ifc_guid?: string; usd_prim_path?: string; rule_code?: string; job_id?: string; conversion_id?: string; minio_key?: string; prefix?: string }`
   - `function isAxisKey(v: string): v is AxisKey`
@@ -771,12 +772,12 @@ git commit -m "feat(console): mount SharedStatusProvider + rail at EdgeConsole t
 ## Task 6: A1 axis cross-link chips (→ #minio, → #sessions)
 
 **Files:**
-- Modify: `web-viewer-sample/src/console/pages.tsx` (function `A1GovernanceWorkbenchPage`; insert chips in the Deliverables Panel, right after the review-room button IIFE that ends at line 707, before the `actionErr` line 708)
+- Modify: `web-viewer-sample/src/console/pages.tsx` (function `A1GovernanceWorkbenchPage`; (a) insert chips in the Deliverables Panel, right after the review-room button IIFE that ends at line 707, before the `actionErr` line 708; (b) upgrade the existing `a1-conv-link` anchor at line 604 to carry `source=a1`/`job_id`)
 - Test: `web-viewer-sample/src/console/A1CrossLinks.test.tsx`
 
 **Interfaces:**
-- Consumes: `buildHandoff` (Task 1); existing A1 scope vars `selectedKey` (selected MinIO object key), `selectedSession` (selected review session id).
-- Produces: evidence-typed chips `a1-link-minio`, `a1-link-sessions` (disabled until the id exists).
+- Consumes: `buildHandoff` (Task 1); existing A1 scope vars `selectedKey` (selected MinIO object key), `selectedSession` (selected review session id), `convJobId` (conversion job id from line 603, may be `null`).
+- Produces: evidence-typed chips `a1-link-minio`, `a1-link-sessions` (disabled until the id exists); upgraded existing `a1-conv-link` (now `#conv?source=a1[&job_id=…]`, was a bare `#/conv`) — the §4.3 A1 → CV row is marked **既有連結，補帶 source/id**, so it must be updated, not left untouched.
 
 - [ ] **Step 1: Write the failing test (SSR smoke — deterministic, no mocks)**
 
@@ -789,11 +790,29 @@ import { A1GovernanceWorkbenchPage } from "./pages";
 describe("A1 cross-link chips", () => {
   it("renders #minio and #sessions chips, disabled before any selection (evidence-typed)", () => {
     const html = renderToString(<A1GovernanceWorkbenchPage />);
-    expect(html).toContain('data-testid="a1-link-minio"');
-    expect(html).toContain('data-testid="a1-link-sessions"');
+    // Parse the SSR string into a DOM so `disabled` is asserted per-button, INDEPENDENT of JSX
+    // prop-serialization order. `Btn` (components.tsx:113) renders `disabled` BEFORE `data-testid`
+    // and nothing follows `data-testid` except `>`, so a regex like
+    // /data-testid="a1-link-minio"[^>]*disabled/ can NEVER match the real markup even when the button
+    // is correctly disabled. Use a DOM query (order-independent, same approach as every other task).
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const minio = doc.querySelector('[data-testid="a1-link-minio"]');
+    const sessions = doc.querySelector('[data-testid="a1-link-sessions"]');
+    expect(minio).not.toBeNull();
+    expect(sessions).not.toBeNull();
     // No selection on server render → both chips must be disabled (no fake enabled navigation).
-    expect(html).toMatch(/data-testid="a1-link-minio"[^>]*disabled/);
-    expect(html).toMatch(/data-testid="a1-link-sessions"[^>]*disabled/);
+    expect((minio as HTMLButtonElement).disabled).toBe(true);
+    expect((sessions as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("upgrades the existing a1-conv-link to carry source=a1 (spec §4.3 A1 → CV 『既有連結，補帶 source/id』)", () => {
+    const html = renderToString(<A1GovernanceWorkbenchPage />);
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const convLink = doc.querySelector('[data-testid="a1-conv-link"]');
+    expect(convLink).not.toBeNull();
+    const href = convLink?.getAttribute("href") ?? "";
+    expect(href.startsWith("#conv")).toBe(true); // canonical hash (no slash), replacing the old #/conv
+    expect(href).toContain("source=a1");         // receiver (CV, Task 14) reads source; job_id appended when a conv job exists
   });
 });
 ```
@@ -836,10 +855,26 @@ In `A1GovernanceWorkbenchPage`, in the Deliverables `<Panel>`, immediately after
         </span>{" "}
 ```
 
+- [ ] **Step 4b: Upgrade the existing `a1-conv-link` to carry `source` (spec §4.3)**
+
+The §4.3 matrix marks the A1 → CV row **既有連結（`a1-conv-link`），補帶 source/id** — it must be upgraded, not left as a bare `#/conv`. Change the existing anchor at `pages.tsx:604` from:
+
+```tsx
+              <a className="ec-s" data-testid="a1-conv-link" href="#/conv">{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+```
+
+to build the hash via `buildHandoff` (carrying the in-scope `convJobId` from line 603 when present):
+
+```tsx
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("conv", { source: "a1", job_id: convJobId ?? undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+```
+
+`buildHandoff` omits `job_id` when it is empty/undefined, so with no conversion yet the href is `#conv?source=a1`; after a trigger it becomes `#conv?source=a1&job_id=<convJobId>`. The receiving CV page re-verifies this id (Task 14). Note the canonical hash drops the legacy slash (`#/conv` → `#conv`).
+
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `npm test -- A1CrossLinks.test.tsx`
-Expected: PASS. Also run `npm test -- A1ViewerEmbed` to confirm the A1 no-embed contract still holds.
+Expected: PASS (2 tests). Also run `npm test -- A1ViewerEmbed` to confirm the A1 no-embed contract still holds.
 
 - [ ] **Step 6: Commit**
 
@@ -900,8 +935,36 @@ describe("CV conversion history panel + cross-links", () => {
     const panel = container.querySelector('[data-testid="conv-history-panel"]');
     expect(panel?.textContent).toContain("未取得");
   });
+
+  // Steps 5 & 6 add three data-testids that are ~half this task's diff; assert them here so nothing in the
+  // task's commit is unverified (this task is committed as one unit — every added chip must be covered).
+  it("renders evidence-typed cross-link chips on ledger + ifc-ready rows and navigates with source=conv", async () => {
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [
+      { idempotency_key: "mw_led1", project_id: "270", project_display_name: "270", category: "建築", external_model_version_id: "v1", conversion_job_id: "cj_1", status: "ready", usdc_key: null, coverage_report: null, object_key: "270專案/建築/v07/模型.ifc", detected_at: "", updated_at: "" },
+    ] });
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [
+      { ifc_ready_job_id: "job_1", status: "ready", project_id: "270", external_model_version_id: "v1", download_status: "done", conversion_status: "ready", conversion_authority: "bim-streaming-server", queue_position: null, conversion_job_id: "cj_1", dispatch_error: null, review_session_id: "review_session_a", viewer_url: null, expected_stage_url: null, expected_mapping_url: null, created_at: "", updated_at: "" },
+    ] } as never);
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // ledger row → #minio chip (evidence-typed: only when object_key exists), keyed by idempotency_key
+    expect(container.querySelector('[data-testid="conv-ledger-minio-mw_led1"]')).not.toBeNull();
+    // ifc-ready row → #sessions / #review chips (only when review_session_id exists), keyed by ifc_ready_job_id
+    expect(container.querySelector('[data-testid="conv-job-session-job_1"]')).not.toBeNull();
+    const toReview = container.querySelector('[data-testid="conv-job-review-job_1"]') as HTMLButtonElement | null;
+    expect(toReview).not.toBeNull();
+    await act(async () => { toReview!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(window.location.hash).toContain("#review?source=conv");
+    expect(window.location.hash).toContain("session=review_session_a");
+  });
 });
 ```
+
+> **Task-decomposition note:** this task adds three things — a history panel (Steps 3–4) and two families of cross-link chips (Steps 5–6). They are committed together, so the test above covers **all three** (panel + the three chip testids), keeping the task independently verifiable. (An equally valid alternative the implementer may choose is to split into two tasks — "CV history panel" and "CV cross-link chips" — each with its own red→green; either way, no chip may land without an assertion.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -992,7 +1055,7 @@ In the ifc-ready job row, change the session cell (line 1208 `<td>{j.review_sess
 - [ ] **Step 7: Run test to verify it passes**
 
 Run: `npm test -- ConversionHistory.test.tsx`
-Expected: PASS (2 tests). Also `npm test -- ConversionSchedulingPage` to confirm no regression on existing CV tests.
+Expected: PASS (3 tests: history panel, honest-degrade, cross-link chips). Also `npm test -- ConversionSchedulingPage` to confirm no regression on existing CV tests.
 
 - [ ] **Step 8: Commit**
 
@@ -1489,7 +1552,7 @@ git commit -m "feat(runtime): add cross-page session-links panel in CoordinatorP
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
+import { ReviewSessionViewerPane, parseReviewRoomHandoff } from "./ReviewSessionViewerPane";
 import { SharedStatusProvider } from "./SharedStatusProvider";
 import { coordinatorClient } from "./coordinatorClient";
 import { type SharedStatusSnapshot } from "./useSharedStatus";
@@ -1514,6 +1577,18 @@ describe("Review Room session candidate seeding (additive, N3-safe)", () => {
     const input = container.querySelector('[data-testid="review-room-session-input"]');
     expect(input?.getAttribute("list")).toBe("review-room-session-candidates");
     expect(claimSpy).not.toHaveBeenCalled(); // N3: no auto-claim
+  });
+
+  // The new §4.3 chips send source=conv/sessions/intake/runtime to #review. Prove the EXISTING Review Room
+  // parser (parseReviewRoomHandoff, ReviewSessionViewerPane.tsx:31) accepts non-a1 sources — it reads the
+  // same snake_case URL keys and does not gate on source value — so these chips are actually consumed, not
+  // silently dropped. (Without this, "#review works" was only ever verified for source=a1.)
+  it("accepts non-a1 handoff sources so CV/SS/IN/RT → #review chips are actually consumed", () => {
+    for (const source of ["conv", "sessions", "intake", "runtime"]) {
+      const parsed = parseReviewRoomHandoff(`#review?source=${source}&session=review_session_a`);
+      expect(parsed.source).toBe(source);
+      expect(parsed.sessionId).toBe("review_session_a");
+    }
   });
 });
 ```
@@ -1562,13 +1637,182 @@ git commit -m "feat(review): seed session input candidates from shared status (N
 
 ---
 
-## Task 14: Browser E2E — cross-axis handoff walk-through
+## Task 14: Receiver-side handoff re-verification (parseHandoff on receiving pages)
+
+**Why this task exists:** the spec makes receiver-side re-verification a **hard** rule — §4.2「接收端重驗鐵律」(labelled 硬性), §12 Route/Handoff「§4.3 每條跳轉…接收端重驗 ID；查無 → not found + 手動重選，不靜默 fallback」, and §13 acceptance「接收端一律以 ID 重驗」. Tasks 6–12 build only the **sender** half (chips that navigate). The only page that currently reacts to an incoming handoff is Review Room — and only by luck, because its existing `parseReviewRoomHandoff` happens to read the same snake_case URL keys (Task 13 proves it also accepts non-a1 sources). Every other receiving page (M, A1, CV, SS, KG) would ignore the incoming id entirely — half a handoff contract. This task adds the receiver half: parse on mount, re-verify the carried id against data the page **already** fetched from its authoritative endpoint, and render an honest verified / not-found banner with **no silent fallback**. IN is a sender-only axis in the §4.3 matrix — do NOT add a receiver there.
+
+**Files:**
+- Create: `web-viewer-sample/src/console/incomingHandoff.tsx` — shared `useIncomingHandoff()` hook + `IncomingHandoffBanner` component. All the re-verify + honest-render logic lives here, so each page wiring is a one-liner and the core logic is tested once.
+- Create: `web-viewer-sample/src/console/incomingHandoff.test.tsx`
+- Modify: `web-viewer-sample/src/console/pages.tsx` — wire the banner into the 5 receiving pages: `MinioDataPage`, `A1GovernanceWorkbenchPage`, `ConversionSchedulingPage`, `SessionManagementPage`, `KitGpuFleetPage`.
+
+**Interfaces:**
+- Consumes: `parseHandoff` + `CrossAxisHandoff` + `AxisKey` (Task 1); each page's already-fetched authoritative list (no new fetch, no new endpoint — N2/N4).
+- Produces: `useIncomingHandoff(selfAxis, verify, hash?)` → `{ handoff, status }`, `status ∈ "none" | "verified" | "not_found"`; `IncomingHandoffBanner` rendering a testid with `data-handoff-status` / `data-handoff-source`; per-page banners `minio-incoming-handoff`, `a1-incoming-handoff`, `conv-incoming-handoff`, `sessions-incoming-handoff`, `kg-incoming-handoff`.
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// web-viewer-sample/src/console/incomingHandoff.test.tsx
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IncomingHandoffBanner, useIncomingHandoff } from "./incomingHandoff";
+import { MinioDataPage, SessionManagementPage } from "./pages";
+import { coordinatorClient, type MinioFolderListing, type RuntimeStatus, type RuntimeSessionSummary } from "./coordinatorClient";
+
+// ---- shared primitive: re-verify + honest render, no silent fallback (this fully covers the logic) ----
+describe("useIncomingHandoff re-verifies the carried id (spec §4.2)", () => {
+  function Probe({ hash, ok }: { hash: string; ok: boolean }) {
+    const inc = useIncomingHandoff("minio", () => ok, hash);
+    return <IncomingHandoffBanner testId="probe-banner" handoff={inc.handoff} status={inc.status} />;
+  }
+  let container: HTMLDivElement;
+  beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); });
+  afterEach(() => { document.body.removeChild(container); });
+
+  it("renders nothing when the hash carries no handoff for this axis", () => {
+    const root = createRoot(container);
+    act(() => { root.render(<Probe hash="#minio" ok={true} />); });
+    expect(container.querySelector('[data-testid="probe-banner"]')).toBeNull();
+  });
+  it("marks verified when the id is found in authoritative data", () => {
+    const root = createRoot(container);
+    act(() => { root.render(<Probe hash="#minio?source=a1&minio_key=270/x.ifc" ok={true} />); });
+    const b = container.querySelector('[data-testid="probe-banner"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("verified");
+    expect(b?.getAttribute("data-handoff-source")).toBe("a1");
+  });
+  it("marks not_found (honest, no silent fallback) when the id is absent", () => {
+    const root = createRoot(container);
+    act(() => { root.render(<Probe hash="#minio?source=a1&minio_key=missing.ifc" ok={false} />); });
+    const b = container.querySelector('[data-testid="probe-banner"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("not_found");
+    expect(b?.textContent).toContain("未"); // honest 未找到 / 未靜默 fallback wording
+  });
+});
+
+// ---- page wiring: each receiving page re-verifies against data it already fetched ----
+const CN_KEY = "270專案/建築/v07/模型.ifc";
+const folder: MinioFolderListing = { bucket: "bim-control", prefix: "", folders: [], count: 1, objects: [
+  { key: CN_KEY, etag: "e1", role: "source_ifc", project_id: "270", project_display_name: "270", category: "建築", version: "v07", idempotency_key: "mw_abc" },
+] };
+const mkSession = (over: Partial<RuntimeSessionSummary>): RuntimeSessionSummary => ({ session_id: "review_session_a", status: "active", project_id: "270", model_version_id: "v1", participant_count: 1, expected_stage_url: null, conversion_status: null, kit_instance_ids: [], created_at: "", updated_at: "", ...over });
+const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({ service: { status: "ok", name: "c", uptime_seconds: 1, generated_at: "" }, configured_endpoints: { coordinator: { host: "127.0.0.1", port: 8004, public_host: "127.0.0.1", public_base_url: "http://127.0.0.1:8004" }, viewer: { browser_url_base: "", handoff_path: "/" }, conversion_authority: { base_url: "", authority: "" }, kit: [] }, sessions: { count: items.length, active_count: items.length, participant_count: 0, items }, kit_instance_bindings: [], ifc_ready_jobs: { count: 0, recent: [] }, observations: { classification: "demo", note: "", web_plane: { coordinator_port: 8004, viewer_port: 5173 }, host_native_plane: { conversion_api_base: "", kit_signal_ports: [], kit_media_ports: [] } } });
+
+describe("receiving pages re-verify the incoming handoff id", () => {
+  let container: HTMLDivElement;
+  beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); });
+  afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = ""; });
+
+  it("M verifies a real incoming minio_key (found in the loaded folder listing)", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue(folder);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+  });
+
+  it("SS flags an incoming session that is not in runtime status as not_found (no silent fallback to act[0])", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([mkSession({ session_id: "review_session_a" })]));
+    window.location.hash = "#sessions?source=conv&session=review_session_ZZZ";
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="sessions-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npm test -- incomingHandoff.test.tsx`
+Expected: FAIL — cannot find `./incomingHandoff`.
+
+- [ ] **Step 3: Write the shared hook + banner**
+
+```tsx
+// web-viewer-sample/src/console/incomingHandoff.tsx
+import { parseHandoff, type AxisKey, type CrossAxisHandoff } from "./handoff";
+import { t } from "./i18n";
+
+export type HandoffVerifyStatus = "none" | "verified" | "not_found";
+
+// Receiver-side re-verification (spec §4.2「接收端重驗鐵律」): read the incoming handoff for THIS axis and
+// re-check the carried id against data the page already fetched from its authoritative endpoint. The verify
+// predicate must query already-in-memory authoritative data only — no new fetch, no new endpoint (N2/N4).
+// Never silently fall back to an unrelated record; surface an honest not_found and let the user reselect.
+export function useIncomingHandoff(
+  selfAxis: AxisKey,
+  verify: (h: CrossAxisHandoff) => boolean,
+  hash: string = typeof window !== "undefined" ? window.location.hash : "",
+): { handoff: CrossAxisHandoff | null; status: HandoffVerifyStatus } {
+  const handoff = parseHandoff(hash);
+  // only react to a handoff whose target route is THIS page (hash begins with #<selfAxis>)
+  if (!handoff || !hash.startsWith(`#${selfAxis}`)) return { handoff: null, status: "none" };
+  return { handoff, status: verify(handoff) ? "verified" : "not_found" };
+}
+
+function handoffIdText(h: CrossAxisHandoff): string {
+  return h.session ?? h.minio_key ?? h.job_id ?? h.conversion_id ?? h.rule_run_id ?? h.prefix ?? "";
+}
+
+export function IncomingHandoffBanner({ testId, handoff, status }: { testId: string; handoff: CrossAxisHandoff | null; status: HandoffVerifyStatus }) {
+  if (!handoff || status === "none") return null;
+  const id = handoffIdText(handoff);
+  return (
+    <div className={`ec-note ${status === "not_found" ? "ec-warn-note" : ""}`} data-testid={testId} data-handoff-status={status} data-handoff-source={handoff.source}>
+      {status === "verified"
+        ? t(`已接收來自 ${handoff.source} 的 ${id}（已向權威端點重驗）`, `Received ${id} from ${handoff.source} (re-verified against the authoritative endpoint)`)
+        : t(`來自 ${handoff.source} 的 ${id} 在權威資料中查無，請手動重選（未靜默 fallback）`, `${id} from ${handoff.source} was not found in authoritative data; please reselect (no silent fallback)`)}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Wire the banner into each receiving page**
+
+Add `import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";` to `pages.tsx`. Each wiring is: call `useIncomingHandoff` with a verify predicate over the list the page **already** holds (bind to the real in-memory state var — the exact names are visible in each page's own task, Tasks 6–12), then render `<IncomingHandoffBanner>` near the top of that page's returned tree. Add **no** new fetch.
+
+- **M** (`MinioDataPage`, receives A1→M / CV→M) — verify `minio_key`/`prefix` against the loaded folder listing:
+```tsx
+  const incoming = useIncomingHandoff("minio", (h) => {
+    if (h.prefix) return true; // navigating to a prefix is a valid intent; the folder load re-verifies contents
+    return !!h.minio_key && (folder?.objects ?? []).some((o) => o.key === h.minio_key);
+  });
+  // …render near the top of the returned tree:
+  <IncomingHandoffBanner testId="minio-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
+```
+- **A1** (`A1GovernanceWorkbenchPage`, receives M→A1) — verify `minio_key` against the objects backing `a1-minio-select`; testId `a1-incoming-handoff`.
+- **CV** (`ConversionSchedulingPage`, receives A1→CV / M→CV / IN→CV) — verify `job_id` against the ifc-ready list, and `minio_key`/`conversion_id` against the ledger records (all already fetched); testId `conv-incoming-handoff`.
+- **SS** (`SessionManagementPage`, receives A1→SS / CV→SS / RT→SS) — verify `session` against the runtime-status items already fetched; testId `sessions-incoming-handoff`.
+- **KG** (`KitGpuFleetPage`, receives SS→KG / RT→KG) — verify `session` against `useSharedStatus().sessionsById`; testId `kg-incoming-handoff`.
+
+All five reuse the identical shared component; only the axis, verify predicate, and testId differ. Because 100% of the branch/render logic lives in `useIncomingHandoff`/`IncomingHandoffBanner` (fully covered by Step 1's first describe block), the per-page wiring is a one-liner — Step 1's page-integration block asserts M (verified) and SS (not_found) end-to-end as representatives of the minio_key and session id families; A1/CV/KG follow the same pattern.
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `npm test -- incomingHandoff.test.tsx`
+Expected: PASS. Then confirm no regression on the receiving pages' own suites: `npm test -- MinioCrossLinks SessionCrossLinks ConversionHistory A1CrossLinks KitGpuFleetCrossLinks`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add web-viewer-sample/src/console/incomingHandoff.tsx web-viewer-sample/src/console/incomingHandoff.test.tsx web-viewer-sample/src/console/pages.tsx
+git commit -m "feat(console): receiver-side handoff re-verification on M/A1/CV/SS/KG (§4.2 honest not-found, no silent fallback)"
+```
+
+---
+
+## Task 15: Browser E2E — cross-axis handoff walk-through
 
 **Files:**
 - Create: `web-viewer-sample/e2e/cross-axis-handoff.spec.ts`
 
 **Interfaces:**
-- Consumes: the deployed console at `${COORDINATOR}/ui` (env `E2E_COORDINATOR_BASE_URL`, default `http://127.0.0.1:8004`), all chips/rail from Tasks 4–13.
+- Consumes: the deployed console at `${COORDINATOR}/ui` (env `E2E_COORDINATOR_BASE_URL`, default `http://127.0.0.1:8004`), all chips/rail/receiver banners from Tasks 4–14.
 - Produces: screenshots + trace under `artifacts/e2e/` (Playwright config already routes there); vertical-slice evidence for §8.
 
 **Prereq:** the console must be reachable (deployed test stack or a branch coordinator). Follow the repo's isolated-stack pattern if `#8004` is the deployment area. This is the user-facing evidence gate (N7).
@@ -1600,15 +1844,29 @@ test.describe("seven-axis cross-page harmony", () => {
     test.skip(hasObjects === 0, "no MinIO source_ifc objects in this environment (not observed)");
     await convChip.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
+    // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found
+    // banner (Task 14) — never silently ignore the id. Assert the banner surfaces one of the two states.
+    const banner = page.getByTestId("conv-incoming-handoff");
+    await expect(banner).toBeVisible({ timeout: 15_000 });
+    await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-conv.png", fullPage: true });
   });
 
   test("A1 has no inline WebRTC viewer; Review Room owns 3D and is not auto-claimed", async ({ page }) => {
     await page.goto(`${COORDINATOR}/ui#a1`);
-    await expect(page.getByTestId("a1-embedded-viewer")).toHaveCount(0);
+    // N3 gate WITH TEETH. `review-room-viewer-host` is the live-3D viewer host that ONLY Review Room
+    // renders (ReviewSessionViewerPane.tsx:313) — it must be absent on #a1, and it IS asserted present-in-
+    // context on #review below, so this is a real differential, not a tautology. (The previous assertion
+    // keyed on `a1-embedded-viewer`, a testid that exists nowhere in the repo, so toHaveCount(0) passed
+    // vacuously and guarded nothing.) The exhaustive "A1 never mounts EmbeddedViewer" guard is the existing
+    // unit test A1ViewerEmbed.test.tsx (mocks EmbeddedViewer, asserts renderCount === 0); this E2E is the
+    // browser-evidence complement (N7).
+    await expect(page.getByTestId("review-room-viewer-host")).toHaveCount(0);
     // A1 → sessions chip is evidence-typed: disabled until a session is selected.
     await expect(page.getByTestId("a1-link-sessions")).toBeDisabled();
     await page.goto(`${COORDINATOR}/ui#review?source=a1`);
+    // Review Room owns the flow: before manual start it shows kit-not-started (and would render
+    // review-room-viewer-host after start) — the positive half of the differential above.
     await expect(page.getByTestId("review-room-kit-not-started")).toBeVisible({ timeout: 20_000 });
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-review-not-started.png", fullPage: true });
   });
@@ -1649,24 +1907,24 @@ git commit -m "test(e2e): cross-axis handoff vertical-slice walk-through (§8, N
 ## Self-Review Checklist
 
 - [ ] Seven routes remain seven physical pages; no route table was created (A.1.1 only) — N1.
-- [ ] `handoff.ts` carries only non-secret IDs; no lease token / auth in any URL; receiving pages re-verify IDs — §4, N3.
+- [ ] `handoff.ts` carries only non-secret IDs; no lease token / auth in any URL; receiving pages (M/A1/CV/SS/KG) re-verify the incoming id against their authoritative data and show honest not-found with no silent fallback — §4.2/§12/§13, N3, Task 14.
 - [ ] Exactly one `SharedStatusProvider` at EdgeConsole top level polls `GET /api/runtime/status` once per cycle; rail visible on every page — §5, Task 5.
 - [ ] `null` GPU → "未取得"; `stale` → dim + "資料過期"; `health="unknown"` → grey (not ok/fail); `stage_matched` stays null — §5.4, Task 4.
 - [ ] `conversionQueue` counts only `status ∈ {detected,queued,converting}`, not total record count — §5.2, Task 3.
 - [ ] Every axis has ≥1 evidence-typed chip covering the §4.3 matrix; chips disabled/absent when the id is missing (A1, CV, SS, KG, M, IN, RT) — Tasks 6–12.
 - [ ] KG Node snapshot stays `prov="demo"`; the new aggregate row is clearly separate and `asbuilt`; no fake button/green — Task 9, N5.
 - [ ] A1 mounts no `EmbeddedViewer`; Review Room owns 3D/lease/highlight; session input candidates are additive only (N3) — Task 13.
-- [ ] Chinese `minio_key` round-trips exactly through encode → hash → decode (deterministic unit test in Task 1 + E2E in Task 14) — OQ4.
+- [ ] Chinese `minio_key` round-trips exactly through encode → hash → decode (deterministic unit test in Task 1 + E2E in Task 15) — OQ4.
 - [ ] Zero backend/route changes, zero frozen-file edits, zero new production dependency; diff is entirely under `web-viewer-sample/src/console/` and `web-viewer-sample/e2e/` — N2, N4, N10.
 - [ ] Signature consistency: `buildHandoff(target, payload)`, `parseHandoff(hash)`, `useSharedStatus()`, `SharedStatusSnapshot` fields, and `getConversionsHistory()` are named identically everywhere they appear.
-- [ ] §8 lifecycle has passing Playwright evidence (screenshot + trace under `artifacts/e2e/`); four evidence points stay distinct — N7, Task 14.
+- [ ] §8 lifecycle has passing Playwright evidence (screenshot + trace under `artifacts/e2e/`); four evidence points stay distinct — N7, Task 15.
 
 ## Open Questions (carried from spec §14 — defaults are executable; do not block)
 
 - **OQ1 doc-lag:** do NOT edit 互動實作規格 / 對齊矩陣; list the IX-A1-06/07/08 / IX-SS-05 / IX-CV-03 doc-lag in the PR description for the user to decide on a separate docs-only PR.
 - **OQ2 CV history route:** implemented as a Panel inside `#conv` (no new hash route) — Task 7.
 - **OQ3 GPU columns:** `gpuNodesTotal`/`gpuNodesBusy` stay `null` ("未取得"); never call kit-manager `:8010` directly.
-- **OQ4 Chinese key round-trip:** deterministic part is Task 1's round-trip test; the real-proxy round-trip is the Task 14 M→CV E2E (honest skip if MinIO empty).
+- **OQ4 Chinese key round-trip:** deterministic part is Task 1's round-trip test; the real-proxy round-trip is the Task 15 M→CV E2E (honest skip if MinIO empty).
 - **OQ5 KG capacity gate:** no pre-attach hard gate in scope; Review Room shows honest post-hoc blocked state (unchanged, N3).
 
 ## Execution Options
