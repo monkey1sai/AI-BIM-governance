@@ -35,8 +35,7 @@ jobs:
       - name: Install Python review dependencies
         shell: pwsh
         run: |
-          npm install -g @fission-ai/openspec gitnexus@1.6.5
-          gitnexus --version
+          npm install -g @fission-ai/openspec
           python -m pip install --upgrade pip
           # jsonschema is required by tests/contracts/structured-log/test_validate.py
           # and test_python_adapter.py per cross-service-structured-log-baseline §6.
@@ -51,16 +50,6 @@ jobs:
         shell: pwsh
         working-directory: web-viewer-sample
         run: npm install --no-audit --no-fund
-
-      - name: Prepare GitNexus index
-        shell: pwsh
-        run: |
-          gitnexus analyze --index-only --max-file-size 128 --name AI-BIM-governance .
-          $gitnexusAnalyzeExitCode = $LASTEXITCODE
-          if ($gitnexusAnalyzeExitCode -ne 0) {
-            Write-Warning "GitNexus analyze failed with exit code $gitnexusAnalyzeExitCode; the review agent will report GitNexus availability separately."
-          }
-          exit 0
 
       - name: Check PR body evidence
         shell: pwsh
@@ -92,7 +81,9 @@ jobs:
             '-HeadSha', '${{ github.event.pull_request.head.sha }}',
             '-PrNumber', '${{ github.event.pull_request.number }}',
             '-RunId', '${{ github.run_id }}',
-            '-OutputDir', 'artifacts/pr-review-agent'
+            '-OutputDir', 'artifacts/pr-review-agent',
+            '-SkipGitNexus',
+            '-AllowGitNexusUnavailable'
           )
           if ($env:PR_DRAFT -eq 'true') {
             $args += '-ReportOnly'

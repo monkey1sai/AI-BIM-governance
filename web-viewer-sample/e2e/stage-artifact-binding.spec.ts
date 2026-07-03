@@ -9,6 +9,8 @@ test.describe("CH-F：Stage / Artifact Binding（primary 交易式套用）", ()
     const label = page.getByTestId("harness-viewport-label");
     await expect(label).toBeVisible({ timeout: 25_000 });
     await expect(label).toContainText("stage:", { timeout: 15_000 });
+    await page.getByTestId("nav-issues").click();
+    await expect(page.getByTestId("nav-issues")).toHaveAttribute("aria-current", "page");
 
     // BindingComposer 列出 harness 的 3 個 ready USDC artifact。
     const table = page.getByTestId("binding-table");

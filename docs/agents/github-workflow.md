@@ -95,7 +95,7 @@ git fetch origin --prune
 
 ## Worktree 生命週期
 
-當工作需要與目前 checkout **並行存活**（例：現有功能開發中途要插做 hotfix；或要跑一套不動部署區的隔離 branch E2E stack）時用 `git worktree`，其餘情況（單線開發、且需要本機 gitignored fixtures 如 `storage/` 下的 IFC 檔）優先用 `git switch` 直接切換 branch。
+開發 / 修 PR / 建 feature 或 fix branch 時，預設使用 dedicated worktree，不在主 repo checkout 直接切工作分支；主 checkout 只作穩定入口、狀態檢查與使用者明確要求的文件/清理操作。若任務需要本機 gitignored fixtures（例如 `storage/` 下真實 IFC），優先在 dedicated worktree 建 junction / symlink 指向主工作區 artifact，而不是把 dirty files 帶進主 checkout branch switch。
 
 ### 位置與命名
 
@@ -103,10 +103,10 @@ git fetch origin --prune
 - **禁用位置**：`.claude/worktrees/` 已被 gitignore，且已有紀錄顯示會被並行 git automation 中途清空（見 `enterworktree-cleaned-by-concurrent-git.md`），`git clean -fdx` 也會把它整個掃掉；不得當作 worktree 的正式落腳點。
 - **命名**：branch 用 `feat|fix|chore|docs/<slug>`；worktree 目錄名對齊同一個 `<slug>`（不重複前綴）。
 
-### 何時用 worktree vs. 直接切 branch
+### 何時可直接切 branch
 
-- **用 worktree**：目前工作必須保持存活並行（例如：主功能還在 in-progress，需要同時開一個 hotfix branch）；或需要跑一套**隔離 branch E2E stack**（alt ports，如 coordinator `:8005`、governance `:49103`），且該 stack **不得**碰到 `D:\Users\deploy\AI-bim-geo` 部署區。
-- **用 branch-switch（同一 checkout）**：單線工作、且需要本機 gitignored fixtures（例如 `storage/` 下的真實 IFC 檔案）——全新 worktree 預設不含這些檔案，除非額外做 junction 連結；此時直接切 branch 比開 worktree 簡單。
+- **用 worktree**：修 PR、建立 feature/fix branch、目前工作必須保持存活並行、或需要跑隔離 branch E2E stack（alt ports，如 coordinator `:8005`、governance `:49103`）時一律使用。
+- **可直接切 branch 的例外**：只限已確認工作區乾淨、使用者明確要求在目前 checkout 操作，或 closeout 要把主 checkout 對齊 `origin/main`。若需要本機 gitignored fixtures，先用 worktree + junction / symlink；不可為了方便把主 checkout 切到 feature branch 並混入既有 dirty files。
 
 ### Closeout
 
@@ -137,4 +137,4 @@ main checkout 或 sibling worktree 開發 → branch → PR → CI 綠 → merge
 
 ## Per-item ship-cycle 自動化（ship-item workflow）
 
-每完成一個可驗證的 work item，agent SHALL 自動走 repo 級 ship-cycle（commit→push→PR→CI watch→buffered auto-merge→closeout），不應要求使用者靠記憶逐步手動執行。**權威程序與完整閘門以 `.claude/workflows/ship-item.md` 為準**（可執行版 `.claude/workflows/ship-item.js`，`Workflow({name:'ship-item', args:{branch, prNumber, userFacing}})`）；本節僅為指標，避免雙重規範漂移。摘要：官方 gate（main branch protection 的 **required checks 全綠**，現含 `pr-review-agent`、`agent-governance` 與各 build/test 共 11 項，以 GitHub 設定為準；CodeRabbit / Codex / Copilot 非 required check）+ ~90–120s reviewer buffer + 當前 head 無新 substantive P1/P2（含非 required reviewer 的發現）→ `gh pr merge --squash --delete-branch` + 上節 closeout 盤點。詳細誠實鐵律、production vs non-production 判斷層次、與既有 consent gate 的調和，見 `ship-item.md`。
+每完成一個可驗證的 work item，agent SHALL 自動走 repo 級 ship-cycle（commit→push→PR→CI watch→buffered auto-merge→closeout），不應要求使用者靠記憶逐步手動執行。**權威程序與完整閘門以 `.claude/workflows/ship-item.md` 為準**（可執行版 `.claude/workflows/ship-item.js`，`Workflow({name:'ship-item', args:{branch, prNumber, userFacing}})`）；本節僅為指標，避免雙重規範漂移。摘要：官方 gate（main branch protection 的 **required checks 全綠**，現含 `pr-review-agent`、`agent-governance` 與各 build/test 共 11 項，以 GitHub 設定為準；CodeRabbit / Codex / Copilot 非 required check）+ ~90–120s reviewer buffer + 只偵測 P0/P1/P2 等級 reviewer 關鍵字（`P0` 視同 P1-equivalent hold；含 Blocker / Critical / CHANGES_REQUESTED）+ AI 交叉對抗驗證決定是否 autofix + 同一 finding key 只允許一次 autofix 嘗試 + 當前 head 無新 substantive P0/P1/P2（含非 required reviewer 的發現）→ `gh pr merge --squash --delete-branch` + 上節 closeout 盤點。詳細誠實鐵律、production vs non-production 判斷層次、與既有 consent gate 的調和，見 `ship-item.md`。

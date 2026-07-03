@@ -8,7 +8,7 @@
 
 ## 步驟
 
-0. **checkout 防呆**：若指定 branch 且當前不在該 branch（`git rev-parse --abbrev-ref HEAD` 比對），先 `git checkout <branch>` 再動作，避免 commit/push 推錯 branch。
+0. **checkout / worktree 防呆**：若指定 branch 且當前不在該 branch（`git rev-parse --abbrev-ref HEAD` 比對），不得在主 repo checkout 直接 `git checkout <branch>` / `git switch <branch>`。先跑 `git worktree list`，使用既有 dedicated worktree 或建立 sibling worktree 後再 ship；若已在 dedicated worktree 內，才允許切到該 worktree 對應 branch，避免主 checkout dirty files 污染 PR。
 1. **commit 前 check**：`git diff --cached --check`，擋掉 trailing whitespace 與 EOF blank line；有就先修乾淨再 commit。
 2. **commit（條件式）**：若無新 staged 改動（work item 已 commit 在 branch）則**跳過**此步；否則訊息用繁體中文，結尾附：
 
@@ -35,7 +35,7 @@
    - 純 tooling / docs / spec（無 production code）→ 不適用上述兩表，但 SHALL 在 body 明確說明這點。
 6. **觀測 CI**：`gh pr checks <n> --watch`，等官方 checks 跑完。
 7. **reviewer buffer**：CI 變綠後 **再等 ~90–120s**。reviewer（pr-review-agent / CodeRabbit / Codex / Copilot）常在 CI 變綠之後才貼出 inline P1/P2，太早查會漏掉。
-8. **查 reviewer 發現（三處來源，全部 `--paginate`）**：reviewer 的 substantive 發現不只在 inline diff comment 上，gate **三處都要查**，任一處有未解除的 substantive P1/P2 / Blocker 都要 hold：
+8. **查 reviewer P0/P1/P2 發現（三處來源，全部 `--paginate`）**：reviewer 的 substantive 發現不只在 inline diff comment 上，gate **三處都要查**。此步只偵測 **P0/P1/P2 等級關鍵字**（`P0`、`P1`、`P2`、`Blocker`、`Critical`、`High`、`CHANGES_REQUESTED`；`P0`/`Blocker`/`Critical` 視同 P1-equivalent hold，`High` 視同 P2），避免把 nit / low / medium / style-only 建議升級成自動修復輸入。任一處有未解除的 P0/P1/P2 finding 都要 hold：
 
    - **(a) inline diff comment**（`/pulls/<n>/comments`）：用 **`commit_id`**（該 comment **現所在**的 commit）篩當前 head——**不是** `original_commit_id`（comment **首次**留下的 commit；用它會漏掉留在當前 head 上的新 comment）；也**不要用 `group_by`**（未排序輸入不可靠）。
    - **(b) PR-level review**（`/pulls/<n>/reviews`）：review summary 與 `CHANGES_REQUESTED` 狀態（CodeRabbit / Codex / Copilot 的整體 verdict 常落在這裡，不是 inline）。
@@ -55,16 +55,19 @@
    ```
 
    inline comment 只看綁在 **當前 head commit** 上的；review / issue comment 因不綁 diff line，按**內容**判斷該發現是否已被後續 push 真正解決（見下方 carry-forward 原則），不可只因 commit_id 移出當前 head 就當已解決。
-9. **跨 push carry-forward 未解除的 substantive 發現**：gate **不可**只看「當前 head 是否還有新 comment」就放行。reviewer 在舊 head 提出的 substantive P1/P2，若 agent push 了新 head 但**並未真正修復**（reviewer 未重貼確認、或只是被 force-push / rebase 把 comment 的 `commit_id` 推離當前 head），該發現**仍視為未解除**。實作上：
+   對每個 P0/P1/P2 finding，agent SHALL 建立穩定 key：`source + file/path + line/anchor + normalized finding text`。這個 key 是後續 carry-forward 與「同一處不重複 autofix」的判斷依據。
+9. **跨 push carry-forward 未解除的 substantive 發現**：gate **不可**只看「當前 head 是否還有新 comment」就放行。reviewer 在舊 head 提出的 substantive P0/P1/P2，若 agent push 了新 head 但**並未真正修復**（reviewer 未重貼確認、或只是被 force-push / rebase 把 comment 的 `commit_id` 推離當前 head），該發現**仍視為未解除**。實作上：
    - agent SHALL 自行維護一份「**已知未解除的 substantive 發現**」清單（finding → 是否已實際修復）。
    - 每次 push 後**沿用**上一輪清單，逐項判斷是否確已修復（看對應 code 改了沒、reviewer 有無 resolve / 回覆 LGTM），而**不是**把清單清空重來。
+   - P0/P1/P2 finding 進入 autofix 前，agent MUST 啟動交叉對抗驗證：builder 先提出最小修法與驗證；verifier 反查 source of truth、blast radius、是否已修過同一 key、是否可能是假陽性或產品決策；coordinator 才裁定 `autofix` / `hold for user` / `reject as false positive`。
+   - 同一 finding key 在同一 PR 生命週期內最多只允許 **一次** autofix 嘗試；若同一處再被 reviewer 重貼或 autofix 後仍失敗，agent SHALL 停止第二次自動修補，改為 hold 並回報需要人工/產品裁決。
    - 只有清單中**每一項都確實修復**，且步驟 8 三處來源都無新增 substantive 發現，gate 才算這一軸通過。
    - 「當前 head 無新 comment」**不等於**「舊發現已解決」——comment 因 commit_id 移出當前 head 而被篩掉，**不可**據此放行。
 10. **GATE（merge 授權）**：兩條件 **同時** 成立才放行 merge——
    - 官方 checks 全綠：main branch protection 的 **全部 required checks**（現含 `pr-review-agent`、`agent-governance` 與各 build/test 共 11 項；以 GitHub 設定為準。CodeRabbit **非** required check，其發現走步驟 8 三處來源交叉查看）；
-   - 步驟 8 三處來源**無新增** substantive P1/P2 / Blocker，**且**步驟 9 的 carry-forward 清單**已全數解除**。
+   - 步驟 8 三處來源**無新增** substantive P0/P1/P2 / Blocker，**且**步驟 9 的 carry-forward 清單**已全數解除**。
    - 滿足 → `gh pr merge <n> --squash --delete-branch` → 接 **closeout**（見下方「closeout worktree 守衛」）：`git fetch origin --prune`、本地 `main` 用 `--ff-only` 對齊 `origin/main`（依 `github-workflow.md` 的 closeout 盤點規則）。
-11. **有新發現就修 → 重跑 buffer cycle**：當前 head 出現新的 substantive 發現（或 carry-forward 清單仍有未解項）時 → 修 → push → **每一次 push 都各自重跑一次 step 6–10 的 buffer cycle**（不是只跑第一輪）。新 push 會產生新 head，舊 inline comment 不再綁當前 head，但其代表的 substantive 發現**未修復前仍留在 carry-forward 清單**。
+11. **有新 P0/P1/P2 發現就驗證後修 → 重跑 buffer cycle**：當前 head 出現新的 P0/P1/P2 finding（或 carry-forward 清單仍有未解項）時 → 先做交叉對抗驗證 → 若裁定 autofix，做一次最小修補 → push → **每一次 push 都各自重跑一次 step 6–10 的 buffer cycle**（不是只跑第一輪）。新 push 會產生新 head，舊 inline comment 不再綁當前 head，但其代表的 substantive 發現**未修復前仍留在 carry-forward 清單**；同一 finding key 不得第二次自動修補。
 
 ## closeout worktree 守衛（SHALL NOT 移除主 checkout）
 
@@ -86,14 +89,14 @@ fi
 
 ## 誠實鐵律
 
-- 絕不 merge 過 production code 上的真 P1/P2。
+- 絕不 merge 過 production code 上的真 P0/P1/P2。
 - 絕不偽裝 CI 綠（不改 check 狀態、不假冒 evidence、未取得的不宣稱 pass）。
 
 ## 判斷層次（nuance）
 
-- **production code 的 P1/P2**：一律 hold，修到好才 merge，不放水。
+- **production code 的 P0/P1/P2**：一律 hold，修到好才 merge，不放水。
 - **非 production 產物**（evidence artifact、docs scaffolding 腳本等）上的 advisory robustness nit：在官方 gate 全綠時可做 judgment-merge，不為了一個非阻斷性的 nit 無限迴圈。
-- merge 授權 = 官方 gate（required checks 全綠 + head 無新 substantive P1/P2）；但 CodeRabbit / Codex / Copilot 這類非 required reviewer 的 inline comment 常抓到真 bug，**不可只看 check 狀態就 merge**，必須交叉看 inline 發現。
+- merge 授權 = 官方 gate（required checks 全綠 + head 無新 substantive P0/P1/P2）；但 CodeRabbit / Codex / Copilot 這類非 required reviewer 的 inline comment 常抓到真 bug，**不可只看 check 狀態就 merge**，必須交叉看 inline 發現。
 
 ## 與既有 consent gate 的調和
 

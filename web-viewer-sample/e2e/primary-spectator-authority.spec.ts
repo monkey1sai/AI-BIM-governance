@@ -6,6 +6,8 @@ test.describe("primary / spectator authority", () => {
   test("primary：binding-apply enabled，套用後出現 active binding revision", async ({ page }) => {
     await page.goto("/?harness=1");
     await expect(page.getByTestId("harness-viewport-label")).toContainText("stage:", { timeout: 25_000 });
+    await page.getByTestId("nav-issues").click();
+    await expect(page.getByTestId("nav-issues")).toHaveAttribute("aria-current", "page");
 
     const apply = page.getByTestId("binding-apply");
     await expect(apply).toBeEnabled();
@@ -19,6 +21,8 @@ test.describe("primary / spectator authority", () => {
 
   test("spectator：控制可見但 disabled + 誠實 readonly banner（不送 mutating）", async ({ page }) => {
     await page.goto("/?harness=1&streamRole=spectator");
+    await page.getByTestId("nav-issues").click();
+    await expect(page.getByTestId("nav-issues")).toHaveAttribute("aria-current", "page");
 
     // spectator overlay 仍渲染（沿用 primary 串流），但唯讀。誠實 reason banner 出現。
     await expect(page.getByTestId("gov-readonly-banner")).toBeVisible({ timeout: 25_000 });

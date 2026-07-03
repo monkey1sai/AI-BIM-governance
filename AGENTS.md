@@ -62,6 +62,7 @@
 ### 本機 agent 產物
 
 - 不在 `main` 上開發；plan / 設計文件預設繁體中文，API 路徑 / schema 欄位 / CLI flags / status enum / log / error / 外部產品名稱保留原文。
+- 開發 / 修 PR / 建 feature 或 fix branch 時，不得在主 repo checkout 直接 `git switch` / `git switch -c` 切工作分支；MUST 先 `git worktree list`，再建立或使用 dedicated worktree 進行該 branch 的開發，避免主工作區既有 dirty files 被跨 branch 帶走或污染 PR。主 repo checkout 預設只作穩定入口、狀態檢查與使用者明確要求的文件/清理操作。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 是本機 agent/tooling 產物，預設維持 ignored（含以 `skills` CLI 裝進 `.claude/skills/` 的技能）。
 - Repo-local `.codex/skills` SHALL 對齊 `.claude/skills` 作為本機 skill inventory（本機同步，非版控同步）；OpenSpec / opsx closed-loop skills 已退役，需求拆解與執行治理改由 Superpowers skills 負責。
 - `.claude/` 版控白名單以 root `.gitignore` 的 `!.claude/...` 例外清單為準（2026-07-02 治理審計起含 `skills/gitnexus/`、`skills/repo-health/`——CLAUDE.md MUST 規則引用的檔案必須入版控）；`.claude/skills/generated/` 與其餘未白名單技能不提交。`.codex/skills` 除既有 tracked 檔（`spec-to-done` adapter 等）外維持本機鏡像不入版控：`pr-review-agent` 對 `.codex/skills` 路徑的新增/修改一律 high blocker（`scripts/lib/pr-review-agent.ps1:343` hard-coded；連既有 tracked 的 `.codex/skills/spec-to-done/SKILL.md` 修改也會擋，屬已知張力，放寬須使用者拍板）。
@@ -165,7 +166,7 @@ Source of Truth 優先順序：
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AI-BIM-governance** (16063 symbols, 26312 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AI-BIM-governance** (16142 symbols, 26425 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

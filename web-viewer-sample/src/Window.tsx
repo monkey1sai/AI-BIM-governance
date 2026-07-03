@@ -17,9 +17,7 @@ import USDAsset from "./USDAsset";
 import USDStage from "./USDStage";
 import { headerHeight } from './App';
 import { fetchUSDAssets, type USDAsset as USDAssetType } from './assetsApi';
-import ArtifactPanel from "./components/ArtifactPanel";
 import DemoControlPanel from "./components/DemoControlPanel";
-import { computeFileReady, computeRuntimeReady, computeSemanticReady, triReadyLabel } from "./utils/triReady";
 import { isBlockedLifecycle, lifecycleStatusText, sameStreamEndpoint, sameStreamTransportEndpoint, selectSpectatorBinding, type StreamEndpoint } from "./utils/windowHelpers";
 // viewer-edge-bim-server-console:ReviewLauncher / PresencePanel 已刪(fast
 // MVP 不需多人協作 UI;spec REMOVED「Viewer separates runtime commands from
@@ -33,6 +31,7 @@ import { allowedCoordinatorOrigins, reviewEnv } from "./config/env";
 import { canHandleHighlight, failedElementsForEmbed, shouldAcceptParentMessage } from "./parentMessageGuard";
 import { harnessEnabled } from "./harness/harnessConfig";
 import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
+import { computeFileReady, computeRuntimeReady, computeSemanticReady } from "./utils/triReady";
 import type { DemoLogEntry } from "./types/demo";
 import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
@@ -2209,26 +2208,37 @@ export default class App extends React.Component<AppProps, AppState> {
         // viewer-edge-bim-server-console:DemoControlPanel 含 mapping verification +
         // Socket.IO log + issue 試標等 debug 區段,fast MVP 主流程不顯示。
         // 預設只有 `?debug=1` 才渲染(對齊 Inspector ④ 技術細節 spec scenario)。
+        const showDebugAssetPanel = this.state.showUI && isDebugQueryEnabled();
         const showDemoPanel = isDebugQueryEnabled()
             && reviewEnv.showDemoPanel
             && !reviewEnv.hasExplicitEmptySessionId;
-        const demoPanelRight = this.state.showUI ? sidebarWidth : 0;
-        const streamReservedWidth = this.state.showUI
-            ? sidebarWidth + (showDemoPanel ? demoPanelWidth : 0)
-            : (showDemoPanel ? demoPanelWidth : 0);
+        const demoPanelRight = showDebugAssetPanel ? sidebarWidth : 0;
+        const streamReservedWidth = (showDebugAssetPanel ? sidebarWidth : 0) + (showDemoPanel ? demoPanelWidth : 0);
         const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
+        const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
+        const liveFrameObserved = this._hasRemoteVideoFrame();
+        const triReady = {
+            file: computeFileReady(this.state.latestStreamConfig),
+            runtime: computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus),
+            semantic: computeSemanticReady(this.state.latestStreamConfig?.quality_metrics_summary),
+        };
+        const showUsdStageDock = this.state.showUI
+            && this.state.viewerTab === "model"
+            && (isDebugQueryEnabled() || this.state.usdPrims.length > 0);
         return (
             <div
                 style={{
                     position: 'absolute',
                     top: headerHeight,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
                     width: '100%',
-                    height: '100%'
                 }}
             >
                 <div style={{
                             position: 'absolute',
-                            height: `calc(100% - ${headerHeight}px)`,
+                            height: "100%",
                             width: `calc(100% - ${streamReservedWidth}px)`
                 }}>
                     
@@ -2259,36 +2269,6 @@ export default class App extends React.Component<AppProps, AppState> {
                         <div className="spinner-border" role="status" style={{ marginTop: 10, visibility: this.state.isLoading? 'visible': 'hidden' }} />
                     </div>
                 }
-
-                <div className={`stage-truth-panel stage-truth-panel--${this.state.stageLoadStatus}`}>
-                    {/* viewer-edge-bim-server-console:TopBar 顯示 project_id /
-                        external_model_version_id / review_session_id;欄位缺失顯示
-                        「未取得」placeholder,不偽宣告(spec scenario:TopBar surfaces
-                        project / version / session identity)。 */}
-                    <div className="stage-truth-panel__row" data-testid="edge-console-topbar">
-                        <strong>Edge BIM Data Server</strong>
-                        <span data-testid="topbar-project">project: {this.state.currentProjectId || "未取得"}</span>
-                        <span data-testid="topbar-version">version: {this.state.currentModelVersionId || "未取得"}</span>
-                        <span data-testid="topbar-session">session: {this.state.reviewSessionId || "未取得"}</span>
-                    </div>
-                    {/* viewer-edge-bim-server-console:三段 ready 取代單一 ready 字樣,
-                        避免使用者誤把 stage matched 等同於 IFC 語意正確。 */}
-                    <div className="stage-truth-panel__row" data-testid="tri-ready-badges">
-                        <span data-testid="tri-ready-file">File: <strong>{triReadyLabel(computeFileReady(this.state.latestStreamConfig))}</strong></span>
-                        <span data-testid="tri-ready-runtime">Runtime: <strong>{triReadyLabel(computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus))}</strong></span>
-                        <span data-testid="tri-ready-semantic">Semantic: <strong>{triReadyLabel(computeSemanticReady(this.state.latestStreamConfig?.quality_metrics_summary))}</strong></span>
-                    </div>
-                    <div className="stage-truth-panel__row">
-                        <strong>Stage truth</strong>
-                        <span>{this.state.stageLoadStatus}</span>
-                    </div>
-                    <div className="stage-truth-panel__line">expected: {this.state.expectedStageUrl || "not_set"}</div>
-                    <div className="stage-truth-panel__line">loaded: {this.state.loadedStageUrl || "not_observed"}</div>
-                    <div className="stage-truth-panel__line">WebRTC: {this.state.webrtcLifecycleStatus} · {streamEndpointLabel(this.state.activeStreamEndpoint)}</div>
-                    {this.state.stageLoadStatus === "disconnected" &&
-                        <button type="button" className="stage-truth-panel__button" onClick={() => this._reconnectStream()}>重新連線</button>
-                    }
-                </div>
 
                 {/* Streamed app */}
                 {shouldRenderAppStream &&
@@ -2323,7 +2303,7 @@ export default class App extends React.Component<AppProps, AppState> {
                             right: demoPanelRight,
                             top: 0,
                             width: demoPanelWidth,
-                            maxHeight: `calc(100% - ${headerHeight}px)`,
+                            maxHeight: "100%",
                             overflow: "auto",
                             zIndex: 5,
                         }}
@@ -2361,30 +2341,9 @@ export default class App extends React.Component<AppProps, AppState> {
 
                 {this.state.showUI &&
                 <>
-                    {/* viewer-edge-bim-server-console:Inspector ① 本機資料包(BindingPanel)。
-                        ReviewLauncher / PresencePanel 已刪;ArtifactPanel 保留作 binding 顯示。 */}
-                    <div
-                        style={{
-                            position: "absolute",
-                            right: sidebarWidth + (showDemoPanel ? demoPanelWidth : 0),
-                            top: 0,
-                            width: sidebarWidth,
-                            maxHeight: `calc(100% - ${headerHeight}px)`,
-                            overflow: "auto",
-                            zIndex: 3,
-                            boxShadow: "0 0 8px rgba(0,0,0,0.18)",
-                        }}
-                    >
-                        <ArtifactPanel
-                            width={sidebarWidth}
-                            artifacts={this.state.reviewArtifacts}
-                            artifactBindings={this.state.latestStreamConfig?.artifact_bindings || []}
-                        />
-                    </div>
-
                     {/* viewer-edge-bim-server-console:USDAsset / USDStage 是 debug 工具,
                         預設不渲染;`?debug=1` 才顯示作為 Inspector ④ 技術細節入口。 */}
-                    {isDebugQueryEnabled() && (
+                    {showDebugAssetPanel && (
                         <USDAsset
                             usdAssets={this.state.usdAssets}
                             selectedAssetUrl={this.state.selectedUSDAsset?.url}
@@ -2394,7 +2353,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     )}
                     {/* CH-B：USD/BIM 語意樹。有 usdPrims（stage 已載入）即顯示為可操作面板，
                         不再僅限 ?debug=1（USDAsset 下拉維持 debug 工具）。 */}
-                    {(isDebugQueryEnabled() || this.state.usdPrims.length > 0) && (
+                    {showUsdStageDock && (
                         <div
                             data-testid="usd-stage-left-dock"
                             style={{
@@ -2402,10 +2361,10 @@ export default class App extends React.Component<AppProps, AppState> {
                                 left: 0,
                                 top: headerHeight,
                                 width: sidebarWidth,
-                                // 明確高度（top..bottom）讓 dock 真正撐開；bottom 留白避開左下 stage-truth 面板（bottom:12, z:6）。
-                                bottom: 150,
+                                // 明確高度（top..bottom）讓 dock 真正撐開；底部只保留一般工具列安全距離。
+                                bottom: 12,
                                 overflow: "hidden",
-                                // 左側語意樹須在治理 overlay（z-index 20）與 stage-truth（z 6）之上才可點選操作（spec：左側 USD 樹）。
+                                // 左側語意樹須在治理 overlay（z-index 20）之上才可點選操作（spec：左側 USD 樹）。
                                 zIndex: 25,
                             }}
                         >
@@ -2427,17 +2386,20 @@ export default class App extends React.Component<AppProps, AppState> {
                     無真實 WebRTC 幀（harness 或尚未出幀）→ 中央資訊濃密 mock viewport（deterministic·no-GPU，非壞掉）；
                     CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後**不再卸載**，改以 liveMode 切左側語意側欄，與中央
                     <video> live 3D 並存（對齊 AI-BIM-Geo Viewer 範本：①③ 左欄 + ②④⑥ 隨點構件），GPU 出畫面時語意
-                    面板不消失。additive：不改 AppStream / GovernanceOverlay / stage-truth / spectator 既有機制；
+                    面板不消失。additive：不改 AppStream / spectator 既有機制；不回復 artifact/stage-truth 浮層；
                     問題分頁仍 viewerTab!=="model" 不掛載（不擾全幅治理）。 */}
                 {this.state.viewerTab === "model"
-                    && (harnessEnabled() || (Boolean(this.state.reviewSessionId) && Boolean(this.state.expectedStageUrl)))
+                    && (harnessEnabled() || Boolean(this.state.reviewSessionId))
                     && (
                     <MockViewport
-                        liveMode={this._hasRemoteVideoFrame()}
+                        liveMode={liveFrameObserved}
                         harness={harnessEnabled()}
                         stageUrl={this.state.expectedStageUrl}
                         loadedStageUrl={this.state.loadedStageUrl}
                         webrtcStatus={this.state.webrtcLifecycleStatus}
+                        streamRole={streamRole}
+                        lifecycleStatus={this.state.reviewLifecycleStatus}
+                        frameObserved={liveFrameObserved}
                         selectedGuid={this.state.govSelectedGuid ?? null}
                         bindings={this.state.latestStreamConfig?.artifact_bindings ?? []}
                         model={this.state.latestStreamConfig?.model ?? null}
@@ -2448,18 +2410,20 @@ export default class App extends React.Component<AppProps, AppState> {
                         isFake={this._mappingCache?.isFake}
                         mappingUrl={this.state.latestStreamConfig?.model?.mapping_url ?? null}
                         onSelectGuid={(g) => this.setState({ govSelectedGuid: g })}
-                        reservedRight={352}
-                        reservedLeft={this.state.showUI ? sidebarWidth : 0}
+                        onReconnect={() => this._reconnectStream()}
+                        reservedRight={0}
+                        reservedLeft={showUsdStageDock ? sidebarWidth : 0}
                         sessionId={this.state.reviewSessionId}
+                        triReady={triReady}
                     />
                 )}
 
-                {/* 統一治理控制台 MVP：A1–A10 治理 overlay 疊在 primary viewer live 3D 上（position:absolute,
-                    z-index:20，late sibling，不改既有 viewer / AppStream / DemoControlPanel / ArtifactPanel 子樹）。
-                    showStream=false 時不渲染（不擋 loading 畫面）。W5：coverage 來源改為
+                {/* 統一治理控制台 MVP：A1–A10 治理面板只在「問題 · 治理」分頁渲染，
+                    避免模型分頁被治理/成果檔 UI 壓住；不改 AppStream / backend / DataChannel command path。
+                    W5：coverage 來源改為
                     streamConfig.quality_metrics_summary.coverage_ratio（型別文件規定 viewer MUST NOT compute，
                     原樣呈現）；缺值時 ratio=null → gate 判 degraded（顯「coverage 未知」降級橫幅），不捏造 coverage%。 */}
-                {(this.state.showStream || (this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId))) && (() => {
+                {(this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId)) && (() => {
                     // T6：把 review session lifecycle 是否 active 納入 overlay 可操作性。active 狀態僅 active/created；
                     // queued/blocked/failed/closing/closed/dropped 一律視為非 active（治理動作唯讀，誠實表態）。
                     const lifecycle = this.state.reviewLifecycleStatus;
@@ -2469,7 +2433,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     // 問題分頁（有 session）：治理面板可操作（rule-run 經 for-session、issue/BCF 經 proxy，皆不需 live 3D）；
                     // 需 DataChannel 的 3D 高亮/binding 仍由各自 send-level dataChannelReady 守門誠實降級，不假裝成功。
                     const issuesTabReady = this.state.viewerTab === "issues" && Boolean(this.state.reviewSessionId);
-                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: harnessEnabled() || this._hasRemoteVideoFrame() || issuesTabReady, lifecycleActive });
+                    const inputs = deriveOverlayInputs({ spectator: isSpectatorStreamMode(), streamReady: harnessEnabled() || liveFrameObserved || issuesTabReady, lifecycleActive });
                     const ratio = this.state.latestStreamConfig?.quality_metrics_summary?.coverage_ratio ?? null;
                     // R6（誠實）：_mappingCache 為 null（尚未載入 / 未知）視為 fake → degraded，
                     // 不在 client 無法標示時仍顯示有把握的 coverage%（保守誠實）。

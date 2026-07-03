@@ -6,6 +6,7 @@ import { MappingTable } from "./MappingTable";
 import { IfcSemanticPanel } from "./IfcSemanticPanel";
 import { StructureStats } from "./StructureStats";
 import { coordinatorClient } from "../coordinatorClient";
+import type { TriReadyState } from "../../utils/triReady";
 
 export interface ArtifactBindingLite {
   artifact_id?: string | null;
@@ -35,15 +36,31 @@ export interface MockViewportProps {
   reservedRight?: number;
   reservedLeft?: number;
   sessionId?: string | null;
+  streamRole?: "primary" | "spectator";
+  lifecycleStatus?: string | null;
+  frameObserved?: boolean;
+  triReady?: { file: TriReadyState; runtime: TriReadyState; semantic: TriReadyState };
+  onReconnect?: () => void;
   // CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後仍掛載——改為左側語意側欄，與中央 live 3D <video> 並存
   // （對齊範本：①③ 左欄 + ②④⑥ 隨點構件），而非整片消失。誠實鐵律：liveMode 下 banner 標「live 3D 已出幀」，不再宣稱 no-GPU。
   liveMode?: boolean;
 }
 
 const DASH = "—";
+const viewerAxes = [
+  { code: "01", title: "點選", detail: "live prim / 對構表選取" },
+  { code: "02", title: "IFC 語意", detail: "Type / Name / GlobalId" },
+  { code: "03", title: "Pset/Qto", detail: "屬性與數量" },
+  { code: "04", title: "Spatial", detail: "樓層 / 空間關係" },
+  { code: "05", title: "GUID ⇔ USD", detail: "mapping 可追溯" },
+  { code: "06", title: "A1 疊加", detail: "overlay / highlight result" },
+  { code: "07", title: "反向定位", detail: "table/tree/list → 3D focus" },
+] as const;
+type ViewerAxisCode = typeof viewerAxes[number]["code"];
+type ViewerAxisTone = "observed" | "index" | "pending" | "blocked";
 
 export function MockViewport(props: MockViewportProps) {
-  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false } = props;
+  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false, streamRole = "primary", lifecycleStatus, frameObserved = false, triReady, onReconnect } = props;
   const layers = bindings.filter((b) => b.ready_status === "ready");
   // ④對構表資料源：經 coordinator :8004 element-mapping for-session proxy（CORS-safe + 守邊界，
   // 瀏覽器不直連 :49101 artifact server）。harness 無真實 coordinator session → null（誠實空狀態）。
@@ -59,6 +76,42 @@ export function MockViewport(props: MockViewportProps) {
     !liveMode && (reservedRight || reservedLeft)
       ? { paddingRight: reservedRight || undefined, paddingLeft: reservedLeft || undefined }
       : undefined;
+  const roleLabel = streamRole === "primary" ? "PRIMARY · control lane" : "SPECTATOR · view-only";
+  const streamEvidence = harness
+    ? "harness stream"
+    : frameObserved || liveMode
+      ? "first frame observed"
+      : "not_observed";
+  const canReconnect = Boolean(onReconnect) && ["stopped", "terminated", "failed"].includes(webrtcStatus ?? "");
+  const axisState = (code: ViewerAxisCode): { label: string; tone: ViewerAxisTone } => {
+    if (code === "01") {
+      return selectedGuid || selectedPrim
+        ? { label: "已選取", tone: "observed" }
+        : { label: "等待選取", tone: "pending" };
+    }
+    if (code === "05") {
+      return mappingSrc
+        ? { label: "proxy path set", tone: "index" }
+        : { label: "未取得", tone: "pending" };
+    }
+    if (code === "06") {
+      return selectedGuid || selectedPrim
+        ? { label: "A1 可高亮", tone: "observed" }
+        : props.sessionId
+          ? { label: "等待 A1 結果", tone: "pending" }
+          : { label: "等待 session", tone: "pending" };
+    }
+    if (code === "07") {
+      return selectedGuid || selectedPrim
+        ? { label: "可回焦 3D", tone: "observed" }
+        : mappingSrc
+          ? { label: "等待表列選取", tone: "index" }
+          : { label: "等待對構", tone: "pending" };
+    }
+    return props.sessionId
+      ? { label: "查詢入口", tone: "index" }
+      : { label: "等待 session", tone: "pending" };
+  };
   return (
     <div className={`gv-mock${liveMode ? " gv-mock--live" : ""}`} data-testid="mock-viewport" style={pad}>
       <div className="gv-mock__banner" data-testid="mock-viewport-banner">
@@ -78,6 +131,19 @@ export function MockViewport(props: MockViewportProps) {
       </div>
 
       {/* section nav 已上移至 viewer 層分頁列（Window.tsx），「問題」分頁隱 MockViewport 後仍可切回。 */}
+      <div className="gv-axis-rail" data-testid="viewer-seven-axis-rail" aria-label="AI-BIM Geo viewer seven-axis IA">
+        {viewerAxes.map((axis) => {
+          const state = axisState(axis.code);
+          return (
+            <div key={axis.code} className={`gv-axis gv-axis--${state.tone}`}>
+              <span className="gv-axis__code">{axis.code}</span>
+              <strong>{axis.title}</strong>
+              <span>{axis.detail}</span>
+              <em>{state.label}</em>
+            </div>
+          );
+        })}
+      </div>
       <div className="gv-mock__grid">
         <div className="gv-mock__col">
           {/* viewport 狀態 echo：證明互動通路暢通（選取/高亮會回饋到這） */}
@@ -96,6 +162,31 @@ export function MockViewport(props: MockViewportProps) {
                   <li key={b.artifact_id ?? i}><span className="gv-mono">#{b.load_order ?? i}</span> {b.display_name || b.artifact_id} <em>{b.source_ifc_filename || ""}</em></li>
                 ))}
               </ul>
+            )}
+          </section>
+
+          <section className="gv-card gv-session-card" data-testid="viewer-session-bridge">
+            <header className="gv-card__title" data-testid="edge-console-topbar">⑦ Session 連動 / Role</header>
+            <table className="gv-kv"><tbody>
+              <tr><td className="gv-kv__k">role</td><td className="gv-kv__v" data-testid="viewer-role">{roleLabel}</td></tr>
+              <tr><td className="gv-kv__k">project</td><td className="gv-kv__v gv-mono" data-testid="topbar-project">project: {props.projectId || "未取得"}</td></tr>
+              <tr><td className="gv-kv__k">version</td><td className="gv-kv__v gv-mono" data-testid="topbar-version">version: {props.modelVersionId || "未取得"}</td></tr>
+              <tr><td className="gv-kv__k">session</td><td className="gv-kv__v gv-mono" data-testid="topbar-session">session: {props.sessionId || "未取得"}</td></tr>
+              <tr><td className="gv-kv__k">lifecycle</td><td className="gv-kv__v">{lifecycleStatus || "unknown"}</td></tr>
+              <tr><td className="gv-kv__k">stream</td><td className="gv-kv__v">{streamEvidence}</td></tr>
+              <tr><td className="gv-kv__k">GPU rule</td><td className="gv-kv__v">{streamRole === "spectator" ? "shares primary stream" : "owns primary Kit stream"}</td></tr>
+              {triReady && (
+                <>
+                  <tr><td className="gv-kv__k">File</td><td className="gv-kv__v gv-mono" data-testid="topbar-file-ready">{triReady.file}</td></tr>
+                  <tr><td className="gv-kv__k">Runtime</td><td className="gv-kv__v gv-mono" data-testid="topbar-runtime-ready">{triReady.runtime}</td></tr>
+                  <tr><td className="gv-kv__k">Semantic</td><td className="gv-kv__v gv-mono" data-testid="topbar-semantic-ready">{triReady.semantic}</td></tr>
+                </>
+              )}
+            </tbody></table>
+            {canReconnect && (
+              <button className="gv-action" type="button" data-testid="viewer-reconnect-stream" onClick={onReconnect}>
+                重新連線 WebRTC
+              </button>
             )}
           </section>
 
