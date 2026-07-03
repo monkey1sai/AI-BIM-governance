@@ -40,6 +40,7 @@ describe("M .ifc cross-link chips with Chinese key round-trip", () => {
     const parsed = parseHandoff(window.location.hash);
     expect(parsed?.source).toBe("minio");
     expect(parsed?.minio_key).toBe(CN_KEY); // exact round-trip through encode → hash → decode
+    expect(window.location.hash.startsWith("#conv?")).toBe(true); // 目的地路由前綴（防 target 打錯字，與 #a1 測試對稱）
   });
 
   it("navigates to #a1 carrying the exact Chinese minio_key", async () => {
