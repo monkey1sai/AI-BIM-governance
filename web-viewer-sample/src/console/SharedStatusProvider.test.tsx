@@ -108,4 +108,50 @@ describe("SharedStatusProvider", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
     expect(captured?.stale).toBe(true);
   });
+
+  it("keeps conversionQueue null when the ledger window is truncated (count > items.length) — no under-report (§5.4)", async () => {
+    // 後端 GET /api/conversion/records 回 { count: 未截斷總筆數, items: slice(0,limit) }，limit 上限 100
+    // (app.ts parseListLimit)。當 ledger 總筆數 > 回傳窗時，佇列狀態 (detected/queued/converting) 的紀錄可能
+    // 落在截斷窗外——對截斷子集算數字會靜默低報真實佇列深度，操作員會把低估值當真 (違反誠實鐵律/§5.4)。
+    // 比照 pages.tsx ledgerChipStatus 的 recordsIncomplete 模式：截斷時退 null (未取得)，不臆測。
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rt(1));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 150, items: [
+      { idempotency_key: "k1", project_id: "270", project_display_name: "270", category: "c", external_model_version_id: "v", conversion_job_id: null, status: "queued", usdc_key: null, coverage_report: null, object_key: null, detected_at: "", updated_at: "" },
+    ] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(captured?.conversionQueue).toBeNull(); // 截斷窗 → 未取得，不用截斷子集算出被低估的數字
+    expect(captured?.activeSessions).toBe(1);     // runtimeStatus half still mapped
+    expect(captured?.health).toBe("ok");          // did not fall through to the outer catch
+  });
+
+  it("does not spawn an orphan poll loop when the effect re-runs while a poll is in-flight (single loop, §12)", async () => {
+    // spec §12: SharedStatusProvider 只建立「一條」輪詢。aliveRef 若是跨 effect 世代共用的 useRef，當 pollMs/value
+    // 在掛載中變動觸發 effect 重跑時，舊 effect 的 cleanup 撥 false、新 effect 立刻把「同一個」ref 撥回 true；此時
+    // 舊 effect 卡在 await 的 poll resume 後誤讀到 true，會 setSnapshot 並在 finally 重新 setTimeout 排下一輪——
+    // 這條孤兒鏈只存在舊 closure，新 cleanup 清不到，與正確迴圈並存重複打 API。effect-local `cancelled` 可杜絕。
+    vi.useFakeTimers();
+    let releaseFirst!: (v: RuntimeStatus) => void;
+    const firstHang = new Promise<RuntimeStatus>((res) => { releaseFirst = res; });
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockReturnValueOnce(firstHang).mockResolvedValue(rt(1));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+
+    const root = createRoot(container);
+    // gen-1: first poll is now suspended awaiting the hung runtimeStatus.
+    await act(async () => { root.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
+    // Dependency (pollMs) changes mid-flight → gen-1 cleanup runs, gen-2 effect starts a fresh loop.
+    await act(async () => { root.render(<SharedStatusProvider pollMs={2000}><Probe /></SharedStatusProvider>); });
+    await act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+
+    const timersBefore = vi.getTimerCount(); // gen-2's poll setTimeout + watchdog setInterval
+
+    // gen-1's hung poll settles AFTER its own cleanup already ran. A shared alive-ref (reset to true by
+    // gen-2) makes the stale poll believe it is still live and schedule an orphan setTimeout — a second,
+    // invisible loop gen-2's cleanup can never clear. An effect-local cancelled flag returns early instead.
+    await act(async () => { releaseFirst(rt(1)); for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+
+    expect(vi.getTimerCount()).toBe(timersBefore); // no orphan timer spawned → still a single poll loop
+  });
 });
