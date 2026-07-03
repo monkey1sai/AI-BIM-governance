@@ -3011,6 +3011,29 @@ export function CoordinatorPage() {
       </p>
       <ProvLegend />
       <CoordinatorGovernanceTabs rt={rt} busy={busy} err={err} onRefresh={load} />
+      <Panel title={t("跨頁 session 連結", "Cross-page session links")} sub={t("值班視圖：把 runtime session 帶到 Session 管理 / Review Room / Kit 機隊（同一份 runtime 真相）", "Duty view: take a runtime session to Session Management / Review Room / Kit Fleet (one runtime truth)")} prov="asbuilt">
+        <div data-testid="rt-crosslinks">
+          {(rt?.sessions.items ?? []).length === 0 ? (
+            <p className="ec-note">{t("目前 runtime status 無 session。", "Runtime status currently has no session.")}</p>
+          ) : (
+            <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>{t("跨頁", "Links")}</th></tr></thead>
+              <tbody>{(rt?.sessions.items ?? []).map((s) => (
+                <tr key={s.session_id}>
+                  <td>{s.session_id}</td><td>{s.status}</td>
+                  <td>
+                    <Btn data-testid={`rt-link-sessions-${s.session_id}`} caption={t("Session 管理", "Session Management")}
+                      onClick={() => { window.location.hash = buildHandoff("sessions", { source: "runtime", session: s.session_id }); }}>SS →</Btn>{" "}
+                    <Btn data-testid={`rt-link-review-${s.session_id}`} caption={t("在 Review Room 開此 session", "Open in Review Room")}
+                      onClick={() => { window.location.hash = buildHandoff("review", { source: "runtime", session: s.session_id }); }}>Review →</Btn>{" "}
+                    <Btn data-testid={`rt-link-instances-${s.session_id}`} caption={t("Kit / GPU 機隊", "Kit / GPU Fleet")}
+                      onClick={() => { window.location.hash = buildHandoff("instances", { source: "runtime", session: s.session_id }); }}>KG →</Btn>
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+          )}
+        </div>
+      </Panel>
     </>
   );
 }
