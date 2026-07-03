@@ -1501,7 +1501,11 @@ export function SessionManagementPage() {
 // 清楚分隔、標籤分明——demo 表維持 prov="demo" 不動，不假裝接真（N5）。GPU per-node 遙測仍未取得（OQ3）。
 export function KitGpuFleetPage() {
   const shared = useSharedStatus();
-  const liveIds = Object.keys(shared.sessionsById);
+  // sessionsById 依 spec §5.2 是全量表（不分狀態，供跨頁 ID 查找重用），且 coordinator 從不刪除 session
+  // （只 active→closing→closed）。此「即時 session 聚合（真實）」區塊只能把 status==='active' 當即時可點連結，
+  // 才與相鄰的「使用中 session 數」（activeSessions，亦只算 active）一致；否則會把 closed/closing 的過期
+  // session 假裝成真實可操作（違反 N5 誠實鐵律）。
+  const liveIds = Object.values(shared.sessionsById).filter((s) => s.status === "active").map((s) => s.session_id);
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>

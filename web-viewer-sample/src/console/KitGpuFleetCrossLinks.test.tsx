@@ -50,4 +50,30 @@ describe("KG real aggregate + demo separation", () => {
     expect(agg?.textContent).toContain("0");
     expect(container.querySelector('[data-testid^="kg-session-link-"]')).toBeNull();
   });
+
+  // 誠實鐵律 / N5：sessionsById 依 spec §5.2 是全量表（由 runtime/status items 映射，不分狀態），且
+  // coordinator 從不刪除 session（只 active→closing→closed，永遠保留）。故任何跑過並關閉過 session 的
+  // 環境，sessionsById 都含 closed。此表標題「即時 session 聚合（真實）」、prov="asbuilt"、且緊鄰只算
+  // active 的「使用中 session 數」；若把 closed session 當即時可點連結呈現＝把過期 session 假裝成真實可操作。
+  it("does not surface a lingering closed session as a live link (aggregate says 0)", () => {
+    const withClosed: SharedStatusSnapshot = { ...snap, activeSessions: 0, sessionsById: { review_session_old: { session_id: "review_session_old", status: "closed" } } };
+    const root = createRoot(container);
+    act(() => { root.render(<SharedStatusProvider value={withClosed}><KitGpuFleetPage /></SharedStatusProvider>); });
+    const agg = container.querySelector('[data-testid="kg-live-aggregate"]');
+    expect(agg?.textContent).toContain("0");
+    // closed session 不得渲染成即時連結，且整個「真實」聚合不得出現任何 kg-session-link 假活躍鈕
+    expect(container.querySelector('[data-testid="kg-session-link-review_session_old"]')).toBeNull();
+    expect(container.querySelector('[data-testid^="kg-session-link-"]')).toBeNull();
+    // 應顯誠實空狀態，而非假的即時連結
+    expect(container.textContent).toContain("目前無使用中 session");
+  });
+
+  // active + closed 混雜：只有 active 應成為即時連結，closed 不得混入「真實」聚合。
+  it("renders live links only for active sessions when active and closed coexist", () => {
+    const mixed: SharedStatusSnapshot = { ...snap, activeSessions: 1, sessionsById: { review_session_a: { session_id: "review_session_a", status: "active" }, review_session_old: { session_id: "review_session_old", status: "closed" } } };
+    const root = createRoot(container);
+    act(() => { root.render(<SharedStatusProvider value={mixed}><KitGpuFleetPage /></SharedStatusProvider>); });
+    expect(container.querySelector('[data-testid="kg-session-link-review_session_a"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="kg-session-link-review_session_old"]')).toBeNull();
+  });
 });
