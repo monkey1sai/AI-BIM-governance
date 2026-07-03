@@ -323,6 +323,16 @@ export interface SessionCloseResponse {
 // 而漂移；UI chip-patch 對 wire 的寬型別 status 做 runtime narrow 時以此為合法集合。
 export type ConversionLedgerStatus = "detected" | "queued" | "converting" | "ready" | "failed";
 
+// Conversion-service job history pass-through (GET /api/dev/conversions → proxied to conversion service
+// /api/conversions, bim-review-coordinator/src/app.ts:2330). Shape is a pass-through artifact from an
+// external service; type it loosely and render honestly. Backend is NOT modified (N2/N4).
+export interface DevConversionRecord {
+  conversion_job_id?: string;
+  status?: string;
+  created_at?: string;
+  [k: string]: unknown;
+}
+
 // Task 5 MinIO 閉環 Phase 1：GET /api/conversion/records 回應中的紀錄形狀。
 // 對齊後端 ConversionLedgerRecord（省略前端用不到的 bucket/correlation_id）。
 export interface ConversionRecord {
@@ -510,4 +520,8 @@ export const coordinatorClient = {
   // A1（B2）：單一 ifc-ready job 輪詢（讀 conversion_lifecycle_status）。
   getIfcReadyJob: (jobId: string) =>
     jsonGet<IfcReadyJobDetail>(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`),
+  // CV 轉檔歷史（純前端補洞）：讀既有 GET /api/dev/conversions（conversion service 側 job 歷史，
+  // 與 coordinator ledger getConversionRecords 不同源）。後端不改（N2/N4）。
+  getConversionsHistory: () =>
+    jsonGet<{ items: DevConversionRecord[]; count?: number }>("/api/dev/conversions"),
 };
