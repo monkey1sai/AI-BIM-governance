@@ -131,6 +131,18 @@
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   font-weight: 700; color: #e2e8f0; margin-bottom: 8px; font-size: 13px;
 }
+.gv-action {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid #4d6b00;
+  border-radius: 6px;
+  background: rgba(118, 185, 0, 0.12);
+  color: #e2e8f0;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+.gv-action:hover { background: rgba(118, 185, 0, 0.2); }
 .gv-badge { font-size: 11px; color: #94a3b8; border: 1px solid #2b3340; border-radius: 10px; padding: 1px 8px; }
 .gv-badge--fake { color: #fca5a5; border-color: #5b2a2a; background: rgba(239, 83, 80, 0.08); }
 

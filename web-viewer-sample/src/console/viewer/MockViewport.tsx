@@ -6,6 +6,7 @@ import { MappingTable } from "./MappingTable";
 import { IfcSemanticPanel } from "./IfcSemanticPanel";
 import { StructureStats } from "./StructureStats";
 import { coordinatorClient } from "../coordinatorClient";
+import type { TriReadyState } from "../../utils/triReady";
 
 export interface ArtifactBindingLite {
   artifact_id?: string | null;
@@ -38,6 +39,8 @@ export interface MockViewportProps {
   streamRole?: "primary" | "spectator";
   lifecycleStatus?: string | null;
   frameObserved?: boolean;
+  triReady?: { file: TriReadyState; runtime: TriReadyState; semantic: TriReadyState };
+  onReconnect?: () => void;
   // CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後仍掛載——改為左側語意側欄，與中央 live 3D <video> 並存
   // （對齊範本：①③ 左欄 + ②④⑥ 隨點構件），而非整片消失。誠實鐵律：liveMode 下 banner 標「live 3D 已出幀」，不再宣稱 no-GPU。
   liveMode?: boolean;
@@ -50,14 +53,14 @@ const viewerAxes = [
   { code: "03", title: "Pset/Qto", detail: "屬性與數量" },
   { code: "04", title: "Spatial", detail: "樓層 / 空間關係" },
   { code: "05", title: "GUID ⇔ USD", detail: "mapping 可追溯" },
-  { code: "06", title: "Role", detail: "primary / spectator" },
-  { code: "07", title: "Session", detail: "跨頁 handoff / role" },
+  { code: "06", title: "A1 疊加", detail: "overlay / highlight result" },
+  { code: "07", title: "反向定位", detail: "table/tree/list → 3D focus" },
 ] as const;
 type ViewerAxisCode = typeof viewerAxes[number]["code"];
 type ViewerAxisTone = "observed" | "index" | "pending" | "blocked";
 
 export function MockViewport(props: MockViewportProps) {
-  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false, streamRole = "primary", lifecycleStatus, frameObserved = false } = props;
+  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false, streamRole = "primary", lifecycleStatus, frameObserved = false, triReady, onReconnect } = props;
   const layers = bindings.filter((b) => b.ready_status === "ready");
   // ④對構表資料源：經 coordinator :8004 element-mapping for-session proxy（CORS-safe + 守邊界，
   // 瀏覽器不直連 :49101 artifact server）。harness 無真實 coordinator session → null（誠實空狀態）。
@@ -79,6 +82,7 @@ export function MockViewport(props: MockViewportProps) {
     : frameObserved || liveMode
       ? "first frame observed"
       : "not_observed";
+  const canReconnect = Boolean(onReconnect) && ["stopped", "terminated", "failed"].includes(webrtcStatus ?? "");
   const axisState = (code: ViewerAxisCode): { label: string; tone: ViewerAxisTone } => {
     if (code === "01") {
       return selectedGuid || selectedPrim
@@ -91,14 +95,18 @@ export function MockViewport(props: MockViewportProps) {
         : { label: "未取得", tone: "pending" };
     }
     if (code === "06") {
-      return streamRole === "spectator"
-        ? { label: "spectator 唯讀", tone: "blocked" }
-        : { label: "primary control", tone: "observed" };
+      return selectedGuid || selectedPrim
+        ? { label: "A1 可高亮", tone: "observed" }
+        : props.sessionId
+          ? { label: "等待 A1 結果", tone: "pending" }
+          : { label: "等待 session", tone: "pending" };
     }
     if (code === "07") {
-      return props.sessionId
-        ? { label: "session linked", tone: "observed" }
-        : { label: "未取得", tone: "pending" };
+      return selectedGuid || selectedPrim
+        ? { label: "可回焦 3D", tone: "observed" }
+        : mappingSrc
+          ? { label: "等待表列選取", tone: "index" }
+          : { label: "等待對構", tone: "pending" };
     }
     return props.sessionId
       ? { label: "查詢入口", tone: "index" }
@@ -167,7 +175,19 @@ export function MockViewport(props: MockViewportProps) {
               <tr><td className="gv-kv__k">lifecycle</td><td className="gv-kv__v">{lifecycleStatus || "unknown"}</td></tr>
               <tr><td className="gv-kv__k">stream</td><td className="gv-kv__v">{streamEvidence}</td></tr>
               <tr><td className="gv-kv__k">GPU rule</td><td className="gv-kv__v">{streamRole === "spectator" ? "shares primary stream" : "owns primary Kit stream"}</td></tr>
+              {triReady && (
+                <>
+                  <tr><td className="gv-kv__k">File</td><td className="gv-kv__v gv-mono" data-testid="topbar-file-ready">{triReady.file}</td></tr>
+                  <tr><td className="gv-kv__k">Runtime</td><td className="gv-kv__v gv-mono" data-testid="topbar-runtime-ready">{triReady.runtime}</td></tr>
+                  <tr><td className="gv-kv__k">Semantic</td><td className="gv-kv__v gv-mono" data-testid="topbar-semantic-ready">{triReady.semantic}</td></tr>
+                </>
+              )}
             </tbody></table>
+            {canReconnect && (
+              <button className="gv-action" type="button" data-testid="viewer-reconnect-stream" onClick={onReconnect}>
+                重新連線 WebRTC
+              </button>
+            )}
           </section>
 
           <ModelInfoCard

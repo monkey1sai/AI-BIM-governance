@@ -68,7 +68,11 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     await expect(bridge).toContainText("role");
     await expect(bridge).toContainText("session");
     await expect(bridge).toContainText("stream");
-    await expect(page.getByTestId("viewer-seven-axis-rail")).not.toContainText("A1 疊加");
+    await expect(bridge).toContainText("File");
+    await expect(bridge).toContainText("Runtime");
+    await expect(bridge).toContainText("Semantic");
+    await expect(page.getByTestId("viewer-seven-axis-rail")).toContainText("A1 疊加");
+    await expect(page.getByTestId("viewer-seven-axis-rail")).toContainText("反向定位");
     await expect(page.getByTestId("mock-stage")).not.toContainText("Stage truth");
     await expect(bridge).not.toContainText("Command evidence");
     await expect(bridge).not.toContainText("Review Room");

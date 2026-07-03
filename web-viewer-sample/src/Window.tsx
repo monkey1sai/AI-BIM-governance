@@ -31,6 +31,7 @@ import { allowedCoordinatorOrigins, reviewEnv } from "./config/env";
 import { canHandleHighlight, failedElementsForEmbed, shouldAcceptParentMessage } from "./parentMessageGuard";
 import { harnessEnabled } from "./harness/harnessConfig";
 import { HARNESS_STAGE_URL } from "./harness/fixtures/usdStageTree";
+import { computeFileReady, computeRuntimeReady, computeSemanticReady } from "./utils/triReady";
 import type { DemoLogEntry } from "./types/demo";
 import { mappingVerificationBlockReason, type ElementMappingDocument, type ElementMappingItem, type ElementMappingSummary } from "./types/mapping";
 import type { ArtifactBinding, ReviewArtifact } from "./types/artifacts";
@@ -252,6 +253,12 @@ function resolveInitialStreamEndpoint(props: AppProps): StreamEndpoint {
         mediaserver: getQueryParam("mediaServer", "mediaserver") || props.mediaserver || StreamConfig.local.server,
         mediaport: getQueryPort("mediaPort", "mediaport") ?? props.mediaport ?? StreamConfig.local.mediaPort ?? undefined,
     };
+}
+
+function streamEndpointLabel(endpoint: StreamEndpoint): string {
+    const kit = endpoint.kitInstanceId ? `${endpoint.kitInstanceId} ` : "";
+    const media = endpoint.mediaport !== undefined ? `/${endpoint.mediaport}` : "";
+    return `${kit}${endpoint.signalingserver}:${endpoint.signalingport}${media}`;
 }
 
 function makeRequestId(prefix: string): string {
@@ -2201,16 +2208,23 @@ export default class App extends React.Component<AppProps, AppState> {
         // viewer-edge-bim-server-console:DemoControlPanel 含 mapping verification +
         // Socket.IO log + issue 試標等 debug 區段,fast MVP 主流程不顯示。
         // 預設只有 `?debug=1` 才渲染(對齊 Inspector ④ 技術細節 spec scenario)。
+        const showDebugAssetPanel = this.state.showUI && isDebugQueryEnabled();
         const showDemoPanel = isDebugQueryEnabled()
             && reviewEnv.showDemoPanel
             && !reviewEnv.hasExplicitEmptySessionId;
-        const demoPanelRight = 0;
-        const streamReservedWidth = showDemoPanel ? demoPanelWidth : 0;
+        const demoPanelRight = showDebugAssetPanel ? sidebarWidth : 0;
+        const streamReservedWidth = (showDebugAssetPanel ? sidebarWidth : 0) + (showDemoPanel ? demoPanelWidth : 0);
         const shouldRenderAppStream = !reviewEnv.hasExplicitEmptySessionId && Boolean(this.state.reviewSessionId);
         const streamRole = isSpectatorStreamMode() ? "spectator" : "primary";
         const liveFrameObserved = this._hasRemoteVideoFrame();
-        const lifecycleActive = this.state.reviewLifecycleStatus === "active" || this.state.reviewLifecycleStatus === "created";
-        const showUsdStageDock = this.state.showUI && (isDebugQueryEnabled() || this.state.usdPrims.length > 0);
+        const triReady = {
+            file: computeFileReady(this.state.latestStreamConfig),
+            runtime: computeRuntimeReady(this.state.webrtcLifecycleStatus, this.state.stageLoadStatus),
+            semantic: computeSemanticReady(this.state.latestStreamConfig?.quality_metrics_summary),
+        };
+        const showUsdStageDock = this.state.showUI
+            && this.state.viewerTab === "model"
+            && (isDebugQueryEnabled() || this.state.usdPrims.length > 0);
         return (
             <div
                 style={{
@@ -2329,7 +2343,7 @@ export default class App extends React.Component<AppProps, AppState> {
                 <>
                     {/* viewer-edge-bim-server-console:USDAsset / USDStage 是 debug 工具,
                         預設不渲染;`?debug=1` 才顯示作為 Inspector ④ 技術細節入口。 */}
-                    {isDebugQueryEnabled() && (
+                    {showDebugAssetPanel && (
                         <USDAsset
                             usdAssets={this.state.usdAssets}
                             selectedAssetUrl={this.state.selectedUSDAsset?.url}
@@ -2375,7 +2389,7 @@ export default class App extends React.Component<AppProps, AppState> {
                     面板不消失。additive：不改 AppStream / spectator 既有機制；不回復 artifact/stage-truth 浮層；
                     問題分頁仍 viewerTab!=="model" 不掛載（不擾全幅治理）。 */}
                 {this.state.viewerTab === "model"
-                    && (harnessEnabled() || (Boolean(this.state.reviewSessionId) && Boolean(this.state.expectedStageUrl)))
+                    && (harnessEnabled() || Boolean(this.state.reviewSessionId))
                     && (
                     <MockViewport
                         liveMode={liveFrameObserved}
@@ -2396,9 +2410,11 @@ export default class App extends React.Component<AppProps, AppState> {
                         isFake={this._mappingCache?.isFake}
                         mappingUrl={this.state.latestStreamConfig?.model?.mapping_url ?? null}
                         onSelectGuid={(g) => this.setState({ govSelectedGuid: g })}
+                        onReconnect={() => this._reconnectStream()}
                         reservedRight={0}
                         reservedLeft={showUsdStageDock ? sidebarWidth : 0}
                         sessionId={this.state.reviewSessionId}
+                        triReady={triReady}
                     />
                 )}
 
