@@ -25,7 +25,14 @@ describe("IN job-row cross-link chips", () => {
     await act(async () => { conv.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(window.location.hash).toContain("#conv?source=intake");
     expect(window.location.hash).toContain("job_id=job_1");
-    expect(container.querySelector('[data-testid="intake-link-review-job_1"]')).not.toBeNull();
+    // #review chip: assert its click→hash too (not just DOM presence). Each click overwrites
+    // window.location.hash, so #conv is verified above first, then #review here — mirrors the sibling
+    // ConversionHistory.test.tsx pattern so the review onClick (session=…) can't silently regress.
+    const review = container.querySelector('[data-testid="intake-link-review-job_1"]') as HTMLButtonElement;
+    expect(review).not.toBeNull();
+    await act(async () => { review.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(window.location.hash).toContain("#review?source=intake");
+    expect(window.location.hash).toContain("session=review_session_a");
   });
 
   it("omits the #review chip when the job has no review_session_id (no fake nav)", async () => {
