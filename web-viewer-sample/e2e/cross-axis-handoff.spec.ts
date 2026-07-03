@@ -19,12 +19,19 @@ test.describe("seven-axis cross-page harmony", () => {
     const convChip = page.locator('[data-testid^="minio-link-conv-"]').first();
     const hasObjects = await convChip.count();
     test.skip(hasObjects === 0, "no MinIO source_ifc objects in this environment (not observed)");
+    // Arm the CV ledger-fetch wait BEFORE the click so the response can't fire before we listen. CV
+    // re-verifies minio_key against `records`, which is [] until GET /api/conversion/records lands — and
+    // unlike A1/SS/KG/M, CV still shows the known truncation→not_found load flash (parent 47f9975 left CV
+    // as-is). Reading data-handoff-status before records settle could latch onto that transient not_found;
+    // gate the assertion on the response so it reads CV's terminal verdict, not a pre-load flash.
+    const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records"), { timeout: 15_000 });
     await convChip.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
     // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found
     // banner (Task 14) — never silently ignore the id. Assert the banner surfaces one of the two states.
     const banner = page.getByTestId("conv-incoming-handoff");
     await expect(banner).toBeVisible({ timeout: 15_000 });
+    await recordsSettled;
     await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-conv.png", fullPage: true });
   });
@@ -62,16 +69,36 @@ test.describe("seven-axis cross-page harmony", () => {
 
   // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). Each infra-heavy leg
   // uses an honest test.skip (same pattern as the isolated tests above): we never fake a conversion, an A1
-  // rule-run failure, or a live Kit session. This is the fix for "Task 15 never exercises the §8 walkthrough".
+  // rule-run failure, or a live Kit session. This adds the §8 walk-through *spec* that Task 15 was missing —
+  // but read the coverage & honesty note before treating it as evidence that the deep flow itself was run.
+  //
+  // §8 COVERAGE & HONESTY NOTE (誠實鐵律 — do not oversell):
+  // In a fixture-less environment (today's CI, and every run recorded for this commit) ONLY two things run to
+  // completion end-to-end: the shared-rail axis sweep (test 1) and the Review-Room "not started" boundary
+  // (test 3). Every deep §8 leg below is gated behind real infra and honestly test.skips when it is absent:
+  //   • M→CV / IN→CV receiver verdict          → needs a real MinIO source_ifc object (+ a CV ledger record).
+  //   • A1 rule-run failure → Review handoff    → needs a real IFC rule-run that actually produces failures.
+  //   • Review-Room four-evidence chain (first_frame/stage_matched/datachannel/highlight) → needs a manual
+  //     attach + a live Kit GPU session; this spec NEVER fakes them (N7: skip != pass).
+  // Consequence: as of this commit the deep §8 lifecycle path is `not observed` — it has NOT been exercised
+  // to completion by any real run (the cross-axis-s8-01/02/03 screenshots below are produced only on a
+  // fixture-backed run and are absent otherwise). Confidence in these legs is code-review + structural only,
+  // NOT browser-E2E evidence — do not mark the §8 lifecycle "verified in browser" on the strength of this file
+  // alone. To capture real deep-segment evidence, run this spec against a branch-isolated coordinator (:8005)
+  // seeded with a real MinIO source_ifc fixture (and a live Kit session for the Review-Room legs).
   test("§8 lifecycle walk-through: M → IN → CV → A1 → Review Room (deep Kit legs honest-skip) → back to A1 issue", async ({ page }) => {
     // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
     await page.goto(`${COORDINATOR}/ui#minio`);
     const mConv = page.locator('[data-testid^="minio-link-conv-"]').first();
     test.skip(await mConv.count() === 0, "no MinIO source_ifc object in this environment (not observed)");
+    // Same CV load-race guard as the isolated M→CV test above: arm the ledger-fetch wait before the click so
+    // the banner assertion reads CV's terminal verdict, not the transient pre-load not_found flash.
+    const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records"), { timeout: 15_000 });
     await mConv.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
     const convBanner = page.getByTestId("conv-incoming-handoff");
     await expect(convBanner).toBeVisible({ timeout: 15_000 });
+    await convRecordsSettled;
     await expect(convBanner).toHaveAttribute("data-handoff-status", /verified|not_found/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-conv.png", fullPage: true });
 
@@ -81,9 +108,14 @@ test.describe("seven-axis cross-page harmony", () => {
     await page.goto(`${COORDINATOR}/ui#intake`);
     const inConv = page.locator('[data-testid^="intake-link-conv-"]').first();
     if (await inConv.count() > 0) {
+      // Same CV load-race guard: gate the receiver verdict on the ledger fetch settling.
+      const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records"), { timeout: 15_000 });
       await inConv.click();
       await expect(page).toHaveURL(/#conv\?source=intake/, { timeout: 15_000 });
-      await expect(page.getByTestId("conv-incoming-handoff")).toHaveAttribute("data-handoff-status", /verified|not_found/);
+      const inBanner = page.getByTestId("conv-incoming-handoff");
+      await expect(inBanner).toBeVisible({ timeout: 15_000 });
+      await inRecordsSettled;
+      await expect(inBanner).toHaveAttribute("data-handoff-status", /verified|not_found/);
     }
 
     // [A1] source_selected → rule_run_ready → failures_ready → review_requested. Real failures need a real IFC
