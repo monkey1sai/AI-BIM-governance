@@ -27,7 +27,6 @@ export const initialA1State: A1State = {
 
 export type A1Event =
   | { type: "PICK_FILE"; ifcPath: string }
-  | { type: "PICK_SESSION" }
   | { type: "RUN" }
   | { type: "RUN_RETRY" }
   | { type: "RUN_PROGRESS"; run: RuleRunStatus }
@@ -42,15 +41,8 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
   switch (event.type) {
     case "PICK_FILE":
       return { ...initialA1State, step: event.ifcPath ? "picked" : "idle", ifcPath: event.ifcPath };
-    case "PICK_SESSION":
-      // for-session 檢核:操作員直接對既有 review session 檢核(未經 MinIO 選實體 IFC)。
-      // 推進步條到 picked 解鎖 run 鈕,但 ifcPath 保持空字串——不以 session id 借位汙染
-      // 「選定 IFC 模型路徑」這個欄位語意;run 改以 selectedSession 送伺服器(for-session)。
-      return { ...initialA1State, step: "picked" };
     case "RUN":
-      // 守門改看 step(非 idle 才前進):picked 可能來自 PICK_FILE(ifcPath 有值)或 PICK_SESSION
-      // (ifcPath 為空),故不可再用 !state.ifcPath 當「未選檔」判斷,否則 session-pick 後 RUN 會被誤擋。
-      if (state.step === "idle") return state;
+      if (state.step === "idle" || !state.ifcPath) return state;
       // 已在 running 時忽略再次 RUN(雙擊/誤觸):否則 run 被清成 null 但 step 仍 running,
       // 讓上一輪尚未結束的 poll callback 之 RUN_DONE/RUN_FAIL 通過守門寫入髒結果污染新 run。
       // 重跑語意(spec §2.1/§5)只允許從已完成步(picked/scored/issued/delivered)重觸發。
@@ -89,7 +81,7 @@ export function a1Reducer(state: A1State, event: A1Event): A1State {
 export type StepDot = "done" | "current" | "future";
 
 export function uiSteps(state: A1State): StepDot[] {
-  // 五個 UI 圓點:[上傳模型, 自動檢核, 結果記分板, 開 Issue, 匯出]。
+  // 五個 UI 圓點:[選檔, 自動檢核, 結果記分板, 開 Issue, 匯出]。
   // currentUi = 當前「綠圈」的點 index;其左側皆 done(綠勾)、右側皆 future(灰)。
   // 對齊 spec §2.1「已完成=綠勾、當前=綠圈」與 Scenario「上傳完成自動亮步驟2」:
   //   picked  → 模型已選定(第1點 done)、自動檢核為當前(第2點 current)        → currentUi=1
