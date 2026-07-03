@@ -36,11 +36,16 @@ test.describe("seven-axis cross-page harmony", () => {
     await convChip.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
     // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found
-    // banner (Task 14) — never silently ignore the id. Assert the banner surfaces one of the two states.
+    // banner (Task 14) — never silently ignore the id. Assert the banner surfaces one of the honest states.
+    // Accept `indeterminate` too (誠實鐵律): CV re-verifies against getConversionRecords(50); once the
+    // coordinator ledger holds >50 records and the incoming key falls outside that query window, the CV
+    // predicate (pages.tsx:908-922, recordsTruncated) honestly returns indeterminate instead of a false
+    // not_found — a correct third state (incomingHandoff.tsx:9,49), not an anomaly. Omitting it would turn
+    // this assertion into intermittent flake once the long-lived ledger crosses 50 rows.
     const banner = page.getByTestId("conv-incoming-handoff");
     await expect(banner).toBeVisible({ timeout: 15_000 });
     await recordsSettled;
-    await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found/);
+    await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-conv.png", fullPage: true });
   });
 
@@ -77,7 +82,7 @@ test.describe("seven-axis cross-page harmony", () => {
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-ss-to-review.png", fullPage: true });
   });
 
-  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). Each infra-heavy leg
+  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). Each deep leg
   // uses an honest test.skip (same pattern as the isolated tests above): we never fake a conversion, an A1
   // rule-run failure, or a live Kit session. This adds the §8 walk-through *spec* that Task 15 was missing —
   // but read the coverage & honesty note before treating it as evidence that the deep flow itself was run.
@@ -85,17 +90,26 @@ test.describe("seven-axis cross-page harmony", () => {
   // §8 COVERAGE & HONESTY NOTE (誠實鐵律 — do not oversell):
   // In a fixture-less environment (today's CI, and every run recorded for this commit) ONLY two things run to
   // completion end-to-end: the shared-rail axis sweep (test 1) and the Review-Room "not started" boundary
-  // (test 3). Every deep §8 leg below is gated behind real infra and honestly test.skips when it is absent:
-  //   • M→CV / IN→CV receiver verdict          → needs a real MinIO source_ifc object (+ a CV ledger record).
-  //   • A1 rule-run failure → Review handoff    → needs a real IFC rule-run that actually produces failures.
-  //   • Review-Room four-evidence chain (first_frame/stage_matched/datachannel/highlight) → needs a manual
-  //     attach + a live Kit GPU session; this spec NEVER fakes them (N7: skip != pass).
+  // (test 3). The deep §8 legs below fall into two honest buckets:
+  //   • Infra-gated — test.skip only because the real backend object is absent in this environment:
+  //       – M→CV / IN→CV receiver verdict  → needs a real MinIO source_ifc object (+ a CV ledger record).
+  //       – Review-Room four-evidence chain (first_frame/stage_matched/datachannel/highlight) → needs a manual
+  //         attach + a live Kit GPU session; this spec NEVER fakes them (N7: skip != pass).
+  //   • Structurally out-of-scope for THIS spec — skips regardless of environment:
+  //       – A1 rule-run failure → Review handoff  → the "開啟 Review Room（第一筆失敗）" CTA only enables after a
+  //         session is selected AND state.failed[0] exists (a1ReviewRoomHandoffReason, pages.tsx:256-262). This
+  //         walk-through never drives session-select + rule-run, and selectedSession (pages.tsx:306) + the
+  //         useReducer state (pages.tsx:283) are pure frontend that never restore from the backend — so this
+  //         leg 100% skips even with full infra. A TEST-SCOPE limit (kept out to avoid extra automation
+  //         fragility on the plan's last task), NOT a missing-fixture / infra limitation.
   // Consequence: as of this commit the deep §8 lifecycle path is `not observed` — it has NOT been exercised
   // to completion by any real run (the cross-axis-s8-01/02/03 screenshots below are produced only on a
   // fixture-backed run and are absent otherwise). Confidence in these legs is code-review + structural only,
   // NOT browser-E2E evidence — do not mark the §8 lifecycle "verified in browser" on the strength of this file
   // alone. To capture real deep-segment evidence, run this spec against a branch-isolated coordinator (:8005)
-  // seeded with a real MinIO source_ifc fixture (and a live Kit session for the Review-Room legs).
+  // seeded with a real MinIO source_ifc fixture (and a live Kit session for the Review-Room legs) — except the
+  // A1→Review leg, which additionally needs this spec extended to drive session-select + rule-run (see its
+  // structural note above); seeding infra alone will not make it run.
   test("§8 lifecycle walk-through: M → IN → CV → A1 → Review Room (deep Kit legs honest-skip) → back to A1 issue", async ({ page }) => {
     // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
     await page.goto(`${COORDINATOR}/ui#minio`);
@@ -113,7 +127,9 @@ test.describe("seven-axis cross-page harmony", () => {
     const convBanner = page.getByTestId("conv-incoming-handoff");
     await expect(convBanner).toBeVisible({ timeout: 15_000 });
     await convRecordsSettled;
-    await expect(convBanner).toHaveAttribute("data-handoff-status", /verified|not_found/);
+    // indeterminate is an honest third state too (see the isolated M→CV note above): pages.tsx:908-922 returns
+    // it via recordsTruncated once the ledger exceeds the 50-record window — accept it so this can't flake.
+    await expect(convBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-conv.png", fullPage: true });
 
     // [IN] ifc_ready_job_listed → #intake job row also chips into #conv (source=intake). Soft leg: exercise it
@@ -132,16 +148,22 @@ test.describe("seven-axis cross-page harmony", () => {
       const inBanner = page.getByTestId("conv-incoming-handoff");
       await expect(inBanner).toBeVisible({ timeout: 15_000 });
       await inRecordsSettled;
-      await expect(inBanner).toHaveAttribute("data-handoff-status", /verified|not_found/);
+      // indeterminate accepted here too (same honest third state; ledger >50 → recordsTruncated, pages.tsx:908-922).
+      await expect(inBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     }
 
-    // [A1] source_selected → rule_run_ready → failures_ready → review_requested. Real failures need a real IFC
-    // rule-run (infra-heavy) → honest skip when the "開啟 Review Room（第一筆失敗）" CTA is not enabled.
+    // [A1] source_selected → rule_run_ready → failures_ready → review_requested. The "開啟 Review Room（第一筆
+    // 失敗）" CTA is disabled until BOTH a session is selected AND state.failed[0] exists (a1ReviewRoomHandoffReason,
+    // pages.tsx:256-262). This walk-through never drives session selection nor a rule-run, and selectedSession
+    // (pages.tsx:306) + the useReducer state (pages.tsx:283) are pure frontend that never restore from the
+    // backend — so the CTA can NEVER enable here regardless of environment. Honest skip below is a TEST-SCOPE
+    // limit (this last additive task deliberately omits the session-select + rule-run driving steps to avoid
+    // extra automation fragility), NOT a missing-fixture / infra limitation.
     await page.goto(`${COORDINATOR}/ui#a1`);
     const openReview = page.getByTestId("a1-open-review-room");
     await expect(openReview).toBeVisible({ timeout: 20_000 });
     const canOpen = await openReview.isEnabled().catch(() => false);
-    test.skip(!canOpen, "A1 has no rule-run failure yet to hand off (not observed — needs a real IFC rule-run producing failures)");
+    test.skip(!canOpen, "A1 Review-Room CTA is structurally unreachable in THIS spec: enabling it needs the test to first drive session selection + a rule-run to populate selectedSession and state.failed[0] (pages.tsx:256-262,283,306), which this additive walk-through deliberately does not do — a test-scope limitation, not an environment/fixture gap (it would skip 100% even with full infra)");
     await openReview.click();
     await expect(page).toHaveURL(/#review\?source=a1/, { timeout: 15_000 });
 
