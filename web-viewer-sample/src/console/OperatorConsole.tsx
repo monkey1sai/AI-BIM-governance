@@ -20,7 +20,8 @@ const PAGE_KEYS: readonly OperatorPage[] = ["coordinator", "intake", "runtime", 
 export function readPage(): OperatorPage {
   const h = window.location.hash
     .replace(/^#\/?console\/?/, "") // #/console/ 或 #console/ 前綴
-    .replace(/^#\/?/, "");          // 餘下的 #/ 或 # 前綴
+    .replace(/^#\/?/, "")          // 餘下的 #/ 或 # 前綴
+    .split("?")[0];
   return (PAGE_KEYS as readonly string[]).includes(h) ? (h as OperatorPage) : "coordinator";
 }
 

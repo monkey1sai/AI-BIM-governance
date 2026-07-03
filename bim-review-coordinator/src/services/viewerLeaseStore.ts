@@ -307,6 +307,8 @@ function stageUrlsEquivalent(loaded: string, expected: string): boolean {
   try {
     const a = new URL(loaded);
     const b = new URL(expected);
+    if (a.protocol !== b.protocol) return false;
+    if (a.protocol !== "http:" && a.protocol !== "https:") return false;
     return a.pathname === b.pathname && a.search === b.search;
   } catch {
     return false;

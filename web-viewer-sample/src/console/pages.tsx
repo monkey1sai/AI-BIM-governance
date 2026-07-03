@@ -6,11 +6,10 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus, type ViewerLeaseClaimResponse } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
-// VG-01 Task 3：A1 工作台嵌入 live viewer（iframe + vg01 postMessage 橋），跑檢核→3D 高亮一氣呵成。
-import { EmbeddedViewer, type EmbeddedViewerHandle } from "./EmbeddedViewer";
+import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
@@ -27,7 +26,6 @@ type NativeFilePickerWindow = Window & {
 
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, uniqueElements: 6715, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
-const A1_EMBEDDED_VIEWER_RECOVERY_MS = 30_000;
 
 // A1 規則檢核的預設 IFC 路徑：部署可用 VITE_A1_DEFAULT_IFC_PATH 覆寫成該機 storage 的真實路徑。
 // 開發機 fallback 指向 repo 內 storage/fixture-bytes.ifc（dev/E2E 用）;部署區未設此 env 時操作員仍可手動改輸入框。
@@ -231,37 +229,29 @@ export function OverviewPage() {
   );
 }
 
-// VG-01 Task 3 純函式 helper（A1 page 外、檔案模組層）：stage truth 比對 + 高亮結果誠實文案。
-type A1SessionLite = { session_id: string; expected_stage_url: string | null };
-// stage URL 等價判斷：先求精確相等；若不等，容忍「同一資源、僅 origin/host 不同」的情形
-// （Kit 常回報正規化/本機 loaded URL，session expected 則是 artifact URL，path+search 相同但 host 不同——
-//  此時 viewer 端 _isLoadedStageExpected 已判定 matched 並送 first_frame，A1 gate 不該因 host 差異而結構性卡死高亮鈕）。
-// 刻意只放寬到 origin 差異（pathname+search 仍須完全相同），不做任意 job-id 子字串比對（避免不同轉檔誤判為相符）。
-function stageUrlsEquivalent(loaded: string, expected: string): boolean {
-  if (loaded === expected) return true;
-  try {
-    const a = new URL(loaded);
-    const b = new URL(expected);
-    return a.pathname === b.pathname && a.search === b.search;
-  } catch {
-    return false; // 非絕對 URL（無法解析 origin）→ 僅接受精確相等，已於上方處理
-  }
+function buildA1ReviewRoomHandoffHash(args: {
+  sessionId: string;
+  runId: string | null;
+  row: RuleResultRow | null | undefined;
+  expectedStageUrl?: string | null;
+}): string {
+  const q = new URLSearchParams({ source: "a1", session: args.sessionId });
+  if (args.runId) q.set("rule_run_id", args.runId);
+  if (args.row?.ifc_guid) q.set("ifc_guid", args.row.ifc_guid);
+  if (args.row?.usd_prim_path) q.set("usd_prim_path", args.row.usd_prim_path);
+  if (args.row?.rule_code) q.set("rule_code", args.row.rule_code);
+  if (args.row?.severity) q.set("severity", args.row.severity);
+  if (args.row?.message) q.set("label", args.row.message);
+  if (args.expectedStageUrl) q.set("expected_stage_url", args.expectedStageUrl);
+  return `#review?${q.toString()}`;
 }
-function isStageMatched(sessions: A1SessionLite[], selected: string, loaded: string | null): boolean {
-  const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
-  return Boolean(loaded && exp && stageUrlsEquivalent(loaded, exp));
-}
-function stageMatchedText(sessions: A1SessionLite[], selected: string, loaded: string | null): string {
-  const exp = sessions.find((s) => s.session_id === selected)?.expected_stage_url ?? null;
-  if (!loaded) return t("not_observed（尚未載入）", "not_observed (not yet loaded)");
-  if (!exp) return t("loaded（無 expected 可比對）", "loaded (no expected to compare)");
-  return stageUrlsEquivalent(loaded, exp) ? t("matched（expected == loaded）", "matched (expected == loaded)") : t("mismatch（expected ≠ loaded，警示）", "mismatch (expected ≠ loaded, warning)");
-}
-function highlightResultText(hl: { ok: boolean; reason?: string }): string {
-  if (hl.ok) return t("已在 3D 標示", "Highlighted in 3D");
-  if (hl.reason === "unmapped") return t("此構件未對映 USD，無法高亮", "This element has no USD mapping; cannot highlight");
-  if (hl.reason === "datachannel_not_ready") return t("3D 尚未就緒", "3D not ready yet");
-  return t("高亮未成功", "Highlight failed");
+
+function a1ReviewRoomHandoffReason(row: RuleResultRow | null | undefined, selectedSession: string): string {
+  if (!selectedSession) return t("尚未選取 review session", "No review session selected yet");
+  if (!row) return t("尚無失敗構件可交給 Review Room", "No failed element to hand off to Review Room");
+  if (!row.ifc_guid) return t("此構件無 ifc_guid，無法定位", "This element has no ifc_guid; it cannot be located");
+  if (!row.usd_prim_path) return t("此構件缺 usd_prim_path，Review Room 會顯示 mapping 缺失且禁止高亮", "This element is missing usd_prim_path; Review Room will show the mapping gap and block highlight");
+  return "";
 }
 function isElementMappingDocumentLike(value: unknown): value is ElementMappingDocument {
   return Boolean(value && typeof value === "object" && Array.isArray((value as ElementMappingDocument).items));
@@ -280,17 +270,6 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
     const usdPrimPath = primByGuid.get(row.ifc_guid);
     return usdPrimPath ? { ...row, usd_prim_path: usdPrimPath } : row;
   });
-}
-
-function createA1ViewerIdentity(): { viewer_id: string; user_id: string; display_name: string } {
-  const random = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return {
-    viewer_id: `a1_viewer_${random}`,
-    user_id: `a1_auto_primary_${random}`,
-    display_name: "A1 auto primary viewer",
-  };
 }
 
 export function A1GovernanceWorkbenchPage() {
@@ -314,32 +293,13 @@ export function A1GovernanceWorkbenchPage() {
   // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
   const [excelBusy, setExcelBusy] = useState(false);
   const [bcfBusy, setBcfBusy] = useState(false);
-  // VG-01 Task 3：嵌入 live viewer + 3D 高亮接線。session 下拉走 runtime/status.sessions.items（S2，
-  // 已查證無 bare GET /api/review-sessions）；viewerOrigin 真源 = configured_endpoints.viewer.browser_url_base
-  // （viewer :5173 baked，非 coordinator :8004）。first_frame / stage matched 為真證據，禁樂觀更新。
+  // A1 只使用 review session 作為 governance rule-run 的 for-session target。
+  // 3D/WebRTC/lease/highlight 已解耦到 Review Room；A1 mount 不得自動選第一個 session 或 claim viewer lease。
   const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; expected_mapping_url?: string | null; first_frame_at?: string | null }[]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
-  const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
-  // coordinator handoff base：與 /ui/open 對齊，傳進嵌入 viewer 讓未 bake 同一 coordinator 的 image/E2E 仍打對 coordinator。
-  const [coordinatorBase, setCoordinatorBase] = useState<string | null>(null);
-  const viewerIdentityRef = useRef<{ viewer_id: string; user_id: string; display_name: string } | null>(null);
-  if (viewerIdentityRef.current === null) viewerIdentityRef.current = createA1ViewerIdentity();
-  const [viewerLease, setViewerLease] = useState<ViewerLeaseClaimResponse | null>(null);
-  const [viewerLeaseBusy, setViewerLeaseBusy] = useState(false);
-  const [viewerLeaseErr, setViewerLeaseErr] = useState<string | null>(null);
-  const [firstFrame, setFirstFrame] = useState(false);
-  const [loadedStageUrl, setLoadedStageUrl] = useState<string | null>(null);
-  const [hl, setHl] = useState<{ ok: boolean; reason?: string } | null>(null);
-  const [viewerMountAttempt, setViewerMountAttempt] = useState(0);
-  const viewerRecoveryRef = useRef<{ leaseId: string; attempts: number } | null>(null);
-  const viewerRef = useRef<EmbeddedViewerHandle>(null);
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
-  const activePrimaryLease =
-    viewerLease && viewerLease.session_id === selectedSession && viewerLease.role === "primary" && viewerLease.status === "active"
-      ? viewerLease
-      : null;
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -348,9 +308,8 @@ export function A1GovernanceWorkbenchPage() {
   useEffect(() => () => { pollGenRef.current += 1; }, []);
   useEffect(() => { if (state.step !== "running") pollGenRef.current += 1; }, [state.step]);
 
-  // VG-01 Task 3：mount 時一次 runtimeStatus() 取齊 active session 與 viewer origin（誠實：失敗就空，
-  // 不偽造）。session 與 viewerOrigin 同源（已查證無 bare GET /api/review-sessions，listReviewSessions
-  // 內部亦讀 runtime/status，故此處直接用 runtimeStatus 一次拿齊兩者，少一次往返）。
+  // Mount 時只列出可手動選取的 active/created session。不得自動選 act[0]；
+  // 3D attach/lease 由 Review Room 明確按鈕啟動。
   useEffect(() => {
     let alive = true;
     coordinatorClient.runtimeStatus()
@@ -358,11 +317,8 @@ export function A1GovernanceWorkbenchPage() {
         if (!alive) return;
         const act = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
         setSessions(act);
-        if (act[0]) setSelectedSession(act[0].session_id);
-        setViewerOrigin(rt.configured_endpoints.viewer.browser_url_base || null); // 真 viewer 入口（:5173 baked），非 :8004
-        setCoordinatorBase(rt.configured_endpoints.coordinator.public_base_url || null); // handoff base（對齊 /ui/open）
       })
-      .catch(() => { if (alive) { setSessions([]); setViewerOrigin(null); setCoordinatorBase(null); } }); // 連不上就空，不假資料
+      .catch(() => { if (alive) setSessions([]); }); // 連不上就空，不假資料
     return () => { alive = false; };
   }, []);
 
@@ -381,88 +337,6 @@ export function A1GovernanceWorkbenchPage() {
   useEffect(() => {
     if (selectedSession && state.step === "idle") dispatch({ type: "PICK_SESSION" });
   }, [selectedSession, state.step]);
-
-  useEffect(() => {
-    if (!selectedSession || !viewerOrigin) {
-      setViewerLease(null);
-      setViewerLeaseErr(null);
-      setViewerLeaseBusy(false);
-      return;
-    }
-    let alive = true;
-    const identity = viewerIdentityRef.current ?? createA1ViewerIdentity();
-    viewerIdentityRef.current = identity;
-    setViewerLease(null);
-    setViewerLeaseErr(null);
-    setViewerLeaseBusy(true);
-    coordinatorClient.claimViewerLease(selectedSession, {
-      viewer_id: identity.viewer_id,
-      user_id: identity.user_id,
-      display_name: identity.display_name,
-      requested_role: "primary",
-      client_nonce: `${identity.viewer_id}:${selectedSession}:primary`,
-    })
-      .then((lease) => {
-        if (alive) setViewerLease(lease);
-      })
-      .catch((e) => {
-        if (alive) setViewerLeaseErr(String(e));
-      })
-      .finally(() => {
-        if (alive) setViewerLeaseBusy(false);
-      });
-    return () => { alive = false; };
-  }, [selectedSession, viewerOrigin]);
-
-  useEffect(() => {
-    if (!selectedSession || !activePrimaryLease) return;
-    return () => {
-      void coordinatorClient.releaseViewerLease(activePrimaryLease.session_id, activePrimaryLease.lease_id, activePrimaryLease.lease_token).catch(() => {});
-    };
-  }, [
-    activePrimaryLease?.session_id,
-    activePrimaryLease?.lease_id,
-    activePrimaryLease?.lease_token,
-  ]);
-
-  useEffect(() => {
-    if (!selectedSession || !activePrimaryLease) return;
-    const heartbeatMs = Math.max(5000, activePrimaryLease.heartbeat_after_ms || 15000);
-    const timer = window.setInterval(() => {
-      void coordinatorClient.viewerLeaseHeartbeat(selectedSession, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-        ...(loadedStageUrl ? { loaded_stage_url: loadedStageUrl } : {}),
-        datachannel_ready: firstFrame,
-      }).catch(() => {});
-    }, heartbeatMs);
-    return () => window.clearInterval(timer);
-  }, [
-    selectedSession,
-    activePrimaryLease?.lease_id,
-    activePrimaryLease?.lease_token,
-    activePrimaryLease?.heartbeat_after_ms,
-    firstFrame,
-    loadedStageUrl,
-  ]);
-
-  useEffect(() => {
-    if (!selectedSession || !activePrimaryLease || firstFrame) return;
-    const leaseId = activePrimaryLease.lease_id;
-    if (viewerRecoveryRef.current?.leaseId !== leaseId) {
-      viewerRecoveryRef.current = { leaseId, attempts: 0 };
-    }
-    if ((viewerRecoveryRef.current?.attempts ?? 0) >= 1) return;
-    const timer = window.setTimeout(() => {
-      const recovery = viewerRecoveryRef.current;
-      if (!recovery || recovery.leaseId !== leaseId || recovery.attempts >= 1) return;
-      recovery.attempts += 1;
-      setViewerMountAttempt((attempt) => attempt + 1);
-    }, A1_EMBEDDED_VIEWER_RECOVERY_MS);
-    return () => window.clearTimeout(timer);
-  }, [
-    selectedSession,
-    activePrimaryLease?.lease_id,
-    firstFrame,
-  ]);
 
   const doRun = useCallback(async () => {
     // gating：須已離開 idle（PICK_FILE 或 PICK_SESSION 推進過）且有選定 session（for-session 必要）。
@@ -586,15 +460,18 @@ export function A1GovernanceWorkbenchPage() {
         const rt = await coordinatorClient.runtimeStatus();
         const act2 = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
         setSessions(act2);
-        // f2 fix：用「本次轉檔 job」的 review_session_id 反查對應 session，而非盲取 act2[0]。
-        // rt.sessions.items 是 coordinator 全域清單；共享環境在 ready 當下可能含多筆 active/created session，
-        // act2[0] 不保證等於本次 ifc-ready job 產生的那個 → 盲取會讓 A1 對錯誤 session 跑治理檢核。
-        // job.review_session_id（coordinator 為此 job 建的 session id）反查；不中（null / 尚未在清單）才退 act2[0]。
-        const ownSession = job.review_session_id
-          ? act2.find((s) => s.session_id === job.review_session_id)
-          : undefined;
-        const picked = ownSession ?? act2[0];
-        if (picked) setSelectedSession(picked.session_id);
+        // 轉檔完成後只能用本 job 的 review_session_id 精準反查。不得 fallback 到 act2[0]：
+        // runtime/status 是全域 session 清單，共享環境中 act2[0] 可能是別人的 session，會讓 A1 對錯模型跑治理檢核。
+        if (!job.review_session_id) {
+          setConvErr(t("轉檔 ready，但 job 未回 review_session_id；請手動選擇正確 review session", "conversion is ready, but the job did not return review_session_id; select the correct review session manually"));
+          return job.conversion_lifecycle_status;
+        }
+        const ownSession = act2.find((s) => s.session_id === job.review_session_id);
+        if (ownSession) {
+          setSelectedSession(ownSession.session_id);
+        } else {
+          setConvErr(t("轉檔 ready，但 runtime/status 尚未列出該 review session；請重新整理或手動選擇", "conversion is ready, but runtime/status has not listed that review session yet; refresh or select manually"));
+        }
       }
       return job.conversion_lifecycle_status;
     };
@@ -634,7 +511,7 @@ export function A1GovernanceWorkbenchPage() {
   return (
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
-      <p className="ec-lead">{t("上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 高亮重用既有 review session viewer（依 IX-A1-06 四條件 enable：first frame ∧ stage matched ∧ 有選 session ∧ 構件有 usd_prim_path），無 active session 時誠實停用。", "Upload/select an IFC, run automated rule validation, then generate Issues, Excel export and BCF 2.1 export (download enabled only after Issues are created). Rule validation runs in the governance-service (CPU); 3D highlighting reuses the existing review session viewer (enabled per the four IX-A1-06 conditions: first frame ∧ stage matched ∧ session selected ∧ element has usd_prim_path), and is honestly disabled when there is no active session.")}</p>
+      <p className="ec-lead">{t("上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 檢視與高亮改由 Review Room 手動啟動 Kit/session，不在 A1 自動嵌入 viewer 或 claim lease。", "Upload/select an IFC, run automated rule validation, then generate Issues, Excel export and BCF 2.1 export (download enabled only after Issues are created). Rule validation runs in the governance-service (CPU); 3D review and highlighting are manually started in Review Room, not auto-embedded or auto-claimed by A1.")}</p>
 
       <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
         <LifecycleStrip steps={[t("上傳模型", "Upload Model"), t("自動檢核", "Auto Validate"), t("結果記分板", "Result Scoreboard"), t("開 Issue", "Open Issue"), t("匯出 Excel", "Export Excel")]} statuses={ui} />
@@ -713,10 +590,10 @@ export function A1GovernanceWorkbenchPage() {
         </Panel>
       )}
 
-      <Panel title={t("3D 即時檢視（嵌入 live viewer）", "Live 3D View (embedded live viewer)")} sub={t("重用既有 viewer 串流；first frame / stage truth 為真證據，非樂觀更新", "Reuses the existing viewer stream; first frame / stage truth are real evidence, not optimistic updates")} prov="asbuilt">
+      <Panel title={t("review session（治理檢核目標）", "review session (governance target)")} sub={t("A1 只選取 for-session 檢核目標；3D viewer / WebRTC / lease 由 Review Room 手動啟動", "A1 only selects the for-session validation target; 3D viewer / WebRTC / lease are started manually in Review Room")} prov="asbuilt">
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
-            <p className="ec-note">{t("無 active session。選定上方 MinIO 模型後，按下方按鈕手動排入 IFC→USD 轉檔；轉檔完成會自動建立 review session，本頁即可進行治理檢核與 3D 高亮。", "No active session. After selecting a MinIO model above, click below to manually queue IFC to USD conversion; when conversion completes a review session is created automatically, and this page can then run governance validation and 3D highlighting.")}</p>
+            <p className="ec-note">{t("無 active session。選定上方 MinIO 模型後，按下方按鈕手動排入 IFC→USD 轉檔；轉檔完成會建立 review session，本頁可進行治理檢核，3D 檢視需到 Review Room 手動 attach。", "No active session. After selecting a MinIO model above, click below to manually queue IFC to USD conversion; when conversion completes a review session is created. This page can then run governance validation, while 3D review is manually attached in Review Room.")}</p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Btn primary data-testid="a1-trigger-convert" disabled={!selectedKey || convBusy}
                 caption={selectedKey ? "POST /api/conversion/trigger {key}" : t("先選 MinIO 模型", "select a MinIO model first")}
@@ -727,89 +604,35 @@ export function A1GovernanceWorkbenchPage() {
               <a className="ec-s" data-testid="a1-conv-link" href="#/conv">{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
             </div>
             {convStatus !== null && <p className="ec-note" data-testid="a1-convert-status">{t("轉檔狀態：", "conversion status: ")}{convStatus}</p>}
-            {convErr && <p className="ec-warn-note" data-testid="a1-convert-error">{convErr}</p>}
           </div>
         ) : (
           <>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
               <label>review session</label>
               {/* 切換 session 必須同時重置 rule-run 結果（RESET → initialA1State）：
-                  rule 結果是針對「特定 session 的 stage + element_mapping」enrich 過的，若只清 first-frame/stage/highlight UI、
-                  保留舊 state.failed 記分板與已 enrich 的 GUID，新 session 一旦 first frame + stage matched，高亮鈕會用
-                  上一個 session 的 GUID 送進新 session 的 viewer/模型（跨 session 殘留誤標）。重置後操作員需對新 session 重跑檢核，
-                  rule 結果才會重新對新 session 的 mapping enrich，符合「高亮只對它被 enrich 的那個 session 提供」。 */}
+                  rule 結果是針對特定 session 的 mapping enrich 過的；切換 session 後必須重跑檢核，避免把舊 session 的
+                  failed rows handoff 到新 session。 */}
               <select data-testid="a1-session-select" value={selectedSession} onChange={(e) => {
                 const nextSession = e.target.value;
                 if (nextSession === selectedSession) return;
                 setSelectedSession(nextSession);
-                setViewerLease(null);
-                setViewerLeaseErr(null);
-                setFirstFrame(false);
-                setLoadedStageUrl(null);
-                setHl(null);
                 dispatch({ type: "RESET" });
               }}>
+                <option value="">{t("— 手動選擇 review session —", "— manually select a review session —")}</option>
                 {sessions.map((s) => <option key={s.session_id} value={s.session_id}>{s.session_id}（{s.status}）</option>)}
               </select>
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
-              <div data-testid="a1-first-frame-evidence"><Field k="first frame" v={firstFrame ? t("已收到真畫面（綠）", "real frame received (green)") : t("not_observed（等待 3D 第一幀）", "not_observed (waiting for first 3D frame)")} prov={firstFrame ? "asbuilt" : "p1"} /></div>
-              <div data-testid="a1-stage-matched"><Field k="stage matched" v={stageMatchedText(sessions, selectedSession, loadedStageUrl)} prov="asbuilt" /></div>
-              <div data-testid="a1-primary-lease"><Field k="primary lease" v={activePrimaryLease ? activePrimaryLease.lease_id : viewerLeaseBusy ? t("claiming…", "claiming…") : t("not_observed（尚未取得 primary）", "not_observed (primary not claimed yet)")} prov={activePrimaryLease ? "asbuilt" : "p1"} /></div>
+              <Field k="selected session" v={selectedSession || t("not_selected（需人工選擇）", "not_selected (manual selection required)")} prov={selectedSession ? "asbuilt" : "p1"} />
+              <Field k="3D handoff" v={t("Review Room owns viewer lease / first frame / stage match / highlight trace", "Review Room owns viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
+              <Field k="A1 auto attach" v={t("disabled by design", "disabled by design")} prov="asbuilt" />
             </div>
-            {viewerLeaseErr && <p className="ec-warn-note" data-testid="a1-viewer-lease-error">{t("primary viewer lease 取得失敗：", "Failed to claim primary viewer lease: ")}{viewerLeaseErr}</p>}
-            {/* S3：iframe 內 viewer 自帶 GovernanceOverlay 失敗清單（會與 console 左側清單重複，造成「console 25 筆 / iframe 說無失敗」矛盾 UX）。
-                解法分兩端：(a) viewer 端在嵌入模式把 overlay 的 failedElements 餵空使清單收合（Task 2「S3 收合」step，已落地）；
-                (b) console 端此處只把 iframe 當高亮引擎，唯一權威失敗清單 = 左側 state.failed 記分板，iframe 不另顯第二份清單。 */}
-            {viewerOrigin === null ? (
-              <p className="ec-warn-note" data-testid="a1-viewer-origin-missing">{t("viewer 入口未取得（runtime/status 無 configured_endpoints.viewer.browser_url_base 或 coordinator 連不上），3D 暫不可用", "viewer entry not available (runtime/status has no configured_endpoints.viewer.browser_url_base, or coordinator unreachable); 3D temporarily unavailable")}</p>
-            ) : !activePrimaryLease ? (
-              <p className="ec-warn-note" data-testid="a1-viewer-primary-missing">{viewerLeaseBusy ? t("正在向 coordinator 取得 primary viewer lease…", "Claiming primary viewer lease from coordinator…") : t("尚未取得 primary viewer lease，3D viewer 暫不載入", "Primary viewer lease not available yet; 3D viewer is not mounted")}</p>
-            ) : (
-              <div style={{ height: 480 }}>
-                <EmbeddedViewer
-                  ref={viewerRef}
-                  key={`${selectedSession}:${activePrimaryLease.lease_id}:${viewerMountAttempt}`}
-                  sessionId={selectedSession}
-                  viewerOrigin={viewerOrigin}
-                  coordinatorApiBase={coordinatorBase}
-                  coordinatorSocketUrl={coordinatorBase}
-                  streamRole="primary"
-                  kitInstanceId={activePrimaryLease.kit_instance_id}
-                  userId={activePrimaryLease.user_id}
-                  displayName={activePrimaryLease.display_name}
-                  sourceClientId={activePrimaryLease.lease_id}
-                  viewerLeaseToken={activePrimaryLease.lease_token}
-                  onFirstFrame={(m) => {
-                    setFirstFrame(true);
-                    // viewer 的 _completeStageLoad 在同一流程「先送 first_frame（含當下已載 stageUrl）再送 stage_loaded」，
-                    // first_frame 是 stage-match 最快的閉合點。若丟棄 m.stageUrl、僅靠獨立 onStageLoaded，當 first_frame
-                    // 先到或順序不同時 loadedStageUrl 恆 null → stageMatched 恆 false → IX-A1-06 第三條件結構性封鎖、高亮鈕無法 enable。
-                    // 與 onStageLoaded 並存（互補不互斥）：m.stageUrl 非 null 即同步閉合。
-                    if (m.stageUrl) setLoadedStageUrl(m.stageUrl);
-                    void coordinatorClient.viewerLeaseHeartbeat(selectedSession, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                      first_frame: true,
-                      loaded_stage_url: m.stageUrl,
-                      datachannel_ready: true,
-                    }).catch(() => {});
-                    void coordinatorClient.reportFirstFrame(selectedSession).catch(() => {});
-                  }}
-                  onStageLoaded={(u) => {
-                    if (u) setLoadedStageUrl(u);
-                    void coordinatorClient.viewerLeaseHeartbeat(selectedSession, activePrimaryLease.lease_id, activePrimaryLease.lease_token, {
-                      ...(u ? { loaded_stage_url: u } : {}),
-                      datachannel_ready: true,
-                    }).catch(() => {});
-                  }}
-                  onHighlightResult={(m) => setHl({ ok: m.ok, reason: m.reason })}
-                />
-              </div>
-            )}
           </>
         )}
+        {convErr && <p className="ec-warn-note" data-testid="a1-convert-error">{convErr}</p>}
       </Panel>
 
-      <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮接 review session viewer（IX-A1-06 四條件）", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlighting connects to the review session viewer (four IX-A1-06 conditions)")} prov="asbuilt">
+      <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 交給 Review Room 手動 attach / highlight", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D is handed off to Review Room for manual attach / highlight")} prov="asbuilt">
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>{t("失敗構件建 Issue", "Create Issues for Failed Elements")}</Btn>{" "}
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
@@ -861,42 +684,27 @@ export function A1GovernanceWorkbenchPage() {
             </>
           );
         })()}{" "}
-        {/* VG-01 Task 3：取代永久 disabled 占位鈕，依 IX-A1-06 四條件 enable 的真按鈕（針對失敗清單第一筆示範；多筆由
-            FailureScoreboard 逐列接，本格交付第一筆）。四條件：first_frame(含 DataChannel ready) ∧ 有選 session ∧
-            stage matched ∧ 該構件有 usd_prim_path（且 ifc_guid 非 null）。firstFrame===true 即代表 viewer 端
-            DataChannel ready ∧ first_frame 兩條同時成立（viewer 為唯一真源；送出當下若 DataChannel 仍未就緒，
-            viewer 回 highlight_result{reason:"datachannel_not_ready"}，由 highlightResultText 顯誠實原因）。 */}
+        {/* A1 不再直接送 viewer DataChannel。這裡只把 rule-run / session / 第一筆失敗構件交給 Review Room；
+            lease、first frame、stage match、highlight result 由 Review Room 的專用畫面觀測與執行。 */}
         {(() => {
           const f0 = state.failed[0];
-          const stageMatched = isStageMatched(sessions, selectedSession, loadedStageUrl);
-          const rowHighlightable = Boolean(f0 && f0.ifc_guid && f0.usd_prim_path);
-          const canHighlight = Boolean(activePrimaryLease) && firstFrame && Boolean(selectedSession) && stageMatched && rowHighlightable;
-          const disabledReason = !activePrimaryLease ? t("等待 primary viewer lease", "Waiting for primary viewer lease")
-            : !firstFrame ? t("等待 3D 第一幀（first frame / DataChannel 未就緒）", "Waiting for the first 3D frame (first frame / DataChannel not ready)")
-            : !selectedSession ? t("尚未選取 review session", "No review session selected yet")
-            : !stageMatched ? t("stage 未對齊（expected ≠ loaded）", "stage not aligned (expected ≠ loaded)")
-            : !f0 ? t("尚無失敗構件", "No failed elements yet")
-            : !f0.ifc_guid ? t("此構件無 ifc_guid，無法高亮", "This element has no ifc_guid; cannot highlight")
-            : !f0.usd_prim_path ? t("此構件未對映 USD（無 usd_prim_path），無法高亮", "This element is not mapped to USD (no usd_prim_path); cannot highlight")
-            : "";
+          const disabledReason = a1ReviewRoomHandoffReason(f0, selectedSession);
+          const expectedStageUrl = sessions.find((s) => s.session_id === selectedSession)?.expected_stage_url ?? null;
+          const href = selectedSession
+            ? buildA1ReviewRoomHandoffHash({ sessionId: selectedSession, runId, row: f0, expectedStageUrl })
+            : "#review?source=a1";
           return (
-            <Btn data-testid="a1-highlight-3d"
-              disabled={!canHighlight}
-              caption={canHighlight ? t("postMessage highlight → viewer HighlightBridge（IX-A1-06 四條件）", "postMessage highlight → viewer HighlightBridge (four IX-A1-06 conditions)") : disabledReason}
+            <Btn data-testid="a1-open-review-room"
+              disabled={Boolean(disabledReason)}
+              caption={disabledReason || t("開啟 #review，Review Room 會手動 attach Kit/session 再執行 highlight", "Open #review; Review Room manually attaches Kit/session before highlight")}
               onClick={() => {
-                if (!f0 || !f0.ifc_guid) return; // 已查證 RuleResultRow.ifc_guid: string|null → 送出前 guard 非 null
-                viewerRef.current?.sendHighlight([{
-                  ifc_guid: f0.ifc_guid,
-                  severity: f0.severity,
-                  label: f0.message ?? f0.ifc_guid, // RuleResultRow 無 label 欄；用 message（fallback ifc_guid）
-                  rule_code: f0.rule_code,
-                }]);
+                if (!selectedSession || !f0?.ifc_guid) return;
+                window.location.hash = href;
               }}>
-              {t("在 3D 高亮（第一筆失敗）", "Highlight in 3D (first failure)")}
+              {t("開啟 Review Room（第一筆失敗）", "Open Review Room (first failure)")}
             </Btn>
           );
         })()}{" "}
-        {hl && <span className="ec-note" data-testid="a1-highlight-status" style={{ marginLeft: 6 }}>{highlightResultText(hl)}</span>}
         {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
     </>
@@ -3175,49 +2983,18 @@ export function RuntimePage() {
   );
 }
 
-// ── P4 Review Room（G）v1：維持殼層狀態 + 加「在既有 viewer 開啟」連結 ──
-// 真實 3D viewport 在既有 <App/> viewer（非 console）。本頁不動 App.tsx / Window.tsx，
-// 只提供連到既有 viewer 入口的連結：coordinator /ui/open?session=（server-side redirect，
-// 查證自 app.ts:1587）或本地 viewer /?session=（main.tsx 解析 ?session= attach）。
-// 工具列誠實標來源：openStage/focusPrim/selectPrims/clearHighlight 為 viewer DataChannel
-// as-built；highlight 走 client 主動拉（不復活 server-push）；section/snapshot 待建。
+// ── P4 Review Room（G）：A1 handoff 的專用 3D session attach 畫面 ──
+// A1 不再內嵌 viewer 或 claim lease；Review Room 才能由操作員明確按鈕 claim primary lease、
+// 掛載 viewer、接收 first_frame / stage truth，並送 highlight command trace。
 export function ReviewRoomPage() {
-  const [sessionId, setSessionId] = useState("");
-  const sid = sessionId.trim();
-  // session id 必須符合 viewer attach（main.tsx）與 coordinator /ui/open（app.ts:1590）共用的權威格式
-  // /^(lwv_|review_session_)[A-Za-z0-9_]+$/。不符者 viewer 無法 attach、coordinator /ui/open 直接回 400，
-  // 故拒絕產生連結（不產生會被後端打回的壞連結，不發明「attach 預檢」幻覺端點）。
-  const valid = /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sid);
-  // invalid 時連結為 undefined（不渲染成可互動 anchor），避免 href="#" 被鍵盤 / 螢幕閱讀器啟用後跳到 #。
-  const viewerLocalUrl = valid ? `/?session=${encodeURIComponent(sid)}` : undefined;
-  const viewerOpenUrl = valid ? coordinatorClient.openInViewerUrl(sid) : undefined;
-
   return (
     <>
       <h1>{t("Review Room · 審查室（G）", "Review Room (G)")}</h1>
       <p className="ec-lead">
-        {t("USD over WebRTC live viewport 在", "The USD over WebRTC live viewport lives in the")}<strong>{t("既有 viewer（web-viewer-sample ", "existing viewer (web-viewer-sample ")}&lt;App/&gt;{t("）", ")")}</strong>{t("，非 console 殼層內。 本頁 v1：提供連到既有 viewer 入口的連結（不在 console 內嵌 3D）；highlight 走 Review-Room 主動拉 → client DataChannel，不復活 server-push。", ", not inside the console shell. This page v1: provides links to the existing viewer entry (no 3D embedded in the console); highlight goes through Review-Room client-pull → client DataChannel, without reviving server-push.")}
+        {t("A1 只把 governance 結果交給本畫面；Kit / WebRTC / viewer lease 必須在 Review Room 手動啟動。highlight 由本畫面送到 viewer DataChannel，並保留 command trace。", "A1 only hands governance results to this screen; Kit / WebRTC / viewer lease must be started manually in Review Room. Highlight is sent from this screen to the viewer DataChannel with a command trace.")}
       </p>
 
-      <Panel title={t("在既有 viewer 開啟 · Open in viewer", "Open in the existing viewer · Open in viewer")} sub={t("輸入 review_session_id（lwv_ / review_session_ 前綴）；連到既有 viewer，不動 App.tsx / Window.tsx", "Enter a review_session_id (lwv_ / review_session_ prefix); links to the existing viewer, without touching App.tsx / Window.tsx")} prov="asbuilt">
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <input className="ec-btn" style={{ minWidth: 360 }} placeholder={t("review_session_xxx 或 lwv_xxx", "review_session_xxx or lwv_xxx")} value={sessionId} onChange={(e) => setSessionId(e.target.value)} />
-          {/* 真實 gating：session id 格式不合（viewer / coordinator 都會拒）則不渲染 href、不可聚焦
-              （tabIndex=-1）、aria-disabled，鍵盤與螢幕閱讀器都無法啟用，不是只靠 pointerEvents 的假禁用。 */}
-          <a className={`ec-btn ${valid ? "primary" : ""}`} {...(valid ? { href: viewerOpenUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
-             style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
-            {t("coordinator /ui/open（redirect）", "coordinator /ui/open (redirect)")}
-          </a>
-          <a className="ec-btn" {...(valid ? { href: viewerLocalUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
-             style={valid ? undefined : { pointerEvents: "none", opacity: 0.45 }} aria-disabled={!valid}>
-            {t("本地 viewer /?session=", "local viewer /?session=")}
-          </a>
-        </div>
-        {!valid && sessionId.length > 0 && <p className="ec-warn-note">{t("此 session id 不符 viewer attach 格式（需 lwv_ 或 review_session_ 前綴 + 英數底線）；viewer 無法 attach、coordinator /ui/open 會回 400 → 連結停用，不產生壞連結。", "This session id does not match the viewer attach format (needs lwv_ or review_session_ prefix + alphanumerics/underscores); the viewer cannot attach and coordinator /ui/open will return 400 → the link is disabled to avoid producing a broken link.")}</p>}
-        <p className="ec-note">
-          {t("coordinator", "coordinator")} <code>/ui/open?session=</code> {t("為 server-side redirect 至 browser-visible viewer（as-built，app.ts）；本地", "is a server-side redirect to the browser-visible viewer (as-built, app.ts); local")} <code>/?session=</code> {t("由既有 main.tsx 解析 attach。本頁僅導引，不在 console 殼層內掛載 WebRTC。", "is parsed and attached by the existing main.tsx. This page only guides; it does not mount WebRTC inside the console shell.")}
-        </p>
-      </Panel>
+      <ReviewSessionViewerPane />
 
       <Panel title={t("工具列 · Tool Rail（既有 viewer 內）", "Tool rail · Tool Rail (inside the existing viewer)")} sub={t("每顆工具標來源：viewer DataChannel as-built 指令 vs 待建", "Each tool labels its provenance: viewer DataChannel as-built command vs not built")} prov="asbuilt">
         <table className="ec-table">
@@ -3240,10 +3017,10 @@ export function ReviewRoomPage() {
       </Panel>
 
       <Panel title={t("範圍與誠實標示", "Scope & honesty labeling")} prov="asbuilt">
-        <Field k="3D viewport" v={t("在既有 viewer（<App/>），非 console 殼層；本頁僅連結導引", "In the existing viewer (<App/>), not the console shell; this page only provides link guidance")} prov="asbuilt" />
+        <Field k="3D viewport" v={t("在 Review Room route 手動 attach；A1 不掛 viewer、不 claim lease", "Manually attached in the Review Room route; A1 does not mount viewer or claim lease")} prov="asbuilt" />
         <Field k={t("server→viewer push highlight / 多人廣播", "server→viewer push highlight / multi-user broadcast")} v={t("2026-05-21 已退役（remove-conflict-review-from-fast-mvp）；加回需另開 OpenSpec", "retired on 2026-05-21 (remove-conflict-review-from-fast-mvp); re-adding requires a new OpenSpec")} prov="p15" />
         <Field k="section / snapshot" v={t("待建", "not built")} prov="p15" />
-        <Field k={t("不動 App.tsx / Window.tsx", "do not touch App.tsx / Window.tsx")} v={t("本頁僅提供連結，不改 viewer 主體（守 console 邊界）", "This page only provides links and does not change the viewer body (respecting the console boundary)")} prov="asbuilt" />
+        <Field k={t("viewer 主體", "viewer body")} v={t("重用既有 EmbeddedViewer / Window.tsx postMessage bridge；不修改 viewer runtime", "Reuses the existing EmbeddedViewer / Window.tsx postMessage bridge; viewer runtime is unchanged")} prov="asbuilt" />
       </Panel>
     </>
   );

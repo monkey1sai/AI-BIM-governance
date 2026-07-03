@@ -17,7 +17,7 @@ const PRODUCT_CONSOLE_ROUTES = [
   "version-diff", "federation", "apps",
   "kit", "demo-control",
 ];
-const SHORT_CONSOLE_HASH = new RegExp(`^#/?(${PRODUCT_CONSOLE_ROUTES.join("|")})$`);
+const SHORT_CONSOLE_HASH = new RegExp(`^#/?(${PRODUCT_CONSOLE_ROUTES.join("|")})(?:\\?.*)?$`);
 export function isOperatorConsolePath(pathname: string, hash: string, search = ""): boolean {
   // 顯式 console 路徑：永遠 console。
   if (/^\/console(?:\/|$)/.test(pathname)) return true;
