@@ -191,7 +191,8 @@ git commit -m "feat(console): add CrossAxisHandoff build/parse util (七軸通�
 **Interfaces:**
 - Consumes: existing `jsonGet<T>(path)` helper (already in this file).
 - Produces (relied on by Task 7):
-  - `interface DevConversionRecord { conversion_job_id?: string; status?: string; created_at?: string; [k: string]: unknown }`
+  - `interface DevConversionRecord { conversion_job_id?: string; status?: string; source_ifc_filename?: string; [k: string]: unknown }`
+  - （2026-07-03 修正:原規劃 `created_at`,經 Task 7 實作時查證後端 `GET /api/dev/conversions` 三條回應組裝分支結構性從不回傳此欄位,已改用實際會回傳的 `source_ifc_filename`）
   - `coordinatorClient.getConversionsHistory(): Promise<{ items: DevConversionRecord[]; count?: number }>` → thin wrapper on existing `GET /api/dev/conversions` (backend unchanged).
 
 - [ ] **Step 1: Write the failing test**
@@ -236,7 +237,7 @@ Add the interface next to the other response interfaces (e.g., just above `expor
 export interface DevConversionRecord {
   conversion_job_id?: string;
   status?: string;
-  created_at?: string;
+  source_ifc_filename?: string;
   [k: string]: unknown;
 }
 ```
@@ -894,6 +895,7 @@ git commit -m "feat(a1): add #minio / #sessions cross-link chips (evidence-typed
 **Interfaces:**
 - Consumes: `coordinatorClient.getConversionsHistory()` (Task 2); `buildHandoff` (Task 1); existing per-row fields `ConversionRecord.object_key` (line 341, may be `null`) and `IfcReadyListItem.review_session_id` (line 220, may be `null`).
 - Produces: `conv-history-panel` (prov=`artifact`, honest empty/error), `conv-ledger-minio-<idem>`, `conv-job-session-<jobid>`.
+- **修正(2026-07-03,取代原 Task 7 首次實作用的 `created_at`)**:歷史表第三欄改用 `source_ifc_filename`(後端 `_conversion_result_list_item` 對每筆結果 `setdefault` 保證存在;`created_at` 只存在內部 job dict 供排序,結構性從不序列化進 `GET /api/dev/conversions` 回應,對任何真實資料恆為 `undefined`)。Task 2 已提交的 `DevConversionRecord` interface(`coordinatorClient.ts`)目前仍是 `created_at?: string`,本 task 需一併把它改成 `source_ifc_filename?: string`(移除已確認永遠不會有值的 `created_at`,新增實際會回傳的欄位)。
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1002,13 +1004,13 @@ Add this Panel just before the closing `</>` of `ConversionSchedulingPage`'s ret
             <p className="ec-note">{t("目前無轉檔歷史紀錄（非錯誤）。", "No conversion history at the moment (not an error).")}</p>
           ) : (
             <table className="ec-table">
-              <thead><tr><th>conversion_job_id</th><th>status</th><th>created_at</th></tr></thead>
+              <thead><tr><th>conversion_job_id</th><th>status</th><th>source_ifc_filename</th></tr></thead>
               <tbody>
                 {history.slice(0, 50).map((h, i) => (
                   <tr key={h.conversion_job_id ?? `h-${i}`} data-testid={`conv-history-row-${h.conversion_job_id ?? i}`}>
                     <td>{h.conversion_job_id ?? "—"}</td>
                     <td>{h.status ?? "—"}</td>
-                    <td>{h.created_at ?? "—"}</td>
+                    <td>{h.source_ifc_filename ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
