@@ -16,6 +16,8 @@ import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappi
 // StreamConfigReader 已抽成獨立葉子檔（破解 pages ↔ coordinator/RuntimeGovernanceTabs 循環依賴）；
 // RuntimePage（本檔內）由此 leaf 直接 import 復用同一元件。RuntimeGovernanceTabs 亦各自 leaf import，故無 re-export 需求。
 import { StreamConfigReader } from "./StreamConfigReader";
+// 七軸通用 cross-page handoff util（§4）：URL hash 帶非機密關聯 ID，接收端重驗，不帶 lease token。
+import { buildHandoff } from "./handoff";
 
 type NativeFilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
@@ -617,7 +619,7 @@ export function A1GovernanceWorkbenchPage() {
                 {convBusy ? t("排入中…", "queuing…") : t("排入 IFC→USD 轉檔排程", "Queue IFC to USD Conversion")}
               </Btn>
               {convJobId && <span className="ec-s" data-testid="a1-convert-job">job: {convJobId}</span>}
-              <a className="ec-s" data-testid="a1-conv-link" href="#/conv">{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("conv", { source: "a1", job_id: convJobId ?? undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
             </div>
             {convStatus !== null && <p className="ec-note" data-testid="a1-convert-status">{t("轉檔狀態：", "conversion status: ")}{convStatus}</p>}
           </div>
@@ -720,6 +722,26 @@ export function A1GovernanceWorkbenchPage() {
             </Btn>
           );
         })()}{" "}
+        {/* 七軸 cross-link chips（§4.3）：回看 MinIO 來源物件、跳 Session 管理檢視此 session。
+            證據型——目標 id 不存在時誠實 disabled，不製造無效跳轉。 */}
+        <span className="ec-crosslinks" data-testid="a1-crosslinks" style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", marginLeft: 8 }}>
+          <Btn
+            data-testid="a1-link-minio"
+            disabled={!selectedKey}
+            caption={selectedKey ? t("回看 MinIO 來源物件", "View the source object in MinIO") : t("尚未選取 MinIO 物件", "No MinIO object selected")}
+            onClick={() => { if (!selectedKey) return; window.location.hash = buildHandoff("minio", { source: "a1", minio_key: selectedKey }); }}
+          >
+            {t("MinIO 來源 →", "MinIO source →")}
+          </Btn>
+          <Btn
+            data-testid="a1-link-sessions"
+            disabled={!selectedSession}
+            caption={selectedSession ? t("在 Session 管理檢視此 session", "View this session in Session Management") : t("尚未選取 review session", "No review session selected")}
+            onClick={() => { if (!selectedSession) return; window.location.hash = buildHandoff("sessions", { source: "a1", session: selectedSession }); }}
+          >
+            {t("Session 管理 →", "Session Management →")}
+          </Btn>
+        </span>{" "}
         {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
     </>
