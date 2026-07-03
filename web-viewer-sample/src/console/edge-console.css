@@ -482,3 +482,13 @@ table.ec-table tr:hover td { background:var(--ec-bg-3); }
 .ec-nav-boundary { margin:10px 12px 4px; padding:8px 10px; border:1px solid var(--ec-grn-3);
   border-radius:var(--ec-r-sm); background:var(--ec-grn-2); color:var(--ec-grn);
   font-family:var(--ec-mono); font-size:10px; line-height:1.5; }
+
+/* Shared status/evidence rail (seven-axis harmony §5). Visual only — tests key on data-testid. */
+.ec-statusrail { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; padding: 4px 8px; }
+.ec-statusrail.stale { opacity: 0.55; }
+.ec-statusrail-item { display: inline-flex; gap: 6px; align-items: baseline; background: none; border: 0; color: inherit; cursor: pointer; font: inherit; }
+.ec-statusrail-item:not(button) { cursor: default; }
+.ec-statusrail-k { font-size: 11px; opacity: 0.7; }
+.ec-statusrail-v { font-weight: 600; }
+.ec-statusrail-v.muted { opacity: 0.6; font-weight: 400; }
+.ec-statusrail-v.health-unknown { opacity: 0.6; }
