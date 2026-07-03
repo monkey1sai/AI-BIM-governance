@@ -15,6 +15,18 @@ export interface ElementMappingSummary {
     unmapped_ifc_count?: number;
     unmapped_usd_count?: number;
     fake_mapping_count?: number;
+    mapping_information_status?: string | null;
+    mapping_issue_code?: string | null;
+    mapping_issue_count?: number | null;
+}
+
+export interface ElementMappingIssue {
+    code?: string | null;
+    message?: string | null;
+    severity?: string | null;
+    required_join_keys?: string[] | null;
+    affected_ifc_count?: number | null;
+    affected_usd_count?: number | null;
 }
 
 export interface ElementMappingDocument {
@@ -30,6 +42,7 @@ export interface ElementMappingDocument {
     unmapped_ifc_guids?: string[];
     unmapped_usd_prims?: string[];
     summary?: ElementMappingSummary;
+    issues?: ElementMappingIssue[];
 }
 
 export function isFakeMappingItem(item: ElementMappingItem): boolean {

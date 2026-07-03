@@ -38,6 +38,9 @@ const handoff: ReviewRoomHandoff = {
   severity: "error",
   label: "Fire rating missing",
   expectedStageUrl: "stage://x",
+  mappingInformationStatus: null,
+  mappingIssueCode: null,
+  mappingIssueCount: null,
 };
 
 function fakeRuntimeStatus() {
@@ -154,11 +157,14 @@ describe("ReviewSessionViewerPane", () => {
   };
 
   it("parses A1 handoff hash without secret fields", () => {
-    const parsed = parseReviewRoomHandoff("#review?source=a1&rule_run_id=rr_a1&session=review_session_x&ifc_guid=g1&usd_prim_path=%2FWorld%2FDoor_001&rule_code=R1");
+    const parsed = parseReviewRoomHandoff("#review?source=a1&rule_run_id=rr_a1&session=review_session_x&ifc_guid=g1&usd_prim_path=%2FWorld%2FDoor_001&rule_code=R1&mapping_information_status=incomplete&mapping_issue_code=ifc_usdc_mapping_information_incomplete&mapping_issue_count=1");
     expect(parsed.source).toBe("a1");
     expect(parsed.ruleRunId).toBe("rr_a1");
     expect(parsed.sessionId).toBe("review_session_x");
     expect(parsed.usdPrimPath).toBe("/World/Door_001");
+    expect(parsed.mappingInformationStatus).toBe("incomplete");
+    expect(parsed.mappingIssueCode).toBe("ifc_usdc_mapping_information_incomplete");
+    expect(parsed.mappingIssueCount).toBe("1");
     expect(JSON.stringify(parsed)).not.toContain("lease_token");
   });
 
@@ -269,8 +275,14 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-runtime-evidence")?.textContent).toContain("已送出並收到 viewer 回報");
   });
 
-  it("missing usd_prim_path blocks highlight in Review Room with an honest reason", async () => {
-    await renderPane({ ...handoff, usdPrimPath: null });
+  it("missing usd_prim_path opens Review Room diagnostic mode but blocks highlight", async () => {
+    await renderPane({
+      ...handoff,
+      usdPrimPath: null,
+      mappingInformationStatus: "incomplete",
+      mappingIssueCode: "ifc_usdc_mapping_information_incomplete",
+      mappingIssueCount: "1",
+    });
     await act(async () => { q<HTMLButtonElement>("review-room-manual-start")!.click(); });
     await flush();
     await act(async () => {
@@ -280,6 +292,8 @@ describe("ReviewSessionViewerPane", () => {
 
     expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
     expect(q("review-room-highlight-reason")?.textContent).toContain("usd_prim_path");
+    expect(q("review-room-highlight-reason")?.textContent).toContain("ifc_usdc_mapping_information_incomplete");
+    expect(q("review-room-handoff-summary")?.textContent).toContain("status=incomplete");
     expect(viewerBox.sendHighlight).not.toHaveBeenCalled();
   });
 });

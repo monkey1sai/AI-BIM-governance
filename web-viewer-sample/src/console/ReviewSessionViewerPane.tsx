@@ -14,6 +14,9 @@ export interface ReviewRoomHandoff {
   severity: string | null;
   label: string | null;
   expectedStageUrl: string | null;
+  mappingInformationStatus: string | null;
+  mappingIssueCode: string | null;
+  mappingIssueCount: string | null;
 }
 
 const EMPTY_HANDOFF: ReviewRoomHandoff = {
@@ -26,6 +29,9 @@ const EMPTY_HANDOFF: ReviewRoomHandoff = {
   severity: null,
   label: null,
   expectedStageUrl: null,
+  mappingInformationStatus: null,
+  mappingIssueCode: null,
+  mappingIssueCount: null,
 };
 
 export function parseReviewRoomHandoff(hash = typeof window !== "undefined" ? window.location.hash : ""): ReviewRoomHandoff {
@@ -42,11 +48,14 @@ export function parseReviewRoomHandoff(hash = typeof window !== "undefined" ? wi
     severity: params.get("severity"),
     label: params.get("label"),
     expectedStageUrl: params.get("expected_stage_url"),
+    mappingInformationStatus: params.get("mapping_information_status"),
+    mappingIssueCode: params.get("mapping_issue_code"),
+    mappingIssueCount: params.get("mapping_issue_count"),
   };
 }
 
 export function reviewRoomHandoffHasPayload(handoff: ReviewRoomHandoff): boolean {
-  return Boolean(handoff.source || handoff.sessionId || handoff.ruleRunId || handoff.ifcGuid || handoff.usdPrimPath);
+  return Boolean(handoff.source || handoff.sessionId || handoff.ruleRunId || handoff.ifcGuid || handoff.usdPrimPath || handoff.mappingInformationStatus || handoff.mappingIssueCode);
 }
 
 function stageUrlsEquivalent(loaded: string, expected: string): boolean {
@@ -82,6 +91,17 @@ function highlightResultText(result: { ok: boolean; reason?: string }): string {
   if (result.reason === "unmapped") return t("viewer 回報未對映，無法高亮", "viewer reported unmapped; cannot highlight");
   if (result.reason === "datachannel_not_ready") return t("viewer DataChannel 尚未就緒", "viewer DataChannel is not ready");
   return t("viewer 回報高亮未成功", "viewer reported highlight failure");
+}
+
+function mappingDiagnosticText(handoff: ReviewRoomHandoff): string {
+  const parts = [
+    handoff.mappingInformationStatus ? `status=${handoff.mappingInformationStatus}` : null,
+    handoff.mappingIssueCode ? `code=${handoff.mappingIssueCode}` : null,
+    handoff.mappingIssueCount ? `issues=${handoff.mappingIssueCount}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0
+    ? parts.join(" / ")
+    : t("missing usd_prim_path / mapping", "missing usd_prim_path / mapping");
 }
 
 export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: { handoff?: ReviewRoomHandoff }) {
@@ -209,7 +229,7 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
   const highlightDisabledReason = !handoff.ifcGuid
     ? t("handoff 缺 ifc_guid，無法高亮", "handoff is missing ifc_guid")
     : !handoff.usdPrimPath
-      ? t("缺 usd_prim_path / mapping，需先補 mapping artifact", "missing usd_prim_path / mapping")
+      ? `${t("缺 usd_prim_path / mapping，禁止高亮：", "missing usd_prim_path / mapping; highlight is blocked: ")}${mappingDiagnosticText(handoff)}`
       : !validSession
         ? t("尚未輸入有效 review session", "enter a valid review session first")
         : !sessionObserved
@@ -363,6 +383,7 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
             <Field k="ifc_guid" v={handoff.ifcGuid ?? "—"} prov={handoff.ifcGuid ? "asbuilt" : "p1"} />
             <Field k="usd_prim_path" v={handoff.usdPrimPath ?? "—"} prov={handoff.usdPrimPath ? "asbuilt" : "p1"} />
             <Field k="rule_code" v={handoff.ruleCode ?? "—"} prov="asbuilt" />
+            <Field k="mapping_status" v={handoff.usdPrimPath ? t("mapped", "mapped") : mappingDiagnosticText(handoff)} prov={handoff.usdPrimPath ? "asbuilt" : "p1"} />
           </div>
           <Btn data-testid="review-room-highlight" disabled={!canHighlight} caption={canHighlight ? t("postMessage highlight -> viewer DataChannel", "postMessage highlight -> viewer DataChannel") : highlightDisabledReason} onClick={sendHighlight}>
             {t("在 3D 高亮 handoff 構件", "Highlight handoff element in 3D")}

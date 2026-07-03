@@ -67,6 +67,15 @@ export interface ReviewParticipant {
  * orchestrator/caller provides at session creation time. The viewer card consumes this read-only.
  * Keep this strictly additive — never make it required, and never let it gate session creation.
  */
+export interface ConversionMappingIssueSummary {
+  code?: string | null;
+  message?: string | null;
+  severity?: string | null;
+  required_join_keys?: string[] | null;
+  affected_ifc_count?: number | null;
+  affected_usd_count?: number | null;
+}
+
 export interface ConversionQualityMetricsSummary {
   fixture_name?: string | null;
   conversion_job_id?: string | null;
@@ -87,6 +96,10 @@ export interface ConversionQualityMetricsSummary {
   semantic_mapping_fidelity?: string | null;
   mapping_has_ifc_type?: boolean | null;
   mapping_has_ifc_name?: boolean | null;
+  mapping_information_status?: string | null;
+  mapping_issue_code?: string | null;
+  mapping_issue_count?: number | null;
+  mapping_issues?: ConversionMappingIssueSummary[] | null;
 }
 
 export interface ReviewSession {

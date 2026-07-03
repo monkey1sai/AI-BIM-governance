@@ -42,6 +42,9 @@ export interface RuleResultRow {
   severity: string;
   status: "pass" | "fail" | "error";
   message: string;
+  mapping_information_status?: string | null;
+  mapping_issue_code?: string | null;
+  mapping_issue_count?: number | null;
 }
 
 // A1 §4.2 失敗構件抽屜：後端開 model 補 name/type/storey（查詢期 enrichment，非持久化）。

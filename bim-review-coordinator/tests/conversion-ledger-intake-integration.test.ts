@@ -130,6 +130,46 @@ describe("intake → ledger", () => {
     expect(item!.usdc_key).toBe("http://127.0.0.1:49101/artifacts/stream_conv_ledger_ready/model.usdc");
   });
 
+  it("conversion result failed 後 GET /api/conversion/records 回填 failed 與 job id", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set("X-Webhook-Secret", "test-secret")
+      .set("X-Idempotency-Key", "mw_failed12345678")
+      .set("X-Correlation-Id", "minio-watch-failed12")
+      .send(body);
+
+    expect(res.status).toBeLessThan(400);
+
+    const failed = await request(app.app)
+      .post("/api/internal/conversion-result")
+      .set(internalHeaders())
+      .send({
+        correlation_id: "minio-watch-failed12",
+        conversion_job_id: "stream_conv_ledger_failed",
+        status: "failed",
+        reason: "ifc_usdc_mapping_information_incomplete",
+      });
+    expect(failed.status).toBe(202);
+
+    const recs = await request(app.app).get("/api/conversion/records");
+    expect(recs.status).toBe(200);
+
+    const item = (recs.body.items as Array<{
+      idempotency_key: string;
+      status: string;
+      conversion_job_id: string | null;
+      usdc_key: string | null;
+      coverage_report: unknown | null;
+    }>).find((r) => r.idempotency_key === "mw_failed12345678");
+
+    expect(item).toBeTruthy();
+    expect(item!.status).toBe("failed");
+    expect(item!.conversion_job_id).toBe("stream_conv_ledger_failed");
+    expect(item!.usdc_key).toBeNull();
+    expect(item!.coverage_report).toBeNull();
+  });
+
   // 非 MinIO 來源（worker compat payload，無 project_display_name / model_category）
   // 進 conversionLedger 的 fallback 守衛。ConversionLedgerRecord 的 project_display_name /
   // category 型別是 string（非 nullable，conversionLedger.ts:18-19），無法存 null，

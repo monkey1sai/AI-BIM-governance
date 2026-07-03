@@ -1,4 +1,8 @@
-import type { ConversionQualityMetricsSummary, ExternalIfcReadyEvent } from "../types.js";
+import type {
+  ConversionMappingIssueSummary,
+  ConversionQualityMetricsSummary,
+  ExternalIfcReadyEvent,
+} from "../types.js";
 import crypto from "node:crypto";
 
 /**
@@ -375,6 +379,35 @@ export function buildQualityMetricsSummary(
     const v = quality[key];
     return typeof v === "boolean" ? v : null;
   };
+  const stringArray = (value: unknown): string[] | null => {
+    return Array.isArray(value) && value.every((item) => typeof item === "string")
+      ? value
+      : null;
+  };
+  const mappingIssues = (key: string): ConversionMappingIssueSummary[] | null => {
+    const v = quality[key];
+    if (!Array.isArray(v)) return null;
+    const issues: ConversionMappingIssueSummary[] = [];
+    for (const item of v) {
+      if (!item || typeof item !== "object") return null;
+      const issue = item as Record<string, unknown>;
+      issues.push({
+        code: typeof issue.code === "string" ? issue.code : null,
+        message: typeof issue.message === "string" ? issue.message : null,
+        severity: typeof issue.severity === "string" ? issue.severity : null,
+        required_join_keys: stringArray(issue.required_join_keys),
+        affected_ifc_count:
+          typeof issue.affected_ifc_count === "number" && Number.isFinite(issue.affected_ifc_count)
+            ? issue.affected_ifc_count
+            : null,
+        affected_usd_count:
+          typeof issue.affected_usd_count === "number" && Number.isFinite(issue.affected_usd_count)
+            ? issue.affected_usd_count
+            : null,
+      });
+    }
+    return issues;
+  };
 
   // phase_timings.conversion_total.duration_seconds(對齊 dev-console.html 的
   // fallback 取法)
@@ -408,5 +441,9 @@ export function buildQualityMetricsSummary(
     semantic_mapping_fidelity: str("semantic_mapping_fidelity"),
     mapping_has_ifc_type: bool("mapping_has_ifc_type"),
     mapping_has_ifc_name: bool("mapping_has_ifc_name"),
+    mapping_information_status: str("mapping_information_status"),
+    mapping_issue_code: str("mapping_issue_code"),
+    mapping_issue_count: num("mapping_issue_count"),
+    mapping_issues: mappingIssues("mapping_issues"),
   };
 }

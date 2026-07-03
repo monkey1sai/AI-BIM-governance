@@ -242,6 +242,12 @@ function buildA1ReviewRoomHandoffHash(args: {
   if (args.row?.rule_code) q.set("rule_code", args.row.rule_code);
   if (args.row?.severity) q.set("severity", args.row.severity);
   if (args.row?.message) q.set("label", args.row.message);
+  const mappingStatus = args.row && !args.row.usd_prim_path
+    ? args.row.mapping_information_status ?? "incomplete"
+    : args.row?.mapping_information_status ?? null;
+  if (mappingStatus) q.set("mapping_information_status", mappingStatus);
+  if (args.row?.mapping_issue_code) q.set("mapping_issue_code", args.row.mapping_issue_code);
+  if (typeof args.row?.mapping_issue_count === "number") q.set("mapping_issue_count", String(args.row.mapping_issue_count));
   if (args.expectedStageUrl) q.set("expected_stage_url", args.expectedStageUrl);
   return `#review?${q.toString()}`;
 }
@@ -250,11 +256,24 @@ function a1ReviewRoomHandoffReason(row: RuleResultRow | null | undefined, select
   if (!selectedSession) return t("尚未選取 review session", "No review session selected yet");
   if (!row) return t("尚無失敗構件可交給 Review Room", "No failed element to hand off to Review Room");
   if (!row.ifc_guid) return t("此構件無 ifc_guid，無法定位", "This element has no ifc_guid; it cannot be located");
-  if (!row.usd_prim_path) return t("此構件缺 usd_prim_path，Review Room 會顯示 mapping 缺失且禁止高亮", "This element is missing usd_prim_path; Review Room will show the mapping gap and block highlight");
   return "";
 }
 function isElementMappingDocumentLike(value: unknown): value is ElementMappingDocument {
   return Boolean(value && typeof value === "object" && Array.isArray((value as ElementMappingDocument).items));
+}
+function mappingDiagnosticFromDocument(value: ElementMappingDocument): Pick<RuleResultRow, "mapping_information_status" | "mapping_issue_code" | "mapping_issue_count"> {
+  const firstIssue = value.issues?.find((issue) => typeof issue.code === "string");
+  const mappingIssueCode = value.summary?.mapping_issue_code ?? firstIssue?.code ?? null;
+  const mappingIssueCount = typeof value.summary?.mapping_issue_count === "number"
+    ? value.summary.mapping_issue_count
+    : value.issues?.length ?? null;
+  const mappingInformationStatus = value.summary?.mapping_information_status
+    ?? (mappingIssueCode || mappingIssueCount ? "incomplete" : null);
+  return {
+    mapping_information_status: mappingInformationStatus,
+    mapping_issue_code: mappingIssueCode,
+    mapping_issue_count: mappingIssueCount,
+  };
 }
 function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): RuleResultRow[] {
   if (!isElementMappingDocumentLike(value) || isFakeMappingDocument(value)) return rows;
@@ -264,11 +283,13 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
       primByGuid.set(item.ifc_guid, item.usd_prim_path);
     }
   }
-  if (primByGuid.size === 0) return rows;
+  const diagnostic = mappingDiagnosticFromDocument(value);
   return rows.map((row) => {
     if (row.usd_prim_path || !row.ifc_guid) return row;
     const usdPrimPath = primByGuid.get(row.ifc_guid);
-    return usdPrimPath ? { ...row, usd_prim_path: usdPrimPath } : row;
+    if (usdPrimPath) return { ...row, usd_prim_path: usdPrimPath };
+    if (!diagnostic.mapping_information_status && !diagnostic.mapping_issue_code && diagnostic.mapping_issue_count === null) return row;
+    return { ...row, ...diagnostic };
   });
 }
 

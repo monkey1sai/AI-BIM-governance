@@ -175,13 +175,23 @@ describe("A1 3D review decoupling", () => {
     expect(viewerBox.renderCount).toBe(0);
   });
 
-  it("missing usd_prim_path keeps A1 handoff disabled with an honest mapping reason", async () => {
+  it("missing usd_prim_path opens Review Room with an honest mapping diagnostic", async () => {
     vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "guid_without_mapping", usd_prim_path: null, rule_code: "MAPPING", severity: "error", status: "fail", message: "missing mapping" },
     ]);
-    vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({ mock: false, summary: { fake_mapping_count: 0 }, items: [] });
+    vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({
+      mock: false,
+      summary: {
+        fake_mapping_count: 0,
+        mapping_information_status: "incomplete",
+        mapping_issue_code: "ifc_usdc_mapping_information_incomplete",
+        mapping_issue_count: 1,
+      },
+      issues: [{ code: "ifc_usdc_mapping_information_incomplete" }],
+      items: [],
+    });
 
     await renderA1();
     await selectSession("review_session_x");
@@ -189,9 +199,18 @@ describe("A1 3D review decoupling", () => {
     await flush();
 
     const open = q<HTMLButtonElement>("a1-open-review-room")!;
-    expect(open.disabled).toBe(true);
-    expect(open.textContent).toContain("usd_prim_path");
-    expect(window.location.hash).toBe("#a1");
+    expect(open.disabled).toBe(false);
+    await act(async () => { open.click(); });
+
+    expect(window.location.hash).toContain("#review?");
+    expect(window.location.hash).toContain("source=a1");
+    expect(window.location.hash).toContain("session=review_session_x");
+    expect(window.location.hash).toContain("ifc_guid=guid_without_mapping");
+    expect(window.location.hash).toContain("mapping_information_status=incomplete");
+    expect(window.location.hash).toContain("mapping_issue_code=ifc_usdc_mapping_information_incomplete");
+    expect(window.location.hash).toContain("mapping_issue_count=1");
+    expect(window.location.hash).not.toContain("usd_prim_path");
+    expect(window.location.hash).not.toContain("lease_token");
   });
 
   it("conversion ready does not fallback to the first active session when job.review_session_id is missing", async () => {

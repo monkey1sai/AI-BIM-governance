@@ -31,6 +31,38 @@ describe("buildQualityMetricsSummary additive mapped/unmapped", () => {
     const s = buildQualityMetricsSummary(resultWith({ coverage_ratio: 0.5 }));
     expect(s!.mapped_count).toBeNull();
     expect(s!.unmapped_count).toBeNull();
+    expect(s!.mapping_information_status).toBeNull();
+    expect(s!.mapping_issue_code).toBeNull();
+    expect(s!.mapping_issue_count).toBeNull();
+    expect(s!.mapping_issues).toBeNull();
+  });
+
+  it("轉送 mapping diagnostic fields（不在 coordinator 重算）", () => {
+    const s = buildQualityMetricsSummary(resultWith({
+      mapping_information_status: "incomplete",
+      mapping_issue_code: "ifc_usdc_mapping_information_incomplete",
+      mapping_issue_count: 1,
+      mapping_issues: [{
+        code: "ifc_usdc_mapping_information_incomplete",
+        message: "element_mapping has no stable IFC GUID join key",
+        severity: "warn",
+        required_join_keys: ["ifc_guid", "usd_prim_path"],
+        affected_ifc_count: 12,
+        affected_usd_count: 12,
+      }],
+    }));
+
+    expect(s!.mapping_information_status).toBe("incomplete");
+    expect(s!.mapping_issue_code).toBe("ifc_usdc_mapping_information_incomplete");
+    expect(s!.mapping_issue_count).toBe(1);
+    expect(s!.mapping_issues).toEqual([{
+      code: "ifc_usdc_mapping_information_incomplete",
+      message: "element_mapping has no stable IFC GUID join key",
+      severity: "warn",
+      required_join_keys: ["ifc_guid", "usd_prim_path"],
+      affected_ifc_count: 12,
+      affected_usd_count: 12,
+    }]);
   });
 
   it("無 quality_metrics 整體回 null（backward compatible）", () => {
