@@ -229,6 +229,45 @@ describe("A1 3D review decoupling", () => {
     expect(window.location.hash).not.toContain("lease_token");
   });
 
+  it("A1 cross-link chips navigate to #minio / #sessions carrying source=a1 and the selected id (not swapped)", async () => {
+    // Regression guard for spec §4.3 A1→MinIO / A1→Sessions chips. The shallow SSR test (A1CrossLinks.test.tsx)
+    // only proves the chips are disabled before selection; this drives the enabled click path and asserts the
+    // exact axis target + param→value mapping. A typo like buildHandoff("session", …) (singular — EdgeConsole
+    // has no such case, only "sessions") or swapping minio_key/session would silently fall through to the
+    // HomePage default; parsing the hash here makes that regression fail loudly instead of green-lighting it.
+    await renderA1();
+
+    // Select a MinIO source object → a1-link-minio becomes enabled.
+    const model = q<HTMLSelectElement>("a1-minio-select")!;
+    await act(async () => {
+      model.value = "松風庵/root/main/u1/model.ifc";
+      model.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+
+    const minioLink = q<HTMLButtonElement>("a1-link-minio")!;
+    expect(minioLink.disabled).toBe(false);
+    await act(async () => { minioLink.click(); });
+
+    expect(window.location.hash.startsWith("#minio?")).toBe(true);
+    const mp = new URLSearchParams(window.location.hash.slice(window.location.hash.indexOf("?") + 1));
+    expect(mp.get("source")).toBe("a1");
+    expect(mp.get("minio_key")).toBe("松風庵/root/main/u1/model.ifc"); // decoded key, exact (round-trips Chinese + slashes)
+    expect(mp.get("session")).toBeNull();                              // must not mislabel the minio key as a session id
+
+    // Select a review session → a1-link-sessions becomes enabled.
+    await selectSession("review_session_x");
+    const sessionsLink = q<HTMLButtonElement>("a1-link-sessions")!;
+    expect(sessionsLink.disabled).toBe(false);
+    await act(async () => { sessionsLink.click(); });
+
+    expect(window.location.hash.startsWith("#sessions?")).toBe(true);  // plural — matches the EdgeConsole "sessions" case
+    const sp = new URLSearchParams(window.location.hash.slice(window.location.hash.indexOf("?") + 1));
+    expect(sp.get("source")).toBe("a1");
+    expect(sp.get("session")).toBe("review_session_x");
+    expect(sp.get("minio_key")).toBeNull();                            // sessions chip must not leak the minio key
+  });
+
   it("conversion ready does not fallback to the first active session when job.review_session_id is missing", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus")
       .mockResolvedValueOnce(fakeRuntimeStatus([]) as never)
