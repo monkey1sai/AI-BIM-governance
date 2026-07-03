@@ -1,5 +1,5 @@
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SharedStatusProvider } from "./SharedStatusProvider";
 import { useSharedStatus, type SharedStatusSnapshot } from "./useSharedStatus";
@@ -26,13 +26,20 @@ function rt(activeCount: number): RuntimeStatus {
 describe("SharedStatusProvider", () => {
   let container: HTMLDivElement;
   let captured: SharedStatusSnapshot | null;
+  let root: Root | null;
   function Probe() { captured = useSharedStatus(); return null; }
 
   beforeEach(() => {
     (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
-    container = document.createElement("div"); document.body.appendChild(container); captured = null;
+    container = document.createElement("div"); document.body.appendChild(container); captured = null; root = null;
   });
-  afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); vi.useRealTimers(); });
+  afterEach(async () => {
+    // Unmount BEFORE restoring mocks / real timers so the effect cleanup clears the watchdog interval +
+    // next-poll setTimeout while the spies (and any fake timers) are still installed — otherwise the
+    // 5000ms auto-poll (spec §5.1) leaks a live loop that would later hit the real coordinatorClient.
+    if (root) await act(async () => { root!.unmount(); });
+    document.body.removeChild(container); vi.restoreAllMocks(); vi.useRealTimers();
+  });
 
   it("polls runtimeStatus once per cycle and maps sessions + null GPU + designed-null stage_matched", async () => {
     const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rt(1));
@@ -40,8 +47,8 @@ describe("SharedStatusProvider", () => {
       { idempotency_key: "k1", project_id: "270", project_display_name: "270", category: "c", external_model_version_id: "v", conversion_job_id: null, status: "queued", usdc_key: null, coverage_report: null, object_key: null, detected_at: "", updated_at: "" },
       { idempotency_key: "k2", project_id: "270", project_display_name: "270", category: "c", external_model_version_id: "v", conversion_job_id: null, status: "ready", usdc_key: null, coverage_report: null, object_key: null, detected_at: "", updated_at: "" },
     ] });
-    const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
+    root = createRoot(container);
+    await act(async () => { root!.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     expect(statusSpy).toHaveBeenCalledTimes(1); // single poll, not per-child
@@ -57,8 +64,8 @@ describe("SharedStatusProvider", () => {
 
   it("marks stale + unknown health when the poll fails", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockRejectedValue(new Error("ECONNREFUSED"));
-    const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
+    root = createRoot(container);
+    await act(async () => { root!.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); });
     expect(captured?.stale).toBe(true);
     expect(captured?.health).toBe("unknown");
@@ -67,8 +74,8 @@ describe("SharedStatusProvider", () => {
   it("uses an injected value and does not poll (test seam)", async () => {
     const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus");
     const fixture: SharedStatusSnapshot = { activeSessions: 5, sessionsById: {}, gpuNodesTotal: null, gpuNodesBusy: null, health: "ok", conversionQueue: null, updatedAt: "2026-07-03", stale: false };
-    const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider value={fixture}><Probe /></SharedStatusProvider>); });
+    root = createRoot(container);
+    await act(async () => { root!.render(<SharedStatusProvider value={fixture}><Probe /></SharedStatusProvider>); });
     expect(statusSpy).not.toHaveBeenCalled();
     expect(captured?.activeSessions).toBe(5);
   });
@@ -80,8 +87,8 @@ describe("SharedStatusProvider", () => {
     // catch (the success path always assigns a filtered number).
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rt(1));
     vi.spyOn(coordinatorClient, "getConversionRecords").mockRejectedValue(new Error("records 503"));
-    const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
+    root = createRoot(container);
+    await act(async () => { root!.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     expect(captured?.conversionQueue).toBeNull();
@@ -99,8 +106,8 @@ describe("SharedStatusProvider", () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValueOnce(rt(1)).mockReturnValue(hang);
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
 
-    const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
+    root = createRoot(container);
+    await act(async () => { root!.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(captured?.stale).toBe(false); // first poll succeeded → last-known-good is fresh
 
@@ -118,8 +125,8 @@ describe("SharedStatusProvider", () => {
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 150, items: [
       { idempotency_key: "k1", project_id: "270", project_display_name: "270", category: "c", external_model_version_id: "v", conversion_job_id: null, status: "queued", usdc_key: null, coverage_report: null, object_key: null, detected_at: "", updated_at: "" },
     ] });
-    const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
+    root = createRoot(container);
+    await act(async () => { root!.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
     expect(captured?.conversionQueue).toBeNull(); // 截斷窗 → 未取得，不用截斷子集算出被低估的數字
@@ -138,11 +145,11 @@ describe("SharedStatusProvider", () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockReturnValueOnce(firstHang).mockResolvedValue(rt(1));
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
 
-    const root = createRoot(container);
+    root = createRoot(container);
     // gen-1: first poll is now suspended awaiting the hung runtimeStatus.
-    await act(async () => { root.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
+    await act(async () => { root!.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
     // Dependency (pollMs) changes mid-flight → gen-1 cleanup runs, gen-2 effect starts a fresh loop.
-    await act(async () => { root.render(<SharedStatusProvider pollMs={2000}><Probe /></SharedStatusProvider>); });
+    await act(async () => { root!.render(<SharedStatusProvider pollMs={2000}><Probe /></SharedStatusProvider>); });
     await act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
 
     const timersBefore = vi.getTimerCount(); // gen-2's poll setTimeout + watchdog setInterval
