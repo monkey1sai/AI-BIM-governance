@@ -39,7 +39,7 @@ description: Use when a brainstormed spec already exists under docs/superpowers/
 - 不得改 P0/P1/P3/P4/P5/P6/P7 的 phase 順序、gate 條件、HELD 值語義或 resume contract。
 - 不得把 `userFacing=true` 的 browser evidence gate 降級成 source inspection / unit test。
 - 不得讓 codebase-memory 取代 GitNexus 的正式 risk/scope 判定。
-- 不得把 `ultracode` skill 說成 Claude Code `/effort ultracode`、dynamic workflow runtime、`/workflows` UI 或背景 workflow manager。
+- 不得把 `ultracode`-style discipline 說成 Claude Code `/effort ultracode`、dynamic workflow runtime、`/workflows` UI 或背景 workflow manager。
 - 不得加入「需要另行授權 commit / push / PR / merge」來覆蓋本檔既有 spec-to-done ship 語義;只有 consent carve-out 類別可再停。
 - 不得移除 P5 adversarial review、P6 ship-item、OpenSpec / pr-review-agent / GitNexus fallback 揭露等 gate。
 - 不得在 Codex copy 自行創造與 `.claude/workflows/*.js` 不相容的欄位或 StructuredOutput 名稱。
