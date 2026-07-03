@@ -125,7 +125,13 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
   // runtimeStatus 判定 / lease 授權邏輯（N3：claimPrimary、lease/heartbeat effects、sendHighlight、
   // EmbeddedViewer 皆不動）。input 仍是自由輸入欄，datalist 只是額外的自動完成候選來源。
   const shared = useSharedStatus();
-  const sessionCandidates = Object.keys(shared.sessionsById);
+  // sessionsById（spec §5.2）是全量表（不分狀態，coordinator 從不刪除 session：active→closing→closed 永久保留）。
+  // datalist 是「可 attach 候選」（spec §5.5），只列與本 pane runtimeSessions（下方 line 123）同一組可 attach 狀態
+  // （active/created）的 session_id；否則長壽環境累積的 closed/closing 過期 session 會被當成外觀無異的自動完成
+  // 候選，把過期 session 假裝成可 attach（違反 N5 誠實鐵律，比照 KitGpuFleetPage task#8 的 active-only 修法）。
+  const sessionCandidates = Object.values(shared.sessionsById)
+    .filter((s) => s.status === "active" || s.status === "created")
+    .map((s) => s.session_id);
   const sid = sessionId.trim();
   const validSession = sessionIdIsValid(sid);
   const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
