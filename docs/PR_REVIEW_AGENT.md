@@ -58,7 +58,7 @@ Markdown summary 只保留人要先看的內容：verdict、blockers、warnings�
 - 不印出 secret 值，只回報檔案路徑與風險類型。
 - 修改既有 `.env`、private key、token / credential 檔案時一律 blocked；若 PR 只刪除這類檔案，允許進入人工審查但必須以 warning 要求確認 rotation / remediation；`.env.example` 或 `.env.*.example` 可作為 contract 變更進入人工審查。
 - 不允許把 retired `_worker`、`_bim-control`、`_s3_storage`、`_conversion-service`、`_conversion-server` 重新寫成 current product runtime dependency。
-- Code 或 script 變更需要 GitNexus detect changes evidence；若 unavailable（例如 runner 沒有可用 index registry 或回報 `No indexed repositories found`），除 docs-only / tooling-only / rollout exception 外 fail closed；若 GitNexus 已執行但回報 failed，不可降級成 warning。
+- Code 或 script 變更仍需要 PR body / agent 回報中的 GitNexus detect changes evidence；GitHub Actions 的 `pr-review-agent` job 為節省 CI 時間預設 `-SkipGitNexus -AllowGitNexusUnavailable`，只記錄 warning，不在 CI 安裝 GitNexus 或重建 index。若本機或專用 runner 實際執行 GitNexus 但回報 failed，不可降級成 warning。
 - OpenSpec archive / formal spec closeout 會跑 `openspec validate --specs --strict`；`openspec/changes/archive/` 不會被當成 active change id。
 - Optional AI adapter 不可把 deterministic failure 改成 passed；預設未要求 AI verdict 時只記錄 human note，不把 gate 降成 warning。
 
@@ -94,7 +94,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\pr-review-agent.ps1 
 
 1. 先讓 workflow 在 PR 上產生 report 與 comment，觀察 false positive / false negative。
 2. 確認審查訊號穩定後，再把 `pr-review-agent` status check 加到 branch protection required checks。
-3. 第一版 GitHub-hosted runner 會先 provision OpenSpec、GitNexus、pytest 與 coordinator npm dependencies；必要 validator 若仍 unavailable 會 blocking。正常 PR 不應使用 `-AllowGitNexusUnavailable`；GitNexus CLI 真正缺失只可在 draft/report-only 或明確 rollout exception 中降級，GitNexus execution failed 不可降級。
+3. GitHub-hosted runner provision OpenSpec、pytest 與 coordinator/viewer dependencies；CI 預設跳過 GitNexus install / analyze，避免每個 PR 長時間 bootstrap。GitNexus 仍由本機 agent / MCP 在改 symbol 前與 commit 前提供 evidence；CI 的 skip 只降級為 warning，GitNexus execution failed（若實際執行）不可降級。
 4. 若 workflow 造成阻塞，可停用 `.github/workflows/pr-review-agent.yml` 或讓 job 只跑 report-only；不影響 product runtime。
 
 ## Required checks
