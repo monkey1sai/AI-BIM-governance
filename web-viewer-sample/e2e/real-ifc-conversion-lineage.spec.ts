@@ -37,10 +37,10 @@ test.describe("real-ifc-conversion-lineage：真實 IFC→USDC 轉檔產物 meta
     expect(sc.model.artifact_id, "artifact_id 存在").toBeTruthy();
     expect(String(sc.model.mapping_url || ""), "element_mapping.json 由轉檔產生").toContain("element_mapping.json");
 
-    // UI 可見：經 /ui/open 進 viewer，stage-truth expected = 該 USDC artifact（lineage 可追溯）。
+    // UI 可見：經 /ui/open 進 viewer，viewport 狀態列顯示該 USDC artifact（lineage 可追溯）。
     await page.goto(`${COORDINATOR}/ui/open?session=${encodeURIComponent(ready.web_view_session_id)}`);
     await expect.poll(async () => (await page.getByTestId("topbar-session").textContent()) || "", { timeout: 40_000 }).toContain("review_session_");
-    await expect(page.locator(".stage-truth-panel")).toContainText("model.usdc");
+    await expect(page.getByTestId("mock-stage-url")).toContainText("model.usdc");
     await page.screenshot({ path: "../artifacts/e2e/real-ifc-conversion-lineage.png", fullPage: true });
 
     console.log("conversion lineage | job:", ready.conversion_job_id, "| usdc:", sc.model.url, "| mapping:", sc.model.mapping_url, "| artifact:", sc.model.artifact_id);

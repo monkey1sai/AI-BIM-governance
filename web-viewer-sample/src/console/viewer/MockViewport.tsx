@@ -35,15 +35,29 @@ export interface MockViewportProps {
   reservedRight?: number;
   reservedLeft?: number;
   sessionId?: string | null;
+  streamRole?: "primary" | "spectator";
+  lifecycleStatus?: string | null;
+  frameObserved?: boolean;
   // CH-H3：取得真實 Kit 幀（_hasRemoteVideoFrame）後仍掛載——改為左側語意側欄，與中央 live 3D <video> 並存
   // （對齊範本：①③ 左欄 + ②④⑥ 隨點構件），而非整片消失。誠實鐵律：liveMode 下 banner 標「live 3D 已出幀」，不再宣稱 no-GPU。
   liveMode?: boolean;
 }
 
 const DASH = "—";
+const viewerAxes = [
+  { code: "01", title: "點選", detail: "live prim / 對構表選取" },
+  { code: "02", title: "IFC 語意", detail: "Type / Name / GlobalId" },
+  { code: "03", title: "Pset/Qto", detail: "屬性與數量" },
+  { code: "04", title: "Spatial", detail: "樓層 / 空間關係" },
+  { code: "05", title: "GUID ⇔ USD", detail: "mapping 可追溯" },
+  { code: "06", title: "Role", detail: "primary / spectator" },
+  { code: "07", title: "Session", detail: "跨頁 handoff / role" },
+] as const;
+type ViewerAxisCode = typeof viewerAxes[number]["code"];
+type ViewerAxisTone = "observed" | "index" | "pending" | "blocked";
 
 export function MockViewport(props: MockViewportProps) {
-  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false } = props;
+  const { harness, stageUrl, loadedStageUrl, webrtcStatus, selectedGuid, selectedPrim, bindings = [], reservedRight = 0, reservedLeft = 0, liveMode = false, streamRole = "primary", lifecycleStatus, frameObserved = false } = props;
   const layers = bindings.filter((b) => b.ready_status === "ready");
   // ④對構表資料源：經 coordinator :8004 element-mapping for-session proxy（CORS-safe + 守邊界，
   // 瀏覽器不直連 :49101 artifact server）。harness 無真實 coordinator session → null（誠實空狀態）。
@@ -59,6 +73,37 @@ export function MockViewport(props: MockViewportProps) {
     !liveMode && (reservedRight || reservedLeft)
       ? { paddingRight: reservedRight || undefined, paddingLeft: reservedLeft || undefined }
       : undefined;
+  const roleLabel = streamRole === "primary" ? "PRIMARY · control lane" : "SPECTATOR · view-only";
+  const streamEvidence = harness
+    ? "harness stream"
+    : frameObserved || liveMode
+      ? "first frame observed"
+      : "not_observed";
+  const axisState = (code: ViewerAxisCode): { label: string; tone: ViewerAxisTone } => {
+    if (code === "01") {
+      return selectedGuid || selectedPrim
+        ? { label: "已選取", tone: "observed" }
+        : { label: "等待選取", tone: "pending" };
+    }
+    if (code === "05") {
+      return mappingSrc
+        ? { label: "proxy path set", tone: "index" }
+        : { label: "未取得", tone: "pending" };
+    }
+    if (code === "06") {
+      return streamRole === "spectator"
+        ? { label: "spectator 唯讀", tone: "blocked" }
+        : { label: "primary control", tone: "observed" };
+    }
+    if (code === "07") {
+      return props.sessionId
+        ? { label: "session linked", tone: "observed" }
+        : { label: "未取得", tone: "pending" };
+    }
+    return props.sessionId
+      ? { label: "查詢入口", tone: "index" }
+      : { label: "等待 session", tone: "pending" };
+  };
   return (
     <div className={`gv-mock${liveMode ? " gv-mock--live" : ""}`} data-testid="mock-viewport" style={pad}>
       <div className="gv-mock__banner" data-testid="mock-viewport-banner">
@@ -78,6 +123,19 @@ export function MockViewport(props: MockViewportProps) {
       </div>
 
       {/* section nav 已上移至 viewer 層分頁列（Window.tsx），「問題」分頁隱 MockViewport 後仍可切回。 */}
+      <div className="gv-axis-rail" data-testid="viewer-seven-axis-rail" aria-label="AI-BIM Geo viewer seven-axis IA">
+        {viewerAxes.map((axis) => {
+          const state = axisState(axis.code);
+          return (
+            <div key={axis.code} className={`gv-axis gv-axis--${state.tone}`}>
+              <span className="gv-axis__code">{axis.code}</span>
+              <strong>{axis.title}</strong>
+              <span>{axis.detail}</span>
+              <em>{state.label}</em>
+            </div>
+          );
+        })}
+      </div>
       <div className="gv-mock__grid">
         <div className="gv-mock__col">
           {/* viewport 狀態 echo：證明互動通路暢通（選取/高亮會回饋到這） */}
@@ -97,6 +155,19 @@ export function MockViewport(props: MockViewportProps) {
                 ))}
               </ul>
             )}
+          </section>
+
+          <section className="gv-card gv-session-card" data-testid="viewer-session-bridge">
+            <header className="gv-card__title" data-testid="edge-console-topbar">⑦ Session 連動 / Role</header>
+            <table className="gv-kv"><tbody>
+              <tr><td className="gv-kv__k">role</td><td className="gv-kv__v" data-testid="viewer-role">{roleLabel}</td></tr>
+              <tr><td className="gv-kv__k">project</td><td className="gv-kv__v gv-mono" data-testid="topbar-project">project: {props.projectId || "未取得"}</td></tr>
+              <tr><td className="gv-kv__k">version</td><td className="gv-kv__v gv-mono" data-testid="topbar-version">version: {props.modelVersionId || "未取得"}</td></tr>
+              <tr><td className="gv-kv__k">session</td><td className="gv-kv__v gv-mono" data-testid="topbar-session">session: {props.sessionId || "未取得"}</td></tr>
+              <tr><td className="gv-kv__k">lifecycle</td><td className="gv-kv__v">{lifecycleStatus || "unknown"}</td></tr>
+              <tr><td className="gv-kv__k">stream</td><td className="gv-kv__v">{streamEvidence}</td></tr>
+              <tr><td className="gv-kv__k">GPU rule</td><td className="gv-kv__v">{streamRole === "spectator" ? "shares primary stream" : "owns primary Kit stream"}</td></tr>
+            </tbody></table>
           </section>
 
           <ModelInfoCard

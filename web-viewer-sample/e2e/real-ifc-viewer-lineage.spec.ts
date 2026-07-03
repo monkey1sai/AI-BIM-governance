@@ -43,8 +43,8 @@ test.describe("真實 IFC → viewer lineage（/ui/open handoff）", () => {
     await expect.poll(async () => (await sessionCell.textContent()) || "", { timeout: 45_000 }).toContain("review_session_");
     await expect(page.getByTestId("topbar-project")).toContainText("project");
     await expect(page.getByTestId("topbar-version")).toContainText("mv_realifc");
-    // stage-truth expected = 由該真實 IFC 轉檔產生的 USDC artifact（lineage 可見、可追溯）。
-    await expect(page.locator(".stage-truth-panel")).toContainText("model.usdc");
+    // Viewport 狀態列顯示由該真實 IFC 轉檔產生的 USDC artifact（lineage 可見、可追溯）。
+    await expect(page.getByTestId("mock-stage-url")).toContainText("model.usdc");
 
     await page.screenshot({ path: "../artifacts/e2e/real-ifc-viewer-lineage.png", fullPage: true });
     console.log("REAL-IFC viewer lineage session:", ready.web_view_session_id, "model_version:", ready.external_model_version_id);

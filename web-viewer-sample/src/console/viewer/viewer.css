@@ -10,7 +10,7 @@
   position: absolute;
   top: 40px; left: 0; right: 0; bottom: 0;
   overflow: auto;
-  background: radial-gradient(1200px 600px at 50% -10%, #12181f 0%, #0b0d10 60%);
+  background: linear-gradient(180deg, #101419 0%, #090b0e 100%);
   color: #cbd5e1;
   font-size: 13px;
   padding: 14px;
@@ -21,7 +21,7 @@
    z-index 26：高於左側 USD 樹 dock(25) 與治理 overlay(20)，確保語意內容恆在最上層可見（reviewer P1：避免被左側
    USD dock 蓋住而隱藏語意）；右側治理 overlay 在 right:0，與本左緣側欄水平不重疊。 */
 .gv-mock.gv-mock--live {
-  right: auto; width: 400px; max-width: 46vw;
+  right: auto; width: 420px; max-width: 46vw;
   background: rgba(11, 13, 16, 0.92);
   border-right: 1px solid #2f363f;
   z-index: 26;
@@ -42,9 +42,82 @@
 .gv-mock__hint { color: #94a3b8; font-size: 12px; }
 .gv-dot { width: 9px; height: 9px; border-radius: 50%; background: #76b900; box-shadow: 0 0 8px #76b900; display: inline-block; }
 
+.gv-axis-rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.gv-axis {
+  min-width: 0;
+  border: 1px solid #26313c;
+  border-radius: 8px;
+  background: #10151a;
+  padding: 8px;
+}
+
+.gv-axis--observed {
+  border-color: rgba(118, 185, 0, 0.35);
+}
+
+.gv-axis--index {
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+.gv-axis--pending {
+  border-color: #2d3742;
+  opacity: 0.82;
+}
+
+.gv-axis--blocked {
+  border-color: rgba(239, 83, 80, 0.4);
+  background: rgba(239, 83, 80, 0.08);
+}
+
+.gv-axis__code {
+  display: block;
+  color: #76b900;
+  font-family: "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.gv-axis strong {
+  display: block;
+  color: #f1f5f9;
+  margin-top: 2px;
+}
+
+.gv-axis span:not(.gv-axis__code) {
+  display: block;
+  color: #95a5b5;
+  font-size: 11px;
+  margin-top: 2px;
+  min-height: 28px;
+}
+
+.gv-axis em {
+  display: block;
+  color: #f4b740;
+  font-style: normal;
+  font-size: 11px;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.gv-mock.gv-mock--live .gv-axis-rail {
+  grid-template-columns: 1fr;
+}
+
 .gv-mock__grid { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 12px; align-items: start; }
 .gv-mock__col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-@media (max-width: 900px) { .gv-mock__grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+  .gv-mock__grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .gv-mock.gv-mock--live { width: min(420px, calc(100vw - 16px)); max-width: none; }
+}
 
 .gv-card {
   background: #11151a;
@@ -52,6 +125,7 @@
   border-radius: 8px;
   padding: 10px 12px;
 }
+.gv-session-card { border-color: rgba(56, 189, 248, 0.28); }
 .gv-card--wide { min-width: 0; }
 .gv-card__title {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;

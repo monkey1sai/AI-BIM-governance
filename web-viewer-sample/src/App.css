@@ -82,61 +82,6 @@ video#remote-video {
     word-break: break-word;
 }
 
-.stage-truth-panel {
-    position: absolute;
-    left: 12px;
-    bottom: 12px;
-    z-index: 6;
-    width: min(520px, calc(100% - 24px));
-    padding: 10px 12px;
-    border: 1px solid rgba(16, 42, 67, 0.22);
-    border-left: 4px solid #829ab1;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.94);
-    color: #102a43;
-    box-shadow: 0 8px 22px rgba(16, 42, 67, 0.18);
-    font-size: 12px;
-    line-height: 1.4;
-}
-
-.stage-truth-panel--matched {
-    border-left-color: #2ea44f;
-}
-
-.stage-truth-panel--pending,
-.stage-truth-panel--unproven {
-    border-left-color: #b08800;
-}
-
-.stage-truth-panel--mismatch,
-.stage-truth-panel--disconnected {
-    border-left-color: #d73a49;
-}
-
-.stage-truth-panel__row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 6px;
-    font-weight: 700;
-}
-
-.stage-truth-panel__line {
-    font-family: "JetBrains Mono", Consolas, "Courier New", monospace;
-    word-break: break-all;
-}
-
-.stage-truth-panel__button {
-    margin-top: 8px;
-    padding: 6px 10px;
-    border: 1px solid #829ab1;
-    border-radius: 6px;
-    background: #ffffff;
-    color: #102a43;
-    font: inherit;
-    cursor: pointer;
-}
-
 /* CH-B：USD/BIM 語意樹改置於左側 dock。原 NVIDIA .usdStageContainer 為右側絕對定位（right:0,
    height:calc(100%-185px)），於 left-dock 內覆寫為填滿 dock，使其成為可點選的左側面板。 */
 [data-testid="usd-stage-left-dock"] .usdStageContainer {

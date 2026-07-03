@@ -32,7 +32,48 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     await expect(page.getByTestId("gv-nav")).toBeVisible();
     await expect(page.getByTestId("nav-model")).toHaveAttribute("aria-current", "page");
     await expect(page.getByTestId("nav-批註")).toBeDisabled();
+    const outerScroll = await page.evaluate(() => ({
+      documentOverflows: document.documentElement.scrollHeight > document.documentElement.clientHeight + 1,
+      bodyOverflows: document.body.scrollHeight > window.innerHeight + 1,
+      documentScrollHeight: document.documentElement.scrollHeight,
+      documentClientHeight: document.documentElement.clientHeight,
+      bodyScrollHeight: document.body.scrollHeight,
+      windowInnerHeight: window.innerHeight,
+    }));
+    expect(outerScroll.documentOverflows, JSON.stringify(outerScroll)).toBe(false);
+    expect(outerScroll.bodyOverflows, JSON.stringify(outerScroll)).toBe(false);
+    await expect(page.locator(".stage-truth-panel")).toHaveCount(0);
+    await expect(page.getByText("DERIVED ready")).toHaveCount(0);
+    await expect(page.getByTestId("gov-run-rulecheck")).toHaveCount(0);
 
     await page.screenshot({ path: "../artifacts/e2e/gov-viewer-layout.png", fullPage: true });
+  });
+
+  test("?harness=1 窄視窗七軸 rail 不溢出，且 model tab 不顯示治理/debug 面板", async ({ page }) => {
+    await page.setViewportSize({ width: 820, height: 900 });
+    await page.goto("/?harness=1");
+
+    const mv = page.getByTestId("mock-viewport");
+    await expect(mv).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("viewer-seven-axis-rail")).toBeVisible();
+    await expect(page.getByTestId("mapping-table")).toBeVisible();
+
+    const viewportBox = await mv.boundingBox();
+    const railBox = await page.getByTestId("viewer-seven-axis-rail").boundingBox();
+    expect(viewportBox).not.toBeNull();
+    expect(railBox).not.toBeNull();
+    expect((railBox?.x ?? 0) + (railBox?.width ?? 0)).toBeLessThanOrEqual((viewportBox?.x ?? 0) + (viewportBox?.width ?? 0) + 1);
+
+    const bridge = page.getByTestId("viewer-session-bridge");
+    await expect(bridge).toContainText("role");
+    await expect(bridge).toContainText("session");
+    await expect(bridge).toContainText("stream");
+    await expect(page.getByTestId("viewer-seven-axis-rail")).not.toContainText("A1 疊加");
+    await expect(page.getByTestId("mock-stage")).not.toContainText("Stage truth");
+    await expect(bridge).not.toContainText("Command evidence");
+    await expect(bridge).not.toContainText("Review Room");
+    await expect(bridge).not.toContainText("mutating commands gated open");
+
+    await page.screenshot({ path: "../artifacts/e2e/gov-viewer-layout-narrow.png", fullPage: true });
   });
 });

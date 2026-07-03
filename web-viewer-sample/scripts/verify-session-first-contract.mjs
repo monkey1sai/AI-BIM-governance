@@ -54,7 +54,8 @@ const windowSource = readSource("src/Window.tsx");
 // #17 vitest 抽出:lifecycle / endpoint 純函式從 Window.tsx 搬到 utils/windowHelpers.ts,
 // 視為 Window 邏輯的一部分,正向 token 檢查兩檔聯集(否定斷言仍只看 Window.tsx)。
 const windowHelpersSource = readSource("src/utils/windowHelpers.ts");
-const windowLogicSource = `${windowSource}\n${windowHelpersSource}`;
+const mockViewportSource = readSource("src/console/viewer/MockViewport.tsx");
+const viewerContractSource = `${windowSource}\n${windowHelpersSource}\n${mockViewportSource}`;
 for (const token of [
     "review_request_id",
     "blocked_conversion",
@@ -75,7 +76,11 @@ for (const token of [
     "stale_stage_or_mismatch",
     "webrtc_disconnected",
     "_reconnectStream",
-    "stage-truth-panel",
+    "viewer-session-bridge",
+    "mock-stage-url",
+    "mock-layer-count",
+    "viewer-role",
+    "showUsdStageDock",
     "Boolean(this.state.reviewSessionId)",
     "this.coordinatorClient.getReviewSession(reviewEnv.defaultSessionId)",
     "isSpectatorStreamMode",
@@ -83,8 +88,14 @@ for (const token of [
     // remove-conflict-review-from-fast-mvp:review-bootstrap endpoint 與 getReviewBootstrap 已退役;
     // session-first 仍保留(先 GET session → 拿 model_version_id),但 bootstrap 取代為 stream-config 內 artifacts。
 ]) {
-    assert.ok(windowLogicSource.includes(token), `Window.tsx/windowHelpers is missing ${token}`);
+    assert.ok(viewerContractSource.includes(token), `viewer contract source is missing ${token}`);
 }
+assert.ok(!windowSource.includes("stage-truth-panel"), "Window.tsx must not render removed stage-truth-panel floating UI");
+assert.match(
+    windowSource,
+    /const showUsdStageDock = this\.state\.showUI && \(isDebugQueryEnabled\(\) \|\| this\.state\.usdPrims\.length > 0\);[\s\S]*?\{showUsdStageDock && \([\s\S]*?data-testid="usd-stage-left-dock"[\s\S]*?reservedLeft=\{showUsdStageDock \? sidebarWidth : 0\}/,
+    "model viewport must reserve left width only when the USD stage dock is rendered",
+);
 // 額外確認 review-bootstrap path 已從 Window.tsx 移除
 assert.ok(!windowSource.includes("getReviewBootstrap"), "Window.tsx must NOT call getReviewBootstrap after remove-conflict-review-from-fast-mvp");
 assert.ok(!windowSource.includes("_loadReviewBootstrapFromCoordinator"), "Window.tsx must NOT define _loadReviewBootstrapFromCoordinator after remove-conflict-review-from-fast-mvp");
@@ -153,7 +164,7 @@ assert.match(
     "session-first viewer must prefer stream_config stage_composition primary URL over stale /api/assets entries",
 );
 assert.match(
-    windowLogicSource,
+    viewerContractSource,
     /function sameStreamTransportEndpoint[\s\S]*?signalingServer[\s\S]*?signalingPort[\s\S]*?mediaServer[\s\S]*?mediaPort/,
     "spectator binding selection must compare the full transport endpoint, not only ids or ports",
 );
