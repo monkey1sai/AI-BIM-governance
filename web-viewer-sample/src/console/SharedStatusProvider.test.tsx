@@ -72,4 +72,40 @@ describe("SharedStatusProvider", () => {
     expect(statusSpy).not.toHaveBeenCalled();
     expect(captured?.activeSessions).toBe(5);
   });
+
+  it("keeps conversionQueue null when getConversionRecords fails though runtimeStatus succeeds (honest 未取得)", async () => {
+    // Exercises the inner catch (records unavailable → do not guess): the runtimeStatus half must still
+    // map, the outer poll must not crash into the failure branch, and conversionQueue must degrade to
+    // null rather than a fabricated count. `conversionQueue === null` here is only reachable via that
+    // catch (the success path always assigns a filtered number).
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rt(1));
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockRejectedValue(new Error("records 503"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SharedStatusProvider><Probe /></SharedStatusProvider>); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(captured?.conversionQueue).toBeNull();
+    expect(captured?.activeSessions).toBe(1); // runtimeStatus half still mapped
+    expect(captured?.health).toBe("ok");      // did not fall through to the outer catch
+    expect(captured?.stale).toBe(false);      // a successful runtime poll is still fresh
+  });
+
+  it("flips stale once the last good poll is older than 2× the interval, even if no poll rejects (watchdog §5.2/§5.4)", async () => {
+    // A request that hangs without ever rejecting (background-tab throttling / wedged socket) never
+    // enters the catch, so stale would stay pinned false and expired data would be shown as fresh
+    // (violates §5.4). The time-based watchdog must flip stale independently of whether a poll settled.
+    vi.useFakeTimers();
+    const hang = new Promise<RuntimeStatus>(() => {}); // never resolves, never rejects
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValueOnce(rt(1)).mockReturnValue(hang);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+
+    const root = createRoot(container);
+    await act(async () => { root.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(captured?.stale).toBe(false); // first poll succeeded → last-known-good is fresh
+
+    // Next cycle's request hangs; advance past 2× the interval with no poll ever settling.
+    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
+    expect(captured?.stale).toBe(true);
+  });
 });

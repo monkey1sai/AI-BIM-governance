@@ -53,8 +53,25 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
         if (aliveRef.current) timer = setTimeout(() => { void poll(); }, pollMs);
       }
     };
+
+    // Watchdog (spec §5.2: stale=true on「上次輪詢失敗 / 超過 2× 間隔」). The catch above only covers a
+    // poll that *rejects*; a request that hangs without settling (background-tab throttling, wedged
+    // socket — jsonGet has no AbortController/timeout) never enters the catch, so stale would stay
+    // pinned at the last success (false) while the data quietly expires. §5.4 forbids presenting
+    // last-known-good as fresh. This timer flips stale purely on elapsed time, independent of whether
+    // any poll settled: if the last good snapshot is older than 2× the interval, it is no longer fresh.
+    const watchdog = setInterval(() => {
+      if (!aliveRef.current) return;
+      setSnapshot((prev) => {
+        if (prev.stale) return prev; // already stale → no re-render churn
+        const lastOk = Date.parse(prev.updatedAt);
+        if (!Number.isFinite(lastOk)) return prev; // no successful poll yet → nothing to age out
+        return Date.now() - lastOk > 2 * pollMs ? { ...prev, stale: true } : prev;
+      });
+    }, pollMs);
+
     void poll();
-    return () => { aliveRef.current = false; if (timer) clearTimeout(timer); };
+    return () => { aliveRef.current = false; if (timer) clearTimeout(timer); clearInterval(watchdog); };
   }, [pollMs, value]);
 
   return <SharedStatusContext.Provider value={value ?? snapshot}>{children}</SharedStatusContext.Provider>;
