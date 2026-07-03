@@ -52,7 +52,7 @@ test.describe("seven-axis cross-page harmony", () => {
   test("A1 has no inline WebRTC viewer; Review Room owns 3D and is not auto-claimed", async ({ page }) => {
     await page.goto(`${COORDINATOR}/ui#a1`);
     // N3 gate WITH TEETH. `review-room-viewer-host` is the live-3D viewer host that ONLY Review Room
-    // renders (ReviewSessionViewerPane.tsx:313) — it must be absent on #a1, and it IS asserted present-in-
+    // renders (ReviewSessionViewerPane.tsx:329) — it must be absent on #a1, and it IS asserted present-in-
     // context on #review below, so this is a real differential, not a tautology. (The previous assertion
     // keyed on `a1-embedded-viewer`, a testid that exists nowhere in the repo, so toHaveCount(0) passed
     // vacuously and guarded nothing.) The exhaustive "A1 never mounts EmbeddedViewer" guard is the existing
