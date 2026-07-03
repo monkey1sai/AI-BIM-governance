@@ -70,13 +70,17 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
     // pinned at the last success (false) while the data quietly expires. §5.4 forbids presenting
     // last-known-good as fresh. This timer flips stale purely on elapsed time, independent of whether
     // any poll settled: if the last good snapshot is older than 2× the interval, it is no longer fresh.
+    // It also degrades health to "unknown" in the same update: §5.4 says health is only "ok" when the
+    // backend *currently* reports ready, and aging out means we no longer have a fresh reading — a green
+    // "ok" over stale data is exactly the "last-known-good as fresh" the spec forbids. This matches the
+    // catch branch and EMPTY_SHARED_STATUS, which both pair stale=true with health="unknown".
     const watchdog = setInterval(() => {
       if (cancelled) return;
       setSnapshot((prev) => {
         if (prev.stale) return prev; // already stale → no re-render churn
         const lastOk = Date.parse(prev.updatedAt);
         if (!Number.isFinite(lastOk)) return prev; // no successful poll yet → nothing to age out
-        return Date.now() - lastOk > 2 * pollMs ? { ...prev, stale: true } : prev;
+        return Date.now() - lastOk > 2 * pollMs ? { ...prev, health: "unknown", stale: true } : prev;
       });
     }, pollMs);
 

@@ -97,7 +97,7 @@ describe("SharedStatusProvider", () => {
     expect(captured?.stale).toBe(false);      // a successful runtime poll is still fresh
   });
 
-  it("flips stale once the last good poll is older than 2× the interval, even if no poll rejects (watchdog §5.2/§5.4)", async () => {
+  it("flips stale AND degrades health to unknown once the last good poll is older than 2× the interval, even if no poll rejects (watchdog §5.2/§5.4)", async () => {
     // A request that hangs without ever rejecting (background-tab throttling / wedged socket) never
     // enters the catch, so stale would stay pinned false and expired data would be shown as fresh
     // (violates §5.4). The time-based watchdog must flip stale independently of whether a poll settled.
@@ -110,10 +110,14 @@ describe("SharedStatusProvider", () => {
     await act(async () => { root!.render(<SharedStatusProvider pollMs={1000}><Probe /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(captured?.stale).toBe(false); // first poll succeeded → last-known-good is fresh
+    expect(captured?.health).toBe("ok");
 
     // Next cycle's request hangs; advance past 2× the interval with no poll ever settling.
     await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
     expect(captured?.stale).toBe(true);
+    // §5.4: aging out must NOT keep vouching for the last-known-good health. Silence = unknown (grey),
+    // never a fresh green "ok" — symmetric with the catch branch and EMPTY_SHARED_STATUS (both stale+unknown).
+    expect(captured?.health).toBe("unknown");
   });
 
   it("keeps conversionQueue null when the ledger window is truncated (count > items.length) — no under-report (§5.4)", async () => {
