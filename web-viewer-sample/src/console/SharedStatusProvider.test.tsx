@@ -174,7 +174,10 @@ describe("SharedStatusProvider", () => {
     // disown it, and start a fresh one so the loop self-heals instead of freezing on the first hang.
     vi.useFakeTimers();
     const hang = new Promise<RuntimeStatus>(() => {}); // never resolves, never rejects
-    const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValueOnce(rt(1)).mockReturnValue(hang);
+    // 三段鏈：①首輪成功(rt(1)) → ②下一輪 wedge(hang，永不 settle，觸發 watchdog 接管) → ③之後每輪都成功(rt(2))，
+    // 讓 watchdog 重啟的 poll 真正拿到 fresh 資料。若只 mockReturnValue(hang) 永遠卡住，只能驗「持續重試」、驗不到
+    // 「復活後 snapshot 回到健康」（見下方後半斷言）。rt(2) 的 active_count=2 有別於 rt(1)，可證明是新鮮資料非殘影。
+    const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValueOnce(rt(1)).mockReturnValueOnce(hang).mockResolvedValue(rt(2));
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
 
     root = createRoot(container);
@@ -186,5 +189,14 @@ describe("SharedStatusProvider", () => {
     // at 2 calls (the success + the single wedged request); a self-healing loop keeps issuing fresh requests.
     await act(async () => { await vi.advanceTimersByTimeAsync(1000 * 12); });
     expect(statusSpy.mock.calls.length).toBeGreaterThan(2);
+
+    // Important #1 的另一半：光是「持續重試」還不夠——復活後 snapshot 必須真的回到健康，否則使用者永遠盯著
+    // stale/unknown。上面 mock 第三段讓某次 watchdog 重啟的 poll 真正成功（rt(2)），再前進數個間隔後，後端已
+    // 收到的 fresh 資料必須落進 snapshot：stale 退回 false、health 回 ok、且活躍 session 更新成新值（2，非上次
+    // rt(1) 的殘影），把「復活後端已收到 fresh 資料」這半也鎖進回歸測試。
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000 * 4); });
+    expect(captured?.stale).toBe(false);
+    expect(captured?.health).toBe("ok");
+    expect(captured?.activeSessions).toBe(2);
   });
 });
