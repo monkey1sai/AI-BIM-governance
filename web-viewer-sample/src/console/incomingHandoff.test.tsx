@@ -304,4 +304,43 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
   });
+
+  // ---- Task 14 Important #1（載入中 vs 查無）：接收端重驗必須把「權威資料尚未載入」（loading）與「已載入
+  // 但真的查無」（not_found）分開。永不 resolve 的 fetch mock 讓頁面停在「mount effect 已觸發、第一個 fetch
+  // 尚未落地」的那一格——正是會閃假 not_found 的視窗；此時應誠實回中性 indeterminate（未明），非警示 not_found。
+  // CV 已有 truncated→indeterminate 覆蓋，且缺乾淨的 loading 訊號，故此組不含 CV（維持原狀）。----
+  it("A1 shows indeterminate (not a false not_found) for an incoming minio_key while the object list is still loading (minioObjects===null)", async () => {
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockReturnValue(new Promise(() => {}) as never); // 永不 resolve → minioObjects 停在 null（載入中）
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockReturnValue(new Promise(() => {}) as never);
+    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    expect(container.querySelector('[data-testid="a1-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
+
+  it("SS shows indeterminate (not a false not_found) for an incoming session while runtime status is still loading (rt===null)", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockReturnValue(new Promise(() => {}) as never); // 永不 resolve → rt 停在 null（載入中）
+    window.location.hash = "#sessions?source=conv&session=review_session_a";
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    expect(container.querySelector('[data-testid="sessions-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
+
+  it("M shows indeterminate (not a false not_found) for an incoming minio_key while the folder is still loading (folder===null)", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockReturnValue(new Promise(() => {}) as never); // 永不 resolve → folder 停在 null（載入中）
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockReturnValue(new Promise(() => {}) as never);
+    window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<MinioDataPage />); });
+    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
+
+  it("KG shows indeterminate (not a false not_found) for an incoming session while shared status is still stale (never polled)", () => {
+    // KG 無 fetch；載入中訊號＝useSharedStatus().stale===true（provider 尚未輪詢過，等同 EMPTY_SHARED_STATUS）。
+    const staleSnap: SharedStatusSnapshot = { activeSessions: 0, sessionsById: {}, gpuNodesTotal: null, gpuNodesBusy: null, health: "unknown", conversionQueue: null, updatedAt: "", stale: true };
+    window.location.hash = "#instances?source=sessions&session=review_session_a";
+    const root = createRoot(container);
+    act(() => { root.render(<SharedStatusProvider value={staleSnap}><KitGpuFleetPage /></SharedStatusProvider>); });
+    expect(container.querySelector('[data-testid="kg-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
 });

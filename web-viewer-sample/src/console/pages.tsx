@@ -329,8 +329,13 @@ export function A1GovernanceWorkbenchPage() {
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
   // Task 14（M→A1 接收端重驗）：向已抓取的 minioObjects 重驗 incoming minio_key；查無 → 誠實 not_found。
-  const incoming = useIncomingHandoff("a1", (h) =>
-    !!h.minio_key && (minioObjects ?? []).some((o) => o.key === h.minio_key));
+  // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
+  // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
+  const incoming = useIncomingHandoff("a1", (h) => {
+    if (!h.minio_key) return false;
+    if (minioObjects === null) return "indeterminate";
+    return minioObjects.some((o) => o.key === h.minio_key);
+  });
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -1468,8 +1473,13 @@ export function SessionManagementPage() {
   const sessions = rt?.sessions.items ?? [];
   // Task 14（A1/CV/RT→SS 接收端重驗）：向已抓取的 rt.sessions.items 重驗 incoming session；
   // 查無 → 誠實 not_found，不靜默改選其他 active session。
-  const incoming = useIncomingHandoff("sessions", (h) =>
-    !!h.session && sessions.some((s) => s.session_id === h.session));
+  // Task14 Important #1：rt===null=runtime status 尚未載入。載入中回中性 indeterminate，不誤閃 not_found；
+  // rt 已載入（sessions 可能為 []）才判 not_found。
+  const incoming = useIncomingHandoff("sessions", (h) => {
+    if (!h.session) return false;
+    if (rt === null) return "indeterminate";
+    return sessions.some((s) => s.session_id === h.session);
+  });
   return (
     <>
       <h1>{t("Session 管理 · Primary / Spectator ATC", "Session Management · Primary / Spectator ATC")}</h1>
@@ -1551,8 +1561,13 @@ export function KitGpuFleetPage() {
   // quality CRITICAL #1（物件注入防護）：sessionsById 是 plain {} 字面量，直接 bracket 存在性判斷會讓
   // 繼承自 Object.prototype 的名字（constructor/toString/__proto__/hasOwnProperty…）查到真實成員而恆真，
   // 對從未存在的 session 假報 verified（違反 §4.2「持有 ID ≠ 已授權」）。改用 own-property 檢查只認真正的 key。
-  const incoming = useIncomingHandoff("instances", (h) =>
-    !!h.session && Object.prototype.hasOwnProperty.call(shared.sessionsById, h.session));
+  // Task14 Important #1：shared.stale=true 代表 SharedStatusProvider 尚未輪詢過（等同 EMPTY_SHARED_STATUS）。
+  // 尚未輪詢時 sessionsById 恆為空 {}，任何 session 都會誤判 not_found；故載入中回中性 indeterminate。
+  const incoming = useIncomingHandoff("instances", (h) => {
+    if (!h.session) return false;
+    if (shared.stale) return "indeterminate";
+    return Object.prototype.hasOwnProperty.call(shared.sessionsById, h.session);
+  });
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>
@@ -1786,7 +1801,11 @@ export function MinioDataPage() {
   //   verified；空層／未設定／尚未載入一律 not_found。不導覽＝沒重驗，banner『已重驗』會是假的。
   const incoming = useIncomingHandoff("minio", (h) => {
     if (h.prefix) return !!folder && folder.prefix === h.prefix && (folder.folders.length > 0 || folder.objects.length > 0);
-    return !!h.minio_key && (folder?.objects ?? []).some((o) => o.key === h.minio_key);
+    if (!h.minio_key) return false;
+    // Task14 Important #1：folder===null=該層尚未載入（比照 prefix 分支既有的 !!folder 寫法）。載入中回中性
+    // indeterminate，不誤閃 not_found；folder 已載入才向該層 objects 判 not_found。
+    if (folder === null) return "indeterminate";
+    return folder.objects.some((o) => o.key === h.minio_key);
   });
   // incoming handoff → 導覽到「來源資料夾」一次（讓 folder 真的載入該層再由上方 predicate 重驗）：
   // - prefix：直接導覽到該 prefix。
