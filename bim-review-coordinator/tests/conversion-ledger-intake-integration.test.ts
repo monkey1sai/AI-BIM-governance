@@ -29,6 +29,10 @@ function makeApp(): CoordinatorApp {
   return active;
 }
 
+function internalHeaders(): Record<string, string> {
+  return { "X-Internal-Token": "dev-internal-token" };
+}
+
 afterEach(async () => {
   if (active) {
     await active.dispose();
@@ -82,6 +86,48 @@ describe("intake → ledger", () => {
     expect(item!.status).toBe("queued");
     expect(item!.category).toBe("機電");
     expect(item!.project_display_name).toBe("松風庵");
+  });
+
+  it("conversion result ready 後 GET /api/conversion/records 回填 ready、job id 與 usdc ref", async () => {
+    const app = makeApp();
+    const res = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set("X-Webhook-Secret", "test-secret")
+      .set("X-Idempotency-Key", "mw_ready1234567890")
+      .set("X-Correlation-Id", "minio-watch-ready12")
+      .send(body);
+
+    expect(res.status).toBeLessThan(400);
+
+    const ready = await request(app.app)
+      .post("/api/internal/conversion-result")
+      .set(internalHeaders())
+      .send({
+        correlation_id: "minio-watch-ready12",
+        conversion_job_id: "stream_conv_ledger_ready",
+        status: "ready",
+        artifacts: {
+          usdc_ref: "http://127.0.0.1:49101/artifacts/stream_conv_ledger_ready/model.usdc",
+          element_mapping_ref: "http://127.0.0.1:49101/artifacts/stream_conv_ledger_ready/element_mapping.json",
+          manifest_ref: "http://127.0.0.1:49101/artifacts/stream_conv_ledger_ready/metadata.json",
+        },
+      });
+    expect(ready.status).toBe(202);
+
+    const recs = await request(app.app).get("/api/conversion/records");
+    expect(recs.status).toBe(200);
+
+    const item = (recs.body.items as Array<{
+      idempotency_key: string;
+      status: string;
+      conversion_job_id: string | null;
+      usdc_key: string | null;
+    }>).find((r) => r.idempotency_key === "mw_ready1234567890");
+
+    expect(item).toBeTruthy();
+    expect(item!.status).toBe("ready");
+    expect(item!.conversion_job_id).toBe("stream_conv_ledger_ready");
+    expect(item!.usdc_key).toBe("http://127.0.0.1:49101/artifacts/stream_conv_ledger_ready/model.usdc");
   });
 
   // 非 MinIO 來源（worker compat payload，無 project_display_name / model_category）
