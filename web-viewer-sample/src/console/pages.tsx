@@ -18,6 +18,9 @@ import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappi
 import { StreamConfigReader } from "./StreamConfigReader";
 // 七軸通用 cross-page handoff util（§4）：URL hash 帶非機密關聯 ID，接收端重驗，不帶 lease token。
 import { buildHandoff } from "./handoff";
+// 七軸和諧整合 §5：共享狀態列同一份 Context 快照（GET /api/runtime/status 單一輪詢）。
+// KG 頁用它讀「真 session 聚合」，與下方 demo Node snapshot 表分開標記，不假裝 demo 表變真（N5）。
+import { useSharedStatus } from "./useSharedStatus";
 
 type NativeFilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
@@ -1493,11 +1496,30 @@ export function SessionManagementPage() {
   );
 }
 
+// 七軸和諧整合 §7 KG（`#instances`）：本頁原本 100% 靜態（無任何 fetch）。現在讀 useSharedStatus()
+// 呈現「真 session 聚合」（asbuilt，來自 GET /api/runtime/status），與下面 Node snapshot demo 表
+// 清楚分隔、標籤分明——demo 表維持 prov="demo" 不動，不假裝接真（N5）。GPU per-node 遙測仍未取得（OQ3）。
 export function KitGpuFleetPage() {
+  const shared = useSharedStatus();
+  const liveIds = Object.keys(shared.sessionsById);
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>
       <p className="ec-lead">{t("此頁是 runtime operator 的機隊視角：哪台 GPU 在服務哪個 Kit stream，哪台可接新 session，哪些節點 drain，哪些 restart/release 必須由 Kit Manager 執行。", "This page is the runtime operator's fleet view: which GPU serves which Kit stream, which can accept a new session, which nodes are draining, and which restart/release must be executed by the Kit Manager.")}</p>
+      <Panel title={t("即時 session 聚合（真實）", "Live session aggregate (real)")} sub={t("讀共享狀態列（GET /api/runtime/status）；GPU per-node 遙測未取得，故只呈現 session 聚合，不假裝映射到節點", "Reads the shared status rail (GET /api/runtime/status); GPU per-node telemetry is not available, so only the session aggregate is shown, not a fake node mapping")} prov="asbuilt">
+        <div className="ec-grid" data-testid="kg-live-aggregate">
+          <Field k={t("使用中 session 數", "active sessions")} v={String(shared.activeSessions)} prov="asbuilt" />
+          <Field k="GPU busy / total" v={t("未取得（kit-manager 遙測待建）", "not available (kit-manager telemetry not built)")} prov="demo" />
+        </div>
+        {liveIds.length > 0 ? (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+            {liveIds.map((id) => (
+              <Btn key={id} data-testid={`kg-session-link-${id}`} caption={t("在 Session 管理檢視", "View in Session Management")}
+                onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances", session: id }); }}>{id} →</Btn>
+            ))}
+          </div>
+        ) : <p className="ec-note">{t("目前無使用中 session（來自共享狀態列）。", "No active session at the moment (from the shared status rail).")}</p>}
+      </Panel>
       <Panel title="Fleet model" sub={t("Coordinator 顯示治理狀態，不直接管理 GPU process", "Coordinator shows governance state and does not directly manage the GPU process")} prov="asbuilt">
         <div className="ec-grid">
           <MiniCard code="1 GPU" title="1 GPU = 1 Kit stream" desc={t("primary 使用獨立 Kit stream；spectator 預設共享同一 stream，除非未來需求是獨立視角。", "Primary uses a dedicated Kit stream; spectators share the same stream by default unless a future requirement needs independent views.")} prov="asbuilt" />
@@ -1507,7 +1529,9 @@ export function KitGpuFleetPage() {
       </Panel>
       <Panel title="Node snapshot" sub={t("實際 GPU/VRAM 遙測仍需 kit-manager-api / runtime manager 提供", "Actual GPU/VRAM telemetry still needs to be provided by kit-manager-api / runtime manager")} prov="demo">
         <table className="ec-table"><thead><tr><th>node</th><th>GPU</th><th>state</th><th>operation</th></tr></thead><tbody>
-          <tr><td>edge-gpu-01</td><td>L40 · 48GB</td><td>running · S-270</td><td>drain / restart intent</td></tr>
+          <tr><td>edge-gpu-01</td><td>L40 · 48GB</td><td>running · S-270</td><td>drain / restart intent{" "}
+            <Btn data-testid="kg-demo-link-sessions" caption={t("到 Session 管理（demo 對照）", "Go to Session Management (demo reference)")}
+              onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances" }); }}>SS →</Btn></td></tr>
           <tr><td>edge-gpu-02</td><td>L40 · 48GB</td><td>running · S-899</td><td>drain / restart intent</td></tr>
           <tr><td>edge-gpu-03</td><td>RTX 6000 · 48GB</td><td>idle</td><td>assign pending session</td></tr>
         </tbody></table>
