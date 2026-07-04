@@ -6,7 +6,7 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, PROV_CLASS, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, ConversionRecord, ConversionQualityMetricsResponse, ConversionLifecycleStatus, DevConversionRecord, IfcReadyListItem, MinioWatchStatus, narrowConversionStatus, RuntimeStatus } from "./coordinatorClient";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
 import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
@@ -16,6 +16,13 @@ import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappi
 // StreamConfigReader 已抽成獨立葉子檔（破解 pages ↔ coordinator/RuntimeGovernanceTabs 循環依賴）；
 // RuntimePage（本檔內）由此 leaf 直接 import 復用同一元件。RuntimeGovernanceTabs 亦各自 leaf import，故無 re-export 需求。
 import { StreamConfigReader } from "./StreamConfigReader";
+// 七軸通用 cross-page handoff util（§4）：URL hash 帶非機密關聯 ID，接收端重驗，不帶 lease token。
+import { buildHandoff } from "./handoff";
+// 七軸和諧整合 §5：共享狀態列同一份 Context 快照（GET /api/runtime/status 單一輪詢）。
+// KG 頁用它讀「真 session 聚合」，與下方 demo Node snapshot 表分開標記，不假裝 demo 表變真（N5）。
+import { useSharedStatus } from "./useSharedStatus";
+// Task 14（§4.2 接收端重驗鐵律）：接收端向已抓取的權威資料重驗 incoming handoff，誠實 verified/not_found。
+import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
 
 type NativeFilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
@@ -321,6 +328,32 @@ export function A1GovernanceWorkbenchPage() {
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
+  // Task 14（M→A1 接收端重驗）：向已抓取的 minioObjects 重驗 incoming minio_key；查無 → 誠實 not_found。
+  // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
+  // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
+  const incoming = useIncomingHandoff("a1", (h) => {
+    // 本軸只重驗 minio_key；SS→A1 chip 只帶 session（A1 不重驗 session）→ 無欄位可查＝not_applicable，
+    // 不得誤成 not_found（否則對真實 active session 假報「查無」；p5-critic honesty regression）。
+    if (!h.minio_key) return "not_applicable";
+    if (minioObjects === null) return "indeterminate";
+    // reviewer P2（Codex，已核實）：getMinioObjects() 失敗時 catch 分支把 minioObjects 落成 []（非 null），
+    // 上面的 null 守門不再成立，未查即誤報 not_found（MinIO 斷線/憑證缺失時對真實 handoff 假警示紅字）。
+    // minioErr 非 null＝本來就沒查成功，比照 null 分支同樣退 indeterminate，不假裝已查無。
+    if (minioErr !== null) return "indeterminate";
+    return minioObjects.some((o) => o.key === h.minio_key);
+  });
+  // reviewer P2（Codex，已核實）：上面 incoming 只顯示「已重驗」banner，過去從未把 handoff 帶來的 minio_key
+  // 真的帶進 selectedKey——operator 看到「已重驗」卻仍要手動從下拉重找同一份檔案，a1-step-pick 也因
+  // selectedKey 空而停用。verified 時把 minio_key 種進 selectedKey（不自動 claim session、不自動跑
+  // rule-run，只補齊選取狀態）；用 ref 記住已種過的 key，避免使用者事後手動改選又被這裡打回去。
+  const seededHandoffKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = incoming.handoff?.minio_key;
+    if (incoming.status === "verified" && key && seededHandoffKeyRef.current !== key) {
+      seededHandoffKeyRef.current = key;
+      setSelectedKey(key);
+    }
+  }, [incoming.status, incoming.handoff?.minio_key]);
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -527,6 +560,7 @@ export function A1GovernanceWorkbenchPage() {
   return (
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
+      <IncomingHandoffBanner testId="a1-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 檢視與高亮改由 Review Room 手動啟動 Kit/session，不在 A1 自動嵌入 viewer 或 claim lease。", "Upload/select an IFC, run automated rule validation, then generate Issues, Excel export and BCF 2.1 export (download enabled only after Issues are created). Rule validation runs in the governance-service (CPU); 3D review and highlighting are manually started in Review Room, not auto-embedded or auto-claimed by A1.")}</p>
 
       <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
@@ -617,7 +651,7 @@ export function A1GovernanceWorkbenchPage() {
                 {convBusy ? t("排入中…", "queuing…") : t("排入 IFC→USD 轉檔排程", "Queue IFC to USD Conversion")}
               </Btn>
               {convJobId && <span className="ec-s" data-testid="a1-convert-job">job: {convJobId}</span>}
-              <a className="ec-s" data-testid="a1-conv-link" href="#/conv">{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("conv", { source: "a1", job_id: convJobId ?? undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
             </div>
             {convStatus !== null && <p className="ec-note" data-testid="a1-convert-status">{t("轉檔狀態：", "conversion status: ")}{convStatus}</p>}
           </div>
@@ -720,6 +754,29 @@ export function A1GovernanceWorkbenchPage() {
             </Btn>
           );
         })()}{" "}
+        {/* 七軸 cross-link chips（§4.3）：回看 MinIO 來源物件、跳 Session 管理檢視此 session。
+            證據型——目標 id 不存在時誠實 disabled，不製造無效跳轉。 */}
+        <span className="ec-crosslinks" data-testid="a1-crosslinks" style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", marginLeft: 8 }}>
+          <Btn
+            data-testid="a1-link-minio"
+            disabled={!selectedKey}
+            caption={selectedKey ? t("回看 MinIO 來源物件", "View the source object in MinIO") : t("尚未選取 MinIO 物件", "No MinIO object selected")}
+            // as-built（既知差異，spec §4.3 A1→M 表下註）：spec 範例寫 prefix，本 chip 刻意送 minio_key（更精確，
+            // 指向確切檔案；M 端做 key-level 重驗）。minio_key 本就列於 §4.3「帶的 ID」欄，屬合規選擇。M 的 prefix
+            // 收件分支保留供未來「純資料夾回看」按鈕，目前無真實按鈕發送 prefix。
+            onClick={() => { if (!selectedKey) return; window.location.hash = buildHandoff("minio", { source: "a1", minio_key: selectedKey }); }}
+          >
+            {t("MinIO 來源 →", "MinIO source →")}
+          </Btn>
+          <Btn
+            data-testid="a1-link-sessions"
+            disabled={!selectedSession}
+            caption={selectedSession ? t("在 Session 管理檢視此 session", "View this session in Session Management") : t("尚未選取 review session", "No review session selected")}
+            onClick={() => { if (!selectedSession) return; window.location.hash = buildHandoff("sessions", { source: "a1", session: selectedSession }); }}
+          >
+            {t("Session 管理 →", "Session Management →")}
+          </Btn>
+        </span>{" "}
         {actionErr && <p className="ec-warn-note" data-testid="a1-action-error" style={{ marginTop: 8 }}>{actionErr}</p>}
       </Panel>
     </>
@@ -876,6 +933,41 @@ export function ConversionSchedulingPage() {
   // 同一事件循環雙擊 confirm 會送出兩個 POST /api/conversion/trigger（失敗路徑下第二次 catch 會覆蓋
   // 第一次 triggerErr、loadRecords 也可能被競爭觸發兩次）。ref 在 React state 更新前同步攔截第二次呼叫。
   const triggerBusyRef = useRef(false);
+  // quality Important #4：jobs（listIfcReady 50）與 records（getConversionRecords 50）都有回傳窗上限。
+  // 當 incoming id 在回傳窗內查無、但該窗被截斷（count > items.length）時，對應紀錄可能落在窗外——這是
+  // 「可能有但看不到」，不可誤報 not_found（比照本頁 ledgerChipStatus 的 recordsIncomplete → indeterminate；§5.4）。
+  const [jobsTruncated, setJobsTruncated] = useState(false);
+  const [recordsTruncated, setRecordsTruncated] = useState(false);
+  // reviewer P2（CodeRabbit + Codex 兩位獨立命中同一發現，已核實）：jobs/records 初始值皆為 []、
+  // jobsTruncated/recordsTruncated 初始皆為 false，與「已查過、確認不存在」在資料形狀上不可分——
+  // mount 後第一個 render（load()/loadRecords() 尚未 settle）就會以此空狀態重驗，對帶 id 的 handoff
+  // 誤報 not_found（可能只是還沒抓完，或抓失敗，不是真的查無）。jobsLoaded/recordsLoaded 明確標記
+  // 「至少 settle 過一次（成功或失敗皆算）」，未 settle 前一律 indeterminate，settle 後才照原邏輯判斷。
+  const [jobsLoaded, setJobsLoaded] = useState(false);
+  const [recordsLoaded, setRecordsLoaded] = useState(false);
+  // Task 14（A1/M/IN→CV 接收端重驗）：job_id 向 jobs（ifc-ready）重驗；conversion_id/minio_key 向
+  // records（ledger）重驗。查無且該來源窗被截斷 → 誠實 indeterminate（未明）；查無且未截斷 → 誠實 not_found，
+  // 不靜默 fallback 到別的紀錄。
+  const incoming = useIncomingHandoff("conv", (h) => {
+    if (h.job_id) {
+      if (!jobsLoaded) return "indeterminate";
+      if (jobs.some((j) => j.ifc_ready_job_id === h.job_id || j.conversion_job_id === h.job_id)) return true;
+      return jobsTruncated ? "indeterminate" : false;
+    }
+    if (h.conversion_id) {
+      if (!recordsLoaded) return "indeterminate";
+      if (records.some((r) => r.conversion_job_id === h.conversion_id)) return true;
+      return recordsTruncated ? "indeterminate" : false;
+    }
+    if (h.minio_key) {
+      if (!recordsLoaded) return "indeterminate";
+      if (records.some((r) => r.object_key === h.minio_key)) return true;
+      return recordsTruncated ? "indeterminate" : false;
+    }
+    // 無 job_id/conversion_id/minio_key（例：a1-conv-link 預設狀態送 #conv?source=a1 不帶 id）＝無欄位可查
+    // ＝not_applicable，不得誤成雙空格假 not_found（p5-critic honesty regression）。
+    return "not_applicable";
+  });
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
   // 故以回傳值（非 throw）讓呼叫端可辨「POST 成功但重抓失敗」這條分支。
@@ -890,8 +982,12 @@ export function ConversionSchedulingPage() {
     ]);
     const jobsOk = jobsRes.status === "fulfilled";
     const mwOk = mwRes.status === "fulfilled";
-    if (jobsRes.status === "fulfilled") setJobs(jobsRes.value.items);
-    else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
+    if (jobsRes.status === "fulfilled") {
+      setJobs(jobsRes.value.items);
+      // quality Important #4：count（slice 前總數）> items.length 即被回傳窗上限截斷 → 供接收端重驗誠實退 indeterminate。
+      setJobsTruncated(jobsRes.value.count > jobsRes.value.items.length);
+    } else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
+    setJobsLoaded(true); // 成功或失敗都算 settle 過一次；接收端重驗不再誤把「還沒抓完」當「查無」
     if (mwRes.status === "fulfilled") setMw(mwRes.value);
     else setMwErr(`${t("未連線 coordinator /api/external/minio-watch/status：", "Not connected to coordinator /api/external/minio-watch/status: ")}${String(mwRes.reason)}`);
     setBusy(false);
@@ -904,12 +1000,28 @@ export function ConversionSchedulingPage() {
     try {
       const res = await coordinatorClient.getConversionRecords(50);
       setRecords(res.items);
+      // quality Important #4：records 被回傳窗上限截斷（count > items.length）→ 查無 key 時退 indeterminate 而非 not_found。
+      setRecordsTruncated(res.count > res.items.length);
     } catch (e) {
       setRecErr(`未連線 coordinator /api/conversion/records：${String(e)}`);
+    } finally {
+      setRecordsLoaded(true); // 成功或失敗都算 settle 過一次，接收端重驗才有依據判斷「真的查無」
     }
   }, []);
   // Task 6：mount 時同時觸發 load()（ifc-ready + watcher）與 loadRecords()（ledger），獨立並行。
   useEffect(() => { void load(); void loadRecords(); }, [load, loadRecords]);
+  // Task 7（七軸和諧 §11 OQ2）：轉檔歷史 panel 資料源，獨立於 ledger/ifc-ready，讀既有
+  // GET /api/dev/conversions（conversion service 側 job 歷史 pass-through，非 coordinator ledger）。
+  // historyErr 與 recErr/err 各自獨立：失敗只影響本 panel 誠實顯示「未取得」，不污染其他 Panel。
+  const [history, setHistory] = useState<DevConversionRecord[] | null>(null);
+  const [historyErr, setHistoryErr] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getConversionsHistory()
+      .then((r) => { if (alive) { setHistory(r.items); setHistoryErr(false); } })
+      .catch(() => { if (alive) { setHistory(null); setHistoryErr(true); } });
+    return () => { alive = false; };
+  }, []);
   const toggleCoverage = useCallback(async (job: IfcReadyListItem) => {
     if (!job.conversion_job_id) return;
     const id = job.ifc_ready_job_id;
@@ -994,6 +1106,7 @@ export function ConversionSchedulingPage() {
   return (
     <>
       <h1>{t("IFC→USD 轉檔排程", "IFC→USD conversion scheduling")}</h1>
+      <IncomingHandoffBanner testId="conv-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("從 MinIO / storage 發現 source IFC，排進 conversion authority，由 `bim-streaming-server` 產出 `model.usdc`、mapping summary，再通知 Kit / Review Session。", "Discover source IFC from MinIO / storage, queue it into the conversion authority, let `bim-streaming-server` produce `model.usdc` and a mapping summary, then notify Kit / Review Session.")}</p>
       {mw?.enabled === false && (
         <p className="ec-warn-note" data-testid="conv-watch-off-banner">
@@ -1159,6 +1272,15 @@ export function ConversionSchedulingPage() {
                           onClick={() => { setActionErr(null); setPendingAction(null); setTriggerErr(null); setPendingTriggerKey(r.object_key); }}
                         >{t("觸發轉檔", "Trigger")}</Btn>
                       ) : <span className="ec-note">—</span>}
+                      {/* Task 7（§4.3 CV → M）：evidence-typed cross-link chip——只有 object_key 存在才掛，
+                          不因列狀態（failed/ready/…）而隱藏；與上方「觸發轉檔」鈕互不排斥、可同列並存。 */}
+                      {r.object_key ? (
+                        <Btn
+                          data-testid={`conv-ledger-minio-${r.idempotency_key}`}
+                          caption={t("回看 MinIO 來源物件", "View source object in MinIO")}
+                          onClick={() => { window.location.hash = buildHandoff("minio", { source: "conv", minio_key: r.object_key as string, conversion_id: r.conversion_job_id ?? undefined }); }}
+                        >{t("來源 →", "Source →")}</Btn>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -1220,7 +1342,21 @@ export function ConversionSchedulingPage() {
                       </span>
                     ) : "—"}
                   </td>
-                  <td>{j.review_session_id ?? "—"}</td>
+                  <td>
+                    {/* Task 7（§4.3 CV → SS / Review Room）：evidence-typed cross-link chips——只有
+                        review_session_id 存在才掛，接收端（SS/Review Room）依 §4.2 重驗 session id。 */}
+                    {j.review_session_id ?? "—"}
+                    {j.review_session_id ? (
+                      <>
+                        {" "}
+                        <Btn data-testid={`conv-job-session-${j.ifc_ready_job_id}`} caption={t("在 Session 管理檢視", "View in Session Management")}
+                          onClick={() => { window.location.hash = buildHandoff("sessions", { source: "conv", session: j.review_session_id as string }); }}>SS →</Btn>
+                        {" "}
+                        <Btn data-testid={`conv-job-review-${j.ifc_ready_job_id}`} caption={t("在 Review Room 開此 session", "Open this session in Review Room")}
+                          onClick={() => { window.location.hash = buildHandoff("review", { source: "conv", session: j.review_session_id as string }); }}>Review →</Btn>
+                      </>
+                    ) : null}
+                  </td>
                   <td>{j.expected_stage_url ?? "—"}</td>
                   <td>{j.conversion_job_id
                     ? <Btn data-testid={`conv-coverage-toggle-${j.ifc_ready_job_id}`} onClick={() => void toggleCoverage(j)}>{openJob === j.ifc_ready_job_id ? t("收合", "Collapse") : "coverage"}</Btn>
@@ -1257,6 +1393,35 @@ export function ConversionSchedulingPage() {
               </Fragment>
             ))}</tbody></table>
         ) : <p className="ec-note">{t("尚未取得 ifc-ready job；可由真實 IFC 進件頁註冊 fixture 後再回來看排程。", "No ifc-ready jobs retrieved yet; register a fixture from the real IFC intake page and come back to view the schedule.")}</p>}
+      </Panel>
+      {/* Task 7（七軸和諧整合 §11 OQ2）：轉檔歷史 panel——純前端補洞，讀既有 GET /api/dev/conversions
+          （conversion service 側 job 歷史 pass-through，與上方 coordinator ledger 不同源）。誠實鐵律：
+          回應形狀非本專案定義（DevConversionRecord 為寬鬆 pass-through 型別），故 prov="artifact"；
+          載入失敗顯「未取得」而非假空表；不改後端（N2/N4）。OQ2 預設：落在 #conv 頁內的一個 Panel，
+          不新增 hash route。 */}
+      <Panel title={t("轉檔歷史（conversion service pass-through）", "Conversion history (conversion-service pass-through)")} sub="GET /api/dev/conversions" prov="artifact">
+        <div data-testid="conv-history-panel">
+          {historyErr ? (
+            <p className="ec-note">{t("未取得（GET /api/dev/conversions 無法讀取或此環境未啟用）", "not available (GET /api/dev/conversions is unavailable or disabled in this environment)")}</p>
+          ) : history == null ? (
+            <p className="ec-note">{t("載入中…", "Loading…")}</p>
+          ) : history.length === 0 ? (
+            <p className="ec-note">{t("目前無轉檔歷史紀錄（非錯誤）。", "No conversion history at the moment (not an error).")}</p>
+          ) : (
+            <table className="ec-table">
+              <thead><tr><th>conversion_job_id</th><th>status</th><th>source_ifc_filename</th></tr></thead>
+              <tbody>
+                {history.slice(0, 50).map((h, i) => (
+                  <tr key={h.conversion_job_id ?? `h-${i}`} data-testid={`conv-history-row-${h.conversion_job_id ?? i}`}>
+                    <td>{h.conversion_job_id ?? "—"}</td>
+                    <td>{h.status ?? "—"}</td>
+                    <td>{h.source_ifc_filename ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </Panel>
       <IntentDialog
         open={pendingAction != null}
@@ -1342,9 +1507,21 @@ export function SessionManagementPage() {
   }, [pendingTerminate, load, markTerminating]);
   useEffect(() => { void load(); }, [load]);
   const sessions = rt?.sessions.items ?? [];
+  // Task 14（A1/CV/RT→SS 接收端重驗）：向已抓取的 rt.sessions.items 重驗 incoming session；
+  // 查無 → 誠實 not_found，不靜默改選其他 active session。
+  // Task14 Important #1：rt===null=runtime status 尚未載入。載入中回中性 indeterminate，不誤閃 not_found；
+  // rt 已載入（sessions 可能為 []）才判 not_found。
+  const incoming = useIncomingHandoff("sessions", (h) => {
+    // 無 session（例：KG demo-row chip 送 #sessions?source=instances 不帶 id）＝無欄位可查＝not_applicable，
+    // 不得誤成假 not_found（p5-critic honesty regression）。
+    if (!h.session) return "not_applicable";
+    if (rt === null) return "indeterminate";
+    return sessions.some((s) => s.session_id === h.session);
+  });
   return (
     <>
       <h1>{t("Session 管理 · Primary / Spectator ATC", "Session Management · Primary / Spectator ATC")}</h1>
+      <IncomingHandoffBanner testId="sessions-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("每個 endpoint 像 runway，每個 primary / spectator viewer 像飛機。Open URL 不等於 occupied；occupied 必須有 browser first frame / heartbeat / stage match evidence。", "Each endpoint is like a runway, each primary / spectator viewer like a plane. Open URL does not equal occupied; occupied requires browser first frame / heartbeat / stage match evidence.")}</p>
       <Panel title="Endpoint readiness rules" sub="port listening != has frame" prov="asbuilt" actions={<Btn data-testid="sessions-refresh" caption="GET /api/runtime/status" onClick={load}>{t("重新整理", "Refresh")}</Btn>}>
         {err && <p className="ec-warn-note">{err}</p>}
@@ -1366,12 +1543,33 @@ export function SessionManagementPage() {
               const terminating = terminatingIds.has(s.session_id);
               const ended = s.status === "closing" || s.status === "closed";
               const greyed = terminating || ended;
+              // reviewer P2（CodeRabbit + Codex 兩位獨立命中同一發現，已核實）：KG/Review 跨頁連結原本不分
+              // session 狀態一律可點，與 CoordinatorPage 對等 Panel（rt-crosslinks）已落實的 gating 不一致。
+              // Review Room / KG 機隊只把 active/created session 當即時可觀察/可 attach（比照後端
+              // isSessionMutable、ReviewSessionViewerPane 的篩選條件——created 尚未綁 Kit 但已可 attach，
+              // 不是「結束」）；對 closing/closed/failed 給滿血按鈕會導向「點了但打不開」的死路，違反 N5 誠實鐵律。
+              const live = s.status === "active" || s.status === "created";
               return (
                 <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
                   <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
-                  <td>{s.status === "active" && !terminating ? (
-                    <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
-                  ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}</td>
+                  <td>
+                    {s.status === "active" && !terminating ? (
+                      <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
+                    ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}
+                    {" "}
+                    <Btn data-testid={`session-link-instances-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，KG 機隊僅即時 active/created session 可導覽", "Session ended; KG Fleet only navigates live active/created sessions")}
+                      caption={live ? t("此 session 落在哪個 GPU node（KG 遙測未取得）", "Which GPU node hosts this session (KG telemetry not available)") : t("session 已結束", "session ended")}
+                      onClick={() => { window.location.hash = buildHandoff("instances", { source: "sessions", session: s.session_id }); }}>KG →</Btn>
+                    {" "}
+                    <Btn data-testid={`session-link-review-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，Review Room 僅即時 active/created session 可開", "Session ended; Review Room only opens live active/created sessions")}
+                      caption={live ? t("在 Review Room 開此 session", "Open this session in Review Room") : t("session 已結束", "session ended")}
+                      onClick={() => { window.location.hash = buildHandoff("review", { source: "sessions", session: s.session_id }); }}>Review →</Btn>
+                    {" "}
+                    <Btn data-testid={`session-link-a1-${s.session_id}`} caption={t("回 A1 治理檢核", "Back to A1 governance")}
+                      onClick={() => { window.location.hash = buildHandoff("a1", { source: "sessions", session: s.session_id }); }}>A1 →</Btn>
+                  </td>
                 </tr>
               );
             })}</tbody></table>
@@ -1396,11 +1594,48 @@ export function SessionManagementPage() {
   );
 }
 
+// 七軸和諧整合 §7 KG（`#instances`）：本頁原本 100% 靜態（無任何 fetch）。現在讀 useSharedStatus()
+// 呈現「真 session 聚合」（asbuilt，來自 GET /api/runtime/status），與下面 Node snapshot demo 表
+// 清楚分隔、標籤分明——demo 表維持 prov="demo" 不動，不假裝接真（N5）。GPU per-node 遙測仍未取得（OQ3）。
 export function KitGpuFleetPage() {
+  const shared = useSharedStatus();
+  // sessionsById 依 spec §5.2 是全量表（不分狀態，供跨頁 ID 查找重用），且 coordinator 從不刪除 session
+  // （只 active→closing→closed）。此「即時 session 聚合（真實）」區塊只能把 status==='active' 當即時可點連結，
+  // 才與相鄰的「使用中 session 數」（activeSessions，亦只算 active）一致；否則會把 closed/closing 的過期
+  // session 假裝成真實可操作（違反 N5 誠實鐵律）。
+  const liveIds = Object.values(shared.sessionsById).filter((s) => s.status === "active").map((s) => s.session_id);
+  // Task 14（SS/RT→KG 接收端重驗）：向已讀的 shared.sessionsById 全量表重驗 incoming session；
+  // 查無 → 誠實 not_found，不靜默假裝該 session 存在。
+  // quality CRITICAL #1（物件注入防護）：sessionsById 是 plain {} 字面量，直接 bracket 存在性判斷會讓
+  // 繼承自 Object.prototype 的名字（constructor/toString/__proto__/hasOwnProperty…）查到真實成員而恆真，
+  // 對從未存在的 session 假報 verified（違反 §4.2「持有 ID ≠ 已授權」）。改用 own-property 檢查只認真正的 key。
+  // Task14 Important #1：shared.stale=true 代表 SharedStatusProvider 尚未輪詢過（等同 EMPTY_SHARED_STATUS）。
+  // 尚未輪詢時 sessionsById 恆為空 {}，任何 session 都會誤判 not_found；故載入中回中性 indeterminate。
+  const incoming = useIncomingHandoff("instances", (h) => {
+    // 無 session＝無欄位可查＝not_applicable（與其他軸一致，避免同類假 not_found；p5-critic honesty regression）。
+    if (!h.session) return "not_applicable";
+    if (shared.stale) return "indeterminate";
+    return Object.prototype.hasOwnProperty.call(shared.sessionsById, h.session);
+  });
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>
+      <IncomingHandoffBanner testId="kg-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">{t("此頁是 runtime operator 的機隊視角：哪台 GPU 在服務哪個 Kit stream，哪台可接新 session，哪些節點 drain，哪些 restart/release 必須由 Kit Manager 執行。", "This page is the runtime operator's fleet view: which GPU serves which Kit stream, which can accept a new session, which nodes are draining, and which restart/release must be executed by the Kit Manager.")}</p>
+      <Panel title={t("即時 session 聚合（真實）", "Live session aggregate (real)")} sub={t("讀共享狀態列（GET /api/runtime/status）；GPU per-node 遙測未取得，故只呈現 session 聚合，不假裝映射到節點", "Reads the shared status rail (GET /api/runtime/status); GPU per-node telemetry is not available, so only the session aggregate is shown, not a fake node mapping")} prov="asbuilt">
+        <div className="ec-grid" data-testid="kg-live-aggregate">
+          <Field k={t("使用中 session 數", "active sessions")} v={String(shared.activeSessions)} prov="asbuilt" />
+          <Field k="GPU busy / total" v={t("未取得（kit-manager 遙測待建）", "not available (kit-manager telemetry not built)")} prov="demo" />
+        </div>
+        {liveIds.length > 0 ? (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+            {liveIds.map((id) => (
+              <Btn key={id} data-testid={`kg-session-link-${id}`} caption={t("在 Session 管理檢視", "View in Session Management")}
+                onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances", session: id }); }}>{id} →</Btn>
+            ))}
+          </div>
+        ) : <p className="ec-note">{t("目前無使用中 session（來自共享狀態列）。", "No active session at the moment (from the shared status rail).")}</p>}
+      </Panel>
       <Panel title="Fleet model" sub={t("Coordinator 顯示治理狀態，不直接管理 GPU process", "Coordinator shows governance state and does not directly manage the GPU process")} prov="asbuilt">
         <div className="ec-grid">
           <MiniCard code="1 GPU" title="1 GPU = 1 Kit stream" desc={t("primary 使用獨立 Kit stream；spectator 預設共享同一 stream，除非未來需求是獨立視角。", "Primary uses a dedicated Kit stream; spectators share the same stream by default unless a future requirement needs independent views.")} prov="asbuilt" />
@@ -1410,7 +1645,9 @@ export function KitGpuFleetPage() {
       </Panel>
       <Panel title="Node snapshot" sub={t("實際 GPU/VRAM 遙測仍需 kit-manager-api / runtime manager 提供", "Actual GPU/VRAM telemetry still needs to be provided by kit-manager-api / runtime manager")} prov="demo">
         <table className="ec-table"><thead><tr><th>node</th><th>GPU</th><th>state</th><th>operation</th></tr></thead><tbody>
-          <tr><td>edge-gpu-01</td><td>L40 · 48GB</td><td>running · S-270</td><td>drain / restart intent</td></tr>
+          <tr><td>edge-gpu-01</td><td>L40 · 48GB</td><td>running · S-270</td><td>drain / restart intent{" "}
+            <Btn data-testid="kg-demo-link-sessions" caption={t("到 Session 管理（demo 對照）", "Go to Session Management (demo reference)")}
+              onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances" }); }}>SS →</Btn></td></tr>
           <tr><td>edge-gpu-02</td><td>L40 · 48GB</td><td>running · S-899</td><td>drain / restart intent</td></tr>
           <tr><td>edge-gpu-03</td><td>RTX 6000 · 48GB</td><td>idle</td><td>assign pending session</td></tr>
         </tbody></table>
@@ -1499,7 +1736,13 @@ export function MinioDataPage() {
   const folderCacheRef = useRef(new Map<string, import("./coordinatorClient").MinioFolderListing>());
   const [stalePrefixes, setStalePrefixes] = useState<Set<string>>(() => new Set());
 
+  // 世代守門（quality Important）：掛載時「導覽 effect 的 setPrefix」會與「prefix 變更即重載 effect」併發兩個
+  // getMinioFolder（根層＋導覽目標層）。真實 S3 根層需逐一序列 probe 子資料夾 has_source_ifc、通常比葉層慢，
+  // 無守門則其晚到的回應會蓋掉已導覽的正確 folder → folder.prefix 退回 ""、verify 假 not_found。每次 load
+  // 認領一個遞增世代；回應落地時若已被更新的 load 取代（世代不符）即丟棄，不覆蓋畫面/錯誤/loading。
+  const loadGenRef = useRef(0);
   const load = useCallback(async (p: string, options?: { refresh?: boolean }) => {
+    const myGen = ++loadGenRef.current;
     if (!options?.refresh) {
       const cached = folderCacheRef.current.get(p);
       if (cached) {
@@ -1515,7 +1758,8 @@ export function MinioDataPage() {
       const res = options?.refresh
         ? await coordinatorClient.getMinioFolder(p, { refresh: true })
         : await coordinatorClient.getMinioFolder(p);
-      folderCacheRef.current.set(p, res);
+      folderCacheRef.current.set(p, res); // 回應對 prefix p 恆為有效資料，無論世代皆可入快取
+      if (loadGenRef.current !== myGen) return; // 已被更新的 load 取代 → 不覆蓋當前畫面（防競態誤蓋）
       setFolder(res);
       setStalePrefixes((prev) => {
         if (!prev.has(p)) return prev;
@@ -1524,9 +1768,10 @@ export function MinioDataPage() {
         return next;
       });
     } catch (e) {
+      if (loadGenRef.current !== myGen) return; // 過期錯誤不覆蓋較新 load 的成功結果
       setErr(String(e));
     } finally {
-      setLoading(false);
+      if (loadGenRef.current === myGen) setLoading(false); // 僅最新 load 解除 loading，避免過期 load 提早關閉
     }
   }, []);
 
@@ -1595,6 +1840,43 @@ export function MinioDataPage() {
   // folder 回應的 note（後端未設定時回 200 + note；MinioFolderListing.note? 已對齊 wire shape）。
   const folderNote = folder?.note;
   const currentPrefixStale = stalePrefixes.has(prefix);
+  // Task 14（A1/CV→M 接收端重驗，spec §4.2 接收端重驗鐵律）：向已抓取的權威資料重驗 incoming id，
+  // 查無 → 誠實 not_found，絕不因『持有 id/prefix』就靜默視為有效。
+  // - minio_key（A1/CV → M）→ 先導覽到 key 所在資料夾（見下方 effect），向該層載入的 folder.objects 重驗是否
+  //   含該 key。真實 S3 帶 Delimiter='/'：巢狀 key 只落在其所在資料夾的 objects，根層 objects 不含它，故不
+  //   導覽＝對真實巢狀 key 恆誤報 not_found（quality CRITICAL；A1→M / CV→M chip 只帶 minio_key、不帶 prefix）。
+  // - prefix（A1 → M「回看選檔來源」，§4.3）→ 導覽到該層後（見下方 effect），向載入的 folder 重驗：
+  //   folder.prefix 必等於請求 prefix（後端 minioClient.ts 回填該欄）且該層真的有 folders/objects 才算
+  //   verified；空層／未設定／尚未載入一律 not_found。不導覽＝沒重驗，banner『已重驗』會是假的。
+  //   既知差異（spec §4.3 A1→M 表下註）：目前無真實按鈕發送 prefix——A1「MinIO 來源」chip 改送更精確的
+  //   minio_key（key-level 重驗）。此 prefix 分支＋其單元測試為保留能力，供未來「純資料夾回看」按鈕使用。
+  const incoming = useIncomingHandoff("minio", (h) => {
+    // reviewer Minor（CodeRabbit，已核實；今日無按鈕送 prefix，屬保留能力的死路徑，比照下方 minio_key
+    // 分支補齊一致的「尚未載入」守門，避免此能力未來被啟用時對載入中的資料夾誤報 not_found）。
+    if (h.prefix) {
+      if (folder === null) return "indeterminate";
+      return folder.prefix === h.prefix && (folder.folders.length > 0 || folder.objects.length > 0);
+    }
+    // 無 prefix 也無 minio_key＝無欄位可查＝not_applicable（與其他軸一致；p5-critic honesty regression）。
+    if (!h.minio_key) return "not_applicable";
+    // Task14 Important #1：folder===null=該層尚未載入（比照 prefix 分支既有的 !!folder 寫法）。載入中回中性
+    // indeterminate，不誤閃 not_found；folder 已載入才向該層 objects 判 not_found。
+    if (folder === null) return "indeterminate";
+    return folder.objects.some((o) => o.key === h.minio_key);
+  });
+  // incoming handoff → 導覽到「來源資料夾」一次（讓 folder 真的載入該層再由上方 predicate 重驗）：
+  // - prefix：直接導覽到該 prefix。
+  // - minio_key：導覽到 key 所在資料夾（末個 '/' 前的路徑）；無 '/' 的根層 key → dir="" 即根層（no-op）。
+  // 依「導覽目標值」為 dep：hash 不變則只跑一次；之後交還使用者手動導覽（不與 goUp/enterFolder 打架、不反覆挾持）。
+  const incomingTargetPrefix = incoming.handoff
+    ? incoming.handoff.prefix ??
+      (incoming.handoff.minio_key
+        ? incoming.handoff.minio_key.slice(0, incoming.handoff.minio_key.lastIndexOf("/") + 1)
+        : undefined)
+    : undefined;
+  useEffect(() => {
+    if (incomingTargetPrefix !== undefined) setPrefix(incomingTargetPrefix);
+  }, [incomingTargetPrefix]);
 
   // IntentDialog onConfirm 帶使用者填的 reason；dialog 不自關、不顯錯誤，由本 caller 負責：
   // 成功才 setPendingKey(null) 關 dialog，失敗 setTriggerErr 經 actionErr 顯示、解除 busy
@@ -1621,6 +1903,7 @@ export function MinioDataPage() {
   return (
     <>
       <h1>{t("MinIO 資料", "MinIO Data")}</h1>
+      <IncomingHandoffBanner testId="minio-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
       <p className="ec-lead">
         {t("唯讀 intake 來源視圖，非 metadata 權威。 此頁讀 ", "Read-only intake source view, not the metadata authority. This page reads ")}<code>GET /api/minio/objects</code>{t("（真實 S3 list proxy，帶 Delimiter='/'）； 像 MinIO 網頁一樣逐層資料夾導覽（point-and-list），導到 model.ifc 才掛專案 / 種類 / 版本語意 badge。 metadata 權威在外部 ", " (real S3 list proxy with Delimiter='/'); browses the bucket level-by-level like the MinIO web UI (point-and-list); project / category / version semantic badges are attached only when reaching model.ifc. The metadata authority is the external ")}<code>bim-control · MySQL</code>{t("，不由本頁決定。", "; this page does not decide it.")}
       </p>
@@ -1726,6 +2009,18 @@ export function MinioDataPage() {
                           >
                             {t("觸發轉檔", "Trigger")}
                           </Btn>
+                          {/* Task 10（§4.3 M → CV / M → A1）：evidence-typed cross-link chips——帶編碼後的
+                              obj.key（可能含中文）當 minio_key，接收端（CV/A1）依 §4.2 重驗。 */}
+                          <Btn
+                            data-testid={`minio-link-conv-${idk}`}
+                            caption={t("查看此物件的轉檔", "View this object's conversion")}
+                            onClick={() => { window.location.hash = buildHandoff("conv", { source: "minio", minio_key: obj.key }); }}
+                          >{t("轉檔 →", "Conversion →")}</Btn>
+                          <Btn
+                            data-testid={`minio-link-a1-${idk}`}
+                            caption={t("拿此檔到 A1 治理檢核", "Take this file to A1 governance")}
+                            onClick={() => { window.location.hash = buildHandoff("a1", { source: "minio", minio_key: obj.key }); }}
+                          >{t("A1 檢核 →", "A1 governance →")}</Btn>
                         </>
                       ) : null}
                     </li>
@@ -2874,6 +3169,50 @@ export function CoordinatorPage() {
       </p>
       <ProvLegend />
       <CoordinatorGovernanceTabs rt={rt} busy={busy} err={err} onRefresh={load} />
+      <Panel title={t("跨頁 session 連結", "Cross-page session links")} sub={t("值班視圖：把 runtime session 帶到 Session 管理 / Review Room / Kit 機隊（同一份 runtime 真相）", "Duty view: take a runtime session to Session Management / Review Room / Kit Fleet (one runtime truth)")} prov="asbuilt">
+        <div data-testid="rt-crosslinks">
+          {/* N5 誠實鐵律：err（載入/Refresh 失敗）先浮出，且與「確實無 session」分流——rt===null 代表尚未取得
+              runtime 真相（載入中或初載失敗），不得渲染成 confirmed-empty。Refresh 失敗時 load() 只 setErr、
+              不重置 rt，rt 會停在 0-session 舊真相，故 confirmed-empty 文案亦需 err 守門（比照同檔 IntakePage），
+              有 err 時讓位給上方紅字，避免「連不上」與「確實無 session（非錯誤）」自相矛盾並存。 */}
+          {err && <p className="ec-warn-note">{err}</p>}
+          {rt === null ? (
+            err ? null : <p className="ec-note">{t("讀取 runtime status 中…", "Loading runtime status…")}</p>
+          ) : rt.sessions.items.length === 0 ? (
+            <p className="ec-note">{err ? "" : t("目前 runtime status 無 session（coordinator 已連線，非錯誤）。", "No session in runtime status (coordinator connected — not an error).")}</p>
+          ) : (
+            <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>{t("跨頁", "Links")}</th></tr></thead>
+              <tbody>{rt.sessions.items.map((s) => {
+                // N5 誠實鐵律：coordinator 從不刪除 session（只 active→closing→closed，永遠保留），此全量表隨時間無界成長。
+                // 「在 Review Room 開此 session」「Kit / GPU 機隊」是即時可操作語意，只有 status==='active'/'created' 成立；對 closed/closing
+                // 的過期 session 給滿血按鈕＝把過期 session 假裝成真實可操作（比照同分支 0860a54）。「Session 管理」是 lifecycle 全量
+                // 治理視圖，對已結束 session 給連結語意合理，保留 enabled。
+                // reviewer P2（Codex，已核實）：session 剛建立、尚未綁 Kit 時 status 是 "created"（非 "active"，
+                // bim-review-coordinator/src/services/sessionStore.ts:48）；後端 isSessionMutable 與前端
+                // ReviewSessionViewerPane 都把 created 當可 attach，只判 active 會把全新 session 誤標成「已結束」。
+                const live = s.status === "active" || s.status === "created";
+                return (
+                <tr key={s.session_id}>
+                  <td>{s.session_id}</td><td>{s.status}</td>
+                  <td>
+                    <Btn data-testid={`rt-link-sessions-${s.session_id}`} caption={t("Session 管理", "Session Management")}
+                      onClick={() => { window.location.hash = buildHandoff("sessions", { source: "runtime", session: s.session_id }); }}>SS →</Btn>{" "}
+                    <Btn data-testid={`rt-link-review-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，Review Room 僅即時 active/created session 可開", "Session ended; Review Room only opens live active/created sessions")}
+                      caption={live ? t("在 Review Room 開此 session", "Open in Review Room") : t("session 已結束", "session ended")}
+                      onClick={() => { window.location.hash = buildHandoff("review", { source: "runtime", session: s.session_id }); }}>Review →</Btn>{" "}
+                    <Btn data-testid={`rt-link-instances-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，Kit / GPU 機隊僅即時 active/created session 可導覽", "Session ended; Kit / GPU Fleet only navigates live active/created sessions")}
+                      caption={live ? t("Kit / GPU 機隊", "Kit / GPU Fleet") : t("session 已結束", "session ended")}
+                      onClick={() => { window.location.hash = buildHandoff("instances", { source: "runtime", session: s.session_id }); }}>KG →</Btn>
+                  </td>
+                </tr>
+                );
+              })}</tbody>
+            </table>
+          )}
+        </div>
+      </Panel>
     </>
   );
 }
@@ -2909,13 +3248,24 @@ export function IntakePage() {
         {err && <p className="ec-warn-note">{err}</p>}
         {jobs.length > 0 ? (
           <table className="ec-table">
-            <thead><tr><th>ifc_ready_job_id</th><th>status</th><th>download</th><th>conversion</th><th>authority</th><th>session</th></tr></thead>
+            <thead><tr><th>ifc_ready_job_id</th><th>status</th><th>download</th><th>conversion</th><th>authority</th><th>session</th><th>{t("跨頁", "Links")}</th></tr></thead>
             <tbody>
               {jobs.slice(0, 40).map((j) => (
                 <tr key={j.ifc_ready_job_id}>
                   <td>{j.ifc_ready_job_id}</td><td>{j.status}</td>
                   <td>{j.download_status ?? "—"}</td><td>{j.conversion_status ?? "—"}</td>
                   <td>{j.conversion_authority ?? "—"}</td><td>{j.review_session_id ?? "—"}</td>
+                  <td>
+                    <Btn data-testid={`intake-link-conv-${j.ifc_ready_job_id}`} caption={t("到轉檔排程排此 job", "Schedule this job in Conversion")}
+                      onClick={() => { window.location.hash = buildHandoff("conv", { source: "intake", job_id: j.ifc_ready_job_id }); }}>CV →</Btn>
+                    {j.review_session_id ? (
+                      <>
+                        {" "}
+                        <Btn data-testid={`intake-link-review-${j.ifc_ready_job_id}`} caption={t("在 Review Room 開此 job 的 session", "Open this job's session in Review Room")}
+                          onClick={() => { window.location.hash = buildHandoff("review", { source: "intake", session: j.review_session_id as string }); }}>Review →</Btn>
+                      </>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

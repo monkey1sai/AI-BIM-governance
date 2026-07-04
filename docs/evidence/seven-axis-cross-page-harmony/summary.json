@@ -1,0 +1,62 @@
+{
+  "feature": "seven-axis-cross-page-harmony",
+  "generated_at": "2026-07-04T06:41:00Z",
+  "engine": "playwright",
+  "spec_file": "web-viewer-sample/e2e/cross-axis-handoff.spec.ts",
+  "design_spec": "docs/superpowers/specs/2026-07-03-seven-axis-cross-page-harmony-design.md",
+  "plan": "docs/superpowers/plans/2026-07-03-seven-axis-cross-page-harmony.md",
+  "run_command": "E2E_COORDINATOR_BASE_URL=http://127.0.0.1:8005 E2E_DISABLE_WEBSERVER=1 npx playwright test cross-axis-handoff.spec.ts",
+  "result_summary": "4 passed, 2 skipped (honest not-observed), 0 failed - 3.6m",
+  "delta_from_prior_round": "Prior round (2026-07-04T06:12) had an EMPTY isolated coordinator (0 session/0 record/0 job), so the receiving-end re-verify was entirely not observed. THIS round seeded a REAL active review session on :8005, so SS->Review receiving-end re-verify is now OBSERVED in-browser.",
+  "console_under_test": {
+    "note": "Deployed :8004/ui serves the MAIN build (only review-room-viewer-host + a1-open-review-room markers; branch testids shared-status-rail / conv-incoming-handoff / minio-link-conv / session-link-review ABSENT). CORS on :8004 only allows :5173 origins, so cross-origin reuse of :8004's real data was impossible. Per plan Task 15 'branch coordinator' path, a same-origin branch coordinator was stood up.",
+    "coordinator": "http://127.0.0.1:8005 (host-native branch coordinator, tsx src/index.ts, same-origin serving branch dist-ui)",
+    "console_dist": "web-viewer-sample/dist-ui built with VITE_COORDINATOR_API_BASE=http://127.0.0.1:8005; served bundle confirmed to contain shared-status-rail + minio-link-conv",
+    "backends": {
+      "governance": "http://127.0.0.1:49102 (real, /health 200)",
+      "conversion_authority": "http://127.0.0.1:49101 (real, /health 200)",
+      "minio": "http://192.168.20.234:9000 bucket bim-control (endpoint+bucket are non-secret and were set; anonymous list => 502 minio_list_failed because access/secret keys are required and were NOT read per the credential-exploration deny policy)"
+    },
+    "isolated_data_dirs": "artifacts/local-backups/e2e-8005/ (fresh ledger/sessions/events/logs; does NOT touch the D:/Users/deploy deployment area)"
+  },
+  "real_data_seeded": {
+    "review_session_id": "review_session_0e4ee1079ee1",
+    "status": "active",
+    "kit_instance": "kit_local_001",
+    "model_version_id": "77e4fbad-e0f7-4946-9a49-fa84d941ddeb",
+    "bound_artifact_url": "http://192.168.10.105:49101/artifacts/stream_conv_20260703090757_89c87388/model.usdc",
+    "bound_conversion_job_id": "stream_conv_20260703090757_89c87388",
+    "provenance": "POST /api/review-sessions bound to the REAL model.usdc produced by the real 洲際好宅/給水 IFC->USD conversion (job stream_conv_20260703090757_89c87388, coverage pass, 2639 IFC entities) already present on the real conversion authority. Not a mock/fake session; the seeded session became active and shows in GET /api/runtime/status.",
+    "primary_viewer_lease_claimed_by_deepkit_test": "viewer_lease_96bc6d786725d374"
+  },
+  "tests": [
+    {"id": 1, "title": "shared status rail present on every axis; GPU shows 未取得 (no fake green)", "result": "passed", "routes": ["#a1","#conv","#sessions","#instances","#minio","#intake","#runtime"], "backend": "GET /api/runtime/status (real :8005)", "screenshot": "seven-axis-cross-page-harmony-rail-all-axes.png"},
+    {"id": 2, "title": "M -> CV chip carries a real minio_key and lands on #conv", "result": "skipped", "reason": "no MinIO source_ifc objects: :8005 GET /api/minio/objects => 502 (access/secret keys required; deployment .env read blocked by credential-exploration deny policy). Honest not observed."},
+    {"id": 3, "title": "A1 has no inline WebRTC viewer; Review Room owns 3D and is not auto-claimed", "result": "passed", "routes": ["#a1","#review?source=a1"], "asserts": "review-room-viewer-host count=0 on #a1; a1-link-sessions disabled; #review?source=a1 shows review-room-kit-not-started (no auto-claim, N3)", "screenshot": "seven-axis-cross-page-harmony-a1-review-not-started.png"},
+    {"id": 4, "title": "SS -> Review chip navigates with the session id (re-verified, not silently defaulted)", "result": "passed", "routes": ["#sessions","#review?source=sessions&session=review_session_0e4ee1079ee1"], "receiving_end_re_verify": "OBSERVED - Review Room re-verified the handed-off session id against real GET /api/runtime/status; review-room-runtime-evidence echoes review_session_0e4ee1079ee1 and its 'runtime session' field reads 'observed' (not silently defaulted). This closes the gap that was not observed last round.", "backend": "GET /api/runtime/status (real :8005 seeded active session)", "screenshot": "seven-axis-cross-page-harmony-ss-to-review.png"},
+    {"id": 5, "title": "§8 lifecycle walk-through: M -> IN -> CV -> A1 -> Review Room -> back to A1 issue (reachable spine)", "result": "passed", "duration": "21.1s", "routes": ["#minio","#intake","#a1","#review?source=a1"], "asserts": "M/IN legs soft-gated (no MinIO objects / no ifc-ready jobs, honest); A1 open-review CTA present-but-DISABLED then continued via #review?source=a1; review-room-kit-not-started reached; a1-step-issues present", "screenshots": ["seven-axis-cross-page-harmony-s8-a1-cta-disabled.png","seven-axis-cross-page-harmony-s8-review-not-started.png","seven-axis-cross-page-harmony-s8-a1-issue.png"]},
+    {"id": 6, "title": "§8 deep Kit evidence chain (first_frame/stage_matched/datachannel/highlight): honest-skip when no live Kit session", "result": "skipped", "reason": "Reached manual attach against the REAL seeded session and CLAIMED a real primary viewer lease (viewer_lease_96bc6d786725d374) + mounted the viewer host (attach/lease path ran end-to-end), but no real WebRTC first_frame arrived within the 180s budget (no live Kit GPU stream bound to the fresh session). Honest N7 skip: first_frame / stage_matched / datachannel_ready / highlight_ack NOT observed. skip != pass; NOT claimed as GPU-backed 3D.", "partial_observed": "manual attach + real primary lease claim + viewer host mount against a real session"}
+  ],
+  "vertical_slice": {
+    "ok": true,
+    "rationale": "The feature's user-facing vertical slice is proven end-to-end and in-browser: reach a UI route -> click an evidence-typed cross-axis chip -> land on the target axis -> receiver re-verifies a REAL correlation id against a REAL backend endpoint -> runtime id visible -> honest loading/success/not-found/not-started states -> screenshot+trace. SS->Review re-verified the real seeded session review_session_0e4ee1079ee1 as 'observed'. Shared status rail is real on all 7 axes with honest 未取得 GPU. This additive frontend feature (N3) leaves Review Room 3D/lease/highlight untouched; GPU-backed 3D is out of its scope. Un-observed legs (M->CV, deep-Kit four-evidence) are honestly skipped and documented, never faked."
+  },
+  "not_observed": [
+    "M -> CV receiving-end re-verify (test 2) - MinIO objects unlistable on :8005 (creds required; deployment .env read blocked by credential-exploration deny policy). not observed.",
+    "IN -> CV leg (test 5) - no ifc-ready jobs on the fresh isolated coordinator (needs real conversion + minio-watch, gated by same MinIO cred block). not observed.",
+    "Deep Kit four-evidence chain first_frame / stage_matched / datachannel_ready / highlight_ack (test 6) - no live Kit GPU frame for the fresh seeded session within 180s. not observed (skip != pass).",
+    "A1 open-review CTA ENABLED for a real rule-run handoff (test 5) - needs a real IFC rule-run producing failures; env reached only the present-but-disabled branch. not observed."
+  ],
+  "evidence_paths": {
+    "screenshots_dir": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e",
+    "trace_bundle": "C:/Repos/active/iot/AI-BIM-governance/artifacts/e2e/seven-axis-cross-page-harmony-trace",
+    "raw_run_log": "C:/Repos/active/iot/AI-BIM-governance/artifacts/local-backups/e2e-8005/playwright-full.log",
+    "branch_coordinator_log": "C:/Repos/active/iot/AI-BIM-governance/artifacts/local-backups/e2e-8005/coordinator-8005.log"
+  },
+  "runtime_ids": [
+    "review_session_0e4ee1079ee1",
+    "viewer_lease_96bc6d786725d374",
+    "stream_conv_20260703090757_89c87388",
+    "kit_local_001"
+  ]
+}

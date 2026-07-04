@@ -31,6 +31,9 @@ import {
 // operator-tool 路由保留：#/kit、#/demo-control 原由 OperatorConsole 服務；換 EdgeConsole 後仍可達（非 silently 砍）。
 import { KitConsolePage } from "./KitConsolePage";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
+import { SharedStatusProvider } from "./SharedStatusProvider";
+import { SharedStatusRail } from "./SharedStatusRail";
+import type { AxisKey } from "./handoff";
 
 function usePageHash(): [string, (k: string) => void] {
   const read = () => window.location.hash.replace(/^#\/?console\/?/, "").replace(/^#\/?/, "").split("?")[0] || "home";
@@ -178,8 +181,15 @@ export default function EdgeConsole() {
   };
   const flowActive = page.startsWith("app/") ? "apps" : page;
   const prompts = COPILOT_PROMPTS[flowActive] ?? COPILOT_PROMPTS.home;
+  // 七軸共享狀態列（spec §5.3）：把目前頁面對映到 AxisKey，供 SharedStatusRail 高亮脈絡；
+  // #gpu/#review（Review Room 兩個入口）沒有自己的 AxisKey，歸類到 runtime（RT 供應 ready 狀態）；
+  // 其餘非七軸頁（home/a2/admin…）預設回 a1（治理優先頁），不新增第八個 axis。
+  const AXIS_SET: readonly AxisKey[] = ["a1", "conv", "sessions", "instances", "minio", "intake", "runtime"];
+  const railAxis: AxisKey = (AXIS_SET as readonly string[]).includes(page) ? (page as AxisKey)
+    : page === "gpu" || page === "review" ? "runtime" : "a1";
 
   return (
+    <SharedStatusProvider>
     <div className={`ec-root ${agentOpen ? "" : "ec-agent-collapsed"} ${theme === "light" ? "theme-light" : ""}`}>
       <header className="ec-top">
         <span className="ec-brand"><span className="ec-brand-mark">BG</span>AI · BIM Governance</span>
@@ -220,6 +230,7 @@ export default function EdgeConsole() {
       <main className="ec-main">
         <div className="ec-mainhead">
           <FlowBar active={flowActive} register={lang === "en" ? "tech" : "biz"} go={go} />
+          <SharedStatusRail activeAxis={railAxis} />
           <span className="ec-spacer" />
           {/* Tweaks（P3-3）：scenario clean/warn（UI 偏好，不改真實資料）。語言切換移至頂列 LangToggle（中/EN）。 */}
           <div className="ec-tweaks">
@@ -260,5 +271,6 @@ export default function EdgeConsole() {
         <span>{t("as-built MVP · 無假數字", "as-built MVP · no fake data")}</span>
       </footer>
     </div>
+    </SharedStatusProvider>
   );
 }
