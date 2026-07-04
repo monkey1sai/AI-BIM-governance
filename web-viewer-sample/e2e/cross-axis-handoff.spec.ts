@@ -3,6 +3,27 @@ import { expect, test } from "@playwright/test";
 const COORDINATOR = process.env.E2E_COORDINATOR_BASE_URL || "http://127.0.0.1:8004";
 
 test.describe("seven-axis cross-page harmony", () => {
+  // Teardown for the deep-Kit test below. That test attaches a PRIMARY viewer lease to a REAL, shared session
+  // sourced from the live Sessions table (never fabricated — 誠實鐵律), so we MUST hand the primary slot back or
+  // we leak it until its 45s TTL (viewerLeaseStore.ts:78) and a real operator can be locked out of their own
+  // session's primary 3D view for ~45s. We RELEASE THE LEASE, never close the session: closing a real shared
+  // session would destroy an operator's work — the exact cross-suite-interference trap VG-01 documents
+  // (viewer-embed-a1-highlight.spec.ts:61-64). Stays null for every other test in this file → afterEach no-ops.
+  let claimedLease: { sessionId: string; leaseId: string; leaseToken: string } | null = null;
+  test.afterEach(async ({ request }) => {
+    if (!claimedLease) return;
+    const { sessionId, leaseId, leaseToken } = claimedLease;
+    claimedLease = null;
+    // Independent `request` fixture (NOT the page) so release does not depend on the component's unmount-time
+    // release fetch actually flushing before Playwright closes the page — that fetch has no keepalive
+    // (ReviewSessionViewerPane.tsx:156-159 → coordinatorClient.ts:474-479) and the browser may drop it on teardown.
+    // Mirrors coordinatorClient.releaseViewerLease: POST the release endpoint with the X-Viewer-Lease-Token header.
+    await request.post(
+      `${COORDINATOR}/api/review-sessions/${encodeURIComponent(sessionId)}/viewer-leases/${encodeURIComponent(leaseId)}/release`,
+      { headers: { "X-Viewer-Lease-Token": leaseToken }, data: {}, timeout: 10_000 },
+    ).catch(() => {});
+  });
+
   test("shared status rail is present on every axis and GPU shows 未取得 (no fake green)", async ({ page }) => {
     for (const route of ["#a1", "#conv", "#sessions", "#instances", "#minio", "#intake", "#runtime"]) {
       await page.goto(`${COORDINATOR}/ui${route}`);
@@ -267,9 +288,33 @@ test.describe("seven-axis cross-page harmony", () => {
     // i.e. a live Kit plane. Disabled → no live plane here → honest N7 skip (skip != pass).
     const manualStart = page.getByTestId("review-room-manual-start");
     await expect(manualStart).toBeVisible({ timeout: 20_000 });
-    const canAttach = await manualStart.isEnabled().catch(() => false);
+    // Retry-wait for enablement — do NOT snapshot .isEnabled() once. The disabled gate keys on viewerOrigin +
+    // sessionObserved, both set by the component's ON-MOUNT runtime/status fetch that fires exactly once and never
+    // polls (ReviewSessionViewerPane.tsx:289,124-142). The button mounts (so toBeVisible passes) BEFORE that fetch
+    // resolves, so a one-shot isEnabled() can read the pre-fetch disabled state and FALSE-skip a genuinely live Kit
+    // session — the same on-mount-fetch race the M / SS legs above already guard with a retrying waitFor. Unlike the
+    // A1 CTA at line ~214 (whose enablement is pure synchronous frontend state, so a snapshot is safe there), this
+    // gate has an async dependency, so it needs a retrying assertion. toBeEnabled() auto-retries until the fetch
+    // flips the gate; the .then(true/false) keeps this an honest N7 skip (button stays disabled = no live plane).
+    const canAttach = await expect(manualStart).toBeEnabled({ timeout: 10_000 }).then(() => true, () => false);
     test.skip(!canAttach, "review-room-manual-start disabled: runtime/status does not observe this session or exposes no viewer origin (no live Kit plane; not observed)");
+    // Arm the claim-response capture BEFORE the click so we record the lease the instant claimPrimary() POSTs it —
+    // afterEach needs lease_id + lease_token to release this REAL session's primary slot, and the token is exposed
+    // ONLY on the claim response (includeToken:true, app.ts:1185; runtime/status never leaks it). A 409
+    // (primary_already_claimed) still resolves this wait, but .ok() is false → we record nothing → nothing to
+    // release (we hold no lease). Matches the file's existing r.url().includes(...) waitForResponse style.
+    const claimSettled = page.waitForResponse(
+      (r) => r.url().includes("/viewer-leases/claim") && r.request().method() === "POST",
+      { timeout: 30_000 },
+    ).catch(() => null);
     await manualStart.click();
+    const claimResp = await claimSettled;
+    if (claimResp && claimResp.ok()) {
+      const claimBody = await claimResp.json().catch(() => null);
+      if (claimBody?.session_id && claimBody?.lease_id && claimBody?.lease_token) {
+        claimedLease = { sessionId: claimBody.session_id, leaseId: claimBody.lease_id, leaseToken: claimBody.lease_token };
+      }
+    }
     // The host mounts only if claimPrimary() succeeds AND a viewer origin exists (ReviewSessionViewerPane.tsx:328-
     // 329). Claim rejected / no viewer origin → host never mounts → honest N7 skip.
     const host = page.getByTestId("review-room-viewer-host");
