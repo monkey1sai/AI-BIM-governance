@@ -95,6 +95,20 @@ const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({ service: { 
 
 const mkRecord = (over: Partial<ConversionRecord>): ConversionRecord => ({ idempotency_key: "mw_r", project_id: "270", project_display_name: "270", category: "建築", external_model_version_id: "v1", conversion_job_id: "cj_x", status: "queued", usdc_key: null, coverage_report: null, object_key: "270/x.ifc", detected_at: "", updated_at: "", ...over });
 
+// waitFor：以「輪詢直到斷言成立」取代固定 microtask tick 數，徹底消除接收頁獨立 async 載入鏈尚未 settle 就斷言的
+// 競態。特別是 CV 頁 loadRecords()（getConversionRecords→setRecords→重繪）是與 load() 分開的 useEffect，負載高時
+// 固定 2-tick 排不乾這條鏈；載入中＝空 records 又與「查無」同樣顯 not_found，故固定 tick 會閃 AssertionError。每輪
+// 包一次 act 以 flush 一個 microtask + 觸發重繪；斷言通過即返回，達上限仍不過才拋出最後一次 AssertionError（語意同
+// testing-library 的 waitFor，比固定 tick 數穩定）。
+async function waitFor(assert: () => void, maxTicks = 40): Promise<void> {
+  let lastErr: unknown;
+  for (let i = 0; i < maxTicks; i++) {
+    await act(async () => { await Promise.resolve(); });
+    try { assert(); return; } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
 describe("receiving pages re-verify the incoming handoff id", () => {
   let container: HTMLDivElement;
   beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); });
@@ -261,8 +275,11 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    // loadRecords() 是與 load() 獨立的 useEffect async 鏈；固定 2-tick 在負載高時排不乾（載入中＝空 records 也顯
+    // not_found），會閃 AssertionError(expected not_found to be verified)。改輪詢等到 banner settle 成 verified。
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    });
   });
 
   it("CV flags an incoming minio_key absent from the (untruncated) ledger records as not_found (no silent fallback)", async () => {
@@ -273,7 +290,13 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent("270專案/建築/v07/查無.ifc")}`;
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    // 先輪詢等到 ledger 真的載入並反映到 render（mkRecord 的 idempotency_key 'mw_r' 落成 ledger 列）。此步同時證明
+    // loadRecords 接線完整＋已反映到 render——若接線被打斷，此列永不出現、輪詢逾時失敗——把「已載入且查無」與「fetch
+    // 從未發生／未反映到 render」兩種原本都會 fallthrough 成 not_found 的情況分開，讓本測試不再是「兩種都會過」的弱斷言。
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="conv-ledger-idem-mw_r"]')).not.toBeNull();
+    });
+    // 權威 records 已載入且未截斷、key 確不在其中 → 誠實 not_found（非因載入中而假 not_found）。
     expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
   });
 
@@ -285,8 +308,11 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
     const root = createRoot(container);
     await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+    // 輪詢等到 banner settle 成 indeterminate（載入中＝空 records＋未截斷會先顯 not_found，records settle 後才因
+    // recordsTruncated 轉 indeterminate）；輪詢逾時＝load 未 settle，避免固定 tick 誤讀載入中的 not_found。
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+    });
   });
 
   it("KG flags an incoming session absent from shared status as not_found (no silent fallback)", () => {
