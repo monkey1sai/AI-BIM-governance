@@ -80,15 +80,36 @@ test.describe("seven-axis cross-page harmony", () => {
 
   test("SS → Review chip navigates with the session id (re-verified, not silently defaulted)", async ({ page }) => {
     await page.goto(`${COORDINATOR}/ui#sessions`);
-    const reviewChip = page.locator('[data-testid^="session-link-review-"]').first();
-    // Same race as M→CV: the sessions table renders from an on-mount /api/runtime/status fetch that goto does
-    // not await, and count() does not retry. waitFor lets a live session actually paint before we decide to skip.
+    // Pick an ACTIVE session's Review chip, not just .first(): store.list() returns ALL sessions incl. closed,
+    // sorted by updated_at desc (sessionStore.ts:70-79), and runtime/status maps them unfiltered (app.ts:2753),
+    // so .first() is often a just-closed row whose Review Room re-verify honestly reads "not_listed"
+    // (ReviewSessionViewerPane.tsx:129 keeps only active/created) and would false-fail the "observed" check below.
+    // An active, non-terminating row is exactly the one carrying a session-terminate button (pages.tsx:1497) —
+    // i.e. the re-verifiable set. Same on-mount /api/runtime/status race as M→CV: waitFor lets it paint before skip.
+    const activeRow = page.locator('[data-testid^="session-row-"]').filter({ has: page.locator('[data-testid^="session-terminate-"]') }).first();
+    const reviewChip = activeRow.locator('[data-testid^="session-link-review-"]');
     const hasSession = await reviewChip.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
-    test.skip(!hasSession, "no active session in this environment (not observed)");
+    test.skip(!hasSession, "no active (non-terminating) session in this environment (not observed)");
     await reviewChip.click();
     await expect(page).toHaveURL(/#review\?source=sessions&.*session=/, { timeout: 15_000 });
-    // Review Room does not auto-claim: the manual start control is present and the not-started note shows.
+    // Capture the REAL session id the SS chip placed on the URL so the assertions below prove the id actually
+    // wired hash → parseReviewRoomHandoff → ReviewSessionViewerPane, not merely that the literal substring
+    // "session=" survived (which an empty / mis-named param would also satisfy).
+    const ssSession = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("session") ?? "";
+    expect(ssSession).not.toBe("");
+    // Review Room does not auto-claim (N3): before manual start it shows kit-not-started.
     await expect(page.getByTestId("review-room-kit-not-started")).toBeVisible({ timeout: 20_000 });
+    // "re-verified, not silently defaulted" — assert the RECEIVER actually re-verified the incoming id, not just
+    // that the URL carried one. review-room-kit-not-started shows for ANY id (it keys only on !activePrimaryLease,
+    // ReviewSessionViewerPane.tsx:324) so it CANNOT prove re-verification; the runtime-evidence block does: its
+    // "session" field must echo the incoming id (catches an empty-string / wrong-param wiring regression) and its
+    // "runtime session" field must read "observed" — sessionObserved = the id was found in /api/runtime/status
+    // (ReviewSessionViewerPane.tsx:119,314), the honest re-verified signal — rather than "not_listed". (Trap-safe:
+    // "observed" is not a substring of "not_listed", and this locator targets only the runtime-session field so the
+    // "not_observed" first-frame/DataChannel fields cannot alias it.)
+    const evidence = page.getByTestId("review-room-runtime-evidence");
+    await expect(evidence).toContainText(ssSession, { timeout: 15_000 });
+    await expect(evidence.locator(".ec-field", { hasText: "runtime session" })).toContainText("observed", { timeout: 15_000 });
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-ss-to-review.png", fullPage: true });
   });
 
@@ -218,21 +239,57 @@ test.describe("seven-axis cross-page harmony", () => {
   });
 
   // §8 DEEP Review-Room evidence chain — first_frame / stage_matched / datachannel_ready / highlight_ack are FOUR
-  // distinct, Review-Room-owned evidence points (ReviewSessionViewerPane): review-room-viewer-host mounts ONLY
-  // under an active primary lease, which needs a manual attach + a live Kit GPU session (Windows-native per repo
-  // constraint). So this spec drives them ONLY when the viewer host mounts and otherwise honestly test.skips them
-  // as `not observed` (skip != pass, N7) — the honest runtime signal the walk-through's reachable spine cannot
-  // itself emit (a mid-test skip there would abort the reachable legs too). This additive spec NEVER fakes the
-  // four points and NEVER re-implements the Review-Room chain that owns them; do NOT cite the stale A1-embedded
-  // VG-01 specs for them (post-#286 they assert moved-away A1 testids — flagged as tech-debt in the PR).
+  // distinct, Review-Room-owned evidence points (ReviewSessionViewerPane). review-room-viewer-host mounts ONLY
+  // under an active primary lease (ReviewSessionViewerPane.tsx:324,328-329), and lease/activePrimaryLease is
+  // written ONLY by claimPrimary(), whose SOLE caller is the manual-start button onClick
+  // (ReviewSessionViewerPane.tsx:185-211,295). So the host is UNREACHABLE without a real session id in the input
+  // AND a manual attach: a bare page.goto(#review?source=a1) (no session, no click) leaves sessionId="" /
+  // lease=null and would test.skip in EVERY environment — live Kit or not — a permanent dead skip that never
+  // lights up (this was quality Important #1). This test therefore sources a REAL active session via the Sessions
+  // axis (never fabricates one — 誠實鐵律) and drives the manual attach, so a branch-isolated coordinator with a
+  // live Kit GPU session genuinely reaches first_frame / datachannel_ready here. It NEVER fakes the four points
+  // and NEVER re-implements the Review-Room chain that owns them; do NOT cite the stale A1-embedded VG-01 specs
+  // (post-#286 they assert moved-away A1 testids — flagged as tech-debt in the PR).
   test("§8 deep Kit evidence chain (first_frame/stage_matched/datachannel/highlight): honest-skip when no live Kit session", async ({ page }) => {
-    await page.goto(`${COORDINATOR}/ui#review?source=a1`);
+    test.setTimeout(300_000); // a real Kit first_frame can take minutes (mirrors viewer-embed-a1-highlight.spec.ts:120); the default 60s test timeout is too tight for the full live-attach path
+    // Source a REAL active session the only honest way — the live Sessions table (active, non-terminating row =
+    // the one with a session-terminate button, pages.tsx:1497), NOT .first() which is often a just-closed row that
+    // could never be attached. No active session → honest N7 skip (the deep points are not observed here).
+    await page.goto(`${COORDINATOR}/ui#sessions`);
+    const activeRow = page.locator('[data-testid^="session-row-"]').filter({ has: page.locator('[data-testid^="session-terminate-"]') }).first();
+    const reviewChip = activeRow.locator('[data-testid^="session-link-review-"]');
+    const hasSession = await reviewChip.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    test.skip(!hasSession, "no active (non-terminating) session in this environment; cannot reach Review Room viewer host (not observed)");
+    await reviewChip.click();
+    await expect(page).toHaveURL(/#review\?source=sessions&.*session=/, { timeout: 15_000 });
+    // Manual attach is the ONLY path to activePrimaryLease → viewer host (N3, no auto-claim). The button enables
+    // only when runtime/status observes the session AND exposes a viewer origin (ReviewSessionViewerPane.tsx:289) —
+    // i.e. a live Kit plane. Disabled → no live plane here → honest N7 skip (skip != pass).
+    const manualStart = page.getByTestId("review-room-manual-start");
+    await expect(manualStart).toBeVisible({ timeout: 20_000 });
+    const canAttach = await manualStart.isEnabled().catch(() => false);
+    test.skip(!canAttach, "review-room-manual-start disabled: runtime/status does not observe this session or exposes no viewer origin (no live Kit plane; not observed)");
+    await manualStart.click();
+    // The host mounts only if claimPrimary() succeeds AND a viewer origin exists (ReviewSessionViewerPane.tsx:328-
+    // 329). Claim rejected / no viewer origin → host never mounts → honest N7 skip.
     const host = page.getByTestId("review-room-viewer-host");
-    // Same waitFor→skip shape as the M→CV / SS→Review tests above so an async mount isn't missed by an early
-    // count(); genuinely absent → honest N7 skip (the deep points are not observed without a live Kit session).
-    const hasHost = await host.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
-    test.skip(!hasHost, "no manual attach + live Kit GPU session here; first_frame/stage_matched/datachannel_ready/highlight_ack not observed (skip != pass, N7)");
-    await expect(host).toBeVisible({ timeout: 20_000 });
+    const hasHost = await host.waitFor({ state: "visible", timeout: 30_000 }).then(() => true, () => false);
+    test.skip(!hasHost, "manual attach did not mount a viewer host (claim rejected / no viewer origin); deep Kit evidence not observed (skip != pass, N7)");
+    // first_frame + datachannel_ready flip to observed together ONLY when a REAL WebRTC frame lands (onFirstFrame,
+    // ReviewSessionViewerPane.tsx:316-317,343-345). The host CAN mount without a live GPU stream (lease granted but
+    // no frame), so gate on the real frame: no frame within budget → honest N7 skip (deep points not observed), NOT
+    // a failure. Trap-safe: "not_observed" CONTAINS "observed", so wait for the field to STOP containing
+    // "not_observed" rather than to contain "observed".
+    const evidence = page.getByTestId("review-room-runtime-evidence");
+    const firstFrameField = evidence.locator(".ec-field", { hasText: "first frame" });
+    const gotFrame = await expect(firstFrameField).not.toContainText("not_observed", { timeout: 180_000 }).then(() => true, () => false);
+    test.skip(!gotFrame, "viewer host mounted but no real Kit first_frame within budget; first_frame/stage_matched/datachannel_ready/highlight_ack not observed (skip != pass, N7)");
+    // Real frame landed: assert the two deterministically-coupled deep points (first_frame proven above;
+    // datachannel_ready is set in the SAME onFirstFrame handler). HONEST SCOPE: stage_matched + highlight_ack are
+    // NOT hard-asserted here — they need the A1 rule-run handoff payload (expected_stage_url / ifc_guid /
+    // usd_prim_path) that a Sessions-sourced handoff does not carry, so they stay screenshot-only evidence owned by
+    // the A1→Review path, not this Kit-liveness probe.
+    await expect(evidence.locator(".ec-field", { hasText: "DataChannel ready" })).not.toContainText("not_observed", { timeout: 15_000 });
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-05-review-deep-kit.png", fullPage: true });
   });
 });
