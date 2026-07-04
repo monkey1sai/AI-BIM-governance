@@ -27,11 +27,13 @@ test.describe("seven-axis cross-page harmony", () => {
     // re-verifies minio_key against `records`, which is [] until GET /api/conversion/records lands, so the
     // banner paints a transient `not_found` first (records=[] & recordsTruncated=false → verify returns false
     // → not_found; pages.tsx:865,904,908-922 + incomingHandoff.tsx:29-30). Unlike A1/SS/KG/M, CV keeps this
-    // load flash on purpose (parent 47f9975). Awaiting this response lets the banner reach its terminal verdict
-    // before the screenshot below captures it. HONEST SCOPE (quality Important #1): awaiting does NOT tighten
-    // the toHaveAttribute assertion — it accepts `not_found`, which is ALSO the transient value, so the
-    // assertion's pass/fail is identical with or without this wait; the wait buys a stable screenshot frame,
-    // not a stricter check. Match `?limit=50` specifically — that is CV's OWN loadRecords() (pages.tsx:952).
+    // load flash on purpose (parent 47f9975). Awaiting this response is a BEST-EFFORT nudge toward a stable
+    // screenshot frame — waitForResponse resolves on the HTTP response (headers received), NOT after the page
+    // reads the body + setRecords + React commits the re-render, so it does NOT guarantee the terminal verdict
+    // is in the DOM by screenshot time; the shot can still catch the transient not_found flash (quality
+    // Important #1 — do not oversell). HONEST SCOPE: awaiting also does NOT tighten the toHaveAttribute
+    // assertion — it accepts `not_found`, which is ALSO the transient value, so the assertion's pass/fail is
+    // identical with or without this wait. Match `?limit=50` specifically — that is CV's OWN loadRecords() (pages.tsx:952).
     // The always-mounted SharedStatusProvider polls the SAME endpoint every 5s and the M page fetches it on
     // mount, both with `?limit=100`; a bare `/api/conversion/records` predicate could resolve on one of those
     // unrelated hits and race past CV's own load, so the screenshot could still catch the pre-load flash.
@@ -52,7 +54,7 @@ test.describe("seven-axis cross-page harmony", () => {
     // in incomingHandoff.test.tsx (its CV truncation cases), not by this E2E.
     const banner = page.getByTestId("conv-incoming-handoff");
     await expect(banner).toBeVisible({ timeout: 15_000 });
-    await recordsSettled; // settle CV's own ledger fetch → the screenshot below shows the terminal banner, not the pre-load not_found flash (does NOT change the assertion — see the arm-site HONEST SCOPE note above)
+    await recordsSettled; // best-effort settle of CV's own ledger fetch → makes the screenshot below LIKELY (not guaranteed) to show the terminal banner rather than the pre-load not_found flash: waitForResponse resolves on the HTTP response, before setRecords + the React re-render (does NOT change the assertion — see the arm-site HONEST SCOPE note above)
     await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-conv.png", fullPage: true });
   });
@@ -90,35 +92,38 @@ test.describe("seven-axis cross-page harmony", () => {
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-ss-to-review.png", fullPage: true });
   });
 
-  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). Each deep leg
-  // uses an honest test.skip (same pattern as the isolated tests above): we never fake a conversion, an A1
-  // rule-run failure, or a live Kit session. This adds the §8 walk-through *spec* that Task 15 was missing —
-  // but read the coverage & honesty note before treating it as evidence that the deep flow itself was run.
+  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). This spec traverses the
+  // REACHABLE spine of the §8 lifecycle (M→CV re-verify → IN→CV re-verify → A1 Review-Room CTA gate) with an
+  // honest test.skip on the infra-gated legs (same pattern as the isolated tests above): we never fake a
+  // conversion, an A1 rule-run failure, or a live Kit session. The DEEP legs (Review-Room evidence chain; A1
+  // rule-run → Review handoff → A1 issue) are deliberately NOT included here — read the coverage & honesty note
+  // before treating this walk-through as evidence that the deep flow was run.
   //
   // §8 COVERAGE & HONESTY NOTE (誠實鐵律 — do not oversell):
-  // In a fixture-less environment (today's CI, and every run recorded for this commit) ONLY two things run to
-  // completion end-to-end: the shared-rail axis sweep (test 1) and the Review-Room "not started" boundary
-  // (test 3). The deep §8 legs below fall into two honest buckets:
-  //   • Infra-gated — test.skip only because the real backend object is absent in this environment:
-  //       – M→CV / IN→CV receiver verdict  → needs a real MinIO source_ifc object (+ a CV ledger record).
-  //       – Review-Room four-evidence chain (first_frame/stage_matched/datachannel/highlight) → needs a manual
-  //         attach + a live Kit GPU session; this spec NEVER fakes them (N7: skip != pass).
-  //   • Structurally out-of-scope for THIS spec — skips regardless of environment:
-  //       – A1 rule-run failure → Review handoff  → the "開啟 Review Room（第一筆失敗）" CTA only enables after a
-  //         session is selected AND state.failed[0] exists (a1ReviewRoomHandoffReason, pages.tsx:256-262). This
-  //         walk-through never drives session-select + rule-run, and selectedSession (pages.tsx:306) + the
-  //         useReducer state (pages.tsx:283) are pure frontend that never restore from the backend — so this
-  //         leg 100% skips even with full infra. A TEST-SCOPE limit (kept out to avoid extra automation
-  //         fragility on the plan's last task), NOT a missing-fixture / infra limitation.
-  // Consequence: as of this commit the deep §8 lifecycle path is `not observed` — it has NOT been exercised
-  // to completion by any real run (the cross-axis-s8-01/02/03 screenshots below are produced only on a
-  // fixture-backed run and are absent otherwise). Confidence in these legs is code-review + structural only,
-  // NOT browser-E2E evidence — do not mark the §8 lifecycle "verified in browser" on the strength of this file
-  // alone. To capture real deep-segment evidence, run this spec against a branch-isolated coordinator (:8005)
-  // seeded with a real MinIO source_ifc fixture (and a live Kit session for the Review-Room legs) — except the
-  // A1→Review leg, which additionally needs this spec extended to drive session-select + rule-run (see its
-  // structural note above); seeding infra alone will not make it run.
-  test("§8 lifecycle walk-through: M → IN → CV → A1 → Review Room (deep Kit legs honest-skip) → back to A1 issue", async ({ page }) => {
+  // What THIS walk-through actually reaches:
+  //   • Reachable & asserted: the M→CV and IN→CV receiver-verdict legs (when a real MinIO object / ifc-ready job
+  //     exists) and the A1 Review-Room CTA gate — asserted present-but-DISABLED (see the A1 leg below; this is
+  //     deterministic and holds in ANY environment).
+  //   • Infra-gated (honest test.skip, N7 skip != pass): M→CV / IN→CV need a real MinIO source_ifc object (+ a
+  //     CV ledger record); absent → the leg skips rather than fakes a conversion.
+  // What THIS walk-through deliberately does NOT include (out of this additive spec's scope — NO dead code left
+  // pretending it runs):
+  //   • The Review-Room four-evidence chain (first_frame / stage_matched / datachannel_ready / highlight_ack) —
+  //     needs a manual attach + a live Kit GPU session; owned by the Review-Room specs, never faked here.
+  //   • The A1 rule-run-failure → Review handoff → A1 issue chain — the "開啟 Review Room（第一筆失敗）" CTA only
+  //     enables after a session is selected AND state.failed[0] exists (a1ReviewRoomHandoffReason,
+  //     pages.tsx:256-262); selectedSession (pages.tsx:306) + the useReducer state (pages.tsx:283) are pure
+  //     frontend that never restore from the backend, so driving it needs this spec extended with a
+  //     session-select + rule-run step. Deliberately omitted on this last additive task to avoid extra
+  //     automation fragility — a TEST-SCOPE limit, NOT a missing-fixture / infra limitation.
+  // Consequence: as of this commit the DEEP §8 lifecycle path is `not observed` — it has NOT been exercised to
+  // completion by any real run, and this file no longer contains code that pretends to (the only §8 screenshots
+  // are cross-axis-s8-01-m-to-conv, fixture-backed, and cross-axis-s8-02-a1-cta-disabled, reachable whenever the
+  // M leg is not skipped). Confidence in the deep legs is code-review + structural only, NOT browser-E2E
+  // evidence — do not mark the §8 lifecycle "verified in browser" on the strength of this file alone. To capture
+  // real deep-segment evidence, extend this spec to drive session-select + rule-run and run it against a
+  // branch-isolated coordinator (:8005) seeded with a real MinIO source_ifc fixture and a live Kit session.
+  test("§8 lifecycle spine (reachable): M→CV + IN→CV receiver re-verify, then A1 Review-Room CTA asserted gated; deep Kit + A1-issue legs out-of-scope (not observed)", async ({ page }) => {
     // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
     await page.goto(`${COORDINATOR}/ui#minio`);
     const mConv = page.locator('[data-testid^="minio-link-conv-"]').first();
@@ -128,9 +133,11 @@ test.describe("seven-axis cross-page harmony", () => {
     test.skip(!mHasConv, "no MinIO source_ifc object in this environment (not observed)");
     // Same CV load-race guard as the isolated M→CV test above — match ?limit=50 (CV's own loadRecords), NOT the
     // SharedStatusProvider 5s poll / M page ?limit=100: arm the ledger-fetch wait before the click so the s8-01
-    // screenshot below captures CV's terminal banner, not the transient pre-load not_found flash. Same honest
-    // scope (quality Important #1): this does NOT tighten the toHaveAttribute below — not_found is accepted and
-    // is also the transient value; the wait is for the screenshot frame, not a stricter check.
+    // screenshot below is a BEST-EFFORT terminal-banner frame. Honest scope (quality Important #1 — do not
+    // oversell): waitForResponse resolves on the HTTP response, before setRecords + the React re-render, so the
+    // shot can still catch the transient pre-load not_found flash; and this does NOT tighten the toHaveAttribute
+    // below — not_found is accepted and is also the transient value; the wait is a best-effort nudge for the
+    // screenshot frame, not a stricter check.
     const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
     await mConv.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
@@ -152,11 +159,12 @@ test.describe("seven-axis cross-page harmony", () => {
     // on-mount jobs fetch; count() doesn't retry) — genuinely-absent jobs still fall through in ~10s.
     const inHasConv = await inConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
     if (inHasConv) {
-      // Same CV load-race guard (?limit=50 = CV's own fetch): await CV's ledger fetch so the banner is read at
-      // its settled state, consistent with the M→CV leg. Honest scope (quality Important #1): this leg takes no
-      // screenshot right after and the assertion accepts not_found (transient AND terminal), so the wait changes
-      // neither a screenshot (none) nor the assertion's pass/fail — it stays a wiring smoke test (banner mounts +
-      // CV re-verifies into an honest non-none state); per-input discrimination is owned by incomingHandoff.test.tsx.
+      // Same CV load-race guard (?limit=50 = CV's own fetch): await CV's ledger fetch as a best-effort settle,
+      // consistent with the M→CV leg (waitForResponse resolves on the HTTP response, before setRecords + the
+      // re-render, so it does not guarantee a settled banner). Honest scope (quality Important #1): this leg takes
+      // no screenshot right after and the assertion accepts not_found (transient AND terminal), so the wait
+      // changes neither a screenshot (none) nor the assertion's pass/fail — it stays a wiring smoke test (banner
+      // mounts + CV re-verifies into an honest non-none state); per-input discrimination is owned by incomingHandoff.test.tsx.
       const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
       await inConv.click();
       await expect(page).toHaveURL(/#conv\?source=intake/, { timeout: 15_000 });
@@ -169,37 +177,17 @@ test.describe("seven-axis cross-page harmony", () => {
     }
 
     // [A1] source_selected → rule_run_ready → failures_ready → review_requested. The "開啟 Review Room（第一筆
-    // 失敗）" CTA is disabled until BOTH a session is selected AND state.failed[0] exists (a1ReviewRoomHandoffReason,
-    // pages.tsx:256-262). This walk-through never drives session selection nor a rule-run, and selectedSession
-    // (pages.tsx:306) + the useReducer state (pages.tsx:283) are pure frontend that never restore from the
-    // backend — so the CTA can NEVER enable here regardless of environment. Honest skip below is a TEST-SCOPE
-    // limit (this last additive task deliberately omits the session-select + rule-run driving steps to avoid
-    // extra automation fragility), NOT a missing-fixture / infra limitation.
+    // 失敗）" CTA is evidence-typed: disabled until BOTH a session is selected AND state.failed[0] exists
+    // (a1ReviewRoomHandoffReason, pages.tsx:256-262 → Btn disabled={Boolean(reason)}, pages.tsx:713-714). This
+    // walk-through never drives session-select nor a rule-run, and selectedSession (pages.tsx:306) + the
+    // useReducer state (pages.tsx:283) are pure frontend that never restore from the backend — so the CTA is
+    // structurally DISABLED here in ANY environment. Assert that honest, REACHABLE truth (present-but-disabled)
+    // as the walk-through's A1 terminus; the deep enable → click → Review Room → A1-issue chain is deliberately
+    // out of this additive spec's scope (see the §8 note above) and is left `not observed`, NOT as dead code.
     await page.goto(`${COORDINATOR}/ui#a1`);
     const openReview = page.getByTestId("a1-open-review-room");
     await expect(openReview).toBeVisible({ timeout: 20_000 });
-    const canOpen = await openReview.isEnabled().catch(() => false);
-    test.skip(!canOpen, "A1 Review-Room CTA is structurally unreachable in THIS spec: enabling it needs the test to first drive session selection + a rule-run to populate selectedSession and state.failed[0] (pages.tsx:256-262,283,306), which this additive walk-through deliberately does not do — a test-scope limitation, not an environment/fixture gap (it would skip 100% even with full infra)");
-    await openReview.click();
-    await expect(page).toHaveURL(/#review\?source=a1/, { timeout: 15_000 });
-
-    // [RR] kit_not_started — Review Room does NOT auto-claim/auto-attach; this honest boundary is what the
-    // additive spec reliably reaches in CI (N3 leaves Review Room 3D/lease/highlight logic untouched).
-    await expect(page.getByTestId("review-room-kit-not-started")).toBeVisible({ timeout: 20_000 });
-    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-review-not-started.png", fullPage: true });
-
-    // [RR] first_frame_seen → stage_matched → datachannel_ready → highlight_sent → highlight_ack are FOUR
-    // distinct, Review-Room-owned evidence points. They require a manual attach + a live Kit GPU session, so we
-    // drive them ONLY when the viewer host mounts and honest-skip otherwise. This spec never fakes them (N7:
-    // skip != pass). The deep four-evidence chain itself is out of this additive spec's scope (see the §8
-    // coverage & honesty note above) — do NOT rely on the stale A1-embedded VG-01 specs for it.
-    const host = page.getByTestId("review-room-viewer-host");
-    test.skip(await host.count() === 0, "no manual attach + live Kit session here; four deep evidence points not observed (skip != pass, N7)");
-    await expect(host).toBeVisible({ timeout: 20_000 });
-
-    // [A1] issue_created — back on #a1 the failure→Issue control (POST from-rule-run) is present (two-step gating).
-    await page.goto(`${COORDINATOR}/ui#a1`);
-    await expect(page.getByTestId("a1-step-issues")).toBeVisible({ timeout: 15_000 });
-    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-03-a1-issue.png", fullPage: true });
+    await expect(openReview).toBeDisabled();
+    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-a1-cta-disabled.png", fullPage: true });
   });
 });
