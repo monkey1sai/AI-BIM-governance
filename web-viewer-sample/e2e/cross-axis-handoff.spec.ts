@@ -61,6 +61,14 @@ test.describe("seven-axis cross-page harmony", () => {
     const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
     await convChip.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
+    // quality Important #1: the title claims the chip "carries a real minio_key" — PROVE that, not just that
+    // source=minio survived. buildHandoff drops empty values (handoff.ts:39) and minio_key is optional in
+    // parseHandoff (handoff.ts:51-53), so a chip that forgot obj.key still yields a non-null handoff whose CV
+    // verify falls through to not_found (pages.tsx:917,921) — indistinguishable from a real key with no ledger
+    // record. Extract the id from the hash (mirrors the SS→Review leg below) and assert non-empty so a
+    // dropped-minio_key wiring regression fails here instead of passing silently.
+    const minioKey = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("minio_key") ?? "";
+    expect(minioKey).not.toBe("");
     // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found banner
     // (Task 14) — never silently ignore the id. WHAT THIS ASSERTS (quality Important #1 — do not oversell): a
     // WIRING smoke test — the banner mounts and CV re-verifies the id into one of the honest non-none states,
@@ -75,6 +83,11 @@ test.describe("seven-axis cross-page harmony", () => {
     // in incomingHandoff.test.tsx (its CV truncation cases), not by this E2E.
     const banner = page.getByTestId("conv-incoming-handoff");
     await expect(banner).toBeVisible({ timeout: 15_000 });
+    // Receiver-side half of the id-carried proof (analogue of SS→Review asserting the evidence block echoes
+    // ssSession): handoffIdText renders minio_key into the banner text for a source=minio handoff regardless of
+    // verify status (incomingHandoff.tsx:35,44-47), so this catches a receiver that surfaced a blank / wrong id.
+    // Orthogonal to the verify-status discrimination noted above — a not_found banner still contains the id.
+    await expect(banner).toContainText(minioKey, { timeout: 15_000 });
     await recordsSettled; // best-effort settle of CV's own ledger fetch → makes the screenshot below LIKELY (not guaranteed) to show the terminal banner rather than the pre-load not_found flash: waitForResponse resolves on the HTTP response, before setRecords + the React re-render (does NOT change the assertion — see the arm-site HONEST SCOPE note above)
     await expect(banner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-m-to-conv.png", fullPage: true });
@@ -183,8 +196,15 @@ test.describe("seven-axis cross-page harmony", () => {
       const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
       await mConv.click();
       await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
+      // Same id-carried proof as the isolated M→CV test above (quality Important #1): prove the chip carried a
+      // real minio_key, not just that source=minio survived — a dropped key still yields a non-null handoff that
+      // CV verifies to not_found, visually identical to a real miss.
+      const mMinioKey = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("minio_key") ?? "";
+      expect(mMinioKey).not.toBe("");
       const convBanner = page.getByTestId("conv-incoming-handoff");
       await expect(convBanner).toBeVisible({ timeout: 15_000 });
+      // Receiver surfaced THAT id (handoffIdText → banner text, incomingHandoff.tsx:35,44-47), independent of verify status.
+      await expect(convBanner).toContainText(mMinioKey, { timeout: 15_000 });
       await convRecordsSettled;
       // Wiring smoke test (see the isolated M→CV note above): accept all three honest terminal states — verified
       // (records.some hit), not_found (honest miss), indeterminate (recordsTruncated once the ledger exceeds the
@@ -211,8 +231,16 @@ test.describe("seven-axis cross-page harmony", () => {
       const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
       await inConv.click();
       await expect(page).toHaveURL(/#conv\?source=intake/, { timeout: 15_000 });
+      // Same id-carried proof (quality Important #1): the intake chip carries job_id (pages.tsx:3185) — prove it
+      // reached the URL rather than trusting source=intake survived; a dropped job_id still verifies to not_found
+      // (pages.tsx:909,921), indistinguishable from a real miss.
+      const inJobId = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("job_id") ?? "";
+      expect(inJobId).not.toBe("");
       const inBanner = page.getByTestId("conv-incoming-handoff");
       await expect(inBanner).toBeVisible({ timeout: 15_000 });
+      // Receiver surfaced THAT id: for a source=intake handoff handoffIdText falls through session→minio_key→job_id
+      // (incomingHandoff.tsx:35), so the banner text carries job_id.
+      await expect(inBanner).toContainText(inJobId, { timeout: 15_000 });
       await inRecordsSettled;
       // Accept all three honest terminal states; indeterminate is the honest truncation case (ledger >50 →
       // recordsTruncated, pages.tsx:908-922).
@@ -237,6 +265,13 @@ test.describe("seven-axis cross-page harmony", () => {
     if (canOpen) {
       await openReview.click();
       await expect(page).toHaveURL(/#review\?source=a1/, { timeout: 15_000 });
+      // Same id-carried proof (quality Important #1, sender half): buildA1ReviewRoomHandoffHash always carries
+      // session (pages.tsx:245), so prove it landed rather than trusting source=a1 survived. This branch is
+      // currently unreachable (selectedSession is pure frontend, never restored from backend — see the note in
+      // the else path), so the guard stays dormant until a deployment seeds a rule-run fixture and enables the
+      // CTA; the receiver-side re-verify of a Review-Room session id is owned by the SS→Review test's evidence assertion.
+      const a1Session = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("session") ?? "";
+      expect(a1Session).not.toBe("");
     } else {
       await expect(openReview).toBeDisabled();
       await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-a1-cta-disabled.png", fullPage: true });
