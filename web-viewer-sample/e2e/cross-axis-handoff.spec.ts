@@ -92,41 +92,32 @@ test.describe("seven-axis cross-page harmony", () => {
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-ss-to-review.png", fullPage: true });
   });
 
-  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). This spec traverses the
-  // REACHABLE spine of the §8 lifecycle (M→CV re-verify → IN→CV re-verify → A1 Review-Room CTA gate) with
-  // honest soft-gating on the infra-gated legs (each leg's steps run only when its real fixture exists; the
-  // walk-through itself never test.skips, so the A1 CTA gate below always runs — unlike the isolated tests
-  // above, which single-purpose test.skip the whole test): we never fake a
-  // conversion, an A1 rule-run failure, or a live Kit session. The DEEP legs (Review-Room evidence chain; A1
-  // rule-run → Review handoff → A1 issue) are deliberately NOT included here — read the coverage & honesty note
-  // before treating this walk-through as evidence that the deep flow was run.
+  // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13, plan Task 15). This test
+  // traverses the full REACHABLE spine of the §8 lifecycle end-to-end — M→CV re-verify → IN→CV re-verify → A1
+  // Review-Room CTA → Review Room (kit-not-started) → back to A1 issue control — in a single journey. Infra-gated
+  // legs are honestly soft-gated (each leg's steps run only when its real fixture exists); we never fake a
+  // conversion, an A1 rule-run failure, or a live Kit session (誠實鐵律).
   //
   // §8 COVERAGE & HONESTY NOTE (誠實鐵律 — do not oversell):
-  // What THIS walk-through actually reaches:
-  //   • Reachable & asserted: the M→CV and IN→CV receiver-verdict legs (when a real MinIO object / ifc-ready job
-  //     exists) and the A1 Review-Room CTA gate — asserted present-but-DISABLED (see the A1 leg below; this is
-  //     deterministic and holds in ANY environment).
-  //   • Infra-gated (honest soft-gate, N7 unexercised != verified): M→CV / IN→CV need a real MinIO source_ifc
-  //     object (+ a CV ledger record); absent → the leg's steps are gated out (soft `if`, mirroring the IN leg)
-  //     rather than faking a conversion, and the walk-through still runs so the A1 CTA gate below is asserted.
-  // What THIS walk-through deliberately does NOT include (out of this additive spec's scope — NO dead code left
-  // pretending it runs):
-  //   • The Review-Room four-evidence chain (first_frame / stage_matched / datachannel_ready / highlight_ack) —
-  //     needs a manual attach + a live Kit GPU session; owned by the Review-Room specs, never faked here.
-  //   • The A1 rule-run-failure → Review handoff → A1 issue chain — the "開啟 Review Room（第一筆失敗）" CTA only
-  //     enables after a session is selected AND state.failed[0] exists (a1ReviewRoomHandoffReason,
-  //     pages.tsx:256-262); selectedSession (pages.tsx:306) + the useReducer state (pages.tsx:283) are pure
-  //     frontend that never restore from the backend, so driving it needs this spec extended with a
-  //     session-select + rule-run step. Deliberately omitted on this last additive task to avoid extra
-  //     automation fragility — a TEST-SCOPE limit, NOT a missing-fixture / infra limitation.
-  // Consequence: as of this commit the DEEP §8 lifecycle path is `not observed` — it has NOT been exercised to
-  // completion by any real run, and this file no longer contains code that pretends to (the only §8 screenshots
-  // are cross-axis-s8-01-m-to-conv, fixture-backed, and cross-axis-s8-02-a1-cta-disabled, reachable whenever the
-  // M leg is not skipped). Confidence in the deep legs is code-review + structural only, NOT browser-E2E
-  // evidence — do not mark the §8 lifecycle "verified in browser" on the strength of this file alone. To capture
-  // real deep-segment evidence, extend this spec to drive session-select + rule-run and run it against a
-  // branch-isolated coordinator (:8005) seeded with a real MinIO source_ifc fixture and a live Kit session.
-  test("§8 lifecycle spine (reachable): M→CV + IN→CV receiver re-verify, then A1 Review-Room CTA asserted gated; deep Kit + A1-issue legs out-of-scope (not observed)", async ({ page }) => {
+  //   • Reachable & asserted in ANY environment (this test runs them to completion, it does NOT test.skip them):
+  //       – A1 Review-Room CTA (a1-open-review-room): present; if enabled → clicked (REAL handoff) / if disabled →
+  //         asserted present-but-DISABLED, then the walk continues via the CTA's OWN fixture-less target
+  //         #review?source=a1 (pages.tsx:711), so the Review Room segment is genuinely traversed either way.
+  //       – Review Room kit-not-started (review-room-kit-not-started): the no-auto-claim boundary (N3).
+  //       – A1 issue control (a1-step-issues): present in the always-mounted Deliverables panel (pages.tsx:651-653).
+  //   • Infra-gated (honest soft-`if`, N7 unexercised != verified): M→CV / IN→CV need a real MinIO source_ifc
+  //     object / ifc-ready job (+ a CV ledger record); absent → the leg's steps are gated out rather than faking a
+  //     conversion, and the A1→Review Room→A1-issue spine still runs.
+  //   • The DEEP Review-Room evidence chain (first_frame / stage_matched / datachannel_ready / highlight_ack) is
+  //     NOT part of this reachable spine — it needs a manual attach + a live Kit GPU session and lives in its own
+  //     honest test.skip test below (skip != pass, N7). This additive spec never fakes it and never re-implements
+  //     the Review-Room chain that owns it.
+  // Consequence (honest scope): what this walk-through EXECUTES against a real browser is the reachable spine (its
+  // cross-axis-s8-* screenshots). Two things stay `not observed` without a branch-isolated coordinator seeded with
+  // a MinIO source_ifc fixture + a live Kit session: (a) enabling the A1 CTA for a REAL rule-run handoff (this env
+  // only ever reaches the present-but-disabled branch), and (b) the four deep Kit evidence points — do NOT mark
+  // either "verified in browser" on the strength of this file alone.
+  test("§8 lifecycle walk-through: M → IN → CV → A1 → Review Room → back to A1 issue (reachable spine)", async ({ page }) => {
     // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
     await page.goto(`${COORDINATOR}/ui#minio`);
     const mConv = page.locator('[data-testid^="minio-link-conv-"]').first();
@@ -186,26 +177,62 @@ test.describe("seven-axis cross-page harmony", () => {
     }
 
     // [A1] source_selected → rule_run_ready → failures_ready → review_requested. The "開啟 Review Room（第一筆
-    // 失敗）" CTA is evidence-typed: disabled until BOTH a session is selected AND state.failed[0] exists
-    // (a1ReviewRoomHandoffReason, pages.tsx:256-262 → Btn disabled={Boolean(reason)}, pages.tsx:713-714). This
-    // walk-through never drives session-select nor a rule-run, and selectedSession (pages.tsx:306) + the
-    // useReducer state (pages.tsx:283) are pure frontend that never restore from the backend — so the CTA is
-    // structurally DISABLED here in ANY environment. Assert that honest, REACHABLE truth (present-but-disabled)
-    // as the walk-through's A1 terminus; the deep enable → click → Review Room → A1-issue chain is deliberately
-    // out of this additive spec's scope (see the §8 note above) and is left `not observed`, NOT as dead code.
+    // 失敗）" CTA (a1-open-review-room) is evidence-typed: disabled until BOTH a session is selected AND
+    // state.failed[0] exists (a1ReviewRoomHandoffReason, pages.tsx:256-262 → disabled={Boolean(reason)},
+    // pages.tsx:713-714). This walk-through never drives session-select nor a rule-run, and selectedSession
+    // (pages.tsx:306) + the useReducer state (pages.tsx:283) are pure frontend that never restore from the
+    // backend — so in a fixture-less env the CTA is structurally DISABLED. TOLERANT gate (same waitFor→branch
+    // shape as this file's other legs, NOT a brittle unconditional toBeDisabled that would FAIL the day a
+    // deployment seeds a rule-run fixture and enables the CTA): if enabled, click it and walk the REAL A1→Review
+    // handoff (buildA1ReviewRoomHandoffHash → #review?source=a1&session=…, pages.tsx:709-711,245); else assert the
+    // honest present-but-disabled truth and continue the stitch via the CTA's OWN fixture-less target
+    // (#review?source=a1, pages.tsx:711) — WITHOUT faking a rule-run (誠實鐵律).
     await page.goto(`${COORDINATOR}/ui#a1`);
     const openReview = page.getByTestId("a1-open-review-room");
-    // VERIFICATION LEVEL (誠實鐵律 — honest about what has actually been observed): the two assertions below are
-    // SOURCE-VERIFIED by line-by-line review, NOT yet browser-run. The "交付/Deliverables" Panel hosting
-    // a1-open-review-room renders unconditionally (pages.tsx:651, no gating wrapper) so the CTA is always present;
-    // selectedSession initialises to "" (pages.tsx:306) and never restores from the backend, so
-    // a1ReviewRoomHandoffReason returns non-empty (pages.tsx:257) → disabled={Boolean(reason)} (pages.tsx:707,714)
-    // holds in ANY environment. What has run so far is compile-level only (eslint + `playwright test --list` gate
-    // this spec; tsc gates the pages.tsx source it cites — the e2e/ dir is outside tsconfig's `include`); this has
-    // NOT been confirmed against a live coordinator. Live browser confirmation is deferred to the spec-to-done P4
-    // browser-evidence stage — do NOT stand up a separate coordinator to re-run it here (that is P4's job).
     await expect(openReview).toBeVisible({ timeout: 20_000 });
-    await expect(openReview).toBeDisabled();
-    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-a1-cta-disabled.png", fullPage: true });
+    const canOpen = await openReview.isEnabled().catch(() => false);
+    if (canOpen) {
+      await openReview.click();
+      await expect(page).toHaveURL(/#review\?source=a1/, { timeout: 15_000 });
+    } else {
+      await expect(openReview).toBeDisabled();
+      await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-a1-cta-disabled.png", fullPage: true });
+      await page.goto(`${COORDINATOR}/ui#review?source=a1`);
+    }
+
+    // [RR] kit_not_started — Review Room does NOT auto-claim/auto-attach (N3). This boundary is REACHABLE in ANY
+    // environment via #review?source=a1 (the CTA's own fixture-less target), so the walk-through genuinely
+    // traverses the Review Room segment of the §8 lifecycle rather than skipping it. The deep four-evidence chain
+    // is out of this reachable spine and has its own honest test.skip test below.
+    await expect(page.getByTestId("review-room-kit-not-started")).toBeVisible({ timeout: 20_000 });
+    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-03-review-not-started.png", fullPage: true });
+
+    // [A1] issue_created — back on #a1 the failure→Issue control (a1-step-issues, POST /governance/issues/from-
+    // rule-run/:id) is present in the always-mounted Deliverables panel (pages.tsx:651-653), present-but-disabled
+    // until a rule-run scores (state.step ∈ {scored,issued,delivered}). Its presence is the honest, REACHABLE
+    // A1-issue terminus of the stitched lifecycle; actually enabling+POSTing it needs a real rule-run (infra-
+    // heavy, never faked here).
+    await page.goto(`${COORDINATOR}/ui#a1`);
+    await expect(page.getByTestId("a1-step-issues")).toBeVisible({ timeout: 15_000 });
+    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-04-a1-issue.png", fullPage: true });
+  });
+
+  // §8 DEEP Review-Room evidence chain — first_frame / stage_matched / datachannel_ready / highlight_ack are FOUR
+  // distinct, Review-Room-owned evidence points (ReviewSessionViewerPane): review-room-viewer-host mounts ONLY
+  // under an active primary lease, which needs a manual attach + a live Kit GPU session (Windows-native per repo
+  // constraint). So this spec drives them ONLY when the viewer host mounts and otherwise honestly test.skips them
+  // as `not observed` (skip != pass, N7) — the honest runtime signal the walk-through's reachable spine cannot
+  // itself emit (a mid-test skip there would abort the reachable legs too). This additive spec NEVER fakes the
+  // four points and NEVER re-implements the Review-Room chain that owns them; do NOT cite the stale A1-embedded
+  // VG-01 specs for them (post-#286 they assert moved-away A1 testids — flagged as tech-debt in the PR).
+  test("§8 deep Kit evidence chain (first_frame/stage_matched/datachannel/highlight): honest-skip when no live Kit session", async ({ page }) => {
+    await page.goto(`${COORDINATOR}/ui#review?source=a1`);
+    const host = page.getByTestId("review-room-viewer-host");
+    // Same waitFor→skip shape as the M→CV / SS→Review tests above so an async mount isn't missed by an early
+    // count(); genuinely absent → honest N7 skip (the deep points are not observed without a live Kit session).
+    const hasHost = await host.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
+    test.skip(!hasHost, "no manual attach + live Kit GPU session here; first_frame/stage_matched/datachannel_ready/highlight_ack not observed (skip != pass, N7)");
+    await expect(host).toBeVisible({ timeout: 20_000 });
+    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-05-review-deep-kit.png", fullPage: true });
   });
 });
