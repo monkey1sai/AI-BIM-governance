@@ -93,8 +93,10 @@ test.describe("seven-axis cross-page harmony", () => {
   });
 
   // §8 Representative Cross-Axis Lifecycle — ONE stitched walk-through (spec §12/§13). This spec traverses the
-  // REACHABLE spine of the §8 lifecycle (M→CV re-verify → IN→CV re-verify → A1 Review-Room CTA gate) with an
-  // honest test.skip on the infra-gated legs (same pattern as the isolated tests above): we never fake a
+  // REACHABLE spine of the §8 lifecycle (M→CV re-verify → IN→CV re-verify → A1 Review-Room CTA gate) with
+  // honest soft-gating on the infra-gated legs (each leg's steps run only when its real fixture exists; the
+  // walk-through itself never test.skips, so the A1 CTA gate below always runs — unlike the isolated tests
+  // above, which single-purpose test.skip the whole test): we never fake a
   // conversion, an A1 rule-run failure, or a live Kit session. The DEEP legs (Review-Room evidence chain; A1
   // rule-run → Review handoff → A1 issue) are deliberately NOT included here — read the coverage & honesty note
   // before treating this walk-through as evidence that the deep flow was run.
@@ -104,8 +106,9 @@ test.describe("seven-axis cross-page harmony", () => {
   //   • Reachable & asserted: the M→CV and IN→CV receiver-verdict legs (when a real MinIO object / ifc-ready job
   //     exists) and the A1 Review-Room CTA gate — asserted present-but-DISABLED (see the A1 leg below; this is
   //     deterministic and holds in ANY environment).
-  //   • Infra-gated (honest test.skip, N7 skip != pass): M→CV / IN→CV need a real MinIO source_ifc object (+ a
-  //     CV ledger record); absent → the leg skips rather than fakes a conversion.
+  //   • Infra-gated (honest soft-gate, N7 unexercised != verified): M→CV / IN→CV need a real MinIO source_ifc
+  //     object (+ a CV ledger record); absent → the leg's steps are gated out (soft `if`, mirroring the IN leg)
+  //     rather than faking a conversion, and the walk-through still runs so the A1 CTA gate below is asserted.
   // What THIS walk-through deliberately does NOT include (out of this additive spec's scope — NO dead code left
   // pretending it runs):
   //   • The Review-Room four-evidence chain (first_frame / stage_matched / datachannel_ready / highlight_ack) —
@@ -127,28 +130,34 @@ test.describe("seven-axis cross-page harmony", () => {
     // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
     await page.goto(`${COORDINATOR}/ui#minio`);
     const mConv = page.locator('[data-testid^="minio-link-conv-"]').first();
-    // Retry-wait for the chip to paint before skipping (goto doesn't await the on-mount folder fetch; count()
-    // doesn't retry) — otherwise a fixture-backed env could still false-skip, contradicting the §8 note above.
+    // Retry-wait for the chip to paint before deciding (goto doesn't await the on-mount folder fetch; count()
+    // doesn't retry) — otherwise a fixture-backed env could false-negative, contradicting the §8 note above.
     const mHasConv = await mConv.waitFor({ state: "visible", timeout: 10_000 }).then(() => true, () => false);
-    test.skip(!mHasConv, "no MinIO source_ifc object in this environment (not observed)");
-    // Same CV load-race guard as the isolated M→CV test above — match ?limit=50 (CV's own loadRecords), NOT the
-    // SharedStatusProvider 5s poll / M page ?limit=100: arm the ledger-fetch wait before the click so the s8-01
-    // screenshot below is a BEST-EFFORT terminal-banner frame. Honest scope (quality Important #1 — do not
-    // oversell): waitForResponse resolves on the HTTP response, before setRecords + the React re-render, so the
-    // shot can still catch the transient pre-load not_found flash; and this does NOT tighten the toHaveAttribute
-    // below — not_found is accepted and is also the transient value; the wait is a best-effort nudge for the
-    // screenshot frame, not a stricter check.
-    const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
-    await mConv.click();
-    await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
-    const convBanner = page.getByTestId("conv-incoming-handoff");
-    await expect(convBanner).toBeVisible({ timeout: 15_000 });
-    await convRecordsSettled;
-    // Wiring smoke test (see the isolated M→CV note above): accept all three honest terminal states — verified
-    // (records.some hit), not_found (honest miss), indeterminate (recordsTruncated once the ledger exceeds the
-    // 50-record window, pages.tsx:908-922). Per-input discrimination is owned by incomingHandoff.test.tsx.
-    await expect(convBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
-    await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-conv.png", fullPage: true });
+    // SOFT leg (mirror the IN leg below), NOT test.skip: a test.skip(!mHasConv) in the body aborts the WHOLE test
+    // the instant MinIO fixtures are absent (Playwright's in-body test.skip throws to end the test), which would
+    // also skip the A1 Review-Room CTA assertions further down — directly contradicting the coverage note's
+    // "asserted present-but-DISABLED … holds in ANY environment". Gate only the MinIO-dependent M steps here so
+    // the IN and A1 legs still run in a fixture-less env.
+    if (mHasConv) {
+      // Same CV load-race guard as the isolated M→CV test above — match ?limit=50 (CV's own loadRecords), NOT the
+      // SharedStatusProvider 5s poll / M page ?limit=100: arm the ledger-fetch wait before the click so the s8-01
+      // screenshot below is a BEST-EFFORT terminal-banner frame. Honest scope (quality Important #1 — do not
+      // oversell): waitForResponse resolves on the HTTP response, before setRecords + the React re-render, so the
+      // shot can still catch the transient pre-load not_found flash; and this does NOT tighten the toHaveAttribute
+      // below — not_found is accepted and is also the transient value; the wait is a best-effort nudge for the
+      // screenshot frame, not a stricter check.
+      const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
+      await mConv.click();
+      await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
+      const convBanner = page.getByTestId("conv-incoming-handoff");
+      await expect(convBanner).toBeVisible({ timeout: 15_000 });
+      await convRecordsSettled;
+      // Wiring smoke test (see the isolated M→CV note above): accept all three honest terminal states — verified
+      // (records.some hit), not_found (honest miss), indeterminate (recordsTruncated once the ledger exceeds the
+      // 50-record window, pages.tsx:908-922). Per-input discrimination is owned by incomingHandoff.test.tsx.
+      await expect(convBanner).toHaveAttribute("data-handoff-status", /verified|not_found|indeterminate/);
+      await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-01-m-to-conv.png", fullPage: true });
+    }
 
     // [IN] ifc_ready_job_listed → #intake job row also chips into #conv (source=intake). Soft leg: exercise it
     // when a job exists (so IN is genuinely traversed, not skipped like the reviewer flagged), else move on —
@@ -186,6 +195,15 @@ test.describe("seven-axis cross-page harmony", () => {
     // out of this additive spec's scope (see the §8 note above) and is left `not observed`, NOT as dead code.
     await page.goto(`${COORDINATOR}/ui#a1`);
     const openReview = page.getByTestId("a1-open-review-room");
+    // VERIFICATION LEVEL (誠實鐵律 — honest about what has actually been observed): the two assertions below are
+    // SOURCE-VERIFIED by line-by-line review, NOT yet browser-run. The "交付/Deliverables" Panel hosting
+    // a1-open-review-room renders unconditionally (pages.tsx:651, no gating wrapper) so the CTA is always present;
+    // selectedSession initialises to "" (pages.tsx:306) and never restores from the backend, so
+    // a1ReviewRoomHandoffReason returns non-empty (pages.tsx:257) → disabled={Boolean(reason)} (pages.tsx:707,714)
+    // holds in ANY environment. What has run so far is compile-level only (eslint + `playwright test --list` gate
+    // this spec; tsc gates the pages.tsx source it cites — the e2e/ dir is outside tsconfig's `include`); this has
+    // NOT been confirmed against a live coordinator. Live browser confirmation is deferred to the spec-to-done P4
+    // browser-evidence stage — do NOT stand up a separate coordinator to re-run it here (that is P4's job).
     await expect(openReview).toBeVisible({ timeout: 20_000 });
     await expect(openReview).toBeDisabled();
     await page.screenshot({ path: "../artifacts/e2e/cross-axis-s8-02-a1-cta-disabled.png", fullPage: true });
