@@ -34,16 +34,35 @@ export function SharedStatusProvider({ children, pollMs = 5000, value }: { child
         const rt = await coordinatorClient.runtimeStatus();
         let conversionQueue: number | null = null;
         try {
-          const recs = await coordinatorClient.getConversionRecords(100);
-          // Important #1: /api/conversion/records 有 limit（後端 parseListLimit 上限 100）。recs.count 是 slice
-          // 前的總筆數、recs.items 是被截斷的回傳窗；count > items.length 即截斷，佇列狀態紀錄可能落在窗外，
-          // 對截斷子集算數字會靜默低報真實佇列深度（操作員會把低估值當真）。比照 pages.tsx ledgerChipStatus 的
-          // recordsIncomplete 模式：截斷時退 null（未取得），不臆測（誠實鐵律 / §5.4）。
-          conversionQueue = recs.count > recs.items.length
-            ? null // 截斷窗：可能有佇列紀錄落在回傳窗外 → 未取得，不用截斷子集低報
-            : recs.items.filter((r) => QUEUE_STATUSES.has(r.status)).length;
+          // reviewer P2（Codex，已核實）：getConversionRecords 是次要/optional 資料源；jsonGet 無
+          // AbortController/timeout，若它卡住會拖住這一輪已成功拿到的 rt 遲遲無法發佈，直到外層 watchdog
+          // （2×pollMs）才把 rt 一起丟掉重跑——白白浪費已成功的主要資料。本地加一個 pollMs 上限的 race，
+          // 讓次要資料卡住時最多延遲 pollMs 就誠實降級為未取得（null），不阻塞主要 rt 資料的發佈；輸掉
+          // race 的原請求仍在背景跑，附一個 no-op catch 吞掉它遲到的 rejection，避免 unhandled rejection。
+          const recsPromise = coordinatorClient.getConversionRecords(100);
+          recsPromise.catch(() => {});
+          let raceTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const recs = await Promise.race([
+              recsPromise,
+              new Promise<never>((_, reject) => {
+                raceTimer = setTimeout(() => reject(new Error("conversion records fetch exceeded pollMs budget")), pollMs);
+              }),
+            ]);
+            // Important #1: /api/conversion/records 有 limit（後端 parseListLimit 上限 100）。recs.count 是 slice
+            // 前的總筆數、recs.items 是被截斷的回傳窗；count > items.length 即截斷，佇列狀態紀錄可能落在窗外，
+            // 對截斷子集算數字會靜默低報真實佇列深度（操作員會把低估值當真）。比照 pages.tsx ledgerChipStatus 的
+            // recordsIncomplete 模式：截斷時退 null（未取得），不臆測（誠實鐵律 / §5.4）。
+            conversionQueue = recs.count > recs.items.length
+              ? null // 截斷窗：可能有佇列紀錄落在回傳窗外 → 未取得，不用截斷子集低報
+              : recs.items.filter((r) => QUEUE_STATUSES.has(r.status)).length;
+          } finally {
+            // quality（self-review）：race 贏家若是 recsPromise，這個 timer 仍是 pending，必須手動清掉，
+            // 否則每輪 poll 都留一個不會被清除的 timer，累積成計時器洩漏（vi.getTimerCount() 迴歸測試會抓到）。
+            clearTimeout(raceTimer);
+          }
         } catch {
-          conversionQueue = null; // records unavailable → 未取得, do not guess
+          conversionQueue = null; // records unavailable or timed out → 未取得, do not guess
         }
         if (cancelled || gen !== pollGen) return; // cancelled OR disowned by a watchdog restart → drop
         const sessionsById: Record<string, SharedSessionEntry> = {};

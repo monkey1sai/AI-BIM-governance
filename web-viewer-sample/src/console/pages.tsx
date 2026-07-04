@@ -336,8 +336,24 @@ export function A1GovernanceWorkbenchPage() {
     // 不得誤成 not_found（否則對真實 active session 假報「查無」；p5-critic honesty regression）。
     if (!h.minio_key) return "not_applicable";
     if (minioObjects === null) return "indeterminate";
+    // reviewer P2（Codex，已核實）：getMinioObjects() 失敗時 catch 分支把 minioObjects 落成 []（非 null），
+    // 上面的 null 守門不再成立，未查即誤報 not_found（MinIO 斷線/憑證缺失時對真實 handoff 假警示紅字）。
+    // minioErr 非 null＝本來就沒查成功，比照 null 分支同樣退 indeterminate，不假裝已查無。
+    if (minioErr !== null) return "indeterminate";
     return minioObjects.some((o) => o.key === h.minio_key);
   });
+  // reviewer P2（Codex，已核實）：上面 incoming 只顯示「已重驗」banner，過去從未把 handoff 帶來的 minio_key
+  // 真的帶進 selectedKey——operator 看到「已重驗」卻仍要手動從下拉重找同一份檔案，a1-step-pick 也因
+  // selectedKey 空而停用。verified 時把 minio_key 種進 selectedKey（不自動 claim session、不自動跑
+  // rule-run，只補齊選取狀態）；用 ref 記住已種過的 key，避免使用者事後手動改選又被這裡打回去。
+  const seededHandoffKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = incoming.handoff?.minio_key;
+    if (incoming.status === "verified" && key && seededHandoffKeyRef.current !== key) {
+      seededHandoffKeyRef.current = key;
+      setSelectedKey(key);
+    }
+  }, [incoming.status, incoming.handoff?.minio_key]);
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -922,19 +938,29 @@ export function ConversionSchedulingPage() {
   // 「可能有但看不到」，不可誤報 not_found（比照本頁 ledgerChipStatus 的 recordsIncomplete → indeterminate；§5.4）。
   const [jobsTruncated, setJobsTruncated] = useState(false);
   const [recordsTruncated, setRecordsTruncated] = useState(false);
+  // reviewer P2（CodeRabbit + Codex 兩位獨立命中同一發現，已核實）：jobs/records 初始值皆為 []、
+  // jobsTruncated/recordsTruncated 初始皆為 false，與「已查過、確認不存在」在資料形狀上不可分——
+  // mount 後第一個 render（load()/loadRecords() 尚未 settle）就會以此空狀態重驗，對帶 id 的 handoff
+  // 誤報 not_found（可能只是還沒抓完，或抓失敗，不是真的查無）。jobsLoaded/recordsLoaded 明確標記
+  // 「至少 settle 過一次（成功或失敗皆算）」，未 settle 前一律 indeterminate，settle 後才照原邏輯判斷。
+  const [jobsLoaded, setJobsLoaded] = useState(false);
+  const [recordsLoaded, setRecordsLoaded] = useState(false);
   // Task 14（A1/M/IN→CV 接收端重驗）：job_id 向 jobs（ifc-ready）重驗；conversion_id/minio_key 向
   // records（ledger）重驗。查無且該來源窗被截斷 → 誠實 indeterminate（未明）；查無且未截斷 → 誠實 not_found，
   // 不靜默 fallback 到別的紀錄。
   const incoming = useIncomingHandoff("conv", (h) => {
     if (h.job_id) {
+      if (!jobsLoaded) return "indeterminate";
       if (jobs.some((j) => j.ifc_ready_job_id === h.job_id || j.conversion_job_id === h.job_id)) return true;
       return jobsTruncated ? "indeterminate" : false;
     }
     if (h.conversion_id) {
+      if (!recordsLoaded) return "indeterminate";
       if (records.some((r) => r.conversion_job_id === h.conversion_id)) return true;
       return recordsTruncated ? "indeterminate" : false;
     }
     if (h.minio_key) {
+      if (!recordsLoaded) return "indeterminate";
       if (records.some((r) => r.object_key === h.minio_key)) return true;
       return recordsTruncated ? "indeterminate" : false;
     }
@@ -961,6 +987,7 @@ export function ConversionSchedulingPage() {
       // quality Important #4：count（slice 前總數）> items.length 即被回傳窗上限截斷 → 供接收端重驗誠實退 indeterminate。
       setJobsTruncated(jobsRes.value.count > jobsRes.value.items.length);
     } else setErr(`${t("未連線 coordinator /api/external/ifc-ready：", "Not connected to coordinator /api/external/ifc-ready: ")}${String(jobsRes.reason)}`);
+    setJobsLoaded(true); // 成功或失敗都算 settle 過一次；接收端重驗不再誤把「還沒抓完」當「查無」
     if (mwRes.status === "fulfilled") setMw(mwRes.value);
     else setMwErr(`${t("未連線 coordinator /api/external/minio-watch/status：", "Not connected to coordinator /api/external/minio-watch/status: ")}${String(mwRes.reason)}`);
     setBusy(false);
@@ -977,6 +1004,8 @@ export function ConversionSchedulingPage() {
       setRecordsTruncated(res.count > res.items.length);
     } catch (e) {
       setRecErr(`未連線 coordinator /api/conversion/records：${String(e)}`);
+    } finally {
+      setRecordsLoaded(true); // 成功或失敗都算 settle 過一次，接收端重驗才有依據判斷「真的查無」
     }
   }, []);
   // Task 6：mount 時同時觸發 load()（ifc-ready + watcher）與 loadRecords()（ledger），獨立並行。
@@ -1514,6 +1543,12 @@ export function SessionManagementPage() {
               const terminating = terminatingIds.has(s.session_id);
               const ended = s.status === "closing" || s.status === "closed";
               const greyed = terminating || ended;
+              // reviewer P2（CodeRabbit + Codex 兩位獨立命中同一發現，已核實）：KG/Review 跨頁連結原本不分
+              // session 狀態一律可點，與 CoordinatorPage 對等 Panel（rt-crosslinks）已落實的 gating 不一致。
+              // Review Room / KG 機隊只把 active/created session 當即時可觀察/可 attach（比照後端
+              // isSessionMutable、ReviewSessionViewerPane 的篩選條件——created 尚未綁 Kit 但已可 attach，
+              // 不是「結束」）；對 closing/closed/failed 給滿血按鈕會導向「點了但打不開」的死路，違反 N5 誠實鐵律。
+              const live = s.status === "active" || s.status === "created";
               return (
                 <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
                   <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
@@ -1522,10 +1557,14 @@ export function SessionManagementPage() {
                       <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
                     ) : <span className="ec-note">{terminating ? t("結束中…", "Terminating…") : "—"}</span>}
                     {" "}
-                    <Btn data-testid={`session-link-instances-${s.session_id}`} caption={t("此 session 落在哪個 GPU node（KG 遙測未取得）", "Which GPU node hosts this session (KG telemetry not available)")}
+                    <Btn data-testid={`session-link-instances-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，KG 機隊僅即時 active/created session 可導覽", "Session ended; KG Fleet only navigates live active/created sessions")}
+                      caption={live ? t("此 session 落在哪個 GPU node（KG 遙測未取得）", "Which GPU node hosts this session (KG telemetry not available)") : t("session 已結束", "session ended")}
                       onClick={() => { window.location.hash = buildHandoff("instances", { source: "sessions", session: s.session_id }); }}>KG →</Btn>
                     {" "}
-                    <Btn data-testid={`session-link-review-${s.session_id}`} caption={t("在 Review Room 開此 session", "Open this session in Review Room")}
+                    <Btn data-testid={`session-link-review-${s.session_id}`} disabled={!live}
+                      title={live ? undefined : t("session 已結束，Review Room 僅即時 active/created session 可開", "Session ended; Review Room only opens live active/created sessions")}
+                      caption={live ? t("在 Review Room 開此 session", "Open this session in Review Room") : t("session 已結束", "session ended")}
                       onClick={() => { window.location.hash = buildHandoff("review", { source: "sessions", session: s.session_id }); }}>Review →</Btn>
                     {" "}
                     <Btn data-testid={`session-link-a1-${s.session_id}`} caption={t("回 A1 治理檢核", "Back to A1 governance")}
@@ -1812,7 +1851,12 @@ export function MinioDataPage() {
   //   既知差異（spec §4.3 A1→M 表下註）：目前無真實按鈕發送 prefix——A1「MinIO 來源」chip 改送更精確的
   //   minio_key（key-level 重驗）。此 prefix 分支＋其單元測試為保留能力，供未來「純資料夾回看」按鈕使用。
   const incoming = useIncomingHandoff("minio", (h) => {
-    if (h.prefix) return !!folder && folder.prefix === h.prefix && (folder.folders.length > 0 || folder.objects.length > 0);
+    // reviewer Minor（CodeRabbit，已核實；今日無按鈕送 prefix，屬保留能力的死路徑，比照下方 minio_key
+    // 分支補齊一致的「尚未載入」守門，避免此能力未來被啟用時對載入中的資料夾誤報 not_found）。
+    if (h.prefix) {
+      if (folder === null) return "indeterminate";
+      return folder.prefix === h.prefix && (folder.folders.length > 0 || folder.objects.length > 0);
+    }
     // 無 prefix 也無 minio_key＝無欄位可查＝not_applicable（與其他軸一致；p5-critic honesty regression）。
     if (!h.minio_key) return "not_applicable";
     // Task14 Important #1：folder===null=該層尚未載入（比照 prefix 分支既有的 !!folder 寫法）。載入中回中性
@@ -3140,10 +3184,13 @@ export function CoordinatorPage() {
             <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>{t("跨頁", "Links")}</th></tr></thead>
               <tbody>{rt.sessions.items.map((s) => {
                 // N5 誠實鐵律：coordinator 從不刪除 session（只 active→closing→closed，永遠保留），此全量表隨時間無界成長。
-                // 「在 Review Room 開此 session」「Kit / GPU 機隊」是即時可操作語意，只有 status==='active' 成立；對 closed/closing
+                // 「在 Review Room 開此 session」「Kit / GPU 機隊」是即時可操作語意，只有 status==='active'/'created' 成立；對 closed/closing
                 // 的過期 session 給滿血按鈕＝把過期 session 假裝成真實可操作（比照同分支 0860a54）。「Session 管理」是 lifecycle 全量
                 // 治理視圖，對已結束 session 給連結語意合理，保留 enabled。
-                const live = s.status === "active";
+                // reviewer P2（Codex，已核實）：session 剛建立、尚未綁 Kit 時 status 是 "created"（非 "active"，
+                // bim-review-coordinator/src/services/sessionStore.ts:48）；後端 isSessionMutable 與前端
+                // ReviewSessionViewerPane 都把 created 當可 attach，只判 active 會把全新 session 誤標成「已結束」。
+                const live = s.status === "active" || s.status === "created";
                 return (
                 <tr key={s.session_id}>
                   <td>{s.session_id}</td><td>{s.status}</td>
@@ -3151,11 +3198,11 @@ export function CoordinatorPage() {
                     <Btn data-testid={`rt-link-sessions-${s.session_id}`} caption={t("Session 管理", "Session Management")}
                       onClick={() => { window.location.hash = buildHandoff("sessions", { source: "runtime", session: s.session_id }); }}>SS →</Btn>{" "}
                     <Btn data-testid={`rt-link-review-${s.session_id}`} disabled={!live}
-                      title={live ? undefined : t("session 已結束，Review Room 僅即時 active session 可開", "Session ended; Review Room only opens live active sessions")}
+                      title={live ? undefined : t("session 已結束，Review Room 僅即時 active/created session 可開", "Session ended; Review Room only opens live active/created sessions")}
                       caption={live ? t("在 Review Room 開此 session", "Open in Review Room") : t("session 已結束", "session ended")}
                       onClick={() => { window.location.hash = buildHandoff("review", { source: "runtime", session: s.session_id }); }}>Review →</Btn>{" "}
                     <Btn data-testid={`rt-link-instances-${s.session_id}`} disabled={!live}
-                      title={live ? undefined : t("session 已結束，Kit / GPU 機隊僅即時 active session 可導覽", "Session ended; Kit / GPU Fleet only navigates live active sessions")}
+                      title={live ? undefined : t("session 已結束，Kit / GPU 機隊僅即時 active/created session 可導覽", "Session ended; Kit / GPU Fleet only navigates live active/created sessions")}
                       caption={live ? t("Kit / GPU 機隊", "Kit / GPU Fleet") : t("session 已結束", "session ended")}
                       onClick={() => { window.location.hash = buildHandoff("instances", { source: "runtime", session: s.session_id }); }}>KG →</Btn>
                   </td>

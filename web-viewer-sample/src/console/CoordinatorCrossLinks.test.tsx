@@ -76,6 +76,21 @@ describe("RT cross-link session panel", () => {
     expect((container.querySelector('[data-testid="rt-link-instances-review_session_old"]') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  // reviewer P2（Codex，已核實）：session 剛建立、尚未綁 Kit 時 status 是 "created"（非 "active"，見
+  // bim-review-coordinator/src/services/sessionStore.ts:48）；後端 isSessionMutable 與前端
+  // ReviewSessionViewerPane 都把 created 當可 attach。修前 live 只判 active，會把全新 session 誤標「已結束」
+  // 並停用 Review/KG 連結；此測試釘住 created 也視為 live。
+  it("keeps Review Room / KG links enabled for a created session (not yet Kit-bound)", async () => {
+    const rtCreated: RuntimeStatus = { ...rt, sessions: { ...rt.sessions, count: 1, active_count: 0, items: [{ ...baseItem, session_id: "review_session_new", status: "created" }] } };
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtCreated);
+    const root = createRoot(container);
+    await act(async () => { root.render(<CoordinatorPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect((container.querySelector('[data-testid="rt-link-review-review_session_new"]') as HTMLButtonElement).disabled).toBe(false);
+    expect((container.querySelector('[data-testid="rt-link-instances-review_session_new"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   // N5 誠實鐵律：初載失敗時 rt 停在 null，此 Panel 不得把「連不上 coordinator」渲染成「確實無 session」
   // （false-empty）。錯誤要在 Panel 內浮出，且不得出現 confirmed-empty 文案（否則等於把不確定講成事實）。
   it("surfaces the fetch error instead of a false 'no session' when runtime status load fails", async () => {

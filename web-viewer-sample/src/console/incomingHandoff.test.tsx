@@ -236,6 +236,36 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     expect(container.querySelector('[data-testid="a1-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
   });
 
+  // reviewer P2（Codex，已核實）：getMinioObjects() 失敗時 catch 分支把 minioObjects 落成 []（非 null），
+  // 修前的 null 守門不再成立，未查即誤報 not_found（MinIO 斷線/憑證缺失時對真實 handoff 假警示紅字）。
+  it("A1 marks an incoming minio_key as indeterminate (not a false not_found) when getMinioObjects fails", async () => {
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockRejectedValue(new Error("minio unavailable"));
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([]));
+    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="a1-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
+
+  // reviewer P2（Codex，已核實）：過去 verified banner 只顯示「已重驗」，從未把 handoff 帶來的 minio_key 真的
+  // 帶進 selectedKey——operator 仍要手動從下拉重找同一份檔案，a1-step-pick 也因 selectedKey 空而停用。
+  it("A1 seeds the MinIO select dropdown from a verified incoming minio_key (so a1-step-pick becomes actionable)", async () => {
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ objects: [
+      { key: CN_KEY, etag: "e1", role: "source_ifc", project_id: "270", project_display_name: "270", category: "建築", version: "v07", idempotency_key: "mw_abc" },
+    ] } as never);
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([]));
+    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="a1-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    const select = container.querySelector('[data-testid="a1-minio-select"]') as HTMLSelectElement;
+    expect(select.value).toBe(CN_KEY);
+    const pick = container.querySelector('[data-testid="a1-step-pick"]') as HTMLButtonElement;
+    expect(pick.disabled).toBe(false);
+  });
+
   it("CV verifies an incoming job_id against the fetched ifc-ready jobs (verified)", async () => {
     // CV's authoritative lists = jobs (listIfcReady) + records (getConversionRecords).
     // Mirror Task 7's stub surface so ConversionSchedulingPage mounts without unhandled rejections.
@@ -262,6 +292,22 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     await act(async () => { root.render(<ConversionSchedulingPage />); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+  });
+
+  // reviewer P2（CodeRabbit + Codex 兩位獨立命中同一發現，已核實）：修前 jobs/records 初始值皆為 []、
+  // jobsTruncated/recordsTruncated 初始皆為 false，與「已查過、確認不存在」在資料形狀上不可分——mount 後
+  // 第一個 render（load()/loadRecords() 的 promise 尚未 resolve）就會以此空狀態誤報 not_found。用永不 settle
+  // 的 promise 鎖定「掛載當下、尚未載入」這個瞬間，不 flush 任何 microtask，直接斷言為 indeterminate。
+  it("CV shows indeterminate (not a false not_found) on the very first render before jobs/records have loaded", () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockReturnValue(new Promise(() => {}) as never);
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockReturnValue(new Promise(() => {}) as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockReturnValue(new Promise(() => {}) as never);
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockReturnValue(new Promise(() => {}) as never);
+    window.location.hash = "#conv?source=intake&job_id=job_1";
+    const root = createRoot(container);
+    act(() => { root.render(<ConversionSchedulingPage />); });
+    const b = container.querySelector('[data-testid="conv-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("indeterminate");
   });
 
   // ---- p5-e2：CV 頁 minio_key 接收端重驗（M→CV chip 帶 object_key；pages.tsx verify records.some(r.object_key===minio_key)）。

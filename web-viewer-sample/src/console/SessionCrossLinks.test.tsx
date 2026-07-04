@@ -89,4 +89,31 @@ describe("SS per-row cross-link chips", () => {
     expect(container.querySelector('[data-testid="session-terminate-review_session_d"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="session-link-review-review_session_d"]')).not.toBeNull();
   });
+
+  // reviewer P2（CodeRabbit + Codex 兩位獨立命中同一發現，已核實）：KG/Review chips 過去對 closing/closed
+  // session 一律可點，導向 Review Room/KG 機隊後那兩頁只把 active/created 當可 attach，形成「點了打不開」的
+  // 死路（比照 CoordinatorPage 對等 rt-crosslinks Panel 已有的 gating）。以下兩個測試釘住修好的行為。
+  it("disables KG/Review chips for a closed session (honest dead-end guard)", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([mk({ session_id: "review_session_e", status: "closed" })]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const instances = container.querySelector('[data-testid="session-link-instances-review_session_e"]') as HTMLButtonElement;
+    const review = container.querySelector('[data-testid="session-link-review-review_session_e"]') as HTMLButtonElement;
+    expect(instances.disabled).toBe(true);
+    expect(review.disabled).toBe(true);
+  });
+
+  it("keeps KG/Review chips enabled for a created session (not yet Kit-bound, still attachable)", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([mk({ session_id: "review_session_f", status: "created" })]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+
+    const instances = container.querySelector('[data-testid="session-link-instances-review_session_f"]') as HTMLButtonElement;
+    const review = container.querySelector('[data-testid="session-link-review-review_session_f"]') as HTMLButtonElement;
+    expect(instances.disabled).toBe(false);
+    expect(review.disabled).toBe(false);
+  });
 });
