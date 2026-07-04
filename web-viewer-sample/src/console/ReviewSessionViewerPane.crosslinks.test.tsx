@@ -18,7 +18,7 @@ describe("Review Room session candidate seeding (additive, N3-safe)", () => {
     const claimSpy = vi.spyOn(coordinatorClient, "claimViewerLease");
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue({ sessions: { items: [] }, configured_endpoints: { viewer: { browser_url_base: "" }, coordinator: { public_base_url: "" } } } as never);
     const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider value={snap}><ReviewSessionViewerPane handoff={{ source: "sessions", sessionId: "", ruleRunId: null, ifcGuid: null, usdPrimPath: null, ruleCode: null, severity: null, label: null, expectedStageUrl: null }} /></SharedStatusProvider>); });
+    await act(async () => { root.render(<SharedStatusProvider value={snap}><ReviewSessionViewerPane handoff={{ source: "sessions", sessionId: "", ruleRunId: null, ifcGuid: null, usdPrimPath: null, ruleCode: null, severity: null, label: null, expectedStageUrl: null, mappingInformationStatus: null, mappingIssueCode: null, mappingIssueCount: null }} /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); });
 
     const datalist = container.querySelector('[data-testid="review-room-session-candidates"]');
@@ -43,7 +43,7 @@ describe("Review Room session candidate seeding (additive, N3-safe)", () => {
       review_session_closing: { session_id: "review_session_closing", status: "closing" },
     } };
     const root = createRoot(container);
-    await act(async () => { root.render(<SharedStatusProvider value={mixed}><ReviewSessionViewerPane handoff={{ source: "sessions", sessionId: "", ruleRunId: null, ifcGuid: null, usdPrimPath: null, ruleCode: null, severity: null, label: null, expectedStageUrl: null }} /></SharedStatusProvider>); });
+    await act(async () => { root.render(<SharedStatusProvider value={mixed}><ReviewSessionViewerPane handoff={{ source: "sessions", sessionId: "", ruleRunId: null, ifcGuid: null, usdPrimPath: null, ruleCode: null, severity: null, label: null, expectedStageUrl: null, mappingInformationStatus: null, mappingIssueCode: null, mappingIssueCount: null }} /></SharedStatusProvider>); });
     await act(async () => { await Promise.resolve(); });
 
     const datalist = container.querySelector('[data-testid="review-room-session-candidates"]');
