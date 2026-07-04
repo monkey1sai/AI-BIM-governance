@@ -58,7 +58,7 @@ test.describe("seven-axis cross-page harmony", () => {
     // The always-mounted SharedStatusProvider polls the SAME endpoint every 5s and the M page fetches it on
     // mount, both with `?limit=100`; a bare `/api/conversion/records` predicate could resolve on one of those
     // unrelated hits and race past CV's own load, so the screenshot could still catch the pre-load flash.
-    const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
+    const recordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
     await convChip.click();
     await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
     // §12 receiver rule: CV must re-verify the incoming minio_key and show an honest verified/not-found banner
@@ -160,6 +160,7 @@ test.describe("seven-axis cross-page harmony", () => {
   // only ever reaches the present-but-disabled branch), and (b) the four deep Kit evidence points — do NOT mark
   // either "verified in browser" on the strength of this file alone.
   test("§8 lifecycle walk-through: M → IN → CV → A1 → Review Room → back to A1 issue (reachable spine)", async ({ page }) => {
+    test.setTimeout(180_000); // fixture-full runs stack ~10 sequential network waits (M leg + IN leg + A1 CTA + Review Room + A1-issue, each 10_000–20_000ms budget) whose worst case approaches/exceeds the 60s global cap (playwright.config.ts:28); 3× headroom, defensively matching the deep-Kit test's test.setTimeout below (no measurement needed — same guard other tests in this file already apply)
     // [M] minio_object_detected → chip to #conv (source=minio); CV receiver re-verifies the minio_key (Task 14)
     await page.goto(`${COORDINATOR}/ui#minio`);
     const mConv = page.locator('[data-testid^="minio-link-conv-"]').first();
@@ -179,7 +180,7 @@ test.describe("seven-axis cross-page harmony", () => {
       // shot can still catch the transient pre-load not_found flash; and this does NOT tighten the toHaveAttribute
       // below — not_found is accepted and is also the transient value; the wait is a best-effort nudge for the
       // screenshot frame, not a stricter check.
-      const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
+      const convRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
       await mConv.click();
       await expect(page).toHaveURL(/#conv\?source=minio/, { timeout: 15_000 });
       const convBanner = page.getByTestId("conv-incoming-handoff");
@@ -207,7 +208,7 @@ test.describe("seven-axis cross-page harmony", () => {
       // no screenshot right after and the assertion accepts not_found (transient AND terminal), so the wait
       // changes neither a screenshot (none) nor the assertion's pass/fail — it stays a wiring smoke test (banner
       // mounts + CV re-verifies into an honest non-none state); per-input discrimination is owned by incomingHandoff.test.tsx.
-      const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 });
+      const inRecordsSettled = page.waitForResponse((r) => r.url().includes("/api/conversion/records?limit=50"), { timeout: 15_000 }).catch(() => null);
       await inConv.click();
       await expect(page).toHaveURL(/#conv\?source=intake/, { timeout: 15_000 });
       const inBanner = page.getByTestId("conv-incoming-handoff");
@@ -272,7 +273,7 @@ test.describe("seven-axis cross-page harmony", () => {
   // and NEVER re-implements the Review-Room chain that owns them; do NOT cite the stale A1-embedded VG-01 specs
   // (post-#286 they assert moved-away A1 testids — flagged as tech-debt in the PR).
   test("§8 deep Kit evidence chain (first_frame/stage_matched/datachannel/highlight): honest-skip when no live Kit session", async ({ page }) => {
-    test.setTimeout(300_000); // a real Kit first_frame can take minutes (mirrors viewer-embed-a1-highlight.spec.ts:120); the default 60s test timeout is too tight for the full live-attach path
+    test.setTimeout(450_000); // a real Kit first_frame can take minutes; the per-step timeout budget below sums to ~310_000ms (10k+15k+20k+10k+30k+30k+180k+15k), so 300_000 was actually BELOW the worst-case sum (zero buffer). Mirror viewer-embed-a1-highlight.spec.ts:46's ~2× buffer convention (test.setTimeout(360_000) over its dominant 180_000 first-frame wait) by leaving real headroom over the summed budget; the default 60s test timeout is far too tight for the full live-attach path
     // Source a REAL active session the only honest way — the live Sessions table (active, non-terminating row =
     // the one with a session-terminate button, pages.tsx:1497), NOT .first() which is often a just-closed row that
     // could never be attached. No active session → honest N7 skip (the deep points are not observed here).
