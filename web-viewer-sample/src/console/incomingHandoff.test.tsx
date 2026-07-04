@@ -64,6 +64,20 @@ describe("useIncomingHandoff re-verifies the carried id (spec §4.2)", () => {
     expect(b?.className ?? "").not.toContain("ec-warn-note"); // indeterminate is neutral, not a warning
     expect(b?.textContent ?? "").toContain("重新整理"); // honest actionable hint, distinct from not_found's 手動重選
   });
+  // honesty regression（p5-critic）：verify() 回 "not_applicable" 代表「此 handoff 未帶本軸會重驗的欄位」
+  // （非查無）——必須是中性態，絕不誤成警示紅字的假查無，且語意與 indeterminate（資料截斷/載入中）分開。
+  it("renders a neutral not_applicable banner (NOT the alarming not_found) when the handoff carries no field this axis re-verifies", () => {
+    function NaProbe() {
+      const inc = useIncomingHandoff("a1", () => "not_applicable", "#a1?source=sessions&session=review_session_a");
+      return <IncomingHandoffBanner testId="probe-banner" handoff={inc.handoff} status={inc.status} />;
+    }
+    const root = createRoot(container);
+    act(() => { root.render(<NaProbe />); });
+    const b = container.querySelector('[data-testid="probe-banner"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("not_applicable");
+    expect(b?.className ?? "").not.toContain("ec-warn-note"); // neutral, not a warning
+    expect(b?.textContent ?? "").not.toContain("查無"); // must NOT claim the id was absent from authoritative data
+  });
 });
 
 // ---- page wiring: each receiving page re-verifies against data it already fetched ----
@@ -236,6 +250,45 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
   });
 
+  // ---- p5-e2：CV 頁 minio_key 接收端重驗（M→CV chip 帶 object_key；pages.tsx verify records.some(r.object_key===minio_key)）。
+  // 對照 A1 頁同款 minio_key predicate 已有專屬單元測試，此前 CV 這條完全無單元/瀏覽器覆蓋——補齊 verified/not_found/
+  // indeterminate 三態（含中文 key），把目前沒有測試網住的回歸風險鎖住。----
+  it("CV verifies an incoming minio_key against the fetched ledger records (verified, Chinese key)", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [mkRecord({ object_key: CN_KEY })] }); // 中文 object_key
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
+    window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+  });
+
+  it("CV flags an incoming minio_key absent from the (untruncated) ledger records as not_found (no silent fallback)", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [mkRecord({ object_key: "270/other.ifc" })] }); // count===items.length → 未截斷
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
+    window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent("270專案/建築/v07/查無.ifc")}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+  });
+
+  it("CV marks an incoming minio_key absent from a TRUNCATED records window as indeterminate, not a false not_found", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 88, items: [mkRecord({ object_key: "270/other.ifc" })] }); // count 88 ≫ 1 → 截斷
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
+    window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
+
   it("KG flags an incoming session absent from shared status as not_found (no silent fallback)", () => {
     // KG's authoritative list = useSharedStatus().sessionsById; inject it via SharedStatusProvider value (KG
     // has no fetch — Task 9). An unknown session must surface honest not_found, never silently resolve.
@@ -342,5 +395,53 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     const root = createRoot(container);
     act(() => { root.render(<SharedStatusProvider value={staleSnap}><KitGpuFleetPage /></SharedStatusProvider>); });
     expect(container.querySelector('[data-testid="kg-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+  });
+
+  // ---- honesty regression（p5-critic-honesty-regression-missing-field-falsepositive）：接收頁的 verify 只查
+  // 「本軸在意的欄位」；當 handoff 存在但缺該欄位（sender 本來就不帶）時，舊行為 fall through 回 false→假 not_found
+  // （警示紅字「查無」）。以下三條為已重現的真實路徑，修正後必須是 not_applicable（中性），不得誤成 not_found。----
+  it("A1 does NOT false-not_found a session-only handoff from SS (real ACTIVE session, no minio_key) — not_applicable (most severe path)", async () => {
+    // SS→A1 chip（session-link-a1-*, pages.tsx:1507）一定帶真實 active session id，但 A1 receiver 只重驗 minio_key。
+    // 對一個 runtime/status 裡真實 active 的 session 點此 chip，舊碼 100% 假報 not_found（宣稱使用中的 session 查無）。
+    vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ objects: [
+      { key: CN_KEY, etag: "e1", role: "source_ifc", project_id: "270", project_display_name: "270", category: "建築", version: "v07", idempotency_key: "mw_abc" },
+    ] } as never);
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([mkSession({ session_id: "review_session_a" })]));
+    window.location.hash = "#a1?source=sessions&session=review_session_a";
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const b = container.querySelector('[data-testid="a1-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("not_applicable"); // 非查無
+    expect(b?.className ?? "").not.toContain("ec-warn-note"); // 中性，不掛警示紅字
+  });
+
+  it("CV does NOT false-not_found an A1 default-state handoff that carries no job/conversion/minio id (#conv?source=a1) — not_applicable", async () => {
+    // a1-conv-link 在 A1 無 session 預設狀態送 #conv?source=a1（convJobId 為 null，不帶 job_id；pages.tsx:620）。
+    // CV verify 三欄位皆缺 → 舊碼 fall through 回 false→雙空格假 not_found（「來自 a1 的  在權威資料中查無」）。
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
+    window.location.hash = "#conv?source=a1";
+    const root = createRoot(container);
+    await act(async () => { root.render(<ConversionSchedulingPage />); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const b = container.querySelector('[data-testid="conv-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("not_applicable");
+    expect(b?.className ?? "").not.toContain("ec-warn-note");
+  });
+
+  it("SS does NOT false-not_found a session-less handoff from the KG demo row (#sessions?source=instances) — not_applicable", async () => {
+    // KG demo-row chip（kg-demo-link-sessions, pages.tsx:1585）刻意不帶 session（標示 demo 對照）。
+    // SS verify 無 session 可查 → 舊碼回 false→假 not_found；修正後應中性 not_applicable。
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([mkSession({ session_id: "review_session_a" })]));
+    window.location.hash = "#sessions?source=instances";
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const b = container.querySelector('[data-testid="sessions-incoming-handoff"]');
+    expect(b?.getAttribute("data-handoff-status")).toBe("not_applicable");
+    expect(b?.className ?? "").not.toContain("ec-warn-note");
   });
 });

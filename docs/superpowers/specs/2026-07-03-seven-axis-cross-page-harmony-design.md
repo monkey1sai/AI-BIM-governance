@@ -116,7 +116,7 @@ interface CrossAxisHandoff {
 |---|---|---|---|
 | A1 → Review Room | `#review?source=a1` | rule_run_id, session?, ifc_guid?, usd_prim_path?, rule_code? | **既有**（`a334e49`） |
 | A1 → CV | `#conv?source=a1` | job_id?/conversion_id? | **既有連結**（`a1-conv-link`），補帶 source/id |
-| A1 → M | `#minio?source=a1&prefix=` | minio_key/prefix | 新增 chip（回看選檔來源） |
+| A1 → M | `#minio?source=a1&minio_key=`（as-built） | minio_key（實際發送）／prefix（保留欄位） | 新增 chip（回看選檔來源）；見表下註 A1→M |
 | M → CV | `#conv?source=minio&minio_key=` | minio_key, conversion_id? | 新增 chip（該物件的轉檔） |
 | M → A1 | `#a1?source=minio&minio_key=` | minio_key | 新增 chip（拿此檔去檢核） |
 | IN → CV | `#conv?source=intake&job_id=` | job_id | 新增 chip（排該 job） |
@@ -128,6 +128,8 @@ interface CrossAxisHandoff {
 | RT → SS / Review Room / KG | `#sessions` / `#review` / `#instances`（帶 session） | session | 新增 chip |
 
 > 所有 chip 一律**證據型**：目標 ID 存在才 enabled，否則 disabled ＋ 誠實原因（承接 §4.2）。不製造無效跳轉。
+
+> **既知差異（A1→M，as-built）**：本表原範例 hash 寫 `#minio?source=a1&prefix=`，但出貨的「MinIO 來源 →」chip（`pages.tsx` `a1-link-minio`）實際發送 **`minio_key`**，非 `prefix`。理由：`minio_key` 指向**確切檔案**，M 端可對該檔做 key-level 重驗（`folder.objects.some(o.key===minio_key)`），比 `prefix` 的 folder-level 重驗（僅驗資料夾非空）**更精確**，且更貼合 chip 文案「回看 MinIO 來源**物件**」。`minio_key` 本就列於 §4.1 型別與本表「帶的 ID」欄，故為合規選擇；漂移僅在範例 hash 字面。`prefix` 為**保留欄位**：M 端 `MinioDataPage` 仍保留 `prefix` 收件／導覽分支與其單元測試（`incomingHandoff.test.tsx`「navigates to an incoming prefix」），供未來「純資料夾回看」按鈕使用，目前無真實按鈕發送。此為文件化的既知差異，非功能性 bug（`minio_key` 一樣正確導覽到對的資料夾）。
 
 ---
 

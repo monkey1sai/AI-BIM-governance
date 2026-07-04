@@ -364,7 +364,28 @@ test.describe("seven-axis cross-page harmony", () => {
     const evidence = page.getByTestId("review-room-runtime-evidence");
     const firstFrameField = evidence.locator(".ec-field", { hasText: "first frame" });
     const gotFrame = await expect(firstFrameField).not.toContainText("not_observed", { timeout: 180_000 }).then(() => true, () => false);
-    test.skip(!gotFrame, "viewer host mounted but no real Kit first_frame within budget; first_frame/stage_matched/datachannel_ready/highlight_ack not observed (skip != pass, N7)");
+    if (!gotFrame) {
+      // Distinguish "environment has no Kit" from "Kit WAS configured but its WebRTC/stage pipeline broke": the backend
+      // KitInstance.status enum exposes a terminal `failed` state on each runtime/status kit_instance_binding
+      // (coordinatorClient.ts:162-170), which neither ReviewSessionViewerPane nor this spec referenced before. Read
+      // runtime/status ONE more time and look up THIS session's binding; a `failed` binding means Kit was provisioned
+      // but its pipeline failed — a materially different triage signal than a plain absence of Kit. Best-effort only
+      // (try/catch): any read error falls back to the generic reason. Pure additive read to enrich the skip MESSAGE —
+      // it does NOT touch ReviewSessionViewerPane.tsx (kept out of scope per the finding's guardrail).
+      const sid = new URLSearchParams(new URL(page.url()).hash.split("?")[1] ?? "").get("session") ?? "";
+      let kitFailed = false;
+      try {
+        const rs = await page.request.get(`${COORDINATOR}/api/runtime/status`, { timeout: 10_000 });
+        if (rs.ok()) {
+          const body = await rs.json();
+          const bindings: Array<{ session_id?: string; status?: string }> = Array.isArray(body?.kit_instance_bindings) ? body.kit_instance_bindings : [];
+          kitFailed = bindings.some((b) => b?.session_id === sid && b?.status === "failed");
+        }
+      } catch { /* best-effort enrichment; keep the generic no-live-Kit reason below */ }
+      test.skip(true, kitFailed
+        ? "viewer host mounted but this session's kit_instance_binding reports status=failed: Kit WAS configured and its WebRTC/stage pipeline FAILED (NOT an environment without Kit); first_frame/stage_matched/datachannel_ready/highlight_ack not observed (skip != pass, N7)"
+        : "viewer host mounted but no real Kit first_frame within budget and no failed binding observed (no live Kit GPU stream in this environment); first_frame/stage_matched/datachannel_ready/highlight_ack not observed (skip != pass, N7)");
+    }
     // Real frame landed: assert the two deterministically-coupled deep points (first_frame proven above;
     // datachannel_ready is set in the SAME onFirstFrame handler). HONEST SCOPE: stage_matched + highlight_ack are
     // NOT hard-asserted here — they need the A1 rule-run handoff payload (expected_stage_url / ifc_guid /

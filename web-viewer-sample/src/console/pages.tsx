@@ -332,7 +332,9 @@ export function A1GovernanceWorkbenchPage() {
   // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
   // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
   const incoming = useIncomingHandoff("a1", (h) => {
-    if (!h.minio_key) return false;
+    // 本軸只重驗 minio_key；SS→A1 chip 只帶 session（A1 不重驗 session）→ 無欄位可查＝not_applicable，
+    // 不得誤成 not_found（否則對真實 active session 假報「查無」；p5-critic honesty regression）。
+    if (!h.minio_key) return "not_applicable";
     if (minioObjects === null) return "indeterminate";
     return minioObjects.some((o) => o.key === h.minio_key);
   });
@@ -743,6 +745,9 @@ export function A1GovernanceWorkbenchPage() {
             data-testid="a1-link-minio"
             disabled={!selectedKey}
             caption={selectedKey ? t("回看 MinIO 來源物件", "View the source object in MinIO") : t("尚未選取 MinIO 物件", "No MinIO object selected")}
+            // as-built（既知差異，spec §4.3 A1→M 表下註）：spec 範例寫 prefix，本 chip 刻意送 minio_key（更精確，
+            // 指向確切檔案；M 端做 key-level 重驗）。minio_key 本就列於 §4.3「帶的 ID」欄，屬合規選擇。M 的 prefix
+            // 收件分支保留供未來「純資料夾回看」按鈕，目前無真實按鈕發送 prefix。
             onClick={() => { if (!selectedKey) return; window.location.hash = buildHandoff("minio", { source: "a1", minio_key: selectedKey }); }}
           >
             {t("MinIO 來源 →", "MinIO source →")}
@@ -933,7 +938,9 @@ export function ConversionSchedulingPage() {
       if (records.some((r) => r.object_key === h.minio_key)) return true;
       return recordsTruncated ? "indeterminate" : false;
     }
-    return false;
+    // 無 job_id/conversion_id/minio_key（例：a1-conv-link 預設狀態送 #conv?source=a1 不帶 id）＝無欄位可查
+    // ＝not_applicable，不得誤成雙空格假 not_found（p5-critic honesty regression）。
+    return "not_applicable";
   });
   // 回傳兩端點各自抓取成功與否（jobsOk / mwOk）：runAction 用它判斷控制動作後的證據型刷新是否
   // 真的取得新狀態。load() 自身對兩端點 allSettled 不 throw（避免 mount/Refresh 未捕捉），
@@ -1476,7 +1483,9 @@ export function SessionManagementPage() {
   // Task14 Important #1：rt===null=runtime status 尚未載入。載入中回中性 indeterminate，不誤閃 not_found；
   // rt 已載入（sessions 可能為 []）才判 not_found。
   const incoming = useIncomingHandoff("sessions", (h) => {
-    if (!h.session) return false;
+    // 無 session（例：KG demo-row chip 送 #sessions?source=instances 不帶 id）＝無欄位可查＝not_applicable，
+    // 不得誤成假 not_found（p5-critic honesty regression）。
+    if (!h.session) return "not_applicable";
     if (rt === null) return "indeterminate";
     return sessions.some((s) => s.session_id === h.session);
   });
@@ -1564,7 +1573,8 @@ export function KitGpuFleetPage() {
   // Task14 Important #1：shared.stale=true 代表 SharedStatusProvider 尚未輪詢過（等同 EMPTY_SHARED_STATUS）。
   // 尚未輪詢時 sessionsById 恆為空 {}，任何 session 都會誤判 not_found；故載入中回中性 indeterminate。
   const incoming = useIncomingHandoff("instances", (h) => {
-    if (!h.session) return false;
+    // 無 session＝無欄位可查＝not_applicable（與其他軸一致，避免同類假 not_found；p5-critic honesty regression）。
+    if (!h.session) return "not_applicable";
     if (shared.stale) return "indeterminate";
     return Object.prototype.hasOwnProperty.call(shared.sessionsById, h.session);
   });
@@ -1799,9 +1809,12 @@ export function MinioDataPage() {
   // - prefix（A1 → M「回看選檔來源」，§4.3）→ 導覽到該層後（見下方 effect），向載入的 folder 重驗：
   //   folder.prefix 必等於請求 prefix（後端 minioClient.ts 回填該欄）且該層真的有 folders/objects 才算
   //   verified；空層／未設定／尚未載入一律 not_found。不導覽＝沒重驗，banner『已重驗』會是假的。
+  //   既知差異（spec §4.3 A1→M 表下註）：目前無真實按鈕發送 prefix——A1「MinIO 來源」chip 改送更精確的
+  //   minio_key（key-level 重驗）。此 prefix 分支＋其單元測試為保留能力，供未來「純資料夾回看」按鈕使用。
   const incoming = useIncomingHandoff("minio", (h) => {
     if (h.prefix) return !!folder && folder.prefix === h.prefix && (folder.folders.length > 0 || folder.objects.length > 0);
-    if (!h.minio_key) return false;
+    // 無 prefix 也無 minio_key＝無欄位可查＝not_applicable（與其他軸一致；p5-critic honesty regression）。
+    if (!h.minio_key) return "not_applicable";
     // Task14 Important #1：folder===null=該層尚未載入（比照 prefix 分支既有的 !!folder 寫法）。載入中回中性
     // indeterminate，不誤閃 not_found；folder 已載入才向該層 objects 判 not_found。
     if (folder === null) return "indeterminate";
