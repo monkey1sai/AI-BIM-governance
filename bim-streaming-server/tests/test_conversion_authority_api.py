@@ -1,5 +1,7 @@
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -95,6 +97,32 @@ class FakePlaceholderConverter(FakeSuccessfulConverter):
 class FakeFailedConverter:
     def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
         raise ConversionAuthorityError("converter_failed", "fixture converter failed")
+
+
+class ConcurrencyTrackingConverter(FakeSuccessfulConverter):
+    """2026-07-06 conversion-kit-port-race: 記錄 convert() 同時在跑的併發峰值。
+
+    真實環境裡每個 ifc-ready job 各自的 Kit subprocess 都會嘗試監聽同一個預設
+    port（omni.services.transport.server.http 的 8011），沒有序列化保護時，
+    多個幾乎同時進來的 job 會讓 Kit 互搶這個 port，輸家直接 crash（exit 1）。
+    這支 fake 用 sleep 撐開時間窗，讓「兩個 convert() 同時在跑」在測試裡穩定可觀察。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.active = 0
+        self.max_active = 0
+
+    def convert(self, *, job: dict, ifc_ready_event: dict, output_dir: Path) -> dict:
+        with self._lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            time.sleep(0.05)
+            return super().convert(job=job, ifc_ready_event=ifc_ready_event, output_dir=output_dir)
+        finally:
+            with self._lock:
+                self.active -= 1
 
 
 def make_client(tmp_path: Path, converter, run_background: bool = True, internal_conversion_token: str | None = None) -> TestClient:
@@ -503,6 +531,43 @@ def test_coordinator_internal_request_failed_yields_failed_and_skipped_callback(
     result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
     assert result["status"] == "failed"
     assert result["authority"] == "bim-streaming-server"
+
+
+# --- conversion-kit-port-race:併發 ifc-ready job 不得同時真的跑 Kit 轉檔 ---
+# 2026-07-06 實測(job ifcready_1783310901113_82ba35bc):bim-review-coordinator 的
+# ConversionDispatchQueue 只序列化「送出 POST /api/conversions/ifc-to-usdc」這個
+# dispatch 動作；這支 API 立刻回 202、真正轉檔用 FastAPI BackgroundTasks 丟到背景
+# 執行，不同 request 的 background task 之間沒有互斥。結果是幾乎同時進來的多個
+# ifc-ready job，其 Kit CAD 轉檔 subprocess 會真的同時啟動，互搶 Kit 內建 HTTP
+# 服務的預設 port（8011），輸家直接 crash、該筆轉檔失敗。
+
+
+def test_concurrent_conversion_requests_do_not_run_kit_conversion_in_parallel(tmp_path: Path):
+    converter = ConcurrencyTrackingConverter()
+    client = make_client(tmp_path, converter=converter)
+
+    def post_job(idx: int) -> None:
+        client.post(
+            "/api/conversions/ifc-to-usdc",
+            json=ifc_ready_payload(
+                event_id=f"evt_concurrent_{idx}",
+                idempotency_key=f"idem_concurrent_{idx}",
+                ifc_artifact={
+                    "artifact_id": f"artifact_concurrent_{idx}",
+                    "format": "ifc",
+                    "filename": f"concurrent-{idx}.ifc",
+                    "url": f"edge-local://fixtures/concurrent-{idx}.ifc",
+                },
+            ),
+        )
+
+    threads = [threading.Thread(target=post_job, args=(idx,)) for idx in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert converter.max_active == 1
 
 
 # --- streaming-server-prefer-local-ifc-path:_ifc_artifact propagate local paths ----
