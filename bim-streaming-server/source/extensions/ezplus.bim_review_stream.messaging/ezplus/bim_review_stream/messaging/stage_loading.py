@@ -27,6 +27,11 @@ import omni.kit.livestream.messaging as messaging
 import omni.usd
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 
+try:
+    from .runtime_authority import is_authorized_mutator, unauthorized_result_payload
+except ImportError:  # pragma: no cover - test modules import this file directly.
+    from runtime_authority import is_authorized_mutator, unauthorized_result_payload
+
 
 _FALLBACK_LIGHTS_ROOT = "/__BIMFallbackLights"
 _HTTP_STAGE_EXTENSIONS = {".usd", ".usda", ".usdc", ".usdz"}
@@ -557,7 +562,17 @@ class LoadingManager:
         self._requested_stage_context["partial_load"] = bool(failed_bindings or skipped_secondary_layers)
 
     def _on_load_artifact_group(self, event: carb.events.IEvent) -> None:
-        url, context = self._resolve_stage_request(event.payload)
+        request_payload = self._payload_dict(event.payload)
+        if not is_authorized_mutator(request_payload):
+            get_eventdispatcher().dispatch_event(
+                "loadArtifactGroupResult",
+                payload=unauthorized_result_payload(request_payload, url=""),
+            )
+            return
+        url, context = self._resolve_stage_request(request_payload)
+        binding_revision_id = request_payload.get("binding_revision_id")
+        if binding_revision_id:
+            context["binding_revision_id"] = binding_revision_id
         payload = {
             "result": "accepted" if url else "error",
             "url": url,
@@ -565,7 +580,7 @@ class LoadingManager:
         }
         get_eventdispatcher().dispatch_event("loadArtifactGroupResult", payload=payload)
         if url:
-            request = self._payload_dict(event.payload)
+            request = self._payload_dict(request_payload)
             request["url"] = url
             self._on_open_stage(type("Event", (), {"payload": request})())
 
@@ -588,7 +603,16 @@ class LoadingManager:
         loaded, and an error on any failure.
         """
 
-        requested_url, stage_context = self._resolve_stage_request(event.payload)
+        request_payload = self._payload_dict(event.payload)
+        if not is_authorized_mutator(request_payload):
+            payload = unauthorized_result_payload(request_payload, url="")
+            get_eventdispatcher().dispatch_event("openedStageResult", payload=payload)
+            return
+
+        requested_url, stage_context = self._resolve_stage_request(request_payload)
+        binding_revision_id = request_payload.get("binding_revision_id")
+        if binding_revision_id:
+            stage_context["binding_revision_id"] = binding_revision_id
         if not requested_url:
             carb.log_error(
                 f"Unexpected message payload: missing loadable \"url\" key. Payload: '{event.payload}'")

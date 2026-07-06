@@ -19,6 +19,17 @@ from omni.kit.test import AsyncTestCase
 from pxr import UsdGeom
 
 
+PRIMARY_AUTH = {
+    "role": "primary",
+    "source_client_id": "test_primary_viewer",
+    "viewer_lease_token": "test_primary_lease_token",
+    "session_id": "review_session_test",
+}
+
+
+def with_primary_authority(payload):
+    return {**payload, **PRIMARY_AUTH}
+
 
 async def wait_stage_loading(wait_frames: int = 2, usd_context=None, timeout=1000, timeout_error=True):
     """
@@ -95,7 +106,7 @@ class MessagingTest(AsyncTestCase):
 
         # Send the openStageRequest event
         url = self._data_path / "testing.usd"
-        self._ed.dispatch_event("openStageRequest", payload={"url": url.as_posix()})
+        self._ed.dispatch_event("openStageRequest", payload=with_primary_authority({"url": url.as_posix()}))
 
         await wait_stage_loading(wait_frames=300)
         self.assertTrue(all(outgoing.values()))
@@ -124,7 +135,7 @@ class MessagingTest(AsyncTestCase):
 
         self._ed.dispatch_event(
             "highlightPrimsRequest",
-            payload={
+            payload=with_primary_authority({
                 "request_id": "highlight-world-smoke-001",
                 "mode": "replace",
                 "items": [
@@ -133,7 +144,7 @@ class MessagingTest(AsyncTestCase):
                         "label": "stage root fallback",
                     }
                 ],
-            },
+            }),
         )
         await self._app.next_update_async()
 
@@ -175,14 +186,14 @@ class MessagingTest(AsyncTestCase):
 
         self._ed.dispatch_event(
             "highlightPrimsRequest",
-            payload={
+            payload=with_primary_authority({
                 "mode": "replace",
                 "items": [
                     {"usd_prim_path": "/World"},
                     {"prim_path": "/MissingPrim"},
                     "malformed",
                 ],
-            },
+            }),
         )
         await self._app.next_update_async()
 
@@ -193,10 +204,10 @@ class MessagingTest(AsyncTestCase):
 
         self._ed.dispatch_event(
             "highlightPrimsRequest",
-            payload={
+            payload=with_primary_authority({
                 "mode": "replace",
                 "items": 1,
-            },
+            }),
         )
         await self._app.next_update_async()
 
@@ -224,13 +235,54 @@ class MessagingTest(AsyncTestCase):
         ))
         await self._app.next_update_async()
 
-        self._ed.dispatch_event("focusPrimRequest", payload={"request_id": "focus-missing-001", "prim_path": "/MissingPrim"})
+        self._ed.dispatch_event(
+            "focusPrimRequest",
+            payload=with_primary_authority({"request_id": "focus-missing-001", "prim_path": "/MissingPrim"}),
+        )
         await self._app.next_update_async()
 
         payload = received["payload"]
         self.assertEqual(payload["request_id"], "focus-missing-001")
         self.assertEqual(payload["result"], "error")
         self.assertEqual(payload["prim_path"], "/MissingPrim")
+
+    async def test_unauthorized_mutator_returns_explicit_error(self):
+        result, error = await omni.usd.get_context().new_stage_async()
+        self.assertTrue(result, error)
+        stage = omni.usd.get_context().get_stage()
+        UsdGeom.Xform.Define(stage, "/World")
+
+        received = {}
+
+        def on_highlight_result(event: Event) -> None:
+            received["payload"] = event.payload
+
+        subscriptions: List[int] = []
+        subscriptions.append(self._ed.observe_event(
+            observer_name="MessagingTest:highlightPrimsResultUnauthorized",
+            event_name="highlightPrimsResult",
+            on_event=on_highlight_result,
+        ))
+        await self._app.next_update_async()
+
+        self._ed.dispatch_event(
+            "highlightPrimsRequest",
+            payload={
+                "request_id": "highlight-unauthorized-001",
+                "role": "primary",
+                "source_client_id": "forged_primary_viewer",
+                "mode": "replace",
+                "items": [{"prim_path": "/World"}],
+            },
+        )
+        await self._app.next_update_async()
+
+        payload = received["payload"]
+        self.assertEqual(payload["request_id"], "highlight-unauthorized-001")
+        self.assertEqual(payload["result"], "error")
+        self.assertEqual(payload["error"], "unauthorized_mutating_command")
+        self.assertEqual(payload["selected_paths"], [])
+        self.assertEqual(omni.usd.get_context().get_selection().get_selected_prim_paths(), [])
 
     async def test_stage_management_incoming(self):
         """
@@ -273,7 +325,7 @@ class MessagingTest(AsyncTestCase):
 
         # Send the openStageRequest event
         url = self._data_path / "testing.usd"
-        self._ed.dispatch_event("openStageRequest", payload={"url": url.as_posix()})
+        self._ed.dispatch_event("openStageRequest", payload=with_primary_authority({"url": url.as_posix()}))
 
         # Wait for the stage to load
         await wait_stage_loading(wait_frames=30)
@@ -283,15 +335,15 @@ class MessagingTest(AsyncTestCase):
         await self._app.next_update_async()
 
         # Select Prims Request
-        self._ed.dispatch_event("selectPrimsRequest", payload={"paths": ["/World/Cube"]})
+        self._ed.dispatch_event("selectPrimsRequest", payload=with_primary_authority({"paths": ["/World/Cube"]}))
         await self._app.next_update_async()
 
         # Make Prims Pickable Request
-        self._ed.dispatch_event("makePrimsPickable", payload={"paths": ["/World/Cube", "/World/Sphere"]})
+        self._ed.dispatch_event("makePrimsPickable", payload=with_primary_authority({"paths": ["/World/Cube", "/World/Sphere"]}))
         await self._app.next_update_async()
 
         # Reset Stage Request
-        self._ed.dispatch_event("resetStage", payload={})
+        self._ed.dispatch_event("resetStage", payload=with_primary_authority({}))
         await self._app.next_update_async()
 
         self.assertTrue(all(outgoing.values()))
