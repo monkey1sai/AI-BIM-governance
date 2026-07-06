@@ -293,6 +293,39 @@ describe("GlobalConversionPane coverage 展開（純呈現）", () => {
     });
   });
 
+  // brief §Step 1 補課（Task 4 review）：展開遇錯誤後收合再展開 → 重新呼叫 conversionQualityMetrics（error 態可重試）。
+  // 對照上方「重用快取」測試（成功後不重打）：error 態不入快取（cov[id] 帶 error 鍵）→ 收合重展必重打。
+  it("展開遇錯誤後收合再展開同一 job → 重新呼 conversionQualityMetrics（error 態可重試，非快取）", async () => {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [coverageJob] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    stubHistoryEmpty();
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics")
+      .mockRejectedValueOnce(new Error("/api/conversions/... -> 502"))
+      .mockResolvedValue({
+        conversion_job_id: "stream_conv_20260616_cov",
+        quality_metrics_summary: {
+          coverage_ratio: 0.9886, coverage_status: "warn", mapped_count: 988, unmapped_count: 12,
+          source_ifc_entity_count: 1000, materialization_strategy: "sidecar", conversion_duration_seconds: 73.5,
+        },
+        usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
+      });
+    render();
+    let toggle: HTMLElement | null = null;
+    await waitFor(() => { toggle = container.querySelector('[data-testid="conv-coverage-toggle-ifcready_cov"]'); expect(toggle).not.toBeNull(); });
+    await act(async () => { toggle!.click(); });                       // 展開 → fetch 一次（reject → error 態）
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!.textContent).toContain("/api/conversions");
+    });
+    await act(async () => { toggle!.click(); });                       // 收合
+    await act(async () => { toggle!.click(); });                       // 再展開 → error 態不重用，重打
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(2);                            // 重試：第二次真的重打
+      expect(container.querySelector('[data-testid="conv-coverage-ifcready_cov"]')!.textContent).toContain("98.86");
+    });
+  });
+
   it("無 conversion_job_id 的 job → 不可展開、顯尚未派工", async () => {
     const noConv: IfcReadyListItem = { ...coverageJob, ifc_ready_job_id: "ifcready_noconv", conversion_job_id: null, conversion_status: "pending" };
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [noConv] });
@@ -611,6 +644,41 @@ describe("GlobalConversionPane：MD 合一新斷言（brief §Step 1）", () => 
     });
   });
 
+  // brief §Step 1 補課（Task 4 review）：md-stat-converting / md-stat-ready 個別斷言（[新1] 只驗 queued/failed）。
+  // converting 讀易失 ifc-ready（conversion_lifecycle_status="converting"）；ready 讀持久 ledger（record.status="ready"）。
+  it("[新1b] 摘要卡統計：converting 從 ifc-ready jobs、ready 從 ledger records，各帶口徑標示", async () => {
+    const convertingJob: IfcReadyListItem = { ...okJob, ifc_ready_job_id: "ifcready_converting", conversion_lifecycle_status: "converting" };
+    const readyRec: ConversionRecord = { ...failedRec, idempotency_key: "mw_ready0123456789", status: "ready", usdc_key: "東勢區許良宇紀念圖書館/root/main/000003/model.usdc" };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [convertingJob] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [readyRec] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    stubHistoryEmpty();
+    render();
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="md-stat-converting"]')!.textContent).toBe("1");
+      expect(container.querySelector('[data-testid="md-stat-ready"]')!.textContent).toBe("1");
+      // 口徑：轉換中（易失 ifc-ready）／完成（持久 ledger）
+      expect(container.querySelector('[data-testid="md-stat-block-converting"]')!.textContent).toContain("口徑：ifc-ready（易失");
+      expect(container.querySelector('[data-testid="md-stat-block-ready"]')!.textContent).toContain("口徑：ledger（持久");
+    });
+  });
+
+  // brief §Step 1 補課（Task 4 review）：jobsTruncated 分支（相對 [新2] 的 recordsTruncated）——
+  // 僅 jobs 被回傳窗截斷（listIfcReady count>items）、records 未截斷，摘要卡仍須加註「（回傳窗內，非全量）」。
+  it("[新2b] jobsTruncated=true（records 未截斷）→ 摘要卡出現「（回傳窗內，非全量）」", async () => {
+    // count(200) > items.length(1) → jobsTruncated=true
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 200, items: [okJob] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] }); // 未截斷
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    stubHistoryEmpty();
+    render();
+    await waitFor(() => {
+      const note = container.querySelector('[data-testid="md-stats-windowed"]');
+      expect(note).not.toBeNull();
+      expect(note!.textContent).toContain("回傳窗內，非全量");
+    });
+  });
+
   it("[新3] 佇列表含 download / authority 兩欄，列 render j.download_status / j.conversion_authority", async () => {
     const inJob: IfcReadyListItem = {
       ...okJob, ifc_ready_job_id: "ifcready_in", download_status: "downloaded", conversion_authority: "bim-streaming-server",
@@ -717,5 +785,37 @@ describe("GlobalConversionPane：MD 合一新斷言（brief §Step 1）", () => 
       expect(container.querySelector('[data-testid="md-queue-locate-mw_failed0123456789"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="md-queue-trigger-mw_failed0123456789"]')).toBeNull();
     });
+  });
+});
+
+// 遷移自 console.test.tsx（Task 9 三頁合一）：dispatch_error 欄位形狀對齊真後端 schema，渲染層驗證（真後端值由 E2E 驗）。
+// 佇列列失敗格 conv-job-failure-* 由 GlobalConversionPane 承接（原 CV 頁行為）：failure_reason 優先、無則回退
+// dispatch_error；>80 字截斷補「…」提示（誠實鐵律不可靜默硬切），完整訊息保留於 title tooltip。
+describe("GlobalConversionPane：dispatch_error 欄位形狀 + 80 字截斷（遷自 console.test.tsx）", () => {
+  it("有 dispatch_error 的 job → 渲染錯誤明細節點（截斷+title）；無 dispatch_error 的 job → 不渲染", async () => {
+    const failJob: IfcReadyListItem = {
+      ...okJob, ifc_ready_job_id: "ifcready_fail", external_model_version_id: "271_pieple_管線",
+      status: "dispatch_failed", conversion_status: "dispatch_failed",
+      dispatch_error: 'streaming conversion API 400: {"detail":"Invalid ifc_artifact_id: ifc_271_pieple_管線"}',
+    };
+    const okDispatched: IfcReadyListItem = { ...okJob, ifc_ready_job_id: "ifcready_ok", status: "dispatched", conversion_status: "dispatched", dispatch_error: null };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 2, items: [failJob, okDispatched] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false, note: "test stub" });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+    stubHistoryEmpty();
+    render();
+    let errNode: Element | null = null;
+    await waitFor(() => {
+      errNode = container.querySelector('[data-testid="conv-job-failure-ifcready_fail"]');
+      expect(errNode).not.toBeNull();
+    });
+    expect(errNode!.textContent).toContain("Invalid ifc_artifact_id");
+    expect(errNode!.getAttribute("title")).toContain("streaming conversion API 400");
+    // 可見文字超過 80 字須截斷並補「…」提示，不得靜默硬切誤導操作員。
+    expect(errNode!.textContent!.endsWith("…")).toBe(true);
+    expect(errNode!.textContent).not.toContain("_管線");         // 尾端已被截斷，不在可見文字
+    expect(errNode!.getAttribute("title")).toContain("_管線");   // 完整訊息仍保留於 title tooltip
+    // 無 dispatch_error 的 job 不得渲染錯誤節點
+    expect(container.querySelector('[data-testid="conv-job-failure-ifcready_ok"]')).toBeNull();
   });
 });

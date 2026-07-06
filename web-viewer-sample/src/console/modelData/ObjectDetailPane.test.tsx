@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ObjectDetailPane } from "./ObjectDetailPane";
 import type { ConversionData } from "./useConversionData";
 import { coordinatorClient, type ConversionRecord, type IfcReadyListItem, type MinioObject } from "../coordinatorClient";
+import { parseHandoff } from "../handoff";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
@@ -216,6 +217,20 @@ describe("ObjectDetailPane：三源串接（spec §3.3）", () => {
     expect(decodeURIComponent(window.location.hash)).toContain("minio_key=a/b/model.ifc");
   });
 
+  // 遷移自 MinioCrossLinks.test.tsx（OQ4 決定性 spike）：中文 minio_key 經 buildHandoff → URL hash →
+  // parseHandoff 完整往返。M 頁物件列的 #a1 chip 已退役，改由單檔詳情 A1 檢核鈕（帶 object.key）承接。
+  it("[5b] A1 檢核鈕：中文 minio_key 經 buildHandoff→hash→parseHandoff 完整往返（source 一律 minio）", async () => {
+    const CN_KEY = "270專案/建築/v07/模型.ifc";
+    render({ object: makeObject({ idempotency_key: K, key: CN_KEY }), data: makeData() });
+    let a1Btn: HTMLButtonElement | null = null;
+    await waitFor(() => { a1Btn = container.querySelector('[data-testid="md-detail-a1"]'); expect(a1Btn).toBeTruthy(); });
+    await act(async () => { a1Btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    const parsed = parseHandoff(window.location.hash);
+    expect(parsed?.source).toBe("minio");
+    expect(parsed?.minio_key).toBe(CN_KEY);                          // encode → hash → decode 精準往返（含中文）
+    expect(window.location.hash.startsWith("#a1?")).toBe(true);      // 目的地路由前綴（防 target 打錯字）
+  });
+
   // 6) 顯示「顯示最新一次嘗試」註記文字（同檔多次轉檔，spec §3.3）
   it("[6] 顯示「顯示最新一次嘗試」註記（同檔多次轉檔，歷史見總覽）", async () => {
     render({ object: makeObject(), data: makeData({ records: [makeRecord({ status: "failed" })] }) });
@@ -340,6 +355,71 @@ describe("ObjectDetailPane：coverage 展開（本地 state，搬自 CV toggleCo
       const drawer = container.querySelector('[data-testid="md-detail-coverage"]')!;
       expect(drawer.textContent).toContain("98.86");
       expect(drawer.textContent).toContain("988");
+    });
+  });
+
+  // brief §Step 1 補課（Task 5 review）：coverage 快取三語意（搬自 CV toggleCoverage 原文，含去重／載入鎖／可重試）。
+  const covData = () => makeData({
+    records: [makeRecord({ status: "ready", conversion_job_id: "conv_1" })],
+    jobs: [makeJob({ idempotency_key: K, status: "dispatched", conversion_job_id: "conv_1" })],
+  });
+  const okMetrics = {
+    conversion_job_id: "conv_1",
+    quality_metrics_summary: {
+      coverage_ratio: 0.9886, coverage_status: "warn", mapped_count: 988, unmapped_count: 12,
+      source_ifc_entity_count: 1000, materialization_strategy: "sidecar", conversion_duration_seconds: 73.5,
+    },
+    usdc_url: "http://x/model.usdc", mapping_url: "http://x/element_mapping.json",
+  } as const;
+
+  it("[快取1] 成功展開後收合再展開 → 重用快取，不再呼 conversionQualityMetrics", async () => {
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics").mockResolvedValue(okMetrics);
+    render({ object: makeObject({ idempotency_key: K }), data: covData() });
+    let toggle: HTMLElement | null = null;
+    await waitFor(() => { toggle = container.querySelector('[data-testid="md-detail-coverage-toggle"]'); expect(toggle).not.toBeNull(); });
+    await act(async () => { toggle!.click(); });                       // 展開 → fetch 一次
+    await waitFor(() => { expect(spy).toHaveBeenCalledTimes(1); });
+    await act(async () => { toggle!.click(); });                       // 收合
+    await act(async () => { toggle!.click(); });                       // 再展開 → 命中快取
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);                            // 不重打
+      expect(container.querySelector('[data-testid="md-detail-coverage"]')!.textContent).toContain("98.86");
+    });
+  });
+
+  it("[快取2] 載入中收合再展開 → 載入鎖擋下第二次 conversionQualityMetrics", async () => {
+    let resolveCov: (v: typeof okMetrics) => void = () => {};
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics")
+      .mockImplementation(() => new Promise((res) => { resolveCov = res as (v: typeof okMetrics) => void; }));
+    render({ object: makeObject({ idempotency_key: K }), data: covData() });
+    let toggle: HTMLElement | null = null;
+    await waitFor(() => { toggle = container.querySelector('[data-testid="md-detail-coverage-toggle"]'); expect(toggle).not.toBeNull(); });
+    await act(async () => { toggle!.click(); });                       // 展開 → fetch 啟動（pending，cov="loading"）
+    await waitFor(() => { expect(spy).toHaveBeenCalledTimes(1); });
+    await act(async () => { toggle!.click(); });                       // 收合（cov 仍停在 "loading"）
+    await act(async () => { toggle!.click(); });                       // 載入中再展開 → 載入鎖擋下第二打
+    expect(spy).toHaveBeenCalledTimes(1);
+    // 放行 pending promise，避免 act 後殘留未 settle
+    await act(async () => { resolveCov(okMetrics); await Promise.resolve(); });
+  });
+
+  it("[快取3] 展開遇錯誤後收合再展開 → 重新呼 conversionQualityMetrics（error 態可重試）", async () => {
+    const spy = vi.spyOn(coordinatorClient, "conversionQualityMetrics")
+      .mockRejectedValueOnce(new Error("/api/conversions/... -> 502"))
+      .mockResolvedValue(okMetrics);
+    render({ object: makeObject({ idempotency_key: K }), data: covData() });
+    let toggle: HTMLElement | null = null;
+    await waitFor(() => { toggle = container.querySelector('[data-testid="md-detail-coverage-toggle"]'); expect(toggle).not.toBeNull(); });
+    await act(async () => { toggle!.click(); });                       // 展開 → reject（error 態，不入快取）
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="md-detail-coverage"]')!.textContent).toContain("/api/conversions");
+    });
+    await act(async () => { toggle!.click(); });                       // 收合
+    await act(async () => { toggle!.click(); });                       // 再展開 → error 態可重試，重打
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('[data-testid="md-detail-coverage"]')!.textContent).toContain("98.86");
     });
   });
 });
