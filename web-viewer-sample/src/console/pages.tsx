@@ -1093,7 +1093,7 @@ export function ConversionSchedulingPage() {
     setTriggerErr(null);
     setTriggerBusy(true);
     try {
-      await coordinatorClient.triggerConversion(pendingTriggerKey);
+      await coordinatorClient.triggerConversion(pendingTriggerKey, { forceRetrigger: true });
       void loadRecords();           // ledger 真值對齊：重抓 ledger（main trigger 已 server-side 落帳）
       setPendingTriggerKey(null);   // 成功才關 dialog
     } catch (e) {
@@ -1449,7 +1449,7 @@ export function ConversionSchedulingPage() {
       <IntentDialog
         open={pendingTriggerKey != null && pendingAction == null}
         title={t("確認觸發轉檔", "Confirm trigger conversion")}
-        cost={t("對此 model.ifc 觸發轉檔 intake（POST /api/conversion/trigger，帶 x-dev-token；同 key 重觸發冪等）：", "Trigger conversion intake for this model.ifc (POST /api/conversion/trigger with x-dev-token; same-key re-trigger is idempotent): ") + (pendingTriggerKey ?? "")}
+        cost={t("對此 model.ifc 送出新的轉檔 attempt（POST /api/conversion/trigger，force_retrigger=true；用於終局 failed recovery）：", "Submit a new conversion attempt for this model.ifc (POST /api/conversion/trigger, force_retrigger=true; for terminal failed recovery): ") + (pendingTriggerKey ?? "")}
         busy={triggerBusy}
         actionErr={triggerErr}
         onConfirm={(reason) => void confirmTrigger(reason)}

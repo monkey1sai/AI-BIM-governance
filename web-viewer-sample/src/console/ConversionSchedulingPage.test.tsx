@@ -1128,8 +1128,11 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
 
-    // 走 /api/conversion/trigger（只以該 object_key 觸發，無第二參數）
-    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // failed ledger row 走新的 conversion attempt，不 replay 舊 failed job。
+    expect(triggerSpy).toHaveBeenCalledWith(
+      "東勢區許良宇紀念圖書館/root/main/000003/model.ifc",
+      { forceRetrigger: true },
+    );
     // 成功後重抓 ledger（初次 mount 1 次 + 成功後 loadRecords 1 次）
     expect(recSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
     // 成功關 dialog
@@ -1171,8 +1174,11 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); }); // loadRecords 重抓 settle
 
-    // triggerConversion 只帶 key（無第二參數）。
-    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // failed ledger row 走新的 conversion attempt，不 replay 舊 failed job。
+    expect(triggerSpy).toHaveBeenCalledWith(
+      "東勢區許良宇紀念圖書館/root/main/000003/model.ifc",
+      { forceRetrigger: true },
+    );
     // ledger 重抓對齊：命中列 status 更新為 detected（label「已偵測」），原 failed label 不再出現。
     const patchedPanel = container.querySelector('[data-testid="conv-ledger-panel"]');
     expect(patchedPanel!.textContent).toContain("已偵測");
@@ -1256,8 +1262,11 @@ describe("ConversionSchedulingPage baseline 揭露 + 一鍵觸發列（Task 8）
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
 
-    // POST 確實送出（只以該 object_key，無第二參數）
-    expect(triggerSpy).toHaveBeenCalledWith("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    // POST 確實送出 failed recovery（新 attempt，不 replay 舊 failed job）
+    expect(triggerSpy).toHaveBeenCalledWith(
+      "東勢區許良宇紀念圖書館/root/main/000003/model.ifc",
+      { forceRetrigger: true },
+    );
     // 失敗不關 dialog（pendingTriggerKey 仍非 null）
     expect(container.querySelector('[data-testid="intent-dialog"]')).not.toBeNull();
     // 誠實錯誤顯示在 dialog 內 intent-action-error 節點（triggerErr 經 actionErr prop 渲染）

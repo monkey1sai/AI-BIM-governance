@@ -380,6 +380,17 @@ describe("coordinatorClient triggerConversion / getIfcReadyJob（PR#259，方向
     expect(JSON.parse(String((call[1] as RequestInit).body))).toEqual({ key: "專案A/root/main/uuid/model.ifc" });
   });
 
+  it("triggerConversion forceRetrigger 會送 force_retrigger=true", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ifc_ready_job_id: "ifcready_mw_retry", force_retrigger: true }), { status: 202 }),
+    );
+    await coordinatorClient.triggerConversion("專案A/root/main/uuid/model.ifc", { forceRetrigger: true });
+    expect(JSON.parse(String((spy.mock.calls[0][1] as RequestInit).body))).toEqual({
+      key: "專案A/root/main/uuid/model.ifc",
+      force_retrigger: true,
+    });
+  });
+
   it("triggerConversion 503（MinIO 未設定）throw 帶後端 detail", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ detail: "MinIO 未設定（endpoint/bucket/credentials 不齊全）" }), { status: 503, statusText: "Service Unavailable" }),

@@ -312,6 +312,75 @@ def test_lists_ready_conversion_results_for_model_version(tmp_path: Path):
     assert body["items"][1]["source_ifc_filename"] == "first-model.ifc"
 
 
+def test_persisted_ready_result_downgrades_when_required_artifact_is_missing(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    initial = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert initial["ready"] is True
+
+    model_path = tmp_path / "artifacts" / conversion_job_id / "model.usdc"
+    assert model_path.is_file()
+    model_path.unlink()
+
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["ready"] is False
+    assert result["status"] == "failed"
+    assert result["model"]["status"] == "failed"
+    assert result["error"]["code"] == "artifact_missing"
+    assert result["error"]["missing_artifacts"][0]["role"] == "model_usdc"
+
+    detail = client.get(f"/api/conversions/{conversion_job_id}").json()
+    assert detail["status"] == "failed"
+    assert detail["stage"] == "artifact_missing"
+    assert detail["callback_payload"]["status"] == "failed"
+    assert detail["callback_payload"]["result"]["ready"] is False
+
+    ready_list = client.get("/api/conversions?model_version_id=version_demo_001&status=succeeded&ready=true").json()
+    assert ready_list["count"] == 0
+
+
+def test_persisted_ready_result_downgrades_when_requested_sidecar_is_missing_from_metadata(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    job_path = tmp_path / "jobs" / f"{conversion_job_id}.json"
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    del job["result"]["artifacts"]["element_mapping"]
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["ready"] is False
+    assert result["error"]["code"] == "artifact_missing"
+    assert result["error"]["missing_artifacts"][0]["role"] == "element_mapping"
+    assert result["error"]["missing_artifacts"][0]["reason"] == "artifact_path_missing"
+
+
+def test_persisted_ready_result_downgrades_when_artifact_url_is_not_per_job_serveable(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter())
+
+    response = client.post("/api/conversions/ifc-to-usdc", json=ifc_ready_payload())
+    conversion_job_id = response.json()["conversion_job_id"]
+    outside = tmp_path / "outside-model.usdc"
+    outside.write_bytes(b"PXR-USDC-real-outside\n")
+    job_path = tmp_path / "jobs" / f"{conversion_job_id}.json"
+    job = json.loads(job_path.read_text(encoding="utf-8"))
+    model = job["result"]["artifacts"]["model_usdc"]
+    model["path"] = str(outside)
+    model["url"] = "http://testserver/artifacts/outside-model.usdc"
+    job["result"]["model"]["url"] = model["url"]
+    job["result"]["usdc_url"] = model["url"]
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+
+    result = client.get(f"/api/conversions/{conversion_job_id}/result").json()
+    assert result["ready"] is False
+    assert result["error"]["code"] == "artifact_missing"
+    assert result["error"]["missing_artifacts"][0]["role"] == "model_usdc"
+    assert result["error"]["missing_artifacts"][0]["reason"] == "artifact_unserveable"
+
+
 def test_placeholder_usdc_fails_without_ready_result(tmp_path: Path):
     client = make_client(tmp_path, converter=FakePlaceholderConverter())
 
