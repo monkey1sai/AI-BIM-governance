@@ -26,7 +26,18 @@
   border-right: 1px solid #2f363f;
   z-index: 26;
 }
-.gv-mock.gv-mock--live .gv-mock__grid { grid-template-columns: 1fr; }
+/* live 側欄（420px）：不論視窗多寬，C grid 都收成單欄堆疊（3 欄最小寬 ~900px 塞不進側欄）。 */
+.gv-mock.gv-mock--live .gv-C {
+  grid-template-columns: 1fr;
+  grid-template-rows: none;
+  grid-template-areas:
+    "evidence"
+    "left"
+    "center"
+    "right"
+    "bottom";
+  overflow: visible;
+}
 .gv-mock__banner {
   display: flex;
   align-items: center;
@@ -110,36 +121,70 @@
   grid-template-columns: 1fr;
 }
 
-.gv-mock__grid {
+/* Task2 §Step3：C 區塊 IA 版面 — .gv-C 本身即 3 欄x3 列 grid 容器，五具名區為其直接子節點（grid item）：
+   evidence 滿版列 / left·center·right 中列 / bottom 滿版列。banner 與七軸 rail 不在 grid 內（留在外層
+   .gv-mock overflow:auto 捲動容器，維持單一捲動）。overflow:hidden 防 grid 自身出捲軸；min-height:100%
+   讓 grid 填滿捲動容器；內容過高時由外層 .gv-mock 捲動。 */
+.gv-C {
+  min-height: 100%;
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr);
-  grid-template-areas: "left right";
-  gap: 12px;
-  align-items: start;
+  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(260px, 320px);
+  grid-template-rows: auto minmax(360px, 1fr) minmax(160px, 220px);
+  grid-template-areas:
+    "evidence evidence evidence"
+    "left center right"
+    "bottom bottom bottom";
+  gap: 8px;
+  overflow: hidden;
 }
-.gv-mock__col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-@media (max-width: 900px) {
-  .gv-mock__grid { grid-template-columns: 1fr; grid-template-areas: "left" "right"; }
+.gv-C__evidence {
+  grid-area: evidence;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  background: rgba(13, 20, 28, 0.6);
+  font-size: 12px;
+}
+.gv-C__evidence > span { color: #cbd5e1; overflow-wrap: anywhere; }
+.gv-C__evidence > span:first-child { color: #67e8f9; font-weight: 700; }
+.gv-C__left { grid-area: left; }
+.gv-C__center { grid-area: center; }
+.gv-C__right { grid-area: right; }
+.gv-C__left,
+.gv-C__center,
+.gv-C__right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+.gv-C__bottom {
+  grid-area: bottom;
+  min-width: 0;
+  min-height: 0;
+}
+/* 窄視窗（含 820px 測試視窗）：三欄最小寬 ~900px 塞不下 → 五區改單欄堆疊，外層 .gv-mock 捲動。 */
+@media (max-width: 980px) {
+  .gv-C {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    grid-template-areas:
+      "evidence"
+      "left"
+      "center"
+      "right"
+      "bottom";
+    overflow: visible;
+  }
 }
 @media (max-width: 620px) {
   .gv-mock.gv-mock--live { width: min(420px, calc(100vw - 16px)); max-width: none; }
-}
-
-/* Task2 §Step3：C 區塊 IA（左模型/中央 stage/右語意/底對構）grid-area 語意對齊
-   geo-viewer-* test id 契約。banner／七軸 rail 在 grid 之外（維持既有 position:absolute +
-   overflow:auto 單一捲動容器，不重排），實際 2 欄 grid 容器沿用 .gv-mock__grid；
-   .gv-C__center／.gv-C__bottom 為欄內第一個/獨立子區塊，加視覺分隔而非另開欄，
-   避免與既有測資（viewer-session-bridge / mock-stage 等 testid 位置）衝突。 */
-.gv-C__left { grid-area: left; min-width: 0; }
-.gv-C__right { grid-area: right; min-width: 0; }
-.gv-C__center {
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  border-radius: 8px;
-}
-.gv-C__bottom {
-  border-top: 1px dashed #262c33;
-  padding-top: 8px;
-  margin-top: 8px;
 }
 
 .gv-card {
