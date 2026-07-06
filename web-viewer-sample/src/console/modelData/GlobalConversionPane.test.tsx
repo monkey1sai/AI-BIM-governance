@@ -788,6 +788,51 @@ describe("GlobalConversionPane：MD 合一新斷言（brief §Step 1）", () => 
   });
 });
 
+// 遷移自 ConversionHistory.test.tsx（Task 9 review fix）：轉檔歷史 panel（GET /api/dev/conversions pass-through）
+// 仍由本元件渲染（md-history-details / conv-history-panel testids 原樣搬移），刪舊檔前漏遷這兩條非 cross-link
+// 斷言，此處補齊。cross-link chips 測試已隨舊 UI 退役（前篇報告比對表）。
+describe("GlobalConversionPane：轉檔歷史 panel（遷自 ConversionHistory.test.tsx）", () => {
+  function stubBase() {
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+  }
+
+  it("renders the history panel with pass-through items (artifact)", async () => {
+    stubBase();
+    // source_ifc_filename（非 created_at——GET /api/dev/conversions 結構上從不序列化 created_at，見
+    // seven-axis plan Task 7 2026-07-03 更正）是第三欄；斷言它真的渲染，不只驗 conversion_job_id。
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [{ conversion_job_id: "cj_9", status: "succeeded", source_ifc_filename: "model_A.ifc" }], count: 1 });
+    render();
+    let details: HTMLDetailsElement | null = null;
+    await waitFor(() => { details = container.querySelector('[data-testid="md-history-details"]'); expect(details).not.toBeNull(); });
+    // 展開折疊區（jsdom 不隨 summary click 自動 toggle → 直接設 open，同 md-pipeline-details 測試模式）。
+    await act(async () => { (details as HTMLDetailsElement).open = true; });
+    await waitFor(() => {
+      const panel = container.querySelector('[data-testid="conv-history-panel"]');
+      expect(panel).not.toBeNull();
+      expect(panel!.textContent).toContain("cj_9");
+      expect(panel!.textContent).toContain("model_A.ifc");
+      expect(container.querySelector('[data-testid="conv-history-row-cj_9"]')).not.toBeNull();
+    });
+  });
+
+  it("history panel degrades honestly when the endpoint fails (no fake rows)", async () => {
+    stubBase();
+    vi.spyOn(coordinatorClient, "getConversionsHistory").mockRejectedValue(new Error("404"));
+    render();
+    let details: HTMLDetailsElement | null = null;
+    await waitFor(() => { details = container.querySelector('[data-testid="md-history-details"]'); expect(details).not.toBeNull(); });
+    await act(async () => { (details as HTMLDetailsElement).open = true; });
+    await waitFor(() => {
+      const panel = container.querySelector('[data-testid="conv-history-panel"]');
+      expect(panel).not.toBeNull();
+      expect(panel!.textContent).toContain("未取得");
+      expect(container.querySelector('[data-testid^="conv-history-row-"]')).toBeNull(); // 無假列
+    });
+  });
+});
+
 // 遷移自 console.test.tsx（Task 9 三頁合一）：dispatch_error 欄位形狀對齊真後端 schema，渲染層驗證（真後端值由 E2E 驗）。
 // 佇列列失敗格 conv-job-failure-* 由 GlobalConversionPane 承接（原 CV 頁行為）：failure_reason 優先、無則回退
 // dispatch_error；>80 字截斷補「…」提示（誠實鐵律不可靜默硬切），完整訊息保留於 title tooltip。
