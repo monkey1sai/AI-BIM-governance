@@ -25,8 +25,8 @@ import {
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
-// MD 三頁合一（Task 6/7）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
-// MinioDataPage 三頁合併）。舊三頁本體（export）保留於 pages.tsx 待 Task 9 統一移除，故此處不再 import。
+// MD 三頁合一（Task 6/7/9）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
+// MinioDataPage 三頁合併）。舊三頁本體已於 Task 9 自 pages.tsx 移除。
 import { ModelDataPage } from "./modelData/ModelDataPage";
 // operator-tool 路由保留：#/kit、#/demo-control 原由 OperatorConsole 服務；換 EdgeConsole 後仍可達（非 silently 砍）。
 import { KitConsolePage } from "./KitConsolePage";
