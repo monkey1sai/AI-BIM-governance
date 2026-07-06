@@ -118,7 +118,7 @@ tests/fakes + tests/contracts = 外部平台 test-only doubles，非 runtime pro
 _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅 tests/fakes 模擬
 ```
 
-完整 folder schema、§1.A 架構決策、§3–§11（repo 邊界 / 資料流 / 通訊 / source of truth / 禁止跨界 / 閉環）見 `docs/agents/repo-boundary-detail.md`。
+完整 folder schema、§1.A 架構決策、§9–§11（Optional Mock Services / 最重要閉環 / 總結）見 `docs/agents/repo-boundary-detail.md`；per-repo 角色與禁止跨界規則（原 §3、§8）見 `docs/agents/repo-boundaries-per-service.md`；資料流 / 通訊 / source of truth（原 §4–§7）見 `docs/agents/repo-data-flow-and-ownership.md`。
 
 歷史 `_worker` / `_bim-control` 退役脈絡見 `docs/agents/history-and-archive.md`。
 
@@ -128,7 +128,9 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 
 | 何時需要 | 讀這份 |
 |---|---|
-| 跨 sub-repo 決策、改 repo boundary、查 data 權威歸屬、追資料流 | `docs/agents/repo-boundary-detail.md` |
+| 跨 sub-repo 決策、workspace 總覽、B 方案架構決策、最重要閉環 | `docs/agents/repo-boundary-detail.md` |
+| 查個別 repo（coordinator/streaming/viewer/governance/kit-manager）角色、負責與不負責清單、禁止跨界規則 | `docs/agents/repo-boundaries-per-service.md` |
+| 查資料類型與歸屬、核心資料流 mermaid、通訊方式邊界、Source of Truth 原則 | `docs/agents/repo-data-flow-and-ownership.md` |
 | 查 A1–A10 產品定位、frontend-operable done、真實 IFC E2E、script/deploy contract | `docs/agents/product-operability-and-script-contract.md` |
 | 開 PR / 處理 GitHub Actions / branch closeout | `docs/agents/github-workflow.md` |
 | 修改 code symbol（function/class/method）、跑 impact analysis、commit 前 detect_changes | `docs/agents/gitnexus-usage.md` |

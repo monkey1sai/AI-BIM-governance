@@ -53,7 +53,9 @@ installed skills / generated wiki / generated skills
 
 | 何時需要 | 讀這份 |
 |---|---|
-| 跨 sub-repo 決策、改 repo boundary、查 data 權威歸屬、追資料流 | `docs/agents/repo-boundary-detail.md` |
+| 跨 sub-repo 決策、workspace 總覽、B 方案架構決策、最重要閉環 | `docs/agents/repo-boundary-detail.md` |
+| 查個別 repo 角色、負責/不負責清單、禁止跨界規則 | `docs/agents/repo-boundaries-per-service.md` |
+| 查資料類型歸屬、核心資料流、通訊方式、Source of Truth | `docs/agents/repo-data-flow-and-ownership.md` |
 | 查 A1–A10、frontend operability、script/deploy contract | `docs/agents/product-operability-and-script-contract.md` |
 | 開 PR / 處理 GitHub Actions / branch closeout | `docs/agents/github-workflow.md` |
 | 修改 code symbol、跑 impact analysis、commit 前 detect_changes | `docs/agents/gitnexus-usage.md` |
