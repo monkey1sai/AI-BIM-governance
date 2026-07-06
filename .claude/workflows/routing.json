@@ -1,12 +1,13 @@
 {
   "tiers": {
-    "extract":  { "model": "haiku",  "effort": null,    "note": "純抽取/格式化，零判斷，下游必複核" },
-    "standard": { "model": "sonnet", "effort": "max",   "note": "讀/探索/標準實作(全類 task 首發)/首審；sonnet=Sonnet 5" },
-    "reason":   { "model": "opus",   "effort": "xhigh", "note": "創造/長程；唯一 max->xhigh 降階點" },
-    "judge":    { "model": "opus",   "effort": "max",   "immutable": true, "note": "驗證/fix；不可降，codegen 只驗不覆寫" },
-    "arbiter":  { "model": "fable",  "effort": "max",   "immutable": true, "note": "單點裁決層(plan 作者/final-review/P4 evidence)；Fable 5，只可升不可降" }
+    "extract":  { "model": "haiku",  "effort": null,    "fallback": [{ "model": "sonnet", "effort": "high" }], "note": "純抽取/格式化，零判斷，下游必複核" },
+    "standard": { "model": "sonnet", "effort": "max",   "fallback": [{ "model": "opus", "effort": "max" }],   "note": "讀/探索/標準實作(全類 task 首發)/首審；sonnet=Sonnet 5" },
+    "reason":   { "model": "opus",   "effort": "xhigh", "fallback": [{ "model": "fable", "effort": "max" }],  "note": "創造/長程；唯一 max->xhigh 降階點" },
+    "judge":    { "model": "opus",   "effort": "max",   "immutable": true, "fallback": [{ "model": "fable", "effort": "max" }], "note": "驗證/fix；不可降，codegen 只驗不覆寫" },
+    "arbiter":  { "model": "fable",  "effort": "max",   "immutable": true, "fallback": [{ "model": "opus", "effort": "max" }],  "note": "單點裁決層(plan 作者/final-review/P4 evidence)；Fable 5，只可升不可降" }
   },
   "allowed_efforts": { "haiku": [null, "max"], "sonnet": ["high", "max"], "opus": ["xhigh", "max"], "fable": ["max"] },
+  "fallback_policy": "供應中斷限定（模型退役/API 不可用），非日常降階。應變：取該 tier fallback 鏈第一個可用項改寫 model/effort → 跑 gen_routing 重生 → 與 pinned tests 同 commit 原子調整；供應恢復即原子回退（arbiter 前科：2026-06-15）。全鏈不可用時人工選當時最強模型並同步 allowed_efforts。immutable 指品質語義不可日常降級，不阻擋供應例外。",
   "flags": { "plan_author_xhigh": false },
   "do_not_codegen": ["std-implement.js:288", "std-implement.js:294", "std-implement.js:300"]
 }
