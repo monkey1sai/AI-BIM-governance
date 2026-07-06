@@ -110,13 +110,36 @@
   grid-template-columns: 1fr;
 }
 
-.gv-mock__grid { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 12px; align-items: start; }
+.gv-mock__grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr);
+  grid-template-areas: "left right";
+  gap: 12px;
+  align-items: start;
+}
 .gv-mock__col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 @media (max-width: 900px) {
-  .gv-mock__grid { grid-template-columns: 1fr; }
+  .gv-mock__grid { grid-template-columns: 1fr; grid-template-areas: "left" "right"; }
 }
 @media (max-width: 620px) {
   .gv-mock.gv-mock--live { width: min(420px, calc(100vw - 16px)); max-width: none; }
+}
+
+/* Task2 §Step3：C 區塊 IA（左模型/中央 stage/右語意/底對構）grid-area 語意對齊
+   geo-viewer-* test id 契約。banner／七軸 rail 在 grid 之外（維持既有 position:absolute +
+   overflow:auto 單一捲動容器，不重排），實際 2 欄 grid 容器沿用 .gv-mock__grid；
+   .gv-C__center／.gv-C__bottom 為欄內第一個/獨立子區塊，加視覺分隔而非另開欄，
+   避免與既有測資（viewer-session-bridge / mock-stage 等 testid 位置）衝突。 */
+.gv-C__left { grid-area: left; min-width: 0; }
+.gv-C__right { grid-area: right; min-width: 0; }
+.gv-C__center {
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+}
+.gv-C__bottom {
+  border-top: 1px dashed #262c33;
+  padding-top: 8px;
+  margin-top: 8px;
 }
 
 .gv-card {
