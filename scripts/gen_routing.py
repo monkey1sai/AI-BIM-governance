@@ -18,6 +18,18 @@ def validate(data):
             raise ValueError(f"tier {name}: unknown model {m}")
         if e not in allowed[m]:
             raise ValueError(f"tier {name}: effort {e!r} not allowed for {m} ({allowed[m]})")
+        # 供應中斷降落點：每個 tier 必須預先宣告 fallback 鏈（政策見 routing.json fallback_policy）
+        fbs = t.get("fallback", [])
+        if not fbs:
+            raise ValueError(f"tier {name}: missing fallback chain")
+        for i, fb in enumerate(fbs):
+            fm, fe = fb["model"], fb.get("effort")
+            if fm not in allowed:
+                raise ValueError(f"tier {name}: fallback[{i}] unknown model {fm}")
+            if fe not in allowed[fm]:
+                raise ValueError(f"tier {name}: fallback[{i}] effort {fe!r} not allowed for {fm} ({allowed[fm]})")
+            if (fm, fe) == (m, e):
+                raise ValueError(f"tier {name}: fallback[{i}] identical to primary {m}/{e!r}")
 
 def load_routing():
     data = json.loads(RJSON.read_text(encoding="utf-8"))

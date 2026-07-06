@@ -197,7 +197,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 | plan 作者、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | fable(arbiter tier,immutable) | 單點失誤代價最高,**只可升不可降** |
 | P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | runtime default(=session 模型,現為 **Fable 5 max**) | P5=抓雷主力(實績:#206 三顆連環雷 + fix 自引 regression 全在 merge 前攔下);P6=端到端代理操作(git/gh/merge 判斷),sonnet 首跑即出程序偏差(#208),**兩者不降** |
 
-升級通道(自動,腳本內建):sonnet implementer(全類首發)回 BLOCKED → 換 opus/max 重派;NEEDS_CONTEXT → opus/max 補脈絡重派。fable 供應中斷時(2026-06-15 有前科):routing.json 的 arbiter 暫改 opus/max(供應例外,非品質降級),與 gen_routing 重生、兩支 pinned tests 同 commit 原子回退。
+升級通道(自動,腳本內建):sonnet implementer(全類首發)回 BLOCKED → 換 opus/max 重派;NEEDS_CONTEXT → opus/max 補脈絡重派。供應中斷應變(2026-06-15 arbiter 有前科):各 tier 的降落點已形式化為 routing.json `fallback` 鏈(gen_routing validate + pinned tests 釘住,如 arbiter: fable→opus/max),程序見「維運注意事項」§2;供應例外,非品質降級,恢復即原子回退。
 平行:P1 四軸 review、P5 per-finding verifier 平行;**P3 implementer 嚴禁平行**(實作衝突)。
 **降本原則**:hard gates(四軸 approved 條件/兩階段 review 閉合條件/P4 vertical slice 七項/P5 refute-by-default + critic/P6 buffered merge)一個不動;降級只發生在「產出被 ≥2 層更強 gate 複核」或「錯誤顯性必爆」的位置。等效性靠 gate 結構保證,非靠單點模型強度。
 
@@ -223,3 +223,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .claude\skills\spec-to-done\
 ## 維運注意事項
 
 1. routing.json 改動後須跑 `.venv\Scripts\python.exe scripts/gen_routing.py` 重生各 std-*.js 的 ROUTING 區塊，並 re-save 受影響 workflow 讓 harness reload；禁止 workflow run 中途執行 codegen。
+2. 模型退役/供應中斷應變：取 routing.json 該 tier `fallback` 鏈第一個可用項改寫 model/effort → 跑 gen_routing 重生 → **同 commit** 更新 pinned routing tests（字面釘住是刻意的人工確認閘，防靜默降級）→ 全套 `.venv\Scripts\python.exe -m pytest tests`。fallback 僅限供應例外、不得作日常降階；全鏈不可用時人工選當時最強模型並同步 allowed_efforts；供應恢復即原子回退。
