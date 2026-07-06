@@ -430,6 +430,11 @@ export default class App extends React.Component<AppProps, AppState> {
         if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
             return `session lifecycle=${this.state.reviewLifecycleStatus || "unknown"}`;
         }
+        // NOTE(scope Task3->Task5)：以下第三條「primary 需 viewer lease token」與 _withRuntimeAuthority 的 payload
+        // 注入，超出 Task3 Step2/3 字面範圍（Task3 只要求 spectator / lifecycle 兩道 gate）。此為 plan 同檔
+        // 「Task5: Kit-Side Runtime Mutator Authorization」之 _is_authorized_mutator 消費契約的前端半。
+        // 誠實界線：此前端 gate 僅 UX、直呼 AppStream.sendMessage 可繞過；權威強制在 Task5 Kit 端後端
+        // （runtime_authority.py，本次 task#2 commit 未含）。保留而非移除，因 6 個 unit test 與 Task5 payload 契約依賴之。
         if (!harnessEnabled() && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
             return "primary viewer lease token required";
         }
@@ -437,6 +442,8 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _withRuntimeAuthority(message: AppStreamMessageType | StreamMessage): AppStreamMessageType | StreamMessage {
+        // NOTE(scope Task3->Task5)：runtime authority payload 注入超出 Task3 字面範圍，提供 plan Task5 Kit 端
+        // _is_authorized_mutator 消費的 role / source_client_id / viewer_lease_token / session_id 形狀（見上方 gate 註解）。
         if (!isRuntimeMutator(message.event_type)) return message;
         const payload = isRecord(message.payload) ? { ...message.payload } : {};
         return {
