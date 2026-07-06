@@ -225,6 +225,26 @@ describe("A1 3D review decoupling", () => {
     expect(createSpy).not.toHaveBeenCalled();
   });
 
+  it("verified MinIO handoff after picking local_fs clears the stale runnable file", async () => {
+    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+
+    await renderA1();
+    await pickModel();
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(false);
+
+    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent("松風庵/root/main/u1/model.ifc")}`;
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    expect(q("a1-incoming-handoff")?.getAttribute("data-handoff-status")).toBe("verified");
+    expect(q<HTMLSelectElement>("a1-minio-select")!.value).toBe("松風庵/root/main/u1/model.ifc");
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
+
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
   it("changing the local_fs dropdown after picking a model clears the stale locked path", async () => {
     const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
 

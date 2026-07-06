@@ -365,10 +365,15 @@ export function A1GovernanceWorkbenchPage() {
     const key = incoming.handoff?.minio_key;
     if (incoming.status === "verified" && key && seededHandoffKeyRef.current !== key) {
       seededHandoffKeyRef.current = key;
+      if (sourceKind !== "minio") {
+        dispatch({ type: "RESET" });
+        setActionErr(null);
+        setA1Issues([]);
+      }
       setSourceKind("minio");
       setSelectedKey(key);
     }
-  }, [incoming.status, incoming.handoff?.minio_key]);
+  }, [incoming.status, incoming.handoff?.minio_key, sourceKind]);
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
