@@ -676,4 +676,46 @@ describe("GlobalConversionPane：MD 合一新斷言（brief §Step 1）", () => 
       expect(row.getAttribute("data-highlight")).toBe("true");
     });
   });
+
+  // spec §4 #12（dispatch 裁定 fix）：ledger 對映 failed 且有 object_key 的佇列列，補「觸發轉檔」鈕
+  //（與「檔案 →」鈕並存不互斥，比照原 CV ledger 列兩鈕並存）；點擊開啟 trigger dialog（cost 含 object_key）。
+  it("[新6/§4#12] failed 對映列掛「觸發轉檔」鈕 → 點擊開 trigger dialog（cost 含 object_key）；非 failed 列無鈕", async () => {
+    const matchedJob: IfcReadyListItem = { ...okJob, ifc_ready_job_id: "ifcready_matched", idempotency_key: "mw_failed0123456789" };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [matchedJob] });
+    // failedRec：status="failed"、object_key 存在、idempotency_key 對映到 matchedJob
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [failedRec] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    stubHistoryEmpty();
+    render();
+    let trigBtn: HTMLButtonElement | null = null;
+    await waitFor(() => {
+      trigBtn = container.querySelector('[data-testid="md-queue-trigger-mw_failed0123456789"]');
+      expect(trigBtn).toBeTruthy();
+      // 兩鈕並存：同列「檔案 →」定位鈕仍在（不互斥）
+      expect(container.querySelector('[data-testid="md-queue-locate-mw_failed0123456789"]')).not.toBeNull();
+    });
+    await act(async () => { trigBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => {
+      const dialog = container.querySelector('[data-testid="intent-dialog"]');
+      expect(dialog).not.toBeNull();
+      expect(dialog!.textContent).toContain("確認觸發轉檔");
+      // cost 文案含原始 object_key（POST /api/conversion/trigger 的 payload 主體，誠實揭露）
+      expect(dialog!.textContent).toContain("東勢區許良宇紀念圖書館/root/main/000003/model.ifc");
+    });
+  });
+
+  it("[新6b/§4#12 邊界] 對映 record 非 failed（queued）→ 該列不掛觸發鈕", async () => {
+    const matchedJob: IfcReadyListItem = { ...okJob, ifc_ready_job_id: "ifcready_matched", idempotency_key: "mw_failed0123456789" };
+    const queuedRec: ConversionRecord = { ...failedRec, status: "queued" };
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [matchedJob] });
+    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [queuedRec] });
+    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false });
+    stubHistoryEmpty();
+    render();
+    await waitFor(() => {
+      // 對映命中（有 object_key）→「檔案 →」鈕在；但 status=queued 非 failed → 無觸發鈕
+      expect(container.querySelector('[data-testid="md-queue-locate-mw_failed0123456789"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="md-queue-trigger-mw_failed0123456789"]')).toBeNull();
+    });
+  });
 });

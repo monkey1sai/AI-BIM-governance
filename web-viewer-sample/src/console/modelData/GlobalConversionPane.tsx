@@ -10,8 +10,8 @@
 //   4. 轉檔歷史 <details>（GET /api/dev/conversions pass-through）。
 //   5. 兩個 IntentDialog（watch-toggle/prioritize/retry ＋ ledger trigger），由 useConversionActions 驅動。
 // 去重化（spec §3.2 line 70）：原 CV 獨立「轉檔 Ledger 表」不再呈現為表；ledger 資料改驅動左欄 chip／
-// 單檔詳情／摘要統計三處。ledger 列「觸發轉檔」鈕移入單檔詳情（Task 5）與佇列表；本元件保留 trigger
-// dialog＋confirmTrigger（共用 hook），opener 由單檔詳情／殼層 wiring（見報告 concern）。
+// 單檔詳情／摘要統計三處。ledger 列「觸發轉檔」鈕移入單檔詳情（Task 5）與佇列表（spec §4 #12）——
+// 佇列表側 opener＝failed 對映列的 md-queue-trigger-* 鈕，開啟本元件的 trigger dialog（共用 hook）。
 import { Fragment, useCallback, useState } from "react";
 import { t } from "../i18n";
 import { Btn, Field, Panel } from "../components";
@@ -323,6 +323,21 @@ export function GlobalConversionPane(props: {
                       ) : (
                         <span className="ec-note">{t("非 MinIO 來源", "non-MinIO source")}</span>
                       )}
+                      {/* spec §4 #12：ledger 對映 failed 且有 object_key 的列補「觸發轉檔」鈕（佇列表側，
+                          與單檔詳情動作區並行；plan §3.2B 漏寫，dispatch 裁定補上）。開啟本元件的 trigger
+                          dialog（POST /api/conversion/trigger，force_retrigger=true）。與「檔案 →」鈕
+                          並存不互斥（比照原 CV ledger 列兩鈕並存）；開啟前清 pendingAction/actionErr 維持
+                          雙 dialog 互斥。 */}
+                      {rec?.status === "failed" && rec.object_key ? (
+                        <>
+                          {" "}
+                          <Btn
+                            data-testid={`md-queue-trigger-${j.idempotency_key}`}
+                            caption="POST /api/conversion/trigger"
+                            onClick={() => { setActionErr(null); setPendingAction(null); setTriggerErr(null); setPendingTriggerKey(rec.object_key as string); }}
+                          >{t("觸發轉檔", "Trigger")}</Btn>
+                        </>
+                      ) : null}
                     </td>
                   </tr>
                   {openJob === j.ifc_ready_job_id && (
