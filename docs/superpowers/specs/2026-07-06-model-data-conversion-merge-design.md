@@ -1,7 +1,7 @@
 # 模型資料與轉檔（MD）：CV / M / IN 三頁合一設計
 
 - 日期：2026-07-06
-- 狀態：設計已由使用者確認（brainstorming 三決策：主從雙欄工作台／全域視圖去重化／命名「模型資料與轉檔」）
+- 狀態：設計已由使用者確認（brainstorming 三決策：主從雙欄工作台／全域視圖去重化／命名「模型資料與轉檔」）；已通過交叉對抗審批（2026-07-06，5 視角×2-lens 反駁、39 agents——CONFIRMED 5 項全數修正、PLAUSIBLE 9 項採納 9、REFUTED 3 項不採納，詳見 git 歷史第二次 commit）
 - 範圍：`web-viewer-sample` console 前端；後端 API 一律不改（後端凍結契約：只打 coordinator `:8004`）
 
 ## 1. 背景與驗證事實
@@ -14,7 +14,7 @@
 | M「MinIO 資料」 | `#minio` | `pages.tsx` `MinioDataPage` | 真實 S3 逐層資料夾導覽（快取＋世代守門＋SSE `minio.changed` stale 通知）、source IFC 掛 ledger chip＋觸發轉檔（intent→confirm）＋「轉檔 →」「A1 檢核 →」cross-link、DEMO bucket layout 規約示意、incoming handoff 重驗（minio_key／prefix） |
 | IN「建模接收與轉換」 | `#intake` | `pages.tsx` `IntakePage` | ifc-ready 唯讀佇列表（欄位為 CV 子集，同一 API `GET /api/external/ifc-ready` limit 50）＋「CV →」「Review →」跳轉、純文案「轉換品質誠實標示」panel |
 
-結論：**IN 功能是 CV 的真子集**（無任何 IN 獨有的動作）；M 與 CV 已共用 ledger 資料與 `POST /api/conversion/trigger`。三頁合一無後端相依。
+結論：**IN 的「動作」是 CV 的真子集**（無任何 IN 獨有的動作），但**顯示欄位有兩欄差異**——`download_status`、`conversion_authority` 僅 IN 表呈現，CV 表完全未顯示（兩者在 `IfcReadyListItem` 上是與 `conversion_status` 並列的獨立欄位，非別名），合併時佇列表須補列這兩欄才達零損失（§3.2B／§4 #17）。M 與 CV 已共用 ledger 資料與 `POST /api/conversion/trigger`。三頁合一無後端相依。
 
 關鍵事實（影響設計）：ifc-ready 佇列含**非 MinIO 來源的 job**（demo-control fixture、外部 webhook），這些 job 在檔案樹沒有節點，插隊／重試必須在全域佇列表可操作，不能只靠檔案視角。
 
@@ -55,13 +55,15 @@
 
 - 逐層導覽（`GET /api/minio/objects?delimiter=/`）、上一層鈕、麵包屑、refresh、cache hit／live list 標示、SSE stale 提示——**行為不變**。
 - 每個 `role === "source_ifc"` 物件掛 ledger 狀態 chip（`ledgerChipStatus`：未轉／轉換中／ready／failed／狀態未明）；三段語意 badge（專案／種類／版本）照舊。
+- **每個物件（不限 source_ifc）的角色徽章**（來源 IFC／已轉 USDC／其他，`roleLabel`／`roleClass`）照舊——這是樹上辨識 USDC 產物的唯一視覺線索，不得與三段語意 badge 混同而遺失。
 - 點選 source IFC → 右欄切單檔詳情；再點一次或點「返回總覽」→ 右欄回全域視圖。
+- 已選中檔案在左欄以反白持續標示（即使之後導覽到其他資料夾）；單檔詳情提供「回到檔案所在資料夾」捷徑，避免深樹導覽迷失定向。
 - 資料夾 `has_source_ifc` badge 照舊。
 
 ### 3.2 右欄（未選檔）：全域轉檔視圖（去重化）
 
-- **A. 摘要卡**：watcher 啟用狀態＋開關鈕（沿用 intent→confirm `IntentDialog`、防重入 ref、證據型刷新——POST 成功但重抓失敗時不關 dialog 顯誠實錯誤）；佇列統計（佇列中 N／轉換中 N／失敗 N／完成 N）由 ifc-ready＋ledger 回應真值計算；任一來源被回傳窗截斷（count > items.length）時統計旁標「（回傳窗內，非全量）」，不顯示假總數。watcher 診斷欄位（bucket／prefix／baseline／triggered／seen／一致性基準與 auto-enroll 說明、last_triggered 表）收進「展開細節」折疊區，文案沿用現有（含 §3.4 auto-enroll 說明與補救路徑說明）。
-- **B. 轉檔佇列表**：CV 的 ifc-ready 表**全欄位保留**（job／key 三訊號（idem·replay·volatility）／lifecycle chip／project／usdc／conversion／dispatch 失敗原因（80 字截斷＋tooltip）／session（SS →、Review →）／stage／coverage drawer／插隊·重試控制）。新增一欄行為：列可對映回 MinIO 物件（ledger `object_key` 存在）時掛「檔案 →」鈕＝左欄導覽定位該檔並切單檔詳情。
+- **A. 摘要卡**：watcher 啟用狀態＋開關鈕（沿用 intent→confirm `IntentDialog`、防重入 ref、證據型刷新——POST 成功但重抓失敗時不關 dialog 顯誠實錯誤）；watcher 關閉琥珀警示條與開關鈕**同卡緊鄰呈現**（警示正下方即開關，不得隔著其他區塊）。佇列統計（佇列中 N／轉換中 N／失敗 N／完成 N）由 ifc-ready＋ledger 回應真值計算，**每個數字明標口徑來源**：佇列中／轉換中來自 ifc-ready（易失、重啟即清），完成／失敗來自 ledger（持久、跨重啟）——兩者生命週期不同，重啟後「完成 N 但佇列空」是正常現象，統計卡以口徑標示消除「數字對不上」困惑；任一來源被回傳窗截斷（count > items.length）時統計旁標「（回傳窗內，非全量）」，不顯示假總數。watcher 診斷欄位（bucket／prefix／baseline／triggered／seen／一致性基準與 auto-enroll 說明、last_triggered 表）收進「展開細節」折疊區，文案沿用現有（含 §3.4 auto-enroll 說明與補救路徑說明）；展開細節同時承接 CV 現有 Pipeline 總覽 Panel 的內容——頁級 LifecycleStrip（讀 MinIO→排隊→IFC→USD→寫回→通知 Kit）、conversion authority 說明（bim-streaming-server owns heavy conversion）、插隊／重試說明、**「concurrency 控制：NOT BUILT（獨立 follow-up 卡）」誠實揭露（prov=p1）不得隨去重化遺失**。
+- **B. 轉檔佇列表**：CV 的 ifc-ready 表**全欄位保留**（job／key 三訊號（idem·replay·volatility）／lifecycle chip／project／usdc／conversion／dispatch 失敗原因（80 字截斷＋tooltip）／session（SS →、Review →）／stage／coverage drawer／插隊·重試控制），**另補 IN 僅有的 `download_status`、`conversion_authority` 兩欄**（CV 現無，補列才達 IN 零損失）。新增一欄行為：列可對映回 MinIO 物件（ledger `object_key` 存在）時掛「檔案 →」鈕＝左欄導覽定位該檔並切單檔詳情。版面：表格外包 `overflow-x: auto` 捲動容器（右欄寬度小於現況 CV 滿版，13 欄不可擠壓變形或裁切）；顯示列數維持 20 上限，回傳筆數多於顯示時表尾標「顯示前 20／回傳 N 筆」，與摘要卡統計口徑互相可對照。
 - **C. 轉檔歷史**：`GET /api/dev/conversions` pass-through 表原樣，降為折疊區塊（prov=`artifact`、失敗顯「未取得」語意不變）。
 - watcher 關閉時的頁頂琥珀警示條（「⚠ 自動偵測已關閉…」）保留於右欄頂。
 
@@ -69,11 +71,11 @@
 
 ### 3.3 右欄（選中 source IFC）：單檔詳情
 
-由三源以既有鍵串接：minio object `idempotency_key` ↔ ledger `idempotency_key`；ledger `conversion_job_id` ↔ ifc-ready job `conversion_job_id`；ledger `object_key` ↔ minio `key`。
+由三源以既有鍵串接，**主鍵＝`idempotency_key`**（minio object ↔ ledger ↔ ifc-ready job 三視圖對帳既有主鍵，job 建立當下即賦值）；`conversion_job_id` 僅作已派工後的輔助確認——它在 queued／detected 階段恆為 null，不可當主鍵，否則未派工階段（佇列表最常見狀態）對映必落空；ledger `object_key` ↔ minio `key`。同檔多次轉檔嘗試（failed 後重試／強制重轉）：單檔詳情明示「顯示最新一次嘗試」，歷史嘗試由全域視圖的「轉檔歷史」折疊區塊（§3.2C）查閱。
 
 - **來源資訊**：object key、專案／種類／版本 badge、偵測時間（ledger `detected_at`）。
 - **生命週期條**：偵測 → 佇列 → 轉檔 → USDC → 審查（沿用 `LifecycleStrip`＋`LEDGER_STATUS_PROV` 三色語意）。
-- **狀態區**：ledger status chip、對應 conversion_job_id、usdc_key（null 標「待產生」p1）、失敗原因（failure_stage＋failure_reason 全文）。
+- **狀態區**：ledger status chip、對應 conversion_job_id、usdc_key（null 標「待產生」p1）、失敗原因（failure_stage＋failure_reason 全文）。失敗原因**來源＝ifc-ready job**（易失·重啟即清），非 ledger 欄位（`ConversionRecord` 無 failure_*）——ledger status=failed 但對應 job 已被重啟清空時，失敗原因誠實顯示「未取得（job 已回收）」，不臆測、不留白誤導。
 - **動作區**（依狀態顯示，全部沿用既有 intent→confirm＋防重入＋證據型更新契約）：
   - 觸發轉檔（未轉／failed／狀態未明可按；`POST /api/conversion/trigger`）
   - 重試（對應 job `dispatch_failed`／`dropped_on_restart`）
@@ -112,20 +114,22 @@
 | 14 | CV：轉檔歷史 pass-through | 折疊區塊（§3.2C） |
 | 15 | CV：SS →／Review → cross-link | 佇列表＋單檔詳情 |
 | 16 | CV：incoming handoff 重驗（job_id／conversion_id／minio_key） | §3.4 |
-| 17 | IN：ifc-ready 唯讀表 | 被 #10 涵蓋（原本即子集） |
+| 17 | IN：ifc-ready 唯讀表 | 動作被 #10 涵蓋；顯示另補 `download_status`／`conversion_authority` 兩欄於佇列表（§3.2B，CV 現無此二欄） |
 | 18 | IN：「CV →」「Review →」跳轉 | 同頁佇列表＋Review → |
 | 19 | IN：品質誠實標示 panel | 精簡併入單檔詳情 coverage 區（§3.3） |
 | 20 | 三頁 IntentDialog 防重入／證據型更新契約 | 全數沿用（§3.2A、§3.3） |
+| 21 | CV：Pipeline 總覽 Panel（頁級 LifecycleStrip＋conversion authority／插隊重試說明＋concurrency 控制 NOT BUILT 誠實揭露） | 摘要卡「展開細節」（§3.2A）；NOT BUILT 揭露不得遺失 |
+| 22 | M：逐物件角色徽章（來源 IFC／已轉 USDC／其他，不限 source_ifc） | 左欄原樣（§3.1） |
 
 ## 5. 路由、導覽與跨頁契約
 
-- `#minio` ＝新頁 MD。`#conv`、`#intake` 改為**重導 alias**：EdgeConsole `renderBody` 收到 `conv`／`intake` 時以 `window.location.replace`（或等效 hash 重寫）導向 `#minio` 並**保留 query string**（handoff id 由新頁照 §3.4 重驗）。依 `docs/plans/docs-plans-README.md` deep-link aliases 保留原則，路由不砍。
+- `#minio` ＝新頁 MD。`#conv`、`#intake` 改為**重導 alias**：以 `window.location.replace` 導向 `#minio` 並**保留 query string**（handoff id 由新頁照 §3.4 重驗）。重導**必須放在 `useEffect`**、不得在 render 期間執行（既有 `console.test.tsx` 以 `renderToString` 同步斷言純渲染，render 期副作用會污染測試慣例）。明示差異：這是本 repo 第一個「URL 重寫式」alias——既有 alias（`coordinator`／`semantic`／`overview` 等）是同 hash 直接 render 對應元件、網址列不變；`#conv`／`#intake` 改寫網址列為 `#minio` 是刻意設計（單一正典 URL），已含於使用者 2026-07-06 合併裁決（§9）。依 `docs/plans/docs-plans-README.md` deep-link aliases 保留原則，路由不砍。
 - `data.ts` `PAGES`：移除 `conv`、`intake` 兩項；`minio` 項改 `no: "MD"`、`label: "模型資料與轉檔"`。`NAV_LABEL`：`minio: { tech: "Model Data & Conversion", biz: "模型資料與轉檔" }`；`conv`／`intake` 條目保留（alias 期間 title 仍可解析）。
 - FlowBar：①接收建模來源、②自動轉換 3D 改 `page: "minio"`。
 - `COPILOT_PROMPTS`：`conv` 與 `minio` 條目合併至 `minio`。
-- `handoff.ts` `AxisKey` 七軸型別**不變**（舊 URL parse 相容）；`EdgeConsole` `AXIS_SET`→`railAxis` 對映將 `conv`／`intake` 歸到 `minio`。發送端更新：`IssuesRuleCenterPage`（A1）等頁的 `buildHandoff("conv", …)` 改 target `"minio"`（payload 欄位不變）；`buildHandoff("minio", …)` 照舊。
+- `handoff.ts` `AxisKey` 七軸型別**不變**（舊 URL parse 相容）；`EdgeConsole` `AXIS_SET`→`railAxis` 對映將 `conv`／`intake` 歸到 `minio`。發送端更新：`IssuesRuleCenterPage`（A1）等頁的 `buildHandoff("conv", …)` 改 target `"minio"`（payload 欄位不變）；`buildHandoff("minio", …)` 照舊。**MD 頁自身對外送出 handoff 時 `source` 一律填 `"minio"`**（原 CV／IN 程式碼搬移時同步更新原本的 `source:"conv"`／`source:"intake"`——`source` 是接收端原樣顯示給使用者的來源標籤，不得指向已不存在的獨立頁）。
 - `routing.ts` `PRODUCT_CONSOLE_ROUTES` 不動。
-- SharedStatusRail 七軸顯示：`conv`／`intake` 兩軸的狀態格對映到 MD（實作於 rail 的 axis→route 對映，不改 rail 資料源）。
+- SharedStatusRail：rail 本身**無 per-axis 狀態格**（僅 5 個固定指標＋3 顆固定按鈕，無 conv/intake/minio 專屬格位），不需變更；唯一要改的是上一點的 `railAxis` 對映，讓 `activeAxis` 在 MD 頁正確標示。
 
 ## 6. 元件結構（順手改善）
 
@@ -140,7 +144,7 @@ web-viewer-sample/src/console/modelData/
   useConversionData.ts     # 共用資料層：jobs／records／watcher／history 抓取＋截斷旗標＋防重入 action hooks
 ```
 
-- 既有共用件直接 import：`IntentDialog`、`Panel`／`Field`／`Btn`、`LifecycleStrip`、`CoverageDrawer`、`ledgerChipStatus`、`LEDGER_STATUS_LABEL/PROV`、`useIncomingHandoff`、`IncomingHandoffBanner`、`buildHandoff`。防重入 ref／證據型更新等既驗證邏輯以搬移為主，不重寫。
+- 共用件分兩類：`IntentDialog`、`Panel`／`Field`／`Btn`、`useIncomingHandoff`、`IncomingHandoffBanner`、`buildHandoff` 已是可 import 的共用模組，直接 import；但 `LifecycleStrip`、`CoverageDrawer`、`ledgerChipStatus`、`LEDGER_STATUS_LABEL`／`LEDGER_STATUS_PROV`（及 `lifecycleLabel`、`roleLabel`／`roleClass`）目前是 **pages.tsx 內未 export 的私有宣告**——前置步驟：先抽至共用檔（如 `modelData/conversionShared.tsx`）並補 export，`modelData/*` 才能 import；此步在 plan 列為獨立 task。防重入 ref／證據型更新等既驗證邏輯以搬移為主，不重寫。
 - `OperatorConsole.tsx`＋`IntakeSelectPage.tsx`（退役入口專用）不動。
 
 ## 7. 錯誤處理
@@ -149,14 +153,14 @@ web-viewer-sample/src/console/modelData/
 
 ## 8. 測試與驗收
 
-- **單元測試遷移**：`MinioDataPage.test.tsx`→`MinioTreePane`／`ModelDataPage`；`ConversionSchedulingPage.test.tsx`→`GlobalConversionPane`／`ObjectDetailPane`／`useConversionData`；`ConversionHistory.test.tsx`、`MinioCrossLinks.test.tsx`、`IntakeCrossLinks.test.tsx`、`console.test.tsx`（nav／FlowBar 斷言）、`EdgeConsole.sharedstatus.test.tsx`（railAxis 對映）對應改寫。新增：alias 重導保留 query、佇列列「檔案 →」定位、單檔詳情三源串接與對映缺口 indeterminate。
+- **單元測試遷移**：`MinioDataPage.test.tsx`→`MinioTreePane`／`ModelDataPage`；`ConversionSchedulingPage.test.tsx`→`GlobalConversionPane`／`ObjectDetailPane`／`useConversionData`；`ConversionHistory.test.tsx`、`MinioCrossLinks.test.tsx`、`IntakeCrossLinks.test.tsx`、`console.test.tsx`（nav／FlowBar 斷言）對應改寫。railAxis 對映斷言落點注意：既有 `activeAxis` 斷言在 `SharedStatusRail.test.tsx`（`EdgeConsole.sharedstatus.test.tsx` 測的是 SharedStatusProvider 資料，勿改錯檔）——conv/intake→minio 對映斷言加在 `SharedStatusRail.test.tsx` 或新增 EdgeConsole railAxis 測試。新增：alias 重導保留 query（含「重導在 useEffect、renderToString 純渲染不觸發導航」）、佇列列「檔案 →」定位、單檔詳情三源串接（idempotency_key 主鍵）與對映缺口 indeterminate。
 - **驗證入口**：`npm run verify`（build＋test＋struct-log）＋另跑 `npx tsc --noEmit`（vite build 不跑 tsc）。
-- **瀏覽器 E2E（user-facing 驗收唯一證據）**：gstack 截圖／trace 至少覆蓋——(1) `#conv?job_id=…` 舊連結重導後佇列高亮；(2) 左欄點 source IFC → 單檔詳情顯示真實 ledger 狀態；(3) failed 檔觸發轉檔 intent→confirm 全程；(4) watcher 開關 dialog 證據型刷新；(5) 佇列插隊／重試按鈕狀態守門。
+- **瀏覽器 E2E（user-facing 驗收唯一證據）**：gstack 截圖／trace 至少覆蓋——(1) `#conv?job_id=…` 舊連結重導後佇列高亮；(2) 左欄點 source IFC → 單檔詳情顯示真實 ledger 狀態；(3) failed 檔觸發轉檔 intent→confirm 全程；(4) watcher 開關 dialog 證據型刷新；(5) 佇列插隊／重試按鈕狀態守門；(6) 右欄實際寬度下佇列表 `overflow-x` 捲動可讀（無擠壓變形／裁切）截圖。
 - 部署驗收：`build:ui` 後經 coordinator `:8004/ui` 實測（viewer :5173 baked image 另計，不在本案範圍——本三頁皆屬 `:8004/ui` console）。
 
 ## 9. 與既有 spec 的調和
 
-- `2026-07-03-seven-axis-cross-page-harmony-design.md`：其 §4.2 接收端重驗鐵律、§4.3 evidence-typed cross-link 契約**繼續適用**；本 spec supersede 其「conv／minio／intake 為三個獨立頁」的版面預設——七軸中 `conv`／`intake`／`minio` 三軸 UI 收斂為單頁 MD，handoff payload 與重驗語意不變，發送端 target 更新見 §5。
+- `2026-07-03-seven-axis-cross-page-harmony-design.md`：**本 spec 是對其 Non-Negotiable N1（不得單頁合併）的正式部分覆寫，非單純調和**。N1 與其 §9 Tournament 曾明文否決「單頁合併」；本 spec 將 `conv`／`intake`／`minio` 三軸 UI 收斂為單頁 MD（七實體頁→五實體頁）。**覆寫授權紀錄**：使用者於 2026-07-06 明確指示「CV 和 IN 兩個頁面功能相同，可以整合後，將功能放到 MinIO 資料介面中，再根據三個頁面的功能重新設計新介面」（附截圖圈選三頁），並於同日三項互動決策確認（主從雙欄工作台／全域視圖去重化／命名「模型資料與轉檔」）——依需求效力序，使用者最新明確指令覆寫既有 spec 裁決。Tournament 當時否決單頁合併的理由逐項對應：canonical IA→§5 alias 重導＋routing 認列不變；deep-link 破壞→重導保留 query；巨頁難維護難測→§6 四檔拆分＋per-pane 測試。N1 其餘部分（deep-link aliases 保留不砍）仍遵守；其 §4.2 接收端重驗鐵律、§4.3 evidence-typed cross-link 契約**繼續適用**，handoff payload 與重驗語意不變，發送端 target 與 source 更新見 §5。
 - `docs/plans/docs-plans-README.md` deep-link alias 保留原則：遵守（§5 重導 alias）。
 - 沿用中的 conv 系列 spec（coverage report／prioritize-retry／watch-toggle／minio-watch 等）之互動契約（IX 卡：禁樂觀更新、證據型更新）不受影響，僅承載頁面改變。
 
@@ -165,7 +169,7 @@ web-viewer-sample/src/console/modelData/
 | 風險 | 緩解 |
 |---|---|
 | 測試遷移量大（三頁測試合計逾千行） | §6 以搬移為主不重寫；plan 按 pane 分 task，逐 pane 綠燈 |
-| 三源串接鍵對映缺口（object 無 ledger、job 無 object_key） | §3.3 誠實顯示「未轉」／「狀態未明」；非 MinIO job 一律在佇列表可操作 |
+| 三源串接鍵對映缺口（object 無 ledger、job 無 object_key、job 被重啟清空） | 主鍵用 `idempotency_key`（job 建立即賦值）消除 queued/detected 階段 `conversion_job_id=null` 的對映空窗；其餘缺口依 §3.3 誠實顯示「未轉」／「狀態未明」／「未取得（job 已回收）」；非 MinIO job 一律在佇列表可操作，無 object_key 列「檔案 →」欄顯示中性文案（如「非 MinIO 來源」）而非留空 |
 | 舊書籤／外部文件指向 #conv、#intake | 重導 alias＋保留 query；routing 認列不變 |
 | e2e trace 錨（`artifacts/e2e/conv-watch-toggle-trace/` 等）指向舊頁 | 驗收重錄於新頁；舊 trace 保留為歷史 |
 | pages.tsx 大幅刪改與並行 PR 衝突 | 單一 branch 完成、PR 前 rebase origin/main |
