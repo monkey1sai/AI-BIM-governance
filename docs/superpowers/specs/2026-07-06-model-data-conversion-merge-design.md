@@ -3,6 +3,16 @@
 - 日期：2026-07-06
 - 狀態：設計已由使用者確認（brainstorming 三決策：主從雙欄工作台／全域視圖去重化／命名「模型資料與轉檔」）；已通過交叉對抗審批（2026-07-06，5 視角×2-lens 反駁、39 agents——CONFIRMED 5 項全數修正、PLAUSIBLE 9 項採納 9、REFUTED 3 項不採納，詳見 git 歷史第二次 commit）
 - 範圍：`web-viewer-sample` console 前端；後端 API 一律不改（後端凍結契約：只打 coordinator `:8004`）
+- PR evidence：documented exception for PR #303。Repo 自 #189 退役 active OpenSpec flow；本檔作為 `docs/superpowers/specs/*.md` formal spec evidence，供 `pr-review-agent` 對 behavior / code PR 判定需求來源。
+
+## 0. PR #303 A1 addendum
+
+PR #303 除 MD 三頁合一外，包含 A1 MinIO / local_fs 檢核入口修正，範圍限於前端 orchestration 與測試：
+
+- `local_fs` 代表 governance-service 可直接讀取的 server-local IFC path；A1 可直接呼叫 governance rule-run。
+- `MinIO` 代表 object key / bucket provenance，不可直接當成 `ifc_source_path` 丟給 governance-service；若使用者已選 review session，A1 SHALL 透過 coordinator `rule-runs/for-session` 由 session / intake context 解析 server-local IFC path。
+- A1 檢核完成後，失敗列 SHALL 提供一鍵開啟 `#review` 的 Review Room handoff，攜帶 `rule_run_id`、`ifc_guid`、`usd_prim_path` 等非機密上下文；不得只因尚未手動選 review session 就把 handoff 按鈕 disabled。
+- 實際 3D highlight 是否可視仍由 Review Room runtime 負責：session、viewer lease、first frame、DataChannel、stage match 與 mapping path 必須在 runtime 層觀測成立，A1 不 claim viewer lease。
 
 ## 1. 背景與驗證事實
 
