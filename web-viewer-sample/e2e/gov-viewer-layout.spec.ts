@@ -9,6 +9,11 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
 
     const mv = page.getByTestId("mock-viewport");
     await expect(mv).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("geo-viewer-left-model")).toBeVisible();
+    await expect(page.getByTestId("geo-viewer-center-stage")).toBeVisible();
+    await expect(page.getByTestId("geo-viewer-right-semantic")).toBeVisible();
+    await expect(page.getByTestId("geo-viewer-bottom-mapping")).toBeVisible();
+    await expect(page.getByTestId("geo-viewer-runtime-evidence")).toContainText(/primary|spectator|session/i);
 
     // 明標非壞掉
     await expect(page.getByTestId("mock-viewport-banner")).toContainText(/no-GPU|deterministic/);
