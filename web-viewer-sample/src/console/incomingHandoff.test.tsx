@@ -9,6 +9,7 @@ import { IncomingHandoffBanner, useIncomingHandoff } from "./incomingHandoff";
 import { A1GovernanceWorkbenchPage, ConversionSchedulingPage, KitGpuFleetPage, MinioDataPage, SessionManagementPage } from "./pages";
 import { SharedStatusProvider } from "./SharedStatusProvider";
 import { coordinatorClient, type ConversionRecord, type MinioFolderListing, type RuntimeStatus, type RuntimeSessionSummary } from "./coordinatorClient";
+import { governanceClient } from "./governanceClient";
 import { type SharedStatusSnapshot } from "./useSharedStatus";
 
 // ---- shared primitive: re-verify + honest render, no silent fallback (this fully covers the logic) ----
@@ -111,7 +112,12 @@ async function waitFor(assert: () => void, maxTicks = 40): Promise<void> {
 
 describe("receiving pages re-verify the incoming handoff id", () => {
   let container: HTMLDivElement;
-  beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); });
+  beforeEach(() => {
+    (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue({ root: "", source_kind: "local_fs", projects: [] });
+  });
   afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = ""; });
 
   it("M navigates to a real incoming minio_key's folder and verifies it there (root list never holds the deep key)", async () => {
@@ -248,9 +254,9 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     expect(container.querySelector('[data-testid="a1-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
   });
 
-  // reviewer P2（Codex，已核實）：過去 verified banner 只顯示「已重驗」，從未把 handoff 帶來的 minio_key 真的
-  // 帶進 selectedKey——operator 仍要手動從下拉重找同一份檔案，a1-step-pick 也因 selectedKey 空而停用。
-  it("A1 seeds the MinIO select dropdown from a verified incoming minio_key (so a1-step-pick becomes actionable)", async () => {
+  // verified handoff seeds the MinIO selector, but MinIO object keys are not server-local ifc_source_path.
+  // The direct CPU pick stays disabled to avoid POST /api/governance/rule-runs 400.
+  it("A1 seeds the MinIO select dropdown from a verified incoming minio_key without enabling direct CPU rule-run", async () => {
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ objects: [
       { key: CN_KEY, etag: "e1", role: "source_ifc", project_id: "270", project_display_name: "270", category: "建築", version: "v07", idempotency_key: "mw_abc" },
     ] } as never);
@@ -263,7 +269,8 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     const select = container.querySelector('[data-testid="a1-minio-select"]') as HTMLSelectElement;
     expect(select.value).toBe(CN_KEY);
     const pick = container.querySelector('[data-testid="a1-step-pick"]') as HTMLButtonElement;
-    expect(pick.disabled).toBe(false);
+    expect(pick.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="a1-minio-source-note"]')?.textContent).toContain("server-local IFC path");
   });
 
   it("CV verifies an incoming job_id against the fetched ifc-ready jobs (verified)", async () => {

@@ -7,6 +7,7 @@ export type A1Step = "idle" | "picked" | "running" | "scored" | "issued" | "deli
 export interface A1State {
   step: A1Step;
   ifcPath: string;
+  modelVersionId: string;
   run: RuleRunStatus | null;
   failed: RuleResultRow[];
   issueCount: number | null;
@@ -20,13 +21,13 @@ export interface A1State {
 }
 
 export const initialA1State: A1State = {
-  step: "idle", ifcPath: "", run: null, failed: [],
+  step: "idle", ifcPath: "", modelVersionId: "", run: null, failed: [],
   issueCount: null, exported: false, issuesCreated: false, bcfExported: false,
   error: null, runError: false,
 };
 
 export type A1Event =
-  | { type: "PICK_FILE"; ifcPath: string }
+  | { type: "PICK_FILE"; ifcPath: string; modelVersionId?: string }
   | { type: "RUN" }
   | { type: "RUN_RETRY" }
   | { type: "RUN_PROGRESS"; run: RuleRunStatus }
@@ -40,7 +41,12 @@ export type A1Event =
 export function a1Reducer(state: A1State, event: A1Event): A1State {
   switch (event.type) {
     case "PICK_FILE":
-      return { ...initialA1State, step: event.ifcPath ? "picked" : "idle", ifcPath: event.ifcPath };
+      return {
+        ...initialA1State,
+        step: event.ifcPath ? "picked" : "idle",
+        ifcPath: event.ifcPath,
+        modelVersionId: event.modelVersionId ?? "",
+      };
     case "RUN":
       if (state.step === "idle" || !state.ifcPath) return state;
       // 已在 running 時忽略再次 RUN(雙擊/誤觸):否則 run 被清成 null 但 step 仍 running,

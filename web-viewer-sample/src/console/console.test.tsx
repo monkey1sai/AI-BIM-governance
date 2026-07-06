@@ -29,7 +29,7 @@ import { StreamConfigReader } from "./StreamConfigReader";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
-import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
+import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
@@ -430,7 +430,11 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain("rule_run_id");
     expect(a1).not.toContain('data-testid="a1-real-ifc-slice"');
     expect(a1).not.toContain('data-testid="real-ifc-demo-control"');
-    expect(a1).toContain('data-testid="a1-minio-select"'); // step① 已改下拉
+    expect(a1).toContain('data-testid="a1-source-picker"');
+    expect(a1).toContain('data-testid="a1-localfs-select"'); // default executable source is local_fs
+    expect(a1).toContain('data-testid="a1-source-minio"'); // MinIO source is available but not sent as ifc_source_path
+    expect(a1).toContain('data-testid="a1-bridge-rail"');
+    expect(a1).toContain('data-testid="a1-bcf-review-panel"');
     expect(a1).not.toContain('data-testid="a1-step-path"'); // 手打路徑文字框已移除
     expect(a1).toContain('data-testid="a1-step-run"');
     expect(a1).toContain('data-testid="a1-step-issues"');
@@ -1546,6 +1550,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 describe("A1 step① MinIO 下拉（B2）", () => {
   it("getMinioObjects 回 source_ifc + parsed_usdc → A1 只列 source_ifc，文字框 a1-step-path 不再渲染", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockRejectedValue(new Error("offline"));
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue({ root: "", source_kind: "local_fs", projects: [] });
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 2,
       objects: [
@@ -1559,6 +1564,9 @@ describe("A1 step① MinIO 下拉（B2）", () => {
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
     for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="a1-source-minio"]')!.click();
+    });
     const select = container.querySelector('[data-testid="a1-minio-select"]') as HTMLSelectElement | null;
     expect(select).not.toBeNull();
     // 只列 source_ifc（1 個真選項 + 1 個 placeholder option）。
@@ -1907,6 +1915,18 @@ describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 
 // 故用 createRoot + act + vi.spyOn 補上 client-render 互動驗收。
 describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作失敗 UI 回饋）", () => {
   const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
+  const A1_LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
+  const a1FilesTree: FilesTreeResponse = {
+    root: "C:/Repos/active/iot/AI-BIM-governance/storage",
+    source_kind: "local_fs",
+    projects: [{
+      project_id: "270",
+      models: [{
+        model_id: "建築",
+        versions: [{ name: "model.ifc", path: A1_LOCAL_IFC_PATH, size_bytes: 12345, mtime: "2026-07-06T00:00:00+08:00" }],
+      }],
+    }],
+  };
   let container: HTMLDivElement;
   let prevActEnv: unknown;
   const fakeRunStatus = (status: RuleRunStatus["status"]): RuleRunStatus => ({
@@ -1937,6 +1957,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
       configured_endpoints: { viewer: { browser_url_base: "" } }, // viewerOrigin 留空 → 不掛 EmbeddedViewer，斷言面不變
     } as never);
     vi.spyOn(governanceClient, "elementMappingForSession").mockResolvedValue({ mock: false, summary: { fake_mapping_count: 0 }, items: [] });
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(a1FilesTree);
     // A1 step① 改 MinIO 下拉後，mount 會打 getMinioObjects()；回單一 source_ifc 物件讓 pickModel 能選到該 option。
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control", count: 1,
@@ -1955,13 +1976,13 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { el.click(); });
   };
 
-  // A1 step① 改 MinIO 下拉後，a1-step-pick 在未選 key 時 disabled。pickModel 先在下拉選到 source_ifc
-  // 物件（設 selectedKey）再點 pick，讓既有 doRun 測試能照常推進 step。fake timers 下先沖一拍 microtask，
-  // 確保 getMinioObjects().then 已渲染 option，sel.value 才選得到。
-  const pickModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+  // A1 v2 executable source is local_fs: pickModel selects the server-local path returned by filesTree(),
+  // then locks it before running CPU rule-run. This is the regression guard against sending MinIO keys
+  // as ifc_source_path.
+  const pickModel = async (path = A1_LOCAL_IFC_PATH) => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-minio-select"]')!;
-    await act(async () => { sel.value = key; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-localfs-select"]')!;
+    await act(async () => { sel.value = path; sel.dispatchEvent(new Event("change", { bubbles: true })); });
     await clickByTestId("a1-step-pick");
   };
 
@@ -2085,6 +2106,16 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     // 第一次匯出：fetch 丟例外（後端離線）。
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
     const issuesSpy = vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
+    vi.spyOn(governanceClient, "getIssue").mockImplementation(async (id: string): Promise<IssueRow> => ({
+      id,
+      kind: "issue",
+      title: `issue ${id}`,
+      status: "open",
+      severity: "medium",
+      ifc_guid: `guid-${id}`,
+      usd_prim_path: null,
+      source_type: "rule_result",
+    }));
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
@@ -2391,6 +2422,16 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
+    vi.spyOn(governanceClient, "getIssue").mockImplementation(async (id: string): Promise<IssueRow> => ({
+      id,
+      kind: "issue",
+      title: `issue ${id}`,
+      status: "open",
+      severity: "medium",
+      ifc_guid: `guid-${id}`,
+      usd_prim_path: null,
+      source_type: "rule_result",
+    }));
     // BCF fetch 成功。
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(new Blob(["bcf-bytes"]), { status: 200 }),
