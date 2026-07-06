@@ -24,6 +24,35 @@ def test_validate_rejects_illegal_effort():
     except ValueError:
         pass
 
+def _fallback_base():
+    return {"tiers": {"x": {"model":"sonnet","effort":"max","fallback":[{"model":"opus","effort":"max"}]}},
+            "allowed_efforts": {"sonnet":["high","max"], "opus":["xhigh","max"]}}
+
+def _assert_validate_raises(data):
+    try:
+        gen.validate(data); assert False, "should have raised"
+    except ValueError:
+        pass
+
+def test_validate_accepts_legal_fallback():
+    gen.validate(_fallback_base())
+
+def test_validate_rejects_missing_fallback():
+    data = _fallback_base(); del data["tiers"]["x"]["fallback"]
+    _assert_validate_raises(data)
+
+def test_validate_rejects_fallback_unknown_model():
+    data = _fallback_base(); data["tiers"]["x"]["fallback"] = [{"model":"gpt","effort":"max"}]
+    _assert_validate_raises(data)
+
+def test_validate_rejects_fallback_illegal_effort():
+    data = _fallback_base(); data["tiers"]["x"]["fallback"] = [{"model":"opus","effort":"low"}]
+    _assert_validate_raises(data)
+
+def test_validate_rejects_fallback_identical_to_primary():
+    data = _fallback_base(); data["tiers"]["x"]["fallback"] = [{"model":"sonnet","effort":"max"}]
+    _assert_validate_raises(data)
+
 def test_apply_replaces_marker_region():
     text = "a\n// <routing:gen>\nOLD\n// </routing:gen>\nb\n"
     out = gen.apply_to_text(text, "// <routing:gen>\nNEW\n// </routing:gen>")
