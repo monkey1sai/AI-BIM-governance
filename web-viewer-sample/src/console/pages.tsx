@@ -246,12 +246,13 @@ export function OverviewPage() {
 }
 
 function buildA1ReviewRoomHandoffHash(args: {
-  sessionId: string;
+  sessionId?: string;
   runId: string | null;
   row: RuleResultRow | null | undefined;
   expectedStageUrl?: string | null;
 }): string {
-  const q = new URLSearchParams({ source: "a1", session: args.sessionId });
+  const q = new URLSearchParams({ source: "a1" });
+  if (args.sessionId) q.set("session", args.sessionId);
   if (args.runId) q.set("rule_run_id", args.runId);
   if (args.row?.ifc_guid) q.set("ifc_guid", args.row.ifc_guid);
   if (args.row?.usd_prim_path) q.set("usd_prim_path", args.row.usd_prim_path);
@@ -268,8 +269,7 @@ function buildA1ReviewRoomHandoffHash(args: {
   return `#review?${q.toString()}`;
 }
 
-function a1ReviewRoomHandoffReason(row: RuleResultRow | null | undefined, selectedSession: string): string {
-  if (!selectedSession) return t("尚未選取 review session", "No review session selected yet");
+function a1ReviewRoomHandoffReason(row: RuleResultRow | null | undefined): string {
   if (!row) return t("尚無失敗構件可交給 Review Room", "No failed element to hand off to Review Room");
   if (!row.ifc_guid) return t("此構件無 ifc_guid，無法定位", "This element has no ifc_guid; it cannot be located");
   return "";
@@ -438,7 +438,9 @@ export function A1GovernanceWorkbenchPage() {
         ids_path: idsPath || undefined,
       } as { ifc_source_path: string; ids_path?: string; model_version_id?: string };
       if (state.modelVersionId) runRequest.model_version_id = state.modelVersionId;
-      const { rule_run_id } = await governanceClient.createRuleRun(runRequest);
+      const { rule_run_id } = selectedSession
+        ? await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined })
+        : await governanceClient.createRuleRun(runRequest);
       if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -596,7 +598,7 @@ export function A1GovernanceWorkbenchPage() {
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
       <IncomingHandoffBanner testId="a1-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
-      <p className="ec-lead">{t("上傳/選取 IFC，跑自動規則檢核，直接產生 Issue、Excel 匯出與 BCF 2.1 匯出（建 Issue 後方可下載）。規則檢核在 governance-service（CPU）完成；3D 檢視與高亮改由 Review Room 手動啟動 Kit/session，不在 A1 自動嵌入 viewer 或 claim lease。", "Upload/select an IFC, run automated rule validation, then generate Issues, Excel export and BCF 2.1 export (download enabled only after Issues are created). Rule validation runs in the governance-service (CPU); 3D review and highlighting are manually started in Review Room, not auto-embedded or auto-claimed by A1.")}</p>
+      <p className="ec-lead">{t("選取 MinIO 偵測到的 IFC，先讓 coordinator 綁定 server-local IFC path，再跑 governance-service CPU 規則檢核；3D 檢視與高亮由 Review Room 開啟，不在 A1 自動嵌入 viewer 或 claim lease。", "Select a MinIO-detected IFC, let the coordinator bind the server-local IFC path, then run governance-service CPU validation; 3D review and highlighting open in Review Room, not by auto-embedding or auto-claiming a viewer in A1.")}</p>
 
       <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
         <LifecycleStrip steps={[t("選檔", "Select File"), t("自動檢核", "Auto Validate"), t("結果記分板", "Result Scoreboard"), t("開 Issue", "Open Issue"), t("匯出 Excel", "Export Excel")]} statuses={ui} />
@@ -708,7 +710,7 @@ export function A1GovernanceWorkbenchPage() {
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
               健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
           <Btn primary data-testid="a1-step-run" disabled={state.step === "idle" || !state.ifcPath || (state.step === "running" && !state.runError)}
-            caption={state.ifcPath ? "POST /api/governance/rule-runs" : t("先選定 IFC 模型；不需要 review session 即可檢核", "Select an IFC model first; review session is not required for validation")} onClick={doRun}>
+            caption={state.ifcPath ? (selectedSession ? "POST /api/governance/rule-runs/for-session/:sessionId" : "POST /api/governance/rule-runs") : t("先選定 IFC 模型", "Select an IFC model first")} onClick={doRun}>
             {state.runError ? t("重試檢核", "Retry Validation") : state.step === "running" ? t("檢核中…", "Validating…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
           {state.runError && <span className="ec-warn-note">{t("檢核失敗（可重試）：", "Validation failed (retryable): ")}{state.error}</span>}
@@ -740,16 +742,16 @@ export function A1GovernanceWorkbenchPage() {
         </Panel>
       )}
 
-      <Panel title={t("review session（3D 連動目標）", "review session (3D handoff target)")} sub={t("A1 rule-run 直接對已選 IFC 檔案執行；review session 只供 Review Room 手動 attach / highlight trace", "A1 rule-run runs directly on the selected IFC file; review session is only for manual Review Room attach / highlight trace")} prov="asbuilt">
+      <Panel title={t("review session（3D 連動目標）", "review session (3D handoff target)")} sub={t("MinIO 來源的 rule-run 優先走 review session，由 coordinator 解析 server-local IFC path；Review Room 負責 attach / highlight trace。", "MinIO-backed rule-runs prefer a review session so the coordinator can resolve the server-local IFC path; Review Room owns attach / highlight trace.")} prov="asbuilt">
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
-            <p className="ec-note">{t("無 active session。治理檢核仍可對已選 IFC 檔案執行；只有 3D Review Room / highlight 需要先建立 review session。", "No active session. Governance validation can still run on the selected IFC file; only 3D Review Room / highlight requires a review session.")}</p>
+            <p className="ec-note">{t("無 active session。請先把選定 MinIO 模型排入轉檔；ready 後本頁會選到對應 session，再用 coordinator 解析出的 server-local IFC path 跑檢核。", "No active session. Queue the selected MinIO model for conversion first; once ready, this page selects its session and runs validation through the coordinator-resolved server-local IFC path.")}</p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Btn data-testid="a1-trigger-convert" disabled
                 caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
                 {t("A1 不排入轉檔", "A1 does not queue conversion")}
               </Btn>
-              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("conv", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
             </div>
           </div>
         ) : (
@@ -769,7 +771,7 @@ export function A1GovernanceWorkbenchPage() {
               </select>
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
-              <Field k="selected session" v={selectedSession || t("not_selected（不阻擋治理檢核）", "not_selected (does not block governance validation)")} prov={selectedSession ? "asbuilt" : "p1"} />
+              <Field k="selected session" v={selectedSession || t("not_selected（未綁定 server-local IFC path）", "not_selected (server-local IFC path not bound)")} prov={selectedSession ? "asbuilt" : "p1"} />
               <Field k="3D handoff" v={t("Review Room owns viewer lease / first frame / stage match / highlight trace", "Review Room owns viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
               <Field k="A1 auto attach" v={t("disabled by design", "disabled by design")} prov="asbuilt" />
             </div>
@@ -883,20 +885,20 @@ export function A1GovernanceWorkbenchPage() {
             lease、first frame、stage match、highlight result 由 Review Room 的專用畫面觀測與執行。 */}
         {(() => {
           const f0 = state.failed[0];
-          const disabledReason = a1ReviewRoomHandoffReason(f0, selectedSession);
+          const disabledReason = a1ReviewRoomHandoffReason(f0);
           const expectedStageUrl = sessions.find((s) => s.session_id === selectedSession)?.expected_stage_url ?? null;
-          const href = selectedSession
-            ? buildA1ReviewRoomHandoffHash({ sessionId: selectedSession, runId, row: f0, expectedStageUrl })
-            : "#review?source=a1";
+          const href = buildA1ReviewRoomHandoffHash({ sessionId: selectedSession || undefined, runId, row: f0, expectedStageUrl });
           return (
             <Btn data-testid="a1-open-review-room"
               disabled={Boolean(disabledReason)}
-              caption={disabledReason || t("開啟 #review，Review Room 會手動 attach Kit/session 再執行 highlight", "Open #review; Review Room manually attaches Kit/session before highlight")}
+              caption={disabledReason || (selectedSession
+                ? t("開啟 #review 並帶入目前 review session / 第一筆失敗構件", "Open #review with the selected review session and first failed element")
+                : t("開啟 #review；可在 Review Room 內選 session / attach Kit 再高亮", "Open #review; choose a session and attach Kit inside Review Room before highlighting"))}
               onClick={() => {
-                if (!selectedSession || !f0?.ifc_guid) return;
+                if (!f0?.ifc_guid) return;
                 window.location.hash = href;
               }}>
-              {t("開啟 Review Room（第一筆失敗）", "Open Review Room (first failure)")}
+              {t("開啟 3D Review Room", "Open 3D Review Room")}
             </Btn>
           );
         })()}{" "}

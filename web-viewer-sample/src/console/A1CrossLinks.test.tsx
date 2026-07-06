@@ -21,13 +21,13 @@ describe("A1 cross-link chips", () => {
     expect((sessions as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("upgrades the existing a1-conv-link to carry source=a1 (spec §4.3 A1 → CV 『既有連結，補帶 source/id』)", () => {
+  it("upgrades the existing a1-conv-link to target #minio directly, carrying source=a1 (MD 三頁合一 Task 8：A1 → 模型資料與轉檔頁)", () => {
     const html = renderToString(<A1GovernanceWorkbenchPage />);
     const doc = new DOMParser().parseFromString(html, "text/html");
     const convLink = doc.querySelector('[data-testid="a1-conv-link"]');
     expect(convLink).not.toBeNull();
     const href = convLink?.getAttribute("href") ?? "";
-    expect(href.startsWith("#conv")).toBe(true); // canonical hash (no slash), replacing the old #/conv
-    expect(href).toContain("source=a1");         // receiver (CV, Task 14) reads source; job_id appended when a conv job exists
+    expect(href.startsWith("#minio")).toBe(true); // MD 合一後直接指向 #minio，不再依賴 #conv → #minio alias 重導（Task 7/8）
+    expect(href).toContain("source=a1");          // receiver (ModelDataPage) reads source; job_id appended when a conv job exists
   });
 });
