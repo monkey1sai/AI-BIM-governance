@@ -27,6 +27,7 @@ type AppInternals = {
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
   _appendReviewEvent: (event: string) => void;
   _appendDemoOutgoing: (label: string, payload: unknown) => void;
+  _appendDemoIncoming: (label: string, payload: unknown) => void;
   _completeStageLoad: (loadedUrl?: string) => void;
   _completeStageLoadFromVisibleStream: () => boolean;
   _finishStageLoad: () => void;

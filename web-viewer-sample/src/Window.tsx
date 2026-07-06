@@ -2583,9 +2583,6 @@ export default class App extends React.Component<AppProps, AppState> {
                         {window.parent !== window && (
                           <p className="ec-note" data-testid="viewer-embedded-list-collapsed">失敗清單由治理工作台（parent）顯示，此 3D 視窗僅作高亮引擎。</p>
                         )}
-                        <p className="ec-note" data-testid="geo-viewer-runtime-evidence">
-                            role: {streamRole === "primary" ? "PRIMARY" : "SPECTATOR"} | session: {this.state.reviewSessionId || "未取得"} | lifecycle: {lifecycle || "unknown"}
-                        </p>
                         <GovernanceOverlay
                             variant={this.state.viewerTab === "issues" ? "panel" : "overlay"}
                             panelState={inputs.panelState}
