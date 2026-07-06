@@ -116,6 +116,47 @@ try {
     foreach ($marker in @('Required checks', 'agent-governance', 'CODEOWNERS', 'branch protection', 'remote-only', 'PR body evidence')) {
         Assert-True ($reviewDoc -match [regex]::Escape($marker)) "PR review doc contains $marker"
     }
+
+    # Machine gates for openspec/specs/agent-doc-context-budget/spec.md:
+    # line budgets, sub-file index completeness, dead-link liveness, mirror declaration, mirror pairing.
+    $agentsBody = Get-Content -LiteralPath 'AGENTS.md' -Raw
+    $claudeBody = Get-Content -LiteralPath 'CLAUDE.md' -Raw
+    $agentsLineCount = @(Get-Content -LiteralPath 'AGENTS.md').Count
+    $claudeLineCount = @(Get-Content -LiteralPath 'CLAUDE.md').Count
+    Assert-True ($agentsLineCount -le 250) "AGENTS.md within 250-line budget (actual: $agentsLineCount); split into docs/agents/*.md or amend agent-doc-context-budget spec"
+    Assert-True ($claudeLineCount -le 130) "CLAUDE.md within 130-line budget (actual: $claudeLineCount); split into docs/agents/*.md or amend agent-doc-context-budget spec"
+
+    Assert-True ($claudeBody -match 'AGENTS\.md') 'CLAUDE.md references AGENTS.md'
+    Assert-True ($claudeBody -match 'source of truth') 'CLAUDE.md declares AGENTS.md as source of truth'
+
+    # No orphan sub-files: every tracked docs/agents/*.md must appear in BOTH root entrypoint index tables
+    $subFiles = @(git ls-files 'docs/agents/*.md')
+    Assert-True ($subFiles.Count -ge 5) 'docs/agents sub-file inventory resolved via git ls-files'
+    foreach ($subFile in $subFiles) {
+        Assert-True ($agentsBody -match [regex]::Escape($subFile)) "AGENTS.md index covers $subFile (no orphan sub-files)"
+        Assert-True ($claudeBody -match [regex]::Escape($subFile)) "CLAUDE.md index covers $subFile (no orphan sub-files)"
+        $subFileLineCount = @(Get-Content -LiteralPath $subFile).Count
+        if ($subFileLineCount -gt 400) {
+            Write-Warning "$subFile exceeds 400 lines ($subFileLineCount); agent-doc-context-budget spec suggests splitting (SHOULD, non-blocking)"
+        }
+    }
+
+    # No dead links: every docs/**.md path referenced by a root entrypoint must exist
+    $docRefs = @([regex]::Matches(($agentsBody + "`n" + $claudeBody), 'docs/[A-Za-z0-9_\-./]+\.md') |
+        ForEach-Object { $_.Value } | Sort-Object -Unique)
+    foreach ($docRef in $docRefs) {
+        Assert-True (Test-Path -LiteralPath $docRef -PathType Leaf) "root entrypoint doc reference exists: $docRef"
+    }
+
+    # Mirror pairing: every tracked CLAUDE.md has a sibling tracked AGENTS.md, and vice versa
+    $claudeDirs = @(git ls-files '*CLAUDE.md' | ForEach-Object { Split-Path $_ -Parent } | Sort-Object -Unique)
+    $agentsDirs = @(git ls-files '*AGENTS.md' | ForEach-Object { Split-Path $_ -Parent } | Sort-Object -Unique)
+    foreach ($dir in $claudeDirs) {
+        Assert-True ($agentsDirs -contains $dir) "CLAUDE.md mirror in '$dir' has sibling AGENTS.md"
+    }
+    foreach ($dir in $agentsDirs) {
+        Assert-True ($claudeDirs -contains $dir) "AGENTS.md in '$dir' has CLAUDE.md mirror"
+    }
 } finally {
     Pop-Location
 }
