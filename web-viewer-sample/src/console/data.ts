@@ -64,15 +64,15 @@ export const PAGES: PageDef[] = [
   { key: "a8", no: "A8", label: "Synthetic Data", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
   { key: "a9", no: "A9", label: "設計 / 審查 Copilot", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
   { key: "a10", no: "A10", label: "機器人 / 巡檢模擬", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
-  { key: "conv", no: "CV", label: "IFC→USD 轉檔排程", plane: "governance", group: "coordinator", badge: "P1", badgeTone: "warn" },
+  // MD 三頁合一（Task 7）：原 conv（轉檔排程）/ minio（MinIO 資料）/ intake（Model Intake）三個 nav 項
+  // 合併為單一 MD 項；#conv / #intake 由 EdgeConsole 以 alias 重導至 #minio。舊三頁本體待 Task 9 移除。
   { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "coordinator" },
   { key: "instances", no: "KG", label: "Kit / GPU 機隊", plane: "omniverse", group: "coordinator" },
-  { key: "minio", no: "M", label: "MinIO 資料", plane: "governance", group: "coordinator" },
+  { key: "minio", no: "MD", label: "模型資料與轉檔", plane: "governance", group: "coordinator" },
   { key: "runtime", no: "RT", label: "Runtime 監控", plane: "omniverse", group: "system" },
   { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system", badge: "待建", badgeTone: "neutral" },
   { key: "spec", no: "▦", label: "設計規格說明", plane: "governance", group: "system" },
   { key: "overview", no: "OV", label: "Overview", plane: "governance", group: "system" },
-  { key: "intake", no: "IN", label: "Model Intake", plane: "governance", group: "coordinator" },
   { key: "review", no: "G", label: "Review Room", plane: "omniverse", group: "omniverse" },
   { key: "semantic", no: "SE", label: "Semantic Viewer", plane: "omniverse", group: "omniverse" },
   { key: "apps", no: "AP", label: "Applications · A1–A10", plane: "governance", group: "system" },

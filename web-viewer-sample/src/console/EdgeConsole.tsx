@@ -10,15 +10,12 @@ import {
   AdminPage,
   AppsPage,
   AppVisionPage,
-  ConversionSchedulingPage,
   CoordinatorPage,
   FederationPage,
   GpuReviewRoomPage,
   HomePage,
-  IntakePage,
   IssuesRuleCenterPage,
   KitGpuFleetPage,
-  MinioDataPage,
   OverviewPage,
   ReportsPage,
   ReviewRoomPage,
@@ -28,6 +25,9 @@ import {
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
+// MD 三頁合一（Task 6/7）：#minio 改由單一 ModelDataPage 承接（原 ConversionSchedulingPage / IntakePage /
+// MinioDataPage 三頁合併）。舊三頁本體（export）保留於 pages.tsx 待 Task 9 統一移除，故此處不再 import。
+import { ModelDataPage } from "./modelData/ModelDataPage";
 // operator-tool 路由保留：#/kit、#/demo-control 原由 OperatorConsole 服務；換 EdgeConsole 後仍可達（非 silently 砍）。
 import { KitConsolePage } from "./KitConsolePage";
 import { RealIfcConsolePage } from "./RealIfcConsolePage";
@@ -50,6 +50,18 @@ function usePageHash(): [string, (k: string) => void] {
   return [page, go];
 }
 
+// URL 重寫式 alias（spec §5，repo 第一個）：舊 #conv / #intake deep link 一律重導到合一後的 #minio。
+// 只能在 useEffect 內做（renderToString 純渲染不觸發 → SSR 不導航，避免 hydration 前搶跑）；
+// window.location.replace 不留 history 污染，並保留原 hash 的 query（如 job_id）供接收端重驗。
+function AliasRedirect({ to }: { to: string }) {
+  useEffect(() => {
+    const raw = window.location.hash;
+    const q = raw.includes("?") ? raw.slice(raw.indexOf("?")) : "";
+    window.location.replace(`#${to}${q}`); // replace：不留 history 污染
+  }, [to]);
+  return null;
+}
+
 function renderBody(page: string, go: (k: string) => void) {
   // app/<slug> → A4–A10 vision 詳頁（P3-1）。
   if (page.startsWith("app/")) return <AppVisionPage slug={page.slice(4)} onOpen={go} />;
@@ -67,10 +79,11 @@ function renderBody(page: string, go: (k: string) => void) {
     case "a10": return <AppVisionPage slug="robot-sim" onOpen={go} />;
     case "viewer": return <ViewerPresentationPage />;
     case "gpu": return <GpuReviewRoomPage />;
-    case "conv": return <ConversionSchedulingPage />;
+    // MD 合一（Task 7）：舊 #conv（轉檔排程）/ #intake（進件）deep link 重導到 #minio；#minio 掛 ModelDataPage。
+    case "conv": case "intake": return <AliasRedirect to="minio" />;
     case "sessions": return <SessionManagementPage />;
     case "instances": return <KitGpuFleetPage />;
-    case "minio": return <MinioDataPage />;
+    case "minio": return <ModelDataPage />;
     case "reports": return <ReportsPage />;
     case "admin": return <AdminPage />;
     case "spec": return <SpecPage />;
@@ -80,7 +93,6 @@ function renderBody(page: string, go: (k: string) => void) {
     case "version-diff": return <VersionDiffPage />;
     case "federation": return <FederationPage />;
     case "coordinator": return <CoordinatorPage />;
-    case "intake": return <IntakePage />;
     case "runtime": return <CoordinatorPage />;
     case "review": return <ReviewRoomPage />;
     case "semantic": return <SemanticViewerPage />;
@@ -108,7 +120,7 @@ const NAV_LABEL: Record<string, { tech: string; biz: string }> = {
   conv: { tech: "Conversion Queue", biz: "IFC→USD 轉檔排程" },
   sessions: { tech: "Session ATC", biz: "Session 管理" },
   instances: { tech: "Kit/GPU Fleet", biz: "Kit / GPU 機隊" },
-  minio: { tech: "MinIO Data", biz: "MinIO 資料" },
+  minio: { tech: "Model Data & Conversion", biz: "模型資料與轉檔" },
   reports: { tech: "Reports", biz: "報表中心" },
   admin: { tech: "Admin", biz: "系統管理" },
   spec: { tech: "Design Spec", biz: "設計規格說明" },
@@ -128,17 +140,17 @@ const COPILOT_PROMPTS: Record<string, string[]> = {
   a2: ["v07 比 v06 改了什麼？", "哪些變更會影響成本？", "上一版的 issue 修掉了嗎？"],
   a4: ["三樓所有沒填防火時效的防火門", "體積最大的 10 個房間", "屬於 L2 但分類碼空白的構件"],
   a5: ["現在哪個區域溫度異常？", "列出逾期未處理的維保工單", "B1 機房本月用電趨勢"],
-  conv: ["哪些轉檔任務卡住或失敗了？", "把 988 的模型插隊優先轉", "列出 coverage < 95% 的任務"],
   sessions: ["哪個 session 有 viewer 收不到 frame？", "把閒置超過 15 分鐘的 session 回收", "S-270 現在幾個人在看？"],
   instances: ["哪台 GPU 還能接新 session？", "把新審查排到最閒的節點", "edge-gpu-02 的 VRAM 還夠嗎？"],
-  minio: ["270 專案有幾個模型？", "哪些模型還沒轉成 USD？", "model.ifc 最大的是哪一個？"],
+  // MD 合一（Task 7）：原 conv（轉檔佇列）三條 prompts 併入 minio 陣列，刪 conv key（#conv 已 alias 至 #minio）。
+  minio: ["270 專案有幾個模型？", "哪些模型還沒轉成 USD？", "model.ifc 最大的是哪一個？", "哪些轉檔任務卡住或失敗了？", "把 988 的模型插隊優先轉", "列出 coverage < 95% 的任務"],
 };
 
 // FlowBar（P3-3）：5 步操作員心智模型 Intake→Convert→Meeting→Mark→Record。
 // state 為各步真實落地狀態（asbuilt / p15）；非資料宣稱，純流程示意。
 const FLOW: { n: string; tech: string; biz: string; state: Prov; page: string }[] = [
-  { n: "①", tech: "Intake", biz: "接收建模來源", state: "asbuilt", page: "intake" },
-  { n: "②", tech: "Convert", biz: "自動轉換 3D", state: "asbuilt", page: "intake" },
+  { n: "①", tech: "Intake", biz: "接收建模來源", state: "asbuilt", page: "minio" },
+  { n: "②", tech: "Convert", biz: "自動轉換 3D", state: "asbuilt", page: "minio" },
   { n: "③", tech: "Meeting", biz: "建立審查會議", state: "asbuilt", page: "runtime" },
   { n: "④", tech: "Mark", biz: "標記問題位置", state: "p15", page: "review" },
   { n: "⑤", tech: "Record", biz: "紀錄回寫雲端", state: "asbuilt", page: "runtime" },
@@ -185,8 +197,11 @@ export default function EdgeConsole() {
   // #gpu/#review（Review Room 兩個入口）沒有自己的 AxisKey，歸類到 runtime（RT 供應 ready 狀態）；
   // 其餘非七軸頁（home/a2/admin…）預設回 a1（治理優先頁），不新增第八個 axis。
   const AXIS_SET: readonly AxisKey[] = ["a1", "conv", "sessions", "instances", "minio", "intake", "runtime"];
-  const railAxis: AxisKey = (AXIS_SET as readonly string[]).includes(page) ? (page as AxisKey)
-    : page === "gpu" || page === "review" ? "runtime" : "a1";
+  // MD 合一（Task 7）：#conv / #intake 已 alias 至 #minio，其 axis 脈絡歸到 minio（合一後的模型資料與轉檔頁）。
+  // AXIS_SET 陣列與 AxisKey 七軸型別不變；僅以 effectivePage 決定高亮的軸。
+  const effectivePage = page === "conv" || page === "intake" ? "minio" : page;
+  const railAxis: AxisKey = (AXIS_SET as readonly string[]).includes(effectivePage) ? (effectivePage as AxisKey)
+    : effectivePage === "gpu" || effectivePage === "review" ? "runtime" : "a1";
 
   return (
     <SharedStatusProvider>
