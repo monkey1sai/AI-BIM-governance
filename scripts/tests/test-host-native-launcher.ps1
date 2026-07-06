@@ -192,4 +192,31 @@ Assert-True (-not ($moduleContent -match '"repo\.bat build')) 'default StartProc
 Assert-True ($moduleContent -match "Join-Path \`$workingDirectory 'repo\.bat'") 'default StartProcessFn resolves repo.bat to a fully-qualified path'
 Write-TestPass 'Invoke-KitRepoBuild default StartProcessFn uses fully-qualified repo.bat path'
 
+# Test 18: default StartProcessFn uses cmd.exe syntax that survives quoted batch
+# paths plus quoted redirected log paths. Without `call`, cmd.exe /c can fail
+# before repo.bat starts with "The filename, directory name, or volume label
+# syntax is incorrect."
+Assert-True ($moduleContent -match 'call `"\$repoBatPath`" build > `"\$logPath`" 2>&1') 'default StartProcessFn uses call for quoted repo.bat redirect'
+$sb = New-TestSandbox -Prefix 'kit repo build'
+try {
+    $runDir = Join-Path $sb 'scripts\.run'
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+    $repoBat = Join-Path $sb 'repo.bat'
+    $logPath = Join-Path $runDir 'kit repo build.log'
+    @(
+        '@echo off'
+        'echo fake repo build %*'
+        'exit /b 0'
+    ) | Set-Content -LiteralPath $repoBat -Encoding ascii
+
+    $result = Invoke-KitRepoBuild -WorkingDirectory $sb -LogPath $logPath -RunDir $runDir -TimeoutSec 5
+
+    Assert-True ($result.TimedOut -eq $false) 'quoted redirect process exits'
+    Assert-Equal 0 $result.ExitCode 'quoted redirect process returns success'
+    Assert-True (Test-Path -LiteralPath $logPath -PathType Leaf) 'quoted redirect writes log file'
+    Assert-True ((Get-Content -LiteralPath $logPath -Raw) -match 'fake repo build build') 'repo.bat received build argument'
+    Write-TestPass 'Invoke-KitRepoBuild default StartProcessFn handles quoted redirect'
+}
+finally { Remove-TestSandbox -Path $sb }
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

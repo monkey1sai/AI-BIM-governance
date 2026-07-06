@@ -172,7 +172,7 @@ function Invoke-KitRepoBuild {
             # `dir`、`call repo.bat` 都找得到/看得到檔案)。完整路徑不經過
             # 這條關聯查找路徑,兩種主機狀態下都能正常執行(2026-07-06 實測)。
             $repoBatPath = Join-Path $workingDirectory 'repo.bat'
-            $cmdLine = "`"$repoBatPath`" build > `"$logPath`" 2>&1"
+            $cmdLine = "call `"$repoBatPath`" build > `"$logPath`" 2>&1"
             Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) `
                 -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
         },
