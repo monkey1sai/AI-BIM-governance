@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import json
 import re
+import threading
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -230,6 +231,16 @@ class StreamingConversionStore:
         self.converter = converter or HeadlessConverterNotConfigured()
         Path(self.settings.artifacts_root).mkdir(parents=True, exist_ok=True)
         Path(self.settings.jobs_dir).mkdir(parents=True, exist_ok=True)
+        # conversion-kit-port-race: `/api/conversions/ifc-to-usdc` returns 202 and
+        # runs complete_conversion_job() via FastAPI BackgroundTasks, so concurrent
+        # requests get independent background tasks with no inherent mutual
+        # exclusion. Each job's Kit CAD-conversion subprocess binds the same
+        # default port (omni.services.transport.server.http, 8011) for an HTTP
+        # service the headless `--exec` conversion never uses; two Kit subprocesses
+        # launched close together race for that port and the loser crashes. This
+        # lock forces actual conversion execution (not just dispatch acceptance)
+        # to run one job at a time within this process.
+        self._conversion_lock = threading.Lock()
 
     def create_conversion_job(self, ifc_ready_event: Mapping[str, Any]) -> dict[str, Any]:
         event = dict(ifc_ready_event)
@@ -333,25 +344,30 @@ class StreamingConversionStore:
         if job.get("status") not in {"queued", "running"}:
             return job
 
-        job = self._update_job(conversion_job_id, status="running", stage="running_headless_converter")
-        output_dir = Path(self.settings.artifacts_root) / conversion_job_id
-        try:
-            converter_result = self.converter.convert(
-                job=job,
-                ifc_ready_event=dict(job["ifc_ready_event"]),
-                output_dir=output_dir,
-            )
-            result = self._build_success_result(job, converter_result)
-        except ConversionAuthorityError as exc:
-            return self._fail_job(
-                job,
-                code=exc.code,
-                message=exc.message,
-                stage="conversion_failed",
-                metadata=exc.metadata,
-            )
-        except Exception as exc:
-            return self._fail_job(job, code=exc.__class__.__name__, message=str(exc), stage="conversion_failed")
+        # conversion-kit-port-race: serialize actual Kit CAD-conversion execution
+        # across concurrently-accepted jobs (see lock comment in __init__). Jobs
+        # waiting on the lock stay "queued" and only flip to "running" once they
+        # actually start, so status faithfully reflects what's really executing.
+        with self._conversion_lock:
+            job = self._update_job(conversion_job_id, status="running", stage="running_headless_converter")
+            output_dir = Path(self.settings.artifacts_root) / conversion_job_id
+            try:
+                converter_result = self.converter.convert(
+                    job=job,
+                    ifc_ready_event=dict(job["ifc_ready_event"]),
+                    output_dir=output_dir,
+                )
+                result = self._build_success_result(job, converter_result)
+            except ConversionAuthorityError as exc:
+                return self._fail_job(
+                    job,
+                    code=exc.code,
+                    message=exc.message,
+                    stage="conversion_failed",
+                    metadata=exc.metadata,
+                )
+            except Exception as exc:
+                return self._fail_job(job, code=exc.__class__.__name__, message=str(exc), stage="conversion_failed")
 
         callback_payload = self._callback_payload(job, result)
         callback_url = job.get("callback_url")
