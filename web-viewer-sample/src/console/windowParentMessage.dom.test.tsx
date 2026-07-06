@@ -44,6 +44,8 @@ type AppInternals = {
   pendingStageUrl: string | null;
   _mappingCache: { primPathForGuid: (g: string) => string | null; guidForPrimPathOrAncestor?: (p: string) => string | null } | null;
   _reverseLookupGuid: (path: string) => void;
+  _onSelectUSDPrims: (prims: Set<{ path: string; name: string }>) => void;
+  _onStageReset: () => void;
   render: () => React.ReactElement;
 };
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -380,6 +382,142 @@ describe("C M4 runtime command bridge：central send path classifies UI-local/re
     expect(internals(app).state.govBindingActiveRevision).toBe("rev_binding_001");
     expect(internals(app).state.govBindingLastGoodRevision).toBe("rev_binding_001");
     expect(internals(app).state.govBindingApplyState).toEqual({ status: "applied" });
+  });
+});
+
+// ── task#2 fix：C M4 Task3 兩項 gap 補上「會實際執行」的自動化回歸網 ─────────────────────────────
+// Gap1（既有 tree handler 未在「未就緒 / 無 lease」情境下被測）：_onSelectUSDPrims 與 _onStageReset
+//   同樣送 runtime mutator（selectPrimsRequest / focusPrimRequest / resetStage），必須與 openStageRequest
+//   一樣經同一中央閘門（_runtimeMutatorBlockReason via _sendStreamMessage）：未就緒時「誠實記事件、不送出」
+//   （非靜默失效），primary + lease 就緒時才真送出並帶 runtime authority payload（不被閘門誤擋）。
+// Gap2（mapping-row 選列＝UI-local 之前僅靠人工讀原始碼）：直接取 Window.render() 真接線的 onSelectGuid
+//   （點對構表列 / 語意選取的唯一 Window 端 handler）呼叫之，只更新 govSelectedGuid，不得送任何 runtime
+//   mutator；若未來被誤接到 mutator，AppStream.sendMessage 會被呼到而使本測失敗（把行為鎖進回歸網）。
+describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘門 + mapping-row 選列為 UI-local", () => {
+  function modelTabApp(): App {
+    const app = new App({} as never);
+    internals(app).state = {
+      ...internals(app).state,
+      viewerTab: "model",
+      reviewSessionId: "review_session_x",
+      reviewLifecycleStatus: "active",
+    };
+    return app;
+  }
+
+  function primSet(...paths: string[]): Set<{ path: string; name: string }> {
+    return new Set(paths.map((path) => ({ path, name: path.split("/").pop() ?? path })));
+  }
+
+  // 深度優先走 render() 元素樹，回傳第一個帶指定 function prop 的 props（onSelectGuid 唯 MockViewport 有）。
+  function findPropHolder(node: unknown, propName: string): Record<string, unknown> | null {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const found = findPropHolder(child, propName);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (!node || typeof node !== "object") return null;
+    const props = (node as { props?: Record<string, unknown> }).props;
+    if (!props) return null;
+    if (typeof props[propName] === "function") return props;
+    return findPropHolder(props.children, propName);
+  }
+
+  it("_onSelectUSDPrims：primary 未取得 viewer lease token → selectPrimsRequest/focusPrimRequest 不送出，且誠實記事件（非靜默）", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = ""; // 未就緒（無 lease token）
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(internals(app), "_reverseLookupGuid").mockImplementation(() => {}); // 反查另有測（見下方 selected_guid 段），此處隔離
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._onSelectUSDPrims(primSet("/World/G_AAA"));
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("primary viewer lease token required"));
+  });
+
+  it("_onSelectUSDPrims：primary + lease token 就緒 → 送 selectPrimsRequest 與 focusPrimRequest，皆帶 runtime authority payload（未被閘門誤擋）", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    vi.spyOn(internals(app), "_reverseLookupGuid").mockImplementation(() => {});
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    internals(app)._onSelectUSDPrims(primSet("/World/G_AAA"));
+
+    const events = sendSpy.mock.calls.map((c) => (c[0] as { event_type: string }).event_type);
+    expect(events).toContain("selectPrimsRequest");
+    expect(events).toContain("focusPrimRequest");
+    for (const call of sendSpy.mock.calls) {
+      expect(call[0]).toMatchObject({
+        payload: expect.objectContaining({
+          role: "primary",
+          source_client_id: "viewer_lease_primary",
+          viewer_lease_token: "lease_token_primary",
+          session_id: "review_session_x",
+        }),
+      });
+    }
+  });
+
+  it("_onStageReset：primary 未取得 viewer lease token → selectPrimsRequest([])/resetStage 不送出，且誠實記事件", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._onStageReset();
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("primary viewer lease token required"));
+  });
+
+  it("_onStageReset：primary + lease token 就緒 → 送 selectPrimsRequest 與 resetStage，皆帶 runtime authority payload", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    useSynchronousSetState(app);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    internals(app)._onStageReset();
+
+    const events = sendSpy.mock.calls.map((c) => (c[0] as { event_type: string }).event_type);
+    expect(events).toContain("selectPrimsRequest");
+    expect(events).toContain("resetStage");
+    for (const call of sendSpy.mock.calls) {
+      expect(call[0]).toMatchObject({
+        payload: expect.objectContaining({
+          role: "primary",
+          viewer_lease_token: "lease_token_primary",
+          session_id: "review_session_x",
+        }),
+      });
+    }
+  });
+
+  it("mapping-row 選列（render 真接線的 onSelectGuid）只更新 govSelectedGuid，不送任何 runtime mutator（即使 primary+lease 就緒）", () => {
+    // 刻意設成 primary + lease 就緒（此時 mutator 是「可以送」的），以證明「不送」純因 UI-local 分類，非因閘門擋下。
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = modelTabApp();
+    useSynchronousSetState(app);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+
+    const holder = findPropHolder(internals(app).render(), "onSelectGuid");
+    expect(holder).not.toBeNull();
+    (holder!.onSelectGuid as (g: string) => void)("GUID-XYZ");
+
+    expect(internals(app).state.govSelectedGuid).toBe("GUID-XYZ");
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 });
 
