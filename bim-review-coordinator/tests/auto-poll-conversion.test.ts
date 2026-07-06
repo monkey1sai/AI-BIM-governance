@@ -298,6 +298,7 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(detail.body.conversion_status).toBe("failed");
     expect(detail.body.failure_stage).toBe("conversion");
     expect(detail.body.failure_reason).toBeTruthy();
+    expect(detail.body.recovery_action).toBe("retrigger_required");
     // F5（list/detail 對稱）：conversion_failure 為 internal-only,對外一律經 deriveFailure 投影
     // humanized failure_reason/failure_stage,不直接外吐 raw 欄位。sanitizeJobForExternal（detail/
     // intake/replay）已剝除,列表 whitelist 本就不含 → 兩出口形狀一致,不得洩漏 conversion_failure。
@@ -310,6 +311,7 @@ describe("coordinator auto-poll streaming conversion", () => {
     expect(item).toBeDefined();
     expect(item?.failure_stage).toBe("conversion");
     expect(item?.failure_reason).toBeTruthy();
+    expect(item?.recovery_action).toBe("retrigger_required");
     expect(item).not.toHaveProperty("conversion_failure");
   });
 

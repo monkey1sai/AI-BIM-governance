@@ -282,6 +282,9 @@ export interface LocalWebViewSession {
     conversion_job_id: string | null;
     conversion_status: string | null;
     conversion_authority: "bim-streaming-server" | null;
+    conversion_artifact_ready: boolean;
+    viewer_open_state: "not_observed" | "open" | "blocked";
+    /** @deprecated Conversion-ready is not viewer-open-ready; use conversion_artifact_ready and runtime stage_open_state. */
     viewer_open_ready: boolean;
   };
   created_at: string;

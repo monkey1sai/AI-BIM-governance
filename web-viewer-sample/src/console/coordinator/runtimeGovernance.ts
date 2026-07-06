@@ -155,6 +155,7 @@ export function buildEndpointRows(rt: RuntimeStatus | null): EndpointRow[] {
     const mediaPort = endpoint.mediaPort ?? "—";
 
     const firstFrame = readiness === "free" ? "missing" : session?.first_frame_at ? "ok" : "not_observed";
+    const stageOpenState = session?.stage_open_state ?? (session?.expected_stage_url ? "not_observed" : "not_requested");
 
     return {
       code,
@@ -166,7 +167,13 @@ export function buildEndpointRows(rt: RuntimeStatus | null): EndpointRow[] {
       kitInstanceId: binding?.kit_instance_id ?? endpoint.id,
       firstFrame,
       heartbeat: heartbeatState(binding, readiness),
-      stageTruth: session?.expected_stage_url ? "not_observed" : "missing",
+      stageTruth: stageOpenState === "open"
+        ? "ok"
+        : stageOpenState === "blocked"
+          ? "failed"
+          : session?.expected_stage_url
+            ? "not_observed"
+            : "missing",
       readiness,
       businessStatus: readinessToBusinessStatus(readiness),
       nextAllowedAction: nextAllowedAction(role, readiness),
@@ -322,11 +329,21 @@ export function deriveClassicDashboard(rt: RuntimeStatus | null): ClassicDashboa
         detail: "目前沒有 active session 需要 viewer evidence",
       };
 
-  const stageTruth = activeSession?.expected_stage_url
+  const stageTruth = activeSession?.stage_open_state === "open"
     ? {
-        value: "stage loaded 未觀測",
-        detail: `expected_stage_url=${activeSession.expected_stage_url}`,
+        value: "stage loaded 已觀測",
+        detail: activeSession.stage_open_evidence?.detail ?? `expected_stage_url=${activeSession.expected_stage_url}`,
       }
+    : activeSession?.stage_open_state === "blocked"
+      ? {
+          value: "stage loaded 不匹配",
+          detail: activeSession.stage_open_evidence?.detail ?? `expected_stage_url=${activeSession.expected_stage_url}`,
+        }
+      : activeSession?.expected_stage_url
+        ? {
+            value: "stage loaded 未觀測",
+            detail: activeSession.stage_open_evidence?.detail ?? `expected_stage_url=${activeSession.expected_stage_url}`,
+          }
     : {
         value: activeSession ? "缺少 expected_stage_url" : "目前無 active stage",
         detail: activeSession ? `session=${activeSession.session_id}` : "目前沒有 active session",

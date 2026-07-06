@@ -31,6 +31,7 @@ import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { deriveFailure } from "./services/failureReason.js";
+import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
 import {
   createMinioS3Client,
   listMinioFolder,
@@ -849,7 +850,10 @@ export function createCoordinatorApp(
       return;
     }
     if (!["dispatch_failed", "dropped_on_restart"].includes(job.status)) {
-      response.status(409).json({ detail: `Job not retryable in status '${job.status}'.` });
+      response.status(409).json({
+        detail: `Job not retryable in status '${job.status}'.`,
+        recovery_action: deriveConversionRecoveryAction(job),
+      });
       return;
     }
     if (!pendingDispatchEvents.has(id)) {
@@ -999,9 +1003,14 @@ export function createCoordinatorApp(
       response.status(502).json({ detail: `presign 失敗：${err instanceof Error ? err.message : String(err)}` });
       return;
     }
+    const forceRetrigger = request.body?.force_retrigger === true;
     // etag 在手動觸發無法事先取得，用 key 當穩定 idempotency 來源（同 key 重觸發回既有 job）。
-    const idemKey = idempotencyKeyFor(config.minioWatchBucket, key, key);
-    const corrId = correlationIdFor(config.minioWatchBucket, key, key);
+    // terminal converter failure 的 operator recovery 需要一個明確的新 attempt；此時只讓
+    // idempotency/correlation 的 attempt salt 改變，source key 與 presigned ref 仍指向同一 IFC。
+    const attemptSalt = forceRetrigger ? `retrigger_${Date.now()}_${randomWebViewSuffix()}` : "";
+    const idempotencyInput = forceRetrigger ? `${key}#${attemptSalt}` : key;
+    const idemKey = idempotencyKeyFor(config.minioWatchBucket, key, idempotencyInput);
+    const corrId = correlationIdFor(config.minioWatchBucket, key, idempotencyInput);
     // self-POST loopback：複用既有 watcher seam config.minioWatchSelfBaseUrl（config.ts:101、
     // app.ts:399 同一條），有值時優先（測試以 listen(0) 的真實 port 注入）；fallback 才用
     // config.port（production 預設 8004，process 已 listen 該 port）。
@@ -1025,7 +1034,9 @@ export function createCoordinatorApp(
           project_display_name: derived.projectDisplayName,
           model_category: derived.category,
           external_model_version_id: derived.externalModelVersionId,
-          external_conversion_task_id: `${derived.externalModelVersionId}_manual`,
+          external_conversion_task_id: forceRetrigger
+            ? `${derived.externalModelVersionId}_manual_${attemptSalt}`
+            : `${derived.externalModelVersionId}_manual`,
           source_ifc: { ref: presignedRef, etag: key, filename: "model.ifc", format: "ifc" },
           requested_outputs: ["usdc", "element_mapping", "entity_index", "metadata"],
         }),
@@ -1036,7 +1047,12 @@ export function createCoordinatorApp(
       const text = await upstream.text();
       const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
       // 誠實：回應不夾帶 presigned ref（即使上游回了也遮蔽；source_ifc_ref 由上游 summarize 已遮蔽）
-      response.status(upstream.status).json({ ...parsed, trigger_source: "manual" });
+      response.status(upstream.status).json({
+        ...parsed,
+        trigger_source: "manual",
+        force_retrigger: forceRetrigger,
+        recovery_action: forceRetrigger ? "retrigger_submitted" : undefined,
+      });
     } catch (err) {
       response.status(502).json({ detail: `trigger 失敗：${err instanceof Error ? err.message : String(err)}` });
     }
@@ -1737,6 +1753,7 @@ export function createCoordinatorApp(
       ...sanitizeJobForExternal(job),
       conversion_lifecycle_status: lifecycle,
       ...deriveFailure(job),
+      recovery_action: deriveConversionRecoveryAction(job),
       usdc_role: "pending" as const, // 同 summarizeIfcReadyJob：job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending（禁 lifecycle 假報 parsed）
       data_volatility: "in_memory_volatile" as const,
     });
@@ -2343,7 +2360,9 @@ export function createCoordinatorApp(
           conversion_job_id: job.conversion_job_id,
           conversion_status: job.conversion_status,
           conversion_authority: job.conversion_authority,
-          viewer_open_ready: job.conversion_status === "ready",
+          conversion_artifact_ready: job.conversion_status === "ready",
+          viewer_open_ready: false,
+          viewer_open_state: "not_observed",
         },
         created_at: new Date().toISOString(),
       };
@@ -2789,6 +2808,7 @@ function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> 
         session_id: session.session_id,
         kit_instance_id: binding.kit_instance_id,
         status: binding.status,
+        binding_intent: "capacity_allocated",
         assigned_artifact_ids: binding.assigned_artifact_ids,
         stream_config: binding.stream_config,
         started_at: binding.started_at,
@@ -2823,6 +2843,7 @@ function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> 
 function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: PublicViewerLease[] = []): Record<string, unknown> {
   const expectedStage = expectedStageBinding(session);
   const primaryLease = viewerLeases.find((lease) => lease.status === "active" && lease.role === "primary") ?? null;
+  const stageOpenEvidence = deriveStageOpenEvidence(expectedStage?.url ?? null, primaryLease);
   return {
     session_id: session.session_id,
     status: session.status,
@@ -2842,9 +2863,70 @@ function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: Public
     created_at: session.created_at,
     updated_at: session.updated_at,
     first_frame_at: session.first_frame_at ?? null, // VG-01 型別鏈：runtime/status 透出真首幀證據
+    stage_open_state: stageOpenEvidence.state,
+    stage_open_evidence: stageOpenEvidence,
     primary_viewer_lease_id: primaryLease?.lease_id ?? null,
     primary_viewer_user_id: primaryLease?.user_id ?? null,
     viewer_leases: viewerLeases,
+  };
+}
+
+function deriveStageOpenEvidence(
+  expectedStageUrl: string | null,
+  primaryLease: PublicViewerLease | null,
+): Record<string, unknown> {
+  if (!expectedStageUrl) {
+    return {
+      state: "not_requested",
+      source: "coordinator",
+      detail: "no ready stage URL is bound to this session",
+      expected_stage_url: null,
+      loaded_stage_url: null,
+      datachannel_ready: false,
+      first_frame_at: null,
+    };
+  }
+  if (!primaryLease) {
+    return {
+      state: "not_requested",
+      source: "coordinator",
+      detail: "Kit endpoint metadata exists, but no active primary viewer lease has requested or reported a stage",
+      expected_stage_url: expectedStageUrl,
+      loaded_stage_url: null,
+      datachannel_ready: false,
+      first_frame_at: null,
+    };
+  }
+  if (primaryLease.stage_match === true) {
+    return {
+      state: "open",
+      source: "viewer_lease",
+      detail: "active primary viewer reported loaded_stage_url matching expected_stage_url",
+      expected_stage_url: expectedStageUrl,
+      loaded_stage_url: primaryLease.loaded_stage_url,
+      datachannel_ready: primaryLease.datachannel_ready,
+      first_frame_at: primaryLease.first_frame_at,
+    };
+  }
+  if (primaryLease.loaded_stage_url && primaryLease.stage_match === false) {
+    return {
+      state: "blocked",
+      source: "viewer_lease",
+      detail: "active primary viewer loaded a different stage URL",
+      expected_stage_url: expectedStageUrl,
+      loaded_stage_url: primaryLease.loaded_stage_url,
+      datachannel_ready: primaryLease.datachannel_ready,
+      first_frame_at: primaryLease.first_frame_at,
+    };
+  }
+  return {
+    state: primaryLease.datachannel_ready ? "requested" : "not_observed",
+    source: "viewer_lease",
+    detail: "active primary viewer lease exists, but no matching loaded_stage_url evidence has been observed",
+    expected_stage_url: expectedStageUrl,
+    loaded_stage_url: primaryLease.loaded_stage_url,
+    datachannel_ready: primaryLease.datachannel_ready,
+    first_frame_at: primaryLease.first_frame_at,
   };
 }
 
@@ -2887,6 +2969,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     idempotency_key: job.idempotency_key,
     idempotent_replay: job.idempotent_replay,
     ...deriveFailure(job),
+    recovery_action: deriveConversionRecoveryAction(job),
     // 誠實（spec §4.6：usdc_role 以 usdc_key 為閂門）：job 端不投影 usdc_key（IfcReadyIntakeJob 無此欄、見「明確排除」;
     // Phase 1 恆缺），Phase 2 由 callback outbox 回填 ledger 後前端由 ledger 讀 parsed → job_output 端恆 pending。
     // 禁用 lifecycle==="ready" 假報 parsed_usdc：真實轉檔完成時 conversion_status→ready 會令 lifecycle→ready,

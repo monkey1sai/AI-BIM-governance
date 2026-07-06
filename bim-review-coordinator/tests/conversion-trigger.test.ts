@@ -162,4 +162,22 @@ describe("POST /api/conversion/trigger", () => {
     expect([200, 202]).toContain(second.status);
     expect(second.body.ifc_ready_job_id).toBe(first.body.ifc_ready_job_id);
   });
+
+  it("同 key force_retrigger → 建立新的 ifc_ready_job_id（終局 conversion failed 的 operator recovery）", async () => {
+    const app = await makeApp();
+    const first = await request(app.app)
+      .post("/api/conversion/trigger")
+      .send({ key: "proj/main/uuid/model.ifc" });
+    expect([200, 202]).toContain(first.status);
+    expect(first.body.ifc_ready_job_id).toBeTruthy();
+
+    const retrigger = await request(app.app)
+      .post("/api/conversion/trigger")
+      .send({ key: "proj/main/uuid/model.ifc", force_retrigger: true });
+    expect([200, 202]).toContain(retrigger.status);
+    expect(retrigger.body.ifc_ready_job_id).toBeTruthy();
+    expect(retrigger.body.ifc_ready_job_id).not.toBe(first.body.ifc_ready_job_id);
+    expect(retrigger.body.force_retrigger).toBe(true);
+    expect(retrigger.body.recovery_action).toBe("retrigger_submitted");
+  });
 });

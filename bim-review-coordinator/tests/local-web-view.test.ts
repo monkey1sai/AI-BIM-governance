@@ -90,10 +90,12 @@ describe("T7 local web view session / artifact resolution", () => {
     expect(res.body.artifact_resolution.source_ifc_ref).toBe(
       (IFC_CONTRACT.example.source_ifc as { ref: string }).ref,
     );
+    expect(res.body.artifact_resolution.conversion_artifact_ready).toBe(false);
+    expect(res.body.artifact_resolution.viewer_open_state).toBe("not_observed");
     expect(res.body.artifact_resolution.viewer_open_ready).toBe(false);
   });
 
-  it("以 external_model_version_id 解析；轉檔 ready 後 viewer_open_ready=true", async () => {
+  it("以 external_model_version_id 解析；轉檔 ready 後只標 conversion_artifact_ready，不標 viewer_open_ready", async () => {
     const app = makeApp();
     const { emv } = await seedJob(app);
     await request(app.app).post("/api/internal/conversion-result").set(internalHeaders()).send({
@@ -110,7 +112,9 @@ describe("T7 local web view session / artifact resolution", () => {
     expect(res.status).toBe(201);
     expect(res.body.user_id).toBe("dev_user_002");
     expect(res.body.artifact_resolution.conversion_status).toBe("ready");
-    expect(res.body.artifact_resolution.viewer_open_ready).toBe(true);
+    expect(res.body.artifact_resolution.conversion_artifact_ready).toBe(true);
+    expect(res.body.artifact_resolution.viewer_open_state).toBe("not_observed");
+    expect(res.body.artifact_resolution.viewer_open_ready).toBe(false);
     expect(res.body.artifact_resolution.artifact_manifest_ref).toBe("edge-local://m.json");
   });
 
