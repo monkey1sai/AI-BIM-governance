@@ -46,6 +46,8 @@ type AppInternals = {
   _reverseLookupGuid: (path: string) => void;
   _onSelectUSDPrims: (prims: Set<{ path: string; name: string }>) => void;
   _onStageReset: () => void;
+  _openSelectedAsset: () => void;
+  _canOpenSelectedAsset: () => boolean;
   render: () => React.ReactElement;
 };
 const internals = (app: App): AppInternals => app as unknown as AppInternals;
@@ -786,5 +788,107 @@ describe("Q-Important（task2）：selected_guid 送出（_reverseLookupGuid →
     expect(() => internals(app)._reverseLookupGuid("/World/G_AAA")).not.toThrow();
     expect(winPost.mock.calls.some((c) => (c[0] as { type?: string } | null)?.type === "selected_guid")).toBe(false);
     winPost.mockRestore();
+  });
+});
+
+// ── quality review 補強（task#2 fix）：Important #1 spectator lease/openStage 一致性守衛 ──────────────
+// _openSelectedAsset 的 openStage 包裝在非 harness 會先 await _ensurePrimaryViewerLease() → standalone
+// （window.parent === window）時真 POST viewer-leases/claim requested_role:"primary"，搶占同 session 唯一
+// primary lease；且進入前已 setState isLoading:true「正在載入模型...」，被下游閘門擋下時不會重置 → 卡住。
+// 修法與姊妹函式 _applyBinding（Window.tsx:1092）一致：spectator（view-only）在進入點即 return。
+describe("Important #1（task2 fix）：spectator 不驅動 openStageRequest / 不索取 primary viewer lease", () => {
+  function spectatorGet() {
+    return vi.spyOn(URLSearchParams.prototype, "get").mockImplementation((k: string) => (k === "streamRole" ? "spectator" : null));
+  }
+
+  it("_canOpenSelectedAsset：spectator 一律回 false（automatic 載入路徑短路，與 _applyBinding 一致）", () => {
+    const app = operableApp();
+    internals(app).state = {
+      ...internals(app).state,
+      selectedUSDAsset: { name: "primary", url: "stage://primary.usdc" },
+    };
+    // 對照組：非 spectator、模型就緒、lifecycle active → 可開（證明 false 來自 spectator 而非其他前置條件）。
+    expect(internals(app)._canOpenSelectedAsset()).toBe(true);
+    const stubGet = spectatorGet();
+    expect(internals(app)._canOpenSelectedAsset()).toBe(false);
+    stubGet.mockRestore();
+  });
+
+  it("_openSelectedAsset：spectator 直呼（如 debug Open Stage）不 POST viewer-leases/claim、不送 openStageRequest、isLoading 收斂為 false", async () => {
+    Object.defineProperty(window, "parent", { value: window, configurable: true }); // standalone：非 harness 才會真 claim
+    reviewEnv.viewerLeaseToken = "";
+    const stubGet = spectatorGet();
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      selectedUSDAsset: { name: "primary", url: "stage://primary.usdc" },
+      isLoading: true,
+      loadingText: "正在載入模型...",
+    };
+    const fetchSpy = vi.fn(async () => new Response(
+      JSON.stringify({ lease_id: "x", lease_token: "t", role: "primary" }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchSpy);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._openSelectedAsset();
+    await flushMicrotasks();
+
+    expect(fetchSpy).not.toHaveBeenCalled(); // 無 primary lease claim → 不搶占真 primary 的 lease
+    expect(sendSpy).not.toHaveBeenCalled(); // 無 openStageRequest（runtime mutator）送出
+    expect(internals(app).state.isLoading).toBe(false); // 不留「正在載入模型...」卡住
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("spectator"));
+    stubGet.mockRestore();
+  });
+});
+
+// ── quality review 補強（task#2 fix）：Important #2 binding-apply 失敗 / 缺證據分支回歸鎖（誠實鐵律）──────
+// 既有測試僅覆蓋 happy path（openedStageResult success + url 相符 + bindingRevisionId → applied）。
+// 補：(a) url 不符 → failed(stale_stage_or_mismatch)；(b) success 但缺 loaded URL（無 stage-match 證據）
+// → 不得偽宣告 applied，須標 failed(missing_stage_evidence)；(c) loadArtifactGroupResult result=error → failed。
+describe("Important #2（task2 fix）：binding-apply 失敗 / 缺證據分支（不偽宣告成功）", () => {
+  function bindingApplyApp(): App {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://primary.usdc",
+      govBindingApplyState: { status: "applying" },
+    };
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+    vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+    return app;
+  }
+
+  it("openedStageResult success 但 loaded URL 與 expected 不符 → failed(stale_stage_or_mismatch)，不宣告 applied", () => {
+    const app = bindingApplyApp();
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: { result: "success", url: "stage://stale-other.usdc", binding_revision_id: "rev_binding_002" },
+    });
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "stale_stage_or_mismatch" });
+    expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
+  });
+
+  it("openedStageResult success 但缺 loaded URL（無 stage-match 證據）→ failed(missing_stage_evidence)，不偽宣告 applied", () => {
+    const app = bindingApplyApp();
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: { result: "success", binding_revision_id: "rev_binding_003" },
+    });
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "missing_stage_evidence" });
+    expect(internals(app).state.govBindingActiveRevision).toBeUndefined();
+  });
+
+  it("loadArtifactGroupResult result=error → failed 帶 Kit error reason", () => {
+    const app = bindingApplyApp();
+    internals(app)._handleCustomEvent({
+      event_type: "loadArtifactGroupResult",
+      payload: { result: "error", binding_revision_id: "rev_binding_004", error: "kit_compose_failed" },
+    });
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "failed", reason: "kit_compose_failed" });
   });
 });

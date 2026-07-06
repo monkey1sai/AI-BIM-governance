@@ -905,6 +905,10 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _canOpenSelectedAsset(): boolean {
+        // Important #1：spectator（view-only）不驅動 stage 載入（由 primary 驅動）。與姊妹函式 _applyBinding
+        //（Window.tsx:1092）一致，讓 _scheduleDeferredOpenStage / loadingStateResponse / _onSelectUSDAsset
+        // 等 automatic 路徑對 spectator 短路，不進入 _openSelectedAsset 的 primary viewer lease claim 流程。
+        if (isSpectatorStreamMode()) return false;
         if (!this.state.selectedUSDAsset) return false;
         if (this.state.latestStreamConfig && this.state.latestStreamConfig.model.status !== "ready") return false;
         return !isBlockedLifecycle(this.state.reviewLifecycleStatus);
@@ -1629,6 +1633,16 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _openSelectedAsset(): void {
+        // Important #1：spectator（view-only）不得驅動 openStageRequest / 索取 primary viewer lease。
+        // 涵蓋直呼路徑（?debug=1 DemoControlPanel「Open Stage」、_loadUSDAssets / review bootstrap 的內聯
+        // 守衛未含 spectator）；否則下方 openStage 包裝會先 await _ensurePrimaryViewerLease() → standalone
+        // 情境真 POST viewer-leases/claim requested_role:"primary" 搶占同 session 唯一 primary lease，且
+        // isLoading 會卡在「正在載入模型...」。與姊妹函式 _applyBinding（Window.tsx:1092）一致，進入點即 return。
+        if (isSpectatorStreamMode()) {
+            this._appendReviewEvent("spectator（view-only）：略過 openStageRequest（stage 由 primary 驅動）");
+            this.setState({ isLoading: false });
+            return;
+        }
         const targetAsset = this._expectedStageAsset() || this.state.selectedUSDAsset;
         if (!targetAsset) {
             console.warn("No USD asset is selected.");
@@ -2029,7 +2043,10 @@ export default class App extends React.Component<AppProps, AppState> {
             if (payload.result === "success") {
                 const loadedUrl = getPayloadString(payload, "url");
                 const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
-                if (loadedUrl && !this._recordLoadedStageEvidence(loadedUrl, "openedStageResult")) {
+                // 誠實鐵律：只有「Kit 回報且與 expected 相符的 loaded URL」才算 stage-match 證據。
+                // 缺 loaded URL（loadedUrl 為空字串）時 stageEvidenceMatched=false，不得偽宣告 applied。
+                const stageEvidenceMatched = loadedUrl ? this._recordLoadedStageEvidence(loadedUrl, "openedStageResult") : false;
+                if (loadedUrl && !stageEvidenceMatched) {
                     if (bindingRevisionId) {
                         this.setState({
                             govBindingApplyState: {
@@ -2041,12 +2058,23 @@ export default class App extends React.Component<AppProps, AppState> {
                     return;
                 }
                 if (bindingRevisionId) {
-                    this.setState({
-                        govBindingActiveRevision: bindingRevisionId,
-                        govBindingLastGoodRevision: bindingRevisionId,
-                        govBindingApplyState: { status: "applied" },
-                    });
-                    this._appendReviewEvent(`binding 已套用（Kit openedStageResult 確認）：${bindingRevisionId}`);
+                    if (!stageEvidenceMatched) {
+                        // success 但缺 loaded URL 證據 → 誠實標 failed，不宣告 applied（不在缺證據下偽成功）。
+                        this.setState({
+                            govBindingApplyState: {
+                                status: "failed",
+                                reason: "missing_stage_evidence",
+                            },
+                        });
+                        this._appendReviewEvent(`binding 未確認：openedStageResult success 但缺 loaded URL 證據（${bindingRevisionId}）`);
+                    } else {
+                        this.setState({
+                            govBindingActiveRevision: bindingRevisionId,
+                            govBindingLastGoodRevision: bindingRevisionId,
+                            govBindingApplyState: { status: "applied" },
+                        });
+                        this._appendReviewEvent(`binding 已套用（Kit openedStageResult 確認）：${bindingRevisionId}`);
+                    }
                 }
                 this._scheduleLoadingStateQuery(250)
             }
