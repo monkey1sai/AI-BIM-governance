@@ -183,4 +183,13 @@ try {
 }
 finally { Remove-TestSandbox -Path $sb }
 
+# Test 17: Invoke-KitRepoBuild's default StartProcessFn calls repo.bat by its
+# fully-qualified path, not a bare name (regression guard: hosts with a broken
+# .bat/batfile file association make cmd.exe's bare-name PATHEXT lookup fail
+# with "not recognized as an internal or external command" even though
+# `where`/`dir`/`call` all find the file — 2026-07-06)
+Assert-True (-not ($moduleContent -match '"repo\.bat build')) 'default StartProcessFn does not call repo.bat by bare name'
+Assert-True ($moduleContent -match "Join-Path \`$workingDirectory 'repo\.bat'") 'default StartProcessFn resolves repo.bat to a fully-qualified path'
+Write-TestPass 'Invoke-KitRepoBuild default StartProcessFn uses fully-qualified repo.bat path'
+
 Write-Host "`n=== test-host-native-launcher.ps1: ALL PASSED ===" -ForegroundColor Green

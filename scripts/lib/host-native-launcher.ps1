@@ -165,7 +165,14 @@ function Invoke-KitRepoBuild {
             # cmd.exe 自己做 `>` 檔案重導向(真實 Win32 file handle,不是
             # pipe),deploy.ps1 只用 WaitForExit(timeout) 等「process 本身」
             # 結束,不受孫行程持有的 handle 影響。
-            $cmdLine = "repo.bat build > `"$logPath`" 2>&1"
+            # 用完整路徑呼叫 repo.bat,不用裸檔名——某些主機的 .bat/batfile
+            # 副檔名關聯毀損時(`assoc .bat`/`ftype batfile` 回報 not found),
+            # cmd.exe 對裸檔名的 PATHEXT 查找+啟動會直接回報 "not recognized
+            # as an internal or external command"(即使 `where repo.bat`、
+            # `dir`、`call repo.bat` 都找得到/看得到檔案)。完整路徑不經過
+            # 這條關聯查找路徑,兩種主機狀態下都能正常執行(2026-07-06 實測)。
+            $repoBatPath = Join-Path $workingDirectory 'repo.bat'
+            $cmdLine = "`"$repoBatPath`" build > `"$logPath`" 2>&1"
             Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) `
                 -WorkingDirectory $workingDirectory -NoNewWindow -PassThru
         },
