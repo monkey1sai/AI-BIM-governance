@@ -22,8 +22,10 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     await expect(page.getByTestId("model-info-card")).toBeVisible();
     await expect(page.getByTestId("mapping-table")).toBeVisible();
 
-    // harness 無 mapping_url → 誠實空狀態（不捏造對構），而非假資料
-    await expect(page.getByTestId("mapping-empty")).toBeVisible();
+    // harness 無真實 mapping_url，但提供標記為 fake 的 demo mapping（見 harness/fixtures/harnessMapping.ts）；
+    // MappingTable 既有 fake-mapping 誠實標示機制顯示 mapping-row + mapping-fake badge，不冒充真實對映。
+    await expect(page.getByTestId("mapping-row").first()).toBeVisible();
+    await expect(page.getByTestId("mapping-fake")).toBeVisible();
 
     // 資訊濃密證據：harness 三圖層（Building Shell / Levels / MEP）
     await expect(page.getByTestId("mock-layer-count")).toHaveText(/[1-9]/);

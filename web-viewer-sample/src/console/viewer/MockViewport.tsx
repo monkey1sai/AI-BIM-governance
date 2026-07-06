@@ -7,6 +7,7 @@ import { IfcSemanticPanel } from "./IfcSemanticPanel";
 import { StructureStats } from "./StructureStats";
 import { coordinatorClient } from "../coordinatorClient";
 import type { TriReadyState } from "../../utils/triReady";
+import { harnessMappingItems } from "../../harness/fixtures/harnessMapping";
 
 export interface ArtifactBindingLite {
   artifact_id?: string | null;
@@ -222,9 +223,16 @@ export function MockViewport(props: MockViewportProps) {
           <IfcSemanticPanel sessionId={props.sessionId} selectedGuid={selectedGuid} />
         </aside>
 
-        {/* 底帶：⑤ GUID ⇔ USD Prim Path 對構（滿版）；harness 無 mapping_url → 誠實空狀態，不捏造對構。 */}
+        {/* 底帶：⑤ GUID ⇔ USD Prim Path 對構（滿版）；harness 無真實 mapping_url，改餵一份標記為 fake 的
+            in-memory demo mapping（harness/fixtures/harnessMapping.ts），沿用 MappingTable 既有 fake-mapping
+            誠實標示機制（fake badge + 逐列標示），讓 harness 有可點的 mapping-row 而不冒充真實對映。 */}
         <footer className="gv-C__bottom" data-testid="geo-viewer-bottom-mapping">
-          <MappingTable mappingUrl={mappingSrc} selectedGuid={selectedGuid} onSelectGuid={props.onSelectGuid} />
+          <MappingTable
+            mappingUrl={mappingSrc}
+            items={harness ? harnessMappingItems : undefined}
+            selectedGuid={selectedGuid}
+            onSelectGuid={props.onSelectGuid}
+          />
         </footer>
       </section>
     </div>
