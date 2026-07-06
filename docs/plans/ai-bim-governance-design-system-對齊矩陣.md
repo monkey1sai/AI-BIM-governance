@@ -292,3 +292,25 @@ governance-service / Kit / 轉檔 = **host-native**；容器只跑 web plane，�
 2. **repo 功能狀態變更（built → NOT BUILT 或反之）須先更新本矩陣，再更新其他 docs**。
 3. **本矩陣不具獨立效力**：若本矩陣與 repo 衝突 → 以 repo 為準，並在下次 docs 週期更新本矩陣。
 4. **A4 狀態裁決**：其他文件只寫「A4=NOT BUILT·p4，裁決見對齊矩陣 §4.4」並反向連結，禁各自展開論證。
+
+---
+
+## 附錄：SaaS 增補層對照（2026-07-06）
+
+> 本附錄為 SaaS 改版新增檔案的對照索引，僅供查找用；**不修改 §0–§8 任何一字**。
+
+| 檔名 | 角色（一句話） | 與本矩陣關係 |
+|---|---|---|
+| `ai-bim-governance-saas-架構總覽.md` | 雲地混合 SaaS 架構總綱（控制面 / edge plane / 通訊契約 / survivability，全 PLANNED） | 引用 §4.4 裁決，不覆寫 |
+| `ai-bim-governance-saas-租戶與身分.md` | 租戶模型 / Bridge 隔離 / 身分與 token 相容路徑 | 引用 §4.4 裁決，不覆寫 |
+| `ai-bim-governance-saas-GPU經濟與計量計費.md` | session broker / GPU 硬約束 / 三軸計量 / 方案分層 | 引用 §4.4 裁決，不覆寫 |
+| `ai-bim-governance-saas-公開API與標準對齊.md` | `/v1` 物理分離 / webhook / BCF / IDS / bSDD | 引用 §4.4 裁決，不覆寫 |
+| `ai-bim-governance-saas-合規資料主權與生命週期.md` | ADR / 資料主權三層 / 生命週期 / DR / GDPR | 引用 §4.4 裁決，不覆寫 |
+| `ai-bim-governance-saas-遷移路線與里程碑.md` | SaaS-M1～M8 scope + DoD + 回退 | 引用 §4.4 裁決，不覆寫 |
+| `審批報告-docs-plans-SaaS改版-2026-07-06.md` | 本輪 SaaS 改版審批紀錄（現行最高審批） | 引用 §4.4 裁決，不覆寫 |
+
+**聲明（三行）：**
+
+1. §4.4 A1–A10 建成裁決不因 SaaS 改版變動：Hero built = A1 + A2 + A3-federation；A3-clash 維持 blocked-on-OCC；A4–A10 維持 NOT BUILT · p3/p4。
+2. 以上 SaaS 檔全部為增補層，效力低於本矩陣；與本矩陣衝突時一律以本矩陣為準。
+3. §8 七項待人類拍板事項維持 open，本輪 SaaS 改版不定案任何一項。

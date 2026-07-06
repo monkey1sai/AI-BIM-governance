@@ -103,6 +103,10 @@
 | **D-31** | **A1 雙來源選檔一邊壞拖垮整區**（2026-07-02 新增） | MinIO `GET /api/minio/objects` 502 時若整個選檔區降破或 fallback 到 local_fs 不告知，使用者誤以為看的是 MinIO | 雙來源各自模式 6：失敗邊顯錯誤條 + 保留另一邊；**禁默默換來源**；來源切換後下游狀態清空（回 idle） |
 | **D-32** | **BCF 審查面板假指派控制**（2026-07-02 新增） | issues schema 現無 assignee 欄（O7）；前端若 render 可選人員下拉（寫入無處去）＝假按鈕 | 指派一律 dashed 待建標 + title 說明；狀態流轉只走 `POST /api/issues/:id/transition` 證據型更新，禁前端自存 |
 | **D-33** | **A1 連動橋自行推定證據**（2026-07-02 新增） | A1 若自己快取／推定 session 證據（或沿用 D-24 式偽 matched），與 `#sessions` 顯示不一致 | 四格證據單一來源＝`#sessions`／Runtime（IX-SS-05）；A1 只讀鏡射同輪詢值；證據未齊高亮鍵 disabled，成功只認 viewer ack |
+| **D-34** | **（SaaS 增補·PLANNED 語境：防線於對應 SaaS-M 階段生效，現為前瞻登錄）租戶參數塞進凍結 governance 路徑**（PLANNED·SaaS-M6） | 實作 `/v1` gateway 或租戶中介層時把 tenant 塞進 proxy 路徑字串／query，破壞 §1 proxy 路徑 byte-identical 凍結契約 | golden-path 逐位元組對比測試（直打 `:8004` vs 經 `/v1`）+ code review 檢查點「proxy 路徑字串 grep 不含 tenant」；驗證：對比測試綠 |
+| **D-35** | **（SaaS 增補·PLANNED 語境：防線於對應 SaaS-M 階段生效，現為前瞻登錄）metadata 上報夾帶 payload 破 H6**（PLANNED·SaaS-M1） | connector 投影邏輯讀到 IFC/USD 內容片段或超白名單欄位，使 metadata-only 承諾失守 | 上報 schema 白名單（計數/狀態/hash/摘要/時戳/版本號）+ 網路擷取抽驗；驗證：抽驗擷取檔 grep 無 payload 特徵 |
+| **D-36** | **（SaaS 增補·PLANNED 語境：防線於對應 SaaS-M 階段生效，現為前瞻登錄）spectator 跨租戶洩漏**（PLANNED·SaaS-M3） | spectator 加入未驗租戶即掛 stream，同一 GPU stream 被跨租戶共看 | 加入前同租戶顯式驗證 + 稽核 log（SOC 2 稽核路徑）；驗證：跨租戶加入被拒且留 log 的 E2E |
+| **D-37** | **（SaaS 增補·PLANNED 語境：防線於對應 SaaS-M 階段生效，現為前瞻登錄）tenant_id 回填漏表**（PLANNED·SaaS-M4） | expand-contract 遷移時漏掉關聯表（ConversionLedger／mapping 索引），造成租戶隔離破洞 | 每次只動一張表 + 雙寫驗證清單 + 級聯清單盤點；驗證：兩租戶隔離測試 + 抹除級聯完整性檢查 |
 
 ---
 

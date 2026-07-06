@@ -365,3 +365,63 @@ v4（差異化）：markup/waypoint ↔ BCF 雙向橋接；A2 三色 onion-skin�
 3. **把本檔 PART B 餵給 Claude Code**：開工指令建議寫「依 docs/plans/互動實作規格 PART B 的 IX-A1-02/03 實作，禁止樂觀更新」這種粒度。
 
 *v1 · 2026-06-11 · 實測來源：http://localhost:8004/ui（#home/#a1/#viewer/#conv/#sessions/#instances/#minio/#review 八頁逐頁擷取）；官方文件查證：docs.ifcopenshell.org（bcf/ifcdiff/ifctester/ifcconvert/ifcpatch）、docs.omniverse.nvidia.com/extensions 與 NVIDIA Kit extension registry。*
+
+---
+
+# PART D（增補 · 2026-07-06）：SaaS 租戶維度 IX 卡 —— 全部 PLANNED · 未建
+
+> **本 PART 效力聲明**：本增補層效力低於 `docs-plans-README §1` 所列全部既有文件；衝突一律以既有凍結契約與對齊矩陣 §4.4 裁決為準。本檔本體 PART A/B/C 與 23 張既有 IX 互動卡為已 merge 的權威行為合約，**逐字保留**，本 PART D 不修改其任何字。
+
+## D.0 增補層前提（三條，動筆前先讀）
+
+1. **不動 A.1.1、不新增 hash 路由**：本 PART 不修改 A.1.1 正典路由表任何一列，不新增任何 hash 路由；22 條 hash（無斜線）與 `data.ts` PAGES 的同步關係維持不變。以下 4 張新卡皆不掛任何新 route，只描述在**既有頁**上疊加的租戶維度呈現。
+2. **租戶維度一律在 22 條 hash 之外**：租戶隔離主承載＝token `tenant_id` claim（由 coordinator 中介層集中解析），輔助＝子網域；path 前綴 `/t/:tenantId` 僅可作為 hash 之外的選配。**引入 tenant-scoped hash 屬待人類簽核的新決策**（觸發條件見 open question #1 裁決），不得在本 PART 或實作中偷渡。
+3. **各卡實作前置＝對應 SaaS-M 階段啟動**：卡上標記的 `SaaS-Mx` 為前置里程碑，詳規以 `ai-bim-governance-saas-遷移路線與里程碑.md` 為準；未到對應階段一律 `PLANNED·未建`。現況能力邊界一句話＝**已建成僅單站點單租戶閉環（tenant zero）**。
+
+> 誠實標記共同紀律：本 PART 全部 4 卡為 `PLANNED·未建`；卡內任何數字為（規劃值·非實測）；不使用「已支援／已交付／即將完成／開箱即用」描述任何未建能力；Prov 型別只用既有 7 值，租戶狀態以正交獨立欄位（`tenantId`/`scope`）表達，不進 prov 型別。
+
+## D.1 租戶維度互動卡（IX-TN）
+
+**IX-TN-01 租戶脈絡注入（PLANNED · SaaS-M2）**
+- **目的**：把「這個請求屬於哪個租戶」從隱含變成可稽核的顯式脈絡，且對 tenant zero 完全向後相容。
+- **前置**：SaaS-M2 身分階段啟動（org-per-tenant OIDC、`tenant_id` claim 簽發）。
+- **互動流程**：登入後 token 帶 `tenant_id` claim；coordinator 租戶 context 中介層在 `/api/*` proxy 前集中解析 claim 並做範圍過濾（不讓各 service 自兜隔離）；前端 console 於頁首以**模式 4** provenance 徽章顯示目前租戶（後端驅動，非前端推定），缺 claim 時徽章顯示「單租戶（tenant zero）」。
+- **API 面**：不新增、不改名任何凍結 proxy 路徑；`X-Tenant-Id` 為 **additive optional header**，缺省 fallback 現況單租戶路徑；`/v1` gateway（SaaS-M6）驗 tenant-scoped token 後 byte-identical 轉發。**§1 proxy 路徑字串 byte-identical 不動。**
+- **狀態機**：`no-claim（tenant zero）→ claim-resolved（顯式租戶）`；解析失敗＝維持 tenant zero 路徑，不硬失敗。
+- **誠實標記**：`PLANNED·未建`；凡在 governance API 加 user/org/project 參數或改 §1 禁改後端檔（app.py/governanceProxy.ts/conversion_authority.py）＝**待人類簽核的新決策**，禁在本卡預設通過。
+- **驗收**：`X-Tenant-Id` header 缺省時，行為與現況**逐位元組相同**（golden-path 對比：直打 :8004 vs 經中介層）；claim 存在時範圍過濾生效且徽章值＝後端回報值。
+
+**IX-TN-02 GPU 配額 429 呈現（PLANNED · SaaS-M3）**
+- **目的**：把 GPU 資源耗盡從「輸家 process crash」改成使用者看得懂的「容量滿」狀態，而非紅色錯誤。
+- **前置**：SaaS-M3 session broker 啟動（queue/quota、429+Retry-After 契約收斂 port 8011 併發搶佔 race）。
+- **互動流程**：使用者於既有 `#sessions`／A1 建立 session；配額滿時後端回結構化 **429 + `Retry-After`**（含佇列深度、預估等待）；前端以**模式 1** 證據型更新渲染「容量滿」卡片（顯示佇列深度、預估等待〔規劃值·非實測〕、重試按鈕），以**模式 6** 錯誤狀態呈現——**429 非故障，呈現為「容量滿」非紅色錯誤**；重試按鈕依 `Retry-After` 倒數後才可再按。
+- **API 面**：沿用既有 session 建立端點（`POST /api/review-sessions*`）的回應；429 為 additive 回應碼，成功路徑不變。
+- **狀態機**：`submitting → 429 capacity-full（顯示等待/重試）→ retry → queued/granted`；**禁樂觀更新**（不先畫成功再回滾）。
+- **誠實標記**：`PLANNED·未建`；佇列深度/預估等待/warm pool 命中率皆（規劃值·非實測）；不承諾 live migration/hot-swap/彈性熱擴縮（H8 物理死線）。
+- **驗收**：併發超額時前端顯示「容量滿」而非 crash 或紅錯；重試按鈕遵守 `Retry-After`；席位釋出後同一使用者重試可 granted。
+
+**IX-TN-03 站點連線狀態徽章（PLANNED · SaaS-M1）**
+- **目的**：讓 operator 一眼看出落地端與雲端控制面的連線狀態，且離線不被誤讀為故障。
+- **前置**：SaaS-M1 Edge Connector 啟動（activation 註冊、5 分鐘心跳〔參照值，本平台數值待定〕、metadata-only 上報）。
+- **互動流程**：console 頁首以**模式 4** provenance 徽章（後端驅動）顯示三態 `connected / offline-grace / expired`；`offline-grace` 徽章文案固定標「**本地自主運作中**」——**不偽紅也不偽綠**，並同句提示「僅犧牲雲端可視性與遠端控制，落地端轉檔/檢核/GPU 渲染/WebRTC 不受影響」；`expired` 提示需重連刷新憑證/金鑰（參照 GDC，本平台窗口待合規拍板）。
+- **API 面**：徽章值來自 Edge Connector outbound 心跳摘要（六服務 up/down、GPU 是否在跑、佇列深度）；**僅 metadata（計數/狀態/hash/摘要/時戳/版本號），IFC/USD payload 不出站**。
+- **狀態機**：`connected →（逾心跳窗）offline-grace →（逾寬限期）expired →（重連刷新憑證）connected`；離線寬限期為（規劃值·非實測，參照 Arc 14 天/GDC 7 天，本平台窗口待合規拍板）。
+- **誠實標記**：`PLANNED·未建`；徽章純 metadata，雲端不可達不影響任何本地功能（H6 一級承諾）；狀態一律後端驅動，前端不推定。
+- **驗收**：拔網 E2E 時徽章轉 `offline-grace` 且標「本地自主運作中」，同時落地端四項本地功能實測全自主；網路擷取證明 payload 零出站。
+
+**IX-TN-04 spectator 同租戶驗證（PLANNED · SaaS-M3）**
+- **目的**：spectator 共看在多租戶下必須先驗證同租戶，防跨租戶偷看模型審查。
+- **前置**：SaaS-M3 session broker 啟動；沿用既有 spectator 架構（primary 49100 + spectator 49110~49150，`KIT_SPECTATOR_COUNT`）。
+- **互動流程**：使用者以 `streamRole=spectator` 加入既有 session 前，broker 顯式驗證其 `tenant_id` 與 primary session 同租戶並留**稽核 log**（SOC 2 稽核路徑）；通過才連 spectator endpoint；拒絕時以**模式 6** 明確錯誤呈現「非同租戶，無法加入此審查」，不畫假成功。
+- **API 面**：spectator 加入沿用既有 `/ui/open?streamRole=spectator` 通道；驗證與稽核為 additive gate，不改既有 handoff URL/session-id regex。
+- **狀態機**：`join-request → tenant-check → allowed（連線）| denied（模式 6 錯誤 + 稽核）`。
+- **誠實標記**：`PLANNED·未建`；spectator 共看不佔額外 GPU、不計費，**但加入前必須通過同租戶顯式驗證 + 稽核 log（PLANNED）**；與 **IX-SS-05 A1 連動橋供應端（單一來源）**關係不變——spectator 仍讀 `#sessions` 權威證據值，不自行推定。
+- **驗收**：跨租戶加入被拒並留稽核 log；同租戶 spectator 正常共看且證據值與 `#sessions` 一致（同一輪詢周期）。
+
+## D.2 待人類簽核的新決策（本 PART 明列，未簽核前不得實作）
+
+- **tenant-scoped hash**：任何要引入 tenant-scoped hash、動 `/ui/open` handoff 或 session-id regex、或讓 routeCensus 復活並加租戶欄位的需求（open question #1）。
+- **§1 凍結面**：governance API 需新增 user/org/project 參數、修改 §1 禁改後端檔、或 target host 選擇邏輯需侵入 proxy 路徑語意（open question #2）。
+- **IX-SS-04 裁定 A 調和**：租戶門控走 token `tenant_id` claim 而非 IP allowlist；如需調和 IX-SS-04 裁定 A（刻意不加 IP allowlist）與租戶門控，或引入 issue/BCF ACL/assignee 寫入路徑（open question #6），須人類簽核，不得在文件或實作中偷渡。
+
+*PART D · 2026-07-06 · 增補層 · 全部 PLANNED·未建 · 承接紀錄見 審批報告-docs-plans-SaaS改版-2026-07-06.md*

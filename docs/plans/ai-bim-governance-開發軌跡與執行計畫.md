@@ -50,7 +50,9 @@
 
 ## 1.1 一句話講這個專案
 
-幫營建業主（億集 EZPLUS）管理 BIM 建築模型的平台：**雲端管帳號和規則（輕），客戶機房的 GPU 電腦管大模型和 3D 畫面（重）**；AI-BIM-Governance 是落地端那一半的操作介面與治理功能，核心賣點是 A1「模型自動檢核」加上 Omniverse 的 GPU 3D 能力（A6–A10）。
+一套**雲地混合（hybrid cloud-edge）的多租戶 BIM 治理 SaaS 平台**：**雲端控制面管帳號、租戶目錄、規則版本分發、跨站聚合與計量計費（輕）；每個客戶站點的落地端 plane 管大模型、GPU 3D 渲染、IFC→USD 轉檔與治理檢核（重）**（H1；**SaaS ≠ 全上雲**）。AI-BIM-Governance 就是落地端那一半——它不是被雲端取代的過渡物，而是**一級產品元件、持續演進、永不規劃淘汰**（H2）。核心賣點是 A1「模型自動檢核」加上 Omniverse 的 GPU 3D 能力（A6–A10），以及**可稽核的資料主權：IFC/USD 模型檔不出站，雲端只收 metadata-only 白名單投影，拔網時落地端完全自主（離線僅犧牲雲端可視性與遠端控制，本地轉檔／檢核／GPU 渲染／WebRTC 運算不受影響；站點徽章標「本地自主運作中」不偽綠不偽紅）**（H6）。
+
+**定位框架（2026-07-06 重定位·全部 SaaS 能力 PLANNED·未建）**：本平台由「單站點單租戶已建成閉環」重定位為雲地混合多租戶 SaaS。現況真正已建成的**只有單站點閉環，它即第一個租戶「tenant zero」**，是第一個租戶而非過渡樣板。雲端控制面、Edge Connector、租戶隔離、session broker、計量計費、公開 `/v1` API 等 SaaS 能力**一律標 PLANNED·未建**；定價／容量／SLO 數字**一律標「規劃值·非實測」**。A1–A10 建成狀態不因 SaaS 語境改變，唯一裁決源＝對齊矩陣 §4.4（見上方「對齊增補層現況表」）——SaaS 只在既有規格外加多租戶脈絡，不新增假按鈕、假數字。凡涉及後端凍結契約（前端對齊DS手冊 §1 十二條）或既有凍結裁定的 SaaS 需求，一律記為「**待人類簽核的新決策**」，未簽核前不得實作。SaaS 詳規見 `ai-bim-governance-saas-架構總覽.md` 等 `saas-*` 檔（效力低於本檔與既有凍結契約，衝突以既有裁決為準）。
 
 ## 1.2 時間軸（誰、何時、做了什麼、產出）
 
@@ -633,11 +635,28 @@ M0 地基盤點 ──→ M1 A1 核心閉環（P0，最快見效）──→ M5 
 - **R4 A4 最小版**：結構化搜尋（NL→條件→elements 索引）+ 3D isolate。
 - **DoD**：A1 的 F8、A4 的 F1–F4 驗收；A1/A4 誠實標記更新。
 
-### M5–M8 · 擴展線（摘要）
+### M5–M8 · 擴展線（摘要 · A1–A10 產品功能線）
 - **M5**：O3 版本層落地 → A2 IFC-diff → 3D onion-skin；A3 layer 疊合 → O6 clash 選型 → 真碰撞清單。
 - **M6**：A5 綁定表 + 模擬 MQTT 走通 → TimescaleDB → 3D 圖釘 → 真場域試點。
 - **M7**：A6 排程匯入 + timeSamples 播放；A8 replicator 出第一批 COCO 資料集。
 - **M8**：A7 點雲對齊與偏差熱力；A9 session layer Copilot；A10 Isaac 巡檢（最後做，環境最重）。
+
+### 3.3.1 SaaS-M1~M8 對照表（雲地混合多租戶遷移線 · 全部 PLANNED·未建）
+
+> 上方 M0–M8 是 **A1–A10 產品功能線**（把應用做成真的）；本表是與其並行、接續既有里程碑編號的 **SaaS 商業化遷移線**，依 SaaS 商業優先序排：先立可稽核的資料主權信任地基（tenant zero 最小增量），再身分、GPU 排隊配額、資料隔離、計量計費、公開 API、合規，最後才是選配的全雲託管 tier。每個 SaaS-M 都適用 DoD 硬化五條件（route 可達／後端真接線非 mock／provenance 成立／browser E2E evidence／0 blocker），backend-only done 不接受；數字一律「規劃值·非實測」。
+
+| 階段 | scope（一句話） | DoD（關鍵三條） | 回退（一句話） |
+|---|---|---|---|
+| SaaS-M1 tenant zero 最小增量 | 新增 outbound-only Edge Connector（activation 註冊／5 分鐘心跳／metadata-only 白名單上報（payload 不出站）／離線佇列）＋ 雲端唯讀 Tenant & Site Registry / Ingest Gateway / 跨站 Dashboard / Audit Ledger 骨架；tenant=1 | ① **git diff 顯示 0 個凍結檔變更**（零改前端、零改凍結後端檔、零改 22 路由、零改六埠）；② **拔網 E2E 實測落地端轉檔／檢核／GPU 渲染／WebRTC 全自主（僅損雲端可視性與遠端控制）**；③ **網路擷取證明 payload 零出站**（只有白名單 metadata） | 停用／移除 connector sidecar，落地端回純單站點閉環、零殘留（純 additive 無反向依賴） |
+| SaaS-M2 身分 | org-per-tenant OIDC、token 帶 `tenant_id` claim、operator/viewer 兩級 scope、coordinator 租戶 context 中介層（`X-Tenant-Id` additive optional）、企業 IdP brokering | ① SSO 登入且 token claim 集中驗證；② tenant zero 向後相容（header 缺省走現況單租戶路徑）；③ §1 proxy 路徑 byte-identical 迴歸測試綠 | claim 為 optional 欄位、缺省 fallback 單租戶行為 |
+| SaaS-M3 session broker | queue／quota／preemption／fair-share、429＋Retry-After 契約（收斂 port 8011 race）、warm pool、spectator 同租戶驗證 gate、per-tenant max-concurrent-sessions | ① 併發超限回 429 非 crash 且配額生效；② spectator 跨租戶被拒並留稽核 log；③ warm pool 命中降冷啟（實測換手延遲） | broker bypass flag 直落回既有 kit-manager-api 直呼 |
+| SaaS-M4 資料隔離 | governance schema-per-tenant（expand-contract，每次只動一張表、雙寫驗證）、per-tenant MinIO bucket、`mw_<tenantId>_<hash16>` | ① 兩租戶資料互不可見；② GDPR 原子抹除（DROP SCHEMA／刪 prefix ＋ 級聯清 ledger）可驗；③ deriveIntakeFromKey 三層解析不變 | 既有 schema 不動、新租戶才進新 schema、逐表 revert；涉 §1 禁改後端檔前先取得人類簽核 |
+| SaaS-M5 計費產品化 | Stripe 三 meter（`gpu_session_minute`／`conversion_job`／`api_call`）＋ 冪等去重、governance credit 換算、entitlements 硬 gate、封頂／結轉／超額加購、rate sheet / estimator | ① 三軸計量端到端對帳準確；② Free／Team／Enterprise 配額生效；③ 先跑 shadow billing（只記帳不扣款）驗證 | 計費關閉、僅記帳不執行配額 |
+| SaaS-M6 公開 API 與標準 | `/v1` gateway 物理分離＋byte-identical 轉發、golden-path 逐位元組對比、`/v1/versions` 服務發現、webhook HMAC、IDS BYO-ruleset 端點、bSDD 快取；BCF 3.0 相容面設計（實作 pending buildingSMART 確認） | ① 對比測試綠（直打 :8004 vs 經 `/v1` byte-for-byte）；② 第三方 BCF client 以 2.1 可串、webhook HMAC 驗簽通過；③ 租戶自帶 IDS 生效 | 關閉 gateway，console 直打 :8004 完全不受影響 |
+| SaaS-M7 合規與資料主權 | 隔離 ADR 定稿、region/stamp pinning、SOC 2 / ISO 27001 / ISO 19650-5 準備、生命週期狀態機全量、per-tenant DR（PITR / MinIO versioning）演練、Audit Ledger 產品化 | ① 隔離 ADR 書面化；② 狀態機驅動 offboard 立即 terminate 佔用中 Kit；③ per-tenant 還原邊界實測達 tier 承諾 | 維持現況單站點資料留存 |
+| SaaS-M8 選項：全雲託管 tier（H6 例外） | 客戶明確 opt-in payload 進雲、datacenter Linux GPU node（L4／L40S）、MIG／GPU-P 硬隔離 POC、顯式同意流程與資料落地合約 | ① 無 GeForce 卡（EULA 合規）；② 硬隔離 POC 通過；③ 顯式同意流程留痕 | 停售全雲 tier、客戶回落地端模式、雲地混合主線不受影響 |
+
+> **雙權威避免聲明**：本表僅為摘要索引，**詳規以 `ai-bim-governance-saas-遷移路線與里程碑.md` 為準**；兩者衝突時以該 `saas-*` 檔的逐階段 scope／DoD／回退為準，本表過時不視為改變承諾。全部 SaaS-M 能力 PLANNED·未建；涉後端凍結契約 §1 或既有凍結裁定者，一律為「待人類簽核的新決策」，未簽核前不得實作。
 
 ## 3.4 風險清單（前五名與對策）
 
