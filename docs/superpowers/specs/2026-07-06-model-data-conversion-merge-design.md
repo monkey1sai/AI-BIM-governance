@@ -3,7 +3,8 @@
 - 日期：2026-07-06
 - 狀態：設計已由使用者確認（brainstorming 三決策：主從雙欄工作台／全域視圖去重化／命名「模型資料與轉檔」）；已通過交叉對抗審批（2026-07-06，5 視角×2-lens 反駁、39 agents——CONFIRMED 5 項全數修正、PLAUSIBLE 9 項採納 9、REFUTED 3 項不採納，詳見 git 歷史第二次 commit）
 - 範圍：`web-viewer-sample` console 前端；後端 API 一律不改（後端凍結契約：只打 coordinator `:8004`）
-- PR evidence：documented exception for PR #303。Repo 自 #189 退役 active OpenSpec flow；本檔作為 `docs/superpowers/specs/*.md` formal spec evidence，供 `pr-review-agent` 對 behavior / code PR 判定需求來源。
+- PR evidence：documented exception for PR #303。Repo 自 #189 退役 active OpenSpec flow；本檔作為 `docs/superpowers/specs/*.md` formal spec evidence，供 `pr-review-agent` 對 behavior / code PR 判定需求來源。**PR #304（Task 9-10 收尾）沿用本檔為 formal spec evidence。**
+- 實作落地：**已完成**（2026-07-06，subagent-driven 10 tasks）——Tasks 1-8（`modelData/` 全元件＋路由整合＋發送端更新）隨 PR #303 合入 main；Task 9（三舊頁移除、pages.tsx 淨減 983 行、測試零損失遷移）＋Task 10（`npm run verify` 全綠＋六項 browser E2E 證據 `artifacts/e2e/md-merge-trace/`）於 PR #304 收尾。已知落地差異：`minio_key` handoff 重驗收斂為 M 語意（單一頁面同欄位僅一套重驗；`folder===null`→indeterminate 守門保留），§3.4 原 CV 側「minio_key 對 ledger records 重驗」路徑隨舊頁退役。
 
 ## 0. PR #303 A1 addendum
 
