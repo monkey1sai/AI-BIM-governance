@@ -29,7 +29,7 @@ import { StreamConfigReader } from "./StreamConfigReader";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
 import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
-import { governanceClient, type FilesTreeResponse, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
+import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
 import { isFakeMappingDocument } from "../types/mapping";
@@ -2106,6 +2106,16 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     // 第一次匯出：fetch 丟例外（後端離線）。
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
     const issuesSpy = vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
+    vi.spyOn(governanceClient, "getIssue").mockImplementation(async (id: string): Promise<IssueRow> => ({
+      id,
+      kind: "issue",
+      title: `issue ${id}`,
+      status: "open",
+      severity: "medium",
+      ifc_guid: `guid-${id}`,
+      usd_prim_path: null,
+      source_type: "rule_result",
+    }));
 
     const root = createRoot(container);
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
@@ -2412,6 +2422,16 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
     vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 2, issue_ids: ["i1", "i2"] });
+    vi.spyOn(governanceClient, "getIssue").mockImplementation(async (id: string): Promise<IssueRow> => ({
+      id,
+      kind: "issue",
+      title: `issue ${id}`,
+      status: "open",
+      severity: "medium",
+      ifc_guid: `guid-${id}`,
+      usd_prim_path: null,
+      source_type: "rule_result",
+    }));
     // BCF fetch 成功。
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(new Blob(["bcf-bytes"]), { status: 200 }),

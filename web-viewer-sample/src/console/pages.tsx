@@ -1,6 +1,6 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
@@ -325,6 +325,7 @@ export function A1GovernanceWorkbenchPage() {
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [a1Issues, setA1Issues] = useState<IssueRow[]>([]);
+  const bcfIssues = useMemo(() => a1Issues.filter((issue) => issue.kind === "issue" && Boolean(issue.ifc_guid)), [a1Issues]);
   // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
   const [excelBusy, setExcelBusy] = useState(false);
   const [bcfBusy, setBcfBusy] = useState(false);
@@ -335,6 +336,12 @@ export function A1GovernanceWorkbenchPage() {
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
+  const issueGenRef = useRef(0);
+  const issueGuardRef = useRef({ runId: null as string | null, modelVersionId: "" });
+  useEffect(() => {
+    issueGuardRef.current = { runId, modelVersionId: state.modelVersionId };
+    issueGenRef.current += 1;
+  }, [runId, state.modelVersionId, state.ifcPath]);
   // Task 14（M→A1 接收端重驗）：向已抓取的 minioObjects 重驗 incoming minio_key；查無 → 誠實 not_found。
   // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
   // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
@@ -421,10 +428,12 @@ export function A1GovernanceWorkbenchPage() {
     // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
     const myGen = pollGenRef.current;
     try {
-      const { rule_run_id } = await governanceClient.createRuleRun({
+      const runRequest = {
         ifc_source_path: state.ifcPath,
         ids_path: idsPath || undefined,
-      });
+      } as { ifc_source_path: string; ids_path?: string; model_version_id?: string };
+      if (state.modelVersionId) runRequest.model_version_id = state.modelVersionId;
+      const { rule_run_id } = await governanceClient.createRuleRun(runRequest);
       if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -458,7 +467,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.step, state.runError, state.ifcPath, idsPath, selectedSession, sessions]);
+  }, [state.step, state.runError, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -483,25 +492,50 @@ export function A1GovernanceWorkbenchPage() {
 
   const makeIssues = useCallback(async () => {
     if (!runId) return;
+    const guardedRunId = runId;
+    const guardedModelVersionId = state.modelVersionId;
+    const guardedIssueGen = issueGenRef.current;
+    const isCurrentIssueRequest = () =>
+      issueGenRef.current === guardedIssueGen &&
+      issueGuardRef.current.runId === guardedRunId &&
+      issueGuardRef.current.modelVersionId === guardedModelVersionId;
     setActionErr(null); // 重試前清掉上次錯誤
     try {
       const { created, issue_ids } = await governanceClient.issuesFromRuleRun(runId);
       try {
         if (issue_ids.length > 0) {
           const rows = await Promise.all(issue_ids.map((id) => governanceClient.getIssue(id)));
+          if (!isCurrentIssueRequest()) return;
           setA1Issues(rows);
         } else {
-          setA1Issues((current) => current);
+          if (guardedModelVersionId) {
+            const existingRows = await governanceClient.listIssues(undefined, {
+              model_version_id: guardedModelVersionId,
+              kind: "issue",
+            });
+            if (!isCurrentIssueRequest()) return;
+            const ruleIssues = existingRows.filter((issue) => issue.source_type === "rule_result" && issue.ifc_guid);
+            if (ruleIssues.length > 0) {
+              setA1Issues(ruleIssues);
+            } else {
+              setActionErr(t("未找到此模型版本既有 rule-run Issue；請重新建立或檢查後端 issue store。", "No existing rule-run issues were found for this model version; recreate them or check the backend issue store."));
+            }
+          } else {
+            if (!isCurrentIssueRequest()) return;
+            setActionErr(t("後端未回傳 issue_ids，且本次 rule-run 未綁定 model_version_id，無法安全重載既有 Issue。", "The backend returned no issue_ids and this rule-run has no model_version_id, so existing Issues cannot be safely reloaded."));
+          }
         }
-      } catch {
-        setA1Issues((current) => current);
+      } catch (e) {
+        if (!isCurrentIssueRequest()) return;
+        setActionErr(`${t("載入 Issue 詳情失敗：", "Failed to load Issue details: ")}${String(e)}`);
       }
+      if (!isCurrentIssueRequest()) return;
       dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
     } catch (e) {
       // 後端離線：誠實不前進（不偽造 issued），但顯示失敗讓操作員知道（誠實鐵律）。
       setActionErr(`${t("建 Issue 失敗：", "Failed to create Issue: ")}${String(e)}`);
     }
-  }, [runId]);
+  }, [runId, state.modelVersionId]);
 
   const doExport = useCallback(async () => {
     if (!runId) return;
@@ -579,6 +613,7 @@ export function A1GovernanceWorkbenchPage() {
                 setActionErr(null);
                 setA1Issues([]);
               }
+              setSelectedKey("");
               setSourceKind("local_fs");
             }}>local_fs</Btn>
           <Btn data-testid="a1-source-minio" prov={sourceKind === "minio" ? "asbuilt" : undefined}
@@ -596,7 +631,15 @@ export function A1GovernanceWorkbenchPage() {
               <select data-testid="a1-localfs-select" className="ec-btn" style={{ minWidth: 520 }}
                 disabled={fsTree === null || Boolean(fsErr)}
                 value={selectedLocalPath}
-                onChange={(e) => setSelectedLocalPath(e.target.value)}>
+                onChange={(e) => {
+                  const nextPath = e.target.value;
+                  setSelectedLocalPath(nextPath);
+                  if (state.ifcPath && state.ifcPath !== nextPath) {
+                    dispatch({ type: "RESET" });
+                    setActionErr(null);
+                    setA1Issues([]);
+                  }
+                }}>
                 <option value="">
                   {fsErr ? t("（local_fs 檔案庫不可用）", "(local_fs file library unavailable)") : fsTree === null ? t("載入中…（GET /api/governance/files/tree）", "Loading… (GET /api/governance/files/tree)") : localOptions.length === 0 ? t("（無 local_fs IFC 檔案）", "(no local_fs IFC files)") : t("— 選擇 local_fs IFC —", "— select a local_fs IFC —")}
                 </option>
@@ -612,7 +655,11 @@ export function A1GovernanceWorkbenchPage() {
                   if (!selectedLocalOption) return;
                   setActionErr(null);
                   setA1Issues([]);
-                  dispatch({ type: "PICK_FILE", ifcPath: selectedLocalOption.version.path });
+                  dispatch({
+                    type: "PICK_FILE",
+                    ifcPath: selectedLocalOption.version.path,
+                    modelVersionId: selectedLocalOption.modelVersionId,
+                  });
                 }}>{t("選取模型", "Select Model")}</Btn>
             </>
           ) : (
@@ -697,7 +744,7 @@ export function A1GovernanceWorkbenchPage() {
                 caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
                 {t("A1 不排入轉檔", "A1 does not queue conversion")}
               </Btn>
-              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("conv", { source: "a1", minio_key: selectedKey || undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("conv", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
             </div>
           </div>
         ) : (
@@ -745,16 +792,16 @@ export function A1GovernanceWorkbenchPage() {
       <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 交給 Review Room 手動 attach / highlight", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D is handed off to Review Room for manual attach / highlight")} prov="asbuilt">
         <div data-testid="a1-bcf-review-panel" style={{ marginBottom: 10 }}>
           <div className="ec-grid" style={{ marginBottom: 8 }}>
-            <Field k="BCF topics" v={a1Issues.length > 0 ? String(a1Issues.length) : t("尚未建立本輪 Issue", "no issues created for this run yet")} prov={a1Issues.length > 0 ? "asbuilt" : "p1"} />
-            <Field k="scope" v={t("from-rule-run 回傳 issue_ids 後以前端過濾呈現", "frontend-filtered by issue_ids returned from from-rule-run")} prov="asbuilt" />
+            <Field k="BCF topics" v={bcfIssues.length > 0 ? String(bcfIssues.length) : t("尚未建立可匯出的正式 Issue", "no exportable formal issues created yet")} prov={bcfIssues.length > 0 ? "asbuilt" : "p1"} />
+            <Field k="scope" v={t("只列 kind=issue 且含 ifc_guid 的 BCF topics；annotation 不計入", "only kind=issue rows with ifc_guid are listed as BCF topics; annotations are excluded")} prov="asbuilt" />
           </div>
-          {a1Issues.length === 0 ? (
+          {bcfIssues.length === 0 ? (
             <p className="ec-note">{t("先按「失敗構件建 Issue」後，這裡才會列出可追蹤的 BCF topics；未建 Issue 前 BCF 匯出保持 disabled。", "Create Issues for Failed Elements first; this panel then lists trackable BCF topics. BCF export stays disabled before issues exist.")}</p>
           ) : (
             <table className="ec-table">
               <thead><tr><th>topic</th><th>severity</th><th>status</th><th>ifc_guid</th><th>action</th></tr></thead>
               <tbody>
-                {a1Issues.map((issue) => {
+                {bcfIssues.map((issue) => {
                   const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" ? "resolved" : null;
                   return (
                     <tr key={issue.id}>
@@ -790,7 +837,7 @@ export function A1GovernanceWorkbenchPage() {
         {(() => {
           // F1：bcfEnabled 同時檢查 issuesCreated（獨立追蹤「曾真正建過 Issue」）與 step。
           // scored→EXPORT_OK→delivered 不經 CREATE_ISSUES_OK，issuesCreated 仍 false → BCF disabled。
-          const bcfEnabled = state.issuesCreated && (state.step === "issued" || state.step === "delivered");
+          const bcfEnabled = state.issuesCreated && bcfIssues.length > 0 && (state.step === "issued" || state.step === "delivered");
           return (
             <>
               <Btn
@@ -853,12 +900,12 @@ export function A1GovernanceWorkbenchPage() {
         <span className="ec-crosslinks" data-testid="a1-crosslinks" style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", marginLeft: 8 }}>
           <Btn
             data-testid="a1-link-minio"
-            disabled={!selectedKey}
-            caption={selectedKey ? t("回看 MinIO 來源物件", "View the source object in MinIO") : t("尚未選取 MinIO 物件", "No MinIO object selected")}
+            disabled={sourceKind !== "minio" || !selectedKey}
+            caption={sourceKind === "minio" && selectedKey ? t("回看 MinIO 來源物件", "View the source object in MinIO") : t("尚未選取 MinIO 物件", "No MinIO object selected")}
             // as-built（既知差異，spec §4.3 A1→M 表下註）：spec 範例寫 prefix，本 chip 刻意送 minio_key（更精確，
             // 指向確切檔案；M 端做 key-level 重驗）。minio_key 本就列於 §4.3「帶的 ID」欄，屬合規選擇。M 的 prefix
             // 收件分支保留供未來「純資料夾回看」按鈕，目前無真實按鈕發送 prefix。
-            onClick={() => { if (!selectedKey) return; window.location.hash = buildHandoff("minio", { source: "a1", minio_key: selectedKey }); }}
+            onClick={() => { if (sourceKind !== "minio" || !selectedKey) return; window.location.hash = buildHandoff("minio", { source: "a1", minio_key: selectedKey }); }}
           >
             {t("MinIO 來源 →", "MinIO source →")}
           </Btn>

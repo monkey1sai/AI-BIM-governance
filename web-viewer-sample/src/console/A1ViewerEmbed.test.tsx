@@ -67,6 +67,7 @@ function fakeRunStatus(status: RuleRunStatus["status"]): RuleRunStatus {
 }
 
 const LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
+const LOCAL_IFC_PATH_B = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model-b.ifc";
 const fakeFilesTree: FilesTreeResponse = {
   root: "C:/Repos/active/iot/AI-BIM-governance/storage",
   source_kind: "local_fs",
@@ -74,7 +75,10 @@ const fakeFilesTree: FilesTreeResponse = {
     project_id: "270",
     models: [{
       model_id: "建築",
-      versions: [{ name: "model.ifc", path: LOCAL_IFC_PATH, size_bytes: 12345, mtime: "2026-07-06T00:00:00+08:00" }],
+      versions: [
+        { name: "model.ifc", path: LOCAL_IFC_PATH, size_bytes: 12345, mtime: "2026-07-06T00:00:00+08:00" },
+        { name: "model-b.ifc", path: LOCAL_IFC_PATH_B, size_bytes: 67890, mtime: "2026-07-06T00:00:00+08:00" },
+      ],
     }],
   }],
 };
@@ -181,6 +185,7 @@ describe("A1 3D review decoupling", () => {
 
     expect(governanceClient.createRuleRun).toHaveBeenCalledWith({
       ifc_source_path: LOCAL_IFC_PATH,
+      model_version_id: "270/建築/model.ifc",
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
     });
     expect(forSessionSpy).not.toHaveBeenCalled();
@@ -220,6 +225,40 @@ describe("A1 3D review decoupling", () => {
     expect(createSpy).not.toHaveBeenCalled();
   });
 
+  it("changing the local_fs dropdown after picking a model clears the stale locked path", async () => {
+    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+
+    await renderA1();
+    await pickModel();
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(false);
+
+    const model = q<HTMLSelectElement>("a1-localfs-select")!;
+    await act(async () => {
+      model.value = LOCAL_IFC_PATH_B;
+      model.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it("switching from MinIO to local_fs clears stale MinIO handoff links", async () => {
+    await renderA1();
+    await selectMinioSource();
+    const minioLink = q<HTMLButtonElement>("a1-link-minio")!;
+    expect(minioLink.disabled).toBe(false);
+    await act(async () => { minioLink.click(); });
+    expect(window.location.hash).toContain("minio_key=");
+
+    await act(async () => { q<HTMLButtonElement>("a1-source-local")!.click(); });
+    await flush();
+
+    expect(q<HTMLButtonElement>("a1-link-minio")!.disabled).toBe(true);
+  });
+
   it("BCF review panel keeps existing topics on idempotent issue creation retry", async () => {
     vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -234,6 +273,7 @@ describe("A1 3D review decoupling", () => {
       { id: "i2", kind: "issue", title: "NAME: Wall", status: "open", severity: "medium", ifc_guid: "g2", usd_prim_path: null, source_type: "rule_result" },
     ];
     vi.spyOn(governanceClient, "getIssue").mockImplementation(async (id: string) => rows.find((row) => row.id === id)!);
+    vi.spyOn(governanceClient, "listIssues").mockResolvedValue(rows);
 
     await renderA1();
     await pickModel();
@@ -249,6 +289,88 @@ describe("A1 3D review decoupling", () => {
     await flush();
     expect(q("a1-bcf-review-panel")?.textContent).toContain("FIRE: Door");
     expect(q("a1-bcf-review-panel")?.textContent).toContain("NAME: Wall");
+  });
+
+  it("idempotent issue creation reloads existing formal topics when issue_ids is empty", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 0, issue_ids: [] });
+    vi.spyOn(governanceClient, "listIssues").mockResolvedValue([
+      { id: "i1", kind: "issue", title: "EXISTING: Door", status: "open", severity: "high", ifc_guid: "g1", usd_prim_path: null, model_version_id: "270/建築/model.ifc", source_type: "rule_result" },
+    ]);
+
+    await renderA1();
+    await pickModel();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    await act(async () => { q<HTMLButtonElement>("a1-step-issues")!.click(); });
+    await flush();
+
+    expect(governanceClient.listIssues).toHaveBeenCalledWith(undefined, { model_version_id: "270/建築/model.ifc", kind: "issue" });
+    expect(q("a1-bcf-review-panel")?.textContent).toContain("EXISTING: Door");
+  });
+
+  it("stale issue detail fetches cannot repopulate BCF topics after reset", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 1, issue_ids: ["late"] });
+    let resolveIssue!: (row: IssueRow) => void;
+    vi.spyOn(governanceClient, "getIssue").mockReturnValue(new Promise<IssueRow>((resolve) => { resolveIssue = resolve; }));
+
+    await renderA1();
+    await pickModel();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    await act(async () => { q<HTMLButtonElement>("a1-step-issues")!.click(); });
+    await act(async () => { q<HTMLButtonElement>("a1-source-minio")!.click(); });
+    await flush();
+    await act(async () => {
+      resolveIssue({ id: "late", kind: "issue", title: "LATE: Door", status: "open", severity: "high", ifc_guid: "g1", usd_prim_path: null, source_type: "rule_result" });
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(q("a1-bcf-review-panel")?.textContent).not.toContain("LATE: Door");
+    expect(q("a1-bcf-review-panel")?.textContent).toContain("尚未建立可匯出的正式 Issue");
+  });
+
+  it("BCF topic panel excludes annotations without IFC GUIDs", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: null, usd_prim_path: null, rule_code: "annotation", severity: "medium", status: "fail", message: "manual annotation" },
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun").mockResolvedValue({ created: 1, issue_ids: ["a1"] });
+    vi.spyOn(governanceClient, "getIssue").mockResolvedValue({
+      id: "a1",
+      kind: "annotation",
+      title: "ANNOTATION: no guid",
+      status: "open",
+      severity: "medium",
+      ifc_guid: null,
+      usd_prim_path: null,
+      source_type: "rule_result",
+    });
+
+    await renderA1();
+    await pickModel();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    await act(async () => { q<HTMLButtonElement>("a1-step-issues")!.click(); });
+    await flush();
+
+    expect(q("a1-bcf-review-panel")?.textContent).not.toContain("ANNOTATION: no guid");
+    expect(q("a1-bcf-review-panel")?.textContent).toContain("尚未建立可匯出的正式 Issue");
+    expect(q<HTMLButtonElement>("a1-step-bcf")!.disabled).toBe(true);
   });
 
   it("rule-run result opens Review Room handoff with non-secret context instead of sending in-place highlight", async () => {

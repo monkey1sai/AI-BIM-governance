@@ -188,8 +188,14 @@ export const governanceClient = {
     jsonFetch<ReviewRoomDescriptor>(`/api/governance/federated-sets/${setId}/review-room`),
 
   // Issue tracking
-  listIssues: (status?: string) =>
-    jsonFetch<{ issues: IssueRow[] }>(`/api/governance/issues${status ? `?status=${status}` : ""}`).then((r) => r.issues),
+  listIssues: (status?: string, filters?: { model_version_id?: string; kind?: "issue" | "annotation" }) => {
+    const qs = new URLSearchParams();
+    if (status) qs.set("status", status);
+    if (filters?.model_version_id) qs.set("model_version_id", filters.model_version_id);
+    if (filters?.kind) qs.set("kind", filters.kind);
+    const q = qs.toString();
+    return jsonFetch<{ issues: IssueRow[] }>(`/api/governance/issues${q ? `?${q}` : ""}`).then((r) => r.issues);
+  },
   getIssue: (id: string) =>
     jsonFetch<{ issue: IssueRow; events: unknown[] }>(`/api/governance/issues/${encodeURIComponent(id)}`).then((r) => r.issue),
   transitionIssue: (id: string, toStatus: string, note?: string) =>
@@ -220,6 +226,7 @@ export interface IssueRow {
   severity: string;
   ifc_guid: string | null;
   usd_prim_path: string | null;
+  model_version_id?: string | null;
   source_type: string;
 }
 
