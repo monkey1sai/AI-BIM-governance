@@ -1,6 +1,6 @@
 // Edge Console 頁面。誠實原則：AS-BUILT 才標已實作；待建一律標 p1/p15 並說明；
 // 任何數字非真即標 artifact / demo，絕不捏造。
-import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { t } from "./i18n";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
@@ -46,6 +46,34 @@ function defaultA1IfcPath(): string {
 function defaultA1IdsPath(): string {
   const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
   return meta?.VITE_A1_DEFAULT_IDS_PATH || "C:\\Repos\\active\\iot\\AI-BIM-governance\\governance-service\\rules\\sample-fire-rating.ids";
+}
+
+type A1SourceKind = "local_fs" | "minio";
+type A1LocalVersionOption = {
+  projectId: string;
+  modelId: string;
+  version: FileVersionRow;
+  modelVersionId: string;
+};
+
+function flattenA1LocalVersions(projects: FileProjectRow[]): A1LocalVersionOption[] {
+  return projects.flatMap((project) =>
+    project.models.flatMap((model) =>
+      model.versions.map((version) => ({
+        projectId: project.project_id,
+        modelId: model.model_id,
+        version,
+        modelVersionId: `${project.project_id}/${model.model_id}/${version.name}`,
+      })),
+    ),
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "?";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function fileInSameDirectory(currentPath: string, fileName: string): string {
@@ -284,31 +312,36 @@ function enrichRuleResultsWithMapping(rows: RuleResultRow[], value: unknown): Ru
 export function A1GovernanceWorkbenchPage() {
   const [state, dispatch] = useReducer(a1Reducer, initialA1State);
   const [idsPath, setIdsPath] = useState(defaultA1IdsPath);
-  // A1（B2）step①：MinIO source_ifc 物件清單（下拉資料源）。null=載入中、[]=空/錯誤；selectedKey 供 step② PICK 與排隊轉檔共用。
+  const [sourceKind, setSourceKind] = useState<A1SourceKind>("local_fs");
+  const [fsTree, setFsTree] = useState<FileProjectRow[] | null>(null);
+  const [fsErr, setFsErr] = useState<string | null>(null);
+  const [selectedLocalPath, setSelectedLocalPath] = useState<string>("");
+  // A1 step①：MinIO source_ifc 物件清單只作來源物件 / handoff。CPU rule-run 需要
+  // governance-service 可讀的 server-local path，不能把 object key 當 ifc_source_path 送出。
   const [minioObjects, setMinioObjects] = useState<import("./coordinatorClient").MinioObject[] | null>(null);
   const [minioErr, setMinioErr] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string>("");
-  // A1（B2）task3：無 session 分支手動排入 IFC→USD 轉檔的排隊狀態 + 輪詢 ref。
-  // 誠實鐵律：convStatus 原樣顯示 lifecycle（detected/queued/converting/ready/failed）或降級 fallback，轉檔未完成不偽造 ready。
-  const [convJobId, setConvJobId] = useState<string | null>(null);
-  const [convStatus, setConvStatus] = useState<string | null>(null); // 原樣顯示 lifecycle / fallback；誠實不偽造 ready
-  const [convErr, setConvErr] = useState<string | null>(null);
-  const [convBusy, setConvBusy] = useState(false);
-  const convPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => () => { if (convPollRef.current) clearInterval(convPollRef.current); }, []);
   // 交付動作（建 Issue / 匯出）失敗的誠實 UI 回饋：後端離線時操作員必須看得到失敗
   // （對齊 doRun 的 runError；component-local，不污染 reducer 語意）。下次成功動作清除。
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [a1Issues, setA1Issues] = useState<IssueRow[]>([]);
+  const bcfIssues = useMemo(() => a1Issues.filter((issue) => issue.kind === "issue" && Boolean(issue.ifc_guid)), [a1Issues]);
   // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
   const [excelBusy, setExcelBusy] = useState(false);
   const [bcfBusy, setBcfBusy] = useState(false);
   // Review session 只作為 3D/Review Room handoff 與 mapping enrichment 的 optional target。
   // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
-  const [sessions, setSessions] = useState<{ session_id: string; status: string; expected_stage_url: string | null; expected_mapping_url?: string | null; first_frame_at?: string | null }[]>([]);
+  const [sessions, setSessions] = useState<RuntimeStatus["sessions"]["items"]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
+  const issueGenRef = useRef(0);
+  const issueGuardRef = useRef({ runId: null as string | null, modelVersionId: "" });
+  useEffect(() => {
+    issueGuardRef.current = { runId, modelVersionId: state.modelVersionId };
+    issueGenRef.current += 1;
+  }, [runId, state.modelVersionId, state.ifcPath]);
   // Task 14（M→A1 接收端重驗）：向已抓取的 minioObjects 重驗 incoming minio_key；查無 → 誠實 not_found。
   // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
   // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
@@ -324,17 +357,23 @@ export function A1GovernanceWorkbenchPage() {
     return minioObjects.some((o) => o.key === h.minio_key);
   });
   // reviewer P2（Codex，已核實）：上面 incoming 只顯示「已重驗」banner，過去從未把 handoff 帶來的 minio_key
-  // 真的帶進 selectedKey——operator 看到「已重驗」卻仍要手動從下拉重找同一份檔案，a1-step-pick 也因
-  // selectedKey 空而停用。verified 時把 minio_key 種進 selectedKey（不自動 claim session、不自動跑
-  // rule-run，只補齊選取狀態）；用 ref 記住已種過的 key，避免使用者事後手動改選又被這裡打回去。
+  // 真的帶進 selectedKey——operator 看到「已重驗」卻仍要手動從下拉重找同一份檔案。verified 時把
+  // minio_key 種進 selectedKey 並切到 MinIO source（不自動 claim session、不自動跑 rule-run；MinIO
+  // key 仍不得直接當 ifc_source_path）；用 ref 記住已種過的 key，避免使用者事後手動改選又被這裡打回去。
   const seededHandoffKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const key = incoming.handoff?.minio_key;
     if (incoming.status === "verified" && key && seededHandoffKeyRef.current !== key) {
       seededHandoffKeyRef.current = key;
+      if (sourceKind !== "minio") {
+        dispatch({ type: "RESET" });
+        setActionErr(null);
+        setA1Issues([]);
+      }
+      setSourceKind("minio");
       setSelectedKey(key);
     }
-  }, [incoming.status, incoming.handoff?.minio_key]);
+  }, [incoming.status, incoming.handoff?.minio_key, sourceKind]);
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -357,6 +396,22 @@ export function A1GovernanceWorkbenchPage() {
     return () => { alive = false; };
   }, []);
 
+  const loadA1FsTree = useCallback(async () => {
+    setFsErr(null);
+    setFsTree(null);
+    try {
+      const tree = await governanceClient.filesTree();
+      setFsTree(tree.projects);
+    } catch (e) {
+      setFsTree([]);
+      setFsErr(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadA1FsTree();
+  }, [loadA1FsTree]);
+
   // A1（B2）step①：列 MinIO source_ifc 物件供下拉選模型。誠實：失敗顯錯、空就空，不偽造。
   useEffect(() => {
     let alive = true;
@@ -369,6 +424,8 @@ export function A1GovernanceWorkbenchPage() {
   const doRun = useCallback(async () => {
     // A1 v2 gating：須先選定 IFC 檔案；review session 只影響後續 3D handoff / mapping enrichment。
     if (state.step === "idle" || !state.ifcPath) return;
+    setActionErr(null);
+    setA1Issues([]);
     // running-error 子態（RUN_FAIL 後 step 仍 running、runError=true）的重試走 RUN_RETRY；
     // 否則 plain RUN 在 running 是 no-op（防雙擊污染），「可重試」按鈕會點了沒反應（spec §5）。
     dispatch({ type: state.step === "running" && state.runError ? "RUN_RETRY" : "RUN" });
@@ -376,12 +433,14 @@ export function A1GovernanceWorkbenchPage() {
     // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
     const myGen = pollGenRef.current;
     try {
+      const runRequest = {
+        ifc_source_path: state.ifcPath,
+        ids_path: idsPath || undefined,
+      } as { ifc_source_path: string; ids_path?: string; model_version_id?: string };
+      if (state.modelVersionId) runRequest.model_version_id = state.modelVersionId;
       const { rule_run_id } = selectedSession
         ? await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined })
-        : await governanceClient.createRuleRun({
-          ifc_source_path: state.ifcPath,
-          ids_path: idsPath || undefined,
-        });
+        : await governanceClient.createRuleRun(runRequest);
       if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -415,7 +474,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.step, state.runError, state.ifcPath, idsPath, selectedSession]);
+  }, [state.step, state.runError, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -440,15 +499,50 @@ export function A1GovernanceWorkbenchPage() {
 
   const makeIssues = useCallback(async () => {
     if (!runId) return;
+    const guardedRunId = runId;
+    const guardedModelVersionId = state.modelVersionId;
+    const guardedIssueGen = issueGenRef.current;
+    const isCurrentIssueRequest = () =>
+      issueGenRef.current === guardedIssueGen &&
+      issueGuardRef.current.runId === guardedRunId &&
+      issueGuardRef.current.modelVersionId === guardedModelVersionId;
     setActionErr(null); // 重試前清掉上次錯誤
     try {
-      const { created } = await governanceClient.issuesFromRuleRun(runId);
+      const { created, issue_ids } = await governanceClient.issuesFromRuleRun(runId);
+      try {
+        if (issue_ids.length > 0) {
+          const rows = await Promise.all(issue_ids.map((id) => governanceClient.getIssue(id)));
+          if (!isCurrentIssueRequest()) return;
+          setA1Issues(rows);
+        } else {
+          if (guardedModelVersionId) {
+            const existingRows = await governanceClient.listIssues(undefined, {
+              model_version_id: guardedModelVersionId,
+              kind: "issue",
+            });
+            if (!isCurrentIssueRequest()) return;
+            const ruleIssues = existingRows.filter((issue) => issue.source_type === "rule_result" && issue.ifc_guid);
+            if (ruleIssues.length > 0) {
+              setA1Issues(ruleIssues);
+            } else {
+              setActionErr(t("未找到此模型版本既有 rule-run Issue；請重新建立或檢查後端 issue store。", "No existing rule-run issues were found for this model version; recreate them or check the backend issue store."));
+            }
+          } else {
+            if (!isCurrentIssueRequest()) return;
+            setActionErr(t("後端未回傳 issue_ids，且本次 rule-run 未綁定 model_version_id，無法安全重載既有 Issue。", "The backend returned no issue_ids and this rule-run has no model_version_id, so existing Issues cannot be safely reloaded."));
+          }
+        }
+      } catch (e) {
+        if (!isCurrentIssueRequest()) return;
+        setActionErr(`${t("載入 Issue 詳情失敗：", "Failed to load Issue details: ")}${String(e)}`);
+      }
+      if (!isCurrentIssueRequest()) return;
       dispatch({ type: "CREATE_ISSUES_OK", issueCount: created });
     } catch (e) {
       // 後端離線：誠實不前進（不偽造 issued），但顯示失敗讓操作員知道（誠實鐵律）。
       setActionErr(`${t("建 Issue 失敗：", "Failed to create Issue: ")}${String(e)}`);
     }
-  }, [runId]);
+  }, [runId, state.modelVersionId]);
 
   const doExport = useCallback(async () => {
     if (!runId) return;
@@ -473,72 +567,32 @@ export function A1GovernanceWorkbenchPage() {
     }
   }, [runId]);
 
-  // A1（B2）task3：無 session 時手動排入 IFC→USD 轉檔。立即輪詢一次讓 UI/測試不必等 interval；非終態才掛 2s interval。
-  const queueConversion = useCallback(async () => {
-    if (!selectedKey || convBusy) return;
-    setConvErr(null);
-    setConvBusy(true);
-    // #1 race 防護：立即清除上一輪殘留的輪詢 interval，避免其在本輪 await（trigger / pollOnce）期間 fire，
-    // 以舊 job 的 lifecycle 覆寫 convStatus（閃爍至舊值）。必須在第一個 await 之前清，不可等第一次 pollOnce(newJobId) resolve 後。
-    if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
-    setConvStatus(t("觸發中…", "triggering…"));
-    const pollOnce = async (jobId: string): Promise<string | null> => {
-      const job = await coordinatorClient.getIfcReadyJob(jobId);
-      // 主讀 conversion_lifecycle_status；缺失才誠實降級到 conversion_status / download_status / status。
-      const lifecycle = job.conversion_lifecycle_status ?? job.conversion_status ?? job.download_status ?? job.status;
-      setConvStatus(lifecycle);
-      if (job.conversion_lifecycle_status === "ready") {
-        // 轉好 → coordinator 已自動建立 review session；重抓 runtime/status 讓 A1 的 Review Room handoff 能使用該 session。
-        const rt = await coordinatorClient.runtimeStatus();
-        const act2 = rt.sessions.items.filter((s) => s.status === "active" || s.status === "created");
-        setSessions(act2);
-        // 轉檔完成後只能用本 job 的 review_session_id 精準反查。不得 fallback 到 act2[0]：
-        // runtime/status 是全域 session 清單，共享環境中 act2[0] 可能是別人的 session，會讓 A1 對錯模型跑治理檢核。
-        if (!job.review_session_id) {
-          setConvErr(t("轉檔 ready，但 job 未回 review_session_id；請手動選擇正確 review session", "conversion is ready, but the job did not return review_session_id; select the correct review session manually"));
-          return job.conversion_lifecycle_status;
-        }
-        const ownSession = act2.find((s) => s.session_id === job.review_session_id);
-        if (ownSession) {
-          setSelectedSession(ownSession.session_id);
-        } else {
-          setConvErr(t("轉檔 ready，但 runtime/status 尚未列出該 review session；請重新整理或手動選擇", "conversion is ready, but runtime/status has not listed that review session yet; refresh or select manually"));
-        }
-      }
-      return job.conversion_lifecycle_status;
-    };
+  const transitionA1Issue = useCallback(async (issue: IssueRow) => {
+    const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" ? "resolved" : null;
+    if (!next) return;
+    setActionErr(null);
     try {
-      const res = await coordinatorClient.triggerConversion(selectedKey);
-      const jobId = res.ifc_ready_job_id ?? null;
-      setConvJobId(jobId);
-      if (!jobId) { setConvErr(t("trigger 未回 job id", "trigger returned no job id")); setConvStatus(null); return; } // 註：TriggerConversionResponse 已無 detail 欄（task#0 收緊型別），失敗 detail 由 jsonPost throw 經 catch 顯示
-      const first = await pollOnce(jobId);
-      if (convPollRef.current) { clearInterval(convPollRef.current); convPollRef.current = null; }
-      if (first !== "ready" && first !== "failed") {
-        // 捕獲本輪 interval id，清除前比對 convPollRef.current === intervalId：避免「round1 的 in-flight
-        // pollOnce 其 .then/.catch 在 round2 已換上新 interval 後，誤清掉 round2 的 interval」的識別競態
-        // （pollOnce in-flight 期間 convBusy 已在 finally 清掉、按鈕重啟用 → 使用者再次排入即可觸發）。
-        const intervalId = setInterval(() => {
-          void pollOnce(jobId)
-            .then((s) => { if ((s === "ready" || s === "failed") && convPollRef.current === intervalId) { clearInterval(intervalId); convPollRef.current = null; } })
-            // ready 分支若先 setConvStatus("ready") 再 await runtimeStatus()，runtimeStatus 拋（coordinator 短暫
-            // 503 / 重啟）會落到此 .catch：須比照首輪 poll 的外層 catch 也 setConvStatus(null)，否則 convStatus
-            // 卡在 "ready" 又顯示 error 且 sessions 仍空，誤導操作員「轉好了」卻無動作、無重試路徑（誠實鐵律）。
-            .catch((e) => { if (convPollRef.current === intervalId) { clearInterval(intervalId); convPollRef.current = null; } setConvErr(String(e)); setConvStatus(null); });
-        }, 2000);
-        convPollRef.current = intervalId;
-      }
+      const updated = await governanceClient.transitionIssue(issue.id, next, "A1 BCF review panel transition");
+      setA1Issues((items) => items.map((item) => item.id === updated.id ? updated : item));
     } catch (e) {
-      setConvErr(String(e)); // 503 MinIO 未設定 / 400 key 不合法 → 誠實顯示，按鈕可重試
-      setConvStatus(null);
-    } finally {
-      setConvBusy(false);
+      setActionErr(`${t("Issue 狀態更新失敗：", "Issue transition failed: ")}${String(e)}`);
     }
-  }, [selectedKey, convBusy]);
+  }, []);
 
   // A1（B2）下拉項 label：專案·種類·版本·檔名（缺值以「?」誠實標示，不臆造）。
   const minioLabel = (o: import("./coordinatorClient").MinioObject) =>
     `${o.project_display_name ?? o.project_id ?? "?"} · ${o.category ?? "?"} · ${o.version ?? "?"} · ${o.key.split("/").pop() ?? o.key}`;
+
+  const localOptions = flattenA1LocalVersions(fsTree ?? []);
+  const selectedLocalOption = localOptions.find((option) => option.version.path === selectedLocalPath) ?? null;
+  const canPickLocal = sourceKind === "local_fs" && Boolean(selectedLocalOption);
+  const selectedSessionSummary = sessions.find((s) => s.session_id === selectedSession) ?? null;
+  const selectedStageEvidence = selectedSessionSummary?.stage_open_evidence ?? null;
+  const stageMatched = Boolean(
+    selectedStageEvidence?.expected_stage_url &&
+    selectedStageEvidence.loaded_stage_url &&
+    selectedStageEvidence.expected_stage_url === selectedStageEvidence.loaded_stage_url,
+  );
 
   return (
     <>
@@ -557,17 +611,82 @@ export function A1GovernanceWorkbenchPage() {
           {state.exported && <div data-testid="a1-exported-artifact"><Field k={t("已匯出（artifact）", "exported (artifact)")} v="excel" prov="asbuilt" /></div>}
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <select data-testid="a1-minio-select" className="ec-btn" style={{ minWidth: 420 }}
-            value={selectedKey} onChange={(e) => setSelectedKey(e.target.value)}>
-            <option value="">{minioErr ? t("（MinIO 物件不可用）", "(MinIO objects unavailable)") : minioObjects === null ? t("載入中…", "Loading…") : minioObjects.length === 0 ? t("（無 source_ifc 物件）", "(no source_ifc objects)") : t("— 選擇 MinIO 模型 —", "— select a MinIO model —")}</option>
-            {(minioObjects ?? []).map((o) => <option key={o.key} value={o.key}>{minioLabel(o)}</option>)}
-          </select>
-          <Btn data-testid="a1-step-pick" disabled={!selectedKey}
-            caption={t("鎖定此模型（進入步驟2；只對選定檔跑 CPU rule-run，不觸發轉檔）", "Lock this model (proceed to step 2; run CPU rule-run on the selected file without triggering conversion)")}
-            onClick={() => dispatch({ type: "PICK_FILE", ifcPath: selectedKey })}>{t("選取模型", "Select Model")}</Btn>
+        <div data-testid="a1-source-picker" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn data-testid="a1-source-local" prov={sourceKind === "local_fs" ? "asbuilt" : undefined}
+            caption={t("local_fs：governance-service 可讀的 server-local IFC path", "local_fs: server-local IFC path readable by governance-service")}
+            onClick={() => {
+              if (sourceKind !== "local_fs") {
+                dispatch({ type: "RESET" });
+                setActionErr(null);
+                setA1Issues([]);
+              }
+              setSelectedKey("");
+              setSourceKind("local_fs");
+            }}>local_fs</Btn>
+          <Btn data-testid="a1-source-minio" prov={sourceKind === "minio" ? "asbuilt" : undefined}
+            caption={t("MinIO：只作來源物件重驗與回看；不可直接當 ifc_source_path", "MinIO: source-object verification and backlink only; cannot be used directly as ifc_source_path")}
+            onClick={() => {
+              if (sourceKind !== "minio") {
+                dispatch({ type: "RESET" });
+                setActionErr(null);
+                setA1Issues([]);
+              }
+              setSourceKind("minio");
+            }}>MinIO</Btn>
+          {sourceKind === "local_fs" ? (
+            <>
+              <select data-testid="a1-localfs-select" className="ec-btn" style={{ minWidth: 520 }}
+                disabled={fsTree === null || Boolean(fsErr)}
+                value={selectedLocalPath}
+                onChange={(e) => {
+                  const nextPath = e.target.value;
+                  setSelectedLocalPath(nextPath);
+                  if (state.ifcPath && state.ifcPath !== nextPath) {
+                    dispatch({ type: "RESET" });
+                    setActionErr(null);
+                    setA1Issues([]);
+                  }
+                }}>
+                <option value="">
+                  {fsErr ? t("（local_fs 檔案庫不可用）", "(local_fs file library unavailable)") : fsTree === null ? t("載入中…（GET /api/governance/files/tree）", "Loading… (GET /api/governance/files/tree)") : localOptions.length === 0 ? t("（無 local_fs IFC 檔案）", "(no local_fs IFC files)") : t("— 選擇 local_fs IFC —", "— select a local_fs IFC —")}
+                </option>
+                {localOptions.map((option) => (
+                  <option key={option.version.path} value={option.version.path}>
+                    {option.projectId} · {option.modelId} · {option.version.name} · {formatBytes(option.version.size_bytes)}
+                  </option>
+                ))}
+              </select>
+              <Btn data-testid="a1-step-pick" disabled={!canPickLocal}
+                caption={canPickLocal ? t("鎖定 server-local IFC path；只跑 CPU rule-run，不觸發轉檔", "Lock server-local IFC path; run CPU rule-run only, without triggering conversion") : t("先選 local_fs IFC；MinIO object key 不能直接檢核", "Select a local_fs IFC first; a MinIO object key cannot be validated directly")}
+                onClick={() => {
+                  if (!selectedLocalOption) return;
+                  setActionErr(null);
+                  setA1Issues([]);
+                  dispatch({
+                    type: "PICK_FILE",
+                    ifcPath: selectedLocalOption.version.path,
+                    modelVersionId: selectedLocalOption.modelVersionId,
+                  });
+                }}>{t("選取模型", "Select Model")}</Btn>
+            </>
+          ) : (
+            <>
+              <select data-testid="a1-minio-select" className="ec-btn" style={{ minWidth: 520 }}
+                value={selectedKey} onChange={(e) => setSelectedKey(e.target.value)}>
+                <option value="">{minioErr ? t("（MinIO 物件不可用）", "(MinIO objects unavailable)") : minioObjects === null ? t("載入中…", "Loading…") : minioObjects.length === 0 ? t("（無 source_ifc 物件）", "(no source_ifc objects)") : t("— 選擇 MinIO 模型 —", "— select a MinIO model —")}</option>
+                {(minioObjects ?? []).map((o) => <option key={o.key} value={o.key}>{minioLabel(o)}</option>)}
+              </select>
+              <Btn data-testid="a1-step-pick" disabled
+                caption={t("MinIO object key 不是 governance-service 可讀的 server-local path；請改選 local_fs IFC，或到 IFC→USD 轉檔排程建立/查看 review session。", "A MinIO object key is not a server-local path readable by governance-service; choose local_fs IFC, or use the IFC→USD schedule to create/view a review session.")}>
+                {t("不可直接檢核 MinIO key", "Cannot validate MinIO key directly")}
+              </Btn>
+            </>
+          )}
         </div>
-        {minioErr && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
+        {fsErr && sourceKind === "local_fs" && <p className="ec-warn-note" data-testid="a1-fs-error" style={{ marginTop: 4 }}>{t("local_fs 檔案庫不可用：", "local_fs file library unavailable: ")}{fsErr}{" "}<Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadA1FsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn></p>}
+        {sourceKind === "minio" && <p className="ec-note" data-testid="a1-minio-source-note" style={{ marginTop: 4 }}>{t("A1 CPU 檢核需要 server-local IFC path；MinIO 選擇只用於來源回看 / handoff，不會送 POST /api/governance/rule-runs。", "A1 CPU validation needs a server-local IFC path; MinIO selection is only for source backlink / handoff and is not sent to POST /api/governance/rule-runs.")}</p>}
+        {minioErr && sourceKind === "minio" && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
+        {selectedLocalOption && sourceKind === "local_fs" && <p className="ec-note" data-testid="a1-localfs-selected" style={{ marginTop: 4 }}>{t("已選 local_fs：", "Selected local_fs: ")}{selectedLocalOption.version.path}</p>}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
           <input className="ec-btn" data-testid="a1-ids-path" style={{ minWidth: 420 }} placeholder={t("（選填）buildingSMART IDS .ids 路徑", "(optional) buildingSMART IDS .ids path")} value={idsPath} onChange={(e) => setIdsPath(e.target.value)} />
           <input
@@ -628,15 +747,12 @@ export function A1GovernanceWorkbenchPage() {
           <div data-testid="a1-no-session">
             <p className="ec-note">{t("無 active session。請先把選定 MinIO 模型排入轉檔；ready 後本頁會選到對應 session，再用 coordinator 解析出的 server-local IFC path 跑檢核。", "No active session. Queue the selected MinIO model for conversion first; once ready, this page selects its session and runs validation through the coordinator-resolved server-local IFC path.")}</p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn primary data-testid="a1-trigger-convert" disabled={!selectedKey || convBusy}
-                caption={selectedKey ? "POST /api/conversion/trigger {key}" : t("先選 MinIO 模型", "select a MinIO model first")}
-                onClick={() => { void queueConversion(); }}>
-                {convBusy ? t("排入中…", "queuing…") : t("排入 IFC→USD 轉檔排程", "Queue IFC to USD Conversion")}
+              <Btn data-testid="a1-trigger-convert" disabled
+                caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
+                {t("A1 不排入轉檔", "A1 does not queue conversion")}
               </Btn>
-              {convJobId && <span className="ec-s" data-testid="a1-convert-job">job: {convJobId}</span>}
-              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", job_id: convJobId ?? undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
             </div>
-            {convStatus !== null && <p className="ec-note" data-testid="a1-convert-status">{t("轉檔狀態：", "conversion status: ")}{convStatus}</p>}
           </div>
         ) : (
           <>
@@ -661,10 +777,59 @@ export function A1GovernanceWorkbenchPage() {
             </div>
           </>
         )}
-        {convErr && <p className="ec-warn-note" data-testid="a1-convert-error">{convErr}</p>}
+      </Panel>
+
+      <Panel title={t("A1 bridge rail", "A1 bridge rail")} sub={t("只顯示 Review Room / Viewer 證據；A1 不自動 attach、不 claim lease、不直接送 highlight", "Shows Review Room / Viewer evidence only; A1 does not auto-attach, claim lease, or send highlight directly")} prov="asbuilt">
+        <div className="ec-grid" data-testid="a1-bridge-rail">
+          <Field k="review_session" v={selectedSession || t("not_selected", "not_selected")} prov={selectedSession ? "asbuilt" : "p1"} />
+          <Field k="viewer_lease" v={selectedSessionSummary?.primary_viewer_lease_id ?? t("not_observed", "not_observed")} prov={selectedSessionSummary?.primary_viewer_lease_id ? "asbuilt" : "p1"} />
+          <Field k="first_frame_at" v={selectedStageEvidence?.first_frame_at ?? selectedSessionSummary?.first_frame_at ?? t("not_observed", "not_observed")} prov={(selectedStageEvidence?.first_frame_at ?? selectedSessionSummary?.first_frame_at) ? "asbuilt" : "p1"} />
+          <Field k="datachannel_ready" v={String(selectedStageEvidence?.datachannel_ready ?? false)} prov={selectedStageEvidence?.datachannel_ready ? "asbuilt" : "p15"} />
+          <Field k="stage_match" v={stageMatched ? "matched" : t("not_observed", "not_observed")} prov={stageMatched ? "asbuilt" : "p15"} />
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn data-testid="a1-bridge-highlight" disabled
+            caption={t("P1.5 disabled：需 Review Room first_frame_at + DataChannel + stage_match 全部為真", "P1.5 disabled: requires Review Room first_frame_at + DataChannel + stage_match all true")}>
+            {t("在 3D 中標示", "Highlight in 3D")}
+          </Btn>
+          <a className="ec-s" href={selectedSession ? buildHandoff("review", { source: "a1", session: selectedSession, rule_run_id: runId ?? undefined }) : "#review?source=a1"}>{t("開啟 Review Room →", "Open Review Room →")}</a>
+        </div>
       </Panel>
 
       <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 交給 Review Room 手動 attach / highlight", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D is handed off to Review Room for manual attach / highlight")} prov="asbuilt">
+        <div data-testid="a1-bcf-review-panel" style={{ marginBottom: 10 }}>
+          <div className="ec-grid" style={{ marginBottom: 8 }}>
+            <Field k="BCF topics" v={bcfIssues.length > 0 ? String(bcfIssues.length) : t("尚未建立可匯出的正式 Issue", "no exportable formal issues created yet")} prov={bcfIssues.length > 0 ? "asbuilt" : "p1"} />
+            <Field k="scope" v={t("只列 kind=issue 且含 ifc_guid 的 BCF topics；annotation 不計入", "only kind=issue rows with ifc_guid are listed as BCF topics; annotations are excluded")} prov="asbuilt" />
+          </div>
+          {bcfIssues.length === 0 ? (
+            <p className="ec-note">{t("先按「失敗構件建 Issue」後，這裡才會列出可追蹤的 BCF topics；未建 Issue 前 BCF 匯出保持 disabled。", "Create Issues for Failed Elements first; this panel then lists trackable BCF topics. BCF export stays disabled before issues exist.")}</p>
+          ) : (
+            <table className="ec-table">
+              <thead><tr><th>topic</th><th>severity</th><th>status</th><th>ifc_guid</th><th>action</th></tr></thead>
+              <tbody>
+                {bcfIssues.map((issue) => {
+                  const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" ? "resolved" : null;
+                  return (
+                    <tr key={issue.id}>
+                      <td>{issue.title}</td>
+                      <td>{issue.severity}</td>
+                      <td>{issue.status}</td>
+                      <td>{issue.ifc_guid ?? "—"}</td>
+                      <td>
+                        <Btn data-testid={`a1-issue-transition-${issue.id}`} disabled={!next}
+                          caption={next ? `POST /api/governance/issues/${issue.id}/transition -> ${next}` : t("已是終態或不支援轉移", "terminal or unsupported transition")}
+                          onClick={() => { void transitionA1Issue(issue); }}>
+                          {next ?? t("無下一步", "No next step")}
+                        </Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
         <Btn data-testid="a1-step-issues" disabled={state.step === "idle" || state.step === "picked" || state.step === "running"}
           caption="POST /api/governance/issues/from-rule-run/:id" onClick={makeIssues}>{t("失敗構件建 Issue", "Create Issues for Failed Elements")}</Btn>{" "}
         {/* export 與 a1-step-issues 共用 state-machine gating（step ∈ {scored,issued,delivered} 才 enable），
@@ -679,7 +844,7 @@ export function A1GovernanceWorkbenchPage() {
         {(() => {
           // F1：bcfEnabled 同時檢查 issuesCreated（獨立追蹤「曾真正建過 Issue」）與 step。
           // scored→EXPORT_OK→delivered 不經 CREATE_ISSUES_OK，issuesCreated 仍 false → BCF disabled。
-          const bcfEnabled = state.issuesCreated && (state.step === "issued" || state.step === "delivered");
+          const bcfEnabled = state.issuesCreated && bcfIssues.length > 0 && (state.step === "issued" || state.step === "delivered");
           return (
             <>
               <Btn
@@ -742,12 +907,12 @@ export function A1GovernanceWorkbenchPage() {
         <span className="ec-crosslinks" data-testid="a1-crosslinks" style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", marginLeft: 8 }}>
           <Btn
             data-testid="a1-link-minio"
-            disabled={!selectedKey}
-            caption={selectedKey ? t("回看 MinIO 來源物件", "View the source object in MinIO") : t("尚未選取 MinIO 物件", "No MinIO object selected")}
+            disabled={sourceKind !== "minio" || !selectedKey}
+            caption={sourceKind === "minio" && selectedKey ? t("回看 MinIO 來源物件", "View the source object in MinIO") : t("尚未選取 MinIO 物件", "No MinIO object selected")}
             // as-built（既知差異，spec §4.3 A1→M 表下註）：spec 範例寫 prefix，本 chip 刻意送 minio_key（更精確，
             // 指向確切檔案；M 端做 key-level 重驗）。minio_key 本就列於 §4.3「帶的 ID」欄，屬合規選擇。M 的 prefix
             // 收件分支保留供未來「純資料夾回看」按鈕，目前無真實按鈕發送 prefix。
-            onClick={() => { if (!selectedKey) return; window.location.hash = buildHandoff("minio", { source: "a1", minio_key: selectedKey }); }}
+            onClick={() => { if (sourceKind !== "minio" || !selectedKey) return; window.location.hash = buildHandoff("minio", { source: "a1", minio_key: selectedKey }); }}
           >
             {t("MinIO 來源 →", "MinIO source →")}
           </Btn>
