@@ -359,19 +359,19 @@ function BindingComposer(props: {
   const applyText = (() => {
     const s = props.applyState;
     if (!s || s.status === "idle") return null;
-    if (s.status === "applying") return t("套用中…（composeStageRequest，等待 Kit bindingApplied 確認）", "Applying… (composeStageRequest, awaiting Kit bindingApplied confirmation)");
+    if (s.status === "applying") return t("套用中…（production: loadArtifactGroupRequest，等待 Kit openedStageResult；harness: deterministic ack）", "Applying… (production: loadArtifactGroupRequest, awaiting Kit openedStageResult; harness: deterministic ack)");
     if (s.status === "failed") return t("套用失敗：", "Apply failed: ") + (s.reason ?? t("未知", "unknown")) + t("（保留上次成功 binding，不偽宣告）", " (keeping last successful binding, no false claim)");
-    return t("已套用（Kit 已確認 bindingApplied）", "Applied (Kit confirmed bindingApplied)");
+    return t("已套用（Kit 已確認 stage opened；harness 則為 deterministic ack）", "Applied (Kit confirmed stage opened; harness uses deterministic ack)");
   })();
 
   return (
     <Panel
       title={t("Stage / Artifact Binding（主入口）", "Stage / Artifact Binding (main entry)")}
-      sub={t("選 1..N ready USDC → 指定唯一 primary → 調 load_order → 交易式套用 → 重組 stage（composeStageRequest）", "Select 1..N ready USDC → designate a single primary → adjust load_order → apply transactionally → recompose stage (composeStageRequest)")}
+      sub={t("選 1..N ready USDC → 指定唯一 primary → 調 load_order → 交易式套用 → 重組 stage（production: loadArtifactGroupRequest + stage_composition）", "Select 1..N ready USDC → designate a single primary → adjust load_order → apply transactionally → recompose stage (production: loadArtifactGroupRequest + stage_composition)")}
       prov="asbuilt"
       actions={
         <Btn
-          caption={t("composeStageRequest（client 主動拉；交易式套用 binding 並重組 stage）", "composeStageRequest (client pull; apply binding transactionally and recompose stage)")}
+          caption={t("loadArtifactGroupRequest（client 主動拉；交易式套用 binding 並重組 stage；harness 使用 deterministic ack）", "loadArtifactGroupRequest (client pull; apply binding transactionally and recompose stage; harness uses deterministic ack)")}
           data-testid="binding-apply"
           disabled={!props.canOperate || props.applyState?.status === "applying"}
           onClick={apply}

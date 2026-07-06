@@ -12,6 +12,7 @@
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import AppStream from "../AppStream";
 import App from "../Window";
 import { reviewEnv } from "../config/env";
 
@@ -20,9 +21,12 @@ const PARENT_ORIGIN = "http://127.0.0.1:8004"; // console（coordinator）origin
 type AppInternals = {
   state: Record<string, unknown>;
   _handleParentMessage: (e: MessageEvent) => void;
+  _handleCustomEvent: (event: { event_type?: string; messageRecipient?: string; data?: string; payload?: unknown } | null) => void;
   _overlayHighlight: (f: unknown) => unknown;
   _postToParent: (m: Record<string, unknown>, allowedOriginsCache?: ReadonlySet<string>) => void;
   _sendStreamMessage: (m: { event_type: string; payload?: unknown }) => void;
+  _appendReviewEvent: (event: string) => void;
+  _appendDemoOutgoing: (label: string, payload: unknown) => void;
   _completeStageLoad: (loadedUrl?: string) => void;
   _completeStageLoadFromVisibleStream: () => boolean;
   _finishStageLoad: () => void;
@@ -76,6 +80,18 @@ function operableApp(): App {
 
 function postedTypes(parent: { postMessage: ReturnType<typeof vi.fn> }): string[] {
   return parent.postMessage.mock.calls.map((c) => (c[0] as { type?: string }).type ?? "");
+}
+
+function useSynchronousSetState(app: App): void {
+  vi.spyOn(app, "setState").mockImplementation((update: unknown, callback?: () => void) => {
+    const patch = typeof update === "function"
+      ? (update as (state: Record<string, unknown>) => Record<string, unknown>)(internals(app).state)
+      : update;
+    if (patch && typeof patch === "object") {
+      internals(app).state = { ...internals(app).state, ...(patch as Record<string, unknown>) };
+    }
+    callback?.();
+  });
 }
 
 async function flushMicrotasks(): Promise<void> {
@@ -265,6 +281,107 @@ describe("Important #1：_handleParentMessage 的 clear / focus 也受 canOperat
   });
 });
 
+describe("C M4 runtime command bridge：central send path classifies UI-local/read-only vs mutators", () => {
+  const runtimeMutators = [
+    "openStageRequest",
+    "loadArtifactGroupRequest",
+    "composeStageRequest",
+    "highlightPrimsRequest",
+    "focusPrimRequest",
+    "clearHighlightRequest",
+    "selectPrimsRequest",
+    "makePrimsPickable",
+    "resetStage",
+  ];
+
+  it("spectator direct mutator bypass attempts are rejected before AppStream.sendMessage", () => {
+    const stubGet = vi.spyOn(URLSearchParams.prototype, "get").mockImplementation((k: string) => (k === "streamRole" ? "spectator" : null));
+    const app = operableApp();
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    for (const eventType of runtimeMutators) {
+      internals(app)._sendStreamMessage({ event_type: eventType, payload: {} });
+    }
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).toHaveBeenCalledTimes(runtimeMutators.length);
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("spectator view-only"));
+    stubGet.mockRestore();
+  });
+
+  it("spectator read-only loadingStateQuery remains allowed", () => {
+    const stubGet = vi.spyOn(URLSearchParams.prototype, "get").mockImplementation((k: string) => (k === "streamRole" ? "spectator" : null));
+    const app = operableApp();
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    internals(app)._sendStreamMessage({ event_type: "loadingStateQuery", payload: {} });
+
+    expect(sendSpy).toHaveBeenCalledWith({ event_type: "loadingStateQuery", payload: {} });
+    stubGet.mockRestore();
+  });
+
+  it("primary mutator without viewer lease token is rejected before AppStream.sendMessage", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "";
+    const app = operableApp();
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._sendStreamMessage({ event_type: "focusPrimRequest", payload: { prim_path: "/World/G_AAA" } });
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("primary viewer lease token required"));
+  });
+
+  it("primary mutator is sent with runtime authority payload", () => {
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = operableApp();
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    internals(app)._sendStreamMessage({ event_type: "focusPrimRequest", payload: { prim_path: "/World/G_AAA" } });
+
+    expect(sendSpy).toHaveBeenCalledWith({
+      event_type: "focusPrimRequest",
+      payload: expect.objectContaining({
+        prim_path: "/World/G_AAA",
+        role: "primary",
+        source_client_id: "viewer_lease_primary",
+        viewer_lease_token: "lease_token_primary",
+        session_id: "review_session_x",
+      }),
+    });
+  });
+
+  it("openedStageResult with binding_revision_id is the production binding apply acknowledgement", () => {
+    const app = operableApp();
+    useSynchronousSetState(app);
+    internals(app).state = {
+      ...internals(app).state,
+      expectedStageUrl: "stage://primary.usdc",
+      govBindingApplyState: { status: "applying" },
+    };
+    vi.spyOn(internals(app), "_appendDemoIncoming").mockImplementation(() => {});
+    vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._handleCustomEvent({
+      event_type: "openedStageResult",
+      payload: {
+        result: "success",
+        url: "stage://primary.usdc",
+        binding_revision_id: "rev_binding_001",
+      },
+    });
+
+    expect(internals(app).state.govBindingActiveRevision).toBe("rev_binding_001");
+    expect(internals(app).state.govBindingLastGoodRevision).toBe("rev_binding_001");
+    expect(internals(app).state.govBindingApplyState).toEqual({ status: "applied" });
+  });
+});
+
 describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切換時第二個 stage 完成仍回報 first_frame）", () => {
   it("第二次 _completeStageLoad（換載 stage）→ 再次送 first_frame / stage_loaded", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
@@ -284,7 +401,7 @@ describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切
 });
 
 describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 claim primary lease", () => {
-  it("先 claim primary viewer lease，再帶 token 呼叫 stage-binding，通過後才送 composeStageRequest", async () => {
+  it("先 claim primary viewer lease，再帶 token 呼叫 stage-binding，通過後才送 loadArtifactGroupRequest", async () => {
     Object.defineProperty(window, "parent", { value: window, configurable: true });
     reviewEnv.viewerLeaseToken = "";
     reviewEnv.sourceClientId = "dev_user_001";
@@ -339,10 +456,17 @@ describe("Standalone stage binding：頂層 viewer 無 parent token 時自動 cl
       primary_artifact_id: "artifact_primary",
     });
     expect(sendSpy).toHaveBeenCalledWith({
-      event_type: "composeStageRequest",
+      event_type: "loadArtifactGroupRequest",
       payload: {
         binding_revision_id: "rev_binding_001",
-        artifacts: expect.arrayContaining([expect.objectContaining({ artifact_id: "artifact_primary", role: "primary" })]),
+        stage_composition: {
+          primary: expect.objectContaining({
+            artifact_id: "artifact_primary",
+            usdc_url: "stage://primary.usdc",
+            load_order: 0,
+          }),
+          secondary_layers: [],
+        },
       },
     });
   });
