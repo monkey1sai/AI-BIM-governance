@@ -435,6 +435,11 @@ export default class App extends React.Component<AppProps, AppState> {
         // 「Task5: Kit-Side Runtime Mutator Authorization」之 _is_authorized_mutator 消費契約的前端半。
         // 誠實界線：此前端 gate 僅 UX、直呼 AppStream.sendMessage 可繞過；權威強制在 Task5 Kit 端後端
         // （runtime_authority.py，本次 task#2 commit 未含）。保留而非移除，因 6 個 unit test 與 Task5 payload 契約依賴之。
+        // 範圍（刻意）：此 gate 位於中央 _sendStreamMessage，故同時覆蓋 standalone 直送與 VG-01 embedded postMessage
+        // 橋（_handleParentMessage 的 highlight / focus / clear，即 EmbeddedViewer/ReviewSessionViewerPane 實作 A1
+        // 「在 3D 高亮失敗構件」的核心路徑）——embedded 端無 lease 亦不送 mutating（與 standalone 一致，非漏網）；
+        // 實務上 ReviewSessionViewerPane 先推 viewer_lease_token 再 enable 高亮鈕，故有 lease 才送。回歸證據見
+        // windowParentMessage.dom.test.tsx「VG-01 postMessage 橋真穿越 lease 閘門至 AppStream.sendMessage」。
         if (!harnessEnabled() && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
             return "primary viewer lease token required";
         }

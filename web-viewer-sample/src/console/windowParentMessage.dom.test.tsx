@@ -523,6 +523,133 @@ describe("C M4 Task3 gap fix：既有 tree handler 走同一 runtime mutator 閘
   });
 });
 
+// ── quality review 補強（task#2 fix）：VG-01 postMessage 橋真穿越 runtime mutator lease 閘門直到 AppStream.sendMessage ──
+// 本檔既有「Important #1 clear/focus canOperate」兩測（:267 /:277）用 spyOn(_sendStreamMessage).mockImplementation
+// 把整個 _sendStreamMessage 換掉，只斷言「有呼叫 _sendStreamMessage」，從未真正跑到 _runtimeMutatorBlockReason /
+// _withRuntimeAuthority——即使 lease 閘門邏輯被改壞（例如條件寫反）仍會綠燈。此處改為直接 spy AppStream.sendMessage，
+// 讓 VG-01 embedded 高亮 / 聚焦 / 清除（EmbeddedViewer/ReviewSessionViewerPane 用來實作 A1「在 3D 高亮失敗構件」
+// 的核心 postMessage 橋，全走 _handleParentMessage → 同一中央 _sendStreamMessage）真的穿越 lease 閘門：
+//   無 lease token → 不呼 AppStream.sendMessage、且誠實記 reviewEvent（"primary viewer lease token required"，非靜默）；
+//   有 lease token → 呼 AppStream.sendMessage、payload 帶 runtime authority 欄位（role / source_client_id /
+//   viewer_lease_token / session_id）。此即 Window.tsx:_runtimeMutatorBlockReason NOTE 標註「gate 亦刻意覆蓋 VG-01
+//   embedded 路徑」的回歸證據；embedded 端實務上由 ReviewSessionViewerPane 先推 viewer_lease_token 再 enable 高亮鈕。
+describe("C M4 Task3 gap fix：VG-01 postMessage 橋（highlight/focus/clear）真穿越 lease 閘門至 AppStream.sendMessage", () => {
+  function embeddedOperableApp(): App {
+    vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
+    setEmbedded(`${PARENT_ORIGIN}/ui`);
+    const app = operableApp(); // primary + issues + session + active → canOperate=true（見本檔 :267 /:277）
+    reviewEnv.sourceClientId = "viewer_lease_primary";
+    return app;
+  }
+
+  // clear ───────────────────────────────────────────────────────────────────
+  it("clear：無 lease token → 不呼 AppStream.sendMessage，且誠實記 reviewEvent（非靜默）", () => {
+    reviewEnv.viewerLeaseToken = "";
+    const app = embeddedOperableApp();
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._handleParentMessage(clearMessage());
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("primary viewer lease token required"));
+  });
+
+  it("clear：有 lease token → 呼 AppStream.sendMessage 送 clearHighlightRequest，payload 帶 runtime authority", () => {
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = embeddedOperableApp();
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    internals(app)._handleParentMessage(clearMessage());
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][0]).toMatchObject({
+      event_type: "clearHighlightRequest",
+      payload: expect.objectContaining({
+        role: "primary",
+        source_client_id: "viewer_lease_primary",
+        viewer_lease_token: "lease_token_primary",
+        session_id: "review_session_x",
+      }),
+    });
+  });
+
+  // focus ───────────────────────────────────────────────────────────────────
+  it("focus：無 lease token → 不呼 AppStream.sendMessage，且誠實記 reviewEvent", () => {
+    reviewEnv.viewerLeaseToken = "";
+    const app = embeddedOperableApp();
+    internals(app)._mappingCache = { primPathForGuid: () => "/World/G_AAA" }; // 排除因缺對映才不送（確保 primPath 解析到）
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._handleParentMessage(focusMessage("GUID-AAA"));
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("primary viewer lease token required"));
+  });
+
+  it("focus：有 lease token → 呼 AppStream.sendMessage 送 focusPrimRequest，payload 帶 runtime authority", () => {
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = embeddedOperableApp();
+    internals(app)._mappingCache = { primPathForGuid: (g: string) => (g === "GUID-AAA" ? "/World/G_AAA" : null) };
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    internals(app)._handleParentMessage(focusMessage("GUID-AAA"));
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][0]).toMatchObject({
+      event_type: "focusPrimRequest",
+      payload: expect.objectContaining({
+        prim_path: "/World/G_AAA",
+        role: "primary",
+        viewer_lease_token: "lease_token_primary",
+        session_id: "review_session_x",
+      }),
+    });
+  });
+
+  // highlight（A1 核心路徑：_overlayHighlight → HighlightBridge → _sendStreamMessage）──────────
+  it("highlight：無 lease token → 不呼 AppStream.sendMessage，且誠實記 reviewEvent（gate 於 _sendStreamMessage 擋下）", () => {
+    reviewEnv.viewerLeaseToken = "";
+    const app = embeddedOperableApp();
+    internals(app).state = { ...internals(app).state, showStream: true };
+    internals(app)._mappingCache = { primPathForGuid: () => "/World/G_AAA" };
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true); // dataChannelReady=true → bridge 會嘗試送，才碰得到 gate
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    const reviewSpy = vi.spyOn(internals(app), "_appendReviewEvent").mockImplementation(() => {});
+
+    internals(app)._handleParentMessage(highlightMessage([{ ifc_guid: "GUID-AAA", severity: "error" }]));
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(reviewSpy).toHaveBeenCalledWith(expect.stringContaining("primary viewer lease token required"));
+  });
+
+  it("highlight：有 lease token → 呼 AppStream.sendMessage 送 highlightPrimsRequest，payload 帶 runtime authority", () => {
+    reviewEnv.viewerLeaseToken = "lease_token_primary";
+    const app = embeddedOperableApp();
+    internals(app).state = { ...internals(app).state, showStream: true };
+    internals(app)._mappingCache = { primPathForGuid: (g: string) => (g === "GUID-AAA" ? "/World/G_AAA" : null) };
+    vi.spyOn(internals(app), "_hasRemoteVideoFrame").mockReturnValue(true);
+    const sendSpy = vi.spyOn(AppStream, "sendMessage").mockResolvedValue({});
+    vi.spyOn(internals(app), "_appendDemoOutgoing").mockImplementation(() => {});
+
+    internals(app)._handleParentMessage(highlightMessage([{ ifc_guid: "GUID-AAA", severity: "error" }]));
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][0]).toMatchObject({
+      event_type: "highlightPrimsRequest",
+      payload: expect.objectContaining({
+        role: "primary",
+        source_client_id: "viewer_lease_primary",
+        viewer_lease_token: "lease_token_primary",
+        session_id: "review_session_x",
+      }),
+    });
+  });
+});
+
 describe("Important #2：_firstFramePosted 隨 stage 重載重置（多模型切換時第二個 stage 完成仍回報 first_frame）", () => {
   it("第二次 _completeStageLoad（換載 stage）→ 再次送 first_frame / stage_loaded", () => {
     vi.stubEnv("VITE_ALLOWED_COORDINATOR_ORIGINS", PARENT_ORIGIN);
