@@ -164,7 +164,8 @@ describe("A1 3D review decoupling", () => {
   });
 
   it("rule-run result opens Review Room handoff with non-secret context instead of sending in-place highlight", async () => {
-    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("selected session must use coordinator for-session proxy"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "2O2Fr$t4X7Zf8NOew3FLOH", usd_prim_path: "/World/Door_001", rule_code: "FIRE-RATING", severity: "error", status: "fail", message: "Fire rating missing" },
@@ -176,6 +177,10 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();
 
+    expect(forSessionSpy).toHaveBeenCalledWith("review_session_x", {
+      ids_path: expect.stringContaining("sample-fire-rating.ids"),
+    });
+    expect(directRunSpy).not.toHaveBeenCalled();
     const open = q<HTMLButtonElement>("a1-open-review-room")!;
     expect(open.disabled).toBe(false);
     await act(async () => { open.click(); });
@@ -190,8 +195,35 @@ describe("A1 3D review decoupling", () => {
     expect(viewerBox.renderCount).toBe(0);
   });
 
-  it("missing usd_prim_path opens Review Room with an honest mapping diagnostic", async () => {
+  it("opens Review Room from A1 results even before a review session is selected", async () => {
     vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "guid_no_session_yet", usd_prim_path: "/World/Door_002", rule_code: "FIRE-RATING", severity: "error", status: "fail", message: "Fire rating missing" },
+    ]);
+
+    await renderA1();
+    await pickModel();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    const open = q<HTMLButtonElement>("a1-open-review-room")!;
+    expect(open.disabled).toBe(false);
+    await act(async () => { open.click(); });
+
+    expect(window.location.hash).toContain("#review?");
+    expect(window.location.hash).toContain("source=a1");
+    expect(window.location.hash).toContain("rule_run_id=rr_a1");
+    expect(window.location.hash).toContain("ifc_guid=guid_no_session_yet");
+    expect(window.location.hash).toContain("usd_prim_path=%2FWorld%2FDoor_002");
+    expect(window.location.hash).not.toContain("session=");
+    expect(window.location.hash).not.toContain("lease_token");
+    expect(viewerBox.renderCount).toBe(0);
+  });
+
+  it("missing usd_prim_path opens Review Room with an honest mapping diagnostic", async () => {
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("selected session must use coordinator for-session proxy"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
       { ifc_guid: "guid_without_mapping", usd_prim_path: null, rule_code: "MAPPING", severity: "error", status: "fail", message: "missing mapping" },
@@ -214,6 +246,10 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();
 
+    expect(forSessionSpy).toHaveBeenCalledWith("review_session_x", {
+      ids_path: expect.stringContaining("sample-fire-rating.ids"),
+    });
+    expect(directRunSpy).not.toHaveBeenCalled();
     const open = q<HTMLButtonElement>("a1-open-review-room")!;
     expect(open.disabled).toBe(false);
     await act(async () => { open.click(); });
