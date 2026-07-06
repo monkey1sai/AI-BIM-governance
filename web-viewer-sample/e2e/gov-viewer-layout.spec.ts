@@ -145,4 +145,45 @@ test.describe("CH-H1 semantic viewer · mock viewport（harness 不空白）", (
     expect(bottom.y).toBeGreaterThan(center.y);
     expect(bottom.width).toBeGreaterThan(center.width + 40);
   });
+
+  // Task2 修復契約：reservedLeft（USD Stage Dock 開啟，?debug=1 或 Kit 回報 usdPrims）灌進 .gv-mock 內距時，
+  // 收欄斷點必須看「.gv-mock 內容框可用寬」而非僅視窗寬。中等視窗（1100px）+ reservedLeft(300) 下可用寬僅 ~786px
+  // 塞不下三欄最小需求(~916px)，舊版只看 @media(max-width:980px) 不會收欄，.gv-C{overflow:hidden} 便把右側語意欄
+  // (②IFC語意/③Pset·Qto/⑥空間)靜默裁到框外看不到。此測驗證修復後 .gv-C 收成單欄、無被裁切的水平溢出、右欄完整可見。
+  test("?harness=1&debug=1 中等視窗 reservedLeft 生效時，C 版面收單欄、右側語意欄不被 overflow 靜默裁切", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await page.goto("/?harness=1&debug=1");
+
+    const mv = page.getByTestId("mock-viewport");
+    await expect(mv).toBeVisible({ timeout: 30_000 });
+    const right = page.getByTestId("geo-viewer-right-semantic");
+    await expect(right).toBeVisible();
+
+    const diag = await mv.evaluate((el) => {
+      const mock = el.closest(".gv-mock") as HTMLElement | null;
+      const mockCs = mock ? getComputedStyle(mock) : null;
+      const gridCs = getComputedStyle(el);
+      return {
+        paddingLeft: mockCs ? parseFloat(mockCs.paddingLeft) : -1,
+        gridTemplateColumns: gridCs.gridTemplateColumns,
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+      };
+    });
+
+    // 前置條件：reservedLeft 已生效（.gv-mock paddingLeft 被灌入 sidebar 寬 ~300）。不成立代表觸發條件改變，須重校準。
+    expect(diag.paddingLeft, JSON.stringify(diag)).toBeGreaterThan(100);
+    // 修復目標一：可用寬不足 → C 版面收單欄（grid-template-columns 只剩單一 track），不維持三欄。
+    expect(diag.gridTemplateColumns.trim().split(/\s+/).length, JSON.stringify(diag)).toBe(1);
+    // 修復目標二：.gv-C 無被裁切的水平溢出（收欄後 scrollWidth 不超過 clientWidth）。舊版此處 916 > 786 為 RED。
+    expect(diag.scrollWidth, JSON.stringify(diag)).toBeLessThanOrEqual(diag.clientWidth + 1);
+
+    // 修復目標三：右側語意欄整體落在 .gv-C 可視框內，不被裁到框外消失。
+    const cBox = await mv.boundingBox();
+    const rBox = await right.boundingBox();
+    expect(cBox).not.toBeNull();
+    expect(rBox).not.toBeNull();
+    const geom = { cRight: (cBox?.x ?? 0) + (cBox?.width ?? 0), rRight: (rBox?.x ?? 0) + (rBox?.width ?? 0) };
+    expect(geom.rRight, JSON.stringify(geom)).toBeLessThanOrEqual(geom.cRight + 1);
+  });
 });

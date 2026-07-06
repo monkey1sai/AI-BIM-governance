@@ -15,6 +15,9 @@
   font-size: 13px;
   padding: 14px;
   box-sizing: border-box;
+  /* CH-H3b：宣告為 inline-size 查詢容器，讓 .gv-C 依「實際可用寬」(=本容器內容框，已扣除 reservedLeft/Right
+     內距) 決定收欄，而非僅看視窗寬——否則 USD Stage Dock 開啟(reservedLeft 生效)時中等視窗右欄會被裁掉。 */
+  container: gvmock / inline-size;
 }
 /* CH-H3：live 3D 已出幀時，MockViewport 不再整片覆蓋中央，改為左緣語意側欄（半透明），與中央 <video> live 3D
    並存（對齊 AI-BIM-Geo Viewer 範本：左欄①③ + 隨點構件②④⑥；模型置中不受遮蔽）。
@@ -123,8 +126,9 @@
 
 /* Task2 §Step3：C 區塊 IA 版面 — .gv-C 本身即 3 欄x3 列 grid 容器，五具名區為其直接子節點（grid item）：
    evidence 滿版列 / left·center·right 中列 / bottom 滿版列。banner 與七軸 rail 不在 grid 內（留在外層
-   .gv-mock overflow:auto 捲動容器，維持單一捲動）。overflow:hidden 防 grid 自身出捲軸；min-height:100%
-   讓 grid 填滿捲動容器；內容過高時由外層 .gv-mock 捲動。 */
+   .gv-mock overflow:auto 捲動容器，維持單一捲動）。min-height:100% 讓 grid 填滿捲動容器；內容過高時由外層
+   .gv-mock 捲動。不設 overflow:hidden——三欄收欄改由下方 @container 依實際可用寬處理；萬一仍有殘餘水平溢出，
+   讓外層 .gv-mock(overflow:auto) 撈得到、可捲動看到，而非靜默裁切消失（reviewer P1：不無聲吃掉右側語意欄）。 */
 .gv-C {
   min-height: 100%;
   display: grid;
@@ -135,7 +139,6 @@
     "left center right"
     "bottom bottom bottom";
   gap: 8px;
-  overflow: hidden;
 }
 .gv-C__evidence {
   grid-area: evidence;
@@ -169,8 +172,10 @@
   min-width: 0;
   min-height: 0;
 }
-/* 窄視窗（含 820px 測試視窗）：三欄最小寬 ~900px 塞不下 → 五區改單欄堆疊，外層 .gv-mock 捲動。 */
-@media (max-width: 980px) {
+/* 可用寬不足（含 820px 窄視窗，或 dock 開啟後 reservedLeft 吃掉寬度使 .gv-mock 內容框 < ~952px）：三欄最小寬
+   ~916px 塞不下 → 五區改單欄堆疊，外層 .gv-mock 捲動。用 @container 看本容器內容框寬（已含 reserved 內距）而非
+   @media 只看視窗寬，才能在 dock 開啟的中等視窗（1024/1100/1152/1200 等）也正確收欄，不讓右欄溢出被裁。 */
+@container gvmock (max-width: 952px) {
   .gv-C {
     grid-template-columns: 1fr;
     grid-template-rows: none;
@@ -180,7 +185,6 @@
       "center"
       "right"
       "bottom";
-    overflow: visible;
   }
 }
 @media (max-width: 620px) {
