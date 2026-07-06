@@ -74,7 +74,20 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
-    throw new Error(`governance proxy ${path} -> ${res.status} ${res.statusText}`);
+    let detail = res.statusText;
+    try {
+      const body = await res.clone().json() as { detail?: unknown; error?: unknown; reason?: unknown };
+      const picked = body.detail ?? body.error ?? body.reason;
+      detail = typeof picked === "string" ? picked : JSON.stringify(body);
+    } catch {
+      try {
+        const text = await res.text();
+        if (text.trim()) detail = text.trim();
+      } catch {
+        // Keep statusText fallback.
+      }
+    }
+    throw new Error(`governance proxy ${path} -> ${res.status} ${detail}`);
   }
   return res.json() as Promise<T>;
 }
@@ -177,6 +190,8 @@ export const governanceClient = {
   // Issue tracking
   listIssues: (status?: string) =>
     jsonFetch<{ issues: IssueRow[] }>(`/api/governance/issues${status ? `?status=${status}` : ""}`).then((r) => r.issues),
+  getIssue: (id: string) =>
+    jsonFetch<{ issue: IssueRow; events: unknown[] }>(`/api/governance/issues/${encodeURIComponent(id)}`).then((r) => r.issue),
   transitionIssue: (id: string, toStatus: string, note?: string) =>
     jsonFetch<IssueRow>(`/api/governance/issues/${id}/transition`, {
       method: "POST",

@@ -13,7 +13,7 @@ vi.mock("./EmbeddedViewer", () => ({
 
 import { A1GovernanceWorkbenchPage } from "./pages";
 import { coordinatorClient } from "./coordinatorClient";
-import { governanceClient, type RuleRunStatus } from "./governanceClient";
+import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus } from "./governanceClient";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
 
@@ -66,6 +66,19 @@ function fakeRunStatus(status: RuleRunStatus["status"]): RuleRunStatus {
   };
 }
 
+const LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
+const fakeFilesTree: FilesTreeResponse = {
+  root: "C:/Repos/active/iot/AI-BIM-governance/storage",
+  source_kind: "local_fs",
+  projects: [{
+    project_id: "270",
+    models: [{
+      model_id: "建築",
+      versions: [{ name: "model.ifc", path: LOCAL_IFC_PATH, size_bytes: 12345, mtime: "2026-07-06T00:00:00+08:00" }],
+    }],
+  }],
+};
+
 describe("A1 3D review decoupling", () => {
   let container: HTMLDivElement;
   let root: Root | null;
@@ -80,6 +93,7 @@ describe("A1 3D review decoupling", () => {
     viewerBox.renderCount = 0;
     window.location.hash = "#a1";
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus() as never);
+    vi.spyOn(governanceClient, "filesTree").mockResolvedValue(fakeFilesTree);
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control",
       count: 1,
@@ -117,13 +131,23 @@ describe("A1 3D review decoupling", () => {
     });
     await flush();
   };
-  const pickModel = async (key = "松風庵/root/main/u1/model.ifc") => {
+  const pickModel = async (path = LOCAL_IFC_PATH) => {
+    const model = q<HTMLSelectElement>("a1-localfs-select")!;
+    await act(async () => {
+      model.value = path;
+      model.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+  };
+  const selectMinioSource = async (key = "松風庵/root/main/u1/model.ifc") => {
+    await act(async () => { q<HTMLButtonElement>("a1-source-minio")!.click(); });
+    await flush();
     const model = q<HTMLSelectElement>("a1-minio-select")!;
     await act(async () => {
       model.value = key;
       model.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
     await flush();
   };
 
@@ -141,7 +165,7 @@ describe("A1 3D review decoupling", () => {
     expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
   });
 
-  it("picked IFC enables governance run without review session and calls createRuleRun", async () => {
+  it("picked local_fs IFC enables governance run without review session and calls createRuleRun", async () => {
     vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("for-session must not be required"));
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -156,11 +180,75 @@ describe("A1 3D review decoupling", () => {
     await flush();
 
     expect(governanceClient.createRuleRun).toHaveBeenCalledWith({
-      ifc_source_path: "松風庵/root/main/u1/model.ifc",
+      ifc_source_path: LOCAL_IFC_PATH,
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
     });
     expect(forSessionSpy).not.toHaveBeenCalled();
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
+  it("selected MinIO object key is not sent as ifc_source_path", async () => {
+    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+
+    await renderA1();
+    await selectMinioSource();
+
+    const pick = q<HTMLButtonElement>("a1-step-pick")!;
+    const run = q<HTMLButtonElement>("a1-step-run")!;
+    expect(pick.disabled).toBe(true);
+    expect(run.disabled).toBe(true);
+    expect(q("a1-minio-source-note")?.textContent).toContain("server-local IFC path");
+
+    await act(async () => { run.click(); });
+    await flush();
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it("switching from picked local_fs to MinIO clears the stale runnable file", async () => {
+    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+
+    await renderA1();
+    await pickModel();
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(false);
+
+    await selectMinioSource();
+    const run = q<HTMLButtonElement>("a1-step-run")!;
+    expect(run.disabled).toBe(true);
+
+    await act(async () => { run.click(); });
+    await flush();
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it("BCF review panel keeps existing topics on idempotent issue creation retry", async () => {
+    vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "g1", usd_prim_path: null, rule_code: "naming", severity: "high", status: "fail", message: "naming rule failed" },
+    ]);
+    vi.spyOn(governanceClient, "issuesFromRuleRun")
+      .mockResolvedValueOnce({ created: 2, issue_ids: ["i1", "i2"] })
+      .mockResolvedValueOnce({ created: 0, issue_ids: [] });
+    const rows: IssueRow[] = [
+      { id: "i1", kind: "issue", title: "FIRE: Door", status: "open", severity: "high", ifc_guid: "g1", usd_prim_path: null, source_type: "rule_result" },
+      { id: "i2", kind: "issue", title: "NAME: Wall", status: "open", severity: "medium", ifc_guid: "g2", usd_prim_path: null, source_type: "rule_result" },
+    ];
+    vi.spyOn(governanceClient, "getIssue").mockImplementation(async (id: string) => rows.find((row) => row.id === id)!);
+
+    await renderA1();
+    await pickModel();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    const issues = q<HTMLButtonElement>("a1-step-issues")!;
+    await act(async () => { issues.click(); });
+    await flush();
+    expect(q("a1-bcf-review-panel")?.textContent).toContain("FIRE: Door");
+
+    await act(async () => { issues.click(); });
+    await flush();
+    expect(q("a1-bcf-review-panel")?.textContent).toContain("FIRE: Door");
+    expect(q("a1-bcf-review-panel")?.textContent).toContain("NAME: Wall");
   });
 
   it("rule-run result opens Review Room handoff with non-secret context instead of sending in-place highlight", async () => {
@@ -238,12 +326,7 @@ describe("A1 3D review decoupling", () => {
     await renderA1();
 
     // Select a MinIO source object → a1-link-minio becomes enabled.
-    const model = q<HTMLSelectElement>("a1-minio-select")!;
-    await act(async () => {
-      model.value = "松風庵/root/main/u1/model.ifc";
-      model.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await flush();
+    await selectMinioSource();
 
     const minioLink = q<HTMLButtonElement>("a1-link-minio")!;
     expect(minioLink.disabled).toBe(false);
@@ -268,30 +351,22 @@ describe("A1 3D review decoupling", () => {
     expect(sp.get("minio_key")).toBeNull();                            // sessions chip must not leak the minio key
   });
 
-  it("conversion ready does not fallback to the first active session when job.review_session_id is missing", async () => {
+  it("A1 does not trigger conversion from the governance page; conversion is a #conv handoff", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus")
-      .mockResolvedValueOnce(fakeRuntimeStatus([]) as never)
-      .mockResolvedValue(fakeRuntimeStatus([fakeSession("review_session_OTHER")]) as never);
-    vi.spyOn(coordinatorClient, "triggerConversion").mockResolvedValue({ ifc_ready_job_id: "ifcready_mw_x", status: "queued_for_conversion" } as never);
-    vi.spyOn(coordinatorClient, "getIfcReadyJob").mockResolvedValue({
-      ifc_ready_job_id: "ifcready_mw_x",
-      status: "x",
-      conversion_lifecycle_status: "ready",
-      download_status: "downloaded",
-      conversion_status: null,
-      review_session_id: null,
-    } as never);
+      .mockResolvedValue(fakeRuntimeStatus([]) as never);
+    const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockRejectedValue(new Error("A1 must not trigger conversion"));
 
     await renderA1();
-    const model = q<HTMLSelectElement>("a1-minio-select")!;
-    await act(async () => {
-      model.value = "松風庵/root/main/u1/model.ifc";
-      model.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await selectMinioSource();
+
+    expect(q<HTMLButtonElement>("a1-trigger-convert")!.disabled).toBe(true);
     await act(async () => { q<HTMLButtonElement>("a1-trigger-convert")!.click(); });
     await flush();
 
-    expect(q<HTMLSelectElement>("a1-session-select")?.value ?? "").toBe("");
-    expect(q("a1-convert-error")?.textContent).toContain("review_session_id");
+    expect(triggerSpy).not.toHaveBeenCalled();
+    const href = q<HTMLAnchorElement>("a1-conv-link")?.getAttribute("href") ?? "";
+    expect(href).toContain("#conv?");
+    expect(href).toContain("source=a1");
+    expect(href).toContain("minio_key=");
   });
 });
