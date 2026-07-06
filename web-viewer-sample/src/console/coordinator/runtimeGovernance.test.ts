@@ -181,6 +181,55 @@ describe("runtime governance helper", () => {
     });
   });
 
+  it("stage_open_state=open 才把 stageTruth 升成 ok", () => {
+    const runtime = makeRuntime({
+      sessions: {
+        count: 1,
+        active_count: 1,
+        participant_count: 1,
+        items: [
+          {
+            session_id: "review_session_open",
+            status: "active",
+            project_id: "project-1",
+            model_version_id: "model-v1",
+            participant_count: 1,
+            expected_stage_url: "omniverse://localhost/Projects/model.usdc",
+            conversion_status: "succeeded",
+            kit_instance_ids: ["kit-primary"],
+            created_at: "2026-06-08T00:00:00.000Z",
+            updated_at: "2026-06-08T00:00:10.000Z",
+            first_frame_at: "2026-06-08T00:00:11.000Z",
+            stage_open_state: "open",
+            stage_open_evidence: {
+              state: "open",
+              source: "viewer_lease",
+              detail: "active primary viewer reported loaded_stage_url matching expected_stage_url",
+              expected_stage_url: "omniverse://localhost/Projects/model.usdc",
+              loaded_stage_url: "omniverse://localhost/Projects/model.usdc",
+              datachannel_ready: true,
+              first_frame_at: "2026-06-08T00:00:11.000Z",
+            },
+          },
+        ],
+      },
+      kit_instance_bindings: [
+        {
+          session_id: "review_session_open",
+          kit_instance_id: "kit-primary",
+          status: "ready",
+          assigned_artifact_ids: ["artifact-1"],
+          started_at: "2026-06-08T00:00:03.000Z",
+          last_heartbeat_at: "2026-06-08T00:00:09.000Z",
+          released_at: null,
+        },
+      ],
+    });
+
+    expect(buildEndpointRows(runtime)[0].stageTruth).toBe("ok");
+    expect(deriveClassicDashboard(runtime).stageTruth.value).toBe("stage loaded 已觀測");
+  });
+
   it("active session without browser evidence produces yellow dashboard and honest missing evidence text", () => {
     const runtime = makeRuntime({
       sessions: {

@@ -121,6 +121,16 @@ export interface RuntimeSessionSummary {
   // VG-01（task#0 後端化）：runtime/status 透出真首幀證據（app.ts:2258 `first_frame_at ?? null`）。
   // 後端可能尚未回此欄（舊版本）或無首幀 → optional + nullable，前端誠實顯 not_observed，不捏造。
   first_frame_at?: string | null;
+  stage_open_state?: "not_requested" | "not_observed" | "requested" | "open" | "blocked" | string;
+  stage_open_evidence?: {
+    state: string;
+    source: string;
+    detail: string;
+    expected_stage_url: string | null;
+    loaded_stage_url: string | null;
+    datachannel_ready: boolean;
+    first_frame_at: string | null;
+  };
   primary_viewer_lease_id?: string | null;
   primary_viewer_user_id?: string | null;
   viewer_leases?: ViewerLeaseSummary[];
@@ -163,6 +173,7 @@ export interface RuntimeKitBinding {
   session_id: string;
   kit_instance_id: string;
   status: string; // KitInstance.status 權威 enum（allocated/starting/ready/draining/released/failed）
+  binding_intent?: string;
   assigned_artifact_ids: string[];
   started_at: string | null;
   last_heartbeat_at: string | null;
@@ -519,8 +530,11 @@ export const coordinatorClient = {
   // A1（B2）：操作員手動把 MinIO 物件排入 IFC→USD 轉檔（POST /api/conversion/trigger {key}）。
   // 前端只送 key；presign 與 webhook secret 一律 coordinator server-side（誠實／簽章不出瀏覽器）。
   // §3.4 對齊：minio-folderview 的一鍵觸發鈕改採此 main 端點（IP allowlist 守門），不再自帶 x-dev-token 版。
-  triggerConversion: (key: string) =>
-    jsonPost<TriggerConversionResponse>("/api/conversion/trigger", { key }),
+  triggerConversion: (key: string, options?: { forceRetrigger?: boolean }) =>
+    jsonPost<TriggerConversionResponse>(
+      "/api/conversion/trigger",
+      options?.forceRetrigger === true ? { key, force_retrigger: true } : { key },
+    ),
   // A1（B2）：單一 ifc-ready job 輪詢（讀 conversion_lifecycle_status）。
   getIfcReadyJob: (jobId: string) =>
     jsonGet<IfcReadyJobDetail>(`/api/external/ifc-ready/${encodeURIComponent(jobId)}`),

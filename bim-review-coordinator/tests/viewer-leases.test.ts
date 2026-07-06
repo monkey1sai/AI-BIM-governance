@@ -110,9 +110,39 @@ describe("review session viewer leases", () => {
     const runtime = await request(app.app).get("/api/runtime/status");
     const session = runtime.body.sessions.items.find((item: any) => item.session_id === sessionId);
     expect(session.primary_viewer_lease_id).toBe(lease.lease_id);
+    expect(session.stage_open_state).toBe("not_observed");
+    expect(session.stage_open_evidence.source).toBe("viewer_lease");
     expect(session.viewer_leases).toHaveLength(1);
     expect(session.viewer_leases[0].lease_id).toBe(lease.lease_id);
     expect(session.viewer_leases[0].lease_token).toBeUndefined();
+  });
+
+  it("keeps Kit binding metadata separate from actual stage-open proof", async () => {
+    const app = makeApp();
+    const sessionId = await createSession(app);
+
+    const beforeLease = await request(app.app).get("/api/runtime/status");
+    const beforeSession = beforeLease.body.sessions.items.find((item: any) => item.session_id === sessionId);
+    expect(beforeSession.stage_open_state).toBe("not_requested");
+    expect(beforeSession.stage_open_evidence.detail).toContain("no active primary viewer lease");
+    expect(beforeLease.body.kit_instance_bindings[0].status).toBe("ready");
+    expect(beforeLease.body.kit_instance_bindings[0].binding_intent).toBe("capacity_allocated");
+
+    const lease = await claimPrimary(app, sessionId);
+    await request(app.app)
+      .post(`/api/review-sessions/${sessionId}/viewer-leases/${lease.lease_id}/heartbeat`)
+      .set("X-Viewer-Lease-Token", lease.lease_token)
+      .send({
+        first_frame: true,
+        loaded_stage_url: "http://127.0.0.1:49101/artifacts/stream_conv_status_001/model.usdc",
+        datachannel_ready: true,
+      });
+
+    const afterHeartbeat = await request(app.app).get("/api/runtime/status");
+    const afterSession = afterHeartbeat.body.sessions.items.find((item: any) => item.session_id === sessionId);
+    expect(afterSession.stage_open_state).toBe("open");
+    expect(afterSession.stage_open_evidence.source).toBe("viewer_lease");
+    expect(afterSession.stage_open_evidence.loaded_stage_url).toContain("model.usdc");
   });
 
   it("replays the same client_nonce idempotently but rejects a second explicit primary", async () => {

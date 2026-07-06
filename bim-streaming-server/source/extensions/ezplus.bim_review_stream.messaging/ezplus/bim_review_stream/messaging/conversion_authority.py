@@ -299,6 +299,10 @@ class StreamingConversionStore:
         return job
 
     def get_conversion_job(self, conversion_job_id: str) -> dict[str, Any] | None:
+        job = self._get_conversion_job_raw(conversion_job_id)
+        return self._project_job_for_read(job) if job is not None else None
+
+    def _get_conversion_job_raw(self, conversion_job_id: str) -> dict[str, Any] | None:
         _safe_id(conversion_job_id, "conversion_job_id")
         path = self._job_path(conversion_job_id)
         if not path.is_file():
@@ -322,7 +326,7 @@ class StreamingConversionStore:
         max_limit = min(limit, 200)
         jobs = []
         for path in Path(self.settings.jobs_dir).glob("stream_conv_*.json"):
-            job = json.loads(path.read_text(encoding="utf-8"))
+            job = self._project_job_for_read(json.loads(path.read_text(encoding="utf-8")))
             if model_version_id and job.get("model_version_id") != model_version_id:
                 continue
             result = job.get("result") or {}
@@ -338,7 +342,7 @@ class StreamingConversionStore:
         return [self._conversion_result_list_item(job) for job in jobs[:max_limit]]
 
     def complete_conversion_job(self, conversion_job_id: str) -> dict[str, Any]:
-        job = self.get_conversion_job(conversion_job_id)
+        job = self._get_conversion_job_raw(conversion_job_id)
         if job is None:
             raise KeyError(conversion_job_id)
         if job.get("status") not in {"queued", "running"}:
@@ -666,13 +670,102 @@ class StreamingConversionStore:
         path.write_text(json.dumps(job, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
     def _update_job(self, conversion_job_id: str, **updates: Any) -> dict[str, Any]:
-        job = self.get_conversion_job(conversion_job_id)
+        job = self._get_conversion_job_raw(conversion_job_id)
         if job is None:
             raise KeyError(conversion_job_id)
         job.update(updates)
         job["updated_at"] = _utc_now()
         self._write_job(job)
         return job
+
+    def _project_job_for_read(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        projected = dict(job)
+        result = projected.get("result")
+        if not isinstance(result, dict) or not self._result_claims_ready(result):
+            return projected
+
+        missing = self._missing_ready_artifacts(projected, result)
+        if not missing:
+            return projected
+
+        projected_result = dict(result)
+        model = dict(projected_result.get("model") or {})
+        error = dict(projected_result.get("error") or {})
+        original_status = projected_result.get("status")
+        projected_result["ready"] = False
+        projected_result["status"] = "failed"
+        model["status"] = "failed"
+        projected_result["model"] = model
+        error.update(
+            {
+                "code": "artifact_missing",
+                "message": "Published conversion result is missing required artifacts.",
+                "missing_artifacts": missing,
+                "original_status": original_status,
+            }
+        )
+        projected_result["error"] = error
+        projected["status"] = "failed"
+        projected["stage"] = "artifact_missing"
+        projected["result"] = projected_result
+
+        callback_payload = projected.get("callback_payload")
+        if isinstance(callback_payload, dict):
+            projected_callback = dict(callback_payload)
+            projected_callback["status"] = "failed"
+            projected_callback["result"] = projected_result
+            projected["callback_payload"] = projected_callback
+        return projected
+
+    def _result_claims_ready(self, result: Mapping[str, Any]) -> bool:
+        model = result.get("model") if isinstance(result.get("model"), dict) else {}
+        return (
+            result.get("ready") is True
+            or result.get("status") in {"succeeded", "succeeded_with_warnings"}
+            or model.get("status") == "ready"
+        )
+
+    def _missing_ready_artifacts(self, job: Mapping[str, Any], result: Mapping[str, Any]) -> list[dict[str, str]]:
+        artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+        requested_outputs = {
+            str(output)
+            for output in (job.get("requested_outputs") or [])
+            if output is not None
+        }
+        required_roles = ["model_usdc", "metadata"]
+        requested_role_map = {
+            "element_mapping": "element_mapping",
+            "mapping": "element_mapping",
+            "entity_index": "entity_index",
+        }
+        for output, role in requested_role_map.items():
+            if output in requested_outputs and role not in required_roles:
+                required_roles.append(role)
+
+        missing: list[dict[str, str]] = []
+        for role in required_roles:
+            entry = artifacts.get(role) if isinstance(artifacts.get(role), dict) else None
+            raw_path = entry.get("path") if entry else None
+            if not raw_path:
+                missing.append({"role": role, "reason": "artifact_path_missing"})
+                continue
+            path = Path(str(raw_path))
+            if not path.is_file():
+                missing.append({"role": role, "reason": "artifact_file_missing", "path": str(path)})
+                continue
+            if not self._artifact_is_serveable(str(job.get("conversion_job_id") or ""), path, entry):
+                missing.append({"role": role, "reason": "artifact_unserveable", "path": str(path)})
+        return missing
+
+    def _artifact_is_serveable(self, conversion_job_id: str, path: Path, entry: Mapping[str, Any]) -> bool:
+        try:
+            relative = path.resolve().relative_to(Path(self.settings.artifacts_root).resolve())
+        except ValueError:
+            return False
+        if len(relative.parts) != 2 or relative.parts[0] != conversion_job_id:
+            return False
+        expected_url = f"{self.settings.public_artifacts_url.rstrip('/')}/{relative.as_posix()}"
+        return entry.get("url") == expected_url
 
     def _conversion_result_list_item(self, job: Mapping[str, Any]) -> dict[str, Any]:
         result = dict(job.get("result") or {})

@@ -248,6 +248,7 @@ describe("conversion control routes — retry", () => {
     await waitFor(async () => (await request(app.app).get(`/api/external/ifc-ready/${jobA}`)).body.status === "dispatched");
     const res = await request(app.app).post(`/api/conversion/jobs/${jobA}/retry`).send({});
     expect(res.status).toBe(409);
+    expect(res.body.recovery_action).toBe("none");
   });
 
   it("dropped_on_restart（dispose 後 pending 脈絡確失）→ retry → 422「請重新進件」", async () => {
