@@ -133,6 +133,36 @@ lib：`AIBIM.tt(node,lang)`（i18n）/ `AIBIM.useLang()` / `AIBIM.usePersistentS
 - **禁** bounce / parallax。
 - 守 `prefers-reduced-motion` 與 `[data-anim="off"]`；對比達 **WCAG 2.2 AA**。
 
+### §1.7 SaaS 品牌演進提案（candidate · 未拍板 · 2026-07-06）
+
+> **狀態＝candidate（提案）· 全部 PLANNED · 未建**。本小節只提「多租戶語境下視覺元素長什麼樣」，是設計**提案**不是決議；現況能力邊界一句話＝**已建成僅單站點單租戶閉環（tenant zero）**。
+> - **不牴觸 `edge-console.css` 的 `--ec-*` 單一真相**：以下樣式一律沿用本檔既有 token 體系表達（§1.3 / §1.5），**不發明新 token 家族**；實作 token 以 `edge-console.css` 的 `--ec-*` 為唯一真相。
+> - **§8 七項待人類拍板一項都不因本提案定案**（NVIDIA 綠值 / 字體 / light theme / i18n / 圓角 / `#semantic` proxy 遷移 / token-tier 範疇）；SaaS 品牌壓力不構成定案理由，**拍板仍走 §8 守門**。
+> - **分工邊界**：視覺樣式歸本檔；**互動行為**（三態切換、429 呈現、spectator 驗證）歸《互動實作規格》**PART D 的 IX-TN-01～04 卡**，本檔僅引用卡號、不重述行為；**租戶模型 / 隔離 / 身分**歸 `ai-bim-governance-saas-租戶與身分.md`。
+
+**(1) tenant zero 徽章（candidate · PLANNED · 未建）**
+
+- 沿用既有 **Badge** 元件（同 P0 / MVP / A1 樣式），mono label（`letter-spacing .12em uppercase`）標「TENANT ZERO」。
+- 用**中性面**（`--surface-2` + `--text-3`），**不用 `--accent` 綠**——避免把「第一個租戶」誤讀成「多租戶已建成」；徽章旁固定綴 `PLANNED` 灰標（見 (4)）。
+
+**(2) 站點連線三態徽章（candidate · PLANNED · SaaS-M1；行為見 IX-TN-03）**
+
+- **StatusLED + label** 三態，**只承載 metadata，IFC/USD payload 不出站**：
+  - `connected`：`--ok` 綠 LED（`.pulse`＝live），label「已連雲端」。
+  - `offline-grace`：`--warn` amber（**不偽綠、不偽紅**），label「**本地自主運作中**」+ 副標「僅犧牲雲端可視性與遠端控制」；離線寬限期窗口為**規劃值 · 非實測**，由合規拍板。
+  - `expired`：`--err` 紅 LED，label「憑證逾期 · 需重連」；紅**僅表雲端憑證逾期**，本地轉檔 / 檢核 / GPU 渲染 / WebRTC 仍自主（**紅不代表本地故障**）。
+- 缺遙測一律 `--idle` LED + 「未取得」，不畫 fail（承 §2.3 鐵律）。
+
+**(3) GPU 佇列深度 / 預估等待顯示（candidate · PLANNED · SaaS-M3；行為見 IX-TN-02）**
+
+- 置於 `ec-top` 健康區或 `#instances`，用 **MetricCard / HealthChip**，數字走 `tabular-nums` + mono；**本提案不擺任何示意數字**，實際值為 runtime 供給。
+- 資源滿的 429 呈現為「**容量滿**」狀態、用 `--warn` **非 `--err` 紅**（429 非故障）；佇列深度與預估等待時附帶的任何數字皆須標「規劃值 · 非實測」，禁樂觀更新。
+
+**(4) 「雲端控制面（PLANNED）」灰色標籤樣式（candidate · PLANNED · 未建）**
+
+- 沿用 §1.5「todo＝1px dashed 灰」既有 provenance 慣例：**灰虛線框 + `--text-4` 弱字**，mono label「雲端控制面 · PLANNED」。
+- 專用於標任何雲端控制面入口 / 卡片（跨站 dashboard、租戶目錄、計量），**與已建成的落地端 CORE / OMNIVERSE / AI plane 色碼視覺區隔**；標籤只表「規劃中」，雲端只收 metadata 投影、**payload 不出站**。
+
 ---
 
 ## §2 Edge Console Shell 結構

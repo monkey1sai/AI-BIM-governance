@@ -27,7 +27,7 @@
 
 ---
 
-## §2 檔案角色表（9 檔）
+## §2 檔案角色表（16 檔）
 
 > **缺檔警告已解除（2026-06-23 更正）**：最高效力的 `ai-bim-governance-互動實作規格與標準對齊.md`（正典路由 22 條的唯一來源、PART B 互動卡、PART C 官方對齊）**已在本資料夾**。**2026-07-02 使用者明確指令**：本輪 A1 v2 改版**授權修訂此檔**（效力順序 §1 第一行）；v2 修訂附變更紀錄於檔頭，此後回復「非使用者指令不得重建/覆寫」。各檔仍把它當 source of truth 引用，引用名以現檔名為準。
 
@@ -41,6 +41,14 @@
 | `ai-bim-governance-實作紀律與技術債防線.md` | **實作紀律 + 技術債防線**（HOW 補充層，不改需求/規格） | §1 一頁速查、§2 八原則、§3 技術債陷阱 D-01~D-23、§4 DoD 硬化、§8 交付前總檢查表 | — |
 | `ai-bim-governance-design-system-對齊矩陣.md` | **DS × repo 三方對照**（新增；A4 狀態唯一裁決源） | repo 覆寫結論索引（DS 宣稱 vs 互動規格 vs repo 現況）；A4=NOT BUILT·p4 裁決在此 | 自封「功能最終覆寫源」（效力見 §1）；不得獨立改需求 |
 | `ai-bim-governance-前端對齊DS-保留後端-實作手冊.md` | **前端對齊 DS 的唯一可執行計畫（HOW 層）**（新增 2026-06-23） | §1 後端凍結面契約（DO-NOT-TOUCH）、§2 token 對照、§3 13 元件對應、§5 逐路由可執行規格（DS 視覺 / 保留後端 API / AI-coding 任務 / 改檔 / Playwright 驗收 / Prov）、§6 執行順序、§8 待人類決策 | 不取代互動規格/設計規格/對齊矩陣（效力見 §1）；路由表/A1–A10 裁決只引用不重維護 |
+| `ai-bim-governance-saas-架構總覽.md` | 雲地混合 SaaS 架構總綱（控制面 / edge plane / 通訊契約 / survivability；**全 PLANNED**，新增 2026-07-06） | 定位框架與服務清單方向 | 當成已建成事實；具體數字（心跳頻率 / SLO 等）皆規劃值·非實測 |
+| `ai-bim-governance-saas-租戶與身分.md` | 租戶模型（tenant→project→model-container）/ Bridge 隔離分層 / 身分與 token 相容路徑（**全 PLANNED**，新增 2026-07-06） | 隔離策略方向（Pool/Silo/tenant-per-stamp）與相容路徑設計 | 當成 repo 已支援多租戶；ACL/assignee 授權模型屬待人類簽核的新決策 |
+| `ai-bim-governance-saas-GPU經濟與計量計費.md` | Session broker 設計 / GPU 硬約束（H8）/ 三軸計量 / 方案分層（**全 PLANNED**，新增 2026-07-06） | GPU 物理死線與排隊 / 配額設計方向 | 承諾 live migration / hot-swap；定價與 COGS 數字皆規劃值·非實測 |
+| `ai-bim-governance-saas-公開API與標準對齊.md` | `/v1` 物理分離設計 / webhook / BCF·IDS·bSDD 對齊（**全 PLANNED**，新增 2026-07-06） | 凍結契約保護矩陣與 golden-path 守門設計方向 | 宣稱已支援 BCF 3.0；動 §1 禁改後端檔 |
+| `ai-bim-governance-saas-合規資料主權與生命週期.md` | ADR / 資料主權三層 / 生命週期狀態機 / DR / GDPR（**全 PLANNED**，新增 2026-07-06） | 合規框架與資料主權承諾方向 | 當成已通過稽核；ISO/SOC 2 範疇聲明皆待簽核 |
+| `ai-bim-governance-saas-遷移路線與里程碑.md` | SaaS-M1～M8 scope / DoD / 回退（**全 PLANNED**，新增 2026-07-06） | 各階段 scope 與 DoD 驗收方向 | 跳過既有 M0–M4 里程碑語意；SaaS-M 編號為接續而非覆寫 |
+| `審批報告-docs-plans-SaaS改版-2026-07-06.md` | 本輪 SaaS 改版審批紀錄（現行最高審批） | 追溯本輪裁決依據與 open_question_rulings | 當成需求規格本身；具體設計以對應 saas-* 檔為準 |
+| `docs/superpowers/specs/2026-07-06-plans-saas-replatform-design.md` | 本輪改寫變更契約（CI missing_openspec gate 佐證；位於 `docs/superpowers/specs/`，非本目錄） | 對照本輪文件變更範圍 | 當成產品需求規格；此檔僅供 CI 治理佐證 |
 
 > `docs/plans/` 共有**兩份**原型 .html——`ai-bim-governance-prototype.html`（殼層，22 頁導航）與 `ai-bim-geo-viewer-prototype.html`（3D 語意驗收示意，M4）。兩份皆為行為/視覺示意，非程式碼範本。
 
@@ -164,3 +172,13 @@ A1–A10 功能需求、UI 驗收語意與實作順序，一律以 docs/plans/ �
   實作紀律與技術債防線.md（HOW 補充層，不改需求）
 兩份 .html 是行為示意，不是程式碼範本。
 ```
+
+---
+
+## SaaS 增補層導讀（2026-07-06）
+
+- 本輪 SaaS 重定位承接《審批報告-docs-plans-SaaS改版-2026-07-06.md》審批紀錄；該報告為本輪裁決依據的唯一追溯來源。
+- 定位一句話：AI-BIM-governance 是「雲端控制面 + 落地端 plane」的雲地混合多租戶 SaaS；**SaaS ≠ 全上雲**，模型檔（IFC/USD payload）不出站，雲端只收 metadata-only 白名單投影。
+- 全部 `ai-bim-governance-saas-*` 檔案（含審批報告與本段）為**增補層**：效力位於本 README §1 所列全部既有文件之下；與既有文件衝突時，一律以既有凍結契約（互動實作規格 A.1.1、前端對齊DS手冊 §1）與對齊矩陣 §4.4 裁決為準，不得覆寫。
+- 全部 SaaS 能力狀態 = **PLANNED**；現況已建成僅單站點閉環（即 tenant zero），任何 SaaS 服務、隔離層、計量計費、`/v1` API 均尚未實作，禁止任何文件寫成「已交付」。
+- 凡本增補層或其對應 saas-* 檔中標記「**待人類簽核的新決策**」的條目，未經人類明確簽核前，一律不得進入實作。

@@ -264,6 +264,7 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--info)}
     <span class="pill test" title="MinIO 暫時測試 IFC（270/889/990/271）"><span class="k">測試專案</span><span class="v">270 · 結構</span></span>
     <span class="pill"><span class="k">來源</span><span class="v mono" style="font-size:10px">bim-control/270/&lt;uuid&gt;/v01</span></span>
     <span class="badge-demo">DEMO · 視覺/行為示意</span>
+    <span class="badge-demo" title="多租戶 SaaS PLANNED·未建；現況已建成僅單站點單租戶閉環。詳見 ai-bim-governance-saas-架構總覽.md">tenant zero · 單站點現況 · DEMO DATA</span>
     <div class="spacer"></div>
     <label class="lbl" for="selScene" style="align-self:center">場景</label>
     <select class="sel" id="selScene" title="?scene= — 每個 GPU 頁開自己的功能場景"></select>
@@ -313,6 +314,7 @@ table.map tr.on td:first-child{box-shadow:inset 3px 0 0 var(--info)}
           <span class="cv-chip" id="chipSel">尚未選取構件</span>
           <span class="cv-chip warn" id="chipA1" style="display:none"></span>
           <span class="cv-chip dc">正式高亮路徑：DataChannel <b>highlightPrimsRequest</b> → Kit（此 canvas 僅示意）</span>
+          <span class="cv-chip dc" title="雲地混合 SaaS PLANNED·未建；模型 payload 不出站">雲地邊界：3D 審查＝落地端 GPU plane；雲端僅收 metadata <b>PLANNED</b>，模型 payload 不出站</span>
         </div>
         <!-- 誠實串流遙測卡：FPS=未取得 -->
         <div class="streamcard" id="streamcard"></div>
@@ -485,15 +487,15 @@ const SCENES={
  clash:   {glyph:'◈',label:'A3 跨專業疊合 · Clash',accent:'var(--c-red)',built:false,phase:'NOT BUILT · clash 卡 OCC',
            sub:'A3 federation 已建；clash 引擎卡 ifcopenshell 缺 OpenCASCADE（has_occ=False），出不了真實碰撞數，不顯任何碰撞計數。spike 未進主分支。'},
  '4d':    {glyph:'▤',label:'A6 4D / 5D 施工模擬',accent:'var(--c-cyan)',built:false,phase:'NOT BUILT · 願景 Phase 4',
-           sub:'GPU-bound；時間軸/成本曲線為願景敘事，後端不存在。'},
+           sub:'多租戶願景：跨站點施工序列與成本曲線於雲端控制面聚合檢視，各站點 3D 仍在落地端 GPU plane、雲端僅收 metadata（PLANNED），模型 payload 不出站。GPU-bound；時間軸/成本曲線為願景敘事，後端不存在。'},
  reality: {glyph:'◫',label:'A7 Reality Capture 比對',accent:'var(--c-amber)',built:false,phase:'NOT BUILT · 願景 Phase 4',
-           sub:'GPU-bound；mesh 比對須先以 usd-code-mcp 驗證再宣稱，後端不存在。'},
+           sub:'多租戶願景：多站點實勘 mesh 與設計模型比對、跨租戶進度回報於雲端 dashboard 聚合（metadata-only，模型 payload 不出站，PLANNED）。GPU-bound；mesh 比對須先以 usd-code-mcp 驗證再宣稱，後端不存在。'},
  synthetic:{glyph:'⊞',label:'A8 Synthetic Data',accent:'var(--c-violet)',built:false,phase:'NOT BUILT · 願景 Phase 4',
-           sub:'須對齊官方 Omniverse Replicator（先驗再寫），後端不存在。'},
+           sub:'多租戶願景：租戶共享合成資料流水線、跨站點資料集治理於控制面編排（雲端僅收 metadata，模型 payload 不出站，PLANNED）。須對齊官方 Omniverse Replicator（先驗再寫），後端不存在。'},
  copilot: {glyph:'✦',label:'A9 設計 / 審查 Copilot',accent:'var(--c-violet)',built:false,phase:'NOT BUILT · 願景 Phase 4',
-           sub:'復用 ChatToolCall，僅在 session layer（非 3D 場景）；後端不存在。'},
+           sub:'多租戶願景：跨站點審查 Copilot 於 session layer 協作（AI 只寫 session layer、source .usdc 雜湊前後不變）。復用 ChatToolCall，僅在 session layer（非 3D 場景）；後端不存在。'},
  robotics:{glyph:'⊿',label:'A10 機器人 / 巡檢模擬',accent:'var(--c-cyan)',built:false,phase:'NOT BUILT · 願景 Phase 4',
-           sub:'Isaac-sim adjacent；能力宣稱前須對齊官方，後端不存在。'},
+           sub:'多租戶願景：跨站點巡檢/機器人模擬排程於雲端聚合、GPU 仍在落地端 plane 執行（雲端僅收 metadata，模型 payload 不出站，PLANNED）。Isaac-sim adjacent；能力宣稱前須對齊官方，後端不存在。'},
 };
 function curSceneId(){const id=new URLSearchParams(location.search).get('scene')||'viewer';return SCENES[id]?id:'viewer';}
 const SCENE_ID=curSceneId(), SCENE=SCENES[SCENE_ID];

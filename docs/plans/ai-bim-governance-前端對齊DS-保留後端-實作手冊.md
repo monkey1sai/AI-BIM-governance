@@ -205,7 +205,7 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 - **Prov 誠實**：樹 `asbuilt`；bucket-layout/usdc-layout `demo`/`p1`；保留 `source_kind` 誠實標記（**不捏「s3 真實三層」**）。
 
 #### `#semantic`（SemanticViewerPage）— BUILT（唯讀）
-> ⚠ **複驗修正**：此頁**不是**走 whitelisted proxy，而是 raw fetch 操作員貼上的 URL（`pages.tsx:2119-2147`）。whitelisted proxy（`governanceClient.elementMappingForSession`，`governanceClient.ts:120`）是**另一頁**（`pages.tsx:338`）在用，勿混。
+> ⚠ **複驗修正**：此頁**不是**走 whitelisted proxy，而是 raw fetch 操作員貼上的 URL（`pages.tsx:3038-3066`）。whitelisted proxy（`governanceClient.elementMappingForSession`，`governanceClient.ts:121`）是**另一頁**（`pages.tsx:420`）在用，勿混。
 - **DS 視覺**：Panel + Field 列呈現 IFC 語意；in-3D 高亮 disabled `p1`；classification/geometry 誠實 null。
 - **保留後端 API**：`coordinatorClient.listIfcReady`（`GET /api/external/ifc-ready`）；**raw `fetch(mapUrl.trim())`** 載入操作員貼上的 `element_mapping.json` URL（現況，非 proxy）。
 - **任務**：1) 語意列→Field；classification/geometry 顯 null + `roadmap[]`（**禁捏造**）。2) 維持現況 raw-fetch 載入操作員 URL 行為（若要改走 whitelisted proxy 是**行為變更**，列入 §8 Q6，非純對齊）。3) in-3D 高亮 disabled `p1`。
@@ -297,7 +297,7 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 
 #### `#gpu`（GpuReviewRoomPage → ReviewRoomPage + panel）— PARTIAL
 - **DS 視覺**：DS Review-Room CTA 卡 + bridge 步驟（建立session→派發endpoint→首幀→DataChannel）做成 Stepper；PrimaryViewLink 區；usage-scenario spec Panel；MethodNote。
-- **保留後端 API**：經 ReviewRoomPage 的 `coordinatorClient.openInViewerUrl` → `${COORD_BASE}/ui/open?session=`（`coordinatorClient.ts:264`）。
+- **保留後端 API**：經 ReviewRoomPage 的 `coordinatorClient.openInViewerUrl` → `${COORD_BASE}/ui/open?session=`（`coordinatorClient.ts:496`）。
 - **任務**：1) bridge 步驟→Stepper。2) CTA 走 `openInViewerUrl`；**保留 `/ui/open?session=` handoff**（不得改 redirect target/regex）。3) console 內 WebRTC 標為不存在（僅 link-out）。
 - **改檔**：`pages.tsx`、`coordinatorClient.ts`、`components.tsx`。
 - **驗收**：點「開啟主畫面預覽」，斷言導向 `/ui/open?session=<id>`（console 內無影片）；Stepper 渲染 bridge 步驟。
@@ -395,3 +395,53 @@ repo `Prov` 型別（`data.ts:6`）**恰好 7 值、無 `todo`**：`asbuilt` / `
 - **AI 可執行 = TRUE**：每頁有真實檔路徑、真實路由、有序任務、驗收。
 - **誠實紀律**：Prov 確認恰 7 值無 `todo`（`data.ts:6`）；A4–A10 一致維持 NOT BUILT/phase-Panel/`p3`-`p4`；idle「未取得」與 501/coverage 自我參照重標皆保留。
 - **已套修正**：`#semantic` 改為 raw-fetch 現實（非 whitelisted proxy）；`#gpu`/`#review`/`#viewer` 措辭收斂為 `/ui/open?session=`（移除 console 不會送出的 `/?session=`）。
+
+---
+
+## §10（增補·2026-07-06）：單租戶 host 假設與 SaaS 租戶維度邊界（全部 PLANNED）
+
+> **增補層聲明**：本節為 2026-07-06 SaaS 改版增補，效力低於 §0 效力鏈所列全部既有文件；與 §1 後端凍結面契約衝突時，一律以 §1 為準。本節描述的 SaaS 租戶維度能力**全部 PLANNED·未建**，現況仍是**單站點單租戶閉環（tenant zero）**。A1–A10 建成狀態不因本節變動——建成裁決唯一源仍是對齊矩陣 §4.4（**本節不重述**）。
+>
+> **編號說明**：本手冊既有末節為 §9 複驗存證；本增補依「不重編既有章節編號」原則接續為 §10。
+
+### 10.1 重申 §1 凍結：SaaS 化不鬆動任何一條
+
+本手冊全篇「frontend-only 對齊」前提在 SaaS 語境下**原封不動**。特別重申兩條最高約束：
+
+- **proxy 路徑字串 byte-identical 永久不可變**：§1.2 governance proxy 路徑、§1.3 轉檔 dev proxy、§1.4 `/ui/open?session=` handoff（含 session-id regex `^(lwv_|review_session_)[A-Za-z0-9_]+$`，以及「必須註冊在 `/ui` SPA fallback **之前**」的順序聲明）、§1.7 enum 逐字 echo、§1.11 envelope key（`{items,count}`／`{issues}`／`{items,total,limit,offset}` 等）——**引入租戶維度不得改動其中任何一個字元**。
+- **禁改後端檔清單不動**：§1.12 列的 governance-service（`app.py`、`diff_engine/api.py`、`federation/api.py`、`issues/api.py`、`bcf/api.py`、`file_library/api.py`）、coordinator（`src/app.ts`、`src/routes/governanceProxy.ts`）、streaming `conversion_authority.py`——SaaS 租戶化**不得**以「加租戶參數」為由觸碰任一檔（觸碰即進 §10.4 待簽核清單）。
+
+### 10.2 租戶維度只有兩種合法增補形態
+
+「單租戶 host 假設」與多租戶並存的**唯二**允許形態（PLANNED·SaaS-M2；兩者皆為 additive、零改凍結面）：
+
+1. **token `tenant_id` claim 於 coordinator 中介層集中解析**：租戶身分由帶 `tenant_id` claim 的短期 token 承載，於 coordinator 新增的租戶 context 中介層**集中**解析與範圍過濾，**不讓各後端 service 自兜隔離**、不改 proxy 路徑字串。現況單一 governance token 視為 `tenant_id=default` 的隱含租戶（tenant zero）。
+2. **`X-Tenant-Id` additive optional header**：作為輔助傳遞，**缺省即 fallback 到現況單租戶路徑**（tenant zero），header 存在與否都不改變 proxy 目標與回應結構。
+
+> 兩形態皆**不新增 hash 路由、不改 A.1.1 22 條正典路由**——租戶維度一律加在 22 條 hash 之外的更外層（token claim 為主、子網域為輔）。任何要引入 tenant-scoped hash 的需求進 §10.4 待簽核清單。
+
+### 10.3 golden-path 逐位元組對比測試（PLANNED·SaaS-M6，§1 迴歸守門）
+
+為機器化守住 §1「byte-identical」承諾，SaaS-M6 導入 **golden-path 逐位元組對比測試**：
+
+- **測法**：同一請求分兩路——(a) 前端 console 現況路徑，直打 coordinator `:8004` 的凍結 `/api/*`；(b) 對外開發者路徑，經 `/v1` gateway 轉發到同一凍結內部路徑。對兩路回應做 **byte-for-byte 比對**。
+- **比對範圍（三類）**：① proxy 路徑字串（不改名）；② enum 逐字 echo（`change_type`／issue `status`／`severity`／conversion·session·job status／`KitInstance.status`）；③ envelope key（不 flatten／不改名）。**逐端點對照詳表引用 `ai-bim-governance-saas-公開API與標準對齊.md` §3，本節不重複。**
+- **守門語意**：對比出任一位元組差異（gateway re-serialize、enum 大小寫、envelope 改名等靜默破壞）＝ SaaS-M6 驗收 fail ＝ §1 迴歸紅燈，阻擋合併。前端 console **完全不經** `/v1` gateway，仍直打 `:8004`（§1 十二條零觸碰）。
+
+### 10.4 待人類簽核的新決策（未簽核前不得實作、不得在改寫或實作中偷渡）
+
+下列任一情形**觸及既有凍結面**，屬「待人類簽核的新決策」，AI coding **不得自行拍板**，須先以顯式 AskUserQuestion 取得人類簽核：
+
+| # | 觸發條件 | 為何須簽核 |
+|---|---|---|
+| S1 | governance API 需新增 `user`／`org`／`project` 參數 | 動到凍結 API 形狀，連動 §1.2 路徑與後端 schema |
+| S2 | 需修改 §1.12 禁改後端檔清單中**任一檔** | 直接違反 §1 最高約束 |
+| S3 | `data.ts:6` `Prov` 型別變更（如加第 8 值） | 牽動 `a1Machine.ts` 等全部消費者，且 `prov="todo"` 已知 TS2322（見 §4） |
+| S4 | target host 選擇邏輯**侵入 proxy 路徑語意**（把 host／tenant 塞進路徑字串或改寫轉發目標語意） | 破壞 byte-identical 與 §10.3 守門 |
+
+> §8 七項待人類決策（NVIDIA 綠值／字體／light theme／i18n／圓角／`#semantic` proxy 遷移／token-tier 範疇）**維持 OPEN**；SaaS 品牌演進壓力**不構成**定案理由，拍板仍走 §8 守門。
+
+### 10.5 技術債防線引用
+
+- **D-34（tenant 參數禁塞凍結路徑）**：實作 `/v1` gateway 或租戶中介層時，**禁**把 tenant 參數塞進凍結 governance proxy 路徑字串／query；防線＝§10.3 golden-path 逐位元組對比測試 ＋ code review 檢查點「proxy 路徑字串 grep 不含 tenant」。詳規見 `ai-bim-governance-實作紀律與技術債防線.md` §3 D-34。
+- **H6 metadata-only**：SaaS 雲端只收白名單 metadata 投影（計數／狀態／hash／摘要／時戳／版本號），**IFC/USD payload 不出站**；此為 D-35 防線標的，本節僅聲明、詳規見技術債防線檔。

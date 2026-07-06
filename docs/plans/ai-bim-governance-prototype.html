@@ -615,6 +615,20 @@ function HomePage({ lang }) {
       <PageHead crumb={tt({ zh:"今天要做什麼", en:"Today" }, lang)} title={tt({ zh:"今天要做什麼", en:"What to do today" }, lang)}
         sub={tt({ zh:"彙整跨應用待辦與常用動作入口。先處理擋下送審的紅燈項目。", en:"Cross-app todos + quick actions. Clear the red blockers first." }, lang)}
         prov={<D.ProvTag level="built" />} host={<HostTag kind="container" />} />
+      {/* SaaS 重定位導讀(NOT BUILT 樣式:虛線框 + disabled 觀感 · 全部 PLANNED) */}
+      <SectionTitle hint={tt({ zh:"SaaS 重定位 · PLANNED", en:"SaaS repositioning · PLANNED" }, lang)}>{tt({ zh:"SaaS 重定位導讀", en:"SaaS repositioning brief" }, lang)}</SectionTitle>
+      <div style={{ position:"relative", background:"var(--surface)", border:"1px dashed var(--line-2)", borderRadius:"var(--radius)", padding:"15px 17px", opacity:.9 }}>
+        <div style={{ position:"absolute", top:12, right:14, display:"flex", gap:6, alignItems:"center" }}>
+          <D.ProvTag level="todo" />
+          <span style={{ fontFamily:"var(--font-mono)", fontSize:8.5, letterSpacing:".08em", color:"var(--warn)", background:"var(--warn-soft)", border:"1px solid var(--warn)", padding:"2px 6px", borderRadius:3 }}>PLANNED</span>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:9, fontSize:13, color:"var(--text-2)", lineHeight:1.6, maxWidth:"70ch" }}>
+          <div>· {tt({ zh:"定位:由單站點單租戶閉環,重定位為「雲端控制面 + 落地端 data/GPU plane」的雲地混合多租戶 SaaS(SaaS ≠ 全上雲)。", en:"Positioning: from a single-site single-tenant loop to a hybrid cloud-control-plane + on-prem data/GPU-plane multi-tenant SaaS (SaaS ≠ all-cloud)." }, lang)}</div>
+          <div>· {tt({ zh:"全部 SaaS 能力一律 PLANNED · 未建;現況已建成僅單站點閉環(tenant zero)。", en:"All SaaS capabilities are PLANNED (not built); today only the single-site loop exists (tenant zero)." }, lang)}</div>
+          <div>· {tt({ zh:"模型檔不出站:IFC/USD payload 永不上雲,雲端只收 metadata 白名單投影;拔網時落地端完全自主。", en:"Model files never leave the site: IFC/USD payload never goes to cloud; cloud receives only a metadata whitelist projection; the site stays fully autonomous when disconnected." }, lang)}</div>
+        </div>
+        <div style={{ marginTop:11, fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-4)" }}>{tt({ zh:"詳規見 ai-bim-governance-saas-架構總覽.md · 效力低於既有凍結契約與對齊矩陣 §4.4", en:"See ai-bim-governance-saas-架構總覽.md · lower precedence than frozen contracts and matrix §4.4" }, lang)}</div>
+      </div>
       <SectionTitle hint={tt({ zh:"示意待辦", en:"demo todos" }, lang)}>{tt({ zh:"待辦 · TODO", en:"TODO" }, lang)}</SectionTitle>
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
         {window.EC_TODOS.map((t, i) => (
@@ -1345,6 +1359,25 @@ function SessionsPage({ lang }) {
         sub={tt({ zh:"review session 生命週期 + occupied 證據鏈。status enum 由後端逐字 echo;Open URL ≠ occupied;A1 的 3D 連動證據由本頁供應。", en:"Review-session lifecycle + occupied evidence chain. Status echoed verbatim; Open URL ≠ occupied; A1's 3D-link evidence is fed from here." }, lang)}
         prov={<D.ProvTag level="built" />} host={<HostTag kind="container" />} />
 
+      {/* 站點連線狀態(示意)· PLANNED · SaaS-M1 · 對應 IX-TN-03 · 兩態不偽綠不偽紅 */}
+      <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:6,
+        padding:"10px 13px", background:"var(--surface-2)", border:"1px dashed var(--line-2)", borderRadius:"var(--radius-sm)" }}>
+        <span style={{ fontFamily:"var(--font-mono)", fontSize:9.5, letterSpacing:".1em", color:"var(--text-3)", textTransform:"uppercase" }}>{tt({ zh:"站點連線狀態", en:"Site link status" }, lang)}</span>
+        <span style={{ display:"inline-flex", alignItems:"center", gap:6, fontFamily:"var(--font-mono)", fontSize:10.5,
+          color:"var(--info)", background:"var(--info-soft)", border:"1px solid var(--info)", padding:"3px 9px", borderRadius:"var(--radius-pill)" }}>
+          <D.StatusLED tone="idle" />connected
+        </span>
+        <span style={{ display:"inline-flex", alignItems:"center", gap:6, fontFamily:"var(--font-mono)", fontSize:10.5,
+          color:"var(--text-2)", background:"var(--surface)", border:"1px dashed var(--line-2)", padding:"3px 9px", borderRadius:"var(--radius-pill)" }}>
+          <D.StatusLED tone="idle" />offline-grace · {tt({ zh:"本地自主運作中", en:"running locally, autonomous" }, lang)}
+        </span>
+        <span style={{ marginLeft:"auto", fontFamily:"var(--font-mono)", fontSize:8.5, letterSpacing:".08em",
+          color:"var(--warn)", background:"var(--warn-soft)", border:"1px solid var(--warn)", padding:"2px 6px", borderRadius:3 }}>DEMO DATA · PLANNED · SaaS-M1</span>
+      </div>
+      <div style={{ marginBottom:2, fontFamily:"var(--font-mono)", fontSize:10, color:"var(--text-4)", lineHeight:1.6 }}>
+        {tt({ zh:"雲端連線僅影響遠端可視性與遠端控制;離線時轉檔／檢核／GPU 渲染／WebRTC 串流全在落地端自主運作,徽章不偽綠也不偽紅(對應 IX-TN-03)。", en:"Cloud link only affects remote visibility/control; when offline, conversion / checking / GPU render / WebRTC all keep running locally — badge is neither fake-green nor fake-red (per IX-TN-03)." }, lang)}
+      </div>
+
       <D.Panel title={tt({ zh:"Session 列表 · GET /api/runtime/status(5s 輪詢)", en:"Sessions · GET /api/runtime/status (5s poll)" }, lang)} right={<D.ProvTag level="built" />}>
         <div style={{ display:"flex", flexDirection:"column" }}>
           {rows.map((r, i) => (
@@ -1718,6 +1751,13 @@ function EdgeConsole() {
             <div className="brand-sub">EDGE RUNTIME · 殼層需求原型</div>
           </div>
         </div>
+        {/* tenant 徽章(示意)· 多租戶 SaaS 全部 PLANNED · 詳見 saas-架構總覽 */}
+        <span title="多租戶 SaaS PLANNED · 詳見 ai-bim-governance-saas-架構總覽.md"
+          style={{ display:"inline-flex", alignItems:"center", gap:7, fontFamily:"var(--font-mono)", fontSize:10,
+            letterSpacing:".04em", background:"var(--surface-2)", border:"1px dashed var(--line-2)", padding:"3px 9px", borderRadius:"var(--radius-pill)" }}>
+          <span style={{ color:"var(--text-2)", fontWeight:600 }}>tenant zero · 單站點現況</span>
+          <span style={{ color:"var(--warn)", background:"var(--warn-soft)", border:"1px solid var(--warn)", padding:"0 5px", borderRadius:3, fontSize:8.5, letterSpacing:".08em" }}>DEMO DATA</span>
+        </span>
         <div className="ec-crumbs">
           <SH.Pill label={tF(window.AIBIM.STR.project)} value="270 · 測試 IFC" caret />
           <SH.Pill label={tF(window.AIBIM.STR.version)} value="v07" caret />
@@ -1750,6 +1790,11 @@ function EdgeConsole() {
         ))}
         <div className="ec-nav-boundary">
           雲地邊界 · Governance host-native (0 GPU) ↔ Omniverse Runtime (GPU)
+          {/* 雲端控制面尚未建置 · 灰色不偽綠 */}
+          <div style={{ marginTop:7 }}>
+            <span style={{ fontFamily:"var(--font-mono)", fontSize:9, letterSpacing:".06em", color:"var(--text-3)",
+              background:"var(--surface-2)", border:"1px dashed var(--line-2)", padding:"2px 7px", borderRadius:4 }}>雲端控制面:PLANNED · 未建</span>
+          </div>
         </div>
       </nav>
 
