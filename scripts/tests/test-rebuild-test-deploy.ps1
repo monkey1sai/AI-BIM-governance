@@ -203,6 +203,85 @@ try {
     Assert-Equal 3 $preserveResult.RestoredEnvFileCount 'rebuild restores current-version env files before deploy'
     Assert-True (@($preserveCalls | Where-Object { $_ -match [regex]::Escape('clean -fdx -e bim-streaming-server/_build/**/logs/**') }).Count -ge 1) 'git clean excludes chronic Kit runtime-log lock path'
 
+    $artifactRoot = Join-Path $sandbox 'edge-runtime-data'
+    $artifactSentinel = Join-Path $artifactRoot 'ledgers\sentinel.txt'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $artifactSentinel) -Force | Out-Null
+    'keep-me' | Set-Content -LiteralPath $artifactSentinel -Encoding ascii
+    $artifactDeployRoot = Join-Path $sandbox 'artifact-contract-root'
+    New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot '.git') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot 'scripts') -Force | Out-Null
+    'deploy' | Set-Content -LiteralPath (Join-Path $artifactDeployRoot 'scripts\deploy.ps1') -Encoding ascii
+
+    $artifactEnvNames = @(
+        'EDGE_SITE_ID',
+        'EDGE_RUNTIME_DATA_ROOT',
+        'RUNTIME_STORAGE_ROOT',
+        'STORAGE_HOST_ROOT',
+        'STREAMING_CONVERSION_ARTIFACTS_ROOT',
+        'CONVERSION_LEDGER_STORE_PATH',
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+    )
+    $artifactEnvBackup = @{}
+    foreach ($name in $artifactEnvNames) {
+        $artifactEnvBackup[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+    }
+
+    try {
+        [Environment]::SetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', $artifactRoot, 'Process')
+        [Environment]::SetEnvironmentVariable('RUNTIME_STORAGE_ROOT', (Join-Path $artifactDeployRoot 'storage'), 'Process')
+        [Environment]::SetEnvironmentVariable('STORAGE_HOST_ROOT', (Join-Path $artifactDeployRoot 'storage'), 'Process')
+        [Environment]::SetEnvironmentVariable('CONVERSION_LEDGER_STORE_PATH', (Join-Path $artifactDeployRoot 'ledgers\conversion-ledger.json'), 'Process')
+        [Environment]::SetEnvironmentVariable('ARTIFACT_HEALTH_LEDGER_STORE_PATH', (Join-Path $artifactDeployRoot 'ledgers\artifact-health-ledger.json'), 'Process')
+
+        $artifactRunner = {
+            param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+            $commandText = $Arguments -join ' '
+            if ($commandText -eq 'remote get-url origin') {
+                return [pscustomobject]@{ ExitCode = 0; Output = 'https://example.invalid/AI-BIM-governance.git' }
+            }
+            if ($commandText -eq 'rev-parse --short HEAD') {
+                return [pscustomobject]@{ ExitCode = 0; Output = 'abc1234' }
+            }
+            if ($commandText -eq 'status --short') {
+                return [pscustomobject]@{ ExitCode = 0; Output = '' }
+            }
+            if ($commandText -eq 'rev-parse origin/main') {
+                return [pscustomobject]@{ ExitCode = 0; Output = 'abcdef123456' }
+            }
+            return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+        }.GetNewClosure()
+
+        $artifactDeployRunner = {
+            param([string] $DeployRoot)
+            $resolvedEdgeRuntimeDataRoot = [Environment]::GetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', 'Process')
+            $resolvedRuntimeStorageRoot = [Environment]::GetEnvironmentVariable('RUNTIME_STORAGE_ROOT', 'Process')
+            $resolvedStorageHostRoot = [Environment]::GetEnvironmentVariable('STORAGE_HOST_ROOT', 'Process')
+            $resolvedArtifactsRoot = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_ARTIFACTS_ROOT', 'Process')
+            $resolvedConversionLedgerPath = [Environment]::GetEnvironmentVariable('CONVERSION_LEDGER_STORE_PATH', 'Process')
+            $resolvedArtifactHealthLedgerPath = [Environment]::GetEnvironmentVariable('ARTIFACT_HEALTH_LEDGER_STORE_PATH', 'Process')
+            Assert-True (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('EDGE_SITE_ID', 'Process'))) 'deploy sees edge site id'
+            Assert-True ($resolvedEdgeRuntimeDataRoot -eq $artifactRoot) 'deploy sees external edge runtime data root'
+            Assert-True ($resolvedRuntimeStorageRoot -eq (Join-Path $artifactRoot 'storage')) 'deploy sees storage root under external data root'
+            Assert-True ($resolvedStorageHostRoot -eq (Join-Path $artifactRoot 'storage')) 'deploy sees storage host root under external data root'
+            Assert-True ($resolvedArtifactsRoot -eq (Join-Path $artifactRoot 'artifacts')) 'deploy sees artifact root under external data root'
+            Assert-True ($resolvedConversionLedgerPath -eq (Join-Path $artifactRoot 'ledgers\conversion-ledger.json')) 'deploy sees conversion ledger path under external data root'
+            Assert-True ($resolvedArtifactHealthLedgerPath -eq (Join-Path $artifactRoot 'ledgers\artifact-health-ledger.json')) 'deploy sees artifact health ledger path under external data root'
+            Assert-True (Test-Path -LiteralPath (Join-Path $artifactRoot 'storage') -PathType Container) 'rebuild creates external storage root'
+            Assert-True (Test-Path -LiteralPath (Join-Path $artifactRoot 'artifacts') -PathType Container) 'rebuild creates external artifact root'
+            Assert-True (Test-Path -LiteralPath (Join-Path $artifactRoot 'ledgers') -PathType Container) 'rebuild creates external ledger root'
+            Assert-True (Test-Path -LiteralPath $artifactSentinel -PathType Leaf) 'external ledger sentinel survives rebuild helper'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $DeployRoot 'ledgers\sentinel.txt'))) 'deployment checkout does not absorb external ledger sentinel'
+            return [pscustomobject]@{ ExitCode = 0 }
+        }.GetNewClosure()
+
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $artifactDeployRoot -AllowNonFixedPathForTests -CommandRunner $artifactRunner -DeployRunner $artifactDeployRunner | Out-Null
+    } finally {
+        foreach ($name in $artifactEnvNames) {
+            [Environment]::SetEnvironmentVariable($name, $artifactEnvBackup[$name], 'Process')
+        }
+    }
+
     $cleanFailureRoot = Join-Path $sandbox 'clean-failure-root'
     New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot '.git') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $cleanFailureRoot 'scripts') -Force | Out-Null
