@@ -841,6 +841,9 @@ export function createCoordinatorApp(
     if (!binding?.url && !binding?.mapping_url) {
       return session.artifact_health ?? null;
     }
+    if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase)) {
+      return session.artifact_health ?? null;
+    }
     try {
       const snapshot = await probeArtifactHealth({
         host_local_path: null,
@@ -3166,6 +3169,7 @@ function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: Public
     first_frame_at: session.first_frame_at ?? null, // VG-01 型別鏈：runtime/status 透出真首幀證據
     stage_open_state: stageOpenEvidence.state,
     stage_open_evidence: stageOpenEvidence,
+    artifact_health: session.artifact_health ?? null,
     primary_viewer_lease_id: primaryLease?.lease_id ?? null,
     primary_viewer_user_id: primaryLease?.user_id ?? null,
     viewer_leases: viewerLeases,
@@ -3317,6 +3321,21 @@ function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {
     .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
     .slice()
     .sort((left, right) => left.load_order - right.load_order)[0] ?? null;
+}
+
+function hasConfiguredConversionOrigin(urlValue: string | null, configuredConversionApiBase: string): boolean {
+  if (!urlValue) return true;
+  try {
+    return new URL(urlValue).origin === new URL(configuredConversionApiBase).origin;
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedDirectSessionProbeBinding(binding: ArtifactBinding, configuredConversionApiBase: string): boolean {
+  return binding.conversion_authority === "bim-streaming-server"
+    && hasConfiguredConversionOrigin(binding.url, configuredConversionApiBase)
+    && hasConfiguredConversionOrigin(binding.mapping_url, configuredConversionApiBase);
 }
 
 function parseListLimit(value: unknown): number {

@@ -114,7 +114,7 @@ describe("T7 local web view session / artifact resolution", () => {
 
   it("stream-config refreshes derived artifact health and exposes model/mapping stale state", async () => {
     const base = await startMissingArtifactServer();
-    const app = makeApp();
+    const app = makeApp({ streamingConversionApiBase: base });
     const created = await request(app.app)
       .post("/api/review-sessions")
       .send({
@@ -154,6 +154,50 @@ describe("T7 local web view session / artifact resolution", () => {
       mapping: "http_404",
     });
     expect(JSON.stringify(config.body.artifact_health)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+
+    const runtime = await request(app.app).get("/api/runtime/status");
+    const runtimeSession = runtime.body.sessions.items.find(
+      (item: { session_id: string }) => item.session_id === created.body.session_id,
+    );
+    expect(runtime.status).toBe(200);
+    expect(runtimeSession.artifact_health).toMatchObject({
+      model_usdc_reachable: false,
+      mapping_reachable: false,
+      stale_reason: "derived_artifact_unreachable",
+    });
+  });
+
+  it("stream-config does not actively probe direct session URLs outside the configured conversion origin", async () => {
+    const base = await startMissingArtifactServer();
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_version_demo_001",
+            artifact_id: "auto_usdc_stream_untrusted_origin",
+            artifact_role: "derived",
+            url: `${base}/artifacts/missing/model.usdc`,
+            mapping_url: `${base}/artifacts/missing/element_mapping.json`,
+            load_order: 0,
+            ready_status: "ready",
+            conversion_authority: "bim-streaming-server",
+            conversion_job_id: "stream_untrusted_origin",
+            conversion_status: "ready",
+          },
+        ],
+      });
+    expect(created.status).toBe(200);
+
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+
+    expect(config.status).toBe(200);
+    expect(config.body.model.status).toBe("ready");
+    expect(config.body.artifact_health).toBeNull();
   });
 
   it("以 external_model_version_id 解析；轉檔 ready 後只標 conversion_artifact_ready，不標 viewer_open_ready", async () => {
