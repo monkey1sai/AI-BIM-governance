@@ -1,5 +1,7 @@
 # A1 MinIO Downloaded IFC Resolution Implementation Plan
 
+> 文件性質：working plan（執行計畫；非 canonical contract）。Formal spec evidence 見 `docs/superpowers/specs/2026-07-07-a1-minio-local-ifc-resolution-design.md`；與程式碼或 formal spec 衝突時，以程式碼與 formal spec 為準。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to execute this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A1 的 MinIO 下拉選單可以選到 watcher 已下載並建立 review session 的 IFC；A1 rule-run 必須走 coordinator `for-session` proxy，由 coordinator 解析 downloaded server-local IFC path，不得把 MinIO object key 或 browser-supplied host path 送進 generic rule-run。

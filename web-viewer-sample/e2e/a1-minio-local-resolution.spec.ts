@@ -48,6 +48,14 @@ test("A1 MinIO downloaded job resolves to coordinator for-session rule-run", asy
   let directRuleRunHit = false;
   let forSessionBody: unknown = null;
 
+  await page.route("**/*", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/api/")) {
+      await route.fulfill({ status: 599, json: { detail: `unexpected API request: ${url}` } });
+      return;
+    }
+    await route.continue();
+  });
   await page.route("**/api/runtime/status", async (route) => {
     await route.fulfill({ json: runtimeStatus() });
   });
