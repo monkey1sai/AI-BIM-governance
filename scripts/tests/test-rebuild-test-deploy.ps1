@@ -11,6 +11,241 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $testName = 'rebuild-test-deploy'
 $sandbox = New-TestSandbox -Prefix $testName
 
+function New-DeployEdgeVolumeHarness {
+    param(
+        [Parameter(Mandatory = $true)][string] $DeployRoot,
+        [Parameter(Mandatory = $true)][string] $SourceRepoRoot
+    )
+
+    $scriptsRoot = Join-Path $DeployRoot 'scripts'
+    $libRoot = Join-Path $scriptsRoot 'lib'
+    New-Item -ItemType Directory -Path $libRoot -Force | Out-Null
+
+    $deploySourcePath = Join-Path $SourceRepoRoot 'scripts\deploy.ps1'
+    $deployScript = Get-Content -LiteralPath $deploySourcePath -Raw
+    $fixedRootLine = "`$script:FixedTestDeployRoot = 'D:\Users\deploy\AI-bim-geo'"
+    $testRootLine = "`$script:FixedTestDeployRoot = '$DeployRoot'"
+    $deployScript = $deployScript.Replace($fixedRootLine, $testRootLine)
+    Set-Content -LiteralPath (Join-Path $scriptsRoot 'deploy.ps1') -Value $deployScript -Encoding ascii
+
+    @'
+function Write-DeployHeader {
+    param([string] $Title)
+}
+
+function Write-DeployTag {
+    param(
+        [string] $Tag,
+        [string] $Message,
+        [string] $LogPath
+    )
+    return "$Tag $Message"
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'deploy-report.ps1') -Encoding ascii
+
+    @'
+function Test-DockerEnvironment {
+    param([string] $RepoRoot)
+
+    $realEnv = Join-Path $RepoRoot '.env.web-plane.host-kit'
+    $exampleEnv = "$realEnv.example"
+    $envFile = if (Test-Path -LiteralPath $realEnv) {
+        '.env.web-plane.host-kit'
+    } elseif (Test-Path -LiteralPath $exampleEnv) {
+        '.env.web-plane.host-kit.example'
+    } else {
+        $null
+    }
+
+    return [pscustomobject]@{
+        cliVersion    = '24.0.0'
+        composeV2     = $true
+        engineRunning = $true
+        envFile       = $envFile
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'preflight-docker.ps1') -Encoding ascii
+
+    @'
+function Test-HostNativeEnvironment {
+    param([string] $RepoRoot)
+
+    return [pscustomobject]@{
+        venv                        = 'OK'
+        kitLauncher                 = 'OK'
+        nvidiaDriver                = 'OK'
+        pythonDependencies          = 'OK'
+        pythonDependencyFastApi     = '0.115.0'
+        pythonDependencyStarlette   = '0.37.2'
+        pythonDependencyUvicorn     = '0.30.6'
+        pythonDependencyReason      = ''
+        kitRuntime                  = 'OK'
+        kitBuildRequired            = $false
+        kitBuildReason              = ''
+        kitBuildCommand             = ''
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'preflight-host-native.ps1') -Encoding ascii
+
+    @'
+function Get-EnvExampleDefaultValue {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        [Parameter(Mandatory = $true)][string] $Key
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ''
+    }
+
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ($line -match "^\s*$([regex]::Escape($Key))\s*[:=]\s*(.*)$") {
+            return $matches[1].Trim()
+        }
+    }
+
+    return ''
+}
+
+function Test-EnvFiles {
+    param([string] $RepoRoot)
+
+    $envPath = Join-Path $RepoRoot '.env.web-plane.host-kit'
+    $examplePath = "$envPath.example"
+
+    return @([pscustomobject]@{
+        file          = '.env.web-plane.host-kit'
+        envExists     = (Test-Path -LiteralPath $envPath -PathType Leaf)
+        exampleExists = (Test-Path -LiteralPath $examplePath -PathType Leaf)
+        missing       = @()
+    })
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'preflight-env.ps1') -Encoding ascii
+
+    @'
+function Test-PortAvailability {
+    param(
+        [string] $RepoRoot,
+        [int] $KitSignalPort,
+        [int] $KitMediaPort,
+        [int[]] $ExtraHostNativePorts,
+        [int[]] $ExtraHostNativeUdpPorts
+    )
+
+    return [pscustomobject]@{
+        docker     = @()
+        hostNative = @()
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'preflight-ports.ps1') -Encoding ascii
+
+    @'
+function Test-VolumeAlignment {
+    param(
+        [Parameter(Mandatory = $true)][string] $RepoRoot,
+        [Parameter(Mandatory = $true)][string] $EnvFile
+    )
+
+    $envPath = if ([System.IO.Path]::IsPathRooted($EnvFile)) {
+        $EnvFile
+    } else {
+        Join-Path $RepoRoot $EnvFile
+    }
+
+    $runtimeStorageRoot = Get-EnvExampleDefaultValue -Path $envPath -Key 'RUNTIME_STORAGE_ROOT'
+    if ([string]::IsNullOrWhiteSpace($runtimeStorageRoot)) {
+        return [pscustomobject]@{
+            runtimeStorageRoot = ''
+            leaf               = ''
+            status             = 'MISSING_KEY'
+        }
+    }
+
+    if (-not [System.IO.Path]::IsPathRooted($runtimeStorageRoot)) {
+        $runtimeStorageRoot = Join-Path $RepoRoot $runtimeStorageRoot
+    }
+
+    $fullRoot = [System.IO.Path]::GetFullPath($runtimeStorageRoot)
+    $leaf = Split-Path -Leaf $fullRoot
+
+    return [pscustomobject]@{
+        runtimeStorageRoot = $fullRoot
+        leaf               = $leaf
+        status             = $(if ($leaf -eq 'storage') { 'ALIGNED' } else { 'WRONG_LEAF' })
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'preflight-volume-alignment.ps1') -Encoding ascii
+
+    @'
+function Start-HostNativeConversion {
+    param(
+        [string] $RepoRoot,
+        [string] $RuntimeStorageRoot,
+        [string] $BindHost,
+        [string] $PublicArtifactsUrl
+    )
+
+    $capturePath = [Environment]::GetEnvironmentVariable('TEST_CAPTURE_VOLUME_PATH', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($capturePath)) {
+        Set-Content -LiteralPath $capturePath -Value $RuntimeStorageRoot -Encoding ascii
+    }
+
+    $logPath = Join-Path $RepoRoot 'scripts\.run\mock-conversion.log'
+    Set-Content -LiteralPath $logPath -Value 'conversion started' -Encoding ascii
+
+    return [pscustomobject]@{
+        Pid     = 4242
+        LogPath = $logPath
+    }
+}
+
+function Start-HostNativeGovernance {
+    param([string] $RepoRoot, [int] $Port, [string] $DbPath, [string] $FileLibraryRoot)
+    return [pscustomobject]@{ Pid = 4343; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-governance.log') }
+}
+
+function Start-HostNativeKit {
+    param([string] $RepoRoot, [int] $SignalPort, [int] $StreamPort, [string] $PublicIp, [int[]] $SpectatorSignalPorts, [int[]] $SpectatorStreamPorts)
+    return [pscustomobject]@{ Pid = 4444; LogPath = (Join-Path $RepoRoot 'scripts\.run\mock-kit.log') }
+}
+
+function Wait-HostNativeHealth {
+    param([string] $Name, [string] $Url, [int] $TimeoutSec)
+    return $true
+}
+
+function Test-AlreadyRunning {
+    param([string] $Name, [string] $RunDir)
+    return $false
+}
+
+function Stop-HostNativeService {
+    param([string] $Name, [string] $RunDir)
+}
+
+function Set-KitRuntimeSignature {
+    param([string] $Path, $Value)
+    $Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding ascii
+}
+
+function Test-KitRuntimeSignatureMatches {
+    param([string] $Path, $Expected)
+    return $false
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'host-native-launcher.ps1') -Encoding ascii
+
+    @'
+function Wait-KitReady {
+    param([string] $LogPath, [int] $SignalPort, [int] $TimeoutSec)
+    return [pscustomobject]@{
+        ready          = $true
+        listenPort     = $SignalPort
+        matchedKeyword = 'mock-ready'
+    }
+}
+'@ | Set-Content -LiteralPath (Join-Path $libRoot 'kit-log-probe.ps1') -Encoding ascii
+}
+
 try {
     $expected = 'D:\Users\deploy\AI-bim-geo'
     Assert-Equal $expected (Assert-TestDeployPath -Path $expected) 'fixed deployment path is accepted'
@@ -209,8 +444,11 @@ try {
     'keep-me' | Set-Content -LiteralPath $artifactSentinel -Encoding ascii
     $artifactDeployRoot = Join-Path $sandbox 'artifact-contract-root'
     New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot '.git') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $artifactDeployRoot 'scripts') -Force | Out-Null
-    'deploy' | Set-Content -LiteralPath (Join-Path $artifactDeployRoot 'scripts\deploy.ps1') -Encoding ascii
+    New-DeployEdgeVolumeHarness -DeployRoot $artifactDeployRoot -SourceRepoRoot $repoRoot
+    @(
+        'RUNTIME_STORAGE_ROOT=./storage',
+        'MINIO_WATCH_ENABLED=true'
+    ) | Set-Content -LiteralPath (Join-Path $artifactDeployRoot '.env.web-plane.host-kit.example') -Encoding ascii
 
     $artifactEnvNames = @(
         'EDGE_SITE_ID',
@@ -233,6 +471,8 @@ try {
         [Environment]::SetEnvironmentVariable('STORAGE_HOST_ROOT', (Join-Path $artifactDeployRoot 'storage'), 'Process')
         [Environment]::SetEnvironmentVariable('CONVERSION_LEDGER_STORE_PATH', (Join-Path $artifactDeployRoot 'ledgers\conversion-ledger.json'), 'Process')
         [Environment]::SetEnvironmentVariable('ARTIFACT_HEALTH_LEDGER_STORE_PATH', (Join-Path $artifactDeployRoot 'ledgers\artifact-health-ledger.json'), 'Process')
+        $capturedVolumePath = Join-Path $sandbox 'captured-conversion-volume.txt'
+        [Environment]::SetEnvironmentVariable('TEST_CAPTURE_VOLUME_PATH', $capturedVolumePath, 'Process')
 
         $artifactRunner = {
             param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
@@ -254,25 +494,19 @@ try {
 
         $artifactDeployRunner = {
             param([string] $DeployRoot)
-            $resolvedEdgeRuntimeDataRoot = [Environment]::GetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', 'Process')
-            $resolvedRuntimeStorageRoot = [Environment]::GetEnvironmentVariable('RUNTIME_STORAGE_ROOT', 'Process')
-            $resolvedStorageHostRoot = [Environment]::GetEnvironmentVariable('STORAGE_HOST_ROOT', 'Process')
-            $resolvedArtifactsRoot = [Environment]::GetEnvironmentVariable('STREAMING_CONVERSION_ARTIFACTS_ROOT', 'Process')
-            $resolvedConversionLedgerPath = [Environment]::GetEnvironmentVariable('CONVERSION_LEDGER_STORE_PATH', 'Process')
-            $resolvedArtifactHealthLedgerPath = [Environment]::GetEnvironmentVariable('ARTIFACT_HEALTH_LEDGER_STORE_PATH', 'Process')
-            Assert-True (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('EDGE_SITE_ID', 'Process'))) 'deploy sees edge site id'
-            Assert-True ($resolvedEdgeRuntimeDataRoot -eq $artifactRoot) 'deploy sees external edge runtime data root'
-            Assert-True ($resolvedRuntimeStorageRoot -eq (Join-Path $artifactRoot 'storage')) 'deploy sees storage root under external data root'
-            Assert-True ($resolvedStorageHostRoot -eq (Join-Path $artifactRoot 'storage')) 'deploy sees storage host root under external data root'
-            Assert-True ($resolvedArtifactsRoot -eq (Join-Path $artifactRoot 'artifacts')) 'deploy sees artifact root under external data root'
-            Assert-True ($resolvedConversionLedgerPath -eq (Join-Path $artifactRoot 'ledgers\conversion-ledger.json')) 'deploy sees conversion ledger path under external data root'
-            Assert-True ($resolvedArtifactHealthLedgerPath -eq (Join-Path $artifactRoot 'ledgers\artifact-health-ledger.json')) 'deploy sees artifact health ledger path under external data root'
             Assert-True (Test-Path -LiteralPath (Join-Path $artifactRoot 'storage') -PathType Container) 'rebuild creates external storage root'
             Assert-True (Test-Path -LiteralPath (Join-Path $artifactRoot 'artifacts') -PathType Container) 'rebuild creates external artifact root'
             Assert-True (Test-Path -LiteralPath (Join-Path $artifactRoot 'ledgers') -PathType Container) 'rebuild creates external ledger root'
             Assert-True (Test-Path -LiteralPath $artifactSentinel -PathType Leaf) 'external ledger sentinel survives rebuild helper'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $DeployRoot 'ledgers\sentinel.txt'))) 'deployment checkout does not absorb external ledger sentinel'
-            return [pscustomobject]@{ ExitCode = 0 }
+            $deployProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build', '-SkipDocker', '-SkipGovernance', '-SkipKit', '-PublicHost', '127.0.0.1') -WorkingDirectory $DeployRoot -NoNewWindow -Wait -PassThru
+            Assert-Equal 0 $deployProcess.ExitCode 'deploy harness exits successfully'
+            Assert-True (Test-Path -LiteralPath (Join-Path $DeployRoot '.env.web-plane.host-kit') -PathType Leaf) 'deploy copies missing host-kit env from example'
+            Assert-True (Test-Path -LiteralPath $capturedVolumePath -PathType Leaf) 'conversion harness captures runtime storage root'
+            $capturedVolume = (Get-Content -LiteralPath $capturedVolumePath -Raw).Trim()
+            Assert-Equal (Join-Path $artifactRoot 'storage') $capturedVolume 'host-native conversion keeps edge runtime storage root after env repair'
+            Assert-True ($capturedVolume -ne (Join-Path $DeployRoot 'storage')) 'host-native conversion does not fall back to deploy checkout storage'
+            return [pscustomobject]@{ ExitCode = $deployProcess.ExitCode }
         }.GetNewClosure()
 
         Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $artifactDeployRoot -AllowNonFixedPathForTests -CommandRunner $artifactRunner -DeployRunner $artifactDeployRunner | Out-Null
@@ -280,6 +514,7 @@ try {
         foreach ($name in $artifactEnvNames) {
             [Environment]::SetEnvironmentVariable($name, $artifactEnvBackup[$name], 'Process')
         }
+        [Environment]::SetEnvironmentVariable('TEST_CAPTURE_VOLUME_PATH', $null, 'Process')
     }
 
     $cleanFailureRoot = Join-Path $sandbox 'clean-failure-root'

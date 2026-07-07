@@ -524,6 +524,23 @@ function Set-DeployEdgeRuntimeContractEnv {
     }
 }
 
+function Resolve-DeployVolumeState {
+    param(
+        [Parameter(Mandatory = $true)] $Volume,
+        $EdgeRuntimeContract = $null
+    )
+
+    if ($null -eq $EdgeRuntimeContract) {
+        return $Volume
+    }
+
+    return [pscustomobject]@{
+        runtimeStorageRoot = $EdgeRuntimeContract.RUNTIME_STORAGE_ROOT
+        leaf               = 'storage'
+        status             = 'ALIGNED'
+    }
+}
+
 # ============================================================
 # Phase 1: Preflight (read-only audit)
 # ============================================================
@@ -668,14 +685,7 @@ $conversionRuntimeSignature = New-ConversionRuntimeSignature `
     -HealthHost $resolvedConversionHealthHost `
     -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl
 
-$volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
-if ($null -ne $edgeRuntimeContract) {
-    $volume = [pscustomobject]@{
-        runtimeStorageRoot = $edgeRuntimeContract.RUNTIME_STORAGE_ROOT
-        leaf               = 'storage'
-        status             = 'ALIGNED'
-    }
-}
+$volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
 $script:volume = $volume
 $resolvedGovernancePort = Resolve-DeployIntValue `
     -Name 'GOV_PORT' `
@@ -927,7 +937,7 @@ foreach ($ef in $envFiles) {
         if ($ef.file -eq '.env.web-plane.host-kit') {
             $resolvedEnvFile = '.env.web-plane.host-kit'
             $script:resolvedEnvFile = $resolvedEnvFile
-            $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+            $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
             $script:volume = $volume
         }
     } elseif ($ef.missing.Count -gt 0) {
@@ -952,7 +962,7 @@ if ($volume.status -eq 'MISSING_KEY') {
     Add-Content -LiteralPath $envPath -Value "# auto-appended by deploy.ps1 (volume alignment)"
     Add-Content -LiteralPath $envPath -Value "RUNTIME_STORAGE_ROOT=$absStorage"
     # 重新 audit
-    $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+    $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
     $script:volume = $volume
     if ($volume.status -ne 'ALIGNED') {
         Write-DeployTag -Tag 'fail' -Message 'volume alignment still not OK after fix' -LogPath $LogPath | Out-Null
