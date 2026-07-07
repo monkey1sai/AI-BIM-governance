@@ -24,7 +24,7 @@ try {
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
-        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'OK' $result.venv 'venv OK'
@@ -59,7 +59,7 @@ try {
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.10.5' } `
-        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
     Assert-Equal 'WRONG_VERSION' $result.venv 'venv WRONG_VERSION'
     Write-TestPass 'Python <3.11 flagged'
@@ -85,7 +85,7 @@ try {
     Set-Content -LiteralPath (Join-Path $venvDir 'python.exe') -Value 'fake'
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
-        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
     Assert-Equal 'MISSING_PATH' $result.kitLauncher 'Kit launcher MISSING_PATH'
     Write-TestPass 'Kit launcher missing flagged'
@@ -104,7 +104,7 @@ try {
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
-        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.111.0'; Starlette = '0.37.2'; Uvicorn = '0.45.0' } } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'OK'; Reason = ''; FastApi = '0.115.6'; Starlette = '0.41.3'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'OK' $result.kitLauncher 'Kit wrapper OK'
@@ -127,7 +127,7 @@ try {
 
     $result = Test-HostNativeEnvironment -RepoRoot $sandbox `
         -PythonVersionProbe { param($exe) '3.12.4' } `
-        -PythonDependencyProbe { param($exe) @{ Status = 'INCOMPATIBLE'; Reason = 'starlette 1.1.0 incompatible with fastapi 0.111.0'; FastApi = '0.111.0'; Starlette = '1.1.0'; Uvicorn = '0.45.0' } } `
+        -PythonDependencyProbe { param($exe) @{ Status = 'INCOMPATIBLE'; Reason = 'starlette 1.1.0 does not match repo baseline 0.41.3'; FastApi = '0.115.6'; Starlette = '1.1.0'; Uvicorn = '0.45.0' } } `
         -NvidiaSmiProbe { @{ Exists = $true; ExitCode = 0 } }
 
     Assert-Equal 'INCOMPATIBLE' $result.pythonDependencies 'pythonDependencies INCOMPATIBLE'
@@ -162,8 +162,8 @@ if (Test-Path -LiteralPath $realPy -PathType Leaf) {
     $result = Test-HostNativePythonDependencies -PythonExe $realPy
     if ($result.Status -eq 'OK') {
         Assert-Equal 'OK' $result.Status 'real .venv dependency probe OK'
-        Assert-Equal '0.111.0' $result.FastApi 'real .venv fastapi baseline'
-        Assert-Equal '0.37.2' $result.Starlette 'real .venv starlette baseline'
+        Assert-Equal '0.115.6' $result.FastApi 'real .venv fastapi baseline'
+        Assert-Equal '0.41.3' $result.Starlette 'real .venv starlette baseline'
         Assert-Equal '0.45.0' $result.Uvicorn 'real .venv uvicorn baseline'
         Write-TestPass 'real .venv dependency probe'
     } elseif ($result.Status -eq 'MISSING') {
