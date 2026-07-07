@@ -15,6 +15,9 @@
   font-size: 13px;
   padding: 14px;
   box-sizing: border-box;
+  /* CH-H3b：宣告為 inline-size 查詢容器，讓 .gv-C 依「實際可用寬」(=本容器內容框，已扣除 reservedLeft/Right
+     內距) 決定收欄，而非僅看視窗寬——否則 USD Stage Dock 開啟(reservedLeft 生效)時中等視窗右欄會被裁掉。 */
+  container: gvmock / inline-size;
 }
 /* CH-H3：live 3D 已出幀時，MockViewport 不再整片覆蓋中央，改為左緣語意側欄（半透明），與中央 <video> live 3D
    並存（對齊 AI-BIM-Geo Viewer 範本：左欄①③ + 隨點構件②④⑥；模型置中不受遮蔽）。
@@ -26,7 +29,18 @@
   border-right: 1px solid #2f363f;
   z-index: 26;
 }
-.gv-mock.gv-mock--live .gv-mock__grid { grid-template-columns: 1fr; }
+/* live 側欄（420px）：不論視窗多寬，C grid 都收成單欄堆疊（3 欄最小寬 ~900px 塞不進側欄）。 */
+.gv-mock.gv-mock--live .gv-C {
+  grid-template-columns: 1fr;
+  grid-template-rows: none;
+  grid-template-areas:
+    "evidence"
+    "left"
+    "center"
+    "right"
+    "bottom";
+  overflow: visible;
+}
 .gv-mock__banner {
   display: flex;
   align-items: center;
@@ -110,10 +124,68 @@
   grid-template-columns: 1fr;
 }
 
-.gv-mock__grid { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 12px; align-items: start; }
-.gv-mock__col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-@media (max-width: 900px) {
-  .gv-mock__grid { grid-template-columns: 1fr; }
+/* Task2 §Step3：C 區塊 IA 版面 — .gv-C 本身即 3 欄x3 列 grid 容器，五具名區為其直接子節點（grid item）：
+   evidence 滿版列 / left·center·right 中列 / bottom 滿版列。banner 與七軸 rail 不在 grid 內（留在外層
+   .gv-mock overflow:auto 捲動容器，維持單一捲動）。min-height:100% 讓 grid 填滿捲動容器；內容過高時由外層
+   .gv-mock 捲動。不設 overflow:hidden——三欄收欄改由下方 @container 依實際可用寬處理；萬一仍有殘餘水平溢出，
+   讓外層 .gv-mock(overflow:auto) 撈得到、可捲動看到，而非靜默裁切消失（reviewer P1：不無聲吃掉右側語意欄）。 */
+.gv-C {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(260px, 320px);
+  grid-template-rows: auto minmax(360px, 1fr) minmax(160px, 220px);
+  grid-template-areas:
+    "evidence evidence evidence"
+    "left center right"
+    "bottom bottom bottom";
+  gap: 8px;
+}
+.gv-C__evidence {
+  grid-area: evidence;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  background: rgba(13, 20, 28, 0.6);
+  font-size: 12px;
+}
+.gv-C__evidence > span { color: #cbd5e1; overflow-wrap: anywhere; }
+.gv-C__evidence > span:first-child { color: #67e8f9; font-weight: 700; }
+.gv-C__left { grid-area: left; }
+.gv-C__center { grid-area: center; }
+.gv-C__right { grid-area: right; }
+.gv-C__left,
+.gv-C__center,
+.gv-C__right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+.gv-C__bottom {
+  grid-area: bottom;
+  min-width: 0;
+  min-height: 0;
+}
+/* 可用寬不足（含 820px 窄視窗，或 dock 開啟後 reservedLeft 吃掉寬度使 .gv-mock 內容框 < ~952px）：三欄最小寬
+   ~916px 塞不下 → 五區改單欄堆疊，外層 .gv-mock 捲動。用 @container 看本容器內容框寬（已含 reserved 內距）而非
+   @media 只看視窗寬，才能在 dock 開啟的中等視窗（1024/1100/1152/1200 等）也正確收欄，不讓右欄溢出被裁。 */
+@container gvmock (max-width: 952px) {
+  .gv-C {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    grid-template-areas:
+      "evidence"
+      "left"
+      "center"
+      "right"
+      "bottom";
+  }
 }
 @media (max-width: 620px) {
   .gv-mock.gv-mock--live { width: min(420px, calc(100vw - 16px)); max-width: none; }

@@ -142,9 +142,24 @@ Expected after implementation: PASS for C region and single-scroll assertions.
 
 **Files:**
 - Modify: `web-viewer-sample/src/Window.tsx`
+- Modify: `web-viewer-sample/src/harness/fixtures/`(新增或擴充一個 mapping fixture,比照 `usdStageTree.ts` 既有「in-memory、非網路 fetch」慣例)
+- Modify: `web-viewer-sample/src/console/viewer/MappingTable.tsx`(新增可選的 inline items 資料路徑,harness 專用,不動既有 fetch 邏輯)
+- Modify(supersedes task#0 的斷言;需在 commit message 說明 plan 修正理由): `web-viewer-sample/e2e/gov-viewer-layout.spec.ts`
 - Test: `web-viewer-sample/e2e/runtime-command-bridge.spec.ts`
 
-- [ ] **Step 1: Add test that mapping row selection is UI-local**
+**2026-07-06 plan 修正(使用者裁決,原始 Step1 撤回)**:原 Step1 要求 `?harness=1` 直接點 mapping-row,但 harness 依 Task1(task#0,已 commit)設計為「無 mapping_url、誠實顯示 mapping-empty」(`MockViewport.tsx:225` 註解 + `gov-viewer-layout.spec.ts:26`),兩者字面互斥。implementer 曾提案「改打真 coordinator session + 誠實 skip」取代,**使用者不接受**,裁決:harness 本身要能提供可點的 mapping-row。
+
+解法(重用既有機制,不新增新的誠實例外):`MappingTable.tsx` 已內建 fake-mapping 誠實標示機制(`isFakeMappingItem`/`isFakeMappingDocument`,判準 `mock===true` 或 `mapping_method==="fake_for_smoke_test"`,對應 UI 有 `data-testid="mapping-fake"` badge + 逐列 fake 標示,不冒充真實對映;見 `src/types/mapping.ts`)。harness 只要餵一份標記為 fake 的 mapping document 給這個既有機制,就能誠實地讓 `mapping-row` 出現在 harness。
+
+- [ ] **Step 0(新增): harness 提供標記為 fake 的 demo mapping**
+
+在 `web-viewer-sample/src/harness/fixtures/`(新檔或加進既有 fixture)新增 2-3 筆 in-memory demo mapping items(`mock: true` 或 `mapping_method: "fake_for_smoke_test"`,`ifc_guid`/`usd_prim_path` 用明顯的 `HARNESS-DEMO-*` 命名,比照 `usdStageTree.ts` 的 `_h_`/`harness://` 前綴慣例避免與真資料混淆)。`MappingTable.tsx` 新增一個可選 prop(例如 `items?: ElementMappingItem[]`),當提供時直接渲染這份 in-memory 資料、跳過 `fetch(mappingUrl)`(harness 本來就是決定性/不連真後端模式,不要為此新增網路請求);沿用元件既有的 fake badge/逐列標示邏輯,不改其行為。`Window.tsx`/`MockViewport.tsx` 在 `harness===true` 時把這份 fixture 傳給 `MappingTable`。
+
+- [ ] **Step 0b(修訂 task#0 斷言): 更新 `gov-viewer-layout.spec.ts`**
+
+harness 模式下不再斷言 `getByTestId("mapping-empty")` 可見;改斷言至少一筆 `mapping-row` 可見,且 `mapping-fake` badge 可見(誠實標示這是 demo 資料,非真實對映)。commit message 需寫明「supersedes task#0 的 mapping-empty 斷言,因使用者裁決 plan Task3 修正而改變 harness 對構表行為」。
+
+- [ ] **Step 1: Add test that mapping row selection is UI-local**(字面可執行,harness 模式下真的有 row 可點)
 
 ```ts
 test("mapping row selection updates semantic state without sending runtime mutator", async ({ page }) => {

@@ -141,8 +141,11 @@ assert.match(
 
 assert.match(
     windowSource,
-    /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(message\)[\s\S]*?appStreamResultToAppEvent\(message\.event_type, result\)[\s\S]*?this\._handleCustomEvent\(responseEvent\)[\s\S]*?this\._appendDemoOutgoing/,
-    "_sendStreamMessage must send object payloads through AppStream, handle built-in Promise replies, and log outgoing messages",
+    // C M4：_sendStreamMessage 先經 _withRuntimeAuthority(message) 包成授權後的 `outgoing` 再送出，
+    // 故送出物件與後續 result 映射/logging 皆針對 `outgoing`（原契約硬編 `message`，於 runtime authority
+    // 閘門落地後更新為 `outgoing`；send-object→map-Promise-reply→handle→log 的結構意圖不變）。
+    /private _sendStreamMessage[\s\S]*?AppStream\.sendMessage\(outgoing\)[\s\S]*?appStreamResultToAppEvent\(outgoing\.event_type, result\)[\s\S]*?this\._handleCustomEvent\(responseEvent\)[\s\S]*?this\._appendDemoOutgoing/,
+    "_sendStreamMessage must send the runtime-authority-wrapped object payload through AppStream, handle built-in Promise replies, and log outgoing messages",
 );
 assert.doesNotMatch(
     windowSource,

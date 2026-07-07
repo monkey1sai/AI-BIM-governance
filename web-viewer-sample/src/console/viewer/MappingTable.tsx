@@ -5,19 +5,23 @@ import { type ElementMappingDocument, type ElementMappingItem, isFakeMappingDocu
 
 export interface MappingTableProps {
   mappingUrl?: string | null;
+  // harness 專用 in-memory 資料路徑（見 harness/fixtures/harnessMapping.ts）：提供時直接渲染這份資料、
+  // 跳過 fetch(mappingUrl)（harness 本來就是決定性/不連真後端模式，不新增網路請求）。不動既有 fetch 邏輯。
+  items?: ElementMappingItem[];
   selectedGuid?: string | null;
   onSelectGuid?: (guid: string) => void;
 }
 
 type LoadState = "idle" | "loading" | "ok" | "error" | "no_url";
 
-export function MappingTable({ mappingUrl, selectedGuid, onSelectGuid }: MappingTableProps) {
-  const [state, setState] = useState<LoadState>(mappingUrl ? "loading" : "no_url");
+export function MappingTable({ mappingUrl, items: inlineItems, selectedGuid, onSelectGuid }: MappingTableProps) {
+  const [state, setState] = useState<LoadState>(inlineItems ? "ok" : mappingUrl ? "loading" : "no_url");
   const [doc, setDoc] = useState<ElementMappingDocument | null>(null);
   const [err, setErr] = useState<string>("");
   const reqRef = useRef(0);
 
   useEffect(() => {
+    if (inlineItems) return; // harness in-memory 路徑：資料已就緒，不 fetch。
     const id = ++reqRef.current;
     if (!mappingUrl) { setState("no_url"); setDoc(null); return; }
     setState("loading"); setErr("");
@@ -25,10 +29,10 @@ export function MappingTable({ mappingUrl, selectedGuid, onSelectGuid }: Mapping
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status} ${r.statusText}`))))
       .then((j: ElementMappingDocument) => { if (id === reqRef.current) { setDoc(j); setState("ok"); } })
       .catch((e) => { if (id === reqRef.current) { setErr(e instanceof Error ? e.message : String(e)); setState("error"); } });
-  }, [mappingUrl]);
+  }, [mappingUrl, inlineItems]);
 
-  const items: ElementMappingItem[] = doc?.items ?? [];
-  const fake = doc ? isFakeMappingDocument(doc) : false;
+  const items: ElementMappingItem[] = inlineItems ?? doc?.items ?? [];
+  const fake = inlineItems ? inlineItems.some(isFakeMappingItem) : (doc ? isFakeMappingDocument(doc) : false);
 
   return (
     <section className="gv-card gv-card--wide" data-testid="mapping-table">

@@ -86,6 +86,7 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
+import stage_loading  # noqa: E402
 from stage_loading import (  # noqa: E402
     LoadingManager,
     _http_stage_allowed_hosts,
@@ -123,6 +124,111 @@ def test_stage_composition_takes_precedence_over_legacy_url():
     assert context["applied_mode"] == "stage_composition"
     assert context["applied_primary"]["artifact_id"] == "artifact_primary"
     assert context["secondary_bindings"][0]["artifact_id"] == "artifact_secondary"
+
+
+def test_load_artifact_group_result_preserves_binding_revision(monkeypatch):
+    manager = make_manager()
+    primary = {
+        "artifact_id": "artifact_primary",
+        "url": "http://127.0.0.1:49101/objects/primary.usdc",
+        "load_order": 0,
+    }
+    dispatched = []
+
+    monkeypatch.setattr(
+        stage_loading,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_on_open_stage",
+        lambda event: dispatched.append(("openStageRequestDelegated", event.payload)),
+    )
+
+    manager._on_load_artifact_group(
+        types.SimpleNamespace(
+            payload={
+                "role": "primary",
+                "source_client_id": "viewer_lease_primary",
+                "viewer_lease_token": "lease_token_primary",
+                "session_id": "review_session_x",
+                "binding_revision_id": "rev_binding_001",
+                "stage_composition": {"primary": primary},
+            }
+        )
+    )
+
+    assert dispatched[0][0] == "loadArtifactGroupResult"
+    assert dispatched[0][1]["result"] == "accepted"
+    assert dispatched[0][1]["binding_revision_id"] == "rev_binding_001"
+    assert dispatched[1][0] == "openStageRequestDelegated"
+    assert dispatched[1][1]["binding_revision_id"] == "rev_binding_001"
+
+
+def test_load_artifact_group_rejects_unauthorized_payload(monkeypatch):
+    manager = make_manager()
+    primary = {
+        "artifact_id": "artifact_primary",
+        "url": "http://127.0.0.1:49101/objects/primary.usdc",
+        "load_order": 0,
+    }
+    dispatched = []
+
+    monkeypatch.setattr(
+        stage_loading,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_on_open_stage",
+        lambda event: dispatched.append(("openStageRequestDelegated", event.payload)),
+    )
+
+    manager._on_load_artifact_group(
+        types.SimpleNamespace(
+            payload={
+                # spectator role 且缺 session_id/viewer_lease_token,模擬 forged/spectator payload
+                "role": "spectator",
+                "source_client_id": "viewer_lease_spectator",
+                "stage_composition": {"primary": primary},
+            }
+        )
+    )
+
+    assert len(dispatched) == 1
+    assert dispatched[0][0] == "loadArtifactGroupResult"
+    assert dispatched[0][1]["result"] == "error"
+    assert dispatched[0][1]["error"] == "unauthorized_mutating_command"
+
+
+def test_open_stage_rejects_unauthorized_payload(monkeypatch):
+    manager = make_manager()
+    dispatched = []
+
+    monkeypatch.setattr(
+        stage_loading,
+        "get_eventdispatcher",
+        lambda: types.SimpleNamespace(
+            dispatch_event=lambda name, payload: dispatched.append((name, payload))
+        ),
+    )
+
+    manager._on_open_stage(
+        types.SimpleNamespace(
+            payload={"url": "http://127.0.0.1:49101/objects/primary.usdc"}
+        )
+    )
+
+    assert len(dispatched) == 1
+    assert dispatched[0][0] == "openedStageResult"
+    assert dispatched[0][1]["result"] == "error"
+    assert dispatched[0][1]["error"] == "unauthorized_mutating_command"
 
 
 def test_allowed_hosts_uses_env_var():

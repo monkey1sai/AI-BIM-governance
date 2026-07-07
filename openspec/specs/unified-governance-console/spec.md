@@ -175,12 +175,12 @@ coordinator 端點 SHALL 僅解析 `session → 該 session artifact binding 的
 
 ### Requirement: primary / spectator 角色權威 SHALL 三層縱深，Stage/Artifact Binding SHALL 交易式套用
 
-控制台 SHALL 以三層縱深落實 primary/spectator 角色權威：(1) UI `disabled` + `aria-disabled` + 誠實 readonly banner；(2) 前端 command 層 spectator SHALL NOT 送 mutating 指令；(3) 後端 coordinator `POST /api/review-sessions/:id/stage-binding` SHALL 以 `source_client_id`/primary 判定授權（非 UI-only gate）。Stage/Artifact Binding SHALL 交易式：選 1..N 個 ready USDC → 指定唯一 primary → 設 load_order → `composeStageRequest`，SHALL 等 Kit `bindingApplied` 確認才宣告 applied 並保留 last-good revision，SHALL NOT 在送出當下偽宣告成功。
+控制台 SHALL 以三層縱深落實 primary/spectator 角色權威：(1) UI `disabled` + `aria-disabled` + 誠實 readonly banner；(2) 前端 command 層 spectator SHALL NOT 送 mutating 指令；(3) 後端 coordinator `POST /api/review-sessions/:id/stage-binding` SHALL 以 `source_client_id`/primary 判定授權（非 UI-only gate）。Stage/Artifact Binding SHALL 交易式：選 1..N 個 ready USDC → 指定唯一 primary → 設 load_order → production runtime 送 `loadArtifactGroupRequest` + `stage_composition`，SHALL 等 Kit `openedStageResult` / `loadArtifactGroupResult` 與 coordinator `stageBindingApplied` audit 確認才宣告 applied 並保留 last-good revision，SHALL NOT 在送出當下偽宣告成功。`composeStageRequest` / `bindingApplied` 僅可作為 harness/legacy fakeKit path，不得作為 production Kit runtime proof。
 
 #### Scenario: spectator 唯讀且不送 mutating；primary binding 交易式套用
 
 - **WHEN** spectator 開啟 viewer overlay、primary 套用 Stage/Artifact Binding
-- **THEN** spectator SHALL 見控制為 `disabled` + `aria-disabled` + 誠實 banner 且 SHALL NOT 送出 mutating；primary 套用後 SHALL 於 Kit `bindingApplied` 確認後出現 active binding revision
+- **THEN** spectator SHALL 見控制為 `disabled` + `aria-disabled` + 誠實 banner 且 SHALL NOT 送出 mutating；primary 套用後 SHALL 於 production Kit `openedStageResult` / `loadArtifactGroupResult` 與 coordinator `stageBindingApplied` audit 確認後出現 active binding revision
 - **AND** SHALL 具 browser E2E 證據（`primary-spectator-authority`、`stage-artifact-binding`）
 
 ### Requirement: primary 治理 viewer SHALL 採範本式全幅語意驗證版面，A1/A2/A3 operation 與 IFC 語意 metadata 清楚分區

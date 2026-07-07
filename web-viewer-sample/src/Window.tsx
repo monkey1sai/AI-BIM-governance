@@ -134,6 +134,18 @@ interface AppStreamMessageType {
     payload: unknown;
 }
 
+const runtimeMutatingEvents = new Set([
+    "openStageRequest",
+    "loadArtifactGroupRequest",
+    "composeStageRequest",
+    "highlightPrimsRequest",
+    "focusPrimRequest",
+    "clearHighlightRequest",
+    "selectPrimsRequest",
+    "makePrimsPickable",
+    "resetStage",
+]);
+
 interface AppStreamEventType {
     event_type?: string;
     messageRecipient?: string;
@@ -143,6 +155,22 @@ interface AppStreamEventType {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
+}
+
+function isRuntimeMutator(eventType: string): boolean {
+    return runtimeMutatingEvents.has(eventType);
+}
+
+function redactStreamPayload(payload: unknown): unknown {
+    if (!isRecord(payload)) return payload;
+    const redacted = { ...payload };
+    if (typeof redacted.viewer_lease_token === "string" && redacted.viewer_lease_token) {
+        redacted.viewer_lease_token = "[redacted]";
+    }
+    if (typeof redacted.lease_token === "string" && redacted.lease_token) {
+        redacted.lease_token = "[redacted]";
+    }
+    return redacted;
 }
 
 // VG-01（Important #2）：parent postMessage 的 highlight item 執行期形狀守衛。
@@ -396,37 +424,70 @@ export default class App extends React.Component<AppProps, AppState> {
         }));
     }
 
+    private _runtimeMutatorBlockReason(eventType: string): string | null {
+        if (!isRuntimeMutator(eventType)) return null;
+        if (isSpectatorStreamMode()) return "spectator view-only";
+        if (isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
+            return `session lifecycle=${this.state.reviewLifecycleStatus || "unknown"}`;
+        }
+        // NOTE(scope Task3->Task5)：以下第三條「primary 需 viewer lease token」與 _withRuntimeAuthority 的 payload
+        // 注入，超出 Task3 Step2/3 字面範圍（Task3 只要求 spectator / lifecycle 兩道 gate）。此為 plan 同檔
+        // 「Task5: Kit-Side Runtime Mutator Authorization」之 _is_authorized_mutator 消費契約的前端半。
+        // 誠實界線：此前端 gate 僅 UX、直呼 AppStream.sendMessage 可繞過。Task5 Kit 端 runtime_authority.py
+        // 是第二道 defense-in-depth gate，但它目前只驗 payload 的 role/session_id/lease_token 字串「形狀」
+        // （非空 + role==primary），並未回 coordinator ViewerLeaseStore 驗證 token 真偽（P5 finding f1，見
+        // final-report Known limitations 與 follow-up issue）。真正的 lease 簽發/spectator 唯讀權威在 coordinator。
+        // 保留此前端 gate 而非移除，因 6 個 unit test 與 Task5 payload 契約依賴之。
+        // 範圍（刻意）：此 gate 位於中央 _sendStreamMessage，故同時覆蓋 standalone 直送與 VG-01 embedded postMessage
+        // 橋（_handleParentMessage 的 highlight / focus / clear，即 EmbeddedViewer/ReviewSessionViewerPane 實作 A1
+        // 「在 3D 高亮失敗構件」的核心路徑）——embedded 端無 lease 亦不送 mutating（與 standalone 一致，非漏網）；
+        // 實務上 ReviewSessionViewerPane 先推 viewer_lease_token 再 enable 高亮鈕，故有 lease 才送。回歸證據見
+        // windowParentMessage.dom.test.tsx「VG-01 postMessage 橋真穿越 lease 閘門至 AppStream.sendMessage」。
+        if (!harnessEnabled() && (!this.state.reviewSessionId || !reviewEnv.viewerLeaseToken)) {
+            return "primary viewer lease token required";
+        }
+        return null;
+    }
+
+    private _withRuntimeAuthority(message: AppStreamMessageType | StreamMessage): AppStreamMessageType | StreamMessage {
+        // NOTE(scope Task3->Task5)：runtime authority payload 注入超出 Task3 字面範圍，提供 plan Task5 Kit 端
+        // _is_authorized_mutator 消費的 role / source_client_id / viewer_lease_token / session_id 形狀（見上方 gate 註解）。
+        if (!isRuntimeMutator(message.event_type)) return message;
+        const payload = isRecord(message.payload) ? { ...message.payload } : {};
+        return {
+            ...message,
+            payload: {
+                ...payload,
+                role: isSpectatorStreamMode() ? "spectator" : "primary",
+                source_client_id: reviewEnv.sourceClientId,
+                ...(reviewEnv.viewerLeaseToken ? { viewer_lease_token: reviewEnv.viewerLeaseToken } : {}),
+                ...(this.state.reviewSessionId ? { session_id: this.state.reviewSessionId } : {}),
+            },
+        };
+    }
+
     private _sendStreamMessage(message: AppStreamMessageType | StreamMessage): void {
-        const mutatingEvents = new Set([
-            "openStageRequest",
-            "loadArtifactGroupRequest",
-            "highlightPrimsRequest",
-            "focusPrimRequest",
-            "clearHighlightRequest",
-            "selectPrimsRequest",
-            "makePrimsPickable",
-            "resetStage",
-        ]);
-        if (mutatingEvents.has(message.event_type) && isBlockedLifecycle(this.state.reviewLifecycleStatus)) {
-            const lifecycle = this.state.reviewLifecycleStatus || "unknown";
-            this._appendReviewEvent(`略過 ${message.event_type}：session lifecycle=${lifecycle}`);
+        const blockReason = this._runtimeMutatorBlockReason(message.event_type);
+        if (blockReason) {
+            this._appendReviewEvent(`略過 ${message.event_type}：${blockReason}`);
             return;
         }
-        void AppStream.sendMessage(message)
+        const outgoing = this._withRuntimeAuthority(message);
+        void AppStream.sendMessage(outgoing)
             .then((result) => {
-                const responseEvent = appStreamResultToAppEvent(message.event_type, result);
+                const responseEvent = appStreamResultToAppEvent(outgoing.event_type, result);
                 if (responseEvent) {
                     this._handleCustomEvent(responseEvent);
                 }
             })
             .catch((error: unknown) => {
                 const diagnostic = error instanceof Error ? error.message : String(error);
-                this._appendReviewEvent(`${message.event_type} failed: ${diagnostic}`);
-                if (message.event_type === "openStageRequest") {
+                this._appendReviewEvent(`${outgoing.event_type} failed: ${diagnostic}`);
+                if (outgoing.event_type === "openStageRequest") {
                     this._failStageLoad("模型載入失敗", [`目標：${this.pendingStageUrl || "unknown"}`, `錯誤：${diagnostic}`].join("\n"));
                 }
             });
-        this._appendDemoOutgoing(message.event_type, message);
+        this._appendDemoOutgoing(outgoing.event_type, { ...outgoing, payload: redactStreamPayload(outgoing.payload) });
     }
 
     private _scheduleStreamStartTimeout(): void {
@@ -852,6 +913,10 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _canOpenSelectedAsset(): boolean {
+        // Important #1：spectator（view-only）不驅動 stage 載入（由 primary 驅動）。與姊妹函式 _applyBinding
+        //（Window.tsx:1092）一致，讓 _scheduleDeferredOpenStage / loadingStateResponse / _onSelectUSDAsset
+        // 等 automatic 路徑對 spectator 短路，不進入 _openSelectedAsset 的 primary viewer lease claim 流程。
+        if (isSpectatorStreamMode()) return false;
         if (!this.state.selectedUSDAsset) return false;
         if (this.state.latestStreamConfig && this.state.latestStreamConfig.model.status !== "ready") return false;
         return !isBlockedLifecycle(this.state.reviewLifecycleStatus);
@@ -1034,7 +1099,7 @@ export default class App extends React.Component<AppProps, AppState> {
     // 跳過 coordinator（避免 CORS / 真轉檔依賴）。只造「後端資料」，前端狀態機
     // （openStage / loadingState / USD 樹 / overlay）全部照真實邏輯跑，由 FakeAppStreamer 回應 Kit。
     // CH-F：交易式套用 Stage / Artifact Binding。spectator / 未就緒不送 mutating 指令（前端 gate 僅 UX）。
-    // composeStageRequest → 等 Kit 回 bindingApplied 才更新 active revision（不偽宣告成功；失敗保留 last-good）。
+    // Production 走既有 Kit loadArtifactGroupRequest + stage_composition handler；harness 仍保留 fakeKit compose ack。
     private _applyBinding(selection: StageArtifactBinding[], revisionId: string): void {
         if (isSpectatorStreamMode()) {
             this._appendReviewEvent(`spectator（view-only）：略過 binding 套用（${revisionId}）`);
@@ -1047,11 +1112,36 @@ export default class App extends React.Component<AppProps, AppState> {
         }
         this.setState({ govBindingApplyState: { status: "applying" } });
         this._appendReviewEvent(`套用 binding revision=${revisionId}（primary=${primary.artifact_id}, layers=${selection.length}）`);
-        const compose = () =>
+        const sendStageComposition = () => {
+            if (harnessEnabled()) {
+                this._sendStreamMessage({
+                    event_type: "composeStageRequest",
+                    payload: { binding_revision_id: revisionId, artifacts: selection },
+                });
+                return;
+            }
+
             this._sendStreamMessage({
-                event_type: "composeStageRequest",
-                payload: { binding_revision_id: revisionId, artifacts: selection },
+                event_type: "loadArtifactGroupRequest",
+                payload: {
+                    binding_revision_id: revisionId,
+                    stage_composition: {
+                        primary: {
+                            artifact_id: primary.artifact_id,
+                            usdc_url: primary.usdc_url,
+                            load_order: primary.load_order,
+                        },
+                        secondary_layers: selection
+                            .filter((artifact) => artifact.role !== "primary")
+                            .map((artifact) => ({
+                                artifact_id: artifact.artifact_id,
+                                usdc_url: artifact.usdc_url,
+                                load_order: artifact.load_order,
+                            })),
+                    },
+                },
             });
+        };
         // CH-C：真實模式先過 coordinator 後端角色權威（source_client_id / primary），通過才送 DataChannel 重組 stage；
         // 後端拒絕（403）→ honest failed，不偽宣告。harness 模式無 coordinator → 直接走假 Kit（authority 由 coordinator 單元測試驗證）。
         if (!harnessEnabled() && this.state.reviewSessionId) {
@@ -1074,13 +1164,13 @@ export default class App extends React.Component<AppProps, AppState> {
                     this.setState({ govBindingApplyState: { status: "failed", reason: `coordinator 後端權威拒絕（${response.status}）` } });
                     return;
                 }
-                compose();
+                sendStageComposition();
             };
             void applyThroughCoordinator()
                 .catch((error) => this.setState({ govBindingApplyState: { status: "failed", reason: error instanceof Error ? error.message : String(error) } }));
             return;
         }
-        compose();
+        sendStageComposition();
     }
 
     private _bootstrapHarnessSession(): void {
@@ -1551,6 +1641,16 @@ export default class App extends React.Component<AppProps, AppState> {
     }
 
     private _openSelectedAsset(): void {
+        // Important #1：spectator（view-only）不得驅動 openStageRequest / 索取 primary viewer lease。
+        // 涵蓋直呼路徑（?debug=1 DemoControlPanel「Open Stage」、_loadUSDAssets / review bootstrap 的內聯
+        // 守衛未含 spectator）；否則下方 openStage 包裝會先 await _ensurePrimaryViewerLease() → standalone
+        // 情境真 POST viewer-leases/claim requested_role:"primary" 搶占同 session 唯一 primary lease，且
+        // isLoading 會卡在「正在載入模型...」。與姊妹函式 _applyBinding（Window.tsx:1092）一致，進入點即 return。
+        if (isSpectatorStreamMode()) {
+            this._appendReviewEvent("spectator（view-only）：略過 openStageRequest（stage 由 primary 驅動）");
+            this.setState({ isLoading: false });
+            return;
+        }
         const targetAsset = this._expectedStageAsset() || this.state.selectedUSDAsset;
         if (!targetAsset) {
             console.warn("No USD asset is selected.");
@@ -1585,14 +1685,27 @@ export default class App extends React.Component<AppProps, AppState> {
         const artifactBindings = this.state.latestStreamConfig?.artifact_bindings?.filter((binding) => binding.url === targetAsset.url) || [];
         const composition = this.state.latestStreamConfig?.stage_composition;
         const selectedIsPrimary = composition?.primary?.url === targetAsset.url;
-        this._sendStreamMessage(
-            buildOpenStageRequest(
-                targetAsset.url,
-                artifactBindings,
-                selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
-            ),
-        );
-        this._scheduleLoadingStateQuery(1500);
+        const openStage = async () => {
+            if (!harnessEnabled()) {
+                const leaseToken = await this._ensurePrimaryViewerLease();
+                if (!leaseToken) {
+                    this._failStageLoad(
+                        "模型載入失敗",
+                        "尚未取得 primary viewer lease，已阻擋 openStageRequest",
+                    );
+                    return;
+                }
+            }
+            this._sendStreamMessage(
+                buildOpenStageRequest(
+                    targetAsset.url,
+                    artifactBindings,
+                    selectedIsPrimary ? { primary: composition.primary, secondary_layers: composition.secondary_layers || [] } : null,
+                ),
+            );
+            this._scheduleLoadingStateQuery(1500);
+        };
+        void openStage();
     }
 
     /**
@@ -1937,8 +2050,39 @@ export default class App extends React.Component<AppProps, AppState> {
         if (event.event_type === "openedStageResult") {
             if (payload.result === "success") {
                 const loadedUrl = getPayloadString(payload, "url");
-                if (loadedUrl && !this._recordLoadedStageEvidence(loadedUrl, "openedStageResult")) {
+                const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+                // 誠實鐵律：只有「Kit 回報且與 expected 相符的 loaded URL」才算 stage-match 證據。
+                // 缺 loaded URL（loadedUrl 為空字串）時 stageEvidenceMatched=false，不得偽宣告 applied。
+                const stageEvidenceMatched = loadedUrl ? this._recordLoadedStageEvidence(loadedUrl, "openedStageResult") : false;
+                if (loadedUrl && !stageEvidenceMatched) {
+                    if (bindingRevisionId) {
+                        this.setState({
+                            govBindingApplyState: {
+                                status: "failed",
+                                reason: "stale_stage_or_mismatch",
+                            },
+                        });
+                    }
                     return;
+                }
+                if (bindingRevisionId) {
+                    if (!stageEvidenceMatched) {
+                        // success 但缺 loaded URL 證據 → 誠實標 failed，不宣告 applied（不在缺證據下偽成功）。
+                        this.setState({
+                            govBindingApplyState: {
+                                status: "failed",
+                                reason: "missing_stage_evidence",
+                            },
+                        });
+                        this._appendReviewEvent(`binding 未確認：openedStageResult success 但缺 loaded URL 證據（${bindingRevisionId}）`);
+                    } else {
+                        this.setState({
+                            govBindingActiveRevision: bindingRevisionId,
+                            govBindingLastGoodRevision: bindingRevisionId,
+                            govBindingApplyState: { status: "applied" },
+                        });
+                        this._appendReviewEvent(`binding 已套用（Kit openedStageResult 確認）：${bindingRevisionId}`);
+                    }
                 }
                 this._scheduleLoadingStateQuery(250)
             }
@@ -1951,6 +2095,20 @@ export default class App extends React.Component<AppProps, AppState> {
                     [`目標：${url || this.pendingStageUrl || "unknown"}`, `錯誤：${error}`].join("\n"),
                 );
             }
+        }
+
+        else if (event.event_type === "loadArtifactGroupResult") {
+            const result = getPayloadString(payload, "result") || "unknown";
+            const bindingRevisionId = getPayloadString(payload, "binding_revision_id");
+            if (result === "error" && bindingRevisionId) {
+                this.setState({
+                    govBindingApplyState: {
+                        status: "failed",
+                        reason: getPayloadString(payload, "error") || "loadArtifactGroupResult error",
+                    },
+                });
+            }
+            this._appendReviewEvent(`artifact group load result：${result}`);
         }
         
         // response received from the 'loadingStateQuery' request
@@ -2416,6 +2574,19 @@ export default class App extends React.Component<AppProps, AppState> {
                         sessionId={this.state.reviewSessionId}
                         triReady={triReady}
                     />
+                )}
+
+                {/* Task3：DataChannel 送出證據（demo-outgoing-log），供 E2E 驗證「UI-local 選取（如對構表選列）
+                    不觸發 runtime mutator」。不依賴 ?debug=1 的 DemoControlPanel（該區塊預設隱藏）；本列複用同一份
+                    已追蹤的 demoOutgoingMessages 真實狀態（_sendStreamMessage 每次真送出才 append），非另造假資料。 */}
+                {this.state.viewerTab === "model"
+                    && (harnessEnabled() || Boolean(this.state.reviewSessionId))
+                    && (
+                    <p className="ec-note" data-testid="demo-outgoing-log">
+                        {this.state.demoOutgoingMessages.length > 0
+                            ? this.state.demoOutgoingMessages.map((m) => m.label).join(", ")
+                            : "（尚無 DataChannel 送出紀錄）"}
+                    </p>
                 )}
 
                 {/* 統一治理控制台 MVP：A1–A10 治理面板只在「問題 · 治理」分頁渲染，

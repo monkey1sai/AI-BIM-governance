@@ -1,0 +1,48 @@
+{
+  "_readme": "Browser E2E evidence summary for PR review (sampled). Full trace batch + all screenshots live in the main workspace at artifacts/e2e/c-m4-runtime-command-bridge-* (not tracked). Engine: playwright.",
+  "feature": "c-m4-runtime-command-bridge",
+  "spec": "docs/superpowers/specs/2026-07-03-c-m4-runtime-command-bridge-design.md",
+  "plan": "docs/superpowers/plans/2026-07-03-c-m4-runtime-command-bridge.md",
+  "branch": "feat/c-m4-runtime-command-bridge",
+  "headCommit": "8749b0e (rebased onto origin/main 8d8a1be, 2026-07-07)",
+  "runDate": "2026-07-07",
+  "engine": "playwright",
+  "routes": [
+    "http://127.0.0.1:5180/?harness=1",
+    "http://127.0.0.1:5180/?harness=1&streamRole=spectator",
+    "http://127.0.0.1:5180/?harness=1&debug=1",
+    "http://127.0.0.1:8004/ui#/demo-control (real intake)",
+    "http://127.0.0.1:8004/ui/open?session=review_session_e7d75e956c31 (real viewer handoff)"
+  ],
+  "results": {
+    "layer2_harness": "8 passed (gov-viewer-layout 4, primary-spectator-authority 2, runtime-command-bridge 1, stage-artifact-binding 1) — verified in this run",
+    "layer3_real_ifc_initial": "2 skipped in the first run (no mv_realifc_* conversion-ready session); skip is NOT a pass",
+    "layer3_real_ifc_rerun_2026_07_07": "3 passed — real-ifc-storage-intake (real ./storage 松風庵_建築_v2.ifc 69KB → register → real download → real conversion dispatch, 1 passed 8.7s) + real-ifc-viewer-lineage & real-ifc-conversion-lineage (2 passed 6.4s) against deployed coordinator :8004 with host-native GPU Kit (kit_local_001 ready, signaling :49100); conversion reached ready in ~10s and /ui/open showed real session lineage + derived USDC artifact"
+  },
+  "runtimeIds": {
+    "note": "Layer2 IDs are harness/demo values, honestly labeled in-UI. Layer3 rerun observed REAL runtime IDs listed below.",
+    "harness_review_session_id": "review_session_harness0001 (harness)",
+    "harness_stage_url": "harness://stage/World/sample-building.usd",
+    "real_review_session_id": "review_session_e7d75e956c31",
+    "real_model_version_id": "mv_realifc_1783396194657_323492",
+    "real_ifc_ready_job_id": "ifcready_1783396194673_aea7aa73",
+    "real_usdc_artifact_id": "auto_usdc_stream_conv_20260707034954_642dcb0a",
+    "real_fixture": "松風庵_建築_v2.ifc (69,861 bytes, real ./storage IFC)",
+    "binding_revision": "binding_rev_<Date.now()> (client-generated in GovernanceOverlay.tsx; not a backend-written revision)"
+  },
+  "verticalSlice": {
+    "ok": true,
+    "reason": "Layer1 (contract tests) + Layer2 (harness browser, honest mock labeling) + Layer3 (real-backend browser path: real IFC intake → real conversion → ready session → /ui/open lineage with real runtime IDs) all observed in this run. GPU-backed Kit instance was live and bound to the session; stage-truth matched was intentionally NOT asserted (spec's own honesty note: lineage must be real, stage matched must not be faked).",
+    "notObserved": [
+      "GPU stage truth matched=true assertion (viewer stage-truth panel not asserted; no 3D-completion claim is made by this spec)",
+      "embedded-primary Kit DataChannel runtime mutator path on real runtime (finding f5 timing window; Kit-side unauthorized rejection covered by pytest)",
+      "browser-visible failure/retry states for runtime mutators",
+      "first frame (not asserted in lineage specs)"
+    ]
+  },
+  "sampledScreenshots": [
+    "docs/evidence/c-m4-runtime-command-bridge/harness-viewer-layout.png",
+    "docs/evidence/c-m4-runtime-command-bridge/mapping-row-click.png",
+    "docs/evidence/c-m4-runtime-command-bridge/real-ifc-viewer-lineage.png"
+  ]
+}

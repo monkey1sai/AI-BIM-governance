@@ -7,6 +7,7 @@ import { IfcSemanticPanel } from "./IfcSemanticPanel";
 import { StructureStats } from "./StructureStats";
 import { coordinatorClient } from "../coordinatorClient";
 import type { TriReadyState } from "../../utils/triReady";
+import { harnessMappingItems } from "../../harness/fixtures/harnessMapping";
 
 export interface ArtifactBindingLite {
   artifact_id?: string | null;
@@ -113,7 +114,7 @@ export function MockViewport(props: MockViewportProps) {
       : { label: "等待 session", tone: "pending" };
   };
   return (
-    <div className={`gv-mock${liveMode ? " gv-mock--live" : ""}`} data-testid="mock-viewport" style={pad}>
+    <div className={`gv-mock${liveMode ? " gv-mock--live" : ""}`} style={pad}>
       <div className="gv-mock__banner" data-testid="mock-viewport-banner">
         {liveMode ? (
           <>
@@ -144,27 +145,20 @@ export function MockViewport(props: MockViewportProps) {
           );
         })}
       </div>
-      <div className="gv-mock__grid">
-        <div className="gv-mock__col">
-          {/* viewport 狀態 echo：證明互動通路暢通（選取/高亮會回饋到這） */}
-          <section className="gv-card" data-testid="mock-stage">
-            <header className="gv-card__title">Viewport 狀態</header>
-            <table className="gv-kv"><tbody>
-              <tr><td className="gv-kv__k">Stage URL</td><td className="gv-kv__v gv-mono" data-testid="mock-stage-url">{stageUrl || DASH}</td></tr>
-              <tr><td className="gv-kv__k">loaded</td><td className="gv-kv__v gv-mono">{loadedStageUrl || "not_observed"}</td></tr>
-              <tr><td className="gv-kv__k">WebRTC</td><td className="gv-kv__v">{webrtcStatus || DASH}</td></tr>
-              <tr><td className="gv-kv__k">loaded layers</td><td className="gv-kv__v" data-testid="mock-layer-count">{layers.length}</td></tr>
-              <tr><td className="gv-kv__k">selected</td><td className="gv-kv__v gv-mono" data-testid="mock-selected">{selectedGuid || selectedPrim || "（點結構樹 / 對構表選取）"}</td></tr>
-            </tbody></table>
-            {layers.length > 0 && (
-              <ul className="gv-layers" data-testid="mock-layers">
-                {layers.slice(0, 8).map((b, i) => (
-                  <li key={b.artifact_id ?? i}><span className="gv-mono">#{b.load_order ?? i}</span> {b.display_name || b.artifact_id} <em>{b.source_ifc_filename || ""}</em></li>
-                ))}
-              </ul>
-            )}
-          </section>
 
+      {/* Task2 C IA：.gv-C 本身即 3 欄x3 列 grid 容器，evidence/left/center/right/bottom 為其「直接子節點」(grid item)。
+          banner 與七軸 rail 不進 grid（留在外層 .gv-mock 捲動容器，維持單一捲動）。 */}
+      <section className="gv-C" data-testid="mock-viewport">
+        {/* Step2：runtime 佐證（role / session / first frame）抽成獨立區塊，與 IA 版面分離；恰 3 個 span，
+            不再把 testid 貼到既有 KV 表上。誠實：harness/未出幀時顯 "first frame not observed"，不捏造已出幀。 */}
+        <div className="gv-C__evidence" data-testid="geo-viewer-runtime-evidence">
+          <span>{streamRole === "spectator" ? "SPECTATOR view-only" : "PRIMARY control"}</span>
+          <span>{props.sessionId || "no session"}</span>
+          <span>{frameObserved ? "first frame observed" : "first frame not observed"}</span>
+        </div>
+
+        {/* 左欄：⑦ Session/Role 佐證表 + ① 模型資訊 + ③ IFC 結構樹 */}
+        <aside className="gv-C__left" data-testid="geo-viewer-left-model">
           <section className="gv-card gv-session-card" data-testid="viewer-session-bridge">
             <header className="gv-card__title" data-testid="edge-console-topbar">⑦ Session 連動 / Role</header>
             <table className="gv-kv"><tbody>
@@ -200,14 +194,47 @@ export function MockViewport(props: MockViewportProps) {
           />
           {/* ③ IFC 結構：真實 session 顯空間巢狀樹（spatial-tree proxy）；harness 退類別計數/空。 */}
           <StructureStats spatialUrl={spatialSrc} mappingUrl={mappingSrc} />
-        </div>
+        </aside>
 
-        <div className="gv-mock__col gv-mock__col--wide">
-          <MappingTable mappingUrl={mappingSrc} selectedGuid={selectedGuid} onSelectGuid={props.onSelectGuid} />
-          {/* CH-H2：點構件 → ② IFC 語意 + ⑥ 空間（真實 ifcopenshell 萃取，經 coordinator for-session proxy）。 */}
+        {/* 中央：有真 Kit 幀時由 Window 的 <video> live 3D 佔中央（本元件此時為左側語意側欄）；harness/未出幀時
+            為 deterministic 佔位 + viewport 狀態/選取 echo（誠實標示，非壞掉）。 */}
+        <main className="gv-C__center" data-testid="geo-viewer-center-stage">
+          <section className="gv-card" data-testid="mock-stage">
+            <header className="gv-card__title">Viewport 狀態</header>
+            <table className="gv-kv"><tbody>
+              <tr><td className="gv-kv__k">Stage URL</td><td className="gv-kv__v gv-mono" data-testid="mock-stage-url">{stageUrl || DASH}</td></tr>
+              <tr><td className="gv-kv__k">loaded</td><td className="gv-kv__v gv-mono">{loadedStageUrl || "not_observed"}</td></tr>
+              <tr><td className="gv-kv__k">WebRTC</td><td className="gv-kv__v">{webrtcStatus || DASH}</td></tr>
+              <tr><td className="gv-kv__k">loaded layers</td><td className="gv-kv__v" data-testid="mock-layer-count">{layers.length}</td></tr>
+              <tr><td className="gv-kv__k">selected</td><td className="gv-kv__v gv-mono" data-testid="mock-selected">{selectedGuid || selectedPrim || "（點結構樹 / 對構表選取）"}</td></tr>
+            </tbody></table>
+            {layers.length > 0 && (
+              <ul className="gv-layers" data-testid="mock-layers">
+                {layers.slice(0, 8).map((b, i) => (
+                  <li key={b.artifact_id ?? i}><span className="gv-mono">#{b.load_order ?? i}</span> {b.display_name || b.artifact_id} <em>{b.source_ifc_filename || ""}</em></li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </main>
+
+        {/* 右欄：② IFC 語意 / Pset·Qto / ⑥ 空間（點構件即查，真實 ifcopenshell 萃取，經 coordinator for-session proxy）。 */}
+        <aside className="gv-C__right" data-testid="geo-viewer-right-semantic">
           <IfcSemanticPanel sessionId={props.sessionId} selectedGuid={selectedGuid} />
-        </div>
-      </div>
+        </aside>
+
+        {/* 底帶：⑤ GUID ⇔ USD Prim Path 對構（滿版）；harness 無真實 mapping_url，改餵一份標記為 fake 的
+            in-memory demo mapping（harness/fixtures/harnessMapping.ts），沿用 MappingTable 既有 fake-mapping
+            誠實標示機制（fake badge + 逐列標示），讓 harness 有可點的 mapping-row 而不冒充真實對映。 */}
+        <footer className="gv-C__bottom" data-testid="geo-viewer-bottom-mapping">
+          <MappingTable
+            mappingUrl={mappingSrc}
+            items={harness ? harnessMappingItems : undefined}
+            selectedGuid={selectedGuid}
+            onSelectGuid={props.onSelectGuid}
+          />
+        </footer>
+      </section>
     </div>
   );
 }
