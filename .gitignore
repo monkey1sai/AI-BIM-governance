@@ -36,6 +36,8 @@ Thumbs.db
 # Tracked GitNexus CLI skills + repo-health（2026-07-02 治理審計：CLAUDE.md MUST 規則引用的檔案必須入版控）
 !.claude/skills/gitnexus/
 !.claude/skills/repo-health/
+# Tracked skills 目錄索引（2026-07-07 repo-health：技能清單與來源標註）
+!.claude/skills/README.md
 # Tracked official OpenAI Figma UI/UX skills（2026-07-03）
 !.claude/skills/figma/
 !.claude/skills/figma-use/
