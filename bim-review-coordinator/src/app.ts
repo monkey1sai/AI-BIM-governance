@@ -761,6 +761,39 @@ export function createCoordinatorApp(
     return snapshotFromArtifactLedger(job) ?? job.artifact_health ?? session?.artifact_health ?? null;
   }
 
+  function existingFile(hostPath: string): boolean {
+    try {
+      return fs.statSync(hostPath).isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  function markSourceIfcMissing(job: IfcReadyIntakeJob, session: ReviewSession): ArtifactHealthSnapshot {
+    const previous = publicArtifactHealthForJob(job, session);
+    const snapshot: ArtifactHealthSnapshot = {
+      source_ifc_exists: false,
+      model_usdc_reachable: previous?.model_usdc_reachable ?? null,
+      mapping_reachable: previous?.mapping_reachable ?? null,
+      metadata_reachable: previous?.metadata_reachable ?? null,
+      all_required_ready: false,
+      checked_at: nowIso(),
+      stale_reason: "source_ifc_missing",
+      failure_details: {
+        source_ifc: "source_ifc_missing",
+        model_usdc: previous?.failure_details?.model_usdc ?? null,
+        mapping: previous?.failure_details?.mapping ?? null,
+        metadata: previous?.failure_details?.metadata ?? null,
+      },
+      source: "edge_health_probe",
+    };
+    job.artifact_health = snapshot;
+    session.artifact_health = snapshot;
+    store.save(session);
+    recordProbeSnapshot(job, snapshot, artifactUrlsForJob(job));
+    return snapshot;
+  }
+
   async function refreshArtifactHealthForJob(
     job: IfcReadyIntakeJob,
     artifacts: { modelArtifactUrl?: string | null; mappingUrl?: string | null } = artifactUrlsForJob(job),
@@ -2878,6 +2911,14 @@ export function createCoordinatorApp(
         return {
           ok: false,
           reason: "IFC for this session has not been downloaded to a server-side path yet.",
+        };
+      }
+      if (!existingFile(ifcSourcePath)) {
+        return {
+          ok: false,
+          error_code: "stale_session_artifact",
+          detail: "source_ifc_missing",
+          artifact_health: markSourceIfcMissing(job, session),
         };
       }
       return {

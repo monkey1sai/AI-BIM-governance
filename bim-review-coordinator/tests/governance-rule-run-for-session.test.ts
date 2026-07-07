@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { type AddressInfo } from "node:net";
 import request from "supertest";
+import type { Response as SupertestResponse } from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
@@ -195,6 +196,20 @@ afterEach(async () => {
   }
 });
 
+function expectStaleSourceIfcResponse(res: SupertestResponse): void {
+  expect(res.status).toBe(409);
+  expect(res.body).toMatchObject({
+    error_code: "stale_session_artifact",
+    detail: "source_ifc_missing",
+    artifact_health: {
+      source_ifc_exists: false,
+      stale_reason: "source_ifc_missing",
+      source: "edge_health_probe",
+    },
+  });
+  expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+}
+
 /** IFC source stub：回 200 + 少量 bytes，讓 strict 下載真實落地 host_local_path。 */
 async function startIfcSourceStub(): Promise<string> {
   const server = http.createServer((_req, res) => {
@@ -227,6 +242,24 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     expect(gov.bodies).toHaveLength(1);
     expect(gov.bodies[0].ifc_source_path).toBe(hostLocalPath);
     expect(gov.bodies[0].model_version_id).toBe("version_demo_001");
+  });
+
+  it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    fs.rmSync(hostLocalPath);
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+      .send({});
+
+    expectStaleSourceIfcResponse(res);
+    expect(gov.bodies).toHaveLength(0);
   });
 
   it("override body 的 rule_set / ids_path 會被一併透傳", async () => {
@@ -367,6 +400,24 @@ describe("GET /api/governance/elements/for-session/:sessionId/:guid", () => {
     expect(gov.urls[0]).toContain(`ifc_guid=${encodeURIComponent(GUID)}`);
   });
 
+  it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceElementsStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    fs.rmSync(hostLocalPath);
+
+    const res = await request(app.app).get(
+      `/api/governance/elements/for-session/${sessionId}/${encodeURIComponent(GUID)}`,
+    );
+
+    expectStaleSourceIfcResponse(res);
+    expect(gov.urls).toHaveLength(0);
+  });
+
   it("session 不存在 → 404，且不打 governance", async () => {
     const gov = await startGovernanceElementsStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
@@ -431,6 +482,21 @@ describe("GET /api/governance/spatial-tree/for-session/:sessionId", () => {
     expect(res.body.tree.ifc_type).toBe("IfcProject");
     expect(gov.urls).toHaveLength(1);
     expect(gov.urls[0]).toContain(`ifc_source_path=${encodeURIComponent(hostLocalPath)}`);
+  });
+
+  it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceSpatialStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    fs.rmSync(hostLocalPath);
+
+    const res = await request(app.app).get(`/api/governance/spatial-tree/for-session/${sessionId}`);
+
+    expectStaleSourceIfcResponse(res);
+    expect(gov.urls).toHaveLength(0);
   });
 
   it("session 不存在 → 404，不打 governance", async () => {

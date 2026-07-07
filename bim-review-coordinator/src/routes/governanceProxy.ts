@@ -5,6 +5,7 @@
  * coordinator 僅做透傳（JSON 與 Excel 二進位），不解讀 / 不保存治理權威資料。
  */
 import type { Express, Response } from "express";
+import type { ArtifactHealthSnapshot } from "../types.js";
 
 const DEFAULT_GOVERNANCE_API_BASE = "http://127.0.0.1:49102";
 
@@ -32,6 +33,12 @@ export interface RuleRunSessionContext {
 
 export type RuleRunSessionResolution =
   | { ok: true; context: RuleRunSessionContext }
+  | {
+      ok: false;
+      error_code: "stale_session_artifact";
+      detail: "source_ifc_missing";
+      artifact_health: ArtifactHealthSnapshot;
+    }
   // 誠實失敗：session 不存在 / 無法解析出 host-side IFC 路徑。reason 供回顯，
   // 永不偽造 path 或成功。
   | { ok: false; reason: string };
@@ -87,6 +94,21 @@ function queryString(originalUrl: string, fallback = ""): string {
   return idx >= 0 ? originalUrl.slice(idx) : fallback;
 }
 
+function sendSessionResolutionFailure(
+  response: Response,
+  resolution: Extract<RuleRunSessionResolution, { ok: false }>,
+): void {
+  if ("reason" in resolution) {
+    response.status(404).json({ detail: resolution.reason });
+    return;
+  }
+  response.status(409).json({
+    error_code: resolution.error_code,
+    detail: resolution.detail,
+    artifact_health: resolution.artifact_health,
+  });
+}
+
 export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps = {}): void {
   // A1 file-library browse proxy（唯讀 local file-server tree，透傳 governance-service /api/files/tree）。
   // 瀏覽器只打 :8004；樹 JSON 原樣透傳，coordinator 不解讀 / 不保存。
@@ -118,7 +140,7 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     }
     const resolution = deps.resolveRuleRunSessionContext(sessionId);
     if (!resolution.ok) {
-      response.status(404).json({ detail: resolution.reason });
+      sendSessionResolutionFailure(response, resolution);
       return;
     }
     const overrideBody = (request.body ?? {}) as { ids_path?: unknown; rule_set?: unknown };
@@ -161,7 +183,7 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     }
     const resolution = deps.resolveRuleRunSessionContext(sessionId);
     if (!resolution.ok) {
-      response.status(404).json({ detail: resolution.reason });
+      sendSessionResolutionFailure(response, resolution);
       return;
     }
     const qs =
@@ -185,7 +207,7 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     }
     const resolution = deps.resolveRuleRunSessionContext(sessionId);
     if (!resolution.ok) {
-      response.status(404).json({ detail: resolution.reason });
+      sendSessionResolutionFailure(response, resolution);
       return;
     }
     void forward(
