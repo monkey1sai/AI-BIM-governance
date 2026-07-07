@@ -140,7 +140,7 @@ export class ArtifactHealthLedger {
     try {
       const raw = fs.readFileSync(this.persistencePath, "utf-8");
       const parsed = JSON.parse(raw) as PersistedArtifactHealthLedger;
-      if (parsed.schema_version && parsed.schema_version !== SCHEMA_VERSION) {
+      if (parsed.schema_version !== SCHEMA_VERSION) {
         return;
       }
       if (!Array.isArray(parsed.records)) return;

@@ -61,6 +61,9 @@ describe("ArtifactHealthLedger", () => {
       "2026-07-07T08:00:00.000Z",
     );
 
+    const persisted = JSON.parse(fs.readFileSync(p, "utf-8")) as { schema_version?: string };
+    expect(persisted.schema_version).toBe("artifact-health-ledger/v1");
+
     const reloaded = new ArtifactHealthLedger(p);
     const record = reloaded.get("site_taipei", "artifact_001", "source_ifc");
 
@@ -87,6 +90,21 @@ describe("ArtifactHealthLedger", () => {
       p,
       JSON.stringify({
         schema_version: "artifact-health-ledger/v0",
+        records: [makeRecord()],
+      }),
+      "utf-8",
+    );
+
+    const ledger = new ArtifactHealthLedger(p);
+
+    expect(ledger.list()).toEqual([]);
+  });
+
+  it("missing schema version starts empty", () => {
+    const p = storePath();
+    fs.writeFileSync(
+      p,
+      JSON.stringify({
         records: [makeRecord()],
       }),
       "utf-8",
