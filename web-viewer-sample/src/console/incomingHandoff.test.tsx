@@ -1,12 +1,18 @@
 // web-viewer-sample/src/console/incomingHandoff.test.tsx
 // Task 14（七軸和諧 §4.2 接收端重驗鐵律）：接收端一律以 ID 向已抓取的權威資料重驗，查無 → 誠實
-// not_found + 手動重選，不靜默 fallback。本檔涵蓋（1）共用 hook/banner 的分支邏輯，（2）五個接收頁
-// 各自的真實 wiring（每頁至少一個 verified + 至少一個 not_found 案例，合計覆蓋 M/A1/CV/SS/KG）。
+// not_found + 手動重選，不靜默 fallback。本檔涵蓋（1）共用 hook/banner 的分支邏輯，（2）接收頁各自
+// 的真實 wiring。
+// MD 三頁合一（Task 9）：原 M（MinioDataPage）/ CV（ConversionSchedulingPage）兩接收頁已合併為單一
+// ModelDataPage（#minio；#conv/#intake 以 alias 重導保 query 到 #minio）。故原本各自 render 舊頁的
+// M/CV wiring 測試改 render ModelDataPage，hash 統一 #minio，banner testid 統一 md-incoming-handoff。
+// A1 / SS / KG 三頁未動，維持原樣。job_id/conversion_id → jobs/records 重驗（CV 語意）；minio_key/prefix
+// → 導覽後向 folder 重驗（M 語意）；皆無欄位 → not_applicable。四分支現由 ModelDataPage predicate 承接。
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IncomingHandoffBanner, useIncomingHandoff } from "./incomingHandoff";
-import { A1GovernanceWorkbenchPage, ConversionSchedulingPage, KitGpuFleetPage, MinioDataPage, SessionManagementPage } from "./pages";
+import { A1GovernanceWorkbenchPage, KitGpuFleetPage, SessionManagementPage } from "./pages";
+import { ModelDataPage } from "./modelData/ModelDataPage";
 import { SharedStatusProvider } from "./SharedStatusProvider";
 import { coordinatorClient, type ConversionRecord, type MinioFolderListing, type RuntimeStatus, type RuntimeSessionSummary } from "./coordinatorClient";
 import { governanceClient } from "./governanceClient";
@@ -96,11 +102,23 @@ const status = (items: RuntimeSessionSummary[]): RuntimeStatus => ({ service: { 
 
 const mkRecord = (over: Partial<ConversionRecord>): ConversionRecord => ({ idempotency_key: "mw_r", project_id: "270", project_display_name: "270", category: "建築", external_model_version_id: "v1", conversion_job_id: "cj_x", status: "queued", usdc_key: null, coverage_report: null, object_key: "270/x.ifc", detected_at: "", updated_at: "", ...over });
 
+// ModelDataPage 掛載時 useConversionData + useMinioFolder 會打五個端點；未針對性 mock 者一律 stub 成空，
+// 讓每個測試只需覆寫它要驗的那條分支（其餘不打真 fetch、不噴 loading 噪音）。呼叫後再覆寫的 mock 生效。
+function quietModelDataEndpoints() {
+  vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
+  vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+  vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
+  vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 } as never);
+  vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({ bucket: "bim-control", prefix: "", folders: [], objects: [], count: 0 });
+}
+
+function mdBannerStatus(container: HTMLElement): string | null {
+  return container.querySelector('[data-testid="md-incoming-handoff"]')?.getAttribute("data-handoff-status") ?? null;
+}
+
 // waitFor：以「輪詢直到斷言成立」取代固定 microtask tick 數，徹底消除接收頁獨立 async 載入鏈尚未 settle 就斷言的
-// 競態。特別是 CV 頁 loadRecords()（getConversionRecords→setRecords→重繪）是與 load() 分開的 useEffect，負載高時
-// 固定 2-tick 排不乾這條鏈；載入中＝空 records 又與「查無」同樣顯 not_found，故固定 tick 會閃 AssertionError。每輪
-// 包一次 act 以 flush 一個 microtask + 觸發重繪；斷言通過即返回，達上限仍不過才拋出最後一次 AssertionError（語意同
-// testing-library 的 waitFor，比固定 tick 數穩定）。
+// 競態。每輪包一次 act 以 flush 一個 microtask + 觸發重繪；斷言通過即返回，達上限仍不過才拋出最後一次 AssertionError
+// （語意同 testing-library 的 waitFor，比固定 tick 數穩定）。
 async function waitFor(assert: () => void, maxTicks = 40): Promise<void> {
   let lastErr: unknown;
   for (let i = 0; i < maxTicks; i++) {
@@ -120,81 +138,72 @@ describe("receiving pages re-verify the incoming handoff id", () => {
   });
   afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = ""; });
 
-  it("M navigates to a real incoming minio_key's folder and verifies it there (root list never holds the deep key)", async () => {
+  it("MD (M axis) navigates to a real incoming minio_key's folder and verifies it there (root list never holds the deep key)", async () => {
     // 真實 S3 帶 Delimiter='/'：3 層深的 CN_KEY 在根層只會以 CommonPrefix(270專案/) 落在 folders，
     // 絕不出現在根層 objects。接收端必須先導覽到 CN_KEY 所在資料夾(270專案/建築/v07/)、向該層 folder 重驗，
     // 才能誠實 verified；停在根層 = 對真實巢狀 key 恆誤報 not_found(§4.2 誠實 verified)。fixture 依 prefix 分流
-    // (root vs 來源層)以尊重 delimiter 語意——舊 fixture 把深層 key 直接塞進根層 objects 會掩蓋此 gap。
+    // (root vs 來源層)以尊重 delimiter 語意。ModelDataPage 的導覽 effect 承接原 M 頁自動導覽行為。
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
     const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
-    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
-    expect(b?.getAttribute("data-handoff-status")).toBe("verified");
-    expect(b?.getAttribute("data-handoff-source")).toBe("a1");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("verified"); });
+    expect(container.querySelector('[data-testid="md-incoming-handoff"]')?.getAttribute("data-handoff-source")).toBe("a1");
     expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(SRC_PREFIX); // 真的導覽到 key 所在層，非停在根
   });
 
-  it("M flags an incoming minio_key absent from its navigated folder as not_found (no silent fallback)", async () => {
+  it("MD (M axis) flags an incoming minio_key absent from its navigated folder as not_found (no silent fallback)", async () => {
     // 導覽到 key 所在資料夾後，該層 objects 真的沒有這支 key(已刪/改名)→ 誠實 not_found，非靜默 fallback。
     const GONE_KEY = "270專案/建築/v07/已刪除.ifc"; // 同資料夾(SRC_PREFIX)，但 srcFolder.objects 只有 CN_KEY
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(GONE_KEY)}`;
     const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
-    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
-    expect(b?.getAttribute("data-handoff-status")).toBe("not_found");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("not_found"); });
     expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(SRC_PREFIX); // 導覽到該層後才判定 not_found
   });
 
-  it("M keeps the navigated folder verified even when a slow root refetch lands late (generation guard, no clobber)", async () => {
+  it("MD (M axis) keeps the navigated folder verified even when a slow root refetch lands late (generation guard, no clobber)", async () => {
     // 掛載時併發兩個 getMinioFolder：根層(prefix="")＋導覽目標層。真實 S3 根層需逐一 probe 子資料夾
     // has_source_ifc(序列)，通常比葉層慢；無世代守門則根層晚到的回應會蓋掉已導覽的葉層 folder，
     // folder.prefix 退回 ""→verify 對 minio_key 失敗→假 not_found(§4.2 想避免的假訊息)。此處刻意讓
-    // 根層 pending、葉層先落地，再放行根層，斷言不得被覆蓋。
+    // 根層 pending、葉層先落地，再放行根層，斷言不得被覆蓋。世代守門在 useMinioFolder（Task 3 搬移）。
+    quietModelDataEndpoints();
     let resolveRoot: (v: MinioFolderListing) => void = () => {};
     const rootPending = new Promise<MinioFolderListing>((r) => { resolveRoot = r; });
     vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation((p?: string) => (p === SRC_PREFIX ? Promise.resolve(srcFolder) : rootPending));
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
     const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); }); // 葉層(正確)先落地→verified
-    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("verified"); }); // 葉層(正確)先落地→verified
     await act(async () => { resolveRoot(rootFolder); for (let i = 0; i < 6; i++) await Promise.resolve(); }); // 根層姍姍來遲
-    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified"); // 不得被根層覆蓋成 not_found
+    expect(mdBannerStatus(container)).toBe("verified"); // 不得被根層覆蓋成 not_found
   });
 
-  it("M navigates to an incoming prefix (回看選檔來源) and verifies it against the freshly loaded folder (verified)", async () => {
+  it("MD (M axis) navigates to an incoming prefix (回看選檔來源) and verifies it against the freshly loaded folder (verified)", async () => {
     // A1 → M prefix handoff（spec §4.3）：接收端必須真的導覽到來源資料夾、向該層 folder 重驗，
     // 不能只因『持有 prefix』就 verified。mock 依 prefix 回不同層：根層（無此檔）vs 來源層（含 CN_KEY）。
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     window.location.hash = `#minio?source=a1&prefix=${encodeURIComponent(SRC_PREFIX)}`;
     const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
-    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
-    expect(b?.getAttribute("data-handoff-status")).toBe("verified");
-    expect(b?.getAttribute("data-handoff-source")).toBe("a1");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("verified"); });
+    expect(container.querySelector('[data-testid="md-incoming-handoff"]')?.getAttribute("data-handoff-source")).toBe("a1");
     expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(SRC_PREFIX); // 真的導覽到來源層，非停在根
   });
 
-  it("M flags an incoming prefix that resolves to an empty/absent folder as not_found (no silent fallback)", async () => {
+  it("MD (M axis) flags an incoming prefix that resolves to an empty/absent folder as not_found (no silent fallback)", async () => {
     // 導覽到來源層後該層無 folders/objects（查無 / 已刪 / 未設定）→ 誠實 not_found，不靜默 fallback。
     const gonePrefix = "999查無專案/";
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => ({ bucket: "bim-control", prefix: p ?? "", folders: [], count: 0, objects: [] }));
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     window.location.hash = `#minio?source=a1&prefix=${encodeURIComponent(gonePrefix)}`;
     const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
-    const b = container.querySelector('[data-testid="minio-incoming-handoff"]');
-    expect(b?.getAttribute("data-handoff-status")).toBe("not_found");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("not_found"); });
     expect(coordinatorClient.getMinioFolder).toHaveBeenCalledWith(gonePrefix); // 導覽到該層後才判定 not_found
   });
 
@@ -273,100 +282,47 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     expect(container.querySelector('[data-testid="a1-minio-source-note"]')?.textContent).toContain("server-local IFC path");
   });
 
-  it("CV verifies an incoming job_id against the fetched ifc-ready jobs (verified)", async () => {
-    // CV's authoritative lists = jobs (listIfcReady) + records (getConversionRecords).
-    // Mirror Task 7's stub surface so ConversionSchedulingPage mounts without unhandled rejections.
+  it("MD (CV axis) verifies an incoming job_id against the fetched ifc-ready jobs (verified)", async () => {
+    // CV's authoritative lists = jobs (listIfcReady) + records (getConversionRecords), now surfaced by ModelDataPage.
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 1, items: [
       { ifc_ready_job_id: "job_1", status: "ready", project_id: "270", external_model_version_id: "v1", download_status: "done", conversion_status: "ready", conversion_authority: "bim-streaming-server", queue_position: null, conversion_job_id: "cj_1", dispatch_error: null, review_session_id: "review_session_a", viewer_url: null, expected_stage_url: null, expected_mapping_url: null, created_at: "", updated_at: "" },
     ] } as never);
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = "#conv?source=intake&job_id=job_1";
+    window.location.hash = "#minio?source=intake&job_id=job_1";
     const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("verified"); });
   });
 
-  it("CV flags an incoming job_id absent from jobs/records as not_found (no silent fallback)", async () => {
+  it("MD (CV axis) flags an incoming job_id absent from jobs/records as not_found (no silent fallback)", async () => {
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = "#conv?source=intake&job_id=job_ZZZ";
+    window.location.hash = "#minio?source=intake&job_id=job_ZZZ";
     const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("not_found"); });
   });
 
   // reviewer P2（CodeRabbit + Codex 兩位獨立命中同一發現，已核實）：修前 jobs/records 初始值皆為 []、
   // jobsTruncated/recordsTruncated 初始皆為 false，與「已查過、確認不存在」在資料形狀上不可分——mount 後
   // 第一個 render（load()/loadRecords() 的 promise 尚未 resolve）就會以此空狀態誤報 not_found。用永不 settle
   // 的 promise 鎖定「掛載當下、尚未載入」這個瞬間，不 flush 任何 microtask，直接斷言為 indeterminate。
-  it("CV shows indeterminate (not a false not_found) on the very first render before jobs/records have loaded", () => {
+  it("MD (CV axis) shows indeterminate (not a false not_found) on the very first render before jobs/records have loaded", () => {
     vi.spyOn(coordinatorClient, "listIfcReady").mockReturnValue(new Promise(() => {}) as never);
     vi.spyOn(coordinatorClient, "minioWatchStatus").mockReturnValue(new Promise(() => {}) as never);
     vi.spyOn(coordinatorClient, "getConversionRecords").mockReturnValue(new Promise(() => {}) as never);
     vi.spyOn(coordinatorClient, "getConversionsHistory").mockReturnValue(new Promise(() => {}) as never);
-    window.location.hash = "#conv?source=intake&job_id=job_1";
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockReturnValue(new Promise(() => {}) as never);
+    window.location.hash = "#minio?source=intake&job_id=job_1";
     const root = createRoot(container);
-    act(() => { root.render(<ConversionSchedulingPage />); });
-    const b = container.querySelector('[data-testid="conv-incoming-handoff"]');
-    expect(b?.getAttribute("data-handoff-status")).toBe("indeterminate");
+    act(() => { root.render(<ModelDataPage />); });
+    expect(mdBannerStatus(container)).toBe("indeterminate");
   });
 
-  // ---- p5-e2：CV 頁 minio_key 接收端重驗（M→CV chip 帶 object_key；pages.tsx verify records.some(r.object_key===minio_key)）。
-  // 對照 A1 頁同款 minio_key predicate 已有專屬單元測試，此前 CV 這條完全無單元/瀏覽器覆蓋——補齊 verified/not_found/
-  // indeterminate 三態（含中文 key），把目前沒有測試網住的回歸風險鎖住。----
-  it("CV verifies an incoming minio_key against the fetched ledger records (verified, Chinese key)", async () => {
-    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [mkRecord({ object_key: CN_KEY })] }); // 中文 object_key
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
-    const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    // loadRecords() 是與 load() 獨立的 useEffect async 鏈；固定 2-tick 在負載高時排不乾（載入中＝空 records 也顯
-    // not_found），會閃 AssertionError(expected not_found to be verified)。改輪詢等到 banner settle 成 verified。
-    await waitFor(() => {
-      expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
-    });
-  });
-
-  it("CV flags an incoming minio_key absent from the (untruncated) ledger records as not_found (no silent fallback)", async () => {
-    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 1, items: [mkRecord({ object_key: "270/other.ifc" })] }); // count===items.length → 未截斷
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent("270專案/建築/v07/查無.ifc")}`;
-    const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    // 先輪詢等到 ledger 真的載入並反映到 render（mkRecord 的 idempotency_key 'mw_r' 落成 ledger 列）。此步同時證明
-    // loadRecords 接線完整＋已反映到 render——若接線被打斷，此列永不出現、輪詢逾時失敗——把「已載入且查無」與「fetch
-    // 從未發生／未反映到 render」兩種原本都會 fallthrough 成 not_found 的情況分開，讓本測試不再是「兩種都會過」的弱斷言。
-    await waitFor(() => {
-      expect(container.querySelector('[data-testid="conv-ledger-idem-mw_r"]')).not.toBeNull();
-    });
-    // 權威 records 已載入且未截斷、key 確不在其中 → 誠實 not_found（非因載入中而假 not_found）。
-    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
-  });
-
-  it("CV marks an incoming minio_key absent from a TRUNCATED records window as indeterminate, not a false not_found", async () => {
-    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 88, items: [mkRecord({ object_key: "270/other.ifc" })] }); // count 88 ≫ 1 → 截斷
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = `#conv?source=minio&minio_key=${encodeURIComponent(CN_KEY)}`;
-    const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    // 輪詢等到 banner settle 成 indeterminate（載入中＝空 records＋未截斷會先顯 not_found，records settle 後才因
-    // recordsTruncated 轉 indeterminate）；輪詢逾時＝load 未 settle，避免固定 tick 誤讀載入中的 not_found。
-    await waitFor(() => {
-      expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
-    });
-  });
+  // ---- 退役（Task 9 MD 三頁合一）：原「CV 頁 minio_key 向 ledger records 重驗」三態測試（verified/not_found/
+  // indeterminate，含中文 key）已隨舊 CV 頁移除。合併後 ModelDataPage 對 minio_key 一律走 M 語意——導覽到來源
+  // 資料夾後向 folder.objects 重驗（見上方 MD (M axis) minio_key 測試），不再以 ledger records.object_key 比對。
+  // minio_key 的截斷→indeterminate 誠實保證改由「folder===null → indeterminate」承接（見下方 loading 測試）。----
 
   it("KG flags an incoming session absent from shared status as not_found (no silent fallback)", () => {
     // KG's authoritative list = useSharedStatus().sessionsById; inject it via SharedStatusProvider value (KG
@@ -397,50 +353,42 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     expect(container.querySelector('[data-testid="kg-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("not_found");
   });
 
-  it("M keeps a verified incoming minio_key verified after the user manually navigates away (go-up) — arrival re-verify is not undone by later browsing (spec §4.2)", async () => {
+  it("MD (M axis) keeps a verified incoming minio_key verified after the user manually navigates away (go-up) — arrival re-verify is not undone by later browsing (spec §4.2)", async () => {
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "getMinioFolder").mockImplementation(async (p?: string) => (p === SRC_PREFIX ? srcFolder : rootFolder));
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
     window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
     const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("verified"); });
     // user clicks 「⬑ 上一層」 → a folder that does NOT contain CN_KEY; banner must not retroactively become not_found
     const up = container.querySelector('[data-testid="minio-go-up"]') as HTMLButtonElement;
     await act(async () => { up.click(); for (let i = 0; i < 6; i++) await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("verified");
+    expect(mdBannerStatus(container)).toBe("verified"); // arrival latch not undone by later browsing
   });
 
-  it("CV marks an incoming job_id absent from a TRUNCATED ifc-ready window as indeterminate, not a false not_found (§5.4, mirrors ledgerChipStatus recordsIncomplete)", async () => {
+  it("MD (CV axis) marks an incoming job_id absent from a TRUNCATED ifc-ready window as indeterminate, not a false not_found (§5.4, mirrors ledgerChipStatus recordsIncomplete)", async () => {
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 99, items: [
       { ifc_ready_job_id: "job_other", status: "ready", project_id: "270", external_model_version_id: "v1", download_status: "done", conversion_status: "ready", conversion_authority: "bim-streaming-server", queue_position: null, conversion_job_id: "cj_other", dispatch_error: null, review_session_id: null, viewer_url: null, expected_stage_url: null, expected_mapping_url: null, created_at: "", updated_at: "" },
     ] } as never); // count 99 ≫ 1 returned item → window truncated; job_ZZZ may live beyond the window
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = "#conv?source=intake&job_id=job_ZZZ";
+    window.location.hash = "#minio?source=intake&job_id=job_ZZZ";
     const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("indeterminate"); });
   });
 
-  it("CV marks an incoming conversion_id absent from a TRUNCATED records window as indeterminate, not a false not_found", async () => {
-    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
+  it("MD (CV axis) marks an incoming conversion_id absent from a TRUNCATED records window as indeterminate, not a false not_found", async () => {
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 88, items: [mkRecord({ conversion_job_id: "cj_other", object_key: "270/other.ifc" })] });
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = "#conv?source=intake&conversion_id=cj_ZZZ";
+    window.location.hash = "#minio?source=intake&conversion_id=cj_ZZZ";
     const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="conv-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("indeterminate"); });
   });
 
   // ---- Task 14 Important #1（載入中 vs 查無）：接收端重驗必須把「權威資料尚未載入」（loading）與「已載入
   // 但真的查無」（not_found）分開。永不 resolve 的 fetch mock 讓頁面停在「mount effect 已觸發、第一個 fetch
-  // 尚未落地」的那一格——正是會閃假 not_found 的視窗；此時應誠實回中性 indeterminate（未明），非警示 not_found。
-  // CV 已有 truncated→indeterminate 覆蓋，且缺乾淨的 loading 訊號，故此組不含 CV（維持原狀）。----
+  // 尚未落地」的那一格——正是會閃假 not_found 的視窗；此時應誠實回中性 indeterminate（未明），非警示 not_found。----
   it("A1 shows indeterminate (not a false not_found) for an incoming minio_key while the object list is still loading (minioObjects===null)", async () => {
     vi.spyOn(coordinatorClient, "getMinioObjects").mockReturnValue(new Promise(() => {}) as never); // 永不 resolve → minioObjects 停在 null（載入中）
     vi.spyOn(coordinatorClient, "runtimeStatus").mockReturnValue(new Promise(() => {}) as never);
@@ -458,13 +406,13 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     expect(container.querySelector('[data-testid="sessions-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
   });
 
-  it("M shows indeterminate (not a false not_found) for an incoming minio_key while the folder is still loading (folder===null)", async () => {
+  it("MD (M axis) shows indeterminate (not a false not_found) for an incoming minio_key while the folder is still loading (folder===null)", async () => {
+    quietModelDataEndpoints();
     vi.spyOn(coordinatorClient, "getMinioFolder").mockReturnValue(new Promise(() => {}) as never); // 永不 resolve → folder 停在 null（載入中）
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockReturnValue(new Promise(() => {}) as never);
     window.location.hash = `#minio?source=a1&minio_key=${encodeURIComponent(CN_KEY)}`;
     const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    expect(container.querySelector('[data-testid="minio-incoming-handoff"]')?.getAttribute("data-handoff-status")).toBe("indeterminate");
+    await act(async () => { root.render(<ModelDataPage />); });
+    expect(mdBannerStatus(container)).toBe("indeterminate");
   });
 
   it("KG shows indeterminate (not a false not_found) for an incoming session while shared status is still stale (never polled)", () => {
@@ -480,7 +428,7 @@ describe("receiving pages re-verify the incoming handoff id", () => {
   // 「本軸在意的欄位」；當 handoff 存在但缺該欄位（sender 本來就不帶）時，舊行為 fall through 回 false→假 not_found
   // （警示紅字「查無」）。以下三條為已重現的真實路徑，修正後必須是 not_applicable（中性），不得誤成 not_found。----
   it("A1 does NOT false-not_found a session-only handoff from SS (real ACTIVE session, no minio_key) — not_applicable (most severe path)", async () => {
-    // SS→A1 chip（session-link-a1-*, pages.tsx:1507）一定帶真實 active session id，但 A1 receiver 只重驗 minio_key。
+    // SS→A1 chip（session-link-a1-*）一定帶真實 active session id，但 A1 receiver 只重驗 minio_key。
     // 對一個 runtime/status 裡真實 active 的 session 點此 chip，舊碼 100% 假報 not_found（宣稱使用中的 session 查無）。
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({ objects: [
       { key: CN_KEY, etag: "e1", role: "source_ifc", project_id: "270", project_display_name: "270", category: "建築", version: "v07", idempotency_key: "mw_abc" },
@@ -495,24 +443,20 @@ describe("receiving pages re-verify the incoming handoff id", () => {
     expect(b?.className ?? "").not.toContain("ec-warn-note"); // 中性，不掛警示紅字
   });
 
-  it("CV does NOT false-not_found an A1 default-state handoff that carries no job/conversion/minio id (#conv?source=a1) — not_applicable", async () => {
-    // a1-conv-link 在 A1 無 session 預設狀態送 #conv?source=a1（convJobId 為 null，不帶 job_id；pages.tsx:620）。
-    // CV verify 三欄位皆缺 → 舊碼 fall through 回 false→雙空格假 not_found（「來自 a1 的  在權威資料中查無」）。
-    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] } as never);
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false } as never);
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    vi.spyOn(coordinatorClient, "getConversionsHistory").mockResolvedValue({ items: [], count: 0 });
-    window.location.hash = "#conv?source=a1";
+  it("MD (CV axis) does NOT false-not_found an A1 default-state handoff that carries no job/conversion/minio id (#minio?source=a1) — not_applicable", async () => {
+    // a1-conv-link 在 A1 無 session 預設狀態送到 MD 頁（convJobId 為 null，不帶 job_id）。合併後 alias 把
+    // #conv?source=a1 重導為 #minio?source=a1（保 query）。MD verify 四欄位皆缺 → 必須中性 not_applicable，
+    // 不得 fall through 成假 not_found（誠實 regression）。
+    quietModelDataEndpoints();
+    window.location.hash = "#minio?source=a1";
     const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    const b = container.querySelector('[data-testid="conv-incoming-handoff"]');
-    expect(b?.getAttribute("data-handoff-status")).toBe("not_applicable");
-    expect(b?.className ?? "").not.toContain("ec-warn-note");
+    await act(async () => { root.render(<ModelDataPage />); });
+    await waitFor(() => { expect(mdBannerStatus(container)).toBe("not_applicable"); });
+    expect(container.querySelector('[data-testid="md-incoming-handoff"]')?.className ?? "").not.toContain("ec-warn-note");
   });
 
   it("SS does NOT false-not_found a session-less handoff from the KG demo row (#sessions?source=instances) — not_applicable", async () => {
-    // KG demo-row chip（kg-demo-link-sessions, pages.tsx:1585）刻意不帶 session（標示 demo 對照）。
+    // KG demo-row chip（kg-demo-link-sessions）刻意不帶 session（標示 demo 對照）。
     // SS verify 無 session 可查 → 舊碼回 false→假 not_found；修正後應中性 not_applicable。
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(status([mkSession({ session_id: "review_session_a" })]));
     window.location.hash = "#sessions?source=instances";

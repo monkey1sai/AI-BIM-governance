@@ -8,14 +8,11 @@ import {
   A1GovernanceWorkbenchPage,
   AppsPage,
   AppVisionPage,
-  ConversionSchedulingPage,
   CoordinatorPage,
   FailureRuleRow,
   FederationPage,
-  IntakePage,
   IssuesRuleCenterPage,
   KitGpuFleetPage,
-  MinioDataPage,
   OverviewPage,
   ReviewRoomPage,
   RuntimePage,
@@ -25,10 +22,12 @@ import {
   ViewerPresentationPage,
   VersionDiffPage,
 } from "./pages";
+// [Task 9 MD 三頁合一] 三舊頁（ConversionSchedulingPage / IntakePage / MinioDataPage）已移除，改由 ModelDataPage 承接。
+import { ModelDataPage } from "./modelData/ModelDataPage";
 import { StreamConfigReader } from "./StreamConfigReader";
 import EdgeConsole from "./EdgeConsole";
 import { ProvLegend } from "./components";
-import { coordinatorClient, type RuntimeStatus, type IfcReadyListItem } from "./coordinatorClient";
+import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus, type RuleResultRow } from "./governanceClient";
 import { CoordinatorGovernanceTabs, LifecycleTab } from "./coordinator/RuntimeGovernanceTabs";
 import { A1A10, A1A10_DETAIL, DEPENDENCIES, ENDPOINTS, PAGES } from "./data";
@@ -216,11 +215,8 @@ describe("edge console honesty smoke", () => {
     expect(coord).toContain("Recent Risk");
     expect(coord).not.toContain("99.1%");
 
-    const intake = renderToString(<IntakePage />);
-    expect(intake).toContain("/api/external/ifc-ready");
-    expect(intake).toContain("不承諾精準 GUID"); // mapping fidelity 誠實
-    expect(intake).toContain("未取得"); // conversion 秒數 / GPU 無遙測
-
+    // [Task 9 MD 三頁合一] IntakePage 已移除；IN 誠實字樣（不承諾精準 GUID／conversion 秒數·GPU 未取得）已遷移至
+    // ObjectDetailPane.test.tsx（coverage 品質三行），/api/external/ifc-ready 由 GlobalConversionPane.test.tsx 覆蓋。
     const runtime = renderToString(<RuntimePage />);
     expect(runtime).toContain("stream-config");
     expect(runtime).toContain("未取得"); // GPU 無遙測標未取得
@@ -417,7 +413,7 @@ describe("edge console honesty smoke", () => {
     }
   });
 
-  it("prototype 核心頁面可 render：A1 stepper、3D viewer、conversion、session、Kit/GPU、MinIO", () => {
+  it("prototype 核心頁面可 render：A1 stepper、3D viewer、session、Kit/GPU（轉檔/MinIO 頁併入 ModelDataPage.test）", () => {
     const a1 = renderToString(<A1GovernanceWorkbenchPage />);
     expect(a1).toContain("選檔");
     expect(a1).toContain("自動檢核");
@@ -454,13 +450,8 @@ describe("edge console honesty smoke", () => {
     expect(viewer).toContain("highlightPrimsRequest");
     expect(viewer).toContain("DataChannel");
 
-    const conv = renderToString(<ConversionSchedulingPage />);
-    expect(conv).toContain("IFC→USD 轉檔排程");
-    // m2a-coverage-report：原 "mapping coverage" 佔位 Field 已移除，coverage 改由 #conv job 表的
-    // 展開抽屜（conv-coverage-toggle-*）呈現真資料；smoke 改驗保留的 conversion authority Field。
-    expect(conv).toContain("conversion authority");
-    expect(conv).toContain("/api/external/ifc-ready");
-
+    // [Task 9 MD 三頁合一] ConversionSchedulingPage 已移除；轉檔頁 smoke 由 ModelDataPage.test.tsx（頁殼）＋
+    // GlobalConversionPane.test.tsx（conversion authority／/api/external/ifc-ready／coverage 抽屜）覆蓋。
     const sessions = renderToString(<SessionManagementPage />);
     expect(sessions).toContain("Session 管理");
     expect(sessions).toContain("first frame");
@@ -471,10 +462,8 @@ describe("edge console honesty smoke", () => {
     expect(fleet).toContain("1 GPU = 1 Kit stream");
     expect(fleet).toContain("drain");
 
-    const minio = renderToString(<MinioDataPage />);
-    expect(minio).toContain("MinIO 資料");
-    expect(minio).toContain("bim-control");
-    expect(minio).toContain("model.usdc");
+    // [Task 9 MD 三頁合一] MinioDataPage 已移除；MinIO 資料頁 smoke 由 ModelDataPage.test.tsx（頁殼＋Demo bucket
+    // layout）＋ MinioTreePane.test.tsx（左欄樹）覆蓋；下方另有 ModelDataPage SSR proxy smoke。
   });
 
   // ── P4 Review Room（G）：A1 handoff 的專用 3D session attach 畫面 ──
@@ -527,9 +516,9 @@ describe("edge console honesty smoke", () => {
     expect(html).not.toContain("列出真實 session");
   });
 
-  // ── MinioData Task 7：接真 MinIO list proxy（GET /api/minio/objects）──
-  it("MinioData 接真 MinIO list proxy（loading 態 + /api/minio/objects 文案 + usdc 仍 p1）", () => {
-    const html = renderToString(<MinioDataPage />);
+  // ── MD 三頁合一（Task 9）：接真 MinIO list proxy（GET /api/minio/objects）SSR smoke，改由 ModelDataPage 承接 ──
+  it("ModelData（MinIO proxy）：loading 態 + /api/minio/objects 文案 + Demo bucket layout（usdc 仍 p1）", () => {
+    const html = renderToString(<ModelDataPage />);
     // 載入態可見（renderToString 首幀無 fetch 結果 → loading=true）。
     expect(html).toContain("載入");
     // 誠實標記：真 S3 proxy 端點文案出現於 Panel sub / loading 文字。
@@ -726,95 +715,9 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
   });
 
-  // MinioData populated 態（Task 6 起 #minio 改逐層資料夾導覽）：頁面改打 getMinioFolder()
-  //（回 folders[] + objects[]），不再呼 getMinioObjects()。葉層物件回真 .ifc → render 出
-  // role label + 三段語意 badge。SSR 永遠到不了，因首幀 loading=true 走 loading 分支。
-  // quality finding Important #2：spy 從退役的 getMinioObjects 改為 getMinioFolder，否則 mock
-  // 不被觸發、頁面卡 loading（await 無解）。
-  it("MinioData getMinioFolder() 回真物件 → render 葉層 .ifc（role + 三段語意 badge，非 loading 殼）", async () => {
-    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
-      bucket: "bim-control",
-      prefix: "松風庵/root/main/000001/",
-      folders: [],
-      count: 1,
-      objects: [
-        {
-          key: "松風庵/root/main/000001/model.ifc",
-          etag: "abc",
-          role: "source_ifc",
-          idempotency_key: "mw_console0000aaaa1",
-          project_id: "mv_1a2b3c4d",
-          project_display_name: "松風庵",
-          category: "main",
-          version: "000001",
-        },
-      ],
-    });
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); }); // 等 getMinioFolder microtask 入 state
-    await act(async () => { await Promise.resolve(); }); // 等 getConversionRecords microtask 入 state
-
-    const html = container.innerHTML;
-    // 三段語意 badge：project_display_name / category / version（loading 態不可能出現這些）。
-    expect(html).toContain("松風庵");
-    expect(html).toContain("main");
-    expect(html).toContain("000001");
-    // 角色標籤（roleLabel）
-    expect(html).toContain("來源 IFC");
-    // Panel sub 顯示真實 bucket（誠實標記）。
-    expect(html).toContain("bucket=bim-control");
-    // 已離開 loading 態。
-    expect(html).not.toContain("載入中…（GET /api/minio/objects）");
-
-    await act(async () => { root.unmount(); });
-  });
-
-  // MinioData error 態：getMinioFolder() reject → 顯示誠實錯誤文案，
-  // 不吞錯、不假裝有物件。SSR 首幀走 loading，永遠到不了此分支。
-  it("MinioData getMinioFolder() reject → error 態誠實顯示錯誤（不吞錯、不偽裝有物件）", async () => {
-    vi.spyOn(coordinatorClient, "getMinioFolder").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); });
-
-    const html = container.innerHTML;
-    // 誠實顯示錯誤原因（String(e)），不吞
-    expect(html).toContain("/api/minio/objects");
-    expect(html).toContain("502 Bad Gateway");
-    expect(html).not.toContain("載入中…（GET /api/minio/objects）"); // 已離開 loading
-    expect(html).not.toContain("松風庵"); // error 態不得渲染假物件
-
-    await act(async () => { root.unmount(); });
-  });
-
-  // MinioData empty 態：getMinioFolder() 成功但 folders=[] 且 objects=[]（count=0）→
-  // 顯示誠實「此層無物件（資料夾為空）」文案，不假裝有物件。SSR 首幀走 loading，
-  // 此分支需 !loading && !err && folders.length===0 && objects.length===0，唯有 client-render
-  // 微任務跑完才到得了。
-  it("MinioData getMinioFolder() 回空層 → empty 態顯示「此層無物件」（非 loading、非假物件）", async () => {
-    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({
-      bucket: "bim-control",
-      prefix: "",
-      folders: [],
-      objects: [],
-      count: 0,
-    });
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); });
-
-    const html = container.innerHTML;
-    expect(html).toContain("此層無物件（資料夾為空）"); // 空狀態文案（spec §2.5 empty 態 (b)）
-    expect(html).not.toContain("載入中…（GET /api/minio/objects）"); // 已離開 loading
-    expect(html).not.toContain("coordinator /api/minio/objects"); // 成功回應，非 error 態
-    expect(html).not.toContain("松風庵"); // 空樹不得渲染假物件節點
-
-    await act(async () => { root.unmount(); });
-  });
+  // [Task 9 MD 三頁合一] MinioData 客端渲染三態（populated / error / empty）已遷移至
+  // MinioTreePane.test.tsx（左欄檔案樹的權威測試）：populated=(a) 排序/badge + (b)(c) 選檔；
+  // error/empty/retry=(d)(e)(f)（含 roleLabel「來源 IFC」+ bucket sub 斷言）。頁殼整合另見 ModelDataPage.test.tsx。
 
   // spec §7.3 核心：A1 選擇器選定 project→model→version 後，ifcPath input 值更新為該 version.path。
   // 這條對應 load-bearing handler onChange={(e)=>{ if(e.target.value) setIfcPath(e.target.value); }}（pages.tsx）。
@@ -1002,53 +905,8 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     await act(async () => { root.unmount(); });
   });
 
-  // reviewer Major：error 態須有使用者可觸發的重試（不必整頁 reload）。
-  // 第一次 getMinioFolder() 失敗 → 顯示誠實 error + 重試鈕；點重試 → 重打 → 成功渲染葉層物件。
-  // quality finding Important #2：spy 從退役的 getMinioObjects 改為 getMinioFolder。
-  it("MinioData error 態點「重試」→ 重打 getMinioFolder() → 成功渲染真物件（不必整頁 reload）", async () => {
-    const spy = vi
-      .spyOn(coordinatorClient, "getMinioFolder")
-      .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
-      .mockResolvedValueOnce({
-        bucket: "bim-control",
-        prefix: "松風庵/root/main/000001/",
-        folders: [],
-        count: 1,
-        objects: [
-          {
-            key: "松風庵/root/main/000001/model.ifc",
-            etag: "abc",
-            role: "source_ifc",
-            idempotency_key: "mw_console0000aaaa2",
-            project_id: "mv_1a2b3c4d",
-            project_display_name: "松風庵",
-            category: "main",
-            version: "000001",
-          },
-        ],
-      });
-    vi.spyOn(coordinatorClient, "getConversionRecords").mockResolvedValue({ count: 0, items: [] });
-    const root = createRoot(container);
-    await act(async () => { root.render(<MinioDataPage />); });
-    await act(async () => { await Promise.resolve(); });
-    // error 態顯示錯誤資訊
-    expect(container.innerHTML).toContain("/api/minio/objects");
-    expect(container.innerHTML).toContain("502 Bad Gateway");
-
-    const retry = container.querySelector<HTMLButtonElement>('[data-testid="minio-tree-retry"]');
-    expect(retry).not.toBeNull();
-    await act(async () => { retry!.click(); });
-    await act(async () => { await Promise.resolve(); });
-    await act(async () => { await Promise.resolve(); }); // 等 getConversionRecords microtask 入 state
-
-    const html = container.innerHTML;
-    expect(html).toContain("松風庵"); // 重試成功 → 真物件葉層渲染
-    expect(html).toContain("來源 IFC"); // 角色標籤
-    expect(html).not.toContain("502 Bad Gateway"); // error 態已清除
-    expect(spy).toHaveBeenCalledTimes(2); // 真的重打了一次
-
-    await act(async () => { root.unmount(); });
-  });
+  // [Task 9 MD 三頁合一] MinioData error→retry→success 已遷移至 MinioTreePane.test.tsx (f)
+  //（refreshCurrent 重打 getMinioFolder、roleLabel「來源 IFC」+ bucket sub 斷言一併保留）。
 
   // 同上（A1 檔案庫選擇器）：graceful degrade 之外提供「重試載入檔案庫」，成功後選擇器可用。
   it("A1 檔案庫不可用點「重試載入檔案庫」→ 重打 filesTree() → 選擇器 enable", async () => {
@@ -1857,62 +1715,8 @@ describe("A2 VersionDiff 檔案庫選擇器 client-render（spec §4.2/§6.2：b
   });
 });
 
-describe("ConversionSchedulingPage：dispatch_error 欄位形狀對齊真後端 schema，渲染層驗證；真後端值由 E2E 驗", () => {
-  const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
-  let container: HTMLDivElement;
-  let prevActEnv: unknown;
-  const baseJob = {
-    project_id: "271", download_status: "downloaded", conversion_authority: null,
-    review_session_id: null, viewer_url: null, expected_stage_url: null,
-    expected_mapping_url: null, created_at: "2026-06-11T00:00:00Z",
-    conversion_job_id: null, // m2a-coverage-report:新 required key（值 null）；補齊既有 fixture
-    queue_position: null, // conv-prioritize-retry:non-optional required key；dispatched fixture 預設 null
-    updated_at: "2026-06-11T00:00:00Z", // conv-prioritize-retry §2.4:新 required key；補齊既有 fixture
-  };
-  beforeEach(() => {
-    prevActEnv = (globalThis as Record<string, unknown>)[actEnvKey];
-    (globalThis as Record<string, unknown>)[actEnvKey] = true;
-    container = document.createElement("div");
-    document.body.appendChild(container);
-  });
-  afterEach(() => {
-    document.body.removeChild(container);
-    vi.restoreAllMocks();
-    (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
-  });
-
-  it("有 dispatch_error 的 job → 渲染錯誤明細節點；無 dispatch_error 的 job → 不渲染", async () => {
-    const items: IfcReadyListItem[] = [
-      { ...baseJob, ifc_ready_job_id: "ifcready_fail", external_model_version_id: "271_pieple_管線",
-        status: "dispatch_failed", conversion_status: "dispatch_failed",
-        dispatch_error: 'streaming conversion API 400: {"detail":"Invalid ifc_artifact_id: ifc_271_pieple_管線"}' },
-      { ...baseJob, ifc_ready_job_id: "ifcready_ok", external_model_version_id: "ext_ok",
-        status: "dispatched", conversion_status: "dispatched", dispatch_error: null },
-    ];
-    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: items.length, items });
-    // load() 在 listIfcReady 後仍會 await minioWatchStatus()；不 mock 會打真 fetch，
-    // jsdom 非同步 reject 時序不定 → 此測試會偶發掩蓋/翻覆（test lie）。固定為已啟用前停 stub。
-    vi.spyOn(coordinatorClient, "minioWatchStatus").mockResolvedValue({ enabled: false, note: "test stub" });
-    const root = createRoot(container);
-    await act(async () => { root.render(<ConversionSchedulingPage />); });
-    await act(async () => { await Promise.resolve(); });
-
-    // ifc-ready-api-field-redesign Task3：dispatch 錯誤格 testid 統一改為 conv-job-failure-*
-    //（failure_reason 優先、無則回退 dispatch_error）；此 fixture 僅有 dispatch_error → 走回退分支。
-    const errNode = container.querySelector('[data-testid="conv-job-failure-ifcready_fail"]');
-    expect(errNode).not.toBeNull();
-    expect(errNode!.textContent).toContain("Invalid ifc_artifact_id");
-    expect(errNode!.getAttribute("title")).toContain("streaming conversion API 400");
-    // quality Important #1 迴歸守衛：可見文字超過 80 字須截斷並補「…」提示,不得靜默硬切誤導操作員。
-    // 此 fixture dispatch_error 長 85 字 > 80,slice(0,80) 會在 "ifc_271_pieple" 處切掉尾端 _管線"},
-    // 若不補省略號,畫面看不出訊息被截斷(違反誠實鐵律:不可靜默丟資訊)。
-    expect(errNode!.textContent!.endsWith("…")).toBe(true);
-    expect(errNode!.textContent).not.toContain("_管線"); // 尾端已被截斷,不在可見文字
-    expect(errNode!.getAttribute("title")).toContain("_管線"); // 但完整訊息仍保留於 title tooltip
-    // 無 dispatch_error 的 job 不得渲染錯誤節點
-    expect(container.querySelector('[data-testid="conv-job-failure-ifcready_ok"]')).toBeNull();
-  });
-});
+// [Task 9 MD 三頁合一] ConversionSchedulingPage：dispatch_error 欄位形狀 + 80 字截斷 迴歸守衛已遷移至
+// GlobalConversionPane.test.tsx（同名 describe，佇列列 conv-job-failure-* 由 GlobalConversionPane 承接）。
 
 // quality finding：A1GovernanceWorkbenchPage doRun 輪詢的 unmount / step-reset 守門 +
 // makeIssues / doExport 失敗的 UI 回饋（誠實鐵律：操作失敗使用者必須看得到）。

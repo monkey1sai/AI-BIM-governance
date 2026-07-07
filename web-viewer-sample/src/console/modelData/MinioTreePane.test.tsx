@@ -154,4 +154,53 @@ describe("MinioTreePane（MD 三頁合一 Task 3 左欄檔案樹）", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith(ifcObj);
   });
+
+  // ── 遷移自 console.test.tsx（Task 9 三頁合一）：error / empty / retry 三態（MinioTreePane 承接 M 頁左欄）──
+  // getMinioFolder reject → 誠實顯錯誤 + 重試鈕（不吞錯、不假裝有物件）。
+  it("(d) 遷移：getMinioFolder reject → error 態誠實顯示錯誤 + 重試鈕（不偽裝有物件）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockRejectedValue(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"));
+    await act(async () => { root.render(createElement(Harness, {})); });
+    await waitFor(() => {
+      const html = container.innerHTML;
+      expect(html).toContain("/api/minio/objects");
+      expect(html).toContain("502 Bad Gateway");
+      expect(container.querySelector('[data-testid="minio-tree-retry"]')).not.toBeNull();
+      expect(html).not.toContain("載入中…（GET /api/minio/objects）"); // 已離開 loading
+      expect(html).not.toContain("東勢區許良宇紀念圖書館"); // error 態不得渲染假物件
+    });
+  });
+
+  // getMinioFolder 成功但空層（folders=[] objects=[]）→ empty 態 (b) 誠實「此層無物件」（非 loading、非假物件）。
+  it("(e) 遷移：getMinioFolder 回空層 → empty 態顯「此層無物件（資料夾為空）」", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder").mockResolvedValue({ bucket: "bim-control", prefix: "", folders: [], objects: [], count: 0 });
+    await act(async () => { root.render(createElement(Harness, {})); });
+    await waitFor(() => {
+      const html = container.innerHTML;
+      expect(html).toContain("此層無物件（資料夾為空）");
+      expect(html).not.toContain("載入中…（GET /api/minio/objects）");
+      expect(html).not.toContain("coordinator /api/minio/objects"); // 成功回應，非 error 態
+    });
+  });
+
+  // error 態點「重試」→ refreshCurrent（getMinioFolder refresh 重打）→ 成功渲染葉層物件（不必整頁 reload）。
+  // 一併保住 console 舊斷言：roleLabel「來源 IFC」+ Panel sub「bucket=bim-control」。
+  it("(f) 遷移：error 態點重試 → 重打 getMinioFolder → 成功渲染真物件（roleLabel + bucket sub）", async () => {
+    vi.spyOn(coordinatorClient, "getMinioFolder")
+      .mockRejectedValueOnce(new Error("coordinator /api/minio/objects -> 502 Bad Gateway"))
+      .mockResolvedValueOnce({ bucket: "bim-control", prefix: "東勢區許良宇紀念圖書館/root/main/000001/", folders: [], objects: [ifcObj], count: 1 });
+    await act(async () => { root.render(createElement(Harness, {})); });
+    let retry: HTMLButtonElement | null = null;
+    await waitFor(() => {
+      expect(container.innerHTML).toContain("502 Bad Gateway");
+      retry = container.querySelector('[data-testid="minio-tree-retry"]');
+      expect(retry).not.toBeNull();
+    });
+    await act(async () => { retry!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await waitFor(() => {
+      const html = container.innerHTML;
+      expect(html).toContain("來源 IFC");          // roleLabel（source_ifc）
+      expect(html).toContain("bucket=bim-control"); // Panel sub 真實 bucket
+      expect(html).not.toContain("502 Bad Gateway"); // error 態已清
+    });
+  });
 });
