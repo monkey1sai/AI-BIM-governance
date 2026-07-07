@@ -44,12 +44,17 @@ afterEach(async () => {
 
 function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-gov-session-test-"));
+  const storageRoot = path.join(root, "storage");
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    storageRoot: path.join(root, "storage"),
-    storageHostRoot: path.join(root, "storage"),
+    conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
+    edgeSiteId: "site_test_edge",
+    edgeRuntimeDataRoot: root,
+    artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
+    storageRoot,
+    storageHostRoot: storageRoot,
     corsOrigins: ["http://127.0.0.1:5173"],
     // streaming/poll 不啟用,避免背景 timer 干擾
     conversionPollEnabled: false,
@@ -142,8 +147,10 @@ async function seedSessionWithDownloadedIfc(
   expect(sessionId).toMatch(/^review_session_/);
 
   const finalJob = await request(app.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
-  const hostLocalPath = finalJob.body.host_local_path as string;
-  expect(hostLocalPath).toBeTruthy();
+  expect(finalJob.body).not.toHaveProperty("local_path");
+  expect(finalJob.body).not.toHaveProperty("host_local_path");
+  const hostLocalPath = path.join(app.config.storageHostRoot, "ifc-cache", ifcReadyJobId, "source.ifc");
+  expect(fs.existsSync(hostLocalPath)).toBe(true);
   return { sessionId, hostLocalPath, ifcReadyJobId };
 }
 

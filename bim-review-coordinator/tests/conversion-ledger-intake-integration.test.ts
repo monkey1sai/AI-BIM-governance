@@ -15,11 +15,17 @@ let root: string | null = null;
 
 function makeApp(): CoordinatorApp {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "ledger-intake-"));
+  const storageRoot = path.join(root, "storage");
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
     conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
+    edgeSiteId: "site_test_edge",
+    edgeRuntimeDataRoot: root,
+    artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
+    storageRoot,
+    storageHostRoot: storageRoot,
     corsOrigins: ["http://127.0.0.1:5173"],
     conversionPollEnabled: false,
     // webhook secret + IP allowlist（使用實際 config 欄位名）
@@ -86,6 +92,15 @@ describe("intake → ledger", () => {
     expect(item!.status).toBe("queued");
     expect(item!.category).toBe("機電");
     expect(item!.project_display_name).toBe("松風庵");
+
+    const artifactHealthLedger = JSON.parse(
+      fs.readFileSync(path.join(root!, "artifact-health-ledger.json"), "utf-8"),
+    ) as { records: Array<{ artifact_kind: string; status: string; host_local_path?: string | null }> };
+    const sourceRecord = artifactHealthLedger.records.find((r) => r.artifact_kind === "source_ifc");
+    expect(sourceRecord).toBeDefined();
+    // non-strict placeholder fallback records the intended host path but does not write bytes.
+    expect(sourceRecord!.status).toBe("missing");
+    expect(sourceRecord!.host_local_path).toContain(path.join("storage", "ifc-cache"));
   });
 
   it("conversion result ready 後 GET /api/conversion/records 回填 ready、job id 與 usdc ref", async () => {
