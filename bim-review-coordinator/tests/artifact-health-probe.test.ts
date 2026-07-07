@@ -119,6 +119,32 @@ describe("probeArtifactHealth", () => {
     expect(alternateDriveSnapshot.source_ifc_exists).toBe(false);
   });
 
+  it("source_ifc_exists is false when a storage symlink resolves outside EDGE_RUNTIME_DATA_ROOT", async () => {
+    const { edgeRoot, storageRoot } = makeEdgeRoot();
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "artifact-health-outside-"));
+    roots.push(outsideRoot);
+    const outsideFile = path.join(outsideRoot, "source.ifc");
+    fs.writeFileSync(outsideFile, "outside", "utf-8");
+
+    const linkPath = path.join(storageRoot, "linked-outside");
+    try {
+      fs.symlinkSync(outsideRoot, linkPath, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return;
+    }
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: path.join(linkPath, "source.ifc"),
+      model_artifact_url: null,
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: "http://127.0.0.1:49100",
+    });
+
+    expect(snapshot.source_ifc_exists).toBe(false);
+    expect(snapshot.failure_details?.source_ifc).toBe("source_ifc_symlink_escape");
+  });
+
   it("model_usdc_reachable is false when artifact URL returns 404", async () => {
     const { edgeRoot } = makeEdgeRoot();
     const server = await startArtifactServer((_req, res) => {
@@ -149,6 +175,105 @@ describe("probeArtifactHealth", () => {
     });
 
     expect(snapshot.model_usdc_reachable).toBeNull();
+  });
+
+  it("model_usdc_reachable rejects credentialed artifact URLs without hitting the server", async () => {
+    const { edgeRoot } = makeEdgeRoot();
+    let hits = 0;
+    const server = await startArtifactServer((_req, res) => {
+      hits += 1;
+      res.writeHead(200);
+      res.end();
+    });
+    const address = new URL(server.origin);
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: `http://user:pass@${address.host}/artifacts/job-1/model.usdc`,
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: server.origin,
+    });
+
+    expect(snapshot.model_usdc_reachable).toBeNull();
+    expect(snapshot.failure_details?.model_usdc).toBe("url_not_allowed");
+    expect(hits).toBe(0);
+  });
+
+  it("model_usdc_reachable does not follow redirects", async () => {
+    const { edgeRoot } = makeEdgeRoot();
+    const seen: string[] = [];
+    const server = await startArtifactServer((req, res) => {
+      seen.push(req.url ?? "");
+      res.writeHead(302, { Location: "https://example.com/private/model.usdc" });
+      res.end();
+    });
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: server.url("/artifacts/job-1/model.usdc"),
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: server.origin,
+    });
+
+    expect(snapshot.model_usdc_reachable).toBe(false);
+    expect(snapshot.failure_details?.model_usdc).toBe("http_302");
+    expect(seen).toEqual(["/artifacts/job-1/model.usdc"]);
+  });
+
+  it("model_usdc_reachable is null for invalid artifact URLs", async () => {
+    const { edgeRoot } = makeEdgeRoot();
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: "not a url",
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: "http://127.0.0.1:49100",
+    });
+
+    expect(snapshot.model_usdc_reachable).toBeNull();
+    expect(snapshot.failure_details?.model_usdc).toBe("url_invalid");
+  });
+
+  it("model_usdc_reachable is false when an allowed URL times out", async () => {
+    const { edgeRoot } = makeEdgeRoot();
+    const server = await startArtifactServer((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200);
+        res.end();
+      }, 2_000);
+    });
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: server.url("/artifacts/job-1/model.usdc"),
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: server.origin,
+    });
+
+    expect(snapshot.model_usdc_reachable).toBe(false);
+    expect(snapshot.failure_details?.model_usdc).toBe("network_error");
+  }, 5_000);
+
+  it("model_usdc_reachable allows loopback origin even when configured origin differs", async () => {
+    const { edgeRoot } = makeEdgeRoot();
+    const server = await startArtifactServer((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: server.url("/artifacts/job-1/model.usdc"),
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: "http://127.0.0.1:49100",
+    });
+
+    expect(snapshot.model_usdc_reachable).toBe(true);
   });
 
   it("model_usdc_reachable follows HEAD 405 with GET range", async () => {
