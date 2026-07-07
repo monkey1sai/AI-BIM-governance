@@ -36,7 +36,7 @@ import {
   type EdgeArtifactRecord,
   type EdgeArtifactStatus,
 } from "./services/artifactHealthLedger.js";
-import { probeArtifactHealth } from "./services/artifactHealthProbe.js";
+import { checkSourceIfcPath, probeArtifactHealth } from "./services/artifactHealthProbe.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { deriveFailure } from "./services/failureReason.js";
 import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
@@ -761,15 +761,11 @@ export function createCoordinatorApp(
     return snapshotFromArtifactLedger(job) ?? job.artifact_health ?? session?.artifact_health ?? null;
   }
 
-  function existingFile(hostPath: string): boolean {
-    try {
-      return fs.statSync(hostPath).isFile();
-    } catch {
-      return false;
-    }
-  }
-
-  function markSourceIfcMissing(job: IfcReadyIntakeJob, session: ReviewSession): ArtifactHealthSnapshot {
+  function markSourceIfcUnavailable(
+    job: IfcReadyIntakeJob,
+    session: ReviewSession,
+    failureCode = "source_ifc_missing",
+  ): ArtifactHealthSnapshot {
     const previous = publicArtifactHealthForJob(job, session);
     const snapshot: ArtifactHealthSnapshot = {
       source_ifc_exists: false,
@@ -778,9 +774,9 @@ export function createCoordinatorApp(
       metadata_reachable: previous?.metadata_reachable ?? null,
       all_required_ready: false,
       checked_at: nowIso(),
-      stale_reason: "source_ifc_missing",
+      stale_reason: failureCode,
       failure_details: {
-        source_ifc: "source_ifc_missing",
+        source_ifc: failureCode,
         model_usdc: previous?.failure_details?.model_usdc ?? null,
         mapping: previous?.failure_details?.mapping ?? null,
         metadata: previous?.failure_details?.metadata ?? null,
@@ -2913,12 +2909,13 @@ export function createCoordinatorApp(
           reason: "IFC for this session has not been downloaded to a server-side path yet.",
         };
       }
-      if (!existingFile(ifcSourcePath)) {
+      const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.edgeRuntimeDataRoot);
+      if (sourceCheck.value !== true) {
         return {
           ok: false,
           error_code: "stale_session_artifact",
           detail: "source_ifc_missing",
-          artifact_health: markSourceIfcMissing(job, session),
+          artifact_health: markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
         };
       }
       return {

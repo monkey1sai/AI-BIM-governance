@@ -196,14 +196,14 @@ afterEach(async () => {
   }
 });
 
-function expectStaleSourceIfcResponse(res: SupertestResponse): void {
+function expectStaleSourceIfcResponse(res: SupertestResponse, staleReason = "source_ifc_missing"): void {
   expect(res.status).toBe(409);
   expect(res.body).toMatchObject({
     error_code: "stale_session_artifact",
     detail: "source_ifc_missing",
     artifact_health: {
       source_ifc_exists: false,
-      stale_reason: "source_ifc_missing",
+      stale_reason: staleReason,
       source: "edge_health_probe",
     },
   });
@@ -260,6 +260,40 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
 
     expectStaleSourceIfcResponse(res);
     expect(gov.bodies).toHaveLength(0);
+  });
+
+  it("storage root resolves outside edge runtime root → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gov-session-storage-escape-"));
+    const relativeSourcePath = path.relative(app.config.storageHostRoot, hostLocalPath);
+    const escapedSourcePath = path.join(outsideRoot, relativeSourcePath);
+    fs.rmSync(app.config.storageHostRoot, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(escapedSourcePath), { recursive: true });
+    fs.writeFileSync(escapedSourcePath, "outside", "utf-8");
+    try {
+      fs.symlinkSync(outsideRoot, app.config.storageHostRoot, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+      return;
+    }
+
+    try {
+      const res = await request(app.app)
+        .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+        .send({});
+
+      expectStaleSourceIfcResponse(res, "edge_storage_root_escape");
+      expect(gov.bodies).toHaveLength(0);
+    } finally {
+      fs.rmSync(app.config.storageHostRoot, { recursive: true, force: true });
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
   });
 
   it("override body 的 rule_set / ids_path 會被一併透傳", async () => {

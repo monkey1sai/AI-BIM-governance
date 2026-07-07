@@ -13,10 +13,12 @@ export interface ArtifactHealthProbeInput {
 
 type ProbeBoolean = boolean | null;
 
-interface ProbeResult {
+export interface SourceIfcPathCheck {
   value: ProbeBoolean;
   failure: string | null;
 }
+
+type ProbeResult = SourceIfcPathCheck;
 
 type PathStyle = "win32" | "posix";
 
@@ -57,7 +59,7 @@ function realpathIfExists(value: string): string | null {
   return fs.realpathSync.native(value);
 }
 
-function checkSourceIfc(hostLocalPath: string | null, edgeRuntimeDataRoot: string): ProbeResult {
+export function checkSourceIfcPath(hostLocalPath: string | null, edgeRuntimeDataRoot: string): SourceIfcPathCheck {
   if (!hostLocalPath) {
     return { value: null, failure: null };
   }
@@ -211,7 +213,7 @@ function failureDetails(
 }
 
 export async function probeArtifactHealth(input: ArtifactHealthProbeInput): Promise<ArtifactHealthSnapshot> {
-  const source = checkSourceIfc(input.host_local_path, input.edge_runtime_data_root);
+  const source = checkSourceIfcPath(input.host_local_path, input.edge_runtime_data_root);
   const [model, mapping] = await Promise.all([
     checkArtifactUrl(input.model_artifact_url, input.configured_conversion_api_origin),
     checkArtifactUrl(input.mapping_url, input.configured_conversion_api_origin),
