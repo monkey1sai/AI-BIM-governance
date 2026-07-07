@@ -17,6 +17,10 @@
 - `conversion_status: "ready"` and `download_status: "downloaded"` are not sufficient proof that files still exist. Runtime use must check artifact health at use time.
 - Do not modify `governance-service` for the first slice unless coordinator cannot produce a precise stale-artifact response.
 - Any code-symbol edit requires GitNexus impact before editing and GitNexus detect_changes before commit.
+- Browser-visible / external IFC-ready DTOs must not expose `local_path` or `host_local_path`; host absolute paths stay edge-internal only.
+- Health probes must not become a filesystem oracle: canonicalized source IFC paths must remain under `EDGE_RUNTIME_DATA_ROOT\storage`, and probes must reject `..`, alternate drives, UNC paths, symlink/reparse-point escapes, and paths outside the expected artifact shape.
+- URL health probes must use an explicit allowlist helper: exact normalized conversion API origin or tenant-zero loopback only; no credentials, no redirects, no arbitrary LAN/link-local/internal metadata endpoints.
+- List/runtime projections must not synchronously probe every job on every request. Bulk projections use the latest persisted snapshot unless a bounded TTL/concurrency guard is implemented.
 
 ## Assumptions
 
@@ -303,7 +307,11 @@ Test cases:
 ```ts
 it("source_ifc_exists is true when host_local_path is a file", () => {});
 it("source_ifc_exists is false when host_local_path is missing", () => {});
+it("source_ifc_exists is false when host_local_path escapes EDGE_RUNTIME_DATA_ROOT", () => {});
+it("source_ifc_exists is false for UNC paths and alternate drives outside EDGE_RUNTIME_DATA_ROOT", () => {});
 it("model_usdc_reachable is false when artifact URL returns 404", () => {});
+it("model_usdc_reachable is null for disallowed off-origin artifact URL", () => {});
+it("model_usdc_reachable follows HEAD 405 with GET range", () => {});
 it("mapping_reachable is null when no mapping URL is bound", () => {});
 ```
 
@@ -314,7 +322,9 @@ Rules:
 - filesystem checks use `fs.existsSync` and `fs.statSync`;
 - URL checks use `HEAD` and fallback to `GET` with `Range: bytes=0-0` when HEAD returns 405;
 - timeout is 1500 ms per URL;
-- only `http://127.0.0.1`, `http://localhost`, and configured conversion API host are allowed for direct probe;
+- only `http://127.0.0.1`, `http://localhost`, and the exact configured conversion API origin are allowed for direct probe;
+- redirects are not followed;
+- URLs with credentials are rejected;
 - other URLs return `null` unless proxied through existing conversion-service binding.
 
 - [ ] Step 3: Run targeted tests.
@@ -339,6 +349,8 @@ Expected: pass.
 - Produces `artifact_health` on ifc-ready job summaries.
 
 - [ ] Step 1: Add failing test for downloaded source IFC.
+
+Also add public DTO safety assertions: `GET /api/external/ifc-ready` and `GET /api/external/ifc-ready/:jobId` must not contain `local_path` or `host_local_path`.
 
 After strict download succeeds, `GET /api/external/ifc-ready/:jobId` should include:
 
@@ -366,7 +378,7 @@ After seeding a session, delete `host_local_path`, then request job detail. Expe
 
 - [ ] Step 3: Implement projection refresh.
 
-Refresh health when building `summarizeIfcReadyJob`. Persist latest snapshot into `ArtifactHealthLedger`.
+Refresh health for detail/use-time paths and persist the latest snapshot into `ArtifactHealthLedger`. Bulk list/runtime projections must use the latest persisted snapshot unless a bounded TTL/concurrency guard is in place. Keep host paths available only inside coordinator internals and resolver logic; public/external responses expose `artifact_health`, not absolute filesystem paths.
 
 - [ ] Step 4: Run targeted tests.
 
