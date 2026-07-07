@@ -102,6 +102,17 @@ function fakeIfcReadyJob(overrides: Partial<IfcReadyListItem> = {}): IfcReadyLis
     viewer_url: null,
     expected_stage_url: "stage://x",
     expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
+    artifact_health: {
+      source_ifc_exists: true,
+      model_usdc_reachable: true,
+      mapping_reachable: true,
+      metadata_reachable: null,
+      all_required_ready: true,
+      checked_at: "2026-07-07T10:00:00.000Z",
+      stale_reason: null,
+      failure_details: null,
+      source: "edge_health_probe",
+    },
     created_at: "2026-07-06T00:00:00+08:00",
     updated_at: "2026-07-06T00:00:01+08:00",
     idempotency_key: MINIO_IDEMPOTENCY_KEY,
@@ -265,6 +276,39 @@ describe("A1 3D review decoupling", () => {
     expect(forSessionSpy).toHaveBeenCalledWith(REVIEW_SESSION_ID, {
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
     });
+    expect(directRunSpy).not.toHaveBeenCalled();
+  });
+
+  it("downloaded MinIO object with stale source IFC stays blocked and does not call for-session rule-run", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({
+        artifact_health: {
+          source_ifc_exists: false,
+          model_usdc_reachable: true,
+          mapping_reachable: true,
+          metadata_reachable: null,
+          all_required_ready: false,
+          checked_at: "2026-07-07T10:00:00.000Z",
+          stale_reason: "source_ifc_missing",
+          failure_details: { source_ifc: "source_ifc_missing", model_usdc: null, mapping: null, metadata: null },
+          source: "edge_health_probe",
+        },
+      })],
+    });
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("stale MinIO session must not use direct rule-run"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("stale MinIO session must not call for-session rule-run"));
+
+    await renderA1();
+    await selectMinioSource();
+
+    expect(q("a1-minio-resolution-note")?.textContent).toContain("source_ifc_missing");
+    expect(q<HTMLButtonElement>("a1-step-pick")!.disabled).toBe(true);
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
+
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+    expect(forSessionSpy).not.toHaveBeenCalled();
     expect(directRunSpy).not.toHaveBeenCalled();
   });
 

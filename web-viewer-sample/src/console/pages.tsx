@@ -608,7 +608,13 @@ export function A1GovernanceWorkbenchPage() {
     : null;
   const selectedMinioSessionId = selectedMinioJob?.review_session_id ?? "";
   const selectedMinioDownloaded = selectedMinioJob?.download_status === "downloaded";
-  const canPickMinioSession = sourceKind === "minio" && Boolean(selectedMinioObject && selectedMinioDownloaded && selectedMinioSessionId);
+  const selectedMinioSourceIfcReady = selectedMinioJob?.artifact_health?.source_ifc_exists === true;
+  const selectedMinioSourceIfcStaleReason =
+    selectedMinioJob?.artifact_health?.stale_reason
+    ?? (selectedMinioJob?.artifact_health?.source_ifc_exists === false ? "source_ifc_exists=false" : "source_ifc_exists=unknown");
+  const canPickMinioSession = sourceKind === "minio" && Boolean(
+    selectedMinioObject && selectedMinioDownloaded && selectedMinioSessionId && selectedMinioSourceIfcReady,
+  );
   const selectedMinioResolutionNote = !selectedKey
     ? t("請先選擇 MinIO source_ifc 物件。", "Select a MinIO source_ifc object first.")
     : ifcReadyErr
@@ -621,12 +627,15 @@ export function A1GovernanceWorkbenchPage() {
             ? `${t("watcher job 尚未下載完成，A1 等待 downloaded 狀態。download_status=", "Watcher job is not downloaded yet; A1 waits for downloaded status. download_status=")}${selectedMinioJob.download_status ?? "unknown"}${selectedMinioJob.download_failure ? ` (${selectedMinioJob.download_failure})` : ""}`
             : !selectedMinioSessionId
               ? t("MinIO 物件已下載，但尚未建立 review session；A1 不使用 browser path，請到 IFC→USD 轉檔排程 / Review Room 建立 session。", "The MinIO object is downloaded, but no review session exists yet; A1 does not use a browser path. Create a session from the IFC→USD schedule / Review Room.")
+              : !selectedMinioSourceIfcReady
+                ? `${t("watcher job 已下載且有 review session，但 source IFC artifact stale；A1 不啟動 for-session rule-run：", "Watcher job is downloaded and has a review session, but the source IFC artifact is stale; A1 will not start a for-session rule-run: ")}${selectedMinioSourceIfcStaleReason}`
               : `${t("已對到 watcher downloaded job 與 review session；rule-run 將走 coordinator for-session proxy：", "Matched watcher downloaded job and review session; rule-run will use coordinator for-session proxy: ")}${selectedMinioJob.ifc_ready_job_id} / ${selectedMinioSessionId}`;
   const selectedSessionSummary = sessions.find((s) => s.session_id === selectedSession) ?? null;
   const selectedStageEvidence = selectedSessionSummary?.stage_open_evidence ?? null;
   const canRunA1 = state.step !== "idle"
     && Boolean(state.ifcPath)
     && !(state.ifcPath.startsWith("session://") && !selectedSession)
+    && !(state.ifcPath.startsWith("session://") && !selectedMinioSourceIfcReady)
     && !(state.step === "running" && !state.runError);
   const stageMatched = Boolean(
     selectedStageEvidence?.expected_stage_url &&
