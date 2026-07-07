@@ -1,19 +1,31 @@
 # INFRA 基礎設施本輪切片 Implementation Plan（Spec-0）
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> Spec：`docs/superpowers/specs/2026-07-07-infra-capability-contract-design.md`
+> Spec：`docs/superpowers/specs/2026-07-07-infra-capability-contract-design.md`（先讀 §0 關鍵發現：INFRA 是 capability substrate，A1 只是第一個 consumer）
 
-**Goal:** 把 `#sessions` 證據鏈（SS-02）、A1 連動橋供應端（SS-05）、ModelDataPage coverage 呈現（S3）、`#instances` 真遙測第一片（S4）、`#runtime` 監控彙總＋孤兒清理（S5）落地。
+**Goal:** 把 INFRA 做成未來 BIM/AI/Omniverse 新能力的共用證據底座：本輪先落地 `#sessions` 證據鏈（SS-02）、A1 連動橋供應端（SS-05）、ModelDataPage coverage 呈現（S3）、`#instances` 真遙測第一片（S4）、`#runtime` 監控彙總＋孤兒清理（S5）。
 
-**Architecture:** 後端證據鏈已存在（coordinator `/api/runtime/status` 的 session 物件已含 `first_frame_at`、`viewer_leases[]`（含 `last_heartbeat_at`/`datachannel_ready`/`stage_match`）、`stage_open_evidence`）。本輪**幾乎全是前端渲染＋一個 additive client 函式**；不改任何凍結檔。
+**Architecture:** 後端證據鏈已存在（coordinator `/api/runtime/status` 的 session 物件已含 `first_frame_at`、`viewer_leases[]`（含 `last_heartbeat_at`/`datachannel_ready`/`stage_match`）、`stage_open_evidence`）。本輪**幾乎全是前端渲染＋一個 additive client 函式**；不改任何凍結檔。A1 只是第一個消費者：本輪建立的 session evidence、runtime telemetry、ledger coverage、Kit instance 狀態與 Review Room handoff，必須能被後續 A2/A3/A4/A5/A6+、AI 審查、BCF topic/viewpoint/snapshot 閉環重用。
 
 **Tech Stack:** React 18 + TypeScript（web-viewer-sample console）、Vitest（`createRoot`+`act`+`vi.spyOn` 模式）、Playwright evidence。
+
+## Product North Star（與長期目標的關係）
+
+這個 repo 的長期目的不是只交付 A1，而是承接 BIM、AI coding、Omniverse/WebRTC、BCF/IDS、digital twin 等新趨勢與新發現，逐步形成一個可驗證、可審批、可回放的能力平台。A1「治理與模型檢核」只是第一個可落地的 capability slice；INFRA 要提供所有未來 capability 共用的證據、遙測、handoff、交付物與誠實降級規則。
+
+本 plan 的任務因此要以「capability substrate」角度執行：
+
+- `#sessions` / `#runtime` 證據鏈不是 A1 私有狀態；它是未來所有 3D 連動能力的 ready gate（A1 高亮、A2 diff overlay、A3 clash 飛點、A4 isolate、A5 IoT twin、A6 4D/5D 等）。
+- BCF 的目標不是單純下載 `.bcfzip`，而是把 AI/rule/diff/人工審查結果變成可交換、可稽核、可帶 viewpoint/snapshot 的 approval artifact；本輪只保留 BCF 2.1 與 Issue gating，不偷渡 BCF 3.0 或假 viewpoint。
+- A1 bridge wording 只在 IX-A1/IX-SS-05 contract 中使用；新增工具函式、資料欄位與 telemetry copy 預設要保持 capability-neutral，避免把未來 A2-A10 都綁死成 A1 特例。
+- 未來 AI coding / AI reviewer 可以消費這些 evidence 來建立或流轉 BCF topic，但本輪不做自動審批、不做 agent 決策寫回 source model；所有 state change 仍走明確 intent、confirm、audit 與 backend 回讀。
 
 ## Global Constraints（每個 Task 隱含適用）
 
 - 前端只打 coordinator `127.0.0.1:8004`；不得直連 `:49102/:49101/:8010`。
 - 禁改凍結檔：coordinator `src/app.ts`、`src/routes/governanceProxy.ts`（本 plan 完全不需要動它們）；streaming `conversion_authority.py`。
 - 誠實鐵律：無遙測顯「未取得」／`not observed`，禁推定（D-33）、禁樂觀更新、禁畫假綠燈。
+- Capability-neutral：除非既有規格明名 `A1Bridge` / IX-A1 / IX-SS-05，新增 helper、types、telemetry copy 不得寫成 A1-only；A1 是第一個 consumer，不是 INFRA 的唯一 owner。
 - `useSharedStatus()` 的 `SharedSessionEntry.stage_matched` 為刻意永遠 null 的精簡摘要（useSharedStatus.ts:10）——**證據欄一律用 `coordinatorClient.runtimeStatus()` 完整資料，不用 SharedStatus**。
 - 驗證指令：`cd web-viewer-sample && npm run verify`（= build + vitest + test:struct-log；型別檢查含在 vite build）。單測：`npx vitest run src/console/<file>`。
 - console 改動要 `npm run build:ui` 產 dist-ui 並重啟 coordinator 才會出現在 `:8004/ui`。
@@ -31,7 +43,7 @@
 - Test: `web-viewer-sample/src/console/SessionManagementPage.test.tsx`
 
 **Interfaces:**
-- Produces: `export function leaseEvidence(s: RuntimeSessionSummary, nowMs: number): LeaseEvidence`（`{ firstFrameAt: string|null; lastHeartbeatAt: string|null; heartbeatStale: boolean|null; stageMatch: boolean|null; datachannelReady: boolean|null }`）— Task 2 與 Plan A1 重用，放在 `pages.tsx` 頂部工具區並 export。
+- Produces: `export function leaseEvidence(s: RuntimeSessionSummary, nowMs: number): LeaseEvidence`（`{ firstFrameAt: string|null; lastHeartbeatAt: string|null; heartbeatStale: boolean|null; stageMatch: boolean|null; datachannelReady: boolean|null }`）— Task 2、A1 bridge 與後續 A-axis 3D consumers 重用，放在 `pages.tsx` 頂部工具區並 export。
 - Consumes: `coordinatorClient.runtimeStatus()`（既有）。
 
 - [ ] **Step 1: 寫失敗測試**（加進 `SessionManagementPage.test.tsx`；沿用該檔 `makeSession`/`rtWith` fixture，fixture 需 additive 補 `first_frame_at`、`primary_viewer_lease_id`、`viewer_leases`）
@@ -76,7 +88,7 @@ it("無 lease 的 session 三欄一律顯示「未取得」不畫 fail", async (
 
 - [ ] **Step 3: 實作**
 
-(a) `pages.tsx` 頂部工具區加（export 供 Task 2／Plan A1 重用）：
+(a) `pages.tsx` 頂部工具區加（export 供 Task 2／A1 bridge／後續 A-axis 3D consumers 重用）：
 
 ```tsx
 export interface LeaseEvidence {
@@ -194,7 +206,7 @@ it("A1BridgeSupplyPanel 顯示繫結鏈且證據與列表同源", async () => {
 </Panel>
 ```
 
-（`buildHandoff` 已在本檔使用（:1243 KG 頁同款 import）。「關 session 後 A1 橋回 idle」由同源輪詢自然成立：session 轉 closing/closed 即從供應清單消失——Plan A1 Task 7 的對稱驗收在 A1 端驗。）
+（`buildHandoff` 已在本檔使用（:1243 KG 頁同款 import）。「關 session 後 A1 橋回 idle」由同源輪詢自然成立：session 轉 closing/closed 即從供應清單消失——A1 端對稱驗收在本輪 E2E 中驗。）
 
 - [ ] **Step 4: 跑測試確認通過**；`npm run verify`。
 - [ ] **Step 5: Commit** — `feat(sessions): IX-SS-05 A1 連動橋供應端 panel`。
