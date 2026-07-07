@@ -92,6 +92,18 @@ function checkSourceIfc(hostLocalPath: string | null, edgeRuntimeDataRoot: strin
   if (!storageReal) {
     return { value: false, failure: "edge_storage_root_missing" };
   }
+  const edgeRootReal = realpathIfExists(edgeRuntimeDataRoot);
+  if (!edgeRootReal) {
+    return { value: false, failure: "edge_runtime_data_root_missing" };
+  }
+  const storageRealStyle = detectPathStyle(storageReal);
+  const edgeRootRealStyle = detectPathStyle(edgeRootReal);
+  if (
+    storageRealStyle !== edgeRootRealStyle
+    || !isWithin(stripExtendedWinPrefix(storageReal), stripExtendedWinPrefix(edgeRootReal), pathApi(storageRealStyle))
+  ) {
+    return { value: false, failure: "edge_storage_root_escape" };
+  }
   if (!fs.existsSync(resolvedHostPath)) {
     return { value: false, failure: "source_ifc_missing" };
   }

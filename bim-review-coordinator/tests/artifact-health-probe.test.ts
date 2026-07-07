@@ -145,6 +145,32 @@ describe("probeArtifactHealth", () => {
     expect(snapshot.failure_details?.source_ifc).toBe("source_ifc_symlink_escape");
   });
 
+  it("source_ifc_exists is false when storage root itself resolves outside EDGE_RUNTIME_DATA_ROOT", async () => {
+    const { edgeRoot, storageRoot } = makeEdgeRoot();
+    fs.rmSync(storageRoot, { recursive: true, force: true });
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "artifact-health-storage-outside-"));
+    roots.push(outsideRoot);
+    const outsideFile = path.join(outsideRoot, "source.ifc");
+    fs.writeFileSync(outsideFile, "outside", "utf-8");
+
+    try {
+      fs.symlinkSync(outsideRoot, storageRoot, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return;
+    }
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: path.join(storageRoot, "source.ifc"),
+      model_artifact_url: null,
+      mapping_url: null,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: "http://127.0.0.1:49100",
+    });
+
+    expect(snapshot.source_ifc_exists).toBe(false);
+    expect(snapshot.failure_details?.source_ifc).toBe("edge_storage_root_escape");
+  });
+
   it("model_usdc_reachable is false when artifact URL returns 404", async () => {
     const { edgeRoot } = makeEdgeRoot();
     const server = await startArtifactServer((_req, res) => {
