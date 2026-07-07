@@ -219,6 +219,8 @@ export interface IfcReadyListItem {
   project_id: string;
   external_model_version_id: string;
   download_status: string | null;
+  download_failure?: string | null;
+  source_ifc_etag?: string | null;
   conversion_status: string | null;
   conversion_authority: string | null;
   // conv-prioritize-retry:in-flight→0、queued→1-based、其餘→null。供插隊鈕 disabled 判斷。

@@ -12,7 +12,7 @@ vi.mock("./EmbeddedViewer", () => ({
 }));
 
 import { A1GovernanceWorkbenchPage } from "./pages";
-import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
 import { governanceClient, type FilesTreeResponse, type IssueRow, type RuleRunStatus } from "./governanceClient";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -68,6 +68,9 @@ function fakeRunStatus(status: RuleRunStatus["status"]): RuleRunStatus {
 
 const LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
 const LOCAL_IFC_PATH_B = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model-b.ifc";
+const MINIO_KEY = "松風庵/root/main/u1/model.ifc";
+const MINIO_IDEMPOTENCY_KEY = "mw_0000000000000001";
+const REVIEW_SESSION_ID = "review_session_x";
 const fakeFilesTree: FilesTreeResponse = {
   root: "C:/Repos/active/iot/AI-BIM-governance/storage",
   source_kind: "local_fs",
@@ -82,6 +85,31 @@ const fakeFilesTree: FilesTreeResponse = {
     }],
   }],
 };
+
+function fakeIfcReadyJob(overrides: Partial<IfcReadyListItem> = {}): IfcReadyListItem {
+  return {
+    ifc_ready_job_id: "ifcready_1",
+    status: "ready",
+    project_id: "p1",
+    external_model_version_id: "v1",
+    download_status: "downloaded",
+    conversion_status: "ready",
+    conversion_authority: "conversion-service",
+    queue_position: null,
+    conversion_job_id: "conv_1",
+    dispatch_error: null,
+    review_session_id: REVIEW_SESSION_ID,
+    viewer_url: null,
+    expected_stage_url: "stage://x",
+    expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
+    created_at: "2026-07-06T00:00:00+08:00",
+    updated_at: "2026-07-06T00:00:01+08:00",
+    idempotency_key: MINIO_IDEMPOTENCY_KEY,
+    project_display_name: "松風庵",
+    category: "建築",
+    ...overrides,
+  };
+}
 
 describe("A1 3D review decoupling", () => {
   let container: HTMLDivElement;
@@ -101,8 +129,9 @@ describe("A1 3D review decoupling", () => {
     vi.spyOn(coordinatorClient, "getMinioObjects").mockResolvedValue({
       bucket: "bim-control",
       count: 1,
-      objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000001", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
+      objects: [{ key: MINIO_KEY, etag: "e", role: "source_ifc", idempotency_key: MINIO_IDEMPOTENCY_KEY, project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
     vi.spyOn(coordinatorClient, "claimViewerLease").mockRejectedValue(new Error("A1 must not claim viewer lease"));
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockRejectedValue(new Error("A1 must not release viewer lease"));
     vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockRejectedValue(new Error("A1 must not heartbeat viewer lease"));
@@ -144,7 +173,7 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
     await flush();
   };
-  const selectMinioSource = async (key = "松風庵/root/main/u1/model.ifc") => {
+  const selectMinioSource = async (key = MINIO_KEY) => {
     await act(async () => { q<HTMLButtonElement>("a1-source-minio")!.click(); });
     await flush();
     const model = q<HTMLSelectElement>("a1-minio-select")!;
@@ -205,6 +234,55 @@ describe("A1 3D review decoupling", () => {
     expect(q("a1-minio-source-note")?.textContent).toContain("server-local IFC path");
 
     await act(async () => { run.click(); });
+    await flush();
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it("downloaded MinIO object with review session runs through coordinator for-session proxy", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({ count: 1, items: [fakeIfcReadyJob()] });
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("MinIO session-backed run must not use direct rule-run"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    await renderA1();
+    await selectMinioSource();
+
+    expect(q("a1-minio-resolution-note")?.textContent).toContain(REVIEW_SESSION_ID);
+    const pick = q<HTMLButtonElement>("a1-step-pick")!;
+    expect(pick.disabled).toBe(false);
+
+    await act(async () => { pick.click(); });
+    await flush();
+
+    expect(q<HTMLSelectElement>("a1-session-select")?.value).toBe(REVIEW_SESSION_ID);
+    const run = q<HTMLButtonElement>("a1-step-run")!;
+    expect(run.disabled).toBe(false);
+
+    await act(async () => { run.click(); });
+    await flush();
+
+    expect(forSessionSpy).toHaveBeenCalledWith(REVIEW_SESSION_ID, {
+      ids_path: expect.stringContaining("sample-fire-rating.ids"),
+    });
+    expect(directRunSpy).not.toHaveBeenCalled();
+  });
+
+  it("downloaded MinIO object without review session stays blocked instead of using a browser path", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null })],
+    });
+    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+
+    await renderA1();
+    await selectMinioSource();
+
+    expect(q("a1-minio-resolution-note")?.textContent).toContain("review session");
+    expect(q<HTMLButtonElement>("a1-step-pick")!.disabled).toBe(true);
+    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
+
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();
     expect(createSpy).not.toHaveBeenCalled();
   });
