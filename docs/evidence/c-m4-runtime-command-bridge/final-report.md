@@ -39,7 +39,7 @@
 
 ## Buttons tested
 
-- `mapping-row`（`getByTestId("mapping-row").first()`）點擊 → 更新 `geo-viewer-right-semantic` / `geo-viewer-bottom-mapping`，且 `demo-outgoing-log` 不含 `focusPrimRequest`（驗證 UI-local 不觸發 runtime mutator）。
+- `mapping-row`（`getByTestId("mapping-row").first()`）點擊 → 更新 `geo-viewer-right-semantic` / `geo-viewer-bottom-mapping`，且 `demo-outgoing-log` 不含 `focusPrimRequest`（驗證 UI-local 不觸發 runtime mutator）。註（P5 f3）：此處「不送 mutator」是 §2 UI-local 設計的正確行為，但同時意味 table 選列**沒有**第 7 塊 reverse-jump 的 focus 入口（只有 tree 有）——見 Known limitations f3，勿誤讀為第 7 塊 table 半邊已完成。
 - primary 端 binding-apply 控制（`primary-spectator-authority.spec.ts`）→ 套用後出現 active binding revision。
 - spectator 端控制（可見但 disabled）→ 誠實 readonly banner，不送 mutating。
 - `stage-artifact-binding.spec.ts`：選 N 個 ready USDC → 指定 primary → 調 load_order → 套用 → active binding revision 出現。
@@ -78,3 +78,13 @@ npx playwright test e2e/real-ifc-viewer-lineage.spec.ts e2e/real-ifc-conversion-
   2. `Window.tsx` 的 `_openSelectedAsset` 內「standalone+primary 缺 lease 就擋 `openStageRequest`」分支（`b6f9f3a` 引入）目前無測試覆蓋。
 - Task5（`bim-streaming-server` mutator 授權）quality-review 因 Anthropic cyber-safeguard 連兩次誤判「cybersecurity topic」而無法自動跑完，改由指揮官親自逐行審查 commit `f979c3f` diff 作為 quality gate，經使用者裁決接受（非自動化 review 缺口的隱瞞）。
 - GitNexus 對 `stage_loading.py` 的索引缺席（同名 template scaffold dedup）為既知限制，已於 Task5 由使用者確認放行（`acknowledgedCriticalSymbols`），本報告的 compare 掃描結果與此一致，非新問題。
+
+### P5 對抗複驗補揭露（2026-07-07，repo-health 後續收斂）
+
+P5（`fu-adversarial-verify-generic`，6 個 refute-by-default 懷疑者）對 5 個 arbiter finding + 1 個 P4 gap 逐一複驗，結果：f2 閉合、f1/f3/f4/g1 與 f5 未閉合。f4 已於本輪補上 committed 回歸測試關閉；其餘四項屬「真實限制/gap」，據誠實鐵律於此揭露（holistic critic 因 session limit 未跑完，不影響以下逐項 code 親驗結論）：
+
+- **f1（安全，Kit 端授權只驗字串形狀不驗真偽）**：`runtime_authority.py` 的 `is_authorized_mutator` 只從 client 自送 payload 讀 `role`/`session_id`/`lease_token` 三個字串，判斷 `role=="primary"` 且兩字串非空即放行，**不回 coordinator ViewerLeaseStore 驗證 token 真偽/撤銷/過期**。故 spec §6「forged client cannot mutate state」僅達成一半——缺欄位會被擋，但任一連上 DataChannel 的 client（含合法 spectator）偽造 `role:"primary"` + 任意 session_id/token 字串即可通過 Kit 端閘門。coordinator 端 lease 簽發/spectator 唯讀仍是真實權威層，Kit 端目前是 defense-in-depth 的形狀檢查，非真偽驗證。→ **follow-up：Kit 端 mutator 授權應回 coordinator 驗 lease 真偽（見待開 issue）**。
+- **f3（第 7 塊 reverse-jump 只做 tree 半邊）**：spec §1 In-scope 的「table/tree/list → 3D focus/highlight 反向跳轉」，tree node 有 `_onSelectUSDPrims` 送 `selectPrimsRequest`+`focusPrimRequest`；**mapping table 選列被設計為純 UI-local（`onSelectGuid` 只 setState），無 focus affordance、不送 mutator**（符合 §2 `select_mapping_row=UI-local`，但第 7 塊 table 半邊的 focus 入口未建）。三層 E2E 全綠是因 spec 自身 Layer2 驗收只驗「選列更新語意面板」。
+- **f5（embedded primary lease 晚到會 stall，無重試）**：embedded viewer 無法自取 lease（`window.parent!==window` 時 `_ensurePrimaryViewerLease` 回 null），完全依賴 parent 推 `viewer_lease_token`；若 token 晚於 3 秒 `_scheduleDeferredOpenStage` 自動開檔到達，`_failStageLoad` 後直接 return 且 **token handler 不重排開檔、`_canOpenSelectedAsset` 不等 lease**，可能真實黑畫面 stall。parent 側（`ReviewSessionViewerPane` 先取 lease 再 mount）正常時序 token 幾乎必先到，但**無順序保證、無競態測試**。只有真 Kit runtime 能觀察，本輪 Layer3 補收的是 standalone `/ui/open` lineage，未覆蓋 embedded Review Room 流程。→ **follow-up：token 到達時重試被擋的 open，或 `_canOpenSelectedAsset` 納入 lease 等待**。
+- **g1（runtime mutator 的 browser 失敗/重試狀態無 E2E）**：Kit 端 `unauthorized_mutating_command` 拒絕只有 pytest 覆蓋；browser 端 mutator 拒絕/失敗呈現只有 vitest jsdom（`windowParentMessage.dom.test.tsx`），**無 Playwright E2E 演練失敗/重試 UI**。harness fakeKit 目前無 reject 模擬能力。→ **follow-up：harness 加 reject 模擬 + 失敗/重試 UI E2E**。
+- **f4（已關閉）**：新增 `bim-review-coordinator/tests/no-generic-operations-endpoint.test.ts`（15 tests，斷言 7 條通用 operations 路徑 GET/POST 皆 404），把「coordinator 不得有通用 operations endpoint」邊界從一次性手動 rg 升級為 committed CI 回歸守衛。

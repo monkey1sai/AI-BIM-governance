@@ -433,8 +433,11 @@ export default class App extends React.Component<AppProps, AppState> {
         // NOTE(scope Task3->Task5)：以下第三條「primary 需 viewer lease token」與 _withRuntimeAuthority 的 payload
         // 注入，超出 Task3 Step2/3 字面範圍（Task3 只要求 spectator / lifecycle 兩道 gate）。此為 plan 同檔
         // 「Task5: Kit-Side Runtime Mutator Authorization」之 _is_authorized_mutator 消費契約的前端半。
-        // 誠實界線：此前端 gate 僅 UX、直呼 AppStream.sendMessage 可繞過；權威強制在 Task5 Kit 端後端
-        // （runtime_authority.py，本次 task#2 commit 未含）。保留而非移除，因 6 個 unit test 與 Task5 payload 契約依賴之。
+        // 誠實界線：此前端 gate 僅 UX、直呼 AppStream.sendMessage 可繞過。Task5 Kit 端 runtime_authority.py
+        // 是第二道 defense-in-depth gate，但它目前只驗 payload 的 role/session_id/lease_token 字串「形狀」
+        // （非空 + role==primary），並未回 coordinator ViewerLeaseStore 驗證 token 真偽（P5 finding f1，見
+        // final-report Known limitations 與 follow-up issue）。真正的 lease 簽發/spectator 唯讀權威在 coordinator。
+        // 保留此前端 gate 而非移除，因 6 個 unit test 與 Task5 payload 契約依賴之。
         // 範圍（刻意）：此 gate 位於中央 _sendStreamMessage，故同時覆蓋 standalone 直送與 VG-01 embedded postMessage
         // 橋（_handleParentMessage 的 highlight / focus / clear，即 EmbeddedViewer/ReviewSessionViewerPane 實作 A1
         // 「在 3D 高亮失敗構件」的核心路徑）——embedded 端無 lease 亦不送 mutating（與 standalone 一致，非漏網）；
