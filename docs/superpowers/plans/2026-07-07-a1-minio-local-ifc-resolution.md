@@ -64,3 +64,8 @@
   - Push branch.
   - Create PR in Traditional Chinese.
   - Check PR status and report whether it is mergeable.
+
+## Execution Notes
+
+- PR: https://github.com/monkey1sai/AI-BIM-governance/pull/305
+- CI note: `pr-review-agent` requires the PR body `Frontend Verification` table. The PR body was updated after the first run; this plan records that workflow note so a new branch push triggers checks with the updated PR payload.
