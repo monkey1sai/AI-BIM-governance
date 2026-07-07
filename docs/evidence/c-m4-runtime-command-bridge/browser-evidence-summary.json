@@ -1,0 +1,43 @@
+{
+  "_readme": "Browser E2E evidence summary for PR review (sampled). Full trace batch + all screenshots live in the main workspace at artifacts/e2e/c-m4-runtime-command-bridge-* (not tracked). Engine: playwright.",
+  "feature": "c-m4-runtime-command-bridge",
+  "spec": "docs/superpowers/specs/2026-07-03-c-m4-runtime-command-bridge-design.md",
+  "plan": "docs/superpowers/plans/2026-07-03-c-m4-runtime-command-bridge.md",
+  "branch": "feat/c-m4-runtime-command-bridge",
+  "headCommit": "01ae3a9",
+  "runDate": "2026-07-07",
+  "engine": "playwright",
+  "routes": [
+    "http://127.0.0.1:5180/?harness=1",
+    "http://127.0.0.1:5180/?harness=1&streamRole=spectator",
+    "http://127.0.0.1:5180/?harness=1&debug=1"
+  ],
+  "results": {
+    "layer2_harness": "8 passed (gov-viewer-layout 4, primary-spectator-authority 2, runtime-command-bridge 1, stage-artifact-binding 1) — verified in this run",
+    "layer3_real_ifc": "2 skipped — coordinator :8004 ifc-ready API responded but no mv_realifc_* conversion-ready session; skip is NOT a pass; real Kit/WebRTC runtime evidence not collected in this run"
+  },
+  "runtimeIds": {
+    "note": "All harness/demo IDs, honestly labeled in-UI (fake mapping badge, HARNESS VIEWPORT banner, deterministic no-GPU banner); no real runtime IDs observed in this run.",
+    "review_session_id": "review_session_harness0001 (harness)",
+    "artifact_id": "artifact_h_building (harness)",
+    "ifc_guid": ["HARNESS-DEMO-GUID-001", "HARNESS-DEMO-GUID-002", "HARNESS-DEMO-GUID-003"],
+    "usd_prim_path": ["/World/Building/Level_1/Wall_001", "/World/Building/Level_1/Door_001", "/World/Building/Level_2/Slab_002"],
+    "stage_url": "harness://stage/World/sample-building.usd",
+    "binding_revision": "binding_rev_<Date.now()> (client-generated in GovernanceOverlay.tsx:356; not a backend-written revision)"
+  },
+  "verticalSlice": {
+    "ok": false,
+    "reason": "Layer1+Layer2 green with honest mock labeling, but no real-backend browser path (Kit/WebRTC or /ui/open) and no GPU-backed stage-truth evidence was collectable in this run; matches final-report.md's own 'Layer 3 not collected, no full M4 readiness claim'.",
+    "notObserved": [
+      "real backend API browser flow (Kit DataChannel runtime mutator path)",
+      "GPU-backed review session / stage truth matched=true",
+      "real review_session_* via /ui/open handoff (no mv_realifc_* ready fixture)",
+      "browser-visible failure/retry states for runtime mutators (Kit-side unauthorized_mutating_command rejection covered by pytest only)",
+      "first frame (harness shows honest 'first frame not observed')"
+    ]
+  },
+  "sampledScreenshots": [
+    "docs/evidence/c-m4-runtime-command-bridge/harness-viewer-layout.png",
+    "docs/evidence/c-m4-runtime-command-bridge/mapping-row-click.png"
+  ]
+}
