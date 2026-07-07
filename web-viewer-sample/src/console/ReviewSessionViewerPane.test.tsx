@@ -23,7 +23,7 @@ vi.mock("./EmbeddedViewer", () => ({
   }),
 }));
 
-import { coordinatorClient } from "./coordinatorClient";
+import { coordinatorClient, type RuntimeStatus } from "./coordinatorClient";
 import { parseReviewRoomHandoff, ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 
 const actEnvKey = "IS_REACT_ACT_ENVIRONMENT" as const;
@@ -43,7 +43,7 @@ const handoff: ReviewRoomHandoff = {
   mappingIssueCount: null,
 };
 
-function fakeRuntimeStatus() {
+function fakeRuntimeStatus(): RuntimeStatus {
   return {
     service: { status: "ok", name: "coordinator", uptime_seconds: 1, generated_at: "" },
     configured_endpoints: {
@@ -202,6 +202,33 @@ describe("ReviewSessionViewerPane", () => {
     expect(q("review-room-runtime-evidence")?.textContent).toContain("not_listed");
     expect(q<HTMLButtonElement>("review-room-manual-start")!.disabled).toBe(true);
     expect(q("review-room-highlight-reason")?.textContent).toContain("runtime/status");
+    expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
+  });
+
+  it("shows stale artifact health and blocks mapping-dependent highlight before attach", async () => {
+    const staleRuntime = fakeRuntimeStatus();
+    staleRuntime.sessions.items[0] = {
+      ...staleRuntime.sessions.items[0],
+      artifact_health: {
+        source_ifc_exists: true,
+        model_usdc_reachable: true,
+        mapping_reachable: false,
+        metadata_reachable: null,
+        all_required_ready: false,
+        checked_at: "2026-07-07T10:00:00.000Z",
+        stale_reason: "derived_artifact_unreachable",
+        failure_details: { source_ifc: null, model_usdc: null, mapping: "http_404", metadata: null },
+        source: "edge_health_probe",
+      },
+    };
+    vi.mocked(coordinatorClient.runtimeStatus).mockResolvedValue(staleRuntime as never);
+
+    await renderPane();
+
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("mapping_reachable=false");
+    expect(q("review-room-runtime-evidence")?.textContent).toContain("derived_artifact_unreachable");
+    expect(q<HTMLButtonElement>("review-room-highlight")!.disabled).toBe(true);
+    expect(q("review-room-highlight-reason")?.textContent).toContain("mapping_reachable=false");
     expect(coordinatorClient.claimViewerLease).not.toHaveBeenCalled();
   });
 

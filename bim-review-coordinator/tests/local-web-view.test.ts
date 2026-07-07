@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import http from "node:http";
+import { type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,12 +18,16 @@ const IFC_CONTRACT = JSON.parse(
 ) as { example: Record<string, unknown> };
 
 let active: CoordinatorApp | null = null;
+const activeServers: http.Server[] = [];
 
 afterEach(async () => {
   if (active) {
     active.io.close();
     await new Promise<void>((resolve) => active?.server.close(() => resolve()));
     active = null;
+  }
+  for (const server of activeServers.splice(0)) {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 
@@ -49,6 +55,17 @@ function svcAuth(overrides: Record<string, string> = {}): Record<string, string>
 
 function internalHeaders(): Record<string, string> {
   return { "X-Internal-Token": "dev-internal-token" };
+}
+
+async function startMissingArtifactServer(): Promise<string> {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ detail: "artifact not found" }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  activeServers.push(server);
+  const address = server.address() as AddressInfo;
+  return `http://127.0.0.1:${address.port}`;
 }
 
 async function seedJob(
@@ -93,6 +110,50 @@ describe("T7 local web view session / artifact resolution", () => {
     expect(res.body.artifact_resolution.conversion_artifact_ready).toBe(false);
     expect(res.body.artifact_resolution.viewer_open_state).toBe("not_observed");
     expect(res.body.artifact_resolution.viewer_open_ready).toBe(false);
+  });
+
+  it("stream-config refreshes derived artifact health and exposes model/mapping stale state", async () => {
+    const base = await startMissingArtifactServer();
+    const app = makeApp();
+    const created = await request(app.app)
+      .post("/api/review-sessions")
+      .send({
+        project_id: "project_demo_001",
+        model_version_id: "version_demo_001",
+        created_by: "dev_user_001",
+        artifact_bindings: [
+          {
+            artifact_group_id: "ag_version_demo_001",
+            artifact_id: "auto_usdc_stream_missing_artifacts",
+            artifact_role: "derived",
+            url: `${base}/artifacts/missing/model.usdc`,
+            mapping_url: `${base}/artifacts/missing/element_mapping.json`,
+            load_order: 0,
+            ready_status: "ready",
+            conversion_authority: "bim-streaming-server",
+            conversion_job_id: "stream_missing_artifacts",
+            conversion_status: "ready",
+          },
+        ],
+      });
+    expect(created.status).toBe(200);
+
+    const config = await request(app.app).get(`/api/review-sessions/${created.body.session_id}/stream-config`);
+
+    expect(config.status).toBe(200);
+    expect(config.body.model.status).toBe("ready");
+    expect(config.body.artifact_health).toMatchObject({
+      source_ifc_exists: null,
+      model_usdc_reachable: false,
+      mapping_reachable: false,
+      stale_reason: "derived_artifact_unreachable",
+      source: "edge_health_probe",
+    });
+    expect(config.body.artifact_health.failure_details).toMatchObject({
+      model_usdc: "http_404",
+      mapping: "http_404",
+    });
+    expect(JSON.stringify(config.body.artifact_health)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
   });
 
   it("以 external_model_version_id 解析；轉檔 ready 後只標 conversion_artifact_ready，不標 viewer_open_ready", async () => {

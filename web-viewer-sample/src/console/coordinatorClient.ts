@@ -104,6 +104,23 @@ export interface CoordinatorHealth {
   kit_signaling_port: number;
 }
 
+export interface ArtifactHealthSnapshot {
+  source_ifc_exists: boolean | null;
+  model_usdc_reachable: boolean | null;
+  mapping_reachable: boolean | null;
+  metadata_reachable: boolean | null;
+  all_required_ready: boolean;
+  checked_at: string;
+  stale_reason: string | null;
+  failure_details?: {
+    source_ifc?: string | null;
+    model_usdc?: string | null;
+    mapping?: string | null;
+    metadata?: string | null;
+  } | null;
+  source: "edge_health_probe";
+}
+
 // /api/runtime/status 真實回應形狀（app.ts:buildRuntimeStatus）。只挑前端會用到的欄位；
 // 其餘以 passthrough 保留。首幀只透過 first_frame_at 表示；GPU / conversion 秒數不在此回應內 → 前端不得捏造。
 export interface RuntimeSessionSummary {
@@ -131,6 +148,7 @@ export interface RuntimeSessionSummary {
     datachannel_ready: boolean;
     first_frame_at: string | null;
   };
+  artifact_health?: ArtifactHealthSnapshot | null;
   primary_viewer_lease_id?: string | null;
   primary_viewer_user_id?: string | null;
   viewer_leases?: ViewerLeaseSummary[];
@@ -191,6 +209,7 @@ export interface RuntimeIfcReadyJob {
   callback_outbox_id: string | null;
   review_session_id: string | null;
   viewer_url: string | null;
+  artifact_health?: ArtifactHealthSnapshot | null;
   created_at: string;
 }
 export interface RuntimeStatus {
@@ -234,6 +253,7 @@ export interface IfcReadyListItem {
   viewer_url: string | null;
   expected_stage_url: string | null;
   expected_mapping_url: string | null;
+  artifact_health?: ArtifactHealthSnapshot | null;
   created_at: string;
   // ifc-ready-api-field-redesign:三視圖對帳主鍵(job↔ledger↔minio 皆以此 join;summarizeIfcReadyJob 投影)。
   idempotency_key?: string;
@@ -278,6 +298,7 @@ export interface IfcReadyJobDetail {
   download_status: string | null;
   conversion_status: string | null;
   review_session_id: string | null;
+  artifact_health?: ArtifactHealthSnapshot | null;
 }
 
 
@@ -306,6 +327,7 @@ export interface StreamConfigResponse {
   session_id: string;
   status: string;
   kit_instances?: unknown[];
+  artifact_health?: ArtifactHealthSnapshot | null;
   [k: string]: unknown;
 }
 

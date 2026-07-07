@@ -193,8 +193,7 @@ function firstStaleReason(
   mapping: ProbeResult,
 ): string | null {
   if (source.value === false) return source.failure ?? "source_ifc_missing";
-  if (model.value === false) return model.failure ?? "model_usdc_unreachable";
-  if (mapping.value === false) return mapping.failure ?? "mapping_unreachable";
+  if (model.value === false || mapping.value === false) return "derived_artifact_unreachable";
   return null;
 }
 

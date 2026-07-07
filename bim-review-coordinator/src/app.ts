@@ -825,6 +825,39 @@ export function createCoordinatorApp(
     }
   }
 
+  function latestIfcReadyJobForSession(sessionId: string): IfcReadyIntakeJob | null {
+    return externalIfcReadyStore
+      .list()
+      .filter((candidate) => candidate.review_session_id === sessionId)
+      .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
+  }
+
+  async function refreshArtifactHealthForSessionBestEffort(session: ReviewSession): Promise<ArtifactHealthSnapshot | null> {
+    const linkedJob = latestIfcReadyJobForSession(session.session_id);
+    if (linkedJob) {
+      return refreshArtifactHealthBestEffort(linkedJob);
+    }
+    const binding = expectedStageBinding(session);
+    if (!binding?.url && !binding?.mapping_url) {
+      return session.artifact_health ?? null;
+    }
+    try {
+      const snapshot = await probeArtifactHealth({
+        host_local_path: null,
+        model_artifact_url: binding.url ?? null,
+        mapping_url: binding.mapping_url ?? null,
+        edge_runtime_data_root: config.edgeRuntimeDataRoot,
+        configured_conversion_api_origin: config.streamingConversionApiBase,
+        checked_at: nowIso(),
+      });
+      session.artifact_health = snapshot;
+      store.save(session);
+      return snapshot;
+    } catch {
+      return session.artifact_health ?? null;
+    }
+  }
+
   app.use(cors({ origin: config.corsOrigins }));
   app.use(
     express.json({
@@ -963,7 +996,7 @@ export function createCoordinatorApp(
     }
   });
 
-  app.get("/api/review-sessions/:sessionId/stream-config", (request, response) => {
+  app.get("/api/review-sessions/:sessionId/stream-config", async (request, response) => {
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
       return;
@@ -973,6 +1006,7 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
+    await refreshArtifactHealthForSessionBestEffort(session);
     response.json(buildStreamConfig(session, [], config));
   });
 
@@ -2889,10 +2923,7 @@ export function createCoordinatorApp(
       }
       // session → ifc-ready job：conversion-ready auto-session 時由
       // recordReviewSession 寫入 job.review_session_id 反向參照（app.ts ~905）。
-      const job = externalIfcReadyStore
-        .list()
-        .filter((candidate) => candidate.review_session_id === sessionId)
-        .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0];
+      const job = latestIfcReadyJobForSession(sessionId);
       if (!job) {
         return {
           ok: false,
