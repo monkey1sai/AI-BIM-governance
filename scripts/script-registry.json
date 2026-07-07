@@ -174,6 +174,12 @@
       "role": "maintenance-tool",
       "owner": "scripts",
       "notes": "Local-only maintenance: prune upstream-gone branches (default dry-run; -Force to delete). Not a deploy entrypoint."
+    },
+    {
+      "path": "scripts/gen_routing.py",
+      "role": "agent-tooling",
+      "owner": "scripts",
+      "notes": "spec-to-done routing codegen: routing.json -> std-*.js '// <routing:gen>' blocks. Pre-session only; never run mid-workflow."
     }
   ]
 }
