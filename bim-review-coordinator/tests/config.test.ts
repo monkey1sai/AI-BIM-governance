@@ -19,6 +19,9 @@ const originalKitSpectatorMediaPortStart = process.env.KIT_SPECTATOR_MEDIA_PORT_
 const originalKitSpectatorStreamPortStart = process.env.KIT_SPECTATOR_STREAM_PORT_START;
 const originalKitSpectatorPortStride = process.env.KIT_SPECTATOR_PORT_STRIDE;
 const originalIfcDownloadStrict = process.env.IFC_DOWNLOAD_STRICT;
+const originalEdgeSiteId = process.env.EDGE_SITE_ID;
+const originalEdgeRuntimeDataRoot = process.env.EDGE_RUNTIME_DATA_ROOT;
+const originalArtifactHealthLedgerStorePath = process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH;
 
 const kitEndpointEnvNames = [
   "KIT_INSTANCE_ENDPOINTS",
@@ -38,6 +41,9 @@ function clearKitEndpointEnv(): void {
 beforeEach(() => {
   clearKitEndpointEnv();
   delete process.env.IFC_DOWNLOAD_STRICT;
+  delete process.env.EDGE_SITE_ID;
+  delete process.env.EDGE_RUNTIME_DATA_ROOT;
+  delete process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH;
 });
 
 afterEach(() => {
@@ -141,6 +147,24 @@ afterEach(() => {
     delete process.env.IFC_DOWNLOAD_STRICT;
   } else {
     process.env.IFC_DOWNLOAD_STRICT = originalIfcDownloadStrict;
+  }
+
+  if (originalEdgeSiteId === undefined) {
+    delete process.env.EDGE_SITE_ID;
+  } else {
+    process.env.EDGE_SITE_ID = originalEdgeSiteId;
+  }
+
+  if (originalEdgeRuntimeDataRoot === undefined) {
+    delete process.env.EDGE_RUNTIME_DATA_ROOT;
+  } else {
+    process.env.EDGE_RUNTIME_DATA_ROOT = originalEdgeRuntimeDataRoot;
+  }
+
+  if (originalArtifactHealthLedgerStorePath === undefined) {
+    delete process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH;
+  } else {
+    process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH = originalArtifactHealthLedgerStorePath;
   }
 });
 
@@ -345,5 +369,35 @@ describe("loadConfig storageRoot fallback", () => {
     process.env.STORAGE_ROOT = "/workspace/storage";
 
     expect(loadConfig().storageRoot).toBe("/workspace/storage");
+  });
+});
+
+describe("loadConfig edge artifact health", () => {
+  it("defaults artifact health ledger under data when EDGE_RUNTIME_DATA_ROOT is unset", () => {
+    const config = loadConfig();
+
+    expect(config.edgeSiteId).toBe("site_local_dev");
+    expect(config.edgeRuntimeDataRoot).toBe(process.cwd());
+    expect(config.artifactHealthLedgerStorePath).toBe(path.join(process.cwd(), "data", "artifact-health-ledger.json"));
+  });
+
+  it("uses edge runtime env vars for deployed data-plane ledgers", () => {
+    process.env.EDGE_SITE_ID = "site_local_deploy";
+    process.env.EDGE_RUNTIME_DATA_ROOT = "D:\\Users\\deploy\\AI-bim-geo-data";
+
+    const config = loadConfig();
+
+    expect(config.edgeSiteId).toBe("site_local_deploy");
+    expect(config.edgeRuntimeDataRoot).toBe("D:\\Users\\deploy\\AI-bim-geo-data");
+    expect(config.artifactHealthLedgerStorePath).toBe(
+      path.join("D:\\Users\\deploy\\AI-bim-geo-data", "ledgers", "artifact-health-ledger.json"),
+    );
+  });
+
+  it("respects explicit ARTIFACT_HEALTH_LEDGER_STORE_PATH", () => {
+    process.env.EDGE_RUNTIME_DATA_ROOT = "D:\\Users\\deploy\\AI-bim-geo-data";
+    process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH = "D:\\edge\\ledgers\\custom-artifact-health.json";
+
+    expect(loadConfig().artifactHealthLedgerStorePath).toBe("D:\\edge\\ledgers\\custom-artifact-health.json");
   });
 });

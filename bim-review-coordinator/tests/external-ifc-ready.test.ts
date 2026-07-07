@@ -77,6 +77,11 @@ function authHeaders(overrides: Record<string, string> = {}): Record<string, str
   };
 }
 
+function expectPublicArtifactHealthIsPathFree(value: unknown): void {
+  const serialized = JSON.stringify(value);
+  expect(serialized).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+}
+
 /**
  * coordinator-serial-conversion-dispatch-queue:dispatch 改為 in-memory queue
  * 非同步處理,POST response 立即帶 status="queued_for_conversion"。test 需要
@@ -354,6 +359,7 @@ describe("POST /api/external/ifc-ready", () => {
       source_ifc_exists: true,
       source: "edge_health_probe",
     });
+    expectPublicArtifactHealthIsPathFree(created.body.artifact_health);
 
     const jobId = created.body.ifc_ready_job_id as string;
     const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
@@ -364,6 +370,7 @@ describe("POST /api/external/ifc-ready", () => {
       source_ifc_exists: true,
       source: "edge_health_probe",
     });
+    expectPublicArtifactHealthIsPathFree(detail.body.artifact_health);
 
     const listed = await request(app.app).get("/api/external/ifc-ready");
     expect(listed.status).toBe(200);
@@ -375,6 +382,7 @@ describe("POST /api/external/ifc-ready", () => {
       source_ifc_exists: true,
       source: "edge_health_probe",
     });
+    expectPublicArtifactHealthIsPathFree(item?.artifact_health);
   });
 
   it("detail refresh marks artifact_health stale when downloaded source IFC is deleted", async () => {
@@ -408,6 +416,7 @@ describe("POST /api/external/ifc-ready", () => {
       stale_reason: "source_ifc_missing",
       source: "edge_health_probe",
     });
+    expectPublicArtifactHealthIsPathFree(detail.body.artifact_health);
   });
 
   it("lists recent IFC-ready jobs with dashboard-safe progress fields", async () => {
