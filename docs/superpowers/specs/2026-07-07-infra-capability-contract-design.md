@@ -11,6 +11,7 @@
 |---|---|---|
 | 2026-07-07 | A1–A4 輪 | 初版：五能力現況盤點＋本輪切片 S1–S5＋backlog |
 | 2026-07-07 | 交叉驗證 | 補 §0 關鍵發現：INFRA 是未來 capability substrate，A1 只是第一個 consumer；BCF 是 approval artifact，不只是匯出檔 |
+| 2026-07-08 | INFRA slice 實作 | 落地 SS-02/SS-05、S3、S4、S5：session 證據三欄與 A1 bridge supply、ModelData ledger coverage、Kit current instance 真遙測、Coordinator runtime monitoring summary；刪除孤兒 RuntimePage/OperatorConsole；A1 MinIO stale artifact copy 補回 runtime diagnosis。 |
 
 ---
 

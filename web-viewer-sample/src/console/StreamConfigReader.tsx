@@ -1,12 +1,12 @@
-// ── stream-config 讀取器（D2-A′ 抽出共用葉子模組）：RuntimePage 與 CoordinatorGovernanceTabs 的 ──
-// Terminal/Debug 分頁共用同一元件，使 stream-config 入口在 #runtime（承接 CoordinatorPage）後不孤兒。
+// ── stream-config 讀取器（D2-A′ 抽出葉子模組）：CoordinatorGovernanceTabs 的 ──
+// Terminal/Debug 分頁掛載此元件，使 stream-config 入口在 #runtime（承接 CoordinatorPage）後不孤兒。
 // 自取資料（coordinatorClient.streamConfig）、零 props、誠實 read-only：不開串流、不捏造遙測。
 //
 // 為何獨立成葉子檔（非留在 pages.tsx）：pages.tsx 與 coordinator/RuntimeGovernanceTabs.tsx 互相 import
 // 會形成循環依賴（pages → RuntimeGovernanceTabs → pages）。Vite/Rollup 的 ES module live-binding 讓
 // build/test 仍過，但一旦初始化順序改變（SSR entry、非 Vite runner、動態 import code-split），
 // StreamConfigReader 取值可能為 undefined → React 靜默不渲染，正好違反 D2-A′「stream-config 不孤兒」合約且
-// 測試抓不到。抽成兩個 consumer 都直接 leaf import 的獨立檔即根治此循環。
+// 測試抓不到。抽成 leaf 檔讓 CoordinatorGovernanceTabs 直接 import，即根治此循環。
 import { useCallback, useState } from "react";
 import { Btn, Panel } from "./components";
 import { coordinatorClient } from "./coordinatorClient";

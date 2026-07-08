@@ -240,6 +240,70 @@ describe("ObjectDetailPane：三源串接（spec §3.3）", () => {
       expect(note!.textContent).toContain("顯示最新一次嘗試");
     });
   });
+
+  it("[7a] ledger coverage_report 存在 → usdc_key 下方顯示真實 coverage、status 與自我參照註記", async () => {
+    render({
+      object: makeObject(),
+      data: makeData({
+        records: [makeRecord({
+          status: "ready",
+          usdc_key: "a/b/model.usdc",
+          coverage_report: {
+            coverage_ratio: 1,
+            coverage_status: "pass",
+            mapped_count: 10,
+            unmapped_count: 0,
+            materialization_strategy: "usd_stage_enumeration",
+          },
+        })],
+      }),
+    });
+    await waitFor(() => {
+      const coverage = container.querySelector('[data-testid="md-ledger-coverage"]');
+      expect(coverage).not.toBeNull();
+      expect(coverage!.textContent).toContain("100%");
+      expect(coverage!.textContent).toContain("pass");
+      expect(coverage!.textContent).toContain("mapped 10 / unmapped 0");
+      expect(coverage!.textContent).toContain("自我參照");
+    });
+  });
+
+  it("[7b] ledger coverage_report 缺失 → coverage 欄位誠實顯示未取得", async () => {
+    render({
+      object: makeObject(),
+      data: makeData({ records: [makeRecord({ status: "ready", usdc_key: "a/b/model.usdc", coverage_report: null })] }),
+    });
+    await waitFor(() => {
+      const coverage = container.querySelector('[data-testid="md-ledger-coverage"]');
+      expect(coverage).not.toBeNull();
+      expect(coverage!.textContent).toContain("未取得");
+    });
+  });
+
+  it("[7c] ledger coverage_report 未完整覆蓋時不得四捨五入顯示為 100%", async () => {
+    render({
+      object: makeObject(),
+      data: makeData({
+        records: [makeRecord({
+          status: "ready",
+          usdc_key: "a/b/model.usdc",
+          coverage_report: {
+            coverage_ratio: 0.999999,
+            coverage_status: "warn",
+            mapped_count: 999999,
+            unmapped_count: 1,
+          },
+        })],
+      }),
+    });
+    await waitFor(() => {
+      const coverage = container.querySelector('[data-testid="md-ledger-coverage"]');
+      expect(coverage).not.toBeNull();
+      expect(coverage!.textContent).toContain("99.99%");
+      expect(coverage!.textContent).not.toContain("100%");
+      expect(coverage!.textContent).toContain("unmapped 1");
+    });
+  });
 });
 
 describe("ObjectDetailPane：頂列捷徑（spec §3.1 定向）", () => {

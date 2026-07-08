@@ -1,5 +1,5 @@
 // web-viewer-sample/src/console/routing.ts
-// operator console 路由判定（純函式，便於測試）。掛 OperatorConsole；其餘維持既有 viewer <App/>（含 ?session= bootstrap）。
+// operator console 路由判定（純函式，便於測試）。掛 EdgeConsole / UI shell；其餘維持既有 viewer <App/>（含 ?session= bootstrap）。
 // 認得三種入口：
 //   1. ROOT /console[/...]（dev）或 hash #/console[/...] —— 顯式 console 路徑，永遠 console（與 ?session= 無關）。
 //   2. coordinator :8004 服務的 /ui pathname —— CH-E 正規 console 入口；viewer 改走 /ui/open 302 至

@@ -392,6 +392,15 @@ export interface ConversionRecord {
   updated_at: string;
 }
 
+export interface KitInstanceState {
+  instance_id: string;
+  status: string;
+  selected_artifact_ids: string[];
+  opened_runtime_uris: string[];
+  last_command: string | null;
+  control_status: string;
+}
+
 // Task 5 MinIO 閉環 Phase 1：GET /api/minio/objects 回應中的物件形狀。
 // 對齊後端 MinioObjectView（key/etag/role/project_id/project_display_name/category/version）。
 // Task 6：加 idempotency_key（後端預計算 mw_<hash16>，前端 chip 用以查 ConversionRecord map）。
@@ -468,6 +477,7 @@ export const coordinatorClient = {
   base: COORD_BASE,
   health: () => jsonGet<CoordinatorHealth>("/health"),
   runtimeStatus: () => jsonGet<RuntimeStatus>("/api/runtime/status"),
+  kitInstanceCurrent: () => jsonGet<KitInstanceState>("/api/kit/instances/current"),
   listIfcReady: (limit = 20) => jsonGet<{ count: number; items: IfcReadyListItem[] }>(`/api/external/ifc-ready?limit=${limit}`),
   minioWatchStatus: () => jsonGet<MinioWatchStatus>("/api/external/minio-watch/status"),
   streamConfig: (sessionId: string) => jsonGet<StreamConfigResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/stream-config`),

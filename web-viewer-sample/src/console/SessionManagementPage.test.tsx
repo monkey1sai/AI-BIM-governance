@@ -91,6 +91,99 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.querySelector('[data-testid="session-row-review_session_t1"]')?.className ?? "").not.toContain("ec-row-muted");
   });
 
+  it("active session 顯示三欄證據：first_frame / heartbeat(stale) / stage_match", async () => {
+    const now = Date.now();
+    const session = {
+      ...makeSession({
+        session_id: "review_session_t1",
+        status: "active",
+        first_frame_at: new Date(now - 60_000).toISOString(),
+        primary_viewer_lease_id: "lease_1",
+      }),
+      viewer_leases: [{
+        lease_id: "lease_1",
+        session_id: "review_session_t1",
+        viewer_id: "viewer_1",
+        user_id: "user_1",
+        display_name: null,
+        role: "primary",
+        status: "active",
+        kit_instance_id: null,
+        stream_config: null,
+        client_nonce: null,
+        claimed_at: new Date(now - 90_000).toISOString(),
+        expires_at: new Date(now + 60_000).toISOString(),
+        last_heartbeat_at: new Date(now - 20_000).toISOString(),
+        released_at: null,
+        first_frame_at: new Date(now - 60_000).toISOString(),
+        loaded_stage_url: "s",
+        datachannel_ready: true,
+        stage_match: true,
+      }],
+    } as RuntimeSessionSummary;
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([session]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const row = container.querySelector('[data-testid="session-row-review_session_t1"]')!;
+    expect(row.closest("table")!.querySelector("thead")!.textContent).toContain("stage 符合");
+    expect(row.querySelector('[data-testid="ev-first-frame"]')!.textContent).not.toContain("未取得");
+    expect(row.querySelector('[data-testid="ev-heartbeat"]')!.textContent).toContain("stale");
+    expect(row.querySelector('[data-testid="ev-stage"]')!.textContent).toContain("matched");
+  });
+
+  it("無 lease 的 session 三欄一律顯示「未取得」不畫 fail", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(rtWith("active"));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const row = container.querySelector('[data-testid="session-row-review_session_t1"]')!;
+    for (const id of ["ev-first-frame", "ev-heartbeat", "ev-stage"]) {
+      expect(row.querySelector(`[data-testid="${id}"]`)!.textContent).toMatch(/未取得|not observed/);
+    }
+  });
+
+  it("A1BridgeSupplyPanel 顯示繫結鏈且證據與列表同源", async () => {
+    const now = Date.now();
+    const session = {
+      ...makeSession({
+        session_id: "review_session_t1",
+        status: "active",
+        first_frame_at: new Date(now - 1000).toISOString(),
+        primary_viewer_lease_id: "lease_1",
+      }),
+      viewer_leases: [{
+        lease_id: "lease_1",
+        session_id: "review_session_t1",
+        viewer_id: "viewer_1",
+        user_id: "user_1",
+        display_name: null,
+        role: "primary",
+        status: "active",
+        kit_instance_id: null,
+        stream_config: null,
+        client_nonce: null,
+        claimed_at: new Date(now - 90_000).toISOString(),
+        expires_at: new Date(now + 60_000).toISOString(),
+        last_heartbeat_at: new Date(now).toISOString(),
+        released_at: null,
+        first_frame_at: new Date(now - 1000).toISOString(),
+        loaded_stage_url: "s",
+        datachannel_ready: true,
+        stage_match: true,
+      }],
+    } as RuntimeSessionSummary;
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([session]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    await act(async () => { await Promise.resolve(); });
+    const panel = container.querySelector('[data-testid="a1-bridge-supply"]')!;
+    const line = panel.querySelector('[data-testid="supply-review_session_t1"]')!;
+    expect(line.textContent).toContain("review_session_t1");
+    expect(line.textContent).toContain("DataChannel ✓");
+    expect(line.textContent).toContain("stage matched");
+  });
+
   // spec §6.2 延伸：結束鈕僅 status==="active" 顯示；closing / closed 不顯且灰列（多列對照覆蓋）。
   it("結束鈕僅在 active session 顯示，closing / closed session 不顯", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(makeStatus([
@@ -277,5 +370,40 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
 
     expect(container.textContent).toContain("未連線 coordinator");
     expect(container.querySelector('[data-testid^="session-terminate-"]')).toBeNull();
+  });
+
+  it("輪詢 response 亂序時丟棄舊 response，避免 stale runtime status 覆蓋新表格", async () => {
+    vi.useFakeTimers();
+    let resolveFirst!: (value: RuntimeStatus) => void;
+    let resolveSecond!: (value: RuntimeStatus) => void;
+    const first = new Promise<RuntimeStatus>((resolve) => { resolveFirst = resolve; });
+    const second = new Promise<RuntimeStatus>((resolve) => { resolveSecond = resolve; });
+    const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus")
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second)
+      .mockResolvedValue(makeStatus([]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    expect(statusSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(statusSpy).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond(makeStatus([makeSession({ session_id: "sess_newer", status: "active" })]));
+      await second;
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="session-row-sess_newer"]')).not.toBeNull();
+
+    await act(async () => {
+      resolveFirst(makeStatus([makeSession({ session_id: "sess_stale", status: "active" })]));
+      await first;
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="session-row-sess_newer"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="session-row-sess_stale"]')).toBeNull();
   });
 });

@@ -205,8 +205,8 @@ function DebugTab({ rt }: { rt: RuntimeStatus | null }) {
         />
         <Field k="raw JSON" v="僅在工程排障視角檢視；Classic Dashboard 不直接展開 payload" prov="asbuilt" />
       </Panel>
-      {/* D2-A′：stream-config 讀取器在此分頁 render，使 #runtime 承接 CoordinatorPage 後（Task 3）入口不孤兒；
-          與 RuntimePage 共用同一 StreamConfigReader 元件（StreamConfigReader.tsx 葉子檔），誠實 read-only、不開串流、不捏造遙測。 */}
+      {/* D2-A′：stream-config 讀取器在此分頁 render，使 #runtime 承接 CoordinatorPage 後入口不孤兒；
+          StreamConfigReader.tsx 是 leaf 模組，誠實 read-only、不開串流、不捏造遙測。 */}
       <StreamConfigReader />
     </>
   );

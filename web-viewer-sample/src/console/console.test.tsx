@@ -15,7 +15,6 @@ import {
   KitGpuFleetPage,
   OverviewPage,
   ReviewRoomPage,
-  RuntimePage,
   SemanticViewerPage,
   SessionManagementPage,
   SpecPage,
@@ -217,8 +216,9 @@ describe("edge console honesty smoke", () => {
 
     // [Task 9 MD 三頁合一] IntakePage 已移除；IN 誠實字樣（不承諾精準 GUID／conversion 秒數·GPU 未取得）已遷移至
     // ObjectDetailPane.test.tsx（coverage 品質三行），/api/external/ifc-ready 由 GlobalConversionPane.test.tsx 覆蓋。
-    const runtime = renderToString(<RuntimePage />);
-    expect(runtime).toContain("stream-config");
+    const runtime = renderToString(<CoordinatorPage />);
+    expect(runtime).toContain('data-testid="rt-monitor-summary"');
+    expect(runtime).toContain("GPU / VRAM");
     expect(runtime).toContain("未取得"); // GPU 無遙測標未取得
     expect(runtime).not.toContain("92.4%");
   });
@@ -557,9 +557,9 @@ describe("edge console honesty smoke", () => {
 });
 
 // ── co-console-runtime-merge §5.1 守門四（D2-A′ 核心合約）：stream-config 不孤兒 ──
-// spec §3.4 D2-A′ 要求 StreamConfigReader 由 (a) RuntimePage 復用、(b) CoordinatorGovernanceTabs
-// 的 debug（Terminal / Debug）分頁直接 render。Task 3 一旦把 #runtime 改渲染 CoordinatorPage，
-// RuntimePage 內的 stream-config 入口就不再可達——唯有 debug 分頁也掛 StreamConfigReader 才不孤兒。
+// spec §3.4 D2-A′ 要求 StreamConfigReader 由 CoordinatorGovernanceTabs
+// 的 debug（Terminal / Debug）分頁直接 render。#runtime 已收斂到 CoordinatorPage，
+// 舊 RuntimePage 入口已刪；唯有 debug 分頁掛 StreamConfigReader 才不孤兒。
 // renderToString 預設只渲 classic 分頁（useState("classic")），到不了 debug；故用 createRoot + 點
 // 「D Terminal / Debug」分頁鈕（本檔既有互動 pattern），實測 CoordinatorGovernanceTabs→debug→
 // StreamConfigReader 這條真路徑含 stream-config 入口（非直測未 export 的 DebugTab，不擴大公開面）。
