@@ -483,15 +483,21 @@ export function A1GovernanceWorkbenchPage() {
     // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
     const myGen = pollGenRef.current;
     try {
-      if (state.ifcPath.startsWith("session://")) {
+      if (state.ifcPath.startsWith("session://") || state.ifcPath.startsWith("ifc-ready://")) {
         const refreshedJobs = await refreshIfcReadyJobs();
         if (pollGenRef.current !== myGen) return;
+        const expectedIfcReadyJobId = state.ifcPath.startsWith("ifc-ready://")
+          ? state.ifcPath.slice("ifc-ready://".length)
+          : "";
         const refreshedJob = selectedMinioObject?.idempotency_key
           ? refreshedJobs.find((job) => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null
-          : refreshedJobs.find((job) => job.review_session_id === selectedSession) ?? null;
+          : expectedIfcReadyJobId
+            ? refreshedJobs.find((job) => job.ifc_ready_job_id === expectedIfcReadyJobId) ?? null
+            : refreshedJobs.find((job) => job.review_session_id === selectedSession) ?? null;
         const refreshedSourceIfcReady =
           refreshedJob?.download_status === "downloaded"
-          && refreshedJob.review_session_id === selectedSession
+          && (!state.ifcPath.startsWith("session://") || refreshedJob.review_session_id === selectedSession)
+          && (!expectedIfcReadyJobId || refreshedJob.ifc_ready_job_id === expectedIfcReadyJobId)
           && refreshedJob.artifact_health?.source_ifc_exists === true;
         if (!refreshedSourceIfcReady) {
           const staleReason = refreshedJob?.artifact_health?.stale_reason
@@ -505,9 +511,14 @@ export function A1GovernanceWorkbenchPage() {
         ids_path: idsPath || undefined,
       } as { ifc_source_path: string; ids_path?: string; model_version_id?: string };
       if (state.modelVersionId) runRequest.model_version_id = state.modelVersionId;
-      const { rule_run_id } = selectedSession
-        ? await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined })
-        : await governanceClient.createRuleRun(runRequest);
+      const ifcReadyJobId = state.ifcPath.startsWith("ifc-ready://")
+        ? state.ifcPath.slice("ifc-ready://".length)
+        : "";
+      const { rule_run_id } = ifcReadyJobId
+        ? await governanceClient.createRuleRunForIfcReady(ifcReadyJobId, { ids_path: idsPath || undefined })
+        : selectedSession
+          ? await governanceClient.createRuleRunForSession(selectedSession, { ids_path: idsPath || undefined })
+          : await governanceClient.createRuleRun(runRequest);
       if (pollGenRef.current !== myGen) return; // createRuleRun await 視窗內取消（PICK_FILE/unmount）→ 不啟動輪詢
       let st: RuleRunStatus | null = null;
       for (let i = 0; i < 60; i++) {
@@ -659,11 +670,12 @@ export function A1GovernanceWorkbenchPage() {
   const selectedMinioSessionId = selectedMinioJob?.review_session_id ?? "";
   const selectedMinioDownloaded = selectedMinioJob?.download_status === "downloaded";
   const selectedMinioSourceIfcReady = selectedMinioJob?.artifact_health?.source_ifc_exists === true;
+  const selectedMinioJobId = selectedMinioJob?.ifc_ready_job_id ?? "";
   const selectedMinioSourceIfcStaleReason =
     selectedMinioJob?.artifact_health?.stale_reason
     ?? (selectedMinioJob?.artifact_health?.source_ifc_exists === false ? "source_ifc_exists=false" : "source_ifc_exists=unknown");
-  const canPickMinioSession = sourceKind === "minio" && Boolean(
-    selectedMinioObject && selectedMinioDownloaded && selectedMinioSessionId && selectedMinioSourceIfcReady,
+  const canPickMinioDownloaded = sourceKind === "minio" && Boolean(
+    selectedMinioObject && selectedMinioDownloaded && selectedMinioJobId && selectedMinioSourceIfcReady,
   );
   const selectedMinioResolutionNote = !selectedKey
     ? t("請先選擇 MinIO source_ifc 物件。", "Select a MinIO source_ifc object first.")
@@ -675,12 +687,12 @@ export function A1GovernanceWorkbenchPage() {
           ? `${t("尚未找到 watcher 下載紀錄；A1 不會直接檢核 MinIO key。idempotency_key=", "No watcher download record found; A1 will not validate a MinIO key directly. idempotency_key=")}${selectedMinioObject?.idempotency_key ?? "unknown"}`
           : !selectedMinioDownloaded
             ? `${t("watcher job 尚未下載完成，A1 等待 downloaded 狀態。download_status=", "Watcher job is not downloaded yet; A1 waits for downloaded status. download_status=")}${selectedMinioJob.download_status ?? "unknown"}${selectedMinioJob.download_failure ? ` (${selectedMinioJob.download_failure})` : ""}`
-            : !selectedMinioSessionId
-              ? t("MinIO 物件已下載，但尚未建立 review session；A1 不使用 browser path，請到 IFC→USD 轉檔排程 / Review Room 建立 session。", "The MinIO object is downloaded, but no review session exists yet; A1 does not use a browser path. Create a session from the IFC→USD schedule / Review Room.")
-              : !selectedMinioSourceIfcReady
-                ? `${t("watcher job 已下載且有 review session，但 source IFC artifact stale；A1 不啟動 for-session rule-run：", "Watcher job is downloaded and has a review session, but the source IFC artifact is stale; A1 will not start a for-session rule-run: ")}${selectedMinioSourceIfcStaleReason}`
-              : `${t("已對到 watcher downloaded job 與 review session；rule-run 將走 coordinator for-session proxy：", "Matched watcher downloaded job and review session; rule-run will use coordinator for-session proxy: ")}${selectedMinioJob.ifc_ready_job_id} / ${selectedMinioSessionId}`;
-  const selectedMinioPickLabel = canPickMinioSession
+            : !selectedMinioSourceIfcReady
+              ? `${t("watcher job 已下載，但 source IFC artifact stale；A1 不啟動 rule-run：", "Watcher job is downloaded, but the source IFC artifact is stale; A1 will not start a rule-run: ")}${selectedMinioSourceIfcStaleReason}`
+              : selectedMinioSessionId
+                ? `${t("已對到 watcher downloaded job 與 review session；rule-run 將走 coordinator for-session proxy：", "Matched watcher downloaded job and review session; rule-run will use coordinator for-session proxy: ")}${selectedMinioJob.ifc_ready_job_id} / ${selectedMinioSessionId}`
+                : `${t("已對到 watcher downloaded job；rule-run 將走 coordinator ifc-ready proxy：", "Matched watcher downloaded job; rule-run will use coordinator ifc-ready proxy: ")}${selectedMinioJob.ifc_ready_job_id}`;
+  const selectedMinioPickLabel = canPickMinioDownloaded
     ? t("選取已下載模型", "Select Downloaded Model")
     : !selectedKey
       ? t("等待選擇 MinIO 模型", "Waiting for MinIO model")
@@ -690,17 +702,16 @@ export function A1GovernanceWorkbenchPage() {
           ? t("等待 watcher 下載紀錄", "Waiting for watcher download record")
           : !selectedMinioDownloaded
             ? t("等待 downloaded session", "Waiting for downloaded session")
-            : !selectedMinioSessionId
-              ? t("等待 review session", "Waiting for review session")
-              : !selectedMinioSourceIfcReady
-                ? t("source IFC artifact stale", "source IFC artifact stale")
-                : t("等待 downloaded session", "Waiting for downloaded session");
+            : !selectedMinioSourceIfcReady
+              ? t("source IFC artifact stale", "source IFC artifact stale")
+              : t("選取已下載模型", "Select Downloaded Model");
   const selectedSessionSummary = sessions.find((s) => s.session_id === selectedSession) ?? null;
   const selectedStageEvidence = selectedSessionSummary?.stage_open_evidence ?? null;
   const canRunA1 = state.step !== "idle"
     && Boolean(state.ifcPath)
     && !(state.ifcPath.startsWith("session://") && !selectedSession)
     && !(state.ifcPath.startsWith("session://") && !selectedMinioSourceIfcReady)
+    && !(state.ifcPath.startsWith("ifc-ready://") && !selectedMinioSourceIfcReady)
     && !(state.step === "running" && !state.runError);
   const stageMatched = Boolean(
     selectedStageEvidence?.expected_stage_url &&
@@ -800,16 +811,16 @@ export function A1GovernanceWorkbenchPage() {
                 <option value="">{minioErr ? t("（MinIO 物件不可用）", "(MinIO objects unavailable)") : minioObjects === null ? t("載入中…", "Loading…") : minioObjects.length === 0 ? t("（無 source_ifc 物件）", "(no source_ifc objects)") : t("— 選擇 MinIO 模型 —", "— select a MinIO model —")}</option>
                 {(minioObjects ?? []).map((o) => <option key={o.key} value={o.key}>{minioLabel(o)}</option>)}
               </select>
-              <Btn data-testid="a1-step-pick" disabled={!canPickMinioSession}
-                caption={canPickMinioSession ? t("鎖定 matching review session；coordinator 會解析 downloaded server-local IFC path", "Lock the matching review session; the coordinator resolves the downloaded server-local IFC path") : selectedMinioResolutionNote}
+              <Btn data-testid="a1-step-pick" disabled={!canPickMinioDownloaded}
+                caption={canPickMinioDownloaded ? t("鎖定 downloaded IFC job；coordinator 會解析 server-local IFC path", "Lock the downloaded IFC job; the coordinator resolves the server-local IFC path") : selectedMinioResolutionNote}
                 onClick={() => {
-                  if (!canPickMinioSession || !selectedMinioObject || !selectedMinioJob || !selectedMinioSessionId) return;
+                  if (!canPickMinioDownloaded || !selectedMinioObject || !selectedMinioJob) return;
                   setActionErr(null);
                   setA1Issues([]);
                   setSelectedSession(selectedMinioSessionId);
                   dispatch({
                     type: "PICK_FILE",
-                    ifcPath: `session://${selectedMinioSessionId}`,
+                    ifcPath: selectedMinioSessionId ? `session://${selectedMinioSessionId}` : `ifc-ready://${selectedMinioJob.ifc_ready_job_id}`,
                     modelVersionId: selectedMinioJob.external_model_version_id || selectedMinioObject.version || selectedMinioObject.key,
                   });
                 }}>
@@ -820,7 +831,7 @@ export function A1GovernanceWorkbenchPage() {
         </div>
         {fsErr && sourceKind === "local_fs" && <p className="ec-warn-note" data-testid="a1-fs-error" style={{ marginTop: 4 }}>{t("local_fs 檔案庫不可用：", "local_fs file library unavailable: ")}{fsErr}{" "}<Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadA1FsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn></p>}
         {sourceKind === "minio" && <p className="ec-note" data-testid="a1-minio-source-note" style={{ marginTop: 4 }}>{t("A1 CPU 檢核需要 coordinator-resolved server-local IFC path；MinIO key 不會送 POST /api/governance/rule-runs。", "A1 CPU validation needs a coordinator-resolved server-local IFC path; the MinIO key is not sent to POST /api/governance/rule-runs.")}</p>}
-        {sourceKind === "minio" && selectedKey && <p className={canPickMinioSession ? "ec-note" : "ec-warn-note"} data-testid="a1-minio-resolution-note" style={{ marginTop: 4 }}>{selectedMinioResolutionNote}</p>}
+        {sourceKind === "minio" && selectedKey && <p className={canPickMinioDownloaded ? "ec-note" : "ec-warn-note"} data-testid="a1-minio-resolution-note" style={{ marginTop: 4 }}>{selectedMinioResolutionNote}</p>}
         {minioErr && sourceKind === "minio" && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
         {selectedLocalOption && sourceKind === "local_fs" && <p className="ec-note" data-testid="a1-localfs-selected" style={{ marginTop: 4 }}>{t("已選 local_fs：", "Selected local_fs: ")}{selectedLocalOption.version.path}</p>}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
@@ -846,7 +857,7 @@ export function A1GovernanceWorkbenchPage() {
           {/* running-error 子態（runError=true）解除 disabled，讓「可重試」真的點得到（spec §5）；
               健康 running（輪詢中、runError=false）仍 disabled 防雙擊。 */}
           <Btn primary data-testid="a1-step-run" disabled={!canRunA1}
-            caption={state.ifcPath ? (selectedSession ? "POST /api/governance/rule-runs/for-session/:sessionId" : "POST /api/governance/rule-runs") : t("先選定 IFC 模型", "Select an IFC model first")} onClick={doRun}>
+            caption={state.ifcPath ? (state.ifcPath.startsWith("ifc-ready://") ? "POST /api/governance/rule-runs/for-ifc-ready/:jobId" : selectedSession ? "POST /api/governance/rule-runs/for-session/:sessionId" : "POST /api/governance/rule-runs") : t("先選定 IFC 模型", "Select an IFC model first")} onClick={doRun}>
             {state.runError ? t("重試檢核", "Retry Validation") : state.step === "running" ? t("檢核中…", "Validating…") : t("執行規則檢核", "Run Rule Validation")}
           </Btn>
           {state.runError && <span className="ec-warn-note">{t("檢核失敗（可重試）：", "Validation failed (retryable): ")}{state.error}</span>}

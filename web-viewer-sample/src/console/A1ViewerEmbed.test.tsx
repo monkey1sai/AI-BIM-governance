@@ -383,23 +383,66 @@ describe("A1 3D review decoupling", () => {
     expect(forSessionSpy).not.toHaveBeenCalled();
   });
 
-  it("downloaded MinIO object without review session stays blocked instead of using a browser path", async () => {
+  it("downloaded MinIO object without review session runs through coordinator ifc-ready proxy", async () => {
     vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
       count: 1,
       items: [fakeIfcReadyJob({ review_session_id: null })],
     });
-    const createSpy = vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("MinIO key must not be sent directly"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("review session should not be required"));
+    const forIfcReadySpy = vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
 
     await renderA1();
     await selectMinioSource();
 
-    expect(q("a1-minio-resolution-note")?.textContent).toContain("review session");
-    expect(q<HTMLButtonElement>("a1-step-pick")!.disabled).toBe(true);
-    expect(q<HTMLButtonElement>("a1-step-run")!.disabled).toBe(true);
+    expect(q("a1-minio-resolution-note")?.textContent).toContain("coordinator ifc-ready proxy");
+    const pick = q<HTMLButtonElement>("a1-step-pick")!;
+    expect(pick.disabled).toBe(false);
 
-    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await act(async () => { pick.click(); });
     await flush();
-    expect(createSpy).not.toHaveBeenCalled();
+
+    const run = q<HTMLButtonElement>("a1-step-run")!;
+    expect(run.disabled).toBe(false);
+
+    await act(async () => { run.click(); });
+    await flush();
+    expect(forIfcReadySpy).toHaveBeenCalledWith("ifcready_1", {
+      ids_path: expect.stringContaining("sample-fire-rating.ids"),
+    });
+    expect(directRunSpy).not.toHaveBeenCalled();
+    expect(forSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it("locked ifc-ready MinIO source is not rerouted through a manually selected review session", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null })],
+    });
+    const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("MinIO key must not be sent directly"));
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("locked ifc-ready source must not be rerouted through session"));
+    const forIfcReadySpy = vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    await renderA1();
+    await selectMinioSource();
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+    await selectSession(REVIEW_SESSION_ID);
+
+    const run = q<HTMLButtonElement>("a1-step-run")!;
+    expect(run.textContent).toContain("POST /api/governance/rule-runs/for-ifc-ready/:jobId");
+    await act(async () => { run.click(); });
+    await flush();
+
+    expect(forIfcReadySpy).toHaveBeenCalledWith("ifcready_1", {
+      ids_path: expect.stringContaining("sample-fire-rating.ids"),
+    });
+    expect(directRunSpy).not.toHaveBeenCalled();
+    expect(forSessionSpy).not.toHaveBeenCalled();
   });
 
   it("switching from picked local_fs to MinIO clears the stale runnable file", async () => {
