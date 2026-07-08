@@ -155,6 +155,56 @@ async function seedSessionWithDownloadedIfc(
   return { sessionId, hostLocalPath, ifcReadyJobId };
 }
 
+async function seedDownloadedIfcWithoutSession(
+  app: CoordinatorApp,
+  ifcSourceUrl: string,
+): Promise<{ hostLocalPath: string; ifcReadyJobId: string }> {
+  const intake = await request(app.app)
+    .post("/api/external/ifc-ready")
+    .set({
+      "X-Webhook-Secret": "dev-webhook-secret",
+      "X-Correlation-Id": "corr_gov_ifc_ready_direct_001",
+      "X-Idempotency-Key": "idem_gov_ifc_ready_direct_001",
+    })
+    .send({
+      event: "ifc_ready",
+      tenant_id: "tenant_demo_001",
+      project_id: "project_demo_001",
+      external_model_version_id: "version_demo_001",
+      external_conversion_task_id: "task_demo_001",
+      source_ifc: { ref: ifcSourceUrl, etag: "etag_demo_001", filename: "model.ifc", format: "ifc" },
+      requested_outputs: ["usdc", "element_mapping"],
+    });
+  expect(intake.status).toBe(202);
+  expect(intake.body.review_session_id ?? null).toBeNull();
+  const ifcReadyJobId = intake.body.ifc_ready_job_id as string;
+  const hostLocalPath = path.join(app.config.storageHostRoot, "ifc-cache", ifcReadyJobId, "source.ifc");
+  expect(fs.existsSync(hostLocalPath)).toBe(true);
+  return { hostLocalPath, ifcReadyJobId };
+}
+
+async function seedFailedDownloadIfcWithoutSession(app: CoordinatorApp): Promise<{ ifcReadyJobId: string }> {
+  const intake = await request(app.app)
+    .post("/api/external/ifc-ready")
+    .set({
+      "X-Webhook-Secret": "dev-webhook-secret",
+      "X-Correlation-Id": "corr_gov_ifc_ready_failed_001",
+      "X-Idempotency-Key": "idem_gov_ifc_ready_failed_001",
+    })
+    .send({
+      event: "ifc_ready",
+      tenant_id: "tenant_demo_001",
+      project_id: "project_demo_001",
+      external_model_version_id: "version_demo_001",
+      external_conversion_task_id: "task_demo_failed_001",
+      source_ifc: { ref: "http://127.0.0.1:1/missing.ifc", etag: "etag_demo_failed_001", filename: "missing.ifc", format: "ifc" },
+      requested_outputs: ["usdc", "element_mapping"],
+    });
+  expect(intake.status).toBe(502);
+  expect(intake.body.download_status).toBe("failed");
+  return { ifcReadyJobId: intake.body.ifc_ready_job_id as string };
+}
+
 /** streaming stub：接受 dispatch + 回 ready result（含 usdc + element_mapping）。 */
 async function startStreamingStub(): Promise<string> {
   const ready = {
@@ -417,6 +467,86 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
 
     expect(res.status).toBe(502);
     expect(typeof res.body.detail).toBe("string");
+  });
+});
+
+describe("POST /api/governance/rule-runs/for-ifc-ready/:jobId", () => {
+  it("無效 ifc-ready job id 格式 → 400，且不打 governance-service", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+
+    const res = await request(app.app)
+      .post("/api/governance/rule-runs/for-ifc-ready/..%2Fetc")
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(gov.bodies).toHaveLength(0);
+  });
+
+  it("解析 downloaded ifc-ready job 的 host-side IFC 路徑並透傳給 governance-service，不需要 review session", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ ifcDownloadStrict: true });
+
+    const { ifcReadyJobId, hostLocalPath } = await seedDownloadedIfcWithoutSession(app, ifcSourceUrl);
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-ifc-ready/${ifcReadyJobId}`)
+      .send({ ids_path: "/rules/fire.ids" });
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ rule_run_id: "rr_stub_001", status: "queued" });
+    expect(gov.bodies).toHaveLength(1);
+    expect(gov.bodies[0]).toMatchObject({
+      ifc_source_path: hostLocalPath,
+      model_version_id: "version_demo_001",
+      ids_path: "/rules/fire.ids",
+    });
+    expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+  });
+
+  it("download failed job → 404，且不打 governance-service、不外洩 host path", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp({ ifcDownloadStrict: true });
+
+    const { ifcReadyJobId } = await seedFailedDownloadIfcWithoutSession(app);
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-ifc-ready/${ifcReadyJobId}`)
+      .send({});
+
+    expect(res.status).toBe(404);
+    expect(res.body.detail).toMatch(/not been downloaded/i);
+    expect(gov.bodies).toHaveLength(0);
+    expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+  });
+
+  it("downloaded no-session job 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance-service、不外洩 host path", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ ifcDownloadStrict: true });
+
+    const { ifcReadyJobId, hostLocalPath } = await seedDownloadedIfcWithoutSession(app, ifcSourceUrl);
+    fs.rmSync(hostLocalPath, { force: true });
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-ifc-ready/${ifcReadyJobId}`)
+      .send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({
+      error_code: "stale_session_artifact",
+      detail: "source_ifc_missing",
+      artifact_health: {
+        source_ifc_exists: false,
+        stale_reason: "source_ifc_missing",
+      },
+    });
+    expect(gov.bodies).toHaveLength(0);
+    expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
   });
 });
 

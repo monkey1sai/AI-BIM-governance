@@ -49,7 +49,7 @@ import {
 } from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
-import { registerGovernanceProxy } from "./routes/governanceProxy.js";
+import { registerGovernanceProxy, type RuleRunSessionResolution } from "./routes/governanceProxy.js";
 import { ViewerLeaseStore, publicLease, type PublicViewerLease } from "./services/viewerLeaseStore.js";
 import {
   StreamingConversionClient,
@@ -763,7 +763,7 @@ export function createCoordinatorApp(
 
   function markSourceIfcUnavailable(
     job: IfcReadyIntakeJob,
-    session: ReviewSession,
+    session: ReviewSession | null,
     failureCode = "source_ifc_missing",
   ): ArtifactHealthSnapshot {
     const previous = publicArtifactHealthForJob(job, session);
@@ -784,8 +784,10 @@ export function createCoordinatorApp(
       source: "edge_health_probe",
     };
     job.artifact_health = snapshot;
-    session.artifact_health = snapshot;
-    store.save(session);
+    if (session) {
+      session.artifact_health = snapshot;
+      store.save(session);
+    }
     recordProbeSnapshot(job, snapshot, artifactUrlsForJob(job));
     return snapshot;
   }
@@ -2919,8 +2921,52 @@ export function createCoordinatorApp(
   // `POST /api/governance/rule-runs/for-session/:sessionId` 能用瀏覽器手上唯一
   // 的 session_id 解析出 host-side IFC 路徑後透傳。resolver 只讀 coordinator
   // 自己的 SessionStore + ExternalIfcReadyStore（不新增資料權威），失敗回誠實 reason。
+  function resolveDownloadedJobForRuleRun(
+    job: IfcReadyIntakeJob | null | undefined,
+    modelVersionId: string | null | undefined,
+    session: ReviewSession | null = null,
+  ): RuleRunSessionResolution {
+    if (!job) {
+      return { ok: false, reason: "IFC-ready job not found." };
+    }
+    if (job.download_status !== "downloaded") {
+      return { ok: false, reason: "IFC-ready job has not been downloaded to a server-side path yet." };
+    }
+    // host_local_path = governance-service host 視角可讀的絕對路徑（markDownloaded
+    // 於同步下載完成時寫入）。container 視角 local_path 只作為 legacy fallback。
+    const ifcSourcePath = job.host_local_path || job.local_path || null;
+    if (!ifcSourcePath) {
+      return {
+        ok: false,
+        reason: "IFC for this job has not been downloaded to a server-side path yet.",
+      };
+    }
+    const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.storageHostRoot, config.edgeRuntimeDataRoot);
+    if (sourceCheck.value !== true) {
+      return {
+        ok: false,
+        error_code: "stale_session_artifact",
+        detail: "source_ifc_missing",
+        artifact_health: markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
+      };
+    }
+    return {
+      ok: true,
+      context: {
+        ifc_source_path: ifcSourcePath,
+        model_version_id: modelVersionId,
+        ifc_ready_job_id: job.ifc_ready_job_id,
+      },
+    };
+  }
+
   registerGovernanceProxy(app, {
     isSafeSessionId,
+    isSafeIfcReadyJobId,
+    resolveRuleRunIfcReadyContext: (jobId) => {
+      const job = externalIfcReadyStore.get(jobId);
+      return resolveDownloadedJobForRuleRun(job, job?.external_model_version_id ?? null);
+    },
     resolveRuleRunSessionContext: (sessionId) => {
       const session = store.get(sessionId);
       if (!session) {
@@ -2936,32 +2982,7 @@ export function createCoordinatorApp(
             "No IFC-ready job linked to this session; rule-run requires an IFC ingested via /api/external/ifc-ready.",
         };
       }
-      // host_local_path = governance-service host 視角可讀的絕對路徑（markDownloaded
-      // 於同步下載完成時寫入，app.ts ~674）。container 視角 local_path 作為 fallback。
-      const ifcSourcePath = job.host_local_path || job.local_path || null;
-      if (!ifcSourcePath) {
-        return {
-          ok: false,
-          reason: "IFC for this session has not been downloaded to a server-side path yet.",
-        };
-      }
-      const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.storageHostRoot, config.edgeRuntimeDataRoot);
-      if (sourceCheck.value !== true) {
-        return {
-          ok: false,
-          error_code: "stale_session_artifact",
-          detail: "source_ifc_missing",
-          artifact_health: markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
-        };
-      }
-      return {
-        ok: true,
-        context: {
-          ifc_source_path: ifcSourcePath,
-          model_version_id: session.model_version_id,
-          ifc_ready_job_id: job.ifc_ready_job_id,
-        },
-      };
+      return resolveDownloadedJobForRuleRun(job, session.model_version_id, session);
     },
   });
 

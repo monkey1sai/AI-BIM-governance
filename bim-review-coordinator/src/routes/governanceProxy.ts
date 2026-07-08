@@ -16,23 +16,25 @@ function governanceApiBase(): string {
 }
 
 /**
- * unified-console-mvp:`POST /api/governance/rule-runs/for-session/:sessionId`
- * 用的 session → server-side IFC 路徑解析結果。由 `app.ts` 注入的 resolver
- * 從 coordinator 自己的 SessionStore + ExternalIfcReadyStore 解析（瀏覽器只持有
- * session_id，不知 server-side IFC path）。coordinator 只解析 + 透傳，**不**
- * 自行跑 rule-run、不宣告為 IFC 資料權威。
+ * unified-console-mvp 用的 browser-visible id → server-side IFC 路徑解析結果。
+ * 由 `app.ts` 注入的 resolver 從 coordinator 自己的 SessionStore +
+ * ExternalIfcReadyStore 解析（瀏覽器只持有 session_id / ifc_ready_job_id，
+ * 不知 server-side IFC path）。coordinator 只解析 + 透傳，**不**自行跑
+ * rule-run、不宣告為 IFC 資料權威。
  */
-export interface RuleRunSessionContext {
+export interface RuleRunSourceContext {
   /** governance-service host 視角可讀的 IFC 來源絕對路徑（job.host_local_path）。 */
   ifc_source_path: string;
-  /** 解析出的 model version（session.model_version_id）。 */
+  /** 解析出的 model version（session.model_version_id 或 job.external_model_version_id）。 */
   model_version_id?: string | null;
   /** 對應的 ifc-ready job（供 log / 回顯；非必要）。 */
   ifc_ready_job_id?: string | null;
 }
 
+export type RuleRunSessionContext = RuleRunSourceContext;
+
 export type RuleRunSessionResolution =
-  | { ok: true; context: RuleRunSessionContext }
+  | { ok: true; context: RuleRunSourceContext }
   | {
       ok: false;
       error_code: "stale_session_artifact";
@@ -49,8 +51,15 @@ export interface GovernanceProxyDeps {
    * 注意：sessionId 已先經 `isSafeSessionId` 驗證（route 內），resolver 不需重驗格式。
    */
   resolveRuleRunSessionContext?: (sessionId: string) => RuleRunSessionResolution;
+  /**
+   * 從 ifc_ready_job_id 解析 server-side IFC 路徑。用於 MinIO watcher 已下載
+   * source IFC、但尚未建立 Review Room session 時的 A1 CPU rule-run。
+   */
+  resolveRuleRunIfcReadyContext?: (ifcReadyJobId: string) => RuleRunSessionResolution;
   /** session_id 格式驗證（reuse SessionStore.isSafeSessionId），避免 path 注入。 */
   isSafeSessionId?: (sessionId: string) => boolean;
+  /** ifc_ready_job_id 格式驗證（reuse app.ts isSafeIfcReadyJobId），避免 path 注入。 */
+  isSafeIfcReadyJobId?: (ifcReadyJobId: string) => boolean;
 }
 
 async function forward(
@@ -109,6 +118,26 @@ function sendSessionResolutionFailure(
   });
 }
 
+function forwardResolvedRuleRun(
+  response: Response,
+  context: RuleRunSourceContext,
+  overrideBody: { ids_path?: unknown; rule_set?: unknown },
+): void {
+  const forwardBody: Record<string, unknown> = {
+    ifc_source_path: context.ifc_source_path,
+  };
+  if (context.model_version_id) {
+    forwardBody.model_version_id = context.model_version_id;
+  }
+  if (typeof overrideBody.ids_path === "string" && overrideBody.ids_path.trim().length > 0) {
+    forwardBody.ids_path = overrideBody.ids_path;
+  }
+  if (typeof overrideBody.rule_set === "string" && overrideBody.rule_set.trim().length > 0) {
+    forwardBody.rule_set = overrideBody.rule_set;
+  }
+  void forward(response, "POST", "/api/rule-runs", forwardBody);
+}
+
 export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps = {}): void {
   // A1 file-library browse proxy（唯讀 local file-server tree，透傳 governance-service /api/files/tree）。
   // 瀏覽器只打 :8004；樹 JSON 原樣透傳，coordinator 不解讀 / 不保存。
@@ -144,19 +173,36 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
       return;
     }
     const overrideBody = (request.body ?? {}) as { ids_path?: unknown; rule_set?: unknown };
-    const forwardBody: Record<string, unknown> = {
-      ifc_source_path: resolution.context.ifc_source_path,
-    };
-    if (resolution.context.model_version_id) {
-      forwardBody.model_version_id = resolution.context.model_version_id;
+    forwardResolvedRuleRun(response, resolution.context, overrideBody);
+  });
+
+  // MinIO watcher 已下載 source IFC 但尚未建立 Review Room session 時，A1 仍可
+  // 透過 ifc_ready_job_id 要求 coordinator 在 server side 解析 host IFC path。
+  // 瀏覽器不接觸 host_local_path，也不把 MinIO key 當 ifc_source_path。
+  //
+  // Security boundary: this follows the existing operator-console inventory
+  // model (/api/external/ifc-ready and /api/minio/objects are browser-visible).
+  // ifc_ready_job_id is not an authorization token. Do not expose this route as
+  // a multi-tenant endpoint until real user/tenant auth is enforced at the
+  // coordinator boundary.
+  app.post("/api/governance/rule-runs/for-ifc-ready/:jobId", (request, response) => {
+    const jobId = request.params.jobId;
+    const isSafe = deps.isSafeIfcReadyJobId ?? (() => true);
+    if (!isSafe(jobId)) {
+      response.status(400).json({ detail: "Invalid ifc-ready job id." });
+      return;
     }
-    if (typeof overrideBody.ids_path === "string" && overrideBody.ids_path.trim().length > 0) {
-      forwardBody.ids_path = overrideBody.ids_path;
+    if (!deps.resolveRuleRunIfcReadyContext) {
+      response.status(501).json({ detail: "ifc-ready IFC resolution is not configured." });
+      return;
     }
-    if (typeof overrideBody.rule_set === "string" && overrideBody.rule_set.trim().length > 0) {
-      forwardBody.rule_set = overrideBody.rule_set;
+    const resolution = deps.resolveRuleRunIfcReadyContext(jobId);
+    if (!resolution.ok) {
+      sendSessionResolutionFailure(response, resolution);
+      return;
     }
-    void forward(response, "POST", "/api/rule-runs", forwardBody);
+    const overrideBody = (request.body ?? {}) as { ids_path?: unknown; rule_set?: unknown };
+    forwardResolvedRuleRun(response, resolution.context, overrideBody);
   });
 
   // CH-H2:per-element 語意 for-session proxy（範本面板②IFC語意/⑥空間 的前端資料來源）。
