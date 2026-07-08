@@ -33,6 +33,38 @@ function lifecycleStatuses(
   }
 }
 
+type LedgerCoverageReport = {
+  coverage_ratio?: number;
+  coverage_status?: string;
+  mapped_count?: number;
+  unmapped_count?: number;
+  materialization_strategy?: string;
+};
+
+function ledgerCoverageReport(value: unknown): LedgerCoverageReport | null {
+  return value && typeof value === "object" ? value as LedgerCoverageReport : null;
+}
+
+function ledgerCoverageText(value: unknown): JSX.Element {
+  const cr = ledgerCoverageReport(value);
+  if (!cr || typeof cr.coverage_ratio !== "number") {
+    return <span data-testid="md-ledger-coverage">{t("未取得", "not observed")}</span>;
+  }
+  const pct = `${Math.round(cr.coverage_ratio * 10000) / 100}%`;
+  const selfRef =
+    cr.materialization_strategy === "usd_stage_enumeration"
+      ? t("（USD stage 枚舉自我參照，非 IFC 全量 lossless 覆蓋率）", "(USD stage enumeration self-reference, not lossless IFC-wide coverage)")
+      : "";
+  return (
+    <span data-testid="md-ledger-coverage">
+      {pct}
+      {cr.coverage_status ? ` · ${cr.coverage_status}` : ""}
+      {` · mapped ${cr.mapped_count ?? t("未取得", "not observed")} / unmapped ${cr.unmapped_count ?? t("未取得", "not observed")}`}
+      {selfRef ? ` · ${selfRef}` : ""}
+    </span>
+  );
+}
+
 export function ObjectDetailPane(props: {
   object: MinioObject;                 // 已選中的 source IFC
   data: ConversionData;
@@ -124,6 +156,11 @@ export function ObjectDetailPane(props: {
           v={record?.usdc_key
             ? <span data-testid="md-detail-usdc" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{record.usdc_key}</span>
             : <span data-testid="md-detail-usdc" className="ec-prov ec-p1">{t("待產生", "pending")}</span>}
+          prov="artifact"
+        />
+        <Field
+          k={t("coverage（ledger 回填）", "coverage (ledger backfill)")}
+          v={ledgerCoverageText(record?.coverage_report)}
           prov="artifact"
         />
         {showFailure && (

@@ -15,7 +15,20 @@ const rtActiveAndClosed: RuntimeStatus = { ...rt, sessions: { ...rt.sessions, co
 
 describe("RT cross-link session panel", () => {
   let container: HTMLDivElement;
-  beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); window.location.hash = ""; });
+  beforeEach(() => {
+    (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
+    vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({
+      instance_id: "kit_main",
+      status: "idle",
+      selected_artifact_ids: [],
+      opened_runtime_uris: [],
+      last_command: null,
+      control_status: "idle",
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    window.location.hash = "";
+  });
   afterEach(() => { document.body.removeChild(container); vi.restoreAllMocks(); window.location.hash = ""; });
 
   it("lists sessions with #sessions/#review/#instances chips carrying source=runtime", async () => {

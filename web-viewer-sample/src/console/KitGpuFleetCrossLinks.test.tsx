@@ -1,8 +1,9 @@
 // web-viewer-sample/src/console/KitGpuFleetCrossLinks.test.tsx
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KitGpuFleetPage } from "./pages";
+import { coordinatorClient } from "./coordinatorClient";
 import { SharedStatusProvider } from "./SharedStatusProvider";
 import { type SharedStatusSnapshot } from "./useSharedStatus";
 
@@ -10,26 +11,41 @@ const snap: SharedStatusSnapshot = { activeSessions: 2, sessionsById: { review_s
 
 describe("KG real aggregate + demo separation", () => {
   let container: HTMLDivElement;
-  beforeEach(() => { (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true; container = document.createElement("div"); document.body.appendChild(container); window.location.hash = ""; });
-  afterEach(() => { document.body.removeChild(container); window.location.hash = ""; });
+  beforeEach(() => {
+    (globalThis as Record<string, unknown>)["IS_REACT_ACT_ENVIRONMENT"] = true;
+    vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockReturnValue(new Promise(() => {}));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    window.location.hash = "";
+  });
+  afterEach(() => { document.body.removeChild(container); window.location.hash = ""; vi.restoreAllMocks(); });
 
-  it("shows a real session aggregate (asbuilt) and keeps the demo table as demo", () => {
+  it("shows a real session aggregate and live kit instance without static demo nodes", async () => {
+    vi.mocked(coordinatorClient.kitInstanceCurrent).mockResolvedValue({
+      instance_id: "kit_main",
+      status: "open",
+      selected_artifact_ids: [],
+      opened_runtime_uris: ["omniverse://stage/main.usd"],
+      last_command: "open",
+      control_status: "sent",
+    });
     const root = createRoot(container);
     act(() => { root.render(<SharedStatusProvider value={snap}><KitGpuFleetPage /></SharedStatusProvider>); });
+    await act(async () => { await Promise.resolve(); });
     const agg = container.querySelector('[data-testid="kg-live-aggregate"]');
     expect(agg?.textContent).toContain("2");
-    // demo table still present and still labeled demo (Node snapshot panel), not faked as real
-    expect(container.textContent).toContain("edge-gpu-01");
-    expect(container.querySelector('[data-testid="kg-demo-link-sessions"]')).not.toBeNull();
+    const live = container.querySelector('[data-testid="kg-live-instance"]');
+    expect(live?.textContent).toContain("kit_main");
+    expect(live?.textContent).toContain("omniverse://stage/main.usd");
+    expect(container.textContent).not.toContain("edge-gpu-01");
+    expect(container.querySelector('[data-testid="kg-demo-link-sessions"]')).toBeNull();
   });
 
-  it("navigates demo row chip to #sessions?source=instances (no session id on the static demo row)", () => {
+  it("does not render the removed demo row chip", () => {
     const root = createRoot(container);
     act(() => { root.render(<SharedStatusProvider value={snap}><KitGpuFleetPage /></SharedStatusProvider>); });
-    const chip = container.querySelector('[data-testid="kg-demo-link-sessions"]') as HTMLButtonElement;
-    expect(chip).not.toBeNull();
-    act(() => { chip.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    expect(window.location.hash).toContain("#sessions?source=instances");
+    expect(container.querySelector('[data-testid="kg-demo-link-sessions"]')).toBeNull();
+    expect(container.textContent).not.toContain("Node snapshot");
   });
 
   it("renders per-session live links that navigate to #sessions carrying the real session id", () => {

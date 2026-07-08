@@ -35,6 +35,24 @@
 
 ---
 
+### Task 0: A1 MinIO downloaded-session stale artifact diagnosis（新增 issue）
+
+**Issue（2026-07-08 runtime diagnosis）**：operator 在 `#a1` 選到 MinIO source_ifc 後，API 狀態可能同時是 `download_status=downloaded`、`review_session_id` 已存在、`conversion_lifecycle_status=ready`，但 `artifact_health.source_ifc_exists=false`、`stale_reason=edge_storage_root_missing`。現有安全守門會正確阻止 for-session rule-run，但主要 disabled button 文案仍可能顯示「等待 downloaded session」，容易被誤解成 watcher 還沒下載，而不是 server-local IFC artifact / storage root 不可讀。
+
+**Files:**
+- Modify: `web-viewer-sample/src/console/pages.tsx`（`A1GovernanceWorkbenchPage` MinIO disabled button copy）
+- Test: `web-viewer-sample/src/console/A1ViewerEmbed.test.tsx`
+
+**Constraints:**
+- 不改 coordinator / governance-service 凍結面；此 issue 是 UX copy + regression test gap，不是放寬 A1 guard。
+- `edge_storage_root_missing` 必須原樣露出於 visible diagnostic；不得把 stale artifact 誤報成 not downloaded。
+
+- [ ] **Step 1: 寫失敗測試** — fixture 設 `download_status="downloaded"`、`review_session_id` 存在、`artifact_health.source_ifc_exists=false`、`stale_reason="edge_storage_root_missing"`；斷言 `a1-minio-resolution-note` 含 `edge_storage_root_missing`，且 disabled `a1-step-pick` 文案不再只是「等待 downloaded session」。
+- [ ] **Step 2: 實作 copy** — disabled pick button label 依 state 區分：未 downloaded 才顯「等待 downloaded session」；已 downloaded 但無 session 顯「等待 review session」；已 downloaded 且 session 存在但 stale 顯「source IFC artifact stale」。
+- [ ] **Step 3: 跑 `npx vitest run src/console/A1ViewerEmbed.test.tsx` 與 `npm run verify`。**
+
+---
+
 ### Task 1: SS-02 — `#sessions` 三欄證據＋5000ms 輪詢
 
 **Files:**
@@ -287,6 +305,7 @@ it("kit-manager 不可用時顯示「未取得」且不出現 edge-gpu 假節點
 
 - [ ] **Step 2: 跑測試確認失敗**。
 - [ ] **Step 3: 實作**
+  - 先同步更新既有 `KitGpuFleetCrossLinks.test.tsx`：原本 assert `edge-gpu-01` demo row 的舊契約需改成真遙測/未取得契約，避免本 Task 依 plan 移除 demo 節點後被舊測試擋住。
   - coordinatorClient additive（照檔內 `jsonGet` 既有寫法）：`kitInstanceCurrent: () => jsonGet<KitInstanceState>("/api/kit/instances/current")` ＋ export `KitInstanceState` interface（欄位逐字如上）。
   - `KitGpuFleetPage`：**整段移除** hardcoded demo Node snapshot 表（:1239-1247，含 edge-gpu-01..03 三列）；原位改為：
 
@@ -353,7 +372,7 @@ it("kit-manager 不可用時顯示「未取得」且不出現 edge-gpu 假節點
 **已查證**：`RuntimePage`（pages.tsx:2407-2466）只被 `OperatorConsole.tsx:8,31` 引用；`OperatorConsole` 在 src 內無人 import（EdgeConsole 是唯一掛載殼層，main.tsx:40）；`#runtime`→CoordinatorPage（EdgeConsole.tsx:96）。
 
 - [ ] **Step 1: GitNexus impact** — `impact({target: "RuntimePage", direction: "upstream"})` 與 `impact({target: "OperatorConsole", direction: "upstream"})`；若出現 EdgeConsole/main 之外的活引用→停，回報不刪。
-- [ ] **Step 2: 刪除** — 刪 `web-viewer-sample/src/console/OperatorConsole.tsx`、`OperatorConsole.test.tsx`；刪 pages.tsx 的 `RuntimePage` 函式（:2407-2466）。`StreamConfigReader` 若只被 RuntimePage 用，一併查 impact 再決定去留（被 CoordinatorGovernanceTabs 共用則保留）。
+- [ ] **Step 2: 刪除 / 測試同步** — 刪 `web-viewer-sample/src/console/OperatorConsole.tsx`、`OperatorConsole.test.tsx`；刪 pages.tsx 的 `RuntimePage` 函式（:2407-2466）。同步移除或改寫仍 import/render `RuntimePage` 的既有測試（例如 `console.test.tsx` runtime legacy assertions），使測試契約對齊 `#runtime→CoordinatorPage` 收斂後的新入口。`StreamConfigReader` 若只被 RuntimePage 用，一併查 impact 再決定去留（被 CoordinatorGovernanceTabs 共用則保留）。
 - [ ] **Step 3: 驗證** — `npm run verify` 綠（vite build 含型別檢查會抓 dangling import）。
 - [ ] **Step 4: `detect_changes`** — blast radius 只含預期符號。
 - [ ] **Step 5: Commit** — `chore(console): 移除孤兒 RuntimePage/OperatorConsole（#runtime→CoordinatorPage 已收斂）`。

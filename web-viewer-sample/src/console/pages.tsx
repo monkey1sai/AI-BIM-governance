@@ -6,7 +6,7 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, IfcReadyListItem, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, IfcReadyListItem, KitInstanceState, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 // [Task 9 MD 三頁合一] CV/M/IN 三頁移除後，conversionShared 其餘符號（CoverageDrawer/chip/role…）改由
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
 import { LifecycleStrip } from "./modelData/conversionShared";
@@ -16,13 +16,10 @@ import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
-// StreamConfigReader 已抽成獨立葉子檔（破解 pages ↔ coordinator/RuntimeGovernanceTabs 循環依賴）；
-// RuntimePage（本檔內）由此 leaf 直接 import 復用同一元件。RuntimeGovernanceTabs 亦各自 leaf import，故無 re-export 需求。
-import { StreamConfigReader } from "./StreamConfigReader";
 // 七軸通用 cross-page handoff util（§4）：URL hash 帶非機密關聯 ID，接收端重驗，不帶 lease token。
 import { buildHandoff } from "./handoff";
 // 七軸和諧整合 §5：共享狀態列同一份 Context 快照（GET /api/runtime/status 單一輪詢）。
-// KG 頁用它讀「真 session 聚合」，與下方 demo Node snapshot 表分開標記，不假裝 demo 表變真（N5）。
+// KG 頁用它讀「真 session 聚合」，另讀 kit-manager current instance；GPU per-node 數值仍誠實標未取得。
 import { useSharedStatus } from "./useSharedStatus";
 // Task 14（§4.2 接收端重驗鐵律）：接收端向已抓取的權威資料重驗 incoming handoff，誠實 verified/not_found。
 import { useIncomingHandoff, IncomingHandoffBanner } from "./incomingHandoff";
@@ -76,6 +73,29 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export interface LeaseEvidence {
+  firstFrameAt: string | null;
+  lastHeartbeatAt: string | null;
+  heartbeatStale: boolean | null;
+  stageMatch: boolean | null;
+  datachannelReady: boolean | null;
+}
+
+export function leaseEvidence(s: RuntimeSessionSummary, nowMs: number): LeaseEvidence {
+  const leases = s.viewer_leases ?? [];
+  const lease = leases.find((l) => l.lease_id === s.primary_viewer_lease_id)
+    ?? leases.find((l) => l.status === "active")
+    ?? null;
+  const lastHb = lease?.last_heartbeat_at ?? null;
+  return {
+    firstFrameAt: s.first_frame_at ?? lease?.first_frame_at ?? null,
+    lastHeartbeatAt: lastHb,
+    heartbeatStale: lastHb ? nowMs - Date.parse(lastHb) > 15_000 : null,
+    stageMatch: lease?.stage_match ?? null,
+    datachannelReady: lease?.datachannel_ready ?? null,
+  };
 }
 
 function fileInSameDirectory(currentPath: string, fileName: string): string {
@@ -660,6 +680,21 @@ export function A1GovernanceWorkbenchPage() {
               : !selectedMinioSourceIfcReady
                 ? `${t("watcher job 已下載且有 review session，但 source IFC artifact stale；A1 不啟動 for-session rule-run：", "Watcher job is downloaded and has a review session, but the source IFC artifact is stale; A1 will not start a for-session rule-run: ")}${selectedMinioSourceIfcStaleReason}`
               : `${t("已對到 watcher downloaded job 與 review session；rule-run 將走 coordinator for-session proxy：", "Matched watcher downloaded job and review session; rule-run will use coordinator for-session proxy: ")}${selectedMinioJob.ifc_ready_job_id} / ${selectedMinioSessionId}`;
+  const selectedMinioPickLabel = canPickMinioSession
+    ? t("選取已下載模型", "Select Downloaded Model")
+    : !selectedKey
+      ? t("等待選擇 MinIO 模型", "Waiting for MinIO model")
+      : ifcReadyJobs === null
+        ? t("載入 downloaded jobs", "Loading downloaded jobs")
+        : !selectedMinioJob
+          ? t("等待 watcher 下載紀錄", "Waiting for watcher download record")
+          : !selectedMinioDownloaded
+            ? t("等待 downloaded session", "Waiting for downloaded session")
+            : !selectedMinioSessionId
+              ? t("等待 review session", "Waiting for review session")
+              : !selectedMinioSourceIfcReady
+                ? t("source IFC artifact stale", "source IFC artifact stale")
+                : t("等待 downloaded session", "Waiting for downloaded session");
   const selectedSessionSummary = sessions.find((s) => s.session_id === selectedSession) ?? null;
   const selectedStageEvidence = selectedSessionSummary?.stage_open_evidence ?? null;
   const canRunA1 = state.step !== "idle"
@@ -778,7 +813,7 @@ export function A1GovernanceWorkbenchPage() {
                     modelVersionId: selectedMinioJob.external_model_version_id || selectedMinioObject.version || selectedMinioObject.key,
                   });
                 }}>
-                {canPickMinioSession ? t("選取已下載模型", "Select Downloaded Model") : t("等待 downloaded session", "Waiting for downloaded session")}
+                {selectedMinioPickLabel}
               </Btn>
             </>
           )}
@@ -1137,7 +1172,11 @@ export function SessionManagementPage() {
       setActionBusy(false);
     }
   }, [pendingTerminate, load, markTerminating]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    const id = window.setInterval(() => { void load(); }, 5000);
+    return () => window.clearInterval(id);
+  }, [load]);
   const sessions = rt?.sessions.items ?? [];
   // Task 14（A1/CV/RT→SS 接收端重驗）：向已抓取的 rt.sessions.items 重驗 incoming session；
   // 查無 → 誠實 not_found，不靜默改選其他 active session。
@@ -1166,7 +1205,7 @@ export function SessionManagementPage() {
       </Panel>
       <Panel title="Active sessions" sub="coordinator-owned session summary" prov="asbuilt">
         {sessions.length ? (
-          <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th><th>動作</th></tr></thead>
+          <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>participants</th><th>conversion</th><th>stage</th><th>首幀</th><th>心跳</th><th>stage</th><th>動作</th></tr></thead>
             {/* terminating 中的列「不過濾」：spec §4.3 的 60s 移除靠 markTerminating 的 timer
                 從 terminatingIds 移除 id（解灰列），最終離開可見列則靠 load() 重抓 runtime/status。
                 故此處直接 .map() 全列渲染；terminating 列只轉灰並顯「結束中…」，不可在這裡 filter 掉，
@@ -1184,6 +1223,17 @@ export function SessionManagementPage() {
               return (
                 <tr key={s.session_id} className={greyed ? "ec-row-muted" : undefined} data-testid={`session-row-${s.session_id}`} data-terminating={terminating ? "true" : undefined}>
                   <td>{s.session_id}</td><td>{s.status}</td><td>{s.participant_count}</td><td>{s.conversion_status ?? "—"}</td><td>{s.expected_stage_url ?? "—"}</td>
+                  {(() => {
+                    const ev = leaseEvidence(s, Date.now());
+                    const na = t("未取得", "not observed");
+                    return (<>
+                      <td data-testid="ev-first-frame">{ev.firstFrameAt ? new Date(ev.firstFrameAt).toLocaleTimeString() : na}</td>
+                      <td data-testid="ev-heartbeat">{ev.lastHeartbeatAt
+                        ? <>{new Date(ev.lastHeartbeatAt).toLocaleTimeString()}{ev.heartbeatStale ? <span className="ec-prov ec-p1" style={{ marginLeft: 4 }}>stale</span> : null}</>
+                        : na}</td>
+                      <td data-testid="ev-stage">{ev.stageMatch === true ? "matched" : ev.stageMatch === false ? t("不符", "mismatch") : na}</td>
+                    </>);
+                  })()}
                   <td>
                     {s.status === "active" && !terminating ? (
                       <Btn data-testid={`session-terminate-${s.session_id}`} onClick={() => { setActionErr(null); setPendingTerminate({ sessionId: s.session_id }); }}>{t("結束 session", "Terminate session")}</Btn>
@@ -1207,6 +1257,28 @@ export function SessionManagementPage() {
             })}</tbody></table>
         ) : <p className="ec-note">{t("目前 runtime status 無 active session；下面 endpoint pool 為治理規則示意。", "Runtime status currently has no active session; the endpoint pool below illustrates governance rules.")}</p>}
       </Panel>
+      <Panel title={t("A1 連動橋供應端", "A1 bridge supply")} prov="asbuilt"
+        sub={t("單一證據來源＝本頁 /api/runtime/status（IX-SS-05）；highlight ack 權威＝Review Room command trace，本面板不推定", "Single evidence source = this page /api/runtime/status (IX-SS-05); highlight ack authority = Review Room command trace, this panel does not infer it")}>
+        <div data-testid="a1-bridge-supply">
+          {sessions.filter((s) => s.status === "active" || s.status === "created").map((s) => {
+            const ev = leaseEvidence(s, Date.now());
+            const na = t("未取得", "not observed");
+            return (
+              <div key={s.session_id} data-testid={`supply-${s.session_id}`} className="ec-s" style={{ marginBottom: 4 }}>
+                <code>{s.session_id}</code>
+                {" ⇢ lease "}{s.primary_viewer_lease_id ?? na}
+                {" ⇢ "}{ev.datachannelReady ? "DataChannel ✓" : `DataChannel ${na}`}
+                {" ⇢ "}{ev.stageMatch === true ? "stage matched" : `stage ${na}`}
+                {" ⇢ 首幀 "}{ev.firstFrameAt ? new Date(ev.firstFrameAt).toLocaleTimeString() : na}
+                {" · "}<a href={buildHandoff("review", { source: "sessions", session: s.session_id })}>{t("Review Room（ack trace）→", "Review Room (ack trace) →")}</a>
+              </div>
+            );
+          })}
+          {sessions.every((s) => s.status !== "active" && s.status !== "created") && (
+            <p className="ec-note">{t("無 active session；A1 連動橋在 #a1 端維持 idle。", "No active session; the A1 bridge stays idle on #a1.")}</p>
+          )}
+        </div>
+      </Panel>
       <Panel title="Controlled actions" sub={t("per-row「結束 session」已落地（IX-SS-04，見上表）；Reclaim stale spectator / Force release 待 IX-SS-02 心跳遙測，維持 disabled（不提供假按鈕）", "Per-row \"Terminate session\" is implemented (IX-SS-04, see table above); Reclaim stale spectator / Force release await IX-SS-02 heartbeat telemetry and stay disabled (no fake buttons)")} prov="p1">
         <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open primary URL</Btn>{" "}
         <Btn disabled caption="Phase 1 read-only：browser-visible URL only" prov="p1">Open spectator URL</Btn>{" "}
@@ -1226,11 +1298,12 @@ export function SessionManagementPage() {
   );
 }
 
-// 七軸和諧整合 §7 KG（`#instances`）：本頁原本 100% 靜態（無任何 fetch）。現在讀 useSharedStatus()
-// 呈現「真 session 聚合」（asbuilt，來自 GET /api/runtime/status），與下面 Node snapshot demo 表
-// 清楚分隔、標籤分明——demo 表維持 prov="demo" 不動，不假裝接真（N5）。GPU per-node 遙測仍未取得（OQ3）。
+// 七軸和諧整合 §7 KG（`#instances`）：呈現「真 session 聚合」（asbuilt，來自 GET /api/runtime/status）
+// 與 kit-manager current instance（asbuilt，來自 coordinator proxy）。多節點 fleet / GPU 數值遙測仍未取得（OQ3）。
 export function KitGpuFleetPage() {
   const shared = useSharedStatus();
+  const [kit, setKit] = useState<KitInstanceState | null>(null);
+  const [kitErr, setKitErr] = useState<string | null>(null);
   // sessionsById 依 spec §5.2 是全量表（不分狀態，供跨頁 ID 查找重用），且 coordinator 從不刪除 session
   // （只 active→closing→closed）。此「即時 session 聚合（真實）」區塊只能把 status==='active' 當即時可點連結，
   // 才與相鄰的「使用中 session 數」（activeSessions，亦只算 active）一致；否則會把 closed/closing 的過期
@@ -1249,6 +1322,13 @@ export function KitGpuFleetPage() {
     if (shared.stale) return "indeterminate";
     return Object.prototype.hasOwnProperty.call(shared.sessionsById, h.session);
   });
+  useEffect(() => {
+    let cancelled = false;
+    coordinatorClient.kitInstanceCurrent()
+      .then((state) => { if (!cancelled) { setKit(state); setKitErr(null); } })
+      .catch((e) => { if (!cancelled) setKitErr(String(e)); });
+    return () => { cancelled = true; };
+  }, []);
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>
@@ -1275,15 +1355,24 @@ export function KitGpuFleetPage() {
           <MiniCard code="move" title={t("搬移不是無縫遷移", "Move is not seamless migration")} desc={t("拖 session 到另一台 GPU 表示 terminate + recreate，約 30-40s 並重載 stage。", "Dragging a session to another GPU means terminate + recreate, about 30-40s and reloading the stage.")} prov="p1" />
         </div>
       </Panel>
-      <Panel title="Node snapshot" sub={t("實際 GPU/VRAM 遙測仍需 kit-manager-api / runtime manager 提供", "Actual GPU/VRAM telemetry still needs to be provided by kit-manager-api / runtime manager")} prov="demo">
-        <table className="ec-table"><thead><tr><th>node</th><th>GPU</th><th>state</th><th>operation</th></tr></thead><tbody>
-          <tr><td>edge-gpu-01</td><td>L40 · 48GB</td><td>running · S-270</td><td>drain / restart intent{" "}
-            <Btn data-testid="kg-demo-link-sessions" caption={t("到 Session 管理（demo 對照）", "Go to Session Management (demo reference)")}
-              onClick={() => { window.location.hash = buildHandoff("sessions", { source: "instances" }); }}>SS →</Btn></td></tr>
-          <tr><td>edge-gpu-02</td><td>L40 · 48GB</td><td>running · S-899</td><td>drain / restart intent</td></tr>
-          <tr><td>edge-gpu-03</td><td>RTX 6000 · 48GB</td><td>idle</td><td>assign pending session</td></tr>
-        </tbody></table>
-        <p className="ec-note">{t("此表為 prototype fleet model 的 UI evidence；真實 restart/release 必須送 audited intent 給 Kit Manager，不能由 coordinator/browser 直接做。", "This table is UI evidence of the prototype fleet model; real restart/release must send an audited intent to the Kit Manager and cannot be done directly by coordinator/browser.")}</p>
+      <Panel title={t("Kit instance（真遙測）", "Kit instance (live)")} prov="asbuilt"
+        sub={t("來源：coordinator /api/kit/instances/current → kit-manager-api :8010；多節點 fleet 遙測 NOT BUILT（Spec-0 §4 backlog）", "Source: coordinator /api/kit/instances/current → kit-manager-api :8010; multi-node fleet telemetry is NOT BUILT (Spec-0 §4 backlog)")}>
+        <div data-testid="kg-live-instance">
+          {kitErr || !kit ? (
+            <p className="ec-note">
+              {t("未取得（kit-manager 未回應）", "not observed (kit-manager unavailable)")}
+              {kitErr ? ` — ${kitErr}` : ""}
+            </p>
+          ) : (
+            <div className="ec-grid">
+              <Field k="instance_id" v={kit.instance_id} prov="asbuilt" />
+              <Field k="status" v={kit.status} prov="asbuilt" />
+              <Field k="control_status" v={kit.control_status} prov="asbuilt" />
+              <Field k="opened_runtime_uris" v={kit.opened_runtime_uris.join(", ") || "—"} prov="asbuilt" />
+              <Field k="GPU busy / total" v={t("未取得（kit-manager 遙測待建）", "not available (kit-manager telemetry not built)")} prov="demo" />
+            </div>
+          )}
+        </div>
       </Panel>
     </>
   );
@@ -2373,16 +2462,34 @@ export function SemanticViewerPage() {
 // 觀察，不捏造 outbox 三態互動。GPU / 首幀無遙測 → 標未取得，禁畫 fail。
 export function CoordinatorPage() {
   const [rt, setRt] = useState<RuntimeStatus | null>(null);
+  const [kit, setKit] = useState<KitInstanceState | null>(null);
+  const [kitErr, setKitErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setBusy(true); setErr(null);
-    try { setRt(await coordinatorClient.runtimeStatus()); }
-    catch (e) { setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(e)}`); }
+    setBusy(true); setErr(null); setKitErr(null);
+    try {
+      const [runtimeResult, kitResult] = await Promise.allSettled([
+        coordinatorClient.runtimeStatus(),
+        coordinatorClient.kitInstanceCurrent(),
+      ]);
+      if (runtimeResult.status === "fulfilled") {
+        setRt(runtimeResult.value);
+      } else {
+        setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(runtimeResult.reason)}`);
+      }
+      if (kitResult.status === "fulfilled") {
+        setKit(kitResult.value);
+      } else {
+        setKit(null);
+        setKitErr(String(kitResult.reason));
+      }
+    }
     finally { setBusy(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  const sessions = rt?.sessions?.items ?? [];
 
   return (
     <>
@@ -2391,6 +2498,23 @@ export function CoordinatorPage() {
         {t("會議生命週期 / Kit 綁定 / IFC-ready 派工 / callback outbox，全經 coordinator :8004。 本頁讀", "Session lifecycle / Kit binding / IFC-ready dispatch / callback outbox all go through coordinator :8004. This page reads")} <code>/api/runtime/status</code>{t("（coordinator-visible read-only summary）；瀏覽器不直連 49100/49101/49102。 誠實標示：Kit 首幀 / GPU 無統一遙測（port listening ≠ has frame）→ 不畫成 fail、不捏造秒數。", " (coordinator-visible read-only summary); the browser does not directly reach 49100/49101/49102. Honesty labeling: Kit first frame / GPU have no unified telemetry (port listening ≠ has frame) → not rendered as fail and no fabricated seconds.")}
       </p>
       <ProvLegend />
+      <Panel title={t("監控彙總", "Monitoring summary")} prov="asbuilt"
+        sub={t("session 證據與 Kit 狀態彙總；無統一 GPU 遙測，不畫 fail、不捏造秒數", "Session evidence and Kit status summary; no unified GPU telemetry, so no fail state or fabricated seconds")}>
+        <div className="ec-grid" data-testid="rt-monitor-summary">
+          <Field k="sessions" v={`active ${sessions.filter((s) => s.status === "active").length} · queued ${sessions.filter((s) => s.status === "queued" || s.status === "created").length}`} prov="asbuilt" />
+          <Field
+            k={t("證據齊備 session", "evidence-green sessions")}
+            v={String(sessions.filter((s) => {
+              const ev = leaseEvidence(s, Date.now());
+              return Boolean(ev.firstFrameAt && ev.datachannelReady && ev.stageMatch === true && ev.heartbeatStale === false);
+            }).length)}
+            prov="asbuilt"
+          />
+          <Field k="kit" v={kit ? `${kit.instance_id} · ${kit.status}` : t("未取得", "not observed")} prov={kit ? "asbuilt" : "demo"} />
+          <Field k="GPU / VRAM" v={t("未取得", "not observed")} prov="demo" />
+          {kitErr ? <Field k="kit error" v={kitErr} prov="demo" /> : null}
+        </div>
+      </Panel>
       <CoordinatorGovernanceTabs rt={rt} busy={busy} err={err} onRefresh={load} />
       <Panel title={t("跨頁 session 連結", "Cross-page session links")} sub={t("值班視圖：把 runtime session 帶到 Session 管理 / Review Room / Kit 機隊（同一份 runtime 真相）", "Duty view: take a runtime session to Session Management / Review Room / Kit Fleet (one runtime truth)")} prov="asbuilt">
         <div data-testid="rt-crosslinks">
@@ -2435,70 +2559,6 @@ export function CoordinatorPage() {
             </table>
           )}
         </div>
-      </Panel>
-    </>
-  );
-}
-
-// ── P2-3 Runtime Dashboard（F）：Kit 綁定 / stream-config（coordinator read-only）──
-// 真實端點：GET /api/runtime/status（host_native_plane / kit bindings）+
-// GET /api/review-sessions/:id/stream-config。GPU / conversion 無遙測 → 標未取得，禁畫 fail。
-export function RuntimePage() {
-  const [rt, setRt] = useState<RuntimeStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setBusy(true); setErr(null);
-    try { setRt(await coordinatorClient.runtimeStatus()); }
-    catch (e) { setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(e)}`); }
-    finally { setBusy(false); }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  return (
-    <>
-      <h1>{t("Runtime Dashboard · 串流執行狀態（F）", "Runtime Dashboard · Streaming runtime status (F)")}</h1>
-      <p className="ec-lead">
-        {t("Kit 實例綁定 / stream-config，由 coordinator", "Kit instance binding / stream-config, forwarded by the coordinator")} <strong>read-only proxy</strong>{t("轉發；瀏覽器永不直連 49100/49101。 GPU / 轉換秒數無統一遙測 → 標未取得（idle，非 fail）。", "; the browser never directly reaches 49100/49101. GPU / conversion seconds have no unified telemetry → marked not available (idle, not fail).")}
-      </p>
-      <Panel
-        title={t("Host-native plane 觀測", "Host-native plane observation")}
-        sub={t("GET /api/runtime/status · observations（read-only；Kit 內部 stage state 仍需 DataChannel / log 佐證）", "GET /api/runtime/status · observations (read-only; Kit internal stage state still needs DataChannel / log evidence)")}
-        prov="asbuilt"
-        actions={<Btn disabled={busy} caption="GET /api/runtime/status" onClick={load}>{busy ? t("讀取中…", "Loading…") : t("重新整理", "Refresh")}</Btn>}
-      >
-        {err && <p className="ec-warn-note">{err}</p>}
-        {rt && (
-          <>
-            <Field k="conversion authority" v={`${rt.configured_endpoints.conversion_authority.authority} · ${rt.configured_endpoints.conversion_authority.base_url}`} prov="asbuilt" />
-            <Field k="Kit signal ports" v={rt.observations.host_native_plane.kit_signal_ports.join(", ") || "—"} prov="asbuilt" />
-            <Field k="Kit media ports" v={rt.observations.host_native_plane.kit_media_ports.join(", ") || "—"} prov="asbuilt" />
-            <Field k="GPU / VRAM / util" v={t("未取得（streaming 未提供統一 GPU 遙測）", "not available (streaming provides no unified GPU telemetry)")} prov="demo" />
-            <Field k={t("觀測分類", "observation category")} v={rt.observations.note} prov="asbuilt" />
-          </>
-        )}
-      </Panel>
-
-      {rt && (
-        <Panel title={t("Kit 實例綁定 · kit_instance_bindings", "Kit instance binding · kit_instance_bindings")} sub={t("provider local_fixed；state = KitInstance.status 權威 enum", "provider local_fixed; state = the authoritative KitInstance.status enum")} prov="asbuilt">
-          {rt.kit_instance_bindings.length > 0 ? (
-            <table className="ec-table">
-              <thead><tr><th>kit_instance_id</th><th>session</th><th>state</th><th>started_at</th></tr></thead>
-              <tbody>
-                {rt.kit_instance_bindings.slice(0, 20).map((b, i) => (
-                  <tr key={i}><td>{b.kit_instance_id}</td><td>{b.session_id}</td><td>{b.status}</td><td>{b.started_at ?? "—"}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          ) : <p className="ec-note">{t("無 Kit 綁定（無 active session 時為空；routing_policy=dedicated_instance 超出 endpoint 數會停在 queued_for_instance）。", "No Kit binding (empty when there is no active session; with routing_policy=dedicated_instance exceeding the endpoint count, it stays at queued_for_instance).")}</p>}
-        </Panel>
-      )}
-
-      <StreamConfigReader />
-
-      <Panel title={t("治理規則執行綁定（A1）", "Governance rule-run binding (A1)")} sub={t("governance-service :49102 為內部服務（經 coordinator proxy）", "governance-service :49102 is an internal service (via coordinator proxy)")} prov="asbuilt">
-        <Field k="rule-run authority" v={t("A1 後端已實作（見 Issues · Rule Center 頁可真實觸發）", "A1 backend implemented (see the Issues · Rule Center page to trigger it for real)")} prov="asbuilt" />
       </Panel>
     </>
   );

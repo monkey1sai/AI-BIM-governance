@@ -350,6 +350,39 @@ describe("A1 3D review decoupling", () => {
     expect(directRunSpy).not.toHaveBeenCalled();
   });
 
+  it("downloaded MinIO object with edge storage root missing explains stale artifact instead of waiting downloaded session", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({
+        artifact_health: {
+          source_ifc_exists: false,
+          model_usdc_reachable: null,
+          mapping_reachable: null,
+          metadata_reachable: null,
+          all_required_ready: false,
+          checked_at: "2026-07-08T07:15:35.598Z",
+          stale_reason: "edge_storage_root_missing",
+          failure_details: { source_ifc: "edge_storage_root_missing", model_usdc: "url_not_allowed", mapping: "url_not_allowed", metadata: null },
+          source: "edge_health_probe",
+        },
+      })],
+    });
+    const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockRejectedValue(new Error("stale MinIO session must not call for-session rule-run"));
+
+    await renderA1();
+    await selectMinioSource();
+
+    const pick = q<HTMLButtonElement>("a1-step-pick")!;
+    expect(q("a1-minio-resolution-note")?.textContent).toContain("edge_storage_root_missing");
+    expect(pick.disabled).toBe(true);
+    expect(pick.textContent).toContain("source IFC artifact stale");
+    expect(pick.textContent).not.toContain("等待 downloaded session");
+
+    await act(async () => { pick.click(); });
+    await flush();
+    expect(forSessionSpy).not.toHaveBeenCalled();
+  });
+
   it("downloaded MinIO object without review session stays blocked instead of using a browser path", async () => {
     vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
       count: 1,
