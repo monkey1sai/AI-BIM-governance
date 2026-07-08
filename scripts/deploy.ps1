@@ -30,6 +30,7 @@ param(
     [int]    $GovernancePort = 49102,
     [int]    $KitSignalPort = 49100,
     [int]    $KitMediaPort  = 47998,
+    [int]    $KitReadyTimeoutSec = 480,
     [int]    $SpectatorCount = 5,
     [int]    $KitSpectatorSignalPortStart = 49110,
     [int]    $KitSpectatorMediaPortStart = 48008,
@@ -1280,9 +1281,9 @@ if ($SkipKit) {
             -SpectatorSignalPorts $resolvedSpectatorSignalPorts `
             -SpectatorStreamPorts $resolvedSpectatorMediaPorts
         Write-DeployTag -Tag 'ok' -Message "Kit PID=$($startInfo.Pid) log=$($startInfo.LogPath)" -LogPath $LogPath | Out-Null
-        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -TimeoutSec 90
+        $kitRes = Wait-KitReady -LogPath $startInfo.LogPath -SignalPort $resolvedKitSignalPort -TimeoutSec $KitReadyTimeoutSec
         if (-not $kitRes.ready) {
-            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in 90s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword))" -LogPath $LogPath | Out-Null
+            Write-DeployTag -Tag 'fail' -Message "stage=4c Phase 4c Kit not ready in ${KitReadyTimeoutSec}s (listen=$($null -ne $kitRes.listenPort) keyword=$($kitRes.matchedKeyword))" -LogPath $LogPath | Out-Null
             Print-FinalSummary -ExitCode 4 -FailedPhase 'Phase 4c (Kit)'
             exit 4
         }

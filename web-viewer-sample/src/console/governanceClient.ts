@@ -111,7 +111,8 @@ export const governanceClient = {
       { method: "POST", body: JSON.stringify(body ?? {}) }
     ),
   // A1 MinIO downloaded/no-session path：browser 只傳 ifc_ready_job_id，由 coordinator
-  // server-side 解析 host IFC path；不把 MinIO key 或 host_local_path 當 ifc_source_path。
+  // server-side 解析 host IFC path，並排入 governance CPU rule-run queue；
+  // 不把 MinIO key 或 host_local_path 當 ifc_source_path，也不排 IFC->USD 轉檔。
   createRuleRunForIfcReady: (ifcReadyJobId: string, body?: { ids_path?: string; rule_set?: string }) =>
     jsonFetch<{ rule_run_id: string; status: string }>(
       `/api/governance/rule-runs/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,

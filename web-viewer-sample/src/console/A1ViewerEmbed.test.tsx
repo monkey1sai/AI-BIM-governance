@@ -397,7 +397,8 @@ describe("A1 3D review decoupling", () => {
     await renderA1();
     await selectMinioSource();
 
-    expect(q("a1-minio-resolution-note")?.textContent).toContain("coordinator ifc-ready proxy");
+    expect(q("a1-minio-resolution-note")?.textContent).toContain("POST /api/governance/rule-runs/for-ifc-ready");
+    expect(q("a1-minio-resolution-note")?.textContent).toContain("governance rule-run queue");
     const pick = q<HTMLButtonElement>("a1-step-pick")!;
     expect(pick.disabled).toBe(false);
 
@@ -765,7 +766,7 @@ describe("A1 3D review decoupling", () => {
     expect(sp.get("minio_key")).toBeNull();                            // sessions chip must not leak the minio key
   });
 
-  it("A1 does not trigger conversion from the governance page; conversion is a #minio handoff", async () => {
+  it("A1 does not trigger conversion from the governance page; missed watcher scheduling is a #minio handoff", async () => {
     vi.spyOn(coordinatorClient, "runtimeStatus")
       .mockResolvedValue(fakeRuntimeStatus([]) as never);
     const triggerSpy = vi.spyOn(coordinatorClient, "triggerConversion").mockRejectedValue(new Error("A1 must not trigger conversion"));
@@ -782,5 +783,6 @@ describe("A1 3D review decoupling", () => {
     expect(href).toContain("#minio?");
     expect(href).toContain("source=a1");
     expect(href).toContain("minio_key=");
+    expect(q<HTMLElement>("a1-no-session")!.textContent).toContain("POST /api/conversion/trigger");
   });
 });
