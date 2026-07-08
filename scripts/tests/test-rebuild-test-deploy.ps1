@@ -756,6 +756,11 @@ try {
     Assert-Equal $deployHelperRoot $deployHelperProbe.WorkingDirectory 'deploy helper runs inside deployment root'
     Assert-True (($deployHelperProbe.ArgumentList -join ' ') -match 'scripts\\deploy\.ps1') 'deploy helper invokes scripts\deploy.ps1'
     Assert-True ($deployHelperProbe.ArgumentList -contains '-Build') 'deploy helper preserves -Build'
+    $nullExitResult = Invoke-TestDeployScript -DeploymentRoot $deployHelperRoot -ProcessRunner {
+        param([string] $FilePath, [string[]] $ArgumentList, [string] $WorkingDirectory)
+        return $null
+    }
+    Assert-Equal 1 $nullExitResult.ExitCode 'deploy helper treats missing exit code as failure'
 
     # F2: restore 逐檔獨立、收集失敗、不中途 abort
     $restoreRoot = Join-Path $sandbox 'restore-partial-failure'

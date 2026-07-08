@@ -316,7 +316,7 @@ function Invoke-TestDeployScript {
     }
 
     if ($null -eq $exitCode) {
-        $exitCode = 0
+        $exitCode = 1
     }
 
     return [pscustomobject]@{
