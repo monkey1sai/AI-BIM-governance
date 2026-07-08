@@ -275,6 +275,55 @@ function Invoke-TestDeployGitCommand {
     return $result
 }
 
+function Invoke-TestDeployScript {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $DeploymentRoot,
+        [scriptblock] $ProcessRunner = $null
+    )
+
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build')
+    if ($null -ne $ProcessRunner) {
+        $exitCode = & $ProcessRunner -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $DeploymentRoot
+    } else {
+        function ConvertTo-CmdQuotedArgument {
+            param([Parameter(Mandatory = $true)][string] $Value)
+            return '"' + $Value.Replace('"', '\"') + '"'
+        }
+
+        $runDir = Join-Path $DeploymentRoot 'scripts\.run'
+        if (-not (Test-Path -LiteralPath $runDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+        }
+        $stdoutPath = Join-Path $runDir 'rebuild-test-deploy.deploy.stdout.log'
+        $stderrPath = Join-Path $runDir 'rebuild-test-deploy.deploy.stderr.log'
+
+        # Do not use Start-Process -Wait here: Windows PowerShell waits on the
+        # launched process tree, and deploy.ps1 intentionally leaves host-native
+        # runtime services running after its own process exits. Route through cmd.exe
+        # with file redirection so long-lived child processes cannot keep the agent
+        # harness pipe open; then wait only for the direct cmd.exe process.
+        $quotedArgs = ($arguments | ForEach-Object { ConvertTo-CmdQuotedArgument -Value $_ }) -join ' '
+        $cmdLine = "powershell.exe $quotedArgs > $(ConvertTo-CmdQuotedArgument -Value $stdoutPath) 2> $(ConvertTo-CmdQuotedArgument -Value $stderrPath)"
+        $process = Start-Process -FilePath 'cmd.exe' `
+            -ArgumentList @('/c', $cmdLine) `
+            -WorkingDirectory $DeploymentRoot `
+            -PassThru `
+            -WindowStyle Hidden
+        $process.WaitForExit()
+        $process.Refresh()
+        $exitCode = $process.ExitCode
+    }
+
+    if ($null -eq $exitCode) {
+        $exitCode = 1
+    }
+
+    return [pscustomobject]@{
+        ExitCode = [int]$exitCode
+    }
+}
+
 function Invoke-TestDeployRebuild {
     [CmdletBinding()]
     param(
@@ -422,10 +471,7 @@ function Invoke-TestDeployRebuild {
         if ($null -ne $DeployRunner) {
             $deployResult = & $DeployRunner $deployRoot
         } else {
-            $deployProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build') -WorkingDirectory $deployRoot -NoNewWindow -Wait -PassThru
-            $deployResult = [pscustomobject]@{
-                ExitCode = [int]$deployProcess.ExitCode
-            }
+            $deployResult = Invoke-TestDeployScript -DeploymentRoot $deployRoot
         }
     } finally {
         Restore-TestDeployProcessEnv -Backup $processEnvBackup

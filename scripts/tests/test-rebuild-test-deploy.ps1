@@ -733,6 +733,35 @@ try {
     $forbiddenWrapperToken = 'Dry' + 'Run'
     Assert-True ($wrapperText -notmatch [regex]::Escape($forbiddenWrapperToken)) 'wrapper does not expose forbidden token'
 
+    $libText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts\lib\rebuild-test-deploy.ps1') -Raw
+    Assert-True ($libText -notmatch "Start-Process\s+-FilePath 'powershell\.exe'[^\r\n]*-Wait") 'rebuild deploy runner must not wait on deploy.ps1 process tree'
+
+    $deployHelperRoot = Join-Path $sandbox 'deploy-helper'
+    New-Item -ItemType Directory -Path $deployHelperRoot -Force | Out-Null
+    $deployHelperProbes = New-Object 'System.Collections.Generic.List[object]'
+    $deployHelperRunner = {
+        param([string] $FilePath, [string[]] $ArgumentList, [string] $WorkingDirectory)
+        $deployHelperProbes.Add([pscustomobject]@{
+            FilePath = $FilePath
+            ArgumentList = @($ArgumentList)
+            WorkingDirectory = $WorkingDirectory
+        }) | Out-Null
+        return 0
+    }.GetNewClosure()
+    $deployHelperResult = Invoke-TestDeployScript -DeploymentRoot $deployHelperRoot -ProcessRunner $deployHelperRunner
+    Assert-Equal 0 $deployHelperResult.ExitCode 'deploy helper returns direct deploy.ps1 exit code'
+    Assert-Equal 1 $deployHelperProbes.Count 'deploy helper invokes process runner once'
+    $deployHelperProbe = $deployHelperProbes[0]
+    Assert-Equal 'powershell.exe' $deployHelperProbe.FilePath 'deploy helper uses Windows PowerShell'
+    Assert-Equal $deployHelperRoot $deployHelperProbe.WorkingDirectory 'deploy helper runs inside deployment root'
+    Assert-True (($deployHelperProbe.ArgumentList -join ' ') -match 'scripts\\deploy\.ps1') 'deploy helper invokes scripts\deploy.ps1'
+    Assert-True ($deployHelperProbe.ArgumentList -contains '-Build') 'deploy helper preserves -Build'
+    $nullExitResult = Invoke-TestDeployScript -DeploymentRoot $deployHelperRoot -ProcessRunner {
+        param([string] $FilePath, [string[]] $ArgumentList, [string] $WorkingDirectory)
+        return $null
+    }
+    Assert-Equal 1 $nullExitResult.ExitCode 'deploy helper treats missing exit code as failure'
+
     # F2: restore 逐檔獨立、收集失敗、不中途 abort
     $restoreRoot = Join-Path $sandbox 'restore-partial-failure'
     New-Item -ItemType Directory -Path $restoreRoot -Force | Out-Null
