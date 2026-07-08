@@ -105,6 +105,12 @@ function mappingDiagnosticText(handoff: ReviewRoomHandoff): string {
     : t("missing usd_prim_path / mapping", "missing usd_prim_path / mapping");
 }
 
+function healthValue(value: boolean | null | undefined): string {
+  if (value === true) return "true";
+  if (value === false) return "false";
+  return "unknown";
+}
+
 export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: { handoff?: ReviewRoomHandoff }) {
   const [sessionId, setSessionId] = useState(handoff.sessionId);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSessionSummary[]>([]);
@@ -137,6 +143,17 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
   const activePrimaryLease = lease && lease.session_id === sid && lease.role === "primary" && lease.status === "active" ? lease : null;
   const runtimeSession = runtimeSessions.find((s) => s.session_id === sid) ?? null;
   const sessionObserved = Boolean(runtimeSession);
+  const artifactHealth = runtimeSession?.artifact_health ?? null;
+  const modelArtifactStale = artifactHealth?.model_usdc_reachable === false;
+  const mappingArtifactStale = artifactHealth?.mapping_reachable === false;
+  const artifactHealthSummary = artifactHealth
+    ? [
+        `source_ifc_exists=${healthValue(artifactHealth.source_ifc_exists)}`,
+        `model_usdc_reachable=${healthValue(artifactHealth.model_usdc_reachable)}`,
+        `mapping_reachable=${healthValue(artifactHealth.mapping_reachable)}`,
+        artifactHealth.stale_reason ? `stale_reason=${artifactHealth.stale_reason}` : null,
+      ].filter((part): part is string => Boolean(part)).join(" / ")
+    : t("not_observed（尚未取得 artifact health）", "not_observed (artifact health not available yet)");
   const expectedStageUrl = handoff.expectedStageUrl ?? runtimeSession?.expected_stage_url ?? null;
   const stageMatched = Boolean(loadedStageUrl && expectedStageUrl && stageUrlsEquivalent(loadedStageUrl, expectedStageUrl));
   const viewerOpenUrl = validSession ? coordinatorClient.openInViewerUrl(sid) : undefined;
@@ -203,7 +220,7 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
   ]);
 
   const claimPrimary = useCallback(async () => {
-    if (!validSession || !viewerOrigin || !sessionObserved || leaseBusy) return;
+    if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy) return;
     const identity = identityRef.current ?? createReviewViewerIdentity();
     identityRef.current = identity;
     setLeaseBusy(true);
@@ -228,7 +245,7 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, leaseBusy]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy]);
 
   const stageText = !loadedStageUrl
     ? t("not_observed（尚未收到 viewer stage）", "not_observed (no viewer stage yet)")
@@ -242,6 +259,8 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
     ? t("handoff 缺 ifc_guid，無法高亮", "handoff is missing ifc_guid")
     : !handoff.usdPrimPath
       ? `${t("缺 usd_prim_path / mapping，禁止高亮：", "missing usd_prim_path / mapping; highlight is blocked: ")}${mappingDiagnosticText(handoff)}`
+      : mappingArtifactStale
+        ? `mapping_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
       : !validSession
         ? t("尚未輸入有效 review session", "enter a valid review session first")
         : !sessionObserved
@@ -306,10 +325,11 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
           <Btn
             primary
             data-testid="review-room-manual-start"
-            disabled={!validSession || !viewerOrigin || !sessionObserved || leaseBusy || Boolean(activePrimaryLease)}
+            disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
             caption={!validSession ? t("需有效 session id", "valid session id required")
               : !viewerOrigin ? t("runtime/status 尚未提供 viewer 入口", "runtime/status has not provided a viewer entry")
               : !sessionObserved ? t("runtime/status 未列出此 session（可能 stale / 已關閉）", "runtime/status does not list this session (possibly stale / closed)")
+              : modelArtifactStale ? `model_usdc_reachable=false: ${artifactHealth?.stale_reason ?? "derived_artifact_unreachable"}`
               : activePrimaryLease ? t("已 attach primary viewer lease", "primary viewer lease attached")
               : t("POST /api/review-sessions/:id/viewer-leases/claim", "POST /api/review-sessions/:id/viewer-leases/claim")}
             onClick={() => { void claimPrimary(); }}
@@ -336,6 +356,7 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
           <Field k="first frame" v={firstFrame ? t("observed", "observed") : t("not_observed", "not_observed")} prov={firstFrame ? "asbuilt" : "p1"} />
           <Field k="DataChannel ready" v={dataChannelReady ? t("observed", "observed") : t("not_observed", "not_observed")} prov={dataChannelReady ? "asbuilt" : "p1"} />
           <Field k="stage truth" v={stageText} prov={stageMatched ? "asbuilt" : "p1"} />
+          <Field k="artifact health" v={artifactHealthSummary} prov={artifactHealth && !modelArtifactStale && !mappingArtifactStale ? "asbuilt" : "p1"} />
           <Field k="highlight ack" v={!commandTrace ? t("not_sent", "not_sent") : highlightResult ? highlightResultText(highlightResult) : t("pending viewer ack", "pending viewer ack")} prov={highlightResult?.ok ? "asbuilt" : "p1"} />
           <Field k="kit_instance_id" v={activePrimaryLease?.kit_instance_id ?? "—"} prov={activePrimaryLease?.kit_instance_id ? "asbuilt" : "p1"} />
         </div>

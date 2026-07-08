@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { type AddressInfo } from "node:net";
 import request from "supertest";
+import type { Response as SupertestResponse } from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCoordinatorApp, type CoordinatorApp } from "../src/app.js";
 import type { CoordinatorConfig } from "../src/config.js";
@@ -44,12 +45,17 @@ afterEach(async () => {
 
 function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-gov-session-test-"));
+  const storageRoot = path.join(root, "storage");
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
-    storageRoot: path.join(root, "storage"),
-    storageHostRoot: path.join(root, "storage"),
+    conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
+    edgeSiteId: "site_test_edge",
+    edgeRuntimeDataRoot: root,
+    artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
+    storageRoot,
+    storageHostRoot: storageRoot,
     corsOrigins: ["http://127.0.0.1:5173"],
     // streaming/poll 不啟用,避免背景 timer 干擾
     conversionPollEnabled: false,
@@ -142,8 +148,10 @@ async function seedSessionWithDownloadedIfc(
   expect(sessionId).toMatch(/^review_session_/);
 
   const finalJob = await request(app.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
-  const hostLocalPath = finalJob.body.host_local_path as string;
-  expect(hostLocalPath).toBeTruthy();
+  expect(finalJob.body).not.toHaveProperty("local_path");
+  expect(finalJob.body).not.toHaveProperty("host_local_path");
+  const hostLocalPath = path.join(app.config.storageHostRoot, "ifc-cache", ifcReadyJobId, "source.ifc");
+  expect(fs.existsSync(hostLocalPath)).toBe(true);
   return { sessionId, hostLocalPath, ifcReadyJobId };
 }
 
@@ -188,6 +196,20 @@ afterEach(async () => {
   }
 });
 
+function expectStaleSourceIfcResponse(res: SupertestResponse, staleReason = "source_ifc_missing"): void {
+  expect(res.status).toBe(409);
+  expect(res.body).toMatchObject({
+    error_code: "stale_session_artifact",
+    detail: "source_ifc_missing",
+    artifact_health: {
+      source_ifc_exists: false,
+      stale_reason: staleReason,
+      source: "edge_health_probe",
+    },
+  });
+  expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+}
+
 /** IFC source stub：回 200 + 少量 bytes，讓 strict 下載真實落地 host_local_path。 */
 async function startIfcSourceStub(): Promise<string> {
   const server = http.createServer((_req, res) => {
@@ -220,6 +242,58 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     expect(gov.bodies).toHaveLength(1);
     expect(gov.bodies[0].ifc_source_path).toBe(hostLocalPath);
     expect(gov.bodies[0].model_version_id).toBe("version_demo_001");
+  });
+
+  it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    fs.rmSync(hostLocalPath);
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+      .send({});
+
+    expectStaleSourceIfcResponse(res);
+    expect(gov.bodies).toHaveLength(0);
+  });
+
+  it("storage root resolves outside edge runtime root → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gov-session-storage-escape-"));
+    const relativeSourcePath = path.relative(app.config.storageHostRoot, hostLocalPath);
+    const escapedSourcePath = path.join(outsideRoot, relativeSourcePath);
+    fs.rmSync(app.config.storageHostRoot, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(escapedSourcePath), { recursive: true });
+    fs.writeFileSync(escapedSourcePath, "outside", "utf-8");
+    try {
+      fs.symlinkSync(outsideRoot, app.config.storageHostRoot, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+      return;
+    }
+
+    try {
+      const res = await request(app.app)
+        .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+        .send({});
+
+      expectStaleSourceIfcResponse(res, "edge_storage_root_escape");
+      expect(gov.bodies).toHaveLength(0);
+    } finally {
+      fs.rmSync(app.config.storageHostRoot, { recursive: true, force: true });
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
   });
 
   it("override body 的 rule_set / ids_path 會被一併透傳", async () => {
@@ -360,6 +434,24 @@ describe("GET /api/governance/elements/for-session/:sessionId/:guid", () => {
     expect(gov.urls[0]).toContain(`ifc_guid=${encodeURIComponent(GUID)}`);
   });
 
+  it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceElementsStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    fs.rmSync(hostLocalPath);
+
+    const res = await request(app.app).get(
+      `/api/governance/elements/for-session/${sessionId}/${encodeURIComponent(GUID)}`,
+    );
+
+    expectStaleSourceIfcResponse(res);
+    expect(gov.urls).toHaveLength(0);
+  });
+
   it("session 不存在 → 404，且不打 governance", async () => {
     const gov = await startGovernanceElementsStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
@@ -424,6 +516,21 @@ describe("GET /api/governance/spatial-tree/for-session/:sessionId", () => {
     expect(res.body.tree.ifc_type).toBe("IfcProject");
     expect(gov.urls).toHaveLength(1);
     expect(gov.urls[0]).toContain(`ifc_source_path=${encodeURIComponent(hostLocalPath)}`);
+  });
+
+  it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
+    const gov = await startGovernanceSpatialStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    fs.rmSync(hostLocalPath);
+
+    const res = await request(app.app).get(`/api/governance/spatial-tree/for-session/${sessionId}`);
+
+    expectStaleSourceIfcResponse(res);
+    expect(gov.urls).toHaveLength(0);
   });
 
   it("session 不存在 → 404，不打 governance", async () => {

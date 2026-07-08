@@ -177,6 +177,7 @@ docs/plans/*.html
 # OpenSpec apply worktrees (opsx-worktree-provision)
 # ----------------------------
 .worktrees/
+.superpowers/
 
 # Ignore storage files by default
 storage/*

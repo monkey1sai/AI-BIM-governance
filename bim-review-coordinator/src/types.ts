@@ -31,6 +31,25 @@ export interface ArtifactBinding {
   diagnostic?: string | null;
 }
 
+export interface ArtifactHealthFailureDetails {
+  source_ifc?: string | null;
+  model_usdc?: string | null;
+  mapping?: string | null;
+  metadata?: string | null;
+}
+
+export interface ArtifactHealthSnapshot {
+  source_ifc_exists: boolean | null;
+  model_usdc_reachable: boolean | null;
+  mapping_reachable: boolean | null;
+  metadata_reachable: boolean | null;
+  all_required_ready: boolean;
+  checked_at: string;
+  stale_reason: string | null;
+  failure_details: ArtifactHealthFailureDetails | null;
+  source: "edge_health_probe";
+}
+
 export interface KitInstanceBinding {
   kit_instance_id: string;
   provider: "local_fixed";
@@ -120,6 +139,7 @@ export interface ReviewSession {
   kit_instance_bindings: KitInstanceBinding[];
   participants: ReviewParticipant[];
   quality_metrics_summary?: ConversionQualityMetricsSummary | null;
+  artifact_health?: ArtifactHealthSnapshot | null;
   // VG-01：viewer 真畫面首幀（_hasRemoteVideoFrame 證明）由 console 經
   // POST /api/review-sessions/:id/first-frame 回報後寫入；coordinator nowIso() 權威時戳。
   // in-memory（檔案）store 重啟後可能不存在 → 讀回 undefined，summarize 時 ?? null。
@@ -233,6 +253,7 @@ export interface IfcReadyIntakeJob {
   host_local_path?: string | null;
   web_view_session_id?: string | null;
   viewer_url?: string | null;
+  artifact_health?: ArtifactHealthSnapshot | null;
   created_at: string;
   updated_at: string;
 }
@@ -315,6 +336,7 @@ export interface StreamConfigResponse {
   artifact_bindings: ArtifactBinding[];
   kit_instance_bindings: KitInstanceBinding[];
   quality_metrics_summary?: ConversionQualityMetricsSummary | null;
+  artifact_health?: ArtifactHealthSnapshot | null;
   stage_composition: {
     applied_policy: "coordinator_load_order";
     primary_artifact_id: string | null;

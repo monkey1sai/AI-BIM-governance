@@ -20,6 +20,8 @@ $script:TestDeployPreservedEnvFiles = @(
     'bim-review-coordinator\.env',
     '.env.web-plane.host-kit'
 )
+$script:TestDeployEdgeSiteId = 'site_local_deploy'
+$script:TestDeployEdgeRuntimeDataRoot = 'D:\Users\deploy\AI-bim-geo-data'
 
 function Normalize-TestDeployPath {
     [CmdletBinding()]
@@ -160,6 +162,75 @@ function Restore-TestDeployEnvSnapshot {
     }
 
     return @($restored.ToArray())
+}
+
+function Resolve-TestDeployEdgeRuntimeContract {
+    [CmdletBinding()]
+    param()
+
+    $edgeSiteId = [Environment]::GetEnvironmentVariable('EDGE_SITE_ID', 'Process')
+    if ([string]::IsNullOrWhiteSpace($edgeSiteId)) {
+        $edgeSiteId = $script:TestDeployEdgeSiteId
+    }
+
+    $edgeRuntimeDataRoot = [Environment]::GetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', 'Process')
+    if ([string]::IsNullOrWhiteSpace($edgeRuntimeDataRoot)) {
+        $edgeRuntimeDataRoot = $script:TestDeployEdgeRuntimeDataRoot
+    }
+    $edgeRuntimeDataRoot = Normalize-TestDeployPath -Path $edgeRuntimeDataRoot
+
+    $runtimeStorageRoot = Join-Path $edgeRuntimeDataRoot 'storage'
+    $artifactsRoot = Join-Path $edgeRuntimeDataRoot 'artifacts'
+    $ledgerRoot = Join-Path $edgeRuntimeDataRoot 'ledgers'
+    foreach ($dirPath in @($runtimeStorageRoot, $artifactsRoot, $ledgerRoot)) {
+        if (-not (Test-Path -LiteralPath $dirPath -PathType Container)) {
+            New-Item -ItemType Directory -Path $dirPath -Force | Out-Null
+        }
+    }
+
+    return [pscustomobject]@{
+        EDGE_SITE_ID                       = $edgeSiteId
+        EDGE_RUNTIME_DATA_ROOT             = $edgeRuntimeDataRoot
+        RUNTIME_STORAGE_ROOT               = $runtimeStorageRoot
+        STORAGE_HOST_ROOT                  = $runtimeStorageRoot
+        STREAMING_CONVERSION_ARTIFACTS_ROOT = $artifactsRoot
+        CONVERSION_LEDGER_STORE_PATH       = Join-Path $ledgerRoot 'conversion-ledger.json'
+        ARTIFACT_HEALTH_LEDGER_STORE_PATH  = Join-Path $ledgerRoot 'artifact-health-ledger.json'
+    }
+}
+
+function Push-TestDeployProcessEnv {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)] $Contract
+    )
+
+    $backup = @{}
+    foreach ($name in @(
+        'EDGE_SITE_ID',
+        'EDGE_RUNTIME_DATA_ROOT',
+        'RUNTIME_STORAGE_ROOT',
+        'STORAGE_HOST_ROOT',
+        'STREAMING_CONVERSION_ARTIFACTS_ROOT',
+        'CONVERSION_LEDGER_STORE_PATH',
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+    )) {
+        $backup[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, [string]$Contract.$name, 'Process')
+    }
+
+    return $backup
+}
+
+function Restore-TestDeployProcessEnv {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable] $Backup
+    )
+
+    foreach ($name in $Backup.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $Backup[$name], 'Process')
+    }
 }
 
 function Invoke-TestDeployGitCommand {
@@ -344,14 +415,20 @@ function Invoke-TestDeployRebuild {
     }
 
     $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+    $edgeRuntimeContract = Resolve-TestDeployEdgeRuntimeContract
+    $processEnvBackup = Push-TestDeployProcessEnv -Contract $edgeRuntimeContract
 
-    if ($null -ne $DeployRunner) {
-        $deployResult = & $DeployRunner $deployRoot
-    } else {
-        $deployProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build') -WorkingDirectory $deployRoot -NoNewWindow -Wait -PassThru
-        $deployResult = [pscustomobject]@{
-            ExitCode = [int]$deployProcess.ExitCode
+    try {
+        if ($null -ne $DeployRunner) {
+            $deployResult = & $DeployRunner $deployRoot
+        } else {
+            $deployProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-Build') -WorkingDirectory $deployRoot -NoNewWindow -Wait -PassThru
+            $deployResult = [pscustomobject]@{
+                ExitCode = [int]$deployProcess.ExitCode
+            }
         }
+    } finally {
+        Restore-TestDeployProcessEnv -Backup $processEnvBackup
     }
 
     return [pscustomobject]@{

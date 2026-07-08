@@ -54,6 +54,9 @@ const defaultConfig: CoordinatorConfig = {
   callbackOutboxMaxAttempts: 5,
   callbackOutboxStorePath: "/tmp/callback-outbox.json",
   conversionLedgerStorePath: "/tmp/conversion-ledger.json",
+  edgeSiteId: "site_local_dev",
+  edgeRuntimeDataRoot: "/tmp",
+  artifactHealthLedgerStorePath: "/tmp/artifact-health-ledger.json",
   userAuthProvider: "local-dev",
   // fast-ifc-link-demo-loop §2.5
   ifcDownloadTimeoutSeconds: 600,

@@ -45,10 +45,17 @@ afterEach(async () => {
 
 function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "bim-review-coordinator-ifcready-test-"));
+  const storageRoot = path.join(root, "storage");
   active = createCoordinatorApp({
     sessionStoreDir: path.join(root, "sessions"),
     eventLogDir: path.join(root, "events"),
     callbackOutboxStorePath: path.join(root, "callback-outbox.json"),
+    conversionLedgerStorePath: path.join(root, "conversion-ledger.json"),
+    edgeSiteId: "site_test_edge",
+    edgeRuntimeDataRoot: root,
+    artifactHealthLedgerStorePath: path.join(root, "artifact-health-ledger.json"),
+    storageRoot,
+    storageHostRoot: storageRoot,
     // streaming 不可達 → 內部派工失敗應 graceful（job dispatch_failed，仍 202）
     streamingConversionApiBase: "http://127.0.0.1:1",
     corsOrigins: ["http://127.0.0.1:5173"],
@@ -68,6 +75,11 @@ function authHeaders(overrides: Record<string, string> = {}): Record<string, str
     "X-Idempotency-Key": "idem_test_001",
     ...overrides,
   };
+}
+
+function expectPublicArtifactHealthIsPathFree(value: unknown): void {
+  const serialized = JSON.stringify(value);
+  expect(serialized).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
 }
 
 /**
@@ -253,6 +265,21 @@ async function startNon2xxIfcSourceStub(status = 404): Promise<{ ifcUrl: string 
   return { ifcUrl: `http://127.0.0.1:${address.port}/edge/source.ifc` };
 }
 
+async function startSuccessfulIfcSourceStub(): Promise<{ ifcUrl: string }> {
+  activeIfcSourceServer = http.createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/octet-stream" });
+    res.end("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n");
+  });
+  await new Promise<void>((resolve) => {
+    activeIfcSourceServer?.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = activeIfcSourceServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected IFC source stub to listen on a TCP port.");
+  }
+  return { ifcUrl: `http://127.0.0.1:${address.port}/edge/source.ifc` };
+}
+
 describe("POST /api/external/ifc-ready", () => {
   it("接受 spec-correct ifc-ready，建立本地 job 並綁定 external_model_version_id", async () => {
     const app = makeApp();
@@ -307,6 +334,89 @@ describe("POST /api/external/ifc-ready", () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("conversion_lifecycle_status");
     expect(res.body.conversion_lifecycle_status).toBe("failed");
+  });
+
+  it("strict 下載成功後 detail/list 回 artifact_health 且不暴露 local filesystem paths", async () => {
+    const source = await startSuccessfulIfcSourceStub();
+    const app = makeApp({ ifcDownloadStrict: true });
+
+    const created = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_health_001", "X-Idempotency-Key": "idem_health_001" }))
+      .send(payload({
+        source_ifc: {
+          ref: source.ifcUrl,
+          etag: "sha256:health-source",
+          filename: "health-source.ifc",
+          format: "ifc",
+        },
+      }));
+
+    expect(created.status).toBe(202);
+    expect(created.body).not.toHaveProperty("local_path");
+    expect(created.body).not.toHaveProperty("host_local_path");
+    expect(created.body.artifact_health).toMatchObject({
+      source_ifc_exists: true,
+      source: "edge_health_probe",
+    });
+    expectPublicArtifactHealthIsPathFree(created.body.artifact_health);
+
+    const jobId = created.body.ifc_ready_job_id as string;
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body).not.toHaveProperty("local_path");
+    expect(detail.body).not.toHaveProperty("host_local_path");
+    expect(detail.body.artifact_health).toMatchObject({
+      source_ifc_exists: true,
+      source: "edge_health_probe",
+    });
+    expectPublicArtifactHealthIsPathFree(detail.body.artifact_health);
+
+    const listed = await request(app.app).get("/api/external/ifc-ready");
+    expect(listed.status).toBe(200);
+    const item = (listed.body.items as Array<Record<string, unknown>>).find((entry) => entry.ifc_ready_job_id === jobId);
+    expect(item).toBeDefined();
+    expect(item).not.toHaveProperty("local_path");
+    expect(item).not.toHaveProperty("host_local_path");
+    expect(item?.artifact_health).toMatchObject({
+      source_ifc_exists: true,
+      source: "edge_health_probe",
+    });
+    expectPublicArtifactHealthIsPathFree(item?.artifact_health);
+  });
+
+  it("detail refresh marks artifact_health stale when downloaded source IFC is deleted", async () => {
+    const source = await startSuccessfulIfcSourceStub();
+    const app = makeApp({ ifcDownloadStrict: true });
+
+    const created = await request(app.app)
+      .post("/api/external/ifc-ready")
+      .set(authHeaders({ "X-Correlation-Id": "corr_health_missing", "X-Idempotency-Key": "idem_health_missing" }))
+      .send(payload({
+        source_ifc: {
+          ref: source.ifcUrl,
+          etag: "sha256:health-source-missing",
+          filename: "health-source-missing.ifc",
+          format: "ifc",
+        },
+      }));
+
+    expect(created.status).toBe(202);
+    const jobId = created.body.ifc_ready_job_id as string;
+    const downloadedIfc = path.join(app.config.storageHostRoot, "ifc-cache", jobId, "source.ifc");
+    expect(fs.existsSync(downloadedIfc)).toBe(true);
+    fs.rmSync(downloadedIfc, { force: true });
+
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body).not.toHaveProperty("local_path");
+    expect(detail.body).not.toHaveProperty("host_local_path");
+    expect(detail.body.artifact_health).toMatchObject({
+      source_ifc_exists: false,
+      stale_reason: "source_ifc_missing",
+      source: "edge_health_probe",
+    });
+    expectPublicArtifactHealthIsPathFree(detail.body.artifact_health);
   });
 
   it("lists recent IFC-ready jobs with dashboard-safe progress fields", async () => {

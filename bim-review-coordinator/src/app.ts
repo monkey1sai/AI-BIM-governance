@@ -29,6 +29,14 @@ import {
 } from "./services/minioWatcher.js";
 import { ConversionDispatchQueue } from "./services/conversionDispatchQueue.js";
 import { ConversionLedger } from "./services/conversionLedger.js";
+import {
+  ArtifactHealthLedger,
+  toCloudProjection,
+  type EdgeArtifactKind,
+  type EdgeArtifactRecord,
+  type EdgeArtifactStatus,
+} from "./services/artifactHealthLedger.js";
+import { checkSourceIfcPath, probeArtifactHealth } from "./services/artifactHealthProbe.js";
 import { deriveLifecycleStatus } from "./services/lifecycleStatus.js";
 import { deriveFailure } from "./services/failureReason.js";
 import { deriveConversionRecoveryAction } from "./services/conversionRecoveryAction.js";
@@ -63,6 +71,7 @@ import { nowIso } from "./utils/time.js";
 import type {
   Artifact,
   ArtifactBinding,
+  ArtifactHealthSnapshot,
   ConversionQualityMetricsSummary,
   ExternalIfcReadyEvent,
   IfcReadyIntakeJob,
@@ -394,6 +403,7 @@ export function createCoordinatorApp(
   // 在啟動路徑前插入新程式碼也不可能重新引入 TDZ。watcher 偵測即寫 queued（Task 2）、GET /api/conversion
   // /records 讀取（Task 3）；建構只讀持久 JSON 檔（無時序副作用），提早到宣告處安全。
   const conversionLedger = new ConversionLedger(config.conversionLedgerStorePath);
+  const artifactHealthLedger = new ArtifactHealthLedger(config.artifactHealthLedgerStorePath);
   // IX-CV-04：runtime toggle 真相。初值 = env opt-in；PUT /api/conversion/watch 在 runtime 覆寫。
   let minioWatchRuntimeEnabled = config.minioWatchEnabled;
   // toggle 同步鎖（CR-B）：dispose() 為 async（2s cap），防並發 PUT 在 await 期間交錯啟兩個 watcher。
@@ -588,6 +598,269 @@ export function createCoordinatorApp(
   // T7：使用者（local web view）auth，可替換；不做死 EZPLUS SSO（OQ5 pending）。
   const userAuthProvider = createUserAuthProvider(config);
 
+  function edgeRelativePath(hostPath: string | null): string | null {
+    if (!hostPath) return null;
+    const root = path.resolve(config.edgeRuntimeDataRoot);
+    const target = path.resolve(hostPath);
+    const relative = path.relative(root, target);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    return relative;
+  }
+
+  function fileSizeIfAvailable(hostPath: string | null): number | null {
+    try {
+      if (!hostPath || !fs.existsSync(hostPath)) return null;
+      const stat = fs.statSync(hostPath);
+      return stat.isFile() ? stat.size : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function statusFromProbe(kind: EdgeArtifactKind, value: boolean | null): EdgeArtifactStatus {
+    if (value === true) return kind === "source_ifc" ? "present" : "reachable";
+    if (value === false) return kind === "source_ifc" ? "missing" : "unreachable";
+    return "unknown";
+  }
+
+  function snapshotFailure(snapshot: ArtifactHealthSnapshot, kind: EdgeArtifactKind): string | null {
+    if (kind === "source_ifc") return snapshot.failure_details?.source_ifc ?? null;
+    if (kind === "model_usdc") return snapshot.failure_details?.model_usdc ?? null;
+    if (kind === "element_mapping") return snapshot.failure_details?.mapping ?? null;
+    if (kind === "metadata") return snapshot.failure_details?.metadata ?? null;
+    return null;
+  }
+
+  function recordProbeSnapshot(
+    job: IfcReadyIntakeJob,
+    snapshot: ArtifactHealthSnapshot,
+    artifacts: { modelArtifactUrl?: string | null; mappingUrl?: string | null } = {},
+  ): void {
+    const now = snapshot.checked_at;
+    const base = {
+      site_id: config.edgeSiteId,
+      tenant_id: job.tenant_id,
+      project_id: job.project_id,
+      external_model_version_id: job.external_model_version_id,
+      ifc_ready_job_id: job.ifc_ready_job_id,
+      conversion_job_id: job.conversion_job_id ?? null,
+      review_session_id: job.review_session_id ?? null,
+    };
+
+    const upsert = (record: Omit<EdgeArtifactRecord, "created_at" | "updated_at">): void => {
+      artifactHealthLedger.upsert({ ...record, created_at: now, updated_at: now }, now);
+    };
+
+    if (job.host_local_path || snapshot.source_ifc_exists !== null) {
+      upsert({
+        ...base,
+        artifact_kind: "source_ifc",
+        edge_artifact_id: job.ifc_ready_job_id,
+        host_local_path: job.host_local_path ?? null,
+        edge_relative_path: edgeRelativePath(job.host_local_path ?? null),
+        public_url: null,
+        status: statusFromProbe("source_ifc", snapshot.source_ifc_exists),
+        size_bytes: snapshot.source_ifc_exists === true ? fileSizeIfAvailable(job.host_local_path ?? null) : null,
+        sha256: null,
+        etag: job.source_ifc_etag ?? null,
+        last_checked_at: now,
+        failure_code: snapshotFailure(snapshot, "source_ifc"),
+      });
+    }
+
+    if (artifacts.modelArtifactUrl || snapshot.model_usdc_reachable !== null) {
+      upsert({
+        ...base,
+        artifact_kind: "model_usdc",
+        edge_artifact_id: job.conversion_job_id ?? job.ifc_ready_job_id,
+        host_local_path: null,
+        edge_relative_path: null,
+        public_url: artifacts.modelArtifactUrl ?? null,
+        status: statusFromProbe("model_usdc", snapshot.model_usdc_reachable),
+        size_bytes: null,
+        sha256: null,
+        etag: null,
+        last_checked_at: now,
+        failure_code: snapshotFailure(snapshot, "model_usdc"),
+      });
+    }
+
+    if (artifacts.mappingUrl || snapshot.mapping_reachable !== null) {
+      upsert({
+        ...base,
+        artifact_kind: "element_mapping",
+        edge_artifact_id: job.conversion_job_id ?? job.ifc_ready_job_id,
+        host_local_path: null,
+        edge_relative_path: null,
+        public_url: artifacts.mappingUrl ?? null,
+        status: statusFromProbe("element_mapping", snapshot.mapping_reachable),
+        size_bytes: null,
+        sha256: null,
+        etag: null,
+        last_checked_at: now,
+        failure_code: snapshotFailure(snapshot, "element_mapping"),
+      });
+    }
+  }
+
+  function artifactUrlsForJob(job: IfcReadyIntakeJob): { modelArtifactUrl: string | null; mappingUrl: string | null } {
+    const session = job.review_session_id ? store.get(job.review_session_id) : null;
+    const binding = session ? expectedStageBinding(session) : null;
+    return {
+      modelArtifactUrl: binding?.url ?? null,
+      mappingUrl: binding?.mapping_url ?? null,
+    };
+  }
+
+  function snapshotFromArtifactLedger(job: IfcReadyIntakeJob): ArtifactHealthSnapshot | null {
+    const source = artifactHealthLedger.get(config.edgeSiteId, job.ifc_ready_job_id, "source_ifc");
+    const model = artifactHealthLedger.get(config.edgeSiteId, job.conversion_job_id ?? job.ifc_ready_job_id, "model_usdc");
+    const mapping = artifactHealthLedger.get(config.edgeSiteId, job.conversion_job_id ?? job.ifc_ready_job_id, "element_mapping");
+    const records = [source, model, mapping].filter((record): record is EdgeArtifactRecord => Boolean(record));
+    if (records.length === 0) return null;
+
+    const sourceProjection = source ? toCloudProjection(source) : null;
+    const modelProjection = model ? toCloudProjection(model) : null;
+    const mappingProjection = mapping ? toCloudProjection(mapping) : null;
+    const checkedAt = records
+      .map((record) => record.last_checked_at ?? record.updated_at)
+      .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+    const staleReason =
+      sourceProjection?.source_ifc_exists === false
+        ? source?.failure_code ?? sourceProjection.stale_reason
+        : modelProjection?.model_usdc_reachable === false
+          ? model?.failure_code ?? modelProjection.stale_reason
+          : mappingProjection?.mapping_reachable === false
+            ? mapping?.failure_code ?? mappingProjection.stale_reason
+            : null;
+    const failureDetails = {
+      source_ifc: source?.failure_code ?? null,
+      model_usdc: model?.failure_code ?? null,
+      mapping: mapping?.failure_code ?? null,
+      metadata: null,
+    };
+    const hasFailureDetails = Object.values(failureDetails).some(Boolean);
+    const snapshot: ArtifactHealthSnapshot = {
+      source_ifc_exists: sourceProjection?.source_ifc_exists ?? null,
+      model_usdc_reachable: modelProjection?.model_usdc_reachable ?? null,
+      mapping_reachable: mappingProjection?.mapping_reachable ?? null,
+      metadata_reachable: null,
+      all_required_ready:
+        sourceProjection?.source_ifc_exists === true
+        && modelProjection?.model_usdc_reachable === true
+        && mappingProjection?.mapping_reachable === true,
+      checked_at: checkedAt,
+      stale_reason: staleReason,
+      failure_details: hasFailureDetails ? failureDetails : null,
+      source: "edge_health_probe",
+    };
+    return snapshot;
+  }
+
+  function publicArtifactHealthForJob(job: IfcReadyIntakeJob, session: ReviewSession | null = null): ArtifactHealthSnapshot | null {
+    return snapshotFromArtifactLedger(job) ?? job.artifact_health ?? session?.artifact_health ?? null;
+  }
+
+  function markSourceIfcUnavailable(
+    job: IfcReadyIntakeJob,
+    session: ReviewSession,
+    failureCode = "source_ifc_missing",
+  ): ArtifactHealthSnapshot {
+    const previous = publicArtifactHealthForJob(job, session);
+    const snapshot: ArtifactHealthSnapshot = {
+      source_ifc_exists: false,
+      model_usdc_reachable: previous?.model_usdc_reachable ?? null,
+      mapping_reachable: previous?.mapping_reachable ?? null,
+      metadata_reachable: previous?.metadata_reachable ?? null,
+      all_required_ready: false,
+      checked_at: nowIso(),
+      stale_reason: failureCode,
+      failure_details: {
+        source_ifc: failureCode,
+        model_usdc: previous?.failure_details?.model_usdc ?? null,
+        mapping: previous?.failure_details?.mapping ?? null,
+        metadata: previous?.failure_details?.metadata ?? null,
+      },
+      source: "edge_health_probe",
+    };
+    job.artifact_health = snapshot;
+    session.artifact_health = snapshot;
+    store.save(session);
+    recordProbeSnapshot(job, snapshot, artifactUrlsForJob(job));
+    return snapshot;
+  }
+
+  async function refreshArtifactHealthForJob(
+    job: IfcReadyIntakeJob,
+    artifacts: { modelArtifactUrl?: string | null; mappingUrl?: string | null } = artifactUrlsForJob(job),
+  ): Promise<ArtifactHealthSnapshot> {
+    const snapshot = await probeArtifactHealth({
+      host_local_path: job.host_local_path ?? null,
+      model_artifact_url: artifacts.modelArtifactUrl ?? null,
+      mapping_url: artifacts.mappingUrl ?? null,
+      edge_runtime_data_root: config.edgeRuntimeDataRoot,
+      configured_conversion_api_origin: config.streamingConversionApiBase,
+      checked_at: nowIso(),
+    });
+    job.artifact_health = snapshot;
+    recordProbeSnapshot(job, snapshot, artifacts);
+    if (job.review_session_id) {
+      const session = store.get(job.review_session_id);
+      if (session) {
+        session.artifact_health = snapshot;
+        store.save(session);
+      }
+    }
+    return snapshot;
+  }
+
+  async function refreshArtifactHealthBestEffort(
+    job: IfcReadyIntakeJob,
+    artifacts: { modelArtifactUrl?: string | null; mappingUrl?: string | null } = artifactUrlsForJob(job),
+  ): Promise<ArtifactHealthSnapshot | null> {
+    try {
+      return await refreshArtifactHealthForJob(job, artifacts);
+    } catch {
+      return publicArtifactHealthForJob(job);
+    }
+  }
+
+  function latestIfcReadyJobForSession(sessionId: string): IfcReadyIntakeJob | null {
+    return externalIfcReadyStore
+      .list()
+      .filter((candidate) => candidate.review_session_id === sessionId)
+      .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
+  }
+
+  async function refreshArtifactHealthForSessionBestEffort(session: ReviewSession): Promise<ArtifactHealthSnapshot | null> {
+    const linkedJob = latestIfcReadyJobForSession(session.session_id);
+    if (linkedJob) {
+      return refreshArtifactHealthBestEffort(linkedJob);
+    }
+    const binding = expectedStageBinding(session);
+    if (!binding?.url && !binding?.mapping_url) {
+      return session.artifact_health ?? null;
+    }
+    if (!isTrustedDirectSessionProbeBinding(binding, config.streamingConversionApiBase)) {
+      return session.artifact_health ?? null;
+    }
+    try {
+      const snapshot = await probeArtifactHealth({
+        host_local_path: null,
+        model_artifact_url: binding.url ?? null,
+        mapping_url: binding.mapping_url ?? null,
+        edge_runtime_data_root: config.edgeRuntimeDataRoot,
+        configured_conversion_api_origin: config.streamingConversionApiBase,
+        checked_at: nowIso(),
+      });
+      session.artifact_health = snapshot;
+      store.save(session);
+      return snapshot;
+    } catch {
+      return session.artifact_health ?? null;
+    }
+  }
+
   app.use(cors({ origin: config.corsOrigins }));
   app.use(
     express.json({
@@ -608,11 +881,15 @@ export function createCoordinatorApp(
   });
 
   app.get("/api/runtime/status", (_request, response) => {
+    const ifcReadyJobs = externalIfcReadyStore.list().map((job) => ({
+      ...job,
+      artifact_health: publicArtifactHealthForJob(job, store.get(job.review_session_id || "")),
+    }));
     response.json(buildRuntimeStatus({
       config,
       startedAt,
       sessions: store.list(),
-      ifcReadyJobs: externalIfcReadyStore.list(),
+      ifcReadyJobs,
       viewerLeasesBySession: (sessionId) => viewerLeaseStore.list(sessionId).map((lease) => publicLease(lease)),
     }));
   });
@@ -722,7 +999,7 @@ export function createCoordinatorApp(
     }
   });
 
-  app.get("/api/review-sessions/:sessionId/stream-config", (request, response) => {
+  app.get("/api/review-sessions/:sessionId/stream-config", async (request, response) => {
     if (!isSafeSessionId(request.params.sessionId)) {
       response.status(400).json({ detail: "Invalid review session id." });
       return;
@@ -732,6 +1009,7 @@ export function createCoordinatorApp(
       response.status(404).json({ detail: "Review session not found." });
       return;
     }
+    await refreshArtifactHealthForSessionBestEffort(session);
     response.json(buildStreamConfig(session, [], config));
   });
 
@@ -1512,6 +1790,7 @@ export function createCoordinatorApp(
         return;
       }
       externalIfcReadyStore.markDownloaded(job.ifc_ready_job_id, downloadResult.local_path, downloadResult.host_local_path);
+      await refreshArtifactHealthBestEffort(job);
 
       // coordinator-serial-conversion-dispatch-queue:downloaded 後不直接同步
       // dispatch,改 enqueue 進 in-memory FIFO。worker 單一 in-flight slot
@@ -1578,7 +1857,10 @@ export function createCoordinatorApp(
       .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
     response.json({
       count: jobs.length,
-      items: jobs.slice(0, limit).map((job) => summarizeIfcReadyJob(job, store.get(job.review_session_id || ""))),
+      items: jobs.slice(0, limit).map((job) => {
+        const session = store.get(job.review_session_id || "");
+        return summarizeIfcReadyJob(job, session, publicArtifactHealthForJob(job, session));
+      }),
     });
   });
 
@@ -1738,25 +2020,31 @@ export function createCoordinatorApp(
     response.json(currentMinioWatchStatusPayload());
   });
 
-  app.get("/api/external/ifc-ready/:jobId", (request, response) => {
-    const job = externalIfcReadyStore.get(request.params.jobId);
-    if (!job) {
-      response.status(404).json({ detail: "IFC-ready job not found." });
-      return;
+  app.get("/api/external/ifc-ready/:jobId", async (request, response, next) => {
+    try {
+      const job = externalIfcReadyStore.get(request.params.jobId);
+      if (!job) {
+        response.status(404).json({ detail: "IFC-ready job not found." });
+        return;
+      }
+      const artifactHealth = await refreshArtifactHealthBestEffort(job);
+      // 誠實鐵律：對外 response 不得含 presigned 簽章（與 list / shadow / session 出口一致）。
+      // quality finding #1：detail 端點與列表端點（summarizeIfcReadyJob）對齊上 wire 單一權威
+      // conversion_lifecycle_status，使前端 IfcReadyJobDetail.conversion_lifecycle_status 型別契約成立
+      // （前端 getIfcReadyJob 輪詢主讀此欄）。additive：sanitizeJobForExternal 仍回原始 job 形狀。
+      const lifecycle = deriveLifecycleStatus(job);
+      response.json({
+        ...sanitizeJobForExternal(job),
+        artifact_health: artifactHealth,
+        conversion_lifecycle_status: lifecycle,
+        ...deriveFailure(job),
+        recovery_action: deriveConversionRecoveryAction(job),
+        usdc_role: "pending" as const, // 同 summarizeIfcReadyJob：job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending（禁 lifecycle 假報 parsed）
+        data_volatility: "in_memory_volatile" as const,
+      });
+    } catch (error) {
+      next(error);
     }
-    // 誠實鐵律：對外 response 不得含 presigned 簽章（與 list / shadow / session 出口一致）。
-    // quality finding #1：detail 端點與列表端點（summarizeIfcReadyJob）對齊上 wire 單一權威
-    // conversion_lifecycle_status，使前端 IfcReadyJobDetail.conversion_lifecycle_status 型別契約成立
-    // （前端 getIfcReadyJob 輪詢主讀此欄）。additive：sanitizeJobForExternal 仍回原始 job 形狀。
-    const lifecycle = deriveLifecycleStatus(job);
-    response.json({
-      ...sanitizeJobForExternal(job),
-      conversion_lifecycle_status: lifecycle,
-      ...deriveFailure(job),
-      recovery_action: deriveConversionRecoveryAction(job),
-      usdc_role: "pending" as const, // 同 summarizeIfcReadyJob：job 端無 usdc_key,依 spec §4.6/§6.3 恆 pending（禁 lifecycle 假報 parsed）
-      data_volatility: "in_memory_volatile" as const,
-    });
   });
 
   // B-scheme T6 §7.1/7.3：本地最小 shadow metadata + data-plane 可答性。
@@ -2154,6 +2442,13 @@ export function createCoordinatorApp(
         session_reason = result.reason;
       }
     }
+    void refreshArtifactHealthBestEffort(
+      externalIfcReadyStore.get(job.ifc_ready_job_id) ?? job,
+      {
+        modelArtifactUrl: report.artifacts?.usdc_ref ?? null,
+        mappingUrl: report.artifacts?.element_mapping_ref ?? null,
+      },
+    );
 
     return { ok: true, ifc_ready_job: externalIfcReadyStore.get(job.ifc_ready_job_id) ?? updatedJob, callback: entry, session, session_replay, session_reason };
   }
@@ -2631,10 +2926,7 @@ export function createCoordinatorApp(
       }
       // session → ifc-ready job：conversion-ready auto-session 時由
       // recordReviewSession 寫入 job.review_session_id 反向參照（app.ts ~905）。
-      const job = externalIfcReadyStore
-        .list()
-        .filter((candidate) => candidate.review_session_id === sessionId)
-        .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0];
+      const job = latestIfcReadyJobForSession(sessionId);
       if (!job) {
         return {
           ok: false,
@@ -2649,6 +2941,15 @@ export function createCoordinatorApp(
         return {
           ok: false,
           reason: "IFC for this session has not been downloaded to a server-side path yet.",
+        };
+      }
+      const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.edgeRuntimeDataRoot);
+      if (sourceCheck.value !== true) {
+        return {
+          ok: false,
+          error_code: "stale_session_artifact",
+          detail: "source_ifc_missing",
+          artifact_health: markSourceIfcUnavailable(job, session, sourceCheck.failure ?? "source_ifc_missing"),
         };
       }
       return {
@@ -2822,7 +3123,10 @@ function buildRuntimeStatus(input: RuntimeStatusInput): Record<string, unknown> 
         .slice()
         .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
         .slice(0, 10)
-        .map((job) => summarizeIfcReadyJob(job, input.sessions.find((session) => session.session_id === job.review_session_id) ?? null)),
+        .map((job) => {
+          const session = input.sessions.find((item) => item.session_id === job.review_session_id) ?? null;
+          return summarizeIfcReadyJob(job, session, job.artifact_health ?? session?.artifact_health ?? null);
+        }),
     },
     observations: {
       classification: "coordinator_visible_runtime_summary",
@@ -2865,6 +3169,7 @@ function summarizeSessionForRuntime(session: ReviewSession, viewerLeases: Public
     first_frame_at: session.first_frame_at ?? null, // VG-01 型別鏈：runtime/status 透出真首幀證據
     stage_open_state: stageOpenEvidence.state,
     stage_open_evidence: stageOpenEvidence,
+    artifact_health: session.artifact_health ?? null,
     primary_viewer_lease_id: primaryLease?.lease_id ?? null,
     primary_viewer_user_id: primaryLease?.user_id ?? null,
     viewer_leases: viewerLeases,
@@ -2930,7 +3235,11 @@ function deriveStageOpenEvidence(
   };
 }
 
-function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | null): Record<string, unknown> {
+function summarizeIfcReadyJob(
+  job: IfcReadyIntakeJob,
+  session: ReviewSession | null,
+  artifactHealth: ArtifactHealthSnapshot | null = null,
+): Record<string, unknown> {
   const expectedStage = session ? expectedStageBinding(session) : null;
   const lifecycle = deriveLifecycleStatus(job);
   return {
@@ -2947,8 +3256,7 @@ function summarizeIfcReadyJob(job: IfcReadyIntakeJob, session: ReviewSession | n
     source_ifc_etag: job.source_ifc_etag,
     download_status: job.download_status ?? null,
     download_failure: job.download_failure ?? null,
-    local_path: job.local_path ?? null,
-    host_local_path: job.host_local_path ?? null,
+    artifact_health: artifactHealth ?? job.artifact_health ?? session?.artifact_health ?? null,
     conversion_job_id: job.conversion_job_id,
     conversion_status: job.conversion_status,
     conversion_lifecycle_status: lifecycle,
@@ -3003,6 +3311,8 @@ function sanitizeJobForExternal(job: IfcReadyIntakeJob): IfcReadyIntakeJob {
   // summarizeIfcReadyJob 是 whitelist 不含此欄 → list/detail 形狀分歧（未文件化的非對稱曝露）。
   const rest = { ...job, source_ifc_ref: maskPresignedRef(job.source_ifc_ref) };
   delete (rest as { conversion_failure?: string | null }).conversion_failure;
+  delete (rest as { local_path?: string | null }).local_path;
+  delete (rest as { host_local_path?: string | null }).host_local_path;
   return rest;
 }
 
@@ -3011,6 +3321,21 @@ function expectedStageBinding(session: ReviewSession): ArtifactBinding | null {
     .filter((binding) => binding.artifact_role === "derived" && binding.ready_status === "ready" && Boolean(binding.url))
     .slice()
     .sort((left, right) => left.load_order - right.load_order)[0] ?? null;
+}
+
+function hasConfiguredConversionOrigin(urlValue: string | null, configuredConversionApiBase: string): boolean {
+  if (!urlValue) return true;
+  try {
+    return new URL(urlValue).origin === new URL(configuredConversionApiBase).origin;
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedDirectSessionProbeBinding(binding: ArtifactBinding, configuredConversionApiBase: string): boolean {
+  return binding.conversion_authority === "bim-streaming-server"
+    && hasConfiguredConversionOrigin(binding.url, configuredConversionApiBase)
+    && hasConfiguredConversionOrigin(binding.mapping_url, configuredConversionApiBase);
 }
 
 function parseListLimit(value: unknown): number {
@@ -3469,6 +3794,7 @@ function buildStreamConfig(session: ReviewSession, artifacts: Artifact[], config
     artifact_bindings: artifactBindings,
     kit_instance_bindings: kitInstanceBindings,
     quality_metrics_summary: session.quality_metrics_summary ?? null,
+    artifact_health: session.artifact_health ?? null,
     stage_composition: {
       applied_policy: "coordinator_load_order",
       primary_artifact_id: primaryStageBinding?.artifact_id || null,

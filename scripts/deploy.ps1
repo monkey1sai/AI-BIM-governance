@@ -50,6 +50,9 @@ $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $RunDir   = Join-Path $RepoRoot 'scripts\.run'
 $LogPath  = Join-Path $RunDir   'deploy.log'
 $script:DefaultPublicHost = '192.168.10.105'
+$script:FixedTestDeployRoot = 'D:\Users\deploy\AI-bim-geo'
+$script:DefaultEdgeSiteId = 'site_local_deploy'
+$script:DefaultEdgeRuntimeDataRoot = 'D:\Users\deploy\AI-bim-geo-data'
 
 # Import lib modules
 $libDir = Join-Path $PSScriptRoot 'lib'
@@ -461,6 +464,83 @@ function Set-DeployEnvIfNeeded {
     }
 }
 
+function Normalize-DeployManagedPath {
+    param([Parameter(Mandatory = $true)][string] $Path)
+    return ([System.IO.Path]::GetFullPath($Path)).TrimEnd([char[]]@('\', '/'))
+}
+
+function Test-IsFixedTestDeployProfile {
+    param([Parameter(Mandatory = $true)][string] $Path)
+    return ((Normalize-DeployManagedPath -Path $Path) -ieq (Normalize-DeployManagedPath -Path $script:FixedTestDeployRoot))
+}
+
+function Resolve-DeployEdgeRuntimeContract {
+    param()
+
+    $edgeSiteId = [Environment]::GetEnvironmentVariable('EDGE_SITE_ID', 'Process')
+    if ([string]::IsNullOrWhiteSpace($edgeSiteId)) {
+        $edgeSiteId = $script:DefaultEdgeSiteId
+    }
+
+    $edgeRuntimeDataRoot = [Environment]::GetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', 'Process')
+    if ([string]::IsNullOrWhiteSpace($edgeRuntimeDataRoot)) {
+        $edgeRuntimeDataRoot = $script:DefaultEdgeRuntimeDataRoot
+    }
+    $edgeRuntimeDataRoot = Normalize-DeployManagedPath -Path $edgeRuntimeDataRoot
+
+    $runtimeStorageRoot = Join-Path $edgeRuntimeDataRoot 'storage'
+    $artifactsRoot = Join-Path $edgeRuntimeDataRoot 'artifacts'
+    $ledgerRoot = Join-Path $edgeRuntimeDataRoot 'ledgers'
+    foreach ($dirPath in @($runtimeStorageRoot, $artifactsRoot, $ledgerRoot)) {
+        if (-not (Test-Path -LiteralPath $dirPath -PathType Container)) {
+            New-Item -ItemType Directory -Path $dirPath -Force | Out-Null
+        }
+    }
+
+    return [pscustomobject]@{
+        EDGE_SITE_ID                        = $edgeSiteId
+        EDGE_RUNTIME_DATA_ROOT              = $edgeRuntimeDataRoot
+        RUNTIME_STORAGE_ROOT                = $runtimeStorageRoot
+        STORAGE_HOST_ROOT                   = $runtimeStorageRoot
+        STREAMING_CONVERSION_ARTIFACTS_ROOT = $artifactsRoot
+        CONVERSION_LEDGER_STORE_PATH        = Join-Path $ledgerRoot 'conversion-ledger.json'
+        ARTIFACT_HEALTH_LEDGER_STORE_PATH   = Join-Path $ledgerRoot 'artifact-health-ledger.json'
+    }
+}
+
+function Set-DeployEdgeRuntimeContractEnv {
+    param([Parameter(Mandatory = $true)] $Contract)
+
+    foreach ($name in @(
+        'EDGE_SITE_ID',
+        'EDGE_RUNTIME_DATA_ROOT',
+        'RUNTIME_STORAGE_ROOT',
+        'STORAGE_HOST_ROOT',
+        'STREAMING_CONVERSION_ARTIFACTS_ROOT',
+        'CONVERSION_LEDGER_STORE_PATH',
+        'ARTIFACT_HEALTH_LEDGER_STORE_PATH'
+    )) {
+        [Environment]::SetEnvironmentVariable($name, [string]$Contract.$name, 'Process')
+    }
+}
+
+function Resolve-DeployVolumeState {
+    param(
+        [Parameter(Mandatory = $true)] $Volume,
+        $EdgeRuntimeContract = $null
+    )
+
+    if ($null -eq $EdgeRuntimeContract) {
+        return $Volume
+    }
+
+    return [pscustomobject]@{
+        runtimeStorageRoot = $EdgeRuntimeContract.RUNTIME_STORAGE_ROOT
+        leaf               = 'storage'
+        status             = 'ALIGNED'
+    }
+}
+
 # ============================================================
 # Phase 1: Preflight (read-only audit)
 # ============================================================
@@ -484,6 +564,11 @@ $resolvedEnvFile = if ([string]::IsNullOrWhiteSpace($EnvFile)) {
     }
 } else { $EnvFile }
 $script:resolvedEnvFile = $resolvedEnvFile
+$edgeRuntimeContract = $null
+if ((-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', 'Process'))) -or (Test-IsFixedTestDeployProfile -Path $RepoRoot)) {
+    $edgeRuntimeContract = Resolve-DeployEdgeRuntimeContract
+    Set-DeployEdgeRuntimeContractEnv -Contract $edgeRuntimeContract
+}
 $resolvedPublicHostRaw = if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {
     $PublicHost
 } else {
@@ -600,7 +685,7 @@ $conversionRuntimeSignature = New-ConversionRuntimeSignature `
     -HealthHost $resolvedConversionHealthHost `
     -PublicArtifactsUrl $resolvedConversionPublicArtifactsUrl
 
-$volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+$volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
 $script:volume = $volume
 $resolvedGovernancePort = Resolve-DeployIntValue `
     -Name 'GOV_PORT' `
@@ -852,7 +937,7 @@ foreach ($ef in $envFiles) {
         if ($ef.file -eq '.env.web-plane.host-kit') {
             $resolvedEnvFile = '.env.web-plane.host-kit'
             $script:resolvedEnvFile = $resolvedEnvFile
-            $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+            $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
             $script:volume = $volume
         }
     } elseif ($ef.missing.Count -gt 0) {
@@ -877,7 +962,7 @@ if ($volume.status -eq 'MISSING_KEY') {
     Add-Content -LiteralPath $envPath -Value "# auto-appended by deploy.ps1 (volume alignment)"
     Add-Content -LiteralPath $envPath -Value "RUNTIME_STORAGE_ROOT=$absStorage"
     # 重新 audit
-    $volume = Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile
+    $volume = Resolve-DeployVolumeState -Volume (Test-VolumeAlignment -RepoRoot $RepoRoot -EnvFile $resolvedEnvFile) -EdgeRuntimeContract $edgeRuntimeContract
     $script:volume = $volume
     if ($volume.status -ne 'ALIGNED') {
         Write-DeployTag -Tag 'fail' -Message 'volume alignment still not OK after fix' -LogPath $LogPath | Out-Null

@@ -55,6 +55,10 @@ export interface CoordinatorConfig {
   // minio-closed-loop-phase1 Task 1：持久 ConversionLedger（coordinator-local shadow）
   // env CONVERSION_LEDGER_STORE_PATH；default data/conversion-ledger.json
   conversionLedgerStorePath: string;
+  // edge artifact health：落地端 runtime data-plane metadata，不進雲端、不放 deploy checkout。
+  edgeSiteId: string;
+  edgeRuntimeDataRoot: string;
+  artifactHealthLedgerStorePath: string;
   // T7：使用者（local web view）auth provider，可替換；不做死 EZPLUS SSO，
   // local web view ↔ 公司 SSO 真實銜接待 OQ5。
   userAuthProvider: string;
@@ -334,6 +338,10 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   const host = process.env.HOST || "127.0.0.1";
   const port = numberFromEnv("PORT", 8004);
   const publicHost = process.env.PUBLIC_HOST || "127.0.0.1";
+  const edgeRuntimeDataRoot = process.env.EDGE_RUNTIME_DATA_ROOT || cwd;
+  const artifactHealthLedgerDefaultPath = process.env.EDGE_RUNTIME_DATA_ROOT
+    ? path.join(edgeRuntimeDataRoot, "ledgers", "artifact-health-ledger.json")
+    : path.join(cwd, "data", "artifact-health-ledger.json");
   const viewerPublicBaseUrl =
     normalizePublicBaseUrl(process.env.VIEWER_PUBLIC_BASE_URL, "VIEWER_PUBLIC_BASE_URL") ||
     publicBaseUrlFromHost(publicHost, numberFromEnv("VIEWER_PORT", 5173));
@@ -392,6 +400,11 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
     conversionLedgerStorePath:
       process.env.CONVERSION_LEDGER_STORE_PATH ||
       path.join(cwd, "data", "conversion-ledger.json"),
+    edgeSiteId: process.env.EDGE_SITE_ID || "site_local_dev",
+    edgeRuntimeDataRoot,
+    artifactHealthLedgerStorePath:
+      process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH ||
+      artifactHealthLedgerDefaultPath,
     userAuthProvider: process.env.USER_AUTH_PROVIDER || "local-dev",
     // fast-ifc-link-demo-loop §2.5:
     ifcDownloadTimeoutSeconds: numberFromEnv("IFC_DOWNLOAD_TIMEOUT_SECONDS", 600),
