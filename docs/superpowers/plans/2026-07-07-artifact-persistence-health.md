@@ -1,5 +1,7 @@
 # Artifact Persistence Health Implementation Plan
 
+> Nature: implementation plan. Formal design evidence: `docs/superpowers/specs/2026-07-07-artifact-persistence-health-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to execute this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make A1 rule-runs and Review Room reject stale local artifacts before they fail inside governance-service or the viewer, and persist edge-local IFC/USDC/mapping health in a way that matches the cloud-control-plane / edge-data-plane architecture.
