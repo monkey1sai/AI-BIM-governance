@@ -36,8 +36,8 @@ import importlib.util
 import json
 
 versioned_required = {
-    "fastapi": "0.111.0",
-    "starlette": "0.37.2",
+    "fastapi": "0.115.6",
+    "starlette": "0.41.3",
     "uvicorn": "0.45.0",
 }
 import_required = ("pxr", "ifcopenshell")
@@ -76,12 +76,12 @@ if missing:
 else:
     fastapi_version = parse_version(versions["fastapi"])
     starlette_version = parse_version(versions["starlette"])
-    if fastapi_version != parse_version("0.111.0"):
+    if fastapi_version != parse_version("0.115.6"):
         status = "INCOMPATIBLE"
-        reason = "fastapi " + versions["fastapi"] + " does not match repo baseline 0.111.0"
-    elif starlette_version < parse_version("0.37.2") or starlette_version >= parse_version("0.38.0"):
+        reason = "fastapi " + versions["fastapi"] + " does not match repo baseline 0.115.6"
+    elif starlette_version != parse_version("0.41.3"):
         status = "INCOMPATIBLE"
-        reason = "starlette " + versions["starlette"] + " incompatible with fastapi 0.111.0"
+        reason = "starlette " + versions["starlette"] + " does not match repo baseline 0.41.3"
     elif parse_version(versions["uvicorn"]) != parse_version("0.45.0"):
         status = "INCOMPATIBLE"
         reason = "uvicorn " + versions["uvicorn"] + " does not match repo baseline 0.45.0"

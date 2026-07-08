@@ -10,6 +10,20 @@
 | 日期 | 輪次 | 變更 |
 |---|---|---|
 | 2026-07-07 | A1–A4 輪 | 初版：五能力現況盤點＋本輪切片 S1–S5＋backlog |
+| 2026-07-07 | 交叉驗證 | 補 §0 關鍵發現：INFRA 是未來 capability substrate，A1 只是第一個 consumer；BCF 是 approval artifact，不只是匯出檔 |
+
+---
+
+## §0 關鍵發現（2026-07-07 交叉驗證）
+
+本 repo 的目標不是只把 A1 做完，而是承接 BIM、AI coding、Omniverse/WebRTC、BCF/IDS、digital twin 等新趨勢與新發現，逐步形成可驗證、可審批、可回放的能力平台。A1「治理與模型檢核」是第一個可落地的 capability slice，不是 INFRA 的唯一 owner。
+
+本 spec 的五個 INFRA 能力因此是 **capability substrate**：
+
+- `#sessions` / `#runtime` 證據鏈是所有 3D 連動 capability 的 ready gate，不是 A1 私有狀態。A1 高亮、A2 diff overlay、A3 clash 飛點、A4 isolate、A5 IoT twin、A6 4D/5D 後續都必須先進 §2 消費者掛鉤矩陣再實作。
+- BCF 的目標是 approval artifact：把 AI / rule / diff / 人工審查結果變成可交換、可稽核、可帶 viewpoint/snapshot 的 topic。現況只承諾 BCF 2.1 + Issue gating；BCF 3.0、viewpoint、snapshot 仍須等 M4 3D 證據與 buildingSMART 規格確認後再開工。
+- `A1Bridge` / IX-A1 / IX-SS-05 是既有規格命名，應保留；但新增 helper、type、telemetry copy 預設保持 capability-neutral，避免把未來 A2–A10 都綁死成 A1 特例。
+- 未來 AI reviewer / AI coding agent 可以消費這些 evidence 來建立、流轉或解釋 BCF topic，但本輪不做自動審批、不做 agent 決策寫回 source model；所有 state change 仍走 intent、confirm、audit 與 backend 回讀。
 
 ---
 
