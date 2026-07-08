@@ -177,8 +177,11 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
   });
 
   // MinIO watcher 已下載 source IFC 但尚未建立 Review Room session 時，A1 仍可
-  // 透過 ifc_ready_job_id 要求 coordinator 在 server side 解析 host IFC path。
+  // 透過 ifc_ready_job_id 要求 coordinator 在 server side 解析 host IFC path，並排入
+  // governance-service CPU rule-run queue。
   // 瀏覽器不接觸 host_local_path，也不把 MinIO key 當 ifc_source_path。
+  // 這不是 IFC 下載 / IFC->USD 轉檔排程 API；未被 watcher 偵測到的 MinIO object
+  // 應走 coordinator conversion trigger / external ifc-ready intake。
   //
   // Security boundary: this follows the existing operator-console inventory
   // model (/api/external/ifc-ready and /api/minio/objects are browser-visible).

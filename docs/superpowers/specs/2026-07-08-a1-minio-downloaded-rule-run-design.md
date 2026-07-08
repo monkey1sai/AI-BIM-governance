@@ -35,6 +35,17 @@ Session-backed MinIO jobs continue to use the existing
 jobs use the new
 `/api/governance/rule-runs/for-ifc-ready/:jobId` path.
 
+`POST /api/governance/rule-runs/for-ifc-ready/:jobId` means "queue an A1
+governance CPU rule-run for an existing downloaded IFC-ready job". It is an
+edge/coordinator API boundary because the browser asks the edge coordinator to
+resolve the local IFC path and communicate with loopback governance-service.
+It is not the download/conversion scheduling queue. If a MinIO `source_ifc`
+object exists but the watcher did not detect it, or it has not entered the
+download / IFC->USD scheduling lifecycle, the operator path is the existing
+conversion trigger (`POST /api/conversion/trigger` with the MinIO key), which
+feeds the external ifc-ready intake and conversion dispatch lifecycle before A1
+can resolve a local IFC path.
+
 When A1 has locked an `ifc-ready://<jobId>` source, that locked source takes
 precedence over a manually selected review session. A later session selection
 must not silently reroute the run to an unrelated session/model.

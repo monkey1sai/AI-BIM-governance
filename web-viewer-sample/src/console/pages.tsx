@@ -684,14 +684,14 @@ export function A1GovernanceWorkbenchPage() {
       : ifcReadyJobs === null
         ? t("正在載入 watcher downloaded ifc-ready jobs…", "Loading watcher downloaded ifc-ready jobs...")
         : !selectedMinioJob
-          ? `${t("尚未找到 watcher 下載紀錄；A1 不會直接檢核 MinIO key。idempotency_key=", "No watcher download record found; A1 will not validate a MinIO key directly. idempotency_key=")}${selectedMinioObject?.idempotency_key ?? "unknown"}`
+          ? `${t("尚未找到 watcher 下載紀錄；A1 不會直接檢核 MinIO key。請用 MinIO/IFC->USD 排程頁觸發 POST /api/conversion/trigger。idempotency_key=", "No watcher download record found; A1 will not validate a MinIO key directly. Use the MinIO/IFC->USD schedule page to trigger POST /api/conversion/trigger. idempotency_key=")}${selectedMinioObject?.idempotency_key ?? "unknown"}`
           : !selectedMinioDownloaded
             ? `${t("watcher job 尚未下載完成，A1 等待 downloaded 狀態。download_status=", "Watcher job is not downloaded yet; A1 waits for downloaded status. download_status=")}${selectedMinioJob.download_status ?? "unknown"}${selectedMinioJob.download_failure ? ` (${selectedMinioJob.download_failure})` : ""}`
             : !selectedMinioSourceIfcReady
               ? `${t("watcher job 已下載，但 source IFC artifact stale；A1 不啟動 rule-run：", "Watcher job is downloaded, but the source IFC artifact is stale; A1 will not start a rule-run: ")}${selectedMinioSourceIfcStaleReason}`
               : selectedMinioSessionId
                 ? `${t("已對到 watcher downloaded job 與 review session；rule-run 將走 coordinator for-session proxy：", "Matched watcher downloaded job and review session; rule-run will use coordinator for-session proxy: ")}${selectedMinioJob.ifc_ready_job_id} / ${selectedMinioSessionId}`
-                : `${t("已對到 watcher downloaded job；rule-run 將走 coordinator ifc-ready proxy：", "Matched watcher downloaded job; rule-run will use coordinator ifc-ready proxy: ")}${selectedMinioJob.ifc_ready_job_id}`;
+                : `${t("已對到 watcher downloaded job；POST /api/governance/rule-runs/for-ifc-ready 只排入 A1 governance rule-run queue：", "Matched watcher downloaded job; POST /api/governance/rule-runs/for-ifc-ready queues only the A1 governance rule-run: ")}${selectedMinioJob.ifc_ready_job_id}`;
   const selectedMinioPickLabel = canPickMinioDownloaded
     ? t("選取已下載模型", "Select Downloaded Model")
     : !selectedKey
@@ -699,7 +699,7 @@ export function A1GovernanceWorkbenchPage() {
       : ifcReadyJobs === null
         ? t("載入 downloaded jobs", "Loading downloaded jobs")
         : !selectedMinioJob
-          ? t("等待 watcher 下載紀錄", "Waiting for watcher download record")
+          ? t("等待 watcher/轉檔排程", "Waiting for watcher/conversion schedule")
           : !selectedMinioDownloaded
             ? t("等待 downloaded session", "Waiting for downloaded session")
             : !selectedMinioSourceIfcReady
@@ -830,7 +830,7 @@ export function A1GovernanceWorkbenchPage() {
           )}
         </div>
         {fsErr && sourceKind === "local_fs" && <p className="ec-warn-note" data-testid="a1-fs-error" style={{ marginTop: 4 }}>{t("local_fs 檔案庫不可用：", "local_fs file library unavailable: ")}{fsErr}{" "}<Btn data-testid="a1-fs-retry" caption="GET /api/governance/files/tree" onClick={() => { void loadA1FsTree(); }}>{t("重試載入檔案庫", "Retry loading file library")}</Btn></p>}
-        {sourceKind === "minio" && <p className="ec-note" data-testid="a1-minio-source-note" style={{ marginTop: 4 }}>{t("A1 CPU 檢核需要 coordinator-resolved server-local IFC path；MinIO key 不會送 POST /api/governance/rule-runs。", "A1 CPU validation needs a coordinator-resolved server-local IFC path; the MinIO key is not sent to POST /api/governance/rule-runs.")}</p>}
+        {sourceKind === "minio" && <p className="ec-note" data-testid="a1-minio-source-note" style={{ marginTop: 4 }}>{t("A1 CPU 檢核需要 coordinator-resolved server-local IFC path；MinIO key 不會送 POST /api/governance/rule-runs。未被 watcher 偵測到的 MinIO 物件請先由轉檔排程頁觸發 POST /api/conversion/trigger。", "A1 CPU validation needs a coordinator-resolved server-local IFC path; the MinIO key is not sent to POST /api/governance/rule-runs. If the watcher missed a MinIO object, trigger POST /api/conversion/trigger from the conversion schedule page first.")}</p>}
         {sourceKind === "minio" && selectedKey && <p className={canPickMinioDownloaded ? "ec-note" : "ec-warn-note"} data-testid="a1-minio-resolution-note" style={{ marginTop: 4 }}>{selectedMinioResolutionNote}</p>}
         {minioErr && sourceKind === "minio" && <p className="ec-warn-note" data-testid="a1-minio-error" style={{ marginTop: 4 }}>{t("MinIO 物件清單不可用：", "MinIO object list unavailable: ")}{minioErr}</p>}
         {selectedLocalOption && sourceKind === "local_fs" && <p className="ec-note" data-testid="a1-localfs-selected" style={{ marginTop: 4 }}>{t("已選 local_fs：", "Selected local_fs: ")}{selectedLocalOption.version.path}</p>}
@@ -892,13 +892,13 @@ export function A1GovernanceWorkbenchPage() {
       <Panel title={t("review session（3D 連動目標）", "review session (3D handoff target)")} sub={t("MinIO 來源的 rule-run 優先走 review session，由 coordinator 解析 server-local IFC path；Review Room 負責 attach / highlight trace。", "MinIO-backed rule-runs prefer a review session so the coordinator can resolve the server-local IFC path; Review Room owns attach / highlight trace.")} prov="asbuilt">
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
-            <p className="ec-note">{t("無 active session。請先把選定 MinIO 模型排入轉檔；ready 後本頁會選到對應 session，再用 coordinator 解析出的 server-local IFC path 跑檢核。", "No active session. Queue the selected MinIO model for conversion first; once ready, this page selects its session and runs validation through the coordinator-resolved server-local IFC path.")}</p>
+            <p className="ec-note">{t("無 active session。若已有 downloaded IFC-ready job，A1 會直接用 POST /api/governance/rule-runs/for-ifc-ready 排入 governance rule-run；若尚未被 watcher 偵測或未排入下載/轉檔，請到 MinIO/IFC→USD 排程頁觸發 POST /api/conversion/trigger。", "No active session. If a downloaded IFC-ready job exists, A1 uses POST /api/governance/rule-runs/for-ifc-ready to queue the governance rule-run directly; if the object was not detected by the watcher or not scheduled for download/conversion, use the MinIO/IFC→USD schedule page to trigger POST /api/conversion/trigger.")}</p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Btn data-testid="a1-trigger-convert" disabled
                 caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
                 {t("A1 不排入轉檔", "A1 does not queue conversion")}
               </Btn>
-              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("到 IFC→USD 轉檔排程查看詳情 →", "View details in the conversion schedule →")}</a>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("到 MinIO / IFC→USD 排程頁觸發 POST /api/conversion/trigger →", "Trigger POST /api/conversion/trigger in the MinIO / IFC→USD schedule page →")}</a>
             </div>
           </div>
         ) : (
