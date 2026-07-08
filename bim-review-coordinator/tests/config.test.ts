@@ -394,6 +394,16 @@ describe("loadConfig edge artifact health", () => {
     );
   });
 
+  it("derives artifact health ledger path from final override edge runtime root", () => {
+    const config = loadConfig({
+      edgeRuntimeDataRoot: "D:\\Users\\deploy\\AI-bim-geo-data",
+    });
+
+    expect(config.artifactHealthLedgerStorePath).toBe(
+      path.join("D:\\Users\\deploy\\AI-bim-geo-data", "ledgers", "artifact-health-ledger.json"),
+    );
+  });
+
   it("respects explicit ARTIFACT_HEALTH_LEDGER_STORE_PATH", () => {
     process.env.EDGE_RUNTIME_DATA_ROOT = "D:\\Users\\deploy\\AI-bim-geo-data";
     process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH = "D:\\edge\\ledgers\\custom-artifact-health.json";

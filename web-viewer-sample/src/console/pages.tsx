@@ -427,6 +427,18 @@ export function A1GovernanceWorkbenchPage() {
 
   // A1 MinIO resolution：以 idempotency_key 對 ifc-ready jobs，只有 downloaded + review_session_id
   // 可進入檢核；server-local path 仍由 coordinator for-session resolver 解析，不由 browser 傳入。
+  const refreshIfcReadyJobs = useCallback(async (): Promise<IfcReadyListItem[]> => {
+    setIfcReadyErr(null);
+    try {
+      const res = await coordinatorClient.listIfcReady(100);
+      setIfcReadyJobs(res.items);
+      return res.items;
+    } catch (e) {
+      setIfcReadyJobs([]);
+      setIfcReadyErr(String(e));
+      throw e;
+    }
+  }, []);
   useEffect(() => {
     let alive = true;
     coordinatorClient.listIfcReady(100)
@@ -434,6 +446,10 @@ export function A1GovernanceWorkbenchPage() {
       .catch((e) => { if (alive) { setIfcReadyJobs([]); setIfcReadyErr(String(e)); } });
     return () => { alive = false; };
   }, []);
+
+  const selectedMinioObject = sourceKind === "minio"
+    ? (minioObjects ?? []).find((o) => o.key === selectedKey) ?? null
+    : null;
 
   const doRun = useCallback(async () => {
     // A1 v2 gating：須先選定 IFC 檔案；review session 只影響後續 3D handoff / mapping enrichment。
@@ -447,6 +463,23 @@ export function A1GovernanceWorkbenchPage() {
     // dispatch PICK_FILE 遞增的新 gen 會被抓回來，守門永遠通過、舊輪詢繼續打（資源洩漏）。
     const myGen = pollGenRef.current;
     try {
+      if (state.ifcPath.startsWith("session://")) {
+        const refreshedJobs = await refreshIfcReadyJobs();
+        if (pollGenRef.current !== myGen) return;
+        const refreshedJob = selectedMinioObject?.idempotency_key
+          ? refreshedJobs.find((job) => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null
+          : refreshedJobs.find((job) => job.review_session_id === selectedSession) ?? null;
+        const refreshedSourceIfcReady =
+          refreshedJob?.download_status === "downloaded"
+          && refreshedJob.review_session_id === selectedSession
+          && refreshedJob.artifact_health?.source_ifc_exists === true;
+        if (!refreshedSourceIfcReady) {
+          const staleReason = refreshedJob?.artifact_health?.stale_reason
+            ?? (refreshedJob?.artifact_health?.source_ifc_exists === false ? "source_ifc_exists=false" : "source_ifc_exists=unknown");
+          dispatch({ type: "RUN_FAIL", error: `source IFC artifact stale before rule-run: ${staleReason}` });
+          return;
+        }
+      }
       const runRequest = {
         ifc_source_path: state.ifcPath,
         ids_path: idsPath || undefined,
@@ -488,7 +521,7 @@ export function A1GovernanceWorkbenchPage() {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.step, state.runError, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions]);
+  }, [state.step, state.runError, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions, selectedMinioObject, refreshIfcReadyJobs]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -600,9 +633,6 @@ export function A1GovernanceWorkbenchPage() {
   const localOptions = flattenA1LocalVersions(fsTree ?? []);
   const selectedLocalOption = localOptions.find((option) => option.version.path === selectedLocalPath) ?? null;
   const canPickLocal = sourceKind === "local_fs" && Boolean(selectedLocalOption);
-  const selectedMinioObject = sourceKind === "minio"
-    ? (minioObjects ?? []).find((o) => o.key === selectedKey) ?? null
-    : null;
   const selectedMinioJob = selectedMinioObject && ifcReadyJobs
     ? ifcReadyJobs.find((job) => job.idempotency_key === selectedMinioObject.idempotency_key) ?? null
     : null;

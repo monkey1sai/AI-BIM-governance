@@ -7,6 +7,7 @@ export interface ArtifactHealthProbeInput {
   model_artifact_url: string | null;
   mapping_url: string | null;
   edge_runtime_data_root: string;
+  storage_root?: string | null;
   configured_conversion_api_origin: string;
   checked_at?: string;
 }
@@ -59,16 +60,20 @@ function realpathIfExists(value: string): string | null {
   return fs.realpathSync.native(value);
 }
 
-export function checkSourceIfcPath(hostLocalPath: string | null, edgeRuntimeDataRoot: string): SourceIfcPathCheck {
+export function checkSourceIfcPath(
+  hostLocalPath: string | null,
+  storageRoot: string,
+  edgeRuntimeDataRoot?: string | null,
+): SourceIfcPathCheck {
   if (!hostLocalPath) {
     return { value: null, failure: null };
   }
-  if (!edgeRuntimeDataRoot) {
-    return { value: false, failure: "edge_runtime_data_root_missing" };
+  if (!storageRoot) {
+    return { value: false, failure: "edge_storage_root_missing" };
   }
 
   const hostStyle = detectPathStyle(hostLocalPath);
-  const rootStyle = detectPathStyle(edgeRuntimeDataRoot);
+  const rootStyle = detectPathStyle(storageRoot);
   if (hostStyle !== rootStyle) {
     return { value: false, failure: "source_ifc_path_style_mismatch" };
   }
@@ -77,34 +82,45 @@ export function checkSourceIfcPath(hostLocalPath: string | null, edgeRuntimeData
   }
 
   const api = pathApi(hostStyle);
-  if (!api.isAbsolute(hostLocalPath) || !api.isAbsolute(edgeRuntimeDataRoot)) {
+  if (!api.isAbsolute(hostLocalPath) || !api.isAbsolute(storageRoot)) {
     return { value: false, failure: "source_ifc_path_not_absolute" };
   }
 
-  const storageRoot = api.resolve(edgeRuntimeDataRoot, "storage");
+  const resolvedStorageRoot = api.resolve(storageRoot);
   const resolvedHostPath = api.resolve(hostLocalPath);
-  if (hostStyle === "win32" && !sameWin32Drive(resolvedHostPath, storageRoot)) {
+  if (hostStyle === "win32" && !sameWin32Drive(resolvedHostPath, resolvedStorageRoot)) {
     return { value: false, failure: "source_ifc_alternate_drive_rejected" };
   }
-  if (!isWithin(resolvedHostPath, storageRoot, api)) {
+  if (!isWithin(resolvedHostPath, resolvedStorageRoot, api)) {
     return { value: false, failure: "source_ifc_outside_edge_storage" };
   }
 
-  const storageReal = realpathIfExists(storageRoot);
+  const storageReal = realpathIfExists(resolvedStorageRoot);
   if (!storageReal) {
     return { value: false, failure: "edge_storage_root_missing" };
   }
-  const edgeRootReal = realpathIfExists(edgeRuntimeDataRoot);
-  if (!edgeRootReal) {
-    return { value: false, failure: "edge_runtime_data_root_missing" };
-  }
-  const storageRealStyle = detectPathStyle(storageReal);
-  const edgeRootRealStyle = detectPathStyle(edgeRootReal);
-  if (
-    storageRealStyle !== edgeRootRealStyle
-    || !isWithin(stripExtendedWinPrefix(storageReal), stripExtendedWinPrefix(edgeRootReal), pathApi(storageRealStyle))
-  ) {
-    return { value: false, failure: "edge_storage_root_escape" };
+  if (edgeRuntimeDataRoot) {
+    const edgeRootStyle = detectPathStyle(edgeRuntimeDataRoot);
+    const resolvedEdgeRoot = edgeRootStyle === hostStyle && api.isAbsolute(edgeRuntimeDataRoot)
+      ? api.resolve(edgeRuntimeDataRoot)
+      : null;
+    const storageExpectedInsideEdge = resolvedEdgeRoot
+      ? isWithin(resolvedStorageRoot, resolvedEdgeRoot, api)
+      : false;
+    if (storageExpectedInsideEdge && resolvedEdgeRoot) {
+      const edgeRootReal = realpathIfExists(resolvedEdgeRoot);
+      if (!edgeRootReal) {
+        return { value: false, failure: "edge_runtime_data_root_missing" };
+      }
+      const storageRealStyle = detectPathStyle(storageReal);
+      const edgeRootRealStyle = detectPathStyle(edgeRootReal);
+      if (
+        storageRealStyle !== edgeRootRealStyle
+        || !isWithin(stripExtendedWinPrefix(storageReal), stripExtendedWinPrefix(edgeRootReal), pathApi(storageRealStyle))
+      ) {
+        return { value: false, failure: "edge_storage_root_escape" };
+      }
+    }
   }
   if (!fs.existsSync(resolvedHostPath)) {
     return { value: false, failure: "source_ifc_missing" };
@@ -212,7 +228,11 @@ function failureDetails(
 }
 
 export async function probeArtifactHealth(input: ArtifactHealthProbeInput): Promise<ArtifactHealthSnapshot> {
-  const source = checkSourceIfcPath(input.host_local_path, input.edge_runtime_data_root);
+  const source = checkSourceIfcPath(
+    input.host_local_path,
+    input.storage_root ?? path.join(input.edge_runtime_data_root, "storage"),
+    input.edge_runtime_data_root,
+  );
   const [model, mapping] = await Promise.all([
     checkArtifactUrl(input.model_artifact_url, input.configured_conversion_api_origin),
     checkArtifactUrl(input.mapping_url, input.configured_conversion_api_origin),
