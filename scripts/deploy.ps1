@@ -491,11 +491,6 @@ function Resolve-DeployEdgeRuntimeContract {
     $runtimeStorageRoot = Join-Path $edgeRuntimeDataRoot 'storage'
     $artifactsRoot = Join-Path $edgeRuntimeDataRoot 'artifacts'
     $ledgerRoot = Join-Path $edgeRuntimeDataRoot 'ledgers'
-    foreach ($dirPath in @($runtimeStorageRoot, $artifactsRoot, $ledgerRoot)) {
-        if (-not (Test-Path -LiteralPath $dirPath -PathType Container)) {
-            New-Item -ItemType Directory -Path $dirPath -Force | Out-Null
-        }
-    }
 
     return [pscustomobject]@{
         EDGE_SITE_ID                        = $edgeSiteId
@@ -506,6 +501,19 @@ function Resolve-DeployEdgeRuntimeContract {
         CONVERSION_LEDGER_STORE_PATH        = Join-Path $ledgerRoot 'conversion-ledger.json'
         ARTIFACT_HEALTH_LEDGER_STORE_PATH   = Join-Path $ledgerRoot 'artifact-health-ledger.json'
     }
+}
+
+function Ensure-DeployEdgeRuntimeContractDirectories {
+    param([Parameter(Mandatory = $true)] $Contract)
+
+    $created = 0
+    foreach ($dirPath in @($Contract.RUNTIME_STORAGE_ROOT, $Contract.STREAMING_CONVERSION_ARTIFACTS_ROOT, (Split-Path -Parent $Contract.CONVERSION_LEDGER_STORE_PATH))) {
+        if (-not (Test-Path -LiteralPath $dirPath -PathType Container)) {
+            New-Item -ItemType Directory -Path $dirPath -Force | Out-Null
+            $created++
+        }
+    }
+    return $created
 }
 
 function Set-DeployEdgeRuntimeContractEnv {
@@ -845,6 +853,9 @@ if ($hardFails.Count -gt 0) {
 Write-DeployHeader -Title 'Phase 2: Auto-fix (safe actions)'
 
 $fixActions = 0
+if ($null -ne $edgeRuntimeContract) {
+    $fixActions += Ensure-DeployEdgeRuntimeContractDirectories -Contract $edgeRuntimeContract
+}
 
 function Install-DeployPythonRequirements {
     param(

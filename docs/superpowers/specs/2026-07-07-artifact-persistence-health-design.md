@@ -44,3 +44,13 @@ The product architecture also separates cloud control-plane metadata from custom
 - Deployment helper tests verify the edge runtime data root survives rebuild cleanup and that storage/artifact/ledger directories are created.
 - GitNexus `detect_changes(scope=compare, base_ref=main)` is expected to report a high blast radius because this design deliberately touches coordinator intake/session/runtime, governance proxy, deploy helper, A1, and Review Room flows.
 - Full deployment/browser E2E must be rerun after merge because the canonical deploy helper rebuilds from freshly fetched `origin/main`, not from an unmerged PR worktree.
+
+## Follow-up Review Fixes
+
+After PR #312 merged, automated review found that several boundaries were still underspecified:
+
+- `storageHostRoot` may intentionally diverge from `edgeRuntimeDataRoot`; source IFC checks must use the configured storage root as the primary containment boundary, while still rejecting symlink/reparse escapes when the storage root is managed under the edge runtime root.
+- `artifactHealthLedgerStorePath` must be derived from the final merged config, including explicit `loadConfig()` overrides, not from a pre-override edge root.
+- `GET /api/review/stream-config/:sessionId` must return artifact-health data from the freshly refreshed session snapshot instead of the pre-refresh object.
+- `deploy.ps1 -DryRun` must stay read-only; edge `storage`, `artifacts`, and `ledgers` directory creation belongs to Phase 2 non-dry-run auto-fix.
+- A1 MinIO session-backed rule-runs must revalidate ifc-ready artifact health immediately before calling the coordinator for-session proxy so a newly stale source IFC cannot slip through stale UI state.

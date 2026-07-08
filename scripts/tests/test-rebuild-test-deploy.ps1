@@ -26,6 +26,9 @@ function New-DeployEdgeVolumeHarness {
     $fixedRootLine = "`$script:FixedTestDeployRoot = 'D:\Users\deploy\AI-bim-geo'"
     $testRootLine = "`$script:FixedTestDeployRoot = '$DeployRoot'"
     $deployScript = $deployScript.Replace($fixedRootLine, $testRootLine)
+    if ($deployScript -notmatch [regex]::Escape($testRootLine)) {
+        throw 'New-DeployEdgeVolumeHarness: failed to rewrite FixedTestDeployRoot in deploy.ps1'
+    }
     Set-Content -LiteralPath (Join-Path $scriptsRoot 'deploy.ps1') -Value $deployScript -Encoding ascii
 
     @'
@@ -437,6 +440,28 @@ try {
     Assert-True ($script:cleanEvents.Count -eq 1) 'mock clean removed env files before restore'
     Assert-Equal 3 $preserveResult.RestoredEnvFileCount 'rebuild restores current-version env files before deploy'
     Assert-True (@($preserveCalls | Where-Object { $_ -match [regex]::Escape('clean -fdx -e bim-streaming-server/_build/**/logs/**') }).Count -ge 1) 'git clean excludes chronic Kit runtime-log lock path'
+
+    $dryRunEdgeRoot = Join-Path $sandbox 'dry-run-edge-runtime-data'
+    $dryRunDeployRoot = Join-Path $sandbox 'dry-run-artifact-contract-root'
+    New-Item -ItemType Directory -Path (Join-Path $dryRunDeployRoot '.git') -Force | Out-Null
+    New-DeployEdgeVolumeHarness -DeployRoot $dryRunDeployRoot -SourceRepoRoot $repoRoot
+    @(
+        'RUNTIME_STORAGE_ROOT=./storage',
+        'MINIO_WATCH_ENABLED=true'
+    ) | Set-Content -LiteralPath (Join-Path $dryRunDeployRoot '.env.web-plane.host-kit.example') -Encoding ascii
+
+    $dryRunEdgeRootBackup = [Environment]::GetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', $dryRunEdgeRoot, 'Process')
+        $dryRunProcess = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts\deploy.ps1', '-DryRun', '-SkipDocker', '-SkipGovernance', '-SkipKit', '-PublicHost', '127.0.0.1') -WorkingDirectory $dryRunDeployRoot -NoNewWindow -Wait -PassThru
+
+        Assert-Equal 0 $dryRunProcess.ExitCode 'deploy dry-run exits successfully'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $dryRunEdgeRoot 'storage'))) 'deploy dry-run does not create external storage root'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $dryRunEdgeRoot 'artifacts'))) 'deploy dry-run does not create external artifact root'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $dryRunEdgeRoot 'ledgers'))) 'deploy dry-run does not create external ledger root'
+    } finally {
+        [Environment]::SetEnvironmentVariable('EDGE_RUNTIME_DATA_ROOT', $dryRunEdgeRootBackup, 'Process')
+    }
 
     $artifactRoot = Join-Path $sandbox 'edge-runtime-data'
     $artifactSentinel = Join-Path $artifactRoot 'ledgers\sentinel.txt'

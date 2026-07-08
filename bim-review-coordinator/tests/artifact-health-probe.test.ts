@@ -40,8 +40,8 @@ async function startArtifactServer(
   };
 }
 
-function alternateDrivePath(edgeRoot: string): string {
-  const currentDrive = path.win32.parse(edgeRoot).root.slice(0, 2).toUpperCase();
+function alternateDrivePath(storageRoot: string): string {
+  const currentDrive = path.win32.parse(storageRoot).root.slice(0, 2).toUpperCase();
   const alternate = currentDrive === "C:" ? "D:" : "C:";
   return `${alternate}\\artifact-health-probe\\storage\\source.ifc`;
 }
@@ -97,26 +97,31 @@ describe("probeArtifactHealth", () => {
     expect(snapshot.source_ifc_exists).toBe(false);
   });
 
-  it("source_ifc_exists is false for UNC paths and alternate drives outside EDGE_RUNTIME_DATA_ROOT", async () => {
-    const { edgeRoot } = makeEdgeRoot();
+  it("source_ifc_exists is false for UNC paths and alternate drives outside STORAGE_HOST_ROOT", async () => {
+    const edgeRoot = "C:\\artifact-health-probe";
+    const storageRoot = "C:\\artifact-health-probe\\storage";
 
     const uncSnapshot = await probeArtifactHealth({
       host_local_path: "\\\\server\\share\\artifact-health-probe\\storage\\source.ifc",
       model_artifact_url: null,
       mapping_url: null,
       edge_runtime_data_root: edgeRoot,
+      storage_root: storageRoot,
       configured_conversion_api_origin: "http://127.0.0.1:49100",
     });
     const alternateDriveSnapshot = await probeArtifactHealth({
-      host_local_path: alternateDrivePath(edgeRoot),
+      host_local_path: alternateDrivePath(storageRoot),
       model_artifact_url: null,
       mapping_url: null,
       edge_runtime_data_root: edgeRoot,
+      storage_root: storageRoot,
       configured_conversion_api_origin: "http://127.0.0.1:49100",
     });
 
     expect(uncSnapshot.source_ifc_exists).toBe(false);
+    expect(uncSnapshot.failure_details?.source_ifc).toBe("source_ifc_unc_path_rejected");
     expect(alternateDriveSnapshot.source_ifc_exists).toBe(false);
+    expect(alternateDriveSnapshot.failure_details?.source_ifc).toBe("source_ifc_alternate_drive_rejected");
   });
 
   it("source_ifc_exists is false when a storage symlink resolves outside EDGE_RUNTIME_DATA_ROOT", async () => {

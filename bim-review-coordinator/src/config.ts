@@ -447,5 +447,12 @@ export function loadConfig(overrides: Partial<CoordinatorConfig> = {}): Coordina
   if (merged.minioWatchPrefix && !merged.minioWatchPrefix.endsWith("/")) {
     merged.minioWatchPrefix = `${merged.minioWatchPrefix}/`;
   }
+  if (!process.env.ARTIFACT_HEALTH_LEDGER_STORE_PATH && overrides.artifactHealthLedgerStorePath === undefined) {
+    const finalEdgeRoot = merged.edgeRuntimeDataRoot;
+    merged.artifactHealthLedgerStorePath =
+      finalEdgeRoot === cwd
+        ? path.join(cwd, "data", "artifact-health-ledger.json")
+        : path.join(finalEdgeRoot, "ledgers", "artifact-health-ledger.json");
+  }
   return merged;
 }

@@ -262,6 +262,36 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     expect(gov.bodies).toHaveLength(0);
   });
 
+  it("storageHostRoot may diverge from edgeRuntimeDataRoot without falsely staling rule-runs", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const edgeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gov-session-edge-root-"));
+    const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "gov-session-storage-root-"));
+    const app = makeApp({
+      edgeRuntimeDataRoot: edgeRoot,
+      storageHostRoot: storageRoot,
+      storageRoot,
+      streamingConversionApiBase: streamingBase,
+      ifcDownloadStrict: true,
+    });
+
+    try {
+      const { sessionId } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+
+      const res = await request(app.app)
+        .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+        .send({});
+
+      expect(res.status).toBe(202);
+      expect(gov.bodies).toHaveLength(1);
+    } finally {
+      fs.rmSync(edgeRoot, { recursive: true, force: true });
+      fs.rmSync(storageRoot, { recursive: true, force: true });
+    }
+  });
+
   it("storage root resolves outside edge runtime root → 409 stale_session_artifact，且不打 governance", async () => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;

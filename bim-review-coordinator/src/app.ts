@@ -799,6 +799,7 @@ export function createCoordinatorApp(
       model_artifact_url: artifacts.modelArtifactUrl ?? null,
       mapping_url: artifacts.mappingUrl ?? null,
       edge_runtime_data_root: config.edgeRuntimeDataRoot,
+      storage_root: config.storageHostRoot,
       configured_conversion_api_origin: config.streamingConversionApiBase,
       checked_at: nowIso(),
     });
@@ -850,6 +851,7 @@ export function createCoordinatorApp(
         model_artifact_url: binding.url ?? null,
         mapping_url: binding.mapping_url ?? null,
         edge_runtime_data_root: config.edgeRuntimeDataRoot,
+        storage_root: config.storageHostRoot,
         configured_conversion_api_origin: config.streamingConversionApiBase,
         checked_at: nowIso(),
       });
@@ -1010,7 +1012,7 @@ export function createCoordinatorApp(
       return;
     }
     await refreshArtifactHealthForSessionBestEffort(session);
-    response.json(buildStreamConfig(session, [], config));
+    response.json(buildStreamConfig(store.get(session.session_id) ?? session, [], config));
   });
 
   // m2a-coverage-report:production 唯讀 passthrough。以 conversion_job_id 取後端品質摘要,
@@ -2943,7 +2945,7 @@ export function createCoordinatorApp(
           reason: "IFC for this session has not been downloaded to a server-side path yet.",
         };
       }
-      const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.edgeRuntimeDataRoot);
+      const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.storageHostRoot, config.edgeRuntimeDataRoot);
       if (sourceCheck.value !== true) {
         return {
           ok: false,
