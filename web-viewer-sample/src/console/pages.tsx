@@ -1138,10 +1138,19 @@ export function SessionManagementPage() {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [terminatingIds, setTerminatingIds] = useState<Set<string>>(new Set());
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const loadSeqRef = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     setErr(null);
-    try { setRt(await coordinatorClient.runtimeStatus()); }
-    catch (e) { setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(e)}`); }
+    try {
+      const next = await coordinatorClient.runtimeStatus();
+      if (seq === loadSeqRef.current) setRt(next);
+    }
+    catch (e) {
+      if (seq === loadSeqRef.current) {
+        setErr(`${t("未連線 coordinator /api/runtime/status：", "Not connected to coordinator /api/runtime/status: ")}${String(e)}`);
+      }
+    }
   }, []);
   const markTerminating = useCallback((id: string) => {
     setTerminatingIds((prev) => new Set(prev).add(id));
@@ -1304,6 +1313,8 @@ export function KitGpuFleetPage() {
   const shared = useSharedStatus();
   const [kit, setKit] = useState<KitInstanceState | null>(null);
   const [kitErr, setKitErr] = useState<string | null>(null);
+  const kitLoadSeqRef = useRef(0);
+  const kitMountedRef = useRef(false);
   // sessionsById 依 spec §5.2 是全量表（不分狀態，供跨頁 ID 查找重用），且 coordinator 從不刪除 session
   // （只 active→closing→closed）。此「即時 session 聚合（真實）」區塊只能把 status==='active' 當即時可點連結，
   // 才與相鄰的「使用中 session 數」（activeSessions，亦只算 active）一致；否則會把 closed/closing 的過期
@@ -1322,13 +1333,24 @@ export function KitGpuFleetPage() {
     if (shared.stale) return "indeterminate";
     return Object.prototype.hasOwnProperty.call(shared.sessionsById, h.session);
   });
-  useEffect(() => {
-    let cancelled = false;
-    coordinatorClient.kitInstanceCurrent()
-      .then((state) => { if (!cancelled) { setKit(state); setKitErr(null); } })
-      .catch((e) => { if (!cancelled) setKitErr(String(e)); });
-    return () => { cancelled = true; };
+  const loadKit = useCallback(async () => {
+    const seq = ++kitLoadSeqRef.current;
+    try {
+      const state = await coordinatorClient.kitInstanceCurrent();
+      if (kitMountedRef.current && seq === kitLoadSeqRef.current) {
+        setKit(state);
+        setKitErr(null);
+      }
+    } catch (e) {
+      if (kitMountedRef.current && seq === kitLoadSeqRef.current) setKitErr(String(e));
+    }
   }, []);
+  useEffect(() => {
+    kitMountedRef.current = true;
+    void loadKit();
+    const id = window.setInterval(() => { void loadKit(); }, 5000);
+    return () => { kitMountedRef.current = false; window.clearInterval(id); };
+  }, [loadKit]);
   return (
     <>
       <h1>{t("Kit / GPU 機隊", "Kit / GPU Fleet")}</h1>
@@ -2489,7 +2511,17 @@ export function CoordinatorPage() {
     finally { setBusy(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  const sessions = rt?.sessions?.items ?? [];
+  const sessions = rt?.sessions?.items ?? null;
+  const observedSessions = sessions ?? [];
+  const sessionsSummary = sessions === null
+    ? t("未取得", "not observed")
+    : `active ${sessions.filter((s) => s.status === "active").length} · created ${sessions.filter((s) => s.status === "created").length}`;
+  const evidenceGreen = sessions === null
+    ? t("未取得", "not observed")
+    : String(sessions.filter((s) => {
+      const ev = leaseEvidence(s, Date.now());
+      return Boolean(ev.firstFrameAt && ev.datachannelReady && ev.stageMatch === true && ev.heartbeatStale === false);
+    }).length);
 
   return (
     <>
@@ -2501,14 +2533,11 @@ export function CoordinatorPage() {
       <Panel title={t("監控彙總", "Monitoring summary")} prov="asbuilt"
         sub={t("session 證據與 Kit 狀態彙總；無統一 GPU 遙測，不畫 fail、不捏造秒數", "Session evidence and Kit status summary; no unified GPU telemetry, so no fail state or fabricated seconds")}>
         <div className="ec-grid" data-testid="rt-monitor-summary">
-          <Field k="sessions" v={`active ${sessions.filter((s) => s.status === "active").length} · queued ${sessions.filter((s) => s.status === "queued" || s.status === "created").length}`} prov="asbuilt" />
+          <Field k="sessions" v={sessionsSummary} prov={sessions === null ? "demo" : "asbuilt"} />
           <Field
             k={t("證據齊備 session", "evidence-green sessions")}
-            v={String(sessions.filter((s) => {
-              const ev = leaseEvidence(s, Date.now());
-              return Boolean(ev.firstFrameAt && ev.datachannelReady && ev.stageMatch === true && ev.heartbeatStale === false);
-            }).length)}
-            prov="asbuilt"
+            v={evidenceGreen}
+            prov={sessions === null ? "demo" : "asbuilt"}
           />
           <Field k="kit" v={kit ? `${kit.instance_id} · ${kit.status}` : t("未取得", "not observed")} prov={kit ? "asbuilt" : "demo"} />
           <Field k="GPU / VRAM" v={t("未取得", "not observed")} prov="demo" />
@@ -2529,7 +2558,7 @@ export function CoordinatorPage() {
             <p className="ec-note">{err ? "" : t("目前 runtime status 無 session（coordinator 已連線，非錯誤）。", "No session in runtime status (coordinator connected — not an error).")}</p>
           ) : (
             <table className="ec-table"><thead><tr><th>session</th><th>status</th><th>{t("跨頁", "Links")}</th></tr></thead>
-              <tbody>{rt.sessions.items.map((s) => {
+              <tbody>{observedSessions.map((s) => {
                 // N5 誠實鐵律：coordinator 從不刪除 session（只 active→closing→closed，永遠保留），此全量表隨時間無界成長。
                 // 「在 Review Room 開此 session」「Kit / GPU 機隊」是即時可操作語意，只有 status==='active'/'created' 成立；對 closed/closing
                 // 的過期 session 給滿血按鈕＝把過期 session 假裝成真實可操作（比照同分支 0860a54）。「Session 管理」是 lifecycle 全量

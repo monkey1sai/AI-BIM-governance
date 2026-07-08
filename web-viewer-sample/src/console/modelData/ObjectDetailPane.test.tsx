@@ -279,6 +279,31 @@ describe("ObjectDetailPane：三源串接（spec §3.3）", () => {
       expect(coverage!.textContent).toContain("未取得");
     });
   });
+
+  it("[7c] ledger coverage_report 未完整覆蓋時不得四捨五入顯示為 100%", async () => {
+    render({
+      object: makeObject(),
+      data: makeData({
+        records: [makeRecord({
+          status: "ready",
+          usdc_key: "a/b/model.usdc",
+          coverage_report: {
+            coverage_ratio: 0.999999,
+            coverage_status: "warn",
+            mapped_count: 999999,
+            unmapped_count: 1,
+          },
+        })],
+      }),
+    });
+    await waitFor(() => {
+      const coverage = container.querySelector('[data-testid="md-ledger-coverage"]');
+      expect(coverage).not.toBeNull();
+      expect(coverage!.textContent).toContain("99.99%");
+      expect(coverage!.textContent).not.toContain("100%");
+      expect(coverage!.textContent).toContain("unmapped 1");
+    });
+  });
 });
 
 describe("ObjectDetailPane：頂列捷徑（spec §3.1 定向）", () => {

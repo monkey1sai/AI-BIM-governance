@@ -176,7 +176,7 @@ test.describe("infra capability slice evidence", () => {
   test("#runtime shows monitoring summary", async ({ page }) => {
     await gotoConsole(page, "runtime");
     await expect(page.getByTestId("rt-monitor-summary")).toContainText("active 1");
-    await expect(page.getByTestId("rt-monitor-summary")).toContainText("queued 1");
+    await expect(page.getByTestId("rt-monitor-summary")).toContainText("created 1");
     await expect(page.getByTestId("rt-monitor-summary")).toContainText("kit_main · open");
     await page.screenshot({ path: `${ARTIFACT_DIR}/runtime-monitor-summary.png`, fullPage: true });
   });

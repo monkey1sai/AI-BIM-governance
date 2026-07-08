@@ -50,7 +50,12 @@ function ledgerCoverageText(value: unknown): JSX.Element {
   if (!cr || typeof cr.coverage_ratio !== "number") {
     return <span data-testid="md-ledger-coverage">{t("未取得", "not observed")}</span>;
   }
-  const pct = `${Math.round(cr.coverage_ratio * 10000) / 100}%`;
+  const percent = cr.coverage_ratio * 100;
+  const roundedPercent = Math.round(percent * 100) / 100;
+  const honestPercent = cr.coverage_ratio < 1 && roundedPercent >= 100
+    ? Math.floor(percent * 100) / 100
+    : roundedPercent;
+  const pct = `${honestPercent}%`;
   const selfRef =
     cr.materialization_strategy === "usd_stage_enumeration"
       ? t("（USD stage 枚舉自我參照，非 IFC 全量 lossless 覆蓋率）", "(USD stage enumeration self-reference, not lossless IFC-wide coverage)")

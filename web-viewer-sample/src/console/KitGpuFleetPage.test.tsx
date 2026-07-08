@@ -45,6 +45,7 @@ describe("KitGpuFleetPage live kit instance telemetry", () => {
     await act(async () => { root?.unmount(); });
     document.body.removeChild(container);
     vi.restoreAllMocks();
+    vi.useRealTimers();
     window.location.hash = "";
     (globalThis as Record<string, unknown>)[actEnvKey] = prevActEnv;
   });
@@ -91,6 +92,47 @@ describe("KitGpuFleetPage live kit instance telemetry", () => {
       expect(panel!.textContent).toContain("未取得");
       expect(panel!.textContent).toContain("kit-manager down");
       expect(container.textContent).not.toContain("edge-gpu-01");
+    });
+  });
+
+  it("定期刷新 live Kit telemetry，避免 open page 後狀態永久停在初始值", async () => {
+    vi.useFakeTimers();
+    const spy = vi.spyOn(coordinatorClient, "kitInstanceCurrent")
+      .mockResolvedValueOnce({
+        instance_id: "kit_main",
+        status: "open",
+        selected_artifact_ids: [],
+        opened_runtime_uris: ["omniverse://first"],
+        last_command: "open",
+        control_status: "sent",
+      })
+      .mockResolvedValueOnce({
+        instance_id: "kit_main",
+        status: "closed",
+        selected_artifact_ids: [],
+        opened_runtime_uris: [],
+        last_command: "close",
+        control_status: "idle",
+      });
+
+    render();
+
+    await waitFor(() => {
+      const panel = container.querySelector('[data-testid="kg-live-instance"]')!;
+      expect(panel.textContent).toContain("open");
+      expect(panel.textContent).toContain("omniverse://first");
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const panel = container.querySelector('[data-testid="kg-live-instance"]')!;
+      expect(panel.textContent).toContain("closed");
+      expect(panel.textContent).not.toContain("omniverse://first");
+      expect(spy).toHaveBeenCalledTimes(2);
     });
   });
 });

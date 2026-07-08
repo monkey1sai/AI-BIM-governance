@@ -370,4 +370,39 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     expect(container.textContent).toContain("未連線 coordinator");
     expect(container.querySelector('[data-testid^="session-terminate-"]')).toBeNull();
   });
+
+  it("輪詢 response 亂序時丟棄舊 response，避免 stale runtime status 覆蓋新表格", async () => {
+    vi.useFakeTimers();
+    let resolveFirst!: (value: RuntimeStatus) => void;
+    let resolveSecond!: (value: RuntimeStatus) => void;
+    const first = new Promise<RuntimeStatus>((resolve) => { resolveFirst = resolve; });
+    const second = new Promise<RuntimeStatus>((resolve) => { resolveSecond = resolve; });
+    const statusSpy = vi.spyOn(coordinatorClient, "runtimeStatus")
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second)
+      .mockResolvedValue(makeStatus([]));
+    const root = createRoot(container);
+    await act(async () => { root.render(<SessionManagementPage />); });
+    expect(statusSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(statusSpy).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond(makeStatus([makeSession({ session_id: "sess_newer", status: "active" })]));
+      await second;
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-testid="session-row-sess_newer"]')).not.toBeNull();
+
+    await act(async () => {
+      resolveFirst(makeStatus([makeSession({ session_id: "sess_stale", status: "active" })]));
+      await first;
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="session-row-sess_newer"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="session-row-sess_stale"]')).toBeNull();
+  });
 });

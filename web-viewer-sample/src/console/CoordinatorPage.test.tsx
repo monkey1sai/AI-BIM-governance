@@ -127,7 +127,8 @@ describe("CoordinatorPage monitoring summary", () => {
       const summary = container.querySelector('[data-testid="rt-monitor-summary"]');
       expect(summary).not.toBeNull();
       expect(summary!.textContent).toContain("active 1");
-      expect(summary!.textContent).toContain("queued 1");
+      expect(summary!.textContent).toContain("created 1");
+      expect(summary!.textContent).not.toContain("queued 1");
       expect(summary!.textContent).toContain("kit_main · idle");
       expect(summary!.textContent).toContain("未取得");
       expect(summary!.textContent).toContain("1");
@@ -144,9 +145,31 @@ describe("CoordinatorPage monitoring summary", () => {
       const summary = container.querySelector('[data-testid="rt-monitor-summary"]');
       expect(summary).not.toBeNull();
       expect(summary!.textContent).toContain("active 1");
-      expect(summary!.textContent).toContain("queued 1");
+      expect(summary!.textContent).toContain("created 1");
       expect(summary!.textContent).toContain("未取得");
       expect(summary!.textContent).toContain("kit unavailable");
+    });
+  });
+
+  it("runtime status 尚未取得時 summary 顯示未取得，不把未知狀態渲染成 0 sessions", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(coordinatorClient, "kitInstanceCurrent").mockResolvedValue({
+      instance_id: "kit_main",
+      status: "idle",
+      selected_artifact_ids: [],
+      opened_runtime_uris: [],
+      last_command: null,
+      control_status: "idle",
+    });
+
+    render();
+
+    await waitFor(() => {
+      const summary = container.querySelector('[data-testid="rt-monitor-summary"]');
+      expect(summary).not.toBeNull();
+      expect(summary!.textContent).toContain("未取得");
+      expect(summary!.textContent).not.toContain("active 0");
+      expect(summary!.textContent).not.toContain("queued 0");
     });
   });
 });
