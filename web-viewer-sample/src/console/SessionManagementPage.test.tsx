@@ -126,6 +126,7 @@ describe("SessionManagementPage 結束 session 控制動作（IX-SS-04）", () =
     await act(async () => { root.render(<SessionManagementPage />); });
     await act(async () => { await Promise.resolve(); });
     const row = container.querySelector('[data-testid="session-row-review_session_t1"]')!;
+    expect(row.closest("table")!.querySelector("thead")!.textContent).toContain("stage 符合");
     expect(row.querySelector('[data-testid="ev-first-frame"]')!.textContent).not.toContain("未取得");
     expect(row.querySelector('[data-testid="ev-heartbeat"]')!.textContent).toContain("stale");
     expect(row.querySelector('[data-testid="ev-stage"]')!.textContent).toContain("matched");
