@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS rule_runs(
   id TEXT PRIMARY KEY,
   model_version_id TEXT,
   ifc_source_path TEXT,
+  source_metadata_json TEXT,
   rule_set TEXT,
   status TEXT,
   started_at TEXT,
@@ -48,6 +49,12 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+def _ensure_rule_run_columns(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(rule_runs)").fetchall()}
+    if "source_metadata_json" not in columns:
+        conn.execute("ALTER TABLE rule_runs ADD COLUMN source_metadata_json TEXT")
+
+
 class Store:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -56,19 +63,25 @@ class Store:
             os.makedirs(parent, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            _ensure_rule_run_columns(conn)
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
-    def create_run(self, model_version_id, ifc_source_path, rule_set) -> str:
+    def create_run(self, model_version_id, ifc_source_path, rule_set, source_metadata: dict | None = None) -> str:
         run_id = _new_id("rr")
+        source_metadata_json = (
+            json.dumps(source_metadata, ensure_ascii=False, sort_keys=True)
+            if source_metadata is not None
+            else None
+        )
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO rule_runs(id, model_version_id, ifc_source_path, rule_set, status, started_at)"
-                " VALUES(?,?,?,?,?,?)",
-                (run_id, model_version_id, ifc_source_path, rule_set, "queued", _now()),
+                "INSERT INTO rule_runs(id, model_version_id, ifc_source_path, source_metadata_json, rule_set, status, started_at)"
+                " VALUES(?,?,?,?,?,?,?)",
+                (run_id, model_version_id, ifc_source_path, source_metadata_json, rule_set, "queued", _now()),
             )
         return run_id
 
@@ -112,6 +125,42 @@ class Store:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM rule_runs WHERE id=?", (run_id,)).fetchone()
             return dict(row) if row else None
+
+    def list_runs(self, filters: dict[str, str], limit: int, offset: int):
+        with self._conn() as conn:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM rule_runs ORDER BY COALESCE(finished_at, started_at) DESC, started_at DESC, id DESC",
+                ).fetchall()
+            ]
+
+        def metadata(row: dict) -> dict:
+            raw = row.get("source_metadata_json")
+            if not raw:
+                return {}
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+
+        def matches(row: dict) -> bool:
+            meta = metadata(row)
+            for key, expected in filters.items():
+                if key == "model_version_id":
+                    if row.get("model_version_id") == expected or meta.get("model_version_id") == expected:
+                        continue
+                    return False
+                if meta.get(key) != expected:
+                    return False
+            return True
+
+        filtered = [row for row in rows if matches(row)]
+        return {
+            "total": len(filtered),
+            "items": filtered[offset:offset + limit],
+        }
 
     def get_results(self, run_id: str, status: str | None = None):
         query = "SELECT * FROM rule_results WHERE rule_run_id=?"

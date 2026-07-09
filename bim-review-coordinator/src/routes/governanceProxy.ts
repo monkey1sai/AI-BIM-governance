@@ -29,6 +29,22 @@ export interface RuleRunSourceContext {
   model_version_id?: string | null;
   /** 對應的 ifc-ready job（供 log / 回顯；非必要）。 */
   ifc_ready_job_id?: string | null;
+  /** 可持久保存於 rule-run 的來源 lineage；不得包含 host path / presigned URL / secret。 */
+  source_metadata?: RuleRunSourceMetadata | null;
+}
+
+export interface RuleRunSourceMetadata {
+  source_kind: "minio_ifc_ready";
+  ifc_ready_job_id: string;
+  idempotency_key: string;
+  project_id: string;
+  project_display_name?: string | null;
+  model_category?: string | null;
+  model_version_id?: string | null;
+  source_ifc_etag?: string | null;
+  review_session_id?: string | null;
+  conversion_job_id?: string | null;
+  conversion_status?: string | null;
 }
 
 export type RuleRunSessionContext = RuleRunSourceContext;
@@ -129,6 +145,9 @@ function forwardResolvedRuleRun(
   if (context.model_version_id) {
     forwardBody.model_version_id = context.model_version_id;
   }
+  if (context.source_metadata) {
+    forwardBody.source_metadata = context.source_metadata;
+  }
   if (typeof overrideBody.ids_path === "string" && overrideBody.ids_path.trim().length > 0) {
     forwardBody.ids_path = overrideBody.ids_path;
   }
@@ -146,7 +165,17 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
   });
 
   app.post("/api/governance/rule-runs", (request, response) => {
-    void forward(response, "POST", "/api/rule-runs", request.body);
+    const body = (request.body && typeof request.body === "object" && !Array.isArray(request.body))
+      ? { ...(request.body as Record<string, unknown>) }
+      : request.body;
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+      delete (body as Record<string, unknown>).source_metadata;
+    }
+    void forward(response, "POST", "/api/rule-runs", body);
+  });
+
+  app.get("/api/governance/rule-runs", (request, response) => {
+    void forward(response, "GET", `/api/rule-runs${queryString(request.originalUrl)}`);
   });
 
   // unified-console-mvp:瀏覽器只持有 session_id（不知 server-side IFC path）。

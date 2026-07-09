@@ -55,7 +55,7 @@ function fakeSession(sessionId: string) {
   };
 }
 
-function fakeRunStatus(status: RuleRunStatus["status"]): RuleRunStatus {
+function fakeRunStatus(status: RuleRunStatus["status"], overrides: Partial<RuleRunStatus> = {}): RuleRunStatus {
   return {
     rule_run_id: "rr_a1",
     status,
@@ -63,12 +63,14 @@ function fakeRunStatus(status: RuleRunStatus["status"]): RuleRunStatus {
     rule_set: "default",
     model_version_id: null,
     summary: { total: 10, passed: 9, failed: 1, errored: 0, target_summary: {}, warnings: [] },
+    ...overrides,
   };
 }
 
 const LOCAL_IFC_PATH = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model.ifc";
 const LOCAL_IFC_PATH_B = "C:/Repos/active/iot/AI-BIM-governance/storage/270/建築/model-b.ifc";
 const MINIO_KEY = "松風庵/root/main/u1/model.ifc";
+const MINIO_KEY_B = "松風庵/root/main/u2/model-b.ifc";
 const MINIO_IDEMPOTENCY_KEY = "mw_0000000000000001";
 const REVIEW_SESSION_ID = "review_session_x";
 const fakeFilesTree: FilesTreeResponse = {
@@ -143,6 +145,7 @@ describe("A1 3D review decoupling", () => {
       objects: [{ key: MINIO_KEY, etag: "e", role: "source_ifc", idempotency_key: MINIO_IDEMPOTENCY_KEY, project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
     vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({ count: 0, items: [] });
+    vi.spyOn(governanceClient, "listRuleRuns").mockResolvedValue({ filters: {}, limit: 5, offset: 0, total: 0, items: [] });
     vi.spyOn(coordinatorClient, "claimViewerLease").mockRejectedValue(new Error("A1 must not claim viewer lease"));
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockRejectedValue(new Error("A1 must not release viewer lease"));
     vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockRejectedValue(new Error("A1 must not heartbeat viewer lease"));
@@ -415,6 +418,144 @@ describe("A1 3D review decoupling", () => {
     });
     expect(directRunSpy).not.toHaveBeenCalled();
     expect(forSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows persisted source lineage for a MinIO-backed rule-run result", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null })],
+    });
+    vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded", {
+      model_version_id: "v1",
+      source_metadata: {
+        source_kind: "minio_ifc_ready",
+        ifc_ready_job_id: "ifcready_1",
+        idempotency_key: MINIO_IDEMPOTENCY_KEY,
+        project_id: "p1",
+        project_display_name: "松風庵",
+        model_category: "建築",
+        model_version_id: "v1",
+        source_ifc_etag: "e",
+        conversion_job_id: "conv_1",
+        conversion_status: "ready",
+      },
+    }));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    await renderA1();
+    await selectMinioSource();
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    const lineage = q("a1-run-lineage")!;
+    expect(lineage.textContent).toContain("松風庵");
+    expect(lineage.textContent).toContain("建築");
+    expect(lineage.textContent).toContain("v1");
+    expect(lineage.textContent).toContain("ifcready_1");
+    expect(lineage.textContent).toContain(MINIO_IDEMPOTENCY_KEY);
+  });
+
+  it("loads MinIO IFC validation history aligned by project, category, version, and job", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null })],
+    });
+    const historySpy = vi.mocked(governanceClient.listRuleRuns);
+    historySpy.mockResolvedValue({
+      filters: {},
+      limit: 5,
+      offset: 0,
+      total: 1,
+      items: [{
+        rule_run_id: "rr_hist_001",
+        status: "succeeded",
+        score: 98,
+        rule_set: "sample-fire-rating.ids",
+        model_version_id: "v1",
+        source_metadata: {
+          source_kind: "minio_ifc_ready",
+          ifc_ready_job_id: "ifcready_1",
+          idempotency_key: MINIO_IDEMPOTENCY_KEY,
+          project_id: "p1",
+          project_display_name: "松風庵",
+          model_category: "建築",
+          model_version_id: "v1",
+        },
+        summary: null,
+        started_at: "2026-07-09T01:00:00Z",
+        finished_at: "2026-07-09T01:00:03Z",
+      }],
+    });
+
+    await renderA1();
+    await selectMinioSource();
+    await flush();
+
+    expect(historySpy).toHaveBeenLastCalledWith(expect.objectContaining({
+      project_id: "p1",
+      model_category: "建築",
+      model_version_id: "v1",
+      ifc_ready_job_id: "ifcready_1",
+      idempotency_key: MINIO_IDEMPOTENCY_KEY,
+      limit: 5,
+    }));
+    const scope = q("a1-minio-history-scope")!;
+    expect(scope.textContent).toContain("松風庵");
+    expect(scope.textContent).toContain("建築");
+    expect(scope.textContent).toContain("v1");
+    expect(scope.textContent).toContain("ifcready_1");
+    expect(scope.textContent).toContain("not built");
+    const history = q("a1-minio-run-history")!;
+    expect(history.textContent).toContain("rr_hist_001");
+    expect(history.textContent).toContain("succeeded");
+    expect(history.textContent).toContain("98");
+  });
+
+  it("incoming MinIO handoff to a different key clears stale scored results", async () => {
+    vi.mocked(coordinatorClient.getMinioObjects).mockResolvedValue({
+      bucket: "bim-control",
+      count: 2,
+      objects: [
+        { key: MINIO_KEY, etag: "e", role: "source_ifc", idempotency_key: MINIO_IDEMPOTENCY_KEY, project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" },
+        { key: MINIO_KEY_B, etag: "e2", role: "source_ifc", idempotency_key: "mw_0000000000000002", project_id: "p1", project_display_name: "松風庵", category: "結構", version: "v2" },
+      ],
+    });
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null })],
+    });
+    vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded", {
+      source_metadata: {
+        source_kind: "minio_ifc_ready",
+        ifc_ready_job_id: "ifcready_1",
+        idempotency_key: MINIO_IDEMPOTENCY_KEY,
+        project_id: "p1",
+        project_display_name: "松風庵",
+        model_category: "建築",
+        model_version_id: "v1",
+      },
+    }));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([]);
+
+    await renderA1();
+    await selectMinioSource(MINIO_KEY);
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+    expect(q("a1-run-lineage")).not.toBeNull();
+
+    window.location.hash = `#a1?source=minio&minio_key=${encodeURIComponent(MINIO_KEY_B)}`;
+    await act(async () => { root!.render(<A1GovernanceWorkbenchPage />); });
+    await flush();
+
+    expect(q<HTMLSelectElement>("a1-minio-select")!.value).toBe(MINIO_KEY_B);
+    expect(q("a1-run-lineage")).toBeNull();
+    expect(q("a1-rulerun-scoreboard")).toBeNull();
   });
 
   it("locked ifc-ready MinIO source is not rerouted through a manually selected review session", async () => {

@@ -16,6 +16,7 @@ import glob
 import importlib.util
 import json
 import os
+import re
 from typing import Any, Optional
 
 import ifcopenshell.util.element as ifc_el
@@ -84,8 +85,77 @@ class RuleRunRequest(BaseModel):
     ifc_source_path: str
     rule_set: Optional[str] = None
     model_version_id: Optional[str] = None
+    source_metadata: Optional[dict[str, Any]] = None
     element_mapping_path: Optional[str] = None
     ids_path: Optional[str] = None  # 提供時改用 buildingSMART IDS（ifctester）而非 YAML 規則集
+
+
+_SOURCE_METADATA_KEYS = frozenset({
+    "source_kind",
+    "ifc_ready_job_id",
+    "idempotency_key",
+    "project_id",
+    "project_display_name",
+    "model_category",
+    "model_version_id",
+    "source_ifc_etag",
+    "review_session_id",
+    "conversion_job_id",
+    "conversion_status",
+})
+
+_PUBLIC_REDACTED_PATH = "[redacted-path]"
+_PUBLIC_REDACTED_URL = "[redacted-url]"
+_WINDOWS_PATH_RE = re.compile(r"\b[A-Za-z]:[\\/][^\s\"'<>]+")
+_FILE_URL_RE = re.compile(r"\bfile://[^\s\"'<>]+", re.IGNORECASE)
+_SIGNED_URL_RE = re.compile(
+    r"\bhttps?://[^\s\"'<>]*(?:X-Amz-Signature|Signature=|token=|secret=)[^\s\"'<>]*",
+    re.IGNORECASE,
+)
+
+
+def _validate_source_metadata(metadata: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if metadata is None:
+        return None
+    unsupported = sorted(set(metadata) - _SOURCE_METADATA_KEYS)
+    if unsupported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"source_metadata contains unsupported keys: {', '.join(unsupported)}",
+        )
+    return metadata
+
+
+def _redact_public_error_text(value: str) -> str:
+    redacted = _WINDOWS_PATH_RE.sub(_PUBLIC_REDACTED_PATH, value)
+    redacted = _FILE_URL_RE.sub(_PUBLIC_REDACTED_URL, redacted)
+    return _SIGNED_URL_RE.sub(_PUBLIC_REDACTED_URL, redacted)
+
+
+def _sanitize_public_summary(value: Any) -> Any:
+    if isinstance(value, str):
+        return _redact_public_error_text(value)
+    if isinstance(value, list):
+        return [_sanitize_public_summary(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_public_summary(item) for key, item in value.items()}
+    return value
+
+
+def _rule_run_response(row: dict[str, Any]) -> dict[str, Any]:
+    summary = json.loads(row["summary_json"]) if row.get("summary_json") else None
+    source_metadata = json.loads(row["source_metadata_json"]) if row.get("source_metadata_json") else None
+    return {
+        "rule_run_id": row["id"],
+        "status": row["status"],
+        "score": row["score"],
+        "rule_set": row["rule_set"],
+        "model_version_id": row["model_version_id"],
+        "source_metadata": source_metadata,
+        "summary": _sanitize_public_summary(summary),
+        "started_at": row.get("started_at"),
+        "finished_at": row.get("finished_at"),
+    }
 
 
 @app.get("/health")
@@ -228,9 +298,43 @@ def create_rule_run(req: RuleRunRequest, background: BackgroundTasks):
     else:
         rule_set_path = _rule_set_path(req.rule_set)
         rule_set_label = req.rule_set or "default-governance"
-    run_id = store.create_run(req.model_version_id, req.ifc_source_path, rule_set_label)
+    source_metadata = _validate_source_metadata(req.source_metadata)
+    run_id = store.create_run(req.model_version_id, req.ifc_source_path, rule_set_label, source_metadata)
     background.add_task(_execute, run_id, req.ifc_source_path, rule_set_path, req.element_mapping_path, req.ids_path)
     return {"rule_run_id": run_id, "status": "queued"}
+
+
+@app.get("/api/rule-runs")
+def list_rule_runs(
+    project_id: Optional[str] = Query(None),
+    model_category: Optional[str] = Query(None),
+    model_version_id: Optional[str] = Query(None),
+    ifc_ready_job_id: Optional[str] = Query(None),
+    idempotency_key: Optional[str] = Query(None),
+    review_session_id: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    filters = {
+        key: value
+        for key, value in {
+            "project_id": project_id,
+            "model_category": model_category,
+            "model_version_id": model_version_id,
+            "ifc_ready_job_id": ifc_ready_job_id,
+            "idempotency_key": idempotency_key,
+            "review_session_id": review_session_id,
+        }.items()
+        if value
+    }
+    page = store.list_runs(filters, limit, offset)
+    return {
+        "filters": filters,
+        "limit": limit,
+        "offset": offset,
+        "total": page["total"],
+        "items": [_rule_run_response(row) for row in page["items"]],
+    }
 
 
 def _execute(run_id: str, ifc_path: str, rule_set_path: Optional[str], mapping_path: Optional[str], ids_path: Optional[str] = None) -> None:
@@ -261,15 +365,7 @@ def get_rule_run(run_id: str):
     row = store.get_run(run_id)
     if not row:
         raise HTTPException(status_code=404, detail="rule run not found")
-    summary = json.loads(row["summary_json"]) if row.get("summary_json") else None
-    return {
-        "rule_run_id": row["id"],
-        "status": row["status"],
-        "score": row["score"],
-        "rule_set": row["rule_set"],
-        "model_version_id": row["model_version_id"],
-        "summary": summary,
-    }
+    return _rule_run_response(row)
 
 
 # 對外契約用過去式（failed/passed/errored），內部 result.status 用 fail/pass/error。

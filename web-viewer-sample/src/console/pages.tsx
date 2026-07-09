@@ -5,7 +5,7 @@ import { t } from "./i18n";
 import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
-import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunStatus } from "./governanceClient";
+import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem, RuleRunStatus } from "./governanceClient";
 import { coordinatorClient, IfcReadyListItem, KitInstanceState, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 // [Task 9 MD 三頁合一] CV/M/IN 三頁移除後，conversionShared 其餘符號（CoverageDrawer/chip/role…）改由
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
@@ -357,6 +357,11 @@ export function A1GovernanceWorkbenchPage() {
   // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
   const [sessions, setSessions] = useState<RuntimeStatus["sessions"]["items"]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
+  const [runHistory, setRunHistory] = useState<RuleRunHistoryItem[] | null>(null);
+  const [runHistoryTotal, setRunHistoryTotal] = useState<number | null>(null);
+  const [runHistoryErr, setRunHistoryErr] = useState<string | null>(null);
+  const [runHistoryLoading, setRunHistoryLoading] = useState(false);
+  const [runHistoryRefreshTick, setRunHistoryRefreshTick] = useState(0);
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
@@ -389,7 +394,7 @@ export function A1GovernanceWorkbenchPage() {
     const key = incoming.handoff?.minio_key;
     if (incoming.status === "verified" && key && seededHandoffKeyRef.current !== key) {
       seededHandoffKeyRef.current = key;
-      if (sourceKind !== "minio") {
+      if (sourceKind !== "minio" || selectedKey !== key) {
         dispatch({ type: "RESET" });
         setActionErr(null);
         setA1Issues([]);
@@ -397,7 +402,7 @@ export function A1GovernanceWorkbenchPage() {
       setSourceKind("minio");
       setSelectedKey(key);
     }
-  }, [incoming.status, incoming.handoff?.minio_key, sourceKind]);
+  }, [incoming.status, incoming.handoff?.minio_key, sourceKind, selectedKey]);
 
   // doRun 輪詢守門：pollGen 在 (a) 元件 unmount、(b) step 離開 running（PICK_FILE/RESET 重置）
   // 時遞增，讓 in-flight 輪詢迴圈以「自己的 generation 已失效」中斷，避免 unmount 後仍每秒
@@ -545,14 +550,16 @@ export function A1GovernanceWorkbenchPage() {
         }
         if (pollGenRef.current !== myGen) return;
         dispatch({ type: "RUN_DONE", run: st, failed });
+        if (sourceKind === "minio") setRunHistoryRefreshTick((value) => value + 1);
       } else {
         dispatch({ type: "RUN_FAIL", error: st ? `rule-run ${st.status}` : "no status" });
+        if (sourceKind === "minio" && st) setRunHistoryRefreshTick((value) => value + 1);
       }
     } catch (e) {
       if (pollGenRef.current !== myGen) return; // unmount / 重置後吞掉殘餘錯誤，不寫回已卸載 UI
       dispatch({ type: "RUN_FAIL", error: String(e) });
     }
-  }, [state.step, state.runError, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions, selectedMinioObject, refreshIfcReadyJobs]);
+  }, [state.step, state.runError, state.ifcPath, state.modelVersionId, idsPath, selectedSession, sessions, selectedMinioObject, sourceKind, refreshIfcReadyJobs]);
 
   const setIdsFileNameInCurrentDirectory = useCallback((fileName: string) => {
     setIdsPath((current) => fileInSameDirectory(current || defaultA1IdsPath(), fileName));
@@ -691,7 +698,7 @@ export function A1GovernanceWorkbenchPage() {
               ? `${t("watcher job 已下載，但 source IFC artifact stale；A1 不啟動 rule-run：", "Watcher job is downloaded, but the source IFC artifact is stale; A1 will not start a rule-run: ")}${selectedMinioSourceIfcStaleReason}`
               : selectedMinioSessionId
                 ? `${t("已對到 watcher downloaded job 與 review session；rule-run 將走 coordinator for-session proxy：", "Matched watcher downloaded job and review session; rule-run will use coordinator for-session proxy: ")}${selectedMinioJob.ifc_ready_job_id} / ${selectedMinioSessionId}`
-                : `${t("已對到 watcher downloaded job；POST /api/governance/rule-runs/for-ifc-ready 只排入 A1 governance rule-run queue：", "Matched watcher downloaded job; POST /api/governance/rule-runs/for-ifc-ready queues only the A1 governance rule-run: ")}${selectedMinioJob.ifc_ready_job_id}`;
+                : `${t("已對到 watcher downloaded job；coordinator ifc-ready proxy（POST /api/governance/rule-runs/for-ifc-ready）只排入 A1 governance rule-run queue：", "Matched watcher downloaded job; coordinator ifc-ready proxy (POST /api/governance/rule-runs/for-ifc-ready) queues only the A1 governance rule-run: ")}${selectedMinioJob.ifc_ready_job_id}`;
   const selectedMinioPickLabel = canPickMinioDownloaded
     ? t("選取已下載模型", "Select Downloaded Model")
     : !selectedKey
@@ -718,6 +725,53 @@ export function A1GovernanceWorkbenchPage() {
     selectedStageEvidence.loaded_stage_url &&
     selectedStageEvidence.expected_stage_url === selectedStageEvidence.loaded_stage_url,
   );
+  const selectedMinioHistoryFilters = useMemo<RuleRunHistoryFilters | null>(() => {
+    if (sourceKind !== "minio" || !selectedMinioObject) return null;
+    const filters: RuleRunHistoryFilters = { limit: 5 };
+    const put = (
+      key: "project_id" | "model_category" | "model_version_id" | "ifc_ready_job_id" | "idempotency_key" | "review_session_id",
+      value: string | null | undefined,
+    ) => {
+      if (value && value.trim().length > 0) {
+        filters[key] = value;
+      }
+    };
+    put("project_id", selectedMinioJob?.project_id ?? selectedMinioObject.project_id);
+    put("model_category", selectedMinioJob?.category ?? selectedMinioObject.category);
+    put("model_version_id", selectedMinioJob?.external_model_version_id ?? selectedMinioObject.version);
+    put("ifc_ready_job_id", selectedMinioJob?.ifc_ready_job_id);
+    put("idempotency_key", selectedMinioJob?.idempotency_key ?? selectedMinioObject.idempotency_key);
+    return filters;
+  }, [sourceKind, selectedMinioObject, selectedMinioJob]);
+
+  useEffect(() => {
+    if (!selectedMinioHistoryFilters) {
+      setRunHistory(null);
+      setRunHistoryTotal(null);
+      setRunHistoryErr(null);
+      setRunHistoryLoading(false);
+      return;
+    }
+    let alive = true;
+    setRunHistoryLoading(true);
+    setRunHistoryErr(null);
+    governanceClient.listRuleRuns(selectedMinioHistoryFilters)
+      .then((res) => {
+        if (!alive) return;
+        setRunHistory(res.items);
+        setRunHistoryTotal(res.total);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setRunHistory([]);
+        setRunHistoryTotal(null);
+        setRunHistoryErr(String(e));
+      })
+      .finally(() => {
+        if (alive) setRunHistoryLoading(false);
+      });
+    return () => { alive = false; };
+  }, [selectedMinioHistoryFilters, runHistoryRefreshTick]);
 
   return (
     <>
@@ -864,6 +918,45 @@ export function A1GovernanceWorkbenchPage() {
         </div>
       </Panel>
 
+      {sourceKind === "minio" && selectedKey && (
+        <Panel title={t("MinIO IFC 檢核歷史", "MinIO IFC Validation History")} sub={t("依目前選取的 MinIO IFC lineage 查詢 governance rule-runs", "Queries governance rule-runs by the selected MinIO IFC lineage")} prov="asbuilt">
+          <div className="ec-grid" data-testid="a1-minio-history-scope" style={{ marginBottom: 10 }}>
+            <Field k={t("來源專案", "Source project")} v={selectedMinioObject?.project_display_name || selectedMinioObject?.project_id || "—"} prov="asbuilt" />
+            <Field k={t("種類", "Category")} v={selectedMinioObject?.category || selectedMinioJob?.category || "—"} prov="asbuilt" />
+            <Field k={t("版本", "Version")} v={selectedMinioJob?.external_model_version_id || selectedMinioObject?.version || "—"} prov="asbuilt" />
+            <Field k="ifc_ready_job_id" v={selectedMinioJobId || "—"} prov={selectedMinioJobId ? "asbuilt" : "p1"} />
+            <Field k="history_total" v={runHistoryTotal === null ? "—" : String(runHistoryTotal)} prov="asbuilt" />
+            <Field k="rollback" v={t("not built（需版本權威 contract）", "not built (requires version authority contract)")} prov="p1" />
+          </div>
+          {runHistoryLoading && <p className="ec-note" data-testid="a1-minio-history-loading">{t("載入檢核歷史…", "Loading validation history...")}</p>}
+          {runHistoryErr && <p className="ec-warn-note" data-testid="a1-minio-history-error">{t("檢核歷史不可用：", "Validation history unavailable: ")}{runHistoryErr}</p>}
+          {!runHistoryLoading && !runHistoryErr && runHistory?.length === 0 && (
+            <p className="ec-note" data-testid="a1-minio-history-empty">{t("尚無此 MinIO IFC 的檢核歷史。", "No validation history for this MinIO IFC yet.")}</p>
+          )}
+          {!runHistoryLoading && !runHistoryErr && runHistory && runHistory.length > 0 && (
+            <table className="ec-table" data-testid="a1-minio-run-history">
+              <thead><tr><th>rule_run_id</th><th>status</th><th>project</th><th>category</th><th>version</th><th>score</th><th>started_at</th></tr></thead>
+              <tbody>
+                {runHistory.map((row) => {
+                  const meta = row.source_metadata ?? {};
+                  return (
+                    <tr key={row.rule_run_id}>
+                      <td>{row.rule_run_id}</td>
+                      <td>{row.status}</td>
+                      <td>{meta.project_display_name || meta.project_id || "—"}</td>
+                      <td>{meta.model_category || "—"}</td>
+                      <td>{meta.model_version_id || row.model_version_id || "—"}</td>
+                      <td>{row.score ?? "—"}</td>
+                      <td>{row.started_at ?? "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Panel>
+      )}
+
       {state.run && (
         <Panel title={t("結果記分板", "Result Scoreboard")} sub={t("真實 rule-run summary；點規則列展開命中構件（GUID/名稱/樓層）", "Real rule-run summary; click a rule row to expand matched elements (GUID/name/storey)")} prov="asbuilt">
           <div className="ec-grid" data-testid="a1-rulerun-scoreboard">
@@ -885,6 +978,40 @@ export function A1GovernanceWorkbenchPage() {
               tone={typeof state.run.score === "number" && state.run.score < 100 ? "warn" : undefined}
             />
           </div>
+          {state.run.source_metadata && (
+            <div className="ec-grid" data-testid="a1-run-lineage" style={{ marginTop: 12 }}>
+              <Field
+                k={t("來源專案", "Source project")}
+                v={state.run.source_metadata.project_display_name || state.run.source_metadata.project_id || "—"}
+                prov="asbuilt"
+              />
+              <Field
+                k={t("種類", "Category")}
+                v={state.run.source_metadata.model_category || "—"}
+                prov="asbuilt"
+              />
+              <Field
+                k={t("版本", "Version")}
+                v={state.run.source_metadata.model_version_id || state.run.model_version_id || "—"}
+                prov="asbuilt"
+              />
+              <Field
+                k="ifc_ready_job_id"
+                v={state.run.source_metadata.ifc_ready_job_id || "—"}
+                prov="asbuilt"
+              />
+              <Field
+                k="idempotency_key"
+                v={state.run.source_metadata.idempotency_key || "—"}
+                prov="asbuilt"
+              />
+              <Field
+                k="source_ifc_etag"
+                v={state.run.source_metadata.source_ifc_etag || "—"}
+                prov="asbuilt"
+              />
+            </div>
+          )}
           {runId && state.failed.length > 0 && <FailureScoreboard runId={runId} failed={state.failed} />}
         </Panel>
       )}

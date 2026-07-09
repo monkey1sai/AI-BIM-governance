@@ -68,9 +68,11 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
  * governance-service `POST /api/rule-runs` stub。記錄收到的 body 供 assert
  * forward payload；回 202 {rule_run_id, status}（與真實服務同形狀）。
  */
-async function startGovernanceStub(): Promise<{ baseUrl: string; bodies: Array<Record<string, unknown>> }> {
+async function startGovernanceStub(): Promise<{ baseUrl: string; bodies: Array<Record<string, unknown>>; urls: string[] }> {
   const bodies: Array<Record<string, unknown>> = [];
+  const urls: string[] = [];
   governanceStub = http.createServer((req, res) => {
+    urls.push(`${req.method ?? "GET"} ${req.url ?? "/"}`);
     let body = "";
     req.on("data", (chunk) => {
       body += chunk.toString("utf8");
@@ -82,13 +84,18 @@ async function startGovernanceStub(): Promise<{ baseUrl: string; bodies: Array<R
         res.end(JSON.stringify({ rule_run_id: "rr_stub_001", status: "queued" }));
         return;
       }
+      if (req.method === "GET" && (req.url ?? "").startsWith("/api/rule-runs")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ limit: 5, offset: 0, total: 0, items: [] }));
+        return;
+      }
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ detail: "not found" }));
     });
   });
   await new Promise<void>((resolve) => governanceStub?.listen(0, "127.0.0.1", () => resolve()));
   const address = governanceStub.address() as AddressInfo;
-  return { baseUrl: `http://127.0.0.1:${address.port}`, bodies };
+  return { baseUrl: `http://127.0.0.1:${address.port}`, bodies, urls };
 }
 
 /**
@@ -116,6 +123,8 @@ async function seedSessionWithDownloadedIfc(
       event: "ifc_ready",
       tenant_id: "tenant_demo_001",
       project_id: "project_demo_001",
+      project_display_name: "松風庵",
+      model_category: "建築",
       external_model_version_id: "version_demo_001",
       external_conversion_task_id: "task_demo_001",
       source_ifc: { ref: ifcSourceUrl, etag: "etag_demo_001", filename: "model.ifc", format: "ifc" },
@@ -170,6 +179,8 @@ async function seedDownloadedIfcWithoutSession(
       event: "ifc_ready",
       tenant_id: "tenant_demo_001",
       project_id: "project_demo_001",
+      project_display_name: "松風庵",
+      model_category: "建築",
       external_model_version_id: "version_demo_001",
       external_conversion_task_id: "task_demo_001",
       source_ifc: { ref: ifcSourceUrl, etag: "etag_demo_001", filename: "model.ifc", format: "ifc" },
@@ -273,6 +284,56 @@ async function startIfcSourceStub(): Promise<string> {
 }
 
 describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
+  it("rule-run history query forwards filters to governance-service without interpreting payload", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+
+    const res = await request(app.app)
+      .get("/api/governance/rule-runs")
+      .query({
+        project_id: "project_demo_001",
+        model_category: "建築",
+        model_version_id: "version_demo_001",
+        ifc_ready_job_id: "ifcready_001",
+        limit: "5",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ limit: 5, offset: 0, total: 0, items: [] });
+    expect(gov.urls.some((url) =>
+      url.startsWith("GET /api/rule-runs?")
+      && url.includes("project_id=project_demo_001")
+      && url.includes("model_category=%E5%BB%BA%E7%AF%89")
+      && url.includes("model_version_id=version_demo_001")
+      && url.includes("ifc_ready_job_id=ifcready_001")
+      && url.includes("limit=5"),
+    )).toBe(true);
+    expect(gov.bodies).toHaveLength(0);
+  });
+
+  it("direct rule-run proxy strips browser-supplied source_metadata so lineage is coordinator-injected only", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+
+    const res = await request(app.app)
+      .post("/api/governance/rule-runs")
+      .send({
+        ifc_source_path: "C:/trusted/server/model.ifc",
+        source_metadata: {
+          project_id: "forged_project",
+          host_local_path: "C:/secret/source.ifc",
+          source_ifc_ref: "http://signed.example.invalid/source.ifc?X-Amz-Signature=secret",
+        },
+      });
+
+    expect(res.status).toBe(202);
+    expect(gov.bodies).toHaveLength(1);
+    expect(gov.bodies[0]).toMatchObject({ ifc_source_path: "C:/trusted/server/model.ifc" });
+    expect(gov.bodies[0]).not.toHaveProperty("source_metadata");
+  });
+
   it("解析 session 的 host-side IFC 路徑並透傳給 governance-service，回 {rule_run_id, status}", async () => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
@@ -280,7 +341,7 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     const ifcSourceUrl = await startIfcSourceStub();
     const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
 
-    const { sessionId, hostLocalPath } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+    const { sessionId, hostLocalPath, ifcReadyJobId } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
 
     const res = await request(app.app)
       .post(`/api/governance/rule-runs/for-session/${sessionId}`)
@@ -292,6 +353,19 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     expect(gov.bodies).toHaveLength(1);
     expect(gov.bodies[0].ifc_source_path).toBe(hostLocalPath);
     expect(gov.bodies[0].model_version_id).toBe("version_demo_001");
+    expect(gov.bodies[0]).toMatchObject({
+      source_metadata: {
+        source_kind: "minio_ifc_ready",
+        ifc_ready_job_id: ifcReadyJobId,
+        idempotency_key: IDEMPOTENCY,
+        project_id: "project_demo_001",
+        project_display_name: "松風庵",
+        model_category: "建築",
+        model_version_id: "version_demo_001",
+        source_ifc_etag: "etag_demo_001",
+        review_session_id: sessionId,
+      },
+    });
   });
 
   it("已下載 session 的 source IFC 被刪除 → 409 stale_session_artifact，且不打 governance", async () => {
@@ -503,7 +577,18 @@ describe("POST /api/governance/rule-runs/for-ifc-ready/:jobId", () => {
       ifc_source_path: hostLocalPath,
       model_version_id: "version_demo_001",
       ids_path: "/rules/fire.ids",
+      source_metadata: {
+        source_kind: "minio_ifc_ready",
+        ifc_ready_job_id: ifcReadyJobId,
+        idempotency_key: "idem_gov_ifc_ready_direct_001",
+        project_id: "project_demo_001",
+        project_display_name: "松風庵",
+        model_category: "建築",
+        model_version_id: "version_demo_001",
+        source_ifc_etag: "etag_demo_001",
+      },
     });
+    expect(gov.bodies[0].source_metadata).toHaveProperty("conversion_status");
     expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
   });
 

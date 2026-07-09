@@ -18,12 +18,27 @@ export interface RuleRunRequest {
   ids_path?: string; // 提供時改用 buildingSMART IDS（ifctester）
 }
 
+export interface RuleRunSourceMetadata {
+  source_kind?: string | null;
+  ifc_ready_job_id?: string | null;
+  idempotency_key?: string | null;
+  project_id?: string | null;
+  project_display_name?: string | null;
+  model_category?: string | null;
+  model_version_id?: string | null;
+  source_ifc_etag?: string | null;
+  review_session_id?: string | null;
+  conversion_job_id?: string | null;
+  conversion_status?: string | null;
+}
+
 export interface RuleRunStatus {
   rule_run_id: string;
   status: "queued" | "running" | "succeeded" | "failed";
   score: number | null;
   rule_set: string;
   model_version_id: string | null;
+  source_metadata?: RuleRunSourceMetadata | null;
   summary: {
     total: number;
     passed: number;
@@ -33,6 +48,30 @@ export interface RuleRunStatus {
     target_summary: Record<string, number>;
     warnings: string[];
   } | null;
+}
+
+export interface RuleRunHistoryItem extends RuleRunStatus {
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface RuleRunHistoryFilters {
+  project_id?: string;
+  model_category?: string;
+  model_version_id?: string;
+  ifc_ready_job_id?: string;
+  idempotency_key?: string;
+  review_session_id?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface RuleRunHistoryResponse {
+  filters: Record<string, string>;
+  limit: number;
+  offset: number;
+  total: number;
+  items: RuleRunHistoryItem[];
 }
 
 export interface RuleResultRow {
@@ -118,6 +157,15 @@ export const governanceClient = {
       `/api/governance/rule-runs/for-ifc-ready/${encodeURIComponent(ifcReadyJobId)}`,
       { method: "POST", body: JSON.stringify(body ?? {}) }
     ),
+  listRuleRuns: (filters: RuleRunHistoryFilters = {}) => {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value === undefined || value === null || value === "") continue;
+      qs.set(key, String(value));
+    }
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return jsonFetch<RuleRunHistoryResponse>(`/api/governance/rule-runs${suffix}`);
+  },
   getRuleRun: (id: string) => jsonFetch<RuleRunStatus>(`/api/governance/rule-runs/${id}`),
   getResults: (id: string, status?: string) =>
     jsonFetch<{ results: RuleResultRow[] }>(

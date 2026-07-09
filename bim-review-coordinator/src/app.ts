@@ -49,7 +49,11 @@ import {
 } from "./services/minioClient.js";
 import { maskPresignedRef } from "./services/presignedRef.js";
 import { downloadIfcToSharedVolume } from "./services/ifcDownloader.js";
-import { registerGovernanceProxy, type RuleRunSessionResolution } from "./routes/governanceProxy.js";
+import {
+  registerGovernanceProxy,
+  type RuleRunSessionResolution,
+  type RuleRunSourceMetadata,
+} from "./routes/governanceProxy.js";
 import { ViewerLeaseStore, publicLease, type PublicViewerLease } from "./services/viewerLeaseStore.js";
 import {
   StreamingConversionClient,
@@ -2921,6 +2925,26 @@ export function createCoordinatorApp(
   // `POST /api/governance/rule-runs/for-session/:sessionId` 能用瀏覽器手上唯一
   // 的 session_id 解析出 host-side IFC 路徑後透傳。resolver 只讀 coordinator
   // 自己的 SessionStore + ExternalIfcReadyStore（不新增資料權威），失敗回誠實 reason。
+  function ruleRunSourceMetadataForJob(
+    job: IfcReadyIntakeJob,
+    modelVersionId: string | null | undefined,
+    session: ReviewSession | null = null,
+  ): RuleRunSourceMetadata {
+    return {
+      source_kind: "minio_ifc_ready",
+      ifc_ready_job_id: job.ifc_ready_job_id,
+      idempotency_key: job.idempotency_key,
+      project_id: job.project_id,
+      project_display_name: job.project_display_name ?? null,
+      model_category: job.category ?? null,
+      model_version_id: modelVersionId ?? job.external_model_version_id ?? null,
+      source_ifc_etag: job.source_ifc_etag ?? null,
+      review_session_id: session?.session_id ?? job.review_session_id ?? null,
+      conversion_job_id: job.conversion_job_id ?? null,
+      conversion_status: job.conversion_status ?? null,
+    };
+  }
+
   function resolveDownloadedJobForRuleRun(
     job: IfcReadyIntakeJob | null | undefined,
     modelVersionId: string | null | undefined,
@@ -2956,6 +2980,7 @@ export function createCoordinatorApp(
         ifc_source_path: ifcSourcePath,
         model_version_id: modelVersionId,
         ifc_ready_job_id: job.ifc_ready_job_id,
+        source_metadata: ruleRunSourceMetadataForJob(job, modelVersionId, session),
       },
     };
   }
