@@ -88,6 +88,14 @@ import type {
 // m2a-coverage-report:conversion job id safe-id（比照後端 _safe_id 的 ^[A-Za-z0-9_.-]+$）。
 // 不可複用 isSafeSessionId —— 其 pattern 只認 ^review_session_,擋掉 stream_conv_*。
 const conversionJobIdPattern = /^[A-Za-z0-9_.-]+$/;
+const semanticReviewConversionProfile = "ifcopenshell_openusd_identity";
+type PendingDispatchEvent = {
+  event: ExternalIfcReadyEvent;
+  correlationId: string;
+  externalModelVersionId: string;
+  localPath: string;
+  hostLocalPath: string;
+};
 export function isSafeConversionJobId(value: string): boolean {
   return typeof value === "string" && value.length > 0 && conversionJobIdPattern.test(value);
 }
@@ -545,16 +553,7 @@ export function createCoordinatorApp(
   const conversionDispatchQueue = new ConversionDispatchQueue();
   // pendingDispatchEvents:enqueue 階段暫存 dispatch 所需 args,worker 取出用。
   // jobId → { event, correlationId, externalModelVersionId, localPath, hostLocalPath }
-  const pendingDispatchEvents = new Map<
-    string,
-    {
-      event: ExternalIfcReadyEvent;
-      correlationId: string;
-      externalModelVersionId: string;
-      localPath: string;
-      hostLocalPath: string;
-    }
-  >();
+  const pendingDispatchEvents = new Map<string, PendingDispatchEvent>();
   // dispatcher closure 用 streamingConversionClient / externalIfcReadyStore /
   // pollerRegistry / schedulePollerForConversion(hoisted)。注意 enqueue 必須
   // 在 setDispatcher 之後才能正確處理 worker。
@@ -574,6 +573,7 @@ export function createCoordinatorApp(
         externalModelVersionId: pending.externalModelVersionId,
         localPath: pending.localPath,
         hostLocalPath: pending.hostLocalPath,
+        conversionProfile: semanticReviewConversionProfile,
       });
       externalIfcReadyStore.markDispatched(
         jobId,
@@ -609,6 +609,32 @@ export function createCoordinatorApp(
     const relative = path.relative(root, target);
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
     return relative;
+  }
+
+  function rebuildPendingDispatchFromDownloadedJob(job: IfcReadyIntakeJob): PendingDispatchEvent | null {
+    if (job.download_status !== "downloaded" || !job.local_path || !job.host_local_path) return null;
+    return {
+      event: {
+        event: "ifc_ready",
+        tenant_id: job.tenant_id,
+        project_id: job.project_id,
+        external_model_version_id: job.external_model_version_id,
+        project_display_name: job.project_display_name,
+        model_category: job.category,
+        external_conversion_task_id: job.external_conversion_task_id,
+        source_ifc: {
+          ref: job.source_ifc_ref,
+          etag: job.source_ifc_etag || job.idempotency_key,
+          filename: "model.ifc",
+          format: "ifc",
+        },
+        callback_url: job.callback_url,
+      },
+      correlationId: job.correlation_id,
+      externalModelVersionId: job.external_model_version_id,
+      localPath: job.local_path,
+      hostLocalPath: job.host_local_path,
+    };
   }
 
   function fileSizeIfAvailable(hostPath: string | null): number | null {
@@ -796,16 +822,26 @@ export function createCoordinatorApp(
     return snapshot;
   }
 
+  function sourceHealthProbePathForJob(job: IfcReadyIntakeJob): { sourcePath: string | null; storageRoot: string } {
+    // Dockerized coordinator cannot stat a Windows host path such as D:/...,
+    // but it can stat the same file through the mounted container path.
+    if (job.local_path && job.host_local_path && job.local_path !== job.host_local_path) {
+      return { sourcePath: job.local_path, storageRoot: config.storageRoot };
+    }
+    return { sourcePath: job.host_local_path || job.local_path || null, storageRoot: config.storageHostRoot };
+  }
+
   async function refreshArtifactHealthForJob(
     job: IfcReadyIntakeJob,
     artifacts: { modelArtifactUrl?: string | null; mappingUrl?: string | null } = artifactUrlsForJob(job),
   ): Promise<ArtifactHealthSnapshot> {
+    const sourceProbe = sourceHealthProbePathForJob(job);
     const snapshot = await probeArtifactHealth({
-      host_local_path: job.host_local_path ?? null,
+      host_local_path: sourceProbe.sourcePath,
       model_artifact_url: artifacts.modelArtifactUrl ?? null,
       mapping_url: artifacts.mappingUrl ?? null,
       edge_runtime_data_root: config.edgeRuntimeDataRoot,
-      storage_root: config.storageHostRoot,
+      storage_root: sourceProbe.storageRoot,
       configured_conversion_api_origin: config.streamingConversionApiBase,
       checked_at: nowIso(),
     });
@@ -1143,9 +1179,13 @@ export function createCoordinatorApp(
       return;
     }
     if (!pendingDispatchEvents.has(id)) {
-      // 脈絡確實不存在（restart / drain 後）— 誠實要求重新進件，不假裝可重試。
-      response.status(422).json({ detail: "Dispatch context lost (coordinator restart/drain); please re-POST the ifc-ready job." });
-      return;
+      const rebuilt = rebuildPendingDispatchFromDownloadedJob(job);
+      if (!rebuilt) {
+        // 脈絡確實不存在且沒有已下載 IFC 可重建派工 — 誠實要求重新進件，不假裝可重試。
+        response.status(422).json({ detail: "Dispatch context lost (coordinator restart/drain); please re-POST the ifc-ready job." });
+        return;
+      }
+      pendingDispatchEvents.set(id, rebuilt);
     }
     // requeue 回 getQueuePosition 語義的 position:0=enqueue 後 worker 閒置同步取為 in-flight
     // (派工中)、≥1=排隊中。比照 intake(app.ts markQueuedForConversion(jobId, getQueuePosition ?? 0))
@@ -2026,6 +2066,95 @@ export function createCoordinatorApp(
   }
   app.get("/api/external/minio-watch/status", (_request, response) => {
     response.json(currentMinioWatchStatusPayload());
+  });
+
+  function ifcReadyReviewSessionOpenPayload(
+    job: IfcReadyIntakeJob,
+    session: ReviewSession,
+    sessionReplay: boolean,
+  ): Record<string, unknown> {
+    const openUrl = buildCoordinatorOpenUrl(config, session.session_id);
+    externalIfcReadyStore.recordReviewSession(job.ifc_ready_job_id, session.session_id);
+    externalIfcReadyStore.setViewerLink(job.ifc_ready_job_id, session.session_id, openUrl);
+    const linkedJob = externalIfcReadyStore.get(job.ifc_ready_job_id) ?? job;
+    const binding = expectedStageBinding(session);
+    return {
+      ifc_ready_job_id: linkedJob.ifc_ready_job_id,
+      conversion_job_id: linkedJob.conversion_job_id ?? null,
+      conversion_status: linkedJob.conversion_status ?? null,
+      review_session_id: session.session_id,
+      session_status: session.status,
+      session_replay: sessionReplay,
+      open_url: openUrl,
+      viewer_url: openUrl,
+      expected_stage_url: binding?.url ?? null,
+      expected_mapping_url: binding?.mapping_url ?? null,
+      artifact_health: publicArtifactHealthForJob(linkedJob, session),
+    };
+  }
+
+  app.post("/api/external/ifc-ready/:jobId/review-session", async (request, response, next) => {
+    try {
+      const jobId = request.params.jobId;
+      if (!isSafeIfcReadyJobId(jobId)) {
+        response.status(400).json({ detail: "Invalid IFC-ready job id." });
+        return;
+      }
+      const job = externalIfcReadyStore.get(jobId);
+      if (!job) {
+        response.status(404).json({ detail: "IFC-ready job not found." });
+        return;
+      }
+
+      const existingSession = job.review_session_id ? store.get(job.review_session_id) : null;
+      if (existingSession) {
+        await refreshArtifactHealthForSessionBestEffort(existingSession);
+        const freshSession = store.get(existingSession.session_id) ?? existingSession;
+        response.json(ifcReadyReviewSessionOpenPayload(job, freshSession, true));
+        return;
+      }
+
+      if (!job.conversion_job_id) {
+        response.status(409).json({
+          error_code: "conversion_not_dispatched",
+          detail: "IFC-ready job has no conversion job yet.",
+          ifc_ready_job_id: job.ifc_ready_job_id,
+          conversion_status: job.conversion_status ?? null,
+        });
+        return;
+      }
+
+      const outcome = await ingestStreamingConversionResult(job.conversion_job_id, { source: "manual" });
+      if (!outcome.ok) {
+        response.status(outcome.status).json({
+          error_code: "conversion_result_unavailable",
+          detail: outcome.detail,
+          ifc_ready_job_id: job.ifc_ready_job_id,
+          conversion_job_id: job.conversion_job_id,
+          conversion_status: job.conversion_status ?? null,
+        });
+        return;
+      }
+
+      if (outcome.failed || !outcome.outcome.session) {
+        response.status(409).json({
+          error_code: outcome.outcome.session_reason ?? (outcome.failed ? "conversion_failed" : "review_session_unavailable"),
+          detail: "IFC-ready job is not ready for Review Room session.",
+          ifc_ready_job_id: job.ifc_ready_job_id,
+          conversion_job_id: job.conversion_job_id,
+          conversion_status: outcome.conversion_status,
+          session_reason: outcome.outcome.session_reason ?? null,
+        });
+        return;
+      }
+
+      await refreshArtifactHealthForSessionBestEffort(outcome.outcome.session);
+      const freshJob = externalIfcReadyStore.get(job.ifc_ready_job_id) ?? outcome.outcome.ifc_ready_job ?? job;
+      const freshSession = store.get(outcome.outcome.session.session_id) ?? outcome.outcome.session;
+      response.json(ifcReadyReviewSessionOpenPayload(freshJob, freshSession, outcome.outcome.session_replay));
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get("/api/external/ifc-ready/:jobId", async (request, response, next) => {
@@ -2965,7 +3094,8 @@ export function createCoordinatorApp(
         reason: "IFC for this job has not been downloaded to a server-side path yet.",
       };
     }
-    const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.storageHostRoot, config.edgeRuntimeDataRoot);
+    const sourceProbe = sourceHealthProbePathForJob(job);
+    const sourceCheck = checkSourceIfcPath(sourceProbe.sourcePath, sourceProbe.storageRoot, config.edgeRuntimeDataRoot);
     if (sourceCheck.value !== true) {
       return {
         ok: false,

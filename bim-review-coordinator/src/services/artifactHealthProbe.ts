@@ -152,11 +152,45 @@ function normalizedOrigin(value: string): string | null {
   }
 }
 
-function isAllowedProbeUrl(url: URL, configuredConversionApiOrigin: string): boolean {
-  if (url.username || url.password) return false;
-  const configuredOrigin = normalizedOrigin(configuredConversionApiOrigin);
-  if (configuredOrigin && url.origin === configuredOrigin) return true;
+function normalizedOriginUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function effectivePort(url: URL): string {
+  if (url.port) return url.port;
+  if (url.protocol === "http:") return "80";
+  if (url.protocol === "https:") return "443";
+  return "";
+}
+
+function isLoopbackHttpUrl(url: URL): boolean {
   return url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost");
+}
+
+function isConversionArtifactPath(pathname: string): boolean {
+  const parts = pathname.split("/");
+  if (parts.length !== 4 || parts[0] !== "" || parts[1] !== "artifacts") return false;
+  if (!/^[A-Za-z0-9_.-]+$/.test(parts[2])) return false;
+  return parts[3] === "model.usdc" || parts[3] === "element_mapping.json" || parts[3] === "metadata.json";
+}
+
+function canonicalProbeUrl(url: URL, configuredConversionApiOrigin: string): URL | null {
+  if (url.username || url.password) return null;
+  const configuredOrigin = normalizedOrigin(configuredConversionApiOrigin);
+  if (configuredOrigin && url.origin === configuredOrigin) return url;
+  if (isLoopbackHttpUrl(url)) return url;
+
+  const configuredUrl = normalizedOriginUrl(configuredConversionApiOrigin);
+  if (!configuredUrl) return null;
+  if (url.protocol !== configuredUrl.protocol) return null;
+  if (effectivePort(url) !== effectivePort(configuredUrl)) return null;
+  if (!isConversionArtifactPath(url.pathname)) return null;
+
+  return new URL(url.pathname, configuredUrl.origin);
 }
 
 function statusToReachability(status: number): ProbeResult {
@@ -188,14 +222,15 @@ async function checkArtifactUrl(urlValue: string | null, configuredConversionApi
     return { value: null, failure: "url_invalid" };
   }
 
-  if (!isAllowedProbeUrl(url, configuredConversionApiOrigin)) {
+  const probeUrl = canonicalProbeUrl(url, configuredConversionApiOrigin);
+  if (!probeUrl) {
     return { value: null, failure: "url_not_allowed" };
   }
 
   try {
-    const headStatus = await requestStatus(url, "HEAD");
+    const headStatus = await requestStatus(probeUrl, "HEAD");
     if (headStatus === 405) {
-      return statusToReachability(await requestStatus(url, "GET"));
+      return statusToReachability(await requestStatus(probeUrl, "GET"));
     }
     return statusToReachability(headStatus);
   } catch {

@@ -8,6 +8,7 @@ import type { Express, Response } from "express";
 import type { ArtifactHealthSnapshot } from "../types.js";
 
 const DEFAULT_GOVERNANCE_API_BASE = "http://127.0.0.1:49102";
+const allowedIdsBasenamePattern = /^[A-Za-z0-9_.-]+\.ids$/;
 
 // 每次請求讀取(而非 import 時固定),讓 deploy / 測試能以 GOVERNANCE_API_BASE
 // 覆寫指向 stub。預設仍是 governance-service loopback 127.0.0.1:49102。
@@ -78,6 +79,44 @@ export interface GovernanceProxyDeps {
   isSafeIfcReadyJobId?: (ifcReadyJobId: string) => boolean;
 }
 
+function redactServerPaths(text: string): string {
+  return text
+    .replace(/[A-Za-z]:(?:\\\\|\\|\/)[^"'\r\n<>]*/g, "[server-path]")
+    .replace(/\/(?:workspace|storage|data|mnt|home|tmp|var|Users)\/[^"'\s<>]*/g, "[server-path]");
+}
+
+function normalizeIdsPath(value: unknown): { ok: true; value?: string } | { ok: false; detail: string } {
+  if (value === undefined || value === null || value === "") return { ok: true };
+  if (typeof value !== "string") {
+    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
+  }
+  const raw = value.trim().replace(/\\/g, "/");
+  if (!raw) return { ok: true };
+  if (raw.includes(":") || raw.startsWith("/") || raw.startsWith("//") || raw.includes("..")) {
+    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
+  }
+  const parts = raw.split("/").filter(Boolean);
+  const basename = parts.length === 1 ? parts[0] : parts.length === 2 && parts[0] === "rules" ? parts[1] : "";
+  if (!allowedIdsBasenamePattern.test(basename)) {
+    return { ok: false, detail: "ids_path must be a rule basename under rules/." };
+  }
+  return { ok: true, value: `rules/${basename}` };
+}
+
+function sanitizeRuleRunBody(body: unknown): { ok: true; body: unknown } | { ok: false; detail: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: true, body };
+  const copy: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+  delete copy.source_metadata;
+  const ids = normalizeIdsPath(copy.ids_path);
+  if (!ids.ok) return { ok: false, detail: ids.detail };
+  if (ids.value) {
+    copy.ids_path = ids.value;
+  } else {
+    delete copy.ids_path;
+  }
+  return { ok: true, body: copy };
+}
+
 async function forward(
   response: Response,
   method: string,
@@ -103,7 +142,7 @@ async function forward(
     } else {
       const text = await upstream.text();
       response.setHeader("Content-Type", contentType ?? "application/json");
-      response.send(text);
+      response.send(redactServerPaths(text));
     }
   } catch (error) {
     // 誠實：後端未啟動時回 502，不假裝成功。
@@ -148,8 +187,13 @@ function forwardResolvedRuleRun(
   if (context.source_metadata) {
     forwardBody.source_metadata = context.source_metadata;
   }
-  if (typeof overrideBody.ids_path === "string" && overrideBody.ids_path.trim().length > 0) {
-    forwardBody.ids_path = overrideBody.ids_path;
+  const ids = normalizeIdsPath(overrideBody.ids_path);
+  if (!ids.ok) {
+    response.status(400).json({ error_code: "invalid_ids_path", detail: ids.detail });
+    return;
+  }
+  if (ids.value) {
+    forwardBody.ids_path = ids.value;
   }
   if (typeof overrideBody.rule_set === "string" && overrideBody.rule_set.trim().length > 0) {
     forwardBody.rule_set = overrideBody.rule_set;
@@ -168,10 +212,12 @@ export function registerGovernanceProxy(app: Express, deps: GovernanceProxyDeps 
     const body = (request.body && typeof request.body === "object" && !Array.isArray(request.body))
       ? { ...(request.body as Record<string, unknown>) }
       : request.body;
-    if (body && typeof body === "object" && !Array.isArray(body)) {
-      delete (body as Record<string, unknown>).source_metadata;
+    const sanitized = sanitizeRuleRunBody(body);
+    if (!sanitized.ok) {
+      response.status(400).json({ error_code: "invalid_ids_path", detail: sanitized.detail });
+      return;
     }
-    void forward(response, "POST", "/api/rule-runs", body);
+    void forward(response, "POST", "/api/rule-runs", sanitized.body);
   });
 
   app.get("/api/governance/rule-runs", (request, response) => {

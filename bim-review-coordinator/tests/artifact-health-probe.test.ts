@@ -307,6 +307,34 @@ describe("probeArtifactHealth", () => {
     expect(snapshot.model_usdc_reachable).toBe(true);
   });
 
+  it("public conversion artifact URLs are probed through the configured conversion origin", async () => {
+    const { edgeRoot } = makeEdgeRoot();
+    const seen: Array<{ host: string | undefined; method: string | undefined; url: string | undefined }> = [];
+    const server = await startArtifactServer((req, res) => {
+      seen.push({ host: req.headers.host, method: req.method, url: req.url });
+      res.writeHead(200);
+      res.end();
+    });
+    const address = new URL(server.origin);
+
+    const snapshot = await probeArtifactHealth({
+      host_local_path: null,
+      model_artifact_url: `http://192.168.10.105:${address.port}/artifacts/stream_conv_demo_001/model.usdc`,
+      mapping_url: `http://192.168.10.105:${address.port}/artifacts/stream_conv_demo_001/element_mapping.json`,
+      edge_runtime_data_root: edgeRoot,
+      configured_conversion_api_origin: server.origin,
+    });
+
+    expect(snapshot.model_usdc_reachable).toBe(true);
+    expect(snapshot.mapping_reachable).toBe(true);
+    expect(seen).toHaveLength(2);
+    expect(seen.every((hit) => hit.host === address.host)).toBe(true);
+    expect(seen.map((hit) => `${hit.method} ${hit.url}`).sort()).toEqual([
+      "HEAD /artifacts/stream_conv_demo_001/element_mapping.json",
+      "HEAD /artifacts/stream_conv_demo_001/model.usdc",
+    ]);
+  });
+
   it("model_usdc_reachable follows HEAD 405 with GET range", async () => {
     const { edgeRoot } = makeEdgeRoot();
     const seen: Array<{ method: string | undefined; range: string | undefined }> = [];

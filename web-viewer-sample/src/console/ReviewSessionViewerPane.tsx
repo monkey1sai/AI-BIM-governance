@@ -76,14 +76,17 @@ function sessionIdIsValid(sessionId: string): boolean {
   return /^(lwv_|review_session_)[A-Za-z0-9_]+$/.test(sessionId);
 }
 
-function createReviewViewerIdentity(): { viewer_id: string; user_id: string; display_name: string } {
+type ReviewSessionViewerPaneMode = "review-room" | "a1-inline";
+
+function createReviewViewerIdentity(mode: ReviewSessionViewerPaneMode): { viewer_id: string; user_id: string; display_name: string } {
   const random = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const prefix = mode === "a1-inline" ? "a1_inline" : "review_room";
   return {
-    viewer_id: `review_room_viewer_${random}`,
-    user_id: `review_room_operator_${random}`,
-    display_name: "Review Room primary viewer",
+    viewer_id: `${prefix}_viewer_${random}`,
+    user_id: `${prefix}_operator_${random}`,
+    display_name: mode === "a1-inline" ? "A1 inline primary viewer" : "Review Room primary viewer",
   };
 }
 
@@ -111,7 +114,8 @@ function healthValue(value: boolean | null | undefined): string {
   return "unknown";
 }
 
-export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: { handoff?: ReviewRoomHandoff }) {
+export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff(), mode = "review-room" }: { handoff?: ReviewRoomHandoff; mode?: ReviewSessionViewerPaneMode }) {
+  const isA1Inline = mode === "a1-inline";
   const [sessionId, setSessionId] = useState(handoff.sessionId);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSessionSummary[]>([]);
   const [viewerOrigin, setViewerOrigin] = useState<string | null>(null);
@@ -127,6 +131,18 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
   const [commandTrace, setCommandTrace] = useState<string | null>(null);
   const identityRef = useRef<{ viewer_id: string; user_id: string; display_name: string } | null>(null);
   const viewerRef = useRef<EmbeddedViewerHandle>(null);
+  const sessionInputTestId = isA1Inline ? "a1-inline-session-input" : "review-room-session-input";
+  const sessionCandidatesTestId = isA1Inline ? "a1-inline-session-candidates" : "review-room-session-candidates";
+  const sessionCandidatesId = sessionCandidatesTestId;
+  const manualStartTestId = isA1Inline ? "a1-inline-manual-start" : "review-room-manual-start";
+  const runtimeEvidenceTestId = isA1Inline ? "a1-inline-runtime-evidence" : "review-room-runtime-evidence";
+  const viewerHostTestId = isA1Inline ? "a1-inline-viewer-host" : "review-room-viewer-host";
+  const kitNotStartedTestId = isA1Inline ? "a1-inline-kit-not-started" : "review-room-kit-not-started";
+  const viewerOriginMissingTestId = isA1Inline ? "a1-inline-viewer-origin-missing" : "review-room-viewer-origin-missing";
+  const handoffSummaryTestId = isA1Inline ? "a1-inline-handoff-summary" : "review-room-handoff-summary";
+  const highlightButtonTestId = isA1Inline ? "a1-inline-highlight" : "review-room-highlight";
+  const highlightReasonTestId = isA1Inline ? "a1-inline-highlight-reason" : "review-room-highlight-reason";
+  const commandTraceTestId = isA1Inline ? "a1-inline-command-trace" : "review-room-command-trace";
   // Task 13（七軸和諧整合）：只借 useSharedStatus() 餵 session input 的候選 <datalist>；不改變本 pane 既有的
   // runtimeStatus 判定 / lease 授權邏輯（N3：claimPrimary、lease/heartbeat effects、sendHighlight、
   // EmbeddedViewer 皆不動）。input 仍是自由輸入欄，datalist 只是額外的自動完成候選來源。
@@ -221,7 +237,7 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
 
   const claimPrimary = useCallback(async () => {
     if (!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy) return;
-    const identity = identityRef.current ?? createReviewViewerIdentity();
+    const identity = identityRef.current ?? createReviewViewerIdentity(mode);
     identityRef.current = identity;
     setLeaseBusy(true);
     setLeaseErr(null);
@@ -245,7 +261,7 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
     } finally {
       setLeaseBusy(false);
     }
-  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy]);
+  }, [sid, validSession, viewerOrigin, sessionObserved, modelArtifactStale, leaseBusy, mode]);
 
   const stageText = !loadedStageUrl
     ? t("not_observed（尚未收到 viewer stage）", "not_observed (no viewer stage yet)")
@@ -288,23 +304,29 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
     viewerRef.current?.sendHighlight([item]);
     setCommandTrace(JSON.stringify({
       command: "highlight",
-      source: "review-room",
+      source: isA1Inline ? "a1-inline" : "review-room",
       session_id: sid,
       rule_run_id: handoff.ruleRunId,
       ifc_guid: handoff.ifcGuid,
       usd_prim_path: handoff.usdPrimPath,
       item,
     }, null, 2));
-  }, [canHighlight, handoff, sid]);
+  }, [canHighlight, handoff, sid, isA1Inline]);
 
   return (
     <>
-      <Panel title={t("Review Room 3D session attach", "Review Room 3D session attach")} sub={t("Kit / WebRTC / viewer lease 必須由本畫面手動啟動；A1 不自動啟動", "Kit / WebRTC / viewer lease must be started manually here; A1 does not auto-start it")} prov="asbuilt">
+      <Panel
+        title={isA1Inline ? t("A1 3D 高亮 session", "A1 3D highlight session") : t("Review Room 3D session attach", "Review Room 3D session attach")}
+        sub={isA1Inline
+          ? t("在 A1 本頁啟動 Kit viewer lease、等待 first frame / DataChannel / stage match，然後直接送出高亮。", "Start the Kit viewer lease on A1, wait for first frame / DataChannel / stage match, then send highlight directly.")
+          : t("Kit / WebRTC / viewer lease 必須由本畫面手動啟動；A1 不自動啟動", "Kit / WebRTC / viewer lease must be started manually here; A1 does not auto-start it")}
+        prov="asbuilt"
+      >
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
           <input
             className="ec-btn"
-            data-testid="review-room-session-input"
-            list="review-room-session-candidates"
+            data-testid={sessionInputTestId}
+            list={sessionCandidatesId}
             style={{ flex: "1 1 220px", minWidth: 0, maxWidth: "100%" }}
             placeholder={t("review_session_xxx 或 lwv_xxx", "review_session_xxx or lwv_xxx")}
             value={sessionId}
@@ -319,12 +341,12 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
               setCommandTrace(null);
             }}
           />
-          <datalist id="review-room-session-candidates" data-testid="review-room-session-candidates">
+          <datalist id={sessionCandidatesId} data-testid={sessionCandidatesTestId}>
             {sessionCandidates.map((id) => <option key={id} value={id} />)}
           </datalist>
           <Btn
             primary
-            data-testid="review-room-manual-start"
+            data-testid={manualStartTestId}
             disabled={!validSession || !viewerOrigin || !sessionObserved || modelArtifactStale || leaseBusy || Boolean(activePrimaryLease)}
             caption={!validSession ? t("需有效 session id", "valid session id required")
               : !viewerOrigin ? t("runtime/status 尚未提供 viewer 入口", "runtime/status has not provided a viewer entry")
@@ -334,20 +356,24 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
               : t("POST /api/review-sessions/:id/viewer-leases/claim", "POST /api/review-sessions/:id/viewer-leases/claim")}
             onClick={() => { void claimPrimary(); }}
           >
-            {leaseBusy ? t("啟動中...", "Starting...") : t("手動啟動 / attach Kit session", "Start / attach Kit session")}
+            {leaseBusy
+              ? t("啟動中...", "Starting...")
+              : isA1Inline ? t("啟動 A1 3D Session", "Start A1 3D Session") : t("手動啟動 / attach Kit session", "Start / attach Kit session")}
           </Btn>
-          <a
-            className={`ec-btn ${validSession ? "" : "disabled"}`}
-            {...(viewerOpenUrl ? { href: viewerOpenUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
-            style={viewerOpenUrl ? undefined : { pointerEvents: "none", opacity: 0.45 }}
-            aria-disabled={!viewerOpenUrl}
-          >
-            {t("另開 viewer /ui/open", "Open viewer /ui/open")}
-          </a>
+          {!isA1Inline && (
+            <a
+              className={`ec-btn ${validSession ? "" : "disabled"}`}
+              {...(viewerOpenUrl ? { href: viewerOpenUrl, target: "_blank", rel: "noreferrer" } : { tabIndex: -1 })}
+              style={viewerOpenUrl ? undefined : { pointerEvents: "none", opacity: 0.45 }}
+              aria-disabled={!viewerOpenUrl}
+            >
+              {t("另開 viewer /ui/open", "Open viewer /ui/open")}
+            </a>
+          )}
         </div>
         <div
           className="ec-grid"
-          data-testid="review-room-runtime-evidence"
+          data-testid={runtimeEvidenceTestId}
           style={{ marginBottom: 8, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
         >
           <Field k="session" v={sid || "—"} prov={validSession ? "asbuilt" : "p1"} />
@@ -363,11 +389,13 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
         {runtimeErr && <p className="ec-warn-note" data-testid="review-room-runtime-error">{runtimeErr}</p>}
         {leaseErr && <p className="ec-warn-note" data-testid="review-room-lease-error">{leaseErr}</p>}
         {!activePrimaryLease ? (
-          <p className="ec-note" data-testid="review-room-kit-not-started">
-            {t("尚未啟動 3D session。這裡不做自動 claim；請按手動啟動後才會掛載 viewer。", "3D session is not started. This page does not auto-claim; the viewer mounts only after manual start.")}
+          <p className="ec-note" data-testid={kitNotStartedTestId}>
+            {isA1Inline
+              ? t("尚未啟動 A1 3D session。按上方按鈕後會在本頁掛載 viewer。", "A1 3D session is not started. Use the button above to mount the viewer on this page.")
+              : t("尚未啟動 3D session。這裡不做自動 claim；請按手動啟動後才會掛載 viewer。", "3D session is not started. This page does not auto-claim; the viewer mounts only after manual start.")}
           </p>
         ) : viewerOrigin ? (
-          <div data-testid="review-room-viewer-host" style={{ height: 480 }}>
+          <div data-testid={viewerHostTestId} style={{ height: 480 }}>
             <EmbeddedViewer
               ref={viewerRef}
               key={`${sid}:${activePrimaryLease.lease_id}`}
@@ -404,15 +432,21 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
             />
           </div>
         ) : (
-          <p className="ec-warn-note" data-testid="review-room-viewer-origin-missing">{t("runtime/status 無 viewer 入口，無法掛載 viewer", "runtime/status has no viewer entry; cannot mount viewer")}</p>
+          <p className="ec-warn-note" data-testid={viewerOriginMissingTestId}>{t("runtime/status 無 viewer 入口，無法掛載 viewer", "runtime/status has no viewer entry; cannot mount viewer")}</p>
         )}
       </Panel>
 
       {reviewRoomHandoffHasPayload(handoff) && (
-        <Panel title={t("A1 handoff", "A1 handoff")} sub={t("從治理檢核結果帶入的第一筆失敗構件；只有 Review Room 可送 3D highlight", "First failed element handed off from governance results; only Review Room can send 3D highlight")} prov="asbuilt">
+        <Panel
+          title={isA1Inline ? t("A1 高亮目標", "A1 highlight target") : t("A1 handoff", "A1 handoff")}
+          sub={isA1Inline
+            ? t("從治理檢核結果帶入的失敗構件；高亮由 A1 本頁 viewer 送出。", "Failed element from the governance result; highlight is sent by the A1 inline viewer.")
+            : t("從治理檢核結果帶入的第一筆失敗構件；只有 Review Room 可送 3D highlight", "First failed element handed off from governance results; only Review Room can send 3D highlight")}
+          prov="asbuilt"
+        >
           <div
             className="ec-grid"
-            data-testid="review-room-handoff-summary"
+            data-testid={handoffSummaryTestId}
             style={{ marginBottom: 8, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}
           >
             <Field k="source" v={handoff.source ?? "—"} prov="asbuilt" />
@@ -422,13 +456,13 @@ export function ReviewSessionViewerPane({ handoff = parseReviewRoomHandoff() }: 
             <Field k="rule_code" v={handoff.ruleCode ?? "—"} prov="asbuilt" />
             <Field k="mapping_status" v={handoff.usdPrimPath ? t("mapped", "mapped") : mappingDiagnosticText(handoff)} prov={handoff.usdPrimPath ? "asbuilt" : "p1"} />
           </div>
-          <Btn data-testid="review-room-highlight" disabled={!canHighlight} caption={canHighlight ? t("postMessage highlight -> viewer DataChannel", "postMessage highlight -> viewer DataChannel") : highlightDisabledReason} onClick={sendHighlight}>
-            {t("在 3D 高亮 handoff 構件", "Highlight handoff element in 3D")}
+          <Btn data-testid={highlightButtonTestId} disabled={!canHighlight} caption={canHighlight ? t("postMessage highlight -> viewer DataChannel", "postMessage highlight -> viewer DataChannel") : highlightDisabledReason} onClick={sendHighlight}>
+            {isA1Inline ? t("在 A1 3D 中標示", "Highlight in A1 3D") : t("在 3D 高亮 handoff 構件", "Highlight handoff element in 3D")}
           </Btn>
-          <span className="ec-note" data-testid="review-room-highlight-reason" style={{ marginLeft: 8 }}>
+          <span className="ec-note" data-testid={highlightReasonTestId} style={{ marginLeft: 8 }}>
             {highlightResult ? highlightResultText(highlightResult) : (canHighlight ? t("可送出", "ready to send") : highlightDisabledReason)}
           </span>
-          {commandTrace && <pre className="ec-note" data-testid="review-room-command-trace" style={{ whiteSpace: "pre-wrap" }}>{commandTrace}</pre>}
+          {commandTrace && <pre className="ec-note" data-testid={commandTraceTestId} style={{ whiteSpace: "pre-wrap" }}>{commandTrace}</pre>}
         </Panel>
       )}
     </>
