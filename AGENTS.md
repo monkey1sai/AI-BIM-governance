@@ -58,6 +58,8 @@
 
 四工具職責表與 anti-patterns 的完整定義見 `docs/agents/github-workflow.md`（單一權威版，避免雙表漂移）；一句話分工：**Superpowers**＝plan / execution 主線、**GitNexus**＝impact / detect_changes、**gstack**＝user-facing 驗收唯一證據、**Matt Pocock skills**＝僅 issue / triage 輔助不得當主線。
 
+CI 本機先行鐵律：GitHub Actions 只作遠端確認，不可當第一輪錯誤發現工具；凡 repo 已提供本機等效檢查（例如 PR body evidence、viewer build/test、deploy/script preflight），agent 必須先在本機跑到綠再 push / watch CI。跳過本機 preflight 造成 PR 等待或重跑，視為嚴重開發時間浪費；PR body 改動須先跑 `.\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <n>`，再用新 commit（必要時 empty commit）觸發 `pull_request.synchronize`，不得只 rerun 舊 event 的 GitHub workflow。
+
 誠實鐵律（repo contract：前端要真的能操作，不能只接 mock）：某部分還沒 backend 時，UI 須誠實標 `DEMO DATA`／`NOT BUILT`／`not observed`，不得假裝 ready。完成標準與 frontend-operable rule 見上方「產品定位與完成標準」。
 
 ### 本機 agent 產物

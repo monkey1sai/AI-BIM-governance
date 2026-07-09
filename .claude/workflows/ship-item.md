@@ -33,6 +33,13 @@
 
    - 若動到 **runtime / deploy** 行為（Docker / Kit / viewer / env / port / conversion-service / demo launch），依 `github-workflow.md` 附 **Deploy Path Verification table**（是否更新 `scripts/deploy.ps1`、`.\scripts\deploy.ps1 -DryRun` 結果或不適用理由）。
    - 純 tooling / docs / spec（無 production code）→ 不適用上述兩表，但 SHALL 在 body 明確說明這點。
+5.1. **本機 PR preflight（CI 等待前硬 gate）**：在 push / PR body 更新後、開始 `gh pr checks --watch` 前，MUST 先跑：
+
+   ```powershell
+   .\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <n>
+   ```
+
+   此命令會用目前 PR body + 本機 `origin/main...HEAD` changed paths 重跑 machine evidence gate，並在 frontend paths 受影響時跑 `web-viewer-sample` 的 `npm run verify`。任何本機可重現的 GitHub workflow failure 都不得丟到 GitHub CI 才發現；跳過此步造成等待或重跑，視為嚴重開發時間浪費。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipViewerVerify`，但正式 push / CI watch 前不得跳過受影響的本機等效測試。PR body-only 修正不可只 `gh run rerun`，需先本機 preflight 綠，再 push 新 commit（必要時 `--allow-empty`）觸發新的 `pull_request.synchronize`。
 6. **觀測 CI**：`gh pr checks <n> --watch`，等官方 checks 跑完。
 7. **reviewer buffer**：CI 變綠後 **再等 ~90–120s**。reviewer（pr-review-agent / CodeRabbit / Codex / Copilot）常在 CI 變綠之後才貼出 inline P1/P2，太早查會漏掉。
 8. **查 reviewer P0/P1/P2 發現（三處來源，全部 `--paginate`）**：reviewer 的 substantive 發現不只在 inline diff comment 上，gate **三處都要查**。此步只偵測 **P0/P1/P2 等級關鍵字**（`P0`、`P1`、`P2`、`Blocker`、`Critical`、`High`、`CHANGES_REQUESTED`；`P0`/`Blocker`/`Critical` 視同 P1-equivalent hold，`High` 視同 P2），避免把 nit / low / medium / style-only 建議升級成自動修復輸入。任一處有未解除的 P0/P1/P2 finding 都要 hold：
