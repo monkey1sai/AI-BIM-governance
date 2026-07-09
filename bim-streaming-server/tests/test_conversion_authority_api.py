@@ -523,6 +523,51 @@ def test_duplicate_idempotency_key_replays_existing_job(tmp_path: Path):
     assert job_file_count(tmp_path) == 1
 
 
+def test_minio_retrigger_with_new_presigned_url_and_cache_path_replays_existing_job(tmp_path: Path):
+    client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
+
+    shared_artifact = {
+        "artifact_id": "ifc_minio_model_v1",
+        "format": "ifc",
+        "filename": "model.ifc",
+        "etag": "77e4fbad-e0f7-4946-9a49-fa84d941ddeb",
+    }
+    first = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_minio_watch_001",
+            correlation_id="minio-watch-f94841eb",
+            idempotency_key="idem_minio_model_v1",
+            ifc_artifact={
+                **shared_artifact,
+                "url": "http://minio.local/source/model.ifc?X-Amz-Date=20260709T074923Z&X-Amz-Signature=old",
+                "local_path": "/workspace/storage/ifcready_old/source.ifc",
+                "host_local_path": "D:/Users/deploy/AI-bim-geo/storage/ifcready_old/source.ifc",
+            },
+        ),
+    )
+    replay = client.post(
+        "/api/conversions/ifc-to-usdc",
+        json=ifc_ready_payload(
+            event_id="evt_minio_watch_002",
+            correlation_id="minio-watch-f94841eb",
+            idempotency_key="idem_minio_model_v1",
+            ifc_artifact={
+                **shared_artifact,
+                "url": "http://minio.local/source/model.ifc?X-Amz-Date=20260709T081100Z&X-Amz-Signature=new",
+                "local_path": "/workspace/storage/ifcready_new/source.ifc",
+                "host_local_path": "D:/Users/deploy/AI-bim-geo/storage/ifcready_new/source.ifc",
+            },
+        ),
+    )
+
+    assert first.status_code == 202
+    assert replay.status_code == 202
+    assert replay.json()["conversion_job_id"] == first.json()["conversion_job_id"]
+    assert replay.json()["idempotent_replay"] is True
+    assert job_file_count(tmp_path) == 1
+
+
 def test_conflicting_idempotency_key_returns_409_without_new_job(tmp_path: Path):
     client = make_client(tmp_path, converter=FakeSuccessfulConverter(), run_background=False)
 

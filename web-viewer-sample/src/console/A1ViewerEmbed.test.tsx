@@ -1,15 +1,34 @@
-// A1 3D 解耦回歸鎖：A1 不再嵌入 EmbeddedViewer、不自動選 session、不自動 claim viewer lease。
-import { act, forwardRef } from "react";
+// A1 3D 回歸鎖：A1 可在本頁建立 / attach 3D session，但仍不得 mount 後自動 claim lease。
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const viewerBox = vi.hoisted(() => ({ renderCount: 0 }));
-vi.mock("./EmbeddedViewer", () => ({
-  EmbeddedViewer: forwardRef((_: Record<string, unknown>, _ref) => {
+const viewerBox = vi.hoisted(() => ({
+  renderCount: 0,
+  highlightBatches: [] as unknown[][],
+}));
+vi.mock("./EmbeddedViewer", async () => {
+  const React = await import("react");
+  return {
+    EmbeddedViewer: React.forwardRef((props: Record<string, unknown>, ref) => {
     viewerBox.renderCount += 1;
+    React.useImperativeHandle(ref, () => ({
+      sendHighlight(items: unknown[]) {
+        viewerBox.highlightBatches.push(items);
+        const onHighlightResult = props.onHighlightResult as undefined | ((message: unknown) => void);
+        onHighlightResult?.({ protocol: "vg01", type: "highlight_result", requestId: "test", ok: true });
+      },
+      sendFocus() {},
+      sendClear() {},
+    }));
+    React.useEffect(() => {
+      const onFirstFrame = props.onFirstFrame as undefined | ((message: unknown) => void);
+      onFirstFrame?.({ protocol: "vg01", type: "first_frame", stageUrl: "stage://x" });
+    }, [props]);
     return null;
   }),
-}));
+  };
+});
 
 import { A1GovernanceWorkbenchPage } from "./pages";
 import { coordinatorClient, type IfcReadyListItem } from "./coordinatorClient";
@@ -136,6 +155,7 @@ describe("A1 3D review decoupling", () => {
     document.body.appendChild(container);
     root = null;
     viewerBox.renderCount = 0;
+    viewerBox.highlightBatches = [];
     window.location.hash = "#a1";
     vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus() as never);
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(fakeFilesTree);
@@ -150,6 +170,7 @@ describe("A1 3D review decoupling", () => {
     vi.spyOn(coordinatorClient, "releaseViewerLease").mockRejectedValue(new Error("A1 must not release viewer lease"));
     vi.spyOn(coordinatorClient, "viewerLeaseHeartbeat").mockRejectedValue(new Error("A1 must not heartbeat viewer lease"));
     vi.spyOn(coordinatorClient, "reportFirstFrame").mockRejectedValue(new Error("A1 must not report first frame"));
+    vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockRejectedValue(new Error("unexpected A1 review-session creation"));
   });
 
   afterEach(async () => {
@@ -280,6 +301,57 @@ describe("A1 3D review decoupling", () => {
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
     });
     expect(directRunSpy).not.toHaveBeenCalled();
+  });
+
+  it("downloaded MinIO object without conversion ready keeps CPU rule-run but disables 3D session actions", async () => {
+    vi.mocked(coordinatorClient.listIfcReady).mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({
+        review_session_id: null,
+        conversion_job_id: null,
+        conversion_status: null,
+        expected_stage_url: null,
+        expected_mapping_url: null,
+        artifact_health: {
+          source_ifc_exists: true,
+          model_usdc_reachable: null,
+          mapping_reachable: null,
+          metadata_reachable: null,
+          all_required_ready: false,
+          checked_at: "2026-07-07T10:00:00.000Z",
+          stale_reason: null,
+          failure_details: null,
+          source: "edge_health_probe",
+        },
+      })],
+    });
+    const forIfcReadySpy = vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    const createReviewSessionSpy = vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockRejectedValue(new Error("conversion-not-ready must not create review session"));
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "guid_cpu_only", usd_prim_path: null, rule_code: "CPU-ONLY", severity: "error", status: "fail", message: "CPU rule fail" },
+    ]);
+
+    await renderA1();
+    await selectMinioSource();
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+
+    const run = q<HTMLButtonElement>("a1-step-run")!;
+    expect(run.disabled).toBe(false);
+    await act(async () => { run.click(); });
+    await flush();
+
+    expect(forIfcReadySpy).toHaveBeenCalledWith("ifcready_1", {
+      ids_path: expect.stringContaining("sample-fire-rating.ids"),
+    });
+    expect(q<HTMLButtonElement>("a1-create-review-session")!.disabled).toBe(true);
+    expect(q<HTMLButtonElement>("a1-retry-conversion")!.disabled).toBe(true);
+    expect(q("a1-open-viewer")).toBeNull();
+    expect(q("a1-open-review-room")).toBeNull();
+    expect(q("a1-inline-manual-start")).toBeNull();
+    expect(createReviewSessionSpy).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#a1");
   });
 
   it("revalidates MinIO ifc-ready health before running and blocks newly stale source IFC", async () => {
@@ -771,7 +843,7 @@ describe("A1 3D review decoupling", () => {
     expect(q<HTMLButtonElement>("a1-step-bcf")!.disabled).toBe(true);
   });
 
-  it("rule-run result opens Review Room handoff with non-secret context instead of sending in-place highlight", async () => {
+  it("rule-run result renders an A1 inline handoff with non-secret context", async () => {
     const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("selected session must use coordinator for-session proxy"));
     const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -789,21 +861,16 @@ describe("A1 3D review decoupling", () => {
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
     });
     expect(directRunSpy).not.toHaveBeenCalled();
-    const open = q<HTMLButtonElement>("a1-open-review-room")!;
-    expect(open.disabled).toBe(false);
-    await act(async () => { open.click(); });
-
-    expect(window.location.hash).toContain("#review?");
-    expect(window.location.hash).toContain("source=a1");
-    expect(window.location.hash).toContain("rule_run_id=rr_a1");
-    expect(window.location.hash).toContain("session=review_session_x");
-    expect(window.location.hash).toContain("ifc_guid=2O2Fr%24t4X7Zf8NOew3FLOH");
-    expect(window.location.hash).toContain("usd_prim_path=%2FWorld%2FDoor_001");
-    expect(window.location.hash).not.toContain("lease_token");
+    expect(q("a1-open-review-room")).toBeNull();
+    expect(q("a1-inline-handoff-summary")?.textContent).toContain("2O2Fr$t4X7Zf8NOew3FLOH");
+    expect(q("a1-inline-handoff-summary")?.textContent).toContain("/World/Door_001");
+    expect(q<HTMLInputElement>("a1-inline-session-input")?.value).toBe("review_session_x");
+    expect(window.location.hash).toBe("#a1");
+    expect(container.textContent).not.toContain("lease_token");
     expect(viewerBox.renderCount).toBe(0);
   });
 
-  it("opens Review Room from A1 results even before a review session is selected", async () => {
+  it("local A1 results without a review session do not expose a stale Review Room handoff button", async () => {
     vi.spyOn(governanceClient, "createRuleRun").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
     vi.spyOn(governanceClient, "getResults").mockResolvedValue([
@@ -815,21 +882,144 @@ describe("A1 3D review decoupling", () => {
     await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
     await flush();
 
-    const open = q<HTMLButtonElement>("a1-open-review-room")!;
-    expect(open.disabled).toBe(false);
-    await act(async () => { open.click(); });
-
-    expect(window.location.hash).toContain("#review?");
-    expect(window.location.hash).toContain("source=a1");
-    expect(window.location.hash).toContain("rule_run_id=rr_a1");
-    expect(window.location.hash).toContain("ifc_guid=guid_no_session_yet");
-    expect(window.location.hash).toContain("usd_prim_path=%2FWorld%2FDoor_002");
-    expect(window.location.hash).not.toContain("session=");
-    expect(window.location.hash).not.toContain("lease_token");
+    expect(q("a1-open-review-room")).toBeNull();
+    expect(q("a1-inline-handoff-summary")).toBeNull();
+    expect(window.location.hash).toBe("#a1");
+    expect(container.textContent).not.toContain("lease_token");
     expect(viewerBox.renderCount).toBe(0);
   });
 
-  it("missing usd_prim_path opens Review Room with an honest mapping diagnostic", async () => {
+  it("MinIO ifc-ready result creates an A1 inline 3D session without opening /ui/open", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus([]) as never);
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null, viewer_url: null })],
+    });
+    const createReviewSessionSpy = vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockResolvedValue({
+      ifc_ready_job_id: "ifcready_1",
+      conversion_job_id: "conv_1",
+      conversion_status: "ready",
+      review_session_id: "review_session_new",
+      session_status: "active",
+      session_replay: false,
+      open_url: "http://127.0.0.1:8004/ui/open?session=review_session_new",
+      viewer_url: "http://127.0.0.1:8004/ui/open?session=review_session_new",
+      expected_stage_url: "stage://x",
+      expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
+      artifact_health: null,
+    });
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "guid_minio_new_session", usd_prim_path: "/World/Door_003", rule_code: "FIRE-RATING", severity: "error", status: "fail", message: "Fire rating missing" },
+    ]);
+
+    await renderA1();
+    await selectMinioSource();
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    await act(async () => { q<HTMLButtonElement>("a1-create-review-session")!.click(); });
+    await flush();
+
+    expect(createReviewSessionSpy).toHaveBeenCalledWith("ifcready_1");
+    expect(window.location.hash).toBe("#a1");
+    expect(q<HTMLInputElement>("a1-inline-session-input")?.value).toBe("review_session_new");
+    expect(q("a1-inline-handoff-summary")?.textContent).toContain("guid_minio_new_session");
+    expect(q("a1-inline-handoff-summary")?.textContent).toContain("/World/Door_003");
+    expect(q("a1-review-open-url")?.textContent).toContain("review_session_new");
+    expect(q("a1-open-viewer")).toBeNull();
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(viewerBox.renderCount).toBe(0);
+  });
+
+  it("MinIO ifc-ready result can start a 3D highlight session inline on A1 without opening Review Room", async () => {
+    vi.spyOn(coordinatorClient, "runtimeStatus").mockResolvedValue(fakeRuntimeStatus([fakeSession("review_session_new")]) as never);
+    vi.spyOn(coordinatorClient, "listIfcReady").mockResolvedValue({
+      count: 1,
+      items: [fakeIfcReadyJob({ review_session_id: null, viewer_url: null })],
+    });
+    const createReviewSessionSpy = vi.spyOn(coordinatorClient, "createReviewSessionForIfcReady").mockResolvedValue({
+      ifc_ready_job_id: "ifcready_1",
+      conversion_job_id: "conv_1",
+      conversion_status: "ready",
+      review_session_id: "review_session_new",
+      session_status: "active",
+      session_replay: false,
+      open_url: "http://127.0.0.1:8004/ui/open?session=review_session_new",
+      viewer_url: "http://127.0.0.1:8004/ui/open?session=review_session_new",
+      expected_stage_url: "stage://x",
+      expected_mapping_url: "http://127.0.0.1:49101/artifacts/demo/element_mapping.json",
+      artifact_health: null,
+    });
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    vi.mocked(coordinatorClient.claimViewerLease).mockResolvedValue({
+      lease_id: "lease_a1",
+      lease_token: "lease_token_a1",
+      session_id: "review_session_new",
+      viewer_id: "a1_viewer",
+      user_id: "a1_operator",
+      display_name: "A1 inline primary viewer",
+      role: "primary",
+      status: "active",
+      kit_instance_id: "kit_1",
+      stream_config: { signalingServer: "127.0.0.1", signalingPort: 49100, mediaServer: "127.0.0.1", mediaPort: 49101 },
+      client_nonce: "nonce",
+      claimed_at: "",
+      expires_at: "",
+      last_heartbeat_at: null,
+      released_at: null,
+      first_frame_at: null,
+      loaded_stage_url: null,
+      datachannel_ready: false,
+      stage_match: null,
+      heartbeat_after_ms: 15000,
+      idempotent_replay: false,
+      primary: true,
+    } as never);
+    vi.mocked(coordinatorClient.viewerLeaseHeartbeat).mockResolvedValue({} as never);
+    vi.mocked(coordinatorClient.reportFirstFrame).mockResolvedValue({ session_id: "review_session_new", first_frame_at: "2026-07-09T00:00:00.000Z" } as never);
+    vi.spyOn(governanceClient, "createRuleRunForIfcReady").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
+    vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
+    vi.spyOn(governanceClient, "getResults").mockResolvedValue([
+      { ifc_guid: "guid_minio_inline", usd_prim_path: "/World/Door_Inline", rule_code: "FIRE-RATING", severity: "error", status: "fail", message: "Fire rating missing" },
+    ]);
+
+    await renderA1();
+    await selectMinioSource();
+    await act(async () => { q<HTMLButtonElement>("a1-step-pick")!.click(); });
+    await flush();
+    await act(async () => { q<HTMLButtonElement>("a1-step-run")!.click(); });
+    await flush();
+
+    await act(async () => { q<HTMLButtonElement>("a1-create-review-session")!.click(); });
+    await flush();
+    expect(createReviewSessionSpy).toHaveBeenCalledWith("ifcready_1");
+    expect(window.location.hash).toBe("#a1");
+
+    const start = q<HTMLButtonElement>("a1-inline-manual-start")!;
+    expect(start).not.toBeNull();
+    expect(start.disabled).toBe(false);
+    await act(async () => { start.click(); });
+    await flush();
+
+    expect(coordinatorClient.claimViewerLease).toHaveBeenCalledWith("review_session_new", expect.objectContaining({ requested_role: "primary" }));
+    expect(q("a1-inline-viewer-host")).not.toBeNull();
+    const highlight = q<HTMLButtonElement>("a1-inline-highlight")!;
+    expect(highlight.disabled).toBe(false);
+    await act(async () => { highlight.click(); });
+    await flush();
+
+    expect(viewerBox.highlightBatches).toHaveLength(1);
+    expect(viewerBox.highlightBatches[0][0]).toMatchObject({ ifc_guid: "guid_minio_inline", rule_code: "FIRE-RATING" });
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("#a1");
+  });
+
+  it("missing usd_prim_path shows an honest A1 inline mapping diagnostic", async () => {
     const directRunSpy = vi.spyOn(governanceClient, "createRuleRun").mockRejectedValue(new Error("selected session must use coordinator for-session proxy"));
     const forSessionSpy = vi.spyOn(governanceClient, "createRuleRunForSession").mockResolvedValue({ rule_run_id: "rr_a1", status: "queued" });
     vi.spyOn(governanceClient, "getRuleRun").mockResolvedValue(fakeRunStatus("succeeded"));
@@ -858,19 +1048,12 @@ describe("A1 3D review decoupling", () => {
       ids_path: expect.stringContaining("sample-fire-rating.ids"),
     });
     expect(directRunSpy).not.toHaveBeenCalled();
-    const open = q<HTMLButtonElement>("a1-open-review-room")!;
-    expect(open.disabled).toBe(false);
-    await act(async () => { open.click(); });
-
-    expect(window.location.hash).toContain("#review?");
-    expect(window.location.hash).toContain("source=a1");
-    expect(window.location.hash).toContain("session=review_session_x");
-    expect(window.location.hash).toContain("ifc_guid=guid_without_mapping");
-    expect(window.location.hash).toContain("mapping_information_status=incomplete");
-    expect(window.location.hash).toContain("mapping_issue_code=ifc_usdc_mapping_information_incomplete");
-    expect(window.location.hash).toContain("mapping_issue_count=1");
-    expect(window.location.hash).not.toContain("usd_prim_path");
-    expect(window.location.hash).not.toContain("lease_token");
+    expect(q("a1-open-review-room")).toBeNull();
+    expect(q("a1-inline-handoff-summary")?.textContent).toContain("guid_without_mapping");
+    expect(q("a1-inline-handoff-summary")?.textContent).toContain("ifc_usdc_mapping_information_incomplete");
+    expect(q("a1-inline-highlight-reason")?.textContent).toContain("usd_prim_path");
+    expect(window.location.hash).toBe("#a1");
+    expect(container.textContent).not.toContain("lease_token");
   });
 
   it("A1 cross-link chips navigate to #minio / #sessions carrying source=a1 and the selected id (not swapped)", async () => {
@@ -924,6 +1107,6 @@ describe("A1 3D review decoupling", () => {
     expect(href).toContain("#minio?");
     expect(href).toContain("source=a1");
     expect(href).toContain("minio_key=");
-    expect(q<HTMLElement>("a1-no-session")!.textContent).toContain("POST /api/conversion/trigger");
+    expect(q<HTMLElement>("a1-no-session")!.textContent).toContain("查看 MinIO 來源");
   });
 });

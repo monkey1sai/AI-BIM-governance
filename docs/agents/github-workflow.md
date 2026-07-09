@@ -41,10 +41,18 @@ Merge            = 正式接受變更
 
 ## PR 與 merge
 
-- 開 PR 前跑最小驗證並回報結果；commit 前跑 GitNexus `detect_changes` 驗 scope；PR 由 GitHub Actions 做自動驗證與審查討論。
+- 開 PR 前跑最小驗證並回報結果；commit 前跑 GitNexus `detect_changes` 驗 scope；PR 由 GitHub Actions 做遠端確認與審查討論，但不得把 GitHub Actions 當成第一輪錯誤發現工具。
+- **Local PR preflight 是硬 gate**：凡 GitHub workflow 可在本機等效檢查，必須先本機跑到綠再 push / watch CI；跳過本機 preflight 導致 PR 等待或重跑，視為嚴重開發時間浪費。最低要求：
+
+  ```powershell
+  .\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <pr-number>
+  ```
+
+  此 wrapper 會抓目前 PR body，預設用本機 `origin/main...HEAD` changed paths 執行 `scripts/tests/check-pr-body-evidence.ps1`，接著在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`；正式 push / CI watch 前不得跳過受影響的本機等效測試。
 - User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準：`Frontend route`、`Main button(s) tested`、`Fixture used`、`Visible success state`、`E2E command`、`Screenshot / trace`、`Known gaps`。無前端 route / button / fixture / **gstack browser evidence** 時不得標為完整完成。
 - Runtime / Docker / Kit / viewer / env / port 相關 PR 描述必須包含 Deploy Path Verification table；若未更新 `scripts/deploy.ps1`，必須明確說明已驗證或不適用。
 - 改動治理面檔案（`AGENTS.md` / `CLAUDE.md` / `README.md` / `docs/agents|plans/` / `.github/` / `.claude/workflows/` / `.codex/skills/` / pr-review-agent scripts）的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`gstack evidence`、`Agent workflow changed?`、`Required checks expected`。所有三張表的 label 都由 `scripts/tests/check-pr-body-evidence.ps1` 逐字比對（值不得為 `-`/`tbd`/`todo` 等占位）；改 body 後需 push empty commit 重跑 check。
+- `pr-review-agent` 的 PR body check 使用 `pull_request` event payload；單純 `gh run rerun` 會重放舊 payload，通常仍看不到剛改好的 body。PR body-only 修正流程固定為：先更新 PR body → 本機 `check-pr-local-preflight.ps1` 跑綠 → push 一個新 commit（必要時 `--allow-empty`）觸發新的 `pull_request.synchronize`。
 - 完成標準、frontend-operable rule 與誠實鐵律（無 backend 處 UI 標 `DEMO DATA` / `NOT BUILT` / `not observed`，不得只接 mock）見 `AGENTS.md` §0.1 與 `product-operability-and-script-contract.md`。
 
 ## `main` 衛生

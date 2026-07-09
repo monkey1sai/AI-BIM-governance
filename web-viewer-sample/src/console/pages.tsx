@@ -6,13 +6,13 @@ import { Btn, Field, Metric, Panel, ProvTag, ProvLegend } from "./components";
 import { a1Reducer, initialA1State, uiSteps } from "./a1Machine";
 import { A1A10, A1A10_DETAIL, AppCardDef, AppVisionDetail, DEPENDENCIES, ENDPOINTS, PAGES, Prov, SERVICES } from "./data";
 import { CoordReport, DiffIssueImpact, DiffItemRow, DiffOverlayResult, DiffStatus, FailureRow, FederatedBuildResult, FileProjectRow, FileVersionRow, governanceClient, IssueRow, ReviewRoomDescriptor, RuleResultRow, RuleRunHistoryFilters, RuleRunHistoryItem, RuleRunStatus } from "./governanceClient";
-import { coordinatorClient, IfcReadyListItem, KitInstanceState, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
+import { coordinatorClient, IfcReadyListItem, IfcReadyReviewSessionResponse, KitInstanceState, RuntimeSessionSummary, RuntimeStatus } from "./coordinatorClient";
 // [Task 9 MD 三頁合一] CV/M/IN 三頁移除後，conversionShared 其餘符號（CoverageDrawer/chip/role…）改由
 // modelData/ 內的 pane 消費；本檔僅剩 LifecycleStrip（A1GovernanceWorkbenchPage stepper 仍用）。
 import { LifecycleStrip } from "./modelData/conversionShared";
 import { CoordinatorGovernanceTabs } from "./coordinator/RuntimeGovernanceTabs";
 import { IntentDialog } from "./IntentDialog";
-import { ReviewSessionViewerPane } from "./ReviewSessionViewerPane";
+import { ReviewSessionViewerPane, type ReviewRoomHandoff } from "./ReviewSessionViewerPane";
 // 重用既有 viewer 的 mapping fake-vs-real 隔離工具（已有測試）：mock / allow_fake_mapping /
 // fake_mapping_count>0 / mapping_method=fake_for_smoke_test 一律當 fake，不重造輪子。
 import { ElementMappingDocument, isFakeMappingDocument, isFakeMappingItem, mappingVerificationBlockReason } from "../types/mapping";
@@ -34,17 +34,16 @@ type NativeFilePickerWindow = Window & {
 // A1 真實 IFC 驗證 artifact（committed evidence，PR #151；非捏造，為實測值）。
 const A1_EVIDENCE = { schema: "IFC4X3", file: "fixture-bytes.ifc", total: 7126, uniqueElements: 6715, passed: 7055, failed: 71, score: 99.0, date: "2026-06-02" };
 
-// A1 規則檢核的預設 IFC 路徑：部署可用 VITE_A1_DEFAULT_IFC_PATH 覆寫成該機 storage 的真實路徑。
-// 開發機 fallback 指向 repo 內 storage/fixture-bytes.ifc（dev/E2E 用）;部署區未設此 env 時操作員仍可手動改輸入框。
-// （#/a1 移除內嵌 file-library 選擇器後若仍寫死開發機絕對路徑,別機部署會在第一步 rule-run 即 ifc_source_path not found。）
+// A1/Issue legacy manual path fallback is env-only. Do not bake host absolute
+// paths into browser code; normal A1 uses file-tree / ifc-ready server resolvers.
 function defaultA1IfcPath(): string {
   const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-  return meta?.VITE_A1_DEFAULT_IFC_PATH || "C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\fixture-bytes.ifc";
+  return meta?.VITE_A1_DEFAULT_IFC_PATH || "";
 }
 
 function defaultA1IdsPath(): string {
   const meta = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
-  return meta?.VITE_A1_DEFAULT_IDS_PATH || "C:\\Repos\\active\\iot\\AI-BIM-governance\\governance-service\\rules\\sample-fire-rating.ids";
+  return meta?.VITE_A1_DEFAULT_IDS_PATH || "rules/sample-fire-rating.ids";
 }
 
 type A1SourceKind = "local_fs" | "minio";
@@ -267,35 +266,6 @@ export function OverviewPage() {
   );
 }
 
-function buildA1ReviewRoomHandoffHash(args: {
-  sessionId?: string;
-  runId: string | null;
-  row: RuleResultRow | null | undefined;
-  expectedStageUrl?: string | null;
-}): string {
-  const q = new URLSearchParams({ source: "a1" });
-  if (args.sessionId) q.set("session", args.sessionId);
-  if (args.runId) q.set("rule_run_id", args.runId);
-  if (args.row?.ifc_guid) q.set("ifc_guid", args.row.ifc_guid);
-  if (args.row?.usd_prim_path) q.set("usd_prim_path", args.row.usd_prim_path);
-  if (args.row?.rule_code) q.set("rule_code", args.row.rule_code);
-  if (args.row?.severity) q.set("severity", args.row.severity);
-  if (args.row?.message) q.set("label", args.row.message);
-  const mappingStatus = args.row && !args.row.usd_prim_path
-    ? args.row.mapping_information_status ?? "incomplete"
-    : args.row?.mapping_information_status ?? null;
-  if (mappingStatus) q.set("mapping_information_status", mappingStatus);
-  if (args.row?.mapping_issue_code) q.set("mapping_issue_code", args.row.mapping_issue_code);
-  if (typeof args.row?.mapping_issue_count === "number") q.set("mapping_issue_count", String(args.row.mapping_issue_count));
-  if (args.expectedStageUrl) q.set("expected_stage_url", args.expectedStageUrl);
-  return `#review?${q.toString()}`;
-}
-
-function a1ReviewRoomHandoffReason(row: RuleResultRow | null | undefined): string {
-  if (!row) return t("尚無失敗構件可交給 Review Room", "No failed element to hand off to Review Room");
-  if (!row.ifc_guid) return t("此構件無 ifc_guid，無法定位", "This element has no ifc_guid; it cannot be located");
-  return "";
-}
 function isElementMappingDocumentLike(value: unknown): value is ElementMappingDocument {
   return Boolean(value && typeof value === "object" && Array.isArray((value as ElementMappingDocument).items));
 }
@@ -353,7 +323,8 @@ export function A1GovernanceWorkbenchPage() {
   // F4：fetch 期間 disable 兩鈕（Excel 與 BCF 同等 loading 保護，防重送）。
   const [excelBusy, setExcelBusy] = useState(false);
   const [bcfBusy, setBcfBusy] = useState(false);
-  // Review session 只作為 3D/Review Room handoff 與 mapping enrichment 的 optional target。
+  // Review session 是 A1 inline 3D viewer lease / mapping enrichment 的 target；
+  // Review Room 仍可作為獨立 fallback route，但不再是 A1 的唯一 3D 入口。
   // A1 v2 的治理 rule-run 直接對已選 IFC 檔案執行；A1 mount 不得自動選第一個 session 或 claim viewer lease。
   const [sessions, setSessions] = useState<RuntimeStatus["sessions"]["items"]>([]);
   const [selectedSession, setSelectedSession] = useState<string>("");
@@ -362,6 +333,11 @@ export function A1GovernanceWorkbenchPage() {
   const [runHistoryErr, setRunHistoryErr] = useState<string | null>(null);
   const [runHistoryLoading, setRunHistoryLoading] = useState(false);
   const [runHistoryRefreshTick, setRunHistoryRefreshTick] = useState(0);
+  const [reviewOpen, setReviewOpen] = useState<IfcReadyReviewSessionResponse | null>(null);
+  const [reviewOpenBusy, setReviewOpenBusy] = useState(false);
+  const [reviewOpenErr, setReviewOpenErr] = useState<string | null>(null);
+  const [conversionRetryBusy, setConversionRetryBusy] = useState(false);
+  const [conversionRetryErr, setConversionRetryErr] = useState<string | null>(null);
   const idsFileInputRef = useRef<HTMLInputElement>(null);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
@@ -371,6 +347,11 @@ export function A1GovernanceWorkbenchPage() {
     issueGuardRef.current = { runId, modelVersionId: state.modelVersionId };
     issueGenRef.current += 1;
   }, [runId, state.modelVersionId, state.ifcPath]);
+
+  const clearReviewOpenState = useCallback(() => {
+    setReviewOpen(null);
+    setReviewOpenErr(null);
+  }, []);
   // Task 14（M→A1 接收端重驗）：向已抓取的 minioObjects 重驗 incoming minio_key；查無 → 誠實 not_found。
   // Task14 Important #1：minioObjects===null=尚未載入（見上方 state 註解）。載入中不得壓成 not_found（掛載後
   // 第一個 fetch resolve 前的同步 render 會誤閃假警示），回中性 indeterminate；已載入（[] 或有值）才判 not_found。
@@ -412,7 +393,7 @@ export function A1GovernanceWorkbenchPage() {
   useEffect(() => { if (state.step !== "running") pollGenRef.current += 1; }, [state.step]);
 
   // Mount 時只列出可手動選取的 active/created session。不得自動選 act[0]；
-  // 3D attach/lease 由 Review Room 明確按鈕啟動。
+  // 3D attach/lease 由 A1 inline viewer pane 的明確按鈕啟動。
   useEffect(() => {
     let alive = true;
     coordinatorClient.runtimeStatus()
@@ -678,6 +659,23 @@ export function A1GovernanceWorkbenchPage() {
   const selectedMinioDownloaded = selectedMinioJob?.download_status === "downloaded";
   const selectedMinioSourceIfcReady = selectedMinioJob?.artifact_health?.source_ifc_exists === true;
   const selectedMinioJobId = selectedMinioJob?.ifc_ready_job_id ?? "";
+  const selectedMinioConversionReady = Boolean(
+    selectedMinioJob?.conversion_job_id
+      && ["ready", "succeeded", "succeeded_with_warnings"].includes(selectedMinioJob.conversion_status ?? "")
+      && selectedMinioJob.expected_stage_url
+      && selectedMinioJob.expected_mapping_url,
+  );
+  const selectedMinioConversionRetryable = Boolean(
+    selectedMinioJobId
+      && selectedMinioDownloaded
+      && selectedMinioSourceIfcReady
+      && ["dispatch_failed", "dropped_on_restart"].includes(selectedMinioJob?.status ?? ""),
+  );
+  const selectedMinioReviewSessionReason = !selectedMinioJobId
+    ? t("需先選取 MinIO downloaded IFC job；local_fs 不自動建 viewer session", "Select a MinIO downloaded IFC job first; local_fs does not auto-create a viewer session")
+    : selectedMinioSessionId || selectedMinioConversionReady
+      ? ""
+      : `${t("IFC→USD conversion 尚未 ready，不能建立 A1 3D session：", "IFC->USD conversion is not ready; cannot create an A1 3D session: ")}${selectedMinioJob?.conversion_status ?? "not_dispatched"}`;
   const selectedMinioSourceIfcStaleReason =
     selectedMinioJob?.artifact_health?.stale_reason
     ?? (selectedMinioJob?.artifact_health?.source_ifc_exists === false ? "source_ifc_exists=false" : "source_ifc_exists=unknown");
@@ -713,18 +711,106 @@ export function A1GovernanceWorkbenchPage() {
               ? t("source IFC artifact stale", "source IFC artifact stale")
               : t("選取已下載模型", "Select Downloaded Model");
   const selectedSessionSummary = sessions.find((s) => s.session_id === selectedSession) ?? null;
-  const selectedStageEvidence = selectedSessionSummary?.stage_open_evidence ?? null;
   const canRunA1 = state.step !== "idle"
     && Boolean(state.ifcPath)
     && !(state.ifcPath.startsWith("session://") && !selectedSession)
     && !(state.ifcPath.startsWith("session://") && !selectedMinioSourceIfcReady)
     && !(state.ifcPath.startsWith("ifc-ready://") && !selectedMinioSourceIfcReady)
     && !(state.step === "running" && !state.runError);
-  const stageMatched = Boolean(
-    selectedStageEvidence?.expected_stage_url &&
-    selectedStageEvidence.loaded_stage_url &&
-    selectedStageEvidence.expected_stage_url === selectedStageEvidence.loaded_stage_url,
-  );
+  const ensureReviewSessionForSelectedIfcReady = useCallback(async (): Promise<IfcReadyReviewSessionResponse | null> => {
+    if (!selectedMinioJobId || !selectedMinioJob) {
+      setReviewOpenErr(t("沒有可建立 A1 3D session 的 ifc-ready job。", "No IFC-ready job is available for an A1 3D session."));
+      return null;
+    }
+    if (!selectedMinioSessionId && !selectedMinioConversionReady) {
+      setReviewOpenErr(selectedMinioReviewSessionReason || t("IFC→USD conversion 尚未 ready。", "IFC->USD conversion is not ready."));
+      return null;
+    }
+    setReviewOpenBusy(true);
+    setReviewOpenErr(null);
+    try {
+      const res = await coordinatorClient.createReviewSessionForIfcReady(selectedMinioJobId);
+      setReviewOpen(res);
+      setSelectedSession(res.review_session_id);
+      setSessions((items) => {
+        const summary: RuntimeSessionSummary = {
+          session_id: res.review_session_id,
+          status: res.session_status,
+          project_id: selectedMinioJob.project_id,
+          model_version_id: selectedMinioJob.external_model_version_id,
+          participant_count: 0,
+          expected_stage_url: res.expected_stage_url,
+          expected_mapping_url: res.expected_mapping_url,
+          conversion_status: res.conversion_status,
+          kit_instance_ids: [],
+          created_at: "",
+          updated_at: "",
+          first_frame_at: null,
+          artifact_health: res.artifact_health ?? null,
+        };
+        return items.some((item) => item.session_id === res.review_session_id)
+          ? items.map((item) => item.session_id === res.review_session_id ? { ...item, ...summary } : item)
+          : [summary, ...items];
+      });
+      setIfcReadyJobs((items) => items
+        ? items.map((job) => job.ifc_ready_job_id === selectedMinioJobId
+          ? {
+              ...job,
+              review_session_id: res.review_session_id,
+              viewer_url: res.viewer_url,
+              expected_stage_url: res.expected_stage_url,
+              expected_mapping_url: res.expected_mapping_url,
+              conversion_status: res.conversion_status,
+              artifact_health: res.artifact_health ?? job.artifact_health,
+            }
+          : job)
+        : items);
+      return res;
+    } catch (e) {
+      setReviewOpenErr(String(e));
+      return null;
+    } finally {
+      setReviewOpenBusy(false);
+    }
+  }, [selectedMinioConversionReady, selectedMinioJob, selectedMinioJobId, selectedMinioReviewSessionReason, selectedMinioSessionId]);
+
+  const retrySelectedMinioConversion = useCallback(async () => {
+    if (!selectedMinioJobId) return;
+    setConversionRetryBusy(true);
+    setConversionRetryErr(null);
+    setReviewOpenErr(null);
+    try {
+      await coordinatorClient.conversionRetry(selectedMinioJobId, "A1 inline 3D session recovery");
+      await refreshIfcReadyJobs();
+    } catch (e) {
+      setConversionRetryErr(String(e));
+    } finally {
+      setConversionRetryBusy(false);
+    }
+  }, [refreshIfcReadyJobs, selectedMinioJobId]);
+
+  const selectedReviewExpectedStageUrl = reviewOpen?.expected_stage_url ?? selectedSessionSummary?.expected_stage_url ?? null;
+  const a1InlineHandoff = useMemo<ReviewRoomHandoff | null>(() => {
+    if (!selectedSession) return null;
+    const row = state.failed.find((item) => item.ifc_guid) ?? state.failed[0] ?? null;
+    return {
+      source: "a1",
+      sessionId: selectedSession,
+      ruleRunId: runId,
+      ifcGuid: row?.ifc_guid ?? null,
+      usdPrimPath: row?.usd_prim_path ?? null,
+      ruleCode: row?.rule_code ?? null,
+      severity: row?.severity ?? null,
+      label: row?.message ?? row?.ifc_guid ?? null,
+      expectedStageUrl: selectedReviewExpectedStageUrl,
+      mappingInformationStatus: row && !row.usd_prim_path
+        ? row.mapping_information_status ?? "incomplete"
+        : row?.mapping_information_status ?? null,
+      mappingIssueCode: row?.mapping_issue_code ?? null,
+      mappingIssueCount: typeof row?.mapping_issue_count === "number" ? String(row.mapping_issue_count) : null,
+    };
+  }, [runId, selectedReviewExpectedStageUrl, selectedSession, state.failed]);
+
   const selectedMinioHistoryFilters = useMemo<RuleRunHistoryFilters | null>(() => {
     if (sourceKind !== "minio" || !selectedMinioObject) return null;
     const filters: RuleRunHistoryFilters = { limit: 5 };
@@ -777,10 +863,10 @@ export function A1GovernanceWorkbenchPage() {
     <>
       <h1>{t("A1 · 治理與模型檢核", "A1 · Governance & Model Validation")}</h1>
       <IncomingHandoffBanner testId="a1-incoming-handoff" handoff={incoming.handoff} status={incoming.status} />
-      <p className="ec-lead">{t("選取 MinIO 偵測到的 IFC，先讓 coordinator 綁定 server-local IFC path，再跑 governance-service CPU 規則檢核；3D 檢視與高亮由 Review Room 開啟，不在 A1 自動嵌入 viewer 或 claim lease。", "Select a MinIO-detected IFC, let the coordinator bind the server-local IFC path, then run governance-service CPU validation; 3D review and highlighting open in Review Room, not by auto-embedding or auto-claiming a viewer in A1.")}</p>
+      <p className="ec-lead">{t("選取 MinIO 偵測到的 IFC，讓 coordinator 綁定 server-local IFC path，再跑 governance-service CPU 規則檢核；IFC→USD ready 後，A1 本頁可直接建立 / 選擇 3D session、attach viewer lease，並送出高亮。", "Select a MinIO-detected IFC, let the coordinator bind the server-local IFC path, then run governance-service CPU validation; once IFC->USD is ready, A1 can directly create / select the 3D session, attach the viewer lease, and send highlights on this page.")}</p>
 
       <Panel title={t("A1 五步引導式流程", "A1 Five-Step Guided Workflow")} sub={t("整頁狀態機驅動；步驟依當前 state 亮燈（證據型更新，禁樂觀）", "Driven by a page-level state machine; steps light up by current state (evidence-based updates, no optimistic UI)")} prov="asbuilt">
-        <LifecycleStrip steps={[t("選檔", "Select File"), t("自動檢核", "Auto Validate"), t("結果記分板", "Result Scoreboard"), t("開 Issue", "Open Issue"), t("匯出 Excel", "Export Excel")]} statuses={ui} />
+        <LifecycleStrip steps={[t("選 IFC", "Select IFC"), t("選 IDS", "Select IDS"), t("執行檢核", "Run Validation"), t("3D Session", "3D Session"), t("高亮審查/交付", "Highlight Review / Deliver")]} statuses={ui} />
         <div className="ec-grid" style={{ marginBottom: 8 }}>
           <Field k="rule_run_id" v={runId ?? "—"} prov="asbuilt" />
           <Field k="step" v={state.step} prov="asbuilt" />
@@ -799,6 +885,7 @@ export function A1GovernanceWorkbenchPage() {
                 setActionErr(null);
                 setA1Issues([]);
                 setSelectedSession("");
+                clearReviewOpenState();
               }
               setSelectedKey("");
               setSourceKind("local_fs");
@@ -810,6 +897,7 @@ export function A1GovernanceWorkbenchPage() {
                 dispatch({ type: "RESET" });
                 setActionErr(null);
                 setA1Issues([]);
+                clearReviewOpenState();
               }
               setSourceKind("minio");
             }}>MinIO</Btn>
@@ -825,6 +913,7 @@ export function A1GovernanceWorkbenchPage() {
                     dispatch({ type: "RESET" });
                     setActionErr(null);
                     setA1Issues([]);
+                    clearReviewOpenState();
                   }
                 }}>
                 <option value="">
@@ -842,6 +931,7 @@ export function A1GovernanceWorkbenchPage() {
                   if (!selectedLocalOption) return;
                   setActionErr(null);
                   setA1Issues([]);
+                  clearReviewOpenState();
                   dispatch({
                     type: "PICK_FILE",
                     ifcPath: selectedLocalOption.version.path,
@@ -860,6 +950,7 @@ export function A1GovernanceWorkbenchPage() {
                     setSelectedSession("");
                     setActionErr(null);
                     setA1Issues([]);
+                    clearReviewOpenState();
                   }
                 }}>
                 <option value="">{minioErr ? t("（MinIO 物件不可用）", "(MinIO objects unavailable)") : minioObjects === null ? t("載入中…", "Loading…") : minioObjects.length === 0 ? t("（無 source_ifc 物件）", "(no source_ifc objects)") : t("— 選擇 MinIO 模型 —", "— select a MinIO model —")}</option>
@@ -871,6 +962,7 @@ export function A1GovernanceWorkbenchPage() {
                   if (!canPickMinioDownloaded || !selectedMinioObject || !selectedMinioJob) return;
                   setActionErr(null);
                   setA1Issues([]);
+                  clearReviewOpenState();
                   setSelectedSession(selectedMinioSessionId);
                   dispatch({
                     type: "PICK_FILE",
@@ -1016,16 +1108,16 @@ export function A1GovernanceWorkbenchPage() {
         </Panel>
       )}
 
-      <Panel title={t("review session（3D 連動目標）", "review session (3D handoff target)")} sub={t("MinIO 來源的 rule-run 優先走 review session，由 coordinator 解析 server-local IFC path；Review Room 負責 attach / highlight trace。", "MinIO-backed rule-runs prefer a review session so the coordinator can resolve the server-local IFC path; Review Room owns attach / highlight trace.")} prov="asbuilt">
+      <Panel title={t("A1 3D 高亮 Session", "A1 3D highlight session")} sub={t("MinIO 來源先由 coordinator 建立 / 重用 review session；A1 本頁直接 attach viewer、觀測 first frame / DataChannel / stage match，並送出 3D 高亮。", "MinIO sources create or reuse a review session through the coordinator; A1 attaches the viewer, observes first frame / DataChannel / stage match, and sends 3D highlight on this page.")} prov="asbuilt">
         {sessions.length === 0 ? (
           <div data-testid="a1-no-session">
-            <p className="ec-note">{t("無 active session。若已有 downloaded IFC-ready job，A1 會直接用 POST /api/governance/rule-runs/for-ifc-ready 排入 governance rule-run；若尚未被 watcher 偵測或未排入下載/轉檔，請到 MinIO/IFC→USD 排程頁觸發 POST /api/conversion/trigger。", "No active session. If a downloaded IFC-ready job exists, A1 uses POST /api/governance/rule-runs/for-ifc-ready to queue the governance rule-run directly; if the object was not detected by the watcher or not scheduled for download/conversion, use the MinIO/IFC→USD schedule page to trigger POST /api/conversion/trigger.")}</p>
+            <p className="ec-note">{t("無 active session。若已有 downloaded IFC-ready job，A1 仍可先跑 CPU rule-run；3D 高亮需先讓 IFC→USD conversion ready，再在本頁建立 / 啟動 3D session。", "No active session. If a downloaded IFC-ready job exists, A1 can still run the CPU rule-run; 3D highlight requires IFC->USD conversion ready, then the 3D session is created and started on this page.")}</p>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <Btn data-testid="a1-trigger-convert" disabled
                 caption={t("A1 v2 不觸發 conversion；請到 IFC→USD 轉檔排程頁操作", "A1 v2 does not trigger conversion; use the IFC→USD schedule page")}>
                 {t("A1 不排入轉檔", "A1 does not queue conversion")}
               </Btn>
-              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("到 MinIO / IFC→USD 排程頁觸發 POST /api/conversion/trigger →", "Trigger POST /api/conversion/trigger in the MinIO / IFC→USD schedule page →")}</a>
+              <a className="ec-s" data-testid="a1-conv-link" href={buildHandoff("minio", { source: "a1", minio_key: sourceKind === "minio" ? selectedKey || undefined : undefined })}>{t("查看 MinIO 來源 →", "View MinIO source →")}</a>
             </div>
           </div>
         ) : (
@@ -1046,31 +1138,36 @@ export function A1GovernanceWorkbenchPage() {
             </div>
             <div className="ec-grid" style={{ marginBottom: 8 }}>
               <Field k="selected session" v={selectedSession || t("not_selected（未綁定 server-local IFC path）", "not_selected (server-local IFC path not bound)")} prov={selectedSession ? "asbuilt" : "p1"} />
-              <Field k="3D handoff" v={t("Review Room owns viewer lease / first frame / stage match / highlight trace", "Review Room owns viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
-              <Field k="A1 auto attach" v={t("disabled by design", "disabled by design")} prov="asbuilt" />
+              <Field k="3D owner" v={t("A1 inline viewer lease / first frame / stage match / highlight trace", "A1 inline viewer lease / first frame / stage match / highlight trace")} prov="asbuilt" />
+              <Field k="A1 auto attach" v={t("manual button only", "manual button only")} prov="asbuilt" />
             </div>
           </>
         )}
-      </Panel>
-
-      <Panel title={t("A1 bridge rail", "A1 bridge rail")} sub={t("只顯示 Review Room / Viewer 證據；A1 不自動 attach、不 claim lease、不直接送 highlight", "Shows Review Room / Viewer evidence only; A1 does not auto-attach, claim lease, or send highlight directly")} prov="asbuilt">
-        <div className="ec-grid" data-testid="a1-bridge-rail">
-          <Field k="review_session" v={selectedSession || t("not_selected", "not_selected")} prov={selectedSession ? "asbuilt" : "p1"} />
-          <Field k="viewer_lease" v={selectedSessionSummary?.primary_viewer_lease_id ?? t("not_observed", "not_observed")} prov={selectedSessionSummary?.primary_viewer_lease_id ? "asbuilt" : "p1"} />
-          <Field k="first_frame_at" v={selectedStageEvidence?.first_frame_at ?? selectedSessionSummary?.first_frame_at ?? t("not_observed", "not_observed")} prov={(selectedStageEvidence?.first_frame_at ?? selectedSessionSummary?.first_frame_at) ? "asbuilt" : "p1"} />
-          <Field k="datachannel_ready" v={String(selectedStageEvidence?.datachannel_ready ?? false)} prov={selectedStageEvidence?.datachannel_ready ? "asbuilt" : "p15"} />
-          <Field k="stage_match" v={stageMatched ? "matched" : t("not_observed", "not_observed")} prov={stageMatched ? "asbuilt" : "p15"} />
-        </div>
-        <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <Btn data-testid="a1-bridge-highlight" disabled
-            caption={t("P1.5 disabled：需 Review Room first_frame_at + DataChannel + stage_match 全部為真", "P1.5 disabled: requires Review Room first_frame_at + DataChannel + stage_match all true")}>
-            {t("在 3D 中標示", "Highlight in 3D")}
+        <div data-testid="a1-review-session-actions" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          <Btn data-testid="a1-retry-conversion"
+            disabled={!selectedMinioConversionRetryable || conversionRetryBusy}
+            caption={selectedMinioConversionRetryable
+              ? "POST /api/conversion/jobs/:id/retry"
+              : selectedMinioJobId
+                ? t("只有 dispatch_failed / dropped_on_restart 且 source IFC ready 的 MinIO job 可在 A1 重派", "Only dispatch_failed / dropped_on_restart MinIO jobs with source IFC ready can be retried in A1")
+                : t("尚未選取 MinIO ifc-ready job", "No MinIO ifc-ready job selected")}
+            onClick={() => { void retrySelectedMinioConversion(); }}>
+            {conversionRetryBusy ? t("重派中…", "Retrying...") : t("重派 3D conversion", "Retry 3D conversion")}
           </Btn>
-          <a className="ec-s" href={selectedSession ? buildHandoff("review", { source: "a1", session: selectedSession, rule_run_id: runId ?? undefined }) : "#review?source=a1"}>{t("開啟 Review Room →", "Open Review Room →")}</a>
+          <Btn data-testid="a1-create-review-session"
+            disabled={Boolean(selectedMinioReviewSessionReason) || reviewOpenBusy}
+            caption={selectedMinioReviewSessionReason || "POST /api/external/ifc-ready/:jobId/review-session"}
+            onClick={() => { void ensureReviewSessionForSelectedIfcReady(); }}>
+            {reviewOpenBusy ? t("建立 3D Session 中…", "Creating 3D Session...") : t("建立 / 重用 3D Session", "Create / Reuse 3D Session")}
+          </Btn>
+          {reviewOpen && <span className="ec-note" data-testid="a1-review-open-url">{reviewOpen.review_session_id}</span>}
+          {reviewOpenErr && <span className="ec-warn-note" data-testid="a1-review-open-error">{reviewOpenErr}</span>}
+          {conversionRetryErr && <span className="ec-warn-note" data-testid="a1-conversion-retry-error">{conversionRetryErr}</span>}
         </div>
+        {a1InlineHandoff && <ReviewSessionViewerPane mode="a1-inline" handoff={a1InlineHandoff} />}
       </Panel>
 
-      <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 交給 Review Room 手動 attach / highlight", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D is handed off to Review Room for manual attach / highlight")} prov="asbuilt">
+      <Panel title={t("交付", "Deliverables")} sub={t("開 Issue / 匯出 Excel / 匯出 BCF 2.1 走真實後端；BCF 需先建 Issue（step=issued/delivered）才 enable；3D 高亮在 A1 本頁 session 面板執行", "Open Issue / Export Excel / Export BCF 2.1 go through the real backend; BCF is enabled only after Issues are created (step=issued/delivered); 3D highlight runs in the A1 session panel above")} prov="asbuilt">
         <div data-testid="a1-bcf-review-panel" style={{ marginBottom: 10 }}>
           <div className="ec-grid" style={{ marginBottom: 8 }}>
             <Field k="BCF topics" v={bcfIssues.length > 0 ? String(bcfIssues.length) : t("尚未建立可匯出的正式 Issue", "no exportable formal issues created yet")} prov={bcfIssues.length > 0 ? "asbuilt" : "p1"} />
@@ -1080,15 +1177,17 @@ export function A1GovernanceWorkbenchPage() {
             <p className="ec-note">{t("先按「失敗構件建 Issue」後，這裡才會列出可追蹤的 BCF topics；未建 Issue 前 BCF 匯出保持 disabled。", "Create Issues for Failed Elements first; this panel then lists trackable BCF topics. BCF export stays disabled before issues exist.")}</p>
           ) : (
             <table className="ec-table">
-              <thead><tr><th>topic</th><th>severity</th><th>status</th><th>ifc_guid</th><th>action</th></tr></thead>
+              <thead><tr><th>topic</th><th>rule_code</th><th>severity</th><th>status</th><th>assignee</th><th>ifc_guid</th><th>action</th></tr></thead>
               <tbody>
                 {bcfIssues.map((issue) => {
                   const next = issue.status === "open" ? "in_progress" : issue.status === "in_progress" ? "resolved" : null;
                   return (
                     <tr key={issue.id}>
                       <td>{issue.title}</td>
+                      <td>{issue.rule_code ?? "—"}</td>
                       <td>{issue.severity}</td>
                       <td>{issue.status}</td>
+                      <td><span className="ec-cap">{t("指派 pending", "assignee pending")}</span></td>
                       <td>{issue.ifc_guid ?? "—"}</td>
                       <td>
                         <Btn data-testid={`a1-issue-transition-${issue.id}`} disabled={!next}
@@ -1153,27 +1252,6 @@ export function A1GovernanceWorkbenchPage() {
               {/* F4：BCF_EXPORT_OK 落地後才出現的可見信號（對齊 Excel EXPORT_OK → a1-exported-artifact）。 */}
               {state.bcfExported && <div data-testid="a1-bcf-exported-artifact"><Field k={t("已匯出（artifact）", "exported (artifact)")} v="bcf" prov="asbuilt" /></div>}
             </>
-          );
-        })()}{" "}
-        {/* A1 不再直接送 viewer DataChannel。這裡只把 rule-run / session / 第一筆失敗構件交給 Review Room；
-            lease、first frame、stage match、highlight result 由 Review Room 的專用畫面觀測與執行。 */}
-        {(() => {
-          const f0 = state.failed[0];
-          const disabledReason = a1ReviewRoomHandoffReason(f0);
-          const expectedStageUrl = sessions.find((s) => s.session_id === selectedSession)?.expected_stage_url ?? null;
-          const href = buildA1ReviewRoomHandoffHash({ sessionId: selectedSession || undefined, runId, row: f0, expectedStageUrl });
-          return (
-            <Btn data-testid="a1-open-review-room"
-              disabled={Boolean(disabledReason)}
-              caption={disabledReason || (selectedSession
-                ? t("開啟 #review 並帶入目前 review session / 第一筆失敗構件", "Open #review with the selected review session and first failed element")
-                : t("開啟 #review；可在 Review Room 內選 session / attach Kit 再高亮", "Open #review; choose a session and attach Kit inside Review Room before highlighting"))}
-              onClick={() => {
-                if (!f0?.ifc_guid) return;
-                window.location.hash = href;
-              }}>
-              {t("開啟 3D Review Room", "Open 3D Review Room")}
-            </Btn>
           );
         })()}{" "}
         {/* 七軸 cross-link chips（§4.3）：回看 MinIO 來源物件、跳 Session 管理檢視此 session。
@@ -2731,15 +2809,14 @@ export function CoordinatorPage() {
   );
 }
 
-// ── P4 Review Room（G）：A1 handoff 的專用 3D session attach 畫面 ──
-// A1 不再內嵌 viewer 或 claim lease；Review Room 才能由操作員明確按鈕 claim primary lease、
-// 掛載 viewer、接收 first_frame / stage truth，並送 highlight command trace。
+// ── P4 Review Room（G）：獨立 3D session attach / fallback 畫面 ──
+// A1 inline viewer 是治理檢核的主要入口；Review Room 保留為跨頁 session 檢視與手動 fallback。
 export function ReviewRoomPage() {
   return (
     <>
       <h1>{t("Review Room · 審查室（G）", "Review Room (G)")}</h1>
       <p className="ec-lead">
-        {t("A1 只把 governance 結果交給本畫面；Kit / WebRTC / viewer lease 必須在 Review Room 手動啟動。highlight 由本畫面送到 viewer DataChannel，並保留 command trace。", "A1 only hands governance results to this screen; Kit / WebRTC / viewer lease must be started manually in Review Room. Highlight is sent from this screen to the viewer DataChannel with a command trace.")}
+        {t("此頁可接收 A1 governance handoff 作為獨立 fallback；A1 頁面本身也能直接啟動 Kit / WebRTC viewer lease 並送出高亮。Review Room 只保留跨頁追蹤與手動操作。", "This page can receive A1 governance handoff as a standalone fallback; the A1 page can also start the Kit / WebRTC viewer lease directly and send highlights. Review Room remains for cross-page tracing and manual operation.")}
       </p>
 
       <ReviewSessionViewerPane />
@@ -2765,7 +2842,7 @@ export function ReviewRoomPage() {
       </Panel>
 
       <Panel title={t("範圍與誠實標示", "Scope & honesty labeling")} prov="asbuilt">
-        <Field k="3D viewport" v={t("在 Review Room route 手動 attach；A1 不掛 viewer、不 claim lease", "Manually attached in the Review Room route; A1 does not mount viewer or claim lease")} prov="asbuilt" />
+        <Field k="3D viewport" v={t("A1 可 inline attach；Review Room 也可手動 attach 作為 fallback", "A1 can attach inline; Review Room can also attach manually as a fallback")} prov="asbuilt" />
         <Field k={t("server→viewer push highlight / 多人廣播", "server→viewer push highlight / multi-user broadcast")} v={t("2026-05-21 已退役（remove-conflict-review-from-fast-mvp）；加回需另開 OpenSpec", "retired on 2026-05-21 (remove-conflict-review-from-fast-mvp); re-adding requires a new OpenSpec")} prov="p15" />
         <Field k="section / snapshot" v={t("待建", "not built")} prov="p15" />
         <Field k={t("viewer 主體", "viewer body")} v={t("重用既有 EmbeddedViewer / Window.tsx postMessage bridge；不修改 viewer runtime", "Reuses the existing EmbeddedViewer / Window.tsx postMessage bridge; viewer runtime is unchanged")} prov="asbuilt" />

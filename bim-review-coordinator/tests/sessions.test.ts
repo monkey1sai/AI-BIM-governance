@@ -38,6 +38,8 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
 
 function multiEndpointOverrides(): Partial<CoordinatorConfig> {
   return {
+    kitStreamServer: "127.0.0.1",
+    kitMediaServer: "127.0.0.1",
     kitMediaPort: 47998,
     kitInstanceEndpoints: [
       {

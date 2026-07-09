@@ -301,6 +301,20 @@ export interface IfcReadyJobDetail {
   artifact_health?: ArtifactHealthSnapshot | null;
 }
 
+export interface IfcReadyReviewSessionResponse {
+  ifc_ready_job_id: string;
+  conversion_job_id: string | null;
+  conversion_status: string | null;
+  review_session_id: string;
+  session_status: string;
+  session_replay: boolean;
+  open_url: string;
+  viewer_url: string;
+  expected_stage_url: string | null;
+  expected_mapping_url: string | null;
+  artifact_health?: ArtifactHealthSnapshot | null;
+}
+
 
 // minio-watch-auto-intake：GET /api/external/minio-watch/status 真實回應形狀。
 // 關閉時只有 enabled=false + note；啟用時帶完整計數。credentials 永不在此回應。
@@ -479,6 +493,8 @@ export const coordinatorClient = {
   runtimeStatus: () => jsonGet<RuntimeStatus>("/api/runtime/status"),
   kitInstanceCurrent: () => jsonGet<KitInstanceState>("/api/kit/instances/current"),
   listIfcReady: (limit = 20) => jsonGet<{ count: number; items: IfcReadyListItem[] }>(`/api/external/ifc-ready?limit=${limit}`),
+  createReviewSessionForIfcReady: (jobId: string) =>
+    jsonPost<IfcReadyReviewSessionResponse>(`/api/external/ifc-ready/${encodeURIComponent(jobId)}/review-session`, {}),
   minioWatchStatus: () => jsonGet<MinioWatchStatus>("/api/external/minio-watch/status"),
   streamConfig: (sessionId: string) => jsonGet<StreamConfigResponse>(`/api/review-sessions/${encodeURIComponent(sessionId)}/stream-config`),
   conversionQualityMetrics: (conversionJobId: string) =>

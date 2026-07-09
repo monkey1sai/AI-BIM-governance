@@ -109,7 +109,7 @@ def create_conversion_api_app(
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if run_background and not job.get("idempotent_replay"):
+        if run_background and (not job.get("idempotent_replay") or job.get("status") in {"queued", "running"}):
             background_tasks.add_task(store.complete_conversion_job, job["conversion_job_id"])
         return job
 
@@ -833,7 +833,20 @@ def _request_fingerprint(event: Mapping[str, Any]) -> str:
     stable_event = dict(event)
     stable_event.pop("event_id", None)
     stable_event.pop("idempotency_key", None)
+    if isinstance(stable_event.get("ifc_artifact"), Mapping):
+        stable_event["ifc_artifact"] = _artifact_fingerprint_identity(stable_event["ifc_artifact"])
     return json.dumps(stable_event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _artifact_fingerprint_identity(artifact: Mapping[str, Any]) -> dict[str, Any]:
+    stable_artifact = dict(artifact)
+    # These are transport/cache details. MinIO watcher retries can produce a new
+    # presigned URL and a new coordinator cache path for the same object/etag.
+    # They must not turn an idempotent replay into a 409 conflict.
+    stable_artifact.pop("url", None)
+    stable_artifact.pop("local_path", None)
+    stable_artifact.pop("host_local_path", None)
+    return stable_artifact
 
 
 def _int_metric(*values: Any, default: int = 0) -> int:
