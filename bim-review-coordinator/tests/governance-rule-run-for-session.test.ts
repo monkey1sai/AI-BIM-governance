@@ -325,6 +325,30 @@ async function startStreamingStub(): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
+async function startBlockingStreamingStub(): Promise<{ baseUrl: string; inFlight: () => boolean; release: () => void }> {
+  const heldSockets: import("node:net").Socket[] = [];
+  const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+      heldSockets.push(req.socket);
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address() as AddressInfo;
+  activeStreamingServers.push(server);
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    inFlight: () => heldSockets.length > 0,
+    release: () => {
+      for (const socket of heldSockets.splice(0)) {
+        socket.destroy();
+      }
+    },
+  };
+}
+
 const activeStreamingServers: http.Server[] = [];
 afterEach(async () => {
   for (const s of activeStreamingServers.splice(0)) {
@@ -813,20 +837,29 @@ describe("POST /api/external/ifc-ready/:jobId/review-session", () => {
   });
 
   it("尚未 dispatch conversion job 時拒絕建立 Review Room session，且不外洩 path", async () => {
+    const blocking = await startBlockingStreamingStub();
     const ifcSourceUrl = await startIfcSourceStub();
-    const app = makeApp({ ifcDownloadStrict: true });
-    const { ifcReadyJobId } = await seedDownloadedIfcWithoutSession(app, ifcSourceUrl);
+    const app = makeApp({ ifcDownloadStrict: true, streamingConversionApiBase: blocking.baseUrl });
+    try {
+      const { ifcReadyJobId } = await seedDownloadedIfcWithoutSession(app, ifcSourceUrl);
+      for (let i = 0; i < 100 && !blocking.inFlight(); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocking.inFlight()).toBe(true);
 
-    const res = await request(app.app)
-      .post(`/api/external/ifc-ready/${ifcReadyJobId}/review-session`)
-      .send({});
+      const res = await request(app.app)
+        .post(`/api/external/ifc-ready/${ifcReadyJobId}/review-session`)
+        .send({});
 
-    expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({
-      error_code: "conversion_not_dispatched",
-      detail: "IFC-ready job has no conversion job yet.",
-    });
-    expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|source_ifc_ref/);
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        error_code: "conversion_not_dispatched",
+        detail: "IFC-ready job has no conversion job yet.",
+      });
+      expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|source_ifc_ref/);
+    } finally {
+      blocking.release();
+    }
   });
 });
 
