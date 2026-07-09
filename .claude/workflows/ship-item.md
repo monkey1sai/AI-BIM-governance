@@ -39,8 +39,8 @@
    .\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <n>
    ```
 
-   此命令會用目前 PR body + 本機 `origin/main...HEAD` changed paths 重跑 machine evidence gate，並在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。任何本機可重現的 GitHub workflow failure 都不得丟到 GitHub CI 才發現；跳過此步造成等待或重跑，視為嚴重開發時間浪費。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`，但正式 push / CI watch 前不得跳過受影響的本機等效測試。PR body-only 修正不可只 `gh run rerun`，需先本機 preflight 綠，再 push 新 commit（必要時 `--allow-empty`）觸發新的 `pull_request.synchronize`。
-6. **觀測 CI**：`gh pr checks <n> --watch`，等官方 checks 跑完。
+   此命令會用目前 PR body + 本機 `origin/main...HEAD` changed paths 重跑 machine evidence gate，並在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。任何本機可重現的 GitHub workflow failure 都不得丟到 GitHub CI 才發現；PR 上 GitHub Actions 先用 changed-path classifier 避免無差別重跑 heavy service checks，未受影響的 service checks 只保留 required check 名稱的 job-level skipped-success；跳過此步造成等待或重跑，視為嚴重開發時間浪費。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`，但正式 push / CI watch 前不得跳過受影響的本機等效測試。PR body-only 修正不可只 `gh run rerun`，需先本機 preflight 綠，再 push 新 commit（必要時 `--allow-empty`）觸發新的 `pull_request.synchronize`。
+6. **觀測 CI**：`gh pr checks <n> --watch`，等官方 PR checks 跑完；PR 上未受影響的 service-level checks 預期可能是 skipped-success，完整遠端 service verification 仍可在 `push main` / `workflow_dispatch` 跑。
 7. **reviewer buffer**：CI 變綠後 **再等 ~90–120s**。reviewer（pr-review-agent / CodeRabbit / Codex / Copilot）常在 CI 變綠之後才貼出 inline P1/P2，太早查會漏掉。
 8. **查 reviewer P0/P1/P2 發現（三處來源，全部 `--paginate`）**：reviewer 的 substantive 發現不只在 inline diff comment 上，gate **三處都要查**。此步只偵測 **P0/P1/P2 等級關鍵字**（`P0`、`P1`、`P2`、`Blocker`、`Critical`、`High`、`CHANGES_REQUESTED`；`P0`/`Blocker`/`Critical` 視同 P1-equivalent hold，`High` 視同 P2），避免把 nit / low / medium / style-only 建議升級成自動修復輸入。任一處有未解除的 P0/P1/P2 finding 都要 hold：
 
@@ -70,8 +70,9 @@
    - 同一 finding key 在同一 PR 生命週期內最多只允許 **一次** autofix 嘗試；若同一處再被 reviewer 重貼或 autofix 後仍失敗，agent SHALL 停止第二次自動修補，改為 hold 並回報需要人工/產品裁決。
    - 只有清單中**每一項都確實修復**，且步驟 8 三處來源都無新增 substantive 發現，gate 才算這一軸通過。
    - 「當前 head 無新 comment」**不等於**「舊發現已解決」——comment 因 commit_id 移出當前 head 而被篩掉，**不可**據此放行。
-10. **GATE（merge 授權）**：兩條件 **同時** 成立才放行 merge——
-   - 官方 checks 全綠：main branch protection 的 **全部 required checks**（現含 `pr-review-agent`、`agent-governance` 與各 build/test 共 11 項；以 GitHub 設定為準。CodeRabbit **非** required check，其發現走步驟 8 三處來源交叉查看）；
+10. **GATE（merge 授權）**：三條件 **同時** 成立才放行 merge——
+   - 本機 PR preflight 綠：`scripts/dev/check-pr-local-preflight.ps1 -PrNumber <n>` 已在目前 head / PR body 上通過；
+   - 官方 checks 全綠或未受影響 PR job-level skipped-success：main branch protection 的 **全部 required checks** 以 GitHub 設定為準；PR 上未受影響的 service-level checks 可因 job-level condition skipped-success，受影響的 checks 必須通過。CodeRabbit **非** required check，其發現走步驟 8 三處來源交叉查看；
    - 步驟 8 三處來源**無新增** substantive P0/P1/P2 / Blocker，**且**步驟 9 的 carry-forward 清單**已全數解除**。
    - 滿足 → `gh pr merge <n> --squash --delete-branch` → 接 **closeout**（見下方「closeout worktree 守衛」）：`git fetch origin --prune`、本地 `main` 用 `--ff-only` 對齊 `origin/main`（依 `github-workflow.md` 的 closeout 盤點規則）。
 11. **有新 P0/P1/P2 發現就驗證後修 → 重跑 buffer cycle**：當前 head 出現新的 P0/P1/P2 finding（或 carry-forward 清單仍有未解項）時 → 先做交叉對抗驗證 → 若裁定 autofix，做一次最小修補 → push → **每一次 push 都各自重跑一次 step 6–10 的 buffer cycle**（不是只跑第一輪）。新 push 會產生新 head，舊 inline comment 不再綁當前 head，但其代表的 substantive 發現**未修復前仍留在 carry-forward 清單**；同一 finding key 不得第二次自動修補。
