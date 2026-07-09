@@ -35,11 +35,15 @@ Use the lowest reasoning effort that satisfies the task.
 
 Higher effort is not automatically better. If requirements conflict, success criteria are weak, or tool access is open-ended, first improve the task contract.
 
-## 4. Worker Dispatch Rule
+## 4. Worker / Reviewer Extraction Rule
 
-For non-trivial tasks, the agent must either dispatch independent subquestions to workers/tools or state why dispatch is not useful.
+For non-trivial tasks, the agent must either dispatch independent subquestions to workers/tools/reviewer lenses or state why dispatch is not useful. "Worker" is an umbrella term here:
 
-Workers are mandatory when:
+- tool-based extraction: shell, MCP, GitNexus, tests, browser, or other objective tooling
+- internal reviewer perspectives: the coordinator applies named reviewer lenses without spawning another agent
+- actual Codex subagents: only when explicitly requested, supported by the current surface, and file scopes do not conflict
+
+Worker/reviewer extraction is mandatory when:
 
 - there are 2+ independent code areas that can be inspected in parallel
 - bug/root-cause investigation has multiple plausible failure layers
@@ -47,17 +51,17 @@ Workers are mandatory when:
 - the user asks for audit, PR review, architecture review, or E2E readiness
 - a long document/codebase can be split into bounded read-heavy sections
 
-Workers are optional when:
+Actual Codex subagents remain optional when:
 
 - the answer depends mainly on direct source-of-truth files
 - shell/MCP/GitNexus output gives objective facts faster than model summarization
 - the task is read-only orientation and no implementation decision is being made
 
-When workers are skipped for a non-trivial task, the final answer must include why, what tools/files replaced worker extraction, and which reviewer perspectives were still applied.
+When actual subagents are skipped for a non-trivial task, the final answer must include why, what tools/files replaced subagent extraction, and which reviewer perspectives were still applied.
 
 ## 5. Worker Output Contract
 
-Each worker or reviewer must return:
+Each worker, actual subagent, or named reviewer perspective must return:
 
 - Scope: what it inspected
 - Evidence: files, commands, tool outputs, links, or tests
@@ -97,15 +101,12 @@ Do not present docs claims, stale memory, generated wiki, GitNexus/graph summari
 
 ## 8. Source-of-Truth Priority
 
-For this repo:
+Do not mix agent instruction priority with runtime/product behavior truth. The canonical definitions live in root `AGENTS.md` §3:
 
-1. User's latest explicit instruction
-2. Root `AGENTS.md` and loaded `docs/agents/*.md` contracts
-3. Code implementation
-4. Contracts / specs / tests / CI config
-5. Generated wiki, memory, graph summaries, and old evidence
+- Agent instruction priority: user's latest explicit instruction > root `AGENTS.md` (including loaded `docs/agents/*.md` lazy-load details) > `CLAUDE.md` > installed skills / generated artifacts.
+- Runtime/product behavior truth: code implementation and executable tests/contracts describe current behavior; `docs/plans/` describes target requirements and acceptance semantics; old evidence and generated summaries are exploratory only.
 
-Generated summaries guide exploration but cannot be the sole basis for behavioral correctness.
+If docs and runtime disagree, do not claim runtime completion from docs. Report the mismatch as an implementation or documentation gap and verify against code/tests before changing behavior.
 
 ## 9. Done Gate
 
@@ -139,8 +140,8 @@ editing:
 - `tournament`
 - `loop-until-done`
 
-Actual Codex subagents are used only when explicitly requested or when the
-current Codex surface supports explicit subagent spawning for the task.
+Actual Codex subagents are used only when explicitly requested, or when the
+current Codex surface supports explicit subagent spawning and the task risk/scope justifies it.
 Otherwise, the coordinator applies the same reviewer perspectives internally
 and states that subagents were skipped.
 

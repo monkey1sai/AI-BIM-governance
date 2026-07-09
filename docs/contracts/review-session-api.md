@@ -6,6 +6,12 @@ Base URL:
 http://127.0.0.1:8004
 ```
 
+Artifact URL fields in this contract are opaque strings. Examples that contain
+`/artifacts/tenants/.../derived/...` document a possible historical shape only;
+clients and tests must not parse tenant/project/job semantics from the path.
+Current conversion-owned artifact URL shape is defined by the streaming
+conversion result returned at runtime.
+
 ## Endpoints
 
 ```http

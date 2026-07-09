@@ -178,7 +178,25 @@ Each loop:
 Default max loop count: 3.
 If not done, final report MUST say `未完成` and list blockers.
 
-## 5. docs/plans implementation protocol
+## 5. Codex Model / Effort Lane Routing
+
+This section is the canonical Codex-side lane map. Do not use Claude model
+names from historical Superpowers specs to choose Codex lanes.
+
+| Task tier | Coordinator effort | Actual subagents | Notes |
+|---|---|---|---|
+| Trivial | low | no | Direct answer or single command. |
+| Simple | medium | no | One source-of-truth file plus one verification step. |
+| Non-trivial docs/code audit | high | optional `explorer` | Use fan-out only when areas are independent. |
+| PR / architecture / E2E readiness review | high | `reviewer` when supported | Reviewer is read-only and must look for regressions and missing evidence. |
+| Security / deploy / secrets / destructive scripts | xhigh | `security_auditor` when supported | Use adversarial verification; confirm before irreversible or host-affecting action. |
+| Debug / failing test / runtime incident | high or xhigh | `debugger` when supported | Use loop-until-done, one hypothesis per loop, default max 3. |
+
+Subagents must not write tracked files unless the coordinator gives a bounded,
+non-conflicting file scope. If the task can be answered faster and more
+objectively by shell/MCP/GitNexus/tests, tool-based extraction is sufficient.
+
+## 6. docs/plans implementation protocol
 
 When implementing a requirement from `docs/plans/`, Codex SHALL:
 
@@ -203,7 +221,7 @@ When implementing a requirement from `docs/plans/`, Codex SHALL:
 12. Final report MUST include workflow mode, agents used/skipped,
     files changed, verification, evidence, risks, and next step.
 
-## 6. Evidence priority
+## 7. Evidence priority
 
 When agents disagree, trust in this order:
 
@@ -216,24 +234,28 @@ When agents disagree, trust in this order:
 
 No evidence means hypothesis, not verified fact.
 
-## 7. Subagent output schema
+## 8. Subagent Output Schema
 
 Every subagent result MUST include:
 
 ```txt
-assigned objective:
-files inspected or changed:
-findings or changes:
-evidence:
-risks and unknowns:
-recommendation: accept | reject | needs-follow-up
+Scope:
+Evidence:
+Finding:
+Uncertainty:
+Risk:
+Next step:
+Recommendation: accept | reject | needs-follow-up
+```
 
-## 8. Coordinator final report schema
+## 9. Coordinator Final Report Schema
 
 Final report MUST include:
+
 ```txt
 mode used:
 agents used or skipped:
+source-of-truth files read:
 decision:
 changes made:
 verification:
@@ -241,12 +263,15 @@ frontend evidence, if user-facing:
 runtime evidence, if Kit/WebRTC:
 risks / remaining unknowns:
 recommended next step:
+```
 
 If done condition is not met, the final report MUST say:
 
+```txt
 未完成
 
 and list:
--hypotheses eliminated
--remaining blocker
--smallest next step
+- hypotheses eliminated
+- remaining blocker
+- smallest next step
+```

@@ -16,15 +16,24 @@
 ### 1. Cold start
 
 ```powershell
+# Safety guard: run only from repo root.
+$repoRoot = (git rev-parse --show-toplevel).Trim()
+if ((Resolve-Path .).Path -ne (Resolve-Path $repoRoot).Path) {
+    throw "Run this cleanup from repo root only: $repoRoot"
+}
+
 # Stop all
 .\scripts\stop-runtime-manager-docker.ps1
 .\scripts\stop-all.ps1
 
-# Clear local artifacts
+# Clear local artifacts under the verified repo root only.
 Remove-Item -LiteralPath .\.venv -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath .\bim-review-coordinator\node_modules -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath .\web-viewer-sample\node_modules -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath .\.env.web-plane.host-kit -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath .\.env.web-plane.host-kit) {
+    Copy-Item -LiteralPath .\.env.web-plane.host-kit -Destination ".\.env.web-plane.host-kit.bak-$(Get-Date -Format yyyyMMddHHmmss)" -Force
+    Remove-Item -LiteralPath .\.env.web-plane.host-kit -Force
+}
 docker compose -f compose.runtime-manager.yml -f compose.host-kit.yml down -v
 ```
 

@@ -11,14 +11,16 @@
 User-facing capability 不得只用 backend/API 測試宣告完成。最終驗收需回報：
 
 ```txt
-Frontend URL
-Buttons tested
+Frontend route
+Main button(s) tested
 Fixture used
-Expected visible result
+Visible success state
 E2E command
-Screenshot / trace / evidence path
-Known limitations
+Screenshot / trace
+Known gaps
 ```
+
+以上 labels 與 `scripts/tests/check-pr-body-evidence.ps1` machine truth 對齊；可額外補 Frontend URL / Backend API called / Runtime action，但不得取代這 7 項。
 
 優先驗證入口：
 
@@ -53,7 +55,7 @@ cd D:\Users\deploy\AI-bim-geo
 
 禁止 `-DryRun`。若 fetch `origin` explicit main refspec 失敗、approval 被拒、或清理後缺少 `scripts\deploy.ps1`，回報 blocker 並停止；不得部署 stale code。
 清理規則會移除 agent/tooling docs、`.github\skills` / `.github\prompts`、root `docs` / `openspec` / `patches`，但保留 `.github\workflows`。
-若 `deploy.ps1 -Build` Phase 3 被外部 `kit.exe` / conversion `python.exe` 佔用必要 ports 擋住，已授權停止該 blocking PID 後重跑同一條 `-Build`；記錄 port / PID / process name，不得改用 `-Force` / `-DryRun`。
+若 `deploy.ps1 -Build` Phase 3 被外部 `kit.exe` / conversion `python.exe` 佔用必要 ports 擋住，已授權只停止可由部署區 pidfile 或 command line / executable path 證明屬於 `D:\Users\deploy\AI-bim-geo` 的 PID tree，並記錄 port / PID / process name / ownership evidence 後重跑同一條 `-Build`。若只有 port/process-name 證據，先取得使用者確認；不得改用 `-Force` / `-DryRun`。
 
 本機 runtime 可用時優先補：
 

@@ -38,7 +38,7 @@
 | A5 | IoT / FM 數位分身 | `p3` | **NOT BUILT · p3** |
 | A6–A10 | 4D·5D / Reality Capture / Synthetic Data / Copilot / Robot Sim | `p4` | **NOT BUILT · p4**（GPU · Omniverse-gated） |
 
-**資料存放現況（誠實，對齊使用者指正）**：MinIO watch 偵測**已實作**（`bim-review-coordinator/src/services/minioWatcher.ts`）；**無持久轉檔紀錄**（watcher status 僅記憶體留 5 筆）；`#minio` 資料結構顯示頁**未接真實 list**；轉檔**僅靠新增 `model.ifc` 觸發排程**；IFC→USDC 轉檔權威**待建**。閉環改善設計見 `docs/superpowers/specs/2026-06-23-minio-conversion-closed-loop-observability-design.md`。metadata 權威 DB = `bim-control · MySQL`（非 Postgres）。
+**資料存放現況（2026-07-09 current decision；覆寫下方 2026-06-11 snapshot）**：MinIO watch 偵測**已實作**（`bim-review-coordinator/src/services/minioWatcher.ts`）；轉檔權威在 `bim-streaming-server`，`GET /api/conversions` list 與 coordinator `/api/dev/conversions` proxy 皆在，缺的是前端 console「轉檔歷史紀錄頁」；`#minio` 已接真 MinIO raw-folder 逐層唯讀瀏覽（coordinator `GET /api/minio/objects?prefix=&delimiter=/`），local_fs `GET /api/governance/files/tree` 仍是 A1 v2 另一選檔來源；A1 選檔只跑 governance rule-run，不觸發 IFC→USDC 轉檔、不寫 bucket。完整裁決見 `docs/plans/docs-plans-README.md` §1.1 / §3 鐵律 #7；metadata 權威 DB = `bim-control · MySQL`（非 Postgres）。
 
 ---
 
@@ -93,7 +93,7 @@
 | CV | `#conv` | IFC→USD 轉檔排程（P1） | OMNIVERSE RUNTIME | coordinator `/api/conversions` + streaming-server 轉檔 | 🟡 讀真 ifc-ready jobs；插隊/重試/coverage P1 |
 | SS | `#sessions` | Session 管理 | OMNIVERSE RUNTIME | coordinator `/api/sessions` | 🟡 Phase1 read-only；結束 session IX-SS-04 已設計(#224)；occupied 證據鏈 P1；**A1 連動橋供應端 IX-SS-05（v2）** |
 | KG | `#instances` | Kit / GPU 機隊 | OMNIVERSE RUNTIME | kit-manager-api `/instances` | 🟡 fleet 模型正確；真遙測接 kit-manager-api；restart/release intent 待建 |
-| M | `#minio` | MinIO 資料 | OMNIVERSE RUNTIME | coordinator → local_fs storage（真 MinIO 待接） | 🟢 真三層樹 270/類別/版本 |
+| M | `#minio` | MinIO 資料 | OMNIVERSE RUNTIME | coordinator `GET /api/minio/objects` + local_fs `GET /api/governance/files/tree` | 🟢 真 MinIO raw-folder 逐層瀏覽（唯讀）；三層語意只屬 watcher 解析，不宣稱 bucket 結構 |
 | RT | `#runtime` | Runtime 監控 | 落地端控制台 / SYSTEM | kit-manager-api `/runtime` + `/health` | 🟡 端點真有；UI 監控面板待建 |
 | SY | `#admin` | 系統管理 | SYSTEM | coordinator（auth/config） | ⚪ **待建**（本期僅佔位） |
 | ▦ | `#spec` | 設計規格說明 | SYSTEM | 靜態 | 🟢 文件入口 |
