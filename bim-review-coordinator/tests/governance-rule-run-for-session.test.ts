@@ -64,6 +64,12 @@ function makeApp(overrides: Partial<CoordinatorConfig> = {}): CoordinatorApp {
   return active;
 }
 
+function joinHostPathForTest(root: string, ...parts: string[]): string {
+  const sep = /[\\]/.test(root) ? "\\" : "/";
+  const tail = parts.map((part) => part.replace(/[\\/]+/g, sep)).join(sep);
+  return root.replace(/[\\/]+$/, "") + sep + tail;
+}
+
 /**
  * governance-service `POST /api/rule-runs` stub。記錄收到的 body 供 assert
  * forward payload；回 202 {rule_run_id, status}（與真實服務同形狀）。
@@ -167,7 +173,7 @@ async function seedSessionWithDownloadedIfc(
 async function seedDownloadedIfcWithoutSession(
   app: CoordinatorApp,
   ifcSourceUrl: string,
-): Promise<{ hostLocalPath: string; ifcReadyJobId: string }> {
+): Promise<{ localPath: string; hostLocalPath: string; ifcReadyJobId: string }> {
   const intake = await request(app.app)
     .post("/api/external/ifc-ready")
     .set({
@@ -189,9 +195,13 @@ async function seedDownloadedIfcWithoutSession(
   expect(intake.status).toBe(202);
   expect(intake.body.review_session_id ?? null).toBeNull();
   const ifcReadyJobId = intake.body.ifc_ready_job_id as string;
-  const hostLocalPath = path.join(app.config.storageHostRoot, "ifc-cache", ifcReadyJobId, "source.ifc");
-  expect(fs.existsSync(hostLocalPath)).toBe(true);
-  return { hostLocalPath, ifcReadyJobId };
+  const localPath = path.join(app.config.storageRoot, "ifc-cache", ifcReadyJobId, "source.ifc");
+  const hostLocalPath = joinHostPathForTest(app.config.storageHostRoot, "ifc-cache", ifcReadyJobId, "source.ifc");
+  expect(fs.existsSync(localPath)).toBe(true);
+  if (app.config.storageRoot === app.config.storageHostRoot) {
+    expect(fs.existsSync(hostLocalPath)).toBe(true);
+  }
+  return { localPath, hostLocalPath, ifcReadyJobId };
 }
 
 async function seedFailedDownloadIfcWithoutSession(app: CoordinatorApp): Promise<{ ifcReadyJobId: string }> {
@@ -590,6 +600,36 @@ describe("POST /api/governance/rule-runs/for-ifc-ready/:jobId", () => {
     });
     expect(gov.bodies[0].source_metadata).toHaveProperty("conversion_status");
     expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+  });
+
+  it("dockerized coordinator 用 mounted local_path 驗 source IFC，但仍轉送 host_local_path 給 governance-service", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({
+      ifcDownloadStrict: true,
+      storageHostRoot: "D:\\Users\\deploy\\AI-bim-geo-data\\storage",
+    });
+
+    const { ifcReadyJobId, localPath, hostLocalPath } = await seedDownloadedIfcWithoutSession(app, ifcSourceUrl);
+    expect(fs.existsSync(localPath)).toBe(true);
+    expect(fs.existsSync(hostLocalPath)).toBe(false);
+
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.artifact_health).toMatchObject({
+      source_ifc_exists: true,
+      stale_reason: null,
+    });
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-ifc-ready/${ifcReadyJobId}`)
+      .send({});
+
+    expect(res.status).toBe(202);
+    expect(gov.bodies).toHaveLength(1);
+    expect(gov.bodies[0].ifc_source_path).toBe(hostLocalPath);
+    expect(gov.bodies[0].ifc_source_path).not.toBe(localPath);
   });
 
   it("download failed job → 404，且不打 governance-service、不外洩 host path", async () => {

@@ -796,16 +796,26 @@ export function createCoordinatorApp(
     return snapshot;
   }
 
+  function sourceHealthProbePathForJob(job: IfcReadyIntakeJob): { sourcePath: string | null; storageRoot: string } {
+    // Dockerized coordinator cannot stat a Windows host path such as D:/...,
+    // but it can stat the same file through the mounted container path.
+    if (job.local_path && job.host_local_path && job.local_path !== job.host_local_path) {
+      return { sourcePath: job.local_path, storageRoot: config.storageRoot };
+    }
+    return { sourcePath: job.host_local_path || job.local_path || null, storageRoot: config.storageHostRoot };
+  }
+
   async function refreshArtifactHealthForJob(
     job: IfcReadyIntakeJob,
     artifacts: { modelArtifactUrl?: string | null; mappingUrl?: string | null } = artifactUrlsForJob(job),
   ): Promise<ArtifactHealthSnapshot> {
+    const sourceProbe = sourceHealthProbePathForJob(job);
     const snapshot = await probeArtifactHealth({
-      host_local_path: job.host_local_path ?? null,
+      host_local_path: sourceProbe.sourcePath,
       model_artifact_url: artifacts.modelArtifactUrl ?? null,
       mapping_url: artifacts.mappingUrl ?? null,
       edge_runtime_data_root: config.edgeRuntimeDataRoot,
-      storage_root: config.storageHostRoot,
+      storage_root: sourceProbe.storageRoot,
       configured_conversion_api_origin: config.streamingConversionApiBase,
       checked_at: nowIso(),
     });
@@ -2965,7 +2975,8 @@ export function createCoordinatorApp(
         reason: "IFC for this job has not been downloaded to a server-side path yet.",
       };
     }
-    const sourceCheck = checkSourceIfcPath(ifcSourcePath, config.storageHostRoot, config.edgeRuntimeDataRoot);
+    const sourceProbe = sourceHealthProbePathForJob(job);
+    const sourceCheck = checkSourceIfcPath(sourceProbe.sourcePath, sourceProbe.storageRoot, config.edgeRuntimeDataRoot);
     if (sourceCheck.value !== true) {
       return {
         ok: false,

@@ -1,5 +1,13 @@
 [sandbox_workspace_write]
 network_access = true
 
+[permissions.safe-workspace.network]
+enabled = true
+mode = "limited"
+
+[permissions.safe-workspace.network.domains]
+"api.github.com" = "allow"
+"github.com" = "allow"
+
 [plugins."cloudflare@openai-curated"]
 enabled = false

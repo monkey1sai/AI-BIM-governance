@@ -207,3 +207,4 @@ artifacts/spec-to-done-design/
 # ----------------------------
 artifacts/tmp/
 bim-review-coordinator/track.txt
+.aider*
