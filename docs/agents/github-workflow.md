@@ -48,7 +48,7 @@ Merge            = 正式接受變更
   .\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <pr-number>
   ```
 
-  此 wrapper 會抓目前 PR body，預設用本機 `origin/main...HEAD` changed paths 執行 `scripts/tests/check-pr-body-evidence.ps1`，並在偵測到 frontend paths 時跑 `web-viewer-sample` 的 `npm run verify`。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipViewerVerify`；正式 push / CI watch 前不得跳過受影響的本機等效測試。
+  此 wrapper 會抓目前 PR body，預設用本機 `origin/main...HEAD` changed paths 執行 `scripts/tests/check-pr-body-evidence.ps1`，接著在 repo-local `.tmp` 下跑 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。若只是在診斷 GitHub 上既有 PR body gate，可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`；正式 push / CI watch 前不得跳過受影響的本機等效測試。
 - User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準：`Frontend route`、`Main button(s) tested`、`Fixture used`、`Visible success state`、`E2E command`、`Screenshot / trace`、`Known gaps`。無前端 route / button / fixture / **gstack browser evidence** 時不得標為完整完成。
 - Runtime / Docker / Kit / viewer / env / port 相關 PR 描述必須包含 Deploy Path Verification table；若未更新 `scripts/deploy.ps1`，必須明確說明已驗證或不適用。
 - 改動治理面檔案（`AGENTS.md` / `CLAUDE.md` / `README.md` / `docs/agents|plans/` / `.github/` / `.claude/workflows/` / `.codex/skills/` / pr-review-agent scripts）的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`gstack evidence`、`Agent workflow changed?`、`Required checks expected`。所有三張表的 label 都由 `scripts/tests/check-pr-body-evidence.ps1` 逐字比對（值不得為 `-`/`tbd`/`todo` 等占位）；改 body 後需 push empty commit 重跑 check。

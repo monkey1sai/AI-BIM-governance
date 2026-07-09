@@ -4,6 +4,7 @@ param(
     [string] $Repo = 'monkey1sai/AI-BIM-governance',
     [ValidateSet('local', 'remote')]
     [string] $ChangedPathsSource = 'local',
+    [switch] $SkipReviewAgent,
     [switch] $SkipViewerVerify
 )
 
@@ -72,30 +73,64 @@ try {
         $changedPathsPath
     ) -FailureMessage 'PR body evidence preflight failed.'
 
+    $tempDir = Join-Path $repoRootPath '.tmp'
+    New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+    $oldTemp = $env:TEMP
+    $oldTmp = $env:TMP
+    $env:TEMP = $tempDir
+    $env:TMP = $tempDir
+
+    if (-not $SkipReviewAgent) {
+        Write-Host '[local-pr-preflight] running scripts/pr-review-agent.ps1 with local base/head'
+        $baseSha = (& git -c "safe.directory=$repoRootPath" rev-parse origin/main).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($baseSha)) {
+            throw 'Unable to resolve origin/main for local PR review agent.'
+        }
+        $headSha = (& git -c "safe.directory=$repoRootPath" rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headSha)) {
+            throw 'Unable to resolve HEAD for local PR review agent.'
+        }
+        Invoke-External -FilePath 'pwsh' -Arguments @(
+            '-NoProfile',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            (Join-Path $repoRootPath 'scripts\pr-review-agent.ps1'),
+            '-BaseSha',
+            $baseSha,
+            '-HeadSha',
+            $headSha,
+            '-PrNumber',
+            ([string]$PrNumber),
+            '-RunId',
+            'local-preflight',
+            '-OutputDir',
+            (Join-Path $outDir 'pr-review-agent'),
+            '-SkipGitNexus',
+            '-AllowGitNexusUnavailable'
+        ) -FailureMessage 'Local PR review agent failed.'
+    }
+
     $frontendPattern = '^(web-viewer-sample/|apps/kit-manager-web/|bim-review-coordinator/(src|public)/|docs/plans/.*prototype\.html)'
     $hasFrontendPaths = [bool](@($changedPaths | Where-Object { $_ -match $frontendPattern } | Select-Object -First 1).Count)
-    if ($hasFrontendPaths -and -not $SkipViewerVerify) {
+    if ($hasFrontendPaths -and -not $SkipViewerVerify -and $SkipReviewAgent) {
         Write-Host '[local-pr-preflight] frontend paths detected; running web-viewer-sample npm run verify'
-        $tempDir = Join-Path $repoRootPath '.tmp'
-        New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
-        $oldTemp = $env:TEMP
-        $oldTmp = $env:TMP
-        $env:TEMP = $tempDir
-        $env:TMP = $tempDir
         Push-Location (Join-Path $repoRootPath 'web-viewer-sample')
         try {
             Invoke-External -FilePath 'npm' -Arguments @('run', 'verify') -FailureMessage 'web-viewer-sample npm run verify failed.'
         } finally {
             Pop-Location
-            $env:TEMP = $oldTemp
-            $env:TMP = $oldTmp
         }
+    } elseif ($hasFrontendPaths -and -not $SkipReviewAgent) {
+        Write-Host '[local-pr-preflight] frontend paths detected; viewer verify is covered by local PR review agent'
     } elseif ($hasFrontendPaths) {
         Write-Host '[local-pr-preflight] frontend paths detected; viewer verify skipped by -SkipViewerVerify'
     } else {
         Write-Host '[local-pr-preflight] no frontend paths detected; viewer verify skipped'
     }
 
+    $env:TEMP = $oldTemp
+    $env:TMP = $oldTmp
     Write-Host "[local-pr-preflight] passed for PR #$PrNumber"
 } finally {
     Pop-Location
