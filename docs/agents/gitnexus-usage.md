@@ -10,6 +10,20 @@ GitNexus 規則本文（Always Do / Never Do / Resources / CLI skill 對應表�
 
 核心鐵律（與自動區塊一致）：修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL 先回報再繼續。
 
+## GitNexus unavailable gate
+
+GitNexus 是 code-symbol impact / detect_changes 的權威 gate；不可因為工具慢或不方便就跳過。只有以下情境可進 unavailable gate：
+
+1. GitNexus MCP / CLI 明確 unavailable、index stale 且重建失敗、registry 找不到 repo、或 linked worktree staged diff 已知失真。
+2. 已從 repo root 嘗試一次最小修復或確認：`node .gitnexus/run.cjs status` / `analyze`（無 run.cjs 時用 `npx gitnexus analyze`），並記錄失敗摘要。
+3. 本輪只用 raw source、tests、`git diff --name-only --cached` / `git diff` 當 advisory evidence；不得把這些包裝成 GitNexus passed。
+
+Unavailable gate 的決策：
+
+- code-symbol 或 shared-flow 修改：停止並請使用者或 CI pr-review-agent 提供 GitNexus evidence，除非使用者明確接受「GitNexus unavailable」風險。
+- docs-only / comments-only / non-code governance 修改：可繼續，但最終回報必須列 `GitNexus unavailable / not applicable` 與原因。
+- GitNexus 回傳 HIGH / CRITICAL 或實際執行失敗（不是 unavailable）：不得 downgrade；先回報再繼續。
+
 ## 本 repo 的 stale 處理
 
 若 GitNexus index stale，但 re-index 需要匯出或重新分析私有 repo，需遵守當前工具權限與使用者授權；不可自動 export sensitive code。重 index 流程：

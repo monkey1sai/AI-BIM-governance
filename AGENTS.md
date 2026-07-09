@@ -4,7 +4,7 @@
 
 本文件是 `AI-BIM-governance/` workspace 的 **agent 入口** — 定義 agent 行為對齊與 repo 邊界的 source of truth。為了控制每次 session 啟動的 context 預算，細節已 lazy-load 到 `docs/agents/*.md` sub-files（見下方 index）。
 
-衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / generated wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。
+衝突解析優先序：使用者最新明確指令 > 本文件（AGENTS.md） > `CLAUDE.md` > installed skills / generated wiki / generated skills。`docs/agents/*.md` sub-files 是本文件的 lazy-load 細節，不另成優先序層級。不要把「agent 指令優先序」和「runtime/product 行為真相」混在一起；後者見 §3。
 
 ---
 
@@ -27,11 +27,11 @@
 - 主系統架構以 `https://bim-docs.jackshappybot.com/` 分頁「01 系統架構」的「BIM 模型管理平台 — 系統架構」為準：採雲端與客戶落地端分離，外部公司雲端是 control-plane，客戶落地端是 IFC / Kit / MCP runtime data-plane。
 - `https://bim-docs.jackshappybot.com/` 分頁「05 BIM治理與模型檢核」中的 A1–A10 是本 repo 的 10 大主要開發項目；分頁「06 操作介面總覽」是使用者操作介面、按鈕、進度與可驗收流程的 UX 參考。
 - 凡是 user-facing capability，不得以「後端 / API / 測試完成」宣告 done。完成標準必須是：使用者可從前端 route 操作，點明確按鈕，使用預設 fixture，看到 loading / success / failure / retry 與關鍵 runtime ID，並有 Playwright / Chrome E2E 截圖或 trace 證據。
-- 最終回報 user-facing work 時必須列出：Frontend URL、Buttons tested、Test fixture used、Expected visible result、E2E command、Screenshot / evidence path、Known limitations。
+- 最終回報 user-facing work 時必須列出並對齊 PR machine truth：Frontend route、Main button(s) tested、Fixture used、Visible success state、E2E command、Screenshot / trace、Known gaps；Frontend URL、Backend API called、Runtime action 可加列但不得取代前述 labels。
 - 真實 IFC semantic viewer E2E 的核心輸入為主工作區 local `storage/` 內 IFC；new worktree 不會自動帶這些 ignored/local artifact，測試應讀主工作區絕對路徑或用 gitignored junction/symlink，不得把 IFC 或大型 `model.usdc` commit 進 repo。
 - 不得宣告 full-system E2E complete，除非同時具備 governance CPU semantic E2E 與 Kit WebRTC visual/runtime E2E 證據。
 - 當使用者要求「請測試部署區重建」或同義口令時，agent MUST 執行 `.\scripts\dev\rebuild-test-deploy.ps1 -Build`；該 helper 會用 freshly fetched `origin/main` 重建 deployment checkout `D:\Users\deploy\AI-bim-geo`、排除 agent/tooling 檔案與 root `docs/`、`openspec/`、`patches/`，並從部署區執行 `.\scripts\deploy.ps1 -Build`。禁止使用 `-DryRun`、禁止使用 stale `origin/main`、禁止改用當前 worktree 或 sub-repo 啟動命令。
-- 已授權：若 `deploy.ps1 -Build` 的 Phase 3 被外部 host-native runtime blocker（如 `kit.exe` / conversion `python.exe` 佔用 49100/49101 或 spectator ports）阻擋，agent 可停止該 blocking PID、記錄 port / PID / process name，並重跑同一條 `-Build`；不得改用 `-Force` / `-DryRun` 或停止無關非 runtime process。
+- 已授權但限縮：若 `deploy.ps1 -Build` 的 Phase 3 被外部 host-native runtime blocker（如 `kit.exe` / conversion `python.exe` 佔用 49100/49101 或 spectator ports）阻擋，agent 只能停止可由部署區 pidfile 或 command line / executable path 證明屬於 `D:\Users\deploy\AI-bim-geo` 的 PID tree，並記錄 port / PID / process name / ownership evidence 後重跑同一條 `-Build`。若只有 port/process-name 證據，先向使用者確認；不得改用 `-Force` / `-DryRun` 或停止無關非 runtime process。
 
 完整 A1–A10 對應、frontend operability rule、真實 IFC E2E evidence contract 與 script contract 見 `docs/agents/product-operability-and-script-contract.md`。
 
@@ -39,6 +39,7 @@
 
 - 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
 - 不允許：修改既有 `.env` 的實際機密值。
+- Evidence 規則：agent 可為本機驗證載入 `.env`，但不得在回覆、log 摘要或 PR body echo 任何值；`.env` / `.env.example` 差異檢查預設只列 key 名稱與缺漏，不列值。
 - 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
 
 ### 開發管線（四套工具：主流程 + 輔助，不平權混用）
@@ -65,7 +66,7 @@
 - 開發 / 修 PR / 建 feature 或 fix branch 時，不得在主 repo checkout 直接 `git switch` / `git switch -c` 切工作分支；MUST 先 `git worktree list`，再建立或使用 dedicated worktree 進行該 branch 的開發，避免主工作區既有 dirty files 被跨 branch 帶走或污染 PR。主 repo checkout 預設只作穩定入口、狀態檢查與使用者明確要求的文件/清理操作。
 - `.claude/`、`.codex/`、`.agents/`、`.gitnexus/` 是本機 agent/tooling 產物，預設維持 ignored（含以 `skills` CLI 裝進 `.claude/skills/` 的技能）。
 - Repo-local `.codex/skills` SHALL 對齊 `.claude/skills` 作為本機 skill inventory（本機同步，非版控同步）；OpenSpec / opsx closed-loop skills 已退役，需求拆解與執行治理改由 Superpowers skills 負責。
-- `.claude/` 版控白名單以 root `.gitignore` 的 `!.claude/...` 例外清單為準（2026-07-02 治理審計起含 `skills/gitnexus/`、`skills/repo-health/`——CLAUDE.md MUST 規則引用的檔案必須入版控）；`.claude/skills/generated/` 與其餘未白名單技能不提交。`.codex/skills` 除既有 tracked 檔（`spec-to-done` adapter 等）外維持本機鏡像不入版控：`pr-review-agent` 對 `.codex/skills` 路徑的新增/修改一律 high blocker（`scripts/lib/pr-review-agent.ps1:343` hard-coded；連既有 tracked 的 `.codex/skills/spec-to-done/SKILL.md` 修改也會擋，屬已知張力，放寬須使用者拍板）。
+- `.claude/` 版控白名單以 root `.gitignore` 的 `!.claude/...` 例外清單為準（2026-07-02 治理審計起含 `skills/gitnexus/`、`skills/repo-health/`——CLAUDE.md MUST 規則引用的檔案必須入版控）；`.claude/skills/generated/` 與其餘未白名單技能不提交。`.codex/skills` 除既有 tracked 檔（`spec-to-done` adapter 等）外維持本機鏡像不入版控：新增路徑或 unknown-base 修改仍是 high blocker；已 tracked 的 adapter 修改降為 warning + AI Coding Governance table + owner review（見 `docs/superpowers/specs/2026-07-02-pr-review-agent-tracked-tooling-mirror-modify.md`）。
 
 完整 GitHub PR workflow 見 `docs/agents/github-workflow.md`。
 
@@ -146,13 +147,19 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 
 ## 3. 探索輔助與 Source of Truth
 
-Source of Truth 優先順序：
+本 repo 有兩條不同優先序，禁止混用：
+
+- **Agent instruction priority**：使用者最新明確指令 > 本文件（含已載入的 `docs/agents/*.md` lazy-load 細節）> `CLAUDE.md` > installed skills / generated artifacts。
+- **Runtime/product behavior truth**：程式碼實作與可執行測試 / contracts 描述目前行為；`docs/plans/` 描述目標需求與驗收語意；兩者不一致時不得用 docs 宣稱 runtime 已完成，必須標成 implementation gap。
+
+Runtime/product 行為真相優先順序：
 
 ```txt
 1. 程式碼實作
-2. contracts 文件
-3. AGENTS 邊界定義（本文件 + docs/agents/*.md sub-files）
-4. generated wiki / generated skills（若存在）
+2. 可執行 tests / contracts 文件
+3. docs/plans current decision ledger 與需求規格（目標行為 / 驗收語意）
+4. AGENTS 邊界定義（本文件 + docs/agents/*.md sub-files）
+5. generated wiki / generated skills / old evidence（若存在）
 ```
 
 目前 checkout **沒有** generated wiki 產物（`docs/wiki/` 不存在；graphify corpus 已於 2026-06-10 移除）。分析 code / 陌生模組探索預設先用 GitNexus MCP（`query` / `context`，永遠查活圖譜）；`codebase-memory-mcp`（`search_graph` / `get_code_snippet` / `trace_path`）只能作為並列第二意見、加速定位後的 GitNexus 交叉確認，或 GitNexus UNKNOWN / crash / unavailable 時的 advisory fallback，不得取代 GitNexus-first discovery。兩者查無結果或有疑義時仍以 GitNexus 為準——**修改 code symbol 前的 `impact` 與 commit 前的 `detect_changes` 仍只由 GitNexus 判定**（見下方 §4）。**此「衝突時以 GitNexus 為準」不限 spec-to-done 內部流程，任何 session（含一般互動對話）都適用**：兩圖譜對同一 symbol 給出不同答案時，MUST 用 grep/Read 核對原始碼再下結論，不得逕自採信單邊「exact」標籤（2026-07-03 實測：GitNexus 曾對 `deriveIntakeFromKey` 假陰漏報全部 caller，已修；codebase-memory 對 `tick`/`run`/`init` 這類常見命名，曾把不同檔案的區域閉包誤併成同一節點、生出不存在的 CALLS 邊——兩者皆非 100% 準）。不得在 README、PR 或驗收報告把不存在的 wiki 寫成現有入口。任何導覽產物與實作不一致時，一律以實作為準。
@@ -161,7 +168,7 @@ Source of Truth 優先順序：
 
 ## 4. GitNexus 入口
 
-本 repo 由 GitNexus 索引。修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL risk 先回報再繼續。
+本 repo 由 GitNexus 索引。修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL risk 先回報再繼續。若 GitNexus stale / unavailable / linked-worktree staged diff 失真，照 `docs/agents/gitnexus-usage.md` 的 unavailable gate 處理，不得自行發明 bypass。
 
 規範本文（Always Do / Never Do / Resources / CLI 表）以下方 `<!-- gitnexus:start -->` 自動維護區塊為準（`analyze` 時自動更新）；stale 重建與 LadybugDB crash 復原程序見 `docs/agents/gitnexus-usage.md`。
 

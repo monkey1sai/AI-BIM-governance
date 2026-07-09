@@ -25,7 +25,7 @@
 ### 1.3 承接鏈
 
 - 承接《**審批報告-docs-plans-A1v2-2026-07-02.md**》：其 §1 指令裁決（A1 雙來源選檔／BCF 審查面板／A1 連動橋）、§3 五條誠實紅線、§5 待決三項全部**延續**（見本報告 §2·§3·§5）。
-- 承接《**審批報告-docs-plans-design-system-對齊重建-2026-06-23.md**》：其**四釘子誠實框架**延續（釘子 a MinIO 偵測已實作／釘子 b 轉檔紀錄待建／釘子 c `#minio` 結構顯示頁待建僅 local_fs 兩層樹／釘子 d 觸發點僅新增 IFC watcher 觸發）。
+- 承接《**審批報告-docs-plans-design-system-對齊重建-2026-06-23.md**》的誠實框架，但落地端現況以 `docs-plans-README.md` §1.1 / §3 鐵律 #7 的 current decision 為準：MinIO watcher 已實作；轉檔 list API + coordinator proxy 已在、缺前端歷史頁；`#minio` 已接真 MinIO raw-folder 逐層唯讀瀏覽；觸發點仍僅 watcher 自動觸發，A1 選檔不觸發轉檔。
 - 兩份歷史檔 **byte-identical 不動**；「無任一檔回頭把待建標成已交付」的地基原則延續至本輪全部 SaaS 增補。
 
 ---

@@ -4,13 +4,13 @@
 
 ## Role
 
-`docs/` 是 **workspace 文件總入口**。它收 agent boundary lazy-load sub-files、跨 service contracts、generated wiki、operational runbooks、superpowers 等 agent-facing 與人 facing 文件；它不是程式碼或 contract 的權威源 —— 真正權威在程式碼與 OpenSpec spec。
+`docs/` 是 **workspace 文件總入口**。它收 agent boundary lazy-load sub-files、跨 service contracts、operational runbooks、superpowers specs/plans、verification evidence 等 agent-facing 與 human-facing 文件；它不是 runtime 行為權威源。現行行為以程式碼、可執行 tests / contracts 為準；`docs/plans/` 定義目標需求與驗收語意；歷史 OpenSpec / generated wiki 只在明確標示為現行時才可當 gate。
 
 ## Owns
 
 - `docs/agents/` — 根目錄 AGENTS.md / CLAUDE.md 的 lazy-load sub-files
 - `docs/contracts/` — 跨 sub-repo / 對外平台 contract 描述（與 `tests/contracts/` 對應）
-- `docs/wiki/` — GitNexus generated wiki（落 `docs/wiki/gitnexus/`）
+- `docs/wiki/` — 若未來生成 GitNexus wiki，只作 generated artifact；目前 checkout 不存在，不得當入口引用
 - `docs/runbooks/` — operational runbook
 - `docs/architecture/` — 架構 snapshot / 決策記錄
 - `docs/superpowers/` — superpowers skill specs / 設計 doc
@@ -23,14 +23,14 @@
 
 - 程式碼行為權威（屬於 sub-repo source）
 - contract 機械驗證（屬於 `tests/contracts/`）
-- OpenSpec spec 權威（屬於 `openspec/specs/<capability>/`）
-- 自動生成的 GitNexus wiki dump（屬於 `docs/wiki/gitnexus/`）
+- active code/test 行為權威（屬於 sub-repo source 與 tests）
+- generated GitNexus wiki dump（若存在，屬 generated artifact，不屬本檔 ownership）
 
 ## Required Boundaries
 
 - MUST 標明文件性質：agent boundary / contract / wiki / runbook / spec design / working note。
-- MUST 對齊 source of truth 順序：程式碼 > contracts > AGENTS 邊界 > wiki（規則見根目錄 `AGENTS.md` §3）。
-- MUST NOT 把 `docs/` 內任何文件當成 product / API 行為的權威 —— wiki 與實作不一致時以實作為準，並補更新 wiki。
+- MUST 對齊根目錄 `AGENTS.md` §3 的兩條優先序：agent instruction priority 與 runtime/product behavior truth 不得混用。
+- MUST NOT 把 `docs/` 內任何文件或舊 evidence 當成 runtime/API 已完成證據；docs 與實作不一致時以實作為準，並把差異標成 implementation gap 或 historical evidence。
 
 ## Before Editing
 

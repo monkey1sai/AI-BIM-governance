@@ -4,6 +4,7 @@
 > 基準：`C:/Users/IOT/Downloads/AI-BIM Governance Design System`（EZPLUS BIM 設計系統，本專案反向工程而來）的 `guides/`（a1-a10-customer-scenarios、frontend-interaction-and-design、ai-bim-geo-web-server、persistence）。
 > 方法：ultracode 三線並行規劃（A1/A2/A3 各 planner → 對抗 critic），指揮官審查 + 使用者拍板範圍後凝固本 doc。
 > 後續：本 doc 為三線並行實作的 source of truth；走 branch → PR → Actions → merge，不在 main 開發。
+> **Superseded note（2026-07-09）**：本檔的 A1/A2 對齊脈絡保留作歷史設計證據；A3 clash implementation plan 已被後續 current decision 覆寫：A3 federation built，clash **NOT BUILT · blocked-on-OCC**（見 `docs/plans/docs-plans-README.md` §1.1 與 design-system 對齊矩陣 §4.4）。除非有新的人類決策，agent 不得依本檔第 3 節直接重啟 A3 clash backend / proxy / UI 實作。
 
 ---
 

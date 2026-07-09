@@ -27,6 +27,21 @@
 
 ---
 
+## §1.1 Current Decision Ledger（避免 stale snapshot 覆寫現況）
+
+| 主題 | 現行裁決 | Superseded / 禁用說法 |
+|---|---|---|
+| MinIO `#minio` | `#minio` 已接 coordinator `GET /api/minio/objects?prefix=&delimiter=/`，是真 MinIO raw-folder 逐層唯讀瀏覽；`GET /api/governance/files/tree` local_fs 仍是 A1 v2 另一選檔來源。 | 禁寫「只剩 local_fs 兩層樹」、「真 MinIO 三層待接」。三層「專案/種類/版本」只是 watcher 解析語意，不是 bucket 結構宣稱。 |
+| IFC→USD 轉檔紀錄 | streaming-server `GET /api/conversions` 與 coordinator `/api/dev/conversions` proxy 皆在；缺的是前端 console 歷史頁呈現。 | 禁寫「完全無持久化」、「完全沒接線」。 |
+| A1 v2 選檔 | 選檔雙來源：local_fs + MinIO；A1 選檔只跑 governance rule-run，不觸發 IFC→USD 轉檔、不寫 bucket。 | 禁把 A1 檔案下拉當 conversion trigger。 |
+| A1 for-ifc-ready rule-run | 2026-07-08 Superpowers spec 標示 `/api/governance/rule-runs/for-ifc-ready/:jobId` 已實作；此屬凍結契約 approved exception，不能外推成任意 proxy 可改。 | 禁把該例外當成 §1 後端凍結全面放寬。 |
+| A1 built 粒度 | A1 core closure built；v2 新增前端面（雙來源接線、BCF 審查面板、A1BridgeRail）仍依矩陣 §4.4 標示，不得未驗收即宣稱完整交付。 | 禁把「A1 built」解讀成所有 v2 user-facing surface 均已 E2E complete。 |
+| A3 clash | A3 federation built；clash NOT BUILT · blocked-on-OCC。舊 A3 clash implementation plan 若無新決策，不得重啟。 | 禁顯示真實 clash 數字；禁依 2026-06-23 plan 直接重開 clash backend。 |
+| SaaS | SaaS docs 全為 PLANNED 增補層；現況是 tenant zero，IFC/USD payload 不出站。 | 禁把 `/v1`、tenant ACL、計量計費、SaaS services 寫成已支援。 |
+| Full-system E2E | 必須同時具備 governance CPU semantic E2E 與 Kit WebRTC visual/runtime evidence。 | 舊 `docs/verification` / `docs/evidence` 不能單獨作 current full-system pass；黑畫面或缺 screenshot 只能標 runtime/stage-load partial。 |
+
+---
+
 ## §2 檔案角色表（16 檔）
 
 > **缺檔警告已解除（2026-06-23 更正）**：最高效力的 `ai-bim-governance-互動實作規格與標準對齊.md`（正典路由 22 條的唯一來源、PART B 互動卡、PART C 官方對齊）**已在本資料夾**。**2026-07-02 使用者明確指令**：本輪 A1 v2 改版**授權修訂此檔**（效力順序 §1 第一行）；v2 修訂附變更紀錄於檔頭，此後回復「非使用者指令不得重建/覆寫」。各檔仍把它當 source of truth 引用，引用名以現檔名為準。
@@ -36,7 +51,7 @@
 | `ai-bim-governance-互動實作規格與標準對齊.md` | **行為合約 + 實測差距 + 官方標準**（最高效力；**已在本資料夾，禁重建/覆寫**） | PART B 互動卡 IX-xx（狀態機 / API / 驗收）、六個通用互動模式、PART C 三領域官方對齊；**A.1.1 正典路由表 22 條（唯一來源）** | — |
 | `ai-bim-governance-prototype.html` | 產品殼層需求原型（A1–A10 + 落地端控制台四頁） | 頁面清單、版面結構、互動語意（轉檔排程 / Session 端點池 / 機隊重啟搬移）、誠實標記呈現、NOT BUILT 全 disabled + 待建標記 | 單檔 vanilla JS 實作。正式殼層 = **React 18 + TypeScript EdgeConsole**，由 coordinator `/ui` 提供 |
 | `ai-bim-geo-viewer-prototype.html` | 3D viewer「M4 完成後」的驗收示意（對應 `#viewer`） | 七區塊 IA（點選 → IFC 語意 → Pset/Qto → Spatial → GUID⇔USD 對應表 → A1 疊加 → 反向跳轉）；IA 保留、重生不動；示意原型內一律標「範例值·示意」 | **自寫 canvas 3D 引擎（純示意）**。正式版來自 Kit WebRTC 串流，前端只收 frame、指令走 DataChannel（`highlightPrimsRequest`）。「由幾何計算非寫死」為正式版要求，示意頁標「範例值·示意」 |
-| `ai-bim-governance-設計規格.md` | v2 介面 + token + A1–A10 介面分析 | Design tokens（**以 styles.css 為唯一真相，文件數值示意**）、A1–A10 介面分析、MinIO 資料章（§4.3/§5 誠實版：local_fs 兩層已交付、真 MinIO 三層待接） | 舊版「🟢 MinIO 介面已交付 / 顯示真實三層結構」**已作廢**（見 §3 鐵律 #7）；A4 狀態以對齊矩陣裁決為準 |
+| `ai-bim-governance-設計規格.md` | v2 介面 + token + A1–A10 介面分析 | Design tokens（**以 styles.css 為唯一真相，文件數值示意**）、A1–A10 介面分析、MinIO / 轉檔狀態須對齊本 README §1.1 與 §3 鐵律 #7 | 舊版「local_fs 兩層樹、真 MinIO 待接」與「完全無轉檔紀錄 / 完全沒接線」皆已作廢；A4 狀態以對齊矩陣裁決為準 |
 | `ai-bim-governance-開發軌跡與執行計畫.md` | v3 軌跡 + 工程規格 + 執行計畫 | **實作順序照這份**：里程碑 M0–M8、各 App API 草案與 DoD、決策 D1–D9、未決事項 O1–O6 | — |
 | `ai-bim-governance-實作紀律與技術債防線.md` | **實作紀律 + 技術債防線**（HOW 補充層，不改需求/規格） | §1 一頁速查、§2 八原則、§3 技術債陷阱 D-01~D-23、§4 DoD 硬化、§8 交付前總檢查表 | — |
 | `ai-bim-governance-design-system-對齊矩陣.md` | **DS × repo 三方對照**（新增；A4 狀態唯一裁決源） | repo 覆寫結論索引（DS 宣稱 vs 互動規格 vs repo 現況）；A4=NOT BUILT·p4 裁決在此 | 自封「功能最終覆寫源」（效力見 §1）；不得獨立改需求 |
@@ -166,7 +181,7 @@ A1–A10 功能需求、UI 驗收語意與實作順序，一律以 docs/plans/ �
 先讀 docs/plans/docs-plans-README.md，再依任務讀：
   互動實作規格與標準對齊.md（行為合約 / 正典路由 22 條 / 官方對齊）
   開發軌跡與執行計畫.md（里程碑 M0–M8 / DoD / 順序）
-  設計規格.md（介面 / A1–A10 介面分析；MinIO 資料章為誠實版：local_fs 兩層已交付、真 MinIO 三層待接，見 README §3.7）
+  設計規格.md（介面 / A1–A10 介面分析；MinIO / 轉檔現況須對齊 README §1.1 / §3.7）
   ai-bim-governance-design-system-對齊矩陣.md（DS × repo 三方對照；A4 狀態唯一裁決源）
   前端對齊DS-保留後端-實作手冊.md（前端對齊 DS 的可執行任務層；§1 後端凍結面契約 = DO-NOT-TOUCH，做前端對齊前必讀）
   實作紀律與技術債防線.md（HOW 補充層，不改需求）
