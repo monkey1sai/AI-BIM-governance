@@ -219,7 +219,7 @@ governance-service / Kit / 轉檔 = **host-native**；容器只跑 web plane，�
 | # | 落差 | 風險 | 處置 |
 |---|---|---|---|
 | L1 | A4 DS/MAP 部分版本標「built / artifact」，repo `prov:"p4"`，無後端程式碼 | 過度宣稱，被 adversary 反駁 | **以 repo 覆寫**；本矩陣 §4.4 A4 裁決=NOT BUILT；其餘文件只引用本節，不各自展開 |
-| L2 | `#minio` 頁舊版標「介面已交付 / 顯示真實三層結構」 | 過度宣稱 | **更正**：`#minio` 頁已建，但只顯示 local_fs 兩層 IFC 樹；真 MinIO 三層結構瀏覽 NOT BUILT |
+| L2 | `#minio` 頁舊版標「介面已交付 / 顯示真實三層結構」或「只剩 local_fs 兩層樹、真 MinIO 待接」 | 過度 / 不足宣稱都會誤導 | **更正**：`#minio` 頁已接真 MinIO raw-folder 逐層唯讀瀏覽；local_fs `files/tree` 仍保留作 A1 v2 另一選檔來源；三層「專案/種類/版本」只屬 watcher 解析語意，不宣稱 bucket 結構 |
 | L3 | 轉檔歷史頁描述「完全無持久化 / 完全無接線」 | 不足宣稱（proxy + list API 已在） | **收緊**：後端 list + proxy 皆在；缺的是前端 UI 呈現層 |
 | L4 | A3 clash 顯示真實數 | 過度宣稱（`has_occ=False` 出不了真實數） | **強制標記**：clash NOT BUILT · blocked-on-OCC；任何 clash 數字須標示範 |
 | L5 | `prov="todo"` 出現在文件或 UI 程式碼 | TS2322 編譯錯誤 | **映射**：todo → `p1` / `p3` / `p4`（依 Phase） |

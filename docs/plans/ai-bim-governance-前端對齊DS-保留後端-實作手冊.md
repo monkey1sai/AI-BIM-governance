@@ -49,6 +49,14 @@
 11. **回應 envelope key 是載重結構（不得 flatten/改名）**：list 用 `{items,count}`（conversions、ifc-ready）或 `{issues}`/`{projects}`/`{results}`/`{items}`；failures 用 `{items,total,limit,offset}`。
 12. **DO-NOT-RE-ADD（2026-05-21 已退役）**：socket 協作 server-push（`highlightRequest`/`selectionUpdate`/`annotationCreate`、`getReviewIssues`、`createAnnotation`、`/api/model-versions/:id/review-bootstrap`）。只剩 `/events` 與 `/lifecycle-events`。**禁改的後端檔**：governance-service（`app.py`、`diff_engine/api.py`、`federation/api.py`、`issues/api.py`、`bcf/api.py`、`file_library/api.py`）、coordinator（`src/app.ts`、`src/routes/governanceProxy.ts`）、streaming `conversion_authority.py`。
 
+### 1.1 Approved Backend-Freeze Exceptions
+
+本表只記錄已被後續設計明確批准的例外；不得外推成 §1 全面放寬。新增任一例外都必須更新本表並列 Requirement source。
+
+| 日期 | 例外 | Requirement source | 邊界 |
+|---|---|---|---|
+| 2026-07-08 | 新增 A1 for-ifc-ready rule-run proxy：`/api/governance/rule-runs/for-ifc-ready/:jobId` | `docs/superpowers/specs/2026-07-08-a1-minio-downloaded-rule-run-design.md` | 僅服務 A1 v2 從 ifc-ready job 對應已下載 IFC 執行 rule-run；不允許改名既有 proxy、不允許新增租戶/host/path 語意、不允許把 A1 選檔改成轉檔觸發器。 |
+
 ---
 
 ## §2 Token 對齊層

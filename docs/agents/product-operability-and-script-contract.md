@@ -83,19 +83,16 @@ UI route
 
 ## 4. PR Frontend Verification Table
 
-PR 描述中 user-facing change 必須包含（label 由 `scripts/tests/check-pr-body-evidence.ps1` **逐字比對**，錯字即 CI fail）：
+PR 描述中 user-facing change 必須包含下列 machine-required labels（由 `scripts/tests/check-pr-body-evidence.ps1` **逐字比對**，錯字即 CI fail）。可加列 `Backend API called`、`Runtime action`、`Manual test steps`，但不得取代 machine-required labels：
 
 | Item | Result |
 |---|---|
 | Frontend route |  |
 | Main button(s) tested |  |
 | Fixture used |  |
-| Backend API called |  |
-| Runtime action |  |
 | Visible success state |  |
 | E2E command |  |
 | Screenshot / trace |  |
-| Manual test steps |  |
 | Known gaps |  |
 
 ## 5. Real IFC Semantic Viewer E2E
@@ -139,7 +136,7 @@ C:\Repos\active\iot\AI-BIM-governance\storage\許良宇圖書館建築_2026.ifc
 - Helper MUST 排除所有層級 `AGENTS.md` / `CLAUDE.md`，以及 root `.codex/`、`.agents/`、`.agent/`、`.claude/`、`.cursor/`、`.windsurf/`、`.github/skills/`、`.github/prompts/`、`docs/`、`openspec/`、`patches/`；MUST 保留 `.github/workflows/`。
 - Helper 完成清理後 MUST 從 `D:\Users\deploy\AI-bim-geo` 執行 `.\scripts\deploy.ps1 -Build` 並回報 exit code / log path。
 - 禁止 `-DryRun`；若 sandbox 需要寫入 `D:\Users\deploy\AI-bim-geo` 的 approval，agent 必須針對 build-only rebuild command 申請，不得改用其他路徑或 dry-run 替代。
-- 若 `deploy.ps1 -Build` Phase 3 被外部 host-native runtime blocker 擋住（例如 `kit.exe` 佔用 49100/49110+，或 conversion `python.exe` 佔用 49101），已授權 agent 停止該 blocking PID、記錄 port / PID / process name，然後重跑同一條 `.\scripts\deploy.ps1 -Build`；不得停止無關 process，也不得改用 `-Force` / `-DryRun`。
+- 若 `deploy.ps1 -Build` Phase 3 被外部 host-native runtime blocker 擋住（例如 `kit.exe` 佔用 49100/49110+，或 conversion `python.exe` 佔用 49101），已授權 agent 只停止可由部署區 pidfile 或 command line / executable path 證明屬於 `D:\Users\deploy\AI-bim-geo` 的 PID tree，並記錄 port / PID / process name / ownership evidence，然後重跑同一條 `.\scripts\deploy.ps1 -Build`；若只有 port/process-name 證據，先取得使用者確認。不得停止無關 process，也不得改用 `-Force` / `-DryRun`。
 
 正式 operator entrypoints：
 

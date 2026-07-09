@@ -42,7 +42,7 @@ Merge            = 正式接受變更
 ## PR 與 merge
 
 - 開 PR 前跑最小驗證並回報結果；commit 前跑 GitNexus `detect_changes` 驗 scope；PR 由 GitHub Actions 做自動驗證與審查討論。
-- User-facing change 的 PR 描述必須包含 Frontend Verification table（Frontend URL / Buttons tested / Test fixture / Expected visible result / gstack E2E command / Screenshot evidence path / Known limitations）；無前端 route / button / fixture / **gstack browser evidence** 時不得標為完整完成。
+- User-facing change 的 PR 描述必須包含 Frontend Verification table；machine-required labels 以 `scripts/tests/check-pr-body-evidence.ps1` 為準：`Frontend route`、`Main button(s) tested`、`Fixture used`、`Visible success state`、`E2E command`、`Screenshot / trace`、`Known gaps`。無前端 route / button / fixture / **gstack browser evidence** 時不得標為完整完成。
 - Runtime / Docker / Kit / viewer / env / port 相關 PR 描述必須包含 Deploy Path Verification table；若未更新 `scripts/deploy.ps1`，必須明確說明已驗證或不適用。
 - 改動治理面檔案（`AGENTS.md` / `CLAUDE.md` / `README.md` / `docs/agents|plans/` / `.github/` / `.claude/workflows/` / `.codex/skills/` / pr-review-agent scripts）的 PR 描述必須包含 **AI Coding Governance** table，7 個必填 label：`Linked issue`、`Requirement source`、`CODEOWNERS / owner review`、`GitNexus evidence`、`gstack evidence`、`Agent workflow changed?`、`Required checks expected`。所有三張表的 label 都由 `scripts/tests/check-pr-body-evidence.ps1` 逐字比對（值不得為 `-`/`tbd`/`todo` 等占位）；改 body 後需 push empty commit 重跑 check。
 - 完成標準、frontend-operable rule 與誠實鐵律（無 backend 處 UI 標 `DEMO DATA` / `NOT BUILT` / `not observed`，不得只接 mock）見 `AGENTS.md` §0.1 與 `product-operability-and-script-contract.md`。

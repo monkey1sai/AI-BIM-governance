@@ -38,7 +38,7 @@ tests/fakes/
 Do not add new callers to the retired conversion API. If a historical document
 still mentions `_worker`, `_bim-control`, or the old conversion API as runtime,
 treat that reference as archival context and verify current behavior against
-this Phase B contract and `AGENTS.md` §1.A / §10 / §11.
+this Phase B contract and root `AGENTS.md` §1 workspace boundary.
 
 ## Host-native conversion authority service (127.0.0.1:49101)
 
