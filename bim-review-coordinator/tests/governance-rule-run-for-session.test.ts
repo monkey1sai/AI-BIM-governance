@@ -21,9 +21,11 @@ const IDEMPOTENCY = "idem_gov_session_001";
 let active: CoordinatorApp | null = null;
 let governanceStub: http.Server | null = null;
 let savedGovBase: string | undefined;
+const streamingDispatchBodies: Array<Record<string, unknown>> = [];
 
 beforeEach(() => {
   savedGovBase = process.env.GOVERNANCE_API_BASE;
+  streamingDispatchBodies.length = 0;
 });
 
 afterEach(async () => {
@@ -104,6 +106,23 @@ async function startGovernanceStub(): Promise<{ baseUrl: string; bodies: Array<R
   return { baseUrl: `http://127.0.0.1:${address.port}`, bodies, urls };
 }
 
+async function startGovernancePathLeakStub(): Promise<{ baseUrl: string }> {
+  governanceStub = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/api/rule-runs") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        detail: "ifc_source_path not found: C:\\Repos\\active\\iot\\AI-BIM-governance\\storage\\secret\\model.ifc",
+      }));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ detail: "not found" }));
+  });
+  await new Promise<void>((resolve) => governanceStub?.listen(0, "127.0.0.1", () => resolve()));
+  const address = governanceStub.address() as AddressInfo;
+  return { baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
 /**
  * 透過真實 intake 路徑落地一個 IFC-ready job 並讓 coordinator 自動建 session：
  * 1. POST /api/external/ifc-ready（http source → strict 下載到 shared volume，
@@ -168,6 +187,45 @@ async function seedSessionWithDownloadedIfc(
   const hostLocalPath = path.join(app.config.storageHostRoot, "ifc-cache", ifcReadyJobId, "source.ifc");
   expect(fs.existsSync(hostLocalPath)).toBe(true);
   return { sessionId, hostLocalPath, ifcReadyJobId };
+}
+
+async function seedDispatchedIfcWithoutSession(
+  app: CoordinatorApp,
+  ifcSourceUrl: string,
+): Promise<{ ifcReadyJobId: string; conversionJobId: string }> {
+  const intake = await request(app.app)
+    .post("/api/external/ifc-ready")
+    .set({
+      "X-Webhook-Secret": "dev-webhook-secret",
+      "X-Correlation-Id": CORRELATION,
+      "X-Idempotency-Key": IDEMPOTENCY,
+    })
+    .send({
+      event: "ifc_ready",
+      tenant_id: "tenant_demo_001",
+      project_id: "project_demo_001",
+      project_display_name: "松風庵",
+      model_category: "建築",
+      external_model_version_id: "version_demo_001",
+      external_conversion_task_id: "task_demo_001",
+      source_ifc: { ref: ifcSourceUrl, etag: "etag_demo_001", filename: "model.ifc", format: "ifc" },
+      requested_outputs: ["usdc", "element_mapping"],
+    });
+  expect(intake.status).toBe(202);
+  expect(intake.body.review_session_id ?? null).toBeNull();
+  const ifcReadyJobId = intake.body.ifc_ready_job_id as string;
+
+  for (let i = 0; i < 300; i += 1) {
+    const job = await request(app.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
+    if (job.body?.status === "dispatched" && job.body?.conversion_job_id) {
+      return { ifcReadyJobId, conversionJobId: job.body.conversion_job_id as string };
+    }
+    if (job.body?.status === "dispatch_failed") {
+      throw new Error(`dispatch failed: ${job.body?.dispatch_error}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("job did not reach dispatched");
 }
 
 async function seedDownloadedIfcWithoutSession(
@@ -242,8 +300,15 @@ async function startStreamingStub(): Promise<string> {
   };
   const server = http.createServer((req, res) => {
     if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
-      res.writeHead(202, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ conversion_job_id: "stream_conv_gov_001", status: "queued", authority: "bim-streaming-server", correlation_id: CORRELATION }));
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString("utf8");
+      });
+      req.on("end", () => {
+        streamingDispatchBodies.push(JSON.parse(body || "{}"));
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ conversion_job_id: "stream_conv_gov_001", status: "queued", authority: "bim-streaming-server", correlation_id: CORRELATION }));
+      });
       return;
     }
     if (req.method === "GET" && req.url === "/api/conversions/stream_conv_gov_001/result") {
@@ -258,6 +323,30 @@ async function startStreamingStub(): Promise<string> {
   // 掛到 governanceStub teardown 之外:用單獨 close。為簡化,複用 activeStreamingServers。
   activeStreamingServers.push(server);
   return `http://127.0.0.1:${address.port}`;
+}
+
+async function startBlockingStreamingStub(): Promise<{ baseUrl: string; inFlight: () => boolean; release: () => void }> {
+  const heldSockets: import("node:net").Socket[] = [];
+  const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+      heldSockets.push(req.socket);
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address() as AddressInfo;
+  activeStreamingServers.push(server);
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    inFlight: () => heldSockets.length > 0,
+    release: () => {
+      for (const socket of heldSockets.splice(0)) {
+        socket.destroy();
+      }
+    },
+  };
 }
 
 const activeStreamingServers: http.Server[] = [];
@@ -359,6 +448,7 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
 
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ rule_run_id: "rr_stub_001", status: "queued" });
+    expect(streamingDispatchBodies[0]?.conversion_profile).toBe("ifcopenshell_openusd_identity");
     // forward payload 必須帶解析出的 host-side IFC 路徑 + model_version_id。
     expect(gov.bodies).toHaveLength(1);
     expect(gov.bodies[0].ifc_source_path).toBe(hostLocalPath);
@@ -460,7 +550,7 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
     }
   });
 
-  it("override body 的 rule_set / ids_path 會被一併透傳", async () => {
+  it("override body 的 rule_set / allowlisted IDS basename 會被一併透傳", async () => {
     const gov = await startGovernanceStub();
     process.env.GOVERNANCE_API_BASE = gov.baseUrl;
     const streamingBase = await startStreamingStub();
@@ -471,12 +561,44 @@ describe("POST /api/governance/rule-runs/for-session/:sessionId", () => {
 
     const res = await request(app.app)
       .post(`/api/governance/rule-runs/for-session/${sessionId}`)
-      .send({ rule_set: "fire-egress", ids_path: "/host/ids/fire.ids" });
+      .send({ rule_set: "fire-egress", ids_path: "fire.ids" });
 
     expect(res.status).toBe(202);
     expect(gov.bodies).toHaveLength(1);
     expect(gov.bodies[0].rule_set).toBe("fire-egress");
-    expect(gov.bodies[0].ids_path).toBe("/host/ids/fire.ids");
+    expect(gov.bodies[0].ids_path).toBe("rules/fire.ids");
+  });
+
+  it("拒絕 browser-supplied absolute IDS path，避免 server-local path probing", async () => {
+    const gov = await startGovernanceStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ streamingConversionApiBase: streamingBase, ifcDownloadStrict: true });
+
+    const { sessionId } = await seedSessionWithDownloadedIfc(app, streamingBase, ifcSourceUrl);
+
+    const res = await request(app.app)
+      .post(`/api/governance/rule-runs/for-session/${sessionId}`)
+      .send({ ids_path: "C:\\Users\\IOT\\secret.ids" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error_code: "invalid_ids_path" });
+    expect(gov.bodies).toHaveLength(0);
+  });
+
+  it("redacts governance-service path-bearing errors before returning them to the browser", async () => {
+    const gov = await startGovernancePathLeakStub();
+    process.env.GOVERNANCE_API_BASE = gov.baseUrl;
+    const app = makeApp();
+
+    const res = await request(app.app)
+      .post("/api/governance/rule-runs")
+      .send({ ifc_source_path: "C:/trusted/server/model.ifc", ids_path: "sample-fire-rating.ids" });
+
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toContain("[server-path]");
+    expect(JSON.stringify(res.body)).not.toMatch(/[A-Za-z]:[\\/]/);
   });
 
   it("session 不存在 → 404 with detail，且不打 governance", async () => {
@@ -578,7 +700,7 @@ describe("POST /api/governance/rule-runs/for-ifc-ready/:jobId", () => {
 
     const res = await request(app.app)
       .post(`/api/governance/rule-runs/for-ifc-ready/${ifcReadyJobId}`)
-      .send({ ids_path: "/rules/fire.ids" });
+      .send({ ids_path: "rules/fire.ids" });
 
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ rule_run_id: "rr_stub_001", status: "queued" });
@@ -586,7 +708,7 @@ describe("POST /api/governance/rule-runs/for-ifc-ready/:jobId", () => {
     expect(gov.bodies[0]).toMatchObject({
       ifc_source_path: hostLocalPath,
       model_version_id: "version_demo_001",
-      ids_path: "/rules/fire.ids",
+      ids_path: "rules/fire.ids",
       source_metadata: {
         source_kind: "minio_ifc_ready",
         ifc_ready_job_id: ifcReadyJobId,
@@ -672,6 +794,72 @@ describe("POST /api/governance/rule-runs/for-ifc-ready/:jobId", () => {
     });
     expect(gov.bodies).toHaveLength(0);
     expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|public_url/);
+  });
+});
+
+describe("POST /api/external/ifc-ready/:jobId/review-session", () => {
+  it("從已 dispatch 的 ifc-ready job 建立並重用 Review Room session，回傳 /ui/open handoff", async () => {
+    const streamingBase = await startStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ ifcDownloadStrict: true, streamingConversionApiBase: streamingBase });
+    const { ifcReadyJobId, conversionJobId } = await seedDispatchedIfcWithoutSession(app, ifcSourceUrl);
+
+    const first = await request(app.app)
+      .post(`/api/external/ifc-ready/${ifcReadyJobId}/review-session`)
+      .send({});
+
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({
+      ifc_ready_job_id: ifcReadyJobId,
+      conversion_job_id: conversionJobId,
+      conversion_status: "ready",
+      session_replay: false,
+      expected_stage_url: "http://127.0.0.1:49101/artifacts/stream_conv_gov_001/model.usdc",
+      expected_mapping_url: "http://127.0.0.1:49101/artifacts/stream_conv_gov_001/element_mapping.json",
+    });
+    expect(first.body.review_session_id).toMatch(/^review_session_/);
+    expect(first.body.open_url).toContain(`/ui/open?session=${first.body.review_session_id}`);
+    expect(first.body.viewer_url).toBe(first.body.open_url);
+    expect(JSON.stringify(first.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|source_ifc_ref/);
+
+    const detail = await request(app.app).get(`/api/external/ifc-ready/${ifcReadyJobId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.review_session_id).toBe(first.body.review_session_id);
+    expect(detail.body.viewer_url).toBe(first.body.open_url);
+
+    const replay = await request(app.app)
+      .post(`/api/external/ifc-ready/${ifcReadyJobId}/review-session`)
+      .send({});
+
+    expect(replay.status).toBe(200);
+    expect(replay.body.review_session_id).toBe(first.body.review_session_id);
+    expect(replay.body.session_replay).toBe(true);
+  });
+
+  it("尚未 dispatch conversion job 時拒絕建立 Review Room session，且不外洩 path", async () => {
+    const blocking = await startBlockingStreamingStub();
+    const ifcSourceUrl = await startIfcSourceStub();
+    const app = makeApp({ ifcDownloadStrict: true, streamingConversionApiBase: blocking.baseUrl });
+    try {
+      const { ifcReadyJobId } = await seedDownloadedIfcWithoutSession(app, ifcSourceUrl);
+      for (let i = 0; i < 100 && !blocking.inFlight(); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(blocking.inFlight()).toBe(true);
+
+      const res = await request(app.app)
+        .post(`/api/external/ifc-ready/${ifcReadyJobId}/review-session`)
+        .send({});
+
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        error_code: "conversion_not_dispatched",
+        detail: "IFC-ready job has no conversion job yet.",
+      });
+      expect(JSON.stringify(res.body)).not.toMatch(/local_path|host_local_path|edge_relative_path|source_ifc_ref/);
+    } finally {
+      blocking.release();
+    }
   });
 });
 

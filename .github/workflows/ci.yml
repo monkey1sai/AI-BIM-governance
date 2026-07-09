@@ -9,9 +9,65 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    name: changed path classifier
+    runs-on: ubuntu-latest
+    outputs:
+      root_contracts: ${{ steps.paths.outputs.root_contracts }}
+      coordinator: ${{ steps.paths.outputs.coordinator }}
+      governance_service: ${{ steps.paths.outputs.governance_service }}
+      viewer: ${{ steps.paths.outputs.viewer }}
+      kit_manager_api: ${{ steps.paths.outputs.kit_manager_api }}
+      kit_manager_web: ${{ steps.paths.outputs.kit_manager_web }}
+      compose_config: ${{ steps.paths.outputs.compose_config }}
+      powershell_static: ${{ steps.paths.outputs.powershell_static }}
+      secret_pattern_scan: ${{ steps.paths.outputs.secret_pattern_scan }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: paths
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git -c core.quotepath=false diff --name-only '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' > changed-paths.txt
+          else
+            printf "__full__\n" > changed-paths.txt
+          fi
+
+          emit() {
+            local name="$1"
+            local pattern="$2"
+            if grep -qx "__full__" changed-paths.txt || grep -Eq "$pattern" changed-paths.txt; then
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$name=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+
+          emit root_contracts '^(tests/|scripts/tests/)'
+          emit coordinator '^bim-review-coordinator/'
+          emit governance_service '^(governance-service/|rules/)'
+          emit viewer '^(web-viewer-sample/|bim-review-coordinator/(src|public)/|docs/plans/.*prototype\.html)'
+          emit kit_manager_api '^services/kit-manager-api/'
+          emit kit_manager_web '^apps/kit-manager-web/'
+          emit compose_config '^(compose\..*\.yml|\.env.*\.example|infra/docker/)'
+          emit powershell_static '^(\.github/workflows/|\.claude/workflows/|scripts/.*\.ps1$|AGENTS\.md|docs/agents/)'
+          echo "secret_pattern_scan=true" >> "$GITHUB_OUTPUT"
+
   root-contracts:
     name: root contracts and fakes
+    needs: changes
+    if: needs.changes.outputs.root_contracts == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -36,6 +92,8 @@ jobs:
 
   coordinator:
     name: coordinator build and tests
+    needs: changes
+    if: needs.changes.outputs.coordinator == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -62,6 +120,8 @@ jobs:
 
   governance-service:
     name: governance-service tests
+    needs: changes
+    if: needs.changes.outputs.governance_service == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -86,6 +146,8 @@ jobs:
 
   viewer:
     name: viewer build and tests
+    needs: changes
+    if: needs.changes.outputs.viewer == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -115,6 +177,8 @@ jobs:
 
   kit-manager-api:
     name: kit-manager-api tests
+    needs: changes
+    if: needs.changes.outputs.kit_manager_api == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -139,6 +203,8 @@ jobs:
 
   kit-manager-web:
     name: kit-manager-web build
+    needs: changes
+    if: needs.changes.outputs.kit_manager_web == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -163,6 +229,8 @@ jobs:
 
   compose-config:
     name: docker compose config
+    needs: changes
+    if: needs.changes.outputs.compose_config == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -177,6 +245,8 @@ jobs:
 
   powershell-static:
     name: powershell static analysis
+    needs: changes
+    if: needs.changes.outputs.powershell_static == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -198,6 +268,8 @@ jobs:
 
   secret-pattern-scan:
     name: secret pattern scan
+    needs: changes
+    if: needs.changes.outputs.secret_pattern_scan == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout

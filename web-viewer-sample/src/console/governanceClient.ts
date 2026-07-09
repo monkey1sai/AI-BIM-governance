@@ -282,6 +282,7 @@ export interface IssueRow {
   severity: string;
   ifc_guid: string | null;
   usd_prim_path: string | null;
+  rule_code?: string | null;
   model_version_id?: string | null;
   source_type: string;
 }

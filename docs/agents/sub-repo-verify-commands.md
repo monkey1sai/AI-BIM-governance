@@ -22,6 +22,16 @@ Known gaps
 
 以上 labels 與 `scripts/tests/check-pr-body-evidence.ps1` machine truth 對齊；可額外補 Frontend URL / Backend API called / Runtime action，但不得取代這 7 項。
 
+PR 本機 preflight 入口：
+
+```powershell
+.\scripts\dev\check-pr-local-preflight.ps1 -PrNumber <pr-number>
+```
+
+此命令會以目前 PR body + 本機 `origin/main...HEAD` changed paths 重跑 machine evidence gate，並在 repo-local `.tmp` 下執行 `scripts/pr-review-agent.ps1`（含 affected sub-repo verify，例如 viewer/coordinator/streaming/scripts）。它是 push / 等待 GitHub CI 前的本機硬 gate；只有診斷 GitHub 上既有 PR body gate 時才可暫用 `-ChangedPathsSource remote -SkipReviewAgent -SkipViewerVerify`。
+
+GitHub PR checks 不再無差別重跑這些本機可重現的 sub-repo verify。PR 上先用 changed-path classifier 判斷受影響範圍；未受影響的 service-level required checks 由 job-level condition skip，受影響的 job 才跑遠端確認。若本機 preflight 未跑綠，不得用 GitHub CI 補跑或等待。
+
 優先驗證入口：
 
 ```powershell

@@ -415,8 +415,10 @@ describe("edge console honesty smoke", () => {
 
   it("prototype 核心頁面可 render：A1 stepper、3D viewer、session、Kit/GPU（轉檔/MinIO 頁併入 ModelDataPage.test）", () => {
     const a1 = renderToString(<A1GovernanceWorkbenchPage />);
-    expect(a1).toContain("選檔");
-    expect(a1).toContain("自動檢核");
+    expect(a1).toContain("選 IFC");
+    expect(a1).toContain("選 IDS");
+    expect(a1).toContain("執行檢核");
+    expect(a1).toContain("A1 3D 高亮 Session");
     expect(a1).toContain("開 Issue");
     // Excel 匯出鈕（fmt=excel .xlsx）。
     expect(a1).toContain("匯出 Excel");
@@ -434,7 +436,8 @@ describe("edge console honesty smoke", () => {
     expect(a1).toContain('data-testid="a1-source-picker"');
     expect(a1).toContain('data-testid="a1-localfs-select"'); // default executable source is local_fs
     expect(a1).toContain('data-testid="a1-source-minio"'); // MinIO source is available but not sent as ifc_source_path
-    expect(a1).toContain('data-testid="a1-bridge-rail"');
+    expect(a1).toContain('data-testid="a1-review-session-actions"');
+    expect(a1).toContain('data-testid="a1-create-review-session"');
     expect(a1).toContain('data-testid="a1-bcf-review-panel"');
     expect(a1).not.toContain('data-testid="a1-step-path"'); // 手打路徑文字框已移除
     expect(a1).toContain('data-testid="a1-step-run"');
@@ -467,14 +470,16 @@ describe("edge console honesty smoke", () => {
   });
 
   // ── P4 Review Room（G）：A1 handoff 的專用 3D session attach 畫面 ──
-  it("P4 Review Room 提供手動 attach 入口且誠實標 A1 不 claim viewer lease", () => {
+  it("P4 Review Room 提供手動 attach fallback，且誠實標 A1 已可 inline attach viewer lease", () => {
     const html = renderToString(<ReviewRoomPage />);
     expect(html).toContain("Review Room 3D session attach");
     expect(html).toContain("手動啟動 / attach Kit session");
     // 真實 viewer 入口仍保留 coordinator /ui/open 旁路，但不代表自動 attach。
     expect(html).toContain("/ui/open");
-    // 誠實標示：A1 不掛 viewer、不 claim lease；Review Room 才手動 attach。
-    expect(html).toContain("A1 不掛 viewer");
+    // 誠實標示：A1 頁面可 inline attach；Review Room 只作 fallback / 跨頁追蹤。
+    expect(html).toContain("A1 頁面本身也能直接啟動 Kit / WebRTC viewer lease");
+    expect(html).toContain("Review Room 只保留跨頁追蹤與手動操作");
+    expect(html).toContain("A1 不自動啟動");
     expect(html).toContain("not_started");
     // 工具列誠實 provenance：section / snapshot 待建（p15），不假裝已實作。
     expect(html).toContain("後端待建 · P1.5");
@@ -721,7 +726,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
 
   // spec §7.3 核心：A1 選擇器選定 project→model→version 後，ifcPath input 值更新為該 version.path。
   // 這條對應 load-bearing handler onChange={(e)=>{ if(e.target.value) setIfcPath(e.target.value); }}（pages.tsx）。
-  // 先確認初始 input = 預設 fixture 路徑；逐層選取後 input.value 變成檔案庫選定的絕對路徑。
+  // 先確認手動 input 可用；逐層選取後 input.value 變成檔案庫選定的絕對路徑。
   it("A1 選 project→model→version → ifcPath input value 更新為 version.path（spec §7.3 data-binding）", async () => {
     vi.spyOn(governanceClient, "filesTree").mockResolvedValue(tree);
     const root = createRoot(container);
@@ -740,8 +745,8 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
       Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
         (el) => !el.placeholder,
       )!;
-    // 初始為預設 fixture 路徑（手動輸入保留，向後相容 a1-real-ifc-slice E2E）。
-    expect(ifcInput().value).toContain("fixture-bytes.ifc");
+    // A1/Issue legacy manual path fallback is env-only; repo 不再硬寫 host absolute fixture。
+    expect(ifcInput().disabled).toBe(false);
     // 載入後 project select 已 enable（disabled={!fsTree}）。
     expect(projectSel!.disabled).toBe(false);
 
@@ -773,7 +778,7 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
   });
 
   // A1 選擇器 graceful degradation：filesTree() reject → 顯示誠實「檔案庫不可用…可改用下方
-  // 手動輸入路徑」（pages.tsx:597），且手動輸入框照常可用（保留預設 fixture、仍可編輯）。
+  // 手動輸入路徑」（pages.tsx:597），且手動輸入框照常可用（不需要預填 fixture）。
   // SSR 首幀 fsErr=null 走 loading 文案，唯有 client-render 微任務跑完（catch→setFsErr）才到得了。
   it("A1 filesTree() reject → 選擇器標「檔案庫不可用」graceful degrade，手動輸入照常可用", async () => {
     vi.spyOn(governanceClient, "filesTree").mockRejectedValue(new Error("proxy 502"));
@@ -789,12 +794,11 @@ describe("MinioData + A1 檔案庫選擇器 client-render（spec §7.3：真樹 
     // 已離開「載入檔案庫中…」（fsErr 已設）。
     expect(html).not.toContain("載入檔案庫中…（GET /api/governance/files/tree）");
 
-    // 手動輸入框仍可用（保留預設 fixture 路徑，graceful degrade 不擋手動流程）。
+    // 手動輸入框仍可用（graceful degrade 不擋手動流程）。
     const ifcInput = Array.from(container.querySelectorAll<HTMLInputElement>("input")).find(
       (el) => !el.placeholder,
     )!;
     expect(ifcInput.disabled).toBe(false);
-    expect(ifcInput.value).toContain("fixture-bytes.ifc");
     // 仍可手動改路徑（驗證受控輸入未被 fsErr 凍結）。
     await act(async () => {
       ifcInput.value = "C:/manual/typed.ifc";
@@ -1800,7 +1804,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
 
     const idsInput = container.querySelector<HTMLInputElement>('[data-testid="a1-ids-path"]')!;
-    expect(idsInput.value).toContain("governance-service\\rules\\sample-fire-rating.ids");
+    expect(idsInput.value).toBe("rules/sample-fire-rating.ids");
 
     const inputClickSpy = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
     await clickByTestId("a1-ids-open-folder");
@@ -1812,7 +1816,7 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
       configurable: true,
     });
     await act(async () => { fileInput.dispatchEvent(new Event("change", { bubbles: true })); });
-    expect(idsInput.value).toContain("governance-service\\rules\\custom-check.ids");
+    expect(idsInput.value).toBe("rules/custom-check.ids");
 
     await act(async () => { root.unmount(); });
   });

@@ -238,6 +238,44 @@ describe("conversion control routes — retry", () => {
     });
   });
 
+  it("dispatch_failed 且已下載 IFC 時，retry 可從 job record 重建 dispatch context", async () => {
+    let n = 0;
+    activeStub = http.createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/api/conversions/ifc-to-usdc") {
+        req.on("data", () => {});
+        req.on("end", () => {
+          n += 1;
+          if (n === 1) {
+            res.writeHead(409, { "Content-Type": "application/json" }).end(JSON.stringify({ detail: "Idempotency key already belongs to a different conversion request." }));
+          } else {
+            res.writeHead(202, { "Content-Type": "application/json" }).end(JSON.stringify({ conversion_job_id: "stream_conv_rehydrated", status: "queued", authority: "bim-streaming-server" }));
+          }
+        });
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    await new Promise<void>((r) => activeStub?.listen(0, "127.0.0.1", () => r()));
+    const addr = activeStub.address();
+    if (!addr || typeof addr === "string") throw new Error("bind");
+    const app = makeApp({ streamingConversionApiBase: `http://127.0.0.1:${addr.port}` });
+    const j = await request(app.app).post("/api/external/ifc-ready").set(authHeaders("corr_rehydrate", "idem_rehydrate")).send(payload());
+    const jobId = j.body.ifc_ready_job_id as string;
+    await waitFor(async () => (await request(app.app).get(`/api/external/ifc-ready/${jobId}`)).body.status === "dispatch_failed");
+    expect(app.hasPendingDispatch(jobId)).toBe(true);
+
+    await app.dispose();
+    expect(app.hasPendingDispatch(jobId)).toBe(false);
+
+    const retry = await request(app.app).post(`/api/conversion/jobs/${jobId}/retry`).send({ reason: "recover downloaded IFC" });
+    expect(retry.status).toBe(200);
+    expect(retry.body.status).toBe("queued_for_conversion");
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobId}`);
+      return r.body.status === "dispatched" && r.body.conversion_job_id === "stream_conv_rehydrated";
+    });
+  });
+
   it("retry 對非 dispatch_failed/dropped_on_restart（dispatched）→ 409", async () => {
     const stub = await startControllableStreamingStub();
     const app = makeApp({ streamingConversionApiBase: stub.baseUrl });
@@ -251,10 +289,10 @@ describe("conversion control routes — retry", () => {
     expect(res.body.recovery_action).toBe("none");
   });
 
-  it("dropped_on_restart（dispose 後 pending 脈絡確失）→ retry → 422「請重新進件」", async () => {
-    // §4.2 / §6.3「retry：脈絡失效→422」。dispose() 把 queued job 標 dropped_on_restart
-    // 並刪除其 pendingDispatchEvents 脈絡;此後 retry 雖然 status 合法(dropped_on_restart
-    // ∈ 可重試)但 pending 確不存在 → 422,不假裝可重試。
+  it("dropped_on_restart 且已下載 IFC 時，retry 可重建 dispatch context", async () => {
+    // A1 MinIO 3D recovery：dispose/restart 會刪掉 pendingDispatchEvents，但 ifc-ready job
+    // 已落地 source IFC local_path / host_local_path 時，retry 可從 job record 重建派工，
+    // 不要求操作者重新進件。
     const stub = await startControllableStreamingStub();
     const app = makeApp({ streamingConversionApiBase: stub.baseUrl });
     // A in-flight(hold)→ B queued。
@@ -267,11 +305,16 @@ describe("conversion control routes — retry", () => {
     await app.dispose();
     const bAfter = await request(app.app).get(`/api/external/ifc-ready/${jobB}`);
     expect(bAfter.body.status).toBe("dropped_on_restart");
-    // 狀態本身合法(否則會 409),但脈絡確失 → 422。
     const retry = await request(app.app).post(`/api/conversion/jobs/${jobB}/retry`).send({ reason: "after restart" });
-    expect(retry.status).toBe(422);
-    expect(retry.body.detail).toMatch(/re-POST|re-post|重新進件|context lost/i);
-    stub.releaseNext(); // teardown：放行 in-flight A
+    expect(retry.status).toBe(200);
+    expect(retry.body.status).toBe("queued_for_conversion");
+    stub.releaseNext(); // 放行 in-flight A
+    await waitFor(() => stub.bodies.length >= 2);
+    stub.releaseNext(); // 放行重建後的 B
+    await waitFor(async () => {
+      const r = await request(app.app).get(`/api/external/ifc-ready/${jobB}`);
+      return r.body.status === "dispatched" && r.body.conversion_job_id === "stream_conv_2";
+    });
   });
 
   it("prioritize / retry 成功時 reason 寫入 audit log（模式 3 ③）", async () => {

@@ -58,9 +58,19 @@ try {
     }
 
     $ci = Get-Content -LiteralPath '.github/workflows/ci.yml' -Raw
-    foreach ($job in @('root-contracts', 'coordinator', 'governance-service', 'viewer', 'kit-manager-api', 'kit-manager-web', 'compose-config', 'powershell-static', 'secret-pattern-scan')) {
+    foreach ($job in @('changes', 'root-contracts', 'coordinator', 'governance-service', 'viewer', 'kit-manager-api', 'kit-manager-web', 'compose-config', 'powershell-static', 'secret-pattern-scan')) {
         Assert-True ($ci -match "(?m)^\s{2}$([regex]::Escape($job)):\s*$") "ci.yml contains job $job"
     }
+    Assert-True ($ci -match 'changed path classifier') 'ci.yml contains changed path classifier'
+    foreach ($output in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
+        $expectedOutput = $output + ': ${{ steps.paths.outputs.' + $output + ' }}'
+        Assert-True ($ci -match [regex]::Escape($expectedOutput)) "changes job exposes $output output"
+    }
+    foreach ($gate in @('root_contracts', 'coordinator', 'governance_service', 'viewer', 'kit_manager_api', 'kit_manager_web', 'compose_config', 'powershell_static', 'secret_pattern_scan')) {
+        Assert-True ($ci -match [regex]::Escape("needs.changes.outputs.$gate == 'true'")) "ci.yml gates affected job on $gate"
+    }
+    Assert-True ($ci -match 'if \[ "\$\{\{ github\.event_name \}\}" = "pull_request" \]') 'changed path classifier diffs PR base/head on pull_request'
+    Assert-True ($ci -match 'printf "__full__\\n" > changed-paths\.txt') 'changed path classifier runs full service CI on push/workflow_dispatch'
     foreach ($command in @(
         'python -m pytest tests -q -p no:cacheprovider',
         'python -m pytest governance-service/tests -q',
@@ -85,10 +95,16 @@ try {
 
     $prReviewWorkflow = Get-Content -LiteralPath '.github/workflows/pr-review-agent.yml' -Raw
     Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+paths-ignore:\s*$')) 'PR review workflow does not use paths-ignore because it is a required-check candidate'
-    Assert-True ($prReviewWorkflow -match "'-SkipGitNexus'") 'normal PR review workflow skips GitNexus in CI to avoid slow bootstrap'
-    Assert-True ($prReviewWorkflow -match "'-AllowGitNexusUnavailable'") 'normal PR review workflow downgrades skipped GitNexus to warning in CI'
-    Assert-True ($prReviewWorkflow -match "'-ReportOnly'") 'draft PR report-only behavior remains available'
+    Assert-True ($prReviewWorkflow -match '(?m)^\s+runs-on:\s+ubuntu-latest\s*$') 'PR review workflow uses lightweight ubuntu runner'
     Assert-True ($prReviewWorkflow -match 'check-pr-body-evidence\.ps1') 'PR review workflow enforces PR body evidence'
+    Assert-True ($prReviewWorkflow -match 'changed-paths\.txt') 'PR review workflow records changed paths for body evidence checks'
+    Assert-True ($prReviewWorkflow -match 'check-pr-local-preflight\.ps1 -PrNumber <n>') 'PR review workflow points reviewers to the local preflight gate'
+    Assert-True ($prReviewWorkflow -match 'Full service CI remains available on `push` to `main` and `workflow_dispatch`') 'PR review workflow documents full remote CI trigger points'
+    Assert-True (-not ($prReviewWorkflow -match 'scripts/pr-review-agent\.ps1')) 'PR review workflow does not rerun the local review agent in CI'
+    Assert-True (-not ($prReviewWorkflow -match "'-SkipGitNexus'|'-AllowGitNexusUnavailable'|'-ReportOnly'")) 'PR review workflow no longer carries local review-agent flags'
+    Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+pull-requests:\s+write\s*$')) 'PR review workflow does not request pull-requests write permission'
+    Assert-True (-not ($prReviewWorkflow -match '(?m)^\s+checks:\s+write\s*$')) 'PR review workflow does not request checks write permission'
+    Assert-True (-not ($prReviewWorkflow -match 'npm ci|npm install --no-audit --no-fund|python -m pip install')) 'PR review workflow does not install local service dependencies in CI'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus@1\.6\.5')) 'PR review workflow does not install GitNexus in CI'
     Assert-True (-not ($prReviewWorkflow -match 'gitnexus analyze --index-only')) 'PR review workflow does not build a GitNexus index in CI'
 
