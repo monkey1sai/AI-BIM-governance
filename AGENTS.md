@@ -39,7 +39,9 @@
 - 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
 - 不允許：修改既有 `.env` 的實際機密值。
 - Evidence 規則：agent 可為本機驗證載入 `.env`，但不得在回覆、log 摘要或 PR body echo 任何值；`.env` / `.env.example` 差異檢查預設只列 key 名稱與缺漏，不列值。
-- 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。`r`n`r`n---
+- 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
+
+---
 
 ## 1. Workspace 範圍（一句話）
 
@@ -61,7 +63,9 @@ AI-BIM-governance/
 ├── services/kit-manager-api/ # Kit Manager API（:8010）
 ├── scripts/                  # deploy / verify / script contract
 └── tests/{contracts,fakes}/  # 外部平台 contract + test-only fakes
-````r`n`r`n一句話定位：
+```
+
+一句話定位：
 
 ```txt
 [外部] 公司雲端 bim-control = control-plane 權威（本 repo 不 mirror）
@@ -158,16 +162,13 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 - NEVER commit changes without running `detect_changes()` to check affected scope.
 
 ## Resources
-
 | Resource | Use for |
 |----------|---------|
 | `gitnexus://repo/AI-BIM-governance/context` | Codebase overview, check index freshness |
 | `gitnexus://repo/AI-BIM-governance/clusters` | All functional areas |
 | `gitnexus://repo/AI-BIM-governance/processes` | All execution flows |
 | `gitnexus://repo/AI-BIM-governance/process/{name}` | Step-by-step execution trace |
-
 ## CLI
-
 | Task | Read this skill file |
 |------|---------------------|
 | Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
@@ -176,5 +177,4 @@ This project is indexed by GitNexus as **AI-BIM-governance** (17817 symbols, 285
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
 <!-- gitnexus:end -->
