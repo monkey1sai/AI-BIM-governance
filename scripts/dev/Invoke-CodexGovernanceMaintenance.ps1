@@ -10,12 +10,15 @@ function Invoke-MaintenanceAudit { param([string]$Root,[string]$Candidate,$Allow
  New-MaintenanceReport Audit 'audited' $ids (Join-Path $Root 'maintenance-journal.json') ([pscustomobject]@{Status='pass'}) ([pscustomobject]@{Complete=$true}) 'Review candidate and run Apply'
 }
 function Invoke-MaintenanceApply { param([string]$Root,[string]$Candidate,$Allowlist,[hashtable]$Callbacks=@{})
- if(-not $Candidate){throw 'CandidatePath is required for Apply'}; $c=Get-Content $Candidate -Raw|ConvertFrom-Json; if($c.createdAtUtc -and ([DateTime]::Parse($c.createdAtUtc) -lt [DateTime]::UtcNow.AddHours(-24))){throw 'Candidate is stale'}; if($Allowlist){. "$PSScriptRoot/../lib/codex-governance/Maintenance.Trust.ps1"; New-TrustedInventory $c $Allowlist|Out-Null}
+ $required=@('cli','plugin','skill') | ForEach-Object { @("Stage:$_","Apply:$_","Rollback:$_") }
+ $missing=@($required | Where-Object { -not $Callbacks.ContainsKey($_) -or -not ($Callbacks[$_] -is [scriptblock]) })
+ if($missing.Count){ throw "Apply callbacks required: $($missing -join ', ')" }
+ if(-not $Candidate){throw 'CandidatePath is required for Apply'}; $c=Get-Content $Candidate -Raw|ConvertFrom-Json; if(($c.PSObject.Properties.Name -contains 'createdAtUtc') -and $c.createdAtUtc -and ([DateTime]::Parse($c.createdAtUtc) -lt [DateTime]::UtcNow.AddHours(-24))){throw 'Candidate is stale'}; if($Allowlist){. "$PSScriptRoot/../lib/codex-governance/Maintenance.Trust.ps1"; New-TrustedInventory $c $Allowlist|Out-Null}
  $snap=Join-Path $Root ('.snapshot-'+[guid]::NewGuid()); New-Item $snap -ItemType Directory|Out-Null; Get-ChildItem $Root -Force | Where-Object {$_.Name -notin @('maintenance.lock','maintenance-journal.json') -and $_.FullName -ne $snap}|Copy-Item -Destination $snap -Recurse -Force; if(-not (Test-Path $snap)){throw 'Snapshot creation failed'}
  $j=Join-Path $Root 'maintenance-journal.json'; Write-JournalPhase $j applying @{TargetPath=$Root;SnapshotPath=$snap} -Root $Root|Out-Null
  $cohorts=@('cli','plugin','skill'); $results=@(); try { foreach($cohort in $cohorts){
-   $stageKey="Stage:$cohort"; $applyKey="Apply:$cohort"; $stage=if($Callbacks[$stageKey]){& $Callbacks[$stageKey] $c $Root}else{$null};
-   if($Callbacks[$applyKey]){$results+=& $Callbacks[$applyKey] $stage $Root}
+   $stageKey="Stage:$cohort"; $applyKey="Apply:$cohort"; $stage=& $Callbacks[$stageKey] $c $Root;
+   $results+=& $Callbacks[$applyKey] $stage $Root
  }} catch { foreach($cohort in $cohorts){$rk="Rollback:$cohort"; if($Callbacks[$rk]){try{& $Callbacks[$rk] $Root}catch{}}}; Write-AtomicJson -Path (Join-Path $Root 'apply-disabled.json') -InputObject @{Disabled=$true;Reason=$_.Exception.Message;AtUtc=[DateTime]::UtcNow.ToString('o')} -Root $Root; throw }
  Write-JournalPhase $j -Phase staged -Data @{TargetPath=$Root;SnapshotPath=$snap;Cohorts=$cohorts;Results=$results} -Root $Root|Out-Null
  Retain-MaintenanceSnapshots -Root $Root
