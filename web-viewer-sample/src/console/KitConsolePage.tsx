@@ -4,6 +4,8 @@
 // 誠實鐵律：HTTP 狀態碼原樣顯示（含非 200 / error），不偽造成功。
 import { useState } from "react";
 import { t } from "./i18n";
+// W4：raw fetch 語意保留（狀態碼原樣顯示），base 解析統一走 coordinatorUrl（修 dev :5173→:8004 斷裂）。
+import { coordinatorUrl } from "./coordinatorClient";
 
 const DASH = "—";
 
@@ -16,17 +18,17 @@ export function KitConsolePage() {
     setHealth("…"); setInstance("…"); setUsdcCount("…");
     // 三個欄位皆走 coordinator /api/kit/*（forward → kit-manager :8010 loopback），原樣顯示 status code。
     try {
-      const r = await fetch("/api/kit/health");
+      const r = await fetch(coordinatorUrl("/api/kit/health"));
       const j = await r.json().catch(() => ({}));
       setHealth(r.status + " " + (j.status || j.kit_status || JSON.stringify(j).slice(0, 60)));
     } catch (e) { setHealth("error: " + (e instanceof Error ? e.message : String(e))); }
     try {
-      const r = await fetch("/api/kit/instances/current");
+      const r = await fetch(coordinatorUrl("/api/kit/instances/current"));
       const j = await r.json().catch(() => ({}));
       setInstance(r.status + " status=" + (j.status || j.state || JSON.stringify(j).slice(0, 50)));
     } catch (e) { setInstance("error: " + (e instanceof Error ? e.message : String(e))); }
     try {
-      const r = await fetch("/api/kit/usdc");
+      const r = await fetch(coordinatorUrl("/api/kit/usdc"));
       const j = await r.json().catch(() => ({}));
       const arr = Array.isArray(j) ? j : (j.items || j.artifacts || j.usdc || []);
       setUsdcCount(r.status + " count=" + (Array.isArray(arr) ? arr.length : "?"));

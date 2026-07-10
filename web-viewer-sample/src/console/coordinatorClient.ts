@@ -24,6 +24,13 @@ const env = (import.meta as { env?: Record<string, string> }).env;
 const COORD_BASE: string =
   env?.VITE_COORDINATOR_API_BASE ?? env?.VITE_COORDINATOR_BASE ?? defaultCoordinatorBase();
 
+// W4（2026-07-10）：operator 頁（KitConsolePage / RealIfcConsolePage）需要「原樣顯示 HTTP 狀態碼」
+// 的 raw fetch 語意（非 2xx 是值不是錯誤），不能走會 throw 的 jsonGet——但裸相對路徑在
+// dev :5173→:8004 分離部署會斷。匯出 base 組 URL helper：raw 語意保留、base 解析統一。
+export function coordinatorUrl(path: string): string {
+  return `${COORD_BASE}${path}`;
+}
+
 async function jsonGet<T>(path: string): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });
   if (!res.ok) {
