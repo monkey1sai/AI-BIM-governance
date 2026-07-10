@@ -14,3 +14,6 @@ Path validation now walks parent components, relative candidates fail determinis
 
 ## Regression coverage follow-up
 Runner now rejects relative CodexHome at parameter validation; existing boundary tests remain green.
+
+## Hash traversal closure
+Get-ContentTreeHash now manually traverses directories and fails closed on reparse-point directories before descent.
