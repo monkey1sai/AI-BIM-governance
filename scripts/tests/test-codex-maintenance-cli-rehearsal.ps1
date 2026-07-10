@@ -1,0 +1,2 @@
+. "$PSScriptRoot/test-helpers.ps1"; . "$PSScriptRoot/../lib/codex-governance/Maintenance.Cli.ps1"
+$root=New-TestSandbox 'cli-rehearsal'; try {$p=Join-Path $root 'prefix';New-Item -ItemType Directory $p|Out-Null;Set-Content (Join-Path $p 'x') 'x';$before=Get-ContentTreeHash $p;$s=Join-Path $root 'stage';Copy-Item $p $s -Recurse; $r=Invoke-CliRollbackRehearsal $p $s '0.144.1' '0.144.1';Assert-Equal $before (Get-ContentTreeHash $p) 'live unchanged';Write-TestPass 'maintenance cli rehearsal'} finally {Remove-TestSandbox $root}
