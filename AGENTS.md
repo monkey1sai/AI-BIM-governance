@@ -9,7 +9,6 @@
 ---
 
 ## 0.1 Agent 工作方式
-
 ### Karpathy-style 工作守則
 
 - 非平凡任務先列出假設、成功標準、最小改動面；若需求或 repo 邊界不清楚，先釐清再實作。
@@ -40,12 +39,17 @@
 - 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
 - 不允許：修改既有 `.env` 的實際機密值。
 - Evidence 規則：agent 可為本機驗證載入 `.env`，但不得在回覆、log 摘要或 PR body echo 任何值；`.env` / `.env.example` 差異檢查預設只列 key 名稱與缺漏，不列值。
-- 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。
-
-
----
+- 此 carve-out 僅覆蓋全域「不得修改環境檔」規則中關於本 repo `.env.example` 讀寫、`.env` 讀取與複製的部分；其餘 secrets / credentials / private keys 規則不變。`r`n`r`n---
 
 ## 1. Workspace 範圍（一句話）
+
+```text
+EDGE (external IFC Worker) -> CO (coordinator :8004) -> KIT (streaming/Kit 49100/49101)
+CO -> GOV (governance :49102); CO -> CLOUD (external control-plane callback)
+WV (web viewer :5173) -> CO and KIT (REST/Socket.IO + WebRTC/DataChannel)
+KM (Kit Manager web/API :8010) -> KIT (fleet/telemetry)
+Nodes: EDGE, CLOUD, CO, KIT, GOV, WV, KM; external EDGE/CLOUD are not runtime repos.
+```
 
 ```txt
 AI-BIM-governance/
@@ -57,10 +61,7 @@ AI-BIM-governance/
 ├── services/kit-manager-api/ # Kit Manager API（:8010）
 ├── scripts/                  # deploy / verify / script contract
 └── tests/{contracts,fakes}/  # 外部平台 contract + test-only fakes
-```
-
-
-一句話定位：
+````r`n`r`n一句話定位：
 
 ```txt
 [外部] 公司雲端 bim-control = control-plane 權威（本 repo 不 mirror）
