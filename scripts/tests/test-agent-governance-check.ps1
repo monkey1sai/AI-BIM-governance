@@ -137,13 +137,71 @@ try {
     # line budgets, sub-file index completeness, dead-link liveness, mirror declaration, mirror pairing.
     $agentsBody = Get-Content -LiteralPath 'AGENTS.md' -Raw
     $claudeBody = Get-Content -LiteralPath 'CLAUDE.md' -Raw
+    foreach ($generatedBody in @($agentsBody, $claudeBody)) {
+        $generatedMatch = [regex]::Match($generatedBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
+        Assert-True $generatedMatch.Success 'GitNexus generated block has both markers'
+        Assert-True (($generatedMatch.Value -split "`r?`n").Count -gt 1) 'GitNexus generated block remains multiline'
+    }
     $agentsLineCount = @(Get-Content -LiteralPath 'AGENTS.md').Count
     $claudeLineCount = @(Get-Content -LiteralPath 'CLAUDE.md').Count
+    foreach ($budget in @(
+        @{ Path = 'AGENTS.md'; Min = 150; Max = 180 },
+        @{ Path = 'CLAUDE.md'; Min = 40; Max = 70 },
+        @{ Path = 'docs/agents/advanced-agent-reasoning-contract.md'; Min = 40; Max = 70 },
+        @{ Path = 'docs/agents/codex-loop-workflows.md'; Min = 50; Max = 90 }
+    )) {
+        $count = @(Get-Content -LiteralPath $budget.Path).Count
+        Assert-True ($count -ge $budget.Min -and $count -le $budget.Max) "$($budget.Path) line budget actual=$count"
+    }
     Assert-True ($agentsLineCount -le 250) "AGENTS.md within 250-line budget (actual: $agentsLineCount); split into docs/agents/*.md or amend agent-doc-context-budget spec"
     Assert-True ($claudeLineCount -le 130) "CLAUDE.md within 130-line budget (actual: $claudeLineCount); split into docs/agents/*.md or amend agent-doc-context-budget spec"
 
     Assert-True ($claudeBody -match 'AGENTS\.md') 'CLAUDE.md references AGENTS.md'
     Assert-True ($claudeBody -match 'source of truth') 'CLAUDE.md declares AGENTS.md as source of truth'
+
+    foreach ($overlayPath in @('docs/agents/advanced-agent-reasoning-contract.md', 'docs/agents/codex-loop-workflows.md')) {
+        Assert-FileContains $overlayPath ([regex]::Escape('C:\Users\IOT\.codex\docs\agents\task-routing.md')) "$overlayPath points to global task-routing source of truth"
+        $overlayBody = Get-Content -LiteralPath $overlayPath -Raw
+        foreach ($genericHeading in @('Task Complexity Tiers', 'Reasoning Effort Routing', 'Codex Model / Effort Lane Routing')) {
+            Assert-True (-not ($overlayBody -match [regex]::Escape($genericHeading))) "$overlayPath does not duplicate generic heading $genericHeading"
+        }
+    }
+
+    # Active governance surfaces must not pin exact model slugs. Approved specs and plans are historical design records.
+    $activeGovernancePaths = @(
+        'AGENTS.md'
+        'CLAUDE.md'
+        'docs/agents/advanced-agent-reasoning-contract.md'
+        'docs/agents/codex-loop-workflows.md'
+        '.codex/skills/spec-to-done/SKILL.md'
+    )
+    foreach ($activePath in $activeGovernancePaths) {
+        Assert-True (-not ((Get-Content -LiteralPath $activePath -Raw) -match '(?i)\bgpt-[0-9]')) "$activePath does not contain an exact GPT model slug"
+    }
+
+    $codexConfig = Get-Content -LiteralPath '.codex/config.toml' -Raw
+    Assert-True ($codexConfig -match '\[permissions\.safe-workspace\.network\]') '.codex/config.toml declares safe-workspace network permissions'
+    foreach ($domain in @('api.github.com', 'github.com')) {
+        Assert-True ($codexConfig -match [regex]::Escape('"' + $domain + '"')) ".codex/config.toml allows $domain"
+    }
+    Assert-True ($codexConfig -match '\[plugins\."cloudflare@openai-curated"\][\s\S]*?enabled\s*=\s*false') '.codex/config.toml disables the Cloudflare plugin'
+    foreach ($forbiddenConfigKey in @('sandbox_workspace_write', 'sandbox_mode', 'model\s*=', 'model_reasoning_effort\s*=')) {
+        Assert-True (-not ($codexConfig -match $forbiddenConfigKey)) ".codex/config.toml does not define forbidden selector $forbiddenConfigKey"
+    }
+    # GitNexus generated blocks are required in both root entrypoints and must
+    # advertise the same current index metadata and multiline marker structure.
+    $gitNexusMetadata = '17817 symbols, 28581 relationships, 300 execution flows'
+    foreach ($entrypoint in @(@{ Name = 'AGENTS.md'; Body = $agentsBody }, @{ Name = 'CLAUDE.md'; Body = $claudeBody })) {
+        Assert-True ($entrypoint.Body -match '<!-- gitnexus:start -->') "$($entrypoint.Name) has GitNexus start marker"
+        Assert-True ($entrypoint.Body -match '<!-- gitnexus:end -->') "$($entrypoint.Name) has GitNexus end marker"
+        $blockMatch = [regex]::Match($entrypoint.Body, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
+        Assert-True $blockMatch.Success "$($entrypoint.Name) has multiline GitNexus block"
+        Assert-True ($blockMatch.Value -match [regex]::Escape($gitNexusMetadata)) "$($entrypoint.Name) has current GitNexus metadata"
+    }
+    $agentsGitNexusBlock = [regex]::Match($agentsBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->').Value
+    $claudeGitNexusBlock = [regex]::Match($claudeBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->').Value
+    $metadataPattern = '17817 symbols, 28581 relationships, 300 execution flows'
+    Assert-True (($agentsGitNexusBlock -match $metadataPattern) -and ($claudeGitNexusBlock -match $metadataPattern)) 'AGENTS.md and CLAUDE.md GitNexus blocks carry matching metadata'
 
     # No orphan sub-files: every tracked docs/agents/*.md must appear in BOTH root entrypoint index tables
     $subFiles = @(git ls-files 'docs/agents/*.md')

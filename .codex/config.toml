@@ -1,6 +1,3 @@
-[sandbox_workspace_write]
-network_access = true
-
 [permissions.safe-workspace.network]
 enabled = true
 mode = "limited"
