@@ -41,6 +41,11 @@
 
 `docs/codex-governance-auto-update-design`、`fix/deploy-rebuild-worktree-e2e`、`fix/r1-governance-scan-scope` 與本輪碰撞面**零檔案重疊**。唯一鄰接：`fix/deploy-rebuild-worktree-e2e` 新增 `scripts/tests/test-rebuild-test-deploy.ps1`（未改 deploy.ps1 本體）——Wave C 的 golden-path task 執行前須確認該分支 merge 狀態，已 merge 則將其測試納入回歸。
 
+## 4.1 落地紀錄
+
+- **Wave A**：PR #321 merged（2026-07-10）——spec+plan＋R1/R2/R3/R6/R8 文件落地＋docs stale 同步。
+- **Wave B**：本 spec 隨 PR-B 更新——B1–B10 全數落地；發現修正：F4（db.py busy_timeout）實測為**誤報**（Python `sqlite3.connect` 預設 `timeout=5.0` 即 5000ms，與 IssueStore 對稱），改留回歸守門測試；W4 改以 `coordinatorUrl()` 統一 base（保留狀態碼原樣顯示語意，較原 plan 的 typed-client 改寫更小）。
+
 ## 5. 驗收總則
 
 - 每個 code task 附最小測試與驗證指令；user-facing 變更（NAV 分組、overlay、A1 badge、A6 卡）須附 branch 隔離 stack 的 Playwright/headless 截圖證據（`artifacts/e2e/`，PNG 需 `git add -f`）。

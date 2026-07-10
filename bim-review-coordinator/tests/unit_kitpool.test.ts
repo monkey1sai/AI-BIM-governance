@@ -85,6 +85,7 @@ const defaultConfig: CoordinatorConfig = {
   minioWatchKeySuffix: "/model.ifc",
   minioWatchTenantId: "tenant_demo_001",
   minioWatchSelfBaseUrl: "",
+  testDataProjectIds: [],
 };
 
 const multiEndpointConfig: CoordinatorConfig = {
