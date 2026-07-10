@@ -37,6 +37,44 @@ function Normalize-TestDeployPath {
     return $fullPath.TrimEnd([char[]]@('\', '/'))
 }
 
+function Test-TestDeployBrokenGitFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string] $GitPath
+    )
+
+    if (-not (Test-Path -LiteralPath $GitPath -PathType Leaf)) {
+        return $false
+    }
+
+    try {
+        $gitFileText = [System.IO.File]::ReadAllText($GitPath).Trim()
+    } catch {
+        return $true
+    }
+
+    if ($gitFileText -notmatch '^gitdir:\s*(.+)$') {
+        return $true
+    }
+
+    $gitDirValue = $Matches[1].Trim()
+    if ([string]::IsNullOrWhiteSpace($gitDirValue)) {
+        return $true
+    }
+
+    try {
+        $gitDirPath = if ([System.IO.Path]::IsPathRooted($gitDirValue)) {
+            [System.IO.Path]::GetFullPath($gitDirValue)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $GitPath) $gitDirValue))
+        }
+    } catch {
+        return $true
+    }
+
+    return -not (Test-Path -LiteralPath $gitDirPath -PathType Container)
+}
+
 function Assert-TestDeployPath {
     [CmdletBinding()]
     param(
@@ -137,11 +175,6 @@ function Restore-TestDeployEnvSnapshot {
         $relativePath = [string]$entry.RelativePath
         if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
 
-        $examplePath = Join-Path $root "$relativePath.example"
-        if (-not (Test-Path -LiteralPath $examplePath -PathType Leaf)) {
-            continue
-        }
-
         $envPath = Join-Path $root $relativePath
         $parent = Split-Path -Parent $envPath
         if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
@@ -150,6 +183,20 @@ function Restore-TestDeployEnvSnapshot {
 
         try {
             [System.IO.File]::WriteAllBytes($envPath, [byte[]]$entry.Bytes)
+            $restoredBytes = [System.IO.File]::ReadAllBytes($envPath)
+            $expectedBytes = [byte[]]$entry.Bytes
+            $bytesMatch = $restoredBytes.Length -eq $expectedBytes.Length
+            if ($bytesMatch) {
+                for ($index = 0; $index -lt $expectedBytes.Length; $index++) {
+                    if ($restoredBytes[$index] -ne $expectedBytes[$index]) {
+                        $bytesMatch = $false
+                        break
+                    }
+                }
+            }
+            if (-not $bytesMatch) {
+                throw 'restored bytes do not match the preserved snapshot'
+            }
             $restored.Add($relativePath) | Out-Null
         } catch {
             $failures.Add("$relativePath`: $_") | Out-Null
@@ -356,23 +403,15 @@ function Invoke-TestDeployRebuild {
         throw 'current repo origin URL is empty'
     }
 
-    if (-not (Test-Path -LiteralPath $deployRoot -PathType Container)) {
-        New-Item -ItemType Directory -Path $deployRoot -Force | Out-Null
-    }
-
-    $envSnapshot = Save-TestDeployEnvSnapshot -DeploymentPath $deployRoot
     $deployGitDir = Join-Path $deployRoot '.git'
-    if (-not (Test-Path -LiteralPath $deployGitDir)) {
-        $existing = @(Get-ChildItem -LiteralPath $deployRoot -Force -ErrorAction SilentlyContinue)
-        if ($existing.Count -gt 0) {
-            foreach ($item in $existing) {
-                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
-            }
-            Write-Host "[rebuild-test-deploy] rebuilt non-git deployment directory: $deployRoot"
-        }
+    $requiresStagedReplacement =
+        -not (Test-Path -LiteralPath $deployGitDir) -or
+        (Test-TestDeployBrokenGitFile -GitPath $deployGitDir)
 
-        Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', $originUrl, $deployRoot) -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner | Out-Null
-    } else {
+    # A valid checkout with the wrong origin must fail before staging, service
+    # stop, or any filesystem mutation. Broken gitfiles are replacement inputs,
+    # so they deliberately skip commands that depend on their missing gitdir.
+    if (-not $requiresStagedReplacement) {
         $deployOrigin = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('remote', 'get-url', 'origin') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
         $deployOriginUrl = $deployOrigin.Output.Trim()
         if ($deployOriginUrl -ne $originUrl) {
@@ -380,6 +419,127 @@ function Invoke-TestDeployRebuild {
         }
     }
 
+    $envSnapshot = Save-TestDeployEnvSnapshot -DeploymentPath $deployRoot
+
+    if ($requiresStagedReplacement) {
+        $deployParent = Split-Path -Parent $deployRoot
+        if (-not (Test-Path -LiteralPath $deployParent -PathType Container)) {
+            throw "deployment parent does not exist: $deployParent"
+        }
+
+        $deployLeaf = Split-Path -Leaf $deployRoot
+        $transactionId = [Guid]::NewGuid().ToString('N')
+        $stageRoot = Normalize-TestDeployPath -Path (Join-Path $deployParent ".$deployLeaf.rebuild-stage-$transactionId")
+        $previousRoot = Normalize-TestDeployPath -Path (Join-Path $deployParent ".$deployLeaf.rebuild-previous-$transactionId")
+        if ((Test-Path -LiteralPath $stageRoot) -or (Test-Path -LiteralPath $previousRoot)) {
+            throw 'could not allocate unique deployment transaction paths'
+        }
+
+        $mainRefSpec = '+refs/heads/main:refs/remotes/origin/main'
+        $restoredEnvFiles = @()
+        try {
+            # Canonical OriginMain preparation: Git creates one standalone,
+            # same-parent sibling. Live remains byte-identical until validation.
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clone', $originUrl, $stageRoot) -WorkingDirectory $repoRootPath -CommandRunner $CommandRunner | Out-Null
+
+            $stageGitDir = Join-Path $stageRoot '.git'
+            if (-not (Test-Path -LiteralPath $stageGitDir -PathType Container)) {
+                throw "staged deployment checkout is not standalone: $stageGitDir"
+            }
+
+            $headBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', '--short', 'HEAD') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner
+            $statusBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('status', '--short') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner
+            if (-not [string]::IsNullOrWhiteSpace($statusBefore.Output)) {
+                $statusLines = @([System.Text.RegularExpressions.Regex]::Split($statusBefore.Output, '\r?\n') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                Write-Host "[rebuild-test-deploy] discarding staged checkout local changes count=$($statusLines.Count) head=$($headBefore.Output.Trim())"
+                Write-Host $statusBefore.Output
+            }
+
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('fetch', 'origin', $mainRefSpec) -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
+            Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('reset', '--hard', 'origin/main') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
+
+            $cleanExcludePattern = 'bim-streaming-server/_build/**/logs/**'
+            $cleanMaxAttempts = 3
+            $cleanAttempt = 0
+            while ($true) {
+                $cleanAttempt++
+                try {
+                    Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('clean', '-fdx', '-e', $cleanExcludePattern) -WorkingDirectory $stageRoot -CommandRunner $CommandRunner | Out-Null
+                    break
+                } catch {
+                    if ($cleanAttempt -ge $cleanMaxAttempts) { throw }
+                    Write-Host "[rebuild-test-deploy] staged git clean -fdx attempt $cleanAttempt failed, retrying in 1s: $($_.Exception.Message)"
+                    Start-Sleep -Seconds 1
+                }
+            }
+
+            $restoredEnvFiles = @(Restore-TestDeployEnvSnapshot -DeploymentPath $stageRoot -Snapshot $envSnapshot)
+            $removed = @(Remove-TestDeployAgentTooling -DeploymentPath $stageRoot -AllowNonFixedPathForTests:$AllowNonFixedPathForTests)
+
+            # Tooling is removed before the final stage gate. No service may be
+            # stopped and no live path may be renamed until all checks pass.
+            if (-not (Test-Path -LiteralPath $stageGitDir -PathType Container)) {
+                throw "staged deployment checkout is not standalone: $stageGitDir"
+            }
+            $stageDeployScript = Join-Path $stageRoot 'scripts\deploy.ps1'
+            if (-not (Test-Path -LiteralPath $stageDeployScript -PathType Leaf)) {
+                throw "deployment script missing after staged rebuild: $stageDeployScript"
+            }
+            $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $stageRoot -CommandRunner $CommandRunner
+
+            $effectiveServiceStopper = $ServiceStopper
+            if ($null -eq $effectiveServiceStopper) {
+                $launcherLibPath = Join-Path $PSScriptRoot 'host-native-launcher.ps1'
+                $effectiveServiceStopper = {
+                    param([string] $ServiceName, [string] $ServiceRunDir)
+                    . $launcherLibPath
+                    Stop-HostNativeService -Name $ServiceName -RunDir $ServiceRunDir | Out-Null
+                }.GetNewClosure()
+            }
+            $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
+            foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
+                try {
+                    & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
+                } catch {
+                    Write-Host "[rebuild-test-deploy] WARNING best-effort stop of '$serviceName' failed (continuing to cutover): $($_.Exception.Message)"
+                }
+            }
+
+            $liveMovedToPrevious = $false
+            if (Test-Path -LiteralPath $deployRoot -PathType Container) {
+                [System.IO.Directory]::Move($deployRoot, $previousRoot)
+                $liveMovedToPrevious = $true
+            } elseif (Test-Path -LiteralPath $deployRoot) {
+                throw "deployment path is not a directory: $deployRoot"
+            }
+
+            try {
+                [System.IO.Directory]::Move($stageRoot, $deployRoot)
+            } catch {
+                $cutoverError = $_
+                if ($liveMovedToPrevious) {
+                    try {
+                        [System.IO.Directory]::Move($previousRoot, $deployRoot)
+                    } catch {
+                        throw "$($cutoverError.Exception.Message)$([Environment]::NewLine)Additionally failed to restore previous live checkout: $($_.Exception.Message)"
+                    }
+                }
+                throw $cutoverError
+            }
+
+            Write-Host "[rebuild-test-deploy] activated validated staged checkout: $deployRoot"
+        } catch {
+            $stageError = $_
+            if (Test-Path -LiteralPath $stageRoot) {
+                Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            throw $stageError
+        }
+
+        if ($restoredEnvFiles.Count -gt 0) {
+            Write-Host "[rebuild-test-deploy] restored deployment env files count=$($restoredEnvFiles.Count): $($restoredEnvFiles -join ', ')"
+        }
+    } else {
     $headBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', '--short', 'HEAD') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
     $statusBefore = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('status', '--short') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
     if (-not [string]::IsNullOrWhiteSpace($statusBefore.Output)) {
@@ -464,6 +624,8 @@ function Invoke-TestDeployRebuild {
     }
 
     $commit = Invoke-TestDeployGitCommand -Tool 'git' -Arguments @('rev-parse', 'origin/main') -WorkingDirectory $deployRoot -CommandRunner $CommandRunner
+    }
+
     $edgeRuntimeContract = Resolve-TestDeployEdgeRuntimeContract
     $processEnvBackup = Push-TestDeployProcessEnv -Contract $edgeRuntimeContract
 
