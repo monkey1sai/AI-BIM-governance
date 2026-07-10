@@ -56,5 +56,5 @@ function Apply-CliClosure {
 
 function Restore-CliClosure {
  param([Parameter(Mandatory)][string]$Prefix,[Parameter(Mandatory)][string]$SnapshotPath)
- if(-not (Test-Path $SnapshotPath)){throw 'Missing CLI snapshot'}; $tmp=$Prefix+'.rollback'; if(Test-Path $tmp){Remove-Item $tmp -Recurse -Force}; Copy-Item $SnapshotPath $tmp -Recurse -Force; $old=$Prefix+'.failed'; if(Test-Path $Prefix){Rename-Item $Prefix (Split-Path $old -Leaf)}; Rename-Item $tmp (Split-Path $Prefix -Leaf); [pscustomobject]@{Status='rolled_back';Prefix=$Prefix}
+ if(-not (Test-Path $SnapshotPath)){throw 'Missing CLI snapshot'}; $tmp=$Prefix+'.rollback'; if(Test-Path $tmp){Remove-Item $tmp -Recurse -Force}; Copy-Item $SnapshotPath $tmp -Recurse -Force; $old=$Prefix+'.failed'; if(Test-Path $old){Remove-Item $old -Recurse -Force}; if(Test-Path $Prefix){Rename-Item $Prefix (Split-Path $old -Leaf)}; Rename-Item $tmp (Split-Path $Prefix -Leaf); [pscustomobject]@{Status='rolled_back';Prefix=$Prefix}
 }
