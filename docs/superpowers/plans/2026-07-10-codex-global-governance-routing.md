@@ -28,10 +28,10 @@ Effort is selected from the task tier, evidence burden, and rollback cost; it is
 | Non-trivial documentation or code audit: bounded multi-file discovery, docs update, type/lint/test check, or ordinary implementation | `medium` | Coordinator on `dev` or `net-install` when dependency download is required; use `explorer` for discovery and `reviewer` for a bounded review |
 | PR, architecture, integration, or E2E work: cross-module contract, user-facing flow, screenshot/trace evidence, or independent verification | `high` | Coordinator on `dev`; dispatch `reviewer`, plus `explorer` for architecture or a separate E2E verifier when the evidence surface is broad |
 | Security, deploy, permissions, migration, or destructive action: secrets/auth, production-like rollout, data loss, or irreversible external side effect | `max` | Coordinator on `deep-review`; require `security_auditor` and `reviewer`, with rollback evidence before applying changes |
-| Debug or runtime incident: failing test, startup failure, flaky behavior, performance regression, or multi-layer root-cause isolation | `xhigh` | Coordinator on `deep-review`; run `debugger` first, then `reviewer`; use `net-install` only for an explicitly required dependency fetch |
-| Highest-risk adversarial or rollback judgment: competing hypotheses after failed attempts, shared-contract breakage, incident containment, or a change that must prove safe rollback | `ultra` | Coordinator on `deep-review`; require adversarial verifier plus `security_auditor` where access/data/deploy is involved, and do not proceed without explicit rollback evidence |
+| Debug or runtime incident: failing test, startup failure, flaky behavior, performance regression, or multi-layer root-cause isolation | `xhigh` | Coordinator on `runtime-incident`; run `debugger` first, then `reviewer`; use `net-install` only for an explicitly required dependency fetch |
+| Highest-risk adversarial or rollback judgment: competing hypotheses after failed attempts, shared-contract breakage, incident containment, or a change that must prove safe rollback | `ultra` | Coordinator on `adversarial`; require adversarial verifier plus `security_auditor` where access/data/deploy is involved, and do not proceed without explicit rollback evidence |
 
-`max`, `ultra`, and `xhigh` are permitted only for the matching triggers above; they are not a blanket default. A role may use a higher lane than its profile only when the coordinator records the trigger and evidence burden in the task log. If a task spans rows, select the highest applicable tier and retain the corresponding reviewer and rollback gates.
+`max`, `ultra`, and `xhigh` are permitted only for the matching triggers above; they are not a blanket default. If a task spans rows, select the highest applicable tier and retain the corresponding reviewer and rollback gates. The named profile is mandatory for its row; no per-role effort override is permitted.
 
 ---
 
@@ -78,6 +78,8 @@ No Git commit is made for host-only backups. The manifest is the checkpoint.
 - Create: `C:\Users\IOT\.codex\dev.config.toml`
 - Create: `C:\Users\IOT\.codex\deep-review.config.toml`
 - Create: `C:\Users\IOT\.codex\net-install.config.toml`
+- Create: `C:\Users\IOT\.codex\runtime-incident.config.toml`
+- Create: `C:\Users\IOT\.codex\adversarial.config.toml`
 
 **Interfaces:**
 - Root config remains the only default/MCP/feature registry.
@@ -92,9 +94,9 @@ if ($cfg -notmatch '\[profiles\.' -or $cfg -notmatch 'sandbox_mode' -or $cfg -no
 
 - [ ] **Step 2: Apply the minimal root diff**
 
-Set `approvals_reviewer = "auto_review"`; set the resolved default model/effort; set `desktop.git-always-force-push = false`; set `agents.max_threads = 6`; replace `:project_roots` with `:workspace_roots` and `"none"` with `"deny"`; remove only the four CLI-removed feature overrides, inline `[profiles.*]`, root `sandbox_mode`, and `[sandbox_workspace_write]`; remove the codebase-memory SessionStart echo hook while preserving its MCP registration and the Windows elevated sandbox setting.
+Set `approvals_reviewer = "auto_review"`; set the resolved default model/effort; set `desktop.git-always-force-push = false`; set `agents.max_threads = 6`; replace `:project_roots` with `:workspace_roots` and `"none"` with `"deny"`; remove only the four CLI-removed feature entries, inline `[profiles.*]`, root `sandbox_mode`, and `[sandbox_workspace_write]`; remove the codebase-memory SessionStart echo hook while preserving its MCP registration and the Windows elevated sandbox setting.
 
-- [ ] **Step 3: Create the four profile files**
+- [ ] **Step 3: Create the six profile files**
 
 ```toml
 # fast-fix.config.toml
@@ -116,6 +118,16 @@ default_permissions = ":read-only"
 model = "gpt-5.6-terra"
 model_reasoning_effort = "medium"
 default_permissions = "network-install"
+
+# runtime-incident.config.toml
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+default_permissions = ":read-only"
+
+# adversarial.config.toml
+model = "gpt-5.6-sol"
+model_reasoning_effort = "ultra"
+default_permissions = ":read-only"
 ```
 
 Copy only the existing non-legacy session keys that each lane needs; omit `sandbox_mode` and inline profile tables. Preserve approved plan effort values rather than inventing new keys.
@@ -125,7 +137,7 @@ Copy only the existing non-legacy session keys that each lane needs; omit `sandb
 ```powershell
 codex --strict-config doctor --summary
 codex mcp list
-foreach ($p in 'fast-fix','dev','deep-review','net-install') { codex --profile $p mcp list }
+foreach ($p in 'fast-fix','dev','deep-review','net-install','runtime-incident','adversarial') { codex --profile $p mcp list }
 ```
 
 Expected: every command exits 0; no new warning type or count; each profile loads the same approved MCP inventory; effort selection remains task-tier driven and may use `max`, `ultra`, or `xhigh` where required. Any failure restores the complete G0 cohort.
@@ -196,11 +208,11 @@ Assert global `AGENTS.md` is 120-160 lines, the Claude adapter import occurs onc
 
 - [ ] **Step 1: Compare final health to G0**
 
-Run doctor, all four profile commands, MCP/plugin summaries, static legacy-token checks, role matrix checks, line budgets, and import/index checks. Warning categories and counts must not worsen. Confirm the task-tier effort policy (including permitted `max`, `ultra`, and `xhigh` lanes) rather than requiring one global `high` value.
+Run doctor, all six profile commands, MCP/plugin summaries, static legacy-token checks, role matrix checks, line budgets, and import/index checks. Warning categories and counts must not worsen. Confirm the task-tier effort policy (including permitted `max`, `ultra`, and `xhigh` lanes) rather than requiring one global `high` value.
 
 - [ ] **Step 2: Exercise full rollback**
 
-Restore every G0 backup, remove only the four newly created profile files, and rerun the baseline commands. Expected: original content hashes, zero doctor failures, and no warning regression. Content/hash rollback is the acceptance gate; Windows ACL rollback remains explicitly unverified if owner reassignment is rejected, and the recorded owner SID mismatch is not a blocker when live ACLs remain unchanged.
+Restore every G0 backup, remove only the six newly created profile files, and rerun the baseline commands. Expected: original content hashes, zero doctor failures, and no warning regression. Content/hash rollback is the acceptance gate; Windows ACL rollback remains explicitly unverified if owner reassignment is rejected, and the recorded owner SID mismatch is not a blocker when live ACLs remain unchanged.
 
 - [ ] **Step 3: Reapply only after rollback Green**
 
