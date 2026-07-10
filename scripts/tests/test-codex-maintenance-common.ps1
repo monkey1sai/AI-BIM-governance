@@ -16,5 +16,11 @@ try {
   New-Item -ItemType Junction -Path $junctionRoot -Target $junctionTarget -Force | Out-Null
   Assert-Throws { Get-ContentTreeHash -Root $junctionRoot } 'reparse root rejected'
   Remove-TestSandbox $junctionTarget
+  $childTarget = New-TestSandbox 'codex-common-child-target'
+  Set-Content (Join-Path $childTarget 'child.txt') 'child'
+  $childJunction = Join-Path $root 'child-junction'
+  New-Item -ItemType Junction -Path $childJunction -Target $childTarget -Force | Out-Null
+  Assert-Throws { Get-ContentTreeHash -Root $root } 'reparse child rejected'
+  Remove-TestSandbox $childTarget
   Write-TestPass 'maintenance common'
 } finally { Remove-TestSandbox $root }
