@@ -1681,7 +1681,7 @@ public static class Task1B1NativeFileIdentity
             LockPath = $canonicalLockPath
         }
     }
-    $validateTempLockResource = {
+    $assertTestLockResourceWithinScenario = {
         param(
             [Parameter(Mandatory = $true)] $Resource,
             [Parameter(Mandatory = $true)][string] $ExpectedParent,
@@ -1701,11 +1701,9 @@ public static class Task1B1NativeFileIdentity
         $sameParent = $canonicalLockParent.Equals($canonicalExpectedParent, [System.StringComparison]::OrdinalIgnoreCase)
         $distinctFromLive = -not $canonicalLockPath.Equals($canonicalLivePath, [System.StringComparison]::OrdinalIgnoreCase)
         if (-not $insideSandbox -or -not $sameParent -or -not $distinctFromLive) {
-            $Resource.Handle.Dispose()
             throw "Enter-TestDeployRebuildLock returned unsafe lock path. lock='$canonicalLockPath' expectedParent='$canonicalExpectedParent'"
         }
         if (-not (Test-Path -LiteralPath $canonicalLockPath -PathType Leaf)) {
-            $Resource.Handle.Dispose()
             throw "Enter-TestDeployRebuildLock lock path is not a temp file: '$canonicalLockPath'"
         }
 
@@ -1813,6 +1811,90 @@ public static class Task1B1NativeFileIdentity
             IsSharingViolation = $isIOException -and $hresult -eq -2147024864 -and $lowCode -eq 32
         }
     }
+
+    # Regression for the candidate -> validate -> official assignment boundary.
+    # The fake helper exposes a live disposable handle but lies about its path,
+    # pointing at a unique sibling outside this test sandbox.  The outside path
+    # is never created: validation must reject and dispose the candidate before
+    # an official resource exists or any fallback/active-path work can begin.
+    $malformedLockScenario = Join-Path $sandbox 'task-1b1-malformed-lock-helper'
+    New-Item -ItemType Directory -Path $malformedLockScenario -Force | Out-Null
+    $malformedLockSentinel = Join-Path $malformedLockScenario 'candidate-sentinel.bin'
+    [System.IO.File]::WriteAllBytes($malformedLockSentinel, [byte[]](2, 4, 6, 8, 10, 12))
+    $malformedSentinelCreationTime = [DateTime]::SpecifyKind([datetime]'2002-03-04T05:06:07', [DateTimeKind]::Utc)
+    [System.IO.File]::SetCreationTimeUtc($malformedLockSentinel, $malformedSentinelCreationTime)
+    $malformedManifestBefore = & $getTask1B1ScenarioManifest $malformedLockScenario
+    $malformedSentinelHashBefore = (Get-FileHash -LiteralPath $malformedLockSentinel -Algorithm SHA256).Hash
+    $malformedSentinelCreationBefore = [System.IO.File]::GetCreationTimeUtc($malformedLockSentinel)
+    $malformedOutsideLockPath = Join-Path ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($sandbox))) ".task-1b1-outside-$([guid]::NewGuid().ToString('N')).rebuild.lock"
+    $malformedOutsideExistedBefore = Test-Path -LiteralPath $malformedOutsideLockPath
+    $malformedBackingStream = $null
+    $malformedSafeHandle = $null
+    $malformedRawResult = $null
+    $malformedCandidateResource = $null
+    $malformedOfficialResource = $null
+    $malformedOfficialAssigned = $false
+    $malformedValidationMessage = $null
+    $malformedHandleWasValid = $false
+    $malformedHandleDisposed = $false
+    try {
+        $malformedBackingStream = [System.IO.File]::Open(
+            $malformedLockSentinel,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $malformedSafeHandle = $malformedBackingStream.SafeFileHandle
+        $malformedHandleWasValid = -not $malformedSafeHandle.IsInvalid -and -not $malformedSafeHandle.IsClosed
+        $malformedFakeHelper = {
+            param([string] $DeploymentPath)
+            return [pscustomobject]@{
+                Handle = $malformedSafeHandle
+                LockPath = $malformedOutsideLockPath
+            }
+        }.GetNewClosure()
+
+        try {
+            $malformedRawResult = & $malformedFakeHelper -DeploymentPath $malformedLockScenario
+            $malformedCandidateResource = & $normalizeLockResource $malformedRawResult
+            $validatedMalformedResource = & $assertTestLockResourceWithinScenario -Resource $malformedCandidateResource -ExpectedParent $malformedLockScenario -LivePath (Join-Path $malformedLockScenario 'live')
+            $malformedOfficialResource = $validatedMalformedResource
+            $malformedCandidateResource = $null
+            $malformedOfficialAssigned = $true
+        } catch {
+            $malformedValidationMessage = $_.Exception.Message
+            $malformedOfficialResource = $null
+            $malformedOfficialAssigned = $false
+        }
+    } finally {
+        if ($null -ne $malformedCandidateResource) {
+            $malformedCandidateResource.Handle.Dispose()
+            $malformedCandidateResource = $null
+        }
+        if ($null -ne $malformedOfficialResource) {
+            $malformedOfficialResource.Handle.Dispose()
+            $malformedOfficialResource = $null
+        }
+        # Observe candidate/official cleanup before disposing the backing
+        # FileStream, otherwise the stream itself could hide a leaked resource.
+        $malformedHandleDisposed = $null -ne $malformedSafeHandle -and $malformedSafeHandle.IsClosed
+        if ($null -ne $malformedBackingStream) {
+            $malformedBackingStream.Dispose()
+            $malformedBackingStream = $null
+        }
+    }
+    $malformedOutsideExistsAfter = Test-Path -LiteralPath $malformedOutsideLockPath
+    $malformedManifestAfter = & $getTask1B1ScenarioManifest $malformedLockScenario
+    $malformedSentinelHashAfter = (Get-FileHash -LiteralPath $malformedLockSentinel -Algorithm SHA256).Hash
+    $malformedSentinelCreationAfter = [System.IO.File]::GetCreationTimeUtc($malformedLockSentinel)
+    & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($malformedValidationMessage) -and $malformedValidationMessage -match 'unsafe lock path') 'Task 1B1 malformed helper resource is rejected by scenario validation' "actual='$malformedValidationMessage'"
+    & $recordTask1B1Expectation (-not $malformedOfficialAssigned -and $null -eq $malformedOfficialResource) 'Task 1B1 malformed helper never becomes an official lock resource' "officialAssigned=$malformedOfficialAssigned"
+    & $recordTask1B1Expectation $malformedHandleWasValid 'Task 1B1 malformed helper supplies a valid live handle before validation' "wasValid=$malformedHandleWasValid"
+    & $recordTask1B1Expectation $malformedHandleDisposed 'Task 1B1 malformed helper candidate handle is disposed' "isClosed=$malformedHandleDisposed"
+    & $recordTask1B1Expectation (-not $malformedOutsideExistedBefore -and -not $malformedOutsideExistsAfter) 'Task 1B1 malformed helper never creates or mutates its outside lock path' "before=$malformedOutsideExistedBefore after=$malformedOutsideExistsAfter path='$malformedOutsideLockPath'"
+    & $recordTask1B1Expectation ($malformedManifestAfter.Serialized -ceq $malformedManifestBefore.Serialized) 'Task 1B1 malformed helper leaves scenario manifest identical' "before='$($malformedManifestBefore.Sha256)' after='$($malformedManifestAfter.Sha256)'"
+    & $recordTask1B1Expectation ($malformedSentinelHashAfter -eq $malformedSentinelHashBefore) 'Task 1B1 malformed helper leaves sentinel byte-identical' "before='$malformedSentinelHashBefore' after='$malformedSentinelHashAfter'"
+    & $recordTask1B1Expectation ($malformedSentinelCreationAfter -eq $malformedSentinelCreationBefore) 'Task 1B1 malformed helper leaves creation metadata unchanged' "before='$($malformedSentinelCreationBefore.ToString('O'))' after='$($malformedSentinelCreationAfter.ToString('O'))'"
 
     # A normal, existing temp deployment path is accepted by the wished-for
     # standalone path-safety helper.
@@ -2047,35 +2129,85 @@ public static class Task1B1NativeFileIdentity
     $lockLiveRoot = Join-Path $lockScenarioRoot 'live'
     New-Item -ItemType Directory -Path $lockLiveRoot -Force | Out-Null
     $fallbackLockPath = Join-Path $lockScenarioRoot ".$((Split-Path -Leaf $lockLiveRoot)).rebuild.lock"
-    $firstLockResource = $null
+    $lockHelperAvailable = $null -ne (Get-Command -Name 'Enter-TestDeployRebuildLock' -ErrorAction SilentlyContinue)
     $firstLockResult = $null
+    $firstLockCandidateResource = $null
+    $firstLockResource = $null
+    $firstLockAcquiredByHelper = $false
     $firstLockAcquireMessage = $null
-    try {
-        $firstLockResult = Enter-TestDeployRebuildLock -DeploymentPath $lockLiveRoot
-        $firstLockResource = & $normalizeLockResource $firstLockResult
-        $firstLockResource = & $validateTempLockResource -Resource $firstLockResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
-    } catch {
-        $firstLockAcquireMessage = $_.Exception.Message
-        if ($null -ne $firstLockResult -and $firstLockResult -is [System.IDisposable]) {
-            $firstLockResult.Dispose()
-        }
-    }
-    $firstLockAcquiredByHelper = $null -ne $firstLockResource
-    & $recordTask1B1Expectation $firstLockAcquiredByHelper 'Task 1B1 first rebuild lock acquire succeeds' "actual='$firstLockAcquireMessage'"
-
+    $activeLockResource = $null
     $activeLockHandle = $null
-    $activeLockPath = $fallbackLockPath
-    if ($firstLockAcquiredByHelper) {
-        $activeLockHandle = $firstLockResource.Handle
-        $activeLockPath = $firstLockResource.LockPath
-    } else {
-        $activeLockHandle = [System.IO.File]::Open(
-            $fallbackLockPath,
-            [System.IO.FileMode]::OpenOrCreate,
-            [System.IO.FileAccess]::ReadWrite,
-            [System.IO.FileShare]::None
-        )
-    }
+    $activeLockPath = $null
+    $activeLockPathValidated = $false
+    $reacquiredLockCandidateResource = $null
+    $reacquiredLockResource = $null
+    try {
+        try {
+            $firstLockResult = Enter-TestDeployRebuildLock -DeploymentPath $lockLiveRoot
+            $firstLockCandidateResource = & $normalizeLockResource $firstLockResult
+            $validatedFirstLockResource = & $assertTestLockResourceWithinScenario -Resource $firstLockCandidateResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
+            $firstLockResource = $validatedFirstLockResource
+            $firstLockCandidateResource = $null
+            $firstLockAcquiredByHelper = $true
+        } catch {
+            $firstLockAcquireMessage = $_.Exception.Message
+            if ($null -ne $firstLockCandidateResource) {
+                $firstLockCandidateResource.Handle.Dispose()
+                $firstLockCandidateResource = $null
+            }
+            if ($null -ne $firstLockResource) {
+                $firstLockResource.Handle.Dispose()
+                $firstLockResource = $null
+            }
+            if ($null -ne $firstLockResult -and $firstLockResult -is [System.IDisposable]) {
+                $firstLockResult.Dispose()
+            }
+            $firstLockAcquiredByHelper = $false
+        }
+        & $recordTask1B1Expectation $firstLockAcquiredByHelper 'Task 1B1 first rebuild lock acquire succeeds' "actual='$firstLockAcquireMessage'"
+
+        if ($firstLockAcquiredByHelper) {
+            $activeLockResource = $firstLockResource
+            $firstLockResource = $null
+            $activeLockHandle = $activeLockResource.Handle
+            $activeLockPath = $activeLockResource.LockPath
+            $activeLockPathValidated = $true
+        } elseif (-not $lockHelperAvailable) {
+            # Safe test-only fallback keeps the native contention assertions
+            # executable while the production helper is intentionally absent.
+            # It must pass the same boundary validator before any path probe.
+            $fallbackRawResult = $null
+            $fallbackCandidateResource = $null
+            try {
+                $fallbackHandle = [System.IO.File]::Open(
+                    $fallbackLockPath,
+                    [System.IO.FileMode]::OpenOrCreate,
+                    [System.IO.FileAccess]::ReadWrite,
+                    [System.IO.FileShare]::None
+                )
+                $fallbackRawResult = [pscustomobject]@{
+                    Handle = $fallbackHandle
+                    LockPath = $fallbackLockPath
+                }
+                $fallbackCandidateResource = & $normalizeLockResource $fallbackRawResult
+                $validatedFallbackResource = & $assertTestLockResourceWithinScenario -Resource $fallbackCandidateResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
+                $activeLockResource = $validatedFallbackResource
+                $fallbackCandidateResource = $null
+                $activeLockHandle = $activeLockResource.Handle
+                $activeLockPath = $activeLockResource.LockPath
+                $activeLockPathValidated = $true
+            } finally {
+                if ($null -ne $fallbackCandidateResource) {
+                    $fallbackCandidateResource.Handle.Dispose()
+                    $fallbackCandidateResource = $null
+                }
+            }
+        }
+
+        # A rejected helper candidate never reaches this block: no fallback is
+        # allowed when the helper exists, and no active-path metadata operation
+        # runs unless an in-sandbox resource completed validation.
+        if ($null -ne $activeLockResource -and $activeLockPathValidated) {
     $canonicalLockParent = ([System.IO.Path]::GetFullPath((Split-Path -Parent $activeLockPath))).TrimEnd($transactionPathTrimChars)
     $canonicalLiveParent = ([System.IO.Path]::GetFullPath((Split-Path -Parent $lockLiveRoot))).TrimEnd($transactionPathTrimChars)
     & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $canonicalLockParent.Equals($canonicalLiveParent, [System.StringComparison]::OrdinalIgnoreCase)) 'Task 1B1 lock file is a same-parent sibling of live' "lock='$activeLockPath' live='$lockLiveRoot'"
@@ -2089,6 +2221,28 @@ public static class Task1B1NativeFileIdentity
         $firstLockIdentityMessage = $_.Exception.Message
     }
     & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($firstLockIdentity)) 'Task 1B1 first lock handle exposes Windows file identity' "actual='$firstLockIdentityMessage'"
+
+    # FileShare.None must also deny delete sharing.  A handle opened with
+    # FileShare.Delete could make every competing open test pass while still
+    # allowing the lock file to be unlinked/replaced underneath the owner.
+    $rawDeleteException = $null
+    try {
+        [System.IO.File]::Delete($activeLockPath)
+    } catch {
+        $rawDeleteException = & $unwrapTask1B1IOException $_.Exception
+    }
+    $rawDeleteEvidence = & $getTask1B1SharingViolationEvidence $rawDeleteException
+    $lockPathExistsAfterDeleteProbe = Test-Path -LiteralPath $activeLockPath -PathType Leaf
+    $lockIdentityAfterDeleteProbe = $null
+    $lockIdentityAfterDeleteProbeMessage = $null
+    try {
+        $lockIdentityAfterDeleteProbe = & $getTask1B1FileIdentity $activeLockHandle
+    } catch {
+        $lockIdentityAfterDeleteProbeMessage = $_.Exception.Message
+    }
+    & $recordTask1B1Expectation $rawDeleteEvidence.IsSharingViolation 'Task 1B1 competing delete gets Windows sharing violation' "type='$($rawDeleteEvidence.Type)' hresult='$($rawDeleteEvidence.HResult)' lowCode='$($rawDeleteEvidence.LowCode)'"
+    & $recordTask1B1Expectation $lockPathExistsAfterDeleteProbe 'Task 1B1 competing delete leaves validated lock path present' "lock='$activeLockPath'"
+    & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($firstLockIdentity) -and $lockIdentityAfterDeleteProbe -ceq $firstLockIdentity) 'Task 1B1 competing delete preserves active handle Windows file identity' "before='$firstLockIdentity' after='$lockIdentityAfterDeleteProbe' actual='$lockIdentityAfterDeleteProbeMessage'"
 
     $rawReadHandle = $null
     $rawReadException = $null
@@ -2162,9 +2316,12 @@ public static class Task1B1NativeFileIdentity
                 }
             }
         }
-        if ($null -ne $activeLockHandle) {
-            $activeLockHandle.Dispose()
+        if ($null -ne $activeLockResource) {
+            $activeLockResource.Handle.Dispose()
+            $activeLockResource = $null
         }
+        $activeLockHandle = $null
+        $firstLockResource = $null
     }
     & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($secondAcquireMessage) -and $secondAcquireMessage -match 'test deploy rebuild already in progress') 'Task 1B1 second concurrent acquire fails with stable error' "actual='$secondAcquireMessage'"
 
@@ -2177,32 +2334,52 @@ public static class Task1B1NativeFileIdentity
     [System.IO.File]::SetCreationTimeUtc($activeLockPath, $stableLockCreationTime)
 
     $reacquiredLockResult = $null
+    $reacquiredLockCandidateResource = $null
     $reacquiredLockResource = $null
+    $reacquiredLockPath = $null
     $reacquiredLockIdentity = $null
+    $reacquiredByHelper = $false
     $reacquireMessage = $null
     try {
         $reacquiredLockResult = Enter-TestDeployRebuildLock -DeploymentPath $lockLiveRoot
-        $reacquiredLockResource = & $normalizeLockResource $reacquiredLockResult
-        $reacquiredLockResource = & $validateTempLockResource -Resource $reacquiredLockResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
+        $reacquiredLockCandidateResource = & $normalizeLockResource $reacquiredLockResult
+        $validatedReacquiredLockResource = & $assertTestLockResourceWithinScenario -Resource $reacquiredLockCandidateResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
+        $reacquiredLockResource = $validatedReacquiredLockResource
+        $reacquiredLockCandidateResource = $null
+        $reacquiredLockPath = $reacquiredLockResource.LockPath
+        $reacquiredByHelper = $true
         $reacquiredLockIdentity = & $getTask1B1FileIdentity $reacquiredLockResource.Handle
     } catch {
         $reacquireMessage = $_.Exception.Message
+        if ($null -ne $reacquiredLockCandidateResource) {
+            $reacquiredLockCandidateResource.Handle.Dispose()
+            $reacquiredLockCandidateResource = $null
+        }
+        if ($null -ne $reacquiredLockResource) {
+            $reacquiredLockResource.Handle.Dispose()
+            $reacquiredLockResource = $null
+        }
         if ($null -ne $reacquiredLockResult -and $reacquiredLockResult -is [System.IDisposable]) {
             $reacquiredLockResult.Dispose()
         }
+        $reacquiredByHelper = $false
     } finally {
+        if ($null -ne $reacquiredLockCandidateResource) {
+            $reacquiredLockCandidateResource.Handle.Dispose()
+            $reacquiredLockCandidateResource = $null
+        }
         if ($null -ne $reacquiredLockResource) {
             $reacquiredLockResource.Handle.Dispose()
+            $reacquiredLockResource = $null
         }
     }
-    $reacquiredByHelper = $null -ne $reacquiredLockResource
     & $recordTask1B1Expectation $reacquiredByHelper 'Task 1B1 lock can be reacquired after first handle disposal' "actual='$reacquireMessage'"
-    $reacquiredSamePath = $reacquiredByHelper -and $firstLockAcquiredByHelper -and $reacquiredLockResource.LockPath.Equals($activeLockPath, [System.StringComparison]::OrdinalIgnoreCase)
-    & $recordTask1B1Expectation $reacquiredSamePath 'Task 1B1 reacquire uses the same stable lock file path' "first='$activeLockPath' second='$(if ($reacquiredByHelper) { $reacquiredLockResource.LockPath } else { '<none>' })'"
+    $reacquiredSamePath = $reacquiredByHelper -and $firstLockAcquiredByHelper -and $reacquiredLockPath.Equals($activeLockPath, [System.StringComparison]::OrdinalIgnoreCase)
+    & $recordTask1B1Expectation $reacquiredSamePath 'Task 1B1 reacquire uses the same stable lock file path' "first='$activeLockPath' second='$(if ($reacquiredByHelper) { $reacquiredLockPath } else { '<none>' })'"
 
     $observedSecondLockIdentity = $reacquiredLockIdentity
     $identityFallbackMessage = $null
-    if ([string]::IsNullOrWhiteSpace($observedSecondLockIdentity)) {
+    if ([string]::IsNullOrWhiteSpace($observedSecondLockIdentity) -and -not $lockHelperAvailable) {
         $identityFallbackHandle = $null
         try {
             $identityFallbackHandle = [System.IO.File]::Open(
@@ -2230,9 +2407,37 @@ public static class Task1B1NativeFileIdentity
         $firstLockIdentity -ceq $reacquiredLockIdentity
     & $recordTask1B1Expectation $sameWindowsFileObject 'Task 1B1 reacquire retains the same Windows file object without delete/recreate' "firstIdentity='$firstLockIdentity' secondIdentity='$reacquiredLockIdentity' observedFallbackIdentity='$observedSecondLockIdentity'"
 
-    $lockStillExists = Test-Path -LiteralPath $activeLockPath -PathType Leaf
-    $lockCreationTimeAfterReacquire = if ($lockStillExists) { [System.IO.File]::GetCreationTimeUtc($activeLockPath) } else { [datetime]::MinValue }
+    $lockStillExists = $false
+    $lockCreationTimeAfterReacquire = [datetime]::MinValue
+    if ($reacquiredByHelper -or -not $lockHelperAvailable) {
+        $lockStillExists = Test-Path -LiteralPath $activeLockPath -PathType Leaf
+        $lockCreationTimeAfterReacquire = if ($lockStillExists) { [System.IO.File]::GetCreationTimeUtc($activeLockPath) } else { [datetime]::MinValue }
+    }
     & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $reacquiredByHelper -and $lockStillExists -and $lockCreationTimeAfterReacquire -eq $stableLockCreationTime) 'Task 1B1 lock creation time remains stable as auxiliary identity evidence' "exists=$lockStillExists expectedCreation='$($stableLockCreationTime.ToString('O'))' actualCreation='$($lockCreationTimeAfterReacquire.ToString('O'))'"
+        }
+    } finally {
+        if ($null -ne $firstLockCandidateResource) {
+            $firstLockCandidateResource.Handle.Dispose()
+            $firstLockCandidateResource = $null
+        }
+        if ($null -ne $reacquiredLockCandidateResource) {
+            $reacquiredLockCandidateResource.Handle.Dispose()
+            $reacquiredLockCandidateResource = $null
+        }
+        if ($null -ne $activeLockResource) {
+            $activeLockResource.Handle.Dispose()
+            $activeLockResource = $null
+        }
+        $activeLockHandle = $null
+        if ($null -ne $firstLockResource) {
+            $firstLockResource.Handle.Dispose()
+            $firstLockResource = $null
+        }
+        if ($null -ne $reacquiredLockResource) {
+            $reacquiredLockResource.Handle.Dispose()
+            $reacquiredLockResource = $null
+        }
+    }
     $task1B1ScenariosExecuted.Add('exclusive lock contention and reacquire') | Out-Null
 
     # Integration ordering tripwire: hold both the deployment lock and an env
@@ -2245,31 +2450,69 @@ public static class Task1B1NativeFileIdentity
     $lockIntegrationManifestBefore = & $getTransactionLiveManifest $lockIntegrationLive
     $lockIntegrationFallbackPath = Join-Path $lockIntegrationScenario ".$((Split-Path -Leaf $lockIntegrationLive)).rebuild.lock"
     $lockIntegrationHeldResult = $null
-    $lockIntegrationHeldResource = $null
+    $integrationLockCandidateResource = $null
+    $integrationLockResource = $null
+    $integrationLockByHelper = $false
     $lockIntegrationAcquireMessage = $null
-    try {
-        $lockIntegrationHeldResult = Enter-TestDeployRebuildLock -DeploymentPath $lockIntegrationLive
-        $lockIntegrationHeldResource = & $normalizeLockResource $lockIntegrationHeldResult
-        $lockIntegrationHeldResource = & $validateTempLockResource -Resource $lockIntegrationHeldResource -ExpectedParent $lockIntegrationScenario -LivePath $lockIntegrationLive
-    } catch {
-        $lockIntegrationAcquireMessage = $_.Exception.Message
-        if ($null -ne $lockIntegrationHeldResult -and $lockIntegrationHeldResult -is [System.IDisposable]) {
-            $lockIntegrationHeldResult.Dispose()
-        }
-    }
-    $lockIntegrationHeldByHelper = $null -ne $lockIntegrationHeldResource
-    & $recordTask1B1Expectation $lockIntegrationHeldByHelper 'Task 1B1 integration acquires the production rebuild lock helper' "actual='$lockIntegrationAcquireMessage'"
+    $lockIntegrationActiveResource = $null
     $lockIntegrationHandle = $null
-    if ($lockIntegrationHeldByHelper) {
-        $lockIntegrationHandle = $lockIntegrationHeldResource.Handle
-    } else {
-        $lockIntegrationHandle = [System.IO.File]::Open(
-            $lockIntegrationFallbackPath,
-            [System.IO.FileMode]::OpenOrCreate,
-            [System.IO.FileAccess]::ReadWrite,
-            [System.IO.FileShare]::None
-        )
-    }
+    try {
+        try {
+            $lockIntegrationHeldResult = Enter-TestDeployRebuildLock -DeploymentPath $lockIntegrationLive
+            $integrationLockCandidateResource = & $normalizeLockResource $lockIntegrationHeldResult
+            $validatedIntegrationLockResource = & $assertTestLockResourceWithinScenario -Resource $integrationLockCandidateResource -ExpectedParent $lockIntegrationScenario -LivePath $lockIntegrationLive
+            $integrationLockResource = $validatedIntegrationLockResource
+            $integrationLockCandidateResource = $null
+            $integrationLockByHelper = $true
+        } catch {
+            $lockIntegrationAcquireMessage = $_.Exception.Message
+            if ($null -ne $integrationLockCandidateResource) {
+                $integrationLockCandidateResource.Handle.Dispose()
+                $integrationLockCandidateResource = $null
+            }
+            if ($null -ne $integrationLockResource) {
+                $integrationLockResource.Handle.Dispose()
+                $integrationLockResource = $null
+            }
+            if ($null -ne $lockIntegrationHeldResult -and $lockIntegrationHeldResult -is [System.IDisposable]) {
+                $lockIntegrationHeldResult.Dispose()
+            }
+            $integrationLockByHelper = $false
+        }
+        & $recordTask1B1Expectation $integrationLockByHelper 'Task 1B1 integration acquires the production rebuild lock helper' "actual='$lockIntegrationAcquireMessage'"
+        if ($integrationLockByHelper) {
+            $lockIntegrationActiveResource = $integrationLockResource
+            $integrationLockResource = $null
+            $lockIntegrationHandle = $lockIntegrationActiveResource.Handle
+        } elseif (-not $lockHelperAvailable) {
+            $integrationFallbackCandidateResource = $null
+            try {
+                $integrationFallbackHandle = [System.IO.File]::Open(
+                    $lockIntegrationFallbackPath,
+                    [System.IO.FileMode]::OpenOrCreate,
+                    [System.IO.FileAccess]::ReadWrite,
+                    [System.IO.FileShare]::None
+                )
+                $integrationFallbackRawResult = [pscustomobject]@{
+                    Handle = $integrationFallbackHandle
+                    LockPath = $lockIntegrationFallbackPath
+                }
+                $integrationFallbackCandidateResource = & $normalizeLockResource $integrationFallbackRawResult
+                $validatedIntegrationFallback = & $assertTestLockResourceWithinScenario -Resource $integrationFallbackCandidateResource -ExpectedParent $lockIntegrationScenario -LivePath $lockIntegrationLive
+                $lockIntegrationActiveResource = $validatedIntegrationFallback
+                $integrationFallbackCandidateResource = $null
+                $lockIntegrationHandle = $lockIntegrationActiveResource.Handle
+            } finally {
+                if ($null -ne $integrationFallbackCandidateResource) {
+                    $integrationFallbackCandidateResource.Handle.Dispose()
+                    $integrationFallbackCandidateResource = $null
+                }
+            }
+        }
+
+        # As with the first acquire, a returned-but-rejected helper candidate
+        # disables fallback and prevents all subsequent active-path operations.
+        if ($null -ne $lockIntegrationActiveResource) {
     $lockIntegrationParentBefore = & $getTask1B1ParentInventory $lockIntegrationScenario
     $lockIntegrationEnvHandle = $null
     $lockIntegrationCommands = New-Object 'System.Collections.Generic.List[string]'
@@ -2315,9 +2558,7 @@ public static class Task1B1NativeFileIdentity
     } finally {
         if ($null -ne $lockIntegrationEnvHandle) {
             $lockIntegrationEnvHandle.Dispose()
-        }
-        if ($null -ne $lockIntegrationHandle) {
-            $lockIntegrationHandle.Dispose()
+            $lockIntegrationEnvHandle = $null
         }
     }
     $lockIntegrationManifestAfter = & $getTransactionLiveManifest $lockIntegrationLive
@@ -2329,6 +2570,22 @@ public static class Task1B1NativeFileIdentity
     & $recordTask1B1Expectation ($lockIntegrationCloneTargets.Count -eq 0) 'Task 1B1 held-lock integration performs zero clones' "targets='$($lockIntegrationCloneTargets -join ',')' commands='$($lockIntegrationCommands -join ';')'"
     & $recordTask1B1Expectation ($lockIntegrationStops.Count -eq 0) 'Task 1B1 held-lock integration performs zero service stops' "stopped='$($lockIntegrationStops -join ',')'"
     & $recordTask1B1Expectation ($lockIntegrationDeployCalls.Count -eq 0) 'Task 1B1 held-lock integration performs zero deploys' "deployCalls=$($lockIntegrationDeployCalls.Count)"
+        }
+    } finally {
+        if ($null -ne $integrationLockCandidateResource) {
+            $integrationLockCandidateResource.Handle.Dispose()
+            $integrationLockCandidateResource = $null
+        }
+        if ($null -ne $lockIntegrationActiveResource) {
+            $lockIntegrationActiveResource.Handle.Dispose()
+            $lockIntegrationActiveResource = $null
+        }
+        $lockIntegrationHandle = $null
+        if ($null -ne $integrationLockResource) {
+            $integrationLockResource.Handle.Dispose()
+            $integrationLockResource = $null
+        }
+    }
     $task1B1ScenariosExecuted.Add('held-lock rebuild integration') | Out-Null
 
     & $recordTask1B1Expectation ($task1B1ScenariosExecuted.Count -eq 5) 'Task 1B1 executes every requested path/reparse/lock scenario' "executed='$($task1B1ScenariosExecuted -join ',')'"
