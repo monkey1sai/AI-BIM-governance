@@ -1776,6 +1776,8 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
       bucket: "bim-control", count: 1,
       objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000013", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
+    // R8：A1 mount 會打 getTestDataProjects()；預設 stub 空清單（不標），個別測試可覆寫。
+    vi.spyOn(coordinatorClient, "getTestDataProjects").mockResolvedValue({ projects: [] });
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -1798,6 +1800,19 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { sel.value = path; sel.dispatchEvent(new Event("change", { bubbles: true })); });
     await clickByTestId("a1-step-pick");
   };
+
+  it("[R8 測試資料標記] local_fs 選項對 config 清單內專案加〔測試資料〕；MinIO 選項不標", async () => {
+    (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockResolvedValue({ projects: ["270"] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-localfs-select"]')!;
+    const optionTexts = Array.from(sel.options).map((o) => o.textContent ?? "");
+    expect(optionTexts.some((s) => s.includes("〔測試資料〕") && s.includes("270"))).toBe(true);
+    // MinIO＝真實資料監控來源，不標測試資料（R8）。
+    expect(container.innerHTML.split("a1-minio-select")[1]?.includes("〔測試資料〕") ?? false).toBe(false);
+  });
 
   it("[IDS picker] A1 IDS 欄位預設顯示 sample IDS path，開啟資料夾後沿用目前目錄填入檔名", async () => {
     const root = createRoot(container);

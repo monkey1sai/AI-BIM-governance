@@ -592,4 +592,8 @@ export const coordinatorClient = {
   // 與 coordinator ledger getConversionRecords 不同源）。後端不改（N2/N4）。
   getConversionsHistory: () =>
     jsonGet<{ items: DevConversionRecord[]; count?: number }>("/api/dev/conversions"),
+  // R8（2026-07-10）：local_fs 測試 fixtures 專案清單（coordinator config 驅動；
+  // 前端只渲染「測試資料」badge，編號不進程式碼——D-05／鐵律 #3）。
+  getTestDataProjects: () =>
+    jsonGet<{ projects: string[] }>("/api/dev/test-data-projects"),
 };

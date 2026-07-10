@@ -339,6 +339,16 @@ export function A1GovernanceWorkbenchPage() {
   const [conversionRetryBusy, setConversionRetryBusy] = useState(false);
   const [conversionRetryErr, setConversionRetryErr] = useState<string | null>(null);
   const idsFileInputRef = useRef<HTMLInputElement>(null);
+  // R8：local_fs 測試 fixtures 專案清單（coordinator config 驅動）。取不到＝空清單＝不標，
+  // 誠實降級不阻塞選檔（MinIO 為真實資料監控來源，不標測試資料）。
+  const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getTestDataProjects()
+      .then((r) => { if (alive) setTestDataProjects(r.projects); })
+      .catch(() => { /* 取不到就不標；不擋 A1 流程 */ });
+    return () => { alive = false; };
+  }, []);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
   const issueGenRef = useRef(0);
@@ -921,7 +931,7 @@ export function A1GovernanceWorkbenchPage() {
                 </option>
                 {localOptions.map((option) => (
                   <option key={option.version.path} value={option.version.path}>
-                    {option.projectId} · {option.modelId} · {option.version.name} · {formatBytes(option.version.size_bytes)}
+                    {testDataProjects.includes(option.projectId) ? t("〔測試資料〕", "[test data] ") : ""}{option.projectId} · {option.modelId} · {option.version.name} · {formatBytes(option.version.size_bytes)}
                   </option>
                 ))}
               </select>
