@@ -7,19 +7,23 @@ Worktree: `C:\Repos\active\iot\AI-BIM-governance.worktrees\codex-governance-auto
 
 Read-only acceptance review. No scheduled task was registered, no live candidate was applied, and no credential, token, private key, or environment value is included. Inspected `CODEX_HOME`: `C:\Users\IOT\.codex`.
 
-## Acceptance gates
+## Acceptance gates (evidence-qualified)
 
 | Gate | Result | Evidence / exact expectation |
 |---|---|---|
-| Redacted reports | PASS | Paths, statuses, and hash contracts only; no secret values. |
-| Applied state | NOT OBSERVED | No live applied manifest was present. Each applied item MUST contain exact version, full 40-hex source SHA where applicable, archive/closure/tree SHA-256 (64 hex), cohort, and committed journal run ID. |
-| Journal completeness | NOT OBSERVED | No live journal was present. A complete journal MUST be monotonic through `discovered -> pinned -> staged -> validated -> snapshotted -> applying -> verifying -> committed`, or terminal rollback/failure with reason and snapshot result. |
-| Candidate freshness | CONTRACT VERIFIED | Apply rejects candidates older than 24 hours or whose source SHA, archive hash, tree hash, cohort, or allowlist seal differs from current trust inputs. |
-| Snapshot retention | CONTRACT VERIFIED | Keep current snapshot plus configured rollback set; prune only after committed transaction, never the snapshot referenced by an incomplete journal. |
-| Stale candidate rejection | TESTED | Health test includes stale-candidate failure injection; maintenance harness passed. |
-| Rollback failure | TESTED | Incomplete rollback is a health failure; Apply is disabled while Audit remains available. |
-| Audit availability | CONTRACT VERIFIED | Apply-disabled state is scoped to Apply; Audit/Verify/Recover remain callable. |
-| Scheduled task state | PASS (definition only) | Audit daily 02:30; Apply Sunday 03:30; `Taipei Standard Time`; absolute `pwsh.exe -NoProfile -NonInteractive`; Interactive/Limited; `StartWhenAvailable`; `IgnoreNew`; `PT1H`. Registration intentionally not invoked. |
+| Redacted report | VERIFIED | Paths, statuses, and hash contracts only; no secret values. |
+| Maintenance unit harness | VERIFIED | All seven/eight maintenance test scripts passed from the commit tree; aggregate reported `failed count 0`. |
+| Governance check | VERIFIED | `test-agent-governance-check.ps1` passed. |
+| Scheduled task contract | VERIFIED (definition only) | Audit daily 02:30; Apply Sunday 03:30; `Taipei Standard Time`; absolute `pwsh.exe -NoProfile -NonInteractive`; Interactive/Limited; `StartWhenAvailable`; `IgnoreNew`; `PT1H`. Registration intentionally not invoked. |
+| No live side effects | VERIFIED | No live task registration or update Apply was performed; unattended updater remains disabled. |
+| `createdAtUtc` stale check | VERIFIED (direct exercise only) | The directly exercised stale-age guard rejects an expired candidate; this does not prove full orchestrator Apply wiring. |
+| Applied state / journal | UNVERIFIED | No live applied manifest or journal was present. Exact identity and phase schemas remain requirements, not observed runtime evidence. |
+| Archive/closure/tree hash through Apply | PARTIAL | Component tests cover hashing, but end-to-end orchestrator Apply wiring was not exercised. |
+| Snapshot retention/pruning | UNVERIFIED | No configured retention/pruning run or live snapshot set was observed. |
+| Stale candidate end-to-end rejection | PARTIAL | Direct age guard was exercised; full candidate loading and Apply rejection path was not. |
+| Rollback failure disables Apply / preserves Audit | UNVERIFIED | Health failure injection exists, but the complete orchestrator state transition and subsequent Audit call were not run. |
+| Post-restore hash verification | UNVERIFIED | No live restore/apply rollback drill was performed. |
+| Live Apply/rollback drill | UNVERIFIED | No live or disposable end-to-end Apply/rollback acceptance drill was run. |
 
 ## Exact identity contract
 
@@ -34,12 +38,13 @@ applied state was observed and this report must remain redacted.
 - `pwsh -NoProfile -NonInteractive -File scripts/dev/run-codex-maintenance-tests.ps1` -> PASS, `failed count 0`.
 - `pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1` -> PASS (`all assertions passed`).
 - `git diff --check` -> PASS.
-- `pytest -q` -> collection failed on 17 pre-existing environment/template cases (`carb`, `omni`, kit-manager import path, and unrendered template syntax); no maintenance test failed.
+- `pytest -q` -> collection failed on 17 pre-existing environment/template cases (`carb`, `omni`, kit-manager import path, and unrendered template syntax); this is unrelated to the maintenance harness.
 
 ## Remaining risk
 
 No live candidate/journal/applied-state was present, so this is not a claim of a
-real Apply or rollback drill. Final foreground acceptance must use a disposable
-fake home, record redacted exact identities, induce rollback failure, confirm
-Apply disabled while Audit succeeds, verify one-instance/one-hour settings, and
-remove the fake home.
+real Apply or rollback drill. The unattended updater is not enabled and Plan C
+is not fully production-ready. A future foreground acceptance must use a
+disposable fake home, record redacted exact identities, exercise orchestrator
+Apply and rollback failure, confirm Apply disabled while Audit succeeds, verify
+one-instance/one-hour settings, and remove the fake home.
