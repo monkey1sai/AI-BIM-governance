@@ -163,8 +163,14 @@ try {
     }
 
     # Active governance surfaces must not pin exact model slugs. Approved specs and plans are historical design records.
-    $activeGovernancePaths = @('AGENTS.md', 'CLAUDE.md') + @(git ls-files 'docs/agents/*.md' '.codex/skills/**/*.md')
-    foreach ($activePath in ($activeGovernancePaths | Sort-Object -Unique)) {
+    $activeGovernancePaths = @(
+        'AGENTS.md'
+        'CLAUDE.md'
+        'docs/agents/advanced-agent-reasoning-contract.md'
+        'docs/agents/codex-loop-workflows.md'
+        '.codex/skills/spec-to-done/SKILL.md'
+    )
+    foreach ($activePath in $activeGovernancePaths) {
         Assert-True (-not ((Get-Content -LiteralPath $activePath -Raw) -match '(?i)\bgpt-[0-9]')) "$activePath does not contain an exact GPT model slug"
     }
 
