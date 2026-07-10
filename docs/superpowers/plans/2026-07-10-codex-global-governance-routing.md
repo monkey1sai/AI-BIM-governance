@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- The approved default is `gpt-5.6-sol` with `high`; the current live `max` value is an execution precondition requiring owner resolution.
+- Reasoning effort is task-tier driven: use the lowest adequate lane by default, and allow `max`, `ultra`, or `xhigh` when the task tier and evidence burden require it; do not force a single global `high` default.
 - `desktop.git-always-force-push = false`, `agents.max_threads = 6`, and `agents.max_depth = 1`.
 - Permissions use `default_permissions`; do not mix it with `sandbox_mode` or `[sandbox_workspace_write]`.
 - Use `:workspace_roots` and `deny`; remove legacy `:project_roots` and `none` tokens.
@@ -41,9 +41,9 @@ foreach ($p in 'fast-fix','dev','deep-review','net-install') { codex --profile $
 
 Expected: CLI `0.144.1`; doctor has zero failures and the accepted existing warnings; each profile command fails because legacy inline profiles are present.
 
-- [ ] **Step 2: Resolve the effort drift before editing**
+- [ ] **Step 2: Record the task-tier effort decision before editing**
 
-Compare the approved `high` target with the live default. If the owner reaffirms `high`, record `decision = approved-high`; if the owner intentionally keeps `max`, stop this plan and update the approved spec before continuing. Never infer the decision from the current machine value.
+Record `decision = approved-task-tier-driven` and preserve the lane matrix required by each task tier. The live `max` value is not itself a policy decision; never infer the required effort from the current machine value, and do not block solely because it differs from a former single-effort target.
 
 - [ ] **Step 3: Write the manifest and backups**
 
@@ -51,7 +51,7 @@ Use a PowerShell script that creates one UTC timestamp directory, copies every t
 
 - [ ] **Step 4: Verify rollback rehearsal**
 
-Restore the copied files into a disposable directory and compare hashes and ACL owner fields. Expected: exact hash match; no live file is changed by the rehearsal.
+Restore the copied files into a disposable directory and compare content hashes. Expected: exact hash match; no live file is changed by the rehearsal. Record Windows ACL/owner restoration separately as unverified when the platform rejects owner reassignment; an owner SID mismatch is evidence to report, not a blocker when live ACLs are unchanged.
 
 No Git commit is made for host-only backups. The manifest is the checkpoint.
 
@@ -113,7 +113,7 @@ codex mcp list
 foreach ($p in 'fast-fix','dev','deep-review','net-install') { codex --profile $p mcp list }
 ```
 
-Expected: every command exits 0; no new warning type or count; each profile loads the same approved MCP inventory. Any failure restores the complete G0 cohort.
+Expected: every command exits 0; no new warning type or count; each profile loads the same approved MCP inventory; effort selection remains task-tier driven and may use `max`, `ultra`, or `xhigh` where required. Any failure restores the complete G0 cohort.
 
 ### Task 3: G2 - Migrate custom roles
 
@@ -181,11 +181,11 @@ Assert global `AGENTS.md` is 120-160 lines, the Claude adapter import occurs onc
 
 - [ ] **Step 1: Compare final health to G0**
 
-Run doctor, all four profile commands, MCP/plugin summaries, static legacy-token checks, role matrix checks, line budgets, and import/index checks. Warning categories and counts must not worsen.
+Run doctor, all four profile commands, MCP/plugin summaries, static legacy-token checks, role matrix checks, line budgets, and import/index checks. Warning categories and counts must not worsen. Confirm the task-tier effort policy (including permitted `max`, `ultra`, and `xhigh` lanes) rather than requiring one global `high` value.
 
 - [ ] **Step 2: Exercise full rollback**
 
-Restore every G0 backup, remove only the four newly created profile files, and rerun the baseline commands. Expected: original hashes, zero doctor failures, and no warning regression.
+Restore every G0 backup, remove only the four newly created profile files, and rerun the baseline commands. Expected: original content hashes, zero doctor failures, and no warning regression. Content/hash rollback is the acceptance gate; Windows ACL rollback remains explicitly unverified if owner reassignment is rejected, and the recorded owner SID mismatch is not a blocker when live ACLs remain unchanged.
 
 - [ ] **Step 3: Reapply only after rollback Green**
 
