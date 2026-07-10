@@ -45,12 +45,15 @@
 
 ## 1. Workspace 範圍（一句話）
 
-```text
-EDGE (external IFC Worker) -> CO (coordinator :8004) -> KIT (streaming/Kit 49100/49101)
-CO -> GOV (governance :49102); CO -> CLOUD (external control-plane callback)
-WV (web viewer :5173) -> CO and KIT (REST/Socket.IO + WebRTC/DataChannel)
-KM (Kit Manager web/API :8010) -> KIT (fleet/telemetry)
-Nodes: EDGE, CLOUD, CO, KIT, GOV, WV, KM; external EDGE/CLOUD are not runtime repos.
+```mermaid
+flowchart LR
+EDGE["[外部] 客戶落地端 IFC Worker"] -->|POST /api/external/ifc-ready| CO[bim-review-coordinator]
+CO -->|internal conversion request| KIT[bim-streaming-server]
+CO -->|/api/governance/* proxy| GOV["governance-service (:49102 loopback)"]
+CO -->|metadata-only callback outbox| CLOUD["[外部] 公司雲端 bim-control"]
+WV[web-viewer-sample] -->|REST + Socket.IO| CO
+WV -->|WebRTC + DataChannel| KIT
+KM["kit-manager web + api (:8010)"] -->|Kit fleet ops / telemetry| KIT
 ```
 
 ```txt
