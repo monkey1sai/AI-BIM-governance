@@ -29,6 +29,10 @@ services:
       KIT_SPECTATOR_MEDIA_PORT_START: ${KIT_SPECTATOR_MEDIA_PORT_START:-48008}
       KIT_SPECTATOR_PORT_STRIDE: ${KIT_SPECTATOR_PORT_STRIDE:-10}
       KIT_INSTANCE_ENDPOINTS: ${KIT_INSTANCE_ENDPOINTS:-}
+      # R8（2026-07-10）：local_fs 測試 fixtures 專案清單（A1「測試資料」badge）。coordinator 容器
+      # 的 runtime env 只能走 compose 透傳（.env 不掛進容器——與 MINIO_WATCH_* 同型）；
+      # 預設空＝不標，部署區在 .env.web-plane.host-kit 設 TEST_DATA_PROJECT_IDS=270,889,990,271。
+      TEST_DATA_PROJECT_IDS: ${TEST_DATA_PROJECT_IDS:-}
       # IFC_DOWNLOAD_STRICT:控制 HTTP 取 IFC 失敗時的行為。
       # false(此 dev default):fetch 失敗時 fallback 寫 placeholder,demo loop 不中斷。
       # production MUST 設 "true":strict 下 HTTP 拿不到 IFC(non-2xx)直接回 502 +
