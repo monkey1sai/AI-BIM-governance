@@ -50,7 +50,7 @@ function Test-TestDeployBrokenGitFile {
     try {
         $gitFileText = [System.IO.File]::ReadAllText($GitPath).Trim()
     } catch {
-        return $true
+        throw "deployment gitfile inspection failed for '$GitPath': $($_.Exception.Message)"
     }
 
     if ($gitFileText -notmatch '^gitdir:\s*(.+)$') {
@@ -497,12 +497,17 @@ function Invoke-TestDeployRebuild {
                 }.GetNewClosure()
             }
             $deployZoneRunDir = Join-Path $deployRoot 'scripts\.run'
+            $serviceStopFailures = New-Object 'System.Collections.Generic.List[string]'
             foreach ($serviceName in @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')) {
                 try {
                     & $effectiveServiceStopper $serviceName $deployZoneRunDir | Out-Null
                 } catch {
-                    Write-Host "[rebuild-test-deploy] WARNING best-effort stop of '$serviceName' failed (continuing to cutover): $($_.Exception.Message)"
+                    $serviceStopFailures.Add("$serviceName`: $($_.Exception.Message)") | Out-Null
+                    Write-Host "[rebuild-test-deploy] WARNING stop of '$serviceName' failed (remaining stops will still be attempted): $($_.Exception.Message)"
                 }
+            }
+            if ($serviceStopFailures.Count -gt 0) {
+                throw "deployment service stop failed: $($serviceStopFailures -join '; ')"
             }
 
             $liveMovedToPrevious = $false

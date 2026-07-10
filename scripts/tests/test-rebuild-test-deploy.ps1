@@ -992,9 +992,6 @@ try {
         New-Item -ItemType Directory -Path (Join-Path $canonicalTarget '.git') -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $canonicalTarget 'scripts') -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $canonicalTarget 'bim-review-coordinator') -Force | Out-Null
-        [System.IO.File]::WriteAllBytes((Join-Path $canonicalTarget '.env.example'), [byte[]](35, 10))
-        [System.IO.File]::WriteAllBytes((Join-Path $canonicalTarget 'bim-review-coordinator\.env.example'), [byte[]](35, 10))
-        [System.IO.File]::WriteAllBytes((Join-Path $canonicalTarget '.env.web-plane.host-kit.example'), [byte[]](35, 10))
         $markerBytes = [System.Text.Encoding]::UTF8.GetBytes($MarkerContent)
         [System.IO.File]::WriteAllBytes((Join-Path $canonicalTarget $transactionProvenanceMarker), $markerBytes)
         if ($IncludeDeployScript) {
@@ -1100,7 +1097,10 @@ try {
     $nonGitStageSafe = $false
     if ($nonGitCloneTargets.Count -eq 1) {
         $nonGitCandidate = $nonGitCloneTargets[0].TrimEnd($transactionPathTrimChars)
-        $nonGitStageSafe = $nonGitCandidate.StartsWith("$nonGitCanonicalScenario$([System.IO.Path]::DirectorySeparatorChar)", [System.StringComparison]::OrdinalIgnoreCase) -and
+        $nonGitCandidateParent = ([System.IO.Path]::GetFullPath((Split-Path -Parent $nonGitCandidate))).TrimEnd($transactionPathTrimChars)
+        $nonGitLiveParent = ([System.IO.Path]::GetFullPath((Split-Path -Parent $nonGitCanonicalLive))).TrimEnd($transactionPathTrimChars)
+        $nonGitStageSafe = $nonGitCandidateParent.Equals($nonGitLiveParent, [System.StringComparison]::OrdinalIgnoreCase) -and
+            $nonGitCandidate.StartsWith("$nonGitCanonicalScenario$([System.IO.Path]::DirectorySeparatorChar)", [System.StringComparison]::OrdinalIgnoreCase) -and
             -not $nonGitCandidate.Equals($nonGitCanonicalLive, [System.StringComparison]::OrdinalIgnoreCase) -and
             -not $nonGitCandidate.StartsWith("$nonGitCanonicalLive$([System.IO.Path]::DirectorySeparatorChar)", [System.StringComparison]::OrdinalIgnoreCase)
     }
@@ -1185,6 +1185,12 @@ try {
     foreach ($relativePath in $transactionFixturePaths | Where-Object { $_ -ne 'live-sentinel.bin' }) {
         & $recordTransactionExpectation ($brokenGitfileHashesAfter[$relativePath] -eq $brokenGitfileHashesBefore[$relativePath]) 'Task 1A.2 preserved env remains SHA256-identical' "path='$relativePath' before='$($brokenGitfileHashesBefore[$relativePath])' after='$($brokenGitfileHashesAfter[$relativePath])'"
     }
+    $brokenGitfileEnvExamples = @(
+        '.env.example',
+        'bim-review-coordinator\.env.example',
+        '.env.web-plane.host-kit.example'
+    ) | Where-Object { Test-Path -LiteralPath (Join-Path $brokenGitfileLiveRoot $_) -PathType Leaf }
+    & $recordTransactionExpectation (@($brokenGitfileEnvExamples).Count -eq 0) 'Task 1A.2 staged env restore does not require .example files' "unexpectedExamples='$($brokenGitfileEnvExamples -join ',')'"
     & $recordTransactionExpectation ($brokenGitfileDeployCalls.Count -eq 1 -and $brokenGitfileDeployCalls[0] -eq $brokenGitfileLiveRoot) 'Task 1A.2 deploy runs from replacement live checkout' "deployRoots='$($brokenGitfileDeployCalls -join ',')'"
 
     # Task 1A.3: a valid standalone checkout with the wrong origin is rejected
@@ -1307,6 +1313,155 @@ try {
     & $recordTransactionExpectation ($missingDeployStoppedServices.Count -eq 0) 'Task 1A.4 missing deploy script fails before service stop' "stopped='$($missingDeployStoppedServices -join ',')'"
     & $recordTransactionExpectation ($missingDeployDeployCalls.Count -eq 0) 'Task 1A.4 missing deploy script fails before deploy' "deployCalls=$($missingDeployDeployCalls.Count)"
     & $recordTransactionExpectation ($missingDeployManifestAfter.Serialized -ceq $missingDeployManifestBefore.Serialized) 'Task 1A.4 missing deploy script leaves complete live manifest identical' "beforeManifest='$($missingDeployManifestBefore.Sha256)' afterManifest='$($missingDeployManifestAfter.Sha256)'"
+
+    # Task 1A.5: a syntactically valid gitfile that cannot be inspected is an
+    # indeterminate checkout, not proof of a broken checkout. Fail closed before
+    # clone/stage/stop/deploy while a real Windows exclusive handle blocks reads.
+    $unreadableGitfileScenarioRoot = Join-Path $sandbox 'transaction-unreadable-gitfile'
+    $unreadableGitfileLiveRoot = Join-Path $unreadableGitfileScenarioRoot 'live'
+    & $newTransactionFixture $unreadableGitfileLiveRoot
+    $validLinkedGitDir = Join-Path $unreadableGitfileScenarioRoot 'valid-linked-gitdir'
+    New-Item -ItemType Directory -Path $validLinkedGitDir -Force | Out-Null
+    $unreadableGitfilePath = Join-Path $unreadableGitfileLiveRoot '.git'
+    [System.IO.File]::WriteAllBytes(
+        $unreadableGitfilePath,
+        [System.Text.Encoding]::ASCII.GetBytes("gitdir: $validLinkedGitDir`r`n")
+    )
+    $unreadableGitfileManifestBefore = & $getTransactionLiveManifest $unreadableGitfileLiveRoot
+    & $assertTransactionManifestCoverage -Manifest $unreadableGitfileManifestBefore -ExpectedGitType 'file'
+    $unreadableGitfileCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $unreadableGitfileStoppedServices = New-Object 'System.Collections.Generic.List[string]'
+    $unreadableGitfileDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:unreadableGitfileCloneTargets = $unreadableGitfileCloneTargets
+    $script:unreadableGitfileStoppedServices = $unreadableGitfileStoppedServices
+    $script:unreadableGitfileDeployCalls = $unreadableGitfileDeployCalls
+    $unreadableGitfileRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments -contains 'clone') {
+            $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $transactionOriginUrl
+            $script:unreadableGitfileCloneTargets.Add($cloneInvocation.Target) | Out-Null
+            return [pscustomobject]@{ ExitCode = 92; Output = 'inspection failure must not reach clone' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $unreadableGitfileStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:unreadableGitfileStoppedServices.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $unreadableGitfileDeployRunner = {
+        param([string] $DeployRoot)
+        $script:unreadableGitfileDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $unreadableGitfileFailureMessage = $null
+    $unreadableGitfileHandle = $null
+    try {
+        $unreadableGitfileHandle = [System.IO.File]::Open(
+            $unreadableGitfilePath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        try {
+            Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $unreadableGitfileLiveRoot -AllowNonFixedPathForTests -CommandRunner $unreadableGitfileRunner -DeployRunner $unreadableGitfileDeployRunner -ServiceStopper $unreadableGitfileStopper | Out-Null
+        } catch {
+            $unreadableGitfileFailureMessage = $_.Exception.Message
+        }
+    } finally {
+        if ($null -ne $unreadableGitfileHandle) {
+            $unreadableGitfileHandle.Dispose()
+        }
+    }
+    $unreadableGitfileManifestAfter = & $getTransactionLiveManifest $unreadableGitfileLiveRoot
+    $unreadableGitfileLiveLeaf = Split-Path -Leaf $unreadableGitfileLiveRoot
+    $unreadableGitfileResidue = @(Get-ChildItem -LiteralPath $unreadableGitfileScenarioRoot -Directory -Force | Where-Object {
+        $_.Name -like ".$unreadableGitfileLiveLeaf.rebuild-stage-*" -or
+        $_.Name -like ".$unreadableGitfileLiveLeaf.rebuild-previous-*"
+    })
+    $unreadableGitfileResidueNames = @($unreadableGitfileResidue | ForEach-Object { $_.Name })
+    & $recordTransactionExpectation (-not [string]::IsNullOrWhiteSpace($unreadableGitfileFailureMessage) -and $unreadableGitfileFailureMessage -match 'deployment gitfile inspection failed') 'Task 1A.5 unreadable gitfile inspection fails closed' "actual='$unreadableGitfileFailureMessage'"
+    & $recordTransactionExpectation ($unreadableGitfileCloneTargets.Count -eq 0) 'Task 1A.5 unreadable gitfile fails before clone or stage' "targets='$($unreadableGitfileCloneTargets -join ',')'"
+    & $recordTransactionExpectation ($unreadableGitfileStoppedServices.Count -eq 0) 'Task 1A.5 unreadable gitfile fails before service stop' "stopped='$($unreadableGitfileStoppedServices -join ',')'"
+    & $recordTransactionExpectation ($unreadableGitfileDeployCalls.Count -eq 0) 'Task 1A.5 unreadable gitfile fails before deploy' "deployCalls=$($unreadableGitfileDeployCalls.Count)"
+    & $recordTransactionExpectation ($unreadableGitfileManifestAfter.Serialized -ceq $unreadableGitfileManifestBefore.Serialized) 'Task 1A.5 unreadable gitfile leaves complete live manifest identical' "beforeManifest='$($unreadableGitfileManifestBefore.Sha256)' afterManifest='$($unreadableGitfileManifestAfter.Sha256)'"
+    & $recordTransactionExpectation ($unreadableGitfileResidue.Count -eq 0) 'Task 1A.5 unreadable gitfile leaves no transaction residue' "residue='$($unreadableGitfileResidueNames -join ',')'"
+
+    # Task 1A.6: staged replacement service-stop failures are aggregated after
+    # every owned service is attempted, then block before the first Directory.Move.
+    $serviceStopFailureScenarioRoot = Join-Path $sandbox 'transaction-service-stop-failure'
+    $serviceStopFailureLiveRoot = Join-Path $serviceStopFailureScenarioRoot 'live'
+    & $newTransactionFixture $serviceStopFailureLiveRoot
+    $serviceStopFailureManifestBefore = & $getTransactionLiveManifest $serviceStopFailureLiveRoot
+    & $assertTransactionManifestCoverage -Manifest $serviceStopFailureManifestBefore -ExpectedGitType 'missing'
+    $serviceStopFailureMarkerContent = "scenario=service-stop-failure`nmode=OriginMain`noriginUrlSha256=$transactionOriginUrlHash`ncommit=$transactionOriginCommit`n"
+    $serviceStopFailureCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $serviceStopAttempts = New-Object 'System.Collections.Generic.List[string]'
+    $serviceStopFailureDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:serviceStopFailureCloneTargets = $serviceStopFailureCloneTargets
+    $script:serviceStopAttempts = $serviceStopAttempts
+    $script:serviceStopFailureDeployCalls = $serviceStopFailureDeployCalls
+    $serviceStopFailureRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments -contains 'clone') {
+            $cloneInvocation = & $resolveTransactionCloneInvocation -Arguments $Arguments -ExpectedOrigin $transactionOriginUrl
+            $script:serviceStopFailureCloneTargets.Add($cloneInvocation.Target) | Out-Null
+            & $newPreparedTransactionStage -Target $cloneInvocation.Target -ScenarioRoot $serviceStopFailureScenarioRoot -LiveRoot $serviceStopFailureLiveRoot -MarkerContent $serviceStopFailureMarkerContent -IncludeDeployScript $true | Out-Null
+            return [pscustomobject]@{ ExitCode = 0; Output = 'prepared stage for service-stop failure' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit.Substring(0, 7) }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $serviceStopFailureStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:serviceStopAttempts.Add($ServiceName) | Out-Null
+        if ($ServiceName -eq 'bim-streaming-conversion-service') {
+            throw 'injected deployment-owned service stop failure'
+        }
+    }.GetNewClosure()
+    $serviceStopFailureDeployRunner = {
+        param([string] $DeployRoot)
+        $script:serviceStopFailureDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $serviceStopFailureMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $serviceStopFailureLiveRoot -AllowNonFixedPathForTests -CommandRunner $serviceStopFailureRunner -DeployRunner $serviceStopFailureDeployRunner -ServiceStopper $serviceStopFailureStopper | Out-Null
+    } catch {
+        $serviceStopFailureMessage = $_.Exception.Message
+    }
+    $serviceStopFailureManifestAfter = & $getTransactionLiveManifest $serviceStopFailureLiveRoot
+    $serviceStopFailureLiveLeaf = Split-Path -Leaf $serviceStopFailureLiveRoot
+    $serviceStopFailureResidue = @(Get-ChildItem -LiteralPath $serviceStopFailureScenarioRoot -Directory -Force | Where-Object {
+        $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-stage-*" -or
+        $_.Name -like ".$serviceStopFailureLiveLeaf.rebuild-previous-*"
+    })
+    $serviceStopFailureResidueNames = @($serviceStopFailureResidue | ForEach-Object { $_.Name })
+    $expectedStoppedServices = @('bim-streaming-server', 'bim-streaming-conversion-service', 'governance-service')
+    $allStopAttemptsObserved = $serviceStopAttempts.Count -eq $expectedStoppedServices.Count
+    foreach ($serviceName in $expectedStoppedServices) {
+        $allStopAttemptsObserved = $allStopAttemptsObserved -and ($serviceStopAttempts -contains $serviceName)
+    }
+    & $recordTransactionExpectation (-not [string]::IsNullOrWhiteSpace($serviceStopFailureMessage) -and $serviceStopFailureMessage -match 'deployment service stop failed') 'Task 1A.6 staged service-stop failure is surfaced' "actual='$serviceStopFailureMessage'"
+    & $recordTransactionExpectation $allStopAttemptsObserved 'Task 1A.6 all deployment-owned service stops are attempted' "attempts='$($serviceStopAttempts -join ',')'"
+    & $recordTransactionExpectation ($serviceStopFailureManifestAfter.Serialized -ceq $serviceStopFailureManifestBefore.Serialized) 'Task 1A.6 service-stop failure leaves complete live manifest identical' "beforeManifest='$($serviceStopFailureManifestBefore.Sha256)' afterManifest='$($serviceStopFailureManifestAfter.Sha256)'"
+    & $recordTransactionExpectation ($serviceStopFailureDeployCalls.Count -eq 0) 'Task 1A.6 service-stop failure blocks deploy' "deployCalls=$($serviceStopFailureDeployCalls.Count)"
+    & $recordTransactionExpectation ($serviceStopFailureResidue.Count -eq 0) 'Task 1A.6 service-stop failure leaves no stage or previous residue' "residue='$($serviceStopFailureResidueNames -join ',')'"
 
     if ($transactionRedFailures.Count -gt 0) {
         throw "Task 1A wished-for RED behaviors unmet:$([Environment]::NewLine) - $($transactionRedFailures -join "$([Environment]::NewLine) - ")"
