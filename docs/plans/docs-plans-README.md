@@ -133,7 +133,7 @@ A1/A2/A3/A5 共用同一 Issue/BCF schema（見 v3 §2.0.3），不要各做各�
 | MCP sidecars | `9901/9902/9903` | kit-mcp / usd-code-mcp / omni-ui-mcp 官方驗證（**dev-time 驗證工具，非 golden-path runtime、不由 deploy.ps1 編排**） | — |
 
 ### 9. IFC diff / BCF 對齊 IfcOpenShell 官方語意
-版本比對現行採**自製多級鍵引擎**（`governance-service/diff_engine`：GlobalId→(is_a,Tag)→type+Name+loc；moved 用 placement Δ、property 用 pset hash；語意對齊 ifcdiff——GlobalId 主鍵、JSON 輸出）。**2026-07-10 簽核（R2）**：選型理由＝三級配對抗 GUID churn＋moved 責任語意＋直接對接 Issue/3D schema；已知限制＝跨 IFC schema 比對不保證正確，碰到跨 schema 需求時再評估官方 `ifcdiff`。BCF 用官方 bcf 庫語意（現行 2.1 保留，3.0 為升級目標）。
+版本比對現行採**自製多級鍵引擎**（`governance-service/diff_engine`：GlobalId→(is_a,Tag)→type+Name+loc；moved 用 placement Δ、property 用 pset hash；語意對齊 ifcdiff——GlobalId 主鍵、JSON 輸出）。**2026-07-10 簽核（R2）**：選型理由＝三級配對抗 GUID churn＋moved 責任語意＋直接對接 Issue/3D schema；已知限制＝跨 IFC schema 比對不保證正確，碰到跨 schema 需求時再評估官方 `ifcdiff`。（2026-07-10 實測：270 機電 v1→v2 與 v2→v3 皆純增量、零 GUID churn，兩引擎輸出同構——三級配對屬防禦性設計尚無自家資料實證；詳 `artifacts/2026-07-10-a2-diff-vs-ifcdiff-experiment.md`。）BCF 用官方 bcf 庫語意（現行 2.1 保留，3.0 為升級目標）。
 
 ### 10. IFC→USD 對齊 IfcConvert 官方能力邊界
 IfcConvert 無 USD 輸出；自製 IFC→USD 必須：(a) 以 GlobalId 命名 prim（`G_<sanitized_guid>`）、(b) 出 mapping coverage 報告（不承諾 100% 無損）；備援路線 `IfcConvert --use-element-guids` → glb。

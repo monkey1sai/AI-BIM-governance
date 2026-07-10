@@ -1,5 +1,10 @@
 # plans×code 修復輪 Implementation Plan（2026-07-10）
 
+> **✅ 全數落地（2026-07-10）**：Wave A＝PR #321、Wave B＝PR #322、Wave C＝PR #324、Wave D＝PR-D（本 PR）。
+> 逐 task 完成狀態與發現修正（F4 誤報、W4 縮小修法、C1 清單調整、D4 改 env opt-in、D6 實驗結論）
+> 見 spec `docs/superpowers/specs/2026-07-10-plans-code-remediation-design.md` §4.1 落地紀錄；
+> 本檔 checkbox 不逐格回寫（完成真相＝spec 落地紀錄＋merged PR）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 依 2026-07-10 分析輪與 grill 裁決（spec：`docs/superpowers/specs/2026-07-10-plans-code-remediation-design.md`），把「裁決文件落地＋docs stale 同步＋合規 code 修＋衛生/golden path＋品質小修」以 Wave A–D 四個 PR 收口。
