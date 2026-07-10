@@ -1467,10 +1467,572 @@ try {
         throw "Task 1A wished-for RED behaviors unmet:$([Environment]::NewLine) - $($transactionRedFailures -join "$([Environment]::NewLine) - ")"
     }
 
+    # Task 1B1 RED: path safety and the stable same-parent rebuild lock must be
+    # enforced before env backup, clone/stage, service stop, or deploy.  The
+    # junction fixtures below are real Windows reparse points.  Their cleanup
+    # resolves and verifies both link and target inside this temp sandbox, then
+    # deletes only the link itself (never recursively through the junction).
+    # Redirect the library's fixed-path variable into temp for this RED block as
+    # an additional safety net against a partial helper ignoring its test path.
+    $task1B1OriginalFixedPath = $script:TestDeployFixedPath
+    $script:TestDeployFixedPath = Join-Path $sandbox 'task-1b1-fixed-path-override'
+    $task1B1RedFailures = New-Object 'System.Collections.Generic.List[string]'
+    $task1B1ScenariosExecuted = New-Object 'System.Collections.Generic.List[string]'
+    $recordTask1B1Expectation = {
+        param(
+            [Parameter(Mandatory = $true)][bool] $Condition,
+            [Parameter(Mandatory = $true)][string] $Behavior,
+            [Parameter(Mandatory = $true)][string] $Details
+        )
+
+        if (-not $Condition) {
+            $task1B1RedFailures.Add("$Behavior -- $Details") | Out-Null
+        }
+    }.GetNewClosure()
+    $removeVerifiedTempJunction = {
+        param(
+            [Parameter(Mandatory = $true)][string] $LinkPath,
+            [Parameter(Mandatory = $true)][string] $ExpectedTarget
+        )
+
+        $canonicalSandbox = ([System.IO.Path]::GetFullPath($sandbox)).TrimEnd($transactionPathTrimChars)
+        $canonicalLink = ([System.IO.Path]::GetFullPath($LinkPath)).TrimEnd($transactionPathTrimChars)
+        $canonicalExpectedTarget = ([System.IO.Path]::GetFullPath($ExpectedTarget)).TrimEnd($transactionPathTrimChars)
+        $sandboxPrefix = "$canonicalSandbox$([System.IO.Path]::DirectorySeparatorChar)"
+        foreach ($candidate in @($canonicalLink, $canonicalExpectedTarget)) {
+            if (-not $candidate.StartsWith($sandboxPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Task 1B1 junction cleanup refused path outside sandbox: '$candidate'"
+            }
+        }
+        if ($canonicalLink.Equals($canonicalExpectedTarget, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Task 1B1 junction cleanup refused identical link and target paths'
+        }
+
+        $linkItem = Get-Item -LiteralPath $canonicalLink -Force -ErrorAction Stop
+        if (-not [bool]($linkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw "Task 1B1 junction cleanup refused non-reparse path: '$canonicalLink'"
+        }
+        $resolvedTargetItem = $linkItem.ResolveLinkTarget($true)
+        if ($null -eq $resolvedTargetItem) {
+            throw "Task 1B1 junction cleanup could not resolve target: '$canonicalLink'"
+        }
+        $canonicalResolvedTarget = ([System.IO.Path]::GetFullPath($resolvedTargetItem.FullName)).TrimEnd($transactionPathTrimChars)
+        if (-not $canonicalResolvedTarget.Equals($canonicalExpectedTarget, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Task 1B1 junction cleanup target mismatch. expected='$canonicalExpectedTarget' actual='$canonicalResolvedTarget'"
+        }
+
+        [System.IO.Directory]::Delete($canonicalLink, $false)
+        if (Test-Path -LiteralPath $canonicalLink) {
+            throw "Task 1B1 junction cleanup failed to remove link: '$canonicalLink'"
+        }
+        if (-not (Test-Path -LiteralPath $canonicalExpectedTarget -PathType Container)) {
+            throw "Task 1B1 junction cleanup removed or lost target: '$canonicalExpectedTarget'"
+        }
+    }.GetNewClosure()
+    $newPathBoundaryDoubles = {
+        $originUrl = $transactionOriginUrl
+        $commands = New-Object 'System.Collections.Generic.List[string]'
+        $cloneTargets = New-Object 'System.Collections.Generic.List[string]'
+        $stoppedServices = New-Object 'System.Collections.Generic.List[string]'
+        $deployCalls = New-Object 'System.Collections.Generic.List[string]'
+        $runner = {
+            param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+            $commandText = $Arguments -join ' '
+            $commands.Add($commandText) | Out-Null
+            if ($commandText -eq 'remote get-url origin') {
+                return [pscustomobject]@{ ExitCode = 0; Output = $originUrl }
+            }
+            if ($Arguments -contains 'clone') {
+                $cloneTargets.Add([System.IO.Path]::GetFullPath([string]$Arguments[-1])) | Out-Null
+                return [pscustomobject]@{ ExitCode = 97; Output = 'path-safety rejection must precede clone' }
+            }
+            return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+        }.GetNewClosure()
+        $stopper = {
+            param([string] $ServiceName, [string] $ServiceRunDir)
+            $stoppedServices.Add($ServiceName) | Out-Null
+        }.GetNewClosure()
+        $deployRunner = {
+            param([string] $DeployRoot)
+            $deployCalls.Add($DeployRoot) | Out-Null
+            return [pscustomobject]@{ ExitCode = 0 }
+        }.GetNewClosure()
+
+        return [pscustomobject]@{
+            Commands = $commands
+            CloneTargets = $cloneTargets
+            StoppedServices = $stoppedServices
+            DeployCalls = $deployCalls
+            Runner = $runner
+            Stopper = $stopper
+            DeployRunner = $deployRunner
+        }
+    }.GetNewClosure()
+    $normalizeLockResource = {
+        param([Parameter(Mandatory = $true)] $Result)
+
+        $handle = $null
+        if ($Result -is [System.IO.Stream]) {
+            $handle = $Result
+        } elseif ($null -ne $Result.PSObject.Properties['Handle']) {
+            $handle = $Result.Handle
+        } elseif ($null -ne $Result.PSObject.Properties['Stream']) {
+            $handle = $Result.Stream
+        }
+        if ($null -eq $handle -or $handle -isnot [System.IDisposable]) {
+            throw 'Enter-TestDeployRebuildLock did not return a disposable lock handle'
+        }
+
+        try {
+            $declaredLockPath = $null
+            if ($null -ne $Result.PSObject.Properties['LockPath']) {
+                $declaredLockPath = [string]$Result.LockPath
+            }
+            $handleLockPath = if ($null -ne $handle.PSObject.Properties['Name']) { [string]$handle.Name } else { $null }
+            if (-not [string]::IsNullOrWhiteSpace($declaredLockPath) -and -not [string]::IsNullOrWhiteSpace($handleLockPath)) {
+                $canonicalDeclaredPath = [System.IO.Path]::GetFullPath($declaredLockPath)
+                $canonicalHandlePath = [System.IO.Path]::GetFullPath($handleLockPath)
+                if (-not $canonicalDeclaredPath.Equals($canonicalHandlePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    throw "Enter-TestDeployRebuildLock returned mismatched handle and lock paths. declared='$canonicalDeclaredPath' handle='$canonicalHandlePath'"
+                }
+            }
+            $lockPath = if (-not [string]::IsNullOrWhiteSpace($handleLockPath)) { $handleLockPath } else { $declaredLockPath }
+            if ([string]::IsNullOrWhiteSpace($lockPath)) {
+                throw 'Enter-TestDeployRebuildLock did not expose the lock file path'
+            }
+            $canonicalLockPath = [System.IO.Path]::GetFullPath($lockPath)
+        } catch {
+            $handle.Dispose()
+            throw
+        }
+
+        return [pscustomobject]@{
+            Handle = $handle
+            LockPath = $canonicalLockPath
+        }
+    }
+    $validateTempLockResource = {
+        param(
+            [Parameter(Mandatory = $true)] $Resource,
+            [Parameter(Mandatory = $true)][string] $ExpectedParent,
+            [Parameter(Mandatory = $true)][string] $LivePath
+        )
+
+        $canonicalSandbox = ([System.IO.Path]::GetFullPath($sandbox)).TrimEnd($transactionPathTrimChars)
+        $canonicalExpectedParent = ([System.IO.Path]::GetFullPath($ExpectedParent)).TrimEnd($transactionPathTrimChars)
+        $canonicalLockPath = ([System.IO.Path]::GetFullPath($Resource.LockPath)).TrimEnd($transactionPathTrimChars)
+        $canonicalLockParent = ([System.IO.Path]::GetFullPath((Split-Path -Parent $canonicalLockPath))).TrimEnd($transactionPathTrimChars)
+        $canonicalLivePath = ([System.IO.Path]::GetFullPath($LivePath)).TrimEnd($transactionPathTrimChars)
+        $sandboxPrefix = "$canonicalSandbox$([System.IO.Path]::DirectorySeparatorChar)"
+
+        # Check only canonical strings until the candidate is proven to be the
+        # exact temp parent.  Never Test-Path or mutate an out-of-bound result.
+        $insideSandbox = $canonicalExpectedParent.StartsWith($sandboxPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+        $sameParent = $canonicalLockParent.Equals($canonicalExpectedParent, [System.StringComparison]::OrdinalIgnoreCase)
+        $distinctFromLive = -not $canonicalLockPath.Equals($canonicalLivePath, [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $insideSandbox -or -not $sameParent -or -not $distinctFromLive) {
+            $Resource.Handle.Dispose()
+            throw "Enter-TestDeployRebuildLock returned unsafe lock path. lock='$canonicalLockPath' expectedParent='$canonicalExpectedParent'"
+        }
+        if (-not (Test-Path -LiteralPath $canonicalLockPath -PathType Leaf)) {
+            $Resource.Handle.Dispose()
+            throw "Enter-TestDeployRebuildLock lock path is not a temp file: '$canonicalLockPath'"
+        }
+
+        return $Resource
+    }.GetNewClosure()
+    $getTask1B1ParentInventory = {
+        param([Parameter(Mandatory = $true)][string] $ParentPath)
+
+        $entries = foreach ($item in @(Get-ChildItem -LiteralPath $ParentPath -Force | Sort-Object Name)) {
+            $kind = if ($item.PSIsContainer) { 'directory' } else { 'file' }
+            $length = if ($item.PSIsContainer) { '-' } else { [string]$item.Length }
+            "$($item.Name)|$kind|$length|$($item.Attributes)"
+        }
+        return @($entries) -join "`n"
+    }
+
+    # A normal, existing temp deployment path is accepted by the wished-for
+    # standalone path-safety helper.
+    $normalSafetyRoot = Join-Path $sandbox 'task-1b1-normal-path\live'
+    New-Item -ItemType Directory -Path $normalSafetyRoot -Force | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $normalSafetyRoot 'normal-sentinel.bin'), [byte[]](1, 3, 5, 7, 9))
+    $normalSafetyFailureMessage = $null
+    try {
+        Assert-TestDeployPathSafety -Path $normalSafetyRoot | Out-Null
+    } catch {
+        $normalSafetyFailureMessage = $_.Exception.Message
+    }
+    $task1B1ScenariosExecuted.Add('normal temp deployment path') | Out-Null
+    & $recordTask1B1Expectation ([string]::IsNullOrWhiteSpace($normalSafetyFailureMessage)) 'Task 1B1 normal temp deployment path passes path safety' "actual='$normalSafetyFailureMessage'"
+
+    # The deployment root itself is a junction.  Both direct validation and the
+    # integrated rebuild entry must reject it before clone/stop/deploy, while the
+    # real target and an unrelated outside sentinel remain byte-identical.
+    $rootJunctionScenario = Join-Path $sandbox 'task-1b1-root-junction'
+    $rootJunctionTarget = Join-Path $rootJunctionScenario 'junction-target'
+    $rootJunctionLink = Join-Path $rootJunctionScenario 'live-junction'
+    $rootJunctionOutside = Join-Path $rootJunctionScenario 'outside-sentinel.bin'
+    & $newTransactionFixture $rootJunctionTarget
+    [System.IO.File]::WriteAllBytes($rootJunctionOutside, [byte[]](21, 22, 23, 200, 201))
+    $rootJunctionTargetBefore = & $getTransactionLiveManifest $rootJunctionTarget
+    $rootJunctionOutsideHashBefore = (Get-FileHash -LiteralPath $rootJunctionOutside -Algorithm SHA256).Hash
+    try {
+        New-Item -ItemType Junction -Path $rootJunctionLink -Target $rootJunctionTarget -ErrorAction Stop | Out-Null
+        $rootJunctionItem = Get-Item -LiteralPath $rootJunctionLink -Force
+        Assert-True ([bool]($rootJunctionItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'Task 1B1 fixture creates a real deployment-root reparse point'
+
+        $rootJunctionDirectMessage = $null
+        try {
+            Assert-TestDeployPathSafety -Path $rootJunctionLink | Out-Null
+        } catch {
+            $rootJunctionDirectMessage = $_.Exception.Message
+        }
+
+        $rootJunctionDoubles = & $newPathBoundaryDoubles
+        $rootJunctionInvokeMessage = $null
+        try {
+            Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $rootJunctionLink -AllowNonFixedPathForTests -CommandRunner $rootJunctionDoubles.Runner -DeployRunner $rootJunctionDoubles.DeployRunner -ServiceStopper $rootJunctionDoubles.Stopper | Out-Null
+        } catch {
+            $rootJunctionInvokeMessage = $_.Exception.Message
+        }
+        $rootJunctionTargetAfter = & $getTransactionLiveManifest $rootJunctionTarget
+        $rootJunctionOutsideHashAfter = (Get-FileHash -LiteralPath $rootJunctionOutside -Algorithm SHA256).Hash
+        $rootJunctionStillReparse = [bool]((Get-Item -LiteralPath $rootJunctionLink -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+
+        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($rootJunctionDirectMessage) -and $rootJunctionDirectMessage -match 'deployment path contains reparse point') 'Task 1B1 root junction direct check fails closed with stable error' "actual='$rootJunctionDirectMessage'"
+        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($rootJunctionInvokeMessage) -and $rootJunctionInvokeMessage -match 'deployment path contains reparse point') 'Task 1B1 root junction rebuild fails closed with stable error' "actual='$rootJunctionInvokeMessage'"
+        & $recordTask1B1Expectation ($rootJunctionDoubles.CloneTargets.Count -eq 0) 'Task 1B1 root junction fails before clone' "targets='$($rootJunctionDoubles.CloneTargets -join ',')' commands='$($rootJunctionDoubles.Commands -join ';')'"
+        & $recordTask1B1Expectation ($rootJunctionDoubles.StoppedServices.Count -eq 0) 'Task 1B1 root junction fails before service stop' "stopped='$($rootJunctionDoubles.StoppedServices -join ',')'"
+        & $recordTask1B1Expectation ($rootJunctionDoubles.DeployCalls.Count -eq 0) 'Task 1B1 root junction fails before deploy' "deployCalls=$($rootJunctionDoubles.DeployCalls.Count)"
+        & $recordTask1B1Expectation ($rootJunctionTargetAfter.Serialized -ceq $rootJunctionTargetBefore.Serialized) 'Task 1B1 root junction target remains complete and byte-identical' "before='$($rootJunctionTargetBefore.Sha256)' after='$($rootJunctionTargetAfter.Sha256)'"
+        & $recordTask1B1Expectation ($rootJunctionOutsideHashAfter -eq $rootJunctionOutsideHashBefore) 'Task 1B1 root junction leaves outside data byte-identical' "before='$rootJunctionOutsideHashBefore' after='$rootJunctionOutsideHashAfter'"
+        & $recordTask1B1Expectation $rootJunctionStillReparse 'Task 1B1 root junction rejection does not replace or traverse the link' "path='$rootJunctionLink'"
+        $task1B1ScenariosExecuted.Add('deployment root junction') | Out-Null
+    } finally {
+        if (Test-Path -LiteralPath $rootJunctionLink) {
+            & $removeVerifiedTempJunction -LinkPath $rootJunctionLink -ExpectedTarget $rootJunctionTarget
+        }
+    }
+    Assert-True (Test-Path -LiteralPath $rootJunctionTarget -PathType Container) 'Task 1B1 root-junction link-only cleanup preserves target directory'
+    $rootJunctionTargetAfterCleanup = & $getTransactionLiveManifest $rootJunctionTarget
+    Assert-Equal $rootJunctionTargetBefore.Serialized $rootJunctionTargetAfterCleanup.Serialized 'Task 1B1 root-junction link-only cleanup preserves complete target manifest'
+    Assert-Equal $rootJunctionOutsideHashBefore (Get-FileHash -LiteralPath $rootJunctionOutside -Algorithm SHA256).Hash 'Task 1B1 root-junction cleanup preserves outside sentinel'
+
+    # The deployment lives below a junction ancestor.  This must be rejected
+    # without creating a same-parent lock/stage through that ancestor.
+    $ancestorJunctionScenario = Join-Path $sandbox 'task-1b1-ancestor-junction'
+    $ancestorJunctionTarget = Join-Path $ancestorJunctionScenario 'junction-target'
+    $ancestorJunctionActualLive = Join-Path $ancestorJunctionTarget 'live'
+    $ancestorJunctionLink = Join-Path $ancestorJunctionScenario 'linked-parent'
+    $ancestorJunctionViaLink = Join-Path $ancestorJunctionLink 'live'
+    $ancestorJunctionOutside = Join-Path $ancestorJunctionScenario 'outside-sentinel.bin'
+    & $newTransactionFixture $ancestorJunctionActualLive
+    [System.IO.File]::WriteAllBytes($ancestorJunctionOutside, [byte[]](31, 32, 33, 210, 211))
+    $ancestorJunctionTargetBefore = & $getTransactionLiveManifest $ancestorJunctionTarget
+    $ancestorJunctionOutsideHashBefore = (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash
+    try {
+        New-Item -ItemType Junction -Path $ancestorJunctionLink -Target $ancestorJunctionTarget -ErrorAction Stop | Out-Null
+        $ancestorJunctionItem = Get-Item -LiteralPath $ancestorJunctionLink -Force
+        Assert-True ([bool]($ancestorJunctionItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'Task 1B1 fixture creates a real ancestor reparse point'
+
+        $ancestorJunctionDirectMessage = $null
+        try {
+            Assert-TestDeployPathSafety -Path $ancestorJunctionViaLink | Out-Null
+        } catch {
+            $ancestorJunctionDirectMessage = $_.Exception.Message
+        }
+
+        $ancestorJunctionDoubles = & $newPathBoundaryDoubles
+        $ancestorJunctionInvokeMessage = $null
+        try {
+            Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $ancestorJunctionViaLink -AllowNonFixedPathForTests -CommandRunner $ancestorJunctionDoubles.Runner -DeployRunner $ancestorJunctionDoubles.DeployRunner -ServiceStopper $ancestorJunctionDoubles.Stopper | Out-Null
+        } catch {
+            $ancestorJunctionInvokeMessage = $_.Exception.Message
+        }
+        $ancestorJunctionTargetAfter = & $getTransactionLiveManifest $ancestorJunctionTarget
+        $ancestorJunctionOutsideHashAfter = (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash
+        $ancestorJunctionStillReparse = [bool]((Get-Item -LiteralPath $ancestorJunctionLink -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+
+        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($ancestorJunctionDirectMessage) -and $ancestorJunctionDirectMessage -match 'deployment path contains reparse point') 'Task 1B1 ancestor junction direct check fails closed with stable error' "actual='$ancestorJunctionDirectMessage'"
+        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($ancestorJunctionInvokeMessage) -and $ancestorJunctionInvokeMessage -match 'deployment path contains reparse point') 'Task 1B1 ancestor junction rebuild fails closed with stable error' "actual='$ancestorJunctionInvokeMessage'"
+        & $recordTask1B1Expectation ($ancestorJunctionDoubles.CloneTargets.Count -eq 0) 'Task 1B1 ancestor junction fails before clone' "targets='$($ancestorJunctionDoubles.CloneTargets -join ',')' commands='$($ancestorJunctionDoubles.Commands -join ';')'"
+        & $recordTask1B1Expectation ($ancestorJunctionDoubles.StoppedServices.Count -eq 0) 'Task 1B1 ancestor junction fails before service stop' "stopped='$($ancestorJunctionDoubles.StoppedServices -join ',')'"
+        & $recordTask1B1Expectation ($ancestorJunctionDoubles.DeployCalls.Count -eq 0) 'Task 1B1 ancestor junction fails before deploy' "deployCalls=$($ancestorJunctionDoubles.DeployCalls.Count)"
+        & $recordTask1B1Expectation ($ancestorJunctionTargetAfter.Serialized -ceq $ancestorJunctionTargetBefore.Serialized) 'Task 1B1 ancestor junction target remains complete and byte-identical' "before='$($ancestorJunctionTargetBefore.Sha256)' after='$($ancestorJunctionTargetAfter.Sha256)'"
+        & $recordTask1B1Expectation ($ancestorJunctionOutsideHashAfter -eq $ancestorJunctionOutsideHashBefore) 'Task 1B1 ancestor junction leaves outside data byte-identical' "before='$ancestorJunctionOutsideHashBefore' after='$ancestorJunctionOutsideHashAfter'"
+        & $recordTask1B1Expectation $ancestorJunctionStillReparse 'Task 1B1 ancestor junction rejection does not replace or traverse the link' "path='$ancestorJunctionLink'"
+        $task1B1ScenariosExecuted.Add('existing ancestor junction') | Out-Null
+    } finally {
+        if (Test-Path -LiteralPath $ancestorJunctionLink) {
+            & $removeVerifiedTempJunction -LinkPath $ancestorJunctionLink -ExpectedTarget $ancestorJunctionTarget
+        }
+    }
+    Assert-True (Test-Path -LiteralPath $ancestorJunctionTarget -PathType Container) 'Task 1B1 ancestor-junction link-only cleanup preserves target directory'
+    $ancestorJunctionTargetAfterCleanup = & $getTransactionLiveManifest $ancestorJunctionTarget
+    Assert-Equal $ancestorJunctionTargetBefore.Serialized $ancestorJunctionTargetAfterCleanup.Serialized 'Task 1B1 ancestor-junction link-only cleanup preserves complete target manifest'
+    Assert-Equal $ancestorJunctionOutsideHashBefore (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash 'Task 1B1 ancestor-junction cleanup preserves outside sentinel'
+
+    # The lock helper returns a disposable exclusive handle.  A second acquire
+    # must get the stable contention error; after disposal the same file (marked
+    # with a deterministic creation time) must be reacquirable, not recreated.
+    $lockScenarioRoot = Join-Path $sandbox 'task-1b1-exclusive-lock'
+    $lockLiveRoot = Join-Path $lockScenarioRoot 'live'
+    New-Item -ItemType Directory -Path $lockLiveRoot -Force | Out-Null
+    $fallbackLockPath = Join-Path $lockScenarioRoot ".$((Split-Path -Leaf $lockLiveRoot)).rebuild.lock"
+    $firstLockResource = $null
+    $firstLockResult = $null
+    $firstLockAcquireMessage = $null
+    try {
+        $firstLockResult = Enter-TestDeployRebuildLock -DeploymentPath $lockLiveRoot
+        $firstLockResource = & $normalizeLockResource $firstLockResult
+        $firstLockResource = & $validateTempLockResource -Resource $firstLockResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
+    } catch {
+        $firstLockAcquireMessage = $_.Exception.Message
+        if ($null -ne $firstLockResult -and $firstLockResult -is [System.IDisposable]) {
+            $firstLockResult.Dispose()
+        }
+    }
+    $firstLockAcquiredByHelper = $null -ne $firstLockResource
+    & $recordTask1B1Expectation $firstLockAcquiredByHelper 'Task 1B1 first rebuild lock acquire succeeds' "actual='$firstLockAcquireMessage'"
+
+    $activeLockHandle = $null
+    $activeLockPath = $fallbackLockPath
+    if ($firstLockAcquiredByHelper) {
+        $activeLockHandle = $firstLockResource.Handle
+        $activeLockPath = $firstLockResource.LockPath
+    } else {
+        $activeLockHandle = [System.IO.File]::Open(
+            $fallbackLockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    }
+    $canonicalLockParent = ([System.IO.Path]::GetFullPath((Split-Path -Parent $activeLockPath))).TrimEnd($transactionPathTrimChars)
+    $canonicalLiveParent = ([System.IO.Path]::GetFullPath((Split-Path -Parent $lockLiveRoot))).TrimEnd($transactionPathTrimChars)
+    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $canonicalLockParent.Equals($canonicalLiveParent, [System.StringComparison]::OrdinalIgnoreCase)) 'Task 1B1 lock file is a same-parent sibling of live' "lock='$activeLockPath' live='$lockLiveRoot'"
+    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and (Test-Path -LiteralPath $activeLockPath -PathType Leaf)) 'Task 1B1 lock file exists while first handle is held' "lock='$activeLockPath'"
+
+    $rawReadHandle = $null
+    $rawReadOpenMessage = $null
+    try {
+        $rawReadHandle = [System.IO.File]::Open(
+            $activeLockPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::ReadWrite
+        )
+    } catch {
+        $rawReadOpenMessage = $_.Exception.Message
+    } finally {
+        if ($null -ne $rawReadHandle) {
+            $rawReadHandle.Dispose()
+        }
+    }
+    $rawWriteHandle = $null
+    $rawWriteOpenMessage = $null
+    try {
+        $rawWriteHandle = [System.IO.File]::Open(
+            $activeLockPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::ReadWrite
+        )
+    } catch {
+        $rawWriteOpenMessage = $_.Exception.Message
+    } finally {
+        if ($null -ne $rawWriteHandle) {
+            $rawWriteHandle.Dispose()
+        }
+    }
+    $rawReadWriteHandle = $null
+    $rawReadWriteOpenMessage = $null
+    try {
+        $rawReadWriteHandle = [System.IO.File]::Open(
+            $activeLockPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::ReadWrite
+        )
+    } catch {
+        $rawReadWriteOpenMessage = $_.Exception.Message
+    } finally {
+        if ($null -ne $rawReadWriteHandle) {
+            $rawReadWriteHandle.Dispose()
+        }
+    }
+    $rawFileShareNoneObserved =
+        -not [string]::IsNullOrWhiteSpace($rawReadOpenMessage) -and
+        -not [string]::IsNullOrWhiteSpace($rawWriteOpenMessage) -and
+        -not [string]::IsNullOrWhiteSpace($rawReadWriteOpenMessage)
+    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $rawFileShareNoneObserved) 'Task 1B1 first lock handle enforces OS FileShare.None' "read='$rawReadOpenMessage' write='$rawWriteOpenMessage' readWrite='$rawReadWriteOpenMessage'"
+
+    $secondAcquireMessage = $null
+    $unexpectedSecondResult = $null
+    try {
+        $unexpectedSecondResult = Enter-TestDeployRebuildLock -DeploymentPath $lockLiveRoot
+    } catch {
+        $secondAcquireMessage = $_.Exception.Message
+    } finally {
+        if ($null -ne $unexpectedSecondResult) {
+            try {
+                $unexpectedSecondResource = & $normalizeLockResource $unexpectedSecondResult
+                $unexpectedSecondResource.Handle.Dispose()
+            } catch {
+                if ($unexpectedSecondResult -is [System.IDisposable]) {
+                    $unexpectedSecondResult.Dispose()
+                }
+            }
+        }
+        if ($null -ne $activeLockHandle) {
+            $activeLockHandle.Dispose()
+        }
+    }
+    & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($secondAcquireMessage) -and $secondAcquireMessage -match 'test deploy rebuild already in progress') 'Task 1B1 second concurrent acquire fails with stable error' "actual='$secondAcquireMessage'"
+
+    $lockPersistedAfterFirstDispose = Test-Path -LiteralPath $activeLockPath -PathType Leaf
+    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $lockPersistedAfterFirstDispose) 'Task 1B1 lock file remains after first handle disposal' "lock='$activeLockPath'"
+    if (-not $lockPersistedAfterFirstDispose) {
+        New-Item -ItemType File -Path $activeLockPath -Force | Out-Null
+    }
+    $stableLockCreationTime = [DateTime]::SpecifyKind([datetime]'2001-02-03T04:05:06', [DateTimeKind]::Utc)
+    [System.IO.File]::SetCreationTimeUtc($activeLockPath, $stableLockCreationTime)
+
+    $reacquiredLockResult = $null
+    $reacquiredLockResource = $null
+    $reacquireMessage = $null
+    try {
+        $reacquiredLockResult = Enter-TestDeployRebuildLock -DeploymentPath $lockLiveRoot
+        $reacquiredLockResource = & $normalizeLockResource $reacquiredLockResult
+        $reacquiredLockResource = & $validateTempLockResource -Resource $reacquiredLockResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
+    } catch {
+        $reacquireMessage = $_.Exception.Message
+        if ($null -ne $reacquiredLockResult -and $reacquiredLockResult -is [System.IDisposable]) {
+            $reacquiredLockResult.Dispose()
+        }
+    } finally {
+        if ($null -ne $reacquiredLockResource) {
+            $reacquiredLockResource.Handle.Dispose()
+        }
+    }
+    $reacquiredByHelper = $null -ne $reacquiredLockResource
+    & $recordTask1B1Expectation $reacquiredByHelper 'Task 1B1 lock can be reacquired after first handle disposal' "actual='$reacquireMessage'"
+    $reacquiredSamePath = $reacquiredByHelper -and $firstLockAcquiredByHelper -and $reacquiredLockResource.LockPath.Equals($activeLockPath, [System.StringComparison]::OrdinalIgnoreCase)
+    & $recordTask1B1Expectation $reacquiredSamePath 'Task 1B1 reacquire uses the same stable lock file path' "first='$activeLockPath' second='$(if ($reacquiredByHelper) { $reacquiredLockResource.LockPath } else { '<none>' })'"
+    $lockStillExists = Test-Path -LiteralPath $activeLockPath -PathType Leaf
+    $lockCreationTimeAfterReacquire = if ($lockStillExists) { [System.IO.File]::GetCreationTimeUtc($activeLockPath) } else { [datetime]::MinValue }
+    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $reacquiredByHelper -and $lockStillExists -and $lockCreationTimeAfterReacquire -eq $stableLockCreationTime) 'Task 1B1 lock file is retained without delete/recreate' "exists=$lockStillExists expectedCreation='$($stableLockCreationTime.ToString('O'))' actualCreation='$($lockCreationTimeAfterReacquire.ToString('O'))'"
+    $task1B1ScenariosExecuted.Add('exclusive lock contention and reacquire') | Out-Null
+
+    # Integration ordering tripwire: hold both the deployment lock and an env
+    # file with FileShare.None.  Correct code reports lock contention before it
+    # ever touches the unreadable env file; missing/late lock wiring instead leaks
+    # an env sharing error.  Only process boundaries are injected.
+    $lockIntegrationScenario = Join-Path $sandbox 'task-1b1-lock-integration'
+    $lockIntegrationLive = Join-Path $lockIntegrationScenario 'live'
+    & $newTransactionFixture $lockIntegrationLive
+    $lockIntegrationManifestBefore = & $getTransactionLiveManifest $lockIntegrationLive
+    $lockIntegrationFallbackPath = Join-Path $lockIntegrationScenario ".$((Split-Path -Leaf $lockIntegrationLive)).rebuild.lock"
+    $lockIntegrationHeldResult = $null
+    $lockIntegrationHeldResource = $null
+    $lockIntegrationAcquireMessage = $null
+    try {
+        $lockIntegrationHeldResult = Enter-TestDeployRebuildLock -DeploymentPath $lockIntegrationLive
+        $lockIntegrationHeldResource = & $normalizeLockResource $lockIntegrationHeldResult
+        $lockIntegrationHeldResource = & $validateTempLockResource -Resource $lockIntegrationHeldResource -ExpectedParent $lockIntegrationScenario -LivePath $lockIntegrationLive
+    } catch {
+        $lockIntegrationAcquireMessage = $_.Exception.Message
+        if ($null -ne $lockIntegrationHeldResult -and $lockIntegrationHeldResult -is [System.IDisposable]) {
+            $lockIntegrationHeldResult.Dispose()
+        }
+    }
+    $lockIntegrationHeldByHelper = $null -ne $lockIntegrationHeldResource
+    & $recordTask1B1Expectation $lockIntegrationHeldByHelper 'Task 1B1 integration acquires the production rebuild lock helper' "actual='$lockIntegrationAcquireMessage'"
+    $lockIntegrationHandle = $null
+    if ($lockIntegrationHeldByHelper) {
+        $lockIntegrationHandle = $lockIntegrationHeldResource.Handle
+    } else {
+        $lockIntegrationHandle = [System.IO.File]::Open(
+            $lockIntegrationFallbackPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    }
+    $lockIntegrationParentBefore = & $getTask1B1ParentInventory $lockIntegrationScenario
+    $lockIntegrationEnvHandle = $null
+    $lockIntegrationCommands = New-Object 'System.Collections.Generic.List[string]'
+    $lockIntegrationCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $lockIntegrationStops = New-Object 'System.Collections.Generic.List[string]'
+    $lockIntegrationDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $lockIntegrationOrigin = $transactionOriginUrl
+    $lockIntegrationRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        $lockIntegrationCommands.Add($commandText) | Out-Null
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $lockIntegrationOrigin }
+        }
+        if ($Arguments -contains 'clone') {
+            $lockIntegrationCloneTargets.Add([System.IO.Path]::GetFullPath([string]$Arguments[-1])) | Out-Null
+            return [pscustomobject]@{ ExitCode = 98; Output = 'lock contention must precede clone' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $lockIntegrationStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $lockIntegrationStops.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $lockIntegrationDeployRunner = {
+        param([string] $DeployRoot)
+        $lockIntegrationDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $lockIntegrationFailureMessage = $null
+    try {
+        $lockIntegrationEnvHandle = [System.IO.File]::Open(
+            (Join-Path $lockIntegrationLive '.env'),
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        try {
+            Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $lockIntegrationLive -AllowNonFixedPathForTests -CommandRunner $lockIntegrationRunner -DeployRunner $lockIntegrationDeployRunner -ServiceStopper $lockIntegrationStopper | Out-Null
+        } catch {
+            $lockIntegrationFailureMessage = $_.Exception.Message
+        }
+    } finally {
+        if ($null -ne $lockIntegrationEnvHandle) {
+            $lockIntegrationEnvHandle.Dispose()
+        }
+        if ($null -ne $lockIntegrationHandle) {
+            $lockIntegrationHandle.Dispose()
+        }
+    }
+    $lockIntegrationManifestAfter = & $getTransactionLiveManifest $lockIntegrationLive
+    $lockIntegrationParentAfter = & $getTask1B1ParentInventory $lockIntegrationScenario
+    & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($lockIntegrationFailureMessage) -and $lockIntegrationFailureMessage -match 'test deploy rebuild already in progress') 'Task 1B1 held deployment lock blocks rebuild before env backup' "actual='$lockIntegrationFailureMessage' commands='$($lockIntegrationCommands -join ';')'"
+    & $recordTask1B1Expectation ($lockIntegrationManifestAfter.Serialized -ceq $lockIntegrationManifestBefore.Serialized) 'Task 1B1 held-lock integration leaves complete live manifest identical' "before='$($lockIntegrationManifestBefore.Sha256)' after='$($lockIntegrationManifestAfter.Sha256)'"
+    & $recordTask1B1Expectation ($lockIntegrationParentAfter -ceq $lockIntegrationParentBefore) 'Task 1B1 held-lock integration creates no run/stage/backup residue' "before='$lockIntegrationParentBefore' after='$lockIntegrationParentAfter'"
+    & $recordTask1B1Expectation ($lockIntegrationCloneTargets.Count -eq 0) 'Task 1B1 held-lock integration performs zero clones' "targets='$($lockIntegrationCloneTargets -join ',')' commands='$($lockIntegrationCommands -join ';')'"
+    & $recordTask1B1Expectation ($lockIntegrationStops.Count -eq 0) 'Task 1B1 held-lock integration performs zero service stops' "stopped='$($lockIntegrationStops -join ',')'"
+    & $recordTask1B1Expectation ($lockIntegrationDeployCalls.Count -eq 0) 'Task 1B1 held-lock integration performs zero deploys' "deployCalls=$($lockIntegrationDeployCalls.Count)"
+    $task1B1ScenariosExecuted.Add('held-lock rebuild integration') | Out-Null
+
+    & $recordTask1B1Expectation ($task1B1ScenariosExecuted.Count -eq 5) 'Task 1B1 executes every requested path/reparse/lock scenario' "executed='$($task1B1ScenariosExecuted -join ',')'"
+    Write-Host "[Task 1B1 RED] scenarios executed: $($task1B1ScenariosExecuted -join '; ')"
+    if ($task1B1RedFailures.Count -gt 0) {
+        throw "Task 1B1 wished-for RED behaviors unmet:$([Environment]::NewLine) - $($task1B1RedFailures -join "$([Environment]::NewLine) - ")"
+    }
+
     Write-TestPass $testName
 } catch {
     Write-TestFail $testName $_.Exception.Message
     throw
 } finally {
+    if ($null -ne (Get-Variable -Name task1B1OriginalFixedPath -ErrorAction SilentlyContinue)) {
+        $script:TestDeployFixedPath = $task1B1OriginalFixedPath
+    }
     Remove-TestSandbox -Path $sandbox
 }
