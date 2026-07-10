@@ -11,3 +11,6 @@ Fixed containment validation, recovery fail-closed behavior, lock-safe runner va
 
 ## Reparse and durability follow-up
 Path validation now walks parent components, relative candidates fail deterministically, journal data validates absolute paths, atomic writes flush before rename, and rolling_back recovery is supported.
+
+## Regression coverage follow-up
+Runner now rejects relative CodexHome at parameter validation; existing boundary tests remain green.

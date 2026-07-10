@@ -1,4 +1,5 @@
 param([ValidateSet('Audit','Apply','Recover','Verify')][string]$Mode='Audit',[Parameter(Mandatory)][string]$CodexHome,[string]$CandidatePath)
+if(-not [IO.Path]::IsPathRooted($CodexHome)){throw 'CodexHome must be absolute'}
 . "$PSScriptRoot/../lib/codex-governance/Maintenance.Common.ps1"; . "$PSScriptRoot/../lib/codex-governance/Maintenance.Transaction.ps1"
 $codexHomePath=[IO.Path]::GetFullPath($CodexHome); if($CandidatePath){if(-not [IO.Path]::IsPathRooted($CandidatePath)){throw 'CandidatePath must be absolute'}; Resolve-ContainedPath -Root $codexHomePath -Path $CandidatePath | Out-Null}; $lock=Enter-MaintenanceLock -Root $codexHomePath
 try { $journal=Join-Path $codexHomePath 'maintenance-journal.json'; if($Mode -eq 'Recover' -and (Test-Path $journal)){ Resume-InterruptedTransaction -JournalPath $journal -CodexHome $codexHomePath } elseif($Mode -ne 'Audit'){ throw "Mode '$Mode' is not implemented" } else {[pscustomobject]@{Mode=$Mode;CodexHome=$codexHomePath;CandidatePath=$CandidatePath}} } finally {$lock.Dispose()}
