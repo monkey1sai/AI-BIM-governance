@@ -137,6 +137,11 @@ try {
     # line budgets, sub-file index completeness, dead-link liveness, mirror declaration, mirror pairing.
     $agentsBody = Get-Content -LiteralPath 'AGENTS.md' -Raw
     $claudeBody = Get-Content -LiteralPath 'CLAUDE.md' -Raw
+    foreach ($generatedBody in @($agentsBody, $claudeBody)) {
+        $generatedMatch = [regex]::Match($generatedBody, '(?s)<!-- gitnexus:start -->.*?<!-- gitnexus:end -->')
+        Assert-True $generatedMatch.Success 'GitNexus generated block has both markers'
+        Assert-True (($generatedMatch.Value -split "`r?`n").Count -gt 1) 'GitNexus generated block remains multiline'
+    }
     $agentsLineCount = @(Get-Content -LiteralPath 'AGENTS.md').Count
     $claudeLineCount = @(Get-Content -LiteralPath 'CLAUDE.md').Count
     foreach ($budget in @(
