@@ -18,6 +18,21 @@
 - Do not alter MCP registrations, auth, tokens, or credentials.
 - Global `AGENTS.md` target is 120-160 physical lines; repo-local budgets are handled in Plan B.
 
+### Task-Tier Effort Matrix
+
+Effort is selected from the task tier, evidence burden, and rollback cost; it is not inferred from the machine's current default. The coordinator chooses the lane first, then uses the named profile or role where specified:
+
+| Trigger / task tier | Required effort | Profile / role use |
+|---|---|---|
+| Trivial or simple: one source-of-truth lookup, formatting, or a single safe command with one verification | `low` | Coordinator on `fast-fix`; no worker unless the source is ambiguous |
+| Non-trivial documentation or code audit: bounded multi-file discovery, docs update, type/lint/test check, or ordinary implementation | `medium` | Coordinator on `dev` or `net-install` when dependency download is required; use `explorer` for discovery and `reviewer` for a bounded review |
+| PR, architecture, integration, or E2E work: cross-module contract, user-facing flow, screenshot/trace evidence, or independent verification | `high` | Coordinator on `dev`; dispatch `reviewer`, plus `explorer` for architecture or a separate E2E verifier when the evidence surface is broad |
+| Security, deploy, permissions, migration, or destructive action: secrets/auth, production-like rollout, data loss, or irreversible external side effect | `max` | Coordinator on `deep-review`; require `security_auditor` and `reviewer`, with rollback evidence before applying changes |
+| Debug or runtime incident: failing test, startup failure, flaky behavior, performance regression, or multi-layer root-cause isolation | `xhigh` | Coordinator on `deep-review`; run `debugger` first, then `reviewer`; use `net-install` only for an explicitly required dependency fetch |
+| Highest-risk adversarial or rollback judgment: competing hypotheses after failed attempts, shared-contract breakage, incident containment, or a change that must prove safe rollback | `ultra` | Coordinator on `deep-review`; require adversarial verifier plus `security_auditor` where access/data/deploy is involved, and do not proceed without explicit rollback evidence |
+
+`max`, `ultra`, and `xhigh` are permitted only for the matching triggers above; they are not a blanket default. A role may use a higher lane than its profile only when the coordinator records the trigger and evidence burden in the task log. If a task spans rows, select the highest applicable tier and retain the corresponding reviewer and rollback gates.
+
 ---
 
 ### Task 1: G0 - Capture drift, backup, and rollback manifest
