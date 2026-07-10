@@ -35,7 +35,6 @@
 完整 A1–A10 對應、frontend operability rule、真實 IFC E2E evidence contract 與 script contract 見 `docs/agents/product-operability-and-script-contract.md`。
 
 ### Secrets / `.env` 存取
-
 - 允許：讀取 `.env`、讀寫 `.env.example`、由 `.env.example` 複製出 `.env`。
 - 不允許：修改既有 `.env` 的實際機密值。
 - Evidence 規則：agent 可為本機驗證載入 `.env`，但不得在回覆、log 摘要或 PR body echo 任何值；`.env` / `.env.example` 差異檢查預設只列 key 名稱與缺漏，不列值。
@@ -44,7 +43,6 @@
 ---
 
 ## 1. Workspace 範圍（一句話）
-
 ```mermaid
 flowchart LR
 EDGE["[外部] 客戶落地端 IFC Worker"] -->|POST /api/external/ifc-ready| CO[bim-review-coordinator]
@@ -89,7 +87,6 @@ _worker / _bim-control = 已自 repo 刪除（2026-05-18 B 方案落地），僅
 ---
 
 ## 2. Sub-files（lazy-load，何時讀哪份）
-
 | 何時需要 | 讀這份 |
 |---|---|
 | 跨 sub-repo 決策、workspace 總覽、B 方案架構決策、最重要閉環 | `docs/agents/repo-boundary-detail.md` |
