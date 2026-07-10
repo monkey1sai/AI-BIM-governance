@@ -25,8 +25,9 @@ function Test-AllowlistOwnerAcl {
  param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][ValidatePattern('^S-\d-\d+(-\d+)+$')][string]$ExpectedOwnerSid)
  if(-not (Test-Path -LiteralPath $Path)){ throw "Allowlist missing: $Path" }
  $acl=Get-Acl -LiteralPath $Path
- if(([string]$acl.Owner) -notmatch [regex]::Escape($ExpectedOwnerSid)){ throw "Allowlist owner mismatch" }
- foreach($r in $acl.Access){ if($r.AccessControlType -eq 'Allow' -and ([string]$r.IdentityReference -notmatch [regex]::Escape($ExpectedOwnerSid))){ throw "Allowlist ACL grants unexpected principal" } }
+ $ownerSid=([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value
+ if($ownerSid -ne $ExpectedOwnerSid){ throw "Allowlist owner mismatch" }
+ foreach($r in $acl.Access){ if($r.AccessControlType -eq 'Allow'){ try {$sid=([System.Security.Principal.NTAccount]$r.IdentityReference).Translate([System.Security.Principal.SecurityIdentifier]).Value} catch {$sid=[string]$r.IdentityReference}; if($sid -ne $ExpectedOwnerSid){ throw "Allowlist ACL grants unexpected principal" } } }
  return $true
 }
 function Read-SealedAllowlist {
