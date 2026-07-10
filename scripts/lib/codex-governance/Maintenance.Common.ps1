@@ -18,6 +18,8 @@ function Write-AtomicJson {
 }
 function Get-ContentTreeHash {
  param([Parameter(Mandatory)][string]$Root)
+ $rootItem=Get-Item -LiteralPath $Root -Force -ErrorAction Stop
+ if(($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){ throw "Reparse point not allowed: $Root" }
  $sha=[Security.Cryptography.SHA256]::Create(); $bytes=New-Object IO.MemoryStream
  try { $files=New-Object Collections.Generic.List[object]; $stack=New-Object Collections.Generic.Stack[string]; $stack.Push([IO.Path]::GetFullPath($Root)); while($stack.Count){$dir=$stack.Pop(); foreach($d in (Get-ChildItem -LiteralPath $dir -Directory -Force)){if(($d.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){throw "Reparse directory not allowed: $($d.FullName)"};$stack.Push($d.FullName)}; foreach($f in (Get-ChildItem -LiteralPath $dir -File -Force)){if($f.Name -notin @('maintenance.lock','maintenance-journal.json') -and $f.Name -notlike '*.tmp' -and (($f.Attributes -band [IO.FileAttributes]::ReparsePoint)-eq 0)){$files.Add($f)}} }; foreach($f in ($files|Sort-Object FullName)){ $rel=$f.FullName.Substring(([IO.Path]::GetFullPath($Root)).Length); $b=[Text.Encoding]::UTF8.GetBytes($rel+"`n");$bytes.Write($b,0,$b.Length);$fb=[IO.File]::ReadAllBytes($f.FullName);$bytes.Write($fb,0,$fb.Length) }; return ([BitConverter]::ToString($sha.ComputeHash($bytes.ToArray())) -replace '-','').ToLowerInvariant() } finally {$bytes.Dispose();$sha.Dispose()}
 }
