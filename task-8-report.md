@@ -25,6 +25,27 @@ Read-only acceptance review. No scheduled task was registered, no live candidate
 | Post-restore hash verification | UNVERIFIED | No live restore/apply rollback drill was performed. |
 | Live Apply/rollback drill | UNVERIFIED | No live or disposable end-to-end Apply/rollback acceptance drill was run. |
 
+## M9 orchestrator callback E2E evidence
+
+The orchestrator callback contract requires the following callbacks to be
+observed in one end-to-end run, in order, with the same candidate/session
+identity: `Audit` (candidate discovery and stale-age decision), `Apply`
+(preflight, snapshot, apply, and applied-state/journal write), `Verify`
+(post-apply health and applied-state confirmation), and `Recover` (rollback,
+post-restore verification, and final state transition). The evidence currently
+available does not include such a run; therefore the callback chain is recorded
+as a requirement, not as a passed acceptance claim.
+
+| M9 orchestrator assertion | Result | Evidence / gap |
+|---|---|---|
+| Required callbacks: Audit -> Apply -> Verify -> Recover | UNVERIFIED | No disposable or live orchestrator callback trace was exercised. |
+| Verify observes and records applied-state after Apply | UNVERIFIED | No live applied manifest/journal or Verify callback output was present. |
+| Apply is disabled after rollback failure | UNVERIFIED | Health-failure injection exists, but the orchestrator transition was not run. |
+| Audit remains callable after Apply is disabled | UNVERIFIED | No post-failure Audit callback was executed. |
+| Snapshots older than 30 days are retained | UNVERIFIED | No retention run or snapshot set spanning the 30-day boundary was observed. |
+| Recover tree-hash mismatch fails the run | UNVERIFIED | Recover E2E tree-hash failure assertion was not exercised. |
+| Recover failure leaves live target unchanged | UNVERIFIED | Recover E2E live-target-unchanged failure assertion was not exercised. |
+
 ## Exact identity contract
 
 Versions are exact strings; commit identities are full 40-character SHA-1;
