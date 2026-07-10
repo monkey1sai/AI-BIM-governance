@@ -10,15 +10,19 @@
 
 
 ## 2. Sub-files（lazy-load，與 AGENTS.md 同一組）
+| workspace / boundary | `docs/agents/repo-boundary-detail.md` |
+| service boundaries | `docs/agents/repo-boundaries-per-service.md` |
+| data flow / ownership | `docs/agents/repo-data-flow-and-ownership.md` |
+| product / frontend / deploy contract | `docs/agents/product-operability-and-script-contract.md` |
+| PR / Actions workflow | `docs/agents/github-workflow.md` |
+| GitNexus stale / unavailable gate | `docs/agents/gitnexus-usage.md` |
+| sub-repo verification | `docs/agents/sub-repo-verify-commands.md` |
+| advanced reasoning overlay | `docs/agents/advanced-agent-reasoning-contract.md` |
+| archive / retired services | `docs/agents/history-and-archive.md` |
 | 查需求效力序、正典路由 A.1.1、A1–A10 建成裁決（§4.4）、後端凍結契約（§1） | `docs/plans/docs-plans-README.md`（跳板）→ 各 plans 檔 |
 | 需要依任務種類／難度選擇 Codex workflow、subagents、模型 lane，或使用 `use agents` / `subagents` / `swarm` 開發 `docs/plans` 需求 | `docs/agents/codex-loop-workflows.md` |
 
-行數預算：本檔 ≤ 130 行（目標 ≤ 100）；AGENTS.md ≤ 250 行（目標 ≤ 200）。預算規範見 spec `agent-doc-context-budget`。
-
-
 ## 4. GitNexus 入口
-
-修改 code symbol 前 MUST 跑 `impact`；commit 前 MUST 跑 `detect_changes`；HIGH / CRITICAL risk 先回報再繼續。規範本文以下方自動維護區塊為準；stale 重建與 crash 復原見 `docs/agents/gitnexus-usage.md`。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
