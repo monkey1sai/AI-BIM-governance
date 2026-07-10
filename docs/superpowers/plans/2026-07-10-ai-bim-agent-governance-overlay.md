@@ -20,7 +20,7 @@
 
 ---
 
-### Task R1: Add failing governance assertions
+### Task 1: R1 - Add failing governance assertions
 
 **Files:**
 - Modify: `scripts/tests/test-agent-governance-check.ps1`
@@ -54,7 +54,7 @@ Assert the two overlays contain `C:\\Users\\IOT\\.codex\\docs\\agents\\task-rout
 
 Assert `.codex/config.toml` contains `[permissions.safe-workspace.network]`, both approved GitHub domains, and the disabled Cloudflare plugin, while not containing `sandbox_workspace_write`, `sandbox_mode`, `model =`, or `model_reasoning_effort`.
 
-### Task R2: Canonicalize repo Codex config
+### Task 2: R2 - Canonicalize repo Codex config
 
 **Files:**
 - Modify: `.codex/config.toml:1-13`
@@ -84,7 +84,7 @@ git add .codex/config.toml scripts/tests/test-agent-governance-check.ps1
 git commit -m "chore: canonicalize repo Codex config"
 ```
 
-### Task R3: Slim repo entrypoints and AI-BIM overlays
+### Task 3: R3 - Slim repo entrypoints and AI-BIM overlays
 
 **Files:**
 - Modify: `AGENTS.md`
@@ -126,7 +126,7 @@ git add AGENTS.md CLAUDE.md docs/agents/advanced-agent-reasoning-contract.md doc
 git commit -m "docs: slim AI-BIM agent governance overlays"
 ```
 
-### Task R4: Route spec-to-done by role capability
+### Task 4: R4 - Route spec-to-done by role capability
 
 **Files:**
 - Modify: `.codex/skills/spec-to-done/SKILL.md:233-249,264`
@@ -160,7 +160,7 @@ git add .codex/skills/spec-to-done/SKILL.md scripts/tests/test-agent-governance-
 git commit -m "docs: route spec-to-done by Codex roles"
 ```
 
-### Task R5: Final repository gates
+### Task 5: R5 - Final repository gates
 
 **Files:**
 - Test: all files above
@@ -179,5 +179,4 @@ Expected: pass banner, empty diff check, doctor exit 0.
 - [ ] **Step 2: Run GitNexus impact before the next plan**
 
 Use `detect_changes(scope=all, worktree=<absolute dedicated worktree>)` and cross-check `git diff --cached --name-only`. Expected: docs/config changes report zero changed symbols or a low-risk result; disclose any unavailable index as a fallback note.
-
 

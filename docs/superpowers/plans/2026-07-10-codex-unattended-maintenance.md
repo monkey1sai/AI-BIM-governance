@@ -22,7 +22,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 
 ---
 
-### Task M1: Common primitives and fake-home harness
+### Task 1: M1 - Common primitives and fake-home harness
 
 **Files:** Create scripts/lib/codex-governance/Maintenance.Common.ps1, Maintenance.Transaction.ps1, scripts/dev/Invoke-CodexGovernanceMaintenance.ps1, and tests/test-codex-maintenance-common.ps1 plus tests/test-codex-maintenance-transaction.ps1.
 
@@ -33,7 +33,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 - [ ] Step 3: Implement journal recovery for discovered -> pinned -> staged -> validated -> snapshotted -> applying -> verifying -> committed. Unfinished applying/verifying/rollback phases restore the recorded snapshot.
 - [ ] Step 4: Run both test scripts with pwsh -NoProfile. Expected: every scenario passes and fake homes are removed in finally.
 
-### Task M2: Foreground trust onboarding
+### Task 2: M2 - Foreground trust onboarding
 
 **Files:** Create Maintenance.Trust.ps1, Initialize-CodexGovernanceTrust.ps1, test-codex-maintenance-trust.ps1, and sources.allowlist.example.json.
 
@@ -43,7 +43,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 - [ ] Step 2: Implement source ID, kind, URI/path, ref policy, subpaths, validator IDs, cohort, CLI range, independent flag, native absolute paths, and capability baseline. Reject command strings.
 - [ ] Step 3: Seal canonical UTF-8 JSON with stable property ordering, atomic seal write, expected owner SID, and ACL verification before every Audit/Apply.
 
-### Task M3: CLI exact closure
+### Task 3: M3 - CLI exact closure
 
 **Files:** Create Maintenance.Cli.ps1, test-codex-maintenance-cli.ps1, and test-codex-maintenance-cli-rehearsal.ps1.
 
@@ -54,7 +54,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 - [ ] Step 3: Return deferred_active_process without changing live hashes when an active executable resolves inside target tree; otherwise snapshot and atomically swap sibling trees with a journal.
 - [ ] Step 4: Run CLI rehearsal with CurrentVersion 0.144.1 and CandidateVersion 0.144.1. Expected: closure hashes match after install/rollback and live prefix is unchanged.
 
-### Task M4: Pinned marketplace/plugin cohort
+### Task 4: M4 - Pinned marketplace/plugin cohort
 
 **Files:** Create Maintenance.Plugin.ps1 and test-codex-maintenance-plugin.ps1.
 
@@ -64,7 +64,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 - [ ] Step 2: Stage in a child process with isolated CODEX_HOME, HOME, USERPROFILE, XDG_CACHE_HOME, APPDATA, and LOCALAPPDATA; run marketplace add with a full SHA, verify staged HEAD, and snapshot enabled state.
 - [ ] Step 3: Enforce rebind gates; never fall back to moving-ref marketplace upgrade.
 
-### Task M5: Pinned skills and content safety
+### Task 5: M5 - Pinned skills and content safety
 
 **Files:** Create Maintenance.Skill.ps1 and test-codex-maintenance-skill.ps1.
 
@@ -74,7 +74,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 - [ ] Step 2: Validate every archive entry before extraction with ZipArchive; validate frontmatter, license/provenance, intentional local diffs, script inventory, capability baseline, archive hash, and tree hash.
 - [ ] Step 3: Stop on executable/code changes without a signed capability manifest; text/reference-only exact-SHA updates with unchanged capabilities use sibling staging, rename, and independent backups. Never execute downloaded scripts.
 
-### Task M6: Orchestrator and health gates
+### Task 6: M6 - Orchestrator and health gates
 
 **Files:** Modify Invoke-CodexGovernanceMaintenance.ps1; create Maintenance.Health.ps1 and test-codex-maintenance-health.ps1.
 
@@ -85,7 +85,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 - [ ] Step 3: Compare strict doctor fail/warning baseline, MCP/profile/plugin health, and rollback completeness; any regression stops and reverses the whole cohort.
 - [ ] Step 4: Back up the old updater and replace its live entry point with a fail-closed migration message or move it under bin\legacy; do not preserve Hook/Force behavior.
 
-### Task M7: Scheduled Tasks and foreground installation
+### Task 7: M7 - Scheduled Tasks and foreground installation
 
 **Files:** Create Maintenance.ScheduledTasks.ps1, Register-CodexGovernanceMaintenanceTasks.ps1, test-codex-maintenance-scheduled-tasks.ps1, and run-codex-maintenance-tests.ps1.
 
@@ -96,7 +96,7 @@ All module paths below are exact: implementation modules live under `scripts/lib
 - [ ] Step 3: Run the complete harness. Expected: every scenario reports PASS, failed count 0.
 - [ ] Step 4: Install to a fake home, run Audit, one Apply, and one rollback drill. Register Audit only after all tests; register Apply only after the drill and health report pass.
 
-### Task M8: Acceptance and retention
+### Task 8: M8 - Acceptance and retention
 
 **Files:** Read CODEX_HOME maintenance state/journal/candidates and create a redacted acceptance report.
 

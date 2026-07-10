@@ -20,7 +20,7 @@
 
 ---
 
-### Task G0: Capture drift, backup, and rollback manifest
+### Task 1: G0 - Capture drift, backup, and rollback manifest
 
 **Files:**
 - Create: `C:\Users\IOT\.codex\maintenance\preflight\20260710-global-baseline.json`
@@ -55,7 +55,7 @@ Restore the copied files into a disposable directory and compare hashes and ACL 
 
 No Git commit is made for host-only backups. The manifest is the checkpoint.
 
-### Task G1: Migrate root config and create standalone profiles
+### Task 2: G1 - Migrate root config and create standalone profiles
 
 **Files:**
 - Modify: `C:\Users\IOT\.codex\config.toml`
@@ -115,7 +115,7 @@ foreach ($p in 'fast-fix','dev','deep-review','net-install') { codex --profile $
 
 Expected: every command exits 0; no new warning type or count; each profile loads the same approved MCP inventory. Any failure restores the complete G0 cohort.
 
-### Task G2: Migrate custom roles
+### Task 3: G2 - Migrate custom roles
 
 **Files:**
 - Modify: `C:\Users\IOT\.codex\agents\explorer.toml`
@@ -143,7 +143,7 @@ Change each `sandbox_mode = "read-only"` to `default_permissions = ":read-only"`
 
 Parse each TOML with the installed Codex CLI by invoking a profile that loads the role, then assert the four required keys with a line-oriented static check. Expected: no `gpt-5.5` or `sandbox_mode` matches and doctor remains Green.
 
-### Task G3: Create global routing and maintenance source documents
+### Task 4: G3 - Create global routing and maintenance source documents
 
 **Files:**
 - Create: `C:\Users\IOT\.codex\docs\agents\task-routing.md`
@@ -174,7 +174,7 @@ Keep language, safety, evidence, coding, and done rules in global `AGENTS.md`; r
 
 Assert global `AGENTS.md` is 120-160 lines, the Claude adapter import occurs once, the dispatch table occurs only in `task-routing.md`, no global/Claude Markdown contains an exact `gpt-5.x` slug, and all referenced files exist.
 
-### Task G4: Host integration and rollback gate
+### Task 5: G4 - Host integration and rollback gate
 
 **Files:**
 - Modify: `C:\Users\IOT\.codex\maintenance\preflight\20260710-global-baseline.json`
@@ -190,4 +190,3 @@ Restore every G0 backup, remove only the four newly created profile files, and r
 - [ ] **Step 3: Reapply only after rollback Green**
 
 Reapply the validated cohort and record `appliedAtUtc`, hashes, and command summaries in the redacted manifest. Do not create Scheduled Tasks in this plan; Plan C owns registration.
-
