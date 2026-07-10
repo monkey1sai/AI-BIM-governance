@@ -1478,6 +1478,69 @@ try {
     $script:TestDeployFixedPath = Join-Path $sandbox 'task-1b1-fixed-path-override'
     $task1B1RedFailures = New-Object 'System.Collections.Generic.List[string]'
     $task1B1ScenariosExecuted = New-Object 'System.Collections.Generic.List[string]'
+    $task1B1FixtureReparsePaths = New-Object 'System.Collections.Generic.List[string]'
+
+    # Test-only Windows file identity.  Creation timestamps are not proof of the
+    # same NTFS file object, so the lock test compares volume serial + file index
+    # from GetFileInformationByHandle before and after reacquisition.
+    if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+        throw 'Task 1B1 Windows file identity is unavailable: tests require Windows'
+    }
+    if ($null -eq ('Task1B1NativeFileIdentity' -as [type])) {
+        try {
+            Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class Task1B1NativeFileIdentity
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BY_HANDLE_FILE_INFORMATION
+    {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle hFile,
+        out BY_HANDLE_FILE_INFORMATION fileInformation);
+
+    public static string Get(SafeFileHandle handle)
+    {
+        if (handle == null || handle.IsInvalid || handle.IsClosed)
+            throw new InvalidOperationException("file handle is not usable");
+
+        BY_HANDLE_FILE_INFORMATION info;
+        if (!GetFileInformationByHandle(handle, out info))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "GetFileInformationByHandle failed");
+
+        return string.Format(
+            "{0:X8}:{1:X8}{2:X8}",
+            info.VolumeSerialNumber,
+            info.FileIndexHigh,
+            info.FileIndexLow);
+    }
+}
+'@ -ErrorAction Stop
+        } catch {
+            throw "Task 1B1 Windows file identity is unavailable: $($_.Exception.Message)"
+        }
+    }
+    if ($null -eq ('Task1B1NativeFileIdentity' -as [type])) {
+        throw 'Task 1B1 Windows file identity is unavailable after Add-Type'
+    }
+
     $recordTask1B1Expectation = {
         param(
             [Parameter(Mandatory = $true)][bool] $Condition,
@@ -1489,6 +1552,11 @@ try {
             $task1B1RedFailures.Add("$Behavior -- $Details") | Out-Null
         }
     }.GetNewClosure()
+    $getTask1B1PathEntry = {
+        param([Parameter(Mandatory = $true)][string] $Path)
+
+        return Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    }
     $removeVerifiedTempJunction = {
         param(
             [Parameter(Mandatory = $true)][string] $LinkPath,
@@ -1522,10 +1590,12 @@ try {
         }
 
         [System.IO.Directory]::Delete($canonicalLink, $false)
-        if (Test-Path -LiteralPath $canonicalLink) {
+        $remainingLinkItem = & $getTask1B1PathEntry -Path $canonicalLink
+        if ($null -ne $remainingLinkItem) {
             throw "Task 1B1 junction cleanup failed to remove link: '$canonicalLink'"
         }
-        if (-not (Test-Path -LiteralPath $canonicalExpectedTarget -PathType Container)) {
+        $remainingTargetItem = Get-Item -LiteralPath $canonicalExpectedTarget -Force -ErrorAction Stop
+        if (-not $remainingTargetItem.PSIsContainer) {
             throw "Task 1B1 junction cleanup removed or lost target: '$canonicalExpectedTarget'"
         }
     }.GetNewClosure()
@@ -1651,6 +1721,98 @@ try {
         }
         return @($entries) -join "`n"
     }
+    $getTask1B1ScenarioManifest = {
+        param([Parameter(Mandatory = $true)][string] $Root)
+
+        $canonicalSandbox = ([System.IO.Path]::GetFullPath($sandbox)).TrimEnd($transactionPathTrimChars)
+        $canonicalRoot = ([System.IO.Path]::GetFullPath($Root)).TrimEnd($transactionPathTrimChars)
+        $sandboxPrefix = "$canonicalSandbox$([System.IO.Path]::DirectorySeparatorChar)"
+        if (-not $canonicalRoot.StartsWith($sandboxPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Task 1B1 scenario manifest refused root outside sandbox: '$canonicalRoot'"
+        }
+
+        $entries = New-Object 'System.Collections.Generic.List[string]'
+        $pendingDirectories = New-Object 'System.Collections.Generic.Queue[string]'
+        $pendingDirectories.Enqueue($canonicalRoot)
+        while ($pendingDirectories.Count -gt 0) {
+            $directory = $pendingDirectories.Dequeue()
+            foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force | Sort-Object FullName)) {
+                $canonicalItem = [System.IO.Path]::GetFullPath($item.FullName)
+                $relativePath = $canonicalItem.Substring($canonicalRoot.Length).TrimStart($transactionPathTrimChars)
+                $isReparse = [bool]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+                if ($isReparse) {
+                    $resolvedTarget = $item.ResolveLinkTarget($true)
+                    $resolvedMarker = if ($null -eq $resolvedTarget) {
+                        '<unresolved>'
+                    } else {
+                        [System.IO.Path]::GetFullPath($resolvedTarget.FullName)
+                    }
+                    $entries.Add("$relativePath|reparse|$($item.Attributes)|$resolvedMarker") | Out-Null
+                    continue
+                }
+                if ($item.PSIsContainer) {
+                    $entries.Add("$relativePath|directory|$($item.Attributes)|-") | Out-Null
+                    $pendingDirectories.Enqueue($canonicalItem)
+                    continue
+                }
+
+                $hash = (Get-FileHash -LiteralPath $canonicalItem -Algorithm SHA256).Hash
+                $entries.Add("$relativePath|file|$($item.Length)|$hash") | Out-Null
+            }
+        }
+
+        $serialized = @($entries.ToArray() | Sort-Object) -join "`n"
+        return [pscustomobject]@{
+            Serialized = $serialized
+            Sha256 = (& $getTransactionBytesHash -Bytes ([System.Text.Encoding]::UTF8.GetBytes($serialized)))
+        }
+    }.GetNewClosure()
+    $getTask1B1TransactionResidue = {
+        param(
+            [Parameter(Mandatory = $true)][string] $ParentPath,
+            [Parameter(Mandatory = $true)][string] $LiveLeaf
+        )
+
+        return @(Get-ChildItem -LiteralPath $ParentPath -Force | Where-Object {
+            $_.Name -like ".$LiveLeaf.rebuild-stage-*" -or
+            $_.Name -like ".$LiveLeaf.rebuild-previous-*"
+        })
+    }
+    $getTask1B1FileIdentity = {
+        param([Parameter(Mandatory = $true)] $Handle)
+
+        if ($null -eq $Handle.PSObject.Properties['SafeFileHandle']) {
+            throw 'Task 1B1 Windows file identity requires a SafeFileHandle'
+        }
+        try {
+            return [Task1B1NativeFileIdentity]::Get($Handle.SafeFileHandle)
+        } catch {
+            throw "Task 1B1 Windows file identity lookup failed: $($_.Exception.Message)"
+        }
+    }
+    $unwrapTask1B1IOException = {
+        param([Parameter(Mandatory = $true)][System.Exception] $Exception)
+
+        $candidate = $Exception
+        while ($candidate -isnot [System.IO.IOException] -and $null -ne $candidate.InnerException) {
+            $candidate = $candidate.InnerException
+        }
+        return $candidate
+    }
+    $getTask1B1SharingViolationEvidence = {
+        param($Exception)
+
+        $isIOException = $Exception -is [System.IO.IOException]
+        $hresult = if ($null -eq $Exception) { 0 } else { [int]$Exception.HResult }
+        $lowCode = $hresult -band 0xFFFF
+        return [pscustomobject]@{
+            IsIOException = $isIOException
+            Type = $(if ($null -eq $Exception) { '<none>' } else { $Exception.GetType().FullName })
+            HResult = $hresult
+            LowCode = $lowCode
+            IsSharingViolation = $isIOException -and $hresult -eq -2147024864 -and $lowCode -eq 32
+        }
+    }
 
     # A normal, existing temp deployment path is accepted by the wished-for
     # standalone path-safety helper.
@@ -1666,112 +1828,217 @@ try {
     $task1B1ScenariosExecuted.Add('normal temp deployment path') | Out-Null
     & $recordTask1B1Expectation ([string]::IsNullOrWhiteSpace($normalSafetyFailureMessage)) 'Task 1B1 normal temp deployment path passes path safety' "actual='$normalSafetyFailureMessage'"
 
-    # The deployment root itself is a junction.  Both direct validation and the
-    # integrated rebuild entry must reject it before clone/stop/deploy, while the
-    # real target and an unrelated outside sentinel remain byte-identical.
+    # The deployment root itself is a junction.  A second nested junction points
+    # at a locked binary tripwire: safe code must reject the root before it can
+    # recurse, read, copy, stage, or mutate any fixture content.
     $rootJunctionScenario = Join-Path $sandbox 'task-1b1-root-junction'
     $rootJunctionTarget = Join-Path $rootJunctionScenario 'junction-target'
     $rootJunctionLink = Join-Path $rootJunctionScenario 'live-junction'
+    $rootJunctionNestedTarget = Join-Path $rootJunctionScenario 'nested-tripwire-target'
+    $rootJunctionNestedLink = Join-Path $rootJunctionTarget 'nested-tripwire-link'
+    $rootJunctionTripwire = Join-Path $rootJunctionNestedTarget 'locked-tripwire.bin'
     $rootJunctionOutside = Join-Path $rootJunctionScenario 'outside-sentinel.bin'
     & $newTransactionFixture $rootJunctionTarget
+    New-Item -ItemType Directory -Path $rootJunctionNestedTarget -Force | Out-Null
+    [System.IO.File]::WriteAllBytes($rootJunctionTripwire, [byte[]](41, 42, 43, 240, 241, 242))
     [System.IO.File]::WriteAllBytes($rootJunctionOutside, [byte[]](21, 22, 23, 200, 201))
-    $rootJunctionTargetBefore = & $getTransactionLiveManifest $rootJunctionTarget
+    $rootJunctionDetachedTargetBaseline = & $getTask1B1ScenarioManifest $rootJunctionTarget
     $rootJunctionOutsideHashBefore = (Get-FileHash -LiteralPath $rootJunctionOutside -Algorithm SHA256).Hash
+    $rootJunctionTripwireHashBefore = (Get-FileHash -LiteralPath $rootJunctionTripwire -Algorithm SHA256).Hash
+    $rootJunctionTripwireHandle = $null
     try {
+        New-Item -ItemType Junction -Path $rootJunctionNestedLink -Target $rootJunctionNestedTarget -ErrorAction Stop | Out-Null
+        $task1B1FixtureReparsePaths.Add([System.IO.Path]::GetFullPath($rootJunctionNestedLink)) | Out-Null
         New-Item -ItemType Junction -Path $rootJunctionLink -Target $rootJunctionTarget -ErrorAction Stop | Out-Null
-        $rootJunctionItem = Get-Item -LiteralPath $rootJunctionLink -Force
+        $task1B1FixtureReparsePaths.Add([System.IO.Path]::GetFullPath($rootJunctionLink)) | Out-Null
+
+        $rootJunctionItem = Get-Item -LiteralPath $rootJunctionLink -Force -ErrorAction Stop
+        $rootNestedItem = Get-Item -LiteralPath $rootJunctionNestedLink -Force -ErrorAction Stop
         Assert-True ([bool]($rootJunctionItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'Task 1B1 fixture creates a real deployment-root reparse point'
+        Assert-True ([bool]($rootNestedItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'Task 1B1 fixture creates a nested reparse tripwire'
+        $rootJunctionTargetBefore = & $getTask1B1ScenarioManifest $rootJunctionTarget
+        $rootJunctionScenarioBefore = & $getTask1B1ScenarioManifest $rootJunctionScenario
+        $rootJunctionTripwireHandle = [System.IO.File]::Open(
+            $rootJunctionTripwire,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
 
         $rootJunctionDirectMessage = $null
+        $rootJunctionDirectException = $null
         try {
             Assert-TestDeployPathSafety -Path $rootJunctionLink | Out-Null
         } catch {
             $rootJunctionDirectMessage = $_.Exception.Message
+            $rootJunctionDirectException = & $unwrapTask1B1IOException $_.Exception
         }
 
         $rootJunctionDoubles = & $newPathBoundaryDoubles
         $rootJunctionInvokeMessage = $null
+        $rootJunctionInvokeException = $null
         try {
             Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $rootJunctionLink -AllowNonFixedPathForTests -CommandRunner $rootJunctionDoubles.Runner -DeployRunner $rootJunctionDoubles.DeployRunner -ServiceStopper $rootJunctionDoubles.Stopper | Out-Null
         } catch {
             $rootJunctionInvokeMessage = $_.Exception.Message
+            $rootJunctionInvokeException = & $unwrapTask1B1IOException $_.Exception
         }
-        $rootJunctionTargetAfter = & $getTransactionLiveManifest $rootJunctionTarget
+        $rootJunctionTripwireHandle.Dispose()
+        $rootJunctionTripwireHandle = $null
+
+        $rootJunctionTargetAfter = & $getTask1B1ScenarioManifest $rootJunctionTarget
+        $rootJunctionScenarioAfter = & $getTask1B1ScenarioManifest $rootJunctionScenario
         $rootJunctionOutsideHashAfter = (Get-FileHash -LiteralPath $rootJunctionOutside -Algorithm SHA256).Hash
-        $rootJunctionStillReparse = [bool]((Get-Item -LiteralPath $rootJunctionLink -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        $rootJunctionTripwireHashAfter = (Get-FileHash -LiteralPath $rootJunctionTripwire -Algorithm SHA256).Hash
+        $rootJunctionStillReparse = [bool]((Get-Item -LiteralPath $rootJunctionLink -Force -ErrorAction Stop).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        $rootNestedStillReparse = [bool]((Get-Item -LiteralPath $rootJunctionNestedLink -Force -ErrorAction Stop).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        $rootJunctionResidue = @(& $getTask1B1TransactionResidue -ParentPath $rootJunctionScenario -LiveLeaf (Split-Path -Leaf $rootJunctionLink))
+        $rootDirectSharingEvidence = & $getTask1B1SharingViolationEvidence $rootJunctionDirectException
+        $rootInvokeSharingEvidence = & $getTask1B1SharingViolationEvidence $rootJunctionInvokeException
 
         & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($rootJunctionDirectMessage) -and $rootJunctionDirectMessage -match 'deployment path contains reparse point') 'Task 1B1 root junction direct check fails closed with stable error' "actual='$rootJunctionDirectMessage'"
+        & $recordTask1B1Expectation (-not $rootDirectSharingEvidence.IsSharingViolation) 'Task 1B1 root junction direct check rejects before reading locked nested tripwire' "type='$($rootDirectSharingEvidence.Type)' hresult='$($rootDirectSharingEvidence.HResult)' lowCode='$($rootDirectSharingEvidence.LowCode)'"
         & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($rootJunctionInvokeMessage) -and $rootJunctionInvokeMessage -match 'deployment path contains reparse point') 'Task 1B1 root junction rebuild fails closed with stable error' "actual='$rootJunctionInvokeMessage'"
+        & $recordTask1B1Expectation (-not $rootInvokeSharingEvidence.IsSharingViolation) 'Task 1B1 root junction rebuild rejects before reading locked nested tripwire' "type='$($rootInvokeSharingEvidence.Type)' hresult='$($rootInvokeSharingEvidence.HResult)' lowCode='$($rootInvokeSharingEvidence.LowCode)'"
         & $recordTask1B1Expectation ($rootJunctionDoubles.CloneTargets.Count -eq 0) 'Task 1B1 root junction fails before clone' "targets='$($rootJunctionDoubles.CloneTargets -join ',')' commands='$($rootJunctionDoubles.Commands -join ';')'"
         & $recordTask1B1Expectation ($rootJunctionDoubles.StoppedServices.Count -eq 0) 'Task 1B1 root junction fails before service stop' "stopped='$($rootJunctionDoubles.StoppedServices -join ',')'"
         & $recordTask1B1Expectation ($rootJunctionDoubles.DeployCalls.Count -eq 0) 'Task 1B1 root junction fails before deploy' "deployCalls=$($rootJunctionDoubles.DeployCalls.Count)"
         & $recordTask1B1Expectation ($rootJunctionTargetAfter.Serialized -ceq $rootJunctionTargetBefore.Serialized) 'Task 1B1 root junction target remains complete and byte-identical' "before='$($rootJunctionTargetBefore.Sha256)' after='$($rootJunctionTargetAfter.Sha256)'"
+        & $recordTask1B1Expectation ($rootJunctionScenarioAfter.Serialized -ceq $rootJunctionScenarioBefore.Serialized) 'Task 1B1 root junction leaves complete scenario parent manifest identical' "before='$($rootJunctionScenarioBefore.Sha256)' after='$($rootJunctionScenarioAfter.Sha256)'"
+        & $recordTask1B1Expectation ($rootJunctionTripwireHashAfter -eq $rootJunctionTripwireHashBefore) 'Task 1B1 root junction leaves locked binary tripwire byte-identical' "before='$rootJunctionTripwireHashBefore' after='$rootJunctionTripwireHashAfter'"
         & $recordTask1B1Expectation ($rootJunctionOutsideHashAfter -eq $rootJunctionOutsideHashBefore) 'Task 1B1 root junction leaves outside data byte-identical' "before='$rootJunctionOutsideHashBefore' after='$rootJunctionOutsideHashAfter'"
-        & $recordTask1B1Expectation $rootJunctionStillReparse 'Task 1B1 root junction rejection does not replace or traverse the link' "path='$rootJunctionLink'"
+        & $recordTask1B1Expectation ($rootJunctionStillReparse -and $rootNestedStillReparse) 'Task 1B1 root junction rejection preserves both reparse entries until verified teardown' "root='$rootJunctionLink' nested='$rootJunctionNestedLink'"
+        & $recordTask1B1Expectation ($rootJunctionResidue.Count -eq 0) 'Task 1B1 root junction leaves no stage or previous residue' "residue='$(@($rootJunctionResidue | ForEach-Object { $_.Name }) -join ',')'"
         $task1B1ScenariosExecuted.Add('deployment root junction') | Out-Null
     } finally {
-        if (Test-Path -LiteralPath $rootJunctionLink) {
+        if ($null -ne $rootJunctionTripwireHandle) {
+            $rootJunctionTripwireHandle.Dispose()
+        }
+        $rootNestedEntry = & $getTask1B1PathEntry -Path $rootJunctionNestedLink
+        if ($null -ne $rootNestedEntry) {
+            & $removeVerifiedTempJunction -LinkPath $rootJunctionNestedLink -ExpectedTarget $rootJunctionNestedTarget
+        }
+        $rootLinkEntry = & $getTask1B1PathEntry -Path $rootJunctionLink
+        if ($null -ne $rootLinkEntry) {
             & $removeVerifiedTempJunction -LinkPath $rootJunctionLink -ExpectedTarget $rootJunctionTarget
         }
     }
-    Assert-True (Test-Path -LiteralPath $rootJunctionTarget -PathType Container) 'Task 1B1 root-junction link-only cleanup preserves target directory'
-    $rootJunctionTargetAfterCleanup = & $getTransactionLiveManifest $rootJunctionTarget
-    Assert-Equal $rootJunctionTargetBefore.Serialized $rootJunctionTargetAfterCleanup.Serialized 'Task 1B1 root-junction link-only cleanup preserves complete target manifest'
+    $rootJunctionTargetAfterCleanup = & $getTask1B1ScenarioManifest $rootJunctionTarget
+    Assert-Equal $rootJunctionDetachedTargetBaseline.Serialized $rootJunctionTargetAfterCleanup.Serialized 'Task 1B1 root-junction link-only cleanup preserves detached target manifest'
+    Assert-Equal $rootJunctionTripwireHashBefore (Get-FileHash -LiteralPath $rootJunctionTripwire -Algorithm SHA256).Hash 'Task 1B1 root-junction cleanup preserves tripwire target'
     Assert-Equal $rootJunctionOutsideHashBefore (Get-FileHash -LiteralPath $rootJunctionOutside -Algorithm SHA256).Hash 'Task 1B1 root-junction cleanup preserves outside sentinel'
 
-    # The deployment lives below a junction ancestor.  This must be rejected
-    # without creating a same-parent lock/stage through that ancestor.
+    # The deployment is three components below a junction ancestor:
+    # linked-parent\normal-a\normal-b\live.  Live and its immediate parent are
+    # ordinary directories, forcing the path guard to walk every existing
+    # component instead of checking only the leaf or direct parent.
     $ancestorJunctionScenario = Join-Path $sandbox 'task-1b1-ancestor-junction'
     $ancestorJunctionTarget = Join-Path $ancestorJunctionScenario 'junction-target'
-    $ancestorJunctionActualLive = Join-Path $ancestorJunctionTarget 'live'
+    $ancestorJunctionActualLive = Join-Path $ancestorJunctionTarget 'normal-a\normal-b\live'
+    $ancestorJunctionActualParent = Split-Path -Parent $ancestorJunctionActualLive
     $ancestorJunctionLink = Join-Path $ancestorJunctionScenario 'linked-parent'
-    $ancestorJunctionViaLink = Join-Path $ancestorJunctionLink 'live'
+    $ancestorJunctionViaLink = Join-Path $ancestorJunctionLink 'normal-a\normal-b\live'
+    $ancestorJunctionNestedTarget = Join-Path $ancestorJunctionScenario 'nested-tripwire-target'
+    $ancestorJunctionNestedLink = Join-Path $ancestorJunctionActualLive 'nested-tripwire-link'
+    $ancestorJunctionTripwire = Join-Path $ancestorJunctionNestedTarget 'locked-tripwire.bin'
     $ancestorJunctionOutside = Join-Path $ancestorJunctionScenario 'outside-sentinel.bin'
     & $newTransactionFixture $ancestorJunctionActualLive
+    New-Item -ItemType Directory -Path $ancestorJunctionNestedTarget -Force | Out-Null
+    [System.IO.File]::WriteAllBytes($ancestorJunctionTripwire, [byte[]](51, 52, 53, 250, 251, 252))
     [System.IO.File]::WriteAllBytes($ancestorJunctionOutside, [byte[]](31, 32, 33, 210, 211))
-    $ancestorJunctionTargetBefore = & $getTransactionLiveManifest $ancestorJunctionTarget
+    $ancestorJunctionDetachedTargetBaseline = & $getTask1B1ScenarioManifest $ancestorJunctionTarget
     $ancestorJunctionOutsideHashBefore = (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash
+    $ancestorJunctionTripwireHashBefore = (Get-FileHash -LiteralPath $ancestorJunctionTripwire -Algorithm SHA256).Hash
+    $ancestorJunctionTripwireHandle = $null
     try {
+        New-Item -ItemType Junction -Path $ancestorJunctionNestedLink -Target $ancestorJunctionNestedTarget -ErrorAction Stop | Out-Null
+        $task1B1FixtureReparsePaths.Add([System.IO.Path]::GetFullPath($ancestorJunctionNestedLink)) | Out-Null
         New-Item -ItemType Junction -Path $ancestorJunctionLink -Target $ancestorJunctionTarget -ErrorAction Stop | Out-Null
-        $ancestorJunctionItem = Get-Item -LiteralPath $ancestorJunctionLink -Force
-        Assert-True ([bool]($ancestorJunctionItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'Task 1B1 fixture creates a real ancestor reparse point'
+        $task1B1FixtureReparsePaths.Add([System.IO.Path]::GetFullPath($ancestorJunctionLink)) | Out-Null
+
+        $ancestorJunctionItem = Get-Item -LiteralPath $ancestorJunctionLink -Force -ErrorAction Stop
+        Assert-True ([bool]($ancestorJunctionItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'Task 1B1 fixture creates a real higher ancestor reparse point'
+        foreach ($ordinaryPath in @(
+            (Join-Path $ancestorJunctionLink 'normal-a'),
+            (Join-Path $ancestorJunctionLink 'normal-a\normal-b'),
+            $ancestorJunctionViaLink
+        )) {
+            $ordinaryItem = Get-Item -LiteralPath $ordinaryPath -Force -ErrorAction Stop
+            Assert-True (-not [bool]($ordinaryItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) "Task 1B1 deep ancestor fixture keeps component ordinary: $ordinaryPath"
+        }
+        $ancestorNestedItem = Get-Item -LiteralPath $ancestorJunctionNestedLink -Force -ErrorAction Stop
+        Assert-True ([bool]($ancestorNestedItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) 'Task 1B1 fixture creates a nested ancestor-tripwire reparse point'
+        $ancestorJunctionTargetBefore = & $getTask1B1ScenarioManifest $ancestorJunctionTarget
+        $ancestorJunctionScenarioBefore = & $getTask1B1ScenarioManifest $ancestorJunctionScenario
+        $ancestorJunctionTripwireHandle = [System.IO.File]::Open(
+            $ancestorJunctionTripwire,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
 
         $ancestorJunctionDirectMessage = $null
+        $ancestorJunctionDirectException = $null
         try {
             Assert-TestDeployPathSafety -Path $ancestorJunctionViaLink | Out-Null
         } catch {
             $ancestorJunctionDirectMessage = $_.Exception.Message
+            $ancestorJunctionDirectException = & $unwrapTask1B1IOException $_.Exception
         }
 
         $ancestorJunctionDoubles = & $newPathBoundaryDoubles
         $ancestorJunctionInvokeMessage = $null
+        $ancestorJunctionInvokeException = $null
         try {
             Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $ancestorJunctionViaLink -AllowNonFixedPathForTests -CommandRunner $ancestorJunctionDoubles.Runner -DeployRunner $ancestorJunctionDoubles.DeployRunner -ServiceStopper $ancestorJunctionDoubles.Stopper | Out-Null
         } catch {
             $ancestorJunctionInvokeMessage = $_.Exception.Message
+            $ancestorJunctionInvokeException = & $unwrapTask1B1IOException $_.Exception
         }
-        $ancestorJunctionTargetAfter = & $getTransactionLiveManifest $ancestorJunctionTarget
-        $ancestorJunctionOutsideHashAfter = (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash
-        $ancestorJunctionStillReparse = [bool]((Get-Item -LiteralPath $ancestorJunctionLink -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        $ancestorJunctionTripwireHandle.Dispose()
+        $ancestorJunctionTripwireHandle = $null
 
-        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($ancestorJunctionDirectMessage) -and $ancestorJunctionDirectMessage -match 'deployment path contains reparse point') 'Task 1B1 ancestor junction direct check fails closed with stable error' "actual='$ancestorJunctionDirectMessage'"
-        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($ancestorJunctionInvokeMessage) -and $ancestorJunctionInvokeMessage -match 'deployment path contains reparse point') 'Task 1B1 ancestor junction rebuild fails closed with stable error' "actual='$ancestorJunctionInvokeMessage'"
-        & $recordTask1B1Expectation ($ancestorJunctionDoubles.CloneTargets.Count -eq 0) 'Task 1B1 ancestor junction fails before clone' "targets='$($ancestorJunctionDoubles.CloneTargets -join ',')' commands='$($ancestorJunctionDoubles.Commands -join ';')'"
-        & $recordTask1B1Expectation ($ancestorJunctionDoubles.StoppedServices.Count -eq 0) 'Task 1B1 ancestor junction fails before service stop' "stopped='$($ancestorJunctionDoubles.StoppedServices -join ',')'"
-        & $recordTask1B1Expectation ($ancestorJunctionDoubles.DeployCalls.Count -eq 0) 'Task 1B1 ancestor junction fails before deploy' "deployCalls=$($ancestorJunctionDoubles.DeployCalls.Count)"
-        & $recordTask1B1Expectation ($ancestorJunctionTargetAfter.Serialized -ceq $ancestorJunctionTargetBefore.Serialized) 'Task 1B1 ancestor junction target remains complete and byte-identical' "before='$($ancestorJunctionTargetBefore.Sha256)' after='$($ancestorJunctionTargetAfter.Sha256)'"
-        & $recordTask1B1Expectation ($ancestorJunctionOutsideHashAfter -eq $ancestorJunctionOutsideHashBefore) 'Task 1B1 ancestor junction leaves outside data byte-identical' "before='$ancestorJunctionOutsideHashBefore' after='$ancestorJunctionOutsideHashAfter'"
-        & $recordTask1B1Expectation $ancestorJunctionStillReparse 'Task 1B1 ancestor junction rejection does not replace or traverse the link' "path='$ancestorJunctionLink'"
-        $task1B1ScenariosExecuted.Add('existing ancestor junction') | Out-Null
+        $ancestorJunctionTargetAfter = & $getTask1B1ScenarioManifest $ancestorJunctionTarget
+        $ancestorJunctionScenarioAfter = & $getTask1B1ScenarioManifest $ancestorJunctionScenario
+        $ancestorJunctionOutsideHashAfter = (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash
+        $ancestorJunctionTripwireHashAfter = (Get-FileHash -LiteralPath $ancestorJunctionTripwire -Algorithm SHA256).Hash
+        $ancestorJunctionStillReparse = [bool]((Get-Item -LiteralPath $ancestorJunctionLink -Force -ErrorAction Stop).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        $ancestorNestedStillReparse = [bool]((Get-Item -LiteralPath $ancestorJunctionNestedLink -Force -ErrorAction Stop).Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+        $ancestorJunctionResidue = @(& $getTask1B1TransactionResidue -ParentPath $ancestorJunctionActualParent -LiveLeaf (Split-Path -Leaf $ancestorJunctionActualLive))
+        $ancestorDirectSharingEvidence = & $getTask1B1SharingViolationEvidence $ancestorJunctionDirectException
+        $ancestorInvokeSharingEvidence = & $getTask1B1SharingViolationEvidence $ancestorJunctionInvokeException
+
+        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($ancestorJunctionDirectMessage) -and $ancestorJunctionDirectMessage -match 'deployment path contains reparse point') 'Task 1B1 deep ancestor junction direct check fails closed with stable error' "actual='$ancestorJunctionDirectMessage'"
+        & $recordTask1B1Expectation (-not $ancestorDirectSharingEvidence.IsSharingViolation) 'Task 1B1 deep ancestor direct check rejects before reading locked nested tripwire' "type='$($ancestorDirectSharingEvidence.Type)' hresult='$($ancestorDirectSharingEvidence.HResult)' lowCode='$($ancestorDirectSharingEvidence.LowCode)'"
+        & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($ancestorJunctionInvokeMessage) -and $ancestorJunctionInvokeMessage -match 'deployment path contains reparse point') 'Task 1B1 deep ancestor junction rebuild fails closed with stable error' "actual='$ancestorJunctionInvokeMessage'"
+        & $recordTask1B1Expectation (-not $ancestorInvokeSharingEvidence.IsSharingViolation) 'Task 1B1 deep ancestor rebuild rejects before reading locked nested tripwire' "type='$($ancestorInvokeSharingEvidence.Type)' hresult='$($ancestorInvokeSharingEvidence.HResult)' lowCode='$($ancestorInvokeSharingEvidence.LowCode)'"
+        & $recordTask1B1Expectation ($ancestorJunctionDoubles.CloneTargets.Count -eq 0) 'Task 1B1 deep ancestor junction fails before clone' "targets='$($ancestorJunctionDoubles.CloneTargets -join ',')' commands='$($ancestorJunctionDoubles.Commands -join ';')'"
+        & $recordTask1B1Expectation ($ancestorJunctionDoubles.StoppedServices.Count -eq 0) 'Task 1B1 deep ancestor junction fails before service stop' "stopped='$($ancestorJunctionDoubles.StoppedServices -join ',')'"
+        & $recordTask1B1Expectation ($ancestorJunctionDoubles.DeployCalls.Count -eq 0) 'Task 1B1 deep ancestor junction fails before deploy' "deployCalls=$($ancestorJunctionDoubles.DeployCalls.Count)"
+        & $recordTask1B1Expectation ($ancestorJunctionTargetAfter.Serialized -ceq $ancestorJunctionTargetBefore.Serialized) 'Task 1B1 deep ancestor target remains complete and byte-identical' "before='$($ancestorJunctionTargetBefore.Sha256)' after='$($ancestorJunctionTargetAfter.Sha256)'"
+        & $recordTask1B1Expectation ($ancestorJunctionScenarioAfter.Serialized -ceq $ancestorJunctionScenarioBefore.Serialized) 'Task 1B1 deep ancestor leaves complete scenario parent manifest identical' "before='$($ancestorJunctionScenarioBefore.Sha256)' after='$($ancestorJunctionScenarioAfter.Sha256)'"
+        & $recordTask1B1Expectation ($ancestorJunctionTripwireHashAfter -eq $ancestorJunctionTripwireHashBefore) 'Task 1B1 deep ancestor leaves locked binary tripwire byte-identical' "before='$ancestorJunctionTripwireHashBefore' after='$ancestorJunctionTripwireHashAfter'"
+        & $recordTask1B1Expectation ($ancestorJunctionOutsideHashAfter -eq $ancestorJunctionOutsideHashBefore) 'Task 1B1 deep ancestor leaves outside data byte-identical' "before='$ancestorJunctionOutsideHashBefore' after='$ancestorJunctionOutsideHashAfter'"
+        & $recordTask1B1Expectation ($ancestorJunctionStillReparse -and $ancestorNestedStillReparse) 'Task 1B1 deep ancestor rejection preserves both reparse entries until verified teardown' "ancestor='$ancestorJunctionLink' nested='$ancestorJunctionNestedLink'"
+        & $recordTask1B1Expectation ($ancestorJunctionResidue.Count -eq 0) 'Task 1B1 deep ancestor leaves no stage or previous residue' "residue='$(@($ancestorJunctionResidue | ForEach-Object { $_.Name }) -join ',')'"
+        $task1B1ScenariosExecuted.Add('existing deep ancestor junction') | Out-Null
     } finally {
-        if (Test-Path -LiteralPath $ancestorJunctionLink) {
+        if ($null -ne $ancestorJunctionTripwireHandle) {
+            $ancestorJunctionTripwireHandle.Dispose()
+        }
+        $ancestorNestedEntry = & $getTask1B1PathEntry -Path $ancestorJunctionNestedLink
+        if ($null -ne $ancestorNestedEntry) {
+            & $removeVerifiedTempJunction -LinkPath $ancestorJunctionNestedLink -ExpectedTarget $ancestorJunctionNestedTarget
+        }
+        $ancestorLinkEntry = & $getTask1B1PathEntry -Path $ancestorJunctionLink
+        if ($null -ne $ancestorLinkEntry) {
             & $removeVerifiedTempJunction -LinkPath $ancestorJunctionLink -ExpectedTarget $ancestorJunctionTarget
         }
     }
-    Assert-True (Test-Path -LiteralPath $ancestorJunctionTarget -PathType Container) 'Task 1B1 ancestor-junction link-only cleanup preserves target directory'
-    $ancestorJunctionTargetAfterCleanup = & $getTransactionLiveManifest $ancestorJunctionTarget
-    Assert-Equal $ancestorJunctionTargetBefore.Serialized $ancestorJunctionTargetAfterCleanup.Serialized 'Task 1B1 ancestor-junction link-only cleanup preserves complete target manifest'
-    Assert-Equal $ancestorJunctionOutsideHashBefore (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash 'Task 1B1 ancestor-junction cleanup preserves outside sentinel'
+    $ancestorJunctionTargetAfterCleanup = & $getTask1B1ScenarioManifest $ancestorJunctionTarget
+    Assert-Equal $ancestorJunctionDetachedTargetBaseline.Serialized $ancestorJunctionTargetAfterCleanup.Serialized 'Task 1B1 deep-ancestor link-only cleanup preserves detached target manifest'
+    Assert-Equal $ancestorJunctionTripwireHashBefore (Get-FileHash -LiteralPath $ancestorJunctionTripwire -Algorithm SHA256).Hash 'Task 1B1 deep-ancestor cleanup preserves tripwire target'
+    Assert-Equal $ancestorJunctionOutsideHashBefore (Get-FileHash -LiteralPath $ancestorJunctionOutside -Algorithm SHA256).Hash 'Task 1B1 deep-ancestor cleanup preserves outside sentinel'
 
     # The lock helper returns a disposable exclusive handle.  A second acquire
     # must get the stable contention error; after disposal the same file (marked
@@ -1814,8 +2081,17 @@ try {
     & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $canonicalLockParent.Equals($canonicalLiveParent, [System.StringComparison]::OrdinalIgnoreCase)) 'Task 1B1 lock file is a same-parent sibling of live' "lock='$activeLockPath' live='$lockLiveRoot'"
     & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and (Test-Path -LiteralPath $activeLockPath -PathType Leaf)) 'Task 1B1 lock file exists while first handle is held' "lock='$activeLockPath'"
 
+    $firstLockIdentity = $null
+    $firstLockIdentityMessage = $null
+    try {
+        $firstLockIdentity = & $getTask1B1FileIdentity $activeLockHandle
+    } catch {
+        $firstLockIdentityMessage = $_.Exception.Message
+    }
+    & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($firstLockIdentity)) 'Task 1B1 first lock handle exposes Windows file identity' "actual='$firstLockIdentityMessage'"
+
     $rawReadHandle = $null
-    $rawReadOpenMessage = $null
+    $rawReadException = $null
     try {
         $rawReadHandle = [System.IO.File]::Open(
             $activeLockPath,
@@ -1824,14 +2100,14 @@ try {
             [System.IO.FileShare]::ReadWrite
         )
     } catch {
-        $rawReadOpenMessage = $_.Exception.Message
+        $rawReadException = & $unwrapTask1B1IOException $_.Exception
     } finally {
         if ($null -ne $rawReadHandle) {
             $rawReadHandle.Dispose()
         }
     }
     $rawWriteHandle = $null
-    $rawWriteOpenMessage = $null
+    $rawWriteException = $null
     try {
         $rawWriteHandle = [System.IO.File]::Open(
             $activeLockPath,
@@ -1840,14 +2116,14 @@ try {
             [System.IO.FileShare]::ReadWrite
         )
     } catch {
-        $rawWriteOpenMessage = $_.Exception.Message
+        $rawWriteException = & $unwrapTask1B1IOException $_.Exception
     } finally {
         if ($null -ne $rawWriteHandle) {
             $rawWriteHandle.Dispose()
         }
     }
     $rawReadWriteHandle = $null
-    $rawReadWriteOpenMessage = $null
+    $rawReadWriteException = $null
     try {
         $rawReadWriteHandle = [System.IO.File]::Open(
             $activeLockPath,
@@ -1856,17 +2132,18 @@ try {
             [System.IO.FileShare]::ReadWrite
         )
     } catch {
-        $rawReadWriteOpenMessage = $_.Exception.Message
+        $rawReadWriteException = & $unwrapTask1B1IOException $_.Exception
     } finally {
         if ($null -ne $rawReadWriteHandle) {
             $rawReadWriteHandle.Dispose()
         }
     }
-    $rawFileShareNoneObserved =
-        -not [string]::IsNullOrWhiteSpace($rawReadOpenMessage) -and
-        -not [string]::IsNullOrWhiteSpace($rawWriteOpenMessage) -and
-        -not [string]::IsNullOrWhiteSpace($rawReadWriteOpenMessage)
-    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $rawFileShareNoneObserved) 'Task 1B1 first lock handle enforces OS FileShare.None' "read='$rawReadOpenMessage' write='$rawWriteOpenMessage' readWrite='$rawReadWriteOpenMessage'"
+    $rawReadEvidence = & $getTask1B1SharingViolationEvidence $rawReadException
+    $rawWriteEvidence = & $getTask1B1SharingViolationEvidence $rawWriteException
+    $rawReadWriteEvidence = & $getTask1B1SharingViolationEvidence $rawReadWriteException
+    & $recordTask1B1Expectation $rawReadEvidence.IsSharingViolation 'Task 1B1 read-only competing open gets Windows sharing violation' "type='$($rawReadEvidence.Type)' hresult='$($rawReadEvidence.HResult)' lowCode='$($rawReadEvidence.LowCode)'"
+    & $recordTask1B1Expectation $rawWriteEvidence.IsSharingViolation 'Task 1B1 write-only competing open gets Windows sharing violation' "type='$($rawWriteEvidence.Type)' hresult='$($rawWriteEvidence.HResult)' lowCode='$($rawWriteEvidence.LowCode)'"
+    & $recordTask1B1Expectation $rawReadWriteEvidence.IsSharingViolation 'Task 1B1 read-write competing open gets Windows sharing violation' "type='$($rawReadWriteEvidence.Type)' hresult='$($rawReadWriteEvidence.HResult)' lowCode='$($rawReadWriteEvidence.LowCode)'"
 
     $secondAcquireMessage = $null
     $unexpectedSecondResult = $null
@@ -1901,11 +2178,13 @@ try {
 
     $reacquiredLockResult = $null
     $reacquiredLockResource = $null
+    $reacquiredLockIdentity = $null
     $reacquireMessage = $null
     try {
         $reacquiredLockResult = Enter-TestDeployRebuildLock -DeploymentPath $lockLiveRoot
         $reacquiredLockResource = & $normalizeLockResource $reacquiredLockResult
         $reacquiredLockResource = & $validateTempLockResource -Resource $reacquiredLockResource -ExpectedParent $lockScenarioRoot -LivePath $lockLiveRoot
+        $reacquiredLockIdentity = & $getTask1B1FileIdentity $reacquiredLockResource.Handle
     } catch {
         $reacquireMessage = $_.Exception.Message
         if ($null -ne $reacquiredLockResult -and $reacquiredLockResult -is [System.IDisposable]) {
@@ -1920,9 +2199,40 @@ try {
     & $recordTask1B1Expectation $reacquiredByHelper 'Task 1B1 lock can be reacquired after first handle disposal' "actual='$reacquireMessage'"
     $reacquiredSamePath = $reacquiredByHelper -and $firstLockAcquiredByHelper -and $reacquiredLockResource.LockPath.Equals($activeLockPath, [System.StringComparison]::OrdinalIgnoreCase)
     & $recordTask1B1Expectation $reacquiredSamePath 'Task 1B1 reacquire uses the same stable lock file path' "first='$activeLockPath' second='$(if ($reacquiredByHelper) { $reacquiredLockResource.LockPath } else { '<none>' })'"
+
+    $observedSecondLockIdentity = $reacquiredLockIdentity
+    $identityFallbackMessage = $null
+    if ([string]::IsNullOrWhiteSpace($observedSecondLockIdentity)) {
+        $identityFallbackHandle = $null
+        try {
+            $identityFallbackHandle = [System.IO.File]::Open(
+                $activeLockPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            $observedSecondLockIdentity = & $getTask1B1FileIdentity $identityFallbackHandle
+        } catch {
+            $identityFallbackMessage = $_.Exception.Message
+        } finally {
+            if ($null -ne $identityFallbackHandle) {
+                $identityFallbackHandle.Dispose()
+            }
+        }
+    }
+    & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($observedSecondLockIdentity)) 'Task 1B1 reopened lock file exposes Windows file identity' "actual='$identityFallbackMessage'"
+    $sameWindowsFileObject =
+        $firstLockAcquiredByHelper -and
+        $reacquiredByHelper -and
+        $lockPersistedAfterFirstDispose -and
+        -not [string]::IsNullOrWhiteSpace($firstLockIdentity) -and
+        -not [string]::IsNullOrWhiteSpace($reacquiredLockIdentity) -and
+        $firstLockIdentity -ceq $reacquiredLockIdentity
+    & $recordTask1B1Expectation $sameWindowsFileObject 'Task 1B1 reacquire retains the same Windows file object without delete/recreate' "firstIdentity='$firstLockIdentity' secondIdentity='$reacquiredLockIdentity' observedFallbackIdentity='$observedSecondLockIdentity'"
+
     $lockStillExists = Test-Path -LiteralPath $activeLockPath -PathType Leaf
     $lockCreationTimeAfterReacquire = if ($lockStillExists) { [System.IO.File]::GetCreationTimeUtc($activeLockPath) } else { [datetime]::MinValue }
-    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $reacquiredByHelper -and $lockStillExists -and $lockCreationTimeAfterReacquire -eq $stableLockCreationTime) 'Task 1B1 lock file is retained without delete/recreate' "exists=$lockStillExists expectedCreation='$($stableLockCreationTime.ToString('O'))' actualCreation='$($lockCreationTimeAfterReacquire.ToString('O'))'"
+    & $recordTask1B1Expectation ($firstLockAcquiredByHelper -and $reacquiredByHelper -and $lockStillExists -and $lockCreationTimeAfterReacquire -eq $stableLockCreationTime) 'Task 1B1 lock creation time remains stable as auxiliary identity evidence' "exists=$lockStillExists expectedCreation='$($stableLockCreationTime.ToString('O'))' actualCreation='$($lockCreationTimeAfterReacquire.ToString('O'))'"
     $task1B1ScenariosExecuted.Add('exclusive lock contention and reacquire') | Out-Null
 
     # Integration ordering tripwire: hold both the deployment lock and an env
@@ -2015,6 +2325,7 @@ try {
     & $recordTask1B1Expectation (-not [string]::IsNullOrWhiteSpace($lockIntegrationFailureMessage) -and $lockIntegrationFailureMessage -match 'test deploy rebuild already in progress') 'Task 1B1 held deployment lock blocks rebuild before env backup' "actual='$lockIntegrationFailureMessage' commands='$($lockIntegrationCommands -join ';')'"
     & $recordTask1B1Expectation ($lockIntegrationManifestAfter.Serialized -ceq $lockIntegrationManifestBefore.Serialized) 'Task 1B1 held-lock integration leaves complete live manifest identical' "before='$($lockIntegrationManifestBefore.Sha256)' after='$($lockIntegrationManifestAfter.Sha256)'"
     & $recordTask1B1Expectation ($lockIntegrationParentAfter -ceq $lockIntegrationParentBefore) 'Task 1B1 held-lock integration creates no run/stage/backup residue' "before='$lockIntegrationParentBefore' after='$lockIntegrationParentAfter'"
+    & $recordTask1B1Expectation ($lockIntegrationCommands.Count -eq 0) 'Task 1B1 held-lock integration performs zero Git or origin commands' "commands='$($lockIntegrationCommands -join ';')'"
     & $recordTask1B1Expectation ($lockIntegrationCloneTargets.Count -eq 0) 'Task 1B1 held-lock integration performs zero clones' "targets='$($lockIntegrationCloneTargets -join ',')' commands='$($lockIntegrationCommands -join ';')'"
     & $recordTask1B1Expectation ($lockIntegrationStops.Count -eq 0) 'Task 1B1 held-lock integration performs zero service stops' "stopped='$($lockIntegrationStops -join ',')'"
     & $recordTask1B1Expectation ($lockIntegrationDeployCalls.Count -eq 0) 'Task 1B1 held-lock integration performs zero deploys' "deployCalls=$($lockIntegrationDeployCalls.Count)"
@@ -2033,6 +2344,14 @@ try {
 } finally {
     if ($null -ne (Get-Variable -Name task1B1OriginalFixedPath -ErrorAction SilentlyContinue)) {
         $script:TestDeployFixedPath = $task1B1OriginalFixedPath
+    }
+    if ($null -ne (Get-Variable -Name task1B1FixtureReparsePaths -ErrorAction SilentlyContinue)) {
+        foreach ($fixtureReparsePath in $task1B1FixtureReparsePaths) {
+            $remainingFixtureReparse = Get-Item -LiteralPath $fixtureReparsePath -Force -ErrorAction SilentlyContinue
+            if ($null -ne $remainingFixtureReparse) {
+                throw "Task 1B1 refused generic sandbox cleanup while fixture reparse remains attached: '$fixtureReparsePath'"
+            }
+        }
     }
     Remove-TestSandbox -Path $sandbox
 }
