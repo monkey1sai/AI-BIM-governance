@@ -339,6 +339,16 @@ export function A1GovernanceWorkbenchPage() {
   const [conversionRetryBusy, setConversionRetryBusy] = useState(false);
   const [conversionRetryErr, setConversionRetryErr] = useState<string | null>(null);
   const idsFileInputRef = useRef<HTMLInputElement>(null);
+  // R8：local_fs 測試 fixtures 專案清單（coordinator config 驅動）。取不到＝空清單＝不標，
+  // 誠實降級不阻塞選檔（MinIO 為真實資料監控來源，不標測試資料）。
+  const [testDataProjects, setTestDataProjects] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    coordinatorClient.getTestDataProjects()
+      .then((r) => { if (alive) setTestDataProjects(r.projects); })
+      .catch(() => { /* 取不到就不標；不擋 A1 流程 */ });
+    return () => { alive = false; };
+  }, []);
   const ui = uiSteps(state);
   const runId = state.run?.rule_run_id ?? null;
   const issueGenRef = useRef(0);
@@ -921,7 +931,7 @@ export function A1GovernanceWorkbenchPage() {
                 </option>
                 {localOptions.map((option) => (
                   <option key={option.version.path} value={option.version.path}>
-                    {option.projectId} · {option.modelId} · {option.version.name} · {formatBytes(option.version.size_bytes)}
+                    {testDataProjects.includes(option.projectId) ? t("〔測試資料〕", "[test data] ") : ""}{option.projectId} · {option.modelId} · {option.version.name} · {formatBytes(option.version.size_bytes)}
                   </option>
                 ))}
               </select>
@@ -2069,6 +2079,13 @@ export function IssuesRuleCenterPage() {
   );
 }
 
+// A6 消歧義（2026-07-10）：roadmap 願景 tier 的 phase 是「規劃優先序」非實作進度——
+// 裸印「Phase 2」會與同卡 ProvTag「願景 · Phase 4（後端未建）」讀成兩套矛盾進度。
+// p3/p4 顯示「規劃序 P{n}」；focus tier（asbuilt）維持 Phase 標示。狀態一律以 prov 為準（README §4）。
+function roadmapPhaseText(p: { phase: number; prov: Prov }): string {
+  return p.prov === "p3" || p.prov === "p4" ? `${t("規劃序 P", "Priority P")}${p.phase}` : `Phase ${p.phase}`;
+}
+
 export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
   const focus = A1A10.filter((a) => a.tier === "focus");
   const roadmap = A1A10.filter((a) => a.tier === "roadmap");
@@ -2083,7 +2100,7 @@ export function AppsPage({ onOpen }: { onOpen: (route: string) => void }) {
         <ProvTag prov={a.prov} />
       </div>
       <div>{a.title}</div>
-      <div className="ec-s">{a.en} · {a.dep} · Phase {a.phase}</div>
+      <div className="ec-s">{a.en} · {a.dep} · {roadmapPhaseText(a)}</div>
     </div>
   );
   return (
@@ -2119,7 +2136,7 @@ export function AppVisionPage({ slug, onOpen }: { slug: string; onOpen: (route: 
   return (
     <>
       <h1>{d.code} · {d.title}<span style={{ marginLeft: 10 }}><ProvTag prov={d.prov} /></span></h1>
-      <p className="ec-lead">{d.en} · Phase {d.phase} · {d.pitch}</p>
+      <p className="ec-lead">{d.en} · {roadmapPhaseText(d)} · {d.pitch}</p>
       <Btn caption={t("回 Applications", "Back to Applications")} onClick={() => onOpen("apps")}>{t("← 回應用導引", "← Back to application guide")}</Btn>
 
       <Panel title={t("目標 · Goal", "Goal · Goal")} sub={t("此應用後端未建；以下為願景規格（roadmap）", "This application's backend is not built; the following is a vision spec (roadmap)")} prov={d.prov}>

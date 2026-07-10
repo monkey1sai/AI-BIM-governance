@@ -1,8 +1,10 @@
 // CH-E：真實 IFC fixture 垂直切片 React 頁（#/demo-control）。
-// 由 vanilla dev-console 面板忠實移植：沿用相同 data-testid，改用「相對路徑」fetch（同源 :8004，無 CORS）。
+// 由 vanilla dev-console 面板忠實移植：沿用相同 data-testid；fetch 路徑經 coordinatorUrl 統一 base
+//（W4：同源 :8004 時等同相對路徑；dev :5173 分離部署時正確指向 coordinator）。
 // 誠實鐵律：runtime 狀態原樣顯示（converting/ready/runtime_blocked/conversion_timeout/download_failed），不偽造成功。
 import { useEffect, useRef, useState } from "react";
 import { t } from "./i18n";
+import { coordinatorUrl } from "./coordinatorClient";
 
 interface IfcSource {
   source_id: string;
@@ -30,7 +32,7 @@ export function RealIfcConsolePage() {
 
   async function loadSources() {
     try {
-      const r = await fetch("/api/dev/ifc-sources");
+      const r = await fetch(coordinatorUrl("/api/dev/ifc-sources"));
       const j = await r.json();
       const items: IfcSource[] = j.items ?? [];
       setSources(items);
@@ -54,7 +56,7 @@ export function RealIfcConsolePage() {
     try {
       const sid = job.web_view_session_id as string | undefined;
       if (!sid) return;
-      const r = await fetch("/api/review-sessions/" + encodeURIComponent(sid) + "/stream-config");
+      const r = await fetch(coordinatorUrl("/api/review-sessions/" + encodeURIComponent(sid) + "/stream-config"));
       if (!r.ok) return;
       const sc = await r.json();
       set("lin-artifact-id", sc.model?.artifact_id);
@@ -68,7 +70,7 @@ export function RealIfcConsolePage() {
     const tick = async () => {
       n++;
       try {
-        const r = await fetch("/api/external/ifc-ready/" + encodeURIComponent(jobId));
+        const r = await fetch(coordinatorUrl("/api/external/ifc-ready/" + encodeURIComponent(jobId)));
         const j = await r.json();
         set("lin-download-status", j.download_status);
         set("lin-conversion-status", j.conversion_status);
@@ -102,7 +104,7 @@ export function RealIfcConsolePage() {
     setViewerUrl("");
     setRuntime("runtime: registering");
     try {
-      const r = await fetch("/api/dev/ifc-sources/" + encodeURIComponent(selected) + "/register", {
+      const r = await fetch(coordinatorUrl("/api/dev/ifc-sources/" + encodeURIComponent(selected) + "/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model_version_id: mv, project_id: "project_real_ifc_demo" }),

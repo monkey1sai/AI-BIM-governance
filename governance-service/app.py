@@ -34,7 +34,7 @@ from rule_engine import (
     run_rules,
     workbook_bytes,
 )
-from rule_engine.models import RuleRunResult
+from rule_engine.models import RuleResult, RuleRunResult
 
 SERVICE_ROOT = os.path.dirname(__file__)
 RULES_DIR = os.path.join(SERVICE_ROOT, "rules")
@@ -384,15 +384,71 @@ def get_rule_run_results(run_id: str, status: Optional[str] = Query(None)):
     }
 
 
+def _rebuild_run_from_store(run_id: str) -> RuleRunResult | None:
+    """F3（2026-07-10，凍結例外已登記手冊 §1.1）：_RUN_CACHE miss 時由 DB 重建匯出用 RuleRunResult。
+
+    僅重建 succeeded run（未完成/失敗不匯出半成品）。rule_results 表未持久化
+    ifc_type/ifc_name → 該兩欄以空值重建（誠實，不捏造；Excel 對應欄留白）。
+    """
+    row = store.get_run(run_id)
+    if not row or row.get("status") != "succeeded":
+        return None
+    try:
+        summary = json.loads(row.get("summary_json") or "{}")
+    except json.JSONDecodeError:
+        summary = {}
+
+    def _evidence(raw: str | None) -> dict:
+        try:
+            parsed = json.loads(raw or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    results = [
+        RuleResult(
+            ifc_guid=r.get("ifc_guid"),
+            ifc_type="",
+            ifc_name=None,
+            rule_code=r.get("rule_code") or "",
+            severity=r.get("severity") or "",
+            status=r.get("status") or "",
+            message=r.get("message") or "",
+            evidence=_evidence(r.get("evidence_json")),
+            usd_prim_path=r.get("usd_prim_path"),
+        )
+        for r in store.get_results(run_id)
+    ]
+    return RuleRunResult(
+        rule_set=str(summary.get("rule_set") or row.get("rule_set") or ""),
+        version=str(summary.get("version") or ""),
+        target_summary=summary.get("target_summary") or {},
+        total=int(summary.get("total") or 0),
+        passed=int(summary.get("passed") or 0),
+        failed=int(summary.get("failed") or 0),
+        errored=int(summary.get("errored") or 0),
+        score=float(summary.get("score") or row.get("score") or 0.0),
+        unique_elements=int(summary.get("unique_elements") or 0),
+        results=results,
+        warnings=list(summary.get("warnings") or []),
+    )
+
+
 @app.get("/api/rule-runs/{run_id}/export")
 def export_rule_run(run_id: str, fmt: str = Query("excel")):
     if fmt == "bcf":
         raise HTTPException(status_code=400, detail="rule-run 匯出僅 Excel；BCF 匯出請先 from-rule-run 建 issue，再 GET /api/bcf/export")
     if fmt != "excel":
         raise HTTPException(status_code=400, detail="only fmt=excel is supported")
-    run = _RUN_CACHE.get(run_id)
+    run = _RUN_CACHE.get(run_id) or _rebuild_run_from_store(run_id)  # F3：重啟/多 worker 後由 DB 重建
     if run is None:
-        raise HTTPException(status_code=409, detail="run not available for export (not completed in this process)")
+        row = store.get_run(run_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="rule run not found")
+        raise HTTPException(
+            status_code=409,
+            detail=f"run not completed (status={row.get('status')}); export requires a succeeded run",
+        )
     data = workbook_bytes(run)
     return StreamingResponse(
         iter([data]),

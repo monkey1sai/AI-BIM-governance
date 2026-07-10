@@ -57,19 +57,22 @@ export const PAGES: PageDef[] = [
   { key: "a5", no: "A5", label: "IoT / FM 數位分身", plane: "governance", group: "core", badge: "P3", badgeTone: "ai" },
   { key: "issues", no: "BC", label: "Issue / BCF", plane: "governance", group: "core", badge: "A1", badgeTone: "info" },
   { key: "reports", no: "RP", label: "報表中心", plane: "governance", group: "core" },
-  { key: "viewer", no: "3D", label: "3D Viewer 呈現", plane: "omniverse", group: "omniverse" },
-  { key: "gpu", no: "01", label: "GPU 審查室", plane: "omniverse", group: "omniverse", badge: "MVP", badgeTone: "accent" },
-  { key: "a6", no: "A6", label: "4D / 5D 施工模擬", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
-  { key: "a7", no: "A7", label: "Reality Capture 比對", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
-  { key: "a8", no: "A8", label: "Synthetic Data", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
-  { key: "a9", no: "A9", label: "設計 / 審查 Copilot", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
-  { key: "a10", no: "A10", label: "機器人 / 巡檢模擬", plane: "omniverse", group: "omniverse", badge: "P4", badgeTone: "ai" },
+  // R4（2026-07-10 裁決）：NAV 分組以互動規格 A.1.1「群組」欄為準——
+  // viewer/gpu/a6–a10＝核心治理（core）；sessions/instances/minio＝OMNIVERSE RUNTIME（omniverse）；
+  // runtime＝落地端控制台（coordinator，A.1.1 row20「落地端控制台 / SYSTEM」取前者）。
+  { key: "viewer", no: "3D", label: "3D Viewer 呈現", plane: "omniverse", group: "core" },
+  { key: "gpu", no: "01", label: "GPU 審查室", plane: "omniverse", group: "core", badge: "MVP", badgeTone: "accent" },
+  { key: "a6", no: "A6", label: "4D / 5D 施工模擬", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
+  { key: "a7", no: "A7", label: "Reality Capture 比對", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
+  { key: "a8", no: "A8", label: "Synthetic Data", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
+  { key: "a9", no: "A9", label: "設計 / 審查 Copilot", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
+  { key: "a10", no: "A10", label: "機器人 / 巡檢模擬", plane: "omniverse", group: "core", badge: "P4", badgeTone: "ai" },
   // MD 三頁合一（Task 7）：原 conv（轉檔排程）/ minio（MinIO 資料）/ intake（Model Intake）三個 nav 項
   // 合併為單一 MD 項；#conv / #intake 由 EdgeConsole 以 alias 重導至 #minio。舊三頁本體待 Task 9 移除。
-  { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "coordinator" },
-  { key: "instances", no: "KG", label: "Kit / GPU 機隊", plane: "omniverse", group: "coordinator" },
-  { key: "minio", no: "MD", label: "模型資料與轉檔", plane: "governance", group: "coordinator" },
-  { key: "runtime", no: "RT", label: "Runtime 監控", plane: "omniverse", group: "system" },
+  { key: "sessions", no: "SS", label: "Session 管理", plane: "governance", group: "omniverse" },
+  { key: "instances", no: "KG", label: "Kit / GPU 機隊", plane: "omniverse", group: "omniverse" },
+  { key: "minio", no: "MD", label: "模型資料與轉檔", plane: "governance", group: "omniverse" },
+  { key: "runtime", no: "RT", label: "Runtime 監控", plane: "omniverse", group: "coordinator" },
   { key: "admin", no: "SY", label: "系統管理", plane: "governance", group: "system", badge: "待建", badgeTone: "neutral" },
   { key: "spec", no: "▦", label: "設計規格說明", plane: "governance", group: "system" },
   { key: "overview", no: "OV", label: "Overview", plane: "governance", group: "system" },

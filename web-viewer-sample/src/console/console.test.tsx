@@ -69,6 +69,20 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("ec-prov");
   });
 
+  it("[A6 消歧義] roadmap tier 不裸印 Phase 數字（與 ProvTag 願景 Phase 矛盾），改標規劃序", () => {
+    const apps = renderToString(<AppsPage onOpen={() => {}} />);
+    // A6：phase=2（規劃優先序）＋ prov=p4（願景 Phase 4）——A6 卡裸印「Phase 2」會與 ProvTag 並列矛盾。
+    // 斷言收斂在 A6 卡片區段（A2/A3 focus 卡的 Phase 2 為合法 asbuilt 標示）。
+    const a6Card = apps.slice(apps.indexOf(">A6<"), apps.indexOf(">A7<"));
+    expect(a6Card).toContain("規劃序 P2");
+    expect(a6Card).not.toContain("Phase 2");
+    // focus tier（A1 phase=1，prov=asbuilt）維持原樣 Phase 標示。
+    expect(apps).toContain("Phase 1");
+    const vision = renderToString(<AppVisionPage slug="4d-5d" onOpen={() => {}} />);
+    expect(vision).not.toContain("Phase 2 ·");
+    expect(vision).toContain("規劃序 P2");
+  });
+
   it("A1 Rule Center 顯示真實 IFC 實測 artifact（非捏造）", () => {
     const html = renderToString(<IssuesRuleCenterPage />);
     expect(html).toContain("規則評估次數");
@@ -360,6 +374,16 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("ec-langtoggle"); // 語言切換移至頂列（中/EN），取代舊「用語」操作員/技術鈕
     expect(html).toContain("clean"); // Tweaks scenario 按鈕
     expect(html).toContain("warn");
+  });
+
+  it("[R4] NAV 分組對齊 A.1.1 群組欄（路由表為準）", () => {
+    const g = (k: string) => PAGES.find((p) => p.key === k)?.group;
+    // A.1.1 rows 9–15：viewer/gpu/a6–a10 群組＝核心治理。
+    ["viewer", "gpu", "a6", "a7", "a8", "a9", "a10"].forEach((k) => expect(g(k)).toBe("core"));
+    // A.1.1 rows 17–19：sessions/instances/minio 群組＝OMNIVERSE RUNTIME。
+    ["sessions", "instances", "minio"].forEach((k) => expect(g(k)).toBe("omniverse"));
+    // A.1.1 row 20：#runtime 群組＝落地端控制台 / SYSTEM（取前者為 nav 歸屬）。
+    expect(g("runtime")).toBe("coordinator");
   });
 
   it("完整產品操作台 shell 顯示 prototype 的四組資訊架構", () => {
@@ -1776,6 +1800,8 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
       bucket: "bim-control", count: 1,
       objects: [{ key: "松風庵/root/main/u1/model.ifc", etag: "e", role: "source_ifc", idempotency_key: "mw_0000000000000013", project_id: "p1", project_display_name: "松風庵", category: "建築", version: "v1" }],
     });
+    // R8：A1 mount 會打 getTestDataProjects()；預設 stub 空清單（不標），個別測試可覆寫。
+    vi.spyOn(coordinatorClient, "getTestDataProjects").mockResolvedValue({ projects: [] });
   });
   afterEach(() => {
     document.body.removeChild(container);
@@ -1798,6 +1824,19 @@ describe("A1GovernanceWorkbenchPage client-render（doRun 輪詢守門 + 動作�
     await act(async () => { sel.value = path; sel.dispatchEvent(new Event("change", { bubbles: true })); });
     await clickByTestId("a1-step-pick");
   };
+
+  it("[R8 測試資料標記] local_fs 選項對 config 清單內專案加〔測試資料〕；MinIO 選項不標", async () => {
+    (coordinatorClient.getTestDataProjects as ReturnType<typeof vi.fn>).mockResolvedValue({ projects: ["270"] });
+    const root = createRoot(container);
+    await act(async () => { root.render(<A1GovernanceWorkbenchPage />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    const sel = container.querySelector<HTMLSelectElement>('[data-testid="a1-localfs-select"]')!;
+    const optionTexts = Array.from(sel.options).map((o) => o.textContent ?? "");
+    expect(optionTexts.some((s) => s.includes("〔測試資料〕") && s.includes("270"))).toBe(true);
+    // MinIO＝真實資料監控來源，不標測試資料（R8）。
+    expect(container.innerHTML.split("a1-minio-select")[1]?.includes("〔測試資料〕") ?? false).toBe(false);
+  });
 
   it("[IDS picker] A1 IDS 欄位預設顯示 sample IDS path，開啟資料夾後沿用目前目錄填入檔名", async () => {
     const root = createRoot(container);

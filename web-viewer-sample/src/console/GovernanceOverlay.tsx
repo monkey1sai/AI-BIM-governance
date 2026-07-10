@@ -1,12 +1,13 @@
 // web-viewer-sample/src/console/GovernanceOverlay.tsx
-// A1–A10 治理 overlay 框架：疊在 primary viewer live 3D 右側。MVP 只接已有引擎 A2/A3/A4/A8；
-// A5/A6/A9/A10 標願景 disabled（誠實，不假裝 ready）。所有治理動作在 live 3D 上；點 failed 構件
+// 治理 overlay：疊在 primary viewer live 3D 右側。條目編號對齊權威 A1–A10（data.ts A1A10／README §4，
+// R9 2026-07-10）：已接能力歸 A1 管線／M4 連動基建；碰撞＝A3 clash（未開工）；語意搜尋＝A4（p4）；
+// 其餘願景項不掛權威編號、disabled（誠實，不假裝 ready）。所有治理動作在 live 3D 上；點 failed 構件
 // 經 onHighlight（HighlightBridge）在 3D 標紅。本元件不自管 WebRTC（props 注入），守 console 邊界。
 import { useState } from "react";
 import { t } from "./i18n";
 import "./governance/overlay.css";
 import { Btn, Field, Metric, Panel, ProvTag } from "./components";
-import type { Prov } from "./data";
+import { A1A10, type Prov } from "./data";
 import type { FailedElement, HighlightResult } from "./governance/highlightBridge";
 import type { ArtifactBinding } from "../types/artifacts";
 // DRY（E3 type consistency）：直接復用 govPanelState 的 union，不另立平行 OverlayPanelState。
@@ -73,19 +74,25 @@ export interface GovernanceOverlayProps {
   onApplyBinding?: (selection: StageArtifactBinding[], revisionId: string) => void;
 }
 
-// MVP 接的已有引擎（design §5 權威對映）。
-const MVP_ENGINES: { code: string; title: string; prov: Prov }[] = [
-  { code: "A2", title: t("轉檔 / 語意映射", "Conversion / semantic mapping"), prov: "asbuilt" },
-  { code: "A3", title: t("規則庫 / IDS 檢核", "Rule library / IDS check"), prov: "asbuilt" },
-  { code: "A4", title: t("完整性 / 治理分", "Completeness / governance score"), prov: "asbuilt" },
-  { code: "A8", title: "Issue / BCF", prov: "asbuilt" },
+// R9（2026-07-10 裁決）：overlay 條目對齊權威 A1–A10（data.ts A1A10／README §4），
+// 舊 overlay 自有編號（A2/A3/A4/A8＝design §5 早期方案）除役——避免與權威 App 編號撞名
+//（權威 A4/A8＝NOT BUILT·p4，舊 overlay 卻標 asbuilt，會被誤讀成建成宣稱）。
+// 已接能力：治理分／Issue·BCF 為 A1 rule-run 管線產物；語意映射為 M4 GUID⇔prim 連動基建，不掛 App 編號。
+const MVP_ENGINES: { id: string; code: string; title: string; prov: Prov }[] = [
+  { id: "mapping", code: "M4", title: t("轉檔 / 語意映射（GUID⇔prim 連動基建）", "Conversion / semantic mapping (GUID⇔prim bridge)"), prov: "asbuilt" },
+  { id: "rules", code: "A1", title: t("規則庫 / IDS 檢核", "Rule library / IDS check"), prov: "asbuilt" },
+  { id: "score", code: "A1", title: t("完整性 / 治理分（rule-run 產物）", "Completeness / governance score (rule-run output)"), prov: "asbuilt" },
+  { id: "issues", code: "A1", title: t("Issue / BCF（共同出海口）", "Issue / BCF (shared outlet)"), prov: "asbuilt" },
 ];
-// MVP 不含的新引擎（Q3 各自獨立 OpenSpec change）→ 標願景 disabled。
-const ROADMAP_ENGINES: { code: string; title: string; prov: Prov }[] = [
-  { code: "A5", title: t("碰撞 / 空間干涉", "Clash / spatial interference"), prov: "p3" },
-  { code: "A6", title: t("圖模一致", "Drawing-model consistency"), prov: "p4" },
-  { code: "A9", title: t("AI 搜尋 / 問答", "AI search / Q&A"), prov: "p4" },
-  { code: "A10", title: t("報表 / 稽核 / 封存", "Reporting / audit / archival"), prov: "p4" },
+// 願景/待建（對齊權威）：碰撞＝A3 clash（未開工；O6 已裁定官方 ifcclash，p1）；
+// 語意搜尋＝權威 A4（p4，title/prov 直接引 data.ts 單一來源）；其餘為 overlay 願景項，
+// 未列權威 A1–A10 → 不掛 App 編號（誠實，不佔用權威碼）。
+const A4_APP = A1A10.find((a) => a.code === "A4");
+const ROADMAP_ENGINES: { id: string; code: string; title: string; prov: Prov }[] = [
+  { id: "clash", code: "A3", title: t("碰撞 / 空間干涉（clash·未開工，ifcclash 已選型）", "Clash / spatial interference (not started; ifcclash selected)"), prov: "p1" },
+  { id: "dwg", code: "—", title: t("圖模一致（願景，未列權威 A1–A10）", "Drawing-model consistency (vision, not in authoritative A1–A10)"), prov: "p4" },
+  { id: "search", code: "A4", title: A4_APP ? t(A4_APP.title, A4_APP.en) : t("語意搜尋與模型問答", "USD Search & NL Query"), prov: A4_APP?.prov ?? "p4" },
+  { id: "audit", code: "—", title: t("報表 / 稽核 / 封存（願景，未列權威 A1–A10）", "Reporting / audit / archival (vision, not in authoritative A1–A10)"), prov: "p4" },
 ];
 
 // 每列穩定 key：rule_code + ifc_guid。同一 ifc_guid 可能有多筆不同 rule_code 的失敗，
@@ -145,16 +152,16 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
   };
 
   return (
-    <div className={`gov-overlay ${props.variant === "panel" ? "gov-overlay--panel" : ""} ${readOnly ? "gov-readonly" : ""}`} role="complementary" aria-label={t("A1–A10 治理 overlay", "A1–A10 governance overlay")} data-testid="gov-overlay">
+    <div className={`gov-overlay ${props.variant === "panel" ? "gov-overlay--panel" : ""} ${readOnly ? "gov-readonly" : ""}`} role="complementary" aria-label={t("治理 overlay", "Governance overlay")} data-testid="gov-overlay">
       <div className="gov-overlay-h">
-        <span className="gov-overlay-t">{t("治理 · A1–A10", "Governance · A1–A10")}</span>
+        <span className="gov-overlay-t">{t("治理 · 依 A1–A10 權威狀態", "Governance · per authoritative A1–A10 status")}</span>
         <ProvTag prov="asbuilt" />
       </div>
       {reason && <div className="gov-banner" data-testid="gov-readonly-banner">{GOV_PANEL_REASON_TEXT[reason]}</div>}
 
-      <Panel title={t("MVP 已接引擎", "MVP connected engines")} sub={t("A2 語意映射 · A3 規則/IDS · A4 治理分 · A8 Issue/BCF（design §5）", "A2 semantic mapping · A3 rules/IDS · A4 governance score · A8 Issue/BCF (design §5)")} prov="asbuilt">
+      <Panel title={t("已接能力", "Connected capabilities")} sub={t("語意映射（M4 連動）· 規則/IDS · 治理分 · Issue/BCF——均屬 A1 管線/連動基建（權威：data.ts A1A10／README §4）", "Semantic mapping (M4 bridge) · rules/IDS · governance score · Issue/BCF — all A1 pipeline / bridge infra (authority: data.ts A1A10 / README §4)")} prov="asbuilt">
         {MVP_ENGINES.map((e) => (
-          <div className="gov-engine" key={e.code}>
+          <div className="gov-engine" key={e.id}>
             <span className="gov-engine-code">{e.code}</span>
             <span className="gov-engine-title">{e.title}</span>
             <ProvTag prov={e.prov} />
@@ -164,7 +171,7 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
 
       {/* W1：A3 規則 / IDS 檢核 —— 由當前 review session 起 rule-run，輪詢後把 failed 構件餵入下方清單。 */}
       <Panel
-        title={t("A3 規則 / IDS 檢核 · 從本 session 起跑", "A3 rule / IDS check · launched from this session")}
+        title={t("A1 規則 / IDS 檢核 · 從本 session 起跑", "A1 rule / IDS check · launched from this session")}
         sub={t("POST /api/governance/rule-runs/for-session/:sessionId（coordinator 端解析 server IFC 路徑）", "POST /api/governance/rule-runs/for-session/:sessionId (coordinator resolves the server IFC path)")}
         prov="asbuilt"
         actions={
@@ -260,7 +267,8 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
 
       {/* W3：A8 Issue / BCF —— 從本次 rule-run 開 issue（須先 succeeded）；BCF 為直連下載（不捏造）。 */}
       <Panel
-        title={t("A8 Issue / BCF · 從本次 rule-run", "A8 Issue / BCF · from this rule-run")}
+        // R9：顯示文字對齊權威（Issue/BCF＝A1 出海口）；data-testid="gov-a8-*" 為既有測試/E2E 契約，保留不改。
+        title={t("A1 Issue / BCF · 從本次 rule-run", "A1 Issue / BCF · from this rule-run")}
         sub="POST /api/governance/issues/from-rule-run/:runId · BCF GET /api/governance/bcf/export"
         prov="asbuilt"
         actions={
@@ -300,9 +308,9 @@ export function GovernanceOverlay(props: GovernanceOverlayProps) {
         <Field k={t("開 issue 前置", "issue prerequisite")} v={t("須先成功跑完 A3 規則檢核（succeeded），否則按鈕 disabled", "A3 rule check must complete successfully (succeeded) first, otherwise the button is disabled")} prov="asbuilt" />
       </Panel>
 
-      <Panel title={t("後期願景 · 各自獨立 OpenSpec change", "Later vision · each its own OpenSpec change")} sub={t("A5/A6/A9/A10 後端未建（Q3）→ disabled，不假裝 ready", "A5/A6/A9/A10 backend not built (Q3) → disabled, not pretending ready")} prov="asbuilt">
+      <Panel title={t("願景 / 待建", "Vision / to build")} sub={t("碰撞屬 A3 clash（ifcclash 已選型、未開工）；語意搜尋屬權威 A4（p4）；其餘願景項後端未建 → 一律 disabled，不假裝 ready", "Clash belongs to A3 (ifcclash selected, not started); semantic search is authoritative A4 (p4); other vision items have no backend → all disabled, not pretending ready")} prov="asbuilt">
         {ROADMAP_ENGINES.map((e) => (
-          <div className="gov-engine roadmap" key={e.code}>
+          <div className="gov-engine roadmap" key={e.id}>
             <span className="gov-engine-code">{e.code}</span>
             <span className="gov-engine-title">{e.title}</span>
             <Btn prov={e.prov} disabled caption={t("後端未建（願景），各自獨立 OpenSpec change", "Backend not built (vision), each its own OpenSpec change")}>{e.title}</Btn>
