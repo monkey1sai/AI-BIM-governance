@@ -5,3 +5,6 @@
 - Tests: `pwsh -NoProfile -File scripts/tests/test-codex-maintenance-common.ps1`; `pwsh -NoProfile -File scripts/tests/test-codex-maintenance-transaction.ps1`; `git diff --check`
 - Scope: containment, atomic JSON replacement, deterministic content hashing, exclusive maintenance lock, journal phases, interrupted applying/verifying recovery, and maintenance runner modes.
 - Concerns: symlink target resolution is delegated to normalized path checks; production runner intentionally performs no network/download or live CODEX_HOME mutation.
+
+## Hardening follow-up
+Fixed containment validation, recovery fail-closed behavior, lock-safe runner variable naming, deterministic hash filtering, and unsupported mode handling.
