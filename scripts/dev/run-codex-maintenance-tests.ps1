@@ -1,0 +1,1 @@
+$ErrorActionPreference='Stop'; $tests=Get-ChildItem "$PSScriptRoot/../tests/test-codex-maintenance-*.ps1"; $failed=0; foreach($t in $tests){& $t.FullName;if($LASTEXITCODE -and $LASTEXITCODE -ne 0){$failed++}}; if($failed){throw "failed count $failed"}; Write-Output 'failed count 0'
