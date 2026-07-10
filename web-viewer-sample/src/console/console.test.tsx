@@ -362,6 +362,16 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("warn");
   });
 
+  it("[R4] NAV 分組對齊 A.1.1 群組欄（路由表為準）", () => {
+    const g = (k: string) => PAGES.find((p) => p.key === k)?.group;
+    // A.1.1 rows 9–15：viewer/gpu/a6–a10 群組＝核心治理。
+    ["viewer", "gpu", "a6", "a7", "a8", "a9", "a10"].forEach((k) => expect(g(k)).toBe("core"));
+    // A.1.1 rows 17–19：sessions/instances/minio 群組＝OMNIVERSE RUNTIME。
+    ["sessions", "instances", "minio"].forEach((k) => expect(g(k)).toBe("omniverse"));
+    // A.1.1 row 20：#runtime 群組＝落地端控制台 / SYSTEM（取前者為 nav 歸屬）。
+    expect(g("runtime")).toBe("coordinator");
+  });
+
   it("完整產品操作台 shell 顯示 prototype 的四組資訊架構", () => {
     const html = renderToString(<EdgeConsole />);
     expect(html).toContain("工作台");
