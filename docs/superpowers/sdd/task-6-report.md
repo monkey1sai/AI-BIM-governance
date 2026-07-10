@@ -7,3 +7,5 @@ Validation: PowerShell parser check, Audit smoke run, and `scripts/tests/test-co
 Known gap: legacy updater migration is intentionally left to the installation/migration task; no live CODEX_HOME or scheduled task was modified.
 
 Follow-up: startup now wires ToolPath/allowlist/SID, Audit/Apply validate trusted inventory, Apply snapshots before journaling, Recover handles absent journal.
+
+Follow-up 2: partial trust arguments now fail closed; Verify writes apply-disabled.json and reports disabled=true on regression.
