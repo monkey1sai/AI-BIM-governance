@@ -230,23 +230,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .codex\skills\spec-to-done\e
 - **範圍限制(誠實)**:只解 host-native port 這條 Read-Host;`deploy.ps1:989` 的 `.venv WRONG_VERSION` Read-Host 不在
   範圍(需重建 .venv 或 `-Force`,CLAUDE.md 禁),撞到 HELD 回報。spectator count 非預設 5 時須同步調整 helper 內 port 陣列。
 
-## 模型預算(Codex gpt-5.x 對齊 Claude 四級 tier;gates 不動)
+## 模型預算與角色路由（Codex）
 
-Claude 版的 haiku / sonnet / opus / fable 是**任務難度 tier**。Codex copy 必須保留同一個 gate 結構,只把 tier 映射到可用的 GPT 模型與 reasoning effort;不得因模型降級而刪減 P4/P5/P6 或放寬 HELD 條件。
+模型與 reasoning effort 不在本 adapter 內固定。依全域 `C:\Users\IOT\.codex\docs\agents\task-routing.md` 的 task tier 與 capability routing，指揮官使用目前 session 選定的 global profile，並依工作內容派發角色 lane：`explorer` 負責 source discovery，`debugger` 負責 root-cause isolation，`reviewer` 負責 correctness / regression review，`security_auditor` 負責 auth、權限、破壞性操作與部署風險。各 lane 的 effort 由 global task tier 決定，不得在此文件寫死模型 slug。
 
-| 位置 | Codex 模型 / effort | 對齊的 Claude tier | 品質守恆(誰兜底) |
-|---|---|---|---|
-| 指揮官(主對話) | session default;跑完整 spec-to-done 時優先 `gpt-5.5` high/xhigh | runtime default / fable(Claude 側 session=Fable 5 max) | 指揮官只裁 gate、配 args、輸出 HELD;不接手弱化 workflow |
-| plan 解析(P3 Parse)、引擎偵測(P4 Probe)、單純檔案盤點/hash/path 檢查 | `gpt-5.3-codex-spark` medium | haiku | 機械抽取/探測,錯誤顯性:抽壞 → implementer 立刻 BLOCKED;探錯 → E2E 起不來即 held |
-| GitNexus impact 預掃 + per-task impact、非 gate 的初步檢查 | `gpt-5.4-mini` medium/high | sonnet(輕量面) | impact 只是風險輸入(CRITICAL gate 在指揮官);輸出被正式 reviewer / P5 critic 兜底 |
-| P1 四軸 reviewer、P3 spec/quality reviewer(首審)、**全類 task implementer 首發(機械/非機械皆是)**、測試/fixture 修復 | `gpt-5.4` high | sonnet | 四軸/雙 review 有 plan-fix + final-review + P5 critic 三層兜底;BLOCKED/NEEDS_CONTEXT → gpt-5.5 升級 |
-| NEEDS_CONTEXT/BLOCKED 升級重派、plan/spec/quality fix、fix-cycle + fix-verify(P5 修復) | `gpt-5.5` high/xhigh | opus(judge) | 修復/迭代兜底層,**不降** |
-| plan 作者、final-review(全 diff 兜底)、evidence 執行+裁決(P4 誠實鐵律本體) | `gpt-5.5` xhigh(GPT 側無 Mythos 級對等品,取最高檔並在此註明) | fable(arbiter) | 單點失誤代價最高,**只可升不可降** |
-| P5 fu-adversarial-verify-generic(verifier + critic)、P6 ship-item | `gpt-5.5` xhigh 或 session default 若 session 已是更強設定 | runtime default / fable(Claude 側現為 Fable 5 max) | P5=抓雷主力;P6=端到端代理操作(git/gh/merge 判斷),兩者不降級成 mini/spark |
-
-升級通道(自動,腳本內建或指揮官調度):`gpt-5.4` implementer 回 BLOCKED 或 NEEDS_CONTEXT → 換 `gpt-5.5` high/xhigh 重派。
-平行:P1 四軸 review、P5 per-finding verifier 可平行;**P3 implementer 嚴禁平行**(實作衝突)。
-**降本原則**:hard gates(四軸 approved 條件/兩階段 review 閉合條件/P4 vertical slice 七項/P5 refute-by-default + critic/P6 buffered merge)一個不動;降級只發生在「產出被 ≥2 層更強 gate 複核」或「錯誤顯性必爆」的位置。等效性靠 gate 結構保證,非靠單點模型強度。
+角色路由不改變本流程的 gate 或升級語意：P4 evidence、P5 verifier/critic 與 P6 ship-item 一律使用 Codex 可用的完整 lane；因為 adapter 运行於 Codex，不得以模型差異刪減、降級或放寬 P4/P5/P6、HELD、resume 或 evidence 條件。平行僅限互不衝突的 review / verification；P3 implementer 維持單一協調流程。
 
 ## 誠實鐵律(本流程的落實)
 
