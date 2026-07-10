@@ -67,7 +67,7 @@ Assert `.codex/config.toml` contains `[permissions.safe-workspace.network]`, bot
 
 Delete only `[sandbox_workspace_write]` and its `network_access` key. Keep `[permissions.safe-workspace.network]`, its limited mode, the two GitHub domains, and the disabled Cloudflare plugin.
 
-- [ ] **Step 2: Run the Green checks**
+- [ ] **Step 2: Run the R2 focused Green checks**
 
 ```powershell
 pwsh -NoProfile -File .\\scripts\\tests\\test-agent-governance-check.ps1
@@ -75,7 +75,7 @@ $env:CODEX_HOME = 'C:\\Users\\IOT\\.codex'
 codex --strict-config doctor --summary
 ```
 
-Expected: assertions pass; doctor exits 0 with no new warning type or count.
+Expected: focused config assertions pass; strict doctor exits 0 with no new warning type or count. Then run the full governance test as a staged check: it is expected to remain RED on the line-budget, overlay, and model assertions until Tasks 3-4 complete. Do not treat that expected RED as a Task 2 failure; focused config or doctor failures remain blocking.
 
 - [ ] **Step 3: Commit the isolated config slice**
 
@@ -165,7 +165,7 @@ git commit -m "docs: route spec-to-done by Codex roles"
 **Files:**
 - Test: all files above
 
-- [ ] **Step 1: Run required checks**
+- [ ] **Step 1: Run the R5 full Green gate**
 
 ```powershell
 pwsh -NoProfile -File .\\scripts\\tests\\test-agent-governance-check.ps1
@@ -174,7 +174,7 @@ $env:CODEX_HOME = 'C:\\Users\\IOT\\.codex'
 codex --strict-config doctor --summary
 ```
 
-Expected: pass banner, empty diff check, doctor exit 0.
+Expected: the full governance test is Green, including line-budget, overlay, and model assertions; pass banner, empty diff check, and doctor exit 0. The staged Task 2/R2 RED is no longer acceptable after Tasks 3-4.
 
 - [ ] **Step 2: Run GitNexus impact before the next plan**
 
