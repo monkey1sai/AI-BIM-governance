@@ -1,5 +1,12 @@
 Set-StrictMode -Version Latest
 
+function Assert-SkillPath { param([string]$Root,[string]$Path)
+ if(-not [IO.Path]::IsPathRooted($Root) -or -not [IO.Path]::IsPathRooted($Path)){throw 'Absolute paths required'}
+ $full=[IO.Path]::GetFullPath($Path); $base=[IO.Path]::GetFullPath($Root).TrimEnd('\')+'\'; if(-not ($full.Equals($base.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($base,[StringComparison]::OrdinalIgnoreCase))){throw 'Path escapes root'}
+ $cursor=$full; while($cursor -and ($cursor.Equals($base.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) -or $cursor.StartsWith($base,[StringComparison]::OrdinalIgnoreCase))){$i=Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue; if($i -and (($i.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0)){throw "Reparse point not allowed: $cursor"}; $next=Split-Path $cursor -Parent; if($next -eq $cursor){break}; $cursor=$next}
+ return $full
+}
+
 function Get-FileSha256 { param([Parameter(Mandatory)][string]$Path) if(-not (Test-Path -LiteralPath $Path -PathType Leaf)){throw "File missing: $Path"}; return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function Test-SkillFrontmatter {
  param([Parameter(Mandatory)][string]$Path)
@@ -26,20 +33,24 @@ function Get-SkillInventory {
 }
 function Stage-PinnedSkillSource {
  param([Parameter(Mandatory)][string]$ArchivePath,[Parameter(Mandatory)][string]$ExpectedSha256,[Parameter(Mandatory)][string]$StageRoot)
+ $ArchivePath=Assert-SkillPath ([IO.Path]::GetFullPath((Split-Path $ArchivePath -Parent))) $ArchivePath; $StageRoot=[IO.Path]::GetFullPath($StageRoot); Assert-SkillPath $StageRoot $StageRoot|Out-Null
  $actual=Get-FileSha256 $ArchivePath; if($actual -ne $ExpectedSha256.ToLowerInvariant()){throw 'Source/archive hash mismatch'}
- New-Item -ItemType Directory -Force -Path $StageRoot|Out-Null; $copy=Join-Path $StageRoot ([IO.Path]::GetFileName($ArchivePath)); Copy-Item $ArchivePath $copy -Force
+ New-Item -ItemType Directory -Force -Path $StageRoot|Out-Null; $copy=Join-Path $StageRoot ([IO.Path]::GetFileName($ArchivePath)); Assert-SkillPath $StageRoot $copy|Out-Null; Copy-Item $ArchivePath $copy -Force
  return [pscustomobject]@{ArchivePath=$copy;ArchiveSha256=$actual;StageRoot=$StageRoot}
 }
 function Expand-ValidatedArchive {
  param([Parameter(Mandatory)][string]$ArchivePath,[Parameter(Mandatory)][string]$Destination,[string]$ExpectedTreeHash)
  Add-Type -AssemblyName System.IO.Compression.FileSystem
- New-Item -ItemType Directory -Force $Destination|Out-Null; $root=[IO.Path]::GetFullPath($Destination).TrimEnd('\')+'\'; $seen=@{}
- $zip=[IO.Compression.ZipFile]::OpenRead($ArchivePath); try { foreach($e in $zip.Entries){$n=$e.FullName -replace '/','\'; if([IO.Path]::IsPathRooted($n) -or $n -match '(^|\\)\.\.($|\\)' -or $n -match ':'){throw "Unsafe archive entry: $($e.FullName)"}; if($e.FullName -match '[\\/]$'){continue}; if($seen.ContainsKey($n.ToLowerInvariant())){throw "Duplicate archive entry: $n"}; $seen[$n.ToLowerInvariant()]=$true; $out=[IO.Path]::GetFullPath((Join-Path $Destination $n)); if(-not $out.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){throw 'Archive entry escapes destination'}; $parent=Split-Path $out -Parent; New-Item -ItemType Directory -Force $parent|Out-Null; [IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$false) } } finally {$zip.Dispose()}
+ $Destination=[IO.Path]::GetFullPath($Destination); if(Test-Path $Destination){Assert-SkillPath $Destination $Destination|Out-Null}; $root=$Destination.TrimEnd('\')+'\'; $seen=@{}; $zip=[IO.Compression.ZipFile]::OpenRead($ArchivePath)
+ try { foreach($e in $zip.Entries){$n=$e.FullName -replace '/','\'; $ext=[int]$e.ExternalAttributes; if([IO.Path]::IsPathRooted($n) -or $n -match '(^|\\)\.\.($|\\)' -or $n -match ':' -or (($ext -band 0xA0000000) -ne 0)){throw "Unsafe archive entry: $($e.FullName)"}; if($e.FullName -match '[\\/]$'){continue}; if($seen.ContainsKey($n.ToLowerInvariant())){throw "Duplicate archive entry: $n"}; $seen[$n.ToLowerInvariant()]=$true; $out=[IO.Path]::GetFullPath((Join-Path $Destination $n)); if(-not $out.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){throw 'Archive entry escapes destination'} } } finally {$zip.Dispose()}
+ New-Item -ItemType Directory -Force $Destination|Out-Null; try { $zip=[IO.Compression.ZipFile]::OpenRead($ArchivePath); try { foreach($e in $zip.Entries){$n=$e.FullName -replace '/','\'; if($e.FullName -match '[\\/]$'){continue}; $out=[IO.Path]::GetFullPath((Join-Path $Destination $n)); $parent=Split-Path $out -Parent; New-Item -ItemType Directory -Force $parent|Out-Null; [IO.Compression.ZipFileExtensions]::ExtractToFile($e,$out,$false) } } finally {$zip.Dispose()} }
+ catch { Remove-Item $Destination -Recurse -Force -ErrorAction SilentlyContinue; throw }
  $skill=Join-Path $Destination 'SKILL.md'; if(-not (Test-Path $skill)){throw 'Archive missing SKILL.md'}; Test-SkillFrontmatter $skill|Out-Null; $tree=Get-ContentTreeHash $Destination; if($ExpectedTreeHash -and $tree -ne $ExpectedTreeHash.ToLowerInvariant()){throw 'Tree hash mismatch'}; return [pscustomobject]@{Destination=$Destination;TreeSha256=$tree;ArchiveSha256=(Get-FileSha256 $ArchivePath)}
 }
 function Apply-SkillSourceCohort {
  param([Parameter(Mandatory)][string]$StagedPath,[Parameter(Mandatory)][string]$TargetPath,[Parameter(Mandatory)]$Baseline,[Parameter(Mandatory)]$Actual,[switch]$SignedCapabilityManifest)
- $cap=Get-SkillCapabilitySnapshot $StagedPath; $changed=(@($cap.scriptInventory)-join '|') -ne (@($Baseline.scriptInventory)-join '|'); if($changed -and -not $SignedCapabilityManifest){throw 'Executable/code changes require signed capability manifest'}; Compare-Object ($Baseline|ConvertTo-Json -Compress) ($cap|ConvertTo-Json -Compress)|Out-Null
+ $StagedPath=[IO.Path]::GetFullPath($StagedPath); $TargetPath=[IO.Path]::GetFullPath($TargetPath); Assert-SkillPath $StagedPath $StagedPath|Out-Null; Assert-SkillPath ([IO.Path]::GetFullPath((Split-Path $TargetPath -Parent))) $TargetPath|Out-Null
+ $cap=Get-SkillCapabilitySnapshot $StagedPath; $changed=(@($cap.scriptInventory)-join '|') -ne (@($Baseline.scriptInventory)-join '|'); if($changed){if(-not $SignedCapabilityManifest -or -not $Actual -or -not $Actual.scriptInventory){throw 'Executable/code changes require signed capability manifest'}; if((@($Actual.scriptInventory)-join '|') -ne (@($cap.scriptInventory)-join '|')){throw 'Capability manifest does not match actual'}}
  $backup=$TargetPath+'.backup-'+[DateTime]::UtcNow.ToString('yyyyMMddHHmmssfff'); if(Test-Path $TargetPath){Copy-Item $TargetPath $backup -Recurse -Force}; $sibling=$TargetPath+'.staged-'+[guid]::NewGuid().ToString('N'); Copy-Item $StagedPath $sibling -Recurse -Force; if(Test-Path $TargetPath){Remove-Item $TargetPath -Recurse -Force}; Move-Item $sibling $TargetPath; return [pscustomobject]@{Status='applied';Backup=$backup;Capability=$cap}
 }
-function Restore-SkillSourceCohort { param([Parameter(Mandatory)][string]$TargetPath,[Parameter(Mandatory)][string]$BackupPath) if(-not (Test-Path $BackupPath)){throw 'Backup missing'}; if(Test-Path $TargetPath){Remove-Item $TargetPath -Recurse -Force}; Move-Item $BackupPath $TargetPath; return [pscustomobject]@{Status='restored'} }
+function Restore-SkillSourceCohort { param([Parameter(Mandatory)][string]$TargetPath,[Parameter(Mandatory)][string]$BackupPath) $TargetPath=[IO.Path]::GetFullPath($TargetPath); $BackupPath=[IO.Path]::GetFullPath($BackupPath); Assert-SkillPath (Split-Path $TargetPath -Parent) $TargetPath|Out-Null; Assert-SkillPath (Split-Path $BackupPath -Parent) $BackupPath|Out-Null; if(-not (Test-Path $BackupPath)){throw 'Backup missing'}; if(Test-Path $TargetPath){Remove-Item $TargetPath -Recurse -Force}; Move-Item $BackupPath $TargetPath; return [pscustomobject]@{Status='restored'} }
