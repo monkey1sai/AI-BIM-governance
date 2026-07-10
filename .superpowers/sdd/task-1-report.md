@@ -8,3 +8,6 @@
 
 ## Hardening follow-up
 Fixed containment validation, recovery fail-closed behavior, lock-safe runner variable naming, deterministic hash filtering, and unsupported mode handling.
+
+## Reparse and durability follow-up
+Path validation now walks parent components, relative candidates fail deterministically, journal data validates absolute paths, atomic writes flush before rename, and rolling_back recovery is supported.
