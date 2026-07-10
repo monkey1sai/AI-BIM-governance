@@ -10,5 +10,9 @@ foreach($mode in 'Audit','Apply') {
  if($mode -eq 'Audit' -and ($d.Trigger.Schedule -ne 'Daily' -or $d.Trigger.StartBoundary.Hour -ne 2 -or $d.Trigger.StartBoundary.Minute -ne 30)){throw 'audit trigger failed'}
  if($mode -eq 'Apply' -and ($d.Trigger.DaysOfWeek -ne 'Sunday' -or $d.Trigger.StartBoundary.Hour -ne 3 -or $d.Trigger.StartBoundary.Minute -ne 30)){throw 'apply trigger failed'}
 }
+# Registration validates before invoking ScheduledTasks APIs.
+$bad = New-CodexGovernanceTaskDefinition Audit $root (Join-Path $root 'tools') 'C:\Program Files\PowerShell\7\pwsh.exe' $root
+$bad.Trigger.TimeZone = 'UTC'
+try { Register-CodexGovernanceTask $bad; throw 'malformed definition was accepted' } catch { if($_.Exception.Message -notmatch 'Invalid task definition'){throw} }
 # This test intentionally never calls Register-CodexGovernanceTask.
 Write-Output 'PASS maintenance scheduled task definitions (registration not invoked)'

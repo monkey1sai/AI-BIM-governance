@@ -22,6 +22,7 @@ function New-CodexGovernanceTaskDefinition {
 
 function Register-CodexGovernanceTask {
     param([Parameter(Mandatory)]$Definition)
+    if (-not (Test-CodexGovernanceTask $Definition)) { throw "Invalid task definition: $($Definition.TaskName)" }
     if (-not $Definition.Action.Execute -or -not [IO.Path]::IsPathRooted($Definition.Action.Execute)) { throw 'Task action executable must be absolute' }
     $action = New-ScheduledTaskAction -Execute $Definition.Action.Execute -Argument $Definition.Action.Arguments -WorkingDirectory $Definition.Action.WorkingDirectory
     $trigger = if ($Definition.Mode -eq 'Audit') { New-ScheduledTaskTrigger -Daily -At $Definition.Trigger.StartBoundary } else { New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At $Definition.Trigger.StartBoundary }
