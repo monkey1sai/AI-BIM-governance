@@ -12,7 +12,7 @@ Read-only acceptance review. No scheduled task was registered, no live candidate
 | Gate | Result | Evidence / exact expectation |
 |---|---|---|
 | Redacted report | VERIFIED | Paths, statuses, and hash contracts only; no secret values. |
-| Maintenance unit harness | VERIFIED | All nine maintenance test scripts passed from the commit tree; aggregate reported `failed count 0`. |
+| Maintenance unit harness | VERIFIED (pwsh 7.5.4 required) | All nine maintenance test scripts passed under PowerShell 7.5.4; aggregate reported `passed count 9; failed count 0`. Windows PowerShell 5 is rejected before product tests run; no aggregate pass is claimed from PS5. |
 | Governance check | VERIFIED | `test-agent-governance-check.ps1` passed. |
 | Scheduled task contract | VERIFIED (definition only) | Audit daily 02:30; Apply Sunday 03:30; `Taipei Standard Time`; absolute `pwsh.exe -NoProfile -NonInteractive`; Interactive/Limited; `StartWhenAvailable`; `IgnoreNew`; `PT1H`. Registration intentionally not invoked. |
 | No live side effects | VERIFIED | No live task registration or update Apply was performed; unattended updater remains disabled. |
@@ -35,7 +35,8 @@ applied state was observed and this report must remain redacted.
 
 ## Verification
 
-- `pwsh -NoProfile -NonInteractive -File scripts/dev/run-codex-maintenance-tests.ps1` -> PASS, `failed count 0`.
+- `pwsh 7.5.4 -NoProfile -NonInteractive -File scripts/dev/run-codex-maintenance-tests.ps1` -> PASS, `passed count 9; failed count 0`.
+- `powershell.exe -NoProfile -NonInteractive -File scripts/dev/run-codex-maintenance-tests.ps1` -> FAIL as required (`PowerShell 7 or newer is required`), before product tests; no PS5 aggregate pass claimed.
 - `pwsh -NoProfile -NonInteractive -File scripts/tests/test-agent-governance-check.ps1` -> PASS (`all assertions passed`).
 - `git diff --check` -> PASS.
 - `pytest -q` -> collection failed on 17 pre-existing environment/template cases (`carb`, `omni`, kit-manager import path, and unrendered template syntax); this is unrelated to the maintenance harness.
