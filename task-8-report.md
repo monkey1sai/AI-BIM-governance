@@ -12,7 +12,7 @@ Read-only acceptance review. No scheduled task was registered, no live candidate
 | Gate | Result | Evidence / exact expectation |
 |---|---|---|
 | Redacted report | VERIFIED | Paths, statuses, and hash contracts only; no secret values. |
-| Maintenance unit harness | VERIFIED | All seven/eight maintenance test scripts passed from the commit tree; aggregate reported `failed count 0`. |
+| Maintenance unit harness | VERIFIED | All nine maintenance test scripts passed from the commit tree; aggregate reported `failed count 0`. |
 | Governance check | VERIFIED | `test-agent-governance-check.ps1` passed. |
 | Scheduled task contract | VERIFIED (definition only) | Audit daily 02:30; Apply Sunday 03:30; `Taipei Standard Time`; absolute `pwsh.exe -NoProfile -NonInteractive`; Interactive/Limited; `StartWhenAvailable`; `IgnoreNew`; `PT1H`. Registration intentionally not invoked. |
 | No live side effects | VERIFIED | No live task registration or update Apply was performed; unattended updater remains disabled. |
