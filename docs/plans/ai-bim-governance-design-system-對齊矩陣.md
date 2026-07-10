@@ -69,7 +69,7 @@
 | 13 | `#a8` | A8 | Synthetic Data | omniverse | 後端不存在 | NOT BUILT · p4 | ✓ |
 | 14 | `#a9` | A9 | 設計 / 審查 Copilot | omniverse | 後端不存在（A9 實作在 session layer） | NOT BUILT · p4 | ✓ |
 | 15 | `#a10` | A10 | 機器人 / 巡檢模擬 | omniverse | 後端不存在 | NOT BUILT · p4 | ✓ |
-| 16 | `#conv` | CV | IFC→USD 轉檔排程 [P1] | governance / coordinator | coordinator intake + streaming :49101 | built（intake 佇列 + coverage）；轉檔歷史頁待建 | ✓ |
+| 16 | `#conv` | CV | alias→`#minio`（MD 三頁合一 #303/#304） | 同 19 列 M | `AliasRedirect`；後端同 M 列 | alias 保留；歷史呈現已併入 ModelDataPage | ✓ |
 | 17 | `#sessions` | SS | Session 管理 | governance / coordinator | coordinator :8004 | built；**v2：新增 A1 連動橋供應端面板（IX-SS-05，前端待實作）** | ✓ |
 | 18 | `#instances` | KG | Kit / GPU 機隊 | omniverse / coordinator | kit-manager-api :8010 | partial（真遙測接 :8010；部分待建） | ✓ |
 | 19 | `#minio` | M | MinIO 資料 | governance / coordinator | coordinator `/api/minio/objects`（真 MinIO raw-folder）+ governance-service `/api/files/tree`（local_fs） | **真 MinIO raw-folder 逐層瀏覽已建（唯讀）；三層「專案/種類/版本」僅 watcher 解析語意；兩條 API 供 A1 v2 雙來源** | ✓ |
@@ -178,8 +178,8 @@ governance-service / Kit / 轉檔 = **host-native**；容器只跑 web plane，�
 |---|---|---|---|
 | MinIO watcher 偵測 | `minioWatcher.ts` 實作 `deriveIntakeFromKey`（≥3 段 key，種類=倒數第二，版本=末段，中文→`mv_<hash8>`）；S3Client 外連 LAN MinIO `192.168.20.234:9000` bucket `bim-control`（外連依賴非 bind） | **已實作；live 多層觸發 not observed** | binding |
 | `#minio` 頁 | **2026-07-02 更新**：頁面接 coordinator `GET /api/minio/objects?prefix=&delimiter=/`（真 MinIO raw-folder 逐層，唯讀；`app.ts:1597`）；local_fs 樹 API（`files/tree`）保留 | **真 MinIO raw-folder 逐層瀏覽已建（唯讀）；三層「專案/種類/版本」僅 watcher 解析語意，非 bucket 結構宣稱；兩條 API 供 A1 v2 雙來源** | **binding** |
-| 轉檔歷史頁 | coordinator 有 `/api/dev/conversions` proxy（`app.ts:1795`）轉發 streaming `/api/conversions` list；`conversion_authority.py:126` `GET /api/conversions` 存在；但**前端 console 未渲染成歷史頁** | 後端 list + proxy 皆在；缺的是 UI 呈現層。精確說法：「job 在 streaming-server 有 JSON 持久化與 list API，但前端無轉檔歷史紀錄頁」 | **binding·落差：不得寫「完全沒接線」** |
-| 手動觸發 UI | `#conv` prioritize/retry 只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期 | **無已接線的手動佇列/插隊 UI 觸發新轉檔** | binding |
+| 轉檔歷史頁 | coordinator `/api/dev/conversions` proxy 轉發 streaming `/api/conversions` list；**前端歷史呈現已落地（2026-07-06 #303）**：ModelDataPage GlobalConversionPane「轉檔歷史」折疊區（前 50 筆、誠實空/錯誤狀態） | 殘餘：獨立第一入口頁與 >50 筆分頁未排程。不得寫「完全沒接線」或「缺前端歷史頁」 | **binding** |
+| 手動觸發 UI | prioritize/retry 只對既有 ifc-ready job 排序/重試；`PUT /api/conversion/watch` 只開關 watcher 生命週期；**`POST /api/conversion/trigger` 手動觸發已接線**（IP allowlist＋IntentDialog＋idempotency；僅對未偵測/終局失敗物件；2026-07-10 認列） | 禁寫「無已接線的手動觸發 UI」 | binding |
 | conv-coverage 自我參照 | `usd_stage_enumeration` 下 source_count 結構性恆等 mapped_count | coverage_ratio=1 是結構性自我參照；標 `conv-coverage-selfref-note`，不宣稱 lossless | binding |
 | watcher vs `#minio`／A1 選檔資料路徑 | watcher 解析三層 key（自動 intake，opt-in 預設關）；UI 列表走 `minio/objects`／`files/tree` | 獨立路徑：watcher 不餵 UI 列表；UI 選檔不觸發轉檔（A1 v2 只跑 rule-run） | binding |
 

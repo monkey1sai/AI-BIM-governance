@@ -34,7 +34,7 @@
 
 1. **先查文件，不靠記憶**：對應功能先在 `docs/plans/` 找到 DoD 條目、IX 互動卡、或 API 草案。找不到 → 停下來問人，不自己發明。
 2. **確認里程碑順序**：M0 → M1（A1 純 CPU，不碰 3D）→ M2 → M3 → M4 → M5+，**不要先做 3D**。
-3. **官方有就用官方**：diff 用 `ifcdiff`、BCF 用官方 bcf 庫語意、3D 量測/批註/剖切/書籤/場景樹/屬性/串流一律走 Omniverse 官方件；自製只做 BCF 橋接層與轉檔 coverage 報告。
+3. **官方有就用官方**：diff 採簽核之自製多級鍵引擎（2026-07-10 R2，語意對齊 ifcdiff；理由與限制見 README 鐵律 #9）、BCF 用官方 bcf 庫語意、3D 量測/批註/剖切/書籤/場景樹/屬性/串流一律走 Omniverse 官方件；自製只做 diff 引擎（已簽核）、BCF 橋接層與轉檔 coverage 報告。
 
 ### 交付前必過（精簡版，完整版見 §8）
 
@@ -80,7 +80,7 @@
 | D-08 | 樂觀更新（先改畫面再等 API） | 出現「畫面 ≠ 事實」時間窗，動搖信任 | busy → 等 API → 以事實重繪；失敗畫面不變只顯示錯誤 |
 | D-09 | 輪詢忘了清理 / 失敗清空舊資料 | 記憶體洩漏；使用者分不清掛了還是真沒資料 | 離頁 `clearInterval`；失敗顯示「上次更新時間·連線異常」不清空 |
 | D-10 | 危險動作缺三段式確認 | 操作不可追溯、使用者不知後果 | 插隊/重試/釋放/terminate/drain/move/批次建 issue/匯出 一律 intent → confirm → audited |
-| D-11 | 版本 diff 自寫、不用 ifcdiff | 跨 schema 不保證正確，後期重做 | A2 用 `from ifcdiff import IfcDiff`；前端直接吃其 JSON；無自寫比對 |
+| D-11 | 版本 diff 引擎選型漂移 | 跨 schema 不保證正確 | A2 現行採**簽核之自製多級鍵引擎**（2026-07-10 R2；GlobalId→(is_a,Tag)→type+Name+loc，語意對齊 ifcdiff）；前端直接吃其 JSON；跨 schema 需求出現時再評估 `from ifcdiff import IfcDiff` |
 | D-12 | A1/A2/A3/A5 各做各的 Issue schema | Issue 中心無法統一、BCF 欄位不一致 | 共用 v3 §2.0.3 同一 schema；`source` 填 A1/A2/A3/A5/manual；無 `A1Issue/A2Issue` 獨立型別 |
 | D-13 | 3D 功能在 web 端重做 | 與 Kit 升版行為不保證一致 | 量測/批註/剖切/書籤/場景樹/屬性/串流走官方件；自製僅 BCF 橋接層 |
 | D-14 | AI 碰 source model | source 被改無法還原 | usd-code-mcp 目標一律 session layer；還原 = 切可見性；source 雜湊不變 |
@@ -129,7 +129,7 @@
 | M2 轉檔 | 新 model.ifc → model.usdc 出現 + coverage | ConvJob status=done；coverage 報告；prim `G_<guid>` 抽樣 |
 | M3 串流 | 瀏覽器見 Kit first frame；兩人同看 | `first_frame_at` viewer 端回報；1 PRI+1 SPC 截圖 |
 | M4 3D 連動 | A1 高亮失敗構件 | 四條件齊備截圖；DataChannel trace；elementGuid↔usdPath 樣本 |
-| M5+ | A2 ifcdiff onion-skin；A3 federation | A3 clash 在 `has_occ=False` 前標待建 |
+| M5+ | A2 diff onion-skin；A3 federation | A3 clash 依 2026-07-07 `ifcclash` plan 執行，落地前標待建 |
 
 ---
 
@@ -300,7 +300,7 @@
 
 ## §11 官方對齊鐵律（三領域，禁憑記憶）
 
-- **IfcOpenShell**：版本比對用 `ifcdiff`（JSON，GlobalId 鍵）；BCF 用官方 bcf 庫語意，**現行 BCF 2.1 匯出保留、3.0 為升級目標（須先向 buildingSMART 確認）**；IFC→USD 自製須 (a) GlobalId 命名 prim `G_<sanitized_guid>`、(b) 出 mapping coverage 報告；IfcConvert 無 USD 輸出，備援 `IfcConvert --use-element-guids → glb`。
+- **IfcOpenShell**：版本比對採簽核之自製多級鍵引擎（2026-07-10 R2，語意對齊 ifcdiff——JSON、GlobalId 主鍵；理由/限制見 README 鐵律 #9）；BCF 用官方 bcf 庫語意，**現行 BCF 2.1 匯出保留、3.0 為升級目標（須先向 buildingSMART 確認）**；IFC→USD 自製須 (a) GlobalId 命名 prim `G_<sanitized_guid>`、(b) 出 mapping coverage 報告；IfcConvert 無 USD 輸出，備援 `IfcConvert --use-element-guids → glb`。
 - **Omniverse**：量測/批註/剖切/書籤/場景樹/屬性/串流一律用官方件，web 端不重做，自製僅限 BCF 橋接層；1 GPU = 1 Kit = 1 stream；terminate + recreate 無 live migration。
 - **Replicator / Cosmos / Isaac（A8/A10）**：版本風險高，先用 kit-mcp/usd-code-mcp/omni-ui-mcp + nvidia.com/omniverse 驗證再寫，無法確認標 `Phase X · 待驗證`。
 - **強制驗證順序**：`kit-mcp` → `usd-code-mcp` → `omni-ui-mcp` → nvidia.com/omniverse → IfcOpenShell → buildingSMART BCF。
@@ -361,7 +361,7 @@
 - ☐ D4 move confirm 明確含「約 30–40 秒/重載 stage/短暫斷線」
 
 **E · 官方工具邊界**
-- ☐ E1 A2 diff 走 `ifcdiff`，無自寫比對
+- ☐ E1 A2 diff 走簽核之自製多級鍵引擎（R2），語意對齊 ifcdiff、enum 逐字不漂移
 - ☐ E2 無 `IfcConvert` 帶 `.usd/.usdc` 輸出
 - ☐ E3 BCF 走官方庫語意/自建 2.1，無完全自寫 BCF-XML
 - ☐ E4 無 web 端自製量測/批註/剖切/書籤/場景樹/屬性元件
