@@ -1,6 +1,6 @@
 # 前端重構實作筆記（frontend-redesign-implementation-notes）
 
-> 來源規格：`frontend-redesign-ia-and-phases.html`（IA 總圖 + CH-A→CH-G 分期）。
+> 來源規格：`frontend-redesign-ia-and-phases.html`（IA 總圖 + CH-A→CH-G 分期；根層原型檔已於 2026-07-10 衛生輪移除，歷史版本見 git）。
 > 設計尺規：Anthropic 前端原則 + NVIDIA Kit primary/spectator。
 > 執行模式：自主連續推進，每期 branch→PR→Actions→merge，**done 條件 = browser E2E evidence（Playwright 截圖/trace）**。
 > 誠實鐵律：沒有真人可開 URL、點按鈕、用 fixture、看到結果、且有 Playwright 證據之前，不得宣告 done。後端/API/mock/docs-only 不算完成。
