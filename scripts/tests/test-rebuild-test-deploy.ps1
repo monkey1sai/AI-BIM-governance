@@ -805,6 +805,310 @@ try {
         $lockedFile.Dispose()
     }
 
+    # Task 1A RED: transactional checkout preparation must never mutate the live
+    # deployment until a complete standalone stage has passed provenance and
+    # deploy-script validation.  These fixtures use real bytes/hashes; only Git,
+    # service-stop, and deploy process boundaries are injected.
+    $transactionOriginUrl = 'https://example.invalid/AI-BIM-governance.git'
+    $transactionOriginCommit = 'fedcba9876543210fedcba9876543210fedcba98'
+    $transactionFixturePaths = @(
+        'live-sentinel.bin',
+        '.env',
+        'bim-review-coordinator\.env',
+        '.env.web-plane.host-kit'
+    )
+    $newTransactionFixture = {
+        param([Parameter(Mandatory = $true)][string] $Root)
+
+        New-Item -ItemType Directory -Path (Join-Path $Root 'scripts') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $Root 'bim-review-coordinator') -Force | Out-Null
+        [System.IO.File]::WriteAllBytes(
+            (Join-Path $Root 'live-sentinel.bin'),
+            [byte[]](0, 1, 2, 13, 10, 127, 128, 254, 255)
+        )
+        [System.IO.File]::WriteAllBytes(
+            (Join-Path $Root '.env'),
+            [System.Text.Encoding]::UTF8.GetBytes("ROOT_TOKEN=fixture-root`r`nUNICODE=交易式`r`n")
+        )
+        [System.IO.File]::WriteAllBytes(
+            (Join-Path $Root 'bim-review-coordinator\.env'),
+            [System.Text.Encoding]::UTF8.GetBytes("INTERNAL_API_AUTH_TOKEN=fixture-coordinator`n")
+        )
+        [System.IO.File]::WriteAllBytes(
+            (Join-Path $Root '.env.web-plane.host-kit'),
+            [System.Text.Encoding]::UTF8.GetBytes("MINIO_WATCH_ACCESS_KEY=fixture-access`r`nMINIO_WATCH_SECRET_KEY=fixture-secret`r`n")
+        )
+
+        # The legacy restore helper currently requires examples.  Keeping them in
+        # the real fixture ensures a RED result cannot be blamed on fixture setup.
+        [System.IO.File]::WriteAllBytes((Join-Path $Root '.env.example'), [byte[]](35, 10))
+        [System.IO.File]::WriteAllBytes((Join-Path $Root 'bim-review-coordinator\.env.example'), [byte[]](35, 10))
+        [System.IO.File]::WriteAllBytes((Join-Path $Root '.env.web-plane.host-kit.example'), [byte[]](35, 10))
+        [System.IO.File]::WriteAllBytes(
+            (Join-Path $Root 'scripts\deploy.ps1'),
+            [System.Text.Encoding]::ASCII.GetBytes("exit 0`r`n")
+        )
+    }
+    $getTransactionHashes = {
+        param([Parameter(Mandatory = $true)][string] $Root)
+
+        $hashes = [ordered]@{}
+        foreach ($relativePath in $transactionFixturePaths) {
+            $path = Join-Path $Root $relativePath
+            $hashes[$relativePath] = if (Test-Path -LiteralPath $path -PathType Leaf) {
+                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            } else {
+                '<missing>'
+            }
+        }
+        return $hashes
+    }.GetNewClosure()
+    $transactionRedFailures = New-Object 'System.Collections.Generic.List[string]'
+    $recordTransactionExpectation = {
+        param(
+            [Parameter(Mandatory = $true)][bool] $Condition,
+            [Parameter(Mandatory = $true)][string] $Behavior,
+            [Parameter(Mandatory = $true)][string] $Details
+        )
+
+        if (-not $Condition) {
+            $transactionRedFailures.Add("$Behavior -- $Details") | Out-Null
+        }
+    }.GetNewClosure()
+
+    # Task 1A.1: non-git live bytes survive a failed sibling-stage clone; no
+    # service stop, live cutover, or deploy is allowed to begin.
+    $nonGitLiveRoot = Join-Path $sandbox 'transaction-non-git-live'
+    & $newTransactionFixture $nonGitLiveRoot
+    $nonGitHashesBefore = & $getTransactionHashes $nonGitLiveRoot
+    $nonGitCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $nonGitStoppedServices = New-Object 'System.Collections.Generic.List[string]'
+    $nonGitDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:nonGitCloneTargets = $nonGitCloneTargets
+    $script:nonGitStoppedServices = $nonGitStoppedServices
+    $script:nonGitDeployCalls = $nonGitDeployCalls
+    $nonGitRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments.Count -gt 0 -and $Arguments[0] -eq 'clone') {
+            $script:nonGitCloneTargets.Add([string]$Arguments[-1]) | Out-Null
+            return [pscustomobject]@{ ExitCode = 91; Output = 'injected sibling stage clone failure' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $nonGitStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:nonGitStoppedServices.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $nonGitDeployRunner = {
+        param([string] $DeployRoot)
+        $script:nonGitDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $nonGitFailureMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $nonGitLiveRoot -AllowNonFixedPathForTests -CommandRunner $nonGitRunner -DeployRunner $nonGitDeployRunner -ServiceStopper $nonGitStopper | Out-Null
+    } catch {
+        $nonGitFailureMessage = $_.Exception.Message
+    }
+    $nonGitHashesAfter = & $getTransactionHashes $nonGitLiveRoot
+    & $recordTransactionExpectation (-not [string]::IsNullOrWhiteSpace($nonGitFailureMessage) -and $nonGitFailureMessage -match 'injected sibling stage clone failure') 'Task 1A.1 non-git clone failure is surfaced' "actual='$nonGitFailureMessage'"
+    foreach ($relativePath in $transactionFixturePaths) {
+        & $recordTransactionExpectation ($nonGitHashesAfter[$relativePath] -eq $nonGitHashesBefore[$relativePath]) 'Task 1A.1 non-git live bytes remain SHA256-identical' "path='$relativePath' before='$($nonGitHashesBefore[$relativePath])' after='$($nonGitHashesAfter[$relativePath])'"
+    }
+    & $recordTransactionExpectation ($nonGitCloneTargets.Count -eq 1 -and $nonGitCloneTargets[0] -ne $nonGitLiveRoot) 'Task 1A.1 clone targets a sibling stage, not live' "targets='$($nonGitCloneTargets -join ',')' live='$nonGitLiveRoot'"
+    & $recordTransactionExpectation ($nonGitStoppedServices.Count -eq 0) 'Task 1A.1 clone failure stops before service stop' "stopped='$($nonGitStoppedServices -join ',')'"
+    & $recordTransactionExpectation ($nonGitDeployCalls.Count -eq 0) 'Task 1A.1 clone failure stops before deploy' "deployCalls=$($nonGitDeployCalls.Count)"
+
+    # Task 1A.2: a stale linked-worktree gitfile is broken state, not a valid
+    # checkout.  A prepared standalone stage may replace it while env hashes and
+    # source provenance remain exact.
+    $brokenGitfileLiveRoot = Join-Path $sandbox 'transaction-broken-gitfile-live'
+    & $newTransactionFixture $brokenGitfileLiveRoot
+    $missingLinkedGitDir = Join-Path $sandbox 'missing-linked-worktree-gitdir'
+    [System.IO.File]::WriteAllBytes(
+        (Join-Path $brokenGitfileLiveRoot '.git'),
+        [System.Text.Encoding]::ASCII.GetBytes("gitdir: $missingLinkedGitDir`r`n")
+    )
+    $brokenGitfileHashesBefore = & $getTransactionHashes $brokenGitfileLiveRoot
+    $brokenGitfileCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $brokenGitfileCloneOrigins = New-Object 'System.Collections.Generic.List[string]'
+    $brokenGitfileDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:brokenGitfileCloneTargets = $brokenGitfileCloneTargets
+    $script:brokenGitfileCloneOrigins = $brokenGitfileCloneOrigins
+    $script:brokenGitfileDeployCalls = $brokenGitfileDeployCalls
+    $brokenGitfileRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments.Count -gt 0 -and $Arguments[0] -eq 'clone') {
+            $cloneTarget = [string]$Arguments[-1]
+            $script:brokenGitfileCloneOrigins.Add([string]$Arguments[-2]) | Out-Null
+            $script:brokenGitfileCloneTargets.Add($cloneTarget) | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneTarget '.git') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneTarget 'scripts') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneTarget 'bim-review-coordinator') -Force | Out-Null
+            [System.IO.File]::WriteAllBytes((Join-Path $cloneTarget 'scripts\deploy.ps1'), [System.Text.Encoding]::ASCII.GetBytes("exit 0`r`n"))
+            [System.IO.File]::WriteAllBytes((Join-Path $cloneTarget '.env.example'), [byte[]](35, 10))
+            [System.IO.File]::WriteAllBytes((Join-Path $cloneTarget 'bim-review-coordinator\.env.example'), [byte[]](35, 10))
+            [System.IO.File]::WriteAllBytes((Join-Path $cloneTarget '.env.web-plane.host-kit.example'), [byte[]](35, 10))
+            return [pscustomobject]@{ ExitCode = 0; Output = 'prepared standalone stage' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit.Substring(0, 7) }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        if ($commandText -eq 'rev-parse origin/main') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $brokenGitfileDeployRunner = {
+        param([string] $DeployRoot)
+        $script:brokenGitfileDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $brokenGitfileFailureMessage = $null
+    $brokenGitfileResult = $null
+    try {
+        $brokenGitfileResult = Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $brokenGitfileLiveRoot -AllowNonFixedPathForTests -CommandRunner $brokenGitfileRunner -DeployRunner $brokenGitfileDeployRunner -ServiceStopper $noopStopper
+    } catch {
+        $brokenGitfileFailureMessage = $_.Exception.Message
+    }
+    $brokenGitfileHashesAfter = & $getTransactionHashes $brokenGitfileLiveRoot
+    $brokenGitfileActualCommit = if ($null -eq $brokenGitfileResult) { '<no result>' } else { [string]$brokenGitfileResult.OriginMainCommit }
+    & $recordTransactionExpectation ([string]::IsNullOrWhiteSpace($brokenGitfileFailureMessage)) 'Task 1A.2 broken gitfile self-heals successfully' "actual='$brokenGitfileFailureMessage'"
+    & $recordTransactionExpectation (Test-Path -LiteralPath (Join-Path $brokenGitfileLiveRoot '.git') -PathType Container) 'Task 1A.2 replacement is a standalone checkout' "live .git remains file=$((Test-Path -LiteralPath (Join-Path $brokenGitfileLiveRoot '.git') -PathType Leaf))"
+    & $recordTransactionExpectation ($brokenGitfileCloneTargets.Count -eq 1 -and $brokenGitfileCloneTargets[0] -ne $brokenGitfileLiveRoot) 'Task 1A.2 broken checkout is replaced from a sibling stage' "targets='$($brokenGitfileCloneTargets -join ',')'"
+    & $recordTransactionExpectation ($brokenGitfileCloneOrigins.Count -eq 1 -and $brokenGitfileCloneOrigins[0] -eq $transactionOriginUrl) 'Task 1A.2 prepared stage uses caller source provenance' "origins='$($brokenGitfileCloneOrigins -join ',')'"
+    & $recordTransactionExpectation ($brokenGitfileActualCommit -eq $transactionOriginCommit) 'Task 1A.2 result provenance matches origin/main' "actual='$brokenGitfileActualCommit'"
+    foreach ($relativePath in $transactionFixturePaths | Where-Object { $_ -ne 'live-sentinel.bin' }) {
+        & $recordTransactionExpectation ($brokenGitfileHashesAfter[$relativePath] -eq $brokenGitfileHashesBefore[$relativePath]) 'Task 1A.2 preserved env remains SHA256-identical' "path='$relativePath' before='$($brokenGitfileHashesBefore[$relativePath])' after='$($brokenGitfileHashesAfter[$relativePath])'"
+    }
+    & $recordTransactionExpectation ($brokenGitfileDeployCalls.Count -eq 1 -and $brokenGitfileDeployCalls[0] -eq $brokenGitfileLiveRoot) 'Task 1A.2 deploy runs from replacement live checkout' "deployRoots='$($brokenGitfileDeployCalls -join ',')'"
+
+    # Task 1A.3: a valid standalone checkout with the wrong origin is rejected
+    # before staging, service stop, cutover, or deploy.
+    $wrongOriginLiveRoot = Join-Path $sandbox 'transaction-wrong-origin-live'
+    & $newTransactionFixture $wrongOriginLiveRoot
+    New-Item -ItemType Directory -Path (Join-Path $wrongOriginLiveRoot '.git') -Force | Out-Null
+    $wrongOriginHashesBefore = & $getTransactionHashes $wrongOriginLiveRoot
+    $wrongOriginCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $wrongOriginStoppedServices = New-Object 'System.Collections.Generic.List[string]'
+    $wrongOriginDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:wrongOriginCloneTargets = $wrongOriginCloneTargets
+    $script:wrongOriginStoppedServices = $wrongOriginStoppedServices
+    $script:wrongOriginDeployCalls = $wrongOriginDeployCalls
+    $wrongOriginRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            $output = if ([System.IO.Path]::GetFullPath($WorkingDirectory) -eq [System.IO.Path]::GetFullPath($wrongOriginLiveRoot)) {
+                'https://wrong.example.invalid/not-this-repo.git'
+            } else {
+                $transactionOriginUrl
+            }
+            return [pscustomobject]@{ ExitCode = 0; Output = $output }
+        }
+        if ($Arguments.Count -gt 0 -and $Arguments[0] -eq 'clone') {
+            $script:wrongOriginCloneTargets.Add([string]$Arguments[-1]) | Out-Null
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $wrongOriginStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:wrongOriginStoppedServices.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $wrongOriginDeployRunner = {
+        param([string] $DeployRoot)
+        $script:wrongOriginDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $wrongOriginFailureMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $wrongOriginLiveRoot -AllowNonFixedPathForTests -CommandRunner $wrongOriginRunner -DeployRunner $wrongOriginDeployRunner -ServiceStopper $wrongOriginStopper | Out-Null
+    } catch {
+        $wrongOriginFailureMessage = $_.Exception.Message
+    }
+    $wrongOriginHashesAfter = & $getTransactionHashes $wrongOriginLiveRoot
+    & $recordTransactionExpectation (-not [string]::IsNullOrWhiteSpace($wrongOriginFailureMessage) -and $wrongOriginFailureMessage -match 'origin mismatch') 'Task 1A.3 wrong live origin is rejected' "actual='$wrongOriginFailureMessage'"
+    & $recordTransactionExpectation ($wrongOriginCloneTargets.Count -eq 0) 'Task 1A.3 wrong origin fails before staging' "targets='$($wrongOriginCloneTargets -join ',')'"
+    & $recordTransactionExpectation ($wrongOriginStoppedServices.Count -eq 0) 'Task 1A.3 wrong origin fails before service stop' "stopped='$($wrongOriginStoppedServices -join ',')'"
+    & $recordTransactionExpectation ($wrongOriginDeployCalls.Count -eq 0) 'Task 1A.3 wrong origin fails before deploy' "deployCalls=$($wrongOriginDeployCalls.Count)"
+    foreach ($relativePath in $transactionFixturePaths) {
+        & $recordTransactionExpectation ($wrongOriginHashesAfter[$relativePath] -eq $wrongOriginHashesBefore[$relativePath]) 'Task 1A.3 wrong-origin rejection leaves live bytes identical' "path='$relativePath' before='$($wrongOriginHashesBefore[$relativePath])' after='$($wrongOriginHashesAfter[$relativePath])'"
+    }
+
+    # Task 1A.4: a successfully prepared stage without scripts/deploy.ps1 is
+    # rejected while live is still untouched and before services are stopped.
+    $missingDeployLiveRoot = Join-Path $sandbox 'transaction-stage-missing-deploy-live'
+    & $newTransactionFixture $missingDeployLiveRoot
+    $missingDeployHashesBefore = & $getTransactionHashes $missingDeployLiveRoot
+    $missingDeployCloneTargets = New-Object 'System.Collections.Generic.List[string]'
+    $missingDeployStoppedServices = New-Object 'System.Collections.Generic.List[string]'
+    $missingDeployDeployCalls = New-Object 'System.Collections.Generic.List[string]'
+    $script:missingDeployCloneTargets = $missingDeployCloneTargets
+    $script:missingDeployStoppedServices = $missingDeployStoppedServices
+    $script:missingDeployDeployCalls = $missingDeployDeployCalls
+    $missingDeployRunner = {
+        param([string] $Tool, [string[]] $Arguments, [string] $WorkingDirectory)
+        $commandText = $Arguments -join ' '
+        if ($commandText -eq 'remote get-url origin') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginUrl }
+        }
+        if ($Arguments.Count -gt 0 -and $Arguments[0] -eq 'clone') {
+            $cloneTarget = [string]$Arguments[-1]
+            $script:missingDeployCloneTargets.Add($cloneTarget) | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneTarget '.git') -Force | Out-Null
+            New-Item -ItemType Directory -Path (Join-Path $cloneTarget 'bim-review-coordinator') -Force | Out-Null
+            [System.IO.File]::WriteAllBytes((Join-Path $cloneTarget '.env.example'), [byte[]](35, 10))
+            [System.IO.File]::WriteAllBytes((Join-Path $cloneTarget 'bim-review-coordinator\.env.example'), [byte[]](35, 10))
+            [System.IO.File]::WriteAllBytes((Join-Path $cloneTarget '.env.web-plane.host-kit.example'), [byte[]](35, 10))
+            return [pscustomobject]@{ ExitCode = 0; Output = 'prepared stage intentionally missing scripts/deploy.ps1' }
+        }
+        if ($commandText -eq 'rev-parse --short HEAD') {
+            return [pscustomobject]@{ ExitCode = 0; Output = $transactionOriginCommit.Substring(0, 7) }
+        }
+        if ($commandText -eq 'status --short') {
+            return [pscustomobject]@{ ExitCode = 0; Output = '' }
+        }
+        return [pscustomobject]@{ ExitCode = 0; Output = 'ok' }
+    }.GetNewClosure()
+    $missingDeployStopper = {
+        param([string] $ServiceName, [string] $ServiceRunDir)
+        $script:missingDeployStoppedServices.Add($ServiceName) | Out-Null
+    }.GetNewClosure()
+    $missingDeployDeployRunner = {
+        param([string] $DeployRoot)
+        $script:missingDeployDeployCalls.Add($DeployRoot) | Out-Null
+        return [pscustomobject]@{ ExitCode = 0 }
+    }.GetNewClosure()
+    $missingDeployFailureMessage = $null
+    try {
+        Invoke-TestDeployRebuild -Build -RepoRoot $rebuildRoot -DeploymentPath $missingDeployLiveRoot -AllowNonFixedPathForTests -CommandRunner $missingDeployRunner -DeployRunner $missingDeployDeployRunner -ServiceStopper $missingDeployStopper | Out-Null
+    } catch {
+        $missingDeployFailureMessage = $_.Exception.Message
+    }
+    $missingDeployHashesAfter = & $getTransactionHashes $missingDeployLiveRoot
+    & $recordTransactionExpectation (-not [string]::IsNullOrWhiteSpace($missingDeployFailureMessage) -and $missingDeployFailureMessage -match 'deploy(ment)? script missing') 'Task 1A.4 missing stage deploy script is surfaced' "actual='$missingDeployFailureMessage'"
+    & $recordTransactionExpectation ($missingDeployCloneTargets.Count -eq 1 -and $missingDeployCloneTargets[0] -ne $missingDeployLiveRoot) 'Task 1A.4 deploy-script validation occurs on a sibling stage' "targets='$($missingDeployCloneTargets -join ',')' live='$missingDeployLiveRoot'"
+    & $recordTransactionExpectation ($missingDeployStoppedServices.Count -eq 0) 'Task 1A.4 missing deploy script fails before service stop' "stopped='$($missingDeployStoppedServices -join ',')'"
+    & $recordTransactionExpectation ($missingDeployDeployCalls.Count -eq 0) 'Task 1A.4 missing deploy script fails before deploy' "deployCalls=$($missingDeployDeployCalls.Count)"
+    foreach ($relativePath in $transactionFixturePaths) {
+        & $recordTransactionExpectation ($missingDeployHashesAfter[$relativePath] -eq $missingDeployHashesBefore[$relativePath]) 'Task 1A.4 missing deploy script leaves live bytes identical' "path='$relativePath' before='$($missingDeployHashesBefore[$relativePath])' after='$($missingDeployHashesAfter[$relativePath])'"
+    }
+
+    if ($transactionRedFailures.Count -gt 0) {
+        throw "Task 1A wished-for RED behaviors unmet:$([Environment]::NewLine) - $($transactionRedFailures -join "$([Environment]::NewLine) - ")"
+    }
+
     Write-TestPass $testName
 } catch {
     Write-TestFail $testName $_.Exception.Message
