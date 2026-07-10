@@ -107,8 +107,16 @@ export interface FailuresResponse {
   items: FailureRow[];
 }
 
+// F12（2026-07-10）：governance 面同樣把逾時下沉到原語層（與 coordinatorClient 對稱）；
+// __setGovFetchTimeoutMsForTests 僅測試 seam。呼叫端可自帶 init.signal 覆寫（保留彈性）。
+let GOV_FETCH_TIMEOUT_MS = 15000;
+export function __setGovFetchTimeoutMsForTests(ms: number | null): void {
+  GOV_FETCH_TIMEOUT_MS = ms ?? 15000;
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${COORD_BASE}${path}`, {
+    signal: AbortSignal.timeout(GOV_FETCH_TIMEOUT_MS),
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });

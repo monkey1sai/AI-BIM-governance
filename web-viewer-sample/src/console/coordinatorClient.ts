@@ -31,8 +31,20 @@ export function coordinatorUrl(path: string): string {
   return `${COORD_BASE}${path}`;
 }
 
+// F12（2026-07-10）：共用 fetch 原語內建逾時——wedged socket 過去會讓 await 永久 pending，
+// 呼叫端 busy 卡死只能整頁重載（SharedStatusProvider 自建 watchdog 自救，其他消費端裸奔）。
+// 保護下沉到原語層：預設 15s（輪詢 GET 為 1s cadence 短請求，15s 天花板安全）；
+// __setFetchTimeoutMsForTests 僅測試 seam。
+let FETCH_TIMEOUT_MS = 15000;
+export function __setFetchTimeoutMsForTests(ms: number | null): void {
+  FETCH_TIMEOUT_MS = ms ?? 15000;
+}
+function fetchTimeoutSignal(): AbortSignal {
+  return AbortSignal.timeout(FETCH_TIMEOUT_MS);
+}
+
 async function jsonGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" } });
+  const res = await fetch(`${COORD_BASE}${path}`, { headers: { Accept: "application/json" }, signal: fetchTimeoutSignal() });
   if (!res.ok) {
     // 與 jsonPost/jsonPut 一致萃取 coordinator `{ detail }`（誠實鐵律）：getIfcReadyJob 等輪詢 GET
     // 失敗時，A1 狀態行直接把 .message 顯給操作員；只 throw statusText 會把後端「job 不存在 /
@@ -47,6 +59,7 @@ async function jsonPost<T>(path: string, body: unknown): Promise<T> {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
+    signal: fetchTimeoutSignal(),
   });
   if (!res.ok) {
     // 與 jsonPut 一致：萃取 coordinator `{ detail }`（誠實鐵律）。sessionClose 等 controlled
@@ -62,6 +75,7 @@ async function jsonPostWithHeaders<T>(path: string, body: unknown, headers: Reco
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body ?? {}),
+    signal: fetchTimeoutSignal(),
   });
   if (!res.ok) {
     throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
@@ -97,6 +111,7 @@ async function jsonPut<T>(path: string, body: Record<string, unknown>): Promise<
     method: "PUT",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: fetchTimeoutSignal(),
   });
   if (!res.ok) {
     throw new Error(`coordinator ${path} -> ${res.status} ${await errorDetail(res)}`);
