@@ -69,6 +69,20 @@ describe("edge console honesty smoke", () => {
     expect(html).toContain("ec-prov");
   });
 
+  it("[A6 消歧義] roadmap tier 不裸印 Phase 數字（與 ProvTag 願景 Phase 矛盾），改標規劃序", () => {
+    const apps = renderToString(<AppsPage onOpen={() => {}} />);
+    // A6：phase=2（規劃優先序）＋ prov=p4（願景 Phase 4）——A6 卡裸印「Phase 2」會與 ProvTag 並列矛盾。
+    // 斷言收斂在 A6 卡片區段（A2/A3 focus 卡的 Phase 2 為合法 asbuilt 標示）。
+    const a6Card = apps.slice(apps.indexOf(">A6<"), apps.indexOf(">A7<"));
+    expect(a6Card).toContain("規劃序 P2");
+    expect(a6Card).not.toContain("Phase 2");
+    // focus tier（A1 phase=1，prov=asbuilt）維持原樣 Phase 標示。
+    expect(apps).toContain("Phase 1");
+    const vision = renderToString(<AppVisionPage slug="4d-5d" onOpen={() => {}} />);
+    expect(vision).not.toContain("Phase 2 ·");
+    expect(vision).toContain("規劃序 P2");
+  });
+
   it("A1 Rule Center 顯示真實 IFC 實測 artifact（非捏造）", () => {
     const html = renderToString(<IssuesRuleCenterPage />);
     expect(html).toContain("規則評估次數");
