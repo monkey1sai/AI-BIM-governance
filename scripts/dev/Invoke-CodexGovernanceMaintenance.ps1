@@ -15,17 +15,18 @@ function Invoke-MaintenanceApply { param([string]$Root,[string]$Candidate,$Allow
  if($missing.Count){ throw "Apply callbacks required: $($missing -join ', ')" }
  if(-not $Candidate){throw 'CandidatePath is required for Apply'}; $c=Get-Content $Candidate -Raw|ConvertFrom-Json; if(($c.PSObject.Properties.Name -contains 'createdAtUtc') -and $c.createdAtUtc -and ([DateTime]::Parse($c.createdAtUtc) -lt [DateTime]::UtcNow.AddHours(-24))){throw 'Candidate is stale'}; if($Allowlist){. "$PSScriptRoot/../lib/codex-governance/Maintenance.Trust.ps1"; New-TrustedInventory $c $Allowlist|Out-Null}
  $snap=Join-Path $Root ('.snapshot-'+[guid]::NewGuid()); New-Item $snap -ItemType Directory|Out-Null; Get-ChildItem $Root -Force | Where-Object {$_.Name -notin @('maintenance.lock','maintenance-journal.json') -and $_.FullName -ne $snap}|Copy-Item -Destination $snap -Recurse -Force; if(-not (Test-Path $snap)){throw 'Snapshot creation failed'}
- $j=Join-Path $Root 'maintenance-journal.json'; Write-JournalPhase $j applying @{TargetPath=$Root;SnapshotPath=$snap} -Root $Root|Out-Null
+ $snapshotTreeHash=Get-ContentTreeHash -Root $snap
+ $j=Join-Path $Root 'maintenance-journal.json'; Write-JournalPhase $j applying @{TargetPath=$Root;SnapshotPath=$snap;SnapshotTreeHash=$snapshotTreeHash} -Root $Root|Out-Null
  $cohorts=@('cli','plugin','skill'); $results=@(); try { foreach($cohort in $cohorts){
    $stageKey="Stage:$cohort"; $applyKey="Apply:$cohort"; $stage=& $Callbacks[$stageKey] $c $Root;
    $results+=& $Callbacks[$applyKey] $stage $Root
  }} catch { foreach($cohort in $cohorts){$rk="Rollback:$cohort"; if($Callbacks[$rk]){try{& $Callbacks[$rk] $Root}catch{}}}; Write-AtomicJson -Path (Join-Path $Root 'apply-disabled.json') -InputObject @{Disabled=$true;Reason=$_.Exception.Message;AtUtc=[DateTime]::UtcNow.ToString('o')} -Root $Root; throw }
- Write-JournalPhase $j -Phase staged -Data @{TargetPath=$Root;SnapshotPath=$snap;Cohorts=$cohorts;Results=$results} -Root $Root|Out-Null
+ Write-JournalPhase $j -Phase staged -Data @{TargetPath=$Root;SnapshotPath=$snap;SnapshotTreeHash=$snapshotTreeHash;Cohorts=$cohorts;Results=$results} -Root $Root|Out-Null
  Retain-MaintenanceSnapshots -Root $Root
  New-MaintenanceReport Apply 'staged' @($c.sourceId) $j ([pscustomobject]@{Status='pass';Cohorts=$cohorts}) ([pscustomobject]@{Complete=$true}) 'Run Verify'
 }
 function Invoke-MaintenanceRecover { param([string]$Root)
- $j=Join-Path $Root 'maintenance-journal.json'; if(-not (Test-Path $j)){return New-MaintenanceReport Recover 'noop' @() $j ([pscustomobject]@{Status='noop'}) ([pscustomobject]@{Complete=$true}) 'No recovery required'}; $before=(Get-Content $j -Raw|ConvertFrom-Json); $r=Resume-InterruptedTransaction -JournalPath $j -CodexHome $Root; if($r.Status -eq 'recovered' -and $before.Data.SnapshotPath){$expected=Get-ContentTreeHash -Root $before.Data.SnapshotPath; $actual=Get-ContentTreeHash -Root $Root; if($expected -ne $actual){throw 'Recovery tree hash mismatch'}}; New-MaintenanceReport Recover $r.Status @() $j ([pscustomobject]@{Status=$r.Status;TreeHashVerified=($r.Status -ne 'recovered' -or $true)}) ([pscustomobject]@{Complete=($r.Status -eq 'recovered')}) 'Run Verify'
+ $j=Join-Path $Root 'maintenance-journal.json'; if(-not (Test-Path $j)){return New-MaintenanceReport Recover 'noop' @() $j ([pscustomobject]@{Status='noop'}) ([pscustomobject]@{Complete=$true}) 'No recovery required'}; $r=Resume-InterruptedTransaction -JournalPath $j -CodexHome $Root; $treeHashVerified=($r.Status -ne 'recovered'); if($r.Status -eq 'recovered'){$actual=Get-ContentTreeHash -Root $Root; if(-not $r.TreeHash -or [string]$r.TreeHash -ne $actual){throw 'Recovery tree hash mismatch'}; $treeHashVerified=$true}; New-MaintenanceReport Recover $r.Status @() $j ([pscustomobject]@{Status=$r.Status;TreeHashVerified=$treeHashVerified}) ([pscustomobject]@{Complete=($r.Status -eq 'recovered')}) 'Run Verify'
 }
 function Invoke-MaintenanceVerify { param([string]$Root,[hashtable]$Baseline=@{},[hashtable]$Actual=@{},[hashtable]$Callbacks=@{})
  foreach($cohort in @('cli','plugin','skill')){ $key="Verify:$cohort"; if($Callbacks[$key]){ & $Callbacks[$key] $Root | Out-Null } }
